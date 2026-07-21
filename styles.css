@@ -1028,6 +1028,86 @@ button:disabled {
   font-size: 1.3rem;
 }
 
+.selection-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selection-timer {
+  --selection-progress: 100%;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: end;
+  min-width: 132px;
+  min-height: 64px;
+  overflow: hidden;
+  padding: 10px 15px 13px;
+  border: 1px solid var(--line-bright);
+  border-radius: 14px;
+  background: rgba(10, 13, 21, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.selection-timer small {
+  grid-column: 1 / 3;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+}
+
+.selection-timer strong {
+  color: var(--cyan);
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.selection-timer span {
+  margin: 0 0 2px 5px;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.selection-timer i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--selection-progress);
+  height: 4px;
+  background: var(--cyan);
+  box-shadow: 0 0 12px rgba(77, 232, 223, 0.55);
+  transition: width 100ms linear;
+}
+
+.selection-timer.pending {
+  border-style: dashed;
+}
+
+.selection-timer.warning {
+  border-color: rgba(255, 53, 79, 0.72);
+  animation: selection-timer-alert 700ms ease-in-out infinite alternate;
+}
+
+.selection-timer.warning strong {
+  color: var(--red-soft);
+}
+
+.selection-timer.warning i {
+  background: var(--red);
+  box-shadow: 0 0 15px rgba(255, 53, 79, 0.62);
+}
+
+@keyframes selection-timer-alert {
+  from { box-shadow: 0 0 0 rgba(255, 53, 79, 0); }
+  to { box-shadow: 0 0 24px rgba(255, 53, 79, 0.24); }
+}
+
 .select-panel {
   padding: 28px;
   border: 1px solid var(--line);
@@ -2041,6 +2121,15 @@ button:disabled {
 
   .section-head {
     display: block;
+  }
+
+  .selection-heading-actions {
+    justify-content: space-between;
+    margin-top: 16px;
+  }
+
+  .selection-heading-actions .button {
+    flex: 1;
   }
 
   .screen-actions {

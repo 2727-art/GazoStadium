@@ -97,6 +97,16 @@
     tone(1567.98, 0.3, 0.38, { type: "sine", endFrequency: 2093, volume: 0.065 });
   }
 
+  function playCountdown(second) {
+    if (second <= 0) {
+      tone(180, 0, 0.11, { type: "square", endFrequency: 110, volume: 0.09 });
+      tone(360, 0.08, 0.13, { type: "sawtooth", endFrequency: 240, volume: 0.065 });
+      return;
+    }
+    const frequency = second === 1 ? 880 : second === 2 ? 720 : 600;
+    tone(frequency, 0, 0.075, { type: "square", endFrequency: frequency * 0.92, volume: 0.07 });
+  }
+
   function classifyButton(button) {
     if (button.classList.contains("button-danger")) return "danger";
     if (button.matches(".score-button, [data-card], [data-online-card]")) return "select";
@@ -140,6 +150,7 @@
     playButton,
     playCritical,
     playPerfect,
+    playCountdown,
     playResult(score) {
       if (score === 10) playPerfect();
       else if (score >= 8) playCritical();

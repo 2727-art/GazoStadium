@@ -30,6 +30,8 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
+const SELECTION_TIME_LIMIT_MS = 10_000;
+const SELECTION_WARNING_SECONDS = 3;
 const MATCH_TIMEOUT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
@@ -93,6 +95,15 @@ function createOnlineState() {
     matchUnsubscribers: [],
     roomUnsubscribers: [],
     roundUnsubscribe: null,
+    serverTimeOffset: 0,
+    selectionTimer: null,
+    selectionStartedAt: 0,
+    selectionRemainingMs: SELECTION_TIME_LIMIT_MS,
+    selectionLastSoundSecond: null,
+    selectionReadyRound: 0,
+    selectionStartRequestRound: 0,
+    selectionTimeoutHandledRound: 0,
+    selectionLocking: false,
     disconnectHandles: [],
     peer: null,
     channel: null,
@@ -344,17 +355,25 @@ function renderOnlineHud() {
 }
 
 function renderRoundSelect() {
+  const timerStarted = hasSelectionStarted();
+  const remainingSeconds = Math.max(0, Math.ceil(state.selectionRemainingMs / 1000));
+  const progress = Math.max(0, Math.min(100, (state.selectionRemainingMs / SELECTION_TIME_LIMIT_MS) * 100));
+  const warning = timerStarted && remainingSeconds <= SELECTION_WARNING_SECONDS;
   const cards = state.deck.map((item, index) => `<button class="select-card ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}"
-    data-online-card="${item.id}" ${item.used ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
+    data-online-card="${item.id}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
     <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span>
   </button>`).join("");
   return `<section class="screen">${renderOnlineHud()}
     <div class="section-head"><div><span class="eyebrow">SECRET PICK</span><h1>あなたの画像選択</h1>
       <p>相手の選択が完了するまで、どの画像を選んだかは送信されません。</p></div>
-      <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
+      <div class="selection-heading-actions"><div class="selection-timer ${timerStarted ? "running" : "pending"} ${warning ? "warning" : ""}"
+        data-selection-timer role="timer" aria-live="polite" aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}"
+        style="--selection-progress:${progress}%"><small>SELECT LIMIT</small><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong>
+        <span data-selection-unit>${timerStarted ? "SEC" : "SYNC"}</span><i></i></div>
+        <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div></div>
     <div class="select-panel"><div class="select-grid">${cards}</div>
-      <div class="selection-footer"><p>画像IDや画像本体はロック完了まで相手へ送られません。</p>
-        <button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId ? "" : "disabled"}>この画像でロック</button></div></div>
+      <div class="selection-footer"><p>${timerStarted ? "10秒以内に選択してください。時間切れ時は未使用画像を自動選択します。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
+        <button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この画像でロック</button></div></div>
     <div class="online-chat-standalone">${renderOnlineChat()}</div>
   </section>`;
 }
@@ -904,6 +923,10 @@ async function enterRoom(roomId) {
 
 async function setupRoomListeners() {
   const base = `online/rooms/${state.roomId}`;
+  state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    state.serverTimeOffset = Number(snapshot.val() || 0);
+    if (state.selectionTimer) updateSelectionCountdown();
+  }));
   const activeDisconnect = onDisconnect(ref(database, `online/active/${state.uid}`));
   await activeDisconnect.remove();
   state.disconnectHandles.push(activeDisconnect);
@@ -1020,6 +1043,7 @@ function configureDataChannel(channel) {
       state.screen = "select";
       render();
     }
+    announceSelectionReady().catch(handleRecoverableError);
   };
   channel.onclose = () => {
     state.channelReady = false;
@@ -1059,17 +1083,141 @@ async function finishIncomingImage(round) {
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${round}/imagesReceived/${state.uid}`), true);
 }
 
+function hasSelectionStarted() {
+  return Number.isFinite(state.selectionStartedAt) && state.selectionStartedAt > 0;
+}
+
+async function announceSelectionReady() {
+  if (!active || !state.roomId || !state.channelReady || state.screen !== "select" || state.selectionReadyRound === state.round) return;
+  const readyRound = state.round;
+  state.selectionReadyRound = readyRound;
+  try {
+    await set(ref(database, `online/rooms/${state.roomId}/rounds/${readyRound}/selectionReady/${state.uid}`), true);
+  } catch (error) {
+    if (state.round === readyRound) state.selectionReadyRound = 0;
+    throw error;
+  }
+}
+
+async function startSharedSelectionClock() {
+  const startRound = state.round;
+  if (state.playerIndex !== 0 || state.selectionStartRequestRound === startRound
+      || Number(state.roundData.selectionStartedAt) > 0) return;
+  state.selectionStartRequestRound = startRound;
+  try {
+    await set(ref(database, `online/rooms/${state.roomId}/rounds/${startRound}/selectionStartedAt`), serverTimestamp());
+  } catch (error) {
+    if (state.round === startRound) state.selectionStartRequestRound = 0;
+    throw error;
+  }
+}
+
+function startSelectionTimer(startedAt) {
+  const firstStart = state.selectionStartedAt !== startedAt;
+  if (firstStart) {
+    stopSelectionTimer();
+    state.selectionStartedAt = startedAt;
+    state.selectionLastSoundSecond = null;
+    state.selectionTimeoutHandledRound = 0;
+    state.selectionRemainingMs = Math.max(0, SELECTION_TIME_LIMIT_MS - ((Date.now() + state.serverTimeOffset) - startedAt));
+    if (state.screen === "select") render();
+  }
+  if (!state.selectionTimer && state.screen === "select") {
+    state.selectionTimer = window.setInterval(updateSelectionCountdown, 100);
+  }
+  updateSelectionCountdown();
+}
+
+function updateSelectionCountdown() {
+  if (state.screen !== "select" || !hasSelectionStarted()) {
+    stopSelectionTimer();
+    return;
+  }
+  state.selectionRemainingMs = Math.max(0, (state.selectionStartedAt + SELECTION_TIME_LIMIT_MS) - (Date.now() + state.serverTimeOffset));
+  const remainingSeconds = Math.max(0, Math.ceil(state.selectionRemainingMs / 1000));
+  updateSelectionTimerDisplay(remainingSeconds);
+  if (remainingSeconds > 0 && remainingSeconds <= SELECTION_WARNING_SECONDS
+      && state.selectionLastSoundSecond !== remainingSeconds) {
+    state.selectionLastSoundSecond = remainingSeconds;
+    window.HariaiAudio?.playCountdown?.(remainingSeconds);
+  }
+  if (state.selectionRemainingMs <= 0 && state.selectionTimeoutHandledRound !== state.round) {
+    state.selectionTimeoutHandledRound = state.round;
+    stopSelectionTimer();
+    handleSelectionTimeout().catch(handleRecoverableError);
+  }
+}
+
+function updateSelectionTimerDisplay(remainingSeconds) {
+  const timer = document.querySelector("[data-selection-timer]");
+  if (!timer) return;
+  const progress = Math.max(0, Math.min(100, (state.selectionRemainingMs / SELECTION_TIME_LIMIT_MS) * 100));
+  timer.style.setProperty("--selection-progress", `${progress}%`);
+  timer.classList.toggle("warning", remainingSeconds <= SELECTION_WARNING_SECONDS);
+  timer.setAttribute("aria-label", `画像選択 残り${remainingSeconds}秒`);
+  const seconds = timer.querySelector("[data-selection-seconds]");
+  const unit = timer.querySelector("[data-selection-unit]");
+  if (seconds) seconds.textContent = String(remainingSeconds);
+  if (unit) unit.textContent = "SEC";
+}
+
+async function handleSelectionTimeout() {
+  if (state.screen !== "select" || state.selectionLocking) return;
+  const hadSelection = Boolean(state.selectedCardId);
+  if (!hadSelection) {
+    const available = state.deck.filter((item) => !item.used);
+    if (!available.length) return;
+    state.selectedCardId = available[Math.floor(Math.random() * available.length)].id;
+  }
+  window.HariaiAudio?.playCountdown?.(0);
+  showToast(hadSelection
+    ? "時間切れのため、選択中の画像を自動ロックしました。"
+    : "時間切れのため、未使用画像を自動選択しました。");
+  await lockSelection();
+}
+
+function stopSelectionTimer() {
+  if (state.selectionTimer) window.clearInterval(state.selectionTimer);
+  state.selectionTimer = null;
+}
+
+function resetSelectionTimerState() {
+  stopSelectionTimer();
+  state.selectionStartedAt = 0;
+  state.selectionRemainingMs = SELECTION_TIME_LIMIT_MS;
+  state.selectionLastSoundSecond = null;
+  state.selectionReadyRound = 0;
+  state.selectionStartRequestRound = 0;
+  state.selectionTimeoutHandledRound = 0;
+  state.selectionLocking = false;
+}
+
 async function lockSelection() {
-  if (!state.selectedCardId || !state.channelReady) return;
+  if (!state.selectedCardId || !state.channelReady || !hasSelectionStarted() || state.selectionLocking) return;
+  state.selectionLocking = true;
+  stopSelectionTimer();
   state.screen = "waitingPick";
   render();
-  await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/picks/${state.uid}`), {
-    ready: true,
-    lockedAt: serverTimestamp(),
-  });
+  try {
+    await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/picks/${state.uid}`), {
+      ready: true,
+      lockedAt: serverTimestamp(),
+    });
+  } finally {
+    state.selectionLocking = false;
+  }
 }
 
 async function reactToRoundData() {
+  const selectionReady = state.roundData.selectionReady || {};
+  if (state.playerIndex === 0 && selectionReady[state.uid] && selectionReady[state.opponentUid]
+      && !Number.isFinite(Number(state.roundData.selectionStartedAt))) {
+    startSharedSelectionClock().catch(handleRecoverableError);
+  }
+  const selectionStartedAt = Number(state.roundData.selectionStartedAt);
+  if (Number.isFinite(selectionStartedAt) && selectionStartedAt > 0 && state.screen === "select") {
+    startSelectionTimer(selectionStartedAt);
+  }
   const picks = state.roundData.picks || {};
   if (picks[state.uid]?.ready && picks[state.opponentUid]?.ready && !state.sentImageRounds.has(state.round)) {
     await sendSelectedImage();
@@ -1172,6 +1320,7 @@ function advanceAfterRound() {
     finishOnlineMatch().catch(handleRecoverableError);
     return;
   }
+  resetSelectionTimerState();
   releaseRemoteImage(state.round);
   state.round += 1;
   state.selectedCardId = "";
@@ -1181,6 +1330,7 @@ function advanceAfterRound() {
   state.screen = "select";
   listenToRound();
   render();
+  announceSelectionReady().catch(handleRecoverableError);
 }
 
 function isMatchOver() {
@@ -1361,6 +1511,7 @@ async function cleanupMatchmaking(keepActive) {
 }
 
 async function cleanupOnlineResources(keepActive) {
+  stopSelectionTimer();
   await cleanupMatchmaking(keepActive);
   await cleanupPublicPresence();
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());

@@ -157,6 +157,16 @@
           },
           "rounds": {
             "$round": {
+              "selectionReady": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "selectionStartedAt": {
+                ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/rooms/' + $roomId + '/rounds/' + $round + '/selectionReady/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/rounds/' + $round + '/selectionReady/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).val() === true",
+                ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
+              },
               "picks": {
                 "$uid": {
                   ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
