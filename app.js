@@ -51,14 +51,15 @@
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
-        <span class="eyebrow">ONLINE 1ON1 IMAGE BATTLE</span>
+        <span class="eyebrow">ONLINE 1ON1 / 2ON2 IMAGE BATTLE</span>
         <h1>貼り合え。<span>YOUR FAVORITE, YOUR POWER.</span></h1>
         <p class="hero-copy">
           自慢の画像を5枚用意し、知らない誰かと魅力を採点し合う。
-          HP30、最大5ラウンド。8点以上はクリティカルです。
+          1on1と、作戦チャットで協力する2on2を選べます。
         </p>
         <div class="hero-actions">
-          <button class="button button-primary" id="onlineButton">オンライン対戦を始める</button>
+          <button class="button button-primary" id="onlineButton">1on1対戦を始める</button>
+          <button class="button button-cyan" id="teamBattleButton">2on2チーム対戦</button>
           <button class="button button-ghost" id="rankingButton">ランキングを見る</button>
           <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
@@ -99,6 +100,7 @@
     setLandingChrome();
     app.innerHTML = renderLanding();
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
+    document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
     document.querySelector("#rankingButton")?.addEventListener("click", renderRankingScreen);
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
@@ -140,6 +142,15 @@
     openOnlineFeature("start");
   }
 
+  function startTeamBattle() {
+    if (window.HariaiTeam?.start) {
+      window.HariaiTeam.start();
+      return;
+    }
+    showToast("2on2機能を読み込んでいます…");
+    window.addEventListener("hariai-team-ready", () => window.HariaiTeam?.start?.(), { once: true });
+  }
+
   function openOnlineFeature(method) {
     if (window.HariaiOnline?.[method]) {
       window.HariaiOnline[method]();
@@ -149,11 +160,12 @@
     window.addEventListener("hariai-online-ready", () => window.HariaiOnline?.[method]?.(), { once: true });
   }
 
-  async function processImageFile(file, position) {
+  async function processImageFile(file, position, options = {}) {
     if (!file.type.startsWith("image/")) throw new Error("画像ファイルだけ選択できます。");
     if (file.size > MAX_FILE_BYTES) throw new Error("15MBを超える画像は選択できません。");
     const bitmap = await decodeImage(file);
-    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    const maxSide = Math.min(MAX_IMAGE_SIDE, Math.max(640, Number(options.maxSide || MAX_IMAGE_SIDE)));
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = document.createElement("canvas");
@@ -164,7 +176,7 @@
     context.fillRect(0, 0, width, height);
     context.drawImage(bitmap.source, 0, 0, width, height);
     bitmap.close?.();
-    const blob = await canvasToBlob(canvas, "image/webp", 0.86);
+    const blob = await canvasToBlob(canvas, "image/webp", Math.max(0.65, Math.min(0.9, Number(options.quality || 0.86))));
     return makeDeckItem(blob, position);
   }
 
@@ -304,12 +316,16 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 / FIREBASE + WEBRTC";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + 2ON2 / FIREBASE + WEBRTC";
     if (footerItems[1]) footerItems[1].textContent = "画像本体は対戦相手へ直接送信し、サーバーへ保存しません";
   }
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiTeam?.isActive?.()) {
+      window.HariaiTeam.requestHome();
+      return;
+    }
     if (window.HariaiOnline?.isActive?.()) {
       window.HariaiOnline.requestHome();
       return;
@@ -318,6 +334,10 @@
   });
 
   document.querySelector("#confirmDestroy")?.addEventListener("click", () => {
+    if (window.HariaiTeam?.isActive?.()) {
+      window.setTimeout(() => window.HariaiTeam.destroyRoom(), 0);
+      return;
+    }
     if (window.HariaiOnline?.isActive?.()) {
       window.setTimeout(() => window.HariaiOnline.destroyRoom(), 0);
     }
