@@ -100,7 +100,7 @@ function createOnlineState() {
   };
 }
 
-const shared = () => window.HariaiOfflineApp?.shared;
+const shared = () => window.HariaiApp?.shared;
 const escapeHtml = (value) => shared()?.escapeHtml(value) ?? String(value);
 const showToast = (message) => shared()?.showToast(message);
 const setBusy = (busy, message) => shared()?.setBusy(busy, message);
@@ -249,7 +249,7 @@ function renderSetup() {
             <label class="button button-cyan button-small file-button">画像を追加
               <input id="onlineImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= MAX_ROUNDS ? "disabled" : ""} />
             </label>
-            <button class="button button-ghost button-small" id="onlineFillDemo">デモ画像で埋める</button>
+            <button class="button button-ghost button-small" id="onlineFillSample">サンプル画像で埋める</button>
           </div>
         </div>
         <div class="deck-grid">${slots}</div>
@@ -465,20 +465,20 @@ function bindScreenEvents() {
   if (state.screen === "result") document.querySelector("#onlineContinue")?.addEventListener("click", continueRound);
   if (state.screen === "gameover") {
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
-    document.querySelector("#onlineGameoverHome")?.addEventListener("click", leaveToOffline);
+    document.querySelector("#onlineGameoverHome")?.addEventListener("click", leaveToLanding);
   }
   if (state.screen === "noContest") {
     document.querySelector("#onlineNoContestAgain")?.addEventListener("click", resetOnlineSetup);
-    document.querySelector("#onlineNoContestHome")?.addEventListener("click", leaveToOffline);
+    document.querySelector("#onlineNoContestHome")?.addEventListener("click", leaveToLanding);
   }
   if (state.screen === "error") {
     document.querySelector("#onlineRetry")?.addEventListener("click", resetOnlineSetup);
-    document.querySelector("#onlineErrorHome")?.addEventListener("click", leaveToOffline);
+    document.querySelector("#onlineErrorHome")?.addEventListener("click", leaveToLanding);
   }
 }
 
 function bindSetupEvents() {
-  document.querySelector("#onlineBackHome")?.addEventListener("click", leaveToOffline);
+  document.querySelector("#onlineBackHome")?.addEventListener("click", leaveToLanding);
   const nameInput = document.querySelector("#onlinePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
@@ -486,7 +486,7 @@ function bindSetupEvents() {
     if (button) button.disabled = !state.authReady || state.deck.length !== MAX_ROUNDS || !state.name.trim();
   });
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
-  document.querySelector("#onlineFillDemo")?.addEventListener("click", fillDemoDeck);
+  document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
   document.querySelector("#findOpponent")?.addEventListener("click", beginMatchmaking);
 }
@@ -539,11 +539,11 @@ async function handleImageInput(event) {
   showToast(firstError ? `${added}枚追加。${firstError}` : `${added}枚の画像を追加しました。`);
 }
 
-async function fillDemoDeck() {
+async function fillSampleDeck() {
   const remaining = MAX_ROUNDS - state.deck.length;
   if (remaining <= 0) return showToast("5枚すべて選択済みです。");
-  setBusy(true, "デモ画像を生成しています…");
-  state.deck.push(...await shared().createDemoItems(0, remaining, state.deck.length));
+  setBusy(true, "サンプル画像を生成しています…");
+  state.deck.push(...await shared().createSampleItems(0, remaining, state.deck.length));
   setBusy(false);
   render();
 }
@@ -1170,7 +1170,7 @@ function triggerCriticalFx(text) {
 
 function requestHome() {
   if (["setup", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
-    leaveToOffline();
+    leaveToLanding();
   } else {
     destroyDialog.showModal();
   }
@@ -1184,7 +1184,7 @@ async function destroyRoom() {
   await cleanupOnlineResources(false);
   releaseAllImages();
   active = false;
-  window.HariaiOfflineApp?.returnHome();
+  window.HariaiApp?.returnHome();
   showToast("ルームを破棄しました。戦績には影響しません。");
 }
 
@@ -1217,11 +1217,11 @@ async function resetOnlineSetup() {
   render();
 }
 
-async function leaveToOffline() {
+async function leaveToLanding() {
   await cleanupOnlineResources(false);
   releaseAllImages();
   active = false;
-  window.HariaiOfflineApp?.returnHome();
+  window.HariaiApp?.returnHome();
 }
 
 async function cleanupMatchmaking(keepActive) {
