@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#090b12" />
+    <meta
+      name="description"
+      content="好きな画像を5枚持ち寄って採点し合う、オンライン・オフライン対応の1on1画像対戦ゲーム。"
+    />
+    <title>張り合いスタジアム | 1on1 Image Battle</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#" id="homeLink" aria-label="張り合いスタジアム ホーム">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
+        <span>
+          <strong>張り合いスタジアム</strong>
+          <small>HARIAI STADIUM</small>
+        </span>
+      </a>
+      <div class="header-badges" aria-label="現在のモード">
+        <span class="status-dot"><i></i> READY</span>
+        <span class="privacy-badge">画像保存なし</span>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer class="site-footer">
+      <span>ONLINE / OFFLINE 1ON1</span>
+      <span>画像本体はサーバーへ保存しません</span>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="fxLayer" class="fx-layer" aria-hidden="true"></div>
+
+    <dialog id="destroyDialog" class="confirm-dialog">
+      <form method="dialog">
+        <span class="eyebrow">NO CONTEST</span>
+        <h2>この対戦を破棄しますか？</h2>
+        <p>勝敗と連勝数には影響しません。選択した画像とチャットはすべて破棄されます。</p>
+        <div class="dialog-actions">
+          <button class="button button-ghost" value="cancel">対戦に戻る</button>
+          <button class="button button-danger" id="confirmDestroy" value="confirm">ルームを破棄</button>
+        </div>
+      </form>
+    </dialog>
+
+    <noscript>
+      <p class="noscript">このゲームを遊ぶにはJavaScriptを有効にしてください。</p>
+    </noscript>
+    <script src="app.js" defer></script>
+    <script type="module" src="online.js"></script>
+  </body>
+</html>
