@@ -317,6 +317,57 @@ button:disabled {
   margin-top: 32px;
 }
 
+.lobby-stats {
+  max-width: 650px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.lobby-stats > div {
+  min-height: 92px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-content: center;
+  gap: 4px 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.lobby-stats span {
+  align-self: end;
+  color: var(--cyan);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.lobby-stats strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  color: var(--text);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.lobby-stats small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.lobby-privacy {
+  max-width: 650px;
+  margin: 9px 0 0;
+  color: #737c91;
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
 .button {
   min-height: 52px;
   display: inline-flex;
@@ -1795,6 +1846,14 @@ button:disabled {
     min-height: auto;
     padding-block: 18px 38px;
     gap: 42px;
+  }
+
+  .lobby-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .lobby-stats > div {
+    min-height: 66px;
   }
 
   .hero h1 {

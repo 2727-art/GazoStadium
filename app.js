@@ -108,6 +108,8 @@
   }
 
   function renderLanding() {
+    const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || { online: null, waiting: null, playing: null };
+    const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
         <span class="eyebrow">ONLINE / OFFLINE 1ON1 IMAGE BATTLE</span>
@@ -121,6 +123,12 @@
           <button class="button button-ghost" id="startButton">1台でオフライン対戦</button>
           <button class="button button-ghost" id="demoButton">オフラインデモ</button>
         </div>
+        <div class="lobby-stats" aria-label="オンライン対戦の参加状況">
+          <div><span>ONLINE</span><strong id="lobbyOnlineCount">${statValue(lobbyStats.online)}</strong><small>オンライン参加者</small></div>
+          <div><span>WAITING</span><strong id="lobbyWaitingCount">${statValue(lobbyStats.waiting)}</strong><small>対戦待機中</small></div>
+          <div><span>IN BATTLE</span><strong id="lobbyPlayingCount">${statValue(lobbyStats.playing)}</strong><small>対戦中</small></div>
+        </div>
+        <p class="lobby-privacy">トップページの閲覧者は含みません。表示名・匿名UID・ルーム情報は公開しません。</p>
         <p class="mode-note">オンライン版の画像は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
       <div class="hero-card" aria-label="ゲーム画面のイメージ">

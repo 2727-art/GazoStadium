@@ -3,6 +3,29 @@
     ".read": false,
     ".write": false,
     "online": {
+      "publicPresence": {
+        ".read": true,
+        "$sessionId": {
+          ".write": "auth != null && root.child('online/publicPresenceOwners/' + $sessionId).val() === auth.uid",
+          ".validate": "!newData.exists() || (newData.hasChildren(['state', 'lastSeen']) && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'playing') && newData.child('lastSeen').isNumber())",
+          "state": {
+            ".validate": "newData.val() === 'waiting' || newData.val() === 'playing'"
+          },
+          "lastSeen": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "publicPresenceOwners": {
+        "$sessionId": {
+          ".read": "auth != null && data.val() === auth.uid",
+          ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && (!newData.exists() || newData.val() === auth.uid)))",
+          ".validate": "!newData.exists() || newData.isString()"
+        }
+      },
       "queue": {
         ".read": "auth != null",
         "$uid": {

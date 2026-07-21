@@ -29,6 +29,8 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MATCH_TIMEOUT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const PUBLIC_PRESENCE_FRESH_MS = 45_000;
+const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -39,6 +41,8 @@ const fxLayer = document.querySelector("#fxLayer");
 
 let active = false;
 let state = createOnlineState();
+let lobbyPresenceEntries = {};
+let lobbyStats = { online: null, waiting: null, playing: null };
 
 function createOnlineState() {
   return {
@@ -73,6 +77,10 @@ function createOnlineState() {
     pendingOffer: null,
     matchTimer: null,
     queueHeartbeat: null,
+    publicPresenceId: "",
+    publicPresenceState: "",
+    publicPresenceHeartbeat: null,
+    publicPresenceDisconnect: null,
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -112,6 +120,40 @@ function start() {
 
 function isActive() {
   return active;
+}
+
+function getLobbyStats() {
+  return { ...lobbyStats };
+}
+
+function refreshLobbyStats() {
+  const freshAfter = Date.now() - PUBLIC_PRESENCE_FRESH_MS;
+  const entries = Object.values(lobbyPresenceEntries).filter((entry) => (
+    Number(entry?.lastSeen) >= freshAfter && (entry?.state === "waiting" || entry?.state === "playing")
+  ));
+  const waiting = entries.filter((entry) => entry.state === "waiting").length;
+  const playing = entries.filter((entry) => entry.state === "playing").length;
+  lobbyStats = { online: waiting + playing, waiting, playing };
+  const values = {
+    lobbyOnlineCount: lobbyStats.online,
+    lobbyWaitingCount: lobbyStats.waiting,
+    lobbyPlayingCount: lobbyStats.playing,
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const element = document.querySelector(`#${id}`);
+    if (element) element.textContent = String(value);
+  });
+}
+
+function watchLobbyStats() {
+  onValue(ref(database, "online/publicPresence"), (snapshot) => {
+    lobbyPresenceEntries = snapshot.val() || {};
+    refreshLobbyStats();
+  }, () => {
+    lobbyPresenceEntries = {};
+    lobbyStats = { online: null, waiting: null, playing: null };
+  });
+  window.setInterval(refreshLobbyStats, 10_000);
 }
 
 async function ensureAuthenticated() {
@@ -541,6 +583,7 @@ async function beginMatchmaking() {
     lastSeen: Date.now(),
     state: "waiting",
   });
+  await startPublicPresence();
   const queueDisconnect = onDisconnect(queueEntryRef);
   await queueDisconnect.remove();
   state.disconnectHandles.push(queueDisconnect);
@@ -563,6 +606,50 @@ async function beginMatchmaking() {
     state.latestQueue = snapshot.val() || {};
     attemptToHost(state.latestQueue).catch(handleRecoverableError);
   }));
+}
+
+async function startPublicPresence() {
+  await cleanupPublicPresence();
+  const presenceId = push(ref(database, "online/publicPresence")).key;
+  if (!presenceId) throw new Error("参加状況を登録できませんでした。");
+  const ownerRef = ref(database, `online/publicPresenceOwners/${presenceId}`);
+  const presenceRef = ref(database, `online/publicPresence/${presenceId}`);
+  await set(ownerRef, state.uid);
+  await set(presenceRef, { state: "waiting", lastSeen: Date.now() });
+  const presenceDisconnect = onDisconnect(presenceRef);
+  await presenceDisconnect.remove();
+  state.publicPresenceId = presenceId;
+  state.publicPresenceState = "waiting";
+  state.publicPresenceDisconnect = presenceDisconnect;
+  state.publicPresenceHeartbeat = window.setInterval(() => {
+    if (!state.publicPresenceId) return;
+    update(ref(database, `online/publicPresence/${state.publicPresenceId}`), {
+      state: state.publicPresenceState,
+      lastSeen: Date.now(),
+    }).catch(() => {});
+  }, PUBLIC_PRESENCE_HEARTBEAT_MS);
+}
+
+async function updatePublicPresence(nextState) {
+  if (!state.publicPresenceId) return;
+  state.publicPresenceState = nextState;
+  await update(ref(database, `online/publicPresence/${state.publicPresenceId}`), {
+    state: nextState,
+    lastSeen: Date.now(),
+  });
+}
+
+async function cleanupPublicPresence() {
+  window.clearInterval(state.publicPresenceHeartbeat);
+  state.publicPresenceHeartbeat = null;
+  await state.publicPresenceDisconnect?.cancel?.().catch(() => {});
+  state.publicPresenceDisconnect = null;
+  const presenceId = state.publicPresenceId;
+  state.publicPresenceId = "";
+  state.publicPresenceState = "";
+  if (!presenceId || !state.uid) return;
+  await remove(ref(database, `online/publicPresence/${presenceId}`)).catch(() => {});
+  await remove(ref(database, `online/publicPresenceOwners/${presenceId}`)).catch(() => {});
 }
 
 function processIncomingOffers(snapshot) {
@@ -701,6 +788,7 @@ async function enterRoom(roomId) {
     perfects: 0,
   }));
   await cleanupMatchmaking(true);
+  await updatePublicPresence("playing");
   state.screen = "connecting";
   state.peerStatus = "P2P接続を準備中…";
   setOnlineChrome("ONLINE BATTLE");
@@ -1112,6 +1200,7 @@ async function handleOpponentDestroyed() {
 
 async function cancelMatching() {
   await cleanupMatchmaking(false);
+  await cleanupPublicPresence();
   state.screen = "setup";
   setOnlineChrome("ONLINE READY");
   render();
@@ -1156,6 +1245,7 @@ async function cleanupMatchmaking(keepActive) {
 
 async function cleanupOnlineResources(keepActive) {
   await cleanupMatchmaking(keepActive);
+  await cleanupPublicPresence();
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.roundUnsubscribe?.();
   state.roundUnsubscribe = null;
@@ -1217,5 +1307,7 @@ window.addEventListener("beforeunload", () => {
   state.peer?.close();
 });
 
-window.HariaiOnline = { start, isActive, requestHome, destroyRoom };
+watchLobbyStats();
+
+window.HariaiOnline = { start, isActive, requestHome, destroyRoom, getLobbyStats };
 window.dispatchEvent(new Event("hariai-online-ready"));
