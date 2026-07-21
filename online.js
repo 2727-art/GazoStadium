@@ -32,6 +32,7 @@ const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
 const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
 const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const MAX_POINTS = 999_999;
+const MAX_EQUIPPED_REACTIONS = 8;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const DAILY_MISSIONS = [
   { id: "complete_match", progressKey: "matches", title: "1試合を完走", description: "ルーム破棄では進みません。", target: 1, reward: 100 },
@@ -39,10 +40,22 @@ const DAILY_MISSIONS = [
   { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
 ];
 const SHOP_PRODUCTS = [
-  { id: "reaction_best_shot", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
-  { id: "reaction_healing", name: "ヒーリング", reaction: "癒やされる", description: "穏やかな画像に似合う追加リアクション", price: 250 },
-  { id: "reaction_story", name: "ストーリーテラー", reaction: "物語を感じる", description: "背景まで想像したときの追加リアクション", price: 400 },
-  { id: "reaction_masterpiece", name: "マスターピース", reaction: "これは名作", description: "ここぞという一枚に送る追加リアクション", price: 600 },
+  { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
+  { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
+  { id: "reaction_composition", type: "reaction", name: "コンポジション", reaction: "構図がうまい！", description: "画面構成に注目した追加リアクション", price: 160 },
+  { id: "reaction_atmosphere", type: "reaction", name: "アトモスフィア", reaction: "空気感が最高", description: "画像全体の雰囲気を褒める追加リアクション", price: 200 },
+  { id: "reaction_idea", type: "reaction", name: "アイデア賞", reaction: "発想がおもしろい！", description: "意外性や着眼点を褒める追加リアクション", price: 240 },
+  { id: "reaction_healing", type: "reaction", name: "ヒーリング", reaction: "癒やされる", description: "穏やかな画像に似合う追加リアクション", price: 250 },
+  { id: "reaction_keep_watching", type: "reaction", name: "ロングルック", reaction: "ずっと見ていたい", description: "見飽きない魅力を伝える追加リアクション", price: 300 },
+  { id: "reaction_today_favorite", type: "reaction", name: "トゥデイズピック", reaction: "今日の推し！", description: "その日の一番を伝える追加リアクション", price: 350 },
+  { id: "reaction_story", type: "reaction", name: "ストーリーテラー", reaction: "物語を感じる", description: "背景まで想像したときの追加リアクション", price: 400 },
+  { id: "reaction_masterpiece", type: "reaction", name: "マスターピース", reaction: "これは名作", description: "ここぞという一枚に送る追加リアクション", price: 600 },
+  { id: "title_good_praiser", type: "title", name: "ほめ上手", title: "ほめ上手", description: "相手の魅力を見つけるプレイヤー向け称号", price: 400 },
+  { id: "title_plant_lover", type: "title", name: "植物愛好家", title: "植物愛好家", description: "植物画像が好きなことを伝える称号", price: 450 },
+  { id: "title_animal_lover", type: "title", name: "どうぶつ派", title: "どうぶつ派", description: "動物画像が好きなことを伝える称号", price: 450 },
+  { id: "title_landscape_hunter", type: "title", name: "風景ハンター", title: "風景ハンター", description: "印象的な景色を探すプレイヤー向け称号", price: 500 },
+  { id: "title_image_sommelier", type: "title", name: "画像ソムリエ", title: "画像ソムリエ", description: "画像の魅力をじっくり味わう上級称号", price: 650 },
+  { id: "title_hariai_master", type: "title", name: "貼り合いマスター", title: "貼り合いマスター", description: "貼り合いを遊び込んだコレクション称号", price: 900 },
 ];
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
@@ -151,6 +164,7 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
   return {
     points: 0,
     inventory: {},
+    equipped: { reactions: {}, title: "" },
     daily: { dateKey, matches: 0, scores: 0, criticals: 0, claimed: {} },
     updatedAt: Date.now(),
   };
@@ -173,6 +187,15 @@ function normalizeEconomyRecord(value, dateKey = currentDailyDateKey()) {
   SHOP_PRODUCTS.forEach((product) => {
     if (source.inventory?.[product.id] === true) record.inventory[product.id] = true;
   });
+  const ownedReactions = SHOP_PRODUCTS.filter((product) => product.type === "reaction" && record.inventory[product.id]);
+  const savedEquipment = source.equipped && typeof source.equipped === "object";
+  const reactionIds = savedEquipment
+    ? ownedReactions.filter((product) => source.equipped?.reactions?.[product.id] === true).map((product) => product.id)
+    : ownedReactions.map((product) => product.id);
+  reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { record.equipped.reactions[id] = true; });
+  const savedTitle = String(source.equipped?.title || "");
+  const titleProduct = SHOP_PRODUCTS.find((product) => product.type === "title" && product.id === savedTitle && record.inventory[product.id]);
+  record.equipped.title = titleProduct?.id || "";
   if (sameDate) {
     record.daily.matches = Math.min(1, Math.max(0, Math.floor(Number(source.daily.matches || 0))));
     record.daily.scores = Math.min(3, Math.max(0, Math.floor(Number(source.daily.scores || 0))));
@@ -188,6 +211,23 @@ const shared = () => window.HariaiApp?.shared;
 const escapeHtml = (value) => shared()?.escapeHtml(value) ?? String(value);
 const showToast = (message) => shared()?.showToast(message);
 const setBusy = (busy, message) => shared()?.setBusy(busy, message);
+
+function getEquippedReactionProducts(economy = state.economy) {
+  return SHOP_PRODUCTS.filter((product) => product.type === "reaction" && economy.equipped?.reactions?.[product.id] === true);
+}
+
+function getTitleProduct(titleId = state.economy.equipped?.title) {
+  return SHOP_PRODUCTS.find((product) => product.type === "title" && product.id === titleId) || null;
+}
+
+function titleLabel(titleId) {
+  return getTitleProduct(titleId)?.title || "";
+}
+
+function renderTitleBadge(titleId = state.economy.equipped?.title) {
+  const label = titleLabel(titleId);
+  return label ? `<span class="player-title-badge">◆ ${escapeHtml(label)}</span>` : "";
+}
 
 function openOnlineScreen(screen) {
   if (active) {
@@ -386,6 +426,7 @@ function renderSetup() {
     </div>
     <div class="online-profile-strip">
       <span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
+      ${renderTitleBadge()}
       <span>RATE ${Number(profile.rating || INITIAL_RATING)}</span>
       <span>戦績 ${profile.wins}勝 ${profile.losses}敗 ${profile.draws}分</span>
       <span>🔥 ${profile.streak}連勝中 / 最高${profile.bestStreak}</span>
@@ -479,25 +520,40 @@ function renderDailyMissions() {
 }
 
 function renderPointShop() {
-  const products = SHOP_PRODUCTS.map((product) => {
+  const equippedReactionCount = getEquippedReactionProducts().length;
+  const renderProduct = (product) => {
     const owned = state.economy.inventory?.[product.id] === true;
     const affordable = state.economy.points >= product.price;
-    return `<article class="shop-card ${owned ? "is-owned" : ""}">
-      <div class="shop-card-top"><span>${owned ? "OWNED" : "CHAT REACTION"}</span><strong>${product.price} PT</strong></div>
-      <h2>${escapeHtml(product.name)}</h2><button class="reaction-button shop-reaction-preview" data-preview-reaction="${escapeHtml(product.reaction)}">${escapeHtml(product.reaction)}</button>
+    const equipped = product.type === "reaction"
+      ? state.economy.equipped?.reactions?.[product.id] === true
+      : state.economy.equipped?.title === product.id;
+    const equipDisabled = !equipped && product.type === "reaction" && equippedReactionCount >= MAX_EQUIPPED_REACTIONS;
+    const preview = product.type === "reaction"
+      ? `<button class="reaction-button shop-reaction-preview" data-preview-reaction="${escapeHtml(product.reaction)}">${escapeHtml(product.reaction)}</button>`
+      : `<span class="player-title-badge shop-title-preview">◆ ${escapeHtml(product.title)}</span>`;
+    const action = owned
+      ? `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${!state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${MAX_EQUIPPED_REACTIONS}/${MAX_EQUIPPED_REACTIONS}` : "装備する"}</button>`
+      : `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
+    return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
+      <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : product.type === "reaction" ? "CHAT REACTION" : "PLAYER TITLE"}</span><strong>${product.price} PT</strong></div>
+      <h2>${escapeHtml(product.name)}</h2>${preview}
       <p>${escapeHtml(product.description)}</p>
-      <button class="button button-wide ${owned ? "button-ghost" : "button-primary"}" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || owned || !affordable ? "disabled" : ""}>${owned ? "購入済み" : affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>
+      ${action}
     </article>`;
-  }).join("");
+  };
+  const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
+  const titleProducts = SHOP_PRODUCTS.filter((product) => product.type === "title").map(renderProduct).join("");
   return `<section class="screen economy-screen">
     <div class="section-head"><div><span class="eyebrow">POINT EXCHANGE</span><h1>ポイントショップ</h1>
-      <p>購入したリアクションは、次のオンライン対戦からチャット欄に追加されます。</p></div>
+      <p>購入したリアクションと称号を装備して、対戦中の交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
-    ${state.economyReady ? `<div class="shop-grid">${products}</div>` : renderEconomyUnavailable()}
+    ${state.economyReady ? `<div class="shop-loadout-summary"><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span></div>
+      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT REACTION</span><h2>追加リアクション</h2></div><p>購入品から最大${MAX_EQUIPPED_REACTIONS}個を装備できます。</p></div><div class="shop-grid">${reactionProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>PLAYER TITLE</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備でき、プロフィールとチャットに表示されます。</p></div><div class="shop-grid">${titleProducts}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
       <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">購入後の払い戻しはありません。ポイントショップの商品はゲーム内チャットだけで使用します。</p>
+    <p class="economy-note">購入後の払い戻しはありません。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。</p>
   </section>`;
 }
 
@@ -691,11 +747,11 @@ function renderError() {
 function renderOnlineChat() {
   const messages = state.chatMessages.length ? state.chatMessages.map((message) => {
     const authorIndex = state.players.findIndex((player) => player.uid === message.authorUid);
-    return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}"><small>${escapeHtml(message.name)} / R${message.round}</small><p>${escapeHtml(message.text)}</p></div>`;
+    return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><p>${escapeHtml(message.text)}</p></div>`;
   }).join("") : `<div class="chat-empty">画像について話してみましょう。<br />チャットはルーム内の2人だけに表示されます。</div>`;
   const reactions = [
     ...DEFAULT_REACTIONS,
-    ...SHOP_PRODUCTS.filter((product) => state.economy.inventory?.[product.id] === true).map((product) => product.reaction),
+    ...getEquippedReactionProducts().map((product) => product.reaction),
   ];
   return `<aside class="chat-panel"><div class="chat-head"><strong>ONLINE CHAT</strong><span>ルーム終了後に非表示</span></div>
     <div class="chat-messages" id="onlineChatMessages">${messages}</div>
@@ -712,6 +768,7 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", () => destroyDialog.showModal()));
   document.querySelectorAll("[data-claim-mission]").forEach((button) => button.addEventListener("click", () => claimDailyMission(button.dataset.claimMission)));
   document.querySelectorAll("[data-buy-product]").forEach((button) => button.addEventListener("click", () => purchaseShopProduct(button.dataset.buyProduct)));
+  document.querySelectorAll("[data-equip-product]").forEach((button) => button.addEventListener("click", () => toggleShopProductEquip(button.dataset.equipProduct)));
   document.querySelectorAll("[data-preview-reaction]").forEach((button) => button.addEventListener("click", () => showToast(`チャットでは「${button.dataset.previewReaction}」と送信します。`)));
   bindChatEvents();
 
@@ -942,14 +999,24 @@ async function purchaseShopProduct(productId) {
       if (record.points < product.price) { outcome = "short"; return; }
       record.points -= product.price;
       record.inventory[product.id] = true;
+      let equippedNow = false;
+      if (product.type === "reaction" && Object.keys(record.equipped.reactions).length < MAX_EQUIPPED_REACTIONS) {
+        record.equipped.reactions[product.id] = true;
+        equippedNow = true;
+      }
+      if (product.type === "title") {
+        record.equipped.title = product.id;
+        equippedNow = true;
+      }
       record.updatedAt = serverNow();
-      outcome = "purchased";
+      outcome = equippedNow ? "purchased-equipped" : "purchased";
       return record;
     });
     applyEconomySnapshot(result.snapshot, dateKey);
     state.economyBusy = false;
     render();
-    if (result.committed && outcome === "purchased") showToast(`「${product.reaction}」を購入しました。`);
+    if (result.committed && outcome === "purchased-equipped") showToast(`「${product.reaction || product.title}」を購入し、装備しました。`);
+    else if (result.committed && outcome === "purchased") showToast(`「${product.reaction || product.title}」を購入しました。装備枠を空けると使用できます。`);
     else if (outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("ポイントが不足しています。");
   } catch (error) {
@@ -957,6 +1024,53 @@ async function purchaseShopProduct(productId) {
     state.economyBusy = false;
     render();
     showToast("商品を購入できませんでした。");
+  }
+}
+
+async function toggleShopProductEquip(productId) {
+  const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
+  if (!product || !state.economyReady || state.economyBusy) return;
+  const dateKey = currentDailyDateKey();
+  let outcome = "unavailable";
+  state.economyBusy = true;
+  render();
+  try {
+    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
+      const record = normalizeEconomyRecord(current, dateKey);
+      if (!record.inventory[product.id]) { outcome = "unowned"; return; }
+      if (product.type === "reaction") {
+        if (record.equipped.reactions[product.id]) {
+          delete record.equipped.reactions[product.id];
+          outcome = "removed";
+        } else if (Object.keys(record.equipped.reactions).length >= MAX_EQUIPPED_REACTIONS) {
+          outcome = "full";
+          return;
+        } else {
+          record.equipped.reactions[product.id] = true;
+          outcome = "equipped";
+        }
+      } else if (record.equipped.title === product.id) {
+        record.equipped.title = "";
+        outcome = "removed";
+      } else {
+        record.equipped.title = product.id;
+        outcome = "equipped";
+      }
+      record.updatedAt = serverNow();
+      return record;
+    });
+    applyEconomySnapshot(result.snapshot, dateKey);
+    state.economyBusy = false;
+    render();
+    if (result.committed && outcome === "equipped") showToast(`「${product.reaction || product.title}」を装備しました。`);
+    else if (result.committed && outcome === "removed") showToast(`「${product.reaction || product.title}」を装備から外しました。`);
+    else if (outcome === "full") showToast(`リアクションは最大${MAX_EQUIPPED_REACTIONS}個まで装備できます。`);
+    else showToast("先に商品を購入してください。");
+  } catch (error) {
+    console.error(error);
+    state.economyBusy = false;
+    render();
+    showToast("装備を変更できませんでした。");
   }
 }
 
@@ -1778,13 +1892,16 @@ async function commitOnlineStats() {
 async function sendChat(value) {
   const text = String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return;
-  await set(push(ref(database, `online/rooms/${state.roomId}/chat`)), {
+  const message = {
     authorUid: state.uid,
     name: state.name,
     text,
     round: state.round,
     createdAt: serverTimestamp(),
-  }).catch(() => showToast("チャットを送信できませんでした。"));
+  };
+  const equippedTitle = getTitleProduct();
+  if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
+  await set(push(ref(database, `online/rooms/${state.roomId}/chat`)), message).catch(() => showToast("チャットを送信できませんでした。"));
 }
 
 function refreshChat() {

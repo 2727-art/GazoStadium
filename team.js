@@ -38,11 +38,26 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
+const MAX_EQUIPPED_REACTIONS = 8;
 const SHOP_REACTIONS = [
+  { id: "reaction_color", reaction: "色づかいが好き！" },
   { id: "reaction_best_shot", reaction: "最高の一枚！" },
+  { id: "reaction_composition", reaction: "構図がうまい！" },
+  { id: "reaction_atmosphere", reaction: "空気感が最高" },
+  { id: "reaction_idea", reaction: "発想がおもしろい！" },
   { id: "reaction_healing", reaction: "癒やされる" },
+  { id: "reaction_keep_watching", reaction: "ずっと見ていたい" },
+  { id: "reaction_today_favorite", reaction: "今日の推し！" },
   { id: "reaction_story", reaction: "物語を感じる" },
   { id: "reaction_masterpiece", reaction: "これは名作" },
+];
+const SHOP_TITLES = [
+  { id: "title_good_praiser", title: "ほめ上手" },
+  { id: "title_plant_lover", title: "植物愛好家" },
+  { id: "title_animal_lover", title: "どうぶつ派" },
+  { id: "title_landscape_hunter", title: "風景ハンター" },
+  { id: "title_image_sommelier", title: "画像ソムリエ" },
+  { id: "title_hariai_master", title: "貼り合いマスター" },
 ];
 
 const firebaseApp = getApp();
@@ -63,7 +78,7 @@ function createState() {
     authReady: false,
     profile: { rating: INITIAL_RATING, streak: 0 },
     teamProfile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
-    economy: { points: 0, inventory: {}, daily: {} },
+    economy: { points: 0, inventory: {}, equipped: { reactions: {}, title: "" }, daily: {} },
     deck: [],
     roomId: "",
     room: null,
@@ -177,9 +192,18 @@ function normalizeEconomy(value) {
   const dateKey = jstDateKey(now());
   const sameDate = source.daily?.dateKey === dateKey;
   const inventory = {};
-  SHOP_REACTIONS.forEach((item) => {
+  [...SHOP_REACTIONS, ...SHOP_TITLES].forEach((item) => {
     if (source.inventory?.[item.id] === true) inventory[item.id] = true;
   });
+  const ownedReactions = SHOP_REACTIONS.filter((item) => inventory[item.id]);
+  const hasSavedEquipment = source.equipped && typeof source.equipped === "object";
+  const equipped = { reactions: {}, title: "" };
+  const reactionIds = hasSavedEquipment
+    ? ownedReactions.filter((item) => source.equipped?.reactions?.[item.id] === true).map((item) => item.id)
+    : ownedReactions.map((item) => item.id);
+  reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { equipped.reactions[id] = true; });
+  const savedTitle = String(source.equipped?.title || "");
+  if (SHOP_TITLES.some((item) => item.id === savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
   const daily = { dateKey, matches: 0, scores: 0, criticals: 0, claimed: {} };
   if (sameDate) {
     daily.matches = Math.min(1, Math.max(0, Math.floor(Number(source.daily.matches || 0))));
@@ -189,7 +213,16 @@ function normalizeEconomy(value) {
       if (source.daily.claimed?.[id] === true) daily.claimed[id] = true;
     });
   }
-  return { points: Math.min(999_999, Math.max(0, Math.floor(Number(source.points || 0)))), inventory, daily, updatedAt: now() };
+  return { points: Math.min(999_999, Math.max(0, Math.floor(Number(source.points || 0)))), inventory, equipped, daily, updatedAt: now() };
+}
+
+function titleLabel(titleId = state.economy.equipped?.title) {
+  return SHOP_TITLES.find((item) => item.id === titleId)?.title || "";
+}
+
+function renderTitleBadge(titleId = state.economy.equipped?.title) {
+  const label = titleLabel(titleId);
+  return label ? `<span class="player-title-badge">◆ ${escapeHtml(label)}</span>` : "";
 }
 
 function jstDateKey(timestamp = Date.now()) {
@@ -244,6 +277,7 @@ function renderSetup() {
     <p>4人が集まると自動で2チームに分かれます。5ラウンドすべてで4人全員が画像を出します。</p></div>
     <button class="button button-ghost button-small" id="teamBackHome">タイトルへ</button></div>
     <div class="online-profile-strip"><span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
+      ${renderTitleBadge()}
       <span>2ON2 RATE ${Number(state.teamProfile.rating || INITIAL_RATING)}</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span>
       <span>🔥 ${state.teamProfile.streak}連勝中</span></div>
     <div class="team-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>2</strong><span>TEAMS</span></div><div><strong>30</strong><span>SHARED HP</span></div><div><strong>20+10</strong><span>SEC</span></div></div>
@@ -402,11 +436,11 @@ function renderError() {
 }
 
 function unlockedReactions() {
-  return [...DEFAULT_REACTIONS, ...SHOP_REACTIONS.filter((item) => state.economy.inventory?.[item.id]).map((item) => item.reaction)];
+  return [...DEFAULT_REACTIONS, ...SHOP_REACTIONS.filter((item) => state.economy.equipped?.reactions?.[item.id]).map((item) => item.reaction)];
 }
 
 function renderMessages(messages, emptyText) {
-  return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}</small><p>${escapeHtml(message.text)}</p></div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
+  return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><p>${escapeHtml(message.text)}</p></div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
 }
 
 function renderTeamChat() {
@@ -1350,25 +1384,29 @@ async function recordDailyProgress(changes) {
 async function sendTeamChat(value) {
   const text = String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId || !state.team) return;
-  await set(push(ref(database, `online/teamChats/${state.roomId}/${state.team}`)), {
+  const message = {
     authorUid: state.uid,
     name: state.name,
     text,
     round: state.round,
     createdAt: serverTimestamp(),
-  }).catch(() => showToast("チームチャットを送信できませんでした。"));
+  };
+  if (titleLabel()) message.titleId = state.economy.equipped.title;
+  await set(push(ref(database, `online/teamChats/${state.roomId}/${state.team}`)), message).catch(() => showToast("チームチャットを送信できませんでした。"));
 }
 
 async function sendAllChat(value) {
   const text = String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return;
-  await set(push(ref(database, `online/teamRooms/${state.roomId}/chat`)), {
+  const message = {
     authorUid: state.uid,
     name: state.name,
     text,
     round: state.round,
     createdAt: serverTimestamp(),
-  }).catch(() => showToast("4人チャットを送信できませんでした。"));
+  };
+  if (titleLabel()) message.titleId = state.economy.equipped.title;
+  await set(push(ref(database, `online/teamRooms/${state.roomId}/chat`)), message).catch(() => showToast("4人チャットを送信できませんでした。"));
 }
 
 function refreshChats() {

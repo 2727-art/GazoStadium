@@ -127,7 +127,21 @@
           },
           "inventory": {
             "$productId": {
-              ".validate": "($productId === 'reaction_best_shot' || $productId === 'reaction_healing' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece') && newData.val() === true"
+              ".validate": "($productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece' || $productId === 'title_good_praiser' || $productId === 'title_plant_lover' || $productId === 'title_animal_lover' || $productId === 'title_landscape_hunter' || $productId === 'title_image_sommelier' || $productId === 'title_hariai_master') && newData.val() === true"
+            }
+          },
+          "equipped": {
+            "reactions": {
+              ".validate": "!newData.exists() || ((newData.child('reaction_color').exists() ? 1 : 0) + (newData.child('reaction_best_shot').exists() ? 1 : 0) + (newData.child('reaction_composition').exists() ? 1 : 0) + (newData.child('reaction_atmosphere').exists() ? 1 : 0) + (newData.child('reaction_idea').exists() ? 1 : 0) + (newData.child('reaction_healing').exists() ? 1 : 0) + (newData.child('reaction_keep_watching').exists() ? 1 : 0) + (newData.child('reaction_today_favorite').exists() ? 1 : 0) + (newData.child('reaction_story').exists() ? 1 : 0) + (newData.child('reaction_masterpiece').exists() ? 1 : 0)) <= 8",
+              "$productId": {
+                ".validate": "($productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece') && newData.val() === true && newData.parent().parent().parent().child('inventory/' + $productId).val() === true"
+              }
+            },
+            "title": {
+              ".validate": "!newData.exists() || newData.val() === '' || ((newData.val() === 'title_good_praiser' || newData.val() === 'title_plant_lover' || newData.val() === 'title_animal_lover' || newData.val() === 'title_landscape_hunter' || newData.val() === 'title_image_sommelier' || newData.val() === 'title_hariai_master') && newData.parent().parent().child('inventory/' + newData.val()).val() === true)"
+            },
+            "$other": {
+              ".validate": false
             }
           },
           "daily": {
@@ -300,7 +314,10 @@
           "chat": {
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/royaleRooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()"
+              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "titleId": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
+              }
             }
           },
           "finished": {
@@ -347,7 +364,10 @@
             ".read": "auth != null && root.child('online/teamRooms/' + $roomId + '/players/' + auth.uid + '/team').val() === $team",
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/players/' + auth.uid + '/team').val() === $team && newData.child('authorUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()"
+              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "titleId": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
+              }
             }
           }
         }
@@ -459,7 +479,10 @@
           "chat": {
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()"
+              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "titleId": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
+              }
             }
           },
           "finished": {
@@ -563,7 +586,10 @@
           "chat": {
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()"
+              ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "titleId": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
+              }
             }
           },
           "finished": {
