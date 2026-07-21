@@ -8,7 +8,7 @@
       name="description"
       content="好きな画像を5枚持ち寄って採点し合う、オンライン・オフライン対応の1on1画像対戦ゲーム。"
     />
-    <title>張り合いスタジアム | 1on1 Image Battle</title>
+    <title>貼り合いスタジアム | 1on1 Image Battle</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -16,16 +16,17 @@
     <div class="ambient ambient-two" aria-hidden="true"></div>
 
     <header class="site-header">
-      <a class="brand" href="#" id="homeLink" aria-label="張り合いスタジアム ホーム">
+      <a class="brand" href="#" id="homeLink" aria-label="貼り合いスタジアム ホーム">
         <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
         <span>
-          <strong>張り合いスタジアム</strong>
+          <strong>貼り合いスタジアム</strong>
           <small>HARIAI STADIUM</small>
         </span>
       </a>
       <div class="header-badges" aria-label="現在のモード">
         <span class="status-dot"><i></i> READY</span>
         <span class="privacy-badge">画像保存なし</span>
+        <button class="audio-toggle" id="audioToggle" type="button" aria-pressed="true" aria-label="効果音をオフにする">SE ON</button>
       </div>
     </header>
 
@@ -54,6 +55,7 @@
     <noscript>
       <p class="noscript">このゲームを遊ぶにはJavaScriptを有効にしてください。</p>
     </noscript>
+    <script src="audio.js" defer></script>
     <script src="app.js" defer></script>
     <script type="module" src="online.js"></script>
   </body>

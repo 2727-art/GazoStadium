@@ -169,6 +169,7 @@ button:disabled {
 
 .status-dot,
 .privacy-badge,
+.audio-toggle,
 .mini-badge,
 .streak-badge {
   display: inline-flex;
@@ -184,6 +185,36 @@ button:disabled {
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+}
+
+.audio-toggle {
+  appearance: none;
+  cursor: pointer;
+  color: var(--cyan);
+  border-color: rgba(100, 232, 213, 0.34);
+  background: rgba(100, 232, 213, 0.08);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.audio-toggle:hover {
+  border-color: rgba(100, 232, 213, 0.72);
+  background: rgba(100, 232, 213, 0.16);
+  transform: translateY(-1px);
+}
+
+.audio-toggle:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+.audio-toggle[aria-pressed="false"] {
+  color: var(--muted);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .status-dot i {

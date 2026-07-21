@@ -960,7 +960,10 @@ function resolveRound(scores) {
   state.screen = "result";
   render();
   const topScore = Math.max(scorePlayerOne, scorePlayerTwo);
-  if (topScore >= 8) triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
+  if (topScore >= 8) {
+    window.HariaiAudio?.playResult(topScore);
+    triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
+  }
 }
 
 async function continueRound() {

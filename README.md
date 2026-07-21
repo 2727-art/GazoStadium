@@ -1,4 +1,4 @@
-# 張り合いスタジアム
+# 貼り合いスタジアム
 
 好きな画像を5枚用意し、相手と1～10点で採点し合う1on1画像対戦ゲームです。
 
@@ -45,6 +45,8 @@ python -m http.server 4173 --bind 127.0.0.1
 - 対戦中の2人だけが読めるチャット
 - 勝敗数、引き分け数、現在の連勝、最高連勝の保存
 - WebRTC DataChannelによる画像の一時的なP2P転送
+- Web Audioによるボタン、決定、クリティカル、パーフェクトの効果音
+- ヘッダーの`SE ON / SE OFF`切り替え（設定はブラウザに保存）
 - 切断時の待機・対戦予約の自動解放
 - 古い対戦提案を次回マッチング開始時に清掃
 
@@ -87,6 +89,7 @@ Realtime Databaseのルールは、各ユーザーが自分の待機情報・採
 - `index.html`: 共通のHTMLシェル
 - `styles.css`: オンライン・オフライン共通スタイル
 - `app.js`: オフライン対戦と共通の画像処理/UI
+- `audio.js`: ボタン・クリティカル・パーフェクトの効果音
 - `online.js`: Firebase/WebRTCオンライン対戦
 - `firebase-config.js`: Firebase Webクライアント設定
 - `database.rules.json`: Realtime Databaseセキュリティルール

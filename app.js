@@ -111,7 +111,7 @@
     return `<section class="screen hero">
       <div>
         <span class="eyebrow">ONLINE / OFFLINE 1ON1 IMAGE BATTLE</span>
-        <h1>張り合え。<span>YOUR FAVORITE, YOUR POWER.</span></h1>
+        <h1>貼り合え。<span>YOUR FAVORITE, YOUR POWER.</span></h1>
         <p class="hero-copy">
           自慢の画像を5枚用意し、知らない誰か、または隣にいる相手と魅力を採点し合う。
           HP30、最大5ラウンド。8点以上はクリティカルです。
@@ -919,7 +919,10 @@
     state.screen = "result";
     render();
     const topScore = Math.max(scorePlayerOne, scorePlayerTwo);
-    if (topScore >= 8) triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
+    if (topScore >= 8) {
+      window.HariaiAudio?.playResult(topScore);
+      triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
+    }
   }
 
   function isMatchOver() {
