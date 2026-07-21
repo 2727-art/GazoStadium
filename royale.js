@@ -54,6 +54,18 @@ const SHOP_TITLES = [
   { id: "title_landscape_hunter", title: "風景ハンター" },
   { id: "title_image_sommelier", title: "画像ソムリエ" },
   { id: "title_hariai_master", title: "貼り合いマスター" },
+  { id: "title_live_action_supremacy", title: "実写至上主義" },
+  { id: "title_2d_lover", title: "二次元愛好家" },
+  { id: "title_mushroom_side", title: "きのこ派" },
+  { id: "title_bamboo_side", title: "たけのこ派" },
+  { id: "title_image_folder_guardian", title: "画像フォルダの守護者" },
+  { id: "title_cant_pick_five", title: "5枚に絞れない" },
+  { id: "title_blur_connoisseur", title: "ピンぼけ鑑定士" },
+  { id: "title_mostly_cats", title: "だいたい猫" },
+  { id: "title_food_photo_alert", title: "飯テロ警戒中" },
+  { id: "title_resolution_is_justice", title: "解像度は正義" },
+  { id: "title_composition_lost", title: "構図迷子" },
+  { id: "title_subjective_today", title: "今日も主観" },
 ];
 
 const firebaseApp = getApp();

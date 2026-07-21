@@ -56,6 +56,18 @@ const SHOP_PRODUCTS = [
   { id: "title_landscape_hunter", type: "title", name: "風景ハンター", title: "風景ハンター", description: "印象的な景色を探すプレイヤー向け称号", price: 500 },
   { id: "title_image_sommelier", type: "title", name: "画像ソムリエ", title: "画像ソムリエ", description: "画像の魅力をじっくり味わう上級称号", price: 650 },
   { id: "title_hariai_master", type: "title", name: "貼り合いマスター", title: "貼り合いマスター", description: "貼り合いを遊び込んだコレクション称号", price: 900 },
+  { id: "title_live_action_supremacy", type: "title", name: "実写至上主義", title: "実写至上主義", description: "写真ならではの一瞬を愛するプレイヤー向け称号", price: 500 },
+  { id: "title_2d_lover", type: "title", name: "二次元愛好家", title: "二次元愛好家", description: "イラストやアニメ画像への愛を示す称号", price: 500 },
+  { id: "title_mushroom_side", type: "title", name: "きのこ派", title: "きのこ派", description: "終わらないお菓子論争で、きのこを選ぶ称号", price: 400 },
+  { id: "title_bamboo_side", type: "title", name: "たけのこ派", title: "たけのこ派", description: "終わらないお菓子論争で、たけのこを選ぶ称号", price: 400 },
+  { id: "title_image_folder_guardian", type: "title", name: "画像フォルダの守護者", title: "画像フォルダの守護者", description: "大切な画像コレクションを見守る者の称号", price: 450 },
+  { id: "title_cant_pick_five", type: "title", name: "5枚に絞れない", title: "5枚に絞れない", description: "候補画像が多すぎて毎回悩む人の称号", price: 350 },
+  { id: "title_blur_connoisseur", type: "title", name: "ピンぼけ鑑定士", title: "ピンぼけ鑑定士", description: "少しくらいのぼけにも味を見つける称号", price: 400 },
+  { id: "title_mostly_cats", type: "title", name: "だいたい猫", title: "だいたい猫", description: "気づけば猫画像を選んでいる人の称号", price: 450 },
+  { id: "title_food_photo_alert", type: "title", name: "飯テロ警戒中", title: "飯テロ警戒中", description: "空腹時の食べ物画像に備えるための称号", price: 450 },
+  { id: "title_resolution_is_justice", type: "title", name: "解像度は正義", title: "解像度は正義", description: "細部までくっきり見届けたい人の称号", price: 500 },
+  { id: "title_composition_lost", type: "title", name: "構図迷子", title: "構図迷子", description: "正解を探しながら今日も画像を選ぶ称号", price: 350 },
+  { id: "title_subjective_today", type: "title", name: "今日も主観", title: "今日も主観", description: "採点は主観、それも含めて楽しむ上位ネタ称号", price: 600 },
 ];
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
