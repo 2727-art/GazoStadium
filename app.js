@@ -51,15 +51,16 @@
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
-        <span class="eyebrow">ONLINE 1ON1 / 2ON2 IMAGE BATTLE</span>
+        <span class="eyebrow">ONLINE 1ON1 / 2ON2 / BATTLE ROYALE</span>
         <h1>貼り合え。<span>YOUR FAVORITE, YOUR POWER.</span></h1>
         <p class="hero-copy">
           自慢の画像を5枚用意し、知らない誰かと魅力を採点し合う。
-          1on1と、作戦チャットで協力する2on2を選べます。
+          1on1、協力型2on2、4人で最後の1人を決めるバトルロワイヤルを選べます。
         </p>
         <div class="hero-actions">
           <button class="button button-primary" id="onlineButton">1on1対戦を始める</button>
           <button class="button button-cyan" id="teamBattleButton">2on2チーム対戦</button>
+          <button class="button button-royale" id="royaleBattleButton">4人バトルロワイヤル</button>
           <button class="button button-ghost" id="rankingButton">ランキングを見る</button>
           <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
@@ -101,6 +102,7 @@
     app.innerHTML = renderLanding();
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
+    document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
     document.querySelector("#rankingButton")?.addEventListener("click", renderRankingScreen);
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
@@ -149,6 +151,15 @@
     }
     showToast("2on2機能を読み込んでいます…");
     window.addEventListener("hariai-team-ready", () => window.HariaiTeam?.start?.(), { once: true });
+  }
+
+  function startRoyaleBattle() {
+    if (window.HariaiRoyale?.start) {
+      window.HariaiRoyale.start();
+      return;
+    }
+    showToast("バトルロワイヤル機能を読み込んでいます…");
+    window.addEventListener("hariai-royale-ready", () => window.HariaiRoyale?.start?.(), { once: true });
   }
 
   function openOnlineFeature(method) {
@@ -316,12 +327,22 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + 2ON2 / FIREBASE + WEBRTC";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC";
     if (footerItems[1]) footerItems[1].textContent = "画像本体は対戦相手へ直接送信し、サーバーへ保存しません";
+    const title = destroyDialog?.querySelector("h2");
+    const body = destroyDialog?.querySelector("p");
+    const confirm = destroyDialog?.querySelector("#confirmDestroy");
+    if (title) title.textContent = "この対戦を破棄しますか？";
+    if (body) body.textContent = "勝敗と連勝数には影響しません。選択した画像とチャットはすべて破棄されます。";
+    if (confirm) confirm.textContent = "ルームを破棄";
   }
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiRoyale?.isActive?.()) {
+      window.HariaiRoyale.requestHome();
+      return;
+    }
     if (window.HariaiTeam?.isActive?.()) {
       window.HariaiTeam.requestHome();
       return;
@@ -334,6 +355,10 @@
   });
 
   document.querySelector("#confirmDestroy")?.addEventListener("click", () => {
+    if (window.HariaiRoyale?.isActive?.()) {
+      window.setTimeout(() => window.HariaiRoyale.destroyRoom(), 0);
+      return;
+    }
     if (window.HariaiTeam?.isActive?.()) {
       window.setTimeout(() => window.HariaiTeam.destroyRoom(), 0);
       return;

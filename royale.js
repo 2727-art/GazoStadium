@@ -22,11 +22,8 @@ import {
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 
-const MAX_HP = 30;
 const MAX_ROUNDS = 5;
-const TEAM_SIZE = 2;
 const PLAYER_COUNT = 4;
-const STRATEGY_TIME_MS = 20_000;
 const SELECTION_TIME_MS = 10_000;
 const SCORE_TIME_MS = 20_000;
 const MATCH_TIMEOUT_MS = 30_000;
@@ -36,7 +33,6 @@ const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const INITIAL_RATING = 1000;
-const RATING_K_FACTOR = 32;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const SHOP_REACTIONS = [
   { id: "reaction_best_shot", reaction: "最高の一枚！" },
@@ -62,20 +58,21 @@ function createState() {
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
     authReady: false,
     profile: { rating: INITIAL_RATING, streak: 0 },
-    teamProfile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
+    royaleProfile: { wins: 0, topTwo: 0, matches: 0, streak: 0, bestStreak: 0 },
     economy: { points: 0, inventory: {}, daily: {} },
     deck: [],
     roomId: "",
     room: null,
     members: [],
-    team: "",
-    teams: createTeams(),
     round: 1,
     roundData: {},
     roundSelections: new Map(),
     selectedCardId: "",
     selectedScores: {},
     history: [],
+    eliminated: {},
+    forfeited: {},
+    tiebreakUids: [],
     outcome: null,
     processedRounds: new Set(),
     continuedRounds: new Set(),
@@ -99,9 +96,7 @@ function createState() {
     selectionLocking: false,
     scoreLocking: false,
     scoredRounds: new Set(),
-    teamChatMessages: [],
     allChatMessages: [],
-    seenTeamChatIds: new Set(),
     seenAllChatIds: new Set(),
     publicPresenceId: "",
     publicPresenceHeartbeat: null,
@@ -112,15 +107,8 @@ function createState() {
     roomUnsubscribers: [],
     roundUnsubscribe: null,
     statsCommitted: false,
-    destroyed: false,
+    leaving: false,
     errorMessage: "",
-  };
-}
-
-function createTeams() {
-  return {
-    A: { hp: MAX_HP, totalScore: 0, criticals: 0, perfects: 0 },
-    B: { hp: MAX_HP, totalScore: 0, criticals: 0, perfects: 0 },
   };
 }
 
@@ -133,16 +121,16 @@ const now = () => Date.now() + Number(state.serverTimeOffset || 0);
 function start() {
   if (active) return;
   if (location.protocol === "file:") {
-    showToast("2on2対戦はローカルサーバーまたは公開URLから起動してください。");
+    showToast("バトルロワイヤル対戦はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
-  if (window.HariaiOnline?.isActive?.() || window.HariaiRoyale?.isActive?.()) {
-    showToast("ほかの対戦画面を終了してから2on2を開始してください。");
+  if (window.HariaiOnline?.isActive?.() || window.HariaiRoyale?.isActive?.() || window.HariaiTeam?.isActive?.()) {
+    showToast("ほかの対戦画面を終了してからバトルロワイヤルを開始してください。");
     return;
   }
   active = true;
   state = createState();
-  setTeamChrome("CONNECTING");
+  setRoyaleChrome("CONNECTING");
   render();
   ensureAuthenticated().catch(handleFatalError);
 }
@@ -156,19 +144,19 @@ async function ensureAuthenticated() {
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
   if (!active) return;
   state.uid = credential.user.uid;
-  const [profileSnapshot, teamProfileSnapshot, economySnapshot] = await Promise.all([
+  const [profileSnapshot, royaleProfileSnapshot, economySnapshot] = await Promise.all([
     get(ref(database, `online/profiles/${state.uid}`)),
-    get(ref(database, `online/teamProfiles/${state.uid}`)),
+    get(ref(database, `online/royaleProfiles/${state.uid}`)),
     get(ref(database, `online/economy/${state.uid}`)),
   ]);
   if (profileSnapshot.exists()) {
     state.profile = { ...state.profile, ...profileSnapshot.val() };
     if (!localStorage.getItem(PROFILE_NAME_KEY) && state.profile.name) state.name = state.profile.name;
   }
-  if (teamProfileSnapshot.exists()) state.teamProfile = { ...state.teamProfile, ...teamProfileSnapshot.val() };
+  if (royaleProfileSnapshot.exists()) state.royaleProfile = { ...state.royaleProfile, ...royaleProfileSnapshot.val() };
   if (economySnapshot.exists()) state.economy = normalizeEconomy(economySnapshot.val());
   state.authReady = true;
-  setTeamChrome("2ON2 READY");
+  setRoyaleChrome("ROYALE READY");
   render();
 }
 
@@ -196,13 +184,13 @@ function jstDateKey(timestamp = Date.now()) {
   return new Date(timestamp + (9 * 60 * 60 * 1000)).toISOString().slice(0, 10);
 }
 
-function setTeamChrome(label) {
+function setRoyaleChrome(label) {
   const status = document.querySelector(".status-dot");
   const privacy = document.querySelector(".privacy-badge");
   const footerItems = document.querySelectorAll(".site-footer span");
   if (status) status.innerHTML = `<i></i> ${escapeHtml(label)}`;
   if (privacy) privacy.textContent = "4人P2P画像転送";
-  if (footerItems[0]) footerItems[0].textContent = "ONLINE 2ON2 / FIREBASE + WEBRTC";
+  if (footerItems[0]) footerItems[0].textContent = "ONLINE 4 PLAYER BATTLE ROYALE / FIREBASE + WEBRTC";
   if (footerItems[1]) footerItems[1].textContent = "4人の画像はP2P転送し、Firebaseには保存しません";
 }
 
@@ -213,7 +201,6 @@ function render() {
     matching: renderMatching,
     forming: renderForming,
     connecting: renderConnecting,
-    strategy: renderStrategy,
     select: renderSelection,
     waitingPick: renderWaitingPick,
     waitingImages: renderWaitingImages,
@@ -223,7 +210,6 @@ function render() {
     result: renderResult,
     waitingContinue: renderWaitingContinue,
     gameover: renderGameOver,
-    noContest: renderNoContest,
     error: renderError,
   };
   appRoot.innerHTML = (renderers[state.screen] || renderSetup)();
@@ -236,41 +222,41 @@ function renderSetup() {
   const slots = Array.from({ length: MAX_ROUNDS }, (_, index) => {
     const item = state.deck[index];
     if (!item) return `<div class="deck-slot empty" aria-label="空きスロット ${index + 1}">${String(index + 1).padStart(2, "0")}</div>`;
-    return `<div class="deck-slot"><img src="${item.url}" alt="2on2選択画像 ${index + 1}" draggable="false" />
-      <div class="deck-label"><span>TEAM ENTRY ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" data-team-remove="${item.id}" aria-label="画像${index + 1}を削除">×</button></div></div>`;
+    return `<div class="deck-slot"><img src="${item.url}" alt="バトルロワイヤル選択画像 ${index + 1}" draggable="false" />
+      <div class="deck-label"><span>SURVIVAL ENTRY ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" data-royale-remove="${item.id}" aria-label="画像${index + 1}を削除">×</button></div></div>`;
   }).join("");
   const ready = state.authReady && state.deck.length === MAX_ROUNDS && state.name.trim();
-  return `<section class="screen"><div class="section-head"><div><span class="eyebrow">ONLINE 2ON2 TEAM BATTLE</span><h1>2on2チーム対戦の準備</h1>
-    <p>4人が集まると自動で2チームに分かれます。5ラウンドすべてで4人全員が画像を出します。</p></div>
-    <button class="button button-ghost button-small" id="teamBackHome">タイトルへ</button></div>
+  return `<section class="screen"><div class="section-head"><div><span class="eyebrow">ONLINE 4 PLAYER BATTLE ROYALE</span><h1>バトルロワイヤルの準備</h1>
+    <p>4人が匿名画像を採点し、各ラウンドの最下位が脱落。最後まで残った1人が勝者です。</p></div>
+    <button class="button button-ghost button-small" id="royaleBackHome">タイトルへ</button></div>
     <div class="online-profile-strip"><span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
-      <span>2ON2 RATE ${Number(state.teamProfile.rating || INITIAL_RATING)}</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span>
-      <span>🔥 ${state.teamProfile.streak}連勝中</span></div>
-    <div class="team-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>2</strong><span>TEAMS</span></div><div><strong>30</strong><span>SHARED HP</span></div><div><strong>20+10</strong><span>SEC</span></div></div>
-    <div class="setup-layout"><aside class="setup-guide"><h2>2on2の流れ</h2><ol class="guide-list">
-      <li><b>1</b><span>チーム専用チャットで20秒間、画像の方向性を相談します。</span></li><li><b>2</b><span>10秒以内に各自が秘密の画像を1枚選びます。</span></li>
-      <li><b>3</b><span>相手チームの画像2枚を採点し、4票の平均でチーム得点を決めます。</span></li></ol>
+      <span>${state.royaleProfile.wins}回優勝</span><span>TOP2 ${state.royaleProfile.topTwo}回 / ${state.royaleProfile.matches}戦</span>
+      <span>🔥 ${state.royaleProfile.streak}連勝中</span></div>
+    <div class="royale-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>1</strong><span>SURVIVOR</span></div><div><strong>3</strong><span>MAIN ROUNDS</span></div><div><strong>10</strong><span>SELECT SEC</span></div></div>
+    <div class="setup-layout"><aside class="setup-guide"><h2>バトルロワイヤルの流れ</h2><ol class="guide-list">
+      <li><b>1</b><span>生存者が10秒以内に未使用画像を1枚選びます。</span></li><li><b>2</b><span>持ち主を隠したまま、自分以外の生存画像を1～10点で採点します。</span></li>
+      <li><b>3</b><span>3票の中央値が最も低い1人が脱落。同点なら未使用画像でサドンデスです。</span></li></ol>
       <div class="privacy-note">画像は最大1280pxへ変換し、Firebaseには保存しません。</div></aside>
-      <div class="setup-panel"><label class="field-label">表示名<input class="text-input" id="teamPlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" /></label>
+      <div class="setup-panel"><label class="field-label">表示名<input class="text-input" id="royalePlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" /></label>
         <div class="deck-toolbar"><div class="deck-counter"><strong>${state.deck.length}</strong> / 5 IMAGES</div><div class="upload-actions">
-          <label class="button button-cyan button-small file-button">画像を追加<input id="teamImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= MAX_ROUNDS ? "disabled" : ""} /></label>
-          <button class="button button-ghost button-small" id="teamFillSample">サンプル画像で埋める</button></div></div>
-        <div class="deck-grid">${slots}</div><div class="setup-actions"><button class="button button-primary" id="findTeamMatch" ${ready ? "" : "disabled"}>4人マッチングを開始</button></div>
+          <label class="button button-cyan button-small file-button">画像を追加<input id="royaleImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= MAX_ROUNDS ? "disabled" : ""} /></label>
+          <button class="button button-ghost button-small" id="royaleFillSample">サンプル画像で埋める</button></div></div>
+        <div class="deck-grid">${slots}</div><div class="setup-actions"><button class="button button-primary" id="findRoyaleMatch" ${ready ? "" : "disabled"}>4人マッチングを開始</button></div>
       </div></div></section>`;
 }
 
 function renderMatching() {
-  return renderStatusCard("◎", "2ON2 MATCHING", "あと3人を待っています", "待機中のプレイヤーが4人揃うと、自動でランダムにチーム分けします。", `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 4人キュー参加中</span>`, `<button class="button button-ghost" id="cancelTeamMatching">マッチングをやめる</button>`);
+  return renderStatusCard("◎", "BATTLE ROYALE MATCHING", "あと3人を待っています", "待機中のプレイヤーが4人揃うと、自動的に対戦ルームを作ります。", `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 4人キュー参加中</span>`, `<button class="button button-ghost" id="cancelRoyaleMatching">マッチングをやめる</button>`);
 }
 
 function renderForming() {
   const accepted = Object.keys(state.room?.accepted || {}).length;
-  return renderStatusCard("4", "TEAM FORMING", "4人の参加確認中", `${accepted} / 4人が参加を確定しました。全員揃うまでお待ちください。`, `<span class="connection-pill connected">● チーム分け完了</span>`, `<button class="button button-danger button-small" data-team-destroy>ルーム破棄</button>`);
+  return renderStatusCard("4", "ROOM FORMING", "4人の参加確認中", `${accepted} / 4人が参加を確定しました。全員揃うまでお待ちください。`, `<span class="connection-pill connected">● 参加枠を確保済み</span>`, `<button class="button button-danger button-small" data-royale-destroy>参加を取り消す</button>`);
 }
 
 function renderConnecting() {
   const connected = [...state.connections.values()].filter((connection) => connection.channel?.readyState === "open").length;
-  return renderStatusCard("P2P", "4 PLAYER MESH", "4人の画像通信を準備中", `${connected} / 3人とP2P接続済みです。`, `<span class="connection-pill ${connected === 3 ? "connected" : ""}">● ${connected} / 3 CONNECTIONS</span>`, `<button class="button button-danger button-small" data-team-destroy>ルーム破棄</button>`);
+  return renderStatusCard("P2P", "4 PLAYER MESH", "4人の画像通信を準備中", `${connected} / 3人とP2P接続済みです。`, `<span class="connection-pill ${connected === 3 ? "connected" : ""}">● ${connected} / 3 CONNECTIONS</span>`, `<button class="button button-danger button-small" data-royale-destroy>対戦から退出</button>`);
 }
 
 function renderStatusCard(icon, eyebrow, title, body, details = "", actions = "") {
@@ -278,22 +264,65 @@ function renderStatusCard(icon, eyebrow, title, body, details = "", actions = ""
     <span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p><div class="online-status-details">${details}</div><div class="button-row">${actions}</div></div></section>`;
 }
 
-function teamMembers(team) {
-  return state.members.filter((player) => player.team === team).sort((first, second) => Number(first.slot) - Number(second.slot));
+function memberByUid(uid) {
+  return state.members.find((player) => player.uid === uid);
 }
 
-function opponentTeam() {
-  return state.team === "A" ? "B" : "A";
+function isForfeited(uid) {
+  return Boolean(state.forfeited[uid]);
 }
 
-function renderTeamHud() {
-  const teamBlock = (team) => `<div class="team-hud ${team === state.team ? "local-team" : ""}"><div class="team-hud-head"><strong>TEAM ${team}${team === state.team ? "（あなた）" : ""}</strong><span>HP ${state.teams[team].hp} / ${MAX_HP}</span></div>
-    <div class="hp-bar"><div class="hp-fill" style="--hp:${Math.max(0, (state.teams[team].hp / MAX_HP) * 100)}%"></div></div><small>${teamMembers(team).map((player) => escapeHtml(player.name)).join(" + ")}</small></div>`;
-  return `<div class="team-round-hud">${teamBlock("A")}<div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>${teamBlock("B")}</div>
-    <div class="online-room-strip"><span>2ON2 ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill connected">● 4 PLAYER P2P</span><span>あなたは TEAM ${state.team}</span></div>`;
+function isEliminated(uid) {
+  return Boolean(state.eliminated[uid]) || isForfeited(uid);
+}
+
+function availableMembers() {
+  return state.members.filter((player) => !isForfeited(player.uid));
+}
+
+function alivePlayers() {
+  return state.members.filter((player) => !isEliminated(player.uid));
+}
+
+function roundParticipants() {
+  const alive = alivePlayers();
+  if (!state.tiebreakUids.length) return alive;
+  const tied = new Set(state.tiebreakUids);
+  return alive.filter((player) => tied.has(player.uid));
+}
+
+function scoreTargets() {
+  return roundParticipants().filter((player) => player.uid !== state.uid);
+}
+
+function stableRoundOrder(players = roundParticipants()) {
+  const seed = `${state.roomId}:${state.round}:`;
+  return [...players].sort((first, second) => stableHash(seed + first.uid) - stableHash(seed + second.uid) || first.uid.localeCompare(second.uid));
+}
+
+function stableHash(value) {
+  let hash = 2166136261;
+  for (const character of String(value)) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function renderRoyaleHud() {
+  const slots = state.members.map((player) => {
+    const eliminated = isEliminated(player.uid);
+    const place = state.eliminated[player.uid]?.place || "OUT";
+    const status = player.uid === state.uid ? (eliminated ? `YOU #${place}` : "YOU") : eliminated ? `#${place}` : "ALIVE";
+    return `<div class="royale-survivor ${eliminated ? "eliminated" : ""} ${player.uid === state.uid ? "local-player" : ""}"><span>${escapeHtml(status)}</span><strong>${escapeHtml(player.name)}</strong><small>${eliminated ? "JUDGE" : "SURVIVOR"}</small></div>`;
+  }).join("");
+  const mode = state.tiebreakUids.length ? "SUDDEN DEATH" : "ELIMINATION";
+  return `<div class="royale-survivor-hud">${slots}<div class="round-badge"><small>${mode}</small><strong>R${state.round}</strong></div></div>
+    <div class="online-room-strip"><span>ROYALE ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill connected">● ${alivePlayers().length} SURVIVORS</span><span>脱落後も審査員として参加</span></div>`;
 }
 
 function timerSeconds() {
+  if (!Number(state.roundData.selectionStartedAt || 0)) return Math.ceil(SELECTION_TIME_MS / 1000);
   return Math.max(0, Math.ceil(state.timerRemainingMs / 1000));
 }
 
@@ -304,34 +333,34 @@ function scoreTimerSeconds() {
 }
 
 function renderStrategy() {
-  return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">TEAM STRATEGY</span><h1>作戦会議</h1>
-    <p>TEAM ${state.team}だけに見えるチャットです。「植物系で揃える」など方向性を相談しましょう。</p></div><div class="team-phase-timer"><small>STRATEGY</small><strong data-team-timer>${state.timerPhase === "strategy" ? timerSeconds() : "--"}</strong></div></div>
-    <div class="team-strategy-layout"><div class="team-members-card">${teamMembers(state.team).map((player) => `<div class="team-member-row"><span>${player.uid === state.uid ? "YOU" : "MATE"}</span><strong>${escapeHtml(player.name)}</strong></div>`).join("")}</div>${renderTeamChat()}</div>
-    <div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button></div></section>`;
+  return renderSelection();
 }
 
 function renderSelection() {
   const remaining = timerSeconds();
-  const cards = state.deck.map((item, index) => `<button class="select-card ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}" data-team-card="${item.id}" ${item.used ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
-    <img src="${item.url}" alt="2on2候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span></button>`).join("");
-  return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">SECRET TEAM PICK</span><h1>画像を選択</h1><p>相方の画像も公開まで見えません。作戦チャットを参考に1枚選んでください。</p></div>
-    <div class="team-phase-timer ${remaining <= 3 ? "warning" : ""}"><small>SELECT</small><strong data-team-timer>${remaining}</strong></div></div>
-    <div class="select-panel"><div class="select-grid">${cards}</div><div class="selection-footer"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button>
-      <button class="button button-primary" id="lockTeamSelection" ${state.selectedCardId ? "" : "disabled"}>この画像で決定</button></div></div>${renderTeamChat()}</section>`;
+  const cards = state.deck.map((item, index) => `<button class="select-card ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}" data-royale-card="${item.id}" ${item.used ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
+    <img src="${item.url}" alt="バトルロワイヤル候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span></button>`).join("");
+  return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">SECRET SURVIVAL PICK</span><h1>${state.tiebreakUids.length ? "サドンデス画像を選択" : "画像を選択"}</h1><p>提出者名は採点完了まで伏せられます。未使用画像を1枚選んでください。</p></div>
+    <div class="royale-phase-timer ${remaining <= 3 ? "warning" : ""}"><small>SELECT</small><strong data-royale-timer>${remaining}</strong></div></div>
+    <div class="select-panel"><div class="select-grid">${cards}</div><div class="selection-footer"><button class="button button-danger button-small" data-royale-destroy>対戦から退出</button>
+      <button class="button button-primary" id="lockRoyaleSelection" ${state.selectedCardId ? "" : "disabled"}>この画像で決定</button></div></div>${renderAllChat()}</section>`;
 }
 
 function renderWaitingPick() {
   const ready = Object.keys(state.roundData.picks || {}).length;
-  return `<section class="screen">${renderTeamHud()}${renderStatusCardInner("⌛", "TEAM PICK LOCKED", "全員の選択を待っています", `${ready} / 4人が選択済みです。画像内容はまだ公開されません。`)}${renderTeamChat()}</section>`;
+  const required = roundParticipants().length;
+  const title = roundParticipants().some((player) => player.uid === state.uid) ? "画像をロックしました" : "生存者の選択を待っています";
+  return `<section class="screen">${renderRoyaleHud()}${renderStatusCardInner("⌛", "SECRET PICK", title, `${Math.min(ready, required)} / ${required}人が選択済みです。画像内容と提出者はまだ公開されません。`)}${renderAllChat()}</section>`;
 }
 
 function renderWaitingImages() {
   const ready = Object.keys(state.roundData.imagesReady || {}).length;
-  return `<section class="screen">${renderTeamHud()}${renderStatusCardInner("⇄", "P2P IMAGE TRANSFER", "4枚の画像を転送中", `${ready} / 4人が画像受信を完了しました。Firebaseには保存していません。`)}</section>`;
+  const available = availableMembers().length;
+  return `<section class="screen">${renderRoyaleHud()}${renderStatusCardInner("⇄", "P2P IMAGE TRANSFER", `${roundParticipants().length}枚の画像を転送中`, `${Math.min(ready, available)} / ${available}人が画像受信を完了しました。Firebaseには保存していません。`)}${renderAllChat()}</section>`;
 }
 
 function renderStatusCardInner(icon, eyebrow, title, body) {
-  return `<div class="handoff-card online-status-card team-inline-status"><div class="handoff-icon" aria-hidden="true">${icon}</div><span class="eyebrow">${eyebrow}</span><h1>${title}</h1><p>${body}</p><div class="matching-pulse"><i></i><i></i><i></i></div><div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button></div></div>`;
+  return `<div class="handoff-card online-status-card royale-inline-status"><div class="handoff-icon" aria-hidden="true">${icon}</div><span class="eyebrow">${eyebrow}</span><h1>${title}</h1><p>${body}</p><div class="matching-pulse"><i></i><i></i><i></i></div><div class="screen-actions"><button class="button button-danger button-small" data-royale-destroy>対戦から退出</button></div></div>`;
 }
 
 function getRoundImage(uid, round = state.round) {
@@ -343,62 +372,79 @@ function getRoundImage(uid, round = state.round) {
 }
 
 function renderFourImages(withScores = null) {
-  const group = (team) => `<div class="team-image-group"><div class="team-image-group-head"><strong>TEAM ${team}</strong><span>${team === state.team ? "YOUR TEAM" : "OPPONENT"}</span></div>
-    <div class="team-image-pair">${teamMembers(team).map((player) => { const item = getRoundImage(player.uid); const result = withScores?.images?.[player.uid]; return `<article class="team-image-card ${result?.perfect ? "perfect" : result?.critical ? "critical" : ""}">
-      <div class="team-image-owner"><span>${escapeHtml(player.name)}</span>${result ? `<strong>${result.average.toFixed(1)}</strong>` : ""}</div><img src="${item?.url || ""}" alt="${escapeHtml(player.name)}の画像" draggable="false" />
-      ${result ? `<div class="team-image-votes"><span>${result.votes.map((score) => `${score}点`).join(" / ")}</span><b>${result.perfect ? "PERFECT" : result.critical ? "CRITICAL" : ""}</b></div>` : ""}</article>`; }).join("")}</div></div>`;
-  return `<div class="four-image-board">${group("A")}<div class="team-versus">VS</div>${group("B")}</div>`;
+  const players = withScores?.participantUids
+    ? withScores.participantUids.map(memberByUid).filter(Boolean)
+    : stableRoundOrder();
+  const ordered = withScores ? players : stableRoundOrder(players);
+  const cards = ordered.map((player, index) => {
+    const item = getRoundImage(player.uid, withScores?.round || state.round);
+    const result = withScores?.images?.[player.uid];
+    const label = result ? escapeHtml(player.name) : `IMAGE ${String(index + 1).padStart(2, "0")}`;
+    const badge = result?.eliminated ? "ELIMINATED" : result?.perfect ? "PERFECT" : result?.critical ? "CRITICAL" : "";
+    return `<article class="royale-image-card ${result?.eliminated ? "eliminated" : result?.perfect ? "perfect" : result?.critical ? "critical" : ""}">
+      <div class="royale-image-owner"><span>${label}</span>${result ? `<strong>${result.median.toFixed(1)}</strong>` : ""}</div>
+      <img src="${item?.url || ""}" alt="${result ? `${escapeHtml(player.name)}の画像` : `匿名画像${index + 1}`}" draggable="false" />
+      ${result ? `<div class="royale-image-votes"><span>${result.votes.map((score) => `${score}点`).join(" / ")}</span><b>${badge}</b></div>` : ""}</article>`;
+  }).join("");
+  return `<div class="royale-image-board count-${ordered.length}">${cards}</div>`;
 }
 
 function renderReveal() {
-  return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">FOUR IMAGE REVEAL</span><h1>4枚同時公開</h1><p>相手チームの2枚をそれぞれ採点します。時間切れの未採点は5点になります。</p></div>
-    <div class="team-phase-timer"><small>SCORE</small><strong data-team-score-timer>${scoreTimerSeconds()}</strong></div></div>${renderFourImages()}
-    <div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button><button class="button button-primary" id="beginTeamScoring">相手2枚を採点する</button></div>${renderAllChat()}</section>`;
+  const targets = scoreTargets();
+  return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">ANONYMOUS IMAGE REVEAL</span><h1>${roundParticipants().length}枚同時公開</h1><p>提出者名は採点確定後に公開します。${targets.length ? `自分以外の${targets.length}枚` : `${roundParticipants().length}枚`}を採点してください。</p></div>
+    <div class="royale-phase-timer"><small>SCORE</small><strong data-royale-score-timer>${scoreTimerSeconds()}</strong></div></div>${renderFourImages()}
+    <div class="screen-actions"><button class="button button-danger button-small" data-royale-destroy>対戦から退出</button><button class="button button-primary" id="beginRoyaleScoring">${targets.length}枚を採点する</button></div>${renderAllChat()}</section>`;
 }
 
 function renderScoring() {
-  const opponents = teamMembers(opponentTeam());
-  const panels = opponents.map((player) => { const item = getRoundImage(player.uid); const current = Number(state.selectedScores[player.uid] || 0); return `<article class="team-score-card"><div class="team-score-image"><span>${escapeHtml(player.name)} / TEAM ${player.team}</span><img src="${item?.url || ""}" alt="採点する${escapeHtml(player.name)}の画像" draggable="false" /></div>
-    <div class="team-score-controls"><strong>${current || "--"}</strong><div class="score-buttons">${Array.from({ length: 10 }, (_, index) => index + 1).map((score) => `<button class="score-button ${current === score ? "selected" : ""}" data-team-score-target="${player.uid}" data-team-score="${score}">${score}</button>`).join("")}</div></div></article>`; }).join("");
-  return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">DOUBLE SCORING</span><h1>相手チームの2枚を採点</h1><p>各画像を1～10点で評価してください。2人分の採点平均が画像得点になります。</p></div>
-    <div class="team-phase-timer ${scoreTimerSeconds() <= 5 ? "warning" : ""}"><small>SCORE</small><strong data-team-score-timer>${scoreTimerSeconds()}</strong></div></div><div class="team-score-grid">${panels}</div>
-    <div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button><button class="button button-primary" id="lockTeamScores" ${opponents.every((player) => Number.isInteger(state.selectedScores[player.uid])) ? "" : "disabled"}>2枚の採点を確定</button></div>${renderAllChat()}</section>`;
+  const targets = stableRoundOrder(scoreTargets());
+  const panels = targets.map((player, index) => { const item = getRoundImage(player.uid); const current = Number(state.selectedScores[player.uid] || 0); return `<article class="royale-score-card"><div class="royale-score-image"><span>ANONYMOUS IMAGE ${String(index + 1).padStart(2, "0")}</span><img src="${item?.url || ""}" alt="採点する匿名画像${index + 1}" draggable="false" /></div>
+    <div class="royale-score-controls"><strong>${current || "--"}</strong><div class="score-buttons">${Array.from({ length: 10 }, (_, index) => index + 1).map((score) => `<button class="score-button ${current === score ? "selected" : ""}" data-royale-score-target="${player.uid}" data-royale-score="${score}">${score}</button>`).join("")}</div></div></article>`; }).join("");
+  return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">SURVIVAL SCORING</span><h1>${targets.length}枚を採点</h1><p>各画像を1～10点で評価してください。集まった票の中央値で脱落者を判定します。</p></div>
+    <div class="royale-phase-timer ${scoreTimerSeconds() <= 5 ? "warning" : ""}"><small>SCORE</small><strong data-royale-score-timer>${scoreTimerSeconds()}</strong></div></div><div class="royale-score-grid">${panels}</div>
+    <div class="screen-actions"><button class="button button-danger button-small" data-royale-destroy>対戦から退出</button><button class="button button-primary" id="lockRoyaleScores" ${targets.every((player) => Number.isInteger(state.selectedScores[player.uid])) ? "" : "disabled"}>採点を確定</button></div>${renderAllChat()}</section>`;
 }
 
 function renderWaitingScore() {
   const ready = Object.keys(state.roundData.scores || {}).length;
-  return `<section class="screen">${renderTeamHud()}${renderStatusCardInner("✦", "VOTE LOCKED", "4人の採点を集計中", `${ready} / 4人が採点済みです。`) }${renderAllChat()}</section>`;
+  const required = availableMembers().length;
+  return `<section class="screen">${renderRoyaleHud()}${renderStatusCardInner("✦", "VOTE LOCKED", "採点を集計中", `${Math.min(ready, required)} / ${required}人が採点済みです。`)}${renderAllChat()}</section>`;
 }
 
 function renderResult() {
   const result = state.history.at(-1);
-  const damageText = result.winnerTeam ? `TEAM ${result.winnerTeam} WIN / ${result.damage} DAMAGE` : "DRAW / NO DAMAGE";
-  return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">TEAM ROUND RESULT</span><h1>ROUND ${state.round} 結果</h1><p>各画像は相手2人の平均、チーム得点は2枚の平均です。</p></div></div>${renderFourImages(result)}
-    <div class="team-result-score"><div><span>TEAM A</span><strong>${result.teamScores.A.toFixed(1)}</strong></div><b>${damageText}</b><div><span>TEAM B</span><strong>${result.teamScores.B.toFixed(1)}</strong></div></div>
-    <div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button><button class="button button-primary" id="continueTeamRound">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>${renderAllChat()}</section>`;
+  const loser = result.eliminatedUid ? memberByUid(result.eliminatedUid) : null;
+  const headline = loser ? `${escapeHtml(loser.name)} 脱落` : "最下位同点・サドンデスへ";
+  const reason = result.fallback ? `サドンデス同点のため、累計得点・CRITICAL・PERFECT${result.lottery ? "・ルーム抽選" : ""}で決定しました。` : loser ? `中央値 ${result.images[result.eliminatedUid].median.toFixed(1)} で最下位となりました。` : "同点のプレイヤーだけが次の画像を提出します。";
+  return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">SURVIVAL ROUND RESULT</span><h1>${headline}</h1><p>${reason}</p></div></div>${renderFourImages(result)}
+    <div class="royale-result-banner ${loser ? "danger" : "sudden"}"><strong>${loser ? `#${result.eliminatedPlace} ${escapeHtml(loser.name)}` : "SUDDEN DEATH"}</strong><span>残り ${alivePlayers().length}人</span></div>
+    <div class="screen-actions"><button class="button button-danger button-small" data-royale-destroy>対戦から退出</button><button class="button button-primary" id="continueRoyaleRound">${isMatchOver() ? "最終結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>${renderAllChat()}</section>`;
 }
 
 function renderWaitingContinue() {
   const ready = Object.keys(state.roundData.continue || {}).length;
-  return `<section class="screen">${renderTeamHud()}${renderStatusCardInner("→", "NEXT ROUND", "全員の準備を待っています", `${ready} / 4人が次へ進む準備を完了しました。`) }${renderAllChat()}</section>`;
+  const required = availableMembers().length;
+  return `<section class="screen">${renderRoyaleHud()}${renderStatusCardInner("→", "NEXT ROUND", "参加者の準備を待っています", `${Math.min(ready, required)} / ${required}人が次へ進む準備を完了しました。`)}${renderAllChat()}</section>`;
 }
 
 function renderGameOver() {
   const outcome = state.outcome;
-  const title = outcome.winnerTeam ? `TEAM ${outcome.winnerTeam} WIN` : "DRAW";
-  const teamCard = (team) => `<article class="team-final-card ${outcome.winnerTeam === team ? "winner" : ""}"><span>TEAM ${team}</span><h2>${teamMembers(team).map((player) => escapeHtml(player.name)).join(" + ")}</h2>
-    <div class="stats-row"><div class="stat-box"><strong>${state.teams[team].hp}</strong><span>残りHP</span></div><div class="stat-box"><strong>${state.teams[team].totalScore.toFixed(1)}</strong><span>累計得点</span></div><div class="stat-box"><strong>${state.teams[team].criticals}</strong><span>CRITICAL</span></div></div></article>`;
-  return `<section class="screen gameover-wrap"><div class="gameover-card team-gameover"><div class="winner-emblem">${outcome.winnerTeam || "="}</div><span class="eyebrow">2ON2 MATCH COMPLETE</span><h1>${title}</h1><p>共有HP、累計得点、CRITICAL、PERFECTの順で判定しました。</p>
-    <div class="team-final-grid">${teamCard("A")}${teamCard("B")}</div><div class="online-profile-strip"><span>あなたの2ON2戦績</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span><span>RATE ${state.teamProfile.rating}</span></div>
-    <div class="gameover-actions"><button class="button button-primary" id="teamNewMatch">もう一度2on2</button><button class="button button-ghost" id="teamGameoverHome">タイトルへ戻る</button></div></div></section>`;
+  const winner = memberByUid(outcome.winnerUid);
+  const standings = state.members.map((player) => ({ player, place: player.uid === outcome.winnerUid ? 1 : Number(state.eliminated[player.uid]?.place || 4) }))
+    .sort((first, second) => first.place - second.place || first.player.uid.localeCompare(second.player.uid))
+    .map(({ player, place }) => `<div class="royale-standing ${place === 1 ? "winner" : ""}"><strong>#${place}</strong><span>${escapeHtml(player.name)}${player.uid === state.uid ? "（あなた）" : ""}</span><small>${place === 1 ? "LAST SURVIVOR" : state.eliminated[player.uid]?.reason === "forfeit" ? "FORFEIT" : "ELIMINATED"}</small></div>`).join("");
+  const localPlace = outcome.winnerUid === state.uid ? 1 : Number(state.eliminated[state.uid]?.place || 4);
+  return `<section class="screen gameover-wrap"><div class="gameover-card royale-gameover"><div class="winner-emblem">1</div><span class="eyebrow">BATTLE ROYALE COMPLETE</span><h1>${escapeHtml(winner?.name || "SURVIVOR")} WIN</h1><p>最後まで生き残ったプレイヤーが勝者です。あなたは${localPlace}位でした。</p>
+    <div class="royale-standings">${standings}</div><div class="online-profile-strip"><span>あなたのバトルロワイヤル戦績</span><span>${state.royaleProfile.wins}回優勝 / TOP2 ${state.royaleProfile.topTwo}回</span><span>${state.royaleProfile.matches}戦</span></div>
+    <div class="gameover-actions"><button class="button button-primary" id="royaleNewMatch">もう一度バトルロワイヤル</button><button class="button button-ghost" id="royaleGameoverHome">タイトルへ戻る</button></div></div></section>`;
 }
 
 function renderNoContest() {
-  return renderStatusCard("×", "2ON2 NO CONTEST", "チーム対戦を終了しました", "1人以上が退出または切断したため、戦績とミッションには影響しません。", "", `<button class="button button-primary" id="teamNoContestAgain">もう一度探す</button><button class="button button-ghost" id="teamNoContestHome">タイトルへ</button>`);
+  return renderStatusCard("×", "BATTLE ROYALE CLOSED", "対戦を終了しました", "対戦ルームが利用できなくなりました。", "", `<button class="button button-primary" id="royaleNoContestAgain">もう一度探す</button><button class="button button-ghost" id="royaleNoContestHome">タイトルへ</button>`);
 }
 
 function renderError() {
-  return renderStatusCard("!", "2ON2 CONNECTION ERROR", "2on2接続に失敗しました", state.errorMessage || "通信状態を確認してください。", "", `<button class="button button-primary" id="teamRetry">もう一度試す</button><button class="button button-ghost" id="teamErrorHome">タイトルへ</button>`);
+  return renderStatusCard("!", "BATTLE ROYALE CONNECTION ERROR", "バトルロワイヤル接続に失敗しました", state.errorMessage || "通信状態を確認してください。", "", `<button class="button button-primary" id="royaleRetry">もう一度試す</button><button class="button button-ghost" id="royaleErrorHome">タイトルへ</button>`);
 }
 
 function unlockedReactions() {
@@ -409,14 +455,9 @@ function renderMessages(messages, emptyText) {
   return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}</small><p>${escapeHtml(message.text)}</p></div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
 }
 
-function renderTeamChat() {
-  return `<aside class="chat-panel team-private-chat"><div class="chat-head"><strong>TEAM ${state.team} STRATEGY CHAT</strong><span>相手チームには非公開</span></div><div class="chat-messages" id="teamChatMessages">${renderMessages(state.teamChatMessages, "相方と画像の方向性を相談しましょう。")}</div>
-    <div class="quick-reactions">${unlockedReactions().map((text) => `<button class="reaction-button" data-team-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div><form class="chat-form" id="teamChatForm"><input class="chat-input" id="teamChatInput" maxlength="80" placeholder="作戦を相談する…" aria-label="チーム作戦チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
-}
-
 function renderAllChat() {
-  return `<aside class="chat-panel online-chat-standalone"><div class="chat-head"><strong>ALL CHAT / 4 PLAYERS</strong><span>4人全員に表示</span></div><div class="chat-messages" id="teamAllChatMessages">${renderMessages(state.allChatMessages, "公開された画像について4人で話してみましょう。")}</div>
-    <div class="quick-reactions">${unlockedReactions().map((text) => `<button class="reaction-button" data-all-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div><form class="chat-form" id="teamAllChatForm"><input class="chat-input" id="teamAllChatInput" maxlength="80" placeholder="4人へひとこと…" aria-label="4人共通チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
+  return `<aside class="chat-panel online-chat-standalone"><div class="chat-head"><strong>ALL CHAT / 4 PLAYERS</strong><span>脱落後も利用できます</span></div><div class="chat-messages" id="royaleAllChatMessages">${renderMessages(state.allChatMessages, "公開された画像について4人で話してみましょう。")}</div>
+    <div class="quick-reactions">${unlockedReactions().map((text) => `<button class="reaction-button" data-all-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div><form class="chat-form" id="royaleAllChatForm"><input class="chat-input" id="royaleAllChatInput" maxlength="80" placeholder="4人へひとこと…" aria-label="4人共通チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
 }
 
 function bindEvents() {
@@ -424,71 +465,81 @@ function bindEvents() {
     image.addEventListener("contextmenu", (event) => event.preventDefault());
     image.addEventListener("dragstart", (event) => event.preventDefault());
   });
-  document.querySelectorAll("[data-team-destroy]").forEach((button) => button.addEventListener("click", () => destroyDialog.showModal()));
+  document.querySelectorAll("[data-royale-destroy]").forEach((button) => button.addEventListener("click", () => {
+    configureExitDialog();
+    destroyDialog.showModal();
+  }));
   bindChatEvents();
   if (state.screen === "setup") bindSetupEvents();
-  if (state.screen === "matching") document.querySelector("#cancelTeamMatching")?.addEventListener("click", cancelMatching);
+  if (state.screen === "matching") document.querySelector("#cancelRoyaleMatching")?.addEventListener("click", cancelMatching);
   if (state.screen === "select") bindSelectionEvents();
-  if (state.screen === "reveal") document.querySelector("#beginTeamScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
+  if (state.screen === "reveal") document.querySelector("#beginRoyaleScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
   if (state.screen === "score") bindScoreEvents();
-  if (state.screen === "result") document.querySelector("#continueTeamRound")?.addEventListener("click", continueRound);
+  if (state.screen === "result") document.querySelector("#continueRoyaleRound")?.addEventListener("click", continueRound);
   if (state.screen === "gameover") {
-    document.querySelector("#teamNewMatch")?.addEventListener("click", resetSetup);
-    document.querySelector("#teamGameoverHome")?.addEventListener("click", leaveToLanding);
+    document.querySelector("#royaleNewMatch")?.addEventListener("click", resetSetup);
+    document.querySelector("#royaleGameoverHome")?.addEventListener("click", leaveToLanding);
   }
   if (state.screen === "noContest") {
-    document.querySelector("#teamNoContestAgain")?.addEventListener("click", resetSetup);
-    document.querySelector("#teamNoContestHome")?.addEventListener("click", leaveToLanding);
+    document.querySelector("#royaleNoContestAgain")?.addEventListener("click", resetSetup);
+    document.querySelector("#royaleNoContestHome")?.addEventListener("click", leaveToLanding);
   }
   if (state.screen === "error") {
-    document.querySelector("#teamRetry")?.addEventListener("click", retryConnection);
-    document.querySelector("#teamErrorHome")?.addEventListener("click", leaveToLanding);
+    document.querySelector("#royaleRetry")?.addEventListener("click", retryConnection);
+    document.querySelector("#royaleErrorHome")?.addEventListener("click", leaveToLanding);
   }
 }
 
 function bindSetupEvents() {
-  document.querySelector("#teamBackHome")?.addEventListener("click", leaveToLanding);
-  const nameInput = document.querySelector("#teamPlayerName");
+  document.querySelector("#royaleBackHome")?.addEventListener("click", leaveToLanding);
+  const nameInput = document.querySelector("#royalePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
-    const button = document.querySelector("#findTeamMatch");
+    const button = document.querySelector("#findRoyaleMatch");
     if (button) button.disabled = !state.authReady || state.deck.length !== MAX_ROUNDS || !state.name.trim();
   });
-  document.querySelector("#teamImageInput")?.addEventListener("change", handleImageInput);
-  document.querySelector("#teamFillSample")?.addEventListener("click", fillSampleDeck);
-  document.querySelectorAll("[data-team-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.teamRemove)));
-  document.querySelector("#findTeamMatch")?.addEventListener("click", beginMatchmaking);
+  document.querySelector("#royaleImageInput")?.addEventListener("change", handleImageInput);
+  document.querySelector("#royaleFillSample")?.addEventListener("click", fillSampleDeck);
+  document.querySelectorAll("[data-royale-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.royaleRemove)));
+  document.querySelector("#findRoyaleMatch")?.addEventListener("click", beginMatchmaking);
 }
 
 function bindSelectionEvents() {
-  document.querySelectorAll("[data-team-card]").forEach((button) => button.addEventListener("click", () => {
-    state.selectedCardId = button.dataset.teamCard;
+  document.querySelectorAll("[data-royale-card]").forEach((button) => button.addEventListener("click", () => {
+    state.selectedCardId = button.dataset.royaleCard;
     render();
   }));
-  document.querySelector("#lockTeamSelection")?.addEventListener("click", lockSelection);
+  document.querySelector("#lockRoyaleSelection")?.addEventListener("click", lockSelection);
 }
 
 function bindScoreEvents() {
-  document.querySelectorAll("[data-team-score-target]").forEach((button) => button.addEventListener("click", () => {
-    state.selectedScores[button.dataset.teamScoreTarget] = Number(button.dataset.teamScore);
+  document.querySelectorAll("[data-royale-score-target]").forEach((button) => button.addEventListener("click", () => {
+    state.selectedScores[button.dataset.royaleScoreTarget] = Number(button.dataset.royaleScore);
     render();
   }));
-  document.querySelector("#lockTeamScores")?.addEventListener("click", lockScores);
+  document.querySelector("#lockRoyaleScores")?.addEventListener("click", lockScores);
 }
 
 function bindChatEvents() {
-  document.querySelectorAll("[data-team-reaction]").forEach((button) => button.addEventListener("click", () => sendTeamChat(button.dataset.teamReaction)));
   document.querySelectorAll("[data-all-reaction]").forEach((button) => button.addEventListener("click", () => sendAllChat(button.dataset.allReaction)));
-  document.querySelector("#teamChatForm")?.addEventListener("submit", (event) => { event.preventDefault(); const input = document.querySelector("#teamChatInput"); sendTeamChat(input.value); input.value = ""; });
-  document.querySelector("#teamAllChatForm")?.addEventListener("submit", (event) => { event.preventDefault(); const input = document.querySelector("#teamAllChatInput"); sendAllChat(input.value); input.value = ""; });
+  document.querySelector("#royaleAllChatForm")?.addEventListener("submit", (event) => { event.preventDefault(); const input = document.querySelector("#royaleAllChatInput"); sendAllChat(input.value); input.value = ""; });
   scrollChats();
+}
+
+function configureExitDialog() {
+  const title = destroyDialog.querySelector("h2");
+  const body = destroyDialog.querySelector("p");
+  const confirm = destroyDialog.querySelector("#confirmDestroy");
+  if (title) title.textContent = state.roomId ? "対戦から退出しますか？" : "参加を取り消しますか？";
+  if (body) body.textContent = state.roomId ? "退出したプレイヤーだけが脱落扱いになります。残りのプレイヤーは対戦を続行します。" : "マッチングまたは参加確認を終了してタイトルへ戻ります。";
+  if (confirm) confirm.textContent = state.roomId ? "脱落して退出" : "参加を取り消す";
 }
 
 async function handleImageInput(event) {
   const files = Array.from(event.target.files || []);
   const remaining = MAX_ROUNDS - state.deck.length;
   if (!files.length || remaining <= 0) return;
-  setBusy(true, "2on2用に画像を圧縮しています…");
+  setBusy(true, "バトルロワイヤル用に画像を圧縮しています…");
   let added = 0;
   let errorMessage = "";
   for (const file of files.slice(0, remaining)) {
@@ -507,7 +558,7 @@ async function handleImageInput(event) {
 async function fillSampleDeck() {
   const remaining = MAX_ROUNDS - state.deck.length;
   if (remaining <= 0) return showToast("5枚すべて選択済みです。");
-  setBusy(true, "2on2サンプル画像を生成しています…");
+  setBusy(true, "バトルロワイヤルサンプル画像を生成しています…");
   state.deck.push(...await shared().createSampleItems(2, remaining, state.deck.length));
   setBusy(false);
   render();
@@ -526,19 +577,19 @@ async function beginMatchmaking() {
   if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name) return;
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   state.screen = "matching";
-  setTeamChrome("2ON2 MATCHING");
+  setRoyaleChrome("BATTLE ROYALE MATCHING");
   render();
 
   await Promise.allSettled([
-    remove(ref(database, `online/teamActive/${state.uid}`)),
-    remove(ref(database, `online/teamInvites/${state.uid}`)),
+    remove(ref(database, `online/royaleActive/${state.uid}`)),
+    remove(ref(database, `online/royaleInvites/${state.uid}`)),
   ]);
-  const queueRef = ref(database, `online/teamQueue/${state.uid}`);
+  const queueRef = ref(database, `online/royaleQueue/${state.uid}`);
   await set(queueRef, {
     uid: state.uid,
     name: state.name,
-    rating: Number(state.teamProfile.rating || INITIAL_RATING),
-    streak: Number(state.teamProfile.streak || 0),
+    rating: INITIAL_RATING,
+    streak: Number(state.royaleProfile.streak || 0),
     joinedAt: Date.now(),
     lastSeen: Date.now(),
     state: "waiting",
@@ -551,15 +602,15 @@ async function beginMatchmaking() {
     update(queueRef, { lastSeen: Date.now() }).then(() => attemptToHost()).catch(() => {});
   }, HEARTBEAT_MS);
 
-  state.matchmakingUnsubscribers.push(onValue(ref(database, "online/teamQueue"), (snapshot) => {
+  state.matchmakingUnsubscribers.push(onValue(ref(database, "online/royaleQueue"), (snapshot) => {
     state.latestQueue = snapshot.val() || {};
     attemptToHost().catch(handleRecoverableError);
   }, handleRecoverableError));
-  state.matchmakingUnsubscribers.push(onValue(ref(database, "online/teamActive"), (snapshot) => {
+  state.matchmakingUnsubscribers.push(onValue(ref(database, "online/royaleActive"), (snapshot) => {
     state.activeUsers = snapshot.val() || {};
     attemptToHost().catch(handleRecoverableError);
   }, handleRecoverableError));
-  state.matchmakingUnsubscribers.push(onValue(ref(database, `online/teamInvites/${state.uid}`), (snapshot) => {
+  state.matchmakingUnsubscribers.push(onValue(ref(database, `online/royaleInvites/${state.uid}`), (snapshot) => {
     processInvites(snapshot.val() || {}).catch(handleRecoverableError);
   }, handleRecoverableError));
 }
@@ -612,7 +663,7 @@ async function attemptToHost() {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingInvite || state.pendingRoomId) return;
   const waiting = freshWaitingPlayers();
   if (waiting.length < PLAYER_COUNT || waiting[0].uid !== state.uid) return;
-  await createTeamRoom(waiting.slice(0, PLAYER_COUNT));
+  await createRoyaleRoom(waiting.slice(0, PLAYER_COUNT));
 }
 
 function shufflePlayers(players) {
@@ -626,31 +677,30 @@ function shufflePlayers(players) {
   return shuffled;
 }
 
-async function createTeamRoom(group) {
+async function createRoyaleRoom(group) {
   state.matchingBusy = true;
-  const roomId = push(ref(database, "online/teamRooms")).key;
+  const roomId = push(ref(database, "online/royaleRooms")).key;
   try {
-    const reservation = await runTransaction(ref(database, `online/teamActive/${state.uid}`), (current) => current === null ? roomId : undefined);
+    const reservation = await runTransaction(ref(database, `online/royaleActive/${state.uid}`), (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
     const shuffled = shufflePlayers(group);
     const players = {};
     const members = {};
     shuffled.forEach((entry, index) => {
-      const team = index < TEAM_SIZE ? "A" : "B";
-      players[entry.uid] = { uid: entry.uid, name: entry.name, team, slot: (index % TEAM_SIZE) + 1, rating: Number(entry.rating || INITIAL_RATING), streak: Number(entry.streak || 0) };
+      players[entry.uid] = { uid: entry.uid, name: entry.name, slot: index + 1, streak: Number(entry.streak || 0) };
       members[entry.uid] = true;
     });
-    await set(ref(database, `online/teamRooms/${roomId}/hostUid`), state.uid);
+    await set(ref(database, `online/royaleRooms/${roomId}/hostUid`), state.uid);
     const roomUpdates = {
       createdAt: Date.now(),
       status: "forming",
     };
     Object.entries(members).forEach(([uid, value]) => { roomUpdates[`members/${uid}`] = value; });
     Object.entries(players).forEach(([uid, value]) => { roomUpdates[`players/${uid}`] = value; });
-    await update(ref(database, `online/teamRooms/${roomId}`), roomUpdates);
-    await set(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`), true);
-    await update(ref(database, `online/teamQueue/${state.uid}`), { state: "forming", roomId });
-    await Promise.all(shuffled.filter((entry) => entry.uid !== state.uid).map((entry) => set(ref(database, `online/teamInvites/${entry.uid}/${roomId}`), {
+    await update(ref(database, `online/royaleRooms/${roomId}`), roomUpdates);
+    await set(ref(database, `online/royaleRooms/${roomId}/accepted/${state.uid}`), true);
+    await update(ref(database, `online/royaleQueue/${state.uid}`), { state: "forming", roomId });
+    await Promise.all(shuffled.filter((entry) => entry.uid !== state.uid).map((entry) => set(ref(database, `online/royaleInvites/${entry.uid}/${roomId}`), {
       roomId,
       hostUid: state.uid,
       createdAt: Date.now(),
@@ -660,10 +710,10 @@ async function createTeamRoom(group) {
     state.screen = "forming";
     render();
     watchPendingRoom(roomId, true);
-    state.matchTimer = window.setTimeout(() => expireTeamRoom(roomId), MATCH_TIMEOUT_MS);
+    state.matchTimer = window.setTimeout(() => expireRoyaleRoom(roomId), MATCH_TIMEOUT_MS);
   } catch (error) {
-    await remove(ref(database, `online/teamActive/${state.uid}`)).catch(() => {});
-    await runTransaction(ref(database, `online/teamRooms/${roomId}/status`), (current) => current === null ? "expired" : undefined).catch(() => {});
+    await remove(ref(database, `online/royaleActive/${state.uid}`)).catch(() => {});
+    await runTransaction(ref(database, `online/royaleRooms/${roomId}/status`), (current) => current === null ? "expired" : undefined).catch(() => {});
     throw error;
   } finally {
     state.matchingBusy = false;
@@ -680,18 +730,18 @@ async function processInvites(invites) {
 async function acceptInvite(roomId, invite) {
   state.acceptingInvite = true;
   try {
-    const snapshot = await get(ref(database, `online/teamRooms/${roomId}`));
+    const snapshot = await get(ref(database, `online/royaleRooms/${roomId}`));
     const room = snapshot.val();
     if (!room || room.status !== "forming" || !room.members?.[state.uid] || invite.hostUid !== room.hostUid) {
-      await remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`));
+      await remove(ref(database, `online/royaleInvites/${state.uid}/${roomId}`));
       return;
     }
-    const reservation = await runTransaction(ref(database, `online/teamActive/${state.uid}`), (current) => current === null ? roomId : undefined);
+    const reservation = await runTransaction(ref(database, `online/royaleActive/${state.uid}`), (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
-    await set(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`), true);
+    await set(ref(database, `online/royaleRooms/${roomId}/accepted/${state.uid}`), true);
     await Promise.allSettled([
-      remove(ref(database, `online/teamQueue/${state.uid}`)),
-      remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
+      remove(ref(database, `online/royaleQueue/${state.uid}`)),
+      remove(ref(database, `online/royaleInvites/${state.uid}/${roomId}`)),
     ]);
     state.pendingRoomId = roomId;
     state.room = { ...room, accepted: { ...(room.accepted || {}), [state.uid]: true } };
@@ -704,8 +754,8 @@ async function acceptInvite(roomId, invite) {
 }
 
 function watchPendingRoom(roomId, isHost) {
-  const statusRef = ref(database, `online/teamRooms/${roomId}/status`);
-  state.matchmakingUnsubscribers.push(onValue(ref(database, `online/teamRooms/${roomId}/accepted`), (snapshot) => {
+  const statusRef = ref(database, `online/royaleRooms/${roomId}/status`);
+  state.matchmakingUnsubscribers.push(onValue(ref(database, `online/royaleRooms/${roomId}/accepted`), (snapshot) => {
     if (!state.room) return;
     state.room.accepted = snapshot.val() || {};
     if (state.screen === "forming") render();
@@ -718,23 +768,23 @@ function watchPendingRoom(roomId, isHost) {
   }, handleRecoverableError));
 }
 
-async function expireTeamRoom(roomId) {
+async function expireRoyaleRoom(roomId) {
   if (state.roomId || state.pendingRoomId !== roomId || state.room?.hostUid !== state.uid) return;
-  await runTransaction(ref(database, `online/teamRooms/${roomId}/status`), (current) => current === "forming" ? "expired" : undefined);
+  await runTransaction(ref(database, `online/royaleRooms/${roomId}/status`), (current) => current === "forming" ? "expired" : undefined);
 }
 
 async function handleExpiredRoom(roomId) {
   if (state.roomId || state.pendingRoomId !== roomId) return;
   await Promise.allSettled([
-    remove(ref(database, `online/teamActive/${state.uid}`)),
-    remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
-    remove(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`)),
+    remove(ref(database, `online/royaleActive/${state.uid}`)),
+    remove(ref(database, `online/royaleInvites/${state.uid}/${roomId}`)),
+    remove(ref(database, `online/royaleRooms/${roomId}/accepted/${state.uid}`)),
   ]);
   state.pendingRoomId = "";
   state.room = null;
   state.screen = "matching";
-  await set(ref(database, `online/teamQueue/${state.uid}`), {
-    uid: state.uid, name: state.name, rating: Number(state.teamProfile.rating || INITIAL_RATING), streak: Number(state.teamProfile.streak || 0), joinedAt: Date.now(), lastSeen: Date.now(), state: "waiting",
+  await set(ref(database, `online/royaleQueue/${state.uid}`), {
+    uid: state.uid, name: state.name, rating: INITIAL_RATING, streak: Number(state.royaleProfile.streak || 0), joinedAt: Date.now(), lastSeen: Date.now(), state: "waiting",
   });
   render();
 }
@@ -742,31 +792,29 @@ async function handleExpiredRoom(roomId) {
 async function enterRoom(roomId) {
   if (state.roomId) return;
   window.clearTimeout(state.matchTimer);
-  const snapshot = await get(ref(database, `online/teamRooms/${roomId}`));
+  const snapshot = await get(ref(database, `online/royaleRooms/${roomId}`));
   const room = snapshot.val();
-  if (!room || room.status !== "active" || !room.members?.[state.uid]) throw new Error("2on2ルームへ参加できませんでした。");
+  if (!room || room.status !== "active" || !room.members?.[state.uid]) throw new Error("バトルロワイヤルルームへ参加できませんでした。");
   state.roomId = roomId;
   state.pendingRoomId = "";
   state.room = room;
-  state.members = Object.values(room.players || {}).sort((first, second) => first.team.localeCompare(second.team) || Number(first.slot) - Number(second.slot));
+  state.members = Object.values(room.players || {}).sort((first, second) => Number(first.slot) - Number(second.slot));
   if (state.members.length !== PLAYER_COUNT) throw new Error("4人のプレイヤー情報が揃っていません。");
-  state.team = room.players[state.uid].team;
-  state.teams = createTeams();
   await cleanupMatchmaking(true);
   await updatePublicPresence("playing");
   state.screen = "connecting";
-  setTeamChrome("2ON2 BATTLE");
+  setRoyaleChrome("BATTLE ROYALE BATTLE");
   render();
   await setupRoomListeners();
   await setupPeerMesh();
 }
 
 async function setupRoomListeners() {
-  const base = `online/teamRooms/${state.roomId}`;
+  const base = `online/royaleRooms/${state.roomId}`;
   state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
     state.serverTimeOffset = Number(snapshot.val() || 0);
   }));
-  const activeDisconnect = onDisconnect(ref(database, `online/teamActive/${state.uid}`));
+  const activeDisconnect = onDisconnect(ref(database, `online/royaleActive/${state.uid}`));
   await activeDisconnect.remove();
   state.disconnectHandles.push(activeDisconnect);
   const presenceRef = ref(database, `${base}/presence/${state.uid}`);
@@ -774,9 +822,12 @@ async function setupRoomListeners() {
   const presenceDisconnect = onDisconnect(presenceRef);
   await presenceDisconnect.set({ online: false, updatedAt: serverTimestamp() });
   state.disconnectHandles.push(presenceDisconnect);
+  const forfeitDisconnect = onDisconnect(ref(database, `${base}/forfeits/${state.uid}`));
+  await forfeitDisconnect.set({ by: state.uid, at: serverTimestamp(), reason: "disconnect" });
+  state.disconnectHandles.push(forfeitDisconnect);
 
-  state.roomUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {
-    if (snapshot.exists() && snapshot.val().by !== state.uid) handleDestroyedRoom().catch(handleRecoverableError);
+  state.roomUnsubscribers.push(onValue(ref(database, `${base}/forfeits`), (snapshot) => {
+    applyForfeits(snapshot.val() || {});
   }, handleRecoverableError));
   state.members.filter((player) => player.uid !== state.uid).forEach((player) => {
     state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${player.uid}`), (snapshot) => {
@@ -784,14 +835,6 @@ async function setupRoomListeners() {
     }));
   });
 
-  const teamChatQuery = query(ref(database, `online/teamChats/${state.roomId}/${state.team}`), limitToLast(60));
-  state.roomUnsubscribers.push(onChildAdded(teamChatQuery, (snapshot) => {
-    if (state.seenTeamChatIds.has(snapshot.key)) return;
-    state.seenTeamChatIds.add(snapshot.key);
-    state.teamChatMessages.push({ id: snapshot.key, ...snapshot.val() });
-    if (state.teamChatMessages.length > 60) state.teamChatMessages.shift();
-    refreshChats();
-  }, handleRecoverableError));
   const allChatQuery = query(ref(database, `${base}/chat`), limitToLast(60));
   state.roomUnsubscribers.push(onChildAdded(allChatQuery, (snapshot) => {
     if (state.seenAllChatIds.has(snapshot.key)) return;
@@ -804,15 +847,38 @@ async function setupRoomListeners() {
 }
 
 async function markDisconnected(uid) {
-  if (state.destroyed || state.outcome) return;
-  state.destroyed = true;
-  await runTransaction(ref(database, `online/teamRooms/${state.roomId}/destroyed`), (current) => current || { by: state.uid, at: Date.now(), reason: `disconnect:${uid}` });
-  await handleDestroyedRoom();
+  if (!state.roomId || state.outcome || isForfeited(uid)) return;
+  await runTransaction(ref(database, `online/royaleRooms/${state.roomId}/forfeits/${uid}`), (current) => current || { by: state.uid, at: Date.now(), reason: "disconnect" });
+}
+
+function eliminatePlayer(uid, reason, round = state.round) {
+  if (state.eliminated[uid]) return;
+  const place = alivePlayers().length;
+  state.eliminated[uid] = { place, round, reason };
+  state.tiebreakUids = state.tiebreakUids.filter((candidate) => candidate !== uid);
+}
+
+function applyForfeits(forfeits) {
+  const added = Object.entries(forfeits)
+    .filter(([uid]) => !state.forfeited[uid])
+    .sort(([, first], [, second]) => Number(first?.at || 0) - Number(second?.at || 0));
+  if (!added.length) return;
+  for (const [uid, detail] of added) {
+    state.forfeited[uid] = detail || { reason: "disconnect" };
+    if (!state.eliminated[uid]) eliminatePlayer(uid, "forfeit");
+  }
+  if (alivePlayers().length <= 1) {
+    finishMatch().catch(handleRecoverableError);
+    return;
+  }
+  if (state.screen === "connecting") maybeStartRound().catch(handleRecoverableError);
+  reactToRoundData().catch(handleRecoverableError);
+  render();
 }
 
 function listenToRound() {
   state.roundUnsubscribe?.();
-  state.roundUnsubscribe = onValue(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}`), (snapshot) => {
+  state.roundUnsubscribe = onValue(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}`), (snapshot) => {
     state.roundData = snapshot.val() || {};
     reactToRoundData().catch(handleRecoverableError);
   }, handleRecoverableError);
@@ -820,7 +886,7 @@ function listenToRound() {
 
 async function setupPeerMesh() {
   if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像転送に対応していません。");
-  const signalsRef = ref(database, `online/teamRooms/${state.roomId}/signals/${state.uid}`);
+  const signalsRef = ref(database, `online/royaleRooms/${state.roomId}/signals/${state.uid}`);
   state.roomUnsubscribers.push(onChildAdded(signalsRef, async (snapshot) => {
     try {
       await handleSignal(snapshot.val());
@@ -832,7 +898,7 @@ async function setupPeerMesh() {
   state.members.filter((player) => player.uid !== state.uid).forEach((player) => createConnection(player.uid));
   for (const [remoteUid, connection] of state.connections) {
     if (state.uid.localeCompare(remoteUid) < 0) {
-      const channel = connection.peer.createDataChannel(`hariai-team-${state.uid}`, { ordered: true });
+      const channel = connection.peer.createDataChannel(`hariai-royale-${state.uid}`, { ordered: true });
       configureChannel(remoteUid, channel);
       const offer = await connection.peer.createOffer();
       await connection.peer.setLocalDescription(offer);
@@ -861,7 +927,7 @@ function createConnection(remoteUid) {
 }
 
 async function sendSignal(targetUid, type, payload) {
-  await set(push(ref(database, `online/teamRooms/${state.roomId}/signals/${targetUid}`)), {
+  await set(push(ref(database, `online/royaleRooms/${state.roomId}/signals/${targetUid}`)), {
     fromUid: state.uid,
     type,
     payload: JSON.stringify(payload),
@@ -902,20 +968,19 @@ function configureChannel(remoteUid, channel) {
     if (state.screen === "connecting") render();
     maybeStartRound().catch(handleRecoverableError);
   };
-  channel.onclose = () => {
-    if (state.roomId && !state.outcome) markDisconnected(remoteUid).catch(() => {});
-  };
+  channel.onclose = () => { if (state.roomId && !state.outcome && !isForfeited(remoteUid)) markDisconnected(remoteUid).catch(() => {}); };
   channel.onerror = () => showToast("4人P2P画像転送で通信エラーが発生しました。");
   channel.onmessage = (event) => handleChannelMessage(remoteUid, event.data).catch(handleRecoverableError);
 }
 
 function openChannelCount() {
-  return [...state.connections.values()].filter((connection) => connection.channel?.readyState === "open").length;
+  return [...state.connections.values()].filter((connection) => !isForfeited(connection.remoteUid) && connection.channel?.readyState === "open").length;
 }
 
 async function maybeStartRound() {
-  if (openChannelCount() !== PLAYER_COUNT - 1 || state.roundReadyRounds.has(state.round)) return;
-  state.screen = "strategy";
+  const expectedPeers = availableMembers().filter((player) => player.uid !== state.uid).length;
+  if (openChannelCount() !== expectedPeers || state.roundReadyRounds.has(state.round) || alivePlayers().length <= 1) return;
+  state.screen = roundParticipants().some((player) => player.uid === state.uid) ? "select" : "waitingPick";
   render();
   await announceRoundReady();
 }
@@ -923,7 +988,7 @@ async function maybeStartRound() {
 async function announceRoundReady() {
   if (state.roundReadyRounds.has(state.round)) return;
   state.roundReadyRounds.add(state.round);
-  await set(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/roundReady/${state.uid}`), true);
+  await set(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/roundReady/${state.uid}`), true);
 }
 
 async function handleChannelMessage(remoteUid, data) {
@@ -951,7 +1016,7 @@ async function handleChannelMessage(remoteUid, data) {
 async function finishIncomingImage(remoteUid, round) {
   const connection = state.connections.get(remoteUid);
   const incoming = connection?.incoming;
-  if (!incoming || incoming.round !== round || incoming.received !== incoming.size) throw new Error("2on2画像の受信が完了していません。");
+  if (!incoming || incoming.round !== round || incoming.received !== incoming.size) throw new Error("バトルロワイヤル画像の受信が完了していません。");
   const blob = new Blob(incoming.chunks, { type: incoming.mime });
   const url = URL.createObjectURL(blob);
   if (!state.remoteImages.has(remoteUid)) state.remoteImages.set(remoteUid, new Map());
@@ -963,17 +1028,24 @@ async function finishIncomingImage(remoteUid, round) {
 }
 
 function hasAllRemoteImages(round = state.round) {
-  return state.members.filter((player) => player.uid !== state.uid).every((player) => state.remoteImages.get(player.uid)?.has(round));
+  return roundParticipants()
+    .filter((player) => player.uid !== state.uid && !isForfeited(player.uid))
+    .every((player) => state.remoteImages.get(player.uid)?.has(round));
 }
 
 async function markImagesReadyIfComplete() {
   if (!hasAllRemoteImages() || state.imageReadyRounds.has(state.round)) return;
   state.imageReadyRounds.add(state.round);
-  await set(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/imagesReady/${state.uid}`), true);
+  await set(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/imagesReady/${state.uid}`), true);
 }
 
 async function sendSelectedImage() {
   if (state.sentImageRounds.has(state.round)) return;
+  if (!roundParticipants().some((player) => player.uid === state.uid)) {
+    state.sentImageRounds.add(state.round);
+    await markImagesReadyIfComplete();
+    return;
+  }
   const item = getRoundImage(state.uid);
   if (!item?.blob) throw new Error("送信する画像を取得できませんでした。");
   state.sentImageRounds.add(state.round);
@@ -982,6 +1054,7 @@ async function sendSelectedImage() {
   try {
     const buffer = await item.blob.arrayBuffer();
     for (const connection of state.connections.values()) {
+      if (isForfeited(connection.remoteUid)) continue;
       const channel = connection.channel;
       if (!channel || channel.readyState !== "open") throw new Error("P2P接続が切れています。");
       channel.send(JSON.stringify({ type: "image-start", round: state.round, size: buffer.byteLength, mime: item.blob.type || "image/webp" }));
@@ -1004,19 +1077,21 @@ function waitForDataBuffer(channel) {
 }
 
 async function reactToRoundData() {
-  const memberIds = state.members.map((player) => player.uid);
-  const allReady = (collection) => memberIds.every((uid) => collection?.[uid]);
-  if (state.room?.hostUid === state.uid && allReady(state.roundData.roundReady) && !state.roundData.strategyStartedAt) {
-    await runTransaction(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/strategyStartedAt`), (current) => current === null ? now() : undefined);
+  if (!state.roomId || state.outcome) return;
+  const memberIds = availableMembers().map((player) => player.uid);
+  const participantIds = roundParticipants().map((player) => player.uid);
+  const allReady = (collection, ids = memberIds) => ids.every((uid) => collection?.[uid]);
+  if (allReady(state.roundData.roundReady) && !state.roundData.selectionStartedAt) {
+    await runTransaction(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/selectionStartedAt`), (current) => current === null ? now() : undefined);
     return;
   }
-  if (Number(state.roundData.strategyStartedAt)) startPhaseTimer();
-  if (allReady(state.roundData.picks) && !state.sentImageRounds.has(state.round)) {
+  if (Number(state.roundData.selectionStartedAt)) startPhaseTimer();
+  if (allReady(state.roundData.picks, participantIds) && !state.sentImageRounds.has(state.round)) {
     await sendSelectedImage();
     return;
   }
-  if (state.room?.hostUid === state.uid && allReady(state.roundData.imagesReady) && !state.roundData.scoringStartedAt) {
-    await runTransaction(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/scoringStartedAt`), (current) => current === null ? now() : undefined);
+  if (allReady(state.roundData.imagesReady) && !state.roundData.scoringStartedAt) {
+    await runTransaction(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/scoringStartedAt`), (current) => current === null ? now() : undefined);
     return;
   }
   if (Number(state.roundData.scoringStartedAt)) startScoreTimer();
@@ -1039,25 +1114,18 @@ function startPhaseTimer() {
 }
 
 function updatePhaseTimer() {
-  const startedAt = Number(state.roundData.strategyStartedAt || 0);
+  const startedAt = Number(state.roundData.selectionStartedAt || 0);
   if (!startedAt) return;
   const elapsed = now() - startedAt;
-  if (elapsed < STRATEGY_TIME_MS) {
-    state.timerPhase = "strategy";
-    state.timerRemainingMs = STRATEGY_TIME_MS - elapsed;
-  } else if (elapsed < STRATEGY_TIME_MS + SELECTION_TIME_MS) {
+  if (elapsed < SELECTION_TIME_MS) {
     state.timerPhase = "selection";
-    state.timerRemainingMs = STRATEGY_TIME_MS + SELECTION_TIME_MS - elapsed;
-    if (state.screen === "strategy") {
-      state.screen = "select";
-      render();
-    }
+    state.timerRemainingMs = SELECTION_TIME_MS - elapsed;
   } else {
     state.timerPhase = "expired";
     state.timerRemainingMs = 0;
     if (state.screen === "select" && !state.selectionLocking) autoLockSelection().catch(handleRecoverableError);
   }
-  const timer = document.querySelector("[data-team-timer]");
+  const timer = document.querySelector("[data-royale-timer]");
   if (timer) timer.textContent = String(timerSeconds());
 }
 
@@ -1074,11 +1142,11 @@ function startScoreTimer() {
 
 function updateScoreTimer() {
   const remaining = scoreTimerSeconds();
-  document.querySelectorAll("[data-team-score-timer]").forEach((timer) => { timer.textContent = String(remaining); });
+  document.querySelectorAll("[data-royale-score-timer]").forEach((timer) => { timer.textContent = String(remaining); });
   if (remaining > 0 || state.scoredRounds.has(state.round) || state.scoreLocking) return;
-  const opponents = teamMembers(opponentTeam());
+  const targets = scoreTargets();
   let filled = false;
-  opponents.forEach((player) => {
+  targets.forEach((player) => {
     if (!Number.isInteger(state.selectedScores[player.uid])) {
       state.selectedScores[player.uid] = 5;
       filled = true;
@@ -1095,6 +1163,7 @@ function stopScoreTimer() {
 
 async function lockSelection() {
   if (state.selectionLocking || state.roundSelections.has(state.round)) return;
+  if (!roundParticipants().some((player) => player.uid === state.uid)) return;
   const available = state.deck.filter((item) => !item.used);
   const selected = available.find((item) => item.id === state.selectedCardId);
   if (!selected) return;
@@ -1103,7 +1172,7 @@ async function lockSelection() {
   state.screen = "waitingPick";
   render();
   try {
-    await set(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/picks/${state.uid}`), {
+    await set(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/picks/${state.uid}`), {
       ready: true,
       lockedAt: serverTimestamp(),
     });
@@ -1131,9 +1200,9 @@ async function autoLockSelection() {
 
 async function lockScores() {
   if (state.scoreLocking || state.scoredRounds.has(state.round)) return;
-  const opponents = teamMembers(opponentTeam());
+  const targets = scoreTargets();
   const values = {};
-  for (const player of opponents) {
+  for (const player of targets) {
     const score = Number(state.selectedScores[player.uid]);
     if (!Number.isInteger(score) || score < 1 || score > 10) return;
     values[player.uid] = score;
@@ -1144,12 +1213,12 @@ async function lockScores() {
   state.screen = "waitingScore";
   render();
   try {
-    await set(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/scores/${state.uid}`), {
+    await set(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/scores/${state.uid}`), {
       values,
       lockedAt: serverTimestamp(),
     });
     await recordDailyProgress({
-      scores: opponents.length,
+      scores: targets.length,
       criticals: Object.values(values).some((score) => score >= 8) ? 1 : 0,
     }).catch(() => showToast("ミッション進捗を更新できませんでした。"));
   } catch (error) {
@@ -1165,49 +1234,65 @@ async function lockScores() {
 
 function resolveRound(scores) {
   if (state.processedRounds.has(state.round)) return;
+  const participants = roundParticipants();
+  const voters = availableMembers();
   const images = {};
-  for (const player of state.members) {
-    const voters = state.members.filter((candidate) => candidate.team !== player.team);
-    const votes = voters.map((voter) => Number(scores[voter.uid]?.values?.[player.uid]));
-    if (votes.length !== TEAM_SIZE || votes.some((score) => !Number.isInteger(score) || score < 1 || score > 10)) return;
-    const average = votes.reduce((sum, score) => sum + score, 0) / votes.length;
+  for (const player of participants) {
+    const votes = voters
+      .filter((voter) => voter.uid !== player.uid)
+      .map((voter) => Number(scores[voter.uid]?.values?.[player.uid]));
+    if (!votes.length || votes.some((score) => !Number.isInteger(score) || score < 1 || score > 10)) return;
+    const sorted = [...votes].sort((first, second) => first - second);
+    const middle = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
     images[player.uid] = {
       uid: player.uid,
-      team: player.team,
       votes,
-      average,
-      critical: average >= 8,
+      median,
+      critical: median >= 8,
       perfect: votes.every((score) => score === 10),
     };
   }
 
   state.processedRounds.add(state.round);
-  const teamScores = {};
-  ["A", "B"].forEach((team) => {
-    const teamImages = teamMembers(team).map((player) => images[player.uid]);
-    teamScores[team] = teamImages.reduce((sum, image) => sum + image.average, 0) / teamImages.length;
-    state.teams[team].totalScore += teamScores[team];
-    state.teams[team].criticals += teamImages.filter((image) => image.critical).length;
-    state.teams[team].perfects += teamImages.filter((image) => image.perfect).length;
-  });
-  const localItem = getRoundImage(state.uid);
-  if (localItem) localItem.used = true;
+  if (participants.some((player) => player.uid === state.uid)) {
+    const localItem = getRoundImage(state.uid);
+    if (localItem) localItem.used = true;
+  }
 
-  let winnerTeam = null;
-  let loserTeam = null;
-  let damage = 0;
-  if (teamScores.A > teamScores.B) {
-    winnerTeam = "A";
-    loserTeam = "B";
-  } else if (teamScores.B > teamScores.A) {
-    winnerTeam = "B";
-    loserTeam = "A";
+  const wasTiebreak = state.tiebreakUids.length > 0;
+  const minimum = Math.min(...Object.values(images).map((image) => image.median));
+  const tied = participants.filter((player) => images[player.uid].median === minimum);
+  let eliminatedUid = "";
+  let lottery = false;
+  let fallback = false;
+  if (tied.length === 1) {
+    eliminatedUid = tied[0].uid;
+  } else if (!wasTiebreak && state.round < MAX_ROUNDS) {
+    state.tiebreakUids = tied.map((player) => player.uid);
+  } else {
+    const decision = chooseTiebreakLoser(tied, images);
+    eliminatedUid = decision.uid;
+    lottery = decision.lottery;
+    fallback = true;
   }
-  if (winnerTeam) {
-    damage = Math.round(teamScores[winnerTeam]);
-    state.teams[loserTeam].hp = Math.max(0, state.teams[loserTeam].hp - damage);
+
+  let eliminatedPlace = null;
+  if (eliminatedUid) {
+    eliminatedPlace = alivePlayers().length;
+    eliminatePlayer(eliminatedUid, lottery ? "lottery" : "score");
+    state.tiebreakUids = [];
+    images[eliminatedUid].eliminated = true;
   }
-  const result = { round: state.round, images, teamScores, winnerTeam, loserTeam, damage };
+  const result = {
+    round: state.round,
+    participantUids: stableRoundOrder(participants).map((player) => player.uid),
+    images,
+    eliminatedUid,
+    eliminatedPlace,
+    lottery,
+    fallback,
+  };
   state.history.push(result);
   state.screen = "result";
   render();
@@ -1222,11 +1307,30 @@ function resolveRound(scores) {
   }
 }
 
+function chooseTiebreakLoser(tiedPlayers, currentImages) {
+  const metrics = tiedPlayers.map((player) => {
+    const previous = state.history.map((result) => result.images[player.uid]).filter(Boolean);
+    const entries = [...previous, currentImages[player.uid]];
+    return {
+      uid: player.uid,
+      total: entries.reduce((sum, image) => sum + image.median, 0),
+      criticals: entries.filter((image) => image.critical).length,
+      perfects: entries.filter((image) => image.perfect).length,
+    };
+  }).sort((first, second) => first.total - second.total || first.criticals - second.criticals || first.perfects - second.perfects || first.uid.localeCompare(second.uid));
+  const first = metrics[0];
+  const tiedMetrics = metrics.filter((entry) => entry.total === first.total && entry.criticals === first.criticals && entry.perfects === first.perfects);
+  if (tiedMetrics.length === 1) return { uid: first.uid, lottery: false };
+  const ordered = tiedMetrics.map((entry) => entry.uid).sort();
+  const index = stableHash(`${state.roomId}:lottery:${state.round}:${ordered.join(":")}`) % ordered.length;
+  return { uid: ordered[index], lottery: true };
+}
+
 async function continueRound() {
   if (state.continuedRounds.has(state.round)) return;
   state.screen = "waitingContinue";
   render();
-  await set(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/continue/${state.uid}`), true);
+  await set(ref(database, `online/royaleRooms/${state.roomId}/rounds/${state.round}/continue/${state.uid}`), true);
 }
 
 function advanceRound() {
@@ -1243,76 +1347,65 @@ function advanceRound() {
   state.selectedScores = {};
   state.timerPhase = "waiting";
   state.timerRemainingMs = 0;
-  state.screen = "strategy";
+  state.screen = roundParticipants().some((player) => player.uid === state.uid) ? "select" : "waitingPick";
   listenToRound();
   render();
   announceRoundReady().catch(handleRecoverableError);
 }
 
 function isMatchOver() {
-  return state.teams.A.hp <= 0 || state.teams.B.hp <= 0 || state.round >= MAX_ROUNDS;
+  return alivePlayers().length <= 1;
 }
 
 function determineOutcome() {
-  const first = state.teams.A;
-  const second = state.teams.B;
-  if (first.hp !== second.hp) return { winnerTeam: first.hp > second.hp ? "A" : "B", reason: "hp" };
-  if (first.totalScore !== second.totalScore) return { winnerTeam: first.totalScore > second.totalScore ? "A" : "B", reason: "score" };
-  if (first.criticals !== second.criticals) return { winnerTeam: first.criticals > second.criticals ? "A" : "B", reason: "critical" };
-  if (first.perfects !== second.perfects) return { winnerTeam: first.perfects > second.perfects ? "A" : "B", reason: "perfect" };
-  return { winnerTeam: null, reason: "draw" };
+  return { winnerUid: alivePlayers()[0]?.uid || "", reason: "last-survivor" };
 }
 
 async function finishMatch() {
   if (state.outcome) return;
   state.outcome = determineOutcome();
   await Promise.all([
-    commitTeamStats(),
+    commitRoyaleStats(),
     recordDailyProgress({ matches: 1 }).catch(() => showToast("ミッション進捗を更新できませんでした。")),
-    set(ref(database, `online/teamRooms/${state.roomId}/finished/${state.uid}`), true),
+    set(ref(database, `online/royaleRooms/${state.roomId}/finished/${state.uid}`), true),
   ]);
   state.screen = "gameover";
-  setTeamChrome("2ON2 COMPLETE");
+  setRoyaleChrome("ROYALE COMPLETE");
   render();
 }
 
-function calculateRating(currentRating, opponentRating, actualScore) {
-  const expectedScore = 1 / (1 + (10 ** ((opponentRating - currentRating) / 400)));
-  return Math.min(3000, Math.max(100, Math.round(currentRating + RATING_K_FACTOR * (actualScore - expectedScore))));
+async function commitRoyaleStats() {
+  if (state.statsCommitted) return;
+  const won = state.outcome.winnerUid === state.uid;
+  const localPlace = won ? 1 : Number(state.eliminated[state.uid]?.place || 4);
+  await commitPlacementStats(localPlace, won);
 }
 
-async function commitTeamStats() {
+async function commitPlacementStats(localPlace, won) {
   if (state.statsCommitted) return;
   state.statsCommitted = true;
-  const draw = state.outcome.winnerTeam === null;
-  const won = state.outcome.winnerTeam === state.team;
-  const opponentPlayers = teamMembers(opponentTeam());
-  const opponentRating = opponentPlayers.reduce((sum, player) => sum + Number(player.rating || INITIAL_RATING), 0) / opponentPlayers.length;
-  const actualScore = draw ? 0.5 : won ? 1 : 0;
-  const result = await runTransaction(ref(database, `online/teamProfiles/${state.uid}`), (current) => {
+  const result = await runTransaction(ref(database, `online/royaleProfiles/${state.uid}`), (current) => {
     const record = {
       name: state.name,
       wins: Number(current?.wins || 0),
-      losses: Number(current?.losses || 0),
-      draws: Number(current?.draws || 0),
+      topTwo: Number(current?.topTwo || 0),
+      matches: Number(current?.matches || 0),
       streak: Number(current?.streak || 0),
       bestStreak: Number(current?.bestStreak || 0),
-      rating: Number(current?.rating || INITIAL_RATING),
       updatedAt: now(),
     };
-    if (draw) record.draws += 1;
-    else if (won) {
+    record.matches += 1;
+    if (localPlace <= 2) record.topTwo += 1;
+    if (won) {
       record.wins += 1;
       record.streak += 1;
       record.bestStreak = Math.max(record.bestStreak, record.streak);
     } else {
-      record.losses += 1;
       record.streak = 0;
     }
-    record.rating = calculateRating(record.rating, opponentRating, actualScore);
     return record;
   });
-  if (result.committed) state.teamProfile = result.snapshot.val();
+  if (result.committed) state.royaleProfile = result.snapshot.val();
 }
 
 async function recordDailyProgress(changes) {
@@ -1336,22 +1429,10 @@ async function recordDailyProgress(changes) {
   if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
 
-async function sendTeamChat(value) {
-  const text = String(value || "").trim().slice(0, 80);
-  if (!text || !state.roomId || !state.team) return;
-  await set(push(ref(database, `online/teamChats/${state.roomId}/${state.team}`)), {
-    authorUid: state.uid,
-    name: state.name,
-    text,
-    round: state.round,
-    createdAt: serverTimestamp(),
-  }).catch(() => showToast("チームチャットを送信できませんでした。"));
-}
-
 async function sendAllChat(value) {
   const text = String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return;
-  await set(push(ref(database, `online/teamRooms/${state.roomId}/chat`)), {
+  await set(push(ref(database, `online/royaleRooms/${state.roomId}/chat`)), {
     authorUid: state.uid,
     name: state.name,
     text,
@@ -1361,15 +1442,13 @@ async function sendAllChat(value) {
 }
 
 function refreshChats() {
-  const teamList = document.querySelector("#teamChatMessages");
-  if (teamList) teamList.innerHTML = renderMessages(state.teamChatMessages, "相方と画像の方向性を相談しましょう。");
-  const allList = document.querySelector("#teamAllChatMessages");
+  const allList = document.querySelector("#royaleAllChatMessages");
   if (allList) allList.innerHTML = renderMessages(state.allChatMessages, "公開された画像について4人で話してみましょう。");
   scrollChats();
 }
 
 function scrollChats() {
-  ["#teamChatMessages", "#teamAllChatMessages"].forEach((selector) => {
+  ["#royaleAllChatMessages"].forEach((selector) => {
     const list = document.querySelector(selector);
     if (list) list.scrollTop = list.scrollHeight;
   });
@@ -1383,44 +1462,40 @@ function triggerCriticalFx(text) {
 
 function requestHome() {
   if (["setup", "matching", "gameover", "noContest", "error"].includes(state.screen)) leaveToLanding();
-  else destroyDialog.showModal();
+  else {
+    configureExitDialog();
+    destroyDialog.showModal();
+  }
 }
 
 async function destroyRoom() {
-  if (!active) return;
+  if (!active || state.leaving) return;
+  state.leaving = true;
   const targetRoomId = state.roomId || state.pendingRoomId;
-  if (targetRoomId) {
-    await runTransaction(ref(database, `online/teamRooms/${targetRoomId}/destroyed`), (current) => current || {
-      by: state.uid,
-      at: Date.now(),
-      reason: "user",
-    }).catch(() => {});
-    if (!state.roomId && state.room?.hostUid === state.uid) {
-      await runTransaction(ref(database, `online/teamRooms/${targetRoomId}/status`), (current) => current === "forming" ? "expired" : undefined).catch(() => {});
+  if (state.roomId) {
+    const place = Number(state.eliminated[state.uid]?.place || alivePlayers().length);
+    if (!state.eliminated[state.uid]) eliminatePlayer(state.uid, "forfeit");
+    await Promise.allSettled([
+      runTransaction(ref(database, `online/royaleRooms/${state.roomId}/forfeits/${state.uid}`), (current) => current || { by: state.uid, at: Date.now(), reason: "user" }),
+      commitPlacementStats(place, false),
+    ]);
+  } else if (targetRoomId) {
+    if (state.room?.hostUid === state.uid) {
+      await runTransaction(ref(database, `online/royaleRooms/${targetRoomId}/status`), (current) => current === "forming" ? "expired" : undefined).catch(() => {});
     }
   }
   await cleanupRoomResources(false);
   releaseAllImages();
   active = false;
   window.HariaiApp?.returnHome();
-  showToast("2on2ルームを破棄しました。戦績には影響しません。");
-}
-
-async function handleDestroyedRoom() {
-  if (state.screen === "noContest") return;
-  state.destroyed = true;
-  await cleanupRoomResources(false);
-  releaseAllImages();
-  state.screen = "noContest";
-  setTeamChrome("NO CONTEST");
-  render();
+  showToast(state.roomId ? "バトルロワイヤルから退出しました。" : "参加を取り消しました。");
 }
 
 async function cancelMatching() {
   await cleanupMatchmaking(false);
   await cleanupPublicPresence();
   state.screen = "setup";
-  setTeamChrome("2ON2 READY");
+  setRoyaleChrome("BATTLE ROYALE READY");
   render();
 }
 
@@ -1430,7 +1505,7 @@ async function resetSetup() {
     name: state.name,
     authReady: state.authReady,
     profile: state.profile,
-    teamProfile: state.teamProfile,
+    royaleProfile: state.royaleProfile,
     economy: state.economy,
     serverTimeOffset: state.serverTimeOffset,
   };
@@ -1439,7 +1514,7 @@ async function resetSetup() {
   state = createState();
   Object.assign(state, identity);
   state.screen = "setup";
-  setTeamChrome("2ON2 READY");
+  setRoyaleChrome("BATTLE ROYALE READY");
   render();
 }
 
@@ -1450,7 +1525,7 @@ async function retryConnection() {
   state = createState();
   state.name = savedName;
   state.screen = "setup";
-  setTeamChrome("CONNECTING");
+  setRoyaleChrome("CONNECTING");
   render();
   await ensureAuthenticated().catch(handleFatalError);
 }
@@ -1471,14 +1546,14 @@ async function cleanupMatchmaking(keepActive) {
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
   if (!state.uid) return;
   const removals = [
-    remove(ref(database, `online/teamQueue/${state.uid}`)),
-    remove(ref(database, `online/teamInvites/${state.uid}`)),
+    remove(ref(database, `online/royaleQueue/${state.uid}`)),
+    remove(ref(database, `online/royaleInvites/${state.uid}`)),
   ];
-  if (!keepActive) removals.push(remove(ref(database, `online/teamActive/${state.uid}`)));
-  if (!keepActive && state.pendingRoomId) removals.push(remove(ref(database, `online/teamRooms/${state.pendingRoomId}/accepted/${state.uid}`)));
+  if (!keepActive) removals.push(remove(ref(database, `online/royaleActive/${state.uid}`)));
+  if (!keepActive && state.pendingRoomId) removals.push(remove(ref(database, `online/royaleRooms/${state.pendingRoomId}/accepted/${state.uid}`)));
   if (state.room?.hostUid === state.uid && state.pendingRoomId) {
     Object.keys(state.room.members || {}).forEach((uid) => {
-      if (uid !== state.uid) removals.push(remove(ref(database, `online/teamInvites/${uid}/${state.pendingRoomId}`)));
+      if (uid !== state.uid) removals.push(remove(ref(database, `online/royaleInvites/${uid}/${state.pendingRoomId}`)));
     });
   }
   await Promise.allSettled(removals);
@@ -1504,8 +1579,8 @@ async function cleanupRoomResources(keepActive) {
   state.connections.clear();
   if (state.roomId) {
     await Promise.allSettled([
-      set(ref(database, `online/teamRooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
-      keepActive ? Promise.resolve() : remove(ref(database, `online/teamActive/${state.uid}`)),
+      set(ref(database, `online/royaleRooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
+      keepActive ? Promise.resolve() : remove(ref(database, `online/royaleActive/${state.uid}`)),
     ]);
   }
 }
@@ -1526,26 +1601,25 @@ function releaseAllImages() {
   });
   state.remoteImages.forEach((rounds) => rounds.forEach((item) => item.url && URL.revokeObjectURL(item.url)));
   state.remoteImages.clear();
-  state.teamChatMessages = [];
   state.allChatMessages = [];
 }
 
 function handleRecoverableError(error) {
   console.error(error);
-  showToast(error?.message || "2on2通信処理に失敗しました。");
+  showToast(error?.message || "バトルロワイヤル通信処理に失敗しました。");
 }
 
 function handleFatalError(error) {
   console.error(error);
   state.errorMessage = friendlyFirebaseError(error);
   state.screen = "error";
-  setTeamChrome("CONNECTION ERROR");
+  setRoyaleChrome("CONNECTION ERROR");
   render();
 }
 
 function friendlyFirebaseError(error) {
   if (error?.code === "auth/admin-restricted-operation") return "Firebaseの匿名ログインが無効です。Authentication設定を確認してください。";
-  if (error?.code === "PERMISSION_DENIED" || String(error?.message).includes("PERMISSION_DENIED")) return "Realtime Databaseの2on2用セキュリティルールにより接続が拒否されました。";
+  if (error?.code === "PERMISSION_DENIED" || String(error?.message).includes("PERMISSION_DENIED")) return "Realtime Databaseのバトルロワイヤル用セキュリティルールにより接続が拒否されました。";
   return error?.message || "Firebaseへ接続できませんでした。";
 }
 
@@ -1554,5 +1628,5 @@ window.addEventListener("beforeunload", () => {
   state.connections.forEach((connection) => connection.peer.close());
 });
 
-window.HariaiTeam = { start, isActive, requestHome, destroyRoom };
-window.dispatchEvent(new Event("hariai-team-ready"));
+window.HariaiRoyale = { start, isActive, requestHome, destroyRoom };
+window.dispatchEvent(new Event("hariai-royale-ready"));
