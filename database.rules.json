@@ -7,7 +7,10 @@
         ".read": true,
         "$sessionId": {
           ".write": "auth != null && root.child('online/publicPresenceOwners/' + $sessionId).val() === auth.uid",
-          ".validate": "!newData.exists() || (newData.hasChildren(['state', 'lastSeen']) && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'playing') && newData.child('lastSeen').isNumber())",
+          ".validate": "!newData.exists() || (newData.hasChildren(['state', 'lastSeen']) && (!newData.child('mode').exists() || newData.child('mode').val() === 'solo' || newData.child('mode').val() === 'team' || newData.child('mode').val() === 'royale') && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'playing') && newData.child('lastSeen').isNumber())",
+          "mode": {
+            ".validate": "newData.val() === 'solo' || newData.val() === 'team' || newData.val() === 'royale'"
+          },
           "state": {
             ".validate": "newData.val() === 'waiting' || newData.val() === 'playing'"
           },

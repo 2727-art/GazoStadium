@@ -620,7 +620,7 @@ async function startPublicPresence() {
   const presenceId = push(ref(database, "online/publicPresence")).key;
   if (!presenceId) throw new Error("参加状況を登録できませんでした。");
   await set(ref(database, `online/publicPresenceOwners/${presenceId}`), state.uid);
-  await set(ref(database, `online/publicPresence/${presenceId}`), { state: "waiting", lastSeen: Date.now() });
+  await writePublicPresence(ref(database, `online/publicPresence/${presenceId}`), "royale", "waiting");
   const disconnect = onDisconnect(ref(database, `online/publicPresence/${presenceId}`));
   await disconnect.remove();
   state.publicPresenceId = presenceId;
@@ -628,14 +628,25 @@ async function startPublicPresence() {
   state.publicPresenceDisconnect = disconnect;
   state.publicPresenceHeartbeat = window.setInterval(() => {
     if (!state.publicPresenceId) return;
-    update(ref(database, `online/publicPresence/${state.publicPresenceId}`), { state: state.publicPresenceState, lastSeen: Date.now() }).catch(() => {});
+    writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), "royale", state.publicPresenceState).catch(() => {});
   }, HEARTBEAT_MS);
 }
 
 async function updatePublicPresence(nextState) {
   if (!state.publicPresenceId) return;
   state.publicPresenceState = nextState;
-  await update(ref(database, `online/publicPresence/${state.publicPresenceId}`), { state: nextState, lastSeen: Date.now() });
+  await writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), "royale", nextState);
+}
+
+async function writePublicPresence(presenceRef, mode, presenceState) {
+  const lastSeen = Date.now();
+  try {
+    await set(presenceRef, { mode, state: presenceState, lastSeen });
+  } catch (error) {
+    const detail = `${error?.code || ""} ${error?.message || ""}`.toLowerCase();
+    if (!detail.includes("permission_denied") && !detail.includes("permission-denied")) throw error;
+    await set(presenceRef, { state: presenceState, lastSeen });
+  }
 }
 
 async function cleanupPublicPresence() {

@@ -317,7 +317,7 @@ button:disabled {
   margin-top: 32px;
 }
 
-.lobby-stats {
+.mode-lobby-stats {
   max-width: 650px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -325,39 +325,87 @@ button:disabled {
   margin-top: 22px;
 }
 
-.lobby-stats > div {
-  min-height: 92px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-content: center;
-  gap: 4px 10px;
+.lobby-mode-card {
+  min-width: 0;
+  min-height: 126px;
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.035);
 }
 
-.lobby-stats span {
-  align-self: end;
-  color: var(--cyan);
-  font-size: 0.62rem;
-  font-weight: 900;
-  letter-spacing: 0.14em;
+.lobby-mode-card.team {
+  border-color: rgba(0, 229, 255, 0.26);
 }
 
-.lobby-stats strong {
-  grid-row: 1 / span 2;
-  grid-column: 2;
-  align-self: center;
+.lobby-mode-card.royale {
+  border-color: rgba(176, 95, 255, 0.34);
+  background: linear-gradient(145deg, rgba(176, 95, 255, 0.08), rgba(255, 255, 255, 0.025));
+}
+
+.lobby-mode-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.lobby-mode-head span {
+  color: var(--cyan);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.11em;
+}
+
+.lobby-mode-card.royale .lobby-mode-head span {
+  color: #c48bff;
+  font-size: 0.62rem;
+}
+
+.lobby-mode-head small {
+  color: #727b90;
+  font-size: 0.52rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.lobby-mode-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.lobby-mode-counts > div + div {
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.lobby-mode-counts small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.lobby-mode-counts strong {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-top: 5px;
   color: var(--text);
-  font-size: 2rem;
+  font-size: 1.65rem;
   line-height: 1;
 }
 
-.lobby-stats small {
+.lobby-mode-counts em {
   color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 800;
+  font-size: 0.6rem;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .lobby-privacy {
@@ -2407,12 +2455,12 @@ button:disabled {
     gap: 42px;
   }
 
-  .lobby-stats {
+  .mode-lobby-stats {
     grid-template-columns: 1fr;
   }
 
-  .lobby-stats > div {
-    min-height: 66px;
+  .lobby-mode-card {
+    min-height: 0;
   }
 
   .ranking-row {

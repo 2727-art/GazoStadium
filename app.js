@@ -47,7 +47,11 @@
   }
 
   function renderLanding() {
-    const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || { online: null, waiting: null, playing: null };
+    const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
+    const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
+    const soloStats = modeStats("solo");
+    const teamStats = modeStats("team");
+    const royaleStats = modeStats("royale");
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
@@ -65,10 +69,19 @@
           <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
         </div>
-        <div class="lobby-stats" aria-label="オンライン対戦の参加状況">
-          <div><span>ONLINE</span><strong id="lobbyOnlineCount">${statValue(lobbyStats.online)}</strong><small>オンライン参加者</small></div>
-          <div><span>WAITING</span><strong id="lobbyWaitingCount">${statValue(lobbyStats.waiting)}</strong><small>対戦待機中</small></div>
-          <div><span>IN BATTLE</span><strong id="lobbyPlayingCount">${statValue(lobbyStats.playing)}</strong><small>対戦中</small></div>
+        <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
+          <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>1ON1</span><small>SOLO BATTLE</small></div><div class="lobby-mode-counts">
+            <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
+            <div><small>対戦中</small><strong><span id="lobbySoloPlayingCount">${statValue(soloStats.playing)}</span><em>人</em></strong></div>
+          </div></article>
+          <article class="lobby-mode-card team"><div class="lobby-mode-head"><span>2ON2</span><small>TEAM BATTLE</small></div><div class="lobby-mode-counts">
+            <div><small>待機中</small><strong><span id="lobbyTeamWaitingCount">${statValue(teamStats.waiting)}</span><em>人</em></strong></div>
+            <div><small>対戦中</small><strong><span id="lobbyTeamPlayingCount">${statValue(teamStats.playing)}</span><em>人</em></strong></div>
+          </div></article>
+          <article class="lobby-mode-card royale"><div class="lobby-mode-head"><span>BATTLE ROYALE</span><small>4 PLAYER</small></div><div class="lobby-mode-counts">
+            <div><small>待機中</small><strong><span id="lobbyRoyaleWaitingCount">${statValue(royaleStats.waiting)}</span><em>人</em></strong></div>
+            <div><small>対戦中</small><strong><span id="lobbyRoyalePlayingCount">${statValue(royaleStats.playing)}</span><em>人</em></strong></div>
+          </div></article>
         </div>
         <p class="lobby-privacy">トップページの閲覧者は含みません。表示名・匿名UID・ルーム情報は公開しません。</p>
         <p class="mode-note">画像は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>

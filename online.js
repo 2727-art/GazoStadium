@@ -64,7 +64,9 @@ const fxLayer = document.querySelector("#fxLayer");
 let active = false;
 let state = createOnlineState();
 let lobbyPresenceEntries = {};
-let lobbyStats = { online: null, waiting: null, playing: null };
+const LOBBY_MODES = ["solo", "team", "royale"];
+const createLobbyStats = (value = null) => Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }]));
+let lobbyStats = createLobbyStats();
 let leaderboardEntries = [];
 
 function createOnlineState() {
@@ -224,7 +226,7 @@ function isActive() {
 }
 
 function getLobbyStats() {
-  return { ...lobbyStats };
+  return Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }]));
 }
 
 function getLeaderboard() {
@@ -234,15 +236,21 @@ function getLeaderboard() {
 function refreshLobbyStats() {
   const freshAfter = Date.now() - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries).filter((entry) => (
-    Number(entry?.lastSeen) >= freshAfter && (entry?.state === "waiting" || entry?.state === "playing")
+    Number(entry?.lastSeen) >= freshAfter
+    && LOBBY_MODES.includes(entry?.mode)
+    && (entry?.state === "waiting" || entry?.state === "playing")
   ));
-  const waiting = entries.filter((entry) => entry.state === "waiting").length;
-  const playing = entries.filter((entry) => entry.state === "playing").length;
-  lobbyStats = { online: waiting + playing, waiting, playing };
+  lobbyStats = createLobbyStats(0);
+  entries.forEach((entry) => {
+    lobbyStats[entry.mode][entry.state] += 1;
+  });
   const values = {
-    lobbyOnlineCount: lobbyStats.online,
-    lobbyWaitingCount: lobbyStats.waiting,
-    lobbyPlayingCount: lobbyStats.playing,
+    lobbySoloWaitingCount: lobbyStats.solo.waiting,
+    lobbySoloPlayingCount: lobbyStats.solo.playing,
+    lobbyTeamWaitingCount: lobbyStats.team.waiting,
+    lobbyTeamPlayingCount: lobbyStats.team.playing,
+    lobbyRoyaleWaitingCount: lobbyStats.royale.waiting,
+    lobbyRoyalePlayingCount: lobbyStats.royale.playing,
   };
   Object.entries(values).forEach(([id, value]) => {
     const element = document.querySelector(`#${id}`);
@@ -256,7 +264,7 @@ function watchLobbyStats() {
     refreshLobbyStats();
   }, () => {
     lobbyPresenceEntries = {};
-    lobbyStats = { online: null, waiting: null, playing: null };
+    lobbyStats = createLobbyStats();
   });
   window.setInterval(refreshLobbyStats, 10_000);
 }
@@ -1099,7 +1107,7 @@ async function startPublicPresence() {
   const ownerRef = ref(database, `online/publicPresenceOwners/${presenceId}`);
   const presenceRef = ref(database, `online/publicPresence/${presenceId}`);
   await set(ownerRef, state.uid);
-  await set(presenceRef, { state: "waiting", lastSeen: Date.now() });
+  await writePublicPresence(presenceRef, "solo", "waiting");
   const presenceDisconnect = onDisconnect(presenceRef);
   await presenceDisconnect.remove();
   state.publicPresenceId = presenceId;
@@ -1107,20 +1115,25 @@ async function startPublicPresence() {
   state.publicPresenceDisconnect = presenceDisconnect;
   state.publicPresenceHeartbeat = window.setInterval(() => {
     if (!state.publicPresenceId) return;
-    update(ref(database, `online/publicPresence/${state.publicPresenceId}`), {
-      state: state.publicPresenceState,
-      lastSeen: Date.now(),
-    }).catch(() => {});
+    writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), "solo", state.publicPresenceState).catch(() => {});
   }, PUBLIC_PRESENCE_HEARTBEAT_MS);
 }
 
 async function updatePublicPresence(nextState) {
   if (!state.publicPresenceId) return;
   state.publicPresenceState = nextState;
-  await update(ref(database, `online/publicPresence/${state.publicPresenceId}`), {
-    state: nextState,
-    lastSeen: Date.now(),
-  });
+  await writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), "solo", nextState);
+}
+
+async function writePublicPresence(presenceRef, mode, presenceState) {
+  const lastSeen = Date.now();
+  try {
+    await set(presenceRef, { mode, state: presenceState, lastSeen });
+  } catch (error) {
+    const detail = `${error?.code || ""} ${error?.message || ""}`.toLowerCase();
+    if (!detail.includes("permission_denied") && !detail.includes("permission-denied")) throw error;
+    await set(presenceRef, { state: presenceState, lastSeen });
+  }
 }
 
 async function cleanupPublicPresence() {
