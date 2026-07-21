@@ -26,11 +26,63 @@
           ".validate": "!newData.exists() || newData.isString()"
         }
       },
+      "leaderboard": {
+        ".read": true,
+        ".indexOn": ["rating"],
+        "$entryId": {
+          ".write": "auth != null && root.child('online/leaderboardOwners/' + $entryId).val() === auth.uid",
+          ".validate": "!newData.exists() || newData.hasChildren(['name', 'rating', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'updatedAt'])",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+          },
+          "rating": {
+            ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+          },
+          "wins": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "losses": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "draws": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "streak": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "bestStreak": {
+            ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('streak').val()"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "leaderboardOwners": {
+        "$entryId": {
+          ".read": "auth != null && data.val() === auth.uid",
+          ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && newData.val() === auth.uid))",
+          ".validate": "newData.isString()"
+        }
+      },
+      "leaderboardEntriesByUser": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.isString() && root.child('online/leaderboardOwners/' + newData.val()).val() === auth.uid) || (data.exists() && newData.val() === data.val()))",
+          ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 40"
+        }
+      },
       "queue": {
         ".read": "auth != null",
         "$uid": {
           ".write": "auth != null && auth.uid === $uid",
-          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'streak', 'joinedAt', 'lastSeen', 'state']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('lastSeen').isNumber() && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'offering'))"
+          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'streak', 'joinedAt', 'lastSeen', 'state']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('lastSeen').isNumber() && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'offering'))",
+          "rating": {
+            ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+          }
         }
       },
       "active": {
@@ -53,7 +105,10 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid",
-          ".validate": "newData.hasChildren(['name', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('wins').isNumber() && newData.child('wins').val() >= 0 && newData.child('losses').isNumber() && newData.child('losses').val() >= 0 && newData.child('draws').isNumber() && newData.child('draws').val() >= 0 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('bestStreak').isNumber() && newData.child('bestStreak').val() >= newData.child('streak').val() && newData.child('updatedAt').isNumber()"
+          ".validate": "newData.hasChildren(['name', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('wins').isNumber() && newData.child('wins').val() >= 0 && newData.child('losses').isNumber() && newData.child('losses').val() >= 0 && newData.child('draws').isNumber() && newData.child('draws').val() >= 0 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('bestStreak').isNumber() && newData.child('bestStreak').val() >= newData.child('streak').val() && newData.child('updatedAt').isNumber()",
+          "rating": {
+            ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+          }
         }
       },
       "rooms": {
@@ -80,7 +135,10 @@
           "players": {
             "$uid": {
               ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['uid', 'name', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0"
+              ".validate": "newData.hasChildren(['uid', 'name', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
+              "rating": {
+                ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+              }
             }
           },
           "status": {

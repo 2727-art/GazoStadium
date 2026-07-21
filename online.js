@@ -12,6 +12,7 @@ import {
   onChildAdded,
   onDisconnect,
   onValue,
+  orderByChild,
   push,
   query,
   ref,
@@ -26,6 +27,9 @@ import { firebaseConfig } from "./firebase-config.js";
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
+const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
+const INITIAL_RATING = 1000;
+const RATING_K_FACTOR = 32;
 const MATCH_TIMEOUT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
@@ -43,13 +47,14 @@ let active = false;
 let state = createOnlineState();
 let lobbyPresenceEntries = {};
 let lobbyStats = { online: null, waiting: null, playing: null };
+let leaderboardEntries = [];
 
 function createOnlineState() {
   return {
     screen: "setup",
     uid: "",
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
-    profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0 },
+    profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
     authReady: false,
     deck: [],
     roomId: "",
@@ -81,6 +86,8 @@ function createOnlineState() {
     publicPresenceState: "",
     publicPresenceHeartbeat: null,
     publicPresenceDisconnect: null,
+    leaderboardId: "",
+    leaderboardPublic: localStorage.getItem(RANKING_PUBLIC_KEY) === "1",
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -126,6 +133,10 @@ function getLobbyStats() {
   return { ...lobbyStats };
 }
 
+function getLeaderboard() {
+  return leaderboardEntries.map((entry) => ({ ...entry }));
+}
+
 function refreshLobbyStats() {
   const freshAfter = Date.now() - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries).filter((entry) => (
@@ -156,6 +167,24 @@ function watchLobbyStats() {
   window.setInterval(refreshLobbyStats, 10_000);
 }
 
+function watchLeaderboard() {
+  const leaderboardQuery = query(ref(database, "online/leaderboard"), orderByChild("rating"), limitToLast(50));
+  onValue(leaderboardQuery, (snapshot) => {
+    leaderboardEntries = Object.values(snapshot.val() || {})
+      .filter((entry) => entry?.name && Number.isFinite(Number(entry.rating)))
+      .sort((first, second) => (
+        Number(second.rating) - Number(first.rating)
+        || Number(second.wins || 0) - Number(first.wins || 0)
+        || Number(second.bestStreak || 0) - Number(first.bestStreak || 0)
+        || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
+      ));
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  }, () => {
+    leaderboardEntries = [];
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  });
+}
+
 async function ensureAuthenticated() {
   await setPersistence(auth, browserLocalPersistence);
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
@@ -169,6 +198,7 @@ async function ensureAuthenticated() {
   state.authReady = true;
   setOnlineChrome("ONLINE READY");
   render();
+  if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
 }
 
 function setOnlineChrome(label) {
@@ -226,9 +256,14 @@ function renderSetup() {
     </div>
     <div class="online-profile-strip">
       <span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
+      <span>RATE ${Number(profile.rating || INITIAL_RATING)}</span>
       <span>戦績 ${profile.wins}勝 ${profile.losses}敗 ${profile.draws}分</span>
       <span>🔥 ${profile.streak}連勝中 / 最高${profile.bestStreak}</span>
     </div>
+    <label class="ranking-optin">
+      <input type="checkbox" id="rankingPublicToggle" ${state.leaderboardPublic ? "checked" : ""} ${state.authReady ? "" : "disabled"} />
+      <span><strong>ランキングに参加する</strong><small>プレイヤーネーム・レート・戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
+    </label>
     <div class="setup-layout">
       <aside class="setup-guide">
         <h2>オンライン画像の取り扱い</h2>
@@ -479,6 +514,7 @@ function bindScreenEvents() {
 
 function bindSetupEvents() {
   document.querySelector("#onlineBackHome")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#rankingPublicToggle")?.addEventListener("change", updateRankingPreference);
   const nameInput = document.querySelector("#onlinePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
@@ -548,6 +584,73 @@ async function fillSampleDeck() {
   render();
 }
 
+async function updateRankingPreference(event) {
+  const enabled = event.currentTarget.checked;
+  state.leaderboardPublic = enabled;
+  localStorage.setItem(RANKING_PUBLIC_KEY, enabled ? "1" : "0");
+  try {
+    if (enabled) {
+      await syncLeaderboardEntry();
+      showToast("ランキングへの参加を有効にしました。");
+    } else {
+      await removeLeaderboardEntry();
+      showToast("ランキングから非公開にしました。");
+    }
+  } catch {
+    state.leaderboardPublic = !enabled;
+    localStorage.setItem(RANKING_PUBLIC_KEY, state.leaderboardPublic ? "1" : "0");
+    render();
+    showToast("ランキング設定を更新できませんでした。");
+  }
+}
+
+async function ensureLeaderboardIdentity() {
+  if (state.leaderboardId) return state.leaderboardId;
+  const userEntryRef = ref(database, `online/leaderboardEntriesByUser/${state.uid}`);
+  const existing = await get(userEntryRef);
+  if (existing.exists()) {
+    state.leaderboardId = String(existing.val());
+    return state.leaderboardId;
+  }
+  const entryId = push(ref(database, "online/leaderboard")).key;
+  if (!entryId) throw new Error("ランキングIDを作成できませんでした。");
+  await set(ref(database, `online/leaderboardOwners/${entryId}`), state.uid);
+  await set(userEntryRef, entryId);
+  state.leaderboardId = entryId;
+  return entryId;
+}
+
+function leaderboardRecord() {
+  return {
+    name: state.name.trim().slice(0, 16) || "PLAYER",
+    rating: Number(state.profile.rating || INITIAL_RATING),
+    wins: Number(state.profile.wins || 0),
+    losses: Number(state.profile.losses || 0),
+    draws: Number(state.profile.draws || 0),
+    streak: Number(state.profile.streak || 0),
+    bestStreak: Number(state.profile.bestStreak || 0),
+    updatedAt: Date.now(),
+  };
+}
+
+async function syncLeaderboardEntry() {
+  if (!state.authReady || !state.uid || !state.leaderboardPublic) return;
+  const entryId = await ensureLeaderboardIdentity();
+  await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord());
+}
+
+async function removeLeaderboardEntry() {
+  if (!state.authReady || !state.uid) return;
+  let entryId = state.leaderboardId;
+  if (!entryId) {
+    const existing = await get(ref(database, `online/leaderboardEntriesByUser/${state.uid}`));
+    entryId = existing.exists() ? String(existing.val()) : "";
+  }
+  if (!entryId) return;
+  state.leaderboardId = entryId;
+  await remove(ref(database, `online/leaderboard/${entryId}`));
+}
+
 function removeDeckItem(id) {
   const item = state.deck.find((candidate) => candidate.id === id);
   if (item?.url) URL.revokeObjectURL(item.url);
@@ -560,6 +663,7 @@ async function beginMatchmaking() {
   state.name = state.name.trim().slice(0, 16);
   if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name) return;
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
+  if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
   state.screen = "matching";
   setOnlineChrome("MATCHING");
   render();
@@ -579,6 +683,7 @@ async function beginMatchmaking() {
     uid: state.uid,
     name: state.name,
     streak: Number(state.profile.streak || 0),
+    rating: Number(state.profile.rating || INITIAL_RATING),
     joinedAt: Date.now(),
     lastSeen: Date.now(),
     state: "waiting",
@@ -687,8 +792,8 @@ async function createOffer(candidate) {
       status: "offered",
       [`members/${state.uid}`]: true,
       [`members/${candidate.uid}`]: true,
-      [`players/${state.uid}`]: { uid: state.uid, name: state.name, streak: Number(state.profile.streak || 0) },
-      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, streak: Number(candidate.streak || 0) },
+      [`players/${state.uid}`]: { uid: state.uid, name: state.name, streak: Number(state.profile.streak || 0), rating: Number(state.profile.rating || INITIAL_RATING) },
+      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING) },
     });
     await set(ref(database, `online/offers/${candidate.uid}/${roomId}`), {
       roomId,
@@ -1100,11 +1205,18 @@ async function finishOnlineMatch() {
   render();
 }
 
+function calculateRating(currentRating, opponentRating, actualScore) {
+  const expectedScore = 1 / (1 + (10 ** ((opponentRating - currentRating) / 400)));
+  return Math.min(3000, Math.max(100, Math.round(currentRating + RATING_K_FACTOR * (actualScore - expectedScore))));
+}
+
 async function commitOnlineStats() {
   if (state.statsCommitted) return;
   state.statsCommitted = true;
   const myWon = state.outcome.winnerIndex === state.playerIndex;
   const draw = state.outcome.winnerIndex === null;
+  const opponentRating = Number(getOpponent()?.rating || INITIAL_RATING);
+  const actualScore = draw ? 0.5 : myWon ? 1 : 0;
   const result = await runTransaction(ref(database, `online/profiles/${state.uid}`), (current) => {
     const record = {
       name: state.name,
@@ -1113,14 +1225,19 @@ async function commitOnlineStats() {
       draws: Number(current?.draws || 0),
       streak: Number(current?.streak || 0),
       bestStreak: Number(current?.bestStreak || 0),
+      rating: Number(current?.rating || INITIAL_RATING),
       updatedAt: Date.now(),
     };
     if (draw) record.draws += 1;
     else if (myWon) { record.wins += 1; record.streak += 1; record.bestStreak = Math.max(record.bestStreak, record.streak); }
     else { record.losses += 1; record.streak = 0; }
+    record.rating = calculateRating(record.rating, opponentRating, actualScore);
     return record;
   });
   if (result.committed) state.profile = result.snapshot.val();
+  if (result.committed && state.leaderboardPublic) {
+    await syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
+  }
   state.players.forEach((player, index) => {
     if (draw) return;
     player.streak = state.outcome.winnerIndex === index ? Number(player.streak || 0) + 1 : 0;
@@ -1308,6 +1425,7 @@ window.addEventListener("beforeunload", () => {
 });
 
 watchLobbyStats();
+watchLeaderboard();
 
-window.HariaiOnline = { start, isActive, requestHome, destroyRoom, getLobbyStats };
+window.HariaiOnline = { start, isActive, requestHome, destroyRoom, getLobbyStats, getLeaderboard };
 window.dispatchEvent(new Event("hariai-online-ready"));

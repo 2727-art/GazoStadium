@@ -9,6 +9,7 @@
   const toast = document.querySelector("#toast");
   const destroyDialog = document.querySelector("#destroyDialog");
   let toastTimer = null;
+  let currentScreen = "landing";
 
   const sampleThemes = [
     ["#142a25", "#66d18f", "#f4c96b"],
@@ -58,6 +59,7 @@
         </p>
         <div class="hero-actions">
           <button class="button button-primary" id="onlineButton">オンライン対戦を始める</button>
+          <button class="button button-ghost" id="rankingButton">ランキングを見る</button>
         </div>
         <div class="lobby-stats" aria-label="オンライン対戦の参加状況">
           <div><span>ONLINE</span><strong id="lobbyOnlineCount">${statValue(lobbyStats.online)}</strong><small>オンライン参加者</small></div>
@@ -91,9 +93,39 @@
   }
 
   function renderLandingScreen() {
+    currentScreen = "landing";
     setLandingChrome();
     app.innerHTML = renderLanding();
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
+    document.querySelector("#rankingButton")?.addEventListener("click", renderRankingScreen);
+    app.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function renderRankingScreen() {
+    currentScreen = "ranking";
+    setLandingChrome();
+    const entries = window.HariaiOnline?.getLeaderboard?.() || [];
+    const rows = entries.length ? entries.map((entry, index) => {
+      const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
+      return `<div class="ranking-row">
+        <strong class="ranking-position">${index + 1}</strong>
+        <div class="ranking-player"><b>${escapeHtml(entry.name)}</b><small>${matches < 5 ? "仮レート" : `${matches}戦`}</small></div>
+        <div class="ranking-rating"><strong>${Number(entry.rating || 1000)}</strong><small>RATE</small></div>
+        <div class="ranking-record"><span>${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>最高${Number(entry.bestStreak || 0)}連勝</small></div>
+      </div>`;
+    }).join("") : `<div class="ranking-empty">まだランキング参加者がいません。<br />オンライン対戦準備画面から参加できます。</div>`;
+    app.innerHTML = `<section class="screen ranking-screen">
+      <div class="section-head">
+        <div><span class="eyebrow">CASUAL RATING / TOP 50</span><h1>プレイヤーランキング</h1>
+          <p>初期レート1000。勝敗と対戦相手のレートに応じて変動します。</p></div>
+        <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
+      </div>
+      <div class="ranking-notice">ランキング参加者のプレイヤーネームと戦績のみを表示します。匿名UIDとルーム履歴は公開しません。</div>
+      <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
+      <p class="ranking-casual-note">カジュアル版のため、レートと戦績はブラウザからFirebaseへ送信されます。</p>
+    </section>`;
+    document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     app.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -291,6 +323,10 @@
       createSampleItems,
     },
   };
+
+  window.addEventListener("hariai-leaderboard-updated", () => {
+    if (currentScreen === "ranking") renderRankingScreen();
+  });
 
   renderLandingScreen();
 })();
