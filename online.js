@@ -28,6 +28,9 @@ const MAX_HP = 30;
 const MAX_ROUNDS = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
+const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
+const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
+const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const SELECTION_TIME_LIMIT_MS = 10_000;
@@ -52,6 +55,8 @@ let lobbyStats = { online: null, waiting: null, playing: null };
 let leaderboardEntries = [];
 
 function createOnlineState() {
+  const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
+  const savedXHandle = normalizeXHandle(localStorage.getItem(X_HANDLE_KEY) || "");
   return {
     screen: "setup",
     uid: "",
@@ -89,7 +94,9 @@ function createOnlineState() {
     publicPresenceHeartbeat: null,
     publicPresenceDisconnect: null,
     leaderboardId: "",
-    leaderboardPublic: localStorage.getItem(RANKING_PUBLIC_KEY) === "1",
+    leaderboardPublic,
+    xHandle: savedXHandle,
+    xPublic: leaderboardPublic && X_HANDLE_PATTERN.test(savedXHandle) && localStorage.getItem(X_PUBLIC_KEY) === "1",
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -275,6 +282,18 @@ function renderSetup() {
       <input type="checkbox" id="rankingPublicToggle" ${state.leaderboardPublic ? "checked" : ""} ${state.authReady ? "" : "disabled"} />
       <span><strong>ランキングに参加する</strong><small>プレイヤーネーム・レート・戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
     </label>
+    <div class="ranking-x-settings ${state.leaderboardPublic ? "" : "is-disabled"}">
+      <div class="ranking-x-heading">
+        <strong>ランキング用Xリンク（任意）</strong>
+        <small>URLではなく、Xのユーザー名だけを入力してください。</small>
+      </div>
+      <div class="ranking-x-controls">
+        <label class="ranking-x-handle" for="rankingXHandle"><span>@</span><input id="rankingXHandle" type="text" maxlength="15" value="${escapeHtml(state.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /></label>
+        <label class="ranking-x-public"><input type="checkbox" id="rankingXPublicToggle" ${state.xPublic ? "checked" : ""} ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /><span>ランキングでXを公開する</span></label>
+        <button class="button button-ghost button-small" id="saveRankingX" ${state.authReady && state.leaderboardPublic ? "" : "disabled"}>保存</button>
+      </div>
+      <p>Xを公開すると匿名性が下がります。リンクは自己申告で、本人確認は行いません。</p>
+    </div>
     <div class="setup-layout">
       <aside class="setup-guide">
         <h2>オンライン画像の取り扱い</h2>
@@ -534,6 +553,7 @@ function bindScreenEvents() {
 function bindSetupEvents() {
   document.querySelector("#onlineBackHome")?.addEventListener("click", leaveToLanding);
   document.querySelector("#rankingPublicToggle")?.addEventListener("change", updateRankingPreference);
+  document.querySelector("#saveRankingX")?.addEventListener("click", saveRankingXSettings);
   const nameInput = document.querySelector("#onlinePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
@@ -605,8 +625,12 @@ async function fillSampleDeck() {
 
 async function updateRankingPreference(event) {
   const enabled = event.currentTarget.checked;
+  const previousPublic = state.leaderboardPublic;
+  const previousXPublic = state.xPublic;
   state.leaderboardPublic = enabled;
+  if (!enabled) state.xPublic = false;
   localStorage.setItem(RANKING_PUBLIC_KEY, enabled ? "1" : "0");
+  localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
   try {
     if (enabled) {
       await syncLeaderboardEntry();
@@ -615,11 +639,55 @@ async function updateRankingPreference(event) {
       await removeLeaderboardEntry();
       showToast("ランキングから非公開にしました。");
     }
+    render();
   } catch {
-    state.leaderboardPublic = !enabled;
+    state.leaderboardPublic = previousPublic;
+    state.xPublic = previousXPublic;
     localStorage.setItem(RANKING_PUBLIC_KEY, state.leaderboardPublic ? "1" : "0");
+    localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
     render();
     showToast("ランキング設定を更新できませんでした。");
+  }
+}
+
+function normalizeXHandle(value) {
+  return String(value || "").trim().replace(/^@/, "");
+}
+
+async function saveRankingXSettings() {
+  if (!state.authReady || !state.leaderboardPublic) return;
+  const input = document.querySelector("#rankingXHandle");
+  const publicToggle = document.querySelector("#rankingXPublicToggle");
+  const nextHandle = normalizeXHandle(input?.value);
+  const nextPublic = Boolean(publicToggle?.checked);
+  if (nextHandle && !X_HANDLE_PATTERN.test(nextHandle)) {
+    showToast("Xのユーザー名は半角英数字と_で15文字以内にしてください。");
+    input?.focus();
+    return;
+  }
+  if (nextPublic && !nextHandle) {
+    showToast("公開するXのユーザー名を入力してください。");
+    input?.focus();
+    return;
+  }
+
+  const previousHandle = state.xHandle;
+  const previousPublic = state.xPublic;
+  state.xHandle = nextHandle;
+  state.xPublic = nextPublic && Boolean(nextHandle);
+  localStorage.setItem(X_HANDLE_KEY, state.xHandle);
+  localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
+  try {
+    await syncLeaderboardEntry();
+    render();
+    showToast(state.xPublic ? "ランキングにXリンクを公開しました。" : "Xリンクを非公開で保存しました。");
+  } catch {
+    state.xHandle = previousHandle;
+    state.xPublic = previousPublic;
+    localStorage.setItem(X_HANDLE_KEY, state.xHandle);
+    localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
+    render();
+    showToast("Xリンク設定を更新できませんでした。");
   }
 }
 
@@ -640,7 +708,7 @@ async function ensureLeaderboardIdentity() {
 }
 
 function leaderboardRecord() {
-  return {
+  const record = {
     name: state.name.trim().slice(0, 16) || "PLAYER",
     rating: Number(state.profile.rating || INITIAL_RATING),
     wins: Number(state.profile.wins || 0),
@@ -650,6 +718,8 @@ function leaderboardRecord() {
     bestStreak: Number(state.profile.bestStreak || 0),
     updatedAt: Date.now(),
   };
+  if (state.xPublic && X_HANDLE_PATTERN.test(state.xHandle)) record.xHandle = state.xHandle;
+  return record;
 }
 
 async function syncLeaderboardEntry() {

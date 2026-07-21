@@ -56,6 +56,9 @@
           "updatedAt": {
             ".validate": "newData.isNumber()"
           },
+          "xHandle": {
+            ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^[A-Za-z0-9_]{1,15}$/))"
+          },
           "$other": {
             ".validate": false
           }

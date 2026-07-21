@@ -108,9 +108,11 @@
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
     const rows = entries.length ? entries.map((entry, index) => {
       const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
+      const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
+      const xLink = xHandle ? `<a class="ranking-x-link" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer">X&nbsp;@${escapeHtml(xHandle)}</a>` : "";
       return `<div class="ranking-row">
         <strong class="ranking-position">${index + 1}</strong>
-        <div class="ranking-player"><b>${escapeHtml(entry.name)}</b><small>${matches < 5 ? "仮レート" : `${matches}戦`}</small></div>
+        <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${matches < 5 ? "仮レート" : `${matches}戦`}</small></div>
         <div class="ranking-rating"><strong>${Number(entry.rating || 1000)}</strong><small>RATE</small></div>
         <div class="ranking-record"><span>${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>最高${Number(entry.bestStreak || 0)}連勝</small></div>
       </div>`;
@@ -121,7 +123,7 @@
           <p>初期レート1000。勝敗と対戦相手のレートに応じて変動します。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
-      <div class="ranking-notice">ランキング参加者のプレイヤーネームと戦績のみを表示します。匿名UIDとルーム履歴は公開しません。</div>
+      <div class="ranking-notice">プレイヤーネームと戦績、本人が任意公開したXリンクを表示します。Xリンクは自己申告・未認証です。匿名UIDとルーム履歴は公開しません。</div>
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
       <p class="ranking-casual-note">カジュアル版のため、レートと戦績はブラウザからFirebaseへ送信されます。</p>
     </section>`;
