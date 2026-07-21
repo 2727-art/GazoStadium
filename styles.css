@@ -482,6 +482,227 @@ button:disabled {
   margin: 12px 2px 0;
 }
 
+.economy-screen {
+  width: min(1120px, 100%);
+  margin-inline: auto;
+}
+
+.economy-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: fit-content;
+  margin: 0 0 22px auto;
+  padding: 13px 18px;
+  border: 1px solid rgba(255, 209, 102, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 209, 102, 0.07);
+  color: var(--gold);
+}
+
+.economy-balance span {
+  color: #c7b477;
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.economy-balance strong {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.economy-balance small {
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.point-balance-inline {
+  color: var(--gold);
+  font-weight: 900;
+}
+
+.mission-grid,
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mission-card,
+.shop-card,
+.economy-unavailable,
+.gameover-missions {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(25, 29, 43, 0.96), rgba(11, 13, 21, 0.96));
+}
+
+.mission-card,
+.shop-card {
+  min-width: 0;
+  padding: 19px;
+}
+
+.mission-card.is-complete {
+  border-color: rgba(77, 232, 223, 0.38);
+  box-shadow: inset 0 0 30px rgba(77, 232, 223, 0.05);
+}
+
+.mission-card.is-claimed {
+  border-color: rgba(119, 239, 170, 0.24);
+  opacity: 0.74;
+}
+
+.mission-card-head,
+.mission-card-foot,
+.shop-card-top,
+.gameover-missions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-card-head span,
+.shop-card-top span {
+  color: var(--cyan);
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.13em;
+}
+
+.mission-card-head strong,
+.shop-card-top strong {
+  color: var(--gold);
+  font-size: 0.78rem;
+}
+
+.mission-card h2,
+.shop-card h2 {
+  margin: 15px 0 7px;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.mission-card p,
+.shop-card p,
+.economy-unavailable p {
+  min-height: 42px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.mission-progress {
+  height: 7px;
+  margin: 19px 0 13px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mission-progress i {
+  display: block;
+  width: var(--mission-progress);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+  transition: width 240ms ease;
+}
+
+.mission-card-foot > span {
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.shop-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.shop-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.shop-card.is-owned {
+  border-color: rgba(119, 239, 170, 0.3);
+}
+
+.shop-reaction-preview {
+  align-self: flex-start;
+  margin: 8px 0 14px;
+}
+
+.shop-card p {
+  flex: 1;
+  margin-bottom: 18px;
+}
+
+.economy-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.economy-note {
+  margin: 14px 0 0;
+  color: #737c91;
+  font-size: 0.7rem;
+  line-height: 1.7;
+  text-align: center;
+}
+
+.economy-unavailable {
+  padding: 42px 24px;
+  text-align: center;
+}
+
+.economy-unavailable strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.economy-unavailable p {
+  min-height: 0;
+}
+
+.gameover-missions {
+  margin-top: 24px;
+  padding: 20px;
+}
+
+.gameover-missions-head {
+  margin-bottom: 14px;
+}
+
+.gameover-missions-head h2 {
+  margin: 5px 0 0;
+  font-size: 1.1rem;
+}
+
+.gameover-missions-head > strong {
+  color: var(--gold);
+}
+
+.mission-grid.compact .mission-card {
+  padding: 14px;
+}
+
+.mission-grid.compact .mission-card h2 {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.mission-grid.compact .mission-card-foot {
+  align-items: stretch;
+  flex-direction: column;
+}
+
 .button {
   min-height: 52px;
   display: inline-flex;
@@ -2133,6 +2354,10 @@ button:disabled {
   .chat-panel {
     min-height: 410px;
   }
+
+  .shop-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -2207,6 +2432,31 @@ button:disabled {
 
   .hero-actions .button {
     width: 100%;
+  }
+
+  .mission-grid,
+  .shop-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .economy-balance {
+    width: 100%;
+    justify-content: flex-end;
+    margin-top: 18px;
+  }
+
+  .economy-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .economy-actions .button {
+    width: 100%;
+  }
+
+  .mission-card-foot {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .hero-card,

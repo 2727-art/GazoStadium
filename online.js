@@ -31,6 +31,19 @@ const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
 const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
 const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
 const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
+const MAX_POINTS = 999_999;
+const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
+const DAILY_MISSIONS = [
+  { id: "complete_match", progressKey: "matches", title: "1試合を完走", description: "ルーム破棄では進みません。", target: 1, reward: 100 },
+  { id: "score_three", progressKey: "scores", title: "3回採点する", description: "相手の画像を合計3回採点します。", target: 3, reward: 60 },
+  { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
+];
+const SHOP_PRODUCTS = [
+  { id: "reaction_best_shot", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
+  { id: "reaction_healing", name: "ヒーリング", reaction: "癒やされる", description: "穏やかな画像に似合う追加リアクション", price: 250 },
+  { id: "reaction_story", name: "ストーリーテラー", reaction: "物語を感じる", description: "背景まで想像したときの追加リアクション", price: 400 },
+  { id: "reaction_masterpiece", name: "マスターピース", reaction: "これは名作", description: "ここぞという一枚に送る追加リアクション", price: 600 },
+];
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const SELECTION_TIME_LIMIT_MS = 10_000;
@@ -97,6 +110,9 @@ function createOnlineState() {
     leaderboardPublic,
     xHandle: savedXHandle,
     xPublic: leaderboardPublic && X_HANDLE_PATTERN.test(savedXHandle) && localStorage.getItem(X_PUBLIC_KEY) === "1",
+    economy: createEmptyEconomy(),
+    economyReady: false,
+    economyBusy: false,
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -125,22 +141,82 @@ function createOnlineState() {
   };
 }
 
+function jstDateKey(timestamp = Date.now()) {
+  return new Date(timestamp + (9 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+}
+
+function createEmptyEconomy(dateKey = jstDateKey()) {
+  return {
+    points: 0,
+    inventory: {},
+    daily: { dateKey, matches: 0, scores: 0, criticals: 0, claimed: {} },
+    updatedAt: Date.now(),
+  };
+}
+
+function serverNow() {
+  return Date.now() + Number(state.serverTimeOffset || 0);
+}
+
+function currentDailyDateKey() {
+  return jstDateKey(serverNow());
+}
+
+function normalizeEconomyRecord(value, dateKey = currentDailyDateKey()) {
+  const source = value && typeof value === "object" ? value : {};
+  const sameDate = source.daily?.dateKey === dateKey;
+  const record = createEmptyEconomy(dateKey);
+  record.points = Math.min(MAX_POINTS, Math.max(0, Math.floor(Number(source.points || 0))));
+  record.updatedAt = serverNow();
+  SHOP_PRODUCTS.forEach((product) => {
+    if (source.inventory?.[product.id] === true) record.inventory[product.id] = true;
+  });
+  if (sameDate) {
+    record.daily.matches = Math.min(1, Math.max(0, Math.floor(Number(source.daily.matches || 0))));
+    record.daily.scores = Math.min(3, Math.max(0, Math.floor(Number(source.daily.scores || 0))));
+    record.daily.criticals = Math.min(1, Math.max(0, Math.floor(Number(source.daily.criticals || 0))));
+    DAILY_MISSIONS.forEach((mission) => {
+      if (source.daily.claimed?.[mission.id] === true) record.daily.claimed[mission.id] = true;
+    });
+  }
+  return record;
+}
+
 const shared = () => window.HariaiApp?.shared;
 const escapeHtml = (value) => shared()?.escapeHtml(value) ?? String(value);
 const showToast = (message) => shared()?.showToast(message);
 const setBusy = (busy, message) => shared()?.setBusy(busy, message);
 
-function start() {
-  if (active) return;
+function openOnlineScreen(screen) {
+  if (active) {
+    if (["setup", "missions", "shop"].includes(state.screen)) {
+      state.screen = screen;
+      render();
+    }
+    return;
+  }
   if (location.protocol === "file:") {
     showToast("オンライン対戦はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
   active = true;
   state = createOnlineState();
+  state.screen = screen;
   setOnlineChrome("CONNECTING");
   render();
   ensureAuthenticated().catch(handleFatalError);
+}
+
+function start() {
+  openOnlineScreen("setup");
+}
+
+function openDailyMissions() {
+  openOnlineScreen("missions");
+}
+
+function openPointShop() {
+  openOnlineScreen("shop");
 }
 
 function isActive() {
@@ -208,15 +284,41 @@ async function ensureAuthenticated() {
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
   if (!active) return;
   state.uid = credential.user.uid;
-  const profileSnapshot = await get(ref(database, `online/profiles/${state.uid}`));
+  const offsetPromise = new Promise((resolve) => {
+    try {
+      onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => resolve(Number(snapshot.val() || 0)), () => resolve(0), { onlyOnce: true });
+    } catch {
+      resolve(0);
+    }
+  });
+  const [profileSnapshot, serverOffset] = await Promise.all([
+    get(ref(database, `online/profiles/${state.uid}`)),
+    offsetPromise,
+  ]);
+  state.serverTimeOffset = serverOffset;
   if (profileSnapshot.exists()) {
     state.profile = { ...state.profile, ...profileSnapshot.val() };
     if (!localStorage.getItem(PROFILE_NAME_KEY) && state.profile.name) state.name = state.profile.name;
   }
   state.authReady = true;
+  try {
+    await initializeEconomy();
+  } catch (error) {
+    console.error(error);
+    state.economyReady = false;
+    showToast("ポイント情報を読み込めませんでした。対戦機能は利用できます。");
+  }
   setOnlineChrome("ONLINE READY");
   render();
   if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
+}
+
+async function initializeEconomy() {
+  const dateKey = currentDailyDateKey();
+  const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => normalizeEconomyRecord(current, dateKey));
+  if (!result.committed) throw new Error("ポイント情報を初期化できませんでした。");
+  state.economy = normalizeEconomyRecord(result.snapshot.val(), dateKey);
+  state.economyReady = true;
 }
 
 function setOnlineChrome(label) {
@@ -233,6 +335,8 @@ function render() {
   if (!active) return;
   const renderers = {
     setup: renderSetup,
+    missions: renderDailyMissions,
+    shop: renderPointShop,
     matching: renderMatching,
     connecting: renderConnecting,
     select: renderRoundSelect,
@@ -277,6 +381,7 @@ function renderSetup() {
       <span>RATE ${Number(profile.rating || INITIAL_RATING)}</span>
       <span>戦績 ${profile.wins}勝 ${profile.losses}敗 ${profile.draws}分</span>
       <span>🔥 ${profile.streak}連勝中 / 最高${profile.bestStreak}</span>
+      <span class="point-balance-inline">◆ ${state.economyReady ? state.economy.points : "--"} PT</span>
     </div>
     <label class="ranking-optin">
       <input type="checkbox" id="rankingPublicToggle" ${state.leaderboardPublic ? "checked" : ""} ${state.authReady ? "" : "disabled"} />
@@ -323,6 +428,68 @@ function renderSetup() {
         </div>
       </div>
     </div>
+  </section>`;
+}
+
+function getMissionProgress(mission) {
+  return Math.min(mission.target, Number(state.economy.daily?.[mission.progressKey] || 0));
+}
+
+function renderMissionCard(mission, compact = false) {
+  const progress = getMissionProgress(mission);
+  const claimed = state.economy.daily?.claimed?.[mission.id] === true;
+  const complete = progress >= mission.target;
+  const buttonLabel = claimed ? "受取済み" : complete ? `+${mission.reward} PTを受け取る` : "挑戦中";
+  return `<article class="mission-card ${complete ? "is-complete" : ""} ${claimed ? "is-claimed" : ""}">
+    <div class="mission-card-head"><span>${claimed ? "CLEAR" : complete ? "COMPLETE" : "DAILY"}</span><strong>+${mission.reward} PT</strong></div>
+    <h2>${escapeHtml(mission.title)}</h2>${compact ? "" : `<p>${escapeHtml(mission.description)}</p>`}
+    <div class="mission-progress"><i style="--mission-progress:${(progress / mission.target) * 100}%"></i></div>
+    <div class="mission-card-foot"><span>${progress} / ${mission.target}</span>
+      <button class="button button-small ${complete && !claimed ? "button-cyan" : "button-ghost"}" data-claim-mission="${mission.id}" ${!state.economyReady || state.economyBusy || !complete || claimed ? "disabled" : ""}>${buttonLabel}</button></div>
+  </article>`;
+}
+
+function renderEconomyUnavailable() {
+  return `<div class="economy-unavailable"><strong>${state.authReady ? "ポイント情報を読み込めませんでした" : "Firebaseへ接続しています…"}</strong>
+    <p>${state.authReady ? "時間をおいて画面を開き直してください。対戦機能は通常どおり利用できます。" : "匿名ログイン後にミッションと所持ポイントを表示します。"}</p></div>`;
+}
+
+function renderDailyMissions() {
+  const missionContent = state.economyReady
+    ? `<div class="mission-grid">${DAILY_MISSIONS.map((mission) => renderMissionCard(mission)).join("")}</div>`
+    : renderEconomyUnavailable();
+  return `<section class="screen economy-screen">
+    <div class="section-head"><div><span class="eyebrow">DAILY CHALLENGE</span><h1>デイリーミッション</h1>
+      <p>毎日0:00（日本時間）に更新。達成した報酬はボタンで受け取ってください。</p></div>
+      <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
+    <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    ${missionContent}
+    <div class="economy-actions"><button class="button button-primary" id="missionsShopButton">ポイントショップへ</button>
+      <button class="button button-ghost" id="missionsBattleButton">オンライン対戦へ</button></div>
+    <p class="economy-note">ポイントと進捗は匿名アカウントに保存されます。サイトデータを削除すると引き継げません。</p>
+  </section>`;
+}
+
+function renderPointShop() {
+  const products = SHOP_PRODUCTS.map((product) => {
+    const owned = state.economy.inventory?.[product.id] === true;
+    const affordable = state.economy.points >= product.price;
+    return `<article class="shop-card ${owned ? "is-owned" : ""}">
+      <div class="shop-card-top"><span>${owned ? "OWNED" : "CHAT REACTION"}</span><strong>${product.price} PT</strong></div>
+      <h2>${escapeHtml(product.name)}</h2><button class="reaction-button shop-reaction-preview" data-preview-reaction="${escapeHtml(product.reaction)}">${escapeHtml(product.reaction)}</button>
+      <p>${escapeHtml(product.description)}</p>
+      <button class="button button-wide ${owned ? "button-ghost" : "button-primary"}" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || owned || !affordable ? "disabled" : ""}>${owned ? "購入済み" : affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>
+    </article>`;
+  }).join("");
+  return `<section class="screen economy-screen">
+    <div class="section-head"><div><span class="eyebrow">POINT EXCHANGE</span><h1>ポイントショップ</h1>
+      <p>購入したリアクションは、次のオンライン対戦からチャット欄に追加されます。</p></div>
+      <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
+    <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    ${state.economyReady ? `<div class="shop-grid">${products}</div>` : renderEconomyUnavailable()}
+    <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
+      <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
+    <p class="economy-note">購入後の払い戻しはありません。ポイントショップの商品はゲーム内チャットだけで使用します。</p>
   </section>`;
 }
 
@@ -489,7 +656,10 @@ function renderGameOver() {
       <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
+    ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>◆ ${state.economy.points} PT</strong></div>
+      <div class="mission-grid compact">${DAILY_MISSIONS.map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="gameover-actions"><button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
+      <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
   </div></section>`;
 }
@@ -515,9 +685,13 @@ function renderOnlineChat() {
     const authorIndex = state.players.findIndex((player) => player.uid === message.authorUid);
     return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}"><small>${escapeHtml(message.name)} / R${message.round}</small><p>${escapeHtml(message.text)}</p></div>`;
   }).join("") : `<div class="chat-empty">画像について話してみましょう。<br />チャットはルーム内の2人だけに表示されます。</div>`;
+  const reactions = [
+    ...DEFAULT_REACTIONS,
+    ...SHOP_PRODUCTS.filter((product) => state.economy.inventory?.[product.id] === true).map((product) => product.reaction),
+  ];
   return `<aside class="chat-panel"><div class="chat-head"><strong>ONLINE CHAT</strong><span>ルーム終了後に非表示</span></div>
     <div class="chat-messages" id="onlineChatMessages">${messages}</div>
-    <div class="quick-reactions">${["すごい！", "かわいい", "センスいい", "もっと見たい"].map((text) => `<button class="reaction-button" data-online-reaction="${text}">${text}</button>`).join("")}</div>
+    <div class="quick-reactions">${reactions.map((text) => `<button class="reaction-button" data-online-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div>
     <form class="chat-form" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
       <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
 }
@@ -528,9 +702,13 @@ function bindScreenEvents() {
     image.addEventListener("dragstart", (event) => event.preventDefault());
   });
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", () => destroyDialog.showModal()));
+  document.querySelectorAll("[data-claim-mission]").forEach((button) => button.addEventListener("click", () => claimDailyMission(button.dataset.claimMission)));
+  document.querySelectorAll("[data-buy-product]").forEach((button) => button.addEventListener("click", () => purchaseShopProduct(button.dataset.buyProduct)));
+  document.querySelectorAll("[data-preview-reaction]").forEach((button) => button.addEventListener("click", () => showToast(`チャットでは「${button.dataset.previewReaction}」と送信します。`)));
   bindChatEvents();
 
   if (state.screen === "setup") bindSetupEvents();
+  if (state.screen === "missions" || state.screen === "shop") bindEconomyEvents();
   if (state.screen === "matching") document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
   if (state.screen === "select") bindSelectEvents();
   if (state.screen === "reveal") document.querySelector("#onlineBeginScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
@@ -538,6 +716,7 @@ function bindScreenEvents() {
   if (state.screen === "result") document.querySelector("#onlineContinue")?.addEventListener("click", continueRound);
   if (state.screen === "gameover") {
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
+    document.querySelector("#onlineGameoverMissions")?.addEventListener("click", openPostMatchMissions);
     document.querySelector("#onlineGameoverHome")?.addEventListener("click", leaveToLanding);
   }
   if (state.screen === "noContest") {
@@ -548,6 +727,14 @@ function bindScreenEvents() {
     document.querySelector("#onlineRetry")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineErrorHome")?.addEventListener("click", leaveToLanding);
   }
+}
+
+function bindEconomyEvents() {
+  document.querySelector("#economyHomeButton")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#missionsShopButton")?.addEventListener("click", () => { state.screen = "shop"; render(); });
+  document.querySelector("#shopMissionsButton")?.addEventListener("click", () => { state.screen = "missions"; render(); });
+  document.querySelector("#missionsBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
+  document.querySelector("#shopBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
 }
 
 function bindSetupEvents() {
@@ -689,6 +876,109 @@ async function saveRankingXSettings() {
     render();
     showToast("Xリンク設定を更新できませんでした。");
   }
+}
+
+function applyEconomySnapshot(snapshot, dateKey = currentDailyDateKey()) {
+  if (snapshot?.exists()) {
+    state.economy = normalizeEconomyRecord(snapshot.val(), dateKey);
+    state.economyReady = true;
+  } else {
+    state.economy = createEmptyEconomy(dateKey);
+    state.economyReady = true;
+  }
+}
+
+async function claimDailyMission(missionId) {
+  const mission = DAILY_MISSIONS.find((candidate) => candidate.id === missionId);
+  if (!mission || !state.economyReady || state.economyBusy) return;
+  const dateKey = currentDailyDateKey();
+  let outcome = "unavailable";
+  state.economyBusy = true;
+  render();
+  try {
+    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
+      const record = normalizeEconomyRecord(current, dateKey);
+      if (record.daily.claimed[mission.id]) { outcome = "claimed"; return; }
+      if (Number(record.daily[mission.progressKey] || 0) < mission.target) { outcome = "incomplete"; return; }
+      record.daily.claimed[mission.id] = true;
+      record.points = Math.min(MAX_POINTS, record.points + mission.reward);
+      record.updatedAt = serverNow();
+      outcome = "claimed-now";
+      return record;
+    });
+    applyEconomySnapshot(result.snapshot, dateKey);
+    state.economyBusy = false;
+    render();
+    if (result.committed && outcome === "claimed-now") showToast(`${mission.reward} PTを受け取りました。`);
+    else if (outcome === "claimed") showToast("この報酬は受取済みです。");
+    else showToast("ミッションはまだ達成していません。");
+  } catch (error) {
+    console.error(error);
+    state.economyBusy = false;
+    render();
+    showToast("ミッション報酬を受け取れませんでした。");
+  }
+}
+
+async function purchaseShopProduct(productId) {
+  const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
+  if (!product || !state.economyReady || state.economyBusy) return;
+  const dateKey = currentDailyDateKey();
+  let outcome = "unavailable";
+  state.economyBusy = true;
+  render();
+  try {
+    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
+      const record = normalizeEconomyRecord(current, dateKey);
+      if (record.inventory[product.id]) { outcome = "owned"; return; }
+      if (record.points < product.price) { outcome = "short"; return; }
+      record.points -= product.price;
+      record.inventory[product.id] = true;
+      record.updatedAt = serverNow();
+      outcome = "purchased";
+      return record;
+    });
+    applyEconomySnapshot(result.snapshot, dateKey);
+    state.economyBusy = false;
+    render();
+    if (result.committed && outcome === "purchased") showToast(`「${product.reaction}」を購入しました。`);
+    else if (outcome === "owned") showToast("この商品は購入済みです。");
+    else showToast("ポイントが不足しています。");
+  } catch (error) {
+    console.error(error);
+    state.economyBusy = false;
+    render();
+    showToast("商品を購入できませんでした。");
+  }
+}
+
+async function recordDailyProgress(changes) {
+  if (!state.economyReady || !state.uid) return;
+  const dateKey = currentDailyDateKey();
+  const before = { ...state.economy.daily };
+  const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
+    const record = normalizeEconomyRecord(current, dateKey);
+    record.daily.matches = Math.min(1, record.daily.matches + Math.max(0, Number(changes.matches || 0)));
+    record.daily.scores = Math.min(3, record.daily.scores + Math.max(0, Number(changes.scores || 0)));
+    record.daily.criticals = Math.min(1, record.daily.criticals + Math.max(0, Number(changes.criticals || 0)));
+    record.updatedAt = serverNow();
+    return record;
+  });
+  if (!result.committed) return;
+  applyEconomySnapshot(result.snapshot, dateKey);
+  const completed = DAILY_MISSIONS.filter((mission) => (
+    Number(before[mission.progressKey] || 0) < mission.target
+    && Number(state.economy.daily[mission.progressKey] || 0) >= mission.target
+  ));
+  if (completed.length) showToast(`デイリーミッション達成：${completed.map((mission) => mission.title).join("・")}`);
+}
+
+async function openPostMatchMissions() {
+  await cleanupOnlineResources(false);
+  releaseAllImages();
+  state.screen = "missions";
+  setOnlineChrome("ONLINE READY");
+  render();
 }
 
 async function ensureLeaderboardIdentity() {
@@ -1347,6 +1637,10 @@ async function lockScore() {
   state.screen = "waitingScore";
   render();
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/scores/${state.uid}`), score);
+  await recordDailyProgress({ scores: 1, criticals: score >= 8 ? 1 : 0 }).catch((error) => {
+    console.error(error);
+    showToast("ミッション進捗を更新できませんでした。");
+  });
 }
 
 function resolveRound(scores) {
@@ -1420,6 +1714,10 @@ async function finishOnlineMatch() {
   if (state.outcome) return;
   state.outcome = determineOutcome();
   await commitOnlineStats();
+  await recordDailyProgress({ matches: 1 }).catch((error) => {
+    console.error(error);
+    showToast("ミッション進捗を更新できませんでした。");
+  });
   await set(ref(database, `online/rooms/${state.roomId}/finished/${state.uid}`), true);
   state.screen = "gameover";
   render();
@@ -1506,7 +1804,7 @@ function triggerCriticalFx(text) {
 }
 
 function requestHome() {
-  if (["setup", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
+  if (["setup", "missions", "shop", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
     leaveToLanding();
   } else {
     destroyDialog.showModal();
@@ -1544,7 +1842,15 @@ async function cancelMatching() {
 }
 
 async function resetOnlineSetup() {
-  const identity = { uid: state.uid, profile: state.profile, authReady: state.authReady, name: state.name };
+  const identity = {
+    uid: state.uid,
+    profile: state.profile,
+    authReady: state.authReady,
+    name: state.name,
+    economy: state.economy,
+    economyReady: state.economyReady,
+    serverTimeOffset: state.serverTimeOffset,
+  };
   await cleanupOnlineResources(false);
   releaseAllImages();
   state = createOnlineState();
@@ -1648,5 +1954,5 @@ window.addEventListener("beforeunload", () => {
 watchLobbyStats();
 watchLeaderboard();
 
-window.HariaiOnline = { start, isActive, requestHome, destroyRoom, getLobbyStats, getLeaderboard };
+window.HariaiOnline = { start, openDailyMissions, openPointShop, isActive, requestHome, destroyRoom, getLobbyStats, getLeaderboard };
 window.dispatchEvent(new Event("hariai-online-ready"));

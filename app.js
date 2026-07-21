@@ -60,6 +60,8 @@
         <div class="hero-actions">
           <button class="button button-primary" id="onlineButton">オンライン対戦を始める</button>
           <button class="button button-ghost" id="rankingButton">ランキングを見る</button>
+          <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
+          <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
         </div>
         <div class="lobby-stats" aria-label="オンライン対戦の参加状況">
           <div><span>ONLINE</span><strong id="lobbyOnlineCount">${statValue(lobbyStats.online)}</strong><small>オンライン参加者</small></div>
@@ -98,6 +100,8 @@
     app.innerHTML = renderLanding();
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#rankingButton")?.addEventListener("click", renderRankingScreen);
+    document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
+    document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
     app.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -133,12 +137,16 @@
   }
 
   function startOnlineBattle() {
-    if (window.HariaiOnline?.start) {
-      window.HariaiOnline.start();
+    openOnlineFeature("start");
+  }
+
+  function openOnlineFeature(method) {
+    if (window.HariaiOnline?.[method]) {
+      window.HariaiOnline[method]();
       return;
     }
     showToast("オンライン機能を読み込んでいます…");
-    window.addEventListener("hariai-online-ready", () => window.HariaiOnline?.start?.(), { once: true });
+    window.addEventListener("hariai-online-ready", () => window.HariaiOnline?.[method]?.(), { once: true });
   }
 
   async function processImageFile(file, position) {

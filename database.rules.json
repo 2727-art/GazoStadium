@@ -114,6 +114,50 @@
           }
         }
       },
+      "economy": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "!newData.exists() || newData.hasChildren(['points', 'daily', 'updatedAt'])",
+          "points": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999"
+          },
+          "inventory": {
+            "$productId": {
+              ".validate": "($productId === 'reaction_best_shot' || $productId === 'reaction_healing' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece') && newData.val() === true"
+            }
+          },
+          "daily": {
+            ".validate": "newData.hasChildren(['dateKey', 'matches', 'scores', 'criticals'])",
+            "dateKey": {
+              ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+            },
+            "matches": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "scores": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+            },
+            "criticals": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "claimed": {
+              "$missionId": {
+                ".validate": "($missionId === 'complete_match' || $missionId === 'score_three' || $missionId === 'give_critical') && newData.val() === true"
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
       "rooms": {
         "$roomId": {
           ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
