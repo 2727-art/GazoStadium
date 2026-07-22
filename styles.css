@@ -786,6 +786,99 @@ button:disabled {
   background: rgba(100, 232, 213, 0.055);
 }
 
+.rating-class-guide {
+  margin: 0 0 14px;
+  border: 1px solid rgba(123, 155, 216, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(19, 29, 51, 0.72), rgba(9, 12, 21, 0.84));
+}
+
+.rating-class-guide summary {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 15px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.rating-class-guide summary::-webkit-details-marker {
+  display: none;
+}
+
+.rating-class-guide summary::after {
+  content: "+";
+  color: #9ca9bf;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.rating-class-guide[open] summary::after {
+  content: "−";
+}
+
+.rating-class-guide summary > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rating-class-guide summary small {
+  color: #8390a8;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.rating-class-guide summary strong {
+  font-size: 0.84rem;
+}
+
+.rating-class-guide summary em {
+  margin-left: auto;
+  color: var(--cyan);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.rating-class-guide > p {
+  margin: 0 15px 13px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.7;
+}
+
+.rating-class-guide ol {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+  padding: 0 15px 15px;
+  list-style: none;
+}
+
+.rating-class-guide li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.rating-class-guide li small {
+  color: #8994a8;
+  font-size: 0.56rem;
+  white-space: nowrap;
+}
+
 .ranking-period-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -924,6 +1017,133 @@ button:disabled {
   align-items: flex-end;
   color: #c8ceda;
   font-size: 0.8rem;
+}
+
+.ranking-overall-rate {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rating-class-badge {
+  --class-color: #c3ccda;
+  --class-border: rgba(170, 183, 204, 0.36);
+  --class-shadow: rgba(124, 141, 169, 0.12);
+  position: relative;
+  display: inline-flex;
+  min-width: 76px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid var(--class-border);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(132, 145, 165, 0.12), rgba(20, 24, 34, 0.82));
+  box-shadow: inset 0 0 10px var(--class-shadow), 0 0 9px var(--class-shadow);
+  color: var(--class-color);
+  font-size: 0.6rem;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rating-class-emblem {
+  position: relative;
+  z-index: 1;
+  font-size: 0.72rem;
+  line-height: 1;
+  text-shadow: 0 0 6px currentColor;
+}
+
+.rating-class-name {
+  position: relative;
+  z-index: 1;
+}
+
+.rating-class-badge.class-great {
+  --class-color: #75ead9;
+  --class-border: rgba(100, 232, 213, 0.43);
+  --class-shadow: rgba(100, 232, 213, 0.16);
+  background: linear-gradient(135deg, rgba(37, 152, 151, 0.2), rgba(10, 27, 32, 0.88));
+}
+
+.rating-class-badge.class-expert {
+  --class-color: #83c5ff;
+  --class-border: rgba(91, 169, 255, 0.52);
+  --class-shadow: rgba(67, 139, 255, 0.2);
+  border-style: double;
+  border-width: 3px;
+  background: linear-gradient(135deg, rgba(48, 105, 205, 0.3), rgba(12, 23, 48, 0.9));
+}
+
+.rating-class-badge.class-veteran {
+  --class-color: #c29aff;
+  --class-border: rgba(164, 111, 255, 0.58);
+  --class-shadow: rgba(139, 84, 238, 0.27);
+  background: linear-gradient(135deg, rgba(107, 64, 180, 0.38), rgba(24, 15, 48, 0.92));
+}
+
+.rating-class-badge.class-ultra {
+  --class-color: #ff9bdf;
+  --class-border: rgba(255, 102, 210, 0.66);
+  --class-shadow: rgba(238, 69, 200, 0.36);
+  background: linear-gradient(135deg, rgba(188, 48, 161, 0.42), rgba(63, 25, 100, 0.86));
+  box-shadow: inset 0 0 11px rgba(255, 121, 218, 0.2), 0 0 12px var(--class-shadow);
+}
+
+.rating-class-badge.class-master {
+  --class-color: #ffe495;
+  --class-border: rgba(255, 211, 97, 0.76);
+  --class-shadow: rgba(255, 191, 55, 0.42);
+  border-style: double;
+  border-width: 3px;
+  background: linear-gradient(120deg, rgba(124, 73, 8, 0.9), rgba(255, 210, 92, 0.28) 48%, rgba(65, 35, 5, 0.94));
+  box-shadow: inset 0 0 11px rgba(255, 231, 154, 0.22), 0 0 13px var(--class-shadow);
+  text-shadow: 0 0 7px rgba(255, 221, 127, 0.58);
+}
+
+.rating-class-badge.class-legend {
+  --class-color: #fff8d6;
+  --class-border: rgba(255, 232, 139, 0.9);
+  --class-shadow: rgba(255, 210, 76, 0.55);
+  min-width: 84px;
+  border-width: 2px;
+  background: linear-gradient(110deg, rgba(177, 65, 149, 0.9), rgba(42, 143, 204, 0.84), rgba(67, 196, 155, 0.86), rgba(220, 159, 43, 0.9), rgba(177, 65, 149, 0.9));
+  background-size: 260% 100%;
+  box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.22), 0 0 16px var(--class-shadow);
+  text-shadow: 0 1px 2px rgba(41, 20, 9, 0.9), 0 0 7px rgba(255, 245, 193, 0.8);
+  animation: rating-class-spectrum 5.5s linear infinite, rating-class-legend-pulse 2.8s ease-in-out infinite;
+}
+
+.rating-class-badge.class-legend::after {
+  position: absolute;
+  top: -70%;
+  bottom: -70%;
+  left: -34%;
+  width: 28%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.78), transparent);
+  content: "";
+  transform: rotate(18deg);
+  animation: rating-class-shine 3.4s ease-in-out infinite;
+}
+
+@keyframes rating-class-spectrum {
+  to { background-position: 260% 0; }
+}
+
+@keyframes rating-class-legend-pulse {
+  50% { box-shadow: inset 0 0 14px rgba(255, 255, 255, 0.28), 0 0 20px rgba(255, 210, 76, 0.7); }
+}
+
+@keyframes rating-class-shine {
+  0%, 58% { left: -34%; }
+  82%, 100% { left: 116%; }
 }
 
 .ranking-mode-points {
@@ -3791,6 +4011,32 @@ button:disabled {
 
   .ranking-mode-points {
     justify-content: flex-start;
+  }
+
+  .ranking-overall-rate {
+    justify-content: flex-start;
+  }
+
+  .rating-class-guide summary {
+    gap: 9px;
+    padding-inline: 12px;
+  }
+
+  .rating-class-guide summary em {
+    font-size: 0.6rem;
+  }
+
+  .rating-class-guide > p {
+    margin-inline: 12px;
+  }
+
+  .rating-class-guide ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 12px;
+  }
+
+  .rating-class-guide li:last-child {
+    grid-column: 1 / -1;
   }
 
   .ranking-comment-toggle {

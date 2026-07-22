@@ -8,6 +8,15 @@
   const PROFILE_AVATAR_DB_NAME = "hariai-stadium-profile-v1";
   const PROFILE_AVATAR_STORE_NAME = "assets";
   const PROFILE_AVATAR_RECORD_KEY = "profile-avatar";
+  const OVERALL_RATING_CLASSES = Object.freeze([
+    { key: "beginner", label: "Beginner", emblem: "◇", min: 100, max: 1024, range: "100–1024" },
+    { key: "great", label: "Great", emblem: "✦", min: 1025, max: 1049, range: "1025–1049" },
+    { key: "expert", label: "Expert", emblem: "◆", min: 1050, max: 1099, range: "1050–1099" },
+    { key: "veteran", label: "Veteran", emblem: "✧", min: 1100, max: 1149, range: "1100–1149" },
+    { key: "ultra", label: "Ultra", emblem: "★", min: 1150, max: 1199, range: "1150–1199" },
+    { key: "master", label: "Master", emblem: "♛", min: 1200, max: 1299, range: "1200–1299" },
+    { key: "legend", label: "Legend", emblem: "♛", min: 1300, max: 3000, range: "1300+" },
+  ]);
 
   const app = document.querySelector("#app");
   const toast = document.querySelector("#toast");
@@ -41,6 +50,38 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function normalizeOverallRating(value) {
+    const rating = Number(value);
+    return Math.min(3000, Math.max(100, Math.round(Number.isFinite(rating) ? rating : 1000)));
+  }
+
+  function overallRatingClass(value) {
+    const rating = normalizeOverallRating(value);
+    return OVERALL_RATING_CLASSES.find((ratingClass) => rating <= ratingClass.max) || OVERALL_RATING_CLASSES.at(-1);
+  }
+
+  function renderOverallRatingClassBadge(ratingClass, rating, { decorative = false } = {}) {
+    const accessibleAttributes = decorative
+      ? 'aria-hidden="true"'
+      : `aria-label="総合RATEクラス ${ratingClass.label}、総合RATE ${normalizeOverallRating(rating)}" title="${ratingClass.label}クラス / 総合RATE ${ratingClass.range}"`;
+    return `<span class="rating-class-badge class-${ratingClass.key}" ${accessibleAttributes}>
+      <span class="rating-class-emblem" aria-hidden="true">${ratingClass.emblem}</span>
+      <span class="rating-class-name">${ratingClass.label}</span>
+    </span>`;
+  }
+
+  function renderOverallRatingClassGuide() {
+    const classItems = OVERALL_RATING_CLASSES.map((ratingClass) => `<li>
+      ${renderOverallRatingClassBadge(ratingClass, ratingClass.min, { decorative: true })}
+      <small>RATE ${ratingClass.range}</small>
+    </li>`).join("");
+    return `<details class="rating-class-guide">
+      <summary><span><small>OVERALL RATE CLASS</small><strong>総合RATEクラス</strong></span><em>ランキング限定表示</em></summary>
+      <p>クラスはリセットされない総合RATEで判定します。順位は選択中の期間ポイントで決まり、クラスは対戦画面には表示されません。</p>
+      <ol>${classItems}</ol>
+    </details>`;
   }
 
   function showToast(message) {
@@ -412,12 +453,15 @@
       const entryId = String(entry.entryId || "");
       const expanded = expandedRankingEntryId === entryId;
       const commentsEnabled = entry.commentsEnabled !== false;
-      return `<article class="ranking-entry ${expanded ? "is-expanded" : ""}">
+      const overallRating = normalizeOverallRating(entry.rating);
+      const ratingClass = overallRatingClass(overallRating);
+      const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating);
+      return `<article class="ranking-entry ranking-class-${ratingClass.key} ${expanded ? "is-expanded" : ""}">
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
           <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small></div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD PT</small></div>
-          <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>総合RATE ${Number(entry.rating || 1000)}</small>${modeBreakdown}</div>
+          <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
           <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
         </div>
         ${expanded ? renderRankingCommentPanel(entry) : ""}
@@ -430,7 +474,7 @@
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
         <div><span class="eyebrow">ONLINE OVERALL RANKING / TOP 50</span><h1>オンライン総合ランキング</h1>
-          <p>4つのオンライン対戦モード共通の期間ポイントと総合RATEで競います。</p></div>
+          <p>順位は4モード共通の期間ポイント、クラスは累積総合RATEで決まります。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       ${participationMenu}
@@ -440,7 +484,8 @@
         <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
       </div>
       <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3pt ／ 引き分け・BR2位1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
-      <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEはリセットされません。任意公開のXリンク・コメントも表示します。</div>
+      <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEとクラスはリセットされません。クラスはランキングだけに表示し、対戦相手には表示しません。</div>
+      ${renderOverallRatingClassGuide()}
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
       <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。カジュアル版のため、RATEと戦績はブラウザからFirebaseへ送信されます。</p>
     </section>`;
