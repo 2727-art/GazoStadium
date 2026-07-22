@@ -31,6 +31,18 @@ import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
 } from "./player-titles.js?v=player-titles-v1";
+import {
+  STAMP_PRODUCTS,
+  acquireStampCooldown,
+  bindChatToolTabs,
+  canUseStamp,
+  getAvailableStamps,
+  getStamp,
+  normalizeEquippedStamps,
+  renderChatTools,
+  renderStampBubble,
+  startStampButtonCooldown,
+} from "./stamps.js?v=stamps-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -107,7 +119,7 @@ function createState() {
     authReady: false,
     profile: { rating: INITIAL_RATING, streak: 0 },
     teamProfile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
-    economy: { points: 0, inventory: {}, equipped: { reactions: {}, title: "", chatFrame: "", chatBackground: "" }, daily: {} },
+    economy: { points: 0, inventory: {}, equipped: { reactions: {}, stamps: {}, title: "", chatFrame: "", chatBackground: "" }, daily: {} },
     deck: [],
     roomId: "",
     room: null,
@@ -227,16 +239,17 @@ function normalizeEconomy(value) {
   const dateKey = jstDateKey(now());
   const sameDate = source.daily?.dateKey === dateKey;
   const inventory = {};
-  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
+  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...STAMP_PRODUCTS, ...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
     if (source.inventory?.[item.id] === true) inventory[item.id] = true;
   });
   const ownedReactions = SHOP_REACTIONS.filter((item) => inventory[item.id]);
   const hasSavedEquipment = source.equipped && typeof source.equipped === "object";
-  const equipped = { reactions: {}, title: "", chatFrame: "", chatBackground: "" };
+  const equipped = { reactions: {}, stamps: {}, title: "", chatFrame: "", chatBackground: "" };
   const reactionIds = hasSavedEquipment
     ? ownedReactions.filter((item) => source.equipped?.reactions?.[item.id] === true).map((item) => item.id)
     : ownedReactions.map((item) => item.id);
   reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { equipped.reactions[id] = true; });
+  equipped.stamps = normalizeEquippedStamps(source, inventory, hasSavedEquipment);
   const savedTitle = String(source.equipped?.title || "");
   if (getPlayerTitleProduct(savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
   const chatCosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
@@ -561,17 +574,22 @@ function unlockedReactions() {
 }
 
 function renderMessages(messages, emptyText) {
-  return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${renderChatCosmeticBubble(message.text, message)}</div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
+  return messages.length ? messages.map((message) => {
+    const content = message.stampId
+      ? renderStampBubble(message.stampId, chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId))
+      : renderChatCosmeticBubble(message.text, message);
+    return `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${content}</div>`;
+  }).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
 }
 
 function renderTeamChat() {
   return `<aside class="chat-panel team-private-chat"><div class="chat-head"><strong>TEAM ${state.team} STRATEGY CHAT</strong><span>相手チームには非公開</span></div><div class="chat-messages" id="teamChatMessages">${renderMessages(state.teamChatMessages, "相方と画像の方向性を相談しましょう。")}</div>
-    <div class="quick-reactions">${unlockedReactions().map((text) => `<button class="reaction-button" data-team-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div><form class="chat-form" id="teamChatForm"><input class="chat-input" id="teamChatInput" maxlength="80" placeholder="作戦を相談する…" aria-label="チーム作戦チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
+    ${renderChatTools({ id: "team-private", textReactions: unlockedReactions(), stamps: getAvailableStamps(state.economy), textAttribute: "data-team-reaction", stampAttribute: "data-team-stamp" })}<form class="chat-form" id="teamChatForm"><input class="chat-input" id="teamChatInput" maxlength="80" placeholder="作戦を相談する…" aria-label="チーム作戦チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
 }
 
 function renderAllChat() {
   return `<aside class="chat-panel online-chat-standalone"><div class="chat-head"><strong>ALL CHAT / 4 PLAYERS</strong><span>4人全員に表示</span></div><div class="chat-messages" id="teamAllChatMessages">${renderMessages(state.allChatMessages, "公開された画像について4人で話してみましょう。")}</div>
-    <div class="quick-reactions">${unlockedReactions().map((text) => `<button class="reaction-button" data-all-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div><form class="chat-form" id="teamAllChatForm"><input class="chat-input" id="teamAllChatInput" maxlength="80" placeholder="4人へひとこと…" aria-label="4人共通チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
+    ${renderChatTools({ id: "team-all", textReactions: unlockedReactions(), stamps: getAvailableStamps(state.economy), textAttribute: "data-all-reaction", stampAttribute: "data-all-stamp" })}<form class="chat-form" id="teamAllChatForm"><input class="chat-input" id="teamAllChatInput" maxlength="80" placeholder="4人へひとこと…" aria-label="4人共通チャット" /><button class="button button-cyan button-small">送信</button></form></aside>`;
 }
 
 function bindEvents() {
@@ -648,8 +666,11 @@ function bindScoreEvents() {
 }
 
 function bindChatEvents() {
+  bindChatToolTabs();
   document.querySelectorAll("[data-team-reaction]").forEach((button) => button.addEventListener("click", () => sendTeamChat(button.dataset.teamReaction)));
   document.querySelectorAll("[data-all-reaction]").forEach((button) => button.addEventListener("click", () => sendAllChat(button.dataset.allReaction)));
+  document.querySelectorAll("[data-team-stamp]").forEach((button) => button.addEventListener("click", () => sendTeamChat("", button.dataset.teamStamp)));
+  document.querySelectorAll("[data-all-stamp]").forEach((button) => button.addEventListener("click", () => sendAllChat("", button.dataset.allStamp)));
   document.querySelector("#teamChatForm")?.addEventListener("submit", (event) => { event.preventDefault(); const input = document.querySelector("#teamChatInput"); sendTeamChat(input.value); input.value = ""; });
   document.querySelector("#teamAllChatForm")?.addEventListener("submit", (event) => { event.preventDefault(); const input = document.querySelector("#teamAllChatInput"); sendAllChat(input.value); input.value = ""; });
   scrollChats();
@@ -1729,8 +1750,17 @@ async function recordDailyProgress(changes) {
   if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
 
-async function sendTeamChat(value) {
-  const text = String(value || "").trim().slice(0, 80);
+async function sendTeamChat(value, stampId = "") {
+  const stamp = getStamp(stampId);
+  if (stampId && (!stamp || !canUseStamp(stampId, state.economy))) {
+    showToast("このスタンプは現在の装備に含まれていません。");
+    return;
+  }
+  if (stamp && !acquireStampCooldown("team-private")) {
+    showToast("スタンプは2秒に1回送信できます。");
+    return;
+  }
+  const text = stamp ? stamp.label : String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId || !state.team) return;
   const message = {
     authorUid: state.uid,
@@ -1739,13 +1769,23 @@ async function sendTeamChat(value) {
     round: state.round,
     createdAt: serverTimestamp(),
   };
+  if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-team-stamp]"); }
   if (titleLabel()) message.titleId = state.economy.equipped.title;
   attachEquippedChatCosmetics(message);
   await set(push(ref(database, `online/teamChats/${state.roomId}/${state.team}`)), message).catch(() => showToast("チームチャットを送信できませんでした。"));
 }
 
-async function sendAllChat(value) {
-  const text = String(value || "").trim().slice(0, 80);
+async function sendAllChat(value, stampId = "") {
+  const stamp = getStamp(stampId);
+  if (stampId && (!stamp || !canUseStamp(stampId, state.economy))) {
+    showToast("このスタンプは現在の装備に含まれていません。");
+    return;
+  }
+  if (stamp && !acquireStampCooldown("team-all")) {
+    showToast("スタンプは2秒に1回送信できます。");
+    return;
+  }
+  const text = stamp ? stamp.label : String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return;
   const message = {
     authorUid: state.uid,
@@ -1754,6 +1794,7 @@ async function sendAllChat(value) {
     round: state.round,
     createdAt: serverTimestamp(),
   };
+  if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-all-stamp]"); }
   if (titleLabel()) message.titleId = state.economy.equipped.title;
   attachEquippedChatCosmetics(message);
   await set(push(ref(database, `online/teamRooms/${state.roomId}/chat`)), message).catch(() => showToast("4人チャットを送信できませんでした。"));

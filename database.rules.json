@@ -348,7 +348,7 @@
           },
           "inventory": {
             "$productId": {
-              ".validate": "($productId === 'feature_top_message' || $productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece' || $productId.matches(/^title_(plant_lover|animal_lover|landscape_hunter|live_action_supremacy|2d_lover|mushroom_side|bamboo_side|mostly_cats|dog_soft_spot|bird_spotter|sky_watcher|night_view_collector|sweet_tooth_camera|image_sommelier|blur_connoisseur|resolution_is_justice|composition_lost|color_collector|light_shadow_resident|negative_space_lover|symmetry_side|waiting_miracle_shot|good_praiser|intuition_ten|speak_in_images|first_impression|scoring_with_love|five_card_match|weakness_detective|bluff_loaded|clue_collecting|pursuit_ready|deck_building|team_link_active|trust_my_partner|combo_romance|last_image|still_surviving|hariai_master|image_folder_guardian|cant_pick_five|food_photo_alert|subjective_today|comments_keep_coming|silent_high_score|words_lost|deep_folder|too_many_favorites)$/) || $productId.matches(/^chat_bg_(sakura_milk|peach_fizz|lavender_mist|aqua_glass|mint_soda|honey_cream|sunset|berry|ocean|forest|midnight|coffee|monochrome|galaxy|hologram|manga_paper)$/) || $productId.matches(/^chat_frame_(heart_ribbon|lace|cat_paw|flower|candy|jewel|antique|stained_glass|moon|film|polaroid|manga|pixel|neon|cyber|ice|flame|lightning|cardboard|ramen|aurora|stardust|royal_gold|beyond)$/)) && newData.val() === true"
+              ".validate": "($productId === 'feature_top_message' || $productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece' || $productId.matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) || $productId.matches(/^title_(plant_lover|animal_lover|landscape_hunter|live_action_supremacy|2d_lover|mushroom_side|bamboo_side|mostly_cats|dog_soft_spot|bird_spotter|sky_watcher|night_view_collector|sweet_tooth_camera|image_sommelier|blur_connoisseur|resolution_is_justice|composition_lost|color_collector|light_shadow_resident|negative_space_lover|symmetry_side|waiting_miracle_shot|good_praiser|intuition_ten|speak_in_images|first_impression|scoring_with_love|five_card_match|weakness_detective|bluff_loaded|clue_collecting|pursuit_ready|deck_building|team_link_active|trust_my_partner|combo_romance|last_image|still_surviving|hariai_master|image_folder_guardian|cant_pick_five|food_photo_alert|subjective_today|comments_keep_coming|silent_high_score|words_lost|deep_folder|too_many_favorites)$/) || $productId.matches(/^chat_bg_(sakura_milk|peach_fizz|lavender_mist|aqua_glass|mint_soda|honey_cream|sunset|berry|ocean|forest|midnight|coffee|monochrome|galaxy|hologram|manga_paper)$/) || $productId.matches(/^chat_frame_(heart_ribbon|lace|cat_paw|flower|candy|jewel|antique|stained_glass|moon|film|polaroid|manga|pixel|neon|cyber|ice|flame|lightning|cardboard|ramen|aurora|stardust|royal_gold|beyond)$/)) && newData.val() === true"
             }
           },
           "equipped": {
@@ -356,6 +356,12 @@
               ".validate": "!newData.exists() || ((newData.child('reaction_color').exists() ? 1 : 0) + (newData.child('reaction_best_shot').exists() ? 1 : 0) + (newData.child('reaction_composition').exists() ? 1 : 0) + (newData.child('reaction_atmosphere').exists() ? 1 : 0) + (newData.child('reaction_idea').exists() ? 1 : 0) + (newData.child('reaction_healing').exists() ? 1 : 0) + (newData.child('reaction_keep_watching').exists() ? 1 : 0) + (newData.child('reaction_today_favorite').exists() ? 1 : 0) + (newData.child('reaction_story').exists() ? 1 : 0) + (newData.child('reaction_masterpiece').exists() ? 1 : 0)) <= 8",
               "$productId": {
                 ".validate": "($productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece') && newData.val() === true && newData.parent().parent().parent().child('inventory/' + $productId).val() === true"
+              }
+            },
+            "stamps": {
+              ".validate": "!newData.exists() || ((newData.child('stamp_god_photo').exists() ? 1 : 0) + (newData.child('stamp_genius').exists() ? 1 : 0) + (newData.child('stamp_best_shot').exists() ? 1 : 0) + (newData.child('stamp_more').exists() ? 1 : 0) + (newData.child('stamp_hit').exists() ? 1 : 0) + (newData.child('stamp_defeated').exists() ? 1 : 0) + (newData.child('stamp_pursuit').exists() ? 1 : 0) + (newData.child('stamp_not_over').exists() ? 1 : 0) + (newData.child('stamp_thinking').exists() ? 1 : 0) + (newData.child('stamp_read').exists() ? 1 : 0) + (newData.child('stamp_bluff').exists() ? 1 : 0) + (newData.child('stamp_weakness').exists() ? 1 : 0) + (newData.child('stamp_partner').exists() ? 1 : 0) + (newData.child('stamp_success').exists() ? 1 : 0) + (newData.child('stamp_leave_it').exists() ? 1 : 0) + (newData.child('stamp_combo').exists() ? 1 : 0) + (newData.child('stamp_survived').exists() ? 1 : 0) + (newData.child('stamp_close_call').exists() ? 1 : 0) + (newData.child('stamp_champion').exists() ? 1 : 0) + (newData.child('stamp_last_card').exists() ? 1 : 0)) <= 6",
+              "$productId": {
+                ".validate": "$productId.matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && newData.val() === true && newData.parent().parent().parent().child('inventory/' + $productId).val() === true"
               }
             },
             "title": {
@@ -582,6 +588,9 @@
             },
             "createdAt": {
               ".validate": "newData.isNumber()"
+            },
+            "stampId": {
+              ".validate": "!newData.exists() || (newData.isString() && ((newData.parent().child('phase').val() === 'scout' && (newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks')) || (newData.parent().child('phase').val() === 'battle' && ((newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks') || (newData.val().matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && root.child('online/economy/' + auth.uid + '/equipped/stamps/' + newData.val()).val() === true)))))"
             },
             "titleId": {
               ".validate": "!newData.exists() || (newData.parent().child('phase').val() === 'battle' && newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
@@ -1002,6 +1011,9 @@
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/royaleRooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
               ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "stampId": {
+                ".validate": "!newData.exists() || (newData.isString() && ((newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks') || (newData.val().matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && root.child('online/economy/' + auth.uid + '/equipped/stamps/' + newData.val()).val() === true)))"
+              },
               "titleId": {
                 ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
               },
@@ -1063,6 +1075,9 @@
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/players/' + auth.uid + '/team').val() === $team && newData.child('authorUid').val() === auth.uid",
               ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "stampId": {
+                ".validate": "!newData.exists() || (newData.isString() && ((newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks') || (newData.val().matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && root.child('online/economy/' + auth.uid + '/equipped/stamps/' + newData.val()).val() === true)))"
+              },
               "titleId": {
                 ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
               },
@@ -1199,6 +1214,9 @@
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
               ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "stampId": {
+                ".validate": "!newData.exists() || (newData.isString() && ((newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks') || (newData.val().matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && root.child('online/economy/' + auth.uid + '/equipped/stamps/' + newData.val()).val() === true)))"
+              },
               "titleId": {
                 ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
               },
@@ -1321,6 +1339,9 @@
             "$messageId": {
               ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
               ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+              "stampId": {
+                ".validate": "!newData.exists() || (newData.isString() && ((newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks') || (newData.val().matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && root.child('online/economy/' + auth.uid + '/equipped/stamps/' + newData.val()).val() === true)))"
+              },
               "titleId": {
                 ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
               },

@@ -31,6 +31,18 @@ import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
 } from "./player-titles.js?v=player-titles-v1";
+import {
+  STAMP_PRODUCTS,
+  acquireStampCooldown,
+  bindChatToolTabs,
+  canUseStamp,
+  getAvailableStamps,
+  getStamp,
+  normalizeEquippedStamps,
+  renderChatTools,
+  renderStampBubble,
+  startStampButtonCooldown,
+} from "./stamps.js?v=stamps-v1";
 
 const MAX_ROUNDS = 5;
 const PLAYER_COUNT = 4;
@@ -107,7 +119,7 @@ function createState() {
     authReady: false,
     profile: { rating: INITIAL_RATING, streak: 0 },
     royaleProfile: { wins: 0, topTwo: 0, matches: 0, streak: 0, bestStreak: 0 },
-    economy: { points: 0, inventory: {}, equipped: { reactions: {}, title: "", chatFrame: "", chatBackground: "" }, daily: {} },
+    economy: { points: 0, inventory: {}, equipped: { reactions: {}, stamps: {}, title: "", chatFrame: "", chatBackground: "" }, daily: {} },
     deck: [],
     roomId: "",
     room: null,
@@ -224,16 +236,17 @@ function normalizeEconomy(value) {
   const dateKey = jstDateKey(now());
   const sameDate = source.daily?.dateKey === dateKey;
   const inventory = {};
-  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
+  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...STAMP_PRODUCTS, ...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
     if (source.inventory?.[item.id] === true) inventory[item.id] = true;
   });
   const ownedReactions = SHOP_REACTIONS.filter((item) => inventory[item.id]);
   const hasSavedEquipment = source.equipped && typeof source.equipped === "object";
-  const equipped = { reactions: {}, title: "", chatFrame: "", chatBackground: "" };
+  const equipped = { reactions: {}, stamps: {}, title: "", chatFrame: "", chatBackground: "" };
   const reactionIds = hasSavedEquipment
     ? ownedReactions.filter((item) => source.equipped?.reactions?.[item.id] === true).map((item) => item.id)
     : ownedReactions.map((item) => item.id);
   reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { equipped.reactions[id] = true; });
+  equipped.stamps = normalizeEquippedStamps(source, inventory, hasSavedEquipment);
   const savedTitle = String(source.equipped?.title || "");
   if (getPlayerTitleProduct(savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
   const chatCosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
@@ -694,13 +707,18 @@ function unlockedReactions() {
 }
 
 function renderMessages(messages, emptyText) {
-  return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${renderChatCosmeticBubble(message.text, message)}</div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
+  return messages.length ? messages.map((message) => {
+    const content = message.stampId
+      ? renderStampBubble(message.stampId, chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId))
+      : renderChatCosmeticBubble(message.text, message);
+    return `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${content}</div>`;
+  }).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
 }
 
 function renderAllChat(locked = false) {
   const controls = locked
     ? `<div class="royale-chat-lock"><strong>匿名投票中</strong><span>画像の持ち主を伏せるため、投票確定後にチャットを再開します。</span></div>`
-    : `<div class="quick-reactions">${unlockedReactions().map((text) => `<button class="reaction-button" data-all-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div><form class="chat-form" id="royaleAllChatForm"><input class="chat-input" id="royaleAllChatInput" maxlength="80" placeholder="4人へひとこと…" aria-label="4人共通チャット" /><button class="button button-cyan button-small">送信</button></form>`;
+    : `${renderChatTools({ id: "royale-all", textReactions: unlockedReactions(), stamps: getAvailableStamps(state.economy), textAttribute: "data-all-reaction", stampAttribute: "data-all-stamp" })}<form class="chat-form" id="royaleAllChatForm"><input class="chat-input" id="royaleAllChatInput" maxlength="80" placeholder="4人へひとこと…" aria-label="4人共通チャット" /><button class="button button-cyan button-small">送信</button></form>`;
   return `<aside class="chat-panel online-chat-standalone ${locked ? "is-locked" : ""}"><div class="chat-head"><strong>ALL CHAT / 4 PLAYERS</strong><span>${locked ? "投票確定まで送信停止" : "脱落後も利用できます"}</span></div><div class="chat-messages" id="royaleAllChatMessages">${renderMessages(state.allChatMessages, "公開された画像について4人で話してみましょう。")}</div>${controls}</aside>`;
 }
 
@@ -791,7 +809,9 @@ function assignRank(targetUid, rank) {
 }
 
 function bindChatEvents() {
+  bindChatToolTabs();
   document.querySelectorAll("[data-all-reaction]").forEach((button) => button.addEventListener("click", () => sendAllChat(button.dataset.allReaction)));
+  document.querySelectorAll("[data-all-stamp]").forEach((button) => button.addEventListener("click", () => sendAllChat("", button.dataset.allStamp)));
   document.querySelector("#royaleAllChatForm")?.addEventListener("submit", (event) => { event.preventDefault(); const input = document.querySelector("#royaleAllChatInput"); sendAllChat(input.value); input.value = ""; });
   scrollChats();
 }
@@ -1935,12 +1955,21 @@ async function recordDailyProgress(changes) {
   if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
 
-async function sendAllChat(value) {
+async function sendAllChat(value, stampId = "") {
   if (["select", "waitingPick", "waitingImages", "reveal", "score", "waitingScore"].includes(state.screen)) {
     showToast("匿名投票が終わるまでチャットは利用できません。");
     return;
   }
-  const text = String(value || "").trim().slice(0, 80);
+  const stamp = getStamp(stampId);
+  if (stampId && (!stamp || !canUseStamp(stampId, state.economy))) {
+    showToast("このスタンプは現在の装備に含まれていません。");
+    return;
+  }
+  if (stamp && !acquireStampCooldown("royale-all")) {
+    showToast("スタンプは2秒に1回送信できます。");
+    return;
+  }
+  const text = stamp ? stamp.label : String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return;
   const message = {
     authorUid: state.uid,
@@ -1949,6 +1978,7 @@ async function sendAllChat(value) {
     round: state.round,
     createdAt: serverTimestamp(),
   };
+  if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-all-stamp]"); }
   if (titleLabel()) message.titleId = state.economy.equipped.title;
   attachEquippedChatCosmetics(message);
   await set(push(ref(database, `online/royaleRooms/${state.roomId}/chat`)), message).catch(() => showToast("4人チャットを送信できませんでした。"));

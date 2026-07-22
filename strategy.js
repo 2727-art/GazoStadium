@@ -32,6 +32,18 @@ import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
 } from "./player-titles.js?v=player-titles-v1";
+import {
+  STAMP_PRODUCTS,
+  acquireStampCooldown,
+  bindChatToolTabs,
+  canUseStamp,
+  getAvailableStamps,
+  getStamp,
+  normalizeEquippedStamps,
+  renderChatTools,
+  renderStampBubble,
+  startStampButtonCooldown,
+} from "./stamps.js?v=stamps-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -115,7 +127,7 @@ function createState() {
     weaknessCommit: "",
     pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
-    economy: { inventory: {}, equipped: { title: "", chatFrame: "", chatBackground: "" } },
+    economy: { inventory: {}, equipped: { stamps: {}, title: "", chatFrame: "", chatBackground: "" } },
     main: [],
     reserve: [],
     roomId: "",
@@ -394,13 +406,14 @@ function normalizeProfile(value) {
 function normalizeChatCosmeticEconomy(value) {
   const source = value && typeof value === "object" ? value : {};
   const inventory = {};
-  [...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((product) => {
+  [...STAMP_PRODUCTS, ...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((product) => {
     if (source.inventory?.[product.id] === true) inventory[product.id] = true;
   });
   const cosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
   const savedTitle = String(source.equipped?.title || "");
   const title = getPlayerTitleProduct(savedTitle) && inventory[savedTitle] ? savedTitle : "";
-  return { inventory, equipped: { title, chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId } };
+  const stamps = normalizeEquippedStamps(source, inventory, Boolean(source.equipped && typeof source.equipped === "object"));
+  return { inventory, equipped: { stamps, title, chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId } };
 }
 
 function renderStrategyTitleBadge(titleId) {
@@ -805,8 +818,11 @@ function renderStrategyChatMessage(message, anonymous) {
   const showIdentityCosmetics = !anonymous && message.phase !== "scout";
   const cosmeticClasses = showIdentityCosmetics ? chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId) : "";
   const titleBadge = showIdentityCosmetics ? renderStrategyTitleBadge(message.titleId) : "";
+  const content = message.stampId
+    ? renderStampBubble(message.stampId, cosmeticClasses)
+    : `<p${cosmeticClasses ? ` class="${cosmeticClasses}"` : ""}>${escapeHtml(message.text)}</p>`;
   return `<div class="strategy-chat-message-row ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
-    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}${titleBadge}</small><p${cosmeticClasses ? ` class="${cosmeticClasses}"` : ""}>${escapeHtml(message.text)}</p></div></div>`;
+    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}${titleBadge}</small>${content}</div></div>`;
 }
 
 function renderStrategyChat() {
@@ -820,7 +836,7 @@ function renderStrategyChat() {
       <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : "会話も推理材料"}</span></div>
     <div class="strategy-chat-participants">${renderStrategyChatParticipant(localPlayer, true, anonymous)}${renderStrategyChatParticipant(opponent, false, anonymous)}</div>
     <div class="chat-messages" id="strategyChatMessages">${messages}</div>
-    <div class="quick-reactions">${STRATEGY_CHAT_PROMPTS.map((text) => `<button class="reaction-button" type="button" data-strategy-chat-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div>
+    ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy, { freeOnly: anonymous }), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
     <form class="chat-form" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="会話から本当の弱点を探る…" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
       <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
 }
@@ -916,7 +932,9 @@ function bindScreenEvents() {
 }
 
 function bindStrategyChatEvents() {
+  bindChatToolTabs();
   document.querySelectorAll("[data-strategy-chat-reaction]").forEach((button) => button.addEventListener("click", () => sendStrategyChat(button.dataset.strategyChatReaction)));
+  document.querySelectorAll("[data-strategy-chat-stamp]").forEach((button) => button.addEventListener("click", () => sendStrategyChat("", button.dataset.strategyChatStamp)));
   document.querySelector("#strategyChatForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const input = document.querySelector("#strategyChatInput");
@@ -928,8 +946,18 @@ function bindStrategyChatEvents() {
   scrollStrategyChat();
 }
 
-async function sendStrategyChat(value) {
-  const text = String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80);
+async function sendStrategyChat(value, stampId = "") {
+  const anonymous = isStrategyChatAnonymous();
+  const stamp = getStamp(stampId);
+  if (stampId && (!stamp || !canUseStamp(stampId, state.economy, { freeOnly: anonymous }))) {
+    showToast(anonymous ? "匿名偵察中は無料スタンプ4種だけ使用できます。" : "このスタンプは現在の装備に含まれていません。");
+    return;
+  }
+  if (stamp && !acquireStampCooldown("strategy")) {
+    showToast("スタンプは2秒に1回送信できます。");
+    return;
+  }
+  const text = stamp ? stamp.label : String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80);
   if (!text || !state.roomId || !isStrategyChatVisible()) return;
   const message = {
     authorUid: state.uid,
@@ -938,6 +966,7 @@ async function sendStrategyChat(value) {
     round: Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
     createdAt: serverTimestamp(),
   };
+  if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-strategy-chat-stamp]"); }
   if (!isStrategyChatAnonymous()) {
     const equippedTitle = getPlayerTitleProduct(state.economy.equipped?.title);
     if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
