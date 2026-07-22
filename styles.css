@@ -2640,6 +2640,110 @@ button:disabled {
   font-size: 0.58rem;
 }
 
+.overall-ranking-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 22px;
+  margin: 0 0 18px;
+  padding: 15px 17px;
+  border: 1px solid rgba(100, 232, 213, 0.3);
+  border-radius: 14px;
+  background: linear-gradient(110deg, rgba(33, 128, 217, 0.12), rgba(100, 232, 213, 0.045));
+}
+
+.overall-ranking-panel.is-disabled {
+  border-color: rgba(255, 255, 255, 0.11);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.overall-ranking-copy {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.overall-ranking-copy .eyebrow {
+  flex: 0 0 auto;
+  max-width: 118px;
+  color: #7fd8ff;
+  line-height: 1.45;
+}
+
+.overall-ranking-copy > div {
+  display: grid;
+  gap: 3px;
+}
+
+.overall-ranking-copy strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.overall-ranking-copy p,
+.overall-ranking-public-settings p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.overall-ranking-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 11px;
+}
+
+.overall-ranking-status {
+  color: var(--cyan);
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.is-disabled .overall-ranking-status {
+  color: var(--muted);
+}
+
+.overall-ranking-panel > small {
+  grid-column: 1 / -1;
+  color: #798398;
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+
+.overall-ranking-public-settings {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px 26px;
+  margin: -8px 0 18px;
+  padding: 15px 17px;
+  border: 1px solid rgba(100, 232, 213, 0.18);
+  border-radius: 14px;
+  background: rgba(7, 11, 19, 0.72);
+}
+
+.overall-ranking-public-settings > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.overall-ranking-public-settings strong {
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.overall-ranking-public-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
 .ranking-optin {
   display: flex;
   align-items: flex-start;
@@ -3016,6 +3120,30 @@ button:disabled {
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .overall-ranking-panel,
+  .overall-ranking-public-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .overall-ranking-copy {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .overall-ranking-copy .eyebrow {
+    max-width: none;
+  }
+
+  .overall-ranking-control,
+  .overall-ranking-public-controls {
+    justify-content: space-between;
+  }
+
+  .overall-ranking-public-controls .ranking-x-handle {
+    width: 100%;
   }
 
   .ranking-record {

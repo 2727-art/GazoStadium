@@ -298,6 +298,7 @@ function renderSetup() {
       ${renderTitleBadge()}
       <span>${state.royaleProfile.wins}回優勝</span><span>TOP2 ${state.royaleProfile.topTwo}回 / ${state.royaleProfile.matches}戦</span>
       <span>🔥 ${state.royaleProfile.streak}連勝中</span></div>
+    ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "royaleOverallRanking" }) || ""}
     <div class="royale-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>3+2</strong><span>MAIN + RESERVE</span></div><div><strong>1</strong><span>DECK SWAP</span></div><div><strong>15</strong><span>VOTE SEC</span></div></div>
     <div class="setup-layout"><aside class="setup-guide"><h2>バトルロワイヤルの流れ</h2><ol class="guide-list">
       <li><b>1</b><span>OPENING・MIDDLE・FINALとRESERVE 2枚を順番に登録します。</span></li><li><b>2</b><span>匿名画像へ順位を付け、合計支持ポイントが最も低い1人が脱落します。</span></li>
@@ -684,6 +685,11 @@ function bindEvents() {
 
 function bindSetupEvents() {
   document.querySelector("#royaleBackHome")?.addEventListener("click", leaveToLanding);
+  window.HariaiOnline?.bindOverallRankingParticipation?.({
+    controlId: "royaleOverallRanking",
+    name: () => state.name,
+    onUpdate: render,
+  });
   const nameInput = document.querySelector("#royalePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);

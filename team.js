@@ -292,6 +292,7 @@ function renderSetup() {
       ${renderTitleBadge()}
       <span>2ON2 RATE ${Number(state.teamProfile.rating || INITIAL_RATING)}</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span>
       <span>🔥 ${state.teamProfile.streak}連勝中</span></div>
+    ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "teamOverallRanking" }) || ""}
     <div class="team-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>2</strong><span>TEAMS</span></div><div><strong>30</strong><span>SHARED HP</span></div><div><strong>20+10</strong><span>SEC</span></div></div>
     <div class="setup-layout"><aside class="setup-guide"><h2>2on2の流れ</h2><ol class="guide-list">
       <li><b>1</b><span>チーム専用チャットで20秒間、画像の方向性を相談します。</span></li><li><b>2</b><span>10秒以内に各自が秘密の画像を1枚選びます。</span></li>
@@ -494,6 +495,11 @@ function bindEvents() {
 
 function bindSetupEvents() {
   document.querySelector("#teamBackHome")?.addEventListener("click", leaveToLanding);
+  window.HariaiOnline?.bindOverallRankingParticipation?.({
+    controlId: "teamOverallRanking",
+    name: () => state.name,
+    onUpdate: render,
+  });
   const nameInput = document.querySelector("#teamPlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);

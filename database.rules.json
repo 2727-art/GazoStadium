@@ -473,7 +473,7 @@
           "players": {
             "$uid": {
               ".write": "auth != null && auth.uid === $uid && !data.exists() && (root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true)",
-              ".validate": "newData.hasChildren(['uid', 'name', 'clues', 'bluffIndex', 'pursuitLine', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('clues').hasChildren(['0', '1', '2']) && newData.child('bluffIndex').isNumber() && (newData.child('bluffIndex').val() === 0 || newData.child('bluffIndex').val() === 1 || newData.child('bluffIndex').val() === 2) && newData.child('pursuitLine').isString() && newData.child('pursuitLine').val().matches(/^[^\\r\\n]{1,40}$/) && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
+              ".validate": "newData.hasChildren(['uid', 'name', 'clues', 'weaknessCommit', 'pursuitLine', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('clues').hasChildren(['0', '1', '2']) && newData.child('weaknessCommit').isString() && newData.child('weaknessCommit').val().matches(/^[a-f0-9]{64}$/) && newData.child('pursuitLine').isString() && newData.child('pursuitLine').val().matches(/^[^\\r\\n]{1,40}$/) && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
               "uid": {
                 ".validate": "newData.isString() && newData.val() === $uid"
               },
@@ -494,8 +494,8 @@
                   ".validate": false
                 }
               },
-              "bluffIndex": {
-                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"
+              "weaknessCommit": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
               },
               "pursuitLine": {
                 ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
@@ -604,6 +604,73 @@
                   ".validate": "newData.val() === true"
                 }
               }
+            }
+          },
+          "weaknessGuesses": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/rounds/3/continue/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/strategyRooms/' + $roomId + '/rounds/3/continue/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).val() === true",
+              ".validate": "newData.hasChildren(['guessIndex', 'lockedAt']) && newData.child('guessIndex').isNumber() && (newData.child('guessIndex').val() === 0 || newData.child('guessIndex').val() === 1 || newData.child('guessIndex').val() === 2) && newData.child('lockedAt').isNumber()",
+              "guessIndex": {
+                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"
+              },
+              "lockedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "weaknessReveals": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists()",
+              ".validate": "newData.hasChildren(['weaknessIndex', 'salt', 'revealedAt']) && newData.child('weaknessIndex').isNumber() && (newData.child('weaknessIndex').val() === 0 || newData.child('weaknessIndex').val() === 1 || newData.child('weaknessIndex').val() === 2) && newData.child('salt').isString() && newData.child('salt').val().matches(/^[a-f0-9]{32}$/) && newData.child('revealedAt').isNumber()",
+              "weaknessIndex": {
+                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"
+              },
+              "salt": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "revealedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "weaknessChains": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists()",
+              ".validate": "newData.hasChildren(['ready', 'count', 'lockedAt']) && newData.child('ready').val() === true && newData.child('count').isNumber() && (newData.child('count').val() === 0 || newData.child('count').val() === 1 || newData.child('count').val() === 2 || newData.child('count').val() === 3) && newData.child('count').val() <= root.child('online/strategyRooms/' + $roomId + '/deckReady/' + auth.uid + '/reserveCount').val() && (newData.child('count').val() === 0 || (auth.uid === root.child('online/strategyRooms/' + $roomId + '/hostUid').val() && root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + auth.uid + '/guessIndex').val() === root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val() + '/weaknessIndex').val()) || (auth.uid === root.child('online/strategyRooms/' + $roomId + '/guestUid').val() && root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + auth.uid + '/guessIndex').val() === root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val() + '/weaknessIndex').val())) && newData.child('lockedAt').isNumber()",
+              "ready": {
+                ".validate": "newData.val() === true"
+              },
+              "count": {
+                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2 || newData.val() === 3)"
+              },
+              "lockedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "weaknessChainImagesReceived": {
+            "$ownerUid": {
+              "$recipientUid": {
+                "$slot": {
+                  ".write": "auth != null && auth.uid === $recipientUid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/members/' + $ownerUid).val() === true",
+                  ".validate": "(($slot === '0' && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + $ownerUid + '/count').val() >= 1) || ($slot === '1' && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + $ownerUid + '/count').val() >= 2) || ($slot === '2' && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + $ownerUid + '/count').val() >= 3)) && newData.val() === true"
+                }
+              }
+            }
+          },
+          "weaknessContinue": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists()",
+              ".validate": "newData.val() === true"
             }
           },
           "signals": {

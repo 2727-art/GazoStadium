@@ -27,6 +27,9 @@ const MAX_HP = 30;
 const MAX_ROUNDS = 5;
 const EXTRA_REQUESTS = 2;
 const PURSUIT_PERMITS = 1;
+const WEAKNESS_SCOUT_ROUND = 3;
+const WEAKNESS_CHAIN_DAMAGE = [4, 3, 2];
+const MAX_WEAKNESS_CHAIN = WEAKNESS_CHAIN_DAMAGE.length;
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const MAX_PURSUIT_LINE_LENGTH = 40;
@@ -38,7 +41,8 @@ const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-strategy-name-v2";
 const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
-const PROFILE_BLUFF_KEY = "hariai-stadium-strategy-bluff-v2";
+const PROFILE_WEAKNESS_KEY = "hariai-stadium-strategy-weakness-v3";
+const LEGACY_PROFILE_BLUFF_KEY = "hariai-stadium-strategy-bluff-v2";
 const PURSUIT_LINE_KEY = "hariai-stadium-strategy-pursuit-line-v2";
 const PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
@@ -72,15 +76,17 @@ function savedClues() {
 }
 
 function createState() {
-  const storedBluffValue = localStorage.getItem(PROFILE_BLUFF_KEY);
-  const storedBluff = Number(storedBluffValue);
+  const storedWeaknessValue = localStorage.getItem(PROFILE_WEAKNESS_KEY) ?? localStorage.getItem(LEGACY_PROFILE_BLUFF_KEY);
+  const storedWeakness = Number(storedWeaknessValue);
   return {
     screen: "profile",
     uid: "",
     authReady: false,
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
     clues: savedClues(),
-    bluffIndex: storedBluffValue !== null && Number.isInteger(storedBluff) && storedBluff >= 0 && storedBluff <= 2 ? storedBluff : null,
+    weaknessIndex: storedWeaknessValue !== null && Number.isInteger(storedWeakness) && storedWeakness >= 0 && storedWeakness <= 2 ? storedWeakness : null,
+    weaknessSalt: "",
+    weaknessCommit: "",
     pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
     main: [],
@@ -102,6 +108,15 @@ function createState() {
     selectedBaseId: "",
     selectedScore: 0,
     selectedReaction: "normal",
+    selectedWeaknessGuess: null,
+    selectedWeaknessChainIds: [],
+    localWeaknessChainCards: [],
+    weaknessChainLocked: false,
+    weaknessRevealsVerified: false,
+    weaknessIntegrityFailed: false,
+    weaknessChainApplied: false,
+    weaknessPhaseComplete: false,
+    weaknessResult: null,
     sentImageKeys: new Set(),
     incomingTransfer: null,
     transferProgress: 0,
@@ -150,18 +165,36 @@ function normalizePursuitLine(value) {
   return normalized || PURSUIT_LINES[0];
 }
 
+function randomHex(bytes = 16) {
+  const values = crypto.getRandomValues(new Uint8Array(bytes));
+  return [...values].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function prepareWeaknessCommit(roomId) {
+  if (!Number.isInteger(state.weaknessIndex)) throw new Error("本当の弱点を確認できませんでした。");
+  state.weaknessSalt = randomHex();
+  state.weaknessCommit = await sha256Hex(`${roomId}:${state.uid}:${state.weaknessIndex}:${state.weaknessSalt}`);
+  return state.weaknessCommit;
+}
+
 function normalizeReaction(value, score) {
   if (value === "request" && score <= 3) return "request";
   if (value === "pursuit" && score >= 9) return "pursuit";
   return "normal";
 }
 
-function playerRoomRecord() {
+async function playerRoomRecord(roomId) {
+  const weaknessCommit = await prepareWeaknessCommit(roomId);
   return {
     uid: state.uid,
     name: state.name,
     clues: state.clues,
-    bluffIndex: state.bluffIndex,
+    weaknessCommit,
     pursuitLine: state.pursuitLine,
     rating: Number(state.profile.rating || INITIAL_RATING),
     streak: Number(state.profile.streak || 0),
@@ -173,7 +206,12 @@ function runtimePlayer(source) {
     uid: String(source?.uid || ""),
     name: String(source?.name || "PLAYER").slice(0, 16),
     clues: normalizeClues(source?.clues),
-    bluffIndex: Math.max(0, Math.min(2, Math.floor(Number(source?.bluffIndex) || 0))),
+    weaknessCommit: /^[a-f0-9]{64}$/.test(String(source?.weaknessCommit || "")) ? String(source.weaknessCommit) : "",
+    weaknessIndex: null,
+    weaknessGuess: null,
+    weaknessCorrect: false,
+    weaknessChainCount: 0,
+    overkill: 0,
     pursuitLine: normalizePursuitLine(source?.pursuitLine),
     rating: Number(source?.rating || INITIAL_RATING),
     streak: Math.max(0, Number(source?.streak || 0)),
@@ -273,6 +311,13 @@ function render() {
     waitingActionRating: () => renderWaiting("RESERVE SCORE", "追加画像の採点を待っています", "追加画像から連鎖効果は発生しません。"),
     roundResult: renderRoundResult,
     waitingContinue: () => renderWaiting("ROUND READY", "相手の準備を待っています", "両者が進むと次のラウンドを開始します。"),
+    weaknessGuess: renderWeaknessGuess,
+    waitingWeaknessGuess: () => renderWaiting("WEAKNESS GUESS LOCKED", "相手の弱点回答を待っています", "両者の回答が確定するまで答えは公開されません。"),
+    weaknessChainSelect: renderWeaknessChainSelect,
+    waitingWeaknessChain: () => renderWaiting("WEAKNESS CHECK", "連続追撃の準備を待っています", "看破に成功したプレイヤーは残りリザーブから最大3枚を選びます。"),
+    waitingWeaknessChainImage: () => renderWaiting("PURSUIT CHAIN TRANSFER", "連続追撃画像を転送しています", `転送状況 ${state.transferProgress}%`),
+    weaknessChainResult: renderWeaknessChainResult,
+    waitingWeaknessContinue: () => renderWaiting("WEAKNESS BREAK COMPLETE", "相手の準備を待っています", "両者が確認すると対戦を続行、または最終結果へ進みます。"),
     gameover: renderGameOver,
     withdrawn: renderWithdrawn,
     noContest: renderNoContest,
@@ -287,20 +332,21 @@ function renderProfile() {
   const usesCustom = !PURSUIT_LINES.includes(state.pursuitLine);
   return `<section class="screen strategy-screen">
     <div class="section-head"><div><span class="eyebrow">ONLINE STRATEGY 1ON1 / PROFILE</span><h1>秘密のプロフィール登録</h1>
-      <p>3つの好みのうち1つだけを弱点に設定します。名前と弱点の答えはデッキ確定まで相手画面へ表示しません。</p></div>
+      <p>弱点候補を3つ登録し、本当の弱点を1つ選びます。残り2つは相手を惑わせるブラフです。</p></div>
       <button class="button button-ghost button-small" id="strategyBackHome">タイトルへ</button></div>
     <div class="online-profile-strip"><span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
       <span>STRATEGY RATE ${Number(state.profile.rating || INITIAL_RATING)}</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span></div>
+    ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "strategyOverallRanking" }) || ""}
     <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
-      <li><b>1</b><span>マッチ開始時は匿名の手掛かり3つだけが相手に表示されます。</span></li>
-      <li><b>2</b><span>相手の好みを読み、メイン5枚とリザーブ最大5枚を構築します。</span></li>
+      <li><b>1</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
+      <li><b>2</b><span>3ラウンドの反応から弱点を推理し、看破すると最大3連続追撃が発生します。</span></li>
       <li><b>3</b><span>画像本体はWebRTCで対戦相手へ直接送り、Firebaseには保存しません。</span></li>
-    </ol><p class="privacy-note">弱点とプレイヤーネームは試合進行に合わせて画面上で公開されます。開発者ツールによる閲覧を完全に防ぐ権威サーバーはありません。</p></aside>
+    </ol><p class="privacy-note">試合前は弱点のハッシュだけを共有し、両者の回答確定後に答えを公開して照合します。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
-      <fieldset class="strategy-clue-fieldset"><legend>好きなものの手掛かり（1つだけ弱点を選択）</legend>
-        ${state.clues.map((clue, index) => `<label class="strategy-clue-row"><input type="radio" name="bluff" value="${index}" ${state.bluffIndex === index ? "checked" : ""} required />
-          <span class="bluff-selector">弱点</span><input class="text-input strategy-clue-input" data-clue-index="${index}" maxlength="80" autocomplete="off" placeholder="例：雨の日の街並みに弱い" value="${escapeHtml(clue)}" required /></label>`).join("")}
+      <fieldset class="strategy-clue-fieldset"><legend>弱点候補（1つだけ本当の弱点を選択）</legend>
+        ${state.clues.map((clue, index) => `<label class="strategy-clue-row"><input type="radio" name="weakness" value="${index}" ${state.weaknessIndex === index ? "checked" : ""} required />
+          <span class="weakness-selector">本命</span><input class="text-input strategy-clue-input" data-clue-index="${index}" maxlength="80" autocomplete="off" placeholder="例：豚骨ラーメン" value="${escapeHtml(clue)}" required /></label>`).join("")}
       </fieldset>
       <div class="pursuit-line-settings"><label class="field-label">追撃時のセリフ<select class="text-input" id="strategyPursuitLine">
         ${PURSUIT_LINES.map((line) => `<option value="${escapeHtml(line)}" ${line === state.pursuitLine ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
@@ -324,8 +370,8 @@ function renderConnecting() {
 function renderAnonymousIntro() {
   const opponent = getOpponent();
   return `<section class="screen strategy-screen strategy-intro-screen"><div class="strategy-anonymous-head"><span class="strategy-anonymous-icon" aria-hidden="true">?</span>
-    <div><span class="eyebrow">ANONYMOUS OPPONENT</span><h1>対戦相手の自己紹介</h1><p>3つのうち1つは弱点です。名前は両者のデッキ確定後に公開されます。</p></div></div>
-    <div class="strategy-clue-cards">${opponent.clues.map((clue, index) => `<article><small>手掛かり ${String(index + 1).padStart(2, "0")}</small><p>${escapeHtml(clue)}</p></article>`).join("")}</div>
+    <div><span class="eyebrow">ANONYMOUS OPPONENT</span><h1>対戦相手の弱点候補</h1><p>3つのうち1つだけが本当の弱点、残り2つはブラフです。</p></div></div>
+    <div class="strategy-clue-cards">${opponent.clues.map((clue, index) => `<article><small>弱点候補 ${String(index + 1).padStart(2, "0")}</small><p>${escapeHtml(clue)}</p></article>`).join("")}</div>
     <div class="strategy-intro-actions"><button class="button button-danger" id="strategyWithdraw">この勝負から撤退</button><button class="button button-primary" id="strategyAccept">推理してデッキを組む</button></div>
     <p class="strategy-rule-note">撤退はノーコンテストとなり、相手の名前・弱点は公開されず、戦績にも影響しません。</p></section>`;
 }
@@ -339,7 +385,7 @@ function renderDeckBuilder() {
   return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">COUNTER DECK BUILD</span><h1>相手に刺さる10枚を選ぶ</h1>
     <p>メインは必ず5枚。リザーブは最大5枚で、追加要求への再提示と追撃に使います。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
     <div class="strategy-build-layout"><aside class="strategy-scout-note"><span>SCOUTING MEMO</span><h2>匿名の対戦相手</h2>
-      ${opponent.clues.map((clue, index) => `<p><b>${index + 1}</b>${escapeHtml(clue)}</p>`).join("")}<small>このうち1つは弱点です。</small></aside>
+      ${opponent.clues.map((clue, index) => `<p><b>${index + 1}</b>${escapeHtml(clue)}</p>`).join("")}<small>本当の弱点は1つ。残り2つはブラフです。</small></aside>
       <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}
         <div class="screen-actions setup-actions"><button class="button button-primary" id="strategyLockDeck" ${state.main.length === MAIN_COUNT ? "" : "disabled"}>デッキを封印する</button></div>
       </div></div></section>`;
@@ -367,7 +413,7 @@ function renderWaitingDeck() {
 
 function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
-    <p>弱点の答えは試合終了まで秘密です。</p></div><div class="strategy-identity-grid">
+    <p>本当の弱点は3ラウンド終了後、両者の回答が確定するまで秘密です。</p></div><div class="strategy-identity-grid">
     ${state.players.map((player, index) => `<article class="strategy-identity-card player-${index + 1}"><small>${index === state.playerIndex ? "YOU" : "OPPONENT"}</small><h2>${escapeHtml(player.name)}</h2>
       <div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`).join("")}<div class="strategy-vs-mark">VS</div></div>
     <button class="button button-primary strategy-center-button" id="strategyBattleStart">画像貼り合い開始</button></section>`;
@@ -449,6 +495,9 @@ function renderRoundResult() {
   const result = state.currentResult;
   if (!result) return renderWaiting("ROUND RESULT", "結果を集計しています", "両者の採点を同期しています。");
   const winner = result.powers[0] === result.powers[1] ? -1 : result.powers[0] > result.powers[1] ? 0 : 1;
+  const nextLabel = state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete
+    ? "弱点看破フェイズへ"
+    : isGameOver() ? "最終結果を見る" : `ROUND ${state.round + 1}へ`;
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="result-card strategy-round-result"><span class="eyebrow">ROUND ${state.round} RESULT</span>
     <h1>${winner < 0 ? "DRAW / ノーダメージ" : `${escapeHtml(state.players[winner].name)}の攻撃`}</h1><div class="strategy-power-versus">
       ${state.players.map((player, index) => `<article class="${winner === index ? "winner" : ""}"><small>${escapeHtml(player.name)}</small><strong>${result.powers[index]}</strong><span>IMAGE POWER</span>
@@ -456,18 +505,73 @@ function renderRoundResult() {
     <div class="strategy-round-breakdown">${state.players.map((player, owner) => {
       const detail = result.actions[owner]?.cardShown ? `${result.actions[owner].type === "pursuit" ? "追撃" : "再提示"} ${result.actionScores[owner]}点` : "追加効果なし";
       return `<p><b>${escapeHtml(player.name)}</b><span>メイン ${result.baseScores[owner]}点 / ${detail}</span></p>`;
-    }).join("")}</div><button class="button button-primary strategy-center-button" id="strategyNextRound">${isGameOver() ? "最終結果を見る" : `ROUND ${state.round + 1}へ`}</button></div></section>`;
+    }).join("")}</div><button class="button button-primary strategy-center-button" id="strategyNextRound">${nextLabel}</button></div></section>`;
+}
+
+function renderWeaknessGuess() {
+  const opponent = getOpponent();
+  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">SCOUT PHASE COMPLETE</span>
+    <h1>本当の弱点を看破せよ</h1><p>3ラウンドの点数とリアクションを読み、相手の本当の弱点を1つ選びます。回答は1回だけで変更できません。</p></div>
+    <form class="strategy-weakness-guess" id="strategyWeaknessGuessForm"><fieldset><legend>${escapeHtml(opponent.name)}の弱点候補</legend>
+      ${opponent.clues.map((clue, index) => `<label class="strategy-guess-card"><input type="radio" name="weaknessGuess" value="${index}" ${state.selectedWeaknessGuess === index ? "checked" : ""} />
+        <span><small>CANDIDATE ${String(index + 1).padStart(2, "0")}</small><strong>${escapeHtml(clue)}</strong></span></label>`).join("")}
+    </fieldset><button class="button button-primary" type="submit" ${Number.isInteger(state.selectedWeaknessGuess) ? "" : "disabled"} id="strategyLockWeaknessGuess">この弱点で回答を封印</button></form></section>`;
+}
+
+function renderWeaknessChainSelect() {
+  const opponent = getOpponent();
+  const available = state.reserve.filter((item) => !item.used);
+  const selected = new Set(state.selectedWeaknessChainIds);
+  return `<section class="screen strategy-screen strategy-chain-screen">${renderBattleHud()}<div class="strategy-weakness-break-banner"><span>WEAKNESS BREAK</span>
+    <h1>${escapeHtml(opponent.clues[opponent.weaknessIndex])}</h1><p>弱点看破成功。残りリザーブから最大${MAX_WEAKNESS_CHAIN}枚を選び、固定ダメージ ${WEAKNESS_CHAIN_DAMAGE.join(" → ")} の連続追撃を放ちます。</p></div>
+    <div class="strategy-chain-counter"><strong>${selected.size}</strong> / ${Math.min(MAX_WEAKNESS_CHAIN, available.length)} CHAIN</div>
+    <div class="strategy-pick-grid strategy-chain-pick-grid">${available.map((item) => `<button class="select-card strategy-pick-card ${selected.has(item.id) ? "selected" : ""}" type="button" data-weakness-chain-card="${item.id}" aria-pressed="${selected.has(item.id)}">
+      <img src="${item.url}" alt="連続追撃候補" /><span>${selected.has(item.id) ? "追撃にセット済み" : "追撃へ追加"}</span></button>`).join("")}</div>
+    <button class="button button-primary strategy-center-button" id="strategyLockWeaknessChain" ${selected.size ? "" : "disabled"}>${selected.size}連続追撃を封印</button></section>`;
+}
+
+function renderWeaknessChainResult() {
+  const result = state.weaknessResult;
+  if (!result) return renderWaiting("WEAKNESS BREAK", "連続追撃を集計しています", "弱点コミットと転送画像を照合しています。");
+  const guessSummary = state.players.map((player, index) => {
+    const opponent = state.players[1 - index];
+    const guess = player.weaknessGuess;
+    return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small>
+      <strong>${escapeHtml(opponent.clues[guess] || "未回答")}</strong><span>${player.weaknessCorrect ? "看破成功" : "看破失敗"}</span></article>`;
+  }).join("");
+  const chains = state.players.map((player, owner) => {
+    const count = result.chainCounts[owner];
+    const defender = state.players[1 - owner];
+    if (!count) return `<article class="strategy-chain-lane is-empty"><h2>${escapeHtml(player.name)}</h2><p>${player.weaknessCorrect ? "リザーブ不足のため連続追撃なし" : "看破失敗のため連続追撃なし"}</p></article>`;
+    const cards = Array.from({ length: count }, (_, index) => {
+      const item = owner === state.playerIndex ? state.localWeaknessChainCards[index] : state.remoteImages.get(imageKey("weaknessChain", index));
+      return `<div class="strategy-chain-card" style="--chain-index:${index}">${renderBattleImage(item, player.name, `PURSUIT CHAIN ×${index + 1}`)}
+        <blockquote>${escapeHtml(player.pursuitLine)}</blockquote><b>${WEAKNESS_CHAIN_DAMAGE[index]} DAMAGE</b></div>`;
+    }).join("");
+    return `<article class="strategy-chain-lane"><h2>${escapeHtml(player.name)} → ${escapeHtml(defender.name)}</h2><div class="strategy-chain-cards">${cards}</div>
+      <p class="strategy-chain-total">CHAIN DAMAGE <strong>${result.chainDamage[owner]}</strong>${result.overkill[1 - owner] > 0 ? `<em>OVERKILL +${result.overkill[1 - owner]}</em>` : ""}</p></article>`;
+  }).join("");
+  const matchEnds = state.players.some((player) => player.hp <= 0);
+  const headline = result.overkill.some((value) => value > 0) ? "OVERKILL" : state.players.some((player) => player.weaknessCorrect) ? "WEAKNESS BREAK" : "READ FAILED";
+  return `<section class="screen strategy-screen strategy-chain-result">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">WEAKNESS REVEAL</span><h1>${headline}</h1>
+    <p>事前登録したハッシュとの照合に成功しました。連続追撃は両者同時に解決されています。</p></div><div class="strategy-guess-summary">${guessSummary}</div>
+    <div class="strategy-chain-result-grid">${chains}</div><button class="button button-primary strategy-center-button" id="strategyWeaknessContinue">${matchEnds ? "最終結果を見る" : "ROUND 4へ"}</button></section>`;
 }
 
 function renderGameOver() {
   const outcome = determineOutcome();
   const winner = outcome.winnerIndex;
+  const weaknessReview = state.weaknessResult ? `<div class="strategy-guess-summary strategy-final-guess-summary">${state.players.map((player, index) => {
+    const opponent = state.players[1 - index];
+    return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small><strong>${escapeHtml(opponent.clues[player.weaknessGuess] || "未回答")}</strong><span>${player.weaknessCorrect ? `看破成功 / ${player.weaknessChainCount} CHAIN` : "看破失敗"}</span></article>`;
+  }).join("")}</div>` : "";
   return `<section class="screen strategy-screen"><div class="gameover-card strategy-gameover"><span class="eyebrow">ONLINE STRATEGY 1ON1 COMPLETE</span>
     <h1>${winner < 0 ? "DRAW" : `${escapeHtml(state.players[winner].name)} WIN`}</h1><p>匿名紹介の読み、メイン5枚、リザーブの使いどころを振り返りましょう。</p>
     <div class="strategy-final-grid">${state.players.map((player, index) => `<article class="${winner === index ? "winner" : ""}"><small>${index === state.playerIndex ? "YOU" : "OPPONENT"}</small><h2>${escapeHtml(player.name)}</h2>
-      <div><span>残りHP</span><strong>${player.hp}</strong></div><div><span>累計パワー</span><strong>${player.totalPower}</strong></div><div><span>平均評価</span><strong>${average(player.receivedScores)}</strong></div></article>`).join("")}</div>
-    <section class="strategy-bluff-reveal"><span class="eyebrow">弱点公開</span><h2>自己紹介の答え合わせ</h2>${state.players.map((player) => `<article><h3>${escapeHtml(player.name)}</h3>
-      ${player.clues.map((clue, index) => `<p class="${index === player.bluffIndex ? "is-bluff" : "is-truth"}"><b>${index === player.bluffIndex ? "弱点" : "TRUE"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
+      <div><span>残りHP</span><strong>${player.hp}</strong></div><div><span>累計パワー</span><strong>${player.totalPower}</strong></div><div><span>平均評価</span><strong>${average(player.receivedScores)}</strong></div>${player.overkill > 0 ? `<em>OVERKILL +${player.overkill}</em>` : ""}</article>`).join("")}</div>
+    ${weaknessReview}
+    <section class="strategy-bluff-reveal"><span class="eyebrow">弱点公開</span><h2>弱点候補の答え合わせ</h2>${state.players.map((player) => `<article><h3>${escapeHtml(player.name)}</h3>
+      ${player.clues.map((clue, index) => `<p class="${index === player.weaknessIndex ? "is-weakness" : "is-bluff"}"><b>${index === player.weaknessIndex ? "本当の弱点" : "ブラフ"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
     <section class="strategy-history"><span class="eyebrow">BATTLE LOG</span>${state.history.map((round) => `<p><b>R${round.round}</b><span>${escapeHtml(state.players[0].name)} ${round.powers[0]} - ${round.powers[1]} ${escapeHtml(state.players[1].name)}</span></p>`).join("")}</section>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
     <div class="screen-actions strategy-final-actions"><button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
@@ -522,6 +626,13 @@ function renderScoreButtons() {
 
 function bindScreenEvents() {
   document.querySelector("#strategyBackHome")?.addEventListener("click", leaveToLanding);
+  if (state.screen === "profile") {
+    window.HariaiOnline?.bindOverallRankingParticipation?.({
+      controlId: "strategyOverallRanking",
+      name: () => document.querySelector("#strategyName")?.value || state.name,
+      onUpdate: render,
+    });
+  }
   document.querySelector("#strategyProfileForm")?.addEventListener("submit", saveProfile);
   bindPursuitFields();
   document.querySelector("#strategyCancelMatching")?.addEventListener("click", cancelMatching);
@@ -542,6 +653,14 @@ function bindScreenEvents() {
   document.querySelector("#strategyRateAction")?.addEventListener("click", () => { state.screen = "actionRating"; state.selectedScore = 0; render(); });
   document.querySelector("#strategyLockActionRating")?.addEventListener("click", lockActionRating);
   document.querySelector("#strategyNextRound")?.addEventListener("click", continueRound);
+  document.querySelectorAll('input[name="weaknessGuess"]').forEach((input) => input.addEventListener("change", () => {
+    state.selectedWeaknessGuess = Number(input.value);
+    document.querySelector("#strategyLockWeaknessGuess")?.removeAttribute("disabled");
+  }));
+  document.querySelector("#strategyWeaknessGuessForm")?.addEventListener("submit", lockWeaknessGuess);
+  document.querySelectorAll("[data-weakness-chain-card]").forEach((button) => button.addEventListener("click", () => toggleWeaknessChainCard(button.dataset.weaknessChainCard)));
+  document.querySelector("#strategyLockWeaknessChain")?.addEventListener("click", lockWeaknessChain);
+  document.querySelector("#strategyWeaknessContinue")?.addEventListener("click", continueAfterWeaknessChain);
   document.querySelectorAll("[data-strategy-destroy]").forEach((button) => button.addEventListener("click", requestHome));
   document.querySelector("#strategyNewMatch")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyWithdrawAgain")?.addEventListener("click", resetStrategySetup);
@@ -576,18 +695,18 @@ async function saveProfile(event) {
   event.preventDefault();
   const name = document.querySelector("#strategyName")?.value.trim().slice(0, 16) || "";
   const clues = [...document.querySelectorAll(".strategy-clue-input")].map((input) => input.value.trim());
-  const bluff = document.querySelector('input[name="bluff"]:checked');
+  const weakness = document.querySelector('input[name="weakness"]:checked');
   if (!state.authReady || !state.uid) return showToast("Firebaseへの接続完了を待ってください。");
-  if (!name || clues.some((clue) => !clue) || !bluff) return showToast("名前、3つの手掛かり、弱点1つをすべて入力してください。");
+  if (!name || clues.some((clue) => !clue) || !weakness) return showToast("名前、3つの弱点候補、本当の弱点1つをすべて入力してください。");
   state.name = name;
   state.clues = normalizeClues(clues);
-  state.bluffIndex = Number(bluff.value);
+  state.weaknessIndex = Number(weakness.value);
   const choice = document.querySelector("#strategyPursuitLine")?.value || PURSUIT_LINES[0];
   const custom = document.querySelector("#strategyCustomPursuitLine")?.value || "";
   state.pursuitLine = choice === CUSTOM_PURSUIT_VALUE ? normalizePursuitLine(custom) : normalizePursuitLine(choice);
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   localStorage.setItem(PROFILE_CLUES_KEY, JSON.stringify(state.clues));
-  localStorage.setItem(PROFILE_BLUFF_KEY, String(state.bluffIndex));
+  localStorage.setItem(PROFILE_WEAKNESS_KEY, String(state.weaknessIndex));
   localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
   window.HariaiAudio?.playButton?.("confirm");
   await beginMatchmaking();
@@ -642,6 +761,7 @@ async function createOffer(candidate) {
     const reservation = await runTransaction(ref(database, `online/strategyActive/${state.uid}`), (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
     const roomRef = ref(database, `online/strategyRooms/${roomId}`);
+    const localPlayerRecord = await playerRoomRecord(roomId);
     await set(ref(database, `online/strategyRooms/${roomId}/hostUid`), state.uid);
     await update(roomRef, {
       guestUid: candidate.uid,
@@ -649,7 +769,7 @@ async function createOffer(candidate) {
       status: "offered",
       [`members/${state.uid}`]: true,
       [`members/${candidate.uid}`]: true,
-      [`players/${state.uid}`]: playerRoomRecord(),
+      [`players/${state.uid}`]: localPlayerRecord,
     });
     await set(ref(database, `online/strategyOffers/${candidate.uid}/${roomId}`), { roomId, fromUid: state.uid, toUid: candidate.uid, createdAt: Date.now() });
     await update(ref(database, `online/strategyQueue/${state.uid}`), { state: "offering", roomId });
@@ -705,7 +825,7 @@ async function acceptOffer(roomId, offer) {
     }
     const reservation = await runTransaction(ref(database, `online/strategyActive/${state.uid}`), (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
-    await set(ref(database, `online/strategyRooms/${roomId}/players/${state.uid}`), playerRoomRecord());
+    await set(ref(database, `online/strategyRooms/${roomId}/players/${state.uid}`), await playerRoomRecord(roomId));
     const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
     if ((await get(statusRef)).val() !== "offered") {
       await remove(ref(database, `online/strategyActive/${state.uid}`));
@@ -861,25 +981,26 @@ async function finishIncomingImage(kind, round, ownerUid) {
   state.incomingTransfer = null;
   state.transferProgress = 100;
   if (kind === "base") await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/baseImagesReceived/${state.uid}`), true);
-  else await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/actionImagesReceived/${ownerUid}/${state.uid}`), true);
+  else if (kind === "action") await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/actionImagesReceived/${ownerUid}/${state.uid}`), true);
+  else if (kind === "weaknessChain") await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChainImagesReceived/${ownerUid}/${state.uid}/${round}`), true);
 }
 
-async function sendImage(item, kind, actionType = "") {
-  const key = imageKey(kind, state.round);
+async function sendImage(item, kind, actionType = "", slot = state.round) {
+  const key = imageKey(kind, slot);
   if (state.sentImageKeys.has(key) || !item?.blob || !state.channel || state.channel.readyState !== "open") return;
   state.sentImageKeys.add(key);
-  state.screen = kind === "base" ? "waitingBaseImage" : "waitingActionImage";
+  state.screen = kind === "base" ? "waitingBaseImage" : kind === "weaknessChain" ? "waitingWeaknessChainImage" : "waitingActionImage";
   state.transferProgress = 0;
   render();
   const buffer = await item.blob.arrayBuffer();
   try {
-    state.channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: state.round, ownerUid: state.uid, actionType, size: buffer.byteLength, mime: item.blob.type || "image/webp" }));
+    state.channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: slot, ownerUid: state.uid, actionType, size: buffer.byteLength, mime: item.blob.type || "image/webp" }));
     for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
       await waitForDataBuffer();
       state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
       state.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
     }
-    state.channel.send(JSON.stringify({ type: "strategy-image-end", kind, round: state.round, ownerUid: state.uid }));
+    state.channel.send(JSON.stringify({ type: "strategy-image-end", kind, round: slot, ownerUid: state.uid }));
   } catch (error) {
     state.sentImageKeys.delete(key);
     throw error;
@@ -1021,6 +1142,226 @@ async function continueRound() {
   await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/continue/${state.uid}`), true);
 }
 
+async function lockWeaknessGuess(event) {
+  event.preventDefault();
+  const selected = Number(document.querySelector('input[name="weaknessGuess"]:checked')?.value);
+  if (!Number.isInteger(selected) || selected < 0 || selected > 2) return showToast("相手の弱点候補を1つ選んでください。");
+  state.selectedWeaknessGuess = selected;
+  state.screen = "waitingWeaknessGuess";
+  render();
+  try {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessGuesses/${state.uid}`), { guessIndex: selected, lockedAt: serverTimestamp() });
+  } catch (error) {
+    console.error(error);
+    state.screen = "weaknessGuess";
+    render();
+    showToast("回答を送信できませんでした。通信状態を確認して、もう一度お試しください。");
+  }
+}
+
+function toggleWeaknessChainCard(cardId) {
+  const available = state.reserve.find((item) => item.id === cardId && !item.used);
+  if (!available) return;
+  const selected = state.selectedWeaknessChainIds;
+  const index = selected.indexOf(cardId);
+  if (index >= 0) selected.splice(index, 1);
+  else if (selected.length < MAX_WEAKNESS_CHAIN) selected.push(cardId);
+  else return showToast(`連続追撃に選べる画像は最大${MAX_WEAKNESS_CHAIN}枚です。`);
+  render();
+}
+
+async function lockWeaknessChain() {
+  const cards = state.selectedWeaknessChainIds.map((cardId) => state.reserve.find((item) => item.id === cardId && !item.used)).filter(Boolean).slice(0, MAX_WEAKNESS_CHAIN);
+  if (!cards.length) return showToast("連続追撃に使うリザーブ画像を選んでください。");
+  cards.forEach((item) => { item.used = true; });
+  state.localWeaknessChainCards = cards;
+  state.weaknessChainLocked = true;
+  state.screen = "waitingWeaknessChain";
+  render();
+  try {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChains/${state.uid}`), { ready: true, count: cards.length, lockedAt: serverTimestamp() });
+  } catch (error) {
+    console.error(error);
+    cards.forEach((item) => { item.used = false; });
+    state.localWeaknessChainCards = [];
+    state.weaknessChainLocked = false;
+    state.screen = "weaknessChainSelect";
+    render();
+    showToast("追撃画像を確定できませんでした。通信状態を確認して、もう一度お試しください。");
+  }
+}
+
+async function continueAfterWeaknessChain() {
+  state.screen = "waitingWeaknessContinue";
+  render();
+  await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessContinue/${state.uid}`), true);
+}
+
+async function verifyWeaknessReveals(guesses, reveals) {
+  for (const player of state.players) {
+    const reveal = reveals[player.uid];
+    const expected = await sha256Hex(`${state.roomId}:${player.uid}:${Number(reveal?.weaknessIndex)}:${String(reveal?.salt || "")}`);
+    if (!player.weaknessCommit || expected !== player.weaknessCommit) return false;
+  }
+  state.players.forEach((player, index) => {
+    const opponent = state.players[1 - index];
+    player.weaknessIndex = Number(reveals[player.uid].weaknessIndex);
+    player.weaknessGuess = Number(guesses[player.uid].guessIndex);
+    player.weaknessCorrect = player.weaknessGuess === Number(reveals[opponent.uid].weaknessIndex);
+  });
+  return true;
+}
+
+async function failWeaknessIntegrityCheck(message = "弱点コミットの照合に失敗しました。この対戦はノーコンテストです。") {
+  if (state.weaknessIntegrityFailed) return;
+  state.weaknessIntegrityFailed = true;
+  await runTransaction(ref(database, `online/strategyRooms/${state.roomId}/destroyed`), (current) => current || { by: state.uid, at: Date.now() }).catch(() => {});
+  handleFatalError(new Error(message));
+}
+
+async function sendWeaknessChainImages(count) {
+  for (let index = 0; index < count; index += 1) {
+    await sendImage(state.localWeaknessChainCards[index], "weaknessChain", "pursuit", index);
+  }
+}
+
+function weaknessChainImagesReady(chains, receipts) {
+  return state.players.every((player, owner) => {
+    const count = Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[player.uid]?.count || 0)));
+    if (!count) return true;
+    const recipientUid = state.players[1 - owner].uid;
+    const acknowledged = Array.from({ length: count }, (_, index) => receipts[player.uid]?.[recipientUid]?.[index] === true).every(Boolean);
+    if (!acknowledged) return false;
+    if (owner === state.playerIndex) return state.localWeaknessChainCards.length >= count;
+    return Array.from({ length: count }, (_, index) => state.remoteImages.has(imageKey("weaknessChain", index))).every(Boolean);
+  });
+}
+
+function weaknessChainsValid(chains) {
+  return state.players.every((player) => {
+    const count = Number(chains[player.uid]?.count);
+    return Number.isInteger(count)
+      && count >= 0
+      && count <= Math.min(MAX_WEAKNESS_CHAIN, remainingReserve(player))
+      && (count === 0 || player.weaknessCorrect);
+  });
+}
+
+function resolveWeaknessChain(guesses, chains) {
+  if (state.weaknessChainApplied) return;
+  state.weaknessChainApplied = true;
+  const chainCounts = state.players.map((player) => Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[player.uid]?.count || 0))));
+  const chainDamage = chainCounts.map((count) => WEAKNESS_CHAIN_DAMAGE.slice(0, count).reduce((sum, damage) => sum + damage, 0));
+  const hpBefore = state.players.map((player) => player.hp);
+  const overkill = [0, 0];
+  state.players.forEach((player, owner) => {
+    player.weaknessChainCount = chainCounts[owner];
+    player.reserveUsed += chainCounts[owner];
+    player.totalPower += chainDamage[owner];
+    const defender = state.players[1 - owner];
+    overkill[1 - owner] = Math.max(0, chainDamage[owner] - hpBefore[1 - owner]);
+    defender.hp = Math.max(0, hpBefore[1 - owner] - chainDamage[owner]);
+  });
+  state.players.forEach((player, index) => { player.overkill = overkill[index]; });
+  state.weaknessResult = { guesses, chainCounts, chainDamage, hpBefore, overkill };
+  state.screen = "weaknessChainResult";
+  const overkillTotal = overkill.reduce((sum, value) => sum + value, 0);
+  const weaknessBroken = state.players.some((player) => player.weaknessCorrect);
+  setStrategyChrome(overkillTotal > 0 ? "OVERKILL" : weaknessBroken ? "WEAKNESS BREAK" : "WEAKNESS REVEAL");
+  if (weaknessBroken) triggerCriticalFx(overkillTotal > 0 ? `OVERKILL +${overkillTotal}` : "WEAKNESS BREAK");
+  render();
+}
+
+async function advanceAfterWeaknessPhase() {
+  if (state.weaknessPhaseComplete) return;
+  state.weaknessPhaseComplete = true;
+  if (state.players.some((player) => player.hp <= 0)) {
+    await finishMatch();
+    return;
+  }
+  state.round = WEAKNESS_SCOUT_ROUND + 1;
+  state.currentResult = null;
+  state.selectedBaseId = "";
+  state.selectedScore = 0;
+  state.selectedReaction = "normal";
+  state.screen = "baseSelect";
+  setStrategyChrome("STRATEGY ONLINE BATTLE");
+  render();
+  await reactToRoomData();
+}
+
+async function reactToWeaknessPhase() {
+  if (state.weaknessIntegrityFailed || state.weaknessPhaseComplete) return;
+  const guesses = state.roomData?.weaknessGuesses || {};
+  if (!both(guesses)) return;
+  const reveals = state.roomData?.weaknessReveals || {};
+  if (!reveals[state.uid]) {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`), {
+      weaknessIndex: state.weaknessIndex,
+      salt: state.weaknessSalt,
+      revealedAt: serverTimestamp(),
+    });
+    return;
+  }
+  if (!both(reveals)) return;
+  if (!state.weaknessRevealsVerified) {
+    const verified = await verifyWeaknessReveals(guesses, reveals);
+    if (!verified) {
+      await failWeaknessIntegrityCheck();
+      return;
+    }
+    state.weaknessRevealsVerified = true;
+  }
+
+  const chains = state.roomData?.weaknessChains || {};
+  const localPlayer = getLocalPlayer();
+  const availableReserve = state.reserve.filter((item) => !item.used);
+  if (!chains[state.uid]) {
+    if (state.weaknessChainLocked) {
+      if (state.screen !== "waitingWeaknessChain") { state.screen = "waitingWeaknessChain"; render(); }
+      return;
+    }
+    if (localPlayer.weaknessCorrect && availableReserve.length) {
+      if (state.screen !== "weaknessChainSelect") {
+        state.selectedWeaknessChainIds = [];
+        state.screen = "weaknessChainSelect";
+        render();
+      }
+      return;
+    }
+    state.weaknessChainLocked = true;
+    state.screen = "waitingWeaknessChain";
+    render();
+    try {
+      await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChains/${state.uid}`), { ready: true, count: 0, lockedAt: serverTimestamp() });
+    } catch (error) {
+      console.error(error);
+      state.weaknessChainLocked = false;
+      showToast("弱点判定を送信できませんでした。通信状態を確認してください。");
+    }
+    return;
+  }
+  if (!both(chains)) {
+    if (state.screen !== "weaknessChainSelect") { state.screen = "waitingWeaknessChain"; render(); }
+    return;
+  }
+  if (!weaknessChainsValid(chains)) {
+    await failWeaknessIntegrityCheck("連続追撃の枚数または弱点判定を照合できませんでした。この対戦はノーコンテストです。");
+    return;
+  }
+
+  const localCount = Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[state.uid]?.count || 0)));
+  if (localCount) await sendWeaknessChainImages(localCount);
+  const receipts = state.roomData?.weaknessChainImagesReceived || {};
+  if (!weaknessChainImagesReady(chains, receipts)) {
+    if (state.screen !== "waitingWeaknessChainImage") { state.screen = "waitingWeaknessChainImage"; render(); }
+    return;
+  }
+  resolveWeaknessChain(guesses, chains);
+  const continued = state.roomData?.weaknessContinue || {};
+  if (both(continued)) await advanceAfterWeaknessPhase();
+}
+
 function currentRoundData() {
   return state.roomData?.rounds?.[state.round] || {};
 }
@@ -1058,7 +1399,10 @@ async function reactToRoomData() {
       state.screen = "baseSelect";
       render();
     }
-    if (both(state.roomData.battleReady)) await reactToRoundData();
+    if (both(state.roomData.battleReady)) {
+      if (state.round === WEAKNESS_SCOUT_ROUND && state.advancedRounds.has(WEAKNESS_SCOUT_ROUND) && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
+      else await reactToRoundData();
+    }
   } finally {
     state.reacting = false;
     if (state.reactAgain) {
@@ -1170,6 +1514,13 @@ function resolveRound(data) {
 async function advanceRoundOrFinish() {
   if (state.advancedRounds.has(state.round)) return;
   state.advancedRounds.add(state.round);
+  if (state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete) {
+    state.screen = "weaknessGuess";
+    setStrategyChrome("WEAKNESS GUESS");
+    render();
+    await reactToWeaknessPhase();
+    return;
+  }
   if (isGameOver()) {
     await finishMatch();
     return;
@@ -1185,6 +1536,8 @@ async function advanceRoundOrFinish() {
 }
 
 function isGameOver() {
+  if (state.round < WEAKNESS_SCOUT_ROUND) return false;
+  if (state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete) return false;
   return state.round >= MAX_ROUNDS || state.players.some((player) => player.hp <= 0);
 }
 
@@ -1348,7 +1701,7 @@ async function cancelMatching() {
 }
 
 async function resetStrategySetup() {
-  const identity = { uid: state.uid, authReady: state.authReady, name: state.name, clues: [...state.clues], bluffIndex: state.bluffIndex, pursuitLine: state.pursuitLine, profile: { ...state.profile } };
+  const identity = { uid: state.uid, authReady: state.authReady, name: state.name, clues: [...state.clues], weaknessIndex: state.weaknessIndex, pursuitLine: state.pursuitLine, profile: { ...state.profile } };
   await cleanupOnlineResources(false);
   releaseAllImages();
   state = createState();

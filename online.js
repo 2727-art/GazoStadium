@@ -342,6 +342,39 @@ function leaderboardPublicSettings() {
   };
 }
 
+function getOverallRankingPreference() {
+  return { ...leaderboardPublicSettings() };
+}
+
+function renderOverallRankingParticipation({ controlId = "overallRankingParticipation", compact = true } = {}) {
+  const settings = getOverallRankingPreference();
+  const safeControlId = /^[A-Za-z][A-Za-z0-9_:.-]*$/.test(String(controlId)) ? String(controlId) : "overallRankingParticipation";
+  return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"} ${compact ? "is-compact" : ""}">
+    <div class="overall-ranking-copy"><span class="eyebrow">ONLINE OVERALL RANKING</span><div><strong>オンライン総合ランキング</strong>
+      <p>${settings.enabled ? "4モードの対戦結果を期間ポイントへ反映しています。" : "総合RATEは非公開で保持され、参加中の対戦から期間ポイントへ反映されます。"}</p></div></div>
+    <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
+      <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
+    <small>この設定は通常型・戦略型・2on2・バトルロワイヤルで共通です。</small>
+  </section>`;
+}
+
+function bindOverallRankingParticipation({ controlId = "overallRankingParticipation", name = "", onUpdate } = {}) {
+  const button = document.querySelector(`#${controlId}`);
+  button?.addEventListener("click", async () => {
+    const nextEnabled = !getOverallRankingPreference().enabled;
+    button.disabled = true;
+    try {
+      const displayName = typeof name === "function" ? name() : name;
+      await setOverallRankingParticipation(nextEnabled, displayName);
+      showToast(nextEnabled ? "オンライン総合ランキングへの参加を有効にしました。" : "オンライン総合ランキングから非公開にしました。");
+    } catch (error) {
+      showToast(error?.message || "ランキング設定を更新できませんでした。");
+    } finally {
+      onUpdate?.();
+    }
+  });
+}
+
 function createEmptyEconomy(dateKey = jstDateKey()) {
   return {
     points: 0,
@@ -1313,28 +1346,14 @@ async function fillSampleDeck() {
 
 async function updateRankingPreference(event) {
   const enabled = event.currentTarget.checked;
-  const previousPublic = state.leaderboardPublic;
-  const previousXPublic = state.xPublic;
-  state.leaderboardPublic = enabled;
-  if (!enabled) state.xPublic = false;
-  localStorage.setItem(RANKING_PUBLIC_KEY, enabled ? "1" : "0");
-  localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
+  event.currentTarget.disabled = true;
   try {
-    if (enabled) {
-      await syncLeaderboardEntry();
-      showToast("ランキングへの参加を有効にしました。");
-    } else {
-      await removeLeaderboardEntry();
-      showToast("ランキングから非公開にしました。");
-    }
+    await setOverallRankingParticipation(enabled, state.name);
+    showToast(enabled ? "オンライン総合ランキングへの参加を有効にしました。" : "オンライン総合ランキングから非公開にしました。");
     render();
-  } catch {
-    state.leaderboardPublic = previousPublic;
-    state.xPublic = previousXPublic;
-    localStorage.setItem(RANKING_PUBLIC_KEY, state.leaderboardPublic ? "1" : "0");
-    localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
+  } catch (error) {
     render();
-    showToast("ランキング設定を更新できませんでした。");
+    showToast(error?.message || "ランキング設定を更新できませんでした。");
   }
 }
 
@@ -1347,42 +1366,18 @@ async function saveRankingXSettings() {
   const input = document.querySelector("#rankingXHandle");
   const publicToggle = document.querySelector("#rankingXPublicToggle");
   const commentsToggle = document.querySelector("#rankingCommentsEnabledToggle");
-  const nextHandle = normalizeXHandle(input?.value);
-  const nextPublic = Boolean(publicToggle?.checked);
-  const nextCommentsEnabled = Boolean(commentsToggle?.checked);
-  if (nextHandle && !X_HANDLE_PATTERN.test(nextHandle)) {
-    showToast("Xのユーザー名は半角英数字と_で15文字以内にしてください。");
-    input?.focus();
-    return;
-  }
-  if (nextPublic && !nextHandle) {
-    showToast("公開するXのユーザー名を入力してください。");
-    input?.focus();
-    return;
-  }
-
-  const previousHandle = state.xHandle;
-  const previousPublic = state.xPublic;
-  const previousCommentsEnabled = state.rankingCommentsEnabled;
-  state.xHandle = nextHandle;
-  state.xPublic = nextPublic && Boolean(nextHandle);
-  state.rankingCommentsEnabled = nextCommentsEnabled;
-  localStorage.setItem(X_HANDLE_KEY, state.xHandle);
-  localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
-  localStorage.setItem(RANKING_COMMENTS_ENABLED_KEY, state.rankingCommentsEnabled ? "1" : "0");
   try {
-    await syncLeaderboardEntry();
+    await saveOverallRankingPublicSettings({
+      xHandle: input?.value,
+      xPublic: publicToggle?.checked,
+      commentsEnabled: commentsToggle?.checked,
+      name: state.name,
+    });
     render();
     showToast("ランキングの公開設定を保存しました。");
-  } catch {
-    state.xHandle = previousHandle;
-    state.xPublic = previousPublic;
-    state.rankingCommentsEnabled = previousCommentsEnabled;
-    localStorage.setItem(X_HANDLE_KEY, state.xHandle);
-    localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
-    localStorage.setItem(RANKING_COMMENTS_ENABLED_KEY, state.rankingCommentsEnabled ? "1" : "0");
+  } catch (error) {
     render();
-    showToast("ランキングの公開設定を更新できませんでした。");
+    showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
   }
 }
 
@@ -1723,20 +1718,95 @@ async function recordOverallResult({ mode, outcome, name, opponentRating = INITI
   return profile;
 }
 
-async function removeLeaderboardEntry() {
-  if (!state.authReady || !state.uid) return;
-  let entryId = state.leaderboardId;
+function persistOverallRankingPreference(settings) {
+  localStorage.setItem(RANKING_PUBLIC_KEY, settings.enabled ? "1" : "0");
+  localStorage.setItem(X_HANDLE_KEY, normalizeXHandle(settings.xHandle || ""));
+  localStorage.setItem(X_PUBLIC_KEY, settings.enabled && settings.xPublic ? "1" : "0");
+  localStorage.setItem(RANKING_COMMENTS_ENABLED_KEY, settings.commentsEnabled ? "1" : "0");
+}
+
+function applyOverallRankingPreferenceToState(settings) {
+  state.leaderboardPublic = Boolean(settings.enabled);
+  state.xHandle = normalizeXHandle(settings.xHandle || "");
+  state.xPublic = Boolean(settings.enabled && settings.xPublic);
+  state.rankingCommentsEnabled = Boolean(settings.commentsEnabled);
+}
+
+function dispatchOverallRankingPreference(settings = getOverallRankingPreference()) {
+  window.dispatchEvent(new CustomEvent("hariai-ranking-preference-updated", { detail: settings }));
+}
+
+async function setOverallRankingParticipation(enabled, name = "") {
+  const previous = getOverallRankingPreference();
+  const next = { ...previous, enabled: Boolean(enabled), xPublic: Boolean(enabled && previous.xPublic) };
+  const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || state.name || "PLAYER").trim().slice(0, 16) || "PLAYER";
+  persistOverallRankingPreference(next);
+  applyOverallRankingPreferenceToState(next);
+  try {
+    const user = await ensureRankingCommentUser();
+    if (next.enabled) {
+      const profile = await ensureOverallProfileSeeded(user.uid, displayName, state.uid === user.uid ? state.profile : null);
+      await publishOverallLeaderboard(user.uid, profile, displayName, next);
+    } else {
+      await removeLeaderboardEntryForUser(user.uid);
+    }
+    const saved = getOverallRankingPreference();
+    applyOverallRankingPreferenceToState(saved);
+    dispatchOverallRankingPreference(saved);
+    return saved;
+  } catch (error) {
+    persistOverallRankingPreference(previous);
+    applyOverallRankingPreferenceToState(previous);
+    dispatchOverallRankingPreference(previous);
+    throw error;
+  }
+}
+
+async function saveOverallRankingPublicSettings({ xHandle = "", xPublic = false, commentsEnabled = true, name = "" } = {}) {
+  const previous = getOverallRankingPreference();
+  if (!previous.enabled) throw new Error("先にオンライン総合ランキングへの参加を有効にしてください。");
+  const normalizedHandle = normalizeXHandle(xHandle);
+  if (normalizedHandle && !X_HANDLE_PATTERN.test(normalizedHandle)) throw new Error("Xのユーザー名は半角英数字と_で15文字以内にしてください。");
+  if (xPublic && !normalizedHandle) throw new Error("公開するXのユーザー名を入力してください。");
+  const next = {
+    ...previous,
+    xHandle: normalizedHandle,
+    xPublic: Boolean(xPublic),
+    commentsEnabled: Boolean(commentsEnabled),
+  };
+  const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || state.name || "PLAYER").trim().slice(0, 16) || "PLAYER";
+  persistOverallRankingPreference(next);
+  applyOverallRankingPreferenceToState(next);
+  try {
+    const user = await ensureRankingCommentUser();
+    const profile = await ensureOverallProfileSeeded(user.uid, displayName, state.uid === user.uid ? state.profile : null);
+    await publishOverallLeaderboard(user.uid, profile, displayName, next);
+    const saved = getOverallRankingPreference();
+    applyOverallRankingPreferenceToState(saved);
+    dispatchOverallRankingPreference(saved);
+    return saved;
+  } catch (error) {
+    persistOverallRankingPreference(previous);
+    applyOverallRankingPreferenceToState(previous);
+    dispatchOverallRankingPreference(previous);
+    throw error;
+  }
+}
+
+async function removeLeaderboardEntryForUser(uid) {
+  if (!uid) return;
+  let entryId = state.uid === uid ? state.leaderboardId : "";
   if (!entryId) {
-    const existing = await get(ref(database, `online/leaderboardEntriesByUser/${state.uid}`));
+    const existing = await get(ref(database, `online/leaderboardEntriesByUser/${uid}`));
     entryId = existing.exists() ? String(existing.val()) : "";
   }
   if (!entryId) return;
-  state.leaderboardId = entryId;
-  const periodIndexRef = ref(database, `online/leaderboardPeriodEntriesByUser/${state.uid}`);
+  if (state.uid === uid) state.leaderboardId = entryId;
+  const periodIndexRef = ref(database, `online/leaderboardPeriodEntriesByUser/${uid}`);
   const periodIndex = await get(periodIndexRef);
   const removals = {
     [`online/leaderboard/${entryId}`]: null,
-    [`online/leaderboardPeriodEntriesByUser/${state.uid}`]: null,
+    [`online/leaderboardPeriodEntriesByUser/${uid}`]: null,
   };
   if (periodIndex.exists()) {
     Object.entries(periodIndex.val() || {}).forEach(([period, keys]) => {
@@ -2734,5 +2804,10 @@ window.HariaiOnline = {
   saveLeaderboardComment,
   deleteLeaderboardComment,
   recordOverallResult,
+  getOverallRankingPreference,
+  renderOverallRankingParticipation,
+  bindOverallRankingParticipation,
+  setOverallRankingParticipation,
+  saveOverallRankingPublicSettings,
 };
 window.dispatchEvent(new Event("hariai-online-ready"));

@@ -66,7 +66,7 @@
   pointer-events: none;
 }
 
-.bluff-selector {
+.weakness-selector {
   grid-row: 1;
   min-width: 70px;
   padding: 9px 8px;
@@ -81,7 +81,7 @@
   letter-spacing: 0.1em;
 }
 
-.strategy-clue-row > input[type="radio"]:checked + .bluff-selector {
+.strategy-clue-row > input[type="radio"]:checked + .weakness-selector {
   border-color: rgba(255, 138, 91, 0.65);
   color: #ffad88;
   background: rgba(255, 138, 91, 0.12);
@@ -622,6 +622,293 @@
   color: var(--text);
 }
 
+.strategy-weakness-head {
+  max-width: 900px;
+  margin: 28px auto 24px;
+  text-align: center;
+}
+
+.strategy-weakness-head h1 {
+  margin: 8px 0 10px;
+  font-size: clamp(2.2rem, 6vw, 4.8rem);
+  letter-spacing: -0.06em;
+}
+
+.strategy-weakness-head p,
+.strategy-weakness-break-banner p {
+  margin: 0 auto;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.strategy-weakness-guess {
+  display: grid;
+  gap: 24px;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: clamp(22px, 4vw, 38px);
+  border: 1px solid rgba(170, 131, 255, 0.3);
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 0%, rgba(170, 131, 255, 0.12), transparent 44%), rgba(10, 13, 22, 0.88);
+}
+
+.strategy-weakness-guess fieldset {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.strategy-weakness-guess legend {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-bottom: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.strategy-guess-card {
+  position: relative;
+  cursor: pointer;
+}
+
+.strategy-guess-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.strategy-guess-card span {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  min-height: 138px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  transition: 160ms ease;
+}
+
+.strategy-guess-card small {
+  color: #8d97aa;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.strategy-guess-card strong {
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.strategy-guess-card input:checked + span {
+  border-color: rgba(255, 138, 91, 0.72);
+  background: rgba(255, 138, 91, 0.1);
+  box-shadow: 0 0 0 3px rgba(255, 138, 91, 0.07), 0 18px 46px rgba(0, 0, 0, 0.22);
+  transform: translateY(-2px);
+}
+
+.strategy-weakness-guess > .button {
+  justify-self: center;
+}
+
+.strategy-chain-screen,
+.strategy-chain-result {
+  --overkill-red: #ff4f6d;
+}
+
+.strategy-weakness-break-banner {
+  max-width: 960px;
+  margin: 28px auto 22px;
+  padding: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 79, 109, 0.5);
+  border-radius: 22px;
+  background: radial-gradient(circle at 50% 0%, rgba(255, 79, 109, 0.2), transparent 58%), rgba(15, 10, 18, 0.9);
+  text-align: center;
+  box-shadow: 0 0 50px rgba(255, 79, 109, 0.08);
+  animation: weakness-break-in 600ms cubic-bezier(.2,.75,.25,1) both;
+}
+
+.strategy-weakness-break-banner > span {
+  color: var(--overkill-red);
+  font-size: 0.7rem;
+  font-weight: 950;
+  letter-spacing: 0.18em;
+}
+
+.strategy-weakness-break-banner h1 {
+  margin: 8px 0 12px;
+  color: #fff;
+  font-size: clamp(2rem, 6vw, 4.5rem);
+  letter-spacing: -0.05em;
+  text-shadow: 0 0 30px rgba(255, 79, 109, 0.28);
+}
+
+.strategy-chain-counter {
+  width: fit-content;
+  margin: 0 auto 18px;
+  padding: 9px 16px;
+  border: 1px solid rgba(244, 201, 107, 0.35);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(244, 201, 107, 0.055);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.strategy-chain-counter strong {
+  color: var(--strategy-gold);
+  font-size: 1rem;
+}
+
+.strategy-chain-result > .strategy-weakness-head h1 {
+  color: var(--overkill-red);
+  text-shadow: 0 0 36px rgba(255, 79, 109, 0.32);
+  animation: overkill-pulse 900ms ease-out both;
+}
+
+.strategy-guess-summary,
+.strategy-chain-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 1120px;
+  margin: 0 auto 20px;
+}
+
+.strategy-guess-summary article {
+  display: grid;
+  gap: 5px;
+  padding: 17px 19px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.strategy-guess-summary article.success {
+  border-color: rgba(255, 79, 109, 0.42);
+  background: rgba(255, 79, 109, 0.07);
+}
+
+.strategy-guess-summary small,
+.strategy-guess-summary span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.strategy-guess-summary article.success span {
+  color: #ff8195;
+}
+
+.strategy-chain-lane {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid rgba(170, 131, 255, 0.22);
+  border-radius: 18px;
+  background: rgba(12, 15, 24, 0.86);
+}
+
+.strategy-chain-lane.is-empty {
+  display: grid;
+  place-content: center;
+  min-height: 180px;
+  text-align: center;
+}
+
+.strategy-chain-lane h2 {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+}
+
+.strategy-chain-lane.is-empty p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.strategy-chain-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.strategy-chain-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  animation: pursuit-chain-in 520ms cubic-bezier(.16,.8,.3,1) both;
+  animation-delay: calc(var(--chain-index) * 180ms);
+}
+
+.strategy-chain-card .strategy-battle-image {
+  min-height: 0;
+}
+
+.strategy-chain-card .strategy-battle-image img {
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+}
+
+.strategy-chain-card blockquote {
+  margin: 0;
+  color: #e8dffd;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.strategy-chain-card > b {
+  color: var(--strategy-gold);
+  font-family: var(--display);
+  font-size: 1.05rem;
+}
+
+.strategy-chain-total {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.strategy-chain-total strong {
+  color: var(--strategy-gold);
+  font-size: 1.4rem;
+}
+
+.strategy-chain-total em {
+  margin-left: auto;
+  color: var(--overkill-red);
+  font-size: 0.9rem;
+  font-style: normal;
+  text-shadow: 0 0 20px rgba(255, 79, 109, 0.3);
+}
+
+@keyframes weakness-break-in {
+  from { opacity: 0; transform: scale(.94); filter: brightness(1.8); }
+  to { opacity: 1; transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes pursuit-chain-in {
+  from { opacity: 0; transform: translateX(-28px) scale(.96); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes overkill-pulse {
+  0% { opacity: 0; transform: scale(1.22); }
+  55% { opacity: 1; transform: scale(.97); }
+  100% { transform: scale(1); }
+}
+
 .strategy-gameover {
   max-width: 1040px;
   margin: 20px auto;
@@ -671,6 +958,20 @@
   font-size: 1.5rem;
 }
 
+.strategy-final-grid article > em {
+  display: block;
+  margin-top: 14px;
+  color: #ff4f6d;
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+}
+
+.strategy-final-guess-summary {
+  margin-top: 22px;
+}
+
 .strategy-bluff-reveal,
 .strategy-history {
   margin-top: 28px;
@@ -713,13 +1014,17 @@
   letter-spacing: 0.1em;
 }
 
-.strategy-bluff-reveal p.is-bluff {
+.strategy-bluff-reveal p.is-weakness {
   border-color: rgba(255, 138, 91, 0.35);
   background: rgba(255, 138, 91, 0.06);
 }
 
-.strategy-bluff-reveal p.is-bluff b {
+.strategy-bluff-reveal p.is-weakness b {
   color: #ff9f77;
+}
+
+.strategy-bluff-reveal p.is-bluff b {
+  color: #a9b2c4;
 }
 
 .strategy-history {
@@ -770,7 +1075,10 @@
   .strategy-clue-cards,
   .strategy-identity-grid,
   .strategy-reveal-grid,
-  .strategy-final-grid {
+  .strategy-final-grid,
+  .strategy-weakness-guess fieldset,
+  .strategy-guess-summary,
+  .strategy-chain-result-grid {
     grid-template-columns: 1fr;
   }
 
@@ -836,5 +1144,13 @@
   .strategy-round-breakdown p,
   .strategy-history p {
     display: grid;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .strategy-weakness-break-banner,
+  .strategy-chain-result > .strategy-weakness-head h1,
+  .strategy-chain-card {
+    animation: none;
   }
 }

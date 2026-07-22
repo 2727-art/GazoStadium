@@ -321,6 +321,25 @@
     setLandingChrome();
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
     const status = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
+    const rankingPreference = window.HariaiOnline?.getOverallRankingPreference?.() || {
+      enabled: false,
+      xHandle: "",
+      xPublic: false,
+      commentsEnabled: true,
+    };
+    const participationMenu = window.HariaiOnline?.renderOverallRankingParticipation?.({
+      controlId: "rankingOverallParticipation",
+      compact: false,
+    }) || "";
+    const publicSettings = rankingPreference.enabled ? `<section class="overall-ranking-public-settings">
+      <div><strong>公開プロフィール設定</strong><p>任意でXへのリンクを表示し、自分の順位欄へのコメント受付を切り替えられます。</p></div>
+      <div class="overall-ranking-public-controls">
+        <label class="ranking-x-handle" for="rankingOverallXHandle"><span>@</span><input id="rankingOverallXHandle" type="text" maxlength="15" value="${escapeHtml(rankingPreference.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
+        <label class="ranking-x-public"><input type="checkbox" id="rankingOverallXPublic" ${rankingPreference.xPublic ? "checked" : ""} /><span>ランキングでXを公開する</span></label>
+        <label class="ranking-x-public"><input type="checkbox" id="rankingOverallCommentsEnabled" ${rankingPreference.commentsEnabled ? "checked" : ""} /><span>自分の順位欄でコメントを受け付ける</span></label>
+        <button class="button button-ghost button-small" type="button" id="saveOverallRankingSettings">公開設定を保存</button>
+      </div>
+    </section>` : "";
     const periodInfo = rankingPeriodInfo();
     const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
     const rows = entries.length ? entries.map((entry, index) => {
@@ -360,6 +379,8 @@
           <p>4つのオンライン対戦モード共通の期間ポイントと総合RATEで競います。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
+      ${participationMenu}
+      ${publicSettings}
       <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
         <button type="button" role="tab" data-ranking-period="daily" aria-selected="${rankingPeriod === "daily"}" class="${rankingPeriod === "daily" ? "is-active" : ""}">デイリー</button>
         <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
@@ -375,10 +396,32 @@
     document.querySelectorAll("[data-ranking-period]").forEach((button) => {
       button.addEventListener("click", () => selectRankingPeriod(button.dataset.rankingPeriod));
     });
+    window.HariaiOnline?.bindOverallRankingParticipation?.({
+      controlId: "rankingOverallParticipation",
+      onUpdate: () => renderRankingScreen({ preserveScroll: true }),
+    });
+    document.querySelector("#saveOverallRankingSettings")?.addEventListener("click", saveOverallRankingSettings);
     bindRankingCommentEvents();
     app.focus({ preventScroll: true });
     if (!preserveScroll) window.scrollTo({ top: 0, behavior: "smooth" });
     if (refresh) refreshSelectedRankingPeriod();
+  }
+
+  async function saveOverallRankingSettings(event) {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await window.HariaiOnline?.saveOverallRankingPublicSettings?.({
+        xHandle: document.querySelector("#rankingOverallXHandle")?.value,
+        xPublic: document.querySelector("#rankingOverallXPublic")?.checked,
+        commentsEnabled: document.querySelector("#rankingOverallCommentsEnabled")?.checked,
+      });
+      showToast("ランキングの公開設定を保存しました。");
+      renderRankingScreen({ preserveScroll: true });
+    } catch (error) {
+      button.disabled = false;
+      showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
+    }
   }
 
   function startOnlineBattle() {
