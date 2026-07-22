@@ -22,6 +22,11 @@ import {
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 import { firebaseConfig } from "./firebase-config.js";
+import {
+  CHAT_COSMETIC_PRODUCTS,
+  chatCosmeticClassNames,
+  getEquippedChatCosmetics,
+} from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -105,6 +110,7 @@ function createState() {
     weaknessCommit: "",
     pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
+    economy: { inventory: {}, equipped: { chatFrame: "", chatBackground: "" } },
     main: [],
     reserve: [],
     roomId: "",
@@ -358,8 +364,12 @@ async function ensureAuthenticated() {
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
   if (!active) return;
   state.uid = credential.user.uid;
-  const profileSnapshot = await get(ref(database, `online/strategyProfiles/${state.uid}`));
+  const [profileSnapshot, economySnapshot] = await Promise.all([
+    get(ref(database, `online/strategyProfiles/${state.uid}`)),
+    get(ref(database, `online/economy/${state.uid}`)),
+  ]);
   if (profileSnapshot.exists()) state.profile = normalizeProfile(profileSnapshot.val());
+  if (economySnapshot.exists()) state.economy = normalizeChatCosmeticEconomy(economySnapshot.val());
   state.authReady = true;
   setStrategyChrome("STRATEGY READY");
   render();
@@ -374,6 +384,16 @@ function normalizeProfile(value) {
     bestStreak: Math.max(0, Number(value?.bestStreak || 0)),
     rating: Math.min(3000, Math.max(100, Number(value?.rating || INITIAL_RATING))),
   };
+}
+
+function normalizeChatCosmeticEconomy(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const inventory = {};
+  CHAT_COSMETIC_PRODUCTS.forEach((product) => {
+    if (source.inventory?.[product.id] === true) inventory[product.id] = true;
+  });
+  const cosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
+  return { inventory, equipped: { chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId } };
 }
 
 function setStrategyChrome(label) {
@@ -768,8 +788,9 @@ function renderStrategyChatMessage(message, anonymous) {
   const player = state.players.find((candidate) => candidate.uid === message.authorUid);
   const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
   const phaseLabel = message.phase === "scout" ? "SCOUT" : `R${Math.max(1, Math.min(MAX_ROUNDS, Number(message.round) || 1))}`;
+  const cosmeticClasses = anonymous ? "" : chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
   return `<div class="strategy-chat-message-row ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
-    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}</small><p>${escapeHtml(message.text)}</p></div></div>`;
+    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}</small><p${cosmeticClasses ? ` class="${cosmeticClasses}"` : ""}>${escapeHtml(message.text)}</p></div></div>`;
 }
 
 function renderStrategyChat() {
@@ -901,6 +922,11 @@ async function sendStrategyChat(value) {
     round: Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
     createdAt: serverTimestamp(),
   };
+  if (!isStrategyChatAnonymous()) {
+    const cosmetics = getEquippedChatCosmetics(state.economy);
+    if (cosmetics.chatFrameId) message.chatFrameId = cosmetics.chatFrameId;
+    if (cosmetics.chatBackgroundId) message.chatBackgroundId = cosmetics.chatBackgroundId;
+  }
   await set(push(ref(database, `online/strategyChats/${state.roomId}`)), message).catch(() => showToast("チャットを送信できませんでした。"));
 }
 

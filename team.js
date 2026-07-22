@@ -21,6 +21,11 @@ import {
   set,
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+import {
+  CHAT_COSMETIC_PRODUCTS,
+  chatCosmeticClassNames,
+  getEquippedChatCosmetics,
+} from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -118,7 +123,7 @@ function createState() {
     authReady: false,
     profile: { rating: INITIAL_RATING, streak: 0 },
     teamProfile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
-    economy: { points: 0, inventory: {}, equipped: { reactions: {}, title: "" }, daily: {} },
+    economy: { points: 0, inventory: {}, equipped: { reactions: {}, title: "", chatFrame: "", chatBackground: "" }, daily: {} },
     deck: [],
     roomId: "",
     room: null,
@@ -238,18 +243,21 @@ function normalizeEconomy(value) {
   const dateKey = jstDateKey(now());
   const sameDate = source.daily?.dateKey === dateKey;
   const inventory = {};
-  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...SHOP_TITLES].forEach((item) => {
+  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...SHOP_TITLES, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
     if (source.inventory?.[item.id] === true) inventory[item.id] = true;
   });
   const ownedReactions = SHOP_REACTIONS.filter((item) => inventory[item.id]);
   const hasSavedEquipment = source.equipped && typeof source.equipped === "object";
-  const equipped = { reactions: {}, title: "" };
+  const equipped = { reactions: {}, title: "", chatFrame: "", chatBackground: "" };
   const reactionIds = hasSavedEquipment
     ? ownedReactions.filter((item) => source.equipped?.reactions?.[item.id] === true).map((item) => item.id)
     : ownedReactions.map((item) => item.id);
   reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { equipped.reactions[id] = true; });
   const savedTitle = String(source.equipped?.title || "");
   if (SHOP_TITLES.some((item) => item.id === savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
+  const chatCosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
+  equipped.chatFrame = chatCosmetics.chatFrameId;
+  equipped.chatBackground = chatCosmetics.chatBackgroundId;
   const daily = {
     dateKey,
     matches: 0,
@@ -279,6 +287,17 @@ function titleLabel(titleId = state.economy.equipped?.title) {
 function renderTitleBadge(titleId = state.economy.equipped?.title) {
   const label = titleLabel(titleId);
   return label ? `<span class="player-title-badge">◆ ${escapeHtml(label)}</span>` : "";
+}
+
+function renderChatCosmeticBubble(text, message = {}) {
+  const classes = chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
+  return `<p${classes ? ` class="${classes}"` : ""}>${escapeHtml(text)}</p>`;
+}
+
+function attachEquippedChatCosmetics(message) {
+  const cosmetics = getEquippedChatCosmetics(state.economy);
+  if (cosmetics.chatFrameId) message.chatFrameId = cosmetics.chatFrameId;
+  if (cosmetics.chatBackgroundId) message.chatBackgroundId = cosmetics.chatBackgroundId;
 }
 
 function jstDateKey(timestamp = Date.now()) {
@@ -555,7 +574,7 @@ function unlockedReactions() {
 }
 
 function renderMessages(messages, emptyText) {
-  return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><p>${escapeHtml(message.text)}</p></div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
+  return messages.length ? messages.map((message) => `<div class="chat-message ${message.authorUid === state.uid ? "player-one" : "player-two"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${renderChatCosmeticBubble(message.text, message)}</div>`).join("") : `<div class="chat-empty">${escapeHtml(emptyText)}</div>`;
 }
 
 function renderTeamChat() {
@@ -1734,6 +1753,7 @@ async function sendTeamChat(value) {
     createdAt: serverTimestamp(),
   };
   if (titleLabel()) message.titleId = state.economy.equipped.title;
+  attachEquippedChatCosmetics(message);
   await set(push(ref(database, `online/teamChats/${state.roomId}/${state.team}`)), message).catch(() => showToast("チームチャットを送信できませんでした。"));
 }
 
@@ -1748,6 +1768,7 @@ async function sendAllChat(value) {
     createdAt: serverTimestamp(),
   };
   if (titleLabel()) message.titleId = state.economy.equipped.title;
+  attachEquippedChatCosmetics(message);
   await set(push(ref(database, `online/teamRooms/${state.roomId}/chat`)), message).catch(() => showToast("4人チャットを送信できませんでした。"));
 }
 

@@ -22,6 +22,14 @@ import {
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 import { firebaseConfig } from "./firebase-config.js";
+import {
+  CHAT_BACKGROUND_PRODUCTS,
+  CHAT_COSMETIC_PRODUCTS,
+  CHAT_SPECIAL_FRAME_PRODUCTS,
+  CHAT_STANDARD_FRAME_PRODUCTS,
+  chatCosmeticClassNames,
+  getEquippedChatCosmetics,
+} from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -114,6 +122,7 @@ const SHOP_PRODUCTS = [
   { id: "title_resolution_is_justice", type: "title", name: "解像度は正義", title: "解像度は正義", description: "細部までくっきり見届けたい人の称号", price: 500 },
   { id: "title_composition_lost", type: "title", name: "構図迷子", title: "構図迷子", description: "正解を探しながら今日も画像を選ぶ称号", price: 350 },
   { id: "title_subjective_today", type: "title", name: "今日も主観", title: "今日も主観", description: "採点は主観、それも含めて楽しむ上位ネタ称号", price: 600 },
+  ...CHAT_COSMETIC_PRODUCTS,
 ];
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
@@ -461,7 +470,7 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
   return {
     points: 0,
     inventory: {},
-    equipped: { reactions: {}, title: "" },
+    equipped: { reactions: {}, title: "", chatFrame: "", chatBackground: "" },
     daily: {
       dateKey,
       matches: 0,
@@ -503,6 +512,9 @@ function normalizeEconomyRecord(value, dateKey = currentDailyDateKey()) {
   const savedTitle = String(source.equipped?.title || "");
   const titleProduct = SHOP_PRODUCTS.find((product) => product.type === "title" && product.id === savedTitle && record.inventory[product.id]);
   record.equipped.title = titleProduct?.id || "";
+  const chatCosmetics = getEquippedChatCosmetics({ inventory: record.inventory, equipped: source.equipped });
+  record.equipped.chatFrame = chatCosmetics.chatFrameId;
+  record.equipped.chatBackground = chatCosmetics.chatBackgroundId;
   if (sameDate) {
     Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
       record.daily[progressKey] = Math.min(limit, Math.max(0, Math.floor(Number(source.daily[progressKey] || 0))));
@@ -534,6 +546,18 @@ function titleLabel(titleId) {
 function renderTitleBadge(titleId = state.economy.equipped?.title) {
   const label = titleLabel(titleId);
   return label ? `<span class="player-title-badge">◆ ${escapeHtml(label)}</span>` : "";
+}
+
+function attachEquippedChatCosmetics(message, economy = state.economy) {
+  const cosmetics = getEquippedChatCosmetics(economy);
+  if (cosmetics.chatFrameId) message.chatFrameId = cosmetics.chatFrameId;
+  if (cosmetics.chatBackgroundId) message.chatBackgroundId = cosmetics.chatBackgroundId;
+  return message;
+}
+
+function renderChatCosmeticBubble(text, message = {}) {
+  const classes = chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
+  return `<p${classes ? ` class="${classes}"` : ""}>${escapeHtml(text)}</p>`;
 }
 
 function openOnlineScreen(screen) {
@@ -1225,6 +1249,7 @@ function renderDailyMissions() {
 
 function renderPointShop() {
   const equippedReactionCount = getEquippedReactionProducts().length;
+  const equippedChatCosmetics = getEquippedChatCosmetics(state.economy);
   const topMessageOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
   const topMessageLabel = state.topMessage ? "公開中" : topMessageOwned ? "投稿できます" : "未購入";
   const renderProduct = (product) => {
@@ -1232,20 +1257,32 @@ function renderPointShop() {
     const affordable = state.economy.points >= product.price;
     const equipped = product.type === "reaction"
       ? state.economy.equipped?.reactions?.[product.id] === true
-      : product.type === "title" && state.economy.equipped?.title === product.id;
+      : product.type === "title"
+        ? state.economy.equipped?.title === product.id
+        : product.type === "chatFrame"
+          ? equippedChatCosmetics.chatFrameId === product.id
+          : product.type === "chatBackground" && equippedChatCosmetics.chatBackgroundId === product.id;
     const equipDisabled = !equipped && product.type === "reaction" && equippedReactionCount >= MAX_EQUIPPED_REACTIONS;
+    const previewFrameId = product.type === "chatFrame" ? product.id : equippedChatCosmetics.chatFrameId;
+    const previewBackgroundId = product.type === "chatBackground" ? product.id : equippedChatCosmetics.chatBackgroundId;
+    const previewClasses = chatCosmeticClassNames(previewFrameId, previewBackgroundId);
     const preview = product.type === "reaction"
       ? `<button class="reaction-button shop-reaction-preview" data-preview-reaction="${escapeHtml(product.reaction)}">${escapeHtml(product.reaction)}</button>`
       : product.type === "title"
         ? `<span class="player-title-badge shop-title-preview">◆ ${escapeHtml(product.title)}</span>`
-        : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
+        : product.type === "chatFrame" || product.type === "chatBackground"
+          ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
+          : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
     let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
     if (owned && product.type === "feature") {
       action = `<button class="button button-wide button-cyan" data-edit-top-message ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "メッセージを編集" : "メッセージを投稿"}</button>`;
     } else if (owned) {
       action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${!state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${MAX_EQUIPPED_REACTIONS}/${MAX_EQUIPPED_REACTIONS}` : "装備する"}</button>`;
     }
-    const productTypeLabel = product.type === "reaction" ? "CHAT REACTION" : product.type === "title" ? "PLAYER TITLE" : "TOP MESSAGE ACCESS";
+    const productTypeLabel = product.type === "reaction" ? "CHAT REACTION"
+      : product.type === "title" ? "PLAYER TITLE"
+        : product.type === "chatFrame" ? (product.special ? "SPECIAL CHAT FRAME" : "CHAT FRAME")
+          : product.type === "chatBackground" ? "CHAT BACKGROUND" : "TOP MESSAGE ACCESS";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
       <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${product.price} PT</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
@@ -1256,6 +1293,9 @@ function renderPointShop() {
   const featureProducts = SHOP_PRODUCTS.filter((product) => product.type === "feature").map(renderProduct).join("");
   const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
   const titleProducts = SHOP_PRODUCTS.filter((product) => product.type === "title").map(renderProduct).join("");
+  const chatBackgroundProducts = CHAT_BACKGROUND_PRODUCTS.map(renderProduct).join("");
+  const chatFrameProducts = CHAT_STANDARD_FRAME_PRODUCTS.map(renderProduct).join("");
+  const specialChatFrameProducts = CHAT_SPECIAL_FRAME_PRODUCTS.map(renderProduct).join("");
   const topMessageComposer = topMessageOwned ? `<section class="top-message-composer" id="topMessageComposer">
     <div class="shop-category-head"><div><span>YOUR COMMUNITY MESSAGE</span><h2>${state.topMessage ? "トップメッセージを編集" : "トップメッセージを投稿"}</h2></div><p>トップページで表示名・装備中の称号と一緒に公開されます。</p></div>
     ${state.topMessageReady ? `<form id="topMessageForm">
@@ -1270,12 +1310,15 @@ function renderPointShop() {
   </section>` : "";
   return `<section class="screen economy-screen">
     <div class="section-head"><div><span class="eyebrow">POINT EXCHANGE</span><h1>ポイントショップ</h1>
-      <p>トップメッセージ、リアクション、称号で交流をカスタマイズできます。</p></div>
+      <p>チャット装飾、トップメッセージ、リアクション、称号で交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
-    ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span></div>
+    ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
       <section class="shop-category"><div class="shop-category-head"><div><span>COMMUNITY FEATURE</span><h2>トップページ機能</h2></div><p>500PTの買い切りで、自分のひとことをいつでも投稿・編集できます。</p></div><div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
       ${topMessageComposer}
+      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / 16 COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / 20 STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
+      <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / 4 STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT REACTION</span><h2>追加リアクション</h2></div><p>購入品から最大${MAX_EQUIPPED_REACTIONS}個を装備できます。</p></div><div class="shop-grid">${reactionProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>PLAYER TITLE</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備でき、プロフィールとチャットに表示されます。</p></div><div class="shop-grid">${titleProducts}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
@@ -1510,7 +1553,7 @@ function renderError() {
 function renderOnlineChat() {
   const messages = state.chatMessages.length ? state.chatMessages.map((message) => {
     const authorIndex = state.players.findIndex((player) => player.uid === message.authorUid);
-    return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small><p>${escapeHtml(message.text)}</p></div>`;
+    return `<div class="chat-message ${authorIndex === 1 ? "player-two" : "player-one"}"><small>${escapeHtml(message.name)} / R${message.round}${message.titleId ? renderTitleBadge(message.titleId) : ""}</small>${renderChatCosmeticBubble(message.text, message)}</div>`;
   }).join("") : `<div class="chat-empty">画像について話してみましょう。<br />チャットはルーム内の2人だけに表示されます。</div>`;
   const reactions = [
     ...DEFAULT_REACTIONS,
@@ -1794,6 +1837,14 @@ async function purchaseShopProduct(productId) {
         record.equipped.title = product.id;
         equippedNow = true;
       }
+      if (product.type === "chatFrame") {
+        record.equipped.chatFrame = product.id;
+        equippedNow = true;
+      }
+      if (product.type === "chatBackground") {
+        record.equipped.chatBackground = product.id;
+        equippedNow = true;
+      }
       record.updatedAt = serverNow();
       outcome = equippedNow ? "purchased-equipped" : "purchased";
       return record;
@@ -1805,7 +1856,7 @@ async function purchaseShopProduct(productId) {
     }
     state.economyBusy = false;
     render();
-    if (result.committed && outcome === "purchased-equipped") showToast(`「${product.reaction || product.title}」を購入し、装備しました。`);
+    if (result.committed && outcome === "purchased-equipped") showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
     else if (result.committed && outcome === "purchased" && product.type === "feature") showToast("「トップメッセージ枠」を購入しました。メッセージを投稿できます。");
     else if (result.committed && outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (outcome === "owned") showToast("この商品は購入済みです。");
@@ -1820,7 +1871,7 @@ async function purchaseShopProduct(productId) {
 
 async function toggleShopProductEquip(productId) {
   const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
-  if (!product || !["reaction", "title"].includes(product.type) || !state.economyReady || state.economyBusy) return;
+  if (!product || !["reaction", "title", "chatFrame", "chatBackground"].includes(product.type) || !state.economyReady || state.economyBusy) return;
   const dateKey = currentDailyDateKey();
   let outcome = "unavailable";
   state.economyBusy = true;
@@ -1840,12 +1891,15 @@ async function toggleShopProductEquip(productId) {
           record.equipped.reactions[product.id] = true;
           outcome = "equipped";
         }
-      } else if (record.equipped.title === product.id) {
-        record.equipped.title = "";
-        outcome = "removed";
       } else {
-        record.equipped.title = product.id;
-        outcome = "equipped";
+        const equipmentKey = product.type === "title" ? "title" : product.type;
+        if (record.equipped[equipmentKey] === product.id) {
+          record.equipped[equipmentKey] = "";
+          outcome = "removed";
+        } else {
+          record.equipped[equipmentKey] = product.id;
+          outcome = "equipped";
+        }
       }
       record.updatedAt = serverNow();
       return record;
@@ -1853,8 +1907,8 @@ async function toggleShopProductEquip(productId) {
     applyEconomySnapshot(result.snapshot, dateKey);
     state.economyBusy = false;
     render();
-    if (result.committed && outcome === "equipped") showToast(`「${product.reaction || product.title}」を装備しました。`);
-    else if (result.committed && outcome === "removed") showToast(`「${product.reaction || product.title}」を装備から外しました。`);
+    if (result.committed && outcome === "equipped") showToast(`「${product.reaction || product.title || product.name}」を装備しました。`);
+    else if (result.committed && outcome === "removed") showToast(`「${product.reaction || product.title || product.name}」を装備から外しました。`);
     else if (outcome === "full") showToast(`リアクションは最大${MAX_EQUIPPED_REACTIONS}個まで装備できます。`);
     else showToast("先に商品を購入してください。");
   } catch (error) {
@@ -3033,6 +3087,7 @@ async function sendChat(value) {
   };
   const equippedTitle = getTitleProduct();
   if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
+  attachEquippedChatCosmetics(message);
   await set(push(ref(database, `online/rooms/${state.roomId}/chat`)), message).catch(() => showToast("チャットを送信できませんでした。"));
 }
 
