@@ -2073,8 +2073,12 @@ function determineOutcome() {
 }
 
 async function finishMatch() {
-  await commitStrategyStats();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/finished/${state.uid}`), true);
+  const dailyCompletion = window.HariaiOnline?.recordModeDailyCompletion?.("strategy");
+  await Promise.all([
+    commitStrategyStats(),
+    dailyCompletion ? dailyCompletion.catch(() => showToast("ミッション進捗を更新できませんでした。")) : Promise.resolve(),
+    set(ref(database, `online/strategyRooms/${state.roomId}/finished/${state.uid}`), true),
+  ]);
   state.screen = "gameover";
   setStrategyChrome("STRATEGY COMPLETE");
   render();

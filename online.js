@@ -59,7 +59,26 @@ const DAILY_MISSIONS = [
   { id: "complete_match", progressKey: "matches", title: "1試合を完走", description: "ルーム破棄では進みません。", target: 1, reward: 100 },
   { id: "score_three", progressKey: "scores", title: "3回採点する", description: "相手の画像を合計3回採点します。", target: 3, reward: 60 },
   { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
+  { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 40 },
+  { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 50 },
+  { id: "play_team", progressKey: "teamMatches", title: "2on2を1回完走", description: "2on2の正式な決着が対象です。", target: 1, reward: 70 },
+  { id: "play_royale", progressKey: "royaleMatches", title: "バトルロワイヤルを1回完走", description: "バトルロワイヤルの正式な決着が対象です。", target: 1, reward: 90 },
 ];
+const DAILY_PROGRESS_LIMITS = Object.freeze({
+  matches: 1,
+  scores: 3,
+  criticals: 1,
+  soloMatches: 1,
+  strategyMatches: 1,
+  teamMatches: 1,
+  royaleMatches: 1,
+});
+const MODE_DAILY_PROGRESS_KEYS = Object.freeze({
+  solo: "soloMatches",
+  strategy: "strategyMatches",
+  team: "teamMatches",
+  royale: "royaleMatches",
+});
 const SHOP_PRODUCTS = [
   { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "トップメッセージ枠", description: "トップページに表示するひとことを投稿・編集できる買い切り機能", price: 500 },
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
@@ -436,7 +455,17 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
     points: 0,
     inventory: {},
     equipped: { reactions: {}, title: "" },
-    daily: { dateKey, matches: 0, scores: 0, criticals: 0, claimed: {} },
+    daily: {
+      dateKey,
+      matches: 0,
+      scores: 0,
+      criticals: 0,
+      soloMatches: 0,
+      strategyMatches: 0,
+      teamMatches: 0,
+      royaleMatches: 0,
+      claimed: {},
+    },
     updatedAt: Date.now(),
   };
 }
@@ -468,9 +497,9 @@ function normalizeEconomyRecord(value, dateKey = currentDailyDateKey()) {
   const titleProduct = SHOP_PRODUCTS.find((product) => product.type === "title" && product.id === savedTitle && record.inventory[product.id]);
   record.equipped.title = titleProduct?.id || "";
   if (sameDate) {
-    record.daily.matches = Math.min(1, Math.max(0, Math.floor(Number(source.daily.matches || 0))));
-    record.daily.scores = Math.min(3, Math.max(0, Math.floor(Number(source.daily.scores || 0))));
-    record.daily.criticals = Math.min(1, Math.max(0, Math.floor(Number(source.daily.criticals || 0))));
+    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
+      record.daily[progressKey] = Math.min(limit, Math.max(0, Math.floor(Number(source.daily[progressKey] || 0))));
+    });
     DAILY_MISSIONS.forEach((mission) => {
       if (source.daily.claimed?.[mission.id] === true) record.daily.claimed[mission.id] = true;
     });
@@ -1791,9 +1820,9 @@ async function recordDailyProgress(changes) {
   const before = { ...state.economy.daily };
   const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
     const record = normalizeEconomyRecord(current, dateKey);
-    record.daily.matches = Math.min(1, record.daily.matches + Math.max(0, Number(changes.matches || 0)));
-    record.daily.scores = Math.min(3, record.daily.scores + Math.max(0, Number(changes.scores || 0)));
-    record.daily.criticals = Math.min(1, record.daily.criticals + Math.max(0, Number(changes.criticals || 0)));
+    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
+      record.daily[progressKey] = Math.min(limit, record.daily[progressKey] + Math.max(0, Number(changes[progressKey] || 0)));
+    });
     record.updatedAt = serverNow();
     return record;
   });
@@ -1804,6 +1833,36 @@ async function recordDailyProgress(changes) {
     && Number(state.economy.daily[mission.progressKey] || 0) >= mission.target
   ));
   if (completed.length) showToast(`デイリーミッション達成：${completed.map((mission) => mission.title).join("・")}`);
+}
+
+async function recordModeDailyCompletion(mode) {
+  const progressKey = MODE_DAILY_PROGRESS_KEYS[mode];
+  if (!progressKey) return false;
+  const user = await ensureRankingCommentUser();
+  const offsetSnapshot = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
+  const dateKey = jstDateKey(Date.now() + Number(offsetSnapshot?.val() || publicRestServerTimeOffset || 0));
+  let previousMatches = 0;
+  let previousProgress = 0;
+  const result = await runTransaction(ref(database, `online/economy/${user.uid}`), (current) => {
+    const record = normalizeEconomyRecord(current, dateKey);
+    previousMatches = Number(record.daily.matches || 0);
+    previousProgress = Number(record.daily[progressKey] || 0);
+    if (previousMatches >= 1 && previousProgress >= 1) return;
+    record.daily.matches = 1;
+    record.daily[progressKey] = 1;
+    record.updatedAt = Date.now() + Number(offsetSnapshot?.val() || publicRestServerTimeOffset || 0);
+    return record;
+  });
+  if (!result.committed) return false;
+  if (state.uid === user.uid) applyEconomySnapshot(result.snapshot, dateKey);
+  const completedTitles = [];
+  if (previousMatches < 1) completedTitles.push("1試合を完走");
+  if (previousProgress < 1) {
+    const mission = DAILY_MISSIONS.find((candidate) => candidate.progressKey === progressKey);
+    if (mission) completedTitles.push(mission.title);
+  }
+  if (completedTitles.length) showToast(`デイリーミッション達成：${completedTitles.join("・")}`);
+  return completedTitles.length > 0;
 }
 
 async function openPostMatchMissions() {
@@ -2853,7 +2912,7 @@ async function finishOnlineMatch() {
   if (state.outcome) return;
   state.outcome = determineOutcome();
   await commitOnlineStats();
-  await recordDailyProgress({ matches: 1 }).catch((error) => {
+  await recordDailyProgress({ matches: 1, soloMatches: 1 }).catch((error) => {
     console.error(error);
     showToast("ミッション進捗を更新できませんでした。");
   });
@@ -3141,6 +3200,7 @@ window.HariaiOnline = {
   saveLeaderboardComment,
   deleteLeaderboardComment,
   recordOverallResult,
+  recordModeDailyCompletion,
   getOverallRankingPreference,
   renderOverallRankingParticipation,
   bindOverallRankingParticipation,

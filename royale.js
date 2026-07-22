@@ -46,6 +46,25 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const INITIAL_RATING = 1000;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const MAX_EQUIPPED_REACTIONS = 8;
+const DAILY_PROGRESS_LIMITS = Object.freeze({
+  matches: 1,
+  scores: 3,
+  criticals: 1,
+  soloMatches: 1,
+  strategyMatches: 1,
+  teamMatches: 1,
+  royaleMatches: 1,
+});
+const DAILY_MISSION_SUMMARIES = [
+  ["matches", 1, "1試合を完走"],
+  ["scores", 3, "3回採点する"],
+  ["criticals", 1, "8点以上をつける"],
+  ["soloMatches", 1, "通常型1on1を1回完走"],
+  ["strategyMatches", 1, "戦略型1on1を1回完走"],
+  ["teamMatches", 1, "2on2を1回完走"],
+  ["royaleMatches", 1, "バトルロワイヤルを1回完走"],
+];
+const DAILY_MISSION_IDS = ["complete_match", "score_three", "give_critical", "play_solo", "play_strategy", "play_team", "play_royale"];
 const SHOP_FEATURE_IDS = ["feature_top_message"];
 const SHOP_REACTIONS = [
   { id: "reaction_color", reaction: "色づかいが好き！" },
@@ -227,12 +246,22 @@ function normalizeEconomy(value) {
   reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { equipped.reactions[id] = true; });
   const savedTitle = String(source.equipped?.title || "");
   if (SHOP_TITLES.some((item) => item.id === savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
-  const daily = { dateKey, matches: 0, scores: 0, criticals: 0, claimed: {} };
+  const daily = {
+    dateKey,
+    matches: 0,
+    scores: 0,
+    criticals: 0,
+    soloMatches: 0,
+    strategyMatches: 0,
+    teamMatches: 0,
+    royaleMatches: 0,
+    claimed: {},
+  };
   if (sameDate) {
-    daily.matches = Math.min(1, Math.max(0, Math.floor(Number(source.daily.matches || 0))));
-    daily.scores = Math.min(3, Math.max(0, Math.floor(Number(source.daily.scores || 0))));
-    daily.criticals = Math.min(1, Math.max(0, Math.floor(Number(source.daily.criticals || 0))));
-    ["complete_match", "score_three", "give_critical"].forEach((id) => {
+    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
+      daily[progressKey] = Math.min(limit, Math.max(0, Math.floor(Number(source.daily[progressKey] || 0))));
+    });
+    DAILY_MISSION_IDS.forEach((id) => {
       if (source.daily.claimed?.[id] === true) daily.claimed[id] = true;
     });
   }
@@ -1826,7 +1855,7 @@ async function finishMatch() {
   state.outcome = determineOutcome();
   await Promise.all([
     commitRoyaleStats(),
-    recordDailyProgress({ matches: 1 }).catch(() => showToast("ミッション進捗を更新できませんでした。")),
+    recordDailyProgress({ matches: 1, royaleMatches: 1 }).catch(() => showToast("ミッション進捗を更新できませんでした。")),
     set(ref(database, `online/royaleRooms/${state.roomId}/finished/${state.uid}`), true),
   ]);
   state.screen = "gameover";
@@ -1882,19 +1911,17 @@ async function recordDailyProgress(changes) {
   const before = { ...(state.economy.daily || {}) };
   const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
     const record = normalizeEconomy(current);
-    record.daily.matches = Math.min(1, record.daily.matches + Math.max(0, Number(changes.matches || 0)));
-    record.daily.scores = Math.min(3, record.daily.scores + Math.max(0, Number(changes.scores || 0)));
-    record.daily.criticals = Math.min(1, record.daily.criticals + Math.max(0, Number(changes.criticals || 0)));
+    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
+      record.daily[progressKey] = Math.min(limit, record.daily[progressKey] + Math.max(0, Number(changes[progressKey] || 0)));
+    });
     record.updatedAt = now();
     return record;
   });
   if (!result.committed) return;
   state.economy = normalizeEconomy(result.snapshot.val());
-  const completed = [
-    ["matches", 1, "1試合を完走"],
-    ["scores", 3, "3回採点する"],
-    ["criticals", 1, "8点以上をつける"],
-  ].filter(([key, target]) => Number(before[key] || 0) < target && Number(state.economy.daily[key] || 0) >= target);
+  const completed = DAILY_MISSION_SUMMARIES.filter(([key, target]) => (
+    Number(before[key] || 0) < target && Number(state.economy.daily[key] || 0) >= target
+  ));
   if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
 

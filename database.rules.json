@@ -379,9 +379,21 @@
             "criticals": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
             },
+            "soloMatches": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "strategyMatches": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "teamMatches": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "royaleMatches": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
             "claimed": {
               "$missionId": {
-                ".validate": "($missionId === 'complete_match' || $missionId === 'score_three' || $missionId === 'give_critical') && newData.val() === true"
+                ".validate": "($missionId === 'complete_match' || $missionId === 'score_three' || $missionId === 'give_critical' || $missionId === 'play_solo' || $missionId === 'play_strategy' || $missionId === 'play_team' || $missionId === 'play_royale') && newData.val() === true"
               }
             },
             "$other": {
