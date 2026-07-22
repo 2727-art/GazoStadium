@@ -22,6 +22,7 @@
   let rankingCommentIdentityStatus = "idle";
   let rankingPeriod = "weekly";
   let rankingDisplayedPeriodKey = "";
+  let landingTopMessageIndex = 0;
   let profileAvatarReadyPromise = null;
   const profileAvatarState = { ready: false, blob: null, url: "" };
 
@@ -60,6 +61,62 @@
     );
   }
 
+  function renderLandingTopMessageContent() {
+    const messages = window.HariaiOnline?.getTopMessages?.() || [];
+    const status = window.HariaiOnline?.getTopMessagesStatus?.() || "idle";
+    const mutedCount = Number(window.HariaiOnline?.getMutedTopMessageCount?.() || 0);
+    const resetMuted = mutedCount > 0
+      ? `<button class="community-reset" type="button" data-top-message-reset>非表示をリセット（${mutedCount}）</button>`
+      : "";
+    if ((status === "idle" || status === "loading") && !messages.length) {
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>みんなのメッセージを読み込んでいます…</p></div>`;
+    }
+    if (status === "error" && !messages.length) {
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>メッセージを読み込めませんでした。</p><button class="community-retry" type="button" data-top-message-retry>再読み込み</button>${resetMuted}</div>`;
+    }
+    if (!messages.length) {
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>まだメッセージはありません。ポイントショップから最初のひとことを届けませんか？</p><button class="community-shop-link" type="button" data-top-message-shop>投稿枠を見る</button>${resetMuted}</div>`;
+    }
+    landingTopMessageIndex %= messages.length;
+    const message = messages[landingTopMessageIndex];
+    const title = message.title ? `<span class="community-title">◆ ${escapeHtml(message.title)}</span>` : "";
+    const count = messages.length > 1 ? `<span class="community-position">${landingTopMessageIndex + 1} / ${messages.length}</span>` : "";
+    return `<article class="community-message-card">
+      <span class="community-quote" aria-hidden="true">♡</span>
+      <div class="community-message-body"><p>${escapeHtml(message.text)}</p><div class="community-author">${title}<strong>${escapeHtml(message.name)}</strong></div></div>
+      <div class="community-message-controls">${count}<button type="button" data-top-message-mute="${escapeHtml(message.entryId)}" aria-label="${escapeHtml(message.name)}のメッセージを非表示">この人を非表示</button>${resetMuted}</div>
+    </article>`;
+  }
+
+  function renderLandingTopMessagePanel() {
+    return `<section class="landing-community" id="topMessagePanel" aria-label="トップメッセージ">
+      <div class="community-message-head"><div><span>COMMUNITY MESSAGE</span><strong>みんなのひとこと</strong></div><small>最新5件を8秒ごとに表示</small></div>
+      <div id="topMessageContent" aria-live="polite">${renderLandingTopMessageContent()}</div>
+    </section>`;
+  }
+
+  function bindLandingTopMessageEvents() {
+    document.querySelector("[data-top-message-retry]")?.addEventListener("click", () => window.HariaiOnline?.refreshTopMessages?.());
+    document.querySelector("[data-top-message-shop]")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
+    document.querySelector("[data-top-message-mute]")?.addEventListener("click", (event) => {
+      landingTopMessageIndex = 0;
+      window.HariaiOnline?.muteTopMessage?.(event.currentTarget.dataset.topMessageMute);
+      showToast("このプレイヤーのトップメッセージをこの端末で非表示にしました。");
+    });
+    document.querySelector("[data-top-message-reset]")?.addEventListener("click", () => {
+      landingTopMessageIndex = 0;
+      window.HariaiOnline?.clearMutedTopMessages?.();
+      showToast("トップメッセージの非表示設定をリセットしました。");
+    });
+  }
+
+  function updateLandingTopMessagePanel() {
+    const content = document.querySelector("#topMessageContent");
+    if (!content) return;
+    content.innerHTML = renderLandingTopMessageContent();
+    bindLandingTopMessageEvents();
+  }
+
   function renderLanding() {
     const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
@@ -89,6 +146,7 @@
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
         </div>
+        ${renderLandingTopMessagePanel()}
         <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
           <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
@@ -107,7 +165,7 @@
             <div><small>対戦中</small><strong><span id="lobbyRoyalePlayingCount">${statValue(royaleStats.playing)}</span><em>人</em></strong></div>
           </div></article>
         </div>
-        <p class="lobby-privacy">トップページの閲覧者は含みません。表示名・匿名UID・ルーム情報は公開しません。</p>
+        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。購入者のトップメッセージだけ表示名・称号とともに公開され、匿名UID・ルーム情報は表示しません。</p>
         <p class="mode-note">画像は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
@@ -127,6 +185,8 @@
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
+    bindLandingTopMessageEvents();
+    window.HariaiOnline?.refreshTopMessages?.();
     app.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -831,11 +891,31 @@
 
   window.addEventListener("hariai-online-ready", () => {
     if (currentScreen === "ranking") refreshSelectedRankingPeriod();
+    if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.();
+  });
+
+  window.addEventListener("hariai-top-messages-updated", () => {
+    const messages = window.HariaiOnline?.getTopMessages?.() || [];
+    if (landingTopMessageIndex >= messages.length) landingTopMessageIndex = 0;
+    updateLandingTopMessagePanel();
   });
 
   window.setInterval(refreshRankingAtPeriodBoundary, 60_000);
+  window.setInterval(() => {
+    if (!document.querySelector("#topMessagePanel")) return;
+    const messages = window.HariaiOnline?.getTopMessages?.() || [];
+    if (messages.length > 1) {
+      landingTopMessageIndex = (landingTopMessageIndex + 1) % messages.length;
+      updateLandingTopMessagePanel();
+    }
+  }, 8_000);
+  window.setInterval(() => {
+    if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.({ silent: true });
+  }, 60_000);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") refreshRankingAtPeriodBoundary();
+    if (document.visibilityState !== "visible") return;
+    refreshRankingAtPeriodBoundary();
+    if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.({ silent: true });
   });
 
   renderLandingScreen();

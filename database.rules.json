@@ -29,6 +29,43 @@
           ".validate": "!newData.exists() || newData.isString()"
         }
       },
+      "topMessages": {
+        ".read": true,
+        ".indexOn": ["updatedAt"],
+        "$entryId": {
+          ".write": "auth != null && root.child('online/topMessageOwners/' + $entryId).val() === auth.uid && root.child('online/economy/' + auth.uid + '/inventory/feature_top_message').val() === true",
+          ".validate": "!newData.exists() || (newData.hasChildren(['name', 'titleId', 'text', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('titleId').isString() && (newData.child('titleId').val() === '' || newData.child('titleId').val() === root.child('online/economy/' + auth.uid + '/equipped/title').val()) && newData.child('text').isString() && newData.child('text').val().matches(/^[^\\r\\n]{1,30}$/) && newData.child('updatedAt').isNumber())",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+          },
+          "titleId": {
+            ".validate": "newData.isString() && (newData.val() === '' || newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
+          },
+          "text": {
+            ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,30}$/)"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "topMessageOwners": {
+        "$entryId": {
+          ".read": "auth != null && data.val() === auth.uid",
+          ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && newData.val() === auth.uid))",
+          ".validate": "newData.isString()"
+        }
+      },
+      "topMessageEntriesByUser": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.isString() && root.child('online/topMessageOwners/' + newData.val()).val() === auth.uid) || (data.exists() && newData.val() === data.val()))",
+          ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 40"
+        }
+      },
       "leaderboard": {
         ".read": true,
         ".indexOn": ["rating"],
@@ -311,7 +348,7 @@
           },
           "inventory": {
             "$productId": {
-              ".validate": "($productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece' || $productId === 'title_good_praiser' || $productId === 'title_plant_lover' || $productId === 'title_animal_lover' || $productId === 'title_landscape_hunter' || $productId === 'title_image_sommelier' || $productId === 'title_hariai_master' || $productId === 'title_live_action_supremacy' || $productId === 'title_2d_lover' || $productId === 'title_mushroom_side' || $productId === 'title_bamboo_side' || $productId === 'title_image_folder_guardian' || $productId === 'title_cant_pick_five' || $productId === 'title_blur_connoisseur' || $productId === 'title_mostly_cats' || $productId === 'title_food_photo_alert' || $productId === 'title_resolution_is_justice' || $productId === 'title_composition_lost' || $productId === 'title_subjective_today') && newData.val() === true"
+              ".validate": "($productId === 'feature_top_message' || $productId === 'reaction_color' || $productId === 'reaction_best_shot' || $productId === 'reaction_composition' || $productId === 'reaction_atmosphere' || $productId === 'reaction_idea' || $productId === 'reaction_healing' || $productId === 'reaction_keep_watching' || $productId === 'reaction_today_favorite' || $productId === 'reaction_story' || $productId === 'reaction_masterpiece' || $productId === 'title_good_praiser' || $productId === 'title_plant_lover' || $productId === 'title_animal_lover' || $productId === 'title_landscape_hunter' || $productId === 'title_image_sommelier' || $productId === 'title_hariai_master' || $productId === 'title_live_action_supremacy' || $productId === 'title_2d_lover' || $productId === 'title_mushroom_side' || $productId === 'title_bamboo_side' || $productId === 'title_image_folder_guardian' || $productId === 'title_cant_pick_five' || $productId === 'title_blur_connoisseur' || $productId === 'title_mostly_cats' || $productId === 'title_food_photo_alert' || $productId === 'title_resolution_is_justice' || $productId === 'title_composition_lost' || $productId === 'title_subjective_today') && newData.val() === true"
             }
           },
           "equipped": {

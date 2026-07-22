@@ -40,6 +40,7 @@ const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const MAX_EQUIPPED_REACTIONS = 8;
+const SHOP_FEATURE_IDS = ["feature_top_message"];
 const SHOP_REACTIONS = [
   { id: "reaction_color", reaction: "色づかいが好き！" },
   { id: "reaction_best_shot", reaction: "最高の一枚！" },
@@ -208,7 +209,7 @@ function normalizeEconomy(value) {
   const dateKey = jstDateKey(now());
   const sameDate = source.daily?.dateKey === dateKey;
   const inventory = {};
-  [...SHOP_REACTIONS, ...SHOP_TITLES].forEach((item) => {
+  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...SHOP_TITLES].forEach((item) => {
     if (source.inventory?.[item.id] === true) inventory[item.id] = true;
   });
   const ownedReactions = SHOP_REACTIONS.filter((item) => inventory[item.id]);

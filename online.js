@@ -44,6 +44,11 @@ const RANKING_COMMENTS_ENABLED_KEY = "hariai-stadium-ranking-comments-enabled-v1
 const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const RANKING_COMMENT_MAX_LENGTH = 80;
 const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
+const TOP_MESSAGE_PRODUCT_ID = "feature_top_message";
+const TOP_MESSAGE_MAX_LENGTH = 30;
+const TOP_MESSAGE_FETCH_LIMIT = 10;
+const TOP_MESSAGE_DISPLAY_LIMIT = 5;
+const TOP_MESSAGE_MUTED_KEY = "hariai-stadium-muted-top-messages-v1";
 const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
@@ -56,6 +61,7 @@ const DAILY_MISSIONS = [
   { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
 ];
 const SHOP_PRODUCTS = [
+  { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "トップメッセージ枠", description: "トップページに表示するひとことを投稿・編集できる買い切り機能", price: 500 },
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
   { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
   { id: "reaction_composition", type: "reaction", name: "コンポジション", reaction: "構図がうまい！", description: "画面構成に注目した追加リアクション", price: 160 },
@@ -118,6 +124,9 @@ let leaderboardPeriod = DEFAULT_LEADERBOARD_PERIOD;
 let leaderboardPeriodKey = "";
 let leaderboardRequestId = 0;
 let publicRestServerTimeOffset = 0;
+let topMessageRecords = [];
+let topMessagesStatus = "idle";
+let topMessagesRequestId = 0;
 
 function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
@@ -173,6 +182,10 @@ function createOnlineState() {
     economy: createEmptyEconomy(),
     economyReady: false,
     economyBusy: false,
+    topMessage: null,
+    topMessageEntryId: "",
+    topMessageReady: false,
+    topMessageBusy: false,
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -540,6 +553,83 @@ function getLeaderboardLoadedPeriod() {
   return { period: leaderboardPeriod, key: leaderboardPeriodKey };
 }
 
+function readMutedTopMessageIds() {
+  try {
+    const value = JSON.parse(localStorage.getItem(TOP_MESSAGE_MUTED_KEY) || "[]");
+    return new Set(Array.isArray(value) ? value.map(validLeaderboardEntryId).filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function getTopMessages() {
+  const mutedIds = readMutedTopMessageIds();
+  return topMessageRecords
+    .filter((message) => !mutedIds.has(message.entryId))
+    .slice(0, TOP_MESSAGE_DISPLAY_LIMIT)
+    .map((message) => ({ ...message }));
+}
+
+function getTopMessagesStatus() {
+  return topMessagesStatus;
+}
+
+function getMutedTopMessageCount() {
+  return readMutedTopMessageIds().size;
+}
+
+function notifyTopMessagesUpdated() {
+  window.dispatchEvent(new Event("hariai-top-messages-updated"));
+}
+
+async function refreshTopMessages({ silent = false } = {}) {
+  const requestId = ++topMessagesRequestId;
+  if (!silent || topMessagesStatus === "idle") {
+    topMessagesStatus = "loading";
+    notifyTopMessagesUpdated();
+  }
+  try {
+    const records = await fetchPublicDatabasePath("online/topMessages", {
+      orderBy: JSON.stringify("updatedAt"),
+      limitToLast: TOP_MESSAGE_FETCH_LIMIT,
+    });
+    if (requestId !== topMessagesRequestId) return;
+    topMessageRecords = Object.entries(records || {})
+      .map(([entryId, record]) => ({
+        entryId: String(entryId || ""),
+        name: String(record?.name || "").slice(0, 16),
+        titleId: String(record?.titleId || ""),
+        title: titleLabel(record?.titleId),
+        text: String(record?.text || "").slice(0, TOP_MESSAGE_MAX_LENGTH),
+        updatedAt: Number(record?.updatedAt || 0),
+      }))
+      .filter((record) => validLeaderboardEntryId(record.entryId) && record.name && record.text && Number.isFinite(record.updatedAt))
+      .sort((first, second) => second.updatedAt - first.updatedAt);
+    topMessagesStatus = "ready";
+  } catch (error) {
+    if (requestId !== topMessagesRequestId) return;
+    console.error(error);
+    topMessageRecords = [];
+    topMessagesStatus = "error";
+  } finally {
+    if (requestId === topMessagesRequestId) notifyTopMessagesUpdated();
+  }
+}
+
+function muteTopMessage(entryId) {
+  const safeEntryId = validLeaderboardEntryId(entryId);
+  if (!safeEntryId) return;
+  const mutedIds = readMutedTopMessageIds();
+  mutedIds.add(safeEntryId);
+  localStorage.setItem(TOP_MESSAGE_MUTED_KEY, JSON.stringify(Array.from(mutedIds)));
+  notifyTopMessagesUpdated();
+}
+
+function clearMutedTopMessages() {
+  localStorage.removeItem(TOP_MESSAGE_MUTED_KEY);
+  notifyTopMessagesUpdated();
+}
+
 async function fetchPublicDatabasePath(path, parameters = {}) {
   const databaseUrl = String(firebaseConfig.databaseURL || "").replace(/\/$/, "");
   const url = new URL(`${databaseUrl}/${path}.json`);
@@ -765,6 +855,15 @@ async function ensureAuthenticated() {
     state.economyReady = false;
     showToast("ポイント情報を読み込めませんでした。対戦機能は利用できます。");
   }
+  if (state.economyReady) {
+    try {
+      await loadOwnTopMessage();
+    } catch (error) {
+      console.error(error);
+      state.topMessageReady = false;
+      showToast("トップメッセージを読み込めませんでした。ポイントショップは利用できます。");
+    }
+  }
   setOnlineChrome("ONLINE READY");
   render();
   if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
@@ -776,6 +875,112 @@ async function initializeEconomy() {
   if (!result.committed) throw new Error("ポイント情報を初期化できませんでした。");
   state.economy = normalizeEconomyRecord(result.snapshot.val(), dateKey);
   state.economyReady = true;
+}
+
+function normalizeOwnTopMessage(value) {
+  if (!value || typeof value !== "object") return null;
+  const text = String(value.text || "").trim().slice(0, TOP_MESSAGE_MAX_LENGTH);
+  if (!text) return null;
+  return {
+    name: String(value.name || "").trim().slice(0, 16),
+    titleId: String(value.titleId || ""),
+    text,
+    updatedAt: Number(value.updatedAt || 0),
+  };
+}
+
+async function loadOwnTopMessage() {
+  if (!state.uid || !state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID]) {
+    state.topMessage = null;
+    state.topMessageEntryId = "";
+    state.topMessageReady = true;
+    return;
+  }
+  const entrySnapshot = await get(ref(database, `online/topMessageEntriesByUser/${state.uid}`));
+  const entryId = validLeaderboardEntryId(entrySnapshot.val());
+  state.topMessageEntryId = entryId;
+  if (!entryId) {
+    state.topMessage = null;
+    state.topMessageReady = true;
+    return;
+  }
+  const snapshot = await get(ref(database, `online/topMessages/${entryId}`));
+  state.topMessage = snapshot.exists() ? normalizeOwnTopMessage(snapshot.val()) : null;
+  state.topMessageReady = true;
+}
+
+async function ensureTopMessageEntryId() {
+  if (state.topMessageEntryId) return state.topMessageEntryId;
+  const indexRef = ref(database, `online/topMessageEntriesByUser/${state.uid}`);
+  const existing = validLeaderboardEntryId((await get(indexRef)).val());
+  if (existing) {
+    state.topMessageEntryId = existing;
+    return existing;
+  }
+  const entryId = push(ref(database, "online/topMessages")).key;
+  if (!validLeaderboardEntryId(entryId)) throw new Error("投稿枠を準備できませんでした。");
+  await set(ref(database, `online/topMessageOwners/${entryId}`), state.uid);
+  const result = await runTransaction(indexRef, (current) => current || entryId);
+  if (!result.committed || !result.snapshot.exists()) throw new Error("投稿枠を保存できませんでした。");
+  const savedEntryId = validLeaderboardEntryId(result.snapshot.val());
+  if (!savedEntryId) throw new Error("投稿枠を確認できませんでした。");
+  state.topMessageEntryId = savedEntryId;
+  return savedEntryId;
+}
+
+function validateTopMessageText(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > TOP_MESSAGE_MAX_LENGTH || /[\r\n]/.test(text)) {
+    throw new Error(`メッセージは1行${TOP_MESSAGE_MAX_LENGTH}文字以内で入力してください。`);
+  }
+  if (RANKING_COMMENT_URL_PATTERN.test(text)) throw new Error("メッセージにURLは入力できません。");
+  return text;
+}
+
+async function saveTopMessage(nameValue, textValue) {
+  if (!state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID]) throw new Error("先にトップメッセージ枠を購入してください。");
+  if (state.topMessageBusy) return;
+  const name = String(nameValue || "").trim().slice(0, 16);
+  const text = validateTopMessageText(textValue);
+  if (!name) throw new Error("表示名を入力してください。");
+  state.topMessageBusy = true;
+  render();
+  try {
+    const entryId = await ensureTopMessageEntryId();
+    const record = {
+      name,
+      titleId: getTitleProduct()?.id || "",
+      text,
+      updatedAt: serverTimestamp(),
+    };
+    await set(ref(database, `online/topMessages/${entryId}`), record);
+    state.name = name;
+    localStorage.setItem(PROFILE_NAME_KEY, name);
+    state.topMessage = { ...record, updatedAt: serverNow() };
+    state.topMessageReady = true;
+    await refreshTopMessages({ silent: true });
+    showToast("トップメッセージを公開しました。");
+  } finally {
+    state.topMessageBusy = false;
+    render();
+  }
+}
+
+async function deleteTopMessage() {
+  if (!state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] || state.topMessageBusy || !state.topMessage) return;
+  state.topMessageBusy = true;
+  render();
+  try {
+    const entryId = state.topMessageEntryId || validLeaderboardEntryId((await get(ref(database, `online/topMessageEntriesByUser/${state.uid}`))).val());
+    if (entryId) await remove(ref(database, `online/topMessages/${entryId}`));
+    state.topMessage = null;
+    state.topMessageReady = true;
+    await refreshTopMessages({ silent: true });
+    showToast("トップメッセージを非公開にしました。");
+  } finally {
+    state.topMessageBusy = false;
+    render();
+  }
 }
 
 function setOnlineChrome(label) {
@@ -940,39 +1145,62 @@ function renderDailyMissions() {
 
 function renderPointShop() {
   const equippedReactionCount = getEquippedReactionProducts().length;
+  const topMessageOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
+  const topMessageLabel = state.topMessage ? "公開中" : topMessageOwned ? "投稿できます" : "未購入";
   const renderProduct = (product) => {
     const owned = state.economy.inventory?.[product.id] === true;
     const affordable = state.economy.points >= product.price;
     const equipped = product.type === "reaction"
       ? state.economy.equipped?.reactions?.[product.id] === true
-      : state.economy.equipped?.title === product.id;
+      : product.type === "title" && state.economy.equipped?.title === product.id;
     const equipDisabled = !equipped && product.type === "reaction" && equippedReactionCount >= MAX_EQUIPPED_REACTIONS;
     const preview = product.type === "reaction"
       ? `<button class="reaction-button shop-reaction-preview" data-preview-reaction="${escapeHtml(product.reaction)}">${escapeHtml(product.reaction)}</button>`
-      : `<span class="player-title-badge shop-title-preview">◆ ${escapeHtml(product.title)}</span>`;
-    const action = owned
-      ? `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${!state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${MAX_EQUIPPED_REACTIONS}/${MAX_EQUIPPED_REACTIONS}` : "装備する"}</button>`
-      : `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
+      : product.type === "title"
+        ? `<span class="player-title-badge shop-title-preview">◆ ${escapeHtml(product.title)}</span>`
+        : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
+    let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
+    if (owned && product.type === "feature") {
+      action = `<button class="button button-wide button-cyan" data-edit-top-message ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "メッセージを編集" : "メッセージを投稿"}</button>`;
+    } else if (owned) {
+      action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${!state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${MAX_EQUIPPED_REACTIONS}/${MAX_EQUIPPED_REACTIONS}` : "装備する"}</button>`;
+    }
+    const productTypeLabel = product.type === "reaction" ? "CHAT REACTION" : product.type === "title" ? "PLAYER TITLE" : "TOP MESSAGE ACCESS";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
-      <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : product.type === "reaction" ? "CHAT REACTION" : "PLAYER TITLE"}</span><strong>${product.price} PT</strong></div>
+      <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${product.price} PT</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
       <p>${escapeHtml(product.description)}</p>
       ${action}
     </article>`;
   };
+  const featureProducts = SHOP_PRODUCTS.filter((product) => product.type === "feature").map(renderProduct).join("");
   const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
   const titleProducts = SHOP_PRODUCTS.filter((product) => product.type === "title").map(renderProduct).join("");
+  const topMessageComposer = topMessageOwned ? `<section class="top-message-composer" id="topMessageComposer">
+    <div class="shop-category-head"><div><span>YOUR COMMUNITY MESSAGE</span><h2>${state.topMessage ? "トップメッセージを編集" : "トップメッセージを投稿"}</h2></div><p>トップページで表示名・装備中の称号と一緒に公開されます。</p></div>
+    ${state.topMessageReady ? `<form id="topMessageForm">
+      <label for="topMessageName">表示名</label>
+      <input id="topMessageName" type="text" maxlength="16" required value="${escapeHtml(state.topMessage?.name || state.name)}" placeholder="PLAYER" autocomplete="nickname" />
+      <label for="topMessageText">メッセージ</label>
+      <textarea id="topMessageText" maxlength="${TOP_MESSAGE_MAX_LENGTH}" rows="2" required placeholder="対戦相手募集中！">${escapeHtml(state.topMessage?.text || "")}</textarea>
+      <div class="top-message-composer-foot"><small>1行${TOP_MESSAGE_MAX_LENGTH}文字以内。URL・連絡先・個人情報は投稿しないでください。</small><span><b id="topMessageLength">${String(state.topMessage?.text || "").length}</b> / ${TOP_MESSAGE_MAX_LENGTH}</span></div>
+      <div class="top-message-composer-actions"><button class="button button-primary" type="submit" ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "更新して公開" : "トップページに公開"}</button>
+        ${state.topMessage ? `<button class="button button-ghost" id="deleteTopMessage" type="button" ${state.topMessageBusy ? "disabled" : ""}>非公開にする</button>` : ""}</div>
+    </form>` : `<p class="economy-note">トップメッセージを読み込めませんでした。ページを開き直してお試しください。</p>`}
+  </section>` : "";
   return `<section class="screen economy-screen">
     <div class="section-head"><div><span class="eyebrow">POINT EXCHANGE</span><h1>ポイントショップ</h1>
-      <p>購入したリアクションと称号を装備して、対戦中の交流をカスタマイズできます。</p></div>
+      <p>トップメッセージ、リアクション、称号で交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
-    ${state.economyReady ? `<div class="shop-loadout-summary"><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span></div>
+    ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span></div>
+      <section class="shop-category"><div class="shop-category-head"><div><span>COMMUNITY FEATURE</span><h2>トップページ機能</h2></div><p>500PTの買い切りで、自分のひとことをいつでも投稿・編集できます。</p></div><div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
+      ${topMessageComposer}
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT REACTION</span><h2>追加リアクション</h2></div><p>購入品から最大${MAX_EQUIPPED_REACTIONS}個を装備できます。</p></div><div class="shop-grid">${reactionProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>PLAYER TITLE</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備でき、プロフィールとチャットに表示されます。</p></div><div class="shop-grid">${titleProducts}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
       <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">購入後の払い戻しはありません。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。</p>
+    <p class="economy-note">購入後の払い戻しはありません。トップメッセージは公開情報です。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。</p>
   </section>`;
 }
 
@@ -1246,6 +1474,31 @@ function bindEconomyEvents() {
   document.querySelector("#shopMissionsButton")?.addEventListener("click", () => { state.screen = "missions"; render(); });
   document.querySelector("#missionsBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
   document.querySelector("#shopBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
+  document.querySelector("[data-edit-top-message]")?.addEventListener("click", () => {
+    document.querySelector("#topMessageComposer")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => document.querySelector("#topMessageText")?.focus(), 280);
+  });
+  const topMessageText = document.querySelector("#topMessageText");
+  topMessageText?.addEventListener("input", () => {
+    const counter = document.querySelector("#topMessageLength");
+    if (counter) counter.textContent = String(topMessageText.value.length);
+  });
+  document.querySelector("#topMessageForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await saveTopMessage(document.querySelector("#topMessageName")?.value, topMessageText?.value);
+    } catch (error) {
+      showToast(error?.message || "トップメッセージを公開できませんでした。");
+    }
+  });
+  document.querySelector("#deleteTopMessage")?.addEventListener("click", async () => {
+    if (!window.confirm("トップページからこのメッセージを非公開にしますか？")) return;
+    try {
+      await deleteTopMessage();
+    } catch (error) {
+      showToast(error?.message || "トップメッセージを非公開にできませんでした。");
+    }
+  });
 }
 
 function bindSetupEvents() {
@@ -1456,10 +1709,15 @@ async function purchaseShopProduct(productId) {
       return record;
     });
     applyEconomySnapshot(result.snapshot, dateKey);
+    if (result.committed && product.type === "feature") {
+      state.topMessage = null;
+      state.topMessageReady = true;
+    }
     state.economyBusy = false;
     render();
     if (result.committed && outcome === "purchased-equipped") showToast(`「${product.reaction || product.title}」を購入し、装備しました。`);
-    else if (result.committed && outcome === "purchased") showToast(`「${product.reaction || product.title}」を購入しました。装備枠を空けると使用できます。`);
+    else if (result.committed && outcome === "purchased" && product.type === "feature") showToast("「トップメッセージ枠」を購入しました。メッセージを投稿できます。");
+    else if (result.committed && outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("ポイントが不足しています。");
   } catch (error) {
@@ -1472,7 +1730,7 @@ async function purchaseShopProduct(productId) {
 
 async function toggleShopProductEquip(productId) {
   const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
-  if (!product || !state.economyReady || state.economyBusy) return;
+  if (!product || !["reaction", "title"].includes(product.type) || !state.economyReady || state.economyBusy) return;
   const dateKey = currentDailyDateKey();
   let outcome = "unavailable";
   state.economyBusy = true;
@@ -2735,6 +2993,9 @@ async function resetOnlineSetup() {
     customPursuitLine: state.customPursuitLine,
     economy: state.economy,
     economyReady: state.economyReady,
+    topMessage: state.topMessage,
+    topMessageEntryId: state.topMessageEntryId,
+    topMessageReady: state.topMessageReady,
     serverTimeOffset: state.serverTimeOffset,
   };
   await cleanupOnlineResources(false);
@@ -2859,6 +3120,12 @@ window.HariaiOnline = {
   getLeaderboardPeriodInfo,
   getLeaderboardLoadedPeriod,
   refreshLeaderboard,
+  getTopMessages,
+  getTopMessagesStatus,
+  getMutedTopMessageCount,
+  refreshTopMessages,
+  muteTopMessage,
+  clearMutedTopMessages,
   getLeaderboardComments,
   getLeaderboardCommentIdentity,
   saveLeaderboardComment,
