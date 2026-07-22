@@ -449,6 +449,33 @@
           }
         }
       },
+      "strategyChats": {
+        "$roomId": {
+          ".read": "auth != null && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+          "$messageId": {
+            ".write": "auth != null && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
+            ".validate": "newData.hasChildren(['authorUid', 'text', 'phase', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && (newData.child('phase').val() === 'scout' || newData.child('phase').val() === 'battle') && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
+            "authorUid": {
+              ".validate": "newData.isString() && newData.val() === auth.uid"
+            },
+            "text": {
+              ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+            },
+            "phase": {
+              ".validate": "newData.val() === 'scout' || newData.val() === 'battle'"
+            },
+            "round": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 5"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      },
       "strategyRooms": {
         "$roomId": {
           ".read": "auth != null && data.child('members').child(auth.uid).val() === true",

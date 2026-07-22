@@ -8,10 +8,12 @@ import {
 import {
   getDatabase,
   get,
+  limitToLast,
   onChildAdded,
   onDisconnect,
   onValue,
   push,
+  query,
   ref,
   remove,
   runTransaction,
@@ -51,6 +53,13 @@ const PURSUIT_LINES = [
   "刺さったね？ 追撃開始！",
   "まだ終わらない。次の一枚をどうぞ！",
 ];
+const STRATEGY_CHAT_PROMPTS = ["それ、本命？", "今の反応、怪しい…", "どれが一番好き？", "ノーコメント！"];
+const ANONYMOUS_CHAT_SCREENS = new Set(["intro", "waitingDecision", "deck", "waitingDeck"]);
+const IDENTIFIED_CHAT_SCREENS = new Set([
+  "identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating",
+  "actionSelect", "waitingActionPick", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "roundResult", "waitingContinue",
+  "weaknessGuess", "waitingWeaknessGuess", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue",
+]);
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -110,6 +119,8 @@ function createState() {
     avatarSent: false,
     incomingAvatarTransfer: null,
     hideOpponentAvatar: false,
+    chatMessages: [],
+    seenChatIds: new Set(),
     selectedBaseId: "",
     selectedScore: 0,
     selectedReaction: "normal",
@@ -334,6 +345,7 @@ function render() {
     error: renderError,
   };
   app.innerHTML = (renderers[state.screen] || renderProfile)();
+  if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("beforeend", renderStrategyChat());
   bindScreenEvents();
   focusScreen();
 }
@@ -611,6 +623,51 @@ function renderStatusCard(icon, eyebrow, title, body, details = "", actions = ""
     <span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(body)}</p><div class="online-status-details">${details}</div><div class="button-row">${actions}</div></article></section>`;
 }
 
+function isStrategyChatVisible() {
+  return ANONYMOUS_CHAT_SCREENS.has(state.screen) || IDENTIFIED_CHAT_SCREENS.has(state.screen);
+}
+
+function isStrategyChatAnonymous() {
+  return ANONYMOUS_CHAT_SCREENS.has(state.screen);
+}
+
+function renderStrategyChatAvatar(player, localPlayer, anonymous) {
+  if (anonymous) return shared()?.profileAvatar?.renderBattle?.(localPlayer ? "YOU" : "?", "", { className: "strategy-chat-avatar" }) || "";
+  const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
+  return shared()?.profileAvatar?.renderBattle?.(player?.name || "PLAYER", avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "strategy-chat-avatar" }) || "";
+}
+
+function renderStrategyChatParticipant(player, localPlayer, anonymous) {
+  const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
+  return `<div class="strategy-chat-participant ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
+    <span><small>${localPlayer ? "YOU" : "OPPONENT"}</small><strong>${escapeHtml(displayName)}</strong></span></div>`;
+}
+
+function renderStrategyChatMessage(message, anonymous) {
+  const localPlayer = message.authorUid === state.uid;
+  const player = state.players.find((candidate) => candidate.uid === message.authorUid);
+  const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
+  const phaseLabel = message.phase === "scout" ? "SCOUT" : `R${Math.max(1, Math.min(MAX_ROUNDS, Number(message.round) || 1))}`;
+  return `<div class="strategy-chat-message-row ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
+    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}</small><p>${escapeHtml(message.text)}</p></div></div>`;
+}
+
+function renderStrategyChat() {
+  const anonymous = isStrategyChatAnonymous();
+  const localPlayer = getLocalPlayer();
+  const opponent = getOpponent();
+  const messages = state.chatMessages.length
+    ? state.chatMessages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
+    : `<div class="chat-empty">会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。</div>`;
+  return `<aside class="chat-panel strategy-chat-panel"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
+      <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : "会話も推理材料"}</span></div>
+    <div class="strategy-chat-participants">${renderStrategyChatParticipant(localPlayer, true, anonymous)}${renderStrategyChatParticipant(opponent, false, anonymous)}</div>
+    <div class="chat-messages" id="strategyChatMessages">${messages}</div>
+    <div class="quick-reactions">${STRATEGY_CHAT_PROMPTS.map((text) => `<button class="reaction-button" type="button" data-strategy-chat-reaction="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div>
+    <form class="chat-form" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="会話から本当の弱点を探る…" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
+      <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
+}
+
 function renderBattleHud() {
   if (state.players.length !== 2) return "";
   return `<div class="round-topbar strategy-hud">${renderHudPlayer(0)}<div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>${renderHudPlayer(1)}</div>
@@ -651,6 +708,7 @@ function bindScreenEvents() {
     shared()?.profileAvatar?.bindSetting?.({ controlId: "strategyProfileAvatar", onUpdate: () => { syncStrategyProfileDraft(); render(); } });
   }
   document.querySelectorAll("[data-strategy-avatar-visibility]").forEach((button) => button.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); }));
+  bindStrategyChatEvents();
   document.querySelector("#strategyProfileForm")?.addEventListener("submit", saveProfile);
   bindPursuitFields();
   document.querySelector("#strategyCancelMatching")?.addEventListener("click", cancelMatching);
@@ -688,6 +746,47 @@ function bindScreenEvents() {
   document.querySelector("#strategyWithdrawHome")?.addEventListener("click", leaveToLanding);
   document.querySelector("#strategyNoContestHome")?.addEventListener("click", leaveToLanding);
   document.querySelector("#strategyErrorHome")?.addEventListener("click", leaveToLanding);
+}
+
+function bindStrategyChatEvents() {
+  document.querySelectorAll("[data-strategy-chat-reaction]").forEach((button) => button.addEventListener("click", () => sendStrategyChat(button.dataset.strategyChatReaction)));
+  document.querySelector("#strategyChatForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = document.querySelector("#strategyChatInput");
+    const text = input?.value || "";
+    if (input) input.value = "";
+    sendStrategyChat(text);
+    input?.focus();
+  });
+  scrollStrategyChat();
+}
+
+async function sendStrategyChat(value) {
+  const text = String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80);
+  if (!text || !state.roomId || !isStrategyChatVisible()) return;
+  const message = {
+    authorUid: state.uid,
+    text,
+    phase: isStrategyChatAnonymous() ? "scout" : "battle",
+    round: Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
+    createdAt: serverTimestamp(),
+  };
+  await set(push(ref(database, `online/strategyChats/${state.roomId}`)), message).catch(() => showToast("チャットを送信できませんでした。"));
+}
+
+function refreshStrategyChat() {
+  const list = document.querySelector("#strategyChatMessages");
+  if (!list) return;
+  const anonymous = isStrategyChatAnonymous();
+  list.innerHTML = state.chatMessages.length
+    ? state.chatMessages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
+    : `<div class="chat-empty">会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。</div>`;
+  scrollStrategyChat();
+}
+
+function scrollStrategyChat() {
+  const list = document.querySelector("#strategyChatMessages");
+  if (list) list.scrollTop = list.scrollHeight;
 }
 
 function syncStrategyProfileDraft() {
@@ -911,6 +1010,14 @@ async function setupRoomListeners() {
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${state.opponentUid}`), (snapshot) => {
     state.opponentOnline = snapshot.val()?.online !== false;
   }));
+  const chatQuery = query(ref(database, `online/strategyChats/${state.roomId}`), limitToLast(60));
+  state.roomUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
+    if (state.seenChatIds.has(snapshot.key)) return;
+    state.seenChatIds.add(snapshot.key);
+    state.chatMessages.push({ id: snapshot.key, ...snapshot.val() });
+    if (state.chatMessages.length > 60) state.chatMessages.shift();
+    refreshStrategyChat();
+  }, handleRecoverableError));
 }
 
 async function setupPeerConnection() {
@@ -1858,6 +1965,8 @@ function releaseAllImages() {
   state.remoteImages.forEach((item) => item.url && URL.revokeObjectURL(item.url));
   state.remoteImages.clear();
   releaseRemoteAvatar();
+  state.chatMessages = [];
+  state.seenChatIds.clear();
 }
 
 function handleRecoverableError(error) {
