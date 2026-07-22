@@ -346,20 +346,40 @@ function getOverallRankingPreference() {
   return { ...leaderboardPublicSettings() };
 }
 
-function renderOverallRankingParticipation({ controlId = "overallRankingParticipation", compact = true } = {}) {
+function normalizeRankingControlId(controlId) {
+  return /^[A-Za-z][A-Za-z0-9_.-]*$/.test(String(controlId)) ? String(controlId) : "overallRankingParticipation";
+}
+
+function renderOverallRankingParticipation({ controlId = "overallRankingParticipation" } = {}) {
   const settings = getOverallRankingPreference();
-  const safeControlId = /^[A-Za-z][A-Za-z0-9_:.-]*$/.test(String(controlId)) ? String(controlId) : "overallRankingParticipation";
-  return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"} ${compact ? "is-compact" : ""}">
+  const safeControlId = normalizeRankingControlId(controlId);
+  const handleId = `${safeControlId}XHandle`;
+  const publicId = `${safeControlId}XPublic`;
+  const commentsId = `${safeControlId}CommentsEnabled`;
+  const saveId = `${safeControlId}Save`;
+  const publicSettings = settings.enabled ? `<details class="overall-ranking-settings">
+    <summary><span><strong>公開プロフィール設定</strong><small>Xリンクと、自分の順位欄でコメントを受け付けるかを設定します。</small></span><b>設定を開く</b></summary>
+    <div class="overall-ranking-public-controls">
+      <label class="ranking-x-handle" for="${handleId}"><span>@</span><input id="${handleId}" type="text" maxlength="15" value="${escapeHtml(settings.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
+      <label class="ranking-x-public"><input type="checkbox" id="${publicId}" ${settings.xPublic ? "checked" : ""} /><span>ランキングでXを公開する</span></label>
+      <label class="ranking-x-public"><input type="checkbox" id="${commentsId}" ${settings.commentsEnabled ? "checked" : ""} /><span>自分の順位欄でコメントを受け付ける</span></label>
+      <button class="button button-ghost button-small" type="button" id="${saveId}">公開設定を保存</button>
+    </div>
+    <p>Xを公開すると匿名性が下がります。コメントはランキング参加者だけが1人1件、80文字以内で投稿できます。</p>
+  </details>` : "";
+  return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"}">
     <div class="overall-ranking-copy"><span class="eyebrow">ONLINE OVERALL RANKING</span><div><strong>オンライン総合ランキング</strong>
-      <p>${settings.enabled ? "4モードの対戦結果を期間ポイントへ反映しています。" : "総合RATEは非公開で保持され、参加中の対戦から期間ポイントへ反映されます。"}</p></div></div>
+      <p>${settings.enabled ? "4モード共通で期間ポイントを集計し、総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間ポイントは参加中の対戦だけ集計されます。"}</p></div></div>
     <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
-    <small>この設定は通常型・戦略型・2on2・バトルロワイヤルで共通です。</small>
+    <small>通常型1on1・戦略型1on1・2on2・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。</small>
+    ${publicSettings}
   </section>`;
 }
 
 function bindOverallRankingParticipation({ controlId = "overallRankingParticipation", name = "", onUpdate } = {}) {
-  const button = document.querySelector(`#${controlId}`);
+  const safeControlId = normalizeRankingControlId(controlId);
+  const button = document.getElementById(safeControlId);
   button?.addEventListener("click", async () => {
     const nextEnabled = !getOverallRankingPreference().enabled;
     button.disabled = true;
@@ -371,6 +391,24 @@ function bindOverallRankingParticipation({ controlId = "overallRankingParticipat
       showToast(error?.message || "ランキング設定を更新できませんでした。");
     } finally {
       onUpdate?.();
+    }
+  });
+  const saveButton = document.getElementById(`${safeControlId}Save`);
+  saveButton?.addEventListener("click", async () => {
+    saveButton.disabled = true;
+    try {
+      const displayName = typeof name === "function" ? name() : name;
+      await saveOverallRankingPublicSettings({
+        xHandle: document.getElementById(`${safeControlId}XHandle`)?.value,
+        xPublic: document.getElementById(`${safeControlId}XPublic`)?.checked,
+        commentsEnabled: document.getElementById(`${safeControlId}CommentsEnabled`)?.checked,
+        name: displayName,
+      });
+      showToast("ランキングの公開設定を保存しました。");
+      onUpdate?.();
+    } catch (error) {
+      saveButton.disabled = false;
+      showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
     }
   });
 }
@@ -801,23 +839,7 @@ function renderSetup() {
       <span>🔥 ${profile.streak}連勝中 / 最高${profile.bestStreak}</span>
       <span class="point-balance-inline">◆ ${state.economyReady ? state.economy.points : "--"} PT</span>
     </div>
-    <label class="ranking-optin">
-      <input type="checkbox" id="rankingPublicToggle" ${state.leaderboardPublic ? "checked" : ""} ${state.authReady ? "" : "disabled"} />
-      <span><strong>オンライン総合ランキングに参加する</strong><small>4モード共通のプレイヤーネーム・総合RATE・デイリー／週間／月間戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
-    </label>
-    <div class="ranking-x-settings ${state.leaderboardPublic ? "" : "is-disabled"}">
-      <div class="ranking-x-heading">
-        <strong>ランキング公開設定</strong>
-        <small>Xリンクと、自分のランキング欄でコメントを受け付けるかを設定します。</small>
-      </div>
-      <div class="ranking-x-controls">
-        <label class="ranking-x-handle" for="rankingXHandle"><span>@</span><input id="rankingXHandle" type="text" maxlength="15" value="${escapeHtml(state.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /></label>
-        <label class="ranking-x-public"><input type="checkbox" id="rankingXPublicToggle" ${state.xPublic ? "checked" : ""} ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /><span>ランキングでXを公開する</span></label>
-        <label class="ranking-x-public"><input type="checkbox" id="rankingCommentsEnabledToggle" ${state.rankingCommentsEnabled ? "checked" : ""} ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /><span>コメントを受け付ける</span></label>
-        <button class="button button-ghost button-small" id="saveRankingX" ${state.authReady && state.leaderboardPublic ? "" : "disabled"}>公開設定を保存</button>
-      </div>
-      <p>Xを公開すると匿名性が下がります。コメントはランキング参加者だけが1人1件、80文字以内で投稿できます。</p>
-    </div>
+    ${renderOverallRankingParticipation({ controlId: "soloOverallRanking" })}
     <div class="setup-layout">
       <aside class="setup-guide">
         <h2>オンライン画像の取り扱い</h2>
@@ -1216,8 +1238,11 @@ function bindEconomyEvents() {
 
 function bindSetupEvents() {
   document.querySelector("#onlineBackHome")?.addEventListener("click", leaveToLanding);
-  document.querySelector("#rankingPublicToggle")?.addEventListener("change", updateRankingPreference);
-  document.querySelector("#saveRankingX")?.addEventListener("click", saveRankingXSettings);
+  bindOverallRankingParticipation({
+    controlId: "soloOverallRanking",
+    name: () => document.querySelector("#onlinePlayerName")?.value || state.name,
+    onUpdate: render,
+  });
   const nameInput = document.querySelector("#onlinePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
@@ -1344,41 +1369,8 @@ async function fillSampleDeck() {
   render();
 }
 
-async function updateRankingPreference(event) {
-  const enabled = event.currentTarget.checked;
-  event.currentTarget.disabled = true;
-  try {
-    await setOverallRankingParticipation(enabled, state.name);
-    showToast(enabled ? "オンライン総合ランキングへの参加を有効にしました。" : "オンライン総合ランキングから非公開にしました。");
-    render();
-  } catch (error) {
-    render();
-    showToast(error?.message || "ランキング設定を更新できませんでした。");
-  }
-}
-
 function normalizeXHandle(value) {
   return String(value || "").trim().replace(/^@/, "");
-}
-
-async function saveRankingXSettings() {
-  if (!state.authReady || !state.leaderboardPublic) return;
-  const input = document.querySelector("#rankingXHandle");
-  const publicToggle = document.querySelector("#rankingXPublicToggle");
-  const commentsToggle = document.querySelector("#rankingCommentsEnabledToggle");
-  try {
-    await saveOverallRankingPublicSettings({
-      xHandle: input?.value,
-      xPublic: publicToggle?.checked,
-      commentsEnabled: commentsToggle?.checked,
-      name: state.name,
-    });
-    render();
-    showToast("ランキングの公開設定を保存しました。");
-  } catch (error) {
-    render();
-    showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
-  }
 }
 
 function applyEconomySnapshot(snapshot, dateKey = currentDailyDateKey()) {

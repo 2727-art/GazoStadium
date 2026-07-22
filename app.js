@@ -64,20 +64,24 @@
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
-        <span class="eyebrow">ONLINE 1ON1 / STRATEGY / 2ON2 / BATTLE ROYALE</span>
-        <h1>貼り合え。<span>YOUR FAVORITE, YOUR POWER.</span></h1>
+        <span class="eyebrow hero-eyebrow"><i aria-hidden="true">♥</i><span>好きな画像で、気軽にオンライン対戦</span><i aria-hidden="true">✦</i></span>
+        <h1 aria-label="貼り合え。YOUR FAVORITE, YOUR POWER."><span class="hero-title-text">貼り合え</span><span class="hero-heart" aria-hidden="true"><svg viewBox="0 0 64 64" focusable="false"><defs><linearGradient id="heroHeartGradient" x1="10" y1="8" x2="54" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#ff6b85"/><stop offset="0.58" stop-color="#ff4f72"/><stop offset="1" stop-color="#66e9df"/></linearGradient></defs><path d="M32 58C28.8 54.8 8.1 42.8 5.1 26.1 2.6 12.1 10.1 4 20.1 4 25.9 4 30 7 32 11c2-4 6.1-7 11.9-7 10 0 17.5 8.1 15 22.1C55.9 42.8 35.2 54.8 32 58Z" fill="url(#heroHeartGradient)"/><path d="M13.5 19.5C15.2 12.4 22.5 9.4 27.4 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-linecap="round" stroke-width="3"/></svg></span><span class="hero-tagline">YOUR FAVORITE, YOUR POWER.</span></h1>
+        <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
-          自慢の画像を5枚用意し、知らない誰かと魅力を採点し合う。
+          お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
           1on1、協力型2on2、4人で最後の1人を決めるバトルロワイヤルを選べます。
         </p>
+        <ul class="hero-assurances" aria-label="安心して遊べるポイント">
+          <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
+        </ul>
         <div class="hero-actions">
-          <button class="button button-primary" id="onlineButton">通常型1on1対戦</button>
-          <button class="button button-strategy" id="strategyLabButton">戦略型1on1対戦</button>
-          <button class="button button-cyan" id="teamBattleButton">2on2チーム対戦</button>
-          <button class="button button-royale" id="royaleBattleButton">4人バトルロワイヤル</button>
-          <button class="button button-ghost" id="rankingButton">オンライン総合ランキング</button>
-          <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
-          <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
+          <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
+          <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
+          <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ふたりで協力</small><span>2on2チーム対戦</span></button>
+          <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
+          <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
+          <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
+          <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
         </div>
         <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
           <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
@@ -161,7 +165,7 @@
     } else if (rankingCommentIdentityStatus !== "ready") {
       composer = `<div class="ranking-comment-auth"><p>ランキング参加者は、このプレイヤーへ1件コメントできます。</p><button class="button button-ghost button-small" type="button" data-ranking-comment-auth="${escapeHtml(entryId)}">投稿資格を確認</button></div>`;
     } else if (!rankingCommentIdentity?.canPost) {
-      composer = `<p class="ranking-comment-guide">コメントするには、通常型1on1対戦の準備画面で「オンライン総合ランキングに参加する」を有効にしてください。</p>`;
+      composer = `<p class="ranking-comment-guide">コメントするには、いずれかのオンライン対戦準備画面またはランキング画面で「オンライン総合ランキングに参加する」を有効にしてください。</p>`;
     } else if (identityEntryId === entryId) {
       composer = `<p class="ranking-comment-guide">自分の欄には投稿できません。寄せられたコメントは削除できます。</p>`;
     } else {
@@ -321,25 +325,9 @@
     setLandingChrome();
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
     const status = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
-    const rankingPreference = window.HariaiOnline?.getOverallRankingPreference?.() || {
-      enabled: false,
-      xHandle: "",
-      xPublic: false,
-      commentsEnabled: true,
-    };
     const participationMenu = window.HariaiOnline?.renderOverallRankingParticipation?.({
       controlId: "rankingOverallParticipation",
-      compact: false,
     }) || "";
-    const publicSettings = rankingPreference.enabled ? `<section class="overall-ranking-public-settings">
-      <div><strong>公開プロフィール設定</strong><p>任意でXへのリンクを表示し、自分の順位欄へのコメント受付を切り替えられます。</p></div>
-      <div class="overall-ranking-public-controls">
-        <label class="ranking-x-handle" for="rankingOverallXHandle"><span>@</span><input id="rankingOverallXHandle" type="text" maxlength="15" value="${escapeHtml(rankingPreference.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
-        <label class="ranking-x-public"><input type="checkbox" id="rankingOverallXPublic" ${rankingPreference.xPublic ? "checked" : ""} /><span>ランキングでXを公開する</span></label>
-        <label class="ranking-x-public"><input type="checkbox" id="rankingOverallCommentsEnabled" ${rankingPreference.commentsEnabled ? "checked" : ""} /><span>自分の順位欄でコメントを受け付ける</span></label>
-        <button class="button button-ghost button-small" type="button" id="saveOverallRankingSettings">公開設定を保存</button>
-      </div>
-    </section>` : "";
     const periodInfo = rankingPeriodInfo();
     const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
     const rows = entries.length ? entries.map((entry, index) => {
@@ -380,7 +368,6 @@
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       ${participationMenu}
-      ${publicSettings}
       <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
         <button type="button" role="tab" data-ranking-period="daily" aria-selected="${rankingPeriod === "daily"}" class="${rankingPeriod === "daily" ? "is-active" : ""}">デイリー</button>
         <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
@@ -400,28 +387,10 @@
       controlId: "rankingOverallParticipation",
       onUpdate: () => renderRankingScreen({ preserveScroll: true }),
     });
-    document.querySelector("#saveOverallRankingSettings")?.addEventListener("click", saveOverallRankingSettings);
     bindRankingCommentEvents();
     app.focus({ preventScroll: true });
     if (!preserveScroll) window.scrollTo({ top: 0, behavior: "smooth" });
     if (refresh) refreshSelectedRankingPeriod();
-  }
-
-  async function saveOverallRankingSettings(event) {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      await window.HariaiOnline?.saveOverallRankingPublicSettings?.({
-        xHandle: document.querySelector("#rankingOverallXHandle")?.value,
-        xPublic: document.querySelector("#rankingOverallXPublic")?.checked,
-        commentsEnabled: document.querySelector("#rankingOverallCommentsEnabled")?.checked,
-      });
-      showToast("ランキングの公開設定を保存しました。");
-      renderRankingScreen({ preserveScroll: true });
-    } catch (error) {
-      button.disabled = false;
-      showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
-    }
   }
 
   function startOnlineBattle() {
