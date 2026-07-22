@@ -4,6 +4,10 @@
   const MAX_ROUNDS = 5;
   const MAX_FILE_BYTES = 15 * 1024 * 1024;
   const MAX_IMAGE_SIDE = 1600;
+  const PROFILE_AVATAR_SIDE = 256;
+  const PROFILE_AVATAR_DB_NAME = "hariai-stadium-profile-v1";
+  const PROFILE_AVATAR_STORE_NAME = "assets";
+  const PROFILE_AVATAR_RECORD_KEY = "profile-avatar";
 
   const app = document.querySelector("#app");
   const toast = document.querySelector("#toast");
@@ -18,6 +22,8 @@
   let rankingCommentIdentityStatus = "idle";
   let rankingPeriod = "weekly";
   let rankingDisplayedPeriodKey = "";
+  let profileAvatarReadyPromise = null;
+  const profileAvatarState = { ready: false, blob: null, url: "" };
 
   const sampleThemes = [
     ["#142a25", "#66d18f", "#f4c96b"],
@@ -505,6 +511,172 @@
     };
   }
 
+  function openProfileAvatarDatabase() {
+    if (!("indexedDB" in window)) return Promise.reject(new Error("このブラウザーはプロフィール画像の端末保存に対応していません。"));
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(PROFILE_AVATAR_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(PROFILE_AVATAR_STORE_NAME)) {
+          request.result.createObjectStore(PROFILE_AVATAR_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("プロフィール画像の保存領域を開けませんでした。"));
+    });
+  }
+
+  async function loadProfileAvatar() {
+    try {
+      const database = await openProfileAvatarDatabase();
+      const blob = await new Promise((resolve, reject) => {
+        const transaction = database.transaction(PROFILE_AVATAR_STORE_NAME, "readonly");
+        const request = transaction.objectStore(PROFILE_AVATAR_STORE_NAME).get(PROFILE_AVATAR_RECORD_KEY);
+        request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+        request.onerror = () => reject(request.error || new Error("プロフィール画像を読み込めませんでした。"));
+      });
+      database.close();
+      replaceProfileAvatarCache(blob);
+    } catch (error) {
+      console.warn("Profile avatar storage is unavailable.", error);
+    } finally {
+      profileAvatarState.ready = true;
+    }
+    return getProfileAvatar();
+  }
+
+  function ensureProfileAvatarReady() {
+    if (!profileAvatarReadyPromise) profileAvatarReadyPromise = loadProfileAvatar();
+    return profileAvatarReadyPromise;
+  }
+
+  function replaceProfileAvatarCache(blob) {
+    if (profileAvatarState.url) URL.revokeObjectURL(profileAvatarState.url);
+    profileAvatarState.blob = blob instanceof Blob ? blob : null;
+    profileAvatarState.url = profileAvatarState.blob ? URL.createObjectURL(profileAvatarState.blob) : "";
+  }
+
+  function getProfileAvatar() {
+    return { ready: profileAvatarState.ready, blob: profileAvatarState.blob, url: profileAvatarState.url };
+  }
+
+  async function persistProfileAvatar(blob) {
+    const database = await openProfileAvatarDatabase();
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(PROFILE_AVATAR_STORE_NAME, "readwrite");
+      transaction.objectStore(PROFILE_AVATAR_STORE_NAME).put(blob, PROFILE_AVATAR_RECORD_KEY);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("プロフィール画像を保存できませんでした。"));
+      transaction.onabort = () => reject(transaction.error || new Error("プロフィール画像の保存が中断されました。"));
+    });
+    database.close();
+  }
+
+  async function deleteProfileAvatar() {
+    await ensureProfileAvatarReady();
+    const database = await openProfileAvatarDatabase();
+    try {
+      await new Promise((resolve, reject) => {
+        const transaction = database.transaction(PROFILE_AVATAR_STORE_NAME, "readwrite");
+        transaction.objectStore(PROFILE_AVATAR_STORE_NAME).delete(PROFILE_AVATAR_RECORD_KEY);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error || new Error("プロフィール画像を削除できませんでした。"));
+      });
+    } finally {
+      database.close();
+    }
+    replaceProfileAvatarCache(null);
+  }
+
+  async function prepareProfileAvatar(file) {
+    if (!file?.type?.startsWith("image/")) throw new Error("プロフィール画像には画像ファイルを選択してください。");
+    if (file.size > MAX_FILE_BYTES) throw new Error("15MBを超える画像は選択できません。");
+    const bitmap = await decodeImage(file);
+    const cropSide = Math.min(bitmap.width, bitmap.height);
+    const sourceX = Math.max(0, Math.round((bitmap.width - cropSide) / 2));
+    const sourceY = Math.max(0, Math.round((bitmap.height - cropSide) / 2));
+    const canvas = document.createElement("canvas");
+    canvas.width = PROFILE_AVATAR_SIDE;
+    canvas.height = PROFILE_AVATAR_SIDE;
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#151925";
+    context.fillRect(0, 0, PROFILE_AVATAR_SIDE, PROFILE_AVATAR_SIDE);
+    context.drawImage(bitmap.source, sourceX, sourceY, cropSide, cropSide, 0, 0, PROFILE_AVATAR_SIDE, PROFILE_AVATAR_SIDE);
+    bitmap.close?.();
+    return canvasToBlob(canvas, "image/webp", 0.82);
+  }
+
+  async function setProfileAvatarFromFile(file) {
+    await ensureProfileAvatarReady();
+    const blob = await prepareProfileAvatar(file);
+    await persistProfileAvatar(blob);
+    replaceProfileAvatarCache(blob);
+    return getProfileAvatar();
+  }
+
+  function profileInitial(name) {
+    return Array.from(String(name || "P").trim())[0]?.toUpperCase() || "P";
+  }
+
+  function renderBattleAvatar(name, url = "", { hidden = false, className = "" } = {}) {
+    const safeName = escapeHtml(name || "PLAYER");
+    const safeClassName = String(className || "").replace(/[^A-Za-z0-9_-]/g, "");
+    if (hidden) return `<span class="battle-avatar is-hidden ${safeClassName}" role="img" aria-label="${safeName}のプロフィール画像は非表示">×</span>`;
+    if (url) return `<span class="battle-avatar has-image ${safeClassName}"><img src="${escapeHtml(url)}" alt="${safeName}のプロフィール画像" draggable="false" /></span>`;
+    return `<span class="battle-avatar is-default ${safeClassName}" role="img" aria-label="${safeName}の初期プロフィールアイコン">${escapeHtml(profileInitial(name))}</span>`;
+  }
+
+  function normalizeAvatarControlId(value) {
+    return /^[A-Za-z][A-Za-z0-9_.-]*$/.test(String(value)) ? String(value) : "profileAvatar";
+  }
+
+  function renderProfileAvatarSetting({ controlId = "profileAvatar", name = "PLAYER" } = {}) {
+    const safeControlId = normalizeAvatarControlId(controlId);
+    const avatar = getProfileAvatar();
+    return `<section class="profile-avatar-setting">
+      <div class="profile-avatar-preview">${renderBattleAvatar(name, avatar.url)}</div>
+      <div class="profile-avatar-copy"><strong>対戦中プロフィール画像</strong><p>この端末だけに保存し、対戦成立後に相手へP2P転送します。ランキングやトップページには表示しません。</p></div>
+      <div class="profile-avatar-actions"><label class="button button-ghost button-small file-button">${avatar.url ? "画像を変更" : "画像を選択"}<input id="${safeControlId}Input" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+        <button class="button button-ghost button-small" type="button" id="${safeControlId}Remove" ${avatar.url ? "" : "disabled"}>画像を削除</button></div>
+      <small>中央を正方形に切り抜きます。本人写真や個人情報が写った画像の使用にはご注意ください。</small>
+    </section>`;
+  }
+
+  function bindProfileAvatarSetting({ controlId = "profileAvatar", onUpdate } = {}) {
+    const safeControlId = normalizeAvatarControlId(controlId);
+    const input = document.getElementById(`${safeControlId}Input`);
+    input?.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      setBusy(true, "プロフィール画像を準備しています…");
+      try {
+        await setProfileAvatarFromFile(file);
+        showToast("プロフィール画像をこの端末に保存しました。");
+        onUpdate?.();
+      } catch (error) {
+        showToast(error?.message || "プロフィール画像を保存できませんでした。");
+      } finally {
+        setBusy(false);
+      }
+    });
+    document.getElementById(`${safeControlId}Remove`)?.addEventListener("click", async () => {
+      try {
+        await deleteProfileAvatar();
+        showToast("プロフィール画像を削除しました。");
+        onUpdate?.();
+      } catch (error) {
+        showToast(error?.message || "プロフィール画像を削除できませんでした。");
+      }
+    });
+  }
+
+  const profileAvatar = {
+    ready: ensureProfileAvatarReady,
+    get: getProfileAvatar,
+    renderSetting: renderProfileAvatarSetting,
+    bindSetting: bindProfileAvatarSetting,
+    renderBattle: renderBattleAvatar,
+  };
+
   async function createSampleItems(playerIndex, count = MAX_ROUNDS, offset = 0) {
     const items = [];
     for (let index = 0; index < count; index += 1) {
@@ -647,8 +819,11 @@
       setBusy,
       processImageFile,
       createSampleItems,
+      profileAvatar,
     },
   };
+
+  profileAvatar.ready();
 
   window.addEventListener("hariai-leaderboard-updated", () => {
     if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });

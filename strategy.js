@@ -39,6 +39,7 @@ const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-strategy-name-v2";
 const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
 const PROFILE_WEAKNESS_KEY = "hariai-stadium-strategy-weakness-v3";
@@ -105,6 +106,10 @@ function createState() {
     localBaseCards: new Map(),
     localActionCards: new Map(),
     remoteImages: new Map(),
+    remoteAvatar: null,
+    avatarSent: false,
+    incomingAvatarTransfer: null,
+    hideOpponentAvatar: false,
     selectedBaseId: "",
     selectedScore: 0,
     selectedReaction: "normal",
@@ -240,6 +245,11 @@ function start() {
   state = createState();
   setStrategyChrome("STRATEGY CONNECTING");
   render();
+  Promise.resolve(shared()?.profileAvatar?.ready?.()).then(() => {
+    if (!active || state.screen !== "profile") return;
+    syncStrategyProfileDraft();
+    render();
+  });
   ensureAuthenticated().catch(handleFatalError);
 }
 
@@ -344,6 +354,7 @@ function renderProfile() {
     </ol><p class="privacy-note">試合前は弱点のハッシュだけを共有し、両者の回答確定後に答えを公開して照合します。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
+      ${shared()?.profileAvatar?.renderSetting?.({ controlId: "strategyProfileAvatar", name: state.name }) || ""}
       <fieldset class="strategy-clue-fieldset"><legend>弱点候補（1つだけ本当の弱点を選択）</legend>
         ${state.clues.map((clue, index) => `<label class="strategy-clue-row"><input type="radio" name="weakness" value="${index}" ${state.weaknessIndex === index ? "checked" : ""} required />
           <span class="weakness-selector">本命</span><input class="text-input strategy-clue-input" data-clue-index="${index}" maxlength="80" autocomplete="off" placeholder="例：豚骨ラーメン" value="${escapeHtml(clue)}" required /></label>`).join("")}
@@ -414,8 +425,9 @@ function renderWaitingDeck() {
 function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
     <p>本当の弱点は3ラウンド終了後、両者の回答が確定するまで秘密です。</p></div><div class="strategy-identity-grid">
-    ${state.players.map((player, index) => `<article class="strategy-identity-card player-${index + 1}"><small>${index === state.playerIndex ? "YOU" : "OPPONENT"}</small><h2>${escapeHtml(player.name)}</h2>
-      <div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`).join("")}<div class="strategy-vs-mark">VS</div></div>
+    ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
+      <div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
+    <button class="avatar-visibility-toggle strategy-avatar-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
     <button class="button button-primary strategy-center-button" id="strategyBattleStart">画像貼り合い開始</button></section>`;
 }
 
@@ -603,14 +615,18 @@ function renderBattleHud() {
   if (state.players.length !== 2) return "";
   return `<div class="round-topbar strategy-hud">${renderHudPlayer(0)}<div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>${renderHudPlayer(1)}</div>
     <div class="online-room-strip"><span>STRATEGY ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ P2P接続待ち"}</span>
-      <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span></div>`;
+      <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
+      <button class="avatar-visibility-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button></div>`;
 }
 
 function renderHudPlayer(index) {
   const player = state.players[index];
   const hpPercent = Math.max(0, Math.min(100, (player.hp / MAX_HP) * 100));
-  return `<div class="hud-player ${index === state.playerIndex ? "local-player" : ""}"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${index === state.playerIndex ? "（あなた）" : ""}</span></div>
-    <div class="hp-bar"><div class="hp-fill" style="--hp:${hpPercent}%"></div></div><span class="hp-value">HP ${player.hp} / ${MAX_HP} ・ ASK ${player.extraRequests} ・ PERMIT ${player.pursuitPermits}</span></div>`;
+  const localPlayer = index === state.playerIndex;
+  const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
+  const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
+  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span></div>
+    <div class="hp-bar"><div class="hp-fill" style="--hp:${hpPercent}%"></div></div><span class="hp-value">HP ${player.hp} / ${MAX_HP} ・ ASK ${player.extraRequests} ・ PERMIT ${player.pursuitPermits}</span></div></div></div>`;
 }
 
 function renderBattleImage(item, name, label) {
@@ -630,9 +646,11 @@ function bindScreenEvents() {
     window.HariaiOnline?.bindOverallRankingParticipation?.({
       controlId: "strategyOverallRanking",
       name: () => document.querySelector("#strategyName")?.value || state.name,
-      onUpdate: render,
+      onUpdate: () => { syncStrategyProfileDraft(); render(); },
     });
+    shared()?.profileAvatar?.bindSetting?.({ controlId: "strategyProfileAvatar", onUpdate: () => { syncStrategyProfileDraft(); render(); } });
   }
+  document.querySelectorAll("[data-strategy-avatar-visibility]").forEach((button) => button.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); }));
   document.querySelector("#strategyProfileForm")?.addEventListener("submit", saveProfile);
   bindPursuitFields();
   document.querySelector("#strategyCancelMatching")?.addEventListener("click", cancelMatching);
@@ -670,6 +688,18 @@ function bindScreenEvents() {
   document.querySelector("#strategyWithdrawHome")?.addEventListener("click", leaveToLanding);
   document.querySelector("#strategyNoContestHome")?.addEventListener("click", leaveToLanding);
   document.querySelector("#strategyErrorHome")?.addEventListener("click", leaveToLanding);
+}
+
+function syncStrategyProfileDraft() {
+  const nameInput = document.querySelector("#strategyName");
+  if (nameInput) state.name = nameInput.value.slice(0, 16);
+  const clueInputs = [...document.querySelectorAll(".strategy-clue-input")];
+  if (clueInputs.length === 3) state.clues = clueInputs.map((input) => input.value.slice(0, 80));
+  const weakness = document.querySelector('input[name="weakness"]:checked');
+  if (weakness) state.weaknessIndex = Number(weakness.value);
+  const choice = document.querySelector("#strategyPursuitLine")?.value || PURSUIT_LINES[0];
+  const custom = document.querySelector("#strategyCustomPursuitLine")?.value || "";
+  state.pursuitLine = choice === CUSTOM_PURSUIT_VALUE ? sanitizePursuitLineDraft(custom) : normalizePursuitLine(choice);
 }
 
 function bindPursuitFields() {
@@ -940,6 +970,7 @@ function configureDataChannel(channel) {
   channel.onopen = () => {
     state.channelReady = true;
     state.peerStatus = "● P2P接続済み";
+    sendProfileAvatar().catch(handleRecoverableError);
     if (state.screen === "connecting") state.screen = "intro";
     render();
     reactToRoomData().catch(handleRecoverableError);
@@ -956,10 +987,29 @@ function imageKey(kind, round) {
 async function handleChannelMessage(data) {
   if (typeof data === "string") {
     const message = JSON.parse(data);
-    if (message.type === "strategy-image-start") {
+    if (message.type === "profile-avatar-start") {
+      const size = Number(message.size);
+      if (!Number.isFinite(size) || size <= 0 || size > PROFILE_AVATAR_MAX_BYTES) throw new Error("プロフィール画像の受信サイズが不正です。");
+      if (message.mime !== "image/webp") throw new Error("プロフィール画像の形式が不正です。");
+      state.incomingAvatarTransfer = { mime: "image/webp", size, chunks: [], received: 0 };
+    } else if (message.type === "profile-avatar-end") {
+      finishIncomingProfileAvatar();
+    } else if (message.type === "profile-avatar-empty") {
+      releaseRemoteAvatar();
+    } else if (message.type === "strategy-image-start") {
       state.incomingTransfer = { kind: message.kind, round: message.round, ownerUid: message.ownerUid, actionType: message.actionType || "", mime: message.mime, size: message.size, chunks: [], received: 0 };
     } else if (message.type === "strategy-image-end") {
       await finishIncomingImage(message.kind, message.round, message.ownerUid);
+    }
+    return;
+  }
+  if (state.incomingAvatarTransfer) {
+    const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+    state.incomingAvatarTransfer.chunks.push(chunk);
+    state.incomingAvatarTransfer.received += chunk.byteLength;
+    if (state.incomingAvatarTransfer.received > state.incomingAvatarTransfer.size) {
+      state.incomingAvatarTransfer = null;
+      throw new Error("プロフィール画像の受信サイズが一致しませんでした。");
     }
     return;
   }
@@ -968,6 +1018,40 @@ async function handleChannelMessage(data) {
   state.incomingTransfer.chunks.push(chunk);
   state.incomingTransfer.received += chunk.byteLength;
   state.transferProgress = Math.min(99, Math.round((state.incomingTransfer.received / state.incomingTransfer.size) * 100));
+}
+
+async function sendProfileAvatar() {
+  if (state.avatarSent || !state.channel || state.channel.readyState !== "open") return;
+  state.avatarSent = true;
+  await shared()?.profileAvatar?.ready?.();
+  const avatar = shared()?.profileAvatar?.get?.();
+  if (!avatar?.blob || avatar.blob.size > PROFILE_AVATAR_MAX_BYTES) {
+    state.channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
+    return;
+  }
+  const buffer = await avatar.blob.arrayBuffer();
+  state.channel.send(JSON.stringify({ type: "profile-avatar-start", size: buffer.byteLength, mime: avatar.blob.type || "image/webp" }));
+  for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+    await waitForDataBuffer();
+    state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+  }
+  state.channel.send(JSON.stringify({ type: "profile-avatar-end" }));
+}
+
+function finishIncomingProfileAvatar() {
+  const transfer = state.incomingAvatarTransfer;
+  if (!transfer || transfer.received !== transfer.size) throw new Error("プロフィール画像の受信が完了していません。");
+  releaseRemoteAvatar();
+  const blob = new Blob(transfer.chunks, { type: transfer.mime });
+  state.remoteAvatar = { blob, url: URL.createObjectURL(blob) };
+  state.incomingAvatarTransfer = null;
+  if (["identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating", "actionSelect", "waitingAction", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "result", "waitingContinue", "weaknessGuess", "waitingWeaknessGuess", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue"].includes(state.screen)) render();
+}
+
+function releaseRemoteAvatar() {
+  if (state.remoteAvatar?.url) URL.revokeObjectURL(state.remoteAvatar.url);
+  state.remoteAvatar = null;
+  state.incomingAvatarTransfer = null;
 }
 
 async function finishIncomingImage(kind, round, ownerUid) {
@@ -1773,6 +1857,7 @@ function releaseAllImages() {
   });
   state.remoteImages.forEach((item) => item.url && URL.revokeObjectURL(item.url));
   state.remoteImages.clear();
+  releaseRemoteAvatar();
 }
 
 function handleRecoverableError(error) {

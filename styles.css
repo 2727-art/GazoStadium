@@ -1848,6 +1848,22 @@ button:disabled {
   min-width: 0;
 }
 
+.hud-player-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.hud-player:last-child .hud-player-main {
+  flex-direction: row-reverse;
+}
+
+.hud-player-details {
+  min-width: 0;
+  flex: 1;
+}
+
 .hud-player:last-child {
   text-align: right;
 }
@@ -2782,6 +2798,125 @@ button:disabled {
   line-height: 1.7;
 }
 
+.profile-avatar-setting {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 14px 15px;
+  border: 1px solid rgba(255, 126, 158, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 91, 126, 0.055), rgba(100, 232, 213, 0.035));
+}
+
+.profile-avatar-preview .battle-avatar {
+  width: 66px;
+  height: 66px;
+}
+
+.profile-avatar-copy {
+  min-width: 0;
+}
+
+.profile-avatar-copy strong {
+  color: #fff0f4;
+  font-size: 0.84rem;
+}
+
+.profile-avatar-copy p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.profile-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.profile-avatar-setting > small {
+  grid-column: 2 / -1;
+  color: #c99ba8;
+  font-size: 0.64rem;
+  line-height: 1.55;
+}
+
+.battle-avatar {
+  width: 48px;
+  height: 48px;
+  display: inline-grid;
+  flex: 0 0 auto;
+  overflow: hidden;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #ff6582, #9b6deb 58%, #55d9d4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.26), 0 0 18px rgba(255, 101, 130, 0.1);
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.battle-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.battle-avatar.is-hidden {
+  color: #7c8497;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.13);
+  background: #151925;
+  box-shadow: none;
+  font-size: 0.8rem;
+}
+
+.avatar-visibility-toggle {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 126, 158, 0.24);
+  border-radius: 999px;
+  cursor: pointer;
+  color: #f0c3ce;
+  background: rgba(255, 91, 126, 0.055);
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.avatar-visibility-toggle:hover {
+  border-color: rgba(255, 126, 158, 0.5);
+  background: rgba(255, 91, 126, 0.11);
+}
+
+.avatar-visibility-toggle[aria-pressed="true"] {
+  color: var(--muted);
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.strategy-identity-card .battle-avatar.identity-avatar {
+  width: 96px;
+  height: 96px;
+  margin-top: 18px;
+  font-size: 1.8rem;
+}
+
+.strategy-identity-card.player-2 .battle-avatar.identity-avatar {
+  margin-left: auto;
+}
+
+.strategy-avatar-toggle {
+  display: block;
+  width: fit-content;
+  margin: -14px auto 0;
+}
+
 .online-profile-strip,
 .online-room-strip {
   display: flex;
@@ -3102,6 +3237,27 @@ button:disabled {
 
   .online-room-strip {
     align-items: center;
+  }
+
+  .profile-avatar-setting {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-avatar-actions,
+  .profile-avatar-setting > small {
+    grid-column: 1 / -1;
+  }
+
+  .profile-avatar-actions {
+    justify-content: stretch;
+  }
+
+  .profile-avatar-actions .button {
+    flex: 1;
+  }
+
+  .strategy-identity-card.player-2 .battle-avatar.identity-avatar {
+    margin-left: 0;
   }
 
   .hero-actions .button {
@@ -3485,6 +3641,16 @@ button:disabled {
     gap: 9px;
   }
 
+  .hud-player-main {
+    gap: 6px;
+  }
+
+  .hud-player .battle-avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 0.72rem;
+  }
+
   .round-badge {
     min-width: 70px;
     padding-inline: 6px;
@@ -3634,6 +3800,26 @@ button:disabled {
 .team-hud-head strong { color: var(--text); }
 .team-hud-head span { color: var(--cyan); font-weight: 900; }
 .team-hud small { display: block; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+
+.team-hud-members {
+  display: flex;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.team-hud-members > span {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-hud-members .battle-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.7rem;
+}
 
 .team-phase-timer {
   display: grid;
@@ -3861,11 +4047,26 @@ button:disabled {
 .royale-survivor {
   min-width: 0;
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   gap: 4px;
   padding: 11px 12px;
   border: 1px solid rgba(170, 131, 255, 0.25);
   border-radius: 13px;
   background: rgba(12, 9, 22, 0.8);
+}
+
+.royale-survivor > .battle-avatar {
+  width: 34px;
+  height: 34px;
+  margin-right: 5px;
+  font-size: 0.72rem;
+}
+
+.royale-survivor > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
 .royale-survivor.local-player {

@@ -34,6 +34,7 @@ const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
@@ -110,6 +111,8 @@ function createState() {
     imageReadyRounds: new Set(),
     roundReadyRounds: new Set(),
     remoteImages: new Map(),
+    remoteAvatars: new Map(),
+    hideOtherAvatars: false,
     connections: new Map(),
     latestQueue: {},
     activeUsers: {},
@@ -171,6 +174,7 @@ function start() {
   state = createState();
   setTeamChrome("CONNECTING");
   render();
+  Promise.resolve(shared()?.profileAvatar?.ready?.()).then(() => { if (active && state.screen === "setup") render(); });
   ensureAuthenticated().catch(handleFatalError);
 }
 
@@ -299,6 +303,7 @@ function renderSetup() {
       <li><b>3</b><span>相手チームの画像2枚を採点し、4票の平均でチーム得点を決めます。</span></li></ol>
       <div class="privacy-note">画像は最大1280pxへ変換し、Firebaseには保存しません。</div></aside>
       <div class="setup-panel"><label class="field-label">表示名<input class="text-input" id="teamPlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" /></label>
+        ${shared()?.profileAvatar?.renderSetting?.({ controlId: "teamProfileAvatar", name: state.name }) || ""}
         <div class="deck-toolbar"><div class="deck-counter"><strong>${state.deck.length}</strong> / 5 IMAGES</div><div class="upload-actions">
           <label class="button button-cyan button-small file-button">画像を追加<input id="teamImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= MAX_ROUNDS ? "disabled" : ""} /></label>
           <button class="button button-ghost button-small" id="teamFillSample">サンプル画像で埋める</button></div></div>
@@ -335,9 +340,10 @@ function opponentTeam() {
 
 function renderTeamHud() {
   const teamBlock = (team) => `<div class="team-hud ${team === state.team ? "local-team" : ""}"><div class="team-hud-head"><strong>TEAM ${team}${team === state.team ? "（あなた）" : ""}</strong><span>HP ${state.teams[team].hp} / ${MAX_HP}</span></div>
-    <div class="hp-bar"><div class="hp-fill" style="--hp:${Math.max(0, (state.teams[team].hp / MAX_HP) * 100)}%"></div></div><small>${teamMembers(team).map((player) => escapeHtml(player.name)).join(" + ")}</small></div>`;
+    <div class="hp-bar"><div class="hp-fill" style="--hp:${Math.max(0, (state.teams[team].hp / MAX_HP) * 100)}%"></div></div><div class="team-hud-members">${teamMembers(team).map((player) => { const localPlayer = player.uid === state.uid; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatars.get(player.uid)?.url; return `<span>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOtherAvatars }) || ""}<small>${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</small></span>`; }).join("")}</div></div>`;
   return `<div class="team-round-hud">${teamBlock("A")}<div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>${teamBlock("B")}</div>
-    <div class="online-room-strip"><span>2ON2 ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill connected">● 4 PLAYER P2P</span><span>あなたは TEAM ${state.team}</span></div>`;
+    <div class="online-room-strip"><span>2ON2 ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill connected">● 4 PLAYER P2P</span><span>あなたは TEAM ${state.team}</span>
+      <button class="avatar-visibility-toggle" type="button" data-team-avatar-visibility aria-pressed="${state.hideOtherAvatars}">${state.hideOtherAvatars ? "他プレイヤー画像を表示" : "他プレイヤー画像を隠す"}</button></div>`;
 }
 
 function timerSeconds() {
@@ -472,6 +478,7 @@ function bindEvents() {
     image.addEventListener("dragstart", (event) => event.preventDefault());
   });
   document.querySelectorAll("[data-team-destroy]").forEach((button) => button.addEventListener("click", () => destroyDialog.showModal()));
+  document.querySelector("[data-team-avatar-visibility]")?.addEventListener("click", () => { state.hideOtherAvatars = !state.hideOtherAvatars; render(); });
   bindChatEvents();
   if (state.screen === "setup") bindSetupEvents();
   if (state.screen === "matching") document.querySelector("#cancelTeamMatching")?.addEventListener("click", cancelMatching);
@@ -500,6 +507,7 @@ function bindSetupEvents() {
     name: () => state.name,
     onUpdate: render,
   });
+  shared()?.profileAvatar?.bindSetting?.({ controlId: "teamProfileAvatar", onUpdate: render });
   const nameInput = document.querySelector("#teamPlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
@@ -911,7 +919,7 @@ function createConnection(remoteUid) {
       { urls: "stun:stun1.l.google.com:19302" },
     ],
   });
-  const connection = { remoteUid, peer, channel: null, pendingIce: [], incoming: null };
+  const connection = { remoteUid, peer, channel: null, pendingIce: [], incoming: null, incomingAvatar: null, avatarSent: false };
   state.connections.set(remoteUid, connection);
   peer.onicecandidate = (event) => {
     if (event.candidate) sendSignal(remoteUid, "candidate", event.candidate.toJSON()).catch(handleRecoverableError);
@@ -962,6 +970,7 @@ function configureChannel(remoteUid, channel) {
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
+    sendProfileAvatarTo(remoteUid).catch(handleRecoverableError);
     if (state.screen === "connecting") render();
     maybeStartRound().catch(handleRecoverableError);
   };
@@ -994,10 +1003,29 @@ async function handleChannelMessage(remoteUid, data) {
   if (!connection) return;
   if (typeof data === "string") {
     const message = JSON.parse(data);
-    if (message.type === "image-start") {
+    if (message.type === "profile-avatar-start") {
+      const size = Number(message.size);
+      if (!Number.isFinite(size) || size <= 0 || size > PROFILE_AVATAR_MAX_BYTES) throw new Error("プロフィール画像の受信サイズが不正です。");
+      if (message.mime !== "image/webp") throw new Error("プロフィール画像の形式が不正です。");
+      connection.incomingAvatar = { mime: "image/webp", size, chunks: [], received: 0 };
+    } else if (message.type === "profile-avatar-end") {
+      finishIncomingProfileAvatar(remoteUid);
+    } else if (message.type === "profile-avatar-empty") {
+      releaseRemoteAvatar(remoteUid);
+    } else if (message.type === "image-start") {
       connection.incoming = { round: Number(message.round), mime: message.mime || "image/webp", size: Number(message.size), chunks: [], received: 0 };
     } else if (message.type === "image-end") {
       await finishIncomingImage(remoteUid, Number(message.round));
+    }
+    return;
+  }
+  if (connection.incomingAvatar) {
+    const chunk = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(await data.arrayBuffer());
+    connection.incomingAvatar.chunks.push(chunk);
+    connection.incomingAvatar.received += chunk.byteLength;
+    if (connection.incomingAvatar.received > connection.incomingAvatar.size) {
+      connection.incomingAvatar = null;
+      throw new Error("プロフィール画像の受信サイズが一致しませんでした。");
     }
     return;
   }
@@ -1009,6 +1037,44 @@ async function handleChannelMessage(remoteUid, data) {
     connection.incoming = null;
     throw new Error("受信画像サイズが不正です。");
   }
+}
+
+async function sendProfileAvatarTo(remoteUid) {
+  const connection = state.connections.get(remoteUid);
+  if (!connection || connection.avatarSent || connection.channel?.readyState !== "open") return;
+  connection.avatarSent = true;
+  await shared()?.profileAvatar?.ready?.();
+  const avatar = shared()?.profileAvatar?.get?.();
+  if (!avatar?.blob || avatar.blob.size > PROFILE_AVATAR_MAX_BYTES) {
+    connection.channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
+    return;
+  }
+  const buffer = await avatar.blob.arrayBuffer();
+  connection.channel.send(JSON.stringify({ type: "profile-avatar-start", size: buffer.byteLength, mime: avatar.blob.type || "image/webp" }));
+  for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+    await waitForDataBuffer(connection.channel);
+    connection.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+  }
+  connection.channel.send(JSON.stringify({ type: "profile-avatar-end" }));
+}
+
+function finishIncomingProfileAvatar(remoteUid) {
+  const connection = state.connections.get(remoteUid);
+  const transfer = connection?.incomingAvatar;
+  if (!transfer || transfer.received !== transfer.size) throw new Error("プロフィール画像の受信が完了していません。");
+  releaseRemoteAvatar(remoteUid);
+  const blob = new Blob(transfer.chunks, { type: transfer.mime });
+  state.remoteAvatars.set(remoteUid, { blob, url: URL.createObjectURL(blob) });
+  connection.incomingAvatar = null;
+  if (!["connecting", "gameover", "noContest", "error"].includes(state.screen)) render();
+}
+
+function releaseRemoteAvatar(remoteUid) {
+  const avatar = state.remoteAvatars.get(remoteUid);
+  if (avatar?.url) URL.revokeObjectURL(avatar.url);
+  state.remoteAvatars.delete(remoteUid);
+  const connection = state.connections.get(remoteUid);
+  if (connection) connection.incomingAvatar = null;
 }
 
 async function finishIncomingImage(remoteUid, round) {
@@ -1602,6 +1668,8 @@ function releaseAllImages() {
   });
   state.remoteImages.forEach((rounds) => rounds.forEach((item) => item.url && URL.revokeObjectURL(item.url)));
   state.remoteImages.clear();
+  state.remoteAvatars.forEach((avatar) => avatar.url && URL.revokeObjectURL(avatar.url));
+  state.remoteAvatars.clear();
   state.teamChatMessages = [];
   state.allChatMessages = [];
 }
