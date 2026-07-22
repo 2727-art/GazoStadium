@@ -135,12 +135,22 @@ python -m http.server 4173 --bind 127.0.0.1
 - Authentication: 匿名ログインを使用
 - Realtime Database: マッチング、ルーム同期、チャット、戦績に使用
 - Storage: 使用しない
-- Firebase Hosting: 必須ではない（GitHub Pagesで公開可能）
+- Firebase Hosting: `https://gazostadium.web.app` で本番公開
 - クライアント設定: `firebase-config.js`
 - セキュリティルールの管理元: `database.rules.json`
-- Firebase CLI設定: `.firebaserc` / `firebase.json`（既定プロジェクト `gazostadium`、Realtime Database Rulesのみをデプロイ）
+- Firebase CLI設定: `.firebaserc` / `firebase.json`（既定プロジェクト `gazostadium`、HostingとRealtime Database Rulesをデプロイ）
 
 Realtime Databaseのルールは、各ユーザーが自分の待機情報・採点・順位投票・累積戦績・期間別ランキングだけを書けること、ルーム参加者だけがルームと共通チャットを読めることを制約します。期間別ポイントは勝利数×3＋引き分け数と一致する必要があります。ランキングコメントは参加者だけが自分の投稿キーへ書き込め、投稿者本人と投稿先プレイヤーだけが削除できます。Firebaseコンソールでルールを変更する場合は、`database.rules.json`も同じ内容に保ってください。
+
+## Firebaseへデプロイする
+
+Firebase CLIへログイン済みの環境で、次のコマンドを実行するとWeb本体とRealtime Database Rulesをまとめて本番反映できます。
+
+```powershell
+npx --yes firebase-tools deploy --only hosting,database --non-interactive
+```
+
+本番URL: `https://gazostadium.web.app`
 
 ## GitHub Pagesで公開する
 
