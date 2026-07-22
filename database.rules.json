@@ -59,6 +59,9 @@
           "updatedAt": {
             ".validate": "newData.isNumber()"
           },
+          "commentsEnabled": {
+            ".validate": "!newData.exists() || newData.isBoolean()"
+          },
           "xHandle": {
             ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^[A-Za-z0-9_]{1,15}$/))"
           },
@@ -79,6 +82,81 @@
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.isString() && root.child('online/leaderboardOwners/' + newData.val()).val() === auth.uid) || (data.exists() && newData.val() === data.val()))",
           ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 40"
+        }
+      },
+      "leaderboardPeriods": {
+        "$period": {
+          "$periodKey": {
+            ".read": "($period === 'daily' || $period === 'weekly' || $period === 'monthly') && (($period === 'monthly' && $periodKey.matches(/^[0-9]{4}-[0-9]{2}$/)) || (($period === 'daily' || $period === 'weekly') && $periodKey.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)))",
+            ".indexOn": ["points"],
+            "$entryId": {
+              ".write": "auth != null && root.child('online/leaderboardOwners/' + $entryId).val() === auth.uid",
+              ".validate": "!newData.exists() || (root.child('online/leaderboard/' + $entryId).exists() && newData.hasChildren(['name', 'points', 'wins', 'losses', 'draws', 'rating', 'commentsEnabled', 'updatedAt']) && newData.child('name').val() === root.child('online/leaderboard/' + $entryId + '/name').val() && newData.child('rating').val() === root.child('online/leaderboard/' + $entryId + '/rating').val() && newData.child('commentsEnabled').val() === root.child('online/leaderboard/' + $entryId + '/commentsEnabled').val() && newData.child('points').val() === (newData.child('wins').val() * 3) + newData.child('draws').val() && ((root.child('online/leaderboard/' + $entryId + '/xHandle').exists() && newData.child('xHandle').val() === root.child('online/leaderboard/' + $entryId + '/xHandle').val()) || (!root.child('online/leaderboard/' + $entryId + '/xHandle').exists() && !newData.child('xHandle').exists())))",
+              "name": {
+                ".validate": "newData.isString() && newData.val() === root.child('online/leaderboard/' + $entryId + '/name').val()"
+              },
+              "points": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() === (newData.parent().child('wins').val() * 3) + newData.parent().child('draws').val()"
+              },
+              "wins": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "losses": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "draws": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "rating": {
+                ".validate": "newData.isNumber() && newData.val() === root.child('online/leaderboard/' + $entryId + '/rating').val()"
+              },
+              "commentsEnabled": {
+                ".validate": "newData.isBoolean() && newData.val() === root.child('online/leaderboard/' + $entryId + '/commentsEnabled').val()"
+              },
+              "updatedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "xHandle": {
+                ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/leaderboard/' + $entryId + '/xHandle').val())"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        }
+      },
+      "leaderboardPeriodEntriesByUser": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          "$period": {
+            "$periodKey": {
+              ".validate": "!newData.exists() || (($period === 'daily' || $period === 'weekly' || $period === 'monthly') && (($period === 'monthly' && $periodKey.matches(/^[0-9]{4}-[0-9]{2}$/)) || (($period === 'daily' || $period === 'weekly') && $periodKey.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/))) && newData.isString() && newData.val() === root.child('online/leaderboardEntriesByUser/' + $uid).val())"
+            }
+          }
+        }
+      },
+      "leaderboardComments": {
+        "$targetEntryId": {
+          ".read": "root.child('online/leaderboard/' + $targetEntryId).exists() && root.child('online/leaderboard/' + $targetEntryId + '/commentsEnabled').val() !== false",
+          ".indexOn": ["updatedAt"],
+          "$authorEntryId": {
+            ".write": "auth != null && ((root.child('online/leaderboardOwners/' + $targetEntryId).val() === auth.uid && !newData.exists()) || (root.child('online/leaderboardOwners/' + $authorEntryId).val() === auth.uid && $targetEntryId !== $authorEntryId && (!newData.exists() || (root.child('online/leaderboard/' + $targetEntryId).exists() && root.child('online/leaderboard/' + $targetEntryId + '/commentsEnabled').val() !== false))))",
+            ".validate": "!newData.exists() || (newData.hasChildren(['text', 'authorName', 'updatedAt']) && newData.child('text').isString() && newData.child('text').val().matches(/^[^\\r\\n]{1,80}$/) && newData.child('authorName').val() === root.child('online/leaderboard/' + $authorEntryId + '/name').val() && newData.child('updatedAt').isNumber())",
+            "text": {
+              ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+            },
+            "authorName": {
+              ".validate": "newData.isString() && newData.val() === root.child('online/leaderboard/' + $authorEntryId + '/name').val()"
+            },
+            "updatedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
         }
       },
       "queue": {

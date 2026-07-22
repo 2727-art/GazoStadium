@@ -38,7 +38,12 @@ const PURSUIT_LINES = [
 const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
 const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
 const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
+const RANKING_COMMENTS_ENABLED_KEY = "hariai-stadium-ranking-comments-enabled-v1";
 const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
+const RANKING_COMMENT_MAX_LENGTH = 80;
+const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
+const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
+const DEFAULT_LEADERBOARD_PERIOD = "weekly";
 const MAX_POINTS = 999_999;
 const MAX_EQUIPPED_REACTIONS = 8;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
@@ -103,9 +108,12 @@ const createLobbyStats = (value = null) => Object.fromEntries(LOBBY_MODES.map((m
 let lobbyStats = createLobbyStats();
 let leaderboardEntries = [];
 let leaderboardStatus = "idle";
+let leaderboardPeriod = DEFAULT_LEADERBOARD_PERIOD;
+let leaderboardPeriodKey = "";
 let lobbyRestRequestPending = false;
-let leaderboardRequestPending = false;
+let leaderboardRequestId = 0;
 let lobbyStatsLoaded = false;
+let publicRestServerTimeOffset = 0;
 
 function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
@@ -152,6 +160,7 @@ function createOnlineState() {
     leaderboardPublic,
     xHandle: savedXHandle,
     xPublic: leaderboardPublic && X_HANDLE_PATTERN.test(savedXHandle) && localStorage.getItem(X_PUBLIC_KEY) === "1",
+    rankingCommentsEnabled: localStorage.getItem(RANKING_COMMENTS_ENABLED_KEY) !== "0",
     economy: createEmptyEconomy(),
     economyReady: false,
     economyBusy: false,
@@ -213,6 +222,57 @@ function applyPursuitLineSetting(value) {
 
 function jstDateKey(timestamp = Date.now()) {
   return new Date(timestamp + (9 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+}
+
+function normalizeLeaderboardPeriod(value) {
+  return LEADERBOARD_PERIODS.includes(value) ? value : DEFAULT_LEADERBOARD_PERIOD;
+}
+
+function leaderboardPeriodKeyFor(period, timestamp = Date.now()) {
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const shifted = new Date(timestamp + (9 * 60 * 60 * 1000));
+  if (normalizedPeriod === "monthly") return shifted.toISOString().slice(0, 7);
+  if (normalizedPeriod === "weekly") {
+    const daysSinceMonday = (shifted.getUTCDay() + 6) % 7;
+    shifted.setUTCDate(shifted.getUTCDate() - daysSinceMonday);
+  }
+  return shifted.toISOString().slice(0, 10);
+}
+
+function leaderboardPeriodStartAt(period, key) {
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const startKey = normalizedPeriod === "monthly" ? `${key}-01` : key;
+  return Date.parse(`${startKey}T00:00:00+09:00`);
+}
+
+function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.now() + publicRestServerTimeOffset) {
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const key = leaderboardPeriodKeyFor(normalizedPeriod, timestamp);
+  const startAt = leaderboardPeriodStartAt(normalizedPeriod, key);
+  let nextResetAt = startAt + (24 * 60 * 60 * 1000);
+  if (normalizedPeriod === "weekly") nextResetAt = startAt + (7 * 24 * 60 * 60 * 1000);
+  if (normalizedPeriod === "monthly") {
+    const shiftedStart = new Date(startAt + (9 * 60 * 60 * 1000));
+    nextResetAt = Date.UTC(shiftedStart.getUTCFullYear(), shiftedStart.getUTCMonth() + 1, 1) - (9 * 60 * 60 * 1000);
+  }
+  const shortDate = new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", timeZone: "Asia/Tokyo" });
+  const label = normalizedPeriod === "daily"
+    ? new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Tokyo" }).format(startAt)
+    : normalizedPeriod === "weekly"
+      ? `${shortDate.format(startAt)}〜${shortDate.format(nextResetAt - 1)}`
+      : new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", timeZone: "Asia/Tokyo" }).format(startAt);
+  return {
+    period: normalizedPeriod,
+    key,
+    label,
+    startAt,
+    nextResetAt,
+    minimumMatches: normalizedPeriod === "daily" ? 1 : normalizedPeriod === "weekly" ? 3 : 5,
+  };
+}
+
+function getLeaderboardPeriodInfo(period = leaderboardPeriod) {
+  return leaderboardPeriodInfoFor(period);
 }
 
 function createEmptyEconomy(dateKey = jstDateKey()) {
@@ -332,13 +392,113 @@ function getLeaderboardStatus() {
   return leaderboardStatus;
 }
 
+function getLeaderboardLoadedPeriod() {
+  return { period: leaderboardPeriod, key: leaderboardPeriodKey };
+}
+
 async function fetchPublicDatabasePath(path, parameters = {}) {
   const databaseUrl = String(firebaseConfig.databaseURL || "").replace(/\/$/, "");
   const url = new URL(`${databaseUrl}/${path}.json`);
   Object.entries(parameters).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   const response = await fetch(url, { cache: "no-store" });
+  const serverDate = Date.parse(response.headers.get("date") || "");
+  if (Number.isFinite(serverDate)) publicRestServerTimeOffset = serverDate - Date.now();
   if (!response.ok) throw new Error(`公開データの取得に失敗しました（${response.status}）`);
   return response.json();
+}
+
+function validLeaderboardEntryId(value) {
+  const entryId = String(value || "");
+  return /^[A-Za-z0-9_-]{16,40}$/.test(entryId) ? entryId : "";
+}
+
+async function ensureRankingCommentUser() {
+  await setPersistence(auth, browserLocalPersistence);
+  return auth.currentUser || (await signInAnonymously(auth)).user;
+}
+
+async function authenticatedDatabaseRequest(path, { method = "GET", body } = {}) {
+  const user = await ensureRankingCommentUser();
+  const token = await user.getIdToken();
+  const databaseUrl = String(firebaseConfig.databaseURL || "").replace(/\/$/, "");
+  const url = new URL(`${databaseUrl}/${path}.json`);
+  url.searchParams.set("auth", token);
+  const response = await fetch(url, {
+    method,
+    cache: "no-store",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = String((await response.json())?.error || "");
+    } catch {
+      // FirebaseがJSON以外を返した場合は共通メッセージを使います。
+    }
+    if (response.status === 401 || response.status === 403 || detail.includes("Permission denied")) {
+      throw new Error("このコメント操作は許可されていません。");
+    }
+    throw new Error(`コメント通信に失敗しました（${response.status}）`);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+async function getLeaderboardComments(targetEntryId) {
+  const targetId = validLeaderboardEntryId(targetEntryId);
+  if (!targetId) throw new Error("ランキング情報を確認できませんでした。");
+  const records = await fetchPublicDatabasePath(`online/leaderboardComments/${targetId}`, {
+    orderBy: JSON.stringify("updatedAt"),
+    limitToLast: 20,
+  });
+  return Object.entries(records || {})
+    .map(([authorEntryId, record]) => ({
+      authorEntryId: validLeaderboardEntryId(authorEntryId),
+      authorName: String(record?.authorName || "").slice(0, 16),
+      text: String(record?.text || "").slice(0, RANKING_COMMENT_MAX_LENGTH),
+      updatedAt: Number(record?.updatedAt || 0),
+    }))
+    .filter((record) => record.authorEntryId && record.authorName && record.text && Number.isFinite(record.updatedAt))
+    .sort((first, second) => second.updatedAt - first.updatedAt);
+}
+
+async function getLeaderboardCommentIdentity() {
+  const user = await ensureRankingCommentUser();
+  const entryId = validLeaderboardEntryId(await authenticatedDatabaseRequest(`online/leaderboardEntriesByUser/${user.uid}`));
+  if (!entryId) return { canPost: false, entryId: "", name: "" };
+  const entry = await fetchPublicDatabasePath(`online/leaderboard/${entryId}`);
+  if (!entry?.name) return { canPost: false, entryId: "", name: "" };
+  return {
+    canPost: true,
+    entryId,
+    name: String(entry.name).slice(0, 16),
+    commentsEnabled: entry.commentsEnabled !== false,
+  };
+}
+
+async function saveLeaderboardComment(targetEntryId, value) {
+  const targetId = validLeaderboardEntryId(targetEntryId);
+  const text = String(value || "").trim();
+  if (!targetId) throw new Error("ランキング情報を確認できませんでした。");
+  if (!text || text.length > RANKING_COMMENT_MAX_LENGTH || /[\r\n]/.test(text)) {
+    throw new Error(`コメントは1行${RANKING_COMMENT_MAX_LENGTH}文字以内で入力してください。`);
+  }
+  if (RANKING_COMMENT_URL_PATTERN.test(text)) throw new Error("コメントにURLは入力できません。");
+  const identity = await getLeaderboardCommentIdentity();
+  if (!identity.canPost) throw new Error("コメントするにはランキングへの参加が必要です。");
+  if (identity.entryId === targetId) throw new Error("自分のランキング欄にはコメントできません。");
+  await authenticatedDatabaseRequest(`online/leaderboardComments/${targetId}/${identity.entryId}`, {
+    method: "PUT",
+    body: { text, authorName: identity.name, updatedAt: { ".sv": "timestamp" } },
+  });
+}
+
+async function deleteLeaderboardComment(targetEntryId, authorEntryId) {
+  const targetId = validLeaderboardEntryId(targetEntryId);
+  const authorId = validLeaderboardEntryId(authorEntryId);
+  if (!targetId || !authorId) throw new Error("コメント情報を確認できませんでした。");
+  await authenticatedDatabaseRequest(`online/leaderboardComments/${targetId}/${authorId}`, { method: "DELETE" });
 }
 
 function refreshLobbyStats() {
@@ -394,31 +554,44 @@ function startLobbyStatsPolling() {
   });
 }
 
-async function refreshLeaderboard() {
-  if (leaderboardRequestPending) return;
-  leaderboardRequestPending = true;
+async function refreshLeaderboard(period = leaderboardPeriod) {
+  const selectedPeriod = normalizeLeaderboardPeriod(period);
+  const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
+  const requestId = ++leaderboardRequestId;
+  leaderboardPeriod = selectedPeriod;
+  leaderboardPeriodKey = periodInfo.key;
+  leaderboardEntries = [];
   leaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const entries = await fetchPublicDatabasePath("online/leaderboard", {
-      orderBy: JSON.stringify("rating"),
-      limitToLast: 50,
+    const entries = await fetchPublicDatabasePath(`online/leaderboardPeriods/${selectedPeriod}/${periodInfo.key}`, {
+      orderBy: JSON.stringify("points"),
+      limitToLast: 100,
     });
-    leaderboardEntries = Object.values(entries || {})
-      .filter((entry) => entry?.name && Number.isFinite(Number(entry.rating)))
+    if (requestId !== leaderboardRequestId) return;
+    leaderboardEntries = Object.entries(entries || {})
+      .map(([entryId, entry]) => ({ entryId, ...entry }))
+      .filter((entry) => (
+        entry?.name
+        && Number.isFinite(Number(entry.points))
+        && Number.isFinite(Number(entry.rating))
+      ))
       .sort((first, second) => (
-        Number(second.rating) - Number(first.rating)
+        Number(second.points) - Number(first.points)
+        || ((Number(second.wins || 0) + (Number(second.draws || 0) * 0.5)) / Math.max(1, Number(second.wins || 0) + Number(second.losses || 0) + Number(second.draws || 0)))
+          - ((Number(first.wins || 0) + (Number(first.draws || 0) * 0.5)) / Math.max(1, Number(first.wins || 0) + Number(first.losses || 0) + Number(first.draws || 0)))
         || Number(second.wins || 0) - Number(first.wins || 0)
-        || Number(second.bestStreak || 0) - Number(first.bestStreak || 0)
+        || Number(second.rating || INITIAL_RATING) - Number(first.rating || INITIAL_RATING)
         || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
-      ));
+      ))
+      .slice(0, 50);
     leaderboardStatus = "ready";
   } catch {
+    if (requestId !== leaderboardRequestId) return;
     leaderboardEntries = [];
     leaderboardStatus = "error";
   } finally {
-    leaderboardRequestPending = false;
-    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+    if (requestId === leaderboardRequestId) window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   }
 }
 
@@ -530,19 +703,20 @@ function renderSetup() {
     </div>
     <label class="ranking-optin">
       <input type="checkbox" id="rankingPublicToggle" ${state.leaderboardPublic ? "checked" : ""} ${state.authReady ? "" : "disabled"} />
-      <span><strong>ランキングに参加する</strong><small>プレイヤーネーム・レート・戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
+      <span><strong>ランキングに参加する</strong><small>プレイヤーネーム・累積RATE・デイリー／週間／月間戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
     </label>
     <div class="ranking-x-settings ${state.leaderboardPublic ? "" : "is-disabled"}">
       <div class="ranking-x-heading">
-        <strong>ランキング用Xリンク（任意）</strong>
-        <small>URLではなく、Xのユーザー名だけを入力してください。</small>
+        <strong>ランキング公開設定</strong>
+        <small>Xリンクと、自分のランキング欄でコメントを受け付けるかを設定します。</small>
       </div>
       <div class="ranking-x-controls">
         <label class="ranking-x-handle" for="rankingXHandle"><span>@</span><input id="rankingXHandle" type="text" maxlength="15" value="${escapeHtml(state.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /></label>
         <label class="ranking-x-public"><input type="checkbox" id="rankingXPublicToggle" ${state.xPublic ? "checked" : ""} ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /><span>ランキングでXを公開する</span></label>
-        <button class="button button-ghost button-small" id="saveRankingX" ${state.authReady && state.leaderboardPublic ? "" : "disabled"}>保存</button>
+        <label class="ranking-x-public"><input type="checkbox" id="rankingCommentsEnabledToggle" ${state.rankingCommentsEnabled ? "checked" : ""} ${state.authReady && state.leaderboardPublic ? "" : "disabled"} /><span>コメントを受け付ける</span></label>
+        <button class="button button-ghost button-small" id="saveRankingX" ${state.authReady && state.leaderboardPublic ? "" : "disabled"}>公開設定を保存</button>
       </div>
-      <p>Xを公開すると匿名性が下がります。リンクは自己申告で、本人確認は行いません。</p>
+      <p>Xを公開すると匿名性が下がります。コメントはランキング参加者だけが1人1件、80文字以内で投稿できます。</p>
     </div>
     <div class="setup-layout">
       <aside class="setup-guide">
@@ -1059,8 +1233,10 @@ async function saveRankingXSettings() {
   if (!state.authReady || !state.leaderboardPublic) return;
   const input = document.querySelector("#rankingXHandle");
   const publicToggle = document.querySelector("#rankingXPublicToggle");
+  const commentsToggle = document.querySelector("#rankingCommentsEnabledToggle");
   const nextHandle = normalizeXHandle(input?.value);
   const nextPublic = Boolean(publicToggle?.checked);
+  const nextCommentsEnabled = Boolean(commentsToggle?.checked);
   if (nextHandle && !X_HANDLE_PATTERN.test(nextHandle)) {
     showToast("Xのユーザー名は半角英数字と_で15文字以内にしてください。");
     input?.focus();
@@ -1074,21 +1250,26 @@ async function saveRankingXSettings() {
 
   const previousHandle = state.xHandle;
   const previousPublic = state.xPublic;
+  const previousCommentsEnabled = state.rankingCommentsEnabled;
   state.xHandle = nextHandle;
   state.xPublic = nextPublic && Boolean(nextHandle);
+  state.rankingCommentsEnabled = nextCommentsEnabled;
   localStorage.setItem(X_HANDLE_KEY, state.xHandle);
   localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
+  localStorage.setItem(RANKING_COMMENTS_ENABLED_KEY, state.rankingCommentsEnabled ? "1" : "0");
   try {
     await syncLeaderboardEntry();
     render();
-    showToast(state.xPublic ? "ランキングにXリンクを公開しました。" : "Xリンクを非公開で保存しました。");
+    showToast("ランキングの公開設定を保存しました。");
   } catch {
     state.xHandle = previousHandle;
     state.xPublic = previousPublic;
+    state.rankingCommentsEnabled = previousCommentsEnabled;
     localStorage.setItem(X_HANDLE_KEY, state.xHandle);
     localStorage.setItem(X_PUBLIC_KEY, state.xPublic ? "1" : "0");
+    localStorage.setItem(RANKING_COMMENTS_ENABLED_KEY, state.rankingCommentsEnabled ? "1" : "0");
     render();
-    showToast("Xリンク設定を更新できませんでした。");
+    showToast("ランキングの公開設定を更新できませんでした。");
   }
 }
 
@@ -1277,16 +1458,67 @@ function leaderboardRecord() {
     draws: Number(state.profile.draws || 0),
     streak: Number(state.profile.streak || 0),
     bestStreak: Number(state.profile.bestStreak || 0),
-    updatedAt: Date.now(),
+    commentsEnabled: Boolean(state.rankingCommentsEnabled),
+    updatedAt: serverNow(),
   };
   if (state.xPublic && X_HANDLE_PATTERN.test(state.xHandle)) record.xHandle = state.xHandle;
   return record;
 }
 
-async function syncLeaderboardEntry() {
+function periodLeaderboardRecord(current, outcome = null) {
+  const record = {
+    name: state.name.trim().slice(0, 16) || "PLAYER",
+    points: 0,
+    wins: Math.max(0, Math.floor(Number(current?.wins || 0))),
+    losses: Math.max(0, Math.floor(Number(current?.losses || 0))),
+    draws: Math.max(0, Math.floor(Number(current?.draws || 0))),
+    rating: Number(state.profile.rating || INITIAL_RATING),
+    commentsEnabled: Boolean(state.rankingCommentsEnabled),
+    updatedAt: serverNow(),
+  };
+  if (outcome === "win") record.wins += 1;
+  else if (outcome === "loss") record.losses += 1;
+  else if (outcome === "draw") record.draws += 1;
+  record.points = (record.wins * 3) + record.draws;
+  if (state.xPublic && X_HANDLE_PATTERN.test(state.xHandle)) record.xHandle = state.xHandle;
+  return record;
+}
+
+async function rememberLeaderboardPeriod(entryId, period, key) {
+  await set(ref(database, `online/leaderboardPeriodEntriesByUser/${state.uid}/${period}/${key}`), entryId);
+}
+
+async function syncCurrentPeriodLeaderboardMetadata(entryId) {
+  const timestamp = serverNow();
+  await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
+    const key = leaderboardPeriodKeyFor(period, timestamp);
+    const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => {
+      if (!current) return;
+      return periodLeaderboardRecord(current);
+    });
+    if (result.committed) await rememberLeaderboardPeriod(entryId, period, key);
+  }));
+}
+
+async function recordLeaderboardPeriodResult(outcome) {
+  if (!LEADERBOARD_PERIODS.length || !["win", "loss", "draw"].includes(outcome)) return;
+  const entryId = await ensureLeaderboardIdentity();
+  const timestamp = serverNow();
+  await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
+    const key = leaderboardPeriodKeyFor(period, timestamp);
+    await rememberLeaderboardPeriod(entryId, period, key);
+    const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => (
+      periodLeaderboardRecord(current, outcome)
+    ));
+    if (!result.committed) throw new Error("期間ランキングを更新できませんでした。");
+  }));
+}
+
+async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
   if (!state.authReady || !state.uid || !state.leaderboardPublic) return;
   const entryId = await ensureLeaderboardIdentity();
   await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord());
+  if (syncPeriodMetadata) await syncCurrentPeriodLeaderboardMetadata(entryId);
 }
 
 async function removeLeaderboardEntry() {
@@ -1298,7 +1530,22 @@ async function removeLeaderboardEntry() {
   }
   if (!entryId) return;
   state.leaderboardId = entryId;
-  await remove(ref(database, `online/leaderboard/${entryId}`));
+  const periodIndexRef = ref(database, `online/leaderboardPeriodEntriesByUser/${state.uid}`);
+  const periodIndex = await get(periodIndexRef);
+  const removals = {
+    [`online/leaderboard/${entryId}`]: null,
+    [`online/leaderboardPeriodEntriesByUser/${state.uid}`]: null,
+  };
+  if (periodIndex.exists()) {
+    Object.entries(periodIndex.val() || {}).forEach(([period, keys]) => {
+      if (!LEADERBOARD_PERIODS.includes(period) || !keys || typeof keys !== "object") return;
+      Object.entries(keys).forEach(([key, indexedEntryId]) => {
+        if (String(indexedEntryId) !== entryId) return;
+        removals[`online/leaderboardPeriods/${period}/${key}/${entryId}`] = null;
+      });
+    });
+  }
+  await update(ref(database), removals);
 }
 
 function removeDeckItem(id) {
@@ -2037,7 +2284,9 @@ async function commitOnlineStats() {
   });
   if (result.committed) state.profile = result.snapshot.val();
   if (result.committed && state.leaderboardPublic) {
-    await syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
+    await syncLeaderboardEntry({ syncPeriodMetadata: false }).catch(() => showToast("累積レートを更新できませんでした。"));
+    const periodOutcome = draw ? "draw" : myWon ? "win" : "loss";
+    await recordLeaderboardPeriodResult(periodOutcome).catch(() => showToast("期間ランキングを更新できませんでした。"));
   }
   state.players.forEach((player, index) => {
     if (draw) return;
@@ -2252,6 +2501,12 @@ window.HariaiOnline = {
   getLobbyStats,
   getLeaderboard,
   getLeaderboardStatus,
+  getLeaderboardPeriodInfo,
+  getLeaderboardLoadedPeriod,
   refreshLeaderboard,
+  getLeaderboardComments,
+  getLeaderboardCommentIdentity,
+  saveLeaderboardComment,
+  deleteLeaderboardComment,
 };
 window.dispatchEvent(new Event("hariai-online-ready"));

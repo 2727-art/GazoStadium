@@ -10,6 +10,14 @@
   const destroyDialog = document.querySelector("#destroyDialog");
   let toastTimer = null;
   let currentScreen = "landing";
+  let expandedRankingEntryId = "";
+  let rankingComments = [];
+  let rankingCommentsStatus = "idle";
+  let rankingCommentsError = "";
+  let rankingCommentIdentity = null;
+  let rankingCommentIdentityStatus = "idle";
+  let rankingPeriod = "weekly";
+  let rankingDisplayedPeriodKey = "";
 
   const sampleThemes = [
     ["#142a25", "#66d18f", "#f4c96b"],
@@ -97,6 +105,9 @@
 
   function renderLandingScreen() {
     currentScreen = "landing";
+    expandedRankingEntryId = "";
+    rankingComments = [];
+    rankingCommentsStatus = "idle";
     setLandingChrome();
     app.innerHTML = renderLanding();
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
@@ -110,41 +121,256 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function renderRankingScreen({ refresh = false } = {}) {
+  function rankingCommentDate(timestamp) {
+    if (!Number.isFinite(Number(timestamp)) || Number(timestamp) <= 0) return "日時不明";
+    return new Intl.DateTimeFormat("ja-JP", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(Number(timestamp)));
+  }
+
+  function renderRankingCommentPanel(entry) {
+    const entryId = String(entry.entryId || "");
+    if (entry.commentsEnabled === false) {
+      return `<div class="ranking-comments-panel is-disabled"><p>このプレイヤーはコメント受付を停止しています。</p></div>`;
+    }
+    if (rankingCommentsStatus === "loading") {
+      return `<div class="ranking-comments-panel"><p>コメントを読み込んでいます…</p></div>`;
+    }
+    if (rankingCommentsStatus === "error") {
+      return `<div class="ranking-comments-panel"><p>${escapeHtml(rankingCommentsError || "コメントを取得できませんでした。")}</p><button class="button button-ghost button-small" data-ranking-comments-retry="${escapeHtml(entryId)}">再読み込み</button></div>`;
+    }
+
+    const identityEntryId = String(rankingCommentIdentity?.entryId || "");
+    const commentItems = rankingComments.length ? rankingComments.map((comment) => {
+      const canDelete = rankingCommentIdentity?.canPost
+        && (identityEntryId === comment.authorEntryId || identityEntryId === entryId);
+      return `<li class="ranking-comment-item">
+        <div class="ranking-comment-meta"><strong>${escapeHtml(comment.authorName)}</strong><time>${escapeHtml(rankingCommentDate(comment.updatedAt))}</time></div>
+        <p>${escapeHtml(comment.text)}</p>
+        ${canDelete ? `<button class="ranking-comment-delete" type="button" data-ranking-comment-delete="${escapeHtml(comment.authorEntryId)}" data-ranking-comment-target="${escapeHtml(entryId)}">削除</button>` : ""}
+      </li>`;
+    }).join("") : `<li class="ranking-comment-empty">まだコメントはありません。</li>`;
+
+    let composer = "";
+    if (rankingCommentIdentityStatus === "loading") {
+      composer = `<p class="ranking-comment-guide">投稿資格を確認しています…</p>`;
+    } else if (rankingCommentIdentityStatus !== "ready") {
+      composer = `<div class="ranking-comment-auth"><p>ランキング参加者は、このプレイヤーへ1件コメントできます。</p><button class="button button-ghost button-small" type="button" data-ranking-comment-auth="${escapeHtml(entryId)}">投稿資格を確認</button></div>`;
+    } else if (!rankingCommentIdentity?.canPost) {
+      composer = `<p class="ranking-comment-guide">コメントするには、通常型1on1対戦の準備画面でランキング参加を有効にしてください。</p>`;
+    } else if (identityEntryId === entryId) {
+      composer = `<p class="ranking-comment-guide">自分の欄には投稿できません。寄せられたコメントは削除できます。</p>`;
+    } else {
+      const ownComment = rankingComments.find((comment) => comment.authorEntryId === identityEntryId);
+      composer = `<form class="ranking-comment-form" data-ranking-comment-form="${escapeHtml(entryId)}">
+        <label for="rankingCommentText">${ownComment ? "自分のコメントを更新" : "このプレイヤーへコメント"}</label>
+        <textarea id="rankingCommentText" maxlength="80" rows="2" required placeholder="URLを含まない1行80文字以内">${escapeHtml(ownComment?.text || "")}</textarea>
+        <div><small>1人につき1件。改行とURLは使えません。</small><button class="button button-primary button-small" type="submit">${ownComment ? "更新する" : "投稿する"}</button></div>
+      </form>`;
+    }
+
+    return `<div class="ranking-comments-panel" id="rankingComments-${escapeHtml(entryId)}">
+      <div class="ranking-comments-head"><strong>プレイヤーコメント</strong><small>新しい順・最大20件</small></div>
+      <ul class="ranking-comment-list">${commentItems}</ul>
+      ${composer}
+    </div>`;
+  }
+
+  async function loadRankingComments(entryId) {
+    const targetId = String(entryId || "");
+    rankingCommentsStatus = "loading";
+    rankingCommentsError = "";
+    rankingComments = [];
+    renderRankingScreen({ preserveScroll: true });
+    try {
+      const comments = await window.HariaiOnline?.getLeaderboardComments?.(targetId);
+      if (expandedRankingEntryId !== targetId) return;
+      rankingComments = Array.isArray(comments) ? comments : [];
+      rankingCommentsStatus = "ready";
+    } catch (error) {
+      if (expandedRankingEntryId !== targetId) return;
+      rankingCommentsStatus = "error";
+      rankingCommentsError = error?.message || "コメントを取得できませんでした。";
+    }
+    renderRankingScreen({ preserveScroll: true });
+  }
+
+  function toggleRankingComments(entryId) {
+    const targetId = String(entryId || "");
+    if (expandedRankingEntryId === targetId) {
+      expandedRankingEntryId = "";
+      rankingComments = [];
+      rankingCommentsStatus = "idle";
+      renderRankingScreen({ preserveScroll: true });
+      return;
+    }
+    expandedRankingEntryId = targetId;
+    loadRankingComments(targetId);
+  }
+
+  async function prepareRankingCommentIdentity(entryId) {
+    rankingCommentIdentityStatus = "loading";
+    renderRankingScreen({ preserveScroll: true });
+    try {
+      rankingCommentIdentity = await window.HariaiOnline?.getLeaderboardCommentIdentity?.();
+      rankingCommentIdentityStatus = "ready";
+    } catch (error) {
+      rankingCommentIdentity = null;
+      rankingCommentIdentityStatus = "idle";
+      showToast(error?.message || "投稿資格を確認できませんでした。");
+    }
+    if (expandedRankingEntryId === entryId) renderRankingScreen({ preserveScroll: true });
+  }
+
+  async function submitRankingComment(form) {
+    const targetId = String(form.dataset.rankingCommentForm || "");
+    const textarea = form.querySelector("textarea");
+    try {
+      setBusy(true, "コメントを保存しています…");
+      await window.HariaiOnline?.saveLeaderboardComment?.(targetId, textarea?.value || "");
+      showToast("コメントを保存しました。");
+      await loadRankingComments(targetId);
+    } catch (error) {
+      showToast(error?.message || "コメントを保存できませんでした。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRankingComment(targetId, authorId) {
+    if (!window.confirm("このコメントを削除しますか？")) return;
+    try {
+      setBusy(true, "コメントを削除しています…");
+      await window.HariaiOnline?.deleteLeaderboardComment?.(targetId, authorId);
+      showToast("コメントを削除しました。");
+      await loadRankingComments(targetId);
+    } catch (error) {
+      showToast(error?.message || "コメントを削除できませんでした。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function bindRankingCommentEvents() {
+    document.querySelectorAll("[data-ranking-comments-toggle]").forEach((button) => {
+      button.addEventListener("click", () => toggleRankingComments(button.dataset.rankingCommentsToggle));
+    });
+    document.querySelector("[data-ranking-comments-retry]")?.addEventListener("click", (event) => {
+      loadRankingComments(event.currentTarget.dataset.rankingCommentsRetry);
+    });
+    document.querySelector("[data-ranking-comment-auth]")?.addEventListener("click", (event) => {
+      prepareRankingCommentIdentity(event.currentTarget.dataset.rankingCommentAuth);
+    });
+    document.querySelector("[data-ranking-comment-form]")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitRankingComment(event.currentTarget);
+    });
+    document.querySelectorAll("[data-ranking-comment-delete]").forEach((button) => {
+      button.addEventListener("click", () => removeRankingComment(button.dataset.rankingCommentTarget, button.dataset.rankingCommentDelete));
+    });
+  }
+
+  function rankingPeriodInfo() {
+    return window.HariaiOnline?.getLeaderboardPeriodInfo?.(rankingPeriod) || {
+      period: rankingPeriod,
+      key: "",
+      label: "期間を確認中",
+      nextResetAt: 0,
+      minimumMatches: rankingPeriod === "daily" ? 1 : rankingPeriod === "weekly" ? 3 : 5,
+    };
+  }
+
+  function rankingResetLabel(timestamp) {
+    if (!Number.isFinite(Number(timestamp)) || Number(timestamp) <= 0) return "";
+    return new Intl.DateTimeFormat("ja-JP", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Tokyo",
+    }).format(new Date(Number(timestamp)));
+  }
+
+  function refreshSelectedRankingPeriod() {
+    const info = rankingPeriodInfo();
+    rankingDisplayedPeriodKey = info.key;
+    expandedRankingEntryId = "";
+    rankingComments = [];
+    rankingCommentsStatus = "idle";
+    window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod);
+  }
+
+  function selectRankingPeriod(period) {
+    if (!["daily", "weekly", "monthly"].includes(period) || period === rankingPeriod) return;
+    rankingPeriod = period;
+    refreshSelectedRankingPeriod();
+  }
+
+  function refreshRankingAtPeriodBoundary() {
+    if (currentScreen !== "ranking") return;
+    const info = rankingPeriodInfo();
+    if (info.key && info.key !== rankingDisplayedPeriodKey) refreshSelectedRankingPeriod();
+  }
+
+  function renderRankingScreen({ refresh = false, preserveScroll = false } = {}) {
     currentScreen = "ranking";
     setLandingChrome();
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
     const status = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
+    const periodInfo = rankingPeriodInfo();
+    const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
     const rows = entries.length ? entries.map((entry, index) => {
       const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
+      const provisional = matches < Number(periodInfo.minimumMatches || 1);
       const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
       const xLink = xHandle ? `<a class="ranking-x-link" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer">X&nbsp;@${escapeHtml(xHandle)}</a>` : "";
-      return `<div class="ranking-row">
-        <strong class="ranking-position">${index + 1}</strong>
-        <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${matches < 5 ? "仮レート" : `${matches}戦`}</small></div>
-        <div class="ranking-rating"><strong>${Number(entry.rating || 1000)}</strong><small>RATE</small></div>
-        <div class="ranking-record"><span>${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>最高${Number(entry.bestStreak || 0)}連勝</small></div>
-      </div>`;
+      const entryId = String(entry.entryId || "");
+      const expanded = expandedRankingEntryId === entryId;
+      const commentsEnabled = entry.commentsEnabled !== false;
+      return `<article class="ranking-entry ${expanded ? "is-expanded" : ""}">
+        <div class="ranking-row">
+          <strong class="ranking-position">${index + 1}</strong>
+          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small></div>
+          <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD PT</small></div>
+          <div class="ranking-record"><span>${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>累積RATE ${Number(entry.rating || 1000)}</small></div>
+          <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
+        </div>
+        ${expanded ? renderRankingCommentPanel(entry) : ""}
+      </article>`;
     }).join("") : status === "error"
       ? `<div class="ranking-empty">ランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="rankingRetryButton">もう一度取得</button></div>`
       : status === "ready"
-        ? `<div class="ranking-empty">まだランキング参加者がいません。<br />オンライン対戦準備画面から参加できます。</div>`
+        ? `<div class="ranking-empty">この期間にはまだ対戦記録がありません。<br />通常型1on1対戦の完了後に集計されます。</div>`
         : `<div class="ranking-empty">ランキングを取得しています…</div>`;
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
-        <div><span class="eyebrow">CASUAL RATING / TOP 50</span><h1>プレイヤーランキング</h1>
-          <p>初期レート1000。勝敗と対戦相手のレートに応じて変動します。</p></div>
+        <div><span class="eyebrow">PERIOD RANKING / TOP 50</span><h1>プレイヤーランキング</h1>
+          <p>期間ポイントで競いながら、累積RATEはシーズンを越えて維持します。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
-      <div class="ranking-notice">プレイヤーネームと戦績、本人が任意公開したXリンクを表示します。Xリンクは自己申告・未認証です。匿名UIDとルーム履歴は公開しません。</div>
+      <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
+        <button type="button" role="tab" data-ranking-period="daily" aria-selected="${rankingPeriod === "daily"}" class="${rankingPeriod === "daily" ? "is-active" : ""}">デイリー</button>
+        <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
+        <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
+      </div>
+      <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利3pt・引き分け1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
+      <div class="ranking-notice">期間戦績は日本時間で自動的に切り替わり、累積RATEはリセットされません。任意公開のXリンク・コメントも表示します。コメントは開いた時だけ取得し、投稿はランキング参加者に限られます。</div>
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
-      <p class="ranking-casual-note">カジュアル版のため、レートと戦績はブラウザからFirebaseへ送信されます。</p>
+      <p class="ranking-casual-note">期間ランキングは導入後に完了した通常型1on1対戦から集計します。カジュアル版のため、RATEと戦績はブラウザからFirebaseへ送信されます。</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
-    document.querySelector("#rankingRetryButton")?.addEventListener("click", () => window.HariaiOnline?.refreshLeaderboard?.());
+    document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
+    document.querySelectorAll("[data-ranking-period]").forEach((button) => {
+      button.addEventListener("click", () => selectRankingPeriod(button.dataset.rankingPeriod));
+    });
+    bindRankingCommentEvents();
     app.focus({ preventScroll: true });
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    if (refresh) window.HariaiOnline?.refreshLeaderboard?.();
+    if (!preserveScroll) window.scrollTo({ top: 0, behavior: "smooth" });
+    if (refresh) refreshSelectedRankingPeriod();
   }
 
   function startOnlineBattle() {
@@ -404,7 +630,16 @@
   };
 
   window.addEventListener("hariai-leaderboard-updated", () => {
-    if (currentScreen === "ranking") renderRankingScreen();
+    if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });
+  });
+
+  window.addEventListener("hariai-online-ready", () => {
+    if (currentScreen === "ranking") refreshSelectedRankingPeriod();
+  });
+
+  window.setInterval(refreshRankingAtPeriodBoundary, 60_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshRankingAtPeriodBoundary();
   });
 
   renderLandingScreen();

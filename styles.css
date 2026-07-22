@@ -448,6 +448,60 @@ button:disabled {
   background: rgba(100, 232, 213, 0.055);
 }
 
+.ranking-period-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(7, 10, 17, 0.72);
+}
+
+.ranking-period-tabs button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ranking-period-tabs button:hover,
+.ranking-period-tabs button:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.ranking-period-tabs button.is-active {
+  border-color: rgba(100, 232, 213, 0.34);
+  background: linear-gradient(135deg, rgba(33, 128, 217, 0.24), rgba(100, 232, 213, 0.1));
+  color: var(--cyan);
+  box-shadow: inset 0 0 18px rgba(100, 232, 213, 0.035);
+}
+
+.ranking-period-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 2px 12px;
+}
+
+.ranking-period-summary strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.ranking-period-summary span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
 .ranking-list {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -455,21 +509,24 @@ button:disabled {
   background: rgba(10, 13, 22, 0.78);
 }
 
+.ranking-entry {
+  border-bottom: 1px solid var(--line);
+}
+
+.ranking-entry:last-child {
+  border-bottom: 0;
+}
+
 .ranking-row {
   display: grid;
-  grid-template-columns: 54px minmax(150px, 1fr) 110px minmax(190px, 0.7fr);
+  grid-template-columns: 54px minmax(150px, 1fr) 110px minmax(190px, 0.7fr) auto;
   align-items: center;
   gap: 14px;
   min-height: 78px;
   padding: 12px 18px;
-  border-bottom: 1px solid var(--line);
 }
 
-.ranking-row:last-child {
-  border-bottom: 0;
-}
-
-.ranking-row:nth-child(-n + 3) {
+.ranking-entry:nth-child(-n + 3) .ranking-row {
   background: linear-gradient(90deg, rgba(255, 201, 107, 0.08), transparent 55%);
 }
 
@@ -521,7 +578,7 @@ button:disabled {
 }
 
 .ranking-rating strong {
-  color: var(--red-soft);
+  color: var(--gold);
   font-size: 1.55rem;
 }
 
@@ -529,6 +586,173 @@ button:disabled {
   align-items: flex-end;
   color: #c8ceda;
   font-size: 0.8rem;
+}
+
+.ranking-comment-toggle {
+  min-width: 78px;
+  padding: 8px 10px;
+  border: 1px solid rgba(100, 232, 213, 0.28);
+  border-radius: 9px;
+  background: rgba(100, 232, 213, 0.07);
+  color: var(--cyan);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ranking-comment-toggle:hover,
+.ranking-comment-toggle:focus-visible {
+  border-color: rgba(100, 232, 213, 0.58);
+  background: rgba(100, 232, 213, 0.13);
+}
+
+.ranking-comment-toggle:disabled {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.ranking-comments-panel {
+  padding: 16px 18px 18px 86px;
+  border-top: 1px solid rgba(100, 232, 213, 0.16);
+  background: rgba(6, 17, 24, 0.62);
+}
+
+.ranking-comments-panel > p,
+.ranking-comment-guide,
+.ranking-comment-auth p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.ranking-comments-panel.is-disabled {
+  padding-left: 18px;
+}
+
+.ranking-comments-head,
+.ranking-comment-meta,
+.ranking-comment-form > div,
+.ranking-comment-auth {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ranking-comments-head {
+  margin-bottom: 10px;
+}
+
+.ranking-comments-head strong {
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.ranking-comments-head small,
+.ranking-comment-meta time,
+.ranking-comment-form small {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.ranking-comment-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 13px;
+  padding: 0;
+  list-style: none;
+}
+
+.ranking-comment-item,
+.ranking-comment-empty {
+  position: relative;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ranking-comment-meta {
+  justify-content: flex-start;
+}
+
+.ranking-comment-meta strong {
+  color: var(--cyan);
+  font-size: 0.7rem;
+}
+
+.ranking-comment-item p {
+  margin: 7px 48px 0 0;
+  color: #d9dee8;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.ranking-comment-empty {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.ranking-comment-delete {
+  position: absolute;
+  right: 12px;
+  bottom: 11px;
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  color: #f28aa0;
+  font: inherit;
+  font-size: 0.65rem;
+  cursor: pointer;
+}
+
+.ranking-comment-delete:hover,
+.ranking-comment-delete:focus-visible {
+  text-decoration: underline;
+}
+
+.ranking-comment-auth {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.ranking-comment-form {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ranking-comment-form label {
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.ranking-comment-form textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(5, 8, 15, 0.8);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.ranking-comment-form textarea:focus {
+  border-color: rgba(100, 232, 213, 0.6);
+  box-shadow: 0 0 0 3px rgba(100, 232, 213, 0.08);
 }
 
 .ranking-empty {
@@ -2688,11 +2912,46 @@ button:disabled {
     padding: 11px 12px;
   }
 
+  .ranking-period-tabs {
+    gap: 4px;
+  }
+
+  .ranking-period-tabs button {
+    min-height: 39px;
+    padding-inline: 4px;
+    font-size: 0.7rem;
+  }
+
+  .ranking-period-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .ranking-record {
-    grid-column: 2 / 4;
+    grid-column: 2 / 3;
     align-items: flex-start;
     padding-top: 4px;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .ranking-comment-toggle {
+    grid-column: 3;
+    min-width: 0;
+    padding-inline: 7px;
+  }
+
+  .ranking-comments-panel {
+    padding: 14px 12px 16px;
+  }
+
+  .ranking-comment-form > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ranking-comment-form .button {
+    width: 100%;
   }
 
   .ranking-rating strong {
