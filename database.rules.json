@@ -290,7 +290,7 @@
                   ".validate": "newData.hasChildren(['values', 'lockedAt']) && newData.child('lockedAt').isNumber() && newData.child('values').hasChildren()",
                   "values": {
                     "$targetUid": {
-                      ".validate": "root.child('online/royaleRooms/' + $roomId + '/members/' + $targetUid).val() === true && $targetUid !== $uid && newData.isNumber() && newData.val() >= 1 && newData.val() <= 10"
+                      ".validate": "root.child('online/royaleRooms/' + $roomId + '/members/' + $targetUid).val() === true && $targetUid !== $uid && newData.isNumber() && newData.val() >= 1 && newData.val() <= 3"
                     }
                   },
                   "lockedAt": {
@@ -299,6 +299,12 @@
                   "$other": {
                     ".validate": false
                   }
+                }
+              },
+              "audienceVotes": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/royaleRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.isString() && (newData.val() === 'pass' || (newData.val() !== $uid && root.child('online/royaleRooms/' + $roomId + '/members/' + newData.val()).val() === true))"
                 }
               },
               "continue": {

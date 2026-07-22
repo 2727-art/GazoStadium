@@ -1252,10 +1252,20 @@ button:disabled {
 .deck-slot.empty {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 6px;
   border-style: dashed;
   color: #555e72;
-  font-size: 1.6rem;
   font-weight: 900;
+}
+
+.deck-slot.empty span {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+}
+
+.deck-slot.empty b {
+  font-size: 1.6rem;
 }
 
 .deck-slot img,
@@ -1553,6 +1563,15 @@ button:disabled {
   opacity: 0.28;
 }
 
+.select-card.locked {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.select-card.swap-candidate:not(:disabled) {
+  border-color: rgba(199, 169, 255, 0.46);
+}
+
 .select-card span {
   position: absolute;
   right: 8px;
@@ -1774,6 +1793,27 @@ button:disabled {
   gap: 6px;
   padding: 0 12px 9px;
   overflow-x: auto;
+}
+
+.royale-chat-lock {
+  display: grid;
+  gap: 4px;
+  margin: 0 12px 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(199, 169, 255, 0.26);
+  border-radius: 12px;
+  background: rgba(170, 131, 255, 0.07);
+}
+
+.royale-chat-lock strong {
+  color: #c7a9ff;
+  font-size: 0.75rem;
+}
+
+.royale-chat-lock span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.55;
 }
 
 .reaction-button {
@@ -3227,6 +3267,7 @@ button:disabled {
 
 .royale-image-card.critical { border-color: rgba(244, 201, 107, 0.72); box-shadow: 0 0 24px rgba(244, 201, 107, 0.12); }
 .royale-image-card.perfect { border-color: rgba(100, 232, 213, 0.84); box-shadow: 0 0 30px rgba(100, 232, 213, 0.2); }
+.royale-image-card.audience { border-color: rgba(199, 169, 255, 0.78); box-shadow: 0 0 26px rgba(170, 131, 255, 0.16); }
 .royale-image-card.eliminated { border-color: rgba(255, 74, 95, 0.7); box-shadow: 0 0 28px rgba(255, 74, 95, 0.14); }
 .royale-image-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #070910; }
 
@@ -3268,6 +3309,51 @@ button:disabled {
 .royale-score-controls > strong { color: #c7a9ff; font-family: var(--display); font-size: 3rem; }
 .royale-score-controls .score-buttons { width: 100%; }
 
+.royale-rank-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.royale-rank-button {
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 11px;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.035);
+  font-weight: 900;
+}
+
+.royale-rank-button:hover { border-color: rgba(199, 169, 255, 0.56); }
+.royale-rank-button.selected { border-color: var(--gold); color: #17110a; background: var(--gold); }
+.royale-rank-button.rank-1:not(.selected) { color: var(--gold); }
+
+.royale-audience-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.royale-audience-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(170, 131, 255, 0.22);
+  border-radius: 16px;
+  background: rgba(7, 10, 18, 0.78);
+}
+
+.royale-audience-card.selected {
+  border-color: rgba(199, 169, 255, 0.74);
+  box-shadow: 0 0 28px rgba(170, 131, 255, 0.16);
+}
+
+.royale-audience-card > span { color: var(--muted); font-size: 0.68rem; font-weight: 900; }
+.royale-audience-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 10px; background: #070910; }
+
 .royale-result-banner {
   display: flex;
   justify-content: space-between;
@@ -3307,6 +3393,7 @@ button:disabled {
 
 @media (max-width: 1120px) {
   .royale-score-grid { grid-template-columns: 1fr; }
+  .royale-audience-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .royale-image-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -3325,4 +3412,5 @@ button:disabled {
   .royale-image-board.count-2 { grid-template-columns: 1fr; }
   .royale-standing { grid-template-columns: 45px minmax(0, 1fr); }
   .royale-standing small { grid-column: 2; }
+  .royale-audience-grid { grid-template-columns: 1fr; }
 }
