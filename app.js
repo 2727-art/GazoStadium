@@ -50,6 +50,7 @@
     const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
     const soloStats = modeStats("solo");
+    const strategyStats = modeStats("strategy");
     const teamStats = modeStats("team");
     const royaleStats = modeStats("royale");
     const statValue = (value) => Number.isInteger(value) ? value : "--";
@@ -62,17 +63,23 @@
           1on1、協力型2on2、4人で最後の1人を決めるバトルロワイヤルを選べます。
         </p>
         <div class="hero-actions">
-          <button class="button button-primary" id="onlineButton">1on1対戦を始める</button>
+          <button class="button button-primary" id="onlineButton">通常型1on1対戦</button>
+          <button class="button button-strategy" id="strategyLabButton">戦略型1on1対戦</button>
           <button class="button button-cyan" id="teamBattleButton">2on2チーム対戦</button>
           <button class="button button-royale" id="royaleBattleButton">4人バトルロワイヤル</button>
           <button class="button button-ghost" id="rankingButton">ランキングを見る</button>
           <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
         </div>
+        <p class="strategy-lab-note"><b>STRATEGY 1ON1 / OFFLINE PROTOTYPE</b> 匿名自己紹介から好みを読み、メイン5枚＋リザーブ5枚を構築する2人用の試作ルールです。</p>
         <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
-          <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>1ON1</span><small>SOLO BATTLE</small></div><div class="lobby-mode-counts">
+          <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbySoloPlayingCount">${statValue(soloStats.playing)}</span><em>人</em></strong></div>
+          </div></article>
+          <article class="lobby-mode-card strategy"><div class="lobby-mode-head"><span>戦略型1ON1</span><small>STRATEGY</small></div><div class="lobby-mode-counts">
+            <div><small>待機中</small><strong><span id="lobbyStrategyWaitingCount">${statValue(strategyStats.waiting)}</span><em>人</em></strong></div>
+            <div><small>対戦中</small><strong><span id="lobbyStrategyPlayingCount">${statValue(strategyStats.playing)}</span><em>人</em></strong></div>
           </div></article>
           <article class="lobby-mode-card team"><div class="lobby-mode-head"><span>2ON2</span><small>TEAM BATTLE</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbyTeamWaitingCount">${statValue(teamStats.waiting)}</span><em>人</em></strong></div>
@@ -113,6 +120,7 @@
     currentScreen = "landing";
     setLandingChrome();
     app.innerHTML = renderLanding();
+    document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
@@ -155,6 +163,15 @@
 
   function startOnlineBattle() {
     openOnlineFeature("start");
+  }
+
+  function startStrategyLab() {
+    if (window.HariaiStrategy?.start) {
+      window.HariaiStrategy.start();
+      return;
+    }
+    showToast("戦略型1on1対戦を読み込んでいます…");
+    window.addEventListener("hariai-strategy-ready", () => window.HariaiStrategy?.start?.(), { once: true });
   }
 
   function startTeamBattle() {
@@ -352,6 +369,10 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiStrategy?.isActive?.()) {
+      window.HariaiStrategy.requestHome();
+      return;
+    }
     if (window.HariaiRoyale?.isActive?.()) {
       window.HariaiRoyale.requestHome();
       return;
@@ -368,6 +389,10 @@
   });
 
   document.querySelector("#confirmDestroy")?.addEventListener("click", () => {
+    if (window.HariaiStrategy?.isActive?.()) {
+      window.setTimeout(() => window.HariaiStrategy.destroyRoom(), 0);
+      return;
+    }
     if (window.HariaiRoyale?.isActive?.()) {
       window.setTimeout(() => window.HariaiRoyale.destroyRoom(), 0);
       return;

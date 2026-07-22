@@ -27,6 +27,15 @@ import { firebaseConfig } from "./firebase-config.js";
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
+const PURSUIT_LINE_KEY = "hariai-stadium-online-pursuit-line-v1";
+const MAX_PURSUIT_LINE_LENGTH = 40;
+const CUSTOM_PURSUIT_VALUE = "__custom__";
+const PURSUIT_LINES = [
+  "その反応、見逃さない。もう一枚いく！",
+  "好みは読めた。ここからが本命だ！",
+  "刺さったね？ 追撃開始！",
+  "まだ終わらない。次の一枚をどうぞ！",
+];
 const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
 const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
 const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
@@ -89,7 +98,7 @@ const fxLayer = document.querySelector("#fxLayer");
 let active = false;
 let state = createOnlineState();
 let lobbyPresenceEntries = {};
-const LOBBY_MODES = ["solo", "team", "royale"];
+const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
 const createLobbyStats = (value = null) => Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }]));
 let lobbyStats = createLobbyStats();
 let leaderboardEntries = [];
@@ -97,12 +106,14 @@ let leaderboardEntries = [];
 function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
   const savedXHandle = normalizeXHandle(localStorage.getItem(X_HANDLE_KEY) || "");
+  const pursuitSettings = getSavedPursuitSettings();
   return {
     screen: "setup",
     uid: "",
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
     authReady: false,
+    ...pursuitSettings,
     deck: [],
     roomId: "",
     room: null,
@@ -166,6 +177,34 @@ function createOnlineState() {
     statsCommitted: false,
     destroyedByOpponent: false,
   };
+}
+
+function sanitizePursuitLineDraft(value) {
+  return String(value || "").replace(/[\r\n]+/g, " ").slice(0, MAX_PURSUIT_LINE_LENGTH);
+}
+
+function normalizePursuitLine(value) {
+  const normalized = sanitizePursuitLineDraft(value).replace(/\s+/g, " ").trim();
+  return normalized || PURSUIT_LINES[0];
+}
+
+function getSavedPursuitSettings() {
+  const savedValue = localStorage.getItem(PURSUIT_LINE_KEY) || "";
+  const pursuitLine = normalizePursuitLine(savedValue);
+  const usesCustomLine = Boolean(savedValue) && !PURSUIT_LINES.includes(pursuitLine);
+  return {
+    pursuitLine,
+    pursuitLineChoice: usesCustomLine ? CUSTOM_PURSUIT_VALUE : pursuitLine,
+    customPursuitLine: usesCustomLine ? pursuitLine : "",
+  };
+}
+
+function applyPursuitLineSetting(value) {
+  const pursuitLine = normalizePursuitLine(value);
+  const usesCustomLine = !PURSUIT_LINES.includes(pursuitLine);
+  state.pursuitLine = pursuitLine;
+  state.pursuitLineChoice = usesCustomLine ? CUSTOM_PURSUIT_VALUE : pursuitLine;
+  state.customPursuitLine = usesCustomLine ? pursuitLine : "";
 }
 
 function jstDateKey(timestamp = Date.now()) {
@@ -299,6 +338,8 @@ function refreshLobbyStats() {
   const values = {
     lobbySoloWaitingCount: lobbyStats.solo.waiting,
     lobbySoloPlayingCount: lobbyStats.solo.playing,
+    lobbyStrategyWaitingCount: lobbyStats.strategy.waiting,
+    lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
     lobbyTeamWaitingCount: lobbyStats.team.waiting,
     lobbyTeamPlayingCount: lobbyStats.team.playing,
     lobbyRoyaleWaitingCount: lobbyStats.royale.waiting,
@@ -359,6 +400,7 @@ async function ensureAuthenticated() {
   if (profileSnapshot.exists()) {
     state.profile = { ...state.profile, ...profileSnapshot.val() };
     if (!localStorage.getItem(PROFILE_NAME_KEY) && state.profile.name) state.name = state.profile.name;
+    if (!localStorage.getItem(PURSUIT_LINE_KEY) && state.profile.pursuitLine) applyPursuitLineSetting(state.profile.pursuitLine);
   }
   state.authReady = true;
   try {
@@ -474,6 +516,21 @@ function renderSetup() {
         <label class="field-label">表示名
           <input class="text-input" id="onlinePlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" />
         </label>
+        <div class="pursuit-line-settings online-pursuit-line-settings">
+          <label class="field-label">追撃時のセリフ
+            <select class="text-input" id="onlinePursuitLineChoice">
+              ${PURSUIT_LINES.map((line) => `<option value="${escapeHtml(line)}" ${state.pursuitLineChoice === line ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
+              <option value="${CUSTOM_PURSUIT_VALUE}" ${state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE ? "selected" : ""}>自由記述</option>
+            </select>
+          </label>
+          <div class="pursuit-custom-field" id="onlineCustomPursuitField" ${state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE ? "" : "hidden"}>
+            <label class="field-label">自由記述（1行・最大${MAX_PURSUIT_LINE_LENGTH}文字）
+              <input class="text-input" id="onlineCustomPursuitLine" maxlength="${MAX_PURSUIT_LINE_LENGTH}" autocomplete="off" placeholder="追撃時に表示するセリフ" value="${escapeHtml(state.customPursuitLine)}" />
+            </label>
+            <span class="pursuit-character-count"><b id="onlinePursuitCharacterCount">${state.customPursuitLine.length}</b> / ${MAX_PURSUIT_LINE_LENGTH}</span>
+          </div>
+          <p class="pursuit-line-note">9〜10点を受けたラウンド結果で表示します。空白時は定型文へ戻り、HTMLは実行されません。</p>
+        </div>
         <div class="deck-toolbar">
           <div class="deck-counter"><strong>${state.deck.length}</strong> / 5 IMAGES</div>
           <div class="upload-actions">
@@ -706,14 +763,24 @@ function renderRoundResult() {
   const result = state.history.at(-1);
   const labelFor = (score) => score === 10 ? "PERFECT!!" : score >= 8 ? "CRITICAL!" : score >= 6 ? "GREAT" : score >= 4 ? "GOOD" : "HIT";
   const damageText = result.winnerIndex === null ? "同点。両者ノーダメージです。" : `${state.players[result.loserIndex].name}に ${result.damage} DAMAGE。`;
+  const pursuitLines = renderOnlinePursuitLines(result);
   return `<section class="screen result-wrap">${renderOnlineHud()}<div class="result-card">
     <span class="eyebrow">ROUND ${state.round} RESULT</span><h1>${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1>
     <div class="result-scores">${resultPlayerHtml(0, result.scorePlayerOne, result.winnerIndex, labelFor(result.scorePlayerOne))}
       <div class="result-vs">VS</div>${resultPlayerHtml(1, result.scorePlayerTwo, result.winnerIndex, labelFor(result.scorePlayerTwo))}</div>
-    <div class="damage-callout">${escapeHtml(damageText)}</div><div class="result-chat">${renderOnlineChat()}</div>
+    <div class="damage-callout">${escapeHtml(damageText)}</div>${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
     <div class="button-row" style="justify-content:center"><button class="button button-danger" data-online-destroy>ルーム破棄</button>
       <button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
   </div></section>`;
+}
+
+function renderOnlinePursuitLines(result) {
+  const scores = [result.scorePlayerOne, result.scorePlayerTwo];
+  const calls = state.players.map((player, index) => ({ player, score: scores[index] }))
+    .filter(({ score }) => score >= 9)
+    .map(({ player, score }) => `<article class="online-pursuit-call"><span>追撃セリフ / ${score} POINTS</span><strong>${escapeHtml(player.name)}</strong><blockquote>${escapeHtml(normalizePursuitLine(player.pursuitLine))}</blockquote></article>`)
+    .join("");
+  return calls ? `<section class="online-pursuit-lines" aria-label="追撃セリフ">${calls}</section>` : "";
 }
 
 function resultPlayerHtml(index, score, winnerIndex, label) {
@@ -824,10 +891,38 @@ function bindSetupEvents() {
     const button = document.querySelector("#findOpponent");
     if (button) button.disabled = !state.authReady || state.deck.length !== MAX_ROUNDS || !state.name.trim();
   });
+  bindOnlinePursuitFields();
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
   document.querySelector("#findOpponent")?.addEventListener("click", beginMatchmaking);
+}
+
+function bindOnlinePursuitFields() {
+  const select = document.querySelector("#onlinePursuitLineChoice");
+  const field = document.querySelector("#onlineCustomPursuitField");
+  const input = document.querySelector("#onlineCustomPursuitLine");
+  const counter = document.querySelector("#onlinePursuitCharacterCount");
+  const syncCustomVisibility = () => {
+    if (field) field.hidden = select?.value !== CUSTOM_PURSUIT_VALUE;
+  };
+  select?.addEventListener("change", () => {
+    state.pursuitLineChoice = select.value;
+    if (select.value === CUSTOM_PURSUIT_VALUE) {
+      state.pursuitLine = normalizePursuitLine(state.customPursuitLine);
+      input?.focus();
+    } else {
+      state.pursuitLine = normalizePursuitLine(select.value);
+    }
+    syncCustomVisibility();
+  });
+  input?.addEventListener("input", () => {
+    input.value = sanitizePursuitLineDraft(input.value);
+    state.customPursuitLine = input.value;
+    state.pursuitLine = normalizePursuitLine(input.value);
+    if (counter) counter.textContent = String(input.value.length);
+  });
+  syncCustomVisibility();
 }
 
 function bindSelectEvents() {
@@ -1175,7 +1270,11 @@ function removeDeckItem(id) {
 async function beginMatchmaking() {
   state.name = state.name.trim().slice(0, 16);
   if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name) return;
+  state.pursuitLine = state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE
+    ? normalizePursuitLine(state.customPursuitLine)
+    : normalizePursuitLine(state.pursuitLineChoice);
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
+  localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
   if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
   state.screen = "matching";
   setOnlineChrome("MATCHING");
@@ -1195,6 +1294,7 @@ async function beginMatchmaking() {
   await set(queueEntryRef, {
     uid: state.uid,
     name: state.name,
+    pursuitLine: state.pursuitLine,
     streak: Number(state.profile.streak || 0),
     rating: Number(state.profile.rating || INITIAL_RATING),
     joinedAt: Date.now(),
@@ -1310,8 +1410,8 @@ async function createOffer(candidate) {
       status: "offered",
       [`members/${state.uid}`]: true,
       [`members/${candidate.uid}`]: true,
-      [`players/${state.uid}`]: { uid: state.uid, name: state.name, streak: Number(state.profile.streak || 0), rating: Number(state.profile.rating || INITIAL_RATING) },
-      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING) },
+      [`players/${state.uid}`]: { uid: state.uid, name: state.name, pursuitLine: state.pursuitLine, streak: Number(state.profile.streak || 0), rating: Number(state.profile.rating || INITIAL_RATING) },
+      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, pursuitLine: normalizePursuitLine(candidate.pursuitLine), streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING) },
     });
     await set(ref(database, `online/offers/${candidate.uid}/${roomId}`), {
       roomId,
@@ -1405,6 +1505,7 @@ async function enterRoom(roomId) {
   state.playerIndex = room.hostUid === state.uid ? 0 : 1;
   state.players = [room.players[room.hostUid], room.players[room.guestUid]].map((player) => ({
     ...player,
+    pursuitLine: normalizePursuitLine(player.pursuitLine),
     hp: MAX_HP,
     totalReceived: 0,
     criticals: 0,
@@ -1877,6 +1978,7 @@ async function commitOnlineStats() {
   const result = await runTransaction(ref(database, `online/profiles/${state.uid}`), (current) => {
     const record = {
       name: state.name,
+      pursuitLine: normalizePursuitLine(state.pursuitLine),
       wins: Number(current?.wins || 0),
       losses: Number(current?.losses || 0),
       draws: Number(current?.draws || 0),
@@ -1989,6 +2091,9 @@ async function resetOnlineSetup() {
     profile: state.profile,
     authReady: state.authReady,
     name: state.name,
+    pursuitLine: state.pursuitLine,
+    pursuitLineChoice: state.pursuitLineChoice,
+    customPursuitLine: state.customPursuitLine,
     economy: state.economy,
     economyReady: state.economyReady,
     serverTimeOffset: state.serverTimeOffset,
