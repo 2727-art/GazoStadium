@@ -41,6 +41,11 @@ const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const MAX_EQUIPPED_REACTIONS = 8;
+const TEAM_LINK_TACTICS = [
+  { id: "sync", icon: "∞", name: "シンクロ", condition: "2枚とも平均7点以上", effect: "勝利時 +2ダメージ", damageBonus: 2, guard: 0 },
+  { id: "ace", icon: "★", name: "エース支援", condition: "片方9点以上・もう片方5点以上", effect: "勝利時 +3ダメージ", damageBonus: 3, guard: 0 },
+  { id: "guard", icon: "◇", name: "カバー", condition: "2枚とも平均6点以上", effect: "敗北時 -2ダメージ", damageBonus: 0, guard: 2 },
+];
 const SHOP_FEATURE_IDS = ["feature_top_message"];
 const SHOP_REACTIONS = [
   { id: "reaction_color", reaction: "色づかいが好き！" },
@@ -104,6 +109,7 @@ function createState() {
     roundData: {},
     roundSelections: new Map(),
     selectedCardId: "",
+    selectedTacticId: "",
     selectedScores: {},
     history: [],
     outcome: null,
@@ -130,6 +136,7 @@ function createState() {
     timerPhase: "waiting",
     timerRemainingMs: 0,
     selectionLocking: false,
+    tacticLocking: false,
     scoreLocking: false,
     scoredRounds: new Set(),
     teamChatMessages: [],
@@ -152,8 +159,8 @@ function createState() {
 
 function createTeams() {
   return {
-    A: { hp: MAX_HP, totalScore: 0, criticals: 0, perfects: 0 },
-    B: { hp: MAX_HP, totalScore: 0, criticals: 0, perfects: 0 },
+    A: { hp: MAX_HP, totalScore: 0, criticals: 0, perfects: 0, links: 0 },
+    B: { hp: MAX_HP, totalScore: 0, criticals: 0, perfects: 0, links: 0 },
   };
 }
 
@@ -300,10 +307,10 @@ function renderSetup() {
       <span>2ON2 RATE ${Number(state.teamProfile.rating || INITIAL_RATING)}</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span>
       <span>🔥 ${state.teamProfile.streak}連勝中</span></div>
     ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "teamOverallRanking" }) || ""}
-    <div class="team-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>2</strong><span>TEAMS</span></div><div><strong>30</strong><span>SHARED HP</span></div><div><strong>20+10</strong><span>SEC</span></div></div>
+    <div class="team-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>3</strong><span>LINK TACTICS</span></div><div><strong>30</strong><span>SHARED HP</span></div><div><strong>20+10</strong><span>SEC</span></div></div>
     <div class="setup-layout"><aside class="setup-guide"><h2>2on2の流れ</h2><ol class="guide-list">
-      <li><b>1</b><span>チーム専用チャットで20秒間、画像の方向性を相談します。</span></li><li><b>2</b><span>10秒以内に各自が秘密の画像を1枚選びます。</span></li>
-      <li><b>3</b><span>相手チームの画像2枚を採点し、4票の平均でチーム得点を決めます。</span></li></ol>
+      <li><b>1</b><span>20秒間、相方と相談して同じTEAM LINK作戦を選びます。</span></li><li><b>2</b><span>作戦の条件を狙い、10秒以内に秘密の画像を1枚選びます。</span></li>
+      <li><b>3</b><span>2枚の結果が条件を満たすと、追加攻撃または防御が発動します。</span></li></ol>
       <div class="privacy-note">画像は最大1280pxへ変換し、Firebaseには保存しません。</div></aside>
       <div class="setup-panel"><label class="field-label">表示名<input class="text-input" id="teamPlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" /></label>
         ${shared()?.profileAvatar?.renderSetting?.({ controlId: "teamProfileAvatar", name: state.name }) || ""}
@@ -359,10 +366,46 @@ function scoreTimerSeconds() {
   return Math.max(0, Math.ceil((SCORE_TIME_MS - (now() - startedAt)) / 1000));
 }
 
+function teamLinkTactic(tacticId) {
+  return TEAM_LINK_TACTICS.find((tactic) => tactic.id === tacticId) || null;
+}
+
+function playerTacticId(uid) {
+  return String(state.roundData.tactics?.[uid]?.id || "");
+}
+
+function agreedTeamTactic(team) {
+  const choices = teamMembers(team).map((player) => playerTacticId(player.uid));
+  if (choices.length !== TEAM_SIZE || choices.some((choice) => !choice) || choices[0] !== choices[1]) return null;
+  return teamLinkTactic(choices[0]);
+}
+
+function renderTeamLinkPlanner() {
+  const members = teamMembers(state.team);
+  const ownTacticId = playerTacticId(state.uid);
+  const selectedTacticId = state.selectedTacticId || ownTacticId;
+  const mate = members.find((player) => player.uid !== state.uid);
+  const mateTactic = teamLinkTactic(playerTacticId(mate?.uid));
+  const ownTactic = teamLinkTactic(ownTacticId);
+  const agreement = agreedTeamTactic(state.team);
+  const cards = TEAM_LINK_TACTICS.map((tactic) => `<button type="button" class="team-link-card ${selectedTacticId === tactic.id ? "selected" : ""}" data-team-tactic="${tactic.id}" aria-pressed="${selectedTacticId === tactic.id}">
+    <b>${tactic.icon}</b><span><strong>${tactic.name}</strong><small>${tactic.condition}</small><em>${tactic.effect}</em></span></button>`).join("");
+  const statusText = agreement ? `${agreement.icon} ${agreement.name} / LINK READY` : ownTactic && mateTactic ? "作戦が不一致です。相談して揃えましょう。" : "2人の作戦が揃うとTEAM LINK候補になります。";
+  return `<section class="team-link-planner ${agreement ? "ready" : ""}"><div class="team-link-heading"><div><span>TEAM LINK</span><h2>相方と同じ作戦を選ぶ</h2></div><strong>${escapeHtml(statusText)}</strong></div>
+    <div class="team-link-grid">${cards}</div><div class="team-link-footer"><div class="team-link-locks"><span>YOU <b>${ownTactic ? `${ownTactic.icon} ${ownTactic.name}` : "未選択"}</b></span><span>MATE <b>${mateTactic ? `${mateTactic.icon} ${mateTactic.name}` : "相談中"}</b></span></div>
+    <button class="button button-cyan button-small" id="lockTeamTactic" ${!selectedTacticId || selectedTacticId === ownTacticId || state.tacticLocking ? "disabled" : ""}>${ownTactic ? "作戦を更新" : "この作戦を共有"}</button></div></section>`;
+}
+
+function renderTeamLinkReminder() {
+  const tactic = agreedTeamTactic(state.team);
+  if (!tactic) return `<div class="team-link-reminder inactive"><span>TEAM LINK</span><strong>作戦不一致 / ボーナスなし</strong></div>`;
+  return `<div class="team-link-reminder"><span>TEAM LINK READY</span><strong>${tactic.icon} ${tactic.name}</strong><small>${tactic.condition} → ${tactic.effect}</small></div>`;
+}
+
 function renderStrategy() {
   return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">TEAM STRATEGY</span><h1>作戦会議</h1>
-    <p>TEAM ${state.team}だけに見えるチャットです。「植物系で揃える」など方向性を相談しましょう。</p></div><div class="team-phase-timer"><small>STRATEGY</small><strong data-team-timer>${state.timerPhase === "strategy" ? timerSeconds() : "--"}</strong></div></div>
-    <div class="team-strategy-layout"><div class="team-members-card">${teamMembers(state.team).map((player) => `<div class="team-member-row"><span>${player.uid === state.uid ? "YOU" : "MATE"}</span><strong>${escapeHtml(player.name)}</strong></div>`).join("")}</div>${renderTeamChat()}</div>
+    <p>画像の方向性とTEAM LINK作戦を相談します。相方と同じ作戦を選ぶことが発動条件です。</p></div><div class="team-phase-timer"><small>STRATEGY</small><strong data-team-timer>${state.timerPhase === "strategy" ? timerSeconds() : "--"}</strong></div></div>
+    ${renderTeamLinkPlanner()}<div class="team-strategy-layout"><div class="team-members-card">${teamMembers(state.team).map((player) => `<div class="team-member-row"><span>${player.uid === state.uid ? "YOU" : "MATE"}</span><strong>${escapeHtml(player.name)}</strong></div>`).join("")}</div>${renderTeamChat()}</div>
     <div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button></div></section>`;
 }
 
@@ -371,7 +414,7 @@ function renderSelection() {
   const cards = state.deck.map((item, index) => `<button class="select-card ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}" data-team-card="${item.id}" ${item.used ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
     <img src="${item.url}" alt="2on2候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span></button>`).join("");
   return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">SECRET TEAM PICK</span><h1>画像を選択</h1><p>相方の画像も公開まで見えません。作戦チャットを参考に1枚選んでください。</p></div>
-    <div class="team-phase-timer ${remaining <= 3 ? "warning" : ""}"><small>SELECT</small><strong data-team-timer>${remaining}</strong></div></div>
+    <div class="team-phase-timer ${remaining <= 3 ? "warning" : ""}"><small>SELECT</small><strong data-team-timer>${remaining}</strong></div></div>${renderTeamLinkReminder()}
     <div class="select-panel"><div class="select-grid">${cards}</div><div class="selection-footer"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button>
       <button class="button button-primary" id="lockTeamSelection" ${state.selectedCardId ? "" : "disabled"}>この画像で決定</button></div></div>${renderTeamChat()}</section>`;
 }
@@ -426,11 +469,24 @@ function renderWaitingScore() {
   return `<section class="screen">${renderTeamHud()}${renderStatusCardInner("✦", "VOTE LOCKED", "4人の採点を集計中", `${ready} / 4人が採点済みです。`) }${renderAllChat()}</section>`;
 }
 
+function renderTeamLinkResults(result) {
+  const card = (team) => {
+    const link = result.links?.[team] || { matched: false, active: false };
+    const stateLabel = !link.matched ? "NO LINK" : link.active ? "LINK BURST" : "条件未達";
+    const effect = link.active
+      ? link.appliedDamage > 0 ? `追加攻撃 +${link.appliedDamage}` : link.appliedGuard > 0 ? `ダメージ軽減 -${link.appliedGuard}` : "作戦条件クリア"
+      : link.matched ? link.condition : "2人の作戦が揃いませんでした";
+    return `<article class="team-link-result ${link.active ? "active" : ""}"><span>TEAM ${team} / ${stateLabel}</span><strong>${link.matched ? `${link.icon} ${link.name}` : "—"}</strong><small>${escapeHtml(effect)}</small></article>`;
+  };
+  return `<div class="team-link-results">${card("A")}${card("B")}</div>`;
+}
+
 function renderResult() {
   const result = state.history.at(-1);
-  const damageText = result.winnerTeam ? `TEAM ${result.winnerTeam} WIN / ${result.damage} DAMAGE` : "DRAW / NO DAMAGE";
+  const modifiers = result.winnerTeam ? `${result.attackBonus ? ` +${result.attackBonus} LINK` : ""}${result.guardReduction ? ` -${result.guardReduction} GUARD` : ""}` : "";
+  const damageText = result.winnerTeam ? `TEAM ${result.winnerTeam} WIN / ${result.damage} DAMAGE${modifiers}` : "DRAW / NO DAMAGE";
   return `<section class="screen">${renderTeamHud()}<div class="section-head"><div><span class="eyebrow">TEAM ROUND RESULT</span><h1>ROUND ${state.round} 結果</h1><p>各画像は相手2人の平均、チーム得点は2枚の平均です。</p></div></div>${renderFourImages(result)}
-    <div class="team-result-score"><div><span>TEAM A</span><strong>${result.teamScores.A.toFixed(1)}</strong></div><b>${damageText}</b><div><span>TEAM B</span><strong>${result.teamScores.B.toFixed(1)}</strong></div></div>
+    ${renderTeamLinkResults(result)}<div class="team-result-score"><div><span>TEAM A</span><strong>${result.teamScores.A.toFixed(1)}</strong></div><b>${damageText}</b><div><span>TEAM B</span><strong>${result.teamScores.B.toFixed(1)}</strong></div></div>
     <div class="screen-actions"><button class="button button-danger button-small" data-team-destroy>ルーム破棄</button><button class="button button-primary" id="continueTeamRound">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>${renderAllChat()}</section>`;
 }
 
@@ -443,8 +499,8 @@ function renderGameOver() {
   const outcome = state.outcome;
   const title = outcome.winnerTeam ? `TEAM ${outcome.winnerTeam} WIN` : "DRAW";
   const teamCard = (team) => `<article class="team-final-card ${outcome.winnerTeam === team ? "winner" : ""}"><span>TEAM ${team}</span><h2>${teamMembers(team).map((player) => escapeHtml(player.name)).join(" + ")}</h2>
-    <div class="stats-row"><div class="stat-box"><strong>${state.teams[team].hp}</strong><span>残りHP</span></div><div class="stat-box"><strong>${state.teams[team].totalScore.toFixed(1)}</strong><span>累計得点</span></div><div class="stat-box"><strong>${state.teams[team].criticals}</strong><span>CRITICAL</span></div></div></article>`;
-  return `<section class="screen gameover-wrap"><div class="gameover-card team-gameover"><div class="winner-emblem">${outcome.winnerTeam || "="}</div><span class="eyebrow">2ON2 MATCH COMPLETE</span><h1>${title}</h1><p>共有HP、累計得点、CRITICAL、PERFECTの順で判定しました。</p>
+    <div class="stats-row"><div class="stat-box"><strong>${state.teams[team].hp}</strong><span>残りHP</span></div><div class="stat-box"><strong>${state.teams[team].totalScore.toFixed(1)}</strong><span>累計得点</span></div><div class="stat-box"><strong>${state.teams[team].links}</strong><span>TEAM LINK</span></div><div class="stat-box"><strong>${state.teams[team].criticals}</strong><span>CRITICAL</span></div></div></article>`;
+  return `<section class="screen gameover-wrap"><div class="gameover-card team-gameover"><div class="winner-emblem">${outcome.winnerTeam || "="}</div><span class="eyebrow">2ON2 MATCH COMPLETE</span><h1>${title}</h1><p>共有HP、累計得点、TEAM LINK、CRITICAL、PERFECTの順で判定しました。</p>
     <div class="team-final-grid">${teamCard("A")}${teamCard("B")}</div><div class="online-profile-strip"><span>あなたの2ON2戦績</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span><span>RATE ${state.teamProfile.rating}</span></div>
     <div class="gameover-actions"><button class="button button-primary" id="teamNewMatch">もう一度2on2</button><button class="button button-ghost" id="teamGameoverHome">タイトルへ戻る</button></div></div></section>`;
 }
@@ -485,6 +541,7 @@ function bindEvents() {
   bindChatEvents();
   if (state.screen === "setup") bindSetupEvents();
   if (state.screen === "matching") document.querySelector("#cancelTeamMatching")?.addEventListener("click", cancelMatching);
+  if (state.screen === "strategy") bindStrategyEvents();
   if (state.screen === "select") bindSelectionEvents();
   if (state.screen === "reveal") document.querySelector("#beginTeamScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
   if (state.screen === "score") bindScoreEvents();
@@ -529,6 +586,14 @@ function bindSelectionEvents() {
     render();
   }));
   document.querySelector("#lockTeamSelection")?.addEventListener("click", lockSelection);
+}
+
+function bindStrategyEvents() {
+  document.querySelectorAll("[data-team-tactic]").forEach((button) => button.addEventListener("click", () => {
+    state.selectedTacticId = button.dataset.teamTactic;
+    render();
+  }));
+  document.querySelector("#lockTeamTactic")?.addEventListener("click", () => lockTeamTactic().catch(handleRecoverableError));
 }
 
 function bindScoreEvents() {
@@ -1257,6 +1322,7 @@ async function reactToRoundData() {
     resolveRound(state.roundData.scores);
   }
   if (allReady(state.roundData.continue)) advanceRound();
+  if (state.screen === "strategy") render();
 }
 
 function startPhaseTimer() {
@@ -1318,6 +1384,23 @@ function updateScoreTimer() {
 function stopScoreTimer() {
   window.clearInterval(state.scoreTimerInterval);
   state.scoreTimerInterval = null;
+}
+
+async function lockTeamTactic() {
+  const tactic = teamLinkTactic(state.selectedTacticId);
+  if (!tactic || state.tacticLocking || state.screen !== "strategy") return;
+  state.tacticLocking = true;
+  render();
+  try {
+    await set(ref(database, `online/teamRooms/${state.roomId}/rounds/${state.round}/tactics/${state.uid}`), {
+      id: tactic.id,
+      lockedAt: serverTimestamp(),
+    });
+    showToast(`${tactic.icon} ${tactic.name}を相方へ共有しました。`);
+  } finally {
+    state.tacticLocking = false;
+    if (state.screen === "strategy") render();
+  }
 }
 
 async function lockSelection() {
@@ -1390,6 +1473,17 @@ async function lockScores() {
   }
 }
 
+function evaluateTeamLink(team, images) {
+  const tactic = agreedTeamTactic(team);
+  if (!tactic) return { matched: false, active: false, appliedDamage: 0, appliedGuard: 0 };
+  const averages = teamMembers(team).map((player) => images[player.uid].average);
+  let active = false;
+  if (tactic.id === "sync") active = averages.every((average) => average >= 7);
+  if (tactic.id === "ace") active = Math.max(...averages) >= 9 && Math.min(...averages) >= 5;
+  if (tactic.id === "guard") active = averages.every((average) => average >= 6);
+  return { ...tactic, matched: true, active, appliedDamage: 0, appliedGuard: 0 };
+}
+
 function resolveRound(scores) {
   if (state.processedRounds.has(state.round)) return;
   const images = {};
@@ -1417,12 +1511,21 @@ function resolveRound(scores) {
     state.teams[team].criticals += teamImages.filter((image) => image.critical).length;
     state.teams[team].perfects += teamImages.filter((image) => image.perfect).length;
   });
+  const links = {
+    A: evaluateTeamLink("A", images),
+    B: evaluateTeamLink("B", images),
+  };
+  ["A", "B"].forEach((team) => {
+    if (links[team].active) state.teams[team].links += 1;
+  });
   const localItem = getRoundImage(state.uid);
   if (localItem) localItem.used = true;
 
   let winnerTeam = null;
   let loserTeam = null;
   let damage = 0;
+  let attackBonus = 0;
+  let guardReduction = 0;
   if (teamScores.A > teamScores.B) {
     winnerTeam = "A";
     loserTeam = "B";
@@ -1431,10 +1534,14 @@ function resolveRound(scores) {
     loserTeam = "A";
   }
   if (winnerTeam) {
-    damage = Math.round(teamScores[winnerTeam]);
+    attackBonus = links[winnerTeam].active ? Number(links[winnerTeam].damageBonus || 0) : 0;
+    guardReduction = links[loserTeam].active ? Number(links[loserTeam].guard || 0) : 0;
+    links[winnerTeam].appliedDamage = attackBonus;
+    links[loserTeam].appliedGuard = guardReduction;
+    damage = Math.max(0, Math.round(teamScores[winnerTeam]) + attackBonus - guardReduction);
     state.teams[loserTeam].hp = Math.max(0, state.teams[loserTeam].hp - damage);
   }
-  const result = { round: state.round, images, teamScores, winnerTeam, loserTeam, damage };
+  const result = { round: state.round, images, teamScores, links, winnerTeam, loserTeam, damage, attackBonus, guardReduction };
   state.history.push(result);
   state.screen = "result";
   render();
@@ -1443,6 +1550,9 @@ function resolveRound(scores) {
   if (allImages.some((image) => image.perfect)) {
     window.HariaiAudio?.playResult?.(10);
     triggerCriticalFx("PERFECT!!");
+  } else if (Object.values(links).some((link) => link.active)) {
+    window.HariaiAudio?.playResult?.(9);
+    triggerCriticalFx("TEAM LINK!");
   } else if (allImages.some((image) => image.critical)) {
     window.HariaiAudio?.playResult?.(8);
     triggerCriticalFx("CRITICAL!");
@@ -1467,7 +1577,9 @@ function advanceRound() {
   state.round += 1;
   state.roundData = {};
   state.selectedCardId = "";
+  state.selectedTacticId = "";
   state.selectedScores = {};
+  state.tacticLocking = false;
   state.timerPhase = "waiting";
   state.timerRemainingMs = 0;
   state.screen = "strategy";
@@ -1485,6 +1597,7 @@ function determineOutcome() {
   const second = state.teams.B;
   if (first.hp !== second.hp) return { winnerTeam: first.hp > second.hp ? "A" : "B", reason: "hp" };
   if (first.totalScore !== second.totalScore) return { winnerTeam: first.totalScore > second.totalScore ? "A" : "B", reason: "score" };
+  if (first.links !== second.links) return { winnerTeam: first.links > second.links ? "A" : "B", reason: "link" };
   if (first.criticals !== second.criticals) return { winnerTeam: first.criticals > second.criticals ? "A" : "B", reason: "critical" };
   if (first.perfects !== second.perfects) return { winnerTeam: first.perfects > second.perfects ? "A" : "B", reason: "perfect" };
   return { winnerTeam: null, reason: "draw" };

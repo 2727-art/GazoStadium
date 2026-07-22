@@ -1034,6 +1034,21 @@
                 ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
                 ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
               },
+              "tactics": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && (!root.child('online/teamRooms/' + $roomId + '/rounds/' + $round + '/strategyStartedAt').exists() || now <= root.child('online/teamRooms/' + $roomId + '/rounds/' + $round + '/strategyStartedAt').val() + 20000)",
+                  ".validate": "newData.hasChildren(['id', 'lockedAt'])",
+                  "id": {
+                    ".validate": "newData.isString() && (newData.val() === 'sync' || newData.val() === 'ace' || newData.val() === 'guard')"
+                  },
+                  "lockedAt": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                }
+              },
               "picks": {
                 "$uid": {
                   ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
