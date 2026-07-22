@@ -1287,7 +1287,6 @@ function renderRoundSelect() {
     <div class="select-panel"><div class="select-grid">${cards}</div>
       <div class="selection-footer"><p>${timerStarted ? "10秒以内に選択してください。時間切れ時は未使用画像を自動選択します。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
         <button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この画像でロック</button></div></div>
-    <div class="online-chat-standalone">${renderOnlineChat()}</div>
   </section>`;
 }
 
@@ -1312,8 +1311,7 @@ function renderBattleWait(eyebrow, title, body) {
     icon: "…", eyebrow, title, body,
     details: `<div class="matching-pulse"><i></i><i></i><i></i></div>`,
     actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
-  }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
-    <div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
+  }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}</section>`;
 }
 
 function renderReveal() {
@@ -1322,12 +1320,11 @@ function renderReveal() {
   const itemFor = (index) => index === state.playerIndex ? localItem : remoteItem;
   return `<section class="screen">${renderOnlineHud()}
     <div class="section-head"><div><span class="eyebrow">IMAGE REVEAL</span><h1>画像、オープン。</h1>
-      <p>相手の一枚について、チャットで話してみましょう。</p></div>
+      <p>通常型は画像だけで勝負。採点が確定するまで会話は表示されません。</p></div>
       <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
     <div class="battle-layout"><div class="arena-panel"><div class="arena-grid">
       ${renderArenaCard(0, itemFor(0))}<div class="arena-vs">VS</div>${renderArenaCard(1, itemFor(1))}
-    </div><div class="arena-actions"><button class="button button-primary" id="onlineBeginScoring">相手の画像を採点</button></div></div>
-    ${renderOnlineChat()}</div></section>`;
+    </div><div class="arena-actions"><button class="button button-primary" id="onlineBeginScoring">相手の画像を採点</button></div></div></div></section>`;
 }
 
 function renderArenaCard(index, item) {

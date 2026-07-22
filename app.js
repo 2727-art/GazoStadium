@@ -166,7 +166,7 @@
           </div></article>
         </div>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。購入者のトップメッセージだけ表示名・称号とともに公開され、匿名UID・ルーム情報は表示しません。</p>
-        <p class="mode-note">画像は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
+        <p class="mode-note">画像と戦略型の添付音声は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
   }
@@ -823,7 +823,7 @@
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
     if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC";
-    if (footerItems[1]) footerItems[1].textContent = "画像本体は対戦相手へ直接送信し、サーバーへ保存しません";
+    if (footerItems[1]) footerItems[1].textContent = "画像と戦略型の添付音声は対戦相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
     const confirm = destroyDialog?.querySelector("#confirmDestroy");

@@ -32,6 +32,12 @@ const PURSUIT_PERMITS = 1;
 const WEAKNESS_SCOUT_ROUND = 3;
 const WEAKNESS_CHAIN_DAMAGE = [4, 3, 2];
 const MAX_WEAKNESS_CHAIN = WEAKNESS_CHAIN_DAMAGE.length;
+const WEAKNESS_MISS_DAMAGE = 5;
+const MAX_AUDIO_SECONDS = 10;
+const AUDIO_HIGHLIGHT_SECONDS = 3;
+const AUDIO_SAMPLE_RATE = 22_050;
+const MAX_AUDIO_SOURCE_BYTES = 20 * 1024 * 1024;
+const MAX_AUDIO_TRANSFER_BYTES = 480 * 1024;
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const MAX_PURSUIT_LINE_LENGTH = 40;
@@ -125,6 +131,7 @@ function createState() {
     selectedScore: 0,
     selectedReaction: "normal",
     selectedWeaknessGuess: null,
+    weaknessTriggerRound: 0,
     selectedWeaknessChainIds: [],
     localWeaknessChainCards: [],
     weaknessChainLocked: false,
@@ -133,8 +140,12 @@ function createState() {
     weaknessChainApplied: false,
     weaknessPhaseComplete: false,
     weaknessResult: null,
+    weaknessSurrenderApplied: false,
+    openedMediaKeys: new Set(),
+    chainPlaybackActive: false,
     sentImageKeys: new Set(),
     incomingTransfer: null,
+    incomingAudioTransfer: null,
     transferProgress: 0,
     peer: null,
     channel: null,
@@ -189,6 +200,80 @@ function randomHex(bytes = 16) {
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function writeAscii(view, offset, value) {
+  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+}
+
+function encodeMonoWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+async function processStrategyAudioFile(file) {
+  if (!file || (file.type && !file.type.startsWith("audio/"))) throw new Error("音声ファイルを選択してください。");
+  if (file.size > MAX_AUDIO_SOURCE_BYTES) throw new Error("元の音声ファイルは20MB以下にしてください。");
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass || !("OfflineAudioContext" in window || "webkitOfflineAudioContext" in window)) throw new Error("このブラウザは音声変換に対応していません。");
+  const context = new AudioContextClass();
+  try {
+    const decoded = await context.decodeAudioData(await file.arrayBuffer());
+    const duration = Math.min(MAX_AUDIO_SECONDS, decoded.duration);
+    if (!Number.isFinite(duration) || duration < 0.15) throw new Error("0.15秒以上の音声を選択してください。");
+    const frameCount = Math.max(1, Math.ceil(duration * AUDIO_SAMPLE_RATE));
+    const OfflineContextClass = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const offline = new OfflineContextClass(1, frameCount, AUDIO_SAMPLE_RATE);
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination);
+    source.start(0, 0, duration);
+    const rendered = await offline.startRendering();
+    const samples = new Float32Array(rendered.getChannelData(0));
+    let peak = 0;
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+    const gain = peak > 0 ? Math.min(4, 0.92 / peak) : 1;
+    if (gain !== 1) for (let index = 0; index < samples.length; index += 1) samples[index] *= gain;
+    const blob = encodeMonoWav(samples, AUDIO_SAMPLE_RATE);
+    if (blob.size > MAX_AUDIO_TRANSFER_BYTES) throw new Error("変換後の音声サイズが上限を超えました。");
+    return {
+      audioBlob: blob,
+      audioUrl: URL.createObjectURL(blob),
+      audioDuration: rendered.duration,
+      audioCueStart: 0,
+      audioName: String(file.name || "添付音声").slice(0, 80),
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+function releaseCardAudio(item) {
+  if (item?.audioUrl) URL.revokeObjectURL(item.audioUrl);
+  if (!item) return;
+  item.audioBlob = null;
+  item.audioUrl = "";
+  item.audioDuration = 0;
+  item.audioCueStart = 0;
+  item.audioName = "";
 }
 
 async function prepareWeaknessCommit(roomId) {
@@ -296,9 +381,9 @@ function setStrategyChrome(label) {
   const privacy = document.querySelector(".privacy-badge");
   const footerItems = document.querySelectorAll(".site-footer span");
   if (status) status.innerHTML = `<i></i> ${escapeHtml(label)}`;
-  if (privacy) privacy.textContent = "P2P画像転送";
+  if (privacy) privacy.textContent = "P2P画像・音声転送";
   if (footerItems[0]) footerItems[0].textContent = "STRATEGY 1ON1 / FIREBASE + WEBRTC";
-  if (footerItems[1]) footerItems[1].textContent = "自己紹介と進行はルーム内同期、画像本体は対戦相手へ直接転送します";
+  if (footerItems[1]) footerItems[1].textContent = "自己紹介と進行はルーム内同期、画像・添付音声は対戦相手へ直接転送します";
 }
 
 function focusScreen() {
@@ -361,8 +446,8 @@ function renderProfile() {
     ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "strategyOverallRanking" }) || ""}
     <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
       <li><b>1</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
-      <li><b>2</b><span>3ラウンドの反応から弱点を推理し、看破すると最大3連続追撃が発生します。</span></li>
-      <li><b>3</b><span>画像本体はWebRTCで対戦相手へ直接送り、Firebaseには保存しません。</span></li>
+      <li><b>2</b><span>各ラウンド後に一度だけ看破を宣言でき、成功すると最大3連続追撃、失敗すると自分に5ダメージです。</span></li>
+      <li><b>3</b><span>画像には10秒までの音声を任意で添付できます。画像・音声はP2P直送でFirebaseには保存しません。</span></li>
     </ol><p class="privacy-note">試合前は弱点のハッシュだけを共有し、両者の回答確定後に答えを公開して照合します。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
@@ -387,7 +472,7 @@ function renderMatching() {
 }
 
 function renderConnecting() {
-  return renderStatusCard("VS", "MATCH FOUND", "対戦相手とマッチングしました", "匿名自己紹介を表示する前にP2P画像転送を準備しています。", `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+  return renderStatusCard("VS", "MATCH FOUND", "対戦相手とマッチングしました", "匿名自己紹介を表示する前にP2P画像・音声転送を準備しています。", `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
 }
 
 function renderAnonymousIntro() {
@@ -406,7 +491,7 @@ function renderWaitingDecision() {
 function renderDeckBuilder() {
   const opponent = getOpponent();
   return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">COUNTER DECK BUILD</span><h1>相手に刺さる10枚を選ぶ</h1>
-    <p>メインは必ず5枚。リザーブは最大5枚で、追加要求への再提示と追撃に使います。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
+    <p>メインは必ず5枚。各画像には10秒までの音声を任意で添付でき、弱点看破後の追撃では指定した3秒を連続再生します。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
     <div class="strategy-build-layout"><aside class="strategy-scout-note"><span>SCOUTING MEMO</span><h2>匿名の対戦相手</h2>
       ${opponent.clues.map((clue, index) => `<p><b>${index + 1}</b>${escapeHtml(clue)}</p>`).join("")}<small>本当の弱点は1つ。残り2つはブラフです。</small></aside>
       <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}
@@ -424,8 +509,14 @@ function renderDeckZone(zone) {
       <button class="button button-ghost button-small" data-strategy-sample="${zone}" ${items.length >= limit ? "disabled" : ""}>サンプルで補充</button></div></div>
     <div class="strategy-deck-grid">${Array.from({ length: limit }, (_, index) => {
       const item = items[index];
+      const cueMax = Math.max(0, Number(item?.audioDuration || 0) - AUDIO_HIGHLIGHT_SECONDS);
       return item ? `<article class="deck-slot"><img src="${item.url}" alt="${isMain ? "メイン" : "リザーブ"}画像 ${index + 1}" />
-        <div class="deck-label"><span>${isMain ? "MAIN" : "RESERVE"} ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" type="button" data-strategy-remove="${zone}:${item.id}" aria-label="画像を外す">×</button></div></article>`
+        <div class="deck-label"><span>${isMain ? "MAIN" : "RESERVE"} ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" type="button" data-strategy-remove="${zone}:${item.id}" aria-label="画像を外す">×</button></div>
+        <div class="deck-audio ${item.audioBlob ? "has-audio" : ""}">${item.audioBlob
+          ? `<div class="deck-audio-head"><span>♪ ${escapeHtml(item.audioName || "添付音声")} / ${Number(item.audioDuration).toFixed(1)}秒</span><button type="button" data-strategy-audio-remove="${zone}:${item.id}">音声を外す</button></div>
+            <audio controls preload="metadata" src="${item.audioUrl}"></audio>
+            <label>追撃で使う3秒 <input type="range" min="0" max="${cueMax.toFixed(1)}" step="0.1" value="${Math.min(Number(item.audioCueStart || 0), cueMax).toFixed(1)}" data-strategy-audio-cue="${zone}:${item.id}" /><output>${Number(item.audioCueStart || 0).toFixed(1)}秒〜</output></label>`
+          : `<label class="deck-audio-add">＋ 10秒音声を添付<input type="file" accept="audio/*" data-strategy-audio="${zone}:${item.id}" /></label>`}</div></article>`
         : '<div class="deck-slot empty"><span>+</span></div>';
     }).join("")}</div></section>`;
 }
@@ -436,7 +527,7 @@ function renderWaitingDeck() {
 
 function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
-    <p>本当の弱点は3ラウンド終了後、両者の回答が確定するまで秘密です。</p></div><div class="strategy-identity-grid">
+    <p>本当の弱点は、どちらかが看破を宣言して両者の回答が確定するまで秘密です。</p></div><div class="strategy-identity-grid">
     ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
       <div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
     <button class="avatar-visibility-toggle strategy-avatar-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
@@ -458,11 +549,14 @@ function renderBaseSelect() {
 function renderBaseReveal() {
   const local = state.localBaseCards.get(state.round);
   const remote = state.remoteImages.get(imageKey("base", state.round));
+  const mediaKey = imageKey("base", state.round);
+  const opened = state.openedMediaKeys.has(mediaKey);
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-versus-title"><span class="eyebrow">SIMULTANEOUS REVEAL</span><h1>メイン画像公開</h1>
-    <p>相手の画像を本音で秘密採点します。</p></div><div class="strategy-reveal-grid">
-      ${renderBattleImage(state.playerIndex === 0 ? local : remote, state.players[0].name, "PLAYER 1")}
-      ${renderBattleImage(state.playerIndex === 1 ? local : remote, state.players[1].name, "PLAYER 2")}</div>
-    <button class="button button-primary strategy-center-button" id="strategyBeginRating">相手の画像を秘密採点</button></section>`;
+    <p>${opened ? "音声も手掛かりにして、本音で秘密採点します。" : "ボタンを押すと相手の画像を公開し、添付音声があれば再生します。"}</p></div><div class="strategy-reveal-grid">
+      ${renderBattleImage(state.playerIndex === 0 ? local : remote, state.players[0].name, "PLAYER 1", state.playerIndex !== 0 && !opened)}
+      ${renderBattleImage(state.playerIndex === 1 ? local : remote, state.players[1].name, "PLAYER 2", state.playerIndex !== 1 && !opened)}</div>
+    ${opened ? '<button class="button button-primary strategy-center-button" id="strategyBeginRating">相手の画像を秘密採点</button>'
+      : '<button class="button button-primary strategy-center-button strategy-open-media" id="strategyOpenBaseMedia">画像＋音声を開く</button>'}</section>`;
 }
 
 function renderBaseRating() {
@@ -498,13 +592,16 @@ function renderActionReveal() {
   const opponentPick = picks[state.opponentUid];
   const localItem = localPick && !localPick.skipped ? state.localActionCards.get(state.round) : null;
   const remoteItem = opponentPick && !opponentPick.skipped ? state.remoteImages.get(imageKey("action", state.round)) : null;
+  const mediaKey = imageKey("action", state.round);
+  const opened = state.openedMediaKeys.has(mediaKey);
   const cards = [];
   if (localItem) cards.push({ item: localItem, player: getLocalPlayer(), type: localPick.type });
   if (remoteItem) cards.push({ item: remoteItem, player: getOpponent(), type: opponentPick.type });
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-versus-title"><span class="eyebrow">RESERVE OPEN</span><h1>リザーブ画像公開</h1></div>
     <div class="strategy-reveal-grid ${cards.length === 1 ? "single" : ""}">${cards.map(({ item, player, type }) => `<div class="strategy-action-reveal">
-      ${renderBattleImage(item, player.name, type === "pursuit" ? "PURSUIT" : "ONE MORE")}${type === "pursuit" ? `<blockquote>${escapeHtml(player.pursuitLine)}</blockquote>` : ""}</div>`).join("")}</div>
-    ${remoteItem ? '<button class="button button-primary strategy-center-button" id="strategyRateAction">相手の追加画像を秘密採点</button>'
+      ${renderBattleImage(item, player.name, type === "pursuit" ? "PURSUIT" : "ONE MORE", item === remoteItem && !opened)}${type === "pursuit" ? `<blockquote>${escapeHtml(player.pursuitLine)}</blockquote>` : ""}</div>`).join("")}</div>
+    ${remoteItem ? opened ? '<button class="button button-primary strategy-center-button" id="strategyRateAction">相手の追加画像を秘密採点</button>'
+      : '<button class="button button-primary strategy-center-button strategy-open-media" id="strategyOpenActionMedia">画像＋音声を開く</button>'
       : '<p class="strategy-rule-note">あなたが提示した追加画像を相手が採点しています。</p>'}</section>`;
 }
 
@@ -522,6 +619,7 @@ function renderRoundResult() {
   const nextLabel = state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete
     ? "弱点看破フェイズへ"
     : isGameOver() ? "最終結果を見る" : `ROUND ${state.round + 1}へ`;
+  const canDeclare = !state.weaknessPhaseComplete && state.round < WEAKNESS_SCOUT_ROUND && !state.roomData?.weaknessGuesses?.[state.uid];
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="result-card strategy-round-result"><span class="eyebrow">ROUND ${state.round} RESULT</span>
     <h1>${winner < 0 ? "DRAW / ノーダメージ" : `${escapeHtml(state.players[winner].name)}の攻撃`}</h1><div class="strategy-power-versus">
       ${state.players.map((player, index) => `<article class="${winner === index ? "winner" : ""}"><small>${escapeHtml(player.name)}</small><strong>${result.powers[index]}</strong><span>IMAGE POWER</span>
@@ -529,13 +627,16 @@ function renderRoundResult() {
     <div class="strategy-round-breakdown">${state.players.map((player, owner) => {
       const detail = result.actions[owner]?.cardShown ? `${result.actions[owner].type === "pursuit" ? "追撃" : "再提示"} ${result.actionScores[owner]}点` : "追加効果なし";
       return `<p><b>${escapeHtml(player.name)}</b><span>メイン ${result.baseScores[owner]}点 / ${detail}</span></p>`;
-    }).join("")}</div><button class="button button-primary strategy-center-button" id="strategyNextRound">${nextLabel}</button></div></section>`;
+    }).join("")}</div><div class="strategy-result-actions"><button class="button button-primary" id="strategyNextRound">${nextLabel}</button>
+      ${canDeclare ? '<button class="button button-danger strategy-declare-weakness" id="strategyDeclareWeakness">今ここで弱点を看破する</button><small>回答は一度だけ。誤答すると自分に5ダメージ</small>' : ""}</div></div></section>`;
 }
 
 function renderWeaknessGuess() {
   const opponent = getOpponent();
+  const triggerRound = Number(state.weaknessTriggerRound || state.round || WEAKNESS_SCOUT_ROUND);
+  const responding = Boolean(state.roomData?.weaknessGuesses?.[state.opponentUid] && !state.roomData?.weaknessGuesses?.[state.uid]);
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">SCOUT PHASE COMPLETE</span>
-    <h1>本当の弱点を看破せよ</h1><p>3ラウンドの点数とリアクションを読み、相手の本当の弱点を1つ選びます。回答は1回だけで変更できません。</p></div>
+    <h1>${responding ? "相手が看破を宣言しました" : "本当の弱点を看破せよ"}</h1><p>ROUND ${triggerRound}までの画像・音声・会話を読み、相手の本当の弱点を1つ選びます。回答は1回だけ。誤答すると自分に${WEAKNESS_MISS_DAMAGE}ダメージです。</p></div>
     <form class="strategy-weakness-guess" id="strategyWeaknessGuessForm"><fieldset><legend>${escapeHtml(opponent.name)}の弱点候補</legend>
       ${opponent.clues.map((clue, index) => `<label class="strategy-guess-card"><input type="radio" name="weaknessGuess" value="${index}" ${state.selectedWeaknessGuess === index ? "checked" : ""} />
         <span><small>CANDIDATE ${String(index + 1).padStart(2, "0")}</small><strong>${escapeHtml(clue)}</strong></span></label>`).join("")}
@@ -561,7 +662,7 @@ function renderWeaknessChainResult() {
     const opponent = state.players[1 - index];
     const guess = player.weaknessGuess;
     return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small>
-      <strong>${escapeHtml(opponent.clues[guess] || "未回答")}</strong><span>${player.weaknessCorrect ? "看破成功" : "看破失敗"}</span></article>`;
+      <strong>${escapeHtml(opponent.clues[guess] || "未回答")}</strong><span>${player.weaknessCorrect ? "看破成功" : `看破失敗 / 自分に${WEAKNESS_MISS_DAMAGE} DAMAGE`}</span></article>`;
   }).join("");
   const chains = state.players.map((player, owner) => {
     const count = result.chainCounts[owner];
@@ -569,17 +670,23 @@ function renderWeaknessChainResult() {
     if (!count) return `<article class="strategy-chain-lane is-empty"><h2>${escapeHtml(player.name)}</h2><p>${player.weaknessCorrect ? "リザーブ不足のため連続追撃なし" : "看破失敗のため連続追撃なし"}</p></article>`;
     const cards = Array.from({ length: count }, (_, index) => {
       const item = owner === state.playerIndex ? state.localWeaknessChainCards[index] : state.remoteImages.get(imageKey("weaknessChain", index));
-      return `<div class="strategy-chain-card" style="--chain-index:${index}">${renderBattleImage(item, player.name, `PURSUIT CHAIN ×${index + 1}`)}
+      return `<div class="strategy-chain-card" data-chain-owner="${owner}" data-chain-slot="${index}" style="--chain-index:${index}">${renderBattleImage(item, player.name, `PURSUIT CHAIN ×${index + 1}`)}
         <blockquote>${escapeHtml(player.pursuitLine)}</blockquote><b>${WEAKNESS_CHAIN_DAMAGE[index]} DAMAGE</b></div>`;
     }).join("");
     return `<article class="strategy-chain-lane"><h2>${escapeHtml(player.name)} → ${escapeHtml(defender.name)}</h2><div class="strategy-chain-cards">${cards}</div>
       <p class="strategy-chain-total">CHAIN DAMAGE <strong>${result.chainDamage[owner]}</strong>${result.overkill[1 - owner] > 0 ? `<em>OVERKILL +${result.overkill[1 - owner]}</em>` : ""}</p></article>`;
   }).join("");
   const matchEnds = state.players.some((player) => player.hp <= 0);
-  const headline = result.overkill.some((value) => value > 0) ? "OVERKILL" : state.players.some((player) => player.weaknessCorrect) ? "WEAKNESS BREAK" : "READ FAILED";
+  const surrendered = (result.surrenders || []).some(Boolean);
+  const headline = surrendered ? "SURRENDER KO" : result.overkill.some((value) => value > 0) ? "OVERKILL" : state.players.some((player) => player.weaknessCorrect) ? "WEAKNESS BREAK" : "READ FAILED";
+  const localCanSurrender = getOpponent().weaknessCorrect && getLocalPlayer().hp > 0 && !state.roomData?.weaknessSurrenders?.[state.uid];
+  const nextRound = Number(state.weaknessTriggerRound || state.round) + 1;
   return `<section class="screen strategy-screen strategy-chain-result">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">WEAKNESS REVEAL</span><h1>${headline}</h1>
-    <p>事前登録したハッシュとの照合に成功しました。連続追撃は両者同時に解決されています。</p></div><div class="strategy-guess-summary">${guessSummary}</div>
-    <div class="strategy-chain-result-grid">${chains}</div><button class="button button-primary strategy-center-button" id="strategyWeaknessContinue">${matchEnds ? "最終結果を見る" : "ROUND 4へ"}</button></section>`;
+    <p>事前登録したハッシュとの照合に成功しました。追撃音声は各カードで指定した3秒を順番に再生します。</p></div><div class="strategy-guess-summary">${guessSummary}</div>
+    <div class="strategy-chain-result-grid">${chains}</div>
+    ${state.players.some((player) => player.weaknessChainCount > 0) ? '<button class="button button-danger strategy-center-button strategy-chain-play" id="strategyPlayWeaknessChain">怒涛の連続追撃を再生</button>' : ""}
+    ${localCanSurrender ? '<button class="button button-ghost strategy-center-button strategy-surrender" id="strategyWeaknessSurrender">参りました（敗北を認める）</button>' : ""}
+    <button class="button button-primary strategy-center-button" id="strategyWeaknessContinue">${matchEnds ? "最終結果を見る" : `ROUND ${nextRound}へ`}</button></section>`;
 }
 
 function renderGameOver() {
@@ -686,8 +793,9 @@ function renderHudPlayer(index) {
     <div class="hp-bar"><div class="hp-fill" style="--hp:${hpPercent}%"></div></div><span class="hp-value">HP ${player.hp} / ${MAX_HP} ・ ASK ${player.extraRequests} ・ PERMIT ${player.pursuitPermits}</span></div></div></div>`;
 }
 
-function renderBattleImage(item, name, label) {
-  return `<article class="strategy-battle-image"><div><span>${escapeHtml(label)}</span><b>${escapeHtml(name)}</b></div><img src="${item?.url || ""}" alt="${escapeHtml(name)}の対戦画像" /></article>`;
+function renderBattleImage(item, name, label, concealed = false) {
+  const audio = item?.audioUrl ? `<div class="strategy-card-audio"><span>♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</span><button type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">もう一度聴く</button></div>` : '<div class="strategy-card-audio is-empty"><span>音声なし</span></div>';
+  return `<article class="strategy-battle-image ${concealed ? "is-concealed" : ""}"><div class="strategy-image-head"><span>${escapeHtml(label)}</span><b>${escapeHtml(name)}</b></div><div class="strategy-image-media"><img src="${item?.url || ""}" alt="${escapeHtml(name)}の対戦画像" />${concealed ? '<span class="strategy-media-lock">TAP TO REVEAL<br /><b>画像＋音声を開く</b></span>' : ""}</div>${concealed ? "" : audio}</article>`;
 }
 
 function renderScoreButtons() {
@@ -717,18 +825,25 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-strategy-upload]").forEach((input) => input.addEventListener("change", (event) => addDeckFiles(input.dataset.strategyUpload, [...event.target.files])));
   document.querySelectorAll("[data-strategy-sample]").forEach((button) => button.addEventListener("click", () => fillDeckSamples(button.dataset.strategySample)));
   document.querySelectorAll("[data-strategy-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.strategyRemove)));
+  document.querySelectorAll("[data-strategy-audio]").forEach((input) => input.addEventListener("change", (event) => addCardAudio(input.dataset.strategyAudio, event.target.files?.[0])));
+  document.querySelectorAll("[data-strategy-audio-remove]").forEach((button) => button.addEventListener("click", () => removeCardAudio(button.dataset.strategyAudioRemove)));
+  document.querySelectorAll("[data-strategy-audio-cue]").forEach((input) => input.addEventListener("input", () => updateCardAudioCue(input.dataset.strategyAudioCue, input.value, input)));
+  document.querySelectorAll("[data-strategy-play-audio]").forEach((button) => button.addEventListener("click", () => playAudioUrl(button.dataset.strategyPlayAudio, Number(button.dataset.audioStart || 0), Number(button.dataset.audioDuration || 0))));
   document.querySelector("#strategyLockDeck")?.addEventListener("click", lockDeck);
   document.querySelector("#strategyBattleStart")?.addEventListener("click", startBattle);
   document.querySelectorAll("[data-base-card]").forEach((button) => button.addEventListener("click", () => lockBaseCard(button.dataset.baseCard)));
+  document.querySelector("#strategyOpenBaseMedia")?.addEventListener("click", () => openStrategyMedia("base"));
   document.querySelector("#strategyBeginRating")?.addEventListener("click", () => { state.screen = "baseRating"; state.selectedScore = 0; state.selectedReaction = "normal"; render(); });
   bindScoreButtons();
   document.querySelectorAll('input[name="reaction"]').forEach((input) => input.addEventListener("change", () => { state.selectedReaction = input.value; }));
   document.querySelector("#strategyLockRating")?.addEventListener("click", lockBaseRating);
   document.querySelectorAll("[data-action-card]").forEach((button) => button.addEventListener("click", () => lockActionCard(button.dataset.actionCard)));
   document.querySelector("#strategySkipPursuit")?.addEventListener("click", skipPursuit);
+  document.querySelector("#strategyOpenActionMedia")?.addEventListener("click", () => openStrategyMedia("action"));
   document.querySelector("#strategyRateAction")?.addEventListener("click", () => { state.screen = "actionRating"; state.selectedScore = 0; render(); });
   document.querySelector("#strategyLockActionRating")?.addEventListener("click", lockActionRating);
   document.querySelector("#strategyNextRound")?.addEventListener("click", continueRound);
+  document.querySelector("#strategyDeclareWeakness")?.addEventListener("click", declareWeaknessGuess);
   document.querySelectorAll('input[name="weaknessGuess"]').forEach((input) => input.addEventListener("change", () => {
     state.selectedWeaknessGuess = Number(input.value);
     document.querySelector("#strategyLockWeaknessGuess")?.removeAttribute("disabled");
@@ -737,6 +852,8 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-weakness-chain-card]").forEach((button) => button.addEventListener("click", () => toggleWeaknessChainCard(button.dataset.weaknessChainCard)));
   document.querySelector("#strategyLockWeaknessChain")?.addEventListener("click", lockWeaknessChain);
   document.querySelector("#strategyWeaknessContinue")?.addEventListener("click", continueAfterWeaknessChain);
+  document.querySelector("#strategyPlayWeaknessChain")?.addEventListener("click", playWeaknessChainSequence);
+  document.querySelector("#strategyWeaknessSurrender")?.addEventListener("click", surrenderToWeaknessBreak);
   document.querySelectorAll("[data-strategy-destroy]").forEach((button) => button.addEventListener("click", requestHome));
   document.querySelector("#strategyNewMatch")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyWithdrawAgain")?.addEventListener("click", resetStrategySetup);
@@ -1021,7 +1138,7 @@ async function setupRoomListeners() {
 }
 
 async function setupPeerConnection() {
-  if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像転送に対応していません。");
+  if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像・音声転送に対応していません。");
   const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] });
   state.peer = peer;
   peer.onicecandidate = (event) => { if (event.candidate) sendSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError); };
@@ -1083,7 +1200,7 @@ function configureDataChannel(channel) {
     reactToRoomData().catch(handleRecoverableError);
   };
   channel.onclose = () => { state.channelReady = false; state.peerStatus = "P2P接続が切れました"; };
-  channel.onerror = () => showToast("画像転送で通信エラーが発生しました。");
+  channel.onerror = () => showToast("画像・音声転送で通信エラーが発生しました。");
   channel.onmessage = (event) => handleChannelMessage(event.data).catch(handleRecoverableError);
 }
 
@@ -1104,9 +1221,17 @@ async function handleChannelMessage(data) {
     } else if (message.type === "profile-avatar-empty") {
       releaseRemoteAvatar();
     } else if (message.type === "strategy-image-start") {
-      state.incomingTransfer = { kind: message.kind, round: message.round, ownerUid: message.ownerUid, actionType: message.actionType || "", mime: message.mime, size: message.size, chunks: [], received: 0 };
+      state.incomingTransfer = { kind: message.kind, round: message.round, ownerUid: message.ownerUid, actionType: message.actionType || "", mime: message.mime, size: message.size, hasAudio: message.hasAudio === true, chunks: [], received: 0 };
     } else if (message.type === "strategy-image-end") {
       await finishIncomingImage(message.kind, message.round, message.ownerUid);
+    } else if (message.type === "strategy-audio-start") {
+      const size = Number(message.size);
+      const duration = Number(message.duration);
+      if (!Number.isFinite(size) || size <= 0 || size > MAX_AUDIO_TRANSFER_BYTES) throw new Error("添付音声の受信サイズが不正です。");
+      if (message.mime !== "audio/wav" || !Number.isFinite(duration) || duration <= 0 || duration > MAX_AUDIO_SECONDS + 0.1) throw new Error("添付音声の形式が不正です。");
+      state.incomingAudioTransfer = { kind: message.kind, round: message.round, ownerUid: message.ownerUid, mime: "audio/wav", size, duration, cueStart: Number(message.cueStart || 0), chunks: [], received: 0 };
+    } else if (message.type === "strategy-audio-end") {
+      await finishIncomingAudio(message.kind, message.round, message.ownerUid);
     }
     return;
   }
@@ -1118,6 +1243,17 @@ async function handleChannelMessage(data) {
       state.incomingAvatarTransfer = null;
       throw new Error("プロフィール画像の受信サイズが一致しませんでした。");
     }
+    return;
+  }
+  if (state.incomingAudioTransfer) {
+    const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+    state.incomingAudioTransfer.chunks.push(chunk);
+    state.incomingAudioTransfer.received += chunk.byteLength;
+    if (state.incomingAudioTransfer.received > state.incomingAudioTransfer.size) {
+      state.incomingAudioTransfer = null;
+      throw new Error("添付音声の受信サイズが一致しませんでした。");
+    }
+    state.transferProgress = Math.min(99, Math.round((state.incomingAudioTransfer.received / state.incomingAudioTransfer.size) * 100));
     return;
   }
   if (!state.incomingTransfer) return;
@@ -1167,10 +1303,31 @@ async function finishIncomingImage(kind, round, ownerUid) {
   const key = imageKey(kind, round);
   const previous = state.remoteImages.get(key);
   if (previous?.url) URL.revokeObjectURL(previous.url);
+  releaseCardAudio(previous);
   const blob = new Blob(transfer.chunks, { type: transfer.mime || "image/webp" });
-  state.remoteImages.set(key, { blob, url: URL.createObjectURL(blob), actionType: transfer.actionType });
+  state.remoteImages.set(key, { blob, url: URL.createObjectURL(blob), actionType: transfer.actionType, awaitingAudio: transfer.hasAudio });
   state.incomingTransfer = null;
   state.transferProgress = 100;
+  if (!transfer.hasAudio) await acknowledgeStrategyMedia(kind, round, ownerUid);
+}
+
+async function finishIncomingAudio(kind, round, ownerUid) {
+  const transfer = state.incomingAudioTransfer;
+  if (!transfer || transfer.kind !== kind || transfer.round !== round || transfer.ownerUid !== ownerUid || transfer.received !== transfer.size) throw new Error("受信音声のサイズが一致しませんでした。");
+  const item = state.remoteImages.get(imageKey(kind, round));
+  if (!item?.awaitingAudio) throw new Error("音声に対応する画像を確認できませんでした。");
+  const blob = new Blob(transfer.chunks, { type: "audio/wav" });
+  item.audioBlob = blob;
+  item.audioUrl = URL.createObjectURL(blob);
+  item.audioDuration = transfer.duration;
+  item.audioCueStart = Math.max(0, Math.min(Math.max(0, transfer.duration - AUDIO_HIGHLIGHT_SECONDS), transfer.cueStart || 0));
+  item.awaitingAudio = false;
+  state.incomingAudioTransfer = null;
+  state.transferProgress = 100;
+  await acknowledgeStrategyMedia(kind, round, ownerUid);
+}
+
+async function acknowledgeStrategyMedia(kind, round, ownerUid) {
   if (kind === "base") await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/baseImagesReceived/${state.uid}`), true);
   else if (kind === "action") await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/actionImagesReceived/${ownerUid}/${state.uid}`), true);
   else if (kind === "weaknessChain") await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChainImagesReceived/${ownerUid}/${state.uid}/${round}`), true);
@@ -1184,14 +1341,25 @@ async function sendImage(item, kind, actionType = "", slot = state.round) {
   state.transferProgress = 0;
   render();
   const buffer = await item.blob.arrayBuffer();
+  const audioBuffer = item.audioBlob ? await item.audioBlob.arrayBuffer() : null;
   try {
-    state.channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: slot, ownerUid: state.uid, actionType, size: buffer.byteLength, mime: item.blob.type || "image/webp" }));
+    state.channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: slot, ownerUid: state.uid, actionType, size: buffer.byteLength, mime: item.blob.type || "image/webp", hasAudio: Boolean(audioBuffer) }));
     for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
       await waitForDataBuffer();
       state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
       state.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
     }
     state.channel.send(JSON.stringify({ type: "strategy-image-end", kind, round: slot, ownerUid: state.uid }));
+    if (audioBuffer) {
+      state.transferProgress = 0;
+      state.channel.send(JSON.stringify({ type: "strategy-audio-start", kind, round: slot, ownerUid: state.uid, size: audioBuffer.byteLength, mime: "audio/wav", duration: Number(item.audioDuration || 0), cueStart: Number(item.audioCueStart || 0) }));
+      for (let offset = 0; offset < audioBuffer.byteLength; offset += DATA_CHUNK_BYTES) {
+        await waitForDataBuffer();
+        state.channel.send(audioBuffer.slice(offset, Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES)));
+        state.transferProgress = Math.round((Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES) / audioBuffer.byteLength) * 100);
+      }
+      state.channel.send(JSON.stringify({ type: "strategy-audio-end", kind, round: slot, ownerUid: state.uid }));
+    }
   } catch (error) {
     state.sentImageKeys.delete(key);
     throw error;
@@ -1231,6 +1399,91 @@ async function addDeckFiles(zone, files) {
   }
 }
 
+function findDeckCard(token) {
+  const [zone, id] = String(token || "").split(":");
+  if (!['main', 'reserve'].includes(zone)) return {};
+  return { zone, item: state[zone].find((card) => card.id === id) };
+}
+
+async function addCardAudio(token, file) {
+  const { item } = findDeckCard(token);
+  if (!item || !file) return;
+  setBusy(true, "音声を10秒以下・モノラルWAVへ変換しています…");
+  try {
+    const audio = await processStrategyAudioFile(file);
+    releaseCardAudio(item);
+    Object.assign(item, audio);
+    showToast(file.size > audio.audioBlob.size ? "音声を軽量化して画像に添付しました。" : "音声を画像に添付しました。");
+  } catch (error) {
+    showToast(error.message || "音声を添付できませんでした。");
+  } finally {
+    setBusy(false);
+    render();
+  }
+}
+
+function removeCardAudio(token) {
+  const { item } = findDeckCard(token);
+  if (!item) return;
+  releaseCardAudio(item);
+  render();
+}
+
+function updateCardAudioCue(token, value, input) {
+  const { item } = findDeckCard(token);
+  if (!item?.audioBlob) return;
+  const max = Math.max(0, Number(item.audioDuration || 0) - AUDIO_HIGHLIGHT_SECONDS);
+  item.audioCueStart = Math.max(0, Math.min(max, Number(value) || 0));
+  const output = input?.parentElement?.querySelector("output");
+  if (output) output.textContent = `${item.audioCueStart.toFixed(1)}秒〜`;
+}
+
+function playAudioUrl(url, start = 0, duration = 0) {
+  if (!url) return Promise.resolve();
+  return new Promise((resolve) => {
+    const audio = new Audio(url);
+    audio.preload = "auto";
+    let settled = false;
+    let timer = 0;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      audio.pause();
+      audio.removeAttribute("src");
+      resolve();
+    };
+    const begin = () => {
+      audio.currentTime = Math.max(0, Math.min(Number(start) || 0, Math.max(0, audio.duration - 0.05)));
+      audio.play().then(() => {
+        if (Number.isFinite(playSeconds)) timer = window.setTimeout(cleanup, playSeconds * 1000);
+      }).catch(() => { showToast("音声を再生できませんでした。もう一度再生ボタンを押してください。"); cleanup(); });
+    };
+    const playSeconds = duration > 0 ? duration : Number.POSITIVE_INFINITY;
+    audio.addEventListener("loadedmetadata", begin, { once: true });
+    audio.addEventListener("ended", cleanup, { once: true });
+    audio.addEventListener("error", cleanup, { once: true });
+    audio.load();
+  });
+}
+
+async function openStrategyMedia(kind) {
+  const key = imageKey(kind, state.round);
+  state.openedMediaKeys.add(key);
+  const item = state.remoteImages.get(key);
+  render();
+  if (item?.audioUrl) await playAudioUrl(item.audioUrl, 0, Number(item.audioDuration || 0));
+}
+
+function declareWeaknessGuess() {
+  if (state.weaknessPhaseComplete || state.round > WEAKNESS_SCOUT_ROUND || state.roomData?.weaknessGuesses?.[state.uid]) return;
+  state.weaknessTriggerRound = state.round;
+  state.selectedWeaknessGuess = null;
+  state.screen = "weaknessGuess";
+  setStrategyChrome("WEAKNESS GUESS");
+  render();
+}
+
 async function fillDeckSamples(zone) {
   const limit = zone === "main" ? MAIN_COUNT : RESERVE_COUNT;
   const missing = limit - state[zone].length;
@@ -1252,6 +1505,7 @@ function removeDeckItem(token) {
   const index = state[zone].findIndex((item) => item.id === id);
   if (index < 0) return;
   const [removed] = state[zone].splice(index, 1);
+  releaseCardAudio(removed);
   URL.revokeObjectURL(removed.url);
   render();
 }
@@ -1338,10 +1592,13 @@ async function lockWeaknessGuess(event) {
   const selected = Number(document.querySelector('input[name="weaknessGuess"]:checked')?.value);
   if (!Number.isInteger(selected) || selected < 0 || selected > 2) return showToast("相手の弱点候補を1つ選んでください。");
   state.selectedWeaknessGuess = selected;
+  const existingGuess = Object.values(state.roomData?.weaknessGuesses || {}).find((guess) => Number.isInteger(Number(guess?.round)));
+  const triggerRound = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(existingGuess?.round || state.weaknessTriggerRound || state.round)));
+  state.weaknessTriggerRound = triggerRound;
   state.screen = "waitingWeaknessGuess";
   render();
   try {
-    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessGuesses/${state.uid}`), { guessIndex: selected, lockedAt: serverTimestamp() });
+    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessGuesses/${state.uid}`), { guessIndex: selected, round: triggerRound, lockedAt: serverTimestamp() });
   } catch (error) {
     console.error(error);
     state.screen = "weaknessGuess";
@@ -1388,7 +1645,56 @@ async function continueAfterWeaknessChain() {
   await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessContinue/${state.uid}`), true);
 }
 
+async function surrenderToWeaknessBreak() {
+  if (!getOpponent()?.weaknessCorrect || getLocalPlayer()?.hp <= 0 || state.roomData?.weaknessSurrenders?.[state.uid]) return;
+  await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessSurrenders/${state.uid}`), { surrendered: true, at: serverTimestamp() })
+    .catch(() => showToast("降参を送信できませんでした。通信状態を確認してください。"));
+}
+
+function applyWeaknessSurrenders(surrenders) {
+  if (!state.weaknessResult) return;
+  let changed = false;
+  state.players.forEach((player, index) => {
+    if (surrenders[player.uid]?.surrendered === true && state.players[1 - index].weaknessCorrect && !state.weaknessResult.surrenders[index]) {
+      player.hp = 0;
+      state.weaknessResult.surrenders[index] = true;
+      changed = true;
+    }
+  });
+  if (!changed) return;
+  state.weaknessSurrenderApplied = true;
+  setStrategyChrome("SURRENDER KO");
+  triggerCriticalFx("SURRENDER KO");
+  if (state.screen === "weaknessChainResult") render();
+}
+
+async function playWeaknessChainSequence() {
+  if (state.chainPlaybackActive || !state.weaknessResult) return;
+  state.chainPlaybackActive = true;
+  const button = document.querySelector("#strategyPlayWeaknessChain");
+  if (button) { button.disabled = true; button.textContent = "連続追撃 再生中…"; }
+  try {
+    const opponentIndex = 1 - state.playerIndex;
+    const owner = Number(state.weaknessResult.chainCounts[state.playerIndex] || 0) > 0 ? state.playerIndex : opponentIndex;
+    const count = Number(state.weaknessResult.chainCounts[owner] || 0);
+    for (let index = 0; index < count; index += 1) {
+      const card = document.querySelector(`[data-chain-owner="${owner}"][data-chain-slot="${index}"]`);
+      card?.classList.add("is-playing");
+      const item = owner === state.playerIndex ? state.localWeaknessChainCards[index] : state.remoteImages.get(imageKey("weaknessChain", index));
+      if (item?.audioUrl) await playAudioUrl(item.audioUrl, Number(item.audioCueStart || 0), Math.min(AUDIO_HIGHLIGHT_SECONDS, Number(item.audioDuration || AUDIO_HIGHLIGHT_SECONDS)));
+      else await new Promise((resolve) => window.setTimeout(resolve, 420));
+      card?.classList.remove("is-playing");
+    }
+  } finally {
+    state.chainPlaybackActive = false;
+    if (button?.isConnected) { button.disabled = false; button.textContent = "怒涛の連続追撃を再生"; }
+  }
+}
+
 async function verifyWeaknessReveals(guesses, reveals) {
+  const guessRounds = state.players.map((player) => Number(guesses[player.uid]?.round));
+  if (!guessRounds.every((round) => Number.isInteger(round) && round >= 1 && round <= WEAKNESS_SCOUT_ROUND && round === guessRounds[0])) return false;
+  state.weaknessTriggerRound = guessRounds[0];
   for (const player of state.players) {
     const reveal = reveals[player.uid];
     const expected = await sha256Hex(`${state.roomId}:${player.uid}:${Number(reveal?.weaknessIndex)}:${String(reveal?.salt || "")}`);
@@ -1444,17 +1750,19 @@ function resolveWeaknessChain(guesses, chains) {
   const chainCounts = state.players.map((player) => Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[player.uid]?.count || 0))));
   const chainDamage = chainCounts.map((count) => WEAKNESS_CHAIN_DAMAGE.slice(0, count).reduce((sum, damage) => sum + damage, 0));
   const hpBefore = state.players.map((player) => player.hp);
+  const missDamage = state.players.map((player) => player.weaknessCorrect ? 0 : WEAKNESS_MISS_DAMAGE);
+  const hpAfterMiss = hpBefore.map((hp, index) => Math.max(0, hp - missDamage[index]));
   const overkill = [0, 0];
   state.players.forEach((player, owner) => {
     player.weaknessChainCount = chainCounts[owner];
     player.reserveUsed += chainCounts[owner];
     player.totalPower += chainDamage[owner];
     const defender = state.players[1 - owner];
-    overkill[1 - owner] = Math.max(0, chainDamage[owner] - hpBefore[1 - owner]);
-    defender.hp = Math.max(0, hpBefore[1 - owner] - chainDamage[owner]);
+    overkill[1 - owner] = Math.max(0, chainDamage[owner] - hpAfterMiss[1 - owner]);
+    defender.hp = Math.max(0, hpAfterMiss[1 - owner] - chainDamage[owner]);
   });
   state.players.forEach((player, index) => { player.overkill = overkill[index]; });
-  state.weaknessResult = { guesses, chainCounts, chainDamage, hpBefore, overkill };
+  state.weaknessResult = { guesses, chainCounts, chainDamage, missDamage, hpBefore, overkill, surrenders: [false, false] };
   state.screen = "weaknessChainResult";
   const overkillTotal = overkill.reduce((sum, value) => sum + value, 0);
   const weaknessBroken = state.players.some((player) => player.weaknessCorrect);
@@ -1470,7 +1778,7 @@ async function advanceAfterWeaknessPhase() {
     await finishMatch();
     return;
   }
-  state.round = WEAKNESS_SCOUT_ROUND + 1;
+  state.round = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(state.weaknessTriggerRound || state.round))) + 1;
   state.currentResult = null;
   state.selectedBaseId = "";
   state.selectedScore = 0;
@@ -1484,7 +1792,17 @@ async function advanceAfterWeaknessPhase() {
 async function reactToWeaknessPhase() {
   if (state.weaknessIntegrityFailed || state.weaknessPhaseComplete) return;
   const guesses = state.roomData?.weaknessGuesses || {};
-  if (!both(guesses)) return;
+  const firstGuess = Object.values(guesses).find((guess) => Number.isInteger(Number(guess?.round)));
+  if (firstGuess) state.weaknessTriggerRound = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(firstGuess.round)));
+  if (!both(guesses)) {
+    if (guesses[state.opponentUid] && !guesses[state.uid] && state.screen !== "weaknessGuess") {
+      state.selectedWeaknessGuess = null;
+      state.screen = "weaknessGuess";
+      setStrategyChrome("WEAKNESS GUESS");
+      render();
+    }
+    return;
+  }
   const reveals = state.roomData?.weaknessReveals || {};
   if (!reveals[state.uid]) {
     await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`), {
@@ -1549,6 +1867,7 @@ async function reactToWeaknessPhase() {
     return;
   }
   resolveWeaknessChain(guesses, chains);
+  applyWeaknessSurrenders(state.roomData?.weaknessSurrenders || {});
   const continued = state.roomData?.weaknessContinue || {};
   if (both(continued)) await advanceAfterWeaknessPhase();
 }
@@ -1591,7 +1910,8 @@ async function reactToRoomData() {
       render();
     }
     if (both(state.roomData.battleReady)) {
-      if (state.round === WEAKNESS_SCOUT_ROUND && state.advancedRounds.has(WEAKNESS_SCOUT_ROUND) && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
+      if (Object.keys(state.roomData?.weaknessGuesses || {}).length && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
+      else if (state.round === WEAKNESS_SCOUT_ROUND && state.advancedRounds.has(WEAKNESS_SCOUT_ROUND) && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
       else await reactToRoundData();
     }
   } finally {
@@ -1706,6 +2026,7 @@ async function advanceRoundOrFinish() {
   if (state.advancedRounds.has(state.round)) return;
   state.advancedRounds.add(state.round);
   if (state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete) {
+    state.weaknessTriggerRound = WEAKNESS_SCOUT_ROUND;
     state.screen = "weaknessGuess";
     setStrategyChrome("WEAKNESS GUESS");
     render();
@@ -1727,8 +2048,7 @@ async function advanceRoundOrFinish() {
 }
 
 function isGameOver() {
-  if (state.round < WEAKNESS_SCOUT_ROUND) return false;
-  if (state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete) return false;
+  if (!state.weaknessPhaseComplete && state.round <= WEAKNESS_SCOUT_ROUND) return false;
   return state.round >= MAX_ROUNDS || state.players.some((player) => player.hp <= 0);
 }
 
@@ -1959,10 +2279,14 @@ async function cleanupOnlineResources(keepActive) {
 function releaseAllImages() {
   [...state.main, ...state.reserve].forEach((item) => {
     if (item.url) URL.revokeObjectURL(item.url);
+    releaseCardAudio(item);
     item.url = "";
     item.blob = null;
   });
-  state.remoteImages.forEach((item) => item.url && URL.revokeObjectURL(item.url));
+  state.remoteImages.forEach((item) => {
+    if (item.url) URL.revokeObjectURL(item.url);
+    releaseCardAudio(item);
+  });
   state.remoteImages.clear();
   releaseRemoteAvatar();
   state.chatMessages = [];

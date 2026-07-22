@@ -672,13 +672,16 @@
           },
           "weaknessGuesses": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/rounds/3/continue/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/strategyRooms/' + $roomId + '/rounds/3/continue/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).val() === true",
-              ".validate": "newData.hasChildren(['guessIndex', 'lockedAt']) && newData.child('guessIndex').isNumber() && (newData.child('guessIndex').val() === 0 || newData.child('guessIndex').val() === 1 || newData.child('guessIndex').val() === 2) && newData.child('lockedAt').isNumber()",
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/battleReady/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/strategyRooms/' + $roomId + '/battleReady/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).val() === true && root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/ratings/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/ratings/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists() && root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/actionPicks/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/actionPicks/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists() && (root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/actionPicks/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val() + '/skipped').val() === true || root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/actionRatings/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists()) && (root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/actionPicks/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val() + '/skipped').val() === true || root.child('online/strategyRooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/actionRatings/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists())",
+              ".validate": "newData.hasChildren(['guessIndex', 'round', 'lockedAt']) && newData.child('guessIndex').isNumber() && (newData.child('guessIndex').val() === 0 || newData.child('guessIndex').val() === 1 || newData.child('guessIndex').val() === 2) && newData.child('round').isNumber() && (newData.child('round').val() === 1 || newData.child('round').val() === 2 || newData.child('round').val() === 3) && newData.child('lockedAt').isNumber() && ((auth.uid === root.child('online/strategyRooms/' + $roomId + '/hostUid').val() && (!root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val()).exists() || newData.child('round').val() === root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val() + '/round').val())) || (auth.uid === root.child('online/strategyRooms/' + $roomId + '/guestUid').val() && (!root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val()).exists() || newData.child('round').val() === root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val() + '/round').val())))",
               "guessIndex": {
                 ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"
               },
               "lockedAt": {
                 ".validate": "newData.isNumber()"
+              },
+              "round": {
+                ".validate": "newData.isNumber() && (newData.val() === 1 || newData.val() === 2 || newData.val() === 3)"
               },
               "$other": {
                 ".validate": false
@@ -728,6 +731,21 @@
                   ".write": "auth != null && auth.uid === $recipientUid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/members/' + $ownerUid).val() === true",
                   ".validate": "(($slot === '0' && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + $ownerUid + '/count').val() >= 1) || ($slot === '1' && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + $ownerUid + '/count').val() >= 2) || ($slot === '2' && root.child('online/strategyRooms/' + $roomId + '/weaknessChains/' + $ownerUid + '/count').val() >= 3)) && newData.val() === true"
                 }
+              }
+            }
+          },
+          "weaknessSurrenders": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + auth.uid).exists() && ((auth.uid === root.child('online/strategyRooms/' + $roomId + '/hostUid').val() && root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/guestUid').val() + '/guessIndex').val() === root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + auth.uid + '/weaknessIndex').val()) || (auth.uid === root.child('online/strategyRooms/' + $roomId + '/guestUid').val() && root.child('online/strategyRooms/' + $roomId + '/weaknessGuesses/' + root.child('online/strategyRooms/' + $roomId + '/hostUid').val() + '/guessIndex').val() === root.child('online/strategyRooms/' + $roomId + '/weaknessReveals/' + auth.uid + '/weaknessIndex').val()))",
+              ".validate": "newData.hasChildren(['surrendered', 'at']) && newData.child('surrendered').val() === true && newData.child('at').isNumber()",
+              "surrendered": {
+                ".validate": "newData.val() === true"
+              },
+              "at": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
               }
             }
           },
@@ -1178,7 +1196,7 @@
           },
           "chat": {
             "$messageId": {
-              ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
+              ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid && root.child('online/rooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/scores/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/rooms/' + $roomId + '/rounds/' + newData.child('round').val() + '/scores/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).exists()",
               ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
               "titleId": {
                 ".validate": "!newData.exists() || (newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
