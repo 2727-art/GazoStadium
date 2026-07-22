@@ -944,6 +944,11 @@
           ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 40)"
         }
       },
+      "teamMatchLock": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && (!newData.exists() || newData.child('uid').val() === auth.uid)) || (data.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now && newData.exists() && newData.child('uid').val() === auth.uid))",
+        ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'roomId', 'createdAt', 'expiresAt']) && newData.child('uid').isString() && newData.child('uid').val() === auth.uid && newData.child('roomId').isString() && newData.child('roomId').val().length > 0 && newData.child('roomId').val().length <= 40 && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 15000 && newData.child('createdAt').val() <= now + 15000 && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() > newData.child('createdAt').val() && newData.child('expiresAt').val() <= now + 60000)"
+      },
       "teamInvites": {
         "$targetUid": {
           ".read": "auth != null && auth.uid === $targetUid",

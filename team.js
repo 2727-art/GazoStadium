@@ -30,6 +30,7 @@ const STRATEGY_TIME_MS = 20_000;
 const SELECTION_TIME_MS = 10_000;
 const SCORE_TIME_MS = 20_000;
 const MATCH_TIMEOUT_MS = 30_000;
+const MATCH_LOCK_TTL_MS = MATCH_TIMEOUT_MS + 10_000;
 const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
@@ -116,6 +117,7 @@ function createState() {
     hideOtherAvatars: false,
     connections: new Map(),
     latestQueue: {},
+    latestInvites: {},
     activeUsers: {},
     matchingBusy: false,
     acceptingInvite: false,
@@ -594,6 +596,9 @@ async function beginMatchmaking() {
     remove(ref(database, `online/teamActive/${state.uid}`)),
     remove(ref(database, `online/teamInvites/${state.uid}`)),
   ]);
+  const offsetSnapshot = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
+  state.serverTimeOffset = Number(offsetSnapshot?.val() || 0);
+  state.latestInvites = {};
   const queueRef = ref(database, `online/teamQueue/${state.uid}`);
   await set(queueRef, {
     uid: state.uid,
@@ -620,8 +625,15 @@ async function beginMatchmaking() {
     state.activeUsers = snapshot.val() || {};
     attemptToHost().catch(handleRecoverableError);
   }, handleRecoverableError));
+  state.matchmakingUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    state.serverTimeOffset = Number(snapshot.val() || 0);
+  }, handleRecoverableError));
+  state.matchmakingUnsubscribers.push(onValue(ref(database, "online/teamMatchLock"), () => {
+    attemptToHost().catch(handleRecoverableError);
+  }, handleRecoverableError));
   state.matchmakingUnsubscribers.push(onValue(ref(database, `online/teamInvites/${state.uid}`), (snapshot) => {
-    processInvites(snapshot.val() || {}).catch(handleRecoverableError);
+    state.latestInvites = snapshot.val() || {};
+    processInvites().catch(handleRecoverableError);
   }, handleRecoverableError));
 }
 
@@ -682,9 +694,41 @@ function freshWaitingPlayers() {
 
 async function attemptToHost() {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingInvite || state.pendingRoomId) return;
+  if (Object.keys(state.latestInvites).length > 0) {
+    await processInvites();
+    return;
+  }
   const waiting = freshWaitingPlayers();
   if (waiting.length < PLAYER_COUNT || waiting[0].uid !== state.uid) return;
   await createTeamRoom(waiting.slice(0, PLAYER_COUNT));
+}
+
+function estimatedServerNow() {
+  return Date.now() + Number(state.serverTimeOffset || 0);
+}
+
+async function acquireTeamMatchLock(roomId) {
+  const lockRef = ref(database, "online/teamMatchLock");
+  const result = await runTransaction(lockRef, (current) => {
+    const now = estimatedServerNow();
+    if (current && current.uid !== state.uid && Number(current.expiresAt || 0) > now) return undefined;
+    return {
+      uid: state.uid,
+      roomId,
+      createdAt: now,
+      expiresAt: now + MATCH_LOCK_TTL_MS,
+    };
+  });
+  const lock = result.snapshot.val();
+  return result.committed && lock?.uid === state.uid && lock?.roomId === roomId;
+}
+
+async function releaseTeamMatchLock(roomId) {
+  if (!state.uid || !roomId) return;
+  await runTransaction(ref(database, "online/teamMatchLock"), (current) => {
+    if (current?.uid !== state.uid || current?.roomId !== roomId) return undefined;
+    return null;
+  }).catch(() => {});
 }
 
 function shufflePlayers(players) {
@@ -701,7 +745,11 @@ function shufflePlayers(players) {
 async function createTeamRoom(group) {
   state.matchingBusy = true;
   const roomId = push(ref(database, "online/teamRooms")).key;
+  let ownsMatchLock = false;
   try {
+    ownsMatchLock = await acquireTeamMatchLock(roomId);
+    if (!ownsMatchLock) return;
+    if (state.screen !== "matching" || state.pendingRoomId || Object.keys(state.latestInvites).length > 0) return;
     const reservation = await runTransaction(ref(database, `online/teamActive/${state.uid}`), (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
     const shuffled = shufflePlayers(group);
@@ -734,45 +782,61 @@ async function createTeamRoom(group) {
     watchPendingRoom(roomId, true);
     state.matchTimer = window.setTimeout(() => expireTeamRoom(roomId), MATCH_TIMEOUT_MS);
   } catch (error) {
-    await remove(ref(database, `online/teamActive/${state.uid}`)).catch(() => {});
-    await runTransaction(ref(database, `online/teamRooms/${roomId}/status`), (current) => current === null ? "expired" : undefined).catch(() => {});
+    await Promise.allSettled([
+      remove(ref(database, `online/teamActive/${state.uid}`)),
+      runTransaction(ref(database, `online/teamRooms/${roomId}/status`), (current) => current === "forming" ? "expired" : undefined),
+      ...group.filter((entry) => entry.uid !== state.uid).map((entry) => remove(ref(database, `online/teamInvites/${entry.uid}/${roomId}`))),
+    ]);
     throw error;
   } finally {
+    if (ownsMatchLock && state.pendingRoomId !== roomId) await releaseTeamMatchLock(roomId);
     state.matchingBusy = false;
   }
 }
 
-async function processInvites(invites) {
+async function processInvites() {
   if (state.acceptingInvite || state.pendingRoomId || state.roomId || state.screen !== "matching") return;
-  const first = Object.entries(invites).sort(([, a], [, b]) => Number(a.createdAt) - Number(b.createdAt))[0];
-  if (!first) return;
-  await acceptInvite(first[0], first[1]);
-}
-
-async function acceptInvite(roomId, invite) {
   state.acceptingInvite = true;
   try {
-    const snapshot = await get(ref(database, `online/teamRooms/${roomId}`));
-    const room = snapshot.val();
-    if (!room || room.status !== "forming" || !room.members?.[state.uid] || invite.hostUid !== room.hostUid) {
-      await remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`));
-      return;
+    while (!state.pendingRoomId && !state.roomId && state.screen === "matching") {
+      const first = Object.entries(state.latestInvites).sort(([, a], [, b]) => Number(a.createdAt) - Number(b.createdAt))[0];
+      if (!first) break;
+      const [roomId, invite] = first;
+      const accepted = await acceptInvite(roomId, invite);
+      if (accepted) return;
+      delete state.latestInvites[roomId];
     }
-    const reservation = await runTransaction(ref(database, `online/teamActive/${state.uid}`), (current) => current === null ? roomId : undefined);
-    if (!reservation.committed) return;
-    await set(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`), true);
-    await Promise.allSettled([
-      remove(ref(database, `online/teamQueue/${state.uid}`)),
-      remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
-    ]);
-    state.pendingRoomId = roomId;
-    state.room = { ...room, accepted: { ...(room.accepted || {}), [state.uid]: true } };
-    state.screen = "forming";
-    render();
-    watchPendingRoom(roomId, false);
   } finally {
     state.acceptingInvite = false;
   }
+  if (!state.pendingRoomId && !state.roomId && state.screen === "matching") await attemptToHost();
+}
+
+async function acceptInvite(roomId, invite) {
+  const snapshot = await get(ref(database, `online/teamRooms/${roomId}`));
+  const room = snapshot.val();
+  if (!room || room.status !== "forming" || !room.members?.[state.uid] || invite.hostUid !== room.hostUid) {
+    await remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`));
+    return false;
+  }
+  const reservation = await runTransaction(ref(database, `online/teamActive/${state.uid}`), (current) => current === null ? roomId : undefined);
+  if (!reservation.committed) {
+    await remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`));
+    return false;
+  }
+  await set(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`), true);
+  await Promise.allSettled([
+    remove(ref(database, `online/teamQueue/${state.uid}`)),
+    remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
+  ]);
+  delete state.latestInvites[roomId];
+  state.pendingRoomId = roomId;
+  state.room = { ...room, accepted: { ...(room.accepted || {}), [state.uid]: true } };
+  state.screen = "forming";
+  render();
+  watchPendingRoom(roomId, false);
+  state.matchTimer = window.setTimeout(() => abandonPendingRoom(roomId).catch(handleRecoverableError), MATCH_TIMEOUT_MS + 5_000);
+  return true;
 }
 
 function watchPendingRoom(roomId, isHost) {
@@ -792,16 +856,26 @@ function watchPendingRoom(roomId, isHost) {
 
 async function expireTeamRoom(roomId) {
   if (state.roomId || state.pendingRoomId !== roomId || state.room?.hostUid !== state.uid) return;
-  await runTransaction(ref(database, `online/teamRooms/${roomId}/status`), (current) => current === "forming" ? "expired" : undefined);
+  try {
+    await runTransaction(ref(database, `online/teamRooms/${roomId}/status`), (current) => current === "forming" ? "expired" : undefined);
+  } finally {
+    await releaseTeamMatchLock(roomId);
+  }
 }
 
-async function handleExpiredRoom(roomId) {
+async function abandonPendingRoom(roomId) {
   if (state.roomId || state.pendingRoomId !== roomId) return;
+  const snapshot = await get(ref(database, `online/teamRooms/${roomId}/status`));
+  if (snapshot.val() === "active") {
+    await enterRoom(roomId);
+    return;
+  }
   await Promise.allSettled([
     remove(ref(database, `online/teamActive/${state.uid}`)),
     remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
     remove(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`)),
   ]);
+  delete state.latestInvites[roomId];
   state.pendingRoomId = "";
   state.room = null;
   state.screen = "matching";
@@ -809,6 +883,28 @@ async function handleExpiredRoom(roomId) {
     uid: state.uid, name: state.name, rating: Number(state.teamProfile.rating || INITIAL_RATING), streak: Number(state.teamProfile.streak || 0), joinedAt: Date.now(), lastSeen: Date.now(), state: "waiting",
   });
   render();
+  await processInvites();
+}
+
+async function handleExpiredRoom(roomId) {
+  if (state.roomId || state.pendingRoomId !== roomId) return;
+  window.clearTimeout(state.matchTimer);
+  state.matchTimer = null;
+  await Promise.allSettled([
+    remove(ref(database, `online/teamActive/${state.uid}`)),
+    remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
+    remove(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`)),
+  ]);
+  delete state.latestInvites[roomId];
+  await releaseTeamMatchLock(roomId);
+  state.pendingRoomId = "";
+  state.room = null;
+  state.screen = "matching";
+  await set(ref(database, `online/teamQueue/${state.uid}`), {
+    uid: state.uid, name: state.name, rating: Number(state.teamProfile.rating || INITIAL_RATING), streak: Number(state.teamProfile.streak || 0), joinedAt: Date.now(), lastSeen: Date.now(), state: "waiting",
+  });
+  render();
+  await processInvites();
 }
 
 async function enterRoom(roomId) {
@@ -824,6 +920,7 @@ async function enterRoom(roomId) {
   if (state.members.length !== PLAYER_COUNT) throw new Error("4人のプレイヤー情報が揃っていません。");
   state.team = room.players[state.uid].team;
   state.teams = createTeams();
+  await releaseTeamMatchLock(roomId);
   await cleanupMatchmaking(true);
   await updatePublicPresence("playing");
   state.screen = "connecting";
@@ -1613,18 +1710,22 @@ async function cleanupMatchmaking(keepActive) {
   state.matchmakingUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
   if (!state.uid) return;
+  const pendingRoomId = state.pendingRoomId;
+  const ownsPendingRoom = state.room?.hostUid === state.uid && Boolean(pendingRoomId);
   const removals = [
     remove(ref(database, `online/teamQueue/${state.uid}`)),
     remove(ref(database, `online/teamInvites/${state.uid}`)),
   ];
   if (!keepActive) removals.push(remove(ref(database, `online/teamActive/${state.uid}`)));
   if (!keepActive && state.pendingRoomId) removals.push(remove(ref(database, `online/teamRooms/${state.pendingRoomId}/accepted/${state.uid}`)));
-  if (state.room?.hostUid === state.uid && state.pendingRoomId) {
+  if (ownsPendingRoom) {
     Object.keys(state.room.members || {}).forEach((uid) => {
-      if (uid !== state.uid) removals.push(remove(ref(database, `online/teamInvites/${uid}/${state.pendingRoomId}`)));
+      if (uid !== state.uid) removals.push(remove(ref(database, `online/teamInvites/${uid}/${pendingRoomId}`)));
     });
   }
   await Promise.allSettled(removals);
+  if (ownsPendingRoom) await releaseTeamMatchLock(pendingRoomId);
+  state.latestInvites = {};
 }
 
 async function cleanupRoomResources(keepActive) {
