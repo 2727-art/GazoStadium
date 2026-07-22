@@ -34,7 +34,7 @@
         ".indexOn": ["rating"],
         "$entryId": {
           ".write": "auth != null && root.child('online/leaderboardOwners/' + $entryId).val() === auth.uid",
-          ".validate": "!newData.exists() || newData.hasChildren(['name', 'rating', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'updatedAt'])",
+          ".validate": "!newData.exists() || (root.child('online/overallProfiles/' + auth.uid).exists() && newData.hasChildren(['name', 'rating', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'commentsEnabled', 'updatedAt']) && newData.child('rating').val() === root.child('online/overallProfiles/' + auth.uid + '/rating').val() && newData.child('wins').val() === root.child('online/overallProfiles/' + auth.uid + '/wins').val() && newData.child('losses').val() === root.child('online/overallProfiles/' + auth.uid + '/losses').val() && newData.child('draws').val() === root.child('online/overallProfiles/' + auth.uid + '/draws').val() && newData.child('streak').val() === root.child('online/overallProfiles/' + auth.uid + '/streak').val() && newData.child('bestStreak').val() === root.child('online/overallProfiles/' + auth.uid + '/bestStreak').val())",
           "name": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
           },
@@ -91,7 +91,7 @@
             ".indexOn": ["points"],
             "$entryId": {
               ".write": "auth != null && root.child('online/leaderboardOwners/' + $entryId).val() === auth.uid",
-              ".validate": "!newData.exists() || (root.child('online/leaderboard/' + $entryId).exists() && newData.hasChildren(['name', 'points', 'wins', 'losses', 'draws', 'rating', 'commentsEnabled', 'updatedAt']) && newData.child('name').val() === root.child('online/leaderboard/' + $entryId + '/name').val() && newData.child('rating').val() === root.child('online/leaderboard/' + $entryId + '/rating').val() && newData.child('commentsEnabled').val() === root.child('online/leaderboard/' + $entryId + '/commentsEnabled').val() && newData.child('points').val() === (newData.child('wins').val() * 3) + newData.child('draws').val() && ((root.child('online/leaderboard/' + $entryId + '/xHandle').exists() && newData.child('xHandle').val() === root.child('online/leaderboard/' + $entryId + '/xHandle').val()) || (!root.child('online/leaderboard/' + $entryId + '/xHandle').exists() && !newData.child('xHandle').exists())))",
+              ".validate": "!newData.exists() || (root.child('online/leaderboard/' + $entryId).exists() && newData.hasChildren(['name', 'points', 'wins', 'losses', 'draws', 'rating', 'modePoints', 'modeMatches', 'commentsEnabled', 'updatedAt']) && newData.child('name').val() === root.child('online/leaderboard/' + $entryId + '/name').val() && newData.child('rating').val() === root.child('online/leaderboard/' + $entryId + '/rating').val() && newData.child('commentsEnabled').val() === root.child('online/leaderboard/' + $entryId + '/commentsEnabled').val() && newData.child('points').val() === (newData.child('wins').val() * 3) + newData.child('draws').val() && newData.child('points').val() === newData.child('modePoints/solo').val() + newData.child('modePoints/strategy').val() + newData.child('modePoints/team').val() + newData.child('modePoints/royale').val() && newData.child('wins').val() + newData.child('losses').val() + newData.child('draws').val() === newData.child('modeMatches/solo').val() + newData.child('modeMatches/strategy').val() + newData.child('modeMatches/team').val() + newData.child('modeMatches/royale').val() && ((root.child('online/leaderboard/' + $entryId + '/xHandle').exists() && newData.child('xHandle').val() === root.child('online/leaderboard/' + $entryId + '/xHandle').val()) || (!root.child('online/leaderboard/' + $entryId + '/xHandle').exists() && !newData.child('xHandle').exists())))",
               "name": {
                 ".validate": "newData.isString() && newData.val() === root.child('online/leaderboard/' + $entryId + '/name').val()"
               },
@@ -109,6 +109,42 @@
               },
               "rating": {
                 ".validate": "newData.isNumber() && newData.val() === root.child('online/leaderboard/' + $entryId + '/rating').val()"
+              },
+              "modePoints": {
+                ".validate": "newData.hasChildren(['solo', 'strategy', 'team', 'royale']) && newData.child('solo').isNumber() && newData.child('solo').val() >= 0 && newData.child('strategy').isNumber() && newData.child('strategy').val() >= 0 && newData.child('team').isNumber() && newData.child('team').val() >= 0 && newData.child('royale').isNumber() && newData.child('royale').val() >= 0",
+                "solo": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "strategy": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "team": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "royale": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "modeMatches": {
+                ".validate": "newData.hasChildren(['solo', 'strategy', 'team', 'royale']) && newData.child('solo').isNumber() && newData.child('solo').val() >= 0 && newData.child('strategy').isNumber() && newData.child('strategy').val() >= 0 && newData.child('team').isNumber() && newData.child('team').val() >= 0 && newData.child('royale').isNumber() && newData.child('royale').val() >= 0",
+                "solo": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "strategy": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "team": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "royale": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "$other": {
+                  ".validate": false
+                }
               },
               "commentsEnabled": {
                 ".validate": "newData.isBoolean() && newData.val() === root.child('online/leaderboard/' + $entryId + '/commentsEnabled').val()"
@@ -163,12 +199,18 @@
         ".read": "auth != null",
         "$uid": {
           ".write": "auth != null && auth.uid === $uid",
-          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'streak', 'joinedAt', 'lastSeen', 'state']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('lastSeen').isNumber() && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'offering'))",
+          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'streak', 'joinedAt', 'lastSeen', 'state', 'sampleCount', 'startingHp']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('lastSeen').isNumber() && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'offering') && newData.child('startingHp').val() === 30 - newData.child('sampleCount').val() * 5)",
           "rating": {
             ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
           },
           "pursuitLine": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+          },
+          "sampleCount": {
+            ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2 || newData.val() === 3 || newData.val() === 4 || newData.val() === 5)"
+          },
+          "startingHp": {
+            ".validate": "newData.isNumber() && (newData.val() === 30 || newData.val() === 25 || newData.val() === 20 || newData.val() === 15 || newData.val() === 10 || newData.val() === 5)"
           }
         }
       },
@@ -198,6 +240,64 @@
           },
           "pursuitLine": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+          }
+        }
+      },
+      "overallProfiles": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['name', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'rating', 'modes', 'updatedAt']) && newData.child('wins').val() === newData.child('modes/solo/wins').val() + newData.child('modes/strategy/wins').val() + newData.child('modes/team/wins').val() + newData.child('modes/royale/wins').val() && newData.child('losses').val() === newData.child('modes/solo/losses').val() + newData.child('modes/strategy/losses').val() + newData.child('modes/team/losses').val() + newData.child('modes/royale/losses').val() && newData.child('draws').val() === newData.child('modes/solo/draws').val() + newData.child('modes/strategy/draws').val() + newData.child('modes/team/draws').val() + newData.child('modes/royale/draws').val()",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+          },
+          "wins": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "losses": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "draws": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "streak": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "bestStreak": {
+            ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('streak').val()"
+          },
+          "rating": {
+            ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+          },
+          "modes": {
+            ".validate": "newData.hasChildren(['solo', 'strategy', 'team', 'royale'])",
+            "$mode": {
+              ".validate": "($mode === 'solo' || $mode === 'strategy' || $mode === 'team' || $mode === 'royale') && newData.hasChildren(['wins', 'losses', 'draws', 'matches', 'points']) && newData.child('wins').isNumber() && newData.child('wins').val() >= 0 && newData.child('losses').isNumber() && newData.child('losses').val() >= 0 && newData.child('draws').isNumber() && newData.child('draws').val() >= 0 && newData.child('matches').isNumber() && newData.child('matches').val() === newData.child('wins').val() + newData.child('losses').val() + newData.child('draws').val() && newData.child('points').isNumber() && newData.child('points').val() === (newData.child('wins').val() * 3) + newData.child('draws').val()",
+              "wins": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "losses": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "draws": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "matches": {
+                ".validate": "newData.isNumber() && newData.val() === newData.parent().child('wins').val() + newData.parent().child('losses').val() + newData.parent().child('draws').val()"
+              },
+              "points": {
+                ".validate": "newData.isNumber() && newData.val() === (newData.parent().child('wins').val() * 3) + newData.parent().child('draws').val()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
           }
         }
       },
@@ -256,6 +356,269 @@
           },
           "$other": {
             ".validate": false
+          }
+        }
+      },
+      "strategyQueue": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'joinedAt', 'lastSeen', 'state']) && newData.child('uid').val() === $uid && newData.child('joinedAt').isNumber() && newData.child('lastSeen').isNumber() && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'offering'))",
+          "uid": {
+            ".validate": "newData.isString() && newData.val() === $uid"
+          },
+          "joinedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "lastSeen": {
+            ".validate": "newData.isNumber()"
+          },
+          "state": {
+            ".validate": "newData.val() === 'waiting' || newData.val() === 'offering'"
+          },
+          "roomId": {
+            ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 40)"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "strategyActive": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 40)"
+        }
+      },
+      "strategyOffers": {
+        "$targetUid": {
+          ".read": "auth != null && auth.uid === $targetUid",
+          "$roomId": {
+            ".write": "auth != null && ((auth.uid === $targetUid && !newData.exists()) || (data.child('fromUid').val() === auth.uid && !newData.exists()) || (!data.exists() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid))",
+            ".validate": "!newData.exists() || (newData.hasChildren(['roomId', 'fromUid', 'toUid', 'createdAt']) && newData.child('roomId').val() === $roomId && newData.child('toUid').val() === $targetUid && newData.child('fromUid').isString() && newData.child('fromUid').val() !== $targetUid && newData.child('createdAt').isNumber())",
+            "roomId": {
+              ".validate": "newData.isString() && newData.val() === $roomId"
+            },
+            "fromUid": {
+              ".validate": "newData.isString() && newData.val() !== $targetUid"
+            },
+            "toUid": {
+              ".validate": "newData.isString() && newData.val() === $targetUid"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      },
+      "strategyProfiles": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['name', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'rating', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('wins').isNumber() && newData.child('wins').val() >= 0 && newData.child('losses').isNumber() && newData.child('losses').val() >= 0 && newData.child('draws').isNumber() && newData.child('draws').val() >= 0 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('bestStreak').isNumber() && newData.child('bestStreak').val() >= newData.child('streak').val() && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('updatedAt').isNumber()",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+          },
+          "wins": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "losses": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "draws": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "streak": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "bestStreak": {
+            ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('streak').val()"
+          },
+          "rating": {
+            ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "strategyRooms": {
+        "$roomId": {
+          ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
+          "hostUid": {
+            ".write": "auth != null && !data.exists() && newData.val() === auth.uid",
+            ".validate": "newData.isString()"
+          },
+          "guestUid": {
+            ".write": "auth != null && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid",
+            ".validate": "newData.isString() && newData.val() !== root.child('online/strategyRooms/' + $roomId + '/hostUid').val()"
+          },
+          "createdAt": {
+            ".write": "auth != null && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid",
+            ".validate": "newData.isNumber()"
+          },
+          "members": {
+            "$uid": {
+              ".write": "auth != null && !data.exists() && newData.val() === true && root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "players": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && (root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true)",
+              ".validate": "newData.hasChildren(['uid', 'name', 'clues', 'bluffIndex', 'pursuitLine', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('clues').hasChildren(['0', '1', '2']) && newData.child('bluffIndex').isNumber() && (newData.child('bluffIndex').val() === 0 || newData.child('bluffIndex').val() === 1 || newData.child('bluffIndex').val() === 2) && newData.child('pursuitLine').isString() && newData.child('pursuitLine').val().matches(/^[^\\r\\n]{1,40}$/) && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
+              "uid": {
+                ".validate": "newData.isString() && newData.val() === $uid"
+              },
+              "name": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+              },
+              "clues": {
+                "0": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+                },
+                "1": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+                },
+                "2": {
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "bluffIndex": {
+                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"
+              },
+              "pursuitLine": {
+                ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+              },
+              "rating": {
+                ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+              },
+              "streak": {
+                ".validate": "newData.isNumber() && newData.val() >= 0"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "status": {
+            ".write": "auth != null && ((root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid && (!data.exists() || data.val() === 'offered')) || (root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && data.val() === 'offered'))",
+            ".validate": "newData.val() === 'offered' || newData.val() === 'active' || newData.val() === 'expired'"
+          },
+          "decisions": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".validate": "newData.val() === 'accept' || newData.val() === 'withdraw'"
+            }
+          },
+          "deckReady": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".validate": "newData.hasChildren(['ready', 'mainCount', 'reserveCount', 'lockedAt']) && newData.child('ready').val() === true && newData.child('mainCount').val() === 5 && newData.child('reserveCount').isNumber() && newData.child('reserveCount').val() >= 0 && newData.child('reserveCount').val() <= 5 && newData.child('lockedAt').isNumber()",
+              "ready": {
+                ".validate": "newData.val() === true"
+              },
+              "mainCount": {
+                ".validate": "newData.val() === 5"
+              },
+              "reserveCount": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
+              },
+              "lockedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "battleReady": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "presence": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".validate": "newData.hasChildren(['online', 'updatedAt']) && newData.child('online').isBoolean() && newData.child('updatedAt').isNumber()"
+            }
+          },
+          "destroyed": {
+            ".write": "auth != null && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('by').val() === auth.uid",
+            ".validate": "newData.hasChildren(['by', 'at']) && newData.child('by').isString() && newData.child('at').isNumber()"
+          },
+          "rounds": {
+            "$round": {
+              "basePicks": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.hasChildren(['ready', 'lockedAt']) && newData.child('ready').val() === true && newData.child('lockedAt').isNumber()"
+                }
+              },
+              "baseImagesReceived": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "ratings": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.hasChildren(['score', 'reaction', 'lockedAt']) && newData.child('score').isNumber() && newData.child('score').val() >= 1 && newData.child('score').val() <= 10 && (newData.child('reaction').val() === 'normal' || (newData.child('reaction').val() === 'request' && newData.child('score').val() <= 3) || (newData.child('reaction').val() === 'pursuit' && newData.child('score').val() >= 9)) && newData.child('lockedAt').isNumber()"
+                }
+              },
+              "actionPicks": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.hasChildren(['ready', 'type', 'skipped', 'lockedAt']) && newData.child('ready').val() === true && (newData.child('type').val() === 'normal' || newData.child('type').val() === 'request' || newData.child('type').val() === 'pursuit') && newData.child('skipped').isBoolean() && ((newData.child('type').val() === 'normal' && newData.child('skipped').val() === true) || newData.child('type').val() === 'request' || newData.child('type').val() === 'pursuit') && newData.child('lockedAt').isNumber()"
+                }
+              },
+              "actionImagesReceived": {
+                "$ownerUid": {
+                  "$recipientUid": {
+                    ".write": "auth != null && auth.uid === $recipientUid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/strategyRooms/' + $roomId + '/members/' + $ownerUid).val() === true",
+                    ".validate": "newData.val() === true"
+                  }
+                }
+              },
+              "actionRatings": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.hasChildren(['score', 'lockedAt']) && newData.child('score').isNumber() && newData.child('score').val() >= 1 && newData.child('score').val() <= 10 && newData.child('lockedAt').isNumber()"
+                }
+              },
+              "continue": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".validate": "newData.val() === true"
+                }
+              }
+            }
+          },
+          "signals": {
+            "$targetUid": {
+              "$messageId": {
+                ".write": "auth != null && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && ((auth.uid === $targetUid && !newData.exists()) || (!data.exists() && newData.child('fromUid').val() === auth.uid && auth.uid !== $targetUid && root.child('online/strategyRooms/' + $roomId + '/members/' + $targetUid).val() === true))",
+                ".validate": "!newData.exists() || (newData.hasChildren(['fromUid', 'type', 'payload', 'createdAt']) && newData.child('fromUid').isString() && (newData.child('type').val() === 'offer' || newData.child('type').val() === 'answer' || newData.child('type').val() === 'candidate') && newData.child('payload').isString() && newData.child('payload').val().length <= 30000 && newData.child('createdAt').isNumber())"
+              }
+            }
+          },
+          "finished": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".validate": "newData.val() === true"
+            }
           }
         }
       },
@@ -607,12 +970,18 @@
           "players": {
             "$uid": {
               ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['uid', 'name', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
+              ".validate": "newData.hasChildren(['uid', 'name', 'streak', 'sampleCount', 'startingHp']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('startingHp').val() === 30 - newData.child('sampleCount').val() * 5",
               "rating": {
                 ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
               },
               "pursuitLine": {
                 ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+              },
+              "sampleCount": {
+                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2 || newData.val() === 3 || newData.val() === 4 || newData.val() === 5)"
+              },
+              "startingHp": {
+                ".validate": "newData.isNumber() && (newData.val() === 30 || newData.val() === 25 || newData.val() === 20 || newData.val() === 15 || newData.val() === 10 || newData.val() === 5)"
               }
             }
           },

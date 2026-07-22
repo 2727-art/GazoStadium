@@ -1369,7 +1369,16 @@ async function commitTeamStats() {
     record.rating = calculateRating(record.rating, opponentRating, actualScore);
     return record;
   });
-  if (result.committed) state.teamProfile = result.snapshot.val();
+  if (result.committed) {
+    state.teamProfile = result.snapshot.val();
+    const overallUpdate = window.HariaiOnline?.recordOverallResult?.({
+      mode: "team",
+      outcome: draw ? "draw" : won ? "win" : "loss",
+      name: state.name,
+      opponentRating,
+    });
+    if (overallUpdate) await overallUpdate.catch(() => showToast("総合ランキングを更新できませんでした。"));
+  }
 }
 
 async function recordDailyProgress(changes) {

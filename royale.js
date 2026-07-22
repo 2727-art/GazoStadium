@@ -1784,7 +1784,16 @@ async function commitPlacementStats(localPlace, won) {
     }
     return record;
   });
-  if (result.committed) state.royaleProfile = result.snapshot.val();
+  if (result.committed) {
+    state.royaleProfile = result.snapshot.val();
+    const overallUpdate = window.HariaiOnline?.recordOverallResult?.({
+      mode: "royale",
+      outcome: localPlace === 1 ? "win" : localPlace === 2 ? "draw" : "loss",
+      name: state.name,
+      opponentRating: 1000,
+    });
+    if (overallUpdate) await overallUpdate.catch(() => showToast("総合ランキングを更新できませんでした。"));
+  }
 }
 
 async function recordDailyProgress(changes) {

@@ -25,6 +25,8 @@ import { firebaseConfig } from "./firebase-config.js";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
+const SAMPLE_HP_PENALTY = 5;
+const MIN_STARTING_HP = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const PURSUIT_LINE_KEY = "hariai-stadium-online-pursuit-line-v1";
 const MAX_PURSUIT_LINE_LENGTH = 40;
@@ -43,6 +45,7 @@ const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const RANKING_COMMENT_MAX_LENGTH = 80;
 const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
 const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
+const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
 const MAX_POINTS = 999_999;
 const MAX_EQUIPPED_REACTIONS = 8;
@@ -98,6 +101,9 @@ const auth = getAuth(firebaseApp);
 const database = getDatabase(firebaseApp);
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
+const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
+const sampleHandicapMessage = document.querySelector("#sampleHandicapMessage");
+const confirmSampleMatch = document.querySelector("#confirmSampleMatch");
 const fxLayer = document.querySelector("#fxLayer");
 
 let active = false;
@@ -124,6 +130,7 @@ function createOnlineState() {
     uid: "",
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
+    overallProfile: null,
     authReady: false,
     ...pursuitSettings,
     deck: [],
@@ -273,6 +280,69 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
 
 function getLeaderboardPeriodInfo(period = leaderboardPeriod) {
   return leaderboardPeriodInfoFor(period);
+}
+
+function emptyOverallModeRecord() {
+  return { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 };
+}
+
+function normalizeOverallModeRecord(value) {
+  const wins = Math.max(0, Math.floor(Number(value?.wins || 0)));
+  const losses = Math.max(0, Math.floor(Number(value?.losses || 0)));
+  const draws = Math.max(0, Math.floor(Number(value?.draws || 0)));
+  return { wins, losses, draws, matches: wins + losses + draws, points: (wins * 3) + draws };
+}
+
+function overallProfileSeed(name, soloProfile = null) {
+  const solo = normalizeOverallModeRecord(soloProfile);
+  const modes = Object.fromEntries(LEADERBOARD_MODES.map((mode) => [mode, mode === "solo" ? solo : emptyOverallModeRecord()]));
+  return {
+    name: String(name || soloProfile?.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
+    wins: solo.wins,
+    losses: solo.losses,
+    draws: solo.draws,
+    streak: Math.max(0, Math.floor(Number(soloProfile?.streak || 0))),
+    bestStreak: Math.max(0, Math.floor(Number(soloProfile?.bestStreak || 0))),
+    rating: Math.min(3000, Math.max(100, Math.round(Number(soloProfile?.rating || INITIAL_RATING)))),
+    modes,
+    updatedAt: serverNow(),
+  };
+}
+
+function normalizeOverallProfile(value, fallbackName = "PLAYER", soloSeed = null) {
+  const source = value && typeof value === "object" ? value : overallProfileSeed(fallbackName, soloSeed);
+  const hasModes = source.modes && typeof source.modes === "object";
+  const legacySolo = hasModes ? null : normalizeOverallModeRecord(source);
+  const modes = Object.fromEntries(LEADERBOARD_MODES.map((mode) => [
+    mode,
+    normalizeOverallModeRecord(hasModes ? source.modes?.[mode] : mode === "solo" ? legacySolo : null),
+  ]));
+  const wins = LEADERBOARD_MODES.reduce((sum, mode) => sum + modes[mode].wins, 0);
+  const losses = LEADERBOARD_MODES.reduce((sum, mode) => sum + modes[mode].losses, 0);
+  const draws = LEADERBOARD_MODES.reduce((sum, mode) => sum + modes[mode].draws, 0);
+  const streak = Math.max(0, Math.floor(Number(source.streak || 0)));
+  return {
+    name: String(fallbackName || source.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
+    wins,
+    losses,
+    draws,
+    streak,
+    bestStreak: Math.max(streak, Math.floor(Number(source.bestStreak || 0))),
+    rating: Math.min(3000, Math.max(100, Math.round(Number(source.rating || INITIAL_RATING)))),
+    modes,
+    updatedAt: Number(source.updatedAt || serverNow()),
+  };
+}
+
+function leaderboardPublicSettings() {
+  const enabled = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
+  const xHandle = normalizeXHandle(localStorage.getItem(X_HANDLE_KEY) || "");
+  return {
+    enabled,
+    xHandle,
+    xPublic: enabled && X_HANDLE_PATTERN.test(xHandle) && localStorage.getItem(X_PUBLIC_KEY) === "1",
+    commentsEnabled: localStorage.getItem(RANKING_COMMENTS_ENABLED_KEY) !== "0",
+  };
 }
 
 function createEmptyEconomy(dateKey = jstDateKey()) {
@@ -617,6 +687,12 @@ async function ensureAuthenticated() {
     if (!localStorage.getItem(PROFILE_NAME_KEY) && state.profile.name) state.name = state.profile.name;
     if (!localStorage.getItem(PURSUIT_LINE_KEY) && state.profile.pursuitLine) applyPursuitLineSetting(state.profile.pursuitLine);
   }
+  try {
+    state.overallProfile = await ensureOverallProfileSeeded(state.uid, state.name, state.profile);
+  } catch (error) {
+    console.error(error);
+    showToast("総合ランキング情報を読み込めませんでした。対戦機能は利用できます。");
+  }
   state.authReady = true;
   try {
     await initializeEconomy();
@@ -675,12 +751,16 @@ function render() {
 }
 
 function renderSetup() {
+  const sampleCount = getDeckSampleCount();
+  const realImageCount = state.deck.length - sampleCount;
+  const startingHp = getStartingHp(sampleCount);
   const slots = Array.from({ length: MAX_ROUNDS }, (_, index) => {
     const item = state.deck[index];
     if (!item) return `<div class="deck-slot empty" aria-label="空きスロット ${index + 1}">${String(index + 1).padStart(2, "0")}</div>`;
-    return `<div class="deck-slot">
+    return `<div class="deck-slot ${item.isSample ? "sample-card" : ""}">
       <img src="${item.url}" alt="選択画像 ${index + 1}" draggable="false" />
-      <div class="deck-label"><span>ENTRY ${String(index + 1).padStart(2, "0")}</span>
+      ${item.isSample ? '<span class="sample-card-badge">SAMPLE / HP−5</span>' : ""}
+      <div class="deck-label"><span>${item.isSample ? "SAMPLE" : "ENTRY"} ${String(index + 1).padStart(2, "0")}</span>
         <button class="remove-card" data-online-remove="${item.id}" aria-label="画像${index + 1}を削除">×</button>
       </div>
     </div>`;
@@ -703,7 +783,7 @@ function renderSetup() {
     </div>
     <label class="ranking-optin">
       <input type="checkbox" id="rankingPublicToggle" ${state.leaderboardPublic ? "checked" : ""} ${state.authReady ? "" : "disabled"} />
-      <span><strong>ランキングに参加する</strong><small>プレイヤーネーム・累積RATE・デイリー／週間／月間戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
+      <span><strong>オンライン総合ランキングに参加する</strong><small>4モード共通のプレイヤーネーム・総合RATE・デイリー／週間／月間戦績を公開します。匿名UIDとルーム履歴は公開しません。</small></span>
     </label>
     <div class="ranking-x-settings ${state.leaderboardPublic ? "" : "is-disabled"}">
       <div class="ranking-x-heading">
@@ -726,6 +806,7 @@ function renderSetup() {
           <li><b>2</b><span>画像はWebRTCで対戦相手へ直接送信し、Firebaseには保存しません。</span></li>
           <li><b>3</b><span>対戦終了・ルーム破棄・ページ終了時に画像参照を解放します。</span></li>
         </ol>
+        <div class="privacy-note sample-handicap-note">サンプル画像1枚につき、通常型1on1の最大HPが5減少します。</div>
         <div class="privacy-note">スクリーンショットなど、相手側での保存を完全に防ぐことはできません。</div>
       </aside>
       <div class="setup-panel">
@@ -753,8 +834,12 @@ function renderSetup() {
             <label class="button button-cyan button-small file-button">画像を追加
               <input id="onlineImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= MAX_ROUNDS ? "disabled" : ""} />
             </label>
-            <button class="button button-ghost button-small" id="onlineFillSample">サンプル画像で埋める</button>
+            <button class="button button-ghost button-small" id="onlineFillSample">不足分をサンプルで埋める（HP減少）</button>
           </div>
+        </div>
+        <div class="deck-handicap-summary ${sampleCount ? "has-handicap" : ""}" aria-live="polite">
+          <span>実画像 <strong>${realImageCount}</strong>枚</span><span>サンプル <strong>${sampleCount}</strong>枚</span>
+          <span>開始HP <strong>${startingHp}</strong> / ${startingHp}</span>${sampleCount ? `<small>HP−${sampleCount * SAMPLE_HP_PENALTY}</small>` : ""}
         </div>
         <div class="deck-grid">${slots}</div>
         <div class="setup-actions">
@@ -843,24 +928,32 @@ function renderPointShop() {
 }
 
 function renderMatching() {
+  const sampleCount = getDeckSampleCount();
+  const startingHp = getStartingHp(sampleCount);
   return renderStatusCard({
     icon: "◎",
     eyebrow: "RANDOM MATCHING",
     title: "対戦相手を探しています",
     body: "待機中のプレイヤーからランダムにマッチングします。この画面を開いたままお待ちください。",
-    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span>`,
+    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span>${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}`,
     actions: `<button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>`,
   });
 }
 
 function renderConnecting() {
   const opponent = getOpponent();
+  const ownPlayer = state.players[state.playerIndex];
+  const handicapDetails = [ownPlayer, opponent].map((player, index) => {
+    const sampleCount = normalizeSampleCount(player?.sampleCount);
+    const startingHp = getStartingHp(sampleCount);
+    return `<span class="connection-pill ${sampleCount ? "warning" : ""}">${index === 0 ? "あなた" : escapeHtml(player?.name || "対戦相手")}: HP ${startingHp}${sampleCount ? ` / SAMPLE ${sampleCount}` : ""}</span>`;
+  }).join("");
   return renderStatusCard({
     icon: "VS",
     eyebrow: "MATCH FOUND",
     title: `${escapeHtml(opponent?.name || "対戦相手")}とマッチング`,
     body: "画像を一時転送するためのP2P接続を準備しています。Firebaseには画像をアップロードしません。",
-    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>`,
+    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${handicapDetails}`,
     actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
   });
 }
@@ -875,12 +968,16 @@ function renderStatusCard({ icon, eyebrow, title, body, details = "", actions = 
 }
 
 function renderOnlineHud() {
-  const playerHtml = (player, index) => `<div class="hud-player ${index === state.playerIndex ? "local-player" : ""}">
+  const playerHtml = (player, index) => {
+    const maxHp = Number(player.maxHp || player.startingHp || MAX_HP);
+    const sampleCount = normalizeSampleCount(player.sampleCount);
+    return `<div class="hud-player ${index === state.playerIndex ? "local-player" : ""}">
     <div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${index === state.playerIndex ? "（あなた）" : ""}</span>
-      ${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</div>
-    <div class="hp-bar" aria-label="${escapeHtml(player.name)} HP ${player.hp}/${MAX_HP}"><div class="hp-fill" style="--hp:${Math.max(0, (player.hp / MAX_HP) * 100)}%"></div></div>
-    <span class="hp-value">HP ${Math.max(0, player.hp)} / ${MAX_HP}</span>
+      ${sampleCount ? `<span class="sample-hud-badge">SAMPLE ${sampleCount}</span>` : ""}${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</div>
+    <div class="hp-bar" aria-label="${escapeHtml(player.name)} HP ${player.hp}/${maxHp}"><div class="hp-fill" style="--hp:${Math.max(0, (player.hp / maxHp) * 100)}%"></div></div>
+    <span class="hp-value">HP ${Math.max(0, player.hp)} / ${maxHp}${sampleCount ? ` ・ サンプル${sampleCount}枚` : ""}</span>
   </div>`;
+  };
   return `<div class="round-topbar">${playerHtml(state.players[0], 0)}
     <div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>
     ${playerHtml(state.players[1], 1)}</div>
@@ -894,9 +991,9 @@ function renderRoundSelect() {
   const remainingSeconds = Math.max(0, Math.ceil(state.selectionRemainingMs / 1000));
   const progress = Math.max(0, Math.min(100, (state.selectionRemainingMs / SELECTION_TIME_LIMIT_MS) * 100));
   const warning = timerStarted && remainingSeconds <= SELECTION_WARNING_SECONDS;
-  const cards = state.deck.map((item, index) => `<button class="select-card ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}"
+  const cards = state.deck.map((item, index) => `<button class="select-card ${item.isSample ? "sample-card" : ""} ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}"
     data-online-card="${item.id}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
-    <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span>
+    <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : item.isSample ? "SAMPLE / HP−5" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span>
   </button>`).join("");
   return `<section class="screen">${renderOnlineHud()}
     <div class="section-head"><div><span class="eyebrow">SECRET PICK</span><h1>あなたの画像選択</h1>
@@ -1111,7 +1208,36 @@ function bindSetupEvents() {
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
-  document.querySelector("#findOpponent")?.addEventListener("click", beginMatchmaking);
+  document.querySelector("#findOpponent")?.addEventListener("click", requestMatchmaking);
+}
+
+function normalizeSampleCount(value) {
+  return Math.max(0, Math.min(MAX_ROUNDS, Math.floor(Number(value) || 0)));
+}
+
+function getDeckSampleCount() {
+  return state.deck.filter((item) => item.isSample === true).length;
+}
+
+function getStartingHp(sampleCount) {
+  return Math.max(MIN_STARTING_HP, MAX_HP - normalizeSampleCount(sampleCount) * SAMPLE_HP_PENALTY);
+}
+
+function requestMatchmaking() {
+  const sampleCount = getDeckSampleCount();
+  if (!sampleCount) {
+    beginMatchmaking();
+    return;
+  }
+  const startingHp = getStartingHp(sampleCount);
+  if (!sampleHandicapDialog || !sampleHandicapMessage || !confirmSampleMatch) {
+    if (window.confirm(`サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦を探しますか？`)) beginMatchmaking();
+    return;
+  }
+  sampleHandicapMessage.textContent = `サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦相手にもサンプル枚数と開始HPが表示されます。`;
+  confirmSampleMatch.textContent = `HP ${startingHp}で対戦を探す`;
+  sampleHandicapDialog.returnValue = "";
+  sampleHandicapDialog.showModal();
 }
 
 function bindOnlinePursuitFields() {
@@ -1433,92 +1559,181 @@ async function openPostMatchMissions() {
   render();
 }
 
-async function ensureLeaderboardIdentity() {
-  if (state.leaderboardId) return state.leaderboardId;
-  const userEntryRef = ref(database, `online/leaderboardEntriesByUser/${state.uid}`);
+async function ensureOverallProfileSeeded(uid, name, soloProfile = null) {
+  if (!uid) throw new Error("総合戦績のユーザーを確認できませんでした。");
+  const profileRef = ref(database, `online/overallProfiles/${uid}`);
+  const existing = await get(profileRef);
+  if (existing.exists()) {
+    const profile = normalizeOverallProfile(existing.val(), name || existing.val()?.name || "PLAYER");
+    if (state.uid === uid) state.overallProfile = profile;
+    return profile;
+  }
+  let seedProfile = soloProfile;
+  if (!seedProfile) {
+    const soloSnapshot = await get(ref(database, `online/profiles/${uid}`));
+    seedProfile = soloSnapshot.exists() ? soloSnapshot.val() : null;
+  }
+  const seed = overallProfileSeed(name, seedProfile);
+  const result = await runTransaction(profileRef, (current) => current || seed);
+  if (!result.committed) throw new Error("総合戦績を初期化できませんでした。");
+  const profile = normalizeOverallProfile(result.snapshot.val(), name || seed.name);
+  if (state.uid === uid) state.overallProfile = profile;
+  return profile;
+}
+
+async function ensureLeaderboardIdentityForUser(uid) {
+  if (state.uid === uid && state.leaderboardId) return state.leaderboardId;
+  const userEntryRef = ref(database, `online/leaderboardEntriesByUser/${uid}`);
   const existing = await get(userEntryRef);
   if (existing.exists()) {
-    state.leaderboardId = String(existing.val());
-    return state.leaderboardId;
+    const entryId = String(existing.val());
+    if (state.uid === uid) state.leaderboardId = entryId;
+    return entryId;
   }
-  const entryId = push(ref(database, "online/leaderboard")).key;
-  if (!entryId) throw new Error("ランキングIDを作成できませんでした。");
-  await set(ref(database, `online/leaderboardOwners/${entryId}`), state.uid);
-  await set(userEntryRef, entryId);
-  state.leaderboardId = entryId;
+  const candidateId = push(ref(database, "online/leaderboard")).key;
+  if (!candidateId) throw new Error("ランキングIDを作成できませんでした。");
+  await set(ref(database, `online/leaderboardOwners/${candidateId}`), uid);
+  const result = await runTransaction(userEntryRef, (current) => current || candidateId);
+  if (!result.committed || !result.snapshot.exists()) throw new Error("ランキングIDを保存できませんでした。");
+  const entryId = String(result.snapshot.val());
+  if (state.uid === uid) state.leaderboardId = entryId;
   return entryId;
 }
 
-function leaderboardRecord() {
+async function ensureLeaderboardIdentity() {
+  return ensureLeaderboardIdentityForUser(state.uid);
+}
+
+function leaderboardRecord(profile = state.overallProfile, name = state.name, settings = leaderboardPublicSettings()) {
+  const normalized = normalizeOverallProfile(profile, name, state.profile);
   const record = {
-    name: state.name.trim().slice(0, 16) || "PLAYER",
-    rating: Number(state.profile.rating || INITIAL_RATING),
-    wins: Number(state.profile.wins || 0),
-    losses: Number(state.profile.losses || 0),
-    draws: Number(state.profile.draws || 0),
-    streak: Number(state.profile.streak || 0),
-    bestStreak: Number(state.profile.bestStreak || 0),
-    commentsEnabled: Boolean(state.rankingCommentsEnabled),
+    name: String(name || normalized.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
+    rating: normalized.rating,
+    wins: normalized.wins,
+    losses: normalized.losses,
+    draws: normalized.draws,
+    streak: normalized.streak,
+    bestStreak: normalized.bestStreak,
+    commentsEnabled: Boolean(settings.commentsEnabled),
     updatedAt: serverNow(),
   };
-  if (state.xPublic && X_HANDLE_PATTERN.test(state.xHandle)) record.xHandle = state.xHandle;
+  if (settings.xPublic && X_HANDLE_PATTERN.test(settings.xHandle)) record.xHandle = settings.xHandle;
   return record;
 }
 
-function periodLeaderboardRecord(current, outcome = null) {
+function periodLeaderboardRecord(current, outcome = null, mode = "solo", profile = state.overallProfile, name = state.name, settings = leaderboardPublicSettings()) {
+  const existingMatches = Math.max(0, Math.floor(Number(current?.wins || 0)) + Math.floor(Number(current?.losses || 0)) + Math.floor(Number(current?.draws || 0)));
+  const hasModePoints = current?.modePoints && typeof current.modePoints === "object";
+  const hasModeMatches = current?.modeMatches && typeof current.modeMatches === "object";
+  const modePoints = Object.fromEntries(LEADERBOARD_MODES.map((candidate) => [candidate, Math.max(0, Math.floor(Number(
+    hasModePoints ? current.modePoints?.[candidate] : candidate === "solo" ? current?.points : 0,
+  ) || 0))]));
+  const modeMatches = Object.fromEntries(LEADERBOARD_MODES.map((candidate) => [candidate, Math.max(0, Math.floor(Number(
+    hasModeMatches ? current.modeMatches?.[candidate] : candidate === "solo" ? existingMatches : 0,
+  ) || 0))]));
+  const normalizedProfile = normalizeOverallProfile(profile, name, state.profile);
   const record = {
-    name: state.name.trim().slice(0, 16) || "PLAYER",
+    name: String(name || normalizedProfile.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
     points: 0,
     wins: Math.max(0, Math.floor(Number(current?.wins || 0))),
     losses: Math.max(0, Math.floor(Number(current?.losses || 0))),
     draws: Math.max(0, Math.floor(Number(current?.draws || 0))),
-    rating: Number(state.profile.rating || INITIAL_RATING),
-    commentsEnabled: Boolean(state.rankingCommentsEnabled),
+    rating: normalizedProfile.rating,
+    modePoints,
+    modeMatches,
+    commentsEnabled: Boolean(settings.commentsEnabled),
     updatedAt: serverNow(),
   };
-  if (outcome === "win") record.wins += 1;
-  else if (outcome === "loss") record.losses += 1;
-  else if (outcome === "draw") record.draws += 1;
+  if (["win", "loss", "draw"].includes(outcome) && LEADERBOARD_MODES.includes(mode)) {
+    if (outcome === "win") record.wins += 1;
+    else if (outcome === "loss") record.losses += 1;
+    else record.draws += 1;
+    record.modePoints[mode] += outcome === "win" ? 3 : outcome === "draw" ? 1 : 0;
+    record.modeMatches[mode] += 1;
+  }
   record.points = (record.wins * 3) + record.draws;
-  if (state.xPublic && X_HANDLE_PATTERN.test(state.xHandle)) record.xHandle = state.xHandle;
+  if (settings.xPublic && X_HANDLE_PATTERN.test(settings.xHandle)) record.xHandle = settings.xHandle;
   return record;
 }
 
-async function rememberLeaderboardPeriod(entryId, period, key) {
-  await set(ref(database, `online/leaderboardPeriodEntriesByUser/${state.uid}/${period}/${key}`), entryId);
+async function rememberLeaderboardPeriod(entryId, period, key, uid = state.uid) {
+  await set(ref(database, `online/leaderboardPeriodEntriesByUser/${uid}/${period}/${key}`), entryId);
 }
 
-async function syncCurrentPeriodLeaderboardMetadata(entryId) {
+async function syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name, settings) {
   const timestamp = serverNow();
   await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
     const key = leaderboardPeriodKeyFor(period, timestamp);
     const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => {
       if (!current) return;
-      return periodLeaderboardRecord(current);
+      return periodLeaderboardRecord(current, null, "solo", profile, name, settings);
     });
-    if (result.committed) await rememberLeaderboardPeriod(entryId, period, key);
+    if (result.committed) await rememberLeaderboardPeriod(entryId, period, key, uid);
   }));
 }
 
-async function recordLeaderboardPeriodResult(outcome) {
-  if (!LEADERBOARD_PERIODS.length || !["win", "loss", "draw"].includes(outcome)) return;
-  const entryId = await ensureLeaderboardIdentity();
+async function recordLeaderboardPeriodResult(outcome, mode, uid, profile, name, settings) {
+  if (!LEADERBOARD_PERIODS.length || !["win", "loss", "draw"].includes(outcome) || !LEADERBOARD_MODES.includes(mode)) return;
+  const entryId = await ensureLeaderboardIdentityForUser(uid);
   const timestamp = serverNow();
   await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
     const key = leaderboardPeriodKeyFor(period, timestamp);
-    await rememberLeaderboardPeriod(entryId, period, key);
+    await rememberLeaderboardPeriod(entryId, period, key, uid);
     const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => (
-      periodLeaderboardRecord(current, outcome)
+      periodLeaderboardRecord(current, outcome, mode, profile, name, settings)
     ));
     if (!result.committed) throw new Error("期間ランキングを更新できませんでした。");
   }));
 }
 
+async function publishOverallLeaderboard(uid, profile, name, settings, event = null) {
+  if (!settings.enabled) return;
+  const entryId = await ensureLeaderboardIdentityForUser(uid);
+  await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord(profile, name, settings));
+  if (event) await recordLeaderboardPeriodResult(event.outcome, event.mode, uid, profile, name, settings);
+  else await syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name, settings);
+}
+
 async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
   if (!state.authReady || !state.uid || !state.leaderboardPublic) return;
+  const profile = await ensureOverallProfileSeeded(state.uid, state.name, state.profile);
+  const settings = {
+    enabled: true,
+    xHandle: state.xHandle,
+    xPublic: state.xPublic,
+    commentsEnabled: state.rankingCommentsEnabled,
+  };
   const entryId = await ensureLeaderboardIdentity();
-  await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord());
-  if (syncPeriodMetadata) await syncCurrentPeriodLeaderboardMetadata(entryId);
+  await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord(profile, state.name, settings));
+  if (syncPeriodMetadata) await syncCurrentPeriodLeaderboardMetadata(entryId, state.uid, profile, state.name, settings);
+}
+
+async function recordOverallResult({ mode, outcome, name, opponentRating = INITIAL_RATING, soloSeed = null } = {}) {
+  if (!LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
+  await setPersistence(auth, browserLocalPersistence);
+  const user = auth.currentUser || (await signInAnonymously(auth)).user;
+  const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
+  await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (state.uid === user.uid ? state.profile : null));
+  const result = await runTransaction(ref(database, `online/overallProfiles/${user.uid}`), (current) => {
+    const record = normalizeOverallProfile(current, displayName);
+    const modeRecord = { ...record.modes[mode] };
+    if (outcome === "win") { record.wins += 1; modeRecord.wins += 1; record.streak += 1; record.bestStreak = Math.max(record.bestStreak, record.streak); }
+    else if (outcome === "loss") { record.losses += 1; modeRecord.losses += 1; record.streak = 0; }
+    else { record.draws += 1; modeRecord.draws += 1; }
+    modeRecord.matches = modeRecord.wins + modeRecord.losses + modeRecord.draws;
+    modeRecord.points = (modeRecord.wins * 3) + modeRecord.draws;
+    record.modes[mode] = modeRecord;
+    record.name = displayName;
+    record.rating = calculateRating(record.rating, Math.min(3000, Math.max(100, Number(opponentRating || INITIAL_RATING))), outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0);
+    record.updatedAt = Date.now();
+    return record;
+  });
+  if (!result.committed) throw new Error("総合戦績を更新できませんでした。");
+  const profile = normalizeOverallProfile(result.snapshot.val(), displayName);
+  if (state.uid === user.uid) state.overallProfile = profile;
+  const settings = leaderboardPublicSettings();
+  if (settings.enabled) await publishOverallLeaderboard(user.uid, profile, displayName, settings, { mode, outcome });
+  return profile;
 }
 
 async function removeLeaderboardEntry() {
@@ -1559,6 +1774,8 @@ function removeDeckItem(id) {
 async function beginMatchmaking() {
   state.name = state.name.trim().slice(0, 16);
   if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name) return;
+  const sampleCount = getDeckSampleCount();
+  const startingHp = getStartingHp(sampleCount);
   state.pursuitLine = state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE
     ? normalizePursuitLine(state.customPursuitLine)
     : normalizePursuitLine(state.pursuitLineChoice);
@@ -1586,6 +1803,8 @@ async function beginMatchmaking() {
     pursuitLine: state.pursuitLine,
     streak: Number(state.profile.streak || 0),
     rating: Number(state.profile.rating || INITIAL_RATING),
+    sampleCount,
+    startingHp,
     joinedAt: Date.now(),
     lastSeen: Date.now(),
     state: "waiting",
@@ -1699,8 +1918,8 @@ async function createOffer(candidate) {
       status: "offered",
       [`members/${state.uid}`]: true,
       [`members/${candidate.uid}`]: true,
-      [`players/${state.uid}`]: { uid: state.uid, name: state.name, pursuitLine: state.pursuitLine, streak: Number(state.profile.streak || 0), rating: Number(state.profile.rating || INITIAL_RATING) },
-      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, pursuitLine: normalizePursuitLine(candidate.pursuitLine), streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING) },
+      [`players/${state.uid}`]: { uid: state.uid, name: state.name, pursuitLine: state.pursuitLine, streak: Number(state.profile.streak || 0), rating: Number(state.profile.rating || INITIAL_RATING), sampleCount: getDeckSampleCount(), startingHp: getStartingHp(getDeckSampleCount()) },
+      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, pursuitLine: normalizePursuitLine(candidate.pursuitLine), streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING), sampleCount: normalizeSampleCount(candidate.sampleCount), startingHp: getStartingHp(candidate.sampleCount) },
     });
     await set(ref(database, `online/offers/${candidate.uid}/${roomId}`), {
       roomId,
@@ -1792,14 +2011,21 @@ async function enterRoom(roomId) {
   state.room = room;
   state.opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
   state.playerIndex = room.hostUid === state.uid ? 0 : 1;
-  state.players = [room.players[room.hostUid], room.players[room.guestUid]].map((player) => ({
-    ...player,
-    pursuitLine: normalizePursuitLine(player.pursuitLine),
-    hp: MAX_HP,
-    totalReceived: 0,
-    criticals: 0,
-    perfects: 0,
-  }));
+  state.players = [room.players[room.hostUid], room.players[room.guestUid]].map((player) => {
+    const sampleCount = normalizeSampleCount(player.sampleCount);
+    const startingHp = getStartingHp(sampleCount);
+    return {
+      ...player,
+      pursuitLine: normalizePursuitLine(player.pursuitLine),
+      sampleCount,
+      startingHp,
+      maxHp: startingHp,
+      hp: startingHp,
+      totalReceived: 0,
+      criticals: 0,
+      perfects: 0,
+    };
+  });
   await cleanupMatchmaking(true);
   await updatePublicPresence("playing");
   state.screen = "connecting";
@@ -2264,6 +2490,7 @@ async function commitOnlineStats() {
   const draw = state.outcome.winnerIndex === null;
   const opponentRating = Number(getOpponent()?.rating || INITIAL_RATING);
   const actualScore = draw ? 0.5 : myWon ? 1 : 0;
+  const soloSeed = { ...state.profile };
   const result = await runTransaction(ref(database, `online/profiles/${state.uid}`), (current) => {
     const record = {
       name: state.name,
@@ -2283,10 +2510,15 @@ async function commitOnlineStats() {
     return record;
   });
   if (result.committed) state.profile = result.snapshot.val();
-  if (result.committed && state.leaderboardPublic) {
-    await syncLeaderboardEntry({ syncPeriodMetadata: false }).catch(() => showToast("累積レートを更新できませんでした。"));
+  if (result.committed) {
     const periodOutcome = draw ? "draw" : myWon ? "win" : "loss";
-    await recordLeaderboardPeriodResult(periodOutcome).catch(() => showToast("期間ランキングを更新できませんでした。"));
+    await recordOverallResult({
+      mode: "solo",
+      outcome: periodOutcome,
+      name: state.name,
+      opponentRating,
+      soloSeed,
+    }).catch(() => showToast("総合ランキングを更新できませんでした。"));
   }
   state.players.forEach((player, index) => {
     if (draw) return;
@@ -2489,6 +2721,12 @@ window.addEventListener("beforeunload", () => {
   state.peer?.close();
 });
 
+sampleHandicapDialog?.addEventListener("close", () => {
+  const confirmed = sampleHandicapDialog.returnValue === "confirm";
+  sampleHandicapDialog.returnValue = "";
+  if (confirmed && active && state.screen === "setup") beginMatchmaking();
+});
+
 startLobbyStatsPolling();
 
 window.HariaiOnline = {
@@ -2508,5 +2746,6 @@ window.HariaiOnline = {
   getLeaderboardCommentIdentity,
   saveLeaderboardComment,
   deleteLeaderboardComment,
+  recordOverallResult,
 };
 window.dispatchEvent(new Event("hariai-online-ready"));

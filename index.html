@@ -6,10 +6,10 @@
     <meta name="theme-color" content="#090b12" />
     <meta
       name="description"
-      content="好きな画像を5枚用意し、知らない相手と採点し合うオンライン1on1・2on2・4人バトルロワイヤル画像対戦ゲーム。"
+      content="好きな画像を用意し、通常型・戦略型1on1、2on2、4人バトルロワイヤルで知らない相手と採点し合うオンライン画像対戦ゲーム。"
     />
     <title>貼り合いスタジアム | Online Image Battle</title>
-    <link rel="stylesheet" href="styles.css?v=period-ranking-v1" />
+    <link rel="stylesheet" href="styles.css?v=overall-ranking-v1" />
     <link rel="stylesheet" href="strategy.css?v=pursuit-line-v1" />
   </head>
   <body>
@@ -34,7 +34,7 @@
     <main id="app" tabindex="-1"></main>
 
     <footer class="site-footer">
-      <span>ONLINE 1ON1 + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC</span>
+      <span>ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC</span>
       <span>画像本体は対戦相手へ直接送信し、サーバーへ保存しません</span>
     </footer>
 
@@ -53,14 +53,26 @@
       </form>
     </dialog>
 
+    <dialog id="sampleHandicapDialog" class="confirm-dialog">
+      <form method="dialog">
+        <span class="eyebrow">SAMPLE HANDICAP</span>
+        <h2>サンプル画像のHPハンデ</h2>
+        <p id="sampleHandicapMessage">サンプル画像1枚につき、最大HPが5減少します。</p>
+        <div class="dialog-actions">
+          <button class="button button-ghost" value="cancel">デッキを見直す</button>
+          <button class="button button-primary" id="confirmSampleMatch" value="confirm">このデッキで対戦を探す</button>
+        </div>
+      </form>
+    </dialog>
+
     <noscript>
       <p class="noscript">このゲームを遊ぶにはJavaScriptを有効にしてください。</p>
     </noscript>
     <script src="audio.js" defer></script>
-    <script src="app.js?v=period-ranking-v1" defer></script>
-    <script src="strategy.js?v=mode-select-v1" defer></script>
-    <script type="module" src="online.js?v=period-ranking-v1"></script>
-    <script type="module" src="team.js"></script>
-    <script type="module" src="royale.js?v=ranked-royale-v1"></script>
+    <script src="app.js?v=overall-ranking-v1" defer></script>
+    <script type="module" src="strategy.js?v=overall-ranking-v1"></script>
+    <script type="module" src="online.js?v=overall-ranking-v1"></script>
+    <script type="module" src="team.js?v=overall-ranking-v1"></script>
+    <script type="module" src="royale.js?v=overall-ranking-v1"></script>
   </body>
 </html>

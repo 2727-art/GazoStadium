@@ -64,7 +64,7 @@
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
-        <span class="eyebrow">ONLINE 1ON1 / 2ON2 / BATTLE ROYALE</span>
+        <span class="eyebrow">ONLINE 1ON1 / STRATEGY / 2ON2 / BATTLE ROYALE</span>
         <h1>貼り合え。<span>YOUR FAVORITE, YOUR POWER.</span></h1>
         <p class="hero-copy">
           自慢の画像を5枚用意し、知らない誰かと魅力を採点し合う。
@@ -75,7 +75,7 @@
           <button class="button button-strategy" id="strategyLabButton">戦略型1on1対戦</button>
           <button class="button button-cyan" id="teamBattleButton">2on2チーム対戦</button>
           <button class="button button-royale" id="royaleBattleButton">4人バトルロワイヤル</button>
-          <button class="button button-ghost" id="rankingButton">ランキングを見る</button>
+          <button class="button button-ghost" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
         </div>
@@ -161,7 +161,7 @@
     } else if (rankingCommentIdentityStatus !== "ready") {
       composer = `<div class="ranking-comment-auth"><p>ランキング参加者は、このプレイヤーへ1件コメントできます。</p><button class="button button-ghost button-small" type="button" data-ranking-comment-auth="${escapeHtml(entryId)}">投稿資格を確認</button></div>`;
     } else if (!rankingCommentIdentity?.canPost) {
-      composer = `<p class="ranking-comment-guide">コメントするには、通常型1on1対戦の準備画面でランキング参加を有効にしてください。</p>`;
+      composer = `<p class="ranking-comment-guide">コメントするには、通常型1on1対戦の準備画面で「オンライン総合ランキングに参加する」を有効にしてください。</p>`;
     } else if (identityEntryId === entryId) {
       composer = `<p class="ranking-comment-guide">自分の欄には投稿できません。寄せられたコメントは削除できます。</p>`;
     } else {
@@ -325,6 +325,14 @@
     const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
     const rows = entries.length ? entries.map((entry, index) => {
       const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
+      const hasModePoints = entry.modePoints && typeof entry.modePoints === "object";
+      const modePoints = {
+        solo: Number(hasModePoints ? entry.modePoints.solo || 0 : entry.points || 0),
+        strategy: Number(hasModePoints ? entry.modePoints.strategy || 0 : 0),
+        team: Number(hasModePoints ? entry.modePoints.team || 0 : 0),
+        royale: Number(hasModePoints ? entry.modePoints.royale || 0 : 0),
+      };
+      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間ポイント"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em><em>2on2 ${modePoints.team}</em><em>BR ${modePoints.royale}</em></span>`;
       const provisional = matches < Number(periodInfo.minimumMatches || 1);
       const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
       const xLink = xHandle ? `<a class="ranking-x-link" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer">X&nbsp;@${escapeHtml(xHandle)}</a>` : "";
@@ -336,7 +344,7 @@
           <strong class="ranking-position">${index + 1}</strong>
           <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small></div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD PT</small></div>
-          <div class="ranking-record"><span>${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>累積RATE ${Number(entry.rating || 1000)}</small></div>
+          <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>総合RATE ${Number(entry.rating || 1000)}</small>${modeBreakdown}</div>
           <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
         </div>
         ${expanded ? renderRankingCommentPanel(entry) : ""}
@@ -344,12 +352,12 @@
     }).join("") : status === "error"
       ? `<div class="ranking-empty">ランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="rankingRetryButton">もう一度取得</button></div>`
       : status === "ready"
-        ? `<div class="ranking-empty">この期間にはまだ対戦記録がありません。<br />通常型1on1対戦の完了後に集計されます。</div>`
+        ? `<div class="ranking-empty">この期間にはまだ対戦記録がありません。<br />オンライン対戦4モードの完了後に集計されます。</div>`
         : `<div class="ranking-empty">ランキングを取得しています…</div>`;
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
-        <div><span class="eyebrow">PERIOD RANKING / TOP 50</span><h1>プレイヤーランキング</h1>
-          <p>期間ポイントで競いながら、累積RATEはシーズンを越えて維持します。</p></div>
+        <div><span class="eyebrow">ONLINE OVERALL RANKING / TOP 50</span><h1>オンライン総合ランキング</h1>
+          <p>4つのオンライン対戦モード共通の期間ポイントと総合RATEで競います。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
@@ -357,10 +365,10 @@
         <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
         <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
       </div>
-      <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利3pt・引き分け1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
-      <div class="ranking-notice">期間戦績は日本時間で自動的に切り替わり、累積RATEはリセットされません。任意公開のXリンク・コメントも表示します。コメントは開いた時だけ取得し、投稿はランキング参加者に限られます。</div>
+      <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3pt ／ 引き分け・BR2位1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
+      <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEはリセットされません。任意公開のXリンク・コメントも表示します。</div>
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
-      <p class="ranking-casual-note">期間ランキングは導入後に完了した通常型1on1対戦から集計します。カジュアル版のため、RATEと戦績はブラウザからFirebaseへ送信されます。</p>
+      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。カジュアル版のため、RATEと戦績はブラウザからFirebaseへ送信されます。</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
@@ -474,13 +482,14 @@
     });
   }
 
-  function makeDeckItem(blob, position) {
+  function makeDeckItem(blob, position, { isSample = false } = {}) {
     return {
       id: `card-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       blob,
       url: URL.createObjectURL(blob),
       position,
       used: false,
+      isSample,
     };
   }
 
@@ -489,7 +498,7 @@
     for (let index = 0; index < count; index += 1) {
       const position = offset + index;
       const blob = await createSampleImage(playerIndex, position);
-      items.push(makeDeckItem(blob, position));
+      items.push(makeDeckItem(blob, position, { isSample: true }));
     }
     return items;
   }
@@ -569,7 +578,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC";
     if (footerItems[1]) footerItems[1].textContent = "画像本体は対戦相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
