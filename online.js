@@ -147,6 +147,8 @@ let leaderboardStatus = "idle";
 let leaderboardPeriod = DEFAULT_LEADERBOARD_PERIOD;
 let leaderboardPeriodKey = "";
 let leaderboardRequestId = 0;
+let monthlyBeyondRanks = new Map();
+let monthlyBeyondPeriodKey = "";
 let publicRestServerTimeOffset = 0;
 let topMessageRecords = [];
 let topMessagesStatus = "idle";
@@ -587,6 +589,17 @@ function getLeaderboardLoadedPeriod() {
   return { period: leaderboardPeriod, key: leaderboardPeriodKey };
 }
 
+function getMonthlyBeyondRank(entryId, rating) {
+  const normalizedRating = Math.min(3000, Math.max(100, Math.round(Number(rating || INITIAL_RATING))));
+  if (normalizedRating < 1400 || monthlyBeyondPeriodKey !== leaderboardPeriodKeyFor("monthly", Date.now() + publicRestServerTimeOffset)) return 0;
+  const rank = Number(monthlyBeyondRanks.get(String(entryId || "")) || 0);
+  return rank >= 1 && rank <= 10 ? rank : 0;
+}
+
+function getMonthlyBeyondPeriodKey() {
+  return monthlyBeyondPeriodKey;
+}
+
 function readMutedTopMessageIds() {
   try {
     const value = JSON.parse(localStorage.getItem(TOP_MESSAGE_MUTED_KEY) || "[]");
@@ -825,37 +838,56 @@ function watchDailyDateRollover() {
   }, 10_000);
 }
 
+function normalizeLeaderboardRecords(entries) {
+  return Object.entries(entries || {})
+    .map(([entryId, entry]) => ({ entryId, ...entry }))
+    .filter((entry) => (
+      entry?.name
+      && Number.isFinite(Number(entry.points))
+      && Number.isFinite(Number(entry.rating))
+    ))
+    .sort((first, second) => (
+      Number(second.points) - Number(first.points)
+      || ((Number(second.wins || 0) + (Number(second.draws || 0) * 0.5)) / Math.max(1, Number(second.wins || 0) + Number(second.losses || 0) + Number(second.draws || 0)))
+        - ((Number(first.wins || 0) + (Number(first.draws || 0) * 0.5)) / Math.max(1, Number(first.wins || 0) + Number(first.losses || 0) + Number(first.draws || 0)))
+      || Number(second.wins || 0) - Number(first.wins || 0)
+      || Number(second.rating || INITIAL_RATING) - Number(first.rating || INITIAL_RATING)
+      || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
+    ))
+    .slice(0, 50);
+}
+
 async function refreshLeaderboard(period = leaderboardPeriod) {
   const selectedPeriod = normalizeLeaderboardPeriod(period);
   const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
+  const monthlyPeriodInfo = leaderboardPeriodInfoFor("monthly");
   const requestId = ++leaderboardRequestId;
   leaderboardPeriod = selectedPeriod;
   leaderboardPeriodKey = periodInfo.key;
   leaderboardEntries = [];
+  monthlyBeyondRanks = new Map();
+  monthlyBeyondPeriodKey = "";
   leaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const entries = await fetchPublicDatabasePath(`online/leaderboardPeriods/${selectedPeriod}/${periodInfo.key}`, {
+    const selectedEntriesPromise = fetchPublicDatabasePath(`online/leaderboardPeriods/${selectedPeriod}/${periodInfo.key}`, {
       orderBy: JSON.stringify("points"),
       limitToLast: 100,
     });
+    const monthlyEntriesPromise = selectedPeriod === "monthly"
+      ? selectedEntriesPromise
+      : fetchPublicDatabasePath(`online/leaderboardPeriods/monthly/${monthlyPeriodInfo.key}`, {
+        orderBy: JSON.stringify("points"),
+        limitToLast: 100,
+      }).catch(() => null);
+    const [entries, monthlyEntries] = await Promise.all([selectedEntriesPromise, monthlyEntriesPromise]);
     if (requestId !== leaderboardRequestId) return;
-    leaderboardEntries = Object.entries(entries || {})
-      .map(([entryId, entry]) => ({ entryId, ...entry }))
-      .filter((entry) => (
-        entry?.name
-        && Number.isFinite(Number(entry.points))
-        && Number.isFinite(Number(entry.rating))
-      ))
-      .sort((first, second) => (
-        Number(second.points) - Number(first.points)
-        || ((Number(second.wins || 0) + (Number(second.draws || 0) * 0.5)) / Math.max(1, Number(second.wins || 0) + Number(second.losses || 0) + Number(second.draws || 0)))
-          - ((Number(first.wins || 0) + (Number(first.draws || 0) * 0.5)) / Math.max(1, Number(first.wins || 0) + Number(first.losses || 0) + Number(first.draws || 0)))
-        || Number(second.wins || 0) - Number(first.wins || 0)
-        || Number(second.rating || INITIAL_RATING) - Number(first.rating || INITIAL_RATING)
-        || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
-      ))
-      .slice(0, 50);
+    leaderboardEntries = normalizeLeaderboardRecords(entries);
+    if (monthlyEntries !== null) {
+      const monthlyRecords = selectedPeriod === "monthly" ? leaderboardEntries : normalizeLeaderboardRecords(monthlyEntries);
+      monthlyBeyondRanks = new Map(monthlyRecords.slice(0, 10).map((entry, index) => [entry.entryId, index + 1]));
+      monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
+    }
     leaderboardStatus = "ready";
   } catch {
     if (requestId !== leaderboardRequestId) return;
@@ -3209,6 +3241,8 @@ window.HariaiOnline = {
   getLeaderboardStatus,
   getLeaderboardPeriodInfo,
   getLeaderboardLoadedPeriod,
+  getMonthlyBeyondRank,
+  getMonthlyBeyondPeriodKey,
   refreshLeaderboard,
   getTopMessages,
   getTopMessagesStatus,

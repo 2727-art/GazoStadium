@@ -18,6 +18,14 @@
     { key: "master", label: "Master", emblem: "♛", min: 1200, max: 1299, range: "1200–1299" },
     { key: "legend", label: "Legend", emblem: "♛", min: 1300, max: 3000, range: "1300+" },
   ]);
+  const BEYOND_RATING_CLASS = Object.freeze({
+    key: "beyond",
+    label: "BEYOND",
+    emblem: "✺",
+    min: 1400,
+    max: 3000,
+    range: "1400+ / 月間TOP10",
+  });
 
   const app = document.querySelector("#app");
   const toast = document.querySelector("#toast");
@@ -97,24 +105,28 @@
     return OVERALL_RATING_CLASSES.find((ratingClass) => rating <= ratingClass.max) || OVERALL_RATING_CLASSES.at(-1);
   }
 
-  function renderOverallRatingClassBadge(ratingClass, rating, { decorative = false } = {}) {
+  function renderOverallRatingClassBadge(ratingClass, rating, { decorative = false, monthlyRank = 0 } = {}) {
+    const beyond = ratingClass.key === BEYOND_RATING_CLASS.key;
     const accessibleAttributes = decorative
       ? 'aria-hidden="true"'
-      : `aria-label="総合RATEクラス ${ratingClass.label}、総合RATE ${normalizeOverallRating(rating)}" title="${ratingClass.label}クラス / 総合RATE ${ratingClass.range}"`;
+      : beyond
+        ? `aria-label="BEYONDクラス、月間総合ランキング${monthlyRank}位、総合RATE ${normalizeOverallRating(rating)}" title="BEYONDクラス / 月間${monthlyRank}位・総合RATE ${normalizeOverallRating(rating)}"`
+        : `aria-label="総合RATEクラス ${ratingClass.label}、総合RATE ${normalizeOverallRating(rating)}" title="${ratingClass.label}クラス / 総合RATE ${ratingClass.range}"`;
     return `<span class="rating-class-badge class-${ratingClass.key}" ${accessibleAttributes}>
       <span class="rating-class-emblem" aria-hidden="true">${ratingClass.emblem}</span>
       <span class="rating-class-name">${ratingClass.label}</span>
+      ${beyond ? `<span class="rating-class-rank">${decorative ? "TOP 10" : `M#${monthlyRank}`}</span>` : ""}
     </span>`;
   }
 
   function renderOverallRatingClassGuide() {
-    const classItems = OVERALL_RATING_CLASSES.map((ratingClass) => `<li>
+    const classItems = [...OVERALL_RATING_CLASSES, BEYOND_RATING_CLASS].map((ratingClass) => `<li>
       ${renderOverallRatingClassBadge(ratingClass, ratingClass.min, { decorative: true })}
       <small>RATE ${ratingClass.range}</small>
     </li>`).join("");
     return `<details class="rating-class-guide">
       <summary><span><small>OVERALL RATE CLASS</small><strong>総合RATEクラス</strong></span><em>ランキング限定表示</em></summary>
-      <p>クラスはリセットされない総合RATEで判定します。順位は選択中の期間ポイントで決まり、クラスは対戦画面には表示されません。</p>
+      <p>基本クラスはリセットされない総合RATEで判定します。BEYONDはRATE 1400以上かつ当月マンスリー総合ランキング10位以内の間だけ有効です。クラスは対戦画面には表示されません。</p>
       <ol>${classItems}</ol>
     </details>`;
   }
@@ -459,7 +471,12 @@
   function refreshRankingAtPeriodBoundary() {
     if (currentScreen !== "ranking") return;
     const info = rankingPeriodInfo();
-    if (info.key && info.key !== rankingDisplayedPeriodKey) refreshSelectedRankingPeriod();
+    const monthlyInfo = window.HariaiOnline?.getLeaderboardPeriodInfo?.("monthly");
+    const loadedMonthlyKey = window.HariaiOnline?.getMonthlyBeyondPeriodKey?.() || "";
+    if (
+      (info.key && info.key !== rankingDisplayedPeriodKey)
+      || (monthlyInfo?.key && monthlyInfo.key !== loadedMonthlyKey)
+    ) refreshSelectedRankingPeriod();
   }
 
   function renderRankingScreen({ refresh = false, preserveScroll = false } = {}) {
@@ -489,8 +506,9 @@
       const expanded = expandedRankingEntryId === entryId;
       const commentsEnabled = entry.commentsEnabled !== false;
       const overallRating = normalizeOverallRating(entry.rating);
-      const ratingClass = overallRatingClass(overallRating);
-      const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating);
+      const monthlyBeyondRank = Number(window.HariaiOnline?.getMonthlyBeyondRank?.(entryId, overallRating) || 0);
+      const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
+      const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
       return `<article class="ranking-entry ranking-class-${ratingClass.key} ${expanded ? "is-expanded" : ""}">
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
@@ -509,7 +527,7 @@
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
         <div><span class="eyebrow">ONLINE OVERALL RANKING / TOP 50</span><h1>オンライン総合ランキング</h1>
-          <p>順位は4モード共通の期間ポイント、クラスは累積総合RATEで決まります。</p></div>
+          <p>順位は4モード共通の期間ポイント、基本クラスは累積総合RATEで決まります。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       ${participationMenu}
@@ -519,7 +537,7 @@
         <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
       </div>
       <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3pt ／ 引き分け・BR2位1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
-      <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEとクラスはリセットされません。クラスはランキングだけに表示し、対戦相手には表示しません。</div>
+      <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEはリセットされません。BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。クラスはランキングだけに表示し、対戦相手には表示しません。</div>
       ${renderOverallRatingClassGuide()}
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
       <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。カジュアル版のため、RATEと戦績はブラウザからFirebaseへ送信されます。</p>
