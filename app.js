@@ -92,26 +92,6 @@
         <p class="lobby-privacy">トップページの閲覧者は含みません。表示名・匿名UID・ルーム情報は公開しません。</p>
         <p class="mode-note">画像は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
-      <div class="hero-card" aria-label="ゲーム画面のイメージ">
-        <div class="mock-arena">
-          <div class="mock-player">
-            <span>PLAYER 01 / HP 30</span>
-            <div class="mock-picture"></div>
-            <div class="mock-score"><small>IMAGE SCORE</small><strong>8</strong></div>
-          </div>
-          <div class="mock-versus">VS</div>
-          <div class="mock-player">
-            <span>PLAYER 02 / HP 30</span>
-            <div class="mock-picture"></div>
-            <div class="mock-score"><small>IMAGE SCORE</small><strong>6</strong></div>
-          </div>
-        </div>
-        <div class="rule-strip">
-          <div><strong>5</strong>IMAGES</div>
-          <div><strong>30</strong>MAX HP</div>
-          <div><strong>8+</strong>CRITICAL</div>
-        </div>
-      </div>
     </section>`;
   }
 
@@ -123,17 +103,18 @@
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
-    document.querySelector("#rankingButton")?.addEventListener("click", renderRankingScreen);
+    document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
     app.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function renderRankingScreen() {
+  function renderRankingScreen({ refresh = false } = {}) {
     currentScreen = "ranking";
     setLandingChrome();
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
+    const status = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
     const rows = entries.length ? entries.map((entry, index) => {
       const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
       const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
@@ -144,7 +125,11 @@
         <div class="ranking-rating"><strong>${Number(entry.rating || 1000)}</strong><small>RATE</small></div>
         <div class="ranking-record"><span>${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><small>最高${Number(entry.bestStreak || 0)}連勝</small></div>
       </div>`;
-    }).join("") : `<div class="ranking-empty">まだランキング参加者がいません。<br />オンライン対戦準備画面から参加できます。</div>`;
+    }).join("") : status === "error"
+      ? `<div class="ranking-empty">ランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="rankingRetryButton">もう一度取得</button></div>`
+      : status === "ready"
+        ? `<div class="ranking-empty">まだランキング参加者がいません。<br />オンライン対戦準備画面から参加できます。</div>`
+        : `<div class="ranking-empty">ランキングを取得しています…</div>`;
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
         <div><span class="eyebrow">CASUAL RATING / TOP 50</span><h1>プレイヤーランキング</h1>
@@ -156,8 +141,10 @@
       <p class="ranking-casual-note">カジュアル版のため、レートと戦績はブラウザからFirebaseへ送信されます。</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
+    document.querySelector("#rankingRetryButton")?.addEventListener("click", () => window.HariaiOnline?.refreshLeaderboard?.());
     app.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "smooth" });
+    if (refresh) window.HariaiOnline?.refreshLeaderboard?.();
   }
 
   function startOnlineBattle() {

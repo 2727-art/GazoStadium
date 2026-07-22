@@ -256,9 +256,12 @@ button:disabled {
 .hero {
   min-height: 620px;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(390px, 0.95fr);
-  align-items: center;
-  gap: clamp(40px, 7vw, 110px);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.hero > div {
+  width: min(780px, 100%);
 }
 
 .eyebrow {

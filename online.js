@@ -12,7 +12,6 @@ import {
   onChildAdded,
   onDisconnect,
   onValue,
-  orderByChild,
   push,
   query,
   ref,
@@ -87,6 +86,7 @@ const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
+const LOBBY_REST_REFRESH_MS = 20_000;
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -102,6 +102,10 @@ const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
 const createLobbyStats = (value = null) => Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }]));
 let lobbyStats = createLobbyStats();
 let leaderboardEntries = [];
+let leaderboardStatus = "idle";
+let lobbyRestRequestPending = false;
+let leaderboardRequestPending = false;
+let lobbyStatsLoaded = false;
 
 function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
@@ -324,7 +328,21 @@ function getLeaderboard() {
   return leaderboardEntries.map((entry) => ({ ...entry }));
 }
 
+function getLeaderboardStatus() {
+  return leaderboardStatus;
+}
+
+async function fetchPublicDatabasePath(path, parameters = {}) {
+  const databaseUrl = String(firebaseConfig.databaseURL || "").replace(/\/$/, "");
+  const url = new URL(`${databaseUrl}/${path}.json`);
+  Object.entries(parameters).forEach(([key, value]) => url.searchParams.set(key, String(value)));
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`公開データの取得に失敗しました（${response.status}）`);
+  return response.json();
+}
+
 function refreshLobbyStats() {
+  if (!lobbyStatsLoaded) return;
   const freshAfter = Date.now() - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries).filter((entry) => (
     Number(entry?.lastSeen) >= freshAfter
@@ -351,21 +369,42 @@ function refreshLobbyStats() {
   });
 }
 
-function watchLobbyStats() {
-  onValue(ref(database, "online/publicPresence"), (snapshot) => {
-    lobbyPresenceEntries = snapshot.val() || {};
+async function refreshLobbyStatsFromRest() {
+  if (lobbyRestRequestPending) return;
+  lobbyRestRequestPending = true;
+  try {
+    lobbyPresenceEntries = await fetchPublicDatabasePath("online/publicPresence") || {};
+    lobbyStatsLoaded = true;
     refreshLobbyStats();
-  }, () => {
-    lobbyPresenceEntries = {};
-    lobbyStats = createLobbyStats();
-  });
-  window.setInterval(refreshLobbyStats, 10_000);
+  } catch {
+    // 最初の取得に失敗した場合は「--」、取得済みなら最後の値を維持します。
+  } finally {
+    lobbyRestRequestPending = false;
+  }
 }
 
-function watchLeaderboard() {
-  const leaderboardQuery = query(ref(database, "online/leaderboard"), orderByChild("rating"), limitToLast(50));
-  onValue(leaderboardQuery, (snapshot) => {
-    leaderboardEntries = Object.values(snapshot.val() || {})
+function startLobbyStatsPolling() {
+  refreshLobbyStatsFromRest();
+  window.setInterval(() => {
+    if (document.visibilityState === "visible") refreshLobbyStatsFromRest();
+  }, LOBBY_REST_REFRESH_MS);
+  window.setInterval(refreshLobbyStats, 10_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshLobbyStatsFromRest();
+  });
+}
+
+async function refreshLeaderboard() {
+  if (leaderboardRequestPending) return;
+  leaderboardRequestPending = true;
+  leaderboardStatus = "loading";
+  window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  try {
+    const entries = await fetchPublicDatabasePath("online/leaderboard", {
+      orderBy: JSON.stringify("rating"),
+      limitToLast: 50,
+    });
+    leaderboardEntries = Object.values(entries || {})
       .filter((entry) => entry?.name && Number.isFinite(Number(entry.rating)))
       .sort((first, second) => (
         Number(second.rating) - Number(first.rating)
@@ -373,11 +412,14 @@ function watchLeaderboard() {
         || Number(second.bestStreak || 0) - Number(first.bestStreak || 0)
         || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
       ));
-    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-  }, () => {
+    leaderboardStatus = "ready";
+  } catch {
     leaderboardEntries = [];
+    leaderboardStatus = "error";
+  } finally {
+    leaderboardRequestPending = false;
     window.dispatchEvent(new Event("hariai-leaderboard-updated"));
-  });
+  }
 }
 
 async function ensureAuthenticated() {
@@ -2198,8 +2240,18 @@ window.addEventListener("beforeunload", () => {
   state.peer?.close();
 });
 
-watchLobbyStats();
-watchLeaderboard();
+startLobbyStatsPolling();
 
-window.HariaiOnline = { start, openDailyMissions, openPointShop, isActive, requestHome, destroyRoom, getLobbyStats, getLeaderboard };
+window.HariaiOnline = {
+  start,
+  openDailyMissions,
+  openPointShop,
+  isActive,
+  requestHome,
+  destroyRoom,
+  getLobbyStats,
+  getLeaderboard,
+  getLeaderboardStatus,
+  refreshLeaderboard,
+};
 window.dispatchEvent(new Event("hariai-online-ready"));
