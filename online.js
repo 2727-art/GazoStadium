@@ -67,6 +67,11 @@ const TOP_MESSAGE_MUTED_KEY = "hariai-stadium-muted-top-messages-v1";
 const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
+const PERIOD_REWARD_CONFIG = Object.freeze({
+  daily: Object.freeze({ label: "デイリー", minimumMatches: 1, tiers: Object.freeze([{ points: 6, reward: 30 }, { points: 3, reward: 20 }, { points: 0, reward: 10 }]) }),
+  weekly: Object.freeze({ label: "ウィークリー", minimumMatches: 3, tiers: Object.freeze([{ points: 12, reward: 180 }, { points: 6, reward: 100 }, { points: 0, reward: 50 }]) }),
+  monthly: Object.freeze({ label: "マンスリー", minimumMatches: 5, tiers: Object.freeze([{ points: 30, reward: 500 }, { points: 12, reward: 300 }, { points: 0, reward: 150 }]) }),
+});
 const MAX_POINTS = 999_999;
 const MAX_EQUIPPED_REACTIONS = 8;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
@@ -207,6 +212,7 @@ function createOnlineState() {
     economy: createEmptyEconomy(),
     economyReady: false,
     economyBusy: false,
+    periodRewardReminderShown: false,
     titleCategoryFilter: "all",
     expandedTitleCategories: new Set(["preference"]),
     topMessage: null,
@@ -322,6 +328,89 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
 
 function getLeaderboardPeriodInfo(period = leaderboardPeriod) {
   return leaderboardPeriodInfoFor(period);
+}
+
+function periodRewardKeyIsValid(period, key) {
+  if (period === "monthly") return /^[0-9]{4}-[0-9]{2}$/.test(String(key || ""));
+  return (period === "daily" || period === "weekly") && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(key || ""));
+}
+
+function periodRewardEndsAtFor(period, key) {
+  if (!periodRewardKeyIsValid(period, key)) return 0;
+  const startAt = leaderboardPeriodStartAt(period, key);
+  if (!Number.isFinite(startAt)) return 0;
+  return leaderboardPeriodInfoFor(period, startAt + 1_000).nextResetAt;
+}
+
+function createEmptyPeriodRewards() {
+  return Object.fromEntries(LEADERBOARD_PERIODS.map((period) => [period, {}]));
+}
+
+function calculatePeriodReward(period, record) {
+  const config = PERIOD_REWARD_CONFIG[period];
+  const matches = Math.max(0, Math.floor(Number(record?.matches || 0)));
+  if (!config || matches < config.minimumMatches) return 0;
+  const points = Math.max(0, Math.floor(Number(record?.points || 0)));
+  return config.tiers.find((tier) => points >= tier.points)?.reward || 0;
+}
+
+function normalizePeriodRewardRecord(value, period, key) {
+  if (!value || typeof value !== "object" || !periodRewardKeyIsValid(period, key)) return null;
+  const wins = Math.max(0, Math.floor(Number(value.wins || 0)));
+  const losses = Math.max(0, Math.floor(Number(value.losses || 0)));
+  const draws = Math.max(0, Math.floor(Number(value.draws || 0)));
+  const matches = wins + losses + draws;
+  let modeMatches = Object.fromEntries(LEADERBOARD_MODES.map((mode) => [mode, Math.max(0, Math.floor(Number(value.modeMatches?.[mode] || 0)))]));
+  if (Object.values(modeMatches).reduce((total, count) => total + count, 0) !== matches) {
+    modeMatches = { solo: matches, strategy: 0, team: 0, royale: 0 };
+  }
+  const record = {
+    matches,
+    wins,
+    losses,
+    draws,
+    points: (wins * 3) + draws,
+    modeMatches,
+    endsAt: periodRewardEndsAtFor(period, key),
+    claimed: value.claimed === true,
+    reward: 0,
+    updatedAt: Math.max(0, Math.floor(Number(value.updatedAt || 0))),
+  };
+  if (record.claimed) {
+    record.reward = calculatePeriodReward(period, record);
+    record.claimedAt = Math.max(record.endsAt, Math.floor(Number(value.claimedAt || value.updatedAt || record.endsAt)));
+  }
+  return record;
+}
+
+function normalizePeriodRewards(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const rewards = createEmptyPeriodRewards();
+  LEADERBOARD_PERIODS.forEach((period) => {
+    Object.entries(source[period] || {}).forEach(([key, entry]) => {
+      const normalized = normalizePeriodRewardRecord(entry, period, key);
+      if (normalized) rewards[period][key] = normalized;
+    });
+  });
+  return rewards;
+}
+
+function periodRewardEntries(economy = state.economy) {
+  return LEADERBOARD_PERIODS.flatMap((period) => Object.entries(economy?.periodRewards?.[period] || {}).map(([key, record]) => ({
+    period,
+    key,
+    record,
+    reward: calculatePeriodReward(period, record),
+  })));
+}
+
+function pendingPeriodRewards(economy = state.economy, timestamp = serverNow()) {
+  return periodRewardEntries(economy).filter(({ record, reward }) => !record.claimed && reward > 0 && Number(record.endsAt || 0) <= timestamp);
+}
+
+function pendingPeriodRewardSummary(economy = state.economy, timestamp = serverNow()) {
+  const entries = pendingPeriodRewards(economy, timestamp);
+  return { entries, total: entries.reduce((total, entry) => total + entry.reward, 0) };
 }
 
 function emptyOverallModeRecord() {
@@ -463,6 +552,7 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
     points: 0,
     inventory: {},
     equipped: { reactions: {}, title: "", chatFrame: "", chatBackground: "" },
+    periodRewards: createEmptyPeriodRewards(),
     daily: {
       dateKey,
       matches: 0,
@@ -507,6 +597,7 @@ function normalizeEconomyRecord(value, dateKey = currentDailyDateKey()) {
   const chatCosmetics = getEquippedChatCosmetics({ inventory: record.inventory, equipped: source.equipped });
   record.equipped.chatFrame = chatCosmetics.chatFrameId;
   record.equipped.chatBackground = chatCosmetics.chatBackgroundId;
+  record.periodRewards = normalizePeriodRewards(source.periodRewards);
   if (sameDate) {
     Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
       record.daily[progressKey] = Math.min(limit, Math.max(0, Math.floor(Number(source.daily[progressKey] || 0))));
@@ -856,6 +947,8 @@ function watchDailyDateRollover() {
     observedDateKey = nextDateKey;
     if (!active || !state.uid || !state.authReady) return;
     initializeEconomy().then(() => {
+      state.periodRewardReminderShown = false;
+      notifyPendingPeriodRewards();
       if (active && ["missions", "gameover"].includes(state.screen)) render();
     }).catch((error) => console.error(error));
   }, 10_000);
@@ -952,6 +1045,7 @@ async function ensureAuthenticated() {
   state.authReady = true;
   try {
     await initializeEconomy();
+    notifyPendingPeriodRewards();
   } catch (error) {
     console.error(error);
     state.economyReady = false;
@@ -1229,6 +1323,39 @@ function renderEconomyUnavailable() {
     <p>${state.authReady ? "時間をおいて画面を開き直してください。対戦機能は通常どおり利用できます。" : "匿名ログイン後にミッションと所持ポイントを表示します。"}</p></div>`;
 }
 
+function renderPeriodRewardPanel() {
+  if (!state.economyReady) return "";
+  const pending = pendingPeriodRewardSummary();
+  const periodCards = LEADERBOARD_PERIODS.map((period) => {
+    const config = PERIOD_REWARD_CONFIG[period];
+    const info = leaderboardPeriodInfoFor(period, serverNow());
+    const record = normalizePeriodRewardRecord(state.economy.periodRewards?.[period]?.[info.key], period, info.key) || {
+      matches: 0,
+      points: 0,
+    };
+    const remainingMatches = Math.max(0, config.minimumMatches - record.matches);
+    const estimatedReward = calculatePeriodReward(period, record);
+    const status = remainingMatches > 0
+      ? `あと${remainingMatches}試合で ${config.tiers.at(-1).reward} PT`
+      : `${estimatedReward} PT見込み`;
+    const periodCopy = period === "daily" ? "今日" : period === "weekly" ? "今週" : "今月";
+    return `<article class="period-reward-card period-reward-${period}">
+      <div><span>${escapeHtml(config.label)}</span><strong>${escapeHtml(status)}</strong></div>
+      <p>${periodCopy} ${record.matches}試合 / 戦績ポイント ${record.points}</p>
+      <small>${escapeHtml(info.label)}・終了後に受取可能</small>
+    </article>`;
+  }).join("");
+  return `<section class="period-reward-panel" aria-labelledby="periodRewardTitle">
+    <div class="period-reward-head"><div><span class="eyebrow">PERIOD BATTLE REWARDS</span><h2 id="periodRewardTitle">期間戦績報酬</h2>
+      <p>好きなモードで正式対戦を完走すると、自動で3期間へ蓄積されます。</p></div>
+      <div class="period-reward-claim ${pending.total ? "has-reward" : ""}"><span>${pending.total ? `${pending.entries.length}期間分` : "受取待ち"}</span>
+        <strong>${pending.total.toLocaleString("ja-JP")} PT</strong>
+        <button class="button button-small ${pending.total ? "button-primary" : "button-ghost"}" id="claimPeriodRewardsButton" ${!pending.total || state.economyBusy ? "disabled" : ""}>${state.economyBusy ? "精算中…" : pending.total ? "まとめて受け取る" : "期間終了後に受取"}</button></div></div>
+    <div class="period-reward-grid">${periodCards}</div>
+    <p class="period-reward-note">勝利3・引き分け1の戦績ポイントで報酬額が上がります。負けても必要試合数を満たせば基本報酬を獲得できます。ランキング公開設定は不要です。</p>
+  </section>`;
+}
+
 function renderDailyMissions() {
   const missions = dailyMissionsForDate(currentDailyDateKey());
   const missionContent = state.economyReady
@@ -1239,6 +1366,7 @@ function renderDailyMissions() {
       <p>毎日0:00（日本時間）に更新。達成した報酬はボタンで受け取ってください。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    ${renderPeriodRewardPanel()}
     ${missionContent}
     <div class="economy-actions"><button class="button button-primary" id="missionsShopButton">ポイントショップへ</button>
       <button class="button button-ghost" id="missionsBattleButton">オンライン対戦へ</button></div>
@@ -1593,6 +1721,7 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", () => destroyDialog.showModal()));
   document.querySelector("[data-online-avatar-visibility]")?.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); });
   document.querySelectorAll("[data-claim-mission]").forEach((button) => button.addEventListener("click", () => claimDailyMission(button.dataset.claimMission)));
+  document.querySelector("#claimPeriodRewardsButton")?.addEventListener("click", claimClosedPeriodRewards);
   document.querySelectorAll("[data-buy-product]").forEach((button) => button.addEventListener("click", () => purchaseShopProduct(button.dataset.buyProduct)));
   document.querySelectorAll("[data-equip-product]").forEach((button) => button.addEventListener("click", () => toggleShopProductEquip(button.dataset.equipProduct)));
   document.querySelectorAll("[data-preview-reaction]").forEach((button) => button.addEventListener("click", () => showToast(`チャットでは「${button.dataset.previewReaction}」と送信します。`)));
@@ -2012,6 +2141,97 @@ async function recordModeDailyCompletion(mode) {
   return completedTitles.length > 0;
 }
 
+async function recordPeriodRewardResult(uid, mode, outcome, timestamp = Date.now()) {
+  if (!uid || !LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
+  const dateKey = jstDateKey(timestamp);
+  const result = await runTransaction(ref(database, `online/economy/${uid}`), (current) => {
+    const economy = normalizeEconomyRecord(current, dateKey);
+    LEADERBOARD_PERIODS.forEach((period) => {
+      const key = leaderboardPeriodKeyFor(period, timestamp);
+      const existing = normalizePeriodRewardRecord(economy.periodRewards[period]?.[key], period, key);
+      const record = existing || {
+        matches: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        points: 0,
+        modeMatches: Object.fromEntries(LEADERBOARD_MODES.map((candidate) => [candidate, 0])),
+        endsAt: periodRewardEndsAtFor(period, key),
+        claimed: false,
+        reward: 0,
+        updatedAt: timestamp,
+      };
+      if (record.claimed) return;
+      record.matches += 1;
+      record[outcome === "win" ? "wins" : outcome === "loss" ? "losses" : "draws"] += 1;
+      record.points = (record.wins * 3) + record.draws;
+      record.modeMatches[mode] += 1;
+      record.updatedAt = timestamp;
+      economy.periodRewards[period][key] = record;
+    });
+    economy.updatedAt = timestamp;
+    return economy;
+  });
+  if (!result.committed) throw new Error("期間戦績報酬を更新できませんでした。");
+  if (state.uid === uid) applyEconomySnapshot(result.snapshot, dateKey);
+  return result.snapshot.val();
+}
+
+function notifyPendingPeriodRewards() {
+  if (!state.economyReady || state.periodRewardReminderShown) return;
+  const pending = pendingPeriodRewardSummary();
+  if (!pending.total) return;
+  state.periodRewardReminderShown = true;
+  showToast(`期間戦績報酬 ${pending.total} PTを受け取れます。`);
+}
+
+async function claimClosedPeriodRewards() {
+  if (!state.uid || !state.economyReady || state.economyBusy) return;
+  const timestamp = serverNow();
+  const dateKey = jstDateKey(timestamp);
+  let nominalTotal = 0;
+  let creditedTotal = 0;
+  let claimedCount = 0;
+  state.economyBusy = true;
+  render();
+  try {
+    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
+      const economy = normalizeEconomyRecord(current, dateKey);
+      const pending = pendingPeriodRewards(economy, timestamp);
+      if (!pending.length) return;
+      nominalTotal = pending.reduce((total, entry) => total + entry.reward, 0);
+      claimedCount = pending.length;
+      pending.forEach(({ period, key, reward }) => {
+        const record = economy.periodRewards[period][key];
+        record.claimed = true;
+        record.reward = reward;
+        record.claimedAt = timestamp;
+        record.updatedAt = timestamp;
+      });
+      const previousPoints = economy.points;
+      economy.points = Math.min(MAX_POINTS, economy.points + nominalTotal);
+      creditedTotal = economy.points - previousPoints;
+      economy.updatedAt = timestamp;
+      return economy;
+    });
+    if (result.snapshot) applyEconomySnapshot(result.snapshot, dateKey);
+    state.economyBusy = false;
+    render();
+    if (result.committed && claimedCount > 0) {
+      showToast(creditedTotal === nominalTotal
+        ? `${claimedCount}期間分の戦績報酬 ${creditedTotal} PTを受け取りました。`
+        : `${claimedCount}期間分を精算し、上限まで${creditedTotal} PTを受け取りました。`);
+    } else {
+      showToast("受け取れる期間戦績報酬はありません。");
+    }
+  } catch (error) {
+    console.error(error);
+    state.economyBusy = false;
+    render();
+    showToast("期間戦績報酬を受け取れませんでした。");
+  }
+}
+
 async function openPostMatchMissions() {
   await cleanupOnlineResources(false);
   releaseAllImages();
@@ -2192,6 +2412,8 @@ async function recordOverallResult({ mode, outcome, name, opponentRating = INITI
   if (!result.committed) throw new Error("総合戦績を更新できませんでした。");
   const profile = normalizeOverallProfile(result.snapshot.val(), displayName);
   if (state.uid === user.uid) state.overallProfile = profile;
+  const resultTimestamp = Date.now() + Number(state.uid === user.uid ? state.serverTimeOffset : publicRestServerTimeOffset || 0);
+  await recordPeriodRewardResult(user.uid, mode, outcome, resultTimestamp);
   const settings = leaderboardPublicSettings();
   if (settings.enabled) await publishOverallLeaderboard(user.uid, profile, displayName, settings, { mode, outcome });
   return profile;

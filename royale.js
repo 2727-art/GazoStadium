@@ -258,7 +258,8 @@ function normalizeEconomy(value) {
       if (source.daily.claimed?.[id] === true) daily.claimed[id] = true;
     });
   }
-  return { points: Math.min(999_999, Math.max(0, Math.floor(Number(source.points || 0)))), inventory, equipped, daily, updatedAt: now() };
+  const periodRewards = source.periodRewards && typeof source.periodRewards === "object" ? source.periodRewards : {};
+  return { points: Math.min(999_999, Math.max(0, Math.floor(Number(source.points || 0)))), inventory, equipped, periodRewards, daily, updatedAt: now() };
 }
 
 function titleLabel(titleId = state.economy.equipped?.title) {

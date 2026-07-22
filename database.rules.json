@@ -371,6 +371,64 @@
               ".validate": false
             }
           },
+          "periodRewards": {
+            "$period": {
+              "$periodKey": {
+                ".validate": "($period === 'daily' || $period === 'weekly' || $period === 'monthly') && (($period === 'monthly' && $periodKey.matches(/^[0-9]{4}-[0-9]{2}$/)) || (($period === 'daily' || $period === 'weekly') && $periodKey.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/))) && newData.hasChildren(['matches', 'wins', 'losses', 'draws', 'points', 'modeMatches', 'endsAt', 'claimed', 'reward', 'updatedAt']) && newData.child('matches').val() === newData.child('wins').val() + newData.child('losses').val() + newData.child('draws').val() && newData.child('points').val() === (newData.child('wins').val() * 3) + newData.child('draws').val() && newData.child('matches').val() === newData.child('modeMatches/solo').val() + newData.child('modeMatches/strategy').val() + newData.child('modeMatches/team').val() + newData.child('modeMatches/royale').val() && ((newData.child('claimed').val() === false && newData.child('reward').val() === 0 && !newData.child('claimedAt').exists()) || (newData.child('claimed').val() === true && newData.child('claimedAt').isNumber() && newData.child('claimedAt').val() >= newData.child('endsAt').val() && newData.child('claimedAt').val() <= now + 300000 && newData.child('reward').val() === ($period === 'daily' ? (newData.child('points').val() >= 6 ? 30 : (newData.child('points').val() >= 3 ? 20 : 10)) : ($period === 'weekly' ? (newData.child('matches').val() < 3 ? 0 : (newData.child('points').val() >= 12 ? 180 : (newData.child('points').val() >= 6 ? 100 : 50))) : (newData.child('matches').val() < 5 ? 0 : (newData.child('points').val() >= 30 ? 500 : (newData.child('points').val() >= 12 ? 300 : 150)))))))",
+                "matches": {
+                  ".validate": "newData.isNumber() && newData.val() >= 1 && ((!data.exists() && newData.val() === 1) || (data.exists() && ((newData.parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                },
+                "wins": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                },
+                "losses": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                },
+                "draws": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                },
+                "points": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "modeMatches": {
+                  ".validate": "newData.hasChildren(['solo', 'strategy', 'team', 'royale'])",
+                  "solo": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                  },
+                  "strategy": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                  },
+                  "team": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                  },
+                  "royale": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() <= 1) || (data.exists() && ((newData.parent().parent().child('claimed').val() === true && newData.val() === data.val()) || (newData.parent().parent().child('claimed').val() === false && (newData.val() === data.val() || (now < data.parent().parent().child('endsAt').val() && newData.val() === data.val() + 1))))))"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "endsAt": {
+                  ".validate": "newData.isNumber() && ((!data.exists() && newData.val() > now && newData.val() <= now + ($period === 'daily' ? 86400000 : ($period === 'weekly' ? 604800000 : 2764800000))) || (data.exists() && newData.val() === data.val()))"
+                },
+                "claimed": {
+                  ".validate": "newData.isBoolean() && ((!data.exists() && newData.val() === false) || (data.exists() && ((data.val() === true && newData.val() === true) || (data.val() === false && (newData.val() === false || (newData.val() === true && now >= newData.parent().child('endsAt').val()))))))"
+                },
+                "reward": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 500"
+                },
+                "claimedAt": {
+                  ".validate": "!newData.exists() || newData.isNumber()"
+                },
+                "updatedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            }
+          },
           "daily": {
             ".validate": "newData.hasChildren(['dateKey', 'matches', 'scores', 'criticals'])",
             "dateKey": {
