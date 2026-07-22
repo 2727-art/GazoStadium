@@ -27,6 +27,11 @@ import {
   chatCosmeticClassNames,
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
+import {
+  PLAYER_TITLE_PRODUCTS,
+  getPlayerTitlePresentation,
+  getPlayerTitleProduct,
+} from "./player-titles.js?v=player-titles-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -110,7 +115,7 @@ function createState() {
     weaknessCommit: "",
     pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
-    economy: { inventory: {}, equipped: { chatFrame: "", chatBackground: "" } },
+    economy: { inventory: {}, equipped: { title: "", chatFrame: "", chatBackground: "" } },
     main: [],
     reserve: [],
     roomId: "",
@@ -389,11 +394,20 @@ function normalizeProfile(value) {
 function normalizeChatCosmeticEconomy(value) {
   const source = value && typeof value === "object" ? value : {};
   const inventory = {};
-  CHAT_COSMETIC_PRODUCTS.forEach((product) => {
+  [...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((product) => {
     if (source.inventory?.[product.id] === true) inventory[product.id] = true;
   });
   const cosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
-  return { inventory, equipped: { chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId } };
+  const savedTitle = String(source.equipped?.title || "");
+  const title = getPlayerTitleProduct(savedTitle) && inventory[savedTitle] ? savedTitle : "";
+  return { inventory, equipped: { title, chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId } };
+}
+
+function renderStrategyTitleBadge(titleId) {
+  const presentation = getPlayerTitlePresentation(titleId);
+  return presentation
+    ? `<span class="player-title-badge ${presentation.className}"><span aria-hidden="true">${escapeHtml(presentation.icon)}</span>${escapeHtml(presentation.product.title)}</span>`
+    : "";
 }
 
 function setStrategyChrome(label) {
@@ -788,9 +802,11 @@ function renderStrategyChatMessage(message, anonymous) {
   const player = state.players.find((candidate) => candidate.uid === message.authorUid);
   const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
   const phaseLabel = message.phase === "scout" ? "SCOUT" : `R${Math.max(1, Math.min(MAX_ROUNDS, Number(message.round) || 1))}`;
-  const cosmeticClasses = anonymous ? "" : chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId);
+  const showIdentityCosmetics = !anonymous && message.phase !== "scout";
+  const cosmeticClasses = showIdentityCosmetics ? chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId) : "";
+  const titleBadge = showIdentityCosmetics ? renderStrategyTitleBadge(message.titleId) : "";
   return `<div class="strategy-chat-message-row ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
-    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}</small><p${cosmeticClasses ? ` class="${cosmeticClasses}"` : ""}>${escapeHtml(message.text)}</p></div></div>`;
+    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}${titleBadge}</small><p${cosmeticClasses ? ` class="${cosmeticClasses}"` : ""}>${escapeHtml(message.text)}</p></div></div>`;
 }
 
 function renderStrategyChat() {
@@ -923,6 +939,8 @@ async function sendStrategyChat(value) {
     createdAt: serverTimestamp(),
   };
   if (!isStrategyChatAnonymous()) {
+    const equippedTitle = getPlayerTitleProduct(state.economy.equipped?.title);
+    if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
     const cosmetics = getEquippedChatCosmetics(state.economy);
     if (cosmetics.chatFrameId) message.chatFrameId = cosmetics.chatFrameId;
     if (cosmetics.chatBackgroundId) message.chatBackgroundId = cosmetics.chatBackgroundId;

@@ -26,6 +26,11 @@ import {
   chatCosmeticClassNames,
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
+import {
+  PLAYER_TITLE_PRODUCTS,
+  getPlayerTitlePresentation,
+  getPlayerTitleProduct,
+} from "./player-titles.js?v=player-titles-v1";
 
 const MAX_ROUNDS = 5;
 const PLAYER_COUNT = 4;
@@ -84,27 +89,6 @@ const SHOP_REACTIONS = [
   { id: "reaction_story", reaction: "物語を感じる" },
   { id: "reaction_masterpiece", reaction: "これは名作" },
 ];
-const SHOP_TITLES = [
-  { id: "title_good_praiser", title: "ほめ上手" },
-  { id: "title_plant_lover", title: "植物愛好家" },
-  { id: "title_animal_lover", title: "どうぶつ派" },
-  { id: "title_landscape_hunter", title: "風景ハンター" },
-  { id: "title_image_sommelier", title: "画像ソムリエ" },
-  { id: "title_hariai_master", title: "貼り合いマスター" },
-  { id: "title_live_action_supremacy", title: "実写至上主義" },
-  { id: "title_2d_lover", title: "二次元愛好家" },
-  { id: "title_mushroom_side", title: "きのこ派" },
-  { id: "title_bamboo_side", title: "たけのこ派" },
-  { id: "title_image_folder_guardian", title: "画像フォルダの守護者" },
-  { id: "title_cant_pick_five", title: "5枚に絞れない" },
-  { id: "title_blur_connoisseur", title: "ピンぼけ鑑定士" },
-  { id: "title_mostly_cats", title: "だいたい猫" },
-  { id: "title_food_photo_alert", title: "飯テロ警戒中" },
-  { id: "title_resolution_is_justice", title: "解像度は正義" },
-  { id: "title_composition_lost", title: "構図迷子" },
-  { id: "title_subjective_today", title: "今日も主観" },
-];
-
 const firebaseApp = getApp();
 const auth = getAuth(firebaseApp);
 const database = getDatabase(firebaseApp);
@@ -240,7 +224,7 @@ function normalizeEconomy(value) {
   const dateKey = jstDateKey(now());
   const sameDate = source.daily?.dateKey === dateKey;
   const inventory = {};
-  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...SHOP_TITLES, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
+  [...SHOP_FEATURE_IDS.map((id) => ({ id })), ...SHOP_REACTIONS, ...PLAYER_TITLE_PRODUCTS, ...CHAT_COSMETIC_PRODUCTS].forEach((item) => {
     if (source.inventory?.[item.id] === true) inventory[item.id] = true;
   });
   const ownedReactions = SHOP_REACTIONS.filter((item) => inventory[item.id]);
@@ -251,7 +235,7 @@ function normalizeEconomy(value) {
     : ownedReactions.map((item) => item.id);
   reactionIds.slice(0, MAX_EQUIPPED_REACTIONS).forEach((id) => { equipped.reactions[id] = true; });
   const savedTitle = String(source.equipped?.title || "");
-  if (SHOP_TITLES.some((item) => item.id === savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
+  if (getPlayerTitleProduct(savedTitle) && inventory[savedTitle]) equipped.title = savedTitle;
   const chatCosmetics = getEquippedChatCosmetics({ inventory, equipped: source.equipped });
   equipped.chatFrame = chatCosmetics.chatFrameId;
   equipped.chatBackground = chatCosmetics.chatBackgroundId;
@@ -278,12 +262,14 @@ function normalizeEconomy(value) {
 }
 
 function titleLabel(titleId = state.economy.equipped?.title) {
-  return SHOP_TITLES.find((item) => item.id === titleId)?.title || "";
+  return getPlayerTitleProduct(titleId)?.title || "";
 }
 
 function renderTitleBadge(titleId = state.economy.equipped?.title) {
-  const label = titleLabel(titleId);
-  return label ? `<span class="player-title-badge">◆ ${escapeHtml(label)}</span>` : "";
+  const presentation = getPlayerTitlePresentation(titleId);
+  return presentation
+    ? `<span class="player-title-badge ${presentation.className}"><span aria-hidden="true">${escapeHtml(presentation.icon)}</span>${escapeHtml(presentation.product.title)}</span>`
+    : "";
 }
 
 function renderChatCosmeticBubble(text, message = {}) {

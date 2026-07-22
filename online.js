@@ -30,6 +30,13 @@ import {
   chatCosmeticClassNames,
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
+import {
+  PLAYER_TITLE_CATEGORIES,
+  PLAYER_TITLE_PRODUCTS,
+  getPlayerTitleCategory,
+  getPlayerTitlePresentation,
+  getPlayerTitleProduct,
+} from "./player-titles.js?v=player-titles-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -104,24 +111,7 @@ const SHOP_PRODUCTS = [
   { id: "reaction_today_favorite", type: "reaction", name: "トゥデイズピック", reaction: "今日の推し！", description: "その日の一番を伝える追加リアクション", price: 350 },
   { id: "reaction_story", type: "reaction", name: "ストーリーテラー", reaction: "物語を感じる", description: "背景まで想像したときの追加リアクション", price: 400 },
   { id: "reaction_masterpiece", type: "reaction", name: "マスターピース", reaction: "これは名作", description: "ここぞという一枚に送る追加リアクション", price: 600 },
-  { id: "title_good_praiser", type: "title", name: "ほめ上手", title: "ほめ上手", description: "相手の魅力を見つけるプレイヤー向け称号", price: 400 },
-  { id: "title_plant_lover", type: "title", name: "植物愛好家", title: "植物愛好家", description: "植物画像が好きなことを伝える称号", price: 450 },
-  { id: "title_animal_lover", type: "title", name: "どうぶつ派", title: "どうぶつ派", description: "動物画像が好きなことを伝える称号", price: 450 },
-  { id: "title_landscape_hunter", type: "title", name: "風景ハンター", title: "風景ハンター", description: "印象的な景色を探すプレイヤー向け称号", price: 500 },
-  { id: "title_image_sommelier", type: "title", name: "画像ソムリエ", title: "画像ソムリエ", description: "画像の魅力をじっくり味わう上級称号", price: 650 },
-  { id: "title_hariai_master", type: "title", name: "貼り合いマスター", title: "貼り合いマスター", description: "貼り合いを遊び込んだコレクション称号", price: 900 },
-  { id: "title_live_action_supremacy", type: "title", name: "実写至上主義", title: "実写至上主義", description: "写真ならではの一瞬を愛するプレイヤー向け称号", price: 500 },
-  { id: "title_2d_lover", type: "title", name: "二次元愛好家", title: "二次元愛好家", description: "イラストやアニメ画像への愛を示す称号", price: 500 },
-  { id: "title_mushroom_side", type: "title", name: "きのこ派", title: "きのこ派", description: "終わらないお菓子論争で、きのこを選ぶ称号", price: 400 },
-  { id: "title_bamboo_side", type: "title", name: "たけのこ派", title: "たけのこ派", description: "終わらないお菓子論争で、たけのこを選ぶ称号", price: 400 },
-  { id: "title_image_folder_guardian", type: "title", name: "画像フォルダの守護者", title: "画像フォルダの守護者", description: "大切な画像コレクションを見守る者の称号", price: 450 },
-  { id: "title_cant_pick_five", type: "title", name: "5枚に絞れない", title: "5枚に絞れない", description: "候補画像が多すぎて毎回悩む人の称号", price: 350 },
-  { id: "title_blur_connoisseur", type: "title", name: "ピンぼけ鑑定士", title: "ピンぼけ鑑定士", description: "少しくらいのぼけにも味を見つける称号", price: 400 },
-  { id: "title_mostly_cats", type: "title", name: "だいたい猫", title: "だいたい猫", description: "気づけば猫画像を選んでいる人の称号", price: 450 },
-  { id: "title_food_photo_alert", type: "title", name: "飯テロ警戒中", title: "飯テロ警戒中", description: "空腹時の食べ物画像に備えるための称号", price: 450 },
-  { id: "title_resolution_is_justice", type: "title", name: "解像度は正義", title: "解像度は正義", description: "細部までくっきり見届けたい人の称号", price: 500 },
-  { id: "title_composition_lost", type: "title", name: "構図迷子", title: "構図迷子", description: "正解を探しながら今日も画像を選ぶ称号", price: 350 },
-  { id: "title_subjective_today", type: "title", name: "今日も主観", title: "今日も主観", description: "採点は主観、それも含めて楽しむ上位ネタ称号", price: 600 },
+  ...PLAYER_TITLE_PRODUCTS,
   ...CHAT_COSMETIC_PRODUCTS,
 ];
 const INITIAL_RATING = 1000;
@@ -217,6 +207,8 @@ function createOnlineState() {
     economy: createEmptyEconomy(),
     economyReady: false,
     economyBusy: false,
+    titleCategoryFilter: "all",
+    expandedTitleCategories: new Set(["preference"]),
     topMessage: null,
     topMessageEntryId: "",
     topMessageReady: false,
@@ -536,7 +528,7 @@ function getEquippedReactionProducts(economy = state.economy) {
 }
 
 function getTitleProduct(titleId = state.economy.equipped?.title) {
-  return SHOP_PRODUCTS.find((product) => product.type === "title" && product.id === titleId) || null;
+  return getPlayerTitleProduct(titleId);
 }
 
 function titleLabel(titleId) {
@@ -544,8 +536,10 @@ function titleLabel(titleId) {
 }
 
 function renderTitleBadge(titleId = state.economy.equipped?.title) {
-  const label = titleLabel(titleId);
-  return label ? `<span class="player-title-badge">◆ ${escapeHtml(label)}</span>` : "";
+  const presentation = getPlayerTitlePresentation(titleId);
+  return presentation
+    ? `<span class="player-title-badge ${presentation.className}"><span aria-hidden="true">${escapeHtml(presentation.icon)}</span>${escapeHtml(presentation.product.title)}</span>`
+    : "";
 }
 
 function attachEquippedChatCosmetics(message, economy = state.economy) {
@@ -666,14 +660,19 @@ async function refreshTopMessages({ silent = false } = {}) {
     });
     if (requestId !== topMessagesRequestId) return;
     topMessageRecords = Object.entries(records || {})
-      .map(([entryId, record]) => ({
-        entryId: String(entryId || ""),
-        name: String(record?.name || "").slice(0, 16),
-        titleId: String(record?.titleId || ""),
-        title: titleLabel(record?.titleId),
-        text: String(record?.text || "").slice(0, TOP_MESSAGE_MAX_LENGTH),
-        updatedAt: Number(record?.updatedAt || 0),
-      }))
+      .map(([entryId, record]) => {
+        const titlePresentation = getPlayerTitlePresentation(record?.titleId);
+        return {
+          entryId: String(entryId || ""),
+          name: String(record?.name || "").slice(0, 16),
+          titleId: String(record?.titleId || ""),
+          title: titlePresentation?.product.title || "",
+          titleIcon: titlePresentation?.icon || "",
+          titleClassName: titlePresentation?.className || "",
+          text: String(record?.text || "").slice(0, TOP_MESSAGE_MAX_LENGTH),
+          updatedAt: Number(record?.updatedAt || 0),
+        };
+      })
       .filter((record) => validLeaderboardEntryId(record.entryId) && record.name && record.text && Number.isFinite(record.updatedAt))
       .sort((first, second) => second.updatedAt - first.updatedAt);
     topMessagesStatus = "ready";
@@ -1266,10 +1265,11 @@ function renderPointShop() {
     const previewFrameId = product.type === "chatFrame" ? product.id : equippedChatCosmetics.chatFrameId;
     const previewBackgroundId = product.type === "chatBackground" ? product.id : equippedChatCosmetics.chatBackgroundId;
     const previewClasses = chatCosmeticClassNames(previewFrameId, previewBackgroundId);
+    const titlePresentation = product.type === "title" ? getPlayerTitlePresentation(product.id) : null;
     const preview = product.type === "reaction"
       ? `<button class="reaction-button shop-reaction-preview" data-preview-reaction="${escapeHtml(product.reaction)}">${escapeHtml(product.reaction)}</button>`
       : product.type === "title"
-        ? `<span class="player-title-badge shop-title-preview">◆ ${escapeHtml(product.title)}</span>`
+        ? `<span class="player-title-badge shop-title-preview ${titlePresentation?.className || ""}"><span aria-hidden="true">${escapeHtml(titlePresentation?.icon || "◆")}</span>${escapeHtml(product.title)}</span>`
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
           : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
@@ -1280,7 +1280,7 @@ function renderPointShop() {
       action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${!state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${MAX_EQUIPPED_REACTIONS}/${MAX_EQUIPPED_REACTIONS}` : "装備する"}</button>`;
     }
     const productTypeLabel = product.type === "reaction" ? "CHAT REACTION"
-      : product.type === "title" ? "PLAYER TITLE"
+      : product.type === "title" ? (getPlayerTitleCategory(product.category)?.eyebrow || "PLAYER TITLE")
         : product.type === "chatFrame" ? (product.special ? "SPECIAL CHAT FRAME" : "CHAT FRAME")
           : product.type === "chatBackground" ? "CHAT BACKGROUND" : "TOP MESSAGE ACCESS";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
@@ -1292,7 +1292,26 @@ function renderPointShop() {
   };
   const featureProducts = SHOP_PRODUCTS.filter((product) => product.type === "feature").map(renderProduct).join("");
   const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
-  const titleProducts = SHOP_PRODUCTS.filter((product) => product.type === "title").map(renderProduct).join("");
+  const selectedTitleCategory = state.titleCategoryFilter === "all" || getPlayerTitleCategory(state.titleCategoryFilter)
+    ? state.titleCategoryFilter
+    : "all";
+  const titleCategoryFilters = [
+    { id: "all", label: `すべて ${PLAYER_TITLE_PRODUCTS.length}` },
+    ...PLAYER_TITLE_CATEGORIES.map((category) => ({
+      id: category.id,
+      label: `${category.icon} ${category.label} ${PLAYER_TITLE_PRODUCTS.filter((product) => product.category === category.id).length}`,
+    })),
+  ].map((filter) => `<button class="shop-title-filter ${selectedTitleCategory === filter.id ? "active" : ""}" type="button" data-title-category-filter="${filter.id}" aria-pressed="${selectedTitleCategory === filter.id}">${escapeHtml(filter.label)}</button>`).join("");
+  const titleGroups = PLAYER_TITLE_CATEGORIES
+    .map((category) => {
+      const categoryProducts = PLAYER_TITLE_PRODUCTS.filter((product) => product.category === category.id);
+      const open = selectedTitleCategory === category.id || state.expandedTitleCategories.has(category.id);
+      const hidden = selectedTitleCategory !== "all" && selectedTitleCategory !== category.id;
+      return `<details class="shop-title-group ${category.className}" data-title-category-group="${category.id}" ${open ? "open" : ""} ${hidden ? "hidden" : ""}>
+        <summary><span class="shop-title-group-icon" aria-hidden="true">${escapeHtml(category.icon)}</span><span><small>${escapeHtml(category.eyebrow)} / ${categoryProducts.length} TITLES</small><strong>${escapeHtml(category.label)}</strong><em>${escapeHtml(category.description)}</em></span><b>＋</b></summary>
+        <div class="shop-grid">${categoryProducts.map(renderProduct).join("")}</div>
+      </details>`;
+    }).join("");
   const chatBackgroundProducts = CHAT_BACKGROUND_PRODUCTS.map(renderProduct).join("");
   const chatFrameProducts = CHAT_STANDARD_FRAME_PRODUCTS.map(renderProduct).join("");
   const specialChatFrameProducts = CHAT_SPECIAL_FRAME_PRODUCTS.map(renderProduct).join("");
@@ -1320,7 +1339,7 @@ function renderPointShop() {
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / 20 STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
       <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / 4 STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT REACTION</span><h2>追加リアクション</h2></div><p>購入品から最大${MAX_EQUIPPED_REACTIONS}個を装備できます。</p></div><div class="shop-grid">${reactionProducts}</div></section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>PLAYER TITLE</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備でき、プロフィールとチャットに表示されます。</p></div><div class="shop-grid">${titleProducts}</div></section>` : renderEconomyUnavailable()}
+      <section class="shop-category shop-title-category" id="shopTitleCategory"><div class="shop-category-head"><div><span>PLAYER TITLE / ${PLAYER_TITLE_PRODUCTS.length} TITLES</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備できます。カテゴリの色は個性を表し、強さには影響しません。</p></div><div class="shop-title-filters" role="group" aria-label="称号カテゴリ">${titleCategoryFilters}</div><div class="shop-title-groups">${titleGroups}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
       <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
     <p class="economy-note">購入後の払い戻しはありません。トップメッセージは公開情報です。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。</p>
@@ -1577,6 +1596,13 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-buy-product]").forEach((button) => button.addEventListener("click", () => purchaseShopProduct(button.dataset.buyProduct)));
   document.querySelectorAll("[data-equip-product]").forEach((button) => button.addEventListener("click", () => toggleShopProductEquip(button.dataset.equipProduct)));
   document.querySelectorAll("[data-preview-reaction]").forEach((button) => button.addEventListener("click", () => showToast(`チャットでは「${button.dataset.previewReaction}」と送信します。`)));
+  document.querySelectorAll("[data-title-category-filter]").forEach((button) => button.addEventListener("click", () => applyTitleCategoryFilter(button.dataset.titleCategoryFilter)));
+  document.querySelectorAll("[data-title-category-group]").forEach((details) => details.addEventListener("toggle", () => {
+    const categoryId = details.dataset.titleCategoryGroup;
+    if (!getPlayerTitleCategory(categoryId)) return;
+    if (details.open) state.expandedTitleCategories.add(categoryId);
+    else state.expandedTitleCategories.delete(categoryId);
+  }));
   bindChatEvents();
 
   if (state.screen === "setup") bindSetupEvents();
@@ -1599,6 +1625,21 @@ function bindScreenEvents() {
     document.querySelector("#onlineRetry")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineErrorHome")?.addEventListener("click", leaveToLanding);
   }
+}
+
+function applyTitleCategoryFilter(categoryId) {
+  const nextFilter = categoryId === "all" || getPlayerTitleCategory(categoryId) ? categoryId : "all";
+  state.titleCategoryFilter = nextFilter;
+  document.querySelectorAll("[data-title-category-filter]").forEach((button) => {
+    const activeFilter = button.dataset.titleCategoryFilter === nextFilter;
+    button.classList.toggle("active", activeFilter);
+    button.setAttribute("aria-pressed", String(activeFilter));
+  });
+  document.querySelectorAll("[data-title-category-group]").forEach((details) => {
+    const visible = nextFilter === "all" || details.dataset.titleCategoryGroup === nextFilter;
+    details.hidden = !visible;
+    if (visible && nextFilter !== "all") details.open = true;
+  });
 }
 
 function bindEconomyEvents() {

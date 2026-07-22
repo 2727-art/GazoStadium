@@ -167,7 +167,9 @@
     }
     landingTopMessageIndex %= messages.length;
     const message = messages[landingTopMessageIndex];
-    const title = message.title ? `<span class="community-title">◆ ${escapeHtml(message.title)}</span>` : "";
+    const title = message.title
+      ? `<span class="community-title ${escapeHtml(message.titleClassName || "")}"><span aria-hidden="true">${escapeHtml(message.titleIcon || "◆")}</span>${escapeHtml(message.title)}</span>`
+      : "";
     const count = messages.length > 1 ? `<span class="community-position">${landingTopMessageIndex + 1} / ${messages.length}</span>` : "";
     return `<article class="community-message-card">
       <span class="community-quote" aria-hidden="true">♡</span>
