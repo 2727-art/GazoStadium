@@ -55,6 +55,7 @@ const DEFAULT_LEADERBOARD_PERIOD = "weekly";
 const MAX_POINTS = 999_999;
 const MAX_EQUIPPED_REACTIONS = 8;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
+const GENERIC_MATCH_MISSION_END_DATE_KEY = "2026-07-23";
 const DAILY_MISSIONS = [
   { id: "complete_match", progressKey: "matches", title: "1試合を完走", description: "ルーム破棄では進みません。", target: 1, reward: 100 },
   { id: "score_three", progressKey: "scores", title: "3回採点する", description: "相手の画像を合計3回採点します。", target: 3, reward: 60 },
@@ -64,6 +65,10 @@ const DAILY_MISSIONS = [
   { id: "play_team", progressKey: "teamMatches", title: "2on2を1回完走", description: "2on2の正式な決着が対象です。", target: 1, reward: 70 },
   { id: "play_royale", progressKey: "royaleMatches", title: "バトルロワイヤルを1回完走", description: "バトルロワイヤルの正式な決着が対象です。", target: 1, reward: 90 },
 ];
+const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
+  mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY
+));
+const isGenericMatchMissionActive = (dateKey) => dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY;
 const DAILY_PROGRESS_LIMITS = Object.freeze({
   matches: 1,
   scores: 3,
@@ -807,6 +812,19 @@ function watchLobbyStats() {
   window.setInterval(refreshLobbyStats, 10_000);
 }
 
+function watchDailyDateRollover() {
+  let observedDateKey = currentDailyDateKey();
+  window.setInterval(() => {
+    const nextDateKey = currentDailyDateKey();
+    if (nextDateKey === observedDateKey) return;
+    observedDateKey = nextDateKey;
+    if (!active || !state.uid || !state.authReady) return;
+    initializeEconomy().then(() => {
+      if (active && ["missions", "gameover"].includes(state.screen)) render();
+    }).catch((error) => console.error(error));
+  }, 10_000);
+}
+
 async function refreshLeaderboard(period = leaderboardPeriod) {
   const selectedPeriod = normalizeLeaderboardPeriod(period);
   const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
@@ -1157,8 +1175,9 @@ function renderEconomyUnavailable() {
 }
 
 function renderDailyMissions() {
+  const missions = dailyMissionsForDate(currentDailyDateKey());
   const missionContent = state.economyReady
-    ? `<div class="mission-grid">${DAILY_MISSIONS.map((mission) => renderMissionCard(mission)).join("")}</div>`
+    ? `<div class="mission-grid">${missions.map((mission) => renderMissionCard(mission)).join("")}</div>`
     : renderEconomyUnavailable();
   return `<section class="screen economy-screen">
     <div class="section-head"><div><span class="eyebrow">DAILY CHALLENGE</span><h1>デイリーミッション</h1>
@@ -1432,7 +1451,7 @@ function renderGameOver() {
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>◆ ${state.economy.points} PT</strong></div>
-      <div class="mission-grid compact">${DAILY_MISSIONS.map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
+      <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
@@ -1689,9 +1708,9 @@ function applyEconomySnapshot(snapshot, dateKey = currentDailyDateKey()) {
 }
 
 async function claimDailyMission(missionId) {
-  const mission = DAILY_MISSIONS.find((candidate) => candidate.id === missionId);
-  if (!mission || !state.economyReady || state.economyBusy) return;
   const dateKey = currentDailyDateKey();
+  const mission = dailyMissionsForDate(dateKey).find((candidate) => candidate.id === missionId);
+  if (!mission || !state.economyReady || state.economyBusy) return;
   let outcome = "unavailable";
   state.economyBusy = true;
   render();
@@ -1828,7 +1847,7 @@ async function recordDailyProgress(changes) {
   });
   if (!result.committed) return;
   applyEconomySnapshot(result.snapshot, dateKey);
-  const completed = DAILY_MISSIONS.filter((mission) => (
+  const completed = dailyMissionsForDate(dateKey).filter((mission) => (
     Number(before[mission.progressKey] || 0) < mission.target
     && Number(state.economy.daily[mission.progressKey] || 0) >= mission.target
   ));
@@ -1841,14 +1860,15 @@ async function recordModeDailyCompletion(mode) {
   const user = await ensureRankingCommentUser();
   const offsetSnapshot = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
   const dateKey = jstDateKey(Date.now() + Number(offsetSnapshot?.val() || publicRestServerTimeOffset || 0));
+  const genericMissionActive = isGenericMatchMissionActive(dateKey);
   let previousMatches = 0;
   let previousProgress = 0;
   const result = await runTransaction(ref(database, `online/economy/${user.uid}`), (current) => {
     const record = normalizeEconomyRecord(current, dateKey);
     previousMatches = Number(record.daily.matches || 0);
     previousProgress = Number(record.daily[progressKey] || 0);
-    if (previousMatches >= 1 && previousProgress >= 1) return;
-    record.daily.matches = 1;
+    if ((!genericMissionActive || previousMatches >= 1) && previousProgress >= 1) return;
+    if (genericMissionActive) record.daily.matches = 1;
     record.daily[progressKey] = 1;
     record.updatedAt = Date.now() + Number(offsetSnapshot?.val() || publicRestServerTimeOffset || 0);
     return record;
@@ -1856,7 +1876,7 @@ async function recordModeDailyCompletion(mode) {
   if (!result.committed) return false;
   if (state.uid === user.uid) applyEconomySnapshot(result.snapshot, dateKey);
   const completedTitles = [];
-  if (previousMatches < 1) completedTitles.push("1試合を完走");
+  if (genericMissionActive && previousMatches < 1) completedTitles.push("1試合を完走");
   if (previousProgress < 1) {
     const mission = DAILY_MISSIONS.find((candidate) => candidate.progressKey === progressKey);
     if (mission) completedTitles.push(mission.title);
@@ -3175,6 +3195,7 @@ sampleHandicapDialog?.addEventListener("close", () => {
 });
 
 watchLobbyStats();
+watchDailyDateRollover();
 
 window.HariaiOnline = {
   start,

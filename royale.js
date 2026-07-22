@@ -46,6 +46,7 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const INITIAL_RATING = 1000;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const MAX_EQUIPPED_REACTIONS = 8;
+const GENERIC_MATCH_MISSION_END_DATE_KEY = "2026-07-23";
 const DAILY_PROGRESS_LIMITS = Object.freeze({
   matches: 1,
   scores: 3,
@@ -1919,8 +1920,11 @@ async function recordDailyProgress(changes) {
   });
   if (!result.committed) return;
   state.economy = normalizeEconomy(result.snapshot.val());
+  const dateKey = jstDateKey(now());
   const completed = DAILY_MISSION_SUMMARIES.filter(([key, target]) => (
-    Number(before[key] || 0) < target && Number(state.economy.daily[key] || 0) >= target
+    (key !== "matches" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY)
+    && Number(before[key] || 0) < target
+    && Number(state.economy.daily[key] || 0) >= target
   ));
   if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
