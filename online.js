@@ -1388,6 +1388,13 @@ function renderGameOver() {
   const outcome = state.outcome;
   const title = outcome.winnerIndex === null ? "引き分け" : `${escapeHtml(state.players[outcome.winnerIndex].name)} WIN`;
   const subtitle = outcome.reason === "hp" ? "HPが0になり、決着しました。" : outcome.reason === "draw" ? "すべての判定項目が同点でした。" : "5ラウンド終了。残りHPと獲得点で判定しました。";
+  const localPlayer = state.players[state.playerIndex];
+  const localResult = outcome.winnerIndex === null ? "DRAW" : outcome.winnerIndex === state.playerIndex ? "WIN" : "LOSE";
+  const shareButton = window.HariaiApp?.shared?.renderResultShareButton?.({
+    mode: "通常型1on1",
+    result: localResult,
+    details: [`残りHP ${Number(localPlayer?.hp || 0)}`, `全${state.round}ラウンド / 合計獲得点 ${Number(localPlayer?.totalReceived || 0)}`],
+  }) || "";
   return `<section class="screen gameover-wrap"><div class="gameover-card"><div class="winner-emblem" aria-hidden="true">${outcome.winnerIndex === null ? "=" : "✦"}</div>
     <span class="eyebrow">ONLINE MATCH COMPLETE</span><h1>${title}</h1><p>${escapeHtml(subtitle)}</p>
     <div class="final-stats">${state.players.map((player, index) => `<div class="final-player ${outcome.winnerIndex === index ? "winner" : ""}">
@@ -1398,7 +1405,7 @@ function renderGameOver() {
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>◆ ${state.economy.points} PT</strong></div>
       <div class="mission-grid compact">${DAILY_MISSIONS.map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
-    <div class="gameover-actions"><button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
+    <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
   </div></section>`;

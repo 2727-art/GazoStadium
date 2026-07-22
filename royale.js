@@ -634,9 +634,15 @@ function renderGameOver() {
     .sort((first, second) => first.place - second.place || first.player.uid.localeCompare(second.player.uid))
     .map(({ player, place }) => `<div class="royale-standing ${place === 1 ? "winner" : ""}"><strong>#${place}</strong><span>${escapeHtml(player.name)}${player.uid === state.uid ? "（あなた）" : ""}</span><small>${place === 1 ? "LAST SURVIVOR" : state.eliminated[player.uid]?.reason === "forfeit" ? "FORFEIT" : "ELIMINATED"}${audienceAwardCount(player.uid) ? ` / 観客賞 ${audienceAwardCount(player.uid)}` : ""}</small></div>`).join("");
   const localPlace = outcome.winnerUid === state.uid ? 1 : Number(state.eliminated[state.uid]?.place || 4);
+  const localAudienceAwards = audienceAwardCount(state.uid);
+  const shareButton = shared()?.renderResultShareButton?.({
+    mode: "4人バトルロワイヤル",
+    result: `${localPlace}位`,
+    details: [localPlace === 1 ? "LAST SURVIVOR / 優勝" : `FINAL PLACE #${localPlace}`, `観客賞 ${localAudienceAwards}票`],
+  }) || "";
   return `<section class="screen gameover-wrap"><div class="gameover-card royale-gameover"><div class="winner-emblem">1</div><span class="eyebrow">BATTLE ROYALE COMPLETE</span><h1>${escapeHtml(winner?.name || "SURVIVOR")} WIN</h1><p>最後まで生き残ったプレイヤーが勝者です。あなたは${localPlace}位でした。</p>
     <div class="royale-standings">${standings}</div><div class="online-profile-strip"><span>あなたのバトルロワイヤル戦績</span><span>${state.royaleProfile.wins}回優勝 / TOP2 ${state.royaleProfile.topTwo}回</span><span>${state.royaleProfile.matches}戦</span></div>
-    <div class="gameover-actions"><button class="button button-primary" id="royaleNewMatch">もう一度バトルロワイヤル</button><button class="button button-ghost" id="royaleGameoverHome">タイトルへ戻る</button></div></div></section>`;
+    <div class="gameover-actions">${shareButton}<button class="button button-primary" id="royaleNewMatch">もう一度バトルロワイヤル</button><button class="button button-ghost" id="royaleGameoverHome">タイトルへ戻る</button></div></div></section>`;
 }
 
 function renderNoContest() {

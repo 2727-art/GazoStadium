@@ -692,6 +692,19 @@ function renderWeaknessChainResult() {
 function renderGameOver() {
   const outcome = determineOutcome();
   const winner = outcome.winnerIndex;
+  const localPlayer = getLocalPlayer();
+  const localResult = winner < 0 ? "DRAW" : winner === state.playerIndex ? "WIN" : "LOSE";
+  const weaknessDetail = localPlayer.weaknessCorrect
+    ? `弱点看破成功 / ${Number(localPlayer.weaknessChainCount || 0)} CHAIN`
+    : "弱点看破：未達";
+  const finishDetail = Number(localPlayer.overkill || 0) > 0
+    ? `OVERKILL +${Number(localPlayer.overkill || 0)}`
+    : `残りHP ${Number(localPlayer.hp || 0)}`;
+  const shareButton = shared()?.renderResultShareButton?.({
+    mode: "戦略型1on1",
+    result: localResult,
+    details: [weaknessDetail, finishDetail],
+  }) || "";
   const weaknessReview = state.weaknessResult ? `<div class="strategy-guess-summary strategy-final-guess-summary">${state.players.map((player, index) => {
     const opponent = state.players[1 - index];
     return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small><strong>${escapeHtml(opponent.clues[player.weaknessGuess] || "未回答")}</strong><span>${player.weaknessCorrect ? `看破成功 / ${player.weaknessChainCount} CHAIN` : "看破失敗"}</span></article>`;
@@ -705,7 +718,7 @@ function renderGameOver() {
       ${player.clues.map((clue, index) => `<p class="${index === player.weaknessIndex ? "is-weakness" : "is-bluff"}"><b>${index === player.weaknessIndex ? "本当の弱点" : "ブラフ"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
     <section class="strategy-history"><span class="eyebrow">BATTLE LOG</span>${state.history.map((round) => `<p><b>R${round.round}</b><span>${escapeHtml(state.players[0].name)} ${round.powers[0]} - ${round.powers[1]} ${escapeHtml(state.players[1].name)}</span></p>`).join("")}</section>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
-    <div class="screen-actions strategy-final-actions"><button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
+    <div class="screen-actions strategy-final-actions">${shareButton}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
 }
 

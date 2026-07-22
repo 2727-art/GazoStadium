@@ -498,11 +498,18 @@ function renderWaitingContinue() {
 function renderGameOver() {
   const outcome = state.outcome;
   const title = outcome.winnerTeam ? `TEAM ${outcome.winnerTeam} WIN` : "DRAW";
+  const localResult = outcome.winnerTeam === null ? "DRAW" : outcome.winnerTeam === state.team ? "WIN" : "LOSE";
+  const localTeam = state.teams[state.team] || createTeams().A;
+  const shareButton = shared()?.renderResultShareButton?.({
+    mode: "2on2チーム対戦",
+    result: localResult,
+    details: [`TEAM ${state.team} / 残りHP ${Number(localTeam.hp || 0)}`, `TEAM LINK ${Number(localTeam.links || 0)}回`],
+  }) || "";
   const teamCard = (team) => `<article class="team-final-card ${outcome.winnerTeam === team ? "winner" : ""}"><span>TEAM ${team}</span><h2>${teamMembers(team).map((player) => escapeHtml(player.name)).join(" + ")}</h2>
     <div class="stats-row"><div class="stat-box"><strong>${state.teams[team].hp}</strong><span>残りHP</span></div><div class="stat-box"><strong>${state.teams[team].totalScore.toFixed(1)}</strong><span>累計得点</span></div><div class="stat-box"><strong>${state.teams[team].links}</strong><span>TEAM LINK</span></div><div class="stat-box"><strong>${state.teams[team].criticals}</strong><span>CRITICAL</span></div></div></article>`;
   return `<section class="screen gameover-wrap"><div class="gameover-card team-gameover"><div class="winner-emblem">${outcome.winnerTeam || "="}</div><span class="eyebrow">2ON2 MATCH COMPLETE</span><h1>${title}</h1><p>共有HP、累計得点、TEAM LINK、CRITICAL、PERFECTの順で判定しました。</p>
     <div class="team-final-grid">${teamCard("A")}${teamCard("B")}</div><div class="online-profile-strip"><span>あなたの2ON2戦績</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span><span>RATE ${state.teamProfile.rating}</span></div>
-    <div class="gameover-actions"><button class="button button-primary" id="teamNewMatch">もう一度2on2</button><button class="button button-ghost" id="teamGameoverHome">タイトルへ戻る</button></div></div></section>`;
+    <div class="gameover-actions">${shareButton}<button class="button button-primary" id="teamNewMatch">もう一度2on2</button><button class="button button-ghost" id="teamGameoverHome">タイトルへ戻る</button></div></div></section>`;
 }
 
 function renderNoContest() {

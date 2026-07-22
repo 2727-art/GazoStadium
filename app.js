@@ -8,6 +8,7 @@
   const PROFILE_AVATAR_DB_NAME = "hariai-stadium-profile-v1";
   const PROFILE_AVATAR_STORE_NAME = "assets";
   const PROFILE_AVATAR_RECORD_KEY = "profile-avatar";
+  const OFFICIAL_GAME_URL = "https://gazostadium.anjugames.workers.dev/";
   const OVERALL_RATING_CLASSES = Object.freeze([
     { key: "beginner", label: "Beginner", emblem: "◇", min: 100, max: 1024, range: "100–1024" },
     { key: "great", label: "Great", emblem: "✦", min: 1025, max: 1049, range: "1025–1049" },
@@ -50,6 +51,40 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function normalizeResultShareLine(value, maxLength = 48) {
+    const normalized = String(value ?? "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+    return [...normalized].slice(0, maxLength).join("");
+  }
+
+  function buildResultShareText({ mode = "オンライン対戦", result = "-", details = [] } = {}) {
+    const safeMode = normalizeResultShareLine(mode, 28) || "オンライン対戦";
+    const safeResult = normalizeResultShareLine(result, 20) || "-";
+    const safeDetails = (Array.isArray(details) ? details : [])
+      .map((detail) => normalizeResultShareLine(detail, 42))
+      .filter(Boolean)
+      .slice(0, 2);
+    return [
+      `貼り合いスタジアム｜${safeMode}`,
+      "",
+      `RESULT：${safeResult}`,
+      ...safeDetails,
+      "",
+      "#貼り合いスタジアム",
+      OFFICIAL_GAME_URL,
+    ].join("\n");
+  }
+
+  function createXResultPostUrl(resultDetails) {
+    const intentUrl = new URL("https://x.com/intent/tweet");
+    intentUrl.searchParams.set("text", buildResultShareText(resultDetails));
+    intentUrl.searchParams.set("lang", "ja");
+    return intentUrl.toString();
+  }
+
+  function renderResultShareButton(resultDetails) {
+    return `<a class="button button-x-share" href="${escapeHtml(createXResultPostUrl(resultDetails))}" target="_blank" rel="noopener noreferrer" title="投稿内容はXで確認・編集できます"><span class="x-share-mark" aria-hidden="true">X</span><span>Xで結果をポスト</span></a>`;
   }
 
   function normalizeOverallRating(value) {
@@ -925,6 +960,9 @@
       processImageFile,
       createSampleItems,
       profileAvatar,
+      buildResultShareText,
+      createXResultPostUrl,
+      renderResultShareButton,
     },
   };
 

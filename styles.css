@@ -1787,6 +1787,33 @@ button:disabled {
   box-shadow: 0 12px 36px rgba(170, 131, 255, 0.22);
 }
 
+.button-x-share {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #f8fafc;
+  background: linear-gradient(135deg, #222832, #050608);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  text-decoration: none;
+}
+
+.button-x-share:hover,
+.button-x-share:focus-visible {
+  border-color: rgba(255, 255, 255, 0.68);
+  background: linear-gradient(135deg, #313946, #0b0d11);
+}
+
+.x-share-mark {
+  display: inline-grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 7px;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 1000;
+  line-height: 1;
+}
+
 .button-ghost {
   border-color: var(--line-bright);
   color: var(--text);
@@ -3152,6 +3179,7 @@ button:disabled {
 .gameover-actions {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
