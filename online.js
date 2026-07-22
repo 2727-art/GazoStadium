@@ -94,7 +94,6 @@ const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
-const LOBBY_REST_REFRESH_MS = 10_000;
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -116,9 +115,7 @@ let leaderboardEntries = [];
 let leaderboardStatus = "idle";
 let leaderboardPeriod = DEFAULT_LEADERBOARD_PERIOD;
 let leaderboardPeriodKey = "";
-let lobbyRestRequestPending = false;
 let leaderboardRequestId = 0;
-let lobbyStatsLoaded = false;
 let publicRestServerTimeOffset = 0;
 
 function createOnlineState() {
@@ -572,7 +569,6 @@ async function deleteLeaderboardComment(targetEntryId, authorEntryId) {
 }
 
 function refreshLobbyStats() {
-  if (!lobbyStatsLoaded) return;
   const freshAfter = Date.now() - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries).filter((entry) => (
     Number(entry?.lastSeen) >= freshAfter
@@ -583,6 +579,10 @@ function refreshLobbyStats() {
   entries.forEach((entry) => {
     lobbyStats[entry.mode][entry.state] += 1;
   });
+  renderLobbyStats();
+}
+
+function renderLobbyStats() {
   const values = {
     lobbySoloWaitingCount: lobbyStats.solo.waiting,
     lobbySoloPlayingCount: lobbyStats.solo.playing,
@@ -595,33 +595,20 @@ function refreshLobbyStats() {
   };
   Object.entries(values).forEach(([id, value]) => {
     const element = document.querySelector(`#${id}`);
-    if (element) element.textContent = String(value);
+    if (element) element.textContent = Number.isInteger(value) ? String(value) : "--";
   });
 }
 
-async function refreshLobbyStatsFromRest() {
-  if (lobbyRestRequestPending) return;
-  lobbyRestRequestPending = true;
-  try {
-    lobbyPresenceEntries = await fetchPublicDatabasePath("online/publicPresence") || {};
-    lobbyStatsLoaded = true;
+function watchLobbyStats() {
+  onValue(ref(database, "online/publicPresence"), (snapshot) => {
+    lobbyPresenceEntries = snapshot.val() || {};
     refreshLobbyStats();
-  } catch {
-    // 最初の取得に失敗した場合は「--」、取得済みなら最後の値を維持します。
-  } finally {
-    lobbyRestRequestPending = false;
-  }
-}
-
-function startLobbyStatsPolling() {
-  refreshLobbyStatsFromRest();
-  window.setInterval(() => {
-    if (document.visibilityState === "visible") refreshLobbyStatsFromRest();
-  }, LOBBY_REST_REFRESH_MS);
-  window.setInterval(refreshLobbyStats, 10_000);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") refreshLobbyStatsFromRest();
+  }, () => {
+    lobbyPresenceEntries = {};
+    lobbyStats = createLobbyStats();
+    renderLobbyStats();
   });
+  window.setInterval(refreshLobbyStats, 10_000);
 }
 
 async function refreshLeaderboard(period = leaderboardPeriod) {
@@ -2727,7 +2714,7 @@ sampleHandicapDialog?.addEventListener("close", () => {
   if (confirmed && active && state.screen === "setup") beginMatchmaking();
 });
 
-startLobbyStatsPolling();
+watchLobbyStats();
 
 window.HariaiOnline = {
   start,
