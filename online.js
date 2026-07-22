@@ -1225,7 +1225,7 @@ function renderConnecting() {
     const startingHp = getStartingHp(sampleCount);
     return `<span class="connection-pill ${sampleCount ? "warning" : ""}">${index === 0 ? "あなた" : escapeHtml(player?.name || "対戦相手")}: HP ${startingHp}${sampleCount ? ` / SAMPLE ${sampleCount}` : ""}</span>`;
   }).join("");
-  return renderStatusCard({
+  const status = renderStatusCard({
     icon: "VS",
     eyebrow: "MATCH FOUND",
     title: `${escapeHtml(opponent?.name || "対戦相手")}とマッチング`,
@@ -1233,6 +1233,8 @@ function renderConnecting() {
     details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${handicapDetails}`,
     actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
   });
+  return `<section class="screen">${status.replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
+    <div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
 }
 
 function renderStatusCard({ icon, eyebrow, title, body, details = "", actions = "" }) {
@@ -1287,6 +1289,7 @@ function renderRoundSelect() {
     <div class="select-panel"><div class="select-grid">${cards}</div>
       <div class="selection-footer"><p>${timerStarted ? "10秒以内に選択してください。時間切れ時は未使用画像を自動選択します。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
         <button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この画像でロック</button></div></div>
+    <div class="online-chat-standalone">${renderOnlineChat()}</div>
   </section>`;
 }
 
@@ -1311,7 +1314,8 @@ function renderBattleWait(eyebrow, title, body) {
     icon: "…", eyebrow, title, body,
     details: `<div class="matching-pulse"><i></i><i></i><i></i></div>`,
     actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
-  }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}</section>`;
+  }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
+    <div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
 }
 
 function renderReveal() {
@@ -1320,11 +1324,12 @@ function renderReveal() {
   const itemFor = (index) => index === state.playerIndex ? localItem : remoteItem;
   return `<section class="screen">${renderOnlineHud()}
     <div class="section-head"><div><span class="eyebrow">IMAGE REVEAL</span><h1>画像、オープン。</h1>
-      <p>通常型は画像だけで勝負。採点が確定するまで会話は表示されません。</p></div>
+      <p>通常型は自由な画像勝負。チャットで感想やリアクションを送りながら楽しめます。</p></div>
       <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
     <div class="battle-layout"><div class="arena-panel"><div class="arena-grid">
       ${renderArenaCard(0, itemFor(0))}<div class="arena-vs">VS</div>${renderArenaCard(1, itemFor(1))}
-    </div><div class="arena-actions"><button class="button button-primary" id="onlineBeginScoring">相手の画像を採点</button></div></div></div></section>`;
+    </div><div class="arena-actions"><button class="button button-primary" id="onlineBeginScoring">相手の画像を採点</button></div></div>
+    ${renderOnlineChat()}</div></section>`;
 }
 
 function renderArenaCard(index, item) {
@@ -1347,7 +1352,7 @@ function renderScore() {
       <p>1～10点を選択してください。確定後の変更はできません。</p><div class="score-buttons">${buttons}</div>
       <button class="button button-primary button-wide score-lock" id="onlineLockScore" ${state.selectedScore ? "" : "disabled"}>この点数で確定</button>
       <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
-  </div></section>`;
+  </div><div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
 }
 
 function renderRoundResult() {
@@ -1392,6 +1397,7 @@ function renderGameOver() {
     </div>`).join("")}</div>
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>◆ ${state.economy.points} PT</strong></div>
       <div class="mission-grid compact">${DAILY_MISSIONS.map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
+    <div class="result-chat">${renderOnlineChat()}</div>
     <div class="gameover-actions"><button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
