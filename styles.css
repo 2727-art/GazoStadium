@@ -858,24 +858,6 @@ button:disabled {
   box-shadow: 0 12px 34px rgba(25, 117, 210, 0.3);
 }
 
-.strategy-lab-note {
-  max-width: 720px;
-  margin: 16px 0 0;
-  padding: 13px 15px;
-  border: 1px solid rgba(89, 181, 255, 0.28);
-  border-radius: 12px;
-  color: #aeb5c8;
-  background: rgba(31, 126, 213, 0.08);
-  font-size: 0.76rem;
-  line-height: 1.65;
-}
-
-.strategy-lab-note b {
-  margin-right: 6px;
-  color: #75c9ff;
-  letter-spacing: 0.08em;
-}
-
 .button-royale {
   color: white;
   background: linear-gradient(135deg, #7a56d8, #c06cff);

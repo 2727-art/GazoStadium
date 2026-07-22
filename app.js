@@ -71,7 +71,6 @@
           <button class="button button-ghost" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost" id="pointShopButton">ポイントショップ</button>
         </div>
-        <p class="strategy-lab-note"><b>STRATEGY 1ON1 / OFFLINE PROTOTYPE</b> 匿名自己紹介から好みを読み、メイン5枚＋リザーブ5枚を構築する2人用の試作ルールです。</p>
         <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
           <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
