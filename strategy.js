@@ -50,6 +50,17 @@ import {
   isPostMatchTipBusy,
   renderPostMatchTip,
 } from "./post-match-tip.js?v=post-match-tip-v2";
+import {
+  STRATEGY_VIDEO_MAX_BYTES,
+  appendStrategyVideoChunk,
+  createIncomingStrategyVideoTransfer,
+  createStrategyVideoTransferId,
+  finishIncomingStrategyVideoTransfer,
+  releaseStrategyVideoResource,
+  releaseStrategyVideoResources,
+  sendStrategyVideoClip,
+  startStrategyVideoRecording,
+} from "./strategy-video-transfer.mjs?v=strategy-video-review-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -64,6 +75,7 @@ const WEAKNESS_MISS_DAMAGE = 5;
 const MAX_AUDIO_SECONDS = 10;
 const AUDIO_HIGHLIGHT_SECONDS = 3;
 const MAX_AUDIO_TRANSFER_BYTES = 480 * 1024;
+const REVIEW_DURATION_MS = 10 * 60 * 1000;
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const MAX_PURSUIT_LINE_LENGTH = 40;
@@ -74,6 +86,7 @@ const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const STRATEGY_VIDEO_CHANNEL_LABEL = "hariai-strategy-videos-v1";
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-strategy-name-v2";
 const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
@@ -113,6 +126,7 @@ const IDENTIFIED_CHAT_SCREENS = new Set([
   "identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating",
   "actionSelect", "waitingActionPick", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "roundResult", "waitingContinue",
   "weaknessGuess", "waitingWeaknessGuess", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue",
+  "review",
 ]);
 
 const app = document.querySelector("#app");
@@ -196,6 +210,22 @@ function createState() {
     incomingTransfer: null,
     incomingAudioTransfer: null,
     transferProgress: 0,
+    videoClips: [],
+    pendingVideo: null,
+    videoRecording: null,
+    videoCaptureStarting: false,
+    videoCaptureAbortController: null,
+    incomingVideoTransfer: null,
+    videoSentPhases: new Set(),
+    videoReceivedPhases: new Set(),
+    videoSending: false,
+    videoTransferProgress: 0,
+    videoChannel: null,
+    videoChannelReady: false,
+    reviewEndReason: "",
+    reviewLocallyEnded: false,
+    reviewClockTimer: null,
+    serverTimeOffset: 0,
     peer: null,
     channel: null,
     channelReady: false,
@@ -422,9 +452,9 @@ function setStrategyChrome(label) {
   const privacy = document.querySelector(".privacy-badge");
   const footerItems = document.querySelectorAll(".site-footer span");
   if (status) status.innerHTML = `<i></i> ${escapeHtml(label)}`;
-  if (privacy) privacy.textContent = "P2P画像・音声転送";
+  if (privacy) privacy.textContent = "P2P画像・音声・短尺映像";
   if (footerItems[0]) footerItems[0].textContent = "STRATEGY 1ON1 / FIREBASE + WEBRTC";
-  if (footerItems[1]) footerItems[1].textContent = "自己紹介と進行はルーム内同期、画像・添付音声は対戦相手へ直接転送します";
+  if (footerItems[1]) footerItems[1].textContent = "進行とチャットはルーム内同期、画像・添付音声・短尺映像は対戦相手へ直接転送します";
 }
 
 function focusScreen() {
@@ -466,6 +496,7 @@ function render() {
     weaknessChainResult: renderWeaknessChainResult,
     waitingWeaknessContinue: () => renderWaiting("WEAKNESS BREAK COMPLETE", "相手の準備を待っています", "両者が確認すると対戦を続行、または最終結果へ進みます。"),
     gameover: renderGameOver,
+    review: renderStrategyReview,
     withdrawn: renderWithdrawn,
     noContest: renderNoContest,
     error: renderError,
@@ -497,8 +528,8 @@ function renderProfile() {
     <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
       <li><b>1</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
       <li><b>2</b><span>各ラウンド後に一度だけ看破を宣言でき、成功すると最大3連続追撃、失敗すると自分に5ダメージです。</span></li>
-      <li><b>3</b><span>画像には10秒までの音声を任意で添付できます。画像・音声はP2P直送でFirebaseには保存しません。</span></li>
-    </ol><p class="privacy-note">試合前は弱点のハッシュだけを共有し、両者の回答確定後に答えを公開して照合します。</p></aside>
+      <li><b>3</b><span>対戦中と双方同意後の品評会では、10秒までの短尺映像をP2Pで相手へ一時送信できます。</span></li>
+    </ol><p class="privacy-note">画像・音声・短尺映像はFirebaseへ保存しません。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
       ${shared()?.profileAvatar?.renderSetting?.({ controlId: "strategyProfileAvatar", name: state.name }) || ""}
@@ -548,7 +579,7 @@ function renderMatching() {
 }
 
 function renderConnecting() {
-  return renderStatusCard("VS", "MATCH FOUND", "対戦相手とマッチングしました", "匿名自己紹介を表示する前にP2P画像・音声転送を準備しています。", `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+  return renderStatusCard("VS", "MATCH FOUND", "対戦相手とマッチングしました", "匿名自己紹介を表示する前にP2P画像・音声・短尺映像転送を準備しています。", `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
 }
 
 function renderAnonymousIntro() {
@@ -794,9 +825,76 @@ function renderGameOver() {
       ${player.clues.map((clue, index) => `<p class="${index === player.weaknessIndex ? "is-weakness" : "is-bluff"}"><b>${index === player.weaknessIndex ? "本当の弱点" : "ブラフ"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
     <section class="strategy-history"><span class="eyebrow">BATTLE LOG</span>${state.history.map((round) => `<p><b>R${round.round}</b><span>${escapeHtml(state.players[0].name)} ${round.powers[0]} - ${round.powers[1]} ${escapeHtml(state.players[1].name)}</span></p>`).join("")}</section>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
+    ${renderStrategyReviewInvite()}
     ${renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
     <div class="screen-actions strategy-final-actions">${shareButton}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
+}
+
+function firebaseNow() {
+  return Date.now() + Number(state.serverTimeOffset || 0);
+}
+
+function reviewRemainingMs() {
+  const startedAt = Number(state.roomData?.reviewStartedAt || 0);
+  return startedAt ? Math.max(0, startedAt + REVIEW_DURATION_MS - firebaseNow()) : 0;
+}
+
+function formatReviewRemaining(milliseconds = reviewRemainingMs()) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function renderStrategyReviewInvite() {
+  const finished = state.roomData?.finished || {};
+  const decisions = state.roomData?.reviewDecisions || {};
+  const ended = state.roomData?.reviewEnded || {};
+  const localDecision = decisions[state.uid] || "";
+  const opponentDecision = decisions[state.opponentUid] || "";
+  const bothFinished = finished[state.uid] === true && finished[state.opponentUid] === true;
+  const reviewStarted = Number(state.roomData?.reviewStartedAt || 0) > 0;
+  const reviewEnded = Boolean(ended[state.uid] || ended[state.opponentUid] || (reviewStarted && reviewRemainingMs() <= 0));
+  let status = "";
+  let actions = "";
+
+  if (!bothFinished) {
+    status = "相手の対戦終了処理を待っています。両者の結果確定後に選べます。";
+  } else if (reviewEnded || state.reviewEndReason) {
+    status = state.reviewEndReason === "time"
+      ? "10分が経過したため品評会は終了しました。映像データは破棄しました。"
+      : "品評会は終了しました。映像データは破棄しました。";
+  } else if (localDecision === "decline" || opponentDecision === "decline") {
+    status = "どちらかが「今回は終了」を選んだため、品評会は開きません。";
+  } else if (!state.opponentOnline && localDecision === "accept") {
+    status = "相手が退出または切断したため、品評会は開始できません。";
+  } else if (reviewStarted) {
+    status = "双方の同意を確認しました。品評会を開いています…";
+  } else if (!localDecision) {
+    status = opponentDecision === "accept"
+      ? "相手は品評会への参加を希望しています。参加は任意です。"
+      : "両者が参加を選んだ場合だけ、10分間のフリーチャットを開きます。";
+    actions = `<button class="button button-primary" id="strategyReviewAccept">品評会に参加</button>
+      <button class="button button-ghost" id="strategyReviewDecline">今回は終了</button>`;
+  } else if (localDecision === "accept") {
+    status = "参加を希望しました。相手の回答を待っています。";
+  }
+
+  return `<section class="strategy-review-invite"><span class="eyebrow">POST-MATCH REVIEW / 任意参加</span><h2>この一戦を一緒に品評しますか？</h2>
+    <p>${escapeHtml(status)}</p>
+    <small>双方同意時のみ開始・最大10分・途中退出で終了。短尺映像はP2P一時転送で、サーバー保存や後日の再視聴はできません。</small>
+    ${actions ? `<div class="strategy-review-actions">${actions}</div>` : ""}</section>`;
+}
+
+function renderStrategyReview() {
+  return `<section class="screen strategy-screen strategy-review-screen">
+    <header class="strategy-review-head"><div><span class="eyebrow">POST-MATCH REVIEW / MUTUAL CONSENT</span><h1>対戦後の品評会</h1>
+      <p>${escapeHtml(getLocalPlayer()?.name || "あなた")} と ${escapeHtml(getOpponent()?.name || "対戦相手")}だけのフリーチャットです。画像の狙いや刺さったポイントを振り返りましょう。</p></div>
+      <div class="strategy-review-clock"><small>残り時間</small><strong id="strategyReviewCountdown">${formatReviewRemaining()}</strong></div></header>
+    <div class="strategy-review-notice"><span>● 双方同意済み</span><p>最大10分です。どちらかが終了すると両者とも閉じ、受信・録画した映像を端末メモリから破棄します。</p></div>
+    <div class="screen-actions strategy-review-leave"><button class="button button-danger" id="strategyReviewLeave">品評会を終了</button></div>
+  </section>`;
 }
 
 function renderWithdrawn() {
@@ -844,7 +942,7 @@ function renderStrategyChatMessage(message, anonymous) {
   const localPlayer = message.authorUid === state.uid;
   const player = state.players.find((candidate) => candidate.uid === message.authorUid);
   const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
-  const phaseLabel = message.phase === "scout" ? "SCOUT" : `R${Math.max(1, Math.min(MAX_ROUNDS, Number(message.round) || 1))}`;
+  const phaseLabel = message.phase === "scout" ? "SCOUT" : message.phase === "review" ? "REVIEW" : `R${Math.max(1, Math.min(MAX_ROUNDS, Number(message.round) || 1))}`;
   const showIdentityCosmetics = !anonymous && message.phase !== "scout";
   const cosmeticClasses = showIdentityCosmetics ? chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId) : "";
   const titleBadge = showIdentityCosmetics ? renderStrategyTitleBadge(message.titleId) : "";
@@ -855,19 +953,77 @@ function renderStrategyChatMessage(message, anonymous) {
     <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}${titleBadge}</small>${content}</div></div>`;
 }
 
+function strategyReviewIsActive() {
+  const decisions = state.roomData?.reviewDecisions || {};
+  const ended = state.roomData?.reviewEnded || {};
+  return !state.reviewLocallyEnded
+    && decisions[state.uid] === "accept"
+    && decisions[state.opponentUid] === "accept"
+    && Number(state.roomData?.reviewStartedAt || 0) > 0
+    && !ended[state.uid]
+    && !ended[state.opponentUid]
+    && reviewRemainingMs() > 0;
+}
+
+function currentStrategyVideoPhase() {
+  if (state.screen === "review") return strategyReviewIsActive() ? "review" : "";
+  const finished = state.roomData?.finished || {};
+  return IDENTIFIED_CHAT_SCREENS.has(state.screen)
+    && state.screen !== "review"
+    && state.screen !== "identity"
+    && state.screen !== "waitingBattle"
+    && finished[state.uid] !== true
+    && finished[state.opponentUid] !== true
+    ? "battle"
+    : "";
+}
+
+function renderStrategyVideoClip(clip) {
+  const local = clip.ownerUid === state.uid;
+  const player = local ? getLocalPlayer() : getOpponent();
+  const label = clip.phase === "review" ? "品評会" : `対戦 R${Math.max(1, Math.min(MAX_ROUNDS, Number(clip.round) || 1))}`;
+  return `<article class="strategy-video-clip ${local ? "is-local" : "is-opponent"}">
+    <div><small>${escapeHtml(label)} / ${local ? "YOU" : "OPPONENT"}</small><strong>${escapeHtml(player?.name || "PLAYER")}</strong></div>
+    <video controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata" src="${escapeHtml(clip.url || "")}"></video>
+    <span>${Number(clip.duration || 0).toFixed(1)}秒 / ${(Number(clip.size || 0) / (1024 * 1024)).toFixed(1)}MB</span>
+  </article>`;
+}
+
+function renderStrategyVideoPanel() {
+  const phase = currentStrategyVideoPhase();
+  const clips = (state.screen === "review" ? state.videoClips : state.videoClips.filter((clip) => clip.phase === "battle"))
+    .filter((clip) => !clip.released && clip.url);
+  const alreadySent = phase ? state.videoSentPhases.has(phase) : false;
+  const canRecord = Boolean(phase) && state.videoChannelReady && !alreadySent && !state.videoSending;
+  const status = !state.videoChannelReady
+    ? "○ 動画P2P接続なし（チャットと対戦は続行できます）"
+    : alreadySent
+      ? `● この${phase === "review" ? "品評会" : "対戦"}では送信済み`
+      : "● 動画P2P接続済み";
+  return `<section class="strategy-video-panel" id="strategyVideoPanel"><div class="strategy-video-panel-head"><div><strong>SHORT VIDEO</strong>
+      <span>最大10秒・480p・約${Math.round(STRATEGY_VIDEO_MAX_BYTES / (1024 * 1024))}MB / P2P一時転送</span></div>
+      <button class="button button-ghost button-small" type="button" data-strategy-video-open ${canRecord ? "" : "disabled"}>${alreadySent ? "このフェーズは送信済み" : "短尺映像を録画"}</button></div>
+    <p class="strategy-video-status">${escapeHtml(status)}</p>
+    ${clips.length ? `<div class="strategy-video-clips">${clips.map(renderStrategyVideoClip).join("")}</div>` : '<p class="strategy-video-empty">受信・送信した映像は、この対戦または品評会を閉じるまでだけ再生できます。</p>'}
+    <small class="strategy-video-privacy">録画前に顔、室内、住所・位置が分かるものが映っていないか確認してください。リアルタイム映像ではなく、確認後に送信します。</small></section>`;
+}
+
 function renderStrategyChat() {
   const anonymous = isStrategyChatAnonymous();
+  const reviewing = state.screen === "review";
   const localPlayer = getLocalPlayer();
   const opponent = getOpponent();
-  const messages = state.chatMessages.length
-    ? state.chatMessages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
-    : `<div class="chat-empty">会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。</div>`;
-  return `<aside class="chat-panel strategy-chat-panel"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
-      <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : "会話も推理材料"}</span></div>
+  const visibleMessages = reviewing ? state.chatMessages.filter((message) => message.phase === "review") : state.chatMessages.filter((message) => message.phase !== "review");
+  const messages = visibleMessages.length
+    ? visibleMessages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
+    : `<div class="chat-empty">${reviewing ? "まだ品評コメントはありません。<br />画像の狙いや刺さったポイントから話してみましょう。" : "会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。"}</div>`;
+  return `<aside class="chat-panel strategy-chat-panel ${reviewing ? "is-review" : ""}"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : reviewing ? "POST-MATCH REVIEW CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
+      <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : reviewing ? "双方同意済み・最大10分" : "会話も推理材料"}</span></div>
     <div class="strategy-chat-participants">${renderStrategyChatParticipant(localPlayer, true, anonymous)}${renderStrategyChatParticipant(opponent, false, anonymous)}</div>
+    ${anonymous ? "" : renderStrategyVideoPanel()}
     <div class="chat-messages" id="strategyChatMessages">${messages}</div>
     ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy, { freeOnly: anonymous }), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
-    <form class="chat-form" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="会話から本当の弱点を探る…" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
+    <form class="chat-form" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="${reviewing ? "この一戦の感想を送る…" : "会話から本当の弱点を探る…"}" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
       <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
 }
 
@@ -968,6 +1124,9 @@ function bindScreenEvents() {
       onBalanceChange: (balance) => { state.economy.points = balance; },
     });
   }
+  document.querySelector("#strategyReviewAccept")?.addEventListener("click", () => submitReviewDecision("accept"));
+  document.querySelector("#strategyReviewDecline")?.addEventListener("click", () => submitReviewDecision("decline"));
+  document.querySelector("#strategyReviewLeave")?.addEventListener("click", leaveStrategyReview);
   document.querySelector("#strategyNewMatch")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyWithdrawAgain")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyNoContestAgain")?.addEventListener("click", resetStrategySetup);
@@ -980,6 +1139,7 @@ function bindScreenEvents() {
 
 function bindStrategyChatEvents() {
   bindChatToolTabs();
+  bindStrategyVideoPanelEvents();
   document.querySelectorAll("[data-strategy-chat-reaction]").forEach((button) => button.addEventListener("click", () => sendStrategyChat(button.dataset.strategyChatReaction)));
   document.querySelectorAll("[data-strategy-chat-stamp]").forEach((button) => button.addEventListener("click", () => sendStrategyChat("", button.dataset.strategyChatStamp)));
   document.querySelector("#strategyChatForm")?.addEventListener("submit", (event) => {
@@ -1009,8 +1169,8 @@ async function sendStrategyChat(value, stampId = "") {
   const message = {
     authorUid: state.uid,
     text,
-    phase: isStrategyChatAnonymous() ? "scout" : "battle",
-    round: Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
+    phase: isStrategyChatAnonymous() ? "scout" : state.screen === "review" ? "review" : "battle",
+    round: state.screen === "review" ? 0 : Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
     createdAt: serverTimestamp(),
   };
   if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-strategy-chat-stamp]"); }
@@ -1028,15 +1188,294 @@ function refreshStrategyChat() {
   const list = document.querySelector("#strategyChatMessages");
   if (!list) return;
   const anonymous = isStrategyChatAnonymous();
-  list.innerHTML = state.chatMessages.length
-    ? state.chatMessages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
-    : `<div class="chat-empty">会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。</div>`;
+  const reviewing = state.screen === "review";
+  const messages = reviewing ? state.chatMessages.filter((message) => message.phase === "review") : state.chatMessages.filter((message) => message.phase !== "review");
+  list.innerHTML = messages.length
+    ? messages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
+    : `<div class="chat-empty">${reviewing ? "まだ品評コメントはありません。<br />画像の狙いや刺さったポイントから話してみましょう。" : "会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。"}</div>`;
   scrollStrategyChat();
 }
 
 function scrollStrategyChat() {
   const list = document.querySelector("#strategyChatMessages");
   if (list) list.scrollTop = list.scrollHeight;
+}
+
+function bindStrategyVideoPanelEvents() {
+  document.querySelector("[data-strategy-video-open]")?.addEventListener("click", openStrategyVideoDialog);
+}
+
+function refreshStrategyVideoPanel() {
+  const panel = document.querySelector("#strategyVideoPanel");
+  if (!panel || isStrategyChatAnonymous()) return;
+  panel.outerHTML = renderStrategyVideoPanel();
+  bindStrategyVideoPanelEvents();
+}
+
+function ensureStrategyVideoDialog() {
+  let dialog = document.querySelector("#strategyVideoDialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "strategyVideoDialog";
+  dialog.className = "strategy-video-dialog";
+  dialog.setAttribute("aria-labelledby", "strategyVideoDialogTitle");
+  dialog.innerHTML = '<div class="strategy-video-dialog-shell" id="strategyVideoDialogBody"></div>';
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    cancelStrategyVideoCapture(true);
+  });
+  document.body.append(dialog);
+  return dialog;
+}
+
+function closeStrategyVideoDialog() {
+  const dialog = document.querySelector("#strategyVideoDialog");
+  if (dialog?.open) dialog.close();
+}
+
+function renderStrategyVideoDialog() {
+  const dialog = ensureStrategyVideoDialog();
+  const body = dialog.querySelector("#strategyVideoDialogBody");
+  if (!body) return;
+  const pending = state.pendingVideo;
+  const capture = state.videoRecording;
+  const phaseLabel = (pending?.phase || capture?.phase || currentStrategyVideoPhase()) === "review" ? "品評会" : "対戦中";
+  let content = "";
+  if (state.videoCaptureStarting) {
+    content = `<div class="strategy-video-dialog-head"><div><span class="eyebrow">SHORT VIDEO / ${phaseLabel}</span><h2 id="strategyVideoDialogTitle">カメラを準備しています</h2></div></div>
+      <div class="strategy-video-permission-wait"><div class="matching-pulse"><i></i><i></i><i></i></div><p>ブラウザのカメラ・マイク許可を確認してください。</p></div>
+      <button class="button button-ghost" type="button" id="strategyVideoCancel">中止</button>`;
+  } else if (capture) {
+    content = `<div class="strategy-video-dialog-head"><div><span class="eyebrow">RECORDING / ${phaseLabel}</span><h2 id="strategyVideoDialogTitle">短尺映像を録画中</h2></div><strong class="strategy-recording-time" id="strategyVideoRecordingTime">0.0 / 10.0秒</strong></div>
+      <div class="strategy-video-preview-wrap is-recording"><video id="strategyVideoLivePreview" muted autoplay playsinline></video><span>REC</span></div>
+      <progress id="strategyVideoRecordingProgress" max="10" value="0"></progress>
+      <p class="strategy-video-dialog-note">10秒で自動停止します。録画後に内容を確認してから送信できます。</p>
+      <div class="strategy-video-dialog-actions"><button class="button button-primary" type="button" id="strategyVideoStop">録画を停止</button><button class="button button-ghost" type="button" id="strategyVideoCancel">破棄して中止</button></div>`;
+  } else if (pending) {
+    content = `<div class="strategy-video-dialog-head"><div><span class="eyebrow">PREVIEW / ${phaseLabel}</span><h2 id="strategyVideoDialogTitle">送信前に確認</h2></div></div>
+      <div class="strategy-video-preview-wrap"><video controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata" src="${escapeHtml(pending.url || "")}"></video></div>
+      <p class="strategy-video-dialog-note">${Number(pending.duration || 0).toFixed(1)}秒 / ${(Number(pending.size || 0) / (1024 * 1024)).toFixed(1)}MB。送信後も、この対戦または品評会を閉じると破棄されます。</p>
+      <div class="strategy-video-send-progress" ${state.videoSending ? "" : "hidden"}><span>相手へP2P送信中</span><strong id="strategyVideoSendProgress">${state.videoTransferProgress}%</strong></div>
+      <div class="strategy-video-dialog-actions"><button class="button button-primary" type="button" id="strategyVideoSend" ${state.videoSending ? "disabled" : ""}>この映像を送信</button>
+        <button class="button button-ghost" type="button" id="strategyVideoRetake" ${state.videoSending ? "disabled" : ""}>撮り直す</button>
+        <button class="button button-ghost" type="button" id="strategyVideoCancel" ${state.videoSending ? "disabled" : ""}>破棄して閉じる</button></div>`;
+  } else {
+    content = `<div class="strategy-video-dialog-head"><div><span class="eyebrow">SHORT VIDEO / ${phaseLabel}</span><h2 id="strategyVideoDialogTitle">最大10秒の映像を録画</h2></div></div>
+      <div class="strategy-video-safety"><strong>録画前の確認</strong><p>顔、室内、住所・位置が分かるもの、個人情報を映さないでください。映像は相手へP2Pで一時送信され、運営サーバーには保存されません。</p></div>
+      <label class="strategy-video-audio-option"><input type="checkbox" id="strategyVideoIncludeAudio" checked /> 映像にマイク音声も含める</label>
+      <p class="strategy-video-dialog-note">480p・最大10秒・約${Math.round(STRATEGY_VIDEO_MAX_BYTES / (1024 * 1024))}MB。録画後に確認し、送信するか選べます。</p>
+      <div class="strategy-video-dialog-actions"><button class="button button-primary" type="button" id="strategyVideoStart">録画を開始</button><button class="button button-ghost" type="button" id="strategyVideoCancel">閉じる</button></div>`;
+  }
+  body.innerHTML = content;
+  body.querySelector("#strategyVideoStart")?.addEventListener("click", beginStrategyVideoCapture);
+  body.querySelector("#strategyVideoStop")?.addEventListener("click", () => state.videoRecording?.session?.stop().catch(() => {}));
+  body.querySelector("#strategyVideoSend")?.addEventListener("click", sendPendingStrategyVideo);
+  body.querySelector("#strategyVideoRetake")?.addEventListener("click", () => {
+    if (state.pendingVideo) releaseStrategyVideoResource(state.pendingVideo);
+    state.pendingVideo = null;
+    state.videoTransferProgress = 0;
+    renderStrategyVideoDialog();
+  });
+  body.querySelector("#strategyVideoCancel")?.addEventListener("click", () => cancelStrategyVideoCapture(true));
+  if (capture) {
+    const preview = body.querySelector("#strategyVideoLivePreview");
+    if (preview) {
+      preview.srcObject = capture.session.stream;
+      preview.play().catch(() => {});
+    }
+  }
+}
+
+function updateStrategyRecordingClock(capture) {
+  if (state.videoRecording !== capture) return;
+  const elapsed = Math.min(10, Math.max(0, (performance.now() - capture.session.startedAt) / 1000));
+  const label = document.querySelector("#strategyVideoRecordingTime");
+  const progress = document.querySelector("#strategyVideoRecordingProgress");
+  if (label) label.textContent = `${elapsed.toFixed(1)} / 10.0秒`;
+  if (progress) progress.value = elapsed;
+}
+
+function openStrategyVideoDialog() {
+  const phase = currentStrategyVideoPhase();
+  if (!phase) return showToast("現在は短尺映像を送信できません。");
+  if (!state.videoChannelReady) return showToast("動画用P2P接続がありません。チャットと対戦はそのまま続けられます。");
+  if (state.videoSentPhases.has(phase)) return showToast("短尺映像は対戦中・品評会中にそれぞれ1本までです。");
+  renderStrategyVideoDialog();
+  const dialog = ensureStrategyVideoDialog();
+  if (!dialog.open) dialog.showModal();
+}
+
+async function beginStrategyVideoCapture() {
+  const phase = currentStrategyVideoPhase();
+  if (!phase || state.videoSentPhases.has(phase) || state.videoCaptureStarting || state.videoRecording) return;
+  const includeAudio = document.querySelector("#strategyVideoIncludeAudio")?.checked !== false;
+  const controller = new AbortController();
+  state.videoCaptureAbortController = controller;
+  state.videoCaptureStarting = true;
+  renderStrategyVideoDialog();
+  try {
+    const session = await startStrategyVideoRecording({ includeAudio, signal: controller.signal });
+    if (controller.signal.aborted || state.videoCaptureAbortController !== controller || currentStrategyVideoPhase() !== phase) {
+      session.cancel().catch(() => {});
+      return;
+    }
+    const capture = {
+      session,
+      phase,
+      round: phase === "review" ? 0 : Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
+      clockTimer: null,
+    };
+    state.videoRecording = capture;
+    state.videoCaptureStarting = false;
+    state.videoCaptureAbortController = null;
+    session.result.then((clip) => {
+      window.clearInterval(capture.clockTimer);
+      if (state.videoRecording !== capture) {
+        releaseStrategyVideoResource(clip);
+        return;
+      }
+      state.videoRecording = null;
+      clip.ownerUid = state.uid;
+      clip.phase = capture.phase;
+      clip.round = capture.round;
+      state.pendingVideo = clip;
+      renderStrategyVideoDialog();
+      refreshStrategyVideoPanel();
+    }).catch((error) => {
+      window.clearInterval(capture.clockTimer);
+      if (state.videoRecording === capture) state.videoRecording = null;
+      if (error?.name !== "AbortError") showToast(error?.message || "短尺映像を録画できませんでした。");
+      renderStrategyVideoDialog();
+    });
+    renderStrategyVideoDialog();
+    capture.clockTimer = window.setInterval(() => updateStrategyRecordingClock(capture), 100);
+    updateStrategyRecordingClock(capture);
+  } catch (error) {
+    if (state.videoCaptureAbortController === controller) {
+      state.videoCaptureStarting = false;
+      state.videoCaptureAbortController = null;
+    }
+    if (error?.name !== "AbortError") showToast(error?.message || "カメラを開始できませんでした。");
+    renderStrategyVideoDialog();
+  }
+}
+
+function stopStrategyVideoRecording({ discard = false } = {}) {
+  state.videoCaptureAbortController?.abort();
+  state.videoCaptureAbortController = null;
+  state.videoCaptureStarting = false;
+  const capture = state.videoRecording;
+  if (capture) {
+    window.clearInterval(capture.clockTimer);
+    if (discard) {
+      state.videoRecording = null;
+      capture.session.cancel().catch(() => {});
+    } else {
+      capture.session.stop().catch(() => {});
+    }
+  }
+  if (discard && state.pendingVideo) {
+    releaseStrategyVideoResource(state.pendingVideo);
+    state.pendingVideo = null;
+  }
+}
+
+function cancelStrategyVideoCapture(closeDialog = false) {
+  if (state.videoSending) return;
+  stopStrategyVideoRecording({ discard: true });
+  state.videoTransferProgress = 0;
+  if (closeDialog) closeStrategyVideoDialog();
+  else renderStrategyVideoDialog();
+  refreshStrategyVideoPanel();
+}
+
+function waitForVideoDataBuffer(channel) {
+  if (!channel || channel.readyState !== "open") return Promise.reject(new Error("動画用P2P接続が切れました。"));
+  if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => done(new Error("動画転送の待機時間を超えました。")), 10_000);
+    const done = (error) => {
+      window.clearTimeout(timeout);
+      channel.removeEventListener("bufferedamountlow", onLow);
+      channel.removeEventListener("close", onClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onLow = () => done();
+    const onClose = () => done(new Error("動画用P2P接続が切れました。"));
+    channel.addEventListener("bufferedamountlow", onLow, { once: true });
+    channel.addEventListener("close", onClose, { once: true });
+  });
+}
+
+async function sendPendingStrategyVideo() {
+  const clip = state.pendingVideo;
+  const phase = currentStrategyVideoPhase();
+  if (!clip || state.videoSending) return;
+  if (!phase || clip.phase !== phase) {
+    showToast("録画したフェーズが終了したため、この映像は送信できません。");
+    releaseStrategyVideoResource(clip);
+    state.pendingVideo = null;
+    renderStrategyVideoDialog();
+    return;
+  }
+  if (!state.videoChannelReady || !state.videoChannel || state.videoChannel.readyState !== "open") {
+    showToast("動画用P2P接続がありません。映像以外の対戦機能は続けられます。");
+    return;
+  }
+  state.videoSending = true;
+  state.videoTransferProgress = 0;
+  renderStrategyVideoDialog();
+  refreshStrategyVideoPanel();
+  try {
+    const transfer = await sendStrategyVideoClip(state.videoChannel, clip, {
+      transferId: createStrategyVideoTransferId(),
+      ownerUid: state.uid,
+      phase: clip.phase,
+      round: clip.round,
+      createdAt: firebaseNow(),
+    }, {
+      waitForBuffer: waitForVideoDataBuffer,
+      isActive: () => active && state.pendingVideo === clip && state.videoChannel?.readyState === "open",
+      onProgress: (progress) => {
+        state.videoTransferProgress = progress;
+        const output = document.querySelector("#strategyVideoSendProgress");
+        if (output) output.textContent = `${progress}%`;
+      },
+    });
+    Object.assign(clip, {
+      id: transfer.transferId,
+      transferId: transfer.transferId,
+      ownerUid: state.uid,
+      phase: transfer.phase,
+      round: transfer.round,
+      createdAt: transfer.createdAt,
+    });
+    state.pendingVideo = null;
+    state.videoClips.push(clip);
+    state.videoSentPhases.add(transfer.phase);
+    closeStrategyVideoDialog();
+    showToast("短尺映像を相手へ一時送信しました。");
+  } catch (error) {
+    console.error(error);
+    showToast(error?.message || "短尺映像を送信できませんでした。チャットと対戦は続けられます。");
+  } finally {
+    state.videoSending = false;
+    state.videoTransferProgress = 0;
+    refreshStrategyVideoPanel();
+    if (state.pendingVideo && document.querySelector("#strategyVideoDialog")?.open) renderStrategyVideoDialog();
+  }
+}
+
+function releaseStrategyVideoData() {
+  stopStrategyVideoRecording({ discard: true });
+  releaseStrategyVideoResources(state.videoClips);
+  state.incomingVideoTransfer = null;
+  state.videoSentPhases.clear();
+  state.videoReceivedPhases.clear();
+  state.videoSending = false;
+  state.videoTransferProgress = 0;
+  closeStrategyVideoDialog();
 }
 
 function syncStrategyProfileDraft() {
@@ -1408,6 +1847,12 @@ async function setupRoomListeners() {
   }));
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${state.opponentUid}`), (snapshot) => {
     state.opponentOnline = snapshot.val()?.online !== false;
+    if (!state.opponentOnline && state.screen === "review") finishReviewLocally("left");
+    else if (state.screen === "gameover") render();
+  }));
+  state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    state.serverTimeOffset = Number(snapshot.val() || 0);
+    if (state.screen === "review") startReviewClock();
   }));
   const chatQuery = query(ref(database, `online/strategyChats/${state.roomId}`), limitToLast(60));
   state.roomUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
@@ -1420,7 +1865,7 @@ async function setupRoomListeners() {
 }
 
 async function setupPeerConnection() {
-  if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像・音声転送に対応していません。");
+  if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像・音声・短尺映像転送に対応していません。");
   const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] });
   state.peer = peer;
   peer.onicecandidate = (event) => { if (event.candidate) sendSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError); };
@@ -1429,7 +1874,11 @@ async function setupPeerConnection() {
     if (["failed", "closed"].includes(peer.connectionState) && active) showToast("P2P接続が切れました。ルーム破棄で退出できます。");
     if (state.screen === "connecting") render();
   };
-  peer.ondatachannel = (event) => configureDataChannel(event.channel);
+  peer.ondatachannel = (event) => {
+    if (event.channel.label === STRATEGY_VIDEO_CHANNEL_LABEL) configureVideoDataChannel(event.channel);
+    else if (event.channel.label === "hariai-strategy-images") configureDataChannel(event.channel);
+    else event.channel.close();
+  };
   const signalsRef = ref(database, `online/strategyRooms/${state.roomId}/signals/${state.uid}`);
   state.roomUnsubscribers.push(onChildAdded(signalsRef, async (snapshot) => {
     try { await handleSignal(snapshot.val()); } finally { await remove(snapshot.ref).catch(() => {}); }
@@ -1437,6 +1886,8 @@ async function setupPeerConnection() {
   if (state.playerIndex === 0) {
     const channel = peer.createDataChannel("hariai-strategy-images", { ordered: true });
     configureDataChannel(channel);
+    const videoChannel = peer.createDataChannel(STRATEGY_VIDEO_CHANNEL_LABEL, { ordered: true });
+    configureVideoDataChannel(videoChannel);
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
@@ -1484,6 +1935,71 @@ function configureDataChannel(channel) {
   channel.onclose = () => { state.channelReady = false; state.peerStatus = "P2P接続が切れました"; };
   channel.onerror = () => showToast("画像・音声転送で通信エラーが発生しました。");
   channel.onmessage = (event) => handleChannelMessage(event.data).catch(handleRecoverableError);
+}
+
+function configureVideoDataChannel(channel) {
+  state.videoChannel = channel;
+  channel.binaryType = "arraybuffer";
+  channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
+  channel.onopen = () => {
+    state.videoChannelReady = true;
+    refreshStrategyVideoPanel();
+  };
+  channel.onclose = () => {
+    state.videoChannelReady = false;
+    state.incomingVideoTransfer = null;
+    refreshStrategyVideoPanel();
+  };
+  channel.onerror = () => {
+    state.videoChannelReady = false;
+    showToast("短尺映像のP2P通信に失敗しました。チャットと対戦は続けられます。");
+    refreshStrategyVideoPanel();
+  };
+  channel.onmessage = (event) => handleVideoChannelMessage(event.data).catch((error) => {
+    state.incomingVideoTransfer = null;
+    console.error(error);
+    showToast(error?.message || "短尺映像を受信できませんでした。チャットと対戦は続けられます。");
+  });
+}
+
+async function handleVideoChannelMessage(data) {
+  if (typeof data === "string") {
+    if (data.length > 4096) throw new Error("動画転送の制御情報が大きすぎます。");
+    const message = JSON.parse(data);
+    if (message.type === "strategy-video-start") {
+      const phase = currentStrategyVideoPhase();
+      if (!phase || message.phase !== phase) throw new Error("現在のフェーズでは短尺映像を受信できません。");
+      if (state.videoReceivedPhases.has(phase)) throw new Error("相手からの短尺映像は各フェーズ1本までです。");
+      state.incomingVideoTransfer = createIncomingStrategyVideoTransfer(message, {
+        currentTransfer: state.incomingVideoTransfer,
+        expectedOwnerUid: state.opponentUid,
+        allowedPhases: [phase],
+        maxRounds: MAX_ROUNDS,
+        now: firebaseNow(),
+      });
+      return;
+    }
+    if (message.type === "strategy-video-end") {
+      const transfer = state.incomingVideoTransfer;
+      state.incomingVideoTransfer = null;
+      const clip = finishIncomingStrategyVideoTransfer(transfer, message);
+      if (state.videoReceivedPhases.has(clip.phase)) {
+        releaseStrategyVideoResource(clip);
+        throw new Error("相手からの短尺映像は各フェーズ1本までです。");
+      }
+      state.videoReceivedPhases.add(clip.phase);
+      state.videoClips.push(clip);
+      refreshStrategyVideoPanel();
+      showToast("相手から短尺映像を受信しました。自動再生はしません。");
+    }
+    return;
+  }
+  try {
+    await appendStrategyVideoChunk(state.incomingVideoTransfer, data);
+  } catch (error) {
+    state.incomingVideoTransfer = null;
+    throw error;
+  }
 }
 
 function imageKey(kind, round) {
@@ -1660,6 +2176,128 @@ async function submitDecision(decision) {
   state.screen = decision === "withdraw" ? "withdrawn" : "waitingDecision";
   render();
   await set(ref(database, `online/strategyRooms/${state.roomId}/decisions/${state.uid}`), decision);
+}
+
+function stopReviewClock() {
+  window.clearInterval(state.reviewClockTimer);
+  state.reviewClockTimer = null;
+}
+
+function finishReviewLocally(reason) {
+  stopReviewClock();
+  stopStrategyVideoRecording({ discard: true });
+  releaseStrategyVideoData();
+  state.reviewEndReason = reason;
+  state.reviewLocallyEnded = true;
+  if (state.screen !== "gameover") {
+    state.screen = "gameover";
+    setStrategyChrome("STRATEGY COMPLETE");
+    render();
+  }
+}
+
+function startReviewClock() {
+  stopReviewClock();
+  const updateClock = () => {
+    const remaining = reviewRemainingMs();
+    const clock = document.querySelector("#strategyReviewCountdown");
+    if (clock) clock.textContent = formatReviewRemaining(remaining);
+    if (remaining <= 0 && state.screen === "review") finishReviewLocally("time");
+  };
+  updateClock();
+  if (state.screen === "review" && reviewRemainingMs() > 0) state.reviewClockTimer = window.setInterval(updateClock, 1000);
+}
+
+async function submitReviewDecision(decision) {
+  const finished = state.roomData?.finished || {};
+  const current = state.roomData?.reviewDecisions?.[state.uid];
+  if (current || finished[state.uid] !== true || finished[state.opponentUid] !== true) return;
+  if (decision !== "accept" && decision !== "decline") return;
+  document.querySelectorAll("#strategyReviewAccept, #strategyReviewDecline").forEach((button) => { button.disabled = true; });
+  try {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/reviewDecisions/${state.uid}`), decision);
+    if (decision === "decline") {
+      stopStrategyVideoRecording({ discard: true });
+      releaseStrategyVideoData();
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("品評会の回答を送信できませんでした。通信状態を確認してください。");
+    render();
+  }
+}
+
+async function maybeStartStrategyReview() {
+  if (Number(state.roomData?.reviewStartedAt || 0) > 0) return;
+  const decisions = state.roomData?.reviewDecisions || {};
+  if (decisions[state.uid] !== "accept" || decisions[state.opponentUid] !== "accept") return;
+  if (!state.opponentOnline) return;
+  try {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/reviewStartedAt`), serverTimestamp());
+  } catch (error) {
+    const snapshot = await get(ref(database, `online/strategyRooms/${state.roomId}/reviewStartedAt`)).catch(() => null);
+    if (!snapshot?.exists()) throw error;
+  }
+}
+
+async function leaveStrategyReview(returnHome = false) {
+  if (state.screen !== "review") return;
+  document.querySelector("#strategyReviewLeave")?.setAttribute("disabled", "");
+  await set(ref(database, `online/strategyRooms/${state.roomId}/reviewEnded/${state.uid}`), true).catch((error) => {
+    console.error(error);
+    showToast("終了通知を相手へ送れませんでした。品評会を閉じます。");
+  });
+  finishReviewLocally("left");
+  if (returnHome) await leaveToLanding();
+}
+
+async function reactToReviewData() {
+  const finished = state.roomData?.finished || {};
+  const decisions = state.roomData?.reviewDecisions || {};
+  const ended = state.roomData?.reviewEnded || {};
+  const bothFinished = finished[state.uid] === true && finished[state.opponentUid] === true;
+  const bothAccepted = decisions[state.uid] === "accept" && decisions[state.opponentUid] === "accept";
+  const declined = decisions[state.uid] === "decline" || decisions[state.opponentUid] === "decline";
+  const startedAt = Number(state.roomData?.reviewStartedAt || 0);
+  const endedByPlayer = Boolean(ended[state.uid] || ended[state.opponentUid]);
+  const expired = startedAt > 0 && reviewRemainingMs() <= 0;
+
+  if (!bothFinished) {
+    if (state.screen === "gameover") render();
+    return;
+  }
+  if (declined) {
+    stopStrategyVideoRecording({ discard: true });
+    releaseStrategyVideoData();
+    if (state.screen === "review") finishReviewLocally("left");
+    else if (state.screen === "gameover") render();
+    return;
+  }
+  if (bothAccepted && !startedAt) {
+    if (!state.opponentOnline) {
+      if (state.screen === "gameover") render();
+      return;
+    }
+    await maybeStartStrategyReview();
+    if (state.screen === "gameover") render();
+    return;
+  }
+  if (startedAt && !endedByPlayer && !expired && bothAccepted) {
+    if (state.reviewLocallyEnded) return;
+    state.reviewEndReason = "";
+    if (state.screen !== "review") {
+      state.screen = "review";
+      setStrategyChrome("POST-MATCH REVIEW");
+      render();
+    }
+    startReviewClock();
+    return;
+  }
+  if (startedAt && (endedByPlayer || expired)) {
+    finishReviewLocally(expired ? "time" : "left");
+    return;
+  }
+  if (state.screen === "gameover") render();
 }
 
 async function addDeckFiles(zone, files) {
@@ -2173,6 +2811,11 @@ async function reactToRoomData() {
       if (state.screen !== "withdrawn") { state.screen = "withdrawn"; render(); }
       return;
     }
+    const finished = state.roomData?.finished || {};
+    if (["gameover", "review"].includes(state.screen) || (finished[state.uid] === true && finished[state.opponentUid] === true)) {
+      await reactToReviewData();
+      return;
+    }
     if (decisions[state.uid] === "accept" && decisions[state.opponentUid] === "accept" && ["intro", "waitingDecision"].includes(state.screen)) {
       state.screen = "deck";
       render();
@@ -2342,6 +2985,8 @@ function determineOutcome() {
 }
 
 async function finishMatch() {
+  stopStrategyVideoRecording({ discard: true });
+  closeStrategyVideoDialog();
   const outcome = determineOutcome();
   const draw = outcome.winnerIndex < 0;
   const won = outcome.winnerIndex === state.playerIndex;
@@ -2494,6 +3139,10 @@ function requestHome() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
+  if (state.screen === "review") {
+    leaveStrategyReview(true).catch(handleRecoverableError);
+    return;
+  }
   if (["profile", "matching", "gameover", "withdrawn", "noContest", "error"].includes(state.screen)) {
     leaveToLanding();
     return;
@@ -2562,6 +3211,7 @@ async function resetStrategySetup() {
 
 async function retryConnection() {
   await cleanupOnlineResources(false);
+  releaseAllImages();
   state.errorMessage = "";
   state.authReady = false;
   state.screen = "profile";
@@ -2607,6 +3257,8 @@ async function cleanupMatchmaking(keepActive) {
 }
 
 async function cleanupOnlineResources(keepActive) {
+  stopReviewClock();
+  stopStrategyVideoRecording({ discard: true });
   await cleanupMatchmaking(keepActive);
   await cleanupPublicPresence();
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
@@ -2617,8 +3269,12 @@ async function cleanupOnlineResources(keepActive) {
     state.peer.close();
   }
   state.channel?.close();
+  state.videoChannel?.close();
   state.peer = null;
   state.channel = null;
+  state.videoChannel = null;
+  state.videoChannelReady = false;
+  state.incomingVideoTransfer = null;
   if (state.roomId) {
     await Promise.allSettled([
       set(ref(database, `online/strategyRooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
@@ -2640,6 +3296,7 @@ function releaseAllImages() {
   });
   state.remoteImages.clear();
   releaseRemoteAvatar();
+  releaseStrategyVideoData();
   state.chatMessages = [];
   state.seenChatIds.clear();
 }
@@ -2659,6 +3316,7 @@ function handleFatalError(error) {
 }
 
 window.addEventListener("beforeunload", () => {
+  stopReviewClock();
   releaseAllImages();
   state.peer?.close();
 });
