@@ -39,6 +39,8 @@ const DATA_BUFFER_LIMIT = 512 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 480 * 1024;
 const TERMINAL_STATES = new Set(["sold", "ended", "canceled"]);
+const MARKET_X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
+const MARKET_TAGLINE_MAX_LENGTH = 40;
 
 const useMarketPreview = useOfflineMarketPreview;
 const economyActionCallable = httpsCallable(functions, "economyAction");
@@ -102,6 +104,11 @@ function createState() {
     pendingActionId: "",
     rankings: { sellers: [], buyers: [] },
     rankingsStatus: "idle",
+    rankingProfile: { xHandle: "", tagline: "" },
+    rankingProfileEligible: false,
+    rankingProfileName: "",
+    rankingProfileOpen: false,
+    rankingProfileBusy: false,
   };
 }
 
@@ -156,6 +163,27 @@ function escapeHtml(value) {
 
 function normalizeMarketName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, 16) || "PLAYER";
+}
+
+function normalizeMarketXHandle(value) {
+  return String(value || "").trim().replace(/^@/, "");
+}
+
+function normalizeMarketTagline(value) {
+  return String(value || "").trim();
+}
+
+function sanitizeMarketPublicProfile(value) {
+  const xHandle = normalizeMarketXHandle(value?.xHandle);
+  const tagline = normalizeMarketTagline(value?.tagline);
+  return {
+    xHandle: MARKET_X_HANDLE_PATTERN.test(xHandle) ? xHandle : "",
+    tagline: tagline.length >= 1
+      && tagline.length <= MARKET_TAGLINE_MAX_LENGTH
+      && !/[\u0000-\u001f\u007f\r\n]/.test(tagline)
+      ? tagline
+      : "",
+  };
 }
 
 function showToast(message) {
@@ -343,13 +371,61 @@ function renderWaiting() {
   </div></section>`;
 }
 
+function renderMarketXLink(profile) {
+  const { xHandle } = sanitizeMarketPublicProfile(profile);
+  if (!xHandle) return "";
+  return `<a class="market-ranking-x" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer nofollow ugc" referrerpolicy="no-referrer" aria-label="Xの自己申告プロフィール @${escapeHtml(xHandle)} を新しいタブで開く"><span>X・自己申告</span>@${escapeHtml(xHandle)} <b aria-hidden="true">↗</b></a>`;
+}
+
+function renderMarketProfilePreview(profile, { xPublic = true, taglinePublic = true } = {}) {
+  const sanitized = sanitizeMarketPublicProfile(profile);
+  const xLink = xPublic ? renderMarketXLink(sanitized) : "";
+  const tagline = taglinePublic && sanitized.tagline
+    ? `<p>「${escapeHtml(sanitized.tagline)}」</p>`
+    : `<p class="is-empty">市場プロフィールの一言は非公開です。</p>`;
+  return `<div class="market-profile-preview" id="marketRankingProfilePreview"><span>PUBLIC PREVIEW</span><strong>${escapeHtml(state.rankingProfileName || state.name)}</strong>${xLink || `<small>Xリンクは非公開です。</small>`}${tagline}</div>`;
+}
+
+function renderMarketRankingProfileSettings() {
+  const loading = state.rankingsStatus === "loading";
+  const profile = sanitizeMarketPublicProfile(state.rankingProfile);
+  const opened = state.rankingProfileOpen ? " open" : "";
+  let body = "";
+  if (loading) {
+    body = `<p class="market-profile-unavailable">公開プロフィールの設定状況を確認しています…</p>`;
+  } else if (state.rankingsStatus === "error") {
+    body = `<p class="market-profile-unavailable">ランキングを再読み込みすると公開プロフィールを設定できます。</p>`;
+  } else if (!state.rankingProfileEligible) {
+    body = `<p class="market-profile-unavailable">売上または購入実績がランキングへ反映された後に設定できます。</p>`;
+  } else {
+    body = `<form class="market-profile-form" id="marketRankingProfileForm">
+      <div class="market-profile-fields">
+        <label class="market-profile-field" for="marketRankingXHandle"><span>Xユーザー名（任意）</span><span class="market-profile-x-input"><b>@</b><input id="marketRankingXHandle" type="text" maxlength="16" value="${escapeHtml(profile.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="marketRankingXHint" /></span><small id="marketRankingXHint">英数字と_で15文字以内。@付きの貼り付けも可。</small></label>
+        <label class="market-profile-check"><input id="marketRankingXPublic" type="checkbox" ${profile.xHandle ? "checked" : ""} /><span>ランキングでXリンクを公開する</span></label>
+        <label class="market-profile-field" for="marketRankingTagline"><span>市場プロフィールの一言（任意）</span><input id="marketRankingTagline" type="text" maxlength="${MARKET_TAGLINE_MAX_LENGTH}" value="${escapeHtml(profile.tagline)}" placeholder="推しの価値を言葉で届けます" aria-describedby="marketRankingTaglineHint" /><small id="marketRankingTaglineHint"><span id="marketRankingTaglineCount">${profile.tagline.length}</span> / ${MARKET_TAGLINE_MAX_LENGTH}文字</small></label>
+        <label class="market-profile-check"><input id="marketRankingTaglinePublic" type="checkbox" ${profile.tagline ? "checked" : ""} /><span>ランキングで一言を公開する</span></label>
+      </div>
+      <p class="market-profile-privacy">ゲーム内表示名とXアカウント名は別の情報です。Xリンクと一言はランキングを見る全員へ公開されます。Xアカウントの本人確認は行いません。公開すると匿名性が下がります。</p>
+      ${renderMarketProfilePreview(profile, { xPublic: Boolean(profile.xHandle), taglinePublic: Boolean(profile.tagline) })}
+      <button class="button button-primary button-small" type="submit" id="marketRankingProfileSave" ${state.rankingProfileBusy ? "disabled" : ""}>${state.rankingProfileBusy ? "保存中…" : "公開設定を保存"}</button>
+    </form>`;
+  }
+  return `<details class="market-profile-settings"${opened}><summary><span><strong>自分の公開プロフィール</strong><small>Xリンクと市場プロフィールの一言を任意で設定できます。</small></span><b>設定</b></summary>${body}</details>`;
+}
+
 function renderRankings() {
-  const row = (entry, index, role) => `<li><span class="market-rank-number">${index + 1}</span><strong>${escapeHtml(entry.name)}</strong><em>${Number(entry.primary || 0).toLocaleString("ja-JP")} PT</em><small>${role === "seller" ? `成立${entry.count}件 / 最高${entry.best}PT` : `購入${entry.count}件 / 最高${entry.best}PT`}</small></li>`;
+  const row = (entry, index, role) => {
+    const profile = sanitizeMarketPublicProfile(entry.publicProfile);
+    const xLink = renderMarketXLink(profile);
+    const tagline = profile.tagline ? `<p class="market-ranking-tagline">「${escapeHtml(profile.tagline)}」</p>` : "";
+    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${Number(entry.primary || 0).toLocaleString("ja-JP")} PT</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${role === "seller" ? `成立${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT` : `購入${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT`}</small></div></li>`;
+  };
   const list = (entries, role) => entries.length
     ? entries.map((entry, index) => row(entry, index, role)).join("")
     : `<li class="market-ranking-empty">集計対象の売買はまだありません。</li>`;
   return `<section class="screen market-screen market-rankings">
     <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>総合ランキングには含まれない、売り手と買い手それぞれの市場実績です。</p></div><button class="button button-ghost" id="marketRankingBack">市場へ戻る</button></div>
+    ${renderMarketRankingProfileSettings()}
     ${state.rankingsStatus === "loading" ? `<div class="market-ranking-loading">ランキングを読み込んでいます…</div>` : `<div class="market-ranking-grid">
       <article><span>SELLER RANKING</span><h2>売上ランキング</h2><ol>${list(state.rankings.sellers, "seller")}</ol></article>
       <article><span>BUYER RANKING</span><h2>購入評価ランキング</h2><ol>${list(state.rankings.buyers, "buyer")}</ol></article>
@@ -472,6 +548,15 @@ function bindEvents() {
     previewRoom(status, role);
   }));
   document.querySelector("#marketRankingBack")?.addEventListener("click", returnFromRankings);
+  document.querySelector(".market-profile-settings")?.addEventListener("toggle", (event) => {
+    state.rankingProfileOpen = event.currentTarget.open;
+  });
+  document.querySelector("#marketRankingProfileForm")?.addEventListener("submit", saveMarketRankingPublicProfile);
+  document.querySelector("#marketRankingXHandle")?.addEventListener("input", updateMarketXHandleInput);
+  document.querySelector("#marketRankingTagline")?.addEventListener("input", updateMarketProfilePreview);
+  for (const id of ["marketRankingXPublic", "marketRankingTaglinePublic"]) {
+    document.getElementById(id)?.addEventListener("change", updateMarketProfilePreview);
+  }
   document.querySelector("#marketCancelQueueButton")?.addEventListener("click", () => cancelQueue());
   document.querySelector("#marketExitRoom")?.addEventListener("click", requestHome);
   document.querySelector("#marketChatForm")?.addEventListener("submit", sendChatPitch);
@@ -1205,27 +1290,149 @@ async function performAction(action, extra = {}) {
   }
 }
 
+function readMarketProfileForm() {
+  return {
+    xHandle: normalizeMarketXHandle(document.querySelector("#marketRankingXHandle")?.value),
+    xPublic: document.querySelector("#marketRankingXPublic")?.checked === true,
+    tagline: normalizeMarketTagline(document.querySelector("#marketRankingTagline")?.value),
+    taglinePublic: document.querySelector("#marketRankingTaglinePublic")?.checked === true,
+  };
+}
+
+function updateMarketXHandleInput(event) {
+  const input = event.currentTarget;
+  input.value = String(input.value || "").trimStart().replace(/^@+/, "").slice(0, 15);
+  updateMarketProfilePreview();
+}
+
+function updateMarketProfilePreview() {
+  const formValue = readMarketProfileForm();
+  const count = document.querySelector("#marketRankingTaglineCount");
+  if (count) count.textContent = String(formValue.tagline.length);
+  const preview = document.querySelector("#marketRankingProfilePreview");
+  if (preview) {
+    preview.outerHTML = renderMarketProfilePreview(formValue, {
+      xPublic: formValue.xPublic,
+      taglinePublic: formValue.taglinePublic,
+    });
+  }
+}
+
+function applyMarketRankingResponse(data) {
+  state.rankings = {
+    sellers: Array.isArray(data?.sellers) ? data.sellers : [],
+    buyers: Array.isArray(data?.buyers) ? data.buyers : [],
+  };
+  state.rankingProfile = sanitizeMarketPublicProfile(data?.viewerProfile);
+  state.rankingProfileEligible = data?.viewerEligible === true;
+  state.rankingProfileName = data?.viewerName
+    ? normalizeMarketName(data.viewerName)
+    : (state.rankingProfileName || state.name);
+  state.rankingsStatus = "ready";
+}
+
+async function saveMarketRankingPublicProfile(event) {
+  event.preventDefault();
+  if (state.rankingProfileBusy || !state.rankingProfileEligible) return;
+  const formValue = readMarketProfileForm();
+  if (formValue.xPublic && !MARKET_X_HANDLE_PATTERN.test(formValue.xHandle)) {
+    document.querySelector("#marketRankingXHandle")?.focus();
+    showToast("Xユーザー名は半角英数字と_で15文字以内にしてください。");
+    return;
+  }
+  if (formValue.taglinePublic && (
+    !formValue.tagline
+    || formValue.tagline.length > MARKET_TAGLINE_MAX_LENGTH
+    || /[\u0000-\u001f\u007f\r\n]/.test(formValue.tagline)
+  )) {
+    document.querySelector("#marketRankingTagline")?.focus();
+    showToast("市場プロフィールの一言は改行なしの40文字以内にしてください。");
+    return;
+  }
+
+  const generation = lifecycleGeneration;
+  state.rankingProfileBusy = true;
+  state.rankingProfileOpen = true;
+  const saveButton = document.querySelector("#marketRankingProfileSave");
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent = "保存中…";
+  }
+  let saved = false;
+  try {
+    let savedProfile = {
+      xHandle: formValue.xPublic ? formValue.xHandle : "",
+      tagline: formValue.taglinePublic ? formValue.tagline : "",
+    };
+    if (!useMarketPreview) {
+      const response = await marketRankingsCallable({
+        action: "save_public_profile",
+        xHandle: formValue.xHandle,
+        xPublic: formValue.xPublic,
+        tagline: formValue.tagline,
+        taglinePublic: formValue.taglinePublic,
+      });
+      if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
+      if (response.data?.saved !== true) {
+        throw new Error("公開プロフィールの保存を確認できませんでした。");
+      }
+      savedProfile = sanitizeMarketPublicProfile(response.data?.profile);
+    }
+    if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
+    state.rankingProfile = sanitizeMarketPublicProfile(savedProfile);
+    for (const role of ["sellers", "buyers"]) {
+      state.rankings[role] = state.rankings[role].map((entry) => (
+        entry.isViewer === true ? { ...entry, publicProfile: state.rankingProfile } : entry
+      ));
+    }
+    saved = true;
+    showToast("市場ランキングの公開設定を保存しました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.screen === "rankings") {
+      showToast(callableMessage(error, "公開プロフィールを保存できませんでした。"));
+    }
+  } finally {
+    if (isCurrentLifecycle(generation)) {
+      state.rankingProfileBusy = false;
+      if (state.screen === "rankings") {
+        if (saved) {
+          render();
+        } else if (saveButton?.isConnected) {
+          saveButton.disabled = false;
+          saveButton.textContent = "公開設定を保存";
+        }
+      }
+    }
+  }
+}
+
 async function openRankings() {
   const generation = lifecycleGeneration;
   state.screen = "rankings";
   state.rankingsStatus = useMarketPreview ? "ready" : "loading";
   if (useMarketPreview) {
     state.rankings = {
-      sellers: [{ name: "SELLER TEST", primary: 1280, count: 9, best: 300 }],
+      sellers: [{
+        name: "SELLER TEST",
+        primary: 1280,
+        count: 9,
+        best: 300,
+        isViewer: true,
+        publicProfile: { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" },
+      }],
       buyers: [{ name: "BUYER TEST", primary: 960, count: 7, best: 250 }],
     };
+    state.rankingProfile = { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" };
+    state.rankingProfileEligible = true;
+    state.rankingProfileName = "SELLER TEST";
     render();
     return;
   }
   render();
   try {
-    const response = await marketRankingsCallable({});
+    const response = await marketRankingsCallable({ action: "list" });
     if (!isCurrentLifecycle(generation)) return;
-    state.rankings = {
-      sellers: Array.isArray(response.data?.sellers) ? response.data.sellers : [],
-      buyers: Array.isArray(response.data?.buyers) ? response.data.buyers : [],
-    };
-    state.rankingsStatus = "ready";
+    applyMarketRankingResponse(response.data);
   } catch (error) {
     if (!isCurrentLifecycle(generation)) return;
     state.rankingsStatus = "error";

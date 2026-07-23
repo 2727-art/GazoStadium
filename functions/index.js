@@ -15,6 +15,17 @@ const {
   nextPublicMarketRoomHeartbeat,
   nextPublicMarketRoomState,
 } = require("./market-presence-state");
+const {
+  createMarketRankingRow,
+  hasRankedMarketStats,
+  isMarketPublicProfilePrivacyReduction,
+  isValidMarketTagline,
+  isValidMarketXHandle,
+  marketPublicProfileUpdateDecision,
+  normalizeMarketTagline,
+  normalizeMarketXHandle,
+  sanitizeStoredMarketPublicProfile,
+} = require("./market-public-profile");
 const PRODUCT_CATALOG = require("./product-catalog");
 
 initializeApp({
@@ -31,6 +42,7 @@ const MARKET_MIN_PRICE = 10;
 const MARKET_MAX_PRICE = 500;
 const MARKET_EXTENSION_FEES = new Set([5, 10, 20]);
 const QUEUE_FRESH_MS = 60_000;
+const MARKET_PROFILE_UPDATE_COOLDOWN_MS = 10_000;
 const MARKET_PUBLIC_PRESENCE_PATH = "online/publicMarketPresence";
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
@@ -1543,26 +1555,82 @@ exports.valueMarketAction = onCall(callableOptions("valueMarketAction"), async (
   }
 });
 
-function rankingRow(snapshot, role) {
-  const value = snapshot.data();
+async function saveMarketPublicProfile(uid, data) {
+  const xPublic = data?.xPublic === true;
+  const taglinePublic = data?.taglinePublic === true;
+  const xHandle = normalizeMarketXHandle(data?.xHandle);
+  const tagline = normalizeMarketTagline(data?.tagline);
+  if (xPublic && !isValidMarketXHandle(xHandle)) {
+    throw new HttpsError("invalid-argument", "Xユーザー名は半角英数字と_で15文字以内にしてください。");
+  }
+  if (taglinePublic && !isValidMarketTagline(tagline)) {
+    throw new HttpsError("invalid-argument", "市場プロフィールの一言は改行なしの40文字以内にしてください。");
+  }
+
+  const statsRef = marketStatsRef(uid);
+  const now = Date.now();
+  const publicProfile = {
+    xHandle: xPublic ? xHandle : "",
+    tagline: taglinePublic ? tagline : "",
+    updatedAt: now,
+  };
+  let savedProfile = sanitizeStoredMarketPublicProfile(publicProfile);
+  let savedAt = now;
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(statsRef);
+    const currentProfile = snapshot.exists ? snapshot.get("publicProfile") : undefined;
+    const decision = marketPublicProfileUpdateDecision(
+      currentProfile,
+      publicProfile,
+      now,
+      MARKET_PROFILE_UPDATE_COOLDOWN_MS,
+    );
+    if (
+      (!snapshot.exists || !hasRankedMarketStats(snapshot.data()))
+      && decision.action !== "noop"
+      && !isMarketPublicProfilePrivacyReduction(currentProfile, publicProfile)
+    ) {
+      throw new HttpsError("failed-precondition", "売上または購入実績がランキングへ反映された後に設定できます。");
+    }
+    if (decision.action === "noop") {
+      savedProfile = decision.profile;
+      savedAt = decision.updatedAt;
+      return;
+    }
+    if (decision.action === "rate_limited") {
+      throw new HttpsError("resource-exhausted", "公開プロフィールは少し待ってから更新してください。");
+    }
+    transaction.set(statsRef, { publicProfile }, { merge: true });
+  });
   return {
-    uid: snapshot.id,
-    name: cleanName(value.name),
-    primary: role === "seller" ? Number(value.grossSales || 0) : Number(value.spent || 0),
-    count: role === "seller" ? Number(value.salesCount || 0) : Number(value.purchases || 0),
-    best: role === "seller" ? Number(value.bestSale || 0) : Number(value.highestPurchase || 0),
+    saved: true,
+    profile: savedProfile,
+    updatedAt: savedAt,
   };
 }
 
+function rankingRow(snapshot, role, viewerUid) {
+  return createMarketRankingRow(snapshot.data(), role, snapshot.id === viewerUid);
+}
+
 exports.valueMarketRankings = onCall(callableOptions("valueMarketRankings"), async (request) => {
-  requireUid(request);
-  const [sellerSnapshot, buyerSnapshot] = await Promise.all([
+  const uid = requireUid(request);
+  const action = cleanText(request.data?.action, 32, "list") || "list";
+  if (action === "save_public_profile") return saveMarketPublicProfile(uid, request.data);
+  if (action !== "list") throw new HttpsError("invalid-argument", "未対応のランキング操作です。");
+
+  const [sellerSnapshot, buyerSnapshot, viewerSnapshot] = await Promise.all([
     firestore.collection("valueMarketStats").orderBy("grossSales", "desc").limit(20).get(),
     firestore.collection("valueMarketStats").orderBy("spent", "desc").limit(20).get(),
+    marketStatsRef(uid).get(),
   ]);
+  const viewerStats = viewerSnapshot.exists ? viewerSnapshot.data() : null;
   return {
-    sellers: sellerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "seller")).filter((entry) => entry.primary > 0),
-    buyers: buyerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "buyer")).filter((entry) => entry.primary > 0),
+    sellers: sellerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "seller", uid)).filter((entry) => entry.primary > 0),
+    buyers: buyerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "buyer", uid)).filter((entry) => entry.primary > 0),
+    viewerProfile: sanitizeStoredMarketPublicProfile(viewerStats?.publicProfile),
+    viewerEligible: hasRankedMarketStats(viewerStats),
+    viewerName: viewerStats ? cleanName(viewerStats.name) : "",
     updatedAt: Date.now(),
   };
 });
