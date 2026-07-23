@@ -2605,6 +2605,157 @@ button:disabled {
   text-align: center;
 }
 
+.daily-play-reward-panel {
+  margin-bottom: 24px;
+  padding: 22px;
+  border: 1px solid rgba(77, 232, 223, 0.3);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(77, 232, 223, 0.12), transparent 34%),
+    linear-gradient(145deg, rgba(18, 31, 42, 0.98), rgba(10, 13, 22, 0.98));
+  box-shadow: inset 0 0 40px rgba(77, 232, 223, 0.025);
+}
+
+.daily-play-reward-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+}
+
+.daily-play-reward-head h2 {
+  margin: 5px 0 6px;
+  font-size: 1.35rem;
+}
+
+.daily-play-reward-head h2 strong {
+  color: var(--cyan);
+  font-size: 1.55rem;
+}
+
+.daily-play-reward-head p,
+.daily-play-reward-copy,
+.daily-play-reward-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.7;
+}
+
+.daily-play-reward-claim {
+  display: flex;
+  min-width: 225px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(4, 7, 14, 0.52);
+}
+
+.daily-play-reward-claim.has-reward {
+  border-color: rgba(255, 209, 102, 0.48);
+  box-shadow: 0 0 24px rgba(255, 209, 102, 0.08);
+}
+
+.daily-play-reward-claim span {
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.daily-play-reward-claim .button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.daily-play-reward-progress {
+  height: 10px;
+  margin: 20px 0 11px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.daily-play-reward-progress i {
+  display: block;
+  width: var(--daily-play-progress);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
+  transition: width 240ms ease;
+}
+
+.daily-play-reward-copy {
+  color: #b8c3d7;
+}
+
+.daily-play-reward-details {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.daily-play-reward-details summary {
+  width: fit-content;
+  padding: 13px 2px 7px;
+  color: var(--cyan);
+  font-size: 0.72rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.daily-play-reward-details ol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.daily-play-reward-details li {
+  display: grid;
+  grid-template-columns: minmax(55px, auto) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.daily-play-reward-details li.is-complete {
+  border-color: rgba(77, 232, 223, 0.24);
+}
+
+.daily-play-reward-details li.is-claimed {
+  border-color: rgba(119, 239, 170, 0.2);
+  opacity: 0.72;
+}
+
+.daily-play-reward-details li span,
+.daily-play-reward-details li strong,
+.daily-play-reward-details li small {
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.daily-play-reward-details li strong {
+  color: var(--gold);
+}
+
+.daily-play-reward-details li small {
+  color: var(--muted);
+  text-align: right;
+}
+
+.daily-play-reward-note {
+  margin-top: 12px;
+  color: #737c91;
+  text-align: center;
+}
+
 .mission-grid,
 .shop-grid {
   display: grid;
@@ -5901,6 +6052,24 @@ button:disabled {
 
   .period-reward-panel {
     padding: 17px 14px;
+  }
+
+  .daily-play-reward-panel {
+    padding: 17px 14px;
+  }
+
+  .daily-play-reward-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-play-reward-claim {
+    min-width: 0;
+    justify-content: space-between;
+  }
+
+  .daily-play-reward-details ol {
+    grid-template-columns: 1fr;
   }
 
   .period-reward-head {

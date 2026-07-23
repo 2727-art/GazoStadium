@@ -275,6 +275,7 @@ function createOnlineState() {
     economy: createEmptyEconomy(),
     economyReady: false,
     economyBusy: false,
+    dailyPlay: createEmptyDailyPlayRewardState(),
     achievements: window.HariaiAchievements?.normalizeProfile?.(null) || {
       unlocked: {},
       pendingUnlocks: [],
@@ -513,6 +514,86 @@ function pendingPeriodRewards(economy = state.economy, timestamp = serverNow()) 
 function pendingPeriodRewardSummary(economy = state.economy, timestamp = serverNow()) {
   const entries = pendingPeriodRewards(economy, timestamp);
   return { entries, total: entries.reduce((total, entry) => total + entry.reward, 0) };
+}
+
+function createEmptyDailyPlayRewardState(dateKey = jstDateKey()) {
+  return {
+    dateKey,
+    startsOn: "2026-07-23",
+    graceDays: 7,
+    matches: 0,
+    basicTarget: 10,
+    maxMatches: 200,
+    basicComplete: false,
+    previousTarget: 0,
+    nextTarget: 0,
+    nextReward: 0,
+    pendingCount: 0,
+    pendingPoints: 0,
+    claimedTierIds: [],
+    tiers: [],
+  };
+}
+
+function normalizeDailyPlayRewardState(value, fallback = state?.dailyPlay) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object"
+    ? fallback
+    : createEmptyDailyPlayRewardState();
+  const maxMatches = Math.min(200, Math.max(1, Math.floor(Number(source.maxMatches || base.maxMatches || 200))));
+  const matches = Math.min(maxMatches, Math.max(0, Math.floor(Number(source.matches || 0))));
+  const claimedTierIds = Array.isArray(source.claimedTierIds)
+    ? source.claimedTierIds.map((id) => String(id || "")).filter((id) => /^daily_play_\d+$/.test(id))
+    : [];
+  const claimed = new Set(claimedTierIds);
+  const tiers = Array.isArray(source.tiers)
+    ? source.tiers.map((tier) => ({
+      id: String(tier?.id || ""),
+      target: Math.min(maxMatches, Math.max(1, Math.floor(Number(tier?.target || 0)))),
+      reward: Math.max(0, Math.floor(Number(tier?.reward || 0))),
+      phase: ["basic", "bonus", "record"].includes(tier?.phase) ? tier.phase : "bonus",
+    }))
+      .filter((tier) => /^daily_play_\d+$/.test(tier.id) && tier.reward > 0)
+      .sort((first, second) => first.target - second.target)
+    : base.tiers || [];
+  const normalizedTiers = tiers.map((tier) => ({
+    ...tier,
+    complete: matches >= tier.target,
+    claimed: claimed.has(tier.id),
+  }));
+  const nextTier = normalizedTiers.find((tier) => !tier.complete) || null;
+  const previousTarget = nextTier
+    ? Math.max(0, ...normalizedTiers.filter((tier) => tier.target < nextTier.target).map((tier) => tier.target))
+    : maxMatches;
+  const basicTarget = Math.min(maxMatches, Math.max(1, Math.floor(Number(source.basicTarget || base.basicTarget || 10))));
+  return {
+    dateKey: /^\d{4}-\d{2}-\d{2}$/.test(String(source.dateKey || "")) ? source.dateKey : currentDailyDateKey(),
+    startsOn: /^\d{4}-\d{2}-\d{2}$/.test(String(source.startsOn || "")) ? source.startsOn : base.startsOn,
+    graceDays: Math.min(30, Math.max(1, Math.floor(Number(source.graceDays || base.graceDays || 7)))),
+    matches,
+    basicTarget,
+    maxMatches,
+    basicComplete: matches >= basicTarget,
+    previousTarget,
+    nextTarget: nextTier?.target || 0,
+    nextReward: nextTier?.reward || 0,
+    pendingCount: Math.max(0, Math.floor(Number(source.pendingCount || 0))),
+    pendingPoints: Math.max(0, Math.floor(Number(source.pendingPoints || 0))),
+    claimedTierIds: [...claimed],
+    tiers: normalizedTiers,
+  };
+}
+
+function applyDailyPlayRewardState(value) {
+  if (!value || typeof value !== "object") return state.dailyPlay;
+  const incomingDateKey = String(value.dateKey || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(incomingDateKey)
+    && /^\d{4}-\d{2}-\d{2}$/.test(String(state.dailyPlay?.dateKey || ""))
+    && incomingDateKey < state.dailyPlay.dateKey) {
+    return state.dailyPlay;
+  }
+  state.dailyPlay = normalizeDailyPlayRewardState(value, state.dailyPlay);
+  return state.dailyPlay;
 }
 
 function emptyOverallModeRecord() {
@@ -1355,8 +1436,17 @@ async function initializeEconomy() {
   const snapshot = await get(ref(database, `online/economy/${state.uid}`));
   state.economy = normalizeEconomyRecord(snapshot.val(), dateKey);
   state.economy.points = Math.min(MAX_POINTS, Math.max(0, Number(response.data?.balance || 0)));
+  applyDailyPlayRewardState(response.data?.dailyPlay);
   applyAchievementPayload(response.data?.achievements, { notifyPending: true });
   state.economyReady = true;
+  if (state.dailyPlay.pendingCount > 0) {
+    try {
+      await settleDailyPlayRewards(state.uid, { announce: true, renderAfter: false });
+    } catch (error) {
+      console.error(error);
+      showToast("デイリープレイ報酬を自動受取できませんでした。ミッション画面から再確認できます。");
+    }
+  }
 }
 
 function notifyAchievementUnlocks(idsValue) {
@@ -1680,6 +1770,58 @@ function renderEconomyUnavailable() {
     <p>${state.authReady ? "時間をおいて画面を開き直してください。対戦機能は通常どおり利用できます。" : "匿名ログイン後にミッションと所持ポイントを表示します。"}</p></div>`;
 }
 
+function renderDailyPlayRewardPanel() {
+  if (!state.economyReady || !state.dailyPlay?.tiers?.length) return "";
+  const dailyPlay = state.dailyPlay;
+  const reachedMaximum = dailyPlay.matches >= dailyPlay.maxMatches;
+  const nextTarget = dailyPlay.nextTarget || dailyPlay.maxMatches;
+  const previousTarget = reachedMaximum
+    ? 0
+    : Math.min(nextTarget, Math.max(0, dailyPlay.previousTarget || 0));
+  const intervalMaximum = reachedMaximum
+    ? dailyPlay.maxMatches
+    : Math.max(previousTarget + 1, nextTarget);
+  const intervalValue = Math.min(intervalMaximum, Math.max(previousTarget, dailyPlay.matches));
+  const intervalProgress = dailyPlay.nextTarget
+    ? ((intervalValue - previousTarget) / Math.max(1, intervalMaximum - previousTarget)) * 100
+    : 100;
+  const status = dailyPlay.matches >= dailyPlay.maxMatches
+    ? "本日の上限達成"
+    : dailyPlay.basicComplete
+      ? `基本ボーナス達成・あと${dailyPlay.nextTarget - dailyPlay.matches}戦で +${dailyPlay.nextReward} PT`
+      : `あと${dailyPlay.nextTarget - dailyPlay.matches}戦で +${dailyPlay.nextReward} PT`;
+  const statusDetail = dailyPlay.matches >= dailyPlay.maxMatches
+    ? "今日はここまで。以降の正式完走は報酬回数へ加算されません。"
+    : dailyPlay.basicComplete
+      ? "10戦以降は、もっと遊びたい人向けの追加ボーナスです。"
+      : `${dailyPlay.basicTarget}戦で本日の基本ボーナスが完了します。`;
+  const tiers = dailyPlay.tiers.map((tier) => {
+    const tierStatus = tier.claimed ? "受取済み" : tier.complete ? "受取可能" : "未達成";
+    return `<li class="${tier.complete ? "is-complete" : ""} ${tier.claimed ? "is-claimed" : ""}">
+      <span>${tier.target}戦</span><strong>+${tier.reward} PT</strong><small>${tierStatus}</small>
+    </li>`;
+  }).join("");
+  const pendingLabel = dailyPlay.pendingCount > 0
+    ? `未受取 ${dailyPlay.pendingPoints.toLocaleString("ja-JP")} PT`
+    : "達成分は自動受取済み";
+  return `<section class="daily-play-reward-panel" aria-labelledby="dailyPlayRewardTitle">
+    <div class="daily-play-reward-head">
+      <div><span class="eyebrow">DAILY PLAY BONUS</span><h2 id="dailyPlayRewardTitle">今日の正式完走 <strong>${dailyPlay.matches}戦</strong></h2>
+        <p>${escapeHtml(status)}</p></div>
+      <div class="daily-play-reward-claim ${dailyPlay.pendingCount ? "has-reward" : ""}">
+        <span>${escapeHtml(pendingLabel)}</span>
+        <button class="button button-small ${dailyPlay.pendingCount ? "button-primary" : "button-ghost"}" id="claimDailyPlayRewardsButton" ${state.economyBusy || !dailyPlay.pendingCount ? "disabled" : ""}>${state.economyBusy ? "確認中…" : dailyPlay.pendingCount ? "まとめて受け取る" : "受取済み"}</button>
+      </div>
+    </div>
+    <div class="daily-play-reward-progress" role="progressbar" aria-label="次のデイリープレイ報酬までの進捗" aria-valuemin="${previousTarget}" aria-valuemax="${intervalMaximum}" aria-valuenow="${intervalValue}" aria-valuetext="${dailyPlay.matches}戦完走、${escapeHtml(status)}">
+      <i style="--daily-play-progress:${Math.max(0, Math.min(100, intervalProgress))}%"></i>
+    </div>
+    <p class="daily-play-reward-copy">${escapeHtml(statusDetail)}</p>
+    <details class="daily-play-reward-details"><summary>全${dailyPlay.tiers.length}段階を見る</summary><ol>${tiers}</ol></details>
+    <p class="daily-play-reward-note">勝敗を問わず、4モードのサーバー検証済み完走が対象です。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
+  </section>`;
+}
+
 function renderPeriodRewardPanel() {
   if (!state.economyReady) return "";
   const pending = pendingPeriodRewardSummary();
@@ -1723,6 +1865,7 @@ function renderDailyMissions() {
       <p>毎日0:00（日本時間）に更新。達成した報酬はボタンで受け取ってください。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    ${renderDailyPlayRewardPanel()}
     ${renderPeriodRewardPanel()}
     ${missionContent}
     <div class="economy-actions"><button class="button button-primary" id="missionsShopButton">ポイントショップへ</button>
@@ -2187,6 +2330,7 @@ function applyTitleCategoryFilter(categoryId) {
 
 function bindEconomyEvents() {
   document.querySelector("#economyHomeButton")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#claimDailyPlayRewardsButton")?.addEventListener("click", claimDailyPlayRewards);
   document.querySelector("#missionsShopButton")?.addEventListener("click", () => { state.screen = "shop"; render(); });
   document.querySelector("#shopMissionsButton")?.addEventListener("click", () => { state.screen = "missions"; render(); });
   document.querySelector("#missionsBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
@@ -2446,6 +2590,76 @@ async function claimDailyMission(missionId) {
   }
 }
 
+function dailyPlayProgressMessage(dailyPlay = state.dailyPlay) {
+  if (!dailyPlay || !Number.isFinite(Number(dailyPlay.matches))) return "";
+  if (dailyPlay.matches >= dailyPlay.maxMatches) {
+    return `本日${dailyPlay.maxMatches}戦・デイリープレイ報酬の上限に到達しました。`;
+  }
+  if (!dailyPlay.nextTarget) return `本日${dailyPlay.matches}戦を正式完走しました。`;
+  const remaining = Math.max(0, dailyPlay.nextTarget - dailyPlay.matches);
+  if (dailyPlay.matches === dailyPlay.basicTarget) {
+    return `本日${dailyPlay.matches}戦・基本ボーナス達成。あと${remaining}戦で +${dailyPlay.nextReward} PTです。`;
+  }
+  return `本日${dailyPlay.matches}戦・あと${remaining}戦で +${dailyPlay.nextReward} PTです。`;
+}
+
+async function settleDailyPlayRewards(uid = state.uid, { announce = false, renderAfter = true } = {}) {
+  if (!uid) return null;
+  const ownsState = state.uid === uid;
+  if (ownsState && state.economyBusy) return null;
+  if (ownsState) {
+    state.economyBusy = true;
+    if (renderAfter && state.screen === "missions") render();
+  }
+  try {
+    const response = await economyActionCallable({ action: "claim_daily_play" });
+    const result = response.data || {};
+    const dailyPlay = ownsState
+      ? applyDailyPlayRewardState(result.dailyPlay)
+      : normalizeDailyPlayRewardState(result.dailyPlay, createEmptyDailyPlayRewardState());
+    if (ownsState) {
+      await refreshEconomyFromServer(currentDailyDateKey(), result.balance);
+      state.economyBusy = false;
+      if (renderAfter && state.screen === "missions") render();
+    }
+    if (announce) {
+      if (Number(result.claimedCount || 0) > 0) {
+        const nextGoal = dailyPlay.nextTarget > dailyPlay.matches
+          ? ` あと${dailyPlay.nextTarget - dailyPlay.matches}戦で +${dailyPlay.nextReward} PTです。`
+          : "";
+        const context = dailyPlay.matches >= dailyPlay.maxMatches
+          ? `本日${dailyPlay.maxMatches}戦・上限達成。`
+          : dailyPlay.matches === dailyPlay.basicTarget
+            ? `本日${dailyPlay.matches}戦・基本ボーナス達成。`
+            : `本日${dailyPlay.matches}戦。`;
+        if (Number(result.credited || 0) < Number(result.nominal || 0)) {
+          showToast(`${context}所持上限まで ${Number(result.credited || 0).toLocaleString("ja-JP")} PTを受け取り、達成分を精算しました。${nextGoal}`);
+        } else {
+          showToast(`${context}段階報酬 ${Number(result.credited || 0).toLocaleString("ja-JP")} PTを受け取りました。${nextGoal}`);
+        }
+      } else if (renderAfter) {
+        showToast("受け取れるデイリープレイ報酬はありません。");
+      }
+    }
+    return { ...result, dailyPlay };
+  } catch (error) {
+    if (ownsState) {
+      state.economyBusy = false;
+      if (renderAfter && state.screen === "missions") render();
+    }
+    throw error;
+  }
+}
+
+async function claimDailyPlayRewards() {
+  try {
+    await settleDailyPlayRewards(state.uid, { announce: true, renderAfter: true });
+  } catch (error) {
+    console.error(error);
+    showToast("デイリープレイ報酬を受け取れませんでした。時間をおいてもう一度お試しください。");
+  }
+}
+
 async function purchaseShopProduct(productId) {
   const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
   if (!product || !state.economyReady || state.economyBusy) return;
@@ -2559,6 +2773,9 @@ async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = 
       await new Promise((resolve) => window.setTimeout(resolve, 750));
       continue;
     }
+    const dailyPlay = state.uid === uid
+      ? applyDailyPlayRewardState(result.dailyPlay)
+      : normalizeDailyPlayRewardState(result.dailyPlay, createEmptyDailyPlayRewardState());
     if (state.uid === uid) {
       state.economy = normalizeEconomyRecord({
         ...state.economy,
@@ -2568,7 +2785,29 @@ async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = 
       applyAchievementPayload(result.achievements);
     }
     notifyAchievementUnlocks(result.newlyUnlocked);
-    return result;
+    let dailyPlayClaim = null;
+    if (dailyPlay.pendingCount > 0) {
+      try {
+        dailyPlayClaim = await settleDailyPlayRewards(uid, { announce: true, renderAfter: false });
+        if (!dailyPlayClaim) {
+          const progressMessage = dailyPlayProgressMessage(dailyPlay);
+          showToast(`${progressMessage} 達成報酬はミッション画面からまとめて受け取れます。`);
+        }
+      } catch (error) {
+        console.error(error);
+        showToast("デイリープレイ報酬を自動受取できませんでした。ミッション画面から再確認できます。");
+      }
+    } else {
+      const progressMessage = dailyPlayProgressMessage(dailyPlay);
+      if (progressMessage) showToast(progressMessage);
+    }
+    return {
+      ...result,
+      dailyPlay: dailyPlayClaim?.dailyPlay || dailyPlay,
+      economyBalance: Number.isFinite(Number(dailyPlayClaim?.balance))
+        ? Number(dailyPlayClaim.balance)
+        : null,
+    };
   }
   throw new Error("参加者全員の試合結果を確認できませんでした。");
 }
@@ -2796,7 +3035,7 @@ async function recordOverallResult({ mode, outcome, name, opponentRating = INITI
   await economyActionCallable({ action: "initialize" });
   const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
   const resultTimestamp = Date.now() + Number(state.uid === user.uid ? state.serverTimeOffset : publicServerTimeOffset || 0);
-  await recordPeriodRewardResult(user.uid, mode, outcome, roomId, resultTimestamp);
+  const periodResult = await recordPeriodRewardResult(user.uid, mode, outcome, roomId, resultTimestamp);
   await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (state.uid === user.uid ? state.profile : null));
   const result = await runTransaction(ref(database, `online/overallProfiles/${user.uid}`), (current) => {
     const record = normalizeOverallProfile(current, displayName);
@@ -2817,7 +3056,10 @@ async function recordOverallResult({ mode, outcome, name, opponentRating = INITI
   if (state.uid === user.uid) state.overallProfile = profile;
   const settings = leaderboardPublicSettings();
   if (settings.enabled) await publishOverallLeaderboard(user.uid, profile, displayName, settings, { mode, outcome });
-  return profile;
+  return {
+    ...profile,
+    economyBalance: periodResult?.economyBalance ?? null,
+  };
 }
 
 function persistOverallRankingPreference(settings) {

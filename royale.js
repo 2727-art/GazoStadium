@@ -1961,7 +1961,17 @@ async function commitPlacementStats(localPlace, won) {
       opponentRating: 1000,
       roomId: state.roomId,
     });
-    if (overallUpdate) await overallUpdate.catch(() => showToast("総合ランキングを更新できませんでした。"));
+    if (overallUpdate) {
+      const overallResult = await overallUpdate.catch(() => {
+        showToast("総合ランキングを更新できませんでした。");
+        return null;
+      });
+      if (overallResult?.economyBalance !== null
+        && overallResult?.economyBalance !== undefined
+        && Number.isFinite(Number(overallResult.economyBalance))) {
+        state.economy.points = Number(overallResult.economyBalance);
+      }
+    }
   }
 }
 

@@ -78,6 +78,13 @@ const {
   serverRankingMatches,
 } = require("./server-ranking");
 const PRODUCT_CATALOG = require("./product-catalog");
+const {
+  claimableDailyPlayRewards,
+  dailyPlayRewardClaimKey,
+  dailyPlayRewardSummary,
+  normalizeDailyPlayClaims,
+  settleDailyPlayRewardClaims,
+} = require("./daily-play-rewards");
 
 initializeApp({
   databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -450,9 +457,10 @@ function normalizeEconomyProgress(value, dateKey = jstDateKey()) {
     ? normalizeBattleStats(value.achievementStats)
     : deriveBattleStatsFromPeriods(periodRewards);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     daily: normalizeDaily(value?.daily, dateKey),
     periodRewards,
+    dailyPlayClaims: normalizeDailyPlayClaims(value?.dailyPlayClaims, periodRewards),
     achievementStats,
     initializedAt: Number(value?.initializedAt || Date.now()),
     updatedAt: Number(value?.updatedAt || Date.now()),
@@ -532,8 +540,9 @@ async function ensureAchievementState(uid) {
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
     if (!progressSnapshot.exists
-      || Number(progressData.schemaVersion || 0) < 2
-      || !progressData.achievementStats) {
+      || Number(progressData.schemaVersion || 0) < 3
+      || !progressData.achievementStats
+      || !progressData.dailyPlayClaims) {
       transaction.set(progressRef, progress);
     }
     if (!profileSnapshot.exists || unlockResult.newlyUnlocked.length) {
@@ -1202,6 +1211,7 @@ async function initializeEconomy(uid) {
     balance,
     daily: progress.daily,
     periodRewards: progress.periodRewards,
+    dailyPlay: dailyPlayRewardSummary(progress.periodRewards, progress.dailyPlayClaims),
     achievements: publicAchievementProfile(profile, progress.achievementStats, marketStats),
     patron: {
       ...publicPatronage(patron, periodKey("monthly")),
@@ -1271,6 +1281,101 @@ async function claimDaily(uid, missionId) {
     mirrorEconomyProgress(uid, progressResult),
   ]);
   return { ...result, daily: progressResult.daily };
+}
+
+async function claimDailyPlayRewards(uid) {
+  const requestTimestamp = Date.now();
+  await Promise.all([ensureWallet(uid), ensureEconomyProgress(uid)]);
+  const wallet = walletRef(uid);
+  const progressRef = economyProgressRef(uid);
+  let result = null;
+  let progressResult = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [walletSnapshot, progressSnapshot] = await Promise.all([
+      transaction.get(wallet),
+      transaction.get(progressRef),
+    ]);
+    const before = safeBalance(walletSnapshot.get("balance"));
+    const progress = normalizeEconomyProgress(progressSnapshot.data(), jstDateKey(requestTimestamp));
+    const claimable = claimableDailyPlayRewards(
+      progress.periodRewards,
+      progress.dailyPlayClaims,
+      requestTimestamp,
+    );
+    const claimRefs = claimable.map(({ dateKey, tier }) => (
+      firestore.collection("economyClaims").doc(uid).collection("daily")
+        .doc(eventId(`${dateKey}:play:${tier.id}`))
+    ));
+    const claimSnapshots = await Promise.all(claimRefs.map((claimRef) => transaction.get(claimRef)));
+    const reservedIncoming = integer(walletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0);
+    const existingClaimKeys = new Set(claimable.flatMap((entry, index) => (
+      claimSnapshots[index].exists
+        ? [dailyPlayRewardClaimKey(entry.dateKey, entry.tier.id)]
+        : []
+    )));
+    const settlement = settleDailyPlayRewardClaims(
+      claimable,
+      existingClaimKeys,
+      Math.max(0, MAX_POINTS - reservedIncoming - before),
+    );
+    settlement.decisions.forEach((decision, index) => {
+      const { dateKey, tier } = decision;
+      const claimState = progress.dailyPlayClaims[dateKey] || {
+        claimed: {},
+        updatedAt: requestTimestamp,
+      };
+      progress.dailyPlayClaims[dateKey] = claimState;
+      claimState.claimed[tier.id] = true;
+      claimState.updatedAt = requestTimestamp;
+      if (!decision.create) return;
+      transaction.create(claimRefs[index], {
+        type: "daily_play",
+        dateKey,
+        tierId: tier.id,
+        target: tier.target,
+        reward: tier.reward,
+        credited: decision.credited,
+        createdAt: requestTimestamp,
+      });
+    });
+    const after = before + settlement.credited;
+    if (settlement.claimedCount > 0) {
+      transaction.update(wallet, { balance: after, updatedAt: requestTimestamp });
+    }
+    if (settlement.claimedCount > 0
+      || settlement.recoveredCount > 0
+      || Number(progressSnapshot.get("schemaVersion") || 0) < 3) {
+      progress.updatedAt = requestTimestamp;
+      transaction.set(progressRef, progress);
+    }
+    progressResult = progress;
+    result = {
+      outcome: settlement.claimedCount > 0
+        ? "claimed-now"
+        : settlement.recoveredCount > 0
+          ? "claimed"
+          : "none",
+      balance: after,
+      credited: settlement.credited,
+      nominal: settlement.nominal,
+      claimedCount: settlement.claimedCount,
+      recoveredCount: settlement.recoveredCount,
+    };
+  });
+  await bestEffort("claimDailyPlayRewards", [
+    mirrorWallet(uid, result.balance),
+    mirrorEconomyProgress(uid, progressResult),
+  ]);
+  return {
+    ...result,
+    daily: progressResult.daily,
+    periodRewards: progressResult.periodRewards,
+    dailyPlay: dailyPlayRewardSummary(
+      progressResult.periodRewards,
+      progressResult.dailyPlayClaims,
+      Date.now(),
+    ),
+  };
 }
 
 async function purchaseProduct(uid, productId) {
@@ -1737,6 +1842,7 @@ async function recordVerifiedMatch(uid, data) {
     outcome: transactionOutcome,
     daily: progressResult.daily,
     periodRewards: progressResult.periodRewards,
+    dailyPlay: dailyPlayRewardSummary(progressResult.periodRewards, progressResult.dailyPlayClaims, now),
     serverRanking: serverRankingProfileResults[uid]
       ? {
         rating: serverRankingProfileResults[uid].rating,
@@ -1917,6 +2023,7 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
   try {
     if (action === "initialize") return await initializeEconomy(uid);
     if (action === "claim_daily") return await claimDaily(uid, cleanText(request.data?.missionId, 40));
+    if (action === "claim_daily_play") return await claimDailyPlayRewards(uid);
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
     if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
