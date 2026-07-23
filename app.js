@@ -8,6 +8,10 @@
   const PROFILE_AVATAR_DB_NAME = "hariai-stadium-profile-v1";
   const PROFILE_AVATAR_STORE_NAME = "assets";
   const PROFILE_AVATAR_RECORD_KEY = "profile-avatar";
+  const GAME_AUDIO_MAX_SECONDS = 10;
+  const GAME_AUDIO_SAMPLE_RATE = 22_050;
+  const GAME_AUDIO_MAX_SOURCE_BYTES = 20 * 1024 * 1024;
+  const GAME_AUDIO_MAX_OUTPUT_BYTES = 480 * 1024;
   const OFFICIAL_GAME_URL = "https://gazostadium.anjugames.workers.dev/";
   const OVERALL_RATING_CLASSES = Object.freeze([
     { key: "beginner", label: "Beginner", emblem: "◇", min: 100, max: 1024, range: "100–1024" },
@@ -30,6 +34,7 @@
   const app = document.querySelector("#app");
   const toast = document.querySelector("#toast");
   const destroyDialog = document.querySelector("#destroyDialog");
+  const audioStudioDialog = document.querySelector("#audioStudioDialog");
   let toastTimer = null;
   let currentScreen = "landing";
   let expandedRankingEntryId = "";
@@ -43,6 +48,18 @@
   let landingTopMessageIndex = 0;
   let profileAvatarReadyPromise = null;
   const profileAvatarState = { ready: false, blob: null, url: "" };
+  const audioStudioState = {
+    recorder: null,
+    stream: null,
+    chunks: [],
+    timerId: null,
+    timeoutId: null,
+    startedAt: 0,
+    discardRecording: false,
+    processing: false,
+    generation: 0,
+    output: null,
+  };
 
   const sampleThemes = [
     ["#142a25", "#66d18f", "#f4c96b"],
@@ -59,6 +76,325 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function writeAscii(view, offset, value) {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+  }
+
+  function encodeMonoWav(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    writeAscii(view, 0, "RIFF");
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeAscii(view, 8, "WAVE");
+    writeAscii(view, 12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeAscii(view, 36, "data");
+    view.setUint32(40, samples.length * 2, true);
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+
+  async function processGameAudioFile(file, options = {}) {
+    const maxSeconds = Math.min(GAME_AUDIO_MAX_SECONDS, Math.max(0.15, Number(options.maxSeconds || GAME_AUDIO_MAX_SECONDS)));
+    const sampleRate = Math.max(8_000, Math.floor(Number(options.sampleRate || GAME_AUDIO_SAMPLE_RATE)));
+    const maxSourceBytes = Math.max(1, Number(options.maxSourceBytes || GAME_AUDIO_MAX_SOURCE_BYTES));
+    const maxOutputBytes = Math.max(1, Number(options.maxOutputBytes || GAME_AUDIO_MAX_OUTPUT_BYTES));
+    if (!file || typeof file.arrayBuffer !== "function" || (file.type && !file.type.startsWith("audio/"))) throw new Error("音声ファイルを選択してください。");
+    if (file.size > maxSourceBytes) throw new Error(`元の音声ファイルは${Math.round(maxSourceBytes / 1024 / 1024)}MB以下にしてください。`);
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const OfflineContextClass = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!AudioContextClass || !OfflineContextClass) throw new Error("このブラウザは音声変換に対応していません。");
+    const context = new AudioContextClass();
+    try {
+      const decoded = await context.decodeAudioData(await file.arrayBuffer());
+      const sourceDuration = Number(decoded.duration || 0);
+      const duration = Math.min(maxSeconds, sourceDuration);
+      if (!Number.isFinite(duration) || duration < 0.15) throw new Error("0.15秒以上の音声を選択してください。");
+      const frameCount = Math.max(1, Math.ceil(duration * sampleRate));
+      const offline = new OfflineContextClass(1, frameCount, sampleRate);
+      const source = offline.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offline.destination);
+      source.start(0, 0, duration);
+      const rendered = await offline.startRendering();
+      const samples = new Float32Array(rendered.getChannelData(0));
+      let peak = 0;
+      for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+      const gain = peak > 0 ? Math.min(4, 0.92 / peak) : 1;
+      if (gain !== 1) for (let index = 0; index < samples.length; index += 1) samples[index] *= gain;
+      const audioBlob = encodeMonoWav(samples, sampleRate);
+      if (audioBlob.size > maxOutputBytes) throw new Error("変換後の音声サイズがゲームの上限を超えました。");
+      return {
+        audioBlob,
+        audioUrl: URL.createObjectURL(audioBlob),
+        audioDuration: rendered.duration,
+        audioCueStart: 0,
+        audioName: String(options.audioName || file.name || "10秒音声").slice(0, 80),
+        sourceDuration,
+        sourceBytes: Number(file.size || 0),
+        truncated: sourceDuration > maxSeconds + 0.01,
+      };
+    } finally {
+      await context.close().catch(() => {});
+    }
+  }
+
+  function formatFileSize(bytes) {
+    const size = Math.max(0, Number(bytes || 0));
+    if (size < 1024) return `${Math.round(size)} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function gameAudioDownloadName() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return `hariai-audio-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.wav`;
+  }
+
+  function setAudioStudioStatus(message, tone = "") {
+    const status = document.querySelector("#audioStudioStatus");
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.tone = tone;
+  }
+
+  function updateAudioStudioTimer(elapsedSeconds = 0) {
+    const elapsed = Math.min(GAME_AUDIO_MAX_SECONDS, Math.max(0, Number(elapsedSeconds || 0)));
+    const timer = document.querySelector("#audioStudioTimer");
+    const progress = document.querySelector("#audioStudioProgress");
+    if (timer) timer.textContent = elapsed.toFixed(1);
+    if (progress) progress.style.width = `${(elapsed / GAME_AUDIO_MAX_SECONDS) * 100}%`;
+  }
+
+  function updateAudioStudioControls() {
+    const recording = audioStudioState.recorder?.state === "recording";
+    const busy = recording || audioStudioState.processing;
+    const record = document.querySelector("#audioStudioRecord");
+    const stop = document.querySelector("#audioStudioStop");
+    const file = document.querySelector("#audioStudioFile");
+    const reset = document.querySelector("#audioStudioReset");
+    if (record) {
+      record.disabled = busy || !navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window);
+      record.textContent = recording ? "● 録音中…" : "● 録音を開始";
+    }
+    if (stop) stop.disabled = !recording;
+    if (file) file.disabled = busy;
+    if (reset) reset.disabled = busy;
+  }
+
+  function clearAudioStudioRecordingTimers() {
+    window.clearInterval(audioStudioState.timerId);
+    window.clearTimeout(audioStudioState.timeoutId);
+    audioStudioState.timerId = null;
+    audioStudioState.timeoutId = null;
+  }
+
+  function releaseAudioStudioStream() {
+    audioStudioState.stream?.getTracks?.().forEach((track) => track.stop());
+    audioStudioState.stream = null;
+  }
+
+  function releaseAudioStudioOutput() {
+    if (audioStudioState.output?.audioUrl) URL.revokeObjectURL(audioStudioState.output.audioUrl);
+    audioStudioState.output = null;
+    const preview = document.querySelector("#audioStudioPreview");
+    if (preview) {
+      preview.pause();
+      preview.removeAttribute("src");
+      preview.load();
+    }
+  }
+
+  function showAudioStudioResult(result) {
+    releaseAudioStudioOutput();
+    audioStudioState.output = result;
+    const section = document.querySelector("#audioStudioResult");
+    const preview = document.querySelector("#audioStudioPreview");
+    const download = document.querySelector("#audioStudioDownload");
+    const duration = document.querySelector("#audioStudioDuration");
+    const sourceSize = document.querySelector("#audioStudioSourceSize");
+    const outputSize = document.querySelector("#audioStudioOutputSize");
+    if (section) section.hidden = false;
+    if (preview) {
+      preview.src = result.audioUrl;
+      preview.load();
+    }
+    if (download) {
+      download.href = result.audioUrl;
+      download.download = gameAudioDownloadName();
+    }
+    if (duration) duration.textContent = `${Number(result.audioDuration || 0).toFixed(1)}秒${result.truncated ? "（先頭10秒）" : ""}`;
+    if (sourceSize) sourceSize.textContent = formatFileSize(result.sourceBytes);
+    if (outputSize) outputSize.textContent = formatFileSize(result.audioBlob?.size);
+    setAudioStudioStatus("ゲーム用WAVへの変換が完了しました。試聴して保存できます。", "success");
+    updateAudioStudioTimer(result.audioDuration);
+  }
+
+  function resetAudioStudio() {
+    audioStudioState.generation += 1;
+    releaseAudioStudioOutput();
+    const result = document.querySelector("#audioStudioResult");
+    const file = document.querySelector("#audioStudioFile");
+    if (result) result.hidden = true;
+    if (file) file.value = "";
+    updateAudioStudioTimer(0);
+    setAudioStudioStatus("録音するか、音声ファイルを選んでください。");
+    updateAudioStudioControls();
+  }
+
+  async function convertAudioForStudio(file, generation = ++audioStudioState.generation) {
+    audioStudioState.processing = true;
+    updateAudioStudioControls();
+    setAudioStudioStatus("先頭10秒をゲーム用の音質・容量へ変換しています…", "working");
+    try {
+      const result = await processGameAudioFile(file, { audioName: file?.name || "マイク録音" });
+      if (generation !== audioStudioState.generation) {
+        URL.revokeObjectURL(result.audioUrl);
+        return;
+      }
+      showAudioStudioResult(result);
+    } catch (error) {
+      if (generation === audioStudioState.generation) setAudioStudioStatus(error?.message || "音声を変換できませんでした。", "error");
+    } finally {
+      audioStudioState.processing = false;
+      updateAudioStudioControls();
+    }
+  }
+
+  function stopAudioStudioRecording({ discard = false } = {}) {
+    if (discard) {
+      audioStudioState.discardRecording = true;
+      audioStudioState.generation += 1;
+    }
+    clearAudioStudioRecordingTimers();
+    if (audioStudioState.recorder?.state === "recording") {
+      audioStudioState.recorder.stop();
+    } else {
+      releaseAudioStudioStream();
+      audioStudioState.recorder = null;
+      updateAudioStudioControls();
+    }
+  }
+
+  function preferredRecordingMimeType() {
+    if (!("MediaRecorder" in window) || typeof MediaRecorder.isTypeSupported !== "function") return "";
+    return [
+      "audio/webm;codecs=opus",
+      "audio/ogg;codecs=opus",
+      "audio/mp4",
+      "audio/webm",
+    ].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  async function startAudioStudioRecording() {
+    if (audioStudioState.recorder?.state === "recording" || audioStudioState.processing) return;
+    if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
+      setAudioStudioStatus("このブラウザはマイク録音に対応していません。音声ファイルからの変換を利用してください。", "error");
+      return;
+    }
+    const generation = ++audioStudioState.generation;
+    audioStudioState.discardRecording = false;
+    setAudioStudioStatus("マイクの使用許可を確認しています…", "working");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+        video: false,
+      });
+      if (generation !== audioStudioState.generation) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      const mimeType = preferredRecordingMimeType();
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, {
+          ...(mimeType ? { mimeType } : {}),
+          audioBitsPerSecond: 64_000,
+        });
+      } catch {
+        recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      }
+      audioStudioState.stream = stream;
+      audioStudioState.recorder = recorder;
+      audioStudioState.chunks = [];
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) audioStudioState.chunks.push(event.data);
+      });
+      recorder.addEventListener("stop", () => {
+        const chunks = audioStudioState.chunks.splice(0);
+        const discard = audioStudioState.discardRecording || generation !== audioStudioState.generation;
+        const type = recorder.mimeType || mimeType || chunks[0]?.type || "audio/webm";
+        clearAudioStudioRecordingTimers();
+        releaseAudioStudioStream();
+        audioStudioState.recorder = null;
+        audioStudioState.discardRecording = false;
+        updateAudioStudioControls();
+        if (discard || !chunks.length) return;
+        const blob = new Blob(chunks, { type });
+        convertAudioForStudio(blob, generation);
+      }, { once: true });
+      recorder.addEventListener("error", () => {
+        setAudioStudioStatus("録音中にエラーが発生しました。", "error");
+        stopAudioStudioRecording({ discard: true });
+      }, { once: true });
+      recorder.start(250);
+      audioStudioState.startedAt = performance.now();
+      updateAudioStudioTimer(0);
+      setAudioStudioStatus("録音中です。10秒で自動停止します。", "recording");
+      updateAudioStudioControls();
+      audioStudioState.timerId = window.setInterval(() => {
+        updateAudioStudioTimer((performance.now() - audioStudioState.startedAt) / 1000);
+      }, 50);
+      audioStudioState.timeoutId = window.setTimeout(() => stopAudioStudioRecording(), GAME_AUDIO_MAX_SECONDS * 1000);
+    } catch (error) {
+      releaseAudioStudioStream();
+      audioStudioState.recorder = null;
+      const message = error?.name === "NotAllowedError"
+        ? "マイクの使用が許可されませんでした。ブラウザの権限を確認してください。"
+        : error?.name === "NotFoundError"
+          ? "利用できるマイクが見つかりませんでした。"
+          : "マイク録音を開始できませんでした。";
+      setAudioStudioStatus(message, "error");
+      updateAudioStudioControls();
+    }
+  }
+
+  function openAudioStudio() {
+    if (!audioStudioDialog) return;
+    updateAudioStudioControls();
+    if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
+      setAudioStudioStatus("このブラウザでは録音できませんが、音声ファイルの変換は利用できます。");
+    }
+    if (!audioStudioDialog.open) audioStudioDialog.showModal();
+  }
+
+  function bindAudioStudioEvents() {
+    document.querySelector("#audioStudioRecord")?.addEventListener("click", startAudioStudioRecording);
+    document.querySelector("#audioStudioStop")?.addEventListener("click", () => stopAudioStudioRecording());
+    document.querySelector("#audioStudioReset")?.addEventListener("click", resetAudioStudio);
+    document.querySelector("#audioStudioFile")?.addEventListener("change", (event) => {
+      const file = event.currentTarget.files?.[0];
+      if (file) convertAudioForStudio(file);
+      event.currentTarget.value = "";
+    });
+    audioStudioDialog?.addEventListener("close", () => stopAudioStudioRecording({ discard: true }));
   }
 
   function normalizeResultShareLine(value, maxLength = 48) {
@@ -235,6 +571,7 @@
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
+          <button class="button hero-audio-tool-button" id="audioStudioButton"><small>端末内だけで録音・変換</small><span>♪ 10秒音声をつくる</span></button>
         </div>
         ${renderLandingTopMessagePanel()}
         <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
@@ -275,6 +612,7 @@
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
+    document.querySelector("#audioStudioButton")?.addEventListener("click", openAudioStudio);
     bindLandingTopMessageEvents();
     window.HariaiOnline?.refreshTopMessages?.();
     app.focus({ preventScroll: true });
@@ -980,6 +1318,7 @@
       processImageFile,
       createSampleItems,
       profileAvatar,
+      processGameAudioFile,
       buildResultShareText,
       createXResultPostUrl,
       renderResultShareButton,
@@ -987,6 +1326,11 @@
   };
 
   profileAvatar.ready();
+  bindAudioStudioEvents();
+  window.addEventListener("pagehide", () => {
+    stopAudioStudioRecording({ discard: true });
+    releaseAudioStudioOutput();
+  }, { once: true });
 
   window.addEventListener("hariai-leaderboard-updated", () => {
     if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });

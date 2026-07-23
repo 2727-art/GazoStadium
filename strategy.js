@@ -57,8 +57,6 @@ const MAX_WEAKNESS_CHAIN = WEAKNESS_CHAIN_DAMAGE.length;
 const WEAKNESS_MISS_DAMAGE = 5;
 const MAX_AUDIO_SECONDS = 10;
 const AUDIO_HIGHLIGHT_SECONDS = 3;
-const AUDIO_SAMPLE_RATE = 22_050;
-const MAX_AUDIO_SOURCE_BYTES = 20 * 1024 * 1024;
 const MAX_AUDIO_TRANSFER_BYTES = 480 * 1024;
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
@@ -225,68 +223,14 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function writeAscii(view, offset, value) {
-  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
-}
-
-function encodeMonoWav(samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  writeAscii(view, 0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeAscii(view, 8, "WAVE");
-  writeAscii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeAscii(view, 36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = Math.max(-1, Math.min(1, samples[index]));
-    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
-  return new Blob([buffer], { type: "audio/wav" });
-}
-
 async function processStrategyAudioFile(file) {
-  if (!file || (file.type && !file.type.startsWith("audio/"))) throw new Error("音声ファイルを選択してください。");
-  if (file.size > MAX_AUDIO_SOURCE_BYTES) throw new Error("元の音声ファイルは20MB以下にしてください。");
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass || !("OfflineAudioContext" in window || "webkitOfflineAudioContext" in window)) throw new Error("このブラウザは音声変換に対応していません。");
-  const context = new AudioContextClass();
-  try {
-    const decoded = await context.decodeAudioData(await file.arrayBuffer());
-    const duration = Math.min(MAX_AUDIO_SECONDS, decoded.duration);
-    if (!Number.isFinite(duration) || duration < 0.15) throw new Error("0.15秒以上の音声を選択してください。");
-    const frameCount = Math.max(1, Math.ceil(duration * AUDIO_SAMPLE_RATE));
-    const OfflineContextClass = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const offline = new OfflineContextClass(1, frameCount, AUDIO_SAMPLE_RATE);
-    const source = offline.createBufferSource();
-    source.buffer = decoded;
-    source.connect(offline.destination);
-    source.start(0, 0, duration);
-    const rendered = await offline.startRendering();
-    const samples = new Float32Array(rendered.getChannelData(0));
-    let peak = 0;
-    for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
-    const gain = peak > 0 ? Math.min(4, 0.92 / peak) : 1;
-    if (gain !== 1) for (let index = 0; index < samples.length; index += 1) samples[index] *= gain;
-    const blob = encodeMonoWav(samples, AUDIO_SAMPLE_RATE);
-    if (blob.size > MAX_AUDIO_TRANSFER_BYTES) throw new Error("変換後の音声サイズが上限を超えました。");
-    return {
-      audioBlob: blob,
-      audioUrl: URL.createObjectURL(blob),
-      audioDuration: rendered.duration,
-      audioCueStart: 0,
-      audioName: String(file.name || "添付音声").slice(0, 80),
-    };
-  } finally {
-    await context.close().catch(() => {});
-  }
+  const processor = shared()?.processGameAudioFile;
+  if (typeof processor !== "function") throw new Error("音声変換機能を読み込めませんでした。ページを再読み込みしてください。");
+  return processor(file, {
+    maxSeconds: MAX_AUDIO_SECONDS,
+    maxOutputBytes: MAX_AUDIO_TRANSFER_BYTES,
+    audioName: String(file?.name || "添付音声").slice(0, 80),
+  });
 }
 
 function releaseCardAudio(item) {

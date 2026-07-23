@@ -9,7 +9,7 @@
       content="好きな画像を用意し、通常型・戦略型1on1、2on2、4人バトルロワイヤルで知らない相手と採点し合うオンライン画像対戦ゲーム。"
     />
     <title>貼り合いスタジアム | Online Image Battle</title>
-    <link rel="stylesheet" href="styles.css?v=stamps-v1" />
+    <link rel="stylesheet" href="styles.css?v=audio-studio-v1" />
     <link rel="stylesheet" href="strategy.css?v=strategy-audio-v1" />
   </head>
   <body>
@@ -41,6 +41,45 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <div id="fxLayer" class="fx-layer" aria-hidden="true"></div>
 
+    <dialog id="audioStudioDialog" class="audio-studio-dialog">
+      <form method="dialog" class="audio-studio-card">
+        <button class="audio-studio-close" value="close" aria-label="10秒音声メーカーを閉じる">×</button>
+        <div class="audio-studio-heading">
+          <span class="eyebrow">10 SECOND AUDIO MAKER</span>
+          <h2>好きな音を、ゲーム用の10秒音声に。</h2>
+          <p>マイク録音または手持ちの音声を、戦略型1on1でそのまま使える軽量WAVへ端末内だけで変換します。</p>
+        </div>
+        <div class="audio-studio-format" aria-label="出力形式">
+          <span>最大10秒</span><span>22.05kHz</span><span>モノラル</span><span>16bit WAV</span><span>音量正規化</span>
+        </div>
+        <section class="audio-studio-recorder" aria-label="音声を録音または変換">
+          <div class="audio-studio-clock"><strong id="audioStudioTimer">0.0</strong><span>/ 10.0 SEC</span></div>
+          <div class="audio-studio-progress" aria-hidden="true"><i id="audioStudioProgress"></i></div>
+          <p id="audioStudioStatus" class="audio-studio-status" role="status" aria-live="polite">録音するか、音声ファイルを選んでください。</p>
+          <div class="audio-studio-actions">
+            <button class="button button-primary" type="button" id="audioStudioRecord">● 録音を開始</button>
+            <button class="button button-danger" type="button" id="audioStudioStop" disabled>■ 録音を停止</button>
+            <label class="button button-ghost audio-studio-file">音声ファイルから変換<input id="audioStudioFile" type="file" accept="audio/*" /></label>
+          </div>
+        </section>
+        <section id="audioStudioResult" class="audio-studio-result" aria-label="変換結果" hidden>
+          <div class="audio-studio-result-head"><span>GAME READY</span><strong>変換が完了しました</strong></div>
+          <audio id="audioStudioPreview" controls preload="metadata"></audio>
+          <dl class="audio-studio-result-meta">
+            <div><dt>長さ</dt><dd id="audioStudioDuration">--</dd></div>
+            <div><dt>変換前</dt><dd id="audioStudioSourceSize">--</dd></div>
+            <div><dt>ゲーム用WAV</dt><dd id="audioStudioOutputSize">--</dd></div>
+          </dl>
+          <div class="audio-studio-result-actions">
+            <a class="button button-cyan" id="audioStudioDownload" download="hariai-10s-audio.wav">WAVを保存</a>
+            <button class="button button-ghost" type="button" id="audioStudioReset">作り直す</button>
+          </div>
+          <p>保存したWAVは、戦略型1on1のデッキ画面にある「10秒音声を添付」から選べます。</p>
+        </section>
+        <p class="audio-studio-privacy">音声はFirebaseや運営サーバーへ送信しません。録音・変換・試聴は、このブラウザ内だけで処理します。</p>
+      </form>
+    </dialog>
+
     <dialog id="destroyDialog" class="confirm-dialog">
       <form method="dialog">
         <span class="eyebrow">NO CONTEST</span>
@@ -69,8 +108,8 @@
       <p class="noscript">このゲームを遊ぶにはJavaScriptを有効にしてください。</p>
     </noscript>
     <script src="audio.js" defer></script>
-    <script src="app.js?v=player-titles-v1" defer></script>
-    <script type="module" src="strategy.js?v=stamps-v1"></script>
+    <script src="app.js?v=audio-studio-v1" defer></script>
+    <script type="module" src="strategy.js?v=strategy-audio-v2"></script>
     <script type="module" src="online.js?v=economy-claims-v1"></script>
     <script type="module" src="team.js?v=stamps-v1"></script>
     <script type="module" src="royale.js?v=stamps-v1"></script>
