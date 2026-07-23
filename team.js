@@ -1,13 +1,10 @@
-import { getApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
   browserLocalPersistence,
-  getAuth,
   setPersistence,
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
   get,
-  getDatabase,
   limitToLast,
   onChildAdded,
   onDisconnect,
@@ -21,6 +18,15 @@ import {
   set,
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+import {
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+import {
+  auth,
+  database,
+  functions,
+  useOfflineMarketPreview,
+} from "./firebase-services.js?v=app-check-v2";
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
@@ -63,7 +69,6 @@ const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const MAX_EQUIPPED_REACTIONS = 8;
-const GENERIC_MATCH_MISSION_END_DATE_KEY = "2026-07-23";
 const DAILY_PROGRESS_LIMITS = Object.freeze({
   matches: 1,
   scores: 3,
@@ -73,15 +78,6 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   teamMatches: 1,
   royaleMatches: 1,
 });
-const DAILY_MISSION_SUMMARIES = [
-  ["matches", 1, "1試合を完走"],
-  ["scores", 3, "3回採点する"],
-  ["criticals", 1, "8点以上をつける"],
-  ["soloMatches", 1, "通常型1on1を1回完走"],
-  ["strategyMatches", 1, "戦略型1on1を1回完走"],
-  ["teamMatches", 1, "2on2を1回完走"],
-  ["royaleMatches", 1, "バトルロワイヤルを1回完走"],
-];
 const DAILY_MISSION_IDS = ["complete_match", "score_three", "give_critical", "play_solo", "play_strategy", "play_team", "play_royale"];
 const TEAM_LINK_TACTICS = [
   { id: "sync", icon: "∞", name: "シンクロ", condition: "2枚とも平均7点以上", effect: "勝利時 +2ダメージ", damageBonus: 2, guard: 0 },
@@ -101,9 +97,7 @@ const SHOP_REACTIONS = [
   { id: "reaction_story", reaction: "物語を感じる" },
   { id: "reaction_masterpiece", reaction: "これは名作" },
 ];
-const firebaseApp = getApp();
-const auth = getAuth(firebaseApp);
-const database = getDatabase(firebaseApp);
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const fxLayer = document.querySelector("#fxLayer");
@@ -193,11 +187,15 @@ const now = () => Date.now() + Number(state.serverTimeOffset || 0);
 
 function start() {
   if (active) return;
+  if (useOfflineMarketPreview) {
+    showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
+    return;
+  }
   if (location.protocol === "file:") {
     showToast("2on2対戦はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
-  if (window.HariaiOnline?.isActive?.() || window.HariaiRoyale?.isActive?.()) {
+  if (window.HariaiOnline?.isActive?.() || window.HariaiRoyale?.isActive?.() || window.HariaiStrategy?.isActive?.() || window.HariaiMarket?.isActive?.()) {
     showToast("ほかの対戦画面を終了してから2on2を開始してください。");
     return;
   }
@@ -218,6 +216,7 @@ async function ensureAuthenticated() {
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
   if (!active) return;
   state.uid = credential.user.uid;
+  await economyActionCallable({ action: "initialize" });
   const [profileSnapshot, teamProfileSnapshot, economySnapshot] = await Promise.all([
     get(ref(database, `online/profiles/${state.uid}`)),
     get(ref(database, `online/teamProfiles/${state.uid}`)),
@@ -891,7 +890,7 @@ async function createTeamRoom(group) {
     });
     await set(ref(database, `online/teamRooms/${roomId}/hostUid`), state.uid);
     const roomUpdates = {
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       status: "forming",
     };
     Object.entries(members).forEach(([uid, value]) => { roomUpdates[`members/${uid}`] = value; });
@@ -1002,7 +1001,6 @@ async function abandonPendingRoom(roomId) {
   await Promise.allSettled([
     remove(ref(database, `online/teamActive/${state.uid}`)),
     remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
-    remove(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`)),
   ]);
   delete state.latestInvites[roomId];
   state.pendingRoomId = "";
@@ -1022,7 +1020,6 @@ async function handleExpiredRoom(roomId) {
   await Promise.allSettled([
     remove(ref(database, `online/teamActive/${state.uid}`)),
     remove(ref(database, `online/teamInvites/${state.uid}/${roomId}`)),
-    remove(ref(database, `online/teamRooms/${roomId}/accepted/${state.uid}`)),
   ]);
   delete state.latestInvites[roomId];
   await releaseTeamMatchLock(roomId);
@@ -1522,10 +1519,6 @@ async function lockScores() {
       values,
       lockedAt: serverTimestamp(),
     });
-    await recordDailyProgress({
-      scores: opponents.length,
-      criticals: Object.values(values).some((score) => score >= 8) ? 1 : 0,
-    }).catch(() => showToast("ミッション進捗を更新できませんでした。"));
   } catch (error) {
     state.scoredRounds.delete(state.round);
     state.screen = "score";
@@ -1669,12 +1662,18 @@ function determineOutcome() {
 
 async function finishMatch() {
   if (state.outcome) return;
-  state.outcome = determineOutcome();
-  await Promise.all([
-    commitTeamStats(),
-    recordDailyProgress({ matches: 1, teamMatches: 1 }).catch(() => showToast("ミッション進捗を更新できませんでした。")),
-    set(ref(database, `online/teamRooms/${state.roomId}/finished/${state.uid}`), true),
-  ]);
+  const outcome = determineOutcome();
+  const draw = outcome.winnerTeam === null;
+  const won = outcome.winnerTeam === state.team;
+  await update(ref(database, `online/teamRooms/${state.roomId}`), {
+    [`resultClaims/${state.uid}`]: {
+      outcome: draw ? "draw" : won ? "win" : "loss",
+      createdAt: serverTimestamp(),
+    },
+    [`finished/${state.uid}`]: true,
+  });
+  state.outcome = outcome;
+  await commitTeamStats();
   state.screen = "gameover";
   setTeamChrome("2ON2 COMPLETE");
   render();
@@ -1723,31 +1722,10 @@ async function commitTeamStats() {
       outcome: draw ? "draw" : won ? "win" : "loss",
       name: state.name,
       opponentRating,
+      roomId: state.roomId,
     });
     if (overallUpdate) await overallUpdate.catch(() => showToast("総合ランキングを更新できませんでした。"));
   }
-}
-
-async function recordDailyProgress(changes) {
-  if (!state.uid) return;
-  const before = { ...(state.economy.daily || {}) };
-  const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-    const record = normalizeEconomy(current);
-    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
-      record.daily[progressKey] = Math.min(limit, record.daily[progressKey] + Math.max(0, Number(changes[progressKey] || 0)));
-    });
-    record.updatedAt = now();
-    return record;
-  });
-  if (!result.committed) return;
-  state.economy = normalizeEconomy(result.snapshot.val());
-  const dateKey = jstDateKey(now());
-  const completed = DAILY_MISSION_SUMMARIES.filter(([key, target]) => (
-    (key !== "matches" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY)
-    && Number(before[key] || 0) < target
-    && Number(state.economy.daily[key] || 0) >= target
-  ));
-  if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
 
 async function sendTeamChat(value, stampId = "") {
@@ -1917,8 +1895,8 @@ async function cleanupMatchmaking(keepActive) {
     remove(ref(database, `online/teamInvites/${state.uid}`)),
   ];
   if (!keepActive) removals.push(remove(ref(database, `online/teamActive/${state.uid}`)));
-  if (!keepActive && state.pendingRoomId) removals.push(remove(ref(database, `online/teamRooms/${state.pendingRoomId}/accepted/${state.uid}`)));
   if (ownsPendingRoom) {
+    removals.push(runTransaction(ref(database, `online/teamRooms/${pendingRoomId}/status`), (current) => current === "forming" ? "expired" : undefined));
     Object.keys(state.room.members || {}).forEach((uid) => {
       if (uid !== state.uid) removals.push(remove(ref(database, `online/teamInvites/${uid}/${pendingRoomId}`)));
     });

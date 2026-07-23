@@ -1,13 +1,10 @@
-import { getApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
   browserLocalPersistence,
-  getAuth,
   setPersistence,
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
   get,
-  getDatabase,
   limitToLast,
   onChildAdded,
   onDisconnect,
@@ -21,6 +18,15 @@ import {
   set,
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
+import {
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+import {
+  auth,
+  database,
+  functions,
+  useOfflineMarketPreview,
+} from "./firebase-services.js?v=app-check-v2";
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
@@ -68,7 +74,6 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const INITIAL_RATING = 1000;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const MAX_EQUIPPED_REACTIONS = 8;
-const GENERIC_MATCH_MISSION_END_DATE_KEY = "2026-07-23";
 const DAILY_PROGRESS_LIMITS = Object.freeze({
   matches: 1,
   scores: 3,
@@ -78,15 +83,6 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   teamMatches: 1,
   royaleMatches: 1,
 });
-const DAILY_MISSION_SUMMARIES = [
-  ["matches", 1, "1試合を完走"],
-  ["scores", 3, "3回採点する"],
-  ["criticals", 1, "8点以上をつける"],
-  ["soloMatches", 1, "通常型1on1を1回完走"],
-  ["strategyMatches", 1, "戦略型1on1を1回完走"],
-  ["teamMatches", 1, "2on2を1回完走"],
-  ["royaleMatches", 1, "バトルロワイヤルを1回完走"],
-];
 const DAILY_MISSION_IDS = ["complete_match", "score_three", "give_critical", "play_solo", "play_strategy", "play_team", "play_royale"];
 const SHOP_FEATURE_IDS = ["feature_top_message"];
 const SHOP_REACTIONS = [
@@ -101,9 +97,7 @@ const SHOP_REACTIONS = [
   { id: "reaction_story", reaction: "物語を感じる" },
   { id: "reaction_masterpiece", reaction: "これは名作" },
 ];
-const firebaseApp = getApp();
-const auth = getAuth(firebaseApp);
-const database = getDatabase(firebaseApp);
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const fxLayer = document.querySelector("#fxLayer");
@@ -190,11 +184,15 @@ const now = () => Date.now() + Number(state.serverTimeOffset || 0);
 
 function start() {
   if (active) return;
+  if (useOfflineMarketPreview) {
+    showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
+    return;
+  }
   if (location.protocol === "file:") {
     showToast("バトルロワイヤル対戦はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
-  if (window.HariaiOnline?.isActive?.() || window.HariaiRoyale?.isActive?.() || window.HariaiTeam?.isActive?.()) {
+  if (window.HariaiOnline?.isActive?.() || window.HariaiStrategy?.isActive?.() || window.HariaiTeam?.isActive?.() || window.HariaiMarket?.isActive?.()) {
     showToast("ほかの対戦画面を終了してからバトルロワイヤルを開始してください。");
     return;
   }
@@ -215,6 +213,7 @@ async function ensureAuthenticated() {
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
   if (!active) return;
   state.uid = credential.user.uid;
+  await economyActionCallable({ action: "initialize" });
   const [profileSnapshot, royaleProfileSnapshot, economySnapshot] = await Promise.all([
     get(ref(database, `online/profiles/${state.uid}`)),
     get(ref(database, `online/royaleProfiles/${state.uid}`)),
@@ -995,7 +994,7 @@ async function createRoyaleRoom(group) {
     });
     await set(ref(database, `online/royaleRooms/${roomId}/hostUid`), state.uid);
     const roomUpdates = {
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       status: "forming",
     };
     Object.entries(members).forEach(([uid, value]) => { roomUpdates[`members/${uid}`] = value; });
@@ -1015,8 +1014,24 @@ async function createRoyaleRoom(group) {
     watchPendingRoom(roomId, true);
     state.matchTimer = window.setTimeout(() => expireRoyaleRoom(roomId), MATCH_TIMEOUT_MS);
   } catch (error) {
-    await remove(ref(database, `online/royaleActive/${state.uid}`)).catch(() => {});
-    await runTransaction(ref(database, `online/royaleRooms/${roomId}/status`), (current) => current === null ? "expired" : undefined).catch(() => {});
+    const statusRef = ref(database, `online/royaleRooms/${roomId}/status`);
+    await runTransaction(statusRef, (current) => current === null ? "forming" : undefined).catch(() => {});
+    await runTransaction(statusRef, (current) => current === "forming" ? "expired" : undefined).catch(() => {});
+    await Promise.allSettled([
+      remove(ref(database, `online/royaleActive/${state.uid}`)),
+      set(ref(database, `online/royaleQueue/${state.uid}`), {
+        uid: state.uid,
+        name: state.name,
+        rating: INITIAL_RATING,
+        streak: Number(state.royaleProfile.streak || 0),
+        joinedAt: Date.now(),
+        lastSeen: Date.now(),
+        state: "waiting",
+      }),
+      ...group
+        .filter((entry) => entry.uid !== state.uid)
+        .map((entry) => remove(ref(database, `online/royaleInvites/${entry.uid}/${roomId}`))),
+    ]);
     throw error;
   } finally {
     state.matchingBusy = false;
@@ -1081,7 +1096,6 @@ async function handleExpiredRoom(roomId) {
   await Promise.allSettled([
     remove(ref(database, `online/royaleActive/${state.uid}`)),
     remove(ref(database, `online/royaleInvites/${state.uid}/${roomId}`)),
-    remove(ref(database, `online/royaleRooms/${roomId}/accepted/${state.uid}`)),
   ]);
   state.pendingRoomId = "";
   state.room = null;
@@ -1640,10 +1654,6 @@ async function lockScores() {
       values,
       lockedAt: serverTimestamp(),
     });
-    await recordDailyProgress({
-      scores: isFinalJuryRound() ? 1 : targets.length,
-      criticals: 0,
-    }).catch(() => showToast("ミッション進捗を更新できませんでした。"));
   } catch (error) {
     state.scoredRounds.delete(state.round);
     state.screen = "score";
@@ -1879,12 +1889,19 @@ function determineOutcome() {
 async function finishMatch() {
   if (state.outcome) return;
   stopResultAdvance();
-  state.outcome = determineOutcome();
-  await Promise.all([
-    commitRoyaleStats(),
-    recordDailyProgress({ matches: 1, royaleMatches: 1 }).catch(() => showToast("ミッション進捗を更新できませんでした。")),
-    set(ref(database, `online/royaleRooms/${state.roomId}/finished/${state.uid}`), true),
-  ]);
+  const outcome = determineOutcome();
+  const won = outcome.winnerUid === state.uid;
+  const localPlace = won ? 1 : Number(state.eliminated[state.uid]?.place || 4);
+  await update(ref(database, `online/royaleRooms/${state.roomId}`), {
+    [`resultClaims/${state.uid}`]: {
+      outcome: localPlace === 1 ? "win" : localPlace === 2 ? "draw" : "loss",
+      placement: localPlace,
+      createdAt: serverTimestamp(),
+    },
+    [`finished/${state.uid}`]: true,
+  });
+  state.outcome = outcome;
+  await commitRoyaleStats();
   state.screen = "gameover";
   setRoyaleChrome("ROYALE COMPLETE");
   render();
@@ -1928,31 +1945,10 @@ async function commitPlacementStats(localPlace, won) {
       outcome: localPlace === 1 ? "win" : localPlace === 2 ? "draw" : "loss",
       name: state.name,
       opponentRating: 1000,
+      roomId: state.roomId,
     });
     if (overallUpdate) await overallUpdate.catch(() => showToast("総合ランキングを更新できませんでした。"));
   }
-}
-
-async function recordDailyProgress(changes) {
-  if (!state.uid) return;
-  const before = { ...(state.economy.daily || {}) };
-  const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-    const record = normalizeEconomy(current);
-    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
-      record.daily[progressKey] = Math.min(limit, record.daily[progressKey] + Math.max(0, Number(changes[progressKey] || 0)));
-    });
-    record.updatedAt = now();
-    return record;
-  });
-  if (!result.committed) return;
-  state.economy = normalizeEconomy(result.snapshot.val());
-  const dateKey = jstDateKey(now());
-  const completed = DAILY_MISSION_SUMMARIES.filter(([key, target]) => (
-    (key !== "matches" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY)
-    && Number(before[key] || 0) < target
-    && Number(state.economy.daily[key] || 0) >= target
-  ));
-  if (completed.length) showToast(`デイリーミッション達成：${completed.map((entry) => entry[2]).join("・")}`);
 }
 
 async function sendAllChat(value, stampId = "") {
@@ -2093,8 +2089,8 @@ async function cleanupMatchmaking(keepActive) {
     remove(ref(database, `online/royaleInvites/${state.uid}`)),
   ];
   if (!keepActive) removals.push(remove(ref(database, `online/royaleActive/${state.uid}`)));
-  if (!keepActive && state.pendingRoomId) removals.push(remove(ref(database, `online/royaleRooms/${state.pendingRoomId}/accepted/${state.uid}`)));
   if (state.room?.hostUid === state.uid && state.pendingRoomId) {
+    removals.push(runTransaction(ref(database, `online/royaleRooms/${state.pendingRoomId}/status`), (current) => current === "forming" ? "expired" : undefined));
     Object.keys(state.room.members || {}).forEach((uid) => {
       if (uid !== state.uid) removals.push(remove(ref(database, `online/royaleInvites/${uid}/${state.pendingRoomId}`)));
     });

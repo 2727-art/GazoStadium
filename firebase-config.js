@@ -11,3 +11,7 @@ export const firebaseConfig = {
   messagingSenderId: "70245106641",
   appId: "1:70245106641:web:722ceea8805a7b11b8d6f0",
 };
+
+// Firebase ConsoleでWebアプリをApp Check（reCAPTCHA Enterprise）へ登録後、
+// 発行されたサイトキーを設定します。未設定時はApp Checkを初期化しません。
+export const appCheckRecaptchaEnterpriseSiteKey = "6LfAyWAtAAAAAEi4dthTKvY50auKt2BT5SdGi7hh";

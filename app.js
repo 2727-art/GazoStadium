@@ -558,7 +558,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
-          1on1、協力型2on2、4人で最後の1人を決めるバトルロワイヤルを選べます。
+          1on1、協力型2on2、4人バトルロワイヤル、ポイント価値で競う推し値市場を選べます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べるポイント">
           <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
@@ -568,6 +568,7 @@
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
           <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ふたりで協力</small><span>2on2チーム対戦</span></button>
           <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
+          <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>ポイントで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
@@ -593,7 +594,7 @@
           </div></article>
         </div>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。購入者のトップメッセージだけ表示名・称号とともに公開され、匿名UID・ルーム情報は表示しません。</p>
-        <p class="mode-note">画像と戦略型の添付音声は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
+        <p class="mode-note">画像と戦略型・推し値市場の音声は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
   }
@@ -609,6 +610,7 @@
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
+    document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
@@ -926,6 +928,15 @@
     }
     showToast("バトルロワイヤル機能を読み込んでいます…");
     window.addEventListener("hariai-royale-ready", () => window.HariaiRoyale?.start?.(), { once: true });
+  }
+
+  function startValueMarket() {
+    if (window.HariaiMarket?.start) {
+      window.HariaiMarket.start();
+      return;
+    }
+    showToast("推し値市場を読み込んでいます…");
+    window.addEventListener("hariai-market-ready", () => window.HariaiMarket?.start?.(), { once: true });
   }
 
   function openOnlineFeature(method) {
@@ -1260,8 +1271,8 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC";
-    if (footerItems[1]) footerItems[1].textContent = "画像と戦略型の添付音声は対戦相手へ直接送信し、サーバーへ保存しません";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE + VALUE MARKET";
+    if (footerItems[1]) footerItems[1].textContent = "画像と戦略型・推し値市場の音声は相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
     const confirm = destroyDialog?.querySelector("#confirmDestroy");
@@ -1272,6 +1283,10 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiMarket?.isActive?.()) {
+      window.HariaiMarket.requestHome();
+      return;
+    }
     if (window.HariaiStrategy?.isActive?.()) {
       window.HariaiStrategy.requestHome();
       return;

@@ -1,12 +1,9 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
   browserLocalPersistence,
-  getAuth,
   setPersistence,
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
-  getDatabase,
   get,
   limitToLast,
   onChildAdded,
@@ -21,7 +18,11 @@ import {
   set,
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
-import { firebaseConfig } from "./firebase-config.js";
+import {
+  auth,
+  database,
+  useOfflineMarketPreview,
+} from "./firebase-services.js?v=app-check-v2";
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
@@ -87,9 +88,6 @@ const IDENTIFIED_CHAT_SCREENS = new Set([
   "weaknessGuess", "waitingWeaknessGuess", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue",
 ]);
 
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const database = getDatabase(firebaseApp);
 const app = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const fxLayer = document.querySelector("#fxLayer");
@@ -296,7 +294,11 @@ function runtimePlayer(source) {
 
 function start() {
   if (active) return;
-  if (window.HariaiOnline?.isActive?.() || window.HariaiTeam?.isActive?.() || window.HariaiRoyale?.isActive?.()) {
+  if (useOfflineMarketPreview) {
+    showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
+    return;
+  }
+  if (window.HariaiOnline?.isActive?.() || window.HariaiTeam?.isActive?.() || window.HariaiRoyale?.isActive?.() || window.HariaiMarket?.isActive?.()) {
     showToast("進行中のオンライン画面を終了してから開いてください。");
     return;
   }
@@ -1041,7 +1043,7 @@ async function createOffer(candidate) {
     await set(ref(database, `online/strategyRooms/${roomId}/hostUid`), state.uid);
     await update(roomRef, {
       guestUid: candidate.uid,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       status: "offered",
       [`members/${state.uid}`]: true,
       [`members/${candidate.uid}`]: true,
@@ -2090,12 +2092,17 @@ function determineOutcome() {
 }
 
 async function finishMatch() {
-  const dailyCompletion = window.HariaiOnline?.recordModeDailyCompletion?.("strategy");
-  await Promise.all([
-    commitStrategyStats(),
-    dailyCompletion ? dailyCompletion.catch(() => showToast("ミッション進捗を更新できませんでした。")) : Promise.resolve(),
-    set(ref(database, `online/strategyRooms/${state.roomId}/finished/${state.uid}`), true),
-  ]);
+  const outcome = determineOutcome();
+  const draw = outcome.winnerIndex < 0;
+  const won = outcome.winnerIndex === state.playerIndex;
+  await update(ref(database, `online/strategyRooms/${state.roomId}`), {
+    [`resultClaims/${state.uid}`]: {
+      outcome: draw ? "draw" : won ? "win" : "loss",
+      createdAt: serverTimestamp(),
+    },
+    [`finished/${state.uid}`]: true,
+  });
+  await commitStrategyStats();
   state.screen = "gameover";
   setStrategyChrome("STRATEGY COMPLETE");
   render();
@@ -2137,6 +2144,7 @@ async function commitStrategyStats() {
       outcome: draw ? "draw" : won ? "win" : "loss",
       name: state.name,
       opponentRating,
+      roomId: state.roomId,
     });
     if (overallUpdate) await overallUpdate.catch(() => showToast("総合ランキングを更新できませんでした。"));
   }

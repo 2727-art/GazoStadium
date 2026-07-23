@@ -1,17 +1,15 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
   browserLocalPersistence,
-  getAuth,
   setPersistence,
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
-  getDatabase,
   get,
   limitToLast,
   onChildAdded,
   onDisconnect,
   onValue,
+  orderByChild,
   push,
   query,
   ref,
@@ -21,7 +19,15 @@ import {
   set,
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
-import { firebaseConfig } from "./firebase-config.js";
+import {
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+import {
+  auth,
+  database,
+  functions,
+  useOfflineMarketPreview,
+} from "./firebase-services.js?v=app-check-v2";
 import {
   CHAT_BACKGROUND_PRODUCTS,
   CHAT_COSMETIC_PRODUCTS,
@@ -122,7 +128,6 @@ const DAILY_MISSIONS = [
 const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
   mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY
 ));
-const isGenericMatchMissionActive = (dateKey) => dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY;
 const DAILY_PROGRESS_LIMITS = Object.freeze({
   matches: 1,
   scores: 3,
@@ -131,12 +136,6 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   strategyMatches: 1,
   teamMatches: 1,
   royaleMatches: 1,
-});
-const MODE_DAILY_PROGRESS_KEYS = Object.freeze({
-  solo: "soloMatches",
-  strategy: "strategyMatches",
-  team: "teamMatches",
-  royale: "royaleMatches",
 });
 const SHOP_PRODUCTS = [
   { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "トップメッセージ枠", description: "トップページに表示するひとことを投稿・編集できる買い切り機能", price: 500 },
@@ -166,9 +165,7 @@ const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
 
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const database = getDatabase(firebaseApp);
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
@@ -190,7 +187,7 @@ let leaderboardPeriodKey = "";
 let leaderboardRequestId = 0;
 let monthlyBeyondRanks = new Map();
 let monthlyBeyondPeriodKey = "";
-let publicRestServerTimeOffset = 0;
+let publicServerTimeOffset = 0;
 let topMessageRecords = [];
 let topMessagesStatus = "idle";
 let topMessagesRequestId = 0;
@@ -353,7 +350,7 @@ function leaderboardPeriodStartAt(period, key) {
   return Date.parse(`${startKey}T00:00:00+09:00`);
 }
 
-function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.now() + publicRestServerTimeOffset) {
+function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.now() + publicServerTimeOffset) {
   const normalizedPeriod = normalizeLeaderboardPeriod(period);
   const key = leaderboardPeriodKeyFor(normalizedPeriod, timestamp);
   const startAt = leaderboardPeriodStartAt(normalizedPeriod, key);
@@ -419,6 +416,7 @@ function normalizePeriodRewardRecord(value, period, key) {
   }
   const record = {
     matches,
+    verifiedMatches: Math.min(matches, Math.max(0, Math.floor(Number(value.verifiedMatches || 0)))),
     wins,
     losses,
     draws,
@@ -458,7 +456,13 @@ function periodRewardEntries(economy = state.economy) {
 }
 
 function pendingPeriodRewards(economy = state.economy, timestamp = serverNow()) {
-  return periodRewardEntries(economy).filter(({ record, reward }) => !record.claimed && reward > 0 && Number(record.endsAt || 0) <= timestamp);
+  return periodRewardEntries(economy).filter(({ record, reward }) => (
+    !record.claimed
+    && record.matches > 0
+    && record.verifiedMatches === record.matches
+    && reward > 0
+    && Number(record.endsAt || 0) <= timestamp
+  ));
 }
 
 function pendingPeriodRewardSummary(economy = state.economy, timestamp = serverNow()) {
@@ -704,6 +708,10 @@ function renderChatCosmeticBubble(text, message = {}) {
 }
 
 function openOnlineScreen(screen) {
+  if (useOfflineMarketPreview) {
+    showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
+    return;
+  }
   if (active) {
     if (["setup", "missions", "shop"].includes(state.screen)) {
       state.screen = screen;
@@ -713,6 +721,10 @@ function openOnlineScreen(screen) {
   }
   if (location.protocol === "file:") {
     showToast("オンライン対戦はローカルサーバーまたは公開URLから起動してください。");
+    return;
+  }
+  if (window.HariaiMarket?.isActive?.()) {
+    showToast("推し値市場を終了してからオンライン画面を開いてください。");
     return;
   }
   active = true;
@@ -758,7 +770,7 @@ function getLeaderboardLoadedPeriod() {
 
 function getMonthlyBeyondRank(entryId, rating) {
   const normalizedRating = Math.min(3000, Math.max(100, Math.round(Number(rating || INITIAL_RATING))));
-  if (normalizedRating < 1400 || monthlyBeyondPeriodKey !== leaderboardPeriodKeyFor("monthly", Date.now() + publicRestServerTimeOffset)) return 0;
+  if (normalizedRating < 1400 || monthlyBeyondPeriodKey !== leaderboardPeriodKeyFor("monthly", Date.now() + publicServerTimeOffset)) return 0;
   const rank = Number(monthlyBeyondRanks.get(String(entryId || "")) || 0);
   return rank >= 1 && rank <= 10 ? rank : 0;
 }
@@ -797,15 +809,21 @@ function notifyTopMessagesUpdated() {
 }
 
 async function refreshTopMessages({ silent = false } = {}) {
+  if (useOfflineMarketPreview) {
+    topMessageRecords = [];
+    topMessagesStatus = "ready";
+    notifyTopMessagesUpdated();
+    return;
+  }
   const requestId = ++topMessagesRequestId;
   if (!silent || topMessagesStatus === "idle") {
     topMessagesStatus = "loading";
     notifyTopMessagesUpdated();
   }
   try {
-    const records = await fetchPublicDatabasePath("online/topMessages", {
-      orderBy: JSON.stringify("updatedAt"),
-      limitToLast: TOP_MESSAGE_FETCH_LIMIT,
+    const records = await readPublicDatabasePath("online/topMessages", {
+      orderByChildKey: "updatedAt",
+      limit: TOP_MESSAGE_FETCH_LIMIT,
     });
     if (requestId !== topMessagesRequestId) return;
     topMessageRecords = Object.entries(records || {})
@@ -849,15 +867,26 @@ function clearMutedTopMessages() {
   notifyTopMessagesUpdated();
 }
 
-async function fetchPublicDatabasePath(path, parameters = {}) {
-  const databaseUrl = String(firebaseConfig.databaseURL || "").replace(/\/$/, "");
-  const url = new URL(`${databaseUrl}/${path}.json`);
-  Object.entries(parameters).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  const response = await fetch(url, { cache: "no-store" });
-  const serverDate = Date.parse(response.headers.get("date") || "");
-  if (Number.isFinite(serverDate)) publicRestServerTimeOffset = serverDate - Date.now();
-  if (!response.ok) throw new Error(`公開データの取得に失敗しました（${response.status}）`);
-  return response.json();
+async function readPublicDatabasePath(path, { orderByChildKey = "", limit = 0 } = {}) {
+  if (useOfflineMarketPreview) return null;
+  const constraints = [];
+  if (orderByChildKey) constraints.push(orderByChild(String(orderByChildKey)));
+  if (limit) {
+    const normalizedLimit = Number(limit);
+    if (!Number.isSafeInteger(normalizedLimit) || normalizedLimit <= 0) {
+      throw new Error("公開データの取得件数が不正です。");
+    }
+    constraints.push(limitToLast(normalizedLimit));
+  }
+  const targetRef = ref(database, path);
+  const targetQuery = constraints.length ? query(targetRef, ...constraints) : targetRef;
+  const [snapshot, offsetSnapshot] = await Promise.all([
+    get(targetQuery),
+    get(ref(database, ".info/serverTimeOffset")).catch(() => null),
+  ]);
+  const offset = Number(offsetSnapshot?.val());
+  if (Number.isFinite(offset)) publicServerTimeOffset = offset;
+  return snapshot.val();
 }
 
 function validLeaderboardEntryId(value) {
@@ -866,44 +895,41 @@ function validLeaderboardEntryId(value) {
 }
 
 async function ensureRankingCommentUser() {
+  if (useOfflineMarketPreview) throw new Error("LOCAL UI PREVIEW中はランキングコメントへ接続しません。");
   await setPersistence(auth, browserLocalPersistence);
   return auth.currentUser || (await signInAnonymously(auth)).user;
 }
 
 async function authenticatedDatabaseRequest(path, { method = "GET", body } = {}) {
-  const user = await ensureRankingCommentUser();
-  const token = await user.getIdToken();
-  const databaseUrl = String(firebaseConfig.databaseURL || "").replace(/\/$/, "");
-  const url = new URL(`${databaseUrl}/${path}.json`);
-  url.searchParams.set("auth", token);
-  const response = await fetch(url, {
-    method,
-    cache: "no-store",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!response.ok) {
-    let detail = "";
-    try {
-      detail = String((await response.json())?.error || "");
-    } catch {
-      // FirebaseがJSON以外を返した場合は共通メッセージを使います。
+  await ensureRankingCommentUser();
+  const targetRef = ref(database, path);
+  try {
+    if (method === "GET") return (await get(targetRef)).val();
+    if (method === "PUT") {
+      await set(targetRef, body);
+      return null;
     }
-    if (response.status === 401 || response.status === 403 || detail.includes("Permission denied")) {
+    if (method === "DELETE") {
+      await remove(targetRef);
+      return null;
+    }
+    throw new Error(`未対応のコメント通信です（${method}）`);
+  } catch (error) {
+    const code = String(error?.code || "").toLowerCase();
+    const detail = String(error?.message || "").toLowerCase();
+    if (code.includes("permission-denied") || detail.includes("permission denied")) {
       throw new Error("このコメント操作は許可されていません。");
     }
-    throw new Error(`コメント通信に失敗しました（${response.status}）`);
+    throw new Error("コメント通信に失敗しました。ページを再読み込みして、もう一度お試しください。");
   }
-  if (response.status === 204) return null;
-  return response.json();
 }
 
 async function getLeaderboardComments(targetEntryId) {
   const targetId = validLeaderboardEntryId(targetEntryId);
   if (!targetId) throw new Error("ランキング情報を確認できませんでした。");
-  const records = await fetchPublicDatabasePath(`online/leaderboardComments/${targetId}`, {
-    orderBy: JSON.stringify("updatedAt"),
-    limitToLast: 20,
+  const records = await readPublicDatabasePath(`online/leaderboardComments/${targetId}`, {
+    orderByChildKey: "updatedAt",
+    limit: 20,
   });
   return Object.entries(records || {})
     .map(([authorEntryId, record]) => ({
@@ -920,7 +946,7 @@ async function getLeaderboardCommentIdentity() {
   const user = await ensureRankingCommentUser();
   const entryId = validLeaderboardEntryId(await authenticatedDatabaseRequest(`online/leaderboardEntriesByUser/${user.uid}`));
   if (!entryId) return { canPost: false, entryId: "", name: "" };
-  const entry = await fetchPublicDatabasePath(`online/leaderboard/${entryId}`);
+  const entry = await readPublicDatabasePath(`online/leaderboard/${entryId}`);
   if (!entry?.name) return { canPost: false, entryId: "", name: "" };
   return {
     canPost: true,
@@ -1035,6 +1061,16 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
   const selectedPeriod = normalizeLeaderboardPeriod(period);
   const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
   const monthlyPeriodInfo = leaderboardPeriodInfoFor("monthly");
+  if (useOfflineMarketPreview) {
+    leaderboardPeriod = selectedPeriod;
+    leaderboardPeriodKey = periodInfo.key;
+    leaderboardEntries = [];
+    monthlyBeyondRanks = new Map();
+    monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
+    leaderboardStatus = "ready";
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+    return;
+  }
   const requestId = ++leaderboardRequestId;
   leaderboardPeriod = selectedPeriod;
   leaderboardPeriodKey = periodInfo.key;
@@ -1044,15 +1080,15 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
   leaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const selectedEntriesPromise = fetchPublicDatabasePath(`online/leaderboardPeriods/${selectedPeriod}/${periodInfo.key}`, {
-      orderBy: JSON.stringify("points"),
-      limitToLast: 100,
+    const selectedEntriesPromise = readPublicDatabasePath(`online/leaderboardPeriods/${selectedPeriod}/${periodInfo.key}`, {
+      orderByChildKey: "points",
+      limit: 100,
     });
     const monthlyEntriesPromise = selectedPeriod === "monthly"
       ? selectedEntriesPromise
-      : fetchPublicDatabasePath(`online/leaderboardPeriods/monthly/${monthlyPeriodInfo.key}`, {
-        orderBy: JSON.stringify("points"),
-        limitToLast: 100,
+      : readPublicDatabasePath(`online/leaderboardPeriods/monthly/${monthlyPeriodInfo.key}`, {
+        orderByChildKey: "points",
+        limit: 100,
       }).catch(() => null);
     const [entries, monthlyEntries] = await Promise.all([selectedEntriesPromise, monthlyEntriesPromise]);
     if (requestId !== leaderboardRequestId) return;
@@ -1125,9 +1161,10 @@ async function ensureAuthenticated() {
 
 async function initializeEconomy() {
   const dateKey = currentDailyDateKey();
-  const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => normalizeEconomyRecord(current, dateKey));
-  if (!result.committed) throw new Error("ポイント情報を初期化できませんでした。");
-  state.economy = normalizeEconomyRecord(result.snapshot.val(), dateKey);
+  const response = await economyActionCallable({ action: "initialize" });
+  const snapshot = await get(ref(database, `online/economy/${state.uid}`));
+  state.economy = normalizeEconomyRecord(snapshot.val(), dateKey);
+  state.economy.points = Math.min(MAX_POINTS, Math.max(0, Number(response.data?.balance || 0)));
   state.economyReady = true;
 }
 
@@ -2071,30 +2108,30 @@ function applyEconomySnapshot(snapshot, dateKey = currentDailyDateKey()) {
   }
 }
 
+async function refreshEconomyFromServer(dateKey = currentDailyDateKey(), balance = null) {
+  const snapshot = await get(ref(database, `online/economy/${state.uid}`));
+  applyEconomySnapshot(snapshot, dateKey);
+  if (Number.isFinite(Number(balance))) state.economy.points = Math.min(MAX_POINTS, Math.max(0, Number(balance)));
+  return state.economy;
+}
+
 async function claimDailyMission(missionId) {
   const dateKey = currentDailyDateKey();
   const mission = dailyMissionsForDate(dateKey).find((candidate) => candidate.id === missionId);
   if (!mission || !state.economyReady || state.economyBusy) return;
-  let outcome = "unavailable";
   state.economyBusy = true;
   render();
   try {
-    // Returning the current value keeps the transaction retryable when Firebase first supplies an uncached null.
-    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-      const record = normalizeEconomyRecord(current, dateKey);
-      if (record.daily.claimed[mission.id]) { outcome = "claimed"; return current; }
-      if (Number(record.daily[mission.progressKey] || 0) < mission.target) { outcome = "incomplete"; return current; }
-      record.daily.claimed[mission.id] = true;
-      record.points = Math.min(MAX_POINTS, record.points + mission.reward);
-      record.updatedAt = serverNow();
-      outcome = "claimed-now";
-      return record;
-    });
-    if (result.committed && result.snapshot?.exists()) applyEconomySnapshot(result.snapshot, dateKey);
+    const response = await economyActionCallable({ action: "claim_daily", missionId: mission.id });
+    const result = response.data || {};
+    await refreshEconomyFromServer(dateKey, result.balance);
     state.economyBusy = false;
     render();
-    if (result.committed && outcome === "claimed-now") showToast(`${mission.reward} PTを受け取りました。`);
-    else if (outcome === "claimed") showToast("この報酬は受取済みです。");
+    if (result.outcome === "claimed-now") {
+      const credited = Number.isFinite(Number(result.credited)) ? Number(result.credited) : mission.reward;
+      showToast(`${credited} PTを受け取りました。`);
+    }
+    else if (result.outcome === "claimed") showToast("この報酬は受取済みです。");
     else showToast("ミッションはまだ達成していません。");
   } catch (error) {
     console.error(error);
@@ -2108,52 +2145,36 @@ async function purchaseShopProduct(productId) {
   const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
   if (!product || !state.economyReady || state.economyBusy) return;
   const dateKey = currentDailyDateKey();
-  let outcome = "unavailable";
   state.economyBusy = true;
   render();
   try {
-    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-      const record = normalizeEconomyRecord(current, dateKey);
-      if (record.inventory[product.id]) { outcome = "owned"; return; }
-      if (record.points < product.price) { outcome = "short"; return; }
-      record.points -= product.price;
-      record.inventory[product.id] = true;
-      let equippedNow = false;
-      if (product.type === "reaction" && Object.keys(record.equipped.reactions).length < MAX_EQUIPPED_REACTIONS) {
-        record.equipped.reactions[product.id] = true;
-        equippedNow = true;
-      }
-      if (product.type === "stamp" && Object.keys(record.equipped.stamps).length < MAX_EQUIPPED_STAMPS) {
-        record.equipped.stamps[product.id] = true;
-        equippedNow = true;
-      }
-      if (product.type === "title") {
-        record.equipped.title = product.id;
-        equippedNow = true;
-      }
-      if (product.type === "chatFrame") {
-        record.equipped.chatFrame = product.id;
-        equippedNow = true;
-      }
-      if (product.type === "chatBackground") {
-        record.equipped.chatBackground = product.id;
-        equippedNow = true;
-      }
-      record.updatedAt = serverNow();
-      outcome = equippedNow ? "purchased-equipped" : "purchased";
-      return record;
-    });
-    applyEconomySnapshot(result.snapshot, dateKey);
-    if (result.committed && product.type === "feature") {
+    const response = await economyActionCallable({ action: "purchase", productId: product.id });
+    const result = response.data || {};
+    const wasEquipped = product.type === "reaction"
+      ? state.economy.equipped?.reactions?.[product.id] === true
+      : product.type === "stamp"
+        ? state.economy.equipped?.stamps?.[product.id] === true
+        : ["title", "chatFrame", "chatBackground"].includes(product.type)
+          ? state.economy.equipped?.[product.type] === product.id
+          : false;
+    await refreshEconomyFromServer(dateKey, result.balance);
+    const isEquipped = product.type === "reaction"
+      ? state.economy.equipped?.reactions?.[product.id] === true
+      : product.type === "stamp"
+        ? state.economy.equipped?.stamps?.[product.id] === true
+        : ["title", "chatFrame", "chatBackground"].includes(product.type)
+          ? state.economy.equipped?.[product.type] === product.id
+          : false;
+    if (result.outcome === "purchased" && product.type === "feature") {
       state.topMessage = null;
       state.topMessageReady = true;
     }
     state.economyBusy = false;
     render();
-    if (result.committed && outcome === "purchased-equipped") showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
-    else if (result.committed && outcome === "purchased" && product.type === "feature") showToast("「トップメッセージ枠」を購入しました。メッセージを投稿できます。");
-    else if (result.committed && outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
-    else if (outcome === "owned") showToast("この商品は購入済みです。");
+    if (result.outcome === "purchased" && isEquipped && !wasEquipped) showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
+    else if (result.outcome === "purchased" && product.type === "feature") showToast("「トップメッセージ枠」を購入しました。メッセージを投稿できます。");
+    else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
+    else if (result.outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("ポイントが不足しています。");
   } catch (error) {
     console.error(error);
@@ -2171,8 +2192,8 @@ async function toggleShopProductEquip(productId) {
   state.economyBusy = true;
   render();
   try {
-    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-      const record = normalizeEconomyRecord(current, dateKey);
+    const result = await runTransaction(ref(database, `online/economy/${state.uid}/equipped`), (current) => {
+      const record = normalizeEconomyRecord({ ...state.economy, equipped: current }, dateKey);
       if (!record.inventory[product.id]) { outcome = "unowned"; return; }
       if (product.type === "reaction") {
         if (record.equipped.reactions[product.id]) {
@@ -2206,10 +2227,9 @@ async function toggleShopProductEquip(productId) {
           outcome = "equipped";
         }
       }
-      record.updatedAt = serverNow();
-      return record;
+      return record.equipped;
     });
-    applyEconomySnapshot(result.snapshot, dateKey);
+    if (result.committed) state.economy = normalizeEconomyRecord({ ...state.economy, equipped: result.snapshot.val() }, dateKey);
     state.economyBusy = false;
     render();
     if (result.committed && outcome === "equipped") showToast(`「${product.reaction || product.title || product.name}」を装備しました。`);
@@ -2225,92 +2245,25 @@ async function toggleShopProductEquip(productId) {
   }
 }
 
-async function recordDailyProgress(changes) {
-  if (!state.economyReady || !state.uid) return;
-  const dateKey = currentDailyDateKey();
-  const before = { ...state.economy.daily };
-  const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-    const record = normalizeEconomyRecord(current, dateKey);
-    Object.entries(DAILY_PROGRESS_LIMITS).forEach(([progressKey, limit]) => {
-      record.daily[progressKey] = Math.min(limit, record.daily[progressKey] + Math.max(0, Number(changes[progressKey] || 0)));
-    });
-    record.updatedAt = serverNow();
-    return record;
-  });
-  if (!result.committed) return;
-  applyEconomySnapshot(result.snapshot, dateKey);
-  const completed = dailyMissionsForDate(dateKey).filter((mission) => (
-    Number(before[mission.progressKey] || 0) < mission.target
-    && Number(state.economy.daily[mission.progressKey] || 0) >= mission.target
-  ));
-  if (completed.length) showToast(`デイリーミッション達成：${completed.map((mission) => mission.title).join("・")}`);
-}
-
-async function recordModeDailyCompletion(mode) {
-  const progressKey = MODE_DAILY_PROGRESS_KEYS[mode];
-  if (!progressKey) return false;
-  const user = await ensureRankingCommentUser();
-  const offsetSnapshot = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
-  const dateKey = jstDateKey(Date.now() + Number(offsetSnapshot?.val() || publicRestServerTimeOffset || 0));
-  const genericMissionActive = isGenericMatchMissionActive(dateKey);
-  let previousMatches = 0;
-  let previousProgress = 0;
-  const result = await runTransaction(ref(database, `online/economy/${user.uid}`), (current) => {
-    const record = normalizeEconomyRecord(current, dateKey);
-    previousMatches = Number(record.daily.matches || 0);
-    previousProgress = Number(record.daily[progressKey] || 0);
-    if ((!genericMissionActive || previousMatches >= 1) && previousProgress >= 1) return;
-    if (genericMissionActive) record.daily.matches = 1;
-    record.daily[progressKey] = 1;
-    record.updatedAt = Date.now() + Number(offsetSnapshot?.val() || publicRestServerTimeOffset || 0);
-    return record;
-  });
-  if (!result.committed) return false;
-  if (state.uid === user.uid) applyEconomySnapshot(result.snapshot, dateKey);
-  const completedTitles = [];
-  if (genericMissionActive && previousMatches < 1) completedTitles.push("1試合を完走");
-  if (previousProgress < 1) {
-    const mission = DAILY_MISSIONS.find((candidate) => candidate.progressKey === progressKey);
-    if (mission) completedTitles.push(mission.title);
+async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = Date.now()) {
+  if (!uid || !roomId || !LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const response = await economyActionCallable({ action: "record_match", mode, outcome, roomId });
+    const result = response.data || {};
+    if (result.outcome === "pending") {
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      continue;
+    }
+    if (state.uid === uid) {
+      state.economy = normalizeEconomyRecord({
+        ...state.economy,
+        daily: result.daily,
+        periodRewards: result.periodRewards,
+      }, jstDateKey(timestamp));
+    }
+    return result;
   }
-  if (completedTitles.length) showToast(`デイリーミッション達成：${completedTitles.join("・")}`);
-  return completedTitles.length > 0;
-}
-
-async function recordPeriodRewardResult(uid, mode, outcome, timestamp = Date.now()) {
-  if (!uid || !LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
-  const dateKey = jstDateKey(timestamp);
-  const result = await runTransaction(ref(database, `online/economy/${uid}`), (current) => {
-    const economy = normalizeEconomyRecord(current, dateKey);
-    LEADERBOARD_PERIODS.forEach((period) => {
-      const key = leaderboardPeriodKeyFor(period, timestamp);
-      const existing = normalizePeriodRewardRecord(economy.periodRewards[period]?.[key], period, key);
-      const record = existing || {
-        matches: 0,
-        wins: 0,
-        losses: 0,
-        draws: 0,
-        points: 0,
-        modeMatches: Object.fromEntries(LEADERBOARD_MODES.map((candidate) => [candidate, 0])),
-        endsAt: periodRewardEndsAtFor(period, key),
-        claimed: false,
-        reward: 0,
-        updatedAt: timestamp,
-      };
-      if (record.claimed) return;
-      record.matches += 1;
-      record[outcome === "win" ? "wins" : outcome === "loss" ? "losses" : "draws"] += 1;
-      record.points = (record.wins * 3) + record.draws;
-      record.modeMatches[mode] += 1;
-      record.updatedAt = timestamp;
-      economy.periodRewards[period][key] = record;
-    });
-    economy.updatedAt = timestamp;
-    return economy;
-  });
-  if (!result.committed) throw new Error("期間戦績報酬を更新できませんでした。");
-  if (state.uid === uid) applyEconomySnapshot(result.snapshot, dateKey);
-  return result.snapshot.val();
+  throw new Error("参加者全員の試合結果を確認できませんでした。");
 }
 
 function notifyPendingPeriodRewards() {
@@ -2323,46 +2276,20 @@ function notifyPendingPeriodRewards() {
 
 async function claimClosedPeriodRewards() {
   if (!state.uid || !state.economyReady || state.economyBusy) return;
-  const timestamp = serverNow();
-  const dateKey = jstDateKey(timestamp);
-  let nominalTotal = 0;
-  let creditedTotal = 0;
-  let claimedCount = 0;
+  const dateKey = jstDateKey(serverNow());
   state.economyBusy = true;
   render();
   try {
-    // Returning the current value keeps the transaction retryable when Firebase first supplies an uncached null.
-    const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
-      const economy = normalizeEconomyRecord(current, dateKey);
-      const pending = pendingPeriodRewards(economy, timestamp);
-      if (!pending.length) {
-        nominalTotal = 0;
-        creditedTotal = 0;
-        claimedCount = 0;
-        return current;
-      }
-      nominalTotal = pending.reduce((total, entry) => total + entry.reward, 0);
-      claimedCount = pending.length;
-      pending.forEach(({ period, key, reward }) => {
-        const record = economy.periodRewards[period][key];
-        record.claimed = true;
-        record.reward = reward;
-        record.claimedAt = timestamp;
-        record.updatedAt = timestamp;
-      });
-      const previousPoints = economy.points;
-      economy.points = Math.min(MAX_POINTS, economy.points + nominalTotal);
-      creditedTotal = economy.points - previousPoints;
-      economy.updatedAt = timestamp;
-      return economy;
-    });
-    if (result.committed && result.snapshot?.exists()) applyEconomySnapshot(result.snapshot, dateKey);
+    const response = await economyActionCallable({ action: "claim_periods" });
+    const result = response.data || {};
+    await refreshEconomyFromServer(dateKey, result.balance);
     state.economyBusy = false;
     render();
-    if (result.committed && claimedCount > 0) {
-      showToast(creditedTotal === nominalTotal
-        ? `${claimedCount}期間分の戦績報酬 ${creditedTotal} PTを受け取りました。`
-        : `${claimedCount}期間分を精算し、上限まで${creditedTotal} PTを受け取りました。`);
+    if (Number(result.claimedCount || 0) > 0) {
+      const suffix = Number(result.remaining || 0) > 0 ? "。残りはもう一度受け取れます。" : "";
+      showToast(Number(result.credited || 0) === Number(result.nominal || 0)
+        ? `${result.claimedCount}期間分の戦績報酬 ${result.credited} PTを受け取りました${suffix}`
+        : `${result.claimedCount}期間分を精算し、上限まで${result.credited} PTを受け取りました${suffix}`);
     } else {
       showToast("受け取れる期間戦績報酬はありません。");
     }
@@ -2531,11 +2458,14 @@ async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
   if (syncPeriodMetadata) await syncCurrentPeriodLeaderboardMetadata(entryId, state.uid, profile, state.name, settings);
 }
 
-async function recordOverallResult({ mode, outcome, name, opponentRating = INITIAL_RATING, soloSeed = null } = {}) {
+async function recordOverallResult({ mode, outcome, name, opponentRating = INITIAL_RATING, soloSeed = null, roomId = "" } = {}) {
   if (!LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
   await setPersistence(auth, browserLocalPersistence);
   const user = auth.currentUser || (await signInAnonymously(auth)).user;
+  await economyActionCallable({ action: "initialize" });
   const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
+  const resultTimestamp = Date.now() + Number(state.uid === user.uid ? state.serverTimeOffset : publicServerTimeOffset || 0);
+  await recordPeriodRewardResult(user.uid, mode, outcome, roomId, resultTimestamp);
   await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (state.uid === user.uid ? state.profile : null));
   const result = await runTransaction(ref(database, `online/overallProfiles/${user.uid}`), (current) => {
     const record = normalizeOverallProfile(current, displayName);
@@ -2554,8 +2484,6 @@ async function recordOverallResult({ mode, outcome, name, opponentRating = INITI
   if (!result.committed) throw new Error("総合戦績を更新できませんでした。");
   const profile = normalizeOverallProfile(result.snapshot.val(), displayName);
   if (state.uid === user.uid) state.overallProfile = profile;
-  const resultTimestamp = Date.now() + Number(state.uid === user.uid ? state.serverTimeOffset : publicRestServerTimeOffset || 0);
-  await recordPeriodRewardResult(user.uid, mode, outcome, resultTimestamp);
   const settings = leaderboardPublicSettings();
   if (settings.enabled) await publishOverallLeaderboard(user.uid, profile, displayName, settings, { mode, outcome });
   return profile;
@@ -2939,7 +2867,7 @@ async function createOffer(candidate) {
     await set(ref(database, `online/rooms/${roomId}/hostUid`), state.uid);
     await update(roomRef, {
       guestUid: candidate.uid,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       status: "offered",
       [`members/${state.uid}`]: true,
       [`members/${candidate.uid}`]: true,
@@ -3483,10 +3411,6 @@ async function lockScore() {
   state.screen = "waitingScore";
   render();
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/scores/${state.uid}`), score);
-  await recordDailyProgress({ scores: 1, criticals: score >= 8 ? 1 : 0 }).catch((error) => {
-    console.error(error);
-    showToast("ミッション進捗を更新できませんでした。");
-  });
 }
 
 function resolveRound(scores) {
@@ -3558,13 +3482,18 @@ function determineOutcome() {
 
 async function finishOnlineMatch() {
   if (state.outcome) return;
-  state.outcome = determineOutcome();
-  await commitOnlineStats();
-  await recordDailyProgress({ matches: 1, soloMatches: 1 }).catch((error) => {
-    console.error(error);
-    showToast("ミッション進捗を更新できませんでした。");
+  const outcome = determineOutcome();
+  const myWon = outcome.winnerIndex === state.playerIndex;
+  const draw = outcome.winnerIndex === null;
+  await update(ref(database, `online/rooms/${state.roomId}`), {
+    [`resultClaims/${state.uid}`]: {
+      outcome: draw ? "draw" : myWon ? "win" : "loss",
+      createdAt: serverTimestamp(),
+    },
+    [`finished/${state.uid}`]: true,
   });
-  await set(ref(database, `online/rooms/${state.roomId}/finished/${state.uid}`), true);
+  state.outcome = outcome;
+  await commitOnlineStats();
   state.screen = "gameover";
   render();
 }
@@ -3609,6 +3538,7 @@ async function commitOnlineStats() {
       name: state.name,
       opponentRating,
       soloSeed,
+      roomId: state.roomId,
     }).catch(() => showToast("総合ランキングを更新できませんでした。"));
   }
   state.players.forEach((player, index) => {
@@ -3842,7 +3772,7 @@ sampleHandicapDialog?.addEventListener("close", () => {
   if (confirmed && active && state.screen === "setup") beginMatchmaking();
 });
 
-watchLobbyStats();
+if (!useOfflineMarketPreview) watchLobbyStats();
 watchDailyDateRollover();
 
 window.HariaiOnline = {
@@ -3871,7 +3801,6 @@ window.HariaiOnline = {
   saveLeaderboardComment,
   deleteLeaderboardComment,
   recordOverallResult,
-  recordModeDailyCompletion,
   getOverallRankingPreference,
   renderOverallRankingParticipation,
   bindOverallRankingParticipation,

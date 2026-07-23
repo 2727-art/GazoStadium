@@ -6,11 +6,12 @@
     <meta name="theme-color" content="#090b12" />
     <meta
       name="description"
-      content="好きな画像を用意し、通常型・戦略型1on1、2on2、4人バトルロワイヤルで知らない相手と採点し合うオンライン画像対戦ゲーム。"
+      content="好きな画像を用意し、通常型・戦略型1on1、2on2、4人バトルロワイヤル、推し値市場で知らない相手と楽しむオンライン画像ゲーム。"
     />
     <title>貼り合いスタジアム | Online Image Battle</title>
     <link rel="stylesheet" href="styles.css?v=preference-matching-v1" />
     <link rel="stylesheet" href="strategy.css?v=strategy-audio-v1" />
+    <link rel="stylesheet" href="market.css?v=value-market-v4" />
   </head>
   <body>
     <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -34,8 +35,8 @@
     <main id="app" tabindex="-1"></main>
 
     <footer class="site-footer">
-      <span>ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE / FIREBASE + WEBRTC</span>
-      <span>画像と戦略型の添付音声は対戦相手へ直接送信し、サーバーへ保存しません</span>
+      <span>ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE + VALUE MARKET</span>
+      <span>画像と戦略型・推し値市場の音声は相手へ直接送信し、サーバーへ保存しません</span>
     </footer>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -47,7 +48,7 @@
         <div class="audio-studio-heading">
           <span class="eyebrow">10 SECOND AUDIO MAKER</span>
           <h2>好きな音を、ゲーム用の10秒音声に。</h2>
-          <p>マイク録音または手持ちの音声を、戦略型1on1でそのまま使える軽量WAVへ端末内だけで変換します。</p>
+          <p>マイク録音または手持ちの音声を、戦略型1on1や推し値市場でそのまま使える軽量WAVへ端末内だけで変換します。</p>
         </div>
         <div class="audio-studio-format" aria-label="出力形式">
           <span>最大10秒</span><span>22.05kHz</span><span>モノラル</span><span>16bit WAV</span><span>音量正規化</span>
@@ -74,7 +75,7 @@
             <a class="button button-cyan" id="audioStudioDownload" download="hariai-10s-audio.wav">WAVを保存</a>
             <button class="button button-ghost" type="button" id="audioStudioReset">作り直す</button>
           </div>
-          <p>保存したWAVは、戦略型1on1のデッキ画面にある「10秒音声を添付」から選べます。</p>
+          <p>保存したWAVは、戦略型1on1の「10秒音声を添付」や推し値市場の営業音声から選べます。</p>
         </section>
         <p class="audio-studio-privacy">音声はFirebaseや運営サーバーへ送信しません。録音・変換・試聴は、このブラウザ内だけで処理します。</p>
       </form>
@@ -108,10 +109,11 @@
       <p class="noscript">このゲームを遊ぶにはJavaScriptを有効にしてください。</p>
     </noscript>
     <script src="audio.js" defer></script>
-    <script src="app.js?v=audio-studio-v1" defer></script>
-    <script type="module" src="strategy.js?v=strategy-audio-v2"></script>
-    <script type="module" src="online.js?v=preference-matching-v1"></script>
-    <script type="module" src="team.js?v=stamps-v1"></script>
-    <script type="module" src="royale.js?v=stamps-v1"></script>
+    <script src="app.js?v=value-market-v1" defer></script>
+    <script type="module" src="strategy.js?v=verified-rewards-v3-app-check-v2"></script>
+    <script type="module" src="online.js?v=preference-matching-v1-app-check-v2"></script>
+    <script type="module" src="market.js?v=value-market-v10-app-check-v2"></script>
+    <script type="module" src="team.js?v=verified-rewards-v3-app-check-v2"></script>
+    <script type="module" src="royale.js?v=verified-rewards-v4-app-check-v2"></script>
   </body>
 </html>
