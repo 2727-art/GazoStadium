@@ -57,6 +57,7 @@ const SAMPLE_HP_PENALTY = 5;
 const MIN_STARTING_HP = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const PURSUIT_LINE_KEY = "hariai-stadium-online-pursuit-line-v1";
+const IMAGE_PREFERENCE_KEY = "hariai-stadium-online-image-preference-v1";
 const MAX_PURSUIT_LINE_LENGTH = 40;
 const CUSTOM_PURSUIT_VALUE = "__custom__";
 const PURSUIT_LINES = [
@@ -65,6 +66,26 @@ const PURSUIT_LINES = [
   "刺さったね？ 追撃開始！",
   "まだ終わらない。次の一枚をどうぞ！",
 ];
+const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
+  Object.freeze({
+    id: "illustration",
+    label: "アニメ・イラストが刺さりやすい",
+    shortLabel: "アニメ・イラスト",
+    description: "漫画・イラスト・2Dゲーム絵などを高く評価しやすい",
+  }),
+  Object.freeze({
+    id: "live_action",
+    label: "実写が刺さりやすい",
+    shortLabel: "実写",
+    description: "人物・風景・動物・物撮りなどを高く評価しやすい",
+  }),
+  Object.freeze({
+    id: "both",
+    label: "どちらも歓迎",
+    shortLabel: "どちらも歓迎",
+    description: "画像表現を絞らず、両方の相手とすぐにマッチング",
+  }),
+]);
 const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
 const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
 const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
@@ -138,6 +159,7 @@ const RATING_K_FACTOR = 32;
 const SELECTION_TIME_LIMIT_MS = 10_000;
 const SELECTION_WARNING_SECONDS = 3;
 const MATCH_TIMEOUT_MS = 20_000;
+const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
@@ -156,6 +178,7 @@ const fxLayer = document.querySelector("#fxLayer");
 
 let active = false;
 let state = createOnlineState();
+let matchmakingGenerationCounter = 0;
 let lobbyPresenceEntries = {};
 const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
 const createLobbyStats = (value = null) => Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }]));
@@ -176,6 +199,7 @@ function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
   const savedXHandle = normalizeXHandle(localStorage.getItem(X_HANDLE_KEY) || "");
   const pursuitSettings = getSavedPursuitSettings();
+  const imagePreference = normalizeImagePreference(localStorage.getItem(IMAGE_PREFERENCE_KEY), "");
   return {
     screen: "setup",
     uid: "",
@@ -184,6 +208,7 @@ function createOnlineState() {
     overallProfile: null,
     authReady: false,
     ...pursuitSettings,
+    imagePreference,
     deck: [],
     roomId: "",
     room: null,
@@ -212,7 +237,11 @@ function createOnlineState() {
     activeUsers: {},
     latestQueue: {},
     pendingOffer: null,
+    matchmakingGeneration: 0,
     matchTimer: null,
+    matchScopeTimer: null,
+    matchScopeAvailable: false,
+    matchScopeExpanded: false,
     queueHeartbeat: null,
     publicPresenceId: "",
     publicPresenceState: "",
@@ -259,6 +288,16 @@ function createOnlineState() {
     statsCommitted: false,
     destroyedByOpponent: false,
   };
+}
+
+function normalizeImagePreference(value, fallback = "both") {
+  const preference = String(value || "").trim();
+  return IMAGE_PREFERENCE_OPTIONS.some((option) => option.id === preference) ? preference : fallback;
+}
+
+function getImagePreferenceOption(value) {
+  const preference = normalizeImagePreference(value);
+  return IMAGE_PREFERENCE_OPTIONS.find((option) => option.id === preference) || IMAGE_PREFERENCE_OPTIONS[2];
 }
 
 function sanitizePursuitLineDraft(value) {
@@ -1238,6 +1277,14 @@ function renderSetup() {
   const sampleCount = getDeckSampleCount();
   const realImageCount = state.deck.length - sampleCount;
   const startingHp = getStartingHp(sampleCount);
+  const preferenceOptions = IMAGE_PREFERENCE_OPTIONS.map((option) => `
+    <label class="image-preference-option">
+      <input type="radio" name="onlineImagePreference" value="${option.id}" ${state.imagePreference === option.id ? "checked" : ""} />
+      <span class="image-preference-card">
+        <strong>${escapeHtml(option.label)}</strong>
+        <small>${escapeHtml(option.description)}</small>
+      </span>
+    </label>`).join("");
   const slots = Array.from({ length: MAX_ROUNDS }, (_, index) => {
     const item = state.deck[index];
     if (!item) return `<div class="deck-slot empty" aria-label="空きスロット ${index + 1}">${String(index + 1).padStart(2, "0")}</div>`;
@@ -1249,12 +1296,12 @@ function renderSetup() {
       </div>
     </div>`;
   }).join("");
-  const ready = state.authReady && state.deck.length === MAX_ROUNDS && state.name.trim();
+  const ready = isMatchmakingSetupReady();
   const profile = state.profile;
   return `<section class="screen">
     <div class="section-head">
       <div><span class="eyebrow">ONLINE DECK SETUP</span><h1>オンライン対戦の準備</h1>
-        <p>画像を5枚選んでから、待機中のプレイヤーとランダムに対戦します。</p></div>
+        <p>画像を5枚選び、評価の好みが近いプレイヤーを優先して対戦します。</p></div>
       <button class="button button-ghost button-small" id="onlineBackHome">タイトルへ</button>
     </div>
     <div class="online-profile-strip">
@@ -1297,6 +1344,12 @@ function renderSetup() {
           </div>
           <p class="pursuit-line-note">9〜10点を受けたラウンド結果で表示します。空白時は定型文へ戻り、HTMLは実行されません。</p>
         </div>
+        <fieldset class="image-preference-settings">
+          <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
+          <p>今回の通常型1on1で、相手から見せてもらいたい画像の傾向を選んでください。</p>
+          <div class="image-preference-grid">${preferenceOptions}</div>
+          <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。</small>
+        </fieldset>
         <div class="deck-toolbar">
           <div class="deck-counter"><strong>${state.deck.length}</strong> / 5 IMAGES</div>
           <div class="upload-actions">
@@ -1312,7 +1365,7 @@ function renderSetup() {
         </div>
         <div class="deck-grid">${slots}</div>
         <div class="setup-actions">
-          <button class="button button-primary" id="findOpponent" ${ready ? "" : "disabled"}>ランダム対戦を探す</button>
+          <button class="button button-primary" id="findOpponent" ${ready ? "" : "disabled"}>好みの近い対戦相手を探す</button>
         </div>
       </div>
     </div>
@@ -1504,13 +1557,26 @@ function renderPointShop() {
 function renderMatching() {
   const sampleCount = getDeckSampleCount();
   const startingHp = getStartingHp(sampleCount);
+  const preference = getImagePreferenceOption(state.imagePreference);
+  const acceptsBoth = preference.id === "both";
+  const scopeBody = acceptsBoth
+    ? "実写・アニメを問わず、すべての待機相手を候補にしています。"
+    : state.matchScopeExpanded
+      ? "同じ好みを最優先しつつ、相手も条件を広げた場合は異なる好みともマッチングします。"
+      : `「${preference.shortLabel}」または「どちらも歓迎」の相手だけを探しています。`;
+  const expandAction = !acceptsBoth && state.matchScopeAvailable && !state.matchScopeExpanded
+    ? '<button class="button button-cyan" id="expandMatchingScope">条件を広げて探す</button>'
+    : "";
+  const scopeHint = !acceptsBoth && !state.matchScopeAvailable && !state.matchScopeExpanded
+    ? `<small class="matching-scope-hint">${MATCH_SCOPE_EXPAND_DELAY_MS / 1000}秒後、必要なら異なる好みまで検索範囲を広げられます。</small>`
+    : "";
   return renderStatusCard({
     icon: "◎",
-    eyebrow: "RANDOM MATCHING",
+    eyebrow: "PREFERENCE MATCHING",
     title: "対戦相手を探しています",
-    body: "待機中のプレイヤーからランダムにマッチングします。この画面を開いたままお待ちください。",
-    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span>${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}`,
-    actions: `<button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>`,
+    body: scopeBody,
+    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}${scopeHint}`,
+    actions: `${expandAction}<button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>`,
   });
 }
 
@@ -1767,7 +1833,10 @@ function bindScreenEvents() {
 
   if (state.screen === "setup") bindSetupEvents();
   if (state.screen === "missions" || state.screen === "shop") bindEconomyEvents();
-  if (state.screen === "matching") document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
+  if (state.screen === "matching") {
+    document.querySelector("#expandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
+    document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
+  }
   if (state.screen === "select") bindSelectEvents();
   if (state.screen === "reveal") document.querySelector("#onlineBeginScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
   if (state.screen === "score") bindScoreEvents();
@@ -1846,14 +1915,32 @@ function bindSetupEvents() {
   const nameInput = document.querySelector("#onlinePlayerName");
   nameInput?.addEventListener("input", () => {
     state.name = nameInput.value.slice(0, 16);
-    const button = document.querySelector("#findOpponent");
-    if (button) button.disabled = !state.authReady || state.deck.length !== MAX_ROUNDS || !state.name.trim();
+    updateMatchmakingSetupButton();
   });
+  document.querySelectorAll('input[name="onlineImagePreference"]').forEach((input) => input.addEventListener("change", () => {
+    state.imagePreference = normalizeImagePreference(input.value, "");
+    if (state.imagePreference) localStorage.setItem(IMAGE_PREFERENCE_KEY, state.imagePreference);
+    updateMatchmakingSetupButton();
+  }));
   bindOnlinePursuitFields();
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
   document.querySelector("#findOpponent")?.addEventListener("click", requestMatchmaking);
+}
+
+function isMatchmakingSetupReady() {
+  return Boolean(
+    state.authReady
+    && state.deck.length === MAX_ROUNDS
+    && state.name.trim()
+    && normalizeImagePreference(state.imagePreference, ""),
+  );
+}
+
+function updateMatchmakingSetupButton() {
+  const button = document.querySelector("#findOpponent");
+  if (button) button.disabled = !isMatchmakingSetupReady();
 }
 
 function normalizeSampleCount(value) {
@@ -2584,16 +2671,36 @@ function removeDeckItem(id) {
   render();
 }
 
+function isCurrentMatchmakingGeneration(generation) {
+  return active
+    && state.screen === "matching"
+    && state.matchmakingGeneration === generation
+    && !state.roomId;
+}
+
+async function removeQueueEntryIfCurrent(queueEntryRef, joinedAt) {
+  await runTransaction(queueEntryRef, (current) => (
+    current && Number(current.joinedAt) === Number(joinedAt) ? null : undefined
+  )).catch(() => {});
+}
+
 async function beginMatchmaking() {
   state.name = state.name.trim().slice(0, 16);
-  if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name) return;
+  state.imagePreference = normalizeImagePreference(state.imagePreference, "");
+  if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name || !state.imagePreference) return;
   const sampleCount = getDeckSampleCount();
   const startingHp = getStartingHp(sampleCount);
+  const joinedAt = Date.now();
+  const generation = ++matchmakingGenerationCounter;
+  state.matchmakingGeneration = generation;
+  state.matchScopeAvailable = false;
+  state.matchScopeExpanded = false;
   state.pursuitLine = state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE
     ? normalizePursuitLine(state.customPursuitLine)
     : normalizePursuitLine(state.pursuitLineChoice);
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
+  localStorage.setItem(IMAGE_PREFERENCE_KEY, state.imagePreference);
   if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
   state.screen = "matching";
   setOnlineChrome("MATCHING");
@@ -2601,14 +2708,18 @@ async function beginMatchmaking() {
 
   const ownActiveRef = ref(database, `online/active/${state.uid}`);
   const staleActive = await get(ownActiveRef);
+  if (!isCurrentMatchmakingGeneration(generation)) return;
   if (staleActive.exists()) await remove(ownActiveRef);
+  if (!isCurrentMatchmakingGeneration(generation)) return;
   const ownOffersRef = ref(database, `online/offers/${state.uid}`);
   const staleOffers = await get(ownOffersRef);
+  if (!isCurrentMatchmakingGeneration(generation)) return;
   if (staleOffers.exists()) {
     await Promise.allSettled(Object.keys(staleOffers.val()).map((roomId) => (
       remove(ref(database, `online/offers/${state.uid}/${roomId}`))
     )));
   }
+  if (!isCurrentMatchmakingGeneration(generation)) return;
   const queueEntryRef = ref(database, `online/queue/${state.uid}`);
   await set(queueEntryRef, {
     uid: state.uid,
@@ -2616,16 +2727,38 @@ async function beginMatchmaking() {
     pursuitLine: state.pursuitLine,
     streak: Number(state.profile.streak || 0),
     rating: Number(state.profile.rating || INITIAL_RATING),
+    ratingPreference: state.imagePreference,
+    allowPreferenceMismatch: false,
     sampleCount,
     startingHp,
-    joinedAt: Date.now(),
-    lastSeen: Date.now(),
+    joinedAt,
+    lastSeen: joinedAt,
     state: "waiting",
   });
-  await startPublicPresence();
+  if (!isCurrentMatchmakingGeneration(generation)) {
+    await removeQueueEntryIfCurrent(queueEntryRef, joinedAt);
+    return;
+  }
+  const presenceStarted = await startPublicPresence(generation);
+  if (!presenceStarted || !isCurrentMatchmakingGeneration(generation)) {
+    await removeQueueEntryIfCurrent(queueEntryRef, joinedAt);
+    return;
+  }
   const queueDisconnect = onDisconnect(queueEntryRef);
   await queueDisconnect.remove();
+  if (!isCurrentMatchmakingGeneration(generation)) {
+    await queueDisconnect.cancel().catch(() => {});
+    await removeQueueEntryIfCurrent(queueEntryRef, joinedAt);
+    return;
+  }
   state.disconnectHandles.push(queueDisconnect);
+  if (state.imagePreference !== "both") {
+    state.matchScopeTimer = window.setTimeout(() => {
+      if (!isCurrentMatchmakingGeneration(generation) || state.matchScopeExpanded) return;
+      state.matchScopeAvailable = true;
+      render();
+    }, MATCH_SCOPE_EXPAND_DELAY_MS);
+  }
   state.queueHeartbeat = window.setInterval(() => {
     update(queueEntryRef, { lastSeen: Date.now() })
       .then(() => attemptToHost(state.latestQueue))
@@ -2647,16 +2780,31 @@ async function beginMatchmaking() {
   }));
 }
 
-async function startPublicPresence() {
+async function startPublicPresence(generation) {
+  if (!isCurrentMatchmakingGeneration(generation)) return false;
   await cleanupPublicPresence();
+  if (!isCurrentMatchmakingGeneration(generation)) return false;
   const presenceId = push(ref(database, "online/publicPresence")).key;
   if (!presenceId) throw new Error("参加状況を登録できませんでした。");
   const ownerRef = ref(database, `online/publicPresenceOwners/${presenceId}`);
   const presenceRef = ref(database, `online/publicPresence/${presenceId}`);
   await set(ownerRef, state.uid);
+  if (!isCurrentMatchmakingGeneration(generation)) {
+    await remove(ownerRef).catch(() => {});
+    return false;
+  }
   await writePublicPresence(presenceRef, "solo", "waiting");
+  if (!isCurrentMatchmakingGeneration(generation)) {
+    await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
+    return false;
+  }
   const presenceDisconnect = onDisconnect(presenceRef);
   await presenceDisconnect.remove();
+  if (!isCurrentMatchmakingGeneration(generation)) {
+    await presenceDisconnect.cancel().catch(() => {});
+    await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
+    return false;
+  }
   state.publicPresenceId = presenceId;
   state.publicPresenceState = "waiting";
   state.publicPresenceDisconnect = presenceDisconnect;
@@ -2664,6 +2812,7 @@ async function startPublicPresence() {
     if (!state.publicPresenceId) return;
     writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), "solo", state.publicPresenceState).catch(() => {});
   }, PUBLIC_PRESENCE_HEARTBEAT_MS);
+  return true;
 }
 
 async function updatePublicPresence(nextState) {
@@ -2703,17 +2852,80 @@ function processIncomingOffers(snapshot) {
   drainIncomingOffers().catch(handleRecoverableError);
 }
 
+async function expandMatchmakingScope() {
+  if (!active || state.screen !== "matching" || state.roomId || state.imagePreference === "both" || state.matchScopeExpanded) return;
+  window.clearTimeout(state.matchScopeTimer);
+  state.matchScopeTimer = null;
+  state.matchScopeAvailable = false;
+  state.matchScopeExpanded = true;
+  render();
+  const lastSeen = Date.now();
+  try {
+    await update(ref(database, `online/queue/${state.uid}`), {
+      allowPreferenceMismatch: true,
+      lastSeen,
+    });
+    state.latestQueue = {
+      ...state.latestQueue,
+      [state.uid]: {
+        ...state.latestQueue[state.uid],
+        allowPreferenceMismatch: true,
+        lastSeen,
+      },
+    };
+    await attemptToHost(state.latestQueue);
+  } catch (error) {
+    state.matchScopeExpanded = false;
+    state.matchScopeAvailable = true;
+    if (state.screen === "matching") render();
+    showToast("検索範囲を広げられませんでした。通信状態を確認してください。");
+  }
+}
+
+function getPreferenceMatchTier(firstEntry, secondEntry) {
+  const firstPreference = normalizeImagePreference(firstEntry?.ratingPreference, "legacy");
+  const secondPreference = normalizeImagePreference(secondEntry?.ratingPreference, "legacy");
+  if (firstPreference !== "legacy" && firstPreference === secondPreference) {
+    return firstPreference === "both" ? 1 : 0;
+  }
+  if (firstPreference === "both" || secondPreference === "both") return 1;
+  if (firstPreference === "legacy" && secondPreference === "legacy") return 1;
+  const firstAllowsMismatch = firstPreference === "legacy" || firstEntry?.allowPreferenceMismatch === true;
+  const secondAllowsMismatch = secondPreference === "legacy" || secondEntry?.allowPreferenceMismatch === true;
+  return firstAllowsMismatch && secondAllowsMismatch ? 2 : Number.POSITIVE_INFINITY;
+}
+
+function findPreferredMatchPair(waiting) {
+  for (const tier of [0, 1, 2]) {
+    for (let hostIndex = 0; hostIndex < waiting.length - 1; hostIndex += 1) {
+      const host = waiting[hostIndex];
+      const candidates = waiting
+        .slice(hostIndex + 1)
+        .filter((candidate) => getPreferenceMatchTier(host, candidate) === tier);
+      if (!candidates.length) continue;
+      return {
+        host,
+        candidate: candidates[Math.floor(Math.random() * candidates.length)],
+      };
+    }
+  }
+  return null;
+}
+
 async function attemptToHost(queue) {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
   const freshAfter = Date.now() - 45_000;
-  const waiting = Object.values(queue).filter((entry) => entry?.state === "waiting" && Number(entry.lastSeen) >= freshAfter && !state.activeUsers[entry.uid]);
+  const waiting = Object.values(queue).filter((entry) => (
+    entry?.uid
+    && entry.state === "waiting"
+    && Number(entry.lastSeen) >= freshAfter
+    && !state.activeUsers[entry.uid]
+  ));
   if (waiting.length < 2) return;
   waiting.sort((a, b) => (Number(a.joinedAt) - Number(b.joinedAt)) || String(a.uid).localeCompare(String(b.uid)));
-  if (waiting[0].uid !== state.uid) return;
-  const candidates = waiting.filter((entry) => entry.uid !== state.uid);
-  if (!candidates.length) return;
-  const candidate = candidates[Math.floor(Math.random() * candidates.length)];
-  await createOffer(candidate);
+  const pair = findPreferredMatchPair(waiting);
+  if (!pair || pair.host.uid !== state.uid) return;
+  await createOffer(pair.candidate);
 }
 
 async function createOffer(candidate) {
@@ -2782,7 +2994,19 @@ async function acceptOffer(roomId, offer) {
   try {
     const roomSnapshot = await get(ref(database, `online/rooms/${roomId}`));
     const room = roomSnapshot.val();
-    if (!room || room.status !== "offered" || !room.members?.[state.uid]) {
+    if (!room || room.status !== "offered" || !room.members?.[state.uid] || room.hostUid !== offer.fromUid) {
+      await remove(ref(database, `online/offers/${state.uid}/${roomId}`));
+      return;
+    }
+    const [ownQueueSnapshot, hostQueueSnapshot] = await Promise.all([
+      get(ref(database, `online/queue/${state.uid}`)),
+      get(ref(database, `online/queue/${room.hostUid}`)),
+    ]);
+    if (
+      !ownQueueSnapshot.exists()
+      || !hostQueueSnapshot.exists()
+      || !Number.isFinite(getPreferenceMatchTier(ownQueueSnapshot.val(), hostQueueSnapshot.val()))
+    ) {
       await remove(ref(database, `online/offers/${state.uid}/${roomId}`));
       return;
     }
@@ -3498,6 +3722,7 @@ async function resetOnlineSetup() {
     pursuitLine: state.pursuitLine,
     pursuitLineChoice: state.pursuitLineChoice,
     customPursuitLine: state.customPursuitLine,
+    imagePreference: state.imagePreference,
     economy: state.economy,
     economyReady: state.economyReady,
     topMessage: state.topMessage,
@@ -3522,11 +3747,16 @@ async function leaveToLanding() {
 }
 
 async function cleanupMatchmaking(keepActive) {
+  state.matchmakingGeneration = ++matchmakingGenerationCounter;
   window.clearTimeout(state.matchTimer);
+  window.clearTimeout(state.matchScopeTimer);
   window.clearInterval(state.queueHeartbeat);
   window.clearInterval(state.offerPollTimer);
   window.clearInterval(state.hostStatusPollTimer);
   state.matchTimer = null;
+  state.matchScopeTimer = null;
+  state.matchScopeAvailable = false;
+  state.matchScopeExpanded = false;
   state.queueHeartbeat = null;
   state.offerPollTimer = null;
   state.hostStatusPollTimer = null;

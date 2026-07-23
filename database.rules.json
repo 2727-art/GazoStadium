@@ -243,6 +243,12 @@
           "pursuitLine": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
           },
+          "ratingPreference": {
+            ".validate": "newData.isString() && (newData.val() === 'illustration' || newData.val() === 'live_action' || newData.val() === 'both')"
+          },
+          "allowPreferenceMismatch": {
+            ".validate": "newData.isBoolean()"
+          },
           "sampleCount": {
             ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2 || newData.val() === 3 || newData.val() === 4 || newData.val() === 5)"
           },
