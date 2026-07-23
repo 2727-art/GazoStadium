@@ -120,6 +120,16 @@ const PERIOD_REWARD_CONFIG = Object.freeze({
   weekly: Object.freeze({ label: "ウィークリー", minimumMatches: 3, tiers: Object.freeze([{ points: 12, reward: 180 }, { points: 6, reward: 100 }, { points: 0, reward: 50 }]) }),
   monthly: Object.freeze({ label: "マンスリー", minimumMatches: 5, tiers: Object.freeze([{ points: 30, reward: 500 }, { points: 12, reward: 300 }, { points: 0, reward: 150 }]) }),
 });
+const SERVER_RANKING_CUTOVER_KEYS = Object.freeze({
+  daily: "2026-07-24",
+  weekly: "2026-07-27",
+  monthly: "2026-08",
+});
+const SERVER_RANKING_AWARD_MINIMUM_MATCHES = Object.freeze({
+  daily: 1,
+  weekly: 3,
+  monthly: 10,
+});
 const MAX_POINTS = 999_999;
 const MAX_EQUIPPED_REACTIONS = 8;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
@@ -199,6 +209,7 @@ let leaderboardPeriodKey = "";
 let leaderboardRequestId = 0;
 let monthlyBeyondRanks = new Map();
 let monthlyBeyondPeriodKey = "";
+let monthlyHallOfFameRecords = [];
 let publicServerTimeOffset = 0;
 let topMessageRecords = [];
 let topMessagesStatus = "idle";
@@ -276,6 +287,8 @@ function createOnlineState() {
     achievementsReady: false,
     achievementsBusy: false,
     notifiedAchievementIds: new Set(),
+    rankingAwards: [],
+    rankingAwardsReady: false,
     periodRewardReminderShown: false,
     titleCategoryFilter: "all",
     expandedTitleCategories: new Set(["preference"]),
@@ -357,6 +370,12 @@ function normalizeLeaderboardPeriod(value) {
   return LEADERBOARD_PERIODS.includes(value) ? value : DEFAULT_LEADERBOARD_PERIOD;
 }
 
+function isServerRankingPeriod(period, key) {
+  return LEADERBOARD_PERIODS.includes(period)
+    && typeof key === "string"
+    && key >= SERVER_RANKING_CUTOVER_KEYS[period];
+}
+
 function leaderboardPeriodKeyFor(period, timestamp = Date.now()) {
   const normalizedPeriod = normalizeLeaderboardPeriod(period);
   const shifted = new Date(timestamp + (9 * 60 * 60 * 1000));
@@ -397,6 +416,8 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
     startAt,
     nextResetAt,
     minimumMatches: normalizedPeriod === "daily" ? 1 : normalizedPeriod === "weekly" ? 3 : 5,
+    awardMinimumMatches: SERVER_RANKING_AWARD_MINIMUM_MATCHES[normalizedPeriod],
+    serverAuthoritative: isServerRankingPeriod(normalizedPeriod, key),
   };
 }
 
@@ -587,7 +608,7 @@ function renderOverallRankingParticipation({ controlId = "overallRankingParticip
       <p>${settings.enabled ? "4モード共通で期間ポイントを集計し、総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間ポイントは参加中の対戦だけ集計されます。"}</p></div></div>
     <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
-    <small>通常型1on1・戦略型1on1・2on2・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。</small>
+    <small>通常型1on1・戦略型1on1・2on2・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。サーバー期間で確定したランキング実績と月間王者記録は、参加終了後も名誉記録として残ります。</small>
     ${publicSettings}
   </section>`;
 }
@@ -820,6 +841,48 @@ function getLobbyStats() {
 
 function getLeaderboard() {
   return leaderboardEntries.map((entry) => ({ ...entry }));
+}
+
+function normalizeServerRankingAwards(value) {
+  return (Array.isArray(value) ? value : []).map((award) => ({
+    period: normalizeLeaderboardPeriod(award?.period),
+    key: String(award?.key || ""),
+    rank: Math.max(1, Math.floor(Number(award?.rank || 1))),
+    matches: Math.max(0, Math.floor(Number(award?.matches || 0))),
+    tier: String(award?.tier || "").slice(0, 40),
+    label: String(award?.label || "").slice(0, 40),
+    endsAt: Number(award?.endsAt || 0),
+    activeUntil: Number(award?.activeUntil || 0),
+    awardedAt: Number(award?.awardedAt || 0),
+  })).filter((award) => (
+    award.key
+    && award.tier
+    && isServerRankingPeriod(award.period, award.key)
+  ));
+}
+
+function applyServerRankingAwards(value) {
+  state.rankingAwards = normalizeServerRankingAwards(value);
+  state.rankingAwardsReady = true;
+  window.dispatchEvent(new Event("hariai-ranking-awards-updated"));
+}
+
+function getServerRankingAwards() {
+  return {
+    ready: state.rankingAwardsReady,
+    awards: state.rankingAwards.map((award) => ({ ...award })),
+  };
+}
+
+function getMonthlyRankingHallOfFame() {
+  return monthlyHallOfFameRecords.map((record) => ({ ...record }));
+}
+
+async function loadServerRankingAwards() {
+  if (!state.authReady || !state.uid) return [];
+  const response = await economyActionCallable({ action: "get_server_ranking_awards" });
+  applyServerRankingAwards(response.data?.awards);
+  return state.rankingAwards;
 }
 
 function getLeaderboardStatus() {
@@ -1142,6 +1205,7 @@ function normalizeLeaderboardRecords(entries) {
       || Number(second.wins || 0) - Number(first.wins || 0)
       || Number(second.rating || INITIAL_RATING) - Number(first.rating || INITIAL_RATING)
       || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
+      || String(first.entryId || "").localeCompare(String(second.entryId || ""))
     ))
     .slice(0, 50);
 }
@@ -1169,19 +1233,44 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
   leaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const selectedEntriesPromise = readPublicDatabasePath(`online/leaderboardPeriods/${selectedPeriod}/${periodInfo.key}`, {
+    const selectedRoot = periodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
+    const monthlyRoot = monthlyPeriodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
+    const selectedEntriesPromise = readPublicDatabasePath(`online/${selectedRoot}/${selectedPeriod}/${periodInfo.key}`, {
       orderByChildKey: "points",
       limit: 100,
     });
     const monthlyEntriesPromise = selectedPeriod === "monthly"
       ? selectedEntriesPromise
-      : readPublicDatabasePath(`online/leaderboardPeriods/monthly/${monthlyPeriodInfo.key}`, {
+      : readPublicDatabasePath(`online/${monthlyRoot}/monthly/${monthlyPeriodInfo.key}`, {
         orderByChildKey: "points",
         limit: 100,
       }).catch(() => null);
-    const [entries, monthlyEntries] = await Promise.all([selectedEntriesPromise, monthlyEntriesPromise]);
+    const hallOfFamePromise = readPublicDatabasePath("online/serverRankingHallOfFame/monthly").catch(() => null);
+    const [entries, monthlyEntries, hallOfFame] = await Promise.all([
+      selectedEntriesPromise,
+      monthlyEntriesPromise,
+      hallOfFamePromise,
+    ]);
     if (requestId !== leaderboardRequestId) return;
     leaderboardEntries = normalizeLeaderboardRecords(entries);
+    if (hallOfFame !== null) {
+      monthlyHallOfFameRecords = Object.entries(hallOfFame || {})
+        .map(([key, value]) => ({
+          key,
+          entryId: String(value?.entryId || ""),
+          name: String(value?.name || "PLAYER").slice(0, 16) || "PLAYER",
+          points: Math.max(0, Math.floor(Number(value?.points || 0))),
+          wins: Math.max(0, Math.floor(Number(value?.wins || 0))),
+          losses: Math.max(0, Math.floor(Number(value?.losses || 0))),
+          draws: Math.max(0, Math.floor(Number(value?.draws || 0))),
+          rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
+          participants: Math.max(1, Math.floor(Number(value?.participants || 1))),
+          finalizedAt: Number(value?.finalizedAt || 0),
+        }))
+        .filter((record) => isServerRankingPeriod("monthly", record.key))
+        .sort((first, second) => second.key.localeCompare(first.key))
+        .slice(0, 12);
+    }
     if (monthlyEntries !== null) {
       const monthlyRecords = selectedPeriod === "monthly" ? leaderboardEntries : normalizeLeaderboardRecords(monthlyEntries);
       monthlyBeyondRanks = new Map(monthlyRecords.slice(0, 10).map((entry, index) => [entry.entryId, index + 1]));
@@ -1243,12 +1332,21 @@ async function ensureAuthenticated() {
       showToast("トップメッセージを読み込めませんでした。ポイントショップは利用できます。");
     }
   }
+  if (state.leaderboardPublic) {
+    try {
+      await syncLeaderboardEntry();
+    } catch (error) {
+      console.error(error);
+      showToast("ランキング情報を更新できませんでした。");
+    }
+  } else {
+    loadServerRankingAwards().catch((error) => console.error(error));
+  }
   setOnlineChrome("ONLINE READY");
   render();
   if (state.screen === "achievements") {
     loadAchievements({ syncPublic: true }).catch(() => showToast("実績情報を更新できませんでした。"));
   }
-  if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
 }
 
 async function initializeEconomy() {
@@ -2629,6 +2727,7 @@ async function syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name,
   const timestamp = serverNow();
   await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
     const key = leaderboardPeriodKeyFor(period, timestamp);
+    if (isServerRankingPeriod(period, key)) return;
     const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => {
       if (!current) return;
       return periodLeaderboardRecord(current, null, "solo", profile, name, settings);
@@ -2643,12 +2742,23 @@ async function recordLeaderboardPeriodResult(outcome, mode, uid, profile, name, 
   const timestamp = serverNow();
   await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
     const key = leaderboardPeriodKeyFor(period, timestamp);
+    if (isServerRankingPeriod(period, key)) return;
     await rememberLeaderboardPeriod(entryId, period, key, uid);
     const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => (
       periodLeaderboardRecord(current, outcome, mode, profile, name, settings)
     ));
     if (!result.committed) throw new Error("期間ランキングを更新できませんでした。");
   }));
+}
+
+async function syncServerRankingParticipation(uid, entryId, enabled = true) {
+  const response = await economyActionCallable({
+    action: "set_server_ranking_participation",
+    enabled,
+    ...(enabled ? { entryId } : {}),
+  });
+  if (state.uid === uid) applyServerRankingAwards(response.data?.awards);
+  return response.data || {};
 }
 
 async function publishOverallLeaderboard(uid, profile, name, settings, event = null) {
@@ -2659,6 +2769,7 @@ async function publishOverallLeaderboard(uid, profile, name, settings, event = n
   else await syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name, settings);
   const achievementResponse = await economyActionCallable({ action: "sync_achievement_showcase" });
   if (state.uid === uid) applyAchievementPayload(achievementResponse.data?.achievements, { notifyPending: true });
+  await syncServerRankingParticipation(uid, entryId, true);
 }
 
 async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
@@ -2675,6 +2786,7 @@ async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
   if (syncPeriodMetadata) await syncCurrentPeriodLeaderboardMetadata(entryId, state.uid, profile, state.name, settings);
   const achievementResponse = await economyActionCallable({ action: "sync_achievement_showcase" });
   applyAchievementPayload(achievementResponse.data?.achievements, { notifyPending: true });
+  await syncServerRankingParticipation(state.uid, entryId, true);
 }
 
 async function recordOverallResult({ mode, outcome, name, opponentRating = INITIAL_RATING, soloSeed = null, roomId = "" } = {}) {
@@ -2738,6 +2850,7 @@ async function setOverallRankingParticipation(enabled, name = "") {
       const profile = await ensureOverallProfileSeeded(user.uid, displayName, state.uid === user.uid ? state.profile : null);
       await publishOverallLeaderboard(user.uid, profile, displayName, next);
     } else {
+      await syncServerRankingParticipation(user.uid, "", false);
       await removeLeaderboardEntryForUser(user.uid);
     }
     const saved = getOverallRankingPreference();
@@ -2796,7 +2909,6 @@ async function removeLeaderboardEntryForUser(uid) {
   const periodIndex = await get(periodIndexRef);
   const removals = {
     [`online/leaderboard/${entryId}`]: null,
-    [`online/leaderboardPeriodEntriesByUser/${uid}`]: null,
   };
   if (periodIndex.exists()) {
     Object.entries(periodIndex.val() || {}).forEach(([period, keys]) => {
@@ -2804,6 +2916,7 @@ async function removeLeaderboardEntryForUser(uid) {
       Object.entries(keys).forEach(([key, indexedEntryId]) => {
         if (String(indexedEntryId) !== entryId) return;
         removals[`online/leaderboardPeriods/${period}/${key}/${entryId}`] = null;
+        removals[`online/leaderboardPeriodEntriesByUser/${uid}/${period}/${key}`] = null;
       });
     });
   }
@@ -4019,8 +4132,11 @@ window.HariaiOnline = {
   getLeaderboardStatus,
   getLeaderboardPeriodInfo,
   getLeaderboardLoadedPeriod,
+  getServerRankingAwards,
+  getMonthlyRankingHallOfFame,
   getMonthlyBeyondRank,
   getMonthlyBeyondPeriodKey,
+  isServerRankingPeriod,
   refreshLeaderboard,
   getTopMessages,
   getTopMessagesStatus,

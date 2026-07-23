@@ -791,6 +791,8 @@
       label: "期間を確認中",
       nextResetAt: 0,
       minimumMatches: rankingPeriod === "daily" ? 1 : rankingPeriod === "weekly" ? 3 : 5,
+      awardMinimumMatches: rankingPeriod === "monthly" ? 10 : rankingPeriod === "weekly" ? 3 : 1,
+      serverAuthoritative: false,
     };
   }
 
@@ -803,6 +805,55 @@
       minute: "2-digit",
       timeZone: "Asia/Tokyo",
     }).format(new Date(Number(timestamp)));
+  }
+
+  function rankingAwardPreview(periodInfo, rank, matches) {
+    if (!periodInfo.serverAuthoritative) return "";
+    const minimum = Number(periodInfo.awardMinimumMatches || 1);
+    if (matches < minimum) {
+      return `<span class="ranking-award-preview is-progress">報酬対象まであと${minimum - matches}戦</span>`;
+    }
+    let label = periodInfo.period === "daily" ? `${rank}位記録対象` : periodInfo.period === "weekly" ? "週間参加記録対象" : "月間参加メダル対象";
+    if (rank === 1) label = periodInfo.period === "daily" ? "暫定デイリー1位" : periodInfo.period === "weekly" ? "暫定週間チャンピオン" : "暫定月間チャンピオン";
+    else if (rank <= 3) label = periodInfo.period === "daily" ? `暫定デイリーTOP${rank}` : periodInfo.period === "weekly" ? "暫定週間TOP3" : "暫定月間TOP3";
+    else if (periodInfo.period !== "daily" && rank <= 10) label = periodInfo.period === "weekly" ? "暫定週間TOP10" : "暫定月間TOP10";
+    return `<span class="ranking-award-preview">${escapeHtml(label)}</span>`;
+  }
+
+  function renderRankingAwardsPanel() {
+    const value = window.HariaiOnline?.getServerRankingAwards?.() || { ready: false, awards: [] };
+    if (!value.ready && !value.awards.length) return "";
+    const now = Date.now();
+    const awards = value.awards.slice(0, 8);
+    const cards = awards.length
+      ? awards.map((award) => {
+        const active = Number(award.activeUntil || 0) > now;
+        const periodLabel = award.period === "daily" ? "DAILY" : award.period === "weekly" ? "WEEKLY" : "MONTHLY";
+        return `<li class="ranking-award-record ${active ? "is-active" : ""}">
+          <span>${escapeHtml(periodLabel)} / ${escapeHtml(award.key)}</span>
+          <strong>${escapeHtml(award.label || `${award.rank}位`)}</strong>
+          <small>${award.rank}位・${award.matches}戦${active ? "・限定表示期間中" : ""}</small>
+        </li>`;
+      }).join("")
+      : `<li class="ranking-award-empty">サーバーランキングの期間終了後、ここに参加記録と入賞記録が残ります。</li>`;
+    return `<section class="ranking-awards-panel" aria-labelledby="rankingAwardsTitle">
+      <div><span class="eyebrow">VERIFIED RANKING RECORDS</span><h2 id="rankingAwardsTitle">ランキング実績</h2></div>
+      <ul>${cards}</ul>
+    </section>`;
+  }
+
+  function renderMonthlyHallOfFame() {
+    const records = window.HariaiOnline?.getMonthlyRankingHallOfFame?.() || [];
+    if (!records.length) return "";
+    const champions = records.slice(0, 6).map((record) => `<li>
+      <span>${escapeHtml(record.key)}</span>
+      <strong>${escapeHtml(record.name)}</strong>
+      <small>${record.points}pt・${record.wins}勝 ${record.losses}敗 ${record.draws}分・参加${record.participants}人</small>
+    </li>`).join("");
+    return `<section class="ranking-hall-of-fame" aria-labelledby="rankingHallTitle">
+      <div><span class="eyebrow">MONTHLY HALL OF FAME</span><h2 id="rankingHallTitle">歴代月間王者</h2></div>
+      <ol>${champions}</ol>
+    </section>`;
   }
 
   function refreshSelectedRankingPeriod() {
@@ -862,10 +913,14 @@
       const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
       const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
       const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
-      return `<article class="ranking-entry ranking-class-${ratingClass.key} ${expanded ? "is-expanded" : ""}">
+      const awardPreview = rankingAwardPreview(periodInfo, index + 1, matches);
+      const activeAward = entry.rankingAwardLabel && Number(entry.rankingAwardUntil || 0) > Date.now()
+        ? `<span class="ranking-award-earned">${escapeHtml(entry.rankingAwardLabel)}</span>`
+        : "";
+      return `<article class="ranking-entry ranking-class-${ratingClass.key} ${periodInfo.serverAuthoritative ? "is-server-verified" : "is-legacy-ranking"} ${expanded ? "is-expanded" : ""}">
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
-          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${achievementBadges}</div>
+          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${activeAward}${awardPreview}${achievementBadges}</div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD PT</small></div>
           <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
           <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
@@ -890,10 +945,16 @@
         <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
       </div>
       <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3pt ／ 引き分け・BR2位1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
+      <div class="ranking-trust-notice ${periodInfo.serverAuthoritative ? "is-verified" : "is-transition"}">
+        <strong>${periodInfo.serverAuthoritative ? "SERVER VERIFIED" : "LEGACY PERIOD"}</strong>
+        <span>${periodInfo.serverAuthoritative ? "この期間は検証済みの正式対戦だけをサーバーで集計し、終了後にランキング実績を確定します。" : "移行前に始まった期間です。現在の順位を期間終了まで維持し、次の期間からサーバー集計へ切り替わります。"}</span>
+      </div>
+      ${renderMonthlyHallOfFame()}
+      ${renderRankingAwardsPanel()}
       <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEはリセットされません。BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。クラスはランキングだけに表示し、対戦相手には表示しません。</div>
       ${renderOverallRatingClassGuide()}
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
-      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。カジュアル版のため、RATEと戦績はブラウザからFirebaseへ送信されます。</p>
+      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。${periodInfo.serverAuthoritative ? "期間ポイント・試合数・勝敗・モード内訳はCloud Functionsが検証済み試合から確定します。総合RATEは移行時の旧RATEを初期値として、切替後の正式対戦だけをサーバーで更新します。" : "この移行前期間のRATEと戦績は従来どおりブラウザからFirebaseへ送信されます。ランキング報酬は発生しません。"}</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
@@ -1372,6 +1433,10 @@
   }, { once: true });
 
   window.addEventListener("hariai-leaderboard-updated", () => {
+    if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });
+  });
+
+  window.addEventListener("hariai-ranking-awards-updated", () => {
     if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });
   });
 

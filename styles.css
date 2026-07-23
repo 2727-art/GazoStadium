@@ -1764,6 +1764,204 @@ button:disabled {
   font-size: 0.68rem;
 }
 
+.ranking-trust-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 11px 14px;
+  border: 1px solid rgba(255, 191, 102, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 191, 102, 0.055);
+}
+
+.ranking-trust-notice strong {
+  flex: 0 0 auto;
+  color: #ffca7a;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+}
+
+.ranking-trust-notice span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.ranking-trust-notice.is-verified {
+  border-color: rgba(100, 232, 213, 0.3);
+  background: linear-gradient(135deg, rgba(36, 139, 165, 0.12), rgba(100, 232, 213, 0.055));
+}
+
+.ranking-trust-notice.is-verified strong {
+  color: var(--cyan);
+}
+
+.ranking-hall-of-fame {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.32fr) minmax(0, 1fr);
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 201, 107, 0.28);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(79, 48, 13, 0.28), rgba(17, 12, 29, 0.84));
+}
+
+.ranking-hall-of-fame h2 {
+  margin: 3px 0 0;
+  color: #ffe1a1;
+  font-size: 0.96rem;
+}
+
+.ranking-hall-of-fame ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ranking-hall-of-fame li {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 201, 107, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 201, 107, 0.035);
+}
+
+.ranking-hall-of-fame li span {
+  color: #a89470;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.ranking-hall-of-fame li strong {
+  overflow: hidden;
+  color: var(--gold);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-hall-of-fame li small {
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1.5;
+}
+
+.ranking-awards-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.36fr) minmax(0, 1fr);
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 201, 107, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(63, 42, 18, 0.24), rgba(12, 15, 25, 0.8));
+}
+
+.ranking-awards-panel h2 {
+  margin: 3px 0 0;
+  font-size: 0.96rem;
+}
+
+.ranking-awards-panel ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ranking-award-record,
+.ranking-award-empty {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ranking-award-record.is-active {
+  border-color: rgba(255, 201, 107, 0.3);
+  box-shadow: inset 0 0 18px rgba(255, 201, 107, 0.055);
+}
+
+.ranking-award-record span {
+  color: #a89470;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.ranking-award-record strong {
+  overflow: hidden;
+  color: var(--gold);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-award-record small,
+.ranking-award-empty {
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.5;
+}
+
+.ranking-award-empty {
+  grid-column: 1 / -1;
+}
+
+.ranking-award-preview {
+  width: fit-content;
+  padding: 2px 7px;
+  border: 1px solid rgba(255, 201, 107, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 201, 107, 0.075);
+  color: var(--gold);
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.ranking-award-preview.is-progress {
+  border-color: rgba(123, 155, 216, 0.22);
+  background: rgba(123, 155, 216, 0.06);
+  color: #9ca9bf;
+}
+
+.ranking-award-earned {
+  width: fit-content;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 201, 107, 0.45);
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(255, 201, 107, 0.17), rgba(224, 127, 255, 0.08));
+  color: #ffe1a1;
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  box-shadow: 0 0 16px rgba(255, 201, 107, 0.08);
+}
+
+.ranking-entry.is-server-verified .ranking-position::after {
+  content: "✓";
+  display: block;
+  color: rgba(100, 232, 213, 0.72);
+  font-size: 0.55rem;
+  line-height: 1;
+}
+
 .ranking-list {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -5503,6 +5701,28 @@ button:disabled {
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .ranking-trust-notice {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .ranking-awards-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-hall-of-fame {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-hall-of-fame ol {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-awards-panel ul {
+    grid-template-columns: 1fr;
   }
 
   .overall-ranking-panel {

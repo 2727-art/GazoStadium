@@ -63,6 +63,20 @@ const {
   marketSaleSettlement,
   postMatchTipAmount,
 } = require("./market-economy");
+const {
+  SERVER_RANKING_AWARD_MINIMUM_MATCHES,
+  SERVER_RANKING_MODES,
+  SERVER_RANKING_PERIODS,
+  SERVER_RANKING_VERSION,
+  addServerRankingResult,
+  compareServerRankingEntries,
+  emptyServerRankingEntry,
+  isServerRankingPeriod,
+  normalizeServerRankingEntry,
+  resolveServerRankingAward,
+  serverRankingEntryDocumentId,
+  serverRankingMatches,
+} = require("./server-ranking");
 const PRODUCT_CATALOG = require("./product-catalog");
 
 initializeApp({
@@ -176,6 +190,26 @@ function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
 }
 
+function serverRankingProfileRef(uid) {
+  return firestore.collection("serverRankingProfiles").doc(uid);
+}
+
+function serverRankingEntryRef(uid, period, key) {
+  return serverRankingProfileRef(uid).collection("entries").doc(serverRankingEntryDocumentId(period, key));
+}
+
+function serverRankingAwardRef(uid, period, key) {
+  return serverRankingProfileRef(uid).collection("awards").doc(serverRankingEntryDocumentId(period, key));
+}
+
+function serverRankingPeriodEntryRef(uid, period, key) {
+  return firestore
+    .collection("serverRankingPeriods")
+    .doc(serverRankingEntryDocumentId(period, key))
+    .collection("entries")
+    .doc(uid);
+}
+
 function patronageRef(uid) {
   return firestore.collection("valueMarketPatrons").doc(uid);
 }
@@ -209,6 +243,135 @@ function transferSourceRef(uid) {
 
 function transferAttemptRef(uid) {
   return firestore.collection("accountTransferAttempts").doc(uid);
+}
+
+function normalizeServerRankingProfile(value, fallback = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const fallbackRating = integer(fallback.rating, 100, 3000, 1000);
+  const xHandle = cleanText(source.xHandle || fallback.xHandle, 15);
+  const achievementShowcase = cleanText(source.achievementShowcase || fallback.achievementShowcase, 160);
+  const rankingAwardTier = cleanText(source.rankingAwardTier || fallback.rankingAwardTier, 40);
+  const rankingAwardUntil = Number(source.rankingAwardUntil || fallback.rankingAwardUntil || 0);
+  return {
+    version: SERVER_RANKING_VERSION,
+    enabled: source.enabled === true,
+    entryId: cleanText(source.entryId || fallback.entryId, 40),
+    name: cleanName(source.name || fallback.name),
+    rating: integer(source.rating, 100, 3000, fallbackRating),
+    legacyRating: integer(source.legacyRating, 100, 3000, fallbackRating),
+    serverMatches: integer(source.serverMatches, 0, 100_000, 0),
+    commentsEnabled: source.commentsEnabled !== false,
+    enabledAt: Number(source.enabledAt || fallback.enabledAt || 0),
+    updatedAt: Number(source.updatedAt || fallback.updatedAt || Date.now()),
+    ...(xHandle && /^[A-Za-z0-9_]{1,15}$/.test(xHandle) ? { xHandle } : {}),
+    ...(achievementShowcase ? { achievementShowcase } : {}),
+    ...(rankingAwardTier && rankingAwardUntil > Date.now() ? {
+      rankingAwardTier,
+      rankingAwardLabel: cleanText(source.rankingAwardLabel || fallback.rankingAwardLabel, 40),
+      rankingAwardUntil,
+    } : {}),
+  };
+}
+
+function activeServerRankingPeriodInfos(timestamp = Date.now()) {
+  return SERVER_RANKING_PERIODS.map((period) => {
+    const key = periodKey(period, timestamp);
+    return {
+      period,
+      key,
+      endsAt: periodEndsAt(period, key),
+    };
+  }).filter(({ period, key }) => isServerRankingPeriod(period, key));
+}
+
+function calculateServerRankingRating(currentRating, opponentRating, outcome) {
+  const current = integer(currentRating, 100, 3000, 1000);
+  const opponent = integer(opponentRating, 100, 3000, 1000);
+  const expected = 1 / (1 + (10 ** ((opponent - current) / 400)));
+  const actual = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
+  return integer(Math.round(current + (32 * (actual - expected))), 100, 3000, current);
+}
+
+function serverRankingOpponentRating(mode, room, participantUid, participants, profiles) {
+  if (mode === "royale") return 1000;
+  const playerTeam = room?.players?.[participantUid]?.team;
+  const opponentRatings = participants.filter((candidateUid) => {
+    if (candidateUid === participantUid) return false;
+    if (mode !== "team") return true;
+    return room?.players?.[candidateUid]?.team !== playerTeam;
+  }).map((candidateUid) => (
+    profiles[candidateUid]?.rating
+    || room?.players?.[candidateUid]?.rating
+    || 1000
+  ));
+  if (!opponentRatings.length) return 1000;
+  return opponentRatings.reduce((sum, rating) => sum + integer(rating, 100, 3000, 1000), 0) / opponentRatings.length;
+}
+
+function publicServerRankingEntry(value) {
+  const entry = normalizeServerRankingEntry(value, value);
+  if (!entry) return null;
+  return {
+    serverVerified: true,
+    version: SERVER_RANKING_VERSION,
+    name: cleanName(entry.name),
+    points: entry.points,
+    wins: entry.wins,
+    losses: entry.losses,
+    draws: entry.draws,
+    rating: entry.rating,
+    modePoints: entry.modePoints,
+    modeMatches: entry.modeMatches,
+    commentsEnabled: entry.commentsEnabled !== false,
+    endsAt: entry.endsAt,
+    updatedAt: entry.updatedAt,
+    ...(entry.xHandle ? { xHandle: entry.xHandle } : {}),
+    ...(entry.achievementShowcase ? { achievementShowcase: entry.achievementShowcase } : {}),
+    ...(entry.rankingAwardTier && Number(entry.rankingAwardUntil || 0) > Date.now() ? {
+      rankingAwardTier: entry.rankingAwardTier,
+      rankingAwardLabel: entry.rankingAwardLabel,
+      rankingAwardUntil: entry.rankingAwardUntil,
+    } : {}),
+  };
+}
+
+async function mirrorServerRankingEntries(entriesByUid) {
+  const updates = {};
+  Object.entries(entriesByUid || {}).forEach(([uid, entries]) => {
+    Object.values(entries || {}).forEach((entry) => {
+      const publicEntry = publicServerRankingEntry(entry);
+      if (!publicEntry || !entry.entryId) return;
+      updates[`online/serverLeaderboardPeriods/${entry.period}/${entry.key}/${entry.entryId}`] = publicEntry;
+      updates[`online/serverLeaderboardPeriodEntriesByUser/${uid}/${entry.period}/${entry.key}`] = entry.entryId;
+    });
+  });
+  if (Object.keys(updates).length) await realtime.ref().update(updates);
+}
+
+async function legacyServerRankingSeed(uid) {
+  const entryIndexSnapshot = await realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get();
+  const entryId = cleanText(entryIndexSnapshot.val(), 40);
+  if (!/^[-0-9A-Z_a-z]{16,40}$/.test(entryId)) return null;
+  const [ownerSnapshot, publicSnapshot] = await Promise.all([
+    realtime.ref(`online/leaderboardOwners/${entryId}`).get(),
+    realtime.ref(`online/leaderboard/${entryId}`).get(),
+  ]);
+  if (String(ownerSnapshot.val() || "") !== uid || !publicSnapshot.exists()) return null;
+  const publicValue = objectValue(publicSnapshot.val());
+  const xHandle = cleanText(publicValue.xHandle, 15);
+  const now = Date.now();
+  return {
+    enabled: true,
+    entryId,
+    name: cleanName(publicValue.name),
+    rating: integer(publicValue.rating, 100, 3000, 1000),
+    legacyRating: integer(publicValue.rating, 100, 3000, 1000),
+    serverMatches: 0,
+    commentsEnabled: publicValue.commentsEnabled !== false,
+    enabledAt: now,
+    updatedAt: now,
+    ...(xHandle && /^[A-Za-z0-9_]{1,15}$/.test(xHandle) ? { xHandle } : {}),
+  };
 }
 
 function emptyDaily(dateKey = jstDateKey()) {
@@ -429,25 +592,364 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
     }, { merge: true }));
   }
 
-  const [entrySnapshot, periodIndexSnapshot] = await Promise.all([
+  const [entrySnapshot, periodIndexSnapshot, serverPeriodIndexSnapshot, serverProfileSnapshot] = await Promise.all([
     realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
     realtime.ref(`online/leaderboardPeriodEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/serverLeaderboardPeriodEntriesByUser/${uid}`).get(),
+    serverRankingProfileRef(uid).get(),
   ]);
   const entryId = entrySnapshot.exists() ? cleanText(entrySnapshot.val(), 40) : "";
   if (entryId) {
     const periodIndex = objectValue(periodIndexSnapshot.val());
+    const serverPeriodIndex = objectValue(serverPeriodIndexSnapshot.val());
     const realtimeUpdates = {};
     for (const period of ["daily", "weekly", "monthly"]) {
       const key = periodKey(period);
-      if (String(periodIndex?.[period]?.[key] || "") !== entryId) continue;
-      realtimeUpdates[`online/leaderboardPeriods/${period}/${key}/${entryId}/achievementShowcase`] = showcase.length
-        ? showcase.join(",")
-        : null;
+      if (String(periodIndex?.[period]?.[key] || "") === entryId) {
+        realtimeUpdates[`online/leaderboardPeriods/${period}/${key}/${entryId}/achievementShowcase`] = showcase.length
+          ? showcase.join(",")
+          : null;
+      }
+      if (String(serverPeriodIndex?.[period]?.[key] || "") === entryId) {
+        realtimeUpdates[`online/serverLeaderboardPeriods/${period}/${key}/${entryId}/achievementShowcase`] = showcase.length
+          ? showcase.join(",")
+          : null;
+      }
     }
     if (Object.keys(realtimeUpdates).length) updates.push(realtime.ref().update(realtimeUpdates));
   }
+  if (serverProfileSnapshot.exists) {
+    const achievementShowcase = showcase.length ? showcase.join(",") : null;
+    const activeRefs = activeServerRankingPeriodInfos().map(({ period, key }) => (
+      serverRankingEntryRef(uid, period, key)
+    ));
+    const activeSnapshots = activeRefs.length ? await firestore.getAll(...activeRefs) : [];
+    const batch = firestore.batch();
+    batch.set(serverRankingProfileRef(uid), {
+      achievementShowcase,
+      updatedAt: Date.now(),
+    }, { merge: true });
+    activeSnapshots.forEach((snapshot) => {
+      if (!snapshot.exists) return;
+      batch.set(snapshot.ref, {
+        achievementShowcase,
+        updatedAt: Date.now(),
+      }, { merge: true });
+    });
+    updates.push(batch.commit());
+  }
   await Promise.all(updates);
   return effectiveShowcase(profile);
+}
+
+async function syncCurrentServerRankingMetadata(uid, profileValue) {
+  const profile = normalizeServerRankingProfile(profileValue);
+  if (!profile.enabled || !profile.entryId) return {};
+  const infos = activeServerRankingPeriodInfos();
+  const refs = infos.map(({ period, key }) => serverRankingEntryRef(uid, period, key));
+  const snapshots = refs.length ? await firestore.getAll(...refs) : [];
+  const entries = {};
+  const batch = firestore.batch();
+  snapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists) return;
+    const info = infos[index];
+    const current = normalizeServerRankingEntry(snapshot.data(), {
+      ...info,
+      entryId: profile.entryId,
+      rating: profile.rating,
+    });
+    if (!current) return;
+    const entry = {
+      ...current,
+      name: profile.name,
+      rating: profile.rating,
+      commentsEnabled: profile.commentsEnabled !== false,
+      updatedAt: Date.now(),
+      ...(profile.xHandle ? { xHandle: profile.xHandle } : {}),
+      ...(profile.achievementShowcase ? { achievementShowcase: profile.achievementShowcase } : {}),
+      ...(profile.rankingAwardTier ? {
+        rankingAwardTier: profile.rankingAwardTier,
+        rankingAwardLabel: profile.rankingAwardLabel,
+        rankingAwardUntil: profile.rankingAwardUntil,
+      } : {}),
+    };
+    if (!profile.xHandle) delete entry.xHandle;
+    if (!profile.achievementShowcase) delete entry.achievementShowcase;
+    if (!profile.rankingAwardTier) {
+      delete entry.rankingAwardTier;
+      delete entry.rankingAwardLabel;
+      delete entry.rankingAwardUntil;
+    }
+    batch.set(snapshot.ref, entry);
+    batch.set(serverRankingPeriodEntryRef(uid, info.period, info.key), entry);
+    entries[`${info.period}:${info.key}`] = entry;
+  });
+  if (Object.keys(entries).length) {
+    await batch.commit();
+    await mirrorServerRankingEntries({ [uid]: entries });
+  }
+  return entries;
+}
+
+async function finalizeServerRankingAwards(uid, timestamp = Date.now()) {
+  const profileSnapshot = await serverRankingProfileRef(uid).get();
+  if (!profileSnapshot.exists) return [];
+  const entriesSnapshot = await serverRankingProfileRef(uid)
+    .collection("entries")
+    .orderBy("endsAt", "desc")
+    .limit(300)
+    .get();
+  const pending = entriesSnapshot.docs.filter((snapshot) => (
+    Number(snapshot.get("endsAt") || 0) > 0
+    && Number(snapshot.get("endsAt")) <= timestamp
+    && !Number(snapshot.get("awardProcessedAt") || 0)
+  ));
+
+  for (const snapshot of pending) {
+    const ownEntry = normalizeServerRankingEntry(snapshot.data(), snapshot.data());
+    if (!ownEntry || !ownEntry.entryId) continue;
+    const periodEntriesSnapshot = await firestore
+      .collection("serverRankingPeriods")
+      .doc(serverRankingEntryDocumentId(ownEntry.period, ownEntry.key))
+      .collection("entries")
+      .get();
+    const minimumMatches = SERVER_RANKING_AWARD_MINIMUM_MATCHES[ownEntry.period] || 1;
+    const rankedEntries = periodEntriesSnapshot.docs
+      .filter((entrySnapshot) => {
+        const withdrawnAt = Number(entrySnapshot.get("withdrawnAt") || 0);
+        const endsAt = Number(entrySnapshot.get("endsAt") || ownEntry.endsAt || 0);
+        return !withdrawnAt || withdrawnAt >= endsAt;
+      })
+      .map((entrySnapshot) => normalizeServerRankingEntry(
+        entrySnapshot.data(),
+        ownEntry,
+      ))
+      .filter((entry) => entry && serverRankingMatches(entry) >= minimumMatches)
+      .sort(compareServerRankingEntries);
+    const withdrawnAt = Number(snapshot.get("withdrawnAt") || 0);
+    const withdrewBeforeEnd = withdrawnAt > 0 && withdrawnAt < ownEntry.endsAt;
+    const resolution = withdrewBeforeEnd
+      ? { processed: true, rank: 0, award: null }
+      : resolveServerRankingAward(
+        ownEntry.period,
+        ownEntry,
+        rankedEntries,
+        {
+          key: ownEntry.key,
+          endsAt: ownEntry.endsAt,
+          now: timestamp,
+        },
+      );
+    if (!resolution.processed) {
+      await serverRankingPeriodEntryRef(uid, ownEntry.period, ownEntry.key).set(snapshot.data());
+      await mirrorServerRankingEntries({
+        [uid]: { [`${ownEntry.period}:${ownEntry.key}`]: ownEntry },
+      });
+      continue;
+    }
+    const award = resolution.award;
+    const awardRef = serverRankingAwardRef(uid, ownEntry.period, ownEntry.key);
+    await firestore.runTransaction(async (transaction) => {
+      const [entryState, awardState] = await Promise.all([
+        transaction.get(snapshot.ref),
+        transaction.get(awardRef),
+      ]);
+      if (!entryState.exists || Number(entryState.get("awardProcessedAt") || 0)) return;
+      if (award && !awardState.exists) {
+        const nextKey = periodKey(ownEntry.period, ownEntry.endsAt + 1000);
+        transaction.create(awardRef, {
+          ...award,
+          activeUntil: periodEndsAt(ownEntry.period, nextKey),
+        });
+      }
+      transaction.update(snapshot.ref, {
+        awardProcessedAt: timestamp,
+        awardTier: award?.tier || (withdrewBeforeEnd ? "withdrawn" : "ineligible"),
+      });
+    });
+
+    if (ownEntry.period === "monthly" && rankedEntries.length) {
+      const champion = rankedEntries[0];
+      await realtime.ref(`online/serverRankingHallOfFame/monthly/${ownEntry.key}`).transaction((current) => (
+        current || {
+          entryId: champion.entryId,
+          name: champion.name,
+          points: champion.points,
+          wins: champion.wins,
+          losses: champion.losses,
+          draws: champion.draws,
+          rating: champion.rating,
+          participants: rankedEntries.length,
+          finalizedAt: timestamp,
+        }
+      ));
+    }
+  }
+
+  const awardsSnapshot = await serverRankingProfileRef(uid)
+    .collection("awards")
+    .orderBy("awardedAt", "desc")
+    .limit(24)
+    .get();
+  const awards = awardsSnapshot.docs.map((snapshot) => {
+    const value = snapshot.data();
+    return {
+      period: cleanText(value.period, 16),
+      key: cleanText(value.key, 16),
+      rank: integer(value.rank, 1, 100_000, 100_000),
+      matches: integer(value.matches, 0, 100_000, 0),
+      tier: cleanText(value.tier, 40),
+      label: cleanText(value.label, 40),
+      endsAt: Number(value.endsAt || 0),
+      activeUntil: Number(value.activeUntil || 0),
+      awardedAt: Number(value.awardedAt || 0),
+    };
+  });
+  const tierPriority = (tier) => (
+    tier === "monthly_champion" ? 90
+      : tier === "monthly_top3" ? 80
+        : tier === "monthly_top10" ? 70
+          : tier === "weekly_champion" ? 60
+            : tier === "weekly_top3" ? 50
+              : tier === "weekly_top10" ? 40
+                : tier === "daily_champion" ? 30
+                  : tier === "daily_top3" ? 20
+                    : 10
+  );
+  const activeAward = awards
+    .filter((award) => award.activeUntil > timestamp)
+    .sort((first, second) => tierPriority(second.tier) - tierPriority(first.tier) || second.awardedAt - first.awardedAt)[0];
+  await serverRankingProfileRef(uid).set({
+    rankingAwardTier: activeAward?.tier || null,
+    rankingAwardLabel: activeAward?.label || null,
+    rankingAwardUntil: activeAward?.activeUntil || 0,
+    updatedAt: timestamp,
+  }, { merge: true });
+  return awards;
+}
+
+async function removeServerRankingPublicEntries(uid, timestamp = Date.now()) {
+  const activeInfos = activeServerRankingPeriodInfos(timestamp);
+  const activeRefs = activeInfos
+    .map(({ period, key }) => serverRankingEntryRef(uid, period, key));
+  const activeSnapshots = activeRefs.length ? await firestore.getAll(...activeRefs) : [];
+  const batch = firestore.batch();
+  let withdrawalCount = 0;
+  activeSnapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists) return;
+    const withdrawal = {
+      withdrawnAt: timestamp,
+      updatedAt: timestamp,
+    };
+    batch.set(snapshot.ref, withdrawal, { merge: true });
+    batch.set(
+      serverRankingPeriodEntryRef(uid, activeInfos[index].period, activeInfos[index].key),
+      withdrawal,
+      { merge: true },
+    );
+    withdrawalCount += 1;
+  });
+  if (withdrawalCount) await batch.commit();
+
+  const indexSnapshot = await realtime.ref(`online/serverLeaderboardPeriodEntriesByUser/${uid}`).get();
+  const index = objectValue(indexSnapshot.val());
+  const updates = {};
+  for (const [period, keys] of Object.entries(index)) {
+    if (!SERVER_RANKING_PERIODS.includes(period)) continue;
+    for (const [key, entryId] of Object.entries(objectValue(keys))) {
+      if (!isServerRankingPeriod(period, key)) continue;
+      const cleanEntryId = cleanText(entryId, 40);
+      if (!cleanEntryId) continue;
+      const entryEndsAt = Number(periodEndsAt(period, key) || 0);
+      if (entryEndsAt <= timestamp) continue;
+      updates[`online/serverLeaderboardPeriods/${period}/${key}/${cleanEntryId}`] = null;
+      updates[`online/serverLeaderboardPeriodEntriesByUser/${uid}/${period}/${key}`] = null;
+    }
+  }
+  if (Object.keys(updates).length) await realtime.ref().update(updates);
+}
+
+async function setServerRankingParticipation(uid, data) {
+  const enabled = data?.enabled === true;
+  const now = Date.now();
+  const profileRef = serverRankingProfileRef(uid);
+  if (!enabled) {
+    const awards = await finalizeServerRankingAwards(uid, now);
+    await profileRef.set({
+      enabled: false,
+      disabledAt: now,
+      updatedAt: now,
+    }, { merge: true });
+    await removeServerRankingPublicEntries(uid, now);
+    return { enabled: false, awards };
+  }
+
+  const entryId = cleanText(data?.entryId, 40);
+  if (!/^[-0-9A-Z_a-z]{16,40}$/.test(entryId)) {
+    throw new HttpsError("invalid-argument", "ランキングIDを確認できませんでした。");
+  }
+  const [entryIndexSnapshot, ownerSnapshot, publicSnapshot, achievementSnapshot] = await Promise.all([
+    realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/leaderboardOwners/${entryId}`).get(),
+    realtime.ref(`online/leaderboard/${entryId}`).get(),
+    achievementProfileRef(uid).get(),
+  ]);
+  if (String(entryIndexSnapshot.val() || "") !== entryId
+    || String(ownerSnapshot.val() || "") !== uid
+    || !publicSnapshot.exists()) {
+    throw new HttpsError("failed-precondition", "公開ランキング情報を確認できませんでした。");
+  }
+  const publicValue = objectValue(publicSnapshot.val());
+  const showcase = effectiveShowcase(normalizeAchievementProfile(achievementSnapshot.data()));
+  let savedProfile = null;
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(profileRef);
+    const previous = normalizeServerRankingProfile(snapshot.data(), {
+      entryId,
+      name: publicValue.name,
+      rating: publicValue.rating,
+      enabledAt: now,
+    });
+    savedProfile = {
+      ...previous,
+      enabled: true,
+      entryId,
+      name: cleanName(publicValue.name),
+      commentsEnabled: publicValue.commentsEnabled !== false,
+      enabledAt: previous.enabled ? previous.enabledAt : now,
+      updatedAt: now,
+      ...(showcase.length ? { achievementShowcase: showcase.join(",") } : {}),
+    };
+    if (!snapshot.exists) {
+      savedProfile.rating = integer(publicValue.rating, 100, 3000, 1000);
+      savedProfile.legacyRating = savedProfile.rating;
+      savedProfile.serverMatches = 0;
+    }
+    const xHandle = cleanText(publicValue.xHandle, 15);
+    if (xHandle && /^[A-Za-z0-9_]{1,15}$/.test(xHandle)) savedProfile.xHandle = xHandle;
+    else delete savedProfile.xHandle;
+    transaction.set(profileRef, savedProfile);
+  });
+  const awards = await finalizeServerRankingAwards(uid, now);
+  const finalizedProfile = normalizeServerRankingProfile((await profileRef.get()).data(), savedProfile);
+  await syncCurrentServerRankingMetadata(uid, finalizedProfile);
+  return {
+    enabled: true,
+    rating: finalizedProfile.rating,
+    serverMatches: finalizedProfile.serverMatches,
+    awards,
+  };
+}
+
+async function getServerRankingAwards(uid) {
+  const awards = await finalizeServerRankingAwards(uid);
+  const profileSnapshot = await serverRankingProfileRef(uid).get();
+  if (profileSnapshot.exists) {
+    await syncCurrentServerRankingMetadata(uid, profileSnapshot.data());
+  }
+  return {
+    awards,
+  };
 }
 
 async function getAchievements(uid, { syncPublic = false } = {}) {
@@ -1081,23 +1583,57 @@ async function recordVerifiedMatch(uid, data) {
   const claimRefs = participants.map((participantUid) => (
     verifiedMatchClaimRef(participantUid, mode, roomId)
   ));
+  const serverPeriodInfos = activeServerRankingPeriodInfos(now);
+  const serverProfileRefs = participants.map((participantUid) => serverRankingProfileRef(participantUid));
+  const serverEntryRefs = participants.flatMap((participantUid) => (
+    serverPeriodInfos.map(({ period, key }) => serverRankingEntryRef(participantUid, period, key))
+  ));
+  const serverPeriodEntryRefs = participants.flatMap((participantUid) => (
+    serverPeriodInfos.map(({ period, key }) => serverRankingPeriodEntryRef(participantUid, period, key))
+  ));
+  const legacyServerRankingSeeds = serverPeriodInfos.length
+    ? Object.fromEntries(await Promise.all(participants.map(async (participantUid) => [
+      participantUid,
+      await legacyServerRankingSeed(participantUid),
+    ])))
+    : {};
   let transactionOutcome = "recorded";
   const progressResults = {};
   const profileResults = {};
   const newlyUnlockedResults = {};
+  const serverRankingProfileResults = {};
+  const serverRankingEntryResults = {};
   await firestore.runTransaction(async (transaction) => {
     transactionOutcome = "recorded";
     Object.keys(progressResults).forEach((key) => delete progressResults[key]);
     Object.keys(profileResults).forEach((key) => delete profileResults[key]);
     Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
+    Object.keys(serverRankingProfileResults).forEach((key) => delete serverRankingProfileResults[key]);
+    Object.keys(serverRankingEntryResults).forEach((key) => delete serverRankingEntryResults[key]);
     const snapshots = await Promise.all([
       ...progressRefs.map((ref) => transaction.get(ref)),
       ...profileRefs.map((ref) => transaction.get(ref)),
       ...claimRefs.map((ref) => transaction.get(ref)),
+      ...serverProfileRefs.map((ref) => transaction.get(ref)),
+      ...serverEntryRefs.map((ref) => transaction.get(ref)),
     ]);
-    const progressSnapshots = snapshots.slice(0, participants.length);
-    const profileSnapshots = snapshots.slice(participants.length, participants.length * 2);
-    const claimSnapshots = snapshots.slice(participants.length * 2);
+    const participantCount = participants.length;
+    const progressSnapshots = snapshots.slice(0, participantCount);
+    const profileSnapshots = snapshots.slice(participantCount, participantCount * 2);
+    const claimSnapshots = snapshots.slice(participantCount * 2, participantCount * 3);
+    const serverProfileSnapshots = snapshots.slice(participantCount * 3, participantCount * 4);
+    const serverEntrySnapshots = snapshots.slice(participantCount * 4);
+    const serverProfiles = Object.fromEntries(participants.map((participantUid, index) => [
+      participantUid,
+      normalizeServerRankingProfile(
+        serverProfileSnapshots[index].exists
+          ? serverProfileSnapshots[index].data()
+          : legacyServerRankingSeeds[participantUid],
+        {
+          rating: room?.players?.[participantUid]?.rating,
+        },
+      ),
+    ]));
     transactionOutcome = claimSnapshots[participants.indexOf(uid)].exists ? "duplicate" : "recorded";
     participants.forEach((participantUid, index) => {
       if (claimSnapshots[index].exists) {
@@ -1142,20 +1678,71 @@ async function recordVerifiedMatch(uid, data) {
         finalizedBy: uid,
         createdAt: now,
       });
+
+      const serverProfile = serverProfiles[participantUid];
+      if (serverProfile.enabled && serverProfile.entryId && serverPeriodInfos.length) {
+        const opponentRating = serverRankingOpponentRating(
+          mode,
+          room,
+          participantUid,
+          participants,
+          serverProfiles,
+        );
+        const updatedServerProfile = {
+          ...serverProfile,
+          rating: calculateServerRankingRating(serverProfile.rating, opponentRating, participantOutcome),
+          serverMatches: serverProfile.serverMatches + 1,
+          updatedAt: now,
+        };
+        serverRankingProfileResults[participantUid] = updatedServerProfile;
+        serverRankingEntryResults[participantUid] = {};
+        transaction.set(serverProfileRefs[index], updatedServerProfile);
+        serverPeriodInfos.forEach((info, periodIndex) => {
+          const flatIndex = (index * serverPeriodInfos.length) + periodIndex;
+          const currentSnapshot = serverEntrySnapshots[flatIndex];
+          const base = currentSnapshot.exists
+            ? currentSnapshot.data()
+            : emptyServerRankingEntry({
+              ...info,
+              entryId: updatedServerProfile.entryId,
+              profile: updatedServerProfile,
+              now,
+            });
+          const entry = addServerRankingResult(base, {
+            mode,
+            outcome: participantOutcome,
+            profile: updatedServerProfile,
+            now,
+          });
+          serverRankingEntryResults[participantUid][`${info.period}:${info.key}`] = entry;
+          transaction.set(serverEntryRefs[flatIndex], entry);
+          transaction.set(serverPeriodEntryRefs[flatIndex], entry);
+        });
+      }
     });
   });
-  await bestEffort("recordVerifiedMatch", participants.flatMap((participantUid) => [
+  const postMatchOperations = participants.flatMap((participantUid) => [
     mirrorEconomyProgress(participantUid, progressResults[participantUid]),
     ...(newlyUnlockedResults[participantUid]?.length
       ? [syncAchievementPublicSurfaces(participantUid, profileResults[participantUid])]
       : []),
-  ]));
+  ]);
+  if (Object.keys(serverRankingEntryResults).length) {
+    postMatchOperations.push(mirrorServerRankingEntries(serverRankingEntryResults));
+  }
+  await bestEffort("recordVerifiedMatch", postMatchOperations);
   const progressResult = progressResults[uid];
   const marketSnapshot = await marketStatsRef(uid).get();
   return {
     outcome: transactionOutcome,
     daily: progressResult.daily,
     periodRewards: progressResult.periodRewards,
+    serverRanking: serverRankingProfileResults[uid]
+      ? {
+        rating: serverRankingProfileResults[uid].rating,
+        serverMatches: serverRankingProfileResults[uid].serverMatches,
+      }
+      : null,
     newlyUnlocked: newlyUnlockedResults[uid] || [],
     achievements: publicAchievementProfile(
       profileResults[uid],
@@ -1334,6 +1921,8 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "claim_periods") return await claimPeriods(uid);
     if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
+    if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);
+    if (action === "get_server_ranking_awards") return await getServerRankingAwards(uid);
     if (action === "get_match_tip") return await getPostMatchTip(uid, request.data);
     if (action === "send_match_tip") return await sendPostMatchTip(uid, request.data);
     if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true });

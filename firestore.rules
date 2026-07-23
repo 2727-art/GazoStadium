@@ -35,6 +35,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /serverRankingProfiles/{uid} {
+      allow read, write: if false;
+
+      match /entries/{entryId} {
+        allow read, write: if false;
+      }
+
+      match /awards/{awardId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /serverRankingPeriods/{periodKey}/entries/{uid} {
+      allow read, write: if false;
+    }
+
     match /valueMarketPatrons/{uid} {
       allow read, write: if false;
     }
