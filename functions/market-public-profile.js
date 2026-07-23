@@ -1,5 +1,7 @@
 "use strict";
 
+const { sanitizeAchievementIds } = require("./achievements");
+
 const MARKET_X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const MARKET_TAGLINE_MAX_LENGTH = 40;
 
@@ -84,6 +86,7 @@ function createMarketRankingRow(value, role, isViewer = false) {
     count: role === "seller" ? Number(value?.salesCount || 0) : Number(value?.purchases || 0),
     best: role === "seller" ? Number(value?.bestSale || 0) : Number(value?.highestPurchase || 0),
     publicProfile: sanitizeStoredMarketPublicProfile(value?.publicProfile),
+    achievementShowcase: sanitizeAchievementIds(value?.publicAchievements),
     isViewer: isViewer === true,
   };
 }

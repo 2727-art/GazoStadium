@@ -26,6 +26,19 @@ const {
   normalizeMarketXHandle,
   sanitizeStoredMarketPublicProfile,
 } = require("./market-public-profile");
+const {
+  addBattleMatch,
+  addMarketTransaction,
+  deriveBattleStatsFromPeriods,
+  effectiveShowcase,
+  eligibleAchievementIds,
+  normalizeAchievementProfile,
+  normalizeBattleStats,
+  normalizeMarketStats,
+  publicAchievementProfile,
+  sanitizeAchievementIds,
+  unlockAchievements,
+} = require("./achievements");
 const PRODUCT_CATALOG = require("./product-catalog");
 
 initializeApp({
@@ -131,6 +144,10 @@ function walletRef(uid) {
 function economyProgressRef(uid) {
   return firestore.collection("economyProgress").doc(uid);
 }
+function achievementProfileRef(uid) {
+  return firestore.collection("achievementProfiles").doc(uid);
+}
+
 
 function emptyDaily(dateKey = jstDateKey()) {
   return {
@@ -203,10 +220,15 @@ function normalizePeriodRecords(value) {
 }
 
 function normalizeEconomyProgress(value, dateKey = jstDateKey()) {
+  const periodRewards = normalizePeriodRecords(value?.periodRewards);
+  const achievementStats = value?.achievementStats
+    ? normalizeBattleStats(value.achievementStats)
+    : deriveBattleStatsFromPeriods(periodRewards);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     daily: normalizeDaily(value?.daily, dateKey),
-    periodRewards: normalizePeriodRecords(value?.periodRewards),
+    periodRewards,
+    achievementStats,
     initializedAt: Number(value?.initializedAt || Date.now()),
     updatedAt: Number(value?.updatedAt || Date.now()),
   };
@@ -265,6 +287,43 @@ async function ensureEconomyProgress(uid) {
   return progress;
 }
 
+async function ensureAchievementState(uid) {
+  const progressRef = economyProgressRef(uid);
+  const profileRef = achievementProfileRef(uid);
+  const statsRef = marketStatsRef(uid);
+  let result = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [progressSnapshot, profileSnapshot, marketSnapshot] = await Promise.all([
+      transaction.get(progressRef),
+      transaction.get(profileRef),
+      transaction.get(statsRef),
+    ]);
+    const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
+    const progress = normalizeEconomyProgress(progressData);
+    const marketStats = normalizeMarketStats(marketSnapshot.data());
+    const eligibleIds = eligibleAchievementIds({
+      battleStats: progress.achievementStats,
+      marketStats,
+    });
+    const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
+    if (!progressSnapshot.exists
+      || Number(progressData.schemaVersion || 0) < 2
+      || !progressData.achievementStats) {
+      transaction.set(progressRef, progress);
+    }
+    if (!profileSnapshot.exists || unlockResult.newlyUnlocked.length) {
+      transaction.set(profileRef, unlockResult.profile);
+    }
+    result = {
+      progress,
+      marketStats,
+      profile: unlockResult.profile,
+      newlyUnlocked: unlockResult.newlyUnlocked,
+    };
+  });
+  return result;
+}
+
 async function mirrorEconomyProgress(uid, progress) {
   const normalized = normalizeEconomyProgress(progress);
   await realtime.ref(`online/economy/${uid}`).update({
@@ -294,6 +353,106 @@ async function retryRealtimeWrite(operation, attempts = 3) {
     }
   }
   throw lastError;
+}
+
+async function syncAchievementPublicSurfaces(uid, profileValue) {
+  const profile = normalizeAchievementProfile(profileValue);
+  const showcase = effectiveShowcase(profile);
+  const marketSnapshot = await marketStatsRef(uid).get();
+  const updates = [];
+  if (marketSnapshot.exists) {
+    updates.push(marketStatsRef(uid).set({
+      publicAchievements: effectiveShowcase(profile),
+      updatedAt: Date.now(),
+    }, { merge: true }));
+  }
+
+  const [entrySnapshot, periodIndexSnapshot] = await Promise.all([
+    realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/leaderboardPeriodEntriesByUser/${uid}`).get(),
+  ]);
+  const entryId = entrySnapshot.exists() ? cleanText(entrySnapshot.val(), 40) : "";
+  if (entryId) {
+    const periodIndex = objectValue(periodIndexSnapshot.val());
+    const realtimeUpdates = {};
+    for (const period of ["daily", "weekly", "monthly"]) {
+      const key = periodKey(period);
+      if (String(periodIndex?.[period]?.[key] || "") !== entryId) continue;
+      realtimeUpdates[`online/leaderboardPeriods/${period}/${key}/${entryId}/achievementShowcase`] = showcase.length
+        ? showcase.join(",")
+        : null;
+    }
+    if (Object.keys(realtimeUpdates).length) updates.push(realtime.ref().update(realtimeUpdates));
+  }
+  await Promise.all(updates);
+  return effectiveShowcase(profile);
+}
+
+async function getAchievements(uid, { syncPublic = false } = {}) {
+  const state = await ensureAchievementState(uid);
+  if (syncPublic) await syncAchievementPublicSurfaces(uid, state.profile);
+  return publicAchievementProfile(state.profile, state.progress.achievementStats, state.marketStats);
+}
+
+async function acknowledgeAchievements(uid, idsValue) {
+  const ids = sanitizeAchievementIds(idsValue, { maximum: 100 });
+  if (!ids.length) return { acknowledged: [] };
+  const profileRef = achievementProfileRef(uid);
+  const acknowledged = [];
+  await firestore.runTransaction(async (transaction) => {
+    acknowledged.length = 0;
+    const snapshot = await transaction.get(profileRef);
+    if (!snapshot.exists) return;
+    const profile = normalizeAchievementProfile(snapshot.data());
+    ids.forEach((id) => {
+      if (!profile.pendingUnlocks[id]) return;
+      delete profile.pendingUnlocks[id];
+      acknowledged.push(id);
+    });
+    if (acknowledged.length) {
+      profile.updatedAt = Date.now();
+      transaction.set(profileRef, profile);
+    }
+  });
+  return { acknowledged };
+}
+
+async function setAchievementShowcase(uid, idsValue) {
+  if (!Array.isArray(idsValue) || idsValue.length > 3) {
+    throw new HttpsError("invalid-argument", "ショーケースには解除済みの実績を3件まで指定してください。");
+  }
+  const rawIds = idsValue.map((id) => String(id || ""));
+  const requestedIds = sanitizeAchievementIds(rawIds);
+  if (requestedIds.length !== rawIds.length) {
+    throw new HttpsError("invalid-argument", "ショーケースの実績IDが正しくありません。");
+  }
+  const profileRef = achievementProfileRef(uid);
+  const progressRef = economyProgressRef(uid);
+  const statsRef = marketStatsRef(uid);
+  let result = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [profileSnapshot, progressSnapshot, marketSnapshot] = await Promise.all([
+      transaction.get(profileRef),
+      transaction.get(progressRef),
+      transaction.get(statsRef),
+    ]);
+    const progress = normalizeEconomyProgress(progressSnapshot.data());
+    const marketStats = normalizeMarketStats(marketSnapshot.data());
+    const profile = normalizeAchievementProfile(profileSnapshot.data());
+    const customShowcase = sanitizeAchievementIds(requestedIds, { unlocked: profile.unlocked });
+    if (customShowcase.length !== requestedIds.length) {
+      throw new HttpsError("failed-precondition", "未解除の実績はショーケースへ設定できません。");
+    }
+    profile.customShowcase = customShowcase;
+    profile.updatedAt = Date.now();
+    transaction.set(profileRef, profile);
+    result = { profile, progress, marketStats };
+  });
+  await syncAchievementPublicSurfaces(uid, result.profile);
+  return {
+    saved: true,
+    achievements: publicAchievementProfile(result.profile, result.progress.achievementStats, result.marketStats),
+  };
 }
 
 function periodReward(period, record) {
@@ -331,15 +490,22 @@ async function autoEquipProduct(uid, product) {
 }
 
 async function initializeEconomy(uid) {
-  const [balance, progress] = await Promise.all([
+  const [balance, achievementState] = await Promise.all([
     ensureWallet(uid),
-    ensureEconomyProgress(uid),
+    ensureAchievementState(uid),
   ]);
+  const { progress, profile, marketStats } = achievementState;
   await Promise.all([
     mirrorWallet(uid, balance),
     mirrorEconomyProgress(uid, progress),
   ]);
-  return { outcome: "ready", balance, daily: progress.daily, periodRewards: progress.periodRewards };
+  return {
+    outcome: "ready",
+    balance,
+    daily: progress.daily,
+    periodRewards: progress.periodRewards,
+    achievements: publicAchievementProfile(profile, progress.achievementStats, marketStats),
+  };
 }
 
 async function claimDaily(uid, missionId) {
@@ -662,6 +828,12 @@ function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
     record.updatedAt = now;
     progress.periodRewards[period][key] = record;
   }
+  progress.achievementStats = addBattleMatch(
+    progress.achievementStats,
+    mode,
+    outcome,
+    jstDateKey(now),
+  );
   progress.updatedAt = now;
   return progress;
 }
@@ -698,24 +870,38 @@ async function recordVerifiedMatch(uid, data) {
     throw new HttpsError("failed-precondition", "全参加者が採点を完了した対戦であることを確認できませんでした。");
   }
 
-  await Promise.all(participants.map((participantUid) => ensureEconomyProgress(participantUid)));
+  await Promise.all(participants.map((participantUid) => ensureAchievementState(participantUid)));
   const progressRefs = participants.map((participantUid) => economyProgressRef(participantUid));
+  const profileRefs = participants.map((participantUid) => achievementProfileRef(participantUid));
   const claimRefs = participants.map((participantUid) => (
     firestore.collection("verifiedMatchClaims").doc(eventId(`${participantUid}:${mode}:${roomId}`))
   ));
   let transactionOutcome = "recorded";
   const progressResults = {};
+  const profileResults = {};
+  const newlyUnlockedResults = {};
   await firestore.runTransaction(async (transaction) => {
+    transactionOutcome = "recorded";
+    Object.keys(progressResults).forEach((key) => delete progressResults[key]);
+    Object.keys(profileResults).forEach((key) => delete profileResults[key]);
+    Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
     const snapshots = await Promise.all([
       ...progressRefs.map((ref) => transaction.get(ref)),
+      ...profileRefs.map((ref) => transaction.get(ref)),
       ...claimRefs.map((ref) => transaction.get(ref)),
     ]);
     const progressSnapshots = snapshots.slice(0, participants.length);
-    const claimSnapshots = snapshots.slice(participants.length);
+    const profileSnapshots = snapshots.slice(participants.length, participants.length * 2);
+    const claimSnapshots = snapshots.slice(participants.length * 2);
     transactionOutcome = claimSnapshots[participants.indexOf(uid)].exists ? "duplicate" : "recorded";
     participants.forEach((participantUid, index) => {
       if (claimSnapshots[index].exists) {
         progressResults[participantUid] = normalizeEconomyProgress(progressSnapshots[index].data());
+        profileResults[participantUid] = normalizeAchievementProfile(profileSnapshots[index].data());
+        newlyUnlockedResults[participantUid] = sanitizeAchievementIds(
+          claimSnapshots[index].get("achievementIds"),
+          { maximum: 100 },
+        );
         return;
       }
       const participantOutcome = verification.outcomes[participantUid];
@@ -727,8 +913,19 @@ async function recordVerifiedMatch(uid, data) {
         participantActivity,
         now,
       );
+      const unlockResult = unlockAchievements(
+        profileSnapshots[index].data(),
+        eligibleAchievementIds({
+          battleStats: progress.achievementStats,
+          scope: "battle",
+        }),
+        now,
+      );
       progressResults[participantUid] = progress;
+      profileResults[participantUid] = unlockResult.profile;
+      newlyUnlockedResults[participantUid] = unlockResult.newlyUnlocked;
       transaction.set(progressRefs[index], progress);
+      transaction.set(profileRefs[index], unlockResult.profile);
       transaction.create(claimRefs[index], {
         uid: participantUid,
         mode,
@@ -736,19 +933,30 @@ async function recordVerifiedMatch(uid, data) {
         outcome: participantOutcome,
         participants,
         activity: participantActivity,
+        achievementIds: unlockResult.newlyUnlocked,
         finalizedBy: uid,
         createdAt: now,
       });
     });
   });
-  await bestEffort("recordVerifiedMatch", participants.map((participantUid) => (
-    mirrorEconomyProgress(participantUid, progressResults[participantUid])
-  )));
+  await bestEffort("recordVerifiedMatch", participants.flatMap((participantUid) => [
+    mirrorEconomyProgress(participantUid, progressResults[participantUid]),
+    ...(newlyUnlockedResults[participantUid]?.length
+      ? [syncAchievementPublicSurfaces(participantUid, profileResults[participantUid])]
+      : []),
+  ]));
   const progressResult = progressResults[uid];
+  const marketSnapshot = await marketStatsRef(uid).get();
   return {
     outcome: transactionOutcome,
     daily: progressResult.daily,
     periodRewards: progressResult.periodRewards,
+    newlyUnlocked: newlyUnlockedResults[uid] || [],
+    achievements: publicAchievementProfile(
+      profileResults[uid],
+      progressResult.achievementStats,
+      marketSnapshot.data(),
+    ),
   };
 }
 
@@ -761,6 +969,12 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
+    if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true });
+    if (action === "ack_achievements") return await acknowledgeAchievements(uid, request.data?.achievementIds);
+    if (action === "set_achievement_showcase") return await setAchievementShowcase(uid, request.data?.achievementIds);
+    if (action === "sync_achievement_showcase") {
+      return { synced: true, achievements: await getAchievements(uid, { syncPublic: true }) };
+    }
     throw new HttpsError("invalid-argument", "未対応のポイント操作です。");
   } catch (error) {
     if (error instanceof HttpsError) throw error;
@@ -1172,6 +1386,12 @@ function defaultStats(uid, name) {
     spent: 0,
     highestPurchase: 0,
     extensionIncome: 0,
+    marketDays: 0,
+    lastMarketDateKey: "",
+    uniqueCounterparties: 0,
+    lastRankedRole: "",
+    marketRoleDay: { dateKey: "", seller: false, buyer: false },
+    publicAchievements: [],
     updatedAt: Date.now(),
   };
 }
@@ -1260,26 +1480,54 @@ async function performMarketAction(uid, data, appCheckVerified) {
   if (MARKET_APP_CHECK_MIGRATION && initialRoom.appCheckVerified === true && appCheckVerified !== true) {
     throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
   }
-  await Promise.all([ensureWallet(initialRoom.sellerUid), ensureWallet(initialRoom.buyerUid)]);
+  await Promise.all([
+    ensureWallet(initialRoom.sellerUid),
+    ensureWallet(initialRoom.buyerUid),
+    ensureAchievementState(initialRoom.sellerUid),
+    ensureAchievementState(initialRoom.buyerUid),
+  ]);
 
   const roomRef = marketRoomRef(roomId);
   const sellerWalletRef = walletRef(initialRoom.sellerUid);
   const buyerWalletRef = walletRef(initialRoom.buyerUid);
   const sellerStatsRef = marketStatsRef(initialRoom.sellerUid);
   const buyerStatsRef = marketStatsRef(initialRoom.buyerUid);
+  const sellerAchievementRef = achievementProfileRef(initialRoom.sellerUid);
+  const buyerAchievementRef = achievementProfileRef(initialRoom.buyerUid);
   const pairKey = eventId(`${[initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":")}:${jstDateKey()}`);
   const pairRef = firestore.collection("valueMarketRankedPairs").doc(pairKey);
+  const relationshipKey = eventId([initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":"));
+  const relationshipRef = firestore.collection("valueMarketAchievementPairs").doc(relationshipKey);
   const ledgerRef = firestore.collection("valueMarketLedger").doc(eventId(`${roomId}:${uid}:${actionId}`));
   let result = null;
+  const achievementResults = {};
+  const newlyUnlockedResults = {};
 
   await firestore.runTransaction(async (transaction) => {
-    const [roomSnapshot, sellerWalletSnapshot, buyerWalletSnapshot, sellerStatsSnapshot, buyerStatsSnapshot, pairSnapshot, ledgerSnapshot] = await Promise.all([
+    result = null;
+    Object.keys(achievementResults).forEach((key) => delete achievementResults[key]);
+    Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
+    const [
+      roomSnapshot,
+      sellerWalletSnapshot,
+      buyerWalletSnapshot,
+      sellerStatsSnapshot,
+      buyerStatsSnapshot,
+      sellerAchievementSnapshot,
+      buyerAchievementSnapshot,
+      pairSnapshot,
+      relationshipSnapshot,
+      ledgerSnapshot,
+    ] = await Promise.all([
       transaction.get(roomRef),
       transaction.get(sellerWalletRef),
       transaction.get(buyerWalletRef),
       transaction.get(sellerStatsRef),
       transaction.get(buyerStatsRef),
+      transaction.get(sellerAchievementRef),
+      transaction.get(buyerAchievementRef),
       transaction.get(pairRef),
+      transaction.get(relationshipRef),
       transaction.get(ledgerRef),
     ]);
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
@@ -1296,11 +1544,14 @@ async function performMarketAction(uid, data, appCheckVerified) {
         sellerBalance: sellerWallet.balance,
         buyerBalance: buyerWallet.balance,
         role,
+        newlyUnlocked: sanitizeAchievementIds(ledger.achievementIds, { maximum: 100 }),
       };
       return;
     }
     const sellerStats = sellerStatsSnapshot.exists ? { ...defaultStats(room.sellerUid, room.sellerName), ...sellerStatsSnapshot.data() } : defaultStats(room.sellerUid, room.sellerName);
     const buyerStats = buyerStatsSnapshot.exists ? { ...defaultStats(room.buyerUid, room.buyerName), ...buyerStatsSnapshot.data() } : defaultStats(room.buyerUid, room.buyerName);
+    const sellerAchievement = normalizeAchievementProfile(sellerAchievementSnapshot.data());
+    const buyerAchievement = normalizeAchievementProfile(buyerAchievementSnapshot.data());
     let transfer = null;
 
     if (action === "accept_pitch") {
@@ -1367,13 +1618,57 @@ async function performMarketAction(uid, data, appCheckVerified) {
         buyerStats.purchases = Number(buyerStats.purchases || 0) + 1;
         buyerStats.spent = Number(buyerStats.spent || 0) + amount;
         buyerStats.highestPurchase = Math.max(Number(buyerStats.highestPurchase || 0), amount);
+        const dateKey = jstDateKey();
+        const sellerPreviousRole = normalizeMarketStats(sellerStats).lastRankedRole;
+        const buyerPreviousRole = normalizeMarketStats(buyerStats).lastRankedRole;
+        Object.assign(sellerStats, addMarketTransaction(sellerStats, "seller", dateKey, {
+          newCounterparty: !relationshipSnapshot.exists,
+        }));
+        Object.assign(buyerStats, addMarketTransaction(buyerStats, "buyer", dateKey, {
+          newCounterparty: !relationshipSnapshot.exists,
+        }));
+        const dealSignals = {
+          firstTurn: Number(room.turn || 1) === 1,
+          extended: Number(room.turn || 1) > 1 || Number(room.extensionFeesPaid || 0) > 0,
+          thirdTurn: Number(room.turn || 1) >= MARKET_MAX_TURNS,
+        };
+        const sellerSignals = {
+          ...dealSignals,
+          bothRolesDay: sellerStats.marketRoleDay?.seller === true && sellerStats.marketRoleDay?.buyer === true,
+          roleSwitch: Boolean(sellerPreviousRole && sellerPreviousRole !== "seller"),
+        };
+        const buyerSignals = {
+          ...dealSignals,
+          bothRolesDay: buyerStats.marketRoleDay?.seller === true && buyerStats.marketRoleDay?.buyer === true,
+          roleSwitch: Boolean(buyerPreviousRole && buyerPreviousRole !== "buyer"),
+        };
+        const sellerUnlock = unlockAchievements(
+          sellerAchievement,
+          eligibleAchievementIds({ marketStats: sellerStats, signals: sellerSignals, scope: "market" }),
+        );
+        const buyerUnlock = unlockAchievements(
+          buyerAchievement,
+          eligibleAchievementIds({ marketStats: buyerStats, signals: buyerSignals, scope: "market" }),
+        );
+        achievementResults[room.sellerUid] = sellerUnlock.profile;
+        achievementResults[room.buyerUid] = buyerUnlock.profile;
+        newlyUnlockedResults[room.sellerUid] = sellerUnlock.newlyUnlocked;
+        newlyUnlockedResults[room.buyerUid] = buyerUnlock.newlyUnlocked;
+        sellerStats.publicAchievements = effectiveShowcase(sellerUnlock.profile);
+        buyerStats.publicAchievements = effectiveShowcase(buyerUnlock.profile);
         transaction.create(pairRef, {
           sellerUid: room.sellerUid,
           buyerUid: room.buyerUid,
-          dateKey: jstDateKey(),
+          dateKey,
           roomId,
           createdAt: Date.now(),
         });
+        if (!relationshipSnapshot.exists) {
+          transaction.create(relationshipRef, {
+            participants: [room.sellerUid, room.buyerUid].sort(),
+            createdAt: Date.now(),
+          });
+        }
       }
     } else if (action === "leave") {
       requireRoomActor(room, uid, "buyer");
@@ -1509,11 +1804,20 @@ async function performMarketAction(uid, data, appCheckVerified) {
     transaction.set(buyerWalletRef, { ...buyerWallet, updatedAt: Date.now() }, { merge: true });
     transaction.set(sellerStatsRef, sellerStats);
     transaction.set(buyerStatsRef, buyerStats);
+    if (achievementResults[room.sellerUid]) transaction.set(sellerAchievementRef, achievementResults[room.sellerUid]);
+    if (achievementResults[room.buyerUid]) transaction.set(buyerAchievementRef, achievementResults[room.buyerUid]);
     if (isTerminalMarketState(room.status)) {
       transaction.delete(marketActiveRef(room.sellerUid));
       transaction.delete(marketActiveRef(room.buyerUid));
     }
-    result = { status: room.status, room, sellerBalance: sellerWallet.balance, buyerBalance: buyerWallet.balance, role };
+    result = {
+      status: room.status,
+      room,
+      sellerBalance: sellerWallet.balance,
+      buyerBalance: buyerWallet.balance,
+      role,
+      newlyUnlocked: newlyUnlockedResults[uid] || [],
+    };
     transaction.create(ledgerRef, {
       roomId,
       actorUid: uid,
@@ -1523,6 +1827,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       sellerBalance: result.sellerBalance,
       buyerBalance: result.buyerBalance,
       rankingCounted: room.rankingCounted ?? null,
+      achievementIds: result.newlyUnlocked,
       transfer,
       turn: Number(room.turn || 1),
       createdAt: Date.now(),
@@ -1532,6 +1837,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
   await bestEffort("performMarketAction", [
     mirrorWallet(initialRoom.sellerUid, result.sellerBalance),
     mirrorWallet(initialRoom.buyerUid, result.buyerBalance),
+    ...Object.entries(achievementResults).map(([participantUid, profile]) => (
+      syncAchievementPublicSurfaces(participantUid, profile)
+    )),
   ]);
   await retryRealtimeWrite(() => mirrorMarketRoom(result.room, {
     seenRoles: isTerminalMarketState(result.status) ? [] : [result.role],
@@ -1541,6 +1849,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
     roomId,
     balance: uid === initialRoom.sellerUid ? result.sellerBalance : result.buyerBalance,
     rankingCounted: result.room.rankingCounted ?? null,
+    newlyUnlocked: result.newlyUnlocked || [],
   };
 }
 
@@ -1618,6 +1927,8 @@ exports.valueMarketRankings = onCall(callableOptions("valueMarketRankings"), asy
   const action = cleanText(request.data?.action, 32, "list") || "list";
   if (action === "save_public_profile") return saveMarketPublicProfile(uid, request.data);
   if (action !== "list") throw new HttpsError("invalid-argument", "未対応のランキング操作です。");
+  const achievementState = await ensureAchievementState(uid);
+  await syncAchievementPublicSurfaces(uid, achievementState.profile);
 
   const [sellerSnapshot, buyerSnapshot, viewerSnapshot] = await Promise.all([
     firestore.collection("valueMarketStats").orderBy("grossSales", "desc").limit(20).get(),

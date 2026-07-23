@@ -193,6 +193,9 @@
                   ".validate": false
                 }
               },
+              "achievementShowcase": {
+                ".validate": "!newData.exists() || (data.exists() && newData.isString() && newData.val() === data.val())"
+              },
               "commentsEnabled": {
                 ".validate": "newData.isBoolean() && newData.val() === root.child('online/leaderboard/' + $entryId + '/commentsEnabled').val()"
               },

@@ -109,6 +109,8 @@ function createState() {
     rankingProfileName: "",
     rankingProfileOpen: false,
     rankingProfileBusy: false,
+    achievementNotificationRooms: new Set(),
+    notifiedAchievementIds: new Set(),
   };
 }
 
@@ -188,6 +190,28 @@ function sanitizeMarketPublicProfile(value) {
 
 function showToast(message) {
   shared()?.showToast?.(message);
+}
+
+function notifyMarketAchievementUnlocks(idsValue) {
+  const ids = (window.HariaiAchievements?.normalizeIds?.(idsValue) || [])
+    .filter((id) => !state.notifiedAchievementIds.has(id));
+  if (!ids.length) return;
+  ids.forEach((id) => state.notifiedAchievementIds.add(id));
+  window.dispatchEvent(new CustomEvent("hariai-achievements-unlocked", { detail: { ids } }));
+  economyActionCallable({ action: "ack_achievements", achievementIds: ids }).catch(() => {
+    ids.forEach((id) => state.notifiedAchievementIds.delete(id));
+  });
+}
+
+async function refreshMarketAchievementNotifications(roomId) {
+  if (!roomId || state.achievementNotificationRooms.has(roomId)) return;
+  state.achievementNotificationRooms.add(roomId);
+  try {
+    const response = await economyActionCallable({ action: "get_achievements", syncPublic: true });
+    notifyMarketAchievementUnlocks(response.data?.pendingUnlocks);
+  } catch {
+    state.achievementNotificationRooms.delete(roomId);
+  }
 }
 
 function callableMessage(error, fallback) {
@@ -418,7 +442,8 @@ function renderRankings() {
     const profile = sanitizeMarketPublicProfile(entry.publicProfile);
     const xLink = renderMarketXLink(profile);
     const tagline = profile.tagline ? `<p class="market-ranking-tagline">「${escapeHtml(profile.tagline)}」</p>` : "";
-    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${Number(entry.primary || 0).toLocaleString("ja-JP")} PT</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${role === "seller" ? `成立${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT` : `購入${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT`}</small></div></li>`;
+    const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
+    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${Number(entry.primary || 0).toLocaleString("ja-JP")} PT</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${role === "seller" ? `成立${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT` : `購入${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT`}</small>${achievementBadges}</div></li>`;
   };
   const list = (entries, role) => entries.length
     ? entries.map((entry, index) => row(entry, index, role)).join("")
@@ -811,6 +836,7 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
       stopRoomHeartbeat();
       clearRoomSyncRetry();
     }
+    if (state.room.status === "sold") refreshMarketAchievementNotifications(roomId);
     if (previousStatus !== state.room.status) window.HariaiAudio?.playPhase?.();
     if (!useMarketPreview && roomRole() === "seller" && !state.image?.blob
         && !TERMINAL_STATES.has(state.room.status)) {
@@ -1275,7 +1301,10 @@ async function performAction(action, extra = {}) {
     clearMarketActionIdentity(actionId);
     updateMarketBalance(response.data?.balance ?? state.balance);
     if (action === "accept_pitch") showToast(`${state.room?.entryFee || ENTRY_FEE}PTの着手料を一時預けました。`);
-    if (action === "buy") showToast("売買が成立しました。");
+    if (action === "buy") {
+      showToast("売買が成立しました。");
+      notifyMarketAchievementUnlocks(response.data?.newlyUnlocked);
+    }
     if (action === "offer_extension") showToast("内金を一時預け、買い手へ提示しました。");
     if (action === "accept_extension") showToast("内金を受け取り、次の営業ターンへ進みます。");
     return true;
@@ -1419,8 +1448,9 @@ async function openRankings() {
         best: 300,
         isViewer: true,
         publicProfile: { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" },
+        achievementShowcase: ["market_seller_3", "market_first_turn"],
       }],
-      buyers: [{ name: "BUYER TEST", primary: 960, count: 7, best: 250 }],
+      buyers: [{ name: "BUYER TEST", primary: 960, count: 7, best: 250, achievementShowcase: ["market_buyer_3"] }],
     };
     state.rankingProfile = { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" };
     state.rankingProfileEligible = true;

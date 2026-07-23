@@ -73,6 +73,7 @@ test("public market ranking rows expose no UID or document identifier", () => {
       xHandle: "market_player",
       tagline: "推しの価値を伝えます",
     },
+    publicAchievements: ["market_seller_10", "not_a_real_achievement"],
   }, "seller", true);
   assert.deepEqual(row, {
     name: "MARKET PLAYER",
@@ -83,6 +84,7 @@ test("public market ranking rows expose no UID or document identifier", () => {
       xHandle: "market_player",
       tagline: "推しの価値を伝えます",
     },
+    achievementShowcase: ["market_seller_10"],
     isViewer: true,
   });
   assert.equal(Object.hasOwn(row, "uid"), false);

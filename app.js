@@ -571,6 +571,7 @@
           <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>ポイントで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
+          <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
           <button class="button hero-audio-tool-button" id="audioStudioButton"><small>端末内だけで録音・変換</small><span>♪ 10秒音声をつくる</span></button>
@@ -618,6 +619,7 @@
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
+    document.querySelector("#achievementButton")?.addEventListener("click", () => openOnlineFeature("openAchievements"));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
     document.querySelector("#audioStudioButton")?.addEventListener("click", openAudioStudio);
@@ -857,10 +859,11 @@
       const monthlyBeyondRank = Number(window.HariaiOnline?.getMonthlyBeyondRank?.(entryId, overallRating) || 0);
       const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
       const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
+      const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
       return `<article class="ranking-entry ranking-class-${ratingClass.key} ${expanded ? "is-expanded" : ""}">
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
-          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small></div>
+          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${achievementBadges}</div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD PT</small></div>
           <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
           <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>

@@ -259,6 +259,18 @@ function createOnlineState() {
     economy: createEmptyEconomy(),
     economyReady: false,
     economyBusy: false,
+    achievements: window.HariaiAchievements?.normalizeProfile?.(null) || {
+      unlocked: {},
+      pendingUnlocks: [],
+      customShowcase: [],
+      showcase: [],
+      unlockedCount: 0,
+      totalCount: 0,
+      stats: {},
+    },
+    achievementsReady: false,
+    achievementsBusy: false,
+    notifiedAchievementIds: new Set(),
     periodRewardReminderShown: false,
     titleCategoryFilter: "all",
     expandedTitleCategories: new Set(["preference"]),
@@ -716,11 +728,42 @@ function renderChatCosmeticBubble(text, message = {}) {
 
 function openOnlineScreen(screen) {
   if (useOfflineMarketPreview) {
+    if (screen === "achievements") {
+      active = true;
+      state = createOnlineState();
+      state.screen = "achievements";
+      state.authReady = true;
+      state.economyReady = true;
+      state.achievementsReady = true;
+      const previewUnlocked = Object.fromEntries([
+        "battle_total_100",
+        "battle_solo_100",
+        "battle_strategy_5",
+        "battle_team_1",
+        "battle_royale_1",
+        "battle_variety_all_1",
+        "battle_losses_30",
+        "battle_loss_streak_5",
+        "battle_days_3",
+        "market_seller_3",
+        "market_buyer_1",
+        "market_both_1",
+        "market_first_turn",
+      ].map((id, index) => [id, Date.now() - (index * 60_000)]));
+      state.achievements = window.HariaiAchievements?.normalizeProfile?.({
+        unlocked: previewUnlocked,
+        customShowcase: [],
+        showcase: ["market_first_turn", "market_both_1", "battle_days_3"],
+      }) || state.achievements;
+      setOnlineChrome("ACHIEVEMENTS PREVIEW");
+      render();
+      return;
+    }
     showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
     return;
   }
   if (active) {
-    if (["setup", "missions", "shop"].includes(state.screen)) {
+    if (["setup", "missions", "shop", "achievements"].includes(state.screen)) {
       state.screen = screen;
       render();
     }
@@ -753,6 +796,10 @@ function openDailyMissions() {
 
 function openPointShop() {
   openOnlineScreen("shop");
+}
+
+function openAchievements() {
+  openOnlineScreen("achievements");
 }
 
 function isActive() {
@@ -1193,6 +1240,9 @@ async function ensureAuthenticated() {
   }
   setOnlineChrome("ONLINE READY");
   render();
+  if (state.screen === "achievements") {
+    loadAchievements({ syncPublic: true }).catch(() => showToast("実績情報を更新できませんでした。"));
+  }
   if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
 }
 
@@ -1202,7 +1252,64 @@ async function initializeEconomy() {
   const snapshot = await get(ref(database, `online/economy/${state.uid}`));
   state.economy = normalizeEconomyRecord(snapshot.val(), dateKey);
   state.economy.points = Math.min(MAX_POINTS, Math.max(0, Number(response.data?.balance || 0)));
+  applyAchievementPayload(response.data?.achievements, { notifyPending: true });
   state.economyReady = true;
+}
+
+function notifyAchievementUnlocks(idsValue) {
+  const ids = (window.HariaiAchievements?.normalizeIds?.(idsValue) || [])
+    .filter((id) => !state.notifiedAchievementIds.has(id));
+  if (!ids.length) return;
+  ids.forEach((id) => state.notifiedAchievementIds.add(id));
+  window.dispatchEvent(new CustomEvent("hariai-achievements-unlocked", { detail: { ids } }));
+  economyActionCallable({ action: "ack_achievements", achievementIds: ids }).catch(() => {
+    ids.forEach((id) => state.notifiedAchievementIds.delete(id));
+  });
+}
+
+function applyAchievementPayload(value, { notifyPending = false } = {}) {
+  if (!value || typeof value !== "object") return;
+  const profile = window.HariaiAchievements?.normalizeProfile?.(value) || value;
+  state.achievements = profile;
+  state.achievementsReady = true;
+  if (notifyPending) notifyAchievementUnlocks(profile.pendingUnlocks);
+}
+
+async function loadAchievements({ syncPublic = true, renderAfter = true } = {}) {
+  if (!state.uid || state.achievementsBusy) return state.achievements;
+  state.achievementsBusy = true;
+  if (renderAfter && state.screen === "achievements") render();
+  try {
+    const response = await economyActionCallable({
+      action: "get_achievements",
+      syncPublic,
+    });
+    applyAchievementPayload(response.data, { notifyPending: true });
+    return state.achievements;
+  } finally {
+    state.achievementsBusy = false;
+    if (renderAfter && state.screen === "achievements") render();
+  }
+}
+
+async function saveAchievementShowcase(idsValue) {
+  if (!state.uid || state.achievementsBusy) return;
+  state.achievementsBusy = true;
+  render();
+  try {
+    const response = await economyActionCallable({
+      action: "set_achievement_showcase",
+      achievementIds: idsValue,
+    });
+    if (response.data?.saved !== true) throw new Error("実績ショーケースの保存を確認できませんでした。");
+    applyAchievementPayload(response.data?.achievements);
+    showToast("ランキングの実績ショーケースを更新しました。");
+  } catch (error) {
+    showToast(error?.message || "実績ショーケースを更新できませんでした。");
+  } finally {
+    state.achievementsBusy = false;
+    render();
+  }
 }
 
 function normalizeOwnTopMessage(value) {
@@ -1327,6 +1434,7 @@ function render() {
     setup: renderSetup,
     missions: renderDailyMissions,
     shop: renderPointShop,
+    achievements: renderAchievements,
     matching: renderMatching,
     connecting: renderConnecting,
     select: renderRoundSelect,
@@ -1517,6 +1625,25 @@ function renderDailyMissions() {
     <div class="economy-actions"><button class="button button-primary" id="missionsShopButton">ポイントショップへ</button>
       <button class="button button-ghost" id="missionsBattleButton">オンライン対戦へ</button></div>
     <p class="economy-note">ポイントと進捗は匿名アカウントに保存されます。サイトデータを削除すると引き継げません。</p>
+  </section>`;
+}
+
+function renderAchievements() {
+  const content = state.achievementsReady
+    ? window.HariaiAchievements?.renderCollection?.(state.achievements)
+    : `<div class="economy-unavailable"><strong>実績情報を読み込んでいます…</strong><p>匿名アカウントの検証済み記録を確認しています。</p></div>`;
+  return `<section class="screen achievement-screen">
+    <div class="section-head"><div><span class="eyebrow">ACHIEVEMENT COLLECTION</span><h1>実績コレクション</h1>
+      <p>勝利・連勝・RATEではなく、遊んだ回数、モード回遊、敗北、市場での成立取引を記録します。</p></div>
+      <button class="button button-ghost button-small" id="achievementHomeButton">タイトルへ</button></div>
+    <div class="achievement-policy">
+      <span>条件は解除まで非公開</span><span>ポイント報酬なし</span><span>ランキング展示は最大3件</span>
+    </div>
+    ${state.achievementsBusy ? `<div class="achievement-loading">実績情報を更新しています…</div>` : ""}
+    ${content || `<div class="economy-unavailable"><strong>実績表示を準備できませんでした</strong><p>ページを読み直してお試しください。</p></div>`}
+    <div class="economy-actions"><button class="button button-ghost" id="achievementRefreshButton" ${state.achievementsBusy ? "disabled" : ""}>実績を再読み込み</button>
+      <button class="button button-primary" id="achievementBattleButton">オンライン対戦へ</button></div>
+    <p class="economy-note">対戦実績はFunctionsが参加人数・完走・双方の結果を確認した試合だけ、市場実績は同じ相手との1日最初の成立取引だけを数えます。</p>
   </section>`;
 }
 
@@ -1907,6 +2034,7 @@ function bindScreenEvents() {
 
   if (state.screen === "setup") bindSetupEvents();
   if (state.screen === "missions" || state.screen === "shop") bindEconomyEvents();
+  if (state.screen === "achievements") bindAchievementEvents();
   if (state.screen === "matching") {
     document.querySelector("#expandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
     document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
@@ -1975,6 +2103,34 @@ function bindEconomyEvents() {
     } catch (error) {
       showToast(error?.message || "トップメッセージを非公開にできませんでした。");
     }
+  });
+}
+
+function bindAchievementEvents() {
+  document.querySelector("#achievementHomeButton")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#achievementBattleButton")?.addEventListener("click", () => {
+    state.screen = "setup";
+    render();
+  });
+  document.querySelector("#achievementRefreshButton")?.addEventListener("click", () => {
+    loadAchievements({ syncPublic: true }).catch(() => showToast("実績情報を再読み込みできませんでした。"));
+  });
+  document.querySelector("[data-achievement-showcase-auto]")?.addEventListener("click", () => {
+    saveAchievementShowcase([]);
+  });
+  document.querySelectorAll("[data-achievement-showcase]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = String(button.dataset.achievementShowcase || "");
+      const profile = window.HariaiAchievements?.normalizeProfile?.(state.achievements) || state.achievements;
+      const selected = [...(profile.customShowcase.length ? profile.customShowcase : profile.showcase)];
+      const index = selected.indexOf(id);
+      if (index >= 0) selected.splice(index, 1);
+      else if (selected.length >= 3) {
+        showToast("ランキングへ展示できる実績は最大3件です。");
+        return;
+      } else selected.push(id);
+      saveAchievementShowcase(selected);
+    });
   });
 }
 
@@ -2297,7 +2453,9 @@ async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = 
         daily: result.daily,
         periodRewards: result.periodRewards,
       }, jstDateKey(timestamp));
+      applyAchievementPayload(result.achievements);
     }
+    notifyAchievementUnlocks(result.newlyUnlocked);
     return result;
   }
   throw new Error("参加者全員の試合結果を確認できませんでした。");
@@ -2439,6 +2597,8 @@ function periodLeaderboardRecord(current, outcome = null, mode = "solo", profile
     record.modeMatches[mode] += 1;
   }
   record.points = (record.wins * 3) + record.draws;
+  const achievementShowcase = window.HariaiAchievements?.normalizeIds?.(current?.achievementShowcase, 3) || [];
+  if (achievementShowcase.length) record.achievementShowcase = achievementShowcase.join(",");
   if (settings.xPublic && X_HANDLE_PATTERN.test(settings.xHandle)) record.xHandle = settings.xHandle;
   return record;
 }
@@ -2479,6 +2639,8 @@ async function publishOverallLeaderboard(uid, profile, name, settings, event = n
   await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord(profile, name, settings));
   if (event) await recordLeaderboardPeriodResult(event.outcome, event.mode, uid, profile, name, settings);
   else await syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name, settings);
+  const achievementResponse = await economyActionCallable({ action: "sync_achievement_showcase" });
+  if (state.uid === uid) applyAchievementPayload(achievementResponse.data?.achievements, { notifyPending: true });
 }
 
 async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
@@ -2493,6 +2655,8 @@ async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
   const entryId = await ensureLeaderboardIdentity();
   await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord(profile, state.name, settings));
   if (syncPeriodMetadata) await syncCurrentPeriodLeaderboardMetadata(entryId, state.uid, profile, state.name, settings);
+  const achievementResponse = await economyActionCallable({ action: "sync_achievement_showcase" });
+  applyAchievementPayload(achievementResponse.data?.achievements, { notifyPending: true });
 }
 
 async function recordOverallResult({ mode, outcome, name, opponentRating = INITIAL_RATING, soloSeed = null, roomId = "" } = {}) {
@@ -3643,7 +3807,7 @@ function triggerCriticalFx(text) {
 }
 
 function requestHome() {
-  if (["setup", "missions", "shop", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
+  if (["setup", "missions", "shop", "achievements", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
     leaveToLanding();
   } else {
     destroyDialog.showModal();
@@ -3816,6 +3980,7 @@ window.HariaiOnline = {
   start,
   openDailyMissions,
   openPointShop,
+  openAchievements,
   isActive,
   requestHome,
   destroyRoom,
