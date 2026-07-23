@@ -29,6 +29,16 @@
           ".validate": "!newData.exists() || newData.isString()"
         }
       },
+      "publicMarketPresence": {
+        ".read": true,
+        ".write": false,
+        "queues": {
+          ".indexOn": ["lastSeen"]
+        },
+        "rooms": {
+          ".indexOn": ["updatedAt"]
+        }
+      },
       "topMessages": {
         ".read": true,
         ".indexOn": ["updatedAt"],
@@ -513,6 +523,10 @@
           "turn": {
             ".write": false,
             ".validate": "newData.isNumber() && (newData.val() === 1 || newData.val() === 2 || newData.val() === 3)"
+          },
+          "stateVersion": {
+            ".write": false,
+            ".validate": "newData.isNumber() && newData.val() >= 1"
           },
           "createdAt": {
             ".write": false

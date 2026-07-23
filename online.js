@@ -29,6 +29,9 @@ import {
   useOfflineMarketPreview,
 } from "./firebase-services.js?v=app-check-v2";
 import {
+  summarizeMarketPresence,
+} from "./market-presence.mjs?v=market-presence-v1";
+import {
   CHAT_BACKGROUND_PRODUCTS,
   CHAT_COSMETIC_PRODUCTS,
   CHAT_SPECIAL_FRAME_PRODUCTS,
@@ -176,9 +179,13 @@ const fxLayer = document.querySelector("#fxLayer");
 let active = false;
 let state = createOnlineState();
 let matchmakingGenerationCounter = 0;
-let lobbyPresenceEntries = {};
+let lobbyPresenceEntries = null;
+let marketPresenceEntries = null;
 const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
-const createLobbyStats = (value = null) => Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }]));
+const createLobbyStats = (value = null) => ({
+  ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
+  market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
+});
 let lobbyStats = createLobbyStats();
 let leaderboardEntries = [];
 let leaderboardStatus = "idle";
@@ -753,7 +760,10 @@ function isActive() {
 }
 
 function getLobbyStats() {
-  return Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }]));
+  return {
+    ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
+    market: { ...lobbyStats.market },
+  };
 }
 
 function getLeaderboard() {
@@ -981,16 +991,26 @@ async function deleteLeaderboardComment(targetEntryId, authorEntryId) {
 }
 
 function refreshLobbyStats() {
-  const freshAfter = Date.now() - PUBLIC_PRESENCE_FRESH_MS;
-  const entries = Object.values(lobbyPresenceEntries).filter((entry) => (
+  const now = Date.now() + Number(publicServerTimeOffset || 0);
+  const freshAfter = now - PUBLIC_PRESENCE_FRESH_MS;
+  const entries = Object.values(lobbyPresenceEntries || {}).filter((entry) => (
     Number(entry?.lastSeen) >= freshAfter
     && LOBBY_MODES.includes(entry?.mode)
     && (entry?.state === "waiting" || entry?.state === "playing")
   ));
-  lobbyStats = createLobbyStats(0);
+  lobbyStats = createLobbyStats();
+  LOBBY_MODES.forEach((mode) => {
+    lobbyStats[mode] = {
+      waiting: lobbyPresenceEntries === null ? null : 0,
+      playing: lobbyPresenceEntries === null ? null : 0,
+    };
+  });
   entries.forEach((entry) => {
     lobbyStats[entry.mode][entry.state] += 1;
   });
+  if (marketPresenceEntries !== null) {
+    lobbyStats.market = summarizeMarketPresence(marketPresenceEntries, now);
+  }
   renderLobbyStats();
 }
 
@@ -1004,6 +1024,9 @@ function renderLobbyStats() {
     lobbyTeamPlayingCount: lobbyStats.team.playing,
     lobbyRoyaleWaitingCount: lobbyStats.royale.waiting,
     lobbyRoyalePlayingCount: lobbyStats.royale.playing,
+    lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
+    lobbyMarketBuyerWaitingCount: lobbyStats.market.buyerWaiting,
+    lobbyMarketNegotiatingCount: lobbyStats.market.negotiating,
   };
   Object.entries(values).forEach(([id, value]) => {
     const element = document.querySelector(`#${id}`);
@@ -1016,9 +1039,23 @@ function watchLobbyStats() {
     lobbyPresenceEntries = snapshot.val() || {};
     refreshLobbyStats();
   }, () => {
-    lobbyPresenceEntries = {};
-    lobbyStats = createLobbyStats();
-    renderLobbyStats();
+    lobbyPresenceEntries = null;
+    refreshLobbyStats();
+  });
+  onValue(ref(database, "online/publicMarketPresence"), (snapshot) => {
+    marketPresenceEntries = snapshot.val() || {};
+    refreshLobbyStats();
+  }, () => {
+    marketPresenceEntries = null;
+    refreshLobbyStats();
+  });
+  onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    const offset = Number(snapshot.val());
+    if (Number.isFinite(offset)) publicServerTimeOffset = offset;
+    refreshLobbyStats();
+  }, () => {
+    // A local clock fallback is sufficient when the offset cannot be read.
+    refreshLobbyStats();
   });
   window.setInterval(refreshLobbyStats, 10_000);
 }

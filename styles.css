@@ -991,6 +991,15 @@ button:disabled {
   background: linear-gradient(145deg, rgba(176, 95, 255, 0.08), rgba(255, 255, 255, 0.025));
 }
 
+.lobby-mode-card.market {
+  grid-column: 1 / -1;
+  min-height: 116px;
+  border-color: rgba(255, 105, 151, 0.34);
+  background:
+    radial-gradient(circle at 92% 10%, rgba(102, 233, 223, 0.1), transparent 38%),
+    linear-gradient(145deg, rgba(255, 79, 114, 0.1), rgba(255, 211, 109, 0.035) 56%, rgba(255, 255, 255, 0.022));
+}
+
 .lobby-mode-head {
   display: flex;
   align-items: baseline;
@@ -1016,6 +1025,10 @@ button:disabled {
   font-size: 0.62rem;
 }
 
+.lobby-mode-card.market .lobby-mode-head span {
+  color: #ff8da6;
+}
+
 .lobby-mode-head small {
   color: #727b90;
   font-size: 0.52rem;
@@ -1029,6 +1042,10 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 11px;
+}
+
+.lobby-mode-counts.market-counts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .lobby-mode-counts > div + div {

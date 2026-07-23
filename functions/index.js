@@ -10,6 +10,11 @@ const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
 } = require("./app-check-rollout");
+const {
+  isIncomingMarketRoomStateOlder,
+  nextPublicMarketRoomHeartbeat,
+  nextPublicMarketRoomState,
+} = require("./market-presence-state");
 const PRODUCT_CATALOG = require("./product-catalog");
 
 initializeApp({
@@ -26,6 +31,7 @@ const MARKET_MIN_PRICE = 10;
 const MARKET_MAX_PRICE = 500;
 const MARKET_EXTENSION_FEES = new Set([5, 10, 20]);
 const QUEUE_FRESH_MS = 60_000;
+const MARKET_PUBLIC_PRESENCE_PATH = "online/publicMarketPresence";
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
   memory: "256MiB",
@@ -767,6 +773,101 @@ function marketStatsRef(uid) {
   return firestore.collection("valueMarketStats").doc(uid);
 }
 
+function createMarketPublicPresenceId() {
+  return crypto.randomBytes(20).toString("hex");
+}
+
+function marketPublicPresenceId(value) {
+  const presenceId = String(value || "");
+  return /^[a-f0-9]{40}$/.test(presenceId) ? presenceId : "";
+}
+
+function marketPublicQueueRef(presenceId) {
+  const normalizedId = marketPublicPresenceId(presenceId);
+  if (!normalizedId) throw new Error("Invalid market queue presence id.");
+  return realtime.ref(`${MARKET_PUBLIC_PRESENCE_PATH}/queues/${normalizedId}`);
+}
+
+function marketPublicRoomRef(room) {
+  const normalizedId = marketPublicPresenceId(room?.publicPresenceId);
+  if (!normalizedId) throw new Error("Invalid market room presence id.");
+  return realtime.ref(`${MARKET_PUBLIC_PRESENCE_PATH}/rooms/${normalizedId}`);
+}
+
+async function removeMarketQueuePublicPresence(presenceId) {
+  const normalizedId = marketPublicPresenceId(presenceId);
+  if (!normalizedId) return;
+  await marketPublicQueueRef(normalizedId).remove();
+}
+
+async function syncMarketQueuePublicPresence(uid) {
+  const [queueSnapshot, activeSnapshot] = await Promise.all([
+    marketQueueRef(uid).get(),
+    marketActiveRef(uid).get(),
+  ]);
+  const entry = queueSnapshot.data();
+  const presenceId = marketPublicPresenceId(entry?.publicPresenceId);
+  if (activeSnapshot.exists || !queueSnapshot.exists || entry?.status !== "waiting"
+      || !["seller", "buyer"].includes(entry?.role)
+      || Number(entry?.lastSeen || 0) < Date.now() - QUEUE_FRESH_MS
+      || !presenceId) {
+    await removeMarketQueuePublicPresence(presenceId);
+    return;
+  }
+  await marketPublicQueueRef(presenceId).set({
+    role: entry.role,
+    lastSeen: Number(entry.lastSeen),
+  });
+}
+
+async function cleanupStaleMarketPublicPresence(now = Date.now()) {
+  const freshAfter = now - QUEUE_FRESH_MS;
+  const [queuesSnapshot, roomsSnapshot] = await Promise.all([
+    realtime.ref(`${MARKET_PUBLIC_PRESENCE_PATH}/queues`)
+      .orderByChild("lastSeen")
+      .endAt(freshAfter - 1)
+      .limitToFirst(25)
+      .get(),
+    realtime.ref(`${MARKET_PUBLIC_PRESENCE_PATH}/rooms`)
+      .orderByChild("updatedAt")
+      .endAt(freshAfter - 1)
+      .limitToFirst(25)
+      .get(),
+  ]);
+  const removals = [];
+  queuesSnapshot.forEach((entry) => {
+    removals.push(realtime.ref(`${MARKET_PUBLIC_PRESENCE_PATH}/queues/${entry.key}`).transaction((current) => (
+      Number(current?.lastSeen || 0) < freshAfter ? null : undefined
+    )));
+  });
+  roomsSnapshot.forEach((entry) => {
+    removals.push(realtime.ref(`${MARKET_PUBLIC_PRESENCE_PATH}/rooms/${entry.key}`).transaction((current) => (
+      Number(current?.updatedAt || 0) < freshAfter ? null : undefined
+    )));
+  });
+  await Promise.all(removals);
+}
+
+async function loadMarketRoomWithPublicPresenceId(roomId) {
+  const roomRef = marketRoomRef(roomId);
+  const snapshot = await roomRef.get();
+  if (!snapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
+  const room = snapshot.data();
+  if (marketPublicPresenceId(room?.publicPresenceId) && Number(room?.stateVersion || 0) > 0) return room;
+  const generatedId = createMarketPublicPresenceId();
+  return firestore.runTransaction(async (transaction) => {
+    const currentSnapshot = await transaction.get(roomRef);
+    if (!currentSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
+    const currentRoom = currentSnapshot.data();
+    const publicPresenceId = marketPublicPresenceId(currentRoom?.publicPresenceId) || generatedId;
+    const stateVersion = Math.max(1, Math.floor(Number(currentRoom?.stateVersion || 0)));
+    if (!marketPublicPresenceId(currentRoom?.publicPresenceId) || Number(currentRoom?.stateVersion || 0) < 1) {
+      transaction.update(roomRef, { publicPresenceId, stateVersion });
+    }
+    return { ...currentRoom, publicPresenceId, stateVersion };
+  });
+}
+
 function normalizeQueueEntry(uid, data, balance, appCheckVerified) {
   const role = data?.role === "seller" ? "seller" : data?.role === "buyer" ? "buyer" : "";
   if (!role) throw new HttpsError("invalid-argument", "売り手または買い手を選択してください。");
@@ -777,6 +878,7 @@ function normalizeQueueEntry(uid, data, balance, appCheckVerified) {
     status: "waiting",
     joinedAt: Date.now(),
     lastSeen: Date.now(),
+    publicPresenceId: createMarketPublicPresenceId(),
     appCheckVerified: appCheckVerified === true,
   };
   if (role === "seller") {
@@ -803,25 +905,64 @@ function queuesCompatible(first, second) {
   return Number(seller.listing?.askingPrice || 0) <= Number(buyer.maxBudget || 0);
 }
 
-async function mirrorMarketRoom(room) {
-  const roomId = room.roomId;
-  await realtime.ref(`online/valueMarketRooms/${roomId}`).update({
-    members: { [room.sellerUid]: true, [room.buyerUid]: true },
-    roles: { [room.sellerUid]: "seller", [room.buyerUid]: "buyer" },
-    names: { [room.sellerUid]: cleanName(room.sellerName), [room.buyerUid]: cleanName(room.buyerName) },
-    status: room.status,
-    turn: Number(room.turn || 1),
-    createdAt: room.createdAt,
-    updatedAt: room.updatedAt,
+async function touchMarketRoomPublicPresence(room, role) {
+  if (!["seller", "buyer"].includes(role) || isTerminalMarketState(room.status)) return;
+  const presenceId = marketPublicPresenceId(room.publicPresenceId);
+  if (!presenceId) return;
+  const now = Date.now();
+  await marketPublicRoomRef(room).transaction((current) => {
+    return nextPublicMarketRoomHeartbeat(current, room, role, now);
   });
+}
+
+async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
+  const now = Date.now();
+  const incomingVersion = Number(room.stateVersion || 0);
+  const incomingUpdatedAt = Number(room.updatedAt || now);
+  const privateRef = realtime.ref(`online/valueMarketRooms/${room.roomId}`);
+  const publicRef = marketPublicPresenceId(room.publicPresenceId) ? marketPublicRoomRef(room) : null;
+  await Promise.all([
+    privateRef.transaction((current) => {
+      if (isIncomingMarketRoomStateOlder(current, room)) return undefined;
+      return {
+        ...(current || {}),
+        members: { [room.sellerUid]: true, [room.buyerUid]: true },
+        roles: { [room.sellerUid]: "seller", [room.buyerUid]: "buyer" },
+        names: { [room.sellerUid]: cleanName(room.sellerName), [room.buyerUid]: cleanName(room.buyerName) },
+        status: room.status,
+        turn: Number(room.turn || 1),
+        stateVersion: incomingVersion,
+        createdAt: Number(room.createdAt || now),
+        updatedAt: incomingUpdatedAt,
+      };
+    }),
+    publicRef?.transaction((current) => nextPublicMarketRoomState(current, room, {
+      now,
+      terminal: isTerminalMarketState(room.status),
+    })),
+  ].filter(Boolean));
+  if (!isTerminalMarketState(room.status)) {
+    await Promise.all(seenRoles
+      .filter((role) => role === "seller" || role === "buyer")
+      .map((role) => touchMarketRoomPublicPresence(room, role)));
+  }
 }
 
 async function joinMarketQueue(uid, data, appCheckVerified) {
   if (MARKET_APP_CHECK_MIGRATION && appCheckVerified !== true) {
     throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
   }
-  const balance = await ensureWallet(uid);
+  const [balance, previousQueueSnapshot] = await Promise.all([
+    ensureWallet(uid),
+    marketQueueRef(uid).get(),
+  ]);
   const ownEntry = normalizeQueueEntry(uid, data, balance, appCheckVerified);
+  const previousQueue = previousQueueSnapshot.data();
+  if (previousQueueSnapshot.exists && previousQueue?.status === "waiting"
+      && Number(previousQueue.lastSeen || 0) >= Date.now() - QUEUE_FRESH_MS
+      && marketPublicPresenceId(previousQueue.publicPresenceId)) {
+    ownEntry.publicPresenceId = previousQueue.publicPresenceId;
+  }
   const oppositeRole = ownEntry.role === "seller" ? "buyer" : "seller";
   const staleQueues = await firestore.collection("valueMarketQueues")
     .where("lastSeen", "<", Date.now() - QUEUE_FRESH_MS)
@@ -829,10 +970,21 @@ async function joinMarketQueue(uid, data, appCheckVerified) {
     .get()
     .catch(() => null);
   if (staleQueues?.size) {
-    const batch = firestore.batch();
-    staleQueues.docs.forEach((snapshot) => batch.delete(snapshot.ref));
-    await batch.commit().catch((error) => console.error("stale market queue cleanup failed", error));
+    const removedPresenceIds = await Promise.all(staleQueues.docs.map((staleSnapshot) => (
+      firestore.runTransaction(async (transaction) => {
+        const currentSnapshot = await transaction.get(staleSnapshot.ref);
+        const current = currentSnapshot.data();
+        if (!currentSnapshot.exists || Number(current?.lastSeen || 0) >= Date.now() - QUEUE_FRESH_MS) return "";
+        transaction.delete(staleSnapshot.ref);
+        return marketPublicPresenceId(current?.publicPresenceId);
+      }).catch((error) => {
+        console.error("stale market queue cleanup failed", { uid: staleSnapshot.id, error });
+        return "";
+      })
+    )));
+    await bestEffort("staleMarketQueues", removedPresenceIds.map(removeMarketQueuePublicPresence));
   }
+  await bestEffort("staleMarketPublicPresence", [cleanupStaleMarketPublicPresence()]);
   const candidatesSnapshot = await firestore.collection("valueMarketQueues")
     .where("role", "==", oppositeRole)
     .where("lastSeen", ">=", Date.now() - QUEUE_FRESH_MS)
@@ -892,11 +1044,13 @@ async function joinMarketQueue(uid, data, appCheckVerified) {
       buyerMaxBudget: buyer.maxBudget,
       status: "preview",
       turn: 1,
+      stateVersion: 1,
       maxTurns: MARKET_MAX_TURNS,
       entryFee: MARKET_ENTRY_FEE,
       entryFeePaid: false,
       extensionFeesPaid: 0,
       appCheckVerified: seller.appCheckVerified === true && buyer.appCheckVerified === true,
+      publicPresenceId: createMarketPublicPresenceId(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -915,16 +1069,37 @@ async function joinMarketQueue(uid, data, appCheckVerified) {
     });
     transaction.delete(ownQueue);
     transaction.delete(candidateQueue);
-    outcome = { status: "matched", balance, roomId, room };
+    outcome = {
+      status: "matched",
+      balance,
+      roomId,
+      room,
+      queuePresenceIds: [seller.publicPresenceId, buyer.publicPresenceId],
+    };
   });
-  if (outcome.room) await bestEffort("joinMarketQueue", [mirrorMarketRoom(outcome.room)]);
+  if (outcome.room) {
+    await bestEffort("joinMarketQueue", [
+      mirrorMarketRoom(outcome.room),
+      ...outcome.queuePresenceIds.map(removeMarketQueuePublicPresence),
+    ]);
+  } else {
+    await bestEffort("joinMarketQueue", [syncMarketQueuePublicPresence(uid)]);
+  }
   return { status: outcome.status, balance: outcome.balance, roomId: outcome.roomId };
 }
 
 async function cancelMarketQueue(uid) {
-  const active = await marketActiveRef(uid).get();
-  if (active.exists) return { status: "matched", roomId: cleanText(active.get("roomId"), 80) };
+  const [active, queue] = await Promise.all([
+    marketActiveRef(uid).get(),
+    marketQueueRef(uid).get(),
+  ]);
+  const presenceId = marketPublicPresenceId(queue.data()?.publicPresenceId);
+  if (active.exists) {
+    await bestEffort("cancelMarketQueue", [removeMarketQueuePublicPresence(presenceId)]);
+    return { status: "matched", roomId: cleanText(active.get("roomId"), 80) };
+  }
   await marketQueueRef(uid).delete();
+  await bestEffort("cancelMarketQueue", [removeMarketQueuePublicPresence(presenceId)]);
   return { status: "canceled", roomId: "" };
 }
 
@@ -935,15 +1110,21 @@ async function heartbeatMarketQueue(uid) {
     const active = await marketActiveRef(uid).get();
     return { status: active.exists ? "matched" : "missing", roomId: active.exists ? cleanText(active.get("roomId"), 80) : "" };
   }
-  await ref.update({ lastSeen: Date.now() });
+  const publicPresenceId = marketPublicPresenceId(snapshot.get("publicPresenceId")) || createMarketPublicPresenceId();
+  await ref.update({ lastSeen: Date.now(), publicPresenceId });
+  await bestEffort("heartbeatMarketQueue", [syncMarketQueuePublicPresence(uid)]);
   return { status: "waiting", roomId: "" };
 }
 
-async function syncMarketRoom(uid, roomId) {
-  const snapshot = await marketRoomRef(roomId).get();
-  const room = snapshot.data();
-  if (!snapshot.exists || room?.participants?.[uid] !== true) throw new HttpsError("permission-denied", "この市場ルームには参加していません。");
-  await mirrorMarketRoom(room);
+async function syncMarketRoom(uid, roomId, { recoverPrivate = false } = {}) {
+  const room = await loadMarketRoomWithPublicPresenceId(roomId);
+  if (room?.participants?.[uid] !== true) throw new HttpsError("permission-denied", "この市場ルームには参加していません。");
+  const role = uid === room.sellerUid ? "seller" : uid === room.buyerUid ? "buyer" : "";
+  if (recoverPrivate || isTerminalMarketState(room.status)) {
+    await mirrorMarketRoom(room, { seenRoles: isTerminalMarketState(room.status) ? [] : [role] });
+  } else {
+    await touchMarketRoomPublicPresence(room, role);
+  }
   return { status: room.status, roomId };
 }
 
@@ -951,13 +1132,14 @@ exports.valueMarketQueue = onCall(callableOptions("valueMarketQueue"), async (re
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 24);
   try {
-    if (MARKET_APP_CHECK_MIGRATION && ["join", "heartbeat"].includes(action) && !request.app) {
+    if (MARKET_APP_CHECK_MIGRATION && ["join", "heartbeat", "heartbeat_room"].includes(action) && !request.app) {
       throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
     }
     if (action === "join") return await joinMarketQueue(uid, request.data, Boolean(request.app));
     if (action === "cancel") return await cancelMarketQueue(uid);
     if (action === "heartbeat") return await heartbeatMarketQueue(uid);
-    if (action === "sync_room") return await syncMarketRoom(uid, cleanText(request.data?.roomId, 80));
+    if (action === "sync_room") return await syncMarketRoom(uid, cleanText(request.data?.roomId, 80), { recoverPrivate: true });
+    if (action === "heartbeat_room") return await syncMarketRoom(uid, cleanText(request.data?.roomId, 80));
     throw new HttpsError("invalid-argument", "未対応の市場待機操作です。");
   } catch (error) {
     if (error instanceof HttpsError) throw error;
@@ -1061,9 +1243,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const roomId = cleanText(data?.roomId, 80);
   const action = cleanText(data?.action, 32);
   const actionId = cleanText(data?.actionId, 80) || `${action}:${integer(data?.turn, 1, MARKET_MAX_TURNS, 1)}`;
-  const initialRoomSnapshot = await marketRoomRef(roomId).get();
-  if (!initialRoomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
-  const initialRoom = initialRoomSnapshot.data();
+  const initialRoom = await loadMarketRoomWithPublicPresenceId(roomId);
   requireRoomActor(initialRoom, uid);
   if (MARKET_APP_CHECK_MIGRATION && initialRoom.appCheckVerified === true && appCheckVerified !== true) {
     throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
@@ -1306,6 +1486,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       throw new HttpsError("invalid-argument", "未対応の市場操作です。");
     }
 
+    room.stateVersion = Math.max(0, Math.floor(Number(room.stateVersion || 0))) + 1;
     room.updatedAt = Date.now();
     sellerStats.name = cleanName(room.sellerName);
     sellerStats.updatedAt = Date.now();
@@ -1340,10 +1521,8 @@ async function performMarketAction(uid, data, appCheckVerified) {
     mirrorWallet(initialRoom.sellerUid, result.sellerBalance),
     mirrorWallet(initialRoom.buyerUid, result.buyerBalance),
   ]);
-  await retryRealtimeWrite(() => realtime.ref(`online/valueMarketRooms/${roomId}`).update({
-    status: result.status,
-    turn: Number(result.room.turn || 1),
-    updatedAt: Date.now(),
+  await retryRealtimeWrite(() => mirrorMarketRoom(result.room, {
+    seenRoles: isTerminalMarketState(result.status) ? [] : [result.role],
   }));
   return {
     status: result.status,

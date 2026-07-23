@@ -71,6 +71,12 @@ function createState() {
     queueJoinPending: false,
     errorMessage: "",
     queueHeartbeat: null,
+    roomHeartbeat: null,
+    roomHeartbeatPending: false,
+    roomSyncRetry: null,
+    roomSyncPending: false,
+    roomSyncWarningShown: false,
+    roomSyncRetryAttempts: 0,
     activeUnsubscribe: null,
     walletUnsubscribe: null,
     roomUnsubscribe: null,
@@ -558,11 +564,104 @@ function startQueueHeartbeat() {
     try {
       const response = await marketQueueCallable({ action: "heartbeat" });
       if (!isCurrentLifecycle(generation)) return;
-      if (response.data?.roomId) await enterRoom(String(response.data.roomId), generation);
+      if (response.data?.roomId) {
+        await enterRoom(String(response.data.roomId), generation);
+        return;
+      }
+      if (response.data?.status === "missing") {
+        window.clearInterval(state.queueHeartbeat);
+        state.queueHeartbeat = null;
+        state.screen = "setup";
+        showToast("待機情報の有効期限が切れました。もう一度参加してください。");
+        render();
+      }
     } catch {
       // The next heartbeat or active-room listener retries.
     }
   }, 20_000);
+}
+
+function stopRoomHeartbeat() {
+  window.clearInterval(state.roomHeartbeat);
+  state.roomHeartbeat = null;
+  state.roomHeartbeatPending = false;
+}
+
+function startRoomHeartbeat(roomId, generation = lifecycleGeneration) {
+  stopRoomHeartbeat();
+  state.roomHeartbeat = window.setInterval(async () => {
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId
+        || TERMINAL_STATES.has(state.room?.status) || state.roomHeartbeatPending) return;
+    state.roomHeartbeatPending = true;
+    try {
+      const response = await marketQueueCallable({ action: "heartbeat_room", roomId });
+      if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+      if (TERMINAL_STATES.has(String(response.data?.status || ""))) stopRoomHeartbeat();
+    } catch {
+      // Firestoreのルーム監視と次の同期で再試行する。
+    } finally {
+      if (isCurrentLifecycle(generation) && state.roomId === roomId && state.roomHeartbeat) {
+        state.roomHeartbeatPending = false;
+      }
+    }
+  }, 20_000);
+}
+
+function clearRoomSyncRetry({ resetWarning = false } = {}) {
+  window.clearTimeout(state.roomSyncRetry);
+  state.roomSyncRetry = null;
+  if (resetWarning) {
+    state.roomSyncWarningShown = false;
+    state.roomSyncRetryAttempts = 0;
+  }
+}
+
+function scheduleRoomSyncRetry(roomId, generation) {
+  clearRoomSyncRetry();
+  const delay = Math.min(20_000, 3_000 * (2 ** Math.min(state.roomSyncRetryAttempts, 3)));
+  state.roomSyncRetryAttempts += 1;
+  state.roomSyncRetry = window.setTimeout(() => {
+    state.roomSyncRetry = null;
+    connectMarketRoomServices(roomId, generation);
+  }, delay);
+}
+
+async function connectMarketRoomServices(roomId, generation = lifecycleGeneration) {
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.roomSyncPending) return;
+  state.roomSyncPending = true;
+  let shouldRetry = false;
+  try {
+    const syncResponse = await marketQueueCallable({ action: "sync_room", roomId });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+    if (TERMINAL_STATES.has(String(syncResponse.data?.status || ""))) {
+      stopRoomHeartbeat();
+      clearRoomSyncRetry({ resetWarning: true });
+      return;
+    }
+    startRoomHeartbeat(roomId, generation);
+    await setupRealtimeRoom(generation, roomId);
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+    clearRoomSyncRetry({ resetWarning: true });
+    if (state.room && state.screen === "room") {
+      setupPeerConnection(generation, roomId).catch((error) => handleFatalError(error, generation));
+    }
+  } catch (error) {
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+    shouldRetry = true;
+    state.peerStatus = "ルーム同期を再試行中…";
+    if (!state.roomSyncWarningShown) {
+      state.roomSyncWarningShown = true;
+      showToast(callableMessage(error, "市場ルームの同期を再試行しています。"));
+    }
+    render();
+  } finally {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.roomSyncPending = false;
+      if (shouldRetry && !TERMINAL_STATES.has(state.room?.status)) {
+        scheduleRoomSyncRetry(roomId, generation);
+      }
+    }
+  }
 }
 
 async function cancelQueue({ cancelMatchedRoom = false } = {}) {
@@ -612,40 +711,42 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
   state.enteringRoomId = roomId;
   window.clearInterval(state.queueHeartbeat);
   state.queueHeartbeat = null;
+  stopRoomHeartbeat();
   state.roomId = roomId;
   state.screen = "room";
   state.busy = false;
   setMarketChrome("VALUE DEAL");
   render();
-  try {
-    await marketQueueCallable({ action: "sync_room", roomId });
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
-    state.roomUnsubscribe?.();
-    state.roomUnsubscribe = onSnapshot(doc(firestore, "valueMarketRooms", roomId), (snapshot) => {
-      if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !snapshot.exists()) return;
-      const previousStatus = state.room?.status;
-      state.room = snapshot.data();
-      if (previousStatus !== state.room.status) window.HariaiAudio?.playPhase?.();
-      if (!useMarketPreview && roomRole() === "seller" && !state.image?.blob
-          && !TERMINAL_STATES.has(state.room.status)) {
-        state.errorMessage = "再読み込みで出品画像が端末メモリから消えたため、この取引は継続できません。「取引を終了して戻る」から安全に精算してください。";
-        state.screen = "error";
-        setMarketChrome("MARKET RECOVERY");
-        render();
-        return;
-      }
+  state.roomUnsubscribe?.();
+  state.roomUnsubscribe = onSnapshot(doc(firestore, "valueMarketRooms", roomId), (snapshot) => {
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !snapshot.exists()) return;
+    const previousStatus = state.room?.status;
+    state.room = snapshot.data();
+    if (TERMINAL_STATES.has(state.room.status)) {
+      stopRoomHeartbeat();
+      clearRoomSyncRetry();
+    }
+    if (previousStatus !== state.room.status) window.HariaiAudio?.playPhase?.();
+    if (!useMarketPreview && roomRole() === "seller" && !state.image?.blob
+        && !TERMINAL_STATES.has(state.room.status)) {
+      state.errorMessage = "再読み込みで出品画像が端末メモリから消えたため、この取引は継続できません。「取引を終了して戻る」から安全に精算してください。";
+      state.screen = "error";
+      setMarketChrome("MARKET RECOVERY");
       render();
+      return;
+    }
+    render();
+    if (state.realtimeRoomId === roomId) {
       setupPeerConnection(generation, roomId).catch((error) => handleFatalError(error, generation));
-    }, (error) => handleFatalError(error, generation));
-    await setupRealtimeRoom(generation, roomId);
-  } finally {
-    if (isCurrentLifecycle(generation) && state.enteringRoomId === roomId) state.enteringRoomId = "";
-  }
+    }
+  }, (error) => handleFatalError(error, generation));
+  await connectMarketRoomServices(roomId, generation);
+  if (isCurrentLifecycle(generation) && state.enteringRoomId === roomId) state.enteringRoomId = "";
 }
 
 function markPresenceOffline(connection) {
-  if (!connection?.reference || !connection?.disconnect) return;
-  set(connection.reference, { online: false, updatedAt: serverTimestamp() })
+  if (!connection?.reference || !connection?.disconnect) return Promise.resolve();
+  return set(connection.reference, { online: false, updatedAt: serverTimestamp() })
     .then(() => connection.disconnect.cancel?.())
     .catch(() => {
       // If the explicit update fails, keep onDisconnect armed as a fallback.
@@ -654,35 +755,49 @@ function markPresenceOffline(connection) {
 
 async function setupRealtimeRoom(generation = lifecycleGeneration, roomId = state.roomId) {
   if (!isCurrentLifecycle(generation) || !roomId || state.realtimeRoomId === roomId) return;
-  state.realtimeRoomId = roomId;
   const base = `online/valueMarketRooms/${roomId}`;
-  const chatQuery = query(ref(database, `${base}/chat`), limitToLast(60));
-  state.realtimeUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
-    if (state.seenChatIds.has(snapshot.key)) return;
-    state.seenChatIds.add(snapshot.key);
-    const message = { id: snapshot.key, ...snapshot.val() };
-    state.chatMessages.push(message);
-    if (message.uid === state.uid && roomRole() === "seller") {
-      state.pitchSentTurns.add(Number(message.turn || 1));
-    }
-    if (state.chatMessages.length > 60) state.chatMessages.shift();
-    render();
-  }));
   const presenceRef = ref(database, `${base}/presence/${state.uid}`);
   const disconnect = onDisconnect(presenceRef);
-  await disconnect.set({ online: false, updatedAt: serverTimestamp() });
   const connection = { reference: presenceRef, disconnect };
-  if (!isCurrentLifecycle(generation) || state.roomId !== roomId) {
-    markPresenceOffline(connection);
-    return;
+  let unsubscribeChat = null;
+  try {
+    await disconnect.set({ online: false, updatedAt: serverTimestamp() });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) {
+      await markPresenceOffline(connection);
+      return;
+    }
+    await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) {
+      await markPresenceOffline(connection);
+      return;
+    }
+    const chatQuery = query(ref(database, `${base}/chat`), limitToLast(60));
+    unsubscribeChat = onChildAdded(chatQuery, (snapshot) => {
+      if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+      if (state.seenChatIds.has(snapshot.key)) return;
+      state.seenChatIds.add(snapshot.key);
+      const message = { id: snapshot.key, ...snapshot.val() };
+      state.chatMessages.push(message);
+      if (message.uid === state.uid && roomRole() === "seller") {
+        state.pitchSentTurns.add(Number(message.turn || 1));
+      }
+      if (state.chatMessages.length > 60) state.chatMessages.shift();
+      render();
+    });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) {
+      unsubscribeChat();
+      await markPresenceOffline(connection);
+      return;
+    }
+    state.realtimeUnsubscribers.push(unsubscribeChat);
+    state.presenceConnections.push(connection);
+    state.realtimeRoomId = roomId;
+  } catch (error) {
+    unsubscribeChat?.();
+    await markPresenceOffline(connection);
+    if (state.realtimeRoomId === roomId) state.realtimeRoomId = "";
+    throw error;
   }
-  await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
-  if (!isCurrentLifecycle(generation) || state.roomId !== roomId) {
-    markPresenceOffline(connection);
-    return;
-  }
-  state.presenceConnections.push(connection);
 }
 
 async function setupPeerConnection(generation = lifecycleGeneration, roomId = state.roomId) {
@@ -1200,6 +1315,9 @@ function returnHome() {
 function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false } = {}) {
   window.clearInterval(state.queueHeartbeat);
   state.queueHeartbeat = null;
+  stopRoomHeartbeat();
+  clearRoomSyncRetry({ resetWarning: true });
+  state.roomSyncPending = false;
   state.roomUnsubscribe?.();
   state.roomUnsubscribe = null;
   state.realtimeUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());

@@ -550,6 +550,7 @@
     const strategyStats = modeStats("strategy");
     const teamStats = modeStats("team");
     const royaleStats = modeStats("royale");
+    const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
@@ -592,8 +593,13 @@
             <div><small>待機中</small><strong><span id="lobbyRoyaleWaitingCount">${statValue(royaleStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyRoyalePlayingCount">${statValue(royaleStats.playing)}</span><em>人</em></strong></div>
           </div></article>
+          <article class="lobby-mode-card market"><div class="lobby-mode-head"><span>推し値市場</span><small>VALUE MARKET</small></div><div class="lobby-mode-counts market-counts">
+            <div><small>売り手待機</small><strong><span id="lobbyMarketSellerWaitingCount">${statValue(marketStats.sellerWaiting)}</span><em>人</em></strong></div>
+            <div><small>買い手待機</small><strong><span id="lobbyMarketBuyerWaitingCount">${statValue(marketStats.buyerWaiting)}</span><em>人</em></strong></div>
+            <div><small>商談中</small><strong><span id="lobbyMarketNegotiatingCount">${statValue(marketStats.negotiating)}</span><em>件</em></strong></div>
+          </div></article>
         </div>
-        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。購入者のトップメッセージだけ表示名・称号とともに公開され、匿名UID・ルーム情報は表示しません。</p>
+        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。購入者のトップメッセージだけ表示名・称号とともに公開され、匿名UID・ルーム情報は表示しません。</p>
         <p class="mode-note">画像と戦略型・推し値市場の音声は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
