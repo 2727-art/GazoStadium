@@ -44,7 +44,7 @@
         ".indexOn": ["updatedAt"],
         "$entryId": {
           ".write": "auth != null && root.child('online/topMessageOwners/' + $entryId).val() === auth.uid && root.child('online/economy/' + auth.uid + '/inventory/feature_top_message').val() === true",
-          ".validate": "!newData.exists() || (newData.hasChildren(['name', 'titleId', 'text', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('titleId').isString() && (newData.child('titleId').val() === '' || newData.child('titleId').val() === root.child('online/economy/' + auth.uid + '/equipped/title').val()) && newData.child('text').isString() && newData.child('text').val().matches(/^[^\\r\\n]{1,30}$/) && newData.child('updatedAt').isNumber())",
+          ".validate": "!newData.exists() || (newData.hasChildren(['name', 'titleId', 'text', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('titleId').isString() && (newData.child('titleId').val() === '' || newData.child('titleId').val() === root.child('online/economy/' + auth.uid + '/equipped/title').val()) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 30 && !newData.child('text').val().contains('\\r') && !newData.child('text').val().contains('\\n') && newData.child('updatedAt').isNumber())",
           "name": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
           },
@@ -52,7 +52,7 @@
             ".validate": "newData.isString() && (newData.val() === '' || newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
           },
           "text": {
-            ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,30}$/)"
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
           },
           "updatedAt": {
             ".validate": "newData.isNumber()"
@@ -252,9 +252,9 @@
           ".indexOn": ["updatedAt"],
           "$authorEntryId": {
             ".write": "auth != null && ((root.child('online/leaderboardOwners/' + $targetEntryId).val() === auth.uid && !newData.exists()) || (root.child('online/leaderboardOwners/' + $authorEntryId).val() === auth.uid && $targetEntryId !== $authorEntryId && (!newData.exists() || (root.child('online/leaderboard/' + $targetEntryId).exists() && root.child('online/leaderboard/' + $targetEntryId + '/commentsEnabled').val() !== false))))",
-            ".validate": "!newData.exists() || (newData.hasChildren(['text', 'authorName', 'updatedAt']) && newData.child('text').isString() && newData.child('text').val().matches(/^[^\\r\\n]{1,80}$/) && newData.child('authorName').val() === root.child('online/leaderboard/' + $authorEntryId + '/name').val() && newData.child('updatedAt').isNumber())",
+            ".validate": "!newData.exists() || (newData.hasChildren(['text', 'authorName', 'updatedAt']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && !newData.child('text').val().contains('\\r') && !newData.child('text').val().contains('\\n') && newData.child('authorName').val() === root.child('online/leaderboard/' + $authorEntryId + '/name').val() && newData.child('updatedAt').isNumber())",
             "text": {
-              ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
             },
             "authorName": {
               ".validate": "newData.isString() && newData.val() === root.child('online/leaderboard/' + $authorEntryId + '/name').val()"
@@ -277,7 +277,7 @@
             ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
           },
           "pursuitLine": {
-            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
           },
           "ratingPreference": {
             ".validate": "newData.isString() && (newData.val() === 'illustration' || newData.val() === 'live_action' || newData.val() === 'both')"
@@ -318,7 +318,7 @@
             ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
           },
           "pursuitLine": {
-            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
           }
         }
       },
@@ -755,7 +755,7 @@
               ".validate": "newData.isString() && newData.val() === auth.uid"
             },
             "text": {
-              ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
             },
             "phase": {
               ".validate": "newData.val() === 'scout' || newData.val() === 'battle'"
@@ -808,7 +808,7 @@
           "players": {
             "$uid": {
               ".write": "auth != null && auth.uid === $uid && !data.exists() && (root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true)",
-              ".validate": "newData.hasChildren(['uid', 'name', 'clues', 'weaknessCommit', 'pursuitLine', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('clues').hasChildren(['0', '1', '2']) && newData.child('weaknessCommit').isString() && newData.child('weaknessCommit').val().matches(/^[a-f0-9]{64}$/) && newData.child('pursuitLine').isString() && newData.child('pursuitLine').val().matches(/^[^\\r\\n]{1,40}$/) && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
+              ".validate": "newData.hasChildren(['uid', 'name', 'clues', 'weaknessCommit', 'pursuitLine', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('clues').hasChildren(['0', '1', '2']) && newData.child('weaknessCommit').isString() && newData.child('weaknessCommit').val().matches(/^[a-f0-9]{64}$/) && newData.child('pursuitLine').isString() && newData.child('pursuitLine').val().length > 0 && newData.child('pursuitLine').val().length <= 40 && !newData.child('pursuitLine').val().contains('\\r') && !newData.child('pursuitLine').val().contains('\\n') && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0",
               "uid": {
                 ".validate": "newData.isString() && newData.val() === $uid"
               },
@@ -817,13 +817,13 @@
               },
               "clues": {
                 "0": {
-                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
                 },
                 "1": {
-                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
                 },
                 "2": {
-                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && newData.val().matches(/^[^\\r\\n]{1,80}$/)"
+                  ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
                 },
                 "$other": {
                   ".validate": false
@@ -833,7 +833,7 @@
                 ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
               },
               "pursuitLine": {
-                ".validate": "newData.isString() && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
               },
               "rating": {
                 ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
@@ -1496,7 +1496,7 @@
                 ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
               },
               "pursuitLine": {
-                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[^\\r\\n]{1,40}$/)"
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
               },
               "sampleCount": {
                 ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2 || newData.val() === 3 || newData.val() === 4 || newData.val() === 5)"
