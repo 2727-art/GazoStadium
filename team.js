@@ -49,6 +49,11 @@ import {
   renderStampBubble,
   startStampButtonCooldown,
 } from "./stamps.js?v=stamps-v1";
+import {
+  bindPostMatchTip,
+  isPostMatchTipBusy,
+  renderPostMatchTip,
+} from "./post-match-tip.js?v=post-match-tip-v2";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -557,6 +562,7 @@ function renderGameOver() {
     <div class="stats-row"><div class="stat-box"><strong>${state.teams[team].hp}</strong><span>残りHP</span></div><div class="stat-box"><strong>${state.teams[team].totalScore.toFixed(1)}</strong><span>累計得点</span></div><div class="stat-box"><strong>${state.teams[team].links}</strong><span>TEAM LINK</span></div><div class="stat-box"><strong>${state.teams[team].criticals}</strong><span>CRITICAL</span></div></div></article>`;
   return `<section class="screen gameover-wrap"><div class="gameover-card team-gameover"><div class="winner-emblem">${outcome.winnerTeam || "="}</div><span class="eyebrow">2ON2 MATCH COMPLETE</span><h1>${title}</h1><p>共有HP、累計得点、TEAM LINK、CRITICAL、PERFECTの順で判定しました。</p>
     <div class="team-final-grid">${teamCard("A")}${teamCard("B")}</div><div class="online-profile-strip"><span>あなたの2ON2戦績</span><span>${state.teamProfile.wins}勝 ${state.teamProfile.losses}敗 ${state.teamProfile.draws}分</span><span>RATE ${state.teamProfile.rating}</span></div>
+    ${renderPostMatchTip({ mode: "team", roomId: state.roomId, viewerUid: state.uid, recipients: state.members, balance: state.economy.points })}
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="teamNewMatch">もう一度2on2</button><button class="button button-ghost" id="teamGameoverHome">タイトルへ戻る</button></div></div></section>`;
 }
 
@@ -607,6 +613,14 @@ function bindEvents() {
   if (state.screen === "score") bindScoreEvents();
   if (state.screen === "result") document.querySelector("#continueTeamRound")?.addEventListener("click", continueRound);
   if (state.screen === "gameover") {
+    bindPostMatchTip(appRoot, {
+      mode: "team",
+      roomId: state.roomId,
+      viewerUid: state.uid,
+      recipients: state.members,
+      balance: state.economy.points,
+      onBalanceChange: (balance) => { state.economy.points = balance; },
+    });
     document.querySelector("#teamNewMatch")?.addEventListener("click", resetSetup);
     document.querySelector("#teamGameoverHome")?.addEventListener("click", leaveToLanding);
   }
@@ -1800,6 +1814,10 @@ function triggerCriticalFx(text) {
 }
 
 function requestHome() {
+  if (isPostMatchTipBusy("team", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   if (["setup", "matching", "gameover", "noContest", "error"].includes(state.screen)) leaveToLanding();
   else destroyDialog.showModal();
 }
@@ -1843,6 +1861,10 @@ async function cancelMatching() {
 }
 
 async function resetSetup() {
+  if (isPostMatchTipBusy("team", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   const identity = {
     uid: state.uid,
     name: state.name,
@@ -1874,6 +1896,10 @@ async function retryConnection() {
 }
 
 async function leaveToLanding() {
+  if (isPostMatchTipBusy("team", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   await cleanupRoomResources(false);
   releaseAllImages();
   active = false;

@@ -365,6 +365,34 @@
             ".write": false,
             ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999"
           },
+          "patron": {
+            ".write": false,
+            ".validate": "!newData.exists() || newData.hasChildren(['seasonKey', 'seasonSpent', 'tier', 'tierId', 'tierLabel', 'lifetimeSpent', 'updatedAt'])",
+            "seasonKey": {
+              ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}$/)"
+            },
+            "seasonSpent": {
+              ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 300 || newData.val() === 1500 || newData.val() === 5000)"
+            },
+            "tier": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+            },
+            "tierId": {
+              ".validate": "newData.isString() && (newData.val() === 'guest' || newData.val() === 'supporter' || newData.val() === 'patron' || newData.val() === 'grand_patron')"
+            },
+            "tierLabel": {
+              ".validate": "newData.isString() && (newData.val() === 'MARKET GUEST' || newData.val() === 'SUPPORTER' || newData.val() === 'PATRON' || newData.val() === 'GRAND PATRON')"
+            },
+            "lifetimeSpent": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999999"
+            },
+            "updatedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
           "inventory": {
             ".write": false,
             "$productId": {

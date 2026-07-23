@@ -4,8 +4,9 @@ const crypto = require("node:crypto");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
@@ -39,6 +40,29 @@ const {
   sanitizeAchievementIds,
   unlockAchievements,
 } = require("./achievements");
+const {
+  PATRON_TIERS,
+  normalizePatronage,
+  patronUpgrade,
+  publicPatronage,
+} = require("./patronage");
+const {
+  TRANSFER_CODE_TTL_MS,
+  TRANSFER_CREATE_COOLDOWN_MS,
+  createTransferCode,
+  formatTransferCode,
+  hashTransferCode,
+  nextAttemptState,
+  normalizeAttemptState,
+  normalizeTransferCode,
+  transferCodeDecision,
+} = require("./account-transfer");
+const {
+  MARKET_SUCCESS_FEE_BASIS_POINTS,
+  POST_MATCH_TIP_AMOUNTS,
+  marketSaleSettlement,
+  postMatchTipAmount,
+} = require("./market-economy");
 const PRODUCT_CATALOG = require("./product-catalog");
 
 initializeApp({
@@ -48,6 +72,7 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
+const adminAuth = getAuth();
 const MAX_POINTS = 999_999;
 const MARKET_ENTRY_FEE = 5;
 const MARKET_MAX_TURNS = 3;
@@ -66,10 +91,12 @@ function callableOptions(functionName) {
   if (!Object.hasOwn(APP_CHECK_ENFORCEMENT, functionName)) {
     throw new Error(`Missing App Check policy for callable: ${functionName}`);
   }
-  return {
+  const options = {
     ...CALLABLE_BASE_OPTIONS,
     enforceAppCheck: APP_CHECK_ENFORCEMENT[functionName],
   };
+  if (functionName === "accountTransfer") options.consumeAppCheckToken = true;
+  return options;
 }
 const DAILY_MISSIONS = Object.freeze({
   complete_match: { progressKey: "matches", target: 1, reward: 100, endsAfter: "2026-07-23" },
@@ -144,10 +171,45 @@ function walletRef(uid) {
 function economyProgressRef(uid) {
   return firestore.collection("economyProgress").doc(uid);
 }
+
 function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
 }
 
+function patronageRef(uid) {
+  return firestore.collection("valueMarketPatrons").doc(uid);
+}
+
+function patronageLedgerRef(uid, actionId) {
+  return firestore.collection("valueMarketPatronLedger").doc(eventId(`${uid}:${actionId}`));
+}
+
+function verifiedMatchClaimRef(uid, mode, roomId) {
+  return firestore.collection("verifiedMatchClaims").doc(eventId(`${uid}:${mode}:${roomId}`));
+}
+
+function postMatchTipRef(uid, mode, roomId) {
+  return firestore.collection("postMatchTips").doc(eventId(`${uid}:${mode}:${roomId}`));
+}
+
+function marketCertificateRef(uid, roomId) {
+  return firestore.collection("valueMarketCertificates")
+    .doc(uid)
+    .collection("items")
+    .doc(eventId(`${uid}:${roomId}`));
+}
+
+function transferCodeRef(codeHash) {
+  return firestore.collection("accountTransferCodes").doc(codeHash);
+}
+
+function transferSourceRef(uid) {
+  return firestore.collection("accountTransferSources").doc(uid);
+}
+
+function transferAttemptRef(uid) {
+  return firestore.collection("accountTransferAttempts").doc(uid);
+}
 
 function emptyDaily(dateKey = jstDateKey()) {
   return {
@@ -489,15 +551,149 @@ async function autoEquipProduct(uid, product) {
   });
 }
 
+async function readPatronage(uid, seasonKey = periodKey("monthly")) {
+  const snapshot = await patronageRef(uid).get();
+  return normalizePatronage(snapshot.data(), seasonKey);
+}
+
+async function mirrorPatronage(uid, patronageValue) {
+  const seasonKey = periodKey("monthly");
+  const patronage = normalizePatronage(patronageValue, seasonKey);
+  await realtime.ref(`online/economy/${uid}/patron`).set({
+    ...publicPatronage(patronage, seasonKey),
+    lifetimeSpent: patronage.lifetimeSpent,
+    updatedAt: Number(patronage.updatedAt || Date.now()),
+  });
+}
+
+function hasGoogleIdentity(request) {
+  const identities = request.auth?.token?.firebase?.identities;
+  return Array.isArray(identities?.["google.com"]) && identities["google.com"].length > 0;
+}
+
+async function hasLiveGoogleIdentity(uid) {
+  const userRecord = await adminAuth.getUser(uid);
+  return !userRecord.disabled
+    && userRecord.providerData.some((provider) => provider.providerId === "google.com");
+}
+
+async function upgradePatronage(uid, request, data) {
+  if (!hasGoogleIdentity(request) || !await hasLiveGoogleIdentity(uid)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "高額ポイントを使う前に、Googleでゲームデータを保護してください。",
+    );
+  }
+  const targetTier = Number(data?.targetTier);
+  const actionId = cleanText(data?.actionId, 80);
+  if (!Number.isSafeInteger(targetTier)
+      || targetTier < 1
+      || targetTier > PATRON_TIERS.at(-1).level
+      || !/^[A-Za-z0-9_-]{16,80}$/.test(actionId)) {
+    throw new HttpsError("invalid-argument", "パトロン昇格操作が正しくありません。");
+  }
+  if (await accountHasActiveSession(uid)) {
+    throw new HttpsError("failed-precondition", "対戦・待機・市場取引を終了してからパトロンへ昇格してください。");
+  }
+
+  await ensureWallet(uid);
+  const now = Date.now();
+  const seasonKey = periodKey("monthly", now);
+  const wallet = walletRef(uid);
+  const patronRef = patronageRef(uid);
+  const ledgerRef = patronageLedgerRef(uid, actionId);
+  let result = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [walletSnapshot, patronSnapshot, ledgerSnapshot] = await Promise.all([
+      transaction.get(wallet),
+      transaction.get(patronRef),
+      transaction.get(ledgerRef),
+    ]);
+    const current = normalizePatronage(patronSnapshot.data(), seasonKey);
+    const before = safeBalance(walletSnapshot.get("balance"));
+    if (ledgerSnapshot.exists) {
+      const saved = ledgerSnapshot.data();
+      if (saved.uid !== uid
+          || saved.actionId !== actionId
+          || saved.seasonKey !== seasonKey
+          || Number(saved.targetTier) !== targetTier) {
+        throw new HttpsError("permission-denied", "パトロン操作IDの内容が一致しません。");
+      }
+      result = {
+        outcome: "upgraded",
+        balance: before,
+        debited: integer(saved.debited, 0, MAX_POINTS, 0),
+        patron: current,
+        repeated: true,
+      };
+      return;
+    }
+
+    const upgrade = patronUpgrade(current, targetTier, seasonKey);
+    if (upgrade.outcome === "owned") {
+      result = { outcome: "owned", balance: before, debited: 0, patron: current };
+      return;
+    }
+    if (upgrade.outcome !== "upgrade" || upgrade.cost <= 0) {
+      throw new HttpsError("invalid-argument", "パトロンランクを確認できませんでした。");
+    }
+    if (before < upgrade.cost) {
+      result = {
+        outcome: "short",
+        balance: before,
+        required: upgrade.cost,
+        debited: 0,
+        patron: current,
+      };
+      return;
+    }
+
+    const after = before - upgrade.cost;
+    const patron = normalizePatronage({
+      seasonKey,
+      seasonSpent: upgrade.target.threshold,
+      lifetimeSpent: current.lifetimeSpent + upgrade.cost,
+      updatedAt: now,
+    }, seasonKey);
+    transaction.update(wallet, { balance: after, updatedAt: now });
+    transaction.set(patronRef, patron);
+    transaction.create(ledgerRef, {
+      uid,
+      actionId,
+      seasonKey,
+      targetTier: upgrade.target.level,
+      debited: upgrade.cost,
+      balance: after,
+      patron,
+      createdAt: now,
+    });
+    result = {
+      outcome: "upgraded",
+      balance: after,
+      debited: upgrade.cost,
+      patron,
+      repeated: false,
+    };
+  });
+
+  await bestEffort("upgradePatronage", [
+    mirrorWallet(uid, result.balance),
+    mirrorPatronage(uid, result.patron),
+  ]);
+  return result;
+}
+
 async function initializeEconomy(uid) {
-  const [balance, achievementState] = await Promise.all([
+  const [balance, achievementState, patron] = await Promise.all([
     ensureWallet(uid),
     ensureAchievementState(uid),
+    readPatronage(uid),
   ]);
   const { progress, profile, marketStats } = achievementState;
   await Promise.all([
     mirrorWallet(uid, balance),
     mirrorEconomyProgress(uid, progress),
+    mirrorPatronage(uid, patron),
   ]);
   return {
     outcome: "ready",
@@ -505,6 +701,15 @@ async function initializeEconomy(uid) {
     daily: progress.daily,
     periodRewards: progress.periodRewards,
     achievements: publicAchievementProfile(profile, progress.achievementStats, marketStats),
+    patron: {
+      ...publicPatronage(patron, periodKey("monthly")),
+      lifetimeSpent: patron.lifetimeSpent,
+    },
+    marketPolicy: {
+      successFeeBasisPoints: MARKET_SUCCESS_FEE_BASIS_POINTS,
+      minimumSuccessFee: 1,
+      postMatchTipAmounts: [...POST_MATCH_TIP_AMOUNTS],
+    },
   };
 }
 
@@ -874,7 +1079,7 @@ async function recordVerifiedMatch(uid, data) {
   const progressRefs = participants.map((participantUid) => economyProgressRef(participantUid));
   const profileRefs = participants.map((participantUid) => achievementProfileRef(participantUid));
   const claimRefs = participants.map((participantUid) => (
-    firestore.collection("verifiedMatchClaims").doc(eventId(`${participantUid}:${mode}:${roomId}`))
+    verifiedMatchClaimRef(participantUid, mode, roomId)
   ));
   let transactionOutcome = "recorded";
   const progressResults = {};
@@ -960,6 +1165,165 @@ async function recordVerifiedMatch(uid, data) {
   };
 }
 
+function validatePostMatchTipRequest(uid, data) {
+  const mode = cleanText(data?.mode, 16);
+  const roomId = cleanText(data?.roomId, 80);
+  const targetUid = cleanText(data?.targetUid, 128);
+  const amount = postMatchTipAmount(data?.amount);
+  if (!VERIFIED_MATCH_MODES[mode] || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)
+      || !targetUid || targetUid === uid || !amount) {
+    throw new HttpsError("invalid-argument", "差し入れの対戦・相手・ポイントを確認してください。");
+  }
+  return {
+    mode,
+    roomId,
+    targetUid,
+    amount,
+    actionId: cleanText(data?.actionId, 80),
+  };
+}
+
+async function loadVerifiedTipMatch(uid, requestData) {
+  const request = validatePostMatchTipRequest(uid, requestData);
+  const config = VERIFIED_MATCH_MODES[request.mode];
+  const now = Date.now();
+  const roomSnapshot = await realtime.ref(`online/${config.roomRoot}/${request.roomId}`).get();
+  const room = roomSnapshot.val();
+  const createdAt = Number(room?.createdAt || 0);
+  if (!roomSnapshot.exists() || room?.status !== "active" || room?.members?.[uid] !== true
+      || !Number.isFinite(createdAt) || createdAt > now - 30_000 || createdAt < now - (12 * 60 * 60 * 1000)) {
+    throw new HttpsError("failed-precondition", "差し入れ可能な完走済み対戦を確認できませんでした。");
+  }
+  const participants = matchParticipants(request.mode, room, config);
+  if (!participants.includes(request.targetUid)) {
+    throw new HttpsError("permission-denied", "この対戦の参加者以外には差し入れできません。");
+  }
+  const verification = validatedOutcomes(request.mode, room, participants);
+  if (verification.pending) {
+    throw new HttpsError("failed-precondition", "参加者全員の対戦結果が確定していません。");
+  }
+  return { ...request, room, participants };
+}
+
+async function getPostMatchTip(uid, data) {
+  const mode = cleanText(data?.mode, 16);
+  const roomId = cleanText(data?.roomId, 80);
+  if (!VERIFIED_MATCH_MODES[mode] || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+    throw new HttpsError("invalid-argument", "差し入れ履歴の対戦情報を確認してください。");
+  }
+  const [snapshot, claimSnapshot] = await Promise.all([
+    postMatchTipRef(uid, mode, roomId).get(),
+    verifiedMatchClaimRef(uid, mode, roomId).get(),
+  ]);
+  const eligible = claimSnapshot.exists
+    && claimSnapshot.get("uid") === uid
+    && claimSnapshot.get("mode") === mode
+    && claimSnapshot.get("roomId") === roomId
+    && Array.isArray(claimSnapshot.get("participants"))
+    && claimSnapshot.get("participants").includes(uid)
+    && claimSnapshot.get("participants").length >= 2;
+  if (!snapshot.exists || snapshot.get("senderUid") !== uid) return { sent: false, eligible };
+  return {
+    sent: true,
+    eligible,
+    amount: postMatchTipAmount(snapshot.get("amount")),
+    recipientName: cleanName(snapshot.get("recipientName")),
+    createdAt: Number(snapshot.get("createdAt") || 0),
+  };
+}
+
+async function sendPostMatchTip(uid, data) {
+  const verified = await loadVerifiedTipMatch(uid, data);
+  await Promise.all([
+    ensureWallet(uid),
+    ensureWallet(verified.targetUid),
+  ]);
+  const senderWalletRef = walletRef(uid);
+  const recipientWalletRef = walletRef(verified.targetUid);
+  const senderClaimRef = verifiedMatchClaimRef(uid, verified.mode, verified.roomId);
+  const recipientClaimRef = verifiedMatchClaimRef(verified.targetUid, verified.mode, verified.roomId);
+  const tipRef = postMatchTipRef(uid, verified.mode, verified.roomId);
+  const senderName = cleanName(verified.room.players?.[uid]?.name);
+  const recipientName = cleanName(verified.room.players?.[verified.targetUid]?.name);
+  let result = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    result = null;
+    const [
+      senderWalletSnapshot,
+      recipientWalletSnapshot,
+      senderClaimSnapshot,
+      recipientClaimSnapshot,
+      tipSnapshot,
+    ] = await Promise.all([
+      transaction.get(senderWalletRef),
+      transaction.get(recipientWalletRef),
+      transaction.get(senderClaimRef),
+      transaction.get(recipientClaimRef),
+      transaction.get(tipRef),
+    ]);
+    const senderWallet = walletData(senderWalletSnapshot);
+    const recipientWallet = walletData(recipientWalletSnapshot);
+    if (!senderClaimSnapshot.exists || !recipientClaimSnapshot.exists
+        || senderClaimSnapshot.get("uid") !== uid
+        || recipientClaimSnapshot.get("uid") !== verified.targetUid
+        || senderClaimSnapshot.get("mode") !== verified.mode
+        || recipientClaimSnapshot.get("mode") !== verified.mode
+        || senderClaimSnapshot.get("roomId") !== verified.roomId
+        || recipientClaimSnapshot.get("roomId") !== verified.roomId) {
+      throw new HttpsError("failed-precondition", "検証済みの対戦記録が確定していません。");
+    }
+    if (tipSnapshot.exists) {
+      if (tipSnapshot.get("senderUid") !== uid) {
+        throw new HttpsError("permission-denied", "差し入れ履歴の所有者が一致しません。");
+      }
+      result = {
+        outcome: "duplicate",
+        balance: senderWallet.balance,
+        recipientBalance: recipientWallet.balance,
+        amount: postMatchTipAmount(tipSnapshot.get("amount")),
+        recipientName: cleanName(tipSnapshot.get("recipientName")),
+      };
+      return;
+    }
+
+    const amount = transferPoints(senderWallet, recipientWallet, verified.amount);
+    const now = Date.now();
+    transaction.set(senderWalletRef, { ...senderWallet, updatedAt: now }, { merge: true });
+    transaction.set(recipientWalletRef, { ...recipientWallet, updatedAt: now }, { merge: true });
+    transaction.create(tipRef, {
+      schemaVersion: 1,
+      senderUid: uid,
+      recipientUid: verified.targetUid,
+      senderName,
+      recipientName,
+      mode: verified.mode,
+      roomId: verified.roomId,
+      amount,
+      actionId: verified.actionId,
+      createdAt: now,
+    });
+    result = {
+      outcome: "sent",
+      balance: senderWallet.balance,
+      recipientBalance: recipientWallet.balance,
+      amount,
+      recipientName,
+    };
+  });
+
+  await bestEffort("sendPostMatchTip", [
+    mirrorWallet(uid, result.balance),
+    mirrorWallet(verified.targetUid, result.recipientBalance),
+  ]);
+  return {
+    outcome: result.outcome,
+    balance: result.balance,
+    amount: result.amount,
+    recipientName: result.recipientName,
+  };
+}
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -968,7 +1332,10 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "claim_daily") return await claimDaily(uid, cleanText(request.data?.missionId, 40));
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
+    if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
+    if (action === "get_match_tip") return await getPostMatchTip(uid, request.data);
+    if (action === "send_match_tip") return await sendPostMatchTip(uid, request.data);
     if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true });
     if (action === "ack_achievements") return await acknowledgeAchievements(uid, request.data?.achievementIds);
     if (action === "set_achievement_showcase") return await setAchievementShowcase(uid, request.data?.achievementIds);
@@ -980,6 +1347,404 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (error instanceof HttpsError) throw error;
     console.error("economyAction failed", { uid, action, error });
     throw new HttpsError("internal", "ポイント処理を完了できませんでした。");
+  }
+});
+
+async function marketSessionIsFresh(uid, activeSnapshot, now = Date.now()) {
+  if (!activeSnapshot.exists) return false;
+  const roomId = cleanText(activeSnapshot.get("roomId"), 80);
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(roomId)) return false;
+  const roomSnapshot = await marketRoomRef(roomId).get();
+  if (!roomSnapshot.exists) return false;
+  const room = roomSnapshot.data();
+  if (room?.participants?.[uid] !== true || isTerminalMarketState(room.status)) return false;
+  if (Number(activeSnapshot.get("updatedAt") || 0) >= now - QUEUE_FRESH_MS) return true;
+  const role = uid === room.sellerUid ? "seller" : uid === room.buyerUid ? "buyer" : "";
+  if (!role || !marketPublicPresenceId(room.publicPresenceId)) return false;
+  const publicSnapshot = await marketPublicRoomRef(room).get();
+  const presence = publicSnapshot.val();
+  return presence?.closed !== true
+    && Number(presence?.[`${role}SeenAt`] || 0) >= now - QUEUE_FRESH_MS;
+}
+
+async function realtimeActiveSessionIsLive(uid, roomPath, activeSnapshot) {
+  if (!activeSnapshot.exists()) return false;
+  const activeValue = activeSnapshot.val();
+  const roomId = cleanText(typeof activeValue === "string" ? activeValue : activeValue?.roomId, 80);
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(roomId)) return false;
+  const roomSnapshot = await realtime.ref(`online/${roomPath}/${roomId}`).get();
+  if (!roomSnapshot.exists()) return false;
+  const presenceSnapshot = roomSnapshot.child(`presence/${uid}`);
+  if (!presenceSnapshot.exists()) return true;
+  return presenceSnapshot.child("online").val() === true;
+}
+
+async function accountHasActiveSession(uid) {
+  const realtimePaths = [
+    { path: "active", roomPath: "rooms" },
+    { path: "queue", queue: true },
+    { path: "strategyActive", roomPath: "strategyRooms" },
+    { path: "strategyQueue", queue: true },
+    { path: "teamActive", roomPath: "teamRooms" },
+    { path: "teamQueue", queue: true },
+    { path: "royaleActive", roomPath: "royaleRooms" },
+    { path: "royaleQueue", queue: true },
+  ];
+  const now = Date.now();
+  const snapshots = await Promise.all([
+    ...realtimePaths.map(({ path }) => realtime.ref(`online/${path}/${uid}`).get()),
+    marketActiveRef(uid).get(),
+    marketQueueRef(uid).get(),
+  ]);
+  const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
+  if (realtimeSnapshots.some((snapshot, index) => {
+    if (!snapshot.exists() || !realtimePaths[index].queue) return false;
+    return Number(snapshot.val()?.lastSeen || 0) >= now - QUEUE_FRESH_MS;
+  })) return true;
+  const activeChecks = await Promise.all(realtimePaths.map((entry, index) => (
+    entry.roomPath
+      ? realtimeActiveSessionIsLive(uid, entry.roomPath, realtimeSnapshots[index])
+      : false
+  )));
+  if (activeChecks.some(Boolean)) return true;
+  const marketActiveSnapshot = snapshots[realtimePaths.length];
+  const marketQueueSnapshot = snapshots[realtimePaths.length + 1];
+  const marketQueue = marketQueueSnapshot.data();
+  if (marketQueueSnapshot.exists
+      && marketQueue?.status === "waiting"
+      && Number(marketQueue.lastSeen || 0) >= now - QUEUE_FRESH_MS) return true;
+  return marketSessionIsFresh(uid, marketActiveSnapshot, now);
+}
+
+function economyProgressHasActivity(value) {
+  const progress = normalizeEconomyProgress(value);
+  const dailyKeys = ["matches", "scores", "criticals", "soloMatches", "strategyMatches", "teamMatches", "royaleMatches"];
+  if (dailyKeys.some((key) => Number(progress.daily?.[key] || 0) > 0)) return true;
+  for (const period of ["daily", "weekly", "monthly"]) {
+    if (Object.values(progress.periodRewards?.[period] || {}).some((record) => Number(record?.matches || 0) > 0)) return true;
+  }
+  return Number(progress.achievementStats?.matches || 0) > 0
+    || Number(progress.achievementStats?.totalMatches || 0) > 0;
+}
+
+function hasMeaningfulEquippedValue(value) {
+  if (value === true) return true;
+  if (typeof value === "string") return value.length > 0;
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).some(hasMeaningfulEquippedValue);
+}
+
+function realtimeEconomyHasActivity(value) {
+  const economy = objectValue(value);
+  if (safeBalance(economy.points) > 0) return true;
+  if (economyProgressHasActivity({
+    daily: economy.daily,
+    periodRewards: economy.periodRewards,
+  })) return true;
+  if (Object.values(objectValue(economy.inventory)).some((owned) => owned === true)) return true;
+  if (hasMeaningfulEquippedValue(economy.equipped)) return true;
+  return Number(economy.patron?.seasonSpent || 0) > 0
+    || Number(economy.patron?.lifetimeSpent || 0) > 0;
+}
+
+async function transferTargetIsPristine(uid, request) {
+  if (request.auth?.token?.firebase?.sign_in_provider !== "anonymous") return false;
+  const [
+    userRecord,
+    walletSnapshot,
+    progressSnapshot,
+    marketSnapshot,
+    patronSnapshot,
+    purchaseSnapshot,
+    dailyClaimSnapshot,
+    periodClaimSnapshot,
+    soloProfileSnapshot,
+    strategyProfileSnapshot,
+    teamProfileSnapshot,
+    royaleProfileSnapshot,
+    economySnapshot,
+    leaderboardSnapshot,
+    periodLeaderboardSnapshot,
+    topMessageSnapshot,
+  ] = await Promise.all([
+    adminAuth.getUser(uid),
+    walletRef(uid).get(),
+    economyProgressRef(uid).get(),
+    marketStatsRef(uid).get(),
+    patronageRef(uid).get(),
+    firestore.collection("economyPurchases").doc(uid).collection("items").limit(1).get(),
+    firestore.collection("economyClaims").doc(uid).collection("daily").limit(1).get(),
+    firestore.collection("economyClaims").doc(uid).collection("periods").limit(1).get(),
+    realtime.ref(`online/profiles/${uid}`).get(),
+    realtime.ref(`online/strategyProfiles/${uid}`).get(),
+    realtime.ref(`online/teamProfiles/${uid}`).get(),
+    realtime.ref(`online/royaleProfiles/${uid}`).get(),
+    realtime.ref(`online/economy/${uid}`).get(),
+    realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/leaderboardPeriodEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/topMessageEntriesByUser/${uid}`).get(),
+  ]);
+  if (userRecord.disabled || userRecord.providerData.length > 0) return false;
+  if (safeBalance(walletSnapshot.get("balance")) > 0
+      || integer(walletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0) > 0) return false;
+  if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
+  if (marketSnapshot.exists || patronSnapshot.exists
+      || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
+  if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
+  return !soloProfileSnapshot.exists()
+    && !strategyProfileSnapshot.exists()
+    && !teamProfileSnapshot.exists()
+    && !royaleProfileSnapshot.exists()
+    && !leaderboardSnapshot.exists()
+    && !periodLeaderboardSnapshot.exists()
+    && !topMessageSnapshot.exists();
+}
+
+async function registerTransferFailure(uid) {
+  const now = Date.now();
+  const attemptRef = transferAttemptRef(uid);
+  let state = null;
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(attemptRef);
+    const current = normalizeAttemptState(snapshot.data(), now);
+    if (current.blockedUntil > now) {
+      state = current;
+      return;
+    }
+    state = nextAttemptState(current, { now });
+    transaction.set(attemptRef, state);
+  });
+  return state;
+}
+
+async function createAccountTransferCode(uid) {
+  const userRecord = await adminAuth.getUser(uid);
+  if (userRecord.disabled) throw new HttpsError("permission-denied", "このアカウントは引き継ぎできません。");
+  if (userRecord.providerData.length > 0) {
+    throw new HttpsError("failed-precondition", "Google保護済みのデータはGoogleから復元してください。");
+  }
+  if (await accountHasActiveSession(uid)) {
+    throw new HttpsError("failed-precondition", "対戦・待機・市場取引を終了してからコードを発行してください。");
+  }
+  const now = Date.now();
+  const code = createTransferCode();
+  const codeHash = hashTransferCode(code);
+  const sourceRef = transferSourceRef(uid);
+  const nextCodeRef = transferCodeRef(codeHash);
+  const expiresAt = now + TRANSFER_CODE_TTL_MS;
+
+  await firestore.runTransaction(async (transaction) => {
+    const [sourceSnapshot, nextCodeSnapshot] = await Promise.all([
+      transaction.get(sourceRef),
+      transaction.get(nextCodeRef),
+    ]);
+    const source = sourceSnapshot.data();
+    if (Number(source?.lastCreatedAt || 0) > now - TRANSFER_CREATE_COOLDOWN_MS) {
+      throw new HttpsError("resource-exhausted", "引き継ぎコードの再発行は少し待ってください。");
+    }
+    if (nextCodeSnapshot.exists) {
+      throw new HttpsError("aborted", "コードを発行できませんでした。もう一度お試しください。");
+    }
+    const previousCodeHash = String(source?.activeCodeHash || "");
+    let previousCodeSnapshot = null;
+    if (previousCodeHash && previousCodeHash !== codeHash) {
+      previousCodeSnapshot = await transaction.get(transferCodeRef(previousCodeHash));
+    }
+    if (previousCodeSnapshot?.exists) transaction.delete(previousCodeSnapshot.ref);
+    transaction.create(nextCodeRef, {
+      sourceUid: uid,
+      createdAt: now,
+      expiresAt,
+      usedAt: 0,
+      deleteAt: Timestamp.fromMillis(expiresAt + (24 * 60 * 60 * 1000)),
+    });
+    transaction.set(sourceRef, {
+      activeCodeHash: codeHash,
+      lastCreatedAt: now,
+      expiresAt,
+      updatedAt: now,
+    }, { merge: true });
+  });
+
+  return {
+    outcome: "created",
+    code: formatTransferCode(code),
+    expiresAt,
+  };
+}
+
+async function redeemAccountTransferCode(request, rawCode) {
+  const targetUid = requireUid(request);
+  const compactCode = normalizeTransferCode(rawCode);
+  if (!compactCode) {
+    const attempt = await registerTransferFailure(targetUid);
+    if (attempt.blockedUntil > Date.now()) {
+      throw new HttpsError("resource-exhausted", "入力回数が多すぎます。時間をおいてください。");
+    }
+    throw new HttpsError("invalid-argument", "引き継ぎコードを確認してください。");
+  }
+
+  const now = Date.now();
+  const currentAttempt = normalizeAttemptState((await transferAttemptRef(targetUid).get()).data(), now);
+  if (currentAttempt.blockedUntil > now) {
+    throw new HttpsError("resource-exhausted", "入力回数が多すぎます。時間をおいてください。");
+  }
+  const codeHash = hashTransferCode(compactCode);
+  const codeRef = transferCodeRef(codeHash);
+  const preliminarySnapshot = await codeRef.get();
+  const preliminaryDecision = transferCodeDecision(preliminarySnapshot.data(), targetUid, now);
+  if (!["redeem", "retry"].includes(preliminaryDecision.outcome)) {
+    const attempt = await registerTransferFailure(targetUid);
+    if (attempt.blockedUntil > Date.now()) {
+      throw new HttpsError("resource-exhausted", "入力回数が多すぎます。時間をおいてください。");
+    }
+    throw new HttpsError("not-found", "コードが無効、使用済み、または期限切れです。");
+  }
+  const sourceUser = await adminAuth.getUser(preliminaryDecision.sourceUid);
+  if (sourceUser.disabled) throw new HttpsError("permission-denied", "発行元アカウントを利用できません。");
+  if (sourceUser.providerData.length > 0) {
+    await cancelAccountTransferCode(preliminaryDecision.sourceUid);
+    throw new HttpsError("failed-precondition", "発行元データはGoogleから復元してください。");
+  }
+  if (!await transferTargetIsPristine(targetUid, request)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "復元先は対戦・購入履歴のない新しいゲストデータで開いてください。",
+    );
+  }
+  if (await accountHasActiveSession(targetUid)) {
+    throw new HttpsError("failed-precondition", "対戦・待機・市場取引を終了してから復元してください。");
+  }
+  if (await accountHasActiveSession(preliminaryDecision.sourceUid)) {
+    throw new HttpsError("failed-precondition", "発行元端末の対戦・待機・市場取引を終了してください。");
+  }
+  const attemptRef = transferAttemptRef(targetUid);
+  const redemptionId = eventId(`${targetUid}:${now}:${crypto.randomUUID()}`);
+  let sourceUid = "";
+  let failure = "";
+  await firestore.runTransaction(async (transaction) => {
+    const [
+      attemptSnapshot,
+      codeSnapshot,
+      targetWalletSnapshot,
+      targetProgressSnapshot,
+      targetMarketSnapshot,
+      targetPatronSnapshot,
+    ] = await Promise.all([
+      transaction.get(attemptRef),
+      transaction.get(codeRef),
+      transaction.get(walletRef(targetUid)),
+      transaction.get(economyProgressRef(targetUid)),
+      transaction.get(marketStatsRef(targetUid)),
+      transaction.get(patronageRef(targetUid)),
+    ]);
+    const attempt = normalizeAttemptState(attemptSnapshot.data(), now);
+    if (attempt.blockedUntil > now) {
+      failure = "blocked";
+      return;
+    }
+    const decision = transferCodeDecision(codeSnapshot.data(), targetUid, now);
+    if (decision.outcome === "same-account") {
+      failure = "same-account";
+      return;
+    }
+    if (!["redeem", "retry"].includes(decision.outcome)) {
+      failure = decision.outcome;
+      transaction.set(attemptRef, nextAttemptState(attempt, { now }));
+      return;
+    }
+    if (safeBalance(targetWalletSnapshot.get("balance")) > 0
+        || integer(targetWalletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0) > 0) {
+      failure = "target-not-empty";
+      return;
+    }
+    if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
+        || targetMarketSnapshot.exists
+        || targetPatronSnapshot.exists) {
+      failure = "target-not-empty";
+      return;
+    }
+
+    sourceUid = decision.sourceUid;
+    const sourceRef = transferSourceRef(sourceUid);
+    const sourceSnapshot = await transaction.get(sourceRef);
+    if (decision.outcome === "redeem") {
+      transaction.update(codeRef, {
+        usedAt: now,
+        usedByUid: targetUid,
+        retryUntil: Number(codeSnapshot.get("expiresAt") || now),
+        redemptionId,
+      });
+    }
+    transaction.set(attemptRef, nextAttemptState(attempt, { now, success: true }));
+    if (sourceSnapshot.get("activeCodeHash") === codeHash) {
+      transaction.set(sourceRef, {
+        activeCodeHash: "",
+        redeemedAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    }
+  });
+
+  if (failure === "blocked") {
+    throw new HttpsError("resource-exhausted", "入力回数が多すぎます。時間をおいてください。");
+  }
+  if (failure === "same-account") {
+    throw new HttpsError("failed-precondition", "この端末はすでに同じゲームデータを使用しています。");
+  }
+  if (failure) {
+    throw new HttpsError("not-found", "コードが無効、使用済み、または期限切れです。");
+  }
+  if (!sourceUid) throw new HttpsError("internal", "引き継ぎ先を確認できませんでした。");
+
+  const latestSourceUser = await adminAuth.getUser(sourceUid);
+  if (latestSourceUser.disabled || latestSourceUser.providerData.length > 0) {
+    throw new HttpsError("failed-precondition", "発行元データはGoogleから復元してください。");
+  }
+  try {
+    const token = await adminAuth.createCustomToken(sourceUid, {
+      hariaiTransfer: true,
+      hariaiTransferId: redemptionId.slice(0, 20),
+    });
+    return { outcome: "redeemed", token };
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function cancelAccountTransferCode(uid) {
+  const sourceRef = transferSourceRef(uid);
+  let canceled = false;
+  await firestore.runTransaction(async (transaction) => {
+    const sourceSnapshot = await transaction.get(sourceRef);
+    const codeHash = String(sourceSnapshot.get("activeCodeHash") || "");
+    if (!codeHash) return;
+    const codeSnapshot = await transaction.get(transferCodeRef(codeHash));
+    if (codeSnapshot.exists && codeSnapshot.get("sourceUid") === uid) {
+      transaction.delete(codeSnapshot.ref);
+    }
+    transaction.set(sourceRef, {
+      activeCodeHash: "",
+      canceledAt: Date.now(),
+      updatedAt: Date.now(),
+    }, { merge: true });
+    canceled = true;
+  });
+  return { outcome: canceled ? "canceled" : "empty" };
+}
+
+exports.accountTransfer = onCall(callableOptions("accountTransfer"), async (request) => {
+  const uid = requireUid(request);
+  const action = cleanText(request.data?.action, 32);
+  try {
+    if (action === "create") return await createAccountTransferCode(uid);
+    if (action === "redeem") return await redeemAccountTransferCode(request, request.data?.code);
+    if (action === "cancel") return await cancelAccountTransferCode(uid);
+    throw new HttpsError("invalid-argument", "未対応の引き継ぎ操作です。");
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("accountTransfer failed", { uid, action, error });
+    throw new HttpsError("internal", "アカウントの引き継ぎ処理を完了できませんでした。");
   }
 });
 
@@ -1094,7 +1859,7 @@ async function loadMarketRoomWithPublicPresenceId(roomId) {
   });
 }
 
-function normalizeQueueEntry(uid, data, balance, appCheckVerified) {
+function normalizeQueueEntry(uid, data, balance, appCheckVerified, patronageValue = null) {
   const role = data?.role === "seller" ? "seller" : data?.role === "buyer" ? "buyer" : "";
   if (!role) throw new HttpsError("invalid-argument", "売り手または買い手を選択してください。");
   const base = {
@@ -1106,6 +1871,7 @@ function normalizeQueueEntry(uid, data, balance, appCheckVerified) {
     lastSeen: Date.now(),
     publicPresenceId: createMarketPublicPresenceId(),
     appCheckVerified: appCheckVerified === true,
+    patron: publicPatronage(patronageValue, periodKey("monthly")),
   };
   if (role === "seller") {
     return {
@@ -1178,11 +1944,12 @@ async function joinMarketQueue(uid, data, appCheckVerified) {
   if (MARKET_APP_CHECK_MIGRATION && appCheckVerified !== true) {
     throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
   }
-  const [balance, previousQueueSnapshot] = await Promise.all([
+  const [balance, previousQueueSnapshot, patronage] = await Promise.all([
     ensureWallet(uid),
     marketQueueRef(uid).get(),
+    readPatronage(uid),
   ]);
-  const ownEntry = normalizeQueueEntry(uid, data, balance, appCheckVerified);
+  const ownEntry = normalizeQueueEntry(uid, data, balance, appCheckVerified, patronage);
   const previousQueue = previousQueueSnapshot.data();
   if (previousQueueSnapshot.exists && previousQueue?.status === "waiting"
       && Number(previousQueue.lastSeen || 0) >= Date.now() - QUEUE_FRESH_MS
@@ -1266,7 +2033,10 @@ async function joinMarketQueue(uid, data, appCheckVerified) {
       buyerUid: buyer.uid,
       sellerName: seller.name,
       buyerName: buyer.name,
+      sellerPatron: publicPatronage(seller.patron, periodKey("monthly")),
+      buyerPatron: publicPatronage(buyer.patron, periodKey("monthly")),
       listing: seller.listing,
+      settlementQuote: marketSaleSettlement(seller.listing.askingPrice),
       buyerMaxBudget: buyer.maxBudget,
       status: "preview",
       turn: 1,
@@ -1380,6 +2150,8 @@ function defaultStats(uid, name) {
     name: cleanName(name),
     salesCount: 0,
     grossSales: 0,
+    marketFeesPaid: 0,
+    netSales: 0,
     bestSale: 0,
     laborFees: 0,
     purchases: 0,
@@ -1494,10 +2266,12 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const buyerStatsRef = marketStatsRef(initialRoom.buyerUid);
   const sellerAchievementRef = achievementProfileRef(initialRoom.sellerUid);
   const buyerAchievementRef = achievementProfileRef(initialRoom.buyerUid);
-  const pairKey = eventId(`${[initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":")}:${jstDateKey()}`);
+  const transactionDateKey = jstDateKey();
+  const pairKey = eventId(`${[initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":")}:${transactionDateKey}`);
   const pairRef = firestore.collection("valueMarketRankedPairs").doc(pairKey);
   const relationshipKey = eventId([initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":"));
   const relationshipRef = firestore.collection("valueMarketAchievementPairs").doc(relationshipKey);
+  const certificateRef = marketCertificateRef(initialRoom.buyerUid, roomId);
   const ledgerRef = firestore.collection("valueMarketLedger").doc(eventId(`${roomId}:${uid}:${actionId}`));
   let result = null;
   const achievementResults = {};
@@ -1517,6 +2291,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       buyerAchievementSnapshot,
       pairSnapshot,
       relationshipSnapshot,
+      certificateSnapshot,
       ledgerSnapshot,
     ] = await Promise.all([
       transaction.get(roomRef),
@@ -1528,6 +2303,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       transaction.get(buyerAchievementRef),
       transaction.get(pairRef),
       transaction.get(relationshipRef),
+      transaction.get(certificateRef),
       transaction.get(ledgerRef),
     ]);
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
@@ -1605,12 +2381,47 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "decision");
       const price = integer(room.listing?.askingPrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE);
-      const amount = transferPoints(buyerWallet, sellerWallet, price);
+      const settlement = marketSaleSettlement(price);
+      const amount = debitPoints(buyerWallet, settlement.grossAmount);
+      creditPoints(sellerWallet, settlement.sellerProceeds);
+      const issuedAt = Date.now();
+      const certificateNumber = `OSHI-${certificateRef.id.slice(0, 16).toUpperCase()}`;
       room.status = "sold";
       room.salePrice = amount;
-      room.soldAt = Date.now();
+      room.marketFee = settlement.feeAmount;
+      room.sellerProceeds = settlement.sellerProceeds;
+      room.certificateNumber = certificateNumber;
+      room.soldAt = issuedAt;
       room.rankingCounted = !pairSnapshot.exists;
-      transfer = { fromUid: room.buyerUid, toUid: room.sellerUid, amount, kind: "sale" };
+      transfer = {
+        fromUid: room.buyerUid,
+        toUid: room.sellerUid,
+        amount,
+        feeAmount: settlement.feeAmount,
+        netAmount: settlement.sellerProceeds,
+        feeToUid: "market_fee_sink",
+        kind: "sale",
+      };
+      if (certificateSnapshot.exists) {
+        throw new HttpsError("already-exists", "この成約の推し値証書は発行済みです。");
+      }
+      transaction.create(certificateRef, {
+        schemaVersion: 1,
+        certificateNumber,
+        buyerUid: room.buyerUid,
+        sellerName: cleanName(room.sellerName),
+        listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
+        purchasePrice: amount,
+        marketFee: settlement.feeAmount,
+        sellerProceeds: settlement.sellerProceeds,
+        turn: integer(room.turn, 1, MARKET_MAX_TURNS, 1),
+        extended: Number(room.turn || 1) > 1 || Number(room.extensionFeesPaid || 0) > 0,
+        rankingCounted: room.rankingCounted,
+        nonTransferable: true,
+        issuedAt,
+      });
+      sellerStats.marketFeesPaid = Number(sellerStats.marketFeesPaid || 0) + settlement.feeAmount;
+      sellerStats.netSales = Number(sellerStats.netSales || 0) + settlement.sellerProceeds;
       if (!pairSnapshot.exists) {
         sellerStats.salesCount = Number(sellerStats.salesCount || 0) + 1;
         sellerStats.grossSales = Number(sellerStats.grossSales || 0) + amount;
@@ -1618,7 +2429,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
         buyerStats.purchases = Number(buyerStats.purchases || 0) + 1;
         buyerStats.spent = Number(buyerStats.spent || 0) + amount;
         buyerStats.highestPurchase = Math.max(Number(buyerStats.highestPurchase || 0), amount);
-        const dateKey = jstDateKey();
+        const dateKey = transactionDateKey;
         const sellerPreviousRole = normalizeMarketStats(sellerStats).lastRankedRole;
         const buyerPreviousRole = normalizeMarketStats(buyerStats).lastRankedRole;
         Object.assign(sellerStats, addMarketTransaction(sellerStats, "seller", dateKey, {
@@ -1827,6 +2638,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
       sellerBalance: result.sellerBalance,
       buyerBalance: result.buyerBalance,
       rankingCounted: room.rankingCounted ?? null,
+      marketFee: Number(room.marketFee || 0),
+      sellerProceeds: Number(room.sellerProceeds || 0),
+      certificateNumber: cleanText(room.certificateNumber, 24),
       achievementIds: result.newlyUnlocked,
       transfer,
       turn: Number(room.turn || 1),
@@ -1849,6 +2663,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
     roomId,
     balance: uid === initialRoom.sellerUid ? result.sellerBalance : result.buyerBalance,
     rankingCounted: result.room.rankingCounted ?? null,
+    marketFee: Number(result.room.marketFee || 0),
+    sellerProceeds: Number(result.room.sellerProceeds || 0),
+    certificateNumber: cleanText(result.room.certificateNumber, 24),
     newlyUnlocked: result.newlyUnlocked || [],
   };
 }
@@ -1922,10 +2739,43 @@ function rankingRow(snapshot, role, viewerUid) {
   return createMarketRankingRow(snapshot.data(), role, snapshot.id === viewerUid);
 }
 
+function publicMarketCertificate(snapshot) {
+  const value = snapshot.data();
+  return {
+    certificateNumber: cleanText(value?.certificateNumber, 24),
+    listingTitle: cleanText(value?.listingTitle, 30, "無題の推し"),
+    sellerName: cleanName(value?.sellerName),
+    purchasePrice: integer(value?.purchasePrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE),
+    marketFee: integer(value?.marketFee, 1, MARKET_MAX_PRICE, 1),
+    sellerProceeds: integer(value?.sellerProceeds, 0, MARKET_MAX_PRICE, 0),
+    turn: integer(value?.turn, 1, MARKET_MAX_TURNS, 1),
+    extended: value?.extended === true,
+    rankingCounted: value?.rankingCounted === true,
+    nonTransferable: true,
+    issuedAt: Number(value?.issuedAt || 0),
+  };
+}
+
+async function listMarketCertificates(uid) {
+  const snapshot = await firestore.collection("valueMarketCertificates")
+    .doc(uid)
+    .collection("items")
+    .orderBy("issuedAt", "desc")
+    .limit(100)
+    .get();
+  return {
+    certificates: snapshot.docs.map(publicMarketCertificate),
+    maximum: 100,
+    hasMore: snapshot.size === 100,
+    updatedAt: Date.now(),
+  };
+}
+
 exports.valueMarketRankings = onCall(callableOptions("valueMarketRankings"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32, "list") || "list";
   if (action === "save_public_profile") return saveMarketPublicProfile(uid, request.data);
+  if (action === "collection") return listMarketCertificates(uid);
   if (action !== "list") throw new HttpsError("invalid-argument", "未対応のランキング操作です。");
   const achievementState = await ensureAchievementState(uid);
   await syncAchievementPublicSurfaces(uid, achievementState.profile);

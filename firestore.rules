@@ -27,7 +27,31 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /postMatchTips/{tipId} {
+      allow read, write: if false;
+    }
+
     match /achievementProfiles/{uid} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatrons/{uid} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronLedger/{entryId} {
+      allow read, write: if false;
+    }
+
+    match /accountTransferCodes/{codeHash} {
+      allow read, write: if false;
+    }
+
+    match /accountTransferSources/{uid} {
+      allow read, write: if false;
+    }
+
+    match /accountTransferAttempts/{uid} {
       allow read, write: if false;
     }
 
@@ -50,6 +74,10 @@ service cloud.firestore {
     }
 
     match /valueMarketLedger/{entryId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketCertificates/{uid}/items/{certificateId} {
       allow read, write: if false;
     }
 

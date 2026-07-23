@@ -45,6 +45,11 @@ import {
   renderStampBubble,
   startStampButtonCooldown,
 } from "./stamps.js?v=stamps-v1";
+import {
+  bindPostMatchTip,
+  isPostMatchTipBusy,
+  renderPostMatchTip,
+} from "./post-match-tip.js?v=post-match-tip-v2";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -123,7 +128,7 @@ function createState() {
     weaknessCommit: "",
     pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
-    economy: { inventory: {}, equipped: { stamps: {}, title: "", chatFrame: "", chatBackground: "" } },
+    economy: { points: 0, inventory: {}, equipped: { stamps: {}, title: "", chatFrame: "", chatBackground: "" } },
     main: [],
     reserve: [],
     roomId: "",
@@ -359,7 +364,11 @@ function normalizeChatCosmeticEconomy(value) {
   const savedTitle = String(source.equipped?.title || "");
   const title = getPlayerTitleProduct(savedTitle) && inventory[savedTitle] ? savedTitle : "";
   const stamps = normalizeEquippedStamps(source, inventory, Boolean(source.equipped && typeof source.equipped === "object"));
-  return { inventory, equipped: { stamps, title, chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId } };
+  return {
+    points: Math.max(0, Math.floor(Number(source.points || 0))),
+    inventory,
+    equipped: { stamps, title, chatFrame: cosmetics.chatFrameId, chatBackground: cosmetics.chatBackgroundId },
+  };
 }
 
 function renderStrategyTitleBadge(titleId) {
@@ -711,6 +720,7 @@ function renderGameOver() {
       ${player.clues.map((clue, index) => `<p class="${index === player.weaknessIndex ? "is-weakness" : "is-bluff"}"><b>${index === player.weaknessIndex ? "本当の弱点" : "ブラフ"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
     <section class="strategy-history"><span class="eyebrow">BATTLE LOG</span>${state.history.map((round) => `<p><b>R${round.round}</b><span>${escapeHtml(state.players[0].name)} ${round.powers[0]} - ${round.powers[1]} ${escapeHtml(state.players[1].name)}</span></p>`).join("")}</section>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
+    ${renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
     <div class="screen-actions strategy-final-actions">${shareButton}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
 }
@@ -867,6 +877,16 @@ function bindScreenEvents() {
   document.querySelector("#strategyPlayWeaknessChain")?.addEventListener("click", playWeaknessChainSequence);
   document.querySelector("#strategyWeaknessSurrender")?.addEventListener("click", surrenderToWeaknessBreak);
   document.querySelectorAll("[data-strategy-destroy]").forEach((button) => button.addEventListener("click", requestHome));
+  if (state.screen === "gameover") {
+    bindPostMatchTip(app, {
+      mode: "strategy",
+      roomId: state.roomId,
+      viewerUid: state.uid,
+      recipients: state.players,
+      balance: state.economy.points,
+      onBalanceChange: (balance) => { state.economy.points = balance; },
+    });
+  }
   document.querySelector("#strategyNewMatch")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyWithdrawAgain")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyNoContestAgain")?.addEventListener("click", resetStrategySetup);
@@ -2212,6 +2232,10 @@ async function cleanupPublicPresence() {
 
 function requestHome() {
   if (!active) return;
+  if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   if (["profile", "matching", "gameover", "withdrawn", "noContest", "error"].includes(state.screen)) {
     leaveToLanding();
     return;
@@ -2254,7 +2278,11 @@ async function cancelMatching() {
 }
 
 async function resetStrategySetup() {
-  const identity = { uid: state.uid, authReady: state.authReady, name: state.name, clues: [...state.clues], weaknessIndex: state.weaknessIndex, pursuitLine: state.pursuitLine, profile: { ...state.profile } };
+  if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
+  const identity = { uid: state.uid, authReady: state.authReady, name: state.name, clues: [...state.clues], weaknessIndex: state.weaknessIndex, pursuitLine: state.pursuitLine, profile: { ...state.profile }, economy: state.economy };
   await cleanupOnlineResources(false);
   releaseAllImages();
   state = createState();
@@ -2275,6 +2303,10 @@ async function retryConnection() {
 }
 
 async function leaveToLanding() {
+  if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   await cleanupOnlineResources(false);
   releaseAllImages();
   active = false;

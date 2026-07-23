@@ -13,6 +13,15 @@
       "npm --prefix functions run check"
     ]
   },
+  "auth": {
+    "providers": {
+      "anonymous": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "GazoStadium",
+        "supportEmail": "at.kga.dmt.pjam.t2727@gmail.com"
+      }
+    }
+  },
   "emulators": {
     "auth": {
       "port": 9099

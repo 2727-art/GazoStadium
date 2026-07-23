@@ -59,6 +59,11 @@ import {
   renderStampBubble,
   startStampButtonCooldown,
 } from "./stamps.js?v=stamps-v1";
+import {
+  bindPostMatchTip,
+  isPostMatchTipBusy,
+  renderPostMatchTip,
+} from "./post-match-tip.js?v=post-match-tip-v2";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -1969,6 +1974,7 @@ function renderGameOver() {
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>◆ ${state.economy.points} PT</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
+    ${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
@@ -2044,6 +2050,14 @@ function bindScreenEvents() {
   if (state.screen === "score") bindScoreEvents();
   if (state.screen === "result") document.querySelector("#onlineContinue")?.addEventListener("click", continueRound);
   if (state.screen === "gameover") {
+    bindPostMatchTip(appRoot, {
+      mode: "solo",
+      roomId: state.roomId,
+      viewerUid: state.uid,
+      recipients: state.players,
+      balance: state.economy.points,
+      onBalanceChange: (balance) => { state.economy.points = balance; },
+    });
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineGameoverMissions")?.addEventListener("click", openPostMatchMissions);
     document.querySelector("#onlineGameoverHome")?.addEventListener("click", leaveToLanding);
@@ -2497,6 +2511,10 @@ async function claimClosedPeriodRewards() {
 }
 
 async function openPostMatchMissions() {
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   await cleanupOnlineResources(false);
   releaseAllImages();
   state.screen = "missions";
@@ -3807,6 +3825,10 @@ function triggerCriticalFx(text) {
 }
 
 function requestHome() {
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   if (["setup", "missions", "shop", "achievements", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
     leaveToLanding();
   } else {
@@ -3845,6 +3867,10 @@ async function cancelMatching() {
 }
 
 async function resetOnlineSetup() {
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   const identity = {
     uid: state.uid,
     profile: state.profile,
@@ -3871,6 +3897,10 @@ async function resetOnlineSetup() {
 }
 
 async function leaveToLanding() {
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   await cleanupOnlineResources(false);
   releaseAllImages();
   active = false;

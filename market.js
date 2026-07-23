@@ -34,6 +34,10 @@ const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
 const ENTRY_FEE = 5;
 const MAX_TURNS = 3;
 const MARKET_PRICES = Object.freeze([10, 25, 50, 100, 200, 300, 500]);
+const DEFAULT_MARKET_POLICY = Object.freeze({
+  successFeeBasisPoints: 500,
+  minimumSuccessFee: 1,
+});
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -62,6 +66,8 @@ function createState() {
     role: localStorage.getItem(MARKET_ROLE_KEY) === "buyer" ? "buyer" : "seller",
     authReady: false,
     balance: 0,
+    patron: normalizeMarketPatron(null),
+    marketPolicy: { ...DEFAULT_MARKET_POLICY },
     listingTitle: "",
     askingPrice: 50,
     pitchStyle: "either",
@@ -109,6 +115,10 @@ function createState() {
     rankingProfileName: "",
     rankingProfileOpen: false,
     rankingProfileBusy: false,
+    certificates: [],
+    certificateStatus: "idle",
+    certificateHasMore: false,
+    certificateReturnScreen: "setup",
     achievementNotificationRooms: new Set(),
     notifiedAchievementIds: new Set(),
   };
@@ -133,6 +143,105 @@ function updateMarketBalance(value) {
   if (!Number.isFinite(balance)) return;
   state.balance = Math.min(999_999, Math.max(0, Math.floor(balance)));
   normalizeBuyerBudget();
+}
+
+function currentPatronSeasonKey() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}`;
+}
+
+function normalizeMarketPatron(value) {
+  const seasonKey = String(value?.seasonKey || currentPatronSeasonKey());
+  const current = seasonKey === currentPatronSeasonKey();
+  const tier = current ? Math.max(0, Math.min(3, Math.floor(Number(value?.tier || 0)))) : 0;
+  const definitions = [
+    { id: "guest", label: "MARKET GUEST", icon: "◇" },
+    { id: "supporter", label: "SUPPORTER", icon: "✦" },
+    { id: "patron", label: "PATRON", icon: "◆" },
+    { id: "grand_patron", label: "GRAND PATRON", icon: "♛" },
+  ];
+  return {
+    seasonKey: currentPatronSeasonKey(),
+    seasonSpent: current ? Math.max(0, Math.floor(Number(value?.seasonSpent || 0))) : 0,
+    tier,
+    ...definitions[tier],
+  };
+}
+
+function normalizeMarketPolicy(value) {
+  const successFeeBasisPoints = Math.max(0, Math.min(10_000, Math.floor(Number(
+    value?.successFeeBasisPoints ?? DEFAULT_MARKET_POLICY.successFeeBasisPoints,
+  ))));
+  const minimumSuccessFee = Math.max(0, Math.min(500, Math.floor(Number(
+    value?.minimumSuccessFee ?? DEFAULT_MARKET_POLICY.minimumSuccessFee,
+  ))));
+  return { successFeeBasisPoints, minimumSuccessFee };
+}
+
+function marketSettlement(price, room = null) {
+  const grossAmount = Math.max(0, Math.floor(Number(price || 0)));
+  const quote = room?.settlementQuote;
+  if (Number(quote?.grossAmount) === grossAmount
+      && Number.isInteger(Number(quote?.feeAmount))
+      && Number.isInteger(Number(quote?.sellerProceeds))
+      && Number(quote.feeAmount) >= 0
+      && Number(quote.sellerProceeds) + Number(quote.feeAmount) === grossAmount) {
+    return {
+      grossAmount,
+      feeAmount: Number(quote.feeAmount),
+      sellerProceeds: Number(quote.sellerProceeds),
+    };
+  }
+  const policy = normalizeMarketPolicy(state.marketPolicy);
+  const feeAmount = grossAmount
+    ? Math.max(
+      policy.minimumSuccessFee,
+      Math.ceil((grossAmount * policy.successFeeBasisPoints) / 10_000),
+    )
+    : 0;
+  return {
+    grossAmount,
+    feeAmount,
+    sellerProceeds: Math.max(0, grossAmount - feeAmount),
+  };
+}
+
+function renderMarketFeeBreakdown(price, { id = "", room = null, compact = false } = {}) {
+  const settlement = marketSettlement(price, room);
+  return `<dl class="market-fee-breakdown ${compact ? "is-compact" : ""}" ${id ? `id="${id}" aria-live="polite"` : ""}>
+    <div><dt>成約価格</dt><dd>${settlement.grossAmount.toLocaleString("ja-JP")} PT</dd></div>
+    <div><dt>成約手数料（売り手負担）</dt><dd>−${settlement.feeAmount.toLocaleString("ja-JP")} PT</dd></div>
+    <div><dt>売り手受取</dt><dd>${settlement.sellerProceeds.toLocaleString("ja-JP")} PT</dd></div>
+    <div><dt>買い手支払</dt><dd>${settlement.grossAmount.toLocaleString("ja-JP")} PT</dd></div>
+  </dl>`;
+}
+
+function renderMarketPatronBadge(value, { compact = false } = {}) {
+  const patron = normalizeMarketPatron(value);
+  if (!patron.tier) return "";
+  return `<span class="market-patron-badge tier-${patron.id} ${compact ? "is-compact" : ""}"><b aria-hidden="true">${patron.icon}</b>${escapeHtml(patron.label)}</span>`;
+}
+
+function patronOpportunityCopy(purchasePrice) {
+  const patron = normalizeMarketPatron(state.patron);
+  const tiers = [
+    { label: "SUPPORTER", threshold: 300 },
+    { label: "PATRON", threshold: 1_500 },
+    { label: "GRAND PATRON", threshold: 5_000 },
+  ];
+  const next = tiers.find((tier) => tier.threshold > patron.seasonSpent);
+  const after = Math.max(0, state.balance - Math.max(0, Number(purchasePrice || 0)));
+  if (!next) return `購入後残高 ${after.toLocaleString("ja-JP")}PT。今月の最高パトロンランクを獲得済みです。`;
+  const needed = next.threshold - patron.seasonSpent;
+  const shortage = Math.max(0, needed - after);
+  return shortage
+    ? `購入後残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}には${needed.toLocaleString("ja-JP")}PT必要です（あと${shortage.toLocaleString("ja-JP")}PT不足）。`
+    : `購入後残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}に必要な${needed.toLocaleString("ja-JP")}PTを残せます。`;
 }
 
 function marketActionIdentity(action, roomId, turn, extra = {}) {
@@ -258,6 +367,7 @@ async function ensureAuthenticated(generation) {
   if (useMarketPreview) {
     state.uid = "local-preview-user";
     updateMarketBalance(500);
+    state.patron = normalizeMarketPatron({ seasonKey: currentPatronSeasonKey(), seasonSpent: 300, tier: 1 });
     state.authReady = true;
     setMarketChrome("VALUE MARKET PREVIEW");
     render();
@@ -271,6 +381,8 @@ async function ensureAuthenticated(generation) {
   const response = await economyActionCallable({ action: "initialize" });
   if (!isCurrentLifecycle(generation)) return;
   updateMarketBalance(response.data?.balance || 0);
+  state.patron = normalizeMarketPatron(response.data?.patron);
+  state.marketPolicy = normalizeMarketPolicy(response.data?.marketPolicy);
   state.authReady = true;
   subscribeToActiveRoom(generation);
   subscribeToWallet(generation);
@@ -314,6 +426,7 @@ function render() {
   if (state.screen === "setup") appRoot.innerHTML = renderSetup();
   else if (state.screen === "waiting") appRoot.innerHTML = renderWaiting();
   else if (state.screen === "rankings") appRoot.innerHTML = renderRankings();
+  else if (state.screen === "certificates") appRoot.innerHTML = renderCertificates();
   else if (state.screen === "room") appRoot.innerHTML = renderRoom();
   else appRoot.innerHTML = renderError();
   lastRenderedScreen = state.screen;
@@ -343,7 +456,7 @@ function render() {
 }
 
 function renderWallet() {
-  return `<div class="market-wallet"><span>MARKET WALLET</span><strong>${Math.floor(state.balance).toLocaleString("ja-JP")}<small>PT</small></strong><p>Functions管理の取引残高</p></div>`;
+  return `<div class="market-wallet"><span>MARKET WALLET</span><strong>${Math.floor(state.balance).toLocaleString("ja-JP")}<small>PT</small></strong>${renderMarketPatronBadge(state.patron)}<p>Functions管理の取引残高</p></div>`;
 }
 
 function renderSetup() {
@@ -367,18 +480,19 @@ function renderSetup() {
         ${seller ? `<label class="market-image-picker">${imagePreview}<input id="marketImageInput" type="file" accept="image/*" /></label>
           <label class="field"><span>出品タイトル（30文字）</span><input id="marketListingTitle" maxlength="30" value="${escapeHtml(state.listingTitle)}" placeholder="この一枚の呼び名" required /></label>
           <div class="market-inline-fields">
-            <label class="field"><span>販売価格</span><select id="marketAskingPrice">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.askingPrice) ? "selected" : ""}>${price} PT</option>`).join("")}</select></label>
+            <label class="field"><span>販売価格</span><select id="marketAskingPrice" aria-describedby="marketSetupFeeBreakdown">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.askingPrice) ? "selected" : ""}>${price} PT</option>`).join("")}</select></label>
             <label class="field"><span>営業方法</span><select id="marketPitchStyle"><option value="either" ${state.pitchStyle === "either" ? "selected" : ""}>チャット／10秒音声</option><option value="chat" ${state.pitchStyle === "chat" ? "selected" : ""}>チャット中心</option><option value="audio" ${state.pitchStyle === "audio" ? "selected" : ""}>10秒音声中心</option></select></label>
-          </div>`
+          </div>
+          ${renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true })}`
           : `<label class="field"><span>購入上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${price} PT</option>`).join("")}</select><small>販売価格が上限以内の売り手だけとマッチします。着手料${ENTRY_FEE}PTは別途必要です。</small></label>`}
         <button class="button button-primary market-join-button" type="submit" ${!state.authReady || state.busy || (seller && !state.image) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.busy ? "参加処理中…" : seller ? "売り手として待機する" : "買い手として待機する"}</button>
       </form>
       <aside class="market-rule-card">
         <span class="eyebrow">FAIR DEAL FLOW</span><h2>取引の流れ</h2>
-        <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料${ENTRY_FEE}PTをFunctionsが一時預かりします。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に着手料を受け取ります。</span></li><li><b>4</b><span>購入・退室・追加検討を選択。追加検討は売り手が内金を買い手へ提示します。</span></li></ol>
+        <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料${ENTRY_FEE}PTをFunctionsが一時預かりします。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に着手料を受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低1PT）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
         <div class="market-safety-note"><strong>POINT AUTHORITY</strong><p>残高移動はCloud Functionsだけが確定し、売買と独立ランキングをFirestoreの同一トランザクションで更新します。</p></div>
         <p class="market-roleplay-note">売買はTRPGとしてのロールプレイです。画像データや著作権・所有権は移転しません。画像の一時判定、音声通報機能は設けません。</p>
-        <button class="button button-ghost" type="button" id="marketRankingsButton">売り手・買い手ランキング</button>
+        <div class="market-setup-links"><button class="button button-ghost" type="button" id="marketRankingsButton">売り手・買い手ランキング</button><button class="button button-ghost" type="button" id="marketCertificatesButton">推し値証書コレクション</button></div>
         ${useMarketPreview ? `<div class="market-preview-controls"><small>LOCAL UI PREVIEW</small><button type="button" data-market-preview-room="preview:buyer">買い手プレビュー画面</button><button type="button" data-market-preview-room="pitch:seller">売り手営業画面</button><button type="button" data-market-preview-room="decision:buyer">買い手決済画面</button><button type="button" data-market-preview-room="extension_offer:buyer">内金確認画面</button><button type="button" data-market-preview-room="sold:buyer">成立結果画面</button></div>` : ""}
       </aside>
     </div>
@@ -459,6 +573,57 @@ function renderRankings() {
   </section>`;
 }
 
+function certificateDate(value) {
+  const timestamp = Number(value || 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return { iso: "", label: "日時不明" };
+  const date = new Date(timestamp);
+  return {
+    iso: date.toISOString(),
+    label: new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date),
+  };
+}
+
+function renderCertificateCard(certificate) {
+  const issued = certificateDate(certificate?.issuedAt);
+  const price = Math.max(0, Math.floor(Number(certificate?.purchasePrice || 0)));
+  const fee = Math.max(0, Math.floor(Number(certificate?.marketFee || 0)));
+  const proceeds = Math.max(0, Math.floor(Number(certificate?.sellerProceeds || price - fee)));
+  return `<li class="market-certificate-card">
+    <div class="market-certificate-seal" aria-hidden="true">推</div>
+    <div class="market-certificate-heading"><span>VALUE CERTIFICATE</span><strong>${escapeHtml(certificate?.certificateNumber || "OSHI-UNKNOWN")}</strong></div>
+    <h2>${escapeHtml(certificate?.listingTitle || "無題の推し")}</h2>
+    <p>売り手 <b>${escapeHtml(certificate?.sellerName || "PLAYER")}</b> の推し値に、あなたがポイント価値をつけた記録です。</p>
+    <dl><div><dt>成約価格</dt><dd>${price.toLocaleString("ja-JP")} PT</dd></div><div><dt>市場手数料</dt><dd>${fee.toLocaleString("ja-JP")} PT</dd></div><div><dt>売り手受取</dt><dd>${proceeds.toLocaleString("ja-JP")} PT</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
+    <time ${issued.iso ? `datetime="${issued.iso}"` : ""}>${escapeHtml(issued.label)} JST</time>
+    <small>非譲渡・画像データ／著作権／所有権は含みません</small>
+  </li>`;
+}
+
+function renderCertificates() {
+  let body = "";
+  if (state.certificateStatus === "loading") {
+    body = `<div class="market-certificate-status" role="status"><div class="loader"></div><p>推し値証書を読み込んでいます…</p></div>`;
+  } else if (state.certificateStatus === "error") {
+    body = `<div class="market-certificate-status is-error" role="alert"><p>証書コレクションを読み込めませんでした。</p><button class="button button-primary" id="marketCertificatesRetry">再読み込み</button></div>`;
+  } else if (!state.certificates.length) {
+    body = `<div class="market-certificate-status" role="status"><span aria-hidden="true">◇</span><h2>証書はまだありません</h2><p>推し値市場で購入が成立すると、画像を保存しないメタデータ証書がここへ追加されます。</p></div>`;
+  } else {
+    body = `<ol class="market-certificate-grid">${state.certificates.map(renderCertificateCard).join("")}</ol>${state.certificateHasMore ? `<p class="market-certificate-limit">最新100件を表示しています。</p>` : ""}`;
+  }
+  return `<section class="screen market-screen market-certificates">
+    <div class="market-section-head"><div><span class="eyebrow">VALUE MARKET COLLECTION</span><h1>推し値証書コレクション</h1><p>購入成立の価格・相手・日時だけを残す、あなただけの非譲渡コレクションです。</p></div><button class="button button-ghost" id="marketCertificatesBack">市場へ戻る</button></div>
+    <div class="market-certificate-policy"><strong>画像は保存しません</strong><p>証書は取引メタデータだけです。元画像、営業チャット、音声、著作権、所有権は含まれません。</p></div>
+    ${body}
+  </section>`;
+}
+
 function roomRole() {
   return state.uid === state.room?.sellerUid ? "seller" : state.uid === state.room?.buyerUid ? "buyer" : "";
 }
@@ -489,10 +654,22 @@ function renderRoomControls(room, role) {
   const terminal = TERMINAL_STATES.has(status);
   if (terminal) {
     const title = status === "sold" ? "売買成立" : status === "canceled" ? "取引中止" : "今回は見送り";
+    const settlement = marketSettlement(room.salePrice || room.listing?.askingPrice, {
+      settlementQuote: {
+        grossAmount: Number(room.salePrice || room.listing?.askingPrice || 0),
+        feeAmount: Number(room.marketFee ?? room.settlementQuote?.feeAmount),
+        sellerProceeds: Number(room.sellerProceeds ?? room.settlementQuote?.sellerProceeds),
+      },
+    });
     const copy = status === "sold"
-      ? `${room.salePrice}PTで成立しました。${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}`
+      ? role === "buyer"
+        ? `${settlement.grossAmount}PTで成立し、推し値証書 ${room.certificateNumber || ""} をコレクションへ追加しました。`
+        : `${settlement.grossAmount}PTで成立。成約手数料${settlement.feeAmount}PTを差し引き、${settlement.sellerProceeds}PTを受け取りました。`
       : "このルームでのポイント移動と営業履歴はここで終了です。";
-    return `<div class="market-result-panel ${status}"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span><h2>${title}</h2><p>${copy}</p><div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button><button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
+    const rankingCopy = status === "sold"
+      ? `<small>${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}</small>`
+      : "";
+    return `<div class="market-result-panel ${status}"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span><h2>${title}</h2><p>${copy}</p>${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement } }) : ""}${rankingCopy}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
   }
   if (status === "preview") {
     if (role === "buyer") {
@@ -513,9 +690,9 @@ function renderRoomControls(room, role) {
   if (status === "decision") {
     if (role === "buyer") {
       const canExtend = Number(room.turn || 1) < Number(room.maxTurns || MAX_TURNS);
-      return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>販売価格 ${room.listing?.askingPrice}PT。購入はロールプレイで、画像データの所有権は移りません。</p><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>${room.listing?.askingPrice}PTで購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
+      return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>購入はロールプレイで、画像データの所有権は移りません。成約手数料は売り手負担のため、買い手の支払額は販売価格のままです。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room })}<small class="market-opportunity-cost">${escapeHtml(patronOpportunityCopy(room.listing?.askingPrice))}</small><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>合計${room.listing?.askingPrice}PTで購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
     }
-    return `<div class="market-wait-panel"><span>BUYER DECISION</span><h2>買い手の判断を待っています</h2><p>購入・退室・追加検討のいずれかが選ばれます。</p></div>`;
+    return `<div class="market-wait-panel"><span>BUYER DECISION</span><h2>買い手の判断を待っています</h2><p>購入・退室・追加検討のいずれかが選ばれます。購入成立時だけ成約手数料が差し引かれます。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room, compact: true })}</div>`;
   }
   if (status === "extension_request") {
     if (role === "seller") {
@@ -537,8 +714,9 @@ function renderRoom() {
   const room = state.room;
   const role = roomRole();
   const counterpart = role === "seller" ? room.buyerName : room.sellerName;
+  const counterpartPatron = role === "seller" ? room.buyerPatron : room.sellerPatron;
   return `<section class="screen market-screen market-room">
-    <div class="market-room-head"><div><span class="eyebrow">VALUE MARKET / TURN ${Number(room.turn || 1)}</span><h1>${escapeHtml(room.listing?.title || "無題の推し")}</h1><p>${role === "seller" ? "SELLER" : "BUYER"} / 相手：${escapeHtml(counterpart)}</p></div>${renderWallet()}</div>
+    <div class="market-room-head"><div><span class="eyebrow">VALUE MARKET / TURN ${Number(room.turn || 1)}</span><h1>${escapeHtml(room.listing?.title || "無題の推し")}</h1><p>${role === "seller" ? "SELLER" : "BUYER"} / 相手：${escapeHtml(counterpart)} ${renderMarketPatronBadge(counterpartPatron, { compact: true })}</p></div>${renderWallet()}</div>
     <div class="market-room-status"><span class="market-price">${room.listing?.askingPrice}<small>PT</small></span><span class="market-p2p ${state.channelReady ? "is-connected" : ""}">${escapeHtml(state.peerStatus)}</span><button type="button" id="marketExitRoom">取引を終了</button></div>
     <div class="market-room-grid">
       <figure class="market-main-image">${renderMarketImage()}<figcaption>画像はこの対戦中だけP2Pで表示されます</figcaption></figure>
@@ -563,16 +741,23 @@ function bindEvents() {
   document.querySelector("#marketEntryForm")?.addEventListener("submit", joinQueue);
   document.querySelector("#marketName")?.addEventListener("input", (event) => { state.name = event.target.value.slice(0, 16); });
   document.querySelector("#marketListingTitle")?.addEventListener("input", (event) => { state.listingTitle = event.target.value.slice(0, 30); });
-  document.querySelector("#marketAskingPrice")?.addEventListener("change", (event) => { state.askingPrice = Number(event.target.value); });
+  document.querySelector("#marketAskingPrice")?.addEventListener("change", (event) => {
+    state.askingPrice = Number(event.target.value);
+    const breakdown = document.querySelector("#marketSetupFeeBreakdown");
+    if (breakdown) breakdown.outerHTML = renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true });
+  });
   document.querySelector("#marketPitchStyle")?.addEventListener("change", (event) => { state.pitchStyle = event.target.value; });
   document.querySelector("#marketMaxBudget")?.addEventListener("change", (event) => { state.maxBudget = Number(event.target.value); });
   document.querySelector("#marketImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#marketRankingsButton")?.addEventListener("click", openRankings);
+  document.querySelector("#marketCertificatesButton")?.addEventListener("click", () => openCertificates("setup"));
   document.querySelectorAll("[data-market-preview-room]").forEach((button) => button.addEventListener("click", () => {
     const [status, role] = button.dataset.marketPreviewRoom.split(":");
     previewRoom(status, role);
   }));
   document.querySelector("#marketRankingBack")?.addEventListener("click", returnFromRankings);
+  document.querySelector("#marketCertificatesBack")?.addEventListener("click", returnFromCertificates);
+  document.querySelector("#marketCertificatesRetry")?.addEventListener("click", () => openCertificates(state.certificateReturnScreen, { force: true }));
   document.querySelector(".market-profile-settings")?.addEventListener("toggle", (event) => {
     state.rankingProfileOpen = event.currentTarget.open;
   });
@@ -590,6 +775,7 @@ function bindEvents() {
   document.querySelector("#marketOfferExtension")?.addEventListener("click", () => performAction("offer_extension", { incentive: Number(document.querySelector("#marketExtensionIncentive")?.value || 5) }));
   document.querySelector("#marketPlayAgain")?.addEventListener("click", resetForReplay);
   document.querySelector("#marketResultRanking")?.addEventListener("click", openRankings);
+  document.querySelector("#marketResultCertificates")?.addEventListener("click", () => openCertificates("room", { force: true }));
   document.querySelector("#marketReturnHome")?.addEventListener("click", returnHome);
   document.querySelector("#marketErrorBack")?.addEventListener("click", requestHome);
 }
@@ -1257,9 +1443,13 @@ function performPreviewAction(action, extra = {}) {
     updateMarketBalance(state.balance + (room.entryFee || ENTRY_FEE));
     room.status = "decision";
   } else if (action === "buy") {
-    updateMarketBalance(state.balance - Number(room.listing?.askingPrice || 0));
+    const settlement = marketSettlement(room.listing?.askingPrice, room);
+    updateMarketBalance(state.balance - settlement.grossAmount);
     room.status = "sold";
-    room.salePrice = Number(room.listing?.askingPrice || 0);
+    room.salePrice = settlement.grossAmount;
+    room.marketFee = settlement.feeAmount;
+    room.sellerProceeds = settlement.sellerProceeds;
+    room.certificateNumber = "OSHI-PREVIEW0000001";
   } else if (action === "leave") {
     room.status = "ended";
   } else if (action === "request_extension") {
@@ -1302,6 +1492,11 @@ async function performAction(action, extra = {}) {
     updateMarketBalance(response.data?.balance ?? state.balance);
     if (action === "accept_pitch") showToast(`${state.room?.entryFee || ENTRY_FEE}PTの着手料を一時預けました。`);
     if (action === "buy") {
+      if (state.room) {
+        state.room.marketFee = Number(response.data?.marketFee || 0);
+        state.room.sellerProceeds = Number(response.data?.sellerProceeds || 0);
+        state.room.certificateNumber = String(response.data?.certificateNumber || "");
+      }
       showToast("売買が成立しました。");
       notifyMarketAchievementUnlocks(response.data?.newlyUnlocked);
     }
@@ -1471,6 +1666,73 @@ async function openRankings() {
   if (isCurrentLifecycle(generation)) render();
 }
 
+function previewCertificates() {
+  return [
+    {
+      certificateNumber: "OSHI-PREVIEW0000001",
+      listingTitle: "夕焼けの推し",
+      sellerName: "SELLER TEST",
+      purchasePrice: 100,
+      marketFee: 5,
+      sellerProceeds: 95,
+      turn: 1,
+      extended: false,
+      rankingCounted: true,
+      nonTransferable: true,
+      issuedAt: Date.now() - (25 * 60 * 1000),
+    },
+    {
+      certificateNumber: "OSHI-PREVIEW0000002",
+      listingTitle: "雨上がりの一枚",
+      sellerName: "VALUE MAKER",
+      purchasePrice: 25,
+      marketFee: 2,
+      sellerProceeds: 23,
+      turn: 2,
+      extended: true,
+      rankingCounted: true,
+      nonTransferable: true,
+      issuedAt: Date.now() - (2 * 24 * 60 * 60 * 1000),
+    },
+  ];
+}
+
+async function openCertificates(returnScreen = state.screen, { force = false } = {}) {
+  const generation = lifecycleGeneration;
+  state.certificateReturnScreen = returnScreen === "room" && state.room ? "room" : "setup";
+  state.screen = "certificates";
+  if (!force && state.certificateStatus === "ready") {
+    render();
+    return;
+  }
+  state.certificateStatus = "loading";
+  render();
+  if (useMarketPreview) {
+    state.certificates = previewCertificates();
+    state.certificateHasMore = false;
+    state.certificateStatus = "ready";
+    render();
+    return;
+  }
+  try {
+    const response = await marketRankingsCallable({ action: "collection" });
+    if (!isCurrentLifecycle(generation) || state.screen !== "certificates") return;
+    state.certificates = Array.isArray(response.data?.certificates) ? response.data.certificates : [];
+    state.certificateHasMore = response.data?.hasMore === true;
+    state.certificateStatus = "ready";
+  } catch (error) {
+    if (!isCurrentLifecycle(generation) || state.screen !== "certificates") return;
+    state.certificateStatus = "error";
+    showToast(callableMessage(error, "推し値証書を読み込めませんでした。"));
+  }
+  if (isCurrentLifecycle(generation) && state.screen === "certificates") render();
+}
+
+function returnFromCertificates() {
+  state.screen = state.certificateReturnScreen === "room" && state.room ? "room" : "setup";
+  render();
+}
+
 async function requestHome() {
   if (!active) return;
   if (useMarketPreview) {
@@ -1507,6 +1769,8 @@ function resetForReplay() {
   const role = state.role;
   const name = state.name;
   const balance = state.balance;
+  const patron = state.patron;
+  const marketPolicy = state.marketPolicy;
   const image = role === "seller" ? state.image : null;
   const listingTitle = state.listingTitle;
   const askingPrice = state.askingPrice;
@@ -1522,6 +1786,8 @@ function resetForReplay() {
     role,
     name,
     balance,
+    patron,
+    marketPolicy,
     image,
     listingTitle,
     askingPrice,
@@ -1620,13 +1886,19 @@ function previewRoom(status = "preview", role = "buyer") {
     buyerUid,
     sellerName: "SELLER TEST",
     buyerName: "BUYER TEST",
+    sellerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 1_500, tier: 2 },
+    buyerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 300, tier: 1 },
     listing: { title: "夕焼けの推し", askingPrice: 100, pitchStyle: "either" },
+    settlementQuote: { grossAmount: 100, feeAmount: 5, sellerProceeds: 95 },
     status,
     turn: status === "extension_offer" ? 2 : 1,
     maxTurns: MAX_TURNS,
     entryFee: ENTRY_FEE,
     extensionIncentive: 10,
     salePrice: 100,
+    marketFee: 5,
+    sellerProceeds: 95,
+    certificateNumber: "OSHI-PREVIEW0000001",
     rankingCounted: true,
   };
   if (status === "pitch" && role === "seller") state.pitchSentTurns.add(1);

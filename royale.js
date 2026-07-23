@@ -49,6 +49,11 @@ import {
   renderStampBubble,
   startStampButtonCooldown,
 } from "./stamps.js?v=stamps-v1";
+import {
+  bindPostMatchTip,
+  isPostMatchTipBusy,
+  renderPostMatchTip,
+} from "./post-match-tip.js?v=post-match-tip-v2";
 
 const MAX_ROUNDS = 5;
 const PLAYER_COUNT = 4;
@@ -690,6 +695,7 @@ function renderGameOver() {
   }) || "";
   return `<section class="screen gameover-wrap"><div class="gameover-card royale-gameover"><div class="winner-emblem">1</div><span class="eyebrow">BATTLE ROYALE COMPLETE</span><h1>${escapeHtml(winner?.name || "SURVIVOR")} WIN</h1><p>最後まで生き残ったプレイヤーが勝者です。あなたは${localPlace}位でした。</p>
     <div class="royale-standings">${standings}</div><div class="online-profile-strip"><span>あなたのバトルロワイヤル戦績</span><span>${state.royaleProfile.wins}回優勝 / TOP2 ${state.royaleProfile.topTwo}回</span><span>${state.royaleProfile.matches}戦</span></div>
+    ${renderPostMatchTip({ mode: "royale", roomId: state.roomId, viewerUid: state.uid, recipients: state.members, balance: state.economy.points })}
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="royaleNewMatch">もう一度バトルロワイヤル</button><button class="button button-ghost" id="royaleGameoverHome">タイトルへ戻る</button></div></div></section>`;
 }
 
@@ -739,6 +745,14 @@ function bindEvents() {
   if (state.screen === "score") bindScoreEvents();
   if (state.screen === "result") document.querySelector("#continueRoyaleRound")?.addEventListener("click", continueRound);
   if (state.screen === "gameover") {
+    bindPostMatchTip(appRoot, {
+      mode: "royale",
+      roomId: state.roomId,
+      viewerUid: state.uid,
+      recipients: state.members,
+      balance: state.economy.points,
+      onBalanceChange: (balance) => { state.economy.points = balance; },
+    });
     document.querySelector("#royaleNewMatch")?.addEventListener("click", resetSetup);
     document.querySelector("#royaleGameoverHome")?.addEventListener("click", leaveToLanding);
   }
@@ -2000,6 +2014,10 @@ function triggerCriticalFx(text) {
 }
 
 function requestHome() {
+  if (isPostMatchTipBusy("royale", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   if (["setup", "matching", "gameover", "noContest", "error"].includes(state.screen)) leaveToLanding();
   else {
     configureExitDialog();
@@ -2039,6 +2057,10 @@ async function cancelMatching() {
 }
 
 async function resetSetup() {
+  if (isPostMatchTipBusy("royale", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   const identity = {
     uid: state.uid,
     name: state.name,
@@ -2070,6 +2092,10 @@ async function retryConnection() {
 }
 
 async function leaveToLanding() {
+  if (isPostMatchTipBusy("royale", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
   await cleanupRoomResources(false);
   releaseAllImages();
   active = false;

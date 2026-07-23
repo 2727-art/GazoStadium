@@ -15,5 +15,12 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "accountTransferCodes",
+      "fieldPath": "deleteAt",
+      "ttl": true,
+      "indexes": []
+    }
+  ]
 }

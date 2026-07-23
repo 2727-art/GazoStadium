@@ -574,6 +574,7 @@
           <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
           <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
+          <button class="button hero-account-button hero-utility-button" id="accountButton">データ保護・市場パトロン</button>
           <button class="button hero-audio-tool-button" id="audioStudioButton"><small>端末内だけで録音・変換</small><span>♪ 10秒音声をつくる</span></button>
         </div>
         ${renderLandingTopMessagePanel()}
@@ -622,6 +623,7 @@
     document.querySelector("#achievementButton")?.addEventListener("click", () => openOnlineFeature("openAchievements"));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
+    document.querySelector("#accountButton")?.addEventListener("click", startAccount);
     document.querySelector("#audioStudioButton")?.addEventListener("click", openAudioStudio);
     bindLandingTopMessageEvents();
     window.HariaiOnline?.refreshTopMessages?.();
@@ -946,6 +948,15 @@
     }
     showToast("推し値市場を読み込んでいます…");
     window.addEventListener("hariai-market-ready", () => window.HariaiMarket?.start?.(), { once: true });
+  }
+
+  function startAccount() {
+    if (window.HariaiAccount?.start) {
+      window.HariaiAccount.start();
+      return;
+    }
+    showToast("データ保護機能を読み込んでいます…");
+    window.addEventListener("hariai-account-ready", () => window.HariaiAccount?.start?.(), { once: true });
   }
 
   function openOnlineFeature(method) {
@@ -1292,6 +1303,10 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiAccount?.isActive?.()) {
+      window.HariaiAccount.requestHome();
+      return;
+    }
     if (window.HariaiMarket?.isActive?.()) {
       window.HariaiMarket.requestHome();
       return;
