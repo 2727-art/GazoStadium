@@ -139,7 +139,26 @@ test("certificate shop snapshots keep the presented identity and refresh verifie
   assert.ok(certificateWrite > shopSnapshot);
   assert.match(
     indexSource,
-    /shopName: presentedSellerShop\.shopName,[\s\S]*?verified: liveSellerShop\.verified,/,
+    /shopName: presentedSellerShop\.shopName,[\s\S]*?shopCharmId: presentedSellerShop\.shopCharmId,[\s\S]*?verified: liveSellerShop\.verified,/,
+  );
+});
+
+test("shop customization ownership is read once and returns free plus owned stamp charms", () => {
+  assert.match(
+    indexSource,
+    /async function ownedMarketProductIds\(uid\)[\s\S]*?readLegacyEconomy\(uid\)[\s\S]*?collection\("economyPurchases"\)[\s\S]*?return ownedIds;/,
+  );
+  assert.match(
+    indexSource,
+    /async function ownedMarketCustomizationIds\(uid\)[\s\S]*?type === "stamp"[\s\S]*?FREE_MARKET_SHOP_CHARM_IDS/,
+  );
+  assert.match(
+    indexSource,
+    /const customizationIds = await ownedMarketCustomizationIds\(uid\);[\s\S]*?validateMarketShopInput\(data, customizationIds\)/,
+  );
+  assert.match(
+    indexSource,
+    /ownedShopCharmIds: customizationIds\.ownedShopCharmIds/g,
   );
 });
 

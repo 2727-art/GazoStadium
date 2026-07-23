@@ -36,7 +36,7 @@ import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v1";
+} from "./player-titles.js?v=player-titles-v2";
 import {
   STAMP_PRODUCTS,
   acquireStampCooldown,

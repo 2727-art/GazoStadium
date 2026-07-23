@@ -5,6 +5,7 @@ export const PLAYER_TITLE_CATEGORIES = Object.freeze([
   { id: "strategy", label: "戦略型1on1", eyebrow: "STRATEGY 1ON1", icon: "?", className: "title-category-strategy", description: "推理・ブラフ・追撃を楽しむプレイヤー向け称号" },
   { id: "multiplayer", label: "2on2・ロワイヤル", eyebrow: "MULTIPLAYER", icon: "∞", className: "title-category-multiplayer", description: "連携や生き残りを楽しむプレイヤー向け称号" },
   { id: "community", label: "交流・ネタ", eyebrow: "COMMUNITY", icon: "☺", className: "title-category-community", description: "チャットや画像収集の個性を気軽に表す称号" },
+  { id: "oshi_market", label: "推し活・ときめき", eyebrow: "OSHI MARKET", icon: "♡", className: "title-category-oshi-market", description: "推し値市場で店主の個性や得意を伝える称号", collection: "oshi_market" },
 ]);
 
 export const PLAYER_TITLE_PRODUCTS = Object.freeze([
@@ -61,6 +62,14 @@ export const PLAYER_TITLE_PRODUCTS = Object.freeze([
   { id: "title_words_lost", type: "title", name: "語彙力消失中", title: "語彙力消失中", description: "刺さる画像を前に言葉を失った人の称号", price: 400, category: "community" },
   { id: "title_deep_folder", type: "title", name: "フォルダが深い", title: "フォルダが深い", description: "目的の画像まで何階層も潜る人の称号", price: 450, category: "community" },
   { id: "title_too_many_favorites", type: "title", name: "推しが多すぎる", title: "推しが多すぎる", description: "好きなものをひとつに決められない人の称号", price: 500, category: "community" },
+
+  { id: "title_oshi_deliverer", type: "title", name: "推しを届ける人", title: "推しを届ける人", description: "大切な一枚を、買い手へ丁寧に届ける店主の称号", price: 400, category: "oshi_market", collection: "oshi_market" },
+  { id: "title_oshi_storyteller", type: "title", name: "推し語り係", title: "推し語り係", description: "画像の好きなところを言葉で伝える店主の称号", price: 450, category: "oshi_market", collection: "oshi_market" },
+  { id: "title_tokimeki_scout", type: "title", name: "ときめき発掘隊", title: "ときめき発掘隊", description: "まだ知られていない魅力を見つけ出す店主の称号", price: 450, category: "oshi_market", collection: "oshi_market" },
+  { id: "title_one_picture_guide", type: "title", name: "一枚の案内人", title: "一枚の案内人", description: "買い手の好みに寄り添って一枚を案内する店主の称号", price: 500, category: "oshi_market", collection: "oshi_market" },
+  { id: "title_favorite_matchmaker", type: "title", name: "好きの仲人", title: "好きの仲人", description: "画像と買い手の「好き」を結びつける店主の称号", price: 550, category: "oshi_market", collection: "oshi_market" },
+  { id: "title_tokimeki_curator", type: "title", name: "ときめきキュレーター", title: "ときめきキュレーター", description: "心が動く一枚を選び抜いて並べる店主の称号", price: 650, category: "oshi_market", collection: "oshi_market" },
+  { id: "title_oshi_concierge", type: "title", name: "推し値コンシェルジュ", title: "推し値コンシェルジュ", description: "店の個性とおもてなしを磨き続ける店主の称号", price: 750, category: "oshi_market", collection: "oshi_market" },
 ]);
 
 const PLAYER_TITLE_BY_ID = new Map(PLAYER_TITLE_PRODUCTS.map((product) => [product.id, product]));

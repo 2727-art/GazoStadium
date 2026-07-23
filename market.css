@@ -1754,6 +1754,110 @@
   box-shadow: 0 0 0 3px var(--market-shop-soft);
 }
 
+.market-shop-form fieldset.market-shop-charm-picker {
+  padding: 15px;
+  border: 1px solid rgba(255, 154, 187, .22);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 96% 0, rgba(199, 168, 255, .12), transparent 40%),
+    rgba(255, 154, 187, .045);
+}
+
+.market-shop-charm-picker legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.market-shop-charm-picker legend small {
+  color: var(--market-shop-accent);
+  font-size: .68rem;
+  letter-spacing: 0;
+}
+
+.market-shop-charm-picker > p {
+  clear: both;
+  margin: 0 0 12px;
+  color: rgba(226, 236, 255, .66);
+  font-size: .72rem;
+  line-height: 1.6;
+}
+
+.market-shop-charm-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+  gap: 9px;
+}
+
+.market-shop-form .market-shop-charm-option {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  min-height: 104px;
+  padding: 8px 6px;
+  overflow: hidden;
+  color: rgba(238, 244, 255, .75);
+  border: 1px solid rgba(226, 236, 255, .14);
+  border-radius: 13px;
+  background: rgba(3, 8, 18, .48);
+  cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+
+.market-shop-form .market-shop-charm-option:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 154, 187, .46);
+  background: rgba(255, 154, 187, .08);
+}
+
+.market-shop-form .market-shop-charm-option.is-selected {
+  color: #fff8fc;
+  border-color: var(--market-shop-accent);
+  background: linear-gradient(145deg, var(--market-shop-soft), rgba(199, 168, 255, .1));
+  box-shadow: 0 8px 22px var(--market-shop-glow), inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
+
+.market-shop-charm-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.market-shop-charm-option:focus-within {
+  outline: 2px solid var(--market-shop-accent);
+  outline-offset: 2px;
+}
+
+.market-shop-charm-option img {
+  width: 62px;
+  height: 62px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 7px rgba(0, 0, 0, .28));
+}
+
+.market-shop-form .market-shop-charm-option > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: .7rem;
+  font-weight: 850;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.market-shop-form .market-shop-charm-option.is-none > span:first-of-type {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  color: rgba(226, 236, 255, .46);
+  border: 1px dashed rgba(226, 236, 255, .22);
+  border-radius: 50%;
+  font-size: 1.25rem;
+}
+
 .market-shop-option-grid,
 .market-impression-options {
   display: grid;
@@ -1915,12 +2019,12 @@
   min-width: 0;
 }
 
-.market-seller-card-head > div {
+.market-seller-card-head > div:not(.market-shop-identity-marks) {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.market-seller-card-head > div > small {
+.market-seller-card-head > div:not(.market-shop-identity-marks) > small {
   display: block;
   color: var(--market-shop-accent);
   font-size: .63rem;
@@ -1951,6 +2055,73 @@
   font-weight: 950;
   line-height: 1;
   transform: rotate(-5deg);
+}
+
+.market-shop-identity-marks {
+  position: relative;
+  display: block;
+  flex: 0 0 78px;
+  width: 78px;
+  height: 70px;
+}
+
+.market-shop-identity-marks .market-shop-seal {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.market-shop-charm {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(255, 255, 255, .42);
+  border-radius: 50%;
+  background: linear-gradient(145deg, rgba(255, 248, 252, .96), rgba(244, 229, 255, .9));
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .32), 0 0 0 3px var(--market-shop-soft);
+  transform: rotate(4deg);
+}
+
+.market-shop-charm img {
+  width: 43px;
+  height: 43px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 3px rgba(34, 19, 36, .18));
+}
+
+.market-shop-charm small {
+  position: absolute;
+  right: -2px;
+  bottom: -8px;
+  padding: 2px 5px;
+  color: #26152c;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ffb5cf, #d7c1ff);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, .2);
+  font-size: .46rem;
+  font-weight: 950;
+  letter-spacing: .08em;
+}
+
+.market-seller-card.is-compact .market-shop-identity-marks {
+  flex-basis: 66px;
+  width: 66px;
+  height: 60px;
+}
+
+.market-seller-card.is-compact .market-shop-charm {
+  width: 39px;
+  height: 39px;
+}
+
+.market-seller-card.is-compact .market-shop-charm img {
+  width: 36px;
+  height: 36px;
 }
 
 .market-seller-title {

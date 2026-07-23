@@ -65,6 +65,7 @@ const {
 } = require("./market-economy");
 const {
   DEFAULT_MARKET_SHOP,
+  FREE_MARKET_SHOP_CHARM_IDS,
   MARKET_SHOP_CATALOG,
   applyMarketSaleToShop,
   isValidPublicSellerId,
@@ -2604,7 +2605,7 @@ async function ensureMarketShop(uid, fallbackName = DEFAULT_MARKET_SHOP.shopName
   throw new HttpsError("aborted", "店コードを発行できませんでした。もう一度お試しください。");
 }
 
-async function ownedMarketTitleIds(uid) {
+async function ownedMarketProductIds(uid) {
   const [legacyEconomy, purchasesSnapshot] = await Promise.all([
     readLegacyEconomy(uid),
     firestore.collection("economyPurchases").doc(uid).collection("items").get(),
@@ -2615,11 +2616,27 @@ async function ownedMarketTitleIds(uid) {
       .map(([productId]) => productId),
   );
   purchasesSnapshot.docs.forEach((snapshot) => {
-    ownedIds.add(cleanText(snapshot.get("productId") || snapshot.id, 80));
+    const productId = cleanText(snapshot.get("productId") || snapshot.id, 80);
+    if (PRODUCT_CATALOG[productId]) ownedIds.add(productId);
   });
-  return [...ownedIds]
+  return ownedIds;
+}
+
+async function ownedMarketCustomizationIds(uid) {
+  const ownedIds = await ownedMarketProductIds(uid);
+  const ownedTitleIds = [...ownedIds]
     .filter((productId) => PRODUCT_CATALOG[productId]?.type === "title")
     .sort();
+  const ownedPaidStampIds = [...ownedIds]
+    .filter((productId) => PRODUCT_CATALOG[productId]?.type === "stamp")
+    .sort();
+  return {
+    ownedTitleIds,
+    ownedShopCharmIds: [
+      ...FREE_MARKET_SHOP_CHARM_IDS,
+      ...ownedPaidStampIds.filter((productId) => !FREE_MARKET_SHOP_CHARM_IDS.includes(productId)),
+    ],
+  };
 }
 
 async function resolveSelectedFavoriteSeller(buyerUid, favoritePublicSellerIdValue) {
@@ -3561,9 +3578,9 @@ async function getMarketShop(uid) {
   const statsSnapshot = await marketStatsRef(uid).get();
   const fallbackName = statsSnapshot.exists ? cleanName(statsSnapshot.get("name")) : DEFAULT_MARKET_SHOP.shopName;
   const shop = await ensureMarketShop(uid, fallbackName);
-  const [favoritesSnapshot, ownedTitleIds] = await Promise.all([
+  const [favoritesSnapshot, customizationIds] = await Promise.all([
     marketShopFavoritesRef(uid).orderBy("updatedAt", "desc").limit(100).get(),
-    ownedMarketTitleIds(uid),
+    ownedMarketCustomizationIds(uid),
   ]);
   const favorites = (await Promise.all(favoritesSnapshot.docs.map(async (favoriteSnapshot) => {
     const sellerUid = favoriteSnapshot.id;
@@ -3612,7 +3629,8 @@ async function getMarketShop(uid) {
     favorites,
     catalog: MARKET_SHOP_CATALOG,
     report: marketShopVerifiedReport(shop, statsSnapshot.data()),
-    ownedTitleIds,
+    ownedTitleIds: customizationIds.ownedTitleIds,
+    ownedShopCharmIds: customizationIds.ownedShopCharmIds,
   };
 }
 
@@ -3623,12 +3641,13 @@ function marketShopValidationMessage(errors) {
   if (errors.includes("serviceStyles")) return "接客スタイルは一覧から重複なしで2個まで選んでください。";
   if (errors.includes("themeId") || errors.includes("sealId")) return "看板テーマまたは商印が正しくありません。";
   if (errors.includes("titleId")) return "所有していない称号は店主称号に設定できません。";
+  if (errors.includes("shopCharmId")) return "無料または所有しているスタンプだけを商店チャームに設定できます。";
   return "推し値商店の設定が正しくありません。";
 }
 
 async function saveMarketShop(uid, data) {
-  const ownedTitleIds = await ownedMarketTitleIds(uid);
-  const validation = validateMarketShopInput(data, { ownedTitleIds });
+  const customizationIds = await ownedMarketCustomizationIds(uid);
+  const validation = validateMarketShopInput(data, customizationIds);
   if (!validation.valid) {
     throw new HttpsError(
       "invalid-argument",
@@ -3680,7 +3699,8 @@ async function saveMarketShop(uid, data) {
     saved: true,
     shop: publicSellerShop(savedShop, { marketStats: statsValue }),
     report: marketShopVerifiedReport(savedShop, statsValue),
-    ownedTitleIds,
+    ownedTitleIds: customizationIds.ownedTitleIds,
+    ownedShopCharmIds: customizationIds.ownedShopCharmIds,
   };
 }
 
@@ -4450,6 +4470,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
           themeId: presentedSellerShop.themeId,
           sealId: presentedSellerShop.sealId,
           titleId: presentedSellerShop.titleId,
+          shopCharmId: presentedSellerShop.shopCharmId,
           repeatWelcome: presentedSellerShop.repeatWelcome,
           verified: liveSellerShop.verified,
         }

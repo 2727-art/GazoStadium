@@ -1,11 +1,25 @@
 "use strict";
 
+const PRODUCT_CATALOG = require("./product-catalog");
+
 const MARKET_SHOP_SCHEMA_VERSION = 1;
 const MARKET_SHOP_NAME_MAX_LENGTH = 16;
 const MARKET_SHOP_TAGLINE_MAX_LENGTH = 40;
 const MARKET_SHOP_MAX_SPECIALTY_TAGS = 3;
 const MARKET_SHOP_MAX_SERVICE_STYLES = 2;
 const MARKET_SHOP_IMPRESSION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+const FREE_MARKET_SHOP_CHARM_IDS = Object.freeze([
+  "stamp_like",
+  "stamp_cute",
+  "stamp_surprise",
+  "stamp_thanks",
+]);
+const MARKET_SHOP_CHARM_IDS = new Set([
+  ...FREE_MARKET_SHOP_CHARM_IDS,
+  ...Object.values(PRODUCT_CATALOG)
+    .filter(({ type }) => type === "stamp")
+    .map(({ id }) => id),
+]);
 
 function catalogEntries(rows) {
   return Object.freeze(rows.map(([id, label, icon]) => Object.freeze({
@@ -80,6 +94,7 @@ const DEFAULT_MARKET_SHOP = Object.freeze({
   themeId: "standard",
   sealId: "heart",
   titleId: "",
+  shopCharmId: "",
   repeatWelcome: false,
 });
 
@@ -104,7 +119,10 @@ function uniqueCatalogSelection(value, catalogIds, maximum) {
   return unique.length === normalized.length ? unique : null;
 }
 
-function validateMarketShopInput(value, { ownedTitleIds = [] } = {}) {
+function validateMarketShopInput(value, {
+  ownedTitleIds = [],
+  ownedShopCharmIds = FREE_MARKET_SHOP_CHARM_IDS,
+} = {}) {
   const source = value && typeof value === "object" ? value : {};
   const shopName = normalizedSingleLine(source.shopName);
   const tagline = normalizedSingleLine(source.tagline);
@@ -121,7 +139,12 @@ function validateMarketShopInput(value, { ownedTitleIds = [] } = {}) {
   const themeId = normalizedSingleLine(source.themeId);
   const sealId = normalizedSingleLine(source.sealId);
   const titleId = normalizedSingleLine(source.titleId);
+  const shopCharmId = normalizedSingleLine(source.shopCharmId);
   const ownedTitles = new Set(Array.isArray(ownedTitleIds) ? ownedTitleIds.map(String) : []);
+  const ownedShopCharms = new Set([
+    ...FREE_MARKET_SHOP_CHARM_IDS,
+    ...(Array.isArray(ownedShopCharmIds) ? ownedShopCharmIds.map(String) : []),
+  ]);
   const errors = [];
 
   if (
@@ -144,6 +167,12 @@ function validateMarketShopInput(value, { ownedTitleIds = [] } = {}) {
   if (!CATALOG_IDS.themes.has(themeId)) errors.push("themeId");
   if (!CATALOG_IDS.seals.has(sealId)) errors.push("sealId");
   if (titleId && !ownedTitles.has(titleId)) errors.push("titleId");
+  if (
+    shopCharmId
+    && (!MARKET_SHOP_CHARM_IDS.has(shopCharmId) || !ownedShopCharms.has(shopCharmId))
+  ) {
+    errors.push("shopCharmId");
+  }
   if (typeof source.repeatWelcome !== "boolean") errors.push("repeatWelcome");
 
   return {
@@ -157,6 +186,7 @@ function validateMarketShopInput(value, { ownedTitleIds = [] } = {}) {
       themeId: CATALOG_IDS.themes.has(themeId) ? themeId : DEFAULT_MARKET_SHOP.themeId,
       sealId: CATALOG_IDS.seals.has(sealId) ? sealId : DEFAULT_MARKET_SHOP.sealId,
       titleId,
+      shopCharmId: MARKET_SHOP_CHARM_IDS.has(shopCharmId) ? shopCharmId : "",
       repeatWelcome: source.repeatWelcome === true,
     },
   };
@@ -212,6 +242,9 @@ function normalizeStoredMarketShop(value, {
     themeId: CATALOG_IDS.themes.has(source.themeId) ? source.themeId : DEFAULT_MARKET_SHOP.themeId,
     sealId: CATALOG_IDS.seals.has(source.sealId) ? source.sealId : DEFAULT_MARKET_SHOP.sealId,
     titleId: normalizedSingleLine(source.titleId),
+    shopCharmId: MARKET_SHOP_CHARM_IDS.has(normalizedSingleLine(source.shopCharmId))
+      ? normalizedSingleLine(source.shopCharmId)
+      : "",
     repeatWelcome: source.repeatWelcome === true,
     issueCount: nonNegativeInteger(source.issueCount),
     bestSale: nonNegativeInteger(source.bestSale),
@@ -293,6 +326,7 @@ function publicSellerShop(value, { marketStats = {} } = {}) {
     themeId: shop.themeId,
     sealId: shop.sealId,
     titleId: shop.titleId,
+    shopCharmId: shop.shopCharmId,
     repeatWelcome: shop.repeatWelcome,
     verified: {
       salesCount: marketShopSalesCount(value, effectiveStats),
@@ -449,6 +483,7 @@ function applyMarketSaleToShop(value, relationshipUpdate, now = Date.now(), sale
 
 module.exports = Object.freeze({
   DEFAULT_MARKET_SHOP,
+  FREE_MARKET_SHOP_CHARM_IDS,
   MARKET_SHOP_CATALOG,
   MARKET_SHOP_IMPRESSION_COOLDOWN_MS,
   MARKET_SHOP_MAX_SERVICE_STYLES,

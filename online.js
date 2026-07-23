@@ -45,7 +45,7 @@ import {
   getPlayerTitleCategory,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v1";
+} from "./player-titles.js?v=player-titles-v2";
 import {
   MAX_EQUIPPED_STAMPS,
   STAMP_PRODUCTS,
@@ -112,6 +112,54 @@ const TOP_MESSAGE_MAX_LENGTH = 30;
 const TOP_MESSAGE_FETCH_LIMIT = 10;
 const TOP_MESSAGE_DISPLAY_LIMIT = 5;
 const TOP_MESSAGE_MUTED_KEY = "hariai-stadium-muted-top-messages-v1";
+const OSHI_MARKET_COLLECTION_ID = "oshi_market";
+const OSHI_MARKET_COLLECTION_GROUPS = Object.freeze([
+  Object.freeze({
+    id: "titles",
+    eyebrow: "SELLER TITLE",
+    title: "店主らしさを伝える称号",
+    description: "装備した称号は、プロフィールに加えて推し値市場の店主カードにも表示されます。",
+    productIds: Object.freeze([
+      "title_oshi_deliverer",
+      "title_oshi_storyteller",
+      "title_tokimeki_scout",
+      "title_one_picture_guide",
+      "title_favorite_matchmaker",
+      "title_tokimeki_curator",
+      "title_oshi_concierge",
+    ]),
+  }),
+  Object.freeze({
+    id: "stamps",
+    eyebrow: "TOKIMEKI STAMP",
+    title: "好きを伝えるスタンプ",
+    description: "推し値商店の「商店チャーム」に1個を飾れます。購入品を装備すると、オンライン対戦チャットでも使えます。",
+    productIds: Object.freeze([
+      "stamp_god_photo",
+      "stamp_genius",
+      "stamp_best_shot",
+      "stamp_more",
+      "stamp_hit",
+    ]),
+  }),
+  Object.freeze({
+    id: "chat-cosmetics",
+    eyebrow: "CUTE CHAT COSMETICS",
+    title: "かわいい背景・フレーム",
+    description: "オンライン対戦チャットの吹き出しを、背景1個とフレーム1個の組み合わせで飾れます。",
+    productIds: Object.freeze([
+      "chat_bg_sakura_milk",
+      "chat_bg_peach_fizz",
+      "chat_bg_lavender_mist",
+      "chat_frame_heart_ribbon",
+      "chat_frame_lace",
+      "chat_frame_cat_paw",
+      "chat_frame_flower",
+      "chat_frame_jewel",
+      "chat_frame_stardust",
+    ]),
+  }),
+]);
 const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
@@ -835,6 +883,34 @@ function renderChatCosmeticBubble(text, message = {}) {
 
 function openOnlineScreen(screen) {
   if (useOfflineMarketPreview) {
+    if (screen === "shop") {
+      active = true;
+      state = createOnlineState();
+      state.uid = "local-preview-shop";
+      state.screen = "shop";
+      state.authReady = true;
+      state.economyReady = true;
+      state.economy = normalizeEconomyRecord({
+        points: 2_500,
+        inventory: {
+          title_oshi_storyteller: true,
+          title_tokimeki_curator: true,
+          stamp_god_photo: true,
+          chat_bg_sakura_milk: true,
+          chat_frame_heart_ribbon: true,
+        },
+        equipped: {
+          reactions: {},
+          stamps: { stamp_god_photo: true },
+          title: "title_oshi_storyteller",
+          chatBackground: "chat_bg_sakura_milk",
+          chatFrame: "chat_frame_heart_ribbon",
+        },
+      });
+      setOnlineChrome("POINT SHOP PREVIEW");
+      render();
+      return;
+    }
     if (screen === "achievements") {
       active = true;
       state = createOnlineState();
@@ -866,7 +942,7 @@ function openOnlineScreen(screen) {
       render();
       return;
     }
-    showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
+    showToast("LOCAL UI PREVIEW中は市場・実績・ポイントショップ以外のオンライン機能へ接続しません。");
     return;
   }
   if (active) {
@@ -1899,6 +1975,8 @@ function renderPointShop() {
   const equippedChatCosmetics = getEquippedChatCosmetics(state.economy);
   const topMessageOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
   const topMessageLabel = state.topMessage ? "公開中" : topMessageOwned ? "投稿できます" : "未購入";
+  const standardTitleCategories = PLAYER_TITLE_CATEGORIES.filter((category) => category.collection !== OSHI_MARKET_COLLECTION_ID);
+  const standardTitleProducts = PLAYER_TITLE_PRODUCTS.filter((product) => product.collection !== OSHI_MARKET_COLLECTION_ID);
   const renderProduct = (product) => {
     const owned = state.economy.inventory?.[product.id] === true;
     const affordable = state.economy.points >= product.price;
@@ -1925,11 +2003,11 @@ function renderPointShop() {
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
           : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
-    let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${!state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
+    let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
     if (owned && product.type === "feature") {
       action = `<button class="button button-wide button-cyan" data-edit-top-message ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "メッセージを編集" : "メッセージを投稿"}</button>`;
     } else if (owned) {
-      action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${!state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${equipLimit}/${equipLimit}` : "装備する"}</button>`;
+      action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${equipLimit}/${equipLimit}` : "装備する"}</button>`;
     }
     const productTypeLabel = product.type === "reaction" ? "CHAT REACTION"
       : product.type === "stamp" ? "CHAT STAMP"
@@ -1946,19 +2024,30 @@ function renderPointShop() {
   const featureProducts = SHOP_PRODUCTS.filter((product) => product.type === "feature").map(renderProduct).join("");
   const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
   const stampProducts = SHOP_PRODUCTS.filter((product) => product.type === "stamp").map(renderProduct).join("");
-  const selectedTitleCategory = state.titleCategoryFilter === "all" || getPlayerTitleCategory(state.titleCategoryFilter)
+  const shopProductById = new Map(SHOP_PRODUCTS.map((product) => [product.id, product]));
+  const oshiMarketCollectionGroups = OSHI_MARKET_COLLECTION_GROUPS.map((group) => {
+    const products = group.productIds.map((productId) => shopProductById.get(productId)).filter(Boolean);
+    return `<section class="shop-oshi-market-group" aria-labelledby="shopOshiMarketGroup-${group.id}">
+      <div class="shop-oshi-market-group-head">
+        <div><span>${escapeHtml(group.eyebrow)}</span><h3 id="shopOshiMarketGroup-${group.id}">${escapeHtml(group.title)}</h3></div>
+        <p>${escapeHtml(group.description)}</p>
+      </div>
+      <div class="shop-grid">${products.map(renderProduct).join("")}</div>
+    </section>`;
+  }).join("");
+  const selectedTitleCategory = state.titleCategoryFilter === "all" || standardTitleCategories.some((category) => category.id === state.titleCategoryFilter)
     ? state.titleCategoryFilter
     : "all";
   const titleCategoryFilters = [
-    { id: "all", label: `すべて ${PLAYER_TITLE_PRODUCTS.length}` },
-    ...PLAYER_TITLE_CATEGORIES.map((category) => ({
+    { id: "all", label: `すべて ${standardTitleProducts.length}` },
+    ...standardTitleCategories.map((category) => ({
       id: category.id,
-      label: `${category.icon} ${category.label} ${PLAYER_TITLE_PRODUCTS.filter((product) => product.category === category.id).length}`,
+      label: `${category.icon} ${category.label} ${standardTitleProducts.filter((product) => product.category === category.id).length}`,
     })),
   ].map((filter) => `<button class="shop-title-filter ${selectedTitleCategory === filter.id ? "active" : ""}" type="button" data-title-category-filter="${filter.id}" aria-pressed="${selectedTitleCategory === filter.id}">${escapeHtml(filter.label)}</button>`).join("");
-  const titleGroups = PLAYER_TITLE_CATEGORIES
+  const titleGroups = standardTitleCategories
     .map((category) => {
-      const categoryProducts = PLAYER_TITLE_PRODUCTS.filter((product) => product.category === category.id);
+      const categoryProducts = standardTitleProducts.filter((product) => product.category === category.id);
       const open = selectedTitleCategory === category.id || state.expandedTitleCategories.has(category.id);
       const hidden = selectedTitleCategory !== "all" && selectedTitleCategory !== category.id;
       return `<details class="shop-title-group ${category.className}" data-title-category-group="${category.id}" ${open ? "open" : ""} ${hidden ? "hidden" : ""}>
@@ -1987,17 +2076,30 @@ function renderPointShop() {
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
     ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
+      <section class="shop-category shop-oshi-market-collection" id="shopOshiMarketCollection" aria-labelledby="shopOshiMarketCollectionTitle">
+        <div class="shop-oshi-market-hero">
+          <div><span>OSHI-KATSU / TOKIMEKI COLLECTION</span><h2 id="shopOshiMarketCollectionTitle">推し活・ときめきコレクション</h2>
+            <p>「この人から買いたい」が伝わる店主称号と、好きを表現するかわいいチャットアイテムを集めました。</p></div>
+          <div class="shop-oshi-market-uses" aria-label="コレクション商品の使い道">
+            <span><b aria-hidden="true">♡</b> 称号は推し値市場の店主カードへ</span>
+            <span><b aria-hidden="true">✿</b> スタンプは商店チャーム・オンライン対戦チャットへ</span>
+            <span><b aria-hidden="true">✦</b> 背景・フレームはオンライン対戦チャットへ</span>
+          </div>
+        </div>
+        <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
+        <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
+      </section>
       <section class="shop-category"><div class="shop-category-head"><div><span>COMMUNITY FEATURE</span><h2>トップページ機能</h2></div><p>500PTの買い切りで、自分のひとことをいつでも投稿・編集できます。</p></div><div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
       ${topMessageComposer}
-      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / 16 COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / 20 STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
-      <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / 4 STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
+      <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / ${CHAT_SPECIAL_FRAME_PRODUCTS.length} STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT REACTION</span><h2>追加リアクション</h2></div><p>購入品から最大${MAX_EQUIPPED_REACTIONS}個を装備できます。</p></div><div class="shop-grid">${reactionProducts}</div></section>
-      <section class="shop-category shop-stamp-category"><div class="shop-category-head"><div><span>CHAT STAMP / 20 ITEMS</span><h2>追加スタンプ</h2></div><p>無料4種に加え、購入品から最大${MAX_EQUIPPED_STAMPS}個を装備できます。全オンラインモード共通です。</p></div><div class="shop-grid">${stampProducts}</div></section>
-      <section class="shop-category shop-title-category" id="shopTitleCategory"><div class="shop-category-head"><div><span>PLAYER TITLE / ${PLAYER_TITLE_PRODUCTS.length} TITLES</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備できます。カテゴリの色は個性を表し、強さには影響しません。</p></div><div class="shop-title-filters" role="group" aria-label="称号カテゴリ">${titleCategoryFilters}</div><div class="shop-title-groups">${titleGroups}</div></section>` : renderEconomyUnavailable()}
+      <section class="shop-category shop-stamp-category"><div class="shop-category-head"><div><span>CHAT STAMP / ${STAMP_PRODUCTS.length} ITEMS</span><h2>追加スタンプ</h2></div><p>無料4種に加え、購入品から最大${MAX_EQUIPPED_STAMPS}個を装備できます。オンライン対戦チャット共通で、推し値商店の商店チャームは装備枠と別に選べます。</p></div><div class="shop-grid">${stampProducts}</div></section>
+      <section class="shop-category shop-title-category" id="shopTitleCategory"><div class="shop-category-head"><div><span>PLAYER TITLE / ${standardTitleProducts.length} STANDARD TITLES</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備できます。推し値市場向け7種は上の「推し活・ときめきコレクション」にあります。</p></div><div class="shop-title-filters" role="group" aria-label="称号カテゴリ">${titleCategoryFilters}</div><div class="shop-title-groups">${titleGroups}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
       <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">購入後の払い戻しはありません。トップメッセージは公開情報です。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。</p>
+    <p class="economy-note">${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入・装備を変更しません。表示とレイアウトだけを安全に確認できます。" : "購入後の払い戻しはありません。トップメッセージは公開情報です。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。"}</p>
   </section>`;
 }
 
@@ -4278,6 +4380,11 @@ async function cleanupMatchmaking(keepActive) {
   state.hostStatusPollTimer = null;
   state.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
+  if (useOfflineMarketPreview) {
+    state.pendingOffer = null;
+    state.pendingIncomingOffer = null;
+    return;
+  }
   const removals = [remove(ref(database, `online/queue/${state.uid}`))];
   if (!keepActive) removals.push(remove(ref(database, `online/active/${state.uid}`)));
   if (state.pendingOffer) removals.push(remove(ref(database, `online/offers/${state.pendingOffer.targetUid}/${state.pendingOffer.roomId}`)));

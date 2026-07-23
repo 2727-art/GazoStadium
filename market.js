@@ -37,7 +37,10 @@ import {
 import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v1";
+} from "./player-titles.js?v=player-titles-v2";
+import {
+  getStamp,
+} from "./stamps.js?v=stamps-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
@@ -59,6 +62,12 @@ const MARKET_SHOP_NAME_MAX_LENGTH = 16;
 const MARKET_SHOP_TAGLINE_MAX_LENGTH = 40;
 const MARKET_SHOP_MAX_SPECIALTY_TAGS = 3;
 const MARKET_SHOP_MAX_SERVICE_STYLES = 2;
+const FREE_MARKET_SHOP_CHARM_IDS = Object.freeze([
+  "stamp_like",
+  "stamp_cute",
+  "stamp_surprise",
+  "stamp_thanks",
+]);
 const MARKET_SHOP_FALLBACK_CATALOG = Object.freeze({
   specialtyTags: Object.freeze([
     Object.freeze({ id: "animals", label: "どうぶつ" }),
@@ -179,6 +188,7 @@ function createState() {
     shopCatalog: normalizeMarketShopCatalog(null),
     shopReport: normalizeSellerVerified(null),
     ownedTitleIds: [],
+    ownedShopCharmIds: [...FREE_MARKET_SHOP_CHARM_IDS],
     favorites: [],
     shopBusy: false,
     shopStatus: "idle",
@@ -453,6 +463,10 @@ function normalizeOwnedTitleIds(value) {
   return normalizeShopIdList(value).filter((titleId) => Boolean(getPlayerTitleProduct(titleId)));
 }
 
+function normalizeOwnedShopCharmIds(value) {
+  return normalizeShopIdList(value).filter((stampId) => Boolean(getStamp(stampId)));
+}
+
 function normalizeSellerImpressions(value) {
   const source = value && typeof value === "object" ? value : {};
   const impressions = {};
@@ -517,6 +531,7 @@ function normalizeMarketShop(value) {
     themeId: normalizeShopOptionId(source.themeId || source.theme) || "standard",
     sealId: normalizeShopOptionId(source.sealId || source.seal) || "heart",
     titleId: normalizeShopOptionId(source.titleId),
+    shopCharmId: normalizeShopOptionId(source.shopCharmId || source.charmId),
     repeatWelcome: source.repeatWelcome === true,
     verified: normalizeSellerVerified(source.verified || source.report || source),
     relationship: normalizeSellerRelationship(source.relationship || source.viewerRelationship),
@@ -587,7 +602,8 @@ function marketShopSample() {
     serviceStyles: ["story", "careful"],
     themeId: "sakura",
     sealId: "ribbon",
-    titleId: "title_good_praiser",
+    titleId: "title_oshi_concierge",
+    shopCharmId: "stamp_cute",
     repeatWelcome: true,
     verified: {
       salesCount: 12,
@@ -611,6 +627,7 @@ function previewMarketFavorites() {
       themeId: "midnight",
       sealId: "moon",
       titleId: "title_night_view_collector",
+      shopCharmId: "stamp_best_shot",
       repeatWelcome: true,
       lastPurchasePrice: 300,
       favoritedAt: Date.now() - 10_000,
@@ -625,6 +642,7 @@ function previewMarketFavorites() {
       themeId: "mint",
       sealId: "cat",
       titleId: "title_animal_lover",
+      shopCharmId: "stamp_like",
       repeatWelcome: false,
       lastPurchasePrice: 100,
       favoritedAt: Date.now() - 20_000,
@@ -639,6 +657,12 @@ function applyMarketShopResponse(value) {
   state.shop = normalizeMarketShop(data.shop || state.shop);
   state.shopReport = normalizeSellerVerified(data.report || state.shop.verified);
   state.ownedTitleIds = normalizeOwnedTitleIds(data.ownedTitleIds || data.ownedTitles);
+  state.ownedShopCharmIds = normalizeOwnedShopCharmIds(
+    [
+      ...FREE_MARKET_SHOP_CHARM_IDS,
+      ...normalizeShopIdList(data.ownedShopCharmIds || data.ownedCharmIds),
+    ],
+  );
   state.favorites = normalizeMarketFavorites(data.favorites);
   reconcileSelectedFavoriteSeller();
   if (state.room && !state.relationshipFeedback.submitted) {
@@ -794,10 +818,19 @@ async function ensureAuthenticated(generation) {
     state.shopCatalog = normalizeMarketShopCatalog(null);
     state.shopReport = normalizeSellerVerified(state.shop.verified);
     state.ownedTitleIds = normalizeOwnedTitleIds([
+      "title_oshi_concierge",
       "title_good_praiser",
       "title_animal_lover",
       "title_night_view_collector",
       "title_image_sommelier",
+    ]);
+    state.ownedShopCharmIds = normalizeOwnedShopCharmIds([
+      "stamp_like",
+      "stamp_cute",
+      "stamp_surprise",
+      "stamp_thanks",
+      "stamp_best_shot",
+      "stamp_god_photo",
     ]);
     state.favorites = previewMarketFavorites();
     state.shopStatus = "ready";
@@ -936,6 +969,12 @@ function renderMarketPlayerTitle(titleId) {
     : "";
 }
 
+function renderMarketShopCharm(shopCharmId, { compact = false } = {}) {
+  const stamp = getStamp(shopCharmId);
+  if (!stamp) return "";
+  return `<span class="market-shop-charm ${compact ? "is-compact" : ""}" role="img" aria-label="商店チャーム：${escapeHtml(stamp.label)}" title="商店チャーム：${escapeHtml(stamp.label)}"><img src="${escapeHtml(stamp.asset)}" alt="" draggable="false" /><small aria-hidden="true">CHARM</small></span>`;
+}
+
 function sellerImpressionTotal(verified) {
   return Object.values(verified?.impressions || {}).reduce((sum, count) => sum + Math.max(0, Number(count || 0)), 0);
 }
@@ -987,6 +1026,7 @@ function renderSellerShopCard(shopValue, {
     || shop.specialtyTags.length
     || shop.serviceStyles.length
     || shop.titleId
+    || shop.shopCharmId
     || shop.repeatWelcome,
   );
   if (!force && !hasIdentity) return "";
@@ -1016,7 +1056,10 @@ function renderSellerShopCard(shopValue, {
     .join("");
   return `<article class="market-seller-card market-shop-theme-${themeId} is-theme-${themeId} ${compact ? "is-compact" : ""}">
     <div class="market-seller-card-head">
-      <span class="market-shop-seal seal-${sealId}" aria-label="${escapeHtml(seal.label)}">${escapeHtml(seal.icon || "◆")}</span>
+      <div class="market-shop-identity-marks">
+        <span class="market-shop-seal seal-${sealId}" aria-label="${escapeHtml(seal.label)}">${escapeHtml(seal.icon || "◆")}</span>
+        ${renderMarketShopCharm(shop.shopCharmId, { compact })}
+      </div>
       <div><small>${escapeHtml(heading)}</small><h2>${escapeHtml(shop.shopName || `${normalizeMarketName(sellerName)}の推し値商店`)}</h2>${shop.publicSellerId ? `<span class="market-shop-public-id">店コード ${escapeHtml(shop.publicSellerId)}</span>` : ""}${shop.tagline ? `<p class="market-shop-tagline">「${escapeHtml(shop.tagline)}」</p>` : `<p class="market-shop-tagline is-empty">商店の理念はまだ設定されていません。</p>`}</div>
       ${renderMarketPlayerTitle(shop.titleId)}
     </div>
@@ -1041,6 +1084,19 @@ function renderMarketShopSettings() {
     const title = getPlayerTitleProduct(titleId);
     return title ? `<option value="${escapeHtml(titleId)}" ${titleId === shop.titleId ? "selected" : ""}>${escapeHtml(title.title)}</option>` : "";
   }).join("");
+  const shopCharmIds = [...state.ownedShopCharmIds];
+  if (shop.shopCharmId && getStamp(shop.shopCharmId) && !shopCharmIds.includes(shop.shopCharmId)) {
+    shopCharmIds.push(shop.shopCharmId);
+  }
+  const shopCharmOptions = shopCharmIds.map((stampId) => {
+    const stamp = getStamp(stampId);
+    if (!stamp) return "";
+    return `<label class="market-shop-charm-option ${stampId === shop.shopCharmId ? "is-selected" : ""}">
+      <input type="radio" name="marketShopCharm" value="${escapeHtml(stampId)}" ${stampId === shop.shopCharmId ? "checked" : ""} ${locked ? "disabled" : ""} />
+      <img src="${escapeHtml(stamp.asset)}" alt="" draggable="false" />
+      <span>${escapeHtml(stamp.name || stamp.label)}</span>
+    </label>`;
+  }).join("");
   const statusNote = state.shopStatus === "loading"
     ? `<p class="market-shop-status">推し値商店を読み込んでいます…</p>`
     : state.shopStatus === "save-error"
@@ -1064,6 +1120,18 @@ function renderMarketShopSettings() {
           <label class="field"><span>商店の印</span><select id="marketShopSeal" ${locked ? "disabled" : ""}>${state.shopCatalog.seals.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.sealId ? "selected" : ""}>${escapeHtml(`${option.icon ? `${option.icon} ` : ""}${option.label}`)}</option>`).join("")}</select></label>
           <label class="field"><span>店主の称号</span><select id="marketShopTitle" ${locked ? "disabled" : ""}><option value="">称号なし</option>${titleOptions}</select><small>ポイントショップで所有する称号から選択</small></label>
         </div>
+        <fieldset class="market-shop-charm-picker">
+          <legend>商店チャーム <small>無料・購入済みスタンプから1個</small></legend>
+          <p>ポイントショップの「推し活・ときめきコレクション」で集めたスタンプを、店主カードの目印にできます。チャットの6個の装備枠とは別です。</p>
+          <div class="market-shop-charm-options">
+            <label class="market-shop-charm-option is-none ${shop.shopCharmId ? "" : "is-selected"}">
+              <input type="radio" name="marketShopCharm" value="" ${shop.shopCharmId ? "" : "checked"} ${locked ? "disabled" : ""} />
+              <span aria-hidden="true">◇</span>
+              <span>なし</span>
+            </label>
+            ${shopCharmOptions}
+          </div>
+        </fieldset>
         <label class="market-profile-check market-shop-repeat-check"><input id="marketShopRepeatWelcome" type="checkbox" ${shop.repeatWelcome ? "checked" : ""} ${locked ? "disabled" : ""} /><span>「常連さん歓迎」を店主カードへ表示する</span></label>
         <button class="button button-primary" type="submit" ${!state.authReady || locked ? "disabled" : ""}>${state.shopBusy ? "保存中…" : "推し値商店を保存"}</button>
       </form>
@@ -1502,6 +1570,12 @@ function bindEvents() {
   document.querySelector("#marketShopTheme")?.addEventListener("change", (event) => { state.shop.themeId = normalizeShopOptionId(event.target.value) || "standard"; });
   document.querySelector("#marketShopSeal")?.addEventListener("change", (event) => { state.shop.sealId = normalizeShopOptionId(event.target.value) || "heart"; });
   document.querySelector("#marketShopTitle")?.addEventListener("change", (event) => { state.shop.titleId = normalizeShopOptionId(event.target.value); });
+  document.querySelectorAll('input[name="marketShopCharm"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.shop.shopCharmId = normalizeShopOptionId(input.value);
+      render();
+    });
+  });
   document.querySelector("#marketShopRepeatWelcome")?.addEventListener("change", (event) => { state.shop.repeatWelcome = event.target.checked; });
   document.querySelectorAll('input[name="marketMatchMode"]').forEach((input) => {
     input.addEventListener("change", () => {
@@ -1594,7 +1668,11 @@ function updateMarketShopMultiChoice(key, inputName, maximum, changedInput) {
 
 function readMarketShopForm() {
   const ownedTitles = new Set(state.ownedTitleIds);
+  const ownedShopCharms = new Set(state.ownedShopCharmIds);
   const requestedTitleId = normalizeShopOptionId(document.querySelector("#marketShopTitle")?.value);
+  const requestedShopCharmId = normalizeShopOptionId(
+    document.querySelector('input[name="marketShopCharm"]:checked')?.value,
+  );
   return normalizeMarketShop({
     ...state.shop,
     shopName: document.querySelector("#marketShopName")?.value,
@@ -1604,6 +1682,9 @@ function readMarketShopForm() {
     themeId: document.querySelector("#marketShopTheme")?.value,
     sealId: document.querySelector("#marketShopSeal")?.value,
     titleId: requestedTitleId && ownedTitles.has(requestedTitleId) ? requestedTitleId : "",
+    shopCharmId: requestedShopCharmId && ownedShopCharms.has(requestedShopCharmId)
+      ? requestedShopCharmId
+      : "",
     repeatWelcome: document.querySelector("#marketShopRepeatWelcome")?.checked === true,
   });
 }
@@ -1642,6 +1723,14 @@ async function saveMarketShop(event) {
       if (response.data?.report) state.shopReport = normalizeSellerVerified(response.data.report);
       if (response.data?.ownedTitleIds || response.data?.ownedTitles) {
         state.ownedTitleIds = normalizeOwnedTitleIds(response.data.ownedTitleIds || response.data.ownedTitles);
+      }
+      if (response.data?.ownedShopCharmIds || response.data?.ownedCharmIds) {
+        state.ownedShopCharmIds = normalizeOwnedShopCharmIds(
+          [
+            ...FREE_MARKET_SHOP_CHARM_IDS,
+            ...normalizeShopIdList(response.data.ownedShopCharmIds || response.data.ownedCharmIds),
+          ],
+        );
       }
       state.shopStatus = "ready";
       state.shopErrorMessage = "";
@@ -2961,6 +3050,7 @@ function resetForReplay() {
   const shopCatalog = state.shopCatalog;
   const shopReport = state.shopReport;
   const ownedTitleIds = state.ownedTitleIds;
+  const ownedShopCharmIds = state.ownedShopCharmIds;
   const favorites = state.favorites;
   const shopStatus = state.shopStatus;
   const shopErrorMessage = state.shopErrorMessage;
@@ -2989,6 +3079,7 @@ function resetForReplay() {
     shopCatalog,
     shopReport,
     ownedTitleIds,
+    ownedShopCharmIds,
     favorites,
     shopStatus,
     shopErrorMessage,

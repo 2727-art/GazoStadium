@@ -2963,6 +2963,227 @@ button:disabled {
   margin-top: 32px;
 }
 
+.shop-oshi-market-collection {
+  position: relative;
+  isolation: isolate;
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid rgba(255, 151, 190, 0.38);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 4% 0%, rgba(255, 154, 197, 0.2), transparent 31%),
+    radial-gradient(circle at 96% 2%, rgba(193, 159, 255, 0.2), transparent 28%),
+    linear-gradient(145deg, rgba(45, 22, 43, 0.96), rgba(21, 18, 39, 0.97) 48%, rgba(14, 18, 33, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 60px rgba(45, 17, 51, 0.18);
+  overflow: hidden;
+}
+
+.shop-oshi-market-collection::before,
+.shop-oshi-market-collection::after {
+  position: absolute;
+  z-index: 0;
+  color: rgba(255, 200, 222, 0.09);
+  font-weight: 950;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.shop-oshi-market-collection > * {
+  position: relative;
+  z-index: 1;
+}
+
+.shop-oshi-market-collection::before {
+  content: "♡";
+  top: 12px;
+  right: 3%;
+  font-size: clamp(5rem, 13vw, 10rem);
+  transform: rotate(12deg);
+}
+
+.shop-oshi-market-collection::after {
+  content: "✦  ·  ♡";
+  bottom: 18px;
+  left: 2%;
+  font-size: clamp(1.4rem, 4vw, 2.8rem);
+  letter-spacing: 0.18em;
+  transform: rotate(-8deg);
+}
+
+.shop-oshi-market-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  align-items: end;
+  gap: 20px 28px;
+  margin-bottom: 16px;
+}
+
+.shop-oshi-market-hero > div:first-child > span,
+.shop-oshi-market-group-head span {
+  color: #ffacd0;
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.15em;
+}
+
+.shop-oshi-market-hero h2 {
+  margin: 5px 0 7px;
+  color: #fff5fb;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.24;
+}
+
+.shop-oshi-market-hero p {
+  max-width: 680px;
+  margin: 0;
+  color: #d9c8d8;
+  font-size: 0.78rem;
+  line-height: 1.8;
+}
+
+.shop-oshi-market-uses {
+  display: grid;
+  gap: 8px;
+}
+
+.shop-oshi-market-uses span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 202, 224, 0.2);
+  border-radius: 13px;
+  color: #f3e8f1;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 0.7rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.shop-oshi-market-uses b {
+  display: grid;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #ff79ad, #a47bea);
+  font-size: 0.72rem;
+}
+
+.shop-oshi-market-shared {
+  margin: 0 0 22px;
+  padding: 11px 14px;
+  border: 1px solid rgba(191, 166, 255, 0.21);
+  border-radius: 13px;
+  color: #c9bed1;
+  background: rgba(21, 16, 34, 0.58);
+  font-size: 0.7rem;
+  line-height: 1.65;
+}
+
+.shop-oshi-market-shared strong {
+  color: #ffe0ed;
+}
+
+.shop-oshi-market-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.shop-oshi-market-group {
+  min-width: 0;
+}
+
+.shop-oshi-market-group + .shop-oshi-market-group {
+  padding-top: 23px;
+  border-top: 1px solid rgba(255, 214, 231, 0.11);
+}
+
+.shop-oshi-market-group-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px 24px;
+  margin-bottom: 12px;
+}
+
+.shop-oshi-market-group-head h3 {
+  margin: 4px 0 0;
+  color: #fff3f9;
+  font-size: 1rem;
+}
+
+.shop-oshi-market-group-head p {
+  max-width: 540px;
+  margin: 0;
+  color: #bdb2c4;
+  font-size: 0.68rem;
+  line-height: 1.65;
+  text-align: right;
+}
+
+.shop-oshi-market-collection .shop-card {
+  border-color: rgba(255, 174, 207, 0.2);
+  background:
+    linear-gradient(155deg, rgba(255, 134, 183, 0.08), rgba(157, 112, 232, 0.035) 48%, rgba(13, 16, 28, 0.95)),
+    rgba(20, 18, 31, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.shop-oshi-market-collection .shop-card:hover {
+  border-color: rgba(255, 174, 207, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 12px 28px rgba(28, 10, 35, 0.2);
+  transform: translateY(-2px);
+}
+
+.shop-oshi-market-collection .shop-card.is-owned {
+  border-color: rgba(128, 237, 193, 0.42);
+}
+
+.shop-oshi-market-collection .shop-card.is-equipped {
+  border-color: rgba(120, 224, 255, 0.62);
+}
+
+.shop-oshi-market-collection .shop-card-top span {
+  color: #ffacd0;
+}
+
+@media (max-width: 760px) {
+  .shop-oshi-market-collection {
+    padding: 20px 14px;
+    border-radius: 21px;
+  }
+
+  .shop-oshi-market-hero {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .shop-oshi-market-group-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .shop-oshi-market-group-head p {
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shop-oshi-market-collection .shop-card {
+    transition: none;
+  }
+
+  .shop-oshi-market-collection .shop-card:hover {
+    transform: none;
+  }
+}
+
 .shop-title-filters {
   display: flex;
   flex-wrap: wrap;
@@ -5270,6 +5491,14 @@ button:disabled {
   --title-icon: #63e5ad;
   --title-surface: linear-gradient(110deg, rgba(72, 210, 151, 0.13), rgba(96, 226, 201, 0.055));
   --title-group-surface: rgba(64, 194, 142, 0.065);
+}
+
+.title-category-oshi-market {
+  --title-border: rgba(255, 137, 189, 0.5);
+  --title-text: #ffc0da;
+  --title-icon: #ff82b7;
+  --title-surface: linear-gradient(110deg, rgba(255, 113, 173, 0.17), rgba(174, 122, 241, 0.09));
+  --title-group-surface: rgba(230, 92, 159, 0.08);
 }
 
 .chat-message small .player-title-badge {

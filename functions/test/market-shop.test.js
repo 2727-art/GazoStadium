@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const PRODUCT_CATALOG = require("../product-catalog");
 
 const {
   MARKET_SHOP_CATALOG,
@@ -27,10 +28,38 @@ function validInput(overrides = {}) {
     themeId: "lavender",
     sealId: "moon",
     titleId: "title_image_sommelier",
+    shopCharmId: "stamp_cute",
     repeatWelcome: true,
     ...overrides,
   };
 }
+
+test("oshi market titles use the agreed product IDs and prices", () => {
+  assert.deepEqual(
+    [
+      ["title_oshi_deliverer", 400],
+      ["title_oshi_storyteller", 450],
+      ["title_tokimeki_scout", 450],
+      ["title_one_picture_guide", 500],
+      ["title_favorite_matchmaker", 550],
+      ["title_tokimeki_curator", 650],
+      ["title_oshi_concierge", 750],
+    ].map(([id, price]) => PRODUCT_CATALOG[id] && {
+      id: PRODUCT_CATALOG[id].id,
+      type: PRODUCT_CATALOG[id].type,
+      price: PRODUCT_CATALOG[id].price,
+    }),
+    [
+      { id: "title_oshi_deliverer", type: "title", price: 400 },
+      { id: "title_oshi_storyteller", type: "title", price: 450 },
+      { id: "title_tokimeki_scout", type: "title", price: 450 },
+      { id: "title_one_picture_guide", type: "title", price: 500 },
+      { id: "title_favorite_matchmaker", type: "title", price: 550 },
+      { id: "title_tokimeki_curator", type: "title", price: 650 },
+      { id: "title_oshi_concierge", type: "title", price: 750 },
+    ],
+  );
+});
 
 test("shop save input accepts only catalog selections and an owned title", () => {
   const result = validateMarketShopInput(validInput(), {
@@ -39,6 +68,7 @@ test("shop save input accepts only catalog selections and an owned title", () =>
   assert.equal(result.valid, true);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.shop.specialtyTags, ["story", "night"]);
+  assert.equal(result.shop.shopCharmId, "stamp_cute");
   assert.equal(result.shop.repeatWelcome, true);
 
   const invalid = validateMarketShopInput(validInput({
@@ -47,12 +77,41 @@ test("shop save input accepts only catalog selections and an owned title", () =>
     themeId: "paid_trust_badge",
     sealId: "verified",
     titleId: "title_not_owned",
+    shopCharmId: "stamp_god_photo",
   }), { ownedTitleIds: [] });
   assert.equal(invalid.valid, false);
   assert.deepEqual(
     invalid.errors,
-    ["specialtyTags", "serviceStyles", "themeId", "sealId", "titleId"],
+    ["specialtyTags", "serviceStyles", "themeId", "sealId", "titleId", "shopCharmId"],
   );
+});
+
+test("shop charms accept free stamps and only owned paid stamps", () => {
+  const freeCharm = validateMarketShopInput(validInput({
+    shopCharmId: "stamp_thanks",
+  }), {
+    ownedTitleIds: ["title_image_sommelier"],
+    ownedShopCharmIds: [],
+  });
+  assert.equal(freeCharm.valid, true);
+
+  const ownedPaidCharm = validateMarketShopInput(validInput({
+    shopCharmId: "stamp_god_photo",
+  }), {
+    ownedTitleIds: ["title_image_sommelier"],
+    ownedShopCharmIds: ["stamp_god_photo"],
+  });
+  assert.equal(ownedPaidCharm.valid, true);
+  assert.equal(ownedPaidCharm.shop.shopCharmId, "stamp_god_photo");
+
+  for (const shopCharmId of ["stamp_god_photo", "stamp_not_in_catalog"]) {
+    const unavailableCharm = validateMarketShopInput(validInput({ shopCharmId }), {
+      ownedTitleIds: ["title_image_sommelier"],
+      ownedShopCharmIds: [],
+    });
+    assert.equal(unavailableCharm.valid, false);
+    assert.deepEqual(unavailableCharm.errors, ["shopCharmId"]);
+  }
 });
 
 test("shop names and taglines are bounded single-line text and taglines reject URLs", () => {
@@ -106,6 +165,7 @@ test("public shop cards expose stable presentation and aggregate report without 
     marketStats: { uniqueCounterparties: 99 },
   });
   assert.equal(card.shopName, "月灯り商店");
+  assert.equal(card.shopCharmId, "stamp_cute");
   assert.equal(card.verified.repeatBuyerCount, 2);
   assert.equal(card.verified.salesCount, 8);
   assert.equal(card.verified.uniqueCounterparties, 6);
@@ -347,5 +407,7 @@ test("catalog IDs are unique within each selectable family", () => {
   const fallback = normalizeStoredMarketShop({});
   assert.equal(fallback.themeId, "standard");
   assert.equal(fallback.sealId, "heart");
+  assert.equal(fallback.shopCharmId, "");
+  assert.equal(normalizeStoredMarketShop({ shopCharmId: "stamp_not_in_catalog" }).shopCharmId, "");
   assert.equal(fallback.impressionBuyerCount, 0);
 });
