@@ -69,6 +69,7 @@ const RATING_K_FACTOR = 32;
 const MAX_PURSUIT_LINE_LENGTH = 40;
 const CUSTOM_PURSUIT_VALUE = "__custom__";
 const MATCH_TIMEOUT_MS = 20_000;
+const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
@@ -79,12 +80,33 @@ const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
 const PROFILE_WEAKNESS_KEY = "hariai-stadium-strategy-weakness-v3";
 const LEGACY_PROFILE_BLUFF_KEY = "hariai-stadium-strategy-bluff-v2";
 const PURSUIT_LINE_KEY = "hariai-stadium-strategy-pursuit-line-v2";
+const PROFILE_IMAGE_PREFERENCE_KEY = "hariai-stadium-strategy-image-preference-v1";
 const PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
   "好みは読めた。ここからが本命だ！",
   "刺さったね？ 追撃開始！",
   "まだ終わらない。次の一枚をどうぞ！",
 ];
+const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
+  Object.freeze({
+    id: "illustration",
+    label: "アニメ・イラストが刺さりやすい",
+    shortLabel: "アニメ・イラスト",
+    description: "漫画・イラスト・2Dゲーム絵などを高く評価しやすい",
+  }),
+  Object.freeze({
+    id: "live_action",
+    label: "実写が刺さりやすい",
+    shortLabel: "実写",
+    description: "人物・風景・動物・物撮りなどを高く評価しやすい",
+  }),
+  Object.freeze({
+    id: "both",
+    label: "どちらも歓迎",
+    shortLabel: "どちらも歓迎",
+    description: "画像表現を絞らず、両方の相手とすぐにマッチング",
+  }),
+]);
 const STRATEGY_CHAT_PROMPTS = ["それ、本命？", "今の反応、怪しい…", "どれが一番好き？", "ノーコメント！"];
 const ANONYMOUS_CHAT_SCREENS = new Set(["intro", "waitingDecision", "deck", "waitingDeck"]);
 const IDENTIFIED_CHAT_SCREENS = new Set([
@@ -99,6 +121,7 @@ const fxLayer = document.querySelector("#fxLayer");
 
 let active = false;
 let state = createState();
+let strategyMatchmakingGenerationCounter = 0;
 
 const shared = () => window.HariaiApp?.shared;
 const escapeHtml = (value) => shared()?.escapeHtml(value) ?? String(value);
@@ -117,6 +140,7 @@ function savedClues() {
 function createState() {
   const storedWeaknessValue = localStorage.getItem(PROFILE_WEAKNESS_KEY) ?? localStorage.getItem(LEGACY_PROFILE_BLUFF_KEY);
   const storedWeakness = Number(storedWeaknessValue);
+  const imagePreference = normalizeImagePreference(localStorage.getItem(PROFILE_IMAGE_PREFERENCE_KEY), "");
   return {
     screen: "profile",
     uid: "",
@@ -127,6 +151,7 @@ function createState() {
     weaknessSalt: "",
     weaknessCommit: "",
     pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
+    imagePreference,
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
     economy: { points: 0, inventory: {}, equipped: { stamps: {}, title: "", chatFrame: "", chatBackground: "" } },
     main: [],
@@ -182,7 +207,11 @@ function createState() {
     pendingOffer: null,
     latestQueue: {},
     activeUsers: {},
+    matchmakingGeneration: 0,
     matchTimer: null,
+    matchScopeTimer: null,
+    matchScopeAvailable: false,
+    matchScopeExpanded: false,
     queueHeartbeat: null,
     offerPollTimer: null,
     hostStatusPollTimer: null,
@@ -200,6 +229,16 @@ function createState() {
     reactAgain: false,
     errorMessage: "",
   };
+}
+
+function normalizeImagePreference(value, fallback = "both") {
+  const preference = String(value || "").trim();
+  return IMAGE_PREFERENCE_OPTIONS.some((option) => option.id === preference) ? preference : fallback;
+}
+
+function getImagePreferenceOption(value) {
+  const preference = normalizeImagePreference(value);
+  return IMAGE_PREFERENCE_OPTIONS.find((option) => option.id === preference) || IMAGE_PREFERENCE_OPTIONS[2];
 }
 
 function normalizeClues(value) {
@@ -439,6 +478,15 @@ function render() {
 
 function renderProfile() {
   const usesCustom = !PURSUIT_LINES.includes(state.pursuitLine);
+  const preferenceOptions = IMAGE_PREFERENCE_OPTIONS.map((option) => `
+    <label class="image-preference-option">
+      <input type="radio" name="strategyImagePreference" value="${option.id}" ${state.imagePreference === option.id ? "checked" : ""} required />
+      <span class="image-preference-card">
+        <strong>${escapeHtml(option.label)}</strong>
+        <small>${escapeHtml(option.description)}</small>
+      </span>
+    </label>`).join("");
+  const matchmakingReady = state.authReady && Boolean(normalizeImagePreference(state.imagePreference, ""));
   return `<section class="screen strategy-screen">
     <div class="section-head"><div><span class="eyebrow">ONLINE STRATEGY 1ON1 / PROFILE</span><h1>秘密のプロフィール登録</h1>
       <p>弱点候補を3つ登録し、本当の弱点を1つ選びます。残り2つは相手を惑わせるブラフです。</p></div>
@@ -454,6 +502,12 @@ function renderProfile() {
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
       ${shared()?.profileAvatar?.renderSetting?.({ controlId: "strategyProfileAvatar", name: state.name }) || ""}
+      <fieldset class="image-preference-settings">
+        <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
+        <p>弱点候補とは別に、今回の戦略型1on1で相手から見せてもらいたい画像の傾向を選んでください。</p>
+        <div class="image-preference-grid">${preferenceOptions}</div>
+        <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。</small>
+      </fieldset>
       <fieldset class="strategy-clue-fieldset"><legend>弱点候補（1つだけ本当の弱点を選択）</legend>
         ${state.clues.map((clue, index) => `<label class="strategy-clue-row"><input type="radio" name="weakness" value="${index}" ${state.weaknessIndex === index ? "checked" : ""} required />
           <span class="weakness-selector">本命</span><input class="text-input strategy-clue-input" data-clue-index="${index}" maxlength="80" autocomplete="off" placeholder="例：豚骨ラーメン" value="${escapeHtml(clue)}" required /></label>`).join("")}
@@ -465,12 +519,32 @@ function renderProfile() {
           <input class="text-input" id="strategyCustomPursuitLine" maxlength="${MAX_PURSUIT_LINE_LENGTH}" autocomplete="off" value="${usesCustom ? escapeHtml(state.pursuitLine) : ""}" /></label>
           <span class="pursuit-character-count"><b id="strategyPursuitCharacterCount">${usesCustom ? state.pursuitLine.length : 0}</b> / ${MAX_PURSUIT_LINE_LENGTH}</span></div>
       </div>
-      <div class="screen-actions setup-actions"><button class="button button-primary" type="submit" ${state.authReady ? "" : "disabled"}>プロフィールを封印して対戦相手を探す</button></div>
+      <div class="screen-actions setup-actions"><button class="button button-primary" id="strategyFindOpponent" type="submit" ${matchmakingReady ? "" : "disabled"}>プロフィールを封印して対戦相手を探す</button></div>
     </form></div></section>`;
 }
 
 function renderMatching() {
-  return renderStatusCard("◎", "STRATEGY MATCHING", "戦略型1on1の対戦相手を探しています", "プロフィールはマッチ成立後に対戦ルームへ登録します。", `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span>`, `<button class="button button-ghost" id="strategyCancelMatching">マッチングをやめる</button>`);
+  const preference = getImagePreferenceOption(state.imagePreference);
+  const acceptsBoth = preference.id === "both";
+  const scopeBody = acceptsBoth
+    ? "実写・アニメを問わず、すべての待機相手を候補にしています。"
+    : state.matchScopeExpanded
+      ? "同じ好みを最優先しつつ、相手も条件を広げた場合は異なる好みともマッチングします。"
+      : `「${preference.shortLabel}」または「どちらも歓迎」の相手だけを探しています。`;
+  const expandAction = !acceptsBoth && state.matchScopeAvailable && !state.matchScopeExpanded
+    ? '<button class="button button-cyan" id="strategyExpandMatchingScope">条件を広げて探す</button>'
+    : "";
+  const scopeHint = !acceptsBoth && !state.matchScopeAvailable && !state.matchScopeExpanded
+    ? `<small class="matching-scope-hint">${MATCH_SCOPE_EXPAND_DELAY_MS / 1000}秒後、必要なら異なる好みまで検索範囲を広げられます。</small>`
+    : "";
+  return renderStatusCard(
+    "◎",
+    "PREFERENCE MATCHING",
+    "戦略型1on1の対戦相手を探しています",
+    scopeBody,
+    `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${scopeHint}`,
+    `${expandAction}<button class="button button-ghost" id="strategyCancelMatching">マッチングをやめる</button>`,
+  );
 }
 
 function renderConnecting() {
@@ -836,11 +910,18 @@ function bindScreenEvents() {
       onUpdate: () => { syncStrategyProfileDraft(); render(); },
     });
     shared()?.profileAvatar?.bindSetting?.({ controlId: "strategyProfileAvatar", onUpdate: () => { syncStrategyProfileDraft(); render(); } });
+    document.querySelectorAll('input[name="strategyImagePreference"]').forEach((input) => input.addEventListener("change", () => {
+      state.imagePreference = normalizeImagePreference(input.value, "");
+      if (state.imagePreference) localStorage.setItem(PROFILE_IMAGE_PREFERENCE_KEY, state.imagePreference);
+      const button = document.querySelector("#strategyFindOpponent");
+      if (button) button.disabled = !state.authReady || !state.imagePreference;
+    }));
   }
   document.querySelectorAll("[data-strategy-avatar-visibility]").forEach((button) => button.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); }));
   bindStrategyChatEvents();
   document.querySelector("#strategyProfileForm")?.addEventListener("submit", saveProfile);
   bindPursuitFields();
+  document.querySelector("#strategyExpandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
   document.querySelector("#strategyCancelMatching")?.addEventListener("click", cancelMatching);
   document.querySelector("#strategyWithdraw")?.addEventListener("click", () => submitDecision("withdraw"));
   document.querySelector("#strategyAccept")?.addEventListener("click", () => submitDecision("accept"));
@@ -965,6 +1046,8 @@ function syncStrategyProfileDraft() {
   if (clueInputs.length === 3) state.clues = clueInputs.map((input) => input.value.slice(0, 80));
   const weakness = document.querySelector('input[name="weakness"]:checked');
   if (weakness) state.weaknessIndex = Number(weakness.value);
+  const imagePreference = document.querySelector('input[name="strategyImagePreference"]:checked');
+  if (imagePreference) state.imagePreference = normalizeImagePreference(imagePreference.value, "");
   const choice = document.querySelector("#strategyPursuitLine")?.value || PURSUIT_LINES[0];
   const custom = document.querySelector("#strategyCustomPursuitLine")?.value || "";
   state.pursuitLine = choice === CUSTOM_PURSUIT_VALUE ? sanitizePursuitLineDraft(custom) : normalizePursuitLine(choice);
@@ -994,11 +1077,13 @@ async function saveProfile(event) {
   const name = document.querySelector("#strategyName")?.value.trim().slice(0, 16) || "";
   const clues = [...document.querySelectorAll(".strategy-clue-input")].map((input) => input.value.trim());
   const weakness = document.querySelector('input[name="weakness"]:checked');
+  const imagePreference = normalizeImagePreference(document.querySelector('input[name="strategyImagePreference"]:checked')?.value, "");
   if (!state.authReady || !state.uid) return showToast("Firebaseへの接続完了を待ってください。");
-  if (!name || clues.some((clue) => !clue) || !weakness) return showToast("名前、3つの弱点候補、本当の弱点1つをすべて入力してください。");
+  if (!name || clues.some((clue) => !clue) || !weakness || !imagePreference) return showToast("名前、採点傾向、3つの弱点候補、本当の弱点1つをすべて入力してください。");
   state.name = name;
   state.clues = normalizeClues(clues);
   state.weaknessIndex = Number(weakness.value);
+  state.imagePreference = imagePreference;
   const choice = document.querySelector("#strategyPursuitLine")?.value || PURSUIT_LINES[0];
   const custom = document.querySelector("#strategyCustomPursuitLine")?.value || "";
   state.pursuitLine = choice === CUSTOM_PURSUIT_VALUE ? normalizePursuitLine(custom) : normalizePursuitLine(choice);
@@ -1006,33 +1091,101 @@ async function saveProfile(event) {
   localStorage.setItem(PROFILE_CLUES_KEY, JSON.stringify(state.clues));
   localStorage.setItem(PROFILE_WEAKNESS_KEY, String(state.weaknessIndex));
   localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
+  localStorage.setItem(PROFILE_IMAGE_PREFERENCE_KEY, state.imagePreference);
   window.HariaiAudio?.playButton?.("confirm");
   await beginMatchmaking();
 }
 
+function isCurrentStrategyMatchmakingGeneration(generation) {
+  return active
+    && state.screen === "matching"
+    && state.matchmakingGeneration === generation
+    && !state.roomId;
+}
+
+async function removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt) {
+  await runTransaction(queueEntryRef, (current) => (
+    current && Number(current.joinedAt) === Number(joinedAt) ? null : undefined
+  )).catch(() => {});
+}
+
 async function beginMatchmaking() {
+  state.imagePreference = normalizeImagePreference(state.imagePreference, "");
+  if (!state.uid || !state.imagePreference) return;
+  const joinedAt = Date.now();
+  const generation = ++strategyMatchmakingGenerationCounter;
+  state.matchmakingGeneration = generation;
+  state.matchScopeAvailable = false;
+  state.matchScopeExpanded = false;
   state.screen = "matching";
   setStrategyChrome("STRATEGY MATCHING");
   render();
+
   const activeRef = ref(database, `online/strategyActive/${state.uid}`);
-  if ((await get(activeRef)).exists()) await remove(activeRef);
+  const staleActive = await get(activeRef);
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  if (staleActive.exists()) await remove(activeRef);
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
   const offersRef = ref(database, `online/strategyOffers/${state.uid}`);
   const staleOffers = await get(offersRef);
-  if (staleOffers.exists()) await Promise.allSettled(Object.keys(staleOffers.val()).map((roomId) => remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`))));
-  const queueRef = ref(database, `online/strategyQueue/${state.uid}`);
-  await set(queueRef, { uid: state.uid, joinedAt: Date.now(), lastSeen: Date.now(), state: "waiting" });
-  await startPublicPresence();
-  const disconnect = onDisconnect(queueRef);
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  if (staleOffers.exists()) {
+    await Promise.allSettled(Object.keys(staleOffers.val()).map((roomId) => (
+      remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`))
+    )));
+  }
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  const queueEntryRef = ref(database, `online/strategyQueue/${state.uid}`);
+  await set(queueEntryRef, {
+    uid: state.uid,
+    ratingPreference: state.imagePreference,
+    allowPreferenceMismatch: false,
+    joinedAt,
+    lastSeen: joinedAt,
+    state: "waiting",
+  });
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    await removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt);
+    return;
+  }
+  const presenceStarted = await startPublicPresence(generation);
+  if (!presenceStarted || !isCurrentStrategyMatchmakingGeneration(generation)) {
+    await removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt);
+    return;
+  }
+  const disconnect = onDisconnect(queueEntryRef);
   await disconnect.remove();
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    await disconnect.cancel().catch(() => {});
+    await removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt);
+    return;
+  }
   state.disconnectHandles.push(disconnect);
-  state.queueHeartbeat = window.setInterval(() => update(queueRef, { lastSeen: Date.now() }).then(() => attemptToHost(state.latestQueue)).catch(() => {}), HEARTBEAT_MS);
+  if (state.imagePreference !== "both") {
+    state.matchScopeTimer = window.setTimeout(() => {
+      if (!isCurrentStrategyMatchmakingGeneration(generation) || state.matchScopeExpanded) return;
+      state.matchScopeAvailable = true;
+      render();
+    }, MATCH_SCOPE_EXPAND_DELAY_MS);
+  }
+  state.queueHeartbeat = window.setInterval(() => {
+    update(queueEntryRef, { lastSeen: Date.now() })
+      .then(() => attemptToHost(state.latestQueue))
+      .catch(() => {});
+  }, HEARTBEAT_MS);
   state.matchUnsubscribers.push(onValue(offersRef, processIncomingOffers, handleRecoverableError));
   state.offerPollTimer = window.setInterval(() => {
     if (!active || state.screen !== "matching" || state.roomId) return;
     get(offersRef).then(processIncomingOffers).catch(handleRecoverableError);
   }, 1500);
-  state.matchUnsubscribers.push(onValue(ref(database, "online/strategyActive"), (snapshot) => { state.activeUsers = snapshot.val() || {}; attemptToHost(state.latestQueue).catch(handleRecoverableError); }));
-  state.matchUnsubscribers.push(onValue(ref(database, "online/strategyQueue"), (snapshot) => { state.latestQueue = snapshot.val() || {}; attemptToHost(state.latestQueue).catch(handleRecoverableError); }));
+  state.matchUnsubscribers.push(onValue(ref(database, "online/strategyActive"), (snapshot) => {
+    state.activeUsers = snapshot.val() || {};
+    attemptToHost(state.latestQueue).catch(handleRecoverableError);
+  }));
+  state.matchUnsubscribers.push(onValue(ref(database, "online/strategyQueue"), (snapshot) => {
+    state.latestQueue = snapshot.val() || {};
+    attemptToHost(state.latestQueue).catch(handleRecoverableError);
+  }));
 }
 
 function processIncomingOffers(snapshot) {
@@ -1042,14 +1195,79 @@ function processIncomingOffers(snapshot) {
   drainIncomingOffers().catch(handleRecoverableError);
 }
 
+async function expandMatchmakingScope() {
+  if (!active || state.screen !== "matching" || state.roomId || state.imagePreference === "both" || state.matchScopeExpanded) return;
+  window.clearTimeout(state.matchScopeTimer);
+  state.matchScopeTimer = null;
+  state.matchScopeAvailable = false;
+  state.matchScopeExpanded = true;
+  render();
+  const lastSeen = Date.now();
+  try {
+    await update(ref(database, `online/strategyQueue/${state.uid}`), {
+      allowPreferenceMismatch: true,
+      lastSeen,
+    });
+    state.latestQueue = {
+      ...state.latestQueue,
+      [state.uid]: {
+        ...state.latestQueue[state.uid],
+        allowPreferenceMismatch: true,
+        lastSeen,
+      },
+    };
+    await attemptToHost(state.latestQueue);
+  } catch {
+    state.matchScopeExpanded = false;
+    state.matchScopeAvailable = true;
+    if (state.screen === "matching") render();
+    showToast("検索範囲を広げられませんでした。通信状態を確認してください。");
+  }
+}
+
+function getPreferenceMatchTier(firstEntry, secondEntry) {
+  const firstPreference = normalizeImagePreference(firstEntry?.ratingPreference, "legacy");
+  const secondPreference = normalizeImagePreference(secondEntry?.ratingPreference, "legacy");
+  if (firstPreference !== "legacy" && firstPreference === secondPreference) {
+    return firstPreference === "both" ? 1 : 0;
+  }
+  if (firstPreference === "both" || secondPreference === "both") return 1;
+  if (firstPreference === "legacy" && secondPreference === "legacy") return 1;
+  const firstAllowsMismatch = firstPreference === "legacy" || firstEntry?.allowPreferenceMismatch === true;
+  const secondAllowsMismatch = secondPreference === "legacy" || secondEntry?.allowPreferenceMismatch === true;
+  return firstAllowsMismatch && secondAllowsMismatch ? 2 : Number.POSITIVE_INFINITY;
+}
+
+function findPreferredMatchPair(waiting) {
+  for (const tier of [0, 1, 2]) {
+    for (let hostIndex = 0; hostIndex < waiting.length - 1; hostIndex += 1) {
+      const host = waiting[hostIndex];
+      const candidates = waiting
+        .slice(hostIndex + 1)
+        .filter((candidate) => getPreferenceMatchTier(host, candidate) === tier);
+      if (!candidates.length) continue;
+      return {
+        host,
+        candidate: candidates[Math.floor(Math.random() * candidates.length)],
+      };
+    }
+  }
+  return null;
+}
+
 async function attemptToHost(queue) {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
-  const waiting = Object.values(queue).filter((entry) => entry?.state === "waiting" && Number(entry.lastSeen) >= Date.now() - QUEUE_FRESH_MS && !state.activeUsers[entry.uid]);
+  const waiting = Object.values(queue).filter((entry) => (
+    entry?.uid
+    && entry.state === "waiting"
+    && Number(entry.lastSeen) >= Date.now() - QUEUE_FRESH_MS
+    && !state.activeUsers[entry.uid]
+  ));
   if (waiting.length < 2) return;
   waiting.sort((a, b) => Number(a.joinedAt) - Number(b.joinedAt) || String(a.uid).localeCompare(String(b.uid)));
-  if (waiting[0].uid !== state.uid) return;
-  const candidates = waiting.filter((entry) => entry.uid !== state.uid);
-  if (candidates.length) await createOffer(candidates[Math.floor(Math.random() * candidates.length)]);
+  const pair = findPreferredMatchPair(waiting);
+  if (!pair || pair.host.uid !== state.uid) return;
+  await createOffer(pair.candidate);
 }
 
 async function createOffer(candidate) {
@@ -1117,7 +1335,19 @@ async function acceptOffer(roomId, offer) {
     const roomRef = ref(database, `online/strategyRooms/${roomId}`);
     const snapshot = await get(roomRef);
     const room = snapshot.val();
-    if (!room || room.status !== "offered" || !room.members?.[state.uid]) {
+    if (!room || room.status !== "offered" || !room.members?.[state.uid] || room.hostUid !== offer.fromUid) {
+      await remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`));
+      return;
+    }
+    const [ownQueueSnapshot, hostQueueSnapshot] = await Promise.all([
+      get(ref(database, `online/strategyQueue/${state.uid}`)),
+      get(ref(database, `online/strategyQueue/${room.hostUid}`)),
+    ]);
+    if (
+      !ownQueueSnapshot.exists()
+      || !hostQueueSnapshot.exists()
+      || !Number.isFinite(getPreferenceMatchTier(ownQueueSnapshot.val(), hostQueueSnapshot.val()))
+    ) {
       await remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`));
       return;
     }
@@ -2192,21 +2422,38 @@ function triggerCriticalFx(text) {
   window.setTimeout(() => { fxLayer.innerHTML = ""; }, 1250);
 }
 
-async function startPublicPresence() {
+async function startPublicPresence(generation) {
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return false;
   await cleanupPublicPresence();
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return false;
   const presenceId = push(ref(database, "online/publicPresence")).key;
   if (!presenceId) throw new Error("参加状況を登録できませんでした。");
-  await set(ref(database, `online/publicPresenceOwners/${presenceId}`), state.uid);
+  const ownerRef = ref(database, `online/publicPresenceOwners/${presenceId}`);
   const presenceRef = ref(database, `online/publicPresence/${presenceId}`);
+  await set(ownerRef, state.uid);
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    await remove(ownerRef).catch(() => {});
+    return false;
+  }
   await writePublicPresence(presenceRef, "waiting");
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
+    return false;
+  }
   const disconnect = onDisconnect(presenceRef);
   await disconnect.remove();
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    await disconnect.cancel().catch(() => {});
+    await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
+    return false;
+  }
   state.publicPresenceId = presenceId;
   state.publicPresenceState = "waiting";
   state.publicPresenceDisconnect = disconnect;
   state.publicPresenceHeartbeat = window.setInterval(() => {
     if (state.publicPresenceId) writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), state.publicPresenceState).catch(() => {});
   }, HEARTBEAT_MS);
+  return true;
 }
 
 async function writePublicPresence(presenceRef, presenceState) {
@@ -2226,6 +2473,7 @@ async function cleanupPublicPresence() {
   state.publicPresenceDisconnect = null;
   const id = state.publicPresenceId;
   state.publicPresenceId = "";
+  state.publicPresenceState = "";
   if (!id || !state.uid) return;
   await Promise.allSettled([remove(ref(database, `online/publicPresence/${id}`)), remove(ref(database, `online/publicPresenceOwners/${id}`))]);
 }
@@ -2282,7 +2530,17 @@ async function resetStrategySetup() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  const identity = { uid: state.uid, authReady: state.authReady, name: state.name, clues: [...state.clues], weaknessIndex: state.weaknessIndex, pursuitLine: state.pursuitLine, profile: { ...state.profile }, economy: state.economy };
+  const identity = {
+    uid: state.uid,
+    authReady: state.authReady,
+    name: state.name,
+    clues: [...state.clues],
+    weaknessIndex: state.weaknessIndex,
+    pursuitLine: state.pursuitLine,
+    imagePreference: state.imagePreference,
+    profile: { ...state.profile },
+    economy: state.economy,
+  };
   await cleanupOnlineResources(false);
   releaseAllImages();
   state = createState();
@@ -2314,10 +2572,19 @@ async function leaveToLanding() {
 }
 
 async function cleanupMatchmaking(keepActive) {
+  state.matchmakingGeneration = ++strategyMatchmakingGenerationCounter;
   window.clearTimeout(state.matchTimer);
+  window.clearTimeout(state.matchScopeTimer);
   window.clearInterval(state.queueHeartbeat);
   window.clearInterval(state.offerPollTimer);
   window.clearInterval(state.hostStatusPollTimer);
+  state.matchTimer = null;
+  state.matchScopeTimer = null;
+  state.matchScopeAvailable = false;
+  state.matchScopeExpanded = false;
+  state.queueHeartbeat = null;
+  state.offerPollTimer = null;
+  state.hostStatusPollTimer = null;
   state.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
   if (!state.uid) return;

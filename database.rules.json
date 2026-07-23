@@ -675,6 +675,12 @@
           "roomId": {
             ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 40)"
           },
+          "ratingPreference": {
+            ".validate": "newData.isString() && (newData.val() === 'illustration' || newData.val() === 'live_action' || newData.val() === 'both')"
+          },
+          "allowPreferenceMismatch": {
+            ".validate": "newData.isBoolean()"
+          },
           "$other": {
             ".validate": false
           }
