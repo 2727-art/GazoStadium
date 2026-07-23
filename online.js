@@ -1992,17 +1992,18 @@ async function claimDailyMission(missionId) {
   state.economyBusy = true;
   render();
   try {
+    // Returning the current value keeps the transaction retryable when Firebase first supplies an uncached null.
     const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
       const record = normalizeEconomyRecord(current, dateKey);
-      if (record.daily.claimed[mission.id]) { outcome = "claimed"; return; }
-      if (Number(record.daily[mission.progressKey] || 0) < mission.target) { outcome = "incomplete"; return; }
+      if (record.daily.claimed[mission.id]) { outcome = "claimed"; return current; }
+      if (Number(record.daily[mission.progressKey] || 0) < mission.target) { outcome = "incomplete"; return current; }
       record.daily.claimed[mission.id] = true;
       record.points = Math.min(MAX_POINTS, record.points + mission.reward);
       record.updatedAt = serverNow();
       outcome = "claimed-now";
       return record;
     });
-    applyEconomySnapshot(result.snapshot, dateKey);
+    if (result.committed && result.snapshot?.exists()) applyEconomySnapshot(result.snapshot, dateKey);
     state.economyBusy = false;
     render();
     if (result.committed && outcome === "claimed-now") showToast(`${mission.reward} PTを受け取りました。`);
@@ -2243,10 +2244,16 @@ async function claimClosedPeriodRewards() {
   state.economyBusy = true;
   render();
   try {
+    // Returning the current value keeps the transaction retryable when Firebase first supplies an uncached null.
     const result = await runTransaction(ref(database, `online/economy/${state.uid}`), (current) => {
       const economy = normalizeEconomyRecord(current, dateKey);
       const pending = pendingPeriodRewards(economy, timestamp);
-      if (!pending.length) return;
+      if (!pending.length) {
+        nominalTotal = 0;
+        creditedTotal = 0;
+        claimedCount = 0;
+        return current;
+      }
       nominalTotal = pending.reduce((total, entry) => total + entry.reward, 0);
       claimedCount = pending.length;
       pending.forEach(({ period, key, reward }) => {
@@ -2262,7 +2269,7 @@ async function claimClosedPeriodRewards() {
       economy.updatedAt = timestamp;
       return economy;
     });
-    if (result.snapshot) applyEconomySnapshot(result.snapshot, dateKey);
+    if (result.committed && result.snapshot?.exists()) applyEconomySnapshot(result.snapshot, dateKey);
     state.economyBusy = false;
     render();
     if (result.committed && claimedCount > 0) {
