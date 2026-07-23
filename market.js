@@ -28,6 +28,12 @@ import {
   functions,
   useOfflineMarketPreview,
 } from "./firebase-services.js?v=app-check-v2";
+import {
+  createIncomingMarketTransfer,
+  marketAssetEndStatus,
+  verifiedMarketImageMime,
+  verifiedMarketImageMimeFromChunks,
+} from "./market-transfer.mjs?v=value-market-transfer-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
@@ -1262,7 +1268,8 @@ async function sendAssetNow(blob, {
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel) {
     throw new Error("P2P転送が中断されました。");
   }
-  channel.send(JSON.stringify({ type: "asset-start", kind, turn, name, mime: blob.type, size: buffer.byteLength, createdAt }));
+  const mime = kind === "image" ? verifiedMarketImageMime(buffer) : blob.type;
+  channel.send(JSON.stringify({ type: "asset-start", kind, turn, name, mime, size: buffer.byteLength, createdAt }));
   for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
     await waitForDataBuffer(channel, generation, roomId);
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel) {
@@ -1293,33 +1300,18 @@ async function handleChannelMessage(data) {
     if (data.length > 4_096) throw new Error("P2P制御データが大きすぎます。");
     const message = JSON.parse(data);
     if (message.type === "asset-start") {
-      if (roomRole() !== "buyer") throw new Error("買い手以外は市場素材を受信できません。");
-      if (!["image", "audio"].includes(message.kind)) throw new Error("受信データの種類が不正です。");
       if (state.incomingTransfer) throw new Error("別のP2P転送が進行中です。");
-      const maximum = message.kind === "audio" ? MAX_AUDIO_BYTES : MAX_IMAGE_BYTES;
-      const size = Number(message.size || 0);
-      if (!Number.isFinite(size) || size <= 0 || size > maximum) throw new Error("受信データのサイズが不正です。");
-      if (message.kind === "image" && message.mime !== "image/webp") throw new Error("画像形式が不正です。");
-      if (message.kind === "audio" && message.mime !== "audio/wav") throw new Error("音声形式が不正です。");
-      const turn = Number(message.turn || 0);
-      if ((message.kind === "image" && turn !== 0)
-          || (message.kind === "audio" && (!Number.isInteger(turn) || turn < 1 || turn > MAX_TURNS))) {
-        throw new Error("受信データのターンが不正です。");
-      }
-      const createdAt = Number(message.createdAt || Date.now());
-      state.incomingTransfer = {
-        kind: message.kind,
-        turn,
-        name: String(message.name || "").slice(0, 80),
-        mime: message.mime,
-        size,
-        createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
-        received: 0,
-        chunks: [],
-      };
+      state.incomingTransfer = createIncomingMarketTransfer(message, {
+        role: roomRole(),
+        maxImageBytes: MAX_IMAGE_BYTES,
+        maxAudioBytes: MAX_AUDIO_BYTES,
+        maxTurns: MAX_TURNS,
+      });
     } else if (message.type === "asset-end") {
-      if (!state.incomingTransfer || message.kind !== state.incomingTransfer.kind
-          || Number(message.turn || 0) !== state.incomingTransfer.turn) {
+      const endStatus = marketAssetEndStatus(state.incomingTransfer, message);
+      if (endStatus === "orphan") return;
+      if (endStatus === "mismatch") {
+        state.incomingTransfer = null;
         throw new Error("P2P転送の終端情報が一致しません。");
       }
       finishIncomingAsset();
@@ -1338,23 +1330,32 @@ async function handleChannelMessage(data) {
 
 function finishIncomingAsset() {
   const transfer = state.incomingTransfer;
-  if (!transfer || transfer.received !== transfer.size) throw new Error("P2P受信が完了していません。");
-  const blob = new Blob(transfer.chunks, { type: transfer.mime });
-  if (transfer.kind === "image") {
-    releaseRemoteImage();
-    state.remoteImage = { blob, url: URL.createObjectURL(blob) };
-  } else {
-    state.audioMessages.push({
-      uid: state.room?.sellerUid,
-      name: state.room?.sellerName || "SELLER",
-      turn: transfer.turn,
-      blob,
-      url: URL.createObjectURL(blob),
-      createdAt: transfer.createdAt,
-    });
+  if (!transfer || transfer.received !== transfer.size) {
+    state.incomingTransfer = null;
+    throw new Error("P2P受信が完了していません。");
   }
-  state.incomingTransfer = null;
-  render();
+  try {
+    const mime = transfer.kind === "image"
+      ? verifiedMarketImageMimeFromChunks(transfer.chunks)
+      : transfer.mime;
+    const blob = new Blob(transfer.chunks, { type: mime });
+    if (transfer.kind === "image") {
+      releaseRemoteImage();
+      state.remoteImage = { blob, url: URL.createObjectURL(blob) };
+    } else {
+      state.audioMessages.push({
+        uid: state.room?.sellerUid,
+        name: state.room?.sellerName || "SELLER",
+        turn: transfer.turn,
+        blob,
+        url: URL.createObjectURL(blob),
+        createdAt: transfer.createdAt,
+      });
+    }
+    render();
+  } finally {
+    state.incomingTransfer = null;
+  }
 }
 
 async function sendChatPitch(event) {
