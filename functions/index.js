@@ -64,6 +64,23 @@ const {
   postMatchTipAmount,
 } = require("./market-economy");
 const {
+  DEFAULT_MARKET_SHOP,
+  MARKET_SHOP_CATALOG,
+  applyMarketSaleToShop,
+  isValidPublicSellerId,
+  marketImpressionDecision,
+  marketQueueCandidateSessionKey,
+  marketQueuesCompatible,
+  marketSaleRelationshipUpdate,
+  marketShopReport,
+  marketShopSalesCount,
+  normalizeStoredMarketShop,
+  publicSellerShop,
+  selectMarketQueueCandidates,
+  shouldReplaceMarketQueue,
+  validateMarketShopInput,
+} = require("./market-shop");
+const {
   SERVER_RANKING_AWARD_MINIMUM_MATCHES,
   SERVER_RANKING_MODES,
   SERVER_RANKING_PERIODS,
@@ -2448,6 +2465,10 @@ function marketQueueRef(uid) {
   return firestore.collection("valueMarketQueues").doc(uid);
 }
 
+function marketQueueControlRef(uid) {
+  return firestore.collection("valueMarketQueueControls").doc(uid);
+}
+
 function marketActiveRef(uid) {
   return firestore.collection("valueMarketActive").doc(uid);
 }
@@ -2458,6 +2479,207 @@ function marketRoomRef(roomId) {
 
 function marketStatsRef(uid) {
   return firestore.collection("valueMarketStats").doc(uid);
+}
+
+function marketShopRef(uid) {
+  return firestore.collection("valueMarketShops").doc(uid);
+}
+
+function marketShopPublicRef(publicSellerId) {
+  return firestore.collection("valueMarketShopPublic").doc(publicSellerId);
+}
+
+function marketShopFavoritesRef(buyerUid) {
+  return firestore.collection("valueMarketShopFavorites").doc(buyerUid).collection("sellers");
+}
+
+function marketShopFavoriteRef(buyerUid, sellerUid) {
+  return marketShopFavoritesRef(buyerUid).doc(sellerUid);
+}
+
+function marketShopBlocksRef(uid) {
+  return firestore.collection("valueMarketShopBlocks").doc(uid).collection("users");
+}
+
+function marketShopBlockRef(uid, targetUid) {
+  return marketShopBlocksRef(uid).doc(targetUid);
+}
+
+function marketShopRelationshipRef(sellerUid, buyerUid) {
+  return firestore.collection("valueMarketShopRelationships")
+    .doc(eventId(`${sellerUid}:${buyerUid}`));
+}
+
+function marketShopImpressionRef(roomId, buyerUid) {
+  return firestore.collection("valueMarketShopImpressions")
+    .doc(eventId(`${roomId}:${buyerUid}`));
+}
+
+function createPublicSellerId() {
+  return crypto.randomBytes(15).toString("base64url");
+}
+
+function marketShopVerifiedReport(shopValue, statsValue) {
+  const shop = normalizeStoredMarketShop(shopValue);
+  const privateReport = marketShopReport(shop);
+  const stats = statsValue && typeof statsValue === "object" ? statsValue : {};
+  return {
+    salesCount: marketShopSalesCount(shopValue, stats),
+    bestSale: Object.prototype.hasOwnProperty.call(
+      shopValue && typeof shopValue === "object" ? shopValue : {},
+      "bestSale",
+    )
+      ? integer(shop.bestSale, 0, MARKET_MAX_PRICE, 0)
+      : integer(stats.bestSale, 0, MARKET_MAX_PRICE, 0),
+    marketDays: integer(stats.marketDays, 0, 100_000, 0),
+    uniqueCounterparties: privateReport.uniqueBuyerCount,
+    repeatBuyerCount: privateReport.repeatBuyerCount,
+    impressions: { ...privateReport.impressionCounts },
+    impressionBuyerCount: privateReport.impressionBuyerCount,
+    favoriteCount: privateReport.favoriteCount,
+  };
+}
+
+function marketShopPublicRecord(uid, shopValue, statsValue, timestamp = Date.now()) {
+  const shop = normalizeStoredMarketShop(shopValue);
+  return {
+    schemaVersion: 1,
+    publicSellerId: shop.publicSellerId,
+    sellerUid: uid,
+    sellerShop: publicSellerShop(shopValue, { marketStats: statsValue }),
+    createdAt: shop.createdAt || timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+async function ensureMarketShop(uid, fallbackName = DEFAULT_MARKET_SHOP.shopName) {
+  const shopRef = marketShopRef(uid);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const candidatePublicSellerId = createPublicSellerId();
+    try {
+      return await firestore.runTransaction(async (transaction) => {
+        const shopSnapshot = await transaction.get(shopRef);
+        const storedShopValue = shopSnapshot.data();
+        const stored = normalizeStoredMarketShop(storedShopValue, {
+          fallbackName: cleanName(fallbackName),
+          publicSellerId: candidatePublicSellerId,
+        });
+        const publicSellerId = isValidPublicSellerId(stored.publicSellerId)
+          ? stored.publicSellerId
+          : candidatePublicSellerId;
+        const publicRef = marketShopPublicRef(publicSellerId);
+        const [publicSnapshot, statsSnapshot] = await Promise.all([
+          transaction.get(publicRef),
+          transaction.get(marketStatsRef(uid)),
+        ]);
+        const mappedUid = cleanText(publicSnapshot.get("sellerUid"), 128);
+        if (publicSnapshot.exists && mappedUid && mappedUid !== uid) {
+          const collision = new Error("Public seller id collision.");
+          collision.marketShopPublicIdCollision = true;
+          throw collision;
+        }
+        const now = Date.now();
+        const shop = {
+          ...stored,
+          publicSellerId,
+          issueCount: marketShopSalesCount(storedShopValue, statsSnapshot.data()),
+          bestSale: Object.prototype.hasOwnProperty.call(
+            storedShopValue && typeof storedShopValue === "object" ? storedShopValue : {},
+            "bestSale",
+          )
+            ? stored.bestSale
+            : integer(statsSnapshot.get("bestSale"), 0, MARKET_MAX_PRICE, 0),
+          createdAt: stored.createdAt || now,
+          updatedAt: stored.updatedAt || now,
+        };
+        transaction.set(shopRef, shop);
+        transaction.set(publicRef, marketShopPublicRecord(uid, shop, statsSnapshot.data(), now));
+        return shop;
+      });
+    } catch (error) {
+      if (error?.marketShopPublicIdCollision === true) continue;
+      throw error;
+    }
+  }
+  throw new HttpsError("aborted", "店コードを発行できませんでした。もう一度お試しください。");
+}
+
+async function ownedMarketTitleIds(uid) {
+  const [legacyEconomy, purchasesSnapshot] = await Promise.all([
+    readLegacyEconomy(uid),
+    firestore.collection("economyPurchases").doc(uid).collection("items").get(),
+  ]);
+  const ownedIds = new Set(
+    Object.entries(objectValue(legacyEconomy.inventory))
+      .filter(([, owned]) => owned === true)
+      .map(([productId]) => productId),
+  );
+  purchasesSnapshot.docs.forEach((snapshot) => {
+    ownedIds.add(cleanText(snapshot.get("productId") || snapshot.id, 80));
+  });
+  return [...ownedIds]
+    .filter((productId) => PRODUCT_CATALOG[productId]?.type === "title")
+    .sort();
+}
+
+async function resolveSelectedFavoriteSeller(buyerUid, favoritePublicSellerIdValue) {
+  const favoritePublicSellerId = typeof favoritePublicSellerIdValue === "string"
+    ? favoritePublicSellerIdValue.trim()
+    : "";
+  if (!isValidPublicSellerId(favoritePublicSellerId)) {
+    throw new HttpsError("invalid-argument", "待機する常連店を選んでください。");
+  }
+  const favoritesSnapshot = await marketShopFavoritesRef(buyerUid)
+    .where("publicSellerId", "==", favoritePublicSellerId)
+    .limit(2)
+    .get();
+  if (favoritesSnapshot.size !== 1) {
+    throw new HttpsError("failed-precondition", "選択した商店は常連帳にありません。");
+  }
+  const favoriteSnapshot = favoritesSnapshot.docs[0];
+  const sellerUid = String(favoriteSnapshot.id || "");
+  if (
+    !sellerUid
+    || sellerUid === buyerUid
+    || favoriteSnapshot.get("buyerUid") !== buyerUid
+    || favoriteSnapshot.get("sellerUid") !== sellerUid
+    || favoriteSnapshot.get("publicSellerId") !== favoritePublicSellerId
+  ) {
+    throw new HttpsError("failed-precondition", "常連帳の商店情報を確認できませんでした。");
+  }
+  const publicSnapshot = await marketShopPublicRef(favoritePublicSellerId).get();
+  const sellerShop = publicSellerShop(publicSnapshot.get("sellerShop"));
+  if (
+    !publicSnapshot.exists
+    || cleanText(publicSnapshot.get("sellerUid"), 128) !== sellerUid
+    || sellerShop?.publicSellerId !== favoritePublicSellerId
+    || sellerShop.repeatWelcome !== true
+  ) {
+    throw new HttpsError("failed-precondition", "選択した商店は現在、常連受付を休止しています。");
+  }
+  return { sellerUid, publicSellerId: favoritePublicSellerId };
+}
+
+async function marketQueueShopContext(uid, role, fallbackName, data = {}) {
+  const selectedFavoritePromise = role === "buyer" && data?.matchMode === "favorites"
+    ? resolveSelectedFavoriteSeller(uid, data?.favoritePublicSellerId)
+    : Promise.resolve(null);
+  const [blocksSnapshot, selectedFavoriteSeller] = await Promise.all([
+    marketShopBlocksRef(uid).orderBy("updatedAt", "desc").limit(100).get(),
+    selectedFavoritePromise,
+  ]);
+  const context = {
+    blockedUids: blocksSnapshot.docs.map((snapshot) => snapshot.id),
+    selectedFavoriteSellerUid: selectedFavoriteSeller?.sellerUid || "",
+    selectedFavoritePublicSellerId: selectedFavoriteSeller?.publicSellerId || "",
+    sellerShop: null,
+  };
+  if (role === "seller") {
+    const shop = await ensureMarketShop(uid, fallbackName);
+    const statsSnapshot = await marketStatsRef(uid).get();
+    context.sellerShop = publicSellerShop(shop, { marketStats: statsSnapshot.data() });
+  }
+  return context;
 }
 
 function createMarketPublicPresenceId() {
@@ -2555,23 +2777,43 @@ async function loadMarketRoomWithPublicPresenceId(roomId) {
   });
 }
 
-function normalizeQueueEntry(uid, data, balance, appCheckVerified, patronageValue = null) {
+function normalizeQueueEntry(
+  uid,
+  data,
+  balance,
+  appCheckVerified,
+  patronageValue = null,
+  shopContext = {},
+  queueRequest = {},
+) {
   const role = data?.role === "seller" ? "seller" : data?.role === "buyer" ? "buyer" : "";
   if (!role) throw new HttpsError("invalid-argument", "売り手または買い手を選択してください。");
+  const now = Date.now();
+  const queueRequestedAt = integer(queueRequest.requestedAt, 1, Number.MAX_SAFE_INTEGER, now);
+  const queueToken = /^[a-f0-9]{32}$/.test(String(queueRequest.token || ""))
+    ? String(queueRequest.token)
+    : crypto.randomBytes(16).toString("hex");
   const base = {
     uid,
     role,
     name: cleanName(data?.name),
     status: "waiting",
-    joinedAt: Date.now(),
-    lastSeen: Date.now(),
+    queueToken,
+    queueRequestedAt,
+    joinedAt: queueRequestedAt,
+    lastSeen: now,
+    lastMatchAttemptAt: now,
+    skippedCandidateSessions: [],
+    skippedCandidatesResetAt: 0,
     publicPresenceId: createMarketPublicPresenceId(),
     appCheckVerified: appCheckVerified === true,
     patron: publicPatronage(patronageValue, periodKey("monthly")),
+    blockedUids: Array.isArray(shopContext.blockedUids) ? shopContext.blockedUids : [],
   };
   if (role === "seller") {
     return {
       ...base,
+      sellerShop: shopContext.sellerShop || null,
       listing: {
         title: cleanText(data?.listing?.title, 30, "無題の推し"),
         askingPrice: integer(data?.listing?.askingPrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, 50),
@@ -2583,14 +2825,25 @@ function normalizeQueueEntry(uid, data, balance, appCheckVerified, patronageValu
   if (balance < MARKET_ENTRY_FEE + MARKET_MIN_PRICE) {
     throw new HttpsError("failed-precondition", `買い手は着手料${MARKET_ENTRY_FEE}PTと購入用${MARKET_MIN_PRICE}PTが必要です。`);
   }
-  return { ...base, maxBudget: integer(data?.maxBudget, MARKET_MIN_PRICE, affordable, affordable) };
+  const matchMode = data?.matchMode === "favorites" ? "favorites" : "discover";
+  if (matchMode === "favorites" && !shopContext.selectedFavoriteSellerUid) {
+    throw new HttpsError("failed-precondition", "待機する常連店を確認できませんでした。");
+  }
+  return {
+    ...base,
+    maxBudget: integer(data?.maxBudget, MARKET_MIN_PRICE, affordable, affordable),
+    matchMode,
+    selectedFavoriteSellerUid: matchMode === "favorites"
+      ? shopContext.selectedFavoriteSellerUid
+      : "",
+    selectedFavoritePublicSellerId: matchMode === "favorites"
+      ? shopContext.selectedFavoritePublicSellerId
+      : "",
+  };
 }
 
 function queuesCompatible(first, second) {
-  if (!first || !second || first.uid === second.uid || first.role === second.role) return false;
-  const seller = first.role === "seller" ? first : second;
-  const buyer = first.role === "buyer" ? first : second;
-  return Number(seller.listing?.askingPrice || 0) <= Number(buyer.maxBudget || 0);
+  return marketQueuesCompatible(first, second);
 }
 
 async function touchMarketRoomPublicPresence(room, role) {
@@ -2636,23 +2889,485 @@ async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
   }
 }
 
+async function loadMarketQueueCandidates(ownEntry, minimumLastSeen) {
+  if (ownEntry.role === "buyer" && ownEntry.matchMode === "favorites") {
+    const targetSnapshot = await marketQueueRef(ownEntry.selectedFavoriteSellerUid).get();
+    return targetSnapshot.exists ? [targetSnapshot.data()] : [];
+  }
+  const oppositeRole = ownEntry.role === "seller" ? "buyer" : "seller";
+  const standardCandidatesPromise = (async () => {
+    const candidates = [];
+    let cursor = null;
+    for (let page = 0; page < 3; page += 1) {
+      let query = firestore.collection("valueMarketQueues")
+        .where("role", "==", oppositeRole)
+        .where("status", "==", "waiting");
+      if (ownEntry.role === "seller") {
+        query = query
+          .where("matchMode", "==", "discover")
+          .where("maxBudget", ">=", Number(ownEntry.listing?.askingPrice || MARKET_MIN_PRICE))
+          .where("lastSeen", ">=", minimumLastSeen)
+          .orderBy("maxBudget", "asc")
+          .orderBy("lastSeen", "asc");
+      } else {
+        query = query
+          .where("listing.askingPrice", "<=", Number(ownEntry.maxBudget || MARKET_MIN_PRICE))
+          .where("lastSeen", ">=", minimumLastSeen)
+          .orderBy("listing.askingPrice", "asc")
+          .orderBy("lastSeen", "asc");
+      }
+      query = query.limit(40);
+      if (cursor) query = query.startAfter(cursor);
+      const snapshot = await query.get();
+      candidates.push(...snapshot.docs.map((candidateSnapshot) => candidateSnapshot.data()));
+      if (
+        snapshot.size < 40
+        || selectMarketQueueCandidates(ownEntry, candidates, {
+          minimumLastSeen,
+          requireAppCheck: MARKET_APP_CHECK_MIGRATION,
+        }).length >= 12
+      ) {
+        break;
+      }
+      cursor = snapshot.docs[snapshot.docs.length - 1];
+    }
+    return candidates;
+  })();
+  const selectedBuyersPromise = ownEntry.role === "seller"
+    ? firestore.collection("valueMarketQueues")
+      .where("selectedFavoriteSellerUid", "==", ownEntry.uid)
+      .where("status", "==", "waiting")
+      .where("lastSeen", ">=", minimumLastSeen)
+      .orderBy("lastSeen", "asc")
+      .limit(40)
+      .get()
+    : Promise.resolve(null);
+  const [standardCandidates, selectedBuyersSnapshot] = await Promise.all([
+    standardCandidatesPromise,
+    selectedBuyersPromise,
+  ]);
+  return [
+    ...standardCandidates,
+    ...(selectedBuyersSnapshot?.docs.map((snapshot) => snapshot.data()) || []),
+  ];
+}
+
+function sameMarketQueueSession(entry, queueToken) {
+  return entry?.status === "waiting"
+    && /^[a-f0-9]{32}$/.test(String(queueToken || ""))
+    && entry.queueToken === queueToken;
+}
+
+function nextSkippedMarketQueueSessions(entry, candidateEntry) {
+  const candidateSession = marketQueueCandidateSessionKey(candidateEntry);
+  const existing = Array.isArray(entry?.skippedCandidateSessions)
+    ? entry.skippedCandidateSessions.map(String).filter(Boolean)
+    : [];
+  if (!candidateSession) return existing.slice(-64);
+  return [
+    ...existing.filter((session) => session !== candidateSession),
+    candidateSession,
+  ].slice(-64);
+}
+
+async function claimMarketQueue(uid, ownEntry, expectedGeneration) {
+  const queueRef = marketQueueRef(uid);
+  const activeRef = marketActiveRef(uid);
+  const controlRef = marketQueueControlRef(uid);
+  let outcome = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [queueSnapshot, activeSnapshot, controlSnapshot] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(activeRef),
+      transaction.get(controlRef),
+    ]);
+    const current = queueSnapshot.data();
+    const control = controlSnapshot.data() || {};
+    const generation = integer(controlSnapshot.get("generation"), 0, Number.MAX_SAFE_INTEGER, 0);
+    if (activeSnapshot.exists) {
+      outcome = {
+        status: "matched",
+        roomId: cleanText(activeSnapshot.get("roomId"), 80),
+        presenceId: marketPublicPresenceId(current?.publicPresenceId),
+      };
+      if (queueSnapshot.exists) transaction.delete(queueRef);
+      return;
+    }
+    if (generation !== expectedGeneration) {
+      outcome = {
+        status: "canceled",
+        roomId: "",
+        presenceId: "",
+      };
+      return;
+    }
+    const latestRequestedAt = integer(
+      control.latestRequestedAt,
+      0,
+      Number.MAX_SAFE_INTEGER,
+      0,
+    );
+    if (
+      latestRequestedAt > 0
+      && !shouldReplaceMarketQueue({
+        status: "waiting",
+        queueRequestedAt: latestRequestedAt,
+        queueToken: String(control.latestToken || ""),
+      }, ownEntry)
+    ) {
+      outcome = {
+        status: "superseded",
+        roomId: "",
+        entry: current,
+        presenceId: "",
+      };
+      return;
+    }
+    if (!shouldReplaceMarketQueue(current, ownEntry)) {
+      outcome = {
+        status: "superseded",
+        roomId: "",
+        entry: current,
+        presenceId: "",
+      };
+      return;
+    }
+    const reusablePresenceId = current?.status === "waiting"
+      && Number(current.lastSeen || 0) >= Date.now() - QUEUE_FRESH_MS
+      ? marketPublicPresenceId(current.publicPresenceId)
+      : "";
+    const claimedEntry = {
+      ...ownEntry,
+      publicPresenceId: reusablePresenceId || ownEntry.publicPresenceId,
+    };
+    transaction.set(queueRef, claimedEntry);
+    transaction.set(controlRef, {
+      generation,
+      latestRequestedAt: claimedEntry.queueRequestedAt,
+      latestToken: claimedEntry.queueToken,
+      updatedAt: Date.now(),
+    }, { merge: true });
+    outcome = {
+      status: "waiting",
+      roomId: "",
+      entry: claimedEntry,
+      presenceId: reusablePresenceId
+        ? ""
+        : marketPublicPresenceId(current?.publicPresenceId),
+    };
+  });
+  return outcome;
+}
+
+async function validateTargetedMarketQueueSession(uid, ownEntry) {
+  if (ownEntry.role !== "buyer" || ownEntry.matchMode !== "favorites") {
+    return { status: "valid", roomId: "" };
+  }
+  const sellerUid = cleanText(ownEntry.selectedFavoriteSellerUid, 128);
+  const publicSellerId = cleanText(ownEntry.selectedFavoritePublicSellerId, 96);
+  if (!sellerUid || !isValidPublicSellerId(publicSellerId)) {
+    return { status: "invalid-target", roomId: "" };
+  }
+  const queueRef = marketQueueRef(uid);
+  const activeRef = marketActiveRef(uid);
+  const publicRef = marketShopPublicRef(publicSellerId);
+  const favoriteRef = marketShopFavoriteRef(uid, sellerUid);
+  let outcome = { status: "valid", roomId: "", presenceId: "" };
+  await firestore.runTransaction(async (transaction) => {
+    const [queueSnapshot, activeSnapshot, publicSnapshot, favoriteSnapshot] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(activeRef),
+      transaction.get(publicRef),
+      transaction.get(favoriteRef),
+    ]);
+    const current = queueSnapshot.data();
+    if (activeSnapshot.exists) {
+      outcome = {
+        status: "matched",
+        roomId: cleanText(activeSnapshot.get("roomId"), 80),
+        presenceId: marketPublicPresenceId(current?.publicPresenceId),
+      };
+      if (queueSnapshot.exists) transaction.delete(queueRef);
+      return;
+    }
+    if (!queueSnapshot.exists) {
+      outcome = { status: "missing", roomId: "", presenceId: "" };
+      return;
+    }
+    if (!sameMarketQueueSession(current, ownEntry.queueToken)) {
+      outcome = { status: "superseded", roomId: "", presenceId: "" };
+      return;
+    }
+    const liveSellerShop = publicSellerShop(publicSnapshot.get("sellerShop"));
+    const valid = publicSnapshot.exists
+      && cleanText(publicSnapshot.get("sellerUid"), 128) === sellerUid
+      && liveSellerShop?.publicSellerId === publicSellerId
+      && liveSellerShop.repeatWelcome === true
+      && favoriteSnapshot.exists
+      && favoriteSnapshot.get("buyerUid") === uid
+      && favoriteSnapshot.get("sellerUid") === sellerUid
+      && favoriteSnapshot.get("publicSellerId") === publicSellerId;
+    if (!valid) {
+      transaction.delete(queueRef);
+      outcome = {
+        status: "invalid-target",
+        roomId: "",
+        presenceId: marketPublicPresenceId(current.publicPresenceId),
+      };
+    }
+  });
+  if (outcome.presenceId) {
+    await bestEffort("validateTargetedMarketQueueSession", [
+      removeMarketQueuePublicPresence(outcome.presenceId),
+    ]);
+  }
+  return outcome;
+}
+
+async function tryMatchMarketQueueSession(uid, ownEntry) {
+  const targetValidation = await validateTargetedMarketQueueSession(uid, ownEntry);
+  if (targetValidation.status !== "valid") return targetValidation;
+  const minimumLastSeen = Date.now() - QUEUE_FRESH_MS;
+  const candidateEntries = await loadMarketQueueCandidates(ownEntry, minimumLastSeen);
+  const candidates = selectMarketQueueCandidates(ownEntry, candidateEntries, {
+    minimumLastSeen,
+    requireAppCheck: MARKET_APP_CHECK_MIGRATION,
+  }).slice(0, 8);
+
+  for (const candidate of candidates) {
+    const sellerUid = ownEntry.role === "seller" ? uid : candidate.uid;
+    const buyerUid = ownEntry.role === "buyer" ? uid : candidate.uid;
+    const ownQueueRef = marketQueueRef(uid);
+    const ownActiveRef = marketActiveRef(uid);
+    const candidateQueueRef = marketQueueRef(candidate.uid);
+    const candidateActiveRef = marketActiveRef(candidate.uid);
+    const sellerShopRef = marketShopRef(sellerUid);
+    const sellerStatsRef = marketStatsRef(sellerUid);
+    const relationshipRef = marketShopRelationshipRef(sellerUid, buyerUid);
+    const sellerBlockRef = marketShopBlockRef(sellerUid, buyerUid);
+    const buyerBlockRef = marketShopBlockRef(buyerUid, sellerUid);
+    const favoriteRef = marketShopFavoriteRef(buyerUid, sellerUid);
+    const roomRef = marketRoomRef(firestore.collection("valueMarketRooms").doc().id);
+    let attempt = { status: "retry", roomId: "" };
+
+    await firestore.runTransaction(async (transaction) => {
+      const [
+        ownQueueSnapshot,
+        ownActiveSnapshot,
+        candidateQueueSnapshot,
+        candidateActiveSnapshot,
+        sellerShopSnapshot,
+        sellerStatsSnapshot,
+        shopRelationshipSnapshot,
+        sellerBlockSnapshot,
+        buyerBlockSnapshot,
+        favoriteSnapshot,
+      ] = await Promise.all([
+        transaction.get(ownQueueRef),
+        transaction.get(ownActiveRef),
+        transaction.get(candidateQueueRef),
+        transaction.get(candidateActiveRef),
+        transaction.get(sellerShopRef),
+        transaction.get(sellerStatsRef),
+        transaction.get(relationshipRef),
+        transaction.get(sellerBlockRef),
+        transaction.get(buyerBlockRef),
+        transaction.get(favoriteRef),
+      ]);
+      const currentOwn = ownQueueSnapshot.data();
+      const currentCandidate = candidateQueueSnapshot.data();
+      const rejectCandidate = (candidateEntry = currentCandidate || candidate) => {
+        transaction.set(ownQueueRef, {
+          skippedCandidateSessions: nextSkippedMarketQueueSessions(currentOwn, candidateEntry),
+          skippedCandidatesResetAt: Number(currentOwn?.skippedCandidatesResetAt || 0) > Date.now()
+            ? Number(currentOwn.skippedCandidatesResetAt)
+            : Date.now() + QUEUE_FRESH_MS,
+        }, { merge: true });
+        attempt = { status: "retry", roomId: "" };
+      };
+      if (ownActiveSnapshot.exists) {
+        attempt = {
+          status: "matched",
+          roomId: cleanText(ownActiveSnapshot.get("roomId"), 80),
+          presenceId: marketPublicPresenceId(currentOwn?.publicPresenceId),
+        };
+        if (ownQueueSnapshot.exists) transaction.delete(ownQueueRef);
+        return;
+      }
+      if (!ownQueueSnapshot.exists) {
+        attempt = { status: "missing", roomId: "" };
+        return;
+      }
+      if (!sameMarketQueueSession(currentOwn, ownEntry.queueToken)) {
+        attempt = { status: "superseded", roomId: "" };
+        return;
+      }
+      if (Number(currentOwn.lastSeen || 0) < Date.now() - QUEUE_FRESH_MS) {
+        transaction.delete(ownQueueRef);
+        attempt = {
+          status: "missing",
+          roomId: "",
+          presenceId: marketPublicPresenceId(currentOwn.publicPresenceId),
+        };
+        return;
+      }
+      if (
+        candidateActiveSnapshot.exists
+        || sellerBlockSnapshot.exists
+        || buyerBlockSnapshot.exists
+        || !currentCandidate
+        || currentCandidate.status !== "waiting"
+        || Number(currentCandidate.lastSeen || 0) < Date.now() - QUEUE_FRESH_MS
+        || (MARKET_APP_CHECK_MIGRATION && currentCandidate.appCheckVerified !== true)
+        || !queuesCompatible(currentOwn, currentCandidate)
+      ) {
+        rejectCandidate();
+        return;
+      }
+      const seller = currentOwn.role === "seller" ? currentOwn : currentCandidate;
+      const buyer = currentOwn.role === "buyer" ? currentOwn : currentCandidate;
+      const liveSellerShop = publicSellerShop(sellerShopSnapshot.data(), {
+        marketStats: sellerStatsSnapshot.data(),
+      });
+      const targetedBuyer = buyer.matchMode === "favorites";
+      const validFavorite = favoriteSnapshot.exists
+        && favoriteSnapshot.get("buyerUid") === buyer.uid
+        && favoriteSnapshot.get("sellerUid") === seller.uid
+        && favoriteSnapshot.get("publicSellerId") === liveSellerShop?.publicSellerId;
+      if (
+        !liveSellerShop
+        || !queuesCompatible({ ...seller, sellerShop: liveSellerShop }, buyer)
+        || (targetedBuyer && (!validFavorite || liveSellerShop.repeatWelcome !== true))
+      ) {
+        if (
+          targetedBuyer
+          && buyer.uid === uid
+          && (!validFavorite || liveSellerShop?.repeatWelcome !== true)
+        ) {
+          transaction.delete(ownQueueRef);
+          attempt = {
+            status: "invalid-target",
+            roomId: "",
+            presenceId: marketPublicPresenceId(currentOwn.publicPresenceId),
+          };
+        } else if (targetedBuyer && !validFavorite && buyer.uid === candidate.uid) {
+          transaction.delete(candidateQueueRef);
+          rejectCandidate();
+          attempt.presenceId = marketPublicPresenceId(currentCandidate.publicPresenceId);
+        } else {
+          rejectCandidate();
+        }
+        return;
+      }
+      const shopRelationship = shopRelationshipSnapshot.data() || {};
+      const previousPurchases = integer(shopRelationship.saleCount, 0, 1_000_000, 0);
+      const sellerShop = {
+        ...liveSellerShop,
+        relationship: {
+          previousPurchases,
+          metBefore: shopRelationshipSnapshot.exists,
+          lastPurchasePrice: integer(shopRelationship.lastSalePrice, 0, MARKET_MAX_PRICE, 0),
+        },
+      };
+      const roomId = roomRef.id;
+      const now = Date.now();
+      const room = {
+        roomId,
+        participants: { [seller.uid]: true, [buyer.uid]: true },
+        sellerUid: seller.uid,
+        buyerUid: buyer.uid,
+        sellerName: seller.name,
+        buyerName: buyer.name,
+        sellerShop,
+        sellerPatron: publicPatronage(seller.patron, periodKey("monthly")),
+        buyerPatron: publicPatronage(buyer.patron, periodKey("monthly")),
+        listing: seller.listing,
+        settlementQuote: marketSaleSettlement(seller.listing.askingPrice),
+        buyerMaxBudget: buyer.maxBudget,
+        status: "preview",
+        turn: 1,
+        stateVersion: 1,
+        maxTurns: MARKET_MAX_TURNS,
+        entryFee: MARKET_ENTRY_FEE,
+        entryFeePaid: false,
+        extensionFeesPaid: 0,
+        appCheckVerified: seller.appCheckVerified === true && buyer.appCheckVerified === true,
+        publicPresenceId: createMarketPublicPresenceId(),
+        createdAt: now,
+        updatedAt: now,
+      };
+      transaction.create(roomRef, room);
+      transaction.set(ownActiveRef, {
+        roomId,
+        role: currentOwn.role,
+        appCheckVerified: room.appCheckVerified,
+        updatedAt: now,
+      });
+      transaction.set(candidateActiveRef, {
+        roomId,
+        role: currentCandidate.role,
+        appCheckVerified: room.appCheckVerified,
+        updatedAt: now,
+      });
+      transaction.delete(ownQueueRef);
+      transaction.delete(candidateQueueRef);
+      attempt = {
+        status: "matched",
+        roomId,
+        room,
+        queuePresenceIds: [seller.publicPresenceId, buyer.publicPresenceId],
+      };
+    });
+
+    if (attempt.room) {
+      await bestEffort("matchMarketQueue", [
+        mirrorMarketRoom(attempt.room),
+        ...attempt.queuePresenceIds.map(removeMarketQueuePublicPresence),
+      ]);
+      return attempt;
+    }
+    if (attempt.presenceId) {
+      await bestEffort("matchMarketQueuePresence", [
+        removeMarketQueuePublicPresence(attempt.presenceId),
+      ]);
+    }
+    if (["matched", "missing", "superseded", "invalid-target"].includes(attempt.status)) {
+      return attempt;
+    }
+  }
+  return { status: "waiting", roomId: "" };
+}
+
 async function joinMarketQueue(uid, data, appCheckVerified) {
+  const requestStartedAt = Date.now();
   if (MARKET_APP_CHECK_MIGRATION && appCheckVerified !== true) {
     throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
   }
-  const [balance, previousQueueSnapshot, patronage] = await Promise.all([
+  const requestedRole = data?.role === "seller" ? "seller" : data?.role === "buyer" ? "buyer" : "";
+  const [balance, patronage, shopContext, controlSnapshot] = await Promise.all([
     ensureWallet(uid),
-    marketQueueRef(uid).get(),
     readPatronage(uid),
+    marketQueueShopContext(uid, requestedRole, data?.name, data),
+    marketQueueControlRef(uid).get(),
   ]);
-  const ownEntry = normalizeQueueEntry(uid, data, balance, appCheckVerified, patronage);
-  const previousQueue = previousQueueSnapshot.data();
-  if (previousQueueSnapshot.exists && previousQueue?.status === "waiting"
-      && Number(previousQueue.lastSeen || 0) >= Date.now() - QUEUE_FRESH_MS
-      && marketPublicPresenceId(previousQueue.publicPresenceId)) {
-    ownEntry.publicPresenceId = previousQueue.publicPresenceId;
-  }
-  const oppositeRole = ownEntry.role === "seller" ? "buyer" : "seller";
+  const expectedGeneration = integer(
+    controlSnapshot.get("generation"),
+    0,
+    Number.MAX_SAFE_INTEGER,
+    0,
+  );
+  const ownEntry = normalizeQueueEntry(
+    uid,
+    data,
+    balance,
+    appCheckVerified,
+    patronage,
+    shopContext,
+    {
+      requestedAt: requestStartedAt,
+      token: crypto.randomBytes(16).toString("hex"),
+    },
+  );
   const staleQueues = await firestore.collection("valueMarketQueues")
     .where("lastSeen", "<", Date.now() - QUEUE_FRESH_MS)
     .limit(50)
@@ -2674,138 +3389,140 @@ async function joinMarketQueue(uid, data, appCheckVerified) {
     await bestEffort("staleMarketQueues", removedPresenceIds.map(removeMarketQueuePublicPresence));
   }
   await bestEffort("staleMarketPublicPresence", [cleanupStaleMarketPublicPresence()]);
-  const candidatesSnapshot = await firestore.collection("valueMarketQueues")
-    .where("role", "==", oppositeRole)
-    .where("lastSeen", ">=", Date.now() - QUEUE_FRESH_MS)
-    .orderBy("lastSeen", "asc")
-    .limit(30)
-    .get();
-  const candidates = candidatesSnapshot.docs
-    .map((snapshot) => snapshot.data())
-    .filter((entry) => entry.status === "waiting"
-      && Number(entry.lastSeen || 0) >= Date.now() - QUEUE_FRESH_MS
-      && (!MARKET_APP_CHECK_MIGRATION || entry.appCheckVerified === true)
-      && queuesCompatible(ownEntry, entry))
-    .sort((first, second) => Number(first.joinedAt || 0) - Number(second.joinedAt || 0));
-  const candidate = candidates[0] || null;
-  const roomRef = marketRoomRef(firestore.collection("valueMarketRooms").doc().id);
-  let outcome = { status: "waiting", balance, roomId: "" };
 
-  await firestore.runTransaction(async (transaction) => {
-    const ownQueue = marketQueueRef(uid);
-    const ownActive = marketActiveRef(uid);
-    const ownActiveSnapshot = await transaction.get(ownActive);
-    if (ownActiveSnapshot.exists) {
-      outcome = { status: "matched", balance, roomId: cleanText(ownActiveSnapshot.get("roomId"), 80) };
-      return;
-    }
-    if (!candidate) {
-      transaction.set(ownQueue, ownEntry);
-      outcome = { status: "waiting", balance, roomId: "" };
-      return;
-    }
-    const candidateQueue = marketQueueRef(candidate.uid);
-    const candidateActive = marketActiveRef(candidate.uid);
-    const [candidateQueueSnapshot, candidateActiveSnapshot] = await Promise.all([
-      transaction.get(candidateQueue),
-      transaction.get(candidateActive),
+  const claim = await claimMarketQueue(uid, ownEntry, expectedGeneration);
+  if (claim.presenceId) {
+    await bestEffort("claimMarketQueuePresence", [
+      removeMarketQueuePublicPresence(claim.presenceId),
     ]);
-    const currentCandidate = candidateQueueSnapshot.data();
-    if (candidateActiveSnapshot.exists || !currentCandidate || currentCandidate.status !== "waiting"
-      || Number(currentCandidate.lastSeen || 0) < Date.now() - QUEUE_FRESH_MS
-      || (MARKET_APP_CHECK_MIGRATION && currentCandidate.appCheckVerified !== true)
-      || !queuesCompatible(ownEntry, currentCandidate)) {
-      transaction.set(ownQueue, ownEntry);
-      outcome = { status: "waiting", balance, roomId: "" };
-      return;
-    }
-    const seller = ownEntry.role === "seller" ? ownEntry : currentCandidate;
-    const buyer = ownEntry.role === "buyer" ? ownEntry : currentCandidate;
-    const roomId = roomRef.id;
-    const room = {
-      roomId,
-      participants: { [seller.uid]: true, [buyer.uid]: true },
-      sellerUid: seller.uid,
-      buyerUid: buyer.uid,
-      sellerName: seller.name,
-      buyerName: buyer.name,
-      sellerPatron: publicPatronage(seller.patron, periodKey("monthly")),
-      buyerPatron: publicPatronage(buyer.patron, periodKey("monthly")),
-      listing: seller.listing,
-      settlementQuote: marketSaleSettlement(seller.listing.askingPrice),
-      buyerMaxBudget: buyer.maxBudget,
-      status: "preview",
-      turn: 1,
-      stateVersion: 1,
-      maxTurns: MARKET_MAX_TURNS,
-      entryFee: MARKET_ENTRY_FEE,
-      entryFeePaid: false,
-      extensionFeesPaid: 0,
-      appCheckVerified: seller.appCheckVerified === true && buyer.appCheckVerified === true,
-      publicPresenceId: createMarketPublicPresenceId(),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    transaction.create(roomRef, room);
-    transaction.set(ownActive, {
-      roomId,
-      role: ownEntry.role,
-      appCheckVerified: room.appCheckVerified,
-      updatedAt: Date.now(),
-    });
-    transaction.set(candidateActive, {
-      roomId,
-      role: currentCandidate.role,
-      appCheckVerified: room.appCheckVerified,
-      updatedAt: Date.now(),
-    });
-    transaction.delete(ownQueue);
-    transaction.delete(candidateQueue);
-    outcome = {
-      status: "matched",
-      balance,
-      roomId,
-      room,
-      queuePresenceIds: [seller.publicPresenceId, buyer.publicPresenceId],
-    };
-  });
-  if (outcome.room) {
-    await bestEffort("joinMarketQueue", [
-      mirrorMarketRoom(outcome.room),
-      ...outcome.queuePresenceIds.map(removeMarketQueuePublicPresence),
-    ]);
-  } else {
+  }
+  if (claim.status === "matched") {
+    return { status: "matched", balance, roomId: claim.roomId };
+  }
+  if (claim.status === "canceled") {
+    return { status: "canceled", balance, roomId: "" };
+  }
+  if (claim.status === "superseded") {
+    await bestEffort("joinMarketQueue", [syncMarketQueuePublicPresence(uid)]);
+    return { status: "waiting", balance, roomId: "" };
+  }
+
+  const outcome = await tryMatchMarketQueueSession(uid, claim.entry);
+  if (outcome.status === "waiting") {
     await bestEffort("joinMarketQueue", [syncMarketQueuePublicPresence(uid)]);
   }
-  return { status: outcome.status, balance: outcome.balance, roomId: outcome.roomId };
+  return {
+    status: outcome.status === "invalid-target" ? "missing" : outcome.status,
+    balance,
+    roomId: outcome.roomId,
+  };
 }
 
 async function cancelMarketQueue(uid) {
-  const [active, queue] = await Promise.all([
-    marketActiveRef(uid).get(),
-    marketQueueRef(uid).get(),
+  const queueRef = marketQueueRef(uid);
+  const activeRef = marketActiveRef(uid);
+  const controlRef = marketQueueControlRef(uid);
+  let outcome = { status: "canceled", roomId: "", presenceId: "" };
+  await firestore.runTransaction(async (transaction) => {
+    const [activeSnapshot, queueSnapshot, controlSnapshot] = await Promise.all([
+      transaction.get(activeRef),
+      transaction.get(queueRef),
+      transaction.get(controlRef),
+    ]);
+    const generation = integer(controlSnapshot.get("generation"), 0, Number.MAX_SAFE_INTEGER, 0);
+    outcome = {
+      status: activeSnapshot.exists ? "matched" : "canceled",
+      roomId: activeSnapshot.exists ? cleanText(activeSnapshot.get("roomId"), 80) : "",
+      presenceId: marketPublicPresenceId(queueSnapshot.get("publicPresenceId")),
+    };
+    transaction.set(controlRef, {
+      generation: Math.min(Number.MAX_SAFE_INTEGER, generation + 1),
+      updatedAt: Date.now(),
+    }, { merge: true });
+    if (queueSnapshot.exists) transaction.delete(queueRef);
+  });
+  await bestEffort("cancelMarketQueue", [
+    removeMarketQueuePublicPresence(outcome.presenceId),
   ]);
-  const presenceId = marketPublicPresenceId(queue.data()?.publicPresenceId);
-  if (active.exists) {
-    await bestEffort("cancelMarketQueue", [removeMarketQueuePublicPresence(presenceId)]);
-    return { status: "matched", roomId: cleanText(active.get("roomId"), 80) };
-  }
-  await marketQueueRef(uid).delete();
-  await bestEffort("cancelMarketQueue", [removeMarketQueuePublicPresence(presenceId)]);
-  return { status: "canceled", roomId: "" };
+  return { status: outcome.status, roomId: outcome.roomId };
 }
 
 async function heartbeatMarketQueue(uid) {
-  const ref = marketQueueRef(uid);
-  const snapshot = await ref.get();
-  if (!snapshot.exists) {
-    const active = await marketActiveRef(uid).get();
-    return { status: active.exists ? "matched" : "missing", roomId: active.exists ? cleanText(active.get("roomId"), 80) : "" };
+  const queueRef = marketQueueRef(uid);
+  const activeRef = marketActiveRef(uid);
+  let outcome = {
+    status: "missing",
+    roomId: "",
+    entry: null,
+    presenceId: "",
+    shouldMatch: false,
+  };
+  await firestore.runTransaction(async (transaction) => {
+    const [queueSnapshot, activeSnapshot] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(activeRef),
+    ]);
+    const current = queueSnapshot.data();
+    if (activeSnapshot.exists) {
+      outcome = {
+        status: "matched",
+        roomId: cleanText(activeSnapshot.get("roomId"), 80),
+        entry: null,
+        presenceId: marketPublicPresenceId(current?.publicPresenceId),
+      };
+      if (queueSnapshot.exists) transaction.delete(queueRef);
+      return;
+    }
+    if (!queueSnapshot.exists || current?.status !== "waiting") return;
+    const publicPresenceId = marketPublicPresenceId(current.publicPresenceId)
+      || createMarketPublicPresenceId();
+    const now = Date.now();
+    const shouldMatch = Number(current.lastMatchAttemptAt || 0) <= now - 10_000;
+    const shouldResetSkippedCandidates = Number(current.skippedCandidatesResetAt || 0) > 0
+      && Number(current.skippedCandidatesResetAt) <= now;
+    const entry = {
+      ...current,
+      lastSeen: now,
+      lastMatchAttemptAt: shouldMatch ? now : Number(current.lastMatchAttemptAt || now),
+      skippedCandidateSessions: shouldResetSkippedCandidates
+        ? []
+        : (Array.isArray(current.skippedCandidateSessions)
+          ? current.skippedCandidateSessions
+          : []),
+      skippedCandidatesResetAt: shouldResetSkippedCandidates
+        ? 0
+        : Number(current.skippedCandidatesResetAt || 0),
+      publicPresenceId,
+    };
+    transaction.set(queueRef, entry);
+    outcome = {
+      status: "waiting",
+      roomId: "",
+      entry,
+      presenceId: "",
+      shouldMatch,
+    };
+  });
+  if (outcome.presenceId) {
+    await bestEffort("heartbeatMarketQueuePresence", [
+      removeMarketQueuePublicPresence(outcome.presenceId),
+    ]);
   }
-  const publicPresenceId = marketPublicPresenceId(snapshot.get("publicPresenceId")) || createMarketPublicPresenceId();
-  await ref.update({ lastSeen: Date.now(), publicPresenceId });
-  await bestEffort("heartbeatMarketQueue", [syncMarketQueuePublicPresence(uid)]);
-  return { status: "waiting", roomId: "" };
+  if (outcome.status !== "waiting") {
+    return { status: outcome.status, roomId: outcome.roomId };
+  }
+  if (!outcome.shouldMatch) {
+    await bestEffort("heartbeatMarketQueue", [syncMarketQueuePublicPresence(uid)]);
+    return { status: "waiting", roomId: "" };
+  }
+  const match = await tryMatchMarketQueueSession(uid, outcome.entry);
+  if (match.status === "waiting") {
+    await bestEffort("heartbeatMarketQueue", [syncMarketQueuePublicPresence(uid)]);
+  }
+  return {
+    status: match.status === "invalid-target" ? "missing" : match.status,
+    roomId: match.roomId,
+  };
 }
 
 async function syncMarketRoom(uid, roomId, { recoverPrivate = false } = {}) {
@@ -2837,6 +3554,502 @@ exports.valueMarketQueue = onCall(callableOptions("valueMarketQueue"), async (re
     if (error instanceof HttpsError) throw error;
     console.error("valueMarketQueue failed", { uid, action, error });
     throw new HttpsError("internal", "市場の待機処理を完了できませんでした。");
+  }
+});
+
+async function getMarketShop(uid) {
+  const statsSnapshot = await marketStatsRef(uid).get();
+  const fallbackName = statsSnapshot.exists ? cleanName(statsSnapshot.get("name")) : DEFAULT_MARKET_SHOP.shopName;
+  const shop = await ensureMarketShop(uid, fallbackName);
+  const [favoritesSnapshot, ownedTitleIds] = await Promise.all([
+    marketShopFavoritesRef(uid).orderBy("updatedAt", "desc").limit(100).get(),
+    ownedMarketTitleIds(uid),
+  ]);
+  const favorites = (await Promise.all(favoritesSnapshot.docs.map(async (favoriteSnapshot) => {
+    const sellerUid = favoriteSnapshot.id;
+    const publicSellerId = cleanText(favoriteSnapshot.get("publicSellerId"), 96);
+    if (!isValidPublicSellerId(publicSellerId)) return null;
+    const publicSnapshot = await marketShopPublicRef(publicSellerId).get();
+    if (
+      !publicSnapshot.exists
+      || cleanText(publicSnapshot.get("sellerUid"), 128) !== sellerUid
+    ) {
+      return null;
+    }
+    const sellerShop = publicSellerShop(publicSnapshot.get("sellerShop"));
+    if (!sellerShop || sellerShop.publicSellerId !== publicSellerId) return null;
+    const storedSaleCount = favoriteSnapshot.get("saleCount");
+    const relationshipSnapshot = typeof storedSaleCount === "number"
+      ? null
+      : await marketShopRelationshipRef(sellerUid, uid).get();
+    const relationship = relationshipSnapshot?.data() || {};
+    const saleCount = integer(
+      storedSaleCount ?? relationship.saleCount,
+      0,
+      1_000_000,
+      0,
+    );
+    const lastPurchasePrice = integer(
+      favoriteSnapshot.get("lastPurchasePrice") ?? relationship.lastSalePrice,
+      0,
+      MARKET_MAX_PRICE,
+      0,
+    );
+    return {
+      ...sellerShop,
+      favoritedAt: Number(favoriteSnapshot.get("createdAt") || favoriteSnapshot.get("updatedAt") || 0),
+      lastPurchasePrice,
+      relationship: {
+        isFavorite: true,
+        metBefore: saleCount > 0,
+        previousPurchases: saleCount,
+        lastPurchasePrice,
+      },
+    };
+  }))).filter(Boolean);
+  return {
+    shop: publicSellerShop(shop, { marketStats: statsSnapshot.data() }),
+    favorites,
+    catalog: MARKET_SHOP_CATALOG,
+    report: marketShopVerifiedReport(shop, statsSnapshot.data()),
+    ownedTitleIds,
+  };
+}
+
+function marketShopValidationMessage(errors) {
+  if (errors.includes("shopName")) return "店名はURLを含まない16文字以内の1行で入力してください。";
+  if (errors.includes("tagline")) return "店主理念はURLを含まない40文字以内の1行で入力してください。";
+  if (errors.includes("specialtyTags")) return "得意分野は一覧から重複なしで3個まで選んでください。";
+  if (errors.includes("serviceStyles")) return "接客スタイルは一覧から重複なしで2個まで選んでください。";
+  if (errors.includes("themeId") || errors.includes("sealId")) return "看板テーマまたは商印が正しくありません。";
+  if (errors.includes("titleId")) return "所有していない称号は店主称号に設定できません。";
+  return "推し値商店の設定が正しくありません。";
+}
+
+async function saveMarketShop(uid, data) {
+  const ownedTitleIds = await ownedMarketTitleIds(uid);
+  const validation = validateMarketShopInput(data, { ownedTitleIds });
+  if (!validation.valid) {
+    throw new HttpsError(
+      "invalid-argument",
+      marketShopValidationMessage(validation.errors),
+      { fields: validation.errors },
+    );
+  }
+  const ensuredShop = await ensureMarketShop(uid, validation.shop.shopName);
+  const shopRef = marketShopRef(uid);
+  const publicRef = marketShopPublicRef(ensuredShop.publicSellerId);
+  let savedShop = null;
+  let statsValue = {};
+  await firestore.runTransaction(async (transaction) => {
+    const [shopSnapshot, publicSnapshot, statsSnapshot, queueSnapshot] = await Promise.all([
+      transaction.get(shopRef),
+      transaction.get(publicRef),
+      transaction.get(marketStatsRef(uid)),
+      transaction.get(marketQueueRef(uid)),
+    ]);
+    const current = normalizeStoredMarketShop(shopSnapshot.data(), {
+      fallbackName: validation.shop.shopName,
+      publicSellerId: ensuredShop.publicSellerId,
+    });
+    if (publicSnapshot.exists && cleanText(publicSnapshot.get("sellerUid"), 128) !== uid) {
+      throw new HttpsError("failed-precondition", "店コードの所有関係を確認できませんでした。");
+    }
+    const now = Date.now();
+    savedShop = {
+      ...current,
+      ...validation.shop,
+      publicSellerId: ensuredShop.publicSellerId,
+      createdAt: current.createdAt || now,
+      updatedAt: now,
+    };
+    statsValue = statsSnapshot.data() || {};
+    transaction.set(shopRef, savedShop);
+    transaction.set(publicRef, marketShopPublicRecord(uid, savedShop, statsValue, now));
+    if (queueSnapshot.exists && queueSnapshot.get("role") === "seller"
+      && queueSnapshot.get("status") === "waiting") {
+      transaction.set(marketQueueRef(uid), {
+        sellerShop: publicSellerShop(savedShop, { marketStats: statsValue }),
+        lastSeen: now,
+        skippedCandidateSessions: [],
+        skippedCandidatesResetAt: 0,
+      }, { merge: true });
+    }
+  });
+  return {
+    saved: true,
+    shop: publicSellerShop(savedShop, { marketStats: statsValue }),
+    report: marketShopVerifiedReport(savedShop, statsValue),
+    ownedTitleIds,
+  };
+}
+
+function marketShopImpressionTag(value) {
+  const tag = cleanText(value, 40);
+  return MARKET_SHOP_CATALOG.impressionTags.some((entry) => entry.id === tag) ? tag : "";
+}
+
+async function updateMarketShopRelationship(uid, data) {
+  const roomId = cleanText(data?.roomId, 80);
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(roomId)) {
+    throw new HttpsError("invalid-argument", "市場ルームを確認できません。");
+  }
+  const impressionRequested = typeof data?.impressionTag === "string" && data.impressionTag.length > 0;
+  const impressionTag = marketShopImpressionTag(data?.impressionTag);
+  if (impressionRequested && !impressionTag) {
+    throw new HttpsError("invalid-argument", "肯定タグが正しくありません。");
+  }
+  const favoriteRequested = typeof data?.favorite === "boolean";
+  const blockValue = typeof data?.block === "boolean"
+    ? data.block
+    : typeof data?.blocked === "boolean"
+      ? data.blocked
+      : null;
+  const blockRequested = typeof blockValue === "boolean";
+  if (!impressionRequested && !favoriteRequested && !blockRequested) {
+    throw new HttpsError("invalid-argument", "更新する関係設定を指定してください。");
+  }
+  if (blockValue === true && data?.favorite === true) {
+    throw new HttpsError("invalid-argument", "ブロックとお気に入り追加は同時に行えません。");
+  }
+
+  const initialRoomSnapshot = await marketRoomRef(roomId).get();
+  if (!initialRoomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
+  const initialRoom = initialRoomSnapshot.data();
+  const actorRole = requireRoomActor(initialRoom, uid);
+  const sellerUid = initialRoom.sellerUid;
+  const buyerUid = initialRoom.buyerUid;
+  if ((impressionRequested || favoriteRequested) && actorRole !== "buyer") {
+    throw new HttpsError("permission-denied", "肯定タグと常連帳は買い手だけが更新できます。");
+  }
+  const targetUid = actorRole === "seller" ? buyerUid : sellerUid;
+  const ensuredShop = await ensureMarketShop(sellerUid, initialRoom.sellerName);
+  const shopRef = marketShopRef(sellerUid);
+  const publicRef = marketShopPublicRef(ensuredShop.publicSellerId);
+  const relationshipRef = marketShopRelationshipRef(sellerUid, buyerUid);
+  const impressionRef = marketShopImpressionRef(roomId, buyerUid);
+  const favoriteRef = marketShopFavoriteRef(buyerUid, sellerUid);
+  const blockRef = marketShopBlockRef(uid, targetUid);
+  const actorQueueRef = marketQueueRef(uid);
+  let outcome = null;
+  let removedQueuePresenceId = "";
+
+  await firestore.runTransaction(async (transaction) => {
+    const [
+      roomSnapshot,
+      shopSnapshot,
+      publicSnapshot,
+      statsSnapshot,
+      relationshipSnapshot,
+      impressionSnapshot,
+      favoriteSnapshot,
+      blockSnapshot,
+      actorQueueSnapshot,
+    ] = await Promise.all([
+      transaction.get(marketRoomRef(roomId)),
+      transaction.get(shopRef),
+      transaction.get(publicRef),
+      transaction.get(marketStatsRef(sellerUid)),
+      transaction.get(relationshipRef),
+      transaction.get(impressionRef),
+      transaction.get(favoriteRef),
+      transaction.get(blockRef),
+      transaction.get(actorQueueRef),
+    ]);
+    if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
+    const room = roomSnapshot.data();
+    const currentRole = requireRoomActor(room, uid);
+    if (room.sellerUid !== sellerUid || room.buyerUid !== buyerUid || currentRole !== actorRole) {
+      throw new HttpsError("failed-precondition", "市場ルームの参加者が変わりました。");
+    }
+    if (data?.favorite === true && blockSnapshot.exists && blockValue !== false) {
+      throw new HttpsError(
+        "failed-precondition",
+        "ブロック中の相手は常連帳へ追加できません。先にブロックを解除してください。",
+      );
+    }
+    const pitchCompleted = Number(room.pitchCompletedAt || 0) > 0;
+    const restoringFavoriteFromBlock = blockValue === false
+      && data?.favorite === true
+      && actorRole === "buyer"
+      && blockSnapshot.exists
+      && blockSnapshot.get("removedFavorite") === true;
+    if (
+      (impressionRequested || data?.favorite === true)
+      && !pitchCompleted
+      && !restoringFavoriteFromBlock
+    ) {
+      throw new HttpsError("failed-precondition", "営業完了後に店主への反応を残せます。");
+    }
+    if (publicSnapshot.exists && cleanText(publicSnapshot.get("sellerUid"), 128) !== sellerUid) {
+      throw new HttpsError("failed-precondition", "店コードの所有関係を確認できませんでした。");
+    }
+    if (data?.favorite === true && !favoriteSnapshot.exists) {
+      const favoriteBookSnapshot = await transaction.get(
+        marketShopFavoritesRef(buyerUid).limit(100),
+      );
+      if (favoriteBookSnapshot.size >= 100) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "常連帳は100店までです。登録済みの商店を解除してから追加してください。",
+        );
+      }
+    }
+
+    const now = Date.now();
+    const relationship = relationshipSnapshot.exists ? { ...relationshipSnapshot.data() } : {};
+    let shop = normalizeStoredMarketShop(shopSnapshot.data(), {
+      fallbackName: room.sellerName,
+      publicSellerId: ensuredShop.publicSellerId,
+    });
+    let shopChanged = false;
+    let responseImpressionTag = "";
+    let impressionRecorded = false;
+    let alreadyRecorded = false;
+
+    if (impressionRequested) {
+      const decision = marketImpressionDecision({
+        existingRoomImpression: impressionSnapshot.exists,
+        lastImpressionAt: relationship.lastImpressionAt,
+        now,
+      });
+      if (decision.action === "cooldown") {
+        if (!favoriteRequested && !blockRequested) {
+          throw new HttpsError(
+            "failed-precondition",
+            "同じ店主への肯定タグは30日ごとに1回送れます。",
+            { retryAfterMs: decision.retryAfterMs },
+          );
+        }
+        alreadyRecorded = true;
+        responseImpressionTag = marketShopImpressionTag(relationship.lastImpressionTag);
+      }
+      impressionRecorded = decision.impressionRecorded;
+      alreadyRecorded = alreadyRecorded || decision.alreadyRecorded;
+      if (decision.action === "noop") {
+        responseImpressionTag = marketShopImpressionTag(impressionSnapshot.get("impressionTag"));
+      }
+      if (decision.action === "write") {
+        shop.impressionCounts[impressionTag] = Number(shop.impressionCounts[impressionTag] || 0) + 1;
+        if (decision.addsDistinctBuyer) shop.impressionBuyerCount += 1;
+        relationship.lastImpressionAt = now;
+        relationship.lastImpressionTag = impressionTag;
+        relationship.lastImpressionRoomId = roomId;
+        transaction.create(impressionRef, {
+          schemaVersion: 1,
+          roomId,
+          sellerUid,
+          buyerUid,
+          impressionTag,
+          createdAt: now,
+        });
+        shopChanged = true;
+        responseImpressionTag = impressionTag;
+      }
+    }
+
+    let favorite = favoriteSnapshot.exists;
+    const shouldRemoveFavoriteForBlock = blockValue === true && actorRole === "buyer";
+    if (favoriteRequested || shouldRemoveFavoriteForBlock) {
+      const nextFavorite = shouldRemoveFavoriteForBlock ? false : data.favorite === true;
+      if (nextFavorite && !favoriteSnapshot.exists) {
+        shop.favoriteCount += 1;
+        favorite = true;
+        shopChanged = true;
+        transaction.set(favoriteRef, {
+          schemaVersion: 1,
+          publicSellerId: ensuredShop.publicSellerId,
+          sellerUid,
+          buyerUid,
+          lastPurchasePrice: integer(room.salePrice, 0, MARKET_MAX_PRICE, 0),
+          saleCount: integer(relationship.saleCount, 0, 1_000_000, 0),
+          createdAt: now,
+          updatedAt: now,
+        });
+      } else if (!nextFavorite && favoriteSnapshot.exists) {
+        shop.favoriteCount = Math.max(0, shop.favoriteCount - 1);
+        favorite = false;
+        shopChanged = true;
+        transaction.delete(favoriteRef);
+      } else if (nextFavorite) {
+        transaction.set(favoriteRef, {
+          publicSellerId: ensuredShop.publicSellerId,
+          lastPurchasePrice: integer(
+            room.salePrice ?? favoriteSnapshot.get("lastPurchasePrice"),
+            0,
+            MARKET_MAX_PRICE,
+            0,
+          ),
+          saleCount: integer(
+            relationship.saleCount ?? favoriteSnapshot.get("saleCount"),
+            0,
+            1_000_000,
+            0,
+          ),
+          updatedAt: now,
+        }, { merge: true });
+      }
+    }
+
+    let blocked = blockSnapshot.exists;
+    if (blockRequested) {
+      blocked = blockValue === true;
+      if (blocked) {
+        transaction.set(blockRef, {
+          schemaVersion: 1,
+          ownerUid: uid,
+          blockedUid: targetUid,
+          removedFavorite: actorRole === "buyer"
+            && (favoriteSnapshot.exists || blockSnapshot.get("removedFavorite") === true),
+          createdAt: blockSnapshot.get("createdAt") || now,
+          updatedAt: now,
+        });
+      } else if (blockSnapshot.exists) {
+        transaction.delete(blockRef);
+      }
+    }
+
+    if (actorQueueSnapshot.exists && actorQueueSnapshot.get("status") === "waiting") {
+      const queuedBlocks = Array.isArray(actorQueueSnapshot.get("blockedUids"))
+        ? actorQueueSnapshot.get("blockedUids").map(String).filter(Boolean)
+        : [];
+      const shouldCancelTargetedQueue = actorRole === "buyer"
+        && actorQueueSnapshot.get("role") === "buyer"
+        && actorQueueSnapshot.get("matchMode") === "favorites"
+        && actorQueueSnapshot.get("selectedFavoriteSellerUid") === sellerUid
+        && (blockValue === true || (favoriteRequested && data.favorite !== true));
+      if (shouldCancelTargetedQueue) {
+        removedQueuePresenceId = marketPublicPresenceId(
+          actorQueueSnapshot.get("publicPresenceId"),
+        );
+        transaction.delete(actorQueueRef);
+      } else if (blockRequested) {
+        const blockedUids = blockValue === true
+          ? [...queuedBlocks.filter((blockedUid) => blockedUid !== targetUid), targetUid].slice(-100)
+          : queuedBlocks.filter((blockedUid) => blockedUid !== targetUid);
+        transaction.set(actorQueueRef, {
+          blockedUids,
+          skippedCandidateSessions: [],
+          skippedCandidatesResetAt: 0,
+        }, { merge: true });
+      }
+    }
+
+    relationship.schemaVersion = 1;
+    relationship.sellerUid = sellerUid;
+    relationship.buyerUid = buyerUid;
+    relationship.updatedAt = now;
+    if (!relationship.createdAt) relationship.createdAt = now;
+    transaction.set(relationshipRef, relationship);
+    if (shopChanged) {
+      shop.updatedAt = now;
+      transaction.set(shopRef, shop);
+      transaction.set(publicRef, marketShopPublicRecord(sellerUid, shop, statsSnapshot.data(), now));
+    }
+    const sellerShop = publicSellerShop(shop, { marketStats: statsSnapshot.data() });
+    outcome = {
+      saved: true,
+      impressionTag: responseImpressionTag,
+      impressionRecorded,
+      alreadyRecorded,
+      favorite: actorRole === "buyer" ? favorite : false,
+      blocked,
+      shop: sellerShop,
+      sellerShop,
+    };
+  });
+  if (removedQueuePresenceId) {
+    await bestEffort("updateMarketShopRelationship", [
+      removeMarketQueuePublicPresence(removedQueuePresenceId),
+    ]);
+  }
+  return outcome;
+}
+
+async function removeMarketShopFavorite(uid, publicSellerIdValue) {
+  const publicSellerId = typeof publicSellerIdValue === "string"
+    ? publicSellerIdValue.trim()
+    : "";
+  if (!isValidPublicSellerId(publicSellerId)) {
+    throw new HttpsError("invalid-argument", "店コードが正しくありません。");
+  }
+  const initialPublicSnapshot = await marketShopPublicRef(publicSellerId).get();
+  if (!initialPublicSnapshot.exists) throw new HttpsError("not-found", "推し値商店が見つかりません。");
+  const sellerUid = cleanText(initialPublicSnapshot.get("sellerUid"), 128);
+  if (!sellerUid || sellerUid === uid) {
+    throw new HttpsError("failed-precondition", "この店は常連帳から削除できません。");
+  }
+  const favoriteRef = marketShopFavoriteRef(uid, sellerUid);
+  const shopRef = marketShopRef(sellerUid);
+  const publicRef = marketShopPublicRef(publicSellerId);
+  let removed = false;
+  let removedQueuePresenceId = "";
+  await firestore.runTransaction(async (transaction) => {
+    const [
+      favoriteSnapshot,
+      shopSnapshot,
+      publicSnapshot,
+      statsSnapshot,
+      queueSnapshot,
+    ] = await Promise.all([
+      transaction.get(favoriteRef),
+      transaction.get(shopRef),
+      transaction.get(publicRef),
+      transaction.get(marketStatsRef(sellerUid)),
+      transaction.get(marketQueueRef(uid)),
+    ]);
+    if (publicSnapshot.exists && cleanText(publicSnapshot.get("sellerUid"), 128) !== sellerUid) {
+      throw new HttpsError("failed-precondition", "店コードの所有関係を確認できませんでした。");
+    }
+    if (!favoriteSnapshot.exists) return;
+    const now = Date.now();
+    const shop = normalizeStoredMarketShop(shopSnapshot.data(), { publicSellerId });
+    shop.favoriteCount = Math.max(0, shop.favoriteCount - 1);
+    shop.updatedAt = now;
+    transaction.delete(favoriteRef);
+    transaction.set(shopRef, shop);
+    transaction.set(publicRef, marketShopPublicRecord(sellerUid, shop, statsSnapshot.data(), now));
+    if (
+      queueSnapshot.exists
+      && queueSnapshot.get("role") === "buyer"
+      && queueSnapshot.get("matchMode") === "favorites"
+      && queueSnapshot.get("selectedFavoriteSellerUid") === sellerUid
+    ) {
+      removedQueuePresenceId = marketPublicPresenceId(queueSnapshot.get("publicPresenceId"));
+      transaction.delete(marketQueueRef(uid));
+    }
+    removed = true;
+  });
+  if (removedQueuePresenceId) {
+    await bestEffort("removeMarketShopFavorite", [
+      removeMarketQueuePublicPresence(removedQueuePresenceId),
+    ]);
+  }
+  return { removed, publicSellerId };
+}
+
+exports.valueMarketShop = onCall(callableOptions("valueMarketShop"), async (request) => {
+  const uid = requireUid(request);
+  const action = cleanText(request.data?.action, 32, "get") || "get";
+  try {
+    if (
+      MARKET_APP_CHECK_MIGRATION
+      && ["save", "relationship", "remove_favorite"].includes(action)
+      && !request.app
+    ) {
+      throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
+    }
+    if (action === "get") return await getMarketShop(uid);
+    if (action === "save") return await saveMarketShop(uid, request.data);
+    if (action === "relationship") return await updateMarketShopRelationship(uid, request.data);
+    if (action === "remove_favorite") {
+      return await removeMarketShopFavorite(uid, request.data?.publicSellerId);
+    }
+    throw new HttpsError("invalid-argument", "未対応の推し値商店操作です。");
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("valueMarketShop failed", { uid, action, error });
+    throw new HttpsError("internal", "推し値商店の処理を完了できませんでした。");
   }
 });
 
@@ -2948,11 +4161,12 @@ async function performMarketAction(uid, data, appCheckVerified) {
   if (MARKET_APP_CHECK_MIGRATION && initialRoom.appCheckVerified === true && appCheckVerified !== true) {
     throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
   }
-  await Promise.all([
+  const [, , , , ensuredSellerShop] = await Promise.all([
     ensureWallet(initialRoom.sellerUid),
     ensureWallet(initialRoom.buyerUid),
     ensureAchievementState(initialRoom.sellerUid),
     ensureAchievementState(initialRoom.buyerUid),
+    ensureMarketShop(initialRoom.sellerUid, initialRoom.sellerName),
   ]);
 
   const roomRef = marketRoomRef(roomId);
@@ -2967,14 +4181,20 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const pairRef = firestore.collection("valueMarketRankedPairs").doc(pairKey);
   const relationshipKey = eventId([initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":"));
   const relationshipRef = firestore.collection("valueMarketAchievementPairs").doc(relationshipKey);
+  const shopRef = marketShopRef(initialRoom.sellerUid);
+  const shopPublicRef = marketShopPublicRef(ensuredSellerShop.publicSellerId);
+  const shopRelationshipRef = marketShopRelationshipRef(initialRoom.sellerUid, initialRoom.buyerUid);
+  const shopFavoriteRef = marketShopFavoriteRef(initialRoom.buyerUid, initialRoom.sellerUid);
   const certificateRef = marketCertificateRef(initialRoom.buyerUid, roomId);
   const ledgerRef = firestore.collection("valueMarketLedger").doc(eventId(`${roomId}:${uid}:${actionId}`));
   let result = null;
   const achievementResults = {};
   const newlyUnlockedResults = {};
+  let sellerShopResult = null;
 
   await firestore.runTransaction(async (transaction) => {
     result = null;
+    sellerShopResult = null;
     Object.keys(achievementResults).forEach((key) => delete achievementResults[key]);
     Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
     const [
@@ -2987,6 +4207,10 @@ async function performMarketAction(uid, data, appCheckVerified) {
       buyerAchievementSnapshot,
       pairSnapshot,
       relationshipSnapshot,
+      shopSnapshot,
+      shopPublicSnapshot,
+      shopRelationshipSnapshot,
+      shopFavoriteSnapshot,
       certificateSnapshot,
       ledgerSnapshot,
     ] = await Promise.all([
@@ -2999,6 +4223,10 @@ async function performMarketAction(uid, data, appCheckVerified) {
       transaction.get(buyerAchievementRef),
       transaction.get(pairRef),
       transaction.get(relationshipRef),
+      transaction.get(shopRef),
+      transaction.get(shopPublicRef),
+      transaction.get(shopRelationshipRef),
+      transaction.get(shopFavoriteRef),
       transaction.get(certificateRef),
       transaction.get(ledgerRef),
     ]);
@@ -3082,11 +4310,33 @@ async function performMarketAction(uid, data, appCheckVerified) {
       creditPoints(sellerWallet, settlement.sellerProceeds);
       const issuedAt = Date.now();
       const certificateNumber = `OSHI-${certificateRef.id.slice(0, 16).toUpperCase()}`;
+      if (
+        shopPublicSnapshot.exists
+        && cleanText(shopPublicSnapshot.get("sellerUid"), 128) !== room.sellerUid
+      ) {
+        throw new HttpsError("failed-precondition", "店コードの所有関係を確認できませんでした。");
+      }
+      const saleRelationship = marketSaleRelationshipUpdate(
+        shopRelationshipSnapshot.data(),
+        transactionDateKey,
+        issuedAt,
+      );
+      sellerShopResult = applyMarketSaleToShop(
+        {
+          ...shopSnapshot.data(),
+          publicSellerId: ensuredSellerShop.publicSellerId,
+        },
+        saleRelationship,
+        issuedAt,
+        amount,
+      );
+      const sellerIssueNumber = sellerShopResult.issueCount;
       room.status = "sold";
       room.salePrice = amount;
       room.marketFee = settlement.feeAmount;
       room.sellerProceeds = settlement.sellerProceeds;
       room.certificateNumber = certificateNumber;
+      room.sellerIssueNumber = sellerIssueNumber;
       room.soldAt = issuedAt;
       room.rankingCounted = !pairSnapshot.exists;
       transfer = {
@@ -3101,21 +4351,30 @@ async function performMarketAction(uid, data, appCheckVerified) {
       if (certificateSnapshot.exists) {
         throw new HttpsError("already-exists", "この成約の推し値証書は発行済みです。");
       }
-      transaction.create(certificateRef, {
+      const {
+        addsUniqueBuyer,
+        addsRepeatBuyer,
+        ...storedSaleRelationship
+      } = saleRelationship;
+      transaction.set(shopRelationshipRef, {
+        ...(shopRelationshipSnapshot.data() || {}),
         schemaVersion: 1,
-        certificateNumber,
+        sellerUid: room.sellerUid,
         buyerUid: room.buyerUid,
-        sellerName: cleanName(room.sellerName),
-        listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
-        purchasePrice: amount,
-        marketFee: settlement.feeAmount,
-        sellerProceeds: settlement.sellerProceeds,
-        turn: integer(room.turn, 1, MARKET_MAX_TURNS, 1),
-        extended: Number(room.turn || 1) > 1 || Number(room.extensionFeesPaid || 0) > 0,
-        rankingCounted: room.rankingCounted,
-        nonTransferable: true,
-        issuedAt,
+        ...storedSaleRelationship,
+        lastSalePrice: amount,
+        lastSaleRoomId: roomId,
+        createdAt: Number(shopRelationshipSnapshot.get("createdAt") || issuedAt),
+        updatedAt: issuedAt,
       });
+      if (shopFavoriteSnapshot.exists) {
+        transaction.set(shopFavoriteRef, {
+          publicSellerId: ensuredSellerShop.publicSellerId,
+          lastPurchasePrice: amount,
+          saleCount: saleRelationship.saleCount,
+          updatedAt: issuedAt,
+        }, { merge: true });
+      }
       sellerStats.marketFeesPaid = Number(sellerStats.marketFeesPaid || 0) + settlement.feeAmount;
       sellerStats.netSales = Number(sellerStats.netSales || 0) + settlement.sellerProceeds;
       if (!pairSnapshot.exists) {
@@ -3177,6 +4436,53 @@ async function performMarketAction(uid, data, appCheckVerified) {
           });
         }
       }
+      const liveSellerShop = publicSellerShop(sellerShopResult, {
+        marketStats: sellerStats,
+      });
+      const presentedSellerShop = publicSellerShop(room.sellerShop);
+      const currentSellerShop = presentedSellerShop?.publicSellerId === liveSellerShop?.publicSellerId
+        ? {
+          ...liveSellerShop,
+          shopName: presentedSellerShop.shopName,
+          tagline: presentedSellerShop.tagline,
+          specialtyTags: presentedSellerShop.specialtyTags,
+          serviceStyles: presentedSellerShop.serviceStyles,
+          themeId: presentedSellerShop.themeId,
+          sealId: presentedSellerShop.sealId,
+          titleId: presentedSellerShop.titleId,
+          repeatWelcome: presentedSellerShop.repeatWelcome,
+          verified: liveSellerShop.verified,
+        }
+        : liveSellerShop;
+      room.sellerShop = {
+        ...currentSellerShop,
+        ...(room.sellerShop?.publicSellerId === ensuredSellerShop.publicSellerId
+          ? {
+            relationship: {
+              previousPurchases: Math.max(0, saleRelationship.saleCount - 1),
+              metBefore: saleRelationship.saleCount > 1,
+              lastPurchasePrice: amount,
+            },
+          }
+          : {}),
+      };
+      transaction.create(certificateRef, {
+        schemaVersion: 1,
+        certificateNumber,
+        buyerUid: room.buyerUid,
+        sellerName: cleanName(room.sellerName),
+        sellerShop: currentSellerShop,
+        sellerIssueNumber,
+        listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
+        purchasePrice: amount,
+        marketFee: settlement.feeAmount,
+        sellerProceeds: settlement.sellerProceeds,
+        turn: integer(room.turn, 1, MARKET_MAX_TURNS, 1),
+        extended: Number(room.turn || 1) > 1 || Number(room.extensionFeesPaid || 0) > 0,
+        rankingCounted: room.rankingCounted,
+        nonTransferable: true,
+        issuedAt,
+      });
     } else if (action === "leave") {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "decision");
@@ -3311,6 +4617,13 @@ async function performMarketAction(uid, data, appCheckVerified) {
     transaction.set(buyerWalletRef, { ...buyerWallet, updatedAt: Date.now() }, { merge: true });
     transaction.set(sellerStatsRef, sellerStats);
     transaction.set(buyerStatsRef, buyerStats);
+    if (sellerShopResult) {
+      transaction.set(shopRef, sellerShopResult);
+      transaction.set(
+        shopPublicRef,
+        marketShopPublicRecord(room.sellerUid, sellerShopResult, sellerStats, room.updatedAt),
+      );
+    }
     if (achievementResults[room.sellerUid]) transaction.set(sellerAchievementRef, achievementResults[room.sellerUid]);
     if (achievementResults[room.buyerUid]) transaction.set(buyerAchievementRef, achievementResults[room.buyerUid]);
     if (isTerminalMarketState(room.status)) {
@@ -3337,6 +4650,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       marketFee: Number(room.marketFee || 0),
       sellerProceeds: Number(room.sellerProceeds || 0),
       certificateNumber: cleanText(room.certificateNumber, 24),
+      sellerIssueNumber: integer(room.sellerIssueNumber, 0, 1_000_000, 0),
       achievementIds: result.newlyUnlocked,
       transfer,
       turn: Number(room.turn || 1),
@@ -3362,6 +4676,8 @@ async function performMarketAction(uid, data, appCheckVerified) {
     marketFee: Number(result.room.marketFee || 0),
     sellerProceeds: Number(result.room.sellerProceeds || 0),
     certificateNumber: cleanText(result.room.certificateNumber, 24),
+    sellerIssueNumber: integer(result.room.sellerIssueNumber, 0, 1_000_000, 0),
+    sellerShop: result.room.sellerShop || null,
     newlyUnlocked: result.newlyUnlocked || [],
   };
 }
@@ -3437,10 +4753,13 @@ function rankingRow(snapshot, role, viewerUid) {
 
 function publicMarketCertificate(snapshot) {
   const value = snapshot.data();
+  const sellerShop = publicSellerShop(value?.sellerShop);
   return {
     certificateNumber: cleanText(value?.certificateNumber, 24),
     listingTitle: cleanText(value?.listingTitle, 30, "無題の推し"),
     sellerName: cleanName(value?.sellerName),
+    ...(sellerShop ? { sellerShop } : {}),
+    sellerIssueNumber: integer(value?.sellerIssueNumber, 0, 1_000_000, 0),
     purchasePrice: integer(value?.purchasePrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE),
     marketFee: integer(value?.marketFee, 1, MARKET_MAX_PRICE, 1),
     sellerProceeds: integer(value?.sellerProceeds, 0, MARKET_MAX_PRICE, 0),

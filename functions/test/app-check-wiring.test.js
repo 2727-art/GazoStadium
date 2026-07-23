@@ -61,6 +61,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "economyAction",
     "valueMarketQueue",
     "valueMarketAction",
+    "valueMarketShop",
     "valueMarketRankings",
   ];
 
@@ -70,6 +71,10 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(
     rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue,
     rollout.APP_CHECK_ENFORCEMENT.valueMarketAction,
+  );
+  assert.equal(
+    rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue,
+    rollout.APP_CHECK_ENFORCEMENT.valueMarketShop,
   );
   if (rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue) {
     assert.equal(rollout.MARKET_APP_CHECK_MIGRATION, true);

@@ -34,6 +34,10 @@ import {
   verifiedMarketImageMime,
   verifiedMarketImageMimeFromChunks,
 } from "./market-transfer.mjs?v=value-market-transfer-v1";
+import {
+  getPlayerTitlePresentation,
+  getPlayerTitleProduct,
+} from "./player-titles.js?v=player-titles-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
@@ -51,12 +55,59 @@ const MAX_AUDIO_BYTES = 480 * 1024;
 const TERMINAL_STATES = new Set(["sold", "ended", "canceled"]);
 const MARKET_X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const MARKET_TAGLINE_MAX_LENGTH = 40;
+const MARKET_SHOP_NAME_MAX_LENGTH = 16;
+const MARKET_SHOP_TAGLINE_MAX_LENGTH = 40;
+const MARKET_SHOP_MAX_SPECIALTY_TAGS = 3;
+const MARKET_SHOP_MAX_SERVICE_STYLES = 2;
+const MARKET_SHOP_FALLBACK_CATALOG = Object.freeze({
+  specialtyTags: Object.freeze([
+    Object.freeze({ id: "animals", label: "どうぶつ" }),
+    Object.freeze({ id: "landscape", label: "風景" }),
+    Object.freeze({ id: "food", label: "食べもの" }),
+    Object.freeze({ id: "people", label: "人物" }),
+    Object.freeze({ id: "illustration", label: "イラスト" }),
+    Object.freeze({ id: "night", label: "夜景" }),
+    Object.freeze({ id: "humor", label: "ネタ" }),
+    Object.freeze({ id: "story", label: "物語" }),
+  ]),
+  serviceStyles: Object.freeze([
+    Object.freeze({ id: "story", label: "物語で伝える" }),
+    Object.freeze({ id: "technical", label: "技術を解説" }),
+    Object.freeze({ id: "intuition", label: "直感で語る" }),
+    Object.freeze({ id: "concise", label: "ひとこと勝負" }),
+    Object.freeze({ id: "audio", label: "音声で熱く" }),
+    Object.freeze({ id: "careful", label: "じっくり丁寧" }),
+  ]),
+  themes: Object.freeze([
+    Object.freeze({ id: "standard", label: "スタンダード" }),
+    Object.freeze({ id: "sakura", label: "さくら" }),
+    Object.freeze({ id: "lavender", label: "ラベンダー" }),
+    Object.freeze({ id: "mint", label: "ミント" }),
+    Object.freeze({ id: "cream", label: "クリーム" }),
+    Object.freeze({ id: "midnight", label: "ミッドナイト" }),
+  ]),
+  seals: Object.freeze([
+    Object.freeze({ id: "heart", label: "ハート", icon: "♥" }),
+    Object.freeze({ id: "star", label: "スター", icon: "★" }),
+    Object.freeze({ id: "ribbon", label: "リボン", icon: "◆" }),
+    Object.freeze({ id: "flower", label: "フラワー", icon: "✿" }),
+    Object.freeze({ id: "cat", label: "キャット", icon: "●" }),
+    Object.freeze({ id: "moon", label: "ムーン", icon: "☾" }),
+  ]),
+  impressionTags: Object.freeze([
+    Object.freeze({ id: "kind", label: "やさしい接客" }),
+    Object.freeze({ id: "insightful", label: "新しい魅力に気づけた" }),
+    Object.freeze({ id: "memorable_voice", label: "言葉・声が印象的" }),
+    Object.freeze({ id: "want_more", label: "もっと見たい" }),
+  ]),
+});
 
 const useMarketPreview = useOfflineMarketPreview;
 const economyActionCallable = httpsCallable(functions, "economyAction");
 const marketQueueCallable = httpsCallable(functions, "valueMarketQueue");
 const marketActionCallable = httpsCallable(functions, "valueMarketAction");
 const marketRankingsCallable = httpsCallable(functions, "valueMarketRankings");
+const marketShopCallable = httpsCallable(functions, "valueMarketShop");
 const appRoot = document.querySelector("#app");
 
 let active = false;
@@ -83,6 +134,8 @@ function createState() {
     room: null,
     busy: false,
     queueJoinPending: false,
+    queueHeartbeatPending: false,
+    queueAttemptGeneration: 0,
     errorMessage: "",
     queueHeartbeat: null,
     roomHeartbeat: null,
@@ -116,11 +169,23 @@ function createState() {
     pendingActionId: "",
     rankings: { sellers: [], buyers: [] },
     rankingsStatus: "idle",
+    rankingReturnScreen: "setup",
     rankingProfile: { xHandle: "", tagline: "" },
     rankingProfileEligible: false,
     rankingProfileName: "",
     rankingProfileOpen: false,
     rankingProfileBusy: false,
+    shop: normalizeMarketShop(null),
+    shopCatalog: normalizeMarketShopCatalog(null),
+    shopReport: normalizeSellerVerified(null),
+    ownedTitleIds: [],
+    favorites: [],
+    shopBusy: false,
+    shopStatus: "idle",
+    shopErrorMessage: "",
+    matchMode: "discover",
+    selectedFavoriteSellerId: "",
+    relationshipFeedback: createRelationshipFeedbackState(),
     certificates: [],
     certificateStatus: "idle",
     certificateHasMore: false,
@@ -132,6 +197,19 @@ function createState() {
 
 function isCurrentLifecycle(generation) {
   return active && generation === lifecycleGeneration;
+}
+
+function beginQueueAttempt() {
+  window.clearInterval(state.queueHeartbeat);
+  state.queueHeartbeat = null;
+  state.queueHeartbeatPending = false;
+  state.queueAttemptGeneration += 1;
+  return state.queueAttemptGeneration;
+}
+
+function isCurrentQueueAttempt(generation, queueAttemptGeneration) {
+  return isCurrentLifecycle(generation)
+    && queueAttemptGeneration === state.queueAttemptGeneration;
 }
 
 function normalizeBuyerBudget() {
@@ -303,6 +381,344 @@ function sanitizeMarketPublicProfile(value) {
   };
 }
 
+function normalizeShopText(value, maximum) {
+  return String(value || "").trim().replace(/[\u0000-\u001f\u007f\r\n]+/g, " ").replace(/\s+/g, " ").slice(0, maximum);
+}
+
+function normalizeShopOptionId(value) {
+  const id = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9_-]{1,40}$/.test(id) ? id : "";
+}
+
+function normalizeCatalogOptions(value, fallback) {
+  const source = Array.isArray(value)
+    ? value.map((item) => [String(item?.id || item?.value || item || ""), item])
+    : value && typeof value === "object"
+      ? Object.entries(value)
+      : [];
+  const seen = new Set();
+  const options = [];
+  for (const [key, rawValue] of source) {
+    const id = normalizeShopOptionId(rawValue?.id || rawValue?.value || key);
+    if (!id || seen.has(id)) continue;
+    const label = normalizeShopText(
+      typeof rawValue === "string" && rawValue !== id
+        ? rawValue
+        : rawValue?.label || rawValue?.name || rawValue?.title || id,
+      40,
+    );
+    const icon = normalizeShopText(rawValue?.icon, 4);
+    seen.add(id);
+    options.push({ id, label: label || id, ...(icon ? { icon } : {}) });
+  }
+  return options.length ? options : fallback.map((option) => ({ ...option }));
+}
+
+function normalizeMarketShopCatalog(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    specialtyTags: normalizeCatalogOptions(
+      source.specialtyTags || source.specialties || source.tags,
+      MARKET_SHOP_FALLBACK_CATALOG.specialtyTags,
+    ),
+    serviceStyles: normalizeCatalogOptions(
+      source.serviceStyles || source.styles,
+      MARKET_SHOP_FALLBACK_CATALOG.serviceStyles,
+    ),
+    themes: normalizeCatalogOptions(
+      source.themes || source.themeIds,
+      MARKET_SHOP_FALLBACK_CATALOG.themes,
+    ),
+    seals: normalizeCatalogOptions(
+      source.seals || source.sealIds,
+      MARKET_SHOP_FALLBACK_CATALOG.seals,
+    ),
+    impressionTags: normalizeCatalogOptions(
+      source.impressionTags || source.feedbackTags || source.impressions,
+      MARKET_SHOP_FALLBACK_CATALOG.impressionTags,
+    ),
+  };
+}
+
+function normalizeShopIdList(value, maximum = 100) {
+  const candidates = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? Object.entries(value).filter(([, enabled]) => enabled === true).map(([id]) => id)
+      : [];
+  return [...new Set(candidates.map(normalizeShopOptionId).filter(Boolean))].slice(0, maximum);
+}
+
+function normalizeOwnedTitleIds(value) {
+  return normalizeShopIdList(value).filter((titleId) => Boolean(getPlayerTitleProduct(titleId)));
+}
+
+function normalizeSellerImpressions(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const impressions = {};
+  for (const [rawId, rawCount] of Object.entries(source)) {
+    const id = normalizeShopOptionId(rawId);
+    const count = Math.max(0, Math.floor(Number(rawCount || 0)));
+    if (id && count) impressions[id] = count;
+  }
+  return impressions;
+}
+
+function normalizeSellerVerified(value) {
+  const source = value?.verified && typeof value.verified === "object"
+    ? value.verified
+    : value?.report && typeof value.report === "object"
+      ? value.report
+      : (value || {});
+  return {
+    salesCount: Math.max(0, Math.floor(Number(source.salesCount || source.issueCount || source.sales || 0))),
+    bestSale: Math.max(0, Math.floor(Number(source.bestSale || source.highestSale || 0))),
+    marketDays: Math.max(0, Math.floor(Number(source.marketDays || source.days || 0))),
+    uniqueCounterparties: Math.max(0, Math.floor(Number(
+      source.uniqueCounterparties || source.uniqueBuyerCount || source.customers || 0,
+    ))),
+    repeatBuyerCount: Math.max(0, Math.floor(Number(source.repeatBuyerCount || source.repeatBuyers || 0))),
+    favoriteCount: Math.max(0, Math.floor(Number(source.favoriteCount || source.favorites || 0))),
+    impressions: normalizeSellerImpressions(source.impressions || source.impressionCounts),
+    impressionsCollecting: source.impressionsCollecting === true,
+  };
+}
+
+function normalizeSellerRelationship(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const previousPurchases = Math.max(0, Math.floor(Number(
+    source.previousPurchases || source.purchaseCount || source.purchases || 0,
+  )));
+  return {
+    previousPurchases,
+    isFavorite: source.isFavorite === true || source.favorite === true,
+    metBefore: source.metBefore === true || source.previouslyPurchased === true || previousPurchases > 0,
+    lastPurchasePrice: Math.max(0, Math.floor(Number(
+      source.lastPurchasePrice || source.lastPrice || source.previousPrice || 0,
+    ))),
+  };
+}
+
+function normalizeMarketShop(value) {
+  const source = value?.sellerShop && typeof value.sellerShop === "object"
+    ? value.sellerShop
+    : value && typeof value === "object"
+      ? value
+      : {};
+  return {
+    publicSellerId: normalizeShopText(source.publicSellerId || source.sellerPublicId, 96),
+    shopName: normalizeShopText(source.shopName || source.name, MARKET_SHOP_NAME_MAX_LENGTH),
+    tagline: normalizeShopText(
+      source.tagline || source.philosophy || source.shopTagline,
+      MARKET_SHOP_TAGLINE_MAX_LENGTH,
+    ),
+    specialtyTags: normalizeShopIdList(source.specialtyTags || source.specialties || source.tags, MARKET_SHOP_MAX_SPECIALTY_TAGS),
+    serviceStyles: normalizeShopIdList(source.serviceStyles || source.styles, MARKET_SHOP_MAX_SERVICE_STYLES),
+    themeId: normalizeShopOptionId(source.themeId || source.theme) || "standard",
+    sealId: normalizeShopOptionId(source.sealId || source.seal) || "heart",
+    titleId: normalizeShopOptionId(source.titleId),
+    repeatWelcome: source.repeatWelcome === true,
+    verified: normalizeSellerVerified(source.verified || source.report || source),
+    relationship: normalizeSellerRelationship(source.relationship || source.viewerRelationship),
+  };
+}
+
+function normalizeMarketFavorite(value, fallbackId = "") {
+  const source = value && typeof value === "object" ? value : {};
+  const shop = normalizeMarketShop(source.shop || source.sellerShop || source);
+  const publicSellerId = normalizeShopText(
+    source.publicSellerId || source.sellerPublicId || shop.publicSellerId || fallbackId,
+    96,
+  );
+  if (!publicSellerId) return null;
+  const lastPurchasePrice = Math.max(0, Math.floor(Number(
+    source.lastPurchasePrice
+      || source.lastPrice
+      || source.previousPrice
+      || source.relationship?.lastPurchasePrice
+      || shop.relationship.lastPurchasePrice
+      || 0,
+  )));
+  return {
+    ...shop,
+    publicSellerId,
+    lastPurchasePrice,
+    favoritedAt: Math.max(0, Number(source.favoritedAt || source.updatedAt || 0)),
+  };
+}
+
+function normalizeMarketFavorites(value) {
+  const source = Array.isArray(value)
+    ? value.map((favorite) => ["", favorite])
+    : value && typeof value === "object"
+      ? Object.entries(value)
+      : [];
+  const favorites = [];
+  const seen = new Set();
+  for (const [fallbackId, rawFavorite] of source) {
+    const favorite = normalizeMarketFavorite(rawFavorite, fallbackId);
+    if (!favorite || seen.has(favorite.publicSellerId)) continue;
+    seen.add(favorite.publicSellerId);
+    favorites.push(favorite);
+  }
+  return favorites.sort((first, second) => second.favoritedAt - first.favoritedAt);
+}
+
+function createRelationshipFeedbackState(roomId = "", favorite = false) {
+  return {
+    roomId: String(roomId || ""),
+    impressionTag: "",
+    alreadyRecorded: false,
+    favorite: favorite === true,
+    favoritePersisted: favorite === true,
+    favoriteBeforeBlock: false,
+    submitted: false,
+    blocked: false,
+    busy: false,
+  };
+}
+
+function marketShopSample() {
+  return normalizeMarketShop({
+    publicSellerId: "preview-owner-shop",
+    shopName: "ときめき発見商店",
+    tagline: "まだ言葉にならない推しの魅力まで、丁寧に届けます。",
+    specialtyTags: ["animals", "illustration", "story"],
+    serviceStyles: ["story", "careful"],
+    themeId: "sakura",
+    sealId: "ribbon",
+    titleId: "title_good_praiser",
+    repeatWelcome: true,
+    verified: {
+      salesCount: 12,
+      bestSale: 300,
+      marketDays: 8,
+      uniqueCounterparties: 9,
+      repeatBuyerCount: 3,
+      impressions: { kind: 7, insightful: 5, want_more: 4 },
+    },
+  });
+}
+
+function previewMarketFavorites() {
+  return normalizeMarketFavorites([
+    {
+      publicSellerId: "preview-favorite-one",
+      shopName: "月あかり写真店",
+      tagline: "夜の色と静かな物語を選んでいます。",
+      specialtyTags: ["night", "landscape"],
+      serviceStyles: ["concise", "audio"],
+      themeId: "midnight",
+      sealId: "moon",
+      titleId: "title_night_view_collector",
+      repeatWelcome: true,
+      lastPurchasePrice: 300,
+      favoritedAt: Date.now() - 10_000,
+      verified: { salesCount: 21, bestSale: 500, repeatBuyerCount: 6 },
+    },
+    {
+      publicSellerId: "preview-favorite-two",
+      shopName: "ふわもこ推し便",
+      tagline: "どうぶつのかわいさを全力でお届け。",
+      specialtyTags: ["animals", "humor"],
+      serviceStyles: ["intuition", "careful"],
+      themeId: "mint",
+      sealId: "cat",
+      titleId: "title_animal_lover",
+      repeatWelcome: false,
+      lastPurchasePrice: 100,
+      favoritedAt: Date.now() - 20_000,
+      verified: { salesCount: 7, bestSale: 200, repeatBuyerCount: 1 },
+    },
+  ]);
+}
+
+function applyMarketShopResponse(value) {
+  const data = value && typeof value === "object" ? value : {};
+  state.shopCatalog = normalizeMarketShopCatalog(data.catalog || state.shopCatalog);
+  state.shop = normalizeMarketShop(data.shop || state.shop);
+  state.shopReport = normalizeSellerVerified(data.report || state.shop.verified);
+  state.ownedTitleIds = normalizeOwnedTitleIds(data.ownedTitleIds || data.ownedTitles);
+  state.favorites = normalizeMarketFavorites(data.favorites);
+  reconcileSelectedFavoriteSeller();
+  if (state.room && !state.relationshipFeedback.submitted) {
+    const sellerId = normalizeMarketShop(state.room.sellerShop).publicSellerId;
+    if (sellerId) {
+      const favorite = Boolean(favoriteForSeller(sellerId));
+      state.relationshipFeedback.favorite = favorite;
+      state.relationshipFeedback.favoritePersisted = favorite;
+    }
+  }
+  state.shopStatus = "ready";
+  state.shopErrorMessage = "";
+}
+
+function favoriteForSeller(publicSellerId) {
+  const id = String(publicSellerId || "");
+  return id ? state.favorites.find((favorite) => favorite.publicSellerId === id) || null : null;
+}
+
+function matchableMarketFavorite(publicSellerId, favorites = state.favorites) {
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  return sellerId
+    ? favorites.find((favorite) => favorite.publicSellerId === sellerId && favorite.repeatWelcome === true) || null
+    : null;
+}
+
+function fallbackMarketFavorite(favorites = state.favorites) {
+  return favorites.find((favorite) => favorite.repeatWelcome === true) || null;
+}
+
+function marketFavoritePreviousPrice(favorite) {
+  return Math.max(0, Math.floor(Number(
+    favorite?.lastPurchasePrice || favorite?.relationship?.lastPurchasePrice || 0,
+  )));
+}
+
+function marketFavoriteRequiredBudget(favorite) {
+  const previousPrice = marketFavoritePreviousPrice(favorite);
+  if (!previousPrice) return 0;
+  return MARKET_PRICES.find((price) => price >= previousPrice) || 0;
+}
+
+function alignBudgetToMarketFavorite(favorite, { announce = false } = {}) {
+  const previousPrice = marketFavoritePreviousPrice(favorite);
+  const requiredBudget = marketFavoriteRequiredBudget(favorite);
+  if (!previousPrice || !requiredBudget) {
+    return { ok: true, previousPrice, requiredBudget: 0, shortage: 0, adjusted: false };
+  }
+  const shortage = Math.max(0, previousPrice + ENTRY_FEE - state.balance);
+  if (shortage) {
+    return { ok: false, previousPrice, requiredBudget, shortage, adjusted: false };
+  }
+  const adjusted = Number(state.maxBudget) < requiredBudget;
+  if (adjusted) {
+    state.maxBudget = requiredBudget;
+    if (announce) {
+      showToast(`前回価格に合わせて購入上限を${requiredBudget.toLocaleString("ja-JP")}PTへ調整しました。`);
+    }
+  }
+  return { ok: true, previousPrice, requiredBudget, shortage: 0, adjusted };
+}
+
+function reconcileSelectedFavoriteSeller() {
+  const selected = matchableMarketFavorite(state.selectedFavoriteSellerId);
+  if (selected) return selected;
+  state.selectedFavoriteSellerId = "";
+  if (state.matchMode === "favorites") state.matchMode = "discover";
+  return null;
+}
+
+function ensureRelationshipFeedback(room = state.room) {
+  const roomId = String(room?.roomId || state.roomId || "");
+  if (!roomId || state.relationshipFeedback.roomId === roomId) return;
+  const shop = normalizeMarketShop(room?.sellerShop);
+  state.relationshipFeedback = createRelationshipFeedbackState(
+    roomId,
+    Boolean(favoriteForSeller(shop.publicSellerId)) || shop.relationship.isFavorite,
+  );
+}
+
 function showToast(message) {
   shared()?.showToast?.(message);
 }
@@ -374,6 +790,18 @@ async function ensureAuthenticated(generation) {
     state.uid = "local-preview-user";
     updateMarketBalance(500);
     state.patron = normalizeMarketPatron({ seasonKey: currentPatronSeasonKey(), seasonSpent: 300, tier: 1 });
+    state.shop = marketShopSample();
+    state.shopCatalog = normalizeMarketShopCatalog(null);
+    state.shopReport = normalizeSellerVerified(state.shop.verified);
+    state.ownedTitleIds = normalizeOwnedTitleIds([
+      "title_good_praiser",
+      "title_animal_lover",
+      "title_night_view_collector",
+      "title_image_sommelier",
+    ]);
+    state.favorites = previewMarketFavorites();
+    state.shopStatus = "ready";
+    state.shopErrorMessage = "";
     state.authReady = true;
     setMarketChrome("VALUE MARKET PREVIEW");
     render();
@@ -394,6 +822,29 @@ async function ensureAuthenticated(generation) {
   subscribeToWallet(generation);
   setMarketChrome("VALUE MARKET");
   render();
+  await loadMarketShop(generation);
+}
+
+async function loadMarketShop(generation = lifecycleGeneration) {
+  if (useMarketPreview || !isCurrentLifecycle(generation) || !state.uid) return;
+  state.shopBusy = true;
+  state.shopStatus = "loading";
+  render();
+  try {
+    const response = await marketShopCallable({ action: "get" });
+    if (!isCurrentLifecycle(generation)) return;
+    applyMarketShopResponse(response.data);
+  } catch (error) {
+    if (!isCurrentLifecycle(generation)) return;
+    console.warn("VALUE MARKET shop profile is unavailable.", error);
+    state.shopStatus = "error";
+    state.shopErrorMessage = callableMessage(error, "推し値商店を読み込めませんでした。");
+  } finally {
+    if (isCurrentLifecycle(generation)) {
+      state.shopBusy = false;
+      render();
+    }
+  }
 }
 
 function subscribeToActiveRoom(generation = lifecycleGeneration) {
@@ -465,8 +916,219 @@ function renderWallet() {
   return `<div class="market-wallet"><span>MARKET WALLET</span><strong>${Math.floor(state.balance).toLocaleString("ja-JP")}<small>PT</small></strong>${renderMarketPatronBadge(state.patron)}<p>Functions管理の取引残高</p></div>`;
 }
 
+function safeShopClassToken(value, fallback = "standard") {
+  return normalizeShopOptionId(value) || fallback;
+}
+
+function marketShopCatalogOption(group, id) {
+  const options = state.shopCatalog?.[group] || MARKET_SHOP_FALLBACK_CATALOG[group] || [];
+  return options.find((option) => option.id === id) || null;
+}
+
+function marketShopCatalogLabel(group, id) {
+  return marketShopCatalogOption(group, id)?.label || String(id || "");
+}
+
+function renderMarketPlayerTitle(titleId) {
+  const presentation = getPlayerTitlePresentation(titleId);
+  return presentation
+    ? `<span class="player-title-badge market-seller-title ${escapeHtml(presentation.className)}"><span aria-hidden="true">${escapeHtml(presentation.icon)}</span>${escapeHtml(presentation.product.title)}</span>`
+    : "";
+}
+
+function sellerImpressionTotal(verified) {
+  return Object.values(verified?.impressions || {}).reduce((sum, count) => sum + Math.max(0, Number(count || 0)), 0);
+}
+
+function renderSellerVerified(verifiedValue, { report = false } = {}) {
+  const verified = normalizeSellerVerified(verifiedValue);
+  const hasRecord = verified.salesCount > 0
+    || verified.bestSale > 0
+    || verified.marketDays > 0
+    || verified.uniqueCounterparties > 0
+    || verified.repeatBuyerCount > 0
+    || verified.favoriteCount > 0
+    || sellerImpressionTotal(verified) > 0;
+  if (!hasRecord && !report) {
+    return `<div class="market-shop-verified is-new"><strong class="market-shop-verified-label"><span aria-hidden="true">◇</span> NEW SHOP</strong><p>実績収集中の新しい推し値商店です。印象タグは異なる買い手5人から届くまで収集中です。</p></div>`;
+  }
+  const impressionItems = Object.entries(verified.impressions)
+    .sort(([, first], [, second]) => second - first)
+    .map(([id, count]) => `<span><b>${escapeHtml(marketShopCatalogLabel("impressionTags", id))}</b><small>${Number(count).toLocaleString("ja-JP")}</small></span>`)
+    .join("");
+  return `<div class="${report ? "market-shop-report" : "market-shop-verified"}">
+    ${report ? `<div class="market-shop-report-head"><span>PRIVATE OWNER REPORT</span><strong>店主レポート</strong><small>あなたにだけ表示</small></div>` : `<strong class="market-shop-verified-label"><span aria-hidden="true">✓</span> FUNCTIONS集計</strong>`}
+    <dl>
+      <div><dt>成立</dt><dd>${verified.salesCount.toLocaleString("ja-JP")}<small>件</small></dd></div>
+      <div><dt>${report ? "購入者" : "最高成約"}</dt><dd>${report ? verified.uniqueCounterparties.toLocaleString("ja-JP") : `${verified.bestSale.toLocaleString("ja-JP")}<small>PT</small>`}</dd></div>
+      <div><dt>リピーター</dt><dd>${verified.repeatBuyerCount.toLocaleString("ja-JP")}<small>人</small></dd></div>
+      <div><dt>${report ? "常連登録" : "市場日数"}</dt><dd>${report ? verified.favoriteCount.toLocaleString("ja-JP") : verified.marketDays.toLocaleString("ja-JP")}<small>${report ? "人" : "日"}</small></dd></div>
+    </dl>
+    ${impressionItems
+    ? `<div class="market-shop-impressions"><small>届いた印象</small>${impressionItems}</div>`
+    : verified.impressionsCollecting && !report
+      ? `<div class="market-shop-impressions is-collecting"><small>届いた印象</small><span><b>異なる買い手5人から届くまで収集中</b></span></div>`
+      : `<p class="market-shop-report-empty">${report ? "購入者からの印象はまだありません。" : ""}</p>`}
+  </div>`;
+}
+
+function renderSellerShopCard(shopValue, {
+  sellerName = "",
+  compact = false,
+  force = false,
+  relationship = null,
+  heading = "店主カード",
+  showVerified = true,
+} = {}) {
+  const shop = normalizeMarketShop(shopValue);
+  const hasIdentity = Boolean(
+    shop.shopName
+    || shop.tagline
+    || shop.specialtyTags.length
+    || shop.serviceStyles.length
+    || shop.titleId
+    || shop.repeatWelcome,
+  );
+  if (!force && !hasIdentity) return "";
+  const themeId = safeShopClassToken(shop.themeId);
+  const sealId = safeShopClassToken(shop.sealId, "heart");
+  const seal = marketShopCatalogOption("seals", sealId)
+    || MARKET_SHOP_FALLBACK_CATALOG.seals.find((option) => option.id === sealId)
+    || MARKET_SHOP_FALLBACK_CATALOG.seals[0];
+  const relationshipSource = relationship === undefined ? shop.relationship : relationship;
+  const sellerRelationship = relationshipSource === false || relationshipSource === null
+    ? null
+    : normalizeSellerRelationship(relationshipSource);
+  const relationshipBadges = sellerRelationship ? [
+    sellerRelationship.isFavorite ? `<span class="is-favorite">♥ 常連帳のお店</span>` : "",
+    sellerRelationship.previousPurchases > 0
+      ? `<span>以前${sellerRelationship.previousPurchases}回購入</span>`
+      : sellerRelationship.metBefore
+        ? `<span>以前取引した店主</span>`
+        : "",
+    shop.repeatWelcome ? `<span class="market-shop-repeat">常連さん歓迎</span>` : "",
+  ].filter(Boolean).join("") : (shop.repeatWelcome ? `<span class="market-shop-repeat">常連さん歓迎</span>` : "");
+  const specialtyTags = shop.specialtyTags
+    .map((id) => `<span>#${escapeHtml(marketShopCatalogLabel("specialtyTags", id))}</span>`)
+    .join("");
+  const serviceStyles = shop.serviceStyles
+    .map((id) => `<span>${escapeHtml(marketShopCatalogLabel("serviceStyles", id))}</span>`)
+    .join("");
+  return `<article class="market-seller-card market-shop-theme-${themeId} is-theme-${themeId} ${compact ? "is-compact" : ""}">
+    <div class="market-seller-card-head">
+      <span class="market-shop-seal seal-${sealId}" aria-label="${escapeHtml(seal.label)}">${escapeHtml(seal.icon || "◆")}</span>
+      <div><small>${escapeHtml(heading)}</small><h2>${escapeHtml(shop.shopName || `${normalizeMarketName(sellerName)}の推し値商店`)}</h2>${shop.publicSellerId ? `<span class="market-shop-public-id">店コード ${escapeHtml(shop.publicSellerId)}</span>` : ""}${shop.tagline ? `<p class="market-shop-tagline">「${escapeHtml(shop.tagline)}」</p>` : `<p class="market-shop-tagline is-empty">商店の理念はまだ設定されていません。</p>`}</div>
+      ${renderMarketPlayerTitle(shop.titleId)}
+    </div>
+    ${relationshipBadges ? `<div class="market-shop-relationship">${relationshipBadges}</div>` : ""}
+    ${specialtyTags ? `<div class="market-shop-tags" aria-label="得意タグ">${specialtyTags}</div>` : ""}
+    ${serviceStyles ? `<div class="market-shop-styles" aria-label="接客スタイル">${serviceStyles}</div>` : ""}
+    ${showVerified ? renderSellerVerified(shop.verified) : ""}
+  </article>`;
+}
+
+function renderMarketShopOptionChecks(group, selectedIds, maximum, inputName) {
+  const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  return state.shopCatalog[group].map((option) => `<label><input type="checkbox" name="${inputName}" value="${escapeHtml(option.id)}" ${selectedIds.includes(option.id) ? "checked" : ""} ${locked ? "disabled" : ""} /><span>${escapeHtml(option.label)}</span></label>`).join("");
+}
+
+function renderMarketShopSettings() {
+  const shop = normalizeMarketShop(state.shop);
+  const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  const titleIds = [...state.ownedTitleIds];
+  if (shop.titleId && getPlayerTitleProduct(shop.titleId) && !titleIds.includes(shop.titleId)) titleIds.push(shop.titleId);
+  const titleOptions = titleIds.map((titleId) => {
+    const title = getPlayerTitleProduct(titleId);
+    return title ? `<option value="${escapeHtml(titleId)}" ${titleId === shop.titleId ? "selected" : ""}>${escapeHtml(title.title)}</option>` : "";
+  }).join("");
+  const statusNote = state.shopStatus === "loading"
+    ? `<p class="market-shop-status">推し値商店を読み込んでいます…</p>`
+    : state.shopStatus === "save-error"
+      ? `<p class="market-shop-status is-error"><strong>未保存です。</strong> ${escapeHtml(state.shopErrorMessage || "通信を確認して、もう一度保存してください。")}</p>`
+      : state.shopStatus === "error"
+        ? `<p class="market-shop-status is-error">商店設定を読み込めませんでした。従来の市場にはそのまま参加できます。保存すると再接続します。</p>`
+        : "";
+  return `<section class="market-shop-settings" aria-labelledby="marketShopSettingsTitle">
+    <div class="market-shop-section-head"><div><span class="eyebrow">YOUR VALUE SHOP</span><h2 id="marketShopSettingsTitle">推し値商店</h2><p>何を売るかだけでなく、誰がどう届けるかを店主カードにします。</p></div><strong>公開する情報を自分で編集</strong></div>
+    ${statusNote}
+    <div class="market-shop-settings-grid">
+      <form class="market-shop-form" id="marketShopForm">
+        <div class="market-shop-fields">
+          <label class="field"><span>店名（${MARKET_SHOP_NAME_MAX_LENGTH}文字）</span><input id="marketShopName" maxlength="${MARKET_SHOP_NAME_MAX_LENGTH}" value="${escapeHtml(shop.shopName)}" placeholder="ときめき発見商店" required ${locked ? "disabled" : ""} /></label>
+          <label class="field"><span>商店の理念（任意・${MARKET_SHOP_TAGLINE_MAX_LENGTH}文字）</span><input id="marketShopTagline" maxlength="${MARKET_SHOP_TAGLINE_MAX_LENGTH}" value="${escapeHtml(shop.tagline)}" placeholder="推しの魅力を丁寧に届けます" ${locked ? "disabled" : ""} /></label>
+        </div>
+        <fieldset class="market-shop-checks"><legend>得意タグ <small>最大${MARKET_SHOP_MAX_SPECIALTY_TAGS}個</small></legend><div class="market-shop-option-grid">${renderMarketShopOptionChecks("specialtyTags", shop.specialtyTags, MARKET_SHOP_MAX_SPECIALTY_TAGS, "marketShopSpecialty")}</div></fieldset>
+        <fieldset class="market-shop-checks"><legend>接客スタイル <small>最大${MARKET_SHOP_MAX_SERVICE_STYLES}個</small></legend><div class="market-shop-option-grid">${renderMarketShopOptionChecks("serviceStyles", shop.serviceStyles, MARKET_SHOP_MAX_SERVICE_STYLES, "marketShopServiceStyle")}</div></fieldset>
+        <div class="market-shop-fields is-three-column">
+          <label class="field"><span>カードテーマ</span><select id="marketShopTheme" ${locked ? "disabled" : ""}>${state.shopCatalog.themes.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.themeId ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></label>
+          <label class="field"><span>商店の印</span><select id="marketShopSeal" ${locked ? "disabled" : ""}>${state.shopCatalog.seals.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.sealId ? "selected" : ""}>${escapeHtml(`${option.icon ? `${option.icon} ` : ""}${option.label}`)}</option>`).join("")}</select></label>
+          <label class="field"><span>店主の称号</span><select id="marketShopTitle" ${locked ? "disabled" : ""}><option value="">称号なし</option>${titleOptions}</select><small>ポイントショップで所有する称号から選択</small></label>
+        </div>
+        <label class="market-profile-check market-shop-repeat-check"><input id="marketShopRepeatWelcome" type="checkbox" ${shop.repeatWelcome ? "checked" : ""} ${locked ? "disabled" : ""} /><span>「常連さん歓迎」を店主カードへ表示する</span></label>
+        <button class="button button-primary" type="submit" ${!state.authReady || locked ? "disabled" : ""}>${state.shopBusy ? "保存中…" : "推し値商店を保存"}</button>
+      </form>
+      <div class="market-shop-owner-preview">
+        ${renderSellerShopCard(shop, { sellerName: state.name, force: true, heading: "PUBLIC OWNER CARD" })}
+        ${renderSellerVerified(state.shopReport, { report: true })}
+      </div>
+    </div>
+  </section>`;
+}
+
+function favoritePriceCopy(favorite) {
+  const price = marketFavoritePreviousPrice(favorite);
+  if (!price) return "前回価格は記録されていません";
+  const requiredBalance = price + ENTRY_FEE;
+  const shortage = Math.max(0, requiredBalance - state.balance);
+  if (shortage) {
+    return `前回 ${price.toLocaleString("ja-JP")}PT ＋ 着手料${ENTRY_FEE}PT ／ あと${shortage.toLocaleString("ja-JP")}PT`;
+  }
+  const requiredBudget = marketFavoriteRequiredBudget(favorite);
+  if (requiredBudget && Number(state.maxBudget) < requiredBudget) {
+    return `前回 ${price.toLocaleString("ja-JP")}PT ＋ 着手料${ENTRY_FEE}PT ／ 選ぶと購入上限を${requiredBudget.toLocaleString("ja-JP")}PTへ調整`;
+  }
+  return `前回 ${price.toLocaleString("ja-JP")}PT ＋ 着手料${ENTRY_FEE}PT ／ 現在の購入上限で届きます`;
+}
+
+function renderMarketFavoritesBook() {
+  const hasFavorites = state.favorites.length > 0;
+  const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  const selectedFavorite = reconcileSelectedFavoriteSeller();
+  const hasMatchableFavorites = Boolean(fallbackMarketFavorite());
+  const canUseFavoriteMode = Boolean(selectedFavorite);
+  const statusNote = state.shopStatus === "loading"
+    ? `<p class="market-shop-status">非公開常連帳を読み込んでいます…</p>`
+    : state.shopStatus === "error"
+      ? `<p class="market-shop-status is-error">常連帳を読み込めませんでした。「新しい商店を探す」はそのまま利用できます。</p>`
+      : "";
+  const favoriteItems = hasFavorites
+    ? state.favorites.map((favorite) => {
+      const selectable = favorite.repeatWelcome === true;
+      const selected = selectable && favorite.publicSellerId === selectedFavorite?.publicSellerId;
+      const activelySelected = selected && state.matchMode === "favorites";
+      return `<li class="market-favorite-card ${activelySelected ? "is-selected" : ""}">
+        ${renderSellerShopCard(favorite, { compact: true, force: true, heading: "REGULAR SHOP", relationship: { isFavorite: true } })}
+        ${selectable
+    ? `<label class="market-favorite-select ${activelySelected ? "is-selected" : ""}"><input type="radio" name="marketFavoriteSeller" value="${escapeHtml(favorite.publicSellerId)}" ${activelySelected ? "checked" : ""} ${locked ? "disabled" : ""} /><span><strong>この商店を待つ</strong><small>${activelySelected ? "この商店を指名中" : "選ぶとこの商店だけを指名して待機"}</small></span></label>`
+    : `<div class="market-favorite-select is-unavailable"><span><strong>常連受付は休止中</strong><small>店主が「常連さん歓迎」にすると指名できます</small></span></div>`}
+        <div class="market-favorite-actions"><span>${escapeHtml(favoritePriceCopy(favorite))}</span><button type="button" class="button button-ghost button-small" data-market-remove-favorite="${escapeHtml(favorite.publicSellerId)}" ${locked ? "disabled" : ""}>常連帳から解除</button></div>
+      </li>`;
+    }).join("")
+    : `<li class="market-favorite-empty"><span aria-hidden="true">♡</span><strong>常連帳はまだ空です</strong><p>営業を受けた商談の終了後に「またこの人から買いたい」を保存すると、ここへ追加されます。</p></li>`;
+  return `<section class="market-favorites-book" aria-labelledby="marketFavoritesTitle">
+    <div class="market-shop-section-head"><div><span class="eyebrow">PRIVATE REGULAR BOOK</span><h2 id="marketFavoritesTitle">非公開常連帳</h2><p>登録した商店は自分にだけ表示されます。誰が登録したかは売り手へ伝えず、店主には合計人数だけを表示します。</p></div><strong>${state.favorites.length} SHOP${state.favorites.length === 1 ? "" : "S"}</strong></div>
+    ${statusNote}
+    <div class="market-match-mode" role="radiogroup" aria-label="売り手の探し方">
+      <label class="${state.matchMode === "discover" ? "is-selected" : ""}"><input type="radio" name="marketMatchMode" value="discover" ${state.matchMode === "discover" ? "checked" : ""} ${locked ? "disabled" : ""} /><span><strong>新しい商店を探す</strong><small>価格条件が合う売り手と出会う</small></span></label>
+      <label class="${state.matchMode === "favorites" ? "is-selected" : ""} ${!canUseFavoriteMode ? "is-disabled" : ""}"><input type="radio" name="marketMatchMode" value="favorites" ${state.matchMode === "favorites" ? "checked" : ""} ${!canUseFavoriteMode || locked ? "disabled" : ""} /><span><strong>指名した商店を待つ</strong><small>${selectedFavorite ? `「${escapeHtml(selectedFavorite.shopName || "登録した商店")}」だけを待つ` : hasMatchableFavorites ? "商店カードで指名先を1店選んでください" : hasFavorites ? "「常連さん歓迎」の登録店があると選べます" : "商店を登録すると選べます"}</small></span></label>
+    </div>
+    <ol class="market-favorite-list">${favoriteItems}</ol>
+  </section>`;
+}
+
 function renderSetup() {
   const seller = state.role === "seller";
+  const locked = state.busy || state.shopBusy || state.queueJoinPending;
   const imagePreview = state.image?.url
     ? `<figure class="market-listing-preview"><img src="${escapeHtml(state.image.url)}" alt="出品する画像のプレビュー" /><figcaption>${escapeHtml(state.listingTitle || "無題の推し")} / ${state.askingPrice}PT</figcaption></figure>`
     : `<div class="market-image-empty"><span>♡</span><strong>推し画像を1枚選択</strong><small>画像はFirebaseへ保存されません</small></div>`;
@@ -477,9 +1139,10 @@ function renderSetup() {
       ${renderWallet()}
     </div>
     <div class="market-role-tabs" role="tablist" aria-label="市場でのロール">
-      <button type="button" class="${seller ? "is-active" : ""}" data-market-role="seller" role="tab" aria-selected="${seller}"><span>SELLER</span><strong>売り手</strong><small>画像の魅力を言葉や10秒音声で営業</small></button>
-      <button type="button" class="${!seller ? "is-active" : ""}" data-market-role="buyer" role="tab" aria-selected="${!seller}"><span>BUYER</span><strong>買い手</strong><small>自分のポイントで推し値を評価</small></button>
+      <button type="button" class="${seller ? "is-active" : ""}" data-market-role="seller" role="tab" aria-selected="${seller}" ${locked ? "disabled" : ""}><span>SELLER</span><strong>売り手</strong><small>画像の魅力を言葉や10秒音声で営業</small></button>
+      <button type="button" class="${!seller ? "is-active" : ""}" data-market-role="buyer" role="tab" aria-selected="${!seller}" ${locked ? "disabled" : ""}><span>BUYER</span><strong>買い手</strong><small>自分のポイントで推し値を評価</small></button>
     </div>
+    ${seller ? renderMarketShopSettings() : renderMarketFavoritesBook()}
     <div class="market-entry-grid">
       <form class="market-entry-card" id="marketEntryForm">
         <label class="field"><span>プレイヤーネーム</span><input id="marketName" maxlength="16" value="${escapeHtml(state.name)}" required /></label>
@@ -491,14 +1154,14 @@ function renderSetup() {
           </div>
           ${renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true })}`
           : `<label class="field"><span>購入上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${price} PT</option>`).join("")}</select><small>販売価格が上限以内の売り手だけとマッチします。着手料${ENTRY_FEE}PTは別途必要です。</small></label>`}
-        <button class="button button-primary market-join-button" type="submit" ${!state.authReady || state.busy || (seller && !state.image) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.busy ? "参加処理中…" : seller ? "売り手として待機する" : "買い手として待機する"}</button>
+        <button class="button button-primary market-join-button" type="submit" ${!state.authReady || locked || (seller && !state.image) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.queueJoinPending || state.busy ? "参加処理中…" : seller ? "売り手として待機する" : "買い手として待機する"}</button>
       </form>
       <aside class="market-rule-card">
         <span class="eyebrow">FAIR DEAL FLOW</span><h2>取引の流れ</h2>
         <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料${ENTRY_FEE}PTをFunctionsが一時預かりします。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に着手料を受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低1PT）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
         <div class="market-safety-note"><strong>POINT AUTHORITY</strong><p>残高移動はCloud Functionsだけが確定し、売買と独立ランキングをFirestoreの同一トランザクションで更新します。</p></div>
         <p class="market-roleplay-note">売買はTRPGとしてのロールプレイです。画像データや著作権・所有権は移転しません。画像の一時判定、音声通報機能は設けません。</p>
-        <div class="market-setup-links"><button class="button button-ghost" type="button" id="marketRankingsButton">売り手・買い手ランキング</button><button class="button button-ghost" type="button" id="marketCertificatesButton">推し値証書コレクション</button></div>
+        <div class="market-setup-links"><button class="button button-ghost" type="button" id="marketRankingsButton" ${locked ? "disabled" : ""}>売り手・買い手ランキング</button><button class="button button-ghost" type="button" id="marketCertificatesButton" ${locked ? "disabled" : ""}>推し値証書コレクション</button></div>
         ${useMarketPreview ? `<div class="market-preview-controls"><small>LOCAL UI PREVIEW</small><button type="button" data-market-preview-room="preview:buyer">買い手プレビュー画面</button><button type="button" data-market-preview-room="pitch:seller">売り手営業画面</button><button type="button" data-market-preview-room="decision:buyer">買い手決済画面</button><button type="button" data-market-preview-room="extension_offer:buyer">内金確認画面</button><button type="button" data-market-preview-room="sold:buyer">成立結果画面</button></div>` : ""}
       </aside>
     </div>
@@ -506,10 +1169,22 @@ function renderSetup() {
 }
 
 function renderWaiting() {
+  const selectedFavorite = state.matchMode === "favorites"
+    ? matchableMarketFavorite(state.selectedFavoriteSellerId)
+    : null;
+  const selectedFavoritePreviousPrice = marketFavoritePreviousPrice(selectedFavorite);
+  const waitingTitle = state.role === "seller"
+    ? "買い手を探しています"
+    : selectedFavorite
+      ? `「${escapeHtml(selectedFavorite.shopName || "登録した商店")}」を待っています`
+      : "売り手を探しています";
+  const waitingDetail = state.role === "seller"
+    ? `${escapeHtml(state.listingTitle)} / ${state.askingPrice}PT`
+    : `購入上限 ${state.maxBudget}PT${selectedFavorite ? `${selectedFavoritePreviousPrice ? ` / 前回価格 ${selectedFavoritePreviousPrice.toLocaleString("ja-JP")}PT` : ""} / 指名店コード ${escapeHtml(selectedFavorite.publicSellerId)}` : ""}`;
   return `<section class="screen market-screen market-waiting"><div class="market-waiting-card">
     <div class="market-radar" aria-hidden="true"><i></i><i></i><span>♡</span></div>
-    <span class="eyebrow">SEARCHING VALUE PARTNER</span><h1>${state.role === "seller" ? "買い手を探しています" : "売り手を探しています"}</h1>
-    <p>${state.role === "seller" ? `${escapeHtml(state.listingTitle)} / ${state.askingPrice}PT` : `購入上限 ${state.maxBudget}PT`}で待機中です。</p>
+    <span class="eyebrow">SEARCHING VALUE PARTNER</span><h1>${waitingTitle}</h1>
+    <p>${waitingDetail} で待機中です。</p>
     <small>ブラウザを閉じるかキャンセルすると待機列から外れます。</small>
     <button class="button button-ghost" id="marketCancelQueueButton" ${state.busy ? "disabled" : ""}>待機をキャンセル</button>
   </div></section>`;
@@ -569,7 +1244,7 @@ function renderRankings() {
     ? entries.map((entry, index) => row(entry, index, role)).join("")
     : `<li class="market-ranking-empty">集計対象の売買はまだありません。</li>`;
   return `<section class="screen market-screen market-rankings">
-    <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>総合ランキングには含まれない、売り手と買い手それぞれの市場実績です。</p></div><button class="button button-ghost" id="marketRankingBack">市場へ戻る</button></div>
+    <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>総合ランキングには含まれない、売り手と買い手それぞれの市場実績です。</p></div><button class="button button-ghost" id="marketRankingBack">${state.rankingReturnScreen === "room" && state.room ? "取引結果へ戻る" : "市場へ戻る"}</button></div>
     ${renderMarketRankingProfileSettings()}
     ${state.rankingsStatus === "loading" ? `<div class="market-ranking-loading">ランキングを読み込んでいます…</div>` : `<div class="market-ranking-grid">
       <article><span>SELLER RANKING</span><h2>売上ランキング</h2><ol>${list(state.rankings.sellers, "seller")}</ol></article>
@@ -601,11 +1276,23 @@ function renderCertificateCard(certificate) {
   const price = Math.max(0, Math.floor(Number(certificate?.purchasePrice || 0)));
   const fee = Math.max(0, Math.floor(Number(certificate?.marketFee || 0)));
   const proceeds = Math.max(0, Math.floor(Number(certificate?.sellerProceeds || price - fee)));
+  const issueNumberValue = certificate?.sellerIssueNumber;
+  const numericIssueNumber = Math.max(0, Math.floor(Number(issueNumberValue || 0)));
+  const sellerIssueNumber = numericIssueNumber
+    ? `#${numericIssueNumber.toLocaleString("ja-JP")}`
+    : normalizeShopText(issueNumberValue, 24);
+  const sellerShop = renderSellerShopCard(certificate?.sellerShop, {
+    sellerName: certificate?.sellerName,
+    compact: true,
+    heading: "CERTIFIED SELLER SHOP",
+  });
   return `<li class="market-certificate-card">
     <div class="market-certificate-seal" aria-hidden="true">推</div>
     <div class="market-certificate-heading"><span>VALUE CERTIFICATE</span><strong>${escapeHtml(certificate?.certificateNumber || "OSHI-UNKNOWN")}</strong></div>
     <h2>${escapeHtml(certificate?.listingTitle || "無題の推し")}</h2>
     <p>売り手 <b>${escapeHtml(certificate?.sellerName || "PLAYER")}</b> の推し値に、あなたがポイント価値をつけた記録です。</p>
+    ${sellerIssueNumber ? `<p class="market-certificate-issue"><span>この商店の発行番号</span><strong>${escapeHtml(sellerIssueNumber)}</strong></p>` : ""}
+    ${sellerShop ? `<div class="market-certificate-seller-shop">${sellerShop}</div>` : ""}
     <dl><div><dt>成約価格</dt><dd>${price.toLocaleString("ja-JP")} PT</dd></div><div><dt>市場手数料</dt><dd>${fee.toLocaleString("ja-JP")} PT</dd></div><div><dt>売り手受取</dt><dd>${proceeds.toLocaleString("ja-JP")} PT</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
     <time ${issued.iso ? `datetime="${issued.iso}"` : ""}>${escapeHtml(issued.label)} JST</time>
     <small>非譲渡・画像データ／著作権／所有権は含みません</small>
@@ -655,6 +1342,37 @@ function renderMarketMessages() {
     : `<li class="${message.uid === state.uid ? "is-mine" : ""}"><span>${escapeHtml(message.name)}</span><p>${escapeHtml(message.text)}</p><small>TURN ${Number(message.turn || 1)}</small></li>`).join("");
 }
 
+function renderMarketRelationshipPanel(room, role, status) {
+  ensureRelationshipFeedback(room);
+  const feedback = state.relationshipFeedback;
+  const disabled = feedback.busy || feedback.blocked;
+  let buyerFeedback = "";
+  if (role === "buyer" && (status === "sold" || Number(room.pitchCompletedAt || 0) > 0)) {
+    if (feedback.submitted) {
+      const impression = feedback.impressionTag
+        ? marketShopCatalogLabel("impressionTags", feedback.impressionTag)
+        : feedback.alreadyRecorded
+          ? "以前届けた印象を確認しました"
+          : "印象は送信済みです";
+      buyerFeedback = `<div class="market-relationship-saved"><span aria-hidden="true">♥</span><div><strong>${feedback.alreadyRecorded ? "以前の印象はそのまま保存されています" : "店主へ印象を届けました"}</strong><p>${escapeHtml(impression)}${feedback.favorite ? "・常連帳へ登録済み" : ""}</p></div></div>`;
+    } else {
+      const impressionOptions = state.shopCatalog.impressionTags.map((option) => `<label><input type="radio" name="marketImpressionTag" value="${escapeHtml(option.id)}" ${feedback.impressionTag === option.id ? "checked" : ""} ${disabled ? "disabled" : ""} /><span>${escapeHtml(option.label)}</span></label>`).join("");
+      buyerFeedback = `<form class="market-relationship-form" id="marketRelationshipForm">
+        <div><span>POSITIVE FEEDBACK</span><h3>この店主の良かったところ</h3><p>肯定的な印象を1つだけ匿名で届けられます。</p></div>
+        <fieldset><legend>印象を1つ選択</legend><div class="market-impression-options">${impressionOptions}</div></fieldset>
+        <label class="market-relationship-favorite"><input id="marketRelationshipFavorite" type="checkbox" ${feedback.favorite ? "checked" : ""} ${disabled ? "disabled" : ""} /><span><strong>またこの人から買いたい</strong><small>非公開常連帳へ保存し、次回この商店だけを待てます。</small></span></label>
+        <button class="button button-primary" type="submit" ${disabled ? "disabled" : ""}>${feedback.busy ? "保存中…" : "印象と常連設定を保存"}</button>
+      </form>`;
+    }
+  }
+  const counterpart = role === "seller" ? room.buyerName : room.sellerName;
+  const blockPanel = `<div class="market-block-panel ${feedback.blocked ? "is-blocked" : ""}">
+    <div><strong>${feedback.blocked ? "この相手をブロックしました" : "今後この相手とマッチしない"}</strong><p>${feedback.blocked ? "誤操作の場合は、この結果画面にいる間にすぐ解除できます。" : `${escapeHtml(normalizeMarketName(counterpart))}との今後の市場マッチングを除外します。`}</p></div>
+    <button class="button button-ghost button-small" type="button" data-market-block-counterparty="${feedback.blocked ? "false" : "true"}" ${feedback.busy ? "disabled" : ""}>${feedback.blocked ? "ブロックを解除" : "この相手をブロック"}</button>
+  </div>`;
+  return `<section class="market-relationship-panel">${buyerFeedback}${blockPanel}</section>`;
+}
+
 function renderRoomControls(room, role) {
   const status = room.status;
   const terminal = TERMINAL_STATES.has(status);
@@ -675,7 +1393,7 @@ function renderRoomControls(room, role) {
     const rankingCopy = status === "sold"
       ? `<small>${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}</small>`
       : "";
-    return `<div class="market-result-panel ${status}"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span><h2>${title}</h2><p>${copy}</p>${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement } }) : ""}${rankingCopy}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
+    return `<div class="market-result-panel ${status}"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span><h2>${title}</h2><p>${copy}</p>${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement } }) : ""}${rankingCopy}${renderMarketRelationshipPanel(room, role, status)}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
   }
   if (status === "preview") {
     if (role === "buyer") {
@@ -721,9 +1439,20 @@ function renderRoom() {
   const role = roomRole();
   const counterpart = role === "seller" ? room.buyerName : room.sellerName;
   const counterpartPatron = role === "seller" ? room.buyerPatron : room.sellerPatron;
+  ensureRelationshipFeedback(room);
+  const normalizedSellerShop = normalizeMarketShop(room.sellerShop);
+  const localFavorite = favoriteForSeller(normalizedSellerShop.publicSellerId);
+  const sellerShopCard = renderSellerShopCard(room.sellerShop, {
+    sellerName: room.sellerName,
+    heading: role === "seller" ? "YOUR SHOP" : "SELLER OWNER CARD",
+    relationship: role === "buyer"
+      ? { ...normalizedSellerShop.relationship, isFavorite: Boolean(localFavorite) }
+      : false,
+  });
   return `<section class="screen market-screen market-room">
     <div class="market-room-head"><div><span class="eyebrow">VALUE MARKET / TURN ${Number(room.turn || 1)}</span><h1>${escapeHtml(room.listing?.title || "無題の推し")}</h1><p>${role === "seller" ? "SELLER" : "BUYER"} / 相手：${escapeHtml(counterpart)} ${renderMarketPatronBadge(counterpartPatron, { compact: true })}</p></div>${renderWallet()}</div>
     <div class="market-room-status"><span class="market-price">${room.listing?.askingPrice}<small>PT</small></span><span class="market-p2p ${state.channelReady ? "is-connected" : ""}">${escapeHtml(state.peerStatus)}</span><button type="button" id="marketExitRoom">取引を終了</button></div>
+    ${sellerShopCard}
     <div class="market-room-grid">
       <figure class="market-main-image">${renderMarketImage()}<figcaption>画像はこの対戦中だけP2Pで表示されます</figcaption></figure>
       <section class="market-sales-log"><div class="market-sales-log-head"><span>SALES LOG</span><strong>営業メッセージ</strong></div><ol id="marketMessageList">${renderMarketMessages()}</ol></section>
@@ -739,6 +1468,7 @@ function renderError() {
 
 function bindEvents() {
   document.querySelectorAll("[data-market-role]").forEach((button) => button.addEventListener("click", () => {
+    if (state.busy || state.shopBusy || state.queueJoinPending) return;
     state.role = button.dataset.marketRole;
     normalizeBuyerBudget();
     localStorage.setItem(MARKET_ROLE_KEY, state.role);
@@ -746,6 +1476,58 @@ function bindEvents() {
   }));
   document.querySelector("#marketEntryForm")?.addEventListener("submit", joinQueue);
   document.querySelector("#marketName")?.addEventListener("input", (event) => { state.name = event.target.value.slice(0, 16); });
+  document.querySelector("#marketShopForm")?.addEventListener("submit", saveMarketShop);
+  document.querySelector("#marketShopName")?.addEventListener("input", (event) => {
+    state.shop.shopName = event.target.value.slice(0, MARKET_SHOP_NAME_MAX_LENGTH);
+  });
+  document.querySelector("#marketShopTagline")?.addEventListener("input", (event) => {
+    state.shop.tagline = event.target.value.slice(0, MARKET_SHOP_TAGLINE_MAX_LENGTH);
+  });
+  document.querySelectorAll('input[name="marketShopSpecialty"]').forEach((input) => {
+    input.addEventListener("change", () => updateMarketShopMultiChoice(
+      "specialtyTags",
+      "marketShopSpecialty",
+      MARKET_SHOP_MAX_SPECIALTY_TAGS,
+      input,
+    ));
+  });
+  document.querySelectorAll('input[name="marketShopServiceStyle"]').forEach((input) => {
+    input.addEventListener("change", () => updateMarketShopMultiChoice(
+      "serviceStyles",
+      "marketShopServiceStyle",
+      MARKET_SHOP_MAX_SERVICE_STYLES,
+      input,
+    ));
+  });
+  document.querySelector("#marketShopTheme")?.addEventListener("change", (event) => { state.shop.themeId = normalizeShopOptionId(event.target.value) || "standard"; });
+  document.querySelector("#marketShopSeal")?.addEventListener("change", (event) => { state.shop.sealId = normalizeShopOptionId(event.target.value) || "heart"; });
+  document.querySelector("#marketShopTitle")?.addEventListener("change", (event) => { state.shop.titleId = normalizeShopOptionId(event.target.value); });
+  document.querySelector("#marketShopRepeatWelcome")?.addEventListener("change", (event) => { state.shop.repeatWelcome = event.target.checked; });
+  document.querySelectorAll('input[name="marketMatchMode"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (state.busy || state.shopBusy || state.queueJoinPending) return;
+      const selectedFavorite = reconcileSelectedFavoriteSeller();
+      state.matchMode = input.value === "favorites" && selectedFavorite ? "favorites" : "discover";
+      render();
+    });
+  });
+  document.querySelectorAll('input[name="marketFavoriteSeller"]').forEach((input) => {
+    input.addEventListener("click", () => {
+      if (state.busy || state.shopBusy || state.queueJoinPending) return;
+      const selectedFavorite = matchableMarketFavorite(input.value);
+      if (!selectedFavorite) return;
+      state.selectedFavoriteSellerId = selectedFavorite.publicSellerId;
+      state.matchMode = "favorites";
+      const budgetAlignment = alignBudgetToMarketFavorite(selectedFavorite, { announce: true });
+      if (!budgetAlignment.ok) {
+        showToast(`前回価格で待つには、あと${budgetAlignment.shortage.toLocaleString("ja-JP")}PT必要です。`);
+      }
+      render();
+    });
+  });
+  document.querySelectorAll("[data-market-remove-favorite]").forEach((button) => {
+    button.addEventListener("click", () => removeMarketFavorite(button.dataset.marketRemoveFavorite));
+  });
   document.querySelector("#marketListingTitle")?.addEventListener("input", (event) => { state.listingTitle = event.target.value.slice(0, 30); });
   document.querySelector("#marketAskingPrice")?.addEventListener("change", (event) => {
     state.askingPrice = Number(event.target.value);
@@ -755,7 +1537,7 @@ function bindEvents() {
   document.querySelector("#marketPitchStyle")?.addEventListener("change", (event) => { state.pitchStyle = event.target.value; });
   document.querySelector("#marketMaxBudget")?.addEventListener("change", (event) => { state.maxBudget = Number(event.target.value); });
   document.querySelector("#marketImageInput")?.addEventListener("change", handleImageInput);
-  document.querySelector("#marketRankingsButton")?.addEventListener("click", openRankings);
+  document.querySelector("#marketRankingsButton")?.addEventListener("click", () => openRankings("setup"));
   document.querySelector("#marketCertificatesButton")?.addEventListener("click", () => openCertificates("setup"));
   document.querySelectorAll("[data-market-preview-room]").forEach((button) => button.addEventListener("click", () => {
     const [status, role] = button.dataset.marketPreviewRoom.split(":");
@@ -780,10 +1562,314 @@ function bindEvents() {
   document.querySelectorAll("[data-market-action]").forEach((button) => button.addEventListener("click", () => performAction(button.dataset.marketAction)));
   document.querySelector("#marketOfferExtension")?.addEventListener("click", () => performAction("offer_extension", { incentive: Number(document.querySelector("#marketExtensionIncentive")?.value || 5) }));
   document.querySelector("#marketPlayAgain")?.addEventListener("click", resetForReplay);
-  document.querySelector("#marketResultRanking")?.addEventListener("click", openRankings);
+  document.querySelector("#marketResultRanking")?.addEventListener("click", () => openRankings("room"));
   document.querySelector("#marketResultCertificates")?.addEventListener("click", () => openCertificates("room", { force: true }));
+  document.querySelector("#marketRelationshipForm")?.addEventListener("submit", saveMarketRelationship);
+  document.querySelectorAll('input[name="marketImpressionTag"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.relationshipFeedback.impressionTag = normalizeShopOptionId(input.value);
+    });
+  });
+  document.querySelector("#marketRelationshipFavorite")?.addEventListener("change", (event) => {
+    state.relationshipFeedback.favorite = event.currentTarget.checked === true;
+  });
+  document.querySelector("[data-market-block-counterparty]")?.addEventListener("click", (event) => {
+    setMarketCounterpartyBlocked(event.currentTarget.dataset.marketBlockCounterparty !== "false");
+  });
   document.querySelector("#marketReturnHome")?.addEventListener("click", returnHome);
   document.querySelector("#marketErrorBack")?.addEventListener("click", requestHome);
+}
+
+function updateMarketShopMultiChoice(key, inputName, maximum, changedInput) {
+  let selected = [...document.querySelectorAll(`input[name="${inputName}"]:checked`)]
+    .map((input) => normalizeShopOptionId(input.value))
+    .filter(Boolean);
+  if (selected.length > maximum) {
+    changedInput.checked = false;
+    selected = selected.filter((id) => id !== changedInput.value);
+    showToast(`最大${maximum}個まで選べます。`);
+  }
+  state.shop[key] = selected.slice(0, maximum);
+}
+
+function readMarketShopForm() {
+  const ownedTitles = new Set(state.ownedTitleIds);
+  const requestedTitleId = normalizeShopOptionId(document.querySelector("#marketShopTitle")?.value);
+  return normalizeMarketShop({
+    ...state.shop,
+    shopName: document.querySelector("#marketShopName")?.value,
+    tagline: document.querySelector("#marketShopTagline")?.value,
+    specialtyTags: [...document.querySelectorAll('input[name="marketShopSpecialty"]:checked')].map((input) => input.value),
+    serviceStyles: [...document.querySelectorAll('input[name="marketShopServiceStyle"]:checked')].map((input) => input.value),
+    themeId: document.querySelector("#marketShopTheme")?.value,
+    sealId: document.querySelector("#marketShopSeal")?.value,
+    titleId: requestedTitleId && ownedTitles.has(requestedTitleId) ? requestedTitleId : "",
+    repeatWelcome: document.querySelector("#marketShopRepeatWelcome")?.checked === true,
+  });
+}
+
+async function saveMarketShop(event) {
+  event.preventDefault();
+  if (state.busy || state.shopBusy || state.queueJoinPending || !state.authReady) return;
+  const shop = readMarketShopForm();
+  if (!shop.shopName) {
+    document.querySelector("#marketShopName")?.focus();
+    showToast("推し値商店の店名を入力してください。");
+    return;
+  }
+  if (/https?:\/\/|www\./i.test(`${shop.shopName} ${shop.tagline}`)) {
+    (/https?:\/\/|www\./i.test(shop.shopName)
+      ? document.querySelector("#marketShopName")
+      : document.querySelector("#marketShopTagline"))?.focus();
+    showToast("店名と商店の理念にURLは使用できません。");
+    return;
+  }
+  const generation = lifecycleGeneration;
+  state.shop = shop;
+  state.shopBusy = true;
+  state.shopStatus = "saving";
+  state.shopErrorMessage = "";
+  render();
+  try {
+    if (useMarketPreview) {
+      state.shop = normalizeMarketShop({ ...shop, verified: state.shopReport });
+      state.shopStatus = "ready";
+      state.shopErrorMessage = "";
+    } else {
+      const response = await marketShopCallable({ action: "save", shop, ...shop });
+      if (!isCurrentLifecycle(generation)) return;
+      state.shop = normalizeMarketShop(response.data?.shop || shop);
+      if (response.data?.report) state.shopReport = normalizeSellerVerified(response.data.report);
+      if (response.data?.ownedTitleIds || response.data?.ownedTitles) {
+        state.ownedTitleIds = normalizeOwnedTitleIds(response.data.ownedTitleIds || response.data.ownedTitles);
+      }
+      state.shopStatus = "ready";
+      state.shopErrorMessage = "";
+    }
+    if (isCurrentLifecycle(generation)) showToast("推し値商店の店主カードを保存しました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation)) {
+      state.shopStatus = "save-error";
+      state.shopErrorMessage = callableMessage(error, "推し値商店を保存できませんでした。");
+      showToast(state.shopErrorMessage);
+    }
+  } finally {
+    if (isCurrentLifecycle(generation)) {
+      state.shopBusy = false;
+      render();
+    }
+  }
+}
+
+async function removeMarketFavorite(publicSellerId) {
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  if (!sellerId || state.busy || state.shopBusy || state.queueJoinPending) return;
+  const generation = lifecycleGeneration;
+  state.shopBusy = true;
+  render();
+  try {
+    if (useMarketPreview) {
+      state.favorites = state.favorites.filter((favorite) => favorite.publicSellerId !== sellerId);
+    } else {
+      const response = await marketShopCallable({ action: "remove_favorite", publicSellerId: sellerId });
+      if (!isCurrentLifecycle(generation)) return;
+      state.favorites = Array.isArray(response.data?.favorites) || (response.data?.favorites && typeof response.data.favorites === "object")
+        ? normalizeMarketFavorites(response.data.favorites)
+        : state.favorites.filter((favorite) => favorite.publicSellerId !== sellerId);
+    }
+    reconcileSelectedFavoriteSeller();
+    if (isCurrentLifecycle(generation)) showToast("常連帳から解除しました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation)) showToast(callableMessage(error, "常連帳から解除できませんでした。"));
+  } finally {
+    if (isCurrentLifecycle(generation)) {
+      state.shopBusy = false;
+      render();
+    }
+  }
+}
+
+function upsertMarketFavorite(value, fallbackShop = null) {
+  const room = state.room;
+  const favorite = normalizeMarketFavorite(
+    value && typeof value === "object"
+      ? value
+      : {
+        ...(fallbackShop || room?.sellerShop || {}),
+        lastPurchasePrice: Number(room?.salePrice || room?.listing?.askingPrice || 0),
+        favoritedAt: Date.now(),
+      },
+  );
+  if (!favorite) return;
+  state.favorites = [
+    favorite,
+    ...state.favorites.filter((entry) => entry.publicSellerId !== favorite.publicSellerId),
+  ];
+  reconcileSelectedFavoriteSeller();
+}
+
+function removeRoomSellerFromFavorites() {
+  const sellerId = normalizeMarketShop(state.room?.sellerShop).publicSellerId;
+  if (!sellerId) return;
+  state.favorites = state.favorites.filter((favorite) => favorite.publicSellerId !== sellerId);
+  reconcileSelectedFavoriteSeller();
+}
+
+async function saveMarketRelationship(event) {
+  event.preventDefault();
+  ensureRelationshipFeedback();
+  if (!state.roomId || state.relationshipFeedback.busy || roomRole() !== "buyer") return;
+  const impressionTag = normalizeShopOptionId(
+    document.querySelector('input[name="marketImpressionTag"]:checked')?.value,
+  );
+  if (!impressionTag) {
+    showToast("店主へ届ける印象を1つ選んでください。");
+    return;
+  }
+  const favorite = document.querySelector("#marketRelationshipFavorite")?.checked === true;
+  const generation = lifecycleGeneration;
+  const roomId = state.roomId;
+  state.relationshipFeedback.impressionTag = impressionTag;
+  state.relationshipFeedback.favorite = favorite;
+  state.relationshipFeedback.busy = true;
+  render();
+  try {
+    let responseData = {
+      shop: state.room?.sellerShop,
+      favorite,
+      impressionRecorded: true,
+      impressionTag,
+      alreadyRecorded: false,
+    };
+    if (!useMarketPreview) {
+      const response = await marketShopCallable({
+        action: "relationship",
+        roomId,
+        impressionTag,
+        favorite,
+      });
+      if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+      responseData = response.data || responseData;
+    }
+    const returnedShop = responseData.sellerShop || responseData.shop;
+    if (returnedShop && state.room) {
+      const relationship = normalizeMarketShop(state.room.sellerShop).relationship;
+      state.room.sellerShop = { ...returnedShop, relationship };
+    }
+    const favoriteResult = responseData.favorite;
+    const effectiveFavorite = favoriteResult === true
+      || Boolean(favoriteResult && typeof favoriteResult === "object")
+      || (favoriteResult === undefined && favorite);
+    if (!effectiveFavorite) {
+      removeRoomSellerFromFavorites();
+    } else {
+      upsertMarketFavorite(
+        favoriteResult && typeof favoriteResult === "object" ? favoriteResult : null,
+        returnedShop || state.room?.sellerShop,
+      );
+    }
+    const returnedImpressionTag = normalizeShopOptionId(responseData.impressionTag);
+    const alreadyRecorded = responseData.alreadyRecorded === true;
+    state.relationshipFeedback.impressionTag = returnedImpressionTag;
+    state.relationshipFeedback.alreadyRecorded = alreadyRecorded;
+    state.relationshipFeedback.favorite = effectiveFavorite;
+    state.relationshipFeedback.favoritePersisted = effectiveFavorite;
+    state.relationshipFeedback.submitted = alreadyRecorded
+      || (responseData.impressionRecorded !== false
+        && (Boolean(returnedImpressionTag) || responseData.impressionRecorded === true));
+    showToast(alreadyRecorded
+      ? `以前届けた印象は変更せず、${effectiveFavorite ? "常連設定を保存しました。" : "常連設定を解除しました。"}`
+      : effectiveFavorite
+        ? "印象と「また買いたい」を保存しました。"
+        : "店主へ印象を届けました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast(callableMessage(error, "店主への印象を保存できませんでした。"));
+    }
+  } finally {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.relationshipFeedback.busy = false;
+      render();
+    }
+  }
+}
+
+async function setMarketCounterpartyBlocked(blockValue = true) {
+  ensureRelationshipFeedback();
+  const blockRequested = blockValue !== false;
+  if (
+    !state.roomId
+    || state.relationshipFeedback.busy
+    || state.relationshipFeedback.blocked === blockRequested
+  ) return;
+  const generation = lifecycleGeneration;
+  const roomId = state.roomId;
+  const buyerRole = roomRole() === "buyer";
+  const roomSellerId = normalizeMarketShop(state.room?.sellerShop).publicSellerId;
+  if (blockRequested && buyerRole) {
+    state.relationshipFeedback.favoriteBeforeBlock = state.relationshipFeedback.favoritePersisted
+      || Boolean(favoriteForSeller(roomSellerId));
+  }
+  const restoreFavorite = !blockRequested
+    && buyerRole
+    && state.relationshipFeedback.favoriteBeforeBlock;
+  state.relationshipFeedback.busy = true;
+  render();
+  try {
+    let responseData = {
+      blocked: blockRequested,
+      favorite: restoreFavorite,
+      sellerShop: state.room?.sellerShop,
+    };
+    if (!useMarketPreview) {
+      const relationshipRequest = { action: "relationship", roomId, block: blockRequested };
+      if (restoreFavorite) relationshipRequest.favorite = true;
+      const response = await marketShopCallable(relationshipRequest);
+      if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+      responseData = response.data || responseData;
+    }
+    const blocked = responseData.blocked === true;
+    const returnedShop = responseData.sellerShop || responseData.shop;
+    if (returnedShop && state.room) {
+      const relationship = normalizeMarketShop(state.room.sellerShop).relationship;
+      state.room.sellerShop = { ...returnedShop, relationship };
+    }
+    state.relationshipFeedback.blocked = blocked;
+    if (blocked && buyerRole) {
+      removeRoomSellerFromFavorites();
+      state.relationshipFeedback.favorite = false;
+      state.relationshipFeedback.favoritePersisted = false;
+    } else if (!blocked && restoreFavorite) {
+      const favoriteResult = responseData.favorite;
+      const favoriteRestored = favoriteResult !== false;
+      if (favoriteRestored) {
+        upsertMarketFavorite(
+          favoriteResult && typeof favoriteResult === "object" ? favoriteResult : null,
+          returnedShop || state.room?.sellerShop,
+        );
+      }
+      state.relationshipFeedback.favorite = favoriteRestored;
+      state.relationshipFeedback.favoritePersisted = favoriteRestored;
+      if (favoriteRestored) state.relationshipFeedback.favoriteBeforeBlock = false;
+    } else if (!blocked) {
+      state.relationshipFeedback.favoriteBeforeBlock = false;
+    }
+    showToast(blocked
+      ? "この相手をブロックしました。今後の市場マッチングから除外されます。"
+      : "ブロックを解除しました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast(callableMessage(
+        error,
+        blockRequested ? "この相手をブロックできませんでした。" : "ブロックを解除できませんでした。",
+      ));
+    }
+  } finally {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.relationshipFeedback.busy = false;
+      render();
+    }
+  }
 }
 
 async function handleImageInput(event) {
@@ -815,14 +1901,57 @@ async function handleImageInput(event) {
 
 async function joinQueue(event) {
   event.preventDefault();
-  if (!state.authReady || state.busy) return;
+  if (!state.authReady || state.busy || state.shopBusy || state.queueJoinPending) return;
   const generation = lifecycleGeneration;
+  const queueAttemptGeneration = beginQueueAttempt();
+  const joinedRole = state.role;
   state.name = normalizeMarketName(document.querySelector("#marketName")?.value || state.name);
-  state.listingTitle = String(document.querySelector("#marketListingTitle")?.value || state.listingTitle).trim().slice(0, 30);
-  state.askingPrice = Number(document.querySelector("#marketAskingPrice")?.value || state.askingPrice);
-  state.pitchStyle = document.querySelector("#marketPitchStyle")?.value || state.pitchStyle;
-  state.maxBudget = Number(document.querySelector("#marketMaxBudget")?.value || state.maxBudget);
-  if (state.role === "seller" && (!state.image || !state.listingTitle)) return showToast("出品画像とタイトルを準備してください。");
+  if (joinedRole === "seller") {
+    state.listingTitle = String(document.querySelector("#marketListingTitle")?.value || state.listingTitle).trim().slice(0, 30);
+    state.askingPrice = Number(document.querySelector("#marketAskingPrice")?.value || state.askingPrice);
+    state.pitchStyle = document.querySelector("#marketPitchStyle")?.value || state.pitchStyle;
+  } else {
+    state.maxBudget = Number(document.querySelector("#marketMaxBudget")?.value || state.maxBudget);
+  }
+  const requestedMatchMode = joinedRole === "buyer"
+    ? document.querySelector('input[name="marketMatchMode"]:checked')?.value
+    : "discover";
+  let selectedFavorite = null;
+  if (requestedMatchMode === "favorites") {
+    const selectedSellerId = document.querySelector('input[name="marketFavoriteSeller"]:checked')?.value
+      || state.selectedFavoriteSellerId;
+    selectedFavorite = matchableMarketFavorite(selectedSellerId);
+    if (!selectedFavorite) {
+      state.matchMode = "discover";
+      render();
+      showToast("指名して待つ商店を1つ選んでください。");
+      return;
+    }
+    state.selectedFavoriteSellerId = selectedFavorite.publicSellerId;
+    state.matchMode = "favorites";
+    const budgetAlignment = alignBudgetToMarketFavorite(selectedFavorite);
+    if (!budgetAlignment.ok) {
+      render();
+      showToast(`この商店の前回価格で待つには、あと${budgetAlignment.shortage.toLocaleString("ja-JP")}PT必要です。`);
+      return;
+    }
+  } else {
+    state.matchMode = "discover";
+  }
+  if (joinedRole === "seller" && state.shopStatus === "save-error") {
+    showToast("店主カードが未保存です。再保存してから待機してください。");
+    return;
+  }
+  if (joinedRole === "seller" && (!state.image || !state.listingTitle)) return showToast("出品画像とタイトルを準備してください。");
+  const joinedName = state.name;
+  const joinedListing = joinedRole === "seller"
+    ? { title: state.listingTitle, askingPrice: state.askingPrice, pitchStyle: state.pitchStyle }
+    : null;
+  const joinedMaxBudget = state.maxBudget;
+  const joinedMatchMode = joinedRole === "buyer" ? state.matchMode : "discover";
+  const joinedFavoritePublicSellerId = joinedRole === "buyer" && joinedMatchMode === "favorites"
+    ? selectedFavorite?.publicSellerId || ""
+    : "";
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   state.busy = true;
   state.queueJoinPending = true;
@@ -834,19 +1963,26 @@ async function joinQueue(event) {
     }
     const response = await marketQueueCallable({
       action: "join",
-      role: state.role,
-      name: state.name,
-      listing: state.role === "seller" ? { title: state.listingTitle, askingPrice: state.askingPrice, pitchStyle: state.pitchStyle } : null,
-      maxBudget: state.maxBudget,
+      role: joinedRole,
+      name: joinedName,
+      listing: joinedListing,
+      maxBudget: joinedMaxBudget,
+      matchMode: joinedMatchMode,
+      favoritePublicSellerId: joinedFavoritePublicSellerId,
     });
-    if (!isCurrentLifecycle(generation)) return;
+    if (!isCurrentQueueAttempt(generation, queueAttemptGeneration) || state.roomId) return;
     updateMarketBalance(response.data?.balance ?? state.balance);
+    if (["canceled", "missing", "superseded"].includes(String(response.data?.status || ""))) {
+      state.screen = "setup";
+      showToast("待機条件が別の操作で変更されました。内容を確認して、もう一度参加してください。");
+      return;
+    }
     if (response.data?.roomId) {
       await enterRoom(String(response.data.roomId), generation);
       return;
     }
     state.screen = "waiting";
-    startQueueHeartbeat();
+    startQueueHeartbeat(queueAttemptGeneration);
   } catch (error) {
     if (isCurrentLifecycle(generation)) showToast(callableMessage(error, "市場の待機列へ参加できませんでした。"));
   } finally {
@@ -858,29 +1994,42 @@ async function joinQueue(event) {
   }
 }
 
-function startQueueHeartbeat() {
+function startQueueHeartbeat(queueAttemptGeneration = state.queueAttemptGeneration) {
   window.clearInterval(state.queueHeartbeat);
+  state.queueHeartbeatPending = false;
+  const generation = lifecycleGeneration;
+  const heartbeatDelay = 20_000 + Math.floor(Math.random() * 5_000);
   state.queueHeartbeat = window.setInterval(async () => {
-    if (!active || state.screen !== "waiting") return;
-    const generation = lifecycleGeneration;
+    if (
+      !isCurrentQueueAttempt(generation, queueAttemptGeneration)
+      || state.screen !== "waiting"
+      || state.queueHeartbeatPending
+    ) return;
+    state.queueHeartbeatPending = true;
     try {
       const response = await marketQueueCallable({ action: "heartbeat" });
-      if (!isCurrentLifecycle(generation)) return;
+      if (
+        !isCurrentQueueAttempt(generation, queueAttemptGeneration)
+        || state.screen !== "waiting"
+      ) return;
       if (response.data?.roomId) {
         await enterRoom(String(response.data.roomId), generation);
         return;
       }
-      if (response.data?.status === "missing") {
-        window.clearInterval(state.queueHeartbeat);
-        state.queueHeartbeat = null;
+      if (["canceled", "missing", "superseded"].includes(String(response.data?.status || ""))) {
+        beginQueueAttempt();
         state.screen = "setup";
         showToast("待機情報の有効期限が切れました。もう一度参加してください。");
         render();
       }
     } catch {
       // The next heartbeat or active-room listener retries.
+    } finally {
+      if (isCurrentQueueAttempt(generation, queueAttemptGeneration)) {
+        state.queueHeartbeatPending = false;
+      }
     }
-  }, 20_000);
+  }, heartbeatDelay);
 }
 
 function stopRoomHeartbeat() {
@@ -969,6 +2118,7 @@ async function connectMarketRoomServices(roomId, generation = lifecycleGeneratio
 async function cancelQueue({ cancelMatchedRoom = false } = {}) {
   if (state.busy) return "busy";
   const generation = lifecycleGeneration;
+  const queueAttemptGeneration = beginQueueAttempt();
   state.busy = true;
   render();
   try {
@@ -997,7 +2147,10 @@ async function cancelQueue({ cancelMatchedRoom = false } = {}) {
     state.screen = "setup";
     return "canceled";
   } catch (error) {
-    if (isCurrentLifecycle(generation)) showToast(callableMessage(error, "待機をキャンセルできませんでした。"));
+    if (isCurrentQueueAttempt(generation, queueAttemptGeneration)) {
+      showToast(callableMessage(error, "待機をキャンセルできませんでした。"));
+      if (state.screen === "waiting") startQueueHeartbeat(queueAttemptGeneration);
+    }
     return "failed";
   } finally {
     if (isCurrentLifecycle(generation)) {
@@ -1009,10 +2162,16 @@ async function cancelQueue({ cancelMatchedRoom = false } = {}) {
 
 async function enterRoom(roomId, generation = lifecycleGeneration) {
   if (!isCurrentLifecycle(generation) || !roomId) return;
-  if ((state.roomId === roomId && state.roomUnsubscribe) || state.enteringRoomId === roomId) return;
+  if (state.roomId === roomId && state.roomUnsubscribe) {
+    beginQueueAttempt();
+    state.screen = "room";
+    state.busy = false;
+    render();
+    return;
+  }
+  if (state.enteringRoomId === roomId) return;
+  beginQueueAttempt();
   state.enteringRoomId = roomId;
-  window.clearInterval(state.queueHeartbeat);
-  state.queueHeartbeat = null;
   stopRoomHeartbeat();
   state.roomId = roomId;
   state.screen = "room";
@@ -1028,7 +2187,10 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
       stopRoomHeartbeat();
       clearRoomSyncRetry();
     }
-    if (state.room.status === "sold") refreshMarketAchievementNotifications(roomId);
+    if (state.room.status === "sold") {
+      if (previousStatus !== "sold") state.certificateStatus = "idle";
+      refreshMarketAchievementNotifications(roomId);
+    }
     if (previousStatus !== state.room.status) window.HariaiAudio?.playPhase?.();
     if (!useMarketPreview && roomRole() === "seller" && !state.image?.blob
         && !TERMINAL_STATES.has(state.room.status)) {
@@ -1443,6 +2605,7 @@ function performPreviewAction(action, extra = {}) {
   } else if (action === "pitch_complete") {
     updateMarketBalance(state.balance + (room.entryFee || ENTRY_FEE));
     room.status = "decision";
+    room.pitchCompletedAt = Date.now();
   } else if (action === "buy") {
     const settlement = marketSettlement(room.listing?.askingPrice, room);
     updateMarketBalance(state.balance - settlement.grossAmount);
@@ -1451,6 +2614,14 @@ function performPreviewAction(action, extra = {}) {
     room.marketFee = settlement.feeAmount;
     room.sellerProceeds = settlement.sellerProceeds;
     room.certificateNumber = "OSHI-PREVIEW0000001";
+    room.sellerIssueNumber = Math.max(1, Number(room.sellerIssueNumber || 13));
+    state.certificateStatus = "idle";
+    if (room.sellerShop) {
+      const sellerShop = normalizeMarketShop(room.sellerShop);
+      sellerShop.verified.salesCount += 1;
+      sellerShop.verified.bestSale = Math.max(sellerShop.verified.bestSale, settlement.grossAmount);
+      room.sellerShop = sellerShop;
+    }
   } else if (action === "leave") {
     room.status = "ended";
   } else if (action === "request_extension") {
@@ -1493,10 +2664,15 @@ async function performAction(action, extra = {}) {
     updateMarketBalance(response.data?.balance ?? state.balance);
     if (action === "accept_pitch") showToast(`${state.room?.entryFee || ENTRY_FEE}PTの着手料を一時預けました。`);
     if (action === "buy") {
+      state.certificateStatus = "idle";
       if (state.room) {
         state.room.marketFee = Number(response.data?.marketFee || 0);
         state.room.sellerProceeds = Number(response.data?.sellerProceeds || 0);
         state.room.certificateNumber = String(response.data?.certificateNumber || "");
+        state.room.sellerIssueNumber = Math.max(0, Number(response.data?.sellerIssueNumber || 0));
+        if (response.data?.sellerShop || response.data?.shop) {
+          state.room.sellerShop = response.data.sellerShop || response.data.shop;
+        }
       }
       showToast("売買が成立しました。");
       notifyMarketAchievementUnlocks(response.data?.newlyUnlocked);
@@ -1631,8 +2807,9 @@ async function saveMarketRankingPublicProfile(event) {
   }
 }
 
-async function openRankings() {
+async function openRankings(returnScreen = state.screen) {
   const generation = lifecycleGeneration;
+  state.rankingReturnScreen = returnScreen === "room" && state.room ? "room" : "setup";
   state.screen = "rankings";
   state.rankingsStatus = useMarketPreview ? "ready" : "loading";
   if (useMarketPreview) {
@@ -1657,14 +2834,14 @@ async function openRankings() {
   render();
   try {
     const response = await marketRankingsCallable({ action: "list" });
-    if (!isCurrentLifecycle(generation)) return;
+    if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
     applyMarketRankingResponse(response.data);
   } catch (error) {
-    if (!isCurrentLifecycle(generation)) return;
+    if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
     state.rankingsStatus = "error";
     showToast(callableMessage(error, "市場ランキングを読み込めませんでした。"));
   }
-  if (isCurrentLifecycle(generation)) render();
+  if (isCurrentLifecycle(generation) && state.screen === "rankings") render();
 }
 
 function previewCertificates() {
@@ -1673,6 +2850,8 @@ function previewCertificates() {
       certificateNumber: "OSHI-PREVIEW0000001",
       listingTitle: "夕焼けの推し",
       sellerName: "SELLER TEST",
+      sellerShop: marketShopSample(),
+      sellerIssueNumber: 13,
       purchasePrice: 100,
       marketFee: 5,
       sellerProceeds: 95,
@@ -1686,6 +2865,11 @@ function previewCertificates() {
       certificateNumber: "OSHI-PREVIEW0000002",
       listingTitle: "雨上がりの一枚",
       sellerName: "VALUE MAKER",
+      sellerShop: {
+        ...previewMarketFavorites()[0],
+        relationship: { isFavorite: true, metBefore: true, previousPurchases: 2, lastPurchasePrice: 300 },
+      },
+      sellerIssueNumber: 22,
       purchasePrice: 25,
       marketFee: 2,
       sellerProceeds: 23,
@@ -1757,11 +2941,7 @@ async function requestHome() {
 }
 
 function returnFromRankings() {
-  if (state.roomId && TERMINAL_STATES.has(state.room?.status)) {
-    resetForReplay();
-    return;
-  }
-  state.screen = "setup";
+  state.screen = state.rankingReturnScreen === "room" && state.room ? "room" : "setup";
   render();
 }
 
@@ -1775,6 +2955,17 @@ function resetForReplay() {
   const image = role === "seller" ? state.image : null;
   const listingTitle = state.listingTitle;
   const askingPrice = state.askingPrice;
+  const pitchStyle = state.pitchStyle;
+  const maxBudget = state.maxBudget;
+  const shop = state.shop;
+  const shopCatalog = state.shopCatalog;
+  const shopReport = state.shopReport;
+  const ownedTitleIds = state.ownedTitleIds;
+  const favorites = state.favorites;
+  const shopStatus = state.shopStatus;
+  const shopErrorMessage = state.shopErrorMessage;
+  const matchMode = state.matchMode;
+  const preservedFavoriteSeller = matchableMarketFavorite(state.selectedFavoriteSellerId, favorites);
   state.activeUnsubscribe?.();
   state.activeUnsubscribe = null;
   state.walletUnsubscribe?.();
@@ -1792,6 +2983,17 @@ function resetForReplay() {
     image,
     listingTitle,
     askingPrice,
+    pitchStyle,
+    maxBudget,
+    shop,
+    shopCatalog,
+    shopReport,
+    ownedTitleIds,
+    favorites,
+    shopStatus,
+    shopErrorMessage,
+    matchMode: matchMode === "favorites" && preservedFavoriteSeller ? "favorites" : "discover",
+    selectedFavoriteSellerId: preservedFavoriteSeller?.publicSellerId || "",
   };
   normalizeBuyerBudget();
   active = true;
@@ -1800,8 +3002,9 @@ function resetForReplay() {
     subscribeToActiveRoom(generation);
     subscribeToWallet(generation);
   }
-  setMarketChrome("VALUE MARKET");
+  setMarketChrome(useMarketPreview ? "VALUE MARKET PREVIEW" : "VALUE MARKET");
   render();
+  if (!useMarketPreview) loadMarketShop(generation);
 }
 
 function returnHome() {
@@ -1819,6 +3022,8 @@ function returnHome() {
 function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false } = {}) {
   window.clearInterval(state.queueHeartbeat);
   state.queueHeartbeat = null;
+  state.queueHeartbeatPending = false;
+  state.queueAttemptGeneration += 1;
   stopRoomHeartbeat();
   clearRoomSyncRetry({ resetWarning: true });
   state.roomSyncPending = false;
@@ -1887,11 +3092,21 @@ function previewRoom(status = "preview", role = "buyer") {
     buyerUid,
     sellerName: "SELLER TEST",
     buyerName: "BUYER TEST",
+    sellerShop: {
+      ...marketShopSample(),
+      relationship: {
+        isFavorite: false,
+        metBefore: true,
+        previousPurchases: 1,
+        lastPurchasePrice: 100,
+      },
+    },
     sellerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 1_500, tier: 2 },
     buyerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 300, tier: 1 },
     listing: { title: "夕焼けの推し", askingPrice: 100, pitchStyle: "either" },
     settlementQuote: { grossAmount: 100, feeAmount: 5, sellerProceeds: 95 },
     status,
+    pitchCompletedAt: ["decision", "extension_request", "extension_offer", "sold", "ended"].includes(status) ? Date.now() - 20_000 : 0,
     turn: status === "extension_offer" ? 2 : 1,
     maxTurns: MAX_TURNS,
     entryFee: ENTRY_FEE,
@@ -1900,8 +3115,10 @@ function previewRoom(status = "preview", role = "buyer") {
     marketFee: 5,
     sellerProceeds: 95,
     certificateNumber: "OSHI-PREVIEW0000001",
+    sellerIssueNumber: 13,
     rankingCounted: true,
   };
+  state.relationshipFeedback = createRelationshipFeedbackState(state.roomId, false);
   if (status === "pitch" && role === "seller") state.pitchSentTurns.add(1);
   const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#ff6b9c"/><stop offset=".55" stop-color="#7d4ba8"/><stop offset="1" stop-color="#102b4d"/></linearGradient></defs><rect width="1200" height="800" fill="url(#g)"/><circle cx="880" cy="210" r="92" fill="#ffd36d"/><path d="M0 570L260 420 480 560 720 350 1200 610V800H0Z" fill="#101827" opacity=".78"/><text x="55" y="90" fill="white" font-family="sans-serif" font-size="42" font-weight="700">VALUE MARKET PREVIEW</text></svg>`;
   releaseRemoteImage();

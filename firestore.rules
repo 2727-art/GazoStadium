@@ -85,7 +85,43 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /valueMarketQueueControls/{uid} {
+      allow read, write: if false;
+    }
+
     match /valueMarketStats/{uid} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketShops/{uid} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketShopPublic/{publicSellerId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketShopFavorites/{buyerUid} {
+      allow read, write: if false;
+
+      match /sellers/{sellerUid} {
+        allow read, write: if false;
+      }
+    }
+
+    match /valueMarketShopBlocks/{uid} {
+      allow read, write: if false;
+
+      match /users/{targetUid} {
+        allow read, write: if false;
+      }
+    }
+
+    match /valueMarketShopRelationships/{relationshipId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketShopImpressions/{impressionId} {
       allow read, write: if false;
     }
 

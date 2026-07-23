@@ -22,6 +22,7 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),
+  valueMarketShop: reached("market_enforced"),
   valueMarketRankings: reached("rankings_enforced"),
 });
 const MARKET_APP_CHECK_MIGRATION = reached("market_migration");
