@@ -3170,7 +3170,7 @@ async function handleOpponentDestroyed() {
   if (state.destroyedByOpponent) return;
   state.destroyedByOpponent = true;
   await cleanupOnlineResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
   state.screen = "noContest";
   setStrategyChrome("NO CONTEST");
   render();
@@ -3189,6 +3189,8 @@ async function resetStrategySetup() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
+  const main = prepareDeckForRematch(state.main);
+  const reserve = prepareDeckForRematch(state.reserve);
   const identity = {
     uid: state.uid,
     authReady: state.authReady,
@@ -3201,17 +3203,29 @@ async function resetStrategySetup() {
     economy: state.economy,
   };
   await cleanupOnlineResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
   state = createState();
   Object.assign(state, identity);
+  state.main = main;
+  state.reserve = reserve;
   state.screen = "profile";
   setStrategyChrome("STRATEGY READY");
   render();
 }
 
+function prepareDeckForRematch(items) {
+  items.forEach((item) => { item.used = false; });
+  return items;
+}
+
 async function retryConnection() {
+  const main = prepareDeckForRematch(state.main);
+  const reserve = prepareDeckForRematch(state.reserve);
   await cleanupOnlineResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
+  state = createState();
+  state.main = main;
+  state.reserve = reserve;
   state.errorMessage = "";
   state.authReady = false;
   state.screen = "profile";
@@ -3283,13 +3297,7 @@ async function cleanupOnlineResources(keepActive) {
   }
 }
 
-function releaseAllImages() {
-  [...state.main, ...state.reserve].forEach((item) => {
-    if (item.url) URL.revokeObjectURL(item.url);
-    releaseCardAudio(item);
-    item.url = "";
-    item.blob = null;
-  });
+function releaseMatchMedia() {
   state.remoteImages.forEach((item) => {
     if (item.url) URL.revokeObjectURL(item.url);
     releaseCardAudio(item);
@@ -3299,6 +3307,16 @@ function releaseAllImages() {
   releaseStrategyVideoData();
   state.chatMessages = [];
   state.seenChatIds.clear();
+}
+
+function releaseAllImages() {
+  [...state.main, ...state.reserve].forEach((item) => {
+    if (item.url) URL.revokeObjectURL(item.url);
+    releaseCardAudio(item);
+    item.url = "";
+    item.blob = null;
+  });
+  releaseMatchMedia();
 }
 
 function handleRecoverableError(error) {

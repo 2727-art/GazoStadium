@@ -2071,6 +2071,7 @@ async function resetSetup() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
+  const deck = prepareDeckForRematch(state.deck);
   const identity = {
     uid: state.uid,
     name: state.name,
@@ -2081,20 +2082,31 @@ async function resetSetup() {
     serverTimeOffset: state.serverTimeOffset,
   };
   await cleanupRoomResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
   state = createState();
   Object.assign(state, identity);
+  state.deck = deck;
   state.screen = "setup";
   setRoyaleChrome("BATTLE ROYALE READY");
   render();
 }
 
+function prepareDeckForRematch(items) {
+  items.forEach((item, index) => {
+    item.position = index;
+    item.used = false;
+  });
+  return items;
+}
+
 async function retryConnection() {
   const savedName = state.name;
+  const deck = prepareDeckForRematch(state.deck);
   await cleanupRoomResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
   state = createState();
   state.name = savedName;
+  state.deck = deck;
   state.screen = "setup";
   setRoyaleChrome("CONNECTING");
   render();
@@ -2171,17 +2183,21 @@ function releaseRoundImages(round) {
   });
 }
 
+function releaseMatchMedia() {
+  state.remoteImages.forEach((rounds) => rounds.forEach((item) => item.url && URL.revokeObjectURL(item.url)));
+  state.remoteImages.clear();
+  state.remoteAvatars.forEach((avatar) => avatar.url && URL.revokeObjectURL(avatar.url));
+  state.remoteAvatars.clear();
+  state.allChatMessages = [];
+}
+
 function releaseAllImages() {
   state.deck.forEach((item) => {
     if (item.url) URL.revokeObjectURL(item.url);
     item.url = "";
     item.blob = null;
   });
-  state.remoteImages.forEach((rounds) => rounds.forEach((item) => item.url && URL.revokeObjectURL(item.url)));
-  state.remoteImages.clear();
-  state.remoteAvatars.forEach((avatar) => avatar.url && URL.revokeObjectURL(avatar.url));
-  state.remoteAvatars.clear();
-  state.allChatMessages = [];
+  releaseMatchMedia();
 }
 
 function handleRecoverableError(error) {

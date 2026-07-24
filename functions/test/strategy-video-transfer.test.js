@@ -359,8 +359,9 @@ test("strategy browser wiring isolates video transfer and releases ephemeral med
   assert.match(source, /finishIncomingStrategyVideoTransfer\(transfer, message\)/);
   assert.match(source, /state\.videoChannel\?\.close\(\)/);
   assert.match(source, /releaseStrategyVideoResources\(state\.videoClips\)/);
-  assert.match(source, /function releaseAllImages\(\)[\s\S]*?releaseStrategyVideoData\(\)/);
-  assert.match(source, /async function retryConnection\(\) \{\s+await cleanupOnlineResources\(false\);\s+releaseAllImages\(\);\s+state\.errorMessage/);
+  assert.match(source, /function releaseMatchMedia\(\)[\s\S]*?releaseStrategyVideoData\(\)/);
+  assert.match(source, /function releaseAllImages\(\)[\s\S]*?releaseMatchMedia\(\)/);
+  assert.match(source, /async function retryConnection\(\)[\s\S]*?releaseMatchMedia\(\);[\s\S]*?state\.errorMessage/);
   assert.match(styles, /\.strategy-video-dialog\b/);
   assert.match(styles, /\.strategy-video-clip video[\s\S]*?aspect-ratio: 16 \/ 9/);
   assert.match(html, /strategy\.css\?v=[^"]*video-review-v1/);

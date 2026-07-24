@@ -76,14 +76,27 @@ const SAMPLE_HP_PENALTY = 5;
 const MIN_STARTING_HP = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const PURSUIT_LINE_KEY = "hariai-stadium-online-pursuit-line-v1";
+const FINISH_LINE_KEY = "hariai-stadium-online-finish-line-v1";
+const OPPONENT_CUSTOM_FINISH_KEY = "hariai-stadium-online-opponent-custom-finish-v1";
 const IMAGE_PREFERENCE_KEY = "hariai-stadium-online-image-preference-v1";
 const MAX_PURSUIT_LINE_LENGTH = 40;
+const MAX_FINISH_LINE_LENGTH = 30;
 const CUSTOM_PURSUIT_VALUE = "__custom__";
+const CUSTOM_FINISH_VALUE = "__custom_finish__";
+const FINISH_LINE_DISABLED_VALUE = "__finish_line_disabled__";
+const FINISH_CUT_IN_DURATION_MS = 1800;
 const PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
   "好みは読めた。ここからが本命だ！",
   "刺さったね？ 追撃開始！",
   "まだ終わらない。次の一枚をどうぞ！",
+];
+const FINISH_LINES = [
+  "これで決着だ！",
+  "この一枚で、勝負を決める。",
+  "最後の一撃、受け取って！",
+  "推しの力、見届けたか！",
+  "いい勝負だった。またやろう。",
 ];
 const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
   Object.freeze({
@@ -232,6 +245,7 @@ const MATCH_TIMEOUT_MS = 20_000;
 const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const MAX_IMAGE_TRANSFER_BYTES = 15 * 1024 * 1024;
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
@@ -243,9 +257,12 @@ const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
 const sampleHandicapMessage = document.querySelector("#sampleHandicapMessage");
 const confirmSampleMatch = document.querySelector("#confirmSampleMatch");
 const fxLayer = document.querySelector("#fxLayer");
+const finishCutInDialog = document.querySelector("#finishCutInDialog");
+const finishCutInContent = document.querySelector("#finishCutInContent");
 
 let active = false;
 let state = createOnlineState();
+let finishCutInGeneration = 0;
 let matchmakingGenerationCounter = 0;
 let lobbyPresenceEntries = null;
 let marketPresenceEntries = null;
@@ -272,6 +289,7 @@ function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
   const savedXHandle = normalizeXHandle(localStorage.getItem(X_HANDLE_KEY) || "");
   const pursuitSettings = getSavedPursuitSettings();
+  const finishSettings = getSavedFinishSettings();
   const imagePreference = normalizeImagePreference(localStorage.getItem(IMAGE_PREFERENCE_KEY), "");
   return {
     screen: "setup",
@@ -281,8 +299,11 @@ function createOnlineState() {
     overallProfile: null,
     authReady: false,
     ...pursuitSettings,
+    ...finishSettings,
+    showOpponentCustomFinish: localStorage.getItem(OPPONENT_CUSTOM_FINISH_KEY) !== "0",
     imagePreference,
     deck: [],
+    signatureCardId: "",
     roomId: "",
     room: null,
     opponentUid: "",
@@ -372,6 +393,7 @@ function createOnlineState() {
     pendingIce: [],
     incomingTransfer: null,
     transferProgress: 0,
+    finishCutInTimer: null,
     opponentOnline: true,
     statsCommitted: false,
     destroyedByOpponent: false,
@@ -414,6 +436,51 @@ function applyPursuitLineSetting(value) {
   state.pursuitLine = pursuitLine;
   state.pursuitLineChoice = usesCustomLine ? CUSTOM_PURSUIT_VALUE : pursuitLine;
   state.customPursuitLine = usesCustomLine ? pursuitLine : "";
+}
+
+function sanitizeFinishLineDraft(value) {
+  return String(value || "").replace(/[\r\n]+/g, " ").slice(0, MAX_FINISH_LINE_LENGTH);
+}
+
+function normalizeFinishLine(value, fallback = FINISH_LINES[0]) {
+  const normalized = sanitizeFinishLineDraft(value).replace(/\s+/g, " ").trim();
+  return normalized || fallback;
+}
+
+function normalizeReceivedFinishLine(value) {
+  if (typeof value !== "string") return FINISH_LINES[0];
+  return normalizeFinishLine(value, "");
+}
+
+function getSavedFinishSettings() {
+  const savedValue = localStorage.getItem(FINISH_LINE_KEY);
+  if (savedValue === FINISH_LINE_DISABLED_VALUE) {
+    return {
+      finishLine: "",
+      finishLineChoice: FINISH_LINE_DISABLED_VALUE,
+      customFinishLine: "",
+    };
+  }
+  const finishLine = normalizeFinishLine(savedValue || "");
+  const usesCustomLine = savedValue !== null && !FINISH_LINES.includes(finishLine);
+  return {
+    finishLine,
+    finishLineChoice: usesCustomLine ? CUSTOM_FINISH_VALUE : finishLine,
+    customFinishLine: usesCustomLine ? finishLine : "",
+  };
+}
+
+function applyFinishLineSetting(value) {
+  if (value === FINISH_LINE_DISABLED_VALUE || value === "") {
+    state.finishLine = "";
+    state.finishLineChoice = FINISH_LINE_DISABLED_VALUE;
+    return;
+  }
+  const finishLine = normalizeFinishLine(value);
+  const usesCustomLine = !FINISH_LINES.includes(finishLine);
+  state.finishLine = finishLine;
+  state.finishLineChoice = usesCustomLine ? CUSTOM_FINISH_VALUE : finishLine;
+  if (usesCustomLine) state.customFinishLine = finishLine;
 }
 
 function jstDateKey(timestamp = Date.now()) {
@@ -1749,11 +1816,15 @@ function renderSetup() {
   const slots = Array.from({ length: MAX_ROUNDS }, (_, index) => {
     const item = state.deck[index];
     if (!item) return `<div class="deck-slot empty" aria-label="空きスロット ${index + 1}">${String(index + 1).padStart(2, "0")}</div>`;
-    return `<div class="deck-slot ${item.isSample ? "sample-card" : ""}">
+    const isSignature = item.id === state.signatureCardId;
+    return `<div class="deck-slot ${item.isSample ? "sample-card" : ""} ${isSignature ? "signature-card" : ""}">
       <img src="${item.url}" alt="選択画像 ${index + 1}" draggable="false" />
       ${item.isSample ? '<span class="sample-card-badge">SAMPLE / HP−5</span>' : ""}
+      <button class="signature-card-toggle ${isSignature ? "is-selected" : ""}" type="button"
+        data-online-signature-card="${escapeHtml(item.id)}" aria-pressed="${isSignature}"
+        aria-label="画像${index + 1}をシグネチャーカード${isSignature ? "から外す" : "に指定"}"><span aria-hidden="true">✦</span>${isSignature ? "SIGNATURE" : "切り札に指定"}</button>
       <div class="deck-label"><span>${item.isSample ? "SAMPLE" : "ENTRY"} ${String(index + 1).padStart(2, "0")}</span>
-        <button class="remove-card" data-online-remove="${item.id}" aria-label="画像${index + 1}を削除">×</button>
+        <button class="remove-card" data-online-remove="${escapeHtml(item.id)}" aria-label="画像${index + 1}を削除">×</button>
       </div>
     </div>`;
   }).join("");
@@ -1780,7 +1851,7 @@ function renderSetup() {
         <ol class="guide-list">
           <li><b>1</b><span>最大1600pxのWebPに変換し、EXIFなどの付随情報を除去します。</span></li>
           <li><b>2</b><span>画像はWebRTCで対戦相手へ直接送信し、Firebaseには保存しません。</span></li>
-          <li><b>3</b><span>対戦終了・ルーム破棄・ページ終了時に画像参照を解放します。</span></li>
+          <li><b>3</b><span>同じモード内の再戦ではデッキを保持し、タイトル復帰・ページ終了時に画像参照を解放します。</span></li>
         </ol>
         <div class="privacy-note sample-handicap-note">サンプル画像1枚につき、通常型1on1の最大HPが5減少します。</div>
         <div class="privacy-note">スクリーンショットなど、相手側での保存を完全に防ぐことはできません。</div>
@@ -1805,6 +1876,27 @@ function renderSetup() {
           </div>
           <p class="pursuit-line-note">9〜10点を受けたラウンド結果で表示します。空白時は定型文へ戻り、HTMLは実行されません。</p>
         </div>
+        <div class="finish-line-settings">
+          <div class="finish-line-heading"><span>SIGNATURE FINISH</span><strong>決着時のセリフ</strong></div>
+          <label class="field-label">HPを0にした時のセリフ
+            <select class="text-input" id="onlineFinishLineChoice">
+              ${FINISH_LINES.map((line) => `<option value="${escapeHtml(line)}" ${state.finishLineChoice === line ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
+              <option value="${CUSTOM_FINISH_VALUE}" ${state.finishLineChoice === CUSTOM_FINISH_VALUE ? "selected" : ""}>自由記述</option>
+              <option value="${FINISH_LINE_DISABLED_VALUE}" ${state.finishLineChoice === FINISH_LINE_DISABLED_VALUE ? "selected" : ""}>セリフなし（画像演出のみ）</option>
+            </select>
+          </label>
+          <div class="pursuit-custom-field" id="onlineCustomFinishField" ${state.finishLineChoice === CUSTOM_FINISH_VALUE ? "" : "hidden"}>
+            <label class="field-label">自由記述（1行・最大${MAX_FINISH_LINE_LENGTH}文字）
+              <input class="text-input" id="onlineCustomFinishLine" maxlength="${MAX_FINISH_LINE_LENGTH}" autocomplete="off" placeholder="決着時に表示するセリフ" value="${escapeHtml(state.customFinishLine)}" />
+            </label>
+            <span class="pursuit-character-count finish-character-count"><b id="onlineFinishCharacterCount">${state.customFinishLine.length}</b> / ${MAX_FINISH_LINE_LENGTH}</span>
+          </div>
+          <label class="finish-visibility-toggle">
+            <input id="onlineShowOpponentCustomFinish" type="checkbox" ${state.showOpponentCustomFinish ? "checked" : ""} />
+            <span>相手が自由記述したフィニッシュセリフを表示する</span>
+          </label>
+          <p class="pursuit-line-note">実際にHPを0にした画像へ合成表示します。自由記述を非表示にした場合、相手の定型外セリフだけ安全な定型文へ置き換えます。</p>
+        </div>
         <fieldset class="image-preference-settings">
           <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
           <p>今回の通常型1on1で、相手から見せてもらいたい画像の傾向を選んでください。</p>
@@ -1823,6 +1915,11 @@ function renderSetup() {
         <div class="deck-handicap-summary ${sampleCount ? "has-handicap" : ""}" aria-live="polite">
           <span>実画像 <strong>${realImageCount}</strong>枚</span><span>サンプル <strong>${sampleCount}</strong>枚</span>
           <span>開始HP <strong>${startingHp}</strong> / ${startingHp}</span>${sampleCount ? `<small>HP−${sampleCount * SAMPLE_HP_PENALTY}</small>` : ""}
+        </div>
+        <div class="signature-card-guide ${state.signatureCardId ? "is-selected" : ""}">
+          <span aria-hidden="true">✦</span>
+          <p><strong>${state.signatureCardId ? "シグネチャーカード指定済み" : "シグネチャーカードは未指定"}</strong>
+            <small>任意の1枚を指定できます。その画像でHPを0にすると、専用の強化演出になります。</small></p>
         </div>
         <div class="deck-grid">${slots}</div>
         <div class="setup-actions">
@@ -2196,9 +2293,11 @@ function renderRoundSelect() {
   const remainingSeconds = Math.max(0, Math.ceil(state.selectionRemainingMs / 1000));
   const progress = Math.max(0, Math.min(100, (state.selectionRemainingMs / SELECTION_TIME_LIMIT_MS) * 100));
   const warning = timerStarted && remainingSeconds <= SELECTION_WARNING_SECONDS;
-  const cards = state.deck.map((item, index) => `<button class="select-card ${item.isSample ? "sample-card" : ""} ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}"
-    data-online-card="${item.id}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
-    <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" /><span>${item.used ? "USED" : item.isSample ? "SAMPLE / HP−5" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span>
+  const cards = state.deck.map((item, index) => `<button class="select-card ${item.isSample ? "sample-card" : ""} ${item.id === state.signatureCardId ? "signature-card" : ""} ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}"
+    data-online-card="${escapeHtml(item.id)}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
+    <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" />
+    ${item.id === state.signatureCardId ? '<i class="select-signature-badge" aria-label="シグネチャーカード">✦ SIGNATURE</i>' : ""}
+    <span>${item.used ? "USED" : item.isSample ? "SAMPLE / HP−5" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span>
   </button>`).join("");
   return `<section class="screen">${renderOnlineHud()}
     <div class="section-head"><div><span class="eyebrow">SECRET PICK</span><h1>あなたの画像選択</h1>
@@ -2280,19 +2379,25 @@ function renderScore() {
 function renderRoundResult() {
   const result = state.history.at(-1);
   const labelFor = (score) => score === 10 ? "PERFECT!!" : score >= 8 ? "CRITICAL!" : score >= 6 ? "GREAT" : score >= 4 ? "GOOD" : "HIT";
-  const damageText = result.winnerIndex === null ? "同点。両者ノーダメージです。" : `${state.players[result.loserIndex].name}に ${result.damage} DAMAGE。`;
+  const damageText = result.winnerIndex === null
+    ? "同点。両者ノーダメージです。"
+    : `${state.players[result.loserIndex].name}に ${result.damage} DAMAGE。${result.lethal ? " HP 0、決着！" : ""}`;
   const pursuitLines = renderOnlinePursuitLines(result);
+  const finishBadge = result.lethal
+    ? `<div class="finish-result-badge ${result.finish?.signature ? "is-signature" : ""}"><span>${result.finish?.signature ? "SIGNATURE FINISH" : "FINISH"}</span><strong>${escapeHtml(result.finish?.winnerName || state.players[result.winnerIndex].name)}の決着演出</strong></div>`
+    : "";
   return `<section class="screen result-wrap">${renderOnlineHud()}<div class="result-card">
     <span class="eyebrow">ROUND ${state.round} RESULT</span><h1>${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1>
     <div class="result-scores">${resultPlayerHtml(0, result.scorePlayerOne, result.winnerIndex, labelFor(result.scorePlayerOne))}
       <div class="result-vs">VS</div>${resultPlayerHtml(1, result.scorePlayerTwo, result.winnerIndex, labelFor(result.scorePlayerTwo))}</div>
-    <div class="damage-callout">${escapeHtml(damageText)}</div>${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
+    <div class="damage-callout">${escapeHtml(damageText)}</div>${finishBadge}${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
     <div class="button-row" style="justify-content:center"><button class="button button-danger" data-online-destroy>ルーム破棄</button>
       <button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
   </div></section>`;
 }
 
 function renderOnlinePursuitLines(result) {
+  if (result.lethal) return "";
   const scores = [result.scorePlayerOne, result.scorePlayerTwo];
   const calls = state.players.map((player, index) => ({ player, score: scores[index] }))
     .filter(({ score }) => score >= 9)
@@ -2521,9 +2626,13 @@ function bindSetupEvents() {
     updateMatchmakingSetupButton();
   }));
   bindOnlinePursuitFields();
+  bindOnlineFinishFields();
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
+  document.querySelectorAll("[data-online-signature-card]").forEach((button) => button.addEventListener("click", () => {
+    toggleSignatureCard(button.dataset.onlineSignatureCard);
+  }));
   document.querySelector("#findOpponent")?.addEventListener("click", requestMatchmaking);
 }
 
@@ -2595,6 +2704,61 @@ function bindOnlinePursuitFields() {
     if (counter) counter.textContent = String(input.value.length);
   });
   syncCustomVisibility();
+}
+
+function bindOnlineFinishFields() {
+  const select = document.querySelector("#onlineFinishLineChoice");
+  const field = document.querySelector("#onlineCustomFinishField");
+  const input = document.querySelector("#onlineCustomFinishLine");
+  const counter = document.querySelector("#onlineFinishCharacterCount");
+  const visibilityToggle = document.querySelector("#onlineShowOpponentCustomFinish");
+  const syncCustomVisibility = () => {
+    if (field) field.hidden = select?.value !== CUSTOM_FINISH_VALUE;
+  };
+  select?.addEventListener("change", () => {
+    state.finishLineChoice = select.value;
+    if (select.value === CUSTOM_FINISH_VALUE) {
+      state.finishLine = normalizeFinishLine(state.customFinishLine);
+      input?.focus();
+    } else {
+      applyFinishLineSetting(select.value);
+    }
+    localStorage.setItem(FINISH_LINE_KEY, state.finishLine || FINISH_LINE_DISABLED_VALUE);
+    syncCustomVisibility();
+  });
+  input?.addEventListener("input", () => {
+    input.value = sanitizeFinishLineDraft(input.value);
+    state.customFinishLine = input.value;
+    state.finishLine = normalizeFinishLine(input.value);
+    localStorage.setItem(FINISH_LINE_KEY, state.finishLine);
+    if (counter) counter.textContent = String(input.value.length);
+  });
+  visibilityToggle?.addEventListener("change", () => {
+    state.showOpponentCustomFinish = visibilityToggle.checked;
+    localStorage.setItem(OPPONENT_CUSTOM_FINISH_KEY, state.showOpponentCustomFinish ? "1" : "0");
+  });
+  syncCustomVisibility();
+}
+
+function toggleSignatureCard(id) {
+  if (!state.deck.some((item) => item.id === id)) return;
+  state.signatureCardId = state.signatureCardId === id ? "" : id;
+  document.querySelectorAll("[data-online-signature-card]").forEach((button) => {
+    const selected = button.dataset.onlineSignatureCard === state.signatureCardId;
+    const index = state.deck.findIndex((item) => item.id === button.dataset.onlineSignatureCard);
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+    button.setAttribute("aria-label", `画像${index + 1}をシグネチャーカード${selected ? "から外す" : "に指定"}`);
+    const icon = document.createElement("span");
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "✦";
+    button.replaceChildren(icon, document.createTextNode(selected ? "SIGNATURE" : "切り札に指定"));
+    button.closest(".deck-slot")?.classList.toggle("signature-card", selected);
+  });
+  const guide = document.querySelector(".signature-card-guide");
+  guide?.classList.toggle("is-selected", Boolean(state.signatureCardId));
+  const guideTitle = guide?.querySelector("strong");
+  if (guideTitle) guideTitle.textContent = state.signatureCardId ? "シグネチャーカード指定済み" : "シグネチャーカードは未指定";
 }
 
 function bindSelectEvents() {
@@ -2964,11 +3128,7 @@ async function openPostMatchMissions() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  await cleanupOnlineResources(false);
-  releaseAllImages();
-  state.screen = "missions";
-  setOnlineChrome("ONLINE READY");
-  render();
+  await resetOnlineState("missions");
 }
 
 async function ensureOverallProfileSeeded(uid, name, soloProfile = null) {
@@ -3281,6 +3441,7 @@ function removeDeckItem(id) {
   const item = state.deck.find((candidate) => candidate.id === id);
   if (item?.url) URL.revokeObjectURL(item.url);
   state.deck = state.deck.filter((candidate) => candidate.id !== id);
+  if (state.signatureCardId === id) state.signatureCardId = "";
   state.deck.forEach((candidate, index) => { candidate.position = index; });
   render();
 }
@@ -3312,8 +3473,14 @@ async function beginMatchmaking() {
   state.pursuitLine = state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE
     ? normalizePursuitLine(state.customPursuitLine)
     : normalizePursuitLine(state.pursuitLineChoice);
+  state.finishLine = state.finishLineChoice === FINISH_LINE_DISABLED_VALUE
+    ? ""
+    : state.finishLineChoice === CUSTOM_FINISH_VALUE
+      ? normalizeFinishLine(state.customFinishLine)
+      : normalizeFinishLine(state.finishLineChoice);
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
+  localStorage.setItem(FINISH_LINE_KEY, state.finishLine || FINISH_LINE_DISABLED_VALUE);
   localStorage.setItem(IMAGE_PREFERENCE_KEY, state.imagePreference);
   if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
   state.screen = "matching";
@@ -3833,9 +4000,22 @@ async function handleChannelMessage(data) {
     } else if (message.type === "profile-avatar-empty") {
       releaseRemoteAvatar();
     } else if (message.type === "image-start") {
-      state.incomingTransfer = { round: message.round, mime: message.mime, size: message.size, chunks: [], received: 0 };
+      const round = Number(message.round);
+      const size = Number(message.size);
+      if (!Number.isInteger(round) || round !== state.round) throw new Error("受信画像のラウンド情報が不正です。");
+      if (!Number.isFinite(size) || size <= 0 || size > MAX_IMAGE_TRANSFER_BYTES) throw new Error("受信画像のサイズが不正です。");
+      if (message.mime !== "image/webp") throw new Error("受信画像の形式が不正です。");
+      state.incomingTransfer = {
+        round,
+        mime: "image/webp",
+        size,
+        signature: message.signature === true,
+        finishLine: normalizeReceivedFinishLine(message.finishLine),
+        chunks: [],
+        received: 0,
+      };
     } else if (message.type === "image-end") {
-      await finishIncomingImage(message.round);
+      await finishIncomingImage(Number(message.round));
     }
     return;
   }
@@ -3853,6 +4033,11 @@ async function handleChannelMessage(data) {
   const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
   state.incomingTransfer.chunks.push(chunk);
   state.incomingTransfer.received += chunk.byteLength;
+  if (state.incomingTransfer.received > state.incomingTransfer.size) {
+    state.incomingTransfer = null;
+    state.transferProgress = 0;
+    throw new Error("受信画像のサイズが宣言値を超えました。");
+  }
   state.transferProgress = Math.min(99, Math.round((state.incomingTransfer.received / state.incomingTransfer.size) * 100));
   if (state.screen === "waitingImage") updateTransferText();
 }
@@ -3897,7 +4082,12 @@ async function finishIncomingImage(round) {
   const previous = state.remoteImages.get(round);
   if (previous?.url) URL.revokeObjectURL(previous.url);
   const blob = new Blob(transfer.chunks, { type: transfer.mime || "image/webp" });
-  state.remoteImages.set(round, { blob, url: URL.createObjectURL(blob) });
+  state.remoteImages.set(round, {
+    blob,
+    url: URL.createObjectURL(blob),
+    signature: transfer.signature === true,
+    finishLine: normalizeReceivedFinishLine(transfer.finishLine),
+  });
   state.incomingTransfer = null;
   state.transferProgress = 100;
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${round}/imagesReceived/${state.uid}`), true);
@@ -4063,7 +4253,14 @@ async function sendSelectedImage() {
   render();
   const buffer = await item.blob.arrayBuffer();
   try {
-    state.channel.send(JSON.stringify({ type: "image-start", round: state.round, size: buffer.byteLength, mime: item.blob.type || "image/webp" }));
+    state.channel.send(JSON.stringify({
+      type: "image-start",
+      round: state.round,
+      size: buffer.byteLength,
+      mime: item.blob.type || "image/webp",
+      signature: item.id === state.signatureCardId,
+      finishLine: state.finishLine,
+    }));
     for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
       await waitForDataBuffer();
       state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
@@ -4110,19 +4307,35 @@ function resolveRound(scores) {
     if (score >= 8) state.players[index].criticals += 1;
     if (score === 10) state.players[index].perfects += 1;
   });
-  getSelectedItem().used = true;
+  const selectedItem = getSelectedItem();
+  if (selectedItem) selectedItem.used = true;
   let winnerIndex = null;
   let loserIndex = null;
   let damage = 0;
   if (scorePlayerOne > scorePlayerTwo) { winnerIndex = 0; loserIndex = 1; damage = scorePlayerOne; }
   else if (scorePlayerTwo > scorePlayerOne) { winnerIndex = 1; loserIndex = 0; damage = scorePlayerTwo; }
-  if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, state.players[loserIndex].hp - damage);
-  state.history.push({ round: state.round, scorePlayerOne, scorePlayerTwo, winnerIndex, loserIndex, damage });
+  const previousHp = loserIndex === null ? null : state.players[loserIndex].hp;
+  if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, previousHp - damage);
+  const lethal = loserIndex !== null && previousHp > 0 && state.players[loserIndex].hp === 0;
+  const finish = lethal ? createFinishCutInPayload(winnerIndex) : null;
+  state.history.push({
+    round: state.round,
+    scorePlayerOne,
+    scorePlayerTwo,
+    winnerIndex,
+    loserIndex,
+    damage,
+    previousHp,
+    lethal,
+    finish,
+  });
   state.screen = "result";
   render();
   const topScore = Math.max(scorePlayerOne, scorePlayerTwo);
-  if (topScore >= 8) {
-    window.HariaiAudio?.playResult(topScore);
+  if (topScore >= 8) window.HariaiAudio?.playResult(topScore);
+  if (lethal) {
+    triggerFinishCutIn(finish);
+  } else if (topScore >= 8) {
     triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
   }
 }
@@ -4285,6 +4498,102 @@ function getOpponent() {
   return state.players[state.playerIndex === 0 ? 1 : 0];
 }
 
+function createFinishCutInPayload(winnerIndex) {
+  const winnerIsLocal = winnerIndex === state.playerIndex;
+  const media = winnerIsLocal ? getSelectedItem() : state.remoteImages.get(state.round);
+  const receivedLine = winnerIsLocal
+    ? normalizeReceivedFinishLine(state.finishLine)
+    : normalizeReceivedFinishLine(media?.finishLine);
+  const customOpponentLine = !winnerIsLocal && receivedLine && !FINISH_LINES.includes(receivedLine);
+  return {
+    winnerName: String(state.players[winnerIndex]?.name || "PLAYER").slice(0, 16),
+    imageUrl: String(media?.url || ""),
+    signature: winnerIsLocal ? media?.id === state.signatureCardId : media?.signature === true,
+    finishLine: customOpponentLine && !state.showOpponentCustomFinish ? FINISH_LINES[0] : receivedLine,
+  };
+}
+
+function clearFinishCutIn() {
+  finishCutInGeneration += 1;
+  if (state.finishCutInTimer) window.clearTimeout(state.finishCutInTimer);
+  state.finishCutInTimer = null;
+  if (finishCutInDialog?.open) finishCutInDialog.close();
+  finishCutInContent?.replaceChildren();
+}
+
+function triggerFinishCutIn(payload) {
+  if (!finishCutInDialog || !finishCutInContent || !payload) return;
+  clearFinishCutIn();
+  const generation = finishCutInGeneration;
+  const cutIn = document.createElement("article");
+  cutIn.className = `finish-cutin ${payload.signature ? "is-signature" : "is-standard"}`;
+  cutIn.setAttribute("aria-label", `${payload.winnerName}の${payload.signature ? "シグネチャー" : ""}フィニッシュ`);
+
+  if (payload.imageUrl) {
+    const backdrop = document.createElement("img");
+    backdrop.className = "finish-cutin-backdrop";
+    backdrop.src = payload.imageUrl;
+    backdrop.alt = "";
+    backdrop.setAttribute("aria-hidden", "true");
+    cutIn.append(backdrop);
+  }
+
+  const shade = document.createElement("div");
+  shade.className = "finish-cutin-shade";
+  shade.setAttribute("aria-hidden", "true");
+  cutIn.append(shade);
+
+  const stage = document.createElement("div");
+  stage.className = "finish-cutin-stage";
+  const imageFrame = document.createElement("div");
+  imageFrame.className = "finish-cutin-image-frame";
+  if (payload.imageUrl) {
+    const image = document.createElement("img");
+    image.className = "finish-cutin-image";
+    image.src = payload.imageUrl;
+    image.alt = `${payload.winnerName}の決着カード`;
+    image.draggable = false;
+    imageFrame.append(image);
+  } else {
+    const fallback = document.createElement("div");
+    fallback.className = "finish-cutin-image-fallback";
+    fallback.textContent = "FINISH";
+    imageFrame.append(fallback);
+  }
+
+  const copy = document.createElement("div");
+  copy.className = "finish-cutin-copy";
+  const label = document.createElement("span");
+  label.className = "finish-cutin-label";
+  label.textContent = payload.signature ? "SIGNATURE FINISH" : "FINISH";
+  const winnerName = document.createElement("strong");
+  winnerName.className = "finish-cutin-winner";
+  winnerName.textContent = payload.winnerName;
+  copy.append(label, winnerName);
+  if (payload.finishLine) {
+    const quote = document.createElement("blockquote");
+    quote.textContent = payload.finishLine;
+    copy.append(quote);
+  }
+
+  const skip = document.createElement("button");
+  skip.type = "button";
+  skip.className = "finish-cutin-skip";
+  skip.textContent = "演出をスキップ";
+  skip.addEventListener("click", clearFinishCutIn, { once: true });
+  stage.append(imageFrame, copy);
+  cutIn.append(stage, skip);
+  cutIn.addEventListener("click", (event) => {
+    if (event.target !== skip) clearFinishCutIn();
+  }, { once: true });
+  finishCutInContent.replaceChildren(cutIn);
+  finishCutInDialog.showModal();
+  skip.focus({ preventScroll: true });
+  state.finishCutInTimer = window.setTimeout(() => {
+    if (generation === finishCutInGeneration) clearFinishCutIn();
+  }, FINISH_CUT_IN_DURATION_MS);
+}
+
 function triggerCriticalFx(text) {
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   fxLayer.innerHTML = `<div class="critical-flash"></div><div class="critical-text">${escapeHtml(text)}</div>`;
@@ -4319,7 +4628,7 @@ async function handleOpponentDestroyed() {
   if (state.destroyedByOpponent) return;
   state.destroyedByOpponent = true;
   await cleanupOnlineResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
   state.screen = "noContest";
   setOnlineChrome("NO CONTEST");
   render();
@@ -4338,27 +4647,56 @@ async function resetOnlineSetup() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
+  await resetOnlineState("setup");
+}
+
+function prepareDeckForRematch(items) {
+  items.forEach((item, index) => {
+    item.position = index;
+    item.used = false;
+  });
+  return items;
+}
+
+async function resetOnlineState(screen) {
+  const deck = prepareDeckForRematch(state.deck);
   const identity = {
     uid: state.uid,
     profile: state.profile,
+    overallProfile: state.overallProfile,
     authReady: state.authReady,
     name: state.name,
     pursuitLine: state.pursuitLine,
     pursuitLineChoice: state.pursuitLineChoice,
     customPursuitLine: state.customPursuitLine,
+    finishLine: state.finishLine,
+    finishLineChoice: state.finishLineChoice,
+    customFinishLine: state.customFinishLine,
+    showOpponentCustomFinish: state.showOpponentCustomFinish,
     imagePreference: state.imagePreference,
+    signatureCardId: state.signatureCardId,
     economy: state.economy,
     economyReady: state.economyReady,
+    dailyPlay: state.dailyPlay,
+    achievements: state.achievements,
+    achievementsReady: state.achievementsReady,
+    notifiedAchievementIds: state.notifiedAchievementIds,
+    rankingAwards: state.rankingAwards,
+    rankingAwardsReady: state.rankingAwardsReady,
+    periodRewardReminderShown: state.periodRewardReminderShown,
+    titleCategoryFilter: state.titleCategoryFilter,
+    expandedTitleCategories: state.expandedTitleCategories,
     topMessage: state.topMessage,
     topMessageEntryId: state.topMessageEntryId,
     topMessageReady: state.topMessageReady,
     serverTimeOffset: state.serverTimeOffset,
   };
   await cleanupOnlineResources(false);
-  releaseAllImages();
+  releaseMatchMedia();
   state = createOnlineState();
   Object.assign(state, identity);
-  state.screen = "setup";
+  state.deck = deck;
+  state.screen = screen;
   setOnlineChrome("ONLINE READY");
   render();
 }
@@ -4404,6 +4742,7 @@ async function cleanupMatchmaking(keepActive) {
 }
 
 async function cleanupOnlineResources(keepActive) {
+  clearFinishCutIn();
   stopSelectionTimer();
   await cleanupMatchmaking(keepActive);
   await cleanupPublicPresence();
@@ -4433,16 +4772,20 @@ function releaseRemoteImage(round) {
   state.remoteImages.delete(round);
 }
 
+function releaseMatchMedia() {
+  state.remoteImages.forEach((item) => item.url && URL.revokeObjectURL(item.url));
+  state.remoteImages.clear();
+  releaseRemoteAvatar();
+  state.chatMessages = [];
+}
+
 function releaseAllImages() {
   state.deck.forEach((item) => {
     if (item.url) URL.revokeObjectURL(item.url);
     item.url = "";
     item.blob = null;
   });
-  state.remoteImages.forEach((item) => item.url && URL.revokeObjectURL(item.url));
-  state.remoteImages.clear();
-  releaseRemoteAvatar();
-  state.chatMessages = [];
+  releaseMatchMedia();
 }
 
 function handleRecoverableError(error) {
@@ -4473,6 +4816,11 @@ sampleHandicapDialog?.addEventListener("close", () => {
   const confirmed = sampleHandicapDialog.returnValue === "confirm";
   sampleHandicapDialog.returnValue = "";
   if (confirmed && active && state.screen === "setup") beginMatchmaking();
+});
+
+finishCutInDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  clearFinishCutIn();
 });
 
 if (!useOfflineMarketPreview) watchLobbyStats();
