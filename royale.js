@@ -53,7 +53,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v2";
+} from "./post-match-tip.js?v=post-match-tip-v3";
 
 const MAX_ROUNDS = 5;
 const PLAYER_COUNT = 4;

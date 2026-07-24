@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
+const { defineBoolean } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
@@ -103,6 +104,18 @@ const {
   normalizeDailyPlayClaims,
   settleDailyPlayRewardClaims,
 } = require("./daily-play-rewards");
+const {
+  ANJU_PAY_HISTORY_DEFAULT_LIMIT,
+  ANJU_PAY_HISTORY_MAX_LIMIT,
+  ANJU_PAY_LEDGER_SCHEMA_VERSION,
+  ANJU_PAY_OPENING_ENTRY_ID,
+  activateAnjuPayWallet,
+  anjuPayEntryId,
+  anjuPayLedgerModeDecision,
+  isAnjuPayWalletActive,
+  nextAnjuPayEntry,
+  sanitizeAnjuPayEntry,
+} = require("./anju-pay-ledger");
 
 initializeApp({
   databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -124,6 +137,10 @@ const MARKET_PUBLIC_PRESENCE_PATH = "online/publicMarketPresence";
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
   memory: "256MiB",
+});
+const ANJU_PAY_LEDGER_REQUIRED = defineBoolean("ANJU_PAY_LEDGER_REQUIRED", {
+  default: true,
+  description: "Keep true after AnjuPay ledger activation. False is allowed only for the initial compatibility deployment.",
 });
 
 function callableOptions(functionName) {
@@ -205,6 +222,14 @@ function eventId(value) {
 
 function walletRef(uid) {
   return firestore.collection("wallets").doc(uid);
+}
+
+function anjuPayLedgerConfigRef() {
+  return firestore.collection("systemConfig").doc("anjuPayLedger");
+}
+
+function anjuPayEntryRef(wallet, entryId) {
+  return wallet.collection("anjuPayEntries").doc(entryId);
 }
 
 function economyProgressRef(uid) {
@@ -491,25 +516,112 @@ async function readLegacyEconomy(uid) {
   return value && typeof value === "object" ? value : {};
 }
 
+function anjuPayLedgerEnabled(configSnapshot) {
+  if (!configSnapshot.exists) return false;
+  const activatedAt = configSnapshot.get("activatedAt");
+  const activatedAtMillis = typeof activatedAt?.toMillis === "function"
+    ? Number(activatedAt.toMillis())
+    : Number(activatedAt || 0);
+  return Number.isFinite(activatedAtMillis) && activatedAtMillis > 0;
+}
+
+function requireAnjuPayLedgerMode(configSnapshot, walletState) {
+  const decision = anjuPayLedgerModeDecision({
+    configExists: configSnapshot.exists,
+    enabledFlag: configSnapshot.exists && configSnapshot.get("enabled") === true,
+    markerActive: anjuPayLedgerEnabled(configSnapshot),
+    ledgerRequired: ANJU_PAY_LEDGER_REQUIRED.value(),
+    walletActive: isAnjuPayWalletActive(walletState),
+  });
+  if (decision.allowed) return decision.enabled;
+  const messages = {
+    "missing-config": "AnjuPay台帳設定を確認できないため、残高操作を一時停止しています。",
+    "incomplete-marker": "AnjuPay台帳の有効化マーカーが不完全なため、残高操作を一時停止しています。",
+    "ledger-required": "AnjuPay台帳が必須のため、残高操作を一時停止しています。",
+    "wallet-mismatch": "AnjuPay台帳の有効化状態が一致しないため、残高操作を一時停止しています。",
+  };
+  throw new HttpsError("unavailable", messages[decision.reason] || messages["missing-config"]);
+}
+
+function anjuPayWalletMetadataPatch(wallet) {
+  if (!isAnjuPayWalletActive(wallet)) return {};
+  return {
+    ledgerVersion: ANJU_PAY_LEDGER_SCHEMA_VERSION,
+    historyStartedAt: Number(wallet.historyStartedAt),
+    ledgerSequence: Number(wallet.ledgerSequence),
+  };
+}
+
+function stageAnjuPayOpening(transaction, wallet, walletState, configSnapshot, occurredAt) {
+  if (!requireAnjuPayLedgerMode(configSnapshot, walletState)) return false;
+  const activation = activateAnjuPayWallet(walletState, occurredAt);
+  if (!activation.activated) return false;
+  Object.assign(walletState, activation.walletPatch);
+  transaction.create(
+    anjuPayEntryRef(wallet, ANJU_PAY_OPENING_ENTRY_ID),
+    activation.openingEntry,
+  );
+  return true;
+}
+
+function appendAnjuPayEntry(transaction, wallet, walletState, configSnapshot, value) {
+  if (!requireAnjuPayLedgerMode(configSnapshot, walletState)) return null;
+  const next = nextAnjuPayEntry(walletState, value);
+  Object.assign(walletState, next.walletPatch);
+  transaction.create(anjuPayEntryRef(wallet, next.entryId), next.entry);
+  return next.entry;
+}
+
+function persistAnjuPayOpening(transaction, wallet, walletState, activated, occurredAt) {
+  if (!activated) return;
+  transaction.update(wallet, {
+    ...anjuPayWalletMetadataPatch(walletState),
+    updatedAt: occurredAt,
+  });
+}
+
+function anjuPayRewardStatus(credited, nominal) {
+  if (credited <= 0) return "capped";
+  if (credited < nominal) return "partial";
+  return "posted";
+}
+
 async function ensureWallet(uid, legacyEconomy = null) {
   const ref = walletRef(uid);
   const existing = await ref.get();
-  if (existing.exists) return safeBalance(existing.get("balance"));
-  const legacy = legacyEconomy || await readLegacyEconomy(uid);
+  const legacy = existing.exists ? {} : (legacyEconomy || await readLegacyEconomy(uid));
   let balance = 0;
   await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(ref);
+    const [snapshot, ledgerConfigSnapshot] = await Promise.all([
+      transaction.get(ref),
+      transaction.get(anjuPayLedgerConfigRef()),
+    ]);
+    const now = Date.now();
     if (snapshot.exists) {
       balance = safeBalance(snapshot.get("balance"));
+      const walletState = walletData(snapshot);
+      const activated = stageAnjuPayOpening(
+        transaction,
+        ref,
+        walletState,
+        ledgerConfigSnapshot,
+        now,
+      );
+      persistAnjuPayOpening(transaction, ref, walletState, activated, now);
       return;
     }
     balance = safeBalance(legacy.points);
-    transaction.create(ref, {
+    const walletState = {
       balance,
       reservedIncoming: 0,
       initializedAt: Date.now(),
       migratedFromRealtimeDatabase: true,
-      updatedAt: Date.now(),
+      updatedAt: now,
+    };
+    stageAnjuPayOpening(transaction, ref, walletState, ledgerConfigSnapshot, now);
+    transaction.create(ref, {
+      ...walletState,
+      ...anjuPayWalletMetadataPatch(walletState),
     });
   });
   await mirrorWallet(uid, balance);
@@ -1110,7 +1222,7 @@ async function upgradePatronage(uid, request, data) {
   if (!hasGoogleIdentity(request) || !await hasLiveGoogleIdentity(uid)) {
     throw new HttpsError(
       "failed-precondition",
-      "高額ポイントを使う前に、Googleでゲームデータを保護してください。",
+      "高額のAnjuPayを使う前に、Googleでゲームデータを保護してください。",
     );
   }
   const targetTier = Number(data?.targetTier);
@@ -1133,13 +1245,27 @@ async function upgradePatronage(uid, request, data) {
   const ledgerRef = patronageLedgerRef(uid, actionId);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
-    const [walletSnapshot, patronSnapshot, ledgerSnapshot] = await Promise.all([
+    const [
+      walletSnapshot,
+      patronSnapshot,
+      ledgerSnapshot,
+      ledgerConfigSnapshot,
+    ] = await Promise.all([
       transaction.get(wallet),
       transaction.get(patronRef),
       transaction.get(ledgerRef),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
     const current = normalizePatronage(patronSnapshot.data(), seasonKey);
-    const before = safeBalance(walletSnapshot.get("balance"));
+    const walletState = walletData(walletSnapshot);
+    const before = walletState.balance;
+    const activated = stageAnjuPayOpening(
+      transaction,
+      wallet,
+      walletState,
+      ledgerConfigSnapshot,
+      now,
+    );
     if (ledgerSnapshot.exists) {
       const saved = ledgerSnapshot.data();
       if (saved.uid !== uid
@@ -1155,12 +1281,14 @@ async function upgradePatronage(uid, request, data) {
         patron: current,
         repeated: true,
       };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
       return;
     }
 
     const upgrade = patronUpgrade(current, targetTier, seasonKey);
     if (upgrade.outcome === "owned") {
       result = { outcome: "owned", balance: before, debited: 0, patron: current };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
       return;
     }
     if (upgrade.outcome !== "upgrade" || upgrade.cost <= 0) {
@@ -1174,17 +1302,44 @@ async function upgradePatronage(uid, request, data) {
         debited: 0,
         patron: current,
       };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
       return;
     }
 
     const after = before - upgrade.cost;
+    walletState.balance = after;
     const patron = normalizePatronage({
       seasonKey,
       seasonSpent: upgrade.target.threshold,
       lifetimeSpent: current.lifetimeSpent + upgrade.cost,
       updatedAt: now,
     }, seasonKey);
-    transaction.update(wallet, { balance: after, updatedAt: now });
+    const groupId = anjuPayEntryId(`patron:${actionId}:${seasonKey}`);
+    appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
+      entryId: groupId,
+      groupId,
+      kind: "patron_upgrade",
+      category: "spend",
+      labelKey: "anju_pay_patron_upgrade",
+      status: "posted",
+      delta: -upgrade.cost,
+      nominalAmount: upgrade.cost,
+      balanceBefore: before,
+      balanceAfter: after,
+      components: [{
+        kind: "patron_upgrade",
+        labelKey: "anju_pay_patron_upgrade",
+        delta: -upgrade.cost,
+        nominalAmount: upgrade.cost,
+        status: "posted",
+      }],
+      details: { targetTier: upgrade.target.level },
+      occurredAt: now,
+    });
+    transaction.update(wallet, { balance: after,
+      ...anjuPayWalletMetadataPatch(walletState),
+      updatedAt: now,
+    });
     transaction.set(patronRef, patron);
     transaction.create(ledgerRef, {
       uid,
@@ -1256,40 +1411,102 @@ async function claimDaily(uid, missionId) {
   const claim = firestore.collection("economyClaims").doc(uid).collection("daily").doc(eventId(`${dateKey}:${missionId}`));
   let result = null;
   let progressResult = null;
+  const claimTimestamp = Date.now();
   await firestore.runTransaction(async (transaction) => {
     if (jstDateKey() !== dateKey) {
       throw new HttpsError("aborted", "日付が切り替わりました。もう一度お試しください。");
     }
-    const [walletSnapshot, progressSnapshot, claimSnapshot] = await Promise.all([
+    const [
+      walletSnapshot,
+      progressSnapshot,
+      claimSnapshot,
+      ledgerConfigSnapshot,
+    ] = await Promise.all([
       transaction.get(wallet),
       transaction.get(progressRef),
       transaction.get(claim),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
-    const before = safeBalance(walletSnapshot.get("balance"));
+    const walletState = walletData(walletSnapshot);
+    const before = walletState.balance;
+    const activated = stageAnjuPayOpening(
+      transaction,
+      wallet,
+      walletState,
+      ledgerConfigSnapshot,
+      claimTimestamp,
+    );
     const progress = normalizeEconomyProgress(progressSnapshot.data(), dateKey);
     const daily = progress.daily;
     if (claimSnapshot.exists) {
       result = { outcome: "claimed", balance: before, credited: 0 };
       daily.claimed[missionId] = true;
-      progress.updatedAt = Date.now();
+      progress.updatedAt = claimTimestamp;
       transaction.set(progressRef, progress);
+      persistAnjuPayOpening(
+        transaction,
+        wallet,
+        walletState,
+        activated,
+        claimTimestamp,
+      );
       progressResult = progress;
       return;
     }
     if (Number(daily[mission.progressKey] || 0) < mission.target) {
       result = { outcome: "incomplete", balance: before, credited: 0 };
-      progress.updatedAt = Date.now();
+      progress.updatedAt = claimTimestamp;
       transaction.set(progressRef, progress);
+      persistAnjuPayOpening(
+        transaction,
+        wallet,
+        walletState,
+        activated,
+        claimTimestamp,
+      );
       progressResult = progress;
       return;
     }
     const reservedIncoming = integer(walletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0);
     const credited = Math.min(mission.reward, Math.max(0, MAX_POINTS - reservedIncoming - before));
     const after = before + credited;
-    transaction.update(wallet, { balance: after, updatedAt: Date.now() });
-    transaction.create(claim, { dateKey, missionId, reward: mission.reward, credited, createdAt: Date.now() });
+    walletState.balance = after;
+    const groupId = anjuPayEntryId(`daily:${dateKey}:${missionId}`);
+    appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
+      entryId: groupId,
+      groupId,
+      kind: "daily_mission_reward",
+      category: "earn",
+      labelKey: "anju_pay_daily_mission_reward",
+      status: anjuPayRewardStatus(credited, mission.reward),
+      delta: credited,
+      nominalAmount: mission.reward,
+      balanceBefore: before,
+      balanceAfter: after,
+      components: [{
+        kind: "daily_mission_reward",
+        labelKey: "anju_pay_daily_mission_reward",
+        delta: credited,
+        nominalAmount: mission.reward,
+        status: anjuPayRewardStatus(credited, mission.reward),
+      }],
+      details: { missionId, dateKey },
+      occurredAt: claimTimestamp,
+    });
+    transaction.update(wallet, {
+      balance: after,
+      ...anjuPayWalletMetadataPatch(walletState),
+      updatedAt: claimTimestamp,
+    });
+    transaction.create(claim, {
+      dateKey,
+      missionId,
+      reward: mission.reward,
+      credited,
+      createdAt: claimTimestamp,
+    });
     daily.claimed[missionId] = true;
-    progress.updatedAt = Date.now();
+    progress.updatedAt = claimTimestamp;
     transaction.set(progressRef, progress);
     progressResult = progress;
     result = { outcome: "claimed-now", balance: after, credited };
@@ -1309,11 +1526,13 @@ async function claimDailyPlayRewards(uid) {
   let result = null;
   let progressResult = null;
   await firestore.runTransaction(async (transaction) => {
-    const [walletSnapshot, progressSnapshot] = await Promise.all([
+    const [walletSnapshot, progressSnapshot, ledgerConfigSnapshot] = await Promise.all([
       transaction.get(wallet),
       transaction.get(progressRef),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
-    const before = safeBalance(walletSnapshot.get("balance"));
+    const walletState = walletData(walletSnapshot);
+    const before = walletState.balance;
     const progress = normalizeEconomyProgress(progressSnapshot.data(), jstDateKey(requestTimestamp));
     const claimable = claimableDailyPlayRewards(
       progress.periodRewards,
@@ -1325,6 +1544,13 @@ async function claimDailyPlayRewards(uid) {
         .doc(eventId(`${dateKey}:play:${tier.id}`))
     ));
     const claimSnapshots = await Promise.all(claimRefs.map((claimRef) => transaction.get(claimRef)));
+    const activated = stageAnjuPayOpening(
+      transaction,
+      wallet,
+      walletState,
+      ledgerConfigSnapshot,
+      requestTimestamp,
+    );
     const reservedIncoming = integer(walletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0);
     const existingClaimKeys = new Set(claimable.flatMap((entry, index) => (
       claimSnapshots[index].exists
@@ -1357,8 +1583,57 @@ async function claimDailyPlayRewards(uid) {
       });
     });
     const after = before + settlement.credited;
+    walletState.balance = after;
     if (settlement.claimedCount > 0) {
-      transaction.update(wallet, { balance: after, updatedAt: requestTimestamp });
+      const createdDecisions = settlement.decisions.filter((decision) => decision.create);
+      const groupId = anjuPayEntryId(`daily-play:${createdDecisions
+        .map(({ dateKey, tier }) => `${dateKey}:${tier.id}`)
+        .sort()
+        .join("|")}`);
+      appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
+        entryId: groupId,
+        groupId,
+        kind: "daily_play_reward",
+        category: "earn",
+        labelKey: "anju_pay_daily_play_reward",
+        status: anjuPayRewardStatus(settlement.credited, settlement.nominal),
+        delta: settlement.credited,
+        nominalAmount: settlement.nominal,
+        balanceBefore: before,
+        balanceAfter: after,
+        components: createdDecisions.map(({ tier, credited }) => ({
+          kind: "daily_play_reward",
+          labelKey: "anju_pay_daily_play_reward",
+          delta: credited,
+          nominalAmount: tier.reward,
+          status: anjuPayRewardStatus(credited, tier.reward),
+        })),
+        details: {
+          dateKey: createdDecisions.at(-1)?.dateKey,
+          tierIds: createdDecisions.map(({ tier }) => tier.id),
+          dailyPlayClaims: createdDecisions.map(({ dateKey, tier, credited }) => ({
+            dateKey,
+            tierId: tier.id,
+            credited,
+            nominalAmount: tier.reward,
+            status: anjuPayRewardStatus(credited, tier.reward),
+          })),
+        },
+        occurredAt: requestTimestamp,
+      });
+      transaction.update(wallet, {
+        balance: after,
+        ...anjuPayWalletMetadataPatch(walletState),
+        updatedAt: requestTimestamp,
+      });
+    } else {
+      persistAnjuPayOpening(
+        transaction,
+        wallet,
+        walletState,
+        activated,
+        requestTimestamp,
+      );
     }
     if (settlement.claimedCount > 0
       || settlement.recoveredCount > 0
@@ -1405,26 +1680,86 @@ async function purchaseProduct(uid, productId) {
   const wallet = walletRef(uid);
   const purchase = firestore.collection("economyPurchases").doc(uid).collection("items").doc(productId);
   let result = null;
+  const purchaseTimestamp = Date.now();
   await firestore.runTransaction(async (transaction) => {
-    const [walletSnapshot, purchaseSnapshot] = await Promise.all([
+    const [walletSnapshot, purchaseSnapshot, ledgerConfigSnapshot] = await Promise.all([
       transaction.get(wallet),
       transaction.get(purchase),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
-    const before = safeBalance(walletSnapshot.get("balance"));
+    const walletState = walletData(walletSnapshot);
+    const before = walletState.balance;
+    const activated = stageAnjuPayOpening(
+      transaction,
+      wallet,
+      walletState,
+      ledgerConfigSnapshot,
+      purchaseTimestamp,
+    );
     if (purchaseSnapshot.exists || alreadyOwned) {
       if (!purchaseSnapshot.exists) {
-        transaction.create(purchase, { productId, price: 0, migrated: true, createdAt: Date.now() });
+        transaction.create(purchase, {
+          productId,
+          price: 0,
+          migrated: true,
+          createdAt: purchaseTimestamp,
+        });
       }
       result = { outcome: "owned", balance: before, price: 0 };
+      persistAnjuPayOpening(
+        transaction,
+        wallet,
+        walletState,
+        activated,
+        purchaseTimestamp,
+      );
       return;
     }
     if (before < product.price) {
       result = { outcome: "short", balance: before, price: product.price };
+      persistAnjuPayOpening(
+        transaction,
+        wallet,
+        walletState,
+        activated,
+        purchaseTimestamp,
+      );
       return;
     }
     const after = before - product.price;
-    transaction.update(wallet, { balance: after, updatedAt: Date.now() });
-    transaction.create(purchase, { productId, price: product.price, createdAt: Date.now() });
+    walletState.balance = after;
+    const groupId = anjuPayEntryId(`purchase:${productId}`);
+    appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
+      entryId: groupId,
+      groupId,
+      kind: "store_purchase",
+      category: "spend",
+      labelKey: "anju_pay_store_purchase",
+      status: "posted",
+      delta: -product.price,
+      nominalAmount: product.price,
+      balanceBefore: before,
+      balanceAfter: after,
+      components: [{
+        kind: "store_purchase",
+        labelKey: "anju_pay_store_purchase",
+        delta: -product.price,
+        nominalAmount: product.price,
+        status: "posted",
+      }],
+      details: { productId },
+      occurredAt: purchaseTimestamp,
+    });
+    transaction.update(wallet, {
+      balance: after,
+      ...anjuPayWalletMetadataPatch(walletState),
+      updatedAt: purchaseTimestamp,
+    });
+    transaction.create(purchase, {
+      productId,
+      price: product.price,
+      createdAt: purchaseTimestamp,
+    });
     result = { outcome: "purchased", balance: after, price: product.price };
   });
   if (result.outcome === "purchased" || result.outcome === "owned") {
@@ -1468,12 +1803,21 @@ async function claimPeriods(uid) {
   let result = null;
   let progressResult = null;
   await firestore.runTransaction(async (transaction) => {
-    const [walletSnapshot, progressSnapshot] = await Promise.all([
+    const [walletSnapshot, progressSnapshot, ledgerConfigSnapshot] = await Promise.all([
       transaction.get(wallet),
       transaction.get(progressRef),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
     const claimSnapshots = [];
     for (const ref of refs) claimSnapshots.push(await transaction.get(ref));
+    const walletState = walletData(walletSnapshot);
+    const activated = stageAnjuPayOpening(
+      transaction,
+      wallet,
+      walletState,
+      ledgerConfigSnapshot,
+      now,
+    );
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const available = batch.filter((entry, index) => {
       const current = progress.periodRewards?.[entry.period]?.[entry.key];
@@ -1483,11 +1827,57 @@ async function claimPeriods(uid) {
         && periodReward(entry.period, current) === entry.reward;
     });
     const nominal = available.reduce((sum, entry) => sum + entry.reward, 0);
-    const before = safeBalance(walletSnapshot.get("balance"));
+    const before = walletState.balance;
     const reservedIncoming = integer(walletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0);
     const credited = Math.min(nominal, Math.max(0, MAX_POINTS - reservedIncoming - before));
     const after = before + credited;
-    if (available.length) transaction.update(wallet, { balance: after, updatedAt: now });
+    walletState.balance = after;
+    if (available.length) {
+      let remainingCredit = credited;
+      const rewardComponents = available.map((entry) => {
+        const componentCredit = Math.min(entry.reward, remainingCredit);
+        remainingCredit -= componentCredit;
+        return {
+          kind: `${entry.period}_period_reward`,
+          labelKey: `anju_pay_${entry.period}_period_reward`,
+          delta: componentCredit,
+          nominalAmount: entry.reward,
+          status: anjuPayRewardStatus(componentCredit, entry.reward),
+        };
+      });
+      const groupId = anjuPayEntryId(`periods:${available
+        .map(({ period, key }) => `${period}:${key}`)
+        .sort()
+        .join("|")}`);
+      appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
+        entryId: groupId,
+        groupId,
+        kind: "period_reward",
+        category: "earn",
+        labelKey: "anju_pay_period_reward",
+        status: anjuPayRewardStatus(credited, nominal),
+        delta: credited,
+        nominalAmount: nominal,
+        balanceBefore: before,
+        balanceAfter: after,
+        components: rewardComponents,
+        details: {
+          periods: available.map((entry) => ({
+            period: entry.period,
+            key: entry.key,
+            nominalAmount: entry.reward,
+          })),
+        },
+        occurredAt: now,
+      });
+      transaction.update(wallet, {
+        balance: after,
+        ...anjuPayWalletMetadataPatch(walletState),
+        updatedAt: now,
+      });
+    } else {
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+    }
     available.forEach((entry) => {
       const index = batch.indexOf(entry);
       transaction.create(refs[index], { period: entry.period, key: entry.key, reward: entry.reward, createdAt: now });
@@ -1883,7 +2273,7 @@ function validatePostMatchTipRequest(uid, data) {
   const amount = postMatchTipAmount(data?.amount);
   if (!VERIFIED_MATCH_MODES[mode] || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)
       || !targetUid || targetUid === uid || !amount) {
-    throw new HttpsError("invalid-argument", "差し入れの対戦・相手・ポイントを確認してください。");
+    throw new HttpsError("invalid-argument", "差し入れの対戦・相手・AnjuPay額を確認してください。");
   }
   return {
     mode,
@@ -1966,15 +2356,34 @@ async function sendPostMatchTip(uid, data) {
       senderClaimSnapshot,
       recipientClaimSnapshot,
       tipSnapshot,
+      ledgerConfigSnapshot,
     ] = await Promise.all([
       transaction.get(senderWalletRef),
       transaction.get(recipientWalletRef),
       transaction.get(senderClaimRef),
       transaction.get(recipientClaimRef),
       transaction.get(tipRef),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
     const senderWallet = walletData(senderWalletSnapshot);
     const recipientWallet = walletData(recipientWalletSnapshot);
+    const senderBalanceBefore = senderWallet.balance;
+    const recipientBalanceBefore = recipientWallet.balance;
+    const now = Date.now();
+    const senderActivated = stageAnjuPayOpening(
+      transaction,
+      senderWalletRef,
+      senderWallet,
+      ledgerConfigSnapshot,
+      now,
+    );
+    const recipientActivated = stageAnjuPayOpening(
+      transaction,
+      recipientWalletRef,
+      recipientWallet,
+      ledgerConfigSnapshot,
+      now,
+    );
     if (!senderClaimSnapshot.exists || !recipientClaimSnapshot.exists
         || senderClaimSnapshot.get("uid") !== uid
         || recipientClaimSnapshot.get("uid") !== verified.targetUid
@@ -1995,11 +2404,67 @@ async function sendPostMatchTip(uid, data) {
         amount: postMatchTipAmount(tipSnapshot.get("amount")),
         recipientName: cleanName(tipSnapshot.get("recipientName")),
       };
+      persistAnjuPayOpening(
+        transaction,
+        senderWalletRef,
+        senderWallet,
+        senderActivated,
+        now,
+      );
+      persistAnjuPayOpening(
+        transaction,
+        recipientWalletRef,
+        recipientWallet,
+        recipientActivated,
+        now,
+      );
       return;
     }
 
     const amount = transferPoints(senderWallet, recipientWallet, verified.amount);
-    const now = Date.now();
+    const groupId = anjuPayEntryId(`post-match-tip:${tipRef.id}`);
+    appendAnjuPayEntry(transaction, senderWalletRef, senderWallet, ledgerConfigSnapshot, {
+      entryId: groupId,
+      groupId,
+      kind: "post_match_tip_sent",
+      category: "tip",
+      labelKey: "anju_pay_post_match_tip_sent",
+      status: "posted",
+      delta: -amount,
+      nominalAmount: amount,
+      balanceBefore: senderBalanceBefore,
+      balanceAfter: senderWallet.balance,
+      components: [{
+        kind: "post_match_tip",
+        labelKey: "anju_pay_post_match_tip_sent",
+        delta: -amount,
+        nominalAmount: amount,
+        status: "posted",
+      }],
+      details: { mode: verified.mode, counterpartyName: recipientName },
+      occurredAt: now,
+    });
+    appendAnjuPayEntry(transaction, recipientWalletRef, recipientWallet, ledgerConfigSnapshot, {
+      entryId: groupId,
+      groupId,
+      kind: "post_match_tip_received",
+      category: "tip",
+      labelKey: "anju_pay_post_match_tip_received",
+      status: "posted",
+      delta: amount,
+      nominalAmount: amount,
+      balanceBefore: recipientBalanceBefore,
+      balanceAfter: recipientWallet.balance,
+      components: [{
+        kind: "post_match_tip",
+        labelKey: "anju_pay_post_match_tip_received",
+        delta: amount,
+        nominalAmount: amount,
+        status: "posted",
+      }],
+      details: { mode: verified.mode, counterpartyName: senderName },
+      occurredAt: now,
+    });
     transaction.set(senderWalletRef, { ...senderWallet, updatedAt: now }, { merge: true });
     transaction.set(recipientWalletRef, { ...recipientWallet, updatedAt: now }, { merge: true });
     transaction.create(tipRef, {
@@ -2035,11 +2500,108 @@ async function sendPostMatchTip(uid, data) {
   };
 }
 
+function anjuPayHistoryRequest(data) {
+  const rawLimit = data?.limit;
+  const limit = rawLimit === undefined || rawLimit === null
+    ? ANJU_PAY_HISTORY_DEFAULT_LIMIT
+    : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > ANJU_PAY_HISTORY_MAX_LIMIT) {
+    throw new HttpsError(
+      "invalid-argument",
+      `AnjuPay履歴の件数は1〜${ANJU_PAY_HISTORY_MAX_LIMIT}の整数で指定してください。`,
+    );
+  }
+  const rawCursor = data?.cursor;
+  if (rawCursor === undefined || rawCursor === null || rawCursor === "") {
+    return { limit, cursor: null };
+  }
+  const cursor = Number(rawCursor);
+  if (!Number.isSafeInteger(cursor) || cursor < 1) {
+    throw new HttpsError("invalid-argument", "AnjuPay履歴の続き位置が正しくありません。");
+  }
+  return { limit, cursor };
+}
+
+async function getAnjuPayWallet(uid, data) {
+  const { limit, cursor } = anjuPayHistoryRequest(data);
+  await ensureWallet(uid);
+  const wallet = walletRef(uid);
+  let [walletSnapshot, ledgerConfigSnapshot] = await Promise.all([
+    wallet.get(),
+    anjuPayLedgerConfigRef().get(),
+  ]);
+  const availableBalance = safeBalance(walletSnapshot.get("balance"));
+  if (!anjuPayLedgerEnabled(ledgerConfigSnapshot)) {
+    return {
+      available: false,
+      schemaVersion: ANJU_PAY_LEDGER_SCHEMA_VERSION,
+      availableBalance,
+      balance: availableBalance,
+      historyStartedAt: null,
+      entries: [],
+      nextCursor: null,
+      hasMore: false,
+    };
+  }
+  if (!isAnjuPayWalletActive(walletSnapshot.data())) {
+    await ensureWallet(uid);
+    [walletSnapshot, ledgerConfigSnapshot] = await Promise.all([
+      wallet.get(),
+      anjuPayLedgerConfigRef().get(),
+    ]);
+    if (!anjuPayLedgerEnabled(ledgerConfigSnapshot)) {
+      const currentBalance = safeBalance(walletSnapshot.get("balance"));
+      return {
+        available: false,
+        schemaVersion: ANJU_PAY_LEDGER_SCHEMA_VERSION,
+        availableBalance: currentBalance,
+        balance: currentBalance,
+        historyStartedAt: null,
+        entries: [],
+        nextCursor: null,
+        hasMore: false,
+      };
+    }
+  }
+  if (!isAnjuPayWalletActive(walletSnapshot.data())) {
+    throw new HttpsError("internal", "AnjuPay履歴を初期化できませんでした。");
+  }
+
+  const walletSequence = integer(
+    walletSnapshot.get("ledgerSequence"),
+    0,
+    Number.MAX_SAFE_INTEGER,
+    0,
+  );
+  const sequenceUpperBound = cursor === null
+    ? walletSequence
+    : Math.min(walletSequence, cursor - 1);
+  const query = wallet.collection("anjuPayEntries")
+    .where("sequence", "<=", sequenceUpperBound)
+    .orderBy("sequence", "desc");
+  const historySnapshot = await query.limit(limit + 1).get();
+  const hasMore = historySnapshot.docs.length > limit;
+  const docs = historySnapshot.docs.slice(0, limit);
+  const entries = docs.map((document) => sanitizeAnjuPayEntry(document.id, document.data()));
+  const currentBalance = safeBalance(walletSnapshot.get("balance"));
+  return {
+    available: true,
+    schemaVersion: ANJU_PAY_LEDGER_SCHEMA_VERSION,
+    availableBalance: currentBalance,
+    balance: currentBalance,
+    historyStartedAt: Number(walletSnapshot.get("historyStartedAt")),
+    entries,
+    nextCursor: hasMore && entries.length ? entries.at(-1).sequence : null,
+    hasMore,
+  };
+}
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
   try {
     if (action === "initialize") return await initializeEconomy(uid);
+    if (action === "get_anju_pay_wallet") return await getAnjuPayWallet(uid, request.data);
     if (action === "claim_daily") return await claimDaily(uid, cleanText(request.data?.missionId, 40));
     if (action === "claim_daily_play") return await claimDailyPlayRewards(uid);
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
@@ -2056,11 +2618,11 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "sync_achievement_showcase") {
       return { synced: true, achievements: await getAchievements(uid, { syncPublic: true }) };
     }
-    throw new HttpsError("invalid-argument", "未対応のポイント操作です。");
+    throw new HttpsError("invalid-argument", "未対応のAnjuPay操作です。");
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     console.error("economyAction failed", { uid, action, error });
-    throw new HttpsError("internal", "ポイント処理を完了できませんでした。");
+    throw new HttpsError("internal", "AnjuPay処理を完了できませんでした。");
   }
 });
 
@@ -2201,6 +2763,9 @@ async function transferTargetIsPristine(uid, request) {
   if (userRecord.disabled || userRecord.providerData.length > 0) return false;
   if (safeBalance(walletSnapshot.get("balance")) > 0
       || integer(walletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0) > 0) return false;
+  if (integer(walletSnapshot.get("ledgerSequence"), 0, Number.MAX_SAFE_INTEGER, 0) > 0) {
+    return false;
+  }
   if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
   if (marketSnapshot.exists || patronSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
@@ -2369,6 +2934,15 @@ async function redeemAccountTransferCode(request, rawCode) {
     }
     if (safeBalance(targetWalletSnapshot.get("balance")) > 0
         || integer(targetWalletSnapshot.get("reservedIncoming"), 0, MAX_POINTS, 0) > 0) {
+      failure = "target-not-empty";
+      return;
+    }
+    if (integer(
+      targetWalletSnapshot.get("ledgerSequence"),
+      0,
+      Number.MAX_SAFE_INTEGER,
+      0,
+    ) > 0) {
       failure = "target-not-empty";
       return;
     }
@@ -4098,7 +4672,7 @@ function defaultStats(uid, name) {
 }
 
 function walletData(snapshot) {
-  if (!snapshot.exists) throw new HttpsError("failed-precondition", "ポイント残高が初期化されていません。");
+  if (!snapshot.exists) throw new HttpsError("failed-precondition", "AnjuPay残高が初期化されていません。");
   return {
     ...snapshot.data(),
     balance: safeBalance(snapshot.get("balance")),
@@ -4125,8 +4699,8 @@ function releaseIncoming(wallet, amount) {
 
 function transferPoints(from, to, amount) {
   const value = integer(amount, 1, MARKET_MAX_PRICE, 1);
-  if (from.balance < value) throw new HttpsError("failed-precondition", "ポイントが不足しています。");
-  if (walletCreditCapacity(to) < value) throw new HttpsError("failed-precondition", "受取側がポイント上限に達しています。");
+  if (from.balance < value) throw new HttpsError("failed-precondition", "AnjuPay残高が不足しています。");
+  if (walletCreditCapacity(to) < value) throw new HttpsError("failed-precondition", "受取側のAnjuPay残高が上限に達しています。");
   from.balance -= value;
   to.balance += value;
   return value;
@@ -4134,14 +4708,14 @@ function transferPoints(from, to, amount) {
 
 function debitPoints(wallet, amount) {
   const value = integer(amount, 1, MARKET_MAX_PRICE, 1);
-  if (wallet.balance < value) throw new HttpsError("failed-precondition", "ポイントが不足しています。");
+  if (wallet.balance < value) throw new HttpsError("failed-precondition", "AnjuPay残高が不足しています。");
   wallet.balance -= value;
   return value;
 }
 
 function creditPoints(wallet, amount) {
   const value = integer(amount, 1, MARKET_MAX_PRICE, 1);
-  if (walletCreditCapacity(wallet) < value) throw new HttpsError("failed-precondition", "受取側がポイント上限に達しています。");
+  if (walletCreditCapacity(wallet) < value) throw new HttpsError("failed-precondition", "受取側のAnjuPay残高が上限に達しています。");
   wallet.balance += value;
   return value;
 }
@@ -4155,6 +4729,15 @@ function distributeEscrow(preferredWallet, fallbackWallet, amount) {
   fallbackWallet.balance += fallbackAmount;
   remaining -= fallbackAmount;
   return { preferredAmount, fallbackAmount, overflow: remaining };
+}
+
+function requireReservedExtensionHold(room, held) {
+  if (held > 0 && room?.extensionReserved !== true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "延長内金の保留状態を確認できないため、取引を停止しました。",
+    );
+  }
 }
 
 function requireRoomActor(room, uid, expectedRole = "") {
@@ -4207,6 +4790,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const shopFavoriteRef = marketShopFavoriteRef(initialRoom.buyerUid, initialRoom.sellerUid);
   const certificateRef = marketCertificateRef(initialRoom.buyerUid, roomId);
   const ledgerRef = firestore.collection("valueMarketLedger").doc(eventId(`${roomId}:${uid}:${actionId}`));
+  const marketActionTimestamp = Date.now();
   let result = null;
   const achievementResults = {};
   const newlyUnlockedResults = {};
@@ -4233,6 +4817,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       shopFavoriteSnapshot,
       certificateSnapshot,
       ledgerSnapshot,
+      ledgerConfigSnapshot,
     ] = await Promise.all([
       transaction.get(roomRef),
       transaction.get(sellerWalletRef),
@@ -4249,12 +4834,29 @@ async function performMarketAction(uid, data, appCheckVerified) {
       transaction.get(shopFavoriteRef),
       transaction.get(certificateRef),
       transaction.get(ledgerRef),
+      transaction.get(anjuPayLedgerConfigRef()),
     ]);
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
     const room = { ...roomSnapshot.data() };
     const role = requireRoomActor(room, uid);
     const sellerWallet = walletData(sellerWalletSnapshot);
     const buyerWallet = walletData(buyerWalletSnapshot);
+    const sellerBalanceBefore = sellerWallet.balance;
+    const buyerBalanceBefore = buyerWallet.balance;
+    const sellerActivated = stageAnjuPayOpening(
+      transaction,
+      sellerWalletRef,
+      sellerWallet,
+      ledgerConfigSnapshot,
+      marketActionTimestamp,
+    );
+    const buyerActivated = stageAnjuPayOpening(
+      transaction,
+      buyerWalletRef,
+      buyerWallet,
+      ledgerConfigSnapshot,
+      marketActionTimestamp,
+    );
     if (ledgerSnapshot.exists) {
       const ledger = ledgerSnapshot.data();
       if (ledger.actorUid !== uid || ledger.action !== action) throw new HttpsError("permission-denied", "市場操作IDが一致しません。");
@@ -4266,6 +4868,20 @@ async function performMarketAction(uid, data, appCheckVerified) {
         role,
         newlyUnlocked: sanitizeAchievementIds(ledger.achievementIds, { maximum: 100 }),
       };
+      persistAnjuPayOpening(
+        transaction,
+        sellerWalletRef,
+        sellerWallet,
+        sellerActivated,
+        marketActionTimestamp,
+      );
+      persistAnjuPayOpening(
+        transaction,
+        buyerWalletRef,
+        buyerWallet,
+        buyerActivated,
+        marketActionTimestamp,
+      );
       return;
     }
     const sellerStats = sellerStatsSnapshot.exists ? { ...defaultStats(room.sellerUid, room.sellerName), ...sellerStatsSnapshot.data() } : defaultStats(room.sellerUid, room.sellerName);
@@ -4273,11 +4889,43 @@ async function performMarketAction(uid, data, appCheckVerified) {
     const sellerAchievement = normalizeAchievementProfile(sellerAchievementSnapshot.data());
     const buyerAchievement = normalizeAchievementProfile(buyerAchievementSnapshot.data());
     let transfer = null;
+    const marketComponents = { seller: [], buyer: [] };
+    const addMarketComponent = (
+      entryRole,
+      kind,
+      status,
+      delta,
+      nominalAmount = Math.abs(delta),
+    ) => {
+      marketComponents[entryRole].push({
+        kind,
+        labelKey: `anju_pay_market_${kind}`,
+        delta,
+        nominalAmount,
+        status,
+      });
+    };
+    const captureMarketBalanceChanges = (kind, status, operation) => {
+      const sellerBefore = sellerWallet.balance;
+      const buyerBefore = buyerWallet.balance;
+      const output = operation();
+      for (const [entryRole, before, after] of [
+        ["seller", sellerBefore, sellerWallet.balance],
+        ["buyer", buyerBefore, buyerWallet.balance],
+      ]) {
+        const delta = after - before;
+        if (!delta) continue;
+        addMarketComponent(entryRole, kind, status, delta);
+      }
+      return output;
+    };
 
     if (action === "accept_pitch") {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "preview");
-      const amount = debitPoints(buyerWallet, room.entryFee || MARKET_ENTRY_FEE);
+      const amount = captureMarketBalanceChanges("entry_fee_hold", "held", () => (
+        debitPoints(buyerWallet, room.entryFee || MARKET_ENTRY_FEE)
+      ));
       reserveIncoming(sellerWallet, amount);
       reserveIncoming(buyerWallet, amount);
       room.status = "pitch";
@@ -4301,9 +4949,31 @@ async function performMarketAction(uid, data, appCheckVerified) {
           releaseIncoming(sellerWallet, heldFee);
           releaseIncoming(buyerWallet, heldFee);
         }
-        const settlement = wasReserved
-          ? { preferredAmount: creditPoints(sellerWallet, heldFee), fallbackAmount: 0, overflow: 0 }
-          : distributeEscrow(sellerWallet, buyerWallet, heldFee);
+        const settlement = captureMarketBalanceChanges(
+          "entry_fee_settlement",
+          "settled",
+          () => (wasReserved
+            ? { preferredAmount: creditPoints(sellerWallet, heldFee), fallbackAmount: 0, overflow: 0 }
+            : distributeEscrow(sellerWallet, buyerWallet, heldFee)),
+        );
+        if (settlement.fallbackAmount > 0) {
+          const buyerRefund = marketComponents.buyer.at(-1);
+          if (buyerRefund?.kind === "entry_fee_settlement") {
+            buyerRefund.kind = "entry_fee_refund";
+            buyerRefund.labelKey = "anju_pay_market_entry_fee_refund";
+            buyerRefund.status = "refunded";
+          }
+        }
+        const settledFromBuyer = Math.max(0, heldFee - settlement.fallbackAmount);
+        if (settledFromBuyer > 0) {
+          addMarketComponent(
+            "buyer",
+            "entry_fee_settlement",
+            "settled",
+            0,
+            settledFromBuyer,
+          );
+        }
         sellerStats.laborFees = Number(sellerStats.laborFees || 0) + settlement.preferredAmount;
         room.entryFeeHeld = 0;
         room.entryFeeReserved = false;
@@ -4328,6 +4998,27 @@ async function performMarketAction(uid, data, appCheckVerified) {
       const settlement = marketSaleSettlement(price);
       const amount = debitPoints(buyerWallet, settlement.grossAmount);
       creditPoints(sellerWallet, settlement.sellerProceeds);
+      addMarketComponent(
+        "buyer",
+        "sale_purchase",
+        "settled",
+        -settlement.grossAmount,
+        settlement.grossAmount,
+      );
+      addMarketComponent(
+        "seller",
+        "sale_gross",
+        "settled",
+        settlement.grossAmount,
+        settlement.grossAmount,
+      );
+      addMarketComponent(
+        "seller",
+        "success_fee",
+        "settled",
+        -settlement.feeAmount,
+        settlement.feeAmount,
+      );
       const issuedAt = Date.now();
       const certificateNumber = `OSHI-${certificateRef.id.slice(0, 16).toUpperCase()}`;
       if (
@@ -4520,7 +5211,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireMarketState(room, "extension_request");
       const incentive = integer(data?.incentive, 5, 20, 5);
       if (!MARKET_EXTENSION_FEES.has(incentive)) throw new HttpsError("invalid-argument", "延長内金は5・10・20PTから選択してください。");
-      const amount = debitPoints(sellerWallet, incentive);
+      const amount = captureMarketBalanceChanges("extension_hold", "held", () => (
+        debitPoints(sellerWallet, incentive)
+      ));
       reserveIncoming(sellerWallet, amount);
       reserveIncoming(buyerWallet, amount);
       room.status = "extension_offer";
@@ -4534,13 +5227,17 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireMarketState(room, "extension_offer");
       const held = Math.max(0, Number(room.extensionHeld || room.extensionIncentive || 0));
       if (held < 1) throw new HttpsError("failed-precondition", "延長内金を確認できません。");
-      if (room.extensionReserved === true) {
-        releaseIncoming(sellerWallet, held);
-        releaseIncoming(buyerWallet, held);
+      requireReservedExtensionHold(room, held);
+      releaseIncoming(sellerWallet, held);
+      releaseIncoming(buyerWallet, held);
+      const amount = captureMarketBalanceChanges(
+        "extension_incentive",
+        "settled",
+        () => creditPoints(buyerWallet, held),
+      );
+      if (sellerWallet.balance === sellerBalanceBefore) {
+        addMarketComponent("seller", "extension_incentive", "settled", 0, held);
       }
-      const amount = room.extensionReserved === true
-        ? creditPoints(buyerWallet, held)
-        : transferPoints(sellerWallet, buyerWallet, held);
       room.status = "pitch";
       room.turn = Number(room.turn || 1) + 1;
       room.extensionFeesPaid = Number(room.extensionFeesPaid || 0) + amount;
@@ -4554,11 +5251,12 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireMarketState(room, "extension_offer");
       const held = Math.max(0, Number(room.extensionHeld || 0));
       if (held > 0) {
-        if (room.extensionReserved === true) {
-          releaseIncoming(sellerWallet, held);
-          releaseIncoming(buyerWallet, held);
-        }
-        creditPoints(sellerWallet, held);
+        requireReservedExtensionHold(room, held);
+        releaseIncoming(sellerWallet, held);
+        releaseIncoming(buyerWallet, held);
+        captureMarketBalanceChanges("extension_refund", "refunded", () => (
+          creditPoints(sellerWallet, held)
+        ));
         room.extensionHeld = 0;
         room.extensionReserved = false;
         transfer = { fromUid: "market_escrow", toUid: room.sellerUid, amount: held, kind: "extension_refund" };
@@ -4568,8 +5266,24 @@ async function performMarketAction(uid, data, appCheckVerified) {
     } else if (action === "cancel") {
       if (isTerminalMarketState(room.status)) {
         result = { status: room.status, room, sellerBalance: sellerWallet.balance, buyerBalance: buyerWallet.balance, role };
+        persistAnjuPayOpening(
+          transaction,
+          sellerWalletRef,
+          sellerWallet,
+          sellerActivated,
+          marketActionTimestamp,
+        );
+        persistAnjuPayOpening(
+          transaction,
+          buyerWalletRef,
+          buyerWallet,
+          buyerActivated,
+          marketActionTimestamp,
+        );
         return;
       }
+      const extensionHeld = Math.max(0, Number(room.extensionHeld || 0));
+      requireReservedExtensionHold(room, extensionHeld);
       const heldFee = Math.max(0, Number(room.entryFeeHeld || 0));
       if (heldFee > 0) {
         const wasReserved = room.entryFeeReserved === true;
@@ -4578,9 +5292,21 @@ async function performMarketAction(uid, data, appCheckVerified) {
           releaseIncoming(buyerWallet, heldFee);
         }
         if (role === "seller") {
-          const settlement = wasReserved
-            ? { preferredAmount: creditPoints(buyerWallet, heldFee), fallbackAmount: 0, overflow: 0 }
-            : distributeEscrow(buyerWallet, sellerWallet, heldFee);
+          const settlement = captureMarketBalanceChanges(
+            "entry_fee_refund",
+            "refunded",
+            () => (wasReserved
+              ? { preferredAmount: creditPoints(buyerWallet, heldFee), fallbackAmount: 0, overflow: 0 }
+              : distributeEscrow(buyerWallet, sellerWallet, heldFee)),
+          );
+          if (settlement.fallbackAmount > 0) {
+            const sellerCompensation = marketComponents.seller.at(-1);
+            if (sellerCompensation?.kind === "entry_fee_refund") {
+              sellerCompensation.kind = "entry_fee_compensation";
+              sellerCompensation.labelKey = "anju_pay_market_entry_fee_compensation";
+              sellerCompensation.status = "settled";
+            }
+          }
           sellerStats.laborFees = Number(sellerStats.laborFees || 0) + settlement.fallbackAmount;
           transfer = {
             fromUid: "market_escrow",
@@ -4592,9 +5318,31 @@ async function performMarketAction(uid, data, appCheckVerified) {
           };
           room.escrowOverflowBurned = Number(room.escrowOverflowBurned || 0) + settlement.overflow;
         } else {
-          const settlement = wasReserved
-            ? { preferredAmount: creditPoints(sellerWallet, heldFee), fallbackAmount: 0, overflow: 0 }
-            : distributeEscrow(sellerWallet, buyerWallet, heldFee);
+          const settlement = captureMarketBalanceChanges(
+            "entry_fee_compensation",
+            "settled",
+            () => (wasReserved
+              ? { preferredAmount: creditPoints(sellerWallet, heldFee), fallbackAmount: 0, overflow: 0 }
+              : distributeEscrow(sellerWallet, buyerWallet, heldFee)),
+          );
+          if (settlement.fallbackAmount > 0) {
+            const buyerRefund = marketComponents.buyer.at(-1);
+            if (buyerRefund?.kind === "entry_fee_compensation") {
+              buyerRefund.kind = "entry_fee_refund";
+              buyerRefund.labelKey = "anju_pay_market_entry_fee_refund";
+              buyerRefund.status = "refunded";
+            }
+          }
+          const settledFromBuyer = Math.max(0, heldFee - settlement.fallbackAmount);
+          if (settledFromBuyer > 0) {
+            addMarketComponent(
+              "buyer",
+              "entry_fee_compensation",
+              "settled",
+              0,
+              settledFromBuyer,
+            );
+          }
           sellerStats.laborFees = Number(sellerStats.laborFees || 0) + settlement.preferredAmount;
           transfer = {
             fromUid: "market_escrow",
@@ -4610,13 +5358,12 @@ async function performMarketAction(uid, data, appCheckVerified) {
         room.entryFeeReserved = false;
         room.entryFeeSettledAt = Date.now();
       }
-      const extensionHeld = Math.max(0, Number(room.extensionHeld || 0));
       if (extensionHeld > 0) {
-        if (room.extensionReserved === true) {
-          releaseIncoming(sellerWallet, extensionHeld);
-          releaseIncoming(buyerWallet, extensionHeld);
-        }
-        creditPoints(sellerWallet, extensionHeld);
+        releaseIncoming(sellerWallet, extensionHeld);
+        releaseIncoming(buyerWallet, extensionHeld);
+        captureMarketBalanceChanges("extension_refund", "refunded", () => (
+          creditPoints(sellerWallet, extensionHeld)
+        ));
         room.extensionHeld = 0;
         room.extensionReserved = false;
         transfer = transfer || { fromUid: "market_escrow", toUid: room.sellerUid, amount: extensionHeld, kind: "extension_refund" };
@@ -4627,6 +5374,70 @@ async function performMarketAction(uid, data, appCheckVerified) {
       throw new HttpsError("invalid-argument", "未対応の市場操作です。");
     }
 
+    const marketGroupId = anjuPayEntryId(`market:${roomId}:${uid}:${actionId}`);
+    const appendMarketEntry = (
+      entryRole,
+      walletReference,
+      walletState,
+      balanceBefore,
+      counterpartyName,
+    ) => {
+      const delta = walletState.balance - balanceBefore;
+      const components = marketComponents[entryRole];
+      if (!delta && !components.length) return;
+      const componentStatuses = new Set(components.map((component) => component.status));
+      const status = componentStatuses.size === 1
+        ? components[0].status
+        : "posted";
+      const saleGross = components.find((component) => component.kind === "sale_gross");
+      const nominalAmount = saleGross
+        ? saleGross.nominalAmount
+        : components.reduce((sum, component) => sum + component.nominalAmount, 0);
+      appendAnjuPayEntry(
+        transaction,
+        walletReference,
+        walletState,
+        ledgerConfigSnapshot,
+        {
+          entryId: marketGroupId,
+          groupId: marketGroupId,
+          kind: "market_transaction",
+          category: "market",
+          labelKey: components.length === 1
+            ? components[0].labelKey
+            : `anju_pay_market_${action}`,
+          status,
+          delta,
+          nominalAmount,
+          balanceBefore,
+          balanceAfter: walletState.balance,
+          components,
+          details: {
+            role: entryRole,
+            counterpartyName,
+            ...(entryRole === "buyer"
+              ? { publicSellerId: ensuredSellerShop.publicSellerId }
+              : {}),
+            listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
+          },
+          occurredAt: marketActionTimestamp,
+        },
+      );
+    };
+    appendMarketEntry(
+      "seller",
+      sellerWalletRef,
+      sellerWallet,
+      sellerBalanceBefore,
+      room.buyerName,
+    );
+    appendMarketEntry(
+      "buyer",
+      buyerWalletRef,
+      buyerWallet,
+      buyerBalanceBefore,
+      room.sellerName,
+    );
     room.stateVersion = Math.max(0, Math.floor(Number(room.stateVersion || 0))) + 1;
     room.updatedAt = Date.now();
     sellerStats.name = cleanName(room.sellerName);

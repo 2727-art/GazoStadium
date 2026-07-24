@@ -92,7 +92,7 @@ function buttonText(context, value) {
 }
 
 function statusText(value) {
-  if (value.sent) return `${value.recipientName}へ${value.sentAmount}PTの差し入れを送りました。`;
+  if (value.sent) return `${value.recipientName}へ${value.sentAmount}PTのAnjuPayを差し入れました。`;
   if (value.error) return value.error;
   if (!value.eligibilityChecked) return "検証済みの対戦記録を確認しています。";
   if (!value.eligible) return "対戦記録がまだ確定していません。相手の結果確定後に再確認してください。";
@@ -111,13 +111,13 @@ export function renderPostMatchTip(options = {}) {
     : `<label class="post-match-tip-recipient"><span>差し入れ先</span><select data-post-match-tip-recipient ${controlsDisabled ? "disabled" : ""}>${context.recipients.map((candidate) => `<option value="${escapeHtml(candidate.uid)}" ${candidate.uid === value.targetUid ? "selected" : ""}>${escapeHtml(candidate.name)}</option>`).join("")}</select></label>`;
   const balance = context.balance === null
     ? ""
-    : `<span class="post-match-tip-balance">現在 ${context.balance.toLocaleString("ja-JP")} PT</span>`;
+    : `<span class="post-match-tip-balance">AnjuPay残高 ${context.balance.toLocaleString("ja-JP")} PT</span>`;
   return `<section class="post-match-tip ${value.sent ? "is-sent" : ""}" id="postMatchTipPanel" data-post-match-tip-mode="${escapeHtml(context.mode)}" data-post-match-tip-room="${escapeHtml(context.roomId)}" data-post-match-tip-viewer="${escapeHtml(context.viewerUid)}">
     <div class="post-match-tip-head"><div><span>AFTER MATCH</span><h2>対戦後の差し入れ</h2></div>${balance}</div>
-    <p>印象に残った参加者へ、自分のポイントを一度だけ贈れます。</p>
+    <p>印象に残った参加者へ、自分のAnjuPayを一度だけ贈れます。</p>
     <div class="post-match-tip-controls" ${unavailable ? "hidden" : ""}>
       ${recipientControl}
-      <fieldset><legend>ポイント</legend><div>${TIP_OPTIONS.map((option) => `<label><input type="radio" name="postMatchTipAmount" value="${option.amount}" ${option.amount === value.amount ? "checked" : ""} ${controlsDisabled ? "disabled" : ""} /><span><b>${option.amount} PT</b><small>${option.label}</small></span></label>`).join("")}</div></fieldset>
+      <fieldset><legend>AnjuPay</legend><div>${TIP_OPTIONS.map((option) => `<label><input type="radio" name="postMatchTipAmount" value="${option.amount}" ${option.amount === value.amount ? "checked" : ""} ${controlsDisabled ? "disabled" : ""} /><span><b>${option.amount} PT</b><small>${option.label}</small></span></label>`).join("")}</div></fieldset>
     </div>
     <button class="button button-cyan post-match-tip-send" type="button" data-post-match-tip-send ${unavailable ? "hidden" : ""} ${controlsDisabled ? "disabled" : ""}>${escapeHtml(buttonText(context, value))}</button>
     <button class="button button-ghost post-match-tip-retry" type="button" data-post-match-tip-retry ${unavailable ? "" : "hidden"}>対戦記録を再確認</button>
@@ -179,7 +179,9 @@ function updatePanel(root, context, value) {
 function callableMessage(error, fallback) {
   const message = String(error?.message || "");
   const detail = message.includes(":") ? message.slice(message.lastIndexOf(":") + 1).trim() : message;
-  return detail || fallback;
+  return (detail || fallback)
+    .replaceAll("ポイント残高", "AnjuPay残高")
+    .replaceAll("ポイント", "AnjuPay");
 }
 
 async function hydrateTip(root, context, value) {
@@ -215,7 +217,7 @@ async function sendTip(root, context, value, onBalanceChange) {
   if (value.busy || value.sent || !value.eligibilityChecked || !value.eligible) return;
   const recipient = selectedRecipient(context, value);
   if (!recipient || !TIP_OPTIONS.some((option) => option.amount === value.amount)) return;
-  if (!window.confirm(`${recipient.name}へ${value.amount}PTを差し入れます。送信後は取り消せません。`)) return;
+  if (!window.confirm(`${recipient.name}へ${value.amount}PTのAnjuPayを差し入れます。送信後は取り消せません。`)) return;
   value.actionId ||= crypto.randomUUID();
   value.busy = true;
   value.error = "";
@@ -239,7 +241,7 @@ async function sendTip(root, context, value, onBalanceChange) {
       const balance = Math.max(0, Math.floor(Number(response.data.balance)));
       onBalanceChange?.(balance);
       const balanceLabel = matchingPanel(root, context)?.querySelector(".post-match-tip-balance");
-      if (balanceLabel) balanceLabel.textContent = `現在 ${balance.toLocaleString("ja-JP")} PT`;
+      if (balanceLabel) balanceLabel.textContent = `AnjuPay残高 ${balance.toLocaleString("ja-JP")} PT`;
     }
   } catch (error) {
     value.error = callableMessage(error, "差し入れを送れませんでした。もう一度お試しください。");

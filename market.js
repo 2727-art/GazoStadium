@@ -330,12 +330,12 @@ function patronOpportunityCopy(purchasePrice) {
   ];
   const next = tiers.find((tier) => tier.threshold > patron.seasonSpent);
   const after = Math.max(0, state.balance - Math.max(0, Number(purchasePrice || 0)));
-  if (!next) return `購入後残高 ${after.toLocaleString("ja-JP")}PT。今月の最高パトロンランクを獲得済みです。`;
+  if (!next) return `購入後のAnjuPay残高 ${after.toLocaleString("ja-JP")}PT。今月の最高パトロンランクを獲得済みです。`;
   const needed = next.threshold - patron.seasonSpent;
   const shortage = Math.max(0, needed - after);
   return shortage
-    ? `購入後残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}には${needed.toLocaleString("ja-JP")}PT必要です（あと${shortage.toLocaleString("ja-JP")}PT不足）。`
-    : `購入後残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}に必要な${needed.toLocaleString("ja-JP")}PTを残せます。`;
+    ? `購入後のAnjuPay残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}には${needed.toLocaleString("ja-JP")}PT必要です（あと${shortage.toLocaleString("ja-JP")}PT不足）。`
+    : `購入後のAnjuPay残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}に必要な${needed.toLocaleString("ja-JP")}PTを残せます。`;
 }
 
 function marketActionIdentity(action, roomId, turn, extra = {}) {
@@ -772,7 +772,9 @@ async function refreshMarketAchievementNotifications(roomId) {
 function callableMessage(error, fallback) {
   const message = String(error?.message || "");
   const detail = message.includes(":") ? message.slice(message.lastIndexOf(":") + 1).trim() : message;
-  return detail || fallback;
+  return (detail || fallback)
+    .replaceAll("ポイント残高", "AnjuPay残高")
+    .replaceAll("ポイント", "AnjuPay");
 }
 
 function setMarketChrome(status = "VALUE MARKET") {
@@ -946,7 +948,7 @@ function render() {
 }
 
 function renderWallet() {
-  return `<div class="market-wallet"><span>MARKET WALLET</span><strong>${Math.floor(state.balance).toLocaleString("ja-JP")}<small>PT</small></strong>${renderMarketPatronBadge(state.patron)}<p>Functions管理の取引残高</p></div>`;
+  return `<div class="market-wallet"><span>ANJUPAY BALANCE</span><strong>${Math.floor(state.balance).toLocaleString("ja-JP")}<small>PT</small></strong>${renderMarketPatronBadge(state.patron)}<p>貼り合いスタジアム内専用ウォレット</p></div>`;
 }
 
 function safeShopClassToken(value, fallback = "standard") {
@@ -1118,11 +1120,11 @@ function renderMarketShopSettings() {
         <div class="market-shop-fields is-three-column">
           <label class="field"><span>カードテーマ</span><select id="marketShopTheme" ${locked ? "disabled" : ""}>${state.shopCatalog.themes.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.themeId ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></label>
           <label class="field"><span>商店の印</span><select id="marketShopSeal" ${locked ? "disabled" : ""}>${state.shopCatalog.seals.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.sealId ? "selected" : ""}>${escapeHtml(`${option.icon ? `${option.icon} ` : ""}${option.label}`)}</option>`).join("")}</select></label>
-          <label class="field"><span>店主の称号</span><select id="marketShopTitle" ${locked ? "disabled" : ""}><option value="">称号なし</option>${titleOptions}</select><small>ポイントショップで所有する称号から選択</small></label>
+          <label class="field"><span>店主の称号</span><select id="marketShopTitle" ${locked ? "disabled" : ""}><option value="">称号なし</option>${titleOptions}</select><small>AnjuPayストアで所有する称号から選択</small></label>
         </div>
         <fieldset class="market-shop-charm-picker">
           <legend>商店チャーム <small>無料・購入済みスタンプから1個</small></legend>
-          <p>ポイントショップの「推し活・ときめきコレクション」で集めたスタンプを、店主カードの目印にできます。チャットの6個の装備枠とは別です。</p>
+          <p>AnjuPayストアの「推し活・ときめきコレクション」で集めたスタンプを、店主カードの目印にできます。チャットの6個の装備枠とは別です。</p>
           <div class="market-shop-charm-options">
             <label class="market-shop-charm-option is-none ${shop.shopCharmId ? "" : "is-selected"}">
               <input type="radio" name="marketShopCharm" value="" ${shop.shopCharmId ? "" : "checked"} ${locked ? "disabled" : ""} />
@@ -1203,12 +1205,12 @@ function renderSetup() {
   return `<section class="screen market-screen market-setup">
     <div class="market-hero">
       <div><span class="eyebrow">END CONTENT / VALUE ROLEPLAY</span><h1>推し値市場 <small>VALUE MARKET</small></h1>
-      <p>画像の魅力を営業し、点数ではなく実際のポイント価値で競うエンドコンテンツです。</p></div>
+      <p>ゲーム内通貨AnjuPayで推し値をつけ、画像の魅力を営業するTRPGエンドコンテンツです。</p></div>
       ${renderWallet()}
     </div>
     <div class="market-role-tabs" role="tablist" aria-label="市場でのロール">
       <button type="button" class="${seller ? "is-active" : ""}" data-market-role="seller" role="tab" aria-selected="${seller}" ${locked ? "disabled" : ""}><span>SELLER</span><strong>売り手</strong><small>画像の魅力を言葉や10秒音声で営業</small></button>
-      <button type="button" class="${!seller ? "is-active" : ""}" data-market-role="buyer" role="tab" aria-selected="${!seller}" ${locked ? "disabled" : ""}><span>BUYER</span><strong>買い手</strong><small>自分のポイントで推し値を評価</small></button>
+      <button type="button" class="${!seller ? "is-active" : ""}" data-market-role="buyer" role="tab" aria-selected="${!seller}" ${locked ? "disabled" : ""}><span>BUYER</span><strong>買い手</strong><small>自分のAnjuPayで推し値を評価</small></button>
     </div>
     ${seller ? renderMarketShopSettings() : renderMarketFavoritesBook()}
     <div class="market-entry-grid">
@@ -1226,8 +1228,8 @@ function renderSetup() {
       </form>
       <aside class="market-rule-card">
         <span class="eyebrow">FAIR DEAL FLOW</span><h2>取引の流れ</h2>
-        <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料${ENTRY_FEE}PTをFunctionsが一時預かりします。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に着手料を受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低1PT）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
-        <div class="market-safety-note"><strong>POINT AUTHORITY</strong><p>残高移動はCloud Functionsだけが確定し、売買と独立ランキングをFirestoreの同一トランザクションで更新します。</p></div>
+        <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料${ENTRY_FEE}PT分をAnjuPay残高からFunctionsが保留します。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に保留中のAnjuPayを受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低1PT）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
+        <div class="market-safety-note"><strong>ANJUPAY AUTHORITY</strong><p>AnjuPayの残高移動はCloud Functionsだけが確定し、売買と独立ランキングをFirestoreの同一トランザクションで更新します。</p></div>
         <p class="market-roleplay-note">売買はTRPGとしてのロールプレイです。画像データや著作権・所有権は移転しません。画像の一時判定、音声通報機能は設けません。</p>
         <div class="market-setup-links"><button class="button button-ghost" type="button" id="marketRankingsButton" ${locked ? "disabled" : ""}>売り手・買い手ランキング</button><button class="button button-ghost" type="button" id="marketCertificatesButton" ${locked ? "disabled" : ""}>推し値証書コレクション</button></div>
         ${useMarketPreview ? `<div class="market-preview-controls"><small>LOCAL UI PREVIEW</small><button type="button" data-market-preview-room="preview:buyer">買い手プレビュー画面</button><button type="button" data-market-preview-room="pitch:seller">売り手営業画面</button><button type="button" data-market-preview-room="decision:buyer">買い手決済画面</button><button type="button" data-market-preview-room="extension_offer:buyer">内金確認画面</button><button type="button" data-market-preview-room="sold:buyer">成立結果画面</button></div>` : ""}
@@ -1318,7 +1320,7 @@ function renderRankings() {
       <article><span>SELLER RANKING</span><h2>売上ランキング</h2><ol>${list(state.rankings.sellers, "seller")}</ol></article>
       <article><span>BUYER RANKING</span><h2>購入評価ランキング</h2><ol>${list(state.rankings.buyers, "buyer")}</ol></article>
     </div>`}
-    <p class="market-ranking-note">同じ売り手・買い手の組み合わせは、日本時間の1日につき最初の成立取引だけランキングへ加算します。ポイント移動自体は通常どおり実行されます。</p>
+    <p class="market-ranking-note">同じ売り手・買い手の組み合わせは、日本時間の1日につき最初の成立取引だけランキングへ加算します。AnjuPayの移動自体は通常どおり実行されます。</p>
   </section>`;
 }
 
@@ -1358,7 +1360,7 @@ function renderCertificateCard(certificate) {
     <div class="market-certificate-seal" aria-hidden="true">推</div>
     <div class="market-certificate-heading"><span>VALUE CERTIFICATE</span><strong>${escapeHtml(certificate?.certificateNumber || "OSHI-UNKNOWN")}</strong></div>
     <h2>${escapeHtml(certificate?.listingTitle || "無題の推し")}</h2>
-    <p>売り手 <b>${escapeHtml(certificate?.sellerName || "PLAYER")}</b> の推し値に、あなたがポイント価値をつけた記録です。</p>
+    <p>売り手 <b>${escapeHtml(certificate?.sellerName || "PLAYER")}</b> の推し値に、あなたがAnjuPayで価値をつけた記録です。</p>
     ${sellerIssueNumber ? `<p class="market-certificate-issue"><span>この商店の発行番号</span><strong>${escapeHtml(sellerIssueNumber)}</strong></p>` : ""}
     ${sellerShop ? `<div class="market-certificate-seller-shop">${sellerShop}</div>` : ""}
     <dl><div><dt>成約価格</dt><dd>${price.toLocaleString("ja-JP")} PT</dd></div><div><dt>市場手数料</dt><dd>${fee.toLocaleString("ja-JP")} PT</dd></div><div><dt>売り手受取</dt><dd>${proceeds.toLocaleString("ja-JP")} PT</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
@@ -1457,7 +1459,7 @@ function renderRoomControls(room, role) {
       ? role === "buyer"
         ? `${settlement.grossAmount}PTで成立し、推し値証書 ${room.certificateNumber || ""} をコレクションへ追加しました。`
         : `${settlement.grossAmount}PTで成立。成約手数料${settlement.feeAmount}PTを差し引き、${settlement.sellerProceeds}PTを受け取りました。`
-      : "このルームでのポイント移動と営業履歴はここで終了です。";
+      : "このルームでのAnjuPay移動と営業履歴はここで終了です。";
     const rankingCopy = status === "sold"
       ? `<small>${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}</small>`
       : "";
@@ -1465,7 +1467,7 @@ function renderRoomControls(room, role) {
   }
   if (status === "preview") {
     if (role === "buyer") {
-      return `<div class="market-decision-panel"><span>FREE PREVIEW</span><h2>この画像の営業を受けますか？</h2><p>受けると着手料${room.entryFee || ENTRY_FEE}PTを一時預け、営業完了時に売り手へ支払います。画像確認だけなら無料です。</p><div><button class="button button-primary" data-market-action="accept_pitch" ${!state.remoteImage || state.busy ? "disabled" : ""}>${room.entryFee || ENTRY_FEE}PTで営業を受ける</button><button class="button button-ghost" data-market-action="decline_preview" ${state.busy ? "disabled" : ""}>営業を受けず退室</button></div></div>`;
+      return `<div class="market-decision-panel"><span>FREE PREVIEW</span><h2>この画像の営業を受けますか？</h2><p>受けると着手料${room.entryFee || ENTRY_FEE}PT分をAnjuPay残高から保留し、営業完了時に売り手へ移します。画像確認だけなら無料です。</p><div><button class="button button-primary" data-market-action="accept_pitch" ${!state.remoteImage || state.busy ? "disabled" : ""}>${room.entryFee || ENTRY_FEE}PTで営業を受ける</button><button class="button button-ghost" data-market-action="decline_preview" ${state.busy ? "disabled" : ""}>営業を受けず退室</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>BUYER PREVIEW</span><h2>買い手が画像を確認中です</h2><p>営業を受けるまでは着手料は発生しません。</p></div>`;
   }
@@ -1488,13 +1490,13 @@ function renderRoomControls(room, role) {
   }
   if (status === "extension_request") {
     if (role === "seller") {
-      return `<div class="market-extension-panel"><span>ANOTHER TURN REQUEST</span><h2>追加営業の内金を提示</h2><p>買い手が受け取って次ターンへ進むためのポイントです。</p><div><select id="marketExtensionIncentive"><option value="5">5 PT</option><option value="10">10 PT</option><option value="20">20 PT</option></select><button class="button button-primary" id="marketOfferExtension" ${state.busy ? "disabled" : ""}>内金を提示する</button><button class="button button-ghost" data-market-action="cancel" ${state.busy ? "disabled" : ""}>取引を終了</button></div></div>`;
+      return `<div class="market-extension-panel"><span>ANOTHER TURN REQUEST</span><h2>追加営業の内金を提示</h2><p>内金分のAnjuPayを残高から保留し、買い手へ提示します。買い手が受け取ると次ターンへ進みます。</p><div><select id="marketExtensionIncentive"><option value="5">5 PT</option><option value="10">10 PT</option><option value="20">20 PT</option></select><button class="button button-primary" id="marketOfferExtension" ${state.busy ? "disabled" : ""}>内金を提示する</button><button class="button button-ghost" data-market-action="cancel" ${state.busy ? "disabled" : ""}>取引を終了</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>EXTENSION REQUESTED</span><h2>売り手が内金を検討中です</h2><p>提示された内金を受け取るか選択できます。</p></div>`;
   }
   if (status === "extension_offer") {
     if (role === "buyer") {
-      return `<div class="market-decision-panel"><span>EXTENSION OFFER</span><h2>${room.extensionIncentive}PTを受け取り、次の営業へ？</h2><p>承諾すると売り手から買い手へ内金が移動し、ターン${Number(room.turn || 1) + 1}へ進みます。</p><div><button class="button button-primary" data-market-action="accept_extension" ${state.busy ? "disabled" : ""}>${room.extensionIncentive}PTを受け取り続行</button><button class="button button-ghost" data-market-action="decline_extension" ${state.busy ? "disabled" : ""}>受け取らず退室</button></div></div>`;
+      return `<div class="market-decision-panel"><span>EXTENSION OFFER</span><h2>${room.extensionIncentive}PTを受け取り、次の営業へ？</h2><p>承諾すると保留中のAnjuPayが売り手から買い手へ移動し、ターン${Number(room.turn || 1) + 1}へ進みます。</p><div><button class="button button-primary" data-market-action="accept_extension" ${state.busy ? "disabled" : ""}>${room.extensionIncentive}PTを受け取り続行</button><button class="button button-ghost" data-market-action="decline_extension" ${state.busy ? "disabled" : ""}>受け取らず退室</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>EXTENSION OFFERED</span><h2>買い手の返答を待っています</h2><p>${room.extensionIncentive}PTの内金を提示中です。</p></div>`;
   }
@@ -2751,7 +2753,7 @@ async function performAction(action, extra = {}) {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return false;
     clearMarketActionIdentity(actionId);
     updateMarketBalance(response.data?.balance ?? state.balance);
-    if (action === "accept_pitch") showToast(`${state.room?.entryFee || ENTRY_FEE}PTの着手料を一時預けました。`);
+    if (action === "accept_pitch") showToast(`${state.room?.entryFee || ENTRY_FEE}PTの着手料をAnjuPay残高から保留しました。`);
     if (action === "buy") {
       state.certificateStatus = "idle";
       if (state.room) {
@@ -2766,8 +2768,8 @@ async function performAction(action, extra = {}) {
       showToast("売買が成立しました。");
       notifyMarketAchievementUnlocks(response.data?.newlyUnlocked);
     }
-    if (action === "offer_extension") showToast("内金を一時預け、買い手へ提示しました。");
-    if (action === "accept_extension") showToast("内金を受け取り、次の営業ターンへ進みます。");
+    if (action === "offer_extension") showToast("内金分のAnjuPayを残高から保留し、買い手へ提示しました。");
+    if (action === "accept_extension") showToast("内金分のAnjuPayを受け取り、次の営業ターンへ進みます。");
     return true;
   } catch (error) {
     if (isCurrentLifecycle(generation)) showToast(callableMessage(error, "市場操作を完了できませんでした。"));
@@ -3023,7 +3025,7 @@ async function requestHome() {
     return;
   }
   if (state.roomId && (!state.room || !TERMINAL_STATES.has(state.room.status))) {
-    if (!window.confirm("現在の市場取引を終了しますか？ 未完了営業の着手料は、売り手終了なら買い手へ返金、買い手終了なら売り手へ支払われます。確定済みの内金は返金されません。")) return;
+    if (!window.confirm("現在の市場取引を終了しますか？ 未完了営業の着手料は、売り手終了なら買い手のAnjuPay残高へ返還し、買い手終了なら売り手へ移します。確定済みの内金は返還されません。")) return;
     if (!await performAction("cancel")) return;
   }
   returnHome();

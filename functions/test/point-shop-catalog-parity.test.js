@@ -135,7 +135,7 @@ test("oshi activity collection has the agreed titles and only reuses valid share
   assert.match(online, /standardTitleProducts\s*=\s*PLAYER_TITLE_PRODUCTS\.filter/);
   assert.match(
     online,
-    /useOfflineMarketPreview[\s\S]*?screen === "shop"[\s\S]*?POINT SHOP PREVIEW/,
+    /useOfflineMarketPreview[\s\S]*?screen === "shop"[\s\S]*?ANJUPAY STORE PREVIEW/,
   );
   assert.match(online, /LOCAL UI PREVIEWでは購入・装備を変更しません/);
   assert.match(
@@ -163,7 +163,7 @@ test("market shop charms use owned stamp IDs without consuming chat equipment sl
   assert.match(css, /\.market-shop-charm(?!-option)/);
   assert.match(server, /economyPurchases/);
   assert.match(server, /readLegacyEconomy/);
-  assert.match(readme, /無料4種とポイントショップで購入済みのスタンプ/);
+  assert.match(readme, /無料4種とAnjuPayストアで購入済みのスタンプ/);
 
   const html = read("index.html");
   assert.match(html, /market\.css\?v=[^"]*shop-charm-v1/);

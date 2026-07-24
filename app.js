@@ -499,7 +499,7 @@
       return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>メッセージを読み込めませんでした。</p><button class="community-retry" type="button" data-top-message-retry>再読み込み</button>${resetMuted}</div>`;
     }
     if (!messages.length) {
-      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>まだメッセージはありません。ポイントショップから最初のひとことを届けませんか？</p><button class="community-shop-link" type="button" data-top-message-shop>投稿枠を見る</button>${resetMuted}</div>`;
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>まだメッセージはありません。AnjuPayストアから最初のひとことを届けませんか？</p><button class="community-shop-link" type="button" data-top-message-shop>投稿枠を見る</button>${resetMuted}</div>`;
     }
     landingTopMessageIndex %= messages.length;
     const message = messages[landingTopMessageIndex];
@@ -559,7 +559,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
-          1on1、協力型2on2、4人バトルロワイヤル、ポイント価値で競う推し値市場を選べます。
+          1on1、協力型2on2、4人バトルロワイヤル、AnjuPayで推し値を競う市場を選べます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べるポイント">
           <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
@@ -569,12 +569,12 @@
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
           <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ふたりで協力</small><span>2on2チーム対戦</span></button>
           <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
-          <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>ポイントで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
+          <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
-          <button class="button button-ghost hero-utility-button" id="pointShopButton">ポイントショップ</button>
-          <button class="button hero-account-button hero-utility-button" id="accountButton">データ保護・市場パトロン</button>
+          <button class="button button-ghost hero-utility-button" id="pointShopButton">AnjuPayストア</button>
+          <button class="button hero-account-button hero-utility-button" id="accountButton">AnjuPayウォレット</button>
           <button class="button hero-audio-tool-button" id="audioStudioButton"><small>端末内だけで録音・変換</small><span>♪ 10秒音声をつくる</span></button>
         </div>
         ${renderLandingTopMessagePanel()}
@@ -1016,7 +1016,7 @@
       window.HariaiAccount.start();
       return;
     }
-    showToast("データ保護機能を読み込んでいます…");
+    showToast("AnjuPayウォレットを読み込んでいます…");
     window.addEventListener("hariai-account-ready", () => window.HariaiAccount?.start?.(), { once: true });
   }
 

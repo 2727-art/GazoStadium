@@ -17,6 +17,14 @@ service cloud.firestore {
     match /wallets/{uid} {
       allow read: if isOwner(uid);
       allow write: if false;
+
+      match /anjuPayEntries/{entryId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /systemConfig/{configId} {
+      allow read, write: if false;
     }
 
     match /economyProgress/{uid} {

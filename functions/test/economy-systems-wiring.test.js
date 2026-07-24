@@ -33,6 +33,38 @@ test("market ranking uses one fixed JST date throughout a transaction retry", ()
   assert.doesNotMatch(source, /const dateKey = jstDateKey\(\);/);
 });
 
+test("ambiguous extension escrow fails closed before any wallet mutation", () => {
+  const server = read("functions/index.js");
+  assert.match(
+    server,
+    /function requireReservedExtensionHold\(room, held\)[\s\S]*?room\?\.extensionReserved !== true[\s\S]*?延長内金の保留状態を確認できないため、取引を停止しました。/,
+  );
+
+  const acceptStart = server.indexOf('} else if (action === "accept_extension")');
+  const declineStart = server.indexOf('} else if (action === "decline_extension")', acceptStart);
+  const cancelStart = server.indexOf('} else if (action === "cancel")', declineStart);
+  const actionEnd = server.indexOf("const marketGroupId", cancelStart);
+  const acceptSource = server.slice(acceptStart, declineStart);
+  const declineSource = server.slice(declineStart, cancelStart);
+  const cancelSource = server.slice(cancelStart, actionEnd);
+
+  assert.ok(acceptStart >= 0 && declineStart > acceptStart);
+  assert.ok(cancelStart > declineStart && actionEnd > cancelStart);
+  assert.ok(
+    acceptSource.indexOf("requireReservedExtensionHold(room, held)")
+      < acceptSource.indexOf("releaseIncoming(sellerWallet, held)"),
+  );
+  assert.doesNotMatch(acceptSource, /transferPoints\(sellerWallet, buyerWallet, held\)/);
+  assert.ok(
+    declineSource.indexOf("requireReservedExtensionHold(room, held)")
+      < declineSource.indexOf("releaseIncoming(sellerWallet, held)"),
+  );
+  assert.ok(
+    cancelSource.indexOf("requireReservedExtensionHold(room, extensionHeld)")
+      < cancelSource.indexOf("const heldFee"),
+  );
+});
+
 test("certificate list is UID-scoped and does not return private identifiers or media", () => {
   const server = read("functions/index.js");
   const start = server.indexOf("function publicMarketCertificate");
@@ -85,7 +117,7 @@ test("all four final-result screens use the shared post-match tip UI", () => {
     ["royale.js", "royale"],
   ]) {
     const source = read(relativePath);
-    assert.match(source, /post-match-tip\.js\?v=post-match-tip-v2/);
+    assert.match(source, /post-match-tip\.js\?v=post-match-tip-v3/);
     assert.match(source, new RegExp(`renderPostMatchTip\\(\\{ mode: "${mode}"`));
     assert.match(source, new RegExp(`bindPostMatchTip\\([\\s\\S]*?mode: "${mode}"`));
     assert.equal((source.match(/renderPostMatchTip\(/g) || []).length, 1);

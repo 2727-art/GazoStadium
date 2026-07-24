@@ -63,7 +63,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v2";
+} from "./post-match-tip.js?v=post-match-tip-v3";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -858,6 +858,11 @@ function getTitleProduct(titleId = state.economy.equipped?.title) {
   return getPlayerTitleProduct(titleId);
 }
 
+function getShopProductLabel(productId) {
+  const product = SHOP_PRODUCTS.find((candidate) => candidate.id === String(productId || ""));
+  return product ? String(product.reaction || product.title || product.name || "") : "";
+}
+
 function titleLabel(titleId) {
   return getTitleProduct(titleId)?.title || "";
 }
@@ -883,11 +888,11 @@ function renderChatCosmeticBubble(text, message = {}) {
 
 function openOnlineScreen(screen) {
   if (useOfflineMarketPreview) {
-    if (screen === "shop") {
+    if (screen === "shop" || screen === "missions") {
       active = true;
       state = createOnlineState();
-      state.uid = "local-preview-shop";
-      state.screen = "shop";
+      state.uid = `local-preview-${screen}`;
+      state.screen = screen;
       state.authReady = true;
       state.economyReady = true;
       state.economy = normalizeEconomyRecord({
@@ -907,7 +912,7 @@ function openOnlineScreen(screen) {
           chatFrame: "chat_frame_heart_ribbon",
         },
       });
-      setOnlineChrome("POINT SHOP PREVIEW");
+      setOnlineChrome(screen === "shop" ? "ANJUPAY STORE PREVIEW" : "DAILY MISSION PREVIEW");
       render();
       return;
     }
@@ -942,7 +947,7 @@ function openOnlineScreen(screen) {
       render();
       return;
     }
-    showToast("LOCAL UI PREVIEW中は市場・実績・ポイントショップ以外のオンライン機能へ接続しません。");
+    showToast("LOCAL UI PREVIEW中は市場・実績・ミッション・AnjuPayストア以外のオンライン機能へ接続しません。");
     return;
   }
   if (active) {
@@ -1478,7 +1483,7 @@ async function ensureAuthenticated() {
   } catch (error) {
     console.error(error);
     state.economyReady = false;
-    showToast("ポイント情報を読み込めませんでした。対戦機能は利用できます。");
+    showToast("AnjuPay情報を読み込めませんでした。対戦機能は利用できます。");
   }
   if (state.economyReady) {
     try {
@@ -1486,7 +1491,7 @@ async function ensureAuthenticated() {
     } catch (error) {
       console.error(error);
       state.topMessageReady = false;
-      showToast("トップメッセージを読み込めませんでした。ポイントショップは利用できます。");
+      showToast("トップメッセージを読み込めませんでした。AnjuPayストアは利用できます。");
     }
   }
   if (state.leaderboardPublic) {
@@ -1761,7 +1766,7 @@ function renderSetup() {
       <span>RATE ${Number(profile.rating || INITIAL_RATING)}</span>
       <span>戦績 ${profile.wins}勝 ${profile.losses}敗 ${profile.draws}分</span>
       <span>🔥 ${profile.streak}連勝中 / 最高${profile.bestStreak}</span>
-      <span class="point-balance-inline">◆ ${state.economyReady ? state.economy.points : "--"} PT</span>
+      <span class="point-balance-inline">AnjuPay ◆ ${state.economyReady ? state.economy.points : "--"} PT</span>
     </div>
     ${renderOverallRankingParticipation({ controlId: "soloOverallRanking" })}
     <div class="setup-layout">
@@ -1842,8 +1847,8 @@ function renderMissionCard(mission, compact = false) {
 }
 
 function renderEconomyUnavailable() {
-  return `<div class="economy-unavailable"><strong>${state.authReady ? "ポイント情報を読み込めませんでした" : "Firebaseへ接続しています…"}</strong>
-    <p>${state.authReady ? "時間をおいて画面を開き直してください。対戦機能は通常どおり利用できます。" : "匿名ログイン後にミッションと所持ポイントを表示します。"}</p></div>`;
+  return `<div class="economy-unavailable"><strong>${state.authReady ? "AnjuPay情報を読み込めませんでした" : "Firebaseへ接続しています…"}</strong>
+    <p>${state.authReady ? "時間をおいて画面を開き直してください。対戦機能は通常どおり利用できます。" : "匿名ログイン後にミッションとAnjuPay残高を表示します。"}</p></div>`;
 }
 
 function renderDailyPlayRewardPanel() {
@@ -1940,13 +1945,13 @@ function renderDailyMissions() {
     <div class="section-head"><div><span class="eyebrow">DAILY CHALLENGE</span><h1>デイリーミッション</h1>
       <p>毎日0:00（日本時間）に更新。達成した報酬はボタンで受け取ってください。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
-    <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
     ${renderDailyPlayRewardPanel()}
     ${renderPeriodRewardPanel()}
     ${missionContent}
-    <div class="economy-actions"><button class="button button-primary" id="missionsShopButton">ポイントショップへ</button>
+    <div class="economy-actions"><button class="button button-primary" id="missionsShopButton">AnjuPayストアへ</button>
       <button class="button button-ghost" id="missionsBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">ポイントと進捗は匿名アカウントに保存されます。サイトデータを削除すると引き継げません。</p>
+    <p class="economy-note">AnjuPay残高と進捗は匿名アカウントに保存されます。サイトデータを削除すると引き継げません。</p>
   </section>`;
 }
 
@@ -1959,7 +1964,7 @@ function renderAchievements() {
       <p>勝利・連勝・RATEではなく、遊んだ回数、モード回遊、敗北、市場での成立取引を記録します。</p></div>
       <button class="button button-ghost button-small" id="achievementHomeButton">タイトルへ</button></div>
     <div class="achievement-policy">
-      <span>条件は解除まで非公開</span><span>ポイント報酬なし</span><span>ランキング展示は最大3件</span>
+      <span>条件は解除まで非公開</span><span>AnjuPay報酬なし</span><span>ランキング展示は最大3件</span>
     </div>
     ${state.achievementsBusy ? `<div class="achievement-loading">実績情報を更新しています…</div>` : ""}
     ${content || `<div class="economy-unavailable"><strong>実績表示を準備できませんでした</strong><p>ページを読み直してお試しください。</p></div>`}
@@ -2071,10 +2076,10 @@ function renderPointShop() {
     </form>` : `<p class="economy-note">トップメッセージを読み込めませんでした。ページを開き直してお試しください。</p>`}
   </section>` : "";
   return `<section class="screen economy-screen">
-    <div class="section-head"><div><span class="eyebrow">POINT EXCHANGE</span><h1>ポイントショップ</h1>
+    <div class="section-head"><div><span class="eyebrow">ANJUPAY STORE</span><h1>AnjuPayストア</h1>
       <p>チャット装飾、トップメッセージ、リアクション、スタンプ、称号で交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
-    <div class="economy-balance"><span>POINT BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
     ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
       <section class="shop-category shop-oshi-market-collection" id="shopOshiMarketCollection" aria-labelledby="shopOshiMarketCollectionTitle">
         <div class="shop-oshi-market-hero">
@@ -2314,7 +2319,7 @@ function renderGameOver() {
       <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
-    ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>◆ ${state.economy.points} PT</strong></div>
+    ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${state.economy.points} PT</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
     ${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
@@ -2796,7 +2801,7 @@ async function purchaseShopProduct(productId) {
     else if (result.outcome === "purchased" && product.type === "feature") showToast("「トップメッセージ枠」を購入しました。メッセージを投稿できます。");
     else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (result.outcome === "owned") showToast("この商品は購入済みです。");
-    else showToast("ポイントが不足しています。");
+    else showToast("AnjuPay残高が不足しています。");
   } catch (error) {
     console.error(error);
     state.economyBusy = false;
@@ -4473,6 +4478,7 @@ window.HariaiOnline = {
   openDailyMissions,
   openPointShop,
   openAchievements,
+  getShopProductLabel,
   isActive,
   requestHome,
   destroyRoom,

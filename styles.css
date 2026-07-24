@@ -471,6 +471,120 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+.account-wallet > em {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.anju-pay-policy {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 20px;
+  padding: 22px 24px;
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 0 0, rgba(255, 209, 102, 0.13), transparent 42%),
+    linear-gradient(135deg, rgba(77, 232, 223, 0.055), rgba(14, 17, 27, 0.96));
+  box-shadow: var(--shadow);
+}
+
+.anju-pay-policy-mark {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(255, 209, 102, 0.65);
+  border-radius: 18px;
+  color: #17110a;
+  background: linear-gradient(135deg, #fff1b9, #ffbf4b);
+  box-shadow: 0 10px 28px rgba(255, 190, 71, 0.15);
+  font-size: 1.8rem;
+  font-weight: 950;
+  place-items: center;
+}
+
+.anju-pay-policy h2 {
+  margin: 5px 0 7px;
+  font-size: clamp(1.25rem, 2.6vw, 1.85rem);
+}
+
+.anju-pay-policy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.anju-pay-policy strong {
+  display: block;
+  margin-top: 10px;
+  color: #ffe8a1;
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.anju-pay-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.anju-pay-quick-actions button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 11px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background:
+    linear-gradient(145deg, rgba(255, 209, 102, 0.055), transparent 55%),
+    rgba(14, 17, 27, 0.9);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.anju-pay-quick-actions button:hover,
+.anju-pay-quick-actions button:focus-visible {
+  border-color: rgba(255, 209, 102, 0.48);
+  background:
+    linear-gradient(145deg, rgba(255, 209, 102, 0.11), rgba(77, 232, 223, 0.04)),
+    rgba(14, 17, 27, 0.96);
+  transform: translateY(-2px);
+}
+
+.anju-pay-quick-actions button > span {
+  display: grid;
+  grid-row: 1 / 3;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 209, 102, 0.38);
+  border-radius: 50%;
+  color: var(--gold);
+  background: rgba(255, 209, 102, 0.075);
+  font-weight: 950;
+  place-items: center;
+}
+
+.anju-pay-quick-actions small {
+  color: var(--gold);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.anju-pay-quick-actions strong {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
 .account-notice,
 .account-error {
   margin: 16px 0;
@@ -493,6 +607,7 @@ button:disabled {
 }
 
 .account-protection-card,
+.anju-pay-history-section,
 .account-patron-section,
 .account-transfer-section {
   margin-top: 20px;
@@ -614,8 +729,225 @@ button:disabled {
 }
 
 .account-patron-section,
+.anju-pay-history-section,
 .account-transfer-section {
   padding: 26px;
+}
+
+.anju-pay-history-section {
+  border-color: rgba(77, 232, 223, 0.22);
+}
+
+.anju-pay-history-head {
+  align-items: center;
+}
+
+.anju-pay-history-head .button {
+  flex: 0 0 auto;
+}
+
+.anju-pay-history-list {
+  display: grid;
+  gap: 9px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.anju-pay-history-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: var(--radius-md);
+  background: rgba(7, 9, 15, 0.55);
+}
+
+.anju-pay-history-entry.is-opening {
+  border-color: rgba(255, 209, 102, 0.22);
+  background: rgba(255, 209, 102, 0.04);
+}
+
+.anju-pay-history-entry.is-market {
+  border-color: rgba(77, 232, 223, 0.17);
+}
+
+.anju-pay-history-entry.is-tip {
+  border-color: rgba(255, 111, 145, 0.17);
+}
+
+.anju-pay-history-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  border: 1px solid currentColor;
+  border-radius: 13px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font-weight: 950;
+  place-items: center;
+}
+
+.is-earn .anju-pay-history-icon,
+.anju-pay-history-entry.is-positive .anju-pay-history-amount > strong {
+  color: var(--green);
+}
+
+.is-spend .anju-pay-history-icon,
+.anju-pay-history-entry.is-negative .anju-pay-history-amount > strong {
+  color: #ff9caf;
+}
+
+.is-market .anju-pay-history-icon {
+  color: var(--cyan);
+}
+
+.is-tip .anju-pay-history-icon {
+  color: #ff9caf;
+}
+
+.is-opening .anju-pay-history-icon,
+.anju-pay-history-entry.is-neutral .anju-pay-history-amount > strong {
+  color: var(--gold);
+}
+
+.anju-pay-history-copy {
+  min-width: 0;
+}
+
+.anju-pay-history-copy > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+
+.anju-pay-history-copy time {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.anju-pay-history-copy > div > span {
+  padding: 2px 6px;
+  border: 1px solid rgba(77, 232, 223, 0.16);
+  border-radius: 999px;
+  color: #a8f7f1;
+  background: rgba(77, 232, 223, 0.045);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.anju-pay-history-copy > strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.94rem;
+}
+
+.anju-pay-history-copy p {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.anju-pay-history-amount {
+  display: grid;
+  justify-items: end;
+  min-width: 126px;
+  text-align: right;
+}
+
+.anju-pay-history-amount > strong {
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.anju-pay-history-amount > small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.67rem;
+  white-space: nowrap;
+}
+
+.anju-pay-history-state {
+  display: grid;
+  gap: 7px;
+  min-height: 130px;
+  margin-top: 18px;
+  padding: 24px;
+  border: 1px dashed var(--line-bright);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  background: rgba(7, 9, 15, 0.42);
+  place-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.anju-pay-history-state strong {
+  color: var(--text);
+}
+
+.anju-pay-history-state p {
+  max-width: 620px;
+  margin: 0;
+  line-height: 1.65;
+}
+
+.anju-pay-history-state.is-error,
+.anju-pay-history-inline-error {
+  border-color: rgba(255, 74, 95, 0.3);
+  color: #ffd4d9;
+  background: rgba(255, 74, 95, 0.07);
+}
+
+.anju-pay-history-inline-error {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 74, 95, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+
+.account-live-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.anju-pay-history-more {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.anju-pay-history-boundary {
+  margin: 15px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
+.anju-pay-history-boundary strong {
+  color: #ffe8a1;
+}
+
+#accountPatronSection:focus {
+  outline: 2px solid rgba(255, 209, 102, 0.55);
+  outline-offset: 4px;
 }
 
 .patron-current-badge {
@@ -850,9 +1182,25 @@ button:disabled {
   .patron-tier-grid {
     grid-template-columns: 1fr;
   }
+
+  .anju-pay-quick-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {
+  .anju-pay-policy {
+    grid-template-columns: 1fr;
+    padding: 18px;
+  }
+
+  .anju-pay-policy-mark {
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+    font-size: 1.5rem;
+  }
+
   .account-protection-card {
     grid-template-columns: 1fr;
     padding: 18px;
@@ -864,8 +1212,27 @@ button:disabled {
   }
 
   .account-patron-section,
+  .anju-pay-history-section,
   .account-transfer-section {
     padding: 18px;
+  }
+
+  .anju-pay-history-entry {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 11px;
+    padding: 13px;
+  }
+
+  .anju-pay-history-amount {
+    grid-column: 2;
+    justify-items: start;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .anju-pay-history-head .button {
+    width: 100%;
   }
 
   .account-transfer-grid {
@@ -884,6 +1251,12 @@ button:disabled {
 
   .patron-progress-card > div:first-child {
     flex-direction: column;
+  }
+}
+
+@media (max-width: 430px) {
+  .anju-pay-quick-actions {
+    grid-template-columns: 1fr;
   }
 }
 

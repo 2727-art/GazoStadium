@@ -49,7 +49,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v2";
+} from "./post-match-tip.js?v=post-match-tip-v3";
 import {
   STRATEGY_VIDEO_MAX_BYTES,
   appendStrategyVideoChunk,
