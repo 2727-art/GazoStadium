@@ -5,3 +5,10 @@ database-debug.log
 firestore-debug.log
 functions/node_modules/
 functions/.env*
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
