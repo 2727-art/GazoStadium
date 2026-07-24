@@ -232,12 +232,12 @@ test("active reservations are disconnect-protected before room setup and safely 
   const cleanupStart = frontend.indexOf("async function cleanupMatchmaking");
   const cleanupEnd = frontend.indexOf("async function cleanupOnlineResources", cleanupStart);
   const cleanup = frontend.slice(cleanupStart, cleanupEnd);
-  assert.match(cleanup, /if \(!keepActive\) removals\.push\(clearActiveReservation\(state\)\)/);
+  assert.match(cleanup, /if \(!keepActive\) removals\.push\(clearActiveReservation\(targetState\)\)/);
   assert.doesNotMatch(cleanup, /await Promise\.allSettled\(removals\);\s+if \(!keepActive\).*cancelActiveReservationDisconnect/);
   const onlineCleanupStart = cleanupEnd;
   const onlineCleanupEnd = frontend.indexOf("function releaseRemoteImage", onlineCleanupStart);
   const onlineCleanup = frontend.slice(onlineCleanupStart, onlineCleanupEnd);
-  assert.match(onlineCleanup, /keepActive \? Promise\.resolve\(\) : clearActiveReservation\(state\)/);
+  assert.match(onlineCleanup, /keepActive \? Promise\.resolve\(\) : clearActiveReservation\(targetState\)/);
 });
 
 test("rollout, matching index, and TTLs fail closed before reunion activation", () => {

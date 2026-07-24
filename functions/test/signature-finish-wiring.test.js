@@ -82,7 +82,7 @@ test("signature choice is optional, unique, cleared on removal, and retained for
   assert.match(online, /function toggleSignatureCard\(id\) \{[\s\S]*?button\.replaceChildren\(/);
   assert.doesNotMatch(extract(/function toggleSignatureCard\(id\) \{[\s\S]*?\n\}/, "signature toggle"), /\brender\(\)/);
   assert.match(online, /if \(state\.signatureCardId === id\) state\.signatureCardId = "";/);
-  assert.match(online, /signatureCardId: state\.signatureCardId,/);
+  assert.match(online, /signatureCardId: expectedState\.signatureCardId,/);
   assert.match(online, /state\.deck = deck;/);
   assert.match(online, /data-online-signature-card=/);
   assert.match(online, /aria-pressed="\$\{isSignature\}"/);
@@ -124,7 +124,7 @@ test("cut-in dialog is skippable, text-safe, responsive, and reduced-motion awar
   assert.match(online, /quote\.textContent = payload\.finishLine;/);
   assert.match(online, /skip\.addEventListener\("click", clearFinishCutIn/);
   assert.match(online, /finishCutInDialog\?\.addEventListener\("cancel"/);
-  assert.match(online, /async function cleanupOnlineResources\(keepActive\) \{\s*clearFinishCutIn\(\);/);
+  assert.match(online, /async function cleanupOnlineResources\(keepActive, targetState = state\)[\s\S]*?if \(state === targetState\) clearFinishCutIn\(\);/);
   assert.match(styles, /\.finish-cutin-image \{[\s\S]*?object-fit: contain;/);
   assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.finish-cutin-stage/);
   assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.finish-cutin \{\s*height: 100%;/);

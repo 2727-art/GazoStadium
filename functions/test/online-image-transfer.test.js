@@ -180,9 +180,13 @@ test("normal 1on1 browser wiring validates bytes, serializes sends, and bounds b
     /message\.type === "image-start"[\s\S]{0,700}message\.mime !== "image\/webp"/,
   );
 
-  assert.match(
-    source,
-    /await sendProfileAvatar\(\);[\s\S]{0,300}await announceSelectionReady\(\);/,
+  const channelStart = source.indexOf("function configureDataChannel");
+  const channelEnd = source.indexOf("async function handleChannelMessage", channelStart);
+  const channelSetup = source.slice(channelStart, channelEnd);
+  assert.ok(channelStart >= 0 && channelEnd > channelStart);
+  assert.ok(
+    channelSetup.indexOf("await sendProfileAvatar()")
+      < channelSetup.indexOf("await announceSelectionReady()"),
   );
   assert.match(source, /queueOutgoingDataTransfer\(expectedState/);
   assert.match(source, /PROFILE_AVATAR_READY_WAIT_MS/);

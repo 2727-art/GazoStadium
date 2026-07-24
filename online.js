@@ -85,6 +85,16 @@ import {
   createIncomingEngawaImageTransfer,
   engawaImageEndStatus,
 } from "./engawa-image-transfer.mjs?v=engawa-image-transfer-v1";
+import {
+  beginOnlineStateTransition,
+  captureOnlineRoomContext,
+  captureOnlineRoundContext,
+  isOnlineRoomContextCurrent,
+  isOnlineRoundContextCurrent,
+  isOnlineSameRoomIdentity,
+  isOnlineStateTransitionCurrent,
+  runOnlineOpponentDestroyedTransition,
+} from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -301,6 +311,7 @@ let active = false;
 let state = createOnlineState();
 let finishCutInGeneration = 0;
 let matchmakingGenerationCounter = 0;
+let pendingDestroyContext = null;
 let lobbyPresenceEntries = null;
 let marketPresenceEntries = null;
 const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
@@ -478,6 +489,9 @@ function createOnlineState() {
     opponentOnline: true,
     statsCommitted: false,
     destroyedByOpponent: false,
+    roomTerminationToken: null,
+    lifecycleTransitionToken: null,
+    cleanupPromise: null,
   };
 }
 
@@ -2868,7 +2882,7 @@ function bindScreenEvents() {
     image.addEventListener("contextmenu", (event) => event.preventDefault());
     image.addEventListener("dragstart", (event) => event.preventDefault());
   });
-  document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", () => destroyDialog.showModal()));
+  document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", openDestroyDialog));
   document.querySelector("[data-online-avatar-visibility]")?.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); });
   document.querySelectorAll("[data-claim-mission]").forEach((button) => button.addEventListener("click", () => claimDailyMission(button.dataset.claimMission)));
   document.querySelector("#claimPeriodRewardsButton")?.addEventListener("click", claimClosedPeriodRewards);
@@ -3942,15 +3956,23 @@ async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
   await syncServerRankingParticipation(state.uid, entryId, true);
 }
 
-async function recordOverallResult({ mode, outcome, name, opponentRating = INITIAL_RATING, soloSeed = null, roomId = "" } = {}) {
+async function recordOverallResult({
+  mode,
+  outcome,
+  name,
+  opponentRating = INITIAL_RATING,
+  soloSeed = null,
+  roomId = "",
+  sourceState = state,
+} = {}) {
   if (!LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
   await setPersistence(auth, browserLocalPersistence);
   const user = auth.currentUser || (await signInAnonymously(auth)).user;
   await economyActionCallable({ action: "initialize" });
   const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
-  const resultTimestamp = Date.now() + Number(state.uid === user.uid ? state.serverTimeOffset : publicServerTimeOffset || 0);
+  const resultTimestamp = Date.now() + Number(sourceState.uid === user.uid ? sourceState.serverTimeOffset : publicServerTimeOffset || 0);
   const periodResult = await recordPeriodRewardResult(user.uid, mode, outcome, roomId, resultTimestamp);
-  await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (state.uid === user.uid ? state.profile : null));
+  await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (sourceState.uid === user.uid ? sourceState.profile : null));
   const result = await runTransaction(ref(database, `online/overallProfiles/${user.uid}`), (current) => {
     const record = normalizeOverallProfile(current, displayName);
     const modeRecord = { ...record.modes[mode] };
@@ -3967,7 +3989,7 @@ async function recordOverallResult({ mode, outcome, name, opponentRating = INITI
   });
   if (!result.committed) throw new Error("総合戦績を更新できませんでした。");
   const profile = normalizeOverallProfile(result.snapshot.val(), displayName);
-  if (state.uid === user.uid) state.overallProfile = profile;
+  if (sourceState.uid === user.uid) sourceState.overallProfile = profile;
   const settings = leaderboardPublicSettings();
   if (settings.enabled) await publishOverallLeaderboard(user.uid, profile, displayName, settings, { mode, outcome });
   return {
@@ -4347,15 +4369,17 @@ async function writePublicPresence(presenceRef, mode, presenceState) {
   }
 }
 
-async function cleanupPublicPresence() {
-  window.clearInterval(state.publicPresenceHeartbeat);
-  state.publicPresenceHeartbeat = null;
-  await state.publicPresenceDisconnect?.cancel?.().catch(() => {});
-  state.publicPresenceDisconnect = null;
-  const presenceId = state.publicPresenceId;
-  state.publicPresenceId = "";
-  state.publicPresenceState = "";
-  if (!presenceId || !state.uid) return;
+async function cleanupPublicPresence(targetState = state) {
+  window.clearInterval(targetState.publicPresenceHeartbeat);
+  targetState.publicPresenceHeartbeat = null;
+  const presenceDisconnect = targetState.publicPresenceDisconnect;
+  const presenceId = targetState.publicPresenceId;
+  const ownUid = targetState.uid;
+  targetState.publicPresenceDisconnect = null;
+  targetState.publicPresenceId = "";
+  targetState.publicPresenceState = "";
+  await presenceDisconnect?.cancel?.().catch(() => {});
+  if (!presenceId || !ownUid) return;
   await remove(ref(database, `online/publicPresence/${presenceId}`)).catch(() => {});
   await remove(ref(database, `online/publicPresenceOwners/${presenceId}`)).catch(() => {});
 }
@@ -5040,13 +5064,12 @@ async function enterRoom(roomId) {
     soloFamiliarActionCallable({ action: "confirm_reunion", roomId })
       .catch((error) => console.error("再会確認を保存できませんでした。", error));
   }
-  const roomSetupContext = {
-    expectedState,
+  const roomSetupContext = captureOnlineRoomContext(expectedState, {
     generation: roomGeneration,
     roomId,
     ownUid,
     opponentUid: state.opponentUid,
-  };
+  });
   let roomListenersReady = false;
   try {
     roomListenersReady = await setupRoomListeners(roomSetupContext);
@@ -5066,10 +5089,15 @@ async function enterRoom(roomId) {
 }
 
 function isCurrentRoomSetupContext(context) {
-  return active
-    && state === context.expectedState
-    && state.matchmakingGeneration === context.generation
-    && state.roomId === context.roomId;
+  return isOnlineRoomContextCurrent(context, { active, currentState: state });
+}
+
+function isSameRoomIdentity(context) {
+  return isOnlineSameRoomIdentity(context, { active, currentState: state });
+}
+
+function isCurrentRoundContext(context) {
+  return isOnlineRoundContextCurrent(context, { active, currentState: state });
 }
 
 async function setupRoomListeners(context) {
@@ -5118,7 +5146,9 @@ async function setupRoomListeners(context) {
   }));
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {
     if (!isCurrentRoomSetupContext(context)) return;
-    if (snapshot.exists() && snapshot.val().by !== context.ownUid) handleOpponentDestroyed();
+    if (snapshot.exists()) {
+      handleOpponentDestroyed(context, snapshot.val()).catch(handleRecoverableError);
+    }
   }));
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${context.opponentUid}`), (snapshot) => {
     if (!isCurrentRoomSetupContext(context)) return;
@@ -5143,16 +5173,25 @@ async function setupRoomListeners(context) {
     if (state.chatMessages.length > 50) state.chatMessages.shift();
     refreshChat();
   }));
-  listenToRound(() => isCurrentRoomSetupContext(context));
+  listenToRound(context);
   return true;
 }
 
-function listenToRound(contextIsCurrent = () => true) {
-  state.roundUnsubscribe?.();
-  state.roundUnsubscribe = onValue(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}`), (snapshot) => {
-    if (!contextIsCurrent()) return;
-    state.roundData = snapshot.val() || {};
-    reactToRoundData().catch(handleRecoverableError);
+function listenToRound(roomContext) {
+  if (!isCurrentRoomSetupContext(roomContext)) return;
+  const targetState = roomContext.expectedState;
+  const roundContext = captureOnlineRoundContext(roomContext, targetState.round);
+  targetState.roundUnsubscribe?.();
+  targetState.roundUnsubscribe = onValue(ref(
+    database,
+    `online/rooms/${roomContext.roomId}/rounds/${roundContext.expectedRound}`,
+  ), (snapshot) => {
+    if (!isCurrentRoundContext(roundContext)) return;
+    const roundData = snapshot.val() || {};
+    targetState.roundData = roundData;
+    reactToRoundData(roundContext, roundData).catch((error) => {
+      if (isCurrentRoundContext(roundContext)) handleRecoverableError(error);
+    });
   });
 }
 
@@ -5206,7 +5245,7 @@ async function setupPeerConnection(context) {
     if (state.screen === "connecting") render();
   };
   peer.ondatachannel = (event) => {
-    if (peerContextIsCurrent()) configureDataChannel(event.channel);
+    if (peerContextIsCurrent()) configureDataChannel(event.channel, context.expectedState);
   };
 
   const signalsRef = ref(database, `online/rooms/${context.roomId}/signals/${context.ownUid}`);
@@ -5222,7 +5261,7 @@ async function setupPeerConnection(context) {
   try {
     if (state.playerIndex === 0) {
       createdChannel = peer.createDataChannel("hariai-images", { ordered: true });
-      configureDataChannel(createdChannel);
+      configureDataChannel(createdChannel, context.expectedState);
       const offer = await peer.createOffer();
       if (!peerContextIsCurrent()) {
         abandonPeerSetup();
@@ -5277,15 +5316,21 @@ async function flushPendingIce() {
   while (state.pendingIce.length) await state.peer.addIceCandidate(state.pendingIce.shift());
 }
 
-function configureDataChannel(channel) {
-  state.channel = channel;
+function configureDataChannel(channel, expectedState = state) {
+  expectedState.channel = channel;
+  const channelContextIsCurrent = () => (
+    state === expectedState
+      && expectedState.channel === channel
+      && !expectedState.roomTerminationToken
+  );
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
-    state.channelReady = true;
-    state.peerStatus = "● P2P接続済み";
-    if (state.screen === "connecting") {
-      state.screen = "select";
+    if (!channelContextIsCurrent()) return;
+    expectedState.channelReady = true;
+    expectedState.peerStatus = "● P2P接続済み";
+    if (expectedState.screen === "connecting") {
+      expectedState.screen = "select";
       render();
     }
     (async () => {
@@ -5295,37 +5340,49 @@ function configureDataChannel(channel) {
         profileTransferSettled = true;
       } catch (error) {
         profileTransferSettled = error?.profileTransferReset === true;
-        handleRecoverableError(error);
+        if (channelContextIsCurrent()) handleRecoverableError(error);
       }
-      if (profileTransferSettled && state.channel === channel && channel.readyState === "open") {
+      if (profileTransferSettled && channelContextIsCurrent() && channel.readyState === "open") {
         await announceSelectionReady();
       }
-    })().catch(handleRecoverableError);
+    })().catch((error) => {
+      if (channelContextIsCurrent()) handleRecoverableError(error);
+    });
   };
   channel.onclose = () => {
-    state.channelReady = false;
-    state.peerStatus = "P2P接続が切れました";
-    if (state.screen === "engawa") {
+    if (!channelContextIsCurrent()) return;
+    expectedState.channelReady = false;
+    expectedState.peerStatus = "P2P接続が切れました";
+    if (expectedState.screen === "engawa") {
       closeEngawaLocally("P2P接続が切れたため、縁側を閉じました。");
-    } else if (state.screen === "gameover" && !state.engawaClosed) {
+    } else if (expectedState.screen === "gameover" && !expectedState.engawaClosed) {
       closeEngawaLocally("P2P接続が閉じたため、今回はここで一戦を終えます。");
     }
   };
-  channel.onerror = () => showToast("画像転送で通信エラーが発生しました。");
+  channel.onerror = () => {
+    if (channelContextIsCurrent()) showToast("画像転送で通信エラーが発生しました。");
+  };
   channel.onmessage = (event) => {
-    const expectedState = state;
     const data = event.data;
     expectedState.incomingMessageChain = expectedState.incomingMessageChain
       .catch(() => {})
       .then(() => {
-        if (state !== expectedState || state.channel !== channel) return;
-        return handleChannelMessage(data);
+        if (!channelContextIsCurrent()) return;
+        return handleChannelMessage(data, expectedState, channel);
       })
-      .catch(handleRecoverableError);
+      .catch((error) => {
+        if (channelContextIsCurrent()) handleRecoverableError(error);
+      });
   };
 }
 
-async function handleChannelMessage(data) {
+async function handleChannelMessage(data, expectedState = state, expectedChannel = expectedState.channel) {
+  const contextIsCurrent = () => (
+    state === expectedState
+      && expectedState.channel === expectedChannel
+      && !expectedState.roomTerminationToken
+  );
+  if (!contextIsCurrent()) return;
   if (typeof data === "string") {
     if (data.length > ENGAWA_MESSAGE_MAX_CHARS) throw new Error("P2Pメッセージが長すぎます。");
     const message = JSON.parse(data);
@@ -5383,6 +5440,7 @@ async function handleChannelMessage(data) {
   }
   if (state.incomingAvatarTransfer) {
     const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+    if (!contextIsCurrent()) return;
     if (!(chunk instanceof ArrayBuffer) || chunk.byteLength <= 0) {
       state.incomingAvatarTransfer = null;
       throw new Error("プロフィール画像の受信データが不正です。");
@@ -5397,6 +5455,7 @@ async function handleChannelMessage(data) {
   }
   if (state.incomingEngawaTransfer) {
     const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+    if (!contextIsCurrent()) return;
     try {
       appendIncomingEngawaImageChunk(state.incomingEngawaTransfer, chunk);
     } catch (error) {
@@ -5407,6 +5466,7 @@ async function handleChannelMessage(data) {
   }
   if (!state.incomingTransfer) return;
   const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+  if (!contextIsCurrent()) return;
   try {
     appendIncomingOnlineImageChunk(state.incomingTransfer, chunk);
   } catch (error) {
@@ -5664,17 +5724,17 @@ function closeEngawaLocally(reason) {
   }
 }
 
-function notifyEngawaDeparture() {
-  if (!state.outcome || state.engawaClosed) return;
-  if (state.channel?.readyState === "open") {
+function notifyEngawaDeparture(targetState = state) {
+  if (!targetState.outcome || targetState.engawaClosed) return;
+  if (targetState.channel?.readyState === "open") {
     try {
-      sendEngawaMessage({ type: "engawa-end" });
+      sendEngawaMessage({ type: "engawa-end" }, targetState.channel);
     } catch {
       // The connection is closing; local cleanup still proceeds.
     }
   }
-  state.engawaClosed = true;
-  state.engawaEndReason = "縁側を終了しました。";
+  targetState.engawaClosed = true;
+  targetState.engawaEndReason = "縁側を終了しました。";
 }
 
 function startIncomingEngawaImage(message) {
@@ -5858,25 +5918,34 @@ function hasSelectionStarted() {
 
 async function announceSelectionReady() {
   if (!active || !state.roomId || !state.channelReady || state.screen !== "select" || state.selectionReadyRound === state.round) return;
-  const readyRound = state.round;
-  state.selectionReadyRound = readyRound;
+  const expectedState = state;
+  const roomId = expectedState.roomId;
+  const ownUid = expectedState.uid;
+  const readyRound = expectedState.round;
+  expectedState.selectionReadyRound = readyRound;
   try {
-    await set(ref(database, `online/rooms/${state.roomId}/rounds/${readyRound}/selectionReady/${state.uid}`), true);
+    await set(ref(database, `online/rooms/${roomId}/rounds/${readyRound}/selectionReady/${ownUid}`), true);
   } catch (error) {
-    if (state.round === readyRound) state.selectionReadyRound = 0;
+    if (state === expectedState && expectedState.round === readyRound) {
+      expectedState.selectionReadyRound = 0;
+    }
     throw error;
   }
 }
 
 async function startSharedSelectionClock() {
-  const startRound = state.round;
-  if (state.playerIndex !== 0 || state.selectionStartRequestRound === startRound
-      || Number(state.roundData.selectionStartedAt) > 0) return;
-  state.selectionStartRequestRound = startRound;
+  const expectedState = state;
+  const roomId = expectedState.roomId;
+  const startRound = expectedState.round;
+  if (expectedState.playerIndex !== 0 || expectedState.selectionStartRequestRound === startRound
+      || Number(expectedState.roundData.selectionStartedAt) > 0) return;
+  expectedState.selectionStartRequestRound = startRound;
   try {
-    await set(ref(database, `online/rooms/${state.roomId}/rounds/${startRound}/selectionStartedAt`), serverTimestamp());
+    await set(ref(database, `online/rooms/${roomId}/rounds/${startRound}/selectionStartedAt`), serverTimestamp());
   } catch (error) {
-    if (state.round === startRound) state.selectionStartRequestRound = 0;
+    if (state === expectedState && expectedState.round === startRound) {
+      expectedState.selectionStartRequestRound = 0;
+    }
     throw error;
   }
 }
@@ -5945,9 +6014,9 @@ async function handleSelectionTimeout() {
   await lockSelection();
 }
 
-function stopSelectionTimer() {
-  if (state.selectionTimer) window.clearInterval(state.selectionTimer);
-  state.selectionTimer = null;
+function stopSelectionTimer(targetState = state) {
+  if (targetState.selectionTimer) window.clearInterval(targetState.selectionTimer);
+  targetState.selectionTimer = null;
 }
 
 function resetSelectionTimerState() {
@@ -5963,36 +6032,45 @@ function resetSelectionTimerState() {
 
 async function lockSelection() {
   if (!state.selectedCardId || !state.channelReady || !hasSelectionStarted() || state.selectionLocking) return;
-  state.selectionLocking = true;
-  stopSelectionTimer();
-  state.screen = "waitingPick";
+  const expectedState = state;
+  const roomId = expectedState.roomId;
+  const round = expectedState.round;
+  const ownUid = expectedState.uid;
+  expectedState.selectionLocking = true;
+  stopSelectionTimer(expectedState);
+  expectedState.screen = "waitingPick";
   render();
   try {
-    await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/picks/${state.uid}`), {
+    await set(ref(database, `online/rooms/${roomId}/rounds/${round}/picks/${ownUid}`), {
       ready: true,
       lockedAt: serverTimestamp(),
     });
   } finally {
-    state.selectionLocking = false;
+    expectedState.selectionLocking = false;
   }
 }
 
-async function reactToRoundData() {
-  const selectionReady = state.roundData.selectionReady || {};
+async function reactToRoundData(roundContext, roundData) {
+  const contextIsCurrent = () => (
+    isCurrentRoundContext(roundContext) && state.roundData === roundData
+  );
+  if (!contextIsCurrent()) return;
+  const selectionReady = roundData.selectionReady || {};
   if (state.playerIndex === 0 && selectionReady[state.uid] && selectionReady[state.opponentUid]
-      && !Number.isFinite(Number(state.roundData.selectionStartedAt))) {
+      && !Number.isFinite(Number(roundData.selectionStartedAt))) {
     startSharedSelectionClock().catch(handleRecoverableError);
   }
-  const selectionStartedAt = Number(state.roundData.selectionStartedAt);
+  const selectionStartedAt = Number(roundData.selectionStartedAt);
   if (Number.isFinite(selectionStartedAt) && selectionStartedAt > 0 && state.screen === "select") {
     startSelectionTimer(selectionStartedAt);
   }
-  const picks = state.roundData.picks || {};
+  const picks = roundData.picks || {};
   if (picks[state.uid]?.ready && picks[state.opponentUid]?.ready
       && !state.sentImageRounds.has(state.round) && !state.imageTransferError) {
     await sendSelectedImage();
+    if (!contextIsCurrent()) return;
   }
-  const received = state.roundData.imagesReceived || {};
+  const received = roundData.imagesReceived || {};
   if (received[state.opponentUid] && state.imageAckRound === state.round) {
     clearImageAckWatchdog(state);
   }
@@ -6001,10 +6079,12 @@ async function reactToRoundData() {
     state.screen = "reveal";
     render();
   }
-  const scores = state.roundData.scores || {};
+  const scores = roundData.scores || {};
   if (Number.isInteger(scores[state.uid]) && Number.isInteger(scores[state.opponentUid])) resolveRound(scores);
-  const continued = state.roundData.continue || {};
-  if (continued[state.uid] && continued[state.opponentUid]) advanceAfterRound();
+  const continued = roundData.continue || {};
+  if (continued[state.uid] && continued[state.opponentUid]) {
+    advanceAfterRound(roundContext);
+  }
 }
 
 async function sendSelectedImage() {
@@ -6187,11 +6267,14 @@ async function continueRound() {
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/continue/${state.uid}`), true);
 }
 
-function advanceAfterRound() {
+function advanceAfterRound(roundContext) {
+  if (!isCurrentRoundContext(roundContext)) return;
   if (state.continuedRounds.has(state.round) || !state.processedRounds.has(state.round)) return;
   state.continuedRounds.add(state.round);
   if (isMatchOver()) {
-    finishOnlineMatch().catch(handleRecoverableError);
+    finishOnlineMatch(roundContext).catch((error) => {
+      if (isCurrentRoundContext(roundContext)) handleRecoverableError(error);
+    });
     return;
   }
   clearImageAckWatchdog(state);
@@ -6203,7 +6286,7 @@ function advanceAfterRound() {
   state.roundData = {};
   state.transferProgress = 0;
   state.screen = "select";
-  listenToRound();
+  listenToRound(roundContext.roomContext);
   render();
   announceSelectionReady().catch(handleRecoverableError);
 }
@@ -6212,8 +6295,8 @@ function isMatchOver() {
   return state.players.some((player) => player.hp <= 0) || state.round >= MAX_ROUNDS;
 }
 
-function determineOutcome() {
-  const [first, second] = state.players;
+function determineOutcome(targetState = state) {
+  const [first, second] = targetState.players;
   if (first.hp !== second.hp) return { winnerIndex: first.hp > second.hp ? 0 : 1, reason: first.hp <= 0 || second.hp <= 0 ? "hp" : "rounds" };
   if (first.totalReceived !== second.totalReceived) return { winnerIndex: first.totalReceived > second.totalReceived ? 0 : 1, reason: "rounds" };
   if (first.criticals !== second.criticals) return { winnerIndex: first.criticals > second.criticals ? 0 : 1, reason: "rounds" };
@@ -6221,21 +6304,25 @@ function determineOutcome() {
   return { winnerIndex: null, reason: "draw" };
 }
 
-async function finishOnlineMatch() {
-  if (state.outcome) return;
-  const outcome = determineOutcome();
-  const myWon = outcome.winnerIndex === state.playerIndex;
+async function finishOnlineMatch(roundContext) {
+  if (!isCurrentRoundContext(roundContext)) return;
+  const expectedState = state;
+  if (expectedState.outcome) return;
+  const outcome = determineOutcome(expectedState);
+  const myWon = outcome.winnerIndex === expectedState.playerIndex;
   const draw = outcome.winnerIndex === null;
-  await update(ref(database, `online/rooms/${state.roomId}`), {
-    [`resultClaims/${state.uid}`]: {
+  await update(ref(database, `online/rooms/${roundContext.roomContext.roomId}`), {
+    [`resultClaims/${roundContext.roomContext.ownUid}`]: {
       outcome: draw ? "draw" : myWon ? "win" : "loss",
       createdAt: serverTimestamp(),
     },
-    [`finished/${state.uid}`]: true,
+    [`finished/${roundContext.roomContext.ownUid}`]: true,
   });
-  state.outcome = outcome;
-  await commitOnlineStats();
-  state.screen = "gameover";
+  if (!isCurrentRoundContext(roundContext)) return;
+  const statsCommitted = await commitOnlineStats(expectedState, outcome, roundContext);
+  if (!statsCommitted || !isCurrentRoundContext(roundContext)) return;
+  expectedState.outcome = outcome;
+  expectedState.screen = "gameover";
   render();
 }
 
@@ -6244,18 +6331,19 @@ function calculateRating(currentRating, opponentRating, actualScore) {
   return Math.min(3000, Math.max(100, Math.round(currentRating + RATING_K_FACTOR * (actualScore - expectedScore))));
 }
 
-async function commitOnlineStats() {
-  if (state.statsCommitted) return;
-  state.statsCommitted = true;
-  const myWon = state.outcome.winnerIndex === state.playerIndex;
-  const draw = state.outcome.winnerIndex === null;
-  const opponentRating = Number(getOpponent()?.rating || INITIAL_RATING);
+async function commitOnlineStats(targetState, outcome, roundContext) {
+  if (!isCurrentRoundContext(roundContext) || targetState.statsCommitted) return false;
+  targetState.statsCommitted = true;
+  const myWon = outcome.winnerIndex === targetState.playerIndex;
+  const draw = outcome.winnerIndex === null;
+  const opponent = targetState.players[targetState.playerIndex === 0 ? 1 : 0];
+  const opponentRating = Number(opponent?.rating || INITIAL_RATING);
   const actualScore = draw ? 0.5 : myWon ? 1 : 0;
-  const soloSeed = { ...state.profile };
-  const result = await runTransaction(ref(database, `online/profiles/${state.uid}`), (current) => {
+  const soloSeed = { ...targetState.profile };
+  const result = await runTransaction(ref(database, `online/profiles/${targetState.uid}`), (current) => {
     const record = {
-      name: state.name,
-      pursuitLine: normalizePursuitLine(state.pursuitLine),
+      name: targetState.name,
+      pursuitLine: normalizePursuitLine(targetState.pursuitLine),
       wins: Number(current?.wins || 0),
       losses: Number(current?.losses || 0),
       draws: Number(current?.draws || 0),
@@ -6270,22 +6358,28 @@ async function commitOnlineStats() {
     record.rating = calculateRating(record.rating, opponentRating, actualScore);
     return record;
   });
-  if (result.committed) state.profile = result.snapshot.val();
+  if (!isCurrentRoundContext(roundContext)) return false;
+  if (result.committed) targetState.profile = result.snapshot.val();
   if (result.committed) {
     const periodOutcome = draw ? "draw" : myWon ? "win" : "loss";
     await recordOverallResult({
       mode: "solo",
       outcome: periodOutcome,
-      name: state.name,
+      name: targetState.name,
       opponentRating,
       soloSeed,
-      roomId: state.roomId,
-    }).catch(() => showToast("総合ランキングを更新できませんでした。"));
+      roomId: targetState.roomId,
+      sourceState: targetState,
+    }).catch(() => {
+      if (isCurrentRoundContext(roundContext)) showToast("総合ランキングを更新できませんでした。");
+    });
   }
-  state.players.forEach((player, index) => {
+  if (!isCurrentRoundContext(roundContext)) return false;
+  targetState.players.forEach((player, index) => {
     if (draw) return;
-    player.streak = state.outcome.winnerIndex === index ? Number(player.streak || 0) + 1 : 0;
+    player.streak = outcome.winnerIndex === index ? Number(player.streak || 0) + 1 : 0;
   });
+  return true;
 }
 
 async function sendChat(value, stampId = "") {
@@ -6442,7 +6536,15 @@ function triggerCriticalFx(text) {
   window.setTimeout(() => { fxLayer.innerHTML = ""; }, 1250);
 }
 
+function openDestroyDialog() {
+  const context = captureOnlineRoomContext(state);
+  if (!isCurrentRoomSetupContext(context)) return;
+  pendingDestroyContext = context;
+  destroyDialog.showModal();
+}
+
 function requestHome() {
+  pendingDestroyContext = null;
   if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -6451,36 +6553,56 @@ function requestHome() {
     || state.screen === "familiarBook") {
     leaveToLanding();
   } else {
-    destroyDialog.showModal();
+    openDestroyDialog();
   }
 }
 
 async function destroyRoom() {
-  if (!active) return;
-  if (state.roomId) {
-    await runTransaction(ref(database, `online/rooms/${state.roomId}/destroyed`), (current) => current || { by: state.uid, at: Date.now() }).catch(() => {});
-  }
-  await cleanupOnlineResources(false);
+  const context = pendingDestroyContext;
+  pendingDestroyContext = null;
+  if (!isCurrentRoomSetupContext(context)) return;
+  const expectedState = context.expectedState;
+  if (expectedState.roomTerminationToken) return;
+  const terminationToken = Object.freeze({ type: "local-destroy" });
+  expectedState.roomTerminationToken = terminationToken;
+  const transitionToken = beginOnlineStateTransition(expectedState, "local-destroy");
+  const destroyWrite = runTransaction(
+    ref(database, `online/rooms/${context.roomId}/destroyed`),
+    (current) => current || { by: context.ownUid, at: Date.now() },
+  ).catch(() => {});
+  const cleanupPromise = cleanupOnlineResources(false, expectedState);
+  await Promise.all([destroyWrite, cleanupPromise]);
+  if (expectedState.roomTerminationToken !== terminationToken
+      || !isSameRoomIdentity(context)
+      || !isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
   releaseAllImages();
   active = false;
   window.HariaiApp?.returnHome();
   showToast("ルームを破棄しました。戦績には影響しません。");
 }
 
-async function handleOpponentDestroyed() {
-  if (state.destroyedByOpponent) return;
-  state.destroyedByOpponent = true;
-  await cleanupOnlineResources(false);
-  releaseMatchMedia();
-  state.screen = "noContest";
-  setOnlineChrome("NO CONTEST");
-  render();
+async function handleOpponentDestroyed(context, marker) {
+  await runOnlineOpponentDestroyedTransition({
+    context,
+    marker,
+    isCurrent: () => isCurrentRoomSetupContext(context),
+    cleanup: (targetState) => cleanupOnlineResources(false, targetState),
+    isStillSameRoom: () => isSameRoomIdentity(context),
+    finalize: () => {
+      releaseMatchMedia();
+      state.screen = "noContest";
+      setOnlineChrome("NO CONTEST");
+      render();
+    },
+  });
 }
 
 async function cancelMatching() {
-  await cleanupMatchmaking(false);
-  await cleanupPublicPresence();
-  state.screen = "setup";
+  const expectedState = state;
+  const transitionToken = beginOnlineStateTransition(expectedState, "cancel-matching");
+  await cleanupOnlineResources(false, expectedState);
+  if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
+  expectedState.screen = "setup";
   setOnlineChrome("ONLINE READY");
   render();
 }
@@ -6502,46 +6624,49 @@ function prepareDeckForRematch(items) {
 }
 
 async function resetOnlineState(screen) {
-  const deck = prepareDeckForRematch(state.deck);
+  const expectedState = state;
+  const transitionToken = beginOnlineStateTransition(expectedState, `reset:${screen}`);
+  const deck = prepareDeckForRematch(expectedState.deck);
   const identity = {
-    uid: state.uid,
-    profile: state.profile,
-    overallProfile: state.overallProfile,
-    authReady: state.authReady,
-    name: state.name,
-    pursuitLine: state.pursuitLine,
-    pursuitLineChoice: state.pursuitLineChoice,
-    customPursuitLine: state.customPursuitLine,
-    finishLine: state.finishLine,
-    finishLineChoice: state.finishLineChoice,
-    customFinishLine: state.customFinishLine,
-    showOpponentCustomFinish: state.showOpponentCustomFinish,
-    imagePreference: state.imagePreference,
-    soloFamiliarStage: state.soloFamiliarStage,
-    soloFamiliarReady: state.soloFamiliarReady,
-    soloFamiliars: state.soloFamiliars,
-    soloBlockedFamiliars: state.soloBlockedFamiliars,
-    soloBlockedCursor: state.soloBlockedCursor,
-    soloBlockedDetailsOpen: state.soloBlockedDetailsOpen,
-    soloReunionPreference: state.soloReunionPreference,
-    signatureCardId: state.signatureCardId,
-    economy: state.economy,
-    economyReady: state.economyReady,
-    dailyPlay: state.dailyPlay,
-    achievements: state.achievements,
-    achievementsReady: state.achievementsReady,
-    notifiedAchievementIds: state.notifiedAchievementIds,
-    rankingAwards: state.rankingAwards,
-    rankingAwardsReady: state.rankingAwardsReady,
-    periodRewardReminderShown: state.periodRewardReminderShown,
-    titleCategoryFilter: state.titleCategoryFilter,
-    expandedTitleCategories: state.expandedTitleCategories,
-    topMessage: state.topMessage,
-    topMessageEntryId: state.topMessageEntryId,
-    topMessageReady: state.topMessageReady,
-    serverTimeOffset: state.serverTimeOffset,
+    uid: expectedState.uid,
+    profile: expectedState.profile,
+    overallProfile: expectedState.overallProfile,
+    authReady: expectedState.authReady,
+    name: expectedState.name,
+    pursuitLine: expectedState.pursuitLine,
+    pursuitLineChoice: expectedState.pursuitLineChoice,
+    customPursuitLine: expectedState.customPursuitLine,
+    finishLine: expectedState.finishLine,
+    finishLineChoice: expectedState.finishLineChoice,
+    customFinishLine: expectedState.customFinishLine,
+    showOpponentCustomFinish: expectedState.showOpponentCustomFinish,
+    imagePreference: expectedState.imagePreference,
+    soloFamiliarStage: expectedState.soloFamiliarStage,
+    soloFamiliarReady: expectedState.soloFamiliarReady,
+    soloFamiliars: expectedState.soloFamiliars,
+    soloBlockedFamiliars: expectedState.soloBlockedFamiliars,
+    soloBlockedCursor: expectedState.soloBlockedCursor,
+    soloBlockedDetailsOpen: expectedState.soloBlockedDetailsOpen,
+    soloReunionPreference: expectedState.soloReunionPreference,
+    signatureCardId: expectedState.signatureCardId,
+    economy: expectedState.economy,
+    economyReady: expectedState.economyReady,
+    dailyPlay: expectedState.dailyPlay,
+    achievements: expectedState.achievements,
+    achievementsReady: expectedState.achievementsReady,
+    notifiedAchievementIds: expectedState.notifiedAchievementIds,
+    rankingAwards: expectedState.rankingAwards,
+    rankingAwardsReady: expectedState.rankingAwardsReady,
+    periodRewardReminderShown: expectedState.periodRewardReminderShown,
+    titleCategoryFilter: expectedState.titleCategoryFilter,
+    expandedTitleCategories: expectedState.expandedTitleCategories,
+    topMessage: expectedState.topMessage,
+    topMessageEntryId: expectedState.topMessageEntryId,
+    topMessageReady: expectedState.topMessageReady,
+    serverTimeOffset: expectedState.serverTimeOffset,
   };
-  await cleanupOnlineResources(false);
+  await cleanupOnlineResources(false, expectedState);
+  if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
   releaseMatchMedia();
   state = createOnlineState();
   Object.assign(state, identity);
@@ -6556,82 +6681,115 @@ async function leaveToLanding() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  await cleanupOnlineResources(false);
+  const expectedState = state;
+  const transitionToken = beginOnlineStateTransition(expectedState, "leave");
+  await cleanupOnlineResources(false, expectedState);
+  if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
   releaseAllImages();
   active = false;
   window.HariaiApp?.returnHome();
 }
 
-async function cleanupMatchmaking(keepActive) {
-  state.matchmakingGeneration = ++matchmakingGenerationCounter;
-  window.clearTimeout(state.matchTimer);
-  window.clearTimeout(state.matchScopeTimer);
-  window.clearInterval(state.queueHeartbeat);
-  window.clearInterval(state.offerPollTimer);
-  window.clearInterval(state.hostStatusPollTimer);
-  window.clearInterval(state.soloServerMatchTimer);
-  state.matchTimer = null;
-  state.matchScopeTimer = null;
-  state.matchScopeAvailable = false;
-  state.matchScopeExpanded = false;
-  state.queueHeartbeat = null;
-  state.offerPollTimer = null;
-  state.hostStatusPollTimer = null;
-  state.soloServerMatchTimer = null;
-  state.matchingBusy = false;
-  state.acceptingOffer = false;
-  state.soloServerMatchBusy = false;
-  state.soloServerMatchErrorNotified = false;
-  state.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
+async function cleanupMatchmaking(keepActive, targetState = state) {
+  targetState.matchmakingGeneration = ++matchmakingGenerationCounter;
+  window.clearTimeout(targetState.matchTimer);
+  window.clearTimeout(targetState.matchScopeTimer);
+  window.clearInterval(targetState.queueHeartbeat);
+  window.clearInterval(targetState.offerPollTimer);
+  window.clearInterval(targetState.hostStatusPollTimer);
+  window.clearInterval(targetState.soloServerMatchTimer);
+  targetState.matchTimer = null;
+  targetState.matchScopeTimer = null;
+  targetState.matchScopeAvailable = false;
+  targetState.matchScopeExpanded = false;
+  targetState.queueHeartbeat = null;
+  targetState.offerPollTimer = null;
+  targetState.hostStatusPollTimer = null;
+  targetState.soloServerMatchTimer = null;
+  targetState.matchingBusy = false;
+  targetState.acceptingOffer = false;
+  targetState.soloServerMatchBusy = false;
+  targetState.soloServerMatchErrorNotified = false;
+  targetState.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+  const disconnectHandles = targetState.disconnectHandles.splice(0);
+  await Promise.allSettled(disconnectHandles.map((handle) => handle.cancel?.()));
   if (useOfflineMarketPreview) {
-    if (!keepActive) await cancelActiveReservationDisconnect("", state).catch(() => {});
-    state.pendingOffer = null;
-    state.pendingIncomingOffer = null;
+    if (!keepActive) await cancelActiveReservationDisconnect("", targetState).catch(() => {});
+    targetState.pendingOffer = null;
+    targetState.pendingIncomingOffer = null;
     return;
   }
-  const pendingHostedOffer = state.pendingOffer;
+  const pendingHostedOffer = targetState.pendingOffer;
   if (pendingHostedOffer?.roomId) {
     await runTransaction(
       ref(database, `online/rooms/${pendingHostedOffer.roomId}/status`),
       (current) => (current === "offered" ? "expired" : undefined),
     ).catch(() => {});
   }
-  const removals = [remove(ref(database, `online/queue/${state.uid}`))];
-  if (!keepActive) removals.push(clearActiveReservation(state));
+  const removals = [remove(ref(database, `online/queue/${targetState.uid}`))];
+  if (!keepActive) removals.push(clearActiveReservation(targetState));
   if (pendingHostedOffer) {
     removals.push(remove(ref(database, `online/offers/${pendingHostedOffer.targetUid}/${pendingHostedOffer.roomId}`)));
   }
   await Promise.allSettled(removals);
-  state.pendingOffer = null;
-  state.pendingIncomingOffer = null;
+  targetState.pendingOffer = null;
+  targetState.pendingIncomingOffer = null;
 }
 
-async function cleanupOnlineResources(keepActive) {
-  clearFinishCutIn();
-  clearImageAckWatchdog(state);
-  stopSelectionTimer();
-  notifyEngawaDeparture();
-  releaseEngawaMedia();
-  await cleanupMatchmaking(keepActive);
-  await cleanupPublicPresence();
-  state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  state.roundUnsubscribe?.();
-  state.roundUnsubscribe = null;
-  state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
-  if (state.peer) {
-    state.peer.onicecandidate = null;
-    state.peer.ondatachannel = null;
-    state.peer.close();
+async function cleanupOnlineResources(keepActive, targetState = state) {
+  if (targetState.cleanupPromise) {
+    await targetState.cleanupPromise;
+    return;
   }
-  state.channel?.close();
-  state.peer = null;
-  state.channel = null;
-  if (state.roomId) {
-    await Promise.allSettled([
-      set(ref(database, `online/rooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
-      keepActive ? Promise.resolve() : clearActiveReservation(state),
-    ]);
+  const cleanupPromise = (async () => {
+    if (state === targetState) clearFinishCutIn();
+    clearImageAckWatchdog(targetState);
+    stopSelectionTimer(targetState);
+    notifyEngawaDeparture(targetState);
+    releaseEngawaMedia(targetState);
+
+    targetState.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+    targetState.roundUnsubscribe?.();
+    targetState.roundUnsubscribe = null;
+
+    const peer = targetState.peer;
+    const channel = targetState.channel;
+    targetState.peer = null;
+    targetState.channel = null;
+    targetState.channelReady = false;
+    if (peer) {
+      peer.onicecandidate = null;
+      peer.onconnectionstatechange = null;
+      peer.ondatachannel = null;
+      peer.close();
+    }
+    if (channel) {
+      channel.onopen = null;
+      channel.onclose = null;
+      channel.onerror = null;
+      channel.onmessage = null;
+      channel.close();
+    }
+
+    const roomId = targetState.roomId;
+    const ownUid = targetState.uid;
+    await cleanupMatchmaking(keepActive, targetState);
+    await cleanupPublicPresence(targetState);
+    if (roomId && ownUid) {
+      await Promise.allSettled([
+        set(ref(database, `online/rooms/${roomId}/presence/${ownUid}`), {
+          online: false,
+          updatedAt: serverTimestamp(),
+        }),
+        keepActive ? Promise.resolve() : clearActiveReservation(targetState),
+      ]);
+    }
+  })();
+  targetState.cleanupPromise = cleanupPromise;
+  try {
+    await cleanupPromise;
+  } finally {
+    if (targetState.cleanupPromise === cleanupPromise) targetState.cleanupPromise = null;
   }
 }
 
@@ -6646,22 +6804,23 @@ function releaseEngawaRemoteImage() {
   state.engawaRemoteImage = null;
 }
 
-function releaseEngawaMedia() {
-  if (state.engawaResumeTimer) window.clearTimeout(state.engawaResumeTimer);
-  state.engawaResumeTimer = null;
-  state.engawaTransferGeneration += 1;
-  releaseEngawaRemoteImage();
-  state.incomingEngawaTransfer = null;
-  state.engawaSelectedCardId = "";
-  state.engawaMoodId = "";
-  state.engawaSharedCardId = "";
-  state.engawaSharedMoodId = "";
-  state.engawaImageSent = false;
-  state.engawaSending = false;
-  state.engawaTransferProgress = 0;
-  state.engawaLocalResponse = "";
-  state.engawaRemoteResponse = "";
-  state.engawaErrorMessage = "";
+function releaseEngawaMedia(targetState = state) {
+  if (targetState.engawaResumeTimer) window.clearTimeout(targetState.engawaResumeTimer);
+  targetState.engawaResumeTimer = null;
+  targetState.engawaTransferGeneration += 1;
+  if (targetState.engawaRemoteImage?.url) URL.revokeObjectURL(targetState.engawaRemoteImage.url);
+  targetState.engawaRemoteImage = null;
+  targetState.incomingEngawaTransfer = null;
+  targetState.engawaSelectedCardId = "";
+  targetState.engawaMoodId = "";
+  targetState.engawaSharedCardId = "";
+  targetState.engawaSharedMoodId = "";
+  targetState.engawaImageSent = false;
+  targetState.engawaSending = false;
+  targetState.engawaTransferProgress = 0;
+  targetState.engawaLocalResponse = "";
+  targetState.engawaRemoteResponse = "";
+  targetState.engawaErrorMessage = "";
 }
 
 function releaseMatchMedia() {
