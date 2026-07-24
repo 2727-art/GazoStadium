@@ -6,6 +6,8 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 const strategySource = read("strategy.js");
+const strategyStyles = read("strategy.css");
+const indexHtml = read("index.html");
 const onlineSource = read("online.js");
 const databaseRulesSource = read("database.rules.json");
 const databaseRules = JSON.parse(databaseRulesSource);
@@ -156,4 +158,40 @@ test("review chat keeps identified cosmetics while standard 1on1 stays untouched
   assert.doesNotMatch(onlineSource, /\breview(?:Decisions|StartedAt|Ended)\b/);
   assert.doesNotMatch(onlineSource, /POST-MATCH REVIEW|品評会/);
   assert.doesNotMatch(onlineSource, /phase:\s*[^,\n]*["']review["']/);
+});
+
+test("review image and audio attachments use a separate consent-gated P2P channel", () => {
+  assert.match(strategySource, /strategy-review-asset-transfer\.mjs\?v=strategy-review-assets-v1/);
+  assert.match(strategySource, /STRATEGY_REVIEW_ASSET_CHANNEL_LABEL = "hariai-strategy-review-assets-v1"/);
+  assert.match(
+    strategySource,
+    /createDataChannel\(STRATEGY_REVIEW_ASSET_CHANNEL_LABEL, \{ ordered: true \}\)/,
+  );
+  assert.match(strategySource, /function handleStrategyReviewAssetChannelMessage\(data\)/);
+  assert.match(
+    strategySource,
+    /if \(!strategyReviewIsActive\(\) \|\| !state\.reviewMediaReceiving\) throw new Error/,
+  );
+  assert.match(strategySource, /expectedOwnerUid: state\.opponentUid/);
+  assert.match(strategySource, /STRATEGY_REVIEW_IMAGE_LIMIT = 3/);
+  assert.match(strategySource, /STRATEGY_REVIEW_AUDIO_LIMIT = 1/);
+  assert.match(strategySource, /state\.reviewAssetSentCounts\[asset\.kind\] \+= 1/);
+  assert.match(strategySource, /state\.reviewAssetReceivedCounts\[asset\.kind\] \+= 1/);
+  assert.match(strategySource, /processImageFile\(file, 0, options\)/);
+  assert.match(strategySource, /processStrategyAudioFile\(file\)/);
+  assert.match(strategySource, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(strategySource, /function collectStrategyReviewBattleMedia\(\)/);
+  assert.match(
+    strategySource,
+    /function finishReviewLocally\(reason\)[\s\S]*?releaseStrategyVideoData\(\);[\s\S]*?releaseStrategyReviewAssetData\(\);/,
+  );
+  assert.match(
+    strategySource,
+    /function releaseMatchMedia\(\)[\s\S]*?releaseStrategyVideoData\(\);[\s\S]*?releaseStrategyReviewAssetData\(\);/,
+  );
+  assert.match(strategySource, /state\.reviewAssetChannel\?\.close\(\)/);
+  assert.match(strategyStyles, /\.strategy-review-gallery-grid\b/);
+  assert.match(strategyStyles, /\.strategy-review-asset-panel\b/);
+  assert.match(indexHtml, /strategy\.css\?v=[^"]*review-assets-v1/);
+  assert.match(indexHtml, /strategy\.js\?v=[^"]*review-assets-v1/);
 });

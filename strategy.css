@@ -1444,6 +1444,206 @@
   margin-top: 18px;
 }
 
+.strategy-review-gallery,
+.strategy-review-asset-panel {
+  display: grid;
+  gap: 11px;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(170, 131, 255, 0.035);
+}
+
+.strategy-review-media-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.strategy-review-media-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.strategy-review-media-head strong {
+  color: #d8c6ff;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+}
+
+.strategy-review-media-head span,
+.strategy-review-asset-status,
+.strategy-review-asset-note,
+.strategy-review-asset-empty {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.55;
+}
+
+.strategy-review-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  max-height: 440px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.strategy-review-gallery-grid article,
+.strategy-review-asset {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(2, 4, 9, 0.48);
+}
+
+.strategy-review-gallery-grid article.is-local,
+.strategy-review-asset.is-local {
+  border-color: rgba(77, 232, 223, 0.26);
+}
+
+.strategy-review-gallery-grid article > div,
+.strategy-review-asset > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 8px 9px;
+}
+
+.strategy-review-gallery-grid small,
+.strategy-review-asset small {
+  color: var(--muted);
+  font-size: 0.56rem;
+}
+
+.strategy-review-gallery-grid strong,
+.strategy-review-asset strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.66rem;
+}
+
+.strategy-review-gallery-grid img,
+.strategy-review-asset img,
+.strategy-review-asset-pending img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #030407;
+}
+
+.strategy-review-gallery-grid .button {
+  width: calc(100% - 12px);
+  margin: 6px;
+}
+
+.strategy-review-asset-status,
+.strategy-review-asset-empty {
+  margin: 0;
+}
+
+.strategy-review-asset-toolbar,
+.strategy-review-asset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.strategy-review-asset-toolbar .file-button.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.strategy-review-media-head .is-receiving {
+  border-color: rgba(77, 232, 223, 0.42);
+  color: #9af4ed;
+}
+
+.strategy-review-recording-time {
+  color: #ff8d82;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.strategy-review-assets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strategy-review-asset > div > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.strategy-review-asset > audio,
+.strategy-review-asset-pending > audio {
+  display: block;
+  width: calc(100% - 18px);
+  margin: 9px;
+}
+
+.strategy-review-asset > small {
+  display: block;
+  padding: 7px 9px;
+}
+
+.review-asset-delete {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.strategy-review-asset-pending {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(244, 201, 107, 0.34);
+  border-radius: 14px;
+  background: rgba(244, 201, 107, 0.045);
+}
+
+.strategy-review-asset-pending > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.strategy-review-asset-pending > div:first-child strong {
+  color: var(--strategy-gold);
+}
+
+.strategy-review-asset-pending img {
+  max-height: 340px;
+}
+
+.strategy-review-asset-progress {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid rgba(77, 232, 223, 0.24);
+  border-radius: 10px;
+  color: #9af4ed;
+  font-size: 0.68rem;
+}
+
+.strategy-review-asset-progress[hidden] {
+  display: none;
+}
+
 .strategy-video-panel {
   display: grid;
   gap: 10px;
@@ -1783,6 +1983,9 @@
   }
 
   .strategy-review-actions,
+  .strategy-review-media-head,
+  .strategy-review-asset-toolbar,
+  .strategy-review-asset-actions,
   .strategy-video-panel-head,
   .strategy-video-dialog-head,
   .strategy-video-dialog-actions {
@@ -1791,9 +1994,17 @@
   }
 
   .strategy-review-actions .button,
+  .strategy-review-media-head .button,
+  .strategy-review-asset-toolbar .button,
+  .strategy-review-asset-actions .button,
   .strategy-video-panel-head .button,
   .strategy-video-dialog-actions .button {
     width: 100%;
+  }
+
+  .strategy-review-gallery-grid,
+  .strategy-review-assets {
+    grid-template-columns: 1fr;
   }
 
   .strategy-video-clips {

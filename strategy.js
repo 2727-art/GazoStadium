@@ -61,6 +61,17 @@ import {
   sendStrategyVideoClip,
   startStrategyVideoRecording,
 } from "./strategy-video-transfer.mjs?v=strategy-video-review-v1";
+import {
+  STRATEGY_REVIEW_AUDIO_MAX_BYTES,
+  STRATEGY_REVIEW_IMAGE_MAX_BYTES,
+  appendStrategyReviewAssetChunk,
+  createIncomingStrategyReviewAssetTransfer,
+  createStrategyReviewAssetTransferId,
+  finishIncomingStrategyReviewAssetTransfer,
+  releaseStrategyReviewAssetResource,
+  releaseStrategyReviewAssetResources,
+  sendStrategyReviewAsset,
+} from "./strategy-review-asset-transfer.mjs?v=strategy-review-assets-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -87,6 +98,9 @@ const HEARTBEAT_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const STRATEGY_VIDEO_CHANNEL_LABEL = "hariai-strategy-videos-v1";
+const STRATEGY_REVIEW_ASSET_CHANNEL_LABEL = "hariai-strategy-review-assets-v1";
+const STRATEGY_REVIEW_IMAGE_LIMIT = 3;
+const STRATEGY_REVIEW_AUDIO_LIMIT = 1;
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-strategy-name-v2";
 const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
@@ -222,6 +236,19 @@ function createState() {
     videoTransferProgress: 0,
     videoChannel: null,
     videoChannelReady: false,
+    reviewAssets: [],
+    reviewAssetSentCounts: { image: 0, audio: 0 },
+    reviewAssetReceivedCounts: { image: 0, audio: 0 },
+    pendingReviewAsset: null,
+    incomingReviewAssetTransfer: null,
+    reviewAssetSending: false,
+    reviewAssetTransferProgress: 0,
+    reviewAssetChannel: null,
+    reviewAssetChannelReady: false,
+    reviewMediaReceiving: true,
+    opponentReviewMediaReceiving: false,
+    reviewAudioRecording: null,
+    reviewAssetGeneration: 0,
     reviewEndReason: "",
     reviewLocallyEnded: false,
     reviewClockTimer: null,
@@ -528,7 +555,7 @@ function renderProfile() {
     <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
       <li><b>1</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
       <li><b>2</b><span>各ラウンド後に一度だけ看破を宣言でき、成功すると最大3連続追撃、失敗すると自分に5ダメージです。</span></li>
-      <li><b>3</b><span>対戦中と双方同意後の品評会では、10秒までの短尺映像をP2Pで相手へ一時送信できます。</span></li>
+      <li><b>3</b><span>双方同意後の品評会では対戦画像を見返し、追加画像・10秒音声・10秒短尺映像をP2Pで一時共有できます。</span></li>
     </ol><p class="privacy-note">画像・音声・短尺映像はFirebaseへ保存しません。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
@@ -863,8 +890,8 @@ function renderStrategyReviewInvite() {
     status = "相手の対戦終了処理を待っています。両者の結果確定後に選べます。";
   } else if (reviewEnded || state.reviewEndReason) {
     status = state.reviewEndReason === "time"
-      ? "10分が経過したため品評会は終了しました。映像データは破棄しました。"
-      : "品評会は終了しました。映像データは破棄しました。";
+      ? "10分が経過したため品評会は終了しました。画像・音声・映像データは破棄しました。"
+      : "品評会は終了しました。画像・音声・映像データは破棄しました。";
   } else if (localDecision === "decline" || opponentDecision === "decline") {
     status = "どちらかが「今回は終了」を選んだため、品評会は開きません。";
   } else if (!state.opponentOnline && localDecision === "accept") {
@@ -874,7 +901,7 @@ function renderStrategyReviewInvite() {
   } else if (!localDecision) {
     status = opponentDecision === "accept"
       ? "相手は品評会への参加を希望しています。参加は任意です。"
-      : "両者が参加を選んだ場合だけ、10分間のフリーチャットを開きます。";
+      : "両者が参加を選んだ場合だけ、10分間のチャットとメディア共有を開きます。";
     actions = `<button class="button button-primary" id="strategyReviewAccept">品評会に参加</button>
       <button class="button button-ghost" id="strategyReviewDecline">今回は終了</button>`;
   } else if (localDecision === "accept") {
@@ -883,16 +910,16 @@ function renderStrategyReviewInvite() {
 
   return `<section class="strategy-review-invite"><span class="eyebrow">POST-MATCH REVIEW / 任意参加</span><h2>この一戦を一緒に品評しますか？</h2>
     <p>${escapeHtml(status)}</p>
-    <small>双方同意時のみ開始・最大10分・途中退出で終了。短尺映像はP2P一時転送で、サーバー保存や後日の再視聴はできません。</small>
+    <small>参加すると、チャットと画像・音声・短尺映像の受信に同意します。最大10分・途中退出で終了。メディアはP2P一時転送で、サーバー保存や後日の再視聴はできません。</small>
     ${actions ? `<div class="strategy-review-actions">${actions}</div>` : ""}</section>`;
 }
 
 function renderStrategyReview() {
   return `<section class="screen strategy-screen strategy-review-screen">
     <header class="strategy-review-head"><div><span class="eyebrow">POST-MATCH REVIEW / MUTUAL CONSENT</span><h1>対戦後の品評会</h1>
-      <p>${escapeHtml(getLocalPlayer()?.name || "あなた")} と ${escapeHtml(getOpponent()?.name || "対戦相手")}だけのフリーチャットです。画像の狙いや刺さったポイントを振り返りましょう。</p></div>
+      <p>${escapeHtml(getLocalPlayer()?.name || "あなた")} と ${escapeHtml(getOpponent()?.name || "対戦相手")}だけの品評会です。対戦画像と追加メディアを見ながら、狙いや刺さったポイントを振り返りましょう。</p></div>
       <div class="strategy-review-clock"><small>残り時間</small><strong id="strategyReviewCountdown">${formatReviewRemaining()}</strong></div></header>
-    <div class="strategy-review-notice"><span>● 双方同意済み</span><p>最大10分です。どちらかが終了すると両者とも閉じ、受信・録画した映像を端末メモリから破棄します。</p></div>
+    <div class="strategy-review-notice"><span>● 双方同意済み</span><p>最大10分です。どちらかが終了すると両者とも閉じ、受信・録音・録画した画像・音声・映像を端末メモリから破棄します。</p></div>
     <div class="screen-actions strategy-review-leave"><button class="button button-danger" id="strategyReviewLeave">品評会を終了</button></div>
   </section>`;
 }
@@ -994,9 +1021,12 @@ function renderStrategyVideoPanel() {
   const clips = (state.screen === "review" ? state.videoClips : state.videoClips.filter((clip) => clip.phase === "battle"))
     .filter((clip) => !clip.released && clip.url);
   const alreadySent = phase ? state.videoSentPhases.has(phase) : false;
-  const canRecord = Boolean(phase) && state.videoChannelReady && !alreadySent && !state.videoSending;
+  const reviewPermissionReady = phase !== "review" || state.opponentReviewMediaReceiving;
+  const canRecord = Boolean(phase) && state.videoChannelReady && reviewPermissionReady && !alreadySent && !state.videoSending;
   const status = !state.videoChannelReady
     ? "○ 動画P2P接続なし（チャットと対戦は続行できます）"
+    : phase === "review" && !state.opponentReviewMediaReceiving
+      ? "○ 相手がメディア受信を停止しています"
     : alreadySent
       ? `● この${phase === "review" ? "品評会" : "対戦"}では送信済み`
       : "● 動画P2P接続済み";
@@ -1006,6 +1036,114 @@ function renderStrategyVideoPanel() {
     <p class="strategy-video-status">${escapeHtml(status)}</p>
     ${clips.length ? `<div class="strategy-video-clips">${clips.map(renderStrategyVideoClip).join("")}</div>` : '<p class="strategy-video-empty">受信・送信した映像は、この対戦または品評会を閉じるまでだけ再生できます。</p>'}
     <small class="strategy-video-privacy">録画前に顔、室内、住所・位置が分かるものが映っていないか確認してください。リアルタイム映像ではなく、確認後に送信します。</small></section>`;
+}
+
+function strategyReviewAssetLimit(kind) {
+  return kind === "image" ? STRATEGY_REVIEW_IMAGE_LIMIT : STRATEGY_REVIEW_AUDIO_LIMIT;
+}
+
+function strategyReviewAssetCount(ownerUid, kind) {
+  const counts = ownerUid === state.uid ? state.reviewAssetSentCounts : state.reviewAssetReceivedCounts;
+  return Math.max(0, Number(counts?.[kind] || 0));
+}
+
+function collectStrategyReviewBattleMedia() {
+  const items = [];
+  const seen = new Set();
+  const add = (item, ownerUid, label) => {
+    if (!item?.url || seen.has(item.url)) return;
+    seen.add(item.url);
+    items.push({
+      item,
+      ownerUid,
+      label,
+      name: ownerUid === state.uid ? getLocalPlayer()?.name : getOpponent()?.name,
+    });
+  };
+  for (let round = 1; round <= MAX_ROUNDS; round += 1) {
+    add(state.localBaseCards.get(round), state.uid, `R${round} メイン`);
+    add(state.remoteImages.get(imageKey("base", round)), state.opponentUid, `R${round} メイン`);
+    add(state.localActionCards.get(round), state.uid, `R${round} 追加`);
+    add(state.remoteImages.get(imageKey("action", round)), state.opponentUid, `R${round} 追加`);
+  }
+  state.localWeaknessChainCards.forEach((item, index) => add(item, state.uid, `弱点追撃 ${index + 1}`));
+  for (let index = 0; index < MAX_WEAKNESS_CHAIN; index += 1) {
+    add(state.remoteImages.get(imageKey("weaknessChain", index)), state.opponentUid, `弱点追撃 ${index + 1}`);
+  }
+  return items;
+}
+
+function renderStrategyReviewBattleGallery() {
+  const items = collectStrategyReviewBattleMedia();
+  if (!items.length) return "";
+  return `<section class="strategy-review-gallery"><div class="strategy-review-media-head"><div><strong>BATTLE GALLERY</strong><span>対戦で使用した画像は再送せず、この端末内の一時データから表示しています。</span></div></div>
+    <div class="strategy-review-gallery-grid">${items.map(({ item, ownerUid, label, name }) => `<article class="${ownerUid === state.uid ? "is-local" : "is-opponent"}">
+      <div><small>${escapeHtml(label)} / ${ownerUid === state.uid ? "YOU" : "OPPONENT"}</small><strong>${escapeHtml(name || "PLAYER")}</strong></div>
+      <img src="${escapeHtml(item.url)}" alt="${escapeHtml(`${name || "PLAYER"}の${label}画像`)}" loading="lazy" />
+      ${item.audioUrl ? `<button class="button button-ghost button-small" type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">♪ 添付音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</button>` : ""}</article>`).join("")}</div>
+  </section>`;
+}
+
+function renderStrategyReviewAsset(asset) {
+  const local = asset.ownerUid === state.uid;
+  const owner = local ? getLocalPlayer() : getOpponent();
+  const media = asset.kind === "image"
+    ? `<img src="${escapeHtml(asset.url || "")}" alt="${escapeHtml(owner?.name || "PLAYER")}が追加した品評会画像" loading="lazy" />`
+    : `<audio controls controlslist="nodownload noplaybackrate" preload="metadata" src="${escapeHtml(asset.url || "")}"></audio>`;
+  return `<article class="strategy-review-asset ${local ? "is-local" : "is-opponent"}" data-review-asset-id="${escapeHtml(asset.id)}">
+    <div><span><small>${asset.kind === "image" ? "追加画像" : "追加音声"} / ${local ? "YOU" : "OPPONENT"}</small><strong>${escapeHtml(owner?.name || "PLAYER")}</strong></span>
+      <button class="review-asset-delete" type="button" data-strategy-review-asset-delete="${escapeHtml(asset.id)}" aria-label="このメディアを端末から削除">×</button></div>
+    ${media}<small>${asset.kind === "audio" ? `${Number(asset.duration || 0).toFixed(1)}秒 / ` : ""}${(Number(asset.size || 0) / 1024).toFixed(0)}KB・一時表示</small>
+  </article>`;
+}
+
+function renderPendingStrategyReviewAsset() {
+  const asset = state.pendingReviewAsset;
+  if (!asset) return "";
+  const canSend = strategyReviewIsActive()
+    && state.reviewAssetChannelReady
+    && state.opponentReviewMediaReceiving
+    && !state.reviewAssetSending;
+  const media = asset.kind === "image"
+    ? `<img src="${escapeHtml(asset.url || "")}" alt="送信前の追加画像プレビュー" />`
+    : `<audio controls preload="metadata" src="${escapeHtml(asset.url || "")}"></audio>`;
+  return `<section class="strategy-review-asset-pending"><div><strong>送信前に確認</strong><span>${asset.kind === "image" ? "追加画像" : `音声 ${Number(asset.duration || 0).toFixed(1)}秒`} / ${(Number(asset.size || 0) / 1024).toFixed(0)}KB</span></div>
+    ${media}
+    <div class="strategy-review-asset-progress" ${state.reviewAssetSending ? "" : "hidden"}><span>相手へP2P送信中</span><strong id="strategyReviewAssetProgress">${state.reviewAssetTransferProgress}%</strong></div>
+    <div class="strategy-review-asset-actions"><button class="button button-primary button-small" type="button" id="strategyReviewAssetSend" ${canSend ? "" : "disabled"}>このメディアを送信</button>
+      <button class="button button-ghost button-small" type="button" id="strategyReviewAssetCancel" ${state.reviewAssetSending ? "disabled" : ""}>破棄</button></div>
+  </section>`;
+}
+
+function renderStrategyReviewAssetPanel() {
+  const activeReview = state.screen === "review" && strategyReviewIsActive();
+  const imageCount = strategyReviewAssetCount(state.uid, "image");
+  const audioCount = strategyReviewAssetCount(state.uid, "audio");
+  const imageFull = imageCount >= STRATEGY_REVIEW_IMAGE_LIMIT;
+  const audioFull = audioCount >= STRATEGY_REVIEW_AUDIO_LIMIT;
+  const opponentAllows = state.opponentReviewMediaReceiving;
+  const canPrepare = activeReview && state.reviewAssetChannelReady && opponentAllows && !state.reviewAssetSending && !state.pendingReviewAsset && !state.reviewAudioRecording;
+  const connectionStatus = !state.reviewAssetChannelReady
+    ? "○ 添付P2P接続なし（チャットは続行できます）"
+    : !opponentAllows
+      ? "○ 相手がメディア受信を停止しています"
+      : "● 画像・音声P2P接続済み";
+  const recording = state.reviewAudioRecording;
+  const assets = state.reviewAssets.filter((asset) => !asset.released && asset.url);
+  return `<section class="strategy-review-asset-panel" id="strategyReviewAssetPanel">
+    <div class="strategy-review-media-head"><div><strong>REVIEW MEDIA</strong><span>追加画像 ${imageCount}/${STRATEGY_REVIEW_IMAGE_LIMIT}・追加音声 ${audioCount}/${STRATEGY_REVIEW_AUDIO_LIMIT} / 1人あたり</span></div>
+      <button class="button button-ghost button-small ${state.reviewMediaReceiving ? "is-receiving" : ""}" type="button" id="strategyReviewMediaToggle" aria-pressed="${state.reviewMediaReceiving}">${state.reviewMediaReceiving ? "メディア受信 ON" : "メディア受信 OFF"}</button></div>
+    <p class="strategy-review-asset-status">${escapeHtml(connectionStatus)}</p>
+    <div class="strategy-review-asset-toolbar">
+      <label class="button button-ghost button-small file-button ${!canPrepare || imageFull ? "is-disabled" : ""}">＋ 画像を追加<input type="file" accept="image/png,image/jpeg,image/webp" id="strategyReviewImageInput" ${!canPrepare || imageFull ? "disabled" : ""} /></label>
+      <label class="button button-ghost button-small file-button ${!canPrepare || audioFull ? "is-disabled" : ""}">♪ 音声ファイル<input type="file" accept="audio/*" id="strategyReviewAudioInput" ${!canPrepare || audioFull ? "disabled" : ""} /></label>
+      <button class="button button-ghost button-small" type="button" id="strategyReviewAudioRecord" ${!canPrepare || audioFull ? "disabled" : ""}>● マイク録音</button>
+      ${recording ? '<button class="button button-danger button-small" type="button" id="strategyReviewAudioStop">録音を停止</button><span class="strategy-review-recording-time" id="strategyReviewAudioRecordingTime">0.0 / 10.0秒</span>' : ""}
+    </div>
+    <small class="strategy-review-asset-note">画像はWebPへ再生成して約1.5MB以下、音声は10秒・モノラルWAV・約${Math.round(STRATEGY_REVIEW_AUDIO_MAX_BYTES / 1024)}KB以下に変換します。自動再生はしません。</small>
+    ${renderPendingStrategyReviewAsset()}
+    ${assets.length ? `<div class="strategy-review-assets">${assets.map(renderStrategyReviewAsset).join("")}</div>` : '<p class="strategy-review-asset-empty">追加メディアはまだありません。対戦画像は上のギャラリーから見返せます。</p>'}
+  </section>`;
 }
 
 function renderStrategyChat() {
@@ -1020,7 +1158,7 @@ function renderStrategyChat() {
   return `<aside class="chat-panel strategy-chat-panel ${reviewing ? "is-review" : ""}"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : reviewing ? "POST-MATCH REVIEW CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
       <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : reviewing ? "双方同意済み・最大10分" : "会話も推理材料"}</span></div>
     <div class="strategy-chat-participants">${renderStrategyChatParticipant(localPlayer, true, anonymous)}${renderStrategyChatParticipant(opponent, false, anonymous)}</div>
-    ${anonymous ? "" : renderStrategyVideoPanel()}
+    ${anonymous ? "" : reviewing ? `${renderStrategyReviewBattleGallery()}${renderStrategyReviewAssetPanel()}${renderStrategyVideoPanel()}` : renderStrategyVideoPanel()}
     <div class="chat-messages" id="strategyChatMessages">${messages}</div>
     ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy, { freeOnly: anonymous }), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
     <form class="chat-form" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="${reviewing ? "この一戦の感想を送る…" : "会話から本当の弱点を探る…"}" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
@@ -1140,6 +1278,7 @@ function bindScreenEvents() {
 function bindStrategyChatEvents() {
   bindChatToolTabs();
   bindStrategyVideoPanelEvents();
+  bindStrategyReviewAssetPanelEvents();
   document.querySelectorAll("[data-strategy-chat-reaction]").forEach((button) => button.addEventListener("click", () => sendStrategyChat(button.dataset.strategyChatReaction)));
   document.querySelectorAll("[data-strategy-chat-stamp]").forEach((button) => button.addEventListener("click", () => sendStrategyChat("", button.dataset.strategyChatStamp)));
   document.querySelector("#strategyChatForm")?.addEventListener("submit", (event) => {
@@ -1299,6 +1438,7 @@ function openStrategyVideoDialog() {
   const phase = currentStrategyVideoPhase();
   if (!phase) return showToast("現在は短尺映像を送信できません。");
   if (!state.videoChannelReady) return showToast("動画用P2P接続がありません。チャットと対戦はそのまま続けられます。");
+  if (phase === "review" && !state.opponentReviewMediaReceiving) return showToast("相手がメディア受信を停止しています。");
   if (state.videoSentPhases.has(phase)) return showToast("短尺映像は対戦中・品評会中にそれぞれ1本までです。");
   renderStrategyVideoDialog();
   const dialog = ensureStrategyVideoDialog();
@@ -1423,6 +1563,10 @@ async function sendPendingStrategyVideo() {
     showToast("動画用P2P接続がありません。映像以外の対戦機能は続けられます。");
     return;
   }
+  if (phase === "review" && !state.opponentReviewMediaReceiving) {
+    showToast("相手がメディア受信を停止したため送信できません。");
+    return;
+  }
   state.videoSending = true;
   state.videoTransferProgress = 0;
   renderStrategyVideoDialog();
@@ -1476,6 +1620,380 @@ function releaseStrategyVideoData() {
   state.videoSending = false;
   state.videoTransferProgress = 0;
   closeStrategyVideoDialog();
+}
+
+function bindStrategyReviewAssetPanelEvents() {
+  document.querySelector("#strategyReviewMediaToggle")?.addEventListener("click", toggleStrategyReviewMediaReceiving);
+  document.querySelector("#strategyReviewImageInput")?.addEventListener("change", (event) => prepareStrategyReviewImage(event.target.files?.[0]));
+  document.querySelector("#strategyReviewAudioInput")?.addEventListener("change", (event) => prepareStrategyReviewAudio(event.target.files?.[0]));
+  document.querySelector("#strategyReviewAudioRecord")?.addEventListener("click", startStrategyReviewAudioRecording);
+  document.querySelector("#strategyReviewAudioStop")?.addEventListener("click", () => stopStrategyReviewAudioRecording());
+  document.querySelector("#strategyReviewAssetSend")?.addEventListener("click", sendPendingStrategyReviewAsset);
+  document.querySelector("#strategyReviewAssetCancel")?.addEventListener("click", discardPendingStrategyReviewAsset);
+  document.querySelectorAll("[data-strategy-review-asset-delete]").forEach((button) => button.addEventListener("click", () => deleteStrategyReviewAsset(button.dataset.strategyReviewAssetDelete)));
+}
+
+function refreshStrategyReviewAssetPanel() {
+  const panel = document.querySelector("#strategyReviewAssetPanel");
+  if (!panel || state.screen !== "review") return;
+  panel.outerHTML = renderStrategyReviewAssetPanel();
+  bindStrategyReviewAssetPanelEvents();
+}
+
+function sendStrategyReviewMediaPermission() {
+  const message = JSON.stringify({
+    type: "strategy-review-media-permission",
+    enabled: state.reviewMediaReceiving,
+  });
+  const channels = new Set([state.reviewAssetChannel, state.videoChannel]);
+  channels.forEach((channel) => {
+    if (channel?.readyState === "open") channel.send(message);
+  });
+}
+
+function toggleStrategyReviewMediaReceiving() {
+  if (state.screen !== "review" || !strategyReviewIsActive()) return;
+  state.reviewMediaReceiving = !state.reviewMediaReceiving;
+  if (!state.reviewMediaReceiving) {
+    state.incomingReviewAssetTransfer = null;
+    state.incomingVideoTransfer = null;
+  }
+  sendStrategyReviewMediaPermission();
+  refreshStrategyReviewAssetPanel();
+  refreshStrategyVideoPanel();
+  showToast(state.reviewMediaReceiving ? "画像・音声・映像の受信を再開しました。" : "新しい画像・音声・映像の受信を停止しました。");
+}
+
+function createPendingStrategyReviewAsset({
+  kind,
+  blob,
+  url,
+  duration = 0,
+}) {
+  if (state.pendingReviewAsset) releaseStrategyReviewAssetResource(state.pendingReviewAsset);
+  state.pendingReviewAsset = {
+    id: `pending-${kind}-${Date.now()}`,
+    transferId: "",
+    ownerUid: state.uid,
+    phase: "review",
+    kind,
+    blob,
+    url,
+    mime: kind === "image" ? "image/webp" : "audio/wav",
+    size: Number(blob?.size || 0),
+    duration: Number(duration || 0),
+    createdAt: firebaseNow(),
+    released: false,
+  };
+  state.reviewAssetTransferProgress = 0;
+}
+
+async function prepareStrategyReviewImage(file) {
+  if (!file || state.pendingReviewAsset || state.reviewAudioRecording || !strategyReviewIsActive()) return;
+  if (strategyReviewAssetCount(state.uid, "image") >= STRATEGY_REVIEW_IMAGE_LIMIT) {
+    showToast(`追加画像は1人${STRATEGY_REVIEW_IMAGE_LIMIT}枚までです。`);
+    return;
+  }
+  const generation = state.reviewAssetGeneration;
+  setBusy(true, "画像をWebPへ変換しています…");
+  let processed = null;
+  try {
+    const attempts = [
+      { maxSide: 1280, quality: 0.82 },
+      { maxSide: 1024, quality: 0.77 },
+      { maxSide: 800, quality: 0.72 },
+    ];
+    for (const options of attempts) {
+      processed = await shared().processImageFile(file, 0, options);
+      if (processed.blob.size <= STRATEGY_REVIEW_IMAGE_MAX_BYTES) break;
+      releaseStrategyReviewAssetResource(processed);
+      processed = null;
+    }
+    if (!processed?.blob || processed.blob.size > STRATEGY_REVIEW_IMAGE_MAX_BYTES) {
+      throw new Error("画像を約1.5MB以下に変換できませんでした。別の画像を選択してください。");
+    }
+    if (generation !== state.reviewAssetGeneration || !strategyReviewIsActive()) {
+      releaseStrategyReviewAssetResource(processed);
+      return;
+    }
+    createPendingStrategyReviewAsset({
+      kind: "image",
+      blob: processed.blob,
+      url: processed.url,
+    });
+    processed.released = true;
+    processed.blob = null;
+    processed.url = "";
+    showToast("追加画像を準備しました。内容を確認して送信してください。");
+  } catch (error) {
+    if (processed?.blob || processed?.url) releaseStrategyReviewAssetResource(processed);
+    showToast(error?.message || "追加画像を準備できませんでした。");
+  } finally {
+    setBusy(false);
+    refreshStrategyReviewAssetPanel();
+  }
+}
+
+async function prepareStrategyReviewAudio(file) {
+  if (!file || state.pendingReviewAsset || !strategyReviewIsActive()) return;
+  if (strategyReviewAssetCount(state.uid, "audio") >= STRATEGY_REVIEW_AUDIO_LIMIT) {
+    showToast(`追加音声は1人${STRATEGY_REVIEW_AUDIO_LIMIT}本までです。`);
+    return;
+  }
+  const generation = state.reviewAssetGeneration;
+  setBusy(true, "音声を10秒以下・モノラルWAVへ変換しています…");
+  let audio = null;
+  try {
+    audio = await processStrategyAudioFile(file);
+    if (generation !== state.reviewAssetGeneration || !strategyReviewIsActive()) {
+      releaseCardAudio(audio);
+      return;
+    }
+    createPendingStrategyReviewAsset({
+      kind: "audio",
+      blob: audio.audioBlob,
+      url: audio.audioUrl,
+      duration: audio.audioDuration,
+    });
+    audio.audioBlob = null;
+    audio.audioUrl = "";
+    showToast("追加音声を準備しました。試聴してから送信してください。");
+  } catch (error) {
+    if (audio) releaseCardAudio(audio);
+    showToast(error?.message || "追加音声を準備できませんでした。");
+  } finally {
+    setBusy(false);
+    refreshStrategyReviewAssetPanel();
+  }
+}
+
+function preferredStrategyReviewAudioMime() {
+  if (typeof MediaRecorder !== "function" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+  return [
+    "audio/webm;codecs=opus",
+    "audio/ogg;codecs=opus",
+    "audio/mp4",
+    "audio/webm",
+  ].find((type) => {
+    try {
+      return MediaRecorder.isTypeSupported(type);
+    } catch {
+      return false;
+    }
+  }) || "";
+}
+
+function releaseStrategyReviewAudioRecording(recording) {
+  if (!recording) return;
+  window.clearInterval(recording.clockTimer);
+  window.clearTimeout(recording.stopTimer);
+  recording.stream?.getTracks?.().forEach((track) => {
+    try {
+      track.stop();
+    } catch {
+      // A track may already be stopped.
+    }
+  });
+  recording.clockTimer = null;
+  recording.stopTimer = null;
+}
+
+function updateStrategyReviewAudioRecordingClock(recording) {
+  if (state.reviewAudioRecording !== recording) return;
+  const elapsed = Math.min(MAX_AUDIO_SECONDS, Math.max(0, (performance.now() - recording.startedAt) / 1000));
+  const output = document.querySelector("#strategyReviewAudioRecordingTime");
+  if (output) output.textContent = `${elapsed.toFixed(1)} / ${MAX_AUDIO_SECONDS.toFixed(1)}秒`;
+}
+
+async function startStrategyReviewAudioRecording() {
+  if (!strategyReviewIsActive() || state.pendingReviewAsset || state.reviewAudioRecording) return;
+  if (!state.reviewAssetChannelReady || !state.opponentReviewMediaReceiving) {
+    showToast("相手がメディアを受信できる状態ではありません。");
+    return;
+  }
+  if (strategyReviewAssetCount(state.uid, "audio") >= STRATEGY_REVIEW_AUDIO_LIMIT) {
+    showToast(`追加音声は1人${STRATEGY_REVIEW_AUDIO_LIMIT}本までです。`);
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== "function") {
+    showToast("このブラウザはマイク録音に対応していません。音声ファイルを選択してください。");
+    return;
+  }
+  const generation = state.reviewAssetGeneration;
+  let provisionalStream = null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: { ideal: 1, max: 1 },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+    provisionalStream = stream;
+    if (generation !== state.reviewAssetGeneration || !strategyReviewIsActive()) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const mimeType = preferredStrategyReviewAudioMime();
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    const recording = {
+      recorder,
+      stream,
+      chunks: [],
+      startedAt: performance.now(),
+      discarded: false,
+      clockTimer: null,
+      stopTimer: null,
+    };
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) recording.chunks.push(event.data);
+    });
+    recorder.addEventListener("error", () => {
+      recording.discarded = true;
+      showToast("マイク録音中にエラーが発生しました。");
+      if (recorder.state === "recording") recorder.stop();
+    }, { once: true });
+    recorder.addEventListener("stop", async () => {
+      releaseStrategyReviewAudioRecording(recording);
+      if (state.reviewAudioRecording === recording) state.reviewAudioRecording = null;
+      refreshStrategyReviewAssetPanel();
+      if (recording.discarded || generation !== state.reviewAssetGeneration || !strategyReviewIsActive()) return;
+      const blob = new Blob(recording.chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
+      if (!blob.size) {
+        showToast("音声を録音できませんでした。");
+        return;
+      }
+      await prepareStrategyReviewAudio(blob);
+    }, { once: true });
+    state.reviewAudioRecording = recording;
+    recorder.start(250);
+    provisionalStream = null;
+    recording.clockTimer = window.setInterval(() => updateStrategyReviewAudioRecordingClock(recording), 100);
+    recording.stopTimer = window.setTimeout(() => stopStrategyReviewAudioRecording(), MAX_AUDIO_SECONDS * 1000);
+    refreshStrategyReviewAssetPanel();
+    updateStrategyReviewAudioRecordingClock(recording);
+  } catch (error) {
+    provisionalStream?.getTracks?.().forEach((track) => track.stop());
+    if (state.reviewAudioRecording?.stream === provisionalStream) state.reviewAudioRecording = null;
+    showToast(error?.name === "NotAllowedError" ? "マイクの使用が許可されませんでした。" : error?.message || "マイク録音を開始できませんでした。");
+  }
+}
+
+function stopStrategyReviewAudioRecording({ discard = false } = {}) {
+  const recording = state.reviewAudioRecording;
+  if (!recording) return;
+  if (discard) recording.discarded = true;
+  window.clearTimeout(recording.stopTimer);
+  if (recording.recorder?.state === "recording") recording.recorder.stop();
+  else {
+    releaseStrategyReviewAudioRecording(recording);
+    if (state.reviewAudioRecording === recording) state.reviewAudioRecording = null;
+  }
+}
+
+function discardPendingStrategyReviewAsset() {
+  if (state.reviewAssetSending || !state.pendingReviewAsset) return;
+  releaseStrategyReviewAssetResource(state.pendingReviewAsset);
+  state.pendingReviewAsset = null;
+  state.reviewAssetTransferProgress = 0;
+  refreshStrategyReviewAssetPanel();
+}
+
+function waitForStrategyReviewAssetBuffer(channel) {
+  if (!channel || channel.readyState !== "open") return Promise.reject(new Error("品評会メディアのP2P接続が切れました。"));
+  if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => done(new Error("品評会メディア転送の待機時間を超えました。")), 10_000);
+    const done = (error) => {
+      window.clearTimeout(timeout);
+      channel.removeEventListener("bufferedamountlow", onLow);
+      channel.removeEventListener("close", onClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onLow = () => done();
+    const onClose = () => done(new Error("品評会メディアのP2P接続が切れました。"));
+    channel.addEventListener("bufferedamountlow", onLow, { once: true });
+    channel.addEventListener("close", onClose, { once: true });
+  });
+}
+
+async function sendPendingStrategyReviewAsset() {
+  const asset = state.pendingReviewAsset;
+  if (!asset || state.reviewAssetSending) return;
+  const limit = strategyReviewAssetLimit(asset.kind);
+  if (strategyReviewAssetCount(state.uid, asset.kind) >= limit) {
+    showToast(asset.kind === "image" ? `追加画像は1人${limit}枚までです。` : `追加音声は1人${limit}本までです。`);
+    return;
+  }
+  if (!strategyReviewIsActive() || !state.reviewAssetChannelReady || !state.opponentReviewMediaReceiving) {
+    showToast("品評会メディアを送信できる状態ではありません。");
+    return;
+  }
+  state.reviewAssetSending = true;
+  state.reviewAssetTransferProgress = 0;
+  refreshStrategyReviewAssetPanel();
+  try {
+    const transfer = await sendStrategyReviewAsset(state.reviewAssetChannel, asset, {
+      transferId: createStrategyReviewAssetTransferId(),
+      ownerUid: state.uid,
+      createdAt: firebaseNow(),
+    }, {
+      waitForBuffer: waitForStrategyReviewAssetBuffer,
+      isActive: () => active
+        && strategyReviewIsActive()
+        && state.pendingReviewAsset === asset
+        && state.opponentReviewMediaReceiving
+        && state.reviewAssetChannel?.readyState === "open",
+      onProgress: (progress) => {
+        state.reviewAssetTransferProgress = progress;
+        const output = document.querySelector("#strategyReviewAssetProgress");
+        if (output) output.textContent = `${progress}%`;
+      },
+    });
+    Object.assign(asset, {
+      id: transfer.transferId,
+      transferId: transfer.transferId,
+      ownerUid: state.uid,
+      createdAt: transfer.createdAt,
+      duration: transfer.duration,
+      size: transfer.size,
+    });
+    state.pendingReviewAsset = null;
+    state.reviewAssets.push(asset);
+    state.reviewAssetSentCounts[asset.kind] += 1;
+    showToast(asset.kind === "image" ? "追加画像を相手へ一時送信しました。" : "追加音声を相手へ一時送信しました。");
+  } catch (error) {
+    console.error(error);
+    showToast(error?.message || "品評会メディアを送信できませんでした。チャットは続けられます。");
+  } finally {
+    state.reviewAssetSending = false;
+    state.reviewAssetTransferProgress = 0;
+    refreshStrategyReviewAssetPanel();
+  }
+}
+
+function deleteStrategyReviewAsset(assetId) {
+  const index = state.reviewAssets.findIndex((asset) => asset.id === assetId);
+  if (index < 0) return;
+  releaseStrategyReviewAssetResource(state.reviewAssets[index]);
+  state.reviewAssets.splice(index, 1);
+  refreshStrategyReviewAssetPanel();
+}
+
+function releaseStrategyReviewAssetData() {
+  state.reviewAssetGeneration += 1;
+  stopStrategyReviewAudioRecording({ discard: true });
+  if (state.pendingReviewAsset) releaseStrategyReviewAssetResource(state.pendingReviewAsset);
+  state.pendingReviewAsset = null;
+  releaseStrategyReviewAssetResources(state.reviewAssets);
+  state.incomingReviewAssetTransfer = null;
+  state.reviewAssetSending = false;
+  state.reviewAssetTransferProgress = 0;
+  state.reviewAssetSentCounts = { image: 0, audio: 0 };
+  state.reviewAssetReceivedCounts = { image: 0, audio: 0 };
 }
 
 function syncStrategyProfileDraft() {
@@ -1876,6 +2394,7 @@ async function setupPeerConnection() {
   };
   peer.ondatachannel = (event) => {
     if (event.channel.label === STRATEGY_VIDEO_CHANNEL_LABEL) configureVideoDataChannel(event.channel);
+    else if (event.channel.label === STRATEGY_REVIEW_ASSET_CHANNEL_LABEL) configureStrategyReviewAssetDataChannel(event.channel);
     else if (event.channel.label === "hariai-strategy-images") configureDataChannel(event.channel);
     else event.channel.close();
   };
@@ -1888,6 +2407,8 @@ async function setupPeerConnection() {
     configureDataChannel(channel);
     const videoChannel = peer.createDataChannel(STRATEGY_VIDEO_CHANNEL_LABEL, { ordered: true });
     configureVideoDataChannel(videoChannel);
+    const reviewAssetChannel = peer.createDataChannel(STRATEGY_REVIEW_ASSET_CHANNEL_LABEL, { ordered: true });
+    configureStrategyReviewAssetDataChannel(reviewAssetChannel);
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
@@ -1943,16 +2464,22 @@ function configureVideoDataChannel(channel) {
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
     state.videoChannelReady = true;
+    state.opponentReviewMediaReceiving = true;
+    sendStrategyReviewMediaPermission();
     refreshStrategyVideoPanel();
   };
   channel.onclose = () => {
     state.videoChannelReady = false;
     state.incomingVideoTransfer = null;
+    if (state.reviewAssetChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
+    refreshStrategyReviewAssetPanel();
     refreshStrategyVideoPanel();
   };
   channel.onerror = () => {
     state.videoChannelReady = false;
+    if (state.reviewAssetChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
     showToast("短尺映像のP2P通信に失敗しました。チャットと対戦は続けられます。");
+    refreshStrategyReviewAssetPanel();
     refreshStrategyVideoPanel();
   };
   channel.onmessage = (event) => handleVideoChannelMessage(event.data).catch((error) => {
@@ -1962,13 +2489,107 @@ function configureVideoDataChannel(channel) {
   });
 }
 
+function configureStrategyReviewAssetDataChannel(channel) {
+  state.reviewAssetChannel = channel;
+  channel.binaryType = "arraybuffer";
+  channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
+  channel.onopen = () => {
+    state.reviewAssetChannelReady = true;
+    state.opponentReviewMediaReceiving = true;
+    sendStrategyReviewMediaPermission();
+    refreshStrategyReviewAssetPanel();
+  };
+  channel.onclose = () => {
+    state.reviewAssetChannelReady = false;
+    if (state.videoChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
+    state.incomingReviewAssetTransfer = null;
+    refreshStrategyReviewAssetPanel();
+    refreshStrategyVideoPanel();
+  };
+  channel.onerror = () => {
+    state.reviewAssetChannelReady = false;
+    if (state.videoChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
+    state.incomingReviewAssetTransfer = null;
+    showToast("品評会メディアのP2P通信に失敗しました。チャットは続けられます。");
+    refreshStrategyReviewAssetPanel();
+    refreshStrategyVideoPanel();
+  };
+  channel.onmessage = (event) => handleStrategyReviewAssetChannelMessage(event.data).catch((error) => {
+    state.incomingReviewAssetTransfer = null;
+    console.error(error);
+    showToast(error?.message || "品評会メディアを受信できませんでした。チャットは続けられます。");
+  });
+}
+
+async function handleStrategyReviewAssetChannelMessage(data) {
+  if (typeof data === "string") {
+    if (data.length > 4096) throw new Error("品評会メディアの制御情報が大きすぎます。");
+    const message = JSON.parse(data);
+    if (message.type === "strategy-review-media-permission") {
+      state.opponentReviewMediaReceiving = message.enabled === true;
+      if (!state.opponentReviewMediaReceiving && state.reviewAssetSending) {
+        showToast("相手がメディア受信を停止しました。進行中の送信を中止します。");
+      }
+      refreshStrategyReviewAssetPanel();
+      refreshStrategyVideoPanel();
+      return;
+    }
+    if (message.type === "strategy-review-asset-start") {
+      if (!strategyReviewIsActive() || !state.reviewMediaReceiving) throw new Error("現在は品評会メディアを受信しません。");
+      const kind = String(message.kind || "");
+      if (strategyReviewAssetCount(state.opponentUid, kind) >= strategyReviewAssetLimit(kind)) {
+        throw new Error(kind === "image" ? `相手からの追加画像は${STRATEGY_REVIEW_IMAGE_LIMIT}枚までです。` : `相手からの追加音声は${STRATEGY_REVIEW_AUDIO_LIMIT}本までです。`);
+      }
+      state.incomingReviewAssetTransfer = createIncomingStrategyReviewAssetTransfer(message, {
+        currentTransfer: state.incomingReviewAssetTransfer,
+        expectedOwnerUid: state.opponentUid,
+        now: firebaseNow(),
+      });
+      return;
+    }
+    if (message.type === "strategy-review-asset-end") {
+      const transfer = state.incomingReviewAssetTransfer;
+      if (!transfer) return;
+      state.incomingReviewAssetTransfer = null;
+      const asset = await finishIncomingStrategyReviewAssetTransfer(transfer, message);
+      if (!strategyReviewIsActive() || !state.reviewMediaReceiving) {
+        releaseStrategyReviewAssetResource(asset);
+        return;
+      }
+      if (strategyReviewAssetCount(state.opponentUid, asset.kind) >= strategyReviewAssetLimit(asset.kind)) {
+        releaseStrategyReviewAssetResource(asset);
+        throw new Error(asset.kind === "image" ? `相手からの追加画像は${STRATEGY_REVIEW_IMAGE_LIMIT}枚までです。` : `相手からの追加音声は${STRATEGY_REVIEW_AUDIO_LIMIT}本までです。`);
+      }
+      state.reviewAssets.push(asset);
+      state.reviewAssetReceivedCounts[asset.kind] += 1;
+      refreshStrategyReviewAssetPanel();
+      showToast(asset.kind === "image" ? "相手から追加画像を受信しました。" : "相手から追加音声を受信しました。自動再生はしません。");
+    }
+    return;
+  }
+  if (!state.incomingReviewAssetTransfer) return;
+  try {
+    await appendStrategyReviewAssetChunk(state.incomingReviewAssetTransfer, data);
+  } catch (error) {
+    state.incomingReviewAssetTransfer = null;
+    throw error;
+  }
+}
+
 async function handleVideoChannelMessage(data) {
   if (typeof data === "string") {
     if (data.length > 4096) throw new Error("動画転送の制御情報が大きすぎます。");
     const message = JSON.parse(data);
+    if (message.type === "strategy-review-media-permission") {
+      state.opponentReviewMediaReceiving = message.enabled === true;
+      refreshStrategyReviewAssetPanel();
+      refreshStrategyVideoPanel();
+      return;
+    }
     if (message.type === "strategy-video-start") {
       const phase = currentStrategyVideoPhase();
       if (!phase || message.phase !== phase) throw new Error("現在のフェーズでは短尺映像を受信できません。");
+      if (phase === "review" && !state.reviewMediaReceiving) throw new Error("現在は品評会メディアを受信しません。");
       if (state.videoReceivedPhases.has(phase)) throw new Error("相手からの短尺映像は各フェーズ1本までです。");
       state.incomingVideoTransfer = createIncomingStrategyVideoTransfer(message, {
         currentTransfer: state.incomingVideoTransfer,
@@ -1981,8 +2602,13 @@ async function handleVideoChannelMessage(data) {
     }
     if (message.type === "strategy-video-end") {
       const transfer = state.incomingVideoTransfer;
+      if (!transfer) return;
       state.incomingVideoTransfer = null;
       const clip = finishIncomingStrategyVideoTransfer(transfer, message);
+      if (clip.phase === "review" && (!strategyReviewIsActive() || !state.reviewMediaReceiving)) {
+        releaseStrategyVideoResource(clip);
+        return;
+      }
       if (state.videoReceivedPhases.has(clip.phase)) {
         releaseStrategyVideoResource(clip);
         throw new Error("相手からの短尺映像は各フェーズ1本までです。");
@@ -1994,6 +2620,7 @@ async function handleVideoChannelMessage(data) {
     }
     return;
   }
+  if (!state.incomingVideoTransfer) return;
   try {
     await appendStrategyVideoChunk(state.incomingVideoTransfer, data);
   } catch (error) {
@@ -2187,6 +2814,7 @@ function finishReviewLocally(reason) {
   stopReviewClock();
   stopStrategyVideoRecording({ discard: true });
   releaseStrategyVideoData();
+  releaseStrategyReviewAssetData();
   state.reviewEndReason = reason;
   state.reviewLocallyEnded = true;
   if (state.screen !== "gameover") {
@@ -2219,6 +2847,7 @@ async function submitReviewDecision(decision) {
     if (decision === "decline") {
       stopStrategyVideoRecording({ discard: true });
       releaseStrategyVideoData();
+      releaseStrategyReviewAssetData();
     }
   } catch (error) {
     console.error(error);
@@ -2269,6 +2898,7 @@ async function reactToReviewData() {
   if (declined) {
     stopStrategyVideoRecording({ discard: true });
     releaseStrategyVideoData();
+    releaseStrategyReviewAssetData();
     if (state.screen === "review") finishReviewLocally("left");
     else if (state.screen === "gameover") render();
     return;
@@ -3284,11 +3914,16 @@ async function cleanupOnlineResources(keepActive) {
   }
   state.channel?.close();
   state.videoChannel?.close();
+  state.reviewAssetChannel?.close();
   state.peer = null;
   state.channel = null;
   state.videoChannel = null;
   state.videoChannelReady = false;
   state.incomingVideoTransfer = null;
+  state.reviewAssetChannel = null;
+  state.reviewAssetChannelReady = false;
+  state.opponentReviewMediaReceiving = false;
+  state.incomingReviewAssetTransfer = null;
   if (state.roomId) {
     await Promise.allSettled([
       set(ref(database, `online/strategyRooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
@@ -3305,6 +3940,7 @@ function releaseMatchMedia() {
   state.remoteImages.clear();
   releaseRemoteAvatar();
   releaseStrategyVideoData();
+  releaseStrategyReviewAssetData();
   state.chatMessages = [];
   state.seenChatIds.clear();
 }
