@@ -122,6 +122,7 @@ test("queue indexes cover affordable discover and targeted-shop scans", () => {
     .filter((index) => index.collectionGroup === "valueMarketQueues")
     .map((index) => index.fields.map((field) => field.fieldPath).join(","));
   assert.ok(fieldSets.includes("selectedFavoriteSellerUid,status,lastSeen"));
+  assert.ok(fieldSets.includes("preferredSellerUid,status,lastSeen"));
   assert.ok(fieldSets.includes("role,status,matchMode,maxBudget,lastSeen"));
   assert.ok(fieldSets.includes("role,status,listing.askingPrice,lastSeen"));
 });

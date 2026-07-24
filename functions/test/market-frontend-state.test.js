@@ -116,8 +116,10 @@ test("queue join is locked and snapshots its role and target", () => {
   );
   assert.match(browser, /const joinedRole = state\.role;/);
   assert.match(browser, /const joinedFavoritePublicSellerId =/);
+  assert.match(browser, /const joinedPreferredPublicSellerId =/);
   assert.match(browser, /role:\s*joinedRole/);
   assert.match(browser, /favoritePublicSellerId:\s*joinedFavoritePublicSellerId/);
+  assert.match(browser, /preferredPublicSellerId:\s*joinedPreferredPublicSellerId/);
 });
 
 test("stale queue responses cannot rewind a newer room or queue attempt", () => {
@@ -184,4 +186,126 @@ test("failed shop saves stay visibly unsaved and cannot enter the seller queue",
     /joinedRole === "seller" && state\.shopStatus === "save-error"/,
   );
   assert.match(browser, /店主カードが未保存です。再保存してから待機してください。/);
+});
+
+test("patron fund state is normalized from economy and shop responses", () => {
+  for (const field of [
+    "seasonKey",
+    "contributed",
+    "burned",
+    "budget",
+    "subsidyPaid",
+    "remaining",
+    "supportedDeals",
+    "activePolicy",
+    "votes",
+    "viewerVote",
+  ]) {
+    assert.match(browser, new RegExp(`${field}[,:]`), `patronFund.${field} should be normalized`);
+  }
+  assert.match(browser, /patronFund:\s*normalizePatronFund\(null\)/);
+  assert.match(browser, /patronImpact:\s*normalizePatronImpact\(null\)/);
+  assert.match(browser, /recommendations:\s*\[\]/);
+  assert.match(browser, /recommendedShelf:\s*\[\]/);
+  assert.match(
+    browser,
+    /state\.patron = normalizeMarketPatron\(response\.data\?\.patron\);\s*applyMarketPatronExperience\(response\.data\);/,
+    "economy initialization should hydrate the patron-fund contract",
+  );
+  assert.match(
+    browser,
+    /function applyMarketShopResponse\(value\) \{[\s\S]*?applyMarketPatronExperience\(data\);/,
+    "shop responses should refresh fund impact and discovery data",
+  );
+});
+
+test("patron fund subsidies produce correct seller proceeds without purchase-hoarding copy", () => {
+  assert.match(browser, /patronFundSubsidy/);
+  assert.match(browser, /function maximumPatronFundSubsidy\(feeValue\)/);
+  assert.match(browser, /Math\.floor\(fee \/ 2\)/);
+  assert.match(browser, /PATRON_FUND_MAX_SUBSIDY_PER_SALE/);
+  assert.match(browser, /fee - 1/);
+  assert.match(
+    browser,
+    /grossAmount - feeAmount \+ patronFundSubsidy/,
+    "seller proceeds should add the server-authorized subsidy back after the fee",
+  );
+  assert.match(browser, /パトロン基金補填/);
+  assert.match(browser, /PATRON BACKED/);
+  assert.match(browser, /function purchaseBalanceCopy\(purchasePrice\)/);
+  assert.match(browser, /購入後のAnjuPay残高は/);
+  assert.match(
+    browser,
+    /grossAmount: 100, feeAmount: 5, patronFundSubsidy: 2, sellerProceeds: 97/,
+    "the local preview should demonstrate half-fee support rather than a full fee refund",
+  );
+  assert.doesNotMatch(browser, /function patronOpportunityCopy\(/);
+  assert.doesNotMatch(browser, /次の\$\{next\.label\}[\s\S]*?残せます/);
+  assert.match(
+    browser,
+    /settlement\.patronFundSubsidy > 0[\s\S]*?renderPatronBackedBadge/,
+    "terminal results should show patron backing only when a subsidy exists",
+  );
+  assert.match(
+    browser,
+    /renderPatronBackedBadge\(settlement\.patronFundSubsidy,\s*\{\s*compact:\s*true\s*\}\)/,
+    "certificates should carry the same conditional backing mark",
+  );
+});
+
+test("regular-book and certificate shops can be recommended without allocating Pay", () => {
+  assert.match(browser, /recommendationBusySellerId:\s*""/);
+  assert.match(browser, /data-market-recommend-shop=/);
+  assert.match(browser, /renderMarketRecommendationAction\(favorite\.publicSellerId\)/);
+  assert.match(
+    browser,
+    /renderMarketRecommendationAction\(normalizeMarketShop\(certificate\?\.sellerShop\)\.publicSellerId\)/,
+  );
+  assert.match(browser, /action:\s*requestedRecommendation \? "recommend_shop" : "remove_recommendation"/);
+  assert.match(browser, /publicSellerId:\s*sellerId/);
+  assert.match(browser, /推薦はPayの配分ではありません/);
+  assert.match(browser, /推薦によって基金のPay配分やランキングは変わりません/);
+  assert.match(browser, /applyMarketPatronExperience\(responseData\)/);
+});
+
+test("recommended shelf offers an accessible soft matchmaking preference", () => {
+  assert.match(browser, /const MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS = 20_000;/);
+  assert.match(browser, /preferredRecommendedSellerId:\s*""/);
+  assert.match(browser, /data-market-prefer-recommended=/);
+  assert.match(browser, /aria-pressed="\$\{selected\}"/);
+  assert.match(browser, /この商店を優先して探す/);
+  assert.match(browser, /見つからなければ通常の商店探しへ広がります/);
+  assert.match(
+    browser,
+    /state\.preferredRecommendedSellerId = removing \? "" : sellerId;\s*state\.matchMode = "discover";/,
+    "choosing a recommendation should remain discovery and must not become favorite-only matching",
+  );
+  assert.match(
+    browser,
+    /最初の\$\{MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS \/ 1000\}秒だけ優先し、その後は通常検索/,
+  );
+  assert.match(browser, /joinButton\?\.scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/);
+  assert.match(browser, /function focusRecommendedPreferenceButton\(publicSellerId\)/);
+  assert.match(browser, /if \(removing\) focusRecommendedPreferenceButton\(sellerId\)/);
+  assert.ok(
+    browser.indexOf('<div class="market-entry-grid">')
+      < browser.indexOf("${seller ? renderMarketShopSettings() : renderMarketFavoritesBook()}"),
+    "the core join form should appear before the detailed shop and regular-book panels",
+  );
+  assert.ok(
+    browser.indexOf("${seller ? renderMarketShopSettings() : renderMarketFavoritesBook()}")
+      < browser.indexOf("${renderPatronFundPanel()}"),
+    "fund panels should stay below the actionable setup",
+  );
+  assert.match(browser, /id="marketSetupOptionsButton"/);
+  assert.match(browser, /market-preferred-summary/);
+});
+
+test("unavailable recommendations remain removable from a collapsed management path", () => {
+  assert.match(browser, /const unavailable = source\.unavailable === true;/);
+  assert.match(browser, /shop: shop \? \{ \.\.\.shop, publicSellerId \} : null/);
+  assert.match(browser, /function renderUnavailableRecommendationManagement\(\)/);
+  assert.match(browser, /<details class="market-safety-note market-recommendation-maintenance">/);
+  assert.match(browser, /data-market-recommend-action="remove"/);
+  assert.match(browser, /表示できない推薦 \$\{unavailable\.length\}件を管理/);
 });

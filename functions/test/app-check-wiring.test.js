@@ -83,7 +83,9 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   for (const functionName of callableNames) {
     assert.match(source, new RegExp(`onCall\\(callableOptions\\("${functionName}"\\)`));
   }
-  assert.equal((source.match(/Boolean\(request\.app\)/g) || []).length, 2);
+  assert.equal((source.match(/Boolean\(request\.app\)/g) || []).length, 4);
+  assert.match(source, /updatePatronRecommendation\(uid, request\.data, false, Boolean\(request\.app\)\)/);
+  assert.match(source, /updatePatronRecommendation\(uid, request\.data, true, Boolean\(request\.app\)\)/);
   assert.match(source, /appCheckVerified:/);
   assert.match(source, /functionName === "accountTransfer"\) options\.consumeAppCheckToken = true/);
   const accountSource = read("account.js");

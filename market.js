@@ -52,6 +52,7 @@ const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
 const ENTRY_FEE = 5;
 const MAX_TURNS = 3;
 const MARKET_PRICES = Object.freeze([10, 25, 50, 100, 200, 300, 500]);
+const MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS = 20_000;
 const DEFAULT_MARKET_POLICY = Object.freeze({
   successFeeBasisPoints: 500,
   minimumSuccessFee: 1,
@@ -115,6 +116,16 @@ const MARKET_SHOP_FALLBACK_CATALOG = Object.freeze({
     Object.freeze({ id: "want_more", label: "もっと見たい" }),
   ]),
 });
+const PATRON_FUND_POLICY_LABELS = Object.freeze({
+  balanced: "出会いと常連",
+  discovery: "新しい出会い",
+  trust: "常連の信頼",
+});
+const PATRON_FUND_KIND_LABELS = Object.freeze({
+  discovery: "新しい商店との成立",
+  trust: "常連商店との成立",
+});
+const PATRON_FUND_MAX_SUBSIDY_PER_SALE = 10;
 
 const useMarketPreview = useOfflineMarketPreview;
 const economyActionCallable = httpsCallable(functions, "economyAction");
@@ -138,6 +149,12 @@ function createState() {
     authReady: false,
     balance: 0,
     patron: normalizeMarketPatron(null),
+    patronFund: normalizePatronFund(null),
+    patronImpact: normalizePatronImpact(null),
+    recommendations: [],
+    recommendedShelf: [],
+    recommendationBusySellerId: "",
+    preferredRecommendedSellerId: "",
     marketPolicy: { ...DEFAULT_MARKET_POLICY },
     listingTitle: "",
     askingPrice: 50,
@@ -282,31 +299,69 @@ function normalizeMarketPolicy(value) {
   return { successFeeBasisPoints, minimumSuccessFee };
 }
 
+function maximumPatronFundSubsidy(feeValue) {
+  const fee = normalizeNonNegativeInteger(feeValue, 500);
+  if (fee < 2) return 0;
+  return Math.min(
+    Math.floor(fee / 2),
+    PATRON_FUND_MAX_SUBSIDY_PER_SALE,
+    fee - 1,
+  );
+}
+
 function marketSettlement(price, room = null) {
   const grossAmount = Math.max(0, Math.floor(Number(price || 0)));
   const quote = room?.settlementQuote;
+  const quotedFee = Math.max(0, Number(quote?.feeAmount || 0));
+  const quotedSubsidy = Math.min(
+    maximumPatronFundSubsidy(quotedFee),
+    normalizeNonNegativeInteger(
+      room?.patronFundSubsidy ?? quote?.patronFundSubsidy,
+      maximumPatronFundSubsidy(quotedFee),
+    ),
+  );
   if (Number(quote?.grossAmount) === grossAmount
       && Number.isInteger(Number(quote?.feeAmount))
       && Number.isInteger(Number(quote?.sellerProceeds))
       && Number(quote.feeAmount) >= 0
-      && Number(quote.sellerProceeds) + Number(quote.feeAmount) === grossAmount) {
+      && quotedSubsidy <= Number(quote.feeAmount)
+      && Number(quote.sellerProceeds) + Number(quote.feeAmount) - quotedSubsidy === grossAmount) {
     return {
       grossAmount,
       feeAmount: Number(quote.feeAmount),
+      patronFundSubsidy: quotedSubsidy,
       sellerProceeds: Number(quote.sellerProceeds),
     };
   }
   const policy = normalizeMarketPolicy(state.marketPolicy);
-  const feeAmount = grossAmount
+  const calculatedFee = grossAmount
     ? Math.max(
       policy.minimumSuccessFee,
       Math.ceil((grossAmount * policy.successFeeBasisPoints) / 10_000),
     )
     : 0;
+  const serverFee = Number(room?.marketFee);
+  const feeAmount = Number.isInteger(serverFee) && serverFee >= 0
+    ? Math.min(grossAmount, serverFee)
+    : calculatedFee;
+  const patronFundSubsidy = Math.min(
+    maximumPatronFundSubsidy(feeAmount),
+    normalizeNonNegativeInteger(
+      room?.patronFundSubsidy,
+      maximumPatronFundSubsidy(feeAmount),
+    ),
+  );
+  const serverSellerProceeds = Number(room?.sellerProceeds);
+  const calculatedProceeds = Math.max(0, grossAmount - feeAmount + patronFundSubsidy);
   return {
     grossAmount,
     feeAmount,
-    sellerProceeds: Math.max(0, grossAmount - feeAmount),
+    patronFundSubsidy,
+    sellerProceeds: Number.isInteger(serverSellerProceeds)
+      && serverSellerProceeds >= 0
+      && serverSellerProceeds + feeAmount - patronFundSubsidy === grossAmount
+      ? serverSellerProceeds
+      : calculatedProceeds,
   };
 }
 
@@ -315,6 +370,7 @@ function renderMarketFeeBreakdown(price, { id = "", room = null, compact = false
   return `<dl class="market-fee-breakdown ${compact ? "is-compact" : ""}" ${id ? `id="${id}" aria-live="polite"` : ""}>
     <div><dt>成約価格</dt><dd>${formatAnjuPay(settlement.grossAmount)}</dd></div>
     <div><dt>成約手数料（売り手負担）</dt><dd>−${formatAnjuPay(settlement.feeAmount)}</dd></div>
+    ${settlement.patronFundSubsidy > 0 ? `<div><dt>パトロン基金補填</dt><dd>＋${formatAnjuPay(settlement.patronFundSubsidy)}</dd></div>` : ""}
     <div><dt>売り手受取</dt><dd>${formatAnjuPay(settlement.sellerProceeds)}</dd></div>
     <div><dt>買い手支払</dt><dd>${formatAnjuPay(settlement.grossAmount)}</dd></div>
   </dl>`;
@@ -326,21 +382,14 @@ function renderMarketPatronBadge(value, { compact = false } = {}) {
   return `<span class="market-patron-badge tier-${patron.id} ${compact ? "is-compact" : ""}"><b aria-hidden="true">${patron.icon}</b>${escapeHtml(patron.label)}</span>`;
 }
 
-function patronOpportunityCopy(purchasePrice) {
-  const patron = normalizeMarketPatron(state.patron);
-  const tiers = [
-    { label: "SUPPORTER", threshold: 300 },
-    { label: "PATRON", threshold: 1_500 },
-    { label: "GRAND PATRON", threshold: 5_000 },
-  ];
-  const next = tiers.find((tier) => tier.threshold > patron.seasonSpent);
+function renderPatronBackedBadge(value, { compact = false } = {}) {
+  if (normalizeNonNegativeInteger(value) <= 0) return "";
+  return `<span class="market-patron-badge tier-grand_patron ${compact ? "is-compact" : ""}"><b aria-hidden="true">◆</b>PATRON BACKED</span>`;
+}
+
+function purchaseBalanceCopy(purchasePrice) {
   const after = Math.max(0, state.balance - Math.max(0, Number(purchasePrice || 0)));
-  if (!next) return `購入後のAnjuPay残高 ${formatAnjuPay(after)}。今月の最高パトロンランクを獲得済みです。`;
-  const needed = next.threshold - patron.seasonSpent;
-  const shortage = Math.max(0, needed - after);
-  return shortage
-    ? `購入後のAnjuPay残高 ${formatAnjuPay(after)}。次の${next.label}には${formatAnjuPay(needed)}が必要です（あと${formatAnjuPay(shortage)}足りません）。`
-    : `購入後のAnjuPay残高 ${formatAnjuPay(after)}。次の${next.label}に必要な${formatAnjuPay(needed)}を残せます。`;
+  return `購入後のAnjuPay残高は${formatAnjuPay(after)}です。`;
 }
 
 function marketActionIdentity(action, roomId, turn, extra = {}) {
@@ -398,6 +447,61 @@ function sanitizeMarketPublicProfile(value) {
 
 function normalizeShopText(value, maximum) {
   return String(value || "").trim().replace(/[\u0000-\u001f\u007f\r\n]+/g, " ").replace(/\s+/g, " ").slice(0, maximum);
+}
+
+function normalizeNonNegativeInteger(value, maximum = 999_999_999) {
+  const number = Math.floor(Number(value));
+  return Number.isFinite(number) ? Math.min(maximum, Math.max(0, number)) : 0;
+}
+
+function normalizePatronFundPolicy(value) {
+  const policy = String(value || "").trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PATRON_FUND_POLICY_LABELS, policy) ? policy : "";
+}
+
+function normalizePatronFundKind(value) {
+  const kind = String(value || "").trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PATRON_FUND_KIND_LABELS, kind) ? kind : "";
+}
+
+function normalizePatronFund(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const contributed = normalizeNonNegativeInteger(source.contributed);
+  const budget = Math.min(contributed || 999_999_999, normalizeNonNegativeInteger(source.budget));
+  const subsidyPaid = Math.min(budget, normalizeNonNegativeInteger(source.subsidyPaid));
+  const remaining = Math.min(
+    budget,
+    normalizeNonNegativeInteger(
+      source.remaining === undefined ? Math.max(0, budget - subsidyPaid) : source.remaining,
+    ),
+  );
+  const votesSource = source.votes && typeof source.votes === "object" ? source.votes : {};
+  return {
+    seasonKey: normalizeShopText(source.seasonKey, 16),
+    contributed,
+    burned: normalizeNonNegativeInteger(source.burned),
+    budget,
+    subsidyPaid,
+    remaining,
+    supportedDeals: normalizeNonNegativeInteger(source.supportedDeals, 100_000),
+    activePolicy: normalizePatronFundPolicy(source.activePolicy),
+    votes: Object.fromEntries(Object.keys(PATRON_FUND_POLICY_LABELS).map((policy) => (
+      [policy, normalizeNonNegativeInteger(votesSource[policy], 100_000)]
+    ))),
+    viewerVote: normalizePatronFundPolicy(source.viewerVote) || null,
+  };
+}
+
+function normalizePatronImpact(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const recommendationLimit = normalizeNonNegativeInteger(source.recommendationLimit, 100);
+  return {
+    recommendationLimit,
+    recommendedShopCount: Math.min(
+      recommendationLimit || 100,
+      normalizeNonNegativeInteger(source.recommendedShopCount, 100),
+    ),
+  };
 }
 
 function normalizeShopOptionId(value) {
@@ -584,6 +688,96 @@ function normalizeMarketFavorites(value) {
   return favorites.sort((first, second) => second.favoritedAt - first.favoritedAt);
 }
 
+function normalizeMarketRecommendation(value, fallbackId = "") {
+  const source = value && typeof value === "object" ? value : {};
+  const unavailable = source.unavailable === true;
+  const shop = unavailable
+    ? null
+    : normalizeMarketShop(source.shop || source.sellerShop || source);
+  const publicSellerId = normalizeShopText(
+    source.publicSellerId || source.sellerPublicId || shop?.publicSellerId || fallbackId,
+    96,
+  );
+  if (!publicSellerId) return null;
+  return {
+    publicSellerId,
+    shop: shop ? { ...shop, publicSellerId } : null,
+    unavailable,
+    recommendedAt: normalizeNonNegativeInteger(source.recommendedAt || source.updatedAt),
+  };
+}
+
+function normalizeMarketRecommendations(value) {
+  const source = Array.isArray(value)
+    ? value.map((recommendation) => ["", recommendation])
+    : value && typeof value === "object"
+      ? Object.entries(value)
+      : [];
+  const seen = new Set();
+  const recommendations = [];
+  for (const [fallbackId, rawRecommendation] of source) {
+    const recommendation = normalizeMarketRecommendation(rawRecommendation, fallbackId);
+    if (!recommendation || seen.has(recommendation.publicSellerId)) continue;
+    seen.add(recommendation.publicSellerId);
+    recommendations.push(recommendation);
+  }
+  return recommendations.sort((first, second) => second.recommendedAt - first.recommendedAt);
+}
+
+function normalizeRecommendedShelf(value) {
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const shops = [];
+  for (const rawShop of source) {
+    const shop = normalizeMarketShop(rawShop);
+    if (!shop.publicSellerId || seen.has(shop.publicSellerId)) continue;
+    seen.add(shop.publicSellerId);
+    shops.push(shop);
+  }
+  return shops.slice(0, 30);
+}
+
+function applyMarketPatronExperience(value) {
+  const data = value && typeof value === "object" ? value : {};
+  if (Object.prototype.hasOwnProperty.call(data, "patronFund")) {
+    state.patronFund = normalizePatronFund(data.patronFund);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "patronImpact")) {
+    state.patronImpact = normalizePatronImpact(data.patronImpact);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "recommendations")) {
+    state.recommendations = normalizeMarketRecommendations(data.recommendations);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "recommendedShelf")) {
+    state.recommendedShelf = normalizeRecommendedShelf(data.recommendedShelf);
+  }
+}
+
+function normalizeMarketRoom(value) {
+  const room = value && typeof value === "object" ? { ...value } : {};
+  const price = normalizeNonNegativeInteger(room.salePrice || room.listing?.askingPrice, 999_999);
+  const fee = Math.min(price, normalizeNonNegativeInteger(
+    room.marketFee ?? room.settlementQuote?.feeAmount,
+    price,
+  ));
+  room.patronFundSubsidy = Math.min(
+    maximumPatronFundSubsidy(fee),
+    normalizeNonNegativeInteger(
+      room.patronFundSubsidy ?? room.settlementQuote?.patronFundSubsidy,
+      maximumPatronFundSubsidy(fee),
+    ),
+  );
+  room.patronFundPolicy = normalizePatronFundPolicy(room.patronFundPolicy);
+  room.patronFundKind = normalizePatronFundKind(room.patronFundKind);
+  if (room.settlementQuote && typeof room.settlementQuote === "object") {
+    room.settlementQuote = {
+      ...room.settlementQuote,
+      patronFundSubsidy: room.patronFundSubsidy,
+    };
+  }
+  return room;
+}
+
 function createRelationshipFeedbackState(roomId = "", favorite = false) {
   return {
     roomId: String(roomId || ""),
@@ -658,6 +852,7 @@ function previewMarketFavorites() {
 
 function applyMarketShopResponse(value) {
   const data = value && typeof value === "object" ? value : {};
+  applyMarketPatronExperience(data);
   state.shopCatalog = normalizeMarketShopCatalog(data.catalog || state.shopCatalog);
   state.shop = normalizeMarketShop(data.shop || state.shop);
   state.shopReport = normalizeSellerVerified(data.report || state.shop.verified);
@@ -854,6 +1049,28 @@ async function ensureAuthenticated(generation, { openLandingRankings = false } =
       "stamp_god_photo",
     ]);
     state.favorites = previewMarketFavorites();
+    state.patronFund = normalizePatronFund({
+      seasonKey: currentPatronSeasonKey(),
+      contributed: 1_200,
+      burned: 4_800,
+      budget: 1_200,
+      subsidyPaid: 175,
+      remaining: 1_025,
+      supportedDeals: 24,
+      activePolicy: "balanced",
+      votes: { balanced: 12, discovery: 8, trust: 10 },
+      viewerVote: "balanced",
+    });
+    state.patronImpact = normalizePatronImpact({ recommendationLimit: 1, recommendedShopCount: 1 });
+    state.recommendations = normalizeMarketRecommendations([{
+      publicSellerId: state.favorites[0]?.publicSellerId,
+      shop: state.favorites[0],
+      recommendedAt: Date.now() - 5_000,
+    }]);
+    state.recommendedShelf = normalizeRecommendedShelf([
+      state.favorites[0],
+      marketShopSample(),
+    ]);
     state.shopStatus = "ready";
     state.shopErrorMessage = "";
     state.authReady = true;
@@ -874,6 +1091,7 @@ async function ensureAuthenticated(generation, { openLandingRankings = false } =
   if (!isCurrentLifecycle(generation)) return;
   updateMarketBalance(response.data?.balance || 0);
   state.patron = normalizeMarketPatron(response.data?.patron);
+  applyMarketPatronExperience(response.data);
   state.marketPolicy = normalizeMarketPolicy(response.data?.marketPolicy);
   state.authReady = true;
   subscribeToActiveRoom(generation);
@@ -1099,6 +1317,168 @@ function renderSellerShopCard(shopValue, {
   </article>`;
 }
 
+function recommendationForSeller(publicSellerId) {
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  return sellerId
+    ? state.recommendations.find((entry) => entry.publicSellerId === sellerId) || null
+    : null;
+}
+
+function recommendationShopSnapshot(publicSellerId) {
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  if (!sellerId) return null;
+  return state.favorites.find((shop) => shop.publicSellerId === sellerId)
+    || state.certificates.map((certificate) => normalizeMarketShop(certificate?.sellerShop))
+      .find((shop) => shop.publicSellerId === sellerId)
+    || state.recommendedShelf.find((shop) => shop.publicSellerId === sellerId)
+    || (normalizeMarketShop(state.room?.sellerShop).publicSellerId === sellerId
+      ? normalizeMarketShop(state.room?.sellerShop)
+      : null);
+}
+
+function preferredRecommendedShop(shelf = state.recommendedShelf) {
+  const sellerId = normalizeShopText(state.preferredRecommendedSellerId, 96);
+  if (!sellerId) return null;
+  return shelf.find((shop) => shop.publicSellerId === sellerId) || null;
+}
+
+function focusMarketJoinButton() {
+  window.requestAnimationFrame(() => {
+    const joinButton = document.querySelector(".market-join-button");
+    joinButton?.scrollIntoView({ behavior: "smooth", block: "center" });
+    joinButton?.focus({ preventScroll: true });
+  });
+}
+
+function focusRecommendedPreferenceButton(publicSellerId) {
+  window.requestAnimationFrame(() => {
+    const button = [...document.querySelectorAll("[data-market-prefer-recommended]")]
+      .find((candidate) => candidate.dataset.marketPreferRecommended === publicSellerId);
+    button?.focus({ preventScroll: true });
+  });
+}
+
+function setRecommendedShopPreference(publicSellerId) {
+  if (
+    state.role !== "buyer"
+    || state.busy
+    || state.shopBusy
+    || state.queueJoinPending
+  ) return;
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  const shop = state.recommendedShelf.find((entry) => entry.publicSellerId === sellerId);
+  if (!shop || sellerId === normalizeMarketShop(state.shop).publicSellerId) {
+    showToast("この推薦商店は優先先に選べません。");
+    return;
+  }
+  const removing = state.preferredRecommendedSellerId === sellerId;
+  state.preferredRecommendedSellerId = removing ? "" : sellerId;
+  state.matchMode = "discover";
+  showToast(removing
+    ? "推薦商店の優先を外しました。"
+    : `${shop.shopName || "この商店"}を最初の${MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS / 1000}秒だけ優先します。`);
+  render();
+  if (removing) focusRecommendedPreferenceButton(sellerId);
+  else focusMarketJoinButton();
+}
+
+function renderMarketRecommendationAction(publicSellerId) {
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  if (!sellerId) return "";
+  const recommended = Boolean(recommendationForSeller(sellerId));
+  const limit = state.patronImpact.recommendationLimit;
+  const used = state.patronImpact.recommendedShopCount;
+  const busy = state.recommendationBusySellerId === sellerId;
+  const blocked = Boolean(state.recommendationBusySellerId)
+    || state.busy
+    || state.shopBusy
+    || state.queueJoinPending
+    || (!recommended && (!limit || used >= limit));
+  const label = recommended
+    ? "推薦を解除"
+    : limit
+      ? "発見棚へ推薦"
+      : "PATRONで推薦可能";
+  return `<div class="market-favorite-actions">
+    <span>${recommended ? "あなたの推薦商店です" : `推薦枠 ${used}/${limit}`}</span>
+    <button type="button" class="button button-ghost button-small" data-market-recommend-shop="${escapeHtml(sellerId)}" data-market-recommend-action="${recommended ? "remove" : "add"}" ${blocked ? "disabled" : ""}>${busy ? "更新中…" : label}</button>
+  </div>`;
+}
+
+function renderUnavailableRecommendationManagement() {
+  const unavailable = state.recommendations.filter((entry) => entry.unavailable === true);
+  if (!unavailable.length) return "";
+  const locked = Boolean(state.recommendationBusySellerId)
+    || state.busy
+    || state.shopBusy
+    || state.queueJoinPending;
+  const rows = unavailable.map((entry) => {
+    const busy = state.recommendationBusySellerId === entry.publicSellerId;
+    return `<li class="market-favorite-actions">
+      <span>表示できない推薦 / 店コード ${escapeHtml(entry.publicSellerId)}</span>
+      <button type="button" class="button button-ghost button-small" data-market-recommend-shop="${escapeHtml(entry.publicSellerId)}" data-market-recommend-action="remove" aria-label="表示できない推薦 ${escapeHtml(entry.publicSellerId)} を解除" ${locked ? "disabled" : ""}>${busy ? "解除中…" : "推薦を解除"}</button>
+    </li>`;
+  }).join("");
+  return `<details class="market-safety-note market-recommendation-maintenance">
+    <summary><strong>表示できない推薦 ${unavailable.length}件を管理</strong></summary>
+    <p>閉店などで商店カードを表示できない推薦です。推薦枠を空けるには解除してください。</p>
+    <ul class="market-favorite-list">${rows}</ul>
+  </details>`;
+}
+
+function renderPatronFundPanel() {
+  const fund = state.patronFund;
+  const impact = state.patronImpact;
+  const activePolicyLabel = PATRON_FUND_POLICY_LABELS[fund.activePolicy] || "方針を集計中";
+  const voteSummary = Object.entries(PATRON_FUND_POLICY_LABELS)
+    .map(([id, label]) => `${label} ${fund.votes[id].toLocaleString("ja-JP")}`)
+    .join(" / ");
+  const viewerVote = fund.viewerVote
+    ? `あなたの方針投票：${PATRON_FUND_POLICY_LABELS[fund.viewerVote]}`
+    : "方針投票はまだ選んでいません";
+  return `<section class="market-rule-card" aria-labelledby="marketPatronFundTitle">
+    <span class="eyebrow">VALUE MARKET PATRON FUND</span><h2 id="marketPatronFundTitle">パトロン基金</h2>
+    <p>パトロン支援の一部を、成立した商談の売り手手数料へ補填します。買い手の支払額は変わらず、補填分だけ店主の受取を守ります。</p>
+    <dl class="market-fee-breakdown market-patron-fund-metrics is-compact">
+      <div><dt>基金への総拠出</dt><dd>${formatAnjuPay(fund.contributed)}</dd></div>
+      <div><dt>市場全体の消却</dt><dd>${formatAnjuPay(fund.burned)}</dd></div>
+      <div><dt>支援原資</dt><dd>${formatAnjuPay(fund.budget)}</dd></div>
+      <div><dt>補填済み</dt><dd>${formatAnjuPay(fund.subsidyPaid)}</dd></div>
+      <div><dt>基金残り</dt><dd>${formatAnjuPay(fund.remaining)}</dd></div>
+      <div><dt>支援成立</dt><dd>${fund.supportedDeals.toLocaleString("ja-JP")}件</dd></div>
+    </dl>
+    <div class="market-safety-note"><strong>今月の基金方針：${escapeHtml(activePolicyLabel)}</strong><p>${escapeHtml(voteSummary)}。${escapeHtml(viewerVote)}。</p></div>
+    <p class="market-roleplay-note">商店の推薦はPayの配分ではありません。推薦枠 ${impact.recommendedShopCount}/${impact.recommendationLimit} を使い、ほかの買い手が店主を見つける「推薦商店」棚へ載せる発見機能です。</p>
+    ${renderUnavailableRecommendationManagement()}
+  </section>`;
+}
+
+function renderRecommendedShelf() {
+  if (!state.recommendedShelf.length) return "";
+  const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  const ownPublicSellerId = normalizeMarketShop(state.shop).publicSellerId;
+  const shops = state.recommendedShelf.map((shop) => {
+    const selected = state.role === "buyer"
+      && state.matchMode === "discover"
+      && state.preferredRecommendedSellerId === shop.publicSellerId;
+    const ownShop = Boolean(ownPublicSellerId && ownPublicSellerId === shop.publicSellerId);
+    const action = state.role !== "buyer"
+      ? `<div class="market-favorite-actions"><span>${recommendationForSeller(shop.publicSellerId) ? "あなたも推薦中" : "パトロン推薦で発見"}</span></div>`
+      : ownShop
+        ? `<div class="market-favorite-actions"><span>あなたの商店です</span></div>`
+        : `<div class="market-favorite-actions"><span>${selected ? `最初の${MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS / 1000}秒はこの商店を優先中` : "見つからない場合は通常の商店探しへ自動で広がります"}</span></div>
+          <button type="button" class="button ${selected ? "button-primary" : "button-ghost"} button-small" data-market-prefer-recommended="${escapeHtml(shop.publicSellerId)}" aria-pressed="${selected}" ${locked ? "disabled" : ""}>${selected ? "優先を外す" : "この商店を優先して探す"}</button>`;
+    return `<li class="market-favorite-card ${selected ? "is-selected" : ""}">
+      ${renderSellerShopCard(shop, { compact: true, force: true, heading: "PATRON RECOMMENDED SHOP" })}
+      ${action}
+    </li>`;
+  }).join("");
+  return `<section class="market-favorites-book" aria-labelledby="marketRecommendedShelfTitle">
+    <div class="market-shop-section-head"><div><span class="eyebrow">PATRON DISCOVERY</span><h2 id="marketRecommendedShelfTitle">推薦商店</h2><p>常連や証書で出会った店主を紹介する発見棚です。買い手は1店を${MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS / 1000}秒だけ優先でき、見つからなければ通常の商店探しへ広がります。推薦によって基金のPay配分やランキングは変わりません。</p></div><strong>${state.recommendedShelf.length} SHOP${state.recommendedShelf.length === 1 ? "" : "S"}</strong></div>
+    <ol class="market-favorite-list">${shops}</ol>
+  </section>`;
+}
+
 function renderMarketShopOptionChecks(group, selectedIds, maximum, inputName) {
   const locked = state.busy || state.shopBusy || state.queueJoinPending;
   return state.shopCatalog[group].map((option) => `<label><input type="checkbox" name="${inputName}" value="${escapeHtml(option.id)}" ${selectedIds.includes(option.id) ? "checked" : ""} ${locked ? "disabled" : ""} /><span>${escapeHtml(option.label)}</span></label>`).join("");
@@ -1209,6 +1589,7 @@ function renderMarketFavoritesBook() {
     ? `<label class="market-favorite-select ${activelySelected ? "is-selected" : ""}"><input type="radio" name="marketFavoriteSeller" value="${escapeHtml(favorite.publicSellerId)}" ${activelySelected ? "checked" : ""} ${locked ? "disabled" : ""} /><span><strong>この商店を待つ</strong><small>${activelySelected ? "この商店を指名中" : "選ぶとこの商店だけを指名して待機"}</small></span></label>`
     : `<div class="market-favorite-select is-unavailable"><span><strong>常連受付は休止中</strong><small>店主が「常連さん歓迎」にすると指名できます</small></span></div>`}
         <div class="market-favorite-actions"><span>${escapeHtml(favoritePriceCopy(favorite))}</span><button type="button" class="button button-ghost button-small" data-market-remove-favorite="${escapeHtml(favorite.publicSellerId)}" ${locked ? "disabled" : ""}>常連帳から解除</button></div>
+        ${renderMarketRecommendationAction(favorite.publicSellerId)}
       </li>`;
     }).join("")
     : `<li class="market-favorite-empty"><span aria-hidden="true">♡</span><strong>常連帳はまだ空です</strong><p>営業を受けた商談の終了後に「またこの人から買いたい」を保存すると、ここへ追加されます。</p></li>`;
@@ -1226,6 +1607,31 @@ function renderMarketFavoritesBook() {
 function renderSetup() {
   const seller = state.role === "seller";
   const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  const selectedFavorite = !seller && state.matchMode === "favorites"
+    ? matchableMarketFavorite(state.selectedFavoriteSellerId)
+    : null;
+  const preferredRecommended = !seller && state.matchMode === "discover"
+    ? preferredRecommendedShop()
+    : null;
+  const buyerSearchSummary = !seller
+    ? `<div class="market-safety-note market-preferred-summary" role="status">
+      <strong>${selectedFavorite
+    ? `常連帳「${escapeHtml(selectedFavorite.shopName || "選択した商店")}」を指名`
+    : preferredRecommended
+      ? `推薦商店を優先：${escapeHtml(preferredRecommended.shopName || "選択した商店")}`
+      : "新しい商店を探す"}</strong>
+      <p>${selectedFavorite
+    ? "この商店だけを待ちます。一般市場へは自動で広がりません。"
+    : preferredRecommended
+      ? `待機開始から${MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS / 1000}秒はこの商店を優先し、見つからなければ通常検索へ広がります。`
+      : "価格条件が合う売り手を一般市場から探します。"}</p>
+      <button type="button" class="button button-ghost button-small" id="marketSetupOptionsButton" ${locked ? "disabled" : ""}>探し方・常連帳を変更</button>
+    </div>`
+    : `<div class="market-safety-note market-preferred-summary">
+      <strong>店主カード：${escapeHtml(normalizeMarketShop(state.shop).shopName || "推し値商店")}</strong>
+      <p>現在保存されている店主カードで待機します。</p>
+      <button type="button" class="button button-ghost button-small" id="marketSetupOptionsButton" ${locked ? "disabled" : ""}>店主カードを編集</button>
+    </div>`;
   const imagePreview = state.image?.url
     ? `<figure class="market-listing-preview"><img src="${escapeHtml(state.image.url)}" alt="出品する画像のプレビュー" /><figcaption>${escapeHtml(state.listingTitle || "無題の推し")} / ${formatAnjuPay(state.askingPrice)}</figcaption></figure>`
     : `<div class="market-image-empty"><span>♡</span><strong>推し画像を1枚選択</strong><small>画像はFirebaseへ保存されません</small></div>`;
@@ -1239,7 +1645,6 @@ function renderSetup() {
       <button type="button" class="${seller ? "is-active" : ""}" data-market-role="seller" role="tab" aria-selected="${seller}" ${locked ? "disabled" : ""}><span>SELLER</span><strong>売り手</strong><small>画像の魅力を言葉や10秒音声で営業</small></button>
       <button type="button" class="${!seller ? "is-active" : ""}" data-market-role="buyer" role="tab" aria-selected="${!seller}" ${locked ? "disabled" : ""}><span>BUYER</span><strong>買い手</strong><small>自分のAnjuPayで推し値を評価</small></button>
     </div>
-    ${seller ? renderMarketShopSettings() : renderMarketFavoritesBook()}
     <div class="market-entry-grid">
       <form class="market-entry-card" id="marketEntryForm">
         <label class="field"><span>プレイヤーネーム</span><input id="marketName" maxlength="16" value="${escapeHtml(state.name)}" required /></label>
@@ -1251,6 +1656,7 @@ function renderSetup() {
           </div>
           ${renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true })}`
           : `<label class="field"><span>購入上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select><small>販売価格が上限以内の売り手だけとマッチします。着手料${formatAnjuPay(ENTRY_FEE)}は別途必要です。</small></label>`}
+        ${buyerSearchSummary}
         <button class="button button-primary market-join-button" type="submit" ${!state.authReady || locked || (seller && !state.image) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.queueJoinPending || state.busy ? "参加処理中…" : seller ? "売り手として待機する" : "買い手として待機する"}</button>
       </form>
       <aside class="market-rule-card">
@@ -1262,6 +1668,9 @@ function renderSetup() {
         ${useMarketPreview ? `<div class="market-preview-controls"><small>LOCAL UI PREVIEW</small><button type="button" data-market-preview-room="preview:buyer">買い手プレビュー画面</button><button type="button" data-market-preview-room="pitch:seller">売り手営業画面</button><button type="button" data-market-preview-room="decision:buyer">買い手決済画面</button><button type="button" data-market-preview-room="extension_offer:buyer">内金確認画面</button><button type="button" data-market-preview-room="sold:buyer">成立結果画面</button></div>` : ""}
       </aside>
     </div>
+    ${seller ? renderMarketShopSettings() : renderMarketFavoritesBook()}
+    ${renderPatronFundPanel()}
+    ${renderRecommendedShelf()}
   </section>`;
 }
 
@@ -1269,15 +1678,24 @@ function renderWaiting() {
   const selectedFavorite = state.matchMode === "favorites"
     ? matchableMarketFavorite(state.selectedFavoriteSellerId)
     : null;
+  const preferredRecommended = state.role === "buyer" && state.matchMode === "discover"
+    ? preferredRecommendedShop()
+    : null;
   const selectedFavoritePreviousPrice = marketFavoritePreviousPrice(selectedFavorite);
   const waitingTitle = state.role === "seller"
     ? "買い手を探しています"
     : selectedFavorite
       ? `「${escapeHtml(selectedFavorite.shopName || "登録した商店")}」を待っています`
+      : preferredRecommended
+        ? `「${escapeHtml(preferredRecommended.shopName || "推薦商店")}」を優先して探しています`
       : "売り手を探しています";
   const waitingDetail = state.role === "seller"
     ? `${escapeHtml(state.listingTitle)} / ${formatAnjuPay(state.askingPrice)}`
-    : `購入上限 ${formatAnjuPay(state.maxBudget)}${selectedFavorite ? `${selectedFavoritePreviousPrice ? ` / 前回価格 ${formatAnjuPay(selectedFavoritePreviousPrice)}` : ""} / 指名店コード ${escapeHtml(selectedFavorite.publicSellerId)}` : ""}`;
+    : `購入上限 ${formatAnjuPay(state.maxBudget)}${selectedFavorite
+      ? `${selectedFavoritePreviousPrice ? ` / 前回価格 ${formatAnjuPay(selectedFavoritePreviousPrice)}` : ""} / 指名店コード ${escapeHtml(selectedFavorite.publicSellerId)}`
+      : preferredRecommended
+        ? ` / 最初の${MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS / 1000}秒だけ優先し、その後は通常検索`
+        : ""}`;
   return `<section class="screen market-screen market-waiting"><div class="market-waiting-card">
     <div class="market-radar" aria-hidden="true"><i></i><i></i><span>♡</span></div>
     <span class="eyebrow">SEARCHING VALUE PARTNER</span><h1>${waitingTitle}</h1>
@@ -1368,11 +1786,34 @@ function certificateDate(value) {
   };
 }
 
+function normalizeMarketCertificate(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const purchasePrice = normalizeNonNegativeInteger(source.purchasePrice, 999_999);
+  const marketFee = Math.min(purchasePrice, normalizeNonNegativeInteger(source.marketFee, purchasePrice));
+  return {
+    ...source,
+    purchasePrice,
+    marketFee,
+    sellerProceeds: normalizeNonNegativeInteger(source.sellerProceeds, purchasePrice),
+    patronFundSubsidy: Math.min(
+      maximumPatronFundSubsidy(marketFee),
+      normalizeNonNegativeInteger(
+        source.patronFundSubsidy,
+        maximumPatronFundSubsidy(marketFee),
+      ),
+    ),
+    patronFundPolicy: normalizePatronFundPolicy(source.patronFundPolicy),
+    patronFundKind: normalizePatronFundKind(source.patronFundKind),
+  };
+}
+
 function renderCertificateCard(certificate) {
+  certificate = normalizeMarketCertificate(certificate);
   const issued = certificateDate(certificate?.issuedAt);
   const price = Math.max(0, Math.floor(Number(certificate?.purchasePrice || 0)));
-  const fee = Math.max(0, Math.floor(Number(certificate?.marketFee || 0)));
-  const proceeds = Math.max(0, Math.floor(Number(certificate?.sellerProceeds || price - fee)));
+  const settlement = marketSettlement(price, certificate);
+  const fee = settlement.feeAmount;
+  const proceeds = settlement.sellerProceeds;
   const issueNumberValue = certificate?.sellerIssueNumber;
   const numericIssueNumber = Math.max(0, Math.floor(Number(issueNumberValue || 0)));
   const sellerIssueNumber = numericIssueNumber
@@ -1386,11 +1827,14 @@ function renderCertificateCard(certificate) {
   return `<li class="market-certificate-card">
     <div class="market-certificate-seal" aria-hidden="true">推</div>
     <div class="market-certificate-heading"><span>VALUE CERTIFICATE</span><strong>${escapeHtml(certificate?.certificateNumber || "OSHI-UNKNOWN")}</strong></div>
+    ${renderPatronBackedBadge(settlement.patronFundSubsidy, { compact: true })}
+    ${settlement.patronFundSubsidy > 0 ? `<p>基金方針「${escapeHtml(PATRON_FUND_POLICY_LABELS[certificate.patronFundPolicy] || "出会いと常連")}」で${formatAnjuPay(settlement.patronFundSubsidy)}を補填した成立です。</p>` : ""}
     <h2>${escapeHtml(certificate?.listingTitle || "無題の推し")}</h2>
     <p>売り手 <b>${escapeHtml(certificate?.sellerName || "PLAYER")}</b> の推し値に、あなたがAnjuPayで価値をつけた記録です。</p>
     ${sellerIssueNumber ? `<p class="market-certificate-issue"><span>この商店の発行番号</span><strong>${escapeHtml(sellerIssueNumber)}</strong></p>` : ""}
     ${sellerShop ? `<div class="market-certificate-seller-shop">${sellerShop}</div>` : ""}
-    <dl><div><dt>成約価格</dt><dd>${formatAnjuPay(price)}</dd></div><div><dt>市場手数料</dt><dd>${formatAnjuPay(fee)}</dd></div><div><dt>売り手受取</dt><dd>${formatAnjuPay(proceeds)}</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
+    ${renderMarketRecommendationAction(normalizeMarketShop(certificate?.sellerShop).publicSellerId)}
+    <dl><div><dt>成約価格</dt><dd>${formatAnjuPay(price)}</dd></div><div><dt>市場手数料</dt><dd>${formatAnjuPay(fee)}</dd></div>${settlement.patronFundSubsidy > 0 ? `<div><dt>基金補填</dt><dd>＋${formatAnjuPay(settlement.patronFundSubsidy)}</dd></div>` : ""}<div><dt>売り手受取</dt><dd>${formatAnjuPay(proceeds)}</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
     <time ${issued.iso ? `datetime="${issued.iso}"` : ""}>${escapeHtml(issued.label)} JST</time>
     <small>非譲渡・画像データ／著作権／所有権は含みません</small>
   </li>`;
@@ -1480,7 +1924,9 @@ function renderRoomControls(room, role) {
         grossAmount: Number(room.salePrice || room.listing?.askingPrice || 0),
         feeAmount: Number(room.marketFee ?? room.settlementQuote?.feeAmount),
         sellerProceeds: Number(room.sellerProceeds ?? room.settlementQuote?.sellerProceeds),
+        patronFundSubsidy: Number(room.patronFundSubsidy || 0),
       },
+      patronFundSubsidy: Number(room.patronFundSubsidy || 0),
     });
     const copy = status === "sold"
       ? role === "buyer"
@@ -1490,7 +1936,10 @@ function renderRoomControls(room, role) {
     const rankingCopy = status === "sold"
       ? `<small>${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}</small>`
       : "";
-    return `<div class="market-result-panel ${status}"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span><h2>${title}</h2><p>${copy}</p>${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement } }) : ""}${rankingCopy}${renderMarketRelationshipPanel(room, role, status)}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
+    const fundCopy = settlement.patronFundSubsidy > 0
+      ? `<p>パトロン基金が${formatAnjuPay(settlement.patronFundSubsidy)}を補填しました。基金方針「${escapeHtml(PATRON_FUND_POLICY_LABELS[normalizePatronFundPolicy(room.patronFundPolicy)] || "出会いと常連")}」／${escapeHtml(PATRON_FUND_KIND_LABELS[normalizePatronFundKind(room.patronFundKind)] || "店主の成立を支援")}。</p>`
+      : "";
+    return `<div class="market-result-panel ${status}"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span>${status === "sold" ? renderPatronBackedBadge(settlement.patronFundSubsidy) : ""}<h2>${title}</h2><p>${copy}</p>${fundCopy}${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement, patronFundSubsidy: settlement.patronFundSubsidy } }) : ""}${rankingCopy}${renderMarketRelationshipPanel(room, role, status)}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
   }
   if (status === "preview") {
     if (role === "buyer") {
@@ -1511,7 +1960,7 @@ function renderRoomControls(room, role) {
   if (status === "decision") {
     if (role === "buyer") {
       const canExtend = Number(room.turn || 1) < Number(room.maxTurns || MAX_TURNS);
-      return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>購入はロールプレイで、画像データの所有権は移りません。成約手数料は売り手負担のため、買い手の支払額は販売価格のままです。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room })}<small class="market-opportunity-cost">${escapeHtml(patronOpportunityCopy(room.listing?.askingPrice))}</small><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>合計${formatAnjuPay(room.listing?.askingPrice)}で購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
+      return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>購入はロールプレイで、画像データの所有権は移りません。成約手数料は売り手負担のため、買い手の支払額は販売価格のままです。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room })}<small class="market-opportunity-cost">${escapeHtml(purchaseBalanceCopy(room.listing?.askingPrice))}</small><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>合計${formatAnjuPay(room.listing?.askingPrice)}で購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>BUYER DECISION</span><h2>買い手の判断を待っています</h2><p>購入・退室・追加検討のいずれかが選ばれます。購入成立時だけ成約手数料が差し引かれます。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room, compact: true })}</div>`;
   }
@@ -1572,6 +2021,16 @@ function bindEvents() {
     render();
   }));
   document.querySelector("#marketEntryForm")?.addEventListener("submit", joinQueue);
+  document.querySelector("#marketSetupOptionsButton")?.addEventListener("click", () => {
+    const target = state.role === "seller"
+      ? document.querySelector("#marketShopForm")
+      : document.querySelector("#marketFavoritesTitle");
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.requestAnimationFrame(() => {
+      if (state.role === "seller") document.querySelector("#marketShopName")?.focus({ preventScroll: true });
+      else document.querySelector('input[name="marketMatchMode"]')?.focus({ preventScroll: true });
+    });
+  });
   document.querySelector("#marketName")?.addEventListener("input", (event) => { state.name = event.target.value.slice(0, 16); });
   document.querySelector("#marketShopForm")?.addEventListener("submit", saveMarketShop);
   document.querySelector("#marketShopName")?.addEventListener("input", (event) => {
@@ -1611,7 +2070,9 @@ function bindEvents() {
       if (state.busy || state.shopBusy || state.queueJoinPending) return;
       const selectedFavorite = reconcileSelectedFavoriteSeller();
       state.matchMode = input.value === "favorites" && selectedFavorite ? "favorites" : "discover";
+      state.preferredRecommendedSellerId = "";
       render();
+      focusMarketJoinButton();
     });
   });
   document.querySelectorAll('input[name="marketFavoriteSeller"]').forEach((input) => {
@@ -1621,15 +2082,28 @@ function bindEvents() {
       if (!selectedFavorite) return;
       state.selectedFavoriteSellerId = selectedFavorite.publicSellerId;
       state.matchMode = "favorites";
+      state.preferredRecommendedSellerId = "";
       const budgetAlignment = alignBudgetToMarketFavorite(selectedFavorite, { announce: true });
       if (!budgetAlignment.ok) {
         showToast(`前回価格で待つには、あと${formatAnjuPay(budgetAlignment.shortage)}が必要です。`);
       }
       render();
+      focusMarketJoinButton();
     });
   });
   document.querySelectorAll("[data-market-remove-favorite]").forEach((button) => {
     button.addEventListener("click", () => removeMarketFavorite(button.dataset.marketRemoveFavorite));
+  });
+  document.querySelectorAll("[data-market-recommend-shop]").forEach((button) => {
+    button.addEventListener("click", () => setMarketShopRecommendation(
+      button.dataset.marketRecommendShop,
+      button.dataset.marketRecommendAction !== "remove",
+    ));
+  });
+  document.querySelectorAll("[data-market-prefer-recommended]").forEach((button) => {
+    button.addEventListener("click", () => setRecommendedShopPreference(
+      button.dataset.marketPreferRecommended,
+    ));
   });
   document.querySelector("#marketListingTitle")?.addEventListener("input", (event) => { state.listingTitle = event.target.value.slice(0, 30); });
   document.querySelector("#marketAskingPrice")?.addEventListener("change", (event) => {
@@ -1802,6 +2276,78 @@ async function removeMarketFavorite(publicSellerId) {
   } finally {
     if (isCurrentLifecycle(generation)) {
       state.shopBusy = false;
+      render();
+    }
+  }
+}
+
+async function setMarketShopRecommendation(publicSellerId, recommend = true) {
+  const sellerId = normalizeShopText(publicSellerId, 96);
+  const currentlyRecommended = Boolean(recommendationForSeller(sellerId));
+  const requestedRecommendation = recommend === true;
+  if (!sellerId
+      || state.recommendationBusySellerId
+      || state.busy
+      || state.shopBusy
+      || state.queueJoinPending
+      || currentlyRecommended === requestedRecommendation) return;
+  if (requestedRecommendation
+      && (!state.patronImpact.recommendationLimit
+        || state.patronImpact.recommendedShopCount >= state.patronImpact.recommendationLimit)) {
+    showToast("今月の商店推薦枠を使い切っています。");
+    return;
+  }
+  const generation = lifecycleGeneration;
+  const snapshot = recommendationShopSnapshot(sellerId);
+  state.recommendationBusySellerId = sellerId;
+  render();
+  try {
+    let responseData = {};
+    if (!useMarketPreview) {
+      const response = await marketShopCallable({
+        action: requestedRecommendation ? "recommend_shop" : "remove_recommendation",
+        publicSellerId: sellerId,
+      });
+      if (!isCurrentLifecycle(generation)) return;
+      responseData = response.data && typeof response.data === "object" ? response.data : {};
+    }
+    const returnedRecommendations = Object.prototype.hasOwnProperty.call(responseData, "recommendations");
+    const returnedImpact = Object.prototype.hasOwnProperty.call(responseData, "patronImpact");
+    applyMarketPatronExperience(responseData);
+    if (!returnedRecommendations) {
+      state.recommendations = requestedRecommendation
+        ? [
+          normalizeMarketRecommendation({
+            publicSellerId: sellerId,
+            shop: snapshot || { publicSellerId: sellerId },
+            recommendedAt: Date.now(),
+          }),
+          ...state.recommendations.filter((entry) => entry.publicSellerId !== sellerId),
+        ].filter(Boolean)
+        : state.recommendations.filter((entry) => entry.publicSellerId !== sellerId);
+    }
+    if (!returnedImpact) {
+      state.patronImpact = {
+        ...state.patronImpact,
+        recommendedShopCount: Math.min(
+          state.patronImpact.recommendationLimit || 100,
+          state.recommendations.length,
+        ),
+      };
+    }
+    showToast(requestedRecommendation
+      ? "この商店を推薦商店の発見棚へ推薦しました。Payの配分は変わりません。"
+      : "商店の推薦を解除しました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation)) {
+      showToast(callableMessage(
+        error,
+        requestedRecommendation ? "商店を推薦できませんでした。" : "商店の推薦を解除できませんでした。",
+      ));
+    }
+  } finally {
+    if (isCurrentLifecycle(generation)) {
+      state.recommendationBusySellerId = "";
       render();
     }
   }
@@ -2035,6 +2581,7 @@ async function joinQueue(event) {
     ? document.querySelector('input[name="marketMatchMode"]:checked')?.value
     : "discover";
   let selectedFavorite = null;
+  let preferredRecommended = null;
   if (requestedMatchMode === "favorites") {
     const selectedSellerId = document.querySelector('input[name="marketFavoriteSeller"]:checked')?.value
       || state.selectedFavoriteSellerId;
@@ -2055,6 +2602,13 @@ async function joinQueue(event) {
     }
   } else {
     state.matchMode = "discover";
+    preferredRecommended = joinedRole === "buyer" ? preferredRecommendedShop() : null;
+    if (state.preferredRecommendedSellerId && !preferredRecommended) {
+      state.preferredRecommendedSellerId = "";
+      render();
+      showToast("優先先が推薦棚から外れたため、もう一度選んでください。");
+      return;
+    }
   }
   if (joinedRole === "seller" && state.shopStatus === "save-error") {
     showToast("店主カードが未保存です。再保存してから待機してください。");
@@ -2069,6 +2623,9 @@ async function joinQueue(event) {
   const joinedMatchMode = joinedRole === "buyer" ? state.matchMode : "discover";
   const joinedFavoritePublicSellerId = joinedRole === "buyer" && joinedMatchMode === "favorites"
     ? selectedFavorite?.publicSellerId || ""
+    : "";
+  const joinedPreferredPublicSellerId = joinedRole === "buyer" && joinedMatchMode === "discover"
+    ? preferredRecommended?.publicSellerId || ""
     : "";
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   state.busy = true;
@@ -2087,6 +2644,7 @@ async function joinQueue(event) {
       maxBudget: joinedMaxBudget,
       matchMode: joinedMatchMode,
       favoritePublicSellerId: joinedFavoritePublicSellerId,
+      preferredPublicSellerId: joinedPreferredPublicSellerId,
     });
     if (!isCurrentQueueAttempt(generation, queueAttemptGeneration) || state.roomId) return;
     updateMarketBalance(response.data?.balance ?? state.balance);
@@ -2300,7 +2858,7 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
   state.roomUnsubscribe = onSnapshot(doc(firestore, "valueMarketRooms", roomId), (snapshot) => {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !snapshot.exists()) return;
     const previousStatus = state.room?.status;
-    state.room = snapshot.data();
+    state.room = normalizeMarketRoom(snapshot.data());
     if (TERMINAL_STATES.has(state.room.status)) {
       stopRoomHeartbeat();
       clearRoomSyncRetry();
@@ -2730,10 +3288,21 @@ function performPreviewAction(action, extra = {}) {
     room.status = "sold";
     room.salePrice = settlement.grossAmount;
     room.marketFee = settlement.feeAmount;
+    room.patronFundSubsidy = settlement.patronFundSubsidy;
+    room.patronFundPolicy = normalizePatronFundPolicy(room.patronFundPolicy) || "balanced";
+    room.patronFundKind = normalizePatronFundKind(room.patronFundKind) || "trust";
     room.sellerProceeds = settlement.sellerProceeds;
     room.certificateNumber = "OSHI-PREVIEW0000001";
     room.sellerIssueNumber = Math.max(1, Number(room.sellerIssueNumber || 13));
     state.certificateStatus = "idle";
+    if (settlement.patronFundSubsidy > 0) {
+      state.patronFund = normalizePatronFund({
+        ...state.patronFund,
+        subsidyPaid: state.patronFund.subsidyPaid + settlement.patronFundSubsidy,
+        remaining: Math.max(0, state.patronFund.remaining - settlement.patronFundSubsidy),
+        supportedDeals: state.patronFund.supportedDeals + 1,
+      });
+    }
     if (room.sellerShop) {
       const sellerShop = normalizeMarketShop(room.sellerShop);
       sellerShop.verified.salesCount += 1;
@@ -2780,12 +3349,29 @@ async function performAction(action, extra = {}) {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return false;
     clearMarketActionIdentity(actionId);
     updateMarketBalance(response.data?.balance ?? state.balance);
+    applyMarketPatronExperience(response.data);
     if (action === "accept_pitch") showToast(`${formatAnjuPay(state.room?.entryFee || ENTRY_FEE)}の着手料をAnjuPay残高から保留しました。`);
     if (action === "buy") {
       state.certificateStatus = "idle";
       if (state.room) {
         state.room.marketFee = Number(response.data?.marketFee || 0);
+        state.room.patronFundSubsidy = Math.min(
+          maximumPatronFundSubsidy(state.room.marketFee),
+          normalizeNonNegativeInteger(
+            response.data?.patronFundSubsidy,
+            maximumPatronFundSubsidy(state.room.marketFee),
+          ),
+        );
+        state.room.patronFundPolicy = normalizePatronFundPolicy(response.data?.patronFundPolicy);
+        state.room.patronFundKind = normalizePatronFundKind(response.data?.patronFundKind);
         state.room.sellerProceeds = Number(response.data?.sellerProceeds || 0);
+        state.room.settlementQuote = {
+          ...(state.room.settlementQuote || {}),
+          grossAmount: Number(state.room.salePrice || state.room.listing?.askingPrice || 0),
+          feeAmount: state.room.marketFee,
+          patronFundSubsidy: state.room.patronFundSubsidy,
+          sellerProceeds: state.room.sellerProceeds,
+        };
         state.room.certificateNumber = String(response.data?.certificateNumber || "");
         state.room.sellerIssueNumber = Math.max(0, Number(response.data?.sellerIssueNumber || 0));
         if (response.data?.sellerShop || response.data?.shop) {
@@ -2974,7 +3560,10 @@ function previewCertificates() {
       sellerIssueNumber: 13,
       purchasePrice: 100,
       marketFee: 5,
-      sellerProceeds: 95,
+      patronFundSubsidy: 2,
+      patronFundPolicy: "balanced",
+      patronFundKind: "trust",
+      sellerProceeds: 97,
       turn: 1,
       extended: false,
       rankingCounted: true,
@@ -3013,7 +3602,7 @@ async function openCertificates(returnScreen = state.screen, { force = false } =
   state.certificateStatus = "loading";
   render();
   if (useMarketPreview) {
-    state.certificates = previewCertificates();
+    state.certificates = previewCertificates().map(normalizeMarketCertificate);
     state.certificateHasMore = false;
     state.certificateStatus = "ready";
     render();
@@ -3022,7 +3611,10 @@ async function openCertificates(returnScreen = state.screen, { force = false } =
   try {
     const response = await marketRankingsCallable({ action: "collection" });
     if (!isCurrentLifecycle(generation) || state.screen !== "certificates") return;
-    state.certificates = Array.isArray(response.data?.certificates) ? response.data.certificates : [];
+    applyMarketPatronExperience(response.data);
+    state.certificates = Array.isArray(response.data?.certificates)
+      ? response.data.certificates.map(normalizeMarketCertificate)
+      : [];
     state.certificateHasMore = response.data?.hasMore === true;
     state.certificateStatus = "ready";
   } catch (error) {
@@ -3075,6 +3667,10 @@ function resetForReplay() {
   const name = state.name;
   const balance = state.balance;
   const patron = state.patron;
+  const patronFund = state.patronFund;
+  const patronImpact = state.patronImpact;
+  const recommendations = state.recommendations;
+  const recommendedShelf = state.recommendedShelf;
   const marketPolicy = state.marketPolicy;
   const image = role === "seller" ? state.image : null;
   const listingTitle = state.listingTitle;
@@ -3090,6 +3686,7 @@ function resetForReplay() {
   const shopStatus = state.shopStatus;
   const shopErrorMessage = state.shopErrorMessage;
   const matchMode = state.matchMode;
+  const preferredRecommendedSellerId = preferredRecommendedShop(recommendedShelf)?.publicSellerId || "";
   const preservedFavoriteSeller = matchableMarketFavorite(state.selectedFavoriteSellerId, favorites);
   state.activeUnsubscribe?.();
   state.activeUnsubscribe = null;
@@ -3104,6 +3701,10 @@ function resetForReplay() {
     name,
     balance,
     patron,
+    patronFund,
+    patronImpact,
+    recommendations,
+    recommendedShelf,
     marketPolicy,
     image,
     listingTitle,
@@ -3120,6 +3721,9 @@ function resetForReplay() {
     shopErrorMessage,
     matchMode: matchMode === "favorites" && preservedFavoriteSeller ? "favorites" : "discover",
     selectedFavoriteSellerId: preservedFavoriteSeller?.publicSellerId || "",
+    preferredRecommendedSellerId: matchMode === "discover"
+      ? preferredRecommendedSellerId
+      : "",
   };
   normalizeBuyerBudget();
   active = true;
@@ -3230,7 +3834,10 @@ function previewRoom(status = "preview", role = "buyer") {
     sellerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 1_500, tier: 2 },
     buyerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 300, tier: 1 },
     listing: { title: "夕焼けの推し", askingPrice: 100, pitchStyle: "either" },
-    settlementQuote: { grossAmount: 100, feeAmount: 5, sellerProceeds: 95 },
+    settlementQuote: { grossAmount: 100, feeAmount: 5, patronFundSubsidy: 2, sellerProceeds: 97 },
+    patronFundSubsidy: 2,
+    patronFundPolicy: "balanced",
+    patronFundKind: "trust",
     status,
     pitchCompletedAt: ["decision", "extension_request", "extension_offer", "sold", "ended"].includes(status) ? Date.now() - 20_000 : 0,
     turn: status === "extension_offer" ? 2 : 1,
@@ -3239,7 +3846,7 @@ function previewRoom(status = "preview", role = "buyer") {
     extensionIncentive: 10,
     salePrice: 100,
     marketFee: 5,
-    sellerProceeds: 95,
+    sellerProceeds: 97,
     certificateNumber: "OSHI-PREVIEW0000001",
     sellerIssueNumber: 13,
     rankingCounted: true,

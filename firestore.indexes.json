@@ -19,6 +19,24 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
+          "fieldPath": "preferredSellerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastSeen",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "valueMarketQueues",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
           "fieldPath": "selectedFavoriteSellerUid",
           "order": "ASCENDING"
         },

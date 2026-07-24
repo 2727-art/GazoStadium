@@ -23,6 +23,51 @@ test("favorite matchmaking resolves one owned public shop and bypasses the broad
   assert.doesNotMatch(indexSource, /favoriteSellerUids/);
 });
 
+test("recommended shops are a private soft preference that widens into discovery", () => {
+  assert.match(indexSource, /const MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS = 20_000;/);
+  assert.match(
+    indexSource,
+    /async function resolvePreferredRecommendedSeller[\s\S]*?patronRecommendedShopRef\(seasonKey, publicSellerId\)\.get\(\)[\s\S]*?recommendationCount < PATRON_RECOMMENDED_SHELF_MINIMUM/,
+  );
+  assert.match(
+    indexSource,
+    /preferredSellerUid: matchMode === "discover"[\s\S]*?preferredSellerExpandAt:[\s\S]*?queueRequestedAt \+ MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS/,
+  );
+  assert.match(
+    indexSource,
+    /marketQueueRef\(ownEntry\.preferredSellerUid\)\.get\(\)/,
+    "a preferred shop should be checked even when it falls outside the ordinary paged scan",
+  );
+  assert.match(
+    indexSource,
+    /\.where\("preferredSellerUid", "==", ownEntry\.uid\)[\s\S]*?\.where\("status", "==", "waiting"\)[\s\S]*?\.where\("lastSeen", ">=", minimumLastSeen\)[\s\S]*?\.limit\(40\)/,
+    "a seller should find buyers that preferred it even when generic paging stops early",
+  );
+  assert.match(
+    indexSource,
+    /function marketRecommendedPreferenceCompatible[\s\S]*?preferredSellerUid === seller\.uid[\s\S]*?preferredSellerExpandAt \|\| 0\) <= now/,
+    "the preference should reject other sellers only until its expansion timestamp",
+  );
+  assert.match(
+    indexSource,
+    /function prioritizeRecommendedMarketCandidates[\s\S]*?Number\(secondPreferred\) - Number\(firstPreferred\)/,
+  );
+  assert.match(
+    indexSource,
+    /!queuesCompatible\(currentOwn, currentCandidate\)[\s\S]*?!marketRecommendedPreferenceCompatible\(currentOwn, currentCandidate\)/,
+    "room creation must recheck the soft preference inside the transaction",
+  );
+  const publicQueueWrite = indexSource.match(
+    /await marketPublicQueueRef\(presenceId\)\.set\(\{[\s\S]*?\n  \}\);/,
+  )?.[0] || "";
+  assert.match(publicQueueWrite, /role: entry\.role,\s*lastSeen: Number\(entry\.lastSeen\)/);
+  assert.doesNotMatch(
+    publicQueueWrite,
+    /uid|preferredSeller|preferredPublicSeller/,
+    "the public presence queue must not reveal the internally resolved seller target",
+  );
+});
+
 test("matching rechecks both live block directions inside the room-creation transaction", () => {
   assert.match(
     indexSource,

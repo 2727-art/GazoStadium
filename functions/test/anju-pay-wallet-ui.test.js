@@ -87,3 +87,65 @@ test("market and reward history preserve transaction meaning and safe detail", (
   assert.match(source, /dailyPlayClaims:[\s\S]*?slice\(0, 100\)/);
   assert.match(source, /formatAnjuPay\(period\.nominalAmount\)/);
 });
+
+test("patron fund and impact responses are normalized on initialize and upgrade", () => {
+  const source = read("account.js");
+  const initializeStart = source.indexOf("async function loadAccountData");
+  const initializeEnd = source.indexOf("function renderAccountStatus", initializeStart);
+  const initialize = source.slice(initializeStart, initializeEnd);
+  const upgradeStart = source.indexOf("async function upgradePatron");
+  const upgradeEnd = source.indexOf("async function votePatronPolicy", upgradeStart);
+  const upgrade = source.slice(upgradeStart, upgradeEnd);
+
+  assert.match(source, /patronFund:\s*normalizePatronFund\(null\)/);
+  assert.match(source, /patronImpact:\s*normalizePatronImpact\(null\)/);
+  assert.match(initialize, /action:\s*"initialize"[\s\S]*applyPatronEconomyResponse\(requestState,\s*response\.data\)/);
+  assert.match(upgrade, /const requestState = state/);
+  assert.match(upgrade, /action:\s*"patron_upgrade"[\s\S]*if \(!active \|\| state !== requestState\) return;[\s\S]*applyPatronEconomyResponse\(requestState,\s*response\.data\)/);
+  assert.match(upgrade, /await loadAnjuPayHistory\(\{ force: true \}\);[\s\S]*if \(!active \|\| state !== requestState\) return;/);
+  assert.match(upgrade, /if \(state === requestState\) \{[\s\S]*requestState\.busyAction = "";[\s\S]*if \(active\) render\(\)/);
+  assert.match(source, /contributed:\s*patronMetric\(source\.contributed\)/);
+  assert.match(source, /burned:\s*patronMetric\(source\.burned\)/);
+  assert.match(source, /budget:\s*patronMetric\(source\.budget\)/);
+  assert.match(source, /subsidyPaid:\s*patronMetric\(source\.subsidyPaid\)/);
+  assert.match(source, /remaining:\s*patronMetric\(source\.remaining\)/);
+  assert.match(source, /supportedDeals:\s*patronMetric\(source\.supportedDeals\)/);
+  assert.match(source, /PATRON_POLICY_IDS\.has\(String\(source\.activePolicy/);
+  assert.match(source, /recommendedShopCount:\s*Math\.min\(/);
+  assert.match(source, /const recommendationLimit = patronMetric\(source\.recommendationLimit/);
+});
+
+test("patron page explains circulation, shows impact, and exposes an accessible policy vote", () => {
+  const source = read("account.js");
+  assert.match(source, /支援額の80%を消却、20%を循環基金へ/);
+  assert.match(source, /基金は成立した商談の売り手手数料の半分/);
+  assert.match(source, /あなたの市場Impact/);
+  assert.match(source, /基金拠出合計/);
+  assert.match(source, /あなたの基金拠出/);
+  assert.match(source, /推薦中の商店/);
+  assert.match(source, /label:\s*"出会いと常連"/);
+  assert.match(source, /label:\s*"新しい出会い"/);
+  assert.match(source, /label:\s*"常連の信頼"/);
+  assert.match(source, /data-patron-policy="\$\{policy\.id\}" aria-pressed="\$\{selected\}"/);
+  assert.match(source, /aria-busy="\$\{policyVoteBusy\}"/);
+  assert.match(source, /class="patron-policy-status" role="status" aria-live="polite"/);
+  assert.match(source, /SUPPORTER以上になると、今月の市場政策へ投票できます/);
+});
+
+test("patron policy voting uses an idempotent economy action and restores server state", () => {
+  const source = read("account.js");
+  const voteStart = source.indexOf("async function votePatronPolicy");
+  const voteEnd = source.indexOf("async function createTransfer", voteStart);
+  const vote = source.slice(voteStart, voteEnd);
+
+  assert.match(vote, /PATRON_POLICY_OPTIONS\.find/);
+  assert.match(vote, /state\.busyAction \|\| state\.patronFund\.viewerVote === policy\.id/);
+  assert.match(vote, /requireCurrentAccount\(\{ google: true \}\)/);
+  assert.match(vote, /action:\s*"patron_policy_vote"/);
+  assert.match(vote, /policyId:\s*policy\.id/);
+  assert.match(vote, /actionId:\s*newActionId\(\)/);
+  assert.match(vote, /applyPatronEconomyResponse\(requestState,\s*response\.data\)/);
+  assert.match(vote, /friendlyError\(error,\s*"今月の市場政策へ投票できませんでした。"\)/);
+  assert.match(vote, /requestState\.busyAction = ""/);
+  assert.match(source, /button\.addEventListener\("click", \(\) => votePatronPolicy\(button\.dataset\.patronPolicy\)\)/);
+});

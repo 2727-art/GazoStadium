@@ -67,6 +67,46 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /valueMarketPatronFunds/{seasonKey} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronFundContributors/{contributorId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronFundPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronSellerImpacts/{impactId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronPolicies/{seasonKey} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronPolicyVotes/{voteId} {
+      allow read, write: if false;
+
+      match /actions/{actionId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /valueMarketPatronRecommendationProfiles/{profileId} {
+      allow read, write: if false;
+    }
+
+    match /valueMarketPatronRecommendationSeasons/{seasonKey} {
+      allow read, write: if false;
+
+      match /shops/{publicSellerId} {
+        allow read, write: if false;
+      }
+    }
+
     match /accountTransferCodes/{codeHash} {
       allow read, write: if false;
     }

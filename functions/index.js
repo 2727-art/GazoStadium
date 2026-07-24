@@ -48,6 +48,18 @@ const {
   publicPatronage,
 } = require("./patronage");
 const {
+  MARKET_POLICY_IDS,
+  PATRON_FUND_MAX_SUBSIDY_PER_SALE,
+  PATRON_FUND_MONTHLY_SELLER_CAP,
+  normalizeMarketPolicyId,
+  normalizePatronFund,
+  normalizePolicyVote,
+  patronFundSubsidyDecision,
+  patronRecommendationLimit,
+  publicPatronFundSummary,
+  splitPatronPayment,
+} = require("./patron-fund");
+const {
   TRANSFER_CODE_TTL_MS,
   TRANSFER_CREATE_COOLDOWN_MS,
   createTransferCode,
@@ -131,6 +143,9 @@ const MARKET_MAX_TURNS = 3;
 const MARKET_MIN_PRICE = 10;
 const MARKET_MAX_PRICE = 500;
 const MARKET_EXTENSION_FEES = new Set([5, 10, 20]);
+const PATRON_RECOMMENDED_SHELF_MINIMUM = 3;
+const PATRON_RECOMMENDED_SHELF_LIMIT = 12;
+const MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS = 20_000;
 const QUEUE_FRESH_MS = 60_000;
 const MARKET_PROFILE_UPDATE_COOLDOWN_MS = 10_000;
 const MARKET_PUBLIC_PRESENCE_PATH = "online/publicMarketPresence";
@@ -266,6 +281,54 @@ function patronageRef(uid) {
 
 function patronageLedgerRef(uid, actionId) {
   return firestore.collection("valueMarketPatronLedger").doc(eventId(`${uid}:${actionId}`));
+}
+
+function patronFundRef(seasonKey) {
+  return firestore.collection("valueMarketPatronFunds").doc(seasonKey);
+}
+
+function patronFundContributorRef(uid, seasonKey) {
+  return firestore.collection("valueMarketPatronFundContributors")
+    .doc(eventId(`${seasonKey}:${uid}`));
+}
+
+function patronFundPairRef(sellerUid, buyerUid, seasonKey) {
+  const participants = [sellerUid, buyerUid].sort();
+  return firestore.collection("valueMarketPatronFundPairs")
+    .doc(eventId(`${seasonKey}:${participants.join(":")}`));
+}
+
+function patronFundSellerImpactRef(sellerUid, seasonKey) {
+  return firestore.collection("valueMarketPatronSellerImpacts")
+    .doc(eventId(`${seasonKey}:${sellerUid}`));
+}
+
+function patronPolicyRef(seasonKey) {
+  return firestore.collection("valueMarketPatronPolicies").doc(seasonKey);
+}
+
+function patronPolicyVoteRef(uid, seasonKey) {
+  return firestore.collection("valueMarketPatronPolicyVotes")
+    .doc(eventId(`${seasonKey}:${uid}`));
+}
+
+function patronPolicyVoteActionRef(uid, seasonKey, actionId) {
+  return patronPolicyVoteRef(uid, seasonKey)
+    .collection("actions")
+    .doc(eventId(actionId));
+}
+
+function patronRecommendationProfileRef(uid, seasonKey) {
+  return firestore.collection("valueMarketPatronRecommendationProfiles")
+    .doc(eventId(`${seasonKey}:${uid}`));
+}
+
+function patronRecommendationSeasonRef(seasonKey) {
+  return firestore.collection("valueMarketPatronRecommendationSeasons").doc(seasonKey);
+}
+
+function patronRecommendedShopRef(seasonKey, publicSellerId) {
+  return patronRecommendationSeasonRef(seasonKey).collection("shops").doc(publicSellerId);
 }
 
 function verifiedMatchClaimRef(uid, mode, roomId) {
@@ -1207,6 +1270,235 @@ async function mirrorPatronage(uid, patronageValue) {
   });
 }
 
+function normalizePatronFundContributor(value, uid, seasonKey) {
+  const sameOwner = value?.uid === uid && value?.seasonKey === seasonKey;
+  return {
+    uid,
+    seasonKey,
+    recognizedSpent: sameOwner
+      ? integer(value?.recognizedSpent, 0, PATRON_TIERS.at(-1).threshold, 0)
+      : 0,
+    contributionAmount: sameOwner
+      ? integer(value?.contributionAmount, 0, PATRON_TIERS.at(-1).threshold, 0)
+      : 0,
+    burnAmount: sameOwner
+      ? integer(value?.burnAmount, 0, PATRON_TIERS.at(-1).threshold, 0)
+      : 0,
+    updatedAt: sameOwner ? Number(value?.updatedAt || 0) : 0,
+  };
+}
+
+function normalizePatronPolicy(value, seasonKey) {
+  const sameSeason = value?.seasonKey === seasonKey;
+  const votes = Object.fromEntries(MARKET_POLICY_IDS.map((policyId) => [
+    policyId,
+    sameSeason ? integer(value?.votes?.[policyId], 0, 1_000_000, 0) : 0,
+  ]));
+  let activePolicy = "balanced";
+  for (const policyId of MARKET_POLICY_IDS) {
+    if (votes[policyId] > votes[activePolicy]) activePolicy = policyId;
+  }
+  return {
+    seasonKey,
+    activePolicy,
+    votes,
+    totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
+    updatedAt: sameSeason ? Number(value?.updatedAt || 0) : 0,
+  };
+}
+
+function normalizePatronRecommendationProfile(value, uid, seasonKey) {
+  const sameOwner = value?.uid === uid && value?.seasonKey === seasonKey;
+  const source = sameOwner && Array.isArray(value?.recommendations)
+    ? value.recommendations
+    : [];
+  const recommendations = [];
+  const seen = new Set();
+  for (const entry of source) {
+    const publicSellerId = cleanText(entry?.publicSellerId, 40);
+    if (!isValidPublicSellerId(publicSellerId) || seen.has(publicSellerId)) continue;
+    seen.add(publicSellerId);
+    recommendations.push({
+      publicSellerId,
+      recommendedAt: Number(entry?.recommendedAt || 0),
+    });
+    if (recommendations.length >= PATRON_TIERS.at(-1).level) break;
+  }
+  return {
+    uid,
+    seasonKey,
+    recommendations,
+    updatedAt: sameOwner ? Number(value?.updatedAt || 0) : 0,
+  };
+}
+
+function normalizePatronSellerImpact(value, sellerUid, seasonKey) {
+  const sameSeller = value?.sellerUid === sellerUid && value?.seasonKey === seasonKey;
+  return {
+    sellerUid,
+    seasonKey,
+    totalSubsidized: sameSeller
+      ? integer(value?.totalSubsidized, 0, PATRON_FUND_MONTHLY_SELLER_CAP, 0)
+      : 0,
+    supportedDeals: sameSeller
+      ? integer(value?.supportedDeals, 0, 1_000_000, 0)
+      : 0,
+    createdAt: sameSeller ? Number(value?.createdAt || 0) : 0,
+    updatedAt: sameSeller ? Number(value?.updatedAt || 0) : 0,
+  };
+}
+
+function stagePatronFundRecognition({
+  fundValue,
+  contributorValue,
+  uid,
+  seasonKey,
+  patronageValue,
+  now = Date.now(),
+}) {
+  const patronage = normalizePatronage(patronageValue, seasonKey);
+  const fund = normalizePatronFund(fundValue, seasonKey);
+  const contributor = normalizePatronFundContributor(
+    contributorValue,
+    uid,
+    seasonKey,
+  );
+  const recognizedSpent = Math.max(contributor.recognizedSpent, patronage.seasonSpent);
+  const unrecognizedSpent = Math.max(0, recognizedSpent - contributor.recognizedSpent);
+  if (!unrecognizedSpent) return { changed: false, fund, contributor };
+  const split = splitPatronPayment(unrecognizedSpent);
+  return {
+    changed: true,
+    fund: {
+      ...fund,
+      seasonKey,
+      totalContributed: fund.totalContributed + split.contributionAmount,
+      totalBurned: fund.totalBurned + split.burnAmount,
+      fundRemaining: fund.fundRemaining + split.contributionAmount,
+      updatedAt: now,
+    },
+    contributor: {
+      uid,
+      seasonKey,
+      recognizedSpent,
+      contributionAmount: contributor.contributionAmount + split.contributionAmount,
+      burnAmount: contributor.burnAmount + split.burnAmount,
+      updatedAt: now,
+    },
+  };
+}
+
+function patronProgramResponse({
+  fundValue,
+  contributorValue,
+  policyValue,
+  voteValue,
+  recommendationValue,
+  patronageValue,
+  uid,
+  seasonKey,
+}) {
+  const policy = normalizePatronPolicy(policyValue, seasonKey);
+  const fund = normalizePatronFund({
+    ...fundValue,
+    activePolicy: policy.activePolicy,
+  }, seasonKey);
+  const summary = publicPatronFundSummary(fund, seasonKey);
+  const contributor = normalizePatronFundContributor(
+    contributorValue,
+    uid,
+    seasonKey,
+  );
+  const recommendations = normalizePatronRecommendationProfile(
+    recommendationValue,
+    uid,
+    seasonKey,
+  );
+  const patronage = normalizePatronage(patronageValue, seasonKey);
+  const viewerVote = voteValue?.uid === uid && voteValue?.seasonKey === seasonKey
+    ? normalizePolicyVote(voteValue?.policyId)
+    : null;
+  return {
+    patronFund: {
+      seasonKey,
+      contributed: summary.totalContributed,
+      burned: summary.totalBurned,
+      budget: summary.totalContributed,
+      subsidyPaid: summary.totalSubsidized,
+      remaining: summary.fundRemaining,
+      supportedDeals: summary.supportedSaleCount,
+      supportedSellerCount: summary.supportedSellerCount,
+      activePolicy: policy.activePolicy,
+      votes: policy.votes,
+      viewerVote,
+      contributionBasisPoints: summary.contributionBasisPoints,
+      maxSubsidyPerSale: summary.maxSubsidyPerSale,
+      monthlySellerCap: summary.monthlySellerCap,
+    },
+    patronImpact: {
+      seasonKey,
+      contributed: contributor.contributionAmount,
+      burned: contributor.burnAmount,
+      recommendedShopCount: recommendations.recommendations.length,
+      recommendationLimit: patronRecommendationLimit(patronage.tier),
+    },
+  };
+}
+
+async function readPatronProgram(uid, patronageValue = null) {
+  const seasonKey = periodKey("monthly");
+  const [
+    patronSnapshot,
+    fundSnapshot,
+    contributorSnapshot,
+    policySnapshot,
+    voteSnapshot,
+    recommendationSnapshot,
+  ] = await Promise.all([
+    patronageValue ? Promise.resolve(null) : patronageRef(uid).get(),
+    patronFundRef(seasonKey).get(),
+    patronFundContributorRef(uid, seasonKey).get(),
+    patronPolicyRef(seasonKey).get(),
+    patronPolicyVoteRef(uid, seasonKey).get(),
+    patronRecommendationProfileRef(uid, seasonKey).get(),
+  ]);
+  return patronProgramResponse({
+    fundValue: fundSnapshot.data(),
+    contributorValue: contributorSnapshot.data(),
+    policyValue: policySnapshot.data(),
+    voteValue: voteSnapshot.data(),
+    recommendationValue: recommendationSnapshot.data(),
+    patronageValue: patronageValue || patronSnapshot?.data(),
+    uid,
+    seasonKey,
+  });
+}
+
+async function ensurePatronFundRecognition(uid, patronageValue) {
+  const seasonKey = periodKey("monthly");
+  const patronage = normalizePatronage(patronageValue, seasonKey);
+  if (patronage.seasonSpent <= 0) return readPatronProgram(uid, patronage);
+  const fundRef = patronFundRef(seasonKey);
+  const contributorRef = patronFundContributorRef(uid, seasonKey);
+  await firestore.runTransaction(async (transaction) => {
+    const [fundSnapshot, contributorSnapshot] = await Promise.all([
+      transaction.get(fundRef),
+      transaction.get(contributorRef),
+    ]);
+    const staged = stagePatronFundRecognition({
+      fundValue: fundSnapshot.data(),
+      contributorValue: contributorSnapshot.data(),
+      uid,
+      seasonKey,
+      patronageValue: patronage,
+    });
+    if (!staged.changed) return;
+    transaction.set(fundRef, staged.fund);
+    transaction.set(contributorRef, staged.contributor);
+  });
+  return readPatronProgram(uid, patronage);
+}
+
 function hasGoogleIdentity(request) {
   const identities = request.auth?.token?.firebase?.identities;
   return Array.isArray(identities?.["google.com"]) && identities["google.com"].length > 0;
@@ -1243,6 +1535,8 @@ async function upgradePatronage(uid, request, data) {
   const wallet = walletRef(uid);
   const patronRef = patronageRef(uid);
   const ledgerRef = patronageLedgerRef(uid, actionId);
+  const fundRef = patronFundRef(seasonKey);
+  const contributorRef = patronFundContributorRef(uid, seasonKey);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
     const [
@@ -1250,11 +1544,15 @@ async function upgradePatronage(uid, request, data) {
       patronSnapshot,
       ledgerSnapshot,
       ledgerConfigSnapshot,
+      fundSnapshot,
+      contributorSnapshot,
     ] = await Promise.all([
       transaction.get(wallet),
       transaction.get(patronRef),
       transaction.get(ledgerRef),
       transaction.get(anjuPayLedgerConfigRef()),
+      transaction.get(fundRef),
+      transaction.get(contributorRef),
     ]);
     const current = normalizePatronage(patronSnapshot.data(), seasonKey);
     const walletState = walletData(walletSnapshot);
@@ -1266,6 +1564,21 @@ async function upgradePatronage(uid, request, data) {
       ledgerConfigSnapshot,
       now,
     );
+    const recognizePatronFund = (patronageValue) => {
+      const staged = stagePatronFundRecognition({
+        fundValue: fundSnapshot.data(),
+        contributorValue: contributorSnapshot.data(),
+        uid,
+        seasonKey,
+        patronageValue,
+        now,
+      });
+      if (staged.changed) {
+        transaction.set(fundRef, staged.fund);
+        transaction.set(contributorRef, staged.contributor);
+      }
+      return staged;
+    };
     if (ledgerSnapshot.exists) {
       const saved = ledgerSnapshot.data();
       if (saved.uid !== uid
@@ -1282,6 +1595,7 @@ async function upgradePatronage(uid, request, data) {
         repeated: true,
       };
       persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
       return;
     }
 
@@ -1289,6 +1603,7 @@ async function upgradePatronage(uid, request, data) {
     if (upgrade.outcome === "owned") {
       result = { outcome: "owned", balance: before, debited: 0, patron: current };
       persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
       return;
     }
     if (upgrade.outcome !== "upgrade" || upgrade.cost <= 0) {
@@ -1303,6 +1618,7 @@ async function upgradePatronage(uid, request, data) {
         patron: current,
       };
       persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
       return;
     }
 
@@ -1314,6 +1630,7 @@ async function upgradePatronage(uid, request, data) {
       lifetimeSpent: current.lifetimeSpent + upgrade.cost,
       updatedAt: now,
     }, seasonKey);
+    const paymentSplit = splitPatronPayment(upgrade.cost);
     const groupId = anjuPayEntryId(`patron:${actionId}:${seasonKey}`);
     appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
       entryId: groupId,
@@ -1333,7 +1650,11 @@ async function upgradePatronage(uid, request, data) {
         nominalAmount: upgrade.cost,
         status: "posted",
       }],
-      details: { targetTier: upgrade.target.level },
+      details: {
+        targetTier: upgrade.target.level,
+        patronFundContribution: paymentSplit.contributionAmount,
+        patronBurnAmount: paymentSplit.burnAmount,
+      },
       occurredAt: now,
     });
     transaction.update(wallet, { balance: after,
@@ -1341,6 +1662,7 @@ async function upgradePatronage(uid, request, data) {
       updatedAt: now,
     });
     transaction.set(patronRef, patron);
+    recognizePatronFund(patron);
     transaction.create(ledgerRef, {
       uid,
       actionId,
@@ -1364,7 +1686,10 @@ async function upgradePatronage(uid, request, data) {
     mirrorWallet(uid, result.balance),
     mirrorPatronage(uid, result.patron),
   ]);
-  return result;
+  return {
+    ...result,
+    ...await readPatronProgram(uid, result.patron),
+  };
 }
 
 async function initializeEconomy(uid) {
@@ -1374,6 +1699,7 @@ async function initializeEconomy(uid) {
     readPatronage(uid),
   ]);
   const { progress, profile, marketStats } = achievementState;
+  const patronProgram = await ensurePatronFundRecognition(uid, patron);
   await Promise.all([
     mirrorWallet(uid, balance),
     mirrorEconomyProgress(uid, progress),
@@ -1395,6 +1721,7 @@ async function initializeEconomy(uid) {
       minimumSuccessFee: 1,
       postMatchTipAmounts: [...POST_MATCH_TIP_AMOUNTS],
     },
+    ...patronProgram,
   };
 }
 
@@ -2596,6 +2923,112 @@ async function getAnjuPayWallet(uid, data) {
   };
 }
 
+async function votePatronPolicy(uid, request, data) {
+  if (!request.app) {
+    throw new HttpsError(
+      "failed-precondition",
+      "市場政策への投票には通信保護が必要です。ページを再読み込みしてください。",
+    );
+  }
+  if (!hasGoogleIdentity(request) || !await hasLiveGoogleIdentity(uid)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "市場政策へ投票するにはGoogleでゲームデータを保護してください。",
+    );
+  }
+  const policyId = normalizePolicyVote(data?.policyId);
+  const actionId = cleanText(data?.actionId, 80);
+  if (!policyId || !/^[A-Za-z0-9_-]{16,80}$/.test(actionId)) {
+    throw new HttpsError("invalid-argument", "市場政策への投票内容が正しくありません。");
+  }
+  const seasonKey = periodKey("monthly");
+  const policyRef = patronPolicyRef(seasonKey);
+  const voteRef = patronPolicyVoteRef(uid, seasonKey);
+  const actionRef = patronPolicyVoteActionRef(uid, seasonKey, actionId);
+  const patronRef = patronageRef(uid);
+  let patron = null;
+  let repeated = false;
+  await firestore.runTransaction(async (transaction) => {
+    const [patronSnapshot, policySnapshot, voteSnapshot, actionSnapshot] = await Promise.all([
+      transaction.get(patronRef),
+      transaction.get(policyRef),
+      transaction.get(voteRef),
+      transaction.get(actionRef),
+    ]);
+    patron = normalizePatronage(patronSnapshot.data(), seasonKey);
+    if (patron.tier < 1) {
+      throw new HttpsError("failed-precondition", "今月の市場パトロンだけが政策へ投票できます。");
+    }
+    if (actionSnapshot.exists) {
+      if (
+        actionSnapshot.get("uid") !== uid
+        || actionSnapshot.get("seasonKey") !== seasonKey
+        || actionSnapshot.get("actionId") !== actionId
+        || normalizePolicyVote(actionSnapshot.get("policyId")) !== policyId
+      ) {
+        throw new HttpsError("already-exists", "同じ操作IDに異なる投票内容は指定できません。");
+      }
+      repeated = true;
+      return;
+    }
+    const policy = normalizePatronPolicy(policySnapshot.data(), seasonKey);
+    const previousVote = voteSnapshot.get("uid") === uid
+      && voteSnapshot.get("seasonKey") === seasonKey
+      ? normalizePolicyVote(voteSnapshot.get("policyId"))
+      : null;
+    const now = Date.now();
+    if (previousVote === policyId) {
+      repeated = true;
+      transaction.create(actionRef, {
+        schemaVersion: 1,
+        uid,
+        seasonKey,
+        actionId,
+        policyId,
+        outcome: "unchanged",
+        createdAt: now,
+      });
+      return;
+    }
+    if (previousVote) {
+      policy.votes[previousVote] = Math.max(0, policy.votes[previousVote] - 1);
+    }
+    policy.votes[policyId] += 1;
+    policy.totalVotes = Object.values(policy.votes).reduce((sum, count) => sum + count, 0);
+    policy.activePolicy = "balanced";
+    for (const candidate of MARKET_POLICY_IDS) {
+      if (policy.votes[candidate] > policy.votes[policy.activePolicy]) {
+        policy.activePolicy = candidate;
+      }
+    }
+    policy.updatedAt = now;
+    transaction.set(policyRef, policy);
+    transaction.set(voteRef, {
+      schemaVersion: 1,
+      uid,
+      seasonKey,
+      policyId,
+      actionId,
+      createdAt: voteSnapshot.get("createdAt") || now,
+      updatedAt: now,
+    });
+    transaction.create(actionRef, {
+      schemaVersion: 1,
+      uid,
+      seasonKey,
+      actionId,
+      policyId,
+      outcome: "voted",
+      createdAt: now,
+    });
+  });
+  return {
+    outcome: repeated ? "unchanged" : "voted",
+    policyId,
+    ...await ensurePatronFundRecognition(uid, patron),
+  };
+}
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -2607,6 +3040,9 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
     if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
+    if (action === "patron_policy_vote") {
+      return await votePatronPolicy(uid, request, request.data);
+    }
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
     if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);
     if (action === "get_server_ranking_awards") return await getServerRankingAwards(uid);
@@ -3251,18 +3687,66 @@ async function resolveSelectedFavoriteSeller(buyerUid, favoritePublicSellerIdVal
   return { sellerUid, publicSellerId: favoritePublicSellerId };
 }
 
+async function resolvePreferredRecommendedSeller(buyerUid, publicSellerIdValue) {
+  const publicSellerId = typeof publicSellerIdValue === "string"
+    ? publicSellerIdValue.trim()
+    : "";
+  if (!isValidPublicSellerId(publicSellerId)) {
+    throw new HttpsError("invalid-argument", "優先して探す推薦商店を確認できませんでした。");
+  }
+  const seasonKey = periodKey("monthly");
+  const [publicSnapshot, recommendationSnapshot] = await Promise.all([
+    marketShopPublicRef(publicSellerId).get(),
+    patronRecommendedShopRef(seasonKey, publicSellerId).get(),
+  ]);
+  const sellerUid = cleanText(publicSnapshot.get("sellerUid"), 128);
+  const sellerShop = publicSellerShop(publicSnapshot.get("sellerShop"));
+  const recommendationCount = integer(
+    recommendationSnapshot.get("recommendationCount"),
+    0,
+    1_000_000,
+    0,
+  );
+  if (
+    !publicSnapshot.exists
+    || !recommendationSnapshot.exists
+    || recommendationCount < PATRON_RECOMMENDED_SHELF_MINIMUM
+    || !sellerUid
+    || sellerUid === buyerUid
+    || sellerShop?.publicSellerId !== publicSellerId
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "この商店は現在の推薦商店から外れています。推薦棚を更新して選び直してください。",
+    );
+  }
+  return { sellerUid, publicSellerId };
+}
+
 async function marketQueueShopContext(uid, role, fallbackName, data = {}) {
   const selectedFavoritePromise = role === "buyer" && data?.matchMode === "favorites"
     ? resolveSelectedFavoriteSeller(uid, data?.favoritePublicSellerId)
     : Promise.resolve(null);
-  const [blocksSnapshot, selectedFavoriteSeller] = await Promise.all([
+  const preferredRecommendedPromise = role === "buyer"
+    && data?.matchMode !== "favorites"
+    && data?.preferredPublicSellerId
+    ? resolvePreferredRecommendedSeller(uid, data.preferredPublicSellerId)
+    : Promise.resolve(null);
+  const [
+    blocksSnapshot,
+    selectedFavoriteSeller,
+    preferredRecommendedSeller,
+  ] = await Promise.all([
     marketShopBlocksRef(uid).orderBy("updatedAt", "desc").limit(100).get(),
     selectedFavoritePromise,
+    preferredRecommendedPromise,
   ]);
   const context = {
     blockedUids: blocksSnapshot.docs.map((snapshot) => snapshot.id),
     selectedFavoriteSellerUid: selectedFavoriteSeller?.sellerUid || "",
     selectedFavoritePublicSellerId: selectedFavoriteSeller?.publicSellerId || "",
+    preferredSellerUid: preferredRecommendedSeller?.sellerUid || "",
+    preferredPublicSellerId: preferredRecommendedSeller?.publicSellerId || "",
     sellerShop: null,
   };
   if (role === "seller") {
@@ -3430,6 +3914,15 @@ function normalizeQueueEntry(
     selectedFavoritePublicSellerId: matchMode === "favorites"
       ? shopContext.selectedFavoritePublicSellerId
       : "",
+    preferredSellerUid: matchMode === "discover"
+      ? cleanText(shopContext.preferredSellerUid, 128)
+      : "",
+    preferredPublicSellerId: matchMode === "discover"
+      ? cleanText(shopContext.preferredPublicSellerId, 40)
+      : "",
+    preferredSellerExpandAt: matchMode === "discover" && shopContext.preferredSellerUid
+      ? queueRequestedAt + MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS
+      : 0,
   };
 }
 
@@ -3478,6 +3971,33 @@ async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
       .filter((role) => role === "seller" || role === "buyer")
       .map((role) => touchMarketRoomPublicPresence(room, role)));
   }
+}
+
+function marketRecommendedPreferenceCompatible(first, second, now = Date.now()) {
+  if (!first || !second || first.role === second.role) return false;
+  const seller = first.role === "seller" ? first : second;
+  const buyer = first.role === "buyer" ? first : second;
+  const preferredSellerUid = cleanText(buyer.preferredSellerUid, 128);
+  if (!preferredSellerUid || preferredSellerUid === seller.uid) return true;
+  return Number(buyer.preferredSellerExpandAt || 0) <= now;
+}
+
+function prioritizeRecommendedMarketCandidates(ownEntry, candidateEntries, now = Date.now()) {
+  const candidates = (Array.isArray(candidateEntries) ? candidateEntries : [])
+    .filter((candidate) => marketRecommendedPreferenceCompatible(ownEntry, candidate, now));
+  const targetUid = ownEntry.role === "buyer"
+    ? cleanText(ownEntry.preferredSellerUid, 128)
+    : cleanText(ownEntry.uid, 128);
+  if (!targetUid) return candidates;
+  return candidates.sort((first, second) => {
+    const firstPreferred = ownEntry.role === "buyer"
+      ? first.uid === targetUid
+      : first.preferredSellerUid === targetUid;
+    const secondPreferred = ownEntry.role === "buyer"
+      ? second.uid === targetUid
+      : second.preferredSellerUid === targetUid;
+    return Number(secondPreferred) - Number(firstPreferred);
+  });
 }
 
 async function loadMarketQueueCandidates(ownEntry, minimumLastSeen) {
@@ -3533,13 +4053,36 @@ async function loadMarketQueueCandidates(ownEntry, minimumLastSeen) {
       .limit(40)
       .get()
     : Promise.resolve(null);
-  const [standardCandidates, selectedBuyersSnapshot] = await Promise.all([
+  const preferredBuyersPromise = ownEntry.role === "seller"
+    ? firestore.collection("valueMarketQueues")
+      .where("preferredSellerUid", "==", ownEntry.uid)
+      .where("status", "==", "waiting")
+      .where("lastSeen", ">=", minimumLastSeen)
+      .orderBy("lastSeen", "asc")
+      .limit(40)
+      .get()
+    : Promise.resolve(null);
+  const preferredSellerPromise = ownEntry.role === "buyer"
+    && ownEntry.matchMode === "discover"
+    && cleanText(ownEntry.preferredSellerUid, 128)
+    ? marketQueueRef(ownEntry.preferredSellerUid).get()
+    : Promise.resolve(null);
+  const [
+    standardCandidates,
+    selectedBuyersSnapshot,
+    preferredBuyersSnapshot,
+    preferredSellerSnapshot,
+  ] = await Promise.all([
     standardCandidatesPromise,
     selectedBuyersPromise,
+    preferredBuyersPromise,
+    preferredSellerPromise,
   ]);
   return [
+    ...(preferredSellerSnapshot?.exists ? [preferredSellerSnapshot.data()] : []),
     ...standardCandidates,
     ...(selectedBuyersSnapshot?.docs.map((snapshot) => snapshot.data()) || []),
+    ...(preferredBuyersSnapshot?.docs.map((snapshot) => snapshot.data()) || []),
   ];
 }
 
@@ -3720,10 +4263,13 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
   if (targetValidation.status !== "valid") return targetValidation;
   const minimumLastSeen = Date.now() - QUEUE_FRESH_MS;
   const candidateEntries = await loadMarketQueueCandidates(ownEntry, minimumLastSeen);
-  const candidates = selectMarketQueueCandidates(ownEntry, candidateEntries, {
-    minimumLastSeen,
-    requireAppCheck: MARKET_APP_CHECK_MIGRATION,
-  }).slice(0, 8);
+  const candidates = prioritizeRecommendedMarketCandidates(
+    ownEntry,
+    selectMarketQueueCandidates(ownEntry, candidateEntries, {
+      minimumLastSeen,
+      requireAppCheck: MARKET_APP_CHECK_MIGRATION,
+    }),
+  ).slice(0, 8);
 
   for (const candidate of candidates) {
     const sellerUid = ownEntry.role === "seller" ? uid : candidate.uid;
@@ -3811,6 +4357,7 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
         || Number(currentCandidate.lastSeen || 0) < Date.now() - QUEUE_FRESH_MS
         || (MARKET_APP_CHECK_MIGRATION && currentCandidate.appCheckVerified !== true)
         || !queuesCompatible(currentOwn, currentCandidate)
+        || !marketRecommendedPreferenceCompatible(currentOwn, currentCandidate)
       ) {
         rejectCandidate();
         return;
@@ -4148,13 +4695,234 @@ exports.valueMarketQueue = onCall(callableOptions("valueMarketQueue"), async (re
   }
 });
 
+async function listPatronRecommendations(uid, seasonKey = periodKey("monthly")) {
+  const profileSnapshot = await patronRecommendationProfileRef(uid, seasonKey).get();
+  const profile = normalizePatronRecommendationProfile(profileSnapshot.data(), uid, seasonKey);
+  const recommendations = await Promise.all(profile.recommendations.map(async (entry) => {
+    const publicSnapshot = await marketShopPublicRef(entry.publicSellerId).get();
+    if (!publicSnapshot.exists) {
+      return {
+        publicSellerId: entry.publicSellerId,
+        shop: null,
+        recommendedAt: entry.recommendedAt,
+        unavailable: true,
+      };
+    }
+    const shop = publicSellerShop(publicSnapshot.get("sellerShop"));
+    if (!shop || shop.publicSellerId !== entry.publicSellerId) {
+      return {
+        publicSellerId: entry.publicSellerId,
+        shop: null,
+        recommendedAt: entry.recommendedAt,
+        unavailable: true,
+      };
+    }
+    return {
+      publicSellerId: entry.publicSellerId,
+      shop,
+      recommendedAt: entry.recommendedAt,
+      unavailable: false,
+    };
+  }));
+  return recommendations;
+}
+
+async function listRecommendedShopShelf(seasonKey = periodKey("monthly")) {
+  const aggregateSnapshot = await patronRecommendationSeasonRef(seasonKey)
+    .collection("shops")
+    .where("recommendationCount", ">=", PATRON_RECOMMENDED_SHELF_MINIMUM)
+    .get();
+  const rotationKey = jstDateKey();
+  const candidates = aggregateSnapshot.docs
+    .map((snapshot) => ({
+      publicSellerId: cleanText(snapshot.get("publicSellerId"), 40),
+      recommendationCount: integer(
+        snapshot.get("recommendationCount"),
+        PATRON_RECOMMENDED_SHELF_MINIMUM,
+        1_000_000,
+        PATRON_RECOMMENDED_SHELF_MINIMUM,
+      ),
+    }))
+    .filter((entry) => isValidPublicSellerId(entry.publicSellerId))
+    .sort((left, right) => (
+      eventId(`${rotationKey}:${left.publicSellerId}`)
+        .localeCompare(eventId(`${rotationKey}:${right.publicSellerId}`))
+    ))
+    .slice(0, PATRON_RECOMMENDED_SHELF_LIMIT);
+  const shops = await Promise.all(candidates.map(async (candidate) => {
+    const publicSnapshot = await marketShopPublicRef(candidate.publicSellerId).get();
+    if (!publicSnapshot.exists) return null;
+    const shop = publicSellerShop(publicSnapshot.get("sellerShop"));
+    if (!shop || shop.publicSellerId !== candidate.publicSellerId) return null;
+    return shop;
+  }));
+  return shops.filter(Boolean);
+}
+
+async function updatePatronRecommendation(uid, data, remove = false, appCheckVerified = false) {
+  if (!appCheckVerified) {
+    throw new HttpsError(
+      "failed-precondition",
+      "商店推薦には通信保護が必要です。ページを再読み込みしてください。",
+    );
+  }
+  const publicSellerId = cleanText(data?.publicSellerId, 40);
+  if (!isValidPublicSellerId(publicSellerId)) {
+    throw new HttpsError("invalid-argument", "店コードが正しくありません。");
+  }
+  const publicRef = marketShopPublicRef(publicSellerId);
+  const initialPublicSnapshot = await publicRef.get();
+  if (!remove && !initialPublicSnapshot.exists) {
+    throw new HttpsError("not-found", "推し値商店が見つかりません。");
+  }
+  const sellerUid = cleanText(initialPublicSnapshot.get("sellerUid"), 128);
+  if (!remove && (!sellerUid || sellerUid === uid)) {
+    throw new HttpsError("failed-precondition", "自分の商店は推薦できません。");
+  }
+
+  const seasonKey = periodKey("monthly");
+  const patronRef = patronageRef(uid);
+  const profileRef = patronRecommendationProfileRef(uid, seasonKey);
+  const favoriteRef = remove ? null : marketShopFavoriteRef(uid, sellerUid);
+  const relationshipRef = remove ? null : marketShopRelationshipRef(sellerUid, uid);
+  const blockRef = remove ? null : marketShopBlockRef(uid, sellerUid);
+  const aggregateRef = patronRecommendedShopRef(seasonKey, publicSellerId);
+  let patron = null;
+  let outcome = remove ? "unchanged" : "recommended";
+
+  await firestore.runTransaction(async (transaction) => {
+    const [patronSnapshot, profileSnapshot, aggregateSnapshot, addSnapshots] = await Promise.all([
+      transaction.get(patronRef),
+      transaction.get(profileRef),
+      transaction.get(aggregateRef),
+      remove
+        ? Promise.resolve(null)
+        : Promise.all([
+          transaction.get(publicRef),
+          transaction.get(favoriteRef),
+          transaction.get(relationshipRef),
+          transaction.get(blockRef),
+        ]),
+    ]);
+    patron = normalizePatronage(patronSnapshot.data(), seasonKey);
+    const profile = normalizePatronRecommendationProfile(
+      profileSnapshot.data(),
+      uid,
+      seasonKey,
+    );
+    const recommendationIndex = profile.recommendations.findIndex(
+      (entry) => entry.publicSellerId === publicSellerId,
+    );
+    const currentlyRecommended = recommendationIndex >= 0;
+
+    if (remove) {
+      if (!currentlyRecommended) {
+        outcome = "unchanged";
+        return;
+      }
+    } else {
+      const [publicSnapshot, favoriteSnapshot, relationshipSnapshot, blockSnapshot] = addSnapshots;
+      if (
+        !publicSnapshot.exists
+        || cleanText(publicSnapshot.get("sellerUid"), 128) !== sellerUid
+        || publicSellerShop(publicSnapshot.get("sellerShop"))?.publicSellerId !== publicSellerId
+      ) {
+        throw new HttpsError("failed-precondition", "店コードの所有関係を確認できませんでした。");
+      }
+      if (patron.tier < 1) {
+        throw new HttpsError("failed-precondition", "今月の市場パトロンだけが商店を推薦できます。");
+      }
+      if (blockSnapshot.exists) {
+        throw new HttpsError("failed-precondition", "ブロック中の商店は推薦できません。");
+      }
+      const favoriteMatches = favoriteSnapshot.exists
+        && cleanText(favoriteSnapshot.get("publicSellerId"), 40) === publicSellerId;
+      const relationshipSaleCount = relationshipSnapshot.get("sellerUid") === sellerUid
+        && relationshipSnapshot.get("buyerUid") === uid
+        ? integer(relationshipSnapshot.get("saleCount"), 0, 1_000_000, 0)
+        : 0;
+      if (!favoriteMatches && relationshipSaleCount < 1) {
+        throw new HttpsError(
+          "failed-precondition",
+          "取引した商店または常連帳の商店だけを推薦できます。",
+        );
+      }
+      if (currentlyRecommended) {
+        outcome = "unchanged";
+        return;
+      }
+      if (profile.recommendations.length >= patronRecommendationLimit(patron.tier)) {
+        throw new HttpsError(
+          "resource-exhausted",
+          `今月の推薦枠は${patronRecommendationLimit(patron.tier)}店です。`,
+        );
+      }
+    }
+
+    const now = Date.now();
+    const aggregateCount = integer(
+      aggregateSnapshot.get("recommendationCount"),
+      0,
+      1_000_000,
+      0,
+    );
+    if (remove) {
+      profile.recommendations.splice(recommendationIndex, 1);
+      outcome = "removed";
+    } else {
+      profile.recommendations.unshift({ publicSellerId, recommendedAt: now });
+      outcome = "recommended";
+    }
+    profile.updatedAt = now;
+    transaction.set(profileRef, {
+      schemaVersion: 1,
+      ...profile,
+      createdAt: Number(profileSnapshot.get("createdAt") || now),
+    });
+    transaction.set(aggregateRef, {
+      schemaVersion: 1,
+      seasonKey,
+      publicSellerId,
+      recommendationCount: remove
+        ? Math.max(0, aggregateCount - 1)
+        : aggregateCount + 1,
+      createdAt: Number(aggregateSnapshot.get("createdAt") || now),
+      updatedAt: now,
+    });
+  });
+
+  const [patronProgram, recommendations, recommendedShelf] = await Promise.all([
+    ensurePatronFundRecognition(uid, patron),
+    listPatronRecommendations(uid, seasonKey),
+    listRecommendedShopShelf(seasonKey),
+  ]);
+  return {
+    outcome,
+    publicSellerId,
+    recommendations,
+    recommendedShelf,
+    ...patronProgram,
+  };
+}
+
 async function getMarketShop(uid) {
   const statsSnapshot = await marketStatsRef(uid).get();
   const fallbackName = statsSnapshot.exists ? cleanName(statsSnapshot.get("name")) : DEFAULT_MARKET_SHOP.shopName;
   const shop = await ensureMarketShop(uid, fallbackName);
-  const [favoritesSnapshot, customizationIds] = await Promise.all([
+  const seasonKey = periodKey("monthly");
+  const patron = await readPatronage(uid, seasonKey);
+  const [
+    favoritesSnapshot,
+    customizationIds,
+    patronProgram,
+    recommendations,
+    recommendedShelf,
+  ] = await Promise.all([
     marketShopFavoritesRef(uid).orderBy("updatedAt", "desc").limit(100).get(),
     ownedMarketCustomizationIds(uid),
+    ensurePatronFundRecognition(uid, patron),
+    listPatronRecommendations(uid, seasonKey),
+    listRecommendedShopShelf(seasonKey),
   ]);
   const favorites = (await Promise.all(favoritesSnapshot.docs.map(async (favoriteSnapshot) => {
     const sellerUid = favoriteSnapshot.id;
@@ -4205,6 +4973,9 @@ async function getMarketShop(uid) {
     report: marketShopVerifiedReport(shop, statsSnapshot.data()),
     ownedTitleIds: customizationIds.ownedTitleIds,
     ownedShopCharmIds: customizationIds.ownedShopCharmIds,
+    recommendations,
+    recommendedShelf,
+    ...patronProgram,
   };
 }
 
@@ -4628,7 +5399,13 @@ exports.valueMarketShop = onCall(callableOptions("valueMarketShop"), async (requ
   try {
     if (
       MARKET_APP_CHECK_MIGRATION
-      && ["save", "relationship", "remove_favorite"].includes(action)
+      && [
+        "save",
+        "relationship",
+        "remove_favorite",
+        "recommend_shop",
+        "remove_recommendation",
+      ].includes(action)
       && !request.app
     ) {
       throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
@@ -4638,6 +5415,12 @@ exports.valueMarketShop = onCall(callableOptions("valueMarketShop"), async (requ
     if (action === "relationship") return await updateMarketShopRelationship(uid, request.data);
     if (action === "remove_favorite") {
       return await removeMarketShopFavorite(uid, request.data?.publicSellerId);
+    }
+    if (action === "recommend_shop") {
+      return await updatePatronRecommendation(uid, request.data, false, Boolean(request.app));
+    }
+    if (action === "remove_recommendation") {
+      return await updatePatronRecommendation(uid, request.data, true, Boolean(request.app));
     }
     throw new HttpsError("invalid-argument", "未対応の推し値商店操作です。");
   } catch (error) {
@@ -4780,6 +5563,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const sellerAchievementRef = achievementProfileRef(initialRoom.sellerUid);
   const buyerAchievementRef = achievementProfileRef(initialRoom.buyerUid);
   const transactionDateKey = jstDateKey();
+  const patronSeasonKey = transactionDateKey.slice(0, 7);
   const pairKey = eventId(`${[initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":")}:${transactionDateKey}`);
   const pairRef = firestore.collection("valueMarketRankedPairs").doc(pairKey);
   const relationshipKey = eventId([initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":"));
@@ -4790,6 +5574,17 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const shopFavoriteRef = marketShopFavoriteRef(initialRoom.buyerUid, initialRoom.sellerUid);
   const certificateRef = marketCertificateRef(initialRoom.buyerUid, roomId);
   const ledgerRef = firestore.collection("valueMarketLedger").doc(eventId(`${roomId}:${uid}:${actionId}`));
+  const marketPatronFundRef = patronFundRef(patronSeasonKey);
+  const marketPatronPairRef = patronFundPairRef(
+    initialRoom.sellerUid,
+    initialRoom.buyerUid,
+    patronSeasonKey,
+  );
+  const marketPatronSellerImpactRef = patronFundSellerImpactRef(
+    initialRoom.sellerUid,
+    patronSeasonKey,
+  );
+  const marketPatronPolicyRef = patronPolicyRef(patronSeasonKey);
   const marketActionTimestamp = Date.now();
   let result = null;
   const achievementResults = {};
@@ -4818,6 +5613,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       certificateSnapshot,
       ledgerSnapshot,
       ledgerConfigSnapshot,
+      patronSubsidySnapshots,
     ] = await Promise.all([
       transaction.get(roomRef),
       transaction.get(sellerWalletRef),
@@ -4835,7 +5631,21 @@ async function performMarketAction(uid, data, appCheckVerified) {
       transaction.get(certificateRef),
       transaction.get(ledgerRef),
       transaction.get(anjuPayLedgerConfigRef()),
+      action === "buy"
+        ? Promise.all([
+          transaction.get(marketPatronFundRef),
+          transaction.get(marketPatronPairRef),
+          transaction.get(marketPatronSellerImpactRef),
+          transaction.get(marketPatronPolicyRef),
+        ])
+        : Promise.resolve([null, null, null, null]),
     ]);
+    const [
+      marketPatronFundSnapshot,
+      marketPatronPairSnapshot,
+      marketPatronSellerImpactSnapshot,
+      marketPatronPolicySnapshot,
+    ] = patronSubsidySnapshots;
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
     const room = { ...roomSnapshot.data() };
     const role = requireRoomActor(room, uid);
@@ -4996,8 +5806,42 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireMarketState(room, "decision");
       const price = integer(room.listing?.askingPrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE);
       const settlement = marketSaleSettlement(price);
+      const patronFund = normalizePatronFund(
+        marketPatronFundSnapshot?.data(),
+        patronSeasonKey,
+      );
+      const patronPolicy = normalizePatronPolicy(
+        marketPatronPolicySnapshot?.data(),
+        patronSeasonKey,
+      );
+      const patronSellerImpact = normalizePatronSellerImpact(
+        marketPatronSellerImpactSnapshot?.data(),
+        room.sellerUid,
+        patronSeasonKey,
+      );
+      const previousShopRelationship = shopRelationshipSnapshot.data() || {};
+      const sellerSubsidyCapacity = Math.max(
+        0,
+        walletCreditCapacity(sellerWallet) - settlement.sellerProceeds,
+      );
+      const candidateSubsidy = patronFundSubsidyDecision({
+        actualFee: settlement.feeAmount,
+        fundRemaining: Math.min(patronFund.fundRemaining, sellerSubsidyCapacity),
+        sellerSubsidized: patronSellerImpact.totalSubsidized,
+        pairAlreadySubsidized: marketPatronPairSnapshot?.exists === true,
+        policyId: patronPolicy.activePolicy,
+        previousSaleCount: integer(previousShopRelationship.saleCount, 0, 1_000_000, 0),
+        lastSaleDateKey: cleanText(previousShopRelationship.lastSaleDateKey, 10),
+        currentDateKey: transactionDateKey,
+      });
+      const subsidyProtected = room.appCheckVerified === true
+        && appCheckVerified === true
+        && !pairSnapshot.exists;
+      const patronSubsidy = subsidyProtected ? candidateSubsidy.subsidyAmount : 0;
+      const actualSellerProceeds = settlement.sellerProceeds + patronSubsidy;
+      const effectiveMarketFee = settlement.feeAmount - patronSubsidy;
       const amount = debitPoints(buyerWallet, settlement.grossAmount);
-      creditPoints(sellerWallet, settlement.sellerProceeds);
+      creditPoints(sellerWallet, actualSellerProceeds);
       addMarketComponent(
         "buyer",
         "sale_purchase",
@@ -5019,6 +5863,15 @@ async function performMarketAction(uid, data, appCheckVerified) {
         -settlement.feeAmount,
         settlement.feeAmount,
       );
+      if (patronSubsidy > 0) {
+        addMarketComponent(
+          "seller",
+          "patron_fund_subsidy",
+          "settled",
+          patronSubsidy,
+          patronSubsidy,
+        );
+      }
       const issuedAt = Date.now();
       const certificateNumber = `OSHI-${certificateRef.id.slice(0, 16).toUpperCase()}`;
       if (
@@ -5045,7 +5898,19 @@ async function performMarketAction(uid, data, appCheckVerified) {
       room.status = "sold";
       room.salePrice = amount;
       room.marketFee = settlement.feeAmount;
-      room.sellerProceeds = settlement.sellerProceeds;
+      room.effectiveMarketFee = effectiveMarketFee;
+      room.patronFundSubsidy = patronSubsidy;
+      room.patronFundPolicy = patronPolicy.activePolicy;
+      room.patronFundKind = patronSubsidy > 0 ? candidateSubsidy.kind : "";
+      room.sellerProceeds = actualSellerProceeds;
+      room.settlementQuote = {
+        ...settlement,
+        effectiveMarketFee,
+        patronFundSubsidy: patronSubsidy,
+        patronFundPolicy: patronPolicy.activePolicy,
+        patronFundKind: room.patronFundKind,
+        sellerProceeds: actualSellerProceeds,
+      };
       room.certificateNumber = certificateNumber;
       room.sellerIssueNumber = sellerIssueNumber;
       room.soldAt = issuedAt;
@@ -5055,7 +5920,11 @@ async function performMarketAction(uid, data, appCheckVerified) {
         toUid: room.sellerUid,
         amount,
         feeAmount: settlement.feeAmount,
-        netAmount: settlement.sellerProceeds,
+        effectiveFeeAmount: effectiveMarketFee,
+        patronFundSubsidy: patronSubsidy,
+        patronFundPolicy: patronPolicy.activePolicy,
+        patronFundKind: room.patronFundKind,
+        netAmount: actualSellerProceeds,
         feeToUid: "market_fee_sink",
         kind: "sale",
       };
@@ -5086,8 +5955,44 @@ async function performMarketAction(uid, data, appCheckVerified) {
           updatedAt: issuedAt,
         }, { merge: true });
       }
-      sellerStats.marketFeesPaid = Number(sellerStats.marketFeesPaid || 0) + settlement.feeAmount;
-      sellerStats.netSales = Number(sellerStats.netSales || 0) + settlement.sellerProceeds;
+      if (patronSubsidy > 0) {
+        const firstSupportedDealForSeller = patronSellerImpact.supportedDeals === 0;
+        transaction.set(marketPatronFundRef, {
+          ...patronFund,
+          activePolicy: patronPolicy.activePolicy,
+          totalSubsidized: patronFund.totalSubsidized + patronSubsidy,
+          fundRemaining: patronFund.fundRemaining - patronSubsidy,
+          supportedSaleCount: patronFund.supportedSaleCount + 1,
+          supportedSellerCount: patronFund.supportedSellerCount
+            + (firstSupportedDealForSeller ? 1 : 0),
+          updatedAt: issuedAt,
+        });
+        transaction.set(marketPatronSellerImpactRef, {
+          schemaVersion: 1,
+          sellerUid: room.sellerUid,
+          seasonKey: patronSeasonKey,
+          totalSubsidized: patronSellerImpact.totalSubsidized + patronSubsidy,
+          supportedDeals: patronSellerImpact.supportedDeals + 1,
+          createdAt: patronSellerImpact.createdAt || issuedAt,
+          updatedAt: issuedAt,
+        });
+        transaction.create(marketPatronPairRef, {
+          schemaVersion: 1,
+          seasonKey: patronSeasonKey,
+          sellerUid: room.sellerUid,
+          buyerUid: room.buyerUid,
+          roomId,
+          dateKey: transactionDateKey,
+          policyId: patronPolicy.activePolicy,
+          subsidyKind: candidateSubsidy.kind,
+          subsidyAmount: patronSubsidy,
+          marketFee: settlement.feeAmount,
+          effectiveMarketFee,
+          createdAt: issuedAt,
+        });
+      }
+      sellerStats.marketFeesPaid = Number(sellerStats.marketFeesPaid || 0) + effectiveMarketFee;
+      sellerStats.netSales = Number(sellerStats.netSales || 0) + actualSellerProceeds;
       if (!pairSnapshot.exists) {
         sellerStats.salesCount = Number(sellerStats.salesCount || 0) + 1;
         sellerStats.grossSales = Number(sellerStats.grossSales || 0) + amount;
@@ -5188,7 +6093,11 @@ async function performMarketAction(uid, data, appCheckVerified) {
         listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
         purchasePrice: amount,
         marketFee: settlement.feeAmount,
-        sellerProceeds: settlement.sellerProceeds,
+        effectiveMarketFee,
+        patronFundSubsidy: patronSubsidy,
+        patronFundPolicy: patronPolicy.activePolicy,
+        patronFundKind: room.patronFundKind,
+        sellerProceeds: actualSellerProceeds,
         turn: integer(room.turn, 1, MARKET_MAX_TURNS, 1),
         extended: Number(room.turn || 1) > 1 || Number(room.extensionFeesPaid || 0) > 0,
         rankingCounted: room.rankingCounted,
@@ -5419,6 +6328,11 @@ async function performMarketAction(uid, data, appCheckVerified) {
               ? { publicSellerId: ensuredSellerShop.publicSellerId }
               : {}),
             listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
+            marketFee: Number(room.marketFee || 0),
+            effectiveMarketFee: Number(room.effectiveMarketFee || room.marketFee || 0),
+            patronFundSubsidy: Number(room.patronFundSubsidy || 0),
+            patronFundPolicy: cleanText(room.patronFundPolicy, 16),
+            patronFundKind: cleanText(room.patronFundKind, 16),
           },
           occurredAt: marketActionTimestamp,
         },
@@ -5480,6 +6394,10 @@ async function performMarketAction(uid, data, appCheckVerified) {
       buyerBalance: result.buyerBalance,
       rankingCounted: room.rankingCounted ?? null,
       marketFee: Number(room.marketFee || 0),
+      effectiveMarketFee: Number(room.effectiveMarketFee || room.marketFee || 0),
+      patronFundSubsidy: Number(room.patronFundSubsidy || 0),
+      patronFundPolicy: cleanText(room.patronFundPolicy, 16),
+      patronFundKind: cleanText(room.patronFundKind, 16),
       sellerProceeds: Number(room.sellerProceeds || 0),
       certificateNumber: cleanText(room.certificateNumber, 24),
       sellerIssueNumber: integer(room.sellerIssueNumber, 0, 1_000_000, 0),
@@ -5500,17 +6418,34 @@ async function performMarketAction(uid, data, appCheckVerified) {
   await retryRealtimeWrite(() => mirrorMarketRoom(result.room, {
     seenRoles: isTerminalMarketState(result.status) ? [] : [result.role],
   }));
+  let patronProgram = null;
+  if (action === "buy") {
+    try {
+      patronProgram = await readPatronProgram(uid);
+    } catch (error) {
+      console.warn("performMarketAction patron program refresh failed", {
+        uid,
+        roomId,
+        error: error?.message || error,
+      });
+    }
+  }
   return {
     status: result.status,
     roomId,
     balance: uid === initialRoom.sellerUid ? result.sellerBalance : result.buyerBalance,
     rankingCounted: result.room.rankingCounted ?? null,
     marketFee: Number(result.room.marketFee || 0),
+    effectiveMarketFee: Number(result.room.effectiveMarketFee || result.room.marketFee || 0),
+    patronFundSubsidy: Number(result.room.patronFundSubsidy || 0),
+    patronFundPolicy: cleanText(result.room.patronFundPolicy, 16),
+    patronFundKind: cleanText(result.room.patronFundKind, 16),
     sellerProceeds: Number(result.room.sellerProceeds || 0),
     certificateNumber: cleanText(result.room.certificateNumber, 24),
     sellerIssueNumber: integer(result.room.sellerIssueNumber, 0, 1_000_000, 0),
     sellerShop: result.room.sellerShop || null,
     newlyUnlocked: result.newlyUnlocked || [],
+    ...(patronProgram || {}),
   };
 }
 
@@ -5586,6 +6521,16 @@ function rankingRow(snapshot, role, viewerUid) {
 function publicMarketCertificate(snapshot) {
   const value = snapshot.data();
   const sellerShop = publicSellerShop(value?.sellerShop);
+  const marketFee = integer(value?.marketFee, 1, MARKET_MAX_PRICE, 1);
+  const patronFundSubsidy = Math.min(
+    Math.floor(marketFee / 2),
+    PATRON_FUND_MAX_SUBSIDY_PER_SALE,
+    marketFee - 1,
+    integer(value?.patronFundSubsidy, 0, MARKET_MAX_PRICE, 0),
+  );
+  const patronFundKind = ["discovery", "trust"].includes(value?.patronFundKind)
+    ? value.patronFundKind
+    : "";
   return {
     certificateNumber: cleanText(value?.certificateNumber, 24),
     listingTitle: cleanText(value?.listingTitle, 30, "無題の推し"),
@@ -5593,7 +6538,11 @@ function publicMarketCertificate(snapshot) {
     ...(sellerShop ? { sellerShop } : {}),
     sellerIssueNumber: integer(value?.sellerIssueNumber, 0, 1_000_000, 0),
     purchasePrice: integer(value?.purchasePrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE),
-    marketFee: integer(value?.marketFee, 1, MARKET_MAX_PRICE, 1),
+    marketFee,
+    effectiveMarketFee: marketFee - patronFundSubsidy,
+    patronFundSubsidy,
+    patronFundPolicy: normalizeMarketPolicyId(value?.patronFundPolicy),
+    patronFundKind,
     sellerProceeds: integer(value?.sellerProceeds, 0, MARKET_MAX_PRICE, 0),
     turn: integer(value?.turn, 1, MARKET_MAX_TURNS, 1),
     extended: value?.extended === true,

@@ -14,7 +14,10 @@ test("successful market buys atomically charge a fee and issue a metadata-only c
   assert.ok(buyStart >= 0 && buyEnd > buyStart);
   assert.match(buySource, /marketSaleSettlement\(price\)/);
   assert.match(buySource, /debitPoints\(buyerWallet, settlement\.grossAmount\)/);
-  assert.match(buySource, /creditPoints\(sellerWallet, settlement\.sellerProceeds\)/);
+  assert.match(buySource, /const actualSellerProceeds = settlement\.sellerProceeds \+ patronSubsidy/);
+  assert.match(buySource, /creditPoints\(sellerWallet, actualSellerProceeds\)/);
+  assert.match(buySource, /patronFundSubsidyDecision\(\{/);
+  assert.match(buySource, /transaction\.create\(marketPatronPairRef/);
   assert.match(buySource, /transaction\.create\(certificateRef/);
   assert.match(buySource, /nonTransferable: true/);
   assert.doesNotMatch(buySource, /\b(?:image|audio|chat)\b/i);

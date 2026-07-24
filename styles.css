@@ -1082,6 +1082,223 @@ button:disabled {
   width: 100%;
 }
 
+.patron-circulation-card,
+.patron-policy-card {
+  margin-top: 18px;
+  padding: 20px;
+  border: 1px solid rgba(255, 209, 102, 0.27);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 100% 0, rgba(255, 209, 102, 0.1), transparent 38%),
+    rgba(7, 9, 15, 0.64);
+}
+
+.patron-circulation-head,
+.patron-policy-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 22px;
+}
+
+.patron-circulation-head h3,
+.patron-policy-head h3,
+.patron-impact-panel h3 {
+  margin: 4px 0 0;
+  font-size: clamp(1.1rem, 2.5vw, 1.45rem);
+}
+
+.patron-circulation-head > p,
+.patron-policy-card > p {
+  max-width: 580px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.7;
+}
+
+.patron-circulation-head > p strong {
+  color: #ffe9a5;
+}
+
+.patron-fund-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 18px 0 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 209, 102, 0.18);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.patron-fund-metrics > div {
+  min-width: 0;
+  padding: 13px 14px;
+  background: rgba(8, 11, 19, 0.86);
+}
+
+.patron-fund-metrics dt,
+.patron-impact-panel dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.patron-fund-metrics dd,
+.patron-impact-panel dd {
+  margin: 4px 0 0;
+  color: #fff0bd;
+  font-size: 0.95rem;
+  font-weight: 950;
+  overflow-wrap: anywhere;
+}
+
+.patron-impact-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1fr);
+  align-items: center;
+  gap: 16px 22px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(77, 232, 223, 0.25);
+  border-radius: var(--radius-sm);
+  background: rgba(77, 232, 223, 0.055);
+}
+
+.patron-impact-panel dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.patron-impact-panel dl > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(5, 8, 14, 0.48);
+}
+
+.patron-impact-panel > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.65;
+}
+
+.patron-policy-card {
+  border-color: rgba(77, 232, 223, 0.25);
+  background:
+    radial-gradient(circle at 0 0, rgba(77, 232, 223, 0.09), transparent 38%),
+    rgba(7, 9, 15, 0.64);
+}
+
+.patron-policy-head > p {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  min-width: 150px;
+  margin: 0;
+  padding: 10px 13px;
+  border: 1px solid rgba(255, 209, 102, 0.27);
+  border-radius: 12px;
+  background: rgba(255, 209, 102, 0.06);
+  text-align: right;
+}
+
+.patron-policy-head > p span {
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 850;
+}
+
+.patron-policy-head > p strong {
+  color: #ffe9a5;
+  font-size: 0.84rem;
+}
+
+.patron-policy-card > p {
+  max-width: none;
+  margin-top: 13px;
+}
+
+.patron-policy-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.patron-policy-option {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 132px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  cursor: pointer;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.025);
+  font: inherit;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.patron-policy-option:hover:not(:disabled),
+.patron-policy-option:focus-visible {
+  border-color: rgba(77, 232, 223, 0.55);
+  outline: 2px solid rgba(77, 232, 223, 0.15);
+  outline-offset: 2px;
+  background: rgba(77, 232, 223, 0.07);
+  transform: translateY(-1px);
+}
+
+.patron-policy-option.is-active-policy {
+  border-color: rgba(255, 209, 102, 0.48);
+  background: rgba(255, 209, 102, 0.065);
+}
+
+.patron-policy-option.is-selected {
+  box-shadow: inset 0 0 0 2px rgba(77, 232, 223, 0.48);
+}
+
+.patron-policy-option:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.patron-policy-option > span {
+  color: #f8fbff;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.patron-policy-option > small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.patron-policy-option > strong {
+  align-self: end;
+  color: var(--cyan);
+  font-size: 0.69rem;
+  line-height: 1.45;
+}
+
+.patron-policy-status {
+  min-height: 1.5em;
+  margin: 12px 0 0;
+  color: #b8fffa;
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
 .account-transfer-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1183,6 +1400,25 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .patron-circulation-head,
+  .patron-policy-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .patron-policy-head > p {
+    width: 100%;
+    text-align: left;
+  }
+
+  .patron-policy-options {
+    grid-template-columns: 1fr;
+  }
+
+  .patron-policy-option {
+    min-height: 0;
+  }
+
   .anju-pay-quick-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1251,6 +1487,17 @@ button:disabled {
 
   .patron-progress-card > div:first-child {
     flex-direction: column;
+  }
+
+  .patron-fund-metrics,
+  .patron-impact-panel,
+  .patron-impact-panel dl {
+    grid-template-columns: 1fr;
+  }
+
+  .patron-circulation-card,
+  .patron-policy-card {
+    padding: 16px;
   }
 }
 

@@ -74,6 +74,25 @@ const PATRON_TIERS = Object.freeze([
   Object.freeze({ level: 2, id: "patron", label: "PATRON", threshold: 1_500, icon: "◆" }),
   Object.freeze({ level: 3, id: "grand_patron", label: "GRAND PATRON", threshold: 5_000, icon: "♛" }),
 ]);
+const PATRON_POLICY_OPTIONS = Object.freeze([
+  Object.freeze({
+    id: "balanced",
+    label: "出会いと常連",
+    description: "新しい出会いと、育ってきた信頼の両方を支えます。",
+  }),
+  Object.freeze({
+    id: "discovery",
+    label: "新しい出会い",
+    description: "まだ取引したことのない店主との商談を優先します。",
+  }),
+  Object.freeze({
+    id: "trust",
+    label: "常連の信頼",
+    description: "別日に再び成立した常連商談を優先します。",
+  }),
+]);
+const PATRON_POLICY_IDS = new Set(PATRON_POLICY_OPTIONS.map((policy) => policy.id));
+const PATRON_METRIC_MAX = 999_999_999;
 const useAccountPreview = useOfflineMarketPreview;
 const previewKind = new URLSearchParams(location.search).get("accountPreview") || "guest";
 
@@ -89,6 +108,8 @@ function createState() {
     user: null,
     balance: 0,
     patron: normalizePatronage(null),
+    patronFund: normalizePatronFund(null),
+    patronImpact: normalizePatronImpact(null),
     historyAvailable: null,
     historyEntries: [],
     historyStartedAt: 0,
@@ -541,6 +562,69 @@ function normalizePatronage(value) {
   };
 }
 
+function patronMetric(value, maximum = PATRON_METRIC_MAX) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(maximum, Math.trunc(number)));
+}
+
+function patronSeasonKey(value) {
+  const seasonKey = String(value || "");
+  return /^\d{4}-(?:0[1-9]|1[0-2])$/.test(seasonKey) ? seasonKey : currentSeasonKey();
+}
+
+function normalizePatronFund(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const voteSource = source.votes && typeof source.votes === "object" && !Array.isArray(source.votes)
+    ? source.votes
+    : {};
+  const activePolicy = PATRON_POLICY_IDS.has(String(source.activePolicy || ""))
+    ? String(source.activePolicy)
+    : "balanced";
+  const viewerVote = PATRON_POLICY_IDS.has(String(source.viewerVote || ""))
+    ? String(source.viewerVote)
+    : "";
+  return {
+    seasonKey: patronSeasonKey(source.seasonKey),
+    contributed: patronMetric(source.contributed),
+    burned: patronMetric(source.burned),
+    budget: patronMetric(source.budget),
+    subsidyPaid: patronMetric(source.subsidyPaid),
+    remaining: patronMetric(source.remaining),
+    supportedDeals: patronMetric(source.supportedDeals),
+    activePolicy,
+    votes: {
+      balanced: patronMetric(voteSource.balanced),
+      discovery: patronMetric(voteSource.discovery),
+      trust: patronMetric(voteSource.trust),
+    },
+    viewerVote,
+  };
+}
+
+function normalizePatronImpact(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const recommendationLimit = patronMetric(source.recommendationLimit, 100);
+  return {
+    contributed: patronMetric(source.contributed),
+    recommendedShopCount: Math.min(
+      recommendationLimit,
+      patronMetric(source.recommendedShopCount, 10_000),
+    ),
+    recommendationLimit,
+  };
+}
+
+function applyPatronEconomyResponse(targetState, responseData) {
+  targetState.patronFund = normalizePatronFund(responseData?.patronFund);
+  targetState.patronImpact = normalizePatronImpact(responseData?.patronImpact);
+}
+
+function resetPatronEconomyState(targetState = state) {
+  targetState.patronFund = normalizePatronFund(null);
+  targetState.patronImpact = normalizePatronImpact(null);
+}
+
 function isGoogleLinked(user = state.user) {
   return Boolean(user?.providerData?.some((provider) => provider?.providerId === "google.com"));
 }
@@ -665,6 +749,25 @@ async function loadAccountData({ notice = "" } = {}) {
     requestState.patron = normalizePatronage(protectedPreview
       ? { seasonKey: currentSeasonKey(), seasonSpent: 1_500, lifetimeSpent: 4_800 }
       : null);
+    applyPatronEconomyResponse(requestState, protectedPreview ? {
+      patronFund: {
+        seasonKey: currentSeasonKey(),
+        contributed: 1_600,
+        burned: 6_400,
+        budget: 1_600,
+        subsidyPaid: 620,
+        remaining: 980,
+        supportedDeals: 48,
+        activePolicy: "balanced",
+        votes: { balanced: 18, discovery: 12, trust: 9 },
+        viewerVote: "balanced",
+      },
+      patronImpact: {
+        contributed: 300,
+        recommendedShopCount: 1,
+        recommendationLimit: 2,
+      },
+    } : null);
     resetHistoryState();
     await loadAnjuPayHistory();
     if (!requestIsCurrent()) return false;
@@ -686,6 +789,7 @@ async function loadAccountData({ notice = "" } = {}) {
     if (previousUid && previousUid !== user.uid) {
       requestState.balance = 0;
       requestState.patron = normalizePatronage(null);
+      resetPatronEconomyState(requestState);
       resetHistoryState();
     }
     if (isGoogleLinked(user)) clearTransferCode();
@@ -694,6 +798,7 @@ async function loadAccountData({ notice = "" } = {}) {
     if (!requestIsCurrent()) return false;
     requestState.balance = Math.max(0, Math.floor(Number(response.data?.balance || 0)));
     requestState.patron = normalizePatronage(response.data?.patron);
+    applyPatronEconomyResponse(requestState, response.data);
     await loadAnjuPayHistory();
     if (!requestIsCurrent()) return false;
     requestState.notice = notice;
@@ -702,6 +807,7 @@ async function loadAccountData({ notice = "" } = {}) {
     if (!requestIsCurrent()) return false;
     requestState.balance = 0;
     requestState.patron = normalizePatronage(null);
+    resetPatronEconomyState(requestState);
     resetHistoryState();
     throw error;
   } finally {
@@ -762,6 +868,8 @@ function renderAccountStatus() {
 
 function renderPatronage() {
   const patron = state.patron;
+  const fund = state.patronFund;
+  const impact = state.patronImpact;
   const currentTier = tierForLevel(patron.tier);
   const nextTier = PATRON_TIERS.find((tier) => tier.level > currentTier.level) || currentTier;
   const nextCost = Math.max(0, nextTier.threshold - patron.seasonSpent);
@@ -771,6 +879,11 @@ function renderPatronage() {
     : Math.min(100, (patron.seasonSpent / progressMaximum) * 100);
   const protectedData = isGoogleLinked();
   const seasonLabel = `${patron.seasonKey.replace("-", "年")}月シーズン`;
+  const fundSeasonLabel = `${fund.seasonKey.replace("-", "年")}月`;
+  const activePolicy = PATRON_POLICY_OPTIONS.find((policy) => policy.id === fund.activePolicy)
+    || PATRON_POLICY_OPTIONS[0];
+  const policyVoteBusy = state.busyAction === "patron-policy";
+  const canVote = protectedData && patron.tier > 0;
   const tierCards = PATRON_TIERS.slice(1).map((tier) => {
     const owned = patron.tier >= tier.level;
     const required = Math.max(0, tier.threshold - patron.seasonSpent);
@@ -782,9 +895,31 @@ function renderPatronage() {
         ${owned || !protectedData || !affordable || state.busyAction ? "disabled" : ""}>${owned ? "獲得済み" : affordable ? `${formatAnjuPay(required)}で昇格` : `あと${formatAnjuPay(required - state.balance)}`}</button>
     </article>`;
   }).join("");
-  return `<section class="account-patron-section" id="accountPatronSection" tabindex="-1">
-    <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2>VALUE MARKET パトロン</h2>
-      <p>AnjuPayをシステムへ納めて、月替わりの市場支援者バッジを獲得します。勝敗や採点には影響しません。</p></div>
+  const policyButtons = PATRON_POLICY_OPTIONS.map((policy) => {
+    const selected = fund.viewerVote === policy.id;
+    const activePolicyOption = fund.activePolicy === policy.id;
+    const votes = fund.votes[policy.id];
+    return `<button class="patron-policy-option ${selected ? "is-selected" : ""} ${activePolicyOption ? "is-active-policy" : ""}" type="button"
+      data-patron-policy="${policy.id}" aria-pressed="${selected}" aria-label="${escapeHtml(policy.label)}に投票、現在${votes}票"
+      ${!canVote || state.busyAction ? "disabled" : ""}>
+      <span>${escapeHtml(policy.label)}</span>
+      <small>${escapeHtml(policy.description)}</small>
+      <strong>${votes}票${activePolicyOption ? "・今月の方針" : ""}${selected ? "・投票済み" : ""}</strong>
+    </button>`;
+  }).join("");
+  const policyStatus = policyVoteBusy
+    ? "市場政策への投票を送信しています。"
+    : fund.viewerVote
+      ? `あなたは「${PATRON_POLICY_OPTIONS.find((policy) => policy.id === fund.viewerVote)?.label || activePolicy.label}」へ投票しています。`
+      : canVote
+        ? "今月支えたい市場の方針を1つ選べます。投票先は月内でも変更できます。"
+        : "SUPPORTER以上になると、今月の市場政策へ投票できます。";
+  const recommendationText = impact.recommendationLimit > 0
+    ? `${impact.recommendedShopCount} / ${impact.recommendationLimit}店`
+    : "ランク獲得後に利用可能";
+  return `<section class="account-patron-section" id="accountPatronSection" tabindex="-1" aria-labelledby="accountPatronTitle">
+    <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2 id="accountPatronTitle">VALUE MARKET パトロン</h2>
+      <p>AnjuPayで月替わりの市場支援者バッジを獲得し、循環基金と市場政策を通じて商談を支えます。勝敗や採点には影響しません。</p></div>
       <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>CURRENT</small><strong>${currentTier.label}</strong></div></div>
     <div class="patron-progress-card">
       <div><span>${seasonLabel}</span><strong>${formatAnjuPay(patron.seasonSpent)} 支援</strong></div>
@@ -793,7 +928,33 @@ function renderPatronage() {
     </div>
     ${!protectedData ? `<div class="patron-protection-lock"><strong>先にゲームデータを保護してください</strong><p>多額のAnjuPay利用は取り消せないため、Google保護後に昇格できます。</p></div>` : ""}
     <div class="patron-tier-grid">${tierCards}</div>
-    <p class="account-fine-print">ランクは日本時間の毎月1日に更新されます。利用したAnjuPayの払い戻しはなく、市場ウォレットと商談相手にバッジが表示されます。累計支援 ${formatAnjuPay(patron.lifetimeSpent)}。</p>
+    <section class="patron-circulation-card" aria-labelledby="patronFundTitle">
+      <div class="patron-circulation-head"><div><span class="eyebrow">MARKET CIRCULATION FUND</span><h3 id="patronFundTitle">${fundSeasonLabel}の循環基金</h3></div>
+        <p><strong>支援額の80%を消却、20%を循環基金へ。</strong>基金は成立した商談の売り手手数料の半分（1商談最大10 Pay）を補填し、未使用分は月末に消却します。</p></div>
+      <dl class="patron-fund-metrics" aria-label="${fundSeasonLabel}の循環基金実績">
+        <div><dt>基金拠出合計</dt><dd>${formatAnjuPay(fund.contributed)}</dd></div>
+        <div><dt>市場から消却</dt><dd>${formatAnjuPay(fund.burned)}</dd></div>
+        <div><dt>基金予算</dt><dd>${formatAnjuPay(fund.budget)}</dd></div>
+        <div><dt>基金残高</dt><dd>${formatAnjuPay(fund.remaining)}</dd></div>
+        <div><dt>手数料補填</dt><dd>${formatAnjuPay(fund.subsidyPaid)}</dd></div>
+        <div><dt>支援した商談</dt><dd>${fund.supportedDeals.toLocaleString("ja-JP")}件</dd></div>
+      </dl>
+      <div class="patron-impact-panel" aria-labelledby="patronImpactTitle">
+        <div><span class="eyebrow">YOUR IMPACT</span><h3 id="patronImpactTitle">あなたの市場Impact</h3></div>
+        <dl><div><dt>あなたの基金拠出</dt><dd>${formatAnjuPay(impact.contributed)}</dd></div>
+          <div><dt>推薦中の商店</dt><dd>${recommendationText}</dd></div></dl>
+        <p>推薦商店はVALUE MARKETの店主カードから選べます。Payが店主へ直接配られる仕組みではありません。</p>
+      </div>
+      <p class="account-fine-print">補填は同じ買い手・売り手の組み合わせにつき月1回、店主1人につき月50 Payまでです。買い手の支払額は変わりません。</p>
+    </section>
+    <section class="patron-policy-card" aria-labelledby="patronPolicyTitle" aria-busy="${policyVoteBusy}">
+      <div class="patron-policy-head"><div><span class="eyebrow">MONTHLY MARKET POLICY</span><h3 id="patronPolicyTitle">今月の市場政策</h3></div>
+        <p><span>現在の方針</span><strong>${escapeHtml(activePolicy.label)}</strong></p></div>
+      <p>${escapeHtml(activePolicy.description)} パトロン投票の最多方針を、循環基金の補填優先度へ反映します。</p>
+      <div class="patron-policy-options" role="group" aria-labelledby="patronPolicyTitle">${policyButtons}</div>
+      <p class="patron-policy-status" role="status" aria-live="polite">${escapeHtml(policyStatus)}</p>
+    </section>
+    <p class="account-fine-print">ランクと投票は日本時間の毎月1日に更新されます。利用したAnjuPayの払い戻しはなく、市場ウォレットと商談相手にバッジが表示されます。累計支援 ${formatAnjuPay(patron.lifetimeSpent)}。</p>
   </section>`;
 }
 
@@ -999,6 +1160,21 @@ async function restoreWithGoogle() {
       state.user = { ...state.user, isAnonymous: false, providerData: [{ providerId: "google.com", email: "restored@example.com" }] };
       state.balance = 6_400;
       state.patron = normalizePatronage({ seasonKey: currentSeasonKey(), seasonSpent: 1_500, lifetimeSpent: 4_800 });
+      applyPatronEconomyResponse(state, {
+        patronFund: {
+          seasonKey: currentSeasonKey(),
+          contributed: 1_600,
+          burned: 6_400,
+          budget: 1_600,
+          subsidyPaid: 620,
+          remaining: 980,
+          supportedDeals: 48,
+          activePolicy: "balanced",
+          votes: { balanced: 18, discovery: 12, trust: 9 },
+          viewerVote: "balanced",
+        },
+        patronImpact: { contributed: 300, recommendedShopCount: 1, recommendationLimit: 2 },
+      });
       applyHistoryResponse(previewHistory(true));
       clearTransferCode();
       state.notice = "Googleデータを復元したプレビュー状態です。";
@@ -1035,6 +1211,7 @@ async function useExistingGoogleData() {
     state.user = result.user;
     state.balance = 0;
     state.patron = normalizePatronage(null);
+    resetPatronEconomyState();
     resetHistoryState();
     clearTransferCode();
     await result.user.getIdToken(true);
@@ -1055,28 +1232,46 @@ function newActionId() {
 
 async function upgradePatron(targetTier) {
   if (state.busyAction || !isGoogleLinked()) return;
+  const requestState = state;
   let operationUid = "";
   try {
     operationUid = requireCurrentAccount({ google: true }).uid;
   } catch (error) {
-    state.error = friendlyError(error, "Google保護状態を確認できませんでした。");
-    render();
+    if (state === requestState) {
+      requestState.error = friendlyError(error, "Google保護状態を確認できませんでした。");
+      render();
+    }
     return;
   }
   const target = tierForLevel(targetTier);
-  const required = Math.max(0, target.threshold - state.patron.seasonSpent);
-  if (!required || state.balance < required) return;
-  if (!window.confirm(`${formatAnjuPay(required)}を払い戻しなしで支払い、今月の${target.label}へ昇格します。続けますか？`)) return;
-  state.busyAction = "patron";
-  state.error = "";
+  const required = Math.max(0, target.threshold - requestState.patron.seasonSpent);
+  if (!required || requestState.balance < required) return;
+  const fundContribution = Math.floor(required * 0.2);
+  const burnedAmount = required - fundContribution;
+  if (!window.confirm(`${formatAnjuPay(required)}を払い戻しなしで支払い、今月の${target.label}へ昇格します。支払額の80%（${formatAnjuPay(burnedAmount)}）は消却、20%（${formatAnjuPay(fundContribution)}）は循環基金へ入ります。続けますか？`)) return;
+  requestState.busyAction = "patron";
+  requestState.error = "";
   render();
   try {
     if (useAccountPreview) {
-      state.balance -= required;
-      state.patron = normalizePatronage({
+      requestState.balance -= required;
+      requestState.patron = normalizePatronage({
         seasonKey: currentSeasonKey(),
         seasonSpent: target.threshold,
-        lifetimeSpent: state.patron.lifetimeSpent + required,
+        lifetimeSpent: requestState.patron.lifetimeSpent + required,
+      });
+      requestState.patronFund = normalizePatronFund({
+        ...requestState.patronFund,
+        seasonKey: currentSeasonKey(),
+        contributed: requestState.patronFund.contributed + fundContribution,
+        burned: requestState.patronFund.burned + burnedAmount,
+        budget: requestState.patronFund.budget + fundContribution,
+        remaining: requestState.patronFund.remaining + fundContribution,
+      });
+      requestState.patronImpact = normalizePatronImpact({
+        ...requestState.patronImpact,
+        contributed: requestState.patronImpact.contributed + fundContribution,
+        recommendationLimit: target.level,
       });
       addPreviewHistoryEntry({
         category: "spend",
@@ -1085,7 +1280,7 @@ async function upgradePatron(targetTier) {
         details: { targetTier: target.level },
         delta: -required,
       });
-      state.notice = `${target.label}へ昇格したプレビュー状態です。`;
+      requestState.notice = `${target.label}へ昇格したプレビュー状態です。`;
       return;
     }
     const response = await economyActionCallable({
@@ -1094,16 +1289,89 @@ async function upgradePatron(targetTier) {
       actionId: newActionId(),
     });
     requireOperationUid(operationUid);
+    if (!active || state !== requestState) return;
     if (response.data?.outcome === "short") throw new Error("AnjuPay残高が不足しています。");
-    state.balance = Math.max(0, Math.floor(Number(response.data?.balance || 0)));
-    state.patron = normalizePatronage(response.data?.patron);
+    requestState.balance = Math.max(0, Math.floor(Number(response.data?.balance || 0)));
+    requestState.patron = normalizePatronage(response.data?.patron);
+    applyPatronEconomyResponse(requestState, response.data);
     await loadAnjuPayHistory({ force: true });
-    state.notice = `${target.label}へ昇格しました。市場で新しいバッジが表示されます。`;
+    if (!active || state !== requestState) return;
+    requestState.notice = `${target.label}へ昇格しました。市場で新しいバッジが表示されます。`;
   } catch (error) {
-    state.error = friendlyError(error, "パトロンランクを更新できませんでした。");
+    if (state === requestState) {
+      requestState.error = friendlyError(error, "パトロンランクを更新できませんでした。");
+    }
   } finally {
-    state.busyAction = "";
-    render();
+    if (state === requestState) {
+      requestState.busyAction = "";
+      if (active) render();
+    }
+  }
+}
+
+async function votePatronPolicy(policyId) {
+  const policy = PATRON_POLICY_OPTIONS.find((option) => option.id === String(policyId || ""));
+  if (!policy || state.busyAction || state.patronFund.viewerVote === policy.id) return;
+  if (!isGoogleLinked() || state.patron.tier < 1) {
+    state.error = "市場政策への投票には、Google保護済みのSUPPORTER以上のパトロンランクが必要です。";
+    render({ focus: false });
+    return;
+  }
+  const requestState = state;
+  let operationUid = "";
+  try {
+    operationUid = requireCurrentAccount({ google: true }).uid;
+  } catch (error) {
+    state.error = friendlyError(error, "Google保護状態を確認できませんでした。");
+    render({ focus: false });
+    return;
+  }
+  requestState.busyAction = "patron-policy";
+  requestState.error = "";
+  requestState.notice = "";
+  render({ focus: false });
+  try {
+    if (useAccountPreview) {
+      const votes = { ...requestState.patronFund.votes };
+      const previousVote = requestState.patronFund.viewerVote;
+      if (previousVote && votes[previousVote] > 0) votes[previousVote] -= 1;
+      votes[policy.id] += 1;
+      const activePolicy = PATRON_POLICY_OPTIONS.reduce((leading, option) => (
+        votes[option.id] > votes[leading.id] ? option : leading
+      ), PATRON_POLICY_OPTIONS[0]).id;
+      requestState.patronFund = normalizePatronFund({
+        ...requestState.patronFund,
+        votes,
+        activePolicy,
+        viewerVote: policy.id,
+      });
+      requestState.notice = `「${policy.label}」へ投票したプレビュー状態です。`;
+      return;
+    }
+    const response = await economyActionCallable({
+      action: "patron_policy_vote",
+      policyId: policy.id,
+      actionId: newActionId(),
+    });
+    requireOperationUid(operationUid);
+    if (!active || state !== requestState) return;
+    applyPatronEconomyResponse(requestState, response.data);
+    requestState.notice = `今月の市場政策「${policy.label}」へ投票しました。`;
+  } catch (error) {
+    if (state === requestState) {
+      requestState.error = friendlyError(error, "今月の市場政策へ投票できませんでした。");
+    }
+  } finally {
+    if (state === requestState) {
+      requestState.busyAction = "";
+      if (active) {
+        render({ focus: false });
+        window.setTimeout(() => {
+          if (!active || state !== requestState) return;
+          document.querySelector(`[data-patron-policy="${policy.id}"]`)?.focus({ preventScroll: true });
+        }, 0);
+      }
+    }
   }
 }
 
@@ -1188,6 +1456,21 @@ async function redeemTransfer(code) {
       state.user = { ...state.user, isAnonymous: false, providerData: [] };
       state.balance = 3_800;
       state.patron = normalizePatronage({ seasonKey: currentSeasonKey(), seasonSpent: 300, lifetimeSpent: 900 });
+      applyPatronEconomyResponse(state, {
+        patronFund: {
+          seasonKey: currentSeasonKey(),
+          contributed: 600,
+          burned: 2_400,
+          budget: 600,
+          subsidyPaid: 160,
+          remaining: 440,
+          supportedDeals: 12,
+          activePolicy: "discovery",
+          votes: { balanced: 4, discovery: 7, trust: 2 },
+          viewerVote: "discovery",
+        },
+        patronImpact: { contributed: 60, recommendedShopCount: 1, recommendationLimit: 1 },
+      });
       const startedAt = Date.now() - 3 * 86_400_000;
       applyHistoryResponse({
         available: true,
@@ -1209,6 +1492,7 @@ async function redeemTransfer(code) {
     state.user = credential.user;
     state.balance = 0;
     state.patron = normalizePatronage(null);
+    resetPatronEconomyState();
     resetHistoryState();
     clearTransferCode();
     await credential.user.getIdToken(true);
@@ -1308,6 +1592,9 @@ function bindEvents() {
   document.querySelectorAll("[data-patron-tier]").forEach((button) => {
     button.addEventListener("click", () => upgradePatron(Number(button.dataset.patronTier)));
   });
+  document.querySelectorAll("[data-patron-policy]").forEach((button) => {
+    button.addEventListener("click", () => votePatronPolicy(button.dataset.patronPolicy));
+  });
   document.querySelector("#createTransferCode")?.addEventListener("click", createTransfer);
   document.querySelector("#cancelTransferCode")?.addEventListener("click", cancelTransfer);
   document.querySelector("#copyTransferCode")?.addEventListener("click", async () => {
@@ -1354,6 +1641,7 @@ function subscribeToAuthChanges() {
     state.user = user;
     state.balance = 0;
     state.patron = normalizePatronage(null);
+    resetPatronEconomyState();
     resetHistoryState();
     detachTransferCode();
     state.loading = true;
