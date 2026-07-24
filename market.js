@@ -799,7 +799,7 @@ function isActive() {
   return active;
 }
 
-async function start() {
+async function start({ initialScreen = "setup" } = {}) {
   if (active) return;
   if (location.protocol === "file:") {
     showToast("VALUE MARKETはローカルサーバーまたは公開URLから起動してください。");
@@ -813,13 +813,24 @@ async function start() {
   active = true;
   const generation = ++lifecycleGeneration;
   state = createState();
+  const openLandingRankings = initialScreen === "rankings";
+  if (openLandingRankings) {
+    state.screen = "rankings";
+    state.rankingReturnScreen = "landing";
+    state.rankingsStatus = "loading";
+  }
   lastRenderedScreen = "";
   setMarketChrome("CONNECTING");
   render();
-  ensureAuthenticated(generation).catch((error) => handleFatalError(error, generation));
+  ensureAuthenticated(generation, { openLandingRankings })
+    .catch((error) => handleFatalError(error, generation));
 }
 
-async function ensureAuthenticated(generation) {
+function openRankingsFromLanding() {
+  return start({ initialScreen: "rankings" });
+}
+
+async function ensureAuthenticated(generation, { openLandingRankings = false } = {}) {
   if (useMarketPreview) {
     state.uid = "local-preview-user";
     updateMarketBalance(500);
@@ -847,6 +858,10 @@ async function ensureAuthenticated(generation) {
     state.shopErrorMessage = "";
     state.authReady = true;
     setMarketChrome("VALUE MARKET PREVIEW");
+    if (openLandingRankings) {
+      await openRankings("landing");
+      return;
+    }
     render();
     return;
   }
@@ -864,6 +879,10 @@ async function ensureAuthenticated(generation) {
   subscribeToActiveRoom(generation);
   subscribeToWallet(generation);
   setMarketChrome("VALUE MARKET");
+  if (openLandingRankings) {
+    await openRankings("landing");
+    return;
+  }
   render();
   await loadMarketShop(generation);
 }
@@ -1322,7 +1341,7 @@ function renderRankings() {
     ? entries.map((entry, index) => row(entry, index, role)).join("")
     : `<li class="market-ranking-empty">集計対象の売買はまだありません。</li>`;
   return `<section class="screen market-screen market-rankings">
-    <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>総合ランキングには含まれない、売り手と買い手それぞれの市場実績です。</p></div><button class="button button-ghost" id="marketRankingBack">${state.rankingReturnScreen === "room" && state.room ? "取引結果へ戻る" : "市場へ戻る"}</button></div>
+    <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>総合ランキングには含まれない、売り手と買い手それぞれの市場実績です。</p></div><button class="button button-ghost" id="marketRankingBack">${state.rankingReturnScreen === "landing" ? "タイトルへ戻る" : state.rankingReturnScreen === "room" && state.room ? "取引結果へ戻る" : "市場へ戻る"}</button></div>
     ${renderMarketRankingProfileSettings()}
     ${state.rankingsStatus === "loading" ? `<div class="market-ranking-loading">ランキングを読み込んでいます…</div>` : `<div class="market-ranking-grid">
       <article><span>SELLER RANKING</span><h2>売上ランキング</h2><ol>${list(state.rankings.sellers, "seller")}</ol></article>
@@ -2908,7 +2927,9 @@ async function saveMarketRankingPublicProfile(event) {
 
 async function openRankings(returnScreen = state.screen) {
   const generation = lifecycleGeneration;
-  state.rankingReturnScreen = returnScreen === "room" && state.room ? "room" : "setup";
+  state.rankingReturnScreen = returnScreen === "landing"
+    ? "landing"
+    : returnScreen === "room" && state.room ? "room" : "setup";
   state.screen = "rankings";
   state.rankingsStatus = useMarketPreview ? "ready" : "loading";
   if (useMarketPreview) {
@@ -3040,6 +3061,10 @@ async function requestHome() {
 }
 
 function returnFromRankings() {
+  if (state.rankingReturnScreen === "landing") {
+    returnHome();
+    return;
+  }
   state.screen = state.rankingReturnScreen === "room" && state.room ? "room" : "setup";
   render();
 }
@@ -3239,6 +3264,7 @@ window.addEventListener("beforeunload", () => {
 
 window.HariaiMarket = {
   start,
+  openRankingsFromLanding,
   isActive,
   requestHome,
 };

@@ -41,6 +41,26 @@
   z-index: 1;
 }
 
+.button.hero-market-ranking-button {
+  border-color: rgba(255, 211, 109, .38);
+  color: #fff1c9;
+  background:
+    linear-gradient(135deg, rgba(255, 107, 156, .12), rgba(101, 232, 221, .08)),
+    rgba(255, 255, 255, .045);
+}
+
+.button.hero-market-ranking-button:hover:not(:disabled) {
+  border-color: rgba(255, 211, 109, .72);
+  background:
+    linear-gradient(135deg, rgba(255, 107, 156, .2), rgba(101, 232, 221, .14)),
+    rgba(255, 255, 255, .07);
+}
+
+.hero-market-ranking-button > span {
+  color: var(--market-pink, #ff6b9c);
+  font-size: 1.05rem;
+}
+
 .market-hero,
 .market-room-head,
 .market-section-head {

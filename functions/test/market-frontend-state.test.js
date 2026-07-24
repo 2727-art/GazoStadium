@@ -5,6 +5,8 @@ const test = require("node:test");
 
 const root = path.resolve(__dirname, "..", "..");
 const browser = fs.readFileSync(path.join(root, "market.js"), "utf8");
+const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
+const marketStyles = fs.readFileSync(path.join(root, "market.css"), "utf8");
 
 test("favorite targeting aligns and validates the buyer budget", () => {
   assert.match(browser, /function marketFavoritePreviousPrice\(/);
@@ -28,16 +30,66 @@ test("favorite targeting aligns and validates the buyer budget", () => {
   assert.match(browser, /maxBudget:\s*joinedMaxBudget/);
 });
 
-test("ranking navigation returns to the terminal result room", () => {
+test("landing opens the existing market rankings after authentication", () => {
+  assert.match(app, /id="valueMarketRankingButton"[^>]*>[\s\S]*?推し値市場ランキング<\/button>/);
+  assert.match(
+    app,
+    /#valueMarketRankingButton"\)\?\.addEventListener\("click", startValueMarketRankings\)/,
+  );
+  assert.match(app, /let pendingValueMarketDestination = "";/);
+  assert.match(app, /let valueMarketReadyListenerPending = false;/);
+  assert.match(app, /function startValueMarket\(\) \{\s*startValueMarketDestination\("setup"\);/);
+  assert.match(app, /function startValueMarketRankings\(\) \{\s*startValueMarketDestination\("rankings"\);/);
+  assert.match(
+    app,
+    /function startValueMarketDestination\(destination\)[\s\S]*?pendingValueMarketDestination = normalizedDestination;[\s\S]*?if \(valueMarketReadyListenerPending\) return;[\s\S]*?requestedDestination === "rankings" \? "openRankingsFromLanding" : "start"/,
+    "the latest market destination should win while the module is loading",
+  );
+  assert.equal(
+    (app.match(/window\.addEventListener\("hariai-market-ready"/g) || []).length,
+    1,
+    "market setup and rankings must share one delayed-ready listener",
+  );
+  assert.match(
+    app,
+    /control\.matches\("#valueMarketButton, #valueMarketRankingButton"\)[\s\S]*?pendingValueMarketDestination = "";/,
+    "choosing another landing action should cancel a delayed market navigation",
+  );
+  assert.match(
+    browser,
+    /function openRankingsFromLanding\(\) \{\s*return start\(\{ initialScreen: "rankings" \}\);\s*\}/,
+  );
+  assert.match(
+    browser,
+    /async function ensureAuthenticated\([\s\S]*?if \(openLandingRankings\) \{\s*await openRankings\("landing"\);/,
+    "the rankings callable must wait until authentication and economy initialization finish",
+  );
+  const authenticationBody = browser.match(
+    /async function ensureAuthenticated\([^)]*\) \{([\s\S]*?)\n\}\n\nasync function loadMarketShop/,
+  )?.[1] || "";
+  assert.ok(
+    authenticationBody.lastIndexOf('await openRankings("landing")')
+      > authenticationBody.indexOf('await economyActionCallable({ action: "initialize" })'),
+    "the live ranking request must run after the authenticated economy initialization",
+  );
+  assert.match(
+    browser,
+    /state\.rankingReturnScreen === "landing" \? "タイトルへ戻る"/,
+  );
+  assert.match(browser, /window\.HariaiMarket = \{[\s\S]*?openRankingsFromLanding,/);
+  assert.match(marketStyles, /\.button\.hero-market-ranking-button\s*\{/);
+});
+
+test("ranking navigation returns to its landing or terminal-room source", () => {
   assert.match(browser, /rankingReturnScreen:\s*"setup"/);
   assert.match(browser, /openRankings\("room"\)/);
   assert.match(
     browser,
-    /state\.rankingReturnScreen = returnScreen === "room" && state\.room \? "room" : "setup"/,
+    /state\.rankingReturnScreen = returnScreen === "landing"[\s\S]*?\? "landing"[\s\S]*?: returnScreen === "room" && state\.room \? "room" : "setup"/,
   );
   assert.match(
     browser,
-    /function returnFromRankings\(\) \{\s*state\.screen = state\.rankingReturnScreen === "room" && state\.room \? "room" : "setup";/,
+    /function returnFromRankings\(\) \{\s*if \(state\.rankingReturnScreen === "landing"\) \{\s*returnHome\(\);\s*return;\s*\}[\s\S]*?state\.screen = state\.rankingReturnScreen === "room" && state\.room \? "room" : "setup";/,
   );
   const returnFromRankingsBody = browser.match(
     /function returnFromRankings\(\) \{([\s\S]*?)\n\}/,

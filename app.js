@@ -48,6 +48,8 @@
   let rankingDisplayedPeriodKey = "";
   let landingTopMessageIndex = 0;
   let profileAvatarReadyPromise = null;
+  let pendingValueMarketDestination = "";
+  let valueMarketReadyListenerPending = false;
   const profileAvatarState = { ready: false, blob: null, url: "" };
   const audioStudioState = {
     recorder: null,
@@ -583,6 +585,7 @@
           <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ふたりで協力</small><span>2on2チーム対戦</span></button>
           <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
+          <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
           <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
@@ -621,17 +624,24 @@
   }
 
   function renderLandingScreen() {
+    pendingValueMarketDestination = "";
     currentScreen = "landing";
     expandedRankingEntryId = "";
     rankingComments = [];
     rankingCommentsStatus = "idle";
     setLandingChrome();
     app.innerHTML = renderLanding();
+    document.querySelector(".screen.hero")?.addEventListener("click", (event) => {
+      const control = event.target.closest?.("button, a");
+      if (!control || control.matches("#valueMarketButton, #valueMarketRankingButton")) return;
+      pendingValueMarketDestination = "";
+    }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
+    document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#achievementButton")?.addEventListener("click", () => openOnlineFeature("openAchievements"));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
@@ -1016,12 +1026,39 @@
   }
 
   function startValueMarket() {
-    if (window.HariaiMarket?.start) {
-      window.HariaiMarket.start();
+    startValueMarketDestination("setup");
+  }
+
+  function startValueMarketRankings() {
+    startValueMarketDestination("rankings");
+  }
+
+  function startValueMarketDestination(destination) {
+    const normalizedDestination = destination === "rankings" ? "rankings" : "setup";
+    const method = normalizedDestination === "rankings" ? "openRankingsFromLanding" : "start";
+    if (typeof window.HariaiMarket?.[method] === "function") {
+      pendingValueMarketDestination = "";
+      window.HariaiMarket[method]();
       return;
     }
-    showToast("推し値市場を読み込んでいます…");
-    window.addEventListener("hariai-market-ready", () => window.HariaiMarket?.start?.(), { once: true });
+    if (window.HariaiMarket) {
+      showToast("推し値市場を更新しました。ページを再読み込みしてお試しください。");
+      return;
+    }
+    pendingValueMarketDestination = normalizedDestination;
+    showToast(normalizedDestination === "rankings"
+      ? "推し値市場ランキングを読み込んでいます…"
+      : "推し値市場を読み込んでいます…");
+    if (valueMarketReadyListenerPending) return;
+    valueMarketReadyListenerPending = true;
+    window.addEventListener("hariai-market-ready", () => {
+      valueMarketReadyListenerPending = false;
+      const requestedDestination = pendingValueMarketDestination;
+      pendingValueMarketDestination = "";
+      if (!requestedDestination || !document.querySelector(".screen.hero")) return;
+      const requestedMethod = requestedDestination === "rankings" ? "openRankingsFromLanding" : "start";
+      window.HariaiMarket?.[requestedMethod]?.();
+    }, { once: true });
   }
 
   function startAccount() {
