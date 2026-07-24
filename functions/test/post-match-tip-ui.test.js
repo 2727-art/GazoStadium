@@ -12,7 +12,12 @@ function loadTipUi(callableResponses = [{ data: {} }]) {
     .replaceAll("export function ", "function ");
   let responseIndex = 0;
   const sandbox = {
+    ANJU_PAY_UNIT: "Pay",
     crypto: { randomUUID: () => "test-action-id" },
+    formatAnjuPay: (value, { sign = false } = {}) => {
+      const amount = Math.trunc(Number(value));
+      return `${sign && amount > 0 ? "+" : ""}${amount.toLocaleString("ja-JP")} Pay`;
+    },
     functions: {},
     httpsCallable: () => async () => {
       const response = callableResponses[Math.min(responseIndex++, callableResponses.length - 1)];

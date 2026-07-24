@@ -35,6 +35,7 @@
   const toast = document.querySelector("#toast");
   const destroyDialog = document.querySelector("#destroyDialog");
   const audioStudioDialog = document.querySelector("#audioStudioDialog");
+  const ANJU_PAY_UNIT_NOTICE_KEY = "hariai-anju-pay-unit-notice-v1";
   let toastTimer = null;
   let currentScreen = "landing";
   let expandedRankingEntryId = "";
@@ -474,6 +475,18 @@
     toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2800);
   }
 
+  function showAnjuPayUnitNoticeOnce() {
+    try {
+      if (window.localStorage.getItem(ANJU_PAY_UNIT_NOTICE_KEY) === "1") return;
+      window.localStorage.setItem(ANJU_PAY_UNIT_NOTICE_KEY, "1");
+    } catch {
+      return;
+    }
+    window.setTimeout(() => {
+      showToast("AnjuPayの単位を「Pay」に統一しました。残高・価格・仕様は変わりません。");
+    }, 700);
+  }
+
   function setBusy(isBusy, message = "画像を準備しています…") {
     document.querySelector("#loadingOverlay")?.remove();
     if (!isBusy) return;
@@ -561,7 +574,7 @@
           お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
           1on1、協力型2on2、4人バトルロワイヤル、AnjuPayで推し値を競う市場を選べます。
         </p>
-        <ul class="hero-assurances" aria-label="安心して遊べるポイント">
+        <ul class="hero-assurances" aria-label="安心して遊べる理由">
           <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
         </ul>
         <div class="hero-actions">
@@ -848,7 +861,7 @@
     const champions = records.slice(0, 6).map((record) => `<li>
       <span>${escapeHtml(record.key)}</span>
       <strong>${escapeHtml(record.name)}</strong>
-      <small>${record.points}pt・${record.wins}勝 ${record.losses}敗 ${record.draws}分・参加${record.participants}人</small>
+      <small>${record.points}点・${record.wins}勝 ${record.losses}敗 ${record.draws}分・参加${record.participants}人</small>
     </li>`).join("");
     return `<section class="ranking-hall-of-fame" aria-labelledby="rankingHallTitle">
       <div><span class="eyebrow">MONTHLY HALL OF FAME</span><h2 id="rankingHallTitle">歴代月間王者</h2></div>
@@ -901,7 +914,7 @@
         team: Number(hasModePoints ? entry.modePoints.team || 0 : 0),
         royale: Number(hasModePoints ? entry.modePoints.royale || 0 : 0),
       };
-      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間ポイント"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em><em>2on2 ${modePoints.team}</em><em>BR ${modePoints.royale}</em></span>`;
+      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間スコア"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em><em>2on2 ${modePoints.team}</em><em>BR ${modePoints.royale}</em></span>`;
       const provisional = matches < Number(periodInfo.minimumMatches || 1);
       const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
       const xLink = xHandle ? `<a class="ranking-x-link" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer">X&nbsp;@${escapeHtml(xHandle)}</a>` : "";
@@ -921,7 +934,7 @@
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
           <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${activeAward}${awardPreview}${achievementBadges}</div>
-          <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD PT</small></div>
+          <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD SCORE</small></div>
           <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
           <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
         </div>
@@ -935,7 +948,7 @@
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
         <div><span class="eyebrow">ONLINE OVERALL RANKING / TOP 50</span><h1>オンライン総合ランキング</h1>
-          <p>順位は4モード共通の期間ポイント、基本クラスは累積総合RATEで決まります。</p></div>
+          <p>順位は4モード共通の期間スコア、基本クラスは累積総合RATEで決まります。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       ${participationMenu}
@@ -944,7 +957,7 @@
         <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
         <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
       </div>
-      <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3pt ／ 引き分け・BR2位1pt${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
+      <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3点 ／ 引き分け・BR2位1点${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
       <div class="ranking-trust-notice ${periodInfo.serverAuthoritative ? "is-verified" : "is-transition"}">
         <strong>${periodInfo.serverAuthoritative ? "SERVER VERIFIED" : "LEGACY PERIOD"}</strong>
         <span>${periodInfo.serverAuthoritative ? "この期間は検証済みの正式対戦だけをサーバーで集計し、終了後にランキング実績を確定します。" : "移行前に始まった期間です。現在の順位を期間終了まで維持し、次の期間からサーバー集計へ切り替わります。"}</span>
@@ -954,7 +967,7 @@
       <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEはリセットされません。BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。クラスはランキングだけに表示し、対戦相手には表示しません。</div>
       ${renderOverallRatingClassGuide()}
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
-      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。${periodInfo.serverAuthoritative ? "期間ポイント・試合数・勝敗・モード内訳はCloud Functionsが検証済み試合から確定します。総合RATEは移行時の旧RATEを初期値として、切替後の正式対戦だけをサーバーで更新します。" : "この移行前期間のRATEと戦績は従来どおりブラウザからFirebaseへ送信されます。ランキング報酬は発生しません。"}</p>
+      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。${periodInfo.serverAuthoritative ? "期間スコア・試合数・勝敗・モード内訳はCloud Functionsが検証済み試合から確定します。総合RATEは移行時の旧RATEを初期値として、切替後の正式対戦だけをサーバーで更新します。" : "この移行前期間のRATEと戦績は従来どおりブラウザからFirebaseへ送信されます。ランキング報酬は発生しません。"}</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
@@ -1470,4 +1483,5 @@
   });
 
   renderLandingScreen();
+  showAnjuPayUnitNoticeOnce();
 })();

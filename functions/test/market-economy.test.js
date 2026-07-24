@@ -8,7 +8,7 @@ const {
   postMatchTipAmount,
 } = require("../market-economy");
 
-test("market fee is 5 percent rounded up with a 1 PT minimum", () => {
+test("market fee is 5 percent rounded up with a 1 Pay minimum", () => {
   assert.equal(MARKET_SUCCESS_FEE_BASIS_POINTS, 500);
   assert.deepEqual(marketSaleSettlement(10), {
     grossAmount: 10,

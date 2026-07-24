@@ -47,8 +47,8 @@ test("top-level economic entry points are branded without adding another utility
   assert.match(app, /id="accountButton">AnjuPayウォレット</);
   assert.equal((app.match(/id="pointShopButton"/g) || []).length, 1);
   assert.equal((app.match(/id="accountButton"/g) || []).length, 1);
-  assert.match(index, /account\.js\?v=anju-pay-wallet-v1/);
-  assert.match(index, /online\.js\?v=[^"]*post-match-tip-v3[^"]*anju-pay-v1/);
+  assert.match(index, /account\.js\?v=anju-pay-wallet-v1[^"]*pay-unit-v1/);
+  assert.match(index, /online\.js\?v=[^"]*post-match-tip-v4[^"]*anju-pay-v1[^"]*pay-unit-v1/);
 });
 
 test("wallet explains its closed game economy and preserves safe handoff navigation", () => {
@@ -85,5 +85,5 @@ test("market and reward history preserve transaction meaning and safe detail", (
   assert.match(source, /key\.includes\("extension_incentive"\)/);
   assert.match(source, /key\.includes\("market_buy"\)[\s\S]*?role === "seller"/);
   assert.match(source, /dailyPlayClaims:[\s\S]*?slice\(0, 100\)/);
-  assert.match(source, /period\.nominalAmount[\s\S]*?toLocaleString\("ja-JP"\)/);
+  assert.match(source, /formatAnjuPay\(period\.nominalAmount\)/);
 });

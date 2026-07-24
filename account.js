@@ -16,6 +16,11 @@ import {
   functions,
   useOfflineMarketPreview,
 } from "./firebase-services.js?v=app-check-v2";
+import {
+  ANJU_PAY_UNIT,
+  formatAnjuPay,
+  formatAnjuPayNumber,
+} from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 
 const appRoot = document.querySelector("#app");
 const economyActionCallable = httpsCallable(functions, "economyAction");
@@ -261,7 +266,7 @@ function historyDetail(entry) {
         if (!label) return "";
         const key = period.key ? ` ${period.key}` : "";
         const amount = Number(period.nominalAmount) > 0
-          ? ` ${Number(period.nominalAmount).toLocaleString("ja-JP")} PT`
+          ? ` ${formatAnjuPay(period.nominalAmount)}`
           : "";
         return `${label}${key}${amount}`;
       })
@@ -772,9 +777,9 @@ function renderPatronage() {
     const affordable = state.balance >= required;
     return `<article class="patron-tier-card tier-${tier.id} ${owned ? "is-owned" : ""}">
       <span class="patron-tier-icon" aria-hidden="true">${tier.icon}</span>
-      <div><small>LEVEL ${tier.level}</small><h3>${tier.label}</h3><strong>${tier.threshold.toLocaleString("ja-JP")} PT</strong></div>
+      <div><small>LEVEL ${tier.level}</small><h3>${tier.label}</h3><strong>${formatAnjuPay(tier.threshold)}</strong></div>
       <button class="button ${owned ? "button-ghost" : "button-primary"} button-small" type="button" data-patron-tier="${tier.level}"
-        ${owned || !protectedData || !affordable || state.busyAction ? "disabled" : ""}>${owned ? "獲得済み" : affordable ? `${required.toLocaleString("ja-JP")}PTで昇格` : `あと${(required - state.balance).toLocaleString("ja-JP")}PT`}</button>
+        ${owned || !protectedData || !affordable || state.busyAction ? "disabled" : ""}>${owned ? "獲得済み" : affordable ? `${formatAnjuPay(required)}で昇格` : `あと${formatAnjuPay(required - state.balance)}`}</button>
     </article>`;
   }).join("");
   return `<section class="account-patron-section" id="accountPatronSection" tabindex="-1">
@@ -782,13 +787,13 @@ function renderPatronage() {
       <p>AnjuPayをシステムへ納めて、月替わりの市場支援者バッジを獲得します。勝敗や採点には影響しません。</p></div>
       <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>CURRENT</small><strong>${currentTier.label}</strong></div></div>
     <div class="patron-progress-card">
-      <div><span>${seasonLabel}</span><strong>${patron.seasonSpent.toLocaleString("ja-JP")} PT 支援</strong></div>
+      <div><span>${seasonLabel}</span><strong>${formatAnjuPay(patron.seasonSpent)} 支援</strong></div>
       <div class="patron-progress" role="progressbar" aria-label="次のパトロンランクまでの進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div>
-      <p>${currentTier.level === PATRON_TIERS.at(-1).level ? "今月の最高ランクを獲得済みです。" : `次の ${nextTier.label} まであと ${nextCost.toLocaleString("ja-JP")} PT`}</p>
+      <p>${currentTier.level === PATRON_TIERS.at(-1).level ? "今月の最高ランクを獲得済みです。" : `次の ${nextTier.label} まであと ${formatAnjuPay(nextCost)}`}</p>
     </div>
     ${!protectedData ? `<div class="patron-protection-lock"><strong>先にゲームデータを保護してください</strong><p>多額のAnjuPay利用は取り消せないため、Google保護後に昇格できます。</p></div>` : ""}
     <div class="patron-tier-grid">${tierCards}</div>
-    <p class="account-fine-print">ランクは日本時間の毎月1日に更新されます。利用したAnjuPayの払い戻しはなく、市場ウォレットと商談相手にバッジが表示されます。累計支援 ${patron.lifetimeSpent.toLocaleString("ja-JP")} PT。</p>
+    <p class="account-fine-print">ランクは日本時間の毎月1日に更新されます。利用したAnjuPayの払い戻しはなく、市場ウォレットと商談相手にバッジが表示されます。累計支援 ${formatAnjuPay(patron.lifetimeSpent)}。</p>
   </section>`;
 }
 
@@ -850,13 +855,11 @@ function renderAnjuPayQuickActions() {
 function renderHistoryEntry(entry) {
   const opening = entry.category === "opening";
   const amount = opening ? entry.openingBalance : entry.delta;
-  const amountText = opening
-    ? `${amount.toLocaleString("ja-JP")} PT`
-    : `${amount > 0 ? "+" : ""}${amount.toLocaleString("ja-JP")} PT`;
+  const amountText = formatAnjuPay(amount, { sign: !opening });
   const detail = historyDetail(entry);
   const balanceAfter = entry.balanceAfter === null
     ? ""
-    : `<small>反映後 ${entry.balanceAfter.toLocaleString("ja-JP")} PT</small>`;
+    : `<small>反映後 ${formatAnjuPay(entry.balanceAfter)}</small>`;
   const dateTime = historyDateTime(entry.occurredAt);
   return `<li class="anju-pay-history-entry is-${entry.category} ${amount > 0 ? "is-positive" : amount < 0 ? "is-negative" : "is-neutral"}">
     <div class="anju-pay-history-icon" aria-hidden="true">${entry.category === "earn" ? "＋" : entry.category === "spend" ? "－" : entry.category === "market" ? "↔" : entry.category === "tip" ? "♡" : "A"}</div>
@@ -913,7 +916,7 @@ function render({ focus = true } = {}) {
   appRoot.innerHTML = `<section class="screen account-screen">
     <div class="account-hero">
       <div><span class="eyebrow">ANJUPAY WALLET</span><h1>AnjuPayウォレット</h1><p>貼り合いスタジアムで稼いだ価値を、残高と利用履歴で確かめられます。</p></div>
-      <div class="account-wallet"><span>${kind === "protected" ? "PROTECTED ANJUPAY" : kind === "transferred" ? "TRANSFERRED ANJUPAY" : "GUEST ANJUPAY"}</span><strong>${state.balance.toLocaleString("ja-JP")}<small>PT</small></strong><em>利用可能残高</em><button class="button button-ghost button-small" type="button" id="accountBackHome">トップへ戻る</button></div>
+      <div class="account-wallet"><span>${kind === "protected" ? "PROTECTED ANJUPAY" : kind === "transferred" ? "TRANSFERRED ANJUPAY" : "GUEST ANJUPAY"}</span><strong>${formatAnjuPayNumber(state.balance)} <small>${ANJU_PAY_UNIT}</small></strong><em>利用可能残高</em><button class="button button-ghost button-small" type="button" id="accountBackHome">トップへ戻る</button></div>
     </div>
     ${state.notice ? `<div class="account-notice" role="status">${escapeHtml(state.notice)}</div>` : ""}
     ${state.error ? `<div class="account-error" role="alert">${escapeHtml(state.error)}</div>` : ""}
@@ -987,7 +990,7 @@ async function restoreWithGoogle() {
     render();
     return;
   }
-  if (!window.confirm(`この端末の現在のデータ（AnjuPay残高 ${state.balance.toLocaleString("ja-JP")}PT）から、選択したGoogleアカウントのデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
+  if (!window.confirm(`この端末の現在のデータ（AnjuPay残高 ${formatAnjuPay(state.balance)}）から、選択したGoogleアカウントのデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
   state.busyAction = "restore";
   state.error = "";
   render();
@@ -1063,7 +1066,7 @@ async function upgradePatron(targetTier) {
   const target = tierForLevel(targetTier);
   const required = Math.max(0, target.threshold - state.patron.seasonSpent);
   if (!required || state.balance < required) return;
-  if (!window.confirm(`${required.toLocaleString("ja-JP")}PTを払い戻しなしで消費し、今月の${target.label}へ昇格します。続けますか？`)) return;
+  if (!window.confirm(`${formatAnjuPay(required)}を払い戻しなしで支払い、今月の${target.label}へ昇格します。続けますか？`)) return;
   state.busyAction = "patron";
   state.error = "";
   render();
@@ -1176,7 +1179,7 @@ async function redeemTransfer(code) {
     render();
     return;
   }
-  if (!window.confirm(`現在の端末データ（AnjuPay残高 ${state.balance.toLocaleString("ja-JP")}PT）から、コード発行元のデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
+  if (!window.confirm(`現在の端末データ（AnjuPay残高 ${formatAnjuPay(state.balance)}）から、コード発行元のデータへ切り替えます。AnjuPay残高は合算されません。続けますか？`)) return;
   state.busyAction = "redeem-code";
   state.error = "";
   render();

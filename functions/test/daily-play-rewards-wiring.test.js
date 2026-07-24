@@ -76,6 +76,6 @@ test("missions show one claim-all control, interval progress, and folded tier de
   }
   assert.match(html, /id="toast"[^>]*aria-atomic="true"/);
   assert.match(readme, /正式完走1・3・5・10・20・30・50・75・100・150・200戦/);
-  assert.match(readme, /合計最大300PT/);
+  assert.match(readme, /合計最大300 Pay/);
   assert.match(readme, /終了後7日間/);
 });

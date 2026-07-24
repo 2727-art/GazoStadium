@@ -86,7 +86,7 @@ test("seller-shop UI and documentation cover identity, relationships, and safety
     assert.match(readme, new RegExp(term));
   }
   assert.match(readme, /選択した1店に限定して待機/);
-  assert.match(readme, /販売価格と着手料5PTの合計以上/);
+  assert.match(readme, /販売価格と着手料5 Payの合計以上/);
   assert.match(readme, /異なる買い手5人/);
   assert.match(readme, /同じ結果画面にいる間ならすぐ解除/);
   assert.doesNotMatch(readme, /ブロック一覧/);

@@ -62,7 +62,7 @@ test("verified ranking entries keep exact mode totals and deterministic ordering
   assert.ok(compareServerRankingEntries(win, draw) < 0);
 });
 
-test("ranking awards use participation gates and prestige tiers without PT", () => {
+test("ranking awards use participation gates and prestige tiers without AnjuPay rewards", () => {
   assert.equal(rankingAwardFor("monthly", 1, 9), null);
   assert.equal(rankingAwardFor("weekly", 10, 3)?.tier, "weekly_top10");
   assert.equal(rankingAwardFor("monthly", 3, 10)?.tier, "monthly_top3");

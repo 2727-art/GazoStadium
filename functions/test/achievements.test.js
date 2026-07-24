@@ -30,7 +30,7 @@ test("battle thresholds keep 100 matches below the long-term ceiling", () => {
   assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "battle_solo_100").level, 5);
 });
 
-test("achievement conditions never depend on wins, rating, rank, or market point totals", () => {
+test("achievement conditions never depend on wins, rating, rank, or AnjuPay market totals", () => {
   const serializedConditions = JSON.stringify(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.condition));
   for (const forbidden of ["wins", "rating", "rank", "grossSales", "spent", "bestSale", "highestPurchase"]) {
     assert.equal(serializedConditions.includes(forbidden), false, `${forbidden} must not be an achievement condition`);
@@ -131,7 +131,7 @@ test("custom showcases advance to the highest unlocked level in the same family"
   assert.deepEqual(effectiveShowcase(profile), ["battle_total_10"]);
 });
 
-test("market stats count days and unique counterparties independently of point totals", () => {
+test("market stats count days and unique counterparties independently of AnjuPay totals", () => {
   let stats = normalizeMarketStats({ salesCount: 3, purchases: 1 });
   stats = addMarketTransaction(stats, "seller", "2026-07-23", { newCounterparty: true });
   stats = addMarketTransaction(stats, "buyer", "2026-07-23", { newCounterparty: false });

@@ -53,7 +53,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v3";
+} from "./post-match-tip.js?v=post-match-tip-v4";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;

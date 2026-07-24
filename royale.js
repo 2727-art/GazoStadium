@@ -53,7 +53,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v3";
+} from "./post-match-tip.js?v=post-match-tip-v4";
 
 const MAX_ROUNDS = 5;
 const PLAYER_COUNT = 4;
@@ -359,7 +359,7 @@ function renderSetup() {
     ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "royaleOverallRanking" }) || ""}
     <div class="royale-rule-summary"><div><strong>4</strong><span>PLAYERS</span></div><div><strong>3+2</strong><span>MAIN + RESERVE</span></div><div><strong>1</strong><span>DECK SWAP</span></div><div><strong>15</strong><span>VOTE SEC</span></div></div>
     <div class="setup-layout"><aside class="setup-guide"><h2>バトルロワイヤルの流れ</h2><ol class="guide-list">
-      <li><b>1</b><span>OPENING・MIDDLE・FINALとRESERVE 2枚を順番に登録します。</span></li><li><b>2</b><span>匿名画像へ順位を付け、合計支持ポイントが最も低い1人が脱落します。</span></li>
+      <li><b>1</b><span>OPENING・MIDDLE・FINALとRESERVE 2枚を順番に登録します。</span></li><li><b>2</b><span>匿名画像へ順位を付け、合計支持値が最も低い1人が脱落します。</span></li>
       <li><b>3</b><span>1試合に1回だけメインをリザーブへ交換可能。FINALは脱落した2人が審査します。</span></li></ol>
       <div class="privacy-note">画像は最大1280pxへ変換し、Firebaseには保存しません。</div></aside>
       <div class="setup-panel"><label class="field-label">表示名<input class="text-input" id="royalePlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" /></label>
@@ -587,7 +587,7 @@ function renderFourImages(withScores = null) {
     const audienceFavorite = withScores?.audienceAwardUid === player.uid;
     const badge = result?.eliminated ? "ELIMINATED" : audienceFavorite ? "AUDIENCE" : result?.perfect ? "UNANIMOUS" : result?.critical ? "ROUND FAVORITE" : "";
     return `<article class="royale-image-card ${result?.eliminated ? "eliminated" : audienceFavorite ? "audience" : result?.perfect ? "perfect" : result?.critical ? "critical" : ""}">
-      <div class="royale-image-owner"><span>${label}</span>${result ? `<strong>${result.points}P</strong>` : ""}</div>
+      <div class="royale-image-owner"><span>${label}</span>${result ? `<strong>${result.points}点</strong>` : ""}</div>
       <img src="${item?.url || ""}" alt="${result ? `${escapeHtml(player.name)}の画像` : `匿名画像${index + 1}`}" draggable="false" />
       ${result ? `<div class="royale-image-votes"><span>1位票 ${result.firstVotes} / 支持率 ${Math.round(result.supportRate * 100)}%</span><b>${badge}</b></div>` : ""}</article>`;
   }).join("");
@@ -623,7 +623,7 @@ function renderScoring() {
   const ranksReady = finalJury
     ? Object.values(state.selectedScores).filter((rank) => rank === 1).length === 1
     : targets.every((player) => Number.isInteger(state.selectedScores[player.uid])) && new Set(targets.map((player) => state.selectedScores[player.uid])).size === targets.length;
-  return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">SURVIVAL RANKING</span><h1>${finalJury ? "FINAL審査" : `${targets.length}枚を順位投票`}</h1><p>${finalJury ? "勝者にふさわしい画像を1枚選んでください。" : "同じ順位は選べません。1位から順に支持ポイントが加算されます。"}</p></div>
+  return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">SURVIVAL RANKING</span><h1>${finalJury ? "FINAL審査" : `${targets.length}枚を順位投票`}</h1><p>${finalJury ? "勝者にふさわしい画像を1枚選んでください。" : "同じ順位は選べません。1位から順に支持値が加算されます。"}</p></div>
     <div class="royale-phase-timer ${scoreTimerSeconds() <= 5 ? "warning" : ""}"><small>SCORE</small><strong data-royale-score-timer>${scoreTimerSeconds()}</strong></div></div><div class="royale-score-grid">${panels}</div>
     <div class="screen-actions"><button class="button button-danger button-small" data-royale-destroy>対戦から退出</button><button class="button button-primary" id="lockRoyaleScores" ${ranksReady ? "" : "disabled"}>投票を確定</button></div>${renderAllChat(true)}</section>`;
 }
@@ -657,7 +657,7 @@ function renderResult() {
     : result.fallback
       ? `サドンデス同点のため、累計支持率・1位票・ラウンド首位${result.lottery ? "・ルーム抽選" : ""}で決定しました。`
       : loser
-        ? `支持ポイント ${result.images[result.eliminatedUid].points}P で最下位となりました。`
+        ? `支持値 ${result.images[result.eliminatedUid].points}点で最下位となりました。`
         : "同点のプレイヤーだけがリザーブ画像でサドンデスを行います。";
   const autoSeconds = resultAutoSeconds();
   return `<section class="screen">${renderRoyaleHud()}<div class="section-head"><div><span class="eyebrow">SURVIVAL ROUND RESULT</span><h1>${headline}</h1><p>${reason}</p></div></div>${renderFourImages(result)}

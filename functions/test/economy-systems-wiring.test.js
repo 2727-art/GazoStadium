@@ -117,7 +117,7 @@ test("all four final-result screens use the shared post-match tip UI", () => {
     ["royale.js", "royale"],
   ]) {
     const source = read(relativePath);
-    assert.match(source, /post-match-tip\.js\?v=post-match-tip-v3/);
+    assert.match(source, /post-match-tip\.js\?v=post-match-tip-v4/);
     assert.match(source, new RegExp(`renderPostMatchTip\\(\\{ mode: "${mode}"`));
     assert.match(source, new RegExp(`bindPostMatchTip\\([\\s\\S]*?mode: "${mode}"`));
     assert.equal((source.match(/renderPostMatchTip\(/g) || []).length, 1);

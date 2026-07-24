@@ -29,6 +29,11 @@ import {
   useOfflineMarketPreview,
 } from "./firebase-services.js?v=app-check-v2";
 import {
+  ANJU_PAY_UNIT,
+  formatAnjuPay,
+  formatAnjuPayNumber,
+} from "./anju-pay-format.mjs?v=anju-pay-format-v1";
+import {
   createIncomingMarketTransfer,
   marketAssetEndStatus,
   verifiedMarketImageMime,
@@ -308,10 +313,10 @@ function marketSettlement(price, room = null) {
 function renderMarketFeeBreakdown(price, { id = "", room = null, compact = false } = {}) {
   const settlement = marketSettlement(price, room);
   return `<dl class="market-fee-breakdown ${compact ? "is-compact" : ""}" ${id ? `id="${id}" aria-live="polite"` : ""}>
-    <div><dt>成約価格</dt><dd>${settlement.grossAmount.toLocaleString("ja-JP")} PT</dd></div>
-    <div><dt>成約手数料（売り手負担）</dt><dd>−${settlement.feeAmount.toLocaleString("ja-JP")} PT</dd></div>
-    <div><dt>売り手受取</dt><dd>${settlement.sellerProceeds.toLocaleString("ja-JP")} PT</dd></div>
-    <div><dt>買い手支払</dt><dd>${settlement.grossAmount.toLocaleString("ja-JP")} PT</dd></div>
+    <div><dt>成約価格</dt><dd>${formatAnjuPay(settlement.grossAmount)}</dd></div>
+    <div><dt>成約手数料（売り手負担）</dt><dd>−${formatAnjuPay(settlement.feeAmount)}</dd></div>
+    <div><dt>売り手受取</dt><dd>${formatAnjuPay(settlement.sellerProceeds)}</dd></div>
+    <div><dt>買い手支払</dt><dd>${formatAnjuPay(settlement.grossAmount)}</dd></div>
   </dl>`;
 }
 
@@ -330,12 +335,12 @@ function patronOpportunityCopy(purchasePrice) {
   ];
   const next = tiers.find((tier) => tier.threshold > patron.seasonSpent);
   const after = Math.max(0, state.balance - Math.max(0, Number(purchasePrice || 0)));
-  if (!next) return `購入後のAnjuPay残高 ${after.toLocaleString("ja-JP")}PT。今月の最高パトロンランクを獲得済みです。`;
+  if (!next) return `購入後のAnjuPay残高 ${formatAnjuPay(after)}。今月の最高パトロンランクを獲得済みです。`;
   const needed = next.threshold - patron.seasonSpent;
   const shortage = Math.max(0, needed - after);
   return shortage
-    ? `購入後のAnjuPay残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}には${needed.toLocaleString("ja-JP")}PT必要です（あと${shortage.toLocaleString("ja-JP")}PT不足）。`
-    : `購入後のAnjuPay残高 ${after.toLocaleString("ja-JP")}PT。次の${next.label}に必要な${needed.toLocaleString("ja-JP")}PTを残せます。`;
+    ? `購入後のAnjuPay残高 ${formatAnjuPay(after)}。次の${next.label}には${formatAnjuPay(needed)}が必要です（あと${formatAnjuPay(shortage)}足りません）。`
+    : `購入後のAnjuPay残高 ${formatAnjuPay(after)}。次の${next.label}に必要な${formatAnjuPay(needed)}を残せます。`;
 }
 
 function marketActionIdentity(action, roomId, turn, extra = {}) {
@@ -719,7 +724,7 @@ function alignBudgetToMarketFavorite(favorite, { announce = false } = {}) {
   if (adjusted) {
     state.maxBudget = requiredBudget;
     if (announce) {
-      showToast(`前回価格に合わせて購入上限を${requiredBudget.toLocaleString("ja-JP")}PTへ調整しました。`);
+      showToast(`前回価格に合わせて購入上限を${formatAnjuPay(requiredBudget)}へ調整しました。`);
     }
   }
   return { ok: true, previousPrice, requiredBudget, shortage: 0, adjusted };
@@ -773,8 +778,11 @@ function callableMessage(error, fallback) {
   const message = String(error?.message || "");
   const detail = message.includes(":") ? message.slice(message.lastIndexOf(":") + 1).trim() : message;
   return (detail || fallback)
+    .replace(/(\d[\d,]*)\s*PT\b/g, `$1 ${ANJU_PAY_UNIT}`)
     .replaceAll("ポイント残高", "AnjuPay残高")
-    .replaceAll("ポイント", "AnjuPay");
+    .replaceAll("所持ポイント", "AnjuPay残高")
+    .replaceAll("ポイントが不足", "AnjuPay残高が不足")
+    .replaceAll("ポイント不足", "AnjuPay残高不足");
 }
 
 function setMarketChrome(status = "VALUE MARKET") {
@@ -948,7 +956,7 @@ function render() {
 }
 
 function renderWallet() {
-  return `<div class="market-wallet"><span>ANJUPAY BALANCE</span><strong>${Math.floor(state.balance).toLocaleString("ja-JP")}<small>PT</small></strong>${renderMarketPatronBadge(state.patron)}<p>貼り合いスタジアム内専用ウォレット</p></div>`;
+  return `<div class="market-wallet"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(Math.floor(state.balance))} <small>${ANJU_PAY_UNIT}</small></strong>${renderMarketPatronBadge(state.patron)}<p>貼り合いスタジアム内専用ウォレット</p></div>`;
 }
 
 function safeShopClassToken(value, fallback = "standard") {
@@ -1001,7 +1009,7 @@ function renderSellerVerified(verifiedValue, { report = false } = {}) {
     ${report ? `<div class="market-shop-report-head"><span>PRIVATE OWNER REPORT</span><strong>店主レポート</strong><small>あなたにだけ表示</small></div>` : `<strong class="market-shop-verified-label"><span aria-hidden="true">✓</span> FUNCTIONS集計</strong>`}
     <dl>
       <div><dt>成立</dt><dd>${verified.salesCount.toLocaleString("ja-JP")}<small>件</small></dd></div>
-      <div><dt>${report ? "購入者" : "最高成約"}</dt><dd>${report ? verified.uniqueCounterparties.toLocaleString("ja-JP") : `${verified.bestSale.toLocaleString("ja-JP")}<small>PT</small>`}</dd></div>
+      <div><dt>${report ? "購入者" : "最高成約"}</dt><dd>${report ? verified.uniqueCounterparties.toLocaleString("ja-JP") : `${formatAnjuPayNumber(verified.bestSale)} <small>${ANJU_PAY_UNIT}</small>`}</dd></div>
       <div><dt>リピーター</dt><dd>${verified.repeatBuyerCount.toLocaleString("ja-JP")}<small>人</small></dd></div>
       <div><dt>${report ? "常連登録" : "市場日数"}</dt><dd>${report ? verified.favoriteCount.toLocaleString("ja-JP") : verified.marketDays.toLocaleString("ja-JP")}<small>${report ? "人" : "日"}</small></dd></div>
     </dl>
@@ -1151,13 +1159,13 @@ function favoritePriceCopy(favorite) {
   const requiredBalance = price + ENTRY_FEE;
   const shortage = Math.max(0, requiredBalance - state.balance);
   if (shortage) {
-    return `前回 ${price.toLocaleString("ja-JP")}PT ＋ 着手料${ENTRY_FEE}PT ／ あと${shortage.toLocaleString("ja-JP")}PT`;
+    return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ あと${formatAnjuPay(shortage)}`;
   }
   const requiredBudget = marketFavoriteRequiredBudget(favorite);
   if (requiredBudget && Number(state.maxBudget) < requiredBudget) {
-    return `前回 ${price.toLocaleString("ja-JP")}PT ＋ 着手料${ENTRY_FEE}PT ／ 選ぶと購入上限を${requiredBudget.toLocaleString("ja-JP")}PTへ調整`;
+    return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ 選ぶと購入上限を${formatAnjuPay(requiredBudget)}へ調整`;
   }
-  return `前回 ${price.toLocaleString("ja-JP")}PT ＋ 着手料${ENTRY_FEE}PT ／ 現在の購入上限で届きます`;
+  return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ 現在の購入上限で届きます`;
 }
 
 function renderMarketFavoritesBook() {
@@ -1200,7 +1208,7 @@ function renderSetup() {
   const seller = state.role === "seller";
   const locked = state.busy || state.shopBusy || state.queueJoinPending;
   const imagePreview = state.image?.url
-    ? `<figure class="market-listing-preview"><img src="${escapeHtml(state.image.url)}" alt="出品する画像のプレビュー" /><figcaption>${escapeHtml(state.listingTitle || "無題の推し")} / ${state.askingPrice}PT</figcaption></figure>`
+    ? `<figure class="market-listing-preview"><img src="${escapeHtml(state.image.url)}" alt="出品する画像のプレビュー" /><figcaption>${escapeHtml(state.listingTitle || "無題の推し")} / ${formatAnjuPay(state.askingPrice)}</figcaption></figure>`
     : `<div class="market-image-empty"><span>♡</span><strong>推し画像を1枚選択</strong><small>画像はFirebaseへ保存されません</small></div>`;
   return `<section class="screen market-screen market-setup">
     <div class="market-hero">
@@ -1219,16 +1227,16 @@ function renderSetup() {
         ${seller ? `<label class="market-image-picker">${imagePreview}<input id="marketImageInput" type="file" accept="image/*" /></label>
           <label class="field"><span>出品タイトル（30文字）</span><input id="marketListingTitle" maxlength="30" value="${escapeHtml(state.listingTitle)}" placeholder="この一枚の呼び名" required /></label>
           <div class="market-inline-fields">
-            <label class="field"><span>販売価格</span><select id="marketAskingPrice" aria-describedby="marketSetupFeeBreakdown">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.askingPrice) ? "selected" : ""}>${price} PT</option>`).join("")}</select></label>
+            <label class="field"><span>販売価格</span><select id="marketAskingPrice" aria-describedby="marketSetupFeeBreakdown">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.askingPrice) ? "selected" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select></label>
             <label class="field"><span>営業方法</span><select id="marketPitchStyle"><option value="either" ${state.pitchStyle === "either" ? "selected" : ""}>チャット／10秒音声</option><option value="chat" ${state.pitchStyle === "chat" ? "selected" : ""}>チャット中心</option><option value="audio" ${state.pitchStyle === "audio" ? "selected" : ""}>10秒音声中心</option></select></label>
           </div>
           ${renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true })}`
-          : `<label class="field"><span>購入上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${price} PT</option>`).join("")}</select><small>販売価格が上限以内の売り手だけとマッチします。着手料${ENTRY_FEE}PTは別途必要です。</small></label>`}
+          : `<label class="field"><span>購入上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select><small>販売価格が上限以内の売り手だけとマッチします。着手料${formatAnjuPay(ENTRY_FEE)}は別途必要です。</small></label>`}
         <button class="button button-primary market-join-button" type="submit" ${!state.authReady || locked || (seller && !state.image) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.queueJoinPending || state.busy ? "参加処理中…" : seller ? "売り手として待機する" : "買い手として待機する"}</button>
       </form>
       <aside class="market-rule-card">
         <span class="eyebrow">FAIR DEAL FLOW</span><h2>取引の流れ</h2>
-        <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料${ENTRY_FEE}PT分をAnjuPay残高からFunctionsが保留します。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に保留中のAnjuPayを受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低1PT）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
+        <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料として${formatAnjuPay(ENTRY_FEE)}をAnjuPay残高からFunctionsが保留します。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に保留中のAnjuPayを受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低${formatAnjuPay(1)}）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
         <div class="market-safety-note"><strong>ANJUPAY AUTHORITY</strong><p>AnjuPayの残高移動はCloud Functionsだけが確定し、売買と独立ランキングをFirestoreの同一トランザクションで更新します。</p></div>
         <p class="market-roleplay-note">売買はTRPGとしてのロールプレイです。画像データや著作権・所有権は移転しません。画像の一時判定、音声通報機能は設けません。</p>
         <div class="market-setup-links"><button class="button button-ghost" type="button" id="marketRankingsButton" ${locked ? "disabled" : ""}>売り手・買い手ランキング</button><button class="button button-ghost" type="button" id="marketCertificatesButton" ${locked ? "disabled" : ""}>推し値証書コレクション</button></div>
@@ -1249,8 +1257,8 @@ function renderWaiting() {
       ? `「${escapeHtml(selectedFavorite.shopName || "登録した商店")}」を待っています`
       : "売り手を探しています";
   const waitingDetail = state.role === "seller"
-    ? `${escapeHtml(state.listingTitle)} / ${state.askingPrice}PT`
-    : `購入上限 ${state.maxBudget}PT${selectedFavorite ? `${selectedFavoritePreviousPrice ? ` / 前回価格 ${selectedFavoritePreviousPrice.toLocaleString("ja-JP")}PT` : ""} / 指名店コード ${escapeHtml(selectedFavorite.publicSellerId)}` : ""}`;
+    ? `${escapeHtml(state.listingTitle)} / ${formatAnjuPay(state.askingPrice)}`
+    : `購入上限 ${formatAnjuPay(state.maxBudget)}${selectedFavorite ? `${selectedFavoritePreviousPrice ? ` / 前回価格 ${formatAnjuPay(selectedFavoritePreviousPrice)}` : ""} / 指名店コード ${escapeHtml(selectedFavorite.publicSellerId)}` : ""}`;
   return `<section class="screen market-screen market-waiting"><div class="market-waiting-card">
     <div class="market-radar" aria-hidden="true"><i></i><i></i><span>♡</span></div>
     <span class="eyebrow">SEARCHING VALUE PARTNER</span><h1>${waitingTitle}</h1>
@@ -1308,7 +1316,7 @@ function renderRankings() {
     const xLink = renderMarketXLink(profile);
     const tagline = profile.tagline ? `<p class="market-ranking-tagline">「${escapeHtml(profile.tagline)}」</p>` : "";
     const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
-    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${Number(entry.primary || 0).toLocaleString("ja-JP")} PT</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${role === "seller" ? `成立${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT` : `購入${Number(entry.count || 0)}件 / 最高${Number(entry.best || 0)}PT`}</small>${achievementBadges}</div></li>`;
+    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${formatAnjuPay(entry.primary || 0)}</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${role === "seller" ? `成立${Number(entry.count || 0)}件 / 最高${formatAnjuPay(entry.best || 0)}` : `購入${Number(entry.count || 0)}件 / 最高${formatAnjuPay(entry.best || 0)}`}</small>${achievementBadges}</div></li>`;
   };
   const list = (entries, role) => entries.length
     ? entries.map((entry, index) => row(entry, index, role)).join("")
@@ -1363,7 +1371,7 @@ function renderCertificateCard(certificate) {
     <p>売り手 <b>${escapeHtml(certificate?.sellerName || "PLAYER")}</b> の推し値に、あなたがAnjuPayで価値をつけた記録です。</p>
     ${sellerIssueNumber ? `<p class="market-certificate-issue"><span>この商店の発行番号</span><strong>${escapeHtml(sellerIssueNumber)}</strong></p>` : ""}
     ${sellerShop ? `<div class="market-certificate-seller-shop">${sellerShop}</div>` : ""}
-    <dl><div><dt>成約価格</dt><dd>${price.toLocaleString("ja-JP")} PT</dd></div><div><dt>市場手数料</dt><dd>${fee.toLocaleString("ja-JP")} PT</dd></div><div><dt>売り手受取</dt><dd>${proceeds.toLocaleString("ja-JP")} PT</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
+    <dl><div><dt>成約価格</dt><dd>${formatAnjuPay(price)}</dd></div><div><dt>市場手数料</dt><dd>${formatAnjuPay(fee)}</dd></div><div><dt>売り手受取</dt><dd>${formatAnjuPay(proceeds)}</dd></div><div><dt>営業ターン</dt><dd>${Math.max(1, Number(certificate?.turn || 1))}</dd></div></dl>
     <time ${issued.iso ? `datetime="${issued.iso}"` : ""}>${escapeHtml(issued.label)} JST</time>
     <small>非譲渡・画像データ／著作権／所有権は含みません</small>
   </li>`;
@@ -1457,8 +1465,8 @@ function renderRoomControls(room, role) {
     });
     const copy = status === "sold"
       ? role === "buyer"
-        ? `${settlement.grossAmount}PTで成立し、推し値証書 ${room.certificateNumber || ""} をコレクションへ追加しました。`
-        : `${settlement.grossAmount}PTで成立。成約手数料${settlement.feeAmount}PTを差し引き、${settlement.sellerProceeds}PTを受け取りました。`
+        ? `${formatAnjuPay(settlement.grossAmount)}で成立し、推し値証書 ${room.certificateNumber || ""} をコレクションへ追加しました。`
+        : `${formatAnjuPay(settlement.grossAmount)}で成立。成約手数料${formatAnjuPay(settlement.feeAmount)}を差し引き、${formatAnjuPay(settlement.sellerProceeds)}を受け取りました。`
       : "このルームでのAnjuPay移動と営業履歴はここで終了です。";
     const rankingCopy = status === "sold"
       ? `<small>${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}</small>`
@@ -1467,7 +1475,7 @@ function renderRoomControls(room, role) {
   }
   if (status === "preview") {
     if (role === "buyer") {
-      return `<div class="market-decision-panel"><span>FREE PREVIEW</span><h2>この画像の営業を受けますか？</h2><p>受けると着手料${room.entryFee || ENTRY_FEE}PT分をAnjuPay残高から保留し、営業完了時に売り手へ移します。画像確認だけなら無料です。</p><div><button class="button button-primary" data-market-action="accept_pitch" ${!state.remoteImage || state.busy ? "disabled" : ""}>${room.entryFee || ENTRY_FEE}PTで営業を受ける</button><button class="button button-ghost" data-market-action="decline_preview" ${state.busy ? "disabled" : ""}>営業を受けず退室</button></div></div>`;
+      return `<div class="market-decision-panel"><span>FREE PREVIEW</span><h2>この画像の営業を受けますか？</h2><p>受けると着手料として${formatAnjuPay(room.entryFee || ENTRY_FEE)}をAnjuPay残高から保留し、営業完了時に売り手へ移します。画像確認だけなら無料です。</p><div><button class="button button-primary" data-market-action="accept_pitch" ${!state.remoteImage || state.busy ? "disabled" : ""}>${formatAnjuPay(room.entryFee || ENTRY_FEE)}で営業を受ける</button><button class="button button-ghost" data-market-action="decline_preview" ${state.busy ? "disabled" : ""}>営業を受けず退室</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>BUYER PREVIEW</span><h2>買い手が画像を確認中です</h2><p>営業を受けるまでは着手料は発生しません。</p></div>`;
   }
@@ -1484,21 +1492,21 @@ function renderRoomControls(room, role) {
   if (status === "decision") {
     if (role === "buyer") {
       const canExtend = Number(room.turn || 1) < Number(room.maxTurns || MAX_TURNS);
-      return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>購入はロールプレイで、画像データの所有権は移りません。成約手数料は売り手負担のため、買い手の支払額は販売価格のままです。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room })}<small class="market-opportunity-cost">${escapeHtml(patronOpportunityCopy(room.listing?.askingPrice))}</small><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>合計${room.listing?.askingPrice}PTで購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
+      return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>購入はロールプレイで、画像データの所有権は移りません。成約手数料は売り手負担のため、買い手の支払額は販売価格のままです。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room })}<small class="market-opportunity-cost">${escapeHtml(patronOpportunityCopy(room.listing?.askingPrice))}</small><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>合計${formatAnjuPay(room.listing?.askingPrice)}で購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>BUYER DECISION</span><h2>買い手の判断を待っています</h2><p>購入・退室・追加検討のいずれかが選ばれます。購入成立時だけ成約手数料が差し引かれます。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room, compact: true })}</div>`;
   }
   if (status === "extension_request") {
     if (role === "seller") {
-      return `<div class="market-extension-panel"><span>ANOTHER TURN REQUEST</span><h2>追加営業の内金を提示</h2><p>内金分のAnjuPayを残高から保留し、買い手へ提示します。買い手が受け取ると次ターンへ進みます。</p><div><select id="marketExtensionIncentive"><option value="5">5 PT</option><option value="10">10 PT</option><option value="20">20 PT</option></select><button class="button button-primary" id="marketOfferExtension" ${state.busy ? "disabled" : ""}>内金を提示する</button><button class="button button-ghost" data-market-action="cancel" ${state.busy ? "disabled" : ""}>取引を終了</button></div></div>`;
+      return `<div class="market-extension-panel"><span>ANOTHER TURN REQUEST</span><h2>追加営業の内金を提示</h2><p>内金分のAnjuPayを残高から保留し、買い手へ提示します。買い手が受け取ると次ターンへ進みます。</p><div><select id="marketExtensionIncentive"><option value="5">${formatAnjuPay(5)}</option><option value="10">${formatAnjuPay(10)}</option><option value="20">${formatAnjuPay(20)}</option></select><button class="button button-primary" id="marketOfferExtension" ${state.busy ? "disabled" : ""}>内金を提示する</button><button class="button button-ghost" data-market-action="cancel" ${state.busy ? "disabled" : ""}>取引を終了</button></div></div>`;
     }
     return `<div class="market-wait-panel"><span>EXTENSION REQUESTED</span><h2>売り手が内金を検討中です</h2><p>提示された内金を受け取るか選択できます。</p></div>`;
   }
   if (status === "extension_offer") {
     if (role === "buyer") {
-      return `<div class="market-decision-panel"><span>EXTENSION OFFER</span><h2>${room.extensionIncentive}PTを受け取り、次の営業へ？</h2><p>承諾すると保留中のAnjuPayが売り手から買い手へ移動し、ターン${Number(room.turn || 1) + 1}へ進みます。</p><div><button class="button button-primary" data-market-action="accept_extension" ${state.busy ? "disabled" : ""}>${room.extensionIncentive}PTを受け取り続行</button><button class="button button-ghost" data-market-action="decline_extension" ${state.busy ? "disabled" : ""}>受け取らず退室</button></div></div>`;
+      return `<div class="market-decision-panel"><span>EXTENSION OFFER</span><h2>${formatAnjuPay(room.extensionIncentive)}を受け取り、次の営業へ？</h2><p>承諾すると保留中のAnjuPayが売り手から買い手へ移動し、ターン${Number(room.turn || 1) + 1}へ進みます。</p><div><button class="button button-primary" data-market-action="accept_extension" ${state.busy ? "disabled" : ""}>${formatAnjuPay(room.extensionIncentive)}を受け取り続行</button><button class="button button-ghost" data-market-action="decline_extension" ${state.busy ? "disabled" : ""}>受け取らず退室</button></div></div>`;
     }
-    return `<div class="market-wait-panel"><span>EXTENSION OFFERED</span><h2>買い手の返答を待っています</h2><p>${room.extensionIncentive}PTの内金を提示中です。</p></div>`;
+    return `<div class="market-wait-panel"><span>EXTENSION OFFERED</span><h2>買い手の返答を待っています</h2><p>${formatAnjuPay(room.extensionIncentive)}の内金を提示中です。</p></div>`;
   }
   return `<div class="market-wait-panel"><h2>市場の状態を同期しています</h2></div>`;
 }
@@ -1521,7 +1529,7 @@ function renderRoom() {
   });
   return `<section class="screen market-screen market-room">
     <div class="market-room-head"><div><span class="eyebrow">VALUE MARKET / TURN ${Number(room.turn || 1)}</span><h1>${escapeHtml(room.listing?.title || "無題の推し")}</h1><p>${role === "seller" ? "SELLER" : "BUYER"} / 相手：${escapeHtml(counterpart)} ${renderMarketPatronBadge(counterpartPatron, { compact: true })}</p></div>${renderWallet()}</div>
-    <div class="market-room-status"><span class="market-price">${room.listing?.askingPrice}<small>PT</small></span><span class="market-p2p ${state.channelReady ? "is-connected" : ""}">${escapeHtml(state.peerStatus)}</span><button type="button" id="marketExitRoom">取引を終了</button></div>
+    <div class="market-room-status"><span class="market-price">${formatAnjuPayNumber(room.listing?.askingPrice)} <small>${ANJU_PAY_UNIT}</small></span><span class="market-p2p ${state.channelReady ? "is-connected" : ""}">${escapeHtml(state.peerStatus)}</span><button type="button" id="marketExitRoom">取引を終了</button></div>
     ${sellerShopCard}
     <div class="market-room-grid">
       <figure class="market-main-image">${renderMarketImage()}<figcaption>画像はこの対戦中だけP2Pで表示されます</figcaption></figure>
@@ -1596,7 +1604,7 @@ function bindEvents() {
       state.matchMode = "favorites";
       const budgetAlignment = alignBudgetToMarketFavorite(selectedFavorite, { announce: true });
       if (!budgetAlignment.ok) {
-        showToast(`前回価格で待つには、あと${budgetAlignment.shortage.toLocaleString("ja-JP")}PT必要です。`);
+        showToast(`前回価格で待つには、あと${formatAnjuPay(budgetAlignment.shortage)}が必要です。`);
       }
       render();
     });
@@ -2023,7 +2031,7 @@ async function joinQueue(event) {
     const budgetAlignment = alignBudgetToMarketFavorite(selectedFavorite);
     if (!budgetAlignment.ok) {
       render();
-      showToast(`この商店の前回価格で待つには、あと${budgetAlignment.shortage.toLocaleString("ja-JP")}PT必要です。`);
+      showToast(`この商店の前回価格で待つには、あと${formatAnjuPay(budgetAlignment.shortage)}が必要です。`);
       return;
     }
   } else {
@@ -2753,7 +2761,7 @@ async function performAction(action, extra = {}) {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return false;
     clearMarketActionIdentity(actionId);
     updateMarketBalance(response.data?.balance ?? state.balance);
-    if (action === "accept_pitch") showToast(`${state.room?.entryFee || ENTRY_FEE}PTの着手料をAnjuPay残高から保留しました。`);
+    if (action === "accept_pitch") showToast(`${formatAnjuPay(state.room?.entryFee || ENTRY_FEE)}の着手料をAnjuPay残高から保留しました。`);
     if (action === "buy") {
       state.certificateStatus = "idle";
       if (state.room) {

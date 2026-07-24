@@ -3414,7 +3414,7 @@ function normalizeQueueEntry(
   }
   const affordable = Math.max(MARKET_MIN_PRICE, Math.min(MARKET_MAX_PRICE, balance - MARKET_ENTRY_FEE));
   if (balance < MARKET_ENTRY_FEE + MARKET_MIN_PRICE) {
-    throw new HttpsError("failed-precondition", `買い手は着手料${MARKET_ENTRY_FEE}PTと購入用${MARKET_MIN_PRICE}PTが必要です。`);
+    throw new HttpsError("failed-precondition", `買い手は着手料${MARKET_ENTRY_FEE} Payと購入用${MARKET_MIN_PRICE} Payが必要です。`);
   }
   const matchMode = data?.matchMode === "favorites" ? "favorites" : "discover";
   if (matchMode === "favorites" && !shopContext.selectedFavoriteSellerUid) {
@@ -5210,7 +5210,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireRoomActor(room, uid, "seller");
       requireMarketState(room, "extension_request");
       const incentive = integer(data?.incentive, 5, 20, 5);
-      if (!MARKET_EXTENSION_FEES.has(incentive)) throw new HttpsError("invalid-argument", "延長内金は5・10・20PTから選択してください。");
+      if (!MARKET_EXTENSION_FEES.has(incentive)) throw new HttpsError("invalid-argument", "延長内金は5 Pay・10 Pay・20 Payから選択してください。");
       const amount = captureMarketBalanceChanges("extension_hold", "held", () => (
         debitPoints(sellerWallet, incentive)
       ));

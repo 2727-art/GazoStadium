@@ -29,6 +29,11 @@ import {
   useOfflineMarketPreview,
 } from "./firebase-services.js?v=app-check-v2";
 import {
+  ANJU_PAY_UNIT,
+  formatAnjuPay,
+  formatAnjuPayNumber,
+} from "./anju-pay-format.mjs?v=anju-pay-format-v1";
+import {
   summarizeMarketPresence,
 } from "./market-presence.mjs?v=market-presence-v1";
 import {
@@ -63,7 +68,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v3";
+} from "./post-match-tip.js?v=post-match-tip-v4";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -734,7 +739,7 @@ function renderOverallRankingParticipation({ controlId = "overallRankingParticip
   </details>` : "";
   return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"}">
     <div class="overall-ranking-copy"><span class="eyebrow">ONLINE OVERALL RANKING</span><div><strong>オンライン総合ランキング</strong>
-      <p>${settings.enabled ? "4モード共通で期間ポイントを集計し、総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間ポイントは参加中の対戦だけ集計されます。"}</p></div></div>
+      <p>${settings.enabled ? "4モード共通で期間スコアを集計し、総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間スコアは参加中の対戦だけ集計されます。"}</p></div></div>
     <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
     <small>通常型1on1・戦略型1on1・2on2・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。サーバー期間で確定したランキング実績と月間王者記録は、参加終了後も名誉記録として残ります。</small>
@@ -1766,7 +1771,7 @@ function renderSetup() {
       <span>RATE ${Number(profile.rating || INITIAL_RATING)}</span>
       <span>戦績 ${profile.wins}勝 ${profile.losses}敗 ${profile.draws}分</span>
       <span>🔥 ${profile.streak}連勝中 / 最高${profile.bestStreak}</span>
-      <span class="point-balance-inline">AnjuPay ◆ ${state.economyReady ? state.economy.points : "--"} PT</span>
+      <span class="point-balance-inline">AnjuPay ◆ ${formatAnjuPay(state.economyReady ? state.economy.points : null)}</span>
     </div>
     ${renderOverallRankingParticipation({ controlId: "soloOverallRanking" })}
     <div class="setup-layout">
@@ -1836,9 +1841,9 @@ function renderMissionCard(mission, compact = false) {
   const progress = getMissionProgress(mission);
   const claimed = state.economy.daily?.claimed?.[mission.id] === true;
   const complete = progress >= mission.target;
-  const buttonLabel = claimed ? "受取済み" : complete ? `+${mission.reward} PTを受け取る` : "挑戦中";
+  const buttonLabel = claimed ? "受取済み" : complete ? `${formatAnjuPay(mission.reward, { sign: true })}を受け取る` : "挑戦中";
   return `<article class="mission-card ${complete ? "is-complete" : ""} ${claimed ? "is-claimed" : ""}">
-    <div class="mission-card-head"><span>${claimed ? "CLEAR" : complete ? "COMPLETE" : "DAILY"}</span><strong>+${mission.reward} PT</strong></div>
+    <div class="mission-card-head"><span>${claimed ? "CLEAR" : complete ? "COMPLETE" : "DAILY"}</span><strong>${formatAnjuPay(mission.reward, { sign: true })}</strong></div>
     <h2>${escapeHtml(mission.title)}</h2>${compact ? "" : `<p>${escapeHtml(mission.description)}</p>`}
     <div class="mission-progress"><i style="--mission-progress:${(progress / mission.target) * 100}%"></i></div>
     <div class="mission-card-foot"><span>${progress} / ${mission.target}</span>
@@ -1869,8 +1874,8 @@ function renderDailyPlayRewardPanel() {
   const status = dailyPlay.matches >= dailyPlay.maxMatches
     ? "本日の上限達成"
     : dailyPlay.basicComplete
-      ? `基本ボーナス達成・あと${dailyPlay.nextTarget - dailyPlay.matches}戦で +${dailyPlay.nextReward} PT`
-      : `あと${dailyPlay.nextTarget - dailyPlay.matches}戦で +${dailyPlay.nextReward} PT`;
+      ? `基本ボーナス達成・あと${dailyPlay.nextTarget - dailyPlay.matches}戦で ${formatAnjuPay(dailyPlay.nextReward, { sign: true })}`
+      : `あと${dailyPlay.nextTarget - dailyPlay.matches}戦で ${formatAnjuPay(dailyPlay.nextReward, { sign: true })}`;
   const statusDetail = dailyPlay.matches >= dailyPlay.maxMatches
     ? "今日はここまで。以降の正式完走は報酬回数へ加算されません。"
     : dailyPlay.basicComplete
@@ -1879,11 +1884,11 @@ function renderDailyPlayRewardPanel() {
   const tiers = dailyPlay.tiers.map((tier) => {
     const tierStatus = tier.claimed ? "受取済み" : tier.complete ? "受取可能" : "未達成";
     return `<li class="${tier.complete ? "is-complete" : ""} ${tier.claimed ? "is-claimed" : ""}">
-      <span>${tier.target}戦</span><strong>+${tier.reward} PT</strong><small>${tierStatus}</small>
+      <span>${tier.target}戦</span><strong>${formatAnjuPay(tier.reward, { sign: true })}</strong><small>${tierStatus}</small>
     </li>`;
   }).join("");
   const pendingLabel = dailyPlay.pendingCount > 0
-    ? `未受取 ${dailyPlay.pendingPoints.toLocaleString("ja-JP")} PT`
+    ? `未受取 ${formatAnjuPay(dailyPlay.pendingPoints)}`
     : "達成分は自動受取済み";
   return `<section class="daily-play-reward-panel" aria-labelledby="dailyPlayRewardTitle">
     <div class="daily-play-reward-head">
@@ -1916,12 +1921,12 @@ function renderPeriodRewardPanel() {
     const remainingMatches = Math.max(0, config.minimumMatches - record.matches);
     const estimatedReward = calculatePeriodReward(period, record);
     const status = remainingMatches > 0
-      ? `あと${remainingMatches}試合で ${config.tiers.at(-1).reward} PT`
-      : `${estimatedReward} PT見込み`;
+      ? `あと${remainingMatches}試合で ${formatAnjuPay(config.tiers.at(-1).reward)}`
+      : `見込み ${formatAnjuPay(estimatedReward)}`;
     const periodCopy = period === "daily" ? "今日" : period === "weekly" ? "今週" : "今月";
     return `<article class="period-reward-card period-reward-${period}">
       <div><span>${escapeHtml(config.label)}</span><strong>${escapeHtml(status)}</strong></div>
-      <p>${periodCopy} ${record.matches}試合 / 戦績ポイント ${record.points}</p>
+      <p>${periodCopy} ${record.matches}試合 / 戦績スコア ${record.points}</p>
       <small>${escapeHtml(info.label)}・終了後に受取可能</small>
     </article>`;
   }).join("");
@@ -1929,10 +1934,10 @@ function renderPeriodRewardPanel() {
     <div class="period-reward-head"><div><span class="eyebrow">PERIOD BATTLE REWARDS</span><h2 id="periodRewardTitle">期間戦績報酬</h2>
       <p>好きなモードで正式対戦を完走すると、自動で3期間へ蓄積されます。</p></div>
       <div class="period-reward-claim ${pending.total ? "has-reward" : ""}"><span>${pending.total ? `${pending.entries.length}期間分` : "受取待ち"}</span>
-        <strong>${pending.total.toLocaleString("ja-JP")} PT</strong>
+        <strong>${formatAnjuPay(pending.total)}</strong>
         <button class="button button-small ${pending.total ? "button-primary" : "button-ghost"}" id="claimPeriodRewardsButton" ${!pending.total || state.economyBusy ? "disabled" : ""}>${state.economyBusy ? "精算中…" : pending.total ? "まとめて受け取る" : "期間終了後に受取"}</button></div></div>
     <div class="period-reward-grid">${periodCards}</div>
-    <p class="period-reward-note">勝利3・引き分け1の戦績ポイントで報酬額が上がります。負けても必要試合数を満たせば基本報酬を獲得できます。ランキング公開設定は不要です。</p>
+    <p class="period-reward-note">勝利3・引き分け1の戦績スコアで報酬額が上がります。負けても必要試合数を満たせば基本報酬を獲得できます。ランキング公開設定は不要です。</p>
   </section>`;
 }
 
@@ -1945,7 +1950,7 @@ function renderDailyMissions() {
     <div class="section-head"><div><span class="eyebrow">DAILY CHALLENGE</span><h1>デイリーミッション</h1>
       <p>毎日0:00（日本時間）に更新。達成した報酬はボタンで受け取ってください。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
-    <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(state.economyReady ? state.economy.points : null)}</strong><small>${ANJU_PAY_UNIT}</small></div>
     ${renderDailyPlayRewardPanel()}
     ${renderPeriodRewardPanel()}
     ${missionContent}
@@ -2008,7 +2013,7 @@ function renderPointShop() {
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
           : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
-    let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${product.price} PTで購入` : `あと${product.price - state.economy.points} PT`}</button>`;
+    let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(product.price)}で購入` : `あと${formatAnjuPay(product.price - state.economy.points)}`}</button>`;
     if (owned && product.type === "feature") {
       action = `<button class="button button-wide button-cyan" data-edit-top-message ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "メッセージを編集" : "メッセージを投稿"}</button>`;
     } else if (owned) {
@@ -2020,7 +2025,7 @@ function renderPointShop() {
         : product.type === "chatFrame" ? (product.special ? "SPECIAL CHAT FRAME" : "CHAT FRAME")
           : product.type === "chatBackground" ? "CHAT BACKGROUND" : "TOP MESSAGE ACCESS";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
-      <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${product.price} PT</strong></div>
+      <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${formatAnjuPay(product.price)}</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
       <p>${escapeHtml(product.description)}</p>
       ${action}
@@ -2079,7 +2084,7 @@ function renderPointShop() {
     <div class="section-head"><div><span class="eyebrow">ANJUPAY STORE</span><h1>AnjuPayストア</h1>
       <p>チャット装飾、トップメッセージ、リアクション、スタンプ、称号で交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
-    <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${state.economyReady ? state.economy.points.toLocaleString("ja-JP") : "--"}</strong><small>PT</small></div>
+    <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(state.economyReady ? state.economy.points : null)}</strong><small>${ANJU_PAY_UNIT}</small></div>
     ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
       <section class="shop-category shop-oshi-market-collection" id="shopOshiMarketCollection" aria-labelledby="shopOshiMarketCollectionTitle">
         <div class="shop-oshi-market-hero">
@@ -2094,7 +2099,7 @@ function renderPointShop() {
         <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>COMMUNITY FEATURE</span><h2>トップページ機能</h2></div><p>500PTの買い切りで、自分のひとことをいつでも投稿・編集できます。</p></div><div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>COMMUNITY FEATURE</span><h2>トップページ機能</h2></div><p>${formatAnjuPay(500)}の買い切りで、自分のひとことをいつでも投稿・編集できます。</p></div><div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
       ${topMessageComposer}
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
@@ -2291,7 +2296,7 @@ function renderOnlinePursuitLines(result) {
   const scores = [result.scorePlayerOne, result.scorePlayerTwo];
   const calls = state.players.map((player, index) => ({ player, score: scores[index] }))
     .filter(({ score }) => score >= 9)
-    .map(({ player, score }) => `<article class="online-pursuit-call"><span>追撃セリフ / ${score} POINTS</span><strong>${escapeHtml(player.name)}</strong><blockquote>${escapeHtml(normalizePursuitLine(player.pursuitLine))}</blockquote></article>`)
+    .map(({ player, score }) => `<article class="online-pursuit-call"><span>追撃セリフ / SCORE ${score}</span><strong>${escapeHtml(player.name)}</strong><blockquote>${escapeHtml(normalizePursuitLine(player.pursuitLine))}</blockquote></article>`)
     .join("");
   return calls ? `<section class="online-pursuit-lines" aria-label="追撃セリフ">${calls}</section>` : "";
 }
@@ -2319,7 +2324,7 @@ function renderGameOver() {
       <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
-    ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${state.economy.points} PT</strong></div>
+    ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${formatAnjuPay(state.economy.points)}</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
     ${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
@@ -2685,7 +2690,7 @@ async function claimDailyMission(missionId) {
     render();
     if (result.outcome === "claimed-now") {
       const credited = Number.isFinite(Number(result.credited)) ? Number(result.credited) : mission.reward;
-      showToast(`${credited} PTを受け取りました。`);
+      showToast(`${formatAnjuPay(credited)}を受け取りました。`);
     }
     else if (result.outcome === "claimed") showToast("この報酬は受取済みです。");
     else showToast("ミッションはまだ達成していません。");
@@ -2705,9 +2710,9 @@ function dailyPlayProgressMessage(dailyPlay = state.dailyPlay) {
   if (!dailyPlay.nextTarget) return `本日${dailyPlay.matches}戦を正式完走しました。`;
   const remaining = Math.max(0, dailyPlay.nextTarget - dailyPlay.matches);
   if (dailyPlay.matches === dailyPlay.basicTarget) {
-    return `本日${dailyPlay.matches}戦・基本ボーナス達成。あと${remaining}戦で +${dailyPlay.nextReward} PTです。`;
+    return `本日${dailyPlay.matches}戦・基本ボーナス達成。あと${remaining}戦で ${formatAnjuPay(dailyPlay.nextReward, { sign: true })}です。`;
   }
-  return `本日${dailyPlay.matches}戦・あと${remaining}戦で +${dailyPlay.nextReward} PTです。`;
+  return `本日${dailyPlay.matches}戦・あと${remaining}戦で ${formatAnjuPay(dailyPlay.nextReward, { sign: true })}です。`;
 }
 
 async function settleDailyPlayRewards(uid = state.uid, { announce = false, renderAfter = true } = {}) {
@@ -2732,7 +2737,7 @@ async function settleDailyPlayRewards(uid = state.uid, { announce = false, rende
     if (announce) {
       if (Number(result.claimedCount || 0) > 0) {
         const nextGoal = dailyPlay.nextTarget > dailyPlay.matches
-          ? ` あと${dailyPlay.nextTarget - dailyPlay.matches}戦で +${dailyPlay.nextReward} PTです。`
+          ? ` あと${dailyPlay.nextTarget - dailyPlay.matches}戦で ${formatAnjuPay(dailyPlay.nextReward, { sign: true })}です。`
           : "";
         const context = dailyPlay.matches >= dailyPlay.maxMatches
           ? `本日${dailyPlay.maxMatches}戦・上限達成。`
@@ -2740,9 +2745,9 @@ async function settleDailyPlayRewards(uid = state.uid, { announce = false, rende
             ? `本日${dailyPlay.matches}戦・基本ボーナス達成。`
             : `本日${dailyPlay.matches}戦。`;
         if (Number(result.credited || 0) < Number(result.nominal || 0)) {
-          showToast(`${context}所持上限まで ${Number(result.credited || 0).toLocaleString("ja-JP")} PTを受け取り、達成分を精算しました。${nextGoal}`);
+          showToast(`${context}所持上限まで ${formatAnjuPay(result.credited || 0)}を受け取り、達成分を精算しました。${nextGoal}`);
         } else {
-          showToast(`${context}段階報酬 ${Number(result.credited || 0).toLocaleString("ja-JP")} PTを受け取りました。${nextGoal}`);
+          showToast(`${context}段階報酬 ${formatAnjuPay(result.credited || 0)}を受け取りました。${nextGoal}`);
         }
       } else if (renderAfter) {
         showToast("受け取れるデイリープレイ報酬はありません。");
@@ -2924,7 +2929,7 @@ function notifyPendingPeriodRewards() {
   const pending = pendingPeriodRewardSummary();
   if (!pending.total) return;
   state.periodRewardReminderShown = true;
-  showToast(`期間戦績報酬 ${pending.total} PTを受け取れます。`);
+  showToast(`期間戦績報酬 ${formatAnjuPay(pending.total)}を受け取れます。`);
 }
 
 async function claimClosedPeriodRewards() {
@@ -2941,8 +2946,8 @@ async function claimClosedPeriodRewards() {
     if (Number(result.claimedCount || 0) > 0) {
       const suffix = Number(result.remaining || 0) > 0 ? "。残りはもう一度受け取れます。" : "";
       showToast(Number(result.credited || 0) === Number(result.nominal || 0)
-        ? `${result.claimedCount}期間分の戦績報酬 ${result.credited} PTを受け取りました${suffix}`
-        : `${result.claimedCount}期間分を精算し、上限まで${result.credited} PTを受け取りました${suffix}`);
+        ? `${result.claimedCount}期間分の戦績報酬 ${formatAnjuPay(result.credited)}を受け取りました${suffix}`
+        : `${result.claimedCount}期間分を精算し、上限まで${formatAnjuPay(result.credited)}を受け取りました${suffix}`);
     } else {
       showToast("受け取れる期間戦績報酬はありません。");
     }

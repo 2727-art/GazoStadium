@@ -23,7 +23,7 @@ const record = (dateKey, matches, verifiedMatches = matches) => ({
   endsAt: dayEndsAt(dateKey),
 });
 
-test("daily play ladder is front-loaded, optional after 10 matches, and capped at 300 PT", () => {
+test("daily play ladder is front-loaded, optional after 10 matches, and capped at 300 Pay", () => {
   assert.equal(DAILY_PLAY_REWARD_START_DATE_KEY, "2026-07-23");
   assert.equal(DAILY_PLAY_REWARD_BASIC_TARGET, 10);
   assert.equal(DAILY_PLAY_REWARD_MAX_MATCHES, 200);
