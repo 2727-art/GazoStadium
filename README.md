@@ -177,6 +177,10 @@ Firebaseの専用待機キューで採点傾向が近い相手を優先してマ
 - HPが0になると敗北
 - 5ラウンド終了時は、残りHP、合計獲得点、CRITICAL回数、10点回数の順で判定
 - すべて同じ場合は引き分け
+- 試合後の「縁側で一息」は、両者が参加を選んだ時だけ開く通常型1on1専用の任意交流。手元の画像1枚と固定の気分札をP2Pで見せ合い、採点・HP・戦績・AnjuPay・ミッション・実績に影響しない固定のひとことを1回だけ返せます。片方の辞退・退出・切断で閉じ、同意・画像・気分・反応はFirebaseへ保存しません
+- 顔なじみ帳は「縁側で一息」で双方の画像が端末間に届いた後にだけ表示する任意機能です。各自が「またどこかで」を選んだ場合だけ、Cloud Functionsが12時間以内の完走済み通常型1on1と両者の検証済み結果申告を確認して関係を作ります。片方だけの希望と「この場だけ」は相手へ通知せず、「この場だけ」はサーバーへ送信しません
+- 顔なじみ帳に表示するのは対戦時の名前だけで、オンライン状態・最終ログイン・勝敗・回数・画像・気分・ひとことは表示しません。1人最大100件です。帳面から外すと双方から静かに消え、ブロックすると顔なじみ関係と再会優先から外れます。通常検索で偶然同じ相手になることまで保証して防ぐ機能ではありません
+- 再会マッチングは通常型1on1の待機列を分けず、双方が端末で希望し、同時に待機中で、直近24時間に再会優先が成立していない顔なじみを先に探します。該当者がいなければ待ち時間を延ばさず、その場で通常の相手へ戻ります。専用報酬・連続ログイン・回数ノルマ・相手のオンライン通知はありません
 - ルーム破棄は勝敗・勝率・連勝数に影響しない
 
 ### 2on2
@@ -298,6 +302,8 @@ Firebaseの専用待機キューで採点傾向が近い相手を優先してマ
 
 Realtime Databaseのルールは、各ユーザーが自分の待機情報・採点・順位投票・モード別戦績・総合戦績・移行前の期間別ランキング・一度限りの対戦結果申告だけを書けること、各ルームの参加者だけがルーム情報を読めることを制約します。期間キーがサーバー切替日以降のランキング、AnjuPay残高、デイリー進捗、購入済み商品、期間戦績報酬、ランキング実績、報酬済みルーム台帳へのクライアント直接書き込みは禁止し、Cloud FunctionsのAdmin SDKだけが更新します。推し値市場の公開参加状況もクライアント書き込みを禁止し、Functionsが参加単位のランダムIDと集計に必要なロール・最終通信時刻・状態世代だけを更新します。推し値市場のRealtime Databaseルームは、取引中の参加者本人のチャット・接続状態と、相手宛てWebRTCシグナルだけを書けます。終了後は新規投稿を拒否し、シグナル削除とオフライン化だけを許可します。市場の取引状態・ウォレット・ランキング・推し値商店・常連帳・ブロック関係・売り手買い手ペア・肯定タグ台帳・パトロン循環基金・補填台帳・月間方針投票・推薦枠はFirestore Rulesでクライアントの直接読み書きを全面禁止し、Callable Functionsだけが本人の権限、App Check、成約履歴を検証して更新します。任意公開プロフィールもFunctionsが本人の実績ドキュメントへだけマージします。ランキング、推薦棚、店主カードの応答には匿名UIDを含めず、表示名・ゲーム内店コード・必要な実績・本人が公開した項目だけを返します。Firebaseコンソールでルールを変更する場合は、リポジトリ内の両Rulesも同じ内容に保ってください。
 
+通常型1on1の顔なじみ希望・相互関係・ブロック・再会間隔はFirestoreのサーバー専用領域へ保存し、クライアントから直接読み書きできません。Callableの帳面・非表示管理はランダムな40桁IDと表示名だけを返し、相手UIDや相手側の選択を返しません。再会段階ではFunctionsが候補とブロックを再確認し、期限付きpermit、両者lock、完全なルームと招待をサーバー側で作成します。クライアントは有効なpermit・両lock・招待が揃った時だけ招待済みから対戦中へ進めます。クライアントの再会確認は即時反映用ですが、確認送信を省略しても次のマッチング前に期限付きlockとpermitをFunctionsが回収し、対戦中への遷移を確認して再会優先の24時間間隔を記録します。通信失敗時はpermitを先に消さず、次回の回収へ残します。なお通常型1on1の既存マッチング、ルーム、WebRTCシグナルは対戦相手を識別するため認証UIDを内部通信キーとして使用しており、UIDそのものを全認証ユーザーから秘匿する設計ではありません。
+
 ## Firebaseへデプロイする
 
 初回だけFirebaseコンソールでCloud Firestoreの本番データベースを作成し、`functions`フォルダーで依存関係をインストールします。
@@ -332,6 +338,20 @@ npx --yes firebase-tools deploy --only database,firestore:rules,hosting --non-in
 ```
 
 最初の切替日までに公開しない場合は、過去日付のまま公開しないでください。`functions/server-ranking.js`、`online.js`、`database.rules.json`、テスト、上記READMEの切替キーを、公開後に到来する次の日次・月曜・月初へ同時に繰り下げます。サーバー版公開前の試合はランキングへ遡及加算しません。
+
+### 顔なじみ帳・再会マッチングの段階公開
+
+顔なじみ機能はFirestoreの`systemConfig/soloFamiliarRollout.stage`とRealtime Databaseの`online/config/soloServerMatchmaking`で二重に制御します。設定documentがない場合、または不明な値の場合は`engawa_only`へ閉じます。`stage: reunion`でもRealtime Databaseの権威フラグが厳密な`true`でなければ実効段階は`familiar_book`です。`soloFamiliarAction`は他のCallableの段階設定に関係なくApp Checkを常時強制します。
+
+1. `firestore.indexes`だけを先に配備し、`soloFamiliarPairs`の`participants CONTAINS + active ASC`複合インデックスが`READY`になり、`soloFamiliarIntents`・`soloFamiliarPairs`・`familiarEntries`・`soloFamiliarReunions`の`deleteAt` TTLが有効になったことを確認します。
+2. `soloFamiliarAction`、Firestore Rules、Realtime Database Rulesを同じソースから配備します。この時点ではFirestore設定を未作成または`engawa_only`、Realtime Databaseの権威フラグを未作成または`false`のままにします。
+3. `solo-familiar-v1`のキャッシュキーを含むHostingを配備し、通常型1on1の縁側、通常マッチング、取消、再読込を2アカウントで確認します。戦略型1on1・2on2・バトルロワイヤルも回帰確認します。
+4. 反応を確認してからFirestoreを`stage: familiar_book`へ進め、片側希望、相互希望、削除、ブロック、非表示管理のページ送りを確認します。
+5. 再会を試す時は先にFirestoreだけを`stage: reunion`へ進めます。権威フラグが`false`の間は実効段階が`familiar_book`のままであることを確認し、その後にRealtime Databaseの`online/config/soloServerMatchmaking`を`true`へ変更します。顔なじみ優先・24時間間隔・通常相手への即時フォールバック・招待取消を確認します。
+
+再会を戻す時は、最初にRealtime Databaseの権威フラグを`false`へ戻し、その後Firestoreを`familiar_book`または`engawa_only`へ戻します。順序を逆にしないでください。権威フラグを戻すと既存の通常マッチャーへ復帰するため、ブロックは顔なじみ帳と再会優先からは外しますが、通常検索での偶然の再会防止は保証しません。
+
+現在の再会マッチャーは小規模な段階検証を前提に、3秒の補助pollとサーバー側の待機列確認を使います。全面公開前にFunctionsの呼出数・p95実行時間・エラー率、待機人数、permit/lock残留、通常相手へ戻る割合を監視してください。人数増加時は待機列のbucket化とUID別lock仲裁へ移行し、全待機列読取と単一lockルートの競合を解消してから対象を広げます。
 
 Google保護を本番で利用する前に、Firebase ConsoleのAuthenticationで匿名認証を維持したままGoogleプロバイダを有効化し、サポートメールを設定します。WorkerやGitHub Pagesで公開する場合は、それぞれのHTTPSホスト名をAuthenticationの承認済みドメインへ追加してください。`accountTransfer`は`consumeAppCheckToken: true`を常時指定しているため、第2世代Functionsの実行サービスアカウントへFirebase App Check Token Verifierロールが必要です。Custom Token作成に既定外のサービスアカウントを使う構成では、Firebase Admin SDKのトークン署名に必要なIAM権限も確認してください。
 
@@ -379,7 +399,7 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 - `strategy-video-transfer.mjs`: 戦略型の10秒短尺録画、WebM/MP4実データ検証、動画専用DataChannel転送、Object URL解放
 - `strategy-review-asset-transfer.mjs`: 品評会の追加WebP画像・WAV音声の実データ検証、容量・時間制限、専用DataChannel転送、Object URL解放
 - `audio.js`: ボタン・クリティカル・パーフェクトの効果音
-- `online.js`: Firebase/WebRTC 1on1対戦、4モード共通の総合ランキング、ミッション、ショップ
+- `online.js`: Firebase/WebRTC通常型1on1、縁側、顔なじみ帳、再会の任意優先、4モード共通の総合ランキング、ミッション、ショップ
 - `market-presence.mjs`: トップページ用の推し値市場公開プレゼンス集計
 - `player-titles.js`: 通常6カテゴリ48種と「推し活・ときめき」7種、合計55種のプレイヤー称号共通カタログ
 - `chat-cosmetics.js`: チャット背景・フレームの共通カタログ
@@ -395,8 +415,9 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 - `firebase-app-check.js`: reCAPTCHA Enterpriseサイトキー設定後のApp Check初期化
 - `database.rules.json`: Realtime Databaseセキュリティルール
 - `firestore.rules`: 権威ウォレット、検証済み進捗・試合台帳、市場データのCloud Firestoreルール
-- `firestore.indexes.json`: パトロン推薦棚の売り手優先を含む市場待機列クエリ用インデックス
-- `functions/index.js`: AnjuPay操作・利用履歴、差し入れ、推し値市場の取引・商店関係・循環基金・月間方針投票・推薦・証書を確定するCallable Cloud Functions
+- `firestore.indexes.json`: 市場待機列の各種クエリ、通常型1on1の顔なじみ検索、顔なじみ一時記録のTTL用インデックス
+- `functions/index.js`: AnjuPay操作・利用履歴、差し入れ、通常型1on1の顔なじみ・ブロック・再会permit、推し値市場の取引・商店関係・循環基金・月間方針投票・推薦・証書を確定するCallable Cloud Functions
+- `functions/solo-familiar.js`: 顔なじみ段階、公開応答の匿名化、採点傾向互換、再会ソフト優先を扱う純粋関数
 - `functions/daily-play-rewards.js`: 1～200戦のデイリープレイ段階、検証済み完走数、7日間の受取猶予を判定する純粋関数
 - `functions/market-shop.js`: 推し値商店カタログ、入力検証、公開店主カード、常連照合、肯定タグ間隔を扱う純粋関数
 - `functions/market-economy.js`: 成約手数料と差し入れ固定額のサーバー側純粋関数

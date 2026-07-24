@@ -39,6 +39,38 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /soloFamiliarIntents/{intentId} {
+      allow read, write: if false;
+    }
+
+    match /soloFamiliarPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /soloFamiliarBooks/{uid} {
+      allow read, write: if false;
+
+      match /familiarEntries/{entryId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /soloFamiliarBlocks/{uid} {
+      allow read, write: if false;
+
+      match /blockEntries/{entryId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /soloFamiliarBlockPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /soloFamiliarReunions/{reunionId} {
+      allow read, write: if false;
+    }
+
     match /achievementProfiles/{uid} {
       allow read, write: if false;
     }

@@ -78,6 +78,13 @@ import {
   verifiedOnlineImageMime,
   verifiedOnlineImageMimeFromChunks,
 } from "./online-image-transfer.mjs?v=online-image-transfer-v1";
+import {
+  appendIncomingEngawaImageChunk,
+  assertIncomingTransferNamespaceExclusive,
+  completeIncomingEngawaImageTransfer,
+  createIncomingEngawaImageTransfer,
+  engawaImageEndStatus,
+} from "./engawa-image-transfer.mjs?v=engawa-image-transfer-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -88,6 +95,7 @@ const PURSUIT_LINE_KEY = "hariai-stadium-online-pursuit-line-v1";
 const FINISH_LINE_KEY = "hariai-stadium-online-finish-line-v1";
 const OPPONENT_CUSTOM_FINISH_KEY = "hariai-stadium-online-opponent-custom-finish-v1";
 const IMAGE_PREFERENCE_KEY = "hariai-stadium-online-image-preference-v1";
+const SOLO_REUNION_PREFERENCE_KEY = "hariai-stadium-solo-reunion-preference-v1";
 const MAX_PURSUIT_LINE_LENGTH = 40;
 const MAX_FINISH_LINE_LENGTH = 30;
 const CUSTOM_PURSUIT_VALUE = "__custom__";
@@ -259,10 +267,27 @@ const IMAGE_ACK_WAIT_MS = 15_000;
 const MAX_IMAGE_TRANSFER_BYTES = 15 * 1024 * 1024;
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PROFILE_AVATAR_READY_WAIT_MS = 3_000;
+const ENGAWA_MESSAGE_MAX_CHARS = 2048;
+const ENGAWA_BUFFER_WAIT_MS = 5000;
+const SOLO_SERVER_MATCH_POLL_MS = 3000;
+const SOLO_FAMILIAR_STAGES = Object.freeze(["engawa_only", "familiar_book", "reunion"]);
+const ENGAWA_MOODS = Object.freeze([
+  Object.freeze({ id: "just_look", label: "ただ見てほしい", description: "言葉にしなくても大丈夫" }),
+  Object.freeze({ id: "smile", label: "少し笑ってほしい", description: "ふっと力が抜ける一枚" }),
+  Object.freeze({ id: "recent_favorite", label: "最近これが好き", description: "近ごろ手元に置きたい一枚" }),
+  Object.freeze({ id: "calm", label: "なんとなく落ち着く", description: "理由はなくても心地よい一枚" }),
+]);
+const ENGAWA_RESPONSES = Object.freeze([
+  Object.freeze({ id: "thanks", label: "見せてくれてありがとう" }),
+  Object.freeze({ id: "like", label: "これ、好きです" }),
+  Object.freeze({ id: "calm", label: "なんか落ち着く" }),
+  Object.freeze({ id: "again", label: "また見たい" }),
+]);
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
 
 const economyActionCallable = httpsCallable(functions, "economyAction");
+const soloFamiliarActionCallable = httpsCallable(functions, "soloFamiliarAction");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
@@ -303,6 +328,7 @@ function createOnlineState() {
   const pursuitSettings = getSavedPursuitSettings();
   const finishSettings = getSavedFinishSettings();
   const imagePreference = normalizeImagePreference(localStorage.getItem(IMAGE_PREFERENCE_KEY), "");
+  const soloReunionPreference = localStorage.getItem(SOLO_REUNION_PREFERENCE_KEY) === "1";
   return {
     screen: "setup",
     uid: "",
@@ -314,6 +340,15 @@ function createOnlineState() {
     ...finishSettings,
     showOpponentCustomFinish: localStorage.getItem(OPPONENT_CUSTOM_FINISH_KEY) !== "0",
     imagePreference,
+    soloFamiliarStage: "engawa_only",
+    soloFamiliarReady: false,
+    soloFamiliarRefreshGeneration: 0,
+    soloFamiliars: [],
+    soloBlockedFamiliars: [],
+    soloBlockedCursor: "",
+    soloBlockedDetailsOpen: false,
+    soloFamiliarBookBusy: false,
+    soloReunionPreference,
     deck: [],
     signatureCardId: "",
     roomId: "",
@@ -398,6 +433,9 @@ function createOnlineState() {
     selectionTimeoutHandledRound: 0,
     selectionLocking: false,
     disconnectHandles: [],
+    activeReservationDisconnect: null,
+    activeReservationDisconnectRoomId: "",
+    activeReservationDisconnectRegistration: null,
     peer: null,
     channel: null,
     channelReady: false,
@@ -410,6 +448,32 @@ function createOnlineState() {
     imageTransferError: "",
     imageAckTimer: null,
     imageAckRound: 0,
+    engawaLocalDecision: "",
+    engawaRemoteDecision: "",
+    engawaSelectedCardId: "",
+    engawaMoodId: "",
+    engawaSharedCardId: "",
+    engawaSharedMoodId: "",
+    engawaImageSent: false,
+    engawaSending: false,
+    engawaTransferProgress: 0,
+    engawaTransferGeneration: 0,
+    engawaRemoteImage: null,
+    incomingEngawaTransfer: null,
+    engawaLocalResponse: "",
+    engawaRemoteResponse: "",
+    engawaClosed: false,
+    engawaEndReason: "",
+    engawaErrorMessage: "",
+    engawaResumeTimer: null,
+    soloFamiliarDecision: "",
+    soloFamiliarDecisionBusy: false,
+    soloFamiliarDecisionSaved: false,
+    soloFamiliarDecisionError: "",
+    soloServerMatchTimer: null,
+    soloServerMatchBusy: false,
+    soloServerMatchErrorNotified: false,
+    reunionMatch: false,
     finishCutInTimer: null,
     opponentOnline: true,
     statsCommitted: false,
@@ -425,6 +489,90 @@ function normalizeImagePreference(value, fallback = "both") {
 function getImagePreferenceOption(value) {
   const preference = normalizeImagePreference(value);
   return IMAGE_PREFERENCE_OPTIONS.find((option) => option.id === preference) || IMAGE_PREFERENCE_OPTIONS[2];
+}
+
+function normalizeSoloFamiliarStage(value) {
+  return SOLO_FAMILIAR_STAGES.includes(value) ? value : "engawa_only";
+}
+
+function soloFamiliarBookEnabled() {
+  return state.soloFamiliarStage === "familiar_book" || state.soloFamiliarStage === "reunion";
+}
+
+function soloServerMatchmakingEnabled() {
+  return state.soloFamiliarStage === "reunion";
+}
+
+function normalizeSoloFamiliarEntries(value, { blocked = false } = {}) {
+  return (Array.isArray(value) ? value : []).map((entry) => ({
+    id: /^[a-f0-9]{40}$/.test(String(entry?.id || "")) ? String(entry.id) : "",
+    name: String(entry?.name || "").trim().slice(0, 16),
+    ...(blocked ? {} : { createdAt: Math.max(0, Number(entry?.createdAt || 0)) }),
+  })).filter((entry) => entry.id && entry.name);
+}
+
+function normalizeSoloBlockedCursor(value) {
+  const cursor = String(value || "");
+  return /^[a-f0-9]{40}$/.test(cursor) ? cursor : "";
+}
+
+function applySoloFamiliarPayload(payload) {
+  const stage = normalizeSoloFamiliarStage(payload?.rollout?.stage);
+  state.soloFamiliarStage = stage;
+  state.soloFamiliarReady = true;
+  if (stage !== "reunion" && state.soloServerMatchTimer) {
+    window.clearInterval(state.soloServerMatchTimer);
+    state.soloServerMatchTimer = null;
+  }
+  state.soloFamiliars = stage === "engawa_only"
+    ? []
+    : normalizeSoloFamiliarEntries(payload?.familiars);
+  state.soloBlockedFamiliars = stage === "engawa_only"
+    ? []
+    : normalizeSoloFamiliarEntries(payload?.blocked, { blocked: true });
+  state.soloBlockedCursor = stage === "engawa_only"
+    ? ""
+    : normalizeSoloBlockedCursor(payload?.blockedCursor);
+  if (stage === "engawa_only" && state.screen === "familiarBook") {
+    state.screen = "setup";
+    setOnlineChrome("ONLINE READY");
+  }
+}
+
+function failClosedSoloFamiliarState() {
+  state.soloFamiliarStage = "engawa_only";
+  state.soloFamiliarReady = true;
+  window.clearInterval(state.soloServerMatchTimer);
+  state.soloServerMatchTimer = null;
+  state.soloFamiliars = [];
+  state.soloBlockedFamiliars = [];
+  state.soloBlockedCursor = "";
+  if (state.screen === "familiarBook") {
+    state.screen = "setup";
+    setOnlineChrome("ONLINE READY");
+  }
+}
+
+async function refreshSoloFamiliarBook({ renderAfter = false, notifyError = false } = {}) {
+  const expectedState = state;
+  const expectedUid = state.uid;
+  const refreshGeneration = ++state.soloFamiliarRefreshGeneration;
+  try {
+    const response = await soloFamiliarActionCallable({ action: "get" });
+    if (!active || state !== expectedState || state.uid !== expectedUid
+        || state.soloFamiliarRefreshGeneration !== refreshGeneration) return false;
+    applySoloFamiliarPayload(response.data || {});
+    if (renderAfter) render();
+    return true;
+  } catch (error) {
+    console.error(error);
+    if (!active || state !== expectedState || state.uid !== expectedUid
+        || state.soloFamiliarRefreshGeneration !== refreshGeneration) return false;
+    failClosedSoloFamiliarState();
+    if (renderAfter) render();
+    if (notifyError) showToast("顔なじみ機能を確認できませんでした。通常1on1の対戦方式は待機開始時に再確認します。");
+    return false;
+  }
 }
 
 function sanitizePursuitLineDraft(value) {
@@ -1040,7 +1188,7 @@ function openOnlineScreen(screen) {
     return;
   }
   if (active) {
-    if (["setup", "missions", "shop", "achievements"].includes(state.screen)) {
+    if (["setup", "familiarBook", "missions", "shop", "achievements"].includes(state.screen)) {
       state.screen = screen;
       render();
     }
@@ -1566,6 +1714,7 @@ async function ensureAuthenticated() {
     showToast("総合ランキング情報を読み込めませんでした。対戦機能は利用できます。");
   }
   state.authReady = true;
+  refreshSoloFamiliarBook({ renderAfter: true }).catch((error) => console.error(error));
   try {
     await initializeEconomy();
     notifyPendingPeriodRewards();
@@ -1795,6 +1944,7 @@ function render() {
   if (!active) return;
   const renderers = {
     setup: renderSetup,
+    familiarBook: renderSoloFamiliarBook,
     missions: renderDailyMissions,
     shop: renderPointShop,
     achievements: renderAchievements,
@@ -1809,6 +1959,7 @@ function render() {
     result: renderRoundResult,
     waitingContinue: renderWaitingContinue,
     gameover: renderGameOver,
+    engawa: renderEngawa,
     noContest: renderNoContest,
     error: renderError,
   };
@@ -1816,6 +1967,57 @@ function render() {
   bindScreenEvents();
   appRoot.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderSoloFamiliarSetupPanel() {
+  if (!soloFamiliarBookEnabled()) return "";
+  const reunionSetting = soloServerMatchmakingEnabled() ? `
+    <label class="solo-reunion-toggle">
+      <input id="soloReunionPreference" type="checkbox" ${state.soloReunionPreference ? "checked" : ""} />
+      <span><strong>顔なじみとの再会を優先する</strong>
+        <small>お互いが同時に待っている時だけ優先します。見つからなければ、待ち時間を延ばさず通常の相手を探します。</small></span>
+    </label>` : "";
+  return `<section class="solo-familiar-setup" aria-labelledby="soloFamiliarSetupTitle">
+    <div><span class="eyebrow">FAMILIAR BOOK</span><h2 id="soloFamiliarSetupTitle">顔なじみ帳</h2>
+      <p>「縁側で一息」のあと、お互いが望んだ相手だけを静かに覚えておく帳面です。</p></div>
+    <button class="button button-ghost button-small" id="openSoloFamiliarBook" type="button">帳面をひらく</button>
+    ${reunionSetting}
+  </section>`;
+}
+
+function renderSoloFamiliarBook() {
+  const familiarItems = state.soloFamiliars.length
+    ? state.soloFamiliars.map((entry) => `<article class="solo-familiar-entry">
+      <div><span>縁側で知り合った人</span><strong>${escapeHtml(entry.name)}</strong></div>
+      <div class="solo-familiar-entry-actions">
+        <button class="button button-ghost button-small" type="button" data-solo-familiar-remove="${entry.id}" ${state.soloFamiliarBookBusy ? "disabled" : ""}>帳面から外す</button>
+        <button class="button button-ghost button-small solo-familiar-block-button" type="button" data-solo-familiar-block="${entry.id}" ${state.soloFamiliarBookBusy ? "disabled" : ""}>ブロック</button>
+      </div>
+    </article>`).join("")
+    : `<div class="solo-familiar-empty"><strong>まだ白いページです</strong><p>縁側でお互いが「またどこかで」と思った時だけ、ここに名前が残ります。</p></div>`;
+  const blockedItems = state.soloBlockedFamiliars.length
+    ? state.soloBlockedFamiliars.map((entry) => `<article class="solo-familiar-blocked-entry">
+      <strong>${escapeHtml(entry.name)}</strong>
+      <button class="button button-ghost button-small" type="button" data-solo-familiar-unblock="${entry.id}" ${state.soloFamiliarBookBusy ? "disabled" : ""}>ブロック解除</button>
+    </article>`).join("")
+    : '<p class="solo-familiar-blocked-empty">ブロック中の相手はいません。</p>';
+  return `<section class="screen solo-familiar-book-screen">
+    <div class="section-head"><div><span class="eyebrow">A QUIET MEMORY</span><h1>顔なじみ帳</h1>
+      <p>表示するのは名前だけです。オンライン状態、最終ログイン、勝敗は記録・表示しません。</p></div>
+      <button class="button button-ghost button-small" id="soloFamiliarBack" type="button">対戦準備へ</button></div>
+    <div class="solo-familiar-book-note"><strong>相手の選択は見えません</strong><span>片方だけが望んだ場合は何も残らず、通知も届きません。</span></div>
+    ${state.soloFamiliarBookBusy ? '<p class="solo-familiar-book-loading" aria-live="polite">帳面を整えています…</p>' : ""}
+    <div class="solo-familiar-list">${familiarItems}</div>
+    <details class="solo-familiar-blocked" ${state.soloBlockedDetailsOpen ? "open" : ""}>
+      <summary>ブロック管理</summary>
+      <p>ブロックした相手は顔なじみ帳と再会優先から外れます。通常検索での偶然の再会まで防ぐことを保証するものではありません。</p>
+      <div>${blockedItems}</div>
+      ${state.soloBlockedCursor ? `<button class="button button-ghost button-small solo-familiar-load-more" id="soloFamiliarLoadMoreBlocked" type="button" ${state.soloFamiliarBookBusy ? "disabled" : ""}>さらに読み込む</button>` : ""}
+    </details>
+    <div class="solo-familiar-book-actions">
+      <button class="button button-ghost" id="soloFamiliarRefresh" type="button" ${state.soloFamiliarBookBusy ? "disabled" : ""}>帳面を読み直す</button>
+    </div>
+  </section>`;
 }
 
 function renderSetup() {
@@ -1862,6 +2064,7 @@ function renderSetup() {
       <span class="point-balance-inline">AnjuPay ◆ ${formatAnjuPay(state.economyReady ? state.economy.points : null)}</span>
     </div>
     ${renderOverallRankingParticipation({ controlId: "soloOverallRanking" })}
+    ${renderSoloFamiliarSetupPanel()}
     <div class="setup-layout">
       <aside class="setup-guide">
         <h2>オンライン画像の取り扱い</h2>
@@ -2243,12 +2446,15 @@ function renderMatching() {
   const scopeHint = !acceptsBoth && !state.matchScopeAvailable && !state.matchScopeExpanded
     ? `<small class="matching-scope-hint">${MATCH_SCOPE_EXPAND_DELAY_MS / 1000}秒後、必要なら異なる好みまで検索範囲を広げられます。</small>`
     : "";
+  const reunionDetail = soloServerMatchmakingEnabled()
+    ? `<span class="connection-pill ${state.soloReunionPreference ? "connected" : ""}">${state.soloReunionPreference ? "顔なじみとの再会を静かに優先" : "通常の相手を優先"}</span>`
+    : "";
   return renderStatusCard({
     icon: "◎",
     eyebrow: "PREFERENCE MATCHING",
     title: "対戦相手を探しています",
     body: scopeBody,
-    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}${scopeHint}`,
+    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${reunionDetail}${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}${scopeHint}`,
     actions: `${expandAction}<button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>`,
   });
 }
@@ -2263,10 +2469,12 @@ function renderConnecting() {
   }).join("");
   const status = renderStatusCard({
     icon: "VS",
-    eyebrow: "MATCH FOUND",
-    title: `${escapeHtml(opponent?.name || "対戦相手")}とマッチング`,
-    body: "画像を一時転送するためのP2P接続を準備しています。Firebaseには画像をアップロードしません。",
-    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${handicapDetails}`,
+    eyebrow: state.reunionMatch ? "FAMILIAR REUNION" : "MATCH FOUND",
+    title: state.reunionMatch ? `${escapeHtml(opponent?.name || "顔なじみ")}と、また会えました` : `${escapeHtml(opponent?.name || "対戦相手")}とマッチング`,
+    body: state.reunionMatch
+      ? "縁側で知り合った顔なじみとの再会です。いつもの通常型1on1を始めます。"
+      : "画像を一時転送するためのP2P接続を準備しています。Firebaseには画像をアップロードしません。",
+    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${state.reunionMatch ? '<span class="connection-pill connected">縁側の顔なじみ</span>' : ""}${handicapDetails}`,
     actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
   });
   return `<section class="screen">${status.replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
@@ -2302,6 +2510,7 @@ function renderOnlineHud() {
     <div class="online-room-strip"><span>ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span>
       <span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ 再接続待ち"}</span>
       <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
+      ${state.reunionMatch ? '<span class="connection-pill connected">顔なじみと再会</span>' : ""}
       <button class="avatar-visibility-toggle" type="button" data-online-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button></div>`;
 }
 
@@ -2447,11 +2656,13 @@ function renderGameOver() {
   }) || "";
   return `<section class="screen gameover-wrap"><div class="gameover-card"><div class="winner-emblem" aria-hidden="true">${outcome.winnerIndex === null ? "=" : "✦"}</div>
     <span class="eyebrow">ONLINE MATCH COMPLETE</span><h1>${title}</h1><p>${escapeHtml(subtitle)}</p>
+    ${state.reunionMatch ? '<div class="solo-reunion-result-note"><strong>また会えました</strong><span>顔なじみとの通常型1on1でした。</span></div>' : ""}
     <div class="final-stats">${state.players.map((player, index) => `<div class="final-player ${outcome.winnerIndex === index ? "winner" : ""}">
       <h2>${escapeHtml(player.name)} ${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</h2>
       <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
+    ${renderEngawaInvitation()}
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${formatAnjuPay(state.economy.points)}</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
@@ -2459,6 +2670,161 @@ function renderGameOver() {
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
+  </div></section>`;
+}
+
+function getEngawaMood(id) {
+  return ENGAWA_MOODS.find((item) => item.id === id) || null;
+}
+
+function getEngawaResponse(id) {
+  return ENGAWA_RESPONSES.find((item) => item.id === id) || null;
+}
+
+function engawaIsMutuallyAccepted() {
+  return state.engawaLocalDecision === "accept"
+    && state.engawaRemoteDecision === "accept"
+    && !state.engawaClosed;
+}
+
+function renderEngawaInvitation() {
+  const connected = state.opponentOnline && state.channel?.readyState === "open";
+  let status = "参加するかどうかは相手に伏せたまま選び、両方が望んだ時だけ開きます。";
+  let actions = "";
+
+  if (state.engawaClosed) {
+    status = state.engawaEndReason || "縁側は閉じました。共有した画像と反応は保存されません。";
+  } else if (!connected) {
+    status = "相手とのP2P接続が閉じたため、今回はここで一戦を終えます。";
+  } else if (state.engawaLocalDecision === "accept") {
+    status = "希望を送りました。相手の選択を静かに待っています。";
+    actions = '<button class="button button-ghost button-small" type="button" data-engawa-end>今回はやめておく</button>';
+  } else {
+    actions = `<button class="button button-primary" type="button" data-engawa-decision="accept">一息ついていく</button>
+      <button class="button button-ghost" type="button" data-engawa-decision="decline">今日はここまで</button>`;
+  }
+
+  return `<section class="engawa-invite" aria-labelledby="engawaInviteTitle">
+    <div class="engawa-invite-head"><div><span>AFTER MATCH / P2P ONLY</span><h2 id="engawaInviteTitle">縁側で一息</h2></div><i aria-hidden="true">♨</i></div>
+    <p>勝負はここまで。お互いが望んだ時だけ、手元の一枚と今の気分をそっと見せ合えます。</p>
+    <div class="engawa-promises" aria-label="縁側の約束"><span>採点なし</span><span>報酬なし</span><span>保存なし</span></div>
+    <p class="engawa-invite-status" aria-live="polite">${escapeHtml(status)}</p>
+    ${actions ? `<div class="engawa-invite-actions">${actions}</div>` : ""}
+  </section>`;
+}
+
+function soloFamiliarDecisionAvailable() {
+  return soloFamiliarBookEnabled()
+    && engawaIsMutuallyAccepted()
+    && state.screen === "engawa"
+    && state.engawaImageSent
+    && Boolean(state.engawaRemoteImage?.url);
+}
+
+function renderSoloFamiliarDecision() {
+  if (!soloFamiliarDecisionAvailable()) return "";
+  let status = "お互いが同じように思った時だけ、顔なじみ帳に名前が残ります。";
+  let actions = `<button class="button button-primary" type="button" data-solo-familiar-decision="accept">またどこかで</button>
+    <button class="button button-ghost" type="button" data-solo-familiar-decision="local-only">この場だけ</button>`;
+  if (state.soloFamiliarDecision === "local-only") {
+    status = "この場だけの思い出にしました。この選択は相手へ送られません。";
+    actions = "";
+  } else if (state.soloFamiliarDecision === "accept" && state.soloFamiliarDecisionBusy) {
+    status = "希望をそっと預けています…";
+    actions = '<button class="button button-primary" type="button" disabled>送信中…</button>';
+  } else if (state.soloFamiliarDecision === "accept" && state.soloFamiliarDecisionSaved) {
+    status = "「またどこかで」を預けました。相手の選択は表示されません。";
+    actions = "";
+  } else if (state.soloFamiliarDecision === "accept") {
+    status = state.soloFamiliarDecisionError || "希望を預けられませんでした。通信状態を確認してください。";
+    actions = '<button class="button button-primary" type="button" data-solo-familiar-decision="accept">もう一度預ける</button>';
+  }
+  return `<section class="solo-familiar-decision" data-solo-familiar-decision-panel aria-labelledby="soloFamiliarDecisionTitle">
+    <div><span>ONE QUIET QUESTION</span><h2 id="soloFamiliarDecisionTitle">この人を覚えておく？</h2>
+      <p>片方だけの希望や「この場だけ」は、相手に通知されません。</p></div>
+    <p class="solo-familiar-decision-status" aria-live="polite">${escapeHtml(status)}</p>
+    ${actions ? `<div class="solo-familiar-decision-actions">${actions}</div>` : ""}
+    <small>画像・気分・ひとことは保存しません。「またどこかで」を選んだ時だけ、希望をFirebaseで照合します。</small>
+  </section>`;
+}
+
+function renderEngawa() {
+  const opponent = getOpponent();
+  const selectedCard = state.deck.find((item) => item.id === state.engawaSelectedCardId);
+  const sharedCard = state.deck.find((item) => item.id === state.engawaSharedCardId);
+  const sharedMood = getEngawaMood(state.engawaSharedMoodId);
+  const remoteMood = getEngawaMood(state.engawaRemoteImage?.moodId);
+  const remoteResponse = getEngawaResponse(state.engawaRemoteResponse);
+  const localResponse = getEngawaResponse(state.engawaLocalResponse);
+  const cards = state.deck.filter((item) => item?.blob && item?.url).map((item, index) => `
+    <button class="engawa-pick ${item.id === state.engawaSelectedCardId ? "selected" : ""}" type="button"
+      data-engawa-card="${escapeHtml(item.id)}" aria-pressed="${item.id === state.engawaSelectedCardId}">
+      <img src="${item.url}" alt="縁側で見せる候補 ${index + 1}" draggable="false" />
+      <span>CARD ${String(index + 1).padStart(2, "0")}</span>
+    </button>`).join("");
+  const moods = ENGAWA_MOODS.map((mood) => `
+    <button class="engawa-mood ${mood.id === state.engawaMoodId ? "selected" : ""}" type="button"
+      data-engawa-mood="${mood.id}" aria-pressed="${mood.id === state.engawaMoodId}">
+      <strong>${escapeHtml(mood.label)}</strong><small>${escapeHtml(mood.description)}</small>
+    </button>`).join("");
+  const responseButtons = ENGAWA_RESPONSES.map((response) => `
+    <button type="button" data-engawa-response="${response.id}">${escapeHtml(response.label)}</button>`).join("");
+
+  const selection = !state.engawaSharedCardId ? `<section class="engawa-selection" aria-labelledby="engawaSelectionTitle">
+    <div class="engawa-section-copy"><span>ONE MORE PICTURE</span><h2 id="engawaSelectionTitle">いま見せたい一枚</h2>
+      <p>対戦用に用意した5枚から一枚だけ。勝負で使わなかった画像でもかまいません。</p></div>
+    <div class="engawa-pick-grid">${cards}</div>
+    <div class="engawa-section-copy"><span>HOW IT FEELS</span><h2>今の気分を添える</h2></div>
+    <div class="engawa-mood-grid">${moods}</div>
+    ${state.engawaRemoteImage ? '<p class="engawa-arrival-note">相手の一枚は届いています。あなたの準備ができるまで伏せておきます。</p>' : ""}
+    <button class="button button-primary engawa-share-button" id="engawaShareImage" type="button"
+      ${selectedCard && getEngawaMood(state.engawaMoodId) ? "" : "disabled"}>この一枚をそっと置く</button>
+  </section>` : "";
+
+  const localTransferText = state.engawaSending
+    ? `P2Pで転送中 ${state.engawaTransferProgress}%`
+    : state.engawaImageSent
+      ? "相手の端末へ直接届けました"
+      : state.engawaErrorMessage || "まだ相手へ届いていません";
+  const localCardPanel = state.engawaSharedCardId ? `<article class="engawa-share-card is-local">
+    <div class="engawa-card-owner"><span>あなたの一枚</span><strong>${escapeHtml(state.players[state.playerIndex]?.name || "YOU")}</strong></div>
+    ${sharedCard?.url ? `<div class="engawa-card-image"><img src="${sharedCard.url}" alt="あなたが縁側で見せた画像" draggable="false" /></div>` : '<div class="engawa-card-placeholder">画像を表示できません</div>'}
+    <p class="engawa-mood-label">${escapeHtml(sharedMood?.label || "")}</p>
+    <p class="engawa-transfer-status ${state.engawaErrorMessage ? "is-error" : ""}" data-engawa-transfer-status aria-live="polite">${escapeHtml(localTransferText)}</p>
+    ${!state.engawaImageSent && !state.engawaSending ? '<button class="button button-ghost button-small" id="engawaRetryImage" type="button">もう一度送る</button>' : ""}
+    ${remoteResponse ? `<blockquote data-engawa-remote-response-slot><span>${escapeHtml(opponent?.name || "相手")}から</span>${escapeHtml(remoteResponse.label)}</blockquote>` : '<p class="engawa-response-wait" data-engawa-remote-response-slot>相手からのひとことを待っています。</p>'}
+  </article>` : "";
+
+  let remoteCardPanel = "";
+  if (state.engawaSharedCardId) {
+    if (state.engawaRemoteImage?.url) {
+      const reaction = localResponse
+        ? `<blockquote class="is-sent" data-engawa-local-response-slot><span>あなたから</span>${escapeHtml(localResponse.label)}</blockquote>`
+        : state.engawaImageSent
+          ? `<div class="engawa-response-panel" data-engawa-local-response-slot><span>ひとことだけ返す</span><div>${responseButtons}</div></div>`
+          : '<p class="engawa-response-wait" data-engawa-local-response-slot>あなたの一枚が届くと、ひとこと返せます。</p>';
+      remoteCardPanel = `<article class="engawa-share-card is-remote">
+        <div class="engawa-card-owner"><span>相手の一枚</span><strong>${escapeHtml(opponent?.name || "PLAYER")}</strong></div>
+        <div class="engawa-card-image"><img src="${state.engawaRemoteImage.url}" alt="相手が縁側で見せた画像" draggable="false" /></div>
+        <p class="engawa-mood-label">${escapeHtml(remoteMood?.label || "")}</p>
+        ${reaction}
+      </article>`;
+    } else {
+      remoteCardPanel = `<article class="engawa-share-card is-waiting">
+        <div class="engawa-card-owner"><span>相手の一枚</span><strong>${escapeHtml(opponent?.name || "PLAYER")}</strong></div>
+        <div class="engawa-card-placeholder"><i aria-hidden="true">湯</i><span>相手が一枚を選んでいます</span></div>
+      </article>`;
+    }
+  }
+
+  return `<section class="screen engawa-screen"><div class="engawa-shell">
+    <header class="engawa-header"><div><span>QUIET AFTER MATCH</span><h1>縁側で一息</h1>
+      <p>競う時間を終えて、一枚だけ眺める場所です。</p></div>
+      <button class="button button-ghost button-small" id="engawaClose" type="button">縁側を終える</button></header>
+    <div class="engawa-privacy-note"><strong>この場だけのやりとり</strong><span>画像・気分・ひとことはP2Pで直接送り、Firebaseや端末履歴へ保存しません。</span></div>
+    ${selection}
+    ${state.engawaSharedCardId ? `<div class="engawa-gallery">${localCardPanel}${remoteCardPanel}</div>` : ""}
+    ${renderSoloFamiliarDecision()}
   </div></section>`;
 }
 
@@ -2520,6 +2886,7 @@ function bindScreenEvents() {
   bindChatEvents();
 
   if (state.screen === "setup") bindSetupEvents();
+  if (state.screen === "familiarBook") bindSoloFamiliarBookEvents();
   if (state.screen === "missions" || state.screen === "shop") bindEconomyEvents();
   if (state.screen === "achievements") bindAchievementEvents();
   if (state.screen === "matching") {
@@ -2544,10 +2911,15 @@ function bindScreenEvents() {
       balance: state.economy.points,
       onBalanceChange: (balance) => { state.economy.points = balance; },
     });
+    document.querySelectorAll("[data-engawa-decision]").forEach((button) => button.addEventListener("click", () => {
+      submitEngawaDecision(button.dataset.engawaDecision);
+    }));
+    document.querySelector("[data-engawa-end]")?.addEventListener("click", () => endEngawa("縁側は開かず、ここで一戦を終えました。"));
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineGameoverMissions")?.addEventListener("click", openPostMatchMissions);
     document.querySelector("#onlineGameoverHome")?.addEventListener("click", leaveToLanding);
   }
+  if (state.screen === "engawa") bindEngawaEvents();
   if (state.screen === "noContest") {
     document.querySelector("#onlineNoContestAgain")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineNoContestHome")?.addEventListener("click", leaveToLanding);
@@ -2555,6 +2927,243 @@ function bindScreenEvents() {
   if (state.screen === "error") {
     document.querySelector("#onlineRetry")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineErrorHome")?.addEventListener("click", leaveToLanding);
+  }
+}
+
+function bindEngawaEvents() {
+  document.querySelectorAll("[data-engawa-card]").forEach((button) => button.addEventListener("click", () => {
+    if (state.engawaSharedCardId || !state.deck.some((item) => item.id === button.dataset.engawaCard && item.blob)) return;
+    state.engawaSelectedCardId = button.dataset.engawaCard;
+    syncEngawaSelectionControls();
+  }));
+  document.querySelectorAll("[data-engawa-mood]").forEach((button) => button.addEventListener("click", () => {
+    if (state.engawaSharedCardId || !getEngawaMood(button.dataset.engawaMood)) return;
+    state.engawaMoodId = button.dataset.engawaMood;
+    syncEngawaSelectionControls();
+  }));
+  document.querySelector("#engawaShareImage")?.addEventListener("click", () => {
+    sendEngawaImage().catch(handleRecoverableError);
+  });
+  document.querySelector("#engawaRetryImage")?.addEventListener("click", () => {
+    sendEngawaImage().catch(handleRecoverableError);
+  });
+  document.querySelectorAll("[data-engawa-response]").forEach((button) => button.addEventListener("click", () => {
+    sendEngawaResponse(button.dataset.engawaResponse);
+  }));
+  document.querySelector("#engawaClose")?.addEventListener("click", () => {
+    endEngawa("縁側を閉じました。共有した画像と反応は破棄しました。");
+  });
+  bindSoloFamiliarDecisionEvents();
+}
+
+function bindSoloFamiliarDecisionEvents() {
+  document.querySelectorAll("[data-solo-familiar-decision]").forEach((button) => {
+    button.addEventListener("click", () => {
+      submitSoloFamiliarDecision(button.dataset.soloFamiliarDecision);
+    });
+  });
+}
+
+function refreshSoloFamiliarDecisionPanel() {
+  const current = document.querySelector("[data-solo-familiar-decision-panel]");
+  const markup = renderSoloFamiliarDecision();
+  if (!markup) {
+    current?.remove();
+    return;
+  }
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = markup;
+  const next = wrapper.firstElementChild;
+  if (!next) return;
+  if (current) current.replaceWith(next);
+  else document.querySelector(".engawa-shell")?.append(next);
+  bindSoloFamiliarDecisionEvents();
+}
+
+async function submitSoloFamiliarDecision(decision) {
+  if (!soloFamiliarDecisionAvailable() || state.soloFamiliarDecisionBusy) return;
+  if (decision === "local-only") {
+    if (state.soloFamiliarDecision) return;
+    state.soloFamiliarDecision = "local-only";
+    state.soloFamiliarDecisionError = "";
+    refreshSoloFamiliarDecisionPanel();
+    return;
+  }
+  if (decision !== "accept" || state.soloFamiliarDecisionSaved) return;
+  const expectedState = state;
+  const expectedRoomId = state.roomId;
+  state.soloFamiliarDecision = "accept";
+  state.soloFamiliarDecisionBusy = true;
+  state.soloFamiliarDecisionError = "";
+  refreshSoloFamiliarDecisionPanel();
+  try {
+    const response = await soloFamiliarActionCallable({
+      action: "accept_familiar",
+      roomId: expectedRoomId,
+    });
+    if (!active || state !== expectedState || state.roomId !== expectedRoomId) return;
+    if (response.data?.received !== true) throw new Error("顔なじみ希望を保存できませんでした。");
+    state.soloFamiliarDecisionSaved = true;
+  } catch (error) {
+    console.error(error);
+    if (!active || state !== expectedState || state.roomId !== expectedRoomId) return;
+    state.soloFamiliarDecisionError = "希望を預けられませんでした。もう一度お試しください。";
+  } finally {
+    if (active && state === expectedState && state.roomId === expectedRoomId) {
+      state.soloFamiliarDecisionBusy = false;
+      refreshSoloFamiliarDecisionPanel();
+    }
+  }
+}
+
+function openSoloFamiliarBook() {
+  if (!soloFamiliarBookEnabled()) return;
+  state.screen = "familiarBook";
+  setOnlineChrome("FAMILIAR BOOK");
+  render();
+  refreshSoloFamiliarBook({ renderAfter: true, notifyError: true });
+}
+
+async function mutateSoloFamiliarBook(action, id) {
+  if (!soloFamiliarBookEnabled() || state.soloFamiliarBookBusy) return;
+  const expectedState = state;
+  state.soloFamiliarBookBusy = true;
+  render();
+  try {
+    const payload = { action };
+    if (action === "unblock") payload.blockId = id;
+    else payload.familiarId = id;
+    await soloFamiliarActionCallable(payload);
+    if (!active || state !== expectedState) return;
+    await refreshSoloFamiliarBook();
+    if (!active || state !== expectedState) return;
+    const message = action === "remove"
+      ? "顔なじみ帳から静かに外しました。"
+      : action === "block"
+        ? "顔なじみ帳から外し、ブロックしました。"
+        : "ブロックを解除しました。";
+    showToast(message);
+  } catch (error) {
+    console.error(error);
+    if (active && state === expectedState) showToast("顔なじみ帳を更新できませんでした。");
+  } finally {
+    if (active && state === expectedState) {
+      state.soloFamiliarBookBusy = false;
+      render();
+    }
+  }
+}
+
+async function loadMoreSoloBlockedFamiliars() {
+  if (!soloFamiliarBookEnabled() || state.soloFamiliarBookBusy || !state.soloBlockedCursor) return;
+  const expectedState = state;
+  const afterId = state.soloBlockedCursor;
+  const refreshGeneration = state.soloFamiliarRefreshGeneration;
+  state.soloFamiliarBookBusy = true;
+  state.soloBlockedDetailsOpen = true;
+  render();
+  try {
+    const response = await soloFamiliarActionCallable({
+      action: "get_blocks",
+      afterId,
+    });
+    if (!active || state !== expectedState || state.screen !== "familiarBook"
+        || state.soloFamiliarRefreshGeneration !== refreshGeneration
+        || state.soloBlockedCursor !== afterId) return;
+    const combinedEntries = new Map(
+      state.soloBlockedFamiliars.map((entry) => [entry.id, entry]),
+    );
+    normalizeSoloFamiliarEntries(response.data?.blocked, { blocked: true })
+      .forEach((entry) => {
+        if (!combinedEntries.has(entry.id)) combinedEntries.set(entry.id, entry);
+      });
+    state.soloBlockedFamiliars = [...combinedEntries.values()];
+    const nextCursor = normalizeSoloBlockedCursor(response.data?.blockedCursor);
+    state.soloBlockedCursor = nextCursor === afterId ? "" : nextCursor;
+  } catch (error) {
+    console.error(error);
+    if (active && state === expectedState) {
+      showToast("ブロック一覧の続きを読み込めませんでした。");
+    }
+  } finally {
+    if (active && state === expectedState) {
+      state.soloFamiliarBookBusy = false;
+      render();
+    }
+  }
+}
+
+function bindSoloFamiliarBookEvents() {
+  document.querySelector(".solo-familiar-blocked")?.addEventListener("toggle", (event) => {
+    state.soloBlockedDetailsOpen = event.currentTarget.open === true;
+  });
+  document.querySelector("#soloFamiliarBack")?.addEventListener("click", () => {
+    state.screen = "setup";
+    setOnlineChrome("ONLINE READY");
+    render();
+  });
+  document.querySelector("#soloFamiliarRefresh")?.addEventListener("click", async () => {
+    if (state.soloFamiliarBookBusy) return;
+    const expectedState = state;
+    state.soloFamiliarBookBusy = true;
+    render();
+    await refreshSoloFamiliarBook({ notifyError: true });
+    if (active && state === expectedState) {
+      state.soloFamiliarBookBusy = false;
+      render();
+    }
+  });
+  document.querySelectorAll("[data-solo-familiar-remove]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!window.confirm("顔なじみ帳から外しますか？ 相手には通知されません。")) return;
+      mutateSoloFamiliarBook("remove", button.dataset.soloFamiliarRemove);
+    });
+  });
+  document.querySelectorAll("[data-solo-familiar-block]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!window.confirm("この相手をブロックしますか？ 顔なじみ帳と再会優先から外れますが、通常検索での偶然の再会まで防ぐ保証はありません。")) return;
+      mutateSoloFamiliarBook("block", button.dataset.soloFamiliarBlock);
+    });
+  });
+  document.querySelectorAll("[data-solo-familiar-unblock]").forEach((button) => {
+    button.addEventListener("click", () => {
+      mutateSoloFamiliarBook("unblock", button.dataset.soloFamiliarUnblock);
+    });
+  });
+  document.querySelector("#soloFamiliarLoadMoreBlocked")?.addEventListener("click", () => {
+    loadMoreSoloBlockedFamiliars();
+  });
+}
+
+function syncEngawaSelectionControls() {
+  document.querySelectorAll("[data-engawa-card]").forEach((button) => {
+    const selected = button.dataset.engawaCard === state.engawaSelectedCardId;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  document.querySelectorAll("[data-engawa-mood]").forEach((button) => {
+    const selected = button.dataset.engawaMood === state.engawaMoodId;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  const shareButton = document.querySelector("#engawaShareImage");
+  if (shareButton) {
+    const selectedCard = state.deck.find((item) => item.id === state.engawaSelectedCardId && item.blob);
+    shareButton.disabled = !selectedCard || !getEngawaMood(state.engawaMoodId);
+  }
+}
+
+function syncEngawaResponseControls() {
+  const localSlot = document.querySelector("[data-engawa-local-response-slot]");
+  const localResponse = getEngawaResponse(state.engawaLocalResponse);
+  if (localSlot && localResponse) {
+    localSlot.outerHTML = `<blockquote class="is-sent" data-engawa-local-response-slot><span>あなたから</span>${escapeHtml(localResponse.label)}</blockquote>`;
+  }
+  const remoteSlot = document.querySelector("[data-engawa-remote-response-slot]");
+  const remoteResponse = getEngawaResponse(state.engawaRemoteResponse);
+  if (remoteSlot && remoteResponse) {
+    const opponent = getOpponent();
+    remoteSlot.outerHTML = `<blockquote data-engawa-remote-response-slot><span>${escapeHtml(opponent?.name || "相手")}から</span>${escapeHtml(remoteResponse.label)}</blockquote>`;
   }
 }
 
@@ -2637,6 +3246,11 @@ function bindAchievementEvents() {
 
 function bindSetupEvents() {
   document.querySelector("#onlineBackHome")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#openSoloFamiliarBook")?.addEventListener("click", openSoloFamiliarBook);
+  document.querySelector("#soloReunionPreference")?.addEventListener("change", (event) => {
+    state.soloReunionPreference = event.currentTarget.checked === true;
+    localStorage.setItem(SOLO_REUNION_PREFERENCE_KEY, state.soloReunionPreference ? "1" : "0");
+  });
   bindOverallRankingParticipation({
     controlId: "soloOverallRanking",
     name: () => document.querySelector("#onlinePlayerName")?.value || state.name,
@@ -3487,13 +4101,100 @@ async function removeQueueEntryIfCurrent(queueEntryRef, joinedAt) {
   )).catch(() => {});
 }
 
+async function cancelActiveReservationDisconnect(roomId = "", expectedState = state) {
+  const pendingRegistration = expectedState.activeReservationDisconnectRegistration;
+  if (pendingRegistration && (!roomId || pendingRegistration.roomId === roomId)) {
+    await pendingRegistration.promise.catch(() => {});
+  }
+  const handle = expectedState.activeReservationDisconnect;
+  if (!handle
+      || (roomId && expectedState.activeReservationDisconnectRoomId !== roomId)) return false;
+  const registeredRoomId = expectedState.activeReservationDisconnectRoomId;
+  await handle.cancel();
+  if (expectedState.activeReservationDisconnect === handle
+      && expectedState.activeReservationDisconnectRoomId === registeredRoomId) {
+    expectedState.activeReservationDisconnect = null;
+    expectedState.activeReservationDisconnectRoomId = "";
+  }
+  return true;
+}
+
+async function releaseActiveReservation(roomId, expectedState = state) {
+  const result = await runTransaction(
+    ref(database, `online/active/${expectedState.uid}`),
+    (current) => current === roomId ? null : undefined,
+  );
+  if (result.snapshot.exists()) return false;
+  await cancelActiveReservationDisconnect(roomId, expectedState);
+  return true;
+}
+
+async function clearActiveReservation(expectedState = state) {
+  await remove(ref(database, `online/active/${expectedState.uid}`));
+  await cancelActiveReservationDisconnect("", expectedState);
+}
+
+async function armActiveReservationDisconnect(
+  roomId,
+  expectedState = state,
+  contextIsCurrent = () => state === expectedState,
+) {
+  if (!roomId || !expectedState.uid || state !== expectedState || !contextIsCurrent()) return false;
+  const pendingRegistration = expectedState.activeReservationDisconnectRegistration;
+  if (pendingRegistration) {
+    await pendingRegistration.promise;
+    if (state !== expectedState || !contextIsCurrent()) return false;
+    if (expectedState.activeReservationDisconnect) {
+      expectedState.activeReservationDisconnectRoomId = roomId;
+      return true;
+    }
+    return armActiveReservationDisconnect(roomId, expectedState, contextIsCurrent);
+  }
+  if (expectedState.activeReservationDisconnect) {
+    const existingHandle = expectedState.activeReservationDisconnect;
+    await existingHandle.remove();
+    if (state !== expectedState
+        || !contextIsCurrent()
+        || expectedState.activeReservationDisconnect !== existingHandle) {
+      await existingHandle.cancel().catch(() => {});
+      return false;
+    }
+    expectedState.activeReservationDisconnectRoomId = roomId;
+    return true;
+  }
+  const registration = { roomId, promise: null };
+  registration.promise = (async () => {
+    const handle = onDisconnect(ref(database, `online/active/${expectedState.uid}`));
+    try {
+      await handle.remove();
+      if (state !== expectedState || !contextIsCurrent()) {
+        await handle.cancel().catch(() => {});
+        return false;
+      }
+      expectedState.activeReservationDisconnect = handle;
+      expectedState.activeReservationDisconnectRoomId = roomId;
+      return true;
+    } catch (error) {
+      await handle.cancel().catch(() => {});
+      throw error;
+    }
+  })();
+  expectedState.activeReservationDisconnectRegistration = registration;
+  try {
+    return await registration.promise;
+  } finally {
+    if (expectedState.activeReservationDisconnectRegistration === registration) {
+      expectedState.activeReservationDisconnectRegistration = null;
+    }
+  }
+}
+
 async function beginMatchmaking() {
   state.name = state.name.trim().slice(0, 16);
   state.imagePreference = normalizeImagePreference(state.imagePreference, "");
   if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name || !state.imagePreference) return;
   const sampleCount = getDeckSampleCount();
   const startingHp = getStartingHp(sampleCount);
-  const joinedAt = Date.now();
   const generation = ++matchmakingGenerationCounter;
   state.matchmakingGeneration = generation;
   state.matchScopeAvailable = false;
@@ -3529,7 +4230,10 @@ async function beginMatchmaking() {
     )));
   }
   if (!isCurrentMatchmakingGeneration(generation)) return;
+  await refreshSoloFamiliarBook({ renderAfter: true });
+  if (!isCurrentMatchmakingGeneration(generation)) return;
   const queueEntryRef = ref(database, `online/queue/${state.uid}`);
+  const joinedAt = serverNow();
   await set(queueEntryRef, {
     uid: state.uid,
     name: state.name,
@@ -3538,6 +4242,7 @@ async function beginMatchmaking() {
     rating: Number(state.profile.rating || INITIAL_RATING),
     ratingPreference: state.imagePreference,
     allowPreferenceMismatch: false,
+    reunionPreference: soloServerMatchmakingEnabled() && state.soloReunionPreference,
     sampleCount,
     startingHp,
     joinedAt,
@@ -3569,10 +4274,11 @@ async function beginMatchmaking() {
     }, MATCH_SCOPE_EXPAND_DELAY_MS);
   }
   state.queueHeartbeat = window.setInterval(() => {
-    update(queueEntryRef, { lastSeen: Date.now() })
-      .then(() => attemptToHost(state.latestQueue))
+    update(queueEntryRef, { lastSeen: serverNow() })
+      .then(() => attemptCurrentSoloMatchmaking(generation))
       .catch(() => {});
   }, 20_000);
+  startSoloServerMatchPolling(generation);
 
   state.matchUnsubscribers.push(onValue(ownOffersRef, processIncomingOffers, handleRecoverableError));
   state.offerPollTimer = window.setInterval(() => {
@@ -3581,11 +4287,11 @@ async function beginMatchmaking() {
   }, 1_500);
   state.matchUnsubscribers.push(onValue(ref(database, "online/active"), (snapshot) => {
     state.activeUsers = snapshot.val() || {};
-    attemptToHost(state.latestQueue).catch(handleRecoverableError);
+    attemptCurrentSoloMatchmaking(generation);
   }));
   state.matchUnsubscribers.push(onValue(ref(database, "online/queue"), (snapshot) => {
     state.latestQueue = snapshot.val() || {};
-    attemptToHost(state.latestQueue).catch(handleRecoverableError);
+    attemptCurrentSoloMatchmaking(generation);
   }));
 }
 
@@ -3631,7 +4337,7 @@ async function updatePublicPresence(nextState) {
 }
 
 async function writePublicPresence(presenceRef, mode, presenceState) {
-  const lastSeen = Date.now();
+  const lastSeen = serverNow();
   try {
     await set(presenceRef, { mode, state: presenceState, lastSeen });
   } catch (error) {
@@ -3668,7 +4374,7 @@ async function expandMatchmakingScope() {
   state.matchScopeAvailable = false;
   state.matchScopeExpanded = true;
   render();
-  const lastSeen = Date.now();
+  const lastSeen = serverNow();
   try {
     await update(ref(database, `online/queue/${state.uid}`), {
       allowPreferenceMismatch: true,
@@ -3682,7 +4388,7 @@ async function expandMatchmakingScope() {
         lastSeen,
       },
     };
-    await attemptToHost(state.latestQueue);
+    await attemptCurrentSoloMatchmaking(state.matchmakingGeneration);
   } catch (error) {
     state.matchScopeExpanded = false;
     state.matchScopeAvailable = true;
@@ -3721,9 +4427,140 @@ function findPreferredMatchPair(waiting) {
   return null;
 }
 
+function normalizeSoloPermitCandidate(value) {
+  const uid = String(value?.uid || "").trim().slice(0, 128);
+  const name = String(value?.name || "").trim().slice(0, 16);
+  if (!uid || uid === state.uid || !name) return null;
+  const sampleCount = normalizeSampleCount(value?.sampleCount);
+  return {
+    uid,
+    name,
+    pursuitLine: normalizePursuitLine(value?.pursuitLine),
+    streak: Math.max(0, Math.floor(Number(value?.streak || 0))),
+    rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
+    sampleCount,
+    startingHp: getStartingHp(sampleCount),
+  };
+}
+
+function isPermissionDeniedError(error) {
+  const detail = `${error?.code || ""} ${error?.message || ""}`.toLowerCase();
+  return detail.includes("permission_denied")
+    || detail.includes("permission-denied")
+    || detail.includes("permission denied");
+}
+
+function startSoloServerMatchPolling(generation = state.matchmakingGeneration) {
+  if (!soloServerMatchmakingEnabled()
+      || !isCurrentMatchmakingGeneration(generation)
+      || state.soloServerMatchTimer) return;
+  state.soloServerMatchTimer = window.setInterval(() => {
+    attemptSoloServerMatch(generation);
+  }, SOLO_SERVER_MATCH_POLL_MS);
+}
+
+async function handleSoloLocalMatchError(error, generation) {
+  if (!isCurrentMatchmakingGeneration(generation)) return;
+  if (!isPermissionDeniedError(error)) {
+    handleRecoverableError(error);
+    return;
+  }
+  if (state.soloServerMatchBusy) return;
+  const expectedState = state;
+  state.soloServerMatchBusy = true;
+  try {
+    await refreshSoloFamiliarBook({ renderAfter: true });
+  } finally {
+    if (state === expectedState && state.matchmakingGeneration === generation) {
+      state.soloServerMatchBusy = false;
+    }
+  }
+  if (!isCurrentMatchmakingGeneration(generation)) return;
+  if (soloServerMatchmakingEnabled()) {
+    await update(ref(database, `online/queue/${state.uid}`), {
+      reunionPreference: state.soloReunionPreference === true,
+      lastSeen: serverNow(),
+    }).catch(() => {});
+    if (!isCurrentMatchmakingGeneration(generation)) return;
+    startSoloServerMatchPolling(generation);
+    await attemptSoloServerMatch(generation);
+    return;
+  }
+  if (!state.soloServerMatchErrorNotified) {
+    state.soloServerMatchErrorNotified = true;
+    showToast("対戦方式を確認できませんでした。待機中に自動で再試行します。");
+  }
+}
+
+function attemptCurrentSoloMatchmaking(generation = state.matchmakingGeneration) {
+  if (soloServerMatchmakingEnabled()) return attemptSoloServerMatch(generation);
+  return attemptToHost(state.latestQueue)
+    .catch((error) => handleSoloLocalMatchError(error, generation));
+}
+
+async function attemptSoloServerMatch(generation = state.matchmakingGeneration) {
+  if (!soloServerMatchmakingEnabled()
+      || !isCurrentMatchmakingGeneration(generation)
+      || state.soloServerMatchBusy
+      || state.matchingBusy
+      || state.acceptingOffer
+      || state.pendingIncomingOffer
+      || state.pendingOffer) return;
+  const expectedState = state;
+  state.soloServerMatchBusy = true;
+  try {
+    const response = await soloFamiliarActionCallable({ action: "try_match" });
+    if (!isCurrentMatchmakingGeneration(generation) || state !== expectedState
+        || !soloServerMatchmakingEnabled()) return;
+    const result = response.data || {};
+    if (result.outcome === "disabled") {
+      await refreshSoloFamiliarBook();
+      if (isCurrentMatchmakingGeneration(generation) && !soloServerMatchmakingEnabled()) {
+        state.soloServerMatchBusy = false;
+        await attemptToHost(state.latestQueue);
+      }
+      return;
+    }
+    state.soloServerMatchErrorNotified = false;
+    if (result.outcome === "join") {
+      const roomId = String(result.roomId || "");
+      if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+        throw new Error("サーバーの通常型1on1ルーム情報が不正です。");
+      }
+      await enterRoom(roomId);
+      return;
+    }
+    if (result.outcome !== "hosted") return;
+    const roomId = String(result.roomId || "");
+    const candidate = normalizeSoloPermitCandidate(result.candidate);
+    if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId) || !candidate) {
+      throw new Error("サーバーの通常型1on1許可情報が不正です。");
+    }
+    if (state.matchingBusy || state.acceptingOffer || state.pendingIncomingOffer || state.pendingOffer) return;
+    await adoptSoloServerHostedMatch(candidate, {
+      roomId,
+      reunion: result.reunion === true,
+    });
+  } catch (error) {
+    console.error(error);
+    if (isCurrentMatchmakingGeneration(generation)
+        && state === expectedState
+        && !state.soloServerMatchErrorNotified) {
+      state.soloServerMatchErrorNotified = true;
+      showToast("対戦相手の確認に時間がかかっています。自動で再試行します。");
+    }
+  } finally {
+    if (state === expectedState && state.matchmakingGeneration === generation) {
+      state.soloServerMatchBusy = false;
+    }
+  }
+}
+
 async function attemptToHost(queue) {
-  if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
-  const freshAfter = Date.now() - 45_000;
+  if (soloServerMatchmakingEnabled()) return;
+  if (!active || state.screen !== "matching" || state.soloServerMatchBusy
+      || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
+  const freshAfter = serverNow() - 45_000;
   const waiting = Object.values(queue).filter((entry) => (
     entry?.uid
     && entry.state === "waiting"
@@ -3737,104 +4574,369 @@ async function attemptToHost(queue) {
   await createOffer(pair.candidate);
 }
 
-async function createOffer(candidate) {
+async function restoreHostedOfferToWaiting(roomId, targetUid, expectedState = state) {
+  const hostUid = expectedState.uid;
+  const restoredLastSeen = Date.now() + Number(expectedState.serverTimeOffset || 0);
+  const [, activeResult, queueResult] = await Promise.allSettled([
+    remove(ref(database, `online/offers/${targetUid}/${roomId}`)),
+    releaseActiveReservation(roomId, expectedState),
+    runTransaction(ref(database, `online/queue/${hostUid}`), (current) => {
+      if (!current || current.roomId !== roomId) return;
+      return {
+        ...current,
+        state: "waiting",
+        roomId: null,
+        lastSeen: restoredLastSeen,
+      };
+    }),
+  ]);
+  if (activeResult.status === "rejected") throw activeResult.reason;
+  if (queueResult.status === "rejected") throw queueResult.reason;
+}
+
+async function finishHostedOfferAsTerminal(
+  roomId,
+  targetUid,
+  expectedState = state,
+  generation = state.matchmakingGeneration,
+) {
+  if (state !== expectedState
+      || !isCurrentMatchmakingGeneration(generation)
+      || state.roomId
+      || state.pendingOffer?.roomId !== roomId) return false;
+  const pendingOffer = state.pendingOffer;
+  if (pendingOffer.terminalCleanupRunning) return false;
+  pendingOffer.terminalCleanupRunning = true;
+  try {
+    await restoreHostedOfferToWaiting(roomId, targetUid, expectedState);
+  } catch (error) {
+    if (state === expectedState && state.pendingOffer === pendingOffer && !state.roomId) {
+      pendingOffer.terminalCleanupRunning = false;
+    }
+    throw error;
+  }
+  if (state !== expectedState
+      || !isCurrentMatchmakingGeneration(generation)
+      || state.roomId
+      || state.pendingOffer !== pendingOffer) return false;
+  window.clearTimeout(state.matchTimer);
+  window.clearInterval(state.hostStatusPollTimer);
+  state.matchTimer = null;
+  state.hostStatusPollTimer = null;
+  state.pendingOffer = null;
+  attemptCurrentSoloMatchmaking(generation).catch(handleRecoverableError);
+  return true;
+}
+
+function registerHostedOfferMonitor({
+  roomId,
+  candidate,
+  reunion,
+  expectedState,
+  generation,
+}) {
+  const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
+  const offerRef = ref(database, `online/offers/${candidate.uid}/${roomId}`);
+  const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
+  state.pendingOffer = { roomId, targetUid: candidate.uid, reunion };
+  const handleHostedRoomStatus = async (snapshot) => {
+    if (!contextIsCurrent() || state.pendingOffer?.roomId !== roomId || state.roomId) return;
+    const status = snapshot.val();
+    if (status === "active") {
+      const pendingOffer = state.pendingOffer;
+      if (pendingOffer.enteringRoom) return;
+      pendingOffer.enteringRoom = true;
+      await remove(offerRef).catch(() => {});
+      if (!contextIsCurrent() || state.pendingOffer !== pendingOffer || state.roomId) return;
+      try {
+        await enterRoom(roomId);
+      } catch (error) {
+        if (contextIsCurrent() && state.pendingOffer === pendingOffer && !state.roomId) {
+          pendingOffer.enteringRoom = false;
+        }
+        throw error;
+      }
+      return;
+    }
+    if (status === "offered") return;
+    await finishHostedOfferAsTerminal(roomId, candidate.uid, expectedState, generation);
+  };
+  const unsubscribe = onValue(roomStatusRef, (snapshot) => {
+    handleHostedRoomStatus(snapshot).catch(handleRecoverableError);
+  }, handleRecoverableError);
+  state.matchUnsubscribers.push(unsubscribe);
+  state.hostStatusPollTimer = window.setInterval(() => {
+    if (!contextIsCurrent() || state.roomId || state.pendingOffer?.roomId !== roomId) return;
+    get(roomStatusRef).then(handleHostedRoomStatus).catch(handleRecoverableError);
+  }, 1_500);
+  state.matchTimer = window.setTimeout(() => {
+    expireOffer(roomId, candidate.uid).catch(handleRecoverableError);
+  }, MATCH_TIMEOUT_MS);
+}
+
+async function adoptSoloServerHostedMatch(candidate, hosted) {
+  const expectedState = state;
+  const generation = state.matchmakingGeneration;
+  const roomId = String(hosted?.roomId || "");
+  const contextIsCurrent = () => (
+    state === expectedState && isCurrentMatchmakingGeneration(generation)
+  );
+  if (!isCurrentMatchmakingGeneration(generation)
+      || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)) return;
   state.matchingBusy = true;
-  const roomId = push(ref(database, "online/rooms")).key;
-  const ownActiveRef = ref(database, `online/active/${state.uid}`);
+  try {
+    const disconnectArmed = await armActiveReservationDisconnect(
+      roomId,
+      expectedState,
+      contextIsCurrent,
+    );
+    if (!disconnectArmed) {
+      await releaseActiveReservation(roomId, expectedState).catch(handleRecoverableError);
+      return;
+    }
+    const roomSnapshot = await get(ref(database, `online/rooms/${roomId}`));
+    if (!contextIsCurrent()) {
+      await releaseActiveReservation(roomId, expectedState).catch(handleRecoverableError);
+      return;
+    }
+    const room = roomSnapshot.val();
+    if (!room
+        || room.hostUid !== state.uid
+        || room.guestUid !== candidate.uid
+        || !["offered", "active"].includes(room.status)
+        || room.members?.[state.uid] !== true
+        || room.members?.[candidate.uid] !== true
+        || (room.reunion === true) !== (hosted?.reunion === true)) {
+      throw new Error("サーバーが準備した通常型1on1ルームを確認できませんでした。");
+    }
+    registerHostedOfferMonitor({
+      roomId,
+      candidate,
+      reunion: hosted?.reunion === true,
+      expectedState,
+      generation,
+    });
+  } catch (error) {
+    await releaseActiveReservation(roomId, expectedState).catch(handleRecoverableError);
+    throw error;
+  } finally {
+    if (state === expectedState && state.matchmakingGeneration === generation) {
+      state.matchingBusy = false;
+    }
+  }
+}
+
+async function createOffer(candidate, permit = null) {
+  const expectedState = state;
+  const generation = state.matchmakingGeneration;
+  if (!isCurrentMatchmakingGeneration(generation)) return;
+  state.matchingBusy = true;
+  const roomId = permit?.roomId || push(ref(database, "online/rooms")).key;
+  const reunion = permit?.reunion === true;
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(String(roomId || ""))) {
+    state.matchingBusy = false;
+    throw new Error("対戦ルームIDを確認できませんでした。");
+  }
+  const hostUid = state.uid;
+  const hostName = state.name;
+  const hostPursuitLine = state.pursuitLine;
+  const hostStreak = Number(state.profile.streak || 0);
+  const hostRating = Number(state.profile.rating || INITIAL_RATING);
+  const hostSampleCount = getDeckSampleCount();
+  const ownActiveRef = ref(database, `online/active/${hostUid}`);
+  const roomRef = ref(database, `online/rooms/${roomId}`);
+  const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
+  const offerRef = ref(database, `online/offers/${candidate.uid}/${roomId}`);
+  const queueEntryRef = ref(database, `online/queue/${hostUid}`);
+  const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
+  const abandonOfferCreation = async () => {
+    await Promise.allSettled([
+      releaseActiveReservation(roomId, expectedState),
+      remove(offerRef),
+      runTransaction(roomStatusRef, (current) => current === "offered" ? "expired" : undefined),
+    ]);
+  };
+  let roomInitialized = false;
+  let pendingOfferRegistered = false;
   try {
     const reservation = await runTransaction(ownActiveRef, (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
-    const roomRef = ref(database, `online/rooms/${roomId}`);
-    await set(ref(database, `online/rooms/${roomId}/hostUid`), state.uid);
+    if (!contextIsCurrent()) {
+      await abandonOfferCreation();
+      return;
+    }
+    const disconnectArmed = await armActiveReservationDisconnect(
+      roomId,
+      expectedState,
+      contextIsCurrent,
+    );
+    if (!disconnectArmed) {
+      await abandonOfferCreation();
+      return;
+    }
+    await set(ref(database, `online/rooms/${roomId}/hostUid`), hostUid);
+    if (!contextIsCurrent()) {
+      await abandonOfferCreation();
+      return;
+    }
     await update(roomRef, {
       guestUid: candidate.uid,
       createdAt: serverTimestamp(),
       status: "offered",
-      [`members/${state.uid}`]: true,
+      ...(reunion ? { reunion: true } : {}),
+      [`members/${hostUid}`]: true,
       [`members/${candidate.uid}`]: true,
-      [`players/${state.uid}`]: { uid: state.uid, name: state.name, pursuitLine: state.pursuitLine, streak: Number(state.profile.streak || 0), rating: Number(state.profile.rating || INITIAL_RATING), sampleCount: getDeckSampleCount(), startingHp: getStartingHp(getDeckSampleCount()) },
+      [`players/${hostUid}`]: { uid: hostUid, name: hostName, pursuitLine: hostPursuitLine, streak: hostStreak, rating: hostRating, sampleCount: hostSampleCount, startingHp: getStartingHp(hostSampleCount) },
       [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, pursuitLine: normalizePursuitLine(candidate.pursuitLine), streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING), sampleCount: normalizeSampleCount(candidate.sampleCount), startingHp: getStartingHp(candidate.sampleCount) },
     });
-    await set(ref(database, `online/offers/${candidate.uid}/${roomId}`), {
+    roomInitialized = true;
+    if (!contextIsCurrent()) {
+      await abandonOfferCreation();
+      return;
+    }
+    await set(offerRef, {
       roomId,
-      fromUid: state.uid,
+      fromUid: hostUid,
       toUid: candidate.uid,
-      fromName: state.name,
+      fromName: hostName,
       createdAt: Date.now(),
     });
-    await update(ref(database, `online/queue/${state.uid}`), { state: "offering", roomId });
-    state.pendingOffer = { roomId, targetUid: candidate.uid };
-    const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
-    const handleHostedRoomStatus = async (snapshot) => {
-      if (snapshot.val() !== "active" || state.roomId) return;
-      await remove(ref(database, `online/offers/${candidate.uid}/${roomId}`)).catch(() => {});
-      await enterRoom(roomId);
-    };
-    const unsubscribe = onValue(roomStatusRef, (snapshot) => {
-      handleHostedRoomStatus(snapshot).catch(handleRecoverableError);
-    }, handleRecoverableError);
-    state.matchUnsubscribers.push(unsubscribe);
-    state.hostStatusPollTimer = window.setInterval(() => {
-      if (!active || state.screen !== "matching" || state.roomId || state.pendingOffer?.roomId !== roomId) return;
-      get(roomStatusRef).then(handleHostedRoomStatus).catch(handleRecoverableError);
-    }, 1_500);
-    state.matchTimer = window.setTimeout(() => expireOffer(roomId, candidate.uid), MATCH_TIMEOUT_MS);
+    if (!contextIsCurrent()) {
+      await abandonOfferCreation();
+      return;
+    }
+    await update(queueEntryRef, { state: "offering", roomId });
+    if (!contextIsCurrent()) {
+      await abandonOfferCreation();
+      return;
+    }
+    registerHostedOfferMonitor({
+      roomId,
+      candidate,
+      reunion,
+      expectedState,
+      generation,
+    });
+    pendingOfferRegistered = true;
+  } catch (error) {
+    if (!pendingOfferRegistered) {
+      await abandonOfferCreation();
+      if (roomInitialized && contextIsCurrent()) {
+        await runTransaction(queueEntryRef, (current) => (
+          current?.roomId === roomId ? { ...current, state: "waiting", roomId: null } : undefined
+        )).catch(() => {});
+      }
+    }
+    throw error;
   } finally {
-    state.matchingBusy = false;
+    if (state === expectedState && state.matchmakingGeneration === generation) {
+      state.matchingBusy = false;
+    }
   }
 }
 
 async function expireOffer(roomId, targetUid) {
   if (state.roomId || state.pendingOffer?.roomId !== roomId) return;
-  const result = await runTransaction(ref(database, `online/rooms/${roomId}/status`), (current) => current === "offered" ? "expired" : undefined);
-  if (!result.committed) return;
-  await Promise.allSettled([
-    remove(ref(database, `online/offers/${targetUid}/${roomId}`)),
-    remove(ref(database, `online/active/${state.uid}`)),
-    update(ref(database, `online/queue/${state.uid}`), { state: "waiting", roomId: null }),
-  ]);
-  state.pendingOffer = null;
+  const expectedState = state;
+  const generation = state.matchmakingGeneration;
+  const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
+  const result = await runTransaction(
+    roomStatusRef,
+    (current) => current === "offered" ? "expired" : undefined,
+  );
+  let status = result.committed ? "expired" : null;
+  if (!result.committed) {
+    const currentStatus = await get(roomStatusRef);
+    status = currentStatus.val();
+  }
+  if (status === "active" || status === "offered") return;
+  await finishHostedOfferAsTerminal(roomId, targetUid, expectedState, generation);
 }
 
 async function acceptOffer(roomId, offer) {
   if (!active || state.screen !== "matching" || state.roomId) return;
   if (!offer || offer.toUid !== state.uid) return;
+  const expectedState = state;
+  const generation = state.matchmakingGeneration;
+  const ownUid = state.uid;
+  const ownActiveRef = ref(database, `online/active/${ownUid}`);
+  const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
+  let reservationHeld = false;
+  const releaseReservation = async () => {
+    const released = await releaseActiveReservation(roomId, expectedState);
+    if (released) reservationHeld = false;
+    return released;
+  };
   state.acceptingOffer = true;
   try {
     const roomSnapshot = await get(ref(database, `online/rooms/${roomId}`));
+    if (!contextIsCurrent()) return;
     const room = roomSnapshot.val();
-    if (!room || room.status !== "offered" || !room.members?.[state.uid] || room.hostUid !== offer.fromUid) {
-      await remove(ref(database, `online/offers/${state.uid}/${roomId}`));
+    if (!room || room.status !== "offered" || !room.members?.[ownUid] || room.hostUid !== offer.fromUid) {
+      await remove(ref(database, `online/offers/${ownUid}/${roomId}`));
       return;
     }
     const [ownQueueSnapshot, hostQueueSnapshot] = await Promise.all([
-      get(ref(database, `online/queue/${state.uid}`)),
+      get(ref(database, `online/queue/${ownUid}`)),
       get(ref(database, `online/queue/${room.hostUid}`)),
     ]);
+    if (!contextIsCurrent()) return;
     if (
       !ownQueueSnapshot.exists()
       || !hostQueueSnapshot.exists()
       || !Number.isFinite(getPreferenceMatchTier(ownQueueSnapshot.val(), hostQueueSnapshot.val()))
     ) {
-      await remove(ref(database, `online/offers/${state.uid}/${roomId}`));
+      await remove(ref(database, `online/offers/${ownUid}/${roomId}`));
       return;
     }
-    const reservation = await runTransaction(ref(database, `online/active/${state.uid}`), (current) => current === null ? roomId : undefined);
+    const reservation = await runTransaction(ownActiveRef, (current) => current === null ? roomId : undefined);
     if (!reservation.committed) return;
+    reservationHeld = true;
+    if (!contextIsCurrent()) {
+      await releaseReservation();
+      return;
+    }
+    const disconnectArmed = await armActiveReservationDisconnect(
+      roomId,
+      expectedState,
+      contextIsCurrent,
+    );
+    if (!disconnectArmed) {
+      await releaseReservation();
+      return;
+    }
     const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
     const currentStatus = await get(roomStatusRef);
+    if (!contextIsCurrent()) {
+      await releaseReservation();
+      return;
+    }
     if (currentStatus.val() !== "offered") {
-      await remove(ref(database, `online/active/${state.uid}`));
+      await releaseReservation();
       return;
     }
     await set(roomStatusRef, "active");
+    if (!contextIsCurrent()) {
+      await releaseReservation();
+      return;
+    }
     await Promise.allSettled([
-      remove(ref(database, `online/offers/${state.uid}/${roomId}`)),
-      remove(ref(database, `online/queue/${state.uid}`)),
+      remove(ref(database, `online/offers/${ownUid}/${roomId}`)),
+      remove(ref(database, `online/queue/${ownUid}`)),
     ]);
+    if (!contextIsCurrent()) {
+      await releaseReservation();
+      return;
+    }
     await enterRoom(roomId);
+    reservationHeld = false;
+  } catch (error) {
+    if (reservationHeld) await releaseReservation();
+    throw error;
   } finally {
-    state.acceptingOffer = false;
+    if (state === expectedState && state.matchmakingGeneration === generation) {
+      state.acceptingOffer = false;
+    }
   }
 }
 
@@ -3848,16 +4950,55 @@ async function drainIncomingOffers() {
 }
 
 async function enterRoom(roomId) {
-  if (state.roomId) return;
+  const expectedState = state;
+  const generation = state.matchmakingGeneration;
+  const ownUid = state.uid;
+  const matchmakingContextIsCurrent = () => (
+    state === expectedState && isCurrentMatchmakingGeneration(generation)
+  );
+  const releaseReservation = () => releaseActiveReservation(roomId, expectedState);
+  if (!isCurrentMatchmakingGeneration(generation)) return;
+  let disconnectArmed = false;
+  try {
+    disconnectArmed = await armActiveReservationDisconnect(
+      roomId,
+      expectedState,
+      matchmakingContextIsCurrent,
+    );
+  } catch (error) {
+    await releaseReservation();
+    throw error;
+  }
+  if (!disconnectArmed) {
+    await releaseReservation();
+    return;
+  }
+  let snapshot;
+  try {
+    snapshot = await get(ref(database, `online/rooms/${roomId}`));
+  } catch (error) {
+    if (state === expectedState && state.matchmakingGeneration === generation) {
+      await releaseReservation();
+    }
+    throw error;
+  }
+  if (!matchmakingContextIsCurrent()) {
+    await releaseReservation();
+    return;
+  }
+  const room = snapshot.val();
+  const roomPlayers = room ? [room.players?.[room.hostUid], room.players?.[room.guestUid]] : [];
+  if (!room || !room.members?.[ownUid] || roomPlayers.some((player) => !player?.uid)) {
+    await releaseReservation();
+    throw new Error("ルーム情報を取得できませんでした。");
+  }
   window.clearTimeout(state.matchTimer);
   state.roomId = roomId;
-  const snapshot = await get(ref(database, `online/rooms/${roomId}`));
-  const room = snapshot.val();
-  if (!room || !room.members?.[state.uid]) throw new Error("ルーム情報を取得できませんでした。");
   state.room = room;
-  state.opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
-  state.playerIndex = room.hostUid === state.uid ? 0 : 1;
-  state.players = [room.players[room.hostUid], room.players[room.guestUid]].map((player) => {
+  state.reunionMatch = room.reunion === true;
+  state.opponentUid = room.hostUid === ownUid ? room.guestUid : room.hostUid;
+  state.playerIndex = room.hostUid === ownUid ? 0 : 1;
+  state.players = roomPlayers.map((player) => {
     const sampleCount = normalizeSampleCount(player.sampleCount);
     const startingHp = getStartingHp(sampleCount);
     return {
@@ -3872,58 +5013,151 @@ async function enterRoom(roomId) {
       perfects: 0,
     };
   });
-  await cleanupMatchmaking(true);
-  await updatePublicPresence("playing");
   state.screen = "connecting";
   state.peerStatus = "P2P接続を準備中…";
-  setOnlineChrome("ONLINE BATTLE");
+  setOnlineChrome(state.reunionMatch ? "FAMILIAR REUNION" : "ONLINE BATTLE");
   render();
-  await setupRoomListeners();
-  await setupPeerConnection();
+  const cleanupPromise = cleanupMatchmaking(true);
+  const roomGeneration = state.matchmakingGeneration;
+  await cleanupPromise;
+  const roomContextIsCurrent = () => active
+    && state === expectedState
+    && state.matchmakingGeneration === roomGeneration
+    && state.roomId === roomId
+    && state.screen === "connecting";
+  if (!roomContextIsCurrent()) {
+    if (state === expectedState && state.roomId === roomId) state.roomId = "";
+    await releaseReservation();
+    return;
+  }
+  await updatePublicPresence("playing");
+  if (!roomContextIsCurrent()) {
+    if (state === expectedState && state.roomId === roomId) state.roomId = "";
+    await releaseReservation();
+    return;
+  }
+  if (state.reunionMatch) {
+    soloFamiliarActionCallable({ action: "confirm_reunion", roomId })
+      .catch((error) => console.error("再会確認を保存できませんでした。", error));
+  }
+  const roomSetupContext = {
+    expectedState,
+    generation: roomGeneration,
+    roomId,
+    ownUid,
+    opponentUid: state.opponentUid,
+  };
+  let roomListenersReady = false;
+  try {
+    roomListenersReady = await setupRoomListeners(roomSetupContext);
+  } catch (error) {
+    await releaseReservation();
+    throw error;
+  }
+  if (!roomListenersReady) {
+    await releaseReservation();
+    return;
+  }
+  if (!roomContextIsCurrent()) {
+    await releaseReservation();
+    return;
+  }
+  await setupPeerConnection(roomSetupContext);
 }
 
-async function setupRoomListeners() {
-  const base = `online/rooms/${state.roomId}`;
+function isCurrentRoomSetupContext(context) {
+  return active
+    && state === context.expectedState
+    && state.matchmakingGeneration === context.generation
+    && state.roomId === context.roomId;
+}
+
+async function setupRoomListeners(context) {
+  if (!isCurrentRoomSetupContext(context)) return false;
+  const disconnectArmed = await armActiveReservationDisconnect(
+    context.roomId,
+    context.expectedState,
+    () => isCurrentRoomSetupContext(context),
+  );
+  if (!disconnectArmed) return false;
+  const base = `online/rooms/${context.roomId}`;
+  const presenceRef = ref(database, `${base}/presence/${context.ownUid}`);
+  let presenceWritten = false;
+  let presenceDisconnect = null;
+  const abandonSetup = async () => {
+    await Promise.allSettled([
+      presenceDisconnect?.cancel?.(),
+      presenceWritten
+        ? set(presenceRef, { online: false, updatedAt: serverTimestamp() })
+        : Promise.resolve(),
+    ]);
+  };
+  try {
+    await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
+    presenceWritten = true;
+    if (!isCurrentRoomSetupContext(context)) {
+      await abandonSetup();
+      return false;
+    }
+    presenceDisconnect = onDisconnect(presenceRef);
+    await presenceDisconnect.set({ online: false, updatedAt: serverTimestamp() });
+    if (!isCurrentRoomSetupContext(context)) {
+      await abandonSetup();
+      return false;
+    }
+  } catch (error) {
+    await abandonSetup();
+    throw error;
+  }
+  state.disconnectHandles.push(presenceDisconnect);
+
   state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    if (!isCurrentRoomSetupContext(context)) return;
     state.serverTimeOffset = Number(snapshot.val() || 0);
     if (state.selectionTimer) updateSelectionCountdown();
   }));
-  const activeDisconnect = onDisconnect(ref(database, `online/active/${state.uid}`));
-  await activeDisconnect.remove();
-  state.disconnectHandles.push(activeDisconnect);
-  const presenceRef = ref(database, `${base}/presence/${state.uid}`);
-  await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
-  const presenceDisconnect = onDisconnect(presenceRef);
-  await presenceDisconnect.set({ online: false, updatedAt: serverTimestamp() });
-  state.disconnectHandles.push(presenceDisconnect);
-
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {
-    if (snapshot.exists() && snapshot.val().by !== state.uid) handleOpponentDestroyed();
+    if (!isCurrentRoomSetupContext(context)) return;
+    if (snapshot.exists() && snapshot.val().by !== context.ownUid) handleOpponentDestroyed();
   }));
-  state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${state.opponentUid}`), (snapshot) => {
+  state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${context.opponentUid}`), (snapshot) => {
+    if (!isCurrentRoomSetupContext(context)) return;
     state.opponentOnline = snapshot.val()?.online !== false;
     document.querySelectorAll(".online-room-strip .connection-pill")[1]?.classList.toggle("warning", !state.opponentOnline);
+    if (!state.opponentOnline && state.screen === "engawa") {
+      closeEngawaLocally("相手の接続が切れたため、縁側を閉じました。");
+    } else if (state.screen === "gameover") {
+      if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+        scheduleEngawaAfterPostMatchTip();
+      } else {
+        render();
+      }
+    }
   }));
   const chatQuery = query(ref(database, `${base}/chat`), limitToLast(50));
   state.roomUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
+    if (!isCurrentRoomSetupContext(context)) return;
     if (state.seenChatIds.has(snapshot.key)) return;
     state.seenChatIds.add(snapshot.key);
     state.chatMessages.push({ id: snapshot.key, ...snapshot.val() });
     if (state.chatMessages.length > 50) state.chatMessages.shift();
     refreshChat();
   }));
-  listenToRound();
+  listenToRound(() => isCurrentRoomSetupContext(context));
+  return true;
 }
 
-function listenToRound() {
+function listenToRound(contextIsCurrent = () => true) {
   state.roundUnsubscribe?.();
   state.roundUnsubscribe = onValue(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}`), (snapshot) => {
+    if (!contextIsCurrent()) return;
     state.roundData = snapshot.val() || {};
     reactToRoundData().catch(handleRecoverableError);
   });
 }
 
-async function setupPeerConnection() {
+async function setupPeerConnection(context) {
+  if (!isCurrentRoomSetupContext(context)) return false;
   if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像転送に対応していません。");
   const peer = new RTCPeerConnection({
     iceServers: [
@@ -3931,35 +5165,85 @@ async function setupPeerConnection() {
       { urls: "stun:stun1.l.google.com:19302" },
     ],
   });
+  const peerContextIsCurrent = () => (
+    isCurrentRoomSetupContext(context) && state.peer === peer
+  );
+  let signalUnsubscribe = null;
+  let createdChannel = null;
+  const abandonPeerSetup = () => {
+    signalUnsubscribe?.();
+    if (state === context.expectedState && createdChannel && state.channel === createdChannel) {
+      createdChannel.close();
+      state.channel = null;
+      state.channelReady = false;
+    }
+    peer.onicecandidate = null;
+    peer.onconnectionstatechange = null;
+    peer.ondatachannel = null;
+    peer.close();
+    if (state === context.expectedState && state.peer === peer) state.peer = null;
+  };
+  const sendRoomSignal = async (type, payload) => {
+    await set(push(ref(database, `online/rooms/${context.roomId}/signals/${context.opponentUid}`)), {
+      fromUid: context.ownUid,
+      type,
+      payload: JSON.stringify(payload),
+      createdAt: Date.now(),
+    });
+  };
   state.peer = peer;
   peer.onicecandidate = (event) => {
-    if (event.candidate) sendSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError);
+    if (event.candidate && peerContextIsCurrent()) {
+      sendRoomSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError);
+    }
   };
   peer.onconnectionstatechange = () => {
+    if (!peerContextIsCurrent()) return;
     state.peerStatus = peer.connectionState === "connected" ? "● P2P接続済み" : `P2P: ${peer.connectionState}`;
     if (["failed", "closed"].includes(peer.connectionState) && active && state.screen !== "noContest") {
       showToast("P2P接続が切れました。ルーム破棄で退出できます。");
     }
     if (state.screen === "connecting") render();
   };
-  peer.ondatachannel = (event) => configureDataChannel(event.channel);
+  peer.ondatachannel = (event) => {
+    if (peerContextIsCurrent()) configureDataChannel(event.channel);
+  };
 
-  const signalsRef = ref(database, `online/rooms/${state.roomId}/signals/${state.uid}`);
-  state.roomUnsubscribers.push(onChildAdded(signalsRef, async (snapshot) => {
+  const signalsRef = ref(database, `online/rooms/${context.roomId}/signals/${context.ownUid}`);
+  signalUnsubscribe = onChildAdded(signalsRef, async (snapshot) => {
     try {
-      await handleSignal(snapshot.val());
+      if (peerContextIsCurrent()) await handleSignal(snapshot.val());
     } finally {
       await remove(snapshot.ref).catch(() => {});
     }
-  }));
+  });
+  state.roomUnsubscribers.push(signalUnsubscribe);
 
-  if (state.playerIndex === 0) {
-    const channel = peer.createDataChannel("hariai-images", { ordered: true });
-    configureDataChannel(channel);
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
+  try {
+    if (state.playerIndex === 0) {
+      createdChannel = peer.createDataChannel("hariai-images", { ordered: true });
+      configureDataChannel(createdChannel);
+      const offer = await peer.createOffer();
+      if (!peerContextIsCurrent()) {
+        abandonPeerSetup();
+        return false;
+      }
+      await peer.setLocalDescription(offer);
+      if (!peerContextIsCurrent()) {
+        abandonPeerSetup();
+        return false;
+      }
+      await sendRoomSignal("offer", { type: offer.type, sdp: offer.sdp });
+      if (!peerContextIsCurrent()) {
+        abandonPeerSetup();
+        return false;
+      }
+    }
+  } catch (error) {
+    abandonPeerSetup();
+    throw error;
   }
+  return true;
 }
 
 async function sendSignal(type, payload) {
@@ -4021,6 +5305,11 @@ function configureDataChannel(channel) {
   channel.onclose = () => {
     state.channelReady = false;
     state.peerStatus = "P2P接続が切れました";
+    if (state.screen === "engawa") {
+      closeEngawaLocally("P2P接続が切れたため、縁側を閉じました。");
+    } else if (state.screen === "gameover" && !state.engawaClosed) {
+      closeEngawaLocally("P2P接続が閉じたため、今回はここで一戦を終えます。");
+    }
   };
   channel.onerror = () => showToast("画像転送で通信エラーが発生しました。");
   channel.onmessage = (event) => {
@@ -4038,8 +5327,23 @@ function configureDataChannel(channel) {
 
 async function handleChannelMessage(data) {
   if (typeof data === "string") {
+    if (data.length > ENGAWA_MESSAGE_MAX_CHARS) throw new Error("P2Pメッセージが長すぎます。");
     const message = JSON.parse(data);
-    if (message.type === "profile-avatar-start") {
+    if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error("P2Pメッセージの形式が不正です。");
+    if (message.type === "engawa-decision") {
+      handleRemoteEngawaDecision(message.decision);
+    } else if (message.type === "engawa-image-start") {
+      startIncomingEngawaImage(message);
+    } else if (message.type === "engawa-image-end") {
+      await finishIncomingEngawaImage();
+    } else if (message.type === "engawa-image-cancel") {
+      state.incomingEngawaTransfer = null;
+    } else if (message.type === "engawa-response") {
+      handleRemoteEngawaResponse(message.responseId);
+    } else if (message.type === "engawa-end") {
+      handleRemoteEngawaEnd();
+    } else if (message.type === "profile-avatar-start") {
+      assertIncomingTransferNamespaceExclusive(state, "profile");
       if (state.incomingAvatarTransfer) {
         state.incomingAvatarTransfer = null;
       }
@@ -4053,6 +5357,7 @@ async function handleChannelMessage(data) {
     } else if (message.type === "profile-avatar-empty") {
       releaseRemoteAvatar();
     } else if (message.type === "image-start") {
+      assertIncomingTransferNamespaceExclusive(state, "battle");
       if (state.incomingTransfer) {
         state.incomingTransfer = null;
         state.transferProgress = 0;
@@ -4087,6 +5392,16 @@ async function handleChannelMessage(data) {
     if (state.incomingAvatarTransfer.received > state.incomingAvatarTransfer.size) {
       state.incomingAvatarTransfer = null;
       throw new Error("プロフィール画像の受信サイズが宣言値を超えました。");
+    }
+    return;
+  }
+  if (state.incomingEngawaTransfer) {
+    const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+    try {
+      appendIncomingEngawaImageChunk(state.incomingEngawaTransfer, chunk);
+    } catch (error) {
+      state.incomingEngawaTransfer = null;
+      throw error;
     }
     return;
   }
@@ -4232,6 +5547,309 @@ async function finishIncomingImage(round) {
   });
   state.transferProgress = 100;
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${round}/imagesReceived/${state.uid}`), true);
+}
+
+function sendEngawaMessage(message, channel = state.channel) {
+  if (!channel || channel.readyState !== "open") throw new Error("相手とのP2P接続が閉じています。");
+  const payload = JSON.stringify(message);
+  if (payload.length > ENGAWA_MESSAGE_MAX_CHARS) throw new Error("縁側の送信内容が長すぎます。");
+  channel.send(payload);
+}
+
+function submitEngawaDecision(decision) {
+  if (state.screen !== "gameover" || state.engawaLocalDecision || state.engawaClosed) return;
+  if (decision !== "accept" && decision !== "decline") return;
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
+  try {
+    sendEngawaMessage({ type: "engawa-decision", decision });
+  } catch (error) {
+    handleRecoverableError(error);
+    return;
+  }
+  state.engawaLocalDecision = decision;
+  if (decision === "decline") {
+    state.engawaClosed = true;
+    state.engawaEndReason = "今日はここまで。縁側は開かず、一戦を終えました。";
+    render();
+    return;
+  }
+  maybeEnterEngawa();
+  if (state.screen === "gameover") render();
+}
+
+function handleRemoteEngawaDecision(decision) {
+  if (decision !== "accept" && decision !== "decline") throw new Error("縁側の参加回答が不正です。");
+  if (!state.outcome && !isMatchOver()) throw new Error("試合終了前の縁側回答は受け取れません。");
+  if (state.engawaRemoteDecision) {
+    if (state.engawaRemoteDecision !== decision) throw new Error("縁側の参加回答は変更できません。");
+    return;
+  }
+  state.engawaRemoteDecision = decision;
+  if (decision === "decline") {
+    closeEngawaLocally("今回は縁側を開かず、ここで一戦を終えます。");
+    return;
+  }
+  maybeEnterEngawa();
+}
+
+function maybeEnterEngawa() {
+  if (state.screen !== "gameover" || !state.outcome || !engawaIsMutuallyAccepted()) return;
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    scheduleEngawaAfterPostMatchTip();
+    return;
+  }
+  if (!state.opponentOnline || state.channel?.readyState !== "open") {
+    closeEngawaLocally("相手とのP2P接続が閉じたため、縁側を開けませんでした。");
+    return;
+  }
+  state.screen = "engawa";
+  state.engawaErrorMessage = "";
+  setOnlineChrome("ENGAWA / P2P");
+  render();
+}
+
+function scheduleEngawaAfterPostMatchTip() {
+  if (state.engawaResumeTimer || state.screen !== "gameover") return;
+  state.engawaResumeTimer = window.setTimeout(() => {
+    state.engawaResumeTimer = null;
+    if (state.screen !== "gameover") return;
+    if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+      scheduleEngawaAfterPostMatchTip();
+      return;
+    }
+    if (engawaIsMutuallyAccepted()) {
+      maybeEnterEngawa();
+    } else {
+      render();
+    }
+  }, 250);
+}
+
+function endEngawa(reason) {
+  if (state.engawaClosed) return;
+  if (state.screen === "gameover" && isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
+  try {
+    sendEngawaMessage({ type: "engawa-end" });
+  } catch (error) {
+    if (state.channel?.readyState === "open") handleRecoverableError(error);
+  }
+  closeEngawaLocally(reason);
+}
+
+function handleRemoteEngawaEnd() {
+  if (!state.outcome && !isMatchOver()) throw new Error("試合終了前の縁側終了通知は受け取れません。");
+  closeEngawaLocally("相手が縁側を終えました。共有した画像と反応は破棄しました。");
+}
+
+function closeEngawaLocally(reason) {
+  if (!state.engawaClosed) {
+    state.engawaClosed = true;
+    state.engawaEndReason = reason;
+  }
+  releaseEngawaMedia();
+  if (state.screen === "engawa") {
+    state.screen = "gameover";
+    setOnlineChrome("MATCH COMPLETE");
+  }
+  if (state.screen === "gameover" && isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    scheduleEngawaAfterPostMatchTip();
+  } else if (state.screen === "gameover") {
+    render();
+  }
+}
+
+function notifyEngawaDeparture() {
+  if (!state.outcome || state.engawaClosed) return;
+  if (state.channel?.readyState === "open") {
+    try {
+      sendEngawaMessage({ type: "engawa-end" });
+    } catch {
+      // The connection is closing; local cleanup still proceeds.
+    }
+  }
+  state.engawaClosed = true;
+  state.engawaEndReason = "縁側を終了しました。";
+}
+
+function startIncomingEngawaImage(message) {
+  if (!engawaIsMutuallyAccepted() || state.screen !== "engawa") throw new Error("縁側が開いていないため画像を受け取れません。");
+  assertIncomingTransferNamespaceExclusive(state, "engawa");
+  if (state.incomingEngawaTransfer || state.engawaRemoteImage) {
+    throw new Error("縁側では画像を一枚だけ受け取れます。");
+  }
+  const mood = getEngawaMood(message.moodId);
+  if (!mood) throw new Error("縁側の気分札が不正です。");
+  state.incomingEngawaTransfer = {
+    ...createIncomingEngawaImageTransfer(message, { maxBytes: MAX_IMAGE_TRANSFER_BYTES }),
+    moodId: mood.id,
+  };
+}
+
+async function finishIncomingEngawaImage() {
+  const transfer = state.incomingEngawaTransfer;
+  if (engawaImageEndStatus(transfer) === "orphan") return;
+  let mime;
+  try {
+    mime = completeIncomingEngawaImageTransfer(transfer);
+  } catch (error) {
+    state.incomingEngawaTransfer = null;
+    throw error;
+  }
+  state.incomingEngawaTransfer = null;
+  if (!engawaIsMutuallyAccepted() || state.screen !== "engawa") return;
+  releaseEngawaRemoteImage();
+  const blob = new Blob(transfer.chunks, { type: mime });
+  state.engawaRemoteImage = {
+    blob,
+    url: URL.createObjectURL(blob),
+    moodId: transfer.moodId,
+  };
+  render();
+}
+
+function handleRemoteEngawaResponse(responseId) {
+  const response = getEngawaResponse(responseId);
+  if (!engawaIsMutuallyAccepted() || state.screen !== "engawa") throw new Error("縁側が開いていないため反応を受け取れません。");
+  if (!response || !state.engawaImageSent) throw new Error("縁側の定型反応が不正です。");
+  if (state.engawaRemoteResponse) {
+    if (state.engawaRemoteResponse !== response.id) throw new Error("縁側の反応は一度だけ送れます。");
+    return;
+  }
+  state.engawaRemoteResponse = response.id;
+  syncEngawaResponseControls();
+}
+
+function sendEngawaResponse(responseId) {
+  const response = getEngawaResponse(responseId);
+  if (!response || state.engawaLocalResponse || !state.engawaRemoteImage || !state.engawaImageSent
+      || !engawaIsMutuallyAccepted() || state.screen !== "engawa") return;
+  try {
+    sendEngawaMessage({ type: "engawa-response", responseId: response.id });
+  } catch (error) {
+    handleRecoverableError(error);
+    return;
+  }
+  state.engawaLocalResponse = response.id;
+  syncEngawaResponseControls();
+}
+
+async function sendEngawaImage() {
+  if (!engawaIsMutuallyAccepted() || state.screen !== "engawa" || state.engawaSending || state.engawaImageSent) return;
+  const expectedState = state;
+  const channel = expectedState.channel;
+  if (!channel || channel.readyState !== "open") throw new Error("相手とのP2P接続が閉じています。");
+  const cardId = state.engawaSharedCardId || state.engawaSelectedCardId;
+  const moodId = state.engawaSharedMoodId || state.engawaMoodId;
+  const item = state.deck.find((card) => card.id === cardId);
+  const mood = getEngawaMood(moodId);
+  if (!item?.blob || !mood) {
+    showToast("見せたい一枚と、今の気分を選んでください。");
+    return;
+  }
+  state.engawaSharedCardId = item.id;
+  state.engawaSharedMoodId = mood.id;
+  state.engawaSending = true;
+  state.engawaTransferProgress = 0;
+  state.engawaErrorMessage = "";
+  const transferGeneration = ++state.engawaTransferGeneration;
+  render();
+
+  try {
+    await queueOutgoingDataTransfer(expectedState, async () => {
+      const transferIsCurrent = () => (
+        state === expectedState
+        && expectedState.channel === channel
+        && channel.readyState === "open"
+        && transferGeneration === expectedState.engawaTransferGeneration
+        && !expectedState.engawaClosed
+        && expectedState.screen === "engawa"
+      );
+      let transferStarted = false;
+      try {
+        if (!transferIsCurrent()) throw new Error("縁側画像の送信前にP2P接続または画面が切り替わりました。");
+        const buffer = await item.blob.arrayBuffer();
+        if (!transferIsCurrent()) throw new Error("縁側画像の送信前にP2P接続または画面が切り替わりました。");
+        if (!Number.isSafeInteger(buffer.byteLength) || buffer.byteLength <= 0 || buffer.byteLength > MAX_IMAGE_TRANSFER_BYTES) {
+          throw new Error("縁側で送る画像のサイズが不正です。");
+        }
+        const mime = verifiedOnlineImageMime(buffer);
+        sendEngawaMessage({
+          type: "engawa-image-start",
+          size: buffer.byteLength,
+          mime,
+          moodId: mood.id,
+        }, channel);
+        transferStarted = true;
+        for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+          await waitForEngawaDataBuffer(channel);
+          if (!transferIsCurrent()) throw new Error("縁側画像の送信中にP2P接続または画面が切り替わりました。");
+          channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+          expectedState.engawaTransferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
+          updateEngawaTransferText();
+        }
+        if (!transferIsCurrent()) throw new Error("縁側画像の送信中にP2P接続または画面が切り替わりました。");
+        sendEngawaMessage({ type: "engawa-image-end" }, channel);
+        expectedState.engawaImageSent = true;
+      } catch (error) {
+        if (transferStarted && channel.readyState === "open") {
+          try {
+            sendEngawaMessage({ type: "engawa-image-cancel" }, channel);
+          } catch {
+            // The original transfer error is more useful than a best-effort cancel failure.
+          }
+        }
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (state !== expectedState || transferGeneration !== expectedState.engawaTransferGeneration
+        || expectedState.engawaClosed || expectedState.screen !== "engawa") return;
+    expectedState.engawaErrorMessage = error?.message || "画像を送れませんでした。";
+    throw error;
+  } finally {
+    if (state === expectedState && transferGeneration === expectedState.engawaTransferGeneration) {
+      expectedState.engawaSending = false;
+      if (expectedState.screen === "engawa") render();
+    }
+  }
+}
+
+function waitForEngawaDataBuffer(channel) {
+  if (!channel || channel.readyState !== "open") return Promise.reject(new Error("相手とのP2P接続が閉じています。"));
+  if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      channel.removeEventListener("bufferedamountlow", handleLow);
+      channel.removeEventListener("close", handleClose);
+      channel.removeEventListener("error", handleClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const handleLow = () => finish();
+    const handleClose = () => finish(new Error("画像転送中にP2P接続が切れました。"));
+    const timer = window.setTimeout(() => finish(new Error("画像転送が混み合っています。もう一度お試しください。")), ENGAWA_BUFFER_WAIT_MS);
+    channel.addEventListener("bufferedamountlow", handleLow, { once: true });
+    channel.addEventListener("close", handleClose, { once: true });
+    channel.addEventListener("error", handleClose, { once: true });
+    if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) finish();
+  });
+}
+
+function updateEngawaTransferText() {
+  const status = document.querySelector("[data-engawa-transfer-status]");
+  if (status && state.screen === "engawa" && state.engawaSending) {
+    status.textContent = `P2Pで転送中 ${state.engawaTransferProgress}%`;
+  }
 }
 
 function hasSelectionStarted() {
@@ -4829,7 +6447,8 @@ function requestHome() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  if (["setup", "missions", "shop", "achievements", "matching", "gameover", "noContest", "error"].includes(state.screen)) {
+  if (["setup", "missions", "shop", "achievements", "matching", "gameover", "engawa", "noContest", "error"].includes(state.screen)
+    || state.screen === "familiarBook") {
     leaveToLanding();
   } else {
     destroyDialog.showModal();
@@ -4898,6 +6517,13 @@ async function resetOnlineState(screen) {
     customFinishLine: state.customFinishLine,
     showOpponentCustomFinish: state.showOpponentCustomFinish,
     imagePreference: state.imagePreference,
+    soloFamiliarStage: state.soloFamiliarStage,
+    soloFamiliarReady: state.soloFamiliarReady,
+    soloFamiliars: state.soloFamiliars,
+    soloBlockedFamiliars: state.soloBlockedFamiliars,
+    soloBlockedCursor: state.soloBlockedCursor,
+    soloBlockedDetailsOpen: state.soloBlockedDetailsOpen,
+    soloReunionPreference: state.soloReunionPreference,
     signatureCardId: state.signatureCardId,
     economy: state.economy,
     economyReady: state.economyReady,
@@ -4943,6 +6569,7 @@ async function cleanupMatchmaking(keepActive) {
   window.clearInterval(state.queueHeartbeat);
   window.clearInterval(state.offerPollTimer);
   window.clearInterval(state.hostStatusPollTimer);
+  window.clearInterval(state.soloServerMatchTimer);
   state.matchTimer = null;
   state.matchScopeTimer = null;
   state.matchScopeAvailable = false;
@@ -4950,16 +6577,31 @@ async function cleanupMatchmaking(keepActive) {
   state.queueHeartbeat = null;
   state.offerPollTimer = null;
   state.hostStatusPollTimer = null;
+  state.soloServerMatchTimer = null;
+  state.matchingBusy = false;
+  state.acceptingOffer = false;
+  state.soloServerMatchBusy = false;
+  state.soloServerMatchErrorNotified = false;
   state.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
   if (useOfflineMarketPreview) {
+    if (!keepActive) await cancelActiveReservationDisconnect("", state).catch(() => {});
     state.pendingOffer = null;
     state.pendingIncomingOffer = null;
     return;
   }
+  const pendingHostedOffer = state.pendingOffer;
+  if (pendingHostedOffer?.roomId) {
+    await runTransaction(
+      ref(database, `online/rooms/${pendingHostedOffer.roomId}/status`),
+      (current) => (current === "offered" ? "expired" : undefined),
+    ).catch(() => {});
+  }
   const removals = [remove(ref(database, `online/queue/${state.uid}`))];
-  if (!keepActive) removals.push(remove(ref(database, `online/active/${state.uid}`)));
-  if (state.pendingOffer) removals.push(remove(ref(database, `online/offers/${state.pendingOffer.targetUid}/${state.pendingOffer.roomId}`)));
+  if (!keepActive) removals.push(clearActiveReservation(state));
+  if (pendingHostedOffer) {
+    removals.push(remove(ref(database, `online/offers/${pendingHostedOffer.targetUid}/${pendingHostedOffer.roomId}`)));
+  }
   await Promise.allSettled(removals);
   state.pendingOffer = null;
   state.pendingIncomingOffer = null;
@@ -4969,6 +6611,8 @@ async function cleanupOnlineResources(keepActive) {
   clearFinishCutIn();
   clearImageAckWatchdog(state);
   stopSelectionTimer();
+  notifyEngawaDeparture();
+  releaseEngawaMedia();
   await cleanupMatchmaking(keepActive);
   await cleanupPublicPresence();
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
@@ -4986,7 +6630,7 @@ async function cleanupOnlineResources(keepActive) {
   if (state.roomId) {
     await Promise.allSettled([
       set(ref(database, `online/rooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
-      keepActive ? Promise.resolve() : remove(ref(database, `online/active/${state.uid}`)),
+      keepActive ? Promise.resolve() : clearActiveReservation(state),
     ]);
   }
 }
@@ -4997,9 +6641,33 @@ function releaseRemoteImage(round) {
   state.remoteImages.delete(round);
 }
 
+function releaseEngawaRemoteImage() {
+  if (state.engawaRemoteImage?.url) URL.revokeObjectURL(state.engawaRemoteImage.url);
+  state.engawaRemoteImage = null;
+}
+
+function releaseEngawaMedia() {
+  if (state.engawaResumeTimer) window.clearTimeout(state.engawaResumeTimer);
+  state.engawaResumeTimer = null;
+  state.engawaTransferGeneration += 1;
+  releaseEngawaRemoteImage();
+  state.incomingEngawaTransfer = null;
+  state.engawaSelectedCardId = "";
+  state.engawaMoodId = "";
+  state.engawaSharedCardId = "";
+  state.engawaSharedMoodId = "";
+  state.engawaImageSent = false;
+  state.engawaSending = false;
+  state.engawaTransferProgress = 0;
+  state.engawaLocalResponse = "";
+  state.engawaRemoteResponse = "";
+  state.engawaErrorMessage = "";
+}
+
 function releaseMatchMedia() {
   state.remoteImages.forEach((item) => item.url && URL.revokeObjectURL(item.url));
   state.remoteImages.clear();
+  releaseEngawaMedia();
   releaseRemoteAvatar();
   state.chatMessages = [];
 }
@@ -5033,6 +6701,7 @@ function friendlyFirebaseError(error) {
 }
 
 window.addEventListener("beforeunload", () => {
+  window.clearInterval(state.soloServerMatchTimer);
   releaseAllImages();
   state.peer?.close();
 });

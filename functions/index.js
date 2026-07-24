@@ -128,6 +128,23 @@ const {
   nextAnjuPayEntry,
   sanitizeAnjuPayEntry,
 } = require("./anju-pay-ledger");
+const {
+  SOLO_FAMILIAR_BLOCK_LIST_LIMIT,
+  SOLO_FAMILIAR_BOOK_LIMIT,
+  SOLO_FAMILIAR_INTENT_TTL_MS,
+  SOLO_FAMILIAR_REUNION_COOLDOWN_MS,
+  SOLO_MATCH_PERMIT_TTL_MS,
+  canReactivateSoloFamiliarPair,
+  isValidSoloServerQueueEntry,
+  publicSoloFamiliarBlockEntry,
+  publicSoloFamiliarBookEntry,
+  selectSoloServerMatch,
+  soloFamiliarEntryId,
+  soloFamiliarIntentId,
+  soloFamiliarPairId,
+  soloFamiliarRolloutFlags,
+  soloQueuePreferenceTier,
+} = require("./solo-familiar");
 
 initializeApp({
   databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -149,6 +166,11 @@ const MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS = 20_000;
 const QUEUE_FRESH_MS = 60_000;
 const MARKET_PROFILE_UPDATE_COOLDOWN_MS = 10_000;
 const MARKET_PUBLIC_PRESENCE_PATH = "online/publicMarketPresence";
+const SOLO_MATCH_ATTEMPT_MIN_INTERVAL_MS = 1_000;
+const SOLO_MATCH_ATTEMPT_RETENTION_MS = 10 * 60 * 1000;
+const SOLO_MATCH_CONTEXT_RECOVERY_GRACE_MS = 5_000;
+const SOLO_MATCH_MIN_REMAINING_PERMIT_MS = 22_000;
+const SOLO_MATCH_PERMIT_SWEEP_INTERVAL_MS = 60_000;
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
   memory: "256MiB",
@@ -157,6 +179,7 @@ const ANJU_PAY_LEDGER_REQUIRED = defineBoolean("ANJU_PAY_LEDGER_REQUIRED", {
   default: true,
   description: "Keep true after AnjuPay ledger activation. False is allowed only for the initial compatibility deployment.",
 });
+let lastSoloMatchPermitSweepAt = 0;
 
 function callableOptions(functionName) {
   if (!Object.hasOwn(APP_CHECK_ENFORCEMENT, functionName)) {
@@ -337,6 +360,46 @@ function verifiedMatchClaimRef(uid, mode, roomId) {
 
 function postMatchTipRef(uid, mode, roomId) {
   return firestore.collection("postMatchTips").doc(eventId(`${uid}:${mode}:${roomId}`));
+}
+
+function soloFamiliarRolloutConfigRef() {
+  return firestore.collection("systemConfig").doc("soloFamiliarRollout");
+}
+
+function soloFamiliarIntentRef(uid, roomId) {
+  return firestore.collection("soloFamiliarIntents").doc(soloFamiliarIntentId(uid, roomId));
+}
+
+function soloFamiliarPairRef(firstUid, secondUid) {
+  return firestore.collection("soloFamiliarPairs").doc(soloFamiliarPairId(firstUid, secondUid));
+}
+
+function soloFamiliarBookRef(uid) {
+  return firestore.collection("soloFamiliarBooks").doc(uid);
+}
+
+function soloFamiliarBookEntryRef(ownerUid, entryId) {
+  return soloFamiliarBookRef(ownerUid)
+    .collection("familiarEntries")
+    .doc(entryId);
+}
+
+function soloFamiliarBlockRef(uid) {
+  return firestore.collection("soloFamiliarBlocks").doc(uid);
+}
+
+function soloFamiliarBlockEntryRef(ownerUid, entryId) {
+  return soloFamiliarBlockRef(ownerUid)
+    .collection("blockEntries")
+    .doc(entryId);
+}
+
+function soloFamiliarBlockPairRef(firstUid, secondUid) {
+  return firestore.collection("soloFamiliarBlockPairs").doc(soloFamiliarPairId(firstUid, secondUid));
+}
+
+function soloFamiliarReunionRef(roomId) {
+  return firestore.collection("soloFamiliarReunions").doc(eventId(`solo-reunion:${roomId}`));
 }
 
 function marketCertificateRef(uid, roomId) {
@@ -3029,6 +3092,1271 @@ async function votePatronPolicy(uid, request, data) {
   };
 }
 
+async function loadSoloFamiliarRollout() {
+  const [configSnapshot, serverAuthoritySnapshot] = await Promise.all([
+    soloFamiliarRolloutConfigRef().get(),
+    realtime.ref("online/config/soloServerMatchmaking").get(),
+  ]);
+  return soloFamiliarRolloutFlags(
+    cleanText(configSnapshot.get("stage"), 32),
+    serverAuthoritySnapshot.val() === true,
+  );
+}
+
+async function loadSoloFamiliarBook(uid, rollout = null) {
+  const flags = rollout || await loadSoloFamiliarRollout();
+  if (!flags.familiarBookEnabled) {
+    return {
+      rollout: flags,
+      familiars: [],
+      blocked: [],
+      blockedCursor: "",
+    };
+  }
+  const [bookSnapshot, blockPage] = await Promise.all([
+    soloFamiliarBookRef(uid).collection("familiarEntries")
+      .where("active", "==", true)
+      .limit(SOLO_FAMILIAR_BOOK_LIMIT)
+      .get(),
+    loadSoloFamiliarBlockPage(uid),
+  ]);
+  return {
+    rollout: flags,
+    familiars: bookSnapshot.docs
+      .map((snapshot) => publicSoloFamiliarBookEntry(snapshot.id, snapshot.data(), uid))
+      .filter(Boolean),
+    ...blockPage,
+  };
+}
+
+async function loadSoloFamiliarBlockPage(uid, afterIdValue = "") {
+  const afterId = cleanText(afterIdValue, 40);
+  let blockQuery = soloFamiliarBlockRef(uid).collection("blockEntries")
+    .orderBy("createdAt", "desc");
+  if (afterId) {
+    if (!/^[a-f0-9]{40}$/.test(afterId)) {
+      throw new HttpsError("invalid-argument", "非表示一覧の続きを確認してください。");
+    }
+    const cursorSnapshot = await soloFamiliarBlockRef(uid)
+      .collection("blockEntries")
+      .doc(afterId)
+      .get();
+    if (!cursorSnapshot.exists || cursorSnapshot.get("ownerUid") !== uid) {
+      throw new HttpsError("failed-precondition", "非表示一覧を最初から読み直してください。");
+    }
+    blockQuery = blockQuery.startAfter(cursorSnapshot);
+  }
+  const snapshot = await blockQuery.limit(SOLO_FAMILIAR_BLOCK_LIST_LIMIT + 1).get();
+  const pageDocs = snapshot.docs.slice(0, SOLO_FAMILIAR_BLOCK_LIST_LIMIT);
+  return {
+    blocked: pageDocs
+      .map((document) => publicSoloFamiliarBlockEntry(document.id, document.data(), uid))
+      .filter(Boolean),
+    blockedCursor: snapshot.size > SOLO_FAMILIAR_BLOCK_LIST_LIMIT
+      ? pageDocs.at(-1)?.id || ""
+      : "",
+  };
+}
+
+async function loadCompletedSoloFamiliarMatch(uid, roomIdValue) {
+  const roomId = cleanText(roomIdValue, 80);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+    throw new HttpsError("invalid-argument", "通常型1on1の対戦情報を確認してください。");
+  }
+  const now = Date.now();
+  const roomSnapshot = await realtime.ref(`online/rooms/${roomId}`).get();
+  const room = roomSnapshot.val();
+  const createdAt = Number(room?.createdAt || 0);
+  if (!roomSnapshot.exists() || room?.status !== "active" || room?.members?.[uid] !== true
+      || !Number.isFinite(createdAt) || createdAt > now - 30_000 || createdAt < now - (12 * 60 * 60 * 1000)) {
+    throw new HttpsError("failed-precondition", "完走済みの通常型1on1を確認できませんでした。");
+  }
+  const config = VERIFIED_MATCH_MODES.solo;
+  const participants = matchParticipants("solo", room, config);
+  const verification = validatedOutcomes("solo", room, participants);
+  if (verification.pending) {
+    throw new HttpsError("failed-precondition", "両者の対戦結果がまだ確定していません。");
+  }
+  const claimSnapshots = await Promise.all(participants.map((participantUid) => (
+    verifiedMatchClaimRef(participantUid, "solo", roomId).get()
+  )));
+  const claimsVerified = claimSnapshots.every((snapshot, index) => {
+    const participantUid = participants[index];
+    const claimParticipants = snapshot.get("participants");
+    return snapshot.exists
+      && snapshot.get("uid") === participantUid
+      && snapshot.get("mode") === "solo"
+      && snapshot.get("roomId") === roomId
+      && Array.isArray(claimParticipants)
+      && sameIds(claimParticipants.slice().sort(), participants);
+  });
+  if (!claimsVerified) {
+    throw new HttpsError("failed-precondition", "検証済みの通常型1on1記録を確認できませんでした。");
+  }
+  const counterpartUid = participants.find((participantUid) => participantUid !== uid);
+  if (!counterpartUid) throw new HttpsError("failed-precondition", "対戦相手を確認できませんでした。");
+  return {
+    roomId,
+    room,
+    participants,
+    counterpartUid,
+    names: Object.fromEntries(participants.map((participantUid) => [
+      participantUid,
+      cleanName(room.players?.[participantUid]?.name),
+    ])),
+  };
+}
+
+async function acceptSoloFamiliar(uid, data) {
+  const rollout = await loadSoloFamiliarRollout();
+  if (!rollout.familiarBookEnabled) {
+    throw new HttpsError("failed-precondition", "顔なじみ帳はまだ公開されていません。");
+  }
+  const match = await loadCompletedSoloFamiliarMatch(uid, data?.roomId);
+  const now = Date.now();
+  const counterpartUid = match.counterpartUid;
+  const orderedParticipants = match.participants.slice().sort();
+  const firstUid = orderedParticipants[0];
+  const secondUid = orderedParticipants[1];
+  const ownIntentRef = soloFamiliarIntentRef(uid, match.roomId);
+  const counterpartIntentRef = soloFamiliarIntentRef(counterpartUid, match.roomId);
+  const pairRef = soloFamiliarPairRef(firstUid, secondUid);
+  const entryIds = {
+    [firstUid]: soloFamiliarEntryId(),
+    [secondUid]: soloFamiliarEntryId(),
+  };
+  const firstBookRef = soloFamiliarBookRef(firstUid);
+  const secondBookRef = soloFamiliarBookRef(secondUid);
+  const firstEntryRef = soloFamiliarBookEntryRef(firstUid, entryIds[firstUid]);
+  const secondEntryRef = soloFamiliarBookEntryRef(secondUid, entryIds[secondUid]);
+  const blockPairRef = soloFamiliarBlockPairRef(firstUid, secondUid);
+
+  await firestore.runTransaction(async (transaction) => {
+    const [
+      ownIntentSnapshot,
+      counterpartIntentSnapshot,
+      pairSnapshot,
+      firstBookSnapshot,
+      secondBookSnapshot,
+      firstEntrySnapshot,
+      secondEntrySnapshot,
+      blockPairSnapshot,
+    ] = await Promise.all([
+      transaction.get(ownIntentRef),
+      transaction.get(counterpartIntentRef),
+      transaction.get(pairRef),
+      transaction.get(firstBookRef),
+      transaction.get(secondBookRef),
+      transaction.get(firstEntryRef),
+      transaction.get(secondEntryRef),
+      transaction.get(blockPairRef),
+    ]);
+    const ownExisting = ownIntentSnapshot.data();
+    if (ownIntentSnapshot.exists && (
+      ownExisting?.uid !== uid
+      || ownExisting?.counterpartUid !== counterpartUid
+      || ownExisting?.roomId !== match.roomId
+    )) {
+      throw new HttpsError("failed-precondition", "顔なじみ希望の記録が一致しません。");
+    }
+    const ownIntentIsFresh = ownIntentSnapshot.exists
+      && Number(ownExisting?.expiresAt || 0) >= now;
+    const ownAcceptedAt = ownIntentIsFresh
+      ? Number(ownExisting?.acceptedAt || now)
+      : now;
+    transaction.set(ownIntentRef, {
+      schemaVersion: 1,
+      uid,
+      counterpartUid,
+      roomId: match.roomId,
+      acceptedAt: ownAcceptedAt,
+      expiresAt: ownAcceptedAt + SOLO_FAMILIAR_INTENT_TTL_MS,
+      deleteAt: Timestamp.fromMillis(ownAcceptedAt + SOLO_FAMILIAR_INTENT_TTL_MS + (7 * 24 * 60 * 60 * 1000)),
+    });
+
+    const counterpartIntent = counterpartIntentSnapshot.data();
+    const counterpartAcceptedAt = Number(counterpartIntent?.acceptedAt || 0);
+    const counterpartAccepted = counterpartIntentSnapshot.exists
+      && counterpartIntent?.uid === counterpartUid
+      && counterpartIntent?.counterpartUid === uid
+      && counterpartIntent?.roomId === match.roomId
+      && Number(counterpartIntent?.expiresAt || 0) >= now;
+    const pair = pairSnapshot.data() || {};
+    if (pair.active === true) return;
+    if (!counterpartAccepted || blockPairSnapshot.exists
+        || !canReactivateSoloFamiliarPair(pair, ownAcceptedAt, counterpartAcceptedAt)) return;
+
+    const firstCount = integer(firstBookSnapshot.get("count"), 0, SOLO_FAMILIAR_BOOK_LIMIT, 0);
+    const secondCount = integer(secondBookSnapshot.get("count"), 0, SOLO_FAMILIAR_BOOK_LIMIT, 0);
+    const firstIncrement = firstEntrySnapshot.exists ? 0 : 1;
+    const secondIncrement = secondEntrySnapshot.exists ? 0 : 1;
+    if (firstCount + firstIncrement > SOLO_FAMILIAR_BOOK_LIMIT
+        || secondCount + secondIncrement > SOLO_FAMILIAR_BOOK_LIMIT) return;
+
+    const pairId = pairRef.id;
+    const createdAt = now;
+    transaction.set(pairRef, {
+      schemaVersion: 1,
+      participants: orderedParticipants,
+      entryIds,
+      active: true,
+      createdAt,
+      currentStartedAt: createdAt,
+      endedAt: 0,
+      lastReunionPriorityAt: Number(pair.lastReunionPriorityAt || 0),
+      deleteAt: null,
+      updatedAt: createdAt,
+    });
+    transaction.set(firstBookRef, {
+      ownerUid: firstUid,
+      count: firstCount + firstIncrement,
+      updatedAt: createdAt,
+    }, { merge: true });
+    transaction.set(secondBookRef, {
+      ownerUid: secondUid,
+      count: secondCount + secondIncrement,
+      updatedAt: createdAt,
+    }, { merge: true });
+    transaction.set(firstEntryRef, {
+      ownerUid: firstUid,
+      counterpartUid: secondUid,
+      pairId,
+      displayName: match.names[secondUid],
+      createdAt,
+      active: true,
+      deleteAt: null,
+    });
+    transaction.set(secondEntryRef, {
+      ownerUid: secondUid,
+      counterpartUid: firstUid,
+      pairId,
+      displayName: match.names[firstUid],
+      createdAt,
+      active: true,
+      deleteAt: null,
+    });
+  });
+  return { received: true };
+}
+
+async function removeOrBlockSoloFamiliar(uid, data, block) {
+  const rollout = await loadSoloFamiliarRollout();
+  if (!rollout.familiarBookEnabled) {
+    throw new HttpsError("failed-precondition", "顔なじみ帳はまだ公開されていません。");
+  }
+  const familiarId = cleanText(data?.familiarId, 40);
+  if (!/^[a-f0-9]{40}$/.test(familiarId)) {
+    throw new HttpsError("invalid-argument", "顔なじみ帳の項目を確認してください。");
+  }
+  const ownEntryRef = soloFamiliarBookRef(uid).collection("familiarEntries").doc(familiarId);
+  const generatedBlockId = block ? soloFamiliarEntryId() : "";
+  let changed = false;
+  let counterpartForPermitCleanup = "";
+  await firestore.runTransaction(async (transaction) => {
+    const ownEntrySnapshot = await transaction.get(ownEntryRef);
+    if (!ownEntrySnapshot.exists || ownEntrySnapshot.get("ownerUid") !== uid) return;
+    const counterpartUid = cleanText(ownEntrySnapshot.get("counterpartUid"), 128);
+    counterpartForPermitCleanup = counterpartUid;
+    const pairId = cleanText(ownEntrySnapshot.get("pairId"), 40);
+    if (!counterpartUid || !/^[a-f0-9]{40}$/.test(pairId)
+        || pairId !== soloFamiliarPairId(uid, counterpartUid)) {
+      throw new HttpsError("failed-precondition", "顔なじみ帳の内部記録が一致しません。");
+    }
+    const pairRef = soloFamiliarPairRef(uid, counterpartUid);
+    const blockPairRef = soloFamiliarBlockPairRef(uid, counterpartUid);
+    const [pairSnapshot, blockPairSnapshot] = await Promise.all([
+      transaction.get(pairRef),
+      transaction.get(blockPairRef),
+    ]);
+    const pairParticipants = (pairSnapshot.get("participants") || []).slice().sort();
+    const pairEntryIds = pairSnapshot.get("entryIds") || {};
+    const currentOwnEntryId = cleanText(pairEntryIds[uid], 40);
+    const counterpartEntryId = cleanText(pairEntryIds[counterpartUid], 40);
+    if (!pairSnapshot.exists
+        || !sameIds(pairParticipants, [uid, counterpartUid].sort())
+        || familiarId !== currentOwnEntryId
+        || !/^[a-f0-9]{40}$/.test(currentOwnEntryId)
+        || !/^[a-f0-9]{40}$/.test(counterpartEntryId)) {
+      throw new HttpsError("failed-precondition", "顔なじみ関係の内部記録が一致しません。");
+    }
+    const currentOwnEntryRef = soloFamiliarBookEntryRef(uid, currentOwnEntryId);
+    const counterpartEntryRef = soloFamiliarBookEntryRef(counterpartUid, counterpartEntryId);
+    const ownBookRef = soloFamiliarBookRef(uid);
+    const counterpartBookRef = soloFamiliarBookRef(counterpartUid);
+    const ownBlockBookRef = soloFamiliarBlockRef(uid);
+    const currentBlockEntryIds = blockPairSnapshot.get("entryIds") || {};
+    const savedBlockId = cleanText(currentBlockEntryIds[uid], 40);
+    const ownBlockId = /^[a-f0-9]{40}$/.test(savedBlockId)
+      ? savedBlockId
+      : generatedBlockId;
+    const ownBlockRef = block ? soloFamiliarBlockEntryRef(uid, ownBlockId) : null;
+    const [
+      currentOwnEntrySnapshot,
+      counterpartEntrySnapshot,
+      ownBookSnapshot,
+      counterpartBookSnapshot,
+      ownBlockSnapshot,
+      ownBlockBookSnapshot,
+    ] = await Promise.all([
+      transaction.get(currentOwnEntryRef),
+      transaction.get(counterpartEntryRef),
+      transaction.get(ownBookRef),
+      transaction.get(counterpartBookRef),
+      ownBlockRef ? transaction.get(ownBlockRef) : Promise.resolve(null),
+      transaction.get(ownBlockBookRef),
+    ]);
+    const now = Date.now();
+    const addingBlock = block && !ownBlockSnapshot?.exists;
+    const ownEntryWasActive = currentOwnEntrySnapshot.exists
+      && currentOwnEntrySnapshot.get("active") === true;
+    const counterpartEntryWasActive = counterpartEntrySnapshot.exists
+      && counterpartEntrySnapshot.get("active") === true;
+    const currentBlockCount = integer(
+      ownBlockBookSnapshot.get("count"),
+      0,
+      Number.MAX_SAFE_INTEGER,
+      0,
+    );
+    if (!block && pairSnapshot.get("active") !== true
+        && !ownEntryWasActive && !counterpartEntryWasActive) {
+      return;
+    }
+    const entryDeleteAt = Timestamp.fromMillis(
+      now + SOLO_FAMILIAR_INTENT_TTL_MS + (7 * 24 * 60 * 60 * 1000),
+    );
+    if (currentOwnEntrySnapshot.exists) {
+      transaction.set(currentOwnEntryRef, {
+        active: false,
+        endedAt: now,
+        deleteAt: entryDeleteAt,
+      }, { merge: true });
+    }
+    if (counterpartEntrySnapshot.exists) {
+      transaction.set(counterpartEntryRef, {
+        active: false,
+        endedAt: now,
+        deleteAt: entryDeleteAt,
+      }, { merge: true });
+    }
+    transaction.set(ownBookRef, {
+      ownerUid: uid,
+      count: Math.max(
+        0,
+        integer(ownBookSnapshot.get("count"), 0, SOLO_FAMILIAR_BOOK_LIMIT, 0)
+          - (ownEntryWasActive ? 1 : 0),
+      ),
+      updatedAt: now,
+    }, { merge: true });
+    transaction.set(counterpartBookRef, {
+      ownerUid: counterpartUid,
+      count: Math.max(0, integer(counterpartBookSnapshot.get("count"), 0, SOLO_FAMILIAR_BOOK_LIMIT, 0)
+        - (counterpartEntryWasActive ? 1 : 0)),
+      updatedAt: now,
+    }, { merge: true });
+    transaction.set(pairRef, {
+      active: false,
+      endedAt: now,
+      deleteAt: Timestamp.fromMillis(
+        now + SOLO_FAMILIAR_INTENT_TTL_MS + (7 * 24 * 60 * 60 * 1000),
+      ),
+      updatedAt: now,
+    }, { merge: true });
+    if (block) {
+      const counterpartName = cleanName(ownEntrySnapshot.get("displayName"));
+      transaction.set(ownBlockRef, {
+        ownerUid: uid,
+        targetUid: counterpartUid,
+        displayName: counterpartName,
+        createdAt: ownBlockSnapshot?.get("createdAt") || now,
+        updatedAt: now,
+      });
+      transaction.set(ownBlockBookRef, {
+        ownerUid: uid,
+        count: currentBlockCount + (addingBlock ? 1 : 0),
+        updatedAt: now,
+      }, { merge: true });
+      transaction.set(blockPairRef, {
+        participants: [uid, counterpartUid].sort(),
+        blockedBy: {
+          ...(blockPairSnapshot.get("blockedBy") || {}),
+          [uid]: true,
+        },
+        entryIds: {
+          ...currentBlockEntryIds,
+          [uid]: ownBlockId,
+        },
+        updatedAt: now,
+      }, { merge: true });
+    }
+    changed = block || pairSnapshot.get("active") === true
+      || ownEntryWasActive
+      || counterpartEntryWasActive;
+  });
+  if (counterpartForPermitCleanup) {
+    await cancelPendingSoloMatchPermit(uid, counterpartForPermitCleanup, {
+      includeNormal: block,
+    });
+  }
+  return { removed: true, blocked: block && changed };
+}
+
+async function unblockSoloFamiliar(uid, data) {
+  const rollout = await loadSoloFamiliarRollout();
+  if (!rollout.familiarBookEnabled) {
+    throw new HttpsError("failed-precondition", "顔なじみ帳はまだ公開されていません。");
+  }
+  const blockId = cleanText(data?.blockId, 40);
+  if (!/^[a-f0-9]{40}$/.test(blockId)) {
+    throw new HttpsError("invalid-argument", "非表示項目を確認してください。");
+  }
+  const ownBlockRef = soloFamiliarBlockRef(uid).collection("blockEntries").doc(blockId);
+  await firestore.runTransaction(async (transaction) => {
+    const ownBlockSnapshot = await transaction.get(ownBlockRef);
+    if (!ownBlockSnapshot.exists || ownBlockSnapshot.get("ownerUid") !== uid) return;
+    const counterpartUid = cleanText(ownBlockSnapshot.get("targetUid"), 128);
+    if (!counterpartUid) throw new HttpsError("failed-precondition", "非表示項目の内部記録が一致しません。");
+    const ownBlockBookRef = soloFamiliarBlockRef(uid);
+    const blockPairRef = soloFamiliarBlockPairRef(uid, counterpartUid);
+    const [
+      ownBlockBookSnapshot,
+      blockPairSnapshot,
+    ] = await Promise.all([
+      transaction.get(ownBlockBookRef),
+      transaction.get(blockPairRef),
+    ]);
+    const blockParticipants = (blockPairSnapshot.get("participants") || []).slice().sort();
+    const blockedBy = { ...(blockPairSnapshot.get("blockedBy") || {}) };
+    const entryIds = { ...(blockPairSnapshot.get("entryIds") || {}) };
+    if (!blockPairSnapshot.exists
+        || !sameIds(blockParticipants, [uid, counterpartUid].sort())
+        || blockedBy[uid] !== true
+        || entryIds[uid] !== blockId) {
+      throw new HttpsError("failed-precondition", "非表示関係の内部記録が一致しません。");
+    }
+    const now = Date.now();
+    transaction.delete(ownBlockRef);
+    transaction.set(ownBlockBookRef, {
+      ownerUid: uid,
+      count: Math.max(
+        0,
+        integer(ownBlockBookSnapshot.get("count"), 0, Number.MAX_SAFE_INTEGER, 0) - 1,
+      ),
+      updatedAt: now,
+    }, { merge: true });
+    delete blockedBy[uid];
+    delete entryIds[uid];
+    if (Object.keys(blockedBy).length) {
+      transaction.set(blockPairRef, { blockedBy, entryIds, updatedAt: now }, { merge: true });
+    } else if (blockPairSnapshot.exists) {
+      transaction.delete(blockPairRef);
+    }
+  });
+  return { unblocked: true };
+}
+
+async function querySoloPairDocuments(collectionName, participantUid, activeOnly = false) {
+  const records = new Map();
+  let cursor = null;
+  while (true) {
+    let pairQuery = firestore.collection(collectionName)
+      .where("participants", "array-contains", participantUid);
+    if (activeOnly) pairQuery = pairQuery.where("active", "==", true);
+    if (cursor) pairQuery = pairQuery.startAfter(cursor);
+    const snapshot = await pairQuery.limit(500).get();
+    snapshot.docs.forEach((document) => records.set(document.id, {
+      id: document.id,
+      data: document.data(),
+    }));
+    if (snapshot.size < 500) break;
+    cursor = snapshot.docs.at(-1);
+  }
+  return [...records.values()];
+}
+
+function boundedSoloServerQueue(uid, queue, now, limit = 500) {
+  const entries = Object.entries(queue && typeof queue === "object" ? queue : {})
+    .filter(([candidateUid, entry]) => (
+      isValidSoloServerQueueEntry(candidateUid, entry, now)
+    ));
+  const requester = entries.find(([candidateUid]) => candidateUid === uid);
+  if (!requester) return {};
+  const candidates = entries
+    .filter(([candidateUid]) => candidateUid !== uid)
+    .sort((first, second) => (
+      Number(first[1].joinedAt) - Number(second[1].joinedAt)
+      || first[0].localeCompare(second[0])
+    ))
+    .slice(0, Math.max(0, limit - 1));
+  return Object.fromEntries([requester, ...candidates]);
+}
+
+async function blockedSoloPairIdsForQueue(uid, queue, now) {
+  const candidateUids = Object.entries(queue && typeof queue === "object" ? queue : {})
+    .filter(([candidateUid, entry]) => (
+      candidateUid !== uid
+      && isValidSoloServerQueueEntry(candidateUid, entry, now)
+    ))
+    .sort((first, second) => (
+      Number(first[1].joinedAt) - Number(second[1].joinedAt)
+      || first[0].localeCompare(second[0])
+    ))
+    .map(([candidateUid]) => candidateUid);
+  const blockedPairIds = [];
+  for (let offset = 0; offset < candidateUids.length; offset += 100) {
+    const refs = candidateUids.slice(offset, offset + 100)
+      .map((candidateUid) => soloFamiliarBlockPairRef(uid, candidateUid));
+    const snapshots = refs.length ? await firestore.getAll(...refs) : [];
+    snapshots.forEach((snapshot) => {
+      if (snapshot.exists) blockedPairIds.push(snapshot.id);
+    });
+  }
+  return blockedPairIds;
+}
+
+function sanitizeSoloQueueCandidate(value) {
+  const sampleCount = integer(value?.sampleCount, 0, 5, 0);
+  return {
+    uid: cleanText(value?.uid, 128),
+    name: cleanName(value?.name),
+    pursuitLine: cleanText(value?.pursuitLine, 40),
+    streak: integer(value?.streak, 0, Number.MAX_SAFE_INTEGER, 0),
+    rating: integer(value?.rating, 100, 3000, 1000),
+    ratingPreference: cleanText(value?.ratingPreference, 24),
+    allowPreferenceMismatch: value?.allowPreferenceMismatch === true,
+    sampleCount,
+    startingHp: 30 - (sampleCount * 5),
+    joinedAt: Number(value?.joinedAt || 0),
+    lastSeen: Number(value?.lastSeen || 0),
+    state: cleanText(value?.state, 16),
+    reunionPreference: value?.reunionPreference === true,
+  };
+}
+
+function soloPermitPlayer(entry) {
+  return {
+    uid: entry.uid,
+    name: entry.name,
+    pursuitLine: entry.pursuitLine,
+    streak: entry.streak,
+    rating: entry.rating,
+    sampleCount: entry.sampleCount,
+    startingHp: entry.startingHp,
+  };
+}
+
+function normalizeSoloPermitPlayer(value, expectedUid) {
+  const uid = cleanText(value?.uid, 128);
+  const name = cleanText(value?.name, 16);
+  const pursuitLine = cleanText(value?.pursuitLine, 40);
+  const rawSampleCount = Number(value?.sampleCount);
+  const sampleCount = Number.isInteger(rawSampleCount)
+    && rawSampleCount >= 0
+    && rawSampleCount <= 5
+    ? rawSampleCount
+    : -1;
+  const startingHp = 30 - (sampleCount * 5);
+  const rawStreak = Number(value?.streak);
+  const rawRating = Number(value?.rating);
+  if (!expectedUid || uid !== expectedUid || !name || !pursuitLine
+      || sampleCount < 0 || Number(value?.startingHp) !== startingHp
+      || !Number.isInteger(rawStreak) || rawStreak < 0
+      || !Number.isInteger(rawRating) || rawRating < 100 || rawRating > 3000) return null;
+  return {
+    uid,
+    name,
+    pursuitLine,
+    streak: rawStreak,
+    rating: rawRating,
+    sampleCount,
+    startingHp,
+  };
+}
+
+function normalizeSoloMatchPermit(roomIdValue, value) {
+  const roomId = cleanText(roomIdValue, 80);
+  const hostUid = cleanText(value?.hostUid, 128);
+  const guestUid = cleanText(value?.guestUid, 128);
+  const createdAt = Number(value?.createdAt || 0);
+  const expiresAt = Number(value?.expiresAt || 0);
+  const reunion = value?.reunion === true;
+  const hostPlayer = normalizeSoloPermitPlayer(value?.players?.[hostUid], hostUid);
+  const guestPlayer = normalizeSoloPermitPlayer(value?.players?.[guestUid], guestUid);
+  const pairId = cleanText(value?.pairId, 40);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)
+      || !hostUid || !guestUid || hostUid === guestUid
+      || !Number.isFinite(createdAt) || !Number.isFinite(expiresAt)
+      || createdAt <= 0 || expiresAt <= createdAt
+      || !hostPlayer || !guestPlayer
+      || (reunion && !/^[a-f0-9]{40}$/.test(pairId))) return null;
+  return {
+    roomId,
+    hostUid,
+    guestUid,
+    createdAt,
+    expiresAt,
+    reunion,
+    ...(reunion ? { pairId } : {}),
+    players: {
+      [hostUid]: hostPlayer,
+      [guestUid]: guestPlayer,
+    },
+  };
+}
+
+function soloPermitLockMatches(lock, permit, roomId, now = Date.now()) {
+  return lock?.roomId === roomId
+    && lock?.hostUid === permit.hostUid
+    && lock?.guestUid === permit.guestUid
+    && lock?.reunion === permit.reunion
+    && Number(lock?.expiresAt || 0) === permit.expiresAt
+    && Number(lock?.expiresAt || 0) > now;
+}
+
+async function soloPermitLocksStillOwned(roomId, permit, now = Date.now()) {
+  const [hostLockSnapshot, guestLockSnapshot] = await Promise.all([
+    realtime.ref(`online/soloMatchPermitLocks/${permit.hostUid}`).get(),
+    realtime.ref(`online/soloMatchPermitLocks/${permit.guestUid}`).get(),
+  ]);
+  return soloPermitLockMatches(hostLockSnapshot.val(), permit, roomId, now)
+    && soloPermitLockMatches(guestLockSnapshot.val(), permit, roomId, now);
+}
+
+function soloRoomPlayerMatchesPermit(value, permitPlayer) {
+  return value?.uid === permitPlayer.uid
+    && value?.name === permitPlayer.name
+    && value?.pursuitLine === permitPlayer.pursuitLine
+    && Number(value?.streak) === permitPlayer.streak
+    && Number(value?.rating) === permitPlayer.rating
+    && Number(value?.sampleCount) === permitPlayer.sampleCount
+    && Number(value?.startingHp) === permitPlayer.startingHp;
+}
+
+function soloRoomMatchesPermit(room, permit) {
+  return room
+    && room.hostUid === permit.hostUid
+    && room.guestUid === permit.guestUid
+    && ["offered", "active", "expired"].includes(room.status)
+    && Number(room.createdAt) >= permit.createdAt
+    && Number(room.createdAt) <= permit.expiresAt
+    && room.members?.[permit.hostUid] === true
+    && room.members?.[permit.guestUid] === true
+    && soloRoomPlayerMatchesPermit(room.players?.[permit.hostUid], permit.players[permit.hostUid])
+    && soloRoomPlayerMatchesPermit(room.players?.[permit.guestUid], permit.players[permit.guestUid])
+    && (room.reunion === true) === permit.reunion;
+}
+
+function soloHostedRoomPayload(permit) {
+  return {
+    hostUid: permit.hostUid,
+    guestUid: permit.guestUid,
+    createdAt: permit.createdAt,
+    status: "offered",
+    ...(permit.reunion ? { reunion: true } : {}),
+    members: {
+      [permit.hostUid]: true,
+      [permit.guestUid]: true,
+    },
+    players: permit.players,
+  };
+}
+
+function soloHostedOfferPayload(roomId, permit) {
+  return {
+    roomId,
+    fromUid: permit.hostUid,
+    toUid: permit.guestUid,
+    fromName: permit.players[permit.hostUid].name,
+    createdAt: permit.createdAt,
+  };
+}
+
+function soloHostedMatchResponse(roomId, permit) {
+  return {
+    outcome: "hosted",
+    roomId,
+    reunion: permit.reunion,
+    candidate: permit.players[permit.guestUid],
+  };
+}
+
+async function releaseSoloMatchPermitLocks(roomId, participantUids) {
+  const result = await realtime.ref("online/soloMatchPermitLocks").transaction((currentValue) => {
+    const current = objectValue(currentValue);
+    const next = { ...current };
+    participantUids.forEach((participantUid) => {
+      if (next[participantUid]?.roomId === roomId) delete next[participantUid];
+    });
+    return next;
+  }).catch(() => null);
+  return result?.committed === true;
+}
+
+async function cleanupSoloMatchContext(roomIdValue, context = {}) {
+  const roomId = cleanText(roomIdValue, 80);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) return false;
+  const permitRef = realtime.ref(`online/soloMatchPermits/${roomId}`);
+  const roomRef = realtime.ref(`online/rooms/${roomId}`);
+  const [permitSnapshot, roomSnapshot] = await Promise.all([
+    permitRef.get(),
+    roomRef.get(),
+  ]);
+  const permit = normalizeSoloMatchPermit(roomId, context.permit || permitSnapshot.val());
+  let room = roomSnapshot.val();
+  const lockHostUid = cleanText(context.hostUid, 128);
+  const lockGuestUid = cleanText(context.guestUid, 128);
+  const hostUid = permit?.hostUid || lockHostUid || cleanText(room?.hostUid, 128);
+  const guestUid = permit?.guestUid || lockGuestUid || cleanText(room?.guestUid, 128);
+  const participantUids = [...new Set([
+    ...(Array.isArray(context.participantUids) ? context.participantUids : []),
+    hostUid,
+    guestUid,
+  ].map((value) => cleanText(value, 128)).filter(Boolean))];
+  let roomIsActive = room?.status === "active"
+    && (!hostUid || room.hostUid === hostUid)
+    && (!guestUid || room.guestUid === guestUid);
+
+  if (!roomIsActive) {
+    const roomResult = await roomRef.transaction((currentValue) => {
+      if (!currentValue) return;
+      if (hostUid && currentValue.hostUid && currentValue.hostUid !== hostUid) return;
+      if (guestUid && currentValue.guestUid && currentValue.guestUid !== guestUid) return;
+      if (currentValue.status === "active") return;
+      if (!currentValue.status) return null;
+      if (currentValue.status === "offered") return { ...currentValue, status: "expired" };
+      return;
+    });
+    room = roomResult.snapshot.val();
+    roomIsActive = room?.status === "active"
+      && (!hostUid || room.hostUid === hostUid)
+      && (!guestUid || room.guestUid === guestUid);
+  }
+
+  const cleanupTasks = [];
+  if (guestUid) {
+    cleanupTasks.push(
+      realtime.ref(`online/offers/${guestUid}/${roomId}`).transaction((currentValue) => {
+        if (!currentValue || currentValue.roomId !== roomId) return;
+        if (hostUid && currentValue.fromUid !== hostUid) return;
+        return null;
+      }),
+    );
+  }
+  participantUids.forEach((participantUid) => {
+    const presenceOnline = roomIsActive
+      && room?.presence?.[participantUid]?.online === true;
+    if (roomIsActive && presenceOnline) return;
+    cleanupTasks.push(
+      realtime.ref(`online/active/${participantUid}`).transaction((currentValue) => (
+        currentValue === roomId ? null : undefined
+      )),
+    );
+  });
+  if (hostUid) {
+    if (roomIsActive) {
+      cleanupTasks.push(
+        realtime.ref(`online/queue/${hostUid}`).transaction((currentValue) => (
+          currentValue?.roomId === roomId ? null : undefined
+        )),
+      );
+    } else {
+      cleanupTasks.push(
+        realtime.ref(`online/queue/${hostUid}`).transaction((currentValue) => {
+          if (!currentValue || currentValue.roomId !== roomId) return;
+          const next = {
+            ...currentValue,
+            state: "waiting",
+            lastSeen: Date.now(),
+          };
+          delete next.roomId;
+          return next;
+        }),
+      );
+    }
+  }
+  await Promise.all(cleanupTasks);
+
+  if (roomIsActive && permit?.reunion === true) {
+    const reunionConfirmed = await confirmSoloFamiliarReunionFromRoom(roomId, {
+      permitValue: permit,
+      roomValue: room,
+    });
+    if (!reunionConfirmed) {
+      throw new Error(`solo familiar reunion cooldown confirmation failed: ${roomId}`);
+    }
+  }
+
+  if (participantUids.length
+      && !await releaseSoloMatchPermitLocks(roomId, participantUids)) {
+    throw new Error(`solo match lock cleanup failed: ${roomId}`);
+  }
+  await permitRef.transaction((currentValue) => {
+    if (!currentValue) return;
+    if (hostUid && currentValue.hostUid !== hostUid) return;
+    if (guestUid && currentValue.guestUid !== guestUid) return;
+    return null;
+  });
+  return true;
+}
+
+async function cancelPendingSoloMatchPermit(
+  firstUid,
+  secondUid,
+  { includeNormal = false } = {},
+) {
+  const [firstLockSnapshot, secondLockSnapshot] = await Promise.all([
+    realtime.ref(`online/soloMatchPermitLocks/${firstUid}`).get(),
+    realtime.ref(`online/soloMatchPermitLocks/${secondUid}`).get(),
+  ]);
+  const firstLock = firstLockSnapshot.val();
+  const secondLock = secondLockSnapshot.val();
+  const roomId = cleanText(firstLock?.roomId, 80);
+  if (!roomId || roomId !== cleanText(secondLock?.roomId, 80)
+      || (!includeNormal
+        && (firstLock?.reunion !== true || secondLock?.reunion !== true))) return;
+  const participantUids = [firstUid, secondUid].sort();
+  const hostUid = cleanText(firstLock?.hostUid || secondLock?.hostUid, 128);
+  const guestUid = cleanText(firstLock?.guestUid || secondLock?.guestUid, 128);
+  await cleanupSoloMatchContext(roomId, {
+    hostUid,
+    guestUid,
+    participantUids,
+  });
+}
+
+async function maybeSweepExpiredSoloMatchPermits(now) {
+  if (now - lastSoloMatchPermitSweepAt < SOLO_MATCH_PERMIT_SWEEP_INTERVAL_MS) return;
+  lastSoloMatchPermitSweepAt = now;
+  try {
+    const [permitSnapshot, attemptSnapshot] = await Promise.all([
+      realtime.ref("online/soloMatchPermits")
+        .orderByChild("expiresAt")
+        .endAt(now)
+        .limitToFirst(20)
+        .get(),
+      realtime.ref("online/soloMatchAttempts")
+        .orderByChild("expiresAt")
+        .endAt(now)
+        .limitToFirst(50)
+        .get(),
+    ]);
+    await Promise.allSettled(Object.entries(objectValue(permitSnapshot.val())).map(async ([roomId, value]) => {
+      const permit = normalizeSoloMatchPermit(roomId, value);
+      const participantUids = permit ? [permit.hostUid, permit.guestUid] : [];
+      await cleanupSoloMatchContext(roomId, {
+        permit,
+        hostUid: permit?.hostUid,
+        guestUid: permit?.guestUid,
+        participantUids,
+      });
+    }));
+    await Promise.allSettled(Object.entries(objectValue(attemptSnapshot.val())).map(
+      ([participantUid, value]) => (
+        realtime.ref(`online/soloMatchAttempts/${participantUid}`).transaction((currentValue) => (
+          currentValue
+            && Number(currentValue.expiresAt || 0) <= now
+            && Number(currentValue.expiresAt || 0) === Number(value?.expiresAt || 0)
+            ? null
+            : undefined
+        ))
+      ),
+    ));
+  } catch (error) {
+    console.error("solo match permit sweep failed", error);
+  }
+}
+
+async function loadExistingSoloHostedMatch(uid, now) {
+  const ownLockSnapshot = await realtime.ref(`online/soloMatchPermitLocks/${uid}`).get();
+  const ownLock = ownLockSnapshot.val();
+  const roomId = cleanText(ownLock?.roomId, 80);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) return null;
+  const lockHostUid = cleanText(ownLock?.hostUid, 128);
+  const lockGuestUid = cleanText(ownLock?.guestUid, 128);
+  const participantUids = [lockHostUid, lockGuestUid].filter(Boolean);
+  if (Number(ownLock?.expiresAt || 0) <= now) {
+    await cleanupSoloMatchContext(roomId, {
+      hostUid: lockHostUid,
+      guestUid: lockGuestUid,
+      participantUids,
+    });
+    return null;
+  }
+
+  const permitSnapshot = await realtime.ref(`online/soloMatchPermits/${roomId}`).get();
+  const permit = normalizeSoloMatchPermit(roomId, permitSnapshot.val());
+  if (!permit || (uid !== permit.hostUid && uid !== permit.guestUid)) {
+    if (Number(ownLock?.acquiredAt || 0) > now - SOLO_MATCH_CONTEXT_RECOVERY_GRACE_MS) {
+      return { outcome: "waiting" };
+    }
+    await cleanupSoloMatchContext(roomId, {
+      hostUid: lockHostUid,
+      guestUid: lockGuestUid,
+      participantUids,
+    });
+    return null;
+  }
+  if (!await soloPermitLocksStillOwned(roomId, permit, now)) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return null;
+  }
+
+  const roomRef = realtime.ref(`online/rooms/${roomId}`);
+  const roomSnapshot = await roomRef.get();
+  const room = roomSnapshot.val();
+  if (!soloRoomMatchesPermit(room, permit)) {
+    if (permit.createdAt > now - SOLO_MATCH_CONTEXT_RECOVERY_GRACE_MS) {
+      return { outcome: "waiting" };
+    }
+    await cleanupSoloMatchContext(roomId, { permit });
+    return null;
+  }
+  if (room.status === "expired") {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return null;
+  }
+  const reservationUids = room.status === "active"
+    ? [permit.hostUid, permit.guestUid]
+    : [permit.hostUid];
+  const reservationResults = await Promise.all(reservationUids.map((participantUid) => (
+    realtime.ref(`online/active/${participantUid}`).transaction((currentValue) => (
+      currentValue === null || currentValue === roomId ? roomId : undefined
+    ))
+  )));
+  if (reservationResults.some((result) => !result.committed)) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return null;
+  }
+  if (room.status === "offered") {
+    const hostQueueResult = await realtime.ref(`online/queue/${permit.hostUid}`)
+      .transaction((currentValue) => {
+        if (!currentValue || currentValue.uid !== permit.hostUid) return;
+        if (currentValue.state !== "waiting"
+            && !(currentValue.state === "offering" && currentValue.roomId === roomId)) return;
+        return {
+          ...currentValue,
+          state: "offering",
+          roomId,
+          lastSeen: Date.now(),
+        };
+      });
+    if (!hostQueueResult.committed) {
+      await cleanupSoloMatchContext(roomId, { permit });
+      return null;
+    }
+  }
+  if (room.status === "offered") {
+    const offerRef = realtime.ref(`online/offers/${permit.guestUid}/${roomId}`);
+    const offerSnapshot = await offerRef.get();
+    const offer = offerSnapshot.val();
+    const offerMatches = offer?.roomId === roomId
+      && offer?.fromUid === permit.hostUid
+      && offer?.toUid === permit.guestUid;
+    if (!offerMatches) {
+      if (!await soloPermitLocksStillOwned(roomId, permit)) {
+        await cleanupSoloMatchContext(roomId, { permit });
+        return null;
+      }
+      await offerRef.set(soloHostedOfferPayload(roomId, permit));
+      if (!await soloPermitLocksStillOwned(roomId, permit)) {
+        await cleanupSoloMatchContext(roomId, { permit });
+        return null;
+      }
+    }
+  }
+  if (uid === permit.hostUid) return soloHostedMatchResponse(roomId, permit);
+  if (room.status === "active") return { outcome: "join", roomId };
+  return { outcome: "waiting" };
+}
+
+async function acquireSoloMatchAttempt(uid, now) {
+  const result = await realtime.ref(`online/soloMatchAttempts/${uid}`).transaction((currentValue) => {
+    const lastAttemptAt = Number(currentValue?.lastAttemptAt || 0);
+    if (lastAttemptAt > now - SOLO_MATCH_ATTEMPT_MIN_INTERVAL_MS) return;
+    return {
+      lastAttemptAt: now,
+      expiresAt: now + SOLO_MATCH_ATTEMPT_RETENTION_MS,
+    };
+  });
+  return result.committed;
+}
+
+async function materializeSoloHostedMatch(roomId, permit) {
+  if (!await soloPermitLocksStillOwned(roomId, permit)) return false;
+  const hostActiveRef = realtime.ref(`online/active/${permit.hostUid}`);
+  const reservation = await hostActiveRef.transaction((currentValue) => (
+    currentValue === null || currentValue === roomId ? roomId : undefined
+  ));
+  if (!reservation.committed) return false;
+
+  const hostQueueRef = realtime.ref(`online/queue/${permit.hostUid}`);
+  const queueResult = await hostQueueRef.transaction((currentValue) => {
+    if (!currentValue || currentValue.uid !== permit.hostUid) return;
+    if (currentValue.state !== "waiting"
+        && !(currentValue.state === "offering" && currentValue.roomId === roomId)) return;
+    return {
+      ...currentValue,
+      state: "offering",
+      roomId,
+      lastSeen: Date.now(),
+    };
+  });
+  if (!queueResult.committed || !await soloPermitLocksStillOwned(roomId, permit)) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return false;
+  }
+
+  const roomRef = realtime.ref(`online/rooms/${roomId}`);
+  const roomResult = await roomRef.transaction((currentValue) => {
+    if (currentValue === null) return soloHostedRoomPayload(permit);
+    if (soloRoomMatchesPermit(currentValue, permit)
+        && (currentValue.status === "offered" || currentValue.status === "active")) return currentValue;
+    return;
+  });
+  if (!roomResult.committed) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return false;
+  }
+  if (roomResult.snapshot.val()?.status === "offered") {
+    await realtime.ref(`online/offers/${permit.guestUid}/${roomId}`)
+      .set(soloHostedOfferPayload(roomId, permit));
+  }
+  if (!await soloPermitLocksStillOwned(roomId, permit)) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return false;
+  }
+  return true;
+}
+
+async function trySoloServerMatch(uid) {
+  const rollout = await loadSoloFamiliarRollout();
+  if (!rollout.reunionEnabled) return { outcome: "disabled" };
+  const requestStartedAt = Date.now();
+  await maybeSweepExpiredSoloMatchPermits(requestStartedAt);
+  const existing = await loadExistingSoloHostedMatch(uid, Date.now());
+  if (existing) return existing;
+  if (!await acquireSoloMatchAttempt(uid, Date.now())) return { outcome: "waiting" };
+  const selectionNow = Date.now();
+  const [queueSnapshot, activeSnapshot, lockSnapshot] = await Promise.all([
+    realtime.ref("online/queue").get(),
+    realtime.ref("online/active").get(),
+    realtime.ref("online/soloMatchPermitLocks").get(),
+  ]);
+  const queue = objectValue(queueSnapshot.val());
+  const active = objectValue(activeSnapshot.val());
+  const locks = objectValue(lockSnapshot.val());
+  const boundedQueue = boundedSoloServerQueue(uid, queue, selectionNow);
+  const ownQueue = sanitizeSoloQueueCandidate(boundedQueue[uid]);
+  if (ownQueue.uid !== uid || Object.keys(boundedQueue).length < 2) {
+    return { outcome: "waiting" };
+  }
+  const [familiarPairs, blockedPairIds] = await Promise.all([
+    querySoloPairDocuments("soloFamiliarPairs", uid, true),
+    blockedSoloPairIdsForQueue(uid, boundedQueue, selectionNow),
+  ]);
+  const selection = selectSoloServerMatch({
+    requesterUid: uid,
+    queue: boundedQueue,
+    active,
+    familiarPairs,
+    blockedPairIds,
+    excludedUids: Object.keys(locks),
+    now: selectionNow,
+  });
+  if (!selection) return { outcome: "waiting" };
+
+  const roomId = realtime.ref("online/rooms").push().key;
+  if (!roomId) throw new HttpsError("unavailable", "対戦ルームを準備できませんでした。");
+  const participantUids = [selection.host.uid, selection.candidate.uid];
+  const lockAcquiredAt = Date.now();
+  const lockExpiresAt = lockAcquiredAt + SOLO_MATCH_PERMIT_TTL_MS;
+  const lockResult = await realtime.ref("online/soloMatchPermitLocks").transaction((currentValue) => {
+    const current = objectValue(currentValue);
+    if (participantUids.some((participantUid) => current[participantUid])) return;
+    const next = { ...current };
+    const lock = {
+      roomId,
+      hostUid: selection.host.uid,
+      guestUid: selection.candidate.uid,
+      acquiredAt: lockAcquiredAt,
+      expiresAt: lockExpiresAt,
+      reunion: selection.reunion === true,
+    };
+    participantUids.forEach((participantUid) => { next[participantUid] = lock; });
+    return next;
+  });
+  if (!lockResult.committed) return { outcome: "waiting" };
+
+  const [
+    hostQueueSnapshot,
+    candidateQueueSnapshot,
+    hostActiveSnapshot,
+    candidateActiveSnapshot,
+    blockPairSnapshot,
+    familiarPairSnapshot,
+  ] = await Promise.all([
+    realtime.ref(`online/queue/${selection.host.uid}`).get(),
+    realtime.ref(`online/queue/${selection.candidate.uid}`).get(),
+    realtime.ref(`online/active/${selection.host.uid}`).get(),
+    realtime.ref(`online/active/${selection.candidate.uid}`).get(),
+    soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
+    soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get(),
+  ]);
+  const validationNow = Date.now();
+  const hostQueueValue = hostQueueSnapshot.val();
+  const candidateQueueValue = candidateQueueSnapshot.val();
+  const freshAndWaiting = isValidSoloServerQueueEntry(
+    selection.host.uid,
+    hostQueueValue,
+    validationNow,
+  ) && isValidSoloServerQueueEntry(
+    selection.candidate.uid,
+    candidateQueueValue,
+    validationNow,
+  );
+  const hostQueue = sanitizeSoloQueueCandidate(hostQueueValue);
+  const candidateQueue = sanitizeSoloQueueCandidate(candidateQueueValue);
+  const preferenceStillCompatible = Number.isFinite(
+    soloQueuePreferenceTier(hostQueue, candidateQueue),
+  );
+  const reunionStillValid = !selection.reunion || (
+    hostQueue.reunionPreference === true
+    && candidateQueue.reunionPreference === true
+    && familiarPairSnapshot.exists
+    && familiarPairSnapshot.get("active") === true
+    && Number(familiarPairSnapshot.get("lastReunionPriorityAt") || 0)
+      <= validationNow - SOLO_FAMILIAR_REUNION_COOLDOWN_MS
+  );
+  if (!freshAndWaiting || !preferenceStillCompatible
+      || hostActiveSnapshot.exists() || candidateActiveSnapshot.exists()
+      || blockPairSnapshot.exists || !reunionStillValid) {
+    await releaseSoloMatchPermitLocks(roomId, participantUids);
+    return { outcome: "waiting" };
+  }
+  const [hostLockSnapshot, candidateLockSnapshot] = await Promise.all([
+    realtime.ref(`online/soloMatchPermitLocks/${selection.host.uid}`).get(),
+    realtime.ref(`online/soloMatchPermitLocks/${selection.candidate.uid}`).get(),
+  ]);
+  const locksStillOwned = [hostLockSnapshot.val(), candidateLockSnapshot.val()].every((lock) => (
+    lock?.roomId === roomId
+    && lock?.hostUid === selection.host.uid
+    && lock?.guestUid === selection.candidate.uid
+    && Number(lock?.expiresAt || 0) === lockExpiresAt
+    && Number(lock?.expiresAt || 0) > validationNow
+    && lock?.reunion === (selection.reunion === true)
+  ));
+  const permitIssuedAt = Date.now();
+  if (!locksStillOwned
+      || lockExpiresAt - permitIssuedAt < SOLO_MATCH_MIN_REMAINING_PERMIT_MS) {
+    await releaseSoloMatchPermitLocks(roomId, participantUids);
+    return { outcome: "waiting" };
+  }
+  const permit = {
+    hostUid: selection.host.uid,
+    guestUid: selection.candidate.uid,
+    createdAt: permitIssuedAt,
+    expiresAt: lockExpiresAt,
+    reunion: selection.reunion === true,
+    players: {
+      [hostQueue.uid]: soloPermitPlayer(hostQueue),
+      [candidateQueue.uid]: soloPermitPlayer(candidateQueue),
+    },
+  };
+  if (selection.reunion) permit.pairId = selection.pairId;
+  await realtime.ref(`online/soloMatchPermits/${roomId}`).set(permit);
+  const normalizedPermit = normalizeSoloMatchPermit(roomId, permit);
+  if (!normalizedPermit || !await soloPermitLocksStillOwned(roomId, normalizedPermit)) {
+    await cleanupSoloMatchContext(roomId, {
+      permit: normalizedPermit || permit,
+      hostUid: selection.host.uid,
+      guestUid: selection.candidate.uid,
+      participantUids,
+    });
+    return { outcome: "waiting" };
+  }
+  if (!await materializeSoloHostedMatch(roomId, normalizedPermit)) {
+    return { outcome: "waiting" };
+  }
+  const [finalBlockSnapshot, finalLocksOwned] = await Promise.all([
+    soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
+    soloPermitLocksStillOwned(roomId, normalizedPermit),
+  ]);
+  if (finalBlockSnapshot.exists || !finalLocksOwned) {
+    await cancelPendingSoloMatchPermit(selection.host.uid, selection.candidate.uid, {
+      includeNormal: true,
+    });
+    return { outcome: "waiting" };
+  }
+  return soloHostedMatchResponse(roomId, normalizedPermit);
+}
+
+async function confirmSoloFamiliarReunionFromRoom(
+  roomIdValue,
+  { requiredMemberUid = "", permitValue = null, roomValue = null } = {},
+) {
+  const roomId = cleanText(roomIdValue, 80);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) return false;
+  let permit = normalizeSoloMatchPermit(roomId, permitValue);
+  let room = roomValue;
+  if (!permit || !room) {
+    const [permitSnapshot, roomSnapshot] = await Promise.all([
+      permit ? Promise.resolve(null) : realtime.ref(`online/soloMatchPermits/${roomId}`).get(),
+      room ? Promise.resolve(null) : realtime.ref(`online/rooms/${roomId}`).get(),
+    ]);
+    if (!permit) permit = normalizeSoloMatchPermit(roomId, permitSnapshot?.val());
+    if (!room) room = roomSnapshot?.val();
+  }
+  if (!permit || permit.reunion !== true || room?.status !== "active"
+      || !soloRoomMatchesPermit(room, permit)
+      || permit.pairId !== soloFamiliarPairId(permit.hostUid, permit.guestUid)
+      || (requiredMemberUid && room.members?.[requiredMemberUid] !== true)) return false;
+  const participants = [permit.hostUid, permit.guestUid].sort();
+  const roomCreatedAt = Number(room.createdAt);
+  const pairRef = firestore.collection("soloFamiliarPairs").doc(permit.pairId);
+  const reunionRef = soloFamiliarReunionRef(roomId);
+  const confirmed = await firestore.runTransaction(async (transaction) => {
+    const [pairSnapshot, reunionSnapshot] = await Promise.all([
+      transaction.get(pairRef),
+      transaction.get(reunionRef),
+    ]);
+    if (reunionSnapshot.exists) return true;
+    if (!pairSnapshot.exists
+        || !sameIds((pairSnapshot.get("participants") || []).slice().sort(), participants)) return false;
+    const now = Date.now();
+    transaction.update(pairRef, {
+      lastReunionPriorityAt: Math.max(
+        Number(pairSnapshot.get("lastReunionPriorityAt") || 0),
+        roomCreatedAt,
+      ),
+      updatedAt: now,
+    });
+    transaction.create(reunionRef, {
+      pairId: permit.pairId,
+      roomId,
+      createdAt: roomCreatedAt,
+      confirmedAt: now,
+      deleteAt: Timestamp.fromMillis(
+        roomCreatedAt + SOLO_FAMILIAR_REUNION_COOLDOWN_MS + (7 * 24 * 60 * 60 * 1000),
+      ),
+    });
+    return true;
+  });
+  return confirmed === true;
+}
+
+async function confirmSoloFamiliarReunion(uid, data) {
+  const rollout = await loadSoloFamiliarRollout();
+  if (!rollout.reunionEnabled) return { confirmed: false };
+  const roomId = cleanText(data?.roomId, 80);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+    throw new HttpsError("invalid-argument", "再会ルームを確認してください。");
+  }
+  return {
+    confirmed: await confirmSoloFamiliarReunionFromRoom(roomId, {
+      requiredMemberUid: uid,
+    }),
+  };
+}
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -3059,6 +4387,32 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (error instanceof HttpsError) throw error;
     console.error("economyAction failed", { uid, action, error });
     throw new HttpsError("internal", "AnjuPay処理を完了できませんでした。");
+  }
+});
+
+exports.soloFamiliarAction = onCall(callableOptions("soloFamiliarAction"), async (request) => {
+  const uid = requireUid(request);
+  const action = cleanText(request.data?.action, 32);
+  try {
+    if (action === "get") return await loadSoloFamiliarBook(uid);
+    if (action === "get_blocks") {
+      const rollout = await loadSoloFamiliarRollout();
+      if (!rollout.familiarBookEnabled) {
+        return { blocked: [], blockedCursor: "" };
+      }
+      return await loadSoloFamiliarBlockPage(uid, request.data?.afterId);
+    }
+    if (action === "accept_familiar") return await acceptSoloFamiliar(uid, request.data);
+    if (action === "remove") return await removeOrBlockSoloFamiliar(uid, request.data, false);
+    if (action === "block") return await removeOrBlockSoloFamiliar(uid, request.data, true);
+    if (action === "unblock") return await unblockSoloFamiliar(uid, request.data);
+    if (action === "try_match") return await trySoloServerMatch(uid);
+    if (action === "confirm_reunion") return await confirmSoloFamiliarReunion(uid, request.data);
+    throw new HttpsError("invalid-argument", "未対応の顔なじみ操作です。");
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("soloFamiliarAction failed", { uid, action, error });
+    throw new HttpsError("internal", "顔なじみ帳を処理できませんでした。");
   }
 });
 
@@ -3178,6 +4532,8 @@ async function transferTargetIsPristine(uid, request) {
     leaderboardSnapshot,
     periodLeaderboardSnapshot,
     topMessageSnapshot,
+    familiarBookSnapshot,
+    familiarBlockSnapshot,
   ] = await Promise.all([
     adminAuth.getUser(uid),
     walletRef(uid).get(),
@@ -3195,6 +4551,8 @@ async function transferTargetIsPristine(uid, request) {
     realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
     realtime.ref(`online/leaderboardPeriodEntriesByUser/${uid}`).get(),
     realtime.ref(`online/topMessageEntriesByUser/${uid}`).get(),
+    soloFamiliarBookRef(uid).get(),
+    soloFamiliarBlockRef(uid).get(),
   ]);
   if (userRecord.disabled || userRecord.providerData.length > 0) return false;
   if (safeBalance(walletSnapshot.get("balance")) > 0
@@ -3212,7 +4570,9 @@ async function transferTargetIsPristine(uid, request) {
     && !royaleProfileSnapshot.exists()
     && !leaderboardSnapshot.exists()
     && !periodLeaderboardSnapshot.exists()
-    && !topMessageSnapshot.exists();
+    && !topMessageSnapshot.exists()
+    && !familiarBookSnapshot.exists
+    && !familiarBlockSnapshot.exists;
 }
 
 async function registerTransferFailure(uid) {
@@ -3345,6 +4705,8 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetProgressSnapshot,
       targetMarketSnapshot,
       targetPatronSnapshot,
+      targetFamiliarBookSnapshot,
+      targetFamiliarBlockSnapshot,
     ] = await Promise.all([
       transaction.get(attemptRef),
       transaction.get(codeRef),
@@ -3352,6 +4714,8 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(economyProgressRef(targetUid)),
       transaction.get(marketStatsRef(targetUid)),
       transaction.get(patronageRef(targetUid)),
+      transaction.get(soloFamiliarBookRef(targetUid)),
+      transaction.get(soloFamiliarBlockRef(targetUid)),
     ]);
     const attempt = normalizeAttemptState(attemptSnapshot.data(), now);
     if (attempt.blockedUntil > now) {
@@ -3384,7 +4748,9 @@ async function redeemAccountTransferCode(request, rawCode) {
     }
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
         || targetMarketSnapshot.exists
-        || targetPatronSnapshot.exists) {
+        || targetPatronSnapshot.exists
+        || targetFamiliarBookSnapshot.exists
+        || targetFamiliarBlockSnapshot.exists) {
       failure = "target-not-empty";
       return;
     }

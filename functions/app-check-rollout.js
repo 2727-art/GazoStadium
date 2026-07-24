@@ -19,6 +19,8 @@ const reached = (stage) => rolloutIndex >= APP_CHECK_ROLLOUT_STAGES.indexOf(stag
 const APP_CHECK_ENFORCEMENT = Object.freeze({
   // ウォレットの所有UIDへ再認証できるため、段階ロールアウトの対象外で常時強制します。
   accountTransfer: true,
+  // 顔なじみ関係と再会permitは相手UIDを扱うため、段階公開前から常時強制します。
+  soloFamiliarAction: true,
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),
