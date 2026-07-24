@@ -89,7 +89,9 @@ test("signature choice is optional, unique, cleared on removal, and retained for
 });
 
 test("finish metadata stays P2P-only and accepts only a strict signature boolean", () => {
-  assert.match(online, /type: "image-start"[\s\S]*?signature: item\.id === state\.signatureCardId,[\s\S]*?finishLine: state\.finishLine,/);
+  assert.match(online, /const signature = item\.id === state\.signatureCardId;/);
+  assert.match(online, /const finishLine = state\.finishLine;/);
+  assert.match(online, /type: "image-start"[\s\S]*?signature,[\s\S]*?finishLine,/);
   assert.match(online, /signature: message\.signature === true,/);
   assert.match(online, /signature: transfer\.signature === true,/);
   assert.match(online, /finishLine: normalizeReceivedFinishLine\(transfer\.finishLine\),/);
@@ -101,11 +103,11 @@ test("finish metadata stays P2P-only and accepts only a strict signature boolean
   assert.doesNotMatch(rules, /"finishLine"/);
 });
 
-test("incoming lethal image metadata is validated before allocation", () => {
-  assert.match(online, /Number\.isInteger\(round\) \|\| round !== state\.round/);
-  assert.match(online, /size > MAX_IMAGE_TRANSFER_BYTES/);
-  assert.match(online, /message\.mime !== "image\/webp"/);
-  assert.match(online, /state\.incomingTransfer\.received > state\.incomingTransfer\.size/);
+test("incoming lethal image metadata and bytes are validated on the transfer path", () => {
+  assert.match(online, /createIncomingOnlineImageTransfer\(message/);
+  assert.match(online, /maxBytes: MAX_IMAGE_TRANSFER_BYTES/);
+  assert.match(online, /completeIncomingOnlineImageTransfer\(transfer\)/);
+  assert.match(online, /appendIncomingOnlineImageChunk\(state\.incomingTransfer, chunk\)/);
 });
 
 test("cut-in fires once only for a positive HP to zero transition", () => {

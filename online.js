@@ -69,6 +69,15 @@ import {
   isPostMatchTipBusy,
   renderPostMatchTip,
 } from "./post-match-tip.js?v=post-match-tip-v4";
+import {
+  appendIncomingOnlineImageChunk,
+  completeIncomingOnlineImageTransfer,
+  createIncomingOnlineImageTransfer,
+  normalizeOnlineImageMime,
+  onlineImageEndStatus,
+  verifiedOnlineImageMime,
+  verifiedOnlineImageMimeFromChunks,
+} from "./online-image-transfer.mjs?v=online-image-transfer-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -245,8 +254,11 @@ const MATCH_TIMEOUT_MS = 20_000;
 const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const DATA_BUFFER_WAIT_MS = 10_000;
+const IMAGE_ACK_WAIT_MS = 15_000;
 const MAX_IMAGE_TRANSFER_BYTES = 15 * 1024 * 1024;
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
+const PROFILE_AVATAR_READY_WAIT_MS = 3_000;
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
 
@@ -389,10 +401,15 @@ function createOnlineState() {
     peer: null,
     channel: null,
     channelReady: false,
+    outgoingTransferChain: Promise.resolve(),
+    incomingMessageChain: Promise.resolve(),
     peerStatus: "未接続",
     pendingIce: [],
     incomingTransfer: null,
     transferProgress: 0,
+    imageTransferError: "",
+    imageAckTimer: null,
+    imageAckRound: 0,
     finishCutInTimer: null,
     opponentOnline: true,
     statsCommitted: false,
@@ -2319,7 +2336,13 @@ function renderWaitingPick() {
 }
 
 function renderWaitingImage() {
-  return renderBattleWait("P2P IMAGE TRANSFER", "画像を安全に転送しています", `転送状況 ${state.transferProgress}%`);
+  const retryAction = state.imageTransferError
+    ? '<button class="button button-primary button-small" id="onlineRetryImageTransfer">画像を再送する</button>'
+    : "";
+  const body = state.imageTransferError
+    ? `転送を完了できませんでした：${escapeHtml(state.imageTransferError)}`
+    : `転送状況 ${state.transferProgress}%`;
+  return renderBattleWait("P2P IMAGE TRANSFER", state.imageTransferError ? "画像を再送できます" : "画像を安全に転送しています", body, retryAction);
 }
 
 function renderWaitingScore() {
@@ -2330,11 +2353,11 @@ function renderWaitingContinue() {
   return renderBattleWait("ROUND READY", "相手の準備を待っています", "両者が準備すると次の画面へ進みます。");
 }
 
-function renderBattleWait(eyebrow, title, body) {
+function renderBattleWait(eyebrow, title, body, extraActions = "") {
   return `<section class="screen">${renderOnlineHud()}${renderStatusCard({
     icon: "…", eyebrow, title, body,
     details: `<div class="matching-pulse"><i></i><i></i><i></i></div>`,
-    actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
+    actions: `${extraActions}<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
   }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
     <div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
 }
@@ -2504,6 +2527,11 @@ function bindScreenEvents() {
     document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
   }
   if (state.screen === "select") bindSelectEvents();
+  if (state.screen === "waitingImage") {
+    document.querySelector("#onlineRetryImageTransfer")?.addEventListener("click", () => {
+      sendSelectedImage().catch(handleRecoverableError);
+    });
+  }
   if (state.screen === "reveal") document.querySelector("#onlineBeginScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
   if (state.screen === "score") bindScoreEvents();
   if (state.screen === "result") document.querySelector("#onlineContinue")?.addEventListener("click", continueRound);
@@ -3972,48 +4000,77 @@ function configureDataChannel(channel) {
   channel.onopen = () => {
     state.channelReady = true;
     state.peerStatus = "● P2P接続済み";
-    sendProfileAvatar().catch(handleRecoverableError);
     if (state.screen === "connecting") {
       state.screen = "select";
       render();
     }
-    announceSelectionReady().catch(handleRecoverableError);
+    (async () => {
+      let profileTransferSettled = false;
+      try {
+        await sendProfileAvatar();
+        profileTransferSettled = true;
+      } catch (error) {
+        profileTransferSettled = error?.profileTransferReset === true;
+        handleRecoverableError(error);
+      }
+      if (profileTransferSettled && state.channel === channel && channel.readyState === "open") {
+        await announceSelectionReady();
+      }
+    })().catch(handleRecoverableError);
   };
   channel.onclose = () => {
     state.channelReady = false;
     state.peerStatus = "P2P接続が切れました";
   };
   channel.onerror = () => showToast("画像転送で通信エラーが発生しました。");
-  channel.onmessage = (event) => handleChannelMessage(event.data).catch(handleRecoverableError);
+  channel.onmessage = (event) => {
+    const expectedState = state;
+    const data = event.data;
+    expectedState.incomingMessageChain = expectedState.incomingMessageChain
+      .catch(() => {})
+      .then(() => {
+        if (state !== expectedState || state.channel !== channel) return;
+        return handleChannelMessage(data);
+      })
+      .catch(handleRecoverableError);
+  };
 }
 
 async function handleChannelMessage(data) {
   if (typeof data === "string") {
     const message = JSON.parse(data);
     if (message.type === "profile-avatar-start") {
+      if (state.incomingAvatarTransfer) {
+        state.incomingAvatarTransfer = null;
+      }
       const size = Number(message.size);
-      if (!Number.isFinite(size) || size <= 0 || size > PROFILE_AVATAR_MAX_BYTES) throw new Error("プロフィール画像の受信サイズが不正です。");
-      if (message.mime !== "image/webp") throw new Error("プロフィール画像の形式が不正です。");
-      state.incomingAvatarTransfer = { mime: "image/webp", size, chunks: [], received: 0 };
+      if (!Number.isSafeInteger(size) || size <= 0 || size > PROFILE_AVATAR_MAX_BYTES) throw new Error("プロフィール画像の受信サイズが不正です。");
+      const declaredMime = normalizeOnlineImageMime(message.mime);
+      if (declaredMime.length > 80) throw new Error("プロフィール画像の形式情報が不正です。");
+      state.incomingAvatarTransfer = { declaredMime, size, chunks: [], received: 0 };
     } else if (message.type === "profile-avatar-end") {
       finishIncomingProfileAvatar();
     } else if (message.type === "profile-avatar-empty") {
       releaseRemoteAvatar();
     } else if (message.type === "image-start") {
-      const round = Number(message.round);
-      const size = Number(message.size);
-      if (!Number.isInteger(round) || round !== state.round) throw new Error("受信画像のラウンド情報が不正です。");
-      if (!Number.isFinite(size) || size <= 0 || size > MAX_IMAGE_TRANSFER_BYTES) throw new Error("受信画像のサイズが不正です。");
-      if (message.mime !== "image/webp") throw new Error("受信画像の形式が不正です。");
+      if (state.incomingTransfer) {
+        state.incomingTransfer = null;
+        state.transferProgress = 0;
+      }
       state.incomingTransfer = {
-        round,
-        mime: "image/webp",
-        size,
+        ...createIncomingOnlineImageTransfer(message, {
+          expectedRound: state.round,
+          maxBytes: MAX_IMAGE_TRANSFER_BYTES,
+        }),
         signature: message.signature === true,
         finishLine: normalizeReceivedFinishLine(message.finishLine),
-        chunks: [],
-        received: 0,
       };
+    } else if (message.type === "image-cancel") {
+      const round = Number(message.round);
+      if (state.incomingTransfer?.round === round) {
+        state.incomingTransfer = null;
+        state.transferProgress = 0;
+      }
     } else if (message.type === "image-end") {
       await finishIncomingImage(Number(message.round));
     }
@@ -4021,52 +4078,122 @@ async function handleChannelMessage(data) {
   }
   if (state.incomingAvatarTransfer) {
     const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+    if (!(chunk instanceof ArrayBuffer) || chunk.byteLength <= 0) {
+      state.incomingAvatarTransfer = null;
+      throw new Error("プロフィール画像の受信データが不正です。");
+    }
     state.incomingAvatarTransfer.chunks.push(chunk);
     state.incomingAvatarTransfer.received += chunk.byteLength;
     if (state.incomingAvatarTransfer.received > state.incomingAvatarTransfer.size) {
       state.incomingAvatarTransfer = null;
-      throw new Error("プロフィール画像の受信サイズが一致しませんでした。");
+      throw new Error("プロフィール画像の受信サイズが宣言値を超えました。");
     }
     return;
   }
   if (!state.incomingTransfer) return;
   const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
-  state.incomingTransfer.chunks.push(chunk);
-  state.incomingTransfer.received += chunk.byteLength;
-  if (state.incomingTransfer.received > state.incomingTransfer.size) {
+  try {
+    appendIncomingOnlineImageChunk(state.incomingTransfer, chunk);
+  } catch (error) {
     state.incomingTransfer = null;
     state.transferProgress = 0;
-    throw new Error("受信画像のサイズが宣言値を超えました。");
+    throw error;
   }
   state.transferProgress = Math.min(99, Math.round((state.incomingTransfer.received / state.incomingTransfer.size) * 100));
   if (state.screen === "waitingImage") updateTransferText();
 }
 
+function queueOutgoingDataTransfer(expectedState, task) {
+  const previous = expectedState.outgoingTransferChain || Promise.resolve();
+  const run = previous.catch(() => {}).then(() => {
+    if (state !== expectedState) throw new Error("画像転送の対象ルームが切り替わりました。");
+    return task();
+  });
+  expectedState.outgoingTransferChain = run.catch(() => {});
+  return run;
+}
+
+function waitForProfileAvatarReady() {
+  const ready = shared()?.profileAvatar?.ready?.();
+  if (!ready || typeof ready.then !== "function") return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, PROFILE_AVATAR_READY_WAIT_MS);
+    Promise.resolve(ready).then(finish, finish);
+  });
+}
+
 async function sendProfileAvatar() {
   if (state.avatarSent || !state.channel || state.channel.readyState !== "open") return;
+  const expectedState = state;
+  const channel = state.channel;
   state.avatarSent = true;
-  await shared()?.profileAvatar?.ready?.();
-  const avatar = shared()?.profileAvatar?.get?.();
-  if (!avatar?.blob || avatar.blob.size > PROFILE_AVATAR_MAX_BYTES) {
-    state.channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
-    return;
-  }
-  const buffer = await avatar.blob.arrayBuffer();
-  state.channel.send(JSON.stringify({ type: "profile-avatar-start", size: buffer.byteLength, mime: avatar.blob.type || "image/webp" }));
-  for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
-    await waitForDataBuffer();
-    state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
-  }
-  state.channel.send(JSON.stringify({ type: "profile-avatar-end" }));
+  await queueOutgoingDataTransfer(expectedState, async () => {
+    let started = false;
+    try {
+      await waitForProfileAvatarReady();
+      if (state !== expectedState || state.channel !== channel || channel.readyState !== "open") {
+        throw new Error("プロフィール画像の送信前にP2P接続が切れました。");
+      }
+      const avatar = shared()?.profileAvatar?.get?.();
+      if (!avatar?.blob || avatar.blob.size > PROFILE_AVATAR_MAX_BYTES) {
+        channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
+        return;
+      }
+      const buffer = await avatar.blob.arrayBuffer();
+      let mime;
+      try {
+        mime = verifiedOnlineImageMime(buffer);
+      } catch {
+        channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
+        return;
+      }
+      channel.send(JSON.stringify({ type: "profile-avatar-start", size: buffer.byteLength, mime }));
+      started = true;
+      for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+        await waitForDataBuffer(channel);
+        channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+      }
+      channel.send(JSON.stringify({ type: "profile-avatar-end" }));
+    } catch (error) {
+      let resetSent = !started;
+      if (started && channel.readyState === "open") {
+        try {
+          channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
+          resetSent = true;
+        } catch {
+          // The original transfer error is more useful than a best-effort reset failure.
+        }
+      }
+      if (error && typeof error === "object") error.profileTransferReset = resetSent;
+      throw error;
+    }
+  });
 }
 
 function finishIncomingProfileAvatar() {
   const transfer = state.incomingAvatarTransfer;
-  if (!transfer || transfer.received !== transfer.size) throw new Error("プロフィール画像の受信が完了していません。");
+  if (!transfer) return;
+  if (transfer.received !== transfer.size) {
+    state.incomingAvatarTransfer = null;
+    throw new Error("プロフィール画像の受信が完了していません。");
+  }
+  let mime;
+  try {
+    mime = verifiedOnlineImageMimeFromChunks(transfer.chunks);
+  } catch {
+    state.incomingAvatarTransfer = null;
+    throw new Error("プロフィール画像の形式が不正です。");
+  }
   releaseRemoteAvatar();
-  const blob = new Blob(transfer.chunks, { type: transfer.mime });
+  const blob = new Blob(transfer.chunks, { type: mime });
   state.remoteAvatar = { blob, url: URL.createObjectURL(blob) };
-  state.incomingAvatarTransfer = null;
   if (!["connecting", "gameover", "noContest", "error"].includes(state.screen)) render();
 }
 
@@ -4078,17 +4205,31 @@ function releaseRemoteAvatar() {
 
 async function finishIncomingImage(round) {
   const transfer = state.incomingTransfer;
-  if (!transfer || transfer.round !== round || transfer.received !== transfer.size) throw new Error("受信画像のサイズが一致しませんでした。");
+  const endStatus = onlineImageEndStatus(transfer, { round });
+  if (endStatus === "orphan") return;
+  if (endStatus === "mismatch") {
+    state.incomingTransfer = null;
+    state.transferProgress = 0;
+    throw new Error("受信画像のラウンド情報が一致しませんでした。");
+  }
+  let mime;
+  try {
+    mime = completeIncomingOnlineImageTransfer(transfer);
+  } catch (error) {
+    state.incomingTransfer = null;
+    state.transferProgress = 0;
+    throw error;
+  }
+  state.incomingTransfer = null;
   const previous = state.remoteImages.get(round);
   if (previous?.url) URL.revokeObjectURL(previous.url);
-  const blob = new Blob(transfer.chunks, { type: transfer.mime || "image/webp" });
+  const blob = new Blob(transfer.chunks, { type: mime });
   state.remoteImages.set(round, {
     blob,
     url: URL.createObjectURL(blob),
     signature: transfer.signature === true,
     finishLine: normalizeReceivedFinishLine(transfer.finishLine),
   });
-  state.incomingTransfer = null;
   state.transferProgress = 100;
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${round}/imagesReceived/${state.uid}`), true);
 }
@@ -4229,10 +4370,14 @@ async function reactToRoundData() {
     startSelectionTimer(selectionStartedAt);
   }
   const picks = state.roundData.picks || {};
-  if (picks[state.uid]?.ready && picks[state.opponentUid]?.ready && !state.sentImageRounds.has(state.round)) {
+  if (picks[state.uid]?.ready && picks[state.opponentUid]?.ready
+      && !state.sentImageRounds.has(state.round) && !state.imageTransferError) {
     await sendSelectedImage();
   }
   const received = state.roundData.imagesReceived || {};
+  if (received[state.opponentUid] && state.imageAckRound === state.round) {
+    clearImageAckWatchdog(state);
+  }
   if (received[state.uid] && received[state.opponentUid] && state.remoteImages.has(state.round)
       && ["waitingPick", "waitingImage"].includes(state.screen)) {
     state.screen = "reveal";
@@ -4247,38 +4392,116 @@ async function reactToRoundData() {
 async function sendSelectedImage() {
   const item = getSelectedItem();
   if (!item?.blob || !state.channel || state.channel.readyState !== "open") return;
-  state.sentImageRounds.add(state.round);
+  const expectedState = state;
+  const channel = state.channel;
+  const round = state.round;
+  const signature = item.id === state.signatureCardId;
+  const finishLine = state.finishLine;
+  clearImageAckWatchdog(expectedState);
+  state.sentImageRounds.add(round);
   state.screen = "waitingImage";
   state.transferProgress = 0;
+  state.imageTransferError = "";
   render();
-  const buffer = await item.blob.arrayBuffer();
   try {
-    state.channel.send(JSON.stringify({
-      type: "image-start",
-      round: state.round,
-      size: buffer.byteLength,
-      mime: item.blob.type || "image/webp",
-      signature: item.id === state.signatureCardId,
-      finishLine: state.finishLine,
-    }));
-    for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
-      await waitForDataBuffer();
-      state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
-      state.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
-      updateTransferText();
-    }
-    state.channel.send(JSON.stringify({ type: "image-end", round: state.round }));
+    await queueOutgoingDataTransfer(expectedState, async () => {
+      if (state.channel !== channel || channel.readyState !== "open" || state.round !== round) {
+        throw new Error("画像送信前にP2P接続またはラウンドが切り替わりました。");
+      }
+      const buffer = await item.blob.arrayBuffer();
+      if (!Number.isSafeInteger(buffer.byteLength) || buffer.byteLength <= 0 || buffer.byteLength > MAX_IMAGE_TRANSFER_BYTES) {
+        throw new Error("送信画像のサイズが不正です。");
+      }
+      const mime = verifiedOnlineImageMime(buffer);
+      let started = false;
+      try {
+        channel.send(JSON.stringify({
+          type: "image-start",
+          round,
+          size: buffer.byteLength,
+          mime,
+          signature,
+          finishLine,
+        }));
+        started = true;
+        for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+          await waitForDataBuffer(channel);
+          channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+          if (state === expectedState && state.round === round) {
+            state.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
+            updateTransferText();
+          }
+        }
+        channel.send(JSON.stringify({ type: "image-end", round }));
+        startImageAckWatchdog(expectedState, round);
+      } catch (error) {
+        if (started && channel.readyState === "open") {
+          try {
+            channel.send(JSON.stringify({ type: "image-cancel", round }));
+          } catch {
+            // The original transfer error is more useful than a best-effort cancel failure.
+          }
+        }
+        throw error;
+      }
+    });
   } catch (error) {
-    state.sentImageRounds.delete(state.round);
+    if (state === expectedState) {
+      clearImageAckWatchdog(expectedState);
+      state.sentImageRounds.delete(round);
+      state.transferProgress = 0;
+      state.imageTransferError = error?.message || "画像を送信できませんでした。";
+      if (state.screen === "waitingImage") render();
+    }
     throw error;
   }
 }
 
-function waitForDataBuffer() {
-  if (!state.channel || state.channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => { state.channel?.removeEventListener("bufferedamountlow", done); resolve(); };
-    state.channel.addEventListener("bufferedamountlow", done, { once: true });
+function clearImageAckWatchdog(targetState) {
+  if (targetState.imageAckTimer) window.clearTimeout(targetState.imageAckTimer);
+  targetState.imageAckTimer = null;
+  targetState.imageAckRound = 0;
+}
+
+function startImageAckWatchdog(expectedState, round) {
+  clearImageAckWatchdog(expectedState);
+  expectedState.imageAckRound = round;
+  expectedState.imageAckTimer = window.setTimeout(() => {
+    expectedState.imageAckTimer = null;
+    expectedState.imageAckRound = 0;
+    if (state !== expectedState || state.round !== round || state.screen !== "waitingImage") return;
+    const received = state.roundData.imagesReceived || {};
+    if (received[state.opponentUid]) return;
+    state.sentImageRounds.delete(round);
+    state.transferProgress = 0;
+    state.imageTransferError = "相手側の受信完了を確認できませんでした。";
+    render();
+  }, IMAGE_ACK_WAIT_MS);
+}
+
+function waitForDataBuffer(channel) {
+  if (!channel || channel.readyState !== "open") return Promise.reject(new Error("画像転送中にP2P接続が切れました。"));
+  if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      channel.removeEventListener("bufferedamountlow", handleLow);
+      channel.removeEventListener("close", handleClose);
+      channel.removeEventListener("error", handleClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const handleLow = () => finish();
+    const handleClose = () => finish(new Error("画像転送中にP2P接続が切れました。"));
+    const timer = window.setTimeout(() => finish(new Error("画像転送が混み合っています。もう一度お試しください。")), DATA_BUFFER_WAIT_MS);
+    channel.addEventListener("bufferedamountlow", handleLow, { once: true });
+    channel.addEventListener("close", handleClose, { once: true });
+    channel.addEventListener("error", handleClose, { once: true });
+    if (channel.readyState !== "open") finish(new Error("画像転送中にP2P接続が切れました。"));
+    else if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) finish();
   });
 }
 
@@ -4353,6 +4576,7 @@ function advanceAfterRound() {
     finishOnlineMatch().catch(handleRecoverableError);
     return;
   }
+  clearImageAckWatchdog(state);
   resetSelectionTimerState();
   releaseRemoteImage(state.round);
   state.round += 1;
@@ -4743,6 +4967,7 @@ async function cleanupMatchmaking(keepActive) {
 
 async function cleanupOnlineResources(keepActive) {
   clearFinishCutIn();
+  clearImageAckWatchdog(state);
   stopSelectionTimer();
   await cleanupMatchmaking(keepActive);
   await cleanupPublicPresence();
