@@ -5956,6 +5956,7 @@ async function reserveSoloSessionV2Queue(entry, resources, role) {
   const roomId = resources.hostLock.roomId;
   const result = await soloSessionQueueRef(entry.uid, entry.sessionId)
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       if (!resourceFenceMatches(currentValue, entry)
           || currentValue.state !== "waiting"
           || Number(currentValue.joinedAt) !== Number(entry.joinedAt)) return;
@@ -6084,6 +6085,7 @@ async function acquireSoloSessionV2RoomTransition(
   let decision = null;
   const result = await realtime.ref(`online/rooms/${roomId}`)
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       decision = decideSoloRoomTransition({
         room: currentValue,
         expected,
@@ -6114,6 +6116,7 @@ async function clearSoloSessionV2RoomTransition(
   let safe = false;
   const result = await realtime.ref(`online/rooms/${roomId}`)
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       if (!roomAttemptMatches(currentValue, expected)
           || !roomTransitionOwned(currentValue, action, token)
           || (requireUndestroyed && currentValue.destroyed)) {
@@ -6645,6 +6648,7 @@ async function confirmSoloFamiliarReunionV2(roomId, resources, transitionToken) 
   let marked = false;
   const result = await realtime.ref(`online/rooms/${roomId}`)
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       if (!soloSessionV2ReunionPermitMatchesRoom(roomId, currentValue, permit)
           || !roomTransitionOwned(currentValue, "accept", transitionToken)) {
         marked = false;
@@ -6667,6 +6671,7 @@ async function activateSoloSessionV2Room(roomId, resources, transitionToken) {
   let activated = false;
   const result = await realtime.ref(`online/rooms/${roomId}`)
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       if (!roomAttemptMatches(currentValue, soloSessionV2TransitionExpected(resources))
           || !roomTransitionOwned(currentValue, "accept", transitionToken)
           || currentValue.destroyed
@@ -6718,6 +6723,7 @@ async function refreshSoloSessionV2ActivePair(resources) {
   let safe = false;
   const result = await realtime.ref("online/activeV2")
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       const current = objectValue(currentValue);
       const currentHost = current[hostUid]?.[hostSession.sessionId];
       const currentGuest = current[guestUid]?.[guestSession.sessionId];
