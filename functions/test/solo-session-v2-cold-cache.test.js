@@ -55,6 +55,34 @@ function coldTransactionRef(serverValue) {
   };
 }
 
+function cachedTransactionRef({ cachedValue, serverValue }) {
+  const inputs = [];
+  let finalValue = serverValue;
+  const sameValue = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  return {
+    inputs,
+    get finalValue() {
+      return finalValue;
+    },
+    transaction: async (updateValue) => {
+      inputs.push(cachedValue);
+      const cachedOutput = updateValue(cachedValue);
+      if (cachedOutput === undefined) {
+        return { committed: false, snapshot: snapshotOf(cachedValue ?? null) };
+      }
+      if (sameValue(cachedValue, serverValue)) {
+        finalValue = cachedOutput;
+        return { committed: true, snapshot: snapshotOf(finalValue) };
+      }
+      inputs.push(serverValue);
+      const serverOutput = updateValue(serverValue);
+      const committed = serverOutput !== undefined;
+      finalValue = committed ? serverOutput : serverValue;
+      return { committed, snapshot: snapshotOf(finalValue ?? null) };
+    },
+  };
+}
+
 test("queue reservation retries a cold null without weakening its fence", async () => {
   const { resourceFenceMatches } = require("../solo-session-v2");
   const reserveSource = sourceBetween(
@@ -132,6 +160,7 @@ this.reserveSoloSessionV2Queue = reserveSoloSessionV2Queue;`,
 test("room transition, activation, and clear retry cold nulls safely", async () => {
   const {
     decideSoloRoomTransition,
+    isSafeToken,
     roomAttemptMatches,
     roomTransitionOwned,
   } = require("../solo-session-v2");
@@ -160,6 +189,7 @@ test("room transition, activation, and clear retry cold nulls safely", async () 
   const context = {
     Date: { now: () => now },
     decideSoloRoomTransition,
+    isSafeToken,
     realtime: { ref: () => reference },
     roomAttemptMatches,
     roomTransitionOwned,
@@ -202,6 +232,22 @@ this.clearSoloSessionV2RoomTransition = clearSoloSessionV2RoomTransition;`,
   assert.equal(activated, true);
   assert.equal(resources.room.status, "active");
   assert.equal(resources.room.activatedAt, now);
+
+  context.soloSessionGeneration = () => "other-transition-token-12345";
+  reference = coldTransactionRef(resources.room);
+  const reused = await context.acquireSoloSessionV2RoomTransition(
+    "room-token-1234567890",
+    expected,
+    "accept",
+    {
+      allowActiveAccept: true,
+      reuseExistingAction: true,
+    },
+  );
+  assert.equal(reused.acquired, true);
+  assert.equal(reused.reason, "reused-existing");
+  assert.equal(reused.token, token);
+  assert.equal(reused.room.matchTransition.token, token);
 
   reference = coldTransactionRef(resources.room);
   const cleared = await context.clearSoloSessionV2RoomTransition(
@@ -331,8 +377,17 @@ test("active pair refresh retries a cold root and preserves both identities", as
     unrelated: { keep: { value: true } },
   };
 
-  const runRefresh = async (serverRoot) => {
-    const reference = coldTransactionRef(serverRoot);
+  const runRefresh = async (serverRoot, cachedRoot = null) => {
+    const references = {
+      [hostUid]: cachedTransactionRef({
+        cachedValue: cachedRoot?.[hostUid]?.[hostSessionId] ?? null,
+        serverValue: serverRoot?.[hostUid]?.[hostSessionId] ?? null,
+      }),
+      [guestUid]: cachedTransactionRef({
+        cachedValue: cachedRoot?.[guestUid]?.[guestSessionId] ?? null,
+        serverValue: serverRoot?.[guestUid]?.[guestSessionId] ?? null,
+      }),
+    };
     const resources = {
       permit: {
         hostUid,
@@ -356,10 +411,12 @@ test("active pair refresh retries a cold root and preserves both identities", as
       SOLO_SESSION_PROTOCOL_VERSION: 2,
       claimMatches,
       normalizeClaim,
-      objectValue: (value) => (
-        value && typeof value === "object" && !Array.isArray(value) ? value : {}
-      ),
-      realtime: { ref: () => reference },
+      realtime: {
+        ref: () => {
+          throw new Error("active pair refresh must not transact at the activeV2 root");
+        },
+      },
+      soloSessionActiveRef: (uid) => references[uid],
       soloSessionClaimRef: (uid) => ({
         get: async () => snapshotOf(claims[uid] ?? null),
       }),
@@ -372,20 +429,49 @@ this.refreshSoloSessionV2ActivePair = refreshSoloSessionV2ActivePair;`,
       context,
     );
     return {
-      reference,
+      references,
       resources,
       refreshed: await context.refreshSoloSessionV2ActivePair(resources),
     };
   };
 
   const exact = await runRefresh(activeRoot);
-  assert.equal(exact.reference.inputs.length, 2);
+  assert.equal(exact.references[hostUid].inputs.length, 2);
+  assert.equal(exact.references[guestUid].inputs.length, 2);
   assert.equal(exact.refreshed, true);
   assert.equal(exact.resources.hostActive.lastSeen, now);
   assert.equal(exact.resources.hostActive.expiresAt, claims[hostUid].expiresAt);
   assert.equal(exact.resources.guestActive.lastSeen, now);
   assert.equal(exact.resources.guestActive.expiresAt, claims[guestUid].expiresAt);
-  assert.equal(exact.reference.finalValue.unrelated.keep.value, true);
+
+  const hostOnlyCache = await runRefresh(activeRoot, {
+    [hostUid]: { [hostSessionId]: hostActive },
+  });
+  assert.equal(hostOnlyCache.refreshed, true);
+  assert.equal(hostOnlyCache.references[hostUid].inputs.length, 1);
+  assert.equal(hostOnlyCache.references[guestUid].inputs.length, 2);
+
+  const guestOnlyCache = await runRefresh(activeRoot, {
+    [guestUid]: { [guestSessionId]: guestActive },
+  });
+  assert.equal(guestOnlyCache.refreshed, true);
+  assert.equal(guestOnlyCache.references[hostUid].inputs.length, 2);
+  assert.equal(guestOnlyCache.references[guestUid].inputs.length, 1);
+
+  const heartbeatRoot = {
+    ...activeRoot,
+    [hostUid]: {
+      [hostSessionId]: {
+        ...hostActive,
+        lastSeen: now + 5_000,
+        expiresAt: now + 60_000,
+      },
+    },
+  };
+  const heartbeat = await runRefresh(heartbeatRoot, activeRoot);
+  assert.equal(heartbeat.refreshed, true);
+  assert.equal(heartbeat.resources.hostActive.lastSeen, now + 5_000);
+  assert.equal(heartbeat.resources.hostActive.expiresAt, now + 60_000);
 
   const differentRoot = {
     ...activeRoot,
@@ -397,17 +483,427 @@ this.refreshSoloSessionV2ActivePair = refreshSoloSessionV2ActivePair;`,
     },
   };
   const fenced = await runRefresh(differentRoot);
-  assert.equal(fenced.reference.inputs.length, 2);
+  assert.equal(fenced.references[guestUid].inputs.length, 2);
   assert.equal(fenced.refreshed, false);
   assert.equal(
-    fenced.reference.finalValue[guestUid][guestSessionId].connectionGeneration,
+    fenced.references[guestUid].finalValue.connectionGeneration,
     "other-connection-generation",
   );
+  assert.equal(fenced.resources.hostActive.lastSeen, hostActive.lastSeen);
+  assert.equal(fenced.resources.guestActive.connectionGeneration, common.connectionGeneration);
 
   const missing = await runRefresh(null);
-  assert.equal(missing.reference.inputs.length, 1);
+  assert.equal(missing.references[hostUid].inputs.length, 1);
+  assert.equal(missing.references[guestUid].inputs.length, 1);
   assert.equal(missing.refreshed, false);
-  assert.equal(missing.reference.finalValue, null);
+  assert.equal(missing.references[hostUid].finalValue, null);
+  assert.equal(missing.references[guestUid].finalValue, null);
+  assert.doesNotMatch(refreshSource, /realtime\.ref\("online\/activeV2"\)/);
+});
+
+test("pair lock transactions retry partial non-null caches without stealing foreign locks", async () => {
+  const lockSource = sourceBetween(
+    "function soloSessionV2LockMatches",
+    "async function reserveSoloSessionV2Queue",
+  );
+  const now = 1_780_000_000_000;
+  const resources = {
+    hostLock: {
+      protocolVersion: 2,
+      roomId: "room-token-1234567890",
+      attemptId: "attempt-token-1234567890",
+      role: "host",
+      sessionId: "host-session-1234567890",
+      generation: "host-generation-123456",
+      hostUid: "host-user",
+      guestUid: "guest-user",
+      acquiredAt: now,
+      expiresAt: now + 45_000,
+    },
+    guestLock: {
+      protocolVersion: 2,
+      roomId: "room-token-1234567890",
+      attemptId: "attempt-token-1234567890",
+      role: "guest",
+      sessionId: "guest-session-123456789",
+      generation: "guest-generation-12345",
+      hostUid: "host-user",
+      guestUid: "guest-user",
+      acquiredAt: now,
+      expiresAt: now + 45_000,
+    },
+  };
+  const exactRoot = {
+    [resources.hostLock.hostUid]: resources.hostLock,
+    [resources.guestLock.guestUid]: resources.guestLock,
+  };
+  const foreignHost = {
+    ...resources.hostLock,
+    roomId: "foreign-room-1234567",
+    attemptId: "foreign-attempt-12345",
+  };
+  const run = async (reference, operation) => {
+    const context = {
+      Date: { now: () => now },
+      SOLO_SESSION_PROTOCOL_VERSION: 2,
+      objectValue: (value) => (
+        value && typeof value === "object" && !Array.isArray(value) ? value : {}
+      ),
+      realtime: { ref: () => reference },
+    };
+    vm.createContext(context);
+    vm.runInContext(
+      `${lockSource}
+this.acquireSoloSessionV2Locks = acquireSoloSessionV2Locks;
+this.releaseSoloSessionV2Locks = releaseSoloSessionV2Locks;`,
+      context,
+    );
+    return operation(context);
+  };
+
+  const acquireReference = cachedTransactionRef({
+    cachedValue: { [resources.hostLock.hostUid]: foreignHost },
+    serverValue: {},
+  });
+  assert.equal(await run(
+    acquireReference,
+    (context) => context.acquireSoloSessionV2Locks(resources),
+  ), true);
+  assert.equal(acquireReference.inputs.length, 2);
+  assert.equal(acquireReference.finalValue[resources.hostLock.hostUid].roomId, resources.hostLock.roomId);
+  assert.equal(acquireReference.finalValue[resources.guestLock.guestUid].roomId, resources.guestLock.roomId);
+
+  const occupiedReference = cachedTransactionRef({
+    cachedValue: { [resources.hostLock.hostUid]: foreignHost },
+    serverValue: { [resources.hostLock.hostUid]: foreignHost },
+  });
+  assert.equal(await run(
+    occupiedReference,
+    (context) => context.acquireSoloSessionV2Locks(resources),
+  ), false);
+  assert.equal(occupiedReference.finalValue[resources.hostLock.hostUid].roomId, foreignHost.roomId);
+
+  const releaseReference = cachedTransactionRef({
+    cachedValue: { [resources.hostLock.hostUid]: foreignHost },
+    serverValue: exactRoot,
+  });
+  assert.equal(await run(
+    releaseReference,
+    (context) => context.releaseSoloSessionV2Locks(resources),
+  ), true);
+  assert.equal(releaseReference.inputs.length, 2);
+  assert.equal(releaseReference.finalValue[resources.hostLock.hostUid], undefined);
+  assert.equal(releaseReference.finalValue[resources.guestLock.guestUid], undefined);
+
+  const foreignReleaseReference = cachedTransactionRef({
+    cachedValue: { [resources.hostLock.hostUid]: foreignHost },
+    serverValue: { [resources.hostLock.hostUid]: foreignHost },
+  });
+  assert.equal(await run(
+    foreignReleaseReference,
+    (context) => context.releaseSoloSessionV2Locks(resources),
+  ), false);
+  assert.equal(
+    foreignReleaseReference.finalValue[resources.hostLock.hostUid].attemptId,
+    foreignHost.attemptId,
+  );
+});
+
+test("pre-active refresh recovery requeues exact resources and logs no identifiers on failure", async () => {
+  const recoverySource = sourceBetween(
+    "async function recoverSoloSessionV2PreActiveMatch",
+    "async function finalizeAcceptedSoloSessionV2Match",
+  );
+  const logs = [];
+  const cleanupCalls = [];
+  let cleanupMode = "success";
+  const context = {
+    console: {
+      error: (message, details) => logs.push({ message, details }),
+    },
+    cleanupSoloSessionV2Match: async (resources, options) => {
+      cleanupCalls.push({ resources, options });
+      if (cleanupMode === "throw") throw new Error("backend unavailable");
+      return cleanupMode === "success";
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${recoverySource}
+this.recoverPreActive = recoverSoloSessionV2PreActiveMatch;`,
+    context,
+  );
+  const resources = {
+    marker: "resource-sensitive-value",
+  };
+  const transitionToken = "transition-sensitive-value";
+
+  assert.equal(await context.recoverPreActive(resources, transitionToken), true);
+  assert.equal(cleanupCalls.length, 1);
+  assert.equal(cleanupCalls[0].resources, resources);
+  assert.equal(JSON.stringify(cleanupCalls[0].options), JSON.stringify({
+    restoreQueue: true,
+    transitionAction: "accept",
+    transitionToken,
+  }));
+  assert.equal(logs.length, 0);
+
+  cleanupMode = "failure";
+  assert.equal(await context.recoverPreActive(resources, transitionToken), false);
+  assert.equal(JSON.stringify(logs.at(-1).details), JSON.stringify({
+    stage: "refresh-active-pair",
+  }));
+
+  cleanupMode = "throw";
+  assert.equal(await context.recoverPreActive(resources, transitionToken), false);
+  const serializedLogs = JSON.stringify(logs);
+  assert.doesNotMatch(serializedLogs, /resource-sensitive-value/);
+  assert.doesNotMatch(serializedLogs, /transition-sensitive-value/);
+  assert.doesNotMatch(serializedLogs, /backend unavailable/);
+});
+
+test("post-active finalization failures preserve safe or unreadable matches and log only stages", async () => {
+  const preservationSource = sourceBetween(
+    "const SOLO_SESSION_V2_FINALIZATION_STAGES",
+    "async function completeAcceptedSoloSessionV2Match",
+  );
+  const logs = [];
+  let abortCalls = 0;
+  const room = {
+    status: "active",
+    marker: "room-sensitive-value",
+  };
+  const resources = {
+    room,
+    marker: "resource-sensitive-value",
+  };
+  const context = {
+    Set,
+    console: {
+      error: (message, details) => logs.push({ message, details }),
+    },
+    acceptedSoloSessionV2Response: () => ({ accepted: true, outcome: "join" }),
+    abortFailedSoloSessionV2Activation: async () => {
+      abortCalls += 1;
+      return true;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${preservationSource}
+this.preserveAcceptance = preserveOrAbortIncompleteSoloSessionV2Acceptance;
+this.setInspection = (inspection) => {
+  inspectSoloSessionV2AcceptanceCore = inspection;
+};`,
+    context,
+  );
+
+  context.setInspection(async () => ({ state: "safe", room }));
+  assert.deepEqual(
+    await context.preserveAcceptance(
+      "room-sensitive-value",
+      resources,
+      "transition-sensitive-value",
+      "uid-sensitive-value",
+      { stage: "remove-permit" },
+    ),
+    { accepted: true, outcome: "join" },
+  );
+  assert.equal(abortCalls, 0);
+  assert.equal(JSON.stringify(logs.at(-1).details), JSON.stringify({
+    stage: "remove-permit",
+    coreState: "safe",
+  }));
+
+  context.setInspection(async () => {
+    throw new Error("backend unavailable");
+  });
+  assert.deepEqual(
+    await context.preserveAcceptance(
+      "room-sensitive-value",
+      resources,
+      "transition-sensitive-value",
+      "uid-sensitive-value",
+      { stage: "uid-sensitive-value" },
+    ),
+    { accepted: true, outcome: "join" },
+  );
+  assert.equal(abortCalls, 0);
+  assert.equal(JSON.stringify(logs.at(-1).details), JSON.stringify({
+    stage: "unknown",
+    coreState: "unknown",
+  }));
+
+  context.setInspection(async () => ({ state: "lost", room: null }));
+  await assert.rejects(
+    context.preserveAcceptance(
+      "room-sensitive-value",
+      resources,
+      "transition-sensitive-value",
+      "uid-sensitive-value",
+      { stage: "release-locks" },
+    ),
+    /acceptance core lost/,
+  );
+  assert.equal(abortCalls, 1);
+  const serializedLogs = JSON.stringify(logs);
+  for (const sensitiveValue of [
+    "room-sensitive-value",
+    "resource-sensitive-value",
+    "transition-sensitive-value",
+    "uid-sensitive-value",
+  ]) {
+    assert.doesNotMatch(serializedLogs, new RegExp(sensitiveValue));
+  }
+});
+
+test("acceptance core inspection requires both exact claims, active entries, and the active room", async () => {
+  const { claimMatches, roomAttemptMatches } = require("../solo-session-v2");
+  const identitySource = sourceBetween(
+    "function exactSoloSessionV2ActiveIdentity",
+    "async function removeExpiredSoloSessionV2Active",
+  );
+  const recordSource = sourceBetween(
+    "function recordAttemptMatches",
+    "async function removeSoloSessionV2Record",
+  );
+  const transitionExpectedSource = sourceBetween(
+    "function soloSessionV2TransitionExpected",
+    "async function acquireSoloSessionV2RoomTransition",
+  );
+  const inspectionSource = sourceBetween(
+    "async function inspectSoloSessionV2AcceptanceCore",
+    "async function preserveOrAbortIncompleteSoloSessionV2Acceptance",
+  );
+  const now = 1_780_000_000_000;
+  const hostUid = "host-user";
+  const guestUid = "guest-user";
+  const hostSessionId = "host-session-1234567890";
+  const guestSessionId = "guest-session-123456789";
+  const attemptId = "attempt-token-1234567890";
+  const connectionGeneration = "connection-generation-1234";
+  const sessions = {
+    [hostUid]: {
+      sessionId: hostSessionId,
+      generation: "host-generation-123456",
+    },
+    [guestUid]: {
+      sessionId: guestSessionId,
+      generation: "guest-generation-12345",
+    },
+  };
+  const room = {
+    protocolVersion: 2,
+    signalingVersion: 2,
+    status: "active",
+    hostUid,
+    guestUid,
+    attemptId,
+    connectionGeneration,
+    sessions,
+  };
+  const active = {
+    [hostUid]: {
+      protocolVersion: 2,
+      uid: hostUid,
+      sessionId: hostSessionId,
+      leaseToken: "host-lease-123456789012",
+      generation: sessions[hostUid].generation,
+      roomId: "room-token-1234567890",
+      attemptId,
+      connectionGeneration,
+      lastSeen: now,
+      expiresAt: now + 45_000,
+    },
+    [guestUid]: {
+      protocolVersion: 2,
+      uid: guestUid,
+      sessionId: guestSessionId,
+      leaseToken: "guest-lease-12345678901",
+      generation: sessions[guestUid].generation,
+      roomId: "room-token-1234567890",
+      attemptId,
+      connectionGeneration,
+      lastSeen: now,
+      expiresAt: now + 45_000,
+    },
+  };
+  const claims = {
+    [hostUid]: {
+      protocolVersion: 2,
+      sessionId: hostSessionId,
+      leaseToken: active[hostUid].leaseToken,
+      generation: sessions[hostUid].generation,
+      claimedAt: now - 10_000,
+      heartbeatAt: now,
+      expiresAt: now + 45_000,
+    },
+    [guestUid]: {
+      protocolVersion: 2,
+      sessionId: guestSessionId,
+      leaseToken: active[guestUid].leaseToken,
+      generation: sessions[guestUid].generation,
+      claimedAt: now - 10_000,
+      heartbeatAt: now,
+      expiresAt: now + 45_000,
+    },
+  };
+  const resources = {
+    room,
+    hostLock: { attemptId },
+    hostActive: active[hostUid],
+    guestActive: active[guestUid],
+    permit: {
+      protocolVersion: 2,
+      hostUid,
+      guestUid,
+      connectionGeneration,
+      sessions,
+    },
+  };
+  const context = {
+    Date: { now: () => now },
+    SOLO_SESSION_PROTOCOL_VERSION: 2,
+    claimMatches,
+    roomAttemptMatches,
+    realtime: {
+      ref: () => ({
+        get: async () => snapshotOf(room),
+      }),
+    },
+    soloSessionClaimRef: (uid) => ({
+      get: async () => snapshotOf(claims[uid] ?? null),
+    }),
+    soloSessionActiveRef: (uid) => ({
+      get: async () => snapshotOf(active[uid] ?? null),
+    }),
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${identitySource}
+${recordSource}
+${transitionExpectedSource}
+${inspectionSource}
+this.inspectAcceptanceCore = inspectSoloSessionV2AcceptanceCore;`,
+    context,
+  );
+
+  const safe = await context.inspectAcceptanceCore(
+    "room-token-1234567890",
+    resources,
+  );
+  assert.equal(safe.state, "safe");
+  assert.equal(safe.room.status, "active");
+
+  active[guestUid] = {
+    ...active[guestUid],
+    connectionGeneration: "foreign-connection-generation",
+  };
+  const lost = await context.inspectAcceptanceCore(
+    "room-token-1234567890",
+    resources,
+  );
+  assert.equal(lost.state, "lost");
 });
 
 test("reunion confirmation mark retries a cold room without crossing its transition", async () => {

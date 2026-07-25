@@ -564,7 +564,7 @@ test("release and failed selection clean only exact V2 fences", () => {
   assert.match(cleanup, /releaseSoloSessionV2Locks/);
 });
 
-test("accept reserves the exact guest and serializes activation with a room CAS", () => {
+test("accept refreshes exact active children before publishing and preserves active cleanup retries", () => {
   const source = read("functions/index.js");
   const start = source.indexOf("async function acceptSoloSessionV2Match");
   const end = source.indexOf("async function cancelSoloSessionV2Match", start);
@@ -575,7 +575,21 @@ test("accept reserves the exact guest and serializes activation with a room CAS"
   assert.match(accept, /acquireSoloSessionV2RoomTransition/);
   assert.match(accept, /roomTransitionOwned\(finalRoom\.val\(\), "accept", transition\.token\)/);
   assert.match(accept, /activateSoloSessionV2Room/);
-  assert.match(accept, /finalizeAcceptedSoloSessionV2Match/);
+  assert.match(accept, /completeAcceptedSoloSessionV2Match/);
+  assert.match(accept, /reuseExistingAction: true/);
+  assert.match(accept, /preserveOrAbortIncompleteSoloSessionV2Acceptance/);
+  assert.match(accept, /recoverSoloSessionV2PreActiveMatch/);
+  const recoveryStart = source.indexOf("async function recoverSoloSessionV2PreActiveMatch");
+  const recoveryEnd = source.indexOf("async function finalizeAcceptedSoloSessionV2Match", recoveryStart);
+  const recovery = source.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /cleanupSoloSessionV2Match\(resources, \{/);
+  assert.match(recovery, /restoreQueue: true/);
+  assert.match(recovery, /transitionAction: "accept"/);
+  assert.doesNotMatch(accept, /abortFailedSoloSessionV2Activation/);
+  assert.ok(
+    accept.lastIndexOf("refreshSoloSessionV2ActivePair")
+      < accept.lastIndexOf("activateSoloSessionV2Room"),
+  );
   assert.doesNotMatch(accept, /rooms\/\$\{data\.roomId\}\/status/);
   assert.doesNotMatch(accept, /realtime\.ref\("online"\)\.update/);
   assert.match(accept, /acceptedSoloSessionV2Response/);
