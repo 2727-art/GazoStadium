@@ -1748,7 +1748,7 @@ async function publishCreatorCard(uid, data) {
   ]);
   const premiumOwned = economy.inventory?.[CREATOR_CARD_PREMIUM_PRODUCT_ID] === true;
   if (isPremiumCreatorCardTheme(cardTheme) && !premiumOwned) {
-    throw new HttpsError("failed-precondition", "プレミアム装飾を先に解放してください。");
+    throw new HttpsError("failed-precondition", "プレミアム仕上げを先に解放してください。");
   }
   const selectedAchievementIds = sanitizeAchievementIds(rawAchievementIds, {
     unlocked: achievementState.profile.unlocked,

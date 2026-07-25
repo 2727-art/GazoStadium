@@ -6,7 +6,7 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
-test("existing 500 Pay entitlement now unlocks premium creator-card decoration", () => {
+test("existing 500 Pay entitlement remains and unlocks the editor-only premium finish", () => {
   const catalog = require("../product-catalog");
   const online = read("online.js");
   assert.deepEqual(catalog.feature_top_message, {
@@ -16,9 +16,9 @@ test("existing 500 Pay entitlement now unlocks premium creator-card decoration",
   });
   assert.match(
     online,
-    /\{\s*id:\s*TOP_MESSAGE_PRODUCT_ID,\s*type:\s*"feature",\s*name:\s*"推しカード プレミアム装飾"[^}]*price:\s*500\s*\}/,
+    /\{\s*id:\s*TOP_MESSAGE_PRODUCT_ID,\s*type:\s*"feature",\s*name:\s*"推しカード プレミアム仕上げ"[^}]*price:\s*500\s*\}/,
   );
-  assert.match(online, /基本カードの公開は無料です。/);
+  assert.match(online, /基本カードは無料でトップページへ飾れます。/);
   assert.match(online, /公開中のカードはそのままです。/);
 
   const purchaseStart = online.indexOf("async function purchaseShopProduct");
@@ -26,6 +26,81 @@ test("existing 500 Pay entitlement now unlocks premium creator-card decoration",
   const purchaseSource = online.slice(purchaseStart, purchaseEnd);
   assert.ok(purchaseStart >= 0 && purchaseEnd > purchaseStart);
   assert.doesNotMatch(purchaseSource, /state\.topMessage\s*=/);
+});
+
+test("premium finish is tried and purchased in the creator-card editor, not a shop shelf", () => {
+  const online = read("online.js");
+  const editorStart = online.indexOf("function renderCreatorCardEditor");
+  const editorEnd = online.indexOf("function renderPointShop", editorStart);
+  const editorSource = online.slice(editorStart, editorEnd);
+  const shopStart = editorEnd;
+  const shopEnd = online.indexOf("function renderMatching", shopStart);
+  const shopSource = online.slice(shopStart, shopEnd);
+  assert.ok(editorStart >= 0 && editorEnd > editorStart);
+  assert.ok(shopStart >= 0 && shopEnd > shopStart);
+
+  assert.match(editorSource, /id="creatorCardPremiumPanel"/);
+  assert.match(editorSource, /id="creatorCardUnlockPremium"/);
+  assert.match(editorSource, /id="creatorCardPremiumTrialLabel"/);
+  assert.match(editorSource, /id="creatorCardSubmit"/);
+  assert.match(editorSource, /creator-card-theme-group/);
+  assert.match(editorSource, /creator-card-theme-grid is-premium/);
+  assert.match(editorSource, /無料4種/);
+  assert.match(editorSource, /プレミアム3種/);
+  assert.match(editorSource, /3つのプレミアム仕上げ/);
+  assert.match(editorSource, /500 Pay/);
+  assert.match(editorSource, /買い切り/);
+  assert.match(editorSource, /試着/);
+  assert.doesNotMatch(editorSource, /const locked = theme\.premium/);
+  assert.match(editorSource, /\$\{premiumTrial \? "disabled" : ""\}/);
+  assert.match(editorSource, /aria-disabled="\$\{premiumTrial\}"/);
+  assert.match(editorSource, /useOfflineMarketPreview/);
+
+  assert.doesNotMatch(shopSource, /const featureProducts\s*=/);
+  assert.doesNotMatch(shopSource, /shop-feature-grid/);
+  assert.match(shopSource, /shop-free-card-callout/);
+  assert.match(shopSource, /推しカード編集ルームへ移動/);
+  assert.match(shopSource, /data-open-creator-card/);
+});
+
+test("premium trial and purchase preserve the draft and never publish implicitly", () => {
+  const online = read("online.js");
+  assert.match(online, /creatorCardDraft:\s*null/);
+  assert.match(online, /state\.creatorCardDraft/);
+  assert.match(online, /function captureCreatorCardDraft/);
+  assert.match(online, /function creatorCardUsesLockedPremium/);
+  assert.doesNotMatch(online, /プレミアム装飾/);
+
+  const purchaseStart = online.indexOf("async function purchaseShopProduct");
+  const purchaseEnd = online.indexOf("async function toggleShopProduct", purchaseStart);
+  const purchaseSource = online.slice(purchaseStart, purchaseEnd);
+  assert.ok(purchaseStart >= 0 && purchaseEnd > purchaseStart);
+  assert.doesNotMatch(purchaseSource, /state\.topMessage\s*=/);
+  assert.doesNotMatch(purchaseSource, /publish_creator_card/);
+  assert.doesNotMatch(purchaseSource, /creatorCardDraft\s*=\s*null/);
+  assert.match(purchaseSource, /const expectedState = state;/);
+  assert.match(purchaseSource, /const expectedUid = expectedState\.uid;/);
+  assert.match(purchaseSource, /state !== expectedState \|\| state\.uid !== expectedUid/);
+
+  const saveStart = online.indexOf("async function saveTopMessage");
+  const saveEnd = online.indexOf("async function deleteTopMessage", saveStart);
+  const saveSource = online.slice(saveStart, saveEnd);
+  assert.ok(saveStart >= 0 && saveEnd > saveStart);
+  assert.match(saveSource, /publish_creator_card/);
+
+  const downloadStart = online.indexOf("async function downloadCreatorCard");
+  const downloadEnd = online.indexOf("async function retryCreatorCardDependencies", downloadStart);
+  const downloadSource = online.slice(downloadStart, downloadEnd);
+  assert.ok(downloadStart >= 0 && downloadEnd > downloadStart);
+  assert.match(downloadSource, /creatorCardUsesLockedPremium\(value\)/);
+
+  const bindStart = online.indexOf("function bindCreatorCardEvents");
+  const bindEnd = online.indexOf("function bindEconomyEvents", bindStart);
+  const bindSource = online.slice(bindStart, bindEnd);
+  assert.ok(bindStart >= 0 && bindEnd > bindStart);
+  assert.match(bindSource, /creatorCardFormValue\(\)[\s\S]*?purchaseShopProduct\(TOP_MESSAGE_PRODUCT_ID\)/);
+  assert.match(bindSource, /creatorCardXShare[\s\S]*?creatorCardUsesLockedPremium[\s\S]*?preventDefault/);
+  assert.match(bindSource, /form\.addEventListener\("submit"[\s\S]*?creatorCardUsesLockedPremium[\s\S]*?return/);
 });
 
 test("creator-card publication is callable-authoritative and premium themes require ownership", () => {
@@ -94,12 +169,25 @@ test("creator-card UI remains discoverable, shareable, and cache-busted", () => 
   assert.match(online, /state\.topMessageBusy \|\| useOfflineMarketPreview \? "disabled"/);
   assert.match(styles, /\.creator-card-screen/);
   assert.match(styles, /\.creator-card-theme-premium-hologram/);
+  assert.match(styles, /\.creator-card-theme-group/);
+  assert.match(styles, /\.creator-card-theme-grid\.is-premium/);
+  assert.match(styles, /\.creator-card-premium-panel/);
+  assert.match(styles, /\.creator-card-premium-panel\.is-owned/);
+  assert.match(styles, /\.creator-card-share-actions \.button\.is-disabled/);
+  assert.match(online, /get\("creatorCardPremium"\) === "locked"/);
 
   for (const asset of ["styles.css", "app.js", "online.js"]) {
-    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*favorite-card-v1`));
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*favorite-card-v2`));
   }
-  assert.match(readme, /基本カードは無料/);
-  assert.match(readme, /500 Pay[^。\n]*プレミアム装飾/);
+  assert.match(readme, /基本カードを無料公開/);
+  assert.match(readme, /推しカードの販売棚は設けず/);
+  assert.match(readme, /無料4種とプレミアム3種/);
+  assert.match(readme, /500 Pay[^。\n]*まとめて[^。\n]*買い切り/);
+  assert.match(readme, /購入時[^。\n]*試着中テーマを維持/);
+  assert.match(readme, /購入だけでは公開中のカードを変更しない/);
+  assert.match(readme, /プレミアム仕上げ/);
+  assert.match(readme, /\?marketPreview=1&creatorCardPremium=locked/);
+  assert.doesNotMatch(readme, /プレミアム装飾/);
   assert.match(readme, /既存購入者/);
   assert.match(readme, /匿名UID、勝敗、RATE、画像、ルーム履歴/);
 });

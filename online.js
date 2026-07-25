@@ -174,6 +174,7 @@ const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const RANKING_COMMENT_MAX_LENGTH = 80;
 const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
 const TOP_MESSAGE_PRODUCT_ID = "feature_top_message";
+const CREATOR_CARD_PREMIUM_PREVIEW_LOCKED = useOfflineMarketPreview && new URLSearchParams(window.location.search).get("creatorCardPremium") === "locked";
 const TOP_MESSAGE_MAX_LENGTH = 30;
 const CREATOR_CARD_URL_PATTERN = /(?:https?:\/\/|www\.|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?:[/?#]\S*)?)/i;
 const CREATOR_CARD_EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,24}/i;
@@ -310,7 +311,7 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   royaleMatches: 1,
 });
 const SHOP_PRODUCTS = [
-  { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム装飾", description: "無料の推しカードにホログラム、星空、ロイヤル箔の仕上げを追加する買い切り機能", price: 500 },
+  { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム仕上げ", description: "無料の推しカードでホログラム、スターダスト、ロイヤル箔を何度でも使える買い切り機能", price: 500 },
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
   { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
   { id: "reaction_composition", type: "reaction", name: "コンポジション", reaction: "構図がうまい！", description: "画面構成に注目した追加リアクション", price: 160 },
@@ -537,6 +538,7 @@ function createOnlineState() {
     topMessageBusy: false,
     creatorCardDependenciesSettled: false,
     creatorCardDependenciesBusy: false,
+    creatorCardDraft: null,
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -1267,7 +1269,7 @@ function openOnlineScreen(screen) {
       state.economy = normalizeEconomyRecord({
         points: 2_500,
         inventory: {
-          [TOP_MESSAGE_PRODUCT_ID]: true,
+          [TOP_MESSAGE_PRODUCT_ID]: !CREATOR_CARD_PREMIUM_PREVIEW_LOCKED,
           title_oshi_storyteller: true,
           title_tokimeki_curator: true,
           stamp_god_photo: true,
@@ -1395,6 +1397,7 @@ function openAchievements() {
 }
 
 function openCreatorCard() {
+  state.creatorCardDraft = null;
   openOnlineScreen("creatorCard");
 }
 
@@ -2102,7 +2105,7 @@ async function saveTopMessage({
   const cardTheme = getCreatorCardTheme(cardThemeValue);
   if (cardTheme.id !== cardThemeValue) throw new Error("カードテーマを選び直してください。");
   const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
-  if (cardTheme.premium && !premiumOwned) throw new Error("プレミアム装飾を先に解放してください。");
+  if (cardTheme.premium && !premiumOwned) throw new Error("プレミアム仕上げを先に解放してください。");
   const rawXHandle = String(xHandleValue || "").trim().replace(/^@+/, "");
   const xHandle = normalizeXHandle(rawXHandle);
   if (rawXHandle && !X_HANDLE_PATTERN.test(xHandle)) {
@@ -2134,6 +2137,7 @@ async function saveTopMessage({
     state.topMessageEntryId = result.entryId;
     state.topMessage = normalizeOwnTopMessage(result.card);
     state.topMessageReady = true;
+    state.creatorCardDraft = null;
     await refreshTopMessages({ silent: true });
     saved = true;
     showToast("推しカードをトップページに飾りました。");
@@ -2156,6 +2160,7 @@ async function deleteTopMessage() {
     await economyActionCallable({ action: "delete_creator_card" });
     state.topMessage = null;
     state.topMessageReady = true;
+    state.creatorCardDraft = null;
     await refreshTopMessages({ silent: true });
     deleted = true;
     showToast("推しカードをトップページから外しました。");
@@ -2633,67 +2638,86 @@ function renderCreatorCardEditor() {
   if (!state.economyReady || !state.achievementsReady || !state.topMessageReady) {
     return `<section class="screen creator-card-screen">
       <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1><p>公開権・実績・現在のカードを安全に確認できませんでした。</p></div><button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
-      <div class="economy-unavailable"><strong>カード情報を読み込めませんでした</strong><p>既存のプレミアム装飾や実績を失わないよう、確認できるまで編集を停止しています。</p><button class="button button-primary" id="creatorCardRetry" type="button" ${state.creatorCardDependenciesBusy ? "disabled" : ""}>再読み込み</button></div>
+      <div class="economy-unavailable"><strong>カード情報を読み込めませんでした</strong><p>既存のプレミアム仕上げや実績を失わないよう、確認できるまで編集を停止しています。</p><button class="button button-primary" id="creatorCardRetry" type="button" ${state.creatorCardDependenciesBusy ? "disabled" : ""}>再読み込み</button></div>
     </section>`;
   }
   const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
   const existing = state.topMessage;
   const growth = creatorCardGrowthProgress();
-  const initialAchievementIds = creatorCardInitialAchievementIds();
   const unlockedAchievements = creatorCardUnlockedAchievements();
-  const creatorType = getCreatorCardType(existing?.creatorType || "illustration");
-  const requestedTheme = getCreatorCardTheme(existing?.cardTheme, { legacyPremium: Number(existing?.schemaVersion || CREATOR_CARD_VERSION) < CREATOR_CARD_VERSION });
-  const selectedTheme = requestedTheme.premium && !premiumOwned
+  const draft = state.creatorCardDraft ? normalizeCreatorCardDraft(state.creatorCardDraft) : null;
+  const creatorType = getCreatorCardType(draft?.creatorType || existing?.creatorType || "illustration");
+  const legacyPremium = Number(existing?.schemaVersion || CREATOR_CARD_VERSION) < CREATOR_CARD_VERSION;
+  const requestedTheme = getCreatorCardTheme(draft?.cardTheme || existing?.cardTheme, { legacyPremium });
+  const selectedTheme = requestedTheme.premium && !premiumOwned && !draft
     ? getCreatorCardTheme("basic-rose")
     : requestedTheme;
-  const initialXHandle = existing?.xHandle || state.xHandle || "";
+  const initialName = draft ? draft.name : existing?.name || state.name;
+  const initialText = draft ? draft.text : existing?.text || creatorType.templates[0];
+  const initialXHandle = draft ? draft.xHandleInput : existing?.xHandle || state.xHandle || "";
+  const initialXPublic = draft ? draft.xPublic : Boolean(existing?.xHandle);
+  const initialAchievementIds = draft ? draft.achievementShowcase : creatorCardInitialAchievementIds();
+  const premiumTrial = selectedTheme.premium && !premiumOwned;
+  const premiumBalance = Math.max(0, Math.floor(Number(state.economy.points || 0)));
+  const premiumAffordable = premiumBalance >= 500;
   const preview = creatorCardPresentation({
-    name: existing?.name || state.name,
-    text: existing?.text || creatorType.templates[0],
+    name: initialName,
+    text: initialText,
     creatorType: creatorType.id,
-    xHandle: existing?.xHandle || "",
+    xHandle: initialXPublic ? initialXHandle : "",
     cardTheme: selectedTheme.id,
     achievementShowcase: initialAchievementIds,
   });
   const typeOptions = CREATOR_CARD_TYPES.map((type) => `<label class="creator-card-choice"><input type="radio" name="creatorCardType" value="${type.id}" ${creatorType.id === type.id ? "checked" : ""} /><span><i aria-hidden="true">${type.icon}</i><b>${type.label}</b></span></label>`).join("");
   const templateButtons = CREATOR_CARD_TYPES.flatMap((type) => type.templates.map((template) => `<button type="button" data-creator-card-template="${escapeHtml(template)}" data-creator-card-template-type="${type.id}" ${type.id === creatorType.id ? "" : "hidden"}>${escapeHtml(template)}</button>`)).join("");
-  const themeOptions = CREATOR_CARD_THEMES.map((theme) => {
-    const locked = theme.premium && !premiumOwned;
-    return `<label class="creator-card-theme-option creator-card-theme-${theme.id} ${locked ? "is-locked" : ""}"><input type="radio" name="creatorCardTheme" value="${theme.id}" ${selectedTheme.id === theme.id && !locked ? "checked" : ""} ${locked ? "disabled" : ""} /><span><i aria-hidden="true"></i><b>${theme.label}</b>${theme.premium ? `<small>${locked ? "500 Payで解放" : "PREMIUM"}</small>` : "<small>FREE</small>"}</span></label>`;
-  }).join("");
+  const renderThemeOption = (theme) => `<label class="creator-card-theme-option creator-card-theme-${theme.id} ${theme.premium ? "is-premium" : ""}"><input type="radio" name="creatorCardTheme" value="${theme.id}" ${selectedTheme.id === theme.id ? "checked" : ""} /><span><i aria-hidden="true"></i><b>${theme.label}</b><small>${theme.premium ? (premiumOwned ? "PREMIUM" : "試着") : "FREE"}</small></span></label>`;
+  const freeThemeOptions = CREATOR_CARD_THEMES.filter((theme) => !theme.premium).map(renderThemeOption).join("");
+  const premiumThemeOptions = CREATOR_CARD_THEMES.filter((theme) => theme.premium).map(renderThemeOption).join("");
   const achievementOptions = unlockedAchievements.length
     ? unlockedAchievements.map((achievement) => `<button class="creator-card-achievement-option" type="button" data-creator-card-achievement="${achievement.id}" aria-pressed="${initialAchievementIds.includes(achievement.id)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>Lv.${achievement.level}</small></button>`).join("")
     : `<p class="creator-card-achievement-empty">検証済みの対戦や市場成立で実績を解除すると、ここから最大3件を飾れます。</p>`;
-  const shareUrl = shared()?.createXCreatorCardPostUrl?.(preview) || "#";
+  const shareUrl = premiumTrial ? "#" : shared()?.createXCreatorCardPostUrl?.(preview) || "#";
   return `<section class="screen creator-card-screen">
     <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1>
       <p>遊んだ歩みで育つ、自分だけの作品名刺です。基本カードは無料でトップページへ飾れます。</p></div>
-      <button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
+      <button class="button button-ghost button-small" id="creatorCardHomeButton" ${state.economyBusy ? "disabled" : ""}>タイトルへ</button></div>
     <div class="creator-card-growth-panel">
       <div><span>CARD GROWTH</span><strong>STAGE ${growth.level}・${growth.label}</strong><p>勝敗や順位ではなく、検証済みの正式対戦と市場成立で育ちます。</p></div>
       <div class="creator-card-growth-meter"><span role="progressbar" aria-label="次のカード段階までの進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(growth.progress)}"><i style="width:${growth.progress.toFixed(1)}%"></i></span><small>${growth.nextTarget ? `次の成長まであと${growth.remaining}回` : "カードは最高段階まで育ちました"}</small></div>
     </div>
     <div class="creator-card-editor-layout">
       <aside class="creator-card-editor-preview"><div><span>LIVE PREVIEW</span><small>公開前に完成形を確認できます</small></div><div id="creatorCardPreview">${shared()?.renderCreatorCard?.(preview, { preview: true }) || ""}</div>
-        <div class="creator-card-share-actions"><button class="button button-ghost button-small" id="creatorCardDownload" type="button">カード画像を保存</button><button class="button button-ghost button-small" id="creatorCardNativeShare" type="button">画像付きで共有</button>
-          <a class="button button-x-share button-small" id="creatorCardXShare" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener noreferrer"><span class="x-share-mark" aria-hidden="true">X</span><span>Xで披露</span></a></div>
+        <div class="creator-card-share-actions"><button class="button button-ghost button-small" id="creatorCardDownload" type="button" ${premiumTrial ? "disabled" : ""}>カード画像を保存</button><button class="button button-ghost button-small" id="creatorCardNativeShare" type="button" ${premiumTrial ? "disabled" : ""}>画像付きで共有</button>
+          <a class="button button-x-share button-small ${premiumTrial ? "is-disabled" : ""}" id="creatorCardXShare" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener noreferrer" aria-disabled="${premiumTrial}" ${premiumTrial ? 'tabindex="-1"' : ""}><span class="x-share-mark" aria-hidden="true">X</span><span>Xで披露</span></a></div>
+        <small id="creatorCardTrialShareNote" ${premiumTrial ? "" : "hidden"}>プレミアム仕上げの試着中は、解放するまで画像保存・共有・公開はできません。</small>
         <small>Xの投稿画面には画像を自動添付できません。画像保存後、X側で添付してください。共有対応端末では「画像付きで共有」を利用できます。</small>
       </aside>
       <form class="creator-card-editor-form" id="creatorCardForm">
-        <section><div class="creator-card-field-head"><label for="creatorCardName">表示名</label><small>16文字以内</small></div><input id="creatorCardName" type="text" maxlength="16" required value="${escapeHtml(existing?.name || state.name)}" autocomplete="nickname" /></section>
+        <section><div class="creator-card-field-head"><label for="creatorCardName">表示名</label><small>16文字以内</small></div><input id="creatorCardName" type="text" maxlength="16" required value="${escapeHtml(initialName)}" autocomplete="nickname" /></section>
         <fieldset><legend>活動札</legend><div class="creator-card-choice-grid">${typeOptions}</div></fieldset>
-        <section><div class="creator-card-field-head"><label for="creatorCardText">カードの紹介文</label><span><b id="creatorCardLength">${String(existing?.text || creatorType.templates[0]).length}</b> / ${TOP_MESSAGE_MAX_LENGTH}</span></div>
-          <textarea id="creatorCardText" maxlength="${TOP_MESSAGE_MAX_LENGTH}" rows="2" required>${escapeHtml(existing?.text || creatorType.templates[0])}</textarea>
+        <section><div class="creator-card-field-head"><label for="creatorCardText">カードの紹介文</label><span><b id="creatorCardLength">${String(initialText).length}</b> / ${TOP_MESSAGE_MAX_LENGTH}</span></div>
+          <textarea id="creatorCardText" maxlength="${TOP_MESSAGE_MAX_LENGTH}" rows="2" required>${escapeHtml(initialText)}</textarea>
           <div class="creator-card-templates" aria-label="紹介文テンプレート">${templateButtons}</div><small>URL・メールアドレス・個人情報は入力しないでください。Xは下の専用欄から公開できます。</small></section>
         <section><div class="creator-card-field-head"><label for="creatorCardXHandle">Xユーザー名</label><small>英数字と_、15文字以内</small></div>
           <label class="creator-card-x-input" for="creatorCardXHandle"><span>@</span><input id="creatorCardXHandle" type="text" maxlength="15" value="${escapeHtml(initialXHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
-          <label class="creator-card-public-check"><input id="creatorCardXPublic" type="checkbox" ${existing?.xHandle ? "checked" : ""} /><span>このカードからXを公開する</span></label><small>ランキングや市場の公開設定とは別です。チェックした場合だけカードにXリンクを表示します。</small></section>
-        <fieldset><legend>カードテーマ</legend><div class="creator-card-theme-grid">${themeOptions}</div>
-          ${premiumOwned ? '<small class="creator-card-premium-note">500 Payで解放済みのプレミアム装飾を使用できます。</small>' : '<div class="creator-card-premium-note"><span>ホログラム・スターダスト・ロイヤル箔は500 Payの買い切り装飾です。</span><button class="button button-ghost button-small" id="creatorCardOpenShop" type="button">装飾を見る</button></div>'}</fieldset>
+          <label class="creator-card-public-check"><input id="creatorCardXPublic" type="checkbox" ${initialXPublic ? "checked" : ""} /><span>このカードからXを公開する</span></label><small>ランキングや市場の公開設定とは別です。チェックした場合だけカードにXリンクを表示します。</small></section>
+        <fieldset><legend>カードテーマ</legend>
+          <section class="creator-card-theme-group"><div class="creator-card-theme-group-head"><strong>無料4種</strong><small>いつでも選べます</small></div><div class="creator-card-theme-grid">${freeThemeOptions}</div></section>
+          <section class="creator-card-theme-group"><div class="creator-card-theme-group-head"><strong>プレミアム3種</strong><small>${premiumOwned ? "解放済み" : "選ぶとプレビューへ試着"}</small></div><div class="creator-card-theme-grid is-premium">${premiumThemeOptions}</div></section>
+        </fieldset>
+        <div class="creator-card-premium-panel ${premiumOwned ? "is-owned" : ""}" id="creatorCardPremiumPanel" role="region" aria-labelledby="creatorCardPremiumHeading" aria-busy="${state.economyBusy}">
+          <div class="creator-card-premium-panel-head"><span>ONE-TIME FAVORITE CARD FINISH</span><strong id="creatorCardPremiumHeading">${premiumOwned ? "3つのプレミアム仕上げを解放済み" : "3つのプレミアム仕上げを500 Payで解放"}</strong>
+            <p id="creatorCardPremiumTrialLabel" aria-live="polite">${premiumOwned ? "解放済み・追加料金なし" : premiumTrial ? `「${escapeHtml(selectedTheme.label)}」を試着中です` : "プレミアムを選ぶと、自分のカードで仕上がりを試せます"}</p></div>
+          <div class="creator-card-premium-panel-body">
+            <ul><li>ホログラム・スターダスト・ロイヤル箔の3種セット</li><li>一度解放すれば何度でも使える買い切りです</li><li>見た目だけの仕上げで、成長やトップの表示順には影響しません</li></ul>
+            ${premiumOwned ? '<div class="creator-card-premium-owned"><strong>解放済み</strong><span>3つすべてを追加料金なしで使えます。</span></div>' : `<div class="creator-card-premium-purchase"><div class="creator-card-premium-balance"><span>現在 <strong>${formatAnjuPay(premiumBalance)}</strong></span><span>解放後 <strong>${premiumAffordable ? formatAnjuPay(premiumBalance - 500) : "残高不足"}</strong></span></div><button class="button button-primary" id="creatorCardUnlockPremium" type="button" ${!premiumTrial || !premiumAffordable || state.economyBusy || useOfflineMarketPreview ? "disabled" : ""}>${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入できません" : !premiumTrial ? "プレミアム仕上げを選んで試着" : premiumAffordable ? "3つの仕上げを500 Payで解放" : `あと${formatAnjuPay(500 - premiumBalance)}`}</button></div>`}
+          </div>
+          <small>解放しただけでは公開中のカードは変わりません。「カードを更新して飾る」で初めて反映します。</small>
+        </div>
         <fieldset><legend>カードに飾る実績 <small>最大3件</small></legend><div class="creator-card-achievement-grid">${achievementOptions}</div></fieldset>
         <div class="creator-card-public-note"><strong>公開されるもの</strong><span>表示名・活動札・紹介文・選んだ実績・称号・カード段階・許可したXユーザー名。匿名UID、勝敗、RATE、画像、ルーム履歴は公開しません。</span></div>
-        ${useOfflineMarketPreview ? '<p class="creator-card-preview-notice">LOCAL UI PREVIEWでは見た目と画像保存だけを確認でき、公開・更新・削除は行いません。</p>' : ""}
-        <div class="creator-card-editor-actions"><button class="button button-primary" type="submit" ${state.topMessageBusy || useOfflineMarketPreview ? "disabled" : ""}>${existing ? "カードを更新して飾る" : "トップページに飾る"}</button>
+        ${useOfflineMarketPreview ? '<p class="creator-card-preview-notice">LOCAL UI PREVIEWでは見た目と画像保存だけを確認でき、公開・更新・削除・購入は行いません。</p>' : ""}
+        <div class="creator-card-editor-actions"><button class="button button-primary" id="creatorCardSubmit" type="submit" ${state.topMessageBusy || useOfflineMarketPreview || premiumTrial ? "disabled" : ""}>${existing ? "カードを更新して飾る" : "トップページに飾る"}</button>
           ${existing ? `<button class="button button-ghost" id="deleteTopMessage" type="button" ${state.topMessageBusy || useOfflineMarketPreview ? "disabled" : ""}>トップページから外す</button>` : ""}</div>
       </form>
     </div>
@@ -2704,9 +2728,6 @@ function renderPointShop() {
   const equippedReactionCount = getEquippedReactionProducts().length;
   const equippedStampCount = getEquippedStampProducts().length;
   const equippedChatCosmetics = getEquippedChatCosmetics(state.economy);
-  const topMessageOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
-  const creatorCardLabel = state.topMessage ? "公開中" : "未公開";
-  const creatorCardPremiumLabel = topMessageOwned ? "解放済み" : "未購入";
   const standardTitleCategories = PLAYER_TITLE_CATEGORIES.filter((category) => category.collection !== OSHI_MARKET_COLLECTION_ID);
   const standardTitleProducts = PLAYER_TITLE_PRODUCTS.filter((product) => product.collection !== OSHI_MARKET_COLLECTION_ID);
   const renderProduct = (product) => {
@@ -2737,7 +2758,7 @@ function renderPointShop() {
           : `<div class="shop-message-preview"><span>✦ FAVORITE CARD FINISH</span><strong>推しカードを特別な一枚へ</strong></div>`;
     let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(product.price)}で購入` : `あと${formatAnjuPay(product.price - state.economy.points)}`}</button>`;
     if (owned && product.type === "feature") {
-      action = `<button class="button button-wide button-cyan" data-open-creator-card ${state.topMessageBusy ? "disabled" : ""}>プレミアム装飾を選ぶ</button>`;
+      action = `<button class="button button-wide button-cyan" data-open-creator-card ${state.topMessageBusy ? "disabled" : ""}>プレミアム仕上げを選ぶ</button>`;
     } else if (owned) {
       action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${equipLimit}/${equipLimit}` : "装備する"}</button>`;
     }
@@ -2753,7 +2774,6 @@ function renderPointShop() {
       ${action}
     </article>`;
   };
-  const featureProducts = SHOP_PRODUCTS.filter((product) => product.type === "feature").map(renderProduct).join("");
   const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
   const stampProducts = SHOP_PRODUCTS.filter((product) => product.type === "stamp").map(renderProduct).join("");
   const shopProductById = new Map(SHOP_PRODUCTS.map((product) => [product.id, product]));
@@ -2792,10 +2812,10 @@ function renderPointShop() {
   const specialChatFrameProducts = CHAT_SPECIAL_FRAME_PRODUCTS.map(renderProduct).join("");
   return `<section class="screen economy-screen">
     <div class="section-head"><div><span class="eyebrow">ANJUPAY STORE</span><h1>AnjuPayストア</h1>
-      <p>チャット装飾、推しカードの仕上げ、リアクション、スタンプ、称号で交流をカスタマイズできます。</p></div>
+      <p>チャット装飾、リアクション、スタンプ、称号で交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(state.economyReady ? state.economy.points : null)}</strong><small>${ANJU_PAY_UNIT}</small></div>
-    ${state.economyReady ? `<div class="shop-loadout-summary"><span>推しカード <strong>${creatorCardLabel}</strong></span><span>プレミアム装飾 <strong>${creatorCardPremiumLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
+    ${state.economyReady ? `<div class="shop-loadout-summary"><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
       <section class="shop-category shop-oshi-market-collection" id="shopOshiMarketCollection" aria-labelledby="shopOshiMarketCollectionTitle">
         <div class="shop-oshi-market-hero">
           <div><span>OSHI-KATSU / TOKIMEKI COLLECTION</span><h2 id="shopOshiMarketCollectionTitle">推し活・ときめきコレクション</h2>
@@ -2809,9 +2829,8 @@ function renderPointShop() {
         <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードのプレミアム仕上げ</h2></div><p>基本カードの公開は無料です。${formatAnjuPay(500)}の買い切りで特別な3テーマを追加できます。</p></div>
-        <div class="shop-free-card-callout"><div><strong>あなたの推しカード</strong><span>活動札・紹介文・実績・Xリンクを選び、トップページへ無料で飾れます。</span></div><button class="button button-cyan" type="button" data-open-creator-card>${state.topMessage ? "カードを編集" : "無料でカードをつくる"}</button></div>
-        <div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードの仕上げ</h2></div><p>推しカードに関する選択と解放は、自分のカードを見ながら行える編集ルームへまとめました。</p></div>
+        <div class="shop-free-card-callout"><div><strong>推しカード編集ルームへ移動しました</strong><span>無料テーマもプレミアム仕上げも、自分のカードで試してから選べます。プレミアム3種の500 Pay買い切り解放も編集ルーム内で行います。</span></div><button class="button button-cyan" type="button" data-open-creator-card>推しカード編集へ</button></div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
       <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / ${CHAT_SPECIAL_FRAME_PRODUCTS.length} STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
@@ -3577,26 +3596,60 @@ function applyTitleCategoryFilter(categoryId) {
   });
 }
 
-function creatorCardFormValue() {
-  const creatorType = document.querySelector('input[name="creatorCardType"]:checked')?.value || "illustration";
-  const cardTheme = document.querySelector('input[name="creatorCardTheme"]:checked')?.value || "basic-rose";
-  const xPublic = document.querySelector("#creatorCardXPublic")?.checked === true;
+function normalizeCreatorCardDraft(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    name: String(source.name ?? "").slice(0, 16),
+    text: String(source.text ?? "").slice(0, TOP_MESSAGE_MAX_LENGTH),
+    creatorType: getCreatorCardType(source.creatorType || "illustration").id,
+    xHandleInput: String(source.xHandleInput ?? "").trim().replace(/^@+/, "").slice(0, 15),
+    xPublic: source.xPublic === true,
+    cardTheme: getCreatorCardTheme(source.cardTheme || "basic-rose").id,
+    achievementShowcase: normalizeCreatorCardAchievementIds(source.achievementShowcase),
+  };
+}
+
+function captureCreatorCardDraft() {
+  const form = document.querySelector("#creatorCardForm");
+  if (!form) return state.creatorCardDraft;
   const achievementShowcase = [...document.querySelectorAll("[data-creator-card-achievement][aria-pressed='true']")]
     .map((button) => button.dataset.creatorCardAchievement)
     .filter(Boolean)
     .slice(0, 3);
-  return creatorCardPresentation({
-    name: document.querySelector("#creatorCardName")?.value || state.name,
-    text: document.querySelector("#creatorCardText")?.value || "",
-    creatorType,
-    xHandle: xPublic ? document.querySelector("#creatorCardXHandle")?.value || "" : "",
-    cardTheme,
+  const draft = normalizeCreatorCardDraft({
+    name: document.querySelector("#creatorCardName")?.value ?? "",
+    text: document.querySelector("#creatorCardText")?.value ?? "",
+    creatorType: document.querySelector('input[name="creatorCardType"]:checked')?.value,
+    xHandleInput: document.querySelector("#creatorCardXHandle")?.value ?? "",
+    xPublic: document.querySelector("#creatorCardXPublic")?.checked === true,
+    cardTheme: document.querySelector('input[name="creatorCardTheme"]:checked')?.value,
     achievementShowcase,
+  });
+  state.creatorCardDraft = draft;
+  return draft;
+}
+
+function creatorCardUsesLockedPremium(value) {
+  return getCreatorCardTheme(value?.cardTheme).premium && state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] !== true;
+}
+
+function creatorCardFormValue() {
+  const draft = captureCreatorCardDraft() || normalizeCreatorCardDraft();
+  return creatorCardPresentation({
+    name: draft.name,
+    text: draft.text,
+    creatorType: draft.creatorType,
+    xHandle: draft.xPublic ? draft.xHandleInput : "",
+    cardTheme: draft.cardTheme,
+    achievementShowcase: draft.achievementShowcase,
   });
 }
 
 function updateCreatorCardPreview() {
   const value = creatorCardFormValue();
+  const selectedTheme = getCreatorCardTheme(value.cardTheme);
+  const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
+  const premiumTrial = selectedTheme.premium && !premiumOwned;
   const preview = document.querySelector("#creatorCardPreview");
   if (preview) preview.innerHTML = shared()?.renderCreatorCard?.(value, { preview: true }) || "";
   const counter = document.querySelector("#creatorCardLength");
@@ -3604,8 +3657,49 @@ function updateCreatorCardPreview() {
   document.querySelectorAll("[data-creator-card-template]").forEach((button) => {
     button.hidden = button.dataset.creatorCardTemplateType !== value.creatorType;
   });
+  const premiumPanel = document.querySelector("#creatorCardPremiumPanel");
+  if (premiumPanel) {
+    premiumPanel.classList.toggle("is-owned", premiumOwned);
+    premiumPanel.setAttribute("aria-busy", String(state.economyBusy));
+  }
+  const trialLabel = document.querySelector("#creatorCardPremiumTrialLabel");
+  if (trialLabel) {
+    trialLabel.textContent = premiumOwned ? "解放済み・追加料金なし" : premiumTrial ? `「${selectedTheme.label}」を試着中です` : "プレミアムを選ぶと、自分のカードで仕上がりを試せます";
+  }
+  const unlockButton = document.querySelector("#creatorCardUnlockPremium");
+  if (unlockButton) {
+    const balance = Math.max(0, Math.floor(Number(state.economy.points || 0)));
+    const affordable = balance >= 500;
+    unlockButton.disabled = !premiumTrial || !affordable || state.economyBusy || useOfflineMarketPreview;
+    unlockButton.textContent = useOfflineMarketPreview
+      ? "LOCAL UI PREVIEWでは購入できません"
+      : !premiumTrial
+        ? "プレミアム仕上げを選んで試着"
+        : !affordable
+          ? `あと${formatAnjuPay(500 - balance)}`
+          : "3つの仕上げを500 Payで解放";
+  }
+  const submitButton = document.querySelector("#creatorCardSubmit");
+  if (submitButton) submitButton.disabled = state.topMessageBusy || useOfflineMarketPreview || premiumTrial;
+  const downloadButton = document.querySelector("#creatorCardDownload");
+  if (downloadButton) downloadButton.disabled = premiumTrial;
+  const nativeShareButton = document.querySelector("#creatorCardNativeShare");
+  if (nativeShareButton) nativeShareButton.disabled = premiumTrial;
   const xShare = document.querySelector("#creatorCardXShare");
-  if (xShare) xShare.href = shared()?.createXCreatorCardPostUrl?.(value) || "#";
+  if (xShare) {
+    xShare.classList.toggle("is-disabled", premiumTrial);
+    xShare.setAttribute("aria-disabled", String(premiumTrial));
+    if (premiumTrial) {
+      xShare.href = "#";
+      xShare.setAttribute("tabindex", "-1");
+    } else {
+      xShare.href = shared()?.createXCreatorCardPostUrl?.(value) || "#";
+      xShare.removeAttribute("tabindex");
+    }
+  }
+  const trialShareNote = document.querySelector("#creatorCardTrialShareNote");
+  if (trialShareNote) trialShareNote.hidden = !premiumTrial;
+  return value;
 }
 
 function creatorCardDownloadName(value) {
@@ -3615,6 +3709,7 @@ function creatorCardDownloadName(value) {
 
 async function downloadCreatorCard({ shareFile = false } = {}) {
   const value = creatorCardFormValue();
+  if (creatorCardUsesLockedPremium(value)) throw new Error("プレミアム仕上げを解放すると画像保存・共有できます。");
   setBusy(true, "推しカード画像をつくっています…");
   try {
     const blob = await shared()?.createCreatorCardPngBlob?.(value);
@@ -3673,12 +3768,41 @@ function bindCreatorCardEvents() {
       showToast("推しカード情報を再読み込みできませんでした。");
     });
   });
-  document.querySelector("#creatorCardOpenShop")?.addEventListener("click", () => {
-    state.screen = "shop";
-    render();
-  });
   const form = document.querySelector("#creatorCardForm");
   if (!form) return;
+  document.querySelector("#creatorCardUnlockPremium")?.addEventListener("click", async () => {
+    const value = creatorCardFormValue();
+    const selectedTheme = getCreatorCardTheme(value.cardTheme);
+    if (!selectedTheme.premium) {
+      showToast("プレミアム仕上げを選び、自分のカードで試着してから解放できます。");
+      return;
+    }
+    if (state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true) {
+      showToast("プレミアム仕上げは解放済みです。追加料金はかかりません。");
+      updateCreatorCardPreview();
+      return;
+    }
+    if (useOfflineMarketPreview) {
+      showToast("LOCAL UI PREVIEWではAnjuPayを使用しません。");
+      return;
+    }
+    if (state.economyBusy) return;
+    const balance = Math.max(0, Math.floor(Number(state.economy.points || 0)));
+    if (balance < 500) {
+      showToast(`プレミアム仕上げの解放まで、あと${formatAnjuPay(500 - balance)}です。`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `プレミアム仕上げ3種を500 Payで解放しますか？\n\n残高 ${formatAnjuPay(balance)} → ${formatAnjuPay(balance - 500)}\n買い切りで、ホログラム・スターダスト・ロイヤル箔を何度でも使えます。\n購入だけでは公開中のカードは変わりません。`,
+    );
+    if (!confirmed) return;
+    await purchaseShopProduct(TOP_MESSAGE_PRODUCT_ID);
+  });
+  document.querySelector("#creatorCardXShare")?.addEventListener("click", (event) => {
+    if (!creatorCardUsesLockedPremium(creatorCardFormValue())) return;
+    event.preventDefault();
+    showToast("プレミアム仕上げを解放するとXで披露できます。");
+  });
   form.querySelectorAll("input, textarea").forEach((control) => {
     control.addEventListener("input", updateCreatorCardPreview);
     control.addEventListener("change", updateCreatorCardPreview);
@@ -3706,6 +3830,10 @@ function bindCreatorCardEvents() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const value = creatorCardFormValue();
+    if (creatorCardUsesLockedPremium(value)) {
+      showToast("プレミアム仕上げを解放してからカードを公開してください。");
+      return;
+    }
     try {
       await saveTopMessage({
         name: value.name,
@@ -3720,7 +3848,7 @@ function bindCreatorCardEvents() {
     }
   });
   document.querySelector("#deleteTopMessage")?.addEventListener("click", async () => {
-    if (!window.confirm("トップページから推しカードを外しますか？育成や装飾の権利は失われません。")) return;
+    if (!window.confirm("トップページから推しカードを外しますか？育成や仕上げの権利は失われません。")) return;
     try {
       await deleteTopMessage();
     } catch (error) {
@@ -3746,7 +3874,7 @@ function bindEconomyEvents() {
   document.querySelector("#missionsBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
   document.querySelector("#shopBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
   document.querySelectorAll("[data-open-creator-card]").forEach((button) => button.addEventListener("click", () => {
-    openOnlineScreen("creatorCard");
+    openCreatorCard();
   }));
 }
 
@@ -4117,37 +4245,57 @@ async function claimDailyPlayRewards() {
 async function purchaseShopProduct(productId) {
   const product = SHOP_PRODUCTS.find((candidate) => candidate.id === productId);
   if (!product || !state.economyReady || state.economyBusy) return;
+  if (useOfflineMarketPreview) {
+    showToast("LOCAL UI PREVIEWではAnjuPayを使用しません。");
+    return;
+  }
   const dateKey = currentDailyDateKey();
-  state.economyBusy = true;
+  const expectedState = state;
+  const expectedUid = expectedState.uid;
+  expectedState.economyBusy = true;
   render();
   try {
     const response = await economyActionCallable({ action: "purchase", productId: product.id });
     const result = response.data || {};
+    if (!active || state !== expectedState || state.uid !== expectedUid) {
+      expectedState.economyBusy = false;
+      return;
+    }
     const wasEquipped = product.type === "reaction"
-      ? state.economy.equipped?.reactions?.[product.id] === true
+      ? expectedState.economy.equipped?.reactions?.[product.id] === true
       : product.type === "stamp"
-        ? state.economy.equipped?.stamps?.[product.id] === true
+        ? expectedState.economy.equipped?.stamps?.[product.id] === true
         : ["title", "chatFrame", "chatBackground"].includes(product.type)
-          ? state.economy.equipped?.[product.type] === product.id
+          ? expectedState.economy.equipped?.[product.type] === product.id
           : false;
-    await refreshEconomyFromServer(dateKey, result.balance);
+    const economySnapshot = await get(ref(database, `online/economy/${expectedUid}`));
+    if (!active || state !== expectedState || state.uid !== expectedUid) {
+      expectedState.economyBusy = false;
+      return;
+    }
+    applyEconomySnapshot(economySnapshot, dateKey);
+    if (Number.isFinite(Number(result.balance))) expectedState.economy.points = Math.min(MAX_POINTS, Math.max(0, Number(result.balance)));
     const isEquipped = product.type === "reaction"
-      ? state.economy.equipped?.reactions?.[product.id] === true
+      ? expectedState.economy.equipped?.reactions?.[product.id] === true
       : product.type === "stamp"
-        ? state.economy.equipped?.stamps?.[product.id] === true
+        ? expectedState.economy.equipped?.stamps?.[product.id] === true
         : ["title", "chatFrame", "chatBackground"].includes(product.type)
-          ? state.economy.equipped?.[product.type] === product.id
+          ? expectedState.economy.equipped?.[product.type] === product.id
           : false;
-    state.economyBusy = false;
+    expectedState.economyBusy = false;
     render();
     if (result.outcome === "purchased" && isEquipped && !wasEquipped) showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
-    else if (result.outcome === "purchased" && product.type === "feature") showToast("推しカードのプレミアム装飾3種を解放しました。公開中のカードはそのままです。");
+    else if (result.outcome === "purchased" && product.type === "feature") showToast("推しカードのプレミアム仕上げ3種を解放しました。カードを更新して飾るまでは、公開中のカードはそのままです。");
     else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (result.outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("AnjuPay残高が不足しています。");
   } catch (error) {
     console.error(error);
-    state.economyBusy = false;
+    if (!active || state !== expectedState || state.uid !== expectedUid) {
+      expectedState.economyBusy = false;
+      return;
+    }
+    expectedState.economyBusy = false;
     render();
     showToast("商品を購入できませんでした。");
   }
