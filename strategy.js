@@ -149,6 +149,7 @@ const fxLayer = document.querySelector("#fxLayer");
 
 let active = false;
 let state = createState();
+let lastRenderedScreen = "";
 let strategyMatchmakingGenerationCounter = 0;
 
 const shared = () => window.HariaiApp?.shared;
@@ -409,6 +410,7 @@ function start() {
   }
   active = true;
   state = createState();
+  lastRenderedScreen = "";
   setStrategyChrome("STRATEGY CONNECTING");
   render();
   Promise.resolve(shared()?.profileAvatar?.ready?.()).then(() => {
@@ -484,13 +486,9 @@ function setStrategyChrome(label) {
   if (footerItems[1]) footerItems[1].textContent = "進行とチャットはルーム内同期、画像・添付音声・短尺映像は対戦相手へ直接転送します";
 }
 
-function focusScreen() {
-  app.focus({ preventScroll: true });
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-
 function render() {
   if (!active) return;
+  const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
     profile: renderProfile,
     matching: renderMatching,
@@ -529,9 +527,13 @@ function render() {
     error: renderError,
   };
   app.innerHTML = (renderers[state.screen] || renderProfile)();
+  lastRenderedScreen = state.screen;
   if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("beforeend", renderStrategyChat());
   bindScreenEvents();
-  focusScreen();
+  if (screenChanged) {
+    window.scrollTo(0, 0);
+    app.focus({ preventScroll: true });
+  }
 }
 
 function renderProfile() {

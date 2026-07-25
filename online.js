@@ -309,6 +309,7 @@ const finishCutInContent = document.querySelector("#finishCutInContent");
 
 let active = false;
 let state = createOnlineState();
+let lastRenderedScreen = "";
 let finishCutInGeneration = 0;
 let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
@@ -1142,6 +1143,7 @@ function openOnlineScreen(screen) {
     if (screen === "shop" || screen === "missions") {
       active = true;
       state = createOnlineState();
+      lastRenderedScreen = "";
       state.uid = `local-preview-${screen}`;
       state.screen = screen;
       state.authReady = true;
@@ -1170,6 +1172,7 @@ function openOnlineScreen(screen) {
     if (screen === "achievements") {
       active = true;
       state = createOnlineState();
+      lastRenderedScreen = "";
       state.screen = "achievements";
       state.authReady = true;
       state.economyReady = true;
@@ -1218,6 +1221,7 @@ function openOnlineScreen(screen) {
   }
   active = true;
   state = createOnlineState();
+  lastRenderedScreen = "";
   state.screen = screen;
   setOnlineChrome("CONNECTING");
   render();
@@ -1956,6 +1960,7 @@ function setOnlineChrome(label) {
 
 function render() {
   if (!active) return;
+  const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
     setup: renderSetup,
     familiarBook: renderSoloFamiliarBook,
@@ -1978,9 +1983,12 @@ function render() {
     error: renderError,
   };
   appRoot.innerHTML = (renderers[state.screen] || renderSetup)();
+  lastRenderedScreen = state.screen;
   bindScreenEvents();
-  appRoot.focus({ preventScroll: true });
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (screenChanged) {
+    window.scrollTo(0, 0);
+    appRoot.focus({ preventScroll: true });
+  }
 }
 
 function renderSoloFamiliarSetupPanel() {

@@ -109,6 +109,7 @@ const fxLayer = document.querySelector("#fxLayer");
 
 let active = false;
 let state = createState();
+let lastRenderedScreen = "";
 
 function createState() {
   return {
@@ -203,6 +204,7 @@ function start() {
   }
   active = true;
   state = createState();
+  lastRenderedScreen = "";
   setRoyaleChrome("CONNECTING");
   render();
   Promise.resolve(shared()?.profileAvatar?.ready?.()).then(() => { if (active && state.screen === "setup") render(); });
@@ -317,6 +319,7 @@ function setRoyaleChrome(label) {
 
 function render() {
   if (!active) return;
+  const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
     setup: renderSetup,
     matching: renderMatching,
@@ -334,9 +337,12 @@ function render() {
     error: renderError,
   };
   appRoot.innerHTML = (renderers[state.screen] || renderSetup)();
+  lastRenderedScreen = state.screen;
   bindEvents();
-  appRoot.focus({ preventScroll: true });
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (screenChanged) {
+    window.scrollTo(0, 0);
+    appRoot.focus({ preventScroll: true });
+  }
 }
 
 function renderSetup() {
