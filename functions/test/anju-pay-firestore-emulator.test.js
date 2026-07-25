@@ -263,6 +263,49 @@ if (!RUN_REQUESTED) {
       await rulesUnitTesting.assertFails(firestoreClient.deleteDoc(config));
     });
 
+    test("solo profile projection queues and jobs reject every direct client access", async () => {
+      await testEnvironment.clearFirestore();
+      await testEnvironment.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          firestoreClient.setDoc(
+            firestoreClient.doc(db, "soloProfileProjectionQueues", "wallet-owner"),
+            { uid: "wallet-owner", pending: true, queueRevision: 1 },
+          ),
+          firestoreClient.setDoc(
+            firestoreClient.doc(
+              db,
+              "soloProfileProjectionQueues",
+              "wallet-owner",
+              "jobs",
+              "a".repeat(40),
+            ),
+            { profileProjectionVersion: 2, outcome: "win" },
+          ),
+        ]);
+      });
+
+      const ownerDb = testEnvironment.authenticatedContext("wallet-owner").firestore();
+      const queue = firestoreClient.doc(
+        ownerDb,
+        "soloProfileProjectionQueues",
+        "wallet-owner",
+      );
+      const jobs = firestoreClient.collection(queue, "jobs");
+      const job = firestoreClient.doc(jobs, "a".repeat(40));
+
+      await rulesUnitTesting.assertFails(firestoreClient.getDoc(queue));
+      await rulesUnitTesting.assertFails(firestoreClient.getDocs(jobs));
+      await rulesUnitTesting.assertFails(firestoreClient.getDoc(job));
+      await rulesUnitTesting.assertFails(
+        firestoreClient.setDoc(queue, { pending: false }, { merge: true }),
+      );
+      await rulesUnitTesting.assertFails(
+        firestoreClient.setDoc(job, { outcome: "loss" }, { merge: true }),
+      );
+      await rulesUnitTesting.assertFails(firestoreClient.deleteDoc(job));
+    });
+
     test("cursor pages retain the first-page snapshot boundary during a concurrent append", async () => {
       await testEnvironment.clearFirestore();
 

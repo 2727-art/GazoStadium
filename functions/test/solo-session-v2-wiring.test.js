@@ -461,6 +461,7 @@ test("failed claim guard renewal still releases the originally acquired guard", 
       return true;
     },
     renewSoloSessionClaimGuard: async () => null,
+    soloProfileProjectionClientUpgradeRequired: async () => false,
     soloSessionClaimRef: () => ({ get: async () => nullSnapshot }),
   };
   vm.createContext(context);
@@ -619,7 +620,7 @@ test("cleanup never restores queues or releases locks after a fenced cleanup fai
   assert.match(cleanup, /if \(restored\.some\(\(safe\) => !safe\)\) return false/);
 });
 
-test("expire cannot terminate active V2 rooms and active cancel requires abort", () => {
+test("expire cannot terminate active V2 rooms and finalized matches reject active aborts", () => {
   const source = read("functions/index.js");
   const start = source.indexOf("async function cancelSoloSessionV2Match");
   const end = source.indexOf("async function dispatchSoloSessionAction", start);
@@ -627,8 +628,18 @@ test("expire cannot terminate active V2 rooms and active cancel requires abort",
   assert.match(cancel, /expireOnly = false/);
   assert.match(cancel, /data\.abort === true/);
   assert.match(cancel, /if \(room\.status === "active"\)/);
+  assert.match(cancel, /if \(room\.serverFinalized\)/);
+  assert.match(cancel, /reason: "finalized"/);
   assert.match(cancel, /if \(!activeAbortRequested\)/);
   assert.match(cancel, /destroyActive: activeRoom/);
+  const cleanupStart = source.indexOf("async function cleanupSoloSessionV2Match");
+  const cleanupEnd = source.indexOf("async function readSoloSessionV2MaterializationFence", cleanupStart);
+  const cleanup = source.slice(cleanupStart, cleanupEnd);
+  assert.match(cleanup, /currentValue\.status === "active" && currentValue\.serverFinalized/);
+  assert.ok(
+    cleanup.indexOf('currentValue.status === "active" && currentValue.serverFinalized')
+      < cleanup.indexOf('reason: "session-abort"'),
+  );
   const dispatchStart = source.indexOf("async function dispatchSoloSessionAction");
   const dispatchEnd = source.indexOf("exports.soloSessionAction", dispatchStart);
   assert.match(

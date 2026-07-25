@@ -15,6 +15,66 @@ function includesAll(value, fragments) {
   }
 }
 
+test("normal and overall profiles protect server projection fences while accepting client receipts", () => {
+  for (const profileRules of [
+    rules.profiles.$uid,
+    rules.overallProfiles.$uid,
+  ]) {
+    includesAll(profileRules[".write"], [
+      "auth.uid === $uid",
+      "newData.child('serverProjectionReceipts').val()",
+      "data.child('serverProjectionReceipts').val()",
+      "newData.child('serverProjectionSequence').val()",
+      "data.child('serverProjectionSequence').val()",
+    ]);
+    includesAll(profileRules.serverProjectionReceipts[".validate"], [
+      "newData.isString()",
+      "newData.val().length <= 800",
+    ]);
+    includesAll(profileRules.serverProjectionSequence[".validate"], [
+      "newData.isNumber()",
+      "newData.val() > 0",
+      "newData.val() <= 9007199254740991",
+    ]);
+  }
+  assert.match(rules.profiles.$uid.lastResultRoomId[".validate"], /\{20\}/);
+  includesAll(rules.profiles.$uid.lastResultOutcome[".validate"], [
+    "win",
+    "loss",
+    "draw",
+  ]);
+  assert.match(rules.overallProfiles.$uid.lastResultRoomId[".validate"], /\{20\}/);
+  includesAll(rules.overallProfiles.$uid.lastResultMode[".validate"], [
+    "solo",
+    "strategy",
+    "team",
+    "royale",
+  ]);
+  includesAll(rules.overallProfiles.$uid.lastResultOutcome[".validate"], [
+    "win",
+    "loss",
+    "draw",
+  ]);
+  const periodEntry = rules.leaderboardPeriods.$period.$periodKey.$entryId;
+  assert.match(periodEntry.lastResultRoomId[".validate"], /\{20\}/);
+  includesAll(periodEntry.lastResultMode[".validate"], ["solo", "strategy", "team", "royale"]);
+  includesAll(periodEntry.lastResultOutcome[".validate"], ["win", "loss", "draw"]);
+  for (const appliedResults of [
+    rules.profiles.$uid.appliedResults.$resultToken,
+    rules.overallProfiles.$uid.appliedResults.$resultToken,
+    periodEntry.appliedResults.$resultToken,
+  ]) {
+    assert.match(appliedResults[".validate"], /\{40\}/);
+    includesAll(appliedResults[".validate"], [
+      "win",
+      "loss",
+      "draw",
+      "!data.exists()",
+      "newData.val() === data.val()",
+    ]);
+  }
+});
+
 test("V2 server-owned matchmaking and diagnostic paths are private", () => {
   for (const path of [
     "soloMatchPermitsV2",
@@ -61,6 +121,9 @@ test("queueV2 permits only the current owner claim to write waiting records", ()
     "data.child('state').val() === 'waiting'",
     "data.child('connectionGeneration').val() === newData.child('connectionGeneration').val()",
     "data.child('joinedAt').val() === newData.child('joinedAt').val()",
+    "data.child('profileProjectionVersion').val() === newData.child('profileProjectionVersion').val()",
+    "soloSessionClaims/' + $uid + '/profileProjectionVersion",
+    "newData.child('profileProjectionVersion').val()",
   ]);
   assert.doesNotMatch(queue[".write"], /!newData\.exists\(\)/);
   includesAll(queue[".validate"], [
@@ -71,6 +134,7 @@ test("queueV2 permits only the current owner claim to write waiting records", ()
     "newData.child('expiresAt').val() === root.child('online/soloSessionClaims/",
   ]);
   assert.equal(queue.state[".validate"], "newData.val() === 'waiting'");
+  assert.equal(queue.profileProjectionVersion[".validate"], "newData.val() === 2");
   assert.equal(queue.attemptId[".validate"], false);
   assert.equal(queue.roomId[".validate"], false);
   assert.equal(queue.$other[".validate"], false);
@@ -123,6 +187,7 @@ test("V2 room identity fields and sessions are backend-owned", () => {
   assert.equal(room.signalingVersion[".validate"], "newData.val() === 2");
   assert.match(room.sessions.$uid.generation[".validate"], /\{22\}/);
   assert.equal(room.sessions.$uid.$other[".validate"], false);
+  assert.equal(room.players.$uid.profileProjectionVersion[".validate"], "newData.val() === 2");
   includesAll(room.status[".write"], [
     "/protocolVersion",
     ".val() !== 2",
@@ -157,13 +222,11 @@ test("presenceV2 binds the owner claim to the exact room session", () => {
   assert.equal(presence.$other[".validate"], false);
 });
 
-test("V2 gameplay writes require the current room session claim", () => {
+test("V2 gameplay writes fence live actions and atomically pair completed-score claims", () => {
   const room = rules.rooms.$roomId;
   for (const expression of [
     room.rounds.$round[".validate"],
     room.chat.$messageId[".write"],
-    room.resultClaims.$uid[".write"],
-    room.finished.$uid[".write"],
   ]) {
     includesAll(expression, [
       "/protocolVersion",
@@ -180,6 +243,7 @@ test("V2 gameplay writes require the current room session claim", () => {
   includesAll(room.destroyed[".write"], [
     "/protocolVersion",
     ".val() !== 2",
+    "/serverFinalized",
     "soloSessionClaims/",
     "/sessionId",
     "/sessions/",
@@ -187,6 +251,33 @@ test("V2 gameplay writes require the current room session claim", () => {
     "/expiresAt",
     ".val() > now",
   ]);
+  includesAll(room.resultClaims.$uid[".write"], [
+    "newData.parent().parent()",
+    "child('finished')",
+    "newData.child('round')",
+    "!newData.child('round').exists()",
+    "/rounds/",
+    "/scores/",
+    "/hostUid",
+    "/guestUid",
+    "/destroyed",
+    "soloSessionClaims/",
+    "/expiresAt",
+  ]);
+  includesAll(room.finished.$uid[".write"], [
+    "newData.parent().parent()",
+    "child('resultClaims')",
+    "child('round')",
+    "child('round').exists()",
+    "/rounds/",
+    "/scores/",
+    "/destroyed",
+    "soloSessionClaims/",
+    "/expiresAt",
+  ]);
+  assert.equal(room.serverFinalized[".write"], false);
+  assert.match(room.resultClaims.$uid.round[".validate"], />= 1/);
+  assert.match(room.resultClaims.$uid.round[".validate"], /<= 5/);
 });
 
 test("signalsV2 are session-scoped, generation-scoped, and target-consumed", () => {

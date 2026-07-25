@@ -8,7 +8,11 @@ const { defineBoolean, defineSecret } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
-const { getFirestore, Timestamp } = require("firebase-admin/firestore");
+const {
+  FieldValue,
+  getFirestore,
+  Timestamp,
+} = require("firebase-admin/firestore");
 const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
@@ -208,6 +212,15 @@ const {
   roomTransitionOwned,
   selectSoloSessionV2Match,
 } = require("./solo-session-v2");
+const {
+  deriveSoloMatchResult,
+} = require("./solo-match-finalization");
+const {
+  SoloProfileProjectionConflictError,
+  projectNormalSoloProfile,
+  projectOverallSoloProfile,
+  serverProjectionReceiptOutcome,
+} = require("./solo-profile-projection");
 
 initializeApp({
   databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -236,6 +249,9 @@ const SOLO_LEGACY_PRESENCE_FRESH_MS = 30 * 60 * 1000;
 const SOLO_MATCH_MIN_REMAINING_PERMIT_MS = 22_000;
 const SOLO_MATCH_PERMIT_SWEEP_INTERVAL_MS = 60_000;
 const SOLO_SESSION_CLAIM_GUARD_TTL_MS = 60_000;
+const SOLO_PROFILE_PROJECTION_VERSION = 2;
+const SOLO_PROFILE_PROJECTION_LEASE_MS = 60_000;
+const SOLO_PROFILE_PROJECTION_BATCH_SIZE = 5;
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
   memory: "256MiB",
@@ -260,6 +276,7 @@ function callableOptions(functionName, secrets = []) {
     ...CALLABLE_BASE_OPTIONS,
     enforceAppCheck: APP_CHECK_ENFORCEMENT[functionName],
   };
+  if (functionName === "economyAction") options.timeoutSeconds = 60;
   if (secrets.length) options.secrets = secrets;
   if (functionName === "accountTransfer") options.consumeAppCheckToken = true;
   return options;
@@ -800,6 +817,18 @@ function patronRecommendedShopRef(seasonKey, publicSellerId) {
 
 function verifiedMatchClaimRef(uid, mode, roomId) {
   return firestore.collection("verifiedMatchClaims").doc(eventId(`${uid}:${mode}:${roomId}`));
+}
+
+function soloProfileProjectionQueueRef(uid) {
+  return firestore.collection("soloProfileProjectionQueues").doc(uid);
+}
+
+function soloProfileProjectionEnrollmentRef(uid) {
+  return realtime.ref(`online/soloProfileProjectionEnrollments/${uid}`);
+}
+
+function soloProfileProjectionJobRef(uid, resultToken) {
+  return soloProfileProjectionQueueRef(uid).collection("jobs").doc(resultToken);
 }
 
 function postMatchTipRef(uid, mode, roomId) {
@@ -2970,7 +2999,78 @@ function matchParticipants(mode, room, config) {
   return members;
 }
 
-function validatedOutcomes(mode, room, participants) {
+async function finalizeSoloRoomResult(uid, roomId, requestedOutcome, now = Date.now()) {
+  const roomRef = realtime.ref(`online/rooms/${roomId}`);
+  const room = (await roomRef.get()).val();
+  if (!room || room.status !== "active" || room.members?.[uid] !== true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "完走済みの通常型1on1ルームを確認できませんでした。",
+    );
+  }
+  const createdAt = Number(room.createdAt || 0);
+  if (!Number.isFinite(createdAt)
+      || createdAt > now
+      || createdAt < now - (12 * 60 * 60 * 1000)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "完走済みの通常型1on1ルームを確認できませんでした。",
+    );
+  }
+  matchParticipants("solo", room, VERIFIED_MATCH_MODES.solo);
+
+  let result;
+  try {
+    result = deriveSoloMatchResult(room);
+  } catch {
+    throw new HttpsError(
+      "failed-precondition",
+      "通常型1on1の確定スコアを検証できませんでした。",
+    );
+  }
+  if (result.status !== "final") return { room, pending: true };
+  if (result.outcomes?.[uid] !== requestedOutcome) {
+    throw new HttpsError(
+      "failed-precondition",
+      "申告した試合結果が確定スコアと一致しません。",
+    );
+  }
+
+  const serverFinalized = {
+    version: 1,
+    round: result.round,
+    finalizedAt: Number(room.serverFinalized?.finalizedAt) || now,
+  };
+  // Keep the client-owned acknowledgement slots untouched. Older clients write
+  // their own resultClaims/finished pair with a create-only rule and would be
+  // locked out if a faster opponent caused Functions to pre-fill those paths.
+  await roomRef.child("serverFinalized").set(serverFinalized);
+  return {
+    room: {
+      ...room,
+      serverFinalized,
+    },
+    result,
+  };
+}
+
+function validatedOutcomes(mode, room, participants, {
+  requireServerFinalized = false,
+} = {}) {
+  if (mode === "solo" && requireServerFinalized) {
+    const derived = deriveSoloMatchResult(room);
+    if (derived.status !== "final"
+        || Number(room.serverFinalized?.version) !== 1
+        || Number(room.serverFinalized?.round) !== derived.round) {
+      throw new HttpsError("failed-precondition", "通常型1on1の確定結果を検証できませんでした。");
+    }
+    return {
+      pending: false,
+      missing: 0,
+      outcomes: derived.outcomes,
+    };
+  }
+
   const claims = objectValue(room.resultClaims);
   const missing = participants.filter((participantUid) => claims[participantUid]?.outcome === undefined
     || room.finished?.[participantUid] !== true);
@@ -3081,6 +3181,550 @@ function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
   return progress;
 }
 
+function soloProfileProjectionEligible(room, uid) {
+  return room?.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION
+    && room?.players?.[uid]?.profileProjectionVersion === SOLO_PROFILE_PROJECTION_VERSION;
+}
+
+function soloProfileProjectionJob(uid, roomId, room, outcome, resultToken, now) {
+  const participants = matchParticipants("solo", room, VERIFIED_MATCH_MODES.solo);
+  const opponentUid = participants.find((participantUid) => participantUid !== uid);
+  const player = room?.players?.[uid];
+  const opponent = room?.players?.[opponentUid];
+  return {
+    profileProjectionVersion: SOLO_PROFILE_PROJECTION_VERSION,
+    uid,
+    roomId,
+    resultToken,
+    outcome,
+    name: cleanName(player?.name),
+    pursuitLine: cleanText(player?.pursuitLine, 40),
+    opponentRating: integer(opponent?.rating, 100, 3000, 1000),
+    createdAt: now,
+  };
+}
+
+function normalizeSoloProjectionJob(jobId, value) {
+  const job = objectValue(value);
+  const uid = typeof job.uid === "string" ? job.uid : "";
+  const roomId = cleanText(job.roomId, 80);
+  const resultToken = cleanText(job.resultToken, 40);
+  const outcome = cleanText(job.outcome, 16);
+  const name = cleanName(job.name);
+  const pursuitLine = cleanText(job.pursuitLine, 40);
+  const opponentRating = job.opponentRating;
+  const createdAt = job.createdAt;
+  const projectionSequence = job.projectionSequence;
+  if (job.profileProjectionVersion !== SOLO_PROFILE_PROJECTION_VERSION
+      || !uid
+      || uid.length > 128
+      || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)
+      || roomId !== job.roomId
+      || !/^[a-f0-9]{40}$/.test(resultToken)
+      || resultToken !== job.resultToken
+      || resultToken !== jobId
+      || !["win", "loss", "draw"].includes(outcome)
+      || outcome !== job.outcome
+      || name !== job.name
+      || pursuitLine !== job.pursuitLine
+      || !Number.isSafeInteger(opponentRating)
+      || opponentRating < 100
+      || opponentRating > 3000
+      || !Number.isSafeInteger(projectionSequence)
+      || projectionSequence < 1
+      || !Number.isSafeInteger(createdAt)
+      || createdAt < 0) {
+    throw new TypeError("invalid solo profile projection job");
+  }
+  return {
+    profileProjectionVersion: SOLO_PROFILE_PROJECTION_VERSION,
+    uid,
+    roomId,
+    resultToken,
+    outcome,
+    name,
+    pursuitLine,
+    opponentRating,
+    projectionSequence,
+    createdAt,
+  };
+}
+
+function soloProjectionClaimMatchesJob(claim, job, {
+  requirePending = false,
+} = {}) {
+  return claim.exists
+    && claim.id === job.resultToken
+    && claim.get("uid") === job.uid
+    && claim.get("mode") === "solo"
+    && claim.get("roomId") === job.roomId
+    && claim.get("outcome") === job.outcome
+    && claim.get("profileProjectionVersion") === SOLO_PROFILE_PROJECTION_VERSION
+    && claim.get("projectionSequence") === job.projectionSequence
+    && claim.get("opponentRating") === job.opponentRating
+    && claim.get("name") === job.name
+    && claim.get("pursuitLine") === job.pursuitLine
+    && claim.get("createdAt") === job.createdAt
+    && (!requirePending || claim.get("profileProjectionStatus") === "pending");
+}
+
+function sameSoloProjectionJob(left, right) {
+  return left.profileProjectionVersion === right.profileProjectionVersion
+    && left.uid === right.uid
+    && left.roomId === right.roomId
+    && left.resultToken === right.resultToken
+    && left.outcome === right.outcome
+    && left.name === right.name
+    && left.pursuitLine === right.pursuitLine
+    && left.opponentRating === right.opponentRating
+    && left.projectionSequence === right.projectionSequence
+    && left.createdAt === right.createdAt;
+}
+
+function soloProjectionLeaseIsCurrent(queueSnapshot, uid, lease, now) {
+  return queueSnapshot.exists
+    && queueSnapshot.id === uid
+    && queueSnapshot.get("uid") === uid
+    && queueSnapshot.get("pending") === true
+    && queueSnapshot.get("leaseToken") === lease.token
+    && Number(queueSnapshot.get("leaseUntil") || 0) > now;
+}
+
+function nextSoloProjectionSequence(queueSnapshot) {
+  const current = queueSnapshot?.exists
+    ? queueSnapshot.get("queueRevision")
+    : 0;
+  if (!Number.isSafeInteger(current)
+      || current < 0
+      || current >= Number.MAX_SAFE_INTEGER) {
+    throw new TypeError("invalid solo profile projection queue revision");
+  }
+  return current + 1;
+}
+
+function soloProjectionQueueContainsSequence(queueSnapshot, projectionSequence) {
+  const queueRevision = queueSnapshot.get("queueRevision");
+  return Number.isSafeInteger(queueRevision)
+    && queueRevision >= projectionSequence;
+}
+
+function soloProjectionIsAppliedOrFenced(profile, job) {
+  const receiptOutcome = serverProjectionReceiptOutcome(profile, job.resultToken);
+  if (receiptOutcome) return receiptOutcome === job.outcome;
+  return Number.isSafeInteger(profile?.serverProjectionSequence)
+    && profile.serverProjectionSequence >= job.projectionSequence;
+}
+
+function publicSoloProjectionProfile(value) {
+  const profile = objectValue(value);
+  if (!profile.name) return null;
+  return {
+    name: cleanName(profile.name),
+    pursuitLine: cleanText(profile.pursuitLine, 40),
+    wins: integer(profile.wins, 0, Number.MAX_SAFE_INTEGER, 0),
+    losses: integer(profile.losses, 0, Number.MAX_SAFE_INTEGER, 0),
+    draws: integer(profile.draws, 0, Number.MAX_SAFE_INTEGER, 0),
+    streak: integer(profile.streak, 0, Number.MAX_SAFE_INTEGER, 0),
+    bestStreak: integer(profile.bestStreak, 0, Number.MAX_SAFE_INTEGER, 0),
+    rating: integer(profile.rating, 100, 3000, 1000),
+    updatedAt: Number(profile.updatedAt || 0),
+  };
+}
+
+function publicOverallProjectionProfile(value) {
+  const profile = objectValue(value);
+  if (!profile.name) return null;
+  const modes = {};
+  for (const mode of ["solo", "strategy", "team", "royale"]) {
+    const source = objectValue(profile.modes?.[mode]);
+    const wins = integer(source.wins, 0, Number.MAX_SAFE_INTEGER, 0);
+    const losses = integer(source.losses, 0, Number.MAX_SAFE_INTEGER, 0);
+    const draws = integer(source.draws, 0, Number.MAX_SAFE_INTEGER, 0);
+    modes[mode] = {
+      wins,
+      losses,
+      draws,
+      matches: wins + losses + draws,
+      points: (wins * 3) + draws,
+    };
+  }
+  return {
+    name: cleanName(profile.name),
+    wins: Object.values(modes).reduce((sum, mode) => sum + mode.wins, 0),
+    losses: Object.values(modes).reduce((sum, mode) => sum + mode.losses, 0),
+    draws: Object.values(modes).reduce((sum, mode) => sum + mode.draws, 0),
+    streak: integer(profile.streak, 0, Number.MAX_SAFE_INTEGER, 0),
+    bestStreak: integer(profile.bestStreak, 0, Number.MAX_SAFE_INTEGER, 0),
+    rating: integer(profile.rating, 100, 3000, 1000),
+    modes,
+    updatedAt: Number(profile.updatedAt || 0),
+  };
+}
+
+async function readSoloProjectionProfiles(uid) {
+  const [soloSnapshot, overallSnapshot] = await Promise.all([
+    realtime.ref(`online/profiles/${uid}`).get(),
+    realtime.ref(`online/overallProfiles/${uid}`).get(),
+  ]);
+  return {
+    soloProfile: publicSoloProjectionProfile(soloSnapshot.val()),
+    overallProfile: publicOverallProjectionProfile(overallSnapshot.val()),
+  };
+}
+
+async function publishSoloProfileProjectionEnrollment(uid) {
+  const result = await soloProfileProjectionEnrollmentRef(uid)
+    .transaction((currentValue) => (
+      currentValue === SOLO_PROFILE_PROJECTION_VERSION
+        ? currentValue
+        : SOLO_PROFILE_PROJECTION_VERSION
+    ));
+  if (result.snapshot.val() !== SOLO_PROFILE_PROJECTION_VERSION) {
+    throw new Error("solo profile projection enrollment was not published");
+  }
+}
+
+async function soloProfileProjectionHasIncompatibleLiveRoom(uid, now = Date.now()) {
+  const [legacyRoom, v2Room] = await Promise.all([
+    liveLegacySoloRoom(uid, now),
+    liveSoloSessionV2Room(uid, now),
+  ]);
+  if (legacyRoom) return true;
+  if (!v2Room) return false;
+  const room = (await realtime.ref(`online/rooms/${v2Room.roomId}`).get()).val();
+  return room?.players?.[uid]?.profileProjectionVersion
+    !== SOLO_PROFILE_PROJECTION_VERSION;
+}
+
+async function acquireSoloProfileProjectionLease(uid, now = Date.now()) {
+  const queueRef = soloProfileProjectionQueueRef(uid);
+  const leaseToken = crypto.randomBytes(16).toString("hex");
+  let lease = null;
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(queueRef);
+    if (!snapshot.exists || snapshot.get("pending") !== true) return;
+    if (Number(snapshot.get("leaseUntil") || 0) > now) return;
+    const queueRevision = snapshot.get("queueRevision");
+    if (!Number.isSafeInteger(queueRevision) || queueRevision < 1) {
+      throw new TypeError("invalid solo profile projection queue revision");
+    }
+    lease = {
+      token: leaseToken,
+      revision: queueRevision,
+    };
+    transaction.set(queueRef, {
+      leaseToken,
+      leaseUntil: now + SOLO_PROFILE_PROJECTION_LEASE_MS,
+      lastStartedAt: now,
+    }, { merge: true });
+  });
+  return lease;
+}
+
+async function releaseSoloProfileProjectionLease(
+  uid,
+  lease,
+  {
+    pending,
+    failed = false,
+    now = Date.now(),
+  },
+) {
+  const queueRef = soloProfileProjectionQueueRef(uid);
+  let finalPending = true;
+  await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(queueRef);
+    if (!snapshot.exists || snapshot.get("leaseToken") !== lease.token) return;
+    const revisionChanged = snapshot.get("queueRevision") !== lease.revision;
+    finalPending = pending === true || revisionChanged;
+    transaction.set(queueRef, {
+      pending: finalPending,
+      leaseToken: FieldValue.delete(),
+      leaseUntil: FieldValue.delete(),
+      lastCompletedAt: failed ? snapshot.get("lastCompletedAt") || 0 : now,
+      ...(failed
+        ? {
+          lastFailedAt: now,
+          failureCount: integer(
+            snapshot.get("failureCount"),
+            0,
+            Number.MAX_SAFE_INTEGER - 1,
+            0,
+          ) + 1,
+        }
+        : {
+          lastFailedAt: FieldValue.delete(),
+          failureCount: 0,
+        }),
+    }, { merge: true });
+  });
+  return finalPending;
+}
+
+async function prepareSoloProfileProjectionJob(jobSnapshot, lease) {
+  const queueRef = jobSnapshot.ref.parent.parent;
+  const queueUid = queueRef?.id || "";
+  const claimRef = firestore.collection("verifiedMatchClaims").doc(jobSnapshot.id);
+  let job = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [queueSnapshot, freshJob, claim] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(jobSnapshot.ref),
+      transaction.get(claimRef),
+    ]);
+    if (!freshJob.exists) return;
+    const checkedAt = Date.now();
+    if (!soloProjectionLeaseIsCurrent(queueSnapshot, queueUid, lease, checkedAt)) {
+      throw new Error("solo profile projection lease lost");
+    }
+    const candidate = normalizeSoloProjectionJob(freshJob.id, freshJob.data());
+    if (queueUid !== candidate.uid
+        || !soloProjectionQueueContainsSequence(
+          queueSnapshot,
+          candidate.projectionSequence,
+        )
+        || !soloProjectionClaimMatchesJob(claim, candidate, { requirePending: true })) {
+      throw new TypeError("solo profile projection claim verification failed");
+    }
+    transaction.set(queueRef, {
+      leaseUntil: checkedAt + SOLO_PROFILE_PROJECTION_LEASE_MS,
+    }, { merge: true });
+    job = candidate;
+  });
+  return job;
+}
+
+async function completeSoloProfileProjectionJob(jobSnapshot, job, lease) {
+  const queueRef = jobSnapshot.ref.parent.parent;
+  const claimRef = firestore.collection("verifiedMatchClaims").doc(job.resultToken);
+  let completed = false;
+  await firestore.runTransaction(async (transaction) => {
+    const [queueSnapshot, freshJob, claim] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(jobSnapshot.ref),
+      transaction.get(claimRef),
+    ]);
+    if (!freshJob.exists) return;
+    const checkedAt = Date.now();
+    if (!soloProjectionLeaseIsCurrent(queueSnapshot, job.uid, lease, checkedAt)) {
+      throw new Error("solo profile projection lease lost");
+    }
+    const currentJob = normalizeSoloProjectionJob(freshJob.id, freshJob.data());
+    if (!sameSoloProjectionJob(currentJob, job)
+        || !soloProjectionQueueContainsSequence(
+          queueSnapshot,
+          job.projectionSequence,
+        )
+        || !soloProjectionClaimMatchesJob(claim, job, { requirePending: true })) {
+      throw new TypeError("solo profile projection claim verification failed");
+    }
+    transaction.set(claimRef, {
+      profileProjectionStatus: "complete",
+      profileProjectionCompletedAt: checkedAt,
+    }, { merge: true });
+    transaction.delete(jobSnapshot.ref);
+    completed = true;
+  });
+  return completed;
+}
+
+async function applySoloProfileProjectionJob(jobSnapshot, lease) {
+  const job = await prepareSoloProfileProjectionJob(jobSnapshot, lease);
+  if (!job) return false;
+  const event = {
+    name: job.name,
+    pursuitLine: job.pursuitLine,
+    outcome: job.outcome,
+    opponentRating: job.opponentRating,
+    roomId: job.roomId,
+    resultToken: job.resultToken,
+    projectionSequence: job.projectionSequence,
+    updatedAt: job.createdAt,
+  };
+  const soloRef = realtime.ref(`online/profiles/${job.uid}`);
+  let soloProjectionError = null;
+  const soloResult = await soloRef.transaction((currentValue) => {
+    try {
+      return projectNormalSoloProfile(currentValue, event).profile;
+    } catch (error) {
+      soloProjectionError = error;
+      return undefined;
+    }
+  });
+  if (soloProjectionError) throw soloProjectionError;
+  const soloProfile = soloResult.snapshot.val();
+  if (!soloProjectionIsAppliedOrFenced(soloProfile, job)) {
+    throw new Error("solo profile projection verification failed");
+  }
+
+  const overallRef = realtime.ref(`online/overallProfiles/${job.uid}`);
+  let overallProjectionError = null;
+  const overallResult = await overallRef.transaction((currentValue) => {
+    try {
+      return projectOverallSoloProfile(currentValue, soloProfile, event).profile;
+    } catch (error) {
+      overallProjectionError = error;
+      return undefined;
+    }
+  });
+  if (overallProjectionError) throw overallProjectionError;
+  const overallProfile = overallResult.snapshot.val();
+  if (!soloProjectionIsAppliedOrFenced(overallProfile, job)) {
+    throw new Error("overall profile projection verification failed");
+  }
+
+  return completeSoloProfileProjectionJob(jobSnapshot, job, lease);
+}
+
+async function quarantineSoloProfileProjectionJob(jobSnapshot, lease) {
+  const queueRef = jobSnapshot.ref.parent.parent;
+  const queueUid = queueRef?.id || "";
+  const claimRef = firestore.collection("verifiedMatchClaims").doc(jobSnapshot.id);
+  await firestore.runTransaction(async (transaction) => {
+    const [queueSnapshot, freshJob, claim] = await Promise.all([
+      transaction.get(queueRef),
+      transaction.get(jobSnapshot.ref),
+      transaction.get(claimRef),
+    ]);
+    if (!freshJob.exists) return;
+    const checkedAt = Date.now();
+    if (!soloProjectionLeaseIsCurrent(queueSnapshot, queueUid, lease, checkedAt)) {
+      throw new Error("solo profile projection lease lost");
+    }
+    if (claim.exists
+        && claim.get("uid") === queueUid
+        && claim.get("mode") === "solo"
+        && claim.get("profileProjectionVersion") === SOLO_PROFILE_PROJECTION_VERSION
+        && claim.get("profileProjectionStatus") === "pending") {
+      transaction.set(claimRef, {
+        profileProjectionStatus: "failed",
+        profileProjectionFailedAt: checkedAt,
+      }, { merge: true });
+    }
+    transaction.delete(jobSnapshot.ref);
+  });
+}
+
+async function reconcileSoloProfileProjection(uid, {
+  maximumJobs = SOLO_PROFILE_PROJECTION_BATCH_SIZE,
+} = {}) {
+  const queueRef = soloProfileProjectionQueueRef(uid);
+  const enrollmentQueueSnapshot = await queueRef.get();
+  const projectionEnrolled = enrollmentQueueSnapshot.exists
+    && enrollmentQueueSnapshot.get("profileProjectionEnrolled") === true
+    && enrollmentQueueSnapshot.get("profileProjectionVersion")
+      === SOLO_PROFILE_PROJECTION_VERSION;
+  if (projectionEnrolled) {
+    await publishSoloProfileProjectionEnrollment(uid);
+  }
+  const lease = await acquireSoloProfileProjectionLease(uid);
+  if (!lease) {
+    const [queueSnapshot, profiles] = await Promise.all([
+      queueRef.get(),
+      readSoloProjectionProfiles(uid),
+    ]);
+    return {
+      ...profiles,
+      pending: queueSnapshot.exists && queueSnapshot.get("pending") === true,
+      processed: 0,
+    };
+  }
+
+  let processed = 0;
+  try {
+    if (projectionEnrolled
+        && await soloProfileProjectionHasIncompatibleLiveRoom(uid)) {
+      const pending = await releaseSoloProfileProjectionLease(uid, lease, {
+        pending: true,
+      });
+      return {
+        ...await readSoloProjectionProfiles(uid),
+        pending,
+        processed,
+      };
+    }
+    const jobs = await queueRef.collection("jobs")
+      .orderBy("projectionSequence", "asc")
+      .limit(integer(maximumJobs, 1, SOLO_PROFILE_PROJECTION_BATCH_SIZE, 1))
+      .get();
+    for (const jobSnapshot of jobs.docs) {
+      try {
+        if (await applySoloProfileProjectionJob(jobSnapshot, lease)) {
+          processed += 1;
+        }
+      } catch (error) {
+        const permanentFailure = error instanceof TypeError
+          || error instanceof SoloProfileProjectionConflictError;
+        if (!permanentFailure) throw error;
+        await quarantineSoloProfileProjectionJob(jobSnapshot, lease);
+        console.warn("solo profile projection job quarantined", {
+          category: "validation",
+        });
+      }
+    }
+    const remaining = await queueRef.collection("jobs").limit(1).get();
+    const pending = await releaseSoloProfileProjectionLease(uid, lease, {
+      pending: !remaining.empty,
+    });
+    return {
+      ...await readSoloProjectionProfiles(uid),
+      pending,
+      processed,
+    };
+  } catch (error) {
+    await releaseSoloProfileProjectionLease(uid, lease, {
+      pending: true,
+      failed: true,
+    }).catch(() => {});
+    throw error;
+  }
+}
+
+async function reconcilePendingSoloProfileProjections() {
+  const queues = await firestore.collection("soloProfileProjectionQueues")
+    .where("pending", "==", true)
+    .orderBy("lastStartedAt", "asc")
+    .limit(25)
+    .get();
+  let reconciled = 0;
+  for (const queueSnapshot of queues.docs) {
+    try {
+      await reconcileSoloProfileProjection(queueSnapshot.id);
+      reconciled += 1;
+    } catch (error) {
+      console.warn("solo profile projection queue deferred", {
+        category: error instanceof TypeError ? "validation" : "internal",
+      });
+    }
+  }
+  return reconciled;
+}
+
+exports.reconcileSoloProfileProjections = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    await reconcilePendingSoloProfileProjections();
+  } catch (error) {
+    console.warn("solo profile projection reconciliation unavailable", {
+      category: error instanceof TypeError ? "validation" : "internal",
+    });
+    throw new Error("solo profile projection reconciliation failed");
+  }
+});
+
+function requestedSoloFinalizationVersion(data) {
+  if (!Object.hasOwn(objectValue(data), "finalizationVersion")) return 1;
+  if (data.finalizationVersion !== 2) {
+    throw new HttpsError("invalid-argument", "通常型1on1の決着通信バージョンが不正です。");
+  }
+  return 2;
+}
+
 async function recordVerifiedMatch(uid, data) {
   const mode = cleanText(data?.mode, 16);
   const requestedOutcome = cleanText(data?.outcome, 16);
@@ -3090,16 +3734,43 @@ async function recordVerifiedMatch(uid, data) {
     throw new HttpsError("invalid-argument", "対戦報酬の検証情報が不足しています。");
   }
 
-  const now = Date.now();
-  const roomSnapshot = await realtime.ref(`online/${config.roomRoot}/${roomId}`).get();
-  const room = roomSnapshot.val();
+  const finalizationVersion = mode === "solo" ? requestedSoloFinalizationVersion(data) : 1;
+  let now = Date.now();
+  let room;
+  if (mode === "solo") {
+    const finalization = await finalizeSoloRoomResult(uid, roomId, requestedOutcome, now);
+    if (finalization.pending) {
+      return { outcome: "pending", missing: 1 };
+    }
+    room = finalization.room;
+  } else {
+    room = (await realtime.ref(`online/${config.roomRoot}/${roomId}`).get()).val();
+  }
   const createdAt = Number(room?.createdAt || 0);
-  if (!roomSnapshot.exists() || room?.status !== "active" || room?.members?.[uid] !== true
-    || !Number.isFinite(createdAt) || createdAt > now - 30_000 || createdAt < now - (12 * 60 * 60 * 1000)) {
+  const minimumRoomAge = 30_000;
+  if (!room || room?.status !== "active" || room?.members?.[uid] !== true
+    || !Number.isFinite(createdAt) || createdAt > now || createdAt < now - (12 * 60 * 60 * 1000)) {
     throw new HttpsError("failed-precondition", "完走済みの対戦ルームを確認できませんでした。");
   }
+  if (createdAt > now - minimumRoomAge) {
+    const retryAfterMs = Math.max(250, (createdAt + minimumRoomAge) - now);
+    if (mode === "solo" && finalizationVersion === 1) {
+      // finish-reply-v2 predecessors poll for only about nine seconds. Keep
+      // their one in-flight call alive through the anti-farm window.
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs + 50));
+      now = Date.now();
+    } else {
+      return {
+        outcome: "pending",
+        missing: 0,
+        retryAfterMs,
+      };
+    }
+  }
   const participants = matchParticipants(mode, room, config);
-  const verification = validatedOutcomes(mode, room, participants);
+  const verification = validatedOutcomes(mode, room, participants, {
+    requireServerFinalized: mode === "solo",
+  });
   if (verification.pending) {
     return { outcome: "pending", missing: verification.missing };
   }
@@ -3119,6 +3790,27 @@ async function recordVerifiedMatch(uid, data) {
   const claimRefs = participants.map((participantUid) => (
     verifiedMatchClaimRef(participantUid, mode, roomId)
   ));
+  const projectionEligibleUids = mode === "solo"
+    ? participants.filter((participantUid) => soloProfileProjectionEligible(room, participantUid))
+    : [];
+  const projectionEligibleUidSet = new Set(projectionEligibleUids);
+  const projectionQueueRefs = projectionEligibleUids
+    .map((participantUid) => soloProfileProjectionQueueRef(participantUid));
+  const projectionActivatedUidSet = new Set();
+  const projectionJobs = Object.fromEntries(projectionEligibleUids.map((participantUid) => {
+    const resultToken = verifiedMatchClaimRef(participantUid, mode, roomId).id;
+    return [
+      participantUid,
+      soloProfileProjectionJob(
+        participantUid,
+        roomId,
+        room,
+        verification.outcomes[participantUid],
+        resultToken,
+        now,
+      ),
+    ];
+  }));
   const serverPeriodInfos = activeServerRankingPeriodInfos(now);
   const serverProfileRefs = participants.map((participantUid) => serverRankingProfileRef(participantUid));
   const serverEntryRefs = participants.flatMap((participantUid) => (
@@ -3146,19 +3838,34 @@ async function recordVerifiedMatch(uid, data) {
     Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
     Object.keys(serverRankingProfileResults).forEach((key) => delete serverRankingProfileResults[key]);
     Object.keys(serverRankingEntryResults).forEach((key) => delete serverRankingEntryResults[key]);
+    projectionActivatedUidSet.clear();
     const snapshots = await Promise.all([
       ...progressRefs.map((ref) => transaction.get(ref)),
       ...profileRefs.map((ref) => transaction.get(ref)),
       ...claimRefs.map((ref) => transaction.get(ref)),
       ...serverProfileRefs.map((ref) => transaction.get(ref)),
       ...serverEntryRefs.map((ref) => transaction.get(ref)),
+      ...projectionQueueRefs.map((ref) => transaction.get(ref)),
     ]);
     const participantCount = participants.length;
+    const serverEntryCount = serverEntryRefs.length;
     const progressSnapshots = snapshots.slice(0, participantCount);
     const profileSnapshots = snapshots.slice(participantCount, participantCount * 2);
     const claimSnapshots = snapshots.slice(participantCount * 2, participantCount * 3);
     const serverProfileSnapshots = snapshots.slice(participantCount * 3, participantCount * 4);
-    const serverEntrySnapshots = snapshots.slice(participantCount * 4);
+    const serverEntrySnapshots = snapshots.slice(
+      participantCount * 4,
+      (participantCount * 4) + serverEntryCount,
+    );
+    const projectionQueueSnapshots = snapshots.slice(
+      (participantCount * 4) + serverEntryCount,
+    );
+    const projectionQueueSnapshotByUid = Object.fromEntries(
+      projectionEligibleUids.map((participantUid, index) => [
+        participantUid,
+        projectionQueueSnapshots[index],
+      ]),
+    );
     const serverProfiles = Object.fromEntries(participants.map((participantUid, index) => [
       participantUid,
       normalizeServerRankingProfile(
@@ -3173,6 +3880,13 @@ async function recordVerifiedMatch(uid, data) {
     transactionOutcome = claimSnapshots[participants.indexOf(uid)].exists ? "duplicate" : "recorded";
     participants.forEach((participantUid, index) => {
       if (claimSnapshots[index].exists) {
+        const projectionStatus = claimSnapshots[index].get("profileProjectionStatus");
+        if (projectionEligibleUidSet.has(participantUid)
+            && claimSnapshots[index].get("profileProjectionVersion")
+              === SOLO_PROFILE_PROJECTION_VERSION
+            && (projectionStatus === "pending" || projectionStatus === "complete")) {
+          projectionActivatedUidSet.add(participantUid);
+        }
         progressResults[participantUid] = normalizeEconomyProgress(progressSnapshots[index].data());
         profileResults[participantUid] = normalizeAchievementProfile(profileSnapshots[index].data());
         newlyUnlockedResults[participantUid] = sanitizeAchievementIds(
@@ -3183,6 +3897,10 @@ async function recordVerifiedMatch(uid, data) {
       }
       const participantOutcome = verification.outcomes[participantUid];
       const participantActivity = activities[participantUid];
+      const projectionQueueSnapshot = projectionQueueSnapshotByUid[participantUid];
+      const projectionSequence = projectionEligibleUidSet.has(participantUid)
+        ? nextSoloProjectionSequence(projectionQueueSnapshot)
+        : 0;
       const progress = addVerifiedMatch(
         progressSnapshots[index].data(),
         mode,
@@ -3203,7 +3921,7 @@ async function recordVerifiedMatch(uid, data) {
       newlyUnlockedResults[participantUid] = unlockResult.newlyUnlocked;
       transaction.set(progressRefs[index], progress);
       transaction.set(profileRefs[index], unlockResult.profile);
-      transaction.create(claimRefs[index], {
+      const verifiedClaim = {
         uid: participantUid,
         mode,
         roomId,
@@ -3213,7 +3931,42 @@ async function recordVerifiedMatch(uid, data) {
         achievementIds: unlockResult.newlyUnlocked,
         finalizedBy: uid,
         createdAt: now,
-      });
+        ...(projectionEligibleUidSet.has(participantUid)
+          ? {
+            profileProjectionVersion: SOLO_PROFILE_PROJECTION_VERSION,
+            profileProjectionStatus: "pending",
+            projectionSequence,
+            opponentRating: projectionJobs[participantUid].opponentRating,
+            name: projectionJobs[participantUid].name,
+            pursuitLine: projectionJobs[participantUid].pursuitLine,
+          }
+          : {}),
+      };
+      transaction.create(claimRefs[index], verifiedClaim);
+      if (projectionEligibleUidSet.has(participantUid)) {
+        projectionActivatedUidSet.add(participantUid);
+        transaction.create(
+          soloProfileProjectionJobRef(participantUid, claimRefs[index].id),
+          {
+            ...projectionJobs[participantUid],
+            projectionSequence,
+          },
+        );
+        transaction.set(soloProfileProjectionQueueRef(participantUid), {
+          uid: participantUid,
+          pending: true,
+          profileProjectionEnrolled: true,
+          profileProjectionVersion: SOLO_PROFILE_PROJECTION_VERSION,
+          queueRevision: projectionSequence,
+          ...(
+            Number.isFinite(projectionQueueSnapshot?.get("lastStartedAt"))
+              && projectionQueueSnapshot.get("lastStartedAt") >= 0
+              ? {}
+              : { lastStartedAt: 0 }
+          ),
+          updatedAt: now,
+        }, { merge: true });
+      }
 
       const serverProfile = serverProfiles[participantUid];
       if (serverProfile.enabled && serverProfile.entryId && serverPeriodInfos.length) {
@@ -3268,10 +4021,56 @@ async function recordVerifiedMatch(uid, data) {
     postMatchOperations.push(mirrorServerRankingEntries(serverRankingEntryResults));
   }
   await bestEffort("recordVerifiedMatch", postMatchOperations);
+  const projectionResults = {};
+  if (mode === "solo") {
+    for (const participantUid of participants.filter(
+      (participantUid) => projectionActivatedUidSet.has(participantUid),
+    )) {
+      try {
+        projectionResults[participantUid] = await reconcileSoloProfileProjection(
+          participantUid,
+          { maximumJobs: 5 },
+        );
+      } catch (error) {
+        console.warn("recordVerifiedMatch profile projection deferred", {
+          category: error instanceof TypeError ? "validation" : "internal",
+        });
+        projectionResults[participantUid] = {
+          ...await readSoloProjectionProfiles(participantUid).catch(() => ({
+            soloProfile: null,
+            overallProfile: null,
+          })),
+          pending: true,
+          processed: 0,
+        };
+      }
+    }
+  }
+  let callerProjectionActivated = projectionActivatedUidSet.has(uid);
+  if (mode === "solo" && callerProjectionActivated) {
+    const callerClaim = await claimRefs[participants.indexOf(uid)].get();
+    const projectionStatus = callerClaim.get("profileProjectionStatus");
+    callerProjectionActivated = callerClaim.exists
+      && callerClaim.get("uid") === uid
+      && callerClaim.get("mode") === "solo"
+      && callerClaim.get("roomId") === roomId
+      && callerClaim.get("profileProjectionVersion") === SOLO_PROFILE_PROJECTION_VERSION
+      && (projectionStatus === "pending" || projectionStatus === "complete");
+  }
   const progressResult = progressResults[uid];
   const marketSnapshot = await marketStatsRef(uid).get();
   return {
     outcome: transactionOutcome,
+    ...(mode === "solo" ? { acceptedFinalizationVersion: finalizationVersion } : {}),
+    ...(callerProjectionActivated
+      ? {
+        profileProjectionMode: "server-v2",
+        profileProjectionPending: projectionResults[uid]?.pending !== false,
+        soloProfile: projectionResults[uid]?.soloProfile || null,
+        overallProfile: projectionResults[uid]?.overallProfile || null,
+      }
+      : {}),
+    resultToken: eventId(`${uid}:${mode}:${roomId}`),
     daily: progressResult.daily,
     periodRewards: progressResult.periodRewards,
     dailyPlay: dailyPlayRewardSummary(progressResult.periodRewards, progressResult.dailyPlayClaims, now),
@@ -3323,7 +4122,9 @@ async function loadVerifiedTipMatch(uid, requestData) {
   if (!participants.includes(request.targetUid)) {
     throw new HttpsError("permission-denied", "この対戦の参加者以外には差し入れできません。");
   }
-  const verification = validatedOutcomes(request.mode, room, participants);
+  const verification = validatedOutcomes(request.mode, room, participants, {
+    requireServerFinalized: request.mode === "solo" && Number(room.serverFinalized?.version) === 1,
+  });
   if (verification.pending) {
     throw new HttpsError("failed-precondition", "参加者全員の対戦結果が確定していません。");
   }
@@ -3807,7 +4608,9 @@ async function loadCompletedSoloFamiliarMatch(uid, roomIdValue) {
   }
   const config = VERIFIED_MATCH_MODES.solo;
   const participants = matchParticipants("solo", room, config);
-  const verification = validatedOutcomes("solo", room, participants);
+  const verification = validatedOutcomes("solo", room, participants, {
+    requireServerFinalized: Number(room.serverFinalized?.version) === 1,
+  });
   if (verification.pending) {
     throw new HttpsError("failed-precondition", "両者の対戦結果がまだ確定していません。");
   }
@@ -4263,6 +5066,7 @@ function sanitizeSoloQueueCandidate(value) {
     lastSeen: Number(value?.lastSeen || 0),
     state: cleanText(value?.state, 16),
     reunionPreference: value?.reunionPreference === true,
+    ...(value?.profileProjectionVersion === 2 ? { profileProjectionVersion: 2 } : {}),
   };
 }
 
@@ -4275,6 +5079,7 @@ function soloPermitPlayer(entry) {
     rating: entry.rating,
     sampleCount: entry.sampleCount,
     startingHp: entry.startingHp,
+    ...(entry.profileProjectionVersion === 2 ? { profileProjectionVersion: 2 } : {}),
   };
 }
 
@@ -4303,6 +5108,7 @@ function normalizeSoloPermitPlayer(value, expectedUid) {
     rating: rawRating,
     sampleCount,
     startingHp,
+    ...(value?.profileProjectionVersion === 2 ? { profileProjectionVersion: 2 } : {}),
   };
 }
 
@@ -4362,7 +5168,9 @@ function soloRoomPlayerMatchesPermit(value, permitPlayer) {
     && Number(value?.streak) === permitPlayer.streak
     && Number(value?.rating) === permitPlayer.rating
     && Number(value?.sampleCount) === permitPlayer.sampleCount
-    && Number(value?.startingHp) === permitPlayer.startingHp;
+    && Number(value?.startingHp) === permitPlayer.startingHp
+    && (value?.profileProjectionVersion === 2)
+      === (permitPlayer.profileProjectionVersion === 2);
 }
 
 function soloRoomMatchesPermit(room, permit) {
@@ -4648,6 +5456,13 @@ async function loadExistingSoloHostedMatch(uid, now) {
     await cleanupSoloMatchContext(roomId, { permit });
     return null;
   }
+  if (room.status === "offered"
+      && await soloProfileProjectionParticipantsUpgradeRequired(
+        Object.values(permit.players),
+      )) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return { outcome: "waiting" };
+  }
   const reservationUids = room.status === "active"
     ? [permit.hostUid, permit.guestUid]
     : [permit.hostUid];
@@ -4715,6 +5530,12 @@ async function acquireSoloMatchAttempt(uid, now) {
 }
 
 async function materializeSoloHostedMatch(roomId, permit) {
+  if (await soloProfileProjectionParticipantsUpgradeRequired(
+    Object.values(permit.players),
+  )) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return false;
+  }
   if (!await soloPermitLocksStillOwned(roomId, permit)) return false;
   const hostActiveRef = realtime.ref(`online/active/${permit.hostUid}`);
   const reservation = await hostActiveRef.transaction((currentValue) => (
@@ -4738,6 +5559,12 @@ async function materializeSoloHostedMatch(roomId, permit) {
     await cleanupSoloMatchContext(roomId, { permit });
     return false;
   }
+  if (await soloProfileProjectionParticipantsUpgradeRequired(
+    Object.values(permit.players),
+  )) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return false;
+  }
 
   const roomRef = realtime.ref(`online/rooms/${roomId}`);
   const roomResult = await roomRef.transaction((currentValue) => {
@@ -4755,6 +5582,12 @@ async function materializeSoloHostedMatch(roomId, permit) {
       .set(soloHostedOfferPayload(roomId, permit));
   }
   if (!await soloPermitLocksStillOwned(roomId, permit)) {
+    await cleanupSoloMatchContext(roomId, { permit });
+    return false;
+  }
+  if (await soloProfileProjectionParticipantsUpgradeRequired(
+    Object.values(permit.players),
+  )) {
     await cleanupSoloMatchContext(roomId, { permit });
     return false;
   }
@@ -4791,6 +5624,9 @@ async function trySoloServerMatch(uid) {
   if (ownQueue.uid !== uid || Object.keys(boundedQueue).length < 2) {
     return { outcome: "waiting" };
   }
+  if (await soloProfileProjectionParticipantsUpgradeRequired([ownQueue])) {
+    return { outcome: "waiting" };
+  }
   const [familiarPairs, blockedPairIds] = await Promise.all([
     querySoloPairDocuments("soloFamiliarPairs", uid, true),
     blockedSoloPairIdsForQueue(uid, boundedQueue, selectionNow),
@@ -4805,6 +5641,12 @@ async function trySoloServerMatch(uid) {
     now: selectionNow,
   });
   if (!selection) return { outcome: "waiting" };
+  if (await soloProfileProjectionParticipantsUpgradeRequired([
+    selection.host,
+    selection.candidate,
+  ])) {
+    return { outcome: "waiting" };
+  }
 
   const roomId = realtime.ref("online/rooms").push().key;
   if (!roomId) throw new HttpsError("unavailable", "対戦ルームを準備できませんでした。");
@@ -5030,6 +5872,7 @@ const SOLO_SESSION_ACTION_RATE_POLICIES = Object.freeze({
   accept: Object.freeze({ windowMs: 60_000, limit: 30 }),
   cancel: Object.freeze({ windowMs: 60_000, limit: 30 }),
   expire: Object.freeze({ windowMs: 60_000, limit: 30 }),
+  reconcile_profile: Object.freeze({ windowMs: 60_000, limit: 20 }),
 });
 
 function soloSessionPathSegment(value, label) {
@@ -5053,7 +5896,13 @@ function requireSoloSessionActionData(value) {
   }
   const action = cleanText(value.action, 24);
   const keysByAction = {
-    claim: new Set(["action", "sessionId", "leaseToken", "sameSessionOwnerConfirmedGone"]),
+    claim: new Set([
+      "action",
+      "sessionId",
+      "leaseToken",
+      "sameSessionOwnerConfirmedGone",
+      "profileProjectionVersion",
+    ]),
     heartbeat: new Set(["action", "sessionId", "leaseToken", "generation"]),
     release: new Set(["action", "sessionId", "leaseToken", "generation"]),
     try_match: new Set(["action", "sessionId", "leaseToken", "avoidUid"]),
@@ -5087,6 +5936,13 @@ function requireSoloSessionActionData(value) {
       throw new HttpsError("invalid-argument", "セッション引き継ぎ情報を確認してください。");
     }
     result.sameSessionOwnerConfirmedGone = value.sameSessionOwnerConfirmedGone === true;
+    if (Object.hasOwn(value, "profileProjectionVersion")
+        && value.profileProjectionVersion !== SOLO_PROFILE_PROJECTION_VERSION) {
+      throw new HttpsError("invalid-argument", "通常型1on1の戦績同期バージョンを確認してください。");
+    }
+    if (value.profileProjectionVersion === SOLO_PROFILE_PROJECTION_VERSION) {
+      result.profileProjectionVersion = SOLO_PROFILE_PROJECTION_VERSION;
+    }
   }
   if (action === "try_match" && Object.hasOwn(value, "avoidUid")) {
     const avoidUid = cleanText(value.avoidUid, 128);
@@ -5508,8 +6364,64 @@ async function cleanupReplacedSoloSessionV2ClaimResources(
   return cleaned.every(Boolean);
 }
 
+async function soloProfileProjectionClientUpgradeRequired(uid, requestedVersion) {
+  if (requestedVersion === SOLO_PROFILE_PROJECTION_VERSION) return false;
+  const [
+    enrollmentSnapshot,
+    queueSnapshot,
+    soloSnapshot,
+    overallSnapshot,
+  ] = await Promise.all([
+    soloProfileProjectionEnrollmentRef(uid).get(),
+    soloProfileProjectionQueueRef(uid).get(),
+    realtime.ref(`online/profiles/${uid}`).get(),
+    realtime.ref(`online/overallProfiles/${uid}`).get(),
+  ]);
+  const durableEnrollment = enrollmentSnapshot.val()
+    === SOLO_PROFILE_PROJECTION_VERSION;
+  const enrolled = queueSnapshot.exists
+    && queueSnapshot.get("profileProjectionEnrolled") === true
+    && queueSnapshot.get("profileProjectionVersion")
+      === SOLO_PROFILE_PROJECTION_VERSION;
+  const hasProtectedSequence = [soloSnapshot.val(), overallSnapshot.val()]
+    .some((profile) => (
+      Number.isSafeInteger(profile?.serverProjectionSequence)
+      && profile.serverProjectionSequence > 0
+    ));
+  const upgradeRequired = durableEnrollment || enrolled || hasProtectedSequence;
+  if (upgradeRequired && !durableEnrollment) {
+    await publishSoloProfileProjectionEnrollment(uid);
+  }
+  return upgradeRequired;
+}
+
+async function soloProfileProjectionParticipantsUpgradeRequired(participants) {
+  const versionsByUid = new Map();
+  for (const participant of Array.isArray(participants) ? participants : []) {
+    const uid = typeof participant?.uid === "string" ? participant.uid : "";
+    if (!uid || uid.length > 128) continue;
+    const marked = participant.profileProjectionVersion
+      === SOLO_PROFILE_PROJECTION_VERSION;
+    versionsByUid.set(uid, (versionsByUid.get(uid) ?? true) && marked);
+  }
+  const markerlessUids = [...versionsByUid.entries()]
+    .filter(([, marked]) => !marked)
+    .map(([uid]) => uid);
+  if (!markerlessUids.length) return false;
+  const upgradeRequired = await Promise.all(markerlessUids.map((uid) => (
+    soloProfileProjectionClientUpgradeRequired(uid)
+  )));
+  return upgradeRequired.some(Boolean);
+}
+
 async function claimSoloSessionV2(uid, data) {
   const now = Date.now();
+  if (await soloProfileProjectionClientUpgradeRequired(
+    uid,
+    data.profileProjectionVersion,
+  )) {
+    return { claimed: false, reason: "client-upgrade-required" };
+  }
   if (await liveLegacySoloRoom(uid, now, { cleanupStale: true })) {
     return { claimed: false, reason: "occupied" };
   }
@@ -5598,6 +6510,12 @@ async function claimSoloSessionV2(uid, data) {
         sameSessionOwnerConfirmedGone: data.sameSessionOwnerConfirmedGone,
       });
       if (!decision.allowed) return;
+      if (data.profileProjectionVersion === SOLO_PROFILE_PROJECTION_VERSION) {
+        decision.claim = {
+          ...decision.claim,
+          profileProjectionVersion: SOLO_PROFILE_PROJECTION_VERSION,
+        };
+      }
       rollbackClaimValue = currentValue == null ? null : currentValue;
       return decision.claim;
     });
@@ -6109,6 +7027,17 @@ async function acquireSoloSessionV2RoomTransition(
   const result = await realtime.ref(`online/rooms/${roomId}`)
     .transaction((currentValue) => {
       if (currentValue == null) return null;
+      if (action === "cancel"
+          && allowActiveCancel
+          && currentValue.status === "active"
+          && currentValue.serverFinalized) {
+        decision = {
+          allowed: false,
+          reason: "finalized",
+          room: currentValue,
+        };
+        return;
+      }
       if (reuseExistingAction
           && action === "accept"
           && allowActiveAccept
@@ -6192,6 +7121,17 @@ async function cleanupSoloSessionV2Match(resources, {
       }
       if (!recordAttemptMatches(currentValue, resources)
           || !roomAttemptMatches(currentValue, soloSessionV2TransitionExpected(resources))) {
+        roomSafe = false;
+        return;
+      }
+      if (currentValue.status === "active" && currentValue.serverFinalized) {
+        if (expectedTransition
+            && roomTransitionOwned(currentValue, transitionAction, transitionToken)) {
+          const next = { ...currentValue };
+          delete next.matchTransition;
+          roomSafe = false;
+          return next;
+        }
         roomSafe = false;
         return;
       }
@@ -6317,7 +7257,7 @@ async function readSoloSessionV2MaterializationFence(resources, hostEntry, guest
     realtime.ref(`online/soloMatchLocksV2/${hostEntry.uid}`).get(),
     realtime.ref(`online/soloMatchLocksV2/${guestEntry.uid}`).get(),
   ]);
-  return materializationFenceMatches({
+  if (!materializationFenceMatches({
     hostClaim: hostClaim.val(),
     guestClaim: guestClaim.val(),
     hostQueue: hostQueue.val(),
@@ -6326,7 +7266,11 @@ async function readSoloSessionV2MaterializationFence(resources, hostEntry, guest
     guestLock: guestLock.val(),
     attemptId: resources.hostLock.attemptId,
     now: Date.now(),
-  });
+  })) return false;
+  return !await soloProfileProjectionParticipantsUpgradeRequired([
+    hostEntry,
+    guestEntry,
+  ]);
 }
 
 async function trySoloSessionV2Match(uid, data) {
@@ -7049,6 +7993,13 @@ async function acceptSoloSessionV2Match(uid, data) {
   const offer = offerSnapshot.val();
   const room = roomSnapshot.val();
   const permit = permitSnapshot.val();
+  if (room?.status === "offered"
+      && await soloProfileProjectionParticipantsUpgradeRequired([
+        room.players?.[room.hostUid],
+        room.players?.[room.guestUid],
+      ])) {
+    return { accepted: false, reason: "client-upgrade-required" };
+  }
   if (room?.status === "active"
       && roomMatchesSessionV2(room, {
         uid,
@@ -7400,6 +8351,9 @@ async function cancelSoloSessionV2Match(uid, data, { expireOnly = false } = {}) 
     && room.status === "active"
     && (data.abort === true || Boolean(room.destroyed));
   if (room.status === "active") {
+    if (room.serverFinalized) {
+      return { cancelled: false, reason: "finalized", status: "active" };
+    }
     if (!activeAbortRequested) {
       return { cancelled: false, reason: "active", status: "active" };
     }
@@ -7498,6 +8452,16 @@ async function cancelSoloSessionV2Match(uid, data, { expireOnly = false } = {}) 
     destroyedByUid: uid,
   });
   if (!cleaned) {
+    const latestRoom = activeRoom
+      ? (await realtime.ref(`online/rooms/${data.roomId}`).get()).val()
+      : null;
+    if (latestRoom?.status === "active" && latestRoom.serverFinalized) {
+      return {
+        cancelled: false,
+        reason: "finalized",
+        status: "active",
+      };
+    }
     return {
       cancelled: false,
       reason: "cleanup-incomplete",
@@ -7550,6 +8514,20 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "get_anju_pay_wallet") return await getAnjuPayWallet(uid, request.data);
     if (action === "claim_daily") return await claimDaily(uid, cleanText(request.data?.missionId, 40));
     if (action === "claim_daily_play") return await claimDailyPlayRewards(uid);
+    if (action === "reconcile_solo_profile") {
+      if (!isPlainCallableObject(request.data)
+          || Reflect.ownKeys(request.data).some((key) => key !== "action")) {
+        throw new HttpsError("invalid-argument", "通常型1on1戦績の再同期情報が不正です。");
+      }
+      await consumeSoloSessionActionRate(uid, "reconcile_profile");
+      const projection = await reconcileSoloProfileProjection(uid);
+      return {
+        profileProjectionMode: "server-v2",
+        profileProjectionPending: projection.pending,
+        soloProfile: projection.soloProfile,
+        overallProfile: projection.overallProfile,
+      };
+    }
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
     if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);

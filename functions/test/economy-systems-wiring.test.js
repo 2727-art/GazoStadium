@@ -90,7 +90,10 @@ test("post-match tips require verified claims and transfer one fixed amount once
   const source = server.slice(start, end);
   assert.ok(getStart >= 0 && start > getStart && end > start);
   assert.match(server, /postMatchTipRef\(uid, mode, roomId\)/);
-  assert.match(server, /validatedOutcomes\(request\.mode, room, participants\)/);
+  assert.match(
+    server,
+    /validatedOutcomes\(request\.mode, room, participants,\s*\{\s*requireServerFinalized:\s*request\.mode === "solo"/,
+  );
   assert.match(getSource, /verifiedMatchClaimRef\(uid, mode, roomId\)\.get\(\)/);
   assert.match(getSource, /return \{ sent: false, eligible \}/);
   assert.match(source, /verifiedMatchClaimRef\(uid, verified\.mode, verified\.roomId\)/);

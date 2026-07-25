@@ -215,6 +215,7 @@ test("normal 1on1 wires room and round contexts through cleanup and transition p
   assert.match(source, /function advanceAfterRound\(roundContext\)/);
   assert.match(source, /listenToRound\(roundContext\.roomContext\)/);
   assert.match(source, /finishOnlineMatch\(roundContext\)/);
+  assert.match(source, /settleOnlineMatch\(roundContext\)/);
   assert.doesNotMatch(source, /function listenToRound\(contextIsCurrent = \(\) => true\)/);
   const reactionStart = source.indexOf("async function reactToRoundData");
   const reactionEnd = source.indexOf("async function sendSelectedImage", reactionStart);
@@ -238,8 +239,13 @@ test("normal 1on1 wires room and round contexts through cleanup and transition p
   assert.match(destroyFlow, /const context = captureOnlineRoomContext\(state\)/);
   assert.match(destroyFlow, /pendingDestroyContext = context/);
   assert.match(destroyFlow, /destroyDialog\.showModal\(\)/);
+  assert.match(destroyFlow, /getResolvedMatchResultForRound\(state\.round, state\)/);
   assert.match(destroyFlow, /const context = pendingDestroyContext/);
   assert.match(destroyFlow, /if \(!isCurrentRoomSetupContext\(context\)\) return/);
+  assert.ok(
+    (destroyFlow.match(/await preserveResolvedMatchBeforeP2pCleanup\(expectedState\)/g) || []).length >= 2,
+    "destroy confirmation must recheck final resolution before and after the write",
+  );
   assert.match(destroyFlow, /online\/rooms\/\$\{context\.roomId\}\/destroyed/);
   assert.match(destroyFlow, /by: context\.ownUid/);
   const destroyWriteIndex = destroyFlow.indexOf("await runTransaction(");
@@ -255,27 +261,37 @@ test("normal 1on1 wires room and round contexts through cleanup and transition p
   assert.match(source, /beginOnlineStateTransition\(expectedState, "cancel-matching"\)/);
   assert.match(source, /beginOnlineStateTransition\(expectedState, `reset:\$\{screen\}`\)/);
   assert.match(source, /beginOnlineStateTransition\(expectedState, "leave"\)/);
-  const finishStart = source.indexOf("async function finishOnlineMatch(roundContext)");
+  const settlementStart = source.indexOf("async function settleOnlineMatch(roundContext)");
+  const finishStart = source.indexOf("async function finishOnlineMatch(roundContext)", settlementStart);
   const finishEnd = source.indexOf("function calculateRating", finishStart);
+  const settlementFlow = source.slice(settlementStart, finishStart);
   const finishFlow = source.slice(finishStart, finishEnd);
-  const finishUpdateIndex = finishFlow.indexOf("await update(");
-  const finishUpdateRecheck = finishFlow.indexOf("if (!isCurrentRoundContext(roundContext)) return", finishUpdateIndex);
-  const finishStatsIndex = finishFlow.indexOf("await commitOnlineStats(expectedState, outcome, roundContext)");
-  const finishStatsRecheck = finishFlow.indexOf("!isCurrentRoundContext(roundContext)", finishStatsIndex);
+  const finishClaimIndex = settlementFlow.indexOf("await ensureOnlineResultClaim(expectedState, outcome, roundContext)");
+  const finishClaimRecheck = settlementFlow.indexOf("!isCurrentRoundContext(roundContext)", finishClaimIndex);
+  const finishStatsIndex = settlementFlow.indexOf("await commitOnlineStats(expectedState, outcome, roundContext)");
+  const finishStatsRecheck = settlementFlow.indexOf("!isCurrentRoundContext(roundContext)", finishStatsIndex);
   const finishScreenIndex = finishFlow.indexOf('expectedState.screen = "gameover"');
-  assert.ok(finishStart >= 0 && finishEnd > finishStart);
+  assert.ok(settlementStart >= 0 && finishStart > settlementStart && finishEnd > finishStart);
   assert.ok(
-    finishUpdateIndex >= 0
-      && finishUpdateRecheck > finishUpdateIndex
-      && finishStatsIndex > finishUpdateRecheck
+    finishClaimIndex >= 0
+      && finishClaimRecheck > finishClaimIndex
+      && finishStatsIndex > finishClaimRecheck
       && finishStatsRecheck > finishStatsIndex
-      && finishScreenIndex > finishStatsRecheck,
+      && finishScreenIndex >= 0,
   );
+  assert.match(settlementFlow, /expectedState\.matchFinalizationPromise/);
+  assert.match(finishFlow, /const settled = await settleOnlineMatch\(roundContext\)/);
   const statsStart = source.indexOf("async function commitOnlineStats(targetState, outcome, roundContext)");
   const statsEnd = source.indexOf("async function sendChat", statsStart);
   const statsFlow = source.slice(statsStart, statsEnd);
   assert.ok(statsStart >= 0 && statsEnd > statsStart);
   assert.match(statsFlow, /if \(!isCurrentRoundContext\(roundContext\)\) return false/);
+  assert.match(statsFlow, /if \(targetState\.statsCommitted\) return true/);
+  assert.match(statsFlow, /targetState\.statsCommitInFlight = true/);
+  assert.match(statsFlow, /lastResultRoomId: targetState\.roomId/);
+  assert.match(statsFlow, /lastResultOutcome: periodOutcome/);
+  assert.match(statsFlow, /targetState\.statsCommitted = true/);
+  assert.match(statsFlow, /finally \{[\s\S]*?targetState\.statsCommitInFlight = false/);
   assert.match(statsFlow, /sourceState: targetState/);
   assert.doesNotMatch(statsFlow, /\bstate\./);
   const cancelStart = source.indexOf("async function cancelMatching()");

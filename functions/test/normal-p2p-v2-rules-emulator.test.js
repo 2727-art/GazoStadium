@@ -70,7 +70,7 @@ if (!RUN_REQUESTED) {
   let environment;
   let now;
 
-  function claim(sessionId, leaseToken, generation) {
+  function claim(sessionId, leaseToken, generation, overrides = {}) {
     return {
       protocolVersion: 2,
       sessionId,
@@ -79,10 +79,11 @@ if (!RUN_REQUESTED) {
       claimedAt: now - 1_000,
       heartbeatAt: now,
       expiresAt: now + 60_000,
+      ...overrides,
     };
   }
 
-  function queueEntry(uid, sessionId, leaseToken, generation) {
+  function queueEntry(uid, sessionId, leaseToken, generation, overrides = {}) {
     return {
       protocolVersion: 2,
       uid,
@@ -100,6 +101,24 @@ if (!RUN_REQUESTED) {
       joinedAt: now,
       lastSeen: now,
       expiresAt: now + 60_000,
+      state: "waiting",
+      sampleCount: 0,
+      startingHp: 30,
+      ...overrides,
+    };
+  }
+
+  function legacyQueueEntry(uid, name) {
+    return {
+      uid,
+      name,
+      pursuitLine: "まだ終わらない",
+      streak: 0,
+      rating: 1_500,
+      ratingPreference: "both",
+      allowPreferenceMismatch: false,
+      joinedAt: now,
+      lastSeen: now,
       state: "waiting",
       sampleCount: 0,
       startingHp: 30,
@@ -255,6 +274,67 @@ if (!RUN_REQUESTED) {
     await assertFails(set(ref(ownerDb, "online/p2pRateLimits/turn/test"), { count: 0 }));
   });
 
+  test("profile owners cannot remove, replace, or forge server projection fences", async () => {
+    const receiptToken = "a".repeat(40);
+    await seed({
+      [`online/profiles/${hostUid}`]: {
+        name: "HOST",
+        pursuitLine: "まだ終わらない",
+        wins: 1,
+        losses: 0,
+        draws: 0,
+        streak: 1,
+        bestStreak: 1,
+        rating: 1_016,
+        updatedAt: now,
+        serverProjectionReceipts: `${receiptToken}:win`,
+        serverProjectionSequence: 1,
+      },
+      [`online/overallProfiles/${hostUid}`]: {
+        name: "HOST",
+        wins: 1,
+        losses: 0,
+        draws: 0,
+        streak: 1,
+        bestStreak: 1,
+        rating: 1_016,
+        modes: {
+          solo: { wins: 1, losses: 0, draws: 0, matches: 1, points: 3 },
+          strategy: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          team: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          royale: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+        },
+        updatedAt: now,
+        serverProjectionReceipts: `${receiptToken}:win`,
+        serverProjectionSequence: 1,
+      },
+    });
+    const ownerDb = environment.authenticatedContext(hostUid).database();
+
+    for (const profilePath of [
+      `online/profiles/${hostUid}`,
+      `online/overallProfiles/${hostUid}`,
+    ]) {
+      const profileRef = ref(ownerDb, profilePath);
+      await assertSucceeds(update(profileRef, { name: "HOST NEW" }));
+      await assertFails(update(profileRef, {
+        serverProjectionReceipts: null,
+      }));
+      await assertFails(update(profileRef, {
+        serverProjectionReceipts: `${receiptToken}:loss`,
+      }));
+      await assertFails(update(profileRef, {
+        serverProjectionReceipts: `${receiptToken}:win,${"b".repeat(40)}:draw`,
+      }));
+      await assertFails(update(profileRef, {
+        serverProjectionSequence: null,
+      }));
+      await assertFails(update(profileRef, {
+        serverProjectionSequence: 2,
+      }));
+    }
+  });
+
   test("queueV2 accepts only a fresh matching claim and never lets a client edit reserved state", async () => {
     await seed({
       [`online/soloSessionClaims/${hostUid}`]: claim(
@@ -276,6 +356,43 @@ if (!RUN_REQUESTED) {
       `online/queueV2/${hostUid}/${hostSessionId}`,
     )));
     await assertFails(get(ref(hostDb, "online/queueV2")));
+    await assertFails(update(ownQueue, { profileProjectionVersion: 2 }));
+
+    await seed({
+      [`online/queueV2/${hostUid}/${hostSessionId}`]: null,
+    });
+    await assertFails(set(
+      ownQueue,
+      queueEntry(hostUid, hostSessionId, hostLeaseToken, hostGeneration, {
+        profileProjectionVersion: 1,
+      }),
+    ));
+    await assertFails(set(
+      ownQueue,
+      queueEntry(hostUid, hostSessionId, hostLeaseToken, hostGeneration, {
+        profileProjectionVersion: 2,
+      }),
+    ));
+    await seed({
+      [`online/soloSessionClaims/${hostUid}`]: claim(
+        hostSessionId,
+        hostLeaseToken,
+        hostGeneration,
+        { profileProjectionVersion: 2 },
+      ),
+    });
+    await assertFails(set(
+      ownQueue,
+      queueEntry(hostUid, hostSessionId, hostLeaseToken, hostGeneration),
+    ));
+    await assertSucceeds(set(
+      ownQueue,
+      queueEntry(hostUid, hostSessionId, hostLeaseToken, hostGeneration, {
+        profileProjectionVersion: 2,
+      }),
+    ));
+    await assertSucceeds(update(ownQueue, { lastSeen: now + 1 }));
+    await assertFails(update(ownQueue, { profileProjectionVersion: null }));
 
     const wrongFence = queueEntry(
       hostUid,
@@ -306,32 +423,101 @@ if (!RUN_REQUESTED) {
       ),
     });
     const hostDb = environment.authenticatedContext(hostUid).database();
-    const legacyEntry = (uid, name) => ({
-      uid,
-      name,
-      pursuitLine: "まだ終わらない",
-      streak: 0,
-      rating: 1_500,
-      ratingPreference: "both",
-      allowPreferenceMismatch: false,
-      joinedAt: now,
-      lastSeen: now,
-      state: "waiting",
-      sampleCount: 0,
-      startingHp: 30,
-    });
     await assertFails(set(
       ref(hostDb, `online/queue/${hostUid}`),
-      legacyEntry(hostUid, "ホスト"),
+      legacyQueueEntry(hostUid, "ホスト"),
     ));
     await assertFails(set(ref(hostDb, `online/active/${hostUid}`), roomId));
 
     const legacyDb = environment.authenticatedContext(otherUid).database();
     await assertSucceeds(set(
       ref(legacyDb, `online/queue/${otherUid}`),
-      legacyEntry(otherUid, "従来利用者"),
+      legacyQueueEntry(otherUid, "従来利用者"),
     ));
     await assertSucceeds(set(ref(legacyDb, `online/active/${otherUid}`), roomId));
+  });
+
+  test("durable projection enrollment blocks markerless queues and legacy activation only", async () => {
+    const legacyRoomId = "-EnrolledLegacyRoom01";
+    const strategyRoomId = "-StrategyScopeRoom001";
+    await seed({
+      [`online/soloProfileProjectionEnrollments/${hostUid}`]: 2,
+      [`online/queue/${hostUid}`]: legacyQueueEntry(hostUid, "ホスト"),
+      [`online/rooms/${legacyRoomId}`]: {
+        hostUid,
+        guestUid,
+        createdAt: now,
+        status: "offered",
+        members: {
+          [hostUid]: true,
+          [guestUid]: true,
+        },
+        players: {
+          [hostUid]: playerRecord(hostUid, "ホスト"),
+          [guestUid]: playerRecord(guestUid, "ゲスト"),
+        },
+      },
+      [`online/strategyRooms/${strategyRoomId}`]: {
+        hostUid,
+        status: "offered",
+        members: {
+          [hostUid]: true,
+          [guestUid]: true,
+        },
+      },
+    });
+    const hostDb = environment.authenticatedContext(hostUid).database();
+    const guestDb = environment.authenticatedContext(guestUid).database();
+
+    await assertFails(get(ref(
+      hostDb,
+      `online/soloProfileProjectionEnrollments/${hostUid}`,
+    )));
+    await assertFails(set(
+      ref(hostDb, `online/soloProfileProjectionEnrollments/${hostUid}`),
+      2,
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/queue/${hostUid}`),
+      legacyQueueEntry(hostUid, "ホスト"),
+    ));
+    await assertSucceeds(remove(ref(hostDb, `online/queue/${hostUid}`)));
+    await assertFails(set(ref(hostDb, `online/active/${hostUid}`), legacyRoomId));
+    await assertFails(set(
+      ref(guestDb, `online/rooms/${legacyRoomId}/status`),
+      "active",
+    ));
+    await assertSucceeds(set(
+      ref(guestDb, `online/strategyRooms/${strategyRoomId}/status`),
+      "active",
+    ));
+
+    await seed({
+      [`online/soloSessionClaims/${hostUid}`]: claim(
+        hostSessionId,
+        hostLeaseToken,
+        hostGeneration,
+      ),
+    });
+    const ownQueue = ref(hostDb, `online/queueV2/${hostUid}/${hostSessionId}`);
+    await assertFails(set(
+      ownQueue,
+      queueEntry(hostUid, hostSessionId, hostLeaseToken, hostGeneration),
+    ));
+    await seed({
+      [`online/soloSessionClaims/${hostUid}`]: claim(
+        hostSessionId,
+        hostLeaseToken,
+        hostGeneration,
+        { profileProjectionVersion: 2 },
+      ),
+    });
+    await assertSucceeds(set(
+      ownQueue,
+      queueEntry(hostUid, hostSessionId, hostLeaseToken, hostGeneration, {
+        profileProjectionVersion: 2,
+      }),
+    ));
   });
 
   test("legacy room setup remains usable while V2 room identity stays backend-only", async () => {
@@ -605,6 +791,94 @@ if (!RUN_REQUESTED) {
         payload: "{}",
         createdAt: now,
       },
+    ));
+  });
+
+  test("new and legacy completed claims coexist while only server finalization blocks destroy", async () => {
+    const recoveredRoomId = "-V2RecoverFinalRoom1";
+    const protectedRoomId = "-V2ProtectFinalRoom1";
+    const finalizedRoomId = "-V2ServerFinalRoom01";
+    const completedRound = {
+      scores: {
+        [hostUid]: 8,
+        [guestUid]: 10,
+      },
+    };
+    await seed({
+      [`online/soloSessionClaims/${hostUid}`]: claim(
+        hostSessionId,
+        hostLeaseToken,
+        hostGeneration,
+      ),
+      [`online/rooms/${recoveredRoomId}`]: {
+        ...v2Room(),
+        destroyed: { by: guestUid, at: now },
+        rounds: { 1: completedRound },
+      },
+      [`online/rooms/${protectedRoomId}`]: {
+        ...v2Room(),
+        rounds: { 1: completedRound },
+      },
+      [`online/rooms/${finalizedRoomId}`]: {
+        ...v2Room(),
+        rounds: { 1: completedRound },
+        serverFinalized: {
+          version: 1,
+          round: 1,
+          finalizedAt: now,
+        },
+      },
+    });
+    const hostDb = environment.authenticatedContext(hostUid).database();
+    const resultClaim = {
+      outcome: "win",
+      round: 1,
+      createdAt: now,
+    };
+
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${recoveredRoomId}/resultClaims/${hostUid}`),
+      resultClaim,
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${recoveredRoomId}/finished/${hostUid}`),
+      true,
+    ));
+    await assertFails(update(
+      ref(hostDb, `online/rooms/${recoveredRoomId}`),
+      {
+        [`resultClaims/${hostUid}`]: { outcome: "win", createdAt: now },
+        [`finished/${hostUid}`]: true,
+      },
+    ));
+    await assertSucceeds(update(
+      ref(hostDb, `online/rooms/${recoveredRoomId}`),
+      {
+        [`resultClaims/${hostUid}`]: resultClaim,
+        [`finished/${hostUid}`]: true,
+      },
+    ));
+    await assertSucceeds(update(
+      ref(hostDb, `online/rooms/${protectedRoomId}`),
+      {
+        [`resultClaims/${hostUid}`]: resultClaim,
+        [`finished/${hostUid}`]: true,
+      },
+    ));
+    await assertSucceeds(update(
+      ref(hostDb, `online/rooms/${finalizedRoomId}`),
+      {
+        [`resultClaims/${hostUid}`]: { outcome: "win", createdAt: now },
+        [`finished/${hostUid}`]: true,
+      },
+    ));
+    await assertSucceeds(set(
+      ref(hostDb, `online/rooms/${protectedRoomId}/destroyed`),
+      { by: hostUid, at: now },
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${finalizedRoomId}/destroyed`),
+      { by: hostUid, at: now },
     ));
   });
 

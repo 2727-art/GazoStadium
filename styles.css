@@ -4553,6 +4553,13 @@ button:disabled {
   line-height: 1.55;
 }
 
+.field-help {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
 .finish-visibility-toggle {
   display: flex;
   align-items: center;
@@ -5978,6 +5985,43 @@ button:disabled {
   white-space: pre-line;
 }
 
+.finish-result-reply-note,
+.finish-result-reply-disclosure {
+  grid-column: 1 / -1;
+  margin: 5px 0 0;
+  color: #c9dadd;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.finish-result-reply-note.is-error {
+  color: #ffc2c9;
+}
+
+.finish-result-reply-disclosure {
+  color: #9fb1b7;
+  font-size: 0.69rem;
+}
+
+.finish-reply-slot:empty {
+  display: none;
+}
+
+.finish-reply-slot:not(.is-terminal):not(:empty) {
+  display: contents;
+}
+
+.finish-reply-slot.is-terminal {
+  width: min(600px, 100%);
+  margin: 24px auto 0;
+}
+
+.finish-reply-slot.is-terminal .finish-result-reply {
+  width: 100%;
+  margin: 0;
+}
+
 .finish-result-reply.is-signature {
   border-color: rgba(255, 209, 102, 0.4);
   background: rgba(255, 209, 102, 0.065);
@@ -6402,6 +6446,13 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.finish-cutin-line-disclosure {
+  color: #b7c5c9;
+  font-size: 0.67rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .finish-reply-line,
 .finish-reply-waiting {
   margin: 0;
@@ -6449,10 +6500,29 @@ button:disabled {
   animation: finish-reply-in 320ms ease-out both;
 }
 
+.finish-reply-panel.is-delivery-failed {
+  border-color: rgba(255, 128, 145, 0.56);
+  background: rgba(74, 24, 34, 0.76);
+}
+
+.finish-reply-disclosure {
+  padding-right: 54px;
+  color: #b8c7cb;
+  font-size: 0.67rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .finish-cutin.is-signature .finish-reply-panel.is-acknowledged {
   border-color: rgba(255, 218, 127, 0.68);
   background: rgba(73, 50, 12, 0.66);
   box-shadow: inset 0 0 28px rgba(255, 209, 102, 0.08), 0 0 26px rgba(255, 193, 55, 0.08);
+}
+
+.finish-cutin.is-signature .finish-reply-panel.is-delivery-failed {
+  border-color: rgba(255, 128, 145, 0.62);
+  background: rgba(74, 24, 34, 0.8);
+  box-shadow: inset 0 0 28px rgba(255, 90, 114, 0.08);
 }
 
 .finish-cutin.is-signature .finish-reply-panel.is-acknowledged .finish-reply-heading,

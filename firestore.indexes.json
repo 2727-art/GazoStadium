@@ -111,6 +111,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "soloProfileProjectionQueues",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "pending",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastStartedAt",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

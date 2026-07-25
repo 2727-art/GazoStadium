@@ -48,7 +48,10 @@ test("all four modes feed the shared verified-match reward path", () => {
     assert.match(source, /overallResult\?\.economyBalance !== null/);
     assert.match(source, /state\.economy\.points = Number\(overallResult\.economyBalance\)/);
   }
-  assert.match(online, /action:\s*"record_match", mode, outcome, roomId/);
+  assert.match(
+    online,
+    /action:\s*"record_match",\s*mode,\s*outcome,\s*roomId,\s*\.\.\.\(mode === "solo" \? \{ finalizationVersion: 2 \} : \{\}\)/,
+  );
   assert.match(online, /settleDailyPlayRewards\(uid, \{ announce: true, renderAfter: false \}\)/);
   assert.match(online, /economyBalance:\s*periodResult\?\.economyBalance \?\? null/);
 });

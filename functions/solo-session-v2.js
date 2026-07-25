@@ -48,7 +48,9 @@ function normalizeClaim(value) {
       || !finiteTimestamp(value.heartbeatAt)
       || !finiteTimestamp(value.expiresAt)
       || value.claimedAt > value.heartbeatAt
-      || value.heartbeatAt >= value.expiresAt) return null;
+      || value.heartbeatAt >= value.expiresAt
+      || (Object.hasOwn(value, "profileProjectionVersion")
+        && value.profileProjectionVersion !== 2)) return null;
   return {
     protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
     sessionId: value.sessionId,
@@ -57,6 +59,7 @@ function normalizeClaim(value) {
     claimedAt: value.claimedAt,
     heartbeatAt: value.heartbeatAt,
     expiresAt: value.expiresAt,
+    ...(value.profileProjectionVersion === 2 ? { profileProjectionVersion: 2 } : {}),
   };
 }
 
@@ -321,6 +324,7 @@ function queueEntryMatchesClaim(uid, sessionId, value, claim, now, {
   allowedStates = ["waiting"],
   freshMs = SOLO_SESSION_QUEUE_FRESH_MS,
 } = {}) {
+  const normalizedClaim = normalizeClaim(claim);
   if (!isSafeUid(uid)
       || !isSafeToken(sessionId)
       || !isRecord(value)
@@ -329,10 +333,14 @@ function queueEntryMatchesClaim(uid, sessionId, value, claim, now, {
       || value.sessionId !== sessionId
       || !isSafeToken(value.leaseToken)
       || !isSafeToken(value.generation)
+      || (Object.hasOwn(value, "profileProjectionVersion")
+        && value.profileProjectionVersion !== 2)
+      || (value.profileProjectionVersion === 2)
+        !== (normalizedClaim?.profileProjectionVersion === 2)
       || !allowedStates.includes(value.state)
       || !freshExpiry(Number(value.expiresAt), now)
       || Number(value.expiresAt) > now + 120_000
-      || !claimMatches(claim, {
+      || !claimMatches(normalizedClaim, {
         sessionId,
         leaseToken: value.leaseToken,
         generation: value.generation,
@@ -468,6 +476,7 @@ function playerFromQueue(entry) {
     rating: entry.rating,
     sampleCount: entry.sampleCount,
     startingHp: entry.startingHp,
+    ...(entry.profileProjectionVersion === 2 ? { profileProjectionVersion: 2 } : {}),
   };
 }
 

@@ -203,6 +203,724 @@ if (!RUN_REQUESTED) {
       await deleteAdminApp(adminApp);
     });
 
+    test("one normal 1on1 caller records both outcomes without occupying the opponent acknowledgement", async () => {
+      const host = await createCaller("solo-finalize-host");
+      const guest = await createCaller("solo-finalize-guest");
+      const roomId = eventId(`${suiteId}:solo-finalize`).slice(0, 20);
+      const createdAt = Date.now() - 1_000;
+      await realtime.ref(`online/rooms/${roomId}`).set({
+        status: "active",
+        createdAt,
+        hostUid: host.uid,
+        guestUid: guest.uid,
+        members: {
+          [host.uid]: true,
+          [guest.uid]: true,
+        },
+        players: {
+          [host.uid]: {
+            uid: host.uid,
+            name: "HOST",
+            rating: 1_000,
+            startingHp: 30,
+          },
+          [guest.uid]: {
+            uid: guest.uid,
+            name: "GUEST",
+            rating: 1_000,
+            startingHp: 5,
+          },
+        },
+        rounds: {
+          1: {
+            scores: {
+              [host.uid]: 1,
+              [guest.uid]: 10,
+            },
+          },
+        },
+      });
+
+      await assert.rejects(
+        invoke(host.economyAction, {
+          action: "record_match",
+          mode: "solo",
+          outcome: "win",
+          roomId,
+          finalizationVersion: 3,
+        }),
+        /決着通信バージョンが不正/,
+      );
+      await assert.rejects(
+        invoke(host.economyAction, {
+          action: "record_match",
+          mode: "solo",
+          outcome: "loss",
+          roomId,
+          finalizationVersion: 2,
+        }),
+        /確定スコアと一致しません/,
+      );
+      assert.equal(
+        (await realtime.ref(`online/rooms/${roomId}/serverFinalized`).get()).exists(),
+        false,
+      );
+
+      const tooFresh = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      assert.equal(tooFresh.outcome, "pending");
+      assert.equal(Number(tooFresh.retryAfterMs) > 0, true);
+      assert.equal(
+        (await firestore.doc(`verifiedMatchClaims/${eventId(`${host.uid}:solo:${roomId}`)}`).get()).exists,
+        false,
+      );
+      await realtime.ref(`online/rooms/${roomId}/createdAt`).set(Date.now() - 60_000);
+
+      const first = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      assert.equal(first.outcome, "recorded");
+      assert.equal(first.acceptedFinalizationVersion, 2);
+      assert.equal(first.resultToken, eventId(`${host.uid}:solo:${roomId}`));
+      assert.equal(first.profileProjectionMode, undefined);
+
+      const finalizedRoom = (await realtime.ref(`online/rooms/${roomId}`).get()).val();
+      assert.equal(finalizedRoom.resultClaims, undefined);
+      assert.equal(finalizedRoom.finished, undefined);
+      assert.equal(finalizedRoom.serverFinalized.version, 1);
+      assert.equal(finalizedRoom.serverFinalized.round, 1);
+
+      const [hostClaim, guestClaim] = await Promise.all([
+        firestore.doc(`verifiedMatchClaims/${eventId(`${host.uid}:solo:${roomId}`)}`).get(),
+        firestore.doc(`verifiedMatchClaims/${eventId(`${guest.uid}:solo:${roomId}`)}`).get(),
+      ]);
+      assert.equal(hostClaim.exists, true);
+      assert.equal(guestClaim.exists, true);
+      assert.equal(hostClaim.get("profileProjectionVersion"), undefined);
+      assert.equal(guestClaim.get("profileProjectionVersion"), undefined);
+      assert.equal(
+        (await firestore.doc(`soloProfileProjectionQueues/${host.uid}`).get()).exists,
+        false,
+      );
+      assert.equal(
+        (await firestore.doc(`soloProfileProjectionQueues/${guest.uid}`).get()).exists,
+        false,
+      );
+
+      const [hostRetry, guestRetry] = await Promise.all([
+        invoke(host.economyAction, {
+          action: "record_match",
+          mode: "solo",
+          outcome: "win",
+          roomId,
+          finalizationVersion: 2,
+        }),
+        invoke(guest.economyAction, {
+          action: "record_match",
+          mode: "solo",
+          outcome: "loss",
+          roomId,
+          finalizationVersion: 2,
+        }),
+      ]);
+      assert.equal(hostRetry.outcome, "duplicate");
+      assert.equal(guestRetry.outcome, "duplicate");
+
+      const [hostProgress, guestProgress] = await Promise.all([
+        firestore.doc(`economyProgress/${host.uid}`).get(),
+        firestore.doc(`economyProgress/${guest.uid}`).get(),
+      ]);
+      assert.equal(hostProgress.get("achievementStats.totalMatches"), 1);
+      assert.equal(guestProgress.get("achievementStats.totalMatches"), 1);
+    });
+
+    test("normal 1on1 profile projection updates both marked V2 participants exactly once", async () => {
+      const host = await createCaller("solo-projection-both-host");
+      const guest = await createCaller("solo-projection-both-guest");
+      const roomId = eventId(`${suiteId}:solo-projection-both`).slice(0, 20);
+      const hostToken = eventId(`${host.uid}:solo:${roomId}`);
+      const guestToken = eventId(`${guest.uid}:solo:${roomId}`);
+      const profileUpdatedAt = Date.now() - 120_000;
+      await Promise.all([
+        realtime.ref(`online/profiles/${host.uid}`).set({
+          name: "HOST OLD",
+          pursuitLine: "HOST OLD LINE",
+          wins: 2,
+          losses: 1,
+          draws: 0,
+          streak: 1,
+          bestStreak: 2,
+          rating: 1_000,
+          updatedAt: profileUpdatedAt,
+          appliedResults: {
+            [hostToken]: "loss",
+          },
+        }),
+        realtime.ref(`online/profiles/${guest.uid}`).set({
+          name: "GUEST OLD",
+          pursuitLine: "GUEST OLD LINE",
+          wins: 1,
+          losses: 3,
+          draws: 1,
+          streak: 0,
+          bestStreak: 1,
+          rating: 1_000,
+          updatedAt: profileUpdatedAt,
+        }),
+        realtime.ref(`online/overallProfiles/${host.uid}`).set({
+          name: "HOST OLD",
+          wins: 3,
+          losses: 1,
+          draws: 0,
+          streak: 1,
+          bestStreak: 2,
+          rating: 1_000,
+          modes: {
+            solo: { wins: 2, losses: 1, draws: 0, matches: 3, points: 6 },
+            strategy: { wins: 1, losses: 0, draws: 0, matches: 1, points: 3 },
+            team: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+            royale: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          },
+          updatedAt: profileUpdatedAt,
+          appliedResults: {
+            [hostToken]: "loss",
+          },
+        }),
+        realtime.ref(`online/overallProfiles/${guest.uid}`).set({
+          name: "GUEST OLD",
+          wins: 1,
+          losses: 4,
+          draws: 1,
+          streak: 0,
+          bestStreak: 1,
+          rating: 1_000,
+          modes: {
+            solo: { wins: 1, losses: 3, draws: 1, matches: 5, points: 4 },
+            strategy: { wins: 0, losses: 1, draws: 0, matches: 1, points: 0 },
+            team: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+            royale: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          },
+          updatedAt: profileUpdatedAt,
+        }),
+      ]);
+      await realtime.ref(`online/rooms/${roomId}`).set({
+        status: "active",
+        protocolVersion: 2,
+        createdAt: Date.now() - 60_000,
+        hostUid: host.uid,
+        guestUid: guest.uid,
+        members: {
+          [host.uid]: true,
+          [guest.uid]: true,
+        },
+        players: {
+          [host.uid]: {
+            uid: host.uid,
+            name: "HOST NEW",
+            pursuitLine: "HOST NEW LINE",
+            rating: 1_000,
+            startingHp: 30,
+            profileProjectionVersion: 2,
+          },
+          [guest.uid]: {
+            uid: guest.uid,
+            name: "GUEST NEW",
+            pursuitLine: "GUEST NEW LINE",
+            rating: 1_000,
+            startingHp: 5,
+            profileProjectionVersion: 2,
+          },
+        },
+        rounds: {
+          1: {
+            scores: {
+              [host.uid]: 1,
+              [guest.uid]: 10,
+            },
+          },
+        },
+      });
+
+      const first = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      assert.equal(first.outcome, "recorded");
+      assert.equal(first.profileProjectionMode, "server-v2");
+      assert.equal(first.profileProjectionPending, false);
+      assert.equal(first.soloProfile.name, "HOST NEW");
+      assert.equal(first.soloProfile.wins, 3);
+      assert.equal(first.soloProfile.losses, 1);
+      assert.equal(first.soloProfile.streak, 2);
+      assert.equal(first.soloProfile.bestStreak, 2);
+      assert.equal(first.soloProfile.rating, 1_016);
+      assert.equal(first.overallProfile.modes.solo.wins, 3);
+      assert.equal(first.overallProfile.modes.strategy.wins, 1);
+
+      const [
+        hostProfileSnapshot,
+        guestProfileSnapshot,
+        hostOverallSnapshot,
+        guestOverallSnapshot,
+        hostClaim,
+        guestClaim,
+        hostQueue,
+        guestQueue,
+        hostJobs,
+        guestJobs,
+      ] = await Promise.all([
+        realtime.ref(`online/profiles/${host.uid}`).get(),
+        realtime.ref(`online/profiles/${guest.uid}`).get(),
+        realtime.ref(`online/overallProfiles/${host.uid}`).get(),
+        realtime.ref(`online/overallProfiles/${guest.uid}`).get(),
+        firestore.doc(`verifiedMatchClaims/${hostToken}`).get(),
+        firestore.doc(`verifiedMatchClaims/${guestToken}`).get(),
+        firestore.doc(`soloProfileProjectionQueues/${host.uid}`).get(),
+        firestore.doc(`soloProfileProjectionQueues/${guest.uid}`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${host.uid}/jobs`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${guest.uid}/jobs`).get(),
+      ]);
+      const hostProfile = hostProfileSnapshot.val();
+      const guestProfile = guestProfileSnapshot.val();
+      const hostOverall = hostOverallSnapshot.val();
+      const guestOverall = guestOverallSnapshot.val();
+      assert.equal(hostProfile.name, "HOST NEW");
+      assert.equal(hostProfile.pursuitLine, "HOST NEW LINE");
+      assert.equal(hostProfile.wins, 3);
+      assert.equal(hostProfile.losses, 1);
+      assert.equal(hostProfile.streak, 2);
+      assert.equal(hostProfile.rating, 1_016);
+      assert.equal(hostProfile.appliedResults[hostToken], "win");
+      assert.equal(hostProfile.serverProjectionReceipts, `${hostToken}:win`);
+      assert.equal(hostProfile.serverProjectionSequence, 1);
+      assert.equal(guestProfile.name, "GUEST NEW");
+      assert.equal(guestProfile.pursuitLine, "GUEST NEW LINE");
+      assert.equal(guestProfile.wins, 1);
+      assert.equal(guestProfile.losses, 4);
+      assert.equal(guestProfile.draws, 1);
+      assert.equal(guestProfile.streak, 0);
+      assert.equal(guestProfile.rating, 984);
+      assert.equal(guestProfile.appliedResults[guestToken], "loss");
+      assert.equal(guestProfile.serverProjectionReceipts, `${guestToken}:loss`);
+      assert.equal(guestProfile.serverProjectionSequence, 1);
+      assert.equal(hostOverall.wins, 4);
+      assert.equal(hostOverall.losses, 1);
+      assert.equal(hostOverall.modes.solo.wins, 3);
+      assert.equal(hostOverall.modes.strategy.wins, 1);
+      assert.equal(hostOverall.rating, 1_016);
+      assert.equal(hostOverall.appliedResults[hostToken], "win");
+      assert.equal(hostOverall.serverProjectionReceipts, `${hostToken}:win`);
+      assert.equal(hostOverall.serverProjectionSequence, 1);
+      assert.equal(guestOverall.wins, 1);
+      assert.equal(guestOverall.losses, 5);
+      assert.equal(guestOverall.draws, 1);
+      assert.equal(guestOverall.modes.solo.losses, 4);
+      assert.equal(guestOverall.modes.strategy.losses, 1);
+      assert.equal(guestOverall.rating, 984);
+      assert.equal(guestOverall.appliedResults[guestToken], "loss");
+      assert.equal(guestOverall.serverProjectionReceipts, `${guestToken}:loss`);
+      assert.equal(guestOverall.serverProjectionSequence, 1);
+      assert.equal(hostClaim.get("profileProjectionVersion"), 2);
+      assert.equal(hostClaim.get("profileProjectionStatus"), "complete");
+      assert.equal(hostClaim.get("projectionSequence"), 1);
+      assert.equal(guestClaim.get("profileProjectionVersion"), 2);
+      assert.equal(guestClaim.get("profileProjectionStatus"), "complete");
+      assert.equal(guestClaim.get("projectionSequence"), 1);
+      assert.equal(hostJobs.empty, true);
+      assert.equal(guestJobs.empty, true);
+      assert.equal(hostQueue.get("pending"), false);
+      assert.equal(guestQueue.get("pending"), false);
+      assert.equal(hostQueue.get("queueRevision"), 1);
+      assert.equal(guestQueue.get("queueRevision"), 1);
+      assert.equal(hostQueue.get("profileProjectionEnrolled"), true);
+      assert.equal(guestQueue.get("profileProjectionEnrolled"), true);
+      assert.equal(hostQueue.get("profileProjectionVersion"), 2);
+      assert.equal(guestQueue.get("profileProjectionVersion"), 2);
+
+      const [hostRetry, guestRetry] = await Promise.all([
+        invoke(host.economyAction, {
+          action: "record_match",
+          mode: "solo",
+          outcome: "win",
+          roomId,
+          finalizationVersion: 2,
+        }),
+        invoke(guest.economyAction, {
+          action: "record_match",
+          mode: "solo",
+          outcome: "loss",
+          roomId,
+          finalizationVersion: 2,
+        }),
+      ]);
+      assert.equal(hostRetry.outcome, "duplicate");
+      assert.equal(guestRetry.outcome, "duplicate");
+      assert.equal(hostRetry.profileProjectionPending, false);
+      assert.equal(guestRetry.profileProjectionPending, false);
+
+      const [
+        hostAfterRetry,
+        guestAfterRetry,
+        hostOverallAfterRetry,
+        guestOverallAfterRetry,
+        hostJobsAfterRetry,
+        guestJobsAfterRetry,
+      ] = await Promise.all([
+        realtime.ref(`online/profiles/${host.uid}`).get(),
+        realtime.ref(`online/profiles/${guest.uid}`).get(),
+        realtime.ref(`online/overallProfiles/${host.uid}`).get(),
+        realtime.ref(`online/overallProfiles/${guest.uid}`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${host.uid}/jobs`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${guest.uid}/jobs`).get(),
+      ]);
+      assert.equal(hostAfterRetry.val().wins, 3);
+      assert.equal(guestAfterRetry.val().losses, 4);
+      assert.equal(hostOverallAfterRetry.val().modes.solo.wins, 3);
+      assert.equal(guestOverallAfterRetry.val().modes.solo.losses, 4);
+      assert.equal(Object.keys(hostAfterRetry.val().appliedResults).length, 1);
+      assert.equal(Object.keys(guestAfterRetry.val().appliedResults).length, 1);
+      assert.equal(Object.keys(hostOverallAfterRetry.val().appliedResults).length, 1);
+      assert.equal(Object.keys(guestOverallAfterRetry.val().appliedResults).length, 1);
+      assert.equal(hostJobsAfterRetry.empty, true);
+      assert.equal(guestJobsAfterRetry.empty, true);
+
+      await firestore.doc(`verifiedMatchClaims/${hostToken}`).update({
+        profileProjectionStatus: "failed",
+      });
+      const failedProjectionRetry = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      assert.equal(failedProjectionRetry.outcome, "duplicate");
+      assert.equal(failedProjectionRetry.profileProjectionMode, undefined);
+    });
+
+    test("a projection quarantined during the same request never suppresses client recovery", async () => {
+      const host = await createCaller("solo-projection-quarantine-host");
+      const guest = await createCaller("solo-projection-quarantine-guest");
+      const roomId = eventId(`${suiteId}:solo-projection-quarantine`).slice(0, 20);
+      const hostToken = eventId(`${host.uid}:solo:${roomId}`);
+      await realtime.ref(`online/profiles/${host.uid}`).set({
+        name: "HOST",
+        pursuitLine: "HOST LINE",
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        streak: 0,
+        bestStreak: 0,
+        rating: 1_000,
+        updatedAt: Date.now() - 120_000,
+        serverProjectionReceipts: `${hostToken}:loss`,
+        serverProjectionSequence: 1,
+      });
+      await realtime.ref(`online/rooms/${roomId}`).set({
+        status: "active",
+        protocolVersion: 2,
+        createdAt: Date.now() - 60_000,
+        hostUid: host.uid,
+        guestUid: guest.uid,
+        members: {
+          [host.uid]: true,
+          [guest.uid]: true,
+        },
+        players: {
+          [host.uid]: {
+            uid: host.uid,
+            name: "HOST",
+            pursuitLine: "HOST LINE",
+            rating: 1_000,
+            startingHp: 30,
+            profileProjectionVersion: 2,
+          },
+          [guest.uid]: {
+            uid: guest.uid,
+            name: "GUEST",
+            pursuitLine: "GUEST LINE",
+            rating: 1_000,
+            startingHp: 5,
+          },
+        },
+        rounds: {
+          1: {
+            scores: {
+              [host.uid]: 1,
+              [guest.uid]: 10,
+            },
+          },
+        },
+      });
+
+      const result = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      const [claim, queue, jobs] = await Promise.all([
+        firestore.doc(`verifiedMatchClaims/${hostToken}`).get(),
+        firestore.doc(`soloProfileProjectionQueues/${host.uid}`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${host.uid}/jobs`).get(),
+      ]);
+      assert.equal(result.outcome, "recorded");
+      assert.equal(result.profileProjectionMode, undefined);
+      assert.equal(claim.get("profileProjectionStatus"), "failed");
+      assert.equal(queue.get("pending"), false);
+      assert.equal(jobs.empty, true);
+    });
+
+    test("normal 1on1 profile projection only updates the marked participant in a mixed V2 room", async () => {
+      const host = await createCaller("solo-projection-mixed-host");
+      const guest = await createCaller("solo-projection-mixed-guest");
+      const roomId = eventId(`${suiteId}:solo-projection-mixed`).slice(0, 20);
+      const profileUpdatedAt = Date.now() - 120_000;
+      const hostInitialProfile = {
+        name: "HOST OLD",
+        pursuitLine: "HOST OLD LINE",
+        wins: 4,
+        losses: 2,
+        draws: 0,
+        streak: 2,
+        bestStreak: 3,
+        rating: 1_000,
+        updatedAt: profileUpdatedAt,
+      };
+      const hostInitialOverall = {
+        name: "HOST OLD",
+        wins: 4,
+        losses: 2,
+        draws: 0,
+        streak: 2,
+        bestStreak: 3,
+        rating: 1_000,
+        modes: {
+          solo: { wins: 4, losses: 2, draws: 0, matches: 6, points: 12 },
+          strategy: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          team: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          royale: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+        },
+        updatedAt: profileUpdatedAt,
+      };
+      const guestInitialProfile = {
+        name: "GUEST LEGACY",
+        pursuitLine: "UNCHANGED",
+        wins: 7,
+        losses: 8,
+        draws: 9,
+        streak: 1,
+        bestStreak: 4,
+        rating: 1_111,
+        updatedAt: profileUpdatedAt,
+        appliedResults: {
+          [eventId(`${guest.uid}:legacy-sentinel`)]: "draw",
+        },
+      };
+      const guestInitialOverall = {
+        name: "GUEST LEGACY",
+        wins: 7,
+        losses: 8,
+        draws: 9,
+        streak: 1,
+        bestStreak: 4,
+        rating: 1_111,
+        modes: {
+          solo: { wins: 7, losses: 8, draws: 9, matches: 24, points: 30 },
+          strategy: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          team: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          royale: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+        },
+        updatedAt: profileUpdatedAt,
+        appliedResults: {
+          [eventId(`${guest.uid}:overall-legacy-sentinel`)]: "draw",
+        },
+      };
+      await Promise.all([
+        realtime.ref(`online/profiles/${host.uid}`).set(hostInitialProfile),
+        realtime.ref(`online/overallProfiles/${host.uid}`).set(hostInitialOverall),
+        realtime.ref(`online/profiles/${guest.uid}`).set(guestInitialProfile),
+        realtime.ref(`online/overallProfiles/${guest.uid}`).set(guestInitialOverall),
+      ]);
+      await realtime.ref(`online/rooms/${roomId}`).set({
+        status: "active",
+        protocolVersion: 2,
+        createdAt: Date.now() - 60_000,
+        hostUid: host.uid,
+        guestUid: guest.uid,
+        members: {
+          [host.uid]: true,
+          [guest.uid]: true,
+        },
+        players: {
+          [host.uid]: {
+            uid: host.uid,
+            name: "HOST PROJECTED",
+            pursuitLine: "HOST PROJECTED LINE",
+            rating: 1_000,
+            startingHp: 30,
+            profileProjectionVersion: 2,
+          },
+          [guest.uid]: {
+            uid: guest.uid,
+            name: "GUEST LEGACY",
+            pursuitLine: "UNCHANGED",
+            rating: 1_000,
+            startingHp: 5,
+          },
+        },
+        rounds: {
+          1: {
+            scores: {
+              [host.uid]: 1,
+              [guest.uid]: 10,
+            },
+          },
+        },
+      });
+
+      const result = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      assert.equal(result.outcome, "recorded");
+      assert.equal(result.profileProjectionMode, "server-v2");
+      assert.equal(result.profileProjectionPending, false);
+      assert.equal(result.soloProfile.name, "HOST PROJECTED");
+      assert.equal(result.soloProfile.wins, 5);
+
+      const hostToken = eventId(`${host.uid}:solo:${roomId}`);
+      const guestToken = eventId(`${guest.uid}:solo:${roomId}`);
+      const [
+        hostProfile,
+        hostOverall,
+        guestProfile,
+        guestOverall,
+        hostClaim,
+        guestClaim,
+        hostQueue,
+        guestQueue,
+        hostJobs,
+        guestJobs,
+      ] = await Promise.all([
+        realtime.ref(`online/profiles/${host.uid}`).get(),
+        realtime.ref(`online/overallProfiles/${host.uid}`).get(),
+        realtime.ref(`online/profiles/${guest.uid}`).get(),
+        realtime.ref(`online/overallProfiles/${guest.uid}`).get(),
+        firestore.doc(`verifiedMatchClaims/${hostToken}`).get(),
+        firestore.doc(`verifiedMatchClaims/${guestToken}`).get(),
+        firestore.doc(`soloProfileProjectionQueues/${host.uid}`).get(),
+        firestore.doc(`soloProfileProjectionQueues/${guest.uid}`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${host.uid}/jobs`).get(),
+        firestore.collection(`soloProfileProjectionQueues/${guest.uid}/jobs`).get(),
+      ]);
+      assert.equal(hostProfile.val().wins, 5);
+      assert.equal(hostProfile.val().rating, 1_016);
+      assert.equal(hostProfile.val().appliedResults[hostToken], "win");
+      assert.equal(hostOverall.val().modes.solo.wins, 5);
+      assert.equal(hostOverall.val().rating, 1_016);
+      assert.equal(hostOverall.val().appliedResults[hostToken], "win");
+      assert.deepEqual(guestProfile.val(), guestInitialProfile);
+      assert.deepEqual(guestOverall.val(), guestInitialOverall);
+      assert.equal(hostClaim.get("profileProjectionVersion"), 2);
+      assert.equal(hostClaim.get("profileProjectionStatus"), "complete");
+      assert.equal(hostClaim.get("projectionSequence"), 1);
+      assert.equal(guestClaim.get("profileProjectionVersion"), undefined);
+      assert.equal(guestClaim.get("profileProjectionStatus"), undefined);
+      assert.equal(hostQueue.get("pending"), false);
+      assert.equal(hostQueue.get("queueRevision"), 1);
+      assert.equal(hostQueue.get("profileProjectionEnrolled"), true);
+      assert.equal(hostQueue.get("profileProjectionVersion"), 2);
+      assert.equal(guestQueue.exists, false);
+      assert.equal(hostJobs.empty, true);
+      assert.equal(guestJobs.empty, true);
+
+      const legacyRetry = await invoke(guest.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "loss",
+        roomId,
+        finalizationVersion: 2,
+      });
+      assert.equal(legacyRetry.outcome, "duplicate");
+      assert.equal(legacyRetry.profileProjectionMode, undefined);
+      assert.deepEqual(
+        (await realtime.ref(`online/profiles/${guest.uid}`).get()).val(),
+        guestInitialProfile,
+      );
+      assert.deepEqual(
+        (await realtime.ref(`online/overallProfiles/${guest.uid}`).get()).val(),
+        guestInitialOverall,
+      );
+    });
+
+    test("legacy normal 1on1 callers wait through the anti-farm window instead of timing out", async () => {
+      const host = await createCaller("legacy-normal-host");
+      const guest = await createCaller("legacy-normal-guest");
+      const roomId = "-LegacyFinishWait001";
+      await realtime.ref(`online/rooms/${roomId}`).set({
+        status: "active",
+        createdAt: Date.now() - 29_800,
+        hostUid: host.uid,
+        guestUid: guest.uid,
+        members: {
+          [host.uid]: true,
+          [guest.uid]: true,
+        },
+        players: {
+          [host.uid]: {
+            uid: host.uid,
+            name: "HOST",
+            rating: 1_000,
+            startingHp: 30,
+          },
+          [guest.uid]: {
+            uid: guest.uid,
+            name: "GUEST",
+            rating: 1_000,
+            startingHp: 5,
+          },
+        },
+        rounds: {
+          1: {
+            scores: {
+              [host.uid]: 1,
+              [guest.uid]: 10,
+            },
+          },
+        },
+      });
+
+      const result = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+      });
+      assert.equal(result.outcome, "recorded");
+      assert.equal(result.acceptedFinalizationVersion, 1);
+      assert.equal(
+        (await firestore.doc(`verifiedMatchClaims/${eventId(`${guest.uid}:solo:${roomId}`)}`).get()).exists,
+        true,
+      );
+    });
+
     test("concurrent distinct purchases use the real callable and keep paging pinned", async () => {
       const caller = await createCaller("purchases");
       const openingBalance = 5_000;

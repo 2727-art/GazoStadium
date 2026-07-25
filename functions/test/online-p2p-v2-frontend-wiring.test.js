@@ -120,15 +120,16 @@ test("TURN refresh failure keeps unexpired credentials and drops them only after
   assert.equal(expired.iceServers[0].urls, "stun:stun.l.google.com:19302");
 });
 
-test("older Safari uses one getRandomValues token path for session, lease, and probe ids", () => {
+test("older Safari uses one getRandomValues token path for session, lease, probe, and reply ids", () => {
   assert.doesNotMatch(source, /crypto\.randomUUID|\.randomUUID\(|replaceAll\("-"/);
   assert.equal(
     (source.match(/createOnlineSessionToken\(window\.crypto\)/g) || []).length,
-    3,
+    4,
   );
   assert.match(source, /const generatedSessionId = createOnlineSessionToken\(window\.crypto\)/);
   assert.match(source, /const clientSoloLeaseToken = createOnlineSessionToken\(window\.crypto\)/);
   assert.match(source, /const probeId = createOnlineSessionToken\(window\.crypto\)/);
+  assert.match(source, /const replyId = createOnlineSessionToken\(window\.crypto\)/);
 });
 
 test("stored UUID sessions remain valid when normalizing an opponent and entering a room", () => {
@@ -340,6 +341,21 @@ test("frontend matchmaking leaves queue and active deletion to the backend", () 
   assert.match(source, /const base = `online\/offersV2\/\$\{targetUid\}\/\$\{targetSessionId\}`/);
   assert.match(matching, /soloQueueEntryPath/);
   assert.match(matching, /soloOfferPath/);
+  assert.match(matching, /profileProjectionVersion: SOLO_STATS_PROJECTION_VERSION/);
+  const claimLease = sourceBetween(
+    "async function claimSoloSessionLease",
+    "function clearSoloSessionHeartbeat",
+  );
+  assert.match(
+    claimLease,
+    /action: "claim",[\s\S]*?profileProjectionVersion: SOLO_STATS_PROJECTION_VERSION/,
+  );
+  assert.match(claimLease, /client-upgrade-required/);
+  assert.ok(
+    matching.indexOf("reconcileSoloProfileBeforeMatchmaking")
+      < matching.indexOf("await set(queueEntryRef"),
+    "verified profile projection must settle before queueV2 snapshots the rating",
+  );
   assert.match(serverMatch, /action: "try_match"/);
   assert.doesNotMatch(source, /soloSessionPresence/);
   assert.doesNotMatch(matching, /onDisconnect\(queueEntryRef\)|removeQueueEntryIfCurrent/);

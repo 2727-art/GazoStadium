@@ -64,6 +64,7 @@ test("finish payload reuses the lethal card and safely replaces hidden opponent 
   assert.equal(local.imageUrl, "blob:local-finisher");
   assert.equal(local.signature, true);
   assert.equal(local.finishLine, "自分の決めセリフ");
+  assert.equal(local.finishLineReplaced, false);
 
   sandbox.state.showOpponentCustomFinish = false;
   sandbox.state.remoteImages.set(1, {
@@ -75,6 +76,7 @@ test("finish payload reuses the lethal card and safely replaces hidden opponent 
   assert.equal(remote.imageUrl, "blob:remote-finisher");
   assert.equal(remote.signature, true);
   assert.equal(remote.finishLine, sandbox.presets[0]);
+  assert.equal(remote.finishLineReplaced, true);
 });
 
 test("signature choice is optional, unique, cleared on removal, and retained for a rematch", () => {
@@ -123,7 +125,7 @@ test("cut-in fires once only for a positive HP to zero transition", () => {
   assert.match(online, /if \(state\.processedRounds\.has\(state\.round\)\) return;/);
   assert.match(online, /const previousHp = loserIndex === null \? null : state\.players\[loserIndex\]\.hp;/);
   assert.match(online, /const lethal = loserIndex !== null && previousHp > 0 && state\.players\[loserIndex\]\.hp === 0;/);
-  assert.match(online, /if \(lethal\) \{\s*triggerFinishCutIn\(finish\);\s*if \(pendingFinishReply\) handleRemoteFinishReply\(pendingFinishReply, state\);\s*\} else if \(topScore >= 8\)/);
+  assert.match(online, /if \(lethal\) \{\s*triggerFinishCutIn\(finish\);\s*if \(pendingFinishReply\) \{[\s\S]*?pendingFinishReply\.message \|\| pendingFinishReply,[\s\S]*?pendingFinishReply\.channel \|\| state\.channel,[\s\S]*?\}\s*\} else if \(topScore >= 8\)/);
   assert.match(online, /function renderOnlinePursuitLines\(result\) \{\s*if \(result\.lethal\) return "";/);
 });
 
@@ -131,11 +133,12 @@ test("cut-in dialog is skippable, text-safe, responsive, and reduced-motion awar
   assert.match(index, /<dialog id="finishCutInDialog" class="finish-cutin-dialog"/);
   assert.match(online, /winnerName\.textContent = payload\.winnerName;/);
   assert.match(online, /quote\.textContent = payload\.finishLine;/);
-  assert.match(online, /skip\.addEventListener\("click", clearFinishCutIn/);
+  assert.match(online, /if \(payload\.finishLineReplaced\)[\s\S]*?自由記述は表示設定により、定型文へ置き換えています/);
+  assert.match(online, /skip\.addEventListener\("click", \(\) => dismissFinishCutIn\(payload\)/);
   assert.match(online, /finishCutInDialog\?\.addEventListener\("cancel"/);
   assert.match(
     online,
-    /async function cleanupOnlineResources\(\s*keepActive,\s*targetState = state,[\s\S]*?\) \{[\s\S]*?if \(state === targetState\) clearFinishCutIn\(\);/,
+    /async function cleanupOnlineResources\(\s*keepActive,\s*targetState = state,[\s\S]*?\) \{[\s\S]*?if \(state === targetState\) clearFinishCutIn\(\{ restoreFocus: false \}\);/,
   );
   assert.match(styles, /\.finish-cutin-image \{[\s\S]*?object-fit: contain;/);
   assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.finish-cutin-stage/);
@@ -151,6 +154,6 @@ test("signature finish is exclusive to normal 1on1", () => {
 });
 
 test("cache tokens load finish JS and CSS together", () => {
-  assert.match(index, /styles\.css\?v=[^"]*signature-finish-v1[^"]*finish-reply-v1/);
-  assert.match(index, /online\.js\?v=[^"]*signature-finish-v1[^"]*finish-reply-v1/);
+  assert.match(index, /styles\.css\?v=[^"]*signature-finish-v1[^"]*finish-reply-v2/);
+  assert.match(index, /online\.js\?v=[^"]*signature-finish-v1[^"]*finish-reply-v3/);
 });

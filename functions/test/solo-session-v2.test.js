@@ -189,7 +189,9 @@ test("claim replacement rotates generation and exposes only the exact prior reso
 });
 
 test("heartbeat refreshes only the exact current owner", () => {
-  const current = claim(SESSION_A, TOKEN_A, GENERATION_A);
+  const current = claim(SESSION_A, TOKEN_A, GENERATION_A, {
+    profileProjectionVersion: 2,
+  });
   const refreshed = heartbeatDecision({
     currentClaim: current,
     sessionId: SESSION_A,
@@ -200,6 +202,7 @@ test("heartbeat refreshes only the exact current owner", () => {
   assert.equal(refreshed.allowed, true);
   assert.equal(refreshed.claim.generation, GENERATION_A);
   assert.equal(refreshed.claim.expiresAt, NOW + SOLO_SESSION_LEASE_TTL_MS);
+  assert.equal(refreshed.claim.profileProjectionVersion, 2);
   assert.equal(heartbeatDecision({
     currentClaim: current,
     sessionId: SESSION_A,
@@ -388,7 +391,9 @@ test("soft avoid skips the previous opponent only when another compatible player
 });
 
 test("V2 room, permit, offer, lock and active records carry immutable session fences", () => {
-  const host = queue("alice", SESSION_A, TOKEN_A, GENERATION_A);
+  const host = queue("alice", SESSION_A, TOKEN_A, GENERATION_A, {
+    profileProjectionVersion: 2,
+  });
   const guest = queue("bob", SESSION_B, TOKEN_B, GENERATION_B);
   const resources = buildSoloSessionV2Resources({
     roomId: ROOM_ID,
@@ -412,6 +417,64 @@ test("V2 room, permit, offer, lock and active records carry immutable session fe
   assert.equal(resources.guestActive.role, "guest");
   assert.equal(resources.hostLock.generation, GENERATION_A);
   assert.equal(resources.guestLock.generation, GENERATION_B);
+  assert.equal(resources.room.players.alice.profileProjectionVersion, 2);
+  assert.equal(resources.permit.players.alice.profileProjectionVersion, 2);
+  assert.equal(
+    Object.hasOwn(resources.room.players.bob, "profileProjectionVersion"),
+    false,
+  );
+});
+
+test("queue projection version must exactly match its current session claim", () => {
+  const uid = "alice";
+  const markerlessClaim = claim(SESSION_A, TOKEN_A, GENERATION_A);
+  const markedClaim = claim(SESSION_A, TOKEN_A, GENERATION_A, {
+    profileProjectionVersion: 2,
+  });
+  const markerlessQueue = queue(uid, SESSION_A, TOKEN_A, GENERATION_A);
+  const markedQueue = queue(uid, SESSION_A, TOKEN_A, GENERATION_A, {
+    profileProjectionVersion: 2,
+  });
+
+  assert.ok(flattenFreshQueueV2(
+    { [uid]: { [SESSION_A]: markerlessQueue } },
+    { [uid]: markerlessClaim },
+    NOW,
+  )[uid]);
+  assert.ok(flattenFreshQueueV2(
+    { [uid]: { [SESSION_A]: markedQueue } },
+    { [uid]: markedClaim },
+    NOW,
+  )[uid]);
+  assert.equal(flattenFreshQueueV2(
+    { [uid]: { [SESSION_A]: markedQueue } },
+    { [uid]: markerlessClaim },
+    NOW,
+  )[uid], undefined);
+  assert.equal(flattenFreshQueueV2(
+    { [uid]: { [SESSION_A]: markerlessQueue } },
+    { [uid]: markedClaim },
+    NOW,
+  )[uid], undefined);
+});
+
+test("V2 queue rejects an invalid profile projection marker without requiring it from old clients", () => {
+  const claims = {
+    alice: claim(SESSION_A, TOKEN_A, GENERATION_A),
+    bob: claim(SESSION_B, TOKEN_B, GENERATION_B),
+  };
+  const flattened = flattenFreshQueueV2({
+    alice: {
+      [SESSION_A]: queue("alice", SESSION_A, TOKEN_A, GENERATION_A),
+    },
+    bob: {
+      [SESSION_B]: queue("bob", SESSION_B, TOKEN_B, GENERATION_B, {
+        profileProjectionVersion: 1,
+      }),
+    },
+  }, claims, NOW);
+
+  assert.deepEqual(Object.keys(flattened), ["alice"]);
 });
 
 test("session B cannot recover session A's room", () => {

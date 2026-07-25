@@ -13,7 +13,10 @@ test("familiar acceptance is derived from a verified completed solo match", () =
   const familiarAcceptance = source.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.match(familiarAcceptance, /VERIFIED_MATCH_MODES\.solo/);
-  assert.match(familiarAcceptance, /validatedOutcomes\("solo", room, participants\)/);
+  assert.match(
+    familiarAcceptance,
+    /validatedOutcomes\("solo", room, participants,\s*\{\s*requireServerFinalized:/,
+  );
   assert.match(familiarAcceptance, /verifiedMatchClaimRef\(participantUid, "solo", roomId\)/);
   assert.match(familiarAcceptance, /claimsVerified/);
   assert.match(familiarAcceptance, /soloFamiliarIntentRef\(uid, match\.roomId\)/);

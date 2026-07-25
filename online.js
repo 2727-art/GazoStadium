@@ -120,8 +120,10 @@ import {
   CUSTOM_FINISH_REPLY_VALUE,
   FINISH_REPLY_DISABLED_VALUE,
   FINISH_REPLY_LINES,
+  MAX_FINISH_REPLY_INPUT_UNITS,
   MAX_FINISH_REPLY_LENGTH,
   ROLEPLAY_VOICE_SETS,
+  countFinishReplyCharacters,
   getRoleplayVoiceSet,
   inferRoleplayVoiceSetId,
   normalizeFinishReplyLine,
@@ -129,7 +131,7 @@ import {
   normalizeRoleplayVoiceSetId,
   resolveVisibleFinishReplyLine,
   sanitizeFinishReplyDraft,
-} from "./finish-roleplay.mjs?v=finish-reply-v1";
+} from "./finish-roleplay.mjs?v=finish-reply-v2";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -150,6 +152,10 @@ const CUSTOM_FINISH_VALUE = "__custom_finish__";
 const FINISH_LINE_DISABLED_VALUE = "__finish_line_disabled__";
 const FINISH_CUT_IN_DURATION_MS = 12_000;
 const FINISH_REPLY_SETTLE_DURATION_MS = 1_600;
+const FINISH_REPLY_ACK_TIMEOUT_MS = 5_000;
+const FINISH_REPLY_PROTOCOL_VERSION = 2;
+const FINISH_REPLY_ID_PATTERN = /^[a-f0-9]{32}$/;
+const SOLO_STATS_PROJECTION_VERSION = 2;
 const LEGACY_PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
   "好みは読めた。ここからが本命だ！",
@@ -192,6 +198,7 @@ const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
   }),
 ]);
 const RANKING_PUBLIC_KEY = "hariai-stadium-ranking-public-v1";
+const PENDING_SOLO_PUBLIC_RESULTS_KEY = "hariai-stadium-pending-solo-public-results-v1";
 const X_HANDLE_KEY = "hariai-stadium-x-handle-v1";
 const X_PUBLIC_KEY = "hariai-stadium-x-public-v1";
 const RANKING_COMMENTS_ENABLED_KEY = "hariai-stadium-ranking-comments-enabled-v1";
@@ -475,7 +482,7 @@ function createOnlineState() {
     ...finishSettings,
     ...finishReplySettings,
     roleplayVoiceSetId: savedVoiceSetId === inferredVoiceSetId ? savedVoiceSetId : inferredVoiceSetId,
-    roleplayVoiceFallbackId: savedVoiceSetId || inferredVoiceSetId || ROLEPLAY_VOICE_SETS[0].id,
+    roleplayVoiceFallbackId: inferredVoiceSetId || savedVoiceSetId || ROLEPLAY_VOICE_SETS[0].id,
     showOpponentCustomFinish: localStorage.getItem(OPPONENT_CUSTOM_FINISH_KEY) !== "0",
     imagePreference,
     soloFamiliarStage: "engawa_only",
@@ -522,6 +529,7 @@ function createOnlineState() {
     outcome: null,
     processedRounds: new Set(),
     pendingFinishReplies: new Map(),
+    pendingFinishReplyAcks: new Map(),
     continuedRounds: new Set(),
     sentImageRounds: new Set(),
     roundData: {},
@@ -642,8 +650,13 @@ function createOnlineState() {
     soloServerMatchErrorNotified: false,
     reunionMatch: false,
     finishCutInTimer: null,
+    finishConnectionLossNotified: false,
     opponentOnline: true,
     statsCommitted: false,
+    statsCommitInFlight: false,
+    resultClaimCommitted: false,
+    matchFinalizationPromise: null,
+    destroyInFlight: false,
     destroyedByOpponent: false,
     roomTerminationToken: null,
     lifecycleTransitionToken: null,
@@ -1137,7 +1150,7 @@ function normalizeOverallModeRecord(value) {
 function overallProfileSeed(name, soloProfile = null) {
   const solo = normalizeOverallModeRecord(soloProfile);
   const modes = Object.fromEntries(LEADERBOARD_MODES.map((mode) => [mode, mode === "solo" ? solo : emptyOverallModeRecord()]));
-  return {
+  const seed = {
     name: String(name || soloProfile?.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
     wins: solo.wins,
     losses: solo.losses,
@@ -1148,6 +1161,17 @@ function overallProfileSeed(name, soloProfile = null) {
     modes,
     updatedAt: serverNow(),
   };
+  if (soloProfile?.appliedResults && typeof soloProfile.appliedResults === "object"
+      && !Array.isArray(soloProfile.appliedResults)) {
+    seed.appliedResults = { ...soloProfile.appliedResults };
+  }
+  if (/^[-0-9A-Z_a-z]{20}$/.test(String(soloProfile?.lastResultRoomId || ""))
+      && ["win", "loss", "draw"].includes(soloProfile?.lastResultOutcome)) {
+    seed.lastResultRoomId = soloProfile.lastResultRoomId;
+    seed.lastResultMode = "solo";
+    seed.lastResultOutcome = soloProfile.lastResultOutcome;
+  }
+  return seed;
 }
 
 function normalizeOverallProfile(value, fallbackName = "PLAYER", soloSeed = null) {
@@ -1173,6 +1197,60 @@ function normalizeOverallProfile(value, fallbackName = "PLAYER", soloSeed = null
     modes,
     updatedAt: Number(source.updatedAt || serverNow()),
   };
+}
+
+function applyServerSoloProjectionProfiles(targetState, payload) {
+  const soloProfile = payload?.soloProfile;
+  if (soloProfile && typeof soloProfile === "object" && !Array.isArray(soloProfile)) {
+    const streak = Math.max(0, Math.floor(Number(soloProfile.streak || 0)));
+    targetState.profile = {
+      ...targetState.profile,
+      name: String(soloProfile.name || targetState.profile.name || targetState.name || "PLAYER")
+        .trim()
+        .slice(0, 16) || "PLAYER",
+      pursuitLine: normalizePursuitLine(
+        soloProfile.pursuitLine || targetState.profile.pursuitLine || targetState.pursuitLine,
+      ),
+      wins: Math.max(0, Math.floor(Number(soloProfile.wins || 0))),
+      losses: Math.max(0, Math.floor(Number(soloProfile.losses || 0))),
+      draws: Math.max(0, Math.floor(Number(soloProfile.draws || 0))),
+      streak,
+      bestStreak: Math.max(streak, Math.floor(Number(soloProfile.bestStreak || 0))),
+      rating: Math.min(3000, Math.max(
+        100,
+        Math.round(Number(soloProfile.rating || INITIAL_RATING)),
+      )),
+      updatedAt: Math.max(0, Math.floor(Number(soloProfile.updatedAt || 0))),
+    };
+  }
+  const overallProfile = payload?.overallProfile;
+  if (overallProfile && typeof overallProfile === "object" && !Array.isArray(overallProfile)) {
+    targetState.overallProfile = normalizeOverallProfile(
+      overallProfile,
+      targetState.name,
+      targetState.profile,
+    );
+  }
+}
+
+async function reconcileSoloProfileBeforeMatchmaking(targetState, generation) {
+  const response = await economyActionCallable({ action: "reconcile_solo_profile" });
+  if (state !== targetState || targetState.matchmakingGeneration !== generation) return false;
+  const result = response.data || {};
+  if (result.profileProjectionMode !== "server-v2") {
+    throw new Error("表示戦績の再同期方式を確認できませんでした。");
+  }
+  applyServerSoloProjectionProfiles(targetState, result);
+  if (result.profileProjectionPending === true) {
+    const error = new Error("前回までの表示戦績を再同期しています。少し待ってから、もう一度お試しください。");
+    error.soloProfileProjectionPending = true;
+    throw error;
+  }
+  await flushPendingSoloPublicResults(targetState).catch((error) => {
+    console.error(error);
+    showToast("表示戦績は同期済みです。公開ランキングだけ後でもう一度同期します。");
+  });
+  return true;
 }
 
 function leaderboardPublicSettings() {
@@ -2458,7 +2536,7 @@ function renderSetup() {
               ${voiceSetOptions}
             </select>
           </label>
-          <div class="roleplay-voice-summary" id="onlineRoleplayVoiceSummary">${voiceSetSummary}</div>
+          <div class="roleplay-voice-summary" id="onlineRoleplayVoiceSummary" role="status" aria-live="polite">${voiceSetSummary}</div>
           <p class="pursuit-line-note">口調セットは追撃・決着・敗北時の返礼を一括設定します。選んだ後に、好きな項目だけ自由記述へ変更できます。</p>
         </section>
         <div class="pursuit-line-settings online-pursuit-line-settings">
@@ -2502,9 +2580,10 @@ function renderSetup() {
           </label>
           <div class="pursuit-custom-field" id="onlineCustomFinishReplyField" ${state.finishReplyChoice === CUSTOM_FINISH_REPLY_VALUE ? "" : "hidden"}>
             <label class="field-label">自由記述（最大${MAX_FINISH_REPLY_LENGTH}文字・改行1回まで）
-              <textarea class="text-input finish-reply-input" id="onlineCustomFinishReplyLine" maxlength="${MAX_FINISH_REPLY_LENGTH}" rows="2" autocomplete="off" placeholder="敗北時に返すセリフ">${escapeHtml(state.customFinishReplyLine)}</textarea>
+              <textarea class="text-input finish-reply-input" id="onlineCustomFinishReplyLine" maxlength="${MAX_FINISH_REPLY_INPUT_UNITS}" rows="2" autocomplete="off" placeholder="敗北時に返すセリフ">${escapeHtml(state.customFinishReplyLine)}</textarea>
             </label>
-            <span class="pursuit-character-count finish-character-count"><b id="onlineFinishReplyCharacterCount">${state.customFinishReplyLine.length}</b> / ${MAX_FINISH_REPLY_LENGTH}</span>
+            <span class="pursuit-character-count finish-character-count"><b id="onlineFinishReplyCharacterCount">${countFinishReplyCharacters(state.customFinishReplyLine)}</b> / ${MAX_FINISH_REPLY_LENGTH}</span>
+            <small class="field-help">空欄のままなら、セリフを送らず静かに結果へ進みます。</small>
           </div>
           <label class="finish-visibility-toggle">
             <input id="onlineShowOpponentCustomFinish" type="checkbox" ${state.showOpponentCustomFinish ? "checked" : ""} />
@@ -3121,16 +3200,30 @@ function renderWaitingScore() {
 }
 
 function renderWaitingContinue() {
-  return renderBattleWait("ROUND READY", "相手の準備を待っています", "両者が準備すると次の画面へ進みます。");
+  return renderBattleWait(
+    "ROUND READY",
+    "相手の準備を待っています",
+    "両者が準備すると次の画面へ進みます。",
+    "",
+    renderFinishReplySlot(state.history.at(-1), { terminal: true }),
+    !isMatchOver(),
+  );
 }
 
-function renderBattleWait(eyebrow, title, body, extraActions = "") {
+function renderBattleWait(
+  eyebrow,
+  title,
+  body,
+  extraActions = "",
+  extraContent = "",
+  allowDestroy = true,
+) {
   return `<section class="screen">${renderOnlineHud()}${renderStatusCard({
     icon: "…", eyebrow, title, body,
     details: `<div class="matching-pulse"><i></i><i></i><i></i></div>`,
-    actions: `${extraActions}<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
+    actions: `${extraActions}${allowDestroy ? '<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>' : ""}`,
   }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
-    <div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
+    ${extraContent}<div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
 }
 
 function renderReveal() {
@@ -3170,6 +3263,47 @@ function renderScore() {
   </div><div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
 }
 
+function renderFinishReplySummary(result) {
+  const finish = result?.finish;
+  if (!finish?.replyAcknowledged) return "";
+  const name = escapeHtml(finish.replyName || state.players[result.loserIndex]?.name || "PLAYER");
+  const signatureClass = finish.signature ? " is-signature" : "";
+  let label = "決着返礼";
+  let body = finish.replyLine
+    ? `<blockquote>${escapeHtml(finish.replyLine)}</blockquote>`
+    : '<p class="finish-result-reply-note">静かに決着を受け入れました。</p>';
+  let note = "";
+  if (finish.replyDeliveryStatus === "pending") {
+    label = "返礼送信中";
+    body = '<p class="finish-result-reply-note">相手側の受信確認を待っています…</p>';
+  } else if (finish.replyDeliveryStatus === "unconfirmed") {
+    label = "返礼受信未確認";
+    body = '<p class="finish-result-reply-note is-error">相手側の受信確認が届かなかったため、届いた扱いにはしていません。</p>';
+  } else if (finish.replyDeliveryStatus === "not-sent" || finish.replyDeliveryFailed) {
+    label = "返礼未送信";
+    body = '<p class="finish-result-reply-note is-error">P2P接続が切れているため、この返礼は相手へ届いていません。</p>';
+  } else if (finish.replySkipped) {
+    label = "返礼なし";
+    body = '<p class="finish-result-reply-note">返礼せず結果へ進みました。</p>';
+  } else if (finish.replyLineReplaced) {
+    note = '<small class="finish-result-reply-disclosure">自由記述は表示設定により、送信者の口調セットに対応する定型文へ置き換えています。</small>';
+  }
+  return `<article class="finish-result-reply${signatureClass}"><span>${label}</span><strong>${name}</strong>${body}${note}</article>`;
+}
+
+function renderFinishReplySlot(result, { terminal = false } = {}) {
+  const round = Number.isInteger(result?.round) ? result.round : state.round;
+  return `<div class="finish-reply-slot${terminal ? " is-terminal" : ""}" data-finish-reply-slot="${round}" aria-live="polite">${renderFinishReplySummary(result)}</div>`;
+}
+
+function syncFinishReplySlot(result) {
+  if (!Number.isInteger(result?.round)) return;
+  const html = renderFinishReplySummary(result);
+  document.querySelectorAll(`[data-finish-reply-slot="${result.round}"]`).forEach((slot) => {
+    slot.innerHTML = html;
+  });
+}
+
 function renderRoundResult() {
   const result = state.history.at(-1);
   const labelFor = (score) => score === 10 ? "PERFECT!!" : score >= 8 ? "CRITICAL!" : score >= 6 ? "GREAT" : score >= 4 ? "GOOD" : "HIT";
@@ -3180,15 +3314,12 @@ function renderRoundResult() {
   const finishBadge = result.lethal
     ? `<div class="finish-result-badge ${result.finish?.signature ? "is-signature" : ""}"><span>${result.finish?.signature ? "SIGNATURE FINISH" : "FINISH"}</span><strong>${escapeHtml(result.finish?.winnerName || state.players[result.winnerIndex].name)}の決着演出</strong></div>`
     : "";
-  const finishReply = result.finish?.replyAcknowledged
-    ? `<div class="finish-result-reply ${result.finish?.signature ? "is-signature" : ""}"><span>決着返礼</span><strong>${escapeHtml(result.finish.replyName || state.players[result.loserIndex].name)}</strong><blockquote>${escapeHtml(result.finish.replyLine || "静かに決着を受け入れました。")}</blockquote></div>`
-    : "";
   return `<section class="screen result-wrap">${renderOnlineHud()}<div class="result-card">
     <span class="eyebrow">ROUND ${state.round} RESULT</span><h1>${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1>
     <div class="result-scores">${resultPlayerHtml(0, result.scorePlayerOne, result.winnerIndex, labelFor(result.scorePlayerOne))}
       <div class="result-vs">VS</div>${resultPlayerHtml(1, result.scorePlayerTwo, result.winnerIndex, labelFor(result.scorePlayerTwo))}</div>
-    <div class="damage-callout">${escapeHtml(damageText)}</div>${finishBadge}${finishReply}${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
-    <div class="button-row" style="justify-content:center"><button class="button button-danger" data-online-destroy>ルーム破棄</button>
+    <div class="damage-callout">${escapeHtml(damageText)}</div>${finishBadge}${renderFinishReplySlot(result)}${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
+    <div class="button-row" style="justify-content:center">${isMatchOver() ? "" : '<button class="button button-danger" data-online-destroy>ルーム破棄</button>'}
       <button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
   </div></section>`;
 }
@@ -3227,6 +3358,7 @@ function renderGameOver() {
       <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
+    ${renderFinishReplySlot(state.history.at(-1), { terminal: true })}
     ${renderEngawaInvitation()}
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${formatAnjuPay(state.economy.points)}</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
@@ -3467,7 +3599,11 @@ function bindScreenEvents() {
   }
   if (state.screen === "reveal") document.querySelector("#onlineBeginScoring")?.addEventListener("click", () => { state.screen = "score"; render(); });
   if (state.screen === "score") bindScoreEvents();
-  if (state.screen === "result") document.querySelector("#onlineContinue")?.addEventListener("click", continueRound);
+  if (state.screen === "result") {
+    document.querySelector("#onlineContinue")?.addEventListener("click", () => {
+      continueRound().catch(handleRecoverableError);
+    });
+  }
   if (state.screen === "gameover") {
     bindPostMatchTip(appRoot, {
       mode: "solo",
@@ -4148,6 +4284,7 @@ function bindOnlineRoleplayVoiceField() {
     }
     applyRoleplayVoiceSetSetting(value);
     render();
+    document.querySelector("#onlineRoleplayVoiceSet")?.focus({ preventScroll: true });
   });
 }
 
@@ -4230,7 +4367,7 @@ function bindOnlineFinishReplyFields() {
     markRoleplayVoiceSetIndividual();
     state.finishReplyChoice = select.value;
     if (select.value === CUSTOM_FINISH_REPLY_VALUE) {
-      state.finishReplyLine = normalizeFinishReplyLine(state.customFinishReplyLine);
+      state.finishReplyLine = normalizeFinishReplyLine(state.customFinishReplyLine, "");
       input?.focus();
     } else {
       applyFinishReplySetting(select.value);
@@ -4242,9 +4379,9 @@ function bindOnlineFinishReplyFields() {
     markRoleplayVoiceSetIndividual();
     input.value = sanitizeFinishReplyDraft(input.value);
     state.customFinishReplyLine = input.value;
-    state.finishReplyLine = normalizeFinishReplyLine(input.value);
+    state.finishReplyLine = normalizeFinishReplyLine(input.value, "");
     persistRoleplayLineSettings();
-    if (counter) counter.textContent = String(input.value.length);
+    if (counter) counter.textContent = String(countFinishReplyCharacters(input.value));
   });
   syncCustomVisibility();
 }
@@ -4567,11 +4704,18 @@ async function toggleShopProductEquip(productId) {
 
 async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = Date.now()) {
   if (!uid || !roomId || !LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const response = await economyActionCallable({ action: "record_match", mode, outcome, roomId });
+  for (let attempt = 0; attempt < 48; attempt += 1) {
+    const response = await economyActionCallable({
+      action: "record_match",
+      mode,
+      outcome,
+      roomId,
+      ...(mode === "solo" ? { finalizationVersion: 2 } : {}),
+    });
     const result = response.data || {};
     if (result.outcome === "pending") {
-      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      const retryDelay = Math.min(750, Math.max(250, Number(result.retryAfterMs) || 750));
+      await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
       continue;
     }
     const dailyPlay = state.uid === uid
@@ -4741,6 +4885,9 @@ function periodLeaderboardRecord(current, outcome = null, mode = "solo", profile
     commentsEnabled: Boolean(settings.commentsEnabled),
     updatedAt: serverNow(),
   };
+  if (current?.appliedResults && typeof current.appliedResults === "object") {
+    record.appliedResults = { ...current.appliedResults };
+  }
   if (["win", "loss", "draw"].includes(outcome) && LEADERBOARD_MODES.includes(mode)) {
     if (outcome === "win") record.wins += 1;
     else if (outcome === "loss") record.losses += 1;
@@ -4772,7 +4919,16 @@ async function syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name,
   }));
 }
 
-async function recordLeaderboardPeriodResult(outcome, mode, uid, profile, name, settings) {
+async function recordLeaderboardPeriodResult(
+  outcome,
+  mode,
+  uid,
+  profile,
+  name,
+  settings,
+  roomId = "",
+  resultToken = "",
+) {
   if (!LEADERBOARD_PERIODS.length || !["win", "loss", "draw"].includes(outcome) || !LEADERBOARD_MODES.includes(mode)) return;
   const entryId = await ensureLeaderboardIdentityForUser(uid);
   const timestamp = serverNow();
@@ -4780,10 +4936,34 @@ async function recordLeaderboardPeriodResult(outcome, mode, uid, profile, name, 
     const key = leaderboardPeriodKeyFor(period, timestamp);
     if (isServerRankingPeriod(period, key)) return;
     await rememberLeaderboardPeriod(entryId, period, key, uid);
-    const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => (
-      periodLeaderboardRecord(current, outcome, mode, profile, name, settings)
-    ));
-    if (!result.committed) throw new Error("期間ランキングを更新できませんでした。");
+    const result = await runTransaction(ref(database, `online/leaderboardPeriods/${period}/${key}/${entryId}`), (current) => {
+      if (resultToken && current?.appliedResults?.[resultToken] === outcome) {
+        return undefined;
+      }
+      const record = periodLeaderboardRecord(current, outcome, mode, profile, name, settings);
+      if (roomId) {
+        record.lastResultRoomId = roomId;
+        record.lastResultMode = mode;
+        record.lastResultOutcome = outcome;
+      }
+      if (resultToken) {
+        record.appliedResults = {
+          ...record.appliedResults,
+          [resultToken]: outcome,
+        };
+      }
+      return record;
+    });
+    const storedPeriod = result.snapshot.val();
+    if (resultToken && storedPeriod?.appliedResults?.[resultToken] !== outcome) {
+      throw new Error("期間ランキングを更新できませんでした。");
+    }
+    if (!resultToken && roomId && (
+      storedPeriod?.lastResultRoomId !== roomId
+        || storedPeriod?.lastResultMode !== mode
+        || storedPeriod?.lastResultOutcome !== outcome
+    )) throw new Error("期間ランキングを更新できませんでした。");
+    if (!roomId && !result.committed) throw new Error("期間ランキングを更新できませんでした。");
   }));
 }
 
@@ -4801,11 +4981,116 @@ async function publishOverallLeaderboard(uid, profile, name, settings, event = n
   if (!settings.enabled) return;
   const entryId = await ensureLeaderboardIdentityForUser(uid);
   await set(ref(database, `online/leaderboard/${entryId}`), leaderboardRecord(profile, name, settings));
-  if (event) await recordLeaderboardPeriodResult(event.outcome, event.mode, uid, profile, name, settings);
+  if (event) {
+    await recordLeaderboardPeriodResult(
+      event.outcome,
+      event.mode,
+      uid,
+      profile,
+      name,
+      settings,
+      event.roomId,
+      event.resultToken,
+    );
+  }
   else await syncCurrentPeriodLeaderboardMetadata(entryId, uid, profile, name, settings);
   const achievementResponse = await economyActionCallable({ action: "sync_achievement_showcase" });
   if (state.uid === uid) applyAchievementPayload(achievementResponse.data?.achievements, { notifyPending: true });
   await syncServerRankingParticipation(uid, entryId, true);
+}
+
+function pendingSoloPublicResultsStorageKey(uid) {
+  return `${PENDING_SOLO_PUBLIC_RESULTS_KEY}:${String(uid || "")}`;
+}
+
+function normalizePendingSoloPublicResult(value) {
+  const resultToken = String(value?.resultToken || "");
+  const roomId = String(value?.roomId || "");
+  const outcome = String(value?.outcome || "");
+  if (value?.mode !== "solo"
+      || !/^[a-f0-9]{40}$/.test(resultToken)
+      || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)
+      || !["win", "loss", "draw"].includes(outcome)) return null;
+  return {
+    mode: "solo",
+    outcome,
+    roomId,
+    resultToken,
+    name: String(value?.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
+  };
+}
+
+function pendingSoloPublicResults(uid) {
+  if (!uid) return [];
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(pendingSoloPublicResultsStorageKey(uid)) || "[]",
+    );
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizePendingSoloPublicResult)
+      .filter(Boolean)
+      .slice(-20);
+  } catch {
+    return [];
+  }
+}
+
+function writePendingSoloPublicResults(uid, entries) {
+  if (!uid) return;
+  const normalized = entries
+    .map(normalizePendingSoloPublicResult)
+    .filter(Boolean)
+    .slice(-20);
+  try {
+    if (normalized.length) {
+      localStorage.setItem(
+        pendingSoloPublicResultsStorageKey(uid),
+        JSON.stringify(normalized),
+      );
+    } else {
+      localStorage.removeItem(pendingSoloPublicResultsStorageKey(uid));
+    }
+  } catch {
+    // A ranking retry must never block the verified match result.
+  }
+}
+
+function queuePendingSoloPublicResult(uid, event) {
+  const normalized = normalizePendingSoloPublicResult(event);
+  if (!uid || !normalized) return;
+  const pending = pendingSoloPublicResults(uid)
+    .filter((entry) => entry.resultToken !== normalized.resultToken);
+  pending.push(normalized);
+  writePendingSoloPublicResults(uid, pending);
+}
+
+function clearPendingSoloPublicResult(uid, resultToken) {
+  writePendingSoloPublicResults(
+    uid,
+    pendingSoloPublicResults(uid)
+      .filter((entry) => entry.resultToken !== resultToken),
+  );
+}
+
+async function flushPendingSoloPublicResults(targetState = state) {
+  const uid = targetState?.uid || "";
+  const settings = leaderboardPublicSettings();
+  if (!uid || !settings.enabled) return 0;
+  const pending = pendingSoloPublicResults(uid);
+  let completed = 0;
+  for (const event of pending) {
+    await publishOverallLeaderboard(
+      uid,
+      targetState.overallProfile,
+      event.name || targetState.name,
+      settings,
+      event,
+    );
+    clearPendingSoloPublicResult(uid, event.resultToken);
+    completed += 1;
+  }
+  return completed;
 }
 
 async function syncLeaderboardEntry({ syncPeriodMetadata = true } = {}) {
@@ -4833,6 +5118,7 @@ async function recordOverallResult({
   soloSeed = null,
   roomId = "",
   sourceState = state,
+  deferPublicSync = false,
 } = {}) {
   if (!LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
   await setPersistence(auth, browserLocalPersistence);
@@ -4841,28 +5127,119 @@ async function recordOverallResult({
   const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
   const resultTimestamp = Date.now() + Number(sourceState.uid === user.uid ? sourceState.serverTimeOffset : publicServerTimeOffset || 0);
   const periodResult = await recordPeriodRewardResult(user.uid, mode, outcome, roomId, resultTimestamp);
-  await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (sourceState.uid === user.uid ? sourceState.profile : null));
-  const result = await runTransaction(ref(database, `online/overallProfiles/${user.uid}`), (current) => {
-    const record = normalizeOverallProfile(current, displayName);
-    const modeRecord = { ...record.modes[mode] };
-    if (outcome === "win") { record.wins += 1; modeRecord.wins += 1; record.streak += 1; record.bestStreak = Math.max(record.bestStreak, record.streak); }
-    else if (outcome === "loss") { record.losses += 1; modeRecord.losses += 1; record.streak = 0; }
-    else { record.draws += 1; modeRecord.draws += 1; }
-    modeRecord.matches = modeRecord.wins + modeRecord.losses + modeRecord.draws;
-    modeRecord.points = (modeRecord.wins * 3) + modeRecord.draws;
-    record.modes[mode] = modeRecord;
-    record.name = displayName;
-    record.rating = calculateRating(record.rating, Math.min(3000, Math.max(100, Number(opponentRating || INITIAL_RATING))), outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0);
-    record.updatedAt = Date.now();
-    return record;
-  });
-  if (!result.committed) throw new Error("総合戦績を更新できませんでした。");
-  const profile = normalizeOverallProfile(result.snapshot.val(), displayName);
-  if (sourceState.uid === user.uid) sourceState.overallProfile = profile;
+  const resultToken = String(periodResult?.resultToken || "");
+  if (!/^[a-f0-9]{40}$/.test(resultToken)) {
+    throw new Error("検証済み対戦IDを確認できませんでした。");
+  }
+  const serverProjection = mode === "solo"
+    && periodResult?.profileProjectionMode === "server-v2";
+  const projectionPending = serverProjection
+    && periodResult?.profileProjectionPending === true;
+  let profile;
+  if (serverProjection) {
+    if (sourceState.uid === user.uid) {
+      applyServerSoloProjectionProfiles(sourceState, periodResult);
+      profile = normalizeOverallProfile(
+        sourceState.overallProfile,
+        displayName,
+        sourceState.profile,
+      );
+    } else {
+      profile = normalizeOverallProfile(
+        periodResult?.overallProfile,
+        displayName,
+        soloSeed,
+      );
+    }
+  } else {
+    await ensureOverallProfileSeeded(user.uid, displayName, soloSeed || (sourceState.uid === user.uid ? sourceState.profile : null));
+    const result = await runTransaction(ref(database, `online/overallProfiles/${user.uid}`), (current) => {
+      if (current?.appliedResults?.[resultToken] === outcome) {
+        return undefined;
+      }
+      const record = normalizeOverallProfile(current, displayName);
+      const modeRecord = { ...record.modes[mode] };
+      if (outcome === "win") { record.wins += 1; modeRecord.wins += 1; record.streak += 1; record.bestStreak = Math.max(record.bestStreak, record.streak); }
+      else if (outcome === "loss") { record.losses += 1; modeRecord.losses += 1; record.streak = 0; }
+      else { record.draws += 1; modeRecord.draws += 1; }
+      modeRecord.matches = modeRecord.wins + modeRecord.losses + modeRecord.draws;
+      modeRecord.points = (modeRecord.wins * 3) + modeRecord.draws;
+      record.modes[mode] = modeRecord;
+      record.name = displayName;
+      record.rating = calculateRating(record.rating, Math.min(3000, Math.max(100, Number(opponentRating || INITIAL_RATING))), outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0);
+      record.updatedAt = Date.now();
+      if (roomId) {
+        record.lastResultRoomId = roomId;
+        record.lastResultMode = mode;
+        record.lastResultOutcome = outcome;
+      }
+      record.appliedResults = {
+        ...(current?.appliedResults && typeof current.appliedResults === "object"
+          ? current.appliedResults
+          : {}),
+        [resultToken]: outcome,
+      };
+      if (typeof current?.serverProjectionReceipts === "string"
+          && current.serverProjectionReceipts.length <= 800) {
+        record.serverProjectionReceipts = current.serverProjectionReceipts;
+      }
+      if (Number.isSafeInteger(current?.serverProjectionSequence)
+          && current.serverProjectionSequence > 0) {
+        record.serverProjectionSequence = current.serverProjectionSequence;
+      }
+      return record;
+    });
+    const storedOverallProfile = result.snapshot.val();
+    if (storedOverallProfile?.appliedResults?.[resultToken] !== outcome) {
+      throw new Error("総合戦績を更新できませんでした。");
+    }
+    profile = normalizeOverallProfile(storedOverallProfile, displayName);
+    if (sourceState.uid === user.uid) sourceState.overallProfile = profile;
+  }
   const settings = leaderboardPublicSettings();
-  if (settings.enabled) await publishOverallLeaderboard(user.uid, profile, displayName, settings, { mode, outcome });
+  const publicResultEvent = {
+    mode,
+    outcome,
+    roomId,
+    resultToken,
+    name: displayName,
+  };
+  if (settings.enabled && projectionPending) {
+    queuePendingSoloPublicResult(user.uid, publicResultEvent);
+  } else if (settings.enabled) {
+    const publicSync = publishOverallLeaderboard(
+      user.uid,
+      profile,
+      displayName,
+      settings,
+      publicResultEvent,
+    );
+    if (deferPublicSync) {
+      publicSync.then(() => {
+        clearPendingSoloPublicResult(user.uid, resultToken);
+      }).catch((error) => {
+        if (mode === "solo") queuePendingSoloPublicResult(user.uid, publicResultEvent);
+        console.error(error);
+        if (sourceState.uid === user.uid) {
+          showToast("対戦結果は確定しました。公開ランキングの同期だけ完了しませんでした。");
+        }
+      });
+    } else {
+      try {
+        await publicSync;
+        clearPendingSoloPublicResult(user.uid, resultToken);
+      } catch (error) {
+        if (mode === "solo") queuePendingSoloPublicResult(user.uid, publicResultEvent);
+        throw error;
+      }
+    }
+  }
   return {
     ...profile,
+    resultToken,
+    profileProjectionMode: serverProjection ? "server-v2" : "",
+    profileProjectionPending: projectionPending,
+    soloProfile: serverProjection ? periodResult?.soloProfile || null : null,
     economyBalance: periodResult?.economyBalance ?? null,
   };
 }
@@ -5094,6 +5471,7 @@ async function claimSoloSessionLease(
       sessionId,
       leaseToken,
       sameSessionOwnerConfirmedGone,
+      profileProjectionVersion: SOLO_STATS_PROJECTION_VERSION,
     })
   );
   const requestWithLegacyQueueWait = async (sameSessionOwnerConfirmedGone = false) => {
@@ -5165,6 +5543,8 @@ async function claimSoloSessionLease(
     } else {
       showToast(reason === "legacy-waiting"
         ? "前の通常版1on1の待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
+        : reason === "client-upgrade-required"
+          ? "通常型1on1が更新されました。ページを再読み込みしてからお試しください。"
         : reason === "occupied"
           ? "別のタブまたは端末で通常版1on1の対戦中です。"
           : "通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
@@ -5176,6 +5556,8 @@ async function claimSoloSessionLease(
     const reason = String(response.data.reason || "");
     showToast(reason === "legacy-waiting"
       ? "前の通常版1on1の待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
+      : reason === "client-upgrade-required"
+        ? "通常型1on1が更新されました。ページを再読み込みしてからお試しください。"
       : "通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
     return false;
   }
@@ -5325,12 +5707,20 @@ async function handleSoloSessionLeaseLost(expectedState = state) {
   }
   if (expectedState.roomTerminationToken) return;
   const roomId = expectedState.roomId;
-  const terminationToken = Object.freeze({ type: "session-lease-lost" });
-  expectedState.roomTerminationToken = terminationToken;
+  if (await preserveResolvedMatchBeforeP2pCleanup(expectedState)) {
+    preserveResolvedFinishFromP2pRecovery(expectedState, { notify: true });
+    return;
+  }
   await runTransaction(
     ref(database, `online/rooms/${roomId}/destroyed`),
     (current) => current || { by: expectedState.uid, at: Date.now() },
   ).catch(() => {});
+  if (await preserveResolvedMatchBeforeP2pCleanup(expectedState)) {
+    preserveResolvedFinishFromP2pRecovery(expectedState, { notify: true });
+    return;
+  }
+  const terminationToken = Object.freeze({ type: "session-lease-lost" });
+  expectedState.roomTerminationToken = terminationToken;
   await cleanupOnlineResources(false, expectedState);
   if (state !== expectedState
       || expectedState.roomTerminationToken !== terminationToken
@@ -5477,18 +5867,23 @@ async function beginMatchmaking({ automatic = false } = {}) {
     expectedState.finishReplyLine = expectedState.finishReplyChoice === FINISH_REPLY_DISABLED_VALUE
       ? ""
       : expectedState.finishReplyChoice === CUSTOM_FINISH_REPLY_VALUE
-        ? normalizeFinishReplyLine(expectedState.customFinishReplyLine)
+        ? normalizeFinishReplyLine(expectedState.customFinishReplyLine, "")
         : normalizeFinishReplyLine(expectedState.finishReplyChoice);
     localStorage.setItem(PROFILE_NAME_KEY, expectedState.name);
     persistRoleplayLineSettings(expectedState);
     localStorage.setItem(IMAGE_PREFERENCE_KEY, expectedState.imagePreference);
-    if (expectedState.leaderboardPublic) {
-      syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
-    }
     expectedState.screen = "matching";
     setOnlineChrome("MATCHING");
     render();
 
+    const projectionReady = await reconcileSoloProfileBeforeMatchmaking(
+      expectedState,
+      generation,
+    );
+    if (!projectionReady || !isCurrentMatchmakingGeneration(generation)) return;
+    if (expectedState.leaderboardPublic) {
+      syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
+    }
     if (!await claimSoloSessionLease(expectedState, generation)) {
       if (isCurrentMatchmakingGeneration(generation)) {
         expectedState.screen = "setup";
@@ -5516,6 +5911,7 @@ async function beginMatchmaking({ automatic = false } = {}) {
     const joinedAt = serverNow();
     await set(queueEntryRef, {
       protocolVersion: ONLINE_SESSION_PROTOCOL_VERSION,
+      profileProjectionVersion: SOLO_STATS_PROJECTION_VERSION,
       uid: expectedState.uid,
       sessionId: expectedState.clientSessionId,
       leaseToken: expectedState.clientLeaseToken,
@@ -5575,7 +5971,9 @@ async function beginMatchmaking({ automatic = false } = {}) {
     setOnlineChrome("ONLINE READY");
     render();
     console.error(error);
-    showToast("対戦の検索を開始できませんでした。通信環境を確認して、もう一度お試しください。");
+    showToast(error?.soloProfileProjectionPending
+      ? error.message
+      : "対戦の検索を開始できませんでした。通信環境を確認して、もう一度お試しください。");
   }
 }
 
@@ -6423,6 +6821,7 @@ function scheduleP2pRecoveryTimer(targetState = state) {
 }
 
 function dispatchP2pRecoveryEvent(type, targetState = state, detail = {}) {
+  if (preserveResolvedFinishFromP2pRecovery(targetState)) return;
   const recovery = targetState.p2pRecovery;
   if (!recovery || state !== targetState) return;
   const result = transitionOnlineP2pRecovery(recovery, {
@@ -6448,16 +6847,23 @@ function dispatchP2pRecoveryEvent(type, targetState = state, detail = {}) {
 }
 
 async function completeP2pFailureCleanup(targetState, effect) {
+  if (await preserveResolvedMatchBeforeP2pCleanup(targetState)) return;
   if (targetState.p2pCleanupPromise) return targetState.p2pCleanupPromise;
   const roomId = targetState.roomId;
   targetState.p2pCleanupPromise = (async () => {
     await reportP2pDiagnostic("cleanup", targetState, targetState.peer);
+    if (await preserveResolvedMatchBeforeP2pCleanup(targetState)) return;
     if (roomId && targetState.uid) {
       await runTransaction(
         ref(database, `online/rooms/${roomId}/destroyed`),
-        (current) => current || { by: targetState.uid, at: Date.now() },
+        (current) => (
+          getResolvedMatchResultForRound(targetState.round, targetState)
+            ? undefined
+            : current || { by: targetState.uid, at: Date.now() }
+        ),
       ).catch(() => {});
     }
+    if (await preserveResolvedMatchBeforeP2pCleanup(targetState)) return;
     await cleanupOnlineResources(false, targetState, { preserveP2pRecovery: true });
     const currentRecovery = targetState.p2pRecovery;
     if (state !== targetState
@@ -6512,6 +6918,7 @@ async function resetAfterP2pFailure(targetState, {
 }
 
 async function handleP2pRecoveryEffect(effect, targetState = state) {
+  if (preserveResolvedFinishFromP2pRecovery(targetState)) return;
   const recovery = targetState.p2pRecovery;
   if (state !== targetState
       || recovery?.generationToken !== effect.generationToken) return;
@@ -6673,15 +7080,21 @@ async function setupPeerConnection(context) {
   const handlePeerStateChange = () => {
     if (!peerContextIsCurrent()) return;
     state.peerStatus = peer.connectionState === "connected" ? "● P2P接続済み" : `P2P: ${peer.connectionState}`;
+    const peerDisconnected = peer.connectionState === "disconnected"
+      || peer.iceConnectionState === "disconnected";
+    const peerFailed = ["failed", "closed"].includes(peer.connectionState)
+      || peer.iceConnectionState === "failed";
+    if ((peerDisconnected || peerFailed)
+        && preserveResolvedFinishFromP2pRecovery(state, { notify: true })) {
+      return;
+    }
     if (peer.connectionState === "connected"
         || ["connected", "completed"].includes(peer.iceConnectionState)) {
       dispatchP2pRecoveryEvent("ICE_CONNECTED", state);
-    } else if (peer.connectionState === "disconnected"
-        || peer.iceConnectionState === "disconnected") {
+    } else if (peerDisconnected) {
       reportP2pDiagnostic("ice_disconnected", state, peer).catch(() => {});
       dispatchP2pRecoveryEvent("ICE_DISCONNECTED", state);
-    } else if (["failed", "closed"].includes(peer.connectionState)
-        || peer.iceConnectionState === "failed") {
+    } else if (peerFailed) {
       reportP2pDiagnostic("ice_failed", state, peer).catch(() => {});
       dispatchP2pRecoveryEvent("ICE_FAILED", state);
     }
@@ -6851,7 +7264,12 @@ function configureDataChannel(channel, expectedState = state) {
     if (!channelContextIsCurrent()) return;
     expectedState.channelReady = false;
     expectedState.peerStatus = "P2P接続が切れました";
-    if (!["gameover", "engawa", "noContest"].includes(expectedState.screen)) {
+    markPendingFinishReplyAcksUnconfirmed(expectedState, channel);
+    const resolvedFinishPreserved = preserveResolvedFinishFromP2pRecovery(
+      expectedState,
+      { notify: true },
+    );
+    if (!resolvedFinishPreserved && !["gameover", "engawa", "noContest"].includes(expectedState.screen)) {
       dispatchP2pRecoveryEvent("ICE_FAILED", expectedState);
     }
     if (expectedState.screen === "engawa") {
@@ -6901,7 +7319,9 @@ async function handleChannelMessage(data, expectedState = state, expectedChannel
     } else if (message.type === "engawa-end") {
       handleRemoteEngawaEnd();
     } else if (message.type === "finish-reply") {
-      handleRemoteFinishReply(message, expectedState);
+      handleRemoteFinishReply(message, expectedState, expectedChannel);
+    } else if (message.type === "finish-reply-ack") {
+      handleRemoteFinishReplyAck(message, expectedState, expectedChannel);
     } else if (message.type === "profile-avatar-start") {
       assertIncomingTransferNamespaceExclusive(state, "profile");
       if (state.incomingAvatarTransfer) {
@@ -7583,7 +8003,14 @@ async function reactToRoundData(roundContext, roundData) {
     render();
   }
   const scores = roundData.scores || {};
-  if (Number.isInteger(scores[state.uid]) && Number.isInteger(scores[state.opponentUid])) resolveRound(scores);
+  if (Number.isInteger(scores[state.uid]) && Number.isInteger(scores[state.opponentUid])) {
+    resolveRound(scores);
+    if (getResolvedMatchResultForRound(state.round)) {
+      settleOnlineMatch(roundContext).catch((error) => {
+        if (isCurrentRoundContext(roundContext)) handleRecoverableError(error);
+      });
+    }
+  }
   const continued = roundData.continue || {};
   if (continued[state.uid] && continued[state.opponentUid]) {
     advanceAfterRound(roundContext);
@@ -7753,6 +8180,7 @@ function resolveRound(scores) {
     lethal,
     finish,
   });
+  if (isMatchOver()) preserveResolvedFinishFromP2pRecovery(state);
   const pendingFinishReply = state.pendingFinishReplies.get(state.round) || null;
   state.pendingFinishReplies.delete(state.round);
   state.screen = "result";
@@ -7761,16 +8189,44 @@ function resolveRound(scores) {
   if (topScore >= 8) window.HariaiAudio?.playResult(topScore);
   if (lethal) {
     triggerFinishCutIn(finish);
-    if (pendingFinishReply) handleRemoteFinishReply(pendingFinishReply, state);
+    if (pendingFinishReply) {
+      handleRemoteFinishReply(
+        pendingFinishReply.message || pendingFinishReply,
+        state,
+        pendingFinishReply.channel || state.channel,
+      );
+    }
   } else if (topScore >= 8) {
     triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
   }
 }
 
 async function continueRound() {
+  const expectedState = state;
+  const roundContext = captureOnlineRoundContext(
+    captureOnlineRoomContext(expectedState),
+    expectedState.round,
+  );
   state.screen = "waitingContinue";
   render();
-  await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/continue/${state.uid}`), true);
+  const continueWrite = set(ref(
+    database,
+    `online/rooms/${expectedState.roomId}/rounds/${expectedState.round}/continue/${expectedState.uid}`,
+  ), true);
+  if (isMatchOver()) {
+    continueWrite.catch(() => {});
+    try {
+      await finishOnlineMatch(roundContext);
+    } catch (error) {
+      if (isCurrentRoundContext(roundContext) && state.screen === "waitingContinue") {
+        state.screen = "result";
+        render();
+      }
+      throw error;
+    }
+    return;
+  }
+  await continueWrite;
 }
 
 function advanceAfterRound(roundContext) {
@@ -7810,24 +8266,83 @@ function determineOutcome(targetState = state) {
   return { winnerIndex: null, reason: "draw" };
 }
 
+async function ensureOnlineResultClaim(targetState, outcome, roundContext) {
+  if (!isCurrentRoundContext(roundContext)) return false;
+  if (targetState.resultClaimCommitted) return true;
+  const claimOutcome = outcome.winnerIndex === null
+    ? "draw"
+    : outcome.winnerIndex === targetState.playerIndex
+      ? "win"
+      : "loss";
+  const roomPath = `online/rooms/${roundContext.roomContext.roomId}`;
+  const claim = {
+    outcome: claimOutcome,
+    round: roundContext.expectedRound,
+    createdAt: serverNow(),
+  };
+  let writeError = null;
+  try {
+    await update(ref(database, roomPath), {
+      [`resultClaims/${roundContext.roomContext.ownUid}`]: claim,
+      [`finished/${roundContext.roomContext.ownUid}`]: true,
+    });
+  } catch (error) {
+    writeError = error;
+  }
+  if (writeError) {
+    try {
+      const snapshot = await get(ref(database, roomPath));
+      const room = snapshot.val();
+      const storedClaim = room?.resultClaims?.[roundContext.roomContext.ownUid];
+      const storedFinished = room?.finished?.[roundContext.roomContext.ownUid];
+      const storedRound = storedClaim?.round;
+      if (storedClaim?.outcome !== claimOutcome
+          || (storedRound !== undefined
+            && storedRound !== null
+            && Number(storedRound) !== roundContext.expectedRound)
+          || storedFinished !== true) {
+        throw writeError;
+      }
+    } catch (verificationError) {
+      if (verificationError === writeError) throw writeError;
+      throw writeError;
+    }
+  }
+  targetState.resultClaimCommitted = true;
+  return isCurrentRoundContext(roundContext);
+}
+
+async function settleOnlineMatch(roundContext) {
+  if (!isCurrentRoundContext(roundContext)) return;
+  const expectedState = state;
+  if (expectedState.outcome) return true;
+  if (expectedState.matchFinalizationPromise) {
+    return expectedState.matchFinalizationPromise;
+  }
+  const finalizationPromise = (async () => {
+    const outcome = determineOutcome(expectedState);
+    const claimCommitted = await ensureOnlineResultClaim(expectedState, outcome, roundContext);
+    if (!claimCommitted || !isCurrentRoundContext(roundContext)) return false;
+    const statsCommitted = await commitOnlineStats(expectedState, outcome, roundContext);
+    if (!statsCommitted || !isCurrentRoundContext(roundContext)) return false;
+    expectedState.outcome = outcome;
+    return true;
+  })();
+  expectedState.matchFinalizationPromise = finalizationPromise;
+  try {
+    return await finalizationPromise;
+  } finally {
+    if (expectedState.matchFinalizationPromise === finalizationPromise) {
+      expectedState.matchFinalizationPromise = null;
+    }
+  }
+}
+
 async function finishOnlineMatch(roundContext) {
   if (!isCurrentRoundContext(roundContext)) return;
   const expectedState = state;
-  if (expectedState.outcome) return;
-  const outcome = determineOutcome(expectedState);
-  const myWon = outcome.winnerIndex === expectedState.playerIndex;
-  const draw = outcome.winnerIndex === null;
-  await update(ref(database, `online/rooms/${roundContext.roomContext.roomId}`), {
-    [`resultClaims/${roundContext.roomContext.ownUid}`]: {
-      outcome: draw ? "draw" : myWon ? "win" : "loss",
-      createdAt: serverTimestamp(),
-    },
-    [`finished/${roundContext.roomContext.ownUid}`]: true,
-  });
-  if (!isCurrentRoundContext(roundContext)) return;
-  const statsCommitted = await commitOnlineStats(expectedState, outcome, roundContext);
-  if (!statsCommitted || !isCurrentRoundContext(roundContext)) return;
-  expectedState.outcome = outcome;
+  const settled = await settleOnlineMatch(roundContext);
+  if (!settled || !isCurrentRoundContext(roundContext)) return;
   expectedState.screen = "gameover";
   render();
 }
@@ -7838,37 +8353,19 @@ function calculateRating(currentRating, opponentRating, actualScore) {
 }
 
 async function commitOnlineStats(targetState, outcome, roundContext) {
-  if (!isCurrentRoundContext(roundContext) || targetState.statsCommitted) return false;
-  targetState.statsCommitted = true;
+  if (!isCurrentRoundContext(roundContext)) return false;
+  if (targetState.statsCommitted) return true;
+  if (targetState.statsCommitInFlight) return false;
+  targetState.statsCommitInFlight = true;
   const myWon = outcome.winnerIndex === targetState.playerIndex;
   const draw = outcome.winnerIndex === null;
+  const periodOutcome = draw ? "draw" : myWon ? "win" : "loss";
   const opponent = targetState.players[targetState.playerIndex === 0 ? 1 : 0];
   const opponentRating = Number(opponent?.rating || INITIAL_RATING);
   const actualScore = draw ? 0.5 : myWon ? 1 : 0;
   const soloSeed = { ...targetState.profile };
-  const result = await runTransaction(ref(database, `online/profiles/${targetState.uid}`), (current) => {
-    const record = {
-      name: targetState.name,
-      pursuitLine: normalizePursuitLine(targetState.pursuitLine),
-      wins: Number(current?.wins || 0),
-      losses: Number(current?.losses || 0),
-      draws: Number(current?.draws || 0),
-      streak: Number(current?.streak || 0),
-      bestStreak: Number(current?.bestStreak || 0),
-      rating: Number(current?.rating || INITIAL_RATING),
-      updatedAt: Date.now(),
-    };
-    if (draw) record.draws += 1;
-    else if (myWon) { record.wins += 1; record.streak += 1; record.bestStreak = Math.max(record.bestStreak, record.streak); }
-    else { record.losses += 1; record.streak = 0; }
-    record.rating = calculateRating(record.rating, opponentRating, actualScore);
-    return record;
-  });
-  if (!isCurrentRoundContext(roundContext)) return false;
-  if (result.committed) targetState.profile = result.snapshot.val();
-  if (result.committed) {
-    const periodOutcome = draw ? "draw" : myWon ? "win" : "loss";
-    await recordOverallResult({
+  try {
+    const overallResult = await recordOverallResult({
       mode: "solo",
       outcome: periodOutcome,
       name: targetState.name,
@@ -7876,16 +8373,68 @@ async function commitOnlineStats(targetState, outcome, roundContext) {
       soloSeed,
       roomId: targetState.roomId,
       sourceState: targetState,
-    }).catch(() => {
-      if (isCurrentRoundContext(roundContext)) showToast("総合ランキングを更新できませんでした。");
+      deferPublicSync: true,
     });
+    const resultToken = String(overallResult?.resultToken || "");
+    if (!/^[a-f0-9]{40}$/.test(resultToken)) return false;
+    if (!isCurrentRoundContext(roundContext)) return false;
+    if (overallResult?.profileProjectionMode === "server-v2") {
+      applyServerSoloProjectionProfiles(targetState, overallResult);
+      if (overallResult.profileProjectionPending === true) {
+        showToast("対戦結果は確定しました。表示戦績はサーバーで再同期中です。");
+      }
+    } else {
+      const result = await runTransaction(ref(database, `online/profiles/${targetState.uid}`), (current) => {
+        if (current?.appliedResults?.[resultToken] === periodOutcome) {
+          return undefined;
+        }
+        const record = {
+          name: targetState.name,
+          pursuitLine: normalizePursuitLine(targetState.pursuitLine),
+          wins: Number(current?.wins || 0),
+          losses: Number(current?.losses || 0),
+          draws: Number(current?.draws || 0),
+          streak: Number(current?.streak || 0),
+          bestStreak: Number(current?.bestStreak || 0),
+          rating: Number(current?.rating || INITIAL_RATING),
+          updatedAt: Date.now(),
+          lastResultRoomId: targetState.roomId,
+          lastResultOutcome: periodOutcome,
+          appliedResults: {
+            ...(current?.appliedResults && typeof current.appliedResults === "object"
+              ? current.appliedResults
+              : {}),
+            [resultToken]: periodOutcome,
+          },
+        };
+        if (typeof current?.serverProjectionReceipts === "string"
+            && current.serverProjectionReceipts.length <= 800) {
+          record.serverProjectionReceipts = current.serverProjectionReceipts;
+        }
+        if (Number.isSafeInteger(current?.serverProjectionSequence)
+            && current.serverProjectionSequence > 0) {
+          record.serverProjectionSequence = current.serverProjectionSequence;
+        }
+        if (draw) record.draws += 1;
+        else if (myWon) { record.wins += 1; record.streak += 1; record.bestStreak = Math.max(record.bestStreak, record.streak); }
+        else { record.losses += 1; record.streak = 0; }
+        record.rating = calculateRating(record.rating, opponentRating, actualScore);
+        return record;
+      });
+      const savedProfile = result.snapshot.val();
+      if (savedProfile?.appliedResults?.[resultToken] !== periodOutcome) return false;
+      targetState.profile = savedProfile;
+    }
+    targetState.statsCommitted = true;
+    if (!isCurrentRoundContext(roundContext)) return false;
+    targetState.players.forEach((player, index) => {
+      if (draw) return;
+      player.streak = outcome.winnerIndex === index ? Number(player.streak || 0) + 1 : 0;
+    });
+    return true;
+  } finally {
+    targetState.statsCommitInFlight = false;
   }
-  if (!isCurrentRoundContext(roundContext)) return false;
-  targetState.players.forEach((player, index) => {
-    if (draw) return;
-    player.streak = outcome.winnerIndex === index ? Number(player.streak || 0) + 1 : 0;
-  });
-  return true;
 }
 
 async function sendChat(value, stampId = "") {
@@ -7948,6 +8497,7 @@ function createFinishCutInPayload(winnerIndex) {
     ? normalizeReceivedFinishLine(state.finishLine)
     : normalizeReceivedFinishLine(media?.finishLine);
   const customOpponentLine = !winnerIsLocal && receivedLine && !FINISH_LINES.includes(receivedLine);
+  const finishLineReplaced = Boolean(customOpponentLine && !state.showOpponentCustomFinish);
   return {
     round: state.round,
     winnerIndex,
@@ -7956,9 +8506,15 @@ function createFinishCutInPayload(winnerIndex) {
     loserName: String(state.players[loserIndex]?.name || "PLAYER").slice(0, 16),
     imageUrl: String(media?.url || ""),
     signature: winnerIsLocal ? media?.id === state.signatureCardId : media?.signature === true,
-    finishLine: customOpponentLine && !state.showOpponentCustomFinish ? FINISH_LINES[0] : receivedLine,
+    finishLine: finishLineReplaced ? FINISH_LINES[0] : receivedLine,
+    finishLineReplaced,
     replyAcknowledged: false,
     replyLine: "",
+    replySkipped: false,
+    replyLineReplaced: false,
+    replyDeliveryPending: false,
+    replyDeliveryFailed: false,
+    replyId: "",
   };
 }
 
@@ -7967,13 +8523,87 @@ function getLethalResultForRound(round, targetState = state) {
   return result?.lethal && result.round === round ? result : null;
 }
 
-function clearFinishCutIn() {
+function getResolvedMatchResultForRound(round, targetState = state) {
+  const result = targetState.history.at(-1);
+  return result?.round === round && (result.lethal || round >= MAX_ROUNDS)
+    ? result
+    : null;
+}
+
+function preserveResolvedFinishFromP2pRecovery(targetState = state, {
+  notify = false,
+} = {}) {
+  if (!getResolvedMatchResultForRound(targetState.round, targetState)) return false;
+  clearP2pRecoveryTimer(targetState);
+  targetState.p2pRestartIce = null;
+  targetState.p2pRecovery = null;
+  targetState.p2pGenerationToken = null;
+  if (notify
+      && state === targetState
+      && !targetState.finishConnectionLossNotified) {
+    targetState.finishConnectionLossNotified = true;
+    showToast("P2P接続は切れましたが、確定済みの決着結果は保持しています。");
+  }
+  queueResolvedMatchSettlement(targetState);
+  return true;
+}
+
+function roundScoresAreComplete(scores, targetState = state) {
+  return Number.isInteger(scores?.[targetState.uid])
+    && Number.isInteger(scores?.[targetState.opponentUid]);
+}
+
+function queueResolvedMatchSettlement(targetState = state) {
+  if (state !== targetState || targetState.outcome || !targetState.roomId) return;
+  const roundContext = captureOnlineRoundContext(
+    captureOnlineRoomContext(targetState),
+    targetState.round,
+  );
+  settleOnlineMatch(roundContext).catch((error) => {
+    if (isCurrentRoundContext(roundContext)) handleRecoverableError(error);
+  });
+}
+
+async function preserveResolvedMatchBeforeP2pCleanup(targetState = state) {
+  if (preserveResolvedFinishFromP2pRecovery(targetState)) return true;
+  if (state !== targetState || !targetState.roomId) return false;
+  let scores = targetState.roundData?.scores || {};
+  if (!roundScoresAreComplete(scores, targetState)) {
+    try {
+      const snapshot = await get(ref(
+        database,
+        `online/rooms/${targetState.roomId}/rounds/${targetState.round}/scores`,
+      ));
+      if (state !== targetState) return false;
+      scores = snapshot.val() || {};
+    } catch {
+      return false;
+    }
+  }
+  if (!roundScoresAreComplete(scores, targetState)) return false;
+  resolveRound(scores);
+  if (!preserveResolvedFinishFromP2pRecovery(targetState)) return false;
+  return true;
+}
+
+function restoreFinishCutInFocus() {
+  window.requestAnimationFrame(() => {
+    if (finishCutInDialog?.open) return;
+    const target = state.screen === "result"
+      ? document.querySelector("#onlineContinue")
+      : appRoot;
+    target?.focus({ preventScroll: true });
+  });
+}
+
+function clearFinishCutIn({ restoreFocus = true } = {}) {
   finishCutInGeneration += 1;
   if (state.finishCutInTimer) window.clearTimeout(state.finishCutInTimer);
   state.finishCutInTimer = null;
   if (finishCutInDialog?.open) finishCutInDialog.close();
   finishCutInContent?.replaceChildren();
   if (finishCutInContent) delete finishCutInContent.dataset.round;
+  if (restoreFocus) restoreFinishCutInFocus();
 }
 
 function scheduleFinishCutInClose(generation, delayMs) {
@@ -7986,11 +8616,34 @@ function scheduleFinishCutInClose(generation, delayMs) {
 function applyFinishReplyToResult(result, {
   line,
   name,
+  skipped = false,
+  lineReplaced = false,
+  deliveryStatus = "delivered",
+  replyId = "",
 } = {}) {
   if (!result?.finish || result.finish.replyAcknowledged) return false;
   result.finish.replyAcknowledged = true;
-  result.finish.replyLine = normalizeReceivedFinishReplyLine(line);
+  result.finish.replyLine = skipped ? "" : normalizeReceivedFinishReplyLine(line);
   result.finish.replyName = String(name || result.finish.loserName || "PLAYER").slice(0, 16);
+  result.finish.replySkipped = skipped === true;
+  result.finish.replyLineReplaced = !skipped && lineReplaced === true;
+  result.finish.replyDeliveryStatus = deliveryStatus;
+  result.finish.replyDeliveryPending = deliveryStatus === "pending";
+  result.finish.replyDeliveryFailed = deliveryStatus === "not-sent";
+  result.finish.replyId = FINISH_REPLY_ID_PATTERN.test(replyId) ? replyId : "";
+  return true;
+}
+
+function updateFinishReplyDelivery(result, status, targetState = state) {
+  if (!result?.finish?.replyAcknowledged
+      || !["pending", "unconfirmed", "delivered", "not-sent"].includes(status)) return false;
+  result.finish.replyDeliveryStatus = status;
+  result.finish.replyDeliveryPending = status === "pending";
+  result.finish.replyDeliveryFailed = status === "not-sent";
+  if (state === targetState && targetState.history.includes(result)) {
+    syncFinishReplySlot(result);
+    completeFinishReplyPresentation(result.finish);
+  }
   return true;
 }
 
@@ -7999,83 +8652,318 @@ function completeFinishReplyPresentation(payload) {
   const cutIn = finishCutInContent.querySelector(".finish-cutin");
   const panel = finishCutInContent.querySelector(".finish-reply-panel");
   if (!cutIn || !panel) return;
+  const focusWasInsidePanel = panel.contains(document.activeElement);
   panel.classList.add("is-acknowledged");
+  const deliveryPending = payload.replyDeliveryStatus === "pending";
+  const deliveryUnconfirmed = payload.replyDeliveryStatus === "unconfirmed";
+  const deliveryNotSent = payload.replyDeliveryStatus === "not-sent"
+    || payload.replyDeliveryFailed === true;
+  panel.classList.toggle("is-delivery-failed", deliveryNotSent || deliveryUnconfirmed);
   const heading = document.createElement("span");
   heading.className = "finish-reply-heading";
-  heading.textContent = "DECISION REPLY";
+  heading.textContent = deliveryPending
+    ? "REPLY SENDING"
+    : deliveryUnconfirmed
+      ? "REPLY UNCONFIRMED"
+      : deliveryNotSent
+        ? "REPLY NOT SENT"
+        : payload.replySkipped
+      ? "REPLY CLOSED"
+      : "DECISION REPLY";
   const replyName = document.createElement("strong");
   replyName.className = "finish-reply-name";
   replyName.textContent = payload.replyName || payload.loserName;
   const reply = payload.replyLine
+      && !payload.replySkipped
+      && !deliveryPending
+      && !deliveryUnconfirmed
+      && !deliveryNotSent
     ? document.createElement("blockquote")
     : document.createElement("p");
   reply.className = "finish-reply-line";
-  reply.textContent = payload.replyLine || "静かに決着を受け入れました。";
+  reply.textContent = deliveryPending
+    ? "相手側の受信確認を待っています…"
+    : deliveryUnconfirmed
+      ? "相手側の受信確認が届かなかったため、届いた扱いにはしていません。"
+      : deliveryNotSent
+        ? "P2P接続が切れているため、相手へは届いていません。"
+        : payload.replySkipped
+      ? "返礼せず結果へ進みました。"
+      : payload.replyLine || "静かに決着を受け入れました。";
   const seal = document.createElement("span");
   seal.className = "finish-reply-seal";
-  seal.textContent = payload.signature ? "返礼" : "勝負あり";
-  panel.replaceChildren(heading, replyName, reply, seal);
+  seal.textContent = deliveryPending
+    ? "確認中"
+    : deliveryUnconfirmed
+      ? "未確認"
+      : deliveryNotSent
+        ? "未送信"
+        : payload.replySkipped
+      ? "終了"
+      : payload.signature ? "返礼" : "勝負あり";
+  const disclosure = payload.replyLineReplaced
+    ? document.createElement("small")
+    : null;
+  if (disclosure) {
+    disclosure.className = "finish-reply-disclosure";
+    disclosure.textContent = "自由記述は表示設定により、口調セットの定型文へ置き換えています。";
+  }
+  panel.replaceChildren(heading, replyName, reply, ...(disclosure ? [disclosure] : []), seal);
   cutIn.classList.add("has-reply");
   const skip = finishCutInContent.querySelector(".finish-cutin-skip");
   if (skip) skip.textContent = "結果を見る";
-  scheduleFinishCutInClose(finishCutInGeneration, FINISH_REPLY_SETTLE_DURATION_MS);
+  if (focusWasInsidePanel) skip?.focus({ preventScroll: true });
+  scheduleFinishCutInClose(
+    finishCutInGeneration,
+    deliveryPending
+      ? FINISH_REPLY_ACK_TIMEOUT_MS + FINISH_REPLY_SETTLE_DURATION_MS
+      : FINISH_REPLY_SETTLE_DURATION_MS,
+  );
 }
 
-function acknowledgeLocalFinishReply(payload) {
-  const result = getLethalResultForRound(payload.round);
-  if (!result || result.loserIndex !== state.playerIndex || result.finish?.replyAcknowledged) return;
-  const replyLine = normalizeReceivedFinishReplyLine(state.finishReplyLine);
+function settlePendingFinishReplyAck(targetState, tracker, status) {
+  if (!tracker
+      || targetState.pendingFinishReplyAcks.get(tracker.replyId) !== tracker
+      || !["unconfirmed", "delivered"].includes(status)) return false;
+  if (tracker.timeoutId) window.clearTimeout(tracker.timeoutId);
+  tracker.timeoutId = null;
+  tracker.status = status;
+  if (status === "delivered") targetState.pendingFinishReplyAcks.delete(tracker.replyId);
+  return updateFinishReplyDelivery(tracker.result, status, targetState);
+}
+
+function clearPendingFinishReplyAcks(targetState = state) {
+  targetState.pendingFinishReplyAcks.forEach((tracker) => {
+    if (tracker.timeoutId) window.clearTimeout(tracker.timeoutId);
+  });
+  targetState.pendingFinishReplyAcks.clear();
+}
+
+function markPendingFinishReplyAcksUnconfirmed(targetState, channel) {
+  targetState.pendingFinishReplyAcks.forEach((tracker) => {
+    if (tracker.channel === channel && tracker.status === "pending") {
+      settlePendingFinishReplyAck(targetState, tracker, "unconfirmed");
+    }
+  });
+}
+
+function sendLocalFinishReply(targetState, result, payload, { replyLine, skipped }) {
+  const channel = targetState.channel;
+  if (state !== targetState || channel?.readyState !== "open") return "not-sent";
+  const replyId = createOnlineSessionToken(window.crypto);
+  const tracker = {
+    replyId,
+    roomId: targetState.roomId,
+    round: payload.round,
+    fromUid: targetState.uid,
+    toUid: targetState.opponentUid,
+    channel,
+    result,
+    status: "pending",
+    timeoutId: null,
+  };
+  targetState.pendingFinishReplyAcks.set(replyId, tracker);
+  tracker.timeoutId = window.setTimeout(() => {
+    settlePendingFinishReplyAck(targetState, tracker, "unconfirmed");
+  }, FINISH_REPLY_ACK_TIMEOUT_MS);
+  try {
+    channel.send(JSON.stringify({
+      type: "finish-reply",
+      finishReplyVersion: FINISH_REPLY_PROTOCOL_VERSION,
+      replyId,
+      roomId: tracker.roomId,
+      round: tracker.round,
+      fromUid: tracker.fromUid,
+      toUid: tracker.toUid,
+      replyLine,
+      skipped: skipped === true,
+      voiceSetId: normalizeRoleplayVoiceSetId(targetState.roleplayVoiceFallbackId),
+    }));
+    result.finish.replyId = replyId;
+    return "pending";
+  } catch {
+    if (tracker.timeoutId) window.clearTimeout(tracker.timeoutId);
+    targetState.pendingFinishReplyAcks.delete(replyId);
+    return "not-sent";
+  }
+}
+
+function acknowledgeLocalFinishReply(payload, {
+  skipped = false,
+  present = true,
+} = {}) {
+  const targetState = state;
+  const result = getLethalResultForRound(payload.round, targetState);
+  if (!result
+      || result.loserIndex !== targetState.playerIndex
+      || result.finish?.replyAcknowledged) return false;
+  const replyLine = skipped ? "" : normalizeReceivedFinishReplyLine(targetState.finishReplyLine);
+  const deliveryStatus = sendLocalFinishReply(
+    targetState,
+    result,
+    payload,
+    { replyLine, skipped },
+  );
   if (!applyFinishReplyToResult(result, {
     line: replyLine,
-    name: state.players[state.playerIndex]?.name,
-  })) return;
-  if (state.channel?.readyState === "open") {
-    try {
-      state.channel.send(JSON.stringify({
-        type: "finish-reply",
-        round: payload.round,
-        replyLine,
-        voiceSetId: normalizeRoleplayVoiceSetId(state.roleplayVoiceFallbackId),
-      }));
-    } catch {
-      // The battle result is already final; a failed optional reply must not block progression.
-    }
+    name: targetState.players[targetState.playerIndex]?.name,
+    skipped,
+    deliveryStatus,
+    replyId: result.finish.replyId,
+  })) return false;
+  syncFinishReplySlot(result);
+  if (deliveryStatus === "not-sent") {
+    showToast("P2P接続が切れているため、返礼は相手へ届きませんでした。");
   }
-  if (state.screen === "result") render();
-  completeFinishReplyPresentation(result.finish);
+  if (present) completeFinishReplyPresentation(result.finish);
+  return deliveryStatus === "pending";
 }
 
-function handleRemoteFinishReply(message, targetState = state) {
+function dismissFinishCutIn(payload) {
+  if (payload?.loserIndex === state.playerIndex) {
+    acknowledgeLocalFinishReply(payload, { skipped: true, present: false });
+  }
+  clearFinishCutIn();
+}
+
+function finishReplyV2Envelope(message, targetState, expectedChannel, {
+  acknowledge = false,
+} = {}) {
+  const v2Keys = [
+    "finishReplyVersion",
+    "replyId",
+    "roomId",
+    "fromUid",
+    "toUid",
+  ];
+  const hasV2Field = v2Keys.some((key) => Object.hasOwn(message || {}, key));
+  if (!hasV2Field) return { legacy: true, valid: !acknowledge };
+  const round = Number(message?.round);
+  const valid = message?.finishReplyVersion === FINISH_REPLY_PROTOCOL_VERSION
+    && FINISH_REPLY_ID_PATTERN.test(String(message?.replyId || ""))
+    && message?.roomId === targetState.roomId
+    && message?.fromUid === targetState.opponentUid
+    && message?.toUid === targetState.uid
+    && Number.isInteger(round)
+    && round >= 1
+    && round <= MAX_ROUNDS
+    && expectedChannel === targetState.channel;
+  return {
+    legacy: false,
+    valid,
+    replyId: valid ? message.replyId : "",
+    round,
+  };
+}
+
+function sendFinishReplyAck(message, targetState, channel) {
+  if (state !== targetState || channel !== targetState.channel || channel?.readyState !== "open") return false;
+  try {
+    channel.send(JSON.stringify({
+      type: "finish-reply-ack",
+      finishReplyVersion: FINISH_REPLY_PROTOCOL_VERSION,
+      replyId: message.replyId,
+      roomId: targetState.roomId,
+      round: Number(message.round),
+      fromUid: targetState.uid,
+      toUid: targetState.opponentUid,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function handleRemoteFinishReplyAck(
+  message,
+  targetState = state,
+  expectedChannel = targetState.channel,
+) {
+  const envelope = finishReplyV2Envelope(
+    message,
+    targetState,
+    expectedChannel,
+    { acknowledge: true },
+  );
+  if (!envelope.valid) return false;
+  const tracker = targetState.pendingFinishReplyAcks.get(envelope.replyId);
+  if (!tracker
+      || tracker.channel !== expectedChannel
+      || tracker.roomId !== targetState.roomId
+      || tracker.round !== envelope.round
+      || tracker.fromUid !== targetState.uid
+      || tracker.toUid !== targetState.opponentUid) return false;
+  return settlePendingFinishReplyAck(targetState, tracker, "delivered");
+}
+
+function handleRemoteFinishReply(
+  message,
+  targetState = state,
+  expectedChannel = targetState.channel,
+) {
   const round = Number(message?.round);
   if (!Number.isInteger(round) || round < 1 || round > MAX_ROUNDS || typeof message?.replyLine !== "string") return;
+  const envelope = finishReplyV2Envelope(message, targetState, expectedChannel);
+  if (!envelope.valid) return;
+  const replyLine = normalizeReceivedFinishReplyLine(message.replyLine);
+  const skipped = message.skipped === true;
   const result = getLethalResultForRound(round, targetState);
   if (!result) {
     if (round === targetState.round) {
-      targetState.pendingFinishReplies.set(round, {
-        type: "finish-reply",
-        round,
-        replyLine: message.replyLine,
-        voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
-      });
+      const pending = targetState.pendingFinishReplies.get(round);
+      if (!pending) {
+        targetState.pendingFinishReplies.set(round, {
+          channel: expectedChannel,
+          message: {
+            type: "finish-reply",
+            ...(!envelope.legacy ? {
+              finishReplyVersion: FINISH_REPLY_PROTOCOL_VERSION,
+              replyId: envelope.replyId,
+              roomId: targetState.roomId,
+              fromUid: targetState.opponentUid,
+              toUid: targetState.uid,
+            } : {}),
+            round,
+            replyLine,
+            skipped,
+            voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
+          },
+        });
+      }
     }
     return;
   }
-  if (result.winnerIndex !== targetState.playerIndex || result.finish?.replyAcknowledged) return;
-  const visibleReply = resolveVisibleFinishReplyLine(message.replyLine, {
-    showCustom: targetState.showOpponentCustomFinish,
-    voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
-  });
+  if (result.winnerIndex !== targetState.playerIndex) return;
+  if (result.finish?.replyAcknowledged) {
+    if (envelope.replyId && result.finish.replyId === envelope.replyId) {
+      sendFinishReplyAck(message, targetState, expectedChannel);
+    }
+    return;
+  }
+  const visibleReply = skipped
+    ? { line: "", custom: false, replaced: false }
+    : resolveVisibleFinishReplyLine(replyLine, {
+      showCustom: targetState.showOpponentCustomFinish,
+      voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
+    });
   if (!applyFinishReplyToResult(result, {
     line: visibleReply.line,
     name: targetState.players[result.loserIndex]?.name,
+    skipped,
+    lineReplaced: visibleReply.replaced,
+    deliveryStatus: "delivered",
+    replyId: envelope.replyId,
   })) return;
-  if (state === targetState && targetState.screen === "result") render();
-  if (state === targetState) completeFinishReplyPresentation(result.finish);
+  if (envelope.replyId) sendFinishReplyAck(message, targetState, expectedChannel);
+  if (state === targetState) {
+    syncFinishReplySlot(result);
+    completeFinishReplyPresentation(result.finish);
+  }
 }
 
 function triggerFinishCutIn(payload) {
   if (!finishCutInDialog || !finishCutInContent || !payload) return;
-  clearFinishCutIn();
+  clearFinishCutIn({ restoreFocus: false });
   const generation = finishCutInGeneration;
   const cutIn = document.createElement("article");
   cutIn.className = `finish-cutin ${payload.signature ? "is-signature" : "is-standard"}`;
@@ -8127,6 +9015,12 @@ function triggerFinishCutIn(payload) {
     quote.className = "finish-cutin-line";
     quote.textContent = payload.finishLine;
     copy.append(quote);
+    if (payload.finishLineReplaced) {
+      const lineDisclosure = document.createElement("small");
+      lineDisclosure.className = "finish-cutin-line-disclosure";
+      lineDisclosure.textContent = "自由記述は表示設定により、定型文へ置き換えています。";
+      copy.append(lineDisclosure);
+    }
   }
 
   const replyPanel = document.createElement("section");
@@ -8164,7 +9058,7 @@ function triggerFinishCutIn(payload) {
   skip.type = "button";
   skip.className = "finish-cutin-skip";
   skip.textContent = localIsLoser ? "返礼せず結果へ" : "結果へ進む";
-  skip.addEventListener("click", clearFinishCutIn, { once: true });
+  skip.addEventListener("click", () => dismissFinishCutIn(payload), { once: true });
   stage.append(imageFrame, copy);
   cutIn.append(stage, skip);
   finishCutInContent.replaceChildren(cutIn);
@@ -8180,9 +9074,22 @@ function triggerCriticalFx(text) {
   window.setTimeout(() => { fxLayer.innerHTML = ""; }, 1250);
 }
 
+function notifyResolvedMatchDestroyBlocked(targetState = state) {
+  if (state !== targetState) return;
+  showToast("決着は確定済みです。「試合結果を見る」から結果へ進んでください。");
+  window.requestAnimationFrame(() => {
+    document.querySelector("#onlineContinue")?.focus({ preventScroll: true });
+  });
+}
+
 function openDestroyDialog() {
   const context = captureOnlineRoomContext(state);
   if (!isCurrentRoomSetupContext(context)) return;
+  if (getResolvedMatchResultForRound(state.round, state)) {
+    queueResolvedMatchSettlement(state);
+    notifyResolvedMatchDestroyBlocked(state);
+    return;
+  }
   pendingDestroyContext = context;
   destroyDialog.showModal();
 }
@@ -8206,26 +9113,66 @@ async function destroyRoom() {
   pendingDestroyContext = null;
   if (!isCurrentRoomSetupContext(context)) return;
   const expectedState = context.expectedState;
-  dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
-  if (expectedState.roomTerminationToken) return;
-  const terminationToken = Object.freeze({ type: "local-destroy" });
-  expectedState.roomTerminationToken = terminationToken;
-  const transitionToken = beginOnlineStateTransition(expectedState, "local-destroy");
-  await runTransaction(
-    ref(database, `online/rooms/${context.roomId}/destroyed`),
-    (current) => current || { by: context.ownUid, at: Date.now() },
-  ).catch(() => {});
-  await cleanupOnlineResources(false, expectedState);
-  if (expectedState.roomTerminationToken !== terminationToken
-      || !isSameRoomIdentity(context)
-      || !isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
-  releaseAllImages();
-  active = false;
-  window.HariaiApp?.returnHome();
-  showToast("ルームを破棄しました。戦績には影響しません。");
+  if (expectedState.destroyInFlight || expectedState.roomTerminationToken) return;
+  expectedState.destroyInFlight = true;
+  try {
+    if (await preserveResolvedMatchBeforeP2pCleanup(expectedState)) {
+      notifyResolvedMatchDestroyBlocked(expectedState);
+      return;
+    }
+    let destroyResult;
+    try {
+      destroyResult = await runTransaction(
+        ref(database, `online/rooms/${context.roomId}/destroyed`),
+        (current) => current || { by: context.ownUid, at: Date.now() },
+      );
+    } catch (error) {
+      if (await preserveResolvedMatchBeforeP2pCleanup(expectedState)) {
+        notifyResolvedMatchDestroyBlocked(expectedState);
+        return;
+      }
+      console.error(error);
+      showToast("ルームを破棄できませんでした。通信状態を確認して、もう一度お試しください。");
+      return;
+    }
+    if (await preserveResolvedMatchBeforeP2pCleanup(expectedState)) {
+      notifyResolvedMatchDestroyBlocked(expectedState);
+      return;
+    }
+    const marker = destroyResult.snapshot.val();
+    if (marker?.by !== context.ownUid) {
+      if (marker?.by === context.opponentUid) {
+        await handleOpponentDestroyed(context, marker);
+      } else {
+        showToast("ルームの終了状態を確認できませんでした。");
+      }
+      return;
+    }
+    dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
+    const terminationToken = Object.freeze({ type: "local-destroy" });
+    expectedState.roomTerminationToken = terminationToken;
+    const transitionToken = beginOnlineStateTransition(expectedState, "local-destroy");
+    await cleanupOnlineResources(false, expectedState);
+    if (expectedState.roomTerminationToken !== terminationToken
+        || !isSameRoomIdentity(context)
+        || !isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
+    releaseAllImages();
+    active = false;
+    window.HariaiApp?.returnHome();
+    showToast("ルームを破棄しました。戦績には影響しません。");
+  } finally {
+    expectedState.destroyInFlight = false;
+  }
 }
 
 async function handleOpponentDestroyed(context, marker) {
+  if (isCurrentRoomSetupContext(context)
+      && marker?.by === context.opponentUid
+      && await preserveResolvedMatchBeforeP2pCleanup(context.expectedState)) {
+    context.expectedState.opponentOnline = false;
+    preserveResolvedFinishFromP2pRecovery(context.expectedState, { notify: true });
+    return;
+  }
   await runOnlineOpponentDestroyedTransition({
     context,
     marker,
@@ -8398,7 +9345,8 @@ async function cleanupOnlineResources(
       targetState.p2pRecovery = null;
       targetState.p2pGenerationToken = null;
     }
-    if (state === targetState) clearFinishCutIn();
+    if (state === targetState) clearFinishCutIn({ restoreFocus: false });
+    clearPendingFinishReplyAcks(targetState);
     clearImageAckWatchdog(targetState);
     stopSelectionTimer(targetState);
     notifyEngawaDeparture(targetState);
@@ -8577,7 +9525,9 @@ sampleHandicapDialog?.addEventListener("close", () => {
 
 finishCutInDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();
-  clearFinishCutIn();
+  const round = Number(finishCutInContent?.dataset.round);
+  const result = getLethalResultForRound(round);
+  dismissFinishCutIn(result?.finish);
 });
 
 if (!useOfflineMarketPreview) watchLobbyStats();

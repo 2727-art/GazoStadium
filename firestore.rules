@@ -35,6 +35,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /soloProfileProjectionQueues/{uid} {
+      allow read, write: if false;
+
+      match /jobs/{jobId} {
+        allow read, write: if false;
+      }
+    }
+
     match /postMatchTips/{tipId} {
       allow read, write: if false;
     }

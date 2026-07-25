@@ -312,6 +312,79 @@ this.clearSoloSessionV2RoomTransition = clearSoloSessionV2RoomTransition;`,
   assert.equal(reference.finalValue.matchTransition.token, otherTransition.matchTransition.token);
 });
 
+test("server-finalized active rooms cannot be destroyed by an Admin cleanup race", async () => {
+  const cleanupSource = sourceBetween(
+    "async function cleanupSoloSessionV2Match",
+    "async function readSoloSessionV2MaterializationFence",
+  );
+  const roomId = "room-finalized-123456";
+  const attemptId = "attempt-finalized-1234";
+  const connectionGeneration = "connection-finalized-1";
+  const transitionToken = "cancel-finalized-token";
+  const room = {
+    status: "active",
+    attemptId,
+    connectionGeneration,
+    serverFinalized: {
+      version: 1,
+      round: 1,
+      finalizedAt: 1_780_000_000_000,
+    },
+    matchTransition: {
+      action: "cancel",
+      token: transitionToken,
+    },
+  };
+  const reference = coldTransactionRef(room);
+  const context = {
+    Date: { now: () => 1_780_000_000_000 },
+    objectValue: (value) => (value && typeof value === "object" ? value : {}),
+    realtime: { ref: () => reference },
+    recordAttemptMatches: () => true,
+    roomAttemptMatches: () => true,
+    roomTransitionOwned: (value, action, token) => (
+      value?.matchTransition?.action === action
+        && value?.matchTransition?.token === token
+    ),
+    soloSessionV2TransitionExpected: () => ({
+      attemptId,
+      connectionGeneration,
+    }),
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${cleanupSource}
+this.cleanupSoloSessionV2Match = cleanupSoloSessionV2Match;`,
+    context,
+  );
+  const resources = {
+    hostLock: { roomId, attemptId },
+    permit: {
+      hostUid: "host-user",
+      guestUid: "guest-user",
+      connectionGeneration,
+      players: {
+        "host-user": { uid: "host-user" },
+        "guest-user": { uid: "guest-user" },
+      },
+      sessions: {
+        "host-user": { sessionId: "host-session" },
+        "guest-user": { sessionId: "guest-session" },
+      },
+    },
+  };
+
+  assert.equal(await context.cleanupSoloSessionV2Match(resources, {
+    restoreQueue: false,
+    transitionAction: "cancel",
+    transitionToken,
+    destroyActive: true,
+    destroyedByUid: "host-user",
+  }), false);
+  assert.equal(reference.finalValue.destroyed, undefined);
+  assert.equal(reference.finalValue.matchTransition, undefined);
+});
+
 test("active pair refresh retries a cold root and preserves both identities", async () => {
   const { claimMatches, normalizeClaim } = require("../solo-session-v2");
   const identitySource = sourceBetween(

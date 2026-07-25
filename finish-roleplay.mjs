@@ -1,4 +1,5 @@
 export const MAX_FINISH_REPLY_LENGTH = 40;
+export const MAX_FINISH_REPLY_INPUT_UNITS = MAX_FINISH_REPLY_LENGTH * 2;
 export const CUSTOM_FINISH_REPLY_VALUE = "__custom_finish_reply__";
 export const FINISH_REPLY_DISABLED_VALUE = "__finish_reply_disabled__";
 
@@ -74,12 +75,17 @@ export function normalizeRoleplayVoiceSetId(value) {
   return getRoleplayVoiceSet(value)?.id || "";
 }
 
+export function countFinishReplyCharacters(value) {
+  return Array.from(String(value || "")).length;
+}
+
 export function sanitizeFinishReplyDraft(value) {
   const normalized = String(value || "").replace(/\r\n?/g, "\n");
   const [firstLine = "", ...remainingLines] = normalized.split("\n");
   const secondLine = remainingLines.join(" ");
-  return `${firstLine}${remainingLines.length ? `\n${secondLine}` : ""}`
-    .slice(0, MAX_FINISH_REPLY_LENGTH);
+  return Array.from(`${firstLine}${remainingLines.length ? `\n${secondLine}` : ""}`)
+    .slice(0, MAX_FINISH_REPLY_LENGTH)
+    .join("");
 }
 
 export function normalizeFinishReplyLine(value, fallback = FINISH_REPLY_LINES[0]) {
@@ -114,11 +120,13 @@ export function resolveVisibleFinishReplyLine(value, {
   voiceSetId = "",
 } = {}) {
   const line = normalizeReceivedFinishReplyLine(value);
-  if (!line) return { line: "", custom: false };
+  if (!line) return { line: "", custom: false, replaced: false };
   const custom = !FINISH_REPLY_LINES.includes(line);
   const fallback = getRoleplayVoiceSet(voiceSetId)?.replyLine || FINISH_REPLY_LINES[0];
+  const replaced = custom && !showCustom;
   return {
-    line: custom && !showCustom ? fallback : line,
+    line: replaced ? fallback : line,
     custom,
+    replaced,
   };
 }
