@@ -191,3 +191,22 @@ test("creator-card UI remains discoverable, shareable, and cache-busted", () => 
   assert.match(readme, /既存購入者/);
   assert.match(readme, /匿名UID、勝敗、RATE、画像、ルーム履歴/);
 });
+
+test("community creator cards keep a single full-width column on mobile", () => {
+  const styles = read("styles.css");
+  const html = read("index.html");
+
+  assert.match(
+    styles,
+    /\.community-card-stage\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+  );
+  assert.match(
+    styles,
+    /\.community-card-stage \.community-message-controls\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width:\s*480px\)\s*\{[\s\S]*?\.community-card-stage \.community-message-controls\s*\{[^}]*flex-wrap:\s*wrap/,
+  );
+  assert.match(html, /styles\.css\?v=[^"]*favorite-card-v2-mobile-grid-v1/);
+});

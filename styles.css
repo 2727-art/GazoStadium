@@ -10046,6 +10046,7 @@ button:disabled {
 
 .community-card-stage {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 16px;
 }
@@ -10055,10 +10056,13 @@ button:disabled {
 }
 
 .community-card-stage .community-message-controls {
+  grid-column: 1 / -1;
   align-items: center;
   flex-direction: row;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
+  width: 100%;
   padding: 0 3px;
 }
 
@@ -11111,6 +11115,15 @@ button:disabled {
 }
 
 @media (max-width: 480px) {
+  .community-card-stage .community-message-controls {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .community-card-stage .community-message-controls > span {
+    flex-wrap: wrap;
+  }
+
   .creator-card-editor-layout {
     gap: 14px;
   }
