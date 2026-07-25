@@ -25,6 +25,51 @@
         ".write": false,
         ".indexOn": ["expiresAt"]
       },
+      "soloSessionClaims": {
+        ".indexOn": ["expiresAt"],
+        "$uid": {
+          ".read": false,
+          ".write": false
+        }
+      },
+      "soloSessionActionRates": {
+        ".read": false,
+        ".write": false
+      },
+      "soloLegacyActiveInspections": {
+        ".read": false,
+        ".write": false
+      },
+      "soloSessionPresence": {
+        ".read": false,
+        ".write": false
+      },
+      "soloMatchPermitsV2": {
+        ".read": false,
+        ".write": false,
+        ".indexOn": ["expiresAt"]
+      },
+      "soloMatchLocksV2": {
+        ".read": false,
+        ".write": false,
+        ".indexOn": ["expiresAt"]
+      },
+      "p2pDiagnostics": {
+        ".read": false,
+        ".write": false
+      },
+      "p2pDiagnosticDays": {
+        ".read": false,
+        ".write": false
+      },
+      "p2pMaintenance": {
+        ".read": false,
+        ".write": false
+      },
+      "p2pRateLimits": {
+        ".read": false,
+        ".write": false
+      },
       "publicPresence": {
         ".read": true,
         "$sessionId": {
@@ -311,7 +356,7 @@
       "queue": {
         ".read": "auth != null",
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && !(root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now)",
           ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'pursuitLine', 'streak', 'rating', 'ratingPreference', 'allowPreferenceMismatch', 'joinedAt', 'lastSeen', 'state', 'sampleCount', 'startingHp']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() >= now - 86400000 && newData.child('joinedAt').val() <= now + 15000 && newData.child('lastSeen').isNumber() && newData.child('lastSeen').val() >= now - 60000 && newData.child('lastSeen').val() <= now + 15000 && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'offering') && newData.child('startingHp').val() === 30 - newData.child('sampleCount').val() * 5)",
           "rating": {
             ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
@@ -336,19 +381,111 @@
           }
         }
       },
+      "queueV2": {
+        "$uid": {
+          "$sessionId": {
+            ".read": false,
+            ".write": "auth != null && auth.uid === $uid && newData.exists() && root.child('online/soloSessionClaims/' + $uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + $uid + '/sessionId').val() === $sessionId && root.child('online/soloSessionClaims/' + $uid + '/leaseToken').val() === newData.child('leaseToken').val() && root.child('online/soloSessionClaims/' + $uid + '/generation').val() === newData.child('generation').val() && root.child('online/soloSessionClaims/' + $uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + $uid + '/expiresAt').val() > now && newData.child('expiresAt').val() === root.child('online/soloSessionClaims/' + $uid + '/expiresAt').val() && newData.child('state').val() === 'waiting' && (!data.exists() || (data.child('state').val() === 'waiting' && data.child('protocolVersion').val() === newData.child('protocolVersion').val() && data.child('uid').val() === newData.child('uid').val() && data.child('sessionId').val() === newData.child('sessionId').val() && data.child('leaseToken').val() === newData.child('leaseToken').val() && data.child('generation').val() === newData.child('generation').val() && data.child('connectionGeneration').val() === newData.child('connectionGeneration').val() && data.child('joinedAt').val() === newData.child('joinedAt').val()))",
+            ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'uid', 'sessionId', 'leaseToken', 'generation', 'connectionGeneration', 'name', 'pursuitLine', 'streak', 'rating', 'ratingPreference', 'allowPreferenceMismatch', 'joinedAt', 'lastSeen', 'expiresAt', 'state', 'sampleCount', 'startingHp']) && newData.child('protocolVersion').val() === 2 && newData.child('uid').val() === $uid && newData.child('sessionId').val() === $sessionId && newData.child('leaseToken').val() === root.child('online/soloSessionClaims/' + $uid + '/leaseToken').val() && newData.child('generation').val() === root.child('online/soloSessionClaims/' + $uid + '/generation').val() && newData.child('expiresAt').val() === root.child('online/soloSessionClaims/' + $uid + '/expiresAt').val() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('pursuitLine').isString() && newData.child('pursuitLine').val().length > 0 && newData.child('pursuitLine').val().length <= 40 && !newData.child('pursuitLine').val().contains('\\r') && !newData.child('pursuitLine').val().contains('\\n') && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() >= now - 86400000 && newData.child('joinedAt').val() <= now + 15000 && newData.child('lastSeen').isNumber() && newData.child('lastSeen').val() >= now - 60000 && newData.child('lastSeen').val() <= now + 15000 && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() > now && newData.child('expiresAt').val() <= now + 90000 && newData.child('state').val() === 'waiting' && newData.child('startingHp').val() === 30 - newData.child('sampleCount').val() * 5)",
+            "protocolVersion": {
+              ".validate": "newData.val() === 2"
+            },
+            "uid": {
+              ".validate": "newData.isString() && newData.val() === $uid"
+            },
+            "sessionId": {
+              ".validate": "newData.isString() && newData.val() === $sessionId && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+            },
+            "leaseToken": {
+              ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+            },
+            "generation": {
+              ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{22}$/)"
+            },
+            "connectionGeneration": {
+              ".validate": "(newData.isNumber() && newData.val() > 0) || (newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/))"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+            },
+            "pursuitLine": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+            },
+            "streak": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "rating": {
+              ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
+            },
+            "ratingPreference": {
+              ".validate": "newData.isString() && (newData.val() === 'illustration' || newData.val() === 'live_action' || newData.val() === 'both')"
+            },
+            "allowPreferenceMismatch": {
+              ".validate": "newData.isBoolean()"
+            },
+            "reunionPreference": {
+              ".validate": "newData.isBoolean()"
+            },
+            "joinedAt": {
+              ".validate": "newData.isNumber() && newData.val() >= now - 86400000 && newData.val() <= now + 15000"
+            },
+            "lastSeen": {
+              ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+            },
+            "expiresAt": {
+              ".validate": "newData.isNumber() && newData.val() > now && newData.val() <= now + 90000"
+            },
+            "state": {
+              ".validate": "newData.val() === 'waiting'"
+            },
+            "sampleCount": {
+              ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2 || newData.val() === 3 || newData.val() === 4 || newData.val() === 5)"
+            },
+            "startingHp": {
+              ".validate": "newData.isNumber() && (newData.val() === 30 || newData.val() === 25 || newData.val() === 20 || newData.val() === 15 || newData.val() === 10 || newData.val() === 5)"
+            },
+            "attemptId": {
+              ".validate": false
+            },
+            "roomId": {
+              ".validate": false
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      },
       "active": {
         ".read": "auth != null",
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && !(root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now)",
           ".validate": "!newData.exists() || (newData.isString() && newData.val().length <= 40)"
+        }
+      },
+      "activeV2": {
+        "$uid": {
+          ".read": false,
+          "$sessionId": {
+            ".write": false,
+            ".validate": "!newData.exists()"
+          }
         }
       },
       "offers": {
         "$targetUid": {
           ".read": "auth != null && auth.uid === $targetUid",
           "$roomId": {
-            ".write": "auth != null && ((auth.uid === $targetUid && !newData.exists()) || (data.child('fromUid').val() === auth.uid && !newData.exists() && (root.child('online/config/soloServerMatchmaking').val() !== true || root.child('online/rooms/' + $roomId + '/status').val() === 'active' || root.child('online/rooms/' + $roomId + '/status').val() === 'expired')) || (!data.exists() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid && root.child('online/config/soloServerMatchmaking').val() !== true))",
+            ".write": "auth != null && !(root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now) && ((auth.uid === $targetUid && !newData.exists()) || (data.child('fromUid').val() === auth.uid && !newData.exists() && (root.child('online/config/soloServerMatchmaking').val() !== true || root.child('online/rooms/' + $roomId + '/status').val() === 'active' || root.child('online/rooms/' + $roomId + '/status').val() === 'expired')) || (!data.exists() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid && root.child('online/config/soloServerMatchmaking').val() !== true))",
             ".validate": "!newData.exists() || (newData.hasChildren(['roomId', 'fromUid', 'toUid', 'fromName', 'createdAt']) && newData.child('roomId').val() === $roomId && newData.child('toUid').val() === $targetUid && newData.child('fromUid').isString() && newData.child('fromUid').val() !== $targetUid && newData.child('fromName').isString() && newData.child('fromName').val().length > 0 && newData.child('fromName').val().length <= 16 && newData.child('createdAt').isNumber())"
+          }
+        }
+      },
+      "offersV2": {
+        ".write": false,
+        "$targetUid": {
+          "$targetSessionId": {
+            ".read": "auth != null && auth.uid === $targetUid && root.child('online/soloSessionClaims/' + $targetUid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/soloSessionClaims/' + $targetUid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + $targetUid + '/expiresAt').val() > now"
           }
         }
       },
@@ -1535,27 +1672,58 @@
       "rooms": {
         "$roomId": {
           ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
+          "protocolVersion": {
+            ".write": false,
+            ".validate": "newData.val() === 2"
+          },
+          "signalingVersion": {
+            ".write": false,
+            ".validate": "newData.val() === 2"
+          },
+          "connectionGeneration": {
+            ".write": false,
+            ".validate": "(newData.isNumber() && newData.val() > 0) || (newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/))"
+          },
+          "attemptId": {
+            ".write": false,
+            ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+          },
+          "sessions": {
+            ".write": false,
+            "$uid": {
+              ".validate": "newData.hasChildren(['sessionId', 'generation'])",
+              "sessionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+              },
+              "generation": {
+                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{22}$/)"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
           "hostUid": {
-            ".write": "auth != null && !data.exists() && newData.val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').isString() && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() !== auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now))",
+            ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && !data.exists() && newData.val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').isString() && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() !== auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now))",
             ".validate": "newData.isString()"
           },
           "guestUid": {
-            ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === newData.val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + newData.val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + newData.val() + '/expiresAt').val() > now))",
+            ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === newData.val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + newData.val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + newData.val() + '/expiresAt').val() > now))",
             ".validate": "newData.isString() && newData.val() !== root.child('online/rooms/' + $roomId + '/hostUid').val()"
           },
           "createdAt": {
-            ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === newData.parent().child('guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/expiresAt').val() > now))",
+            ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === newData.parent().child('guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/expiresAt').val() > now))",
             ".validate": "newData.isNumber() && newData.val() >= now - 15000 && newData.val() <= now + 15000"
           },
           "members": {
             "$uid": {
-              ".write": "auth != null && !data.exists() && newData.val() === true && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && ($uid === root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() || $uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val()) && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now))",
+              ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && !data.exists() && newData.val() === true && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && ($uid === root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() || $uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val()) && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now))",
               ".validate": "newData.val() === true"
             }
           },
           "players": {
             "$uid": {
-              ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && ($uid === root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() || $uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val()) && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now))",
+              ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && !data.exists() && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && (root.child('online/config/soloServerMatchmaking').val() !== true || (root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && ($uid === root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() || $uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val()) && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now))",
               ".validate": "newData.hasChildren(['uid', 'name', 'streak', 'sampleCount', 'startingHp']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('startingHp').val() === 30 - newData.child('sampleCount').val() * 5 && (root.child('online/config/soloServerMatchmaking').val() !== true || (newData.child('uid').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/uid').val() && newData.child('name').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/name').val() && newData.child('pursuitLine').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/pursuitLine').val() && newData.child('streak').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/streak').val() && newData.child('rating').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/rating').val() && newData.child('sampleCount').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/sampleCount').val() && newData.child('startingHp').val() === root.child('online/soloMatchPermits/' + $roomId + '/players/' + $uid + '/startingHp').val()))",
               "rating": {
                 ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 3000"
@@ -1572,25 +1740,55 @@
             }
           },
           "status": {
-            ".write": "auth != null && ((root.child('online/config/soloServerMatchmaking').val() !== true && ((!data.exists() && newData.val() === 'offered' && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid) || (data.exists() && data.val() === 'offered' && (root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true) && (newData.val() === 'active' || newData.val() === 'expired')))) || (root.child('online/config/soloServerMatchmaking').val() === true && data.exists() && data.val() === 'offered' && ((newData.val() === 'expired' && (root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true)) || (newData.val() === 'active' && auth.uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === root.child('online/rooms/' + $roomId + '/hostUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === root.child('online/rooms/' + $roomId + '/guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/hostUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/hostUid').val() + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now && ((root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() === true && root.child('online/rooms/' + $roomId + '/reunion').val() === true) || (root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() !== true && !root.child('online/rooms/' + $roomId + '/reunion').exists())) && root.child('online/rooms/' + $roomId + '/createdAt').isNumber() && root.child('online/rooms/' + $roomId + '/createdAt').val() >= root.child('online/soloMatchPermits/' + $roomId + '/createdAt').val() && root.child('online/rooms/' + $roomId + '/createdAt').val() <= root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() && root.child('online/rooms/' + $roomId + '/members/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/members/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/players/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/rooms/' + $roomId + '/players/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).exists() && root.child('online/offers/' + auth.uid + '/' + $roomId + '/roomId').val() === $roomId && root.child('online/offers/' + auth.uid + '/' + $roomId + '/fromUid').val() === root.child('online/rooms/' + $roomId + '/hostUid').val() && root.child('online/offers/' + auth.uid + '/' + $roomId + '/toUid').val() === auth.uid))))",
+            ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && ((root.child('online/config/soloServerMatchmaking').val() !== true && ((!data.exists() && newData.val() === 'offered' && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid) || (data.exists() && data.val() === 'offered' && (root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true) && (newData.val() === 'active' || newData.val() === 'expired')))) || (root.child('online/config/soloServerMatchmaking').val() === true && data.exists() && data.val() === 'offered' && ((newData.val() === 'expired' && (root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true)) || (newData.val() === 'active' && auth.uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === root.child('online/rooms/' + $roomId + '/hostUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === root.child('online/rooms/' + $roomId + '/guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/hostUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/hostUid').val() + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now && ((root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() === true && root.child('online/rooms/' + $roomId + '/reunion').val() === true) || (root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() !== true && !root.child('online/rooms/' + $roomId + '/reunion').exists())) && root.child('online/rooms/' + $roomId + '/createdAt').isNumber() && root.child('online/rooms/' + $roomId + '/createdAt').val() >= root.child('online/soloMatchPermits/' + $roomId + '/createdAt').val() && root.child('online/rooms/' + $roomId + '/createdAt').val() <= root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() && root.child('online/rooms/' + $roomId + '/members/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/members/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/players/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/rooms/' + $roomId + '/players/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).exists() && root.child('online/offers/' + auth.uid + '/' + $roomId + '/roomId').val() === $roomId && root.child('online/offers/' + auth.uid + '/' + $roomId + '/fromUid').val() === root.child('online/rooms/' + $roomId + '/hostUid').val() && root.child('online/offers/' + auth.uid + '/' + $roomId + '/toUid').val() === auth.uid))))",
             ".validate": "newData.val() === 'offered' || newData.val() === 'active' || newData.val() === 'expired'"
           },
           "reunion": {
-            ".write": "auth != null && !data.exists() && newData.val() === true && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === newData.parent().child('guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() === true && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/expiresAt').val() > now",
+            ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && !data.exists() && newData.val() === true && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === newData.parent().child('guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() === true && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + auth.uid + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + auth.uid + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + newData.parent().child('guestUid').val() + '/expiresAt').val() > now",
             ".validate": "newData.val() === true"
           },
           "presence": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".write": "auth != null && auth.uid === $uid && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
               ".validate": "newData.hasChildren(['online', 'updatedAt']) && newData.child('online').isBoolean() && newData.child('updatedAt').isNumber()"
             }
           },
+          "presenceV2": {
+            "$uid": {
+              "$sessionId": {
+                ".write": "auth != null && auth.uid === $uid && root.child('online/rooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/rooms/' + $roomId + '/signalingVersion').val() === 2 && root.child('online/rooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/rooms/' + $roomId + '/sessions/' + $uid + '/sessionId').val() === $sessionId && ((!newData.exists() && data.child('sessionId').val() === $sessionId && data.child('generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + $uid + '/generation').val()) || (newData.exists() && root.child('online/soloSessionClaims/' + $uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + $uid + '/sessionId').val() === $sessionId && root.child('online/soloSessionClaims/' + $uid + '/leaseToken').val() === newData.child('leaseToken').val() && root.child('online/soloSessionClaims/' + $uid + '/generation').val() === newData.child('generation').val() && root.child('online/soloSessionClaims/' + $uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + $uid + '/generation').val() && root.child('online/soloSessionClaims/' + $uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + $uid + '/expiresAt').val() > now))",
+                ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'sessionId', 'leaseToken', 'generation', 'online', 'updatedAt']) && newData.child('protocolVersion').val() === 2 && newData.child('sessionId').val() === $sessionId && newData.child('leaseToken').val() === root.child('online/soloSessionClaims/' + $uid + '/leaseToken').val() && newData.child('generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + $uid + '/generation').val() && newData.child('online').isBoolean() && newData.child('updatedAt').isNumber() && newData.child('updatedAt').val() >= now - 60000 && newData.child('updatedAt').val() <= now + 15000)",
+                "protocolVersion": {
+                  ".validate": "newData.val() === 2"
+                },
+                "sessionId": {
+                  ".validate": "newData.isString() && newData.val() === $sessionId && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+                },
+                "leaseToken": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+                },
+                "generation": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{22}$/)"
+                },
+                "online": {
+                  ".validate": "newData.isBoolean()"
+                },
+                "updatedAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            }
+          },
           "destroyed": {
-            ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('by').val() === auth.uid",
+            ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('by').val() === auth.uid && (root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 || (root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/sessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now))",
             ".validate": "newData.hasChildren(['by', 'at']) && newData.child('by').isString() && newData.child('at').isNumber()"
           },
           "rounds": {
             "$round": {
+              ".validate": "root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 || (!root.child('online/rooms/' + $roomId + '/destroyed').exists() && root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/sessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now)",
               "selectionReady": {
                 "$uid": {
                   ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
@@ -1630,14 +1828,60 @@
           "signals": {
             "$targetUid": {
               "$messageId": {
-                ".write": "auth != null && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && ((auth.uid === $targetUid && !newData.exists()) || (!data.exists() && newData.child('fromUid').val() === auth.uid && auth.uid !== $targetUid && root.child('online/rooms/' + $roomId + '/members/' + $targetUid).val() === true))",
+                ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && root.child('online/rooms/' + $roomId + '/signalingVersion').val() !== 2 && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && ((auth.uid === $targetUid && !newData.exists()) || (!data.exists() && newData.child('fromUid').val() === auth.uid && auth.uid !== $targetUid && root.child('online/rooms/' + $roomId + '/members/' + $targetUid).val() === true))",
                 ".validate": "!newData.exists() || (newData.hasChildren(['fromUid', 'type', 'payload', 'createdAt']) && newData.child('fromUid').isString() && (newData.child('type').val() === 'offer' || newData.child('type').val() === 'answer' || newData.child('type').val() === 'candidate') && newData.child('payload').isString() && newData.child('payload').val().length <= 30000 && newData.child('createdAt').isNumber())"
+              }
+            }
+          },
+          "signalsV2": {
+            "$targetUid": {
+              "$targetSessionId": {
+                "$messageId": {
+                  ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/rooms/' + $roomId + '/signalingVersion').val() === 2 && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/rooms/' + $roomId + '/members/' + $targetUid).val() === true && ((auth.uid === $targetUid && data.exists() && !newData.exists() && data.child('toUid').val() === $targetUid && data.child('toSessionId').val() === $targetSessionId && root.child('online/soloSessionClaims/' + $targetUid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/soloSessionClaims/' + $targetUid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + $targetUid + '/generation').val() && root.child('online/soloSessionClaims/' + $targetUid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + $targetUid + '/expiresAt').val() > now && root.child('online/rooms/' + $roomId + '/sessions/' + $targetUid + '/sessionId').val() === $targetSessionId) || (auth.uid !== $targetUid && !data.exists() && newData.exists() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid && newData.child('fromSessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && newData.child('toSessionId').val() === $targetSessionId && newData.child('toSessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + $targetUid + '/sessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/sessionId').val() === newData.child('fromSessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now && newData.child('connectionGeneration').val() === root.child('online/rooms/' + $roomId + '/connectionGeneration').val() && newData.child('attemptId').val() === root.child('online/rooms/' + $roomId + '/attemptId').val()))",
+                  ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'signalingVersion', 'fromUid', 'toUid', 'fromSessionId', 'toSessionId', 'connectionGeneration', 'attemptId', 'type', 'payload', 'createdAt']) && newData.child('protocolVersion').val() === 2 && newData.child('signalingVersion').val() === 2 && newData.child('fromUid').isString() && newData.child('toUid').val() === $targetUid && newData.child('fromUid').val() !== $targetUid && newData.child('fromSessionId').isString() && newData.child('toSessionId').val() === $targetSessionId && newData.child('connectionGeneration').val() === root.child('online/rooms/' + $roomId + '/connectionGeneration').val() && newData.child('attemptId').val() === root.child('online/rooms/' + $roomId + '/attemptId').val() && (newData.child('type').val() === 'offer' || newData.child('type').val() === 'answer' || newData.child('type').val() === 'candidate') && newData.child('payload').isString() && newData.child('payload').val().length > 0 && newData.child('payload').val().length <= 30000 && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 60000 && newData.child('createdAt').val() <= now + 15000)",
+                  "protocolVersion": {
+                    ".validate": "newData.val() === 2"
+                  },
+                  "signalingVersion": {
+                    ".validate": "newData.val() === 2"
+                  },
+                  "fromUid": {
+                    ".validate": "newData.isString() && newData.val() === auth.uid"
+                  },
+                  "toUid": {
+                    ".validate": "newData.isString() && newData.val() === $targetUid"
+                  },
+                  "fromSessionId": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val()"
+                  },
+                  "toSessionId": {
+                    ".validate": "newData.isString() && newData.val() === $targetSessionId && newData.val() === root.child('online/rooms/' + $roomId + '/sessions/' + $targetUid + '/sessionId').val()"
+                  },
+                  "connectionGeneration": {
+                    ".validate": "newData.val() === root.child('online/rooms/' + $roomId + '/connectionGeneration').val()"
+                  },
+                  "attemptId": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/rooms/' + $roomId + '/attemptId').val()"
+                  },
+                  "type": {
+                    ".validate": "newData.val() === 'offer' || newData.val() === 'answer' || newData.val() === 'candidate'"
+                  },
+                  "payload": {
+                    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30000"
+                  },
+                  "createdAt": {
+                    ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                }
               }
             }
           },
           "chat": {
             "$messageId": {
-              ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid",
+              ".write": "auth != null && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && newData.child('authorUid').val() === auth.uid && (root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 || (!root.child('online/rooms/' + $roomId + '/destroyed').exists() && root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/sessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now))",
               ".validate": "newData.hasChildren(['authorUid', 'name', 'text', 'round', 'createdAt']) && newData.child('authorUid').isString() && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 80 && newData.child('round').isNumber() && newData.child('round').val() >= 1 && newData.child('round').val() <= 5 && newData.child('createdAt').isNumber()",
               "stampId": {
                 ".validate": "!newData.exists() || (newData.isString() && ((newData.val() === 'stamp_like' || newData.val() === 'stamp_cute' || newData.val() === 'stamp_surprise' || newData.val() === 'stamp_thanks') || (newData.val().matches(/^stamp_(god_photo|genius|best_shot|more|hit|defeated|pursuit|not_over|thinking|read|bluff|weakness|partner|success|leave_it|combo|survived|close_call|champion|last_card)$/) && root.child('online/economy/' + auth.uid + '/equipped/stamps/' + newData.val()).val() === true)))"
@@ -1655,7 +1899,7 @@
           },
           "resultClaims": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/rooms/' + $roomId + '/status').val() === 'active'",
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/rooms/' + $roomId + '/status').val() === 'active' && (root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 || (!root.child('online/rooms/' + $roomId + '/destroyed').exists() && root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/sessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now))",
               ".validate": "newData.hasChildren(['outcome', 'createdAt'])",
               "outcome": {
                 ".validate": "newData.isString() && (newData.val() === 'win' || newData.val() === 'loss' || newData.val() === 'draw')"
@@ -1673,7 +1917,7 @@
           },
           "finished": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/rooms/' + $roomId + '/status').val() === 'active'",
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/rooms/' + $roomId + '/status').val() === 'active' && (root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 || (!root.child('online/rooms/' + $roomId + '/destroyed').exists() && root.child('online/soloSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/soloSessionClaims/' + auth.uid + '/sessionId').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && root.child('online/soloSessionClaims/' + auth.uid + '/generation').val() === root.child('online/rooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/soloSessionClaims/' + auth.uid + '/expiresAt').val() > now))",
               ".validate": "newData.val() === true"
             }
           }

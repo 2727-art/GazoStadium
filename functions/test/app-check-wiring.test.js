@@ -59,6 +59,9 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   const callableNames = [
     "accountTransfer",
     "soloFamiliarAction",
+    "soloSessionAction",
+    "getP2pIceServers",
+    "reportP2pConnectivity",
     "economyAction",
     "valueMarketQueue",
     "valueMarketAction",
@@ -70,6 +73,9 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.deepEqual(Object.keys(rollout.APP_CHECK_ENFORCEMENT).sort(), callableNames.toSorted());
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.accountTransfer, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportP2pConnectivity, true);
   assert.equal(
     rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue,
     rollout.APP_CHECK_ENFORCEMENT.valueMarketAction,
@@ -83,7 +89,10 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   }
 
   for (const functionName of callableNames) {
-    assert.match(source, new RegExp(`onCall\\(callableOptions\\("${functionName}"\\)`));
+    assert.match(
+      source,
+      new RegExp(`onCall\\(\\s*callableOptions\\("${functionName}"(?:,|\\))`),
+    );
   }
   assert.equal((source.match(/Boolean\(request\.app\)/g) || []).length, 4);
   assert.match(source, /updatePatronRecommendation\(uid, request\.data, false, Boolean\(request\.app\)\)/);

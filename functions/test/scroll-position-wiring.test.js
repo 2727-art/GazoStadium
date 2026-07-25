@@ -72,7 +72,7 @@ test("the four corrected modules use a new browser cache key", () => {
   for (const { file } of Object.values(modes)) {
     assert.match(
       html,
-      new RegExp(`src="${file.replace(".", "\\.")}\\?v=[^"]*${marker}"`),
+      new RegExp(`src="${file.replace(".", "\\.")}\\?v=[^"]*${marker}[^"]*"`),
       `${file} must be reloaded after release`,
     );
   }

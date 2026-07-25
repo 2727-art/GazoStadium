@@ -107,7 +107,10 @@ test("engawa has no reward hooks and releases transient media on every exit path
   assert.match(onlineSource, /function releaseEngawaRemoteImage\(\)[\s\S]*?URL\.revokeObjectURL/);
   assert.match(onlineSource, /function releaseEngawaMedia\(targetState = state\)[\s\S]*?targetState\.engawaTransferGeneration \+= 1;[\s\S]*?URL\.revokeObjectURL/);
   assert.match(onlineSource, /function releaseMatchMedia\(\)[\s\S]*?releaseEngawaMedia\(\)/);
-  assert.match(onlineSource, /function cleanupOnlineResources\(keepActive, targetState = state\)[\s\S]*?notifyEngawaDeparture\(targetState\);\s*releaseEngawaMedia\(targetState\);/);
+  assert.match(
+    onlineSource,
+    /async function cleanupOnlineResources\(\s*keepActive,\s*targetState = state,[\s\S]*?\) \{[\s\S]*?notifyEngawaDeparture\(targetState\);\s*releaseEngawaMedia\(targetState\);/,
+  );
   assert.match(onlineSource, /state\.screen === "engawa"[\s\S]*?closeEngawaLocally\("相手の接続が切れたため/);
   assert.match(onlineSource, /channel\.onclose[\s\S]*?expectedState\.screen === "engawa"[\s\S]*?closeEngawaLocally/);
   assert.match(onlineSource, /\["setup", "missions", "shop", "achievements", "matching", "gameover", "engawa", "noContest", "error"\]/);

@@ -21,6 +21,12 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   accountTransfer: true,
   // 顔なじみ関係と再会permitは相手UIDを扱うため、段階公開前から常時強制します。
   soloFamiliarAction: true,
+  // 通常版1on1のV2セッションとマッチ生成はサーバー専用境界のため、常時強制します。
+  soloSessionAction: true,
+  // TURN認証情報の発行は課金可能な外部リソースのため、常時強制します。
+  getP2pIceServers: true,
+  // 接続診断は内部保存領域への書き込みとなるため、常時強制します。
+  reportP2pConnectivity: true,
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),

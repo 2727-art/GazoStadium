@@ -138,10 +138,14 @@ test("oshi activity collection has the agreed titles and only reuses valid share
     /useOfflineMarketPreview[\s\S]*?screen === "shop"[\s\S]*?ANJUPAY STORE PREVIEW/,
   );
   assert.match(online, /LOCAL UI PREVIEWでは購入・装備を変更しません/);
-  assert.match(
-    online,
-    /async function cleanupMatchmaking[\s\S]*?if \(useOfflineMarketPreview\) \{[\s\S]*?return;[\s\S]*?online\/queue/,
-  );
+  const cleanupStart = online.indexOf("async function cleanupMatchmaking");
+  const cleanupEnd = online.indexOf("async function cleanupOnlineResources", cleanupStart);
+  assert.ok(cleanupStart >= 0 && cleanupEnd > cleanupStart);
+  const cleanup = online.slice(cleanupStart, cleanupEnd);
+  const previewReturn = cleanup.indexOf("if (useOfflineMarketPreview)");
+  assert.ok(previewReturn >= 0);
+  assert.match(cleanup.slice(previewReturn), /return;/);
+  assert.doesNotMatch(cleanup, /\b(?:remove|runTransaction)\(ref\(database/);
 });
 
 test("market shop charms use owned stamp IDs without consuming chat equipment slots", () => {

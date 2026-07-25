@@ -3,7 +3,8 @@
 const crypto = require("node:crypto");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
-const { defineBoolean } = require("firebase-functions/params");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { defineBoolean, defineSecret } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getDatabase } = require("firebase-admin/database");
@@ -157,6 +158,50 @@ const {
   soloFamiliarRolloutFlags,
   soloQueuePreferenceTier,
 } = require("./solo-familiar");
+const {
+  P2P_CONNECTIVITY_PUBLIC_ERROR,
+  P2P_DIAGNOSTIC_CLEANUP_INTERVAL_MS,
+  P2P_DIAGNOSTIC_CLEANUP_MAX_DAYS,
+  P2P_DIAGNOSTIC_RATE_LIMIT_POLICY,
+  P2P_DIAGNOSTIC_RETENTION_DAYS,
+  P2P_DIAGNOSTIC_TIME_ZONE,
+  TURN_CREDENTIAL_RATE_LIMIT_POLICY,
+  TURN_CREDENTIAL_REQUEST_TIMEOUT_MS,
+  cloudflareTurnCredentialRequestBody,
+  cloudflareTurnCredentialsUrl,
+  createP2PDiagnosticRecord,
+  p2pDiagnosticRetentionCutoffDay,
+  p2pDiagnosticCleanupMarkerRollbackValue,
+  p2pConnectivityRateLimitDecision,
+  safeP2PConnectivityError,
+  selectExpiredP2PDiagnosticDayKeys,
+  validateCloudflareTurnCredentialResponse,
+} = require("./p2p-connectivity");
+const {
+  SOLO_SESSION_LEASE_TTL_MS,
+  SOLO_SESSION_MATCH_TTL_MS,
+  SOLO_SESSION_PROTOCOL_VERSION,
+  SOLO_SIGNALING_VERSION,
+  activeV2EntryIsFresh,
+  activeV2UidSet,
+  buildSoloSessionV2Resources,
+  claimDecision,
+  claimMatches,
+  decideSoloRoomTransition,
+  flattenFreshQueueV2,
+  heartbeatDecision,
+  isSafeToken,
+  materializationFenceMatches,
+  normalizeClaim,
+  publicClaimLease,
+  queueEntryMatchesClaim,
+  replacedClaimResourceFence,
+  resourceFenceMatches,
+  roomAttemptMatches,
+  roomMatchesSessionV2,
+  roomTransitionOwned,
+  selectSoloSessionV2Match,
+} = require("./solo-session-v2");
 
 initializeApp({
   databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -181,8 +226,10 @@ const MARKET_PUBLIC_PRESENCE_PATH = "online/publicMarketPresence";
 const SOLO_MATCH_ATTEMPT_MIN_INTERVAL_MS = 1_000;
 const SOLO_MATCH_ATTEMPT_RETENTION_MS = 10 * 60 * 1000;
 const SOLO_MATCH_CONTEXT_RECOVERY_GRACE_MS = 5_000;
+const SOLO_LEGACY_PRESENCE_FRESH_MS = 30 * 60 * 1000;
 const SOLO_MATCH_MIN_REMAINING_PERMIT_MS = 22_000;
 const SOLO_MATCH_PERMIT_SWEEP_INTERVAL_MS = 60_000;
+const SOLO_SESSION_CLAIM_GUARD_TTL_MS = 60_000;
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
   memory: "256MiB",
@@ -192,9 +239,14 @@ const ANJU_PAY_LEDGER_REQUIRED = defineBoolean("ANJU_PAY_LEDGER_REQUIRED", {
   description: "Keep true after AnjuPay ledger activation. False is allowed only for the initial compatibility deployment.",
 });
 const CREATOR_CARD_PUBLISH_COOLDOWN_MS = 15_000;
+const CLOUDFLARE_TURN_KEY_ID = defineSecret("CLOUDFLARE_TURN_KEY_ID");
+const CLOUDFLARE_TURN_API_TOKEN = defineSecret("CLOUDFLARE_TURN_API_TOKEN");
+const P2P_DIAGNOSTIC_HMAC_SECRET = defineSecret("P2P_DIAGNOSTIC_HMAC_SECRET");
+const P2P_TURN_RESPONSE_MAX_BYTES = 64 * 1024;
+const P2P_DIAGNOSTIC_RETENTION_MS = P2P_DIAGNOSTIC_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 let lastSoloMatchPermitSweepAt = 0;
 
-function callableOptions(functionName) {
+function callableOptions(functionName, secrets = []) {
   if (!Object.hasOwn(APP_CHECK_ENFORCEMENT, functionName)) {
     throw new Error(`Missing App Check policy for callable: ${functionName}`);
   }
@@ -202,6 +254,7 @@ function callableOptions(functionName) {
     ...CALLABLE_BASE_OPTIONS,
     enforceAppCheck: APP_CHECK_ENFORCEMENT[functionName],
   };
+  if (secrets.length) options.secrets = secrets;
   if (functionName === "accountTransfer") options.consumeAppCheckToken = true;
   return options;
 }
@@ -220,6 +273,378 @@ function requireUid(request) {
   if (!uid) throw new HttpsError("unauthenticated", "匿名ログインが必要です。");
   return uid;
 }
+
+function isPlainCallableObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function requireEmptyP2pCallableData(value) {
+  if (value == null) return;
+  if (!isPlainCallableObject(value) || Reflect.ownKeys(value).length !== 0) {
+    throw new HttpsError("invalid-argument", "接続情報リクエストの形式が正しくありません。");
+  }
+}
+
+function requireP2pDiagnosticCallableData(value) {
+  const allowedKeys = new Set(["sessionId", "roomId", "diagnostic"]);
+  if (!isPlainCallableObject(value)
+      || Reflect.ownKeys(value).some((key) => (
+        typeof key !== "string" || !allowedKeys.has(key)
+      ))
+      || ![...allowedKeys].every((key) => Object.hasOwn(value, key))) {
+    throw new HttpsError("invalid-argument", "接続診断の形式が正しくありません。");
+  }
+  return value;
+}
+
+async function requireCurrentP2pDiagnosticContext(uid, data, now = Date.now()) {
+  if (!isSafeToken(data.sessionId)
+      || !/^[-0-9A-Z_a-z]{20}$/.test(String(data.roomId || ""))) {
+    throw new HttpsError("invalid-argument", "接続診断の対象を確認してください。");
+  }
+  const [claimSnapshot, roomSnapshot] = await Promise.all([
+    realtime.ref(`online/soloSessionClaims/${uid}`).get(),
+    realtime.ref(`online/rooms/${data.roomId}`).get(),
+  ]);
+  const claim = normalizeClaim(claimSnapshot.val());
+  const room = roomSnapshot.val();
+  if (!claim
+      || claim.sessionId !== data.sessionId
+      || claim.expiresAt <= now
+      || !roomMatchesSessionV2(room, {
+        uid,
+        sessionId: data.sessionId,
+        generation: claim.generation,
+        roomId: data.roomId,
+      })) {
+    throw new HttpsError(
+      "failed-precondition",
+      "現在の通常版1on1接続として確認できませんでした。",
+    );
+  }
+}
+
+function readCloudflareTurnApiToken() {
+  const value = CLOUDFLARE_TURN_API_TOKEN.value();
+  const token = typeof value === "string" ? value.trim() : "";
+  if (token.length < 16
+      || token.length > 2048
+      || !/^[\x21-\x7e]+$/.test(token)) {
+    throw new TypeError("Cloudflare TURN API token is not configured");
+  }
+  return token;
+}
+
+function readP2pDiagnosticHmacSecret() {
+  const value = P2P_DIAGNOSTIC_HMAC_SECRET.value();
+  const secret = typeof value === "string" ? value.trim() : "";
+  const bytes = Buffer.byteLength(secret, "utf8");
+  if (bytes < 32 || bytes > 4096) {
+    throw new TypeError("P2P diagnostic HMAC secret is not configured");
+  }
+  return secret;
+}
+
+function p2pRateLimitPath(scope, uid) {
+  if (scope !== "turn" && scope !== "diagnostic") {
+    throw new TypeError("P2P rate limit scope is invalid");
+  }
+  const uidHash = crypto
+    .createHash("sha256")
+    .update(`p2p-connectivity-rate-limit:v1:${scope}:`)
+    .update(uid)
+    .digest("hex");
+  return `online/p2pRateLimits/${scope}/${uidHash}`;
+}
+
+async function consumeP2pConnectivityRateLimit(uid, scope, policy) {
+  const now = Date.now();
+  let committedDecision = null;
+  let result;
+  try {
+    result = await realtime.ref(p2pRateLimitPath(scope, uid)).transaction((currentValue) => {
+      committedDecision = p2pConnectivityRateLimitDecision(currentValue, now, policy);
+      return committedDecision.state;
+    });
+  } catch (error) {
+    console.warn(
+      "P2P connectivity rate limit unavailable",
+      safeP2PConnectivityError(error, "rate_limit"),
+    );
+    throw new HttpsError(
+      "unavailable",
+      "接続保護情報を確認できませんでした。時間をおいてもう一度お試しください。",
+    );
+  }
+  if (!result.committed || !committedDecision) {
+    console.warn("P2P connectivity rate limit unavailable", {
+      stage: "rate_limit",
+      category: "not_committed",
+      status: 0,
+    });
+    throw new HttpsError(
+      "unavailable",
+      "接続保護情報を確認できませんでした。時間をおいてもう一度お試しください。",
+    );
+  }
+  if (!committedDecision.allowed) {
+    throw new HttpsError(
+      "resource-exhausted",
+      "接続処理が短時間に集中しています。少し待ってからもう一度お試しください。",
+      { retryAfterMs: committedDecision.retryAfterMs },
+    );
+  }
+}
+
+async function requestCloudflareTurnIceServers() {
+  const keyId = CLOUDFLARE_TURN_KEY_ID.value();
+  const url = cloudflareTurnCredentialsUrl(keyId);
+  const apiToken = readCloudflareTurnApiToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TURN_CREDENTIAL_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(cloudflareTurnCredentialRequestBody()),
+      signal: controller.signal,
+    });
+    if (response.status !== 201) {
+      const error = new Error("Cloudflare TURN request was rejected");
+      error.status = response.status;
+      throw error;
+    }
+    const declaredLength = response.headers.get("content-length");
+    if (declaredLength != null
+        && (!/^\d+$/.test(declaredLength)
+        || Number(declaredLength) > P2P_TURN_RESPONSE_MAX_BYTES)) {
+      throw new TypeError("Cloudflare TURN response length is invalid");
+    }
+    const responseText = await response.text();
+    if (Buffer.byteLength(responseText, "utf8") > P2P_TURN_RESPONSE_MAX_BYTES) {
+      throw new TypeError("Cloudflare TURN response is too large");
+    }
+    const payload = JSON.parse(responseText);
+    return validateCloudflareTurnCredentialResponse({
+      status: response.status,
+      contentType: response.headers.get("content-type") || "",
+      payload,
+      now: Date.now(),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function maybeCleanupExpiredP2pDiagnostics(now = Date.now()) {
+  const maintenanceRef = realtime.ref("online/p2pMaintenance/diagnosticCleanup");
+  let previousMarkerValue = null;
+  let markerClaimed = false;
+  try {
+    const claim = await maintenanceRef.transaction((currentValue) => {
+      const current = isPlainCallableObject(currentValue) ? currentValue : {};
+      const lastStartedAt = Number(current.lastStartedAt);
+      if (Number.isFinite(lastStartedAt)
+          && lastStartedAt > 0
+          && lastStartedAt + P2P_DIAGNOSTIC_CLEANUP_INTERVAL_MS > now) {
+        return undefined;
+      }
+      previousMarkerValue = currentValue == null ? null : currentValue;
+      const lastCompletedAt = Number(current.lastCompletedAt);
+      const removedDayCount = Number(current.removedDayCount);
+      return {
+        lastStartedAt: now,
+        lastCompletedAt: Number.isFinite(lastCompletedAt)
+          ? Math.max(0, Math.floor(lastCompletedAt))
+          : 0,
+        removedDayCount: Number.isInteger(removedDayCount)
+          ? Math.max(0, removedDayCount)
+          : 0,
+      };
+    });
+    markerClaimed = claim.committed
+      && Number(claim.snapshot.val()?.lastStartedAt) === now;
+    if (!markerClaimed) return false;
+
+    const cutoffDay = p2pDiagnosticRetentionCutoffDay(now);
+    const dayIndexSnapshot = await realtime.ref("online/p2pDiagnosticDays")
+      .orderByKey()
+      .endBefore(cutoffDay)
+      .limitToFirst(P2P_DIAGNOSTIC_CLEANUP_MAX_DAYS * 4)
+      .get();
+    const indexedDayKeys = [];
+    dayIndexSnapshot.forEach((snapshot) => {
+      indexedDayKeys.push(snapshot.key);
+    });
+    const expiredDayKeys = selectExpiredP2PDiagnosticDayKeys(indexedDayKeys, {
+      now,
+      maximum: P2P_DIAGNOSTIC_CLEANUP_MAX_DAYS,
+    });
+    if (expiredDayKeys.length) {
+      const removals = {};
+      for (const day of expiredDayKeys) {
+        removals[`online/p2pDiagnostics/${day}`] = null;
+        removals[`online/p2pDiagnosticDays/${day}`] = null;
+      }
+      await realtime.ref().update(removals);
+    }
+    const completedAt = Date.now();
+    await maintenanceRef.transaction((currentValue) => {
+      if (Number(currentValue?.lastStartedAt) !== now) return undefined;
+      return {
+        lastStartedAt: now,
+        lastCompletedAt: completedAt,
+        removedDayCount: expiredDayKeys.length,
+      };
+    });
+    return true;
+  } catch (error) {
+    if (markerClaimed) {
+      try {
+        await maintenanceRef.transaction((currentValue) => (
+          p2pDiagnosticCleanupMarkerRollbackValue(
+            currentValue,
+            now,
+            previousMarkerValue,
+          )
+        ));
+      } catch (rollbackError) {
+        console.warn(
+          "P2P diagnostic cleanup marker rollback unavailable",
+          safeP2PConnectivityError(rollbackError, "retention_cleanup"),
+        );
+      }
+    }
+    throw error;
+  }
+}
+
+exports.cleanupP2pDiagnostics = onSchedule({
+  schedule: "every day 03:30",
+  timeZone: P2P_DIAGNOSTIC_TIME_ZONE,
+}, async () => {
+  try {
+    await maybeCleanupExpiredP2pDiagnostics(Date.now());
+  } catch (error) {
+    console.warn(
+      "P2P diagnostic retention cleanup unavailable",
+      safeP2PConnectivityError(error, "retention_cleanup"),
+    );
+    throw new Error("P2P diagnostic retention cleanup failed");
+  }
+});
+
+exports.getP2pIceServers = onCall(
+  callableOptions("getP2pIceServers", [
+    CLOUDFLARE_TURN_KEY_ID,
+    CLOUDFLARE_TURN_API_TOKEN,
+  ]),
+  async (request) => {
+    const uid = requireUid(request);
+    requireEmptyP2pCallableData(request.data);
+    await consumeP2pConnectivityRateLimit(
+      uid,
+      "turn",
+      TURN_CREDENTIAL_RATE_LIMIT_POLICY,
+    );
+    try {
+      const credentials = await requestCloudflareTurnIceServers();
+      return {
+        iceServers: credentials.iceServers,
+        issuedAt: credentials.issuedAt,
+        refreshAt: credentials.refreshAt,
+        expiresAt: credentials.expiresAt,
+      };
+    } catch (error) {
+      console.warn(
+        "getP2pIceServers unavailable",
+        safeP2PConnectivityError(error, "turn_response"),
+      );
+      throw new HttpsError(
+        P2P_CONNECTIVITY_PUBLIC_ERROR.code,
+        P2P_CONNECTIVITY_PUBLIC_ERROR.message,
+      );
+    }
+  },
+);
+
+exports.reportP2pConnectivity = onCall(
+  callableOptions("reportP2pConnectivity", [P2P_DIAGNOSTIC_HMAC_SECRET]),
+  async (request) => {
+    const uid = requireUid(request);
+    const data = requireP2pDiagnosticCallableData(request.data);
+    await requireCurrentP2pDiagnosticContext(uid, data);
+    let hmacSecret;
+    try {
+      hmacSecret = readP2pDiagnosticHmacSecret();
+    } catch (error) {
+      console.warn(
+        "reportP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "接続診断を送信できませんでした。");
+    }
+    const now = Date.now();
+    let record;
+    try {
+      record = createP2PDiagnosticRecord({
+        uid,
+        sessionId: data.sessionId,
+        roomId: data.roomId,
+        hmacSecret,
+        payload: data.diagnostic,
+        now,
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new HttpsError("invalid-argument", "接続診断の形式が正しくありません。");
+      }
+      console.warn(
+        "reportP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "接続診断を送信できませんでした。");
+    }
+    await consumeP2pConnectivityRateLimit(
+      uid,
+      "diagnostic",
+      P2P_DIAGNOSTIC_RATE_LIMIT_POLICY,
+    );
+    try {
+      const eventId = realtime.ref(`online/p2pDiagnostics/${record.day}`).push().key;
+      if (!eventId) throw new Error("P2P diagnostic id was not generated");
+      await realtime.ref().update({
+        [`online/p2pDiagnostics/${record.day}/${eventId}`]: {
+          ...record,
+          retentionDays: P2P_DIAGNOSTIC_RETENTION_DAYS,
+          deleteAt: now + P2P_DIAGNOSTIC_RETENTION_MS,
+        },
+        [`online/p2pDiagnosticDays/${record.day}`]: true,
+      });
+    } catch (error) {
+      console.warn(
+        "reportP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "接続診断を送信できませんでした。");
+    }
+    try {
+      await maybeCleanupExpiredP2pDiagnostics(now);
+    } catch (error) {
+      console.warn(
+        "P2P diagnostic retention cleanup unavailable",
+        safeP2PConnectivityError(error, "retention_cleanup"),
+      );
+    }
+    return { accepted: true };
+  },
+);
 
 function cleanText(value, maxLength, fallback = "") {
   return String(value || fallback).trim().replace(/\s+/g, " ").slice(0, maxLength);
@@ -4334,6 +4759,14 @@ async function trySoloServerMatch(uid) {
   const rollout = await loadSoloFamiliarRollout();
   if (!rollout.reunionEnabled) return { outcome: "disabled" };
   const requestStartedAt = Date.now();
+  const [ownV2ClaimSnapshot, ownV2Room] = await Promise.all([
+    soloSessionClaimRef(uid).get(),
+    liveSoloSessionV2Room(uid, requestStartedAt),
+  ]);
+  const ownV2Claim = normalizeClaim(ownV2ClaimSnapshot.val());
+  if ((ownV2Claim && ownV2Claim.expiresAt > requestStartedAt) || ownV2Room) {
+    return { outcome: "waiting" };
+  }
   await maybeSweepExpiredSoloMatchPermits(requestStartedAt);
   const existing = await loadExistingSoloHostedMatch(uid, Date.now());
   if (existing) return existing;
@@ -4389,6 +4822,7 @@ async function trySoloServerMatch(uid) {
   });
   if (!lockResult.committed) return { outcome: "waiting" };
 
+  const crossVersionCheckedAt = Date.now();
   const [
     hostQueueSnapshot,
     candidateQueueSnapshot,
@@ -4396,6 +4830,12 @@ async function trySoloServerMatch(uid) {
     candidateActiveSnapshot,
     blockPairSnapshot,
     familiarPairSnapshot,
+    hostV2ClaimSnapshot,
+    candidateV2ClaimSnapshot,
+    hostV2LockSnapshot,
+    candidateV2LockSnapshot,
+    hostV2Room,
+    candidateV2Room,
   ] = await Promise.all([
     realtime.ref(`online/queue/${selection.host.uid}`).get(),
     realtime.ref(`online/queue/${selection.candidate.uid}`).get(),
@@ -4403,6 +4843,12 @@ async function trySoloServerMatch(uid) {
     realtime.ref(`online/active/${selection.candidate.uid}`).get(),
     soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
     soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get(),
+    soloSessionClaimRef(selection.host.uid).get(),
+    soloSessionClaimRef(selection.candidate.uid).get(),
+    realtime.ref(`online/soloMatchLocksV2/${selection.host.uid}`).get(),
+    realtime.ref(`online/soloMatchLocksV2/${selection.candidate.uid}`).get(),
+    liveSoloSessionV2Room(selection.host.uid, crossVersionCheckedAt),
+    liveSoloSessionV2Room(selection.candidate.uid, crossVersionCheckedAt),
   ]);
   const validationNow = Date.now();
   const hostQueueValue = hostQueueSnapshot.val();
@@ -4418,6 +4864,16 @@ async function trySoloServerMatch(uid) {
   );
   const hostQueue = sanitizeSoloQueueCandidate(hostQueueValue);
   const candidateQueue = sanitizeSoloQueueCandidate(candidateQueueValue);
+  const hostV2Claim = normalizeClaim(hostV2ClaimSnapshot.val());
+  const candidateV2Claim = normalizeClaim(candidateV2ClaimSnapshot.val());
+  const v2SessionConflict = Boolean(
+    (hostV2Claim && hostV2Claim.expiresAt > validationNow)
+      || (candidateV2Claim && candidateV2Claim.expiresAt > validationNow)
+      || Number(hostV2LockSnapshot.val()?.expiresAt || 0) > validationNow
+      || Number(candidateV2LockSnapshot.val()?.expiresAt || 0) > validationNow
+      || hostV2Room
+      || candidateV2Room,
+  );
   const preferenceStillCompatible = Number.isFinite(
     soloQueuePreferenceTier(hostQueue, candidateQueue),
   );
@@ -4429,7 +4885,7 @@ async function trySoloServerMatch(uid) {
     && Number(familiarPairSnapshot.get("lastReunionPriorityAt") || 0)
       <= validationNow - SOLO_FAMILIAR_REUNION_COOLDOWN_MS
   );
-  if (!freshAndWaiting || !preferenceStillCompatible
+  if (!freshAndWaiting || v2SessionConflict || !preferenceStillCompatible
       || hostActiveSnapshot.exists() || candidateActiveSnapshot.exists()
       || blockPairSnapshot.exists || !reunionStillValid) {
     await releaseSoloMatchPermitLocks(roomId, participantUids);
@@ -4560,6 +5016,2325 @@ async function confirmSoloFamiliarReunion(uid, data) {
   };
 }
 
+const SOLO_SESSION_ACTION_RATE_POLICIES = Object.freeze({
+  claim: Object.freeze({ windowMs: 60_000, limit: 12 }),
+  heartbeat: Object.freeze({ windowMs: 60_000, limit: 12 }),
+  release: Object.freeze({ windowMs: 60_000, limit: 30 }),
+  try_match: Object.freeze({ windowMs: 60_000, limit: 90 }),
+  accept: Object.freeze({ windowMs: 60_000, limit: 30 }),
+  cancel: Object.freeze({ windowMs: 60_000, limit: 30 }),
+  expire: Object.freeze({ windowMs: 60_000, limit: 30 }),
+});
+
+function soloSessionPathSegment(value, label) {
+  if (!isSafeToken(value)) {
+    throw new HttpsError("invalid-argument", `${label}を確認してください。`);
+  }
+  return value;
+}
+
+function soloSessionRoomId(value) {
+  const roomId = cleanText(value, 80);
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+    throw new HttpsError("invalid-argument", "対戦ルームを確認してください。");
+  }
+  return roomId;
+}
+
+function requireSoloSessionActionData(value) {
+  if (!isPlainCallableObject(value)) {
+    throw new HttpsError("invalid-argument", "通常版1on1セッションの形式が正しくありません。");
+  }
+  const action = cleanText(value.action, 24);
+  const keysByAction = {
+    claim: new Set(["action", "sessionId", "leaseToken", "sameSessionOwnerConfirmedGone"]),
+    heartbeat: new Set(["action", "sessionId", "leaseToken", "generation"]),
+    release: new Set(["action", "sessionId", "leaseToken", "generation"]),
+    try_match: new Set(["action", "sessionId", "leaseToken", "avoidUid"]),
+    accept: new Set(["action", "sessionId", "leaseToken", "roomId"]),
+    cancel: new Set(["action", "sessionId", "leaseToken", "roomId", "abort"]),
+    expire: new Set(["action", "sessionId", "leaseToken", "roomId"]),
+  };
+  const allowedKeys = keysByAction[action];
+  if (!allowedKeys
+      || Reflect.ownKeys(value).some((key) => (
+        typeof key !== "string" || !allowedKeys.has(key)
+      ))) {
+    throw new HttpsError("invalid-argument", "未対応の通常版1on1セッション操作です。");
+  }
+  const requiredKeys = ["action", "sessionId", "leaseToken"];
+  if (!requiredKeys.every((key) => Object.hasOwn(value, key))) {
+    throw new HttpsError("invalid-argument", "通常版1on1セッション情報が不足しています。");
+  }
+  const sessionId = soloSessionPathSegment(value.sessionId, "セッション");
+  const leaseToken = soloSessionPathSegment(value.leaseToken, "セッション所有権");
+  const result = { action, sessionId, leaseToken };
+  if (action === "heartbeat" || action === "release") {
+    result.generation = soloSessionPathSegment(
+      value.generation,
+      "セッション世代",
+    );
+  }
+  if (action === "claim") {
+    if (Object.hasOwn(value, "sameSessionOwnerConfirmedGone")
+        && typeof value.sameSessionOwnerConfirmedGone !== "boolean") {
+      throw new HttpsError("invalid-argument", "セッション引き継ぎ情報を確認してください。");
+    }
+    result.sameSessionOwnerConfirmedGone = value.sameSessionOwnerConfirmedGone === true;
+  }
+  if (action === "try_match" && Object.hasOwn(value, "avoidUid")) {
+    const avoidUid = cleanText(value.avoidUid, 128);
+    if (avoidUid && avoidUid !== value.avoidUid) {
+      throw new HttpsError("invalid-argument", "再マッチ対象を確認してください。");
+    }
+    result.avoidUid = avoidUid;
+  }
+  if (["accept", "cancel", "expire"].includes(action)) {
+    result.roomId = soloSessionRoomId(value.roomId);
+  }
+  if (action === "cancel") {
+    if (Object.hasOwn(value, "abort") && typeof value.abort !== "boolean") {
+      throw new HttpsError("invalid-argument", "対戦中断情報を確認してください。");
+    }
+    result.abort = value.abort === true;
+  }
+  return result;
+}
+
+function soloSessionActionRatePath(uid, action) {
+  const ownerHash = crypto
+    .createHash("sha256")
+    .update("solo-session-action-rate:v2:")
+    .update(uid)
+    .digest("hex");
+  return `online/soloSessionActionRates/${ownerHash}/${action}`;
+}
+
+async function consumeSoloSessionActionRate(uid, action) {
+  const policy = SOLO_SESSION_ACTION_RATE_POLICIES[action];
+  if (!policy) throw new HttpsError("invalid-argument", "未対応の通常版1on1操作です。");
+  const now = Date.now();
+  let allowed = false;
+  const result = await realtime.ref(soloSessionActionRatePath(uid, action))
+    .transaction((currentValue) => {
+      const windowStartedAt = Number(currentValue?.windowStartedAt || 0);
+      const inWindow = windowStartedAt > now - policy.windowMs
+        && windowStartedAt <= now + 15_000;
+      const count = inWindow ? Number(currentValue?.count || 0) : 0;
+      allowed = Number.isInteger(count) && count >= 0 && count < policy.limit;
+      if (!allowed) return;
+      return {
+        windowStartedAt: inWindow ? windowStartedAt : now,
+        count: count + 1,
+        lastAt: now,
+        expiresAt: now + (2 * policy.windowMs),
+      };
+    });
+  if (!result.committed || !allowed) {
+    throw new HttpsError(
+      "resource-exhausted",
+      "通常版1on1の操作が短時間に集中しています。少し待ってからお試しください。",
+    );
+  }
+}
+
+function soloSessionClaimRef(uid) {
+  return realtime.ref(`online/soloSessionClaims/${uid}`);
+}
+
+function soloSessionQueueRef(uid, sessionId) {
+  return realtime.ref(`online/queueV2/${uid}/${sessionId}`);
+}
+
+function soloSessionActiveRef(uid, sessionId) {
+  return realtime.ref(`online/activeV2/${uid}/${sessionId}`);
+}
+
+function soloSessionOfferRef(uid, sessionId, roomId) {
+  return realtime.ref(`online/offersV2/${uid}/${sessionId}/${roomId}`);
+}
+
+function soloSessionGeneration() {
+  return crypto.randomBytes(16).toString("base64url");
+}
+
+function soloSessionClaimGuardMatches(value, operationId) {
+  return value?.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION
+    && value?.kind === "claim"
+    && value?.operationId === operationId;
+}
+
+async function acquireSoloSessionClaimGuard(uid, data) {
+  const operationId = soloSessionGeneration();
+  const now = Date.now();
+  const guard = {
+    protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+    kind: "claim",
+    operationId,
+    sessionId: data.sessionId,
+    leaseToken: data.leaseToken,
+    acquiredAt: now,
+    expiresAt: now + SOLO_SESSION_CLAIM_GUARD_TTL_MS,
+  };
+  const result = await realtime.ref(`online/soloMatchLocksV2/${uid}`)
+    .transaction((currentValue) => {
+      if (Number(currentValue?.expiresAt || 0) > now
+          && !soloSessionClaimGuardMatches(currentValue, operationId)) return;
+      return guard;
+    });
+  return result.committed
+    && soloSessionClaimGuardMatches(result.snapshot.val(), operationId)
+    ? guard
+    : null;
+}
+
+async function renewSoloSessionClaimGuard(uid, guard) {
+  if (!guard) return null;
+  const now = Date.now();
+  const result = await realtime.ref(`online/soloMatchLocksV2/${uid}`)
+    .transaction((currentValue) => {
+      if (!soloSessionClaimGuardMatches(currentValue, guard.operationId)
+          || Number(currentValue.expiresAt || 0) <= now) return;
+      return {
+        ...currentValue,
+        expiresAt: now + SOLO_SESSION_CLAIM_GUARD_TTL_MS,
+      };
+    });
+  const renewed = result.snapshot.val();
+  return result.committed
+    && soloSessionClaimGuardMatches(renewed, guard.operationId)
+    && Number(renewed.expiresAt || 0) > now
+    ? renewed
+    : null;
+}
+
+async function releaseSoloSessionClaimGuard(uid, guard) {
+  if (!guard) return true;
+  let safe = false;
+  const result = await realtime.ref(`online/soloMatchLocksV2/${uid}`)
+    .transaction((currentValue) => {
+      if (currentValue == null) {
+        safe = true;
+        return null;
+      }
+      if (!soloSessionClaimGuardMatches(currentValue, guard.operationId)) {
+        safe = false;
+        return;
+      }
+      safe = true;
+      return null;
+    });
+  return safe && (result.committed || result.snapshot.val() == null);
+}
+
+function legacySoloActiveValueMatches(currentValue, expectedValue) {
+  if (typeof expectedValue === "string") return currentValue === expectedValue;
+  return isPlainCallableObject(expectedValue)
+    && isPlainCallableObject(currentValue)
+    && JSON.stringify(currentValue) === JSON.stringify(expectedValue);
+}
+
+function legacySoloActiveInspectionRef(uid) {
+  const ownerHash = crypto
+    .createHash("sha256")
+    .update("solo-legacy-active-inspection:v2:")
+    .update(uid)
+    .digest("hex");
+  return realtime.ref(`online/soloLegacyActiveInspections/${ownerHash}`);
+}
+
+async function legacySoloRoomPreparationIsLive(uid, roomId, now) {
+  const [permitSnapshot, lockSnapshot] = await Promise.all([
+    realtime.ref(`online/soloMatchPermits/${roomId}`).get(),
+    realtime.ref(`online/soloMatchPermitLocks/${uid}`).get(),
+  ]);
+  const permit = permitSnapshot.val();
+  const lock = lockSnapshot.val();
+  return Number(permit?.expiresAt || 0) > now
+    && (permit?.hostUid === uid || permit?.guestUid === uid)
+    && lock?.roomId === roomId
+    && Number(lock?.expiresAt || 0) > now;
+}
+
+async function removeStaleLegacySoloActive(uid, expectedValue) {
+  const result = await realtime.ref(`online/active/${uid}`).transaction((currentValue) => (
+    legacySoloActiveValueMatches(currentValue, expectedValue) ? null : undefined
+  ));
+  return result.committed;
+}
+
+async function liveLegacySoloRoom(uid, now = Date.now(), { cleanupStale = false } = {}) {
+  const activeRef = realtime.ref(`online/active/${uid}`);
+  const activeSnapshot = await activeRef.get();
+  if (!activeSnapshot.exists()) return null;
+  const activeValue = activeSnapshot.val();
+  const roomId = cleanText(
+    typeof activeValue === "string" ? activeValue : activeValue?.roomId,
+    80,
+  );
+  const inspectionRef = cleanupStale ? legacySoloActiveInspectionRef(uid) : null;
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+    if (cleanupStale) {
+      await removeStaleLegacySoloActive(uid, activeValue);
+      await inspectionRef.remove().catch(() => {});
+    }
+    return null;
+  }
+  const roomSnapshot = await realtime.ref(`online/rooms/${roomId}`).get();
+  const room = roomSnapshot.val();
+  const legacyRoom = room
+    && room.protocolVersion !== SOLO_SESSION_PROTOCOL_VERSION
+    && !room.destroyed
+    && room.members?.[uid] === true;
+  if (legacyRoom && room.status === "active") {
+    const presence = room.presence?.[uid];
+    const presenceUpdatedAt = Number(presence?.updatedAt || 0);
+    const activeRoomIsLive = (presence?.online === true
+        && presenceUpdatedAt >= now - SOLO_LEGACY_PRESENCE_FRESH_MS
+        && presenceUpdatedAt <= now + 15_000)
+      || (!presence
+        && Number(room.createdAt || 0) >= now - 60_000
+        && Number(room.createdAt || 0) <= now + 15_000);
+    if (activeRoomIsLive) {
+      await inspectionRef?.remove().catch(() => {});
+      return { roomId, status: "active" };
+    }
+  }
+  if (legacyRoom
+      && room.status === "offered"
+      && Number(room.createdAt || 0) >= now - 60_000
+      && Number(room.createdAt || 0) <= now + 15_000) {
+    await inspectionRef?.remove().catch(() => {});
+    return { roomId, status: "offered" };
+  }
+  if (room) {
+    if (cleanupStale) {
+      await removeStaleLegacySoloActive(uid, activeValue);
+      await inspectionRef.remove().catch(() => {});
+    }
+    return null;
+  }
+  if (await legacySoloRoomPreparationIsLive(uid, roomId, now)) {
+    await inspectionRef?.remove().catch(() => {});
+    return { roomId, status: "preparing" };
+  }
+  if (!cleanupStale) return null;
+
+  const roomFingerprint = crypto
+    .createHash("sha256")
+    .update("solo-legacy-active-room:v2:")
+    .update(roomId)
+    .digest("hex");
+  let staleConfirmed = false;
+  await inspectionRef.transaction((currentValue) => {
+    const sameObservation = currentValue?.roomFingerprint === roomFingerprint;
+    const firstSeenAt = sameObservation ? Number(currentValue?.firstSeenAt || 0) : now;
+    staleConfirmed = sameObservation && firstSeenAt <= now - SOLO_MATCH_CONTEXT_RECOVERY_GRACE_MS;
+    return {
+      roomFingerprint,
+      firstSeenAt,
+      lastSeenAt: now,
+      expiresAt: now + 60_000,
+    };
+  });
+  if (!staleConfirmed) return { roomId, status: "preparing" };
+
+  const [activeRecheck, roomRecheck, pendingRecheck] = await Promise.all([
+    activeRef.get(),
+    realtime.ref(`online/rooms/${roomId}`).get(),
+    legacySoloRoomPreparationIsLive(uid, roomId, Date.now()),
+  ]);
+  if (!legacySoloActiveValueMatches(activeRecheck.val(), activeValue)) {
+    await inspectionRef.remove().catch(() => {});
+    return liveLegacySoloRoom(uid, Date.now());
+  }
+  if (roomRecheck.exists() || pendingRecheck) {
+    await inspectionRef.remove().catch(() => {});
+    return liveLegacySoloRoom(uid, Date.now());
+  }
+  await removeStaleLegacySoloActive(uid, activeValue);
+  await inspectionRef.remove().catch(() => {});
+  return null;
+}
+
+function exactSoloSessionV2ActiveIdentity(value, expected, uid, sessionId) {
+  return value?.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION
+    && value.uid === uid
+    && value.sessionId === sessionId
+    && value.sessionId === expected?.sessionId
+    && value.leaseToken === expected?.leaseToken
+    && value.generation === expected?.generation
+    && value.roomId === expected?.roomId
+    && value.attemptId === expected?.attemptId
+    && value.connectionGeneration === expected?.connectionGeneration;
+}
+
+async function removeExpiredSoloSessionV2Active(uid, sessionId, expected, now, {
+  allowFresh = false,
+} = {}) {
+  const result = await soloSessionActiveRef(uid, sessionId)
+    .transaction((currentValue) => {
+      if (!exactSoloSessionV2ActiveIdentity(currentValue, expected, uid, sessionId)
+          || (!allowFresh && Number(currentValue.expiresAt || 0) > now)) return;
+      return null;
+    });
+  return result.committed;
+}
+
+async function markAbandonedSoloSessionV2RoomDestroyed(uid, roomId, entry) {
+  await realtime.ref(`online/rooms/${roomId}`).transaction((currentValue) => {
+    if (!roomMatchesSessionV2(currentValue, {
+      uid,
+      sessionId: entry.sessionId,
+      generation: entry.generation,
+      roomId,
+      attemptId: entry.attemptId,
+    })
+        || currentValue.status !== "active"
+        || currentValue.destroyed) return;
+    return {
+      ...currentValue,
+      destroyed: {
+        by: uid,
+        at: Date.now(),
+      },
+    };
+  });
+}
+
+async function liveSoloSessionV2Room(uid, now = Date.now()) {
+  const activeSnapshot = await realtime.ref(`online/activeV2/${uid}`).get();
+  const entries = Object.entries(objectValue(activeSnapshot.val()))
+    .sort((first, second) => (
+      Number(second[1]?.expiresAt || 0) - Number(first[1]?.expiresAt || 0)
+    ))
+    .slice(0, 50);
+  for (const [sessionId, entry] of entries) {
+    const roomId = cleanText(entry?.roomId, 80);
+    if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)
+        || entry?.sessionId !== sessionId
+        || !isSafeToken(entry?.sessionId)
+        || !isSafeToken(entry?.generation)) continue;
+    const roomSnapshot = await realtime.ref(`online/rooms/${roomId}`).get();
+    const room = roomSnapshot.val();
+    if (!roomMatchesSessionV2(room, {
+      uid,
+      sessionId: entry.sessionId,
+      generation: entry.generation,
+      roomId,
+      attemptId: entry.attemptId,
+    })) {
+      await removeExpiredSoloSessionV2Active(uid, sessionId, entry, now);
+      continue;
+    }
+    const reservationFresh = Number(entry.expiresAt || 0) > now;
+    const roomPresence = room.presenceV2?.[uid]?.[entry.sessionId];
+    const presenceFresh = roomPresence?.online === true
+      && Number(roomPresence.updatedAt || 0)
+        >= now - SOLO_SESSION_LEASE_TTL_MS - 15_000;
+    const roomIsLive = !room.destroyed
+      && ((room.status === "active"
+          && (reservationFresh || presenceFresh))
+        || (room.status === "offered"
+          && reservationFresh
+          && Number(room.createdAt || 0) >= now - SOLO_SESSION_MATCH_TTL_MS
+          && Number(room.createdAt || 0) <= now + 15_000));
+    if (roomIsLive) {
+      return {
+        roomId,
+        status: room.status,
+        sessionId: entry.sessionId,
+        generation: entry.generation,
+      };
+    }
+    const terminalRoom = Boolean(room.destroyed)
+      || !["active", "offered"].includes(room.status);
+    const removed = await removeExpiredSoloSessionV2Active(
+      uid,
+      sessionId,
+      entry,
+      now,
+      { allowFresh: terminalRoom },
+    );
+    if (removed && room.status === "active" && !room.destroyed) {
+      await markAbandonedSoloSessionV2RoomDestroyed(uid, roomId, entry);
+    }
+  }
+  return null;
+}
+
+function soloSessionClaimResponse(claim, reason) {
+  const lease = publicClaimLease(claim);
+  if (!lease) throw new Error("solo session claim response is invalid");
+  return {
+    claimed: true,
+    reason,
+    lease,
+    sessionGeneration: claim.generation,
+  };
+}
+
+async function removeReplacedSoloSessionV2Resource(reference, fence) {
+  const result = await reference.transaction((currentValue) => (
+    resourceFenceMatches(currentValue, fence) ? null : undefined
+  ));
+  return !resourceFenceMatches(result.snapshot.val(), fence);
+}
+
+async function cleanupReplacedSoloSessionV2ClaimResources(
+  uid,
+  previousClaim,
+  committedClaim,
+) {
+  const fence = replacedClaimResourceFence(previousClaim, committedClaim);
+  if (!fence) return true;
+  const cleaned = await Promise.all([
+    removeReplacedSoloSessionV2Resource(
+      soloSessionQueueRef(uid, fence.sessionId),
+      fence,
+    ),
+    removeReplacedSoloSessionV2Resource(
+      soloSessionActiveRef(uid, fence.sessionId),
+      fence,
+    ),
+  ]);
+  return cleaned.every(Boolean);
+}
+
+async function claimSoloSessionV2(uid, data) {
+  const now = Date.now();
+  if (await liveLegacySoloRoom(uid, now, { cleanupStale: true })) {
+    return { claimed: false, reason: "occupied" };
+  }
+  const claimRef = soloSessionClaimRef(uid);
+  const [
+    existingSnapshot,
+    lockSnapshot,
+    legacyLockSnapshot,
+    legacyQueueSnapshot,
+  ] = await Promise.all([
+    claimRef.get(),
+    realtime.ref(`online/soloMatchLocksV2/${uid}`).get(),
+    realtime.ref(`online/soloMatchPermitLocks/${uid}`).get(),
+    realtime.ref(`online/queue/${uid}`).get(),
+  ]);
+  const existing = normalizeClaim(existingSnapshot.val());
+  const exactExistingOwner = existing?.sessionId === data.sessionId
+    && existing?.leaseToken === data.leaseToken;
+  const needsClaimGuard = !exactExistingOwner || Number(existing?.expiresAt || 0) <= now;
+  const lock = lockSnapshot.val();
+  const legacyLock = legacyLockSnapshot.val();
+  const liveV2Room = needsClaimGuard ? await liveSoloSessionV2Room(uid, now) : null;
+  const lockCheckNow = Date.now();
+  if (needsClaimGuard
+      && (Number(lock?.expiresAt || 0) > lockCheckNow
+        || Number(legacyLock?.expiresAt || 0) > lockCheckNow
+        || liveV2Room)) {
+    return { claimed: false, reason: "occupied" };
+  }
+  if (needsClaimGuard
+      && isValidSoloServerQueueEntry(uid, legacyQueueSnapshot.val(), lockCheckNow)) {
+    return { claimed: false, reason: "legacy-waiting" };
+  }
+
+  let claimGuard = needsClaimGuard
+    ? await acquireSoloSessionClaimGuard(uid, data)
+    : null;
+  if (needsClaimGuard && !claimGuard) {
+    return { claimed: false, reason: "occupied" };
+  }
+
+  try {
+    if (claimGuard) {
+      const [
+        legacyRoomUnderGuard,
+        v2RoomUnderGuard,
+        legacyLockUnderGuardSnapshot,
+        legacyQueueUnderGuardSnapshot,
+      ] =
+        await Promise.all([
+          liveLegacySoloRoom(uid, Date.now(), { cleanupStale: true }),
+          liveSoloSessionV2Room(uid, Date.now()),
+          realtime.ref(`online/soloMatchPermitLocks/${uid}`).get(),
+          realtime.ref(`online/queue/${uid}`).get(),
+        ]);
+      const guardCheckNow = Date.now();
+      if (legacyRoomUnderGuard
+          || v2RoomUnderGuard
+          || Number(legacyLockUnderGuardSnapshot.val()?.expiresAt || 0) > guardCheckNow) {
+        return { claimed: false, reason: "occupied" };
+      }
+      if (isValidSoloServerQueueEntry(
+        uid,
+        legacyQueueUnderGuardSnapshot.val(),
+        guardCheckNow,
+      )) {
+        return { claimed: false, reason: "legacy-waiting" };
+      }
+      claimGuard = await renewSoloSessionClaimGuard(uid, claimGuard);
+      if (!claimGuard) {
+        return { claimed: false, reason: "occupied" };
+      }
+    }
+
+    const replacementGeneration = soloSessionGeneration();
+    let decision = null;
+    let rollbackClaimValue = null;
+    const result = await claimRef.transaction((currentValue) => {
+      decision = claimDecision({
+        currentClaim: currentValue,
+        sessionId: data.sessionId,
+        leaseToken: data.leaseToken,
+        generation: replacementGeneration,
+        now: Date.now(),
+        ttlMs: SOLO_SESSION_LEASE_TTL_MS,
+        sameSessionOwnerConfirmedGone: data.sameSessionOwnerConfirmedGone,
+      });
+      if (!decision.allowed) return;
+      rollbackClaimValue = currentValue == null ? null : currentValue;
+      return decision.claim;
+    });
+    if (!result.committed || !decision?.allowed) {
+      return {
+        claimed: false,
+        reason: decision?.reason === "same-session-owned"
+          ? "same-session-owned"
+          : "occupied",
+      };
+    }
+    const committedClaim = normalizeClaim(result.snapshot.val());
+    if (!committedClaim) throw new Error("solo session claim was not committed");
+    const [
+      legacyRoomAfterClaim,
+      v2RoomAfterClaim,
+      legacyLockAfterClaimSnapshot,
+      legacyQueueAfterClaimSnapshot,
+      claimGuardAfterClaimSnapshot,
+    ] = await Promise.all([
+      liveLegacySoloRoom(uid, Date.now(), { cleanupStale: true }),
+      liveSoloSessionV2Room(uid, Date.now()),
+      realtime.ref(`online/soloMatchPermitLocks/${uid}`).get(),
+      realtime.ref(`online/queue/${uid}`).get(),
+      claimGuard
+        ? realtime.ref(`online/soloMatchLocksV2/${uid}`).get()
+        : Promise.resolve(null),
+    ]);
+    const postClaimCheckNow = Date.now();
+    const v2RoomOwnedByClaim = v2RoomAfterClaim
+      && v2RoomAfterClaim.sessionId === committedClaim.sessionId
+      && v2RoomAfterClaim.generation === committedClaim.generation;
+    const legacyQueueAfterClaimIsFresh = isValidSoloServerQueueEntry(
+      uid,
+      legacyQueueAfterClaimSnapshot.val(),
+      postClaimCheckNow,
+    );
+    const claimGuardStillOwned = !claimGuard || (
+      soloSessionClaimGuardMatches(
+        claimGuardAfterClaimSnapshot?.val(),
+        claimGuard.operationId,
+      )
+      && Number(claimGuardAfterClaimSnapshot.val()?.expiresAt || 0) > postClaimCheckNow
+    );
+    if (legacyRoomAfterClaim
+        || Number(legacyLockAfterClaimSnapshot.val()?.expiresAt || 0) > postClaimCheckNow
+        || legacyQueueAfterClaimIsFresh
+        || !claimGuardStillOwned
+        || (v2RoomAfterClaim && !v2RoomOwnedByClaim)) {
+      await claimRef.transaction((currentValue) => (
+        claimMatches(currentValue, {
+          sessionId: committedClaim.sessionId,
+          leaseToken: committedClaim.leaseToken,
+          generation: committedClaim.generation,
+          now: Date.now(),
+          requireFresh: false,
+        }) ? rollbackClaimValue : undefined
+      ));
+      return {
+        claimed: false,
+        reason: legacyQueueAfterClaimIsFresh ? "legacy-waiting" : "occupied",
+      };
+    }
+
+    try {
+      const replacementResourcesCleaned =
+        await cleanupReplacedSoloSessionV2ClaimResources(
+          uid,
+          rollbackClaimValue,
+          committedClaim,
+        );
+      if (!replacementResourcesCleaned) {
+        throw new Error("solo session replacement cleanup was incomplete");
+      }
+    } catch {
+      await claimRef.transaction((currentValue) => (
+        claimMatches(currentValue, {
+          sessionId: committedClaim.sessionId,
+          leaseToken: committedClaim.leaseToken,
+          generation: committedClaim.generation,
+          now: Date.now(),
+          requireFresh: false,
+        }) ? rollbackClaimValue : undefined
+      ));
+      throw new Error("solo session replacement cleanup failed");
+    }
+    return soloSessionClaimResponse(committedClaim, decision.reason);
+  } finally {
+    if (claimGuard && !await releaseSoloSessionClaimGuard(uid, claimGuard)) {
+      console.error("solo session claim guard cleanup failed", { category: "cleanup" });
+    }
+  }
+}
+
+async function heartbeatSoloSessionV2(uid, data) {
+  const claimRef = soloSessionClaimRef(uid);
+  let decision = null;
+  const result = await claimRef.transaction((currentValue) => {
+    decision = heartbeatDecision({
+      currentClaim: currentValue,
+      sessionId: data.sessionId,
+      leaseToken: data.leaseToken,
+      generation: data.generation,
+      now: Date.now(),
+      ttlMs: SOLO_SESSION_LEASE_TTL_MS,
+    });
+    return decision.allowed ? decision.claim : undefined;
+  });
+  if (!result.committed || !decision?.allowed) {
+    return { claimed: false, reason: "lease-lost" };
+  }
+  const claim = normalizeClaim(result.snapshot.val());
+  if (!claim) throw new Error("solo session heartbeat was not committed");
+  const fence = {
+    sessionId: claim.sessionId,
+    leaseToken: claim.leaseToken,
+    generation: claim.generation,
+  };
+  const refreshedAt = Date.now();
+  await Promise.allSettled([
+    soloSessionQueueRef(uid, data.sessionId).transaction((currentValue) => (
+      resourceFenceMatches(currentValue, fence)
+        ? {
+          ...currentValue,
+          lastSeen: refreshedAt,
+          expiresAt: claim.expiresAt,
+        }
+        : undefined
+    )),
+    soloSessionActiveRef(uid, data.sessionId).transaction((currentValue) => (
+      resourceFenceMatches(currentValue, fence)
+        ? {
+          ...currentValue,
+          lastSeen: refreshedAt,
+          expiresAt: claim.expiresAt,
+        }
+        : undefined
+    )),
+  ]);
+  return soloSessionClaimResponse(claim, "refreshed");
+}
+
+async function removeSoloSessionResourceIfFenced(reference, fence) {
+  let safe = false;
+  const result = await reference.transaction((currentValue) => {
+    if (currentValue == null) {
+      safe = true;
+      return null;
+    }
+    if (!resourceFenceMatches(currentValue, fence)) {
+      safe = false;
+      return;
+    }
+    safe = true;
+    return null;
+  });
+  return safe && result.snapshot.val() == null;
+}
+
+async function releaseSoloSessionV2(uid, data) {
+  const claimRef = soloSessionClaimRef(uid);
+  const releaseGuard = await acquireSoloSessionClaimGuard(uid, data);
+  if (!releaseGuard) return { released: false, reason: "occupied" };
+  try {
+    const claimSnapshot = await claimRef.get();
+    const releasedClaim = normalizeClaim(claimSnapshot.val());
+    if (!releasedClaim
+        || releasedClaim.sessionId !== data.sessionId
+        || releasedClaim.leaseToken !== data.leaseToken
+        || releasedClaim.generation !== data.generation) {
+      return { released: false, reason: "lease-lost" };
+    }
+    const fence = {
+      sessionId: releasedClaim.sessionId,
+      leaseToken: releasedClaim.leaseToken,
+      generation: releasedClaim.generation,
+    };
+    const [queueRemoved, activeRemoved] = await Promise.all([
+      removeSoloSessionResourceIfFenced(
+        soloSessionQueueRef(uid, data.sessionId),
+        fence,
+      ),
+      removeSoloSessionResourceIfFenced(
+        soloSessionActiveRef(uid, data.sessionId),
+        fence,
+      ),
+    ]);
+    if (!queueRemoved || !activeRemoved) {
+      return { released: false, reason: "resource-changed" };
+    }
+    let claimReleased = false;
+    const result = await claimRef.transaction((currentValue) => {
+      const current = normalizeClaim(currentValue);
+      if (!current
+          || current.sessionId !== data.sessionId
+          || current.leaseToken !== data.leaseToken
+          || current.generation !== data.generation) {
+        claimReleased = false;
+        return;
+      }
+      claimReleased = true;
+      return null;
+    });
+    if (!result.committed || !claimReleased) {
+      return { released: false, reason: "lease-lost" };
+    }
+    return {
+      released: true,
+      queueRemoved,
+      activeRemoved,
+      sessionGeneration: releasedClaim.generation,
+    };
+  } finally {
+    if (!await releaseSoloSessionClaimGuard(uid, releaseGuard)) {
+      console.error("solo session release guard cleanup failed", { category: "cleanup" });
+    }
+  }
+}
+
+function boundedSoloSessionV2Queue(uid, queue, limit = 500) {
+  const requester = queue[uid];
+  if (!requester) return {};
+  const candidates = Object.entries(queue)
+    .filter(([candidateUid]) => candidateUid !== uid)
+    .sort((first, second) => (
+      Number(first[1].joinedAt) - Number(second[1].joinedAt)
+      || first[0].localeCompare(second[0])
+    ))
+    .slice(0, Math.max(0, limit - 1));
+  return Object.fromEntries([[uid, requester], ...candidates]);
+}
+
+function liveSoloSessionV2LockUids(locks, now) {
+  return Object.entries(objectValue(locks))
+    .filter(([, lock]) => Number(lock?.expiresAt || 0) > now)
+    .map(([uid]) => uid);
+}
+
+async function liveLegacySoloUidsForQueue(queue, legacyActive, now) {
+  const candidateUids = Object.keys(queue)
+    .filter((uid) => Object.hasOwn(legacyActive, uid));
+  const liveUids = [];
+  for (let offset = 0; offset < candidateUids.length; offset += 50) {
+    const batch = candidateUids.slice(offset, offset + 50);
+    const results = await Promise.all(batch.map((uid) => liveLegacySoloRoom(uid, now)));
+    results.forEach((room, index) => {
+      if (room) liveUids.push(batch[index]);
+    });
+  }
+  return liveUids;
+}
+
+function soloSessionV2Candidate(player, session) {
+  if (!player
+      || !session
+      || !isSafeToken(session.sessionId)
+      || !isSafeToken(session.generation)) return null;
+  return {
+    ...player,
+    sessionId: session.sessionId,
+    sessionGeneration: session.generation,
+  };
+}
+
+async function loadExistingSoloSessionV2Match(uid, claim, now) {
+  const activeSnapshot = await soloSessionActiveRef(uid, claim.sessionId).get();
+  const activeEntry = activeSnapshot.val();
+  if (!activeV2EntryIsFresh(uid, activeEntry, claim, now)) return null;
+  const roomId = cleanText(activeEntry.roomId, 80);
+  const roomSnapshot = await realtime.ref(`online/rooms/${roomId}`).get();
+  const room = roomSnapshot.val();
+  if (!roomMatchesSessionV2(room, {
+    uid,
+    sessionId: claim.sessionId,
+    generation: claim.generation,
+    roomId,
+    attemptId: activeEntry.attemptId,
+  }) || room.destroyed || !["offered", "active"].includes(room.status)) return null;
+  const opponentUid = uid === room.hostUid ? room.guestUid : room.hostUid;
+  const candidate = soloSessionV2Candidate(
+    room.players?.[opponentUid],
+    room.sessions?.[opponentUid],
+  );
+  if (!candidate) return null;
+  const common = {
+    roomId,
+    attemptId: room.attemptId,
+    connectionGeneration: room.connectionGeneration,
+    candidate,
+  };
+  if (uid === room.guestUid && room.status === "active") {
+    return { outcome: "join", ...common };
+  }
+  if (uid === room.hostUid) {
+    return {
+      outcome: "hosted",
+      ...common,
+      reunion: room.reunion === true,
+    };
+  }
+  return { outcome: "waiting" };
+}
+
+async function acquireSoloSessionV2Locks(resources) {
+  const participantLocks = {
+    [resources.hostLock.hostUid]: resources.hostLock,
+    [resources.guestLock.guestUid]: resources.guestLock,
+  };
+  const now = Date.now();
+  const result = await realtime.ref("online/soloMatchLocksV2")
+    .transaction((currentValue) => {
+      const current = objectValue(currentValue);
+      const next = { ...current };
+      for (const [uid, lock] of Object.entries(participantLocks)) {
+        if (Number(current[uid]?.expiresAt || 0) > now) return;
+        next[uid] = lock;
+      }
+      return next;
+    });
+  return result.committed;
+}
+
+async function releaseSoloSessionV2Locks(resources) {
+  const expectedLocks = {
+    [resources.hostLock.hostUid]: resources.hostLock,
+    [resources.guestLock.guestUid]: resources.guestLock,
+  };
+  let safe = false;
+  const result = await realtime.ref("online/soloMatchLocksV2")
+    .transaction((currentValue) => {
+      const current = objectValue(currentValue);
+      const mismatched = Object.entries(expectedLocks).some(([uid, expected]) => {
+        const lock = current[uid];
+        return lock != null && (
+          lock.protocolVersion !== SOLO_SESSION_PROTOCOL_VERSION
+          || lock.roomId !== expected.roomId
+          || lock.attemptId !== expected.attemptId
+          || lock.sessionId !== expected.sessionId
+          || lock.generation !== expected.generation
+          || lock.hostUid !== expected.hostUid
+          || lock.guestUid !== expected.guestUid
+        );
+      });
+      if (mismatched) {
+        safe = false;
+        return;
+      }
+      const next = { ...current };
+      Object.keys(expectedLocks).forEach((uid) => delete next[uid]);
+      safe = true;
+      return next;
+    });
+  return safe && Object.keys(expectedLocks).every(
+    (uid) => result.snapshot.child(uid).val() == null,
+  );
+}
+
+async function reserveSoloSessionV2Queue(entry, resources, role) {
+  const roomId = resources.hostLock.roomId;
+  const result = await soloSessionQueueRef(entry.uid, entry.sessionId)
+    .transaction((currentValue) => {
+      if (!resourceFenceMatches(currentValue, entry)
+          || currentValue.state !== "waiting"
+          || Number(currentValue.joinedAt) !== Number(entry.joinedAt)) return;
+      return {
+        ...currentValue,
+        state: role === "host" ? "offering" : "reserved",
+        roomId,
+        attemptId: resources.hostLock.attemptId,
+        lastSeen: Date.now(),
+        expiresAt: resources.permit.expiresAt,
+      };
+    });
+  return result.committed ? result.snapshot.val() : null;
+}
+
+async function restoreSoloSessionV2Queue(entry, resources) {
+  const now = Date.now();
+  const claimSnapshot = await soloSessionClaimRef(entry.uid).get();
+  let safe = false;
+  const result = await soloSessionQueueRef(entry.uid, entry.sessionId)
+    .transaction((currentValue) => {
+      if (currentValue == null) {
+        safe = true;
+        return null;
+      }
+      const exactFence = resourceFenceMatches(currentValue, entry);
+      const alreadyWaiting = exactFence
+        && currentValue.state === "waiting"
+        && !currentValue.roomId
+        && !currentValue.attemptId;
+      if (alreadyWaiting) {
+        safe = true;
+        return currentValue;
+      }
+      if (currentValue?.protocolVersion !== SOLO_SESSION_PROTOCOL_VERSION
+          || currentValue?.sessionId !== entry.sessionId
+          || currentValue?.leaseToken !== entry.leaseToken
+          || currentValue?.generation !== entry.generation
+          || currentValue.roomId !== resources.hostLock.roomId
+          || currentValue.attemptId !== resources.hostLock.attemptId
+          || !["offering", "reserved"].includes(currentValue.state)) {
+        safe = false;
+        return;
+      }
+      safe = true;
+      const claim = normalizeClaim(claimSnapshot.val());
+      if (!claimMatches(claimSnapshot.val(), {
+        sessionId: currentValue.sessionId,
+        leaseToken: currentValue.leaseToken,
+        generation: currentValue.generation,
+        now,
+      })) return null;
+      const next = {
+        ...currentValue,
+        state: "waiting",
+        lastSeen: now,
+        expiresAt: claim.expiresAt,
+      };
+      delete next.roomId;
+      delete next.attemptId;
+      return next;
+    });
+  const finalValue = result.snapshot.val();
+  return safe && (
+    finalValue == null
+    || (
+      resourceFenceMatches(finalValue, entry)
+      && finalValue.state === "waiting"
+      && !finalValue.roomId
+      && !finalValue.attemptId
+    )
+  );
+}
+
+function recordAttemptMatches(value, resources) {
+  return value?.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION
+    && value?.attemptId === resources.hostLock.attemptId
+    && value?.connectionGeneration === resources.permit.connectionGeneration;
+}
+
+function recordSessionsMatch(value, resources) {
+  const hostUid = resources.permit.hostUid;
+  const guestUid = resources.permit.guestUid;
+  return recordAttemptMatches(value, resources)
+    && value?.sessions?.[hostUid]?.sessionId
+      === resources.permit.sessions?.[hostUid]?.sessionId
+    && value?.sessions?.[hostUid]?.generation
+      === resources.permit.sessions?.[hostUid]?.generation
+    && value?.sessions?.[guestUid]?.sessionId
+      === resources.permit.sessions?.[guestUid]?.sessionId
+    && value?.sessions?.[guestUid]?.generation
+      === resources.permit.sessions?.[guestUid]?.generation;
+}
+
+async function removeSoloSessionV2Record(reference, matches) {
+  let safe = false;
+  const result = await reference.transaction((currentValue) => {
+    if (currentValue == null) {
+      safe = true;
+      return null;
+    }
+    if (!matches(currentValue)) {
+      safe = false;
+      return;
+    }
+    safe = true;
+    return null;
+  });
+  return safe && (result.committed || result.snapshot.val() == null);
+}
+
+function soloSessionV2TransitionExpected(resources) {
+  return {
+    attemptId: resources.hostLock.attemptId,
+    connectionGeneration: resources.permit.connectionGeneration,
+  };
+}
+
+async function acquireSoloSessionV2RoomTransition(
+  roomId,
+  expected,
+  action,
+  { allowActiveCancel = false, allowActiveAccept = false } = {},
+) {
+  const token = soloSessionGeneration();
+  let decision = null;
+  const result = await realtime.ref(`online/rooms/${roomId}`)
+    .transaction((currentValue) => {
+      decision = decideSoloRoomTransition({
+        room: currentValue,
+        expected,
+        action,
+        token,
+        now: Date.now(),
+        allowActiveCancel,
+        allowActiveAccept,
+      });
+      return decision.allowed ? decision.room : undefined;
+    });
+  const room = result.snapshot.val();
+  return {
+    acquired: result.committed && roomTransitionOwned(room, action, token),
+    reason: decision?.reason || "room-changed",
+    room,
+    token,
+  };
+}
+
+async function clearSoloSessionV2RoomTransition(
+  roomId,
+  expected,
+  action,
+  token,
+  { requireUndestroyed = false } = {},
+) {
+  let safe = false;
+  const result = await realtime.ref(`online/rooms/${roomId}`)
+    .transaction((currentValue) => {
+      if (!roomAttemptMatches(currentValue, expected)
+          || !roomTransitionOwned(currentValue, action, token)
+          || (requireUndestroyed && currentValue.destroyed)) {
+        safe = false;
+        return;
+      }
+      const next = { ...currentValue };
+      delete next.matchTransition;
+      safe = true;
+      return next;
+    });
+  return safe && result.committed;
+}
+
+async function cleanupSoloSessionV2Match(resources, {
+  restoreQueue = true,
+  transitionAction = "",
+  transitionToken = "",
+  destroyActive = false,
+  destroyedByUid = "",
+} = {}) {
+  const roomId = resources.hostLock.roomId;
+  const host = resources.permit.players[resources.permit.hostUid];
+  const guest = resources.permit.players[resources.permit.guestUid];
+  const hostSession = resources.permit.sessions[resources.permit.hostUid];
+  const guestSession = resources.permit.sessions[resources.permit.guestUid];
+  const expectedTransition = transitionAction && transitionToken;
+  let roomSafe = false;
+  const roomResult = await realtime.ref(`online/rooms/${roomId}`)
+    .transaction((currentValue) => {
+      if (currentValue == null) {
+        roomSafe = true;
+        return null;
+      }
+      if (!recordAttemptMatches(currentValue, resources)
+          || !roomAttemptMatches(currentValue, soloSessionV2TransitionExpected(resources))) {
+        roomSafe = false;
+        return;
+      }
+      const priorAbort = currentValue.destroyed?.reason === "session-abort"
+        && currentValue.destroyed?.attemptId === resources.hostLock.attemptId
+        && currentValue.destroyed?.connectionGeneration
+          === resources.permit.connectionGeneration;
+      if (priorAbort && destroyActive) {
+        roomSafe = true;
+        return currentValue;
+      }
+      if (expectedTransition
+          ? !roomTransitionOwned(currentValue, transitionAction, transitionToken)
+          : Boolean(currentValue.matchTransition)) {
+        roomSafe = false;
+        return;
+      }
+      if (currentValue.status === "active") {
+        if (!destroyActive || !expectedTransition) {
+          roomSafe = false;
+          return;
+        }
+        const next = {
+          ...currentValue,
+          destroyed: {
+            ...objectValue(currentValue.destroyed),
+            by: currentValue.destroyed?.by || destroyedByUid,
+            at: Number(currentValue.destroyed?.at || Date.now()),
+            reason: "session-abort",
+            attemptId: resources.hostLock.attemptId,
+            connectionGeneration: resources.permit.connectionGeneration,
+          },
+        };
+        delete next.matchTransition;
+        roomSafe = true;
+        return next;
+      }
+      if (currentValue.status !== "offered") {
+        roomSafe = false;
+        return;
+      }
+      roomSafe = true;
+      return null;
+    });
+  if (!roomSafe || (!roomResult.committed && roomResult.snapshot.val() != null)) return false;
+
+  const cleanupChecks = [
+    await removeSoloSessionV2Record(
+      realtime.ref(`online/soloMatchPermitsV2/${roomId}`),
+      (currentValue) => recordSessionsMatch(currentValue, resources),
+    ),
+    await removeSoloSessionV2Record(
+      soloSessionOfferRef(resources.permit.guestUid, guestSession.sessionId, roomId),
+      (currentValue) => recordSessionsMatch(currentValue, resources),
+    ),
+    await removeSoloSessionV2Record(
+      soloSessionActiveRef(resources.permit.hostUid, hostSession.sessionId),
+      (currentValue) => exactSoloSessionV2ActiveIdentity(
+        currentValue,
+        resources.hostActive,
+        resources.permit.hostUid,
+        hostSession.sessionId,
+      ),
+    ),
+    await removeSoloSessionV2Record(
+      soloSessionActiveRef(resources.permit.guestUid, guestSession.sessionId),
+      (currentValue) => exactSoloSessionV2ActiveIdentity(
+        currentValue,
+        resources.guestActive,
+        resources.permit.guestUid,
+        guestSession.sessionId,
+      ),
+    ),
+  ];
+  if (!restoreQueue) {
+    cleanupChecks.push(
+      await removeSoloSessionV2Record(
+        soloSessionQueueRef(resources.permit.hostUid, hostSession.sessionId),
+        (currentValue) => (
+          resourceFenceMatches(currentValue, resources.hostActive)
+          && currentValue.roomId === roomId
+          && currentValue.attemptId === resources.hostLock.attemptId
+        ),
+      ),
+      await removeSoloSessionV2Record(
+        soloSessionQueueRef(resources.permit.guestUid, guestSession.sessionId),
+        (currentValue) => (
+          resourceFenceMatches(currentValue, resources.guestActive)
+          && currentValue.roomId === roomId
+          && currentValue.attemptId === resources.guestLock.attemptId
+        ),
+      ),
+    );
+  }
+  if (cleanupChecks.some((safe) => !safe)) return false;
+
+  if (restoreQueue) {
+    const restored = await Promise.all([
+      restoreSoloSessionV2Queue({
+        ...host,
+        ...hostSession,
+        leaseToken: resources.hostActive.leaseToken,
+        protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+      }, resources),
+      restoreSoloSessionV2Queue({
+        ...guest,
+        ...guestSession,
+        leaseToken: resources.guestActive.leaseToken,
+        protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+      }, resources),
+    ]);
+    if (restored.some((safe) => !safe)) return false;
+  }
+  return releaseSoloSessionV2Locks(resources);
+}
+
+async function readSoloSessionV2MaterializationFence(resources, hostEntry, guestEntry) {
+  const [hostClaim, guestClaim, hostQueue, guestQueue, hostLock, guestLock] = await Promise.all([
+    soloSessionClaimRef(hostEntry.uid).get(),
+    soloSessionClaimRef(guestEntry.uid).get(),
+    soloSessionQueueRef(hostEntry.uid, hostEntry.sessionId).get(),
+    soloSessionQueueRef(guestEntry.uid, guestEntry.sessionId).get(),
+    realtime.ref(`online/soloMatchLocksV2/${hostEntry.uid}`).get(),
+    realtime.ref(`online/soloMatchLocksV2/${guestEntry.uid}`).get(),
+  ]);
+  return materializationFenceMatches({
+    hostClaim: hostClaim.val(),
+    guestClaim: guestClaim.val(),
+    hostQueue: hostQueue.val(),
+    guestQueue: guestQueue.val(),
+    hostLock: hostLock.val(),
+    guestLock: guestLock.val(),
+    attemptId: resources.hostLock.attemptId,
+    now: Date.now(),
+  });
+}
+
+async function trySoloSessionV2Match(uid, data) {
+  const now = Date.now();
+  const [claimSnapshot, rollout] = await Promise.all([
+    soloSessionClaimRef(uid).get(),
+    loadSoloFamiliarRollout(),
+  ]);
+  const claim = normalizeClaim(claimSnapshot.val());
+  if (!claim
+      || claim.sessionId !== data.sessionId
+      || claim.leaseToken !== data.leaseToken
+      || claim.expiresAt <= now) {
+    return { outcome: "lease-lost" };
+  }
+  if (await liveLegacySoloRoom(uid, now)) return { outcome: "occupied" };
+  const existing = await loadExistingSoloSessionV2Match(uid, claim, Date.now());
+  if (existing) return existing;
+
+  const selectionNow = Date.now();
+  const [queueSnapshot, claimsSnapshot, activeSnapshot, locksSnapshot, legacyActiveSnapshot] =
+    await Promise.all([
+      realtime.ref("online/queueV2").get(),
+      realtime.ref("online/soloSessionClaims")
+        .orderByChild("expiresAt")
+        .startAt(selectionNow + 1)
+        .limitToFirst(2_000)
+        .get(),
+      realtime.ref("online/activeV2").get(),
+      realtime.ref("online/soloMatchLocksV2").get(),
+      realtime.ref("online/active").get(),
+    ]);
+  if (queueSnapshot.numChildren() > 2_000
+      || activeSnapshot.numChildren() > 2_000) {
+    throw new HttpsError("resource-exhausted", "対戦待機情報が混み合っています。");
+  }
+  const claims = {
+    ...objectValue(claimsSnapshot.val()),
+    [uid]: claim,
+  };
+  const freshQueue = flattenFreshQueueV2(
+    objectValue(queueSnapshot.val()),
+    claims,
+    selectionNow,
+  );
+  const boundedQueue = boundedSoloSessionV2Queue(uid, freshQueue);
+  if (!boundedQueue[uid] || Object.keys(boundedQueue).length < 2) {
+    return { outcome: "waiting" };
+  }
+  const [familiarPairs, blockedPairIds] = await Promise.all([
+    rollout.reunionEnabled
+      ? querySoloPairDocuments("soloFamiliarPairs", uid, true)
+      : Promise.resolve([]),
+    blockedSoloPairIdsForQueue(uid, boundedQueue, selectionNow),
+  ]);
+  const legacyActiveUids = await liveLegacySoloUidsForQueue(
+    boundedQueue,
+    objectValue(legacyActiveSnapshot.val()),
+    selectionNow,
+  );
+  const selection = selectSoloSessionV2Match({
+    requesterUid: uid,
+    queue: boundedQueue,
+    activeUids: [
+      ...activeV2UidSet(objectValue(activeSnapshot.val()), claims, selectionNow),
+      ...legacyActiveUids,
+    ],
+    lockedUids: liveSoloSessionV2LockUids(locksSnapshot.val(), selectionNow),
+    familiarPairs,
+    blockedPairIds,
+    avoidUid: data.avoidUid,
+    now: selectionNow,
+  });
+  if (!selection) return { outcome: "waiting" };
+
+  const roomId = realtime.ref("online/rooms").push().key;
+  if (!roomId) throw new HttpsError("unavailable", "対戦ルームを準備できませんでした。");
+  const materializedAt = Date.now();
+  const resources = buildSoloSessionV2Resources({
+    roomId,
+    attemptId: soloSessionGeneration(),
+    connectionGeneration: soloSessionGeneration(),
+    host: selection.host,
+    guest: selection.candidate,
+    now: materializedAt,
+    expiresAt: materializedAt + SOLO_SESSION_MATCH_TTL_MS,
+    reunion: selection.reunion,
+    pairId: selection.pairId,
+  });
+  if (!await acquireSoloSessionV2Locks(resources)) return { outcome: "waiting" };
+
+  const [
+    hostClaimSnapshot,
+    guestClaimSnapshot,
+    hostQueueSnapshot,
+    guestQueueSnapshot,
+    hostLegacyRoom,
+    guestLegacyRoom,
+    finalBlockSnapshot,
+    finalFamiliarSnapshot,
+  ] = await Promise.all([
+    soloSessionClaimRef(selection.host.uid).get(),
+    soloSessionClaimRef(selection.candidate.uid).get(),
+    soloSessionQueueRef(selection.host.uid, selection.host.sessionId).get(),
+    soloSessionQueueRef(selection.candidate.uid, selection.candidate.sessionId).get(),
+    liveLegacySoloRoom(selection.host.uid),
+    liveLegacySoloRoom(selection.candidate.uid),
+    soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
+    selection.reunion
+      ? soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get()
+      : Promise.resolve(null),
+  ]);
+  const validationNow = Date.now();
+  const claimsAndQueuesStillFresh = queueEntryMatchesClaim(
+    selection.host.uid,
+    selection.host.sessionId,
+    hostQueueSnapshot.val(),
+    hostClaimSnapshot.val(),
+    validationNow,
+  ) && queueEntryMatchesClaim(
+    selection.candidate.uid,
+    selection.candidate.sessionId,
+    guestQueueSnapshot.val(),
+    guestClaimSnapshot.val(),
+    validationNow,
+  );
+  if (!claimsAndQueuesStillFresh
+      || hostLegacyRoom
+      || guestLegacyRoom
+      || finalBlockSnapshot.exists
+      || (selection.reunion && (
+        !finalFamiliarSnapshot?.exists
+        || finalFamiliarSnapshot.get("active") !== true
+        || Number(finalFamiliarSnapshot.get("lastReunionPriorityAt") || 0)
+          > validationNow - SOLO_FAMILIAR_REUNION_COOLDOWN_MS
+      ))) {
+    await cleanupSoloSessionV2Match(resources);
+    return { outcome: "waiting" };
+  }
+
+  const [reservedHost, reservedGuest] = await Promise.all([
+    reserveSoloSessionV2Queue(selection.host, resources, "host"),
+    reserveSoloSessionV2Queue(selection.candidate, resources, "guest"),
+  ]);
+  if (!reservedHost || !reservedGuest
+      || !await readSoloSessionV2MaterializationFence(
+        resources,
+        selection.host,
+        selection.candidate,
+      )) {
+    await cleanupSoloSessionV2Match(resources);
+    return { outcome: "waiting" };
+  }
+
+  await realtime.ref("online").update({
+    [`soloMatchPermitsV2/${roomId}`]: resources.permit,
+    [`rooms/${roomId}`]: resources.room,
+    [`activeV2/${selection.host.uid}/${selection.host.sessionId}`]: resources.hostActive,
+    [`offersV2/${selection.candidate.uid}/${selection.candidate.sessionId}/${roomId}`]:
+      resources.offer,
+  });
+  if (!await readSoloSessionV2MaterializationFence(
+    resources,
+    selection.host,
+    selection.candidate,
+  )) {
+    await cleanupSoloSessionV2Match(resources);
+    return { outcome: "waiting" };
+  }
+  return {
+    outcome: "hosted",
+    roomId,
+    attemptId: resources.permit.attemptId,
+    connectionGeneration: resources.permit.connectionGeneration,
+    reunion: resources.permit.reunion,
+    candidate: soloSessionV2Candidate(
+      resources.permit.players[selection.candidate.uid],
+      resources.permit.sessions[selection.candidate.uid],
+    ),
+  };
+}
+
+function soloSessionV2ActiveMatchesRoom(value, uid, session, roomId, room) {
+  return value?.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION
+    && value?.uid === uid
+    && value?.sessionId === session?.sessionId
+    && value?.generation === session?.generation
+    && isSafeToken(value?.leaseToken)
+    && value?.roomId === roomId
+    && value?.attemptId === room?.attemptId
+    && value?.connectionGeneration === room?.connectionGeneration;
+}
+
+function soloSessionV2QueueMatchesRoom(value, uid, session, roomId, room) {
+  return value?.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION
+    && value?.uid === uid
+    && value?.sessionId === session?.sessionId
+    && value?.generation === session?.generation
+    && isSafeToken(value?.leaseToken)
+    && value?.roomId === roomId
+    && value?.attemptId === room?.attemptId
+    && ["offering", "reserved"].includes(value?.state);
+}
+
+function soloSessionV2ResourcesFromStored(roomId, room, permit, {
+  hostActive = null,
+  guestActive = null,
+  hostQueue = null,
+  guestQueue = null,
+  requireBothActive = false,
+} = {}) {
+  if (!roomAttemptMatches(room, room)
+      || !["offered", "active"].includes(room?.status)) return null;
+  const hostUid = room.hostUid;
+  const guestUid = room.guestUid;
+  const hostSession = room.sessions?.[hostUid];
+  const guestSession = room.sessions?.[guestUid];
+  if (!hostUid || !guestUid || hostUid === guestUid
+      || !hostSession || !guestSession) return null;
+  if (permit != null && (
+    !recordSessionsMatch(permit, {
+      permit: {
+        ...permit,
+        hostUid,
+        guestUid,
+        sessions: room.sessions,
+        connectionGeneration: room.connectionGeneration,
+      },
+      hostLock: { attemptId: room.attemptId },
+    })
+    || permit.hostUid !== hostUid
+    || permit.guestUid !== guestUid
+  )) return null;
+
+  const activeValues = {
+    [hostUid]: soloSessionV2ActiveMatchesRoom(
+      hostActive,
+      hostUid,
+      hostSession,
+      roomId,
+      room,
+    ) ? hostActive : null,
+    [guestUid]: soloSessionV2ActiveMatchesRoom(
+      guestActive,
+      guestUid,
+      guestSession,
+      roomId,
+      room,
+    ) ? guestActive : null,
+  };
+  const queueValues = {
+    [hostUid]: soloSessionV2QueueMatchesRoom(
+      hostQueue,
+      hostUid,
+      hostSession,
+      roomId,
+      room,
+    ) ? hostQueue : null,
+    [guestUid]: soloSessionV2QueueMatchesRoom(
+      guestQueue,
+      guestUid,
+      guestSession,
+      roomId,
+      room,
+    ) ? guestQueue : null,
+  };
+  if (requireBothActive && (!activeValues[hostUid] || !activeValues[guestUid])) return null;
+  const hostFence = activeValues[hostUid] || queueValues[hostUid];
+  const guestFence = activeValues[guestUid] || queueValues[guestUid];
+  if (!hostFence || !guestFence) return null;
+  const expiresAt = Math.max(
+    Number(room.expiresAt || 0),
+    Number(permit?.expiresAt || 0),
+    Number(hostFence.expiresAt || 0),
+    Number(guestFence.expiresAt || 0),
+    Number(room.createdAt || 0) + 1,
+  );
+  const resources = buildSoloSessionV2Resources({
+    roomId,
+    attemptId: room.attemptId,
+    connectionGeneration: room.connectionGeneration,
+    host: {
+      ...room.players?.[hostUid],
+      uid: hostUid,
+      ...hostSession,
+      leaseToken: hostFence.leaseToken,
+      protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+    },
+    guest: {
+      ...room.players?.[guestUid],
+      uid: guestUid,
+      ...guestSession,
+      leaseToken: guestFence.leaseToken,
+      protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+    },
+    now: Number(room.createdAt),
+    expiresAt,
+    reunion: room.reunion === true,
+    pairId: cleanText(room.pairId || permit?.pairId, 40),
+  });
+  resources.room = room;
+  resources.permit = permit || {
+    ...resources.permit,
+    expiresAt,
+  };
+  if (activeValues[hostUid]) resources.hostActive = activeValues[hostUid];
+  if (activeValues[guestUid]) resources.guestActive = activeValues[guestUid];
+  resources.hostQueue = queueValues[hostUid];
+  resources.guestQueue = queueValues[guestUid];
+  return resources;
+}
+
+function soloSessionV2ReunionPermitMatchesRoom(roomId, room, permit) {
+  if (room?.status !== "active"
+      || room?.destroyed
+      || room?.protocolVersion !== SOLO_SESSION_PROTOCOL_VERSION
+      || room?.signalingVersion !== SOLO_SIGNALING_VERSION
+      || permit?.protocolVersion !== SOLO_SESSION_PROTOCOL_VERSION
+      || permit?.signalingVersion !== SOLO_SIGNALING_VERSION
+      || room.reunion !== true
+      || permit.reunion !== true
+      || room.hostUid !== permit.hostUid
+      || room.guestUid !== permit.guestUid
+      || !recordAttemptMatches(room, {
+        hostLock: { attemptId: permit.attemptId },
+        permit: { connectionGeneration: permit.connectionGeneration },
+      })
+      || !recordAttemptMatches(permit, {
+        hostLock: { attemptId: room.attemptId },
+        permit: { connectionGeneration: room.connectionGeneration },
+      })) return false;
+  const pairId = soloFamiliarPairId(room.hostUid, room.guestUid);
+  if (room.pairId !== pairId || permit.pairId !== pairId) return false;
+  for (const participantUid of [room.hostUid, room.guestUid]) {
+    if (room.members?.[participantUid] !== true
+        || room.sessions?.[participantUid]?.sessionId
+          !== permit.sessions?.[participantUid]?.sessionId
+        || room.sessions?.[participantUid]?.generation
+          !== permit.sessions?.[participantUid]?.generation) return false;
+  }
+  return normalizeSoloMatchPermit(roomId, permit) != null
+    && soloRoomMatchesPermit(room, normalizeSoloMatchPermit(roomId, permit));
+}
+
+async function confirmSoloFamiliarReunionV2(roomId, resources, transitionToken) {
+  const room = resources.room;
+  if (room.reunion !== true) return true;
+  if (Number.isFinite(Number(room.reunionConfirmedAt))
+      && Number(room.reunionConfirmedAt) > 0) return true;
+  if (resources.permitWasStored !== true) return false;
+  const permit = resources.permit;
+  if (!soloSessionV2ReunionPermitMatchesRoom(roomId, room, permit)) return false;
+  const confirmed = await confirmSoloFamiliarReunionFromRoom(roomId, {
+    permitValue: permit,
+    roomValue: room,
+  });
+  if (!confirmed) return false;
+  let marked = false;
+  const result = await realtime.ref(`online/rooms/${roomId}`)
+    .transaction((currentValue) => {
+      if (!soloSessionV2ReunionPermitMatchesRoom(roomId, currentValue, permit)
+          || !roomTransitionOwned(currentValue, "accept", transitionToken)) {
+        marked = false;
+        return;
+      }
+      marked = true;
+      return {
+        ...currentValue,
+        reunionConfirmedAt: Date.now(),
+      };
+    });
+  if (marked && result.committed) {
+    resources.room = result.snapshot.val();
+    return true;
+  }
+  return false;
+}
+
+async function activateSoloSessionV2Room(roomId, resources, transitionToken) {
+  let activated = false;
+  const result = await realtime.ref(`online/rooms/${roomId}`)
+    .transaction((currentValue) => {
+      if (!roomAttemptMatches(currentValue, soloSessionV2TransitionExpected(resources))
+          || !roomTransitionOwned(currentValue, "accept", transitionToken)
+          || currentValue.destroyed
+          || !["offered", "active"].includes(currentValue.status)) {
+        activated = false;
+        return;
+      }
+      activated = true;
+      return {
+        ...currentValue,
+        status: "active",
+        activatedAt: Number(currentValue.activatedAt || Date.now()),
+        matchTransition: {
+          ...currentValue.matchTransition,
+          startedAt: Date.now(),
+        },
+      };
+    });
+  if (activated && result.committed) {
+    resources.room = result.snapshot.val();
+    return true;
+  }
+  return false;
+}
+
+async function refreshSoloSessionV2ActivePair(resources) {
+  const hostUid = resources.permit.hostUid;
+  const guestUid = resources.permit.guestUid;
+  const hostSession = resources.permit.sessions[hostUid];
+  const guestSession = resources.permit.sessions[guestUid];
+  const [hostClaimSnapshot, guestClaimSnapshot] = await Promise.all([
+    soloSessionClaimRef(hostUid).get(),
+    soloSessionClaimRef(guestUid).get(),
+  ]);
+  const now = Date.now();
+  const hostClaim = normalizeClaim(hostClaimSnapshot.val());
+  const guestClaim = normalizeClaim(guestClaimSnapshot.val());
+  if (!claimMatches(hostClaimSnapshot.val(), {
+    sessionId: hostSession.sessionId,
+    leaseToken: resources.hostActive.leaseToken,
+    generation: hostSession.generation,
+    now,
+  }) || !claimMatches(guestClaimSnapshot.val(), {
+    sessionId: guestSession.sessionId,
+    leaseToken: resources.guestActive.leaseToken,
+    generation: guestSession.generation,
+    now,
+  })) return false;
+  let safe = false;
+  const result = await realtime.ref("online/activeV2")
+    .transaction((currentValue) => {
+      const current = objectValue(currentValue);
+      const currentHost = current[hostUid]?.[hostSession.sessionId];
+      const currentGuest = current[guestUid]?.[guestSession.sessionId];
+      if (!exactSoloSessionV2ActiveIdentity(
+        currentHost,
+        resources.hostActive,
+        hostUid,
+        hostSession.sessionId,
+      ) || !exactSoloSessionV2ActiveIdentity(
+        currentGuest,
+        resources.guestActive,
+        guestUid,
+        guestSession.sessionId,
+      )) {
+        safe = false;
+        return;
+      }
+      safe = true;
+      const next = { ...current };
+      next[hostUid] = {
+        ...objectValue(current[hostUid]),
+        [hostSession.sessionId]: {
+          ...currentHost,
+          lastSeen: now,
+          expiresAt: hostClaim.expiresAt,
+        },
+      };
+      next[guestUid] = {
+        ...objectValue(current[guestUid]),
+        [guestSession.sessionId]: {
+          ...currentGuest,
+          lastSeen: now,
+          expiresAt: guestClaim.expiresAt,
+        },
+      };
+      return next;
+    });
+  if (!safe || !result.committed) return false;
+  resources.hostActive = result.snapshot.child(
+    `${hostUid}/${hostSession.sessionId}`,
+  ).val();
+  resources.guestActive = result.snapshot.child(
+    `${guestUid}/${guestSession.sessionId}`,
+  ).val();
+  return true;
+}
+
+async function finalizeAcceptedSoloSessionV2Match(roomId, resources, transitionToken) {
+  if (!await refreshSoloSessionV2ActivePair(resources)) return false;
+  const hostUid = resources.permit.hostUid;
+  const guestUid = resources.permit.guestUid;
+  const hostSession = resources.permit.sessions[hostUid];
+  const guestSession = resources.permit.sessions[guestUid];
+  const recordsRemoved = [
+    await removeSoloSessionV2Record(
+      soloSessionOfferRef(guestUid, guestSession.sessionId, roomId),
+      (currentValue) => recordSessionsMatch(currentValue, resources),
+    ),
+    await removeSoloSessionV2Record(
+      soloSessionQueueRef(hostUid, hostSession.sessionId),
+      (currentValue) => (
+        resourceFenceMatches(currentValue, resources.hostActive)
+        && currentValue.roomId === roomId
+        && currentValue.attemptId === resources.hostLock.attemptId
+      ),
+    ),
+    await removeSoloSessionV2Record(
+      soloSessionQueueRef(guestUid, guestSession.sessionId),
+      (currentValue) => (
+        resourceFenceMatches(currentValue, resources.guestActive)
+        && currentValue.roomId === roomId
+        && currentValue.attemptId === resources.guestLock.attemptId
+      ),
+    ),
+  ];
+  if (recordsRemoved.some((safe) => !safe)) return false;
+  if (!await confirmSoloFamiliarReunionV2(roomId, resources, transitionToken)) {
+    return false;
+  }
+  const permitRemoved = await removeSoloSessionV2Record(
+    realtime.ref(`online/soloMatchPermitsV2/${roomId}`),
+    (currentValue) => recordSessionsMatch(currentValue, resources),
+  );
+  if (!permitRemoved || !await releaseSoloSessionV2Locks(resources)) return false;
+  return clearSoloSessionV2RoomTransition(
+    roomId,
+    soloSessionV2TransitionExpected(resources),
+    "accept",
+    transitionToken,
+    { requireUndestroyed: true },
+  );
+}
+
+async function abortFailedSoloSessionV2Activation(
+  resources,
+  transitionToken,
+  destroyedByUid,
+) {
+  return cleanupSoloSessionV2Match(resources, {
+    restoreQueue: false,
+    transitionAction: "accept",
+    transitionToken,
+    destroyActive: true,
+    destroyedByUid,
+  });
+}
+
+function acceptedSoloSessionV2Response(roomId, room) {
+  const hostSession = room.sessions?.[room.hostUid];
+  const candidate = soloSessionV2Candidate(room.players?.[room.hostUid], hostSession);
+  if (!candidate) return null;
+  return {
+    accepted: true,
+    outcome: "join",
+    roomId,
+    attemptId: room.attemptId,
+    connectionGeneration: room.connectionGeneration,
+    candidate,
+  };
+}
+
+async function acceptSoloSessionV2Match(uid, data) {
+  const now = Date.now();
+  const claimSnapshot = await soloSessionClaimRef(uid).get();
+  const claim = normalizeClaim(claimSnapshot.val());
+  if (!claim
+      || claim.sessionId !== data.sessionId
+      || claim.leaseToken !== data.leaseToken
+      || claim.expiresAt <= now) {
+    return { accepted: false, reason: "lease-lost" };
+  }
+  const offerRef = soloSessionOfferRef(uid, data.sessionId, data.roomId);
+  const [offerSnapshot, roomSnapshot, permitSnapshot] = await Promise.all([
+    offerRef.get(),
+    realtime.ref(`online/rooms/${data.roomId}`).get(),
+    realtime.ref(`online/soloMatchPermitsV2/${data.roomId}`).get(),
+  ]);
+  const offer = offerSnapshot.val();
+  const room = roomSnapshot.val();
+  const permit = permitSnapshot.val();
+  if (room?.status === "active"
+      && roomMatchesSessionV2(room, {
+        uid,
+        sessionId: data.sessionId,
+        generation: claim.generation,
+        roomId: data.roomId,
+      })
+      && !room.destroyed) {
+    const hostUid = room.hostUid;
+    const guestUid = room.guestUid;
+    const hostSession = room.sessions?.[hostUid];
+    const guestSession = room.sessions?.[guestUid];
+    if (!hostUid || !guestUid || !hostSession || !guestSession) {
+      return { accepted: false, reason: "room-invalid" };
+    }
+    const [hostActiveSnapshot, guestActiveSnapshot, hostQueueSnapshot, guestQueueSnapshot] =
+      await Promise.all([
+        soloSessionActiveRef(hostUid, hostSession?.sessionId).get(),
+        soloSessionActiveRef(guestUid, guestSession?.sessionId).get(),
+        soloSessionQueueRef(hostUid, hostSession?.sessionId).get(),
+        soloSessionQueueRef(guestUid, guestSession?.sessionId).get(),
+      ]);
+    const ownActive = uid === hostUid
+      ? hostActiveSnapshot.val()
+      : guestActiveSnapshot.val();
+    if (!activeV2EntryIsFresh(uid, ownActive, claim, Date.now())
+        || ownActive?.roomId !== data.roomId
+        || ownActive?.attemptId !== room.attemptId) {
+      return { accepted: false, reason: "room-invalid" };
+    }
+    const reunionComplete = room.reunion !== true
+      || Number(room.reunionConfirmedAt || 0) > 0;
+    const finalizationAlreadyComplete = !room.matchTransition
+      && !permitSnapshot.exists()
+      && reunionComplete;
+    if (finalizationAlreadyComplete) {
+      return acceptedSoloSessionV2Response(data.roomId, room)
+        || { accepted: false, reason: "room-invalid" };
+    }
+    if (room.matchTransition?.action && room.matchTransition.action !== "accept") {
+      return { accepted: false, reason: "transition-busy" };
+    }
+    const transition = await acquireSoloSessionV2RoomTransition(
+      data.roomId,
+      room,
+      "accept",
+      { allowActiveAccept: true },
+    );
+    if (!transition.acquired) {
+      return { accepted: false, reason: transition.reason };
+    }
+    const latestPermitSnapshot = await realtime.ref(
+      `online/soloMatchPermitsV2/${data.roomId}`,
+    ).get();
+    const storedPermit = latestPermitSnapshot.val();
+    const resources = soloSessionV2ResourcesFromStored(
+      data.roomId,
+      transition.room,
+      storedPermit,
+      {
+        hostActive: hostActiveSnapshot.val(),
+        guestActive: guestActiveSnapshot.val(),
+        hostQueue: hostQueueSnapshot.val(),
+        guestQueue: guestQueueSnapshot.val(),
+        requireBothActive: true,
+      },
+    );
+    if (!resources) {
+      await clearSoloSessionV2RoomTransition(
+        data.roomId,
+        transition.room,
+        "accept",
+        transition.token,
+      );
+      return { accepted: false, reason: "room-invalid" };
+    }
+    resources.permitWasStored = latestPermitSnapshot.exists();
+    const activeRecovered = await activateSoloSessionV2Room(
+      data.roomId,
+      resources,
+      transition.token,
+    );
+    const finalized = activeRecovered && await finalizeAcceptedSoloSessionV2Match(
+      data.roomId,
+      resources,
+      transition.token,
+    );
+    if (!finalized) {
+      if (activeRecovered) {
+        await abortFailedSoloSessionV2Activation(resources, transition.token, uid);
+      }
+      throw new Error("solo session V2 active acceptance recovery failed");
+    }
+    const completedRoom = (await realtime.ref(`online/rooms/${data.roomId}`).get()).val();
+    return acceptedSoloSessionV2Response(data.roomId, completedRoom)
+      || { accepted: false, reason: "room-invalid" };
+  }
+  if (!offer
+      || offer.toUid !== uid
+      || offer.toSessionId !== data.sessionId
+      || Number(offer.expiresAt || 0) <= now
+      || offer.sessions?.[uid]?.generation !== claim.generation
+      || room?.status !== "offered"
+      || !roomMatchesSessionV2(room, {
+        uid,
+        sessionId: data.sessionId,
+        generation: claim.generation,
+        roomId: data.roomId,
+        attemptId: offer.attemptId,
+      })
+      || Number(permit?.expiresAt || 0) <= now
+      || !recordAttemptMatches(permit, {
+        hostLock: { attemptId: offer.attemptId },
+        permit: { connectionGeneration: offer.connectionGeneration },
+      })
+      || permit.hostUid !== room.hostUid
+      || permit.guestUid !== room.guestUid
+      || permit.sessions?.[room.hostUid]?.sessionId
+        !== room.sessions?.[room.hostUid]?.sessionId
+      || permit.sessions?.[room.hostUid]?.generation
+        !== room.sessions?.[room.hostUid]?.generation
+      || permit.sessions?.[room.guestUid]?.sessionId
+        !== room.sessions?.[room.guestUid]?.sessionId
+      || permit.sessions?.[room.guestUid]?.generation
+        !== room.sessions?.[room.guestUid]?.generation) {
+    return { accepted: false, reason: "offer-stale" };
+  }
+  const hostUid = room.hostUid;
+  const hostSession = room.sessions?.[hostUid];
+  const guestSession = room.sessions?.[uid];
+  if (!hostUid || !hostSession || !guestSession) {
+    return { accepted: false, reason: "offer-stale" };
+  }
+  const [
+    hostClaimSnapshot,
+    hostActiveSnapshot,
+    guestQueueSnapshot,
+    hostLockSnapshot,
+    guestLockSnapshot,
+  ] = await Promise.all([
+    soloSessionClaimRef(hostUid).get(),
+    soloSessionActiveRef(hostUid, hostSession.sessionId).get(),
+    soloSessionQueueRef(uid, data.sessionId).get(),
+    realtime.ref(`online/soloMatchLocksV2/${hostUid}`).get(),
+    realtime.ref(`online/soloMatchLocksV2/${uid}`).get(),
+  ]);
+  const guestQueue = guestQueueSnapshot.val();
+  const hostActive = hostActiveSnapshot.val();
+  if (!claimMatches(hostClaimSnapshot.val(), {
+    sessionId: hostSession.sessionId,
+    leaseToken: hostActive?.leaseToken,
+    generation: hostSession.generation,
+    now: Date.now(),
+  })
+      || !activeV2EntryIsFresh(hostUid, hostActive, hostClaimSnapshot.val(), Date.now())
+      || hostActive.roomId !== data.roomId
+      || hostActive.attemptId !== offer.attemptId
+      || !queueEntryMatchesClaim(
+        uid,
+        data.sessionId,
+        guestQueue,
+        claim,
+        Date.now(),
+        { allowedStates: ["reserved"] },
+      )
+      || guestQueue.roomId !== data.roomId
+      || guestQueue.attemptId !== offer.attemptId
+      || hostLockSnapshot.val()?.attemptId !== offer.attemptId
+      || hostLockSnapshot.val()?.sessionId !== hostSession.sessionId
+      || hostLockSnapshot.val()?.generation !== hostSession.generation
+      || Number(hostLockSnapshot.val()?.expiresAt || 0) <= Date.now()
+      || guestLockSnapshot.val()?.attemptId !== offer.attemptId
+      || guestLockSnapshot.val()?.sessionId !== guestSession.sessionId
+      || guestLockSnapshot.val()?.generation !== guestSession.generation
+      || Number(guestLockSnapshot.val()?.expiresAt || 0) <= Date.now()) {
+    return { accepted: false, reason: "offer-stale" };
+  }
+  const resources = buildSoloSessionV2Resources({
+    roomId: data.roomId,
+    attemptId: room.attemptId,
+    connectionGeneration: room.connectionGeneration,
+    host: {
+      ...room.players[hostUid],
+      ...hostSession,
+      leaseToken: hostActive.leaseToken,
+      protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+    },
+    guest: guestQueue,
+    now: room.createdAt,
+    expiresAt: Math.max(permit.expiresAt, Date.now() + SOLO_SESSION_MATCH_TTL_MS),
+    reunion: room.reunion === true,
+    pairId: permit.pairId || "",
+  });
+  resources.permitWasStored = true;
+  const activeExpiresAt = Math.min(
+    Number(hostClaimSnapshot.val().expiresAt),
+    Number(claim.expiresAt),
+  );
+  resources.guestActive.lastSeen = Date.now();
+  resources.guestActive.expiresAt = claim.expiresAt;
+  resources.hostActive.lastSeen = Date.now();
+  resources.hostActive.expiresAt = Number(hostClaimSnapshot.val().expiresAt);
+  if (activeExpiresAt <= Date.now()) {
+    return { accepted: false, reason: "offer-stale" };
+  }
+  const transition = await acquireSoloSessionV2RoomTransition(
+    data.roomId,
+    resources.room,
+    "accept",
+  );
+  if (!transition.acquired) {
+    return { accepted: false, reason: transition.reason };
+  }
+  resources.room = transition.room;
+  const guestReservation = await soloSessionActiveRef(uid, data.sessionId)
+    .transaction((currentValue) => {
+      if (currentValue
+          && Number(currentValue.expiresAt || 0) > Date.now()
+          && !(recordAttemptMatches(currentValue, resources)
+            && resourceFenceMatches(currentValue, guestQueue))) return;
+      return resources.guestActive;
+    });
+  if (!guestReservation.committed) {
+    await clearSoloSessionV2RoomTransition(
+      data.roomId,
+      soloSessionV2TransitionExpected(resources),
+      "accept",
+      transition.token,
+    );
+    return { accepted: false, reason: "occupied" };
+  }
+  resources.guestActive = guestReservation.snapshot.val();
+  const [finalClaim, finalRoom, finalOffer, finalHostActive, fenceStillValid] =
+    await Promise.all([
+    soloSessionClaimRef(uid).get(),
+    realtime.ref(`online/rooms/${data.roomId}`).get(),
+    offerRef.get(),
+    soloSessionActiveRef(hostUid, hostSession.sessionId).get(),
+    readSoloSessionV2MaterializationFence(
+      resources,
+      {
+        ...room.players[hostUid],
+        uid: hostUid,
+        ...hostSession,
+        leaseToken: hostActive.leaseToken,
+        protocolVersion: SOLO_SESSION_PROTOCOL_VERSION,
+      },
+      guestQueue,
+    ),
+  ]);
+  if (!claimMatches(finalClaim.val(), {
+    sessionId: data.sessionId,
+    leaseToken: data.leaseToken,
+    generation: guestSession.generation,
+    now: Date.now(),
+  })
+      || finalRoom.val()?.status !== "offered"
+      || !roomTransitionOwned(finalRoom.val(), "accept", transition.token)
+      || !recordAttemptMatches(finalRoom.val(), resources)
+      || !recordSessionsMatch(finalOffer.val(), resources)
+      || !exactSoloSessionV2ActiveIdentity(
+        finalHostActive.val(),
+        resources.hostActive,
+        hostUid,
+        hostSession.sessionId,
+      )
+      || !fenceStillValid) {
+    await removeSoloSessionV2Record(
+      soloSessionActiveRef(uid, data.sessionId),
+      (currentValue) => exactSoloSessionV2ActiveIdentity(
+        currentValue,
+        resources.guestActive,
+        uid,
+        data.sessionId,
+      ),
+    );
+    await clearSoloSessionV2RoomTransition(
+      data.roomId,
+      soloSessionV2TransitionExpected(resources),
+      "accept",
+      transition.token,
+    );
+    return { accepted: false, reason: "offer-stale" };
+  }
+  if (!await activateSoloSessionV2Room(data.roomId, resources, transition.token)) {
+    const currentRoom = (await realtime.ref(`online/rooms/${data.roomId}`).get()).val();
+    if (currentRoom?.status !== "active") {
+      await removeSoloSessionV2Record(
+        soloSessionActiveRef(uid, data.sessionId),
+        (currentValue) => exactSoloSessionV2ActiveIdentity(
+          currentValue,
+          resources.guestActive,
+          uid,
+          data.sessionId,
+        ),
+      );
+      await clearSoloSessionV2RoomTransition(
+        data.roomId,
+        soloSessionV2TransitionExpected(resources),
+        "accept",
+        transition.token,
+      );
+    }
+    return { accepted: false, reason: "offer-stale" };
+  }
+  if (!await finalizeAcceptedSoloSessionV2Match(
+    data.roomId,
+    resources,
+    transition.token,
+  )) {
+    await abortFailedSoloSessionV2Activation(resources, transition.token, uid);
+    throw new Error("solo session V2 acceptance finalization failed");
+  }
+  const completedRoom = (await realtime.ref(`online/rooms/${data.roomId}`).get()).val();
+  return acceptedSoloSessionV2Response(data.roomId, completedRoom)
+    || { accepted: false, reason: "room-invalid" };
+}
+
+async function cancelSoloSessionV2Match(uid, data, { expireOnly = false } = {}) {
+  const [claimSnapshot, roomSnapshot] = await Promise.all([
+    soloSessionClaimRef(uid).get(),
+    realtime.ref(`online/rooms/${data.roomId}`).get(),
+  ]);
+  const claim = normalizeClaim(claimSnapshot.val());
+  const room = roomSnapshot.val();
+  if (!claim
+      || claim.sessionId !== data.sessionId
+      || claim.leaseToken !== data.leaseToken
+      || claim.expiresAt <= Date.now()
+      || !roomMatchesSessionV2(room, {
+        uid,
+        sessionId: data.sessionId,
+        generation: claim.generation,
+        roomId: data.roomId,
+      })) return { cancelled: false, reason: "not-owner", status: "" };
+  const activeAbortRequested = !expireOnly
+    && room.status === "active"
+    && (data.abort === true || Boolean(room.destroyed));
+  if (room.status === "active") {
+    if (!activeAbortRequested) {
+      return { cancelled: false, reason: "active", status: "active" };
+    }
+  } else if (room.status !== "offered") {
+    return { cancelled: false, reason: "terminal", status: String(room.status || "") };
+  }
+  const priorAbort = room.destroyed?.reason === "session-abort"
+    && room.destroyed?.attemptId === room.attemptId
+    && room.destroyed?.connectionGeneration === room.connectionGeneration;
+  const action = expireOnly ? "expire" : "cancel";
+  const transition = priorAbort
+    ? {
+      acquired: true,
+      room,
+      token: "",
+    }
+    : await acquireSoloSessionV2RoomTransition(
+      data.roomId,
+      room,
+      action,
+      { allowActiveCancel: activeAbortRequested },
+    );
+  if (!transition.acquired) {
+    return {
+      cancelled: false,
+      reason: transition.reason,
+      status: String(room.status || ""),
+    };
+  }
+  const activeRoom = transition.room.status === "active";
+  const hostUid = transition.room.hostUid;
+  const guestUid = transition.room.guestUid;
+  const hostSession = transition.room.sessions?.[hostUid];
+  const guestSession = transition.room.sessions?.[guestUid];
+  if (!hostUid || !guestUid || !hostSession || !guestSession) {
+    if (!priorAbort) {
+      await clearSoloSessionV2RoomTransition(
+        data.roomId,
+        transition.room,
+        action,
+        transition.token,
+      );
+    }
+    return {
+      cancelled: false,
+      reason: "stale",
+      status: String(transition.room.status || ""),
+    };
+  }
+  const [
+    permitSnapshot,
+    hostActiveSnapshot,
+    guestActiveSnapshot,
+    hostQueueSnapshot,
+    guestQueueSnapshot,
+  ] = await Promise.all([
+    realtime.ref(`online/soloMatchPermitsV2/${data.roomId}`).get(),
+    soloSessionActiveRef(hostUid, hostSession?.sessionId).get(),
+    soloSessionActiveRef(guestUid, guestSession?.sessionId).get(),
+    soloSessionQueueRef(hostUid, hostSession?.sessionId).get(),
+    soloSessionQueueRef(guestUid, guestSession?.sessionId).get(),
+  ]);
+  const resources = soloSessionV2ResourcesFromStored(
+    data.roomId,
+    transition.room,
+    permitSnapshot.val(),
+    {
+      hostActive: hostActiveSnapshot.val(),
+      guestActive: guestActiveSnapshot.val(),
+      hostQueue: hostQueueSnapshot.val(),
+      guestQueue: guestQueueSnapshot.val(),
+      requireBothActive: activeRoom,
+    },
+  );
+  if (!resources) {
+    if (!priorAbort) {
+      await clearSoloSessionV2RoomTransition(
+        data.roomId,
+        transition.room,
+        action,
+        transition.token,
+      );
+    }
+    return {
+      cancelled: false,
+      reason: "stale",
+      status: String(transition.room.status || ""),
+    };
+  }
+  resources.permitWasStored = permitSnapshot.exists();
+  const cleaned = await cleanupSoloSessionV2Match(resources, {
+    restoreQueue: !activeRoom,
+    transitionAction: priorAbort ? "" : action,
+    transitionToken: transition.token,
+    destroyActive: activeRoom,
+    destroyedByUid: uid,
+  });
+  if (!cleaned) {
+    return {
+      cancelled: false,
+      reason: "cleanup-incomplete",
+      status: String(transition.room.status || ""),
+    };
+  }
+  return {
+    cancelled: true,
+    status: activeRoom ? "destroyed" : "expired",
+  };
+}
+
+async function dispatchSoloSessionAction(uid, data) {
+  await consumeSoloSessionActionRate(uid, data.action);
+  if (data.action === "claim") return claimSoloSessionV2(uid, data);
+  if (data.action === "heartbeat") return heartbeatSoloSessionV2(uid, data);
+  if (data.action === "release") return releaseSoloSessionV2(uid, data);
+  if (data.action === "try_match") return trySoloSessionV2Match(uid, data);
+  if (data.action === "accept") return acceptSoloSessionV2Match(uid, data);
+  if (data.action === "cancel") return cancelSoloSessionV2Match(uid, data);
+  if (data.action === "expire") {
+    return cancelSoloSessionV2Match(uid, data, { expireOnly: true });
+  }
+  throw new HttpsError("invalid-argument", "未対応の通常版1on1セッション操作です。");
+}
+
+exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (request) => {
+  const uid = requireUid(request);
+  const data = requireSoloSessionActionData(request.data);
+  try {
+    return await dispatchSoloSessionAction(uid, data);
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("soloSessionAction failed", {
+      action: data.action,
+      category: error instanceof TypeError ? "validation" : "internal",
+    });
+    throw new HttpsError(
+      "internal",
+      "通常版1on1のセッション処理を完了できませんでした。",
+    );
+  }
+});
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -4674,6 +7449,8 @@ async function accountHasActiveSession(uid) {
     ...realtimePaths.map(({ path }) => realtime.ref(`online/${path}/${uid}`).get()),
     marketActiveRef(uid).get(),
     marketQueueRef(uid).get(),
+    soloSessionClaimRef(uid).get(),
+    liveSoloSessionV2Room(uid, now),
   ]);
   const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
   if (realtimeSnapshots.some((snapshot, index) => {
@@ -4688,6 +7465,10 @@ async function accountHasActiveSession(uid) {
   if (activeChecks.some(Boolean)) return true;
   const marketActiveSnapshot = snapshots[realtimePaths.length];
   const marketQueueSnapshot = snapshots[realtimePaths.length + 1];
+  const soloSessionClaimSnapshot = snapshots[realtimePaths.length + 2];
+  const soloSessionRoom = snapshots[realtimePaths.length + 3];
+  const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
+  if ((soloSessionClaim && soloSessionClaim.expiresAt > now) || soloSessionRoom) return true;
   const marketQueue = marketQueueSnapshot.data();
   if (marketQueueSnapshot.exists
       && marketQueue?.status === "waiting"

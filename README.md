@@ -305,6 +305,10 @@ Firebaseの専用待機キューで採点傾向が近い相手を優先してマ
 
 Realtime Databaseのルールは、各ユーザーが自分の待機情報・採点・順位投票・モード別戦績・総合戦績・移行前の期間別ランキング・一度限りの対戦結果申告だけを書けること、各ルームの参加者だけがルーム情報を読めることを制約します。期間キーがサーバー切替日以降のランキング、AnjuPay残高、デイリー進捗、購入済み商品、期間戦績報酬、ランキング実績、報酬済みルーム台帳、推しカード本体・所有者・ユーザー別公開IDへのクライアント直接書き込みは禁止し、Cloud FunctionsのAdmin SDKだけが更新します。推し値市場の公開参加状況もクライアント書き込みを禁止し、Functionsが参加単位のランダムIDと集計に必要なロール・最終通信時刻・状態世代だけを更新します。推し値市場のRealtime Databaseルームは、取引中の参加者本人のチャット・接続状態と、相手宛てWebRTCシグナルだけを書けます。終了後は新規投稿を拒否し、シグナル削除とオフライン化だけを許可します。市場の取引状態・ウォレット・ランキング・推し値商店・常連帳・ブロック関係・売り手買い手ペア・肯定タグ台帳・パトロン循環基金・補填台帳・月間方針投票・推薦枠はFirestore Rulesでクライアントの直接読み書きを全面禁止し、Callable Functionsだけが本人の権限、App Check、成約履歴を検証して更新します。任意公開プロフィールもFunctionsが本人の実績ドキュメントへだけマージします。ランキング、推薦棚、店主カードの応答には匿名UIDを含めず、表示名・ゲーム内店コード・必要な実績・本人が公開した項目だけを返します。Firebaseコンソールでルールを変更する場合は、リポジトリ内の両Rulesも同じ内容に保ってください。
 
+通常版1on1は、Functionsが発行する60秒リースとセッション世代を使うV2待機列へ移行します。ルーム、招待、active、permit、lockはFunctionsだけが生成し、シグナルと対戦中の書き込みはルームに固定されたセッション世代と現在のリースが一致する場合だけ許可します。同じ匿名アカウントを別タブ・別端末から使った場合は新しい対戦を並行開始せず、同一タブ複製の引き継ぎもBroadcastChannelで旧ページが応答しないことを確認してから行います。接続開始から15秒で一度だけICE restartを行い、それでも接続できない場合はルームを完全に片付けてから一度だけ別相手を自動検索します。いったんDataChannelが開いた対戦、手動取消、非表示ページ、オフライン状態では自動再検索しません。
+
+通常版1on1のICE設定は認証・App Check済みの`getP2pIceServers`がCloudflare Realtime TURNの短期資格情報を返します。長期API tokenとTURN key IDはSecret ManagerからFunctionsだけが読み、ブラウザ、Realtime Database、ログへ保存しません。`reportP2pConnectivity`は接続状態、候補種別、transport、所要時間だけを許可し、IP、SDP、ICE candidate、User-Agent、UID、任意フィールドを拒否します。保存時は日ごとのHMACへ置き換え、診断本文と日付インデックスは最低14日が満了した後、書込み時の保守処理とJST 03:30の日次`cleanupP2pDiagnostics`で日単位に段階削除します。
+
 通常型1on1の顔なじみ希望・相互関係・ブロック・再会間隔はFirestoreのサーバー専用領域へ保存し、クライアントから直接読み書きできません。Callableの帳面・非表示管理はランダムな40桁IDと表示名だけを返し、相手UIDや相手側の選択を返しません。再会段階ではFunctionsが候補とブロックを再確認し、期限付きpermit、両者lock、完全なルームと招待をサーバー側で作成します。クライアントは有効なpermit・両lock・招待が揃った時だけ招待済みから対戦中へ進めます。クライアントの再会確認は即時反映用ですが、確認送信を省略しても次のマッチング前に期限付きlockとpermitをFunctionsが回収し、対戦中への遷移を確認して再会優先の24時間間隔を記録します。通信失敗時はpermitを先に消さず、次回の回収へ残します。なお通常型1on1の既存マッチング、ルーム、WebRTCシグナルは対戦相手を識別するため認証UIDを内部通信キーとして使用しており、UIDそのものを全認証ユーザーから秘匿する設計ではありません。
 
 ## Firebaseへデプロイする
@@ -321,6 +325,34 @@ npx --yes firebase-tools deploy --only hosting --non-interactive
 初回はこの順番を守り、先にクライアントからのAnjuPay残高・デイリー進捗・期間戦績報酬への直接書き込みをRulesで閉じてから、Functionsと新しいフロントエンドを公開します。旧版のRealtime DatabaseにあるAnjuPay残高と購入済み商品は最初のFunctions利用時に一度だけFirestoreへ移行しますが、旧ルール下で作られた値の正当性を後から完全には判別できません。公開前にRealtime Databaseをエクスポートして異常な高残高・大量商品を確認してください。デイリー進捗と期間戦績は安全のため旧値を移行せず、新しいサーバー台帳から開始します。
 
 推しカード版を既存本番へ追加するときは、新しい`economyAction`と`valueMarketAction`を先に配備し、その後にRealtime Database RulesとHostingを配備します。旧商品ID `feature_top_message` を変更しないため購入権はそのまま引き継がれ、Functions配備後も旧クライアントの公開ひとことは新しいRulesへ切り替わるまで利用できます。
+
+### 通常版1on1 V2・TURNの公開
+
+Cloudflare Realtime TURNで作成したサーバーのkey IDとAPI token、および32byte以上のランダムな診断HMAC secretを、値をファイルへ残さずFirebase Secret Managerへ登録します。secret名は次の3つで、値そのものはGit、`.env`、README、デプロイログへ記載しません。
+
+```text
+CLOUDFLARE_TURN_KEY_ID
+CLOUDFLARE_TURN_API_TOKEN
+P2P_DIAGNOSTIC_HMAC_SECRET
+```
+
+本番切替は、旧クライアントを止めないため次の順番で行います。
+
+1. Cloudflareの短期ICE credential APIがHTTP 201を返し、STUNとTURN/TURNSの両方を含むことを運営環境から確認する。
+2. `soloSessionAction`、`getP2pIceServers`、`reportP2pConnectivity`、日次削除の`cleanupP2pDiagnostics`に加え、旧matcherとの相互フェンスを持つ`soloFamiliarAction`とV2対戦中の移行を拒否する`accountTransfer`を先に配備する。新規3 Callableは段階設定に関係なくApp Checkを常時強制するため、本番ドメインの正規通信がVerifiedであることを確認する。
+3. `database.rules.json`を配備する。V2 claimが存在しない旧クライアントはlegacy経路を継続できる。
+4. 新旧Functions revisionの入れ替わり中に旧matcherとV2 matcherが交差しないよう、Functions配備完了から90秒以上待つ。この間はHostingを配備せず、`soloSessionAction`の正規呼び出しが新revisionで成功することを確認する。
+5. `p2p-hardening-v2`のキャッシュキーを含むHostingを配備する。
+6. Wi-Fi同士だけでなく、家庭Wi-Fi対モバイル回線、iPhone Safari対PCブラウザでも2アカウントの成立、取消、ページ再読込、同一アカウントの別タブ拒否、15秒timeout後の一度だけの再試行を確認する。診断で`candidateType: relay`が記録される試験も1件確認する。
+
+```powershell
+npx --yes firebase-tools deploy --only functions:soloSessionAction,functions:getP2pIceServers,functions:reportP2pConnectivity,functions:cleanupP2pDiagnostics,functions:soloFamiliarAction,functions:accountTransfer --non-interactive
+npx --yes firebase-tools deploy --only database --non-interactive
+Start-Sleep -Seconds 90
+npx --yes firebase-tools deploy --only hosting --non-interactive
+```
+
+切り戻す場合はHostingを先に旧版へ戻し、V2クライアントが止まってから90秒以上待ちます。V2のFunctionsとRulesは旧クライアントと互換なので、障害調査中は残して構いません。Rulesを先に旧版へ戻すと、配信済みV2クライアントの待機・シグナル・cleanupが拒否されるため避けます。
 
 AnjuPay履歴を既存本番へ導入するときは、旧Functionsインスタンスが履歴を記録しないまま残高を更新する時間帯を作らないため、事前準備後に三段階で有効化します。
 
@@ -432,11 +464,15 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 - `functions/account-transfer.js`: 使い捨て引き継ぎコードの生成・正規化・ハッシュ・再試行制御
 - `functions/market-presence-state.js`: 市場プレゼンスの状態世代・終端競合を防ぐ純粋関数
 - `functions/app-check-rollout.js`: Callable App Checkの監視・市場移行・段階強制ポリシー
+- `functions/p2p-connectivity.js`: Cloudflare TURN応答検証、匿名接続診断、レート制限、14日保持判定
+- `functions/solo-session-v2.js`: 通常版1on1のセッションリース、V2待機列、世代・attemptフェンス
 - `functions/product-catalog.js`: サーバー側ショップ価格カタログ
+- `online-p2p-hardening.mjs`: 接続timeout、1回のICE restart、cleanup後の安全な自動再検索
+- `online-session-guard.mjs`: タブ別セッション、多重起動防止、V2シグナル消費判定
 
 ## 現時点の制約
 
-- WebRTCは公開STUNサーバーを使用し、TURNサーバーは未設定です。厳しいNATや組織ネットワーク同士ではP2P接続できない場合があります。戦略型の短尺映像と品評会追加メディアも同じP2P接続を使うため、各専用DataChannelが利用できない時は該当メディア送受信だけを無効にし、品評会チャットや対戦進行は継続します。3接続が必要な2on2・バトルロワイヤルは、1on1より接続失敗の影響を受けやすくなります。
+- 通常版1on1はCloudflare Realtime TURNを利用します。TURN自体の障害、FunctionsまたはApp Checkの拒否時は公開STUNへ安全に縮退するため、その間は厳しいNATや組織ネットワーク同士で接続できない場合があります。戦略型1on1、推し値市場、2on2、バトルロワイヤルは現時点では従来どおりSTUN中心です。戦略型の短尺映像と品評会追加メディアはDataChannelが利用できない時に該当メディア送受信だけを無効にし、品評会チャットや対戦進行は継続します。3接続が必要な2on2・バトルロワイヤルは、1on1より接続失敗の影響を受けやすくなります。
 - Google保護または引き継ぎを行っていない匿名アカウントはブラウザのサイトデータに紐づき、サイトデータを消すと復元できません。Google保護後はUIDに保存したオンラインデータを復元できますが、端末保存したプロフィール画像・対戦素材・音声・設定は対象外で再登録が必要です。
 - 採点の書き換え先はセキュリティルールで本人の領域に限定していますが、通常対戦の採点・勝敗自体は完全な権威サーバー方式ではありません。
 - サーバー切替日より前に始まったオンライン総合ランキングは従来のカジュアル表示で、期間終了まで現在順位を維持します。この移行前データへランキング実績やAnjuPay報酬を後付けしません。切替日以降はCloud Functionsが検証済み試合台帳から期間戦績とRATE変動を確定し、Realtime Databaseには匿名UIDを含まない公開ミラーだけを書きます。ランキング実績は名誉記録でAnjuPay報酬を発生させません。AnjuPayを発行するデイリー・期間戦績と、推し値市場のAnjuPay移動・独立ランキングもCloud Functionsで確定します。

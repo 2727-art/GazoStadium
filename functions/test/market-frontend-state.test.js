@@ -64,9 +64,13 @@ test("landing opens the existing market rankings after authentication", () => {
     /async function ensureAuthenticated\([\s\S]*?if \(openLandingRankings\) \{\s*await openRankings\("landing"\);/,
     "the rankings callable must wait until authentication and economy initialization finish",
   );
-  const authenticationBody = browser.match(
-    /async function ensureAuthenticated\([^)]*\) \{([\s\S]*?)\n\}\n\nasync function loadMarketShop/,
-  )?.[1] || "";
+  const authenticationStart = browser.indexOf("async function ensureAuthenticated");
+  const authenticationEnd = browser.indexOf(
+    "async function loadMarketShop",
+    authenticationStart,
+  );
+  assert.ok(authenticationStart >= 0 && authenticationEnd > authenticationStart);
+  const authenticationBody = browser.slice(authenticationStart, authenticationEnd);
   assert.ok(
     authenticationBody.lastIndexOf('await openRankings("landing")')
       > authenticationBody.indexOf('await economyActionCallable({ action: "initialize" })'),

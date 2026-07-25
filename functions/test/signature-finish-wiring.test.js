@@ -10,6 +10,7 @@ const online = read("online.js");
 const styles = read("styles.css");
 const index = read("index.html");
 const rules = read("database.rules.json");
+const soloSessionV2 = read("functions/solo-session-v2.js");
 
 function extract(pattern, label) {
   const match = online.match(pattern);
@@ -97,9 +98,17 @@ test("finish metadata stays P2P-only and accepts only a strict signature boolean
   assert.match(online, /finishLine: normalizeReceivedFinishLine\(transfer\.finishLine\),/);
 
   const queueWrite = extract(/await set\(queueEntryRef, \{[\s\S]*?\n  \}\);/, "normal queue write");
-  const roomWrite = extract(/await update\(roomRef, \{[\s\S]*?\n    \}\);/, "normal room write");
+  const roomResourceStart = soloSessionV2.indexOf("function buildSoloSessionV2Resources");
+  const roomResourceEnd = soloSessionV2.indexOf(
+    "function roomMatchesSessionV2",
+    roomResourceStart,
+  );
+  assert.ok(roomResourceStart >= 0 && roomResourceEnd > roomResourceStart);
+  const roomResources = soloSessionV2.slice(roomResourceStart, roomResourceEnd);
   assert.doesNotMatch(queueWrite, /finishLine|signatureCardId/);
-  assert.doesNotMatch(roomWrite, /finishLine|signatureCardId/);
+  assert.match(roomResources, /const room = \{/);
+  assert.match(roomResources, /sessions,/);
+  assert.doesNotMatch(roomResources, /finishLine|signatureCardId/);
   assert.doesNotMatch(rules, /"finishLine"/);
 });
 
@@ -124,7 +133,10 @@ test("cut-in dialog is skippable, text-safe, responsive, and reduced-motion awar
   assert.match(online, /quote\.textContent = payload\.finishLine;/);
   assert.match(online, /skip\.addEventListener\("click", clearFinishCutIn/);
   assert.match(online, /finishCutInDialog\?\.addEventListener\("cancel"/);
-  assert.match(online, /async function cleanupOnlineResources\(keepActive, targetState = state\)[\s\S]*?if \(state === targetState\) clearFinishCutIn\(\);/);
+  assert.match(
+    online,
+    /async function cleanupOnlineResources\(\s*keepActive,\s*targetState = state,[\s\S]*?\) \{[\s\S]*?if \(state === targetState\) clearFinishCutIn\(\);/,
+  );
   assert.match(styles, /\.finish-cutin-image \{[\s\S]*?object-fit: contain;/);
   assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.finish-cutin-stage/);
   assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.finish-cutin \{\s*height: 100%;/);

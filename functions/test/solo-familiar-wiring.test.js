@@ -65,44 +65,65 @@ test("familiar and block records remain behind a callable-only boundary", () => 
   assert.match(source, /soloFamiliarBlockPairRef\(uid, candidateUid\)/);
 });
 
-test("server matchmaking creates the room and offer instead of handing an unused permit to a client", () => {
+test("V2 server matchmaking materializes fenced room and offer records", () => {
   const backend = read("functions/index.js");
   const frontend = read("online.js");
-  const start = backend.indexOf("async function materializeSoloHostedMatch");
-  const end = backend.indexOf("async function trySoloServerMatch", start);
+  const start = backend.indexOf("async function trySoloSessionV2Match");
+  const end = backend.indexOf("function soloSessionV2ResourcesFromStored", start);
   const materializer = backend.slice(start, end);
   assert.ok(start >= 0 && end > start);
-  assert.match(materializer, /online\/active\/\$\{permit\.hostUid\}/);
-  assert.match(materializer, /online\/queue\/\$\{permit\.hostUid\}/);
-  assert.match(materializer, /soloHostedRoomPayload\(permit\)/);
-  assert.match(materializer, /soloHostedOfferPayload\(roomId, permit\)/);
-  assert.match(backend, /outcome: "hosted"/);
-  assert.match(backend, /const lockAcquiredAt = Date\.now\(\)/);
-  assert.match(backend, /const permitIssuedAt = Date\.now\(\)/);
-  assert.match(frontend, /result\.outcome !== "hosted"/);
-  assert.match(frontend, /adoptSoloServerHostedMatch\(candidate/);
+  assert.match(materializer, /buildSoloSessionV2Resources/);
+  assert.match(materializer, /readSoloSessionV2MaterializationFence/);
+  assert.match(materializer, /realtime\.ref\("online"\)\.update/);
+  assert.match(materializer, /\[`soloMatchPermitsV2\/\$\{roomId\}`\]: resources\.permit/);
+  assert.match(materializer, /\[`rooms\/\$\{roomId\}`\]: resources\.room/);
+  assert.match(materializer, /\[`activeV2\/\$\{selection\.host\.uid\}\/\$\{selection\.host\.sessionId\}`\]/);
+  assert.match(materializer, /\[`offersV2\/\$\{selection\.candidate\.uid\}\/\$\{selection\.candidate\.sessionId\}\/\$\{roomId\}`\]/);
+  assert.match(materializer, /outcome: "hosted"/);
+
+  const attemptStart = frontend.indexOf("async function attemptSoloServerMatch");
+  const attemptEnd = frontend.indexOf(
+    "async function restoreHostedOfferToWaiting",
+    attemptStart,
+  );
+  const attempt = frontend.slice(attemptStart, attemptEnd);
+  assert.ok(attemptStart >= 0 && attemptEnd > attemptStart);
+  assert.match(attempt, /soloSessionActionCallable\(\{\s*action: "try_match"/);
+  assert.match(attempt, /result\.outcome !== "hosted"/);
+  assert.match(attempt, /adoptSoloServerHostedMatch\(candidate/);
   assert.doesNotMatch(
-    frontend.slice(
-      frontend.indexOf("async function attemptSoloServerMatch"),
-      frontend.indexOf("async function attemptToHost"),
-    ),
-    /createOffer\(/,
+    attempt,
+    /\b(?:set|update|runTransaction)\(ref\(database, `online\/(?:rooms|activeV2|offersV2)/,
   );
 });
 
-test("cancelled or expired hosted offers restore the host queue conditionally", () => {
+test("cancelled or expired V2 offers are restored only by exact server fences", () => {
   const backend = read("functions/index.js");
-  const cleanupStart = backend.indexOf("async function cleanupSoloMatchContext");
-  const cleanupEnd = backend.indexOf("async function cancelPendingSoloMatchPermit", cleanupStart);
-  const cleanup = backend.slice(cleanupStart, cleanupEnd);
-  assert.match(cleanup, /online\/active\/\$\{participantUid\}/);
-  assert.match(cleanup, /currentValue === roomId \? null : undefined/);
-  assert.match(cleanup, /online\/queue\/\$\{hostUid\}/);
-  assert.match(cleanup, /currentValue\.roomId !== roomId/);
-  assert.match(cleanup, /state: "waiting"/);
+  const cancelStart = backend.indexOf("async function cancelSoloSessionV2Match");
+  const cancelEnd = backend.indexOf("async function dispatchSoloSessionAction", cancelStart);
+  const cancel = backend.slice(cancelStart, cancelEnd);
+  assert.ok(cancelStart >= 0 && cancelEnd > cancelStart);
+  assert.match(cancel, /claim\.sessionId !== data\.sessionId/);
+  assert.match(cancel, /claim\.leaseToken !== data\.leaseToken/);
+  assert.match(cancel, /roomMatchesSessionV2/);
+  assert.match(cancel, /if \(room\.status === "active"\)/);
+  assert.match(cancel, /if \(room\.status !== "offered"\)/);
+  assert.match(cancel, /cleanupSoloSessionV2Match\(resources, \{/);
+  assert.match(cancel, /restoreQueue: !activeRoom/);
+  assert.match(cancel, /transitionAction: priorAbort \? "" : action/);
+  assert.match(cancel, /status: activeRoom \? "destroyed" : "expired"/);
 
   const frontend = read("online.js");
-  assert.match(frontend, /async function restoreHostedOfferToWaiting/);
+  const restoreStart = frontend.indexOf("async function restoreHostedOfferToWaiting");
+  const restoreEnd = frontend.indexOf("async function finishHostedOfferAsTerminal", restoreStart);
+  const restore = frontend.slice(restoreStart, restoreEnd);
+  assert.ok(restoreStart >= 0 && restoreEnd > restoreStart);
+  assert.match(restore, /soloSessionActionCallable\(\{/);
+  assert.match(restore, /action: "expire"/);
+  assert.match(restore, /sessionId: expectedState\.clientSessionId/);
+  assert.match(restore, /leaseToken: expectedState\.clientLeaseToken/);
+  assert.match(restore, /roomId,/);
+  assert.doesNotMatch(restore, /\b(?:set|update|remove|runTransaction)\(ref\(database/);
   const terminalStart = frontend.indexOf("async function finishHostedOfferAsTerminal");
   const terminalEnd = frontend.indexOf("function registerHostedOfferMonitor", terminalStart);
   const terminalCleanup = frontend.slice(terminalStart, terminalEnd);
@@ -136,11 +157,27 @@ test("cancelled or expired hosted offers restore the host queue conditionally", 
     frontendCleanupStart,
   );
   const matchmakingCleanup = frontend.slice(frontendCleanupStart, frontendCleanupEnd);
-  assert.match(matchmakingCleanup, /current === "offered" \? "expired" : undefined/);
-  assert.match(matchmakingCleanup, /pendingHostedOffer\.targetUid/);
+  assert.doesNotMatch(matchmakingCleanup, /soloSessionActionCallable/);
+  assert.doesNotMatch(matchmakingCleanup, /\b(?:remove|runTransaction)\(ref\(database/);
+  assert.doesNotMatch(matchmakingCleanup, /online\/active(?:V2)?\//);
+
+  const onlineCleanupEnd = frontend.indexOf("function releaseRemoteImage", frontendCleanupEnd);
+  const onlineCleanup = frontend.slice(frontendCleanupEnd, onlineCleanupEnd);
+  assert.match(
+    onlineCleanup,
+    /const cancelRoomId = activeRoomId \|\| targetState\.pendingOffer\?\.roomId \|\| ""/,
+  );
+  const cancelIndex = onlineCleanup.indexOf(
+    "await cancelSoloSessionRoomOnce(cancelRoomId, targetState)",
+  );
+  const releaseIndex = onlineCleanup.indexOf(
+    "await releaseSoloSessionLease(targetState)",
+    cancelIndex,
+  );
+  assert.ok(cancelIndex >= 0 && releaseIndex > cancelIndex);
 });
 
-test("the initial queue timestamp is taken immediately before registration and preserved on recovery", () => {
+test("the initial V2 queue timestamp is preserved by fenced server recovery", () => {
   const frontend = read("online.js");
   const beginStart = frontend.indexOf("async function beginMatchmaking");
   const beginEnd = frontend.indexOf("async function startPublicPresence", beginStart);
@@ -149,71 +186,68 @@ test("the initial queue timestamp is taken immediately before registration and p
   const joinedAtIndex = begin.indexOf("const joinedAt = serverNow()", queueRefIndex);
   const queueSetIndex = begin.indexOf("await set(queueEntryRef", joinedAtIndex);
   assert.ok(queueRefIndex >= 0 && joinedAtIndex > queueRefIndex && queueSetIndex > joinedAtIndex);
-  assert.match(begin.slice(joinedAtIndex, queueSetIndex + 500), /joinedAt,\s+lastSeen: joinedAt/);
+  const queueSetEnd = begin.indexOf("\n    });", queueSetIndex);
+  assert.ok(queueSetEnd > queueSetIndex);
+  const queueWrite = begin.slice(queueSetIndex, queueSetEnd);
+  assert.match(queueWrite, /sessionId: expectedState\.clientSessionId/);
+  assert.match(queueWrite, /leaseToken: expectedState\.clientLeaseToken/);
+  assert.match(queueWrite, /generation: expectedState\.soloSessionGeneration/);
+  assert.match(queueWrite, /joinedAt,\s+lastSeen: joinedAt/);
 
-  const restoreStart = frontend.indexOf("async function restoreHostedOfferToWaiting");
-  const restoreEnd = frontend.indexOf("async function finishHostedOfferAsTerminal", restoreStart);
-  const restore = frontend.slice(restoreStart, restoreEnd);
-  assert.match(restore, /lastSeen: restoredLastSeen/);
-  assert.doesNotMatch(restore, /joinedAt: restoredLastSeen/);
-  assert.match(restore, /releaseActiveReservation\(roomId, expectedState\)/);
-  assert.doesNotMatch(restore, /runTransaction\(ref\(database, `online\/active/);
+  const backend = read("functions/index.js");
+  const restoreStart = backend.indexOf("async function restoreSoloSessionV2Queue");
+  const restoreEnd = backend.indexOf("function recordAttemptMatches", restoreStart);
+  const restore = backend.slice(restoreStart, restoreEnd);
+  assert.ok(restoreStart >= 0 && restoreEnd > restoreStart);
+  assert.match(restore, /currentValue\?\.sessionId !== entry\.sessionId/);
+  assert.match(restore, /currentValue\?\.generation !== entry\.generation/);
+  assert.match(restore, /currentValue\.roomId !== resources\.hostLock\.roomId/);
+  assert.match(restore, /currentValue\.attemptId !== resources\.hostLock\.attemptId/);
+  assert.match(restore, /claimMatches\(claimSnapshot\.val\(\)/);
+  assert.match(restore, /const next = \{\s*\.\.\.currentValue,\s*state: "waiting",\s*lastSeen: now,/);
+  assert.doesNotMatch(restore, /joinedAt\s*:/);
 });
 
-test("active reservations are disconnect-protected before room setup and safely handed off", () => {
+test("V2 active reservations stay server-owned and client cleanup is callable-fenced", () => {
   const frontend = read("online.js");
-  const cancelStart = frontend.indexOf("async function cancelActiveReservationDisconnect");
+  const cancelStart = frontend.indexOf("async function cancelSoloSessionRoomOnce");
+  const releaseStart = frontend.indexOf("async function releaseActiveReservation", cancelStart);
   const armStart = frontend.indexOf("async function armActiveReservationDisconnect");
-  const disconnectHelpers = frontend.slice(cancelStart, armStart);
+  const cancel = frontend.slice(cancelStart, releaseStart);
+  const release = frontend.slice(releaseStart, armStart);
   const armEnd = frontend.indexOf("async function beginMatchmaking", armStart);
   const arm = frontend.slice(armStart, armEnd);
-  assert.ok(cancelStart >= 0 && armStart > cancelStart && armEnd > armStart);
-  assert.ok(
-    disconnectHelpers.indexOf("await handle.cancel()")
-      < disconnectHelpers.indexOf("expectedState.activeReservationDisconnect = null"),
-  );
-  const releaseStart = disconnectHelpers.indexOf("async function releaseActiveReservation");
-  const releaseEnd = disconnectHelpers.indexOf("async function clearActiveReservation", releaseStart);
-  const release = disconnectHelpers.slice(releaseStart, releaseEnd);
-  assert.match(release, /const result = await runTransaction/);
-  assert.match(release, /if \(result\.snapshot\.exists\(\)\) return false/);
-  assert.ok(
-    release.indexOf("const result = await runTransaction")
-      < release.indexOf("await cancelActiveReservationDisconnect"),
-  );
-  const clearStart = releaseEnd;
-  const clear = disconnectHelpers.slice(clearStart);
-  assert.ok(
-    clear.indexOf("await remove(") < clear.indexOf("await cancelActiveReservationDisconnect"),
-  );
-  assert.match(arm, /onDisconnect\(ref\(database, `online\/active\/\$\{expectedState\.uid\}`\)\)/);
-  assert.match(arm, /await handle\.remove\(\)/);
-  assert.match(arm, /await handle\.cancel\(\)\.catch/);
+  assert.ok(cancelStart >= 0 && releaseStart > cancelStart && armStart > releaseStart && armEnd > armStart);
+  assert.match(cancel, /soloSessionCancelRoomId === normalizedRoomId/);
+  assert.match(cancel, /soloSessionCancelPromise/);
+  assert.match(cancel, /soloSessionActionCallable\(\{/);
+  assert.match(cancel, /action: "cancel"/);
+  assert.match(cancel, /sessionId: expectedState\.clientSessionId/);
+  assert.match(cancel, /leaseToken: expectedState\.clientLeaseToken/);
+  assert.match(cancel, /roomId: normalizedRoomId/);
+  assert.match(release, /cancelSoloSessionRoomOnce\(roomId, expectedState\)/);
+  assert.doesNotMatch(release, /online\/activeV2/);
+  assert.doesNotMatch(release, /\b(?:remove|set|update|runTransaction)\(ref\(database/);
+  assert.match(arm, /expectedState\.soloSessionLeaseHeld/);
+  assert.match(arm, /contextIsCurrent\(\)/);
+  assert.doesNotMatch(arm, /\bonDisconnect\(|online\/activeV2|remove\(|set\(|update\(/);
 
   const adoptStart = frontend.indexOf("async function adoptSoloServerHostedMatch");
-  const adoptEnd = frontend.indexOf("async function createOffer", adoptStart);
+  const adoptEnd = frontend.indexOf("async function expireOffer", adoptStart);
   const adopt = frontend.slice(adoptStart, adoptEnd);
   assert.ok(
     adopt.indexOf("armActiveReservationDisconnect") < adopt.indexOf("online/rooms/${roomId}"),
   );
   assert.match(adopt, /releaseActiveReservation\(roomId, expectedState\)/);
-  const createStart = frontend.indexOf("async function createOffer");
-  const createEnd = frontend.indexOf("async function expireOffer", createStart);
-  const create = frontend.slice(createStart, createEnd);
-  assert.ok(
-    create.indexOf("const reservation = await runTransaction")
-      < create.indexOf("armActiveReservationDisconnect"),
-  );
-  assert.match(create, /releaseActiveReservation\(roomId, expectedState\)/);
 
   const acceptStart = frontend.indexOf("async function acceptOffer");
   const acceptEnd = frontend.indexOf("async function drainIncomingOffers", acceptStart);
   const accept = frontend.slice(acceptStart, acceptEnd);
-  const reservationIndex = accept.indexOf("const reservation = await runTransaction");
-  const disconnectIndex = accept.indexOf("armActiveReservationDisconnect", reservationIndex);
-  const activateIndex = accept.indexOf('await set(roomStatusRef, "active")', disconnectIndex);
-  assert.ok(reservationIndex >= 0 && disconnectIndex > reservationIndex && activateIndex > disconnectIndex);
+  assert.match(accept, /soloSessionActionCallable\(\{\s*action: "accept"/);
+  assert.match(accept, /sessionId: state\.clientSessionId/);
+  assert.match(accept, /leaseToken: state\.clientLeaseToken/);
   assert.match(accept, /releaseActiveReservation\(roomId, expectedState\)/);
+  assert.doesNotMatch(accept, /\b(?:set|update|runTransaction)\(ref\(database/);
 
   const enterStart = frontend.indexOf("async function enterRoom");
   const enterEnd = frontend.indexOf("function isCurrentRoomSetupContext", enterStart);
@@ -227,17 +261,19 @@ test("active reservations are disconnect-protected before room setup and safely 
   const setup = frontend.slice(setupStart, setupEnd);
   assert.match(setup, /armActiveReservationDisconnect/);
   assert.match(setup, /state\.disconnectHandles\.push\(presenceDisconnect\)/);
-  assert.doesNotMatch(setup, /onDisconnect\(ref\(database, `online\/active/);
+  assert.match(setup, /soloRoomPresencePath\(/);
+  assert.doesNotMatch(setup, /onDisconnect\(ref\(database, `online\/activeV2/);
 
   const cleanupStart = frontend.indexOf("async function cleanupMatchmaking");
   const cleanupEnd = frontend.indexOf("async function cleanupOnlineResources", cleanupStart);
   const cleanup = frontend.slice(cleanupStart, cleanupEnd);
-  assert.match(cleanup, /if \(!keepActive\) removals\.push\(clearActiveReservation\(targetState\)\)/);
-  assert.doesNotMatch(cleanup, /await Promise\.allSettled\(removals\);\s+if \(!keepActive\).*cancelActiveReservationDisconnect/);
+  assert.doesNotMatch(cleanup, /online\/activeV2/);
+  assert.doesNotMatch(cleanup, /\b(?:remove|runTransaction)\(ref\(database/);
   const onlineCleanupStart = cleanupEnd;
   const onlineCleanupEnd = frontend.indexOf("function releaseRemoteImage", onlineCleanupStart);
   const onlineCleanup = frontend.slice(onlineCleanupStart, onlineCleanupEnd);
-  assert.match(onlineCleanup, /keepActive \? Promise\.resolve\(\) : clearActiveReservation\(targetState\)/);
+  assert.match(onlineCleanup, /if \(!keepActive\) await releaseSoloSessionLease\(targetState\)/);
+  assert.doesNotMatch(onlineCleanup, /online\/activeV2/);
 });
 
 test("rollout, matching index, and TTLs fail closed before reunion activation", () => {

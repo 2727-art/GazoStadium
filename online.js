@@ -95,6 +95,27 @@ import {
   isOnlineStateTransitionCurrent,
   runOnlineOpponentDestroyedTransition,
 } from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v1";
+import {
+  ONLINE_P2P_RECOVERY_PHASES,
+  createOnlineP2pGenerationToken,
+  createOnlineP2pRecoveryState,
+  getOnlineP2pRecoveryTimer,
+  isOnlineP2pOpponentCoolingDown,
+  transitionOnlineP2pRecovery,
+} from "./online-p2p-hardening.mjs?v=online-p2p-hardening-v2";
+import {
+  ONLINE_SESSION_LEASE_DEFAULTS,
+  ONLINE_SESSION_PROTOCOL_VERSION,
+  ONLINE_SESSION_STORAGE_KEY,
+  createOnlineSessionToken,
+  createOnlineSessionFence,
+  decideOnlineSessionHeartbeatResult,
+  decideOnlineSignalEnvelope,
+  isValidOnlineSessionId,
+  isOnlineSessionLeaseOwner,
+  resolveOnlineSessionId,
+  shouldConsumeOnlineSignal,
+} from "./online-session-guard.mjs?v=online-session-guard-v2";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -335,9 +356,17 @@ const ENGAWA_RESPONSES = Object.freeze([
 ]);
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
+const SOLO_REMATCH_SOFT_WIDEN_MS = 20_000;
+const FALLBACK_ICE_SERVERS = Object.freeze([
+  Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
+  Object.freeze({ urls: "stun:stun1.l.google.com:19302" }),
+]);
 
 const economyActionCallable = httpsCallable(functions, "economyAction");
 const soloFamiliarActionCallable = httpsCallable(functions, "soloFamiliarAction");
+const soloSessionActionCallable = httpsCallable(functions, "soloSessionAction");
+const getP2pIceServersCallable = httpsCallable(functions, "getP2pIceServers");
+const reportP2pConnectivityCallable = httpsCallable(functions, "reportP2pConnectivity");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
@@ -373,6 +402,26 @@ let publicServerTimeOffset = 0;
 let topMessageRecords = [];
 let topMessagesStatus = "idle";
 let topMessagesRequestId = 0;
+let cachedP2pIceServers = null;
+
+function loadOrCreateSoloSessionId() {
+  const generatedSessionId = createOnlineSessionToken(window.crypto);
+  try {
+    const decision = resolveOnlineSessionId({
+      storedSessionId: sessionStorage.getItem(ONLINE_SESSION_STORAGE_KEY),
+      generatedSessionId,
+    });
+    if (decision.shouldPersist) {
+      sessionStorage.setItem(ONLINE_SESSION_STORAGE_KEY, decision.sessionId);
+    }
+    return decision.sessionId;
+  } catch {
+    return generatedSessionId;
+  }
+}
+
+const clientSoloSessionId = loadOrCreateSoloSessionId();
+const clientSoloLeaseToken = createOnlineSessionToken(window.crypto);
 
 function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";
@@ -406,6 +455,22 @@ function createOnlineState() {
     roomId: "",
     room: null,
     opponentUid: "",
+    clientSessionId: clientSoloSessionId,
+    clientLeaseToken: clientSoloLeaseToken,
+    opponentSessionId: "",
+    roomConnectionGeneration: "",
+    signalingAttemptId: "",
+    soloSessionLeaseHeld: false,
+    soloSessionLease: null,
+    soloSessionGeneration: 0,
+    soloSessionFence: null,
+    soloSessionHeartbeat: null,
+    soloSessionHeartbeatInFlight: false,
+    soloSessionReleasePromise: null,
+    soloSessionReleaseStarted: false,
+    soloSessionCancelPromise: null,
+    soloSessionCancelRoomId: "",
+    soloSessionCancelResult: null,
     playerIndex: 0,
     players: [],
     round: 1,
@@ -487,9 +552,6 @@ function createOnlineState() {
     selectionTimeoutHandledRound: 0,
     selectionLocking: false,
     disconnectHandles: [],
-    activeReservationDisconnect: null,
-    activeReservationDisconnectRoomId: "",
-    activeReservationDisconnectRegistration: null,
     peer: null,
     channel: null,
     channelReady: false,
@@ -497,6 +559,18 @@ function createOnlineState() {
     incomingMessageChain: Promise.resolve(),
     peerStatus: "未接続",
     pendingIce: [],
+    p2pGenerationToken: null,
+    p2pRecovery: null,
+    p2pRecoveryTimer: null,
+    p2pRestartIce: null,
+    p2pCleanupPromise: null,
+    p2pAutoRequeueCount: 0,
+    p2pOpponentCooldown: null,
+    p2pAutoRequeueStartedAt: 0,
+    p2pAutoRequeueCancelling: false,
+    p2pTurnAvailable: false,
+    p2pStartedAt: 0,
+    p2pDiagnosticSent: new Set(),
     incomingTransfer: null,
     transferProgress: 0,
     imageTransferError: "",
@@ -3767,12 +3841,14 @@ function getStartingHp(sampleCount) {
 function requestMatchmaking() {
   const sampleCount = getDeckSampleCount();
   if (!sampleCount) {
-    beginMatchmaking();
+    beginMatchmaking().catch(handleRecoverableError);
     return;
   }
   const startingHp = getStartingHp(sampleCount);
   if (!sampleHandicapDialog || !sampleHandicapMessage || !confirmSampleMatch) {
-    if (window.confirm(`サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦を探しますか？`)) beginMatchmaking();
+    if (window.confirm(`サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦を探しますか？`)) {
+      beginMatchmaking().catch(handleRecoverableError);
+    }
     return;
   }
   sampleHandicapMessage.textContent = `サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦相手にもサンプル枚数と開始HPが表示されます。`;
@@ -4552,50 +4628,450 @@ function removeDeckItem(id) {
   render();
 }
 
+const soloSessionChannel = "BroadcastChannel" in window
+  ? new BroadcastChannel("hariai-stadium-solo-session-v2")
+  : null;
+
+soloSessionChannel?.addEventListener("message", (event) => {
+  const message = event.data;
+  if (message?.type !== "probe"
+      || message.sessionId !== state.clientSessionId
+      || message.leaseToken === state.clientLeaseToken
+      || !state.soloSessionLeaseHeld) return;
+  soloSessionChannel.postMessage({
+    type: "probe-response",
+    probeId: message.probeId,
+    sessionId: state.clientSessionId,
+    leaseToken: state.clientLeaseToken,
+  });
+});
+
+function soloQueueEntryPath(uid, sessionId) {
+  return `online/queueV2/${uid}/${sessionId}`;
+}
+
+function soloOfferPath(targetUid, targetSessionId, roomId = "") {
+  const base = `online/offersV2/${targetUid}/${targetSessionId}`;
+  return roomId ? `${base}/${roomId}` : base;
+}
+
+function soloRoomSignalPath(roomId, targetUid, targetSessionId) {
+  return `online/rooms/${roomId}/signalsV2/${targetUid}/${targetSessionId}`;
+}
+
+function soloRoomPresencePath(roomId, uid, sessionId) {
+  return `online/rooms/${roomId}/presenceV2/${uid}/${sessionId}`;
+}
+
+async function legacySoloActiveRoomIsLive(uid) {
+  const activeSnapshot = await get(ref(database, `online/active/${uid}`));
+  if (!activeSnapshot.exists()) return false;
+  const activeValue = activeSnapshot.val();
+  const roomId = String(
+    typeof activeValue === "string" ? activeValue : activeValue?.roomId || "",
+  );
+  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) return false;
+  const roomSnapshot = await get(ref(database, `online/rooms/${roomId}`));
+  const room = roomSnapshot.val();
+  if (!room || room.members?.[uid] !== true || room.destroyed) return false;
+  if (room.status === "offered") {
+    return Number(room.createdAt || 0) >= serverNow() - 60_000;
+  }
+  return room.status === "active" && room.presence?.[uid]?.online !== false;
+}
+
+async function confirmSameSessionOwnerGone(expectedState) {
+  if (!soloSessionChannel) return false;
+  const probeId = createOnlineSessionToken(window.crypto);
+  let ownerResponded = false;
+  const listener = (event) => {
+    const message = event.data;
+    if (message?.type === "probe-response"
+        && message.probeId === probeId
+        && message.sessionId === expectedState.clientSessionId
+        && message.leaseToken !== expectedState.clientLeaseToken) {
+      ownerResponded = true;
+    }
+  };
+  soloSessionChannel.addEventListener("message", listener);
+  soloSessionChannel.postMessage({
+    type: "probe",
+    probeId,
+    sessionId: expectedState.clientSessionId,
+    leaseToken: expectedState.clientLeaseToken,
+  });
+  await new Promise((resolve) => window.setTimeout(resolve, 300));
+  soloSessionChannel.removeEventListener("message", listener);
+  return !ownerResponded;
+}
+
+async function releaseSoloSessionClaimExact({
+  sessionId,
+  leaseToken,
+  generation,
+} = {}) {
+  if (!isValidOnlineSessionId(sessionId)
+      || !/^[a-f0-9]{32}$/.test(String(leaseToken || ""))
+      || !/^[A-Za-z0-9_-]{22}$/.test(String(generation || ""))) return false;
+  try {
+    const response = await soloSessionActionCallable({
+      action: "release",
+      sessionId,
+      leaseToken,
+      generation,
+    });
+    return response?.data?.released === true;
+  } catch {
+    return false;
+  }
+}
+
+async function claimSoloSessionLease(
+  expectedState = state,
+  expectedMatchmakingGeneration = expectedState.matchmakingGeneration,
+) {
+  const sessionId = expectedState.clientSessionId;
+  const leaseToken = expectedState.clientLeaseToken;
+  const contextIsCurrent = () => (
+    state === expectedState
+    && isCurrentMatchmakingGeneration(expectedMatchmakingGeneration)
+  );
+  if (!expectedState.uid || !contextIsCurrent()) return false;
+  const request = (sameSessionOwnerConfirmedGone = false) => (
+    soloSessionActionCallable({
+      action: "claim",
+      sessionId,
+      leaseToken,
+      sameSessionOwnerConfirmedGone,
+    })
+  );
+  const requestWithLegacyQueueWait = async (sameSessionOwnerConfirmedGone = false) => {
+    const retryDeadline = p2pMonotonicNow() + 50_000;
+    let notified = false;
+    while (true) {
+      if (!contextIsCurrent()) return null;
+      const result = await request(sameSessionOwnerConfirmedGone);
+      if (result?.data?.claimed !== false
+          || result.data.reason !== "legacy-waiting"
+          || !contextIsCurrent()
+          || document.visibilityState !== "visible"
+          || !navigator.onLine
+          || p2pMonotonicNow() + 5_000 > retryDeadline) {
+        return result;
+      }
+      if (!notified) {
+        showToast("前の接続が終了するのを確認しています。少しお待ちください。");
+        notified = true;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+    }
+  };
+  const abandonStaleResponse = async (candidateResponse) => {
+    if (contextIsCurrent()) return false;
+    const staleGeneration = String(candidateResponse?.data?.sessionGeneration || "");
+    const newerAttemptMayAdopt = active
+      && state.clientSessionId === sessionId
+      && state.clientLeaseToken === leaseToken
+      && !state.cleanupPromise
+      && !state.p2pAutoRequeueCancelling
+      && (
+        state.soloSessionLeaseHeld
+        || (state.screen === "matching"
+          && state.matchmakingGeneration !== expectedMatchmakingGeneration)
+      );
+    if (candidateResponse?.data?.claimed === true && !newerAttemptMayAdopt) {
+      await releaseSoloSessionClaimExact({
+        sessionId,
+        leaseToken,
+        generation: staleGeneration,
+      });
+    }
+    return true;
+  };
+  let response;
+  try {
+    response = await requestWithLegacyQueueWait(false);
+  } catch (error) {
+    if (!contextIsCurrent()) return false;
+    const reason = String(error?.details?.reason || "");
+    if (reason !== "same-session-owned-by-another-page"
+        || !await confirmSameSessionOwnerGone(expectedState)) {
+      if (reason === "occupied" || await legacySoloActiveRoomIsLive(expectedState.uid)) {
+        showToast("別のタブまたは端末で通常版1on1の対戦中です。");
+      } else {
+        showToast("通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
+      }
+      return false;
+    }
+    response = await requestWithLegacyQueueWait(true);
+  }
+  if (await abandonStaleResponse(response)) return false;
+  if (response?.data?.claimed === false) {
+    const reason = String(response.data.reason || "");
+    if (reason === "same-session-owned"
+        && await confirmSameSessionOwnerGone(expectedState)) {
+      response = await requestWithLegacyQueueWait(true);
+    } else {
+      showToast(reason === "legacy-waiting"
+        ? "前の通常版1on1の待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
+        : reason === "occupied"
+          ? "別のタブまたは端末で通常版1on1の対戦中です。"
+          : "通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
+      return false;
+    }
+  }
+  if (await abandonStaleResponse(response)) return false;
+  if (response?.data?.claimed === false) {
+    const reason = String(response.data.reason || "");
+    showToast(reason === "legacy-waiting"
+      ? "前の通常版1on1の待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
+      : "通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
+    return false;
+  }
+  const lease = response?.data?.lease;
+  const sessionGeneration = String(response?.data?.sessionGeneration || "");
+  if (!isOnlineSessionLeaseOwner(lease, {
+    sessionId,
+    leaseToken,
+  }) || !/^[A-Za-z0-9_-]{22}$/.test(sessionGeneration)) {
+    showToast("通常版1on1のセッションを確認できませんでした。もう一度お試しください。");
+    return false;
+  }
+  if (!contextIsCurrent()) {
+    await releaseSoloSessionClaimExact({
+      sessionId,
+      leaseToken,
+      generation: sessionGeneration,
+    });
+    return false;
+  }
+  expectedState.soloSessionLeaseHeld = true;
+  expectedState.soloSessionLease = lease;
+  expectedState.soloSessionGeneration = sessionGeneration;
+  expectedState.soloSessionReleasePromise = null;
+  expectedState.soloSessionReleaseStarted = false;
+  expectedState.soloSessionCancelPromise = null;
+  expectedState.soloSessionCancelRoomId = "";
+  expectedState.soloSessionCancelResult = null;
+  scheduleSoloSessionLeaseHeartbeat(expectedState);
+  return true;
+}
+
+function clearSoloSessionHeartbeat(expectedState = state) {
+  window.clearTimeout(expectedState.soloSessionHeartbeat);
+  expectedState.soloSessionHeartbeat = null;
+}
+
+function markSoloSessionLeaseLost(expectedState = state) {
+  if (!expectedState.soloSessionLeaseHeld) return;
+  expectedState.soloSessionLeaseHeld = false;
+  clearSoloSessionHeartbeat(expectedState);
+  handleSoloSessionLeaseLost(expectedState).catch(handleRecoverableError);
+}
+
+function scheduleSoloSessionLeaseHeartbeat(
+  expectedState = state,
+  delayMs = ONLINE_SESSION_LEASE_DEFAULTS.heartbeatIntervalMs,
+) {
+  clearSoloSessionHeartbeat(expectedState);
+  if (!active || state !== expectedState || !expectedState.soloSessionLeaseHeld) return false;
+  const remainingMs = Number(expectedState.soloSessionLease?.expiresAt || 0) - serverNow();
+  if (remainingMs <= 0) {
+    markSoloSessionLeaseLost(expectedState);
+    return false;
+  }
+  const requestedDelay = Number.isFinite(Number(delayMs))
+    ? Math.max(1, Math.floor(Number(delayMs)))
+    : ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs;
+  const boundedDelay = Math.max(1, Math.min(requestedDelay, remainingMs));
+  const timer = window.setTimeout(() => {
+    if (expectedState.soloSessionHeartbeat !== timer) return;
+    expectedState.soloSessionHeartbeat = null;
+    refreshSoloSessionLease(expectedState).catch(handleRecoverableError);
+  }, boundedDelay);
+  expectedState.soloSessionHeartbeat = timer;
+  return true;
+}
+
+async function refreshSoloSessionLease(expectedState = state) {
+  if (!active
+      || state !== expectedState
+      || !expectedState.soloSessionLeaseHeld
+      || expectedState.soloSessionHeartbeatInFlight) return false;
+  if (Number(expectedState.soloSessionLease?.expiresAt || 0) <= serverNow()) {
+    markSoloSessionLeaseLost(expectedState);
+    return false;
+  }
+  expectedState.soloSessionHeartbeatInFlight = true;
+  let responseData = null;
+  try {
+    try {
+      const response = await soloSessionActionCallable({
+        action: "heartbeat",
+        sessionId: expectedState.clientSessionId,
+        leaseToken: expectedState.clientLeaseToken,
+        generation: expectedState.soloSessionGeneration,
+      });
+      responseData = response?.data || null;
+    } catch {
+      responseData = null;
+    }
+    if (state !== expectedState || !expectedState.soloSessionLeaseHeld) return false;
+    const decision = decideOnlineSessionHeartbeatResult({
+      responseData,
+      currentLease: expectedState.soloSessionLease,
+      sessionId: expectedState.clientSessionId,
+      leaseToken: expectedState.clientLeaseToken,
+      sessionGeneration: expectedState.soloSessionGeneration,
+      now: serverNow(),
+      retryIntervalMs: ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs,
+    });
+    if (decision.action === "lost") {
+      markSoloSessionLeaseLost(expectedState);
+      return false;
+    }
+    if (decision.action === "retry") {
+      scheduleSoloSessionLeaseHeartbeat(expectedState, decision.retryDelayMs);
+      return false;
+    }
+    expectedState.soloSessionLease = decision.lease;
+    const heartbeat = {
+      lastSeen: serverNow(),
+      expiresAt: decision.lease.expiresAt,
+    };
+    const heartbeatWrites = [
+      update(ref(database, soloQueueEntryPath(
+        expectedState.uid,
+        expectedState.clientSessionId,
+      )), heartbeat),
+    ];
+    if (expectedState.roomId && expectedState.soloSessionGeneration) {
+      heartbeatWrites.push(update(ref(database, soloRoomPresencePath(
+        expectedState.roomId,
+        expectedState.uid,
+        expectedState.clientSessionId,
+      )), {
+        online: true,
+        updatedAt: serverTimestamp(),
+      }));
+    }
+    await Promise.allSettled(heartbeatWrites);
+    scheduleSoloSessionLeaseHeartbeat(expectedState);
+    return true;
+  } finally {
+    expectedState.soloSessionHeartbeatInFlight = false;
+  }
+}
+
+async function handleSoloSessionLeaseLost(expectedState = state) {
+  if (!active || state !== expectedState) return;
+  if (!expectedState.roomId) {
+    if (["matching", "connecting"].includes(expectedState.screen)) {
+      showToast("別のタブまたは端末に通常版1on1の接続が移ったため、この画面の検索を終了します。");
+      await cancelMatching();
+    }
+    return;
+  }
+  if (expectedState.roomTerminationToken) return;
+  const roomId = expectedState.roomId;
+  const terminationToken = Object.freeze({ type: "session-lease-lost" });
+  expectedState.roomTerminationToken = terminationToken;
+  await runTransaction(
+    ref(database, `online/rooms/${roomId}/destroyed`),
+    (current) => current || { by: expectedState.uid, at: Date.now() },
+  ).catch(() => {});
+  await cleanupOnlineResources(false, expectedState);
+  if (state !== expectedState
+      || expectedState.roomTerminationToken !== terminationToken
+      || expectedState.roomId !== roomId) return;
+  releaseMatchMedia();
+  expectedState.screen = "noContest";
+  setOnlineChrome("NO CONTEST");
+  render();
+  showToast("別のタブまたは端末に通常版1on1の接続が移ったため、この対戦を終了しました。");
+}
+
+async function releaseSoloSessionLease(expectedState = state) {
+  if (expectedState.soloSessionReleasePromise) {
+    return expectedState.soloSessionReleasePromise;
+  }
+  if (expectedState.soloSessionReleaseStarted) return false;
+  const hadLease = Boolean(expectedState.soloSessionLease);
+  if (!hadLease || !expectedState.uid || !expectedState.clientSessionId) return false;
+  expectedState.soloSessionReleaseStarted = true;
+  clearSoloSessionHeartbeat(expectedState);
+  expectedState.soloSessionLeaseHeld = false;
+  const releasePromise = (async () => {
+    let released = false;
+    try {
+      const response = await soloSessionActionCallable({
+        action: "release",
+        sessionId: expectedState.clientSessionId,
+        leaseToken: expectedState.clientLeaseToken,
+        generation: expectedState.soloSessionGeneration,
+      });
+      released = response?.data?.released === true;
+    } catch {
+      released = false;
+    } finally {
+      expectedState.soloSessionLease = null;
+      expectedState.soloSessionGeneration = 0;
+      expectedState.soloSessionFence = null;
+    }
+    return released;
+  })();
+  expectedState.soloSessionReleasePromise = releasePromise;
+  return releasePromise;
+}
+
 function isCurrentMatchmakingGeneration(generation) {
   return active
     && state.screen === "matching"
     && state.matchmakingGeneration === generation
-    && !state.roomId;
+    && !state.roomId
+    && (state.p2pAutoRequeueStartedAt <= 0
+      || (document.visibilityState === "visible" && navigator.onLine));
 }
 
-async function removeQueueEntryIfCurrent(queueEntryRef, joinedAt) {
-  await runTransaction(queueEntryRef, (current) => (
-    current && Number(current.joinedAt) === Number(joinedAt) ? null : undefined
-  )).catch(() => {});
-}
-
-async function cancelActiveReservationDisconnect(roomId = "", expectedState = state) {
-  const pendingRegistration = expectedState.activeReservationDisconnectRegistration;
-  if (pendingRegistration && (!roomId || pendingRegistration.roomId === roomId)) {
-    await pendingRegistration.promise.catch(() => {});
+async function cancelSoloSessionRoomOnce(roomId, expectedState = state) {
+  const normalizedRoomId = String(roomId || "");
+  if (!normalizedRoomId || !expectedState.uid || !expectedState.clientSessionId) return null;
+  if (expectedState.soloSessionCancelRoomId === normalizedRoomId) {
+    if (expectedState.soloSessionCancelPromise) {
+      return expectedState.soloSessionCancelPromise;
+    }
+    return expectedState.soloSessionCancelResult;
   }
-  const handle = expectedState.activeReservationDisconnect;
-  if (!handle
-      || (roomId && expectedState.activeReservationDisconnectRoomId !== roomId)) return false;
-  const registeredRoomId = expectedState.activeReservationDisconnectRoomId;
-  await handle.cancel();
-  if (expectedState.activeReservationDisconnect === handle
-      && expectedState.activeReservationDisconnectRoomId === registeredRoomId) {
-    expectedState.activeReservationDisconnect = null;
-    expectedState.activeReservationDisconnectRoomId = "";
+  expectedState.soloSessionCancelRoomId = normalizedRoomId;
+  expectedState.soloSessionCancelResult = null;
+  const cancelPromise = (async () => {
+    try {
+      const response = await soloSessionActionCallable({
+        action: "cancel",
+        sessionId: expectedState.clientSessionId,
+        leaseToken: expectedState.clientLeaseToken,
+        roomId: normalizedRoomId,
+      });
+      expectedState.soloSessionCancelResult = response?.data || null;
+    } catch {
+      expectedState.soloSessionCancelResult = null;
+    }
+    return expectedState.soloSessionCancelResult;
+  })();
+  expectedState.soloSessionCancelPromise = cancelPromise;
+  try {
+    return await cancelPromise;
+  } finally {
+    if (expectedState.soloSessionCancelPromise === cancelPromise) {
+      expectedState.soloSessionCancelPromise = null;
+    }
   }
-  return true;
 }
 
 async function releaseActiveReservation(roomId, expectedState = state) {
-  const result = await runTransaction(
-    ref(database, `online/active/${expectedState.uid}`),
-    (current) => current === roomId ? null : undefined,
-  );
-  if (result.snapshot.exists()) return false;
-  await cancelActiveReservationDisconnect(roomId, expectedState);
-  return true;
-}
-
-async function clearActiveReservation(expectedState = state) {
-  await remove(ref(database, `online/active/${expectedState.uid}`));
-  await cancelActiveReservationDisconnect("", expectedState);
+  const result = await cancelSoloSessionRoomOnce(roomId, expectedState);
+  return result?.cancelled === true
+    || ["active", "destroyed", "expired"].includes(String(result?.status || ""));
 }
 
 async function armActiveReservationDisconnect(
@@ -4603,160 +5079,149 @@ async function armActiveReservationDisconnect(
   expectedState = state,
   contextIsCurrent = () => state === expectedState,
 ) {
-  if (!roomId || !expectedState.uid || state !== expectedState || !contextIsCurrent()) return false;
-  const pendingRegistration = expectedState.activeReservationDisconnectRegistration;
-  if (pendingRegistration) {
-    await pendingRegistration.promise;
-    if (state !== expectedState || !contextIsCurrent()) return false;
-    if (expectedState.activeReservationDisconnect) {
-      expectedState.activeReservationDisconnectRoomId = roomId;
-      return true;
-    }
-    return armActiveReservationDisconnect(roomId, expectedState, contextIsCurrent);
-  }
-  if (expectedState.activeReservationDisconnect) {
-    const existingHandle = expectedState.activeReservationDisconnect;
-    await existingHandle.remove();
-    if (state !== expectedState
-        || !contextIsCurrent()
-        || expectedState.activeReservationDisconnect !== existingHandle) {
-      await existingHandle.cancel().catch(() => {});
-      return false;
-    }
-    expectedState.activeReservationDisconnectRoomId = roomId;
-    return true;
-  }
-  const registration = { roomId, promise: null };
-  registration.promise = (async () => {
-    const handle = onDisconnect(ref(database, `online/active/${expectedState.uid}`));
-    try {
-      await handle.remove();
-      if (state !== expectedState || !contextIsCurrent()) {
-        await handle.cancel().catch(() => {});
-        return false;
-      }
-      expectedState.activeReservationDisconnect = handle;
-      expectedState.activeReservationDisconnectRoomId = roomId;
-      return true;
-    } catch (error) {
-      await handle.cancel().catch(() => {});
-      throw error;
-    }
-  })();
-  expectedState.activeReservationDisconnectRegistration = registration;
-  try {
-    return await registration.promise;
-  } finally {
-    if (expectedState.activeReservationDisconnectRegistration === registration) {
-      expectedState.activeReservationDisconnectRegistration = null;
-    }
-  }
+  return Boolean(
+    roomId
+      && expectedState.uid
+      && expectedState.soloSessionLeaseHeld
+      && state === expectedState
+      && contextIsCurrent(),
+  );
 }
 
-async function beginMatchmaking() {
-  state.name = state.name.trim().slice(0, 16);
-  state.imagePreference = normalizeImagePreference(state.imagePreference, "");
-  if (!state.uid || state.deck.length !== MAX_ROUNDS || !state.name || !state.imagePreference) return;
+async function beginMatchmaking({ automatic = false } = {}) {
+  const expectedState = state;
+  expectedState.name = expectedState.name.trim().slice(0, 16);
+  expectedState.imagePreference = normalizeImagePreference(expectedState.imagePreference, "");
+  if (!expectedState.uid
+      || expectedState.deck.length !== MAX_ROUNDS
+      || !expectedState.name
+      || !expectedState.imagePreference) return;
+  if (automatic && (
+    document.visibilityState !== "visible"
+    || !navigator.onLine
+  )) return;
+  if (automatic) {
+    expectedState.p2pAutoRequeueStartedAt = Date.now();
+  } else {
+    expectedState.p2pAutoRequeueCount = 0;
+    expectedState.p2pOpponentCooldown = null;
+    expectedState.p2pAutoRequeueStartedAt = 0;
+  }
+  expectedState.p2pAutoRequeueCancelling = false;
   const sampleCount = getDeckSampleCount();
   const startingHp = getStartingHp(sampleCount);
   const generation = ++matchmakingGenerationCounter;
-  state.matchmakingGeneration = generation;
-  state.matchScopeAvailable = false;
-  state.matchScopeExpanded = false;
-  state.pursuitLine = state.pursuitLineChoice === CUSTOM_PURSUIT_VALUE
-    ? normalizePursuitLine(state.customPursuitLine)
-    : normalizePursuitLine(state.pursuitLineChoice);
-  state.finishLine = state.finishLineChoice === FINISH_LINE_DISABLED_VALUE
-    ? ""
-    : state.finishLineChoice === CUSTOM_FINISH_VALUE
-      ? normalizeFinishLine(state.customFinishLine)
-      : normalizeFinishLine(state.finishLineChoice);
-  localStorage.setItem(PROFILE_NAME_KEY, state.name);
-  localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
-  localStorage.setItem(FINISH_LINE_KEY, state.finishLine || FINISH_LINE_DISABLED_VALUE);
-  localStorage.setItem(IMAGE_PREFERENCE_KEY, state.imagePreference);
-  if (state.leaderboardPublic) syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
-  state.screen = "matching";
-  setOnlineChrome("MATCHING");
-  render();
+  expectedState.matchmakingGeneration = generation;
+  try {
+    expectedState.matchScopeAvailable = false;
+    expectedState.matchScopeExpanded = false;
+    expectedState.pursuitLine = expectedState.pursuitLineChoice === CUSTOM_PURSUIT_VALUE
+      ? normalizePursuitLine(expectedState.customPursuitLine)
+      : normalizePursuitLine(expectedState.pursuitLineChoice);
+    expectedState.finishLine = expectedState.finishLineChoice === FINISH_LINE_DISABLED_VALUE
+      ? ""
+      : expectedState.finishLineChoice === CUSTOM_FINISH_VALUE
+        ? normalizeFinishLine(expectedState.customFinishLine)
+        : normalizeFinishLine(expectedState.finishLineChoice);
+    localStorage.setItem(PROFILE_NAME_KEY, expectedState.name);
+    localStorage.setItem(PURSUIT_LINE_KEY, expectedState.pursuitLine);
+    localStorage.setItem(FINISH_LINE_KEY, expectedState.finishLine || FINISH_LINE_DISABLED_VALUE);
+    localStorage.setItem(IMAGE_PREFERENCE_KEY, expectedState.imagePreference);
+    if (expectedState.leaderboardPublic) {
+      syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
+    }
+    expectedState.screen = "matching";
+    setOnlineChrome("MATCHING");
+    render();
 
-  const ownActiveRef = ref(database, `online/active/${state.uid}`);
-  const staleActive = await get(ownActiveRef);
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  if (staleActive.exists()) await remove(ownActiveRef);
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  const ownOffersRef = ref(database, `online/offers/${state.uid}`);
-  const staleOffers = await get(ownOffersRef);
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  if (staleOffers.exists()) {
-    await Promise.allSettled(Object.keys(staleOffers.val()).map((roomId) => (
-      remove(ref(database, `online/offers/${state.uid}/${roomId}`))
-    )));
-  }
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  await refreshSoloFamiliarBook({ renderAfter: true });
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  const queueEntryRef = ref(database, `online/queue/${state.uid}`);
-  const joinedAt = serverNow();
-  await set(queueEntryRef, {
-    uid: state.uid,
-    name: state.name,
-    pursuitLine: state.pursuitLine,
-    streak: Number(state.profile.streak || 0),
-    rating: Number(state.profile.rating || INITIAL_RATING),
-    ratingPreference: state.imagePreference,
-    allowPreferenceMismatch: false,
-    reunionPreference: soloServerMatchmakingEnabled() && state.soloReunionPreference,
-    sampleCount,
-    startingHp,
-    joinedAt,
-    lastSeen: joinedAt,
-    state: "waiting",
-  });
-  if (!isCurrentMatchmakingGeneration(generation)) {
-    await removeQueueEntryIfCurrent(queueEntryRef, joinedAt);
-    return;
-  }
-  const presenceStarted = await startPublicPresence(generation);
-  if (!presenceStarted || !isCurrentMatchmakingGeneration(generation)) {
-    await removeQueueEntryIfCurrent(queueEntryRef, joinedAt);
-    return;
-  }
-  const queueDisconnect = onDisconnect(queueEntryRef);
-  await queueDisconnect.remove();
-  if (!isCurrentMatchmakingGeneration(generation)) {
-    await queueDisconnect.cancel().catch(() => {});
-    await removeQueueEntryIfCurrent(queueEntryRef, joinedAt);
-    return;
-  }
-  state.disconnectHandles.push(queueDisconnect);
-  if (state.imagePreference !== "both") {
-    state.matchScopeTimer = window.setTimeout(() => {
-      if (!isCurrentMatchmakingGeneration(generation) || state.matchScopeExpanded) return;
-      state.matchScopeAvailable = true;
-      render();
-    }, MATCH_SCOPE_EXPAND_DELAY_MS);
-  }
-  state.queueHeartbeat = window.setInterval(() => {
-    update(queueEntryRef, { lastSeen: serverNow() })
-      .then(() => attemptCurrentSoloMatchmaking(generation))
-      .catch(() => {});
-  }, 20_000);
-  startSoloServerMatchPolling(generation);
+    if (!await claimSoloSessionLease(expectedState, generation)) {
+      if (isCurrentMatchmakingGeneration(generation)) {
+        expectedState.screen = "setup";
+        setOnlineChrome("ONLINE READY");
+        render();
+      }
+      return;
+    }
+    if (!isCurrentMatchmakingGeneration(generation)) return;
+    await refreshSoloFamiliarBook({ renderAfter: true });
+    if (!isCurrentMatchmakingGeneration(generation)) return;
+    expectedState.soloSessionFence = createOnlineSessionFence({
+      sessionId: expectedState.clientSessionId,
+      leaseToken: expectedState.clientLeaseToken,
+      connectionGeneration: generation,
+    });
+    const ownOffersRef = ref(database, soloOfferPath(
+      expectedState.uid,
+      expectedState.clientSessionId,
+    ));
+    const queueEntryRef = ref(database, soloQueueEntryPath(
+      expectedState.uid,
+      expectedState.clientSessionId,
+    ));
+    const joinedAt = serverNow();
+    await set(queueEntryRef, {
+      protocolVersion: ONLINE_SESSION_PROTOCOL_VERSION,
+      uid: expectedState.uid,
+      sessionId: expectedState.clientSessionId,
+      leaseToken: expectedState.clientLeaseToken,
+      generation: expectedState.soloSessionGeneration,
+      connectionGeneration: generation,
+      name: expectedState.name,
+      pursuitLine: expectedState.pursuitLine,
+      streak: Number(expectedState.profile.streak || 0),
+      rating: Number(expectedState.profile.rating || INITIAL_RATING),
+      ratingPreference: expectedState.imagePreference,
+      allowPreferenceMismatch: false,
+      reunionPreference: soloServerMatchmakingEnabled() && expectedState.soloReunionPreference,
+      sampleCount,
+      startingHp,
+      joinedAt,
+      lastSeen: joinedAt,
+      expiresAt: expectedState.soloSessionLease.expiresAt,
+      state: "waiting",
+    });
+    if (!isCurrentMatchmakingGeneration(generation)) return;
+    const presenceStarted = await startPublicPresence(generation);
+    if (!presenceStarted || !isCurrentMatchmakingGeneration(generation)) return;
+    if (expectedState.imagePreference !== "both") {
+      expectedState.matchScopeTimer = window.setTimeout(() => {
+        if (!isCurrentMatchmakingGeneration(generation) || expectedState.matchScopeExpanded) return;
+        expectedState.matchScopeAvailable = true;
+        render();
+      }, MATCH_SCOPE_EXPAND_DELAY_MS);
+    }
+    expectedState.queueHeartbeat = window.setInterval(() => {
+      update(queueEntryRef, { lastSeen: serverNow() })
+        .then(() => attemptCurrentSoloMatchmaking(generation))
+        .catch(() => {});
+    }, 20_000);
+    startSoloServerMatchPolling(generation);
 
-  state.matchUnsubscribers.push(onValue(ownOffersRef, processIncomingOffers, handleRecoverableError));
-  state.offerPollTimer = window.setInterval(() => {
-    if (!active || state.screen !== "matching" || state.roomId) return;
-    get(ownOffersRef).then(processIncomingOffers).catch(handleRecoverableError);
-  }, 1_500);
-  state.matchUnsubscribers.push(onValue(ref(database, "online/active"), (snapshot) => {
-    state.activeUsers = snapshot.val() || {};
-    attemptCurrentSoloMatchmaking(generation);
-  }));
-  state.matchUnsubscribers.push(onValue(ref(database, "online/queue"), (snapshot) => {
-    state.latestQueue = snapshot.val() || {};
-    attemptCurrentSoloMatchmaking(generation);
-  }));
+    expectedState.matchUnsubscribers.push(
+      onValue(ownOffersRef, processIncomingOffers, handleRecoverableError),
+    );
+    expectedState.offerPollTimer = window.setInterval(() => {
+      if (!isCurrentMatchmakingGeneration(generation)) return;
+      get(ownOffersRef).then(processIncomingOffers).catch(handleRecoverableError);
+    }, 1_500);
+  } catch (error) {
+    if (state !== expectedState
+        || expectedState.matchmakingGeneration !== generation
+        || expectedState.roomId) return;
+    const transitionToken = beginOnlineStateTransition(
+      expectedState,
+      "matchmaking-initialization-failed",
+    );
+    await cleanupOnlineResources(false, expectedState);
+    if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
+    expectedState.p2pAutoRequeueStartedAt = 0;
+    expectedState.p2pAutoRequeueCancelling = false;
+    expectedState.screen = "setup";
+    setOnlineChrome("ONLINE READY");
+    render();
+    console.error(error);
+    showToast("対戦の検索を開始できませんでした。通信環境を確認して、もう一度お試しください。");
+  }
 }
 
 async function startPublicPresence(generation) {
@@ -4842,18 +5307,13 @@ async function expandMatchmakingScope() {
   render();
   const lastSeen = serverNow();
   try {
-    await update(ref(database, `online/queue/${state.uid}`), {
+    await update(ref(database, soloQueueEntryPath(
+      state.uid,
+      state.clientSessionId,
+    )), {
       allowPreferenceMismatch: true,
       lastSeen,
     });
-    state.latestQueue = {
-      ...state.latestQueue,
-      [state.uid]: {
-        ...state.latestQueue[state.uid],
-        allowPreferenceMismatch: true,
-        lastSeen,
-      },
-    };
     await attemptCurrentSoloMatchmaking(state.matchmakingGeneration);
   } catch (error) {
     state.matchScopeExpanded = false;
@@ -4863,43 +5323,20 @@ async function expandMatchmakingScope() {
   }
 }
 
-function getPreferenceMatchTier(firstEntry, secondEntry) {
-  const firstPreference = normalizeImagePreference(firstEntry?.ratingPreference, "legacy");
-  const secondPreference = normalizeImagePreference(secondEntry?.ratingPreference, "legacy");
-  if (firstPreference !== "legacy" && firstPreference === secondPreference) {
-    return firstPreference === "both" ? 1 : 0;
-  }
-  if (firstPreference === "both" || secondPreference === "both") return 1;
-  if (firstPreference === "legacy" && secondPreference === "legacy") return 1;
-  const firstAllowsMismatch = firstPreference === "legacy" || firstEntry?.allowPreferenceMismatch === true;
-  const secondAllowsMismatch = secondPreference === "legacy" || secondEntry?.allowPreferenceMismatch === true;
-  return firstAllowsMismatch && secondAllowsMismatch ? 2 : Number.POSITIVE_INFINITY;
-}
-
-function findPreferredMatchPair(waiting) {
-  for (const tier of [0, 1, 2]) {
-    for (let hostIndex = 0; hostIndex < waiting.length - 1; hostIndex += 1) {
-      const host = waiting[hostIndex];
-      const candidates = waiting
-        .slice(hostIndex + 1)
-        .filter((candidate) => getPreferenceMatchTier(host, candidate) === tier);
-      if (!candidates.length) continue;
-      return {
-        host,
-        candidate: candidates[Math.floor(Math.random() * candidates.length)],
-      };
-    }
-  }
-  return null;
-}
-
 function normalizeSoloPermitCandidate(value) {
   const uid = String(value?.uid || "").trim().slice(0, 128);
   const name = String(value?.name || "").trim().slice(0, 16);
-  if (!uid || uid === state.uid || !name) return null;
+  const sessionId = String(value?.sessionId || "");
+  const generation = value?.sessionGeneration;
+  if (!uid || uid === state.uid || !name
+      || !isValidOnlineSessionId(sessionId)
+      || typeof generation !== "string"
+      || !/^[A-Za-z0-9_-]{22}$/.test(generation)) return null;
   const sampleCount = normalizeSampleCount(value?.sampleCount);
   return {
     uid,
+    sessionId,
+    generation,
     name,
     pursuitLine: normalizePursuitLine(value?.pursuitLine),
     streak: Math.max(0, Math.floor(Number(value?.streak || 0))),
@@ -4909,64 +5346,20 @@ function normalizeSoloPermitCandidate(value) {
   };
 }
 
-function isPermissionDeniedError(error) {
-  const detail = `${error?.code || ""} ${error?.message || ""}`.toLowerCase();
-  return detail.includes("permission_denied")
-    || detail.includes("permission-denied")
-    || detail.includes("permission denied");
-}
-
 function startSoloServerMatchPolling(generation = state.matchmakingGeneration) {
-  if (!soloServerMatchmakingEnabled()
-      || !isCurrentMatchmakingGeneration(generation)
+  if (!isCurrentMatchmakingGeneration(generation)
       || state.soloServerMatchTimer) return;
   state.soloServerMatchTimer = window.setInterval(() => {
     attemptSoloServerMatch(generation);
   }, SOLO_SERVER_MATCH_POLL_MS);
 }
 
-async function handleSoloLocalMatchError(error, generation) {
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  if (!isPermissionDeniedError(error)) {
-    handleRecoverableError(error);
-    return;
-  }
-  if (state.soloServerMatchBusy) return;
-  const expectedState = state;
-  state.soloServerMatchBusy = true;
-  try {
-    await refreshSoloFamiliarBook({ renderAfter: true });
-  } finally {
-    if (state === expectedState && state.matchmakingGeneration === generation) {
-      state.soloServerMatchBusy = false;
-    }
-  }
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  if (soloServerMatchmakingEnabled()) {
-    await update(ref(database, `online/queue/${state.uid}`), {
-      reunionPreference: state.soloReunionPreference === true,
-      lastSeen: serverNow(),
-    }).catch(() => {});
-    if (!isCurrentMatchmakingGeneration(generation)) return;
-    startSoloServerMatchPolling(generation);
-    await attemptSoloServerMatch(generation);
-    return;
-  }
-  if (!state.soloServerMatchErrorNotified) {
-    state.soloServerMatchErrorNotified = true;
-    showToast("対戦方式を確認できませんでした。待機中に自動で再試行します。");
-  }
-}
-
 function attemptCurrentSoloMatchmaking(generation = state.matchmakingGeneration) {
-  if (soloServerMatchmakingEnabled()) return attemptSoloServerMatch(generation);
-  return attemptToHost(state.latestQueue)
-    .catch((error) => handleSoloLocalMatchError(error, generation));
+  return attemptSoloServerMatch(generation);
 }
 
 async function attemptSoloServerMatch(generation = state.matchmakingGeneration) {
-  if (!soloServerMatchmakingEnabled()
-      || !isCurrentMatchmakingGeneration(generation)
+  if (!isCurrentMatchmakingGeneration(generation)
       || state.soloServerMatchBusy
       || state.matchingBusy
       || state.acceptingOffer
@@ -4975,18 +5368,19 @@ async function attemptSoloServerMatch(generation = state.matchmakingGeneration) 
   const expectedState = state;
   state.soloServerMatchBusy = true;
   try {
-    const response = await soloFamiliarActionCallable({ action: "try_match" });
-    if (!isCurrentMatchmakingGeneration(generation) || state !== expectedState
-        || !soloServerMatchmakingEnabled()) return;
+    const cooldown = state.p2pOpponentCooldown;
+    const response = await soloSessionActionCallable({
+      action: "try_match",
+      sessionId: state.clientSessionId,
+      leaseToken: state.clientLeaseToken,
+      ...(cooldown && isOnlineP2pOpponentCoolingDown(
+        cooldown,
+        cooldown.opponentUid,
+        Date.now(),
+      ) ? { avoidUid: cooldown.opponentUid } : {}),
+    });
+    if (!isCurrentMatchmakingGeneration(generation) || state !== expectedState) return;
     const result = response.data || {};
-    if (result.outcome === "disabled") {
-      await refreshSoloFamiliarBook();
-      if (isCurrentMatchmakingGeneration(generation) && !soloServerMatchmakingEnabled()) {
-        state.soloServerMatchBusy = false;
-        await attemptToHost(state.latestQueue);
-      }
-      return;
-    }
     state.soloServerMatchErrorNotified = false;
     if (result.outcome === "join") {
       const roomId = String(result.roomId || "");
@@ -5022,42 +5416,14 @@ async function attemptSoloServerMatch(generation = state.matchmakingGeneration) 
   }
 }
 
-async function attemptToHost(queue) {
-  if (soloServerMatchmakingEnabled()) return;
-  if (!active || state.screen !== "matching" || state.soloServerMatchBusy
-      || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
-  const freshAfter = serverNow() - 45_000;
-  const waiting = Object.values(queue).filter((entry) => (
-    entry?.uid
-    && entry.state === "waiting"
-    && Number(entry.lastSeen) >= freshAfter
-    && !state.activeUsers[entry.uid]
-  ));
-  if (waiting.length < 2) return;
-  waiting.sort((a, b) => (Number(a.joinedAt) - Number(b.joinedAt)) || String(a.uid).localeCompare(String(b.uid)));
-  const pair = findPreferredMatchPair(waiting);
-  if (!pair || pair.host.uid !== state.uid) return;
-  await createOffer(pair.candidate);
-}
-
 async function restoreHostedOfferToWaiting(roomId, targetUid, expectedState = state) {
-  const hostUid = expectedState.uid;
-  const restoredLastSeen = Date.now() + Number(expectedState.serverTimeOffset || 0);
-  const [, activeResult, queueResult] = await Promise.allSettled([
-    remove(ref(database, `online/offers/${targetUid}/${roomId}`)),
-    releaseActiveReservation(roomId, expectedState),
-    runTransaction(ref(database, `online/queue/${hostUid}`), (current) => {
-      if (!current || current.roomId !== roomId) return;
-      return {
-        ...current,
-        state: "waiting",
-        roomId: null,
-        lastSeen: restoredLastSeen,
-      };
-    }),
-  ]);
-  if (activeResult.status === "rejected") throw activeResult.reason;
-  if (queueResult.status === "rejected") throw queueResult.reason;
+  void targetUid;
+  await soloSessionActionCallable({
+    action: "expire",
+    sessionId: expectedState.clientSessionId,
+    leaseToken: expectedState.clientLeaseToken,
+    roomId,
+  });
 }
 
 async function finishHostedOfferAsTerminal(
@@ -5102,9 +5468,13 @@ function registerHostedOfferMonitor({
   generation,
 }) {
   const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
-  const offerRef = ref(database, `online/offers/${candidate.uid}/${roomId}`);
   const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
-  state.pendingOffer = { roomId, targetUid: candidate.uid, reunion };
+  state.pendingOffer = {
+    roomId,
+    targetUid: candidate.uid,
+    targetSessionId: candidate.sessionId,
+    reunion,
+  };
   const handleHostedRoomStatus = async (snapshot) => {
     if (!contextIsCurrent() || state.pendingOffer?.roomId !== roomId || state.roomId) return;
     const status = snapshot.val();
@@ -5112,7 +5482,6 @@ function registerHostedOfferMonitor({
       const pendingOffer = state.pendingOffer;
       if (pendingOffer.enteringRoom) return;
       pendingOffer.enteringRoom = true;
-      await remove(offerRef).catch(() => {});
       if (!contextIsCurrent() || state.pendingOffer !== pendingOffer || state.roomId) return;
       try {
         await enterRoom(roomId);
@@ -5167,11 +5536,17 @@ async function adoptSoloServerHostedMatch(candidate, hosted) {
     }
     const room = roomSnapshot.val();
     if (!room
+        || room.protocolVersion !== ONLINE_SESSION_PROTOCOL_VERSION
+        || room.signalingVersion !== ONLINE_SESSION_PROTOCOL_VERSION
         || room.hostUid !== state.uid
         || room.guestUid !== candidate.uid
         || !["offered", "active"].includes(room.status)
         || room.members?.[state.uid] !== true
         || room.members?.[candidate.uid] !== true
+        || room.sessions?.[state.uid]?.sessionId !== state.clientSessionId
+        || room.sessions?.[state.uid]?.generation !== state.soloSessionGeneration
+        || room.sessions?.[candidate.uid]?.sessionId !== candidate.sessionId
+        || room.sessions?.[candidate.uid]?.generation !== candidate.generation
         || (room.reunion === true) !== (hosted?.reunion === true)) {
       throw new Error("サーバーが準備した通常型1on1ルームを確認できませんでした。");
     }
@@ -5192,213 +5567,45 @@ async function adoptSoloServerHostedMatch(candidate, hosted) {
   }
 }
 
-async function createOffer(candidate, permit = null) {
-  const expectedState = state;
-  const generation = state.matchmakingGeneration;
-  if (!isCurrentMatchmakingGeneration(generation)) return;
-  state.matchingBusy = true;
-  const roomId = permit?.roomId || push(ref(database, "online/rooms")).key;
-  const reunion = permit?.reunion === true;
-  if (!/^[-0-9A-Z_a-z]{20}$/.test(String(roomId || ""))) {
-    state.matchingBusy = false;
-    throw new Error("対戦ルームIDを確認できませんでした。");
-  }
-  const hostUid = state.uid;
-  const hostName = state.name;
-  const hostPursuitLine = state.pursuitLine;
-  const hostStreak = Number(state.profile.streak || 0);
-  const hostRating = Number(state.profile.rating || INITIAL_RATING);
-  const hostSampleCount = getDeckSampleCount();
-  const ownActiveRef = ref(database, `online/active/${hostUid}`);
-  const roomRef = ref(database, `online/rooms/${roomId}`);
-  const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
-  const offerRef = ref(database, `online/offers/${candidate.uid}/${roomId}`);
-  const queueEntryRef = ref(database, `online/queue/${hostUid}`);
-  const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
-  const abandonOfferCreation = async () => {
-    await Promise.allSettled([
-      releaseActiveReservation(roomId, expectedState),
-      remove(offerRef),
-      runTransaction(roomStatusRef, (current) => current === "offered" ? "expired" : undefined),
-    ]);
-  };
-  let roomInitialized = false;
-  let pendingOfferRegistered = false;
-  try {
-    const reservation = await runTransaction(ownActiveRef, (current) => current === null ? roomId : undefined);
-    if (!reservation.committed) return;
-    if (!contextIsCurrent()) {
-      await abandonOfferCreation();
-      return;
-    }
-    const disconnectArmed = await armActiveReservationDisconnect(
-      roomId,
-      expectedState,
-      contextIsCurrent,
-    );
-    if (!disconnectArmed) {
-      await abandonOfferCreation();
-      return;
-    }
-    await set(ref(database, `online/rooms/${roomId}/hostUid`), hostUid);
-    if (!contextIsCurrent()) {
-      await abandonOfferCreation();
-      return;
-    }
-    await update(roomRef, {
-      guestUid: candidate.uid,
-      createdAt: serverTimestamp(),
-      status: "offered",
-      ...(reunion ? { reunion: true } : {}),
-      [`members/${hostUid}`]: true,
-      [`members/${candidate.uid}`]: true,
-      [`players/${hostUid}`]: { uid: hostUid, name: hostName, pursuitLine: hostPursuitLine, streak: hostStreak, rating: hostRating, sampleCount: hostSampleCount, startingHp: getStartingHp(hostSampleCount) },
-      [`players/${candidate.uid}`]: { uid: candidate.uid, name: candidate.name, pursuitLine: normalizePursuitLine(candidate.pursuitLine), streak: Number(candidate.streak || 0), rating: Number(candidate.rating || INITIAL_RATING), sampleCount: normalizeSampleCount(candidate.sampleCount), startingHp: getStartingHp(candidate.sampleCount) },
-    });
-    roomInitialized = true;
-    if (!contextIsCurrent()) {
-      await abandonOfferCreation();
-      return;
-    }
-    await set(offerRef, {
-      roomId,
-      fromUid: hostUid,
-      toUid: candidate.uid,
-      fromName: hostName,
-      createdAt: Date.now(),
-    });
-    if (!contextIsCurrent()) {
-      await abandonOfferCreation();
-      return;
-    }
-    await update(queueEntryRef, { state: "offering", roomId });
-    if (!contextIsCurrent()) {
-      await abandonOfferCreation();
-      return;
-    }
-    registerHostedOfferMonitor({
-      roomId,
-      candidate,
-      reunion,
-      expectedState,
-      generation,
-    });
-    pendingOfferRegistered = true;
-  } catch (error) {
-    if (!pendingOfferRegistered) {
-      await abandonOfferCreation();
-      if (roomInitialized && contextIsCurrent()) {
-        await runTransaction(queueEntryRef, (current) => (
-          current?.roomId === roomId ? { ...current, state: "waiting", roomId: null } : undefined
-        )).catch(() => {});
-      }
-    }
-    throw error;
-  } finally {
-    if (state === expectedState && state.matchmakingGeneration === generation) {
-      state.matchingBusy = false;
-    }
-  }
-}
-
 async function expireOffer(roomId, targetUid) {
   if (state.roomId || state.pendingOffer?.roomId !== roomId) return;
   const expectedState = state;
   const generation = state.matchmakingGeneration;
-  const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
-  const result = await runTransaction(
-    roomStatusRef,
-    (current) => current === "offered" ? "expired" : undefined,
-  );
-  let status = result.committed ? "expired" : null;
-  if (!result.committed) {
-    const currentStatus = await get(roomStatusRef);
-    status = currentStatus.val();
-  }
+  const response = await soloSessionActionCallable({
+    action: "expire",
+    sessionId: expectedState.clientSessionId,
+    leaseToken: expectedState.clientLeaseToken,
+    roomId,
+  });
+  const status = String(response.data?.status || "");
   if (status === "active" || status === "offered") return;
   await finishHostedOfferAsTerminal(roomId, targetUid, expectedState, generation);
 }
 
 async function acceptOffer(roomId, offer) {
   if (!active || state.screen !== "matching" || state.roomId) return;
-  if (!offer || offer.toUid !== state.uid) return;
+  if (!offer
+      || offer.protocolVersion !== ONLINE_SESSION_PROTOCOL_VERSION
+      || offer.toUid !== state.uid
+      || offer.toSessionId !== state.clientSessionId
+      || offer.sessions?.[state.uid]?.generation !== state.soloSessionGeneration) return;
   const expectedState = state;
   const generation = state.matchmakingGeneration;
-  const ownUid = state.uid;
-  const ownActiveRef = ref(database, `online/active/${ownUid}`);
   const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
-  let reservationHeld = false;
-  const releaseReservation = async () => {
-    const released = await releaseActiveReservation(roomId, expectedState);
-    if (released) reservationHeld = false;
-    return released;
-  };
   state.acceptingOffer = true;
   try {
-    const roomSnapshot = await get(ref(database, `online/rooms/${roomId}`));
-    if (!contextIsCurrent()) return;
-    const room = roomSnapshot.val();
-    if (!room || room.status !== "offered" || !room.members?.[ownUid] || room.hostUid !== offer.fromUid) {
-      await remove(ref(database, `online/offers/${ownUid}/${roomId}`));
-      return;
-    }
-    const [ownQueueSnapshot, hostQueueSnapshot] = await Promise.all([
-      get(ref(database, `online/queue/${ownUid}`)),
-      get(ref(database, `online/queue/${room.hostUid}`)),
-    ]);
-    if (!contextIsCurrent()) return;
-    if (
-      !ownQueueSnapshot.exists()
-      || !hostQueueSnapshot.exists()
-      || !Number.isFinite(getPreferenceMatchTier(ownQueueSnapshot.val(), hostQueueSnapshot.val()))
-    ) {
-      await remove(ref(database, `online/offers/${ownUid}/${roomId}`));
-      return;
-    }
-    const reservation = await runTransaction(ownActiveRef, (current) => current === null ? roomId : undefined);
-    if (!reservation.committed) return;
-    reservationHeld = true;
-    if (!contextIsCurrent()) {
-      await releaseReservation();
-      return;
-    }
-    const disconnectArmed = await armActiveReservationDisconnect(
+    const response = await soloSessionActionCallable({
+      action: "accept",
+      sessionId: state.clientSessionId,
+      leaseToken: state.clientLeaseToken,
       roomId,
-      expectedState,
-      contextIsCurrent,
-    );
-    if (!disconnectArmed) {
-      await releaseReservation();
-      return;
-    }
-    const roomStatusRef = ref(database, `online/rooms/${roomId}/status`);
-    const currentStatus = await get(roomStatusRef);
+    });
+    if (response.data?.accepted !== true) return;
     if (!contextIsCurrent()) {
-      await releaseReservation();
-      return;
-    }
-    if (currentStatus.val() !== "offered") {
-      await releaseReservation();
-      return;
-    }
-    await set(roomStatusRef, "active");
-    if (!contextIsCurrent()) {
-      await releaseReservation();
-      return;
-    }
-    await Promise.allSettled([
-      remove(ref(database, `online/offers/${ownUid}/${roomId}`)),
-      remove(ref(database, `online/queue/${ownUid}`)),
-    ]);
-    if (!contextIsCurrent()) {
-      await releaseReservation();
+      await releaseActiveReservation(roomId, expectedState).catch(() => {});
       return;
     }
     await enterRoom(roomId);
-    reservationHeld = false;
-  } catch (error) {
-    if (reservationHeld) await releaseReservation();
-    throw error;
   } finally {
     if (state === expectedState && state.matchmakingGeneration === generation) {
       state.acceptingOffer = false;
@@ -5454,7 +5661,17 @@ async function enterRoom(roomId) {
   }
   const room = snapshot.val();
   const roomPlayers = room ? [room.players?.[room.hostUid], room.players?.[room.guestUid]] : [];
-  if (!room || !room.members?.[ownUid] || roomPlayers.some((player) => !player?.uid)) {
+  const opponentUid = room?.hostUid === ownUid ? room?.guestUid : room?.hostUid;
+  if (!room
+      || room.protocolVersion !== ONLINE_SESSION_PROTOCOL_VERSION
+      || room.signalingVersion !== ONLINE_SESSION_PROTOCOL_VERSION
+      || !/^[-_0-9A-Za-z]{8,128}$/.test(String(room.connectionGeneration || ""))
+      || !/^[-_0-9A-Za-z]{8,128}$/.test(String(room.attemptId || ""))
+      || !room.members?.[ownUid]
+      || room.sessions?.[ownUid]?.sessionId !== state.clientSessionId
+      || room.sessions?.[ownUid]?.generation !== state.soloSessionGeneration
+      || !isValidOnlineSessionId(String(room.sessions?.[opponentUid]?.sessionId || ""))
+      || roomPlayers.some((player) => !player?.uid)) {
     await releaseReservation();
     throw new Error("ルーム情報を取得できませんでした。");
   }
@@ -5462,7 +5679,10 @@ async function enterRoom(roomId) {
   state.roomId = roomId;
   state.room = room;
   state.reunionMatch = room.reunion === true;
-  state.opponentUid = room.hostUid === ownUid ? room.guestUid : room.hostUid;
+  state.opponentUid = opponentUid;
+  state.opponentSessionId = room.sessions[opponentUid].sessionId;
+  state.roomConnectionGeneration = room.connectionGeneration;
+  state.signalingAttemptId = room.attemptId;
   state.playerIndex = room.hostUid === ownUid ? 0 : 1;
   state.players = roomPlayers.map((player) => {
     const sampleCount = normalizeSampleCount(player.sampleCount);
@@ -5551,26 +5771,38 @@ async function setupRoomListeners(context) {
   );
   if (!disconnectArmed) return false;
   const base = `online/rooms/${context.roomId}`;
-  const presenceRef = ref(database, `${base}/presence/${context.ownUid}`);
+  const presenceRef = ref(database, soloRoomPresencePath(
+    context.roomId,
+    context.ownUid,
+    context.expectedState.clientSessionId,
+  ));
+  const presencePayload = (online) => ({
+    protocolVersion: ONLINE_SESSION_PROTOCOL_VERSION,
+    sessionId: context.expectedState.clientSessionId,
+    leaseToken: context.expectedState.clientLeaseToken,
+    generation: context.expectedState.soloSessionGeneration,
+    online,
+    updatedAt: serverTimestamp(),
+  });
   let presenceWritten = false;
   let presenceDisconnect = null;
   const abandonSetup = async () => {
     await Promise.allSettled([
       presenceDisconnect?.cancel?.(),
       presenceWritten
-        ? set(presenceRef, { online: false, updatedAt: serverTimestamp() })
+        ? set(presenceRef, presencePayload(false))
         : Promise.resolve(),
     ]);
   };
   try {
-    await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
+    await set(presenceRef, presencePayload(true));
     presenceWritten = true;
     if (!isCurrentRoomSetupContext(context)) {
       await abandonSetup();
       return false;
     }
     presenceDisconnect = onDisconnect(presenceRef);
-    await presenceDisconnect.set({ online: false, updatedAt: serverTimestamp() });
+    await presenceDisconnect.set(presencePayload(false));
     if (!isCurrentRoomSetupContext(context)) {
       await abandonSetup();
       return false;
@@ -5592,7 +5824,11 @@ async function setupRoomListeners(context) {
       handleOpponentDestroyed(context, snapshot.val()).catch(handleRecoverableError);
     }
   }));
-  state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${context.opponentUid}`), (snapshot) => {
+  state.roomUnsubscribers.push(onValue(ref(database, soloRoomPresencePath(
+    context.roomId,
+    context.opponentUid,
+    context.expectedState.opponentSessionId,
+  )), (snapshot) => {
     if (!isCurrentRoomSetupContext(context)) return;
     state.opponentOnline = snapshot.val()?.online !== false;
     document.querySelectorAll(".online-room-strip .connection-pill")[1]?.classList.toggle("warning", !state.opponentOnline);
@@ -5637,19 +5873,355 @@ function listenToRound(roomContext) {
   });
 }
 
+function p2pDiagnosticPhase(screen) {
+  if (screen === "matching") return "matchmaking";
+  if (screen === "connecting") return "connecting";
+  if (screen === "select") return "select";
+  if (["play", "score", "roundResult"].includes(screen)) return "battle";
+  if (["gameover", "engawa", "noContest"].includes(screen)) return "result";
+  return "unknown";
+}
+
+function validCloudflareIceUrl(url) {
+  return typeof url === "string" && (
+    /^stun:stun\.cloudflare\.com:(?:3478|53)$/.test(url)
+    || /^turn:turn\.cloudflare\.com:(?:3478|53)\?transport=udp$/.test(url)
+    || /^turn:turn\.cloudflare\.com:(?:3478|53|80)\?transport=tcp$/.test(url)
+    || /^turns:turn\.cloudflare\.com:(?:5349|443)\?transport=tcp$/.test(url)
+  );
+}
+
+function validateClientIceServers(value) {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 4) {
+    throw new Error("TURN構成が不正です。");
+  }
+  let hasTurn = false;
+  const normalized = value.map((server) => {
+    const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
+    if (!urls.length || urls.length > 12 || urls.some((url) => !validCloudflareIceUrl(url))) {
+      throw new Error("TURN接続先が不正です。");
+    }
+    const containsTurn = urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"));
+    hasTurn ||= containsTurn;
+    if (!containsTurn) return { urls };
+    if (typeof server.username !== "string" || server.username.length < 8
+        || typeof server.credential !== "string" || server.credential.length < 8) {
+      throw new Error("TURN資格情報が不正です。");
+    }
+    return {
+      urls,
+      username: server.username,
+      credential: server.credential,
+    };
+  });
+  if (!hasTurn) throw new Error("TURN接続先がありません。");
+  return normalized;
+}
+
+function p2pMonotonicNow() {
+  const value = globalThis.performance?.now?.();
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function p2pTurnCacheWindow(value, {
+  monotonicAt = p2pMonotonicNow(),
+  wallClockAt = Date.now(),
+} = {}) {
+  const issuedAt = Number(value?.issuedAt || 0);
+  const refreshAt = Number(value?.refreshAt || 0);
+  const expiresAt = Number(value?.expiresAt || 0);
+  const refreshAfterMs = refreshAt - issuedAt;
+  const expiresAfterMs = expiresAt - issuedAt;
+  const expirySafetyMs = 30_000;
+  if (!Number.isFinite(monotonicAt)
+      || !Number.isFinite(wallClockAt)
+      || !Number.isFinite(issuedAt)
+      || !Number.isFinite(refreshAt)
+      || !Number.isFinite(expiresAt)
+      || issuedAt <= 0
+      || refreshAfterMs <= 0
+      || expiresAfterMs <= refreshAfterMs + expirySafetyMs
+      || expiresAfterMs > 2 * 60 * 60 * 1000) {
+    throw new Error("TURN有効期限が不正です。");
+  }
+  return {
+    refreshDeadlineMonotonic: monotonicAt + refreshAfterMs,
+    expiresDeadlineMonotonic: monotonicAt + expiresAfterMs - expirySafetyMs,
+    refreshDeadlineWall: wallClockAt + refreshAfterMs,
+    expiresDeadlineWall: wallClockAt + expiresAfterMs - expirySafetyMs,
+  };
+}
+
+function p2pTurnCacheBeforeDeadline(cache, kind) {
+  const monotonicDeadline = Number(cache?.[`${kind}DeadlineMonotonic`]);
+  const wallDeadline = Number(cache?.[`${kind}DeadlineWall`]);
+  return Number.isFinite(monotonicDeadline)
+    && Number.isFinite(wallDeadline)
+    && monotonicDeadline > p2pMonotonicNow()
+    && wallDeadline > Date.now();
+}
+
+async function loadP2pIceServers() {
+  if (cachedP2pIceServers
+      && p2pTurnCacheBeforeDeadline(cachedP2pIceServers, "refresh")) {
+    return {
+      iceServers: cachedP2pIceServers.iceServers,
+      turnAvailable: true,
+    };
+  }
+  try {
+    const response = await getP2pIceServersCallable({});
+    const iceServers = validateClientIceServers(response.data?.iceServers);
+    const cacheWindow = p2pTurnCacheWindow(response.data);
+    cachedP2pIceServers = { iceServers, ...cacheWindow };
+    return { iceServers, turnAvailable: true };
+  } catch {
+    if (cachedP2pIceServers
+        && p2pTurnCacheBeforeDeadline(cachedP2pIceServers, "expires")) {
+      return {
+        iceServers: cachedP2pIceServers.iceServers,
+        turnAvailable: true,
+      };
+    }
+    cachedP2pIceServers = null;
+    return {
+      iceServers: FALLBACK_ICE_SERVERS.map((server) => ({ ...server })),
+      turnAvailable: false,
+    };
+  }
+}
+
+async function selectedP2pCandidateSummary(peer) {
+  if (!peer?.getStats) return {};
+  try {
+    const stats = await peer.getStats();
+    let selectedPair = null;
+    for (const report of stats.values()) {
+      if (report.type === "transport" && report.selectedCandidatePairId) {
+        selectedPair = stats.get(report.selectedCandidatePairId);
+        break;
+      }
+      if (report.type === "candidate-pair" && report.state === "succeeded"
+          && (report.selected === true || report.nominated === true)) {
+        selectedPair = report;
+      }
+    }
+    const localCandidate = selectedPair?.localCandidateId
+      ? stats.get(selectedPair.localCandidateId)
+      : null;
+    const candidateType = ["host", "srflx", "prflx", "relay"].includes(localCandidate?.candidateType)
+      ? localCandidate.candidateType
+      : "none";
+    const rawTransport = String(localCandidate?.relayProtocol || localCandidate?.protocol || "none");
+    const transport = ["udp", "tcp", "tls"].includes(rawTransport) ? rawTransport : "none";
+    return { candidateType, transport };
+  } catch {
+    return { candidateType: "unknown", transport: "unknown" };
+  }
+}
+
+async function reportP2pDiagnostic(event, targetState = state, peer = targetState.peer, extra = {}) {
+  if (!targetState.roomId || !targetState.clientSessionId) return;
+  const dedupeKey = `${event}:${targetState.p2pRecovery?.iceRestartCount || 0}`;
+  if (targetState.p2pDiagnosticSent.has(dedupeKey)
+      && !["ice_disconnected", "cleanup"].includes(event)) return;
+  targetState.p2pDiagnosticSent.add(dedupeKey);
+  const candidate = await selectedP2pCandidateSummary(peer);
+  const elapsedMs = Math.min(
+    10 * 60 * 1000,
+    Math.max(0, Date.now() - Number(targetState.p2pStartedAt || Date.now())),
+  );
+  const diagnostic = {
+    event,
+    phase: event === "cleanup" ? "cleanup" : p2pDiagnosticPhase(targetState.screen),
+    turnAvailable: targetState.p2pTurnAvailable === true,
+    connectionState: String(peer?.connectionState || "unknown"),
+    iceConnectionState: String(peer?.iceConnectionState || "unknown"),
+    iceGatheringState: String(peer?.iceGatheringState || "unknown"),
+    candidateType: candidate.candidateType || "none",
+    transport: candidate.transport || "none",
+    attempt: Math.min(3, Math.max(0, Number(targetState.p2pRecovery?.iceRestartCount || 0))),
+    elapsedMs,
+    ...extra,
+  };
+  reportP2pConnectivityCallable({
+    sessionId: targetState.clientSessionId,
+    roomId: targetState.roomId,
+    diagnostic,
+  }).catch(() => {});
+}
+
+function clearP2pRecoveryTimer(targetState = state) {
+  window.clearTimeout(targetState.p2pRecoveryTimer);
+  targetState.p2pRecoveryTimer = null;
+}
+
+function scheduleP2pRecoveryTimer(targetState = state) {
+  clearP2pRecoveryTimer(targetState);
+  const timer = getOnlineP2pRecoveryTimer(targetState.p2pRecovery);
+  if (!timer) return;
+  targetState.p2pRecoveryTimer = window.setTimeout(() => {
+    dispatchP2pRecoveryEvent("TIMER_EXPIRED", targetState, {
+      timerToken: timer.timerToken,
+    });
+  }, Math.max(0, timer.deadlineAt - Date.now()));
+}
+
+function dispatchP2pRecoveryEvent(type, targetState = state, detail = {}) {
+  const recovery = targetState.p2pRecovery;
+  if (!recovery || state !== targetState) return;
+  const result = transitionOnlineP2pRecovery(recovery, {
+    type,
+    generationToken: recovery.generationToken,
+    now: Date.now(),
+    ...detail,
+  });
+  if (result.ignored) {
+    if (type === "TIMER_EXPIRED"
+        && detail.timerToken === recovery.timerToken
+        && Number.isFinite(recovery.deadlineAt)
+        && Date.now() < recovery.deadlineAt) {
+      scheduleP2pRecoveryTimer(targetState);
+    }
+    return;
+  }
+  targetState.p2pRecovery = result.state;
+  scheduleP2pRecoveryTimer(targetState);
+  result.effects.forEach((effect) => {
+    handleP2pRecoveryEffect(effect, targetState).catch(handleRecoverableError);
+  });
+}
+
+async function completeP2pFailureCleanup(targetState, effect) {
+  if (targetState.p2pCleanupPromise) return targetState.p2pCleanupPromise;
+  const roomId = targetState.roomId;
+  targetState.p2pCleanupPromise = (async () => {
+    await reportP2pDiagnostic("cleanup", targetState, targetState.peer);
+    if (roomId && targetState.uid) {
+      await runTransaction(
+        ref(database, `online/rooms/${roomId}/destroyed`),
+        (current) => current || { by: targetState.uid, at: Date.now() },
+      ).catch(() => {});
+    }
+    await cleanupOnlineResources(false, targetState, { preserveP2pRecovery: true });
+    const currentRecovery = targetState.p2pRecovery;
+    if (state !== targetState
+        || currentRecovery?.generationToken !== effect.generationToken
+        || currentRecovery.phase !== ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP) return;
+    if (currentRecovery.manuallyCancelled) {
+      targetState.p2pRecovery = null;
+      targetState.p2pGenerationToken = null;
+      return;
+    }
+    dispatchP2pRecoveryEvent("CLEANUP_COMPLETED", targetState);
+  })();
+  try {
+    await targetState.p2pCleanupPromise;
+  } finally {
+    targetState.p2pCleanupPromise = null;
+  }
+}
+
+async function resetAfterP2pFailure(targetState, {
+  autoRequeueCount = 0,
+  opponentCooldown = null,
+  automatic = false,
+} = {}) {
+  if (state !== targetState
+      || !active
+      || (automatic && (
+        targetState.p2pRecovery?.manuallyCancelled
+        || document.visibilityState !== "visible"
+        || !navigator.onLine
+      ))) return false;
+  const resetSucceeded = await resetOnlineState("setup");
+  if (!resetSucceeded
+      || !active
+      || state.screen !== "setup"
+      || (automatic && (
+        document.visibilityState !== "visible"
+        || !navigator.onLine
+      ))) return false;
+  const replacementState = state;
+  replacementState.p2pAutoRequeueCount = autoRequeueCount;
+  replacementState.p2pOpponentCooldown = opponentCooldown;
+  replacementState.p2pAutoRequeueStartedAt = automatic ? Date.now() : 0;
+  if (!automatic) {
+    showToast("P2P接続を確立できませんでした。通信環境を確認して、もう一度お試しください。");
+    return true;
+  }
+  showToast("接続先を切り替えて、対戦相手をもう一度探しています。");
+  await beginMatchmaking({ automatic: true });
+  return state !== replacementState
+    || replacementState.screen !== "setup";
+}
+
+async function handleP2pRecoveryEffect(effect, targetState = state) {
+  const recovery = targetState.p2pRecovery;
+  if (state !== targetState
+      || recovery?.generationToken !== effect.generationToken) return;
+  if (effect.type === "restart-ice") {
+    await reportP2pDiagnostic("restart_started", targetState, targetState.peer);
+    const currentRecovery = targetState.p2pRecovery;
+    if (state !== targetState
+        || currentRecovery?.generationToken !== effect.generationToken
+        || currentRecovery.phase !== ONLINE_P2P_RECOVERY_PHASES.RESTARTING
+        || currentRecovery.channelWasOpened
+        || currentRecovery.manuallyCancelled) return;
+    try {
+      await targetState.p2pRestartIce?.();
+    } catch {
+      const failedRecovery = targetState.p2pRecovery;
+      if (state === targetState
+          && failedRecovery?.generationToken === effect.generationToken
+          && failedRecovery.phase === ONLINE_P2P_RECOVERY_PHASES.RESTARTING
+          && !failedRecovery.channelWasOpened
+          && !failedRecovery.manuallyCancelled) {
+        dispatchP2pRecoveryEvent("ICE_FAILED", targetState);
+      }
+    }
+    return;
+  }
+  if (effect.type === "cleanup-failed-room") {
+    if (effect.reason === "connection-timeout") {
+      await reportP2pDiagnostic("connection_timeout", targetState, targetState.peer);
+    } else if (effect.reason === "restart-timeout") {
+      await reportP2pDiagnostic("restart_timeout", targetState, targetState.peer);
+    }
+    const currentRecovery = targetState.p2pRecovery;
+    if (state !== targetState
+        || currentRecovery?.generationToken !== effect.generationToken
+        || currentRecovery.phase !== ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP) return;
+    await completeP2pFailureCleanup(targetState, effect);
+    return;
+  }
+  if (effect.type === "auto-requeue") {
+    await resetAfterP2pFailure(targetState, {
+      automatic: true,
+      autoRequeueCount: effect.autoRequeueCount,
+      opponentCooldown: effect.opponentCooldown,
+    });
+    return;
+  }
+  if (effect.type === "show-connection-failure") {
+    await resetAfterP2pFailure(targetState);
+  }
+}
+
 async function setupPeerConnection(context) {
   if (!isCurrentRoomSetupContext(context)) return false;
   if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像転送に対応していません。");
+  const iceConfiguration = await loadP2pIceServers();
+  if (!isCurrentRoomSetupContext(context)) return false;
   const peer = new RTCPeerConnection({
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-    ],
+    iceServers: iceConfiguration.iceServers,
+    iceTransportPolicy: "all",
   });
   const peerContextIsCurrent = () => (
     isCurrentRoomSetupContext(context) && state.peer === peer
   );
   let signalUnsubscribe = null;
+  let signalHandlingChain = Promise.resolve();
   let createdChannel = null;
   const abandonPeerSetup = () => {
     signalUnsubscribe?.();
@@ -5659,44 +6231,150 @@ async function setupPeerConnection(context) {
       state.channelReady = false;
     }
     peer.onicecandidate = null;
+    peer.onicecandidateerror = null;
     peer.onconnectionstatechange = null;
+    peer.oniceconnectionstatechange = null;
     peer.ondatachannel = null;
     peer.close();
-    if (state === context.expectedState && state.peer === peer) state.peer = null;
+    if (state === context.expectedState && state.peer === peer) {
+      clearP2pRecoveryTimer(context.expectedState);
+      context.expectedState.p2pRestartIce = null;
+      context.expectedState.peer = null;
+    }
   };
   const sendRoomSignal = async (type, payload) => {
-    await set(push(ref(database, `online/rooms/${context.roomId}/signals/${context.opponentUid}`)), {
+    if (!peerContextIsCurrent()) return;
+    await set(push(ref(database, soloRoomSignalPath(
+      context.roomId,
+      context.opponentUid,
+      context.expectedState.opponentSessionId,
+    ))), {
+      protocolVersion: ONLINE_SESSION_PROTOCOL_VERSION,
+      signalingVersion: ONLINE_SESSION_PROTOCOL_VERSION,
       fromUid: context.ownUid,
+      fromSessionId: context.expectedState.clientSessionId,
+      toUid: context.opponentUid,
+      toSessionId: context.expectedState.opponentSessionId,
+      connectionGeneration: context.expectedState.roomConnectionGeneration,
+      attemptId: context.expectedState.signalingAttemptId,
       type,
       payload: JSON.stringify(payload),
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
     });
   };
   state.peer = peer;
+  state.pendingIce = [];
+  state.p2pStartedAt = Date.now();
+  state.p2pTurnAvailable = iceConfiguration.turnAvailable;
+  state.p2pGenerationToken = createOnlineP2pGenerationToken({
+    matchmakingGeneration: context.generation,
+    roomId: context.roomId,
+    sessionId: state.clientSessionId,
+  });
+  state.p2pRecovery = createOnlineP2pRecoveryState({
+    generationToken: state.p2pGenerationToken,
+    isHost: state.playerIndex === 0,
+    opponentUid: context.opponentUid,
+    startedAt: state.p2pStartedAt,
+    autoRequeueCount: state.p2pAutoRequeueCount,
+    visible: document.visibilityState === "visible",
+    online: navigator.onLine,
+  });
+  state.p2pRestartIce = async () => {
+    const restartIsCurrent = () => (
+      peerContextIsCurrent()
+      && state.playerIndex === 0
+      && state.p2pRecovery?.phase === ONLINE_P2P_RECOVERY_PHASES.RESTARTING
+      && state.p2pRecovery?.channelWasOpened !== true
+    );
+    if (!restartIsCurrent()) return;
+    peer.restartIce?.();
+    const restartOffer = await peer.createOffer({ iceRestart: true });
+    if (!restartIsCurrent()) return;
+    await peer.setLocalDescription(restartOffer);
+    if (!restartIsCurrent()) return;
+    await sendRoomSignal("offer", {
+      type: restartOffer.type,
+      sdp: restartOffer.sdp,
+      iceRestart: true,
+    });
+  };
+  scheduleP2pRecoveryTimer(state);
+  reportP2pDiagnostic("peer_created", state, peer).catch(() => {});
+  if (!iceConfiguration.turnAvailable) {
+    reportP2pDiagnostic("turn_unavailable", state, peer).catch(() => {});
+  }
   peer.onicecandidate = (event) => {
     if (event.candidate && peerContextIsCurrent()) {
       sendRoomSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError);
     }
   };
-  peer.onconnectionstatechange = () => {
+  peer.onicecandidateerror = () => {
+    if (peerContextIsCurrent() && state.screen === "connecting") {
+      state.peerStatus = "P2P接続経路を調整中…";
+      render();
+    }
+  };
+  const handlePeerStateChange = () => {
     if (!peerContextIsCurrent()) return;
     state.peerStatus = peer.connectionState === "connected" ? "● P2P接続済み" : `P2P: ${peer.connectionState}`;
-    if (["failed", "closed"].includes(peer.connectionState) && active && state.screen !== "noContest") {
-      showToast("P2P接続が切れました。ルーム破棄で退出できます。");
+    if (peer.connectionState === "connected"
+        || ["connected", "completed"].includes(peer.iceConnectionState)) {
+      dispatchP2pRecoveryEvent("ICE_CONNECTED", state);
+    } else if (peer.connectionState === "disconnected"
+        || peer.iceConnectionState === "disconnected") {
+      reportP2pDiagnostic("ice_disconnected", state, peer).catch(() => {});
+      dispatchP2pRecoveryEvent("ICE_DISCONNECTED", state);
+    } else if (["failed", "closed"].includes(peer.connectionState)
+        || peer.iceConnectionState === "failed") {
+      reportP2pDiagnostic("ice_failed", state, peer).catch(() => {});
+      dispatchP2pRecoveryEvent("ICE_FAILED", state);
     }
     if (state.screen === "connecting") render();
   };
+  peer.onconnectionstatechange = handlePeerStateChange;
+  peer.oniceconnectionstatechange = handlePeerStateChange;
   peer.ondatachannel = (event) => {
     if (peerContextIsCurrent()) configureDataChannel(event.channel, context.expectedState);
   };
 
-  const signalsRef = ref(database, `online/rooms/${context.roomId}/signals/${context.ownUid}`);
-  signalUnsubscribe = onChildAdded(signalsRef, async (snapshot) => {
-    try {
-      if (peerContextIsCurrent()) await handleSignal(snapshot.val());
-    } finally {
-      await remove(snapshot.ref).catch(() => {});
-    }
+  const signalsRef = ref(database, soloRoomSignalPath(
+    context.roomId,
+    context.ownUid,
+    context.expectedState.clientSessionId,
+  ));
+  signalUnsubscribe = onChildAdded(signalsRef, (snapshot) => {
+    signalHandlingChain = signalHandlingChain
+      .catch(() => {})
+      .then(async () => {
+        if (!peerContextIsCurrent()) return;
+        const signal = snapshot.val();
+        const decision = decideOnlineSignalEnvelope({
+          envelope: signal,
+          ownSessionId: context.expectedState.clientSessionId,
+          remoteSessionId: context.expectedState.opponentSessionId,
+          connectionGeneration: context.expectedState.roomConnectionGeneration,
+          isCurrentLeaseOwner: context.expectedState.soloSessionLeaseHeld,
+        });
+        if (!decision.accepted) return;
+        let handledSuccessfully = false;
+        try {
+          await handleSignal(signal, {
+            context,
+            peer,
+            sendRoomSignal,
+          });
+          handledSuccessfully = true;
+        } catch (error) {
+          if (peerContextIsCurrent()) handleRecoverableError(error);
+        }
+        if (shouldConsumeOnlineSignal(decision, {
+          handledSuccessfully,
+          contextStillCurrent: peerContextIsCurrent(),
+        })) {
+          await remove(snapshot.ref).catch(() => {});
+        }
+      });
   });
   state.roomUnsubscribers.push(signalUnsubscribe);
 
@@ -5714,7 +6392,11 @@ async function setupPeerConnection(context) {
         abandonPeerSetup();
         return false;
       }
-      await sendRoomSignal("offer", { type: offer.type, sdp: offer.sdp });
+      await sendRoomSignal("offer", {
+        type: offer.type,
+        sdp: offer.sdp,
+        iceRestart: false,
+      });
       if (!peerContextIsCurrent()) {
         abandonPeerSetup();
         return false;
@@ -5727,35 +6409,46 @@ async function setupPeerConnection(context) {
   return true;
 }
 
-async function sendSignal(type, payload) {
-  await set(push(ref(database, `online/rooms/${state.roomId}/signals/${state.opponentUid}`)), {
-    fromUid: state.uid,
-    type,
-    payload: JSON.stringify(payload),
-    createdAt: Date.now(),
-  });
-}
-
-async function handleSignal(signal) {
-  if (!signal || signal.fromUid !== state.opponentUid || !state.peer) return;
+async function handleSignal(signal, { context, peer, sendRoomSignal }) {
+  const targetState = context.expectedState;
+  const contextIsCurrent = () => (
+    isCurrentRoomSetupContext(context) && state.peer === peer
+  );
+  if (!contextIsCurrent()
+      || signal?.fromUid !== context.opponentUid
+      || signal?.toUid !== context.ownUid
+      || signal?.attemptId !== targetState.signalingAttemptId) {
+    throw new Error("現在の接続試行と異なるシグナルです。");
+  }
   const payload = JSON.parse(signal.payload);
   if (signal.type === "offer") {
-    await state.peer.setRemoteDescription(payload);
-    await flushPendingIce();
-    const answer = await state.peer.createAnswer();
-    await state.peer.setLocalDescription(answer);
-    await sendSignal("answer", { type: answer.type, sdp: answer.sdp });
+    if (payload?.iceRestart === true) {
+      dispatchP2pRecoveryEvent("RESTART_OFFER_RECEIVED", targetState);
+    }
+    await peer.setRemoteDescription({ type: payload.type, sdp: payload.sdp });
+    if (!contextIsCurrent()) return;
+    await flushPendingIce(peer, targetState.pendingIce, contextIsCurrent);
+    const answer = await peer.createAnswer();
+    if (!contextIsCurrent()) return;
+    await peer.setLocalDescription(answer);
+    if (!contextIsCurrent()) return;
+    await sendRoomSignal("answer", { type: answer.type, sdp: answer.sdp });
   } else if (signal.type === "answer") {
-    await state.peer.setRemoteDescription(payload);
-    await flushPendingIce();
+    await peer.setRemoteDescription({ type: payload.type, sdp: payload.sdp });
+    if (!contextIsCurrent()) return;
+    await flushPendingIce(peer, targetState.pendingIce, contextIsCurrent);
   } else if (signal.type === "candidate") {
-    if (state.peer.remoteDescription) await state.peer.addIceCandidate(payload);
-    else state.pendingIce.push(payload);
+    if (peer.remoteDescription) await peer.addIceCandidate(payload);
+    else targetState.pendingIce.push(payload);
+  } else {
+    throw new Error("未対応の接続シグナルです。");
   }
 }
 
-async function flushPendingIce() {
-  while (state.pendingIce.length) await state.peer.addIceCandidate(state.pendingIce.shift());
+async function flushPendingIce(peer, pendingIce, contextIsCurrent = () => true) {
+  while (pendingIce.length && contextIsCurrent()) {
+    await peer.addIceCandidate(pendingIce.shift());
+  }
 }
 
 function configureDataChannel(channel, expectedState = state) {
@@ -5769,7 +6462,15 @@ function configureDataChannel(channel, expectedState = state) {
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
     if (!channelContextIsCurrent()) return;
+    dispatchP2pRecoveryEvent("CHANNEL_OPENED", expectedState);
+    reportP2pDiagnostic("channel_open", expectedState, expectedState.peer).catch(() => {});
+    if ([
+      ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP,
+      ONLINE_P2P_RECOVERY_PHASES.TERMINAL,
+    ].includes(expectedState.p2pRecovery?.phase)) return;
     expectedState.channelReady = true;
+    expectedState.p2pAutoRequeueStartedAt = 0;
+    expectedState.p2pAutoRequeueCancelling = false;
     expectedState.peerStatus = "● P2P接続済み";
     if (expectedState.screen === "connecting") {
       expectedState.screen = "select";
@@ -5795,6 +6496,9 @@ function configureDataChannel(channel, expectedState = state) {
     if (!channelContextIsCurrent()) return;
     expectedState.channelReady = false;
     expectedState.peerStatus = "P2P接続が切れました";
+    if (!["gameover", "engawa", "noContest"].includes(expectedState.screen)) {
+      dispatchP2pRecoveryEvent("ICE_FAILED", expectedState);
+    }
     if (expectedState.screen === "engawa") {
       closeEngawaLocally("P2P接続が切れたため、縁側を閉じました。");
     } else if (expectedState.screen === "gameover" && !expectedState.engawaClosed) {
@@ -7004,16 +7708,16 @@ async function destroyRoom() {
   pendingDestroyContext = null;
   if (!isCurrentRoomSetupContext(context)) return;
   const expectedState = context.expectedState;
+  dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
   if (expectedState.roomTerminationToken) return;
   const terminationToken = Object.freeze({ type: "local-destroy" });
   expectedState.roomTerminationToken = terminationToken;
   const transitionToken = beginOnlineStateTransition(expectedState, "local-destroy");
-  const destroyWrite = runTransaction(
+  await runTransaction(
     ref(database, `online/rooms/${context.roomId}/destroyed`),
     (current) => current || { by: context.ownUid, at: Date.now() },
   ).catch(() => {});
-  const cleanupPromise = cleanupOnlineResources(false, expectedState);
-  await Promise.all([destroyWrite, cleanupPromise]);
+  await cleanupOnlineResources(false, expectedState);
   if (expectedState.roomTerminationToken !== terminationToken
       || !isSameRoomIdentity(context)
       || !isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
@@ -7041,6 +7745,7 @@ async function handleOpponentDestroyed(context, marker) {
 
 async function cancelMatching() {
   const expectedState = state;
+  dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
   const transitionToken = beginOnlineStateTransition(expectedState, "cancel-matching");
   await cleanupOnlineResources(false, expectedState);
   if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
@@ -7067,6 +7772,7 @@ function prepareDeckForRematch(items) {
 
 async function resetOnlineState(screen) {
   const expectedState = state;
+  dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
   const transitionToken = beginOnlineStateTransition(expectedState, `reset:${screen}`);
   const deck = prepareDeckForRematch(expectedState.deck);
   const identity = {
@@ -7115,7 +7821,7 @@ async function resetOnlineState(screen) {
     serverTimeOffset: expectedState.serverTimeOffset,
   };
   await cleanupOnlineResources(false, expectedState);
-  if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
+  if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return false;
   releaseMatchMedia();
   state = createOnlineState();
   Object.assign(state, identity);
@@ -7123,6 +7829,7 @@ async function resetOnlineState(screen) {
   state.screen = screen;
   setOnlineChrome("ONLINE READY");
   render();
+  return true;
 }
 
 async function leaveToLanding() {
@@ -7131,6 +7838,7 @@ async function leaveToLanding() {
     return;
   }
   const expectedState = state;
+  dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
   const transitionToken = beginOnlineStateTransition(expectedState, "leave");
   await cleanupOnlineResources(false, expectedState);
   if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
@@ -7163,34 +7871,30 @@ async function cleanupMatchmaking(keepActive, targetState = state) {
   const disconnectHandles = targetState.disconnectHandles.splice(0);
   await Promise.allSettled(disconnectHandles.map((handle) => handle.cancel?.()));
   if (useOfflineMarketPreview) {
-    if (!keepActive) await cancelActiveReservationDisconnect("", targetState).catch(() => {});
     targetState.pendingOffer = null;
     targetState.pendingIncomingOffer = null;
     return;
   }
-  const pendingHostedOffer = targetState.pendingOffer;
-  if (pendingHostedOffer?.roomId) {
-    await runTransaction(
-      ref(database, `online/rooms/${pendingHostedOffer.roomId}/status`),
-      (current) => (current === "offered" ? "expired" : undefined),
-    ).catch(() => {});
-  }
-  const removals = [remove(ref(database, `online/queue/${targetState.uid}`))];
-  if (!keepActive) removals.push(clearActiveReservation(targetState));
-  if (pendingHostedOffer) {
-    removals.push(remove(ref(database, `online/offers/${pendingHostedOffer.targetUid}/${pendingHostedOffer.roomId}`)));
-  }
-  await Promise.allSettled(removals);
   targetState.pendingOffer = null;
   targetState.pendingIncomingOffer = null;
 }
 
-async function cleanupOnlineResources(keepActive, targetState = state) {
+async function cleanupOnlineResources(
+  keepActive,
+  targetState = state,
+  { preserveP2pRecovery = false } = {},
+) {
   if (targetState.cleanupPromise) {
     await targetState.cleanupPromise;
     return;
   }
   const cleanupPromise = (async () => {
+    clearP2pRecoveryTimer(targetState);
+    targetState.p2pRestartIce = null;
+    if (!preserveP2pRecovery) {
+      targetState.p2pRecovery = null;
+      targetState.p2pGenerationToken = null;
+    }
     if (state === targetState) clearFinishCutIn();
     clearImageAckWatchdog(targetState);
     stopSelectionTimer(targetState);
@@ -7208,7 +7912,9 @@ async function cleanupOnlineResources(keepActive, targetState = state) {
     targetState.channelReady = false;
     if (peer) {
       peer.onicecandidate = null;
+      peer.onicecandidateerror = null;
       peer.onconnectionstatechange = null;
+      peer.oniceconnectionstatechange = null;
       peer.ondatachannel = null;
       peer.close();
     }
@@ -7220,19 +7926,29 @@ async function cleanupOnlineResources(keepActive, targetState = state) {
       channel.close();
     }
 
-    const roomId = targetState.roomId;
+    const activeRoomId = targetState.roomId;
+    const cancelRoomId = activeRoomId || targetState.pendingOffer?.roomId || "";
     const ownUid = targetState.uid;
     await cleanupMatchmaking(keepActive, targetState);
     await cleanupPublicPresence(targetState);
-    if (roomId && ownUid) {
-      await Promise.allSettled([
-        set(ref(database, `online/rooms/${roomId}/presence/${ownUid}`), {
-          online: false,
-          updatedAt: serverTimestamp(),
-        }),
-        keepActive ? Promise.resolve() : clearActiveReservation(targetState),
-      ]);
+    if (activeRoomId && ownUid) {
+      await set(ref(database, soloRoomPresencePath(
+        activeRoomId,
+        ownUid,
+        targetState.clientSessionId,
+      )), {
+        protocolVersion: ONLINE_SESSION_PROTOCOL_VERSION,
+        sessionId: targetState.clientSessionId,
+        leaseToken: targetState.clientLeaseToken,
+        generation: targetState.soloSessionGeneration,
+        online: false,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
     }
+    if (!keepActive && cancelRoomId) {
+      await cancelSoloSessionRoomOnce(cancelRoomId, targetState);
+    }
+    if (!keepActive) await releaseSoloSessionLease(targetState);
   })();
   targetState.cleanupPromise = cleanupPromise;
   try {
@@ -7308,16 +8024,52 @@ function friendlyFirebaseError(error) {
   return error?.message || "Firebaseへ接続できませんでした。";
 }
 
+function cancelUnavailableAutomaticMatchmaking() {
+  const expectedState = state;
+  if (!active
+      || expectedState.p2pAutoRequeueStartedAt <= 0
+      || expectedState.p2pAutoRequeueCancelling
+      || !["matching", "connecting"].includes(expectedState.screen)
+      || (document.visibilityState === "visible" && navigator.onLine)) return;
+  expectedState.p2pAutoRequeueCancelling = true;
+  cancelMatching().catch(handleRecoverableError).finally(() => {
+    if (state === expectedState) {
+      expectedState.p2pAutoRequeueCancelling = false;
+    }
+  });
+}
+
+document.addEventListener("visibilitychange", () => {
+  dispatchP2pRecoveryEvent("VISIBILITY_CHANGED", state, {
+    visible: document.visibilityState === "visible",
+  });
+  cancelUnavailableAutomaticMatchmaking();
+});
+
+window.addEventListener("online", () => {
+  dispatchP2pRecoveryEvent("NETWORK_CHANGED", state, { online: true });
+});
+
+window.addEventListener("offline", () => {
+  dispatchP2pRecoveryEvent("NETWORK_CHANGED", state, { online: false });
+  cancelUnavailableAutomaticMatchmaking();
+});
+
 window.addEventListener("beforeunload", () => {
   window.clearInterval(state.soloServerMatchTimer);
+  window.clearTimeout(state.soloSessionHeartbeat);
+  clearP2pRecoveryTimer(state);
   releaseAllImages();
   state.peer?.close();
+  soloSessionChannel?.close();
 });
 
 sampleHandicapDialog?.addEventListener("close", () => {
   const confirmed = sampleHandicapDialog.returnValue === "confirm";
   sampleHandicapDialog.returnValue = "";
-  if (confirmed && active && state.screen === "setup") beginMatchmaking();
+  if (confirmed && active && state.screen === "setup") {
+    beginMatchmaking().catch(handleRecoverableError);
+  }
 });
 
 finishCutInDialog?.addEventListener("cancel", (event) => {

@@ -242,14 +242,16 @@ test("normal 1on1 wires room and round contexts through cleanup and transition p
   assert.match(destroyFlow, /if \(!isCurrentRoomSetupContext\(context\)\) return/);
   assert.match(destroyFlow, /online\/rooms\/\$\{context\.roomId\}\/destroyed/);
   assert.match(destroyFlow, /by: context\.ownUid/);
-  const destroyWriteIndex = destroyFlow.indexOf("const destroyWrite = runTransaction");
-  const destroyCleanupIndex = destroyFlow.indexOf("const cleanupPromise = cleanupOnlineResources");
-  const destroyAwaitIndex = destroyFlow.indexOf("await Promise.all([destroyWrite, cleanupPromise])");
+  const destroyWriteIndex = destroyFlow.indexOf("await runTransaction(");
+  const destroyCleanupIndex = destroyFlow.indexOf(
+    "await cleanupOnlineResources(false, expectedState)",
+    destroyWriteIndex,
+  );
   assert.ok(
     destroyWriteIndex >= 0
       && destroyCleanupIndex > destroyWriteIndex
-      && destroyAwaitIndex > destroyCleanupIndex,
   );
+  assert.doesNotMatch(destroyFlow, /Promise\.all\(\[destroyWrite, cleanupPromise\]\)/);
   assert.match(source, /beginOnlineStateTransition\(expectedState, "cancel-matching"\)/);
   assert.match(source, /beginOnlineStateTransition\(expectedState, `reset:\$\{screen\}`\)/);
   assert.match(source, /beginOnlineStateTransition\(expectedState, "leave"\)/);
