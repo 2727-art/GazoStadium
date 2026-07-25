@@ -378,7 +378,7 @@ const finishCutInDialog = document.querySelector("#finishCutInDialog");
 const finishCutInContent = document.querySelector("#finishCutInContent");
 
 let active = false;
-let state = createOnlineState();
+let state;
 let lastRenderedScreen = "";
 let finishCutInGeneration = 0;
 let matchmakingGenerationCounter = 0;
@@ -423,6 +423,7 @@ function loadOrCreateSoloSessionId() {
 
 const clientSoloSessionId = loadOrCreateSoloSessionId();
 const clientSoloLeaseToken = createOnlineSessionToken(window.crypto);
+state = createOnlineState();
 
 function createOnlineState() {
   const leaderboardPublic = localStorage.getItem(RANKING_PUBLIC_KEY) === "1";

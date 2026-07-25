@@ -17,6 +17,23 @@ function sourceBetween(start, end) {
   return source.slice(startIndex, endIndex);
 }
 
+test("top-page bootstrap creates online state after per-tab session tokens", () => {
+  const stateDeclarationIndex = source.indexOf("let state;");
+  const sessionIdIndex = source.indexOf(
+    "const clientSoloSessionId = loadOrCreateSoloSessionId();",
+  );
+  const leaseTokenIndex = source.indexOf(
+    "const clientSoloLeaseToken = createOnlineSessionToken(window.crypto);",
+  );
+  const stateInitializationIndex = source.indexOf("state = createOnlineState();");
+
+  assert.notEqual(stateDeclarationIndex, -1);
+  assert.ok(sessionIdIndex > stateDeclarationIndex);
+  assert.ok(leaseTokenIndex > sessionIdIndex);
+  assert.ok(stateInitializationIndex > leaseTokenIndex);
+  assert.doesNotMatch(source, /let state = createOnlineState\(\);/);
+});
+
 test("normal 1on1 obtains short-lived TURN configuration with a cached relay fallback", () => {
   const loader = sourceBetween(
     "function validCloudflareIceUrl",
