@@ -239,6 +239,197 @@ this.renewSoloSessionClaimGuard = renewSoloSessionClaimGuard;`,
   assert.equal(otherResult.result, null);
 });
 
+test("heartbeat retries cold-cache null before refreshing the exact claim and resources", async () => {
+  const source = read("functions/index.js");
+  const heartbeatStart = source.indexOf("async function heartbeatSoloSessionV2");
+  const heartbeatEnd = source.indexOf(
+    "async function removeSoloSessionResourceIfFenced",
+    heartbeatStart,
+  );
+  assert.ok(heartbeatStart >= 0 && heartbeatEnd > heartbeatStart);
+
+  const {
+    heartbeatDecision,
+    normalizeClaim,
+    resourceFenceMatches,
+  } = require("../solo-session-v2");
+  const now = 1_780_000_000_000;
+  const ownClaim = {
+    protocolVersion: 2,
+    sessionId: "session-token-12345678",
+    leaseToken: "lease-token-1234567890",
+    generation: "generation-token-123456",
+    claimedAt: now - 10_000,
+    heartbeatAt: now - 10_000,
+    expiresAt: now + 20_000,
+  };
+  const exactResource = {
+    ...ownClaim,
+    uid: "owner",
+    state: "waiting",
+    joinedAt: now - 10_000,
+    lastSeen: now - 10_000,
+  };
+
+  const callbackInputs = {
+    claim: [],
+    queue: [],
+    active: [],
+  };
+  const committedValues = {};
+  const coldReference = (key, serverValue) => ({
+    transaction: async (updateValue) => {
+      callbackInputs[key].push(null);
+      const coldOutput = updateValue(null);
+      assert.equal(coldOutput, null);
+      if (serverValue == null) {
+        committedValues[key] = null;
+        return {
+          committed: true,
+          snapshot: { val: () => null },
+        };
+      }
+      callbackInputs[key].push(serverValue);
+      const serverOutput = updateValue(serverValue);
+      committedValues[key] = serverOutput === undefined ? serverValue : serverOutput;
+      return {
+        committed: serverOutput !== undefined,
+        snapshot: {
+          val: () => committedValues[key],
+        },
+      };
+    },
+  });
+  const context = {
+    Date: { now: () => now },
+    SOLO_SESSION_LEASE_TTL_MS: 60_000,
+    heartbeatDecision,
+    normalizeClaim,
+    resourceFenceMatches,
+    soloSessionClaimRef: () => coldReference("claim", ownClaim),
+    soloSessionQueueRef: () => coldReference("queue", exactResource),
+    soloSessionActiveRef: () => coldReference("active", exactResource),
+    soloSessionClaimResponse: (claim, reason) => ({
+      claimed: true,
+      reason,
+      lease: claim,
+      sessionGeneration: claim.generation,
+    }),
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${source.slice(heartbeatStart, heartbeatEnd)}
+this.heartbeatSoloSessionV2 = heartbeatSoloSessionV2;`,
+    context,
+  );
+
+  const result = await context.heartbeatSoloSessionV2("owner", {
+    sessionId: ownClaim.sessionId,
+    leaseToken: ownClaim.leaseToken,
+    generation: ownClaim.generation,
+  });
+
+  assert.equal(result.claimed, true);
+  assert.equal(result.reason, "refreshed");
+  assert.equal(result.sessionGeneration, ownClaim.generation);
+  assert.equal(result.lease.expiresAt, now + 60_000);
+  assert.equal(callbackInputs.claim.length, 2);
+  assert.equal(callbackInputs.queue.length, 2);
+  assert.equal(callbackInputs.active.length, 2);
+  assert.equal(committedValues.queue.expiresAt, now + 60_000);
+  assert.equal(committedValues.queue.lastSeen, now);
+  assert.equal(committedValues.active.expiresAt, now + 60_000);
+  assert.equal(committedValues.active.lastSeen, now);
+});
+
+test("heartbeat cold-cache probe never steals a missing or different claim", async () => {
+  const source = read("functions/index.js");
+  const heartbeatStart = source.indexOf("async function heartbeatSoloSessionV2");
+  const heartbeatEnd = source.indexOf(
+    "async function removeSoloSessionResourceIfFenced",
+    heartbeatStart,
+  );
+  const {
+    heartbeatDecision,
+    normalizeClaim,
+    resourceFenceMatches,
+  } = require("../solo-session-v2");
+  const now = 1_780_000_000_000;
+  const requested = {
+    sessionId: "session-token-12345678",
+    leaseToken: "lease-token-1234567890",
+    generation: "generation-token-123456",
+  };
+  const runHeartbeat = async (serverClaim) => {
+    const callbackInputs = [];
+    const claimReference = {
+      transaction: async (updateValue) => {
+        callbackInputs.push(null);
+        const coldOutput = updateValue(null);
+        assert.equal(coldOutput, null);
+        if (serverClaim == null) {
+          return {
+            committed: true,
+            snapshot: { val: () => null },
+          };
+        }
+        callbackInputs.push(serverClaim);
+        const serverOutput = updateValue(serverClaim);
+        return {
+          committed: serverOutput !== undefined,
+          snapshot: {
+            val: () => serverOutput === undefined ? serverClaim : serverOutput,
+          },
+        };
+      },
+    };
+    const context = {
+      Date: { now: () => now },
+      SOLO_SESSION_LEASE_TTL_MS: 60_000,
+      heartbeatDecision,
+      normalizeClaim,
+      resourceFenceMatches,
+      soloSessionClaimRef: () => claimReference,
+      soloSessionQueueRef: () => {
+        throw new Error("lost claim must not touch queue");
+      },
+      soloSessionActiveRef: () => {
+        throw new Error("lost claim must not touch active");
+      },
+      soloSessionClaimResponse: () => {
+        throw new Error("lost claim must not return a refreshed lease");
+      },
+    };
+    vm.createContext(context);
+    vm.runInContext(
+      `${source.slice(heartbeatStart, heartbeatEnd)}
+this.heartbeatSoloSessionV2 = heartbeatSoloSessionV2;`,
+      context,
+    );
+    return {
+      callbackInputs,
+      result: await context.heartbeatSoloSessionV2("owner", requested),
+    };
+  };
+
+  const missing = await runHeartbeat(null);
+  assert.equal(missing.callbackInputs.length, 1);
+  assert.equal(missing.result.claimed, false);
+  assert.equal(missing.result.reason, "lease-lost");
+
+  const different = await runHeartbeat({
+    protocolVersion: 2,
+    ...requested,
+    generation: "other-generation-123456",
+    claimedAt: now - 10_000,
+    heartbeatAt: now - 10_000,
+    expiresAt: now + 20_000,
+  });
+  assert.equal(different.callbackInputs.length, 2);
+  assert.equal(different.result.claimed, false);
+  assert.equal(different.result.reason, "lease-lost");
+});
+
 test("failed claim guard renewal still releases the originally acquired guard", async () => {
   const source = read("functions/index.js");
   const claimStart = source.indexOf("async function claimSoloSessionV2");

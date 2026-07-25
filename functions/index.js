@@ -5690,6 +5690,7 @@ async function heartbeatSoloSessionV2(uid, data) {
   const claimRef = soloSessionClaimRef(uid);
   let decision = null;
   const result = await claimRef.transaction((currentValue) => {
+    if (currentValue == null) return null;
     decision = heartbeatDecision({
       currentClaim: currentValue,
       sessionId: data.sessionId,
@@ -5712,24 +5713,26 @@ async function heartbeatSoloSessionV2(uid, data) {
   };
   const refreshedAt = Date.now();
   await Promise.allSettled([
-    soloSessionQueueRef(uid, data.sessionId).transaction((currentValue) => (
-      resourceFenceMatches(currentValue, fence)
+    soloSessionQueueRef(uid, data.sessionId).transaction((currentValue) => {
+      if (currentValue == null) return null;
+      return resourceFenceMatches(currentValue, fence)
         ? {
           ...currentValue,
           lastSeen: refreshedAt,
           expiresAt: claim.expiresAt,
         }
-        : undefined
-    )),
-    soloSessionActiveRef(uid, data.sessionId).transaction((currentValue) => (
-      resourceFenceMatches(currentValue, fence)
+        : undefined;
+    }),
+    soloSessionActiveRef(uid, data.sessionId).transaction((currentValue) => {
+      if (currentValue == null) return null;
+      return resourceFenceMatches(currentValue, fence)
         ? {
           ...currentValue,
           lastSeen: refreshedAt,
           expiresAt: claim.expiresAt,
         }
-        : undefined
-    )),
+        : undefined;
+    }),
   ]);
   return soloSessionClaimResponse(claim, "refreshed");
 }
