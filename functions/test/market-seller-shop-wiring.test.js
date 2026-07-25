@@ -11,6 +11,8 @@ test("seller-shop assets use the same cache generation", () => {
   assert.match(html, /market\.css\?v=[^"]*seller-shop-v1/);
   assert.match(html, /market\.js\?v=[^"]*seller-shop-v1/);
   assert.match(html, /market\.js\?v=[^"]*app-check-v2/);
+  assert.match(html, /market\.css\?v=[^"]*oshijo-closing-v1/);
+  assert.match(html, /market\.js\?v=[^"]*oshijo-closing-v1/);
 });
 
 test("seller-shop Firestore collections are server-only", () => {
@@ -82,6 +84,7 @@ test("seller-shop UI and documentation cover identity, relationships, and safety
     "ブロック",
     "証書来歴",
     "評価悪用",
+    "推し嬢（熱血クロージング）",
   ]) {
     assert.match(readme, new RegExp(term));
   }

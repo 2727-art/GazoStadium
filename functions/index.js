@@ -90,6 +90,12 @@ const {
   postMatchTipAmount,
 } = require("./market-economy");
 const {
+  marketClosingAllowsExtension,
+  marketClosingAuditMode,
+  marketClosingDecision,
+  marketClosingLeaveReason,
+} = require("./market-closing");
+const {
   DEFAULT_MARKET_SHOP,
   FREE_MARKET_SHOP_CHARM_IDS,
   MARKET_SHOP_CATALOG,
@@ -10040,6 +10046,24 @@ async function performMarketAction(uid, data, appCheckVerified) {
     if (ledgerSnapshot.exists) {
       const ledger = ledgerSnapshot.data();
       if (ledger.actorUid !== uid || ledger.action !== action) throw new HttpsError("permission-denied", "市場操作IDが一致しません。");
+      if (action === "pitch_complete") {
+        const replayClosingDecision = marketClosingDecision({
+          closingMode: data?.closingMode,
+          serviceStyles: room.sellerShop?.serviceStyles,
+        });
+        if (!replayClosingDecision.allowed) {
+          if (replayClosingDecision.errorCode === "failed-precondition") {
+            throw new HttpsError(
+              "failed-precondition",
+              "推し嬢モードは接客スタイルに設定している売り手だけが発動できます。",
+            );
+          }
+          throw new HttpsError("invalid-argument", "未対応の営業クロージングモードです。");
+        }
+        if (marketClosingAuditMode(ledger.closingMode) !== replayClosingDecision.closingMode) {
+          throw new HttpsError("permission-denied", "市場操作IDの営業クロージングモードが一致しません。");
+        }
+      }
       result = {
         status: room.status,
         room: { ...room, rankingCounted: room.rankingCounted ?? ledger.rankingCounted ?? null },
@@ -10122,6 +10146,22 @@ async function performMarketAction(uid, data, appCheckVerified) {
     } else if (action === "pitch_complete") {
       requireRoomActor(room, uid, "seller");
       requireMarketState(room, "pitch");
+      const closingDecision = marketClosingDecision({
+        closingMode: data?.closingMode,
+        serviceStyles: room.sellerShop?.serviceStyles,
+      });
+      if (!closingDecision.allowed) {
+        if (closingDecision.errorCode === "failed-precondition") {
+          throw new HttpsError(
+            "failed-precondition",
+            "推し嬢モードは接客スタイルに設定している売り手だけが発動できます。",
+          );
+        }
+        throw new HttpsError("invalid-argument", "未対応の営業クロージングモードです。");
+      }
+      const pitchCompletedAt = Date.now();
+      room.closingMode = closingDecision.closingMode;
+      room.closingActivatedAt = closingDecision.closingMode ? pitchCompletedAt : 0;
       const heldFee = Math.max(0, Number(room.entryFeeHeld || 0));
       if (heldFee > 0) {
         const wasReserved = room.entryFeeReserved === true;
@@ -10170,7 +10210,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
         };
       }
       room.status = "decision";
-      room.pitchCompletedAt = Date.now();
+      room.pitchCompletedAt = pitchCompletedAt;
     } else if (action === "buy") {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "decision");
@@ -10468,6 +10508,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
         patronFundPolicy: patronPolicy.activePolicy,
         patronFundKind: room.patronFundKind,
         sellerProceeds: actualSellerProceeds,
+        closingMode: marketClosingAuditMode(room.closingMode),
         turn: integer(room.turn, 1, MARKET_MAX_TURNS, 1),
         extended: Number(room.turn || 1) > 1 || Number(room.extensionFeesPaid || 0) > 0,
         rankingCounted: room.rankingCounted,
@@ -10478,10 +10519,13 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "decision");
       room.status = "ended";
-      room.endReason = "buyer_left";
+      room.endReason = marketClosingLeaveReason(room.closingMode);
     } else if (action === "request_extension") {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "decision");
+      if (!marketClosingAllowsExtension(room.closingMode)) {
+        throw new HttpsError("failed-precondition", "推し嬢モード中は追加検討できません。");
+      }
       if (Number(room.turn || 1) >= MARKET_MAX_TURNS) throw new HttpsError("failed-precondition", "営業ターンは上限です。");
       room.status = "extension_request";
       room.extensionRequestedAt = Date.now();
@@ -10769,6 +10813,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       patronFundPolicy: cleanText(room.patronFundPolicy, 16),
       patronFundKind: cleanText(room.patronFundKind, 16),
       sellerProceeds: Number(room.sellerProceeds || 0),
+      closingMode: marketClosingAuditMode(room.closingMode),
       certificateNumber: cleanText(room.certificateNumber, 24),
       sellerIssueNumber: integer(room.sellerIssueNumber, 0, 1_000_000, 0),
       achievementIds: result.newlyUnlocked,
@@ -10814,6 +10859,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
     patronFundPolicy: cleanText(result.room.patronFundPolicy, 16),
     patronFundKind: cleanText(result.room.patronFundKind, 16),
     sellerProceeds: Number(result.room.sellerProceeds || 0),
+    closingMode: marketClosingAuditMode(result.room.closingMode),
     certificateNumber: cleanText(result.room.certificateNumber, 24),
     sellerIssueNumber: integer(result.room.sellerIssueNumber, 0, 1_000_000, 0),
     sellerShop: result.room.sellerShop || null,
@@ -10917,6 +10963,7 @@ function publicMarketCertificate(snapshot) {
     patronFundPolicy: normalizeMarketPolicyId(value?.patronFundPolicy),
     patronFundKind,
     sellerProceeds: integer(value?.sellerProceeds, 0, MARKET_MAX_PRICE, 0),
+    closingMode: marketClosingAuditMode(value?.closingMode),
     turn: integer(value?.turn, 1, MARKET_MAX_TURNS, 1),
     extended: value?.extended === true,
     rankingCounted: value?.rankingCounted === true,

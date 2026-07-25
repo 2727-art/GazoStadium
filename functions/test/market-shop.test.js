@@ -85,6 +85,22 @@ test("shop save input accepts only catalog selections and an owned title", () =>
     ["specialtyTags", "serviceStyles", "themeId", "sealId", "titleId", "shopCharmId"],
   );
 });
+test("shop save input accepts and stores the oshijo service style", () => {
+  const result = validateMarketShopInput(validInput({
+    serviceStyles: ["story", "oshijo"],
+  }), {
+    ownedTitleIds: ["title_image_sommelier"],
+  });
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.shop.serviceStyles, ["story", "oshijo"]);
+  assert.deepEqual(
+    MARKET_SHOP_CATALOG.serviceStyles.find(({ id }) => id === "oshijo"),
+    { id: "oshijo", label: "推し嬢（熱血クロージング）" },
+  );
+});
+
 
 test("shop charms accept free stamps and only owned paid stamps", () => {
   const freeCharm = validateMarketShopInput(validInput({

@@ -47,6 +47,7 @@ const MARKET_SHOP_CATALOG = Object.freeze({
     ["concise", "ひとこと勝負"],
     ["audio", "音声で熱く"],
     ["careful", "じっくり丁寧"],
+    ["oshijo", "推し嬢（熱血クロージング）"],
   ]),
   themes: catalogEntries([
     ["standard", "スタンダード"],
