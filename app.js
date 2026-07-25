@@ -30,6 +30,28 @@
     max: 3000,
     range: "1400+ / 月間TOP10",
   });
+  const CREATOR_CARD_TYPES = Object.freeze({
+    illustration: Object.freeze({ label: "イラスト", icon: "✦" }),
+    photo: Object.freeze({ label: "写真", icon: "▣" }),
+    both: Object.freeze({ label: "イラスト・写真", icon: "◆" }),
+    community: Object.freeze({ label: "対戦・交流", icon: "♡" }),
+  });
+  const CREATOR_CARD_THEMES = new Set([
+    "basic-rose",
+    "basic-aqua",
+    "basic-violet",
+    "basic-sunset",
+    "premium-hologram",
+    "premium-stardust",
+    "premium-royal",
+  ]);
+  const CREATOR_CARD_GROWTH_LABELS = Object.freeze([
+    "はじまり",
+    "一枚目",
+    "いつもの一枚",
+    "育った一枚",
+    "自分だけの名刺",
+  ]);
 
   const app = document.querySelector("#app");
   const toast = document.querySelector("#toast");
@@ -47,6 +69,7 @@
   let rankingPeriod = "weekly";
   let rankingDisplayedPeriodKey = "";
   let landingTopMessageIndex = 0;
+  let landingTopMessagePaused = false;
   let profileAvatarReadyPromise = null;
   let pendingValueMarketDestination = "";
   let valueMarketReadyListenerPending = false;
@@ -497,7 +520,210 @@
       `<div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite">
         <div class="loading-card"><div class="loader"></div><strong>${escapeHtml(message)}</strong></div>
       </div>`,
-    );
+      );
+  }
+
+  function normalizeCreatorCardPresentation(value = {}) {
+    const creatorType = CREATOR_CARD_TYPES[value.creatorType]
+      ? String(value.creatorType)
+      : "community";
+    const legacyPremium = Number(value.schemaVersion || 0) < 2;
+    const requestedTheme = String(value.cardTheme || "");
+    const cardTheme = CREATOR_CARD_THEMES.has(requestedTheme)
+      ? requestedTheme
+      : legacyPremium ? "premium-hologram" : "basic-rose";
+    const growthLevel = Math.min(5, Math.max(1, Math.floor(Number(value.growthLevel || 1))));
+    const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(value.xHandle || ""))
+      ? String(value.xHandle)
+      : "";
+    return {
+      ...value,
+      schemaVersion: Number(value.schemaVersion || 0),
+      name: String(value.name || "PLAYER").trim().slice(0, 16) || "PLAYER",
+      text: String(value.text || "").trim().slice(0, 30),
+      creatorType,
+      creatorTypeLabel: CREATOR_CARD_TYPES[creatorType].label,
+      creatorTypeIcon: CREATOR_CARD_TYPES[creatorType].icon,
+      cardTheme,
+      growthLevel,
+      growthLabel: CREATOR_CARD_GROWTH_LABELS[growthLevel - 1],
+      xHandle,
+      achievementShowcase: window.HariaiAchievements?.normalizeIds?.(value.achievementShowcase, 3) || [],
+    };
+  }
+
+  function renderCreatorCard(value, { preview = false, compact = false } = {}) {
+    const card = normalizeCreatorCardPresentation(value);
+    const title = card.title
+      ? `<span class="community-title ${escapeHtml(card.titleClassName || "")}"><span aria-hidden="true">${escapeHtml(card.titleIcon || "◆")}</span>${escapeHtml(card.title)}</span>`
+      : "";
+    const badges = window.HariaiAchievements?.renderBadges?.(card.achievementShowcase) || "";
+    const xContent = card.xHandle
+      ? preview
+        ? `<span class="creator-card-x-link is-preview"><b aria-hidden="true">X</b>@${escapeHtml(card.xHandle)}</span>`
+        : `<a class="creator-card-x-link" href="https://x.com/${encodeURIComponent(card.xHandle)}" target="_blank" rel="noopener noreferrer nofollow ugc" referrerpolicy="no-referrer"><b aria-hidden="true">X</b>作品を見る&nbsp;@${escapeHtml(card.xHandle)}</a>`
+      : `<span class="creator-card-x-empty">Xリンクは公開されていません</span>`;
+    return `<article class="creator-card creator-card-theme-${escapeHtml(card.cardTheme)} creator-card-stage-${card.growthLevel} ${compact ? "is-compact" : ""}" aria-label="${escapeHtml(card.name)}の推しカード">
+      <span class="creator-card-sheen" aria-hidden="true"></span>
+      <header class="creator-card-header"><span>MY FAVORITE CARD</span><b>STAGE ${card.growthLevel}<small>${escapeHtml(card.growthLabel)}</small></b></header>
+      <div class="creator-card-identity"><span class="creator-card-type"><i aria-hidden="true">${escapeHtml(card.creatorTypeIcon)}</i>${escapeHtml(card.creatorTypeLabel)}</span><strong>${escapeHtml(card.name)}</strong>${title}</div>
+      <blockquote>${escapeHtml(card.text || "あなたの「好き」を、ここに。")}</blockquote>
+      <div class="creator-card-achievements">${badges || '<span class="creator-card-achievement-empty">育てると実績を飾れます</span>'}</div>
+      <footer>${xContent}<span class="creator-card-brand">貼り合いスタジアム</span></footer>
+    </article>`;
+  }
+
+  function creatorCardShareText(value) {
+    const card = normalizeCreatorCardPresentation(value);
+    return [
+      `貼り合いスタジアムで「${card.name}」の推しカードを育てています。`,
+      card.text,
+      "",
+      "#貼り合いスタジアム",
+      OFFICIAL_GAME_URL,
+    ].filter((line, index, values) => line || (index > 0 && values[index - 1])).join("\n");
+  }
+
+  function createXCreatorCardPostUrl(value) {
+    const intentUrl = new URL("https://x.com/intent/tweet");
+    intentUrl.searchParams.set("text", creatorCardShareText(value));
+    intentUrl.searchParams.set("lang", "ja");
+    return intentUrl.toString();
+  }
+
+  function creatorCardCanvasPalette(theme) {
+    const palettes = {
+      "basic-rose": ["#21121c", "#ff7194", "#ffd0dc", "#70e6dd"],
+      "basic-aqua": ["#0d2025", "#56dfd8", "#c9fffb", "#ff91aa"],
+      "basic-violet": ["#18132a", "#a68cff", "#e1d8ff", "#68e6dc"],
+      "basic-sunset": ["#281716", "#ff966d", "#ffe0b0", "#ff6f9c"],
+      "premium-hologram": ["#11182b", "#75f5e7", "#fff0ff", "#ff78ad"],
+      "premium-stardust": ["#0d1026", "#9188ff", "#f7e7a9", "#69e5e0"],
+      "premium-royal": ["#231708", "#edc66c", "#fff3c2", "#b383ff"],
+    };
+    return palettes[theme] || palettes["basic-rose"];
+  }
+
+  function drawCreatorCardWrappedText(context, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+    const characters = Array.from(String(text || ""));
+    const lines = [];
+    let line = "";
+    characters.forEach((character) => {
+      const candidate = `${line}${character}`;
+      if (line && context.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = character;
+      } else {
+        line = candidate;
+      }
+    });
+    if (line) lines.push(line);
+    lines.slice(0, maxLines).forEach((entry, index) => {
+      const finalLine = index === maxLines - 1 && lines.length > maxLines
+        ? `${Array.from(entry).slice(0, -1).join("")}…`
+        : entry;
+      context.fillText(finalLine, x, y + (index * lineHeight));
+    });
+  }
+
+  async function createCreatorCardPngBlob(value) {
+    const card = normalizeCreatorCardPresentation(value);
+    await document.fonts?.ready;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 675;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("カード画像を作成できませんでした。");
+    const [surface, accent, text, subAccent] = creatorCardCanvasPalette(card.cardTheme);
+    const background = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    background.addColorStop(0, "#080b13");
+    background.addColorStop(0.52, surface);
+    background.addColorStop(1, "#080c14");
+    context.fillStyle = background;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalAlpha = 0.15 + (card.growthLevel * 0.025);
+    context.fillStyle = accent;
+    context.beginPath();
+    context.arc(1060, 70, 310, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = subAccent;
+    context.beginPath();
+    context.arc(100, 650, 260, 0, Math.PI * 2);
+    context.fill();
+    context.globalAlpha = 1;
+    context.beginPath();
+    context.roundRect(48, 46, 1104, 583, 42);
+    context.fillStyle = "rgba(8, 10, 18, 0.82)";
+    context.fill();
+    context.lineWidth = 3 + card.growthLevel;
+    context.strokeStyle = accent;
+    context.stroke();
+    if (card.cardTheme.startsWith("premium-")) {
+      const foil = context.createLinearGradient(100, 80, 1100, 600);
+      foil.addColorStop(0, "rgba(255,255,255,.05)");
+      foil.addColorStop(0.35, `${accent}66`);
+      foil.addColorStop(0.58, `${subAccent}55`);
+      foil.addColorStop(1, "rgba(255,255,255,.03)");
+      context.fillStyle = foil;
+      context.beginPath();
+      context.roundRect(65, 63, 1070, 549, 34);
+      context.fill();
+    }
+    context.fillStyle = accent;
+    context.font = "900 25px system-ui, sans-serif";
+    context.letterSpacing = "4px";
+    context.fillText("MY FAVORITE CARD", 96, 112);
+    context.letterSpacing = "0px";
+    context.textAlign = "right";
+    context.fillText(`STAGE ${card.growthLevel}  ${card.growthLabel}`, 1100, 112);
+    context.textAlign = "left";
+    context.fillStyle = subAccent;
+    context.font = "900 28px system-ui, sans-serif";
+    context.fillText(`${card.creatorTypeIcon}  ${card.creatorTypeLabel}`, 96, 178);
+    context.fillStyle = text;
+    context.font = "950 66px system-ui, sans-serif";
+    context.fillText(card.name, 96, 260);
+    if (card.title) {
+      context.fillStyle = accent;
+      context.font = "800 24px system-ui, sans-serif";
+      context.fillText(`${card.titleIcon || "◆"}  ${card.title}`, 96, 305);
+    }
+    context.fillStyle = "#ffffff";
+    context.font = "800 42px system-ui, sans-serif";
+    drawCreatorCardWrappedText(context, card.text, 96, card.title ? 370 : 350, 960, 54, 2);
+    const achievementDefinitions = card.achievementShowcase
+      .map((id) => window.HariaiAchievements?.byId?.get?.(id))
+      .filter(Boolean);
+    context.font = "800 24px system-ui, sans-serif";
+    let badgeX = 96;
+    achievementDefinitions.forEach((definition) => {
+      const label = `${definition.icon} ${definition.name}`;
+      const width = Math.min(290, context.measureText(label).width + 34);
+      context.fillStyle = "rgba(255,255,255,.09)";
+      context.beginPath();
+      context.roundRect(badgeX, 472, width, 48, 24);
+      context.fill();
+      context.fillStyle = "#f4ecf2";
+      context.fillText(label, badgeX + 17, 505);
+      badgeX += width + 14;
+    });
+    context.fillStyle = card.xHandle ? accent : "#8c93a3";
+    context.font = "800 26px system-ui, sans-serif";
+    context.fillText(card.xHandle ? `X  @${card.xHandle}` : "Xリンクは非公開", 96, 566);
+    context.textAlign = "right";
+    context.fillStyle = "#aab1c0";
+    context.font = "700 21px system-ui, sans-serif";
+    context.fillText("貼り合いスタジアム  gazostadium.anjugames.workers.dev", 1100, 566);
+    return canvasToBlob(canvas, "image/png");
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
 
   function renderLandingTopMessageContent() {
@@ -508,54 +734,83 @@
       ? `<button class="community-reset" type="button" data-top-message-reset>非表示をリセット（${mutedCount}）</button>`
       : "";
     if ((status === "idle" || status === "loading") && !messages.length) {
-      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>みんなのメッセージを読み込んでいます…</p></div>`;
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>みんなの推しカードを読み込んでいます…</p></div>`;
     }
     if (status === "error" && !messages.length) {
-      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>メッセージを読み込めませんでした。</p><button class="community-retry" type="button" data-top-message-retry>再読み込み</button>${resetMuted}</div>`;
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>推しカードを読み込めませんでした。</p><button class="community-retry" type="button" data-top-message-retry>再読み込み</button>${resetMuted}</div>`;
     }
     if (!messages.length) {
-      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>まだメッセージはありません。AnjuPayストアから最初のひとことを届けませんか？</p><button class="community-shop-link" type="button" data-top-message-shop>投稿枠を見る</button>${resetMuted}</div>`;
+      return `<div class="community-message-state"><span class="community-message-spark" aria-hidden="true">♡</span><p>まだ公開カードはありません。あなたの「好き」を育てたカードを最初に飾ってみませんか？</p><button class="community-shop-link" type="button" data-top-message-compose>カードをつくる</button>${resetMuted}</div>`;
     }
     landingTopMessageIndex %= messages.length;
     const message = messages[landingTopMessageIndex];
-    const title = message.title
-      ? `<span class="community-title ${escapeHtml(message.titleClassName || "")}"><span aria-hidden="true">${escapeHtml(message.titleIcon || "◆")}</span>${escapeHtml(message.title)}</span>`
-      : "";
     const count = messages.length > 1 ? `<span class="community-position">${landingTopMessageIndex + 1} / ${messages.length}</span>` : "";
-    return `<article class="community-message-card">
-      <span class="community-quote" aria-hidden="true">♡</span>
-      <div class="community-message-body"><p>${escapeHtml(message.text)}</p><div class="community-author">${title}<strong>${escapeHtml(message.name)}</strong></div></div>
-      <div class="community-message-controls">${count}<button type="button" data-top-message-mute="${escapeHtml(message.entryId)}" aria-label="${escapeHtml(message.name)}のメッセージを非表示">この人を非表示</button>${resetMuted}</div>
-    </article>`;
+    const navigation = messages.length > 1
+      ? `<div class="community-card-navigation"><button type="button" data-top-message-prev aria-label="前の推しカード">‹</button><button type="button" data-top-message-next aria-label="次の推しカード">›</button></div>`
+      : "";
+    return `<div class="community-card-stage">
+      ${renderCreatorCard(message, { compact: true })}
+      <div class="community-message-controls"><span>${count}${navigation}</span><button type="button" data-top-message-mute="${escapeHtml(message.entryId)}" aria-label="${escapeHtml(message.name)}のカードを非表示">この人を非表示</button>${resetMuted}</div>
+    </div>`;
   }
 
   function renderLandingTopMessagePanel() {
-    return `<section class="landing-community" id="topMessagePanel" aria-label="トップメッセージ">
-      <div class="community-message-head"><div><span>COMMUNITY MESSAGE</span><strong>みんなのひとこと</strong></div><small>最新5件を8秒ごとに表示</small></div>
-      <div id="topMessageContent" aria-live="polite">${renderLandingTopMessageContent()}</div>
+    return `<section class="landing-community" id="topMessagePanel" aria-label="みんなの推しカード">
+      <div class="community-message-head"><div class="community-message-title"><span>PLAYER SHOWCASE</span><strong>みんなの推しカード</strong></div><div class="community-head-actions"><small>${landingTopMessagePaused ? "自動切替は停止中" : "日替わり順・10秒ごとに表示"}</small><button class="community-autoplay-toggle" type="button" data-top-message-autoplay aria-pressed="${landingTopMessagePaused}">${landingTopMessagePaused ? "自動切替を再開" : "自動切替を停止"}</button><button type="button" data-top-message-compose>自分のカードを飾る</button></div></div>
+      <div id="topMessageContent">${renderLandingTopMessageContent()}</div>
     </section>`;
   }
 
   function bindLandingTopMessageEvents() {
-    document.querySelector("[data-top-message-retry]")?.addEventListener("click", () => window.HariaiOnline?.refreshTopMessages?.());
-    document.querySelector("[data-top-message-shop]")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
+    document.querySelector("[data-top-message-retry]")?.addEventListener("click", async () => {
+      await window.HariaiOnline?.refreshTopMessages?.();
+      updateLandingTopMessagePanel({ focusSelector: "[data-top-message-autoplay]" });
+    });
+    document.querySelectorAll("[data-top-message-compose]").forEach((button) => {
+      button.onclick = () => openOnlineFeature("openCreatorCard");
+    });
+    const autoplayButton = document.querySelector("[data-top-message-autoplay]");
+    if (autoplayButton) {
+      autoplayButton.onclick = () => {
+        landingTopMessagePaused = !landingTopMessagePaused;
+        autoplayButton.setAttribute("aria-pressed", String(landingTopMessagePaused));
+        autoplayButton.textContent = landingTopMessagePaused ? "自動切替を再開" : "自動切替を停止";
+        const status = autoplayButton.parentElement?.querySelector("small");
+        if (status) status.textContent = landingTopMessagePaused ? "自動切替は停止中" : "日替わり順・10秒ごとに表示";
+      };
+    }
     document.querySelector("[data-top-message-mute]")?.addEventListener("click", (event) => {
       landingTopMessageIndex = 0;
       window.HariaiOnline?.muteTopMessage?.(event.currentTarget.dataset.topMessageMute);
-      showToast("このプレイヤーのトップメッセージをこの端末で非表示にしました。");
+      updateLandingTopMessagePanel({ focusSelector: "[data-top-message-autoplay]" });
+      showToast("このプレイヤーの推しカードをこの端末で非表示にしました。");
+    });
+    document.querySelector("[data-top-message-prev]")?.addEventListener("click", () => {
+      const messages = window.HariaiOnline?.getTopMessages?.() || [];
+      if (!messages.length) return;
+      landingTopMessageIndex = (landingTopMessageIndex - 1 + messages.length) % messages.length;
+      updateLandingTopMessagePanel({ focusSelector: "[data-top-message-prev]" });
+    });
+    document.querySelector("[data-top-message-next]")?.addEventListener("click", () => {
+      const messages = window.HariaiOnline?.getTopMessages?.() || [];
+      if (!messages.length) return;
+      landingTopMessageIndex = (landingTopMessageIndex + 1) % messages.length;
+      updateLandingTopMessagePanel({ focusSelector: "[data-top-message-next]" });
     });
     document.querySelector("[data-top-message-reset]")?.addEventListener("click", () => {
       landingTopMessageIndex = 0;
       window.HariaiOnline?.clearMutedTopMessages?.();
-      showToast("トップメッセージの非表示設定をリセットしました。");
+      updateLandingTopMessagePanel({ focusSelector: "[data-top-message-autoplay]" });
+      showToast("推しカードの非表示設定をリセットしました。");
     });
   }
 
-  function updateLandingTopMessagePanel() {
+  function updateLandingTopMessagePanel({ focusSelector = "" } = {}) {
     const content = document.querySelector("#topMessageContent");
     if (!content) return;
     content.innerHTML = renderLandingTopMessageContent();
     bindLandingTopMessageEvents();
+    if (focusSelector) document.querySelector(focusSelector)?.focus();
   }
 
   function renderLanding() {
@@ -617,7 +872,7 @@
             <div><small>商談中</small><strong><span id="lobbyMarketNegotiatingCount">${statValue(marketStats.negotiating)}</span><em>件</em></strong></div>
           </div></article>
         </div>
-        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。購入者のトップメッセージだけ表示名・称号とともに公開され、匿名UID・ルーム情報は表示しません。</p>
+        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
         <p class="mode-note">画像と戦略型・推し値市場の音声は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
@@ -1472,6 +1727,12 @@
       buildResultShareText,
       createXResultPostUrl,
       renderResultShareButton,
+      renderCreatorCard,
+      createCreatorCardPngBlob,
+      createXCreatorCardPostUrl,
+      creatorCardShareText,
+      downloadBlob,
+      officialGameUrl: OFFICIAL_GAME_URL,
     },
   };
 
@@ -1498,18 +1759,21 @@
   window.addEventListener("hariai-top-messages-updated", () => {
     const messages = window.HariaiOnline?.getTopMessages?.() || [];
     if (landingTopMessageIndex >= messages.length) landingTopMessageIndex = 0;
+    if (document.querySelector("#topMessageContent")?.matches(":focus-within")) return;
     updateLandingTopMessagePanel();
   });
 
   window.setInterval(refreshRankingAtPeriodBoundary, 60_000);
   window.setInterval(() => {
-    if (!document.querySelector("#topMessagePanel")) return;
+    const panel = document.querySelector("#topMessagePanel");
+    if (!panel) return;
+    if (landingTopMessagePaused || panel.matches(":hover, :focus-within")) return;
     const messages = window.HariaiOnline?.getTopMessages?.() || [];
     if (messages.length > 1) {
       landingTopMessageIndex = (landingTopMessageIndex + 1) % messages.length;
       updateLandingTopMessagePanel();
     }
-  }, 8_000);
+  }, 10_000);
   window.setInterval(() => {
     if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.({ silent: true });
   }, 60_000);

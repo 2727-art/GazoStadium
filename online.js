@@ -154,9 +154,49 @@ const RANKING_COMMENT_MAX_LENGTH = 80;
 const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
 const TOP_MESSAGE_PRODUCT_ID = "feature_top_message";
 const TOP_MESSAGE_MAX_LENGTH = 30;
-const TOP_MESSAGE_FETCH_LIMIT = 10;
-const TOP_MESSAGE_DISPLAY_LIMIT = 5;
+const CREATOR_CARD_URL_PATTERN = /(?:https?:\/\/|www\.|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?:[/?#]\S*)?)/i;
+const CREATOR_CARD_EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,24}/i;
+const TOP_MESSAGE_FETCH_LIMIT = 20;
+const TOP_MESSAGE_DISPLAY_LIMIT = 10;
 const TOP_MESSAGE_MUTED_KEY = "hariai-stadium-muted-top-messages-v1";
+const CREATOR_CARD_VERSION = 2;
+const CREATOR_CARD_TYPES = Object.freeze([
+  Object.freeze({
+    id: "illustration",
+    label: "イラスト",
+    icon: "✦",
+    templates: Object.freeze(["Xでイラストを投稿しています", "女の子のイラストを描いています", "新作を見てもらえたら嬉しいです"]),
+  }),
+  Object.freeze({
+    id: "photo",
+    label: "写真",
+    icon: "▣",
+    templates: Object.freeze(["Xで写真を投稿しています", "風景や街の写真を撮っています", "お気に入りの一枚を見にきてね"]),
+  }),
+  Object.freeze({
+    id: "both",
+    label: "イラスト・写真",
+    icon: "◆",
+    templates: Object.freeze(["イラストと写真を投稿しています", "好きな一枚を気ままに投稿中です", "作品を見てもらえたら嬉しいです"]),
+  }),
+  Object.freeze({
+    id: "community",
+    label: "対戦・交流",
+    icon: "♡",
+    templates: Object.freeze(["対戦相手募集中です", "みんなの好きな画像も見たいです", "気軽に声をかけてください"]),
+  }),
+]);
+const CREATOR_CARD_THEMES = Object.freeze([
+  Object.freeze({ id: "basic-rose", label: "ローズ", premium: false }),
+  Object.freeze({ id: "basic-aqua", label: "アクア", premium: false }),
+  Object.freeze({ id: "basic-violet", label: "バイオレット", premium: false }),
+  Object.freeze({ id: "basic-sunset", label: "サンセット", premium: false }),
+  Object.freeze({ id: "premium-hologram", label: "ホログラム", premium: true }),
+  Object.freeze({ id: "premium-stardust", label: "スターダスト", premium: true }),
+  Object.freeze({ id: "premium-royal", label: "ロイヤル箔", premium: true }),
+]);
+const CREATOR_CARD_GROWTH_THRESHOLDS = Object.freeze([0, 1, 10, 30, 100]);
+const CREATOR_CARD_GROWTH_LABELS = Object.freeze(["はじまり", "一枚目", "いつもの一枚", "育った一枚", "自分だけの名刺"]);
 const OSHI_MARKET_COLLECTION_ID = "oshi_market";
 const OSHI_MARKET_COLLECTION_GROUPS = Object.freeze([
   Object.freeze({
@@ -249,7 +289,7 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   royaleMatches: 1,
 });
 const SHOP_PRODUCTS = [
-  { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "トップメッセージ枠", description: "トップページに表示するひとことを投稿・編集できる買い切り機能", price: 500 },
+  { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム装飾", description: "無料の推しカードにホログラム、星空、ロイヤル箔の仕上げを追加する買い切り機能", price: 500 },
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
   { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
   { id: "reaction_composition", type: "reaction", name: "コンポジション", reaction: "構図がうまい！", description: "画面構成に注目した追加リアクション", price: 160 },
@@ -430,6 +470,8 @@ function createOnlineState() {
     topMessageEntryId: "",
     topMessageReady: false,
     topMessageBusy: false,
+    creatorCardDependenciesSettled: false,
+    creatorCardDependenciesBusy: false,
     offerPollTimer: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
@@ -1140,7 +1182,7 @@ function renderChatCosmeticBubble(text, message = {}) {
 
 function openOnlineScreen(screen) {
   if (useOfflineMarketPreview) {
-    if (screen === "shop" || screen === "missions") {
+    if (screen === "shop" || screen === "missions" || screen === "creatorCard") {
       active = true;
       state = createOnlineState();
       lastRenderedScreen = "";
@@ -1151,6 +1193,7 @@ function openOnlineScreen(screen) {
       state.economy = normalizeEconomyRecord({
         points: 2_500,
         inventory: {
+          [TOP_MESSAGE_PRODUCT_ID]: true,
           title_oshi_storyteller: true,
           title_tokimeki_curator: true,
           stamp_god_photo: true,
@@ -1165,7 +1208,39 @@ function openOnlineScreen(screen) {
           chatFrame: "chat_frame_heart_ribbon",
         },
       });
-      setOnlineChrome(screen === "shop" ? "ANJUPAY STORE PREVIEW" : "DAILY MISSION PREVIEW");
+      if (screen === "creatorCard") {
+        const previewUnlocked = Object.fromEntries([
+          "battle_total_30",
+          "battle_solo_20",
+          "market_seller_3",
+        ].map((id, index) => [id, Date.now() - (index * 60_000)]));
+        state.achievementsReady = true;
+        state.achievements = window.HariaiAchievements?.normalizeProfile?.({
+          unlocked: previewUnlocked,
+          showcase: Object.keys(previewUnlocked),
+        }) || state.achievements;
+        state.achievements.stats = {
+          battle: { totalMatches: 30 },
+          market: { salesCount: 3, purchases: 1 },
+        };
+        state.topMessageReady = true;
+        state.creatorCardDependenciesSettled = true;
+        state.topMessage = normalizeOwnTopMessage({
+          schemaVersion: CREATOR_CARD_VERSION,
+          name: "ANJU",
+          titleId: "title_oshi_storyteller",
+          text: "Xでイラストを投稿しています",
+          creatorType: "illustration",
+          cardTheme: "premium-hologram",
+          growthLevel: 4,
+          achievementShowcase: Object.keys(previewUnlocked).join(","),
+          xHandle: "example",
+          updatedAt: Date.now(),
+        });
+      }
+      setOnlineChrome(screen === "shop"
+        ? "ANJUPAY STORE PREVIEW"
+        : screen === "creatorCard" ? "FAVORITE CARD PREVIEW" : "DAILY MISSION PREVIEW");
       render();
       return;
     }
@@ -1201,11 +1276,11 @@ function openOnlineScreen(screen) {
       render();
       return;
     }
-    showToast("LOCAL UI PREVIEW中は市場・実績・ミッション・AnjuPayストア以外のオンライン機能へ接続しません。");
+    showToast("LOCAL UI PREVIEW中は市場・実績・ミッション・AnjuPayストア・推しカード以外のオンライン機能へ接続しません。");
     return;
   }
   if (active) {
-    if (["setup", "familiarBook", "missions", "shop", "achievements"].includes(state.screen)) {
+    if (["setup", "familiarBook", "missions", "shop", "achievements", "creatorCard"].includes(state.screen)) {
       state.screen = screen;
       render();
     }
@@ -1243,6 +1318,10 @@ function openPointShop() {
 
 function openAchievements() {
   openOnlineScreen("achievements");
+}
+
+function openCreatorCard() {
+  openOnlineScreen("creatorCard");
 }
 
 function isActive() {
@@ -1330,6 +1409,31 @@ function readMutedTopMessageIds() {
   }
 }
 
+function getCreatorCardType(value) {
+  return CREATOR_CARD_TYPES.find((type) => type.id === String(value || ""))
+    || CREATOR_CARD_TYPES.at(-1);
+}
+
+function getCreatorCardTheme(value, { legacyPremium = false } = {}) {
+  return CREATOR_CARD_THEMES.find((theme) => theme.id === String(value || ""))
+    || CREATOR_CARD_THEMES.find((theme) => theme.id === (legacyPremium ? "premium-hologram" : "basic-rose"));
+}
+
+function normalizeCreatorCardAchievementIds(value) {
+  return window.HariaiAchievements?.normalizeIds?.(value, 3) || [];
+}
+
+function creatorCardDailyOrder(entryId) {
+  const day = Math.floor((Date.now() + Number(publicServerTimeOffset || 0) + (9 * 60 * 60 * 1000)) / 86_400_000);
+  const text = `${entryId}:${day}`;
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 function getTopMessages() {
   const mutedIds = readMutedTopMessageIds();
   return topMessageRecords
@@ -1371,25 +1475,35 @@ async function refreshTopMessages({ silent = false } = {}) {
     topMessageRecords = Object.entries(records || {})
       .map(([entryId, record]) => {
         const titlePresentation = getPlayerTitlePresentation(record?.titleId);
+        const schemaVersion = Math.max(0, Math.floor(Number(record?.schemaVersion || 0)));
+        const creatorType = getCreatorCardType(record?.creatorType);
+        const cardTheme = getCreatorCardTheme(record?.cardTheme, { legacyPremium: schemaVersion < CREATOR_CARD_VERSION });
+        const xHandle = normalizeXHandle(record?.xHandle);
         return {
           entryId: String(entryId || ""),
+          schemaVersion,
           name: String(record?.name || "").slice(0, 16),
           titleId: String(record?.titleId || ""),
           title: titlePresentation?.product.title || "",
           titleIcon: titlePresentation?.icon || "",
           titleClassName: titlePresentation?.className || "",
           text: String(record?.text || "").slice(0, TOP_MESSAGE_MAX_LENGTH),
+          creatorType: creatorType.id,
+          cardTheme: cardTheme.id,
+          growthLevel: Math.min(5, Math.max(1, Math.floor(Number(record?.growthLevel || 1)))),
+          achievementShowcase: normalizeCreatorCardAchievementIds(record?.achievementShowcase),
+          ...(X_HANDLE_PATTERN.test(xHandle) ? { xHandle } : {}),
           updatedAt: Number(record?.updatedAt || 0),
         };
       })
       .filter((record) => validLeaderboardEntryId(record.entryId) && record.name && record.text && Number.isFinite(record.updatedAt))
-      .sort((first, second) => second.updatedAt - first.updatedAt);
+      .sort((first, second) => creatorCardDailyOrder(first.entryId) - creatorCardDailyOrder(second.entryId)
+        || second.updatedAt - first.updatedAt);
     topMessagesStatus = "ready";
   } catch (error) {
     if (requestId !== topMessagesRequestId) return;
     console.error(error);
-    topMessageRecords = [];
-    topMessagesStatus = "error";
+    topMessagesStatus = topMessageRecords.length ? "ready" : "error";
   } finally {
     if (requestId === topMessagesRequestId) notifyTopMessagesUpdated();
   }
@@ -1732,6 +1846,8 @@ async function ensureAuthenticated() {
     showToast("総合ランキング情報を読み込めませんでした。対戦機能は利用できます。");
   }
   state.authReady = true;
+  state.creatorCardDependenciesBusy = true;
+  state.creatorCardDependenciesSettled = false;
   refreshSoloFamiliarBook({ renderAfter: true }).catch((error) => console.error(error));
   try {
     await initializeEconomy();
@@ -1741,15 +1857,15 @@ async function ensureAuthenticated() {
     state.economyReady = false;
     showToast("AnjuPay情報を読み込めませんでした。対戦機能は利用できます。");
   }
-  if (state.economyReady) {
-    try {
-      await loadOwnTopMessage();
-    } catch (error) {
-      console.error(error);
-      state.topMessageReady = false;
-      showToast("トップメッセージを読み込めませんでした。AnjuPayストアは利用できます。");
-    }
+  try {
+    await loadOwnTopMessage();
+  } catch (error) {
+    console.error(error);
+    state.topMessageReady = false;
+    showToast("推しカードを読み込めませんでした。時間をおいてもう一度お試しください。");
   }
+  state.creatorCardDependenciesBusy = false;
+  state.creatorCardDependenciesSettled = true;
   if (state.leaderboardPublic) {
     try {
       await syncLeaderboardEntry();
@@ -1846,16 +1962,23 @@ function normalizeOwnTopMessage(value) {
   if (!value || typeof value !== "object") return null;
   const text = String(value.text || "").trim().slice(0, TOP_MESSAGE_MAX_LENGTH);
   if (!text) return null;
+  const schemaVersion = Math.max(0, Math.floor(Number(value.schemaVersion || 0)));
   return {
+    schemaVersion,
     name: String(value.name || "").trim().slice(0, 16),
     titleId: String(value.titleId || ""),
     text,
+    creatorType: getCreatorCardType(value.creatorType).id,
+    cardTheme: getCreatorCardTheme(value.cardTheme, { legacyPremium: schemaVersion < CREATOR_CARD_VERSION }).id,
+    growthLevel: Math.min(5, Math.max(1, Math.floor(Number(value.growthLevel || 1)))),
+    achievementShowcase: normalizeCreatorCardAchievementIds(value.achievementShowcase),
+    xHandle: normalizeXHandle(value.xHandle),
     updatedAt: Number(value.updatedAt || 0),
   };
 }
 
 async function loadOwnTopMessage() {
-  if (!state.uid || !state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID]) {
+  if (!state.uid) {
     state.topMessage = null;
     state.topMessageEntryId = "";
     state.topMessageReady = true;
@@ -1874,77 +1997,98 @@ async function loadOwnTopMessage() {
   state.topMessageReady = true;
 }
 
-async function ensureTopMessageEntryId() {
-  if (state.topMessageEntryId) return state.topMessageEntryId;
-  const indexRef = ref(database, `online/topMessageEntriesByUser/${state.uid}`);
-  const existing = validLeaderboardEntryId((await get(indexRef)).val());
-  if (existing) {
-    state.topMessageEntryId = existing;
-    return existing;
-  }
-  const entryId = push(ref(database, "online/topMessages")).key;
-  if (!validLeaderboardEntryId(entryId)) throw new Error("投稿枠を準備できませんでした。");
-  await set(ref(database, `online/topMessageOwners/${entryId}`), state.uid);
-  const result = await runTransaction(indexRef, (current) => current || entryId);
-  if (!result.committed || !result.snapshot.exists()) throw new Error("投稿枠を保存できませんでした。");
-  const savedEntryId = validLeaderboardEntryId(result.snapshot.val());
-  if (!savedEntryId) throw new Error("投稿枠を確認できませんでした。");
-  state.topMessageEntryId = savedEntryId;
-  return savedEntryId;
-}
-
 function validateTopMessageText(value) {
   const text = String(value || "").trim();
   if (!text || text.length > TOP_MESSAGE_MAX_LENGTH || /[\r\n]/.test(text)) {
-    throw new Error(`メッセージは1行${TOP_MESSAGE_MAX_LENGTH}文字以内で入力してください。`);
+    throw new Error(`紹介文は1行${TOP_MESSAGE_MAX_LENGTH}文字以内で入力してください。`);
   }
-  if (RANKING_COMMENT_URL_PATTERN.test(text)) throw new Error("メッセージにURLは入力できません。");
+  if (CREATOR_CARD_URL_PATTERN.test(text) || CREATOR_CARD_EMAIL_PATTERN.test(text)) {
+    throw new Error("紹介文にURL・メールアドレスは入力できません。Xのユーザー名は専用欄へ入力してください。");
+  }
   return text;
 }
 
-async function saveTopMessage(nameValue, textValue) {
-  if (!state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID]) throw new Error("先にトップメッセージ枠を購入してください。");
+async function saveTopMessage({
+  name: nameValue,
+  text: textValue,
+  creatorType: creatorTypeValue,
+  xHandle: xHandleValue = "",
+  cardTheme: cardThemeValue,
+  achievementIds = [],
+} = {}) {
+  if (useOfflineMarketPreview) {
+    throw new Error("LOCAL UI PREVIEWでは推しカードを公開・更新しません。");
+  }
   if (state.topMessageBusy) return;
-  const name = String(nameValue || "").trim().slice(0, 16);
+  const name = String(nameValue || "").trim();
+  if (!name || name.length > 16 || /[\r\n]/.test(name)) throw new Error("表示名は1行16文字以内で入力してください。");
   const text = validateTopMessageText(textValue);
-  if (!name) throw new Error("表示名を入力してください。");
+  const creatorType = getCreatorCardType(creatorTypeValue);
+  if (creatorType.id !== creatorTypeValue) throw new Error("活動札を選び直してください。");
+  const cardTheme = getCreatorCardTheme(cardThemeValue);
+  if (cardTheme.id !== cardThemeValue) throw new Error("カードテーマを選び直してください。");
+  const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
+  if (cardTheme.premium && !premiumOwned) throw new Error("プレミアム装飾を先に解放してください。");
+  const rawXHandle = String(xHandleValue || "").trim().replace(/^@+/, "");
+  const xHandle = normalizeXHandle(rawXHandle);
+  if (rawXHandle && !X_HANDLE_PATTERN.test(xHandle)) {
+    throw new Error("Xのユーザー名は英数字と_の15文字以内で入力してください。");
+  }
+  const normalizedAchievementIds = normalizeCreatorCardAchievementIds(achievementIds);
+  if (!Array.isArray(achievementIds) || normalizedAchievementIds.length !== achievementIds.length) {
+    throw new Error("カードへ飾る実績は解除済みから3件まで選んでください。");
+  }
   state.topMessageBusy = true;
-  render();
+  setBusy(true, "推しカードを公開しています…");
+  let saved = false;
   try {
-    const entryId = await ensureTopMessageEntryId();
-    const record = {
+    const response = await economyActionCallable({
+      action: "publish_creator_card",
       name,
-      titleId: getTitleProduct()?.id || "",
       text,
-      updatedAt: serverTimestamp(),
-    };
-    await set(ref(database, `online/topMessages/${entryId}`), record);
+      creatorType: creatorType.id,
+      xHandle,
+      cardTheme: cardTheme.id,
+      achievementIds: normalizedAchievementIds,
+    });
+    const result = response.data || {};
+    if (result.saved !== true || !validLeaderboardEntryId(result.entryId)) {
+      throw new Error("推しカードの公開を確認できませんでした。");
+    }
     state.name = name;
     localStorage.setItem(PROFILE_NAME_KEY, name);
-    state.topMessage = { ...record, updatedAt: serverNow() };
+    state.topMessageEntryId = result.entryId;
+    state.topMessage = normalizeOwnTopMessage(result.card);
     state.topMessageReady = true;
     await refreshTopMessages({ silent: true });
-    showToast("トップメッセージを公開しました。");
+    saved = true;
+    showToast("推しカードをトップページに飾りました。");
   } finally {
     state.topMessageBusy = false;
-    render();
+    setBusy(false);
+    if (saved) render();
   }
 }
 
 async function deleteTopMessage() {
-  if (!state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] || state.topMessageBusy || !state.topMessage) return;
+  if (useOfflineMarketPreview) {
+    throw new Error("LOCAL UI PREVIEWでは公開中の推しカードを外しません。");
+  }
+  if (state.topMessageBusy || !state.topMessage) return;
   state.topMessageBusy = true;
-  render();
+  setBusy(true, "推しカードをトップページから外しています…");
+  let deleted = false;
   try {
-    const entryId = state.topMessageEntryId || validLeaderboardEntryId((await get(ref(database, `online/topMessageEntriesByUser/${state.uid}`))).val());
-    if (entryId) await remove(ref(database, `online/topMessages/${entryId}`));
+    await economyActionCallable({ action: "delete_creator_card" });
     state.topMessage = null;
     state.topMessageReady = true;
     await refreshTopMessages({ silent: true });
-    showToast("トップメッセージを非公開にしました。");
+    deleted = true;
+    showToast("推しカードをトップページから外しました。");
   } finally {
     state.topMessageBusy = false;
-    render();
+    setBusy(false);
+    if (deleted) render();
   }
 }
 
@@ -1967,6 +2111,7 @@ function render() {
     missions: renderDailyMissions,
     shop: renderPointShop,
     achievements: renderAchievements,
+    creatorCard: renderCreatorCardEditor,
     matching: renderMatching,
     connecting: renderConnecting,
     select: renderRoundSelect,
@@ -2318,12 +2463,176 @@ function renderAchievements() {
   </section>`;
 }
 
+function creatorCardActivityCountFromState() {
+  const battleMatches = Math.max(0, Math.floor(Number(state.achievements?.stats?.battle?.totalMatches || 0)));
+  const marketSales = Math.max(0, Math.floor(Number(state.achievements?.stats?.market?.salesCount || 0)));
+  const marketPurchases = Math.max(0, Math.floor(Number(state.achievements?.stats?.market?.purchases || 0)));
+  return battleMatches + marketSales + marketPurchases;
+}
+
+function creatorCardGrowthProgress() {
+  const activity = creatorCardActivityCountFromState();
+  let level = 1;
+  CREATOR_CARD_GROWTH_THRESHOLDS.forEach((threshold, index) => {
+    if (activity >= threshold) level = index + 1;
+  });
+  const currentTarget = CREATOR_CARD_GROWTH_THRESHOLDS[level - 1];
+  const nextTarget = CREATOR_CARD_GROWTH_THRESHOLDS[level] || 0;
+  const progress = nextTarget
+    ? Math.min(100, Math.max(0, ((activity - currentTarget) / (nextTarget - currentTarget)) * 100))
+    : 100;
+  return {
+    activity,
+    level,
+    label: CREATOR_CARD_GROWTH_LABELS[level - 1],
+    nextTarget,
+    remaining: nextTarget ? Math.max(0, nextTarget - activity) : 0,
+    progress,
+  };
+}
+
+function creatorCardUnlockedAchievements() {
+  const unlocked = state.achievements?.unlocked || {};
+  const highestByFamily = new Map();
+  (window.HariaiAchievements?.catalog || []).forEach((achievement) => {
+    if (!unlocked[achievement.id]) return;
+    const current = highestByFamily.get(achievement.family);
+    if (!current || achievement.level > current.level) highestByFamily.set(achievement.family, achievement);
+  });
+  return [...highestByFamily.values()].sort((first, second) => (
+    Number(unlocked[second.id] || 0) - Number(unlocked[first.id] || 0)
+    || second.level - first.level
+    || first.id.localeCompare(second.id)
+  ));
+}
+
+function creatorCardHighestUnlockedAchievementId(id) {
+  const definition = window.HariaiAchievements?.byId?.get?.(id);
+  if (!definition) return "";
+  const unlocked = state.achievements?.unlocked || {};
+  return (window.HariaiAchievements?.catalog || [])
+    .filter((candidate) => candidate.family === definition.family && unlocked[candidate.id])
+    .sort((first, second) => second.level - first.level)[0]?.id || "";
+}
+
+function creatorCardInitialAchievementIds() {
+  const currentIds = state.topMessage
+    ? normalizeCreatorCardAchievementIds(state.topMessage.achievementShowcase)
+    : normalizeCreatorCardAchievementIds(state.achievements?.showcase);
+  return normalizeCreatorCardAchievementIds(
+    currentIds.map(creatorCardHighestUnlockedAchievementId).filter(Boolean),
+  );
+}
+
+function creatorCardPresentation({
+  name = state.topMessage?.name || state.name,
+  text = state.topMessage?.text || "",
+  creatorType = state.topMessage?.creatorType || "illustration",
+  xHandle = state.topMessage?.xHandle || "",
+  cardTheme = state.topMessage?.cardTheme || "basic-rose",
+  achievementShowcase = creatorCardInitialAchievementIds(),
+} = {}) {
+  const titlePresentation = getPlayerTitlePresentation(getTitleProduct()?.id);
+  const growth = creatorCardGrowthProgress();
+  return {
+    schemaVersion: CREATOR_CARD_VERSION,
+    name,
+    text,
+    creatorType,
+    xHandle,
+    cardTheme,
+    growthLevel: Math.max(growth.level, Number(state.topMessage?.growthLevel || 1)),
+    achievementShowcase,
+    title: titlePresentation?.product.title || "",
+    titleIcon: titlePresentation?.icon || "",
+    titleClassName: titlePresentation?.className || "",
+  };
+}
+
+function renderCreatorCardEditor() {
+  if (!state.authReady || !state.creatorCardDependenciesSettled) {
+    return `<section class="screen creator-card-screen">
+      <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1><p>公開カードを準備しています…</p></div><button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
+      <div class="economy-unavailable"><strong>カード情報を読み込んでいます</strong><p>匿名アカウントと公開設定を確認しています。</p></div>
+    </section>`;
+  }
+  if (!state.economyReady || !state.achievementsReady || !state.topMessageReady) {
+    return `<section class="screen creator-card-screen">
+      <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1><p>公開権・実績・現在のカードを安全に確認できませんでした。</p></div><button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
+      <div class="economy-unavailable"><strong>カード情報を読み込めませんでした</strong><p>既存のプレミアム装飾や実績を失わないよう、確認できるまで編集を停止しています。</p><button class="button button-primary" id="creatorCardRetry" type="button" ${state.creatorCardDependenciesBusy ? "disabled" : ""}>再読み込み</button></div>
+    </section>`;
+  }
+  const premiumOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
+  const existing = state.topMessage;
+  const growth = creatorCardGrowthProgress();
+  const initialAchievementIds = creatorCardInitialAchievementIds();
+  const unlockedAchievements = creatorCardUnlockedAchievements();
+  const creatorType = getCreatorCardType(existing?.creatorType || "illustration");
+  const requestedTheme = getCreatorCardTheme(existing?.cardTheme, { legacyPremium: Number(existing?.schemaVersion || CREATOR_CARD_VERSION) < CREATOR_CARD_VERSION });
+  const selectedTheme = requestedTheme.premium && !premiumOwned
+    ? getCreatorCardTheme("basic-rose")
+    : requestedTheme;
+  const initialXHandle = existing?.xHandle || state.xHandle || "";
+  const preview = creatorCardPresentation({
+    name: existing?.name || state.name,
+    text: existing?.text || creatorType.templates[0],
+    creatorType: creatorType.id,
+    xHandle: existing?.xHandle || "",
+    cardTheme: selectedTheme.id,
+    achievementShowcase: initialAchievementIds,
+  });
+  const typeOptions = CREATOR_CARD_TYPES.map((type) => `<label class="creator-card-choice"><input type="radio" name="creatorCardType" value="${type.id}" ${creatorType.id === type.id ? "checked" : ""} /><span><i aria-hidden="true">${type.icon}</i><b>${type.label}</b></span></label>`).join("");
+  const templateButtons = CREATOR_CARD_TYPES.flatMap((type) => type.templates.map((template) => `<button type="button" data-creator-card-template="${escapeHtml(template)}" data-creator-card-template-type="${type.id}" ${type.id === creatorType.id ? "" : "hidden"}>${escapeHtml(template)}</button>`)).join("");
+  const themeOptions = CREATOR_CARD_THEMES.map((theme) => {
+    const locked = theme.premium && !premiumOwned;
+    return `<label class="creator-card-theme-option creator-card-theme-${theme.id} ${locked ? "is-locked" : ""}"><input type="radio" name="creatorCardTheme" value="${theme.id}" ${selectedTheme.id === theme.id && !locked ? "checked" : ""} ${locked ? "disabled" : ""} /><span><i aria-hidden="true"></i><b>${theme.label}</b>${theme.premium ? `<small>${locked ? "500 Payで解放" : "PREMIUM"}</small>` : "<small>FREE</small>"}</span></label>`;
+  }).join("");
+  const achievementOptions = unlockedAchievements.length
+    ? unlockedAchievements.map((achievement) => `<button class="creator-card-achievement-option" type="button" data-creator-card-achievement="${achievement.id}" aria-pressed="${initialAchievementIds.includes(achievement.id)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>Lv.${achievement.level}</small></button>`).join("")
+    : `<p class="creator-card-achievement-empty">検証済みの対戦や市場成立で実績を解除すると、ここから最大3件を飾れます。</p>`;
+  const shareUrl = shared()?.createXCreatorCardPostUrl?.(preview) || "#";
+  return `<section class="screen creator-card-screen">
+    <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1>
+      <p>遊んだ歩みで育つ、自分だけの作品名刺です。基本カードは無料でトップページへ飾れます。</p></div>
+      <button class="button button-ghost button-small" id="creatorCardHomeButton">タイトルへ</button></div>
+    <div class="creator-card-growth-panel">
+      <div><span>CARD GROWTH</span><strong>STAGE ${growth.level}・${growth.label}</strong><p>勝敗や順位ではなく、検証済みの正式対戦と市場成立で育ちます。</p></div>
+      <div class="creator-card-growth-meter"><span role="progressbar" aria-label="次のカード段階までの進み具合" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(growth.progress)}"><i style="width:${growth.progress.toFixed(1)}%"></i></span><small>${growth.nextTarget ? `次の成長まであと${growth.remaining}回` : "カードは最高段階まで育ちました"}</small></div>
+    </div>
+    <div class="creator-card-editor-layout">
+      <aside class="creator-card-editor-preview"><div><span>LIVE PREVIEW</span><small>公開前に完成形を確認できます</small></div><div id="creatorCardPreview">${shared()?.renderCreatorCard?.(preview, { preview: true }) || ""}</div>
+        <div class="creator-card-share-actions"><button class="button button-ghost button-small" id="creatorCardDownload" type="button">カード画像を保存</button><button class="button button-ghost button-small" id="creatorCardNativeShare" type="button">画像付きで共有</button>
+          <a class="button button-x-share button-small" id="creatorCardXShare" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener noreferrer"><span class="x-share-mark" aria-hidden="true">X</span><span>Xで披露</span></a></div>
+        <small>Xの投稿画面には画像を自動添付できません。画像保存後、X側で添付してください。共有対応端末では「画像付きで共有」を利用できます。</small>
+      </aside>
+      <form class="creator-card-editor-form" id="creatorCardForm">
+        <section><div class="creator-card-field-head"><label for="creatorCardName">表示名</label><small>16文字以内</small></div><input id="creatorCardName" type="text" maxlength="16" required value="${escapeHtml(existing?.name || state.name)}" autocomplete="nickname" /></section>
+        <fieldset><legend>活動札</legend><div class="creator-card-choice-grid">${typeOptions}</div></fieldset>
+        <section><div class="creator-card-field-head"><label for="creatorCardText">カードの紹介文</label><span><b id="creatorCardLength">${String(existing?.text || creatorType.templates[0]).length}</b> / ${TOP_MESSAGE_MAX_LENGTH}</span></div>
+          <textarea id="creatorCardText" maxlength="${TOP_MESSAGE_MAX_LENGTH}" rows="2" required>${escapeHtml(existing?.text || creatorType.templates[0])}</textarea>
+          <div class="creator-card-templates" aria-label="紹介文テンプレート">${templateButtons}</div><small>URL・メールアドレス・個人情報は入力しないでください。Xは下の専用欄から公開できます。</small></section>
+        <section><div class="creator-card-field-head"><label for="creatorCardXHandle">Xユーザー名</label><small>英数字と_、15文字以内</small></div>
+          <label class="creator-card-x-input" for="creatorCardXHandle"><span>@</span><input id="creatorCardXHandle" type="text" maxlength="15" value="${escapeHtml(initialXHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
+          <label class="creator-card-public-check"><input id="creatorCardXPublic" type="checkbox" ${existing?.xHandle ? "checked" : ""} /><span>このカードからXを公開する</span></label><small>ランキングや市場の公開設定とは別です。チェックした場合だけカードにXリンクを表示します。</small></section>
+        <fieldset><legend>カードテーマ</legend><div class="creator-card-theme-grid">${themeOptions}</div>
+          ${premiumOwned ? '<small class="creator-card-premium-note">500 Payで解放済みのプレミアム装飾を使用できます。</small>' : '<div class="creator-card-premium-note"><span>ホログラム・スターダスト・ロイヤル箔は500 Payの買い切り装飾です。</span><button class="button button-ghost button-small" id="creatorCardOpenShop" type="button">装飾を見る</button></div>'}</fieldset>
+        <fieldset><legend>カードに飾る実績 <small>最大3件</small></legend><div class="creator-card-achievement-grid">${achievementOptions}</div></fieldset>
+        <div class="creator-card-public-note"><strong>公開されるもの</strong><span>表示名・活動札・紹介文・選んだ実績・称号・カード段階・許可したXユーザー名。匿名UID、勝敗、RATE、画像、ルーム履歴は公開しません。</span></div>
+        ${useOfflineMarketPreview ? '<p class="creator-card-preview-notice">LOCAL UI PREVIEWでは見た目と画像保存だけを確認でき、公開・更新・削除は行いません。</p>' : ""}
+        <div class="creator-card-editor-actions"><button class="button button-primary" type="submit" ${state.topMessageBusy || useOfflineMarketPreview ? "disabled" : ""}>${existing ? "カードを更新して飾る" : "トップページに飾る"}</button>
+          ${existing ? `<button class="button button-ghost" id="deleteTopMessage" type="button" ${state.topMessageBusy || useOfflineMarketPreview ? "disabled" : ""}>トップページから外す</button>` : ""}</div>
+      </form>
+    </div>
+  </section>`;
+}
+
 function renderPointShop() {
   const equippedReactionCount = getEquippedReactionProducts().length;
   const equippedStampCount = getEquippedStampProducts().length;
   const equippedChatCosmetics = getEquippedChatCosmetics(state.economy);
   const topMessageOwned = state.economy.inventory?.[TOP_MESSAGE_PRODUCT_ID] === true;
-  const topMessageLabel = state.topMessage ? "公開中" : topMessageOwned ? "投稿できます" : "未購入";
+  const creatorCardLabel = state.topMessage ? "公開中" : "未公開";
+  const creatorCardPremiumLabel = topMessageOwned ? "解放済み" : "未購入";
   const standardTitleCategories = PLAYER_TITLE_CATEGORIES.filter((category) => category.collection !== OSHI_MARKET_COLLECTION_ID);
   const standardTitleProducts = PLAYER_TITLE_PRODUCTS.filter((product) => product.collection !== OSHI_MARKET_COLLECTION_ID);
   const renderProduct = (product) => {
@@ -2351,10 +2660,10 @@ function renderPointShop() {
         ? `<span class="player-title-badge shop-title-preview ${titlePresentation?.className || ""}"><span aria-hidden="true">${escapeHtml(titlePresentation?.icon || "◆")}</span>${escapeHtml(product.title)}</span>`
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
-          : `<div class="shop-message-preview"><span>♡ COMMUNITY MESSAGE</span><strong>トップページにひとこと</strong></div>`;
+          : `<div class="shop-message-preview"><span>✦ FAVORITE CARD FINISH</span><strong>推しカードを特別な一枚へ</strong></div>`;
     let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(product.price)}で購入` : `あと${formatAnjuPay(product.price - state.economy.points)}`}</button>`;
     if (owned && product.type === "feature") {
-      action = `<button class="button button-wide button-cyan" data-edit-top-message ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "メッセージを編集" : "メッセージを投稿"}</button>`;
+      action = `<button class="button button-wide button-cyan" data-open-creator-card ${state.topMessageBusy ? "disabled" : ""}>プレミアム装飾を選ぶ</button>`;
     } else if (owned) {
       action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${equipLimit}/${equipLimit}` : "装備する"}</button>`;
     }
@@ -2362,7 +2671,7 @@ function renderPointShop() {
       : product.type === "stamp" ? "CHAT STAMP"
       : product.type === "title" ? (getPlayerTitleCategory(product.category)?.eyebrow || "PLAYER TITLE")
         : product.type === "chatFrame" ? (product.special ? "SPECIAL CHAT FRAME" : "CHAT FRAME")
-          : product.type === "chatBackground" ? "CHAT BACKGROUND" : "TOP MESSAGE ACCESS";
+          : product.type === "chatBackground" ? "CHAT BACKGROUND" : "FAVORITE CARD PREMIUM";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
       <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${formatAnjuPay(product.price)}</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
@@ -2407,24 +2716,12 @@ function renderPointShop() {
   const chatBackgroundProducts = CHAT_BACKGROUND_PRODUCTS.map(renderProduct).join("");
   const chatFrameProducts = CHAT_STANDARD_FRAME_PRODUCTS.map(renderProduct).join("");
   const specialChatFrameProducts = CHAT_SPECIAL_FRAME_PRODUCTS.map(renderProduct).join("");
-  const topMessageComposer = topMessageOwned ? `<section class="top-message-composer" id="topMessageComposer">
-    <div class="shop-category-head"><div><span>YOUR COMMUNITY MESSAGE</span><h2>${state.topMessage ? "トップメッセージを編集" : "トップメッセージを投稿"}</h2></div><p>トップページで表示名・装備中の称号と一緒に公開されます。</p></div>
-    ${state.topMessageReady ? `<form id="topMessageForm">
-      <label for="topMessageName">表示名</label>
-      <input id="topMessageName" type="text" maxlength="16" required value="${escapeHtml(state.topMessage?.name || state.name)}" placeholder="PLAYER" autocomplete="nickname" />
-      <label for="topMessageText">メッセージ</label>
-      <textarea id="topMessageText" maxlength="${TOP_MESSAGE_MAX_LENGTH}" rows="2" required placeholder="対戦相手募集中！">${escapeHtml(state.topMessage?.text || "")}</textarea>
-      <div class="top-message-composer-foot"><small>1行${TOP_MESSAGE_MAX_LENGTH}文字以内。URL・連絡先・個人情報は投稿しないでください。</small><span><b id="topMessageLength">${String(state.topMessage?.text || "").length}</b> / ${TOP_MESSAGE_MAX_LENGTH}</span></div>
-      <div class="top-message-composer-actions"><button class="button button-primary" type="submit" ${state.topMessageBusy ? "disabled" : ""}>${state.topMessage ? "更新して公開" : "トップページに公開"}</button>
-        ${state.topMessage ? `<button class="button button-ghost" id="deleteTopMessage" type="button" ${state.topMessageBusy ? "disabled" : ""}>非公開にする</button>` : ""}</div>
-    </form>` : `<p class="economy-note">トップメッセージを読み込めませんでした。ページを開き直してお試しください。</p>`}
-  </section>` : "";
   return `<section class="screen economy-screen">
     <div class="section-head"><div><span class="eyebrow">ANJUPAY STORE</span><h1>AnjuPayストア</h1>
-      <p>チャット装飾、トップメッセージ、リアクション、スタンプ、称号で交流をカスタマイズできます。</p></div>
+      <p>チャット装飾、推しカードの仕上げ、リアクション、スタンプ、称号で交流をカスタマイズできます。</p></div>
       <button class="button button-ghost button-small" id="economyHomeButton">タイトルへ</button></div>
     <div class="economy-balance"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(state.economyReady ? state.economy.points : null)}</strong><small>${ANJU_PAY_UNIT}</small></div>
-    ${state.economyReady ? `<div class="shop-loadout-summary"><span>トップメッセージ <strong>${topMessageLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
+    ${state.economyReady ? `<div class="shop-loadout-summary"><span>推しカード <strong>${creatorCardLabel}</strong></span><span>プレミアム装飾 <strong>${creatorCardPremiumLabel}</strong></span><span>リアクション装備 <strong>${equippedReactionCount} / ${MAX_EQUIPPED_REACTIONS}</strong></span><span>スタンプ装備 <strong>${equippedStampCount} / ${MAX_EQUIPPED_STAMPS}</strong></span><span>称号 <strong>${escapeHtml(getTitleProduct()?.title || "未装備")}</strong></span><span>チャット背景 <strong>${escapeHtml(CHAT_BACKGROUND_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatBackgroundId)?.name || "標準")}</strong></span><span>チャット枠 <strong>${escapeHtml(CHAT_COSMETIC_PRODUCTS.find((product) => product.id === equippedChatCosmetics.chatFrameId)?.name || "標準")}</strong></span></div>
       <section class="shop-category shop-oshi-market-collection" id="shopOshiMarketCollection" aria-labelledby="shopOshiMarketCollectionTitle">
         <div class="shop-oshi-market-hero">
           <div><span>OSHI-KATSU / TOKIMEKI COLLECTION</span><h2 id="shopOshiMarketCollectionTitle">推し活・ときめきコレクション</h2>
@@ -2438,8 +2735,9 @@ function renderPointShop() {
         <p class="shop-oshi-market-shared"><strong>通常の商品棚と同じ商品です。</strong> 商品ID・購入状態・装備状態は共通のため、どちらの棚から購入しても二重購入にはなりません。</p>
         <div class="shop-oshi-market-groups">${oshiMarketCollectionGroups}</div>
       </section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>COMMUNITY FEATURE</span><h2>トップページ機能</h2></div><p>${formatAnjuPay(500)}の買い切りで、自分のひとことをいつでも投稿・編集できます。</p></div><div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
-      ${topMessageComposer}
+      <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードのプレミアム仕上げ</h2></div><p>基本カードの公開は無料です。${formatAnjuPay(500)}の買い切りで特別な3テーマを追加できます。</p></div>
+        <div class="shop-free-card-callout"><div><strong>あなたの推しカード</strong><span>活動札・紹介文・実績・Xリンクを選び、トップページへ無料で飾れます。</span></div><button class="button button-cyan" type="button" data-open-creator-card>${state.topMessage ? "カードを編集" : "無料でカードをつくる"}</button></div>
+        <div class="shop-grid shop-feature-grid">${featureProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
       <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / ${CHAT_SPECIAL_FRAME_PRODUCTS.length} STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
@@ -2448,7 +2746,7 @@ function renderPointShop() {
       <section class="shop-category shop-title-category" id="shopTitleCategory"><div class="shop-category-head"><div><span>PLAYER TITLE / ${standardTitleProducts.length} STANDARD TITLES</span><h2>プレイヤー称号</h2></div><p>称号は1個だけ装備できます。推し値市場向け7種は上の「推し活・ときめきコレクション」にあります。</p></div><div class="shop-title-filters" role="group" aria-label="称号カテゴリ">${titleCategoryFilters}</div><div class="shop-title-groups">${titleGroups}</div></section>` : renderEconomyUnavailable()}
     <div class="economy-actions"><button class="button button-primary" id="shopMissionsButton">ミッションを見る</button>
       <button class="button button-ghost" id="shopBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入・装備を変更しません。表示とレイアウトだけを安全に確認できます。" : "購入後の払い戻しはありません。トップメッセージは公開情報です。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。"}</p>
+    <p class="economy-note">${useOfflineMarketPreview ? "LOCAL UI PREVIEWでは購入・装備を変更しません。表示とレイアウトだけを安全に確認できます。" : "購入後の払い戻しはありません。推しカードは本人が公開を選んだ情報だけを表示します。商品は交流と表示のカスタマイズ専用で、採点や勝敗には影響しません。"}</p>
   </section>`;
 }
 
@@ -2911,6 +3209,7 @@ function bindScreenEvents() {
   if (state.screen === "familiarBook") bindSoloFamiliarBookEvents();
   if (state.screen === "missions" || state.screen === "shop") bindEconomyEvents();
   if (state.screen === "achievements") bindAchievementEvents();
+  if (state.screen === "creatorCard") bindCreatorCardEvents();
   if (state.screen === "matching") {
     document.querySelector("#expandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
     document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
@@ -3204,6 +3503,167 @@ function applyTitleCategoryFilter(categoryId) {
   });
 }
 
+function creatorCardFormValue() {
+  const creatorType = document.querySelector('input[name="creatorCardType"]:checked')?.value || "illustration";
+  const cardTheme = document.querySelector('input[name="creatorCardTheme"]:checked')?.value || "basic-rose";
+  const xPublic = document.querySelector("#creatorCardXPublic")?.checked === true;
+  const achievementShowcase = [...document.querySelectorAll("[data-creator-card-achievement][aria-pressed='true']")]
+    .map((button) => button.dataset.creatorCardAchievement)
+    .filter(Boolean)
+    .slice(0, 3);
+  return creatorCardPresentation({
+    name: document.querySelector("#creatorCardName")?.value || state.name,
+    text: document.querySelector("#creatorCardText")?.value || "",
+    creatorType,
+    xHandle: xPublic ? document.querySelector("#creatorCardXHandle")?.value || "" : "",
+    cardTheme,
+    achievementShowcase,
+  });
+}
+
+function updateCreatorCardPreview() {
+  const value = creatorCardFormValue();
+  const preview = document.querySelector("#creatorCardPreview");
+  if (preview) preview.innerHTML = shared()?.renderCreatorCard?.(value, { preview: true }) || "";
+  const counter = document.querySelector("#creatorCardLength");
+  if (counter) counter.textContent = String(document.querySelector("#creatorCardText")?.value.length || 0);
+  document.querySelectorAll("[data-creator-card-template]").forEach((button) => {
+    button.hidden = button.dataset.creatorCardTemplateType !== value.creatorType;
+  });
+  const xShare = document.querySelector("#creatorCardXShare");
+  if (xShare) xShare.href = shared()?.createXCreatorCardPostUrl?.(value) || "#";
+}
+
+function creatorCardDownloadName(value) {
+  const safeName = String(value?.name || "player").replace(/[\\/:*?"<>|]/g, "_").slice(0, 24) || "player";
+  return `hariai-favorite-card-${safeName}.png`;
+}
+
+async function downloadCreatorCard({ shareFile = false } = {}) {
+  const value = creatorCardFormValue();
+  setBusy(true, "推しカード画像をつくっています…");
+  try {
+    const blob = await shared()?.createCreatorCardPngBlob?.(value);
+    if (!(blob instanceof Blob)) throw new Error("カード画像を作成できませんでした。");
+    const filename = creatorCardDownloadName(value);
+    const file = new File([blob], filename, { type: "image/png" });
+    if (shareFile && navigator.share && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({
+        title: "貼り合いスタジアム｜推しカード",
+        text: shared()?.creatorCardShareText?.(value) || "",
+        files: [file],
+      });
+      return;
+    }
+    shared()?.downloadBlob?.(blob, filename);
+    showToast(shareFile
+      ? "共有対応端末ではないため画像を保存しました。X側で添付できます。"
+      : "推しカード画像を保存しました。Xの投稿へ添付できます。");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function retryCreatorCardDependencies() {
+  if (!state.uid || state.creatorCardDependenciesBusy) return;
+  state.creatorCardDependenciesBusy = true;
+  state.creatorCardDependenciesSettled = false;
+  render();
+  const errors = [];
+  try {
+    await initializeEconomy();
+  } catch (error) {
+    console.error(error);
+    state.economyReady = false;
+    errors.push(error);
+  }
+  try {
+    await loadOwnTopMessage();
+  } catch (error) {
+    console.error(error);
+    state.topMessageReady = false;
+    errors.push(error);
+  }
+  state.creatorCardDependenciesBusy = false;
+  state.creatorCardDependenciesSettled = true;
+  render();
+  if (errors.length) showToast("推しカード情報を再読み込みできませんでした。時間をおいてお試しください。");
+  else showToast("推しカード情報を再読み込みしました。");
+}
+
+function bindCreatorCardEvents() {
+  document.querySelector("#creatorCardHomeButton")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#creatorCardRetry")?.addEventListener("click", () => {
+    retryCreatorCardDependencies().catch((error) => {
+      console.error(error);
+      showToast("推しカード情報を再読み込みできませんでした。");
+    });
+  });
+  document.querySelector("#creatorCardOpenShop")?.addEventListener("click", () => {
+    state.screen = "shop";
+    render();
+  });
+  const form = document.querySelector("#creatorCardForm");
+  if (!form) return;
+  form.querySelectorAll("input, textarea").forEach((control) => {
+    control.addEventListener("input", updateCreatorCardPreview);
+    control.addEventListener("change", updateCreatorCardPreview);
+  });
+  document.querySelectorAll("[data-creator-card-template]").forEach((button) => button.addEventListener("click", () => {
+    const typeInput = document.querySelector(`input[name="creatorCardType"][value="${button.dataset.creatorCardTemplateType}"]`);
+    if (typeInput) typeInput.checked = true;
+    const text = document.querySelector("#creatorCardText");
+    if (text) {
+      text.value = button.dataset.creatorCardTemplate || "";
+      text.focus();
+    }
+    updateCreatorCardPreview();
+  }));
+  document.querySelectorAll("[data-creator-card-achievement]").forEach((button) => button.addEventListener("click", () => {
+    const selected = button.getAttribute("aria-pressed") === "true";
+    const selectedCount = document.querySelectorAll("[data-creator-card-achievement][aria-pressed='true']").length;
+    if (!selected && selectedCount >= 3) {
+      showToast("カードへ飾れる実績は3件までです。");
+      return;
+    }
+    button.setAttribute("aria-pressed", String(!selected));
+    updateCreatorCardPreview();
+  }));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = creatorCardFormValue();
+    try {
+      await saveTopMessage({
+        name: value.name,
+        text: value.text,
+        creatorType: value.creatorType,
+        xHandle: value.xHandle,
+        cardTheme: value.cardTheme,
+        achievementIds: value.achievementShowcase,
+      });
+    } catch (error) {
+      showToast(error?.message || "推しカードを公開できませんでした。");
+    }
+  });
+  document.querySelector("#deleteTopMessage")?.addEventListener("click", async () => {
+    if (!window.confirm("トップページから推しカードを外しますか？育成や装飾の権利は失われません。")) return;
+    try {
+      await deleteTopMessage();
+    } catch (error) {
+      showToast(error?.message || "推しカードを外せませんでした。");
+    }
+  });
+  document.querySelector("#creatorCardDownload")?.addEventListener("click", () => {
+    downloadCreatorCard().catch((error) => showToast(error?.message || "カード画像を保存できませんでした。"));
+  });
+  document.querySelector("#creatorCardNativeShare")?.addEventListener("click", () => {
+    downloadCreatorCard({ shareFile: true }).catch((error) => {
+      if (error?.name !== "AbortError") showToast(error?.message || "カード画像を共有できませんでした。");
+    });
+  });
+  updateCreatorCardPreview();
+}
+
 function bindEconomyEvents() {
   document.querySelector("#economyHomeButton")?.addEventListener("click", leaveToLanding);
   document.querySelector("#claimDailyPlayRewardsButton")?.addEventListener("click", claimDailyPlayRewards);
@@ -3211,31 +3671,9 @@ function bindEconomyEvents() {
   document.querySelector("#shopMissionsButton")?.addEventListener("click", () => { state.screen = "missions"; render(); });
   document.querySelector("#missionsBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
   document.querySelector("#shopBattleButton")?.addEventListener("click", () => { state.screen = "setup"; render(); });
-  document.querySelector("[data-edit-top-message]")?.addEventListener("click", () => {
-    document.querySelector("#topMessageComposer")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    window.setTimeout(() => document.querySelector("#topMessageText")?.focus(), 280);
-  });
-  const topMessageText = document.querySelector("#topMessageText");
-  topMessageText?.addEventListener("input", () => {
-    const counter = document.querySelector("#topMessageLength");
-    if (counter) counter.textContent = String(topMessageText.value.length);
-  });
-  document.querySelector("#topMessageForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await saveTopMessage(document.querySelector("#topMessageName")?.value, topMessageText?.value);
-    } catch (error) {
-      showToast(error?.message || "トップメッセージを公開できませんでした。");
-    }
-  });
-  document.querySelector("#deleteTopMessage")?.addEventListener("click", async () => {
-    if (!window.confirm("トップページからこのメッセージを非公開にしますか？")) return;
-    try {
-      await deleteTopMessage();
-    } catch (error) {
-      showToast(error?.message || "トップメッセージを非公開にできませんでした。");
-    }
-  });
+  document.querySelectorAll("[data-open-creator-card]").forEach((button) => button.addEventListener("click", () => {
+    openOnlineScreen("creatorCard");
+  }));
 }
 
 function bindAchievementEvents() {
@@ -3624,14 +4062,10 @@ async function purchaseShopProduct(productId) {
         : ["title", "chatFrame", "chatBackground"].includes(product.type)
           ? state.economy.equipped?.[product.type] === product.id
           : false;
-    if (result.outcome === "purchased" && product.type === "feature") {
-      state.topMessage = null;
-      state.topMessageReady = true;
-    }
     state.economyBusy = false;
     render();
     if (result.outcome === "purchased" && isEquipped && !wasEquipped) showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
-    else if (result.outcome === "purchased" && product.type === "feature") showToast("「トップメッセージ枠」を購入しました。メッセージを投稿できます。");
+    else if (result.outcome === "purchased" && product.type === "feature") showToast("推しカードのプレミアム装飾3種を解放しました。公開中のカードはそのままです。");
     else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (result.outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("AnjuPay残高が不足しています。");
@@ -6671,6 +7105,13 @@ async function resetOnlineState(screen) {
     topMessage: expectedState.topMessage,
     topMessageEntryId: expectedState.topMessageEntryId,
     topMessageReady: expectedState.topMessageReady,
+    creatorCardDependenciesSettled: expectedState.creatorCardDependenciesSettled
+      || (
+        expectedState.authReady
+        && expectedState.economyReady
+        && expectedState.achievementsReady
+        && expectedState.topMessageReady
+      ),
     serverTimeOffset: expectedState.serverTimeOffset,
   };
   await cleanupOnlineResources(false, expectedState);
@@ -6892,6 +7333,7 @@ window.HariaiOnline = {
   openDailyMissions,
   openPointShop,
   openAchievements,
+  openCreatorCard,
   getShopProductLabel,
   isActive,
   requestHome,

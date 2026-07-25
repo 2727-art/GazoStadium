@@ -65,16 +65,34 @@
         ".read": true,
         ".indexOn": ["updatedAt"],
         "$entryId": {
-          ".write": "auth != null && root.child('online/topMessageOwners/' + $entryId).val() === auth.uid && root.child('online/economy/' + auth.uid + '/inventory/feature_top_message').val() === true",
-          ".validate": "!newData.exists() || (newData.hasChildren(['name', 'titleId', 'text', 'updatedAt']) && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('titleId').isString() && (newData.child('titleId').val() === '' || newData.child('titleId').val() === root.child('online/economy/' + auth.uid + '/equipped/title').val()) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 30 && !newData.child('text').val().contains('\\r') && !newData.child('text').val().contains('\\n') && newData.child('updatedAt').isNumber())",
+          ".write": false,
+          ".validate": "!newData.exists() || (newData.hasChildren(['schemaVersion', 'name', 'titleId', 'text', 'creatorType', 'cardTheme', 'growthLevel', 'achievementShowcase', 'updatedAt']) && newData.child('schemaVersion').val() === 2 && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && !newData.child('name').val().contains('\\r') && !newData.child('name').val().contains('\\n') && newData.child('titleId').isString() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 30 && !newData.child('text').val().contains('\\r') && !newData.child('text').val().contains('\\n') && newData.child('creatorType').isString() && newData.child('creatorType').val().matches(/^(illustration|photo|both|community)$/) && newData.child('cardTheme').isString() && newData.child('cardTheme').val().matches(/^(basic-(rose|aqua|violet|sunset)|premium-(hologram|stardust|royal))$/) && newData.child('growthLevel').isNumber() && newData.child('growthLevel').val() >= 1 && newData.child('growthLevel').val() <= 5 && newData.child('achievementShowcase').isString() && newData.child('achievementShowcase').val().length <= 160 && (!newData.child('xHandle').exists() || (newData.child('xHandle').isString() && newData.child('xHandle').val().matches(/^[A-Za-z0-9_]{1,15}$/))) && newData.child('updatedAt').isNumber())",
+          "schemaVersion": {
+            ".validate": "newData.val() === 2"
+          },
           "name": {
-            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
           },
           "titleId": {
-            ".validate": "newData.isString() && (newData.val() === '' || newData.val() === root.child('online/economy/' + auth.uid + '/equipped/title').val())"
+            ".validate": "newData.isString()"
           },
           "text": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+          },
+          "creatorType": {
+            ".validate": "newData.isString() && newData.val().matches(/^(illustration|photo|both|community)$/)"
+          },
+          "cardTheme": {
+            ".validate": "newData.isString() && newData.val().matches(/^(basic-(rose|aqua|violet|sunset)|premium-(hologram|stardust|royal))$/)"
+          },
+          "growthLevel": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 5"
+          },
+          "achievementShowcase": {
+            ".validate": "newData.isString() && newData.val().length <= 160"
+          },
+          "xHandle": {
+            ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_]{1,15}$/)"
           },
           "updatedAt": {
             ".validate": "newData.isNumber()"
@@ -87,14 +105,14 @@
       "topMessageOwners": {
         "$entryId": {
           ".read": "auth != null && data.val() === auth.uid",
-          ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && newData.val() === auth.uid))",
+          ".write": false,
           ".validate": "newData.isString()"
         }
       },
       "topMessageEntriesByUser": {
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.isString() && root.child('online/topMessageOwners/' + newData.val()).val() === auth.uid) || (data.exists() && newData.val() === data.val()))",
+          ".write": false,
           ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 40"
         }
       },
