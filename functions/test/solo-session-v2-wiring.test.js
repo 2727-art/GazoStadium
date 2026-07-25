@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -133,7 +134,7 @@ test("claim replacement cleans only resources carrying the exact prior fence", (
   assert.doesNotMatch(claim, /decision\.reason === "same-session-takeover"/);
 });
 
-test("claim guard outlives the callable and is renewed before commit", () => {
+test("claim guard outlives the callable and is safely renewed before commit", () => {
   const source = read("functions/index.js");
   const guardTtl = Number(
     source.match(/const SOLO_SESSION_CLAIM_GUARD_TTL_MS = ([\d_]+);/)?.[1]
@@ -146,6 +147,7 @@ test("claim guard outlives the callable and is renewed before commit", () => {
   const renewStart = source.indexOf("async function renewSoloSessionClaimGuard");
   const renewEnd = source.indexOf("async function releaseSoloSessionClaimGuard", renewStart);
   const renew = source.slice(renewStart, renewEnd);
+  assert.match(renew, /if \(currentValue == null\) return null/);
   assert.match(renew, /soloSessionClaimGuardMatches/);
   assert.match(renew, /Number\(currentValue\.expiresAt \|\| 0\) <= now/);
   assert.match(renew, /now \+ SOLO_SESSION_CLAIM_GUARD_TTL_MS/);
@@ -153,12 +155,140 @@ test("claim guard outlives the callable and is renewed before commit", () => {
   const claimStart = source.indexOf("async function claimSoloSessionV2");
   const claimEnd = source.indexOf("async function heartbeatSoloSessionV2", claimStart);
   const claim = source.slice(claimStart, claimEnd);
-  const renewal = claim.indexOf("claimGuard = await renewSoloSessionClaimGuard");
+  const renewal = claim.indexOf(
+    "const renewedClaimGuard = await renewSoloSessionClaimGuard",
+  );
   const commit = claim.indexOf("const result = await claimRef.transaction");
   assert.ok(renewal >= 0 && commit > renewal);
+  assert.match(claim, /const claimGuard = needsClaimGuard/);
+  assert.doesNotMatch(claim, /claimGuard = await renewSoloSessionClaimGuard/);
+  assert.doesNotMatch(claim, /claimGuard = renewedClaimGuard/);
   assert.match(claim, /claimGuardAfterClaimSnapshot/);
   assert.match(claim, /claimGuardStillOwned/);
   assert.match(claim, /legacyLockAfterClaimSnapshot/);
+});
+
+test("claim guard renewal retries a cold-cache null without stealing another operation", async () => {
+  const source = read("functions/index.js");
+  const matchesStart = source.indexOf("function soloSessionClaimGuardMatches");
+  const matchesEnd = source.indexOf("async function acquireSoloSessionClaimGuard", matchesStart);
+  const renewStart = source.indexOf("async function renewSoloSessionClaimGuard");
+  const renewEnd = source.indexOf("async function releaseSoloSessionClaimGuard", renewStart);
+  assert.ok(matchesStart >= 0 && matchesEnd > matchesStart);
+  assert.ok(renewStart >= 0 && renewEnd > renewStart);
+
+  const now = 1_780_000_000_000;
+  const ownGuard = {
+    protocolVersion: 2,
+    kind: "claim",
+    operationId: "own-operation",
+    sessionId: "session-token",
+    leaseToken: "lease-token",
+    acquiredAt: now - 1_000,
+    expiresAt: now + 20_000,
+  };
+  const otherGuard = {
+    ...ownGuard,
+    operationId: "other-operation",
+  };
+
+  const runRenewal = async (serverGuard) => {
+    const callbackInputs = [];
+    const reference = {
+      transaction: async (update) => {
+        callbackInputs.push(null);
+        const initialOutput = update(null);
+        assert.equal(initialOutput, null);
+
+        callbackInputs.push(serverGuard);
+        const serverOutput = update(serverGuard);
+        return {
+          committed: serverOutput !== undefined,
+          snapshot: {
+            val: () => serverOutput === undefined ? serverGuard : serverOutput,
+          },
+        };
+      },
+    };
+    const context = {
+      Date: { now: () => now },
+      realtime: { ref: () => reference },
+      SOLO_SESSION_CLAIM_GUARD_TTL_MS: 60_000,
+      SOLO_SESSION_PROTOCOL_VERSION: 2,
+    };
+    vm.createContext(context);
+    vm.runInContext(
+      `${source.slice(matchesStart, matchesEnd)}
+${source.slice(renewStart, renewEnd)}
+this.renewSoloSessionClaimGuard = renewSoloSessionClaimGuard;`,
+      context,
+    );
+    return {
+      callbackInputs,
+      result: await context.renewSoloSessionClaimGuard("owner", ownGuard),
+    };
+  };
+
+  const ownResult = await runRenewal(ownGuard);
+  assert.equal(ownResult.callbackInputs.length, 2);
+  assert.equal(ownResult.result.operationId, ownGuard.operationId);
+  assert.equal(ownResult.result.expiresAt, now + 60_000);
+
+  const otherResult = await runRenewal(otherGuard);
+  assert.equal(otherResult.callbackInputs.length, 2);
+  assert.equal(otherResult.result, null);
+});
+
+test("failed claim guard renewal still releases the originally acquired guard", async () => {
+  const source = read("functions/index.js");
+  const claimStart = source.indexOf("async function claimSoloSessionV2");
+  const claimEnd = source.indexOf("async function heartbeatSoloSessionV2", claimStart);
+  assert.ok(claimStart >= 0 && claimEnd > claimStart);
+
+  const nullSnapshot = { val: () => null };
+  const acquiredGuard = {
+    protocolVersion: 2,
+    kind: "claim",
+    operationId: "own-operation",
+    sessionId: "session-token",
+    leaseToken: "lease-token",
+    acquiredAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  };
+  const releaseCalls = [];
+  const context = {
+    acquireSoloSessionClaimGuard: async () => acquiredGuard,
+    isValidSoloServerQueueEntry: () => false,
+    liveLegacySoloRoom: async () => null,
+    liveSoloSessionV2Room: async () => null,
+    normalizeClaim: () => null,
+    realtime: {
+      ref: () => ({ get: async () => nullSnapshot }),
+    },
+    releaseSoloSessionClaimGuard: async (uid, guard) => {
+      releaseCalls.push({ uid, guard });
+      return true;
+    },
+    renewSoloSessionClaimGuard: async () => null,
+    soloSessionClaimRef: () => ({ get: async () => nullSnapshot }),
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    `${source.slice(claimStart, claimEnd)}
+this.claimSoloSessionV2 = claimSoloSessionV2;`,
+    context,
+  );
+
+  const result = await context.claimSoloSessionV2("owner", {
+    sessionId: acquiredGuard.sessionId,
+    leaseToken: acquiredGuard.leaseToken,
+  });
+
+  assert.equal(result.claimed, false);
+  assert.equal(result.reason, "occupied");
+  assert.equal(releaseCalls.length, 1);
+  assert.equal(releaseCalls[0].uid, "owner");
+  assert.equal(releaseCalls[0].guard, acquiredGuard);
 });
 
 test("claim checks fresh legacy waiting state before, under, and after its guard", () => {

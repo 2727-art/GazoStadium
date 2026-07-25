@@ -5193,6 +5193,7 @@ async function renewSoloSessionClaimGuard(uid, guard) {
   const now = Date.now();
   const result = await realtime.ref(`online/soloMatchLocksV2/${uid}`)
     .transaction((currentValue) => {
+      if (currentValue == null) return null;
       if (!soloSessionClaimGuardMatches(currentValue, guard.operationId)
           || Number(currentValue.expiresAt || 0) <= now) return;
       return {
@@ -5537,7 +5538,7 @@ async function claimSoloSessionV2(uid, data) {
     return { claimed: false, reason: "legacy-waiting" };
   }
 
-  let claimGuard = needsClaimGuard
+  const claimGuard = needsClaimGuard
     ? await acquireSoloSessionClaimGuard(uid, data)
     : null;
   if (needsClaimGuard && !claimGuard) {
@@ -5571,8 +5572,8 @@ async function claimSoloSessionV2(uid, data) {
       )) {
         return { claimed: false, reason: "legacy-waiting" };
       }
-      claimGuard = await renewSoloSessionClaimGuard(uid, claimGuard);
-      if (!claimGuard) {
+      const renewedClaimGuard = await renewSoloSessionClaimGuard(uid, claimGuard);
+      if (!renewedClaimGuard) {
         return { claimed: false, reason: "occupied" };
       }
     }
