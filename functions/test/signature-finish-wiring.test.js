@@ -21,7 +21,7 @@ function extract(pattern, label) {
 function createFinishSandbox() {
   const source = [
     extract(/const MAX_FINISH_LINE_LENGTH = 30;/, "finish line limit"),
-    extract(/const FINISH_LINES = \[[\s\S]*?\n\];/, "finish line presets"),
+    'const FINISH_LINES = ["これで決着だ！"];',
     extract(/function sanitizeFinishLineDraft\(value\) \{[\s\S]*?\n\}/, "finish sanitizer"),
     extract(/function normalizeFinishLine\(value, fallback = FINISH_LINES\[0\]\) \{[\s\S]*?\n\}/, "finish normalizer"),
     extract(/function normalizeReceivedFinishLine\(value\) \{[\s\S]*?\n\}/, "received finish normalizer"),
@@ -123,7 +123,7 @@ test("cut-in fires once only for a positive HP to zero transition", () => {
   assert.match(online, /if \(state\.processedRounds\.has\(state\.round\)\) return;/);
   assert.match(online, /const previousHp = loserIndex === null \? null : state\.players\[loserIndex\]\.hp;/);
   assert.match(online, /const lethal = loserIndex !== null && previousHp > 0 && state\.players\[loserIndex\]\.hp === 0;/);
-  assert.match(online, /if \(lethal\) \{\s*triggerFinishCutIn\(finish\);\s*\} else if \(topScore >= 8\)/);
+  assert.match(online, /if \(lethal\) \{\s*triggerFinishCutIn\(finish\);\s*if \(pendingFinishReply\) handleRemoteFinishReply\(pendingFinishReply, state\);\s*\} else if \(topScore >= 8\)/);
   assert.match(online, /function renderOnlinePursuitLines\(result\) \{\s*if \(result\.lethal\) return "";/);
 });
 
@@ -146,11 +146,11 @@ test("cut-in dialog is skippable, text-safe, responsive, and reduced-motion awar
 test("signature finish is exclusive to normal 1on1", () => {
   for (const file of ["strategy.js", "team.js", "royale.js"]) {
     const source = read(file);
-    assert.doesNotMatch(source, /signatureCardId|CUSTOM_FINISH_VALUE|finish-cutin-dialog/i, `${file} must not receive normal 1on1 finish state`);
+    assert.doesNotMatch(source, /signatureCardId|CUSTOM_FINISH_VALUE|finishReply|finish-cutin-dialog/i, `${file} must not receive normal 1on1 finish state`);
   }
 });
 
 test("cache tokens load finish JS and CSS together", () => {
-  assert.match(index, /styles\.css\?v=[^"]*signature-finish-v1/);
-  assert.match(index, /online\.js\?v=[^"]*signature-finish-v1/);
+  assert.match(index, /styles\.css\?v=[^"]*signature-finish-v1[^"]*finish-reply-v1/);
+  assert.match(index, /online\.js\?v=[^"]*signature-finish-v1[^"]*finish-reply-v1/);
 });

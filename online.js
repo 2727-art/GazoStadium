@@ -116,6 +116,20 @@ import {
   resolveOnlineSessionId,
   shouldConsumeOnlineSignal,
 } from "./online-session-guard.mjs?v=online-session-guard-v2";
+import {
+  CUSTOM_FINISH_REPLY_VALUE,
+  FINISH_REPLY_DISABLED_VALUE,
+  FINISH_REPLY_LINES,
+  MAX_FINISH_REPLY_LENGTH,
+  ROLEPLAY_VOICE_SETS,
+  getRoleplayVoiceSet,
+  inferRoleplayVoiceSetId,
+  normalizeFinishReplyLine,
+  normalizeReceivedFinishReplyLine,
+  normalizeRoleplayVoiceSetId,
+  resolveVisibleFinishReplyLine,
+  sanitizeFinishReplyDraft,
+} from "./finish-roleplay.mjs?v=finish-reply-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -124,6 +138,8 @@ const MIN_STARTING_HP = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const PURSUIT_LINE_KEY = "hariai-stadium-online-pursuit-line-v1";
 const FINISH_LINE_KEY = "hariai-stadium-online-finish-line-v1";
+const FINISH_REPLY_LINE_KEY = "hariai-stadium-online-finish-reply-line-v1";
+const ROLEPLAY_VOICE_SET_KEY = "hariai-stadium-online-roleplay-voice-v1";
 const OPPONENT_CUSTOM_FINISH_KEY = "hariai-stadium-online-opponent-custom-finish-v1";
 const IMAGE_PREFERENCE_KEY = "hariai-stadium-online-image-preference-v1";
 const SOLO_REUNION_PREFERENCE_KEY = "hariai-stadium-solo-reunion-preference-v1";
@@ -132,20 +148,29 @@ const MAX_FINISH_LINE_LENGTH = 30;
 const CUSTOM_PURSUIT_VALUE = "__custom__";
 const CUSTOM_FINISH_VALUE = "__custom_finish__";
 const FINISH_LINE_DISABLED_VALUE = "__finish_line_disabled__";
-const FINISH_CUT_IN_DURATION_MS = 1800;
-const PURSUIT_LINES = [
+const FINISH_CUT_IN_DURATION_MS = 12_000;
+const FINISH_REPLY_SETTLE_DURATION_MS = 1_600;
+const LEGACY_PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
   "好みは読めた。ここからが本命だ！",
   "刺さったね？ 追撃開始！",
   "まだ終わらない。次の一枚をどうぞ！",
 ];
-const FINISH_LINES = [
+const LEGACY_FINISH_LINES = [
   "これで決着だ！",
   "この一枚で、勝負を決める。",
   "最後の一撃、受け取って！",
   "推しの力、見届けたか！",
   "いい勝負だった。またやろう。",
 ];
+const PURSUIT_LINES = Object.freeze(Array.from(new Set([
+  ...ROLEPLAY_VOICE_SETS.map(({ pursuitLine }) => pursuitLine),
+  ...LEGACY_PURSUIT_LINES,
+])));
+const FINISH_LINES = Object.freeze(Array.from(new Set([
+  ...ROLEPLAY_VOICE_SETS.map(({ finishLine }) => finishLine),
+  ...LEGACY_FINISH_LINES,
+])));
 const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
   Object.freeze({
     id: "illustration",
@@ -430,6 +455,13 @@ function createOnlineState() {
   const savedXHandle = normalizeXHandle(localStorage.getItem(X_HANDLE_KEY) || "");
   const pursuitSettings = getSavedPursuitSettings();
   const finishSettings = getSavedFinishSettings();
+  const finishReplySettings = getSavedFinishReplySettings();
+  const savedVoiceSetId = normalizeRoleplayVoiceSetId(localStorage.getItem(ROLEPLAY_VOICE_SET_KEY));
+  const inferredVoiceSetId = inferRoleplayVoiceSetId({
+    pursuitLine: pursuitSettings.pursuitLine,
+    finishLine: finishSettings.finishLine,
+    replyLine: finishReplySettings.finishReplyLine,
+  });
   const imagePreference = normalizeImagePreference(localStorage.getItem(IMAGE_PREFERENCE_KEY), "");
   const soloReunionPreference = localStorage.getItem(SOLO_REUNION_PREFERENCE_KEY) === "1";
   return {
@@ -441,6 +473,9 @@ function createOnlineState() {
     authReady: false,
     ...pursuitSettings,
     ...finishSettings,
+    ...finishReplySettings,
+    roleplayVoiceSetId: savedVoiceSetId === inferredVoiceSetId ? savedVoiceSetId : inferredVoiceSetId,
+    roleplayVoiceFallbackId: savedVoiceSetId || inferredVoiceSetId || ROLEPLAY_VOICE_SETS[0].id,
     showOpponentCustomFinish: localStorage.getItem(OPPONENT_CUSTOM_FINISH_KEY) !== "0",
     imagePreference,
     soloFamiliarStage: "engawa_only",
@@ -486,6 +521,7 @@ function createOnlineState() {
     history: [],
     outcome: null,
     processedRounds: new Set(),
+    pendingFinishReplies: new Map(),
     continuedRounds: new Set(),
     sentImageRounds: new Set(),
     roundData: {},
@@ -780,6 +816,78 @@ function applyFinishLineSetting(value) {
   state.finishLine = finishLine;
   state.finishLineChoice = usesCustomLine ? CUSTOM_FINISH_VALUE : finishLine;
   if (usesCustomLine) state.customFinishLine = finishLine;
+}
+
+function getSavedFinishReplySettings() {
+  const savedValue = localStorage.getItem(FINISH_REPLY_LINE_KEY);
+  if (savedValue === FINISH_REPLY_DISABLED_VALUE) {
+    return {
+      finishReplyLine: "",
+      finishReplyChoice: FINISH_REPLY_DISABLED_VALUE,
+      customFinishReplyLine: "",
+    };
+  }
+  const finishReplyLine = normalizeFinishReplyLine(savedValue || "");
+  const usesCustomLine = savedValue !== null && !FINISH_REPLY_LINES.includes(finishReplyLine);
+  return {
+    finishReplyLine,
+    finishReplyChoice: usesCustomLine ? CUSTOM_FINISH_REPLY_VALUE : finishReplyLine,
+    customFinishReplyLine: usesCustomLine ? finishReplyLine : "",
+  };
+}
+
+function applyFinishReplySetting(value) {
+  if (value === FINISH_REPLY_DISABLED_VALUE || value === "") {
+    state.finishReplyLine = "";
+    state.finishReplyChoice = FINISH_REPLY_DISABLED_VALUE;
+    return;
+  }
+  const finishReplyLine = normalizeFinishReplyLine(value);
+  const usesCustomLine = !FINISH_REPLY_LINES.includes(finishReplyLine);
+  state.finishReplyLine = finishReplyLine;
+  state.finishReplyChoice = usesCustomLine ? CUSTOM_FINISH_REPLY_VALUE : finishReplyLine;
+  if (usesCustomLine) state.customFinishReplyLine = finishReplyLine;
+}
+
+function persistRoleplayLineSettings(targetState = state) {
+  localStorage.setItem(PURSUIT_LINE_KEY, targetState.pursuitLine);
+  localStorage.setItem(FINISH_LINE_KEY, targetState.finishLine || FINISH_LINE_DISABLED_VALUE);
+  localStorage.setItem(FINISH_REPLY_LINE_KEY, targetState.finishReplyLine || FINISH_REPLY_DISABLED_VALUE);
+  localStorage.setItem(
+    ROLEPLAY_VOICE_SET_KEY,
+    normalizeRoleplayVoiceSetId(targetState.roleplayVoiceFallbackId || targetState.roleplayVoiceSetId)
+      || ROLEPLAY_VOICE_SETS[0].id,
+  );
+}
+
+function markRoleplayVoiceSetIndividual() {
+  state.roleplayVoiceSetId = "";
+  const select = document.querySelector("#onlineRoleplayVoiceSet");
+  if (select) select.value = "";
+  const summary = document.querySelector("#onlineRoleplayVoiceSummary");
+  if (summary) {
+    summary.innerHTML = "<strong>個別設定</strong><small>追撃・決着・返礼を自分のキャラクターに合わせて編集しています。</small>";
+  }
+}
+
+function applyRoleplayVoiceSetSetting(value) {
+  const voiceSet = getRoleplayVoiceSet(value);
+  if (!voiceSet) {
+    markRoleplayVoiceSetIndividual();
+    return;
+  }
+  state.roleplayVoiceSetId = voiceSet.id;
+  state.roleplayVoiceFallbackId = voiceSet.id;
+  state.pursuitLine = voiceSet.pursuitLine;
+  state.pursuitLineChoice = voiceSet.pursuitLine;
+  state.customPursuitLine = "";
+  state.finishLine = voiceSet.finishLine;
+  state.finishLineChoice = voiceSet.finishLine;
+  state.customFinishLine = "";
+  state.finishReplyLine = voiceSet.replyLine;
+  state.finishReplyChoice = voiceSet.replyLine;
+  state.customFinishReplyLine = "";
+  persistRoleplayLineSettings();
 }
 
 function jstDateKey(timestamp = Date.now()) {
@@ -1915,7 +2023,15 @@ async function ensureAuthenticated() {
   if (profileSnapshot.exists()) {
     state.profile = { ...state.profile, ...profileSnapshot.val() };
     if (!localStorage.getItem(PROFILE_NAME_KEY) && state.profile.name) state.name = state.profile.name;
-    if (!localStorage.getItem(PURSUIT_LINE_KEY) && state.profile.pursuitLine) applyPursuitLineSetting(state.profile.pursuitLine);
+    if (!localStorage.getItem(PURSUIT_LINE_KEY) && state.profile.pursuitLine) {
+      applyPursuitLineSetting(state.profile.pursuitLine);
+      state.roleplayVoiceSetId = inferRoleplayVoiceSetId({
+        pursuitLine: state.pursuitLine,
+        finishLine: state.finishLine,
+        replyLine: state.finishReplyLine,
+      });
+      if (state.roleplayVoiceSetId) state.roleplayVoiceFallbackId = state.roleplayVoiceSetId;
+    }
   }
   try {
     state.overallProfile = await ensureOverallProfileSeeded(state.uid, state.name, state.profile);
@@ -2279,6 +2395,12 @@ function renderSetup() {
         <small>${escapeHtml(option.description)}</small>
       </span>
     </label>`).join("");
+  const activeVoiceSet = getRoleplayVoiceSet(state.roleplayVoiceSetId);
+  const voiceSetOptions = ROLEPLAY_VOICE_SETS.map((voiceSet) => `
+    <option value="${voiceSet.id}" ${state.roleplayVoiceSetId === voiceSet.id ? "selected" : ""}>${escapeHtml(voiceSet.label)} — ${escapeHtml(voiceSet.description)}</option>`).join("");
+  const voiceSetSummary = activeVoiceSet
+    ? `<strong>${escapeHtml(activeVoiceSet.label)}</strong><small>${escapeHtml(activeVoiceSet.description)}。下の各セリフは個別に変更できます。</small>`
+    : "<strong>個別設定</strong><small>追撃・決着・返礼を自分のキャラクターに合わせて編集しています。</small>";
   const slots = Array.from({ length: MAX_ROUNDS }, (_, index) => {
     const item = state.deck[index];
     if (!item) return `<div class="deck-slot empty" aria-label="空きスロット ${index + 1}">${String(index + 1).padStart(2, "0")}</div>`;
@@ -2328,6 +2450,17 @@ function renderSetup() {
           <input class="text-input" id="onlinePlayerName" maxlength="16" value="${escapeHtml(state.name)}" autocomplete="nickname" />
         </label>
         ${shared()?.profileAvatar?.renderSetting?.({ controlId: "soloProfileAvatar", name: state.name }) || ""}
+        <section class="roleplay-voice-settings" aria-labelledby="onlineRoleplayVoiceTitle">
+          <div class="finish-line-heading"><span>ROLEPLAY VOICE</span><strong id="onlineRoleplayVoiceTitle">キャラクターの口調セット</strong></div>
+          <label class="field-label">初心者向け一括設定
+            <select class="text-input" id="onlineRoleplayVoiceSet">
+              <option value="" ${state.roleplayVoiceSetId ? "" : "selected"}>個別に設定する</option>
+              ${voiceSetOptions}
+            </select>
+          </label>
+          <div class="roleplay-voice-summary" id="onlineRoleplayVoiceSummary">${voiceSetSummary}</div>
+          <p class="pursuit-line-note">口調セットは追撃・決着・敗北時の返礼を一括設定します。選んだ後に、好きな項目だけ自由記述へ変更できます。</p>
+        </section>
         <div class="pursuit-line-settings online-pursuit-line-settings">
           <label class="field-label">追撃時のセリフ
             <select class="text-input" id="onlinePursuitLineChoice">
@@ -2358,11 +2491,26 @@ function renderSetup() {
             </label>
             <span class="pursuit-character-count finish-character-count"><b id="onlineFinishCharacterCount">${state.customFinishLine.length}</b> / ${MAX_FINISH_LINE_LENGTH}</span>
           </div>
+          <div class="finish-reply-divider" aria-hidden="true"></div>
+          <div class="finish-line-heading"><span>FINISH REPLY</span><strong>敗北時の決着返礼</strong></div>
+          <label class="field-label">HPが0になった時に返すセリフ
+            <select class="text-input" id="onlineFinishReplyChoice">
+              ${FINISH_REPLY_LINES.map((line) => `<option value="${escapeHtml(line)}" ${state.finishReplyChoice === line ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
+              <option value="${CUSTOM_FINISH_REPLY_VALUE}" ${state.finishReplyChoice === CUSTOM_FINISH_REPLY_VALUE ? "selected" : ""}>自由記述</option>
+              <option value="${FINISH_REPLY_DISABLED_VALUE}" ${state.finishReplyChoice === FINISH_REPLY_DISABLED_VALUE ? "selected" : ""}>返礼なし（静かに決着を受け入れる）</option>
+            </select>
+          </label>
+          <div class="pursuit-custom-field" id="onlineCustomFinishReplyField" ${state.finishReplyChoice === CUSTOM_FINISH_REPLY_VALUE ? "" : "hidden"}>
+            <label class="field-label">自由記述（最大${MAX_FINISH_REPLY_LENGTH}文字・改行1回まで）
+              <textarea class="text-input finish-reply-input" id="onlineCustomFinishReplyLine" maxlength="${MAX_FINISH_REPLY_LENGTH}" rows="2" autocomplete="off" placeholder="敗北時に返すセリフ">${escapeHtml(state.customFinishReplyLine)}</textarea>
+            </label>
+            <span class="pursuit-character-count finish-character-count"><b id="onlineFinishReplyCharacterCount">${state.customFinishReplyLine.length}</b> / ${MAX_FINISH_REPLY_LENGTH}</span>
+          </div>
           <label class="finish-visibility-toggle">
             <input id="onlineShowOpponentCustomFinish" type="checkbox" ${state.showOpponentCustomFinish ? "checked" : ""} />
-            <span>相手が自由記述したフィニッシュセリフを表示する</span>
+            <span>相手が自由記述した決着セリフ・返礼を表示する</span>
           </label>
-          <p class="pursuit-line-note">実際にHPを0にした画像へ合成表示します。自由記述を非表示にした場合、相手の定型外セリフだけ安全な定型文へ置き換えます。</p>
+          <p class="pursuit-line-note">決着セリフと返礼はP2Pで対戦相手だけへ一時送信します。自由記述を非表示にした場合、相手の定型外セリフだけ安全な定型文へ置き換えます。</p>
         </div>
         <fieldset class="image-preference-settings">
           <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
@@ -3032,11 +3180,14 @@ function renderRoundResult() {
   const finishBadge = result.lethal
     ? `<div class="finish-result-badge ${result.finish?.signature ? "is-signature" : ""}"><span>${result.finish?.signature ? "SIGNATURE FINISH" : "FINISH"}</span><strong>${escapeHtml(result.finish?.winnerName || state.players[result.winnerIndex].name)}の決着演出</strong></div>`
     : "";
+  const finishReply = result.finish?.replyAcknowledged
+    ? `<div class="finish-result-reply ${result.finish?.signature ? "is-signature" : ""}"><span>決着返礼</span><strong>${escapeHtml(result.finish.replyName || state.players[result.loserIndex].name)}</strong><blockquote>${escapeHtml(result.finish.replyLine || "静かに決着を受け入れました。")}</blockquote></div>`
+    : "";
   return `<section class="screen result-wrap">${renderOnlineHud()}<div class="result-card">
     <span class="eyebrow">ROUND ${state.round} RESULT</span><h1>${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1>
     <div class="result-scores">${resultPlayerHtml(0, result.scorePlayerOne, result.winnerIndex, labelFor(result.scorePlayerOne))}
       <div class="result-vs">VS</div>${resultPlayerHtml(1, result.scorePlayerTwo, result.winnerIndex, labelFor(result.scorePlayerTwo))}</div>
-    <div class="damage-callout">${escapeHtml(damageText)}</div>${finishBadge}${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
+    <div class="damage-callout">${escapeHtml(damageText)}</div>${finishBadge}${finishReply}${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
     <div class="button-row" style="justify-content:center"><button class="button button-danger" data-online-destroy>ルーム破棄</button>
       <button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
   </div></section>`;
@@ -3930,8 +4081,10 @@ function bindSetupEvents() {
     if (state.imagePreference) localStorage.setItem(IMAGE_PREFERENCE_KEY, state.imagePreference);
     updateMatchmakingSetupButton();
   }));
+  bindOnlineRoleplayVoiceField();
   bindOnlinePursuitFields();
   bindOnlineFinishFields();
+  bindOnlineFinishReplyFields();
   document.querySelector("#onlineImageInput")?.addEventListener("change", handleImageInput);
   document.querySelector("#onlineFillSample")?.addEventListener("click", fillSampleDeck);
   document.querySelectorAll("[data-online-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.onlineRemove)));
@@ -3986,6 +4139,18 @@ function requestMatchmaking() {
   sampleHandicapDialog.showModal();
 }
 
+function bindOnlineRoleplayVoiceField() {
+  document.querySelector("#onlineRoleplayVoiceSet")?.addEventListener("change", (event) => {
+    const value = normalizeRoleplayVoiceSetId(event.currentTarget.value);
+    if (!value) {
+      markRoleplayVoiceSetIndividual();
+      return;
+    }
+    applyRoleplayVoiceSetSetting(value);
+    render();
+  });
+}
+
 function bindOnlinePursuitFields() {
   const select = document.querySelector("#onlinePursuitLineChoice");
   const field = document.querySelector("#onlineCustomPursuitField");
@@ -3995,6 +4160,7 @@ function bindOnlinePursuitFields() {
     if (field) field.hidden = select?.value !== CUSTOM_PURSUIT_VALUE;
   };
   select?.addEventListener("change", () => {
+    markRoleplayVoiceSetIndividual();
     state.pursuitLineChoice = select.value;
     if (select.value === CUSTOM_PURSUIT_VALUE) {
       state.pursuitLine = normalizePursuitLine(state.customPursuitLine);
@@ -4002,12 +4168,15 @@ function bindOnlinePursuitFields() {
     } else {
       state.pursuitLine = normalizePursuitLine(select.value);
     }
+    persistRoleplayLineSettings();
     syncCustomVisibility();
   });
   input?.addEventListener("input", () => {
+    markRoleplayVoiceSetIndividual();
     input.value = sanitizePursuitLineDraft(input.value);
     state.customPursuitLine = input.value;
     state.pursuitLine = normalizePursuitLine(input.value);
+    persistRoleplayLineSettings();
     if (counter) counter.textContent = String(input.value.length);
   });
   syncCustomVisibility();
@@ -4023,6 +4192,7 @@ function bindOnlineFinishFields() {
     if (field) field.hidden = select?.value !== CUSTOM_FINISH_VALUE;
   };
   select?.addEventListener("change", () => {
+    markRoleplayVoiceSetIndividual();
     state.finishLineChoice = select.value;
     if (select.value === CUSTOM_FINISH_VALUE) {
       state.finishLine = normalizeFinishLine(state.customFinishLine);
@@ -4030,19 +4200,51 @@ function bindOnlineFinishFields() {
     } else {
       applyFinishLineSetting(select.value);
     }
-    localStorage.setItem(FINISH_LINE_KEY, state.finishLine || FINISH_LINE_DISABLED_VALUE);
+    persistRoleplayLineSettings();
     syncCustomVisibility();
   });
   input?.addEventListener("input", () => {
+    markRoleplayVoiceSetIndividual();
     input.value = sanitizeFinishLineDraft(input.value);
     state.customFinishLine = input.value;
     state.finishLine = normalizeFinishLine(input.value);
-    localStorage.setItem(FINISH_LINE_KEY, state.finishLine);
+    persistRoleplayLineSettings();
     if (counter) counter.textContent = String(input.value.length);
   });
   visibilityToggle?.addEventListener("change", () => {
     state.showOpponentCustomFinish = visibilityToggle.checked;
     localStorage.setItem(OPPONENT_CUSTOM_FINISH_KEY, state.showOpponentCustomFinish ? "1" : "0");
+  });
+  syncCustomVisibility();
+}
+
+function bindOnlineFinishReplyFields() {
+  const select = document.querySelector("#onlineFinishReplyChoice");
+  const field = document.querySelector("#onlineCustomFinishReplyField");
+  const input = document.querySelector("#onlineCustomFinishReplyLine");
+  const counter = document.querySelector("#onlineFinishReplyCharacterCount");
+  const syncCustomVisibility = () => {
+    if (field) field.hidden = select?.value !== CUSTOM_FINISH_REPLY_VALUE;
+  };
+  select?.addEventListener("change", () => {
+    markRoleplayVoiceSetIndividual();
+    state.finishReplyChoice = select.value;
+    if (select.value === CUSTOM_FINISH_REPLY_VALUE) {
+      state.finishReplyLine = normalizeFinishReplyLine(state.customFinishReplyLine);
+      input?.focus();
+    } else {
+      applyFinishReplySetting(select.value);
+    }
+    persistRoleplayLineSettings();
+    syncCustomVisibility();
+  });
+  input?.addEventListener("input", () => {
+    markRoleplayVoiceSetIndividual();
+    input.value = sanitizeFinishReplyDraft(input.value);
+    state.customFinishReplyLine = input.value;
+    state.finishReplyLine = normalizeFinishReplyLine(input.value);
+    persistRoleplayLineSettings();
+    if (counter) counter.textContent = String(input.value.length);
   });
   syncCustomVisibility();
 }
@@ -5272,9 +5474,13 @@ async function beginMatchmaking({ automatic = false } = {}) {
       : expectedState.finishLineChoice === CUSTOM_FINISH_VALUE
         ? normalizeFinishLine(expectedState.customFinishLine)
         : normalizeFinishLine(expectedState.finishLineChoice);
+    expectedState.finishReplyLine = expectedState.finishReplyChoice === FINISH_REPLY_DISABLED_VALUE
+      ? ""
+      : expectedState.finishReplyChoice === CUSTOM_FINISH_REPLY_VALUE
+        ? normalizeFinishReplyLine(expectedState.customFinishReplyLine)
+        : normalizeFinishReplyLine(expectedState.finishReplyChoice);
     localStorage.setItem(PROFILE_NAME_KEY, expectedState.name);
-    localStorage.setItem(PURSUIT_LINE_KEY, expectedState.pursuitLine);
-    localStorage.setItem(FINISH_LINE_KEY, expectedState.finishLine || FINISH_LINE_DISABLED_VALUE);
+    persistRoleplayLineSettings(expectedState);
     localStorage.setItem(IMAGE_PREFERENCE_KEY, expectedState.imagePreference);
     if (expectedState.leaderboardPublic) {
       syncLeaderboardEntry().catch(() => showToast("ランキング情報を更新できませんでした。"));
@@ -6694,6 +6900,8 @@ async function handleChannelMessage(data, expectedState = state, expectedChannel
       handleRemoteEngawaResponse(message.responseId);
     } else if (message.type === "engawa-end") {
       handleRemoteEngawaEnd();
+    } else if (message.type === "finish-reply") {
+      handleRemoteFinishReply(message, expectedState);
     } else if (message.type === "profile-avatar-start") {
       assertIncomingTransferNamespaceExclusive(state, "profile");
       if (state.incomingAvatarTransfer) {
@@ -7545,12 +7753,15 @@ function resolveRound(scores) {
     lethal,
     finish,
   });
+  const pendingFinishReply = state.pendingFinishReplies.get(state.round) || null;
+  state.pendingFinishReplies.delete(state.round);
   state.screen = "result";
   render();
   const topScore = Math.max(scorePlayerOne, scorePlayerTwo);
   if (topScore >= 8) window.HariaiAudio?.playResult(topScore);
   if (lethal) {
     triggerFinishCutIn(finish);
+    if (pendingFinishReply) handleRemoteFinishReply(pendingFinishReply, state);
   } else if (topScore >= 8) {
     triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
   }
@@ -7731,17 +7942,29 @@ function getOpponent() {
 
 function createFinishCutInPayload(winnerIndex) {
   const winnerIsLocal = winnerIndex === state.playerIndex;
+  const loserIndex = winnerIndex === 0 ? 1 : 0;
   const media = winnerIsLocal ? getSelectedItem() : state.remoteImages.get(state.round);
   const receivedLine = winnerIsLocal
     ? normalizeReceivedFinishLine(state.finishLine)
     : normalizeReceivedFinishLine(media?.finishLine);
   const customOpponentLine = !winnerIsLocal && receivedLine && !FINISH_LINES.includes(receivedLine);
   return {
+    round: state.round,
+    winnerIndex,
+    loserIndex,
     winnerName: String(state.players[winnerIndex]?.name || "PLAYER").slice(0, 16),
+    loserName: String(state.players[loserIndex]?.name || "PLAYER").slice(0, 16),
     imageUrl: String(media?.url || ""),
     signature: winnerIsLocal ? media?.id === state.signatureCardId : media?.signature === true,
     finishLine: customOpponentLine && !state.showOpponentCustomFinish ? FINISH_LINES[0] : receivedLine,
+    replyAcknowledged: false,
+    replyLine: "",
   };
+}
+
+function getLethalResultForRound(round, targetState = state) {
+  const result = targetState.history.at(-1);
+  return result?.lethal && result.round === round ? result : null;
 }
 
 function clearFinishCutIn() {
@@ -7750,6 +7973,104 @@ function clearFinishCutIn() {
   state.finishCutInTimer = null;
   if (finishCutInDialog?.open) finishCutInDialog.close();
   finishCutInContent?.replaceChildren();
+  if (finishCutInContent) delete finishCutInContent.dataset.round;
+}
+
+function scheduleFinishCutInClose(generation, delayMs) {
+  if (state.finishCutInTimer) window.clearTimeout(state.finishCutInTimer);
+  state.finishCutInTimer = window.setTimeout(() => {
+    if (generation === finishCutInGeneration) clearFinishCutIn();
+  }, delayMs);
+}
+
+function applyFinishReplyToResult(result, {
+  line,
+  name,
+} = {}) {
+  if (!result?.finish || result.finish.replyAcknowledged) return false;
+  result.finish.replyAcknowledged = true;
+  result.finish.replyLine = normalizeReceivedFinishReplyLine(line);
+  result.finish.replyName = String(name || result.finish.loserName || "PLAYER").slice(0, 16);
+  return true;
+}
+
+function completeFinishReplyPresentation(payload) {
+  if (!finishCutInContent || finishCutInContent.dataset.round !== String(payload.round)) return;
+  const cutIn = finishCutInContent.querySelector(".finish-cutin");
+  const panel = finishCutInContent.querySelector(".finish-reply-panel");
+  if (!cutIn || !panel) return;
+  panel.classList.add("is-acknowledged");
+  const heading = document.createElement("span");
+  heading.className = "finish-reply-heading";
+  heading.textContent = "DECISION REPLY";
+  const replyName = document.createElement("strong");
+  replyName.className = "finish-reply-name";
+  replyName.textContent = payload.replyName || payload.loserName;
+  const reply = payload.replyLine
+    ? document.createElement("blockquote")
+    : document.createElement("p");
+  reply.className = "finish-reply-line";
+  reply.textContent = payload.replyLine || "静かに決着を受け入れました。";
+  const seal = document.createElement("span");
+  seal.className = "finish-reply-seal";
+  seal.textContent = payload.signature ? "返礼" : "勝負あり";
+  panel.replaceChildren(heading, replyName, reply, seal);
+  cutIn.classList.add("has-reply");
+  const skip = finishCutInContent.querySelector(".finish-cutin-skip");
+  if (skip) skip.textContent = "結果を見る";
+  scheduleFinishCutInClose(finishCutInGeneration, FINISH_REPLY_SETTLE_DURATION_MS);
+}
+
+function acknowledgeLocalFinishReply(payload) {
+  const result = getLethalResultForRound(payload.round);
+  if (!result || result.loserIndex !== state.playerIndex || result.finish?.replyAcknowledged) return;
+  const replyLine = normalizeReceivedFinishReplyLine(state.finishReplyLine);
+  if (!applyFinishReplyToResult(result, {
+    line: replyLine,
+    name: state.players[state.playerIndex]?.name,
+  })) return;
+  if (state.channel?.readyState === "open") {
+    try {
+      state.channel.send(JSON.stringify({
+        type: "finish-reply",
+        round: payload.round,
+        replyLine,
+        voiceSetId: normalizeRoleplayVoiceSetId(state.roleplayVoiceFallbackId),
+      }));
+    } catch {
+      // The battle result is already final; a failed optional reply must not block progression.
+    }
+  }
+  if (state.screen === "result") render();
+  completeFinishReplyPresentation(result.finish);
+}
+
+function handleRemoteFinishReply(message, targetState = state) {
+  const round = Number(message?.round);
+  if (!Number.isInteger(round) || round < 1 || round > MAX_ROUNDS || typeof message?.replyLine !== "string") return;
+  const result = getLethalResultForRound(round, targetState);
+  if (!result) {
+    if (round === targetState.round) {
+      targetState.pendingFinishReplies.set(round, {
+        type: "finish-reply",
+        round,
+        replyLine: message.replyLine,
+        voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
+      });
+    }
+    return;
+  }
+  if (result.winnerIndex !== targetState.playerIndex || result.finish?.replyAcknowledged) return;
+  const visibleReply = resolveVisibleFinishReplyLine(message.replyLine, {
+    showCustom: targetState.showOpponentCustomFinish,
+    voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
+  });
+  if (!applyFinishReplyToResult(result, {
+    line: visibleReply.line,
+    name: targetState.players[result.loserIndex]?.name,
+  })) return;
+  if (state === targetState && targetState.screen === "result") render();
+  if (state === targetState) completeFinishReplyPresentation(result.finish);
 }
 
 function triggerFinishCutIn(payload) {
@@ -7803,26 +8124,54 @@ function triggerFinishCutIn(payload) {
   copy.append(label, winnerName);
   if (payload.finishLine) {
     const quote = document.createElement("blockquote");
+    quote.className = "finish-cutin-line";
     quote.textContent = payload.finishLine;
     copy.append(quote);
   }
 
+  const replyPanel = document.createElement("section");
+  replyPanel.className = "finish-reply-panel";
+  replyPanel.setAttribute("aria-live", "polite");
+  const localIsLoser = payload.loserIndex === state.playerIndex;
+  const replyHeading = document.createElement("span");
+  replyHeading.className = "finish-reply-heading";
+  replyHeading.textContent = localIsLoser ? "YOUR FINISH REPLY" : "WAITING FOR REPLY";
+  replyPanel.append(replyHeading);
+  let replyAction = null;
+  if (localIsLoser) {
+    const replyPreview = state.finishReplyLine
+      ? document.createElement("blockquote")
+      : document.createElement("p");
+    replyPreview.className = "finish-reply-line";
+    replyPreview.textContent = state.finishReplyLine || "セリフを送らず、静かに決着を受け入れます。";
+    replyAction = document.createElement("button");
+    replyAction.type = "button";
+    replyAction.className = "finish-reply-action";
+    replyAction.textContent = state.finishReplyLine
+      ? "この言葉で決着に応える"
+      : "静かに決着を受け入れる";
+    replyAction.addEventListener("click", () => acknowledgeLocalFinishReply(payload), { once: true });
+    replyPanel.append(replyPreview, replyAction);
+  } else {
+    const waiting = document.createElement("p");
+    waiting.className = "finish-reply-waiting";
+    waiting.textContent = `${payload.loserName}の返礼を待っています…`;
+    replyPanel.append(waiting);
+  }
+  copy.append(replyPanel);
+
   const skip = document.createElement("button");
   skip.type = "button";
   skip.className = "finish-cutin-skip";
-  skip.textContent = "演出をスキップ";
+  skip.textContent = localIsLoser ? "返礼せず結果へ" : "結果へ進む";
   skip.addEventListener("click", clearFinishCutIn, { once: true });
   stage.append(imageFrame, copy);
   cutIn.append(stage, skip);
-  cutIn.addEventListener("click", (event) => {
-    if (event.target !== skip) clearFinishCutIn();
-  }, { once: true });
   finishCutInContent.replaceChildren(cutIn);
+  finishCutInContent.dataset.round = String(payload.round);
   finishCutInDialog.showModal();
-  skip.focus({ preventScroll: true });
-  state.finishCutInTimer = window.setTimeout(() => {
-    if (generation === finishCutInGeneration) clearFinishCutIn();
-  }, FINISH_CUT_IN_DURATION_MS);
+  (replyAction || skip).focus({ preventScroll: true });
+  scheduleFinishCutInClose(generation, FINISH_CUT_IN_DURATION_MS);
 }
 
 function triggerCriticalFx(text) {
@@ -7936,6 +8285,11 @@ async function resetOnlineState(screen) {
     finishLine: expectedState.finishLine,
     finishLineChoice: expectedState.finishLineChoice,
     customFinishLine: expectedState.customFinishLine,
+    finishReplyLine: expectedState.finishReplyLine,
+    finishReplyChoice: expectedState.finishReplyChoice,
+    customFinishReplyLine: expectedState.customFinishReplyLine,
+    roleplayVoiceSetId: expectedState.roleplayVoiceSetId,
+    roleplayVoiceFallbackId: expectedState.roleplayVoiceFallbackId,
     showOpponentCustomFinish: expectedState.showOpponentCustomFinish,
     imagePreference: expectedState.imagePreference,
     soloFamiliarStage: expectedState.soloFamiliarStage,
