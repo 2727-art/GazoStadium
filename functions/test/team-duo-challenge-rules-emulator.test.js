@@ -23,7 +23,7 @@ const projectId = process.env.TEAM_DUO_RULES_TEST_PROJECT_ID || "demo-team-duo";
 const runsAgainstSafeEmulator = /^demo-[a-z0-9-]+$/.test(projectId)
   && /^(?:127\.0\.0\.1|localhost):\d+$/.test(emulatorHost);
 
-function eligibility(uid, now) {
+function legacyEligibility(uid, now) {
   return {
     uid,
     version: 1,
@@ -34,6 +34,15 @@ function eligibility(uid, now) {
     reason: "rating",
     issuedAt: now - 1_000,
     expiresAt: now + (60 * 60 * 1000),
+  };
+}
+
+function roleplayCompatibility(uid) {
+  return {
+    uid,
+    version: 2,
+    eligible: true,
+    reason: "roleplay",
   };
 }
 
@@ -80,7 +89,7 @@ function roomPayload({
   soloUid,
   firstUid,
   secondUid,
-  eligibilitySnapshot,
+  eligibilitySnapshot = null,
 }) {
   return {
     protocolVersion: 2,
@@ -112,7 +121,7 @@ function roomPayload({
     accepted: {
       [soloUid]: true,
     },
-    eligibilitySnapshot,
+    ...(eligibilitySnapshot ? { eligibilitySnapshot } : {}),
     presentationOrder: ["solo", "duo"],
   };
 }
@@ -129,7 +138,7 @@ async function createEnvironment(context) {
   return environment;
 }
 
-test("team duo rules enforce atomic qualified three-player bootstrap", {
+test("team duo rules let any authenticated player choose the role while bootstrap stays atomic", {
   skip: runsAgainstSafeEmulator
     ? false
     : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TEAM_DUO_RULES_TEST_PROJECT_ID",
@@ -141,45 +150,44 @@ test("team duo rules enforce atomic qualified three-player bootstrap", {
   const secondUid = "duo-second";
   const outsiderUid = "outsider";
   const roomId = "-teamDuoRoom123456789";
-  const validEligibility = eligibility(soloUid, now);
-
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(
-      ref(adminContext.database(), `online/teamEligibility/${soloUid}`),
-      validEligibility,
-    );
-  });
+  const validLegacySnapshot = legacyEligibility(soloUid, now);
+  const validRoleplaySnapshot = roleplayCompatibility(soloUid);
 
   const soloDatabase = environment.authenticatedContext(soloUid).database();
   const firstDatabase = environment.authenticatedContext(firstUid).database();
   const secondDatabase = environment.authenticatedContext(secondUid).database();
   const outsiderDatabase = environment.authenticatedContext(outsiderUid).database();
 
-  await assertSucceeds(get(ref(soloDatabase, `online/teamEligibility/${soloUid}`)));
-  await assertFails(get(ref(firstDatabase, `online/teamEligibility/${soloUid}`)));
   await assertFails(set(
-    ref(soloDatabase, `online/teamEligibility/${soloUid}/rating`),
-    3000,
+    ref(soloDatabase, `online/teamEligibility/${soloUid}`),
+    validLegacySnapshot,
   ));
 
   await assertSucceeds(set(
     ref(soloDatabase, `online/teamQueue/${soloUid}`),
-    queueEntry(soloUid, "oshi_jouzu", now),
+    {
+      ...queueEntry(soloUid, "oshi_jouzu", now),
+      rating: 100,
+    },
   ));
   await assertFails(set(
     ref(soloDatabase, `online/teamQueue/${soloUid}`),
     {
       ...queueEntry(soloUid, "oshi_jouzu", now),
-      eligibilitySnapshot: validEligibility,
+      eligibilitySnapshot: validRoleplaySnapshot,
     },
   ));
   await assertSucceeds(set(
     ref(firstDatabase, `online/teamQueue/${firstUid}`),
     queueEntry(firstUid, "challenger", now),
   ));
-  await assertFails(set(
+  await assertSucceeds(set(
     ref(firstDatabase, `online/teamQueue/${firstUid}`),
     queueEntry(firstUid, "oshi_jouzu", now),
+  ));
+  await assertSucceeds(set(
+    ref(firstDatabase, `online/teamQueue/${firstUid}`),
+    queueEntry(firstUid, "challenger", now),
   ));
   await assertFails(set(
     ref(secondDatabase, `online/teamQueue/${secondUid}`),
@@ -191,7 +199,6 @@ test("team duo rules enforce atomic qualified three-player bootstrap", {
     soloUid,
     firstUid,
     secondUid,
-    eligibilitySnapshot: validEligibility,
   });
   await assertFails(set(
     ref(firstDatabase, `online/teamRooms/${roomId}`),
@@ -233,6 +240,37 @@ test("team duo rules enforce atomic qualified three-player bootstrap", {
     ref(soloDatabase, `online/teamRooms/${roomId}/status`),
     "active",
   ));
+
+  await assertSucceeds(set(
+    ref(soloDatabase, "online/teamRooms/-teamDuoLegacySnapshot"),
+    roomPayload({
+      now,
+      soloUid,
+      firstUid,
+      secondUid,
+      eligibilitySnapshot: validLegacySnapshot,
+    }),
+  ));
+  await assertSucceeds(set(
+    ref(soloDatabase, "online/teamRooms/-teamDuoRoleplaySnapshot"),
+    roomPayload({
+      now,
+      soloUid,
+      firstUid,
+      secondUid,
+      eligibilitySnapshot: validRoleplaySnapshot,
+    }),
+  ));
+  await assertFails(set(
+    ref(soloDatabase, "online/teamRooms/-teamDuoWrongSnapshot"),
+    roomPayload({
+      now,
+      soloUid,
+      firstUid,
+      secondUid,
+      eligibilitySnapshot: roleplayCompatibility("different-player"),
+    }),
+  ));
 });
 
 test("team duo rules seal scores and gate the one-shot and talk state machine", {
@@ -246,11 +284,6 @@ test("team duo rules seal scores and gate the one-shot and talk state machine", 
   const firstUid = "first";
   const secondUid = "second";
   const roomId = "-teamDuoFlow123456789";
-  const validEligibility = eligibility(soloUid, now);
-
-  await environment.withSecurityRulesDisabled(async (adminContext) => {
-    await set(ref(adminContext.database(), `online/teamEligibility/${soloUid}`), validEligibility);
-  });
 
   const soloDatabase = environment.authenticatedContext(soloUid).database();
   const firstDatabase = environment.authenticatedContext(firstUid).database();
@@ -262,7 +295,6 @@ test("team duo rules seal scores and gate the one-shot and talk state machine", 
       soloUid,
       firstUid,
       secondUid,
-      eligibilitySnapshot: validEligibility,
     }),
   ));
   await assertSucceeds(set(ref(firstDatabase, `online/teamRooms/${roomId}/accepted/${firstUid}`), true));

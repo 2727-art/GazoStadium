@@ -82,7 +82,7 @@ import {
   TEAM_CHALLENGE_VARIANT,
   allMembersMarked,
   createPerPeerTransferQueue,
-  eligibleTeamChallengeQueueEntries,
+  validTeamChallengeQueueEntries,
   normalizePresentationOrder,
   normalizeTeamChallengeFocus,
   normalizeTeamChallengeRole,
@@ -96,7 +96,7 @@ import {
   sortedChallengePlayers,
   teamChallengeMembersByRole,
   teamTalkStatus,
-} from "./team-duo-challenge.mjs?v=oshi-jouzu-duo-v1";
+} from "./team-duo-challenge.mjs?v=oshi-jouzu-duo-v1-roleplay-v1";
 
 const PLAYER_COUNT = 3;
 const DUO_STRATEGY_MS = 20_000;
@@ -172,10 +172,6 @@ function createState() {
     authReady: false,
     role: "",
     focus: "overall",
-    eligibilityReady: false,
-    eligible: false,
-    eligibilityMessage: "参加資格を確認しています…",
-    eligibilitySnapshot: null,
     economy: {
       points: 0,
       inventory: {},
@@ -299,33 +295,8 @@ async function ensureAuthenticated() {
     if (economySnapshot.exists()) state.economy = normalizeEconomy(economySnapshot.val());
   }
   state.authReady = true;
+  setTeamChrome("推し上手 READY");
   render();
-  await loadTeamChallengeEligibility();
-}
-
-async function loadTeamChallengeEligibility() {
-  state.eligibilityReady = false;
-  render();
-  try {
-    const response = await economyActionCallable({ action: "prepare_team_challenge" });
-    const payload = response.data && typeof response.data === "object" ? response.data : {};
-    state.eligibilitySnapshot = payload.eligibilitySnapshot && typeof payload.eligibilitySnapshot === "object"
-      ? payload.eligibilitySnapshot
-      : payload;
-    state.eligible = payload.eligible === true || state.eligibilitySnapshot?.eligible === true;
-    state.eligibilityMessage = state.eligible
-      ? "つよ推しの証へ挑めます。"
-      : String(payload.message || state.eligibilitySnapshot?.message || "推し上手さんとしての参加条件をまだ満たしていません。");
-  } catch (error) {
-    console.error(error);
-    state.eligible = false;
-    state.eligibilitySnapshot = null;
-    state.eligibilityMessage = "参加資格を確認できませんでした。通信状態を確認して、もう一度お試しください。";
-  } finally {
-    state.eligibilityReady = true;
-    setTeamChrome("推し上手 READY");
-    render();
-  }
 }
 
 function normalizeEconomy(value) {
@@ -404,7 +375,6 @@ function render() {
 }
 
 function renderRoleSelect() {
-  const eligibilityClass = state.eligible ? "connected" : state.eligibilityReady ? "warning" : "";
   return `<section class="screen"><div class="section-head"><div><span class="eyebrow">推し上手！ふたりチャレンジ</span>
     <h1>ひとりの推し技、ふたりの推し愛。</h1>
     <p>画像・音声・10秒動画・ことばを掛け合わせる、一度きりの1対2チャレンジです。</p></div>
@@ -417,13 +387,13 @@ function renderRoleSelect() {
         <li><b>3</b><span>対戦後は全員同意で、三人の推しトーク会を開けます。</span></li>
       </ol><div class="privacy-note">メディアは対戦中だけ端末間で転送し、終了時に破棄します。</div></aside>
       <div class="setup-panel"><div class="team-final-grid">
-        <article class="team-final-card"><span>ひとり側</span><h2>推し上手さん</h2><p>ひとつの推し表現で、ふたり分の推し愛を受け止めます。</p>
-          <span class="connection-pill ${eligibilityClass}">${escapeHtml(state.authReady ? state.eligibilityMessage : "Firebaseへ接続中…")}</span>
-          <button class="button button-primary" id="chooseOshiJouzu" ${state.authReady && state.eligibilityReady && state.eligible ? "" : "disabled"}>推し上手さんとして腕試し</button></article>
+        <article class="team-final-card"><span>ひとり側・ロールプレイ</span><h2>推し上手さん</h2><p>ひとつの推し表現で、ふたり分の推し愛を受け止める役です。戦績や順位に関係なく選べます。</p>
+          <span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● どなたでも演じられます" : "○ Firebaseへ接続中…"}</span>
+          <button class="button button-primary" id="chooseOshiJouzu" ${state.authReady ? "" : "disabled"}>推し上手さんを演じる</button></article>
         <article class="team-final-card"><span>ふたり側</span><h2>ふたり推し</h2><p>二枚と共同演出を組み合わせて、推し上手さんへ挑みます。</p>
           <span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● 参加できます" : "○ Firebaseへ接続中…"}</span>
           <button class="button button-cyan" id="chooseFutariOshi" ${state.authReady ? "" : "disabled"}>ふたりで挑戦する</button></article>
-      </div>${state.eligibilityReady && !state.eligible ? '<button class="button button-ghost button-small" id="refreshTeamEligibility">参加資格を再確認</button>' : ""}</div>
+      </div></div>
     </div></section>`;
 }
 
@@ -453,8 +423,7 @@ function renderFocusOptions(name, selected = state.focus) {
 function renderSetup() {
   const isSolo = state.role === TEAM_CHALLENGE_ROLES.OSHI_JOUZU;
   const ready = state.authReady
-    && Boolean(state.composition.image?.blob)
-    && (!isSolo || state.eligible);
+    && Boolean(state.composition.image?.blob);
   return `<section class="screen"><div class="section-head"><div><span class="eyebrow">推し上手！ふたりチャレンジ / ${isSolo ? "推し上手さん" : "ふたり推し"}</span>
     <h1>${isSolo ? "一枚に、あなたの推し技を込める" : "ふたりへ持ち寄る一枚を選ぶ"}</h1>
     <p>画像は必須。音声・10秒動画・100字以内のことばは任意です。組み合わせて、画像の魅力をそっと引き出せます。</p></div>
@@ -898,16 +867,11 @@ function bindRoleEvents() {
   document.querySelector("#teamBackHome")?.addEventListener("click", leaveToLanding);
   document.querySelector("#chooseOshiJouzu")?.addEventListener("click", () => chooseRole(TEAM_CHALLENGE_ROLES.OSHI_JOUZU));
   document.querySelector("#chooseFutariOshi")?.addEventListener("click", () => chooseRole(TEAM_CHALLENGE_ROLES.CHALLENGER));
-  document.querySelector("#refreshTeamEligibility")?.addEventListener("click", loadTeamChallengeEligibility);
 }
 
 function chooseRole(role) {
   const normalized = normalizeTeamChallengeRole(role);
   if (!normalized) return;
-  if (normalized === TEAM_CHALLENGE_ROLES.OSHI_JOUZU && !state.eligible) {
-    showToast(state.eligibilityMessage);
-    return;
-  }
   state.role = normalized;
   state.screen = "setup";
   render();
@@ -949,8 +913,7 @@ function updateSetupReadyButton() {
   if (!button) return;
   button.disabled = !state.authReady
     || !state.name.trim()
-    || !state.composition.image?.blob
-    || (state.role === TEAM_CHALLENGE_ROLES.OSHI_JOUZU && !state.eligible);
+    || !state.composition.image?.blob;
 }
 
 async function prepareMainImage(file) {
@@ -1106,10 +1069,6 @@ async function beginMatchmaking() {
   state.name = state.name.trim().slice(0, 16);
   state.composition.words = normalizeTeamChallengeWords(state.composition.words);
   if (!state.uid || !state.name || !state.composition.image?.blob) return;
-  if (state.role === TEAM_CHALLENGE_ROLES.OSHI_JOUZU && (!state.eligible || !state.eligibilitySnapshot)) {
-    showToast("推し上手さんとしての参加資格を確認できません。");
-    return;
-  }
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   state.screen = "matching";
   setTeamChrome("推し上手 MATCHING");
@@ -1205,7 +1164,7 @@ async function cleanupPublicPresence() {
 }
 
 function freshChallengeEntries() {
-  return eligibleTeamChallengeQueueEntries(state.latestQueue, {
+  return validTeamChallengeQueueEntries(state.latestQueue, {
     now: firebaseNow(),
     freshnessMs: QUEUE_FRESH_MS,
     activeUsers: state.activeUsers,
@@ -1290,7 +1249,6 @@ async function createTeamRoom(group) {
       roster,
       members,
       players,
-      eligibilitySnapshot: state.eligibilitySnapshot,
       presentationOrder,
       accepted: { [state.uid]: true },
     });
@@ -1313,7 +1271,6 @@ async function createTeamRoom(group) {
       protocolVersion: 2,
       variant: TEAM_CHALLENGE_VARIANT,
       presentationOrder,
-      eligibilitySnapshot: state.eligibilitySnapshot,
     };
     state.screen = "forming";
     render();
@@ -2686,10 +2643,6 @@ function preservedIdentity() {
     authReady: state.authReady,
     role: state.role,
     focus: state.focus,
-    eligibilityReady: state.eligibilityReady,
-    eligible: state.eligible,
-    eligibilityMessage: state.eligibilityMessage,
-    eligibilitySnapshot: state.eligibilitySnapshot,
     economy: state.economy,
     composition: state.composition,
     serverTimeOffset: state.serverTimeOffset,

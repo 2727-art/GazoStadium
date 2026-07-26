@@ -68,7 +68,7 @@ export function isTeamChallengeQueueEntry(value, {
     && !objectValue(activeUsers)[entry.uid];
 }
 
-export function eligibleTeamChallengeQueueEntries(queue, options = {}) {
+export function validTeamChallengeQueueEntries(queue, options = {}) {
   return Object.values(objectValue(queue))
     .filter((entry) => isTeamChallengeQueueEntry(entry, options))
     .sort((first, second) => (
@@ -76,6 +76,9 @@ export function eligibleTeamChallengeQueueEntries(queue, options = {}) {
       || String(first.uid).localeCompare(String(second.uid))
     ));
 }
+
+// Cached pre-roleplay clients still import this technical queue-validity name.
+export const eligibleTeamChallengeQueueEntries = validTeamChallengeQueueEntries;
 
 export function selectTeamChallengeGroup(entries) {
   const source = Array.isArray(entries) ? entries : [];

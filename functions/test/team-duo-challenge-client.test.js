@@ -13,8 +13,10 @@ test("queue grouping accepts only protocol v2 solo plus two challengers", async 
     TEAM_CHALLENGE_PROTOCOL_VERSION,
     TEAM_CHALLENGE_VARIANT,
     eligibleTeamChallengeQueueEntries,
+    validTeamChallengeQueueEntries,
     selectTeamChallengeGroup,
   } = await helpersPromise;
+  assert.equal(eligibleTeamChallengeQueueEntries, validTeamChallengeQueueEntries);
   const now = 1_000_000;
   const base = {
     protocolVersion: TEAM_CHALLENGE_PROTOCOL_VERSION,
@@ -23,7 +25,7 @@ test("queue grouping accepts only protocol v2 solo plus two challengers", async 
     joinedAt: now - 2_000,
     lastSeen: now,
   };
-  const entries = eligibleTeamChallengeQueueEntries({
+  const entries = validTeamChallengeQueueEntries({
     old: { ...base, uid: "old", role: "oshi_jouzu", protocolVersion: 1 },
     solo: { ...base, uid: "solo", role: "oshi_jouzu" },
     first: { ...base, uid: "first", role: "challenger", joinedAt: now - 1_000 },

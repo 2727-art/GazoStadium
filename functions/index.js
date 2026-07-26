@@ -48,13 +48,8 @@ const {
 } = require("./achievements");
 const {
   TEAM_DUO_VARIANT,
-  TEAM_ELIGIBILITY_TTL_MS,
-  TEAM_ELIGIBILITY_VERSION,
-  createTeamEligibilityMirror,
   deriveTeamDuoChallengeResult,
-  evaluateTeamEligibility,
   isTeamDuoChallengeRoom,
-  validateTeamEligibilityForRoom,
 } = require("./team-duo-challenge");
 const {
   CREATOR_CARD_PREMIUM_PRODUCT_ID,
@@ -2979,61 +2974,18 @@ async function claimPeriods(uid) {
 }
 
 async function prepareTeamChallenge(uid) {
-  const now = Date.now();
-  const eligibilityRef = realtime.ref(`online/teamEligibility/${uid}`);
-  const awards = await finalizeServerRankingAwards(uid, now);
-  const [profileSnapshot, mirrorSnapshot] = await Promise.all([
-    serverRankingProfileRef(uid).get(),
-    eligibilityRef.get(),
-  ]);
-  const evaluated = evaluateTeamEligibility(profileSnapshot.data(), awards);
-  const existing = objectValue(mirrorSnapshot.val());
-  const minimumRemainingMs = Math.min(15 * 60 * 1000, TEAM_ELIGIBILITY_TTL_MS / 4);
-  const reusable = existing.uid === uid
-    && existing.version === TEAM_ELIGIBILITY_VERSION
-    && existing.eligible === evaluated.eligible
-    && existing.tier === evaluated.tier
-    && existing.rating === evaluated.rating
-    && existing.serverMatches === evaluated.serverMatches
-    && existing.reason === evaluated.reason
-    && Number(existing.issuedAt) <= now
-    && Number(existing.expiresAt) > now + minimumRemainingMs;
-  if (reusable) {
-    await realtime.ref(`online/teamEligibilityArchive/${uid}/${existing.issuedAt}`).set(existing);
-    return existing;
-  }
-  const eligibility = createTeamEligibilityMirror(
-    uid,
-    profileSnapshot.data(),
-    awards,
-    now,
-  );
-  await Promise.all([
-    eligibilityRef.set(eligibility),
-    realtime.ref(`online/teamEligibilityArchive/${uid}/${eligibility.issuedAt}`).set(eligibility),
-  ]);
-  return eligibility;
-}
-
-async function verifiedTeamDuoEligibility(room, now = Date.now()) {
-  let oshiJozuUid = "";
-  try {
-    oshiJozuUid = deriveTeamDuoChallengeResult(room).oshiJozuUid;
-  } catch {
-    throw new HttpsError("failed-precondition", "推し上手！ふたりチャレンジの採点を検証できませんでした。");
-  }
-  const issuedAt = Number(room?.eligibilitySnapshot?.issuedAt);
-  if (!Number.isInteger(issuedAt) || issuedAt <= 0) {
-    throw new HttpsError("failed-precondition", "推し上手さんの参加資格を確認できませんでした。");
-  }
-  const mirror = (
-    await realtime.ref(`online/teamEligibilityArchive/${oshiJozuUid}/${issuedAt}`).get()
-  ).val();
-  try {
-    return validateTeamEligibilityForRoom(room, mirror, now);
-  } catch {
-    throw new HttpsError("failed-precondition", "推し上手さんの参加資格を確認できませんでした。");
-  }
+  const compatibilitySnapshot = {
+    uid: String(uid),
+    version: 2,
+    eligible: true,
+    reason: "roleplay",
+  };
+  return {
+    ...compatibilitySnapshot,
+    roleplay: true,
+    message: "推し上手さんはロールプレイ。戦績や順位に関係なく、どなたでも選べます。",
+    eligibilitySnapshot: compatibilitySnapshot,
+  };
 }
 
 const VERIFIED_MATCH_MODES = Object.freeze({
@@ -3905,7 +3857,6 @@ async function recordVerifiedMatch(uid, data) {
     } catch {
       throw new HttpsError("failed-precondition", "推し上手！ふたりチャレンジの確定採点を検証できませんでした。");
     }
-    await verifiedTeamDuoEligibility(room, now);
   }
   const participants = matchParticipants(
     mode,
@@ -4052,7 +4003,6 @@ async function recordVerifiedMatch(uid, data) {
               : 0,
         ])),
         signalsByUid: teamDuoResult.signalsByUid,
-        eligibilitySnapshot: room.eligibilitySnapshot,
         createdAt,
         finalizedAt: now,
       });
@@ -8769,7 +8719,7 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "prepare_team_challenge") {
       if (!isPlainCallableObject(request.data)
           || Reflect.ownKeys(request.data).some((key) => key !== "action")) {
-        throw new HttpsError("invalid-argument", "推し上手さんの資格確認情報が不正です。");
+        throw new HttpsError("invalid-argument", "推し上手さんのロール準備情報が不正です。");
       }
       return await prepareTeamChallenge(uid);
     }

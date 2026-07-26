@@ -5,11 +5,7 @@ const test = require("node:test");
 const {
   TEAM_BATTLE_SIGNAL_KEYS,
   TEAM_DUO_VARIANT,
-  TEAM_ELIGIBILITY_TTL_MS,
-  createTeamEligibilityMirror,
   deriveTeamDuoChallengeResult,
-  evaluateTeamEligibility,
-  validateTeamEligibilityForRoom,
 } = require("../team-duo-challenge");
 
 const oshiJozuUid = "oshi";
@@ -158,69 +154,18 @@ test("the official result rejects missing, extra, out-of-range, and wrong-role s
   assert.throws(() => deriveTeamDuoChallengeResult(forgedHost), /roster does not match roles/);
 });
 
-test("eligibility uses verified rate plus match count or a qualifying finalized award", () => {
-  assert.deepEqual(evaluateTeamEligibility({ rating: 1200, serverMatches: 10 }, []), {
-    eligible: true,
-    tier: "oshi_jouzu",
-    rating: 1200,
-    serverMatches: 10,
-    reason: "rating",
-  });
-  assert.equal(evaluateTeamEligibility({ rating: 1199, serverMatches: 10 }, []).eligible, false);
-  assert.equal(evaluateTeamEligibility({ rating: 1200, serverMatches: 9 }, []).eligible, false);
-  assert.deepEqual(
-    evaluateTeamEligibility(
-      { rating: 1000, serverMatches: 0 },
-      [{ tier: "daily_champion" }, { tier: "weekly_top10" }],
-    ),
-    {
-      eligible: true,
-      tier: "oshi_jouzu",
-      rating: 1000,
-      serverMatches: 0,
-      reason: "award",
-    },
-  );
-  assert.equal(
-    evaluateTeamEligibility(
-      { rating: 1000, serverMatches: 0 },
-      [{ tier: "monthly_top3" }],
-    ).tier,
-    "beyond",
-  );
-  assert.equal(
-    evaluateTeamEligibility(
-      { rating: 1000, serverMatches: 0 },
-      [{ tier: "weekly_champion" }, { tier: "monthly_top10" }],
-    ).tier,
-    "beyond",
-  );
-});
-
-test("room eligibility must match the protected issuance used when the room was created", () => {
-  const now = 1_800_000_000_000;
-  const mirror = createTeamEligibilityMirror(
-    oshiJozuUid,
-    { rating: 1250, serverMatches: 12 },
-    [],
-    now,
-  );
-  assert.equal(mirror.expiresAt, now + TEAM_ELIGIBILITY_TTL_MS);
+test("the 推し上手 role needs no rating, ranking, award, or eligibility metadata", () => {
   const room = roomWithScores();
-  room.eligibilitySnapshot = { ...mirror };
-  assert.deepEqual(validateTeamEligibilityForRoom(room, mirror, now + 1), mirror);
+  room.players[oshiJozuUid].rating = 100;
+  room.players[oshiJozuUid].serverMatches = 0;
+  room.players[oshiJozuUid].rankingAwards = [];
+  assert.equal(room.eligibilitySnapshot, undefined);
 
-  assert.throws(
-    () => validateTeamEligibilityForRoom(room, { ...mirror, rating: 1249 }, now + 1),
-    /does not match/,
-  );
-  assert.deepEqual(validateTeamEligibilityForRoom(room, mirror, mirror.expiresAt + 1), mirror);
-  assert.throws(
-    () => validateTeamEligibilityForRoom(
-      { ...room, eligibilitySnapshot: { ...mirror, uid: "other" } },
-      mirror,
-      now + 1,
-    ),
-    /does not match/,
-  );
+  const result = deriveTeamDuoChallengeResult(room);
+  assert.equal(result.winnerRole, "oshi_jouzu");
+  assert.equal(result.outcomes[oshiJozuUid], "win");
+  assert.deepEqual(result.signalsByUid[oshiJozuUid], {
+    [TEAM_BATTLE_SIGNAL_KEYS.OSHI_JOUZU_DEFENSE]: true,
+    [TEAM_BATTLE_SIGNAL_KEYS.OSHI_JOUZU_CLEAN_DEFENSE]: true,
+  });
 });

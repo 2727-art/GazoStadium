@@ -2,25 +2,8 @@
 
 const TEAM_DUO_PROTOCOL_VERSION = 2;
 const TEAM_DUO_VARIANT = "oshi_jouzu_duo";
-const TEAM_ELIGIBILITY_VERSION = 1;
-const TEAM_ELIGIBILITY_TTL_MS = 24 * 60 * 60 * 1000;
 const TEAM_OSHI_JOUZU_ROLE = "oshi_jouzu";
 const TEAM_CHALLENGER_ROLE = "challenger";
-const TEAM_ELIGIBILITY_MINIMUM_RATING = 1200;
-const TEAM_ELIGIBILITY_MINIMUM_MATCHES = 10;
-const TEAM_ELIGIBILITY_AWARD_TIERS = Object.freeze([
-  "weekly_top10",
-  "weekly_top3",
-  "weekly_champion",
-  "monthly_top10",
-  "monthly_top3",
-  "monthly_champion",
-]);
-const TEAM_BEYOND_AWARD_TIERS = new Set([
-  "weekly_champion",
-  "monthly_top3",
-  "monthly_champion",
-]);
 const TEAM_BATTLE_SIGNAL_KEYS = Object.freeze({
   OSHI_JOUZU_DEFENSE: "teamOshiJozuDefense",
   OSHI_JOUZU_CLEAN_DEFENSE: "teamOshiJozuCleanDefense",
@@ -30,11 +13,6 @@ const TEAM_BATTLE_SIGNAL_KEYS = Object.freeze({
 
 function objectValue(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-
-function boundedInteger(value, minimum, maximum, fallback = minimum) {
-  const number = Math.floor(Number(value));
-  return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
 }
 
 function memberIds(value) {
@@ -183,120 +161,14 @@ function deriveTeamDuoChallengeResult(room) {
   return result;
 }
 
-function strongestQualifyingAwardTier(awards) {
-  const available = new Set(
-    (Array.isArray(awards) ? awards : [])
-      .map((award) => String(award?.tier || ""))
-      .filter((tier) => TEAM_ELIGIBILITY_AWARD_TIERS.includes(tier)),
-  );
-  return TEAM_ELIGIBILITY_AWARD_TIERS
-    .slice()
-    .reverse()
-    .find((tier) => available.has(tier)) || "";
-}
-
-function evaluateTeamEligibility(profileValue, awardsValue) {
-  const profile = objectValue(profileValue);
-  const rating = boundedInteger(profile.rating, 100, 3000, 1000);
-  const serverMatches = boundedInteger(profile.serverMatches, 0, 100_000, 0);
-  const awardTier = strongestQualifyingAwardTier(awardsValue);
-  const qualifiedByRating = rating >= TEAM_ELIGIBILITY_MINIMUM_RATING
-    && serverMatches >= TEAM_ELIGIBILITY_MINIMUM_MATCHES;
-  const qualifiedByAward = Boolean(awardTier);
-  const qualifiedForBeyond = (Array.isArray(awardsValue) ? awardsValue : [])
-    .some((award) => TEAM_BEYOND_AWARD_TIERS.has(String(award?.tier || "")));
-  const eligible = qualifiedByRating || qualifiedByAward;
-  return {
-    eligible,
-    tier: eligible && qualifiedForBeyond
-      ? "beyond"
-      : eligible
-        ? "oshi_jouzu"
-        : "none",
-    rating,
-    serverMatches,
-    reason: qualifiedByRating && qualifiedByAward
-      ? "rating_and_award"
-      : qualifiedByRating
-        ? "rating"
-        : qualifiedByAward
-          ? "award"
-          : "not_eligible",
-  };
-}
-
-function createTeamEligibilityMirror(uid, profile, awards, now = Date.now()) {
-  const issuedAt = Number(now);
-  if (!uid || !Number.isFinite(issuedAt) || issuedAt <= 0) {
-    throw new TypeError("Eligibility mirror identity and timestamp are required");
-  }
-  return {
-    uid: String(uid),
-    version: TEAM_ELIGIBILITY_VERSION,
-    ...evaluateTeamEligibility(profile, awards),
-    issuedAt,
-    expiresAt: issuedAt + TEAM_ELIGIBILITY_TTL_MS,
-  };
-}
-
-function sameTeamEligibility(firstValue, secondValue) {
-  const first = objectValue(firstValue);
-  const second = objectValue(secondValue);
-  return [
-    "uid",
-    "version",
-    "eligible",
-    "tier",
-    "rating",
-    "serverMatches",
-    "reason",
-    "issuedAt",
-    "expiresAt",
-  ].every((key) => first[key] === second[key]);
-}
-
-function validateTeamEligibilityForRoom(room, mirrorValue, now = Date.now()) {
-  const { oshiJozuUid } = teamDuoChallengeRoles(room);
-  const snapshot = objectValue(room?.eligibilitySnapshot);
-  const mirror = objectValue(mirrorValue);
-  if (snapshot.uid !== oshiJozuUid
-      || snapshot.version !== TEAM_ELIGIBILITY_VERSION
-      || snapshot.eligible !== true
-      || !sameTeamEligibility(snapshot, mirror)) {
-    throw new TypeError("Team challenge eligibility snapshot does not match");
-  }
-  const timestamp = Number(now);
-  const roomCreatedAt = Number(room?.createdAt);
-  if (!Number.isFinite(timestamp)
-      || !Number.isFinite(roomCreatedAt)
-      || !Number.isFinite(Number(snapshot.issuedAt))
-      || !Number.isFinite(Number(snapshot.expiresAt))
-      || Number(snapshot.issuedAt) > roomCreatedAt
-      || roomCreatedAt < Number(snapshot.issuedAt)
-      || roomCreatedAt >= Number(snapshot.expiresAt)
-      || roomCreatedAt > timestamp) {
-    throw new TypeError("Team challenge eligibility has expired");
-  }
-  return snapshot;
-}
-
 module.exports = Object.freeze({
   TEAM_BATTLE_SIGNAL_KEYS,
   TEAM_CHALLENGER_ROLE,
   TEAM_DUO_PROTOCOL_VERSION,
   TEAM_DUO_VARIANT,
-  TEAM_ELIGIBILITY_AWARD_TIERS,
-  TEAM_ELIGIBILITY_MINIMUM_MATCHES,
-  TEAM_ELIGIBILITY_MINIMUM_RATING,
-  TEAM_ELIGIBILITY_TTL_MS,
-  TEAM_ELIGIBILITY_VERSION,
   TEAM_OSHI_JOUZU_ROLE,
-  createTeamEligibilityMirror,
   deriveTeamDuoChallengeResult,
-  evaluateTeamEligibility,
   isTeamDuoChallengeRoom,
-  sameTeamEligibility,
   teamDuoBattleSignals,
   teamDuoChallengeRoles,
-  validateTeamEligibilityForRoom,
 });
