@@ -15,7 +15,7 @@ import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v2-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,

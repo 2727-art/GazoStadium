@@ -14,7 +14,7 @@ import {
   connectFunctionsEmulator,
   getFunctions,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
-import { firebaseApp } from "./firebase-client.js?v=app-check-v2-oshi-jouzu-duo-v1-restore-v1";
+import { firebaseApp } from "./firebase-client.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
 
 const isLocalhost = ["127.0.0.1", "localhost"].includes(location.hostname);
 const searchParams = new URLSearchParams(location.search);

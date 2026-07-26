@@ -103,6 +103,9 @@ const {
   createAnjuPayFleaService,
 } = require("./anju-pay-flea-service");
 const {
+  createFreeTableService,
+} = require("./free-table");
+const {
   MARKET_RANKING_CONTRIBUTION_CAP,
   applyMarketRankingHonor,
   applyMonthlyMarketSale,
@@ -245,8 +248,32 @@ const {
   serverProjectionReceiptOutcome,
 } = require("./solo-profile-projection");
 
+const PRODUCTION_DATABASE_URL =
+  "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+function runtimeDatabaseUrl(environment = process.env) {
+  let configuredProjectId = "";
+  try {
+    configuredProjectId = String(
+      JSON.parse(environment.FIREBASE_CONFIG || "{}").projectId || "",
+    );
+  } catch {
+    configuredProjectId = "";
+  }
+  const projectId = String(
+    environment.GCLOUD_PROJECT
+    || environment.GCP_PROJECT
+    || configuredProjectId,
+  );
+  const isIsolatedEmulator = Boolean(environment.FIREBASE_DATABASE_EMULATOR_HOST)
+    && /^demo-[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$/.test(projectId);
+  return isIsolatedEmulator
+    ? `https://${projectId}-default-rtdb.firebaseio.com`
+    : PRODUCTION_DATABASE_URL;
+}
+
 initializeApp({
-  databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
+  databaseURL: runtimeDatabaseUrl(),
 });
 setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
@@ -13005,6 +13032,43 @@ exports.expireAnjuPayFleaListings = onSchedule({
     return await anjuPayFleaService.expireListings(Date.now());
   } catch (error) {
     console.error("expireAnjuPayFleaListings failed", { error });
+    throw error;
+  }
+});
+
+const freeTableService = createFreeTableService({
+  firestore,
+  realtime,
+  HttpsError,
+  Timestamp,
+});
+
+exports.freeTableAction = onCall(callableOptions("freeTableAction"), async (request) => {
+  const uid = requireUid(request);
+  try {
+    return await freeTableService.performAction(uid, request.data);
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("freeTableAction failed", {
+      uid,
+      action: request.data?.action,
+      error,
+    });
+    throw new HttpsError("internal", "貼り合い自由卓の処理を完了できませんでした。");
+  }
+});
+
+exports.cleanupExpiredFreeTables = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    return await freeTableService.cleanupExpired(Date.now());
+  } catch (error) {
+    console.error("cleanupExpiredFreeTables failed", { error });
     throw error;
   }
 });

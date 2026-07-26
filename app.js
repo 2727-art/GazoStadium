@@ -840,12 +840,13 @@
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
-        <span class="eyebrow hero-eyebrow"><i aria-hidden="true">♥</i><span>好きな画像で、気軽にオンライン対戦</span><i aria-hidden="true">✦</i></span>
+        <span class="eyebrow hero-eyebrow"><i aria-hidden="true">♥</i><span>好きな画像で、対戦もひと休みも</span><i aria-hidden="true">✦</i></span>
         <h1 aria-label="貼り合え。YOUR FAVORITE, YOUR POWER."><span class="hero-title-text">貼り合え</span><span class="hero-heart" aria-hidden="true"><svg viewBox="0 0 64 64" focusable="false"><defs><linearGradient id="heroHeartGradient" x1="10" y1="8" x2="54" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#ff6b85"/><stop offset="0.58" stop-color="#ff4f72"/><stop offset="1" stop-color="#66e9df"/></linearGradient></defs><path d="M32 58C28.8 54.8 8.1 42.8 5.1 26.1 2.6 12.1 10.1 4 20.1 4 25.9 4 30 7 32 11c2-4 6.1-7 11.9-7 10 0 17.5 8.1 15 22.1C55.9 42.8 35.2 54.8 32 58Z" fill="url(#heroHeartGradient)"/><path d="M13.5 19.5C15.2 12.4 22.5 9.4 27.4 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-linecap="round" stroke-width="3"/></svg></span><span class="hero-tagline">YOUR FAVORITE, YOUR POWER.</span></h1>
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
-          1on1、三人で遊ぶふたりチャレンジ、4人バトルロワイヤル、AnjuPayで推し値を競う市場を選べます。
+          1on1、三人で遊ぶふたりチャレンジ、4人バトルロワイヤル、AnjuPayで推し値を競う市場に加え、
+          勝敗をつけず会話とネタを貼り合う「貼り合い自由卓」も選べます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
           <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
@@ -855,6 +856,7 @@
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
           <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ひとりの推し技、ふたりの推し愛。</small><span>推し上手！ふたりチャレンジ</span></button>
           <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
+          <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
@@ -890,7 +892,7 @@
           </div></article>
         </div>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
-        <p class="mode-note">画像と戦略型・推し値市場の音声は対戦中だけ相手へ直接送信され、Firebaseには保存されません。</p>
+        <p class="mode-note">画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
   }
@@ -914,6 +916,7 @@
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
+    document.querySelector("#freeTableButton")?.addEventListener("click", startFreeTable);
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
     document.querySelector("#fleaMarketSellersButton")?.addEventListener("click", startFleaMarketSellers);
@@ -1300,6 +1303,15 @@
     }
     showToast("バトルロワイヤル機能を読み込んでいます…");
     window.addEventListener("hariai-royale-ready", () => window.HariaiRoyale?.start?.(), { once: true });
+  }
+
+  function startFreeTable() {
+    if (window.HariaiFreeTable?.start) {
+      window.HariaiFreeTable.start();
+      return;
+    }
+    showToast("貼り合い自由卓を読み込んでいます…");
+    window.addEventListener("hariai-free-table-ready", () => window.HariaiFreeTable?.start?.(), { once: true });
   }
 
   function startValueMarket() {
@@ -1718,9 +1730,9 @@
     const privacy = document.querySelector(".privacy-badge");
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
-    if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 1VS2 + BATTLE ROYALE + VALUE MARKET + ANJUPAY FLEA";
-    if (footerItems[1]) footerItems[1].textContent = "対戦画像・音声・短尺動画は相手へ直接送信し、サーバーへ保存しません";
+    if (privacy) privacy.textContent = "P2Pメディア転送";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 1VS2 + BATTLE ROYALE + FREE TABLE + VALUE MARKET + ANJUPAY FLEA";
+    if (footerItems[1]) footerItems[1].textContent = "画像・音声・短尺動画は相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
     const confirm = destroyDialog?.querySelector("#confirmDestroy");
@@ -1731,6 +1743,11 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiFreeTable?.isActive?.()) {
+      const requestHome = window.HariaiFreeTable.requestHome || window.HariaiFreeTable.leave;
+      requestHome?.();
+      return;
+    }
     if (window.HariaiAccount?.isActive?.()) {
       window.HariaiAccount.requestHome();
       return;

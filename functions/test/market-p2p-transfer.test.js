@@ -105,5 +105,5 @@ test("the browser market handler uses the tested transfer validator", () => {
   assert.match(source, /verifiedMarketImageMimeFromChunks\(transfer\.chunks\)/);
   assert.match(source, /if \(endStatus === "orphan"\) return;/);
   assert.doesNotMatch(source, /message\.mime !== "image\/webp"/);
-  assert.match(html, /market\.js\?v=[^"]*transfer-v1[^"]*app-check-v2/);
+  assert.match(html, /market\.js\?v=[^"]*transfer-v1[^"]*app-check-v3/);
 });

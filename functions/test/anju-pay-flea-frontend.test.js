@@ -27,7 +27,7 @@ test("the flea market is a separate top-level discovery panel, not another VALUE
   assert.match(html, /styles\.css\?v=[^"]*urikko-card-v1/);
   assert.match(html, /flea-market\.css\?v=[^"]*urikko-card-v1/);
   assert.match(html, /app\.js\?v=[^"]*urikko-card-v1/);
-  assert.match(html, /flea-market\.js\?v=[^"]*app-check-v2[^"]*urikko-card-v1/);
+  assert.match(html, /flea-market\.js\?v=[^"]*app-check-v3[^"]*urikko-card-v1/);
   assert.match(app, /function renderLandingFleaPanel\(\)/);
   assert.ok(
     app.indexOf("${renderLandingTopMessagePanel()}")

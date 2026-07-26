@@ -22,7 +22,7 @@ import {
   auth,
   database,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v2-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
@@ -49,7 +49,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v4-oshi-jouzu-duo-v1-restore-v1";
+} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-oshi-jouzu-duo-v1-restore-v1";
 import {
   STRATEGY_VIDEO_MAX_BYTES,
   appendStrategyVideoChunk,

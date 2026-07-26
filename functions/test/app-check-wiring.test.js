@@ -7,9 +7,9 @@ const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
 test("all Firebase entry modules use the shared App Check bootstrap", () => {
-  for (const relativePath of ["account.js", "online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "post-match-tip.js"]) {
+  for (const relativePath of ["account.js", "online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
     const source = read(relativePath);
-    assert.match(source, /firebase-services\.js\?v=app-check-v2/);
+    assert.match(source, /firebase-services\.js\?v=app-check-v3/);
     assert.doesNotMatch(source, /\binitializeApp\s*\(/);
     assert.doesNotMatch(source, /\bgetApp(?:s)?\s*\(/);
     assert.doesNotMatch(source, /\bget(?:Auth|Database|Firestore|Functions)\s*\(/);
@@ -18,9 +18,9 @@ test("all Firebase entry modules use the shared App Check bootstrap", () => {
   const clientSource = read("firebase-client.js");
   const servicesSource = read("firebase-services.js");
   assert.match(clientSource, /initializeHariaiAppCheck\(firebaseApp\)/);
-  assert.match(clientSource, /firebase-app-check\.js\?v=app-check-v2/);
-  assert.match(clientSource, /firebase-config\.js\?v=app-check-v2/);
-  assert.match(servicesSource, /firebase-client\.js\?v=app-check-v2/);
+  assert.match(clientSource, /firebase-app-check\.js\?v=app-check-v3/);
+  assert.match(clientSource, /firebase-config\.js\?v=app-check-v3/);
+  assert.match(servicesSource, /firebase-client\.js\?v=app-check-v3/);
 });
 
 test("Realtime Database browser traffic stays on the Firebase SDK", () => {
@@ -34,8 +34,8 @@ test("Realtime Database browser traffic stays on the Firebase SDK", () => {
 
 test("cache busters load one App Check module generation", () => {
   const html = read("index.html");
-  for (const moduleName of ["account", "strategy", "online", "market", "flea-market", "team", "royale"]) {
-    assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v2`));
+  for (const moduleName of ["account", "strategy", "online", "market", "flea-market", "free-table", "team", "royale"]) {
+    assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v3`));
   }
 
   const browserSources = [
@@ -49,9 +49,13 @@ test("cache busters load one App Check module generation", () => {
     "royale.js",
     "market.js",
     "flea-market.js",
+    "free-table.js",
     "post-match-tip.js",
   ].map(read).join("\n");
-  assert.doesNotMatch(browserSources, /app-check-v1/);
+  assert.doesNotMatch(browserSources, /app-check-v[12]/);
+  for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js"]) {
+    assert.match(read(relativePath), /post-match-tip\.js\?v=[^"]*app-check-v3/);
+  }
 });
 
 test("Callable App Check policies follow a valid rollout stage", () => {
@@ -59,6 +63,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   const rollout = require("../app-check-rollout");
   const callableNames = [
     "accountTransfer",
+    "freeTableAction",
     "soloFamiliarAction",
     "soloSessionAction",
     "getP2pIceServers",
@@ -74,6 +79,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.ok(rollout.APP_CHECK_ROLLOUT_STAGES.includes(rollout.APP_CHECK_ROLLOUT_STAGE));
   assert.deepEqual(Object.keys(rollout.APP_CHECK_ENFORCEMENT).sort(), callableNames.toSorted());
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.accountTransfer, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);
@@ -118,12 +124,28 @@ test("local integration mode redirects Authentication as well as data services",
   assert.match(servicesSource, /connectFirestoreEmulator/);
   assert.match(servicesSource, /connectFunctionsEmulator/);
   const clientSource = read("firebase-client.js");
+  const functionsSource = read("functions/index.js");
   assert.match(clientSource, /useFirebaseEmulators/);
   assert.match(clientSource, /projectId: "demo-gazostadium"/);
   assert.match(clientSource, /databaseURL: "https:\/\/demo-gazostadium-default-rtdb\.firebaseio\.com"/);
   assert.match(clientSource, /initializeApp\(clientConfig\)/);
-  for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "post-match-tip.js"]) {
-    assert.match(read(relativePath), /firebase-services\.js\?v=app-check-v2/);
+  assert.match(functionsSource, /FIREBASE_DATABASE_EMULATOR_HOST/);
+  assert.match(functionsSource, /\^demo-/);
+  assert.match(
+    functionsSource,
+    /`https:\/\/\$\{projectId\}-default-rtdb\.firebaseio\.com`/,
+  );
+  assert.match(functionsSource, /: PRODUCTION_DATABASE_URL/);
+  const appCheckSource = read("firebase-app-check.js");
+  assert.match(appCheckSource, /CustomProvider/);
+  assert.match(appCheckSource, /projectId\.startsWith\("demo-"\)/);
+  assert.match(
+    appCheckSource,
+    /isLocalhost && searchParams\.has\("firebaseEmulators"\)/,
+  );
+  assert.match(appCheckSource, /isTokenAutoRefreshEnabled: false/);
+  for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
+    assert.match(read(relativePath), /firebase-services\.js\?v=app-check-v3/);
   }
   assert.match(read("README.md"), /--project demo-gazostadium/);
 });

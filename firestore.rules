@@ -258,6 +258,60 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // 貼り合い自由卓の設定、成長、帰る場所、縁、ブロック、通報は
+    // すべて App Check 強制の Callable から Admin SDK で扱います。
+    match /freeTableProfiles/{uid} {
+      allow read, write: if false;
+    }
+
+    match /freeTablePublicMembers/{publicMemberId} {
+      allow read, write: if false;
+    }
+
+    match /freeTableSpaces/{uid} {
+      allow read, write: if false;
+    }
+
+    match /freeTablePublicSpaces/{publicRoomId} {
+      allow read, write: if false;
+    }
+
+    match /freeTableVisitLedger/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /freeTablePairActivity/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /freeTableBookmarks/{uid} {
+      allow read, write: if false;
+
+      match /rooms/{publicRoomId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /freeTableRelationships/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /freeTableBlocks/{uid} {
+      allow read, write: if false;
+
+      match /users/{publicMemberId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /freeTableBlockPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /freeTableReports/{reportId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

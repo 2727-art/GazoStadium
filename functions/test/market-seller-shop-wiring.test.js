@@ -10,7 +10,7 @@ test("seller-shop assets use the same cache generation", () => {
   const html = read("index.html");
   assert.match(html, /market\.css\?v=[^"]*seller-shop-v1/);
   assert.match(html, /market\.js\?v=[^"]*seller-shop-v1/);
-  assert.match(html, /market\.js\?v=[^"]*app-check-v2/);
+  assert.match(html, /market\.js\?v=[^"]*app-check-v3/);
   assert.match(html, /market\.css\?v=[^"]*oshijo-closing-v1/);
   assert.match(html, /market\.js\?v=[^"]*oshijo-closing-v1/);
 });
