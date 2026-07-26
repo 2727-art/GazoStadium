@@ -79,6 +79,7 @@
       },
       "publicPresence": {
         ".read": true,
+        ".indexOn": ["lastSeen"],
         "$sessionId": {
           ".write": "auth != null && root.child('online/publicPresenceOwners/' + $sessionId).val() === auth.uid",
           ".validate": "!newData.exists() || (newData.hasChildren(['state', 'lastSeen']) && (!newData.child('mode').exists() || newData.child('mode').val() === 'solo' || newData.child('mode').val() === 'strategy' || newData.child('mode').val() === 'team' || newData.child('mode').val() === 'royale') && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'playing') && newData.child('lastSeen').isNumber())",

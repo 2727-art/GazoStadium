@@ -14,6 +14,9 @@ const {
   Timestamp,
 } = require("firebase-admin/firestore");
 const {
+  createOnlinePublicPresenceCleanup,
+} = require("./online-public-presence-cleanup");
+const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
 } = require("./app-check-rollout");
@@ -279,6 +282,9 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
+const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
+  realtime,
+});
 const adminAuth = getAuth();
 const MAX_POINTS = ANJU_PAY_MAX_BALANCE;
 const MARKET_ENTRY_FEE = 5;
@@ -13154,6 +13160,25 @@ exports.cleanupExpiredFreeTables = onSchedule({
     return await freeTableService.cleanupExpired(Date.now());
   } catch (error) {
     console.error("cleanupExpiredFreeTables failed", { error });
+    throw error;
+  }
+});
+
+exports.cleanupOnlinePublicPresence = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 60,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const result = await cleanupOnlinePublicPresence(Date.now());
+    console.info("cleanupOnlinePublicPresence completed", result);
+    return result;
+  } catch (error) {
+    console.error("cleanupOnlinePublicPresence failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
     throw error;
   }
 });
