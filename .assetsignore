@@ -13,6 +13,11 @@ functions/
 .firebase/
 .wrangler/
 README.md
+ANJU_PAY_FLEA_DESIGN.md
 tmp/
+.codex-remote-attachments/
 firebase-debug.log
 firebase-debug.*.log
+database-debug.log
+firestore-debug.log
+ui-debug.log

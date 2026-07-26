@@ -38,6 +38,31 @@ test("the flea market is a separate top-level discovery panel, not another VALUE
   assert.doesNotMatch(flea, /marketStats|unlockAchievements|MarketCertificates|patronFund/);
 });
 
+test("internal flea design and local artifacts are excluded from every static publisher", () => {
+  const firebase = JSON.parse(read("firebase.json"));
+  const workerIgnore = read(".assetsignore");
+  const privatePaths = [
+    "ANJU_PAY_FLEA_DESIGN.md",
+    ".codex-remote-attachments",
+    "database-debug.log",
+    "firestore-debug.log",
+    "ui-debug.log",
+  ];
+
+  for (const privatePath of privatePaths) {
+    assert.ok(
+      firebase.hosting.ignore.includes(privatePath)
+        || firebase.hosting.ignore.includes(`${privatePath}/**`),
+      `${privatePath} must be excluded from Firebase Hosting`,
+    );
+    assert.match(
+      workerIgnore,
+      new RegExp(`^${privatePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?$`, "m"),
+      `${privatePath} must be excluded from Cloudflare static assets`,
+    );
+  }
+});
+
 test("the flea experience stays text-only and never embeds or fetches X content", () => {
   const source = read("flea-market.js");
   const xConfirmation = between(source, "function bindFleaXLinkConfirmations", "function bindEvents");
