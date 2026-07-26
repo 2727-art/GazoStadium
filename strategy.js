@@ -3374,6 +3374,13 @@ async function reactToWeaknessPhase() {
     state.weaknessRevealsVerified = true;
   }
 
+  if (state.weaknessChainApplied) {
+    applyWeaknessSurrenders(state.roomData?.weaknessSurrenders || {});
+    const continued = state.roomData?.weaknessContinue || {};
+    if (both(continued)) await advanceAfterWeaknessPhase();
+    return;
+  }
+
   const chains = state.roomData?.weaknessChains || {};
   const localPlayer = getLocalPlayer();
   const availableReserve = state.reserve.filter((item) => !item.used);
