@@ -12,6 +12,7 @@ const PROJECT_ID = process.env[PROJECT_ID_ENV] || "";
 const MIDNIGHT_GUARD_MS = 6 * 60 * 1_000;
 const FLEA_COLLECTIONS = Object.freeze([
   "anjuPayFleaListings",
+  "anjuPayFleaSellerCards",
   "anjuPayFleaSales",
   "anjuPayFleaReceipts",
   "anjuPayFleaFavorites",
@@ -292,6 +293,45 @@ if (!RUN_REQUESTED) {
     assert.equal(ledger.entries.at(-1).balanceAfter, expectedBalance);
   }
 
+  function stableLedgerShape(ledger) {
+    return {
+      balance: ledger.wallet.balance,
+      reservedIncoming: ledger.wallet.reservedIncoming,
+      ledgerSequence: ledger.wallet.ledgerSequence,
+      entries: ledger.entries.map((entry) => ({
+        id: entry.id,
+        sequence: entry.sequence,
+        kind: entry.kind,
+        status: entry.status,
+        delta: entry.delta,
+        balanceBefore: entry.balanceBefore,
+        balanceAfter: entry.balanceAfter,
+      })),
+    };
+  }
+
+  function assertNoMarketStatistics(value, seen = new Set()) {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    const forbidden = new Set([
+      "salesCount",
+      "grossSales",
+      "marketFeesPaid",
+      "netSales",
+      "bestSale",
+      "marketDays",
+      "uniqueCounterparties",
+      "repeatBuyerCount",
+      "favoriteCount",
+      "ranking",
+      "rank",
+    ]);
+    for (const [key, nested] of Object.entries(value)) {
+      assert.ok(!forbidden.has(key), `Callable response exposed market statistic: ${key}`);
+      assertNoMarketStatistics(nested, seen);
+    }
+  }
+
   function assertStableJstWindow() {
     const now = Date.now();
     assert.ok(
@@ -377,6 +417,8 @@ if (!RUN_REQUESTED) {
         await clearFleaCollections();
         for (const uid of createdUids) {
           await firestore.recursiveDelete(firestore.doc(`wallets/${uid}`));
+          await firestore.recursiveDelete(firestore.doc(`achievementProfiles/${uid}`));
+          await firestore.recursiveDelete(firestore.doc(`valueMarketStats/${uid}`));
         }
         if (previousLedgerConfig?.exists) {
           await firestore
@@ -466,23 +508,6 @@ if (!RUN_REQUESTED) {
       assert.equal(discovered.price, 25);
       assert.equal(discovered.seller.creatorCard.xHandle, "flea_e2e");
 
-      const favorited = await invoke(buyer.fleaAction, {
-        action: "set_favorite",
-        listingId,
-        favorite: true,
-      });
-      assert.equal(favorited.favorite.favorite, true);
-      assert.equal(favorited.favorite.publicSellerId, publicSellerId);
-      assert.ok(
-        !Object.hasOwn(favorited.favorite.seller.creatorCard, "xHandle"),
-        "private favorite snapshot must not retain the X handle",
-      );
-      const rawFavorite = await firestore
-        .doc(`anjuPayFleaFavorites/${buyer.uid}/sellers/${publicSellerId}`)
-        .get();
-      assert.equal(rawFavorite.exists, true);
-      assert.ok(!Object.hasOwn(rawFavorite.get("creatorCard") || {}, "xHandle"));
-
       const [purchaseA, purchaseB] = await Promise.all([
         invoke(buyer.fleaAction, {
           action: "buy",
@@ -503,6 +528,23 @@ if (!RUN_REQUESTED) {
         assert.equal(result.purchase.sellerProceeds, 23);
         assert.equal(result.balance, 75);
       }
+
+      const favorited = await invoke(buyer.fleaAction, {
+        action: "set_favorite",
+        listingId,
+        favorite: true,
+      });
+      assert.equal(favorited.favorite.favorite, true);
+      assert.equal(favorited.favorite.publicSellerId, publicSellerId);
+      assert.ok(
+        !Object.hasOwn(favorited.favorite.seller.creatorCard, "xHandle"),
+        "private favorite snapshot must not retain the X handle",
+      );
+      const rawFavorite = await firestore
+        .doc(`anjuPayFleaFavorites/${buyer.uid}/sellers/${publicSellerId}`)
+        .get();
+      assert.equal(rawFavorite.exists, true);
+      assert.ok(!Object.hasOwn(rawFavorite.get("creatorCard") || {}, "xHandle"));
 
       const [
         rawListing,
@@ -960,6 +1002,193 @@ if (!RUN_REQUESTED) {
       ];
       assert.equal(new Set(allIds).size, 52);
       assert.deepEqual(allIds, sortedIds);
+
+      const firstSellerPage = await invoke(viewer.fleaAction, {
+        action: "browse_sellers",
+        category: "photo",
+      });
+      assert.equal(firstSellerPage.category, "photo");
+      assert.equal(firstSellerPage.appendSellerListings, false);
+      assert.equal(firstSellerPage.sellerListings.length, 50);
+      assert.equal(firstSellerPage.hasMoreSellers, true);
+      assert.equal(firstSellerPage.nextSellerCursor, sortedIds[49]);
+      assert.deepEqual(
+        firstSellerPage.sellerListings.map((listing) => listing.id),
+        sortedIds.slice(0, 50),
+      );
+      assertNoMarketStatistics(firstSellerPage);
+
+      const secondSellerPage = await invoke(viewer.fleaAction, {
+        action: "browse_sellers",
+        category: "photo",
+        cursor: firstSellerPage.nextSellerCursor,
+      });
+      assert.equal(secondSellerPage.category, "photo");
+      assert.equal(secondSellerPage.appendSellerListings, true);
+      assert.equal(secondSellerPage.hasMoreSellers, false);
+      assert.equal(secondSellerPage.nextSellerCursor, null);
+      assert.deepEqual(
+        secondSellerPage.sellerListings.map((listing) => listing.id),
+        sortedIds.slice(50),
+      );
+      assert.deepEqual(
+        [
+          ...firstSellerPage.sellerListings,
+          ...secondSellerPage.sellerListings,
+        ].map((listing) => listing.id),
+        sortedIds,
+      );
+      assertNoMarketStatistics(secondSellerPage);
+
+      await assert.rejects(
+        () => invoke(viewer.fleaAction, {
+          action: "browse_sellers",
+          category: "illustration",
+          cursor: firstSellerPage.nextSellerCursor,
+        }),
+        (error) => {
+          assert.equal(error.code, "functions/invalid-argument");
+          return true;
+        },
+      );
+    });
+
+    test("売りっ子カードは解除済み市場実績だけを反映し、出品・Pay・市場統計を分離する", async () => {
+      const seller = await createCaller("urikko-card-seller");
+      const viewer = await createCaller("urikko-card-viewer");
+      const now = Date.now();
+      const marketStatsReference = firestore.doc(`valueMarketStats/${seller.uid}`);
+      const achievementReference = firestore.doc(`achievementProfiles/${seller.uid}`);
+      await Promise.all([
+        seedLegacyWallet(seller.uid, 100),
+        seedLegacyWallet(viewer.uid, 25),
+        achievementReference.set({
+          schemaVersion: 1,
+          unlocked: {
+            market_seller_1: now - 2_000,
+            battle_total_1: now - 1_000,
+          },
+          pendingUnlocks: {},
+          customShowcase: [],
+          initializedAt: now - 2_000,
+          updatedAt: now - 1_000,
+        }),
+        marketStatsReference.set({
+          uid: seller.uid,
+          name: "URIKKO SELLER",
+          salesCount: 1,
+          grossSales: 500,
+          marketFeesPaid: 25,
+          netSales: 475,
+          bestSale: 500,
+          marketDays: 1,
+          uniqueCounterparties: 1,
+          publicAchievements: ["market_seller_1"],
+          testMarker: `${suiteId}:market-stats-must-not-change`,
+          updatedAt: now,
+        }),
+      ]);
+
+      const created = await invoke(seller.fleaAction, listingInput({
+        name: "URIKKO SELLER",
+        category: "outfit",
+        title: "夜色を重ねた衣装コーデ",
+        description: "落ち着いた夜色を中心に、ことばから雰囲気を想像できる組み合わせを考えました。",
+        price: 10,
+      }));
+      const listingId = created.createdListing.id;
+      assert.deepEqual(created.createdListing.seller.urikkoCard, {
+        schemaVersion: 1,
+        tagline: "",
+        themeId: "standard",
+        sealId: "heart",
+        achievementIds: [],
+      });
+      assert.ok(created.unlockedMarketAchievementIds.includes("market_seller_1"));
+      assert.ok(!created.unlockedMarketAchievementIds.includes("battle_total_1"));
+
+      const [ledgerBefore, marketStatsBeforeSnapshot, mirrorBeforeSnapshot] = await Promise.all([
+        readLedger(seller.uid),
+        marketStatsReference.get(),
+        realtime.ref(`online/economy/${seller.uid}/balance`).get(),
+      ]);
+      const marketStatsBefore = marketStatsBeforeSnapshot.data();
+      const mirrorBefore = mirrorBeforeSnapshot.val();
+      assertContinuousLedger(ledgerBefore, 99);
+
+      const cardInput = {
+        action: "save_urikko_card",
+        tagline: "ことばで、今日の好きに出会いたい。",
+        themeId: "sakura",
+        sealId: "ribbon",
+      };
+      for (const achievementId of ["market_seller_3", "battle_total_1"]) {
+        await assert.rejects(
+          () => invoke(seller.fleaAction, {
+            ...cardInput,
+            achievementIds: [achievementId],
+          }),
+          (error) => {
+            assert.equal(error.code, "functions/failed-precondition");
+            return true;
+          },
+        );
+      }
+
+      const saved = await invoke(seller.fleaAction, {
+        ...cardInput,
+        achievementIds: ["market_seller_1"],
+      });
+      const expectedCard = {
+        schemaVersion: 1,
+        tagline: cardInput.tagline,
+        themeId: "sakura",
+        sealId: "ribbon",
+        achievementIds: ["market_seller_1"],
+      };
+      assert.deepEqual(saved.savedUrikkoCard, expectedCard);
+      assert.deepEqual(saved.urikkoCard, expectedCard);
+      assert.ok(saved.unlockedMarketAchievementIds.includes("market_seller_1"));
+      assert.ok(!saved.unlockedMarketAchievementIds.includes("battle_total_1"));
+      assertNoMarketStatistics(saved);
+
+      const [
+        rawCard,
+        rawListing,
+        ledgerAfter,
+        marketStatsAfterSnapshot,
+        mirrorAfterSnapshot,
+      ] = await Promise.all([
+        firestore.doc(`anjuPayFleaSellerCards/${seller.uid}`).get(),
+        firestore.doc(`anjuPayFleaListings/${listingId}`).get(),
+        readLedger(seller.uid),
+        marketStatsReference.get(),
+        realtime.ref(`online/economy/${seller.uid}/balance`).get(),
+      ]);
+      assert.equal(rawCard.exists, true);
+      assert.match(rawCard.get("publicSellerId"), /^[a-f0-9]{40}$/);
+      assert.notEqual(rawCard.get("publicSellerId"), seller.uid);
+      assert.deepEqual(rawCard.get("achievementIds"), ["market_seller_1"]);
+      assert.deepEqual(rawListing.get("urikkoCard"), expectedCard);
+      assert.equal(rawListing.get("status"), "active");
+      assert.equal(rawListing.get("sellerUid"), seller.uid);
+      assert.deepEqual(stableLedgerShape(ledgerAfter), stableLedgerShape(ledgerBefore));
+      assert.deepEqual(marketStatsAfterSnapshot.data(), marketStatsBefore);
+      assert.equal(mirrorAfterSnapshot.val(), mirrorBefore);
+
+      const sellerPage = await invoke(viewer.fleaAction, {
+        action: "browse_sellers",
+        category: "outfit",
+      });
+      const publicListing = sellerPage.sellerListings.find((listing) => listing.id === listingId);
+      assert.ok(publicListing, "category seller browse should include the active seller");
+      assert.equal(publicListing.isOwn, false);
+      assert.deepEqual(publicListing.seller.urikkoCard, expectedCard);
+      assert.deepEqual(
+        Object.keys(publicListing.seller.urikkoCard).sort(),
+        ["achievementIds", "schemaVersion", "sealId", "tagline", "themeId"].sort(),
+      );
+      assertNoMarketStatistics(sellerPage);
     });
   });
 }

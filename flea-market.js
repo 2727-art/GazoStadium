@@ -35,6 +35,31 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "outfit", label: "衣装コーデ", mark: "◇" }),
 ]);
 const CATEGORY_IDS = new Set(CATEGORY_DEFINITIONS.map((category) => category.id));
+const URIKKO_THEME_DEFINITIONS = Object.freeze([
+  Object.freeze({ id: "standard", label: "スタンダード" }),
+  Object.freeze({ id: "sakura", label: "さくら" }),
+  Object.freeze({ id: "lavender", label: "ラベンダー" }),
+  Object.freeze({ id: "mint", label: "ミント" }),
+  Object.freeze({ id: "cream", label: "クリーム" }),
+  Object.freeze({ id: "midnight", label: "ミッドナイト" }),
+]);
+const URIKKO_SEAL_DEFINITIONS = Object.freeze([
+  Object.freeze({ id: "heart", label: "ハート", mark: "♥" }),
+  Object.freeze({ id: "star", label: "スター", mark: "★" }),
+  Object.freeze({ id: "ribbon", label: "リボン", mark: "◆" }),
+  Object.freeze({ id: "flower", label: "フラワー", mark: "✿" }),
+  Object.freeze({ id: "cat", label: "キャット", mark: "●" }),
+  Object.freeze({ id: "moon", label: "ムーン", mark: "☾" }),
+]);
+const URIKKO_THEME_IDS = new Set(URIKKO_THEME_DEFINITIONS.map((theme) => theme.id));
+const URIKKO_SEAL_IDS = new Set(URIKKO_SEAL_DEFINITIONS.map((seal) => seal.id));
+const DEFAULT_URIKKO_CARD = Object.freeze({
+  schemaVersion: 1,
+  tagline: "",
+  themeId: "standard",
+  sealId: "heart",
+  achievementIds: Object.freeze([]),
+});
 const REPORT_REASONS = Object.freeze([
   Object.freeze({ id: "rights", label: "権利・無断掲載のおそれ" }),
   Object.freeze({ id: "privacy", label: "個人情報・プライバシー" }),
@@ -47,11 +72,13 @@ const LISTING_STATUSES = new Set(["active", "sold", "canceled", "expired", "hidd
 const RECEIPT_STATUSES = new Set(["sold", "canceled", "expired"]);
 const SCREEN_IDS = new Set([
   "shelf",
+  "sellers",
   "favorites",
   "detail",
   "sell",
   "publish-review",
   "own",
+  "seller-card-editor",
   "purchase-review",
   "success",
   "history",
@@ -132,6 +159,32 @@ function normalizeAchievementIds(value) {
     || candidates.filter((entry) => /^[a-z0-9_]{1,64}$/.test(entry)).slice(0, 3);
 }
 
+function normalizeMarketAchievementIds(value, maximum = 3) {
+  const candidates = Array.isArray(value)
+    ? value
+    : String(value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+  const ids = [];
+  for (const candidate of candidates) {
+    const id = String(candidate || "");
+    const definition = window.HariaiAchievements?.byId?.get?.(id);
+    if (!definition || definition.scope !== "market" || ids.includes(id)) continue;
+    ids.push(id);
+    if (ids.length >= maximum) break;
+  }
+  return ids;
+}
+
+function normalizeUrikkoCard(value) {
+  const source = value && typeof value === "object" ? value : DEFAULT_URIKKO_CARD;
+  return {
+    schemaVersion: 1,
+    tagline: boundedText(source.tagline, 40),
+    themeId: URIKKO_THEME_IDS.has(source.themeId) ? source.themeId : "standard",
+    sealId: URIKKO_SEAL_IDS.has(source.sealId) ? source.sealId : "heart",
+    achievementIds: normalizeMarketAchievementIds(source.achievementIds, 3),
+  };
+}
+
 function normalizeCreatorCard(value) {
   if (!value || typeof value !== "object") return null;
   const name = boundedText(value.name, 16);
@@ -191,10 +244,12 @@ function normalizeListing(value) {
     status,
     createdAt: Math.max(0, integer(value.createdAt)),
     expiresAt: Math.max(0, integer(value.expiresAt)),
+    isOwn: value.isOwn === true,
     seller: {
       publicSellerId: boundedText(sellerValue.publicSellerId, 80),
       name: sellerName,
       creatorCard: normalizeCreatorCard(sellerValue.creatorCard),
+      urikkoCard: normalizeUrikkoCard(sellerValue.urikkoCard),
     },
     ...(xPostUrl ? { xPostUrl } : {}),
   };
@@ -238,10 +293,12 @@ function normalizeFavorites(value) {
     ids.add(publicSellerId);
     if (!entryValue) return;
     const creatorCard = normalizeFavoriteCreatorCard(entryValue.creatorCard);
+    const urikkoCard = normalizeUrikkoCard(entryValue.urikkoCard);
     sellersById.set(publicSellerId, {
       publicSellerId,
       name: boundedText(entryValue.name, 16) || creatorCard?.name || "PLAYER",
       creatorCard,
+      urikkoCard,
       updatedAt: Math.max(0, integer(entryValue.updatedAt)),
     });
   });
@@ -326,11 +383,20 @@ function createState(initialScreen = "shelf") {
     nextBrowseCursor: "",
     browseErrorMessage: "",
     ownListing: null,
+    sellerListings: [],
+    sellerListingsCategory: "",
+    nextSellerCursor: "",
+    sellerBrowseErrorMessage: "",
     favoriteSellers: [],
     favorites: new Set(),
     receipts: [],
+    urikkoCard: normalizeUrikkoCard(null),
+    urikkoCardDraft: normalizeUrikkoCard(null),
+    unlockedMarketAchievementIds: [],
+    urikkoCardFormMessage: "",
     categoryFilter: "all",
     selectedListingId: "",
+    detailReturnScreen: "shelf",
     draft: loadDraft(),
     cancelReviewOpen: false,
     success: null,
@@ -344,9 +410,20 @@ function currentServerTime() {
 
 function currentListing() {
   return state.listings.find((listing) => listing.id === state.selectedListingId)
+    || state.sellerListings.find((listing) => listing.id === state.selectedListingId)
     || (state.ownListing?.id === state.selectedListingId ? state.ownListing : null)
     || state.success?.listing
     || null;
+}
+
+function detailReturnDestination() {
+  if (state.detailReturnScreen === "sellers") {
+    return { screen: "sellers", label: "売りっ子一覧へ戻る" };
+  }
+  if (state.detailReturnScreen === "favorites") {
+    return { screen: "favorites", label: "推し帳へ戻る" };
+  }
+  return { screen: "shelf", label: "一品の棚へ戻る" };
 }
 
 function hasTodayListing() {
@@ -417,6 +494,9 @@ function removeReportedListingXLocally(listingIdValue) {
   state.listings = state.listings.map((listing) => (
     listing.id === listingId ? stripListingXReferences(listing) : listing
   ));
+  state.sellerListings = state.sellerListings.map((listing) => (
+    listing.id === listingId ? stripListingXReferences(listing) : listing
+  ));
   if (state.ownListing?.id === listingId) {
     state.ownListing = stripListingXReferences(state.ownListing);
   }
@@ -468,6 +548,12 @@ function applyServerState(value, { browseMode = "replace" } = {}) {
     state.serverTimeOffset = Number(data.serverNow) - Date.now();
   }
   if (incomingDateKey) state.dateKey = incomingDateKey;
+  if (dateChanged) {
+    state.sellerListings = [];
+    state.sellerListingsCategory = "";
+    state.nextSellerCursor = "";
+    state.sellerBrowseErrorMessage = "";
+  }
   if (Number.isFinite(Number(data.expiresAt))) state.expiresAt = Math.max(0, Number(data.expiresAt));
   if (Object.hasOwn(data, "policy")) state.policy = normalizePolicy(data.policy);
   if (Number.isFinite(Number(data.balance))) state.balance = Math.max(0, integer(data.balance));
@@ -501,6 +587,28 @@ function applyServerState(value, { browseMode = "replace" } = {}) {
   if (Array.isArray(data.receipts)) {
     state.receipts = data.receipts.map(normalizeReceipt).filter(Boolean)
       .sort((left, right) => right.createdAt - left.createdAt);
+  }
+  if (Object.hasOwn(data, "urikkoCard")) {
+    state.urikkoCard = normalizeUrikkoCard(data.urikkoCard);
+    state.urikkoCardDraft = normalizeUrikkoCard(data.urikkoCard);
+  }
+  if (Array.isArray(data.unlockedMarketAchievementIds)) {
+    state.unlockedMarketAchievementIds = normalizeMarketAchievementIds(
+      data.unlockedMarketAchievementIds,
+      50,
+    );
+  }
+  if (Array.isArray(data.sellerListings)) {
+    const category = CATEGORY_IDS.has(data.category) ? data.category : "";
+    const incomingSellerListings = data.sellerListings.map(normalizeListing).filter(Boolean);
+    const appendSellers = data.appendSellerListings === true
+      && category
+      && state.sellerListingsCategory === category;
+    state.sellerListings = appendSellers
+      ? appendUniqueBrowseListings(state.sellerListings, incomingSellerListings)
+      : incomingSellerListings;
+    state.sellerListingsCategory = category;
+    state.nextSellerCursor = normalizeBrowseCursor(data.nextSellerCursor);
   }
   if (!state.policy.prices.includes(integer(state.draft.price))) {
     state.draft.price = state.policy.prices[0];
@@ -551,6 +659,11 @@ async function ensureUser() {
 async function refreshState({ silent = false } = {}) {
   if (!active || useFleaPreview) return;
   const generation = lifecycleGeneration;
+  const screenBefore = state.screen;
+  const sellerCategory = screenBefore === "sellers" && CATEGORY_IDS.has(state.categoryFilter)
+    ? state.categoryFilter
+    : "";
+  let refreshedBaseState = false;
   if (!silent) {
     state.busyAction = "refresh";
     state.notice = "";
@@ -560,12 +673,28 @@ async function refreshState({ silent = false } = {}) {
     const response = await fleaActionCallable({ action: "state" });
     if (!isCurrentLifecycle(generation)) return;
     applyServerState(response.data);
+    refreshedBaseState = true;
+    if (sellerCategory) {
+      state.sellerListings = [];
+      state.sellerListingsCategory = sellerCategory;
+      state.nextSellerCursor = "";
+      const sellerResponse = await fleaActionCallable({
+        action: "browse_sellers",
+        category: sellerCategory,
+      });
+      if (!isCurrentLifecycle(generation)) return;
+      applyServerState(sellerResponse.data);
+      state.sellerBrowseErrorMessage = "";
+    }
     state.errorMessage = "";
     state.browseErrorMessage = "";
   } catch (error) {
     if (!isCurrentLifecycle(generation)) return;
+    const message = friendlyMessage(error, "AnjuPayフリマを更新できませんでした。");
+    if (sellerCategory && refreshedBaseState) {
+      state.sellerBrowseErrorMessage = message;
+    }
     if (!silent) {
-      const message = friendlyMessage(error, "AnjuPayフリマを更新できませんでした。");
       state.errorMessage = message;
       state.notice = message;
     }
@@ -573,6 +702,9 @@ async function refreshState({ silent = false } = {}) {
     if (isCurrentLifecycle(generation)) {
       if (!silent) state.busyAction = "";
       render();
+      if (!silent && state.screen === screenBefore) {
+        document.querySelector("[data-flea-refresh]")?.focus({ preventScroll: true });
+      }
     }
   }
 }
@@ -589,6 +721,16 @@ function previewCreatorCard(name = "ANJU FAN") {
     titleId: "",
     xHandle: "anju_example",
   };
+}
+
+function previewUrikkoCard(overrides = {}) {
+  return normalizeUrikkoCard({
+    tagline: "推し値市場で育てたことばを、今日の棚にも。",
+    themeId: "sakura",
+    sealId: "ribbon",
+    achievementIds: ["market_seller_3", "market_days_2"],
+    ...overrides,
+  });
 }
 
 function previewListings() {
@@ -609,6 +751,7 @@ function previewListings() {
         publicSellerId: "flea-preview-seller-one",
         name: "ANJU FAN",
         creatorCard: previewCreatorCard("ANJU FAN"),
+        urikkoCard: previewUrikkoCard(),
       },
       xPostUrl: "https://x.com/anju_example/status/1234567890123456789",
     },
@@ -625,6 +768,12 @@ function previewListings() {
       seller: {
         publicSellerId: "flea-preview-seller-two",
         name: "RAIN WALKER",
+        urikkoCard: previewUrikkoCard({
+          tagline: "雨上がりの空気を、ことばでそっと渡します。",
+          themeId: "midnight",
+          sealId: "moon",
+          achievementIds: ["market_partners_3"],
+        }),
       },
     },
     {
@@ -647,6 +796,12 @@ function previewListings() {
           text: "衣装の好きなところを丁寧に話します。",
           xHandle: "",
         },
+        urikkoCard: previewUrikkoCard({
+          tagline: "衣装の好きなところを、ゆっくり話します。",
+          themeId: "mint",
+          sealId: "flower",
+          achievementIds: [],
+        }),
       },
     },
   ];
@@ -663,6 +818,12 @@ function applyPreviewState(initialScreen) {
   const screen = SCREEN_IDS.has(requestedScreen)
     ? requestedScreen
     : (SCREEN_IDS.has(initialScreen) ? initialScreen : "shelf");
+  const ownPreviewUrikkoCard = previewUrikkoCard({
+    tagline: "ことばから、気になる人へ。",
+    themeId: "lavender",
+    sealId: "star",
+    achievementIds: ["market_seller_3", "market_days_2", "market_partners_3"],
+  });
   const ownListing = {
     ...listings[2],
     id: "flea-preview-own",
@@ -671,6 +832,7 @@ function applyPreviewState(initialScreen) {
       publicSellerId: "flea-preview-owner",
       name: state.draft.name || "PLAYER",
       creatorCard: previewCreatorCard(state.draft.name || "PLAYER"),
+      urikkoCard: ownPreviewUrikkoCard,
     },
   };
   applyServerState({
@@ -682,10 +844,18 @@ function applyPreviewState(initialScreen) {
     listings,
     nextBrowseCursor: "",
     ownListing: screen === "own" ? ownListing : null,
+    urikkoCard: ownPreviewUrikkoCard,
+    unlockedMarketAchievementIds: [
+      "market_seller_3",
+      "market_days_2",
+      "market_partners_3",
+      "market_first_turn",
+    ],
     favorites: [{
       publicSellerId: listings[0].seller.publicSellerId,
       name: listings[0].seller.name,
       creatorCard: listings[0].seller.creatorCard,
+      urikkoCard: listings[0].seller.urikkoCard,
       updatedAt: Date.now() - 20 * 60_000,
     }],
     receipts: [
@@ -768,7 +938,7 @@ function renderWallet() {
 }
 
 function renderTabs() {
-  const tabForScreen = ["sell", "publish-review", "own"].includes(state.screen)
+  const tabForScreen = ["sell", "publish-review", "own", "seller-card-editor"].includes(state.screen)
     ? "sell"
     : state.screen === "favorites"
       ? "favorites"
@@ -776,7 +946,7 @@ function renderTabs() {
   return `<nav class="flea-tabs" role="tablist" aria-label="AnjuPayフリマ">
     <button type="button" role="tab" aria-selected="${tabForScreen === "shelf"}" class="${tabForScreen === "shelf" ? "is-active" : ""}" data-flea-nav="shelf"><span aria-hidden="true">⌂</span><strong>見つける</strong><small>今日の一日棚</small></button>
     <button type="button" role="tab" aria-selected="${tabForScreen === "favorites"}" class="${tabForScreen === "favorites" ? "is-active" : ""}" data-flea-nav="favorites"><span aria-hidden="true">♡</span><strong>推し帳</strong><small>非公開・店主単位</small></button>
-    <button type="button" role="tab" aria-selected="${tabForScreen === "sell"}" class="${tabForScreen === "sell" ? "is-active" : ""}" data-flea-nav="sell"><span aria-hidden="true">✎</span><strong>今日の出品</strong><small>1日1回まで</small></button>
+    <button type="button" role="tab" aria-selected="${tabForScreen === "sell"}" class="${tabForScreen === "sell" ? "is-active" : ""}" data-flea-nav="sell"><span aria-hidden="true">✎</span><strong>出品・カード</strong><small>1日1回 / 装いはいつでも</small></button>
     <button type="button" role="tab" aria-selected="${tabForScreen === "history"}" class="${tabForScreen === "history" ? "is-active" : ""}" data-flea-nav="history"><span aria-hidden="true">≡</span><strong>出会いの記録</strong><small>購入・販売履歴</small></button>
   </nav>`;
 }
@@ -823,14 +993,55 @@ function renderCategoryFilters() {
   return `<div class="flea-category-filters" aria-label="興味カテゴリ">
     ${definitions.map((category) => {
       const selected = state.categoryFilter === category.id;
-      return `<button type="button" aria-pressed="${selected}" class="${selected ? "is-active" : ""}" data-flea-category="${category.id}"><span aria-hidden="true">${category.mark}</span>${category.label}</button>`;
+      return `<button type="button" aria-pressed="${selected}" class="${selected ? "is-active" : ""}" data-flea-category="${category.id}" ${state.busyAction ? "disabled" : ""}><span aria-hidden="true">${category.mark}</span>${category.label}</button>`;
     }).join("")}
   </div>`;
 }
 
+function renderDiscoverySwitch(activeView) {
+  return `<div class="flea-discovery-switch" aria-label="見つけ方">
+    <button type="button" aria-pressed="${activeView === "sellers"}" class="${activeView === "sellers" ? "is-active" : ""}" data-flea-nav="sellers"><span aria-hidden="true">◇</span><strong>売りっ子から</strong><small>人柄と今日のことば</small></button>
+    <button type="button" aria-pressed="${activeView === "shelf"}" class="${activeView === "shelf" ? "is-active" : ""}" data-flea-nav="shelf"><span aria-hidden="true">✎</span><strong>一品から</strong><small>紹介文を先に読む</small></button>
+  </div>`;
+}
+
+function urikkoSealDefinition(value) {
+  return URIKKO_SEAL_DEFINITIONS.find((seal) => seal.id === value)
+    || URIKKO_SEAL_DEFINITIONS[0];
+}
+
+function renderUrikkoAchievements(value, { empty = true } = {}) {
+  const ids = normalizeMarketAchievementIds(value, 3);
+  if (!ids.length) {
+    return empty
+      ? '<p class="flea-urikko-achievements-empty">推し値市場実績は、本人が選んだときだけ表示されます。</p>'
+      : "";
+  }
+  const badges = ids.map((id) => {
+    const definition = window.HariaiAchievements?.byId?.get?.(id);
+    if (!definition || definition.scope !== "market") return "";
+    return `<span class="flea-urikko-achievement" aria-label="推し値市場実績：${escapeHtml(definition.name)}"><i aria-hidden="true">${escapeHtml(definition.icon)}</i><strong>${escapeHtml(definition.name)}</strong></span>`;
+  }).join("");
+  return badges
+    ? `<div class="flea-urikko-achievements" aria-label="本人が選んだ推し値市場実績">${badges}</div>`
+    : "";
+}
+
+function renderUrikkoCard(sellerValue, { compact = false, preview = false } = {}) {
+  const seller = sellerValue && typeof sellerValue === "object" ? sellerValue : {};
+  const name = boundedText(seller.name, 16) || "PLAYER";
+  const card = normalizeUrikkoCard(seller.urikkoCard);
+  const seal = urikkoSealDefinition(card.sealId);
+  return `<section class="flea-urikko-card is-theme-${escapeHtml(card.themeId)} ${compact ? "is-compact" : ""} ${preview ? "is-preview" : ""}" aria-label="${escapeHtml(name)}の売りっ子カード">
+    <header><span>URIKKO CARD</span><i class="flea-urikko-seal" aria-label="商いの印：${escapeHtml(seal.label)}">${escapeHtml(seal.mark)}</i></header>
+    <div class="flea-urikko-identity"><small>SELLER</small><h3>${escapeHtml(name)}</h3><p>${escapeHtml(card.tagline || "ひとことは、まだ設定されていません。")}</p></div>
+    ${renderUrikkoAchievements(card.achievementIds)}
+  </section>`;
+}
+
 function renderFavoriteButton(listing, { compact = false } = {}) {
   const sellerId = listing?.seller?.publicSellerId || "";
-  if (!sellerId) return "";
+  if (!sellerId || listing?.isOwn) return "";
   const selected = state.favorites.has(sellerId);
   return `<button class="flea-favorite ${compact ? "is-compact" : ""} ${selected ? "is-selected" : ""}" type="button" data-flea-favorite="${escapeHtml(listing.id)}" aria-pressed="${selected}" ${state.busyAction ? "disabled" : ""}><span aria-hidden="true">${selected ? "♥" : "♡"}</span>${selected ? "推し帳に追加済み" : "推し帳に追加"}</button>`;
 }
@@ -842,6 +1053,7 @@ function favoriteSnapshotFromListing(listing) {
     publicSellerId,
     name: listing.seller.name || "PLAYER",
     creatorCard: normalizeFavoriteCreatorCard(listing.seller.creatorCard),
+    urikkoCard: normalizeUrikkoCard(listing.seller.urikkoCard),
     updatedAt: currentServerTime(),
   };
 }
@@ -883,6 +1095,16 @@ function renderListingCard(listing) {
   </article>`;
 }
 
+function renderSellerDirectoryCard(listing) {
+  const category = categoryDefinition(listing.category);
+  return `<article class="flea-urikko-directory-card" data-flea-seller-card="${escapeHtml(listing.id)}" aria-label="${escapeHtml(listing.seller.name)}の売りっ子カードと今日の一品">
+    <header><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span><time datetime="${escapeHtml(new Date(listing.expiresAt || state.expiresAt).toISOString())}">本日23:59まで</time></header>
+    ${renderUrikkoCard(listing.seller)}
+    <section class="flea-urikko-today"><span>TODAY'S WORDS</span><h2>${escapeHtml(listing.title)}</h2><p>${escapeHtml(listing.description)}</p></section>
+    <footer><strong>${formatAnjuPay(listing.price)}</strong><div>${renderFavoriteButton(listing, { compact: true })}<button class="button button-primary button-small" type="button" data-flea-detail="${escapeHtml(listing.id)}">今日の一品を見る</button></div></footer>
+  </article>`;
+}
+
 function renderShelf() {
   const listings = state.listings.filter((listing) => (
     listingIsOpen(listing)
@@ -904,16 +1126,63 @@ function renderShelf() {
       </div>`
     : "";
   return renderFrame(`<section class="flea-shelf" aria-labelledby="fleaShelfHeading">
-    <div class="flea-section-head"><div><span>TODAY'S SHELF</span><h2 id="fleaShelfHeading">今日の出品を見つける</h2><p>カテゴリは興味の入口です。最後は、紹介することばと店主の人柄で選べます。</p></div><small>日本時間 0:00 に本日の店じまい</small></div>
+    <div class="flea-section-head"><div><span>TODAY'S SHELF</span><h2 id="fleaShelfHeading">今日の一品から見つける</h2><p>カテゴリは興味の入口です。紹介することばを先に読んで、気になる店主へ進めます。</p></div><small>日本時間 0:00 に本日の店じまい</small></div>
+    ${renderDiscoverySwitch("shelf")}
     ${renderCategoryFilters()}
     ${body}
     ${browseMore}
-    <p class="flea-market-boundary"><strong>推し値市場とは別の場所です。</strong>ここでの購入・販売は、推し値市場のランキング・実績・常連帳・店主評価へ加算しません。店主推し帳も、自分だけに見える別の記録です。</p>
+    <p class="flea-market-boundary"><strong>推し値市場の成績へ加算しません。</strong>ここでの購入・販売は、市場のランキング・実績・常連帳・店主評価へ加算しません。本人が選んだ解除済みの市場実績だけを、売りっ子カードの飾りとして表示できます。</p>
+  </section>`);
+}
+
+function sellerDirectoryListings() {
+  const source = state.categoryFilter === "all"
+    ? state.listings
+    : state.sellerListingsCategory === state.categoryFilter
+      ? state.sellerListings
+      : [];
+  return source.filter((listing) => (
+    listingIsOpen(listing)
+    && (state.categoryFilter === "all" || listing.category === state.categoryFilter)
+  ));
+}
+
+function renderSellers() {
+  const listings = sellerDirectoryListings();
+  const loadingCategory = state.busyAction === "browse_sellers";
+  const directoryError = state.categoryFilter === "all"
+    ? state.browseErrorMessage
+    : state.sellerBrowseErrorMessage;
+  const content = listings.length
+    ? `<div class="flea-urikko-directory">${listings.map(renderSellerDirectoryCard).join("")}</div>`
+    : loadingCategory
+      ? '<section class="flea-empty" role="status"><span aria-hidden="true">◇</span><h2>このカテゴリの売りっ子を探しています</h2><p>今日出品している店主を、日替わりの順番で読み込んでいます。</p></section>'
+      : directoryError
+        ? '<section class="flea-empty"><span aria-hidden="true">◇</span><h2>売りっ子一覧を更新できませんでした</h2><p>空の一覧ではありません。通信状態を確かめてから、棚を更新してください。</p></section>'
+      : `<section class="flea-empty"><span aria-hidden="true">◇</span><h2>${state.categoryFilter === "all" ? "今日の売りっ子は、まだいません" : "このカテゴリの売りっ子は、まだいません"}</h2><p>出品の多さや少なさに順位の意味はありません。気が向いたときに、またのぞいてみてください。</p><button class="button button-primary" type="button" data-flea-nav="sell">今日の一品を出す</button></section>`;
+  const cursor = state.categoryFilter === "all"
+    ? state.nextBrowseCursor
+    : state.nextSellerCursor;
+  const moreAction = state.categoryFilter === "all" ? "browse_more" : "browse_sellers";
+  const browseMore = cursor
+    ? `<div class="flea-browse-more" aria-live="polite">
+        <button class="button button-ghost" type="button" data-flea-sellers-more="${moreAction}" ${state.busyAction ? "disabled" : ""}>${["browse_more", "browse_sellers"].includes(state.busyAction) ? "続きを読み込んでいます…" : "続きを見る"}</button>
+      </div>`
+    : "";
+  return renderFrame(`<section class="flea-seller-directory-screen" aria-labelledby="fleaSellersHeading">
+    <div class="flea-section-head"><div><span>TODAY'S URIKKO</span><h2 id="fleaSellersHeading">今日の売りっ子たち</h2><p>今日出品している店主を、興味カテゴリ別に紹介します。カードを整えていない人も同じ順番・同じ高さで並びます。</p></div><small>順位ではありません / 0:00に日替わり</small></div>
+    ${renderDiscoverySwitch("sellers")}
+    ${renderCategoryFilters()}
+    <p class="flea-seller-order-note"><strong>表示順は営業成績では決まりません。</strong>売上、推し帳の人数、カードの装飾、実績の数を使わない日替わりの順番です。</p>
+    ${directoryError ? `<p class="flea-form-error" role="alert">${escapeHtml(directoryError)}</p>` : ""}
+    ${content}
+    ${browseMore}
+    <p class="flea-market-boundary"><strong>カードの実績は推し値市場で育てた歩みです。</strong>AnjuPayフリマでの購入・販売から解除されるものではなく、本人が公開するものを最大3件だけ選びます。</p>
   </section>`);
 }
 
 function activeListingForSeller(publicSellerId) {
-  return state.listings.find((listing) => (
+  return [...state.listings, ...state.sellerListings].find((listing) => (
     listingIsOpen(listing) && listing.seller.publicSellerId === publicSellerId
   )) || null;
 }
@@ -936,6 +1205,7 @@ function favoriteSellerEntries() {
 function renderFavoriteSeller(snapshot) {
   const listing = activeListingForSeller(snapshot.publicSellerId);
   const card = listing?.seller?.creatorCard || snapshot.creatorCard;
+  const urikkoCard = listing?.seller?.urikkoCard || snapshot.urikkoCard;
   const name = listing?.seller?.name || snapshot.name || card?.name || "PLAYER";
   const cardMarkup = card ? shared()?.renderCreatorCard?.(card, { compact: true }) || "" : "";
   const savedAt = snapshot.updatedAt > 0
@@ -946,7 +1216,7 @@ function renderFavoriteSeller(snapshot) {
     : `<div><strong>今日は出品していません</strong><p>推し帳へ追加した時点のカードです。Xリンクは保存せず、また一日棚で出会える日まで静かに残します。</p></div>`;
   return `<article class="flea-favorite-seller">
     <header><div><span>PRIVATE FAVORITE</span><h3>${escapeHtml(name)}</h3></div>${savedAt}</header>
-    <div class="flea-favorite-seller-card">${cardMarkup || `<section class="flea-creator-card-empty"><span>MY FAVORITE CARD</span><h3>${escapeHtml(name)}</h3><p>この店主は、現在推しカードを公開していません。</p></section>`}</div>
+    <div class="flea-favorite-seller-card">${renderUrikkoCard({ name, urikkoCard }, { compact: true })}${cardMarkup || `<section class="flea-creator-card-empty"><span>MY FAVORITE CARD</span><h3>${escapeHtml(name)}</h3><p>この店主は、現在推しカードを公開していません。</p></section>`}</div>
     <footer>${path}<div class="flea-favorite-seller-actions">${listing ? `<button class="button button-primary button-small" type="button" data-flea-detail="${escapeHtml(listing.id)}">今日の一品を読む</button>` : ""}<button class="flea-favorite is-compact is-selected" type="button" data-flea-unfavorite-seller="${escapeHtml(snapshot.publicSellerId)}" aria-pressed="true" ${state.busyAction ? "disabled" : ""}><span aria-hidden="true">♥</span>推し帳から外す</button></div></footer>
   </article>`;
 }
@@ -981,15 +1251,26 @@ function renderCreatorCard(listing, { success = false } = {}) {
   </section>`;
 }
 
+function renderListingUrikkoCard(listing, { success = false } = {}) {
+  return `<section class="flea-urikko-feature">
+    <div><span>${success ? "THE PERSON YOU FOUND" : "ABOUT THIS SELLER"}</span><h3>${success ? "選んだ人の、売りっ子カード" : "店主の売りっ子カード"}</h3><p>${success ? "購入は、この人をもっと知っていく入口です。" : "装飾と実績の有無は表示順に影響しません。ひとことと本人が選んだ市場実績だけを表示します。"}</p></div>
+    ${renderUrikkoCard(listing?.seller)}
+  </section>`;
+}
+
 function renderListingDetailBody(listing) {
   const category = categoryDefinition(listing.category);
   const own = state.ownListing?.id === listing.id;
   const open = listingIsOpen(listing);
   const affordable = state.balance >= listing.price;
   const xLink = renderXPostLink(listing.xPostUrl, listing.seller.name);
+  const returnDestination = state.screen === "own"
+    ? { screen: "shelf", label: "一品の棚へ戻る" }
+    : detailReturnDestination();
   return `<article class="flea-detail">
     <div class="flea-detail-head"><div><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span><small>${escapeHtml(listing.seller.name)}の今日の一品</small><h2>${escapeHtml(listing.title)}</h2></div><div class="flea-detail-price"><span>PRICE</span><strong>${formatAnjuPay(listing.price)}</strong><small>${escapeHtml(listingStatusLabel(listing))}</small></div></div>
     <section class="flea-description" aria-labelledby="fleaDescriptionHeading"><span>IN THEIR OWN WORDS</span><h3 id="fleaDescriptionHeading">ことばで紹介</h3><p>${escapeHtml(listing.description)}</p></section>
+    ${renderListingUrikkoCard(listing)}
     ${xLink ? `<section class="flea-reference"><div><span>OPTIONAL REFERENCE</span><h3>もう少し知りたいときだけ</h3><p>ポスト本文や画像はゲーム内に表示しません。Xへ移動して自分で確かめられますが、リンク先の内容・継続公開を運営は保証しません。</p></div>${xLink}</section>` : ""}
     ${renderCreatorCard(listing)}
     <section class="flea-purchase-panel" aria-label="購入判断">
@@ -997,7 +1278,7 @@ function renderListingDetailBody(listing) {
         <p>購入するのは実物や画像ではなく、このゲーム内でことばと人柄に価値をつける体験です。</p></div>
       <div class="flea-purchase-actions">
         ${own ? '<button class="button button-primary" type="button" data-flea-nav="own">今日の出品状況を見る</button>' : open ? `<button class="button button-primary" type="button" data-flea-purchase-review="${escapeHtml(listing.id)}" ${state.busyAction || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(listing.price)}で購入内容を確認` : `あと${formatAnjuPay(listing.price - state.balance)}`}</button>${renderFavoriteButton(listing)}` : ""}
-        <button class="button button-ghost" type="button" data-flea-nav="shelf">棚へ戻る</button>
+        <button class="button button-ghost" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.label}</button>
       </div>
     </section>
     ${own ? "" : renderReportPanel(listing)}
@@ -1016,7 +1297,8 @@ function renderReportPanel(listing) {
 function renderDetail() {
   const listing = currentListing();
   if (!listing) {
-    return renderFrame(`<section class="flea-empty"><span aria-hidden="true">♡</span><h2>この出品は棚から離れました</h2><p>売れたか、本日の店じまいを迎えた可能性があります。</p><button class="button button-primary" type="button" data-flea-nav="shelf">今日の棚へ戻る</button></section>`);
+    const returnDestination = detailReturnDestination();
+    return renderFrame(`<section class="flea-empty"><span aria-hidden="true">♡</span><h2>この出品は棚から離れました</h2><p>売れたか、本日の店じまいを迎えた可能性があります。</p><button class="button button-primary" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.label}</button></section>`);
   }
   return renderFrame(renderListingDetailBody(listing), { compactHeader: true });
 }
@@ -1033,6 +1315,51 @@ function renderDraftPreview(draft = state.draft) {
   </article>`;
 }
 
+function ownUrikkoSeller(card = state.urikkoCardDraft) {
+  return {
+    name: state.ownListing?.seller?.name || state.draft.name || "PLAYER",
+    urikkoCard: normalizeUrikkoCard(card),
+  };
+}
+
+function renderUrikkoEditorPath() {
+  return `<section class="flea-urikko-editor-path">
+    <div><span>YOUR URIKKO CARD</span><h3>売りっ子カードを整える</h3><p>ひとこと、テーマ、商いの印、本人が選んだ推し値市場実績を飾れます。装飾は表示順に影響しません。</p></div>
+    <button class="button button-ghost" type="button" data-flea-nav="seller-card-editor">カードを編集</button>
+  </section>`;
+}
+
+function renderSellerCardEditor() {
+  const draft = normalizeUrikkoCard(state.urikkoCardDraft);
+  const inputDisabled = state.busyAction ? "disabled" : "";
+  const themes = URIKKO_THEME_DEFINITIONS.map((theme) => `<label class="flea-urikko-theme-choice"><input type="radio" name="fleaUrikkoTheme" value="${theme.id}" ${draft.themeId === theme.id ? "checked" : ""} ${inputDisabled} /><span class="is-theme-${theme.id}"><i aria-hidden="true">◇</i><strong>${escapeHtml(theme.label)}</strong></span></label>`).join("");
+  const seals = URIKKO_SEAL_DEFINITIONS.map((seal) => `<label class="flea-urikko-seal-choice"><input type="radio" name="fleaUrikkoSeal" value="${seal.id}" ${draft.sealId === seal.id ? "checked" : ""} ${inputDisabled} /><span><i aria-hidden="true">${escapeHtml(seal.mark)}</i><strong>${escapeHtml(seal.label)}</strong></span></label>`).join("");
+  const availableAchievements = state.unlockedMarketAchievementIds
+    .map((id) => window.HariaiAchievements?.byId?.get?.(id))
+    .filter((definition) => definition?.scope === "market");
+  const achievements = availableAchievements.length
+    ? `<div class="flea-urikko-achievement-choices">${availableAchievements.map((definition) => {
+      const selected = draft.achievementIds.includes(definition.id);
+      return `<label class="flea-urikko-achievement-choice"><input type="checkbox" name="fleaUrikkoAchievement" value="${escapeHtml(definition.id)}" ${selected ? "checked" : ""} ${inputDisabled} /><span><i aria-hidden="true">${escapeHtml(definition.icon)}</i><strong>${escapeHtml(definition.name)}</strong><small>${escapeHtml(definition.familyLabel)}の歩み</small></span></label>`;
+    }).join("")}</div>`
+    : `<div class="flea-urikko-no-achievements"><strong>飾れる推し値市場実績は、まだありません</strong><p>カードは実績なしでも同じ高さで表示されます。営業を急かす条件や、フリマ側の達成報酬はありません。</p><button class="button button-ghost button-small" type="button" data-flea-open-value-market>推し値市場を見る</button></div>`;
+  return renderFrame(`<section class="flea-urikko-card-editor" aria-labelledby="fleaUrikkoEditorHeading">
+    <div class="flea-section-head"><div><span>CUSTOMIZE YOUR CARD</span><h2 id="fleaUrikkoEditorHeading">売りっ子カードを整える</h2><p>今日の出品を「誰が紹介しているか」から見つけてもらうためのカードです。既存の推しカードや推し値商店カードは変更しません。</p></div><small>保存無料 / 公開項目だけ</small></div>
+    <div class="flea-urikko-editor-layout">
+      <aside class="flea-urikko-editor-preview"><div><span>PUBLIC PREVIEW</span><small>売りっ子一覧での見え方</small></div><div id="fleaUrikkoPreview">${renderUrikkoCard(ownUrikkoSeller(draft), { preview: true })}</div><p>売上・成約数・推し帳人数・順位はカードにも並び順にも使用しません。</p></aside>
+      <form class="flea-urikko-form" id="fleaUrikkoCardForm" aria-busy="${Boolean(state.busyAction)}">
+        <p class="flea-urikko-form-status" id="fleaUrikkoFormStatus" role="status">${escapeHtml(state.urikkoCardFormMessage)}</p>
+        <section><div class="flea-field-head"><label for="fleaUrikkoTagline">ひとこと</label><span><b id="fleaUrikkoTaglineCount">${draft.tagline.length}</b> / 40</span></div><input id="fleaUrikkoTagline" name="tagline" type="text" maxlength="40" value="${escapeHtml(draft.tagline)}" aria-describedby="fleaUrikkoTaglineHint" ${inputDisabled} /><small id="fleaUrikkoTaglineHint">空欄でも構いません。URL、個人情報、外部連絡や実物取引への誘導は掲載できません。</small></section>
+        <fieldset><legend>カードテーマ</legend><p>色だけで選択状態を判断しないよう、選択中のラジオボタンも表示します。</p><div class="flea-urikko-theme-grid">${themes}</div></fieldset>
+        <fieldset><legend>商いの印</legend><p>意味や能力差はない、カードだけの装飾です。</p><div class="flea-urikko-seal-grid">${seals}</div></fieldset>
+        <fieldset><legend>本人が選ぶ推し値市場実績</legend><p>最大3件。同じ系統は現在の到達実績1件へサーバーで整えます。選んだ実績の名前と印だけを表示し、解除済み総数・進捗値・達成条件・解除日時は表示しません。</p>${achievements}</fieldset>
+        <div class="flea-public-note"><strong>公開されるもの</strong><span>店主名、ひとこと、テーマ、商いの印、本人が選んだ解除済みの推し値市場実績（最大3件）。</span></div>
+        <div class="flea-form-actions"><button class="button button-primary" id="fleaUrikkoSaveButton" type="submit" ${state.busyAction ? "disabled" : ""}>${state.busyAction === "save_urikko_card" ? "保存しています…" : "売りっ子カードを保存"}</button><button class="button button-ghost" type="button" data-flea-nav="sell" ${state.busyAction ? "disabled" : ""}>出品画面へ戻る</button></div>
+      </form>
+    </div>
+  </section>`);
+}
+
 function renderSell() {
   if (hasTodayListing()) {
     state.screen = "own";
@@ -1043,6 +1370,7 @@ function renderSell() {
   const priceOptions = state.policy.prices.map((price) => `<option value="${price}" ${integer(draft.price) === price ? "selected" : ""}>${formatAnjuPay(price)}</option>`).join("");
   return renderFrame(`<section class="flea-sell" aria-labelledby="fleaSellHeading">
     <div class="flea-section-head"><div><span>OPEN TODAY'S SHELF</span><h2 id="fleaSellHeading">今日の一品を、ことばで出す</h2><p>画像は投稿しません。何を選び、どう紹介する人なのかが買い手へ届きます。</p></div><small>出品は1日1回まで</small></div>
+    ${renderUrikkoEditorPath()}
     <div class="flea-editor-layout">
       <aside class="flea-editor-preview"><div><span>LIVE PREVIEW</span><small>公開前に買い手からの見え方を確認</small></div><div id="fleaDraftPreview">${renderDraftPreview()}</div><p>下書きはこの端末に残し、本日の店じまい後も消しません。</p></aside>
       <form class="flea-form" id="fleaListingForm" aria-busy="${Boolean(state.busyAction)}">
@@ -1054,7 +1382,7 @@ function renderSell() {
         <section class="flea-price-field"><label for="fleaPrice">価格</label><select id="fleaPrice" name="price">${priceOptions}</select><small>買い手の支払額です。販売成立時は販売手数料が差し引かれます。</small></section>
         <section class="flea-x-field"><div class="flea-field-head"><label for="fleaXPostUrl">参考にするXポスト（任意）</label><small>個別ポストのみ</small></div><input id="fleaXPostUrl" name="xPostUrl" type="url" inputmode="url" maxlength="240" value="${escapeHtml(draft.xPostUrl)}" placeholder="https://x.com/username/status/..." autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="fleaXPostHint" /><small id="fleaXPostHint">自分のポストで、推しカードに公開中のXユーザー名と一致する個別ポストだけを指定できます。ゲーム内にはポスト本文・画像・プレビューを表示せず、外部リンクだけを置きます。</small>
           <label class="flea-consent"><input id="fleaXConsent" name="xConsent" type="checkbox" ${draft.xConsent ? "checked" : ""} /><span>自分の投稿で、必要な権利・写っている人の公開同意があり、成人向け・個人情報・実物/外部取引を含まないこと、推しカードに公開中の同じXユーザー名から投稿したことを確認し、外部リンクの公開に同意します</span></label></section>
-        <div class="flea-public-note"><strong>公開されるもの</strong><span>店主名、カテゴリ、タイトル、説明文、価格、任意で許可したXポストリンク、公開中の推しカード。</span></div>
+        <div class="flea-public-note"><strong>公開されるもの</strong><span>店主名、カテゴリ、タイトル、説明文、価格、任意で許可したXポストリンク、売りっ子カード、公開中の推しカード。</span></div>
         <div class="flea-form-actions"><button class="button button-primary" type="submit" ${state.busyAction ? "disabled" : ""}>出品内容を確認</button><button class="button button-ghost" type="button" data-flea-nav="shelf">出品せず棚を見る</button></div>
       </form>
     </div>
@@ -1151,6 +1479,7 @@ function renderOwn() {
   ));
   return renderFrame(`<section class="flea-own" aria-labelledby="fleaOwnHeading">
     <div class="flea-section-head"><div><span>MY TODAY'S SHELF</span><h2 id="fleaOwnHeading">${escapeHtml(listingStatusLabel(listing))}</h2><p>${open ? "ことばを棚へ置きました。売れたかどうかは、ここへ戻ると確認できます。" : listing.status === "sold" ? "あなたのことばと人柄を選んだプレイヤーがいました。" : "紹介文の下書きは端末へ残しています。"}</p></div><small>本日の出品回数は使用済みです</small></div>
+    ${renderUrikkoEditorPath()}
     ${renderListingDetailBody(listing)}
     ${matchingReceipt ? `<section class="flea-own-settlement"><span>SETTLEMENT</span><h3>販売の記録</h3>${renderFeeSummary(matchingReceipt.price, { includeListingFee: false })}<p>実際の受取額はサーバーで確定した${formatAnjuPay(matchingReceipt.sellerProceeds)}です。</p></section>` : ""}
     ${open ? `<section class="flea-cancel-panel"><button class="button button-danger button-small" type="button" data-flea-cancel-review aria-expanded="${state.cancelReviewOpen}" aria-controls="fleaCancelConfirm">出品を取り下げる</button><div id="fleaCancelConfirm" tabindex="-1" ${state.cancelReviewOpen ? "" : "hidden"}><strong>本当に取り下げますか？</strong><p>手数料と本日の出品回数は戻りません。下書きは端末に残ります。</p><button class="button button-danger" type="button" data-flea-cancel="${escapeHtml(listing.id)}" ${state.busyAction ? "disabled" : ""}>取り下げを確定</button></div></section>` : ""}
@@ -1185,13 +1514,15 @@ function renderSuccess() {
     state.screen = "history";
     return renderHistory();
   }
+  const returnDestination = detailReturnDestination();
   return renderFrame(`<section class="flea-success" role="status" aria-live="polite" aria-labelledby="fleaSuccessHeading" tabindex="-1">
     <div class="flea-success-mark" aria-hidden="true">♡</div><span>PUSH FOUND</span><h2 id="fleaSuccessHeading">この人のことばへ、Payが届きました</h2><p>「買った」で終わらず、気になった人をもっと知る入口にできます。</p>
     <div class="flea-success-record"><div><small>出会いの記録</small><strong>${escapeHtml(listing.title)}</strong><span>${escapeHtml(listing.seller.name)}</span></div><strong>${formatAnjuPay(purchase.price || listing.price)}</strong></div>
     ${renderXPostLink(listing.xPostUrl, listing.seller.name, { className: "is-success" })}
+    ${renderListingUrikkoCard(listing, { success: true })}
     ${renderCreatorCard(listing, { success: true })}
     <section class="flea-live-market-path"><div><span>WHEN YOU WANT TO HEAR THEIR WORDS</span><h3>直接ことばを聞きたいときは、推し値市場へ</h3><p>推し値市場は、売り手が時間と労力をかけて対面営業する別の場所です。フリマの購入実績や店主推し帳は持ち込みません。同じ店主と会える保証はありませんし、優先マッチにもなりません。</p></div><button class="button hero-market-button" type="button" data-flea-open-value-market>推し値市場を見る</button></section>
-    <div class="flea-success-actions"><button class="button button-primary" type="button" data-flea-nav="shelf">ほかの一品を見る</button><button class="button button-ghost" type="button" data-flea-nav="history">出会いの記録を見る</button><button class="button button-ghost" type="button" data-flea-home>トップへ戻る</button></div>
+    <div class="flea-success-actions">${renderFavoriteButton(listing)}<button class="button button-primary" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.screen === "sellers" ? "ほかの売りっ子を見る" : returnDestination.screen === "favorites" ? "推し帳へ戻る" : "ほかの一品を見る"}</button><button class="button button-ghost" type="button" data-flea-nav="history">出会いの記録を見る</button><button class="button button-ghost" type="button" data-flea-home>トップへ戻る</button></div>
   </section>`, { compactHeader: true });
 }
 
@@ -1227,11 +1558,13 @@ function render() {
   }
   const screenChanged = lastRenderedScreen !== state.screen;
   if (state.screen === "shelf") appRoot.innerHTML = renderShelf();
+  else if (state.screen === "sellers") appRoot.innerHTML = renderSellers();
   else if (state.screen === "favorites") appRoot.innerHTML = renderFavorites();
   else if (state.screen === "detail") appRoot.innerHTML = renderDetail();
   else if (state.screen === "sell") appRoot.innerHTML = renderSell();
   else if (state.screen === "publish-review") appRoot.innerHTML = renderPublishReview();
   else if (state.screen === "own") appRoot.innerHTML = renderOwn();
+  else if (state.screen === "seller-card-editor") appRoot.innerHTML = renderSellerCardEditor();
   else if (state.screen === "purchase-review") appRoot.innerHTML = renderPurchaseReview();
   else if (state.screen === "success") appRoot.innerHTML = renderSuccess();
   else if (state.screen === "history") appRoot.innerHTML = renderHistory();
@@ -1253,6 +1586,16 @@ function navigate(screen) {
   else if (target === "detail" && !currentListing()) state.screen = "shelf";
   else state.screen = target;
   render();
+  if (
+    state.screen === "sellers"
+    && CATEGORY_IDS.has(state.categoryFilter)
+    && state.sellerListingsCategory !== state.categoryFilter
+  ) {
+    state.sellerListings = [];
+    state.sellerListingsCategory = state.categoryFilter;
+    state.nextSellerCursor = "";
+    performAction("browse_sellers", { category: state.categoryFilter });
+  }
 }
 
 function captureDraftFromForm() {
@@ -1301,17 +1644,127 @@ function submitListingDraft(event) {
   render();
 }
 
+function captureUrikkoCardFromForm() {
+  const form = document.querySelector("#fleaUrikkoCardForm");
+  if (!form) return;
+  state.urikkoCardDraft = {
+    schemaVersion: 1,
+    tagline: String(document.querySelector("#fleaUrikkoTagline")?.value ?? "").slice(0, 40),
+    themeId: document.querySelector('input[name="fleaUrikkoTheme"]:checked')?.value || "standard",
+    sealId: document.querySelector('input[name="fleaUrikkoSeal"]:checked')?.value || "heart",
+    achievementIds: [...document.querySelectorAll('input[name="fleaUrikkoAchievement"]:checked')]
+      .map((input) => String(input.value || "")),
+  };
+}
+
+function validateUrikkoCardDraft(draft = state.urikkoCardDraft) {
+  const tagline = String(draft.tagline || "").normalize("NFKC").trim();
+  if (tagline.length > 40 || /[\r\n\u0000-\u001f\u007f]/.test(tagline)) {
+    return { ok: false, field: "fleaUrikkoTagline", message: "ひとことは1行40文字以内で入力してください。" };
+  }
+  if (URL_LIKE_PATTERN.test(tagline) || EMAIL_PATTERN.test(tagline)) {
+    return { ok: false, field: "fleaUrikkoTagline", message: "ひとことにはURLや連絡先を入力できません。" };
+  }
+  if (!URIKKO_THEME_IDS.has(draft.themeId) || !URIKKO_SEAL_IDS.has(draft.sealId)) {
+    return { ok: false, field: "fleaUrikkoCardForm", message: "カードテーマと商いの印を選び直してください。" };
+  }
+  const achievementIds = Array.isArray(draft.achievementIds)
+    ? [...new Set(draft.achievementIds.map(String))]
+    : [];
+  if (achievementIds.length > 3) {
+    return { ok: false, field: "fleaUrikkoCardForm", message: "カードへ飾れる推し値市場実績は3件までです。" };
+  }
+  const unlockedIds = new Set(state.unlockedMarketAchievementIds);
+  if (achievementIds.some((id) => !unlockedIds.has(id))) {
+    return { ok: false, field: "fleaUrikkoCardForm", message: "解除済みの推し値市場実績から選び直してください。" };
+  }
+  return {
+    ok: true,
+    value: {
+      tagline,
+      themeId: draft.themeId,
+      sealId: draft.sealId,
+      achievementIds,
+    },
+  };
+}
+
+function updateUrikkoCardPreview(event) {
+  captureUrikkoCardFromForm();
+  if (state.urikkoCardDraft.achievementIds.length > 3) {
+    if (event?.target?.matches?.('input[name="fleaUrikkoAchievement"]')) {
+      event.target.checked = false;
+      captureUrikkoCardFromForm();
+    }
+    state.urikkoCardFormMessage = "カードへ飾れる推し値市場実績は3件までです。";
+  } else {
+    state.urikkoCardFormMessage = "";
+  }
+  const preview = document.querySelector("#fleaUrikkoPreview");
+  if (preview) {
+    preview.innerHTML = renderUrikkoCard(ownUrikkoSeller(state.urikkoCardDraft), {
+      preview: true,
+    });
+  }
+  const count = document.querySelector("#fleaUrikkoTaglineCount");
+  if (count) count.textContent = String(state.urikkoCardDraft.tagline.length);
+  const status = document.querySelector("#fleaUrikkoFormStatus");
+  if (status) status.textContent = state.urikkoCardFormMessage;
+}
+
+function submitUrikkoCard(event) {
+  event.preventDefault();
+  captureUrikkoCardFromForm();
+  const validation = validateUrikkoCardDraft();
+  if (!validation.ok) {
+    state.urikkoCardFormMessage = validation.message;
+    render();
+    document.getElementById(validation.field)?.focus({ preventScroll: true });
+    return;
+  }
+  state.urikkoCardDraft = normalizeUrikkoCard(validation.value);
+  state.urikkoCardFormMessage = "";
+  performAction("save_urikko_card", validation.value);
+}
+
+function restoreFocusAfterAction(action, payload, screenBefore) {
+  if (!active || state.screen !== screenBefore) return;
+  let selector = "";
+  if (action === "browse_more") {
+    selector = state.screen === "sellers"
+      ? "[data-flea-sellers-more]"
+      : "[data-flea-browse-more]";
+  } else if (action === "browse_sellers") {
+    selector = payload.cursor
+      ? "[data-flea-sellers-more]"
+      : `[data-flea-category="${String(payload.category || "")}"]`;
+  } else if (action === "set_favorite" && payload.listingId) {
+    selector = `[data-flea-favorite="${String(payload.listingId)}"]`;
+  } else if (action === "set_favorite") {
+    selector = '[data-flea-nav="favorites"]';
+  } else if (action === "save_urikko_card") {
+    selector = "#fleaUrikkoSaveButton";
+  }
+  const target = selector ? document.querySelector(selector) : null;
+  (target || appRoot)?.focus({ preventScroll: true });
+}
+
 async function performAction(action, payload = {}) {
   if (!active || state.busyAction) return null;
   const generation = lifecycleGeneration;
+  const screenBefore = state.screen;
   const requestedListingId = String(payload.listingId || "");
   const requestedListing = requestedListingId
-    ? state.listings.find((listing) => listing.id === requestedListingId) || null : null;
+    ? state.listings.find((listing) => listing.id === requestedListingId)
+      || state.sellerListings.find((listing) => listing.id === requestedListingId)
+      || null
+    : null;
   const selectedBefore = action === "set_favorite" ? requestedListing : currentListing();
   state.busyAction = action;
   state.notice = "";
   state.errorMessage = "";
   if (action === "browse_more") state.browseErrorMessage = "";
+  if (action === "browse_sellers") state.sellerBrowseErrorMessage = "";
   render();
   try {
     if (useFleaPreview) {
@@ -1322,21 +1775,29 @@ async function performAction(action, payload = {}) {
     if (!isCurrentLifecycle(generation)) return null;
     const data = response.data && typeof response.data === "object" ? response.data : {};
     applyServerState(data, {
-      browseMode: action === "browse_more" ? "append" : "preserve",
+      browseMode: action === "browse_more"
+        ? "append"
+        : action === "create_listing"
+          ? "replace"
+          : "preserve",
     });
     if (action === "create_listing") {
       const createdListing = normalizeListing(data.createdListing) || state.ownListing;
       if (createdListing) {
         state.ownListing = createdListing;
-        if (!createdListing.dateKey || createdListing.dateKey === state.dateKey) {
-          state.listings = [createdListing, ...state.listings.filter((listing) => listing.id !== createdListing.id)];
-        }
       }
+      state.sellerListings = [];
+      state.sellerListingsCategory = "";
+      state.nextSellerCursor = "";
+      state.sellerBrowseErrorMessage = "";
       state.screen = "own";
       state.notice = "今日の一品を棚へ出しました。下書きはこの端末に残しています。";
     } else if (action === "buy") {
       const listing = selectedBefore || currentListing();
       state.listings = state.listings.map((entry) => (
+        entry.id === requestedListingId ? { ...entry, status: "sold" } : entry
+      ));
+      state.sellerListings = state.sellerListings.map((entry) => (
         entry.id === requestedListingId ? { ...entry, status: "sold" } : entry
       ));
       state.success = {
@@ -1353,6 +1814,25 @@ async function performAction(action, payload = {}) {
       state.listings = state.listings.map((entry) => (
         entry.id === requestedListingId ? { ...entry, status: "canceled" } : entry
       ));
+      state.sellerListings = state.sellerListings.map((entry) => (
+        entry.id === requestedListingId ? { ...entry, status: "canceled" } : entry
+      ));
+    } else if (action === "save_urikko_card") {
+      const savedCard = normalizeUrikkoCard(data.savedUrikkoCard || state.urikkoCard);
+      state.urikkoCard = savedCard;
+      state.urikkoCardDraft = savedCard;
+      const ownListingId = state.ownListing?.id || "";
+      if (ownListingId) {
+        const replaceCard = (listing) => listing.id === ownListingId
+          ? { ...listing, seller: { ...listing.seller, urikkoCard: savedCard } }
+          : listing;
+        state.listings = state.listings.map(replaceCard);
+        state.sellerListings = state.sellerListings.map(replaceCard);
+        state.ownListing = replaceCard(state.ownListing);
+      }
+      state.notice = state.ownListing && listingIsOpen(state.ownListing)
+        ? "売りっ子カードを保存し、公開中の今日の一品にも反映しました。"
+        : "売りっ子カードを保存しました。次の出品から公開されます。";
     } else if (action === "set_favorite") {
       applyLocalFavoriteAction(selectedBefore, payload);
       state.notice = payload.favorite
@@ -1366,6 +1846,8 @@ async function performAction(action, payload = {}) {
         : "通報を受け付けました。この端末では対象のXリンクを表示しません。";
     } else if (action === "browse_more") {
       state.browseErrorMessage = "";
+    } else if (action === "browse_sellers") {
+      state.sellerBrowseErrorMessage = "";
     }
     return data;
   } catch (error) {
@@ -1377,6 +1859,12 @@ async function performAction(action, payload = {}) {
       state.screen = "sell";
     } else if (action === "browse_more") {
       state.browseErrorMessage = message;
+    } else if (action === "browse_sellers") {
+      state.sellerBrowseErrorMessage = message;
+    } else if (action === "save_urikko_card") {
+      state.urikkoCardFormMessage = message;
+      state.notice = message;
+      state.screen = "seller-card-editor";
     } else {
       state.notice = message;
     }
@@ -1385,6 +1873,7 @@ async function performAction(action, payload = {}) {
     if (isCurrentLifecycle(generation)) {
       state.busyAction = "";
       render();
+      restoreFocusAfterAction(action, payload, screenBefore);
     }
   }
 }
@@ -1404,10 +1893,10 @@ async function performPreviewAction(action, payload, selectedBefore) {
         publicSellerId: "flea-preview-owner",
         name: validation.value.name,
         creatorCard: previewCreatorCard(validation.value.name),
+        urikkoCard: state.urikkoCard,
       },
     });
     state.ownListing = listing;
-    state.listings = [listing, ...state.listings];
     state.balance = Math.max(0, state.balance - state.policy.listingFee);
     state.screen = "own";
     state.notice = "PREVIEW：今日の一品を棚へ出した表示に切り替えました。";
@@ -1416,6 +1905,9 @@ async function performPreviewAction(action, payload, selectedBefore) {
     if (!listing) throw new Error("出品を確認できません。");
     state.balance = Math.max(0, state.balance - listing.price);
     state.listings = state.listings.map((entry) => (
+      entry.id === listing.id ? { ...entry, status: "sold" } : entry
+    ));
+    state.sellerListings = state.sellerListings.map((entry) => (
       entry.id === listing.id ? { ...entry, status: "sold" } : entry
     ));
     state.success = {
@@ -1433,6 +1925,9 @@ async function performPreviewAction(action, payload, selectedBefore) {
     state.listings = state.listings.map((entry) => (
       entry.id === payload.listingId ? { ...entry, status: "canceled" } : entry
     ));
+    state.sellerListings = state.sellerListings.map((entry) => (
+      entry.id === payload.listingId ? { ...entry, status: "canceled" } : entry
+    ));
     state.cancelReviewOpen = false;
     state.notice = "PREVIEW：取り下げ後の表示に切り替えました。";
   } else if (action === "set_favorite") {
@@ -1446,6 +1941,27 @@ async function performPreviewAction(action, payload, selectedBefore) {
   } else if (action === "browse_more") {
     state.nextBrowseCursor = "";
     state.browseErrorMessage = "";
+  } else if (action === "browse_sellers") {
+    state.sellerListingsCategory = CATEGORY_IDS.has(payload.category) ? payload.category : "";
+    state.sellerListings = state.listings.filter((listing) => (
+      listing.category === state.sellerListingsCategory
+    ));
+    state.nextSellerCursor = "";
+    state.sellerBrowseErrorMessage = "";
+  } else if (action === "save_urikko_card") {
+    const validation = validateUrikkoCardDraft(payload);
+    if (!validation.ok) throw new Error(validation.message);
+    const savedCard = normalizeUrikkoCard(validation.value);
+    state.urikkoCard = savedCard;
+    state.urikkoCardDraft = savedCard;
+    const ownListingId = state.ownListing?.id || "";
+    const replaceCard = (listing) => listing?.id === ownListingId
+      ? { ...listing, seller: { ...listing.seller, urikkoCard: savedCard } }
+      : listing;
+    state.listings = state.listings.map(replaceCard);
+    state.sellerListings = state.sellerListings.map(replaceCard);
+    if (state.ownListing) state.ownListing = replaceCard(state.ownListing);
+    state.notice = "PREVIEW：売りっ子カードを保存した表示に切り替えました。";
   }
 }
 
@@ -1513,6 +2029,18 @@ function bindEvents() {
     button.addEventListener("click", () => {
       const category = button.dataset.fleaCategory;
       state.categoryFilter = category === "all" || CATEGORY_IDS.has(category) ? category : "all";
+      if (state.screen === "sellers" && state.categoryFilter !== "all") {
+        state.sellerListings = [];
+        state.sellerListingsCategory = state.categoryFilter;
+        state.nextSellerCursor = "";
+        state.sellerBrowseErrorMessage = "";
+        performAction("browse_sellers", { category: state.categoryFilter }).then(() => {
+          document.querySelector(`[data-flea-category="${state.categoryFilter}"]`)?.focus({
+            preventScroll: true,
+          });
+        });
+        return;
+      }
       render();
       document.querySelector(`[data-flea-category="${state.categoryFilter}"]`)?.focus({ preventScroll: true });
     });
@@ -1526,16 +2054,42 @@ function bindEvents() {
     }
     performAction("browse_more", { cursor });
   });
+  document.querySelector("[data-flea-sellers-more]")?.addEventListener("click", (event) => {
+    const action = event.currentTarget.dataset.fleaSellersMore;
+    if (state.expiresAt && currentServerTime() >= state.expiresAt) {
+      refreshState();
+      return;
+    }
+    if (action === "browse_more") {
+      if (state.nextBrowseCursor) performAction("browse_more", { cursor: state.nextBrowseCursor });
+      return;
+    }
+    if (
+      action === "browse_sellers"
+      && CATEGORY_IDS.has(state.categoryFilter)
+      && state.nextSellerCursor
+    ) {
+      performAction("browse_sellers", {
+        category: state.categoryFilter,
+        cursor: state.nextSellerCursor,
+      });
+    }
+  });
   document.querySelectorAll("[data-flea-detail]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedListingId = String(button.dataset.fleaDetail || "");
+      state.detailReturnScreen = ["sellers", "favorites"].includes(state.screen)
+        ? state.screen
+        : "shelf";
       navigate("detail");
     });
   });
   document.querySelectorAll("[data-flea-favorite]").forEach((button) => {
     button.addEventListener("click", () => {
       const listingId = String(button.dataset.fleaFavorite || "");
-      const listing = state.listings.find((entry) => entry.id === listingId) || currentListing();
+      const listing = state.listings.find((entry) => entry.id === listingId)
+        || state.sellerListings.find((entry) => entry.id === listingId)
+        || currentListing();
       const sellerId = listing?.seller?.publicSellerId || "";
       if (!sellerId) return;
       performAction("set_favorite", {
@@ -1565,6 +2119,14 @@ function bindEvents() {
   form?.querySelectorAll("input, textarea, select").forEach((control) => {
     control.addEventListener("input", updateDraftPreview);
     control.addEventListener("change", updateDraftPreview);
+  });
+  const urikkoForm = document.querySelector("#fleaUrikkoCardForm");
+  urikkoForm?.addEventListener("submit", submitUrikkoCard);
+  urikkoForm?.querySelectorAll("input").forEach((control) => {
+    control.addEventListener(
+      control.type === "text" ? "input" : "change",
+      updateUrikkoCardPreview,
+    );
   });
   document.querySelector("[data-flea-publish]")?.addEventListener("click", () => {
     const validation = validateDraft();
@@ -1605,7 +2167,15 @@ function bindEvents() {
 }
 
 async function start({ initialScreen = "shelf" } = {}) {
-  const normalizedInitialScreen = ["sell", "own", "favorites", "history"].includes(initialScreen)
+  const normalizedInitialScreen = [
+    "shelf",
+    "sellers",
+    "sell",
+    "own",
+    "seller-card-editor",
+    "favorites",
+    "history",
+  ].includes(initialScreen)
     ? initialScreen
     : "shelf";
   if (active) {

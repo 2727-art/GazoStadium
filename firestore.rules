@@ -152,6 +152,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /anjuPayFleaSellerCards/{uid} {
+      allow read, write: if false;
+    }
+
     match /anjuPayFleaFavorites/{uid} {
       allow read, write: if false;
 

@@ -426,6 +426,146 @@ test("create charges one Pay once, replays identical payload, and rejects a chan
   assert.equal(harness.firestore.count("anjuPayFleaListings/"), 1);
 });
 
+test("urikko card uses only unlocked market achievements without changing Pay or browse order", async () => {
+  const harness = createHarness({
+    balances: { seller: 100, viewer: 100 },
+    creatorCards: {
+      seller: { name: "SELLER", text: "今日の好きなところを丁寧に話します" },
+    },
+  });
+  harness.firestore.write("achievementProfiles/seller", {
+    schemaVersion: 1,
+    unlocked: {
+      battle_total_1: 10,
+      market_seller_1: 20,
+      market_seller_3: 30,
+      market_days_2: 40,
+    },
+    pendingUnlocks: {},
+    customShowcase: [],
+    initializedAt: 1,
+    updatedAt: 40,
+  });
+
+  const initialState = await harness.service.performAction("seller", { action: "state" });
+  assert.deepEqual(initialState.urikkoCard, {
+    schemaVersion: 1,
+    tagline: "",
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: [],
+  });
+  assert.deepEqual(
+    initialState.unlockedMarketAchievementIds,
+    ["market_days_2", "market_seller_3"],
+  );
+
+  const savedBeforeListing = await harness.service.performAction("seller", {
+    action: "save_urikko_card",
+    tagline: "推し値市場で育てたことばを、今日の棚にも。",
+    themeId: "sakura",
+    sealId: "ribbon",
+    achievementIds: ["market_seller_1", "market_days_2"],
+  });
+  assert.deepEqual(savedBeforeListing.savedUrikkoCard.achievementIds, [
+    "market_seller_3",
+    "market_days_2",
+  ]);
+  assert.equal(harness.wallet("seller").balance, 100);
+  assert.equal(harness.walletLedger("seller").length, 0);
+  assert.equal(harness.firestore.count("anjuPayFleaListings/"), 0);
+  assert.deepEqual(
+    harness.firestore.read("anjuPayFleaSellerCards/seller").achievementIds,
+    ["market_seller_3", "market_days_2"],
+  );
+
+  const created = await harness.service.performAction("seller", listingInput());
+  const listingId = created.createdListing.id;
+  const storedBeforeEdit = harness.firestore.read(`anjuPayFleaListings/${listingId}`);
+  assert.equal(created.createdListing.seller.urikkoCard.themeId, "sakura");
+  assert.deepEqual(created.createdListing.seller.urikkoCard.achievementIds, [
+    "market_seller_3",
+    "market_days_2",
+  ]);
+
+  const changed = await harness.service.performAction("seller", {
+    action: "save_urikko_card",
+    tagline: "今日は静かに、好きなところから話します。",
+    themeId: "mint",
+    sealId: "flower",
+    achievementIds: ["market_days_2"],
+  });
+  const storedAfterEdit = harness.firestore.read(`anjuPayFleaListings/${listingId}`);
+  assert.equal(changed.savedUrikkoCard.themeId, "mint");
+  assert.equal(storedAfterEdit.urikkoCard.themeId, "mint");
+  assert.equal(storedAfterEdit.browseOrder, storedBeforeEdit.browseOrder);
+  assert.equal(harness.wallet("seller").balance, 99);
+  assert.equal(harness.walletLedger("seller").length, 1);
+
+  const viewerState = await harness.service.performAction("viewer", { action: "state" });
+  const publicListing = viewerState.listings.find((listing) => listing.id === listingId);
+  assert.deepEqual(publicListing.seller.urikkoCard, {
+    schemaVersion: 1,
+    tagline: "今日は静かに、好きなところから話します。",
+    themeId: "mint",
+    sealId: "flower",
+    achievementIds: ["market_days_2"],
+  });
+  assert.equal(containsPrivateIdentity(publicListing), false);
+  assert.equal(JSON.stringify(publicListing).includes("salesCount"), false);
+  assert.equal(JSON.stringify(publicListing).includes("grossSales"), false);
+});
+
+test("urikko card rejects locked, battle, duplicate-family, and forged customization", async () => {
+  const harness = createHarness({ balances: { seller: 100 } });
+  harness.firestore.write("achievementProfiles/seller", {
+    schemaVersion: 1,
+    unlocked: {
+      battle_total_1: 10,
+      market_seller_1: 20,
+      market_seller_3: 30,
+    },
+    pendingUnlocks: {},
+    customShowcase: [],
+    initializedAt: 1,
+    updatedAt: 30,
+  });
+  const base = {
+    action: "save_urikko_card",
+    tagline: "",
+    themeId: "standard",
+    sealId: "heart",
+  };
+  for (const achievementIds of [
+    ["battle_total_1"],
+    ["market_days_2"],
+    ["forged_market_achievement"],
+  ]) {
+    await assert.rejects(
+      harness.service.performAction("seller", { ...base, achievementIds }),
+      hasCode("failed-precondition"),
+    );
+  }
+  await assert.rejects(
+    harness.service.performAction("seller", {
+      ...base,
+      achievementIds: ["market_seller_1", "market_seller_3"],
+    }),
+    hasCode("invalid-argument"),
+  );
+  await assert.rejects(
+    harness.service.performAction("seller", {
+      ...base,
+      themeId: "rank-one",
+      achievementIds: [],
+    }),
+    hasCode("invalid-argument"),
+  );
+  assert.equal(harness.firestore.count("anjuPayFleaSellerCards/"), 0);
+  assert.equal(harness.wallet("seller").balance, 100);
+  assert.equal(harness.walletLedger("seller").length, 0);
+});
+
 test("25 Pay sale is atomic, credits 23 Pay, sinks 2 Pay, and is purchase-idempotent", async () => {
   const harness = createHarness({
     balances: { seller: 100, buyer: 100, otherBuyer: 100 },
@@ -500,7 +640,7 @@ test("insufficient buyer balance rolls back every sale-side write", async () => 
   );
 });
 
-test("a transaction attempt crossing JST midnight rejects both creation and purchase", async () => {
+test("a transaction attempt crossing JST midnight rejects creation, purchase, and card save", async () => {
   const beforeMidnight = Date.parse("2026-07-25T14:59:59.900Z");
   const atMidnight = Date.parse("2026-07-25T15:00:00.000Z");
 
@@ -540,6 +680,26 @@ test("a transaction attempt crossing JST midnight rejects both creation and purc
   assert.equal(purchaseHarnessAtBoundary.wallet("seller").balance, 99);
   assert.equal(purchaseHarnessAtBoundary.firestore.count("anjuPayFleaSales/"), 0);
   assert.equal(purchaseHarnessAtBoundary.firestore.count("anjuPayFleaReceipts/"), 0);
+
+  const cardHarnessAtBoundary = createHarness({
+    balances: { seller: 100 },
+    initialNow: beforeMidnight,
+  });
+  cardHarnessAtBoundary.crossAtNextTransaction(atMidnight);
+  await assert.rejects(
+    cardHarnessAtBoundary.service.performAction("seller", {
+      action: "save_urikko_card",
+      tagline: "",
+      themeId: "standard",
+      sealId: "heart",
+      achievementIds: [],
+    }),
+    hasCode("aborted"),
+  );
+  assert.equal(
+    cardHarnessAtBoundary.firestore.read("anjuPayFleaSellerCards/seller"),
+    undefined,
+  );
 });
 
 test("self purchase, self favorite, and self report are all rejected without side effects", async () => {
@@ -918,11 +1078,84 @@ test("state and browse_more return every paid listing across collision-safe boun
   );
 });
 
-test("favorite addition rejects sold, hidden, and transaction-expired listings", async () => {
+test("browse_sellers pages one category without gaps and keeps working after its cursor sells", async () => {
+  const initialNow = Date.parse("2026-07-25T03:00:00.000Z");
+  const expiresAt = Date.parse("2026-07-25T15:00:00.000Z");
+  const harness = createHarness({
+    balances: { viewer: 100 },
+    initialNow,
+  });
+  const illustrationIds = [];
+  const photoIds = [];
+  for (let index = 0; index < 60; index += 1) {
+    const id = (index + 500).toString(16).padStart(40, "0");
+    const category = index < 55 ? "illustration" : "photo";
+    harness.firestore.write(`anjuPayFleaListings/${id}`, {
+      schemaVersion: 1,
+      sellerUid: `seller-${index}`,
+      publicSellerId: stableId(`seller-${index}`),
+      sellerName: `SELLER${index}`.slice(0, 16),
+      sellerCard: null,
+      urikkoCard: null,
+      dateKey: "2026-07-25",
+      status: "active",
+      category,
+      title: `TITLE${index}`,
+      description: `DESCRIPTION${index}`,
+      price: 25,
+      browseOrder: index.toString(16).padStart(40, "0"),
+      createdAt: initialNow,
+      expiresAt,
+      updatedAt: initialNow,
+    });
+    (category === "illustration" ? illustrationIds : photoIds).push(id);
+  }
+
+  const first = await harness.service.performAction("viewer", {
+    action: "browse_sellers",
+    category: "illustration",
+  });
+  assert.equal(first.sellerListings.length, 50);
+  assert.deepEqual(first.sellerListings.map(({ id }) => id), illustrationIds.slice(0, 50));
+  assert.equal(first.nextSellerCursor, illustrationIds[49]);
+  assert.equal(first.hasMoreSellers, true);
+  assert.equal(first.appendSellerListings, false);
+
+  const cursorPath = `anjuPayFleaListings/${first.nextSellerCursor}`;
+  harness.firestore.write(cursorPath, {
+    ...harness.firestore.read(cursorPath),
+    status: "sold",
+  });
+  const second = await harness.service.performAction("viewer", {
+    action: "browse_sellers",
+    category: "illustration",
+    cursor: first.nextSellerCursor,
+  });
+  assert.deepEqual(second.sellerListings.map(({ id }) => id), illustrationIds.slice(50));
+  assert.equal(second.hasMoreSellers, false);
+  assert.equal(second.appendSellerListings, true);
+  assert.equal(containsPrivateIdentity([...first.sellerListings, ...second.sellerListings]), false);
+
+  const photos = await harness.service.performAction("viewer", {
+    action: "browse_sellers",
+    category: "photo",
+  });
+  assert.deepEqual(photos.sellerListings.map(({ id }) => id), photoIds);
+  await assert.rejects(
+    harness.service.performAction("viewer", {
+      action: "browse_sellers",
+      category: "photo",
+      cursor: illustrationIds[48],
+    }),
+    hasCode("invalid-argument"),
+  );
+});
+
+test("favorite addition allows the purchasing buyer after a sale and rejects everyone else", async () => {
   const beforeMidnight = Date.parse("2026-07-25T14:59:59.900Z");
   const atMidnight = Date.parse("2026-07-25T15:00:00.000Z");
   const harness = createHarness({
-    balances: { seller: 100, buyer: 100 },
+    balances: { seller: 100, buyer: 100, stranger: 100 },
     initialNow: beforeMidnight - 60_000,
   });
   const created = await harness.service.performAction("seller", listingInput());
@@ -930,31 +1163,50 @@ test("favorite addition rejects sold, hidden, and transaction-expired listings",
   const listingPath = `anjuPayFleaListings/${listingId}`;
   const activeListing = harness.firestore.read(listingPath);
 
-  for (const status of ["sold", "hidden"]) {
-    harness.firestore.write(listingPath, {
-      ...activeListing,
-      status,
-    });
-    await assert.rejects(
-      harness.service.performAction("buyer", {
-        action: "set_favorite",
-        listingId,
-        favorite: true,
-      }),
-      hasCode("failed-precondition"),
-    );
-  }
-
-  harness.firestore.write(listingPath, activeListing);
-  harness.setNow(beforeMidnight);
-  harness.crossAtNextTransaction(atMidnight);
+  await harness.service.performAction("buyer", {
+    action: "buy",
+    listingId,
+    buyerName: "BUYER",
+  });
+  const favoritedAfterPurchase = await harness.service.performAction("buyer", {
+    action: "set_favorite",
+    listingId,
+    favorite: true,
+  });
+  assert.equal(favoritedAfterPurchase.favorite.favorite, true);
   await assert.rejects(
-    harness.service.performAction("buyer", {
+    harness.service.performAction("stranger", {
       action: "set_favorite",
       listingId,
       favorite: true,
     }),
     hasCode("failed-precondition"),
   );
-  assert.equal(harness.firestore.count("anjuPayFleaFavorites/buyer/sellers/"), 0);
+
+  harness.firestore.write(listingPath, {
+    ...activeListing,
+    status: "hidden",
+  });
+  await assert.rejects(
+    harness.service.performAction("stranger", {
+      action: "set_favorite",
+      listingId,
+      favorite: true,
+    }),
+    hasCode("failed-precondition"),
+  );
+
+  harness.firestore.write(listingPath, activeListing);
+  harness.setNow(beforeMidnight);
+  harness.crossAtNextTransaction(atMidnight);
+  await assert.rejects(
+    harness.service.performAction("stranger", {
+      action: "set_favorite",
+      listingId,
+      favorite: true,
+    }),
+    hasCode("failed-precondition"),
+  );
+  assert.equal(harness.firestore.count("anjuPayFleaFavorites/buyer/sellers/"), 1);
+  assert.equal(harness.firestore.count("anjuPayFleaFavorites/stranger/sellers/"), 0);
 });

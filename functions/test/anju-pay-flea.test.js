@@ -12,6 +12,11 @@ const {
   FLEA_PRICE_OPTIONS,
   FLEA_REPORT_REASONS,
   FLEA_SCHEMA_VERSION,
+  FLEA_SELLER_CARD_MAX_ACHIEVEMENTS,
+  FLEA_SELLER_CARD_SCHEMA_VERSION,
+  FLEA_SELLER_CARD_SEALS,
+  FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH,
+  FLEA_SELLER_CARD_THEMES,
   FLEA_SUCCESS_FEE_BASIS_POINTS,
   FLEA_TITLE_MAX_LENGTH,
   effectiveFleaListingStatus,
@@ -22,6 +27,7 @@ const {
   fleaSaleSettlement,
   isFleaReportReason,
   normalizeFleaListingInput,
+  normalizeFleaSellerCardInput,
   normalizeFleaSellerName,
   normalizeFleaXPostUrl,
 } = require("../anju-pay-flea");
@@ -51,6 +57,25 @@ test("flea constants pin the independent MVP economy and content contract", () =
   assert.equal(FLEA_TITLE_MAX_LENGTH, 30);
   assert.equal(FLEA_DESCRIPTION_MIN_LENGTH, 20);
   assert.equal(FLEA_DESCRIPTION_MAX_LENGTH, 240);
+  assert.equal(FLEA_SELLER_CARD_SCHEMA_VERSION, 1);
+  assert.equal(FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH, 40);
+  assert.equal(FLEA_SELLER_CARD_MAX_ACHIEVEMENTS, 3);
+  assert.deepEqual(FLEA_SELLER_CARD_THEMES, [
+    "standard",
+    "sakura",
+    "lavender",
+    "mint",
+    "cream",
+    "midnight",
+  ]);
+  assert.deepEqual(FLEA_SELLER_CARD_SEALS, [
+    "heart",
+    "star",
+    "ribbon",
+    "flower",
+    "cat",
+    "moon",
+  ]);
   assert.deepEqual(FLEA_REPORT_REASONS, [
     "rights",
     "privacy",
@@ -70,6 +95,8 @@ test("flea constants pin the independent MVP economy and content contract", () =
     FLEA_CATEGORIES,
     FLEA_REPORT_REASONS,
     FLEA_LISTING_STATUSES,
+    FLEA_SELLER_CARD_THEMES,
+    FLEA_SELLER_CARD_SEALS,
   ]) {
     assert.equal(Object.isFrozen(value), true);
   }
@@ -273,6 +300,69 @@ test("listing text rejects obvious personal information and restricted trade sol
       description,
     );
   }
+});
+
+test("seller card input is independent, bounded, and limited to three achievement IDs", () => {
+  assert.deepEqual(normalizeFleaSellerCardInput({
+    tagline: "ことばで、今日の好きに出会いたい。",
+    themeId: "sakura",
+    sealId: "ribbon",
+    achievementIds: ["market_seller_1", "market_days_2"],
+  }), {
+    schemaVersion: 1,
+    tagline: "ことばで、今日の好きに出会いたい。",
+    themeId: "sakura",
+    sealId: "ribbon",
+    achievementIds: ["market_seller_1", "market_days_2"],
+  });
+  assert.deepEqual(normalizeFleaSellerCardInput({
+    tagline: "  ",
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: [],
+  }), {
+    schemaVersion: 1,
+    tagline: "",
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: [],
+  });
+  assert.throws(() => normalizeFleaSellerCardInput({
+    tagline: "x".repeat(41),
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: [],
+  }), errorCode("invalid_seller_card_tagline"));
+  assert.throws(() => normalizeFleaSellerCardInput({
+    tagline: "DMで連絡してください",
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: [],
+  }), errorCode("contact_solicitation_in_listing_text"));
+  assert.throws(() => normalizeFleaSellerCardInput({
+    tagline: "",
+    themeId: "gold",
+    sealId: "heart",
+    achievementIds: [],
+  }), errorCode("invalid_seller_card_theme"));
+  assert.throws(() => normalizeFleaSellerCardInput({
+    tagline: "",
+    themeId: "standard",
+    sealId: "crown",
+    achievementIds: [],
+  }), errorCode("invalid_seller_card_seal"));
+  assert.throws(() => normalizeFleaSellerCardInput({
+    tagline: "",
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: ["a", "b", "c", "d"],
+  }), errorCode("too_many_seller_card_achievements"));
+  assert.throws(() => normalizeFleaSellerCardInput({
+    tagline: "",
+    themeId: "standard",
+    sealId: "heart",
+    achievementIds: ["market_seller_1", "market_seller_1"],
+  }), errorCode("invalid_seller_card_achievements"));
 });
 
 test("creative descriptions allow isolated place, comparison, vehicle, and fictional weapon words", () => {

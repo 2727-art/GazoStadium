@@ -8702,6 +8702,7 @@ async function transferTargetIsPristine(uid, request) {
     walletSnapshot,
     progressSnapshot,
     marketSnapshot,
+    fleaSellerCardSnapshot,
     patronSnapshot,
     purchaseSnapshot,
     dailyClaimSnapshot,
@@ -8721,6 +8722,7 @@ async function transferTargetIsPristine(uid, request) {
     walletRef(uid).get(),
     economyProgressRef(uid).get(),
     marketStatsRef(uid).get(),
+    firestore.collection("anjuPayFleaSellerCards").doc(uid).get(),
     patronageRef(uid).get(),
     firestore.collection("economyPurchases").doc(uid).collection("items").limit(1).get(),
     firestore.collection("economyClaims").doc(uid).collection("daily").limit(1).get(),
@@ -8743,7 +8745,7 @@ async function transferTargetIsPristine(uid, request) {
     return false;
   }
   if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
-  if (marketSnapshot.exists || patronSnapshot.exists
+  if (marketSnapshot.exists || fleaSellerCardSnapshot.exists || patronSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
   return !soloProfileSnapshot.exists()
@@ -8886,6 +8888,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetWalletSnapshot,
       targetProgressSnapshot,
       targetMarketSnapshot,
+      targetFleaSellerCardSnapshot,
       targetPatronSnapshot,
       targetFamiliarBookSnapshot,
       targetFamiliarBlockSnapshot,
@@ -8895,6 +8898,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(walletRef(targetUid)),
       transaction.get(economyProgressRef(targetUid)),
       transaction.get(marketStatsRef(targetUid)),
+      transaction.get(firestore.collection("anjuPayFleaSellerCards").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
       transaction.get(soloFamiliarBlockRef(targetUid)),
@@ -8930,6 +8934,7 @@ async function redeemAccountTransferCode(request, rawCode) {
     }
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
         || targetMarketSnapshot.exists
+        || targetFleaSellerCardSnapshot.exists
         || targetPatronSnapshot.exists
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {

@@ -271,10 +271,370 @@
   font-size: 1rem;
 }
 
+.flea-category-filters button:disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
+.flea-discovery-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-bottom: 13px;
+  padding: 6px;
+  border: 1px solid rgba(114, 224, 210, 0.16);
+  border-radius: 18px;
+  background: rgba(5, 8, 14, 0.58);
+}
+
+.flea-discovery-switch button {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  gap: 1px 10px;
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  cursor: pointer;
+  color: #aab3c5;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.flea-discovery-switch button > span {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--flea-mint);
+  font-size: 1.15rem;
+}
+
+.flea-discovery-switch button strong,
+.flea-discovery-switch button small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.flea-discovery-switch button strong {
+  color: inherit;
+  font-size: 0.8rem;
+}
+
+.flea-discovery-switch button small {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.flea-discovery-switch button:hover,
+.flea-discovery-switch button:focus-visible,
+.flea-discovery-switch button.is-active {
+  border-color: rgba(114, 224, 210, 0.42);
+  color: #edfffc;
+  background: rgba(114, 224, 210, 0.075);
+}
+
 .flea-shelf-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.flea-urikko-directory {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.flea-seller-order-note {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.36fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 18px;
+  padding: 13px 16px;
+  border: 1px solid rgba(114, 224, 210, 0.2);
+  border-radius: 15px;
+  color: var(--muted);
+  background: rgba(114, 224, 210, 0.05);
+  font-size: 0.73rem;
+  line-height: 1.7;
+}
+
+.flea-seller-order-note strong {
+  color: #c9fff8;
+  font-size: 0.8rem;
+}
+
+.flea-urikko-directory-card {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 13px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  border-radius: 23px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(114, 224, 210, 0.055), transparent 35%),
+    linear-gradient(145deg, rgba(22, 25, 37, 0.96), rgba(9, 12, 20, 0.97));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.17);
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.flea-urikko-directory-card:hover {
+  border-color: rgba(114, 224, 210, 0.28);
+  box-shadow: 0 22px 52px rgba(0, 0, 0, 0.22);
+  transform: translateY(-2px);
+}
+
+.flea-urikko-directory-card > header,
+.flea-urikko-directory-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.flea-urikko-directory-card > header time {
+  color: #8992a4;
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.flea-urikko-directory-card > footer {
+  align-items: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.flea-urikko-directory-card > footer > strong {
+  color: var(--flea-cream);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.28rem;
+}
+
+.flea-urikko-directory-card > footer > div {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.flea-urikko-today {
+  min-width: 0;
+  padding: 2px 3px 0;
+}
+
+.flea-urikko-today > span {
+  color: #8892a6;
+  font-size: 0.61rem;
+  font-weight: 950;
+  letter-spacing: 0.13em;
+}
+
+.flea-urikko-today h2 {
+  margin: 5px 0 7px;
+  font-size: clamp(1.05rem, 2vw, 1.4rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.flea-urikko-today p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #aeb7c8;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.flea-urikko-card {
+  --urikko-accent: #ff8daa;
+  --urikko-secondary: #72e0d2;
+  --urikko-surface: rgba(32, 19, 29, 0.9);
+  min-width: 0;
+  height: 232px;
+  min-height: 208px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 13px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 141, 170, 0.4);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 92% 4%, rgba(114, 224, 210, 0.14), transparent 36%),
+    radial-gradient(circle at 0 100%, rgba(255, 141, 170, 0.12), transparent 44%),
+    var(--urikko-surface);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.flea-urikko-card.is-theme-standard {
+  --urikko-accent: #ff8daa;
+  --urikko-secondary: #72e0d2;
+  --urikko-surface: rgba(29, 22, 32, 0.91);
+}
+
+.flea-urikko-card.is-theme-sakura {
+  --urikko-accent: #ff9fbd;
+  --urikko-secondary: #ffd0dc;
+  --urikko-surface: rgba(42, 21, 32, 0.92);
+  border-color: rgba(255, 159, 189, 0.44);
+}
+
+.flea-urikko-card.is-theme-lavender {
+  --urikko-accent: #c8a7ff;
+  --urikko-secondary: #9dd6ff;
+  --urikko-surface: rgba(29, 24, 47, 0.92);
+  border-color: rgba(200, 167, 255, 0.42);
+}
+
+.flea-urikko-card.is-theme-mint {
+  --urikko-accent: #72e0d2;
+  --urikko-secondary: #baf5d5;
+  --urikko-surface: rgba(17, 37, 37, 0.92);
+  border-color: rgba(114, 224, 210, 0.42);
+}
+
+.flea-urikko-card.is-theme-cream {
+  --urikko-accent: #ffe4ac;
+  --urikko-secondary: #ffbd87;
+  --urikko-surface: rgba(43, 34, 22, 0.92);
+  border-color: rgba(255, 228, 172, 0.43);
+}
+
+.flea-urikko-card.is-theme-midnight {
+  --urikko-accent: #8fb8ff;
+  --urikko-secondary: #b79cff;
+  --urikko-surface: rgba(12, 20, 42, 0.94);
+  border-color: rgba(143, 184, 255, 0.42);
+}
+
+.flea-urikko-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.flea-urikko-card > header > span {
+  color: var(--urikko-accent);
+  font-size: 0.61rem;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+}
+
+.flea-urikko-seal {
+  width: 33px;
+  height: 33px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--urikko-accent);
+  background: rgba(255, 255, 255, 0.045);
+  font-style: normal;
+  font-size: 1rem;
+}
+
+.flea-urikko-identity {
+  min-width: 0;
+  align-self: center;
+}
+
+.flea-urikko-identity small {
+  color: var(--urikko-secondary);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.flea-urikko-identity h3 {
+  margin: 3px 0 7px;
+  color: #fff;
+  font-size: clamp(1.28rem, 2.5vw, 1.9rem);
+  letter-spacing: -0.025em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flea-urikko-identity p {
+  min-height: 2.65em;
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #d0d5df;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.flea-urikko-achievements {
+  min-width: 0;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+}
+
+.flea-urikko-achievement {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  color: #f1f4f8;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 0.65rem;
+  overflow: hidden;
+}
+
+.flea-urikko-achievement i {
+  color: var(--urikko-secondary);
+  font-style: normal;
+}
+
+.flea-urikko-achievement strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flea-urikko-achievements-empty {
+  min-height: 2.4em;
+  align-self: end;
+  margin: 0;
+  color: #8993a6;
+  font-size: 0.64rem;
+  line-height: 1.55;
+}
+
+.flea-urikko-card.is-compact {
+  height: 210px;
+  min-height: 174px;
+  padding: 13px;
+  border-radius: 17px;
+}
+
+.flea-urikko-card.is-compact .flea-urikko-identity h3 {
+  font-size: 1.18rem;
 }
 
 .flea-listing-card,
@@ -1676,6 +2036,321 @@
   }
 }
 
+.flea-urikko-feature {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.38fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 18px;
+  padding: 19px;
+  border: 1px solid rgba(114, 224, 210, 0.14);
+  border-radius: 20px;
+  background: rgba(5, 8, 14, 0.56);
+}
+
+.flea-urikko-feature > div {
+  align-self: center;
+}
+
+.flea-urikko-feature > div > span,
+.flea-urikko-editor-path > div > span,
+.flea-urikko-editor-preview > div > span {
+  color: var(--flea-mint);
+  font-size: 0.64rem;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+}
+
+.flea-urikko-feature > div > h3,
+.flea-urikko-editor-path h3 {
+  margin: 4px 0 8px;
+  font-size: clamp(1.15rem, 2.3vw, 1.7rem);
+}
+
+.flea-urikko-feature > div > p,
+.flea-urikko-editor-path p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.72;
+}
+
+.flea-urikko-feature > .flea-urikko-card {
+  min-height: 190px;
+}
+
+.flea-urikko-editor-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border: 1px solid rgba(200, 167, 255, 0.2);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(200, 167, 255, 0.09), transparent 38%),
+    rgba(200, 167, 255, 0.04);
+}
+
+.flea-urikko-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.flea-urikko-editor-preview,
+.flea-urikko-form {
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(200, 167, 255, 0.07), transparent 35%),
+    linear-gradient(145deg, rgba(22, 25, 37, 0.96), rgba(9, 12, 20, 0.97));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.17);
+}
+
+.flea-urikko-editor-preview {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 14px;
+  padding: 17px;
+}
+
+.flea-urikko-editor-preview > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.flea-urikko-editor-preview > div:first-child small,
+.flea-urikko-editor-preview > p {
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1.65;
+}
+
+.flea-urikko-editor-preview > p {
+  margin: 0;
+}
+
+.flea-urikko-form {
+  display: grid;
+  gap: 17px;
+  padding: clamp(17px, 3vw, 26px);
+}
+
+.flea-urikko-form > section,
+.flea-urikko-form > fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 17px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.flea-urikko-form legend {
+  padding: 0;
+  color: #f0f2f7;
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.flea-urikko-form fieldset > p,
+.flea-urikko-form section > small {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.65;
+}
+
+.flea-urikko-form input[type="text"] {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(4, 7, 13, 0.72);
+  font: inherit;
+}
+
+.flea-urikko-form input[type="text"]:focus {
+  border-color: rgba(114, 224, 210, 0.52);
+  outline: 2px solid rgba(114, 224, 210, 0.12);
+  outline-offset: 1px;
+}
+
+.flea-urikko-form-status {
+  min-height: 1.5em;
+  margin: 0;
+  color: #ffd6df;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.flea-urikko-theme-grid,
+.flea-urikko-seal-grid,
+.flea-urikko-achievement-choices {
+  display: grid;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.flea-urikko-theme-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.flea-urikko-seal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.flea-urikko-achievement-choices {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.flea-urikko-theme-choice,
+.flea-urikko-seal-choice,
+.flea-urikko-achievement-choice {
+  min-width: 0;
+  cursor: pointer;
+}
+
+.flea-urikko-theme-choice input,
+.flea-urikko-seal-choice input,
+.flea-urikko-achievement-choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.flea-urikko-theme-choice > span,
+.flea-urikko-seal-choice > span,
+.flea-urikko-achievement-choice > span {
+  position: relative;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 34px 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  color: #c4cad6;
+  background: rgba(255, 255, 255, 0.025);
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.flea-urikko-achievement-choice > span {
+  grid-template-rows: auto auto;
+}
+
+.flea-urikko-theme-choice > span::after,
+.flea-urikko-seal-choice > span::after,
+.flea-urikko-achievement-choice > span::after {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  color: #8e98aa;
+  font-size: 0.9rem;
+  font-weight: 950;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.flea-urikko-theme-choice > span::after,
+.flea-urikko-seal-choice > span::after {
+  content: "○";
+}
+
+.flea-urikko-achievement-choice > span::after {
+  content: "□";
+}
+
+.flea-urikko-theme-choice i,
+.flea-urikko-seal-choice i,
+.flea-urikko-achievement-choice i {
+  grid-row: 1 / 3;
+  color: var(--flea-rose);
+  font-style: normal;
+  font-size: 1.08rem;
+}
+
+.flea-urikko-theme-choice strong,
+.flea-urikko-seal-choice strong,
+.flea-urikko-achievement-choice strong,
+.flea-urikko-achievement-choice small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.flea-urikko-theme-choice strong,
+.flea-urikko-seal-choice strong,
+.flea-urikko-achievement-choice strong {
+  font-size: 0.73rem;
+}
+
+.flea-urikko-achievement-choice small {
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.flea-urikko-theme-choice input:checked + span,
+.flea-urikko-seal-choice input:checked + span,
+.flea-urikko-achievement-choice input:checked + span {
+  border-color: rgba(114, 224, 210, 0.52);
+  color: #f1fffd;
+  background: rgba(114, 224, 210, 0.085);
+  box-shadow: inset 0 0 0 1px rgba(114, 224, 210, 0.1);
+}
+
+.flea-urikko-theme-choice input:checked + span::after,
+.flea-urikko-seal-choice input:checked + span::after {
+  color: var(--flea-mint);
+  content: "●";
+}
+
+.flea-urikko-achievement-choice input:checked + span::after {
+  color: var(--flea-mint);
+  content: "✓";
+}
+
+.flea-urikko-theme-choice input:focus-visible + span,
+.flea-urikko-seal-choice input:focus-visible + span,
+.flea-urikko-achievement-choice input:focus-visible + span {
+  outline: 2px solid rgba(114, 224, 210, 0.7);
+  outline-offset: 2px;
+}
+
+.flea-urikko-no-achievements {
+  margin-top: 11px;
+  padding: 13px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.flea-urikko-no-achievements strong {
+  color: #edf0f6;
+  font-size: 0.78rem;
+}
+
+.flea-urikko-no-achievements p {
+  margin: 5px 0 10px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.65;
+}
+
+.flea-favorite-seller-card {
+  display: grid;
+  gap: 12px;
+}
+
 
 @media (max-width: 900px) {
   .flea-tabs {
@@ -1698,15 +2373,18 @@
   }
 
   .flea-editor-layout,
-  .flea-review-grid {
+  .flea-review-grid,
+  .flea-urikko-editor-layout {
     grid-template-columns: 1fr;
   }
 
-  .flea-editor-preview {
+  .flea-editor-preview,
+  .flea-urikko-editor-preview {
     position: static;
   }
 
-  .flea-creator-card {
+  .flea-creator-card,
+  .flea-urikko-feature {
     grid-template-columns: 1fr;
   }
 
@@ -1760,7 +2438,16 @@
   }
 
   .flea-shelf-grid,
-  .flea-history-grid {
+  .flea-history-grid,
+  .flea-urikko-directory {
+    grid-template-columns: 1fr;
+  }
+
+  .flea-seller-order-note {
+    grid-template-columns: 1fr;
+  }
+
+  .flea-urikko-achievement-choices {
     grid-template-columns: 1fr;
   }
 
@@ -1794,6 +2481,7 @@
 
 @media (max-width: 520px) {
   .flea-top-actions,
+  .flea-discovery-switch,
   .flea-form-actions,
   .flea-review-actions,
   .flea-success-actions,
@@ -1811,6 +2499,7 @@
   }
 
   .flea-listing-card,
+  .flea-urikko-directory-card,
   .flea-detail,
   .flea-editor-preview,
   .flea-form,
@@ -1824,6 +2513,7 @@
   }
 
   .flea-listing-card > footer,
+  .flea-urikko-directory-card > footer,
   .flea-success-record,
   .flea-purchase-summary {
     align-items: stretch;
@@ -1837,8 +2527,16 @@
   }
 
   .flea-listing-card > footer .button,
-  .flea-listing-card > footer .flea-favorite {
+  .flea-listing-card > footer .flea-favorite,
+  .flea-urikko-directory-card > footer .button,
+  .flea-urikko-directory-card > footer .flea-favorite {
     width: 100%;
+  }
+
+  .flea-urikko-directory-card > footer > div {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 1fr;
   }
 
 
@@ -1861,6 +2559,24 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .flea-urikko-editor-path {
+    grid-template-columns: 1fr;
+  }
+
+  .flea-urikko-editor-path .button {
+    width: 100%;
+  }
+
+  .flea-urikko-editor-preview > div:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .flea-urikko-theme-grid,
+  .flea-urikko-seal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .flea-balance-check {
@@ -1886,6 +2602,20 @@
   }
 }
 
+@media (max-width: 380px) {
+  .flea-urikko-theme-grid,
+  .flea-urikko-seal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .flea-urikko-card,
+  .flea-urikko-feature,
+  .flea-urikko-editor-preview,
+  .flea-urikko-form {
+    padding: 14px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .flea-loader i {
     animation: none;
@@ -1893,13 +2623,19 @@
   }
 
   .flea-tabs button,
+  .flea-discovery-switch button,
   .flea-category-filters button,
   .flea-listing-card,
+  .flea-urikko-directory-card,
+  .flea-urikko-theme-choice > span,
+  .flea-urikko-seal-choice > span,
+  .flea-urikko-achievement-choice > span,
   .flea-x-link {
     transition: none;
   }
 
   .flea-listing-card:hover,
+  .flea-urikko-directory-card:hover,
   .flea-x-link:hover,
   .flea-category-filters button:hover {
     transform: none;

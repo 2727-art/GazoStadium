@@ -6,6 +6,11 @@ const {
   FLEA_LISTING_FEE,
   FLEA_PRICE_OPTIONS,
   FLEA_SCHEMA_VERSION,
+  FLEA_SELLER_CARD_MAX_ACHIEVEMENTS,
+  FLEA_SELLER_CARD_SCHEMA_VERSION,
+  FLEA_SELLER_CARD_SEALS,
+  FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH,
+  FLEA_SELLER_CARD_THEMES,
   FLEA_SUCCESS_FEE_BASIS_POINTS,
   FLEA_TITLE_MAX_LENGTH,
   assertSafeFleaListingText,
@@ -17,16 +22,24 @@ const {
   fleaSaleSettlement,
   isFleaReportReason,
   normalizeFleaListingInput,
+  normalizeFleaSellerCardInput,
   normalizeFleaSellerName,
   normalizeFleaXPostUrl,
 } = require("./anju-pay-flea");
+const {
+  ACHIEVEMENT_BY_ID,
+  ACHIEVEMENT_DEFINITIONS,
+  normalizeAchievementProfile,
+} = require("./achievements");
 
 const FLEA_ACTIONS = Object.freeze([
   "state",
   "browse_more",
+  "browse_sellers",
   "create_listing",
   "buy",
   "cancel_listing",
+  "save_urikko_card",
   "set_favorite",
   "report",
 ]);
@@ -72,6 +85,13 @@ const STATE_LISTING_LIMIT = 50;
 const STATE_FAVORITE_LIMIT = 100;
 const STATE_RECEIPT_LIMIT = 30;
 const EXPIRY_BATCH_LIMIT = 100;
+const DEFAULT_FLEA_SELLER_CARD = Object.freeze({
+  schemaVersion: FLEA_SELLER_CARD_SCHEMA_VERSION,
+  tagline: "",
+  themeId: "standard",
+  sealId: "heart",
+  achievementIds: Object.freeze([]),
+});
 const X_QUARANTINE_REPORT_REASONS = Object.freeze(new Set([
   "rights",
   "privacy",
@@ -129,6 +149,8 @@ function createAnjuPayFleaService(deps) {
   const favoriteSellersRef = (uid) => favoriteOwnerRef(uid).collection("sellers");
   const favoriteRef = (uid, publicSellerId) => favoriteSellersRef(uid).doc(publicSellerId);
   const reportRef = (reportId) => firestore.collection("anjuPayFleaReports").doc(reportId);
+  const sellerCardRef = (uid) => firestore.collection("anjuPayFleaSellerCards").doc(uid);
+  const achievementProfileRef = (uid) => firestore.collection("achievementProfiles").doc(uid);
 
   function httpsError(code, message) {
     return new HttpsError(code, message);
@@ -171,6 +193,14 @@ function createAnjuPayFleaService(deps) {
       throw httpsError("invalid-argument", "出品者を確認してください。");
     }
     return publicSellerId;
+  }
+
+  function requireFleaCategory(value) {
+    const category = typeof value === "string" ? value.trim() : "";
+    if (!FLEA_CATEGORIES.includes(category)) {
+      throw httpsError("invalid-argument", "カテゴリを選び直してください。");
+    }
+    return category;
   }
 
   function finiteTimestamp(value, fallback = 0) {
@@ -231,6 +261,94 @@ function createAnjuPayFleaService(deps) {
 
   function privateFavoriteCreatorCard(value) {
     return withoutCreatorCardXHandle(value);
+  }
+
+  function safeUrikkoTagline(value) {
+    const tagline = safeOneLine(value, FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH);
+    if (!tagline) return "";
+    try {
+      assertSafeFleaListingText(tagline, "");
+      return tagline;
+    } catch {
+      return "";
+    }
+  }
+
+  function publicUrikkoCard(value) {
+    const source = value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : DEFAULT_FLEA_SELLER_CARD;
+    const themeId = FLEA_SELLER_CARD_THEMES.includes(source.themeId)
+      ? source.themeId
+      : DEFAULT_FLEA_SELLER_CARD.themeId;
+    const sealId = FLEA_SELLER_CARD_SEALS.includes(source.sealId)
+      ? source.sealId
+      : DEFAULT_FLEA_SELLER_CARD.sealId;
+    const achievementIds = [];
+    for (const candidate of Array.isArray(source.achievementIds) ? source.achievementIds : []) {
+      const id = String(candidate || "");
+      const definition = ACHIEVEMENT_BY_ID.get(id);
+      if (
+        !definition
+        || definition.scope !== "market"
+        || achievementIds.includes(id)
+      ) continue;
+      achievementIds.push(id);
+      if (achievementIds.length >= FLEA_SELLER_CARD_MAX_ACHIEVEMENTS) break;
+    }
+    return {
+      schemaVersion: FLEA_SELLER_CARD_SCHEMA_VERSION,
+      tagline: safeUrikkoTagline(source.tagline),
+      themeId,
+      sealId,
+      achievementIds,
+    };
+  }
+
+  function highestUnlockedMarketAchievements(profileValue) {
+    const profile = normalizeAchievementProfile(profileValue);
+    const highestByFamily = new Map();
+    for (const definition of ACHIEVEMENT_DEFINITIONS) {
+      if (definition.scope !== "market" || !profile.unlocked[definition.id]) continue;
+      const current = highestByFamily.get(definition.family);
+      if (!current || definition.level > current.level) {
+        highestByFamily.set(definition.family, definition);
+      }
+    }
+    return [...highestByFamily.values()]
+      .sort((left, right) => (
+        Number(profile.unlocked[right.id] || 0) - Number(profile.unlocked[left.id] || 0)
+        || right.level - left.level
+        || left.id.localeCompare(right.id)
+      ));
+  }
+
+  function verifiedUrikkoCard(value, profileValue) {
+    const normalized = normalizeFleaSellerCardInput(value);
+    const profile = normalizeAchievementProfile(profileValue);
+    const selectedFamilies = new Set();
+    const achievementIds = normalized.achievementIds.map((id) => {
+      const definition = ACHIEVEMENT_BY_ID.get(id);
+      if (!definition || definition.scope !== "market" || !profile.unlocked[id]) {
+        throw httpsError(
+          "failed-precondition",
+          "売りっ子カードには、本人が解除済みの推し値市場実績だけを飾れます。",
+        );
+      }
+      if (selectedFamilies.has(definition.family)) {
+        throw httpsError(
+          "invalid-argument",
+          "同じ系統の推し値市場実績は、いちばん新しい1件だけを選んでください。",
+        );
+      }
+      selectedFamilies.add(definition.family);
+      return highestUnlockedMarketAchievements(profile)
+        .find((candidate) => candidate.family === definition.family)?.id || id;
+    });
+    return publicUrikkoCard({
+      ...normalized,
+      achievementIds,
+    });
   }
 
   async function readCreatorCard(uid) {
@@ -307,6 +425,7 @@ function createAnjuPayFleaService(deps) {
           : "",
         name: safeOneLine(source.sellerName, 16, "PLAYER"),
         creatorCard: publicCreatorCard(source.sellerCard),
+        urikkoCard: publicUrikkoCard(source.urikkoCard),
       },
     };
     const xPostUrl = safePublicXPostUrl(source.xPostUrl);
@@ -362,8 +481,10 @@ function createAnjuPayFleaService(deps) {
     const favorite = { publicSellerId };
     const name = safeOneLine(source.name, 16);
     const creatorCard = privateFavoriteCreatorCard(source.creatorCard);
+    const urikkoCard = publicUrikkoCard(source.urikkoCard);
     if (name) favorite.name = name;
     if (creatorCard) favorite.creatorCard = creatorCard;
+    favorite.urikkoCard = urikkoCard;
     const updatedAt = finiteTimestamp(source.updatedAt);
     if (updatedAt) favorite.updatedAt = updatedAt;
     return assertNoPrivateFleaFields(favorite);
@@ -382,6 +503,14 @@ function createAnjuPayFleaService(deps) {
     return listingsCollection()
       .where("dateKey", "==", dateKey)
       .where("status", "==", "active")
+      .orderBy("browseOrder", "asc");
+  }
+
+  function activeSellerBrowseQuery(dateKey, category) {
+    return listingsCollection()
+      .where("dateKey", "==", dateKey)
+      .where("status", "==", "active")
+      .where("category", "==", category)
       .orderBy("browseOrder", "asc");
   }
 
@@ -422,6 +551,8 @@ function createAnjuPayFleaService(deps) {
       ownListingSnapshot,
       favoritesSnapshot,
       receiptsSnapshot,
+      sellerCardSnapshot,
+      achievementProfileSnapshot,
     ] = await Promise.all([
       ensureWallet(uid),
       getFirstBrowsePage(dateKey),
@@ -431,6 +562,8 @@ function createAnjuPayFleaService(deps) {
         .orderBy("createdAt", "desc")
         .limit(STATE_RECEIPT_LIMIT)
         .get(),
+      sellerCardRef(uid).get(),
+      achievementProfileRef(uid).get(),
     ]);
     const serverNow = currentTime();
     if (fleaJstDateKey(serverNow) !== dateKey) {
@@ -465,6 +598,10 @@ function createAnjuPayFleaService(deps) {
       ownListing,
       favorites,
       receipts,
+      urikkoCard: publicUrikkoCard(sellerCardSnapshot.data()),
+      unlockedMarketAchievementIds: highestUnlockedMarketAchievements(
+        achievementProfileSnapshot.data(),
+      ).map((definition) => definition.id),
     });
   }
 
@@ -505,6 +642,52 @@ function createAnjuPayFleaService(deps) {
     });
   }
 
+  async function getSellerBrowseListings(uidValue, categoryValue, cursorValue = "") {
+    const uid = requireUid(uidValue);
+    const category = requireFleaCategory(categoryValue);
+    const cursor = cursorValue == null || cursorValue === ""
+      ? ""
+      : requireBrowseCursor(cursorValue);
+    const requestNow = currentTime();
+    const dateKey = fleaJstDateKey(requestNow);
+    const expiresAt = fleaExpiresAt(requestNow);
+    let query = activeSellerBrowseQuery(dateKey, category);
+    if (cursor) {
+      const cursorSnapshot = await listingRef(cursor).get();
+      const cursorListing = cursorSnapshot.exists ? cursorSnapshot.data() || {} : null;
+      if (
+        !cursorListing
+        || cursorListing.dateKey !== dateKey
+        || cursorListing.category !== category
+        || !FLEA_ID_PATTERN.test(String(cursorListing.browseOrder || ""))
+      ) {
+        throw httpsError("invalid-argument", "売りっ子一覧を最初から読み直してください。");
+      }
+      // The cursor may have sold since the previous page. Its immutable day, category,
+      // ordering value and document ID are sufficient to continue without skipping anyone.
+      query = query.startAfter(cursorSnapshot);
+    }
+    const listingsSnapshot = await query.limit(STATE_LISTING_LIMIT + 1).get();
+    const serverNow = currentTime();
+    if (fleaJstDateKey(serverNow) !== dateKey) {
+      throw httpsError(
+        "aborted",
+        "日付が変わったため、売りっ子一覧を最初から更新してください。",
+      );
+    }
+    const page = publicBrowsePage(listingsSnapshot, uid, serverNow);
+    return assertNoPrivateFleaFields({
+      serverNow,
+      dateKey,
+      expiresAt,
+      category,
+      appendSellerListings: Boolean(cursor),
+      sellerListings: page.listings,
+      nextSellerCursor: page.nextBrowseCursor,
+      hasMoreSellers: page.hasMore,
+    });
+  }
+
   async function mirrorCommittedBalances(label, balances) {
     await bestEffort(
       label,
@@ -538,6 +721,7 @@ function createAnjuPayFleaService(deps) {
     const browseOrder = anjuPayEntryId(`flea-browse:${dateKey}:${listingId}`);
     const walletReference = walletRef(uid);
     const listingReference = listingRef(listingId);
+    const sellerCardReference = sellerCardRef(uid);
     await ensureWallet(uid);
 
     let storedListing = null;
@@ -545,10 +729,16 @@ function createAnjuPayFleaService(deps) {
     let committedAt = requestedAt;
     let replayed = false;
     await firestore.runTransaction(async (transaction) => {
-      const [walletSnapshot, listingSnapshot, ledgerConfigSnapshot] = await Promise.all([
+      const [
+        walletSnapshot,
+        listingSnapshot,
+        ledgerConfigSnapshot,
+        sellerCardSnapshot,
+      ] = await Promise.all([
         transaction.get(walletReference),
         transaction.get(listingReference),
         transaction.get(anjuPayLedgerConfigRef()),
+        transaction.get(sellerCardReference),
       ]);
       const wallet = walletData(walletSnapshot);
       const attemptNow = currentTime();
@@ -630,6 +820,7 @@ function createAnjuPayFleaService(deps) {
         sellerName,
         creatorCardEntryId: creatorIdentity.entryId,
         sellerCard: creatorIdentity.card,
+        urikkoCard: publicUrikkoCard(sellerCardSnapshot.data()),
         dateKey,
         status: "active",
         category: normalized.category,
@@ -850,6 +1041,7 @@ function createAnjuPayFleaService(deps) {
         sellerName: safeOneLine(listing.sellerName, 16, "PLAYER"),
         creatorCardEntryId: listing.creatorCardEntryId || "",
         sellerCard: publicCreatorCard(listing.sellerCard),
+        urikkoCard: publicUrikkoCard(listing.urikkoCard),
         category: listing.category,
         listingTitle: listing.title,
         description: listing.description,
@@ -953,6 +1145,63 @@ function createAnjuPayFleaService(deps) {
     return publicFleaListing(listingId, storedListing, uid, canceledAt);
   }
 
+  async function saveUrikkoCard(uid, data) {
+    // Validate all appearance fields before entering the transaction. Achievement ownership
+    // is intentionally checked again from the server-owned profile inside the transaction.
+    normalizeFleaSellerCardInput(data);
+    const requestedAt = currentTime();
+    const dateKey = fleaJstDateKey(requestedAt);
+    const cardReference = sellerCardRef(uid);
+    const profileReference = achievementProfileRef(uid);
+    const todayListingReference = listingRef(fleaListingId(uid, dateKey));
+    let savedCard = null;
+
+    await firestore.runTransaction(async (transaction) => {
+      const [cardSnapshot, profileSnapshot, listingSnapshot] = await Promise.all([
+        transaction.get(cardReference),
+        transaction.get(profileReference),
+        transaction.get(todayListingReference),
+      ]);
+      const attemptNow = currentTime();
+      if (fleaJstDateKey(attemptNow) !== dateKey) {
+        throw httpsError(
+          "aborted",
+          "日付が変わったため、売りっ子カードをもう一度保存してください。",
+        );
+      }
+      const publicCard = verifiedUrikkoCard(data, profileSnapshot.data());
+      const currentPublicCard = publicUrikkoCard(cardSnapshot.data());
+      const cardChanged = !cardSnapshot.exists
+        || JSON.stringify(currentPublicCard) !== JSON.stringify(publicCard);
+      savedCard = {
+        ...publicCard,
+        publicSellerId: fleaPublicSellerId(uid),
+        createdAt: finiteTimestamp(cardSnapshot.get("createdAt"), attemptNow),
+        updatedAt: cardChanged
+          ? attemptNow
+          : finiteTimestamp(cardSnapshot.get("updatedAt"), attemptNow),
+      };
+      if (cardChanged) transaction.set(cardReference, savedCard);
+
+      if (listingSnapshot.exists) {
+        const listing = listingSnapshot.data() || {};
+        if (
+          listing.sellerUid === uid
+          && listing.dateKey === fleaJstDateKey(attemptNow)
+          && listing.status === "active"
+          && effectiveFleaListingStatus(listing, attemptNow) === "active"
+          && JSON.stringify(publicUrikkoCard(listing.urikkoCard)) !== JSON.stringify(publicCard)
+        ) {
+          transaction.update(todayListingReference, {
+            urikkoCard: publicCard,
+            updatedAt: attemptNow,
+          });
+        }
+      }
+    });
+    return publicUrikkoCard(savedCard);
+  }
+
   async function setFavorite(uid, data) {
     if (typeof data?.favorite !== "boolean") {
       throw httpsError("invalid-argument", "お気に入りの状態を確認してください。");
@@ -995,10 +1244,14 @@ function createAnjuPayFleaService(deps) {
       }
       publicSellerId = requirePublicSellerId(listing.publicSellerId);
       const attemptNow = currentTime();
+      const canFavoriteActiveListing = listing.status === "active"
+        && effectiveFleaListingStatus(listing, attemptNow) === "active";
+      const canFavoritePurchasedListing = listing.status === "sold"
+        && listing.buyerUid === uid;
       if (
         data.favorite
-        && (listing.status !== "active"
-          || effectiveFleaListingStatus(listing, attemptNow) !== "active")
+        && !canFavoriteActiveListing
+        && !canFavoritePurchasedListing
       ) {
         throw httpsError("failed-precondition", "この出品はすでに受付を終了しています。");
       }
@@ -1017,6 +1270,7 @@ function createAnjuPayFleaService(deps) {
         publicSellerId,
         name,
         creatorCard: privateFavoriteCreatorCard(listing.sellerCard),
+        urikkoCard: publicUrikkoCard(listing.urikkoCard),
         updatedAt,
       };
       if (data.favorite) {
@@ -1204,6 +1458,9 @@ function createAnjuPayFleaService(deps) {
     if (action === "browse_more") {
       return getMoreBrowseListings(uid, data.cursor);
     }
+    if (action === "browse_sellers") {
+      return getSellerBrowseListings(uid, data.category, data.cursor);
+    }
 
     let field = "";
     let mutation = null;
@@ -1216,6 +1473,9 @@ function createAnjuPayFleaService(deps) {
     } else if (action === "cancel_listing") {
       field = "canceled";
       mutation = await cancelListing(uid, data);
+    } else if (action === "save_urikko_card") {
+      field = "savedUrikkoCard";
+      mutation = await saveUrikkoCard(uid, data);
     } else if (action === "set_favorite") {
       field = "favorite";
       mutation = await setFavorite(uid, data);

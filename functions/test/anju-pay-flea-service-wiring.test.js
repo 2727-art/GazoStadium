@@ -46,35 +46,56 @@ test("service is an injected factory with the three required operations", () => 
   assert.match(source, /async expireListings\(now\)/);
 });
 
-test("the flea service never imports or writes existing synchronous-market progression", () => {
-  assert.doesNotMatch(source, /valueMarket/);
+test("market achievements are read-only decoration and never mutate market progression", () => {
+  assert.match(source, /require\("\.\/achievements"\)/);
+  assert.match(source, /firestore\.collection\("achievementProfiles"\)\.doc\(uid\)/);
+  assert.match(source, /definition\.scope !== "market"/);
+  assert.match(source, /normalizeAchievementProfile/);
+  assert.doesNotMatch(source, /collection\("valueMarket/);
   assert.doesNotMatch(source, /marketStatsRef|addMarketTransaction|ensureAchievementState/);
   assert.doesNotMatch(source, /unlockAchievements|ensureMarketShop|applyMarketSaleToShop/);
   assert.doesNotMatch(source, /syncCreatorCardGrowth|RankedPairs|AchievementPairs/);
   assert.doesNotMatch(source, /MarketCertificates|patronFund|marketShop/i);
+  const save = between("async function saveUrikkoCard", "async function setFavorite");
+  assert.doesNotMatch(
+    save,
+    /walletRef|ensureWallet|debitPoints|creditPoints|stageAnjuPayOpening|appendAnjuPayEntry/,
+  );
+  assert.doesNotMatch(save, /transaction\.(?:set|update|create)\(profileReference/);
 });
 
 test("all flea persistence stays in dedicated callable-only collections", () => {
+  const rules = fs.readFileSync(
+    path.resolve(__dirname, "..", "..", "firestore.rules"),
+    "utf8",
+  );
   for (const collection of [
     "anjuPayFleaListings",
     "anjuPayFleaSales",
     "anjuPayFleaReceipts",
     "anjuPayFleaFavorites",
     "anjuPayFleaReports",
+    "anjuPayFleaSellerCards",
   ]) {
     assert.match(source, new RegExp(`collection\\("${collection}"\\)`));
   }
   for (const action of [
     "state",
     "browse_more",
+    "browse_sellers",
     "create_listing",
     "buy",
     "cancel_listing",
+    "save_urikko_card",
     "set_favorite",
     "report",
   ]) {
     assert.match(source, new RegExp(`"${action}"`));
   }
+  assert.match(
+    rules,
+    /match \/anjuPayFleaSellerCards\/\{uid\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+  );
 });
 
 test("public responses are allowlisted and recursively reject private UIDs", () => {
@@ -86,7 +107,12 @@ test("public responses are allowlisted and recursively reject private UIDs", () 
     source,
     /function assertNoPrivateFleaFields[\s\S]*?PRIVATE_FLEA_RESPONSE_FIELDS\.has\(key\)/,
   );
-  for (const sanitizer of ["publicFleaListing", "publicFleaReceipt", "publicCreatorCard"]) {
+  for (const sanitizer of [
+    "publicFleaListing",
+    "publicFleaReceipt",
+    "publicCreatorCard",
+    "publicUrikkoCard",
+  ]) {
     assert.match(source, new RegExp(`function ${sanitizer}\\(`));
   }
   const card = between("function publicCreatorCard", "async function readCreatorCard");
@@ -104,6 +130,28 @@ test("public responses are allowlisted and recursively reject private UIDs", () 
     assert.match(card, new RegExp(`\\b${field}\\b`));
   }
   assert.doesNotMatch(card, /sellerUid|buyerUid|reporterUid/);
+  const urikkoCard = between(
+    "function publicUrikkoCard",
+    "function highestUnlockedMarketAchievements",
+  );
+  for (const field of [
+    "schemaVersion",
+    "tagline",
+    "themeId",
+    "sealId",
+    "achievementIds",
+  ]) {
+    assert.match(urikkoCard, new RegExp(`\\b${field}\\b`));
+  }
+  assert.match(urikkoCard, /definition\.scope !== "market"/);
+  assert.match(
+    urikkoCard,
+    /achievementIds\.length >= FLEA_SELLER_CARD_MAX_ACHIEVEMENTS/,
+  );
+  assert.doesNotMatch(
+    urikkoCard,
+    /sellerUid|buyerUid|reporterUid|grossSales|netSales|bestSale|salesCount|purchaseCount|favoriteCount|viewCount|impression|ranking|marketShop|publicMarketSellerId/i,
+  );
   assert.match(source, /function safePublicXPostUrl[\s\S]*?normalizeFleaXPostUrl\(value\)/);
   assert.match(
     source,
@@ -114,7 +162,10 @@ test("public responses are allowlisted and recursively reject private UIDs", () 
     listing,
     /id:[\s\S]*?dateKey:[\s\S]*?category:[\s\S]*?title:[\s\S]*?description:[\s\S]*?price:[\s\S]*?status,[\s\S]*?createdAt:[\s\S]*?expiresAt:[\s\S]*?isOwn,[\s\S]*?seller:/,
   );
-  assert.match(listing, /publicSellerId:[\s\S]*?name:[\s\S]*?creatorCard:/);
+  assert.match(
+    listing,
+    /publicSellerId:[\s\S]*?name:[\s\S]*?creatorCard:[\s\S]*?urikkoCard:/,
+  );
   assert.doesNotMatch(listing, /\blistingFee\b|\bcreatorCardEntryId\b|\bsellerName:/);
   const receipt = between("function publicFleaReceipt", "function publicFleaFavorite");
   assert.match(
@@ -153,10 +204,12 @@ test("state returns a bounded first page in stable browse order", () => {
   );
   assert.match(state, /fleaJstDateKey\(serverNow\) !== dateKey/);
   assert.match(state, /getStateInternal\(uid, false\)/);
+  assert.match(state, /sellerCardRef\(uid\)\.get\(\)/);
+  assert.match(state, /achievementProfileRef\(uid\)\.get\(\)/);
   assert.match(state, /receiptItemsRef\(uid\)[\s\S]*?\.orderBy\("createdAt", "desc"\)[\s\S]*?\.limit\(STATE_RECEIPT_LIMIT\)/);
   assert.match(
     state,
-    /serverNow,[\s\S]*?dateKey,[\s\S]*?expiresAt,[\s\S]*?policy: policy\(\),[\s\S]*?balance:[\s\S]*?\.\.\.browsePage,[\s\S]*?ownListing,[\s\S]*?favorites,[\s\S]*?receipts/,
+    /serverNow,[\s\S]*?dateKey,[\s\S]*?expiresAt,[\s\S]*?policy: policy\(\),[\s\S]*?balance:[\s\S]*?\.\.\.browsePage,[\s\S]*?ownListing,[\s\S]*?favorites,[\s\S]*?receipts,[\s\S]*?urikkoCard:[\s\S]*?unlockedMarketAchievementIds:/,
   );
 });
 
@@ -175,6 +228,105 @@ test("browse_more validates a same-day 40-hex cursor and preserves collision tie
   assert.match(more, /serverNow,[\s\S]*?dateKey,[\s\S]*?expiresAt,[\s\S]*?\.\.\.publicBrowsePage/);
   assert.match(source, /action === "browse_more"[\s\S]*?getMoreBrowseListings\(uid, data\.cursor\)/);
 });
+
+test("browse_sellers is category-scoped and keeps the neutral daily order", () => {
+  const indexes = JSON.parse(fs.readFileSync(
+    path.resolve(__dirname, "..", "..", "firestore.indexes.json"),
+    "utf8",
+  ));
+  assert.ok(indexes.indexes.some((index) => (
+    index.collectionGroup === "anjuPayFleaListings"
+    && ["dateKey", "status", "category", "browseOrder"].every((fieldPath) => (
+      index.fields.some((field) => (
+        field.fieldPath === fieldPath && field.order === "ASCENDING"
+      ))
+    ))
+  )));
+  const sellerQuery = between("function activeSellerBrowseQuery", "function publicBrowsePage");
+  assert.match(sellerQuery, /\.where\("dateKey", "==", dateKey\)/);
+  assert.match(sellerQuery, /\.where\("status", "==", "active"\)/);
+  assert.match(sellerQuery, /\.where\("category", "==", category\)/);
+  assert.deepEqual(
+    [...sellerQuery.matchAll(/\.orderBy\("([^"]+)", "asc"\)/g)]
+      .map((match) => match[1]),
+    ["browseOrder"],
+  );
+  assert.doesNotMatch(
+    sellerQuery,
+    /sales|purchase|favorite|view|impression|ranking|achievement|theme|seal/i,
+  );
+
+  const sellers = between(
+    "async function getSellerBrowseListings",
+    "async function mirrorCommittedBalances",
+  );
+  assert.match(sellers, /requireFleaCategory\(categoryValue\)/);
+  assert.match(sellers, /activeSellerBrowseQuery\(dateKey, category\)/);
+  assert.match(sellers, /cursorListing\.dateKey !== dateKey/);
+  assert.match(sellers, /cursorListing\.category !== category/);
+  assert.match(sellers, /\.startAfter\(cursorSnapshot\)/);
+  assert.match(sellers, /\.limit\(STATE_LISTING_LIMIT \+ 1\)/);
+  assert.match(sellers, /appendSellerListings: Boolean\(cursor\)/);
+  assert.match(sellers, /sellerListings: page\.listings/);
+  assert.match(sellers, /nextSellerCursor: page\.nextBrowseCursor/);
+  assert.match(sellers, /hasMoreSellers: page\.hasMore/);
+  assert.match(
+    source,
+    /action === "browse_sellers"[\s\S]*?getSellerBrowseListings\(uid, data\.category, data\.cursor\)/,
+  );
+  const create = between("async function createListing", "async function purchaseListing");
+  assert.match(
+    create,
+    /const browseOrder = anjuPayEntryId\(`flea-browse:\$\{dateKey\}:\$\{listingId\}`\)/,
+  );
+});
+
+test("seller cards accept only owner-selected unlocked market achievements", () => {
+  const verified = between("function verifiedUrikkoCard", "async function readCreatorCard");
+  assert.match(verified, /normalizeFleaSellerCardInput\(value\)/);
+  assert.match(verified, /normalizeAchievementProfile\(profileValue\)/);
+  assert.match(
+    verified,
+    /!definition \|\| definition\.scope !== "market" \|\| !profile\.unlocked\[id\]/,
+  );
+  assert.match(verified, /const selectedFamilies = new Set\(\)/);
+  assert.match(verified, /selectedFamilies\.has\(definition\.family\)/);
+  assert.match(verified, /highestUnlockedMarketAchievements\(profile\)/);
+
+  const save = between("async function saveUrikkoCard", "async function setFavorite");
+  const firstWrite = Math.min(
+    ...["transaction.set(", "transaction.update("]
+      .map((marker) => save.indexOf(marker))
+      .filter((index) => index >= 0),
+  );
+  for (const read of [
+    "transaction.get(cardReference)",
+    "transaction.get(profileReference)",
+    "transaction.get(todayListingReference)",
+  ]) {
+    assert.ok(save.indexOf(read) >= 0 && save.indexOf(read) < firstWrite, read);
+  }
+  assert.match(save, /verifiedUrikkoCard\(data, profileSnapshot\.data\(\)\)/);
+  assert.match(save, /transaction\.set\(cardReference, savedCard\)/);
+  assert.match(
+    save,
+    /listing\.sellerUid === uid[\s\S]*?listing\.status === "active"[\s\S]*?effectiveFleaListingStatus\(listing, attemptNow\) === "active"/,
+  );
+  assert.match(
+    save,
+    /transaction\.update\(todayListingReference, \{[\s\S]*?urikkoCard: publicCard/,
+  );
+  assert.doesNotMatch(
+    save,
+    /walletRef|ensureWallet|debitPoints|creditPoints|stageAnjuPayOpening|appendAnjuPayEntry|marketStatsRef|valueMarket|unlockAchievements|ensureMarketShop|syncCreatorCardGrowth/,
+  );
+  assert.doesNotMatch(save, /transaction\.(?:set|update|create)\(profileReference/);
+  assert.match(
+    source,
+    /action === "save_urikko_card"[\s\S]*?mutation = await saveUrikkoCard\(uid, data\)/,
+  );
+});
+
 test("creator-card identity is owner-verified and X posts must use its public handle", () => {
   assert.match(source, /online\/topMessageEntriesByUser\/\$\{uid\}/);
   assert.match(source, /online\/topMessageOwners\/\$\{entryId\}/);
@@ -198,6 +350,7 @@ test("listing creation reads every transaction dependency before charging once",
     "transaction.get(walletReference)",
     "transaction.get(listingReference)",
     "transaction.get(anjuPayLedgerConfigRef())",
+    "transaction.get(sellerCardReference)",
   ]) {
     assert.ok(create.indexOf(read) >= 0 && create.indexOf(read) < firstWrite, read);
   }
@@ -225,6 +378,7 @@ test("listing creation reads every transaction dependency before charging once",
   );
   assert.doesNotMatch(feeEntry, /listingTitle/);
   assert.match(create, /transaction\.create\(listingReference, storedListing\)/);
+  assert.match(create, /urikkoCard: publicUrikkoCard\(sellerCardSnapshot\.data\(\)\)/);
   assert.match(create, /mirrorCommittedBalances\("anjuPayFleaCreate"/);
 });
 
@@ -275,7 +429,9 @@ test("cancel, favorite, and report remain non-rewarding and idempotent", () => {
   assert.doesNotMatch(favorite, /favoriteCount|counter|increment/i);
   assert.match(favorite, /privateFavoriteCreatorCard\(listing\.sellerCard\)/);
   assert.match(favorite, /const attemptNow = currentTime\(\)/);
-  assert.match(favorite, /data\.favorite[\s\S]*?listing\.status !== "active"[\s\S]*?effectiveFleaListingStatus\(listing, attemptNow\) !== "active"/);
+  assert.match(favorite, /const canFavoriteActiveListing = listing\.status === "active"[\s\S]*?effectiveFleaListingStatus\(listing, attemptNow\) === "active"/);
+  assert.match(favorite, /const canFavoritePurchasedListing = listing\.status === "sold"[\s\S]*?listing\.buyerUid === uid/);
+  assert.match(favorite, /data\.favorite[\s\S]*?!canFavoriteActiveListing[\s\S]*?!canFavoritePurchasedListing/);
   assert.match(favorite, /const updatedAt = attemptNow/);
   assert.ok(favorite.indexOf("data.favorite === false") < favorite.indexOf("const listingId"));
   assert.match(favorite, /currentCount >= STATE_FAVORITE_LIMIT/);

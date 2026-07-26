@@ -14,6 +14,25 @@ const FLEA_CATEGORIES = Object.freeze([
 const FLEA_TITLE_MAX_LENGTH = 30;
 const FLEA_DESCRIPTION_MIN_LENGTH = 20;
 const FLEA_DESCRIPTION_MAX_LENGTH = 240;
+const FLEA_SELLER_CARD_SCHEMA_VERSION = 1;
+const FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH = 40;
+const FLEA_SELLER_CARD_MAX_ACHIEVEMENTS = 3;
+const FLEA_SELLER_CARD_THEMES = Object.freeze([
+  "standard",
+  "sakura",
+  "lavender",
+  "mint",
+  "cream",
+  "midnight",
+]);
+const FLEA_SELLER_CARD_SEALS = Object.freeze([
+  "heart",
+  "star",
+  "ribbon",
+  "flower",
+  "cat",
+  "moon",
+]);
 const FLEA_REPORT_REASONS = Object.freeze([
   "rights",
   "privacy",
@@ -51,6 +70,7 @@ const CONTROL_CHARACTER_PATTERN = /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f
 const SINGLE_LINE_BREAK_PATTERN = /[\r\n\u2028\u2029]/u;
 const X_POST_PATH_PATTERN = /^\/([A-Za-z0-9_]{1,15})\/status\/([0-9]+)$/;
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ACHIEVEMENT_ID_PATTERN = /^[a-z0-9_]{1,64}$/;
 
 function fleaError(code, message) {
   const error = new RangeError(message);
@@ -260,6 +280,80 @@ function normalizeFleaListingInput(data) {
   });
 }
 
+function normalizeFleaSellerCardInput(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw fleaError("invalid_seller_card_input", "売りっ子カードの内容を確認してください。");
+  }
+  const rawTagline = data.tagline == null
+    ? ""
+    : normalizedString(
+      data.tagline,
+      "invalid_seller_card_tagline",
+      `ひとことは1行${FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH}文字以内で入力してください。`,
+    );
+  if (
+    rawTagline.length > FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH
+    || SINGLE_LINE_BREAK_PATTERN.test(rawTagline)
+    || CONTROL_CHARACTER_PATTERN.test(rawTagline)
+  ) {
+    throw fleaError(
+      "invalid_seller_card_tagline",
+      `ひとことは1行${FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH}文字以内で入力してください。`,
+    );
+  }
+  if (rawTagline) assertSafeFleaListingText(rawTagline, "");
+
+  const themeId = normalizedString(
+    data.themeId,
+    "invalid_seller_card_theme",
+    "カードテーマを選び直してください。",
+  );
+  if (!FLEA_SELLER_CARD_THEMES.includes(themeId)) {
+    throw fleaError("invalid_seller_card_theme", "カードテーマを選び直してください。");
+  }
+
+  const sealId = normalizedString(
+    data.sealId,
+    "invalid_seller_card_seal",
+    "商いの印を選び直してください。",
+  );
+  if (!FLEA_SELLER_CARD_SEALS.includes(sealId)) {
+    throw fleaError("invalid_seller_card_seal", "商いの印を選び直してください。");
+  }
+
+  if (!Array.isArray(data.achievementIds)) {
+    throw fleaError(
+      "invalid_seller_card_achievements",
+      "カードへ飾る推し値市場実績を選び直してください。",
+    );
+  }
+  if (data.achievementIds.length > FLEA_SELLER_CARD_MAX_ACHIEVEMENTS) {
+    throw fleaError(
+      "too_many_seller_card_achievements",
+      `カードへ飾れる推し値市場実績は${FLEA_SELLER_CARD_MAX_ACHIEVEMENTS}件までです。`,
+    );
+  }
+  const achievementIds = [];
+  for (const value of data.achievementIds) {
+    const id = typeof value === "string" ? value.trim() : "";
+    if (!ACHIEVEMENT_ID_PATTERN.test(id) || achievementIds.includes(id)) {
+      throw fleaError(
+        "invalid_seller_card_achievements",
+        "カードへ飾る推し値市場実績を選び直してください。",
+      );
+    }
+    achievementIds.push(id);
+  }
+
+  return Object.freeze({
+    schemaVersion: FLEA_SELLER_CARD_SCHEMA_VERSION,
+    tagline: rawTagline,
+    themeId,
+    sealId,
+    achievementIds: Object.freeze(achievementIds),
+  });
+}
+
 function fleaSaleSettlement(price) {
   if (!Number.isSafeInteger(price) || !FLEA_PRICE_OPTIONS.includes(price)) {
     throw fleaError("invalid_flea_price", "価格を選び直してください。");
@@ -335,6 +429,11 @@ module.exports = Object.freeze({
   FLEA_PRICE_OPTIONS,
   FLEA_REPORT_REASONS,
   FLEA_SCHEMA_VERSION,
+  FLEA_SELLER_CARD_MAX_ACHIEVEMENTS,
+  FLEA_SELLER_CARD_SCHEMA_VERSION,
+  FLEA_SELLER_CARD_SEALS,
+  FLEA_SELLER_CARD_TAGLINE_MAX_LENGTH,
+  FLEA_SELLER_CARD_THEMES,
   FLEA_SUCCESS_FEE_BASIS_POINTS,
   FLEA_TITLE_MAX_LENGTH,
   assertSafeFleaListingText,
@@ -346,6 +445,7 @@ module.exports = Object.freeze({
   fleaSaleSettlement,
   isFleaReportReason,
   normalizeFleaListingInput,
+  normalizeFleaSellerCardInput,
   normalizeFleaSellerName,
   normalizeFleaXPostUrl,
 });

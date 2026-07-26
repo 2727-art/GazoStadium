@@ -98,12 +98,44 @@ test("account protection wiring preserves UID and never copies wallet data", () 
   for (const collection of [
     "valueMarketPatrons",
     "valueMarketPatronLedger",
+    "anjuPayFleaSellerCards",
     "accountTransferCodes",
     "accountTransferSources",
     "accountTransferAttempts",
   ]) {
     assert.match(rules, new RegExp(`match /${collection}/`));
   }
+});
+
+test("a saved flea seller card makes an account-transfer target non-pristine", () => {
+  const server = read("functions/index.js");
+  const start = server.indexOf("async function transferTargetIsPristine");
+  const end = server.indexOf("async function registerTransferFailure", start);
+  assert.ok(start >= 0 && end > start);
+  const pristine = server.slice(start, end);
+  assert.match(pristine, /\bfleaSellerCardSnapshot\b/);
+  assert.match(
+    pristine,
+    /firestore\.collection\("anjuPayFleaSellerCards"\)\.doc\(uid\)\.get\(\)/,
+  );
+  assert.match(
+    pristine,
+    /marketSnapshot\.exists \|\| fleaSellerCardSnapshot\.exists \|\| patronSnapshot\.exists/,
+  );
+
+  const redeemStart = server.indexOf("async function redeemAccountTransferCode");
+  const redeemEnd = server.indexOf("async function cancelAccountTransferCode", redeemStart);
+  assert.ok(redeemStart >= 0 && redeemEnd > redeemStart);
+  const redeem = server.slice(redeemStart, redeemEnd);
+  assert.match(redeem, /\btargetFleaSellerCardSnapshot\b/);
+  assert.match(
+    redeem,
+    /transaction\.get\(firestore\.collection\("anjuPayFleaSellerCards"\)\.doc\(targetUid\)\)/,
+  );
+  assert.match(
+    redeem,
+    /targetMarketSnapshot\.exists[\s\S]*?\|\| targetFleaSellerCardSnapshot\.exists[\s\S]*?\|\| targetPatronSnapshot\.exists/,
+  );
 });
 
 test("account transfer treats a fresh normal 1on1 V2 session as active", () => {

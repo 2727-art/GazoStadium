@@ -270,6 +270,7 @@ if (!RUN_REQUESTED) {
       const reportId = "c".repeat(40);
       const fixturePaths = [
         ["anjuPayFleaListings", listingId],
+        ["anjuPayFleaSellerCards", "wallet-owner"],
         ["anjuPayFleaSales", listingId],
         ["anjuPayFleaReceipts", "wallet-owner", "items", listingId],
         ["anjuPayFleaReceipts", "wallet-owner"],
@@ -304,6 +305,7 @@ if (!RUN_REQUESTED) {
 
       for (const collectionSegments of [
         ["anjuPayFleaListings"],
+        ["anjuPayFleaSellerCards"],
         ["anjuPayFleaSales"],
         ["anjuPayFleaReceipts", "wallet-owner", "items"],
         ["anjuPayFleaReceipts"],
