@@ -1,4 +1,5 @@
 .firebase/
+.codex-remote-attachments/
 firebase-debug.log
 firebase-debug.*.log
 database-debug.log

@@ -263,6 +263,60 @@ if (!RUN_REQUESTED) {
       await rulesUnitTesting.assertFails(firestoreClient.deleteDoc(config));
     });
 
+    test("AnjuPay flea collections reject every direct client read and write", async () => {
+      await testEnvironment.clearFirestore();
+      const listingId = "a".repeat(40);
+      const sellerId = "b".repeat(40);
+      const reportId = "c".repeat(40);
+      const fixturePaths = [
+        ["anjuPayFleaListings", listingId],
+        ["anjuPayFleaSales", listingId],
+        ["anjuPayFleaReceipts", "wallet-owner", "items", listingId],
+        ["anjuPayFleaReceipts", "wallet-owner"],
+        ["anjuPayFleaFavorites", "wallet-owner"],
+        ["anjuPayFleaFavorites", "wallet-owner", "sellers", sellerId],
+        ["anjuPayFleaReports", reportId],
+      ];
+      await testEnvironment.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all(fixturePaths.map((segments) => (
+          firestoreClient.setDoc(firestoreClient.doc(db, ...segments), {
+            marker: "server-only",
+          })
+        )));
+      });
+
+      const ownerDb = testEnvironment.authenticatedContext("wallet-owner").firestore();
+      const anonymousDb = testEnvironment.unauthenticatedContext().firestore();
+      for (const segments of fixturePaths) {
+        const ownerDocument = firestoreClient.doc(ownerDb, ...segments);
+        const anonymousDocument = firestoreClient.doc(anonymousDb, ...segments);
+        await rulesUnitTesting.assertFails(firestoreClient.getDoc(ownerDocument));
+        await rulesUnitTesting.assertFails(firestoreClient.getDoc(anonymousDocument));
+        await rulesUnitTesting.assertFails(
+          firestoreClient.setDoc(ownerDocument, { marker: "client" }),
+        );
+        await rulesUnitTesting.assertFails(
+          firestoreClient.updateDoc(ownerDocument, { marker: "client" }),
+        );
+        await rulesUnitTesting.assertFails(firestoreClient.deleteDoc(ownerDocument));
+      }
+
+      for (const collectionSegments of [
+        ["anjuPayFleaListings"],
+        ["anjuPayFleaSales"],
+        ["anjuPayFleaReceipts", "wallet-owner", "items"],
+        ["anjuPayFleaReceipts"],
+        ["anjuPayFleaFavorites"],
+        ["anjuPayFleaFavorites", "wallet-owner", "sellers"],
+        ["anjuPayFleaReports"],
+      ]) {
+        await rulesUnitTesting.assertFails(firestoreClient.getDocs(
+          firestoreClient.collection(ownerDb, ...collectionSegments),
+        ));
+      }
+    });
+
     test("solo profile projection queues and jobs reject every direct client access", async () => {
       await testEnvironment.clearFirestore();
       await testEnvironment.withSecurityRulesDisabled(async (context) => {

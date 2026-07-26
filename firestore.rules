@@ -147,6 +147,35 @@ service cloud.firestore {
       }
     }
 
+    // AnjuPayフリマは一覧を含む全操作をCallable経由に限定し、UIDを公開しません。
+    match /anjuPayFleaListings/{listingId} {
+      allow read, write: if false;
+    }
+
+    match /anjuPayFleaFavorites/{uid} {
+      allow read, write: if false;
+
+      match /sellers/{publicSellerId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /anjuPayFleaReceipts/{uid} {
+      allow read, write: if false;
+
+      match /items/{receiptId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /anjuPayFleaSales/{listingId} {
+      allow read, write: if false;
+    }
+
+    match /anjuPayFleaReports/{reportId} {
+      allow read, write: if false;
+    }
+
     match /accountTransferCodes/{codeHash} {
       allow read, write: if false;
     }

@@ -8,6 +8,8 @@
   "scripts": {
     "check": "node --check index.js && node --test test/*.test.js",
     "test:emulator": "node --test --test-concurrency=1 test/*emulator.test.js",
+    "test:flea-emulator": "node test/run-anju-pay-flea-e2e-emulator.js",
+    "test:flea-emulator:run": "node --test --test-concurrency=1 test/anju-pay-flea-e2e-emulator.test.js",
     "serve": "firebase emulators:start --only auth,functions,firestore,database --project demo-gazostadium"
   },
   "dependencies": {

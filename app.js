@@ -73,6 +73,8 @@
   let profileAvatarReadyPromise = null;
   let pendingValueMarketDestination = "";
   let valueMarketReadyListenerPending = false;
+  let pendingFleaMarketDestination = "";
+  let fleaMarketReadyListenerPending = false;
   const profileAvatarState = { ready: false, blob: null, url: "" };
   const audioStudioState = {
     recorder: null,
@@ -761,6 +763,20 @@
     </section>`;
   }
 
+  function renderLandingFleaPanel() {
+    return `<section class="landing-flea" id="fleaMarketPanel" aria-labelledby="fleaMarketPanelTitle">
+      <div class="landing-flea-mark" aria-hidden="true"><span>一日棚</span><strong>◇</strong></div>
+      <div class="landing-flea-copy">
+        <span class="eyebrow">ANJUPAY FLEA MARKET</span>
+        <h2 id="fleaMarketPanelTitle">AnjuPayフリマ</h2>
+        <p class="landing-flea-lead">ことばから、推しに出会う。</p>
+        <p>イラスト・実写・衣装コーデを、画像ではなく言葉で紹介する今日だけの一日棚です。任意のXポストは、見たい人だけ外部で確認できます。</p>
+        <small>推し値市場の販売実績・ランキング・常連帳・実績とは別に扱われます。実物・画像データ・衣服・権利の受け渡しはありません。</small>
+        <div class="landing-flea-actions"><button class="button button-primary" id="fleaMarketBrowseButton" type="button">今日の出品を見る</button><button class="button button-ghost" id="fleaMarketSellButton" type="button">今日の一品を出す</button></div>
+      </div>
+    </section>`;
+  }
+
   function bindLandingTopMessageEvents() {
     document.querySelector("[data-top-message-retry]")?.addEventListener("click", async () => {
       await window.HariaiOnline?.refreshTopMessages?.();
@@ -849,6 +865,7 @@
           <button class="button hero-audio-tool-button" id="audioStudioButton"><small>端末内だけで録音・変換</small><span>♪ 10秒音声をつくる</span></button>
         </div>
         ${renderLandingTopMessagePanel()}
+        ${renderLandingFleaPanel()}
         <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
           <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
@@ -880,6 +897,7 @@
 
   function renderLandingScreen() {
     pendingValueMarketDestination = "";
+    pendingFleaMarketDestination = "";
     currentScreen = "landing";
     expandedRankingEntryId = "";
     rankingComments = [];
@@ -888,8 +906,9 @@
     app.innerHTML = renderLanding();
     document.querySelector(".screen.hero")?.addEventListener("click", (event) => {
       const control = event.target.closest?.("button, a");
-      if (!control || control.matches("#valueMarketButton, #valueMarketRankingButton")) return;
-      pendingValueMarketDestination = "";
+      if (!control) return;
+      if (!control.matches("#valueMarketButton, #valueMarketRankingButton")) pendingValueMarketDestination = "";
+      if (!control.matches("#fleaMarketBrowseButton, #fleaMarketSellButton")) pendingFleaMarketDestination = "";
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
@@ -897,6 +916,8 @@
     document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
+    document.querySelector("#fleaMarketBrowseButton")?.addEventListener("click", startFleaMarketBrowse);
+    document.querySelector("#fleaMarketSellButton")?.addEventListener("click", startFleaMarketSell);
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#achievementButton")?.addEventListener("click", () => openOnlineFeature("openAchievements"));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
@@ -1316,6 +1337,40 @@
     }, { once: true });
   }
 
+  function startFleaMarketBrowse() {
+    startFleaMarketDestination("shelf");
+  }
+
+  function startFleaMarketSell() {
+    startFleaMarketDestination("sell");
+  }
+
+  function startFleaMarketDestination(destination) {
+    const initialScreen = destination === "sell" ? "sell" : "shelf";
+    if (typeof window.HariaiFleaMarket?.start === "function") {
+      pendingFleaMarketDestination = "";
+      window.HariaiFleaMarket.start({ initialScreen });
+      return;
+    }
+    if (window.HariaiFleaMarket) {
+      showToast("AnjuPayフリマを更新しました。ページを再読み込みしてお試しください。");
+      return;
+    }
+    pendingFleaMarketDestination = initialScreen;
+    showToast(initialScreen === "sell"
+      ? "AnjuPayフリマの出品画面を読み込んでいます…"
+      : "AnjuPayフリマの一日棚を読み込んでいます…");
+    if (fleaMarketReadyListenerPending) return;
+    fleaMarketReadyListenerPending = true;
+    window.addEventListener("hariai-flea-market-ready", () => {
+      fleaMarketReadyListenerPending = false;
+      const requestedDestination = pendingFleaMarketDestination;
+      pendingFleaMarketDestination = "";
+      if (!requestedDestination || !document.querySelector(".screen.hero")) return;
+      window.HariaiFleaMarket?.start?.({ initialScreen: requestedDestination });
+    }, { once: true });
+  }
+
   function startAccount() {
     if (window.HariaiAccount?.start) {
       window.HariaiAccount.start();
@@ -1657,7 +1712,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE + VALUE MARKET";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE + VALUE MARKET + ANJUPAY FLEA";
     if (footerItems[1]) footerItems[1].textContent = "画像と戦略型・推し値市場の音声は相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
@@ -1671,6 +1726,10 @@
     event.preventDefault();
     if (window.HariaiAccount?.isActive?.()) {
       window.HariaiAccount.requestHome();
+      return;
+    }
+    if (window.HariaiFleaMarket?.isActive?.()) {
+      window.HariaiFleaMarket.requestHome();
       return;
     }
     if (window.HariaiMarket?.isActive?.()) {

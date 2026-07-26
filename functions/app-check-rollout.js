@@ -27,6 +27,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   getP2pIceServers: true,
   // 接続診断は内部保存領域への書き込みとなるため、常時強制します。
   reportP2pConnectivity: true,
+  // 新規公開の非同期フリマは旧クライアント移行を待つ必要がないため、初日から強制します。
+  anjuPayFleaAction: true,
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),

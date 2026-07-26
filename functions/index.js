@@ -94,6 +94,9 @@ const {
   postMatchTipAmount,
 } = require("./market-economy");
 const {
+  createAnjuPayFleaService,
+} = require("./anju-pay-flea-service");
+const {
   marketClosingAllowsExtension,
   marketClosingAuditMode,
   marketClosingDecision,
@@ -12045,6 +12048,55 @@ exports.valueMarketAction = onCall(callableOptions("valueMarketAction"), async (
     if (error instanceof HttpsError) throw error;
     console.error("valueMarketAction failed", { uid, roomId: request.data?.roomId, action: request.data?.action, error });
     throw new HttpsError("internal", "市場取引を完了できませんでした。");
+  }
+});
+
+const anjuPayFleaService = createAnjuPayFleaService({
+  firestore,
+  realtime,
+  HttpsError,
+  ensureWallet,
+  walletRef,
+  anjuPayLedgerConfigRef,
+  walletData,
+  walletCreditCapacity,
+  debitPoints,
+  creditPoints,
+  stageAnjuPayOpening,
+  appendAnjuPayEntry,
+  anjuPayWalletMetadataPatch,
+  anjuPayEntryId,
+  mirrorWallet,
+  bestEffort,
+});
+
+exports.anjuPayFleaAction = onCall(callableOptions("anjuPayFleaAction"), async (request) => {
+  const uid = requireUid(request);
+  try {
+    return await anjuPayFleaService.performAction(uid, request.data);
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("anjuPayFleaAction failed", {
+      uid,
+      action: request.data?.action,
+      error,
+    });
+    throw new HttpsError("internal", "AnjuPayフリマの処理を完了できませんでした。");
+  }
+});
+
+exports.expireAnjuPayFleaListings = onSchedule({
+  schedule: "every day 00:00",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    return await anjuPayFleaService.expireListings(Date.now());
+  } catch (error) {
+    console.error("expireAnjuPayFleaListings failed", { error });
+    throw error;
   }
 });
 

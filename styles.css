@@ -775,6 +775,10 @@ button:disabled {
   border-color: rgba(77, 232, 223, 0.17);
 }
 
+.anju-pay-history-entry.is-flea {
+  border-color: rgba(196, 151, 255, 0.2);
+}
+
 .anju-pay-history-entry.is-tip {
   border-color: rgba(255, 111, 145, 0.17);
 }
@@ -803,6 +807,10 @@ button:disabled {
 
 .is-market .anju-pay-history-icon {
   color: var(--cyan);
+}
+
+.is-flea .anju-pay-history-icon {
+  color: #c497ff;
 }
 
 .is-tip .anju-pay-history-icon {
@@ -1934,6 +1942,101 @@ button:disabled {
     radial-gradient(circle at 4% 10%, rgba(255, 105, 137, 0.15), transparent 28%),
     linear-gradient(135deg, rgba(25, 20, 34, 0.94), rgba(12, 20, 29, 0.94));
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.landing-flea {
+  position: relative;
+  max-width: 860px;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 22px;
+  margin-top: 18px;
+  padding: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(196, 151, 255, 0.3);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 5% 20%, rgba(196, 151, 255, 0.16), transparent 30%),
+    linear-gradient(135deg, rgba(28, 20, 42, 0.95), rgba(12, 20, 29, 0.95));
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.18), inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.landing-flea::after {
+  position: absolute;
+  right: -50px;
+  bottom: -70px;
+  width: 180px;
+  height: 180px;
+  border: 1px solid rgba(196, 151, 255, 0.12);
+  border-radius: 50%;
+  content: "";
+}
+
+.landing-flea-mark {
+  min-height: 132px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+  border: 1px solid rgba(196, 151, 255, 0.24);
+  border-radius: 18px;
+  color: #d9bcff;
+  background: rgba(196, 151, 255, 0.07);
+}
+
+.landing-flea-mark span {
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.landing-flea-mark strong {
+  font-size: 2.3rem;
+  line-height: 1;
+}
+
+.landing-flea-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.landing-flea-copy h2 {
+  margin: 4px 0 1px;
+  font-size: clamp(1.25rem, 3vw, 1.7rem);
+}
+
+.landing-flea-copy > p {
+  max-width: 650px;
+  margin: 7px 0;
+  color: #aeb6c8;
+  font-size: 0.76rem;
+  line-height: 1.7;
+}
+
+.landing-flea-copy .landing-flea-lead {
+  margin-top: 0;
+  color: #e7d8fb;
+  font-size: 0.94rem;
+  font-weight: 900;
+}
+
+.landing-flea-copy > small {
+  display: block;
+  color: #8e96aa;
+  font-size: 0.65rem;
+  line-height: 1.65;
+}
+
+.landing-flea-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 15px;
+}
+
+.landing-flea-actions .button {
+  min-height: 44px;
 }
 
 .community-message-head {
@@ -7439,6 +7542,20 @@ button:disabled {
 
   .hero-mode-button {
     min-height: 66px;
+  }
+
+  .landing-flea {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 17px;
+  }
+
+  .landing-flea-mark {
+    min-height: 72px;
+  }
+
+  .landing-flea-actions .button {
+    width: 100%;
   }
 
   .audio-studio-card {

@@ -32,7 +32,7 @@ googleProvider.setCustomParameters({ prompt: "select_account" });
 const TRANSFER_SESSION_KEY = "hariaiActiveTransferCodeV1";
 const ANJU_PAY_HISTORY_PAGE_SIZE = 20;
 const ANJU_PAY_MAX_BALANCE = 999_999;
-const ANJU_PAY_CATEGORIES = new Set(["opening", "earn", "spend", "market", "tip"]);
+const ANJU_PAY_CATEGORIES = new Set(["opening", "earn", "spend", "market", "flea", "tip"]);
 const ANJU_PAY_STATUSES = new Set(["posted", "held", "settled", "refunded", "partial", "capped"]);
 const ANJU_PAY_LABELS = Object.freeze({
   opening: "AnjuPay開始残高",
@@ -58,6 +58,10 @@ const ANJU_PAY_LABELS = Object.freeze({
   market_settlement: "推し値市場の取引成立",
   market_refund: "推し値市場から返却",
   market_cancel: "推し値市場の取引取消",
+  flea_listing_fee: "AnjuPayフリマの出品料",
+  flea_purchase: "AnjuPayフリマで一品を選んだ",
+  flea_sale: "AnjuPayフリマで一品が選ばれた",
+  flea_success_fee: "AnjuPayフリマの販売手数料",
 });
 const ANJU_PAY_STATUS_LABELS = Object.freeze({
   posted: "反映済み",
@@ -320,6 +324,12 @@ function historyLabel(entry) {
   if (key.includes("daily") || key.includes("mission")) return ANJU_PAY_LABELS.daily_mission;
   if (key.includes("period")) return ANJU_PAY_LABELS.period_reward;
   if (key.includes("patron")) return ANJU_PAY_LABELS.patron_upgrade;
+  if (key.includes("flea_listing_fee")) return ANJU_PAY_LABELS.flea_listing_fee;
+  if (key.includes("flea_purchase")) return ANJU_PAY_LABELS.flea_purchase;
+  if (key.includes("flea_success_fee")) return ANJU_PAY_LABELS.flea_success_fee;
+  if (key.includes("flea_sale")) return ANJU_PAY_LABELS.flea_sale;
+  if (key.includes("flea") && entry.delta < 0) return ANJU_PAY_LABELS.flea_purchase;
+  if (key.includes("flea")) return ANJU_PAY_LABELS.flea_sale;
   if (!key.includes("market") && (key.includes("purchase") || key.includes("shop"))) {
     return ANJU_PAY_LABELS.shop_purchase;
   }
@@ -378,6 +388,7 @@ function historyLabel(entry) {
   if (entry.category === "earn") return "AnjuPayを獲得";
   if (entry.category === "spend") return "AnjuPayを利用";
   if (entry.category === "market") return "推し値市場";
+  if (entry.category === "flea") return "AnjuPayフリマ";
   if (entry.category === "tip") return entry.delta < 0 ? "対戦後の応援" : "対戦後に受けた応援";
   return "AnjuPay残高の更新";
 }
@@ -725,7 +736,8 @@ function modesAreActive() {
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiTeam?.isActive?.()
     || window.HariaiRoyale?.isActive?.()
-    || window.HariaiMarket?.isActive?.(),
+    || window.HariaiMarket?.isActive?.()
+    || window.HariaiFleaMarket?.isActive?.(),
   );
 }
 
@@ -998,7 +1010,7 @@ function renderAnjuPayPolicy() {
   return `<section class="anju-pay-policy" aria-labelledby="anjuPayPolicyTitle">
     <div class="anju-pay-policy-mark" aria-hidden="true">A</div>
     <div><span class="eyebrow">IN-STADIUM CURRENCY</span><h2 id="anjuPayPolicyTitle">貼り合いスタジアムの中だけで使えるAnjuPay</h2>
-      <p>対戦やミッションで稼ぎ、AnjuPayストア、推し値市場、対戦後の応援など、ゲーム内で用意された用途に使うゲーム内通貨です。</p>
+      <p>対戦やミッションで稼ぎ、AnjuPayストア、推し値市場、AnjuPayフリマ、対戦後の応援など、ゲーム内で用意された用途に使うゲーム内通貨です。</p>
       <strong>現金での購入・チャージ、換金、自由送金、ゲーム外での利用には対応せず、今後も追加しません。</strong>
     </div>
   </section>`;
@@ -1023,7 +1035,7 @@ function renderHistoryEntry(entry) {
     : `<small>反映後 ${formatAnjuPay(entry.balanceAfter)}</small>`;
   const dateTime = historyDateTime(entry.occurredAt);
   return `<li class="anju-pay-history-entry is-${entry.category} ${amount > 0 ? "is-positive" : amount < 0 ? "is-negative" : "is-neutral"}">
-    <div class="anju-pay-history-icon" aria-hidden="true">${entry.category === "earn" ? "＋" : entry.category === "spend" ? "－" : entry.category === "market" ? "↔" : entry.category === "tip" ? "♡" : "A"}</div>
+    <div class="anju-pay-history-icon" aria-hidden="true">${entry.category === "earn" ? "＋" : entry.category === "spend" ? "－" : entry.category === "market" ? "↔" : entry.category === "flea" ? "◇" : entry.category === "tip" ? "♡" : "A"}</div>
     <div class="anju-pay-history-copy"><div><time${dateTime ? ` datetime="${escapeHtml(dateTime)}"` : ""}>${escapeHtml(formatHistoryTime(entry.occurredAt))}</time><span>${escapeHtml(ANJU_PAY_STATUS_LABELS[entry.status] || "反映済み")}</span></div>
       <strong>${escapeHtml(historyLabel(entry))}</strong>${detail ? `<p>${escapeHtml(detail)}</p>` : ""}</div>
     <div class="anju-pay-history-amount"><strong>${escapeHtml(amountText)}</strong>${balanceAfter}</div>
