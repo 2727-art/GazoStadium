@@ -1519,7 +1519,7 @@
         ".read": "auth != null",
         "$uid": {
           ".write": "auth != null && auth.uid === $uid",
-          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'rating', 'streak', 'joinedAt', 'lastSeen', 'state']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('lastSeen').isNumber() && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'forming'))"
+          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'name', 'rating', 'streak', 'joinedAt', 'lastSeen', 'state']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() >= now - 43200000 && newData.child('joinedAt').val() <= now + 15000 && newData.child('lastSeen').isNumber() && newData.child('lastSeen').val() >= now - 15000 && newData.child('lastSeen').val() <= now + 15000 && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'forming') && ((!newData.child('protocolVersion').exists() && !newData.child('variant').exists() && !newData.child('role').exists() && !newData.child('components').exists() && !newData.child('eligibilitySnapshot').exists()) || (newData.child('protocolVersion').val() === 2 && newData.child('variant').val() === 'oshi_jouzu_duo' && !newData.child('eligibilitySnapshot').exists() && (newData.child('role').val() === 'oshi_jouzu' || newData.child('role').val() === 'challenger') && newData.child('components').hasChildren(['audio', 'video', 'words']) && newData.child('components/audio').isBoolean() && newData.child('components/video').isBoolean() && newData.child('components/words').isBoolean())))"
         }
       },
       "teamActive": {
@@ -1531,7 +1531,7 @@
       },
       "teamMatchLock": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && (!newData.exists() || newData.child('uid').val() === auth.uid)) || (data.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now && newData.exists() && newData.child('uid').val() === auth.uid))",
+        ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && !newData.exists()) || (data.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now && newData.exists() && newData.child('uid').val() === auth.uid))",
         ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'roomId', 'createdAt', 'expiresAt']) && newData.child('uid').isString() && newData.child('uid').val() === auth.uid && newData.child('roomId').isString() && newData.child('roomId').val().length > 0 && newData.child('roomId').val().length <= 40 && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 15000 && newData.child('createdAt').val() <= now + 15000 && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() > newData.child('createdAt').val() && newData.child('expiresAt').val() <= now + 60000)"
       },
       "teamInvites": {
@@ -1573,9 +1573,42 @@
           }
         }
       },
+      "teamDuoScores": {
+        "$roomId": {
+          ".read": "auth != null && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/variant').val() === 'oshi_jouzu_duo' && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/teamRooms/' + $roomId + '/scoreReady/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/scoreReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/scoreReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true",
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true",
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/variant').val() === 'oshi_jouzu_duo' && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/scoringStartedAt').isNumber() && root.child('online/teamRooms/' + $roomId + '/scoringStartedAt').val() <= now && now <= root.child('online/teamRooms/' + $roomId + '/scoringStartedAt').val() + 120000 && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+            ".validate": "newData.hasChildren(['values', 'auto', 'lockedAt']) && newData.child('auto').isBoolean() && newData.child('lockedAt').isNumber() && newData.child('lockedAt').val() >= now - 300000 && newData.child('lockedAt').val() <= now + 300000 && (($uid === root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val() && newData.child('values').hasChildren([root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val(), root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()]) && !newData.child('values/' + $uid).exists()) || (($uid === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || $uid === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && newData.child('values').hasChildren([root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()]) && !newData.child('values/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).exists() && !newData.child('values/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).exists()))",
+            "values": {
+              "$targetUid": {
+                ".validate": "(($uid === root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val() && ($targetUid === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || $targetUid === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val())) || (($uid === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || $uid === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && $targetUid === root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val())) && (newData.val() === 1 || newData.val() === 2 || newData.val() === 3 || newData.val() === 4 || newData.val() === 5 || newData.val() === 6 || newData.val() === 7 || newData.val() === 8 || newData.val() === 9 || newData.val() === 10)"
+              }
+            },
+            "auto": {
+              ".validate": "newData.isBoolean()"
+            },
+            "lockedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      },
       "teamRooms": {
         "$roomId": {
           ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
+          ".write": "auth != null && !data.exists() && newData.hasChildren(['protocolVersion', 'variant', 'hostUid', 'createdAt', 'status', 'roster', 'members', 'players', 'accepted', 'presentationOrder']) && newData.child('protocolVersion').val() === 2 && newData.child('variant').val() === 'oshi_jouzu_duo' && newData.child('hostUid').val() === auth.uid && newData.child('status').val() === 'forming' && newData.child('roster/soloUid').val() === auth.uid && (!newData.child('eligibilitySnapshot').exists() || newData.child('eligibilitySnapshot/uid').val() === auth.uid)",
+          "protocolVersion": {
+            ".write": false,
+            ".validate": "newData.val() === 2"
+          },
+          "variant": {
+            ".write": false,
+            ".validate": "newData.val() === 'oshi_jouzu_duo'"
+          },
           "hostUid": {
             ".write": "auth != null && !data.exists() && newData.val() === auth.uid",
             ".validate": "newData.isString()"
@@ -1585,25 +1618,210 @@
             ".validate": "newData.isNumber() && newData.val() >= now - 15000 && newData.val() <= now + 15000"
           },
           "status": {
-            ".write": "auth != null && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && ((!data.exists() && newData.val() === 'forming') || (data.val() === 'forming' && (newData.val() === 'active' || newData.val() === 'expired')))",
+            ".write": "auth != null && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && ((!data.exists() && newData.val() === 'forming') || (data.val() === 'forming' && newData.val() === 'expired') || (data.val() === 'forming' && newData.val() === 'active' && (!root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() || (root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/variant').val() === 'oshi_jouzu_duo' && root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() !== root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val() && root.child('online/teamRooms/' + $roomId + '/accepted/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/accepted/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/accepted/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/players/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val() + '/role').val() === 'oshi_jouzu' && root.child('online/teamRooms/' + $roomId + '/players/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() + '/role').val() === 'challenger' && root.child('online/teamRooms/' + $roomId + '/players/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val() + '/role').val() === 'challenger'))))",
             ".validate": "newData.val() === 'forming' || newData.val() === 'active' || newData.val() === 'expired'"
+          },
+          "eligibilitySnapshot": {
+            ".write": false,
+            ".validate": "(newData.hasChildren(['uid', 'version', 'eligible', 'reason']) && newData.child('uid').isString() && newData.child('version').val() === 2 && newData.child('eligible').val() === true && newData.child('reason').val() === 'roleplay') || (newData.hasChildren(['uid', 'version', 'eligible', 'tier', 'rating', 'serverMatches', 'reason', 'issuedAt', 'expiresAt']) && newData.child('uid').isString() && newData.child('version').val() === 1 && newData.child('eligible').val() === true && (newData.child('tier').val() === 'oshi_jouzu' || newData.child('tier').val() === 'beyond') && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('serverMatches').isNumber() && newData.child('serverMatches').val() >= 0 && (newData.child('reason').val() === 'rating_and_award' || newData.child('reason').val() === 'rating' || newData.child('reason').val() === 'award') && newData.child('issuedAt').isNumber() && newData.child('expiresAt').isNumber() && newData.child('issuedAt').val() <= now && newData.child('expiresAt').val() > now)"
+          },
+          "roster": {
+            ".write": false,
+            ".validate": "newData.hasChildren(['soloUid', 'challenger1Uid', 'challenger2Uid']) && newData.child('soloUid').isString() && newData.child('challenger1Uid').isString() && newData.child('challenger2Uid').isString() && newData.child('soloUid').val().length > 0 && newData.child('soloUid').val().length <= 128 && newData.child('challenger1Uid').val().length > 0 && newData.child('challenger1Uid').val().length <= 128 && newData.child('challenger2Uid').val().length > 0 && newData.child('challenger2Uid').val().length <= 128 && newData.child('soloUid').val() === newData.parent().child('hostUid').val() && (!newData.parent().child('eligibilitySnapshot').exists() || newData.child('soloUid').val() === newData.parent().child('eligibilitySnapshot/uid').val()) && newData.child('soloUid').val() !== newData.child('challenger1Uid').val() && newData.child('soloUid').val() !== newData.child('challenger2Uid').val() && newData.child('challenger1Uid').val() !== newData.child('challenger2Uid').val()",
+            "soloUid": {
+              ".validate": "newData.isString()"
+            },
+            "challenger1Uid": {
+              ".validate": "newData.isString()"
+            },
+            "challenger2Uid": {
+              ".validate": "newData.isString()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "presentationOrder": {
+            ".write": false,
+            ".validate": "newData.hasChildren(['0', '1']) && ((newData.child('0').val() === 'solo' && newData.child('1').val() === 'duo') || (newData.child('0').val() === 'duo' && newData.child('1').val() === 'solo'))",
+            "0": {
+              ".validate": "newData.val() === 'solo' || newData.val() === 'duo'"
+            },
+            "1": {
+              ".validate": "newData.val() === 'solo' || newData.val() === 'duo'"
+            },
+            "$other": {
+              ".validate": false
+            }
           },
           "members": {
             "$uid": {
-              ".write": "auth != null && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
-              ".validate": "newData.val() === true"
+              ".write": "auth != null && !data.exists() && newData.val() === true && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
+              ".validate": "newData.val() === true && (!newData.parent().parent().child('protocolVersion').exists() || (newData.parent().parent().child('protocolVersion').val() === 2 && ($uid === newData.parent().parent().child('roster/soloUid').val() || $uid === newData.parent().parent().child('roster/challenger1Uid').val() || $uid === newData.parent().parent().child('roster/challenger2Uid').val())))"
             }
           },
           "players": {
             "$uid": {
-              ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
-              ".validate": "newData.hasChildren(['uid', 'name', 'team', 'slot', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && (newData.child('team').val() === 'A' || newData.child('team').val() === 'B') && newData.child('slot').isNumber() && newData.child('slot').val() >= 1 && newData.child('slot').val() <= 2 && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0"
+              ".write": "auth != null && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
+              ".validate": "newData.hasChildren(['uid', 'name', 'team', 'slot', 'rating', 'streak']) && newData.child('uid').val() === $uid && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 16 && (newData.child('team').val() === 'A' || newData.child('team').val() === 'B') && newData.child('slot').isNumber() && newData.child('slot').val() >= 1 && newData.child('slot').val() <= 2 && newData.child('rating').isNumber() && newData.child('rating').val() >= 100 && newData.child('rating').val() <= 3000 && newData.child('streak').isNumber() && newData.child('streak').val() >= 0 && ((!newData.parent().parent().child('protocolVersion').exists() && !newData.child('role').exists()) || (newData.parent().parent().child('protocolVersion').val() === 2 && newData.child('components').hasChildren(['audio', 'video', 'words']) && newData.child('components/audio').isBoolean() && newData.child('components/video').isBoolean() && newData.child('components/words').isBoolean() && (($uid === newData.parent().parent().child('roster/soloUid').val() && newData.child('role').val() === 'oshi_jouzu' && newData.child('team').val() === 'A' && newData.child('slot').val() === 1) || ($uid === newData.parent().parent().child('roster/challenger1Uid').val() && newData.child('role').val() === 'challenger' && newData.child('team').val() === 'B' && newData.child('slot').val() === 1) || ($uid === newData.parent().parent().child('roster/challenger2Uid').val() && newData.child('role').val() === 'challenger' && newData.child('team').val() === 'B' && newData.child('slot').val() === 2))))",
+              "role": {
+                ".validate": "!newData.exists() || (newData.parent().parent().parent().child('protocolVersion').val() === 2 && (newData.val() === 'oshi_jouzu' || newData.val() === 'challenger'))"
+              },
+              "components": {
+                ".validate": "!newData.exists() || (newData.parent().parent().parent().child('protocolVersion').val() === 2 && newData.hasChildren(['audio', 'video', 'words']) && newData.child('audio').isBoolean() && newData.child('video').isBoolean() && newData.child('words').isBoolean())"
+              }
             }
           },
           "accepted": {
             "$uid": {
               ".write": "auth != null && auth.uid === $uid && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && !data.exists() && newData.val() === true",
+              ".validate": "newData.val() === true && (!newData.parent().parent().child('protocolVersion').exists() || (newData.parent().parent().child('protocolVersion').val() === 2 && ($uid === newData.parent().parent().child('roster/soloUid').val() || $uid === newData.parent().parent().child('roster/challenger1Uid').val() || $uid === newData.parent().parent().child('roster/challenger2Uid').val())))"
+            }
+          },
+          "meshReady": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
               ".validate": "newData.val() === true"
+            }
+          },
+          "duoStartedAt": {
+            ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/meshReady/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/meshReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/meshReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+            ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
+          },
+          "duoChoices": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/players/' + $uid + '/role').val() === 'challenger' && root.child('online/teamRooms/' + $roomId + '/duoStartedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/duoStartedAt').val() + 25000 && !root.child('online/teamRooms/' + $roomId + '/duoPlan').exists() && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+              ".validate": "newData.hasChildren(['audioOwnerUid', 'videoOwnerUid', 'wordsOwnerUid', 'locked', 'lockedAt']) && (newData.child('audioOwnerUid').val() === '' || newData.child('audioOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || newData.child('audioOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && (newData.child('videoOwnerUid').val() === '' || newData.child('videoOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || newData.child('videoOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && (newData.child('wordsOwnerUid').val() === '' || newData.child('wordsOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || newData.child('wordsOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && newData.child('locked').val() === true && newData.child('lockedAt').isNumber()",
+              "audioOwnerUid": {
+                ".validate": "newData.isString()"
+              },
+              "videoOwnerUid": {
+                ".validate": "newData.isString()"
+              },
+              "wordsOwnerUid": {
+                ".validate": "newData.isString()"
+              },
+              "locked": {
+                ".validate": "newData.val() === true"
+              },
+              "lockedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "duoPlan": {
+            ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/duoStartedAt').isNumber() && ((root.child('online/teamRooms/' + $roomId + '/duoChoices/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() + '/locked').val() === true && root.child('online/teamRooms/' + $roomId + '/duoChoices/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val() + '/locked').val() === true) || now >= root.child('online/teamRooms/' + $roomId + '/duoStartedAt').val() + 20000) && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+            ".validate": "newData.hasChildren(['audioOwnerUid', 'videoOwnerUid', 'wordsOwnerUid', 'agreed', 'lockedAt']) && (newData.child('audioOwnerUid').val() === '' || newData.child('audioOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || newData.child('audioOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && (newData.child('videoOwnerUid').val() === '' || newData.child('videoOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || newData.child('videoOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && (newData.child('wordsOwnerUid').val() === '' || newData.child('wordsOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val() || newData.child('wordsOwnerUid').val() === root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()) && newData.child('agreed').isBoolean() && newData.child('lockedAt').isNumber() && newData.child('lockedAt').val() >= root.child('online/teamRooms/' + $roomId + '/duoStartedAt').val()",
+            "audioOwnerUid": {
+              ".validate": "newData.isString()"
+            },
+            "videoOwnerUid": {
+              ".validate": "newData.isString()"
+            },
+            "wordsOwnerUid": {
+              ".validate": "newData.isString()"
+            },
+            "agreed": {
+              ".validate": "newData.isBoolean()"
+            },
+            "lockedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "assetsReady": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/duoPlan').exists() && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "revealStartedAt": {
+            ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/duoPlan').exists() && root.child('online/teamRooms/' + $roomId + '/assetsReady/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/assetsReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/assetsReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+            ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
+          },
+          "presentationCompleted": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/revealStartedAt').isNumber() && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "scoringStartedAt": {
+            ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/presentationCompleted/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/presentationCompleted/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/presentationCompleted/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+            ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
+          },
+          "scoreReady": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active' && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamDuoScores/' + $roomId + '/' + $uid).exists() && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "feedbackReady": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/scoreReady/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/scoreReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/scoreReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "talkDecisions": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/feedbackReady/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/feedbackReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/feedbackReady/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true && !root.child('online/teamRooms/' + $roomId + '/talkStartedAt').exists() && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+              ".validate": "newData.val() === 'accept' || newData.val() === 'decline'"
+            }
+          },
+          "talkStartedAt": {
+            ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/talkDecisions/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === 'accept' && root.child('online/teamRooms/' + $roomId + '/talkDecisions/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === 'accept' && root.child('online/teamRooms/' + $roomId + '/talkDecisions/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === 'accept' && !root.child('online/teamRooms/' + $roomId + '/destroyed').exists()",
+            ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
+          },
+          "talkEnded": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/talkStartedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/talkStartedAt').val() + 660000",
+              ".validate": "newData.val() === true"
+            }
+          },
+          "talkReplay": {
+            "$side": {
+              "ready": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && ($side === 'solo' || $side === 'duo') && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/talkStartedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/talkStartedAt').val() + 600000 && !root.child('online/teamRooms/' + $roomId + '/talkEnded/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).exists() && !root.child('online/teamRooms/' + $roomId + '/talkEnded/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).exists() && !root.child('online/teamRooms/' + $roomId + '/talkEnded/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).exists()",
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "startedAt": {
+                ".write": "auth != null && !data.exists() && ($side === 'solo' || $side === 'duo') && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/teamRooms/' + $roomId + '/talkStartedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/talkStartedAt').val() + 600000 && root.child('online/teamRooms/' + $roomId + '/talkReplay/' + $side + '/ready/' + root.child('online/teamRooms/' + $roomId + '/roster/soloUid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/talkReplay/' + $side + '/ready/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger1Uid').val()).val() === true && root.child('online/teamRooms/' + $roomId + '/talkReplay/' + $side + '/ready/' + root.child('online/teamRooms/' + $roomId + '/roster/challenger2Uid').val()).val() === true",
+                ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
+              },
+              "completed": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && ($side === 'solo' || $side === 'duo') && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/talkReplay/' + $side + '/startedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/talkStartedAt').val() + 600000",
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "referenceVideoPlay": {
+            "$ownerUid": {
+              "playing": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + $ownerUid).val() === true && root.child('online/teamRooms/' + $roomId + '/talkStartedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/talkStartedAt').val() + 600000 && !root.child('online/teamRooms/' + $roomId + '/referenceVideoPlay/' + $ownerUid + '/success/' + $uid).exists() && ((!data.exists() && newData.val() === true) || (data.val() === true && !newData.exists()))",
+                  ".validate": "!newData.exists() || newData.val() === true"
+                }
+              },
+              "success": {
+                "$uid": {
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + $ownerUid).val() === true && root.child('online/teamRooms/' + $roomId + '/referenceVideoPlay/' + $ownerUid + '/playing/' + $uid).val() === true && root.child('online/teamRooms/' + $roomId + '/talkStartedAt').isNumber() && now <= root.child('online/teamRooms/' + $roomId + '/talkStartedAt').val() + 600000",
+                  ".validate": "newData.val() === true"
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
             }
           },
           "presence": {
@@ -1620,17 +1838,17 @@
             "$round": {
               "roundReady": {
                 "$uid": {
-                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
                   ".validate": "newData.val() === true"
                 }
               },
               "strategyStartedAt": {
-                ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
+                ".write": "auth != null && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
                 ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
               },
               "tactics": {
                 "$uid": {
-                  ".write": "auth != null && auth.uid === $uid && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && (!root.child('online/teamRooms/' + $roomId + '/rounds/' + $round + '/strategyStartedAt').exists() || now <= root.child('online/teamRooms/' + $roomId + '/rounds/' + $round + '/strategyStartedAt').val() + 20000)",
+                  ".write": "auth != null && auth.uid === $uid && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && (!root.child('online/teamRooms/' + $roomId + '/rounds/' + $round + '/strategyStartedAt').exists() || now <= root.child('online/teamRooms/' + $roomId + '/rounds/' + $round + '/strategyStartedAt').val() + 20000)",
                   ".validate": "newData.hasChildren(['id', 'lockedAt'])",
                   "id": {
                     ".validate": "newData.isString() && (newData.val() === 'sync' || newData.val() === 'ace' || newData.val() === 'guard')"
@@ -1645,23 +1863,23 @@
               },
               "picks": {
                 "$uid": {
-                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
                   ".validate": "newData.hasChildren(['ready', 'lockedAt']) && newData.child('ready').val() === true && newData.child('lockedAt').isNumber()"
                 }
               },
               "imagesReady": {
                 "$uid": {
-                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
                   ".validate": "newData.val() === true"
                 }
               },
               "scoringStartedAt": {
-                ".write": "auth != null && !data.exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
+                ".write": "auth != null && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/hostUid').val() === auth.uid",
                 ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 5000"
               },
               "scores": {
                 "$uid": {
-                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
                   ".validate": "newData.hasChildren(['values', 'lockedAt']) && newData.child('lockedAt').isNumber() && newData.child('values').hasChildren()",
                   "values": {
                     "$targetUid": {
@@ -1678,7 +1896,7 @@
               },
               "continue": {
                 "$uid": {
-                  ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+                  ".write": "auth != null && auth.uid === $uid && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true",
                   ".validate": "newData.val() === true"
                 }
               }
@@ -1712,7 +1930,7 @@
           },
           "resultClaims": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active'",
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active'",
               ".validate": "newData.hasChildren(['outcome', 'createdAt'])",
               "outcome": {
                 ".validate": "newData.isString() && (newData.val() === 'win' || newData.val() === 'loss' || newData.val() === 'draw')"
@@ -1730,7 +1948,7 @@
           },
           "finished": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active'",
+              ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.val() === true && !root.child('online/teamRooms/' + $roomId + '/protocolVersion').exists() && root.child('online/teamRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/teamRooms/' + $roomId + '/status').val() === 'active'",
               ".validate": "newData.val() === true"
             }
           }

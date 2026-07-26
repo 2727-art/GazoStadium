@@ -151,7 +151,7 @@ test("oshijo UI gives advance notice, an explicit final confirmation, and a decl
     /if \(role === "buyer" && pitchAccepted\) previewBalance -= ENTRY_FEE/,
   );
   const oshijoDecision = marketSource.match(
-    /if \(oshijoClosing\) \{([\s\S]*?)\n\s*\}\n\s*const canExtend/,
+    /if \(oshijoClosing\) \{([\s\S]*?)\r?\n\s*\}\r?\n\s*const canExtend/,
   )?.[1] || "";
   assert.ok(oshijoDecision, "buyer oshijo decision block should exist");
   assert.doesNotMatch(oshijoDecision, /data-market-action="request_extension"/);

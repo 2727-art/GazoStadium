@@ -27,7 +27,7 @@ import {
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v2";
+} from "./firebase-services.js?v=app-check-v2-oshi-jouzu-duo-v1-restore-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -42,10 +42,10 @@ import {
 import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1";
 import {
   getStamp,
-} from "./stamps.js?v=stamps-v1";
+} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";

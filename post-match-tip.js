@@ -3,7 +3,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
 import {
   functions,
-} from "./firebase-services.js?v=app-check-v2";
+} from "./firebase-services.js?v=app-check-v2-oshi-jouzu-duo-v1-restore-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,

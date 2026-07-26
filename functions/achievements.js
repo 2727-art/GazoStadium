@@ -1,6 +1,12 @@
 "use strict";
 
-const BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "royale"]);
+const BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo", "royale"]);
+const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
+  Object.freeze(["solo"]),
+  Object.freeze(["strategy"]),
+  Object.freeze(["team", "team_duo"]),
+  Object.freeze(["royale"]),
+]);
 const VALID_SCOPES = new Set(["battle", "market"]);
 const MAX_SHOWCASE = 3;
 
@@ -126,6 +132,54 @@ const battleDefinitions = [
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
     condition: (target) => ({ type: "battle_stat", key: "playDays", target }),
   }),
+  ...[
+    {
+      id: "team_oshi_jouzu_defense",
+      family: "team_oshi_jouzu_defense",
+      level: 1,
+      name: "つよ推しの証",
+      description: "推し上手さんとして、ふたりの挑戦を退けた",
+      signal: "teamOshiJozuDefense",
+    },
+    {
+      id: "team_oshi_jouzu_clean_defense",
+      family: "team_oshi_jouzu_defense",
+      level: 2,
+      name: "ひとりで魅せきった",
+      description: "推し上手さんとして、2点以上の差で防衛した",
+      signal: "teamOshiJozuCleanDefense",
+    },
+    {
+      id: "team_duo_breakthrough",
+      family: "team_duo_breakthrough",
+      level: 1,
+      name: "ふたりの推しが届いた",
+      description: "ふたりで推し上手さんを上回った",
+      signal: "teamDuoBreakthrough",
+    },
+    {
+      id: "team_duo_clean_breakthrough",
+      family: "team_duo_breakthrough",
+      level: 2,
+      name: "ふたりで魅せきった",
+      description: "ふたりで2点以上の差をつけて推し上手さんを上回った",
+      signal: "teamDuoCleanBreakthrough",
+    },
+  ].map((definition) => Object.freeze({
+    id: definition.id,
+    scope: "battle",
+    category: "battle_honor",
+    family: definition.family,
+    familyLabel: "推し上手！ふたりチャレンジ",
+    icon: "❀",
+    level: definition.level,
+    target: 1,
+    name: definition.name,
+    description: definition.description,
+    hint: "推し上手！ふたりチャレンジの正式戦で解除",
+    autoPublic: false,
+    condition: { type: "battle_signal", signal: definition.signal },
+  })),
 ];
 
 const marketDefinitions = [
@@ -256,9 +310,12 @@ function deriveBattleStatsFromPeriods(periodRewards) {
     const matches = count(record?.matches);
     stats.totalMatches += matches;
     stats.losses += count(record?.losses, matches);
-    BATTLE_MODES.forEach((mode) => {
-      stats.modeMatches[mode] += count(record?.modeMatches?.[mode], matches);
-    });
+    const teamDuoMatches = count(record?.variantMatches?.teamDuo, matches);
+    stats.modeMatches.solo += count(record?.modeMatches?.solo, matches);
+    stats.modeMatches.strategy += count(record?.modeMatches?.strategy, matches);
+    stats.modeMatches.team_duo += teamDuoMatches;
+    stats.modeMatches.team += Math.max(0, count(record?.modeMatches?.team, matches) - teamDuoMatches);
+    stats.modeMatches.royale += count(record?.modeMatches?.royale, matches);
   });
   stats.playDays = daily.length;
   stats.lastPlayDateKey = daily.map(([key]) => key).sort().at(-1) || "";
@@ -326,11 +383,16 @@ function achievementConditionMet(definition, battleStats, marketStats, signals =
   if (condition.type === "battle_stat") return count(battleStats?.[condition.key]) >= condition.target;
   if (condition.type === "battle_mode") return count(battleStats?.modeMatches?.[condition.mode]) >= condition.target;
   if (condition.type === "distinct_battle_modes") {
-    return BATTLE_MODES.filter((mode) => count(battleStats?.modeMatches?.[mode]) > 0).length >= condition.target;
+    return BATTLE_VARIETY_MODE_GROUPS
+      .filter((modes) => modes.some((mode) => count(battleStats?.modeMatches?.[mode]) > 0))
+      .length >= condition.target;
   }
   if (condition.type === "minimum_battle_modes") {
-    return BATTLE_MODES.every((mode) => count(battleStats?.modeMatches?.[mode]) >= condition.target);
+    return BATTLE_VARIETY_MODE_GROUPS.every((modes) => (
+      modes.reduce((sum, mode) => sum + count(battleStats?.modeMatches?.[mode]), 0) >= condition.target
+    ));
   }
+  if (condition.type === "battle_signal") return signals?.[condition.signal] === true;
   if (condition.type === "market_stat") return count(marketStats?.[condition.key]) >= condition.target;
   if (condition.type === "market_both") {
     return count(marketStats?.salesCount) >= condition.target && count(marketStats?.purchases) >= condition.target;

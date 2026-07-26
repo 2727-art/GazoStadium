@@ -56,7 +56,7 @@ test("legacy verified monthly records backfill totals without inventing a loss s
     losses: 42,
     currentLossStreak: 0,
     bestLossStreak: 0,
-    modeMatches: { solo: 88, strategy: 5, team: 4, royale: 3 },
+    modeMatches: { solo: 88, strategy: 5, team: 4, team_duo: 0, royale: 3 },
     playDays: 2,
     lastPlayDateKey: "2026-07-23",
   });
@@ -74,6 +74,20 @@ test("verified matches advance play days and reset loss streak on a draw", () =>
   assert.equal(stats.currentLossStreak, 0);
   assert.equal(stats.bestLossStreak, 3);
   assert.equal(stats.losses, 3);
+});
+
+test("the new one-versus-two variant does not advance legacy 2on2 achievements", () => {
+  let stats = normalizeBattleStats({
+    totalMatches: 4,
+    modeMatches: { team: 4 },
+  });
+  stats = addBattleMatch(stats, "team_duo", "win", "2026-07-26");
+  assert.equal(stats.totalMatches, 5);
+  assert.equal(stats.modeMatches.team, 4);
+  assert.equal(stats.modeMatches.team_duo, 1);
+  const ids = eligibleAchievementIds({ battleStats: stats, scope: "battle" });
+  assert.equal(ids.includes("battle_team_5"), false);
+  assert.equal(ids.includes("battle_total_1"), true);
 });
 
 test("mode variety and loss achievements unlock from neutral verified stats", () => {
@@ -96,6 +110,35 @@ test("mode variety and loss achievements unlock from neutral verified stats", ()
     "battle_days_7",
   ]) assert.equal(ids.includes(expected), true, expected);
   assert.equal(ids.includes("battle_variety_all_20"), false);
+});
+
+test("server-only battle signals unlock the new honor achievements", () => {
+  const noSignals = eligibleAchievementIds({ battleStats: null, scope: "battle" });
+  assert.equal(noSignals.includes("team_oshi_jouzu_defense"), false);
+  const defense = eligibleAchievementIds({
+    battleStats: null,
+    signals: {
+      teamOshiJozuDefense: true,
+      teamOshiJozuCleanDefense: true,
+    },
+    scope: "battle",
+  });
+  assert.equal(defense.includes("team_oshi_jouzu_defense"), true);
+  assert.equal(defense.includes("team_oshi_jouzu_clean_defense"), true);
+  const breakthrough = eligibleAchievementIds({
+    battleStats: null,
+    signals: {
+      teamDuoBreakthrough: true,
+      teamDuoCleanBreakthrough: true,
+    },
+    scope: "battle",
+  });
+  assert.equal(breakthrough.includes("team_duo_breakthrough"), true);
+  assert.equal(breakthrough.includes("team_duo_clean_breakthrough"), true);
+  for (const id of [...defense, ...breakthrough]) {
+    const definition = ACHIEVEMENT_DEFINITIONS.find((candidate) => candidate.id === id);
+    if (definition?.category === "battle_honor") assert.equal(definition.autoPublic, false);
+  }
 });
 
 test("unlocking is idempotent and loss badges are not automatically public", () => {
