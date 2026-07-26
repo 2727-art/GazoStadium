@@ -2292,6 +2292,16 @@ button:disabled {
   background: linear-gradient(145deg, rgba(176, 95, 255, 0.08), rgba(255, 255, 255, 0.025));
 }
 
+.lobby-mode-card.free-table-status {
+  grid-column: 1 / -1;
+  min-height: 116px;
+  border-color: rgba(226, 190, 132, 0.34);
+  background:
+    radial-gradient(circle at 9% 18%, rgba(231, 188, 120, 0.11), transparent 34%),
+    radial-gradient(circle at 91% 82%, rgba(112, 159, 129, 0.1), transparent 38%),
+    linear-gradient(145deg, rgba(126, 82, 59, 0.09), rgba(255, 255, 255, 0.022));
+}
+
 .lobby-mode-card.market {
   grid-column: 1 / -1;
   min-height: 116px;
@@ -2324,6 +2334,10 @@ button:disabled {
 .lobby-mode-card.royale .lobby-mode-head span {
   color: #c48bff;
   font-size: 0.62rem;
+}
+
+.lobby-mode-card.free-table-status .lobby-mode-head span {
+  color: #e9c38f;
 }
 
 .lobby-mode-card.market .lobby-mode-head span {

@@ -13058,6 +13058,24 @@ exports.freeTableAction = onCall(callableOptions("freeTableAction"), async (requ
   }
 });
 
+exports.freeTablePublicStats = onCall(
+  callableOptions("freeTablePublicStats"),
+  async (request) => {
+    try {
+      return await freeTableService.getPublicStats(request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("freeTablePublicStats failed", {
+        code: typeof error?.code === "string" ? error.code : "unknown",
+      });
+      throw new HttpsError(
+        "internal",
+        "貼り合い自由卓の公開状況を取得できませんでした。",
+      );
+    }
+  },
+);
+
 exports.cleanupExpiredFreeTables = onSchedule({
   schedule: "every 5 minutes",
   timeZone: "Asia/Tokyo",

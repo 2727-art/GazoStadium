@@ -836,6 +836,7 @@
     const strategyStats = modeStats("strategy");
     const teamStats = modeStats("team");
     const royaleStats = modeStats("royale");
+    const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
@@ -868,7 +869,7 @@
         </div>
         ${renderLandingTopMessagePanel()}
         ${renderLandingFleaPanel()}
-        <div class="mode-lobby-stats" aria-label="モード別オンライン対戦の参加状況">
+        <div class="mode-lobby-stats" aria-label="モード別の参加・開室状況">
           <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbySoloPlayingCount">${statValue(soloStats.playing)}</span><em>人</em></strong></div>
@@ -885,13 +886,17 @@
             <div><small>待機中</small><strong><span id="lobbyRoyaleWaitingCount">${statValue(royaleStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyRoyalePlayingCount">${statValue(royaleStats.playing)}</span><em>人</em></strong></div>
           </div></article>
+          <article class="lobby-mode-card free-table-status"><div class="lobby-mode-head"><span>貼り合い自由卓</span><small>FREE TABLE</small></div><div class="lobby-mode-counts">
+            <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
+            <div><small>同席中</small><strong><span id="lobbyFreeTableSeatedCount">${statValue(freeTableStats.seatedRooms)}</span><em>卓</em></strong></div>
+          </div></article>
           <article class="lobby-mode-card market"><div class="lobby-mode-head"><span>推し値市場</span><small>VALUE MARKET</small></div><div class="lobby-mode-counts market-counts">
             <div><small>売り手待機</small><strong><span id="lobbyMarketSellerWaitingCount">${statValue(marketStats.sellerWaiting)}</span><em>人</em></strong></div>
             <div><small>買い手待機</small><strong><span id="lobbyMarketBuyerWaitingCount">${statValue(marketStats.buyerWaiting)}</span><em>人</em></strong></div>
             <div><small>商談中</small><strong><span id="lobbyMarketNegotiatingCount">${statValue(marketStats.negotiating)}</span><em>件</em></strong></div>
           </div></article>
         </div>
-        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
+        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
         <p class="mode-note">画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
@@ -906,6 +911,7 @@
     rankingCommentsStatus = "idle";
     setLandingChrome();
     app.innerHTML = renderLanding();
+    window.dispatchEvent(new Event("hariai-landing-rendered"));
     document.querySelector(".screen.hero")?.addEventListener("click", (event) => {
       const control = event.target.closest?.("button, a");
       if (!control) return;

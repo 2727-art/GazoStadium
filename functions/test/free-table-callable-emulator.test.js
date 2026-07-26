@@ -3,6 +3,9 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { after, before, test } = require("node:test");
+const {
+  FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS,
+} = require("../free-table");
 
 const RUN_FLAG = "RUN_FREE_TABLE_CALLABLE_E2E_TESTS";
 const PROJECT_ID_ENV = "FREE_TABLE_CALLABLE_E2E_PROJECT_ID";
@@ -198,6 +201,7 @@ if (!RUN_REQUESTED) {
     return {
       uid,
       action: httpsCallable(functions, "freeTableAction"),
+      stats: httpsCallable(functions, "freeTablePublicStats"),
     };
   }
 
@@ -205,6 +209,25 @@ if (!RUN_REQUESTED) {
     const result = (await caller.action({ action, ...fields })).data;
     assertNoPrivateUid(result);
     return result;
+  }
+
+  async function invokeStats(caller, payload = {}) {
+    const result = (await caller.stats(payload)).data;
+    assertNoPrivateUid(result);
+    assert.deepEqual(
+      Object.keys(result).sort(),
+      ["seatedRooms", "updatedAt", "welcomingRooms"],
+    );
+    return result;
+  }
+
+  async function waitForStatsCacheExpiry(stats) {
+    const remaining = Number(stats.updatedAt || 0)
+      + FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS
+      + 100
+      - Date.now();
+    if (remaining <= 0) return;
+    await new Promise((resolve) => setTimeout(resolve, remaining));
   }
 
   before(async () => {
@@ -239,12 +262,16 @@ if (!RUN_REQUESTED) {
     if (adminApp) await deleteAdminApp(adminApp);
   });
 
-  test("Callable enforces App Check and authentication before a private full lifecycle", async () => {
+  test("Callables enforce App Check while public stats stay auth optional and canonical", async () => {
     const withoutAppCheck = await createCaller("without-app-check", {
       appCheck: false,
     });
     await assert.rejects(
       () => invoke(withoutAppCheck, "get_my_state"),
+      (error) => error.code === "functions/unauthenticated",
+    );
+    await assert.rejects(
+      () => invokeStats(withoutAppCheck),
       (error) => error.code === "functions/unauthenticated",
     );
     const withoutAuth = await createCaller("without-auth", {
@@ -254,6 +281,10 @@ if (!RUN_REQUESTED) {
       () => invoke(withoutAuth, "get_my_state"),
       (error) => error.code === "functions/unauthenticated",
     );
+    await assert.rejects(
+      () => invokeStats(withoutAuth, { extra: true }),
+      (error) => error.code === "functions/invalid-argument",
+    );
 
     const host = await createCaller("host");
     const visitor = await createCaller("visitor");
@@ -262,6 +293,9 @@ if (!RUN_REQUESTED) {
       hostCard: card("夜更かし店主"),
     });
     const opened = await invoke(host, "open", { active: true });
+    const openStats = await invokeStats(withoutAuth);
+    assert.equal(openStats.welcomingRooms, 1);
+    assert.equal(openStats.seatedRooms, 0);
     const listed = await invoke(visitor, "list");
     const room = listed.rooms.find((entry) => (
       entry.publicRoomId === opened.room.publicRoomId
@@ -277,6 +311,10 @@ if (!RUN_REQUESTED) {
     });
     const sessionId = accepted.session.sessionId;
     assert.ok(sessionId);
+    await waitForStatsCacheExpiry(openStats);
+    const connectingStats = await invokeStats(withoutAuth);
+    assert.equal(connectingStats.welcomingRooms, 0);
+    assert.equal(connectingStats.seatedRooms, 0);
     const [hostClaimBeforeArrival, visitorClaimBeforeArrival, canonicalSession] =
       await Promise.all([
         realtime.ref(`freeTables/active/${host.uid}`).get(),
@@ -288,12 +326,33 @@ if (!RUN_REQUESTED) {
     assert.equal(canonicalSession.val()?.sessionId, sessionId);
     assert.equal((await invoke(host, "arrive", { sessionId })).established, false);
     assert.equal((await invoke(visitor, "arrive", { sessionId })).established, true);
+    const presenceNow = Date.now();
+    await realtime.ref(`freeTables/presence/${sessionId}`).set({
+      [host.uid]: {
+        online: true,
+        lastSeen: presenceNow,
+        expiresAt: presenceNow + 60_000,
+      },
+      [visitor.uid]: {
+        online: true,
+        lastSeen: presenceNow,
+        expiresAt: presenceNow + 60_000,
+      },
+    });
+    await waitForStatsCacheExpiry(connectingStats);
+    const seatedStats = await invokeStats(withoutAuth);
+    assert.equal(seatedStats.welcomingRooms, 0);
+    assert.equal(seatedStats.seatedRooms, 1);
     const ended = await invoke(visitor, "end", {
       sessionId,
       reason: "departure",
       message: "元気をもらいました",
     });
     assert.equal(ended.session.ending.line, "元気をもらいました。いってきます");
+    await waitForStatsCacheExpiry(seatedStats);
+    const endedStats = await invokeStats(withoutAuth);
+    assert.equal(endedStats.welcomingRooms, 0);
+    assert.equal(endedStats.seatedRooms, 0);
     const [hostClaim, visitorClaim, hostActive] = await Promise.all([
       realtime.ref(`freeTables/active/${host.uid}`).get(),
       realtime.ref(`freeTables/active/${visitor.uid}`).get(),

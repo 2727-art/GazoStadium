@@ -64,6 +64,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   const callableNames = [
     "accountTransfer",
     "freeTableAction",
+    "freeTablePublicStats",
     "soloFamiliarAction",
     "soloSessionAction",
     "getP2pIceServers",
@@ -80,6 +81,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.deepEqual(Object.keys(rollout.APP_CHECK_ENFORCEMENT).sort(), callableNames.toSorted());
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.accountTransfer, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTablePublicStats, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);

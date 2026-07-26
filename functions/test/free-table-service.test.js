@@ -10,12 +10,16 @@ const {
   FREE_TABLE_DISCONNECT_GRACE_MS,
   FREE_TABLE_LIST_SCAN_LIMIT,
   FREE_TABLE_PAIR_GROWTH_COOLDOWN_MS,
+  FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS,
   FREE_TABLE_RECONNECT_MERGE_MS,
   FREE_TABLE_REQUEST_LIMIT,
   FREE_TABLE_REQUEST_TTL_MS,
   acceptedSessionValue,
   blockedInEitherDirection,
+  createFreeTablePublicStatsLoader,
+  createFreeTableService,
   fairShelfCursor,
+  freeTablePublicStatsProjection,
   growthStage,
   nextAdmissionState,
   internalReportId,
@@ -114,6 +118,170 @@ function openRoom() {
   };
 }
 
+function publicStatsRoot() {
+  const hostUid = "stats-host";
+  const generation = 7;
+  const expiresAt = NOW + 120_000;
+  return {
+    hostActive: {
+      [hostUid]: {
+        roomId: ID_A,
+        publicRoomId: ID_B,
+        state: "open",
+        generation,
+        heartbeatAt: NOW,
+        expiresAt,
+      },
+    },
+    publicRooms: {
+      [ID_B]: {
+        protocolVersion: 1,
+        roomId: ID_A,
+        publicRoomId: ID_B,
+        publicMemberId: ID_C,
+        hostUid,
+        state: "open",
+        generation,
+        space: roomSettings(),
+        hostCard: card("夜更かし店主"),
+        openedAt: NOW,
+        heartbeatAt: NOW,
+        expiresAt,
+      },
+    },
+    roomStates: {
+      [ID_A]: {
+        roomId: ID_A,
+        publicRoomId: ID_B,
+        publicMemberId: ID_C,
+        hostUid,
+        state: "open",
+        generation,
+        space: roomSettings(),
+        hostCard: card("夜更かし店主"),
+        heartbeatAt: NOW,
+        expiresAt,
+      },
+    },
+    roomOwners: {
+      [ID_A]: {
+        roomId: ID_A,
+        publicRoomId: ID_B,
+        uid: hostUid,
+        generation,
+        heartbeatAt: NOW,
+        expiresAt,
+      },
+    },
+    engagements: {
+      [hostUid]: {
+        roomId: ID_A,
+        publicRoomId: ID_B,
+        state: "host_open",
+        generation,
+        heartbeatAt: NOW,
+        expiresAt,
+      },
+    },
+    sessions: {},
+    active: {},
+    presence: {},
+  };
+}
+
+function establishedPublicStatsRoot() {
+  const root = publicStatsRoot();
+  const hostUid = "stats-host";
+  const visitorUid = "stats-visitor";
+  const sessionId = "S".repeat(24);
+  const expiresAt = NOW + 3_600_000;
+  root.hostActive[hostUid] = {
+    roomId: ID_A,
+    publicRoomId: ID_B,
+    sessionId,
+    state: "active",
+    generation: 7,
+    heartbeatAt: NOW,
+    expiresAt,
+  };
+  root.publicRooms = {};
+  root.sessions[sessionId] = {
+    protocolVersion: 1,
+    sessionId,
+    roomId: ID_A,
+    publicRoomId: ID_B,
+    generation: 7,
+    hostUid,
+    visitorUid,
+    participants: {
+      [hostUid]: true,
+      [visitorUid]: true,
+    },
+    status: "active",
+    admissionAccepted: true,
+    p2pConnected: true,
+    arrivals: {
+      host: true,
+      visitor: true,
+    },
+    hardExpiresAt: expiresAt,
+    expiresAt,
+  };
+  root.active = {
+    [hostUid]: {
+      sessionId,
+      role: "host",
+      expiresAt,
+    },
+    [visitorUid]: {
+      sessionId,
+      role: "visitor",
+      expiresAt,
+    },
+  };
+  root.engagements = {
+    [hostUid]: {
+      state: "active",
+      role: "host",
+      roomId: ID_A,
+      publicRoomId: ID_B,
+      sessionId,
+      generation: 7,
+      expiresAt,
+    },
+    [visitorUid]: {
+      state: "active",
+      role: "visitor",
+      roomId: ID_A,
+      publicRoomId: ID_B,
+      sessionId,
+      generation: 7,
+      expiresAt,
+    },
+  };
+  root.presence = {
+    [sessionId]: {
+      [hostUid]: {
+        online: true,
+        lastSeen: NOW,
+        expiresAt: NOW + 60_000,
+      },
+      [visitorUid]: {
+        online: true,
+        lastSeen: NOW,
+        expiresAt: NOW + 60_000,
+      },
+    },
+  };
+  return {
+    expiresAt,
+    hostUid,
+    root,
+    sessionId,
+    visitorUid,
+  };
+}
+
 test("room and card validation follows the shared v1 schema", () => {
   assert.equal(validateRoomSettings(roomSettings()), true);
   assert.equal(validateCard(card()), true);
@@ -163,6 +331,199 @@ test("public shelf projection excludes uid, competitive, Pay, and growth counts"
   assert.equal("hostUid" in projection, false);
   assert.equal("growth" in projection, false);
   assert.doesNotMatch(serialized, /secret-host-uid|victories|rating|points|visitCount|growthCount/);
+});
+
+test("public stats count the valid unexpired public shelf without heartbeat joins", () => {
+  const root = publicStatsRoot();
+  assert.deepEqual(freeTablePublicStatsProjection(root, NOW), {
+    welcomingRooms: 1,
+    seatedRooms: 0,
+    updatedAt: NOW,
+  });
+  root.hostActive["stats-host"].generation += 1;
+  root.roomOwners[ID_A].expiresAt = NOW;
+  assert.equal(
+    freeTablePublicStatsProjection(root, NOW).welcomingRooms,
+    1,
+  );
+  root.publicRooms[ID_B].publicRoomId = ID_C;
+  assert.equal(
+    freeTablePublicStatsProjection(root, NOW).welcomingRooms,
+    0,
+  );
+  root.publicRooms[ID_B].publicRoomId = ID_B;
+  root.publicRooms[ID_B].expiresAt = NOW;
+  assert.equal(freeTablePublicStatsProjection(root, NOW).welcomingRooms, 0);
+});
+
+test("public stats require one canonical established seat with both fresh presences", () => {
+  const {
+    hostUid,
+    root,
+    sessionId,
+    visitorUid,
+  } = establishedPublicStatsRoot();
+
+  const stats = freeTablePublicStatsProjection(root, NOW);
+  assert.deepEqual(stats, {
+    welcomingRooms: 0,
+    seatedRooms: 1,
+    updatedAt: NOW,
+  });
+  assert.deepEqual(Object.keys(stats), [
+    "welcomingRooms",
+    "seatedRooms",
+    "updatedAt",
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(stats),
+    /stats-host|stats-visitor|hostUid|visitorUid|publicRoomId|sessionId|card|topic/i,
+  );
+
+  root.sessions[sessionId].status = "connecting";
+  assert.equal(freeTablePublicStatsProjection(root, NOW).seatedRooms, 0);
+  root.sessions[sessionId].status = "active";
+  root.presence[sessionId][visitorUid].online = false;
+  assert.equal(freeTablePublicStatsProjection(root, NOW).seatedRooms, 0);
+  root.presence[sessionId][visitorUid].online = true;
+  root.engagements[visitorUid].generation = 8;
+  assert.equal(freeTablePublicStatsProjection(root, NOW).seatedRooms, 0);
+});
+
+test("public stats loader coalesces in-flight work and keeps only a short cache", async () => {
+  let now = NOW;
+  let loadCount = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const loader = createFreeTablePublicStatsLoader({
+    load: async (startedAt) => {
+      loadCount += 1;
+      await gate;
+      return Object.freeze({
+        welcomingRooms: loadCount,
+        seatedRooms: 0,
+        updatedAt: startedAt,
+      });
+    },
+    now: () => now,
+  });
+  const first = loader();
+  const second = loader();
+  await Promise.resolve();
+  assert.equal(loadCount, 1);
+  release();
+  const [firstValue, secondValue] = await Promise.all([first, second]);
+  assert.strictEqual(firstValue, secondValue);
+  assert.equal((await loader()).welcomingRooms, 1);
+  assert.equal(loadCount, 1);
+  now += FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS;
+  assert.equal((await loader()).welcomingRooms, 2);
+  assert.equal(loadCount, 2);
+});
+
+test("public stats service reads indexed shelves and only targeted active-session paths", async () => {
+  const {
+    hostUid,
+    root,
+    sessionId,
+    visitorUid,
+  } = establishedPublicStatsRoot();
+  const storedValues = {
+    "freeTables/publicRooms": root.publicRooms,
+    "freeTables/hostActive": root.hostActive,
+    [`freeTables/sessions/${sessionId}`]: root.sessions[sessionId],
+    [`freeTables/active/${hostUid}`]: root.active[hostUid],
+    [`freeTables/active/${visitorUid}`]: root.active[visitorUid],
+    [`freeTables/engagements/${hostUid}`]: root.engagements[hostUid],
+    [`freeTables/engagements/${visitorUid}`]: root.engagements[visitorUid],
+    [`freeTables/presence/${sessionId}`]: root.presence[sessionId],
+  };
+  const reads = [];
+  const realtime = {
+    ref(pathValue) {
+      const query = {
+        orderBy: "",
+        startAt: null,
+      };
+      return {
+        orderByChild(field) {
+          query.orderBy = field;
+          return this;
+        },
+        startAt(value) {
+          query.startAt = value;
+          return this;
+        },
+        async get() {
+          reads.push({
+            orderBy: query.orderBy,
+            path: pathValue,
+            startAt: query.startAt,
+          });
+          return {
+            val: () => storedValues[pathValue] ?? null,
+          };
+        },
+      };
+    },
+  };
+  class TestHttpsError extends Error {
+    constructor(code, message) {
+      super(message);
+      this.code = code;
+    }
+  }
+  const service = createFreeTableService({
+    firestore: {
+      collection() {},
+      getAll() {},
+      runTransaction() {},
+    },
+    HttpsError: TestHttpsError,
+    now: () => NOW,
+    realtime,
+    Timestamp: {},
+  });
+  const [first, second] = await Promise.all([
+    service.getPublicStats({}),
+    service.getPublicStats({}),
+  ]);
+  assert.deepEqual(first, {
+    welcomingRooms: 0,
+    seatedRooms: 1,
+    updatedAt: NOW,
+  });
+  assert.strictEqual(first, second);
+  assert.deepEqual(
+    reads.filter((read) => read.orderBy).map((read) => read.path).sort(),
+    ["freeTables/hostActive", "freeTables/publicRooms"],
+  );
+  assert.ok(
+    reads.filter((read) => read.orderBy).every((read) => (
+      read.orderBy === "expiresAt" && read.startAt === NOW + 1
+    )),
+  );
+  assert.deepEqual(
+    reads.filter((read) => !read.orderBy).map((read) => read.path).sort(),
+    [
+      `freeTables/active/${hostUid}`,
+      `freeTables/active/${visitorUid}`,
+      `freeTables/engagements/${hostUid}`,
+      `freeTables/engagements/${visitorUid}`,
+      `freeTables/presence/${sessionId}`,
+      `freeTables/sessions/${sessionId}`,
+    ].sort(),
+  );
+  await service.getPublicStats({});
+  assert.equal(reads.length, 8);
+  await assert.rejects(
+    () => service.getPublicStats({ extra: true }),
+    (error) => error.code === "invalid-argument",
+  );
+  assert.equal(reads.length, 8);
+  assert.equal(reads.some((read) => read.path === "freeTables/presence"), false);
 });
 
 test("host-visible request projection contains a random member id but no uid", () => {

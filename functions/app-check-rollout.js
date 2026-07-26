@@ -31,6 +31,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   anjuPayFleaAction: true,
   // 貼り合い自由卓は公開ID・承認・ブロック・通報を扱う新規サーバー境界のため、初日から強制します。
   freeTableAction: true,
+  // トップ向け統計も生の卓情報を読まず、App Check済みの集計境界だけを公開します。
+  freeTablePublicStats: true,
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),

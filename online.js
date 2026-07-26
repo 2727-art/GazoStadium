@@ -389,6 +389,10 @@ const ENGAWA_RESPONSES = Object.freeze([
 ]);
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
+const FREE_TABLE_PUBLIC_STATS_POLL_MS = 60_000;
+const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;
+const FREE_TABLE_PUBLIC_STATS_MAX_BACKOFF_MS = 240_000;
+const FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
 const SOLO_REMATCH_SOFT_WIDEN_MS = 20_000;
 const FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
@@ -400,6 +404,7 @@ const soloFamiliarActionCallable = httpsCallable(functions, "soloFamiliarAction"
 const soloSessionActionCallable = httpsCallable(functions, "soloSessionAction");
 const getP2pIceServersCallable = httpsCallable(functions, "getP2pIceServers");
 const reportP2pConnectivityCallable = httpsCallable(functions, "reportP2pConnectivity");
+const freeTablePublicStatsCallable = httpsCallable(functions, "freeTablePublicStats");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
@@ -417,9 +422,19 @@ let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let lobbyPresenceEntries = null;
 let marketPresenceEntries = null;
+let freeTablePublicStats = {
+  welcomingRooms: null,
+  seatedRooms: null,
+  updatedAt: null,
+};
+let freeTablePublicStatsLastSuccessAt = 0;
+let freeTablePublicStatsFailureCount = 0;
+let freeTablePublicStatsRequest = null;
+let freeTablePublicStatsTimer = null;
 const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
 const createLobbyStats = (value = null) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
+  freeTable: { ...freeTablePublicStats },
   market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
 });
 let lobbyStats = createLobbyStats();
@@ -432,6 +447,7 @@ let monthlyBeyondRanks = new Map();
 let monthlyBeyondPeriodKey = "";
 let monthlyHallOfFameRecords = [];
 let publicServerTimeOffset = 0;
+let publicServerTimeOffsetReady = false;
 let topMessageRecords = [];
 let topMessagesStatus = "idle";
 let topMessagesRequestId = 0;
@@ -1593,8 +1609,10 @@ function isActive() {
 }
 
 function getLobbyStats() {
+  expireFreeTablePublicStats(Date.now(), false);
   return {
     ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
+    freeTable: { ...lobbyStats.freeTable },
     market: { ...lobbyStats.market },
   };
 }
@@ -1900,7 +1918,122 @@ async function deleteLeaderboardComment(targetEntryId, authorEntryId) {
   await authenticatedDatabaseRequest(`online/leaderboardComments/${targetId}/${authorId}`, { method: "DELETE" });
 }
 
+function normalizeFreeTablePublicStats(value, receivedAt) {
+  const welcomingRooms = value?.welcomingRooms;
+  const seatedRooms = value?.seatedRooms;
+  const updatedAt = value?.updatedAt;
+  if (!Number.isSafeInteger(welcomingRooms)
+      || welcomingRooms < 0
+      || !Number.isSafeInteger(seatedRooms)
+      || seatedRooms < 0
+      || !Number.isSafeInteger(updatedAt)
+      || updatedAt < 0) return null;
+  if (Number.isSafeInteger(freeTablePublicStats.updatedAt)
+      && updatedAt < freeTablePublicStats.updatedAt) return null;
+  if (publicServerTimeOffsetReady) {
+    const estimatedServerNow = receivedAt + publicServerTimeOffset;
+    if (updatedAt > estimatedServerNow + FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS
+        || updatedAt <= estimatedServerNow - FREE_TABLE_PUBLIC_STATS_STALE_MS) return null;
+  }
+  return { welcomingRooms, seatedRooms, updatedAt };
+}
+
+function canRefreshFreeTablePublicStats() {
+  return document.visibilityState === "visible"
+    && document.querySelector("#lobbyFreeTableWelcomingCount") !== null;
+}
+
+function freeTablePublicStatsAreExpired(now = Date.now()) {
+  if (!freeTablePublicStatsLastSuccessAt) return false;
+  let expiresAt = freeTablePublicStatsLastSuccessAt + FREE_TABLE_PUBLIC_STATS_STALE_MS;
+  if (publicServerTimeOffsetReady && Number.isSafeInteger(freeTablePublicStats.updatedAt)) {
+    const serverUpdatedAtInLocalTime = freeTablePublicStats.updatedAt - publicServerTimeOffset;
+    expiresAt = Math.min(
+      expiresAt,
+      serverUpdatedAtInLocalTime + FREE_TABLE_PUBLIC_STATS_STALE_MS,
+    );
+  }
+  return now >= expiresAt;
+}
+
+function expireFreeTablePublicStats(now = Date.now(), shouldRender = true) {
+  if (!freeTablePublicStatsAreExpired(now)) return false;
+  freeTablePublicStats = {
+    welcomingRooms: null,
+    seatedRooms: null,
+    updatedAt: null,
+  };
+  freeTablePublicStatsLastSuccessAt = 0;
+  lobbyStats.freeTable = { ...freeTablePublicStats };
+  if (shouldRender) renderLobbyStats();
+  return true;
+}
+
+function clearFreeTablePublicStatsTimer() {
+  window.clearTimeout(freeTablePublicStatsTimer);
+  freeTablePublicStatsTimer = null;
+}
+
+function scheduleFreeTablePublicStatsRefresh(delay) {
+  clearFreeTablePublicStatsTimer();
+  if (!canRefreshFreeTablePublicStats()) return;
+  freeTablePublicStatsTimer = window.setTimeout(() => {
+    freeTablePublicStatsTimer = null;
+    refreshFreeTablePublicStats();
+  }, delay);
+}
+
+function nextFreeTablePublicStatsDelay(succeeded) {
+  if (succeeded) return FREE_TABLE_PUBLIC_STATS_POLL_MS;
+  return Math.min(
+    FREE_TABLE_PUBLIC_STATS_POLL_MS * (2 ** Math.min(freeTablePublicStatsFailureCount, 2)),
+    FREE_TABLE_PUBLIC_STATS_MAX_BACKOFF_MS,
+  );
+}
+
+function refreshFreeTablePublicStats() {
+  expireFreeTablePublicStats();
+  if (!canRefreshFreeTablePublicStats()) {
+    return Promise.resolve({ ...freeTablePublicStats });
+  }
+  if (freeTablePublicStatsRequest) return freeTablePublicStatsRequest;
+  let succeeded = false;
+  const request = Promise.resolve()
+    .then(() => freeTablePublicStatsCallable({}))
+    .then((response) => {
+      const receivedAt = Date.now();
+      const nextStats = normalizeFreeTablePublicStats(response?.data, receivedAt);
+      if (!nextStats) throw new Error("Invalid free table public stats response.");
+      freeTablePublicStats = nextStats;
+      freeTablePublicStatsLastSuccessAt = receivedAt;
+      freeTablePublicStatsFailureCount = 0;
+      lobbyStats.freeTable = { ...nextStats };
+      renderLobbyStats();
+      succeeded = true;
+      return { ...nextStats };
+    })
+    .catch(() => {
+      freeTablePublicStatsFailureCount = Math.min(freeTablePublicStatsFailureCount + 1, 8);
+      expireFreeTablePublicStats();
+      return { ...freeTablePublicStats };
+    })
+    .finally(() => {
+      if (freeTablePublicStatsRequest === request) freeTablePublicStatsRequest = null;
+      if (canRefreshFreeTablePublicStats()) {
+        scheduleFreeTablePublicStatsRefresh(nextFreeTablePublicStatsDelay(succeeded));
+      }
+    });
+  freeTablePublicStatsRequest = request;
+  return request;
+}
+
+function refreshFreeTablePublicStatsImmediately() {
+  clearFreeTablePublicStatsTimer();
+  return refreshFreeTablePublicStats();
+}
+
 function refreshLobbyStats() {
+  expireFreeTablePublicStats(Date.now(), false);
   const now = Date.now() + Number(publicServerTimeOffset || 0);
   const freshAfter = now - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries || {}).filter((entry) => (
@@ -1934,6 +2067,8 @@ function renderLobbyStats() {
     lobbyTeamPlayingCount: lobbyStats.team.playing,
     lobbyRoyaleWaitingCount: lobbyStats.royale.waiting,
     lobbyRoyalePlayingCount: lobbyStats.royale.playing,
+    lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
+    lobbyFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
     lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
     lobbyMarketBuyerWaitingCount: lobbyStats.market.buyerWaiting,
     lobbyMarketNegotiatingCount: lobbyStats.market.negotiating,
@@ -1945,6 +2080,7 @@ function renderLobbyStats() {
 }
 
 function watchLobbyStats() {
+  refreshFreeTablePublicStatsImmediately();
   onValue(ref(database, "online/publicPresence"), (snapshot) => {
     lobbyPresenceEntries = snapshot.val() || {};
     refreshLobbyStats();
@@ -1961,13 +2097,24 @@ function watchLobbyStats() {
   });
   onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
     const offset = Number(snapshot.val());
-    if (Number.isFinite(offset)) publicServerTimeOffset = offset;
+    if (Number.isFinite(offset)) {
+      publicServerTimeOffset = offset;
+      publicServerTimeOffsetReady = true;
+    }
     refreshLobbyStats();
   }, () => {
     // A local clock fallback is sufficient when the offset cannot be read.
     refreshLobbyStats();
   });
   window.setInterval(refreshLobbyStats, 10_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      refreshFreeTablePublicStatsImmediately();
+    } else {
+      clearFreeTablePublicStatsTimer();
+    }
+  });
+  window.addEventListener("hariai-landing-rendered", refreshFreeTablePublicStatsImmediately);
 }
 
 function watchDailyDateRollover() {

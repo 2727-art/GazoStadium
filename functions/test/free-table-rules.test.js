@@ -17,12 +17,23 @@ function containsAll(value, parts) {
   for (const part of parts) assert.ok(value.includes(part), `missing ${part}`);
 }
 
-test("freeTableAction is App Check enforced and has a separate cleanup job", () => {
+test("free table Callables are App Check enforced and have a separate cleanup job", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTablePublicStats, true);
   assert.match(
     functionsSource,
     /exports\.freeTableAction = onCall\(callableOptions\("freeTableAction"\)/,
   );
+  assert.match(
+    functionsSource,
+    /exports\.freeTablePublicStats = onCall\(\s*callableOptions\("freeTablePublicStats"\)/,
+  );
+  const publicStatsSource = functionsSource.slice(
+    functionsSource.indexOf("exports.freeTablePublicStats = onCall("),
+    functionsSource.indexOf("exports.cleanupExpiredFreeTables = onSchedule("),
+  );
+  assert.match(publicStatsSource, /freeTableService\.getPublicStats\(request\.data\)/);
+  assert.doesNotMatch(publicStatsSource, /requireUid\(/);
   assert.match(functionsSource, /exports\.cleanupExpiredFreeTables = onSchedule\(/);
   assert.match(functionsSource, /every 5 minutes/);
   const serviceSource = fs.readFileSync(
@@ -32,6 +43,21 @@ test("freeTableAction is App Check enforced and has a separate cleanup job", () 
   assert.match(serviceSource, /cleanupExpiredFirestoreCollection\("freeTableReports", now\)/);
   assert.match(serviceSource, /cleanupExpiredFirestoreCollection\("freeTableVisitLedger", now\)/);
   assert.match(serviceSource, /\.where\("expireAt", "<=", Timestamp\.fromMillis\(now\)\)/);
+  assert.match(
+    serviceSource,
+    /publicRoomsRef\(\)\s*\.orderByChild\("expiresAt"\)\s*\.startAt\(now \+ 1\)/,
+  );
+  assert.match(
+    serviceSource,
+    /hostActiveCollectionRef\(\)\s*\.orderByChild\("expiresAt"\)\s*\.startAt\(now \+ 1\)/,
+  );
+  assert.doesNotMatch(
+    serviceSource.slice(
+      serviceSource.indexOf("async function readPublicStats(now)"),
+      serviceSource.indexOf("async function cleanupExpiredFirestoreCollection("),
+    ),
+    /realtime\.ref\("freeTables\/presence"\)\.get\(\)/,
+  );
 });
 
 test("public shelf and coordination state are callable-only", () => {
@@ -39,6 +65,8 @@ test("public shelf and coordination state are callable-only", () => {
     assert.equal(databaseRules[pathName][".read"], false);
     assert.equal(databaseRules[pathName][".write"], false);
   }
+  assert.deepEqual(databaseRules.publicRooms[".indexOn"], ["expiresAt"]);
+  assert.deepEqual(databaseRules.hostActive[".indexOn"], ["expiresAt"]);
   assert.equal(databaseRules.hostActive.$uid[".write"], false);
   assert.equal(databaseRules.visitorPending.$uid[".write"], false);
   assert.equal(databaseRules.active.$uid[".write"], false);

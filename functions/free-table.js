@@ -21,6 +21,7 @@ const FREE_TABLE_BLOCK_LIMIT = 100;
 const FREE_TABLE_RELATIONSHIP_LIMIT = 100;
 const FREE_TABLE_REPORT_MESSAGE_LIMIT = 10;
 const FREE_TABLE_REPORT_CHAT_SCAN_LIMIT = 80;
+const FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS = 5 * 1000;
 const FREE_TABLE_GROWTH_MILESTONES = Object.freeze([1, 3, 7, 15, 30]);
 const FREE_TABLE_ROLEPLAY_LEVELS = Object.freeze(["none", "light", "full"]);
 const FREE_TABLE_DURATIONS = Object.freeze(["5m", "15m", "30m", "leisurely"]);
@@ -59,6 +60,7 @@ const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
 const CHILD_ID_PATTERN = /^[A-Za-z0-9_-]{20,40}$/;
 const THEME_ID_PATTERN = /^[A-Za-z0-9_-]{0,48}$/;
 const UID_CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
+const RTDB_KEY_FORBIDDEN_PATTERN = /[.#$\[\]\/]/u;
 const TEXT_CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu;
 const ROOM_LIMITS = Object.freeze({
   name: 24,
@@ -319,6 +321,165 @@ function publicRoomProjection(value, now = Date.now()) {
     openedAt: Math.max(0, Number(source.openedAt || 0)),
     heartbeatAt: Math.max(0, Number(source.heartbeatAt || 0)),
     expiresAt: Math.max(0, Number(source.expiresAt || 0)),
+  });
+}
+
+function freeTablePresenceRowIsFresh(value, now) {
+  const presence = objectValue(value);
+  return presence.online === true
+    && Number(presence.lastSeen || 0) > 0
+    && Number(presence.expiresAt || 0) > Number(now);
+}
+
+function freeTablePublicStatsUidIsSafe(value) {
+  return typeof value === "string"
+    && Boolean(value)
+    && value.length <= 128
+    && !UID_CONTROL_PATTERN.test(value)
+    && !RTDB_KEY_FORBIDDEN_PATTERN.test(value);
+}
+
+function freeTablePublicStatsHostCandidate(hostUidValue, hostValue, nowValue) {
+  const hostUid = String(hostUidValue || "");
+  const host = objectValue(hostValue);
+  const roomId = String(host.roomId || "");
+  const publicRoomId = String(host.publicRoomId || "");
+  const generation = Number(host.generation || 0);
+  const expiresAt = Number(host.expiresAt || 0);
+  if (!freeTablePublicStatsUidIsSafe(hostUid)
+      || !CHILD_ID_PATTERN.test(roomId)
+      || !PUBLIC_ID_PATTERN.test(publicRoomId)
+      || !Number.isSafeInteger(generation)
+      || generation <= 0
+      || expiresAt <= Number(nowValue)) return null;
+  return Object.freeze({
+    expiresAt,
+    generation,
+    host,
+    hostUid,
+    publicRoomId,
+    roomId,
+  });
+}
+
+function createFreeTablePublicStatsLoader({
+  load,
+  now = Date.now,
+  ttlMs = FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS,
+}) {
+  if (typeof load !== "function" || typeof now !== "function") {
+    throw new TypeError("free table public stats loader dependencies are invalid");
+  }
+  const cacheTtlMs = Math.max(0, Number(ttlMs) || 0);
+  let cached = null;
+  let inFlight = null;
+  return async function loadPublicStats() {
+    const startedAt = Math.max(0, Number(now()) || 0);
+    if (cached && cached.expiresAt > startedAt) return cached.value;
+    if (inFlight) return inFlight;
+    const pending = Promise.resolve()
+      .then(() => load(startedAt))
+      .then((value) => {
+        cached = {
+          expiresAt: startedAt + cacheTtlMs,
+          value,
+        };
+        return value;
+      });
+    inFlight = pending;
+    try {
+      return await pending;
+    } finally {
+      if (inFlight === pending) inFlight = null;
+    }
+  };
+}
+
+function freeTablePublicStatsProjection(rootValue, nowValue = Date.now()) {
+  const root = objectValue(rootValue);
+  const now = Math.max(0, Number(nowValue) || 0);
+  const hostActive = objectValue(root.hostActive);
+  const publicRooms = objectValue(root.publicRooms);
+  const engagements = objectValue(root.engagements);
+  const sessions = objectValue(root.sessions);
+  const active = objectValue(root.active);
+  const presence = objectValue(root.presence);
+  const seatedSessionIds = new Set();
+  let welcomingRooms = 0;
+
+  for (const [publicRoomId, publicRoomValue] of Object.entries(publicRooms)) {
+    const publicRoom = objectValue(publicRoomValue);
+    if (publicRoom.publicRoomId === publicRoomId
+        && publicRoomProjection(publicRoom, now)) welcomingRooms += 1;
+  }
+
+  for (const [hostUid, hostValue] of Object.entries(hostActive)) {
+    const candidate = freeTablePublicStatsHostCandidate(hostUid, hostValue, now);
+    if (!candidate) continue;
+    const {
+      expiresAt: hostExpiresAt,
+      generation,
+      host,
+      publicRoomId,
+      roomId,
+    } = candidate;
+
+    if (host.state !== "active") continue;
+    const sessionId = String(host.sessionId || "");
+    if (!CHILD_ID_PATTERN.test(sessionId) || seatedSessionIds.has(sessionId)) continue;
+    const session = objectValue(sessions[sessionId]);
+    const visitorUid = String(session.visitorUid || "");
+    const sessionExpiresAt = Number(session.expiresAt || 0);
+    const hardExpiresAt = Number(session.hardExpiresAt || sessionExpiresAt);
+    if (!freeTablePublicStatsUidIsSafe(visitorUid)
+        || visitorUid === hostUid
+        || session.sessionId !== sessionId
+        || session.hostUid !== hostUid
+        || session.roomId !== roomId
+        || session.publicRoomId !== publicRoomId
+        || session.generation !== generation
+        || session.status !== "active"
+        || session.admissionAccepted !== true
+        || session.p2pConnected !== true
+        || session.arrivals?.host !== true
+        || session.arrivals?.visitor !== true
+        || session.participants?.[hostUid] !== true
+        || session.participants?.[visitorUid] !== true
+        || sessionExpiresAt <= now
+        || hardExpiresAt <= now
+        || hostExpiresAt !== sessionExpiresAt) continue;
+    const hostClaim = objectValue(active[hostUid]);
+    const visitorClaim = objectValue(active[visitorUid]);
+    const hostEngagement = objectValue(engagements[hostUid]);
+    const visitorEngagement = objectValue(engagements[visitorUid]);
+    const sessionPresence = objectValue(presence[sessionId]);
+    const claimMatches = (claim, role) => (
+      claim.sessionId === sessionId
+      && claim.role === role
+      && Number(claim.expiresAt || 0) === sessionExpiresAt
+    );
+    const engagementMatches = (engagement, role) => (
+      engagement.state === "active"
+      && engagement.role === role
+      && engagement.sessionId === sessionId
+      && engagement.roomId === roomId
+      && engagement.publicRoomId === publicRoomId
+      && engagement.generation === generation
+      && Number(engagement.expiresAt || 0) === sessionExpiresAt
+    );
+    if (!claimMatches(hostClaim, "host")
+        || !claimMatches(visitorClaim, "visitor")
+        || !engagementMatches(hostEngagement, "host")
+        || !engagementMatches(visitorEngagement, "visitor")
+        || !freeTablePresenceRowIsFresh(sessionPresence[hostUid], now)
+        || !freeTablePresenceRowIsFresh(sessionPresence[visitorUid], now)) continue;
+    seatedSessionIds.add(sessionId);
+  }
+
+  return Object.freeze({
+    welcomingRooms,
+    seatedRooms: seatedSessionIds.size,
+    updatedAt: now,
   });
 }
 
@@ -927,6 +1088,7 @@ function createFreeTableService(deps) {
     .ref(`freeTables/openGenerations/${uid}`);
   const engagementsRef = () => realtime.ref("freeTables/engagements");
   const engagementRef = (uid) => realtime.ref(`freeTables/engagements/${uid}`);
+  const hostActiveCollectionRef = () => realtime.ref("freeTables/hostActive");
   const hostActiveRef = (uid) => realtime.ref(`freeTables/hostActive/${uid}`);
   const visitorPendingRef = (uid) => realtime.ref(`freeTables/visitorPending/${uid}`);
   const requestsRef = (roomId) => realtime.ref(`freeTables/requests/${roomId}`);
@@ -3659,6 +3821,86 @@ function createFreeTableService(deps) {
     };
   }
 
+  async function readPublicStats(now) {
+    const [publicRoomsSnapshot, hostActiveSnapshot] = await Promise.all([
+      publicRoomsRef()
+        .orderByChild("expiresAt")
+        .startAt(now + 1)
+        .get(),
+      hostActiveCollectionRef()
+        .orderByChild("expiresAt")
+        .startAt(now + 1)
+        .get(),
+    ]);
+    const hostActive = objectValue(hostActiveSnapshot.val());
+    const projectionRoot = {
+      active: {},
+      engagements: {},
+      hostActive,
+      presence: {},
+      publicRooms: publicRoomsSnapshot.val(),
+      sessions: {},
+    };
+    const targetedReads = new Map();
+    const readTargetedValue = (pathValue) => {
+      if (!targetedReads.has(pathValue)) {
+        targetedReads.set(
+          pathValue,
+          realtime.ref(pathValue).get().then((snapshot) => snapshot.val()),
+        );
+      }
+      return targetedReads.get(pathValue);
+    };
+
+    await Promise.all(Object.entries(hostActive).map(async ([hostUid, hostValue]) => {
+      const candidate = freeTablePublicStatsHostCandidate(hostUid, hostValue, now);
+      const sessionId = String(candidate?.host?.sessionId || "");
+      if (!candidate
+          || candidate.host.state !== "active"
+          || !CHILD_ID_PATTERN.test(sessionId)) return;
+      const session = objectValue(
+        await readTargetedValue(`freeTables/sessions/${sessionId}`),
+      );
+      projectionRoot.sessions[sessionId] = session;
+      const visitorUid = String(session.visitorUid || "");
+      if (!freeTablePublicStatsUidIsSafe(visitorUid)
+          || visitorUid === candidate.hostUid) return;
+      const [
+        hostClaim,
+        visitorClaim,
+        hostEngagement,
+        visitorEngagement,
+        presence,
+      ] = await Promise.all([
+        readTargetedValue(`freeTables/active/${candidate.hostUid}`),
+        readTargetedValue(`freeTables/active/${visitorUid}`),
+        readTargetedValue(`freeTables/engagements/${candidate.hostUid}`),
+        readTargetedValue(`freeTables/engagements/${visitorUid}`),
+        readTargetedValue(`freeTables/presence/${sessionId}`),
+      ]);
+      projectionRoot.active[candidate.hostUid] = hostClaim;
+      projectionRoot.active[visitorUid] = visitorClaim;
+      projectionRoot.engagements[candidate.hostUid] = hostEngagement;
+      projectionRoot.engagements[visitorUid] = visitorEngagement;
+      projectionRoot.presence[sessionId] = presence;
+    }));
+
+    return freeTablePublicStatsProjection(projectionRoot, now);
+  }
+
+  const loadPublicStats = createFreeTablePublicStatsLoader({
+    load: readPublicStats,
+    now: currentTime,
+  });
+
+  async function getPublicStats(data) {
+    const payload = objectValue(data);
+    if (data !== payload || Reflect.ownKeys(payload).length !== 0) {
+      throw httpsError("invalid-argument", "自由卓の公開状況を確認してください。");
+    }
+    return loadPublicStats();
+  }
+
   async function cleanupExpiredFirestoreCollection(collectionName, now) {
     let removed = 0;
     for (let page = 0; page < 5; page += 1) {
@@ -4056,6 +4298,7 @@ function createFreeTableService(deps) {
 
   return Object.freeze({
     cleanupExpired,
+    getPublicStats,
     performAction,
   });
 }
@@ -4073,6 +4316,7 @@ module.exports = Object.freeze({
   FREE_TABLE_LIST_SCAN_LIMIT,
   FREE_TABLE_PAIR_GROWTH_COOLDOWN_MS,
   FREE_TABLE_PROTOCOL_VERSION,
+  FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS,
   FREE_TABLE_PUBLIC_ROOM_TTL_MS,
   FREE_TABLE_RECONNECT_MERGE_MS,
   FREE_TABLE_REPORT_MESSAGE_LIMIT,
@@ -4080,6 +4324,7 @@ module.exports = Object.freeze({
   FREE_TABLE_REQUEST_LIMIT,
   FREE_TABLE_REQUEST_TTL_MS,
   FREE_TABLE_SESSION_TTL_MS,
+  createFreeTablePublicStatsLoader,
   createFreeTableService,
   acceptedSessionValue,
   blockedInEitherDirection,
@@ -4105,6 +4350,7 @@ module.exports = Object.freeze({
   normalizeRoomSettings,
   ownerGrowthProjection,
   pairGrowthDecision,
+  freeTablePublicStatsProjection,
   publicRequestProjection,
   publicRoomProjection,
   publicSessionProjection,
