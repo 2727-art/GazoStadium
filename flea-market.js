@@ -436,9 +436,21 @@ function listingIsOpen(listing) {
   return expiresAt <= 0 || expiresAt > currentServerTime();
 }
 
+function listingIsTodaySold(listing) {
+  if (!listing || listing.status !== "sold") return false;
+  if (state.dateKey && listing.dateKey !== state.dateKey) return false;
+  const expiresAt = Number(listing.expiresAt || state.expiresAt || 0);
+  return expiresAt <= 0 || expiresAt > currentServerTime();
+}
+
+function listingIsVisibleToday(listing) {
+  return listingIsOpen(listing) || listingIsTodaySold(listing);
+}
+
 function listingStatusLabel(listing) {
   if (listingIsOpen(listing)) return "本日の棚に公開中";
-  if (listing?.status === "sold") return "売れました";
+  if (listingIsTodaySold(listing)) return "誰かに届きました";
+  if (listing?.status === "sold") return "ご縁がありました";
   if (listing?.status === "canceled") return "取り下げ済み";
   if (listing?.status === "hidden") return "安全確認のため非表示";
   return "本日の店じまい";
@@ -762,7 +774,7 @@ function previewListings() {
       title: "雨上がりの商店街",
       description: "閉店前の灯りが濡れた路面に映った瞬間です。派手ではないけれど、帰ってきたくなる空気を言葉と一緒に残しました。",
       price: 10,
-      status: "active",
+      status: "sold",
       createdAt: now - 2 * 60 * 60_000,
       expiresAt,
       seller: {
@@ -1086,28 +1098,38 @@ function applyLocalFavoriteAction(listing, payload) {
   removeLocalFavorite(sellerId);
 }
 
+function renderListingAvailability(listing) {
+  if (listingIsTodaySold(listing)) {
+    return '<span class="flea-listing-availability is-reached"><i aria-hidden="true">♡</i>ご縁がありました</span>';
+  }
+  const expiresAt = Number(listing.expiresAt || state.expiresAt || 0);
+  return `<time class="flea-listing-availability" datetime="${escapeHtml(new Date(expiresAt).toISOString())}">本日23:59まで</time>`;
+}
+
 function renderListingCard(listing) {
   const category = categoryDefinition(listing.category);
-  return `<article class="flea-listing-card" data-flea-listing-card="${escapeHtml(listing.id)}">
-    <header><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span><time datetime="${escapeHtml(new Date(listing.expiresAt || state.expiresAt).toISOString())}">本日23:59まで</time></header>
+  const reached = listingIsTodaySold(listing);
+  return `<article class="flea-listing-card ${reached ? "is-reached" : ""}" data-flea-listing-card="${escapeHtml(listing.id)}">
+    <header><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span>${renderListingAvailability(listing)}</header>
     <div class="flea-listing-copy"><small>FROM ${escapeHtml(listing.seller.name)}</small><h2>${escapeHtml(listing.title)}</h2><p>${escapeHtml(listing.description)}</p></div>
-    <footer><strong>${formatAnjuPay(listing.price)}</strong><div>${renderFavoriteButton(listing, { compact: true })}<button class="button button-primary button-small" type="button" data-flea-detail="${escapeHtml(listing.id)}">詳しく読む</button></div></footer>
+    <footer><strong>${formatAnjuPay(listing.price)}</strong><div>${renderFavoriteButton(listing, { compact: true })}<button class="button ${reached ? "button-ghost" : "button-primary"} button-small" type="button" data-flea-detail="${escapeHtml(listing.id)}">${reached ? "この売りっ子を知る" : "詳しく読む"}</button></div></footer>
   </article>`;
 }
 
 function renderSellerDirectoryCard(listing) {
   const category = categoryDefinition(listing.category);
-  return `<article class="flea-urikko-directory-card" data-flea-seller-card="${escapeHtml(listing.id)}" aria-label="${escapeHtml(listing.seller.name)}の売りっ子カードと今日の一品">
-    <header><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span><time datetime="${escapeHtml(new Date(listing.expiresAt || state.expiresAt).toISOString())}">本日23:59まで</time></header>
+  const reached = listingIsTodaySold(listing);
+  return `<article class="flea-urikko-directory-card ${reached ? "is-reached" : ""}" data-flea-seller-card="${escapeHtml(listing.id)}" aria-label="${escapeHtml(listing.seller.name)}の売りっ子カードと今日の一品">
+    <header><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span>${renderListingAvailability(listing)}</header>
     ${renderUrikkoCard(listing.seller)}
     <section class="flea-urikko-today"><span>TODAY'S WORDS</span><h2>${escapeHtml(listing.title)}</h2><p>${escapeHtml(listing.description)}</p></section>
-    <footer><strong>${formatAnjuPay(listing.price)}</strong><div>${renderFavoriteButton(listing, { compact: true })}<button class="button button-primary button-small" type="button" data-flea-detail="${escapeHtml(listing.id)}">今日の一品を見る</button></div></footer>
+    <footer><strong>${formatAnjuPay(listing.price)}</strong><div>${renderFavoriteButton(listing, { compact: true })}<button class="button ${reached ? "button-ghost" : "button-primary"} button-small" type="button" data-flea-detail="${escapeHtml(listing.id)}">${reached ? "この売りっ子を知る" : "今日の一品を見る"}</button></div></footer>
   </article>`;
 }
 
 function renderShelf() {
   const listings = state.listings.filter((listing) => (
-    listingIsOpen(listing)
+    listingIsVisibleToday(listing)
     && (state.categoryFilter === "all" || listing.category === state.categoryFilter)
   ));
   const body = listings.length
@@ -1126,7 +1148,7 @@ function renderShelf() {
       </div>`
     : "";
   return renderFrame(`<section class="flea-shelf" aria-labelledby="fleaShelfHeading">
-    <div class="flea-section-head"><div><span>TODAY'S SHELF</span><h2 id="fleaShelfHeading">今日の一品から見つける</h2><p>カテゴリは興味の入口です。紹介することばを先に読んで、気になる店主へ進めます。</p></div><small>日本時間 0:00 に本日の店じまい</small></div>
+    <div class="flea-section-head"><div><span>TODAY'S SHELF</span><h2 id="fleaShelfHeading">今日の一品から見つける</h2><p>カテゴリは興味の入口です。誰かへ届いた一品も同じ場所に残り、紹介することばから気になる店主へ進めます。</p></div><small>日本時間 0:00 に本日の店じまい</small></div>
     ${renderDiscoverySwitch("shelf")}
     ${renderCategoryFilters()}
     ${body}
@@ -1142,7 +1164,7 @@ function sellerDirectoryListings() {
       ? state.sellerListings
       : [];
   return source.filter((listing) => (
-    listingIsOpen(listing)
+    listingIsVisibleToday(listing)
     && (state.categoryFilter === "all" || listing.category === state.categoryFilter)
   ));
 }
@@ -1170,7 +1192,7 @@ function renderSellers() {
       </div>`
     : "";
   return renderFrame(`<section class="flea-seller-directory-screen" aria-labelledby="fleaSellersHeading">
-    <div class="flea-section-head"><div><span>TODAY'S URIKKO</span><h2 id="fleaSellersHeading">今日の売りっ子たち</h2><p>今日出品している店主を、興味カテゴリ別に紹介します。カードを整えていない人も同じ順番・同じ高さで並びます。</p></div><small>順位ではありません / 0:00に日替わり</small></div>
+    <div class="flea-section-head"><div><span>TODAY'S URIKKO</span><h2 id="fleaSellersHeading">今日の売りっ子たち</h2><p>今日出品した店主を、興味カテゴリ別に紹介します。誰かへ届いた後も0:00までは同じ順番・同じ高さで並びます。</p></div><small>順位ではありません / 0:00に日替わり</small></div>
     ${renderDiscoverySwitch("sellers")}
     ${renderCategoryFilters()}
     <p class="flea-seller-order-note"><strong>表示順は営業成績では決まりません。</strong>売上、推し帳の人数、カードの装飾、実績の数を使わない日替わりの順番です。</p>
@@ -1181,9 +1203,9 @@ function renderSellers() {
   </section>`);
 }
 
-function activeListingForSeller(publicSellerId) {
+function visibleListingForSeller(publicSellerId) {
   return [...state.listings, ...state.sellerListings].find((listing) => (
-    listingIsOpen(listing) && listing.seller.publicSellerId === publicSellerId
+    listingIsVisibleToday(listing) && listing.seller.publicSellerId === publicSellerId
   )) || null;
 }
 
@@ -1193,7 +1215,7 @@ function favoriteSellerEntries() {
   );
   state.favorites.forEach((publicSellerId) => {
     if (sellersById.has(publicSellerId)) return;
-    const listing = activeListingForSeller(publicSellerId);
+    const listing = visibleListingForSeller(publicSellerId);
     const snapshot = favoriteSnapshotFromListing(listing);
     if (snapshot) sellersById.set(publicSellerId, snapshot);
   });
@@ -1203,7 +1225,7 @@ function favoriteSellerEntries() {
 }
 
 function renderFavoriteSeller(snapshot) {
-  const listing = activeListingForSeller(snapshot.publicSellerId);
+  const listing = visibleListingForSeller(snapshot.publicSellerId);
   const card = listing?.seller?.creatorCard || snapshot.creatorCard;
   const urikkoCard = listing?.seller?.urikkoCard || snapshot.urikkoCard;
   const name = listing?.seller?.name || snapshot.name || card?.name || "PLAYER";
@@ -1262,6 +1284,7 @@ function renderListingDetailBody(listing) {
   const category = categoryDefinition(listing.category);
   const own = state.ownListing?.id === listing.id;
   const open = listingIsOpen(listing);
+  const reached = listingIsTodaySold(listing);
   const affordable = state.balance >= listing.price;
   const xLink = renderXPostLink(listing.xPostUrl, listing.seller.name);
   const returnDestination = state.screen === "own"
@@ -1273,11 +1296,12 @@ function renderListingDetailBody(listing) {
     ${renderListingUrikkoCard(listing)}
     ${xLink ? `<section class="flea-reference"><div><span>OPTIONAL REFERENCE</span><h3>もう少し知りたいときだけ</h3><p>ポスト本文や画像はゲーム内に表示しません。Xへ移動して自分で確かめられますが、リンク先の内容・継続公開を運営は保証しません。</p></div>${xLink}</section>` : ""}
     ${renderCreatorCard(listing)}
+    ${reached && !own ? `<section class="flea-live-market-path"><div><span>WHEN YOU WANT TO HEAR THEIR WORDS</span><h3>この売りっ子のことばが気になったら、推し値市場へ</h3><p>この一品は誰かへ届きましたが、店主のことばと人柄を知る入口は本日の店じまいまで残ります。推し値市場で同じ店主と会える保証や、優先マッチはありません。</p></div><button class="button hero-market-button" type="button" data-flea-open-value-market>推し値市場を見る</button></section>` : ""}
     <section class="flea-purchase-panel" aria-label="購入判断">
-      <div><span>YOUR DECISION</span><h3>${own ? "これはあなたの出品です" : open ? "この一品を購入しますか？" : listingStatusLabel(listing)}</h3>
-        <p>購入するのは実物や画像ではなく、このゲーム内でことばと人柄に価値をつける体験です。</p></div>
+      <div><span>${reached ? "AFTER THE ENCOUNTER" : "YOUR DECISION"}</span><h3>${own ? "これはあなたの出品です" : open ? "この一品を購入しますか？" : reached ? "この一品には、ご縁がありました" : listingStatusLabel(listing)}</h3>
+        <p>${reached && !own ? "購入はできませんが、店主が紹介したことばと人柄は、本日の店じまいまでゆっくり読めます。" : "購入するのは実物や画像ではなく、このゲーム内でことばと人柄に価値をつける体験です。"}</p></div>
       <div class="flea-purchase-actions">
-        ${own ? '<button class="button button-primary" type="button" data-flea-nav="own">今日の出品状況を見る</button>' : open ? `<button class="button button-primary" type="button" data-flea-purchase-review="${escapeHtml(listing.id)}" ${state.busyAction || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(listing.price)}で購入内容を確認` : `あと${formatAnjuPay(listing.price - state.balance)}`}</button>${renderFavoriteButton(listing)}` : ""}
+        ${own ? '<button class="button button-primary" type="button" data-flea-nav="own">今日の出品状況を見る</button>' : open ? `<button class="button button-primary" type="button" data-flea-purchase-review="${escapeHtml(listing.id)}" ${state.busyAction || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(listing.price)}で購入内容を確認` : `あと${formatAnjuPay(listing.price - state.balance)}`}</button>${renderFavoriteButton(listing)}` : reached ? renderFavoriteButton(listing) : ""}
         <button class="button button-ghost" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.label}</button>
       </div>
     </section>
@@ -1296,9 +1320,9 @@ function renderReportPanel(listing) {
 
 function renderDetail() {
   const listing = currentListing();
-  if (!listing) {
+  if (!listing || (!listing.isOwn && !listingIsVisibleToday(listing))) {
     const returnDestination = detailReturnDestination();
-    return renderFrame(`<section class="flea-empty"><span aria-hidden="true">♡</span><h2>この出品は棚から離れました</h2><p>売れたか、本日の店じまいを迎えた可能性があります。</p><button class="button button-primary" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.label}</button></section>`);
+    return renderFrame(`<section class="flea-empty"><span aria-hidden="true">♡</span><h2>この一品は本日の棚を離れました</h2><p>取り下げ、安全確認、または0:00の店じまいを迎えた可能性があります。</p><button class="button button-primary" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.label}</button></section>`);
   }
   return renderFrame(renderListingDetailBody(listing), { compactHeader: true });
 }
@@ -1532,6 +1556,7 @@ function renderHistoryReceipt(receipt) {
   return `<article class="flea-receipt">
     <header><span>${seller ? "SOLD" : "FOUND"}</span><time datetime="${escapeHtml(new Date(receipt.createdAt).toISOString())}">${escapeHtml(formatDateTime(receipt.createdAt))}</time></header>
     <div><span class="flea-category is-${category.id}"><i aria-hidden="true">${category.mark}</i>${category.label}</span><h3>${escapeHtml(receipt.listing.title)}</h3><p>${seller ? "購入者" : "店主"}：${escapeHtml(receipt.counterpartyName)}</p></div>
+    ${receipt.listing.description ? `<section class="flea-receipt-description"><span>その日に紹介されていたことば</span><p>${escapeHtml(receipt.listing.description)}</p></section>` : ""}
     <dl><div><dt>${seller ? "販売価格" : "支払額"}</dt><dd>${formatAnjuPay(receipt.price)}</dd></div>${seller ? `<div><dt>販売手数料</dt><dd>${formatAnjuPay(receipt.feeAmount)}</dd></div><div><dt>受取額</dt><dd>${formatAnjuPay(receipt.sellerProceeds)}</dd></div>` : ""}</dl>
     ${receipt.listing.xPostUrl ? renderXPostLink(receipt.listing.xPostUrl, receipt.counterpartyName, { className: "is-compact" }) : ""}
     ${seller ? "" : renderReportPanel({ id: receipt.id })}
@@ -1543,7 +1568,7 @@ function renderHistory() {
     ? `<div class="flea-history-grid">${state.receipts.map(renderHistoryReceipt).join("")}</div>`
     : `<section class="flea-empty"><span aria-hidden="true">♡</span><h2>出会いの記録はまだありません</h2><p>購入または販売が成立すると、ここへゲーム内の記録が残ります。</p><button class="button button-primary" type="button" data-flea-nav="shelf">今日の棚を見る</button></section>`;
   return renderFrame(`<section class="flea-history" aria-labelledby="fleaHistoryHeading">
-    <div class="flea-section-head"><div><span>ENCOUNTER RECORDS</span><h2 id="fleaHistoryHeading">出会いの記録</h2><p>実物や権利の所有証明ではなく、このゲーム内で誰かのことばを選んだ記録です。</p></div><small>ランキングには使用しません</small></div>
+    <div class="flea-section-head"><div><span>ENCOUNTER RECORDS</span><h2 id="fleaHistoryHeading">出会いの記録</h2><p>実物や権利の所有証明ではなく、このゲーム内で誰かのことばを選んだ記録です。出品時の説明文も自分だけで読み返せます。</p></div><small>あなたにだけ表示 / ランキング不使用</small></div>
     ${records}
   </section>`);
 }
@@ -1830,8 +1855,8 @@ async function performAction(action, payload = {}) {
         state.sellerListings = state.sellerListings.map(replaceCard);
         state.ownListing = replaceCard(state.ownListing);
       }
-      state.notice = state.ownListing && listingIsOpen(state.ownListing)
-        ? "売りっ子カードを保存し、公開中の今日の一品にも反映しました。"
+      state.notice = state.ownListing && listingIsVisibleToday(state.ownListing)
+        ? "売りっ子カードを保存し、本日公開中の一品にも反映しました。"
         : "売りっ子カードを保存しました。次の出品から公開されます。";
     } else if (action === "set_favorite") {
       applyLocalFavoriteAction(selectedBefore, payload);
@@ -1854,7 +1879,16 @@ async function performAction(action, payload = {}) {
     if (!isCurrentLifecycle(generation)) return null;
     const message = friendlyMessage(error, "AnjuPayフリマの操作を完了できませんでした。");
     state.errorMessage = message;
-    if (action === "create_listing") {
+    if (
+      ["buy", "cancel_listing"].includes(action)
+      && /(売り切れました|受付を終了(?:しました|しています)|出品が見つかりません)/.test(message)
+    ) {
+      state.notice = action === "buy"
+        ? "購入受付が変わったため、最新の棚へ更新しました。"
+        : "出品状況が変わったため、最新の状態へ更新しました。";
+      state.screen = action === "buy" ? "detail" : "own";
+      await refreshState({ silent: true });
+    } else if (action === "create_listing") {
       state.formError = message;
       state.screen = "sell";
     } else if (action === "browse_more") {
@@ -2247,10 +2281,14 @@ function requestHome() {
 }
 
 window.addEventListener("visibilitychange", () => {
-  if (!active || document.visibilityState !== "visible" || useFleaPreview) return;
-  if (state.expiresAt && currentServerTime() >= state.expiresAt) {
-    refreshState({ silent: true });
-  }
+  if (
+    !active
+    || document.visibilityState !== "visible"
+    || useFleaPreview
+    || !state.authReady
+    || state.busyAction
+  ) return;
+  refreshState({ silent: true });
 });
 
 window.addEventListener("beforeunload", () => {

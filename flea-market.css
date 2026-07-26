@@ -397,7 +397,7 @@
   gap: 10px;
 }
 
-.flea-urikko-directory-card > header time {
+.flea-urikko-directory-card > header .flea-listing-availability {
   color: #8992a4;
   font-size: 0.64rem;
   font-weight: 800;
@@ -683,10 +683,28 @@
   gap: 10px;
 }
 
-.flea-listing-card > header time {
+.flea-listing-card > header .flea-listing-availability {
   color: #8992a4;
   font-size: 0.64rem;
   font-weight: 800;
+}
+
+.flea-listing-availability {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  text-align: right;
+}
+
+.flea-listing-card > header .flea-listing-availability.is-reached,
+.flea-urikko-directory-card > header .flea-listing-availability.is-reached {
+  color: #aee9df;
+}
+
+.flea-listing-availability.is-reached i {
+  font-style: normal;
 }
 
 .flea-category {
@@ -1916,6 +1934,30 @@
   margin: 0;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.flea-receipt .flea-receipt-description {
+  margin-top: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.flea-receipt-description span {
+  color: var(--flea-mint);
+  font-size: 0.61rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.flea-receipt-description p {
+  margin: 6px 0 0;
+  color: #c1c8d5;
+  font-size: 0.75rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .flea-receipt dl {

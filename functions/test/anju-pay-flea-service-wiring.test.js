@@ -101,7 +101,7 @@ test("all flea persistence stays in dedicated callable-only collections", () => 
 test("public responses are allowlisted and recursively reject private UIDs", () => {
   assert.match(
     source,
-    /PRIVATE_FLEA_RESPONSE_FIELDS[\s\S]*?"sellerUid"[\s\S]*?"buyerUid"[\s\S]*?"reporterUid"/,
+    /PRIVATE_FLEA_RESPONSE_FIELDS[\s\S]*?"sellerUid"[\s\S]*?"buyerUid"[\s\S]*?"reporterUid"[\s\S]*?"soldAt"/,
   );
   assert.match(
     source,
@@ -166,7 +166,10 @@ test("public responses are allowlisted and recursively reject private UIDs", () 
     listing,
     /publicSellerId:[\s\S]*?name:[\s\S]*?creatorCard:[\s\S]*?urikkoCard:/,
   );
-  assert.doesNotMatch(listing, /\blistingFee\b|\bcreatorCardEntryId\b|\bsellerName:/);
+  assert.doesNotMatch(
+    listing,
+    /\blistingFee\b|\bcreatorCardEntryId\b|\bsellerName:|\bbuyerUid\b|\bsoldAt\b/,
+  );
   const receipt = between("function publicFleaReceipt", "function publicFleaFavorite");
   assert.match(
     receipt,
@@ -188,10 +191,11 @@ test("state returns a bounded first page in stable browse order", () => {
     ))
   )));
   const state = between("async function getStateInternal", "async function mirrorCommittedBalances");
-  const browse = between("function activeBrowseQuery", "async function getStateInternal");
+  const browse = between("function publicBrowseQuery", "async function getStateInternal");
   assert.match(source, /const STATE_LISTING_LIMIT = 50;/);
+  assert.match(source, /const PUBLIC_FLEA_LISTING_STATUSES = Object\.freeze\(\["active", "sold"\]\);/);
   assert.match(browse, /\.where\("dateKey", "==", dateKey\)/);
-  assert.match(browse, /\.where\("status", "==", "active"\)/);
+  assert.match(browse, /\.where\("status", "in", PUBLIC_FLEA_LISTING_STATUSES\)/);
   assert.match(browse, /\.orderBy\("browseOrder", "asc"\)/);
   assert.match(browse, /\.limit\(STATE_LISTING_LIMIT \+ 1\)/);
   assert.match(browse, /documents\.slice\(0, STATE_LISTING_LIMIT\)/);
@@ -242,9 +246,9 @@ test("browse_sellers is category-scoped and keeps the neutral daily order", () =
       ))
     ))
   )));
-  const sellerQuery = between("function activeSellerBrowseQuery", "function publicBrowsePage");
+  const sellerQuery = between("function publicSellerBrowseQuery", "function publicBrowsePage");
   assert.match(sellerQuery, /\.where\("dateKey", "==", dateKey\)/);
-  assert.match(sellerQuery, /\.where\("status", "==", "active"\)/);
+  assert.match(sellerQuery, /\.where\("status", "in", PUBLIC_FLEA_LISTING_STATUSES\)/);
   assert.match(sellerQuery, /\.where\("category", "==", category\)/);
   assert.deepEqual(
     [...sellerQuery.matchAll(/\.orderBy\("([^"]+)", "asc"\)/g)]
@@ -261,7 +265,7 @@ test("browse_sellers is category-scoped and keeps the neutral daily order", () =
     "async function mirrorCommittedBalances",
   );
   assert.match(sellers, /requireFleaCategory\(categoryValue\)/);
-  assert.match(sellers, /activeSellerBrowseQuery\(dateKey, category\)/);
+  assert.match(sellers, /publicSellerBrowseQuery\(dateKey, category\)/);
   assert.match(sellers, /cursorListing\.dateKey !== dateKey/);
   assert.match(sellers, /cursorListing\.category !== category/);
   assert.match(sellers, /\.startAfter\(cursorSnapshot\)/);
@@ -311,6 +315,10 @@ test("seller cards accept only owner-selected unlocked market achievements", () 
   assert.match(
     save,
     /listing\.sellerUid === uid[\s\S]*?listing\.status === "active"[\s\S]*?effectiveFleaListingStatus\(listing, attemptNow\) === "active"/,
+  );
+  assert.match(
+    save,
+    /listing\.status === "sold"[\s\S]*?finiteTimestamp\(listing\.expiresAt\) > attemptNow/,
   );
   assert.match(
     save,
@@ -429,9 +437,15 @@ test("cancel, favorite, and report remain non-rewarding and idempotent", () => {
   assert.doesNotMatch(favorite, /favoriteCount|counter|increment/i);
   assert.match(favorite, /privateFavoriteCreatorCard\(listing\.sellerCard\)/);
   assert.match(favorite, /const attemptNow = currentTime\(\)/);
-  assert.match(favorite, /const canFavoriteActiveListing = listing\.status === "active"[\s\S]*?effectiveFleaListingStatus\(listing, attemptNow\) === "active"/);
-  assert.match(favorite, /const canFavoritePurchasedListing = listing\.status === "sold"[\s\S]*?listing\.buyerUid === uid/);
-  assert.match(favorite, /data\.favorite[\s\S]*?!canFavoriteActiveListing[\s\S]*?!canFavoritePurchasedListing/);
+  assert.match(
+    favorite,
+    /const canFavoriteActiveListing = listing\.status === "active"[\s\S]*?listing\.dateKey === fleaJstDateKey\(attemptNow\)[\s\S]*?effectiveFleaListingStatus\(listing, attemptNow\) === "active"/,
+  );
+  assert.match(
+    favorite,
+    /const canFavoritePublicSoldListing = listing\.status === "sold"[\s\S]*?listing\.dateKey === fleaJstDateKey\(attemptNow\)[\s\S]*?finiteTimestamp\(listing\.expiresAt\) > attemptNow/,
+  );
+  assert.match(favorite, /data\.favorite[\s\S]*?!canFavoriteActiveListing[\s\S]*?!canFavoritePublicSoldListing/);
   assert.match(favorite, /const updatedAt = attemptNow/);
   assert.ok(favorite.indexOf("data.favorite === false") < favorite.indexOf("const listingId"));
   assert.match(favorite, /currentCount >= STATE_FAVORITE_LIMIT/);

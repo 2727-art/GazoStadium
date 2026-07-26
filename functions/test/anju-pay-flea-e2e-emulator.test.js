@@ -212,7 +212,7 @@ if (!RUN_REQUESTED) {
     seen.add(value);
     for (const [key, nested] of Object.entries(value)) {
       assert.ok(
-        !["sellerUid", "buyerUid", "reporterUid"].includes(key),
+        !["sellerUid", "buyerUid", "reporterUid", "soldAt"].includes(key),
         `Callable response exposed private field: ${key}`,
       );
       assertNoPrivateResponseFields(nested, seen);
@@ -470,12 +470,14 @@ if (!RUN_REQUESTED) {
       assert.deepEqual(state.listings, []);
     });
 
-    test("X付き出品を発見・推し帳保存し、二重購入を一度だけ精算する", async () => {
+    test("X付き出品を発見し、売却後も当日公開・第三者推し帳導線・一度だけの精算を保つ", async () => {
       const seller = await createCaller("sale-seller");
       const buyer = await createCaller("sale-buyer");
+      const visitor = await createCaller("sold-listing-visitor");
       await Promise.all([
         seedLegacyWallet(seller.uid, 100),
         seedLegacyWallet(buyer.uid, 100),
+        seedLegacyWallet(visitor.uid, 10),
         seedCreatorCard(seller.uid, {
           name: "SELLER X",
           xHandle: "flea_e2e",
@@ -529,6 +531,24 @@ if (!RUN_REQUESTED) {
         assert.equal(result.balance, 75);
       }
 
+      const soldBrowseState = await invoke(visitor.fleaAction, { action: "state" });
+      const soldDiscovery = soldBrowseState.listings.find((listing) => listing.id === listingId);
+      assert.ok(soldDiscovery, "today's sold listing should remain discoverable");
+      assert.equal(soldDiscovery.status, "sold");
+      assert.equal(soldDiscovery.isOwn, false);
+      assert.equal(Object.hasOwn(soldDiscovery, "buyerUid"), false);
+      assert.equal(Object.hasOwn(soldDiscovery, "soldAt"), false);
+      assert.equal(Object.hasOwn(soldDiscovery, "sellerProceeds"), false);
+      assert.equal(Object.hasOwn(soldDiscovery, "feeAmount"), false);
+      assert.equal(Object.hasOwn(soldDiscovery, "saleFee"), false);
+      const visitorFavorite = await invoke(visitor.fleaAction, {
+        action: "set_favorite",
+        listingId,
+        favorite: true,
+      });
+      assert.equal(visitorFavorite.favorite.favorite, true);
+      assert.equal(visitorFavorite.favorite.publicSellerId, publicSellerId);
+
       const favorited = await invoke(buyer.fleaAction, {
         action: "set_favorite",
         listingId,
@@ -543,8 +563,13 @@ if (!RUN_REQUESTED) {
       const rawFavorite = await firestore
         .doc(`anjuPayFleaFavorites/${buyer.uid}/sellers/${publicSellerId}`)
         .get();
+      const rawVisitorFavorite = await firestore
+        .doc(`anjuPayFleaFavorites/${visitor.uid}/sellers/${publicSellerId}`)
+        .get();
       assert.equal(rawFavorite.exists, true);
+      assert.equal(rawVisitorFavorite.exists, true);
       assert.ok(!Object.hasOwn(rawFavorite.get("creatorCard") || {}, "xHandle"));
+      assert.ok(!Object.hasOwn(rawVisitorFavorite.get("creatorCard") || {}, "xHandle"));
 
       const [
         rawListing,
@@ -925,7 +950,10 @@ if (!RUN_REQUESTED) {
       assert.equal(cleanedUp.canceled.status, "canceled");
     });
 
-    test("同一browseOrderの52件をstateからbrowse_moreへ重複なく送る", async () => {
+    test("activeからsoldへ変わるcursorでも当日52件を公平順で重複なく送る", async () => {
+      // Earlier E2E cases intentionally leave sold listings behind. Isolate this
+      // pagination fixture so the expected 52-item order is exact.
+      await firestore.recursiveDelete(firestore.collection("anjuPayFleaListings"));
       const viewer = await createCaller("browse-viewer");
       await seedLegacyWallet(viewer.uid, 10);
       const initialState = await invoke(viewer.fleaAction, { action: "state" });
@@ -985,6 +1013,12 @@ if (!RUN_REQUESTED) {
         sortedIds.slice(0, 50),
       );
 
+      await firestore.doc(`anjuPayFleaListings/${firstPage.nextBrowseCursor}`).update({
+        status: "sold",
+        buyerUid: viewer.uid,
+        soldAt: Date.now(),
+        updatedAt: Date.now(),
+      });
       const secondPage = await invoke(viewer.fleaAction, {
         action: "browse_more",
         cursor: firstPage.nextBrowseCursor,
@@ -1003,6 +1037,10 @@ if (!RUN_REQUESTED) {
       assert.equal(new Set(allIds).size, 52);
       assert.deepEqual(allIds, sortedIds);
 
+      await firestore.doc(`anjuPayFleaListings/${firstPage.nextBrowseCursor}`).update({
+        status: "active",
+        updatedAt: Date.now(),
+      });
       const firstSellerPage = await invoke(viewer.fleaAction, {
         action: "browse_sellers",
         category: "photo",
@@ -1018,6 +1056,12 @@ if (!RUN_REQUESTED) {
       );
       assertNoMarketStatistics(firstSellerPage);
 
+      await firestore.doc(`anjuPayFleaListings/${firstSellerPage.nextSellerCursor}`).update({
+        status: "sold",
+        buyerUid: viewer.uid,
+        soldAt: Date.now(),
+        updatedAt: Date.now(),
+      });
       const secondSellerPage = await invoke(viewer.fleaAction, {
         action: "browse_sellers",
         category: "photo",
@@ -1039,6 +1083,16 @@ if (!RUN_REQUESTED) {
         sortedIds,
       );
       assertNoMarketStatistics(secondSellerPage);
+      const soldSellerPage = await invoke(viewer.fleaAction, {
+        action: "browse_sellers",
+        category: "photo",
+      });
+      const soldCategoryListing = soldSellerPage.sellerListings.find(
+        (listing) => listing.id === firstSellerPage.nextSellerCursor,
+      );
+      assert.equal(soldCategoryListing?.status, "sold");
+      assert.equal(Object.hasOwn(soldCategoryListing, "buyerUid"), false);
+      assert.equal(Object.hasOwn(soldCategoryListing, "soldAt"), false);
 
       await assert.rejects(
         () => invoke(viewer.fleaAction, {

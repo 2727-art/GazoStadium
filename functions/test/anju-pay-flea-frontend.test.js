@@ -59,7 +59,7 @@ test("the seller directory is a category-based daily discovery view, never a fif
   const source = read("flea-market.js");
   const css = read("flea-market.css");
   const tabs = between(source, "function renderTabs", "function renderFrame");
-  const directory = between(source, "function sellerDirectoryListings", "function activeListingForSeller");
+  const directory = between(source, "function sellerDirectoryListings", "function visibleListingForSeller");
   const sellerCardCss = between(
     css,
     ".flea-urikko-card {",
@@ -73,7 +73,7 @@ test("the seller directory is a category-based daily discovery view, never a fif
   assert.match(directory, /renderDiscoverySwitch\("sellers"\)/);
   assert.match(directory, /renderCategoryFilters\(\)/);
   assert.match(directory, /state\.categoryFilter === "all"[\s\S]*state\.listings[\s\S]*state\.sellerListingsCategory === state\.categoryFilter[\s\S]*state\.sellerListings/);
-  assert.match(directory, /listingIsOpen\(listing\)/);
+  assert.match(directory, /listingIsVisibleToday\(listing\)/);
   assert.match(directory, /順位ではありません \/ 0:00に日替わり/);
   assert.match(directory, /売上、推し帳の人数、カードの装飾、実績の数を使わない日替わりの順番/);
   assert.match(directory, /data-flea-sellers-more=/);
@@ -397,7 +397,7 @@ test("detail navigation returns to its discovery origin", () => {
 test("category seller refresh and pagination preserve errors and the JST date boundary", () => {
   const source = read("flea-market.js");
   const refresh = between(source, "async function refreshState", "function previewCreatorCard");
-  const directory = between(source, "function sellerDirectoryListings", "function activeListingForSeller");
+  const directory = between(source, "function sellerDirectoryListings", "function visibleListingForSeller");
   const actions = between(source, "async function performAction", "async function performPreviewAction");
   const eventBindings = between(source, "function bindEvents", "async function start");
   const sellerMore = between(
@@ -489,7 +489,7 @@ test("the daily shelf pages safely without replacing loaded listings", () => {
   const initialState = between(source, "function createState", "function currentServerTime");
   const applyState = between(source, "function applyServerState", "function isCurrentLifecycle");
   const browseHelpers = between(source, "function appendUniqueBrowseListings", "function applyServerState");
-  const shelf = between(source, "function renderShelf", "function activeListingForSeller");
+  const shelf = between(source, "function renderShelf", "function visibleListingForSeller");
   const actions = between(source, "async function performAction", "async function performPreviewAction");
   const previewAction = between(source, "async function performPreviewAction", "function openValueMarket");
   const eventBindings = between(source, "function bindEvents", "async function start");
@@ -556,4 +556,85 @@ test("the daily shelf pages safely without replacing loaded listings", () => {
   assert.match(previewAction, /action === "browse_more"[\s\S]*state\.nextBrowseCursor = ""/);
   assert.match(source, /nextBrowseCursor: ""[\s\S]*ownListing: screen === "own"/);
   assert.match(css, /\.flea-browse-more \{/);
+});
+
+test("sold listings stay in today's neutral discovery order as a path to the seller", () => {
+  const source = read("flea-market.js");
+  const css = read("flea-market.css");
+  const visibility = between(source, "function currentServerTime", "function formatDateTime");
+  const shelf = between(source, "function renderListingCard", "function visibleListingForSeller");
+  const listingCard = between(source, "function renderListingCard", "function renderSellerDirectoryCard");
+  const sellerCard = between(source, "function renderSellerDirectoryCard", "function renderShelf");
+  const availability = between(
+    source,
+    "function renderListingAvailability",
+    "function renderListingCard",
+  );
+  const detail = between(source, "function renderListingDetailBody", "function renderReportPanel");
+  const history = between(source, "function renderHistoryReceipt", "function render() {");
+  const actions = between(source, "async function performAction", "async function performPreviewAction");
+  const visibilityRefresh = between(
+    source,
+    'window.addEventListener("visibilitychange"',
+    'window.addEventListener("beforeunload"',
+  );
+
+  const now = Date.now();
+  const sandbox = {
+    state: {
+      serverTimeOffset: 0,
+      dateKey: "2026-07-26",
+      expiresAt: now + 60_000,
+    },
+  };
+  vm.runInNewContext(visibility, sandbox);
+  assert.equal(sandbox.listingIsVisibleToday({
+    status: "sold",
+    dateKey: "2026-07-26",
+    expiresAt: now + 60_000,
+  }), true);
+  assert.equal(sandbox.listingIsVisibleToday({
+    status: "sold",
+    dateKey: "2026-07-25",
+    expiresAt: now + 60_000,
+  }), false);
+  assert.equal(sandbox.listingIsVisibleToday({
+    status: "sold",
+    dateKey: "2026-07-26",
+    expiresAt: now - 1,
+  }), false);
+  assert.equal(sandbox.listingIsVisibleToday({
+    status: "hidden",
+    dateKey: "2026-07-26",
+    expiresAt: now + 60_000,
+  }), false);
+
+  assert.match(shelf, /listingIsVisibleToday\(listing\)/);
+  assert.match(shelf, /誰かへ届いた一品も同じ場所に残り/);
+  assert.match(shelf, /誰かへ届いた後も0:00までは同じ順番・同じ高さで並びます/);
+  assert.match(listingCard, /is-reached/);
+  assert.match(sellerCard, /is-reached/);
+  assert.match(listingCard, /この売りっ子を知る/);
+  assert.match(sellerCard, /この売りっ子を知る/);
+  assert.match(availability, /ご縁がありました/);
+  assert.doesNotMatch(availability, /soldAt|createdAt|購入者|件/);
+  assert.doesNotMatch(`${listingCard}${sellerCard}`, /SOLD OUT|完売|購入者|soldAt|成約数/);
+  assert.doesNotMatch(css, /\.flea-(?:listing-card|urikko-directory-card)\.is-reached/);
+
+  assert.match(detail, /この一品には、ご縁がありました/);
+  assert.match(detail, /reached \? renderFavoriteButton\(listing\)/);
+  assert.match(detail, /data-flea-open-value-market>推し値市場を見る/);
+  assert.match(detail, /購入はできませんが、店主が紹介したことばと人柄/);
+  assert.match(detail, /renderListingUrikkoCard\(listing\)/);
+  assert.match(detail, /renderCreatorCard\(listing\)/);
+  assert.match(detail, /renderXPostLink\(listing\.xPostUrl/);
+  assert.match(history, /flea-receipt-description/);
+  assert.match(history, /出品時の説明文も自分だけで読み返せます/);
+  assert.match(
+    actions,
+    /\["buy", "cancel_listing"\]\.includes\(action\)[\s\S]*売り切れました[\s\S]*受付を終了[\s\S]*state\.screen = action === "buy" \? "detail" : "own"[\s\S]*await refreshState\(\{ silent: true \}\)/,
+  );
+  assert.match(actions, /state\.ownListing && listingIsVisibleToday\(state\.ownListing\)/);
+  assert.match(visibilityRefresh, /state\.authReady/);
+  assert.match(visibilityRefresh, /refreshState\(\{ silent: true \}\)/);
 });

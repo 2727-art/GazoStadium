@@ -47,6 +47,7 @@ const PRIVATE_FLEA_RESPONSE_FIELDS = Object.freeze(new Set([
   "sellerUid",
   "buyerUid",
   "reporterUid",
+  "soldAt",
 ]));
 const REQUIRED_DEPENDENCIES = Object.freeze([
   "firestore",
@@ -85,6 +86,7 @@ const STATE_LISTING_LIMIT = 50;
 const STATE_FAVORITE_LIMIT = 100;
 const STATE_RECEIPT_LIMIT = 30;
 const EXPIRY_BATCH_LIMIT = 100;
+const PUBLIC_FLEA_LISTING_STATUSES = Object.freeze(["active", "sold"]);
 const DEFAULT_FLEA_SELLER_CARD = Object.freeze({
   schemaVersion: FLEA_SELLER_CARD_SCHEMA_VERSION,
   tagline: "",
@@ -499,17 +501,17 @@ function createAnjuPayFleaService(deps) {
     };
   }
 
-  function activeBrowseQuery(dateKey) {
+  function publicBrowseQuery(dateKey) {
     return listingsCollection()
       .where("dateKey", "==", dateKey)
-      .where("status", "==", "active")
+      .where("status", "in", PUBLIC_FLEA_LISTING_STATUSES)
       .orderBy("browseOrder", "asc");
   }
 
-  function activeSellerBrowseQuery(dateKey, category) {
+  function publicSellerBrowseQuery(dateKey, category) {
     return listingsCollection()
       .where("dateKey", "==", dateKey)
-      .where("status", "==", "active")
+      .where("status", "in", PUBLIC_FLEA_LISTING_STATUSES)
       .where("category", "==", category)
       .orderBy("browseOrder", "asc");
   }
@@ -519,7 +521,9 @@ function createAnjuPayFleaService(deps) {
     const pageDocuments = documents.slice(0, STATE_LISTING_LIMIT);
     const listings = pageDocuments
       .map((document) => publicFleaListing(document.id, document.data(), uid, serverNow))
-      .filter((listing) => listing.id && listing.status === "active");
+      .filter((listing) => (
+        listing.id && PUBLIC_FLEA_LISTING_STATUSES.includes(listing.status)
+      ));
     const hasMore = documents.length > STATE_LISTING_LIMIT;
     const lastDocumentId = String(pageDocuments.at(-1)?.id || "");
     const nextBrowseCursor = hasMore && FLEA_ID_PATTERN.test(lastDocumentId)
@@ -534,7 +538,7 @@ function createAnjuPayFleaService(deps) {
 
   function getFirstBrowsePage(dateKey) {
     // Firestore appends document ID as the deterministic final ordering field.
-    return activeBrowseQuery(dateKey)
+    return publicBrowseQuery(dateKey)
       .limit(STATE_LISTING_LIMIT + 1)
       .get();
   }
@@ -622,7 +626,7 @@ function createAnjuPayFleaService(deps) {
     }
     // A DocumentSnapshot cursor carries Firestore's implicit document-ID tie-break,
     // so equal browseOrder values cannot skip or duplicate a paid listing.
-    const listingsSnapshot = await activeBrowseQuery(dateKey)
+    const listingsSnapshot = await publicBrowseQuery(dateKey)
       .startAfter(cursorSnapshot)
       .limit(STATE_LISTING_LIMIT + 1)
       .get();
@@ -651,7 +655,7 @@ function createAnjuPayFleaService(deps) {
     const requestNow = currentTime();
     const dateKey = fleaJstDateKey(requestNow);
     const expiresAt = fleaExpiresAt(requestNow);
-    let query = activeSellerBrowseQuery(dateKey, category);
+    let query = publicSellerBrowseQuery(dateKey, category);
     if (cursor) {
       const cursorSnapshot = await listingRef(cursor).get();
       const cursorListing = cursorSnapshot.exists ? cursorSnapshot.data() || {} : null;
@@ -1188,8 +1192,16 @@ function createAnjuPayFleaService(deps) {
         if (
           listing.sellerUid === uid
           && listing.dateKey === fleaJstDateKey(attemptNow)
-          && listing.status === "active"
-          && effectiveFleaListingStatus(listing, attemptNow) === "active"
+          && (
+            (
+              listing.status === "active"
+              && effectiveFleaListingStatus(listing, attemptNow) === "active"
+            )
+            || (
+              listing.status === "sold"
+              && finiteTimestamp(listing.expiresAt) > attemptNow
+            )
+          )
           && JSON.stringify(publicUrikkoCard(listing.urikkoCard)) !== JSON.stringify(publicCard)
         ) {
           transaction.update(todayListingReference, {
@@ -1245,13 +1257,15 @@ function createAnjuPayFleaService(deps) {
       publicSellerId = requirePublicSellerId(listing.publicSellerId);
       const attemptNow = currentTime();
       const canFavoriteActiveListing = listing.status === "active"
+        && listing.dateKey === fleaJstDateKey(attemptNow)
         && effectiveFleaListingStatus(listing, attemptNow) === "active";
-      const canFavoritePurchasedListing = listing.status === "sold"
-        && listing.buyerUid === uid;
+      const canFavoritePublicSoldListing = listing.status === "sold"
+        && listing.dateKey === fleaJstDateKey(attemptNow)
+        && finiteTimestamp(listing.expiresAt) > attemptNow;
       if (
         data.favorite
         && !canFavoriteActiveListing
-        && !canFavoritePurchasedListing
+        && !canFavoritePublicSoldListing
       ) {
         throw httpsError("failed-precondition", "この出品はすでに受付を終了しています。");
       }

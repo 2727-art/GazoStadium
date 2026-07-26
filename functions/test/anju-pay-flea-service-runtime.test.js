@@ -120,6 +120,7 @@ class FakeQuery {
       values = values.filter((entry) => {
         const actual = entry.value?.[field];
         if (operator === "==") return actual === value;
+        if (operator === "in") return Array.isArray(value) && value.includes(actual);
         if (operator === "<=") return actual <= value;
         throw new Error(`Unsupported fake Firestore operator: ${operator}`);
       });
@@ -395,7 +396,7 @@ function hasCode(code) {
 function containsPrivateIdentity(value) {
   if (!value || typeof value !== "object") return false;
   return Object.entries(value).some(([key, nested]) => (
-    ["sellerUid", "buyerUid", "reporterUid", "xHandle"].includes(key)
+    ["sellerUid", "buyerUid", "reporterUid", "soldAt", "xHandle"].includes(key)
     || containsPrivateIdentity(nested)
   ));
 }
@@ -426,7 +427,7 @@ test("create charges one Pay once, replays identical payload, and rejects a chan
   assert.equal(harness.firestore.count("anjuPayFleaListings/"), 1);
 });
 
-test("urikko card uses only unlocked market achievements without changing Pay or browse order", async () => {
+test("urikko card uses only unlocked market achievements and keeps today's sold card current", async () => {
   const harness = createHarness({
     balances: { seller: 100, viewer: 100 },
     creatorCards: {
@@ -514,6 +515,29 @@ test("urikko card uses only unlocked market achievements without changing Pay or
   assert.equal(containsPrivateIdentity(publicListing), false);
   assert.equal(JSON.stringify(publicListing).includes("salesCount"), false);
   assert.equal(JSON.stringify(publicListing).includes("grossSales"), false);
+
+  await harness.service.performAction("viewer", {
+    action: "buy",
+    listingId,
+    buyerName: "VIEWER",
+  });
+  const soldBeforeCardEdit = harness.firestore.read(`anjuPayFleaListings/${listingId}`);
+  await harness.service.performAction("seller", {
+    action: "save_urikko_card",
+    tagline: "ご縁のあとも、今日のことばを残します。",
+    themeId: "midnight",
+    sealId: "star",
+    achievementIds: ["market_seller_3"],
+  });
+  const soldAfterCardEdit = harness.firestore.read(`anjuPayFleaListings/${listingId}`);
+  assert.equal(soldAfterCardEdit.status, "sold");
+  assert.equal(soldAfterCardEdit.browseOrder, soldBeforeCardEdit.browseOrder);
+  assert.equal(soldAfterCardEdit.urikkoCard.themeId, "midnight");
+  const soldViewerState = await harness.service.performAction("viewer", { action: "state" });
+  assert.equal(
+    soldViewerState.listings.find((listing) => listing.id === listingId)?.seller.urikkoCard.themeId,
+    "midnight",
+  );
 });
 
 test("urikko card rejects locked, battle, duplicate-family, and forged customization", async () => {
@@ -993,7 +1017,7 @@ test("favorite snapshots omit UID and X handle, support removal, and enforce the
   assert.equal(harness.firestore.read("anjuPayFleaFavorites/cappedBuyer").count, 100);
 });
 
-test("state and browse_more return every paid listing across collision-safe bounded pages", async () => {
+test("state and browse_more return today's active and sold listings in one collision-safe order", async () => {
   const initialNow = Date.parse("2026-07-25T03:00:00.000Z");
   const expiresAt = Date.parse("2026-07-25T15:00:00.000Z");
   const harness = createHarness({
@@ -1011,7 +1035,7 @@ test("state and browse_more return every paid listing across collision-safe boun
       sellerName: `SELLER${index}`.slice(0, 16),
       sellerCard: null,
       dateKey: "2026-07-25",
-      status: "active",
+      status: index % 4 === 0 ? "sold" : "active",
       category: "illustration",
       title: `TITLE${index}`,
       description: `DESCRIPTION${index}`,
@@ -1020,12 +1044,36 @@ test("state and browse_more return every paid listing across collision-safe boun
       createdAt: initialNow,
       expiresAt,
       updatedAt: initialNow,
+      ...(index % 4 === 0 ? {
+        buyerUid: `buyer-${index}`,
+        soldAt: initialNow + index,
+      } : {}),
     });
     expected.push({ id, browseOrder });
   }
   expected.sort((left, right) => (
     left.browseOrder.localeCompare(right.browseOrder) || left.id.localeCompare(right.id)
   ));
+  for (const [offset, status] of ["hidden", "canceled", "expired"].entries()) {
+    const id = (1000 + offset).toString(16).padStart(40, "0");
+    harness.firestore.write(`anjuPayFleaListings/${id}`, {
+      schemaVersion: 1,
+      sellerUid: `excluded-seller-${offset}`,
+      publicSellerId: stableId(`excluded-seller-${offset}`),
+      sellerName: "EXCLUDED",
+      sellerCard: null,
+      dateKey: "2026-07-25",
+      status,
+      category: "illustration",
+      title: "EXCLUDED",
+      description: "EXCLUDED",
+      price: 25,
+      browseOrder: offset.toString(16).padStart(40, "0"),
+      createdAt: initialNow,
+      expiresAt,
+      updatedAt: initialNow,
+    });
+  }
 
   const first = await harness.service.performAction("viewer", { action: "state" });
   assert.equal(first.listings.length, 50);
@@ -1056,6 +1104,14 @@ test("state and browse_more return every paid listing across collision-safe boun
 
   const allListings = [...first.listings, ...second.listings, ...third.listings];
   assert.equal(new Set(allListings.map(({ id }) => id)).size, 105);
+  assert.ok(allListings.some(({ status }) => status === "sold"));
+  assert.ok(allListings.some(({ status }) => status === "active"));
+  assert.ok(allListings.every(({ status }) => ["active", "sold"].includes(status)));
+  assert.ok(allListings.filter(({ status }) => status === "sold").every((listing) => (
+    !Object.hasOwn(listing, "sellerProceeds")
+    && !Object.hasOwn(listing, "feeAmount")
+    && !Object.hasOwn(listing, "saleFee")
+  )));
   assert.equal(containsPrivateIdentity(allListings), false);
   await assert.rejects(
     harness.service.performAction("viewer", {
@@ -1078,7 +1134,7 @@ test("state and browse_more return every paid listing across collision-safe boun
   );
 });
 
-test("browse_sellers pages one category without gaps and keeps working after its cursor sells", async () => {
+test("browse_sellers pages today's active and sold category without gaps or status promotion", async () => {
   const initialNow = Date.parse("2026-07-25T03:00:00.000Z");
   const expiresAt = Date.parse("2026-07-25T15:00:00.000Z");
   const harness = createHarness({
@@ -1098,7 +1154,7 @@ test("browse_sellers pages one category without gaps and keeps working after its
       sellerCard: null,
       urikkoCard: null,
       dateKey: "2026-07-25",
-      status: "active",
+      status: index % 5 === 0 ? "sold" : "active",
       category,
       title: `TITLE${index}`,
       description: `DESCRIPTION${index}`,
@@ -1107,6 +1163,10 @@ test("browse_sellers pages one category without gaps and keeps working after its
       createdAt: initialNow,
       expiresAt,
       updatedAt: initialNow,
+      ...(index % 5 === 0 ? {
+        buyerUid: `buyer-${index}`,
+        soldAt: initialNow + index,
+      } : {}),
     });
     (category === "illustration" ? illustrationIds : photoIds).push(id);
   }
@@ -1120,6 +1180,7 @@ test("browse_sellers pages one category without gaps and keeps working after its
   assert.equal(first.nextSellerCursor, illustrationIds[49]);
   assert.equal(first.hasMoreSellers, true);
   assert.equal(first.appendSellerListings, false);
+  assert.ok(first.sellerListings.some(({ status }) => status === "sold"));
 
   const cursorPath = `anjuPayFleaListings/${first.nextSellerCursor}`;
   harness.firestore.write(cursorPath, {
@@ -1135,6 +1196,15 @@ test("browse_sellers pages one category without gaps and keeps working after its
   assert.equal(second.hasMoreSellers, false);
   assert.equal(second.appendSellerListings, true);
   assert.equal(containsPrivateIdentity([...first.sellerListings, ...second.sellerListings]), false);
+  const refreshed = await harness.service.performAction("viewer", {
+    action: "browse_sellers",
+    category: "illustration",
+  });
+  assert.deepEqual(refreshed.sellerListings.map(({ id }) => id), illustrationIds.slice(0, 50));
+  assert.equal(
+    refreshed.sellerListings.find(({ id }) => id === first.nextSellerCursor)?.status,
+    "sold",
+  );
 
   const photos = await harness.service.performAction("viewer", {
     action: "browse_sellers",
@@ -1151,7 +1221,7 @@ test("browse_sellers pages one category without gaps and keeps working after its
   );
 });
 
-test("favorite addition allows the purchasing buyer after a sale and rejects everyone else", async () => {
+test("any viewer may favorite today's sold listing, but hidden and past-day listings stay closed", async () => {
   const beforeMidnight = Date.parse("2026-07-25T14:59:59.900Z");
   const atMidnight = Date.parse("2026-07-25T15:00:00.000Z");
   const harness = createHarness({
@@ -1174,6 +1244,47 @@ test("favorite addition allows the purchasing buyer after a sale and rejects eve
     favorite: true,
   });
   assert.equal(favoritedAfterPurchase.favorite.favorite, true);
+  const favoritedByStranger = await harness.service.performAction("stranger", {
+    action: "set_favorite",
+    listingId,
+    favorite: true,
+  });
+  assert.equal(favoritedByStranger.favorite.favorite, true);
+  assert.equal(containsPrivateIdentity(favoritedByStranger.favorite), false);
+  await assert.rejects(
+    harness.service.performAction("stranger", {
+      action: "buy",
+      listingId,
+      buyerName: "STRANGER",
+    }),
+    hasCode("failed-precondition"),
+  );
+  await harness.service.performAction("stranger", {
+    action: "set_favorite",
+    favorite: false,
+    publicSellerId: fleaPublicSellerId("seller"),
+  });
+
+  for (const status of ["hidden", "canceled", "expired"]) {
+    harness.firestore.write(listingPath, {
+      ...activeListing,
+      status,
+    });
+    await assert.rejects(
+      harness.service.performAction("stranger", {
+        action: "set_favorite",
+        listingId,
+        favorite: true,
+      }),
+      hasCode("failed-precondition"),
+    );
+  }
+
+  harness.firestore.write(listingPath, {
+    ...activeListing,
+    dateKey: "2026-07-24",
+    expiresAt: atMidnight + 60_000,
+  });
   await assert.rejects(
     harness.service.performAction("stranger", {
       action: "set_favorite",
@@ -1185,18 +1296,10 @@ test("favorite addition allows the purchasing buyer after a sale and rejects eve
 
   harness.firestore.write(listingPath, {
     ...activeListing,
-    status: "hidden",
+    status: "sold",
+    buyerUid: "buyer",
+    soldAt: beforeMidnight - 30_000,
   });
-  await assert.rejects(
-    harness.service.performAction("stranger", {
-      action: "set_favorite",
-      listingId,
-      favorite: true,
-    }),
-    hasCode("failed-precondition"),
-  );
-
-  harness.firestore.write(listingPath, activeListing);
   harness.setNow(beforeMidnight);
   harness.crossAtNextTransaction(atMidnight);
   await assert.rejects(
