@@ -50,7 +50,7 @@ import {
   getPlayerTitleCategory,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1";
 import {
   MAX_EQUIPPED_STAMPS,
   STAMP_PRODUCTS,
@@ -63,7 +63,7 @@ import {
   renderChatTools,
   renderStampBubble,
   startStampButtonCooldown,
-} from "./stamps.js?v=stamps-v1";
+} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1";
 import {
   bindPostMatchTip,
   isPostMatchTipBusy,

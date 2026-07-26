@@ -18,7 +18,7 @@ import {
 } from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 import {
   getPlayerTitlePresentation,
-} from "./player-titles.js?v=player-titles-v2";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const FLEA_DRAFT_KEY = "hariai-stadium-anju-pay-flea-draft-v1";
