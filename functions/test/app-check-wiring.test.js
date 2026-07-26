@@ -69,6 +69,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "soloSessionAction",
     "getP2pIceServers",
     "reportP2pConnectivity",
+    "reportMarketP2pConnectivity",
     "economyAction",
     "anjuPayFleaAction",
     "valueMarketQueue",
@@ -86,6 +87,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportP2pConnectivity, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportMarketP2pConnectivity, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.anjuPayFleaAction, true);
   assert.equal(
     rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue,

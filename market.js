@@ -62,6 +62,13 @@ const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 480 * 1024;
+const MARKET_P2P_CONNECT_TIMEOUT_MS = 20_000;
+const MARKET_P2P_DISCONNECT_GRACE_MS = 8_000;
+const MARKET_P2P_MAX_RECOVERY_ATTEMPTS = 3;
+const MARKET_FALLBACK_ICE_SERVERS = Object.freeze([
+  Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
+  Object.freeze({ urls: "stun:stun1.l.google.com:19302" }),
+]);
 const TERMINAL_STATES = new Set(["sold", "ended", "canceled"]);
 const MARKET_X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const MARKET_TAGLINE_MAX_LENGTH = 40;
@@ -144,10 +151,13 @@ const marketQueueCallable = httpsCallable(functions, "valueMarketQueue");
 const marketActionCallable = httpsCallable(functions, "valueMarketAction");
 const marketRankingsCallable = httpsCallable(functions, "valueMarketRankings");
 const marketShopCallable = httpsCallable(functions, "valueMarketShop");
+const getP2pIceServersCallable = httpsCallable(functions, "getP2pIceServers");
+const reportMarketP2pConnectivityCallable = httpsCallable(functions, "reportMarketP2pConnectivity");
 const appRoot = document.querySelector("#app");
 
 let active = false;
 let state = createState();
+let cachedMarketIceServers = null;
 let lastRenderedScreen = "";
 let lastRenderedMarketFocusKey = "";
 let lifecycleGeneration = 0;
@@ -189,14 +199,24 @@ function createState() {
     roomSyncWarningShown: false,
     roomSyncRetryAttempts: 0,
     activeUnsubscribe: null,
+    activeSnapshotRetry: null,
     walletUnsubscribe: null,
+    walletSnapshotRetry: null,
     roomUnsubscribe: null,
+    roomSnapshotRetry: null,
     realtimeUnsubscribers: [],
     realtimeRoomId: "",
     presenceConnections: [],
     enteringRoomId: "",
     peer: null,
     peerTimeout: null,
+    peerRecoveryTimer: null,
+    peerRecoveryAttempts: 0,
+    peerConnectionId: "",
+    peerTurnAvailable: false,
+    peerWasConnected: false,
+    peerStartedAt: 0,
+    peerDiagnosticSent: new Set(),
     channel: null,
     channelReady: false,
     peerStatus: "P2P接続を準備中…",
@@ -1453,6 +1473,8 @@ async function loadMarketShop(generation = lifecycleGeneration) {
 
 function subscribeToActiveRoom(generation = lifecycleGeneration) {
   state.activeUnsubscribe?.();
+  window.clearTimeout(state.activeSnapshotRetry);
+  state.activeSnapshotRetry = null;
   const uid = state.uid;
   state.activeUnsubscribe = onSnapshot(doc(firestore, "valueMarketActive", state.uid), (snapshot) => {
     if (!isCurrentLifecycle(generation) || state.uid !== uid) return;
@@ -1460,18 +1482,34 @@ function subscribeToActiveRoom(generation = lifecycleGeneration) {
     if (roomId && roomId !== state.roomId) {
       enterRoom(roomId, generation).catch((error) => handleFatalError(error, generation));
     }
-  }, (error) => handleFatalError(error, generation));
+  }, () => {
+    if (!isCurrentLifecycle(generation) || state.uid !== uid) return;
+    state.activeUnsubscribe = null;
+    state.activeSnapshotRetry = window.setTimeout(() => {
+      state.activeSnapshotRetry = null;
+      subscribeToActiveRoom(generation);
+    }, 3_000);
+  });
 }
 
 function subscribeToWallet(generation = lifecycleGeneration) {
   state.walletUnsubscribe?.();
+  window.clearTimeout(state.walletSnapshotRetry);
+  state.walletSnapshotRetry = null;
   const uid = state.uid;
   state.walletUnsubscribe = onSnapshot(doc(firestore, "wallets", uid), (snapshot) => {
     if (!isCurrentLifecycle(generation) || state.uid !== uid || !snapshot.exists()) return;
     const previousBalance = state.balance;
     updateMarketBalance(snapshot.data()?.balance);
     if (state.balance !== previousBalance) render();
-  }, (error) => handleFatalError(error, generation));
+  }, () => {
+    if (!isCurrentLifecycle(generation) || state.uid !== uid) return;
+    state.walletUnsubscribe = null;
+    state.walletSnapshotRetry = window.setTimeout(() => {
+      state.walletSnapshotRetry = null;
+      subscribeToWallet(generation);
+    }, 3_000);
+  });
 }
 
 function render() {
@@ -3707,6 +3745,8 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
   setMarketChrome("VALUE DEAL");
   render();
   state.roomUnsubscribe?.();
+  window.clearTimeout(state.roomSnapshotRetry);
+  state.roomSnapshotRetry = null;
   state.roomUnsubscribe = onSnapshot(doc(firestore, "valueMarketRooms", roomId), (snapshot) => {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !snapshot.exists()) return;
     const previousStatus = state.room?.status;
@@ -3737,7 +3777,21 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
     if (state.realtimeRoomId === roomId) {
       setupPeerConnection(generation, roomId).catch((error) => handleFatalError(error, generation));
     }
-  }, (error) => handleFatalError(error, generation));
+  }, () => {
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+    state.roomUnsubscribe = null;
+    state.peerStatus = "取引状態を再同期しています…交渉内容は保持されています";
+    render();
+    state.roomSnapshotRetry = window.setTimeout(() => {
+      state.roomSnapshotRetry = null;
+      enterRoom(roomId, generation).catch(() => {
+        if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+          state.peerStatus = "取引状態の再同期を続けています…";
+          render();
+        }
+      });
+    }, 3_000);
+  });
   await connectMarketRoomServices(roomId, generation);
   if (isCurrentLifecycle(generation) && state.enteringRoomId === roomId) state.enteringRoomId = "";
 }
@@ -3798,22 +3852,201 @@ async function setupRealtimeRoom(generation = lifecycleGeneration, roomId = stat
   }
 }
 
+function validMarketIceUrl(url) {
+  return typeof url === "string" && (
+    /^stun:stun\.cloudflare\.com:(?:3478|53)$/.test(url)
+    || /^turn:turn\.cloudflare\.com:(?:3478|53)\?transport=udp$/.test(url)
+    || /^turn:turn\.cloudflare\.com:(?:3478|53|80)\?transport=tcp$/.test(url)
+    || /^turns:turn\.cloudflare\.com:(?:5349|443)\?transport=tcp$/.test(url)
+  );
+}
+
+function validateMarketIceServers(value) {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 4) {
+    throw new Error("TURN構成が不正です。");
+  }
+  let hasTurn = false;
+  const iceServers = value.map((server) => {
+    const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
+    if (!urls.length || urls.length > 12 || urls.some((url) => !validMarketIceUrl(url))) {
+      throw new Error("TURN接続先が不正です。");
+    }
+    const containsTurn = urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"));
+    hasTurn ||= containsTurn;
+    if (!containsTurn) return { urls };
+    if (typeof server.username !== "string" || server.username.length < 8
+        || typeof server.credential !== "string" || server.credential.length < 8) {
+      throw new Error("TURN資格情報が不正です。");
+    }
+    return { urls, username: server.username, credential: server.credential };
+  });
+  if (!hasTurn) throw new Error("TURN接続先がありません。");
+  return iceServers;
+}
+
+function marketMonotonicNow() {
+  const value = globalThis.performance?.now?.();
+  return Number.isFinite(value) ? value : Date.now();
+}
+
+function marketIceCacheIsFresh(cache) {
+  return Number(cache?.refreshDeadlineMonotonic) > marketMonotonicNow()
+    && Number(cache?.refreshDeadlineWall) > Date.now();
+}
+
+async function loadMarketIceServers() {
+  if (marketIceCacheIsFresh(cachedMarketIceServers)) {
+    return { iceServers: cachedMarketIceServers.iceServers, turnAvailable: true };
+  }
+  try {
+    const response = await getP2pIceServersCallable({});
+    const iceServers = validateMarketIceServers(response.data?.iceServers);
+    const issuedAt = Number(response.data?.issuedAt || 0);
+    const refreshAt = Number(response.data?.refreshAt || 0);
+    const expiresAt = Number(response.data?.expiresAt || 0);
+    const refreshAfterMs = refreshAt - issuedAt;
+    if (issuedAt <= 0 || refreshAfterMs <= 0 || expiresAt <= refreshAt + 30_000
+        || expiresAt - issuedAt > 2 * 60 * 60 * 1000) {
+      throw new Error("TURN有効期限が不正です。");
+    }
+    cachedMarketIceServers = {
+      iceServers,
+      refreshDeadlineMonotonic: marketMonotonicNow() + refreshAfterMs,
+      refreshDeadlineWall: Date.now() + refreshAfterMs,
+    };
+    return { iceServers, turnAvailable: true };
+  } catch {
+    cachedMarketIceServers = null;
+    return {
+      iceServers: MARKET_FALLBACK_ICE_SERVERS.map((server) => ({ ...server })),
+      turnAvailable: false,
+    };
+  }
+}
+
+async function selectedMarketCandidateSummary(peer) {
+  if (!peer?.getStats) return { candidateType: "unknown", transport: "unknown" };
+  try {
+    const stats = await peer.getStats();
+    let selectedPair = null;
+    for (const report of stats.values()) {
+      if (report.type === "transport" && report.selectedCandidatePairId) {
+        selectedPair = stats.get(report.selectedCandidatePairId);
+        break;
+      }
+      if (report.type === "candidate-pair" && report.state === "succeeded"
+          && (report.selected === true || report.nominated === true)) selectedPair = report;
+    }
+    const candidate = selectedPair?.localCandidateId ? stats.get(selectedPair.localCandidateId) : null;
+    const candidateType = ["host", "srflx", "prflx", "relay"].includes(candidate?.candidateType)
+      ? candidate.candidateType
+      : "none";
+    const rawTransport = String(candidate?.relayProtocol || candidate?.protocol || "none");
+    const transport = ["udp", "tcp", "tls"].includes(rawTransport) ? rawTransport : "none";
+    return { candidateType, transport };
+  } catch {
+    return { candidateType: "unknown", transport: "unknown" };
+  }
+}
+
+async function reportMarketP2pDiagnostic(event, peer = state.peer) {
+  if (!state.roomId || useMarketPreview) return;
+  const dedupeKey = `${event}:${state.peerRecoveryAttempts}`;
+  if (state.peerDiagnosticSent.has(dedupeKey) && event !== "ice_disconnected") return;
+  state.peerDiagnosticSent.add(dedupeKey);
+  const candidate = await selectedMarketCandidateSummary(peer);
+  reportMarketP2pConnectivityCallable({
+    roomId: state.roomId,
+    diagnostic: {
+      event,
+      phase: "market",
+      turnAvailable: state.peerTurnAvailable === true,
+      connectionState: String(peer?.connectionState || "unknown"),
+      iceConnectionState: String(peer?.iceConnectionState || "unknown"),
+      iceGatheringState: String(peer?.iceGatheringState || "unknown"),
+      candidateType: candidate.candidateType,
+      transport: candidate.transport,
+      attempt: Math.min(3, Math.max(0, state.peerRecoveryAttempts)),
+      elapsedMs: Math.min(10 * 60 * 1000, Math.max(0, Date.now() - Number(state.peerStartedAt || Date.now()))),
+    },
+  }).catch(() => {});
+}
+
+function clearMarketPeerRecoveryTimer() {
+  window.clearTimeout(state.peerRecoveryTimer);
+  state.peerRecoveryTimer = null;
+}
+
+function marketPeerConnectionId() {
+  return globalThis.crypto?.randomUUID?.()
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function scheduleMarketPeerRecovery(peer, generation, roomId, { immediate = false } = {}) {
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer
+      || TERMINAL_STATES.has(state.room?.status) || state.peerRecoveryTimer) return;
+  const delay = immediate
+    ? 0
+    : MARKET_P2P_DISCONNECT_GRACE_MS + (state.peerRecoveryAttempts * 2_000);
+  state.peerStatus = state.peerWasConnected
+    ? "P2P接続を復旧しています…交渉内容は保持されています"
+    : "P2P接続先を切り替えています…";
+  render();
+  state.peerRecoveryTimer = window.setTimeout(() => {
+    state.peerRecoveryTimer = null;
+    (async () => {
+      if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer
+          || peer.connectionState === "connected" || state.channel?.readyState === "open") return;
+      if (state.peerRecoveryAttempts >= MARKET_P2P_MAX_RECOVERY_ATTEMPTS) {
+        reportMarketP2pDiagnostic("restart_timeout", peer);
+        state.peerStatus = "画像・音声の接続を復旧できませんでした。文字での交渉と取引操作は継続できます";
+        render();
+        return;
+      }
+      state.peerRecoveryAttempts += 1;
+      reportMarketP2pDiagnostic("restart_started", peer);
+      state.realtimeUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+      state.realtimeRoomId = "";
+      state.peer = null;
+      state.channel = null;
+      state.channelReady = false;
+      state.pendingIce = [];
+      peer.close();
+      await setupRealtimeRoom(generation, roomId);
+      await setupPeerConnection(generation, roomId);
+    })().catch(() => {
+      if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+        state.peerStatus = "画像・音声を再接続しています…文字での交渉と取引操作は継続できます";
+        render();
+        scheduleMarketPeerRecovery(state.peer, generation, roomId);
+      }
+    });
+  }, delay);
+}
+
 async function setupPeerConnection(generation = lifecycleGeneration, roomId = state.roomId) {
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer || !state.room) return;
   if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC転送に対応していません。");
+  const iceConfiguration = await loadMarketIceServers();
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer || !state.room) return;
   const opponentUid = state.uid === state.room.sellerUid ? state.room.buyerUid : state.room.sellerUid;
   const peer = new RTCPeerConnection({
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-    ],
+    iceServers: iceConfiguration.iceServers,
+    iceTransportPolicy: "all",
   });
+  const peerStartedAt = Date.now();
   state.peer = peer;
+  if (!state.peerStartedAt) state.peerStartedAt = Date.now();
+  state.peerTurnAvailable = iceConfiguration.turnAvailable;
+  state.peerConnectionId = roomRole() === "seller" ? marketPeerConnectionId() : "";
+  reportMarketP2pDiagnostic("peer_created", peer);
+  if (!iceConfiguration.turnAvailable) reportMarketP2pDiagnostic("turn_unavailable", peer);
   window.clearTimeout(state.peerTimeout);
   state.peerTimeout = window.setTimeout(() => {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer || state.channelReady) return;
-    handleFatalError(new Error("P2P接続を確立できませんでした。通信環境を確認するか、取引を終了してください。"), generation);
-  }, 20_000);
+    reportMarketP2pDiagnostic("connection_timeout", peer);
+    scheduleMarketPeerRecovery(peer, generation, roomId, { immediate: true });
+  }, MARKET_P2P_CONNECT_TIMEOUT_MS);
   peer.onicecandidate = (event) => {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
     if (event.candidate) {
@@ -3824,6 +4057,16 @@ async function setupPeerConnection(generation = lifecycleGeneration, roomId = st
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
     state.peerStatus = peer.connectionState === "connected" ? "● P2P接続済み" : `P2P: ${peer.connectionState}`;
     state.channelReady = state.channel?.readyState === "open";
+    if (peer.connectionState === "connected") {
+      state.peerWasConnected = true;
+      clearMarketPeerRecoveryTimer();
+    } else if (peer.connectionState === "disconnected") {
+      reportMarketP2pDiagnostic("ice_disconnected", peer);
+      scheduleMarketPeerRecovery(peer, generation, roomId);
+    } else if (["failed", "closed"].includes(peer.connectionState)) {
+      if (peer.connectionState === "failed") reportMarketP2pDiagnostic("ice_failed", peer);
+      scheduleMarketPeerRecovery(peer, generation, roomId, { immediate: true });
+    }
     render();
   };
   peer.ondatachannel = (event) => {
@@ -3835,7 +4078,7 @@ async function setupPeerConnection(generation = lifecycleGeneration, roomId = st
   state.realtimeUnsubscribers.push(onChildAdded(signalsRef, async (snapshot) => {
     try {
       if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
-      await handleSignal(snapshot.val(), opponentUid, peer, roomId, generation);
+      await handleSignal(snapshot.val(), opponentUid, peer, roomId, generation, peerStartedAt);
     } catch (error) {
       if (isCurrentLifecycle(generation)) handleRecoverableError(error);
     } finally {
@@ -3849,22 +4092,42 @@ async function setupPeerConnection(generation = lifecycleGeneration, roomId = st
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
     await peer.setLocalDescription(offer);
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
-    await sendSignal(opponentUid, "offer", { type: offer.type, sdp: offer.sdp }, roomId, generation);
+    await sendSignal(opponentUid, "offer", { type: offer.type, sdp: offer.sdp }, roomId, generation, state.peerConnectionId);
   }
 }
 
-async function sendSignal(targetUid, type, payload, roomId = state.roomId, generation = lifecycleGeneration) {
+async function sendSignal(
+  targetUid,
+  type,
+  payload,
+  roomId = state.roomId,
+  generation = lifecycleGeneration,
+  connectionId = state.peerConnectionId,
+) {
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
   await set(push(ref(database, `online/valueMarketRooms/${roomId}/signals/${targetUid}`)), {
     fromUid: state.uid,
     type,
     payload: JSON.stringify(payload),
+    connectionId,
     createdAt: serverTimestamp(),
   });
 }
 
-async function handleSignal(signal, opponentUid, peer = state.peer, roomId = state.roomId, generation = lifecycleGeneration) {
+async function handleSignal(
+  signal,
+  opponentUid,
+  peer = state.peer,
+  roomId = state.roomId,
+  generation = lifecycleGeneration,
+  peerStartedAt = Date.now(),
+) {
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !signal || signal.fromUid !== opponentUid || !peer) return;
+  const signalCreatedAt = Number(signal.createdAt || 0);
+  if (signalCreatedAt > 0 && signalCreatedAt < peerStartedAt - 60_000) return;
+  const incomingConnectionId = String(signal.connectionId || "");
+  if (signal.type === "offer" && incomingConnectionId) state.peerConnectionId = incomingConnectionId;
+  if (incomingConnectionId && state.peerConnectionId && incomingConnectionId !== state.peerConnectionId) return;
   const payload = JSON.parse(signal.payload);
   if (signal.type === "offer") {
     await peer.setRemoteDescription(payload);
@@ -3873,7 +4136,7 @@ async function handleSignal(signal, opponentUid, peer = state.peer, roomId = sta
     const answer = await peer.createAnswer();
     if (!isCurrentLifecycle(generation) || state.peer !== peer) return;
     await peer.setLocalDescription(answer);
-    await sendSignal(opponentUid, "answer", { type: answer.type, sdp: answer.sdp }, roomId, generation);
+    await sendSignal(opponentUid, "answer", { type: answer.type, sdp: answer.sdp }, roomId, generation, state.peerConnectionId);
   } else if (signal.type === "answer") {
     await peer.setRemoteDescription(payload);
     if (!isCurrentLifecycle(generation) || state.peer !== peer) return;
@@ -3896,7 +4159,10 @@ function configureDataChannel(channel, generation = lifecycleGeneration, roomId 
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel) return;
     window.clearTimeout(state.peerTimeout);
     state.peerTimeout = null;
+    clearMarketPeerRecoveryTimer();
     state.channelReady = true;
+    state.peerWasConnected = true;
+    reportMarketP2pDiagnostic("channel_open", state.peer);
     state.peerStatus = "● P2P接続済み";
     if (roomRole() === "seller") sendListingImage().catch(handleRecoverableError);
     render();
@@ -3904,8 +4170,7 @@ function configureDataChannel(channel, generation = lifecycleGeneration, roomId 
   channel.onclose = () => {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel) return;
     state.channelReady = false;
-    state.peerStatus = "P2P接続が切れました";
-    render();
+    scheduleMarketPeerRecovery(state.peer, generation, roomId);
   };
   channel.onerror = () => {
     if (isCurrentLifecycle(generation) && state.roomId === roomId) showToast("P2P転送で通信エラーが発生しました。");
@@ -5057,8 +5322,12 @@ function returnHome() {
   lifecycleGeneration += 1;
   state.activeUnsubscribe?.();
   state.activeUnsubscribe = null;
+  window.clearTimeout(state.activeSnapshotRetry);
+  state.activeSnapshotRetry = null;
   state.walletUnsubscribe?.();
   state.walletUnsubscribe = null;
+  window.clearTimeout(state.walletSnapshotRetry);
+  state.walletSnapshotRetry = null;
   cleanupRoom();
   window.HariaiApp?.returnHome?.();
 }
@@ -5071,6 +5340,8 @@ function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false 
   stopRoomHeartbeat();
   clearRoomSyncRetry({ resetWarning: true });
   state.roomSyncPending = false;
+  window.clearTimeout(state.roomSnapshotRetry);
+  state.roomSnapshotRetry = null;
   state.roomUnsubscribe?.();
   state.roomUnsubscribe = null;
   state.realtimeUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
@@ -5080,7 +5351,14 @@ function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false 
   state.channel?.close();
   window.clearTimeout(state.peerTimeout);
   state.peerTimeout = null;
+  clearMarketPeerRecoveryTimer();
   state.peer = null;
+  state.peerRecoveryAttempts = 0;
+  state.peerConnectionId = "";
+  state.peerTurnAvailable = false;
+  state.peerWasConnected = false;
+  state.peerStartedAt = 0;
+  state.peerDiagnosticSent = new Set();
   state.channel = null;
   state.channelReady = false;
   state.pendingIce = [];

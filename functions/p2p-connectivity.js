@@ -93,6 +93,7 @@ const P2P_DIAGNOSTIC_PHASES = new Set([
   "select",
   "battle",
   "result",
+  "market",
   "cleanup",
   "unknown",
 ]);

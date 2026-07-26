@@ -373,6 +373,19 @@ function requireP2pDiagnosticCallableData(value) {
   return value;
 }
 
+function requireMarketP2pDiagnosticCallableData(value) {
+  const allowedKeys = new Set(["roomId", "diagnostic"]);
+  if (!isPlainCallableObject(value)
+      || Reflect.ownKeys(value).some((key) => (
+        typeof key !== "string" || !allowedKeys.has(key)
+      ))
+      || ![...allowedKeys].every((key) => Object.hasOwn(value, key))
+      || !/^[-0-9A-Z_a-z]{20}$/.test(String(value.roomId || ""))) {
+    throw new HttpsError("invalid-argument", "市場接続診断の形式が正しくありません。");
+  }
+  return value;
+}
+
 async function requireCurrentP2pDiagnosticContext(uid, data, now = Date.now()) {
   if (!isSafeToken(data.sessionId)
       || !/^[-0-9A-Z_a-z]{20}$/.test(String(data.roomId || ""))) {
@@ -715,6 +728,60 @@ exports.reportP2pConnectivity = onCall(
         "P2P diagnostic retention cleanup unavailable",
         safeP2PConnectivityError(error, "retention_cleanup"),
       );
+    }
+    return { accepted: true };
+  },
+);
+
+exports.reportMarketP2pConnectivity = onCall(
+  callableOptions("reportMarketP2pConnectivity", [P2P_DIAGNOSTIC_HMAC_SECRET]),
+  async (request) => {
+    const uid = requireUid(request);
+    const data = requireMarketP2pDiagnosticCallableData(request.data);
+    const roomSnapshot = await marketRoomRef(data.roomId).get();
+    const room = roomSnapshot.data();
+    if (!roomSnapshot.exists || room?.participants?.[uid] !== true) {
+      throw new HttpsError("failed-precondition", "現在の推し値市場接続として確認できませんでした。");
+    }
+    const now = Date.now();
+    let record;
+    try {
+      record = createP2PDiagnosticRecord({
+        uid,
+        sessionId: `market-${data.roomId}`,
+        roomId: data.roomId,
+        hmacSecret: readP2pDiagnosticHmacSecret(),
+        payload: data.diagnostic,
+        now,
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new HttpsError("invalid-argument", "市場接続診断の形式が正しくありません。");
+      }
+      console.warn(
+        "reportMarketP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "市場接続診断を送信できませんでした。");
+    }
+    await consumeP2pConnectivityRateLimit(uid, "diagnostic", P2P_DIAGNOSTIC_RATE_LIMIT_POLICY);
+    try {
+      const eventId = realtime.ref(`online/p2pDiagnostics/${record.day}`).push().key;
+      if (!eventId) throw new Error("Market P2P diagnostic id was not generated");
+      await realtime.ref().update({
+        [`online/p2pDiagnostics/${record.day}/${eventId}`]: {
+          ...record,
+          retentionDays: P2P_DIAGNOSTIC_RETENTION_DAYS,
+          deleteAt: now + P2P_DIAGNOSTIC_RETENTION_MS,
+        },
+        [`online/p2pDiagnosticDays/${record.day}`]: true,
+      });
+    } catch (error) {
+      console.warn(
+        "reportMarketP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "市場接続診断を送信できませんでした。");
     }
     return { accepted: true };
   },
