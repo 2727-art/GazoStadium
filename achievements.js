@@ -122,6 +122,25 @@
     names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手"],
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
   });
+  [
+    ["team_oshi_jouzu_defense", "team_oshi_jouzu_defense", 1, "つよ推しの証", "推し上手さんとして、ふたりの挑戦を退けた"],
+    ["team_oshi_jouzu_clean_defense", "team_oshi_jouzu_defense", 2, "ひとりで魅せきった", "推し上手さんとして、2点以上の差で防衛した"],
+    ["team_duo_breakthrough", "team_duo_breakthrough", 1, "ふたりの推しが届いた", "ふたりで推し上手さんを上回った"],
+    ["team_duo_clean_breakthrough", "team_duo_breakthrough", 2, "ふたりで魅せきった", "ふたりで2点以上の差をつけて推し上手さんを上回った"],
+  ].forEach(([id, family, level, name, description]) => definitions.push(Object.freeze({
+    id,
+    scope: "battle",
+    category: "battle_honor",
+    family,
+    familyLabel: "推し上手！ふたりチャレンジ",
+    icon: "❀",
+    level,
+    target: 1,
+    name,
+    description,
+    hint: "推し上手！ふたりチャレンジの正式戦で解除",
+    autoPublic: false,
+  })));
 
   addSeries({
     scope: "market",
@@ -202,6 +221,7 @@
     { id: "battle_variety", label: "モード回遊", copy: "複数の入口を訪れたオールラウンダーの記録" },
     { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も貼り続けた記録" },
     { id: "battle_days", label: "継続", copy: "異なる日にスタジアムへ戻ってきた記録" },
+    { id: "battle_honor", label: "つよ推しの証", copy: "一発勝負で示した、推し上手さんとふたりの武勲" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },

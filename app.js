@@ -845,7 +845,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
-          1on1、協力型2on2、4人バトルロワイヤル、AnjuPayで推し値を競う市場を選べます。
+          1on1、三人で遊ぶふたりチャレンジ、4人バトルロワイヤル、AnjuPayで推し値を競う市場を選べます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
           <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
@@ -853,7 +853,7 @@
         <div class="hero-actions">
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
-          <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ふたりで協力</small><span>2on2チーム対戦</span></button>
+          <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ひとりの推し技、ふたりの推し愛。</small><span>推し上手！ふたりチャレンジ</span></button>
           <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
@@ -875,7 +875,7 @@
             <div><small>待機中</small><strong><span id="lobbyStrategyWaitingCount">${statValue(strategyStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyStrategyPlayingCount">${statValue(strategyStats.playing)}</span><em>人</em></strong></div>
           </div></article>
-          <article class="lobby-mode-card team"><div class="lobby-mode-head"><span>2ON2</span><small>TEAM BATTLE</small></div><div class="lobby-mode-counts">
+          <article class="lobby-mode-card team"><div class="lobby-mode-head"><span>ふたりチャレンジ</span><small>1 vs 2</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbyTeamWaitingCount">${statValue(teamStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyTeamPlayingCount">${statValue(teamStats.playing)}</span><em>人</em></strong></div>
           </div></article>
@@ -1201,7 +1201,7 @@
         team: Number(hasModePoints ? entry.modePoints.team || 0 : 0),
         royale: Number(hasModePoints ? entry.modePoints.royale || 0 : 0),
       };
-      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間スコア"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em><em>2on2 ${modePoints.team}</em><em>BR ${modePoints.royale}</em></span>`;
+      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間スコア"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em><em>ふたり挑戦 ${modePoints.team}</em><em>BR ${modePoints.royale}</em></span>`;
       const provisional = matches < Number(periodInfo.minimumMatches || 1);
       const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
       const xLink = xHandle ? `<a class="ranking-x-link" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer">X&nbsp;@${escapeHtml(xHandle)}</a>` : "";
@@ -1251,10 +1251,10 @@
       </div>
       ${renderMonthlyHallOfFame()}
       ${renderRankingAwardsPanel()}
-      <div class="ranking-notice">通常型1on1・戦略型1on1・2on2・バトルロワイヤルを合算します。期間戦績は日本時間で自動切替、総合RATEはリセットされません。BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。クラスはランキングだけに表示し、対戦相手には表示しません。</div>
+      <div class="ranking-notice">通常型1on1・戦略型1on1・ふたりチャレンジ・バトルロワイヤルを合算します。ふたりチャレンジは勝利3点・引き分け1点を加算しますが、非対称戦のため総合RATEは変動しません。期間戦績は日本時間で自動切替、総合RATEはリセットされません。BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。</div>
       ${renderOverallRatingClassGuide()}
       <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
-      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。${periodInfo.serverAuthoritative ? "期間スコア・試合数・勝敗・モード内訳はCloud Functionsが検証済み試合から確定します。総合RATEは移行時の旧RATEを初期値として、切替後の正式対戦だけをサーバーで更新します。" : "この移行前期間のRATEと戦績は従来どおりブラウザからFirebaseへ送信されます。ランキング報酬は発生しません。"}</p>
+      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。${periodInfo.serverAuthoritative ? "期間スコア・試合数・勝敗・モード内訳はCloud Functionsが検証済み試合から確定します。総合RATEは移行時の旧RATEを初期値として引き継ぎ、対称戦の正式対戦だけで更新します。" : "この移行前期間のRATEと戦績は従来どおりブラウザからFirebaseへ送信されます。ランキング報酬は発生しません。"}</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
@@ -1289,7 +1289,7 @@
       window.HariaiTeam.start();
       return;
     }
-    showToast("2on2機能を読み込んでいます…");
+    showToast("ふたりチャレンジを読み込んでいます…");
     window.addEventListener("hariai-team-ready", () => window.HariaiTeam?.start?.(), { once: true });
   }
 
@@ -1719,8 +1719,8 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2P画像転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 2ON2 + BATTLE ROYALE + VALUE MARKET + ANJUPAY FLEA";
-    if (footerItems[1]) footerItems[1].textContent = "画像と戦略型・推し値市場の音声は相手へ直接送信し、サーバーへ保存しません";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 1VS2 + BATTLE ROYALE + VALUE MARKET + ANJUPAY FLEA";
+    if (footerItems[1]) footerItems[1].textContent = "対戦画像・音声・短尺動画は相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
     const confirm = destroyDialog?.querySelector("#confirmDestroy");

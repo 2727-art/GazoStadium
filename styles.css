@@ -8056,7 +8056,7 @@ button:disabled {
   }
 }
 
-/* 2on2 team mode --------------------------------------------------------- */
+/* 推し上手！ふたりチャレンジ --------------------------------------------- */
 
 .team-rule-summary {
   display: grid;
@@ -8410,6 +8410,120 @@ button:disabled {
 .team-final-card > span { color: var(--cyan); font-size: 0.68rem; font-weight: 900; letter-spacing: 0.12em; }
 .team-final-card h2 { min-height: 2.6em; margin: 8px 0 16px; font-size: 1.05rem; }
 .team-gameover { width: min(1040px, 100%); }
+
+.team-rule-summary > div {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(255, 160, 205, 0.3);
+  background:
+    radial-gradient(circle at 82% 16%, rgba(255, 255, 255, 0.16), transparent 28%),
+    linear-gradient(145deg, rgba(255, 144, 196, 0.13), rgba(151, 129, 255, 0.08));
+  box-shadow: inset 0 0 24px rgba(255, 171, 211, 0.025);
+}
+
+.team-rule-summary > div::after {
+  content: "♡";
+  position: absolute;
+  right: 9px;
+  bottom: 3px;
+  color: rgba(255, 179, 217, 0.2);
+  font-family: var(--display);
+  font-size: 1.5rem;
+}
+
+.team-rule-summary strong {
+  color: #ffacd4;
+  text-shadow: 0 0 18px rgba(255, 139, 195, 0.24);
+}
+
+.team-final-card {
+  border-color: rgba(255, 171, 211, 0.16);
+  background:
+    linear-gradient(145deg, rgba(255, 157, 205, 0.055), rgba(100, 232, 213, 0.025)),
+    rgba(255, 255, 255, 0.018);
+}
+
+.team-final-card audio,
+.team-final-card video {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  margin: 10px 0 14px;
+  border-radius: 12px;
+  background: #070910;
+}
+
+.team-final-grid > .team-final-card:first-child {
+  border-color: rgba(255, 157, 205, 0.25);
+}
+
+.team-final-grid > .team-final-card:last-child {
+  border-color: rgba(100, 232, 213, 0.22);
+}
+
+.team-round-hud .round-badge {
+  border-color: rgba(255, 157, 205, 0.44);
+  background: radial-gradient(circle, rgba(255, 157, 205, 0.16), rgba(7, 10, 18, 0.82) 70%);
+  box-shadow: 0 0 28px rgba(255, 157, 205, 0.09);
+}
+
+.team-round-hud .round-badge strong {
+  color: #ffacd4;
+}
+
+.team-hud:first-child {
+  border-color: rgba(255, 157, 205, 0.28);
+}
+
+.team-hud:first-child .team-hud-head span {
+  color: #ffacd4;
+}
+
+.four-image-board > .team-image-group:first-child {
+  border-color: rgba(255, 157, 205, 0.3);
+  background: linear-gradient(145deg, rgba(255, 157, 205, 0.07), rgba(7, 10, 18, 0.76));
+}
+
+.four-image-board > .team-image-group:last-child {
+  border-color: rgba(100, 232, 213, 0.26);
+  background: linear-gradient(215deg, rgba(100, 232, 213, 0.065), rgba(7, 10, 18, 0.76));
+}
+
+.team-image-pair > .team-image-card:only-child {
+  width: min(420px, 100%);
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+.team-versus {
+  color: #ffacd4;
+  text-shadow: 0 0 18px rgba(255, 157, 205, 0.28);
+}
+
+.team-score-card:only-child {
+  width: min(780px, 100%);
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+.team-link-planner {
+  border-color: rgba(255, 157, 205, 0.28);
+  background:
+    radial-gradient(circle at 90% 0, rgba(255, 157, 205, 0.11), transparent 34%),
+    linear-gradient(135deg, rgba(100, 232, 213, 0.07), rgba(151, 129, 255, 0.055) 52%, rgba(7, 10, 18, 0.84));
+}
+
+.team-gameover .winner-emblem {
+  border-color: rgba(255, 157, 205, 0.52);
+  color: #ffacd4;
+  box-shadow: 0 0 34px rgba(255, 157, 205, 0.12);
+}
+
+.strategy-review-screen .team-link-planner.ready {
+  background:
+    radial-gradient(circle at 12% 0, rgba(255, 157, 205, 0.11), transparent 36%),
+    linear-gradient(135deg, rgba(244, 201, 107, 0.08), rgba(100, 232, 213, 0.045), rgba(7, 10, 18, 0.86));
+}
 
 @media (max-width: 1120px) {
   .team-score-grid { grid-template-columns: 1fr; }

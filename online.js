@@ -327,7 +327,7 @@ const DAILY_MISSIONS = [
   { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
   { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 40 },
   { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 50 },
-  { id: "play_team", progressKey: "teamMatches", title: "2on2を1回完走", description: "2on2の正式な決着が対象です。", target: 1, reward: 70 },
+  { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "推し上手！ふたりチャレンジの正式な決着が対象です。", target: 1, reward: 70 },
   { id: "play_royale", progressKey: "royaleMatches", title: "バトルロワイヤルを1回完走", description: "バトルロワイヤルの正式な決着が対象です。", target: 1, reward: 90 },
 ];
 const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
@@ -1291,10 +1291,10 @@ function renderOverallRankingParticipation({ controlId = "overallRankingParticip
   </details>` : "";
   return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"}">
     <div class="overall-ranking-copy"><span class="eyebrow">ONLINE OVERALL RANKING</span><div><strong>オンライン総合ランキング</strong>
-      <p>${settings.enabled ? "4モード共通で期間スコアを集計し、総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間スコアは参加中の対戦だけ集計されます。"}</p></div></div>
+      <p>${settings.enabled ? "4モード共通で期間スコアを集計し、対称戦で更新した総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間スコアは参加中の対戦だけ集計されます。"}</p></div></div>
     <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
-    <small>通常型1on1・戦略型1on1・2on2・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。サーバー期間で確定したランキング実績と月間王者記録は、参加終了後も名誉記録として残ります。</small>
+    <small>通常型1on1・戦略型1on1・ふたりチャレンジ・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。サーバー期間で確定したランキング実績と月間王者記録は、参加終了後も名誉記録として残ります。</small>
     ${publicSettings}
   </section>`;
 }
@@ -9552,6 +9552,7 @@ window.HariaiOnline = {
   getMonthlyRankingHallOfFame,
   getMonthlyBeyondRank,
   getMonthlyBeyondPeriodKey,
+  getP2pIceConfiguration: loadP2pIceServers,
   isServerRankingPeriod,
   refreshLeaderboard,
   getTopMessages,

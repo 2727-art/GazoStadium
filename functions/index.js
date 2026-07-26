@@ -47,6 +47,16 @@ const {
   unlockAchievements,
 } = require("./achievements");
 const {
+  TEAM_DUO_VARIANT,
+  TEAM_ELIGIBILITY_TTL_MS,
+  TEAM_ELIGIBILITY_VERSION,
+  createTeamEligibilityMirror,
+  deriveTeamDuoChallengeResult,
+  evaluateTeamEligibility,
+  isTeamDuoChallengeRoom,
+  validateTeamEligibilityForRoom,
+} = require("./team-duo-challenge");
+const {
   CREATOR_CARD_PREMIUM_PRODUCT_ID,
   CREATOR_CARD_TEXT_MAX_LENGTH,
   CREATOR_CARD_TYPES,
@@ -822,6 +832,10 @@ function verifiedMatchClaimRef(uid, mode, roomId) {
   return firestore.collection("verifiedMatchClaims").doc(eventId(`${uid}:${mode}:${roomId}`));
 }
 
+function verifiedTeamDuoResultRef(roomId) {
+  return firestore.collection("verifiedTeamDuoResults").doc(roomId);
+}
+
 function soloProfileProjectionQueueRef(uid) {
   return firestore.collection("soloProfileProjectionQueues").doc(uid);
 }
@@ -1084,6 +1098,9 @@ function normalizePeriodRecords(value) {
           strategy: integer(source?.modeMatches?.strategy, 0, matches, 0),
           team: integer(source?.modeMatches?.team, 0, matches, 0),
           royale: integer(source?.modeMatches?.royale, 0, matches, 0),
+        },
+        variantMatches: {
+          teamDuo: integer(source?.variantMatches?.teamDuo, 0, matches, 0),
         },
         endsAt: Number(source?.endsAt || periodEndsAt(period, key)),
         claimed: source?.claimed === true,
@@ -2961,11 +2978,74 @@ async function claimPeriods(uid) {
   return result;
 }
 
+async function prepareTeamChallenge(uid) {
+  const now = Date.now();
+  const eligibilityRef = realtime.ref(`online/teamEligibility/${uid}`);
+  const awards = await finalizeServerRankingAwards(uid, now);
+  const [profileSnapshot, mirrorSnapshot] = await Promise.all([
+    serverRankingProfileRef(uid).get(),
+    eligibilityRef.get(),
+  ]);
+  const evaluated = evaluateTeamEligibility(profileSnapshot.data(), awards);
+  const existing = objectValue(mirrorSnapshot.val());
+  const minimumRemainingMs = Math.min(15 * 60 * 1000, TEAM_ELIGIBILITY_TTL_MS / 4);
+  const reusable = existing.uid === uid
+    && existing.version === TEAM_ELIGIBILITY_VERSION
+    && existing.eligible === evaluated.eligible
+    && existing.tier === evaluated.tier
+    && existing.rating === evaluated.rating
+    && existing.serverMatches === evaluated.serverMatches
+    && existing.reason === evaluated.reason
+    && Number(existing.issuedAt) <= now
+    && Number(existing.expiresAt) > now + minimumRemainingMs;
+  if (reusable) {
+    await realtime.ref(`online/teamEligibilityArchive/${uid}/${existing.issuedAt}`).set(existing);
+    return existing;
+  }
+  const eligibility = createTeamEligibilityMirror(
+    uid,
+    profileSnapshot.data(),
+    awards,
+    now,
+  );
+  await Promise.all([
+    eligibilityRef.set(eligibility),
+    realtime.ref(`online/teamEligibilityArchive/${uid}/${eligibility.issuedAt}`).set(eligibility),
+  ]);
+  return eligibility;
+}
+
+async function verifiedTeamDuoEligibility(room, now = Date.now()) {
+  let oshiJozuUid = "";
+  try {
+    oshiJozuUid = deriveTeamDuoChallengeResult(room).oshiJozuUid;
+  } catch {
+    throw new HttpsError("failed-precondition", "推し上手！ふたりチャレンジの採点を検証できませんでした。");
+  }
+  const issuedAt = Number(room?.eligibilitySnapshot?.issuedAt);
+  if (!Number.isInteger(issuedAt) || issuedAt <= 0) {
+    throw new HttpsError("failed-precondition", "推し上手さんの参加資格を確認できませんでした。");
+  }
+  const mirror = (
+    await realtime.ref(`online/teamEligibilityArchive/${oshiJozuUid}/${issuedAt}`).get()
+  ).val();
+  try {
+    return validateTeamEligibilityForRoom(room, mirror, now);
+  } catch {
+    throw new HttpsError("failed-precondition", "推し上手さんの参加資格を確認できませんでした。");
+  }
+}
+
 const VERIFIED_MATCH_MODES = Object.freeze({
   solo: { roomRoot: "rooms", members: 2 },
   strategy: { roomRoot: "strategyRooms", members: 2 },
   team: { roomRoot: "teamRooms", members: 4, requireAccepted: true },
   royale: { roomRoot: "royaleRooms", members: 4, requireAccepted: true },
+});
+const TEAM_DUO_MATCH_CONFIG = Object.freeze({
+  roomRoot: "teamRooms",
+  members: 3,
+  requireAccepted: true,
 });
 
 function objectValue(value) {
@@ -3059,6 +3139,7 @@ async function finalizeSoloRoomResult(uid, roomId, requestedOutcome, now = Date.
 
 function validatedOutcomes(mode, room, participants, {
   requireServerFinalized = false,
+  teamDuoResult = null,
 } = {}) {
   if (mode === "solo" && requireServerFinalized) {
     const derived = deriveSoloMatchResult(room);
@@ -3074,7 +3155,24 @@ function validatedOutcomes(mode, room, participants, {
     };
   }
 
+  if (teamDuoResult) {
+    return {
+      pending: false,
+      missing: 0,
+      outcomes: Object.fromEntries(participants.map((participantUid) => [
+        participantUid,
+        teamDuoResult.outcomes[participantUid],
+      ])),
+    };
+  }
+
   const claims = objectValue(room.resultClaims);
+  const claimedUids = Object.keys(claims);
+  const finishedUids = verifiedMemberIds(room.finished);
+  if (teamDuoResult && (claimedUids.some((claimUid) => !participants.includes(claimUid))
+      || finishedUids.some((finishedUid) => !participants.includes(finishedUid)))) {
+    throw new HttpsError("failed-precondition", "三人分の結果申告が一発勝負の参加者と一致しません。");
+  }
   const missing = participants.filter((participantUid) => claims[participantUid]?.outcome === undefined
     || room.finished?.[participantUid] !== true);
   if (missing.length) return { pending: true, missing: missing.length, outcomes: {} };
@@ -3086,7 +3184,13 @@ function validatedOutcomes(mode, room, participants, {
     }
     outcomes[participantUid] = outcome;
   }
-  if (mode === "solo" || mode === "strategy") {
+  if (teamDuoResult) {
+    for (const participantUid of participants) {
+      if (teamDuoResult.outcomes?.[participantUid] !== outcomes[participantUid]) {
+        throw new HttpsError("failed-precondition", "申告した結果が一発勝負の確定採点と一致しません。");
+      }
+    }
+  } else if (mode === "solo" || mode === "strategy") {
     const values = participants.map((participantUid) => outcomes[participantUid]).sort();
     if (values.join(",") !== "draw,draw" && values.join(",") !== "loss,win") {
       throw new HttpsError("failed-precondition", "両者の試合結果が一致しません。");
@@ -3124,7 +3228,10 @@ function validatedOutcomes(mode, room, participants, {
 function dailyActivityForRoom(mode, room, uid) {
   let scores = 0;
   let criticals = 0;
-  for (const round of Object.values(objectValue(room.rounds))) {
+  const rounds = isTeamDuoChallengeRoom(room)
+    ? [objectValue(room?.rounds?.[1])]
+    : Object.values(objectValue(room.rounds));
+  for (const round of rounds) {
     let values = [];
     if (mode === "solo") {
       values = [round?.scores?.[uid]];
@@ -3143,7 +3250,10 @@ function dailyActivityForRoom(mode, room, uid) {
   return { scores: Math.min(3, scores), criticals: Math.min(1, criticals) };
 }
 
-function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
+function addVerifiedMatch(progressValue, mode, outcome, activity, now, {
+  achievementMode = mode,
+  variant = "",
+} = {}) {
   const progress = normalizeEconomyProgress(progressValue, jstDateKey(now));
   progress.daily.matches = 1;
   progress.daily[`${mode}Matches`] = 1;
@@ -3160,6 +3270,7 @@ function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
       losses: 0,
       draws: 0,
       modeMatches: { solo: 0, strategy: 0, team: 0, royale: 0 },
+      variantMatches: { teamDuo: 0 },
       endsAt: periodEndsAt(period, key),
       claimed: false,
       reward: 0,
@@ -3170,13 +3281,17 @@ function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
     record.losses += outcome === "loss" ? 1 : 0;
     record.draws += outcome === "draw" ? 1 : 0;
     record.modeMatches[mode] += 1;
+    record.variantMatches = {
+      teamDuo: integer(record?.variantMatches?.teamDuo, 0, record.matches, 0),
+    };
+    if (variant === TEAM_DUO_VARIANT) record.variantMatches.teamDuo += 1;
     record.points = (record.wins * 3) + record.draws;
     record.updatedAt = now;
     progress.periodRewards[period][key] = record;
   }
   progress.achievementStats = addBattleMatch(
     progress.achievementStats,
-    mode,
+    achievementMode,
     outcome,
     jstDateKey(now),
   );
@@ -3749,6 +3864,16 @@ async function recordVerifiedMatch(uid, data) {
   } else {
     room = (await realtime.ref(`online/${config.roomRoot}/${roomId}`).get()).val();
   }
+  const teamDuo = mode === "team" && isTeamDuoChallengeRoom(room);
+  if (teamDuo) {
+    const sealedScores = (await realtime.ref(`online/teamDuoScores/${roomId}`).get()).val();
+    room = {
+      ...room,
+      rounds: {
+        1: { scores: sealedScores },
+      },
+    };
+  }
   const createdAt = Number(room?.createdAt || 0);
   const minimumRoomAge = 30_000;
   if (!room || room?.status !== "active" || room?.members?.[uid] !== true
@@ -3770,9 +3895,26 @@ async function recordVerifiedMatch(uid, data) {
       };
     }
   }
-  const participants = matchParticipants(mode, room, config);
+  let teamDuoResult = null;
+  if (teamDuo) {
+    if (!sameIds(verifiedMemberIds(room.members), verifiedMemberIds(room.scoreReady))) {
+      throw new HttpsError("failed-precondition", "三人全員の秘密採点がまだそろっていません。");
+    }
+    try {
+      teamDuoResult = deriveTeamDuoChallengeResult(room);
+    } catch {
+      throw new HttpsError("failed-precondition", "推し上手！ふたりチャレンジの確定採点を検証できませんでした。");
+    }
+    await verifiedTeamDuoEligibility(room, now);
+  }
+  const participants = matchParticipants(
+    mode,
+    room,
+    teamDuo ? TEAM_DUO_MATCH_CONFIG : config,
+  );
   const verification = validatedOutcomes(mode, room, participants, {
     requireServerFinalized: mode === "solo",
+    teamDuoResult,
   });
   if (verification.pending) {
     return { outcome: "pending", missing: verification.missing };
@@ -3822,6 +3964,7 @@ async function recordVerifiedMatch(uid, data) {
   const serverPeriodEntryRefs = participants.flatMap((participantUid) => (
     serverPeriodInfos.map(({ period, key }) => serverRankingPeriodEntryRef(participantUid, period, key))
   ));
+  const teamDuoResultRef = teamDuo ? verifiedTeamDuoResultRef(roomId) : null;
   const legacyServerRankingSeeds = serverPeriodInfos.length
     ? Object.fromEntries(await Promise.all(participants.map(async (participantUid) => [
       participantUid,
@@ -3848,6 +3991,7 @@ async function recordVerifiedMatch(uid, data) {
       ...claimRefs.map((ref) => transaction.get(ref)),
       ...serverProfileRefs.map((ref) => transaction.get(ref)),
       ...serverEntryRefs.map((ref) => transaction.get(ref)),
+      ...(teamDuoResultRef ? [transaction.get(teamDuoResultRef)] : []),
       ...projectionQueueRefs.map((ref) => transaction.get(ref)),
     ]);
     const participantCount = participants.length;
@@ -3860,8 +4004,11 @@ async function recordVerifiedMatch(uid, data) {
       participantCount * 4,
       (participantCount * 4) + serverEntryCount,
     );
+    const teamDuoResultSnapshot = teamDuoResultRef
+      ? snapshots[(participantCount * 4) + serverEntryCount]
+      : null;
     const projectionQueueSnapshots = snapshots.slice(
-      (participantCount * 4) + serverEntryCount,
+      (participantCount * 4) + serverEntryCount + (teamDuoResultRef ? 1 : 0),
     );
     const projectionQueueSnapshotByUid = Object.fromEntries(
       projectionEligibleUids.map((participantUid, index) => [
@@ -3880,6 +4027,36 @@ async function recordVerifiedMatch(uid, data) {
         },
       ),
     ]));
+    if (teamDuoResultRef && !teamDuoResultSnapshot.exists) {
+      transaction.create(teamDuoResultRef, {
+        version: 1,
+        variant: TEAM_DUO_VARIANT,
+        roomId,
+        participants,
+        oshiJozuUid: teamDuoResult.oshiJozuUid,
+        challengerUids: teamDuoResult.challengerUids,
+        soloVotes: teamDuoResult.soloVotes,
+        duoVotes: teamDuoResult.duoVotes,
+        soloScore: teamDuoResult.soloScore,
+        duoScore: teamDuoResult.duoScore,
+        scoreDifference: teamDuoResult.scoreDifference,
+        clean: teamDuoResult.clean,
+        winnerRole: teamDuoResult.winnerRole,
+        outcomes: teamDuoResult.outcomes,
+        pointsByUid: Object.fromEntries(participants.map((participantUid) => [
+          participantUid,
+          teamDuoResult.outcomes[participantUid] === "win"
+            ? 3
+            : teamDuoResult.outcomes[participantUid] === "draw"
+              ? 1
+              : 0,
+        ])),
+        signalsByUid: teamDuoResult.signalsByUid,
+        eligibilitySnapshot: room.eligibilitySnapshot,
+        createdAt,
+        finalizedAt: now,
+      });
+    }
     transactionOutcome = claimSnapshots[participants.indexOf(uid)].exists ? "duplicate" : "recorded";
     participants.forEach((participantUid, index) => {
       if (claimSnapshots[index].exists) {
@@ -3900,6 +4077,7 @@ async function recordVerifiedMatch(uid, data) {
       }
       const participantOutcome = verification.outcomes[participantUid];
       const participantActivity = activities[participantUid];
+      const participantSignals = teamDuoResult?.signalsByUid?.[participantUid] || {};
       const projectionQueueSnapshot = projectionQueueSnapshotByUid[participantUid];
       const projectionSequence = projectionEligibleUidSet.has(participantUid)
         ? nextSoloProjectionSequence(projectionQueueSnapshot)
@@ -3910,11 +4088,18 @@ async function recordVerifiedMatch(uid, data) {
         participantOutcome,
         participantActivity,
         now,
+        teamDuo
+          ? {
+            achievementMode: "team_duo",
+            variant: TEAM_DUO_VARIANT,
+          }
+          : {},
       );
       const unlockResult = unlockAchievements(
         profileSnapshots[index].data(),
         eligibleAchievementIds({
           battleStats: progress.achievementStats,
+          signals: participantSignals,
           scope: "battle",
         }),
         now,
@@ -3931,6 +4116,11 @@ async function recordVerifiedMatch(uid, data) {
         outcome: participantOutcome,
         participants,
         activity: participantActivity,
+        ...(teamDuo ? {
+          variant: TEAM_DUO_VARIANT,
+          signals: participantSignals,
+          resultId: roomId,
+        } : {}),
         achievementIds: unlockResult.newlyUnlocked,
         finalizedBy: uid,
         createdAt: now,
@@ -3973,16 +4163,20 @@ async function recordVerifiedMatch(uid, data) {
 
       const serverProfile = serverProfiles[participantUid];
       if (serverProfile.enabled && serverProfile.entryId && serverPeriodInfos.length) {
-        const opponentRating = serverRankingOpponentRating(
-          mode,
-          room,
-          participantUid,
-          participants,
-          serverProfiles,
-        );
+        const opponentRating = teamDuo
+          ? serverProfile.rating
+          : serverRankingOpponentRating(
+            mode,
+            room,
+            participantUid,
+            participants,
+            serverProfiles,
+          );
         const updatedServerProfile = {
           ...serverProfile,
-          rating: calculateServerRankingRating(serverProfile.rating, opponentRating, participantOutcome),
+          rating: teamDuo
+            ? serverProfile.rating
+            : calculateServerRankingRating(serverProfile.rating, opponentRating, participantOutcome),
           serverMatches: serverProfile.serverMatches + 1,
           updatedAt: now,
         };
@@ -4065,6 +4259,17 @@ async function recordVerifiedMatch(uid, data) {
   return {
     outcome: transactionOutcome,
     ...(mode === "solo" ? { acceptedFinalizationVersion: finalizationVersion } : {}),
+    ...(teamDuo ? {
+      teamChallengeResult: {
+        variant: TEAM_DUO_VARIANT,
+        soloScore: teamDuoResult.soloScore,
+        duoScore: teamDuoResult.duoScore,
+        scoreDifference: teamDuoResult.scoreDifference,
+        clean: teamDuoResult.clean,
+        winnerRole: teamDuoResult.winnerRole,
+        outcome: teamDuoResult.outcomes[uid],
+      },
+    } : {}),
     ...(callerProjectionActivated
       ? {
         profileProjectionMode: "server-v2",
@@ -4115,18 +4320,42 @@ async function loadVerifiedTipMatch(uid, requestData) {
   const config = VERIFIED_MATCH_MODES[request.mode];
   const now = Date.now();
   const roomSnapshot = await realtime.ref(`online/${config.roomRoot}/${request.roomId}`).get();
-  const room = roomSnapshot.val();
+  let room = roomSnapshot.val();
+  const teamDuo = request.mode === "team" && isTeamDuoChallengeRoom(room);
+  let teamDuoResult = null;
+  if (teamDuo) {
+    const sealedScores = (await realtime.ref(`online/teamDuoScores/${request.roomId}`).get()).val();
+    room = {
+      ...room,
+      rounds: {
+        1: { scores: sealedScores },
+      },
+    };
+    if (!sameIds(verifiedMemberIds(room.members), verifiedMemberIds(room.scoreReady))) {
+      throw new HttpsError("failed-precondition", "三人全員の秘密採点がまだそろっていません。");
+    }
+    try {
+      teamDuoResult = deriveTeamDuoChallengeResult(room);
+    } catch {
+      throw new HttpsError("failed-precondition", "差し入れ対象の一発勝負を検証できませんでした。");
+    }
+  }
   const createdAt = Number(room?.createdAt || 0);
   if (!roomSnapshot.exists() || room?.status !== "active" || room?.members?.[uid] !== true
       || !Number.isFinite(createdAt) || createdAt > now - 30_000 || createdAt < now - (12 * 60 * 60 * 1000)) {
     throw new HttpsError("failed-precondition", "差し入れ可能な完走済み対戦を確認できませんでした。");
   }
-  const participants = matchParticipants(request.mode, room, config);
+  const participants = matchParticipants(
+    request.mode,
+    room,
+    teamDuo ? TEAM_DUO_MATCH_CONFIG : config,
+  );
   if (!participants.includes(request.targetUid)) {
     throw new HttpsError("permission-denied", "この対戦の参加者以外には差し入れできません。");
   }
   const verification = validatedOutcomes(request.mode, room, participants, {
     requireServerFinalized: request.mode === "solo" && Number(room.serverFinalized?.version) === 1,
+    teamDuoResult,
   });
   if (verification.pending) {
     throw new HttpsError("failed-precondition", "参加者全員の対戦結果が確定していません。");
@@ -8536,6 +8765,13 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
     if (action === "patron_policy_vote") {
       return await votePatronPolicy(uid, request, request.data);
+    }
+    if (action === "prepare_team_challenge") {
+      if (!isPlainCallableObject(request.data)
+          || Reflect.ownKeys(request.data).some((key) => key !== "action")) {
+        throw new HttpsError("invalid-argument", "推し上手さんの資格確認情報が不正です。");
+      }
+      return await prepareTeamChallenge(uid);
     }
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
     if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);

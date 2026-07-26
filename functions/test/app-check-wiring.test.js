@@ -117,6 +117,11 @@ test("local integration mode redirects Authentication as well as data services",
   assert.match(servicesSource, /connectDatabaseEmulator/);
   assert.match(servicesSource, /connectFirestoreEmulator/);
   assert.match(servicesSource, /connectFunctionsEmulator/);
+  const clientSource = read("firebase-client.js");
+  assert.match(clientSource, /useFirebaseEmulators/);
+  assert.match(clientSource, /projectId: "demo-gazostadium"/);
+  assert.match(clientSource, /databaseURL: "https:\/\/demo-gazostadium-default-rtdb\.firebaseio\.com"/);
+  assert.match(clientSource, /initializeApp\(clientConfig\)/);
   for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "post-match-tip.js"]) {
     assert.match(read(relativePath), /firebase-services\.js\?v=app-check-v2/);
   }
