@@ -1041,6 +1041,71 @@ button:disabled {
   color: #ffe9a5;
 }
 
+.patron-oshijo-qualification {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid rgba(255, 126, 158, 0.3);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 100% 0, rgba(255, 126, 158, 0.11), transparent 42%),
+    rgba(10, 8, 15, 0.66);
+}
+
+.patron-oshijo-qualification.is-qualified {
+  border-color: rgba(119, 239, 170, 0.4);
+  box-shadow: inset 0 0 24px rgba(119, 239, 170, 0.05);
+}
+
+.patron-oshijo-qualification.is-legacy {
+  border-color: rgba(255, 209, 102, 0.25);
+  background: rgba(255, 209, 102, 0.055);
+}
+
+.patron-oshijo-qualification h3 {
+  margin: 4px 0 0;
+  font-size: clamp(1.05rem, 2.4vw, 1.35rem);
+}
+
+.patron-oshijo-qualification > p,
+.patron-oshijo-qualification > small {
+  display: block;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.patron-oshijo-qualification.is-legacy strong {
+  color: #ffe9a5;
+}
+
+.patron-oshijo-qualification dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
+.patron-oshijo-qualification dl > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: rgba(5, 8, 14, 0.5);
+}
+
+.patron-oshijo-qualification dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.patron-oshijo-qualification dd {
+  margin: 4px 0 0;
+  color: #fff0bd;
+  font-weight: 950;
+  overflow-wrap: anywhere;
+}
+
 .patron-tier-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1498,6 +1563,7 @@ button:disabled {
   }
 
   .patron-fund-metrics,
+  .patron-oshijo-qualification dl,
   .patron-impact-panel,
   .patron-impact-panel dl {
     grid-template-columns: 1fr;

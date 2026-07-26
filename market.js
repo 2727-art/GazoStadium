@@ -51,6 +51,7 @@ const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
 const ENTRY_FEE = 5;
 const MAX_TURNS = 3;
+const ANJU_PAY_MAX_BALANCE = 999_999_999;
 const MARKET_PRICES = Object.freeze([10, 25, 50, 100, 200, 300, 500]);
 const MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS = 20_000;
 const DEFAULT_MARKET_POLICY = Object.freeze({
@@ -70,6 +71,13 @@ const MARKET_SHOP_MAX_SPECIALTY_TAGS = 3;
 const MARKET_SHOP_MAX_SERVICE_STYLES = 2;
 const OSHIJO_SERVICE_STYLE_ID = "oshijo";
 const OSHIJO_CLOSING_MODE = "oshijo";
+const OSHIJO_MAX_CLAIM_AMOUNT = 999_999;
+const OSHIJO_RANKING_CAP = 500;
+const OSHIJO_MAX_CLOSING_TURNS = 3;
+const OSHIJO_CLOSING_TEXT_MAX_LENGTH = 160;
+const OSHIJO_CLOSING_IMAGE_PREFIX = "oshijo-closing-image:";
+const OSHIJO_CLOSING_AUDIO_PREFIX = "oshijo-closing-audio:";
+const MARKET_RANKING_PERIODS = Object.freeze(["monthly", "lifetime"]);
 const FREE_MARKET_SHOP_CHARM_IDS = Object.freeze([
   "stamp_like",
   "stamp_cute",
@@ -155,6 +163,7 @@ function createState() {
     patron: normalizeMarketPatron(null),
     patronFund: normalizePatronFund(null),
     patronImpact: normalizePatronImpact(null),
+    patronEligibility: normalizeOshijoPatronEligibility(null),
     recommendations: [],
     recommendedShelf: [],
     recommendationBusySellerId: "",
@@ -202,7 +211,15 @@ function createState() {
     audioMessages: [],
     pendingActionKey: "",
     pendingActionId: "",
-    rankings: { sellers: [], buyers: [] },
+    rankings: {
+      monthly: { sellers: [], buyers: [], label: "" },
+      lifetime: { sellers: [], buyers: [], label: "" },
+    },
+    rankingPeriod: "monthly",
+    rankingPeriodsLoaded: new Set(),
+    rankingMonthlyAchievements: normalizeMarketMonthlyAchievements(null),
+    rankingMonthlyAchievementsAvailable: false,
+    rankingMeta: { monthlyStartKey: "", finalizedSeasonKey: "", rankingContributionCap: OSHIJO_RANKING_CAP },
     rankingsStatus: "idle",
     rankingReturnScreen: "setup",
     rankingProfile: { xHandle: "", tagline: "" },
@@ -228,6 +245,13 @@ function createState() {
     certificateReturnScreen: "setup",
     achievementNotificationRooms: new Set(),
     notifiedAchievementIds: new Set(),
+    oshijoClaimOpen: false,
+    oshijoClaimDraft: "",
+    oshijoAudioMuted: false,
+    oshijoClosingImages: [],
+    oshijoShareChoice: "",
+    oshijoDecisionRequested: false,
+    restartGuide: normalizeMarketRestartGuide(null),
   };
 }
 
@@ -261,7 +285,7 @@ function normalizeBuyerBudget() {
 function updateMarketBalance(value) {
   const balance = Number(value);
   if (!Number.isFinite(balance)) return;
-  state.balance = Math.min(999_999, Math.max(0, Math.floor(balance)));
+  state.balance = Math.min(ANJU_PAY_MAX_BALANCE, Math.max(0, Math.floor(balance)));
   normalizeBuyerBudget();
 }
 
@@ -389,6 +413,21 @@ function renderMarketPatronBadge(value, { compact = false } = {}) {
 function renderPatronBackedBadge(value, { compact = false } = {}) {
   if (normalizeNonNegativeInteger(value) <= 0) return "";
   return `<span class="market-patron-badge tier-grand_patron ${compact ? "is-compact" : ""}"><b aria-hidden="true">◆</b>PATRON BACKED</span>`;
+}
+
+function renderOshijoPatronHonor(value, { compact = false } = {}) {
+  const honor = normalizeOshijoPatronEligibility(value);
+  if (!honor.eligible && !honor.badges.length) return "";
+  const badges = honor.badges.map((badge) => {
+    const source = badge && typeof badge === "object" ? badge : { label: badge };
+    const label = normalizeShopText(
+      source.label || source.title || source.name || source.id || "パトロン",
+      40,
+    );
+    const level = normalizeNonNegativeInteger(source.level ?? source.tier ?? source.count, 999);
+    return `<span class="market-oshijo-patron-honor-badge"><b aria-hidden="true">${escapeHtml(normalizeShopText(source.icon, 4) || "♛")}</b>${escapeHtml(label)}${level > 1 ? `<small>LV.${level}</small>` : ""}</span>`;
+  }).join("");
+  return `<div class="market-oshijo-patron-honor ${compact ? "is-compact" : ""}"><span>POPULAR OSHIJO / PATRON HONOR</span><strong>${escapeHtml(honor.label || "人気推し嬢")}</strong>${honor.detail ? `<p>${escapeHtml(honor.detail)}</p>` : ""}${badges ? `<div>${badges}</div>` : ""}</div>`;
 }
 
 function purchaseBalanceCopy(purchasePrice) {
@@ -658,6 +697,266 @@ function isOshijoClosing(room) {
   return String(room?.closingMode || "") === OSHIJO_CLOSING_MODE;
 }
 
+function normalizeMarketRankingPeriod(value) {
+  const period = String(value || "").trim().toLowerCase();
+  return MARKET_RANKING_PERIODS.includes(period) ? period : "monthly";
+}
+
+function normalizeOshijoPhase(room) {
+  if (!isOshijoClosing(room)) return "";
+  const explicit = String(
+    room?.oshijoPhase
+      || room?.closingPhase
+      || room?.decisionPhase
+      || "",
+  ).trim().toLowerCase();
+  if (["warning", "claim", "offer", "oshijo_warning"].includes(explicit)) return "warning";
+  if (["closing", "hearing", "negotiation", "oshijo_closing"].includes(explicit)) return "closing";
+  if (["silent", "final", "decision", "silent_decision"].includes(explicit)) return "final";
+  const status = String(room?.status || "").trim().toLowerCase();
+  if (["oshijo_warning", "oshijo_offer", "closing_warning"].includes(status)) return "warning";
+  if (["oshijo_closing", "closing_round", "oshijo_hearing"].includes(status)) return "closing";
+  if (status === "decision") return "final";
+  if (TERMINAL_STATES.has(status)) return "result";
+  return "";
+}
+
+function normalizeOshijoDeal(room = state.room) {
+  const source = room && typeof room === "object" ? room : {};
+  const fallbackClaim = isOshijoClosing(source) ? source.listing?.askingPrice : 0;
+  const claimAmount = Math.max(1, normalizeNonNegativeInteger(
+    source.claimAmount
+      ?? source.oshijoClaimAmount
+      ?? source.closingClaimAmount
+      ?? source.requestedAmount
+      ?? fallbackClaim,
+    OSHIJO_MAX_CLAIM_AMOUNT,
+  ));
+  const paidAmountValue = source.paidAmount
+    ?? source.actualPaidAmount
+    ?? source.actualPayment
+    ?? source.salePrice;
+  const paidAmount = Number.isFinite(Number(paidAmountValue))
+    ? normalizeNonNegativeInteger(paidAmountValue, OSHIJO_MAX_CLAIM_AMOUNT)
+    : Math.min(claimAmount, normalizeNonNegativeInteger(state.balance, OSHIJO_MAX_CLAIM_AMOUNT));
+  const rankingContribution = Math.min(
+    OSHIJO_RANKING_CAP,
+    normalizeNonNegativeInteger(
+      source.rankingContribution
+        ?? source.rankingAmount
+        ?? source.rankingPay
+        ?? Math.min(paidAmount, OSHIJO_RANKING_CAP),
+      OSHIJO_RANKING_CAP,
+    ),
+  );
+  const closingTurns = Array.isArray(source.closingTurns)
+    ? source.closingTurns.length
+    : source.closingTurns && typeof source.closingTurns === "object"
+      ? Object.keys(source.closingTurns).length
+      : 0;
+  const closingTurnsUsed = Math.min(
+    OSHIJO_MAX_CLOSING_TURNS,
+    normalizeNonNegativeInteger(
+      source.closingTurnsUsed
+        ?? source.closingTurnCount
+        ?? source.oshijoClosingTurnCount
+        ?? source.oshijoClosingTurns
+        ?? closingTurns,
+      OSHIJO_MAX_CLOSING_TURNS,
+    ),
+  );
+  const allIn = source.allIn === true
+    || source.isAllIn === true
+    || paidAmount < claimAmount;
+  return {
+    claimAmount,
+    paidAmount,
+    rankingContribution,
+    closingTurnsUsed,
+    allIn,
+  };
+}
+
+function isOshijoClosingMessage(message) {
+  return String(message?.phase || message?.marketPhase || "").toLowerCase() === "oshijo_closing"
+    || String(message?.name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
+}
+
+function normalizeMarketRankingEntry(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const showcase = Array.isArray(source.achievementShowcase)
+    ? source.achievementShowcase
+    : Array.isArray(source.monthlyAchievements)
+      ? source.monthlyAchievements
+      : Array.isArray(source.badges)
+        ? source.badges
+        : [];
+  const monthlyBadges = Array.isArray(source.monthlyAchievements)
+    ? source.monthlyAchievements
+    : Array.isArray(source.monthlyBadges)
+      ? source.monthlyBadges
+      : Array.isArray(source.badges)
+        ? source.badges
+        : [];
+  return {
+    ...source,
+    name: normalizeMarketName(source.name || source.displayName),
+    primary: normalizeNonNegativeInteger(
+      source.primary
+        ?? source.rankingContribution
+        ?? source.rankingAmount
+        ?? source.total
+        ?? source.sales
+        ?? source.spent,
+    ),
+    count: normalizeNonNegativeInteger(source.count ?? source.dealCount ?? source.salesCount ?? source.purchaseCount, 100_000),
+    best: normalizeNonNegativeInteger(source.best ?? source.bestSale ?? source.highestAmount),
+    uniqueCounterparties: normalizeNonNegativeInteger(
+      source.uniqueCounterparties ?? source.uniqueBuyerCount ?? source.uniqueSellerCount,
+      100_000,
+    ),
+    achievementShowcase: showcase,
+    monthlyAchievements: monthlyBadges,
+  };
+}
+
+function normalizeMarketRankingSet(value, fallback = null) {
+  const source = value && typeof value === "object" ? value : {};
+  const fallbackSource = fallback && typeof fallback === "object" ? fallback : {};
+  const sellers = Array.isArray(source.sellers)
+    ? source.sellers
+    : Array.isArray(fallbackSource.sellers)
+      ? fallbackSource.sellers
+      : [];
+  const buyers = Array.isArray(source.buyers)
+    ? source.buyers
+    : Array.isArray(fallbackSource.buyers)
+      ? fallbackSource.buyers
+      : [];
+  return {
+    sellers: sellers.map(normalizeMarketRankingEntry),
+    buyers: buyers.map(normalizeMarketRankingEntry),
+    label: normalizeShopText(
+      source.label || source.periodLabel || source.monthLabel || fallbackSource.label,
+      40,
+    ),
+  };
+}
+
+function normalizeMarketRankingPayload(value) {
+  const data = value && typeof value === "object" ? value : {};
+  const root = data.rankings && typeof data.rankings === "object" ? data.rankings : data;
+  const periods = root.periods && typeof root.periods === "object" ? root.periods : root;
+  const requestedPeriod = normalizeMarketRankingPeriod(data.period || root.period);
+  const flat = {
+    sellers: Array.isArray(root.sellers) ? root.sellers : [],
+    buyers: Array.isArray(root.buyers) ? root.buyers : [],
+    label: root.label || root.periodLabel || "",
+  };
+  const selectedFlat = flat.sellers.length || flat.buyers.length ? flat : null;
+  const monthlySource = periods.monthly
+    || periods.currentMonth
+    || data.monthly
+    || (requestedPeriod === "monthly" ? selectedFlat : null);
+  const lifetimeSource = periods.lifetime
+    || periods.allTime
+    || data.lifetime
+    || data.allTime
+    || (requestedPeriod === "lifetime" ? selectedFlat : null);
+  return {
+    monthly: normalizeMarketRankingSet(monthlySource, selectedFlat || lifetimeSource),
+    lifetime: normalizeMarketRankingSet(lifetimeSource, selectedFlat || monthlySource),
+  };
+}
+
+function normalizeMarketMonthlyAchievements(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const normalizeRole = (role) => {
+    const entry = source[role] && typeof source[role] === "object" ? source[role] : {};
+    return {
+      months: normalizeNonNegativeInteger(entry.months, 999),
+      top3Months: normalizeNonNegativeInteger(entry.top3Months, 999),
+      championMonths: normalizeNonNegativeInteger(entry.championMonths, 999),
+      level: normalizeNonNegativeInteger(entry.level, 99),
+      latestSeasonKey: /^\d{4}-\d{2}$/.test(String(entry.latestSeasonKey || ""))
+        ? String(entry.latestSeasonKey)
+        : "",
+      latestAwardId: ["champion", "top3", "top10"].includes(String(entry.latestAwardId || ""))
+        ? String(entry.latestAwardId)
+        : "",
+      latestRank: normalizeNonNegativeInteger(entry.latestRank, 10_000),
+    };
+  };
+  const levelMonths = (Array.isArray(source.levelMonths) ? source.levelMonths : [1, 3, 6, 12])
+    .map((month) => normalizeNonNegativeInteger(month, 999))
+    .filter((month, index, values) => month > 0 && values.indexOf(month) === index)
+    .sort((left, right) => left - right);
+  return {
+    seller: normalizeRole("seller"),
+    buyer: normalizeRole("buyer"),
+    levelMonths: levelMonths.length ? levelMonths : [1, 3, 6, 12],
+  };
+}
+
+function normalizeMarketRestartGuide(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const buyerMinimumBalance = Math.max(
+    1,
+    normalizeNonNegativeInteger(
+      source.buyerMinimumBalance
+        ?? source.buyerEntryTarget
+        ?? source.marketBuyerMinimum
+        ?? 15,
+      10_000,
+    ),
+  );
+  return {
+    buyerMinimumBalance,
+    remainingPay: normalizeNonNegativeInteger(
+      source.remainingPay ?? source.payToBuyerReturn ?? source.shortage,
+      10_000,
+    ),
+    rewardLabel: normalizeShopText(
+      source.rewardLabel || source.nextRewardLabel || source.availableRewardLabel,
+      60,
+    ),
+    rewardAmount: normalizeNonNegativeInteger(
+      source.rewardAmount ?? source.nextRewardAmount ?? source.availableRewardAmount,
+      10_000,
+    ),
+    matchesUntilReward: normalizeNonNegativeInteger(
+      source.matchesUntilReward ?? source.matchesRemaining ?? source.battlesRemaining,
+      100,
+    ),
+    rewardAvailable: source.rewardAvailable === true || source.available === true,
+  };
+}
+
+function normalizeOshijoPatronEligibility(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const badges = Array.isArray(source.badges)
+    ? source.badges
+    : Array.isArray(source.achievements)
+      ? source.achievements
+      : [];
+  const salesCount = normalizeNonNegativeInteger(source.salesCount, 100_000);
+  const uniqueBuyers = normalizeNonNegativeInteger(source.uniqueBuyers ?? source.uniqueBuyerCount, 100_000);
+  const minimumSales = normalizeNonNegativeInteger(source.minimumSales, 100_000);
+  const minimumUniqueBuyers = normalizeNonNegativeInteger(source.minimumUniqueBuyers, 100_000);
+  const progressDetail = minimumSales || minimumUniqueBuyers
+    ? `月間成立 ${salesCount}/${minimumSales || "―"}・異なる買い手 ${uniqueBuyers}/${minimumUniqueBuyers || "―"}`
+    : "";
+  return {
+    eligible: source.eligible === true
+      || source.popular === true
+      || source.popularSeller === true
+      || source.isEligible === true,
+    label: normalizeShopText(source.label || source.title || "人気推し嬢", 40),
+    detail: normalizeShopText(source.detail || source.reason || source.message || progressDetail, 120),
+    badges,
+  };
+}
+
 function normalizeMarketFavorite(value, fallbackId = "") {
   const source = value && typeof value === "object" ? value : {};
   const shop = normalizeMarketShop(source.shop || source.sellerShop || source);
@@ -762,6 +1061,13 @@ function applyMarketPatronExperience(value) {
   if (Object.prototype.hasOwnProperty.call(data, "recommendedShelf")) {
     state.recommendedShelf = normalizeRecommendedShelf(data.recommendedShelf);
   }
+  const eligibility = data.oshijoPatronEligibility
+    || data.oshijoPatron
+    || data.patronEligibility
+    || data.sellerPatronEligibility;
+  if (eligibility) state.patronEligibility = normalizeOshijoPatronEligibility(eligibility);
+  const restartGuide = data.restartGuide || data.reentryGuide || data.marketRestartGuide;
+  if (restartGuide) state.restartGuide = normalizeMarketRestartGuide(restartGuide);
 }
 
 function normalizeMarketRoom(value) {
@@ -786,6 +1092,13 @@ function normalizeMarketRoom(value) {
       patronFundSubsidy: room.patronFundSubsidy,
     };
   }
+  const restartGuide = room.restartGuide || room.reentryGuide || room.marketRestartGuide;
+  if (restartGuide) room.restartGuide = normalizeMarketRestartGuide(restartGuide);
+  const eligibility = room.oshijoPatronEligibility
+    || room.oshijoPatron
+    || room.patronEligibility
+    || room.sellerPatronEligibility;
+  if (eligibility) room.oshijoPatronEligibility = normalizeOshijoPatronEligibility(eligibility);
   return room;
 }
 
@@ -1164,6 +1477,8 @@ function subscribeToWallet(generation = lifecycleGeneration) {
 function render() {
   if (!active) return;
   const draft = document.querySelector("#marketChatInput")?.value ?? null;
+  const closingDraft = document.querySelector("#marketOshijoClosingText")?.value ?? null;
+  const claimDraft = document.querySelector("#marketOshijoClaimAmount")?.value ?? null;
   const oshijoFocusSelector = (() => {
     const focused = document.activeElement;
     if (!focused?.closest?.("#marketOshijoDecision")) return "";
@@ -1197,7 +1512,8 @@ function render() {
   })();
   const playingAudio = [...document.querySelectorAll("audio[data-market-audio-key]")]
     .find((audio) => !audio.paused && !audio.ended);
-  const playback = playingAudio ? {
+  const enteringQuietDecision = normalizeOshijoPhase(state.room) === "final";
+  const playback = playingAudio && !(enteringQuietDecision && playingAudio.dataset.marketOshijoAudio === "true") ? {
     key: playingAudio.dataset.marketAudioKey,
     currentTime: playingAudio.currentTime,
   } : null;
@@ -1205,7 +1521,20 @@ function render() {
   const focusPresentation = (() => {
     if (state.screen !== "room" || !state.room || !state.roomId) return { key: "", selector: "" };
     const role = roomRole();
-    if (role === "buyer" && state.room.status === "decision" && isOshijoClosing(state.room)) {
+    const oshijoPhase = normalizeOshijoPhase(state.room);
+    if (role === "buyer" && oshijoPhase === "warning") {
+      return {
+        key: `${state.roomId}:buyer:oshijo:warning`,
+        selector: "#marketOshijoWarning",
+      };
+    }
+    if (role === "buyer" && oshijoPhase === "closing") {
+      return {
+        key: `${state.roomId}:buyer:oshijo:closing`,
+        selector: "#marketOshijoClosingBuyer",
+      };
+    }
+    if (role === "buyer" && oshijoPhase === "final") {
       return {
         key: `${state.roomId}:buyer:decision:oshijo`,
         selector: "#marketOshijoDecision",
@@ -1233,6 +1562,10 @@ function render() {
   bindEvents();
   const restoredDraft = document.querySelector("#marketChatInput");
   if (!screenChanged && restoredDraft && draft !== null) restoredDraft.value = draft;
+  const restoredClosingDraft = document.querySelector("#marketOshijoClosingText");
+  if (!screenChanged && restoredClosingDraft && closingDraft !== null) restoredClosingDraft.value = closingDraft;
+  const restoredClaimDraft = document.querySelector("#marketOshijoClaimAmount");
+  if (!screenChanged && restoredClaimDraft && claimDraft !== null) restoredClaimDraft.value = claimDraft;
   if (!screenChanged && playback) {
     const restoredAudio = [...document.querySelectorAll("audio[data-market-audio-key]")]
       .find((audio) => audio.dataset.marketAudioKey === playback.key);
@@ -1261,8 +1594,8 @@ function render() {
   }
 }
 
-function renderWallet() {
-  return `<div class="market-wallet"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(Math.floor(state.balance))} <small>${ANJU_PAY_UNIT}</small></strong>${renderMarketPatronBadge(state.patron)}<p>貼り合いスタジアム内専用ウォレット</p></div>`;
+function renderWallet({ showPatron = true } = {}) {
+  return `<div class="market-wallet"><span>ANJUPAY BALANCE</span><strong>${formatAnjuPayNumber(Math.floor(state.balance))} <small>${ANJU_PAY_UNIT}</small></strong>${showPatron ? renderMarketPatronBadge(state.patron) : ""}<p>貼り合いスタジアム内専用ウォレット</p></div>`;
 }
 
 function safeShopClassToken(value, fallback = "standard") {
@@ -1315,7 +1648,7 @@ function renderSellerVerified(verifiedValue, { report = false } = {}) {
     ${report ? `<div class="market-shop-report-head"><span>PRIVATE OWNER REPORT</span><strong>店主レポート</strong><small>あなたにだけ表示</small></div>` : `<strong class="market-shop-verified-label"><span aria-hidden="true">✓</span> FUNCTIONS集計</strong>`}
     <dl>
       <div><dt>成立</dt><dd>${verified.salesCount.toLocaleString("ja-JP")}<small>件</small></dd></div>
-      <div><dt>${report ? "購入者" : "最高成約"}</dt><dd>${report ? verified.uniqueCounterparties.toLocaleString("ja-JP") : `${formatAnjuPayNumber(verified.bestSale)} <small>${ANJU_PAY_UNIT}</small>`}</dd></div>
+      <div><dt>${report ? "購入者" : "最高加算"}</dt><dd>${report ? verified.uniqueCounterparties.toLocaleString("ja-JP") : `${formatAnjuPayNumber(verified.bestSale)} <small>${ANJU_PAY_UNIT}</small>`}</dd></div>
       <div><dt>リピーター</dt><dd>${verified.repeatBuyerCount.toLocaleString("ja-JP")}<small>人</small></dd></div>
       <div><dt>${report ? "常連登録" : "市場日数"}</dt><dd>${report ? verified.favoriteCount.toLocaleString("ja-JP") : verified.marketDays.toLocaleString("ja-JP")}<small>${report ? "人" : "日"}</small></dd></div>
     </dl>
@@ -1739,9 +2072,12 @@ function renderSetup() {
           <button type="button" data-market-preview-room="preview:buyer">買い手プレビュー画面</button>
           <button type="button" data-market-preview-room="pitch:seller">売り手営業画面</button>
           <button type="button" data-market-preview-room="decision:buyer">買い手決済画面</button>
-          <button type="button" data-market-preview-room="decision:buyer:oshijo">推し嬢クロージング画面</button>
+          <button type="button" data-market-preview-room="oshijo_warning:buyer:oshijo">推し嬢・警告画面</button>
+          <button type="button" data-market-preview-room="oshijo_closing:buyer:oshijo">推し嬢・本気商談画面</button>
+          <button type="button" data-market-preview-room="decision:buyer:oshijo">推し嬢・静かな最終判断</button>
           <button type="button" data-market-preview-room="extension_offer:buyer">内金確認画面</button>
           <button type="button" data-market-preview-room="sold:buyer">成立結果画面</button>
+          <button type="button" data-market-preview-room="sold:buyer:oshijo">推し嬢・オールイン結果</button>
         </div>` : ""}
       </aside>
     </div>
@@ -1824,25 +2160,107 @@ function renderMarketRankingProfileSettings() {
   return `<details class="market-profile-settings"${opened}><summary><span><strong>自分の公開プロフィール</strong><small>Xリンクと市場プロフィールの一言を任意で設定できます。</small></span><b>設定</b></summary>${body}</details>`;
 }
 
+function renderMarketRankingBadges(entry, period) {
+  const badges = period === "monthly" && entry.monthlyAchievements?.length
+    ? entry.monthlyAchievements
+    : entry.achievementShowcase || [];
+  if (!badges.length) return "";
+  const ids = badges.filter((badge) => typeof badge === "string");
+  const knownBadges = ids.length
+    ? window.HariaiAchievements?.renderBadges?.(ids) || ""
+    : "";
+  const customBadges = badges
+    .filter((badge) => badge && typeof badge === "object")
+    .map((badge) => {
+      const label = normalizeShopText(
+        badge.label || badge.title || badge.name || badge.id || "月間実績",
+        40,
+      );
+      const level = normalizeNonNegativeInteger(badge.level ?? badge.tier ?? badge.count, 999);
+      const icon = normalizeShopText(badge.icon, 4);
+      return `<span class="market-monthly-achievement">${icon ? `<b aria-hidden="true">${escapeHtml(icon)}</b>` : ""}${escapeHtml(label)}${level > 1 ? `<small>LV.${level}</small>` : ""}</span>`;
+    })
+    .join("");
+  const fallbackIds = !knownBadges
+    ? ids.map((id) => `<span class="market-monthly-achievement">${escapeHtml(id)}</span>`).join("")
+    : "";
+  return `${knownBadges}${customBadges || fallbackIds ? `<div class="market-monthly-achievements" aria-label="${period === "monthly" ? "月間実績" : "累計実績"}">${customBadges}${fallbackIds}</div>` : ""}`;
+}
+
+function renderMarketMonthlyAchievementSummary() {
+  if (!state.rankingMonthlyAchievementsAvailable) return "";
+  const honors = state.rankingMonthlyAchievements;
+  const awardLabels = {
+    champion: "月間1位",
+    top3: "月間TOP3",
+    top10: "月間TOP10",
+  };
+  const roleCard = (role, heading) => {
+    const honor = honors[role];
+    const nextTarget = honors.levelMonths.find((months) => months > honor.months) || null;
+    const latest = honor.latestAwardId
+      ? `${awardLabels[honor.latestAwardId]}${honor.latestSeasonKey ? ` / ${honor.latestSeasonKey}` : ""}`
+      : "実績の締めを待っています";
+    return `<article>
+      <span>${role === "seller" ? "SELLER HONOR" : "BUYER HONOR"}</span>
+      <h3>${heading} <small>LV.${honor.level}</small></h3>
+      <strong>${honor.months}か月の月間実績</strong>
+      <dl><div><dt>TOP3</dt><dd>${honor.top3Months}回</dd></div><div><dt>1位</dt><dd>${honor.championMonths}回</dd></div></dl>
+      <p>${escapeHtml(latest)}</p>
+      <small>${nextTarget ? `あと${nextTarget - honor.months}か月の実績で次のレベル` : "最高レベルへ到達"}</small>
+    </article>`;
+  };
+  return `<section class="market-monthly-achievement-summary" aria-labelledby="marketMonthlyAchievementTitle">
+    <div><span>PERMANENT MONTHLY HONORS</span><h2 id="marketMonthlyAchievementTitle">月間の実績は、累計の歩みとして残ります</h2><p>月が替わっても獲得月数やレベルは失われません。順位によるPay報酬はありません。</p></div>
+    <div>${roleCard("seller", "月間の推し嬢")}${roleCard("buyer", "推し支え人")}</div>
+  </section>`;
+}
+
 function renderRankings() {
+  const period = normalizeMarketRankingPeriod(state.rankingPeriod);
+  const rankings = state.rankings[period] || { sellers: [], buyers: [], label: "" };
+  const periodLabel = period === "monthly" ? "月間" : "累計";
+  const monthlyStartsLater = period === "monthly"
+    && /^\d{4}-\d{2}$/.test(state.rankingMeta.monthlyStartKey)
+    && currentPatronSeasonKey() < state.rankingMeta.monthlyStartKey;
+  const monthlyStartLabel = monthlyStartsLater
+    ? `${Number(state.rankingMeta.monthlyStartKey.slice(0, 4))}年${Number(state.rankingMeta.monthlyStartKey.slice(5, 7))}月`
+    : "";
   const row = (entry, index, role) => {
     const profile = sanitizeMarketPublicProfile(entry.publicProfile);
     const xLink = renderMarketXLink(profile);
     const tagline = profile.tagline ? `<p class="market-ranking-tagline">「${escapeHtml(profile.tagline)}」</p>` : "";
-    const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
-    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${formatAnjuPay(entry.primary || 0)}</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${role === "seller" ? `成立${Number(entry.count || 0)}件 / 最高${formatAnjuPay(entry.best || 0)}` : `購入${Number(entry.count || 0)}件 / 最高${formatAnjuPay(entry.best || 0)}`}</small>${achievementBadges}</div></li>`;
+    const achievementBadges = renderMarketRankingBadges(entry, period);
+    const patronHonor = role === "seller"
+      ? renderOshijoPatronHonor(
+        entry.oshijoPatronHonor || entry.patronHonor || entry.patronEligibility,
+        { compact: true },
+      )
+      : "";
+    const counterparties = Number(entry.uniqueCounterparties || 0);
+    const record = role === "seller"
+      ? `成立${Number(entry.count || 0)}件${counterparties ? ` / 買い手${counterparties}人` : ""} / 最高加算${formatAnjuPay(Math.min(OSHIJO_RANKING_CAP, entry.best || 0))}`
+      : `購入${Number(entry.count || 0)}件${counterparties ? ` / 応援した店主${counterparties}人` : ""} / 最高加算${formatAnjuPay(Math.min(OSHIJO_RANKING_CAP, entry.best || 0))}`;
+    return `<li class="${entry.isViewer === true ? "is-viewer" : ""}"><span class="market-rank-number">${index + 1}</span><div class="market-ranking-entry-main"><div class="market-ranking-entry-head"><strong>${escapeHtml(entry.name)}${entry.isViewer === true ? `<small>あなた</small>` : ""}</strong><em>${formatAnjuPay(entry.primary || 0)}</em></div>${xLink || tagline ? `<div class="market-ranking-public-profile">${xLink}${tagline}</div>` : ""}<small class="market-ranking-record">${record}</small>${achievementBadges}${patronHonor}</div></li>`;
   };
   const list = (entries, role) => entries.length
     ? entries.map((entry, index) => row(entry, index, role)).join("")
     : `<li class="market-ranking-empty">集計対象の売買はまだありません。</li>`;
   return `<section class="screen market-screen market-rankings">
-    <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>総合ランキングには含まれない、売り手と買い手それぞれの市場実績です。</p></div><button class="button button-ghost" id="marketRankingBack">${state.rankingReturnScreen === "landing" ? "タイトルへ戻る" : state.rankingReturnScreen === "room" && state.room ? "取引結果へ戻る" : "市場へ戻る"}</button></div>
+    <div class="market-section-head"><div><span class="eyebrow">INDEPENDENT VALUE RANKING</span><h1>VALUE MARKET ランキング</h1><p>月間は今月の出会い、累計はこれまで積み重ねた支持と貢献の記録です。</p></div><button class="button button-ghost" id="marketRankingBack">${state.rankingReturnScreen === "landing" ? "タイトルへ戻る" : state.rankingReturnScreen === "room" && state.room ? "取引結果へ戻る" : "市場へ戻る"}</button></div>
     ${renderMarketRankingProfileSettings()}
+    ${renderMarketMonthlyAchievementSummary()}
+    <div class="market-ranking-tabs" role="tablist" aria-label="ランキング集計期間">
+      <button type="button" role="tab" data-market-ranking-period="monthly" aria-selected="${period === "monthly"}" class="${period === "monthly" ? "is-active" : ""}"><strong>月間</strong><small>新しい店主と今月の活躍</small></button>
+      <button type="button" role="tab" data-market-ranking-period="lifetime" aria-selected="${period === "lifetime"}" class="${period === "lifetime" ? "is-active" : ""}"><strong>累計</strong><small>消えない支持と貢献の歩み</small></button>
+    </div>
+    ${rankings.label ? `<p class="market-ranking-period-label">${escapeHtml(rankings.label)}</p>` : ""}
+    ${monthlyStartsLater && !rankings.sellers.length && !rankings.buyers.length ? `<div class="market-ranking-start-note"><strong>月間ランキングは${escapeHtml(monthlyStartLabel)}から始まります</strong><p>開始前の取引実績は累計ランキングに残り、過去の歩みが0になることはありません。</p></div>` : ""}
     ${state.rankingsStatus === "loading" ? `<div class="market-ranking-loading">ランキングを読み込んでいます…</div>` : `<div class="market-ranking-grid">
-      <article><span>SELLER RANKING</span><h2>売上ランキング</h2><ol>${list(state.rankings.sellers, "seller")}</ol></article>
-      <article><span>BUYER RANKING</span><h2>購入評価ランキング</h2><ol>${list(state.rankings.buyers, "buyer")}</ol></article>
+      <article><span>SELLER / ${period === "monthly" ? "THIS MONTH" : "ALL TIME"}</span><h2>${periodLabel}売上ランキング</h2><ol>${list(rankings.sellers, "seller")}</ol></article>
+      <article><span>BUYER / ${period === "monthly" ? "THIS MONTH" : "ALL TIME"}</span><h2>${periodLabel}貢献ランキング</h2><ol>${list(rankings.buyers, "buyer")}</ol></article>
     </div>`}
-    <p class="market-ranking-note">同じ売り手・買い手の組み合わせは、日本時間の1日につき最初の成立取引だけランキングへ加算します。AnjuPayの移動自体は通常どおり実行されます。</p>
+    <p class="market-ranking-note">同じ売り手・買い手の組み合わせは、日本時間の1日につき最初の成立取引だけ集計します。1回の実支払額が500 Payを超えても、ランキング加算は最大500 Payです。実際のAnjuPay移動と累計の歩みは失われません。</p>
   </section>`;
 }
 
@@ -1959,9 +2377,22 @@ function renderMarketMessages() {
     || String(first.id || "").localeCompare(String(second.id || ""))
   ));
   if (!messages.length) return `<li class="market-chat-empty">営業メッセージはまだありません。</li>`;
-  return messages.map((message) => message.kind === "audio"
-    ? `<li class="${message.uid === state.uid ? "is-mine" : ""} is-audio"><span>${escapeHtml(message.name)}</span><p>10秒音声</p><audio controls preload="metadata" data-market-audio-key="${escapeHtml(`${message.turn}:${message.createdAt}`)}" src="${escapeHtml(message.url)}"></audio><small>TURN ${Number(message.turn || 1)}</small></li>`
-    : `<li class="${message.uid === state.uid ? "is-mine" : ""}"><span>${escapeHtml(message.name)}</span><p>${escapeHtml(message.text)}</p><small>TURN ${Number(message.turn || 1)}</small></li>`).join("");
+  return messages.map((message) => {
+    const closingMessage = isOshijoClosingMessage(message);
+    const classes = [
+      message.uid === state.uid ? "is-mine" : "",
+      message.kind === "audio" ? "is-audio" : "",
+      closingMessage ? "is-oshijo-closing" : "",
+    ].filter(Boolean).join(" ");
+    const displayName = String(message.name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX)
+      ? String(message.name).slice(OSHIJO_CLOSING_AUDIO_PREFIX.length)
+      : message.name;
+    const phaseLabel = closingMessage ? "CLOSING" : `TURN ${Number(message.turn || 1)}`;
+    if (message.kind === "audio") {
+      return `<li class="${classes}"><span>${escapeHtml(displayName)}</span><p>10秒音声（再生は買い手操作）</p><audio controls preload="metadata" ${state.oshijoAudioMuted && closingMessage ? "muted" : ""} data-market-oshijo-audio="${closingMessage ? "true" : "false"}" data-market-audio-key="${escapeHtml(`${message.turn}:${message.createdAt}`)}" src="${escapeHtml(message.url)}"></audio><small>${phaseLabel}</small></li>`;
+    }
+    return `<li class="${classes}"><span>${escapeHtml(displayName)}</span><p>${escapeHtml(message.text)}</p><small>${phaseLabel}</small></li>`;
+  }).join("");
 }
 
 function renderMarketRelationshipPanel(room, role, status) {
@@ -2008,14 +2439,214 @@ function marketEntryFeeSettlement(room) {
   };
 }
 
+function oshijoClosingTurnsUsed(room) {
+  const serverCount = normalizeOshijoDeal(room).closingTurnsUsed;
+  const localTextCount = state.chatMessages.filter(isOshijoClosingMessage).length;
+  const localAudioCount = state.audioMessages.filter(isOshijoClosingMessage).length;
+  const localImageCount = state.oshijoClosingImages.length;
+  return Math.min(
+    OSHIJO_MAX_CLOSING_TURNS,
+    Math.max(serverCount, localTextCount + localAudioCount + localImageCount),
+  );
+}
+
+function oshijoClosingMediaUsed(room, mediaKind) {
+  const counts = room?.closingMediaCounts || room?.oshijoClosingMediaCounts || {};
+  const serverCount = normalizeNonNegativeInteger(counts?.[mediaKind], OSHIJO_MAX_CLOSING_TURNS);
+  if (mediaKind === "text") {
+    return Math.max(serverCount, state.chatMessages.filter(isOshijoClosingMessage).length);
+  }
+  if (mediaKind === "audio") {
+    return Math.max(serverCount, state.audioMessages.filter(isOshijoClosingMessage).length);
+  }
+  if (mediaKind === "image") return Math.max(serverCount, state.oshijoClosingImages.length);
+  return 0;
+}
+
+function renderOshijoDecisionValues(room, { balance = state.balance } = {}) {
+  const deal = normalizeOshijoDeal(room);
+  const currentBalance = normalizeNonNegativeInteger(balance, ANJU_PAY_MAX_BALANCE);
+  const payment = Math.min(deal.claimAmount, currentBalance);
+  return `<dl class="market-oshijo-values">
+    <div><dt>推し嬢からの請求額</dt><dd>${formatAnjuPay(deal.claimAmount)}</dd></div>
+    <div><dt>現在の所持Pay</dt><dd>${formatAnjuPay(currentBalance)}</dd></div>
+    <div><dt>購入後残高（同意時）</dt><dd>${formatAnjuPay(currentBalance - payment)}</dd></div>
+    <div><dt>ランキング加算</dt><dd>最大 ${formatAnjuPay(OSHIJO_RANKING_CAP)}</dd></div>
+  </dl>`;
+}
+
+function renderOshijoClosingImages() {
+  if (!state.oshijoClosingImages.length) return "";
+  return `<div class="market-oshijo-closing-images" aria-label="推し嬢クロージング画像">${state.oshijoClosingImages.map((image, index) => (
+    `<figure><img src="${escapeHtml(image.url)}" alt="推し嬢クロージングで届いた補足画像 ${index + 1}" /><figcaption>クロージング画像 ${index + 1} / この商談中だけ表示</figcaption></figure>`
+  )).join("")}</div>`;
+}
+
+function renderOshijoWarning(room, role) {
+  const deal = normalizeOshijoDeal(room);
+  if (role === "seller") {
+    return `<div class="market-wait-panel market-oshijo-wait market-oshijo-claim-wait">
+      <span>OSHIJO CLAIM / BUYER WARNING</span>
+      <h2>${formatAnjuPay(deal.claimAmount)}を請求しました</h2>
+      <p>買い手には、請求額・現在残高・同意後残高・ランキング加算上限を示した警告画面が表示されています。買い手が「営業を聞く」を選ぶまで、追い込み営業は送れません。</p>
+      <div class="market-oshijo-seller-rule"><strong>オールイン成約について</strong><span>相手の残高は表示されません。残高が請求額に満たない場合でも、買い手が明示的に同意すれば、その時点の全残高が実支払額となり、請求額との差額は残りません。</span></div>
+    </div>`;
+  }
+  return `<div id="marketOshijoWarning" class="market-decision-panel market-oshijo-warning" role="alertdialog" aria-modal="false" aria-labelledby="marketOshijoWarningHeading" aria-describedby="marketOshijoWarningCaution" tabindex="-1">
+    <span>PAYMENT CLAIM / NORMAL JUDGMENT FIRST</span>
+    <h2 id="marketOshijoWarningHeading">${formatAnjuPay(deal.claimAmount)}の任意請求です</h2>
+    <p id="marketOshijoWarningCaution" class="market-oshijo-pay-warning"><strong>支払義務はありません。</strong>営業を聞かず、ここで見送ることもできます。画像データ・著作権・所有権は移りません。</p>
+    ${renderOshijoDecisionValues(room)}
+    <p class="market-oshijo-entry-fee">ランキングは実支払額にかかわらず、1回の成立につき最大${formatAnjuPay(OSHIJO_RANKING_CAP)}だけ加算されます。</p>
+    <div class="market-oshijo-warning-actions">
+      <button class="button market-oshijo-leave" data-market-action="leave" ${state.busy ? "disabled" : ""}>ここで見送る</button>
+      <button class="button button-ghost" data-market-action="hear_oshijo_closing" ${state.busy ? "disabled" : ""}>警告を理解して営業を聞く</button>
+    </div>
+  </div>`;
+}
+
+function renderOshijoClosingRound(room, role) {
+  const deal = normalizeOshijoDeal(room);
+  const used = oshijoClosingTurnsUsed(room);
+  const remaining = Math.max(0, OSHIJO_MAX_CLOSING_TURNS - used);
+  if (role === "seller") {
+    const imageUsed = oshijoClosingMediaUsed(room, "image") > 0;
+    const audioUsed = oshijoClosingMediaUsed(room, "audio") > 0;
+    return `<div class="market-pitch-panel market-oshijo-closing-panel">
+      <span>OSHIJO CLOSING / ${used} OF ${OSHIJO_MAX_CLOSING_TURNS}</span>
+      <h2>警戒心を言葉・画像・声で解きほぐす</h2>
+      <p>請求額は${formatAnjuPay(deal.claimAmount)}です。最大${OSHIJO_MAX_CLOSING_TURNS}手まで届けられます。買い手が静かな最終判断へ進んだ瞬間、すべての送信は止まります。</p>
+      <div class="market-oshijo-seller-rule"><strong>成約額の約束</strong><span>相手の残高は非公開です。請求額未満でも、買い手がオールインへ同意した場合は実際に残っている全Payで成立します。売り手はその実支払額を最終成約額として受け入れます。</span></div>
+      <div class="market-oshijo-turn-meter"><span>残り ${remaining} 手</span><progress max="${OSHIJO_MAX_CLOSING_TURNS}" value="${used}">${used}/${OSHIJO_MAX_CLOSING_TURNS}</progress></div>
+      <form id="marketOshijoClosingTextForm">
+        <label for="marketOshijoClosingText">文字で届ける</label>
+        <textarea id="marketOshijoClosingText" maxlength="${OSHIJO_CLOSING_TEXT_MAX_LENGTH}" placeholder="相手の迷いを受け止め、自分の言葉で価値を伝える…" ${state.busy || remaining <= 0 ? "disabled" : ""}></textarea>
+        <button class="button button-cyan" ${state.busy || remaining <= 0 ? "disabled" : ""}>文字を1手送る</button>
+      </form>
+      <div class="market-oshijo-media-actions">
+        <label class="button button-ghost ${imageUsed ? "is-used" : ""}">${imageUsed ? "クロージング画像は送信済み" : "画像を1手送る"}<input id="marketOshijoClosingImageInput" type="file" accept="image/png,image/jpeg,image/webp" ${state.busy || remaining <= 0 || imageUsed || !state.channelReady ? "disabled" : ""} /></label>
+        <label class="button button-ghost ${audioUsed ? "is-used" : ""}">${audioUsed ? "クロージング音声は送信済み" : "10秒音声を1手送る"}<input id="marketOshijoClosingAudioInput" type="file" accept="audio/*" ${state.busy || remaining <= 0 || audioUsed || !state.channelReady ? "disabled" : ""} /></label>
+      </div>
+      ${remaining <= 0 ? `<p class="market-oshijo-limit-reached">3手を届けました。買い手が最終判断へ進むまでお待ちください。</p>` : ""}
+    </div>`;
+  }
+  return `<div id="marketOshijoClosingBuyer" class="market-decision-panel market-oshijo-closing-buyer" role="region" aria-live="polite" aria-labelledby="marketOshijoClosingBuyerHeading" tabindex="-1">
+    <span>OSHIJO CLOSING / BUYER CONTROLLED</span>
+    <h2 id="marketOshijoClosingBuyerHeading">本気商談を聞いています</h2>
+    <p>文字・画像・音声は最大${OSHIJO_MAX_CLOSING_TURNS}手です。音声は自動再生されません。いつでも営業を止め、静かな最終判断へ進むか、見送れます。</p>
+    ${renderOshijoDecisionValues(room)}
+    <div class="market-oshijo-playback-control">
+      <button type="button" class="button button-ghost button-small" id="marketOshijoAudioMute" aria-pressed="${state.oshijoAudioMuted}">${state.oshijoAudioMuted ? "クロージング音声のミュートを解除" : "クロージング音声をミュート"}</button>
+      <small>再生ボタンを押した音声だけ再生されます。</small>
+    </div>
+    ${renderOshijoClosingImages()}
+    <div class="market-oshijo-warning-actions">
+      <button class="button market-oshijo-leave" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button>
+      <button class="button button-primary" data-market-action="enter_silent_decision" ${state.busy ? "disabled" : ""}>営業を止めて静かな最終判断へ</button>
+    </div>
+  </div>`;
+}
+
+function renderOshijoFinalDecision(room, role) {
+  const deal = normalizeOshijoDeal(room);
+  if (role === "seller") {
+    return `<div class="market-wait-panel market-oshijo-wait is-quiet">
+      <span>QUIET FINAL DECISION</span>
+      <h2>営業入力は終了しました</h2>
+      <p>買い手が新しい営業を受けない静かな画面で、${formatAnjuPay(deal.claimAmount)}の請求へ最終判断をしています。購入または見送りが選ばれるまで、そのままお待ちください。</p>
+    </div>`;
+  }
+  const currentBalance = normalizeNonNegativeInteger(state.balance, ANJU_PAY_MAX_BALANCE);
+  const paidAmount = Math.min(deal.claimAmount, currentBalance);
+  const allIn = currentBalance < deal.claimAmount;
+  const entryFee = marketEntryFeeSettlement(room);
+  const totalSpend = paidAmount + entryFee.paid;
+  const entryFeeCopy = entryFee.refunded > 0
+    ? `着手料${formatAnjuPay(entryFee.nominal)}のうち${formatAnjuPay(entryFee.paid)}は営業分として支払済みで、${formatAnjuPay(entryFee.refunded)}は返還済みです。`
+    : `着手料${formatAnjuPay(entryFee.paid)}は購入代金とは別に、営業分として支払済みです。`;
+  const confirmationCopy = allIn
+    ? `請求額${formatAnjuPay(deal.claimAmount)}に対し、現在の${formatAnjuPay(currentBalance)}すべてを支払います。今回の総支出は${formatAnjuPay(totalSpend)}です。`
+    : `${formatAnjuPay(deal.claimAmount)}を支払います。今回の総支出は${formatAnjuPay(totalSpend)}です。`;
+  const buyLabel = allIn
+    ? `${formatAnjuPay(currentBalance)}すべてでオールイン成約`
+    : `${formatAnjuPay(deal.claimAmount)}を支払って購入を確定`;
+  return `<div id="marketOshijoDecision" class="market-decision-panel market-oshijo-decision is-quiet" role="region" aria-live="polite" aria-atomic="true" aria-labelledby="marketOshijoHeading" aria-describedby="marketOshijoCaution marketOshijoConsent" tabindex="-1">
+    <span>OSHIJO MODE / 筋と人情の熱血お嬢 / QUIET FINAL DECISION</span>
+    <h2 id="marketOshijoHeading">営業は止まりました。ここからは、あなたの判断です。</h2>
+    <p id="marketOshijoCaution" class="market-oshijo-pay-warning"><strong>Payは貴重です。購入は任意です。</strong>新しい文字・画像・音声は届きません。落ち着いて支払額と残高を確認してください。</p>
+    <p class="market-oshijo-roleplay">これは画像の魅力にPayで価値をつけるロールプレイです。画像データ・著作権・所有権は移りません。</p>
+    ${renderOshijoDecisionValues(room, { balance: currentBalance })}
+    <p class="market-oshijo-entry-fee">${entryFeeCopy}</p>
+    <div id="marketOshijoConsent" class="market-oshijo-consent"><strong>${allIn ? "オールイン成約の確認" : "購入内容の確認"}</strong><span>${allIn ? `所持Payが請求額に満たないため、同意すると${formatAnjuPay(currentBalance)}すべてが実支払額になります。不足分の請求は残らず、後払いもありません。` : "請求額を全額支払います。購入後残高は上の表示どおりです。"}</span></div>
+    <div class="market-oshijo-actions">
+      <div class="market-oshijo-confirm">
+        <button type="button" class="button market-oshijo-review" data-market-oshijo-review aria-expanded="false" aria-controls="marketOshijoFinalConfirm" ${state.busy ? "disabled" : ""}>${allIn ? "オールイン内容の最終確認へ" : "購入内容の最終確認へ"}</button>
+        <div id="marketOshijoFinalConfirm" role="group" aria-label="購入の最終確認" hidden><strong>最終確認</strong><span>${confirmationCopy}</span><button class="button market-oshijo-buy ${allIn ? "is-all-in" : ""}" data-market-action="buy" ${state.busy || paidAmount <= 0 ? "disabled" : ""}>${buyLabel}</button></div>
+      </div>
+      <button class="button market-oshijo-leave" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button>
+    </div>
+  </div>`;
+}
+
+function oshijoShareCopy(room, choice) {
+  const deal = normalizeOshijoDeal(room);
+  if (choice === "persuasion") {
+    return "推し嬢の営業の説得力が素晴らしく、ついつい購入してしまった。";
+  }
+  if (choice === "all_in") {
+    return `推し嬢の本気営業に心を動かされ、${formatAnjuPay(deal.paidAmount)}の全Payを託した。0 Payから、また始める。`;
+  }
+  if (choice === "value") {
+    return `この商談で${formatAnjuPay(deal.paidAmount)}を、自分で選んだ推し値として届けました。`;
+  }
+  return "";
+}
+
+function renderOshijoSharePanel(room, role, status) {
+  if (role !== "buyer" || status !== "sold" || !isOshijoClosing(room)) return "";
+  const deal = normalizeOshijoDeal(room);
+  const options = [
+    ["persuasion", "説得力を称える", "推し嬢の営業の説得力が素晴らしく、ついつい購入してしまった。"],
+    ...(deal.allIn ? [["all_in", "0 Payからの再出発", `全Payを託した。0 Payから、また始める。`]] : []),
+    ["value", "自分の推し値として残す", `${formatAnjuPay(deal.paidAmount)}を、自分で選んだ推し値として届けた。`],
+  ];
+  return `<section class="market-oshijo-share">
+    <div><span>OPTIONAL SHARE COPY</span><h3>本人が選んだ言葉だけ残す</h3><p>共有は任意です。選択するまで文章は決まりません。</p></div>
+    <div class="market-oshijo-share-options">${options.map(([id, label, preview]) => `<label><input type="radio" name="marketOshijoShareChoice" value="${id}" ${state.oshijoShareChoice === id ? "checked" : ""} /><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(preview)}</small></span></label>`).join("")}</div>
+    <button type="button" class="button button-ghost button-small" id="marketOshijoCopyShare" ${state.oshijoShareChoice ? "" : "disabled"}>選んだ文章をコピー</button>
+  </section>`;
+}
+
+function renderOshijoRestartPanel(room, role, status) {
+  if (role !== "buyer" || status !== "sold" || state.balance !== 0 || !isOshijoClosing(room)) return "";
+  const guide = normalizeMarketRestartGuide(room.restartGuide || state.restartGuide);
+  const remaining = guide.remainingPay || Math.max(0, guide.buyerMinimumBalance - state.balance);
+  let rewardCopy = "現在取得できる対戦・ランキング報酬は、各モードの報酬表示から確認できます。";
+  if (guide.rewardLabel || guide.rewardAmount) {
+    rewardCopy = `${guide.rewardLabel || "次の報酬"}${guide.rewardAmount ? ` ${formatAnjuPay(guide.rewardAmount)}` : ""}${guide.matchesUntilReward ? `まであと${guide.matchesUntilReward}試合` : guide.rewardAvailable ? "を現在受け取れます" : ""}。`;
+  }
+  return `<section class="market-oshijo-restart">
+    <span>ZERO PAY / NEW CHAPTER</span>
+    <h3>0 Payから、また市場へ</h3>
+    <p>買い手として戻る目安は${formatAnjuPay(guide.buyerMinimumBalance)}です。あと${formatAnjuPay(remaining)}で、最小価格の商談へ参加できます。</p>
+    <p>売り手は0 Payでも参加でき、買い手に営業を受けてもらって完了すると着手料${formatAnjuPay(ENTRY_FEE)}を受け取れます。</p>
+    <p>${escapeHtml(rewardCopy)}</p>
+    <div><button type="button" class="button button-primary" id="marketRestartAsSeller">売り手として0 Payから営業する</button><button type="button" class="button button-ghost" id="marketRestartHome">対戦・報酬を確認する</button></div>
+  </section>`;
+}
+
 function renderRoomControls(room, role) {
   const status = room.status;
   const terminal = TERMINAL_STATES.has(status);
   if (terminal) {
     const title = status === "sold" ? "売買成立" : status === "canceled" ? "取引中止" : "今回は見送り";
-    const settlement = marketSettlement(room.salePrice || room.listing?.askingPrice, {
+    const oshijoDeal = normalizeOshijoDeal(room);
+    const settlementAmount = isOshijoClosing(room)
+      ? oshijoDeal.paidAmount
+      : room.salePrice || room.listing?.askingPrice;
+    const settlement = marketSettlement(settlementAmount, {
       settlementQuote: {
-        grossAmount: Number(room.salePrice || room.listing?.askingPrice || 0),
+        grossAmount: Number(settlementAmount || 0),
         feeAmount: Number(room.marketFee ?? room.settlementQuote?.feeAmount),
         sellerProceeds: Number(room.sellerProceeds ?? room.settlementQuote?.sellerProceeds),
         patronFundSubsidy: Number(room.patronFundSubsidy || 0),
@@ -2028,7 +2659,11 @@ function renderRoomControls(room, role) {
         : `${formatAnjuPay(settlement.grossAmount)}で成立。成約手数料${formatAnjuPay(settlement.feeAmount)}を差し引き、${formatAnjuPay(settlement.sellerProceeds)}を受け取りました。`
       : "このルームでのAnjuPay移動と営業履歴はここで終了です。";
     const rankingCopy = status === "sold"
-      ? `<small>${room.rankingCounted === false ? "同一ペア本日2回目以降のためランキング対象外です。" : "独立ランキングへ反映されます。"}</small>`
+      ? `<small>${room.rankingCounted === false
+        ? "同一ペア本日2回目以降のためランキング対象外です。"
+        : isOshijoClosing(room)
+          ? `ランキングには${formatAnjuPay(oshijoDeal.rankingContribution)}を加算します（1成立最大${formatAnjuPay(OSHIJO_RANKING_CAP)}）。`
+          : "独立ランキングへ反映されます。"}</small>`
       : "";
     const fundCopy = status === "sold" && settlement.patronFundSubsidy > 0
       ? `<p>パトロン基金が${formatAnjuPay(settlement.patronFundSubsidy)}を補填しました。基金方針「${escapeHtml(PATRON_FUND_POLICY_LABELS[normalizePatronFundPolicy(room.patronFundPolicy)] || "出会いと常連")}」／${escapeHtml(PATRON_FUND_KIND_LABELS[normalizePatronFundKind(room.patronFundKind)] || "店主の成立を支援")}。</p>`
@@ -2043,18 +2678,25 @@ function renderRoomControls(room, role) {
     const oshijoSettlementCopy = isOshijoClosing(room)
       ? status === "sold"
         ? role === "buyer"
-          ? `<p>${entryFeeResultCopy}今回の総支出は${formatAnjuPay(settlement.grossAmount + entryFee.paid)}です。</p>`
-          : `<p>${entryFeeResultCopy}</p>`
+          ? `<div class="market-oshijo-result-values"><div><span>請求額</span><strong>${formatAnjuPay(oshijoDeal.claimAmount)}</strong></div><div><span>実支払額</span><strong>${formatAnjuPay(settlement.grossAmount)}</strong></div><div><span>成約種別</span><strong>${oshijoDeal.allIn ? "オールイン" : "全額成約"}</strong></div></div><p>${entryFeeResultCopy}今回の総支出は${formatAnjuPay(settlement.grossAmount + entryFee.paid)}です。${oshijoDeal.allIn ? "請求額との差額は残らず、0 Payから新しい章が始まります。" : ""}</p>`
+          : `<div class="market-oshijo-result-values"><div><span>請求額</span><strong>${formatAnjuPay(oshijoDeal.claimAmount)}</strong></div><div><span>実支払額</span><strong>${formatAnjuPay(settlement.grossAmount)}</strong></div><div><span>成約種別</span><strong>${oshijoDeal.allIn ? "オールイン" : "全額成約"}</strong></div></div><p>${entryFeeResultCopy}${oshijoDeal.allIn ? "買い手の全残高を実支払額として成約しました。" : ""}</p>`
         : role === "buyer"
           ? `<p>購入代金は支払っていません。${entryFeeResultCopy}</p>`
           : `<p>購入は見送りになりました。${entryFeeResultCopy}</p>`
       : "";
-    return `<div id="marketResultPanel" class="market-result-panel ${status}" role="status" aria-live="polite" tabindex="-1"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span>${status === "sold" ? renderPatronBackedBadge(settlement.patronFundSubsidy) : ""}${oshijoResultBadge}<h2>${title}</h2><p>${copy}</p>${oshijoSettlementCopy}${fundCopy}${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement, patronFundSubsidy: settlement.patronFundSubsidy } }) : ""}${rankingCopy}${renderMarketRelationshipPanel(room, role, status)}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
+    const patronHonor = renderOshijoPatronHonor(
+      room.oshijoPatron
+        || room.oshijoPatronHonor
+        || room.patronHonor
+        || room.oshijoPatronEligibility
+        || (role === "seller" ? state.patronEligibility : null),
+    );
+    return `<div id="marketResultPanel" class="market-result-panel ${status}" role="status" aria-live="polite" tabindex="-1"><span>${status === "sold" ? "DEAL COMPLETE" : "MARKET CLOSED"}</span>${status === "sold" ? renderPatronBackedBadge(settlement.patronFundSubsidy) : ""}${oshijoResultBadge}<h2>${title}</h2><p>${copy}</p>${oshijoSettlementCopy}${fundCopy}${status === "sold" ? renderMarketFeeBreakdown(settlement.grossAmount, { room: { settlementQuote: settlement, patronFundSubsidy: settlement.patronFundSubsidy } }) : ""}${rankingCopy}${patronHonor}${renderOshijoSharePanel(room, role, status)}${renderOshijoRestartPanel(room, role, status)}${renderMarketRelationshipPanel(room, role, status)}<div><button class="button button-primary" id="marketPlayAgain">もう一度参加</button>${status === "sold" ? `<button class="button button-cyan" id="marketResultCertificates">${role === "buyer" ? "今回の証書を見る" : "証書コレクション"}</button>` : ""}<button class="button button-ghost" id="marketResultRanking">ランキングを見る</button><button class="button button-ghost" id="marketReturnHome">トップへ戻る</button></div></div>`;
   }
   if (status === "preview") {
     if (role === "buyer") {
       const oshijoNotice = marketShopSupportsOshijo(room.sellerShop)
-        ? `<aside class="market-oshijo-notice"><span>熱血お嬢スタイルの店主</span><strong>推し嬢モードの事前案内</strong><p>推し嬢＝筋と人情で背中を押す熱血お嬢スタイル。この店主が営業の最後に発動すると、追加検討は使えず、購入か見送りのどちらかを選びます。購入は任意で、自動購入や時間切れ購入はありません。</p></aside>`
+        ? `<aside class="market-oshijo-notice"><span>熱血お嬢スタイルの店主</span><strong>推し嬢モードの事前案内</strong><p>推し嬢＝筋と人情で背中を押す熱血お嬢スタイル。この店主は通常価格とは別に、営業後に自由な金額を請求できます。請求時は先に警告画面が開き、営業を聞かず見送るか、最大3手の本気商談を聞くかを選べます。推し嬢モードでは追加検討は使えず、購入か見送りを最終的に選びます。購入は任意で、自動購入や時間切れ購入はありません。</p></aside>`
         : "";
       return `<div class="market-decision-panel">
         <span>FREE PREVIEW</span>
@@ -2070,11 +2712,19 @@ function renderRoomControls(room, role) {
     if (role === "seller") {
       const sent = state.pitchSentTurns.has(Number(room.turn || 1));
       const supportsOshijo = marketShopSupportsOshijo(room.sellerShop);
+      const claimDefault = state.oshijoClaimDraft
+        || String(Math.max(1, Number(room.listing?.askingPrice || state.askingPrice || 1)));
       const completionActions = supportsOshijo
         ? `<div class="market-pitch-completion-actions">
           <button class="button button-primary" data-market-action="pitch_complete" ${!sent || state.busy ? "disabled" : ""}>通常営業を完了</button>
-          <button class="button market-oshijo-trigger" data-market-action="pitch_complete" data-market-closing-mode="oshijo" ${!sent || state.busy ? "disabled" : ""}>推し嬢モードで最終決断へ</button>
-        </div>`
+          <button type="button" class="button market-oshijo-trigger" id="marketOshijoClaimToggle" aria-expanded="${state.oshijoClaimOpen}" aria-controls="marketOshijoClaimForm" ${!sent || state.busy ? "disabled" : ""}>推し嬢モードの請求額を決める</button>
+        </div>
+        <form id="marketOshijoClaimForm" class="market-oshijo-claim-form" ${state.oshijoClaimOpen ? "" : "hidden"}>
+          <div><label for="marketOshijoClaimAmount">自由請求額</label><span><input id="marketOshijoClaimAmount" type="number" inputmode="numeric" min="1" max="${OSHIJO_MAX_CLAIM_AMOUNT}" step="1" value="${escapeHtml(claimDefault)}" ${state.busy ? "disabled" : ""} /><b>Pay</b></span></div>
+          <p>相手の残高は見えません。相手が請求額を持っていない場合でも、明示的にオールインへ同意すれば、その時点の全残高が実支払額になります。ランキング加算は最大${formatAnjuPay(OSHIJO_RANKING_CAP)}です。</p>
+          <label class="market-oshijo-seller-consent"><input id="marketOshijoAllInConsent" type="checkbox" ${state.busy ? "disabled" : ""} /><span>請求額未満のオールイン成約では、実支払額を最終成約額として受け入れます。</span></label>
+          <button class="button market-oshijo-trigger" ${state.busy ? "disabled" : ""}>この金額で警告画面を送る</button>
+        </form>`
         : `<button class="button button-primary market-complete-pitch" data-market-action="pitch_complete" ${!sent || state.busy ? "disabled" : ""}>通常営業を完了</button>`;
       return `<div class="market-pitch-panel">
         <span>SALES TURN ${Number(room.turn || 1)} / ${room.maxTurns || MAX_TURNS}</span><h2>画像の魅力を営業する</h2>
@@ -2084,51 +2734,22 @@ function renderRoomControls(room, role) {
       </div>`;
     }
     const decisionNotice = marketShopSupportsOshijo(room.sellerShop)
-      ? "この店主は推し嬢モードを発動する場合があります。発動時は追加検討を使えず、購入か見送りを選びます。通常完了なら追加検討も選べます。"
+      ? "この店主は営業後に自由請求を提示する場合があります。提示された場合は、警告画面で見送るか、本気商談を聞くかを先に選べます。"
       : "営業完了後に、購入・退室・追加検討を選択できます。";
     return `<div class="market-wait-panel"><span>SALES TURN ${Number(room.turn || 1)}</span><h2>売り手の営業を受けています</h2><p>${decisionNotice}</p></div>`;
   }
+  if (status === "oshijo_warning") return renderOshijoWarning(room, role);
+  if (status === "oshijo_closing") return renderOshijoClosingRound(room, role);
   if (status === "decision") {
     const oshijoClosing = isOshijoClosing(room);
     if (role === "buyer") {
       if (oshijoClosing) {
-        const purchasePrice = Math.max(0, Number(room.listing?.askingPrice || 0));
-        const balanceAfterPurchase = Math.max(0, state.balance - purchasePrice);
-        const canAffordPurchase = state.balance >= purchasePrice;
-        const entryFee = marketEntryFeeSettlement(room);
-        const totalSpend = purchasePrice + entryFee.paid;
-        const entryFeeCopy = entryFee.refunded > 0
-          ? `着手料${formatAnjuPay(entryFee.nominal)}のうち${formatAnjuPay(entryFee.paid)}は購入代金とは別に売り手へ支払済みで、${formatAnjuPay(entryFee.refunded)}は残高へ返還済みです。`
-          : `着手料${formatAnjuPay(entryFee.paid)}は購入代金とは別に、営業完了時に売り手へ支払済みです。`;
-        return `<div id="marketOshijoDecision" class="market-decision-panel market-oshijo-decision" role="region" aria-live="polite" aria-atomic="true" aria-labelledby="marketOshijoHeading" aria-describedby="marketOshijoCaution marketOshijoConsent" tabindex="-1">
-          <span>OSHIJO MODE / 筋と人情の熱血お嬢</span>
-          <div class="market-oshijo-flare" aria-hidden="true"><i></i><i></i><i></i></div>
-          <h2 id="marketOshijoHeading">推し嬢、ここ一番！</h2>
-          <p class="market-oshijo-line">迷いごと、うちが受け止める。けど、大事なPayをどう使うかは、あなたが決める。</p>
-          <p id="marketOshijoCaution" class="market-oshijo-pay-warning"><strong>Payは貴重です。</strong>支払いは慎重に判断してください。</p>
-          <p class="market-oshijo-roleplay">これは画像の魅力にPayで価値をつけるロールプレイです。画像データ・著作権・所有権は移りません。</p>
-          <dl class="market-oshijo-values"><div><dt>ここからの購入代金</dt><dd>${formatAnjuPay(purchasePrice)}</dd></div><div><dt>今回の総支出</dt><dd>${formatAnjuPay(totalSpend)}</dd></div><div><dt>購入後残高</dt><dd>${formatAnjuPay(balanceAfterPurchase)}</dd></div></dl>
-          <p class="market-oshijo-entry-fee">${entryFeeCopy}</p>
-          <div id="marketOshijoConsent" class="market-oshijo-consent"><strong>購入は任意です</strong><span>内容と残高を確認し、納得できる場合だけ購入してください。今回は見送ることもできます。</span></div>
-          <div class="market-oshijo-actions">
-            <div class="market-oshijo-confirm">
-              <button type="button" class="button market-oshijo-review" data-market-oshijo-review aria-expanded="false" aria-controls="marketOshijoFinalConfirm" ${state.busy ? "disabled" : ""}>購入内容の最終確認へ</button>
-              <div id="marketOshijoFinalConfirm" role="group" aria-label="購入の最終確認" hidden><strong>最終確認</strong><span>${formatAnjuPay(purchasePrice)}をここから支払い、今回の総支出は${formatAnjuPay(totalSpend)}です。</span>${canAffordPurchase ? "" : `<em>残高が${formatAnjuPay(purchasePrice - state.balance)}不足しています。</em>`}<button class="button market-oshijo-buy" data-market-action="buy" ${state.busy || !canAffordPurchase ? "disabled" : ""}>${formatAnjuPay(purchasePrice)}を支払って購入を確定</button></div>
-            </div>
-            <button class="button market-oshijo-leave" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button>
-          </div>
-        </div>`;
+        return renderOshijoFinalDecision(room, role);
       }
       const canExtend = Number(room.turn || 1) < Number(room.maxTurns || MAX_TURNS);
       return `<div class="market-decision-panel"><span>VALUE DECISION</span><h2>この推し値で購入しますか？</h2><p>購入はロールプレイで、画像データの所有権は移りません。成約手数料は売り手負担のため、買い手の支払額は販売価格のままです。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room })}<small class="market-opportunity-cost">${escapeHtml(purchaseBalanceCopy(room.listing?.askingPrice))}</small><div><button class="button button-primary" data-market-action="buy" ${state.busy ? "disabled" : ""}>合計${formatAnjuPay(room.listing?.askingPrice)}で購入</button>${canExtend ? `<button class="button button-cyan" data-market-action="request_extension" ${state.busy ? "disabled" : ""}>もう1ターン検討</button>` : ""}<button class="button button-ghost" data-market-action="leave" ${state.busy ? "disabled" : ""}>今回は見送る</button></div></div>`;
     }
-    if (oshijoClosing) {
-      return `<div class="market-wait-panel market-oshijo-wait">
-        <span>OSHIJO MODE / HEATED CLOSING</span>
-        <h2>熱血クロージングを届けました</h2>
-        <p>あとは買い手の判断です。購入または見送りが選ばれるまで、そのままお待ちください。</p>
-      </div>`;
-    }
+    if (oshijoClosing) return renderOshijoFinalDecision(room, role);
     return `<div class="market-wait-panel"><span>BUYER DECISION</span><h2>買い手の判断を待っています</h2><p>購入・退室・追加検討のいずれかが選ばれます。購入成立時だけ成約手数料が差し引かれます。</p>${renderMarketFeeBreakdown(room.listing?.askingPrice, { room, compact: true })}</div>`;
   }
   if (status === "extension_request") {
@@ -2150,6 +2771,9 @@ function renderRoom() {
   if (!state.room) return `<section class="screen market-screen market-waiting"><div class="market-waiting-card"><div class="loader"></div><h1>市場ルームを準備しています</h1></div></section>`;
   const room = state.room;
   const role = roomRole();
+  const oshijoPhase = normalizeOshijoPhase(room);
+  const suppressBuyerDecisionInfluence = role === "buyer"
+    && ["warning", "closing", "final"].includes(oshijoPhase);
   const counterpart = role === "seller" ? room.buyerName : room.sellerName;
   const counterpartPatron = role === "seller" ? room.buyerPatron : room.sellerPatron;
   ensureRelationshipFeedback(room);
@@ -2162,13 +2786,29 @@ function renderRoom() {
       ? { ...normalizedSellerShop.relationship, isFavorite: Boolean(localFavorite) }
       : false,
   });
+  const patronHonor = suppressBuyerDecisionInfluence
+    ? ""
+    : renderOshijoPatronHonor(
+      room.oshijoPatron
+        || room.oshijoPatronHonor
+        || room.patronHonor
+        || room.sellerShop?.oshijoPatron,
+      { compact: true },
+    );
+  const roomPrice = isOshijoClosing(room) && oshijoPhase
+    ? normalizeOshijoDeal(room).claimAmount
+    : room.listing?.askingPrice;
+  const salesLog = role === "buyer" && oshijoPhase === "final"
+    ? `<section class="market-sales-log market-sales-log-quiet" aria-label="営業入力停止"><div class="market-sales-log-head"><span>QUIET DECISION</span><strong>営業ログを閉じました</strong></div><div><strong>新しい営業は届きません</strong><p>文字・画像・音声から離れて、支払内容だけを確認できます。</p></div></section>`
+    : `<section class="market-sales-log"><div class="market-sales-log-head"><span>SALES LOG</span><strong>営業メッセージ</strong></div><ol id="marketMessageList">${renderMarketMessages()}</ol></section>`;
   return `<section class="screen market-screen market-room">
-    <div class="market-room-head"><div><span class="eyebrow">VALUE MARKET / TURN ${Number(room.turn || 1)}</span><h1>${escapeHtml(room.listing?.title || "無題の推し")}</h1><p>${role === "seller" ? "SELLER" : "BUYER"} / 相手：${escapeHtml(counterpart)} ${renderMarketPatronBadge(counterpartPatron, { compact: true })}</p></div>${renderWallet()}</div>
-    <div class="market-room-status"><span class="market-price">${formatAnjuPayNumber(room.listing?.askingPrice)} <small>${ANJU_PAY_UNIT}</small></span><span class="market-p2p ${state.channelReady ? "is-connected" : ""}">${escapeHtml(state.peerStatus)}</span><button type="button" id="marketExitRoom">取引を終了</button></div>
+    <div class="market-room-head"><div><span class="eyebrow">VALUE MARKET / TURN ${Number(room.turn || 1)}</span><h1>${escapeHtml(room.listing?.title || "無題の推し")}</h1><p>${role === "seller" ? "SELLER" : "BUYER"} / 相手：${escapeHtml(counterpart)} ${suppressBuyerDecisionInfluence ? "" : renderMarketPatronBadge(counterpartPatron, { compact: true })}</p></div>${renderWallet({ showPatron: !suppressBuyerDecisionInfluence })}</div>
+    <div class="market-room-status"><span class="market-price">${formatAnjuPayNumber(roomPrice)} <small>${isOshijoClosing(room) && oshijoPhase ? "請求 Pay" : ANJU_PAY_UNIT}</small></span><span class="market-p2p ${state.channelReady ? "is-connected" : ""}">${escapeHtml(state.peerStatus)}</span><button type="button" id="marketExitRoom">取引を終了</button></div>
     ${sellerShopCard}
+    ${patronHonor}
     <div class="market-room-grid">
       <figure class="market-main-image">${renderMarketImage()}<figcaption>画像はこの対戦中だけP2Pで表示されます</figcaption></figure>
-      <section class="market-sales-log"><div class="market-sales-log-head"><span>SALES LOG</span><strong>営業メッセージ</strong></div><ol id="marketMessageList">${renderMarketMessages()}</ol></section>
+      ${salesLog}
     </div>
     ${renderRoomControls(room, role)}
   </section>`;
@@ -2288,6 +2928,9 @@ function bindEvents() {
     previewRoom(status, role, closingMode);
   }));
   document.querySelector("#marketRankingBack")?.addEventListener("click", returnFromRankings);
+  document.querySelectorAll("[data-market-ranking-period]").forEach((button) => {
+    button.addEventListener("click", () => selectMarketRankingPeriod(button.dataset.marketRankingPeriod));
+  });
   document.querySelector("#marketCertificatesBack")?.addEventListener("click", returnFromCertificates);
   document.querySelector("#marketCertificatesRetry")?.addEventListener("click", () => openCertificates(state.certificateReturnScreen, { force: true }));
   document.querySelector(".market-profile-settings")?.addEventListener("toggle", (event) => {
@@ -2303,6 +2946,25 @@ function bindEvents() {
   document.querySelector("#marketExitRoom")?.addEventListener("click", requestHome);
   document.querySelector("#marketChatForm")?.addEventListener("submit", sendChatPitch);
   document.querySelector("#marketAudioInput")?.addEventListener("change", sendAudioPitch);
+  document.querySelector("#marketOshijoClaimToggle")?.addEventListener("click", () => {
+    state.oshijoClaimOpen = !state.oshijoClaimOpen;
+    render();
+    if (state.oshijoClaimOpen) document.querySelector("#marketOshijoClaimAmount")?.focus({ preventScroll: true });
+  });
+  document.querySelector("#marketOshijoClaimAmount")?.addEventListener("input", (event) => {
+    state.oshijoClaimDraft = String(event.currentTarget.value || "").replace(/[^\d]/g, "").slice(0, 6);
+  });
+  document.querySelector("#marketOshijoClaimForm")?.addEventListener("submit", submitOshijoClaim);
+  document.querySelector("#marketOshijoClosingTextForm")?.addEventListener("submit", sendOshijoClosingText);
+  document.querySelector("#marketOshijoClosingImageInput")?.addEventListener("change", sendOshijoClosingImage);
+  document.querySelector("#marketOshijoClosingAudioInput")?.addEventListener("change", sendOshijoClosingAudio);
+  document.querySelector("#marketOshijoAudioMute")?.addEventListener("click", () => {
+    state.oshijoAudioMuted = !state.oshijoAudioMuted;
+    document.querySelectorAll('audio[data-market-oshijo-audio="true"]').forEach((audio) => {
+      audio.muted = state.oshijoAudioMuted;
+    });
+    render();
+  });
   document.querySelectorAll("[data-market-oshijo-review]").forEach((button) => {
     button.addEventListener("click", () => {
       const confirmation = document.getElementById(button.getAttribute("aria-controls"));
@@ -2330,6 +2992,15 @@ function bindEvents() {
   document.querySelector("#marketRelationshipFavorite")?.addEventListener("change", (event) => {
     state.relationshipFeedback.favorite = event.currentTarget.checked === true;
   });
+  document.querySelectorAll('input[name="marketOshijoShareChoice"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.oshijoShareChoice = input.value;
+      render();
+    });
+  });
+  document.querySelector("#marketOshijoCopyShare")?.addEventListener("click", copyOshijoShareText);
+  document.querySelector("#marketRestartAsSeller")?.addEventListener("click", restartMarketAsSeller);
+  document.querySelector("#marketRestartHome")?.addEventListener("click", returnHome);
   document.querySelector("[data-market-block-counterparty]")?.addEventListener("click", (event) => {
     setMarketCounterpartyBlocked(event.currentTarget.dataset.marketBlockCounterparty !== "false");
   });
@@ -3030,6 +3701,7 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
   state.enteringRoomId = roomId;
   stopRoomHeartbeat();
   state.roomId = roomId;
+  state.oshijoDecisionRequested = false;
   state.screen = "room";
   state.busy = false;
   setMarketChrome("VALUE DEAL");
@@ -3039,6 +3711,11 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !snapshot.exists()) return;
     const previousStatus = state.room?.status;
     state.room = normalizeMarketRoom(snapshot.data());
+    const incomingClosingAsset = String(state.incomingTransfer?.name || "").startsWith(OSHIJO_CLOSING_IMAGE_PREFIX)
+      || String(state.incomingTransfer?.name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
+    if (incomingClosingAsset && normalizeOshijoPhase(state.room) !== "closing") {
+      state.incomingTransfer = null;
+    }
     if (TERMINAL_STATES.has(state.room.status)) {
       stopRoomHeartbeat();
       clearRoomSyncRetry();
@@ -3279,22 +3956,28 @@ async function sendAssetNow(blob, {
   roomId,
 }) {
   const channel = state.channel;
+  const closingOnly = String(name || "").startsWith(OSHIJO_CLOSING_IMAGE_PREFIX)
+    || String(name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
+  const closingStillOpen = () => !closingOnly
+    || normalizeOshijoPhase(state.room) === "closing";
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !channel || channel.readyState !== "open") {
     throw new Error("P2P接続が完了していません。");
   }
+  if (!closingStillOpen()) throw new Error("静かな最終判断へ進んだため、営業素材は送信しませんでした。");
   const buffer = await blob.arrayBuffer();
-  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel) {
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel || !closingStillOpen()) {
     throw new Error("P2P転送が中断されました。");
   }
   const mime = kind === "image" ? verifiedMarketImageMime(buffer) : blob.type;
   channel.send(JSON.stringify({ type: "asset-start", kind, turn, name, mime, size: buffer.byteLength, createdAt }));
   for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
     await waitForDataBuffer(channel, generation, roomId);
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel) {
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel || !closingStillOpen()) {
       throw new Error("P2P転送が中断されました。");
     }
     channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
   }
+  if (!closingStillOpen()) throw new Error("静かな最終判断へ進んだため、営業素材の転送を終了しました。");
   channel.send(JSON.stringify({ type: "asset-end", kind, turn }));
 }
 
@@ -3319,6 +4002,12 @@ async function handleChannelMessage(data) {
     const message = JSON.parse(data);
     if (message.type === "asset-start") {
       if (state.incomingTransfer) throw new Error("別のP2P転送が進行中です。");
+      const closingAsset = String(message.name || "").startsWith(OSHIJO_CLOSING_IMAGE_PREFIX)
+        || String(message.name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
+      if (closingAsset && (
+        state.oshijoDecisionRequested
+        || normalizeOshijoPhase(state.room) !== "closing"
+      )) return;
       state.incomingTransfer = createIncomingMarketTransfer(message, {
         role: roomRole(),
         maxImageBytes: MAX_IMAGE_BYTES,
@@ -3357,7 +4046,22 @@ function finishIncomingAsset() {
       ? verifiedMarketImageMimeFromChunks(transfer.chunks)
       : transfer.mime;
     const blob = new Blob(transfer.chunks, { type: mime });
-    if (transfer.kind === "image") {
+    const closingImage = transfer.kind === "image"
+      && String(transfer.name || "").startsWith(OSHIJO_CLOSING_IMAGE_PREFIX);
+    const closingAudio = transfer.kind === "audio"
+      && String(transfer.name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
+    if ((closingImage || closingAudio) && (
+      state.oshijoDecisionRequested
+      || normalizeOshijoPhase(state.room) !== "closing"
+    )) return;
+    if (closingImage) {
+      state.oshijoClosingImages.push({
+        uid: state.room?.sellerUid,
+        blob,
+        url: URL.createObjectURL(blob),
+        createdAt: transfer.createdAt,
+      });
+    } else if (transfer.kind === "image") {
       releaseRemoteImage();
       state.remoteImage = { blob, url: URL.createObjectURL(blob) };
     } else {
@@ -3365,6 +4069,7 @@ function finishIncomingAsset() {
         uid: state.room?.sellerUid,
         name: state.room?.sellerName || "SELLER",
         turn: transfer.turn,
+        phase: closingAudio ? "oshijo_closing" : "",
         blob,
         url: URL.createObjectURL(blob),
         createdAt: transfer.createdAt,
@@ -3450,6 +4155,256 @@ async function sendAudioPitch(event) {
   }
 }
 
+async function submitOshijoClaim(event) {
+  event.preventDefault();
+  if (roomRole() !== "seller" || state.room?.status !== "pitch" || state.busy) return;
+  const input = document.querySelector("#marketOshijoClaimAmount");
+  const consent = document.querySelector("#marketOshijoAllInConsent");
+  const claimAmount = Math.floor(Number(input?.value || 0));
+  if (!Number.isInteger(claimAmount) || claimAmount < 1 || claimAmount > OSHIJO_MAX_CLAIM_AMOUNT) {
+    input?.focus();
+    showToast(`請求額は1〜${formatAnjuPay(OSHIJO_MAX_CLAIM_AMOUNT)}で入力してください。`);
+    return;
+  }
+  if (consent?.checked !== true) {
+    consent?.focus();
+    showToast("オールイン時は実支払額で成約することを確認してください。");
+    return;
+  }
+  state.oshijoClaimDraft = String(claimAmount);
+  const completed = await performAction("pitch_complete", {
+    closingMode: OSHIJO_CLOSING_MODE,
+    claimAmount,
+  });
+  if (completed) state.oshijoClaimOpen = false;
+}
+
+async function authorizeOshijoClosingTurn(mediaKind) {
+  if (
+    roomRole() !== "seller"
+    || state.room?.status !== "oshijo_closing"
+    || !["text", "image", "audio"].includes(mediaKind)
+  ) return false;
+  if (oshijoClosingTurnsUsed(state.room) >= OSHIJO_MAX_CLOSING_TURNS) {
+    showToast("クロージングは最大3手までです。");
+    return false;
+  }
+  if (useMarketPreview) {
+    state.room.closingTurnsUsed = Math.min(
+      OSHIJO_MAX_CLOSING_TURNS,
+      normalizeNonNegativeInteger(state.room.closingTurnsUsed, OSHIJO_MAX_CLOSING_TURNS) + 1,
+    );
+    state.room.closingMediaCounts = {
+      ...(state.room.closingMediaCounts || {}),
+      [mediaKind]: normalizeNonNegativeInteger(state.room.closingMediaCounts?.[mediaKind], OSHIJO_MAX_CLOSING_TURNS) + 1,
+    };
+    return true;
+  }
+  const generation = lifecycleGeneration;
+  const roomId = state.roomId;
+  const turn = Math.max(1, Number(state.room?.turn || 1));
+  const extra = { mediaKind };
+  const { actionId } = marketActionIdentity("oshijo_closing_turn", roomId, turn, extra);
+  try {
+    const response = await marketActionCallable({
+      action: "oshijo_closing_turn",
+      roomId,
+      mediaKind,
+      actionId,
+      turn,
+    });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return false;
+    clearMarketActionIdentity(actionId);
+    if (state.room) {
+      const returnedCount = response.data?.closingTurnsUsed
+        ?? response.data?.closingTurnCount
+        ?? response.data?.oshijoClosingTurnCount;
+      if (Number.isFinite(Number(returnedCount))) {
+        state.room.closingTurnsUsed = normalizeNonNegativeInteger(returnedCount, OSHIJO_MAX_CLOSING_TURNS);
+      }
+      const returnedCounts = response.data?.closingMediaCounts || response.data?.oshijoClosingMediaCounts;
+      if (returnedCounts && typeof returnedCounts === "object") {
+        state.room.closingMediaCounts = { ...returnedCounts };
+      }
+    }
+    return true;
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast(callableMessage(error, "クロージングの送信枠を確保できませんでした。"));
+    }
+    return false;
+  }
+}
+
+async function sendOshijoClosingText(event) {
+  event.preventDefault();
+  if (state.busy || roomRole() !== "seller" || state.room?.status !== "oshijo_closing") return;
+  const input = document.querySelector("#marketOshijoClosingText");
+  const text = String(input?.value || "").trim().slice(0, OSHIJO_CLOSING_TEXT_MAX_LENGTH);
+  if (!text) return;
+  const generation = lifecycleGeneration;
+  const roomId = state.roomId;
+  state.busy = true;
+  render();
+  try {
+    if (!await authorizeOshijoClosingTurn("text")) return;
+    const message = {
+      uid: state.uid,
+      name: normalizeMarketName(state.room?.sellerName || state.name),
+      text,
+      turn: Number(state.room?.turn || 1),
+      phase: "oshijo_closing",
+      createdAt: useMarketPreview ? Date.now() : serverTimestamp(),
+    };
+    if (useMarketPreview) {
+      state.chatMessages.push({ id: crypto.randomUUID(), ...message });
+    } else {
+      await set(push(ref(database, `online/valueMarketRooms/${roomId}/chat`)), message);
+    }
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast("クロージングの言葉を1手届けました。");
+    }
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast(error.message || "クロージングの言葉を送信できませんでした。");
+    }
+  } finally {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.busy = false;
+      render();
+    }
+  }
+}
+
+async function sendOshijoClosingImage(event) {
+  const file = event.currentTarget.files?.[0];
+  if (!file || state.busy || roomRole() !== "seller" || state.room?.status !== "oshijo_closing") return;
+  if (oshijoClosingMediaUsed(state.room, "image") > 0) {
+    showToast("クロージング画像は1枚までです。");
+    return;
+  }
+  const generation = lifecycleGeneration;
+  const roomId = state.roomId;
+  state.busy = true;
+  render();
+  let processed = null;
+  try {
+    processed = await shared().processImageFile(file, 0, { maxSide: 1200 });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
+    if (!await authorizeOshijoClosingTurn("image")) return;
+    const createdAt = Date.now();
+    if (!useMarketPreview) {
+      await sendAsset(processed.blob, {
+        kind: "image",
+        turn: 0,
+        name: `${OSHIJO_CLOSING_IMAGE_PREFIX}${createdAt}`,
+        createdAt,
+        generation,
+        roomId,
+      });
+    }
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
+    state.oshijoClosingImages.push({
+      uid: state.uid,
+      blob: processed.blob,
+      url: processed.url,
+      createdAt,
+    });
+    processed.url = "";
+    showToast("クロージング画像を1手届けました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast(error.message || "クロージング画像を送信できませんでした。");
+    }
+  } finally {
+    if (processed?.url) URL.revokeObjectURL(processed.url);
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.busy = false;
+      render();
+    }
+  }
+}
+
+async function sendOshijoClosingAudio(event) {
+  const file = event.currentTarget.files?.[0];
+  if (!file || state.busy || roomRole() !== "seller" || state.room?.status !== "oshijo_closing") return;
+  if (oshijoClosingMediaUsed(state.room, "audio") > 0) {
+    showToast("クロージング音声は1件までです。");
+    return;
+  }
+  const generation = lifecycleGeneration;
+  const roomId = state.roomId;
+  const turn = Math.max(1, Number(state.room?.turn || 1));
+  state.busy = true;
+  render();
+  let processed = null;
+  try {
+    processed = await shared().processGameAudioFile(file, { audioName: file.name });
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
+    if (!await authorizeOshijoClosingTurn("audio")) return;
+    const createdAt = Date.now();
+    const name = `${OSHIJO_CLOSING_AUDIO_PREFIX}${processed.audioName}`;
+    if (!useMarketPreview) {
+      await sendAsset(processed.audioBlob, {
+        kind: "audio",
+        turn,
+        name,
+        createdAt,
+        generation,
+        roomId,
+      });
+    }
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
+    state.audioMessages.push({
+      uid: state.uid,
+      name,
+      turn,
+      phase: "oshijo_closing",
+      blob: processed.audioBlob,
+      url: processed.audioUrl,
+      createdAt,
+    });
+    processed.audioUrl = "";
+    showToast("クロージング音声を1手届けました。");
+  } catch (error) {
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      showToast(error.message || "クロージング音声を送信できませんでした。");
+    }
+  } finally {
+    if (processed?.audioUrl) URL.revokeObjectURL(processed.audioUrl);
+    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.busy = false;
+      render();
+    }
+  }
+}
+
+async function copyOshijoShareText() {
+  const copy = oshijoShareCopy(state.room, state.oshijoShareChoice);
+  if (!copy) return;
+  try {
+    await navigator.clipboard.writeText(copy);
+    showToast("選んだ共有文をコピーしました。");
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = copy;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    showToast(copied ? "選んだ共有文をコピーしました。" : "共有文をコピーできませんでした。");
+  }
+}
+
+function restartMarketAsSeller() {
+  state.role = "seller";
+  localStorage.setItem(MARKET_ROLE_KEY, "seller");
+  resetForReplay();
+}
+
 function performPreviewAction(action, extra = {}) {
   const room = state.room;
   if (!room) return false;
@@ -3460,14 +4415,30 @@ function performPreviewAction(action, extra = {}) {
     room.status = "ended";
   } else if (action === "pitch_complete") {
     updateMarketBalance(state.balance + (room.entryFee || ENTRY_FEE));
-    room.status = "decision";
     room.closingMode = extra.closingMode === OSHIJO_CLOSING_MODE ? OSHIJO_CLOSING_MODE : "";
+    room.claimAmount = room.closingMode
+      ? normalizeNonNegativeInteger(extra.claimAmount || room.listing?.askingPrice, OSHIJO_MAX_CLAIM_AMOUNT)
+      : 0;
+    room.status = room.closingMode ? "oshijo_warning" : "decision";
     room.pitchCompletedAt = Date.now();
+  } else if (action === "hear_oshijo_closing") {
+    room.status = "oshijo_closing";
+    room.closingStartedAt = Date.now();
+  } else if (action === "enter_silent_decision") {
+    room.status = "decision";
+    room.silentDecisionAt = Date.now();
   } else if (action === "buy") {
-    const settlement = marketSettlement(room.listing?.askingPrice, room);
+    const deal = normalizeOshijoDeal(room);
+    const purchaseAmount = isOshijoClosing(room)
+      ? Math.min(deal.claimAmount, state.balance)
+      : room.listing?.askingPrice;
+    const settlement = marketSettlement(purchaseAmount, room);
     updateMarketBalance(state.balance - settlement.grossAmount);
     room.status = "sold";
+    room.paidAmount = settlement.grossAmount;
     room.salePrice = settlement.grossAmount;
+    room.allIn = isOshijoClosing(room) && settlement.grossAmount < deal.claimAmount;
+    room.rankingContribution = Math.min(OSHIJO_RANKING_CAP, settlement.grossAmount);
     room.marketFee = settlement.feeAmount;
     room.patronFundSubsidy = settlement.patronFundSubsidy;
     room.patronFundPolicy = normalizePatronFundPolicy(room.patronFundPolicy) || "balanced";
@@ -3522,11 +4493,30 @@ async function performAction(action, extra = {}) {
   const generation = lifecycleGeneration;
   const roomId = state.roomId;
   const turn = Math.max(1, Number(state.room?.turn || 1));
-  const { actionId } = marketActionIdentity(action, roomId, turn, extra);
+  let requestExtra = { ...extra };
+  if (action === "buy" && isOshijoClosing(state.room)) {
+    const deal = normalizeOshijoDeal(state.room);
+    const confirmedBalance = normalizeNonNegativeInteger(state.balance, ANJU_PAY_MAX_BALANCE);
+    const confirmedPaidAmount = Math.min(deal.claimAmount, confirmedBalance);
+    requestExtra = {
+      ...requestExtra,
+      confirmedBalance,
+      confirmedPaidAmount,
+      acceptedClaimAmount: deal.claimAmount,
+      acceptedPayableAmount: confirmedPaidAmount,
+      allIn: confirmedPaidAmount < deal.claimAmount,
+    };
+  }
+  const enteringSilentDecision = action === "enter_silent_decision" && isOshijoClosing(state.room);
+  if (enteringSilentDecision) {
+    state.oshijoDecisionRequested = true;
+    state.incomingTransfer = null;
+  }
+  const { actionId } = marketActionIdentity(action, roomId, turn, requestExtra);
   state.busy = true;
   render();
   try {
-    const response = await marketActionCallable({ action, roomId, ...extra, actionId, turn });
+    const response = await marketActionCallable({ action, roomId, ...requestExtra, actionId, turn });
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return false;
     clearMarketActionIdentity(actionId);
     updateMarketBalance(response.data?.balance ?? state.balance);
@@ -3535,6 +4525,34 @@ async function performAction(action, extra = {}) {
     if (action === "buy") {
       state.certificateStatus = "idle";
       if (state.room) {
+        const paidAmount = normalizeNonNegativeInteger(
+          response.data?.paidAmount
+            ?? response.data?.salePrice
+            ?? requestExtra.confirmedPaidAmount
+            ?? state.room.salePrice
+            ?? state.room.listing?.askingPrice,
+          OSHIJO_MAX_CLAIM_AMOUNT,
+        );
+        state.room.claimAmount = normalizeNonNegativeInteger(
+          response.data?.claimAmount
+            ?? requestExtra.acceptedClaimAmount
+            ?? state.room.claimAmount
+            ?? state.room.listing?.askingPrice,
+          OSHIJO_MAX_CLAIM_AMOUNT,
+        );
+        state.room.paidAmount = paidAmount;
+        state.room.salePrice = paidAmount;
+        state.room.allIn = response.data?.allIn === true
+          || (isOshijoClosing(state.room) && paidAmount < state.room.claimAmount);
+        state.room.rankingContribution = Math.min(
+          OSHIJO_RANKING_CAP,
+          normalizeNonNegativeInteger(
+            response.data?.rankingContribution
+              ?? response.data?.rankingAmount
+              ?? paidAmount,
+            OSHIJO_RANKING_CAP,
+          ),
+        );
         state.room.marketFee = Number(response.data?.marketFee || 0);
         state.room.patronFundSubsidy = Math.min(
           maximumPatronFundSubsidy(state.room.marketFee),
@@ -3548,7 +4566,7 @@ async function performAction(action, extra = {}) {
         state.room.sellerProceeds = Number(response.data?.sellerProceeds || 0);
         state.room.settlementQuote = {
           ...(state.room.settlementQuote || {}),
-          grossAmount: Number(state.room.salePrice || state.room.listing?.askingPrice || 0),
+          grossAmount: paidAmount,
           feeAmount: state.room.marketFee,
           patronFundSubsidy: state.room.patronFundSubsidy,
           sellerProceeds: state.room.sellerProceeds,
@@ -3562,10 +4580,23 @@ async function performAction(action, extra = {}) {
       showToast("売買が成立しました。");
       notifyMarketAchievementUnlocks(response.data?.newlyUnlocked);
     }
+    if (action === "pitch_complete" && requestExtra.closingMode === OSHIJO_CLOSING_MODE && state.room) {
+      state.room.closingMode = OSHIJO_CLOSING_MODE;
+      state.room.claimAmount = normalizeNonNegativeInteger(
+        response.data?.claimAmount ?? requestExtra.claimAmount,
+        OSHIJO_MAX_CLAIM_AMOUNT,
+      );
+    }
+    if (action === "enter_silent_decision" && state.room) {
+      state.room.status = "decision";
+    }
     if (action === "offer_extension") showToast("内金分のAnjuPayを残高から保留し、買い手へ提示しました。");
     if (action === "accept_extension") showToast("内金分のAnjuPayを受け取り、次の営業ターンへ進みます。");
     return true;
   } catch (error) {
+    if (enteringSilentDecision && isCurrentLifecycle(generation) && state.roomId === roomId) {
+      state.oshijoDecisionRequested = false;
+    }
     if (isCurrentLifecycle(generation)) showToast(callableMessage(error, "市場操作を完了できませんでした。"));
     return false;
   } finally {
@@ -3604,10 +4635,51 @@ function updateMarketProfilePreview() {
   }
 }
 
-function applyMarketRankingResponse(data) {
-  state.rankings = {
-    sellers: Array.isArray(data?.sellers) ? data.sellers : [],
-    buyers: Array.isArray(data?.buyers) ? data.buyers : [],
+function applyMarketRankingResponse(data, { requestedPeriod = state.rankingPeriod } = {}) {
+  const payload = data && typeof data === "object" ? data : {};
+  const normalized = normalizeMarketRankingPayload(payload);
+  const root = payload.rankings && typeof payload.rankings === "object" ? payload.rankings : payload;
+  const periods = root.periods && typeof root.periods === "object" ? root.periods : root;
+  const hasMonthly = Boolean(periods.monthly || periods.currentMonth || payload.monthly);
+  const hasLifetime = Boolean(periods.lifetime || periods.allTime || payload.lifetime || payload.allTime);
+  const hasFlat = Array.isArray(root.sellers) || Array.isArray(root.buyers);
+  if (hasMonthly) {
+    state.rankings.monthly = normalized.monthly;
+    state.rankingPeriodsLoaded.add("monthly");
+  }
+  if (hasLifetime) {
+    state.rankings.lifetime = normalized.lifetime;
+    state.rankingPeriodsLoaded.add("lifetime");
+  }
+  if (!hasMonthly && !hasLifetime && hasFlat) {
+    const selected = normalizeMarketRankingPeriod(payload.period || root.period || requestedPeriod);
+    state.rankings[selected] = normalized[selected];
+    const periodKey = normalizeShopText(payload.periodKey || root.periodKey, 16);
+    if (periodKey) {
+      state.rankings[selected].label = selected === "monthly" && /^\d{4}-\d{2}$/.test(periodKey)
+        ? `${Number(periodKey.slice(0, 4))}年${Number(periodKey.slice(5, 7))}月`
+        : "市場開始からの累計";
+    }
+    state.rankingPeriodsLoaded.add(selected);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "monthlyAchievements")) {
+    state.rankingMonthlyAchievements = normalizeMarketMonthlyAchievements(payload.monthlyAchievements);
+    state.rankingMonthlyAchievementsAvailable = true;
+  }
+  state.rankingMeta = {
+    monthlyStartKey: /^\d{4}-\d{2}$/.test(String(payload.monthlyStartKey || ""))
+      ? String(payload.monthlyStartKey)
+      : state.rankingMeta.monthlyStartKey,
+    finalizedSeasonKey: /^\d{4}-\d{2}$/.test(String(payload.finalizedSeasonKey || ""))
+      ? String(payload.finalizedSeasonKey)
+      : state.rankingMeta.finalizedSeasonKey,
+    rankingContributionCap: Math.min(
+      OSHIJO_RANKING_CAP,
+      normalizeNonNegativeInteger(
+        payload.rankingContributionCap ?? state.rankingMeta.rankingContributionCap,
+        OSHIJO_RANKING_CAP,
+      ) || OSHIJO_RANKING_CAP,
+    ),
   };
   state.rankingProfile = sanitizeMarketPublicProfile(data?.viewerProfile);
   state.rankingProfileEligible = data?.viewerEligible === true;
@@ -3615,6 +4687,28 @@ function applyMarketRankingResponse(data) {
     ? normalizeMarketName(data.viewerName)
     : (state.rankingProfileName || state.name);
   state.rankingsStatus = "ready";
+}
+
+async function selectMarketRankingPeriod(value) {
+  const period = normalizeMarketRankingPeriod(value);
+  state.rankingPeriod = period;
+  if (useMarketPreview || state.rankingPeriodsLoaded.has(period)) {
+    render();
+    return;
+  }
+  const generation = lifecycleGeneration;
+  state.rankingsStatus = "loading";
+  render();
+  try {
+    const response = await marketRankingsCallable({ action: "list", period });
+    if (!isCurrentLifecycle(generation) || state.screen !== "rankings" || state.rankingPeriod !== period) return;
+    applyMarketRankingResponse(response.data, { requestedPeriod: period });
+  } catch (error) {
+    if (!isCurrentLifecycle(generation) || state.screen !== "rankings" || state.rankingPeriod !== period) return;
+    state.rankingsStatus = "error";
+    showToast(callableMessage(error, "市場ランキングを読み込めませんでした。"));
+  }
+  if (isCurrentLifecycle(generation) && state.screen === "rankings" && state.rankingPeriod === period) render();
 }
 
 async function saveMarketRankingPublicProfile(event) {
@@ -3666,10 +4760,12 @@ async function saveMarketRankingPublicProfile(event) {
     }
     if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
     state.rankingProfile = sanitizeMarketPublicProfile(savedProfile);
-    for (const role of ["sellers", "buyers"]) {
-      state.rankings[role] = state.rankings[role].map((entry) => (
-        entry.isViewer === true ? { ...entry, publicProfile: state.rankingProfile } : entry
-      ));
+    for (const period of MARKET_RANKING_PERIODS) {
+      for (const role of ["sellers", "buyers"]) {
+        state.rankings[period][role] = state.rankings[period][role].map((entry) => (
+          entry.isViewer === true ? { ...entry, publicProfile: state.rankingProfile } : entry
+        ));
+      }
     }
     saved = true;
     showToast("市場ランキングの公開設定を保存しました。");
@@ -3698,20 +4794,54 @@ async function openRankings(returnScreen = state.screen) {
     ? "landing"
     : returnScreen === "room" && state.room ? "room" : "setup";
   state.screen = "rankings";
+  state.rankingPeriod = "monthly";
   state.rankingsStatus = useMarketPreview ? "ready" : "loading";
   if (useMarketPreview) {
     state.rankings = {
-      sellers: [{
-        name: "SELLER TEST",
-        primary: 1280,
-        count: 9,
-        best: 300,
-        isViewer: true,
-        publicProfile: { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" },
-        achievementShowcase: ["market_seller_3", "market_first_turn"],
-      }],
-      buyers: [{ name: "BUYER TEST", primary: 960, count: 7, best: 250, achievementShowcase: ["market_buyer_3"] }],
+      monthly: normalizeMarketRankingSet({
+        label: "2026年8月（レイアウト例）",
+        sellers: [{
+          name: "SELLER TEST",
+          primary: 1280,
+          count: 9,
+          best: 3000,
+          uniqueCounterparties: 6,
+          isViewer: true,
+          publicProfile: { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" },
+          monthlyAchievements: [{ label: "月間の推し嬢", level: 3, icon: "◆" }],
+        }],
+        buyers: [{
+          name: "BUYER TEST",
+          primary: 960,
+          count: 7,
+          best: 1500,
+          uniqueCounterparties: 4,
+          monthlyAchievements: [{ label: "推し支え人", level: 2, icon: "✦" }],
+        }],
+      }),
+      lifetime: normalizeMarketRankingSet({
+        label: "市場開始からの累計",
+        sellers: [{
+          name: "SELLER TEST",
+          primary: 12_800,
+          count: 42,
+          best: 5000,
+          uniqueCounterparties: 18,
+          isViewer: true,
+          publicProfile: { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" },
+          achievementShowcase: ["market_seller_3", "market_first_turn"],
+        }],
+        buyers: [{ name: "BUYER TEST", primary: 9_600, count: 31, best: 3000, achievementShowcase: ["market_buyer_3"] }],
+      }),
     };
+    state.rankingPeriodsLoaded = new Set(MARKET_RANKING_PERIODS);
+    state.rankingMonthlyAchievements = normalizeMarketMonthlyAchievements({
+      seller: { months: 4, top3Months: 2, championMonths: 1, level: 2, latestSeasonKey: "2026-06", latestAwardId: "top3", latestRank: 2 },
+      buyer: { months: 2, top3Months: 1, championMonths: 0, level: 1, latestSeasonKey: "2026-06", latestAwardId: "top10", latestRank: 8 },
+      levelMonths: [1, 3, 6, 12],
+    });
+    state.rankingMonthlyAchievementsAvailable = true;
+    state.rankingMeta = { monthlyStartKey: "2026-08", finalizedSeasonKey: "2026-07", rankingContributionCap: OSHIJO_RANKING_CAP };
     state.rankingProfile = { xHandle: "seller_art", tagline: "推しの価値を言葉で届けます" };
     state.rankingProfileEligible = true;
     state.rankingProfileName = "SELLER TEST";
@@ -3720,9 +4850,9 @@ async function openRankings(returnScreen = state.screen) {
   }
   render();
   try {
-    const response = await marketRankingsCallable({ action: "list" });
+    const response = await marketRankingsCallable({ action: "list", period: "monthly" });
     if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
-    applyMarketRankingResponse(response.data);
+    applyMarketRankingResponse(response.data, { requestedPeriod: "monthly" });
   } catch (error) {
     if (!isCurrentLifecycle(generation) || state.screen !== "rankings") return;
     state.rankingsStatus = "error";
@@ -3851,6 +4981,7 @@ function resetForReplay() {
   const patron = state.patron;
   const patronFund = state.patronFund;
   const patronImpact = state.patronImpact;
+  const patronEligibility = state.patronEligibility;
   const recommendations = state.recommendations;
   const recommendedShelf = state.recommendedShelf;
   const marketPolicy = state.marketPolicy;
@@ -3885,6 +5016,7 @@ function resetForReplay() {
     patron,
     patronFund,
     patronImpact,
+    patronEligibility,
     recommendations,
     recommendedShelf,
     marketPolicy,
@@ -3958,6 +5090,8 @@ function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false 
   state.realtimeRoomId = "";
   state.audioMessages.forEach((message) => message.url && URL.revokeObjectURL(message.url));
   state.audioMessages = [];
+  state.oshijoClosingImages.forEach((image) => image.url && URL.revokeObjectURL(image.url));
+  state.oshijoClosingImages = [];
   releaseRemoteImage();
   if (!preserveLocalImage) releaseLocalImage();
 }
@@ -3992,16 +5126,26 @@ function previewRoom(status = "preview", role = "buyer", closingMode = "") {
   const buyerUid = "local-preview-buyer";
   state.role = role;
   state.uid = role === "seller" ? sellerUid : buyerUid;
-  const pitchAccepted = ["pitch", "decision", "extension_request", "extension_offer", "sold", "ended"]
+  state.audioMessages.forEach((message) => message.url && URL.revokeObjectURL(message.url));
+  state.audioMessages = [];
+  state.oshijoClosingImages.forEach((image) => image.url && URL.revokeObjectURL(image.url));
+  state.oshijoClosingImages = [];
+  state.chatMessages = [];
+  state.seenChatIds = new Set();
+  state.oshijoShareChoice = "";
+  const pitchAccepted = ["pitch", "oshijo_warning", "oshijo_closing", "decision", "extension_request", "extension_offer", "sold", "ended"]
     .includes(status);
-  const pitchCompleted = ["decision", "extension_request", "extension_offer", "sold", "ended"]
+  const pitchCompleted = ["oshijo_warning", "oshijo_closing", "decision", "extension_request", "extension_offer", "sold", "ended"]
     .includes(status);
+  const oshijoPreview = closingMode === OSHIJO_CLOSING_MODE;
+  const previewClaimAmount = oshijoPreview ? 800 : 100;
+  const previewPaidAmount = oshijoPreview ? 495 : 100;
   let previewBalance = 500;
   if (role === "buyer" && pitchAccepted) previewBalance -= ENTRY_FEE;
   if (role === "seller" && pitchCompleted) previewBalance += ENTRY_FEE;
   if (status === "sold") {
-    if (role === "buyer") previewBalance -= 100;
-    else previewBalance += 97;
+    if (role === "buyer") previewBalance -= previewPaidAmount;
+    else previewBalance += Math.max(0, previewPaidAmount - Math.ceil(previewPaidAmount * .05));
   }
   updateMarketBalance(previewBalance);
   state.roomId = "local-preview-room";
@@ -4026,27 +5170,52 @@ function previewRoom(status = "preview", role = "buyer", closingMode = "") {
     },
     sellerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 1_500, tier: 2 },
     buyerPatron: { seasonKey: currentPatronSeasonKey(), seasonSpent: 300, tier: 1 },
+    oshijoPatron: {
+      eligible: true,
+      label: "人気推し嬢パトロン",
+      detail: "月間の支持条件を満たし、基金へ還元できる店主です。",
+      badges: [{ label: "PATRON", level: 2, icon: "♛" }],
+    },
     listing: { title: "夕焼けの推し", askingPrice: 100, pitchStyle: "either" },
-    settlementQuote: { grossAmount: 100, feeAmount: 5, patronFundSubsidy: 2, sellerProceeds: 97 },
-    patronFundSubsidy: 2,
+    settlementQuote: status === "sold" && oshijoPreview
+      ? { grossAmount: previewPaidAmount, feeAmount: 25, patronFundSubsidy: 10, sellerProceeds: 480 }
+      : { grossAmount: 100, feeAmount: 5, patronFundSubsidy: 2, sellerProceeds: 97 },
+    patronFundSubsidy: status === "sold" && oshijoPreview ? 10 : 2,
     patronFundPolicy: "balanced",
     patronFundKind: "trust",
     status,
-    closingMode: closingMode === OSHIJO_CLOSING_MODE ? OSHIJO_CLOSING_MODE : "",
-    pitchCompletedAt: ["decision", "extension_request", "extension_offer", "sold", "ended"].includes(status) ? Date.now() - 20_000 : 0,
+    closingMode: oshijoPreview ? OSHIJO_CLOSING_MODE : "",
+    claimAmount: oshijoPreview ? previewClaimAmount : 0,
+    pitchCompletedAt: pitchCompleted ? Date.now() - 20_000 : 0,
+    closingTurnsUsed: status === "oshijo_closing" ? 1 : 0,
+    closingMediaCounts: status === "oshijo_closing" ? { text: 1, image: 0, audio: 0 } : {},
     turn: status === "extension_offer" ? 2 : 1,
     maxTurns: MAX_TURNS,
     entryFee: ENTRY_FEE,
     extensionIncentive: 10,
-    salePrice: 100,
-    marketFee: 5,
-    sellerProceeds: 97,
+    paidAmount: status === "sold" ? previewPaidAmount : 0,
+    salePrice: status === "sold" ? previewPaidAmount : 100,
+    allIn: status === "sold" && oshijoPreview,
+    rankingContribution: status === "sold" ? Math.min(OSHIJO_RANKING_CAP, previewPaidAmount) : 0,
+    marketFee: status === "sold" && oshijoPreview ? 25 : 5,
+    sellerProceeds: status === "sold" && oshijoPreview ? 480 : 97,
     certificateNumber: "OSHI-PREVIEW0000001",
     sellerIssueNumber: 13,
     rankingCounted: true,
   };
   state.relationshipFeedback = createRelationshipFeedbackState(state.roomId, false);
   if (status === "pitch" && role === "seller") state.pitchSentTurns.add(1);
+  if (status === "oshijo_closing") {
+    state.chatMessages.push({
+      id: crypto.randomUUID(),
+      uid: sellerUid,
+      name: "SELLER TEST",
+      text: "その警戒は当然だよ。だからこそ、この一枚を選んだ理由から聞いてほしい。",
+      turn: 1,
+      phase: "oshijo_closing",
+      createdAt: Date.now(),
+    });
+  }
   const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#ff6b9c"/><stop offset=".55" stop-color="#7d4ba8"/><stop offset="1" stop-color="#102b4d"/></linearGradient></defs><rect width="1200" height="800" fill="url(#g)"/><circle cx="880" cy="210" r="92" fill="#ffd36d"/><path d="M0 570L260 420 480 560 720 350 1200 610V800H0Z" fill="#101827" opacity=".78"/><text x="55" y="90" fill="white" font-family="sans-serif" font-size="42" font-weight="700">VALUE MARKET PREVIEW</text></svg>`;
   releaseRemoteImage();
   state.remoteImage = { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sampleSvg)}` };

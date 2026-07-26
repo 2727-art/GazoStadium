@@ -317,7 +317,7 @@ const SERVER_RANKING_AWARD_MINIMUM_MATCHES = Object.freeze({
   weekly: 3,
   monthly: 10,
 });
-const MAX_POINTS = 999_999;
+const MAX_POINTS = 999_999_999;
 const MAX_EQUIPPED_REACTIONS = 8;
 const DEFAULT_REACTIONS = ["すごい！", "かわいい", "センスいい", "もっと見たい"];
 const GENERIC_MATCH_MISSION_END_DATE_KEY = "2026-07-23";

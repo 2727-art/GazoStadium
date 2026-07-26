@@ -31,7 +31,7 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 const TRANSFER_SESSION_KEY = "hariaiActiveTransferCodeV1";
 const ANJU_PAY_HISTORY_PAGE_SIZE = 20;
-const ANJU_PAY_MAX_BALANCE = 999_999;
+const ANJU_PAY_MAX_BALANCE = 999_999_999;
 const ANJU_PAY_CATEGORIES = new Set(["opening", "earn", "spend", "market", "flea", "tip"]);
 const ANJU_PAY_STATUSES = new Set(["posted", "held", "settled", "refunded", "partial", "capped"]);
 const ANJU_PAY_LABELS = Object.freeze({
@@ -47,6 +47,7 @@ const ANJU_PAY_LABELS = Object.freeze({
   shop_purchase: "AnjuPayストアで購入",
   purchase: "AnjuPayストアで購入",
   patron_upgrade: "VALUE MARKET パトロン支援",
+  oshijo_patron_upgrade: "推し嬢営業収益のパトロン基金還元",
   patronage: "VALUE MARKET パトロン支援",
   post_match_tip_sent: "対戦後の応援",
   post_match_tip_received: "対戦後に受けた応援",
@@ -97,6 +98,7 @@ const PATRON_POLICY_OPTIONS = Object.freeze([
 ]);
 const PATRON_POLICY_IDS = new Set(PATRON_POLICY_OPTIONS.map((policy) => policy.id));
 const PATRON_METRIC_MAX = 999_999_999;
+const OSHIJO_PATRON_START_KEY = "2026-08";
 const useAccountPreview = useOfflineMarketPreview;
 const previewKind = new URLSearchParams(location.search).get("accountPreview") || "guest";
 
@@ -114,6 +116,7 @@ function createState() {
     patron: normalizePatronage(null),
     patronFund: normalizePatronFund(null),
     patronImpact: normalizePatronImpact(null),
+    oshijoPatron: normalizeOshijoPatronEligibility(null),
     historyAvailable: null,
     historyEntries: [],
     historyStartedAt: 0,
@@ -566,10 +569,14 @@ function normalizePatronage(value) {
   return {
     seasonKey,
     seasonSpent,
+    oshijoSeasonSpent: sameSeason
+      ? Math.min(seasonSpent, patronMetric(value?.oshijoSeasonSpent, 5_000))
+      : 0,
     tier: tier.level,
     tierId: tier.id,
     tierLabel: tier.label,
     lifetimeSpent: Math.max(0, Math.floor(Number(value?.lifetimeSpent || 0))),
+    oshijoLifetimeSpent: patronMetric(value?.oshijoLifetimeSpent),
   };
 }
 
@@ -626,14 +633,46 @@ function normalizePatronImpact(value) {
   };
 }
 
+function normalizeOshijoPatronEligibility(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const minimumSales = Math.max(1, patronMetric(source.minimumSales, 1_000) || 5);
+  const minimumUniqueBuyers = Math.max(
+    1,
+    patronMetric(source.minimumUniqueBuyers, 1_000) || 3,
+  );
+  const netProceeds = patronMetric(source.netProceeds);
+  const proceedsUsed = Math.min(netProceeds, patronMetric(source.proceedsUsed));
+  return {
+    seasonKey: patronSeasonKey(source.seasonKey),
+    popular: source.popular === true,
+    salesCount: patronMetric(source.salesCount),
+    uniqueBuyers: patronMetric(source.uniqueBuyers),
+    netProceeds,
+    proceedsUsed,
+    availableProceeds: Math.min(
+      netProceeds - proceedsUsed,
+      patronMetric(source.availableProceeds),
+    ),
+    minimumSales,
+    minimumUniqueBuyers,
+    canUpgrade: source.canUpgrade === true,
+  };
+}
+
 function applyPatronEconomyResponse(targetState, responseData) {
   targetState.patronFund = normalizePatronFund(responseData?.patronFund);
   targetState.patronImpact = normalizePatronImpact(responseData?.patronImpact);
+  targetState.oshijoPatron = normalizeOshijoPatronEligibility(
+    responseData?.oshijoPatron
+      || responseData?.oshijoPatronEligibility
+      || responseData?.patronEligibility,
+  );
 }
 
 function resetPatronEconomyState(targetState = state) {
   targetState.patronFund = normalizePatronFund(null);
   targetState.patronImpact = normalizePatronImpact(null);
+  targetState.oshijoPatron = normalizeOshijoPatronEligibility(null);
 }
 
 function isGoogleLinked(user = state.user) {
@@ -779,6 +818,18 @@ async function loadAccountData({ notice = "" } = {}) {
         recommendedShopCount: 1,
         recommendationLimit: 2,
       },
+      oshijoPatron: {
+        seasonKey: currentSeasonKey(),
+        popular: true,
+        salesCount: 8,
+        uniqueBuyers: 5,
+        netProceeds: 6_100,
+        proceedsUsed: 1_500,
+        availableProceeds: 4_600,
+        minimumSales: 5,
+        minimumUniqueBuyers: 3,
+        canUpgrade: true,
+      },
     } : null);
     resetHistoryState();
     await loadAnjuPayHistory();
@@ -882,6 +933,7 @@ function renderPatronage() {
   const patron = state.patron;
   const fund = state.patronFund;
   const impact = state.patronImpact;
+  const oshijoPatron = state.oshijoPatron;
   const currentTier = tierForLevel(patron.tier);
   const nextTier = PATRON_TIERS.find((tier) => tier.level > currentTier.level) || currentTier;
   const nextCost = Math.max(0, nextTier.threshold - patron.seasonSpent);
@@ -890,6 +942,7 @@ function renderPatronage() {
     ? 100
     : Math.min(100, (patron.seasonSpent / progressMaximum) * 100);
   const protectedData = isGoogleLinked();
+  const oshijoProgram = patron.seasonKey >= OSHIJO_PATRON_START_KEY;
   const seasonLabel = `${patron.seasonKey.replace("-", "年")}月シーズン`;
   const fundSeasonLabel = `${fund.seasonKey.replace("-", "年")}月`;
   const activePolicy = PATRON_POLICY_OPTIONS.find((policy) => policy.id === fund.activePolicy)
@@ -900,11 +953,20 @@ function renderPatronage() {
     const owned = patron.tier >= tier.level;
     const required = Math.max(0, tier.threshold - patron.seasonSpent);
     const affordable = state.balance >= required;
+    const earnedByOshijo = !oshijoProgram
+      || (oshijoPatron.popular && oshijoPatron.availableProceeds >= required);
+    const upgradeLabel = !affordable
+      ? `あと${formatAnjuPay(required - state.balance)}`
+      : oshijoProgram && !oshijoPatron.popular
+        ? "人気条件の達成後に解放"
+        : oshijoProgram && oshijoPatron.availableProceeds < required
+          ? `還元可能額があと${formatAnjuPay(required - oshijoPatron.availableProceeds)}`
+          : `${formatAnjuPay(required)}を基金へ還元`;
     return `<article class="patron-tier-card tier-${tier.id} ${owned ? "is-owned" : ""}">
       <span class="patron-tier-icon" aria-hidden="true">${tier.icon}</span>
       <div><small>LEVEL ${tier.level}</small><h3>${tier.label}</h3><strong>${formatAnjuPay(tier.threshold)}</strong></div>
       <button class="button ${owned ? "button-ghost" : "button-primary"} button-small" type="button" data-patron-tier="${tier.level}"
-        ${owned || !protectedData || !affordable || state.busyAction ? "disabled" : ""}>${owned ? "獲得済み" : affordable ? `${formatAnjuPay(required)}で昇格` : `あと${formatAnjuPay(required - state.balance)}`}</button>
+        ${owned || !protectedData || !affordable || !earnedByOshijo || state.busyAction ? "disabled" : ""}>${owned ? "獲得済み" : upgradeLabel}</button>
     </article>`;
   }).join("");
   const policyButtons = PATRON_POLICY_OPTIONS.map((policy) => {
@@ -929,9 +991,22 @@ function renderPatronage() {
   const recommendationText = impact.recommendationLimit > 0
     ? `${impact.recommendedShopCount} / ${impact.recommendationLimit}店`
     : "ランク獲得後に利用可能";
+  const oshijoQualification = oshijoProgram
+    ? `<section class="patron-oshijo-qualification ${oshijoPatron.popular ? "is-qualified" : ""}" aria-labelledby="patronOshijoTitle">
+        <div><span class="eyebrow">POPULAR OSHIJO QUALIFICATION</span><h3 id="patronOshijoTitle">${oshijoPatron.popular ? "人気推し嬢の条件を達成" : "人気推し嬢の実績を育てる"}</h3></div>
+        <p>請求額や高額Payではなく、ランキング集計対象の推し嬢成約と異なる買い手とのご縁で判定します。</p>
+        <dl>
+          <div><dt>推し嬢成約</dt><dd>${oshijoPatron.salesCount} / ${oshijoPatron.minimumSales}件</dd></div>
+          <div><dt>異なる買い手</dt><dd>${oshijoPatron.uniqueBuyers} / ${oshijoPatron.minimumUniqueBuyers}人</dd></div>
+          <div><dt>当月の推し嬢営業収益</dt><dd>${formatAnjuPay(oshijoPatron.netProceeds)}</dd></div>
+          <div><dt>基金へ還元できる残額</dt><dd>${formatAnjuPay(oshijoPatron.availableProceeds)}</dd></div>
+        </dl>
+        <small>人気条件を満たした後、当月の推し嬢営業収益から還元した分だけバッジがレベルアップします。</small>
+      </section>`
+    : `<aside class="patron-oshijo-qualification is-legacy"><strong>2026年8月から取得条件が変わります</strong><p>7月中に獲得したバッジと権利、累計支援履歴は維持されます。8月以降の新しいバッジは、人気推し嬢が当月の営業収益を基金へ還元した場合だけ取得できます。</p></aside>`;
   return `<section class="account-patron-section" id="accountPatronSection" tabindex="-1" aria-labelledby="accountPatronTitle">
     <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2 id="accountPatronTitle">VALUE MARKET パトロン</h2>
-      <p>AnjuPayで月替わりの市場支援者バッジを獲得し、循環基金と市場政策を通じて商談を支えます。勝敗や採点には影響しません。</p></div>
+      <p>人気推し嬢が当月の営業収益を還元して月替わりの名誉バッジを育て、循環基金と市場政策を通じて次の商談を支えます。勝敗や採点には影響しません。</p></div>
       <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>CURRENT</small><strong>${currentTier.label}</strong></div></div>
     <div class="patron-progress-card">
       <div><span>${seasonLabel}</span><strong>${formatAnjuPay(patron.seasonSpent)} 支援</strong></div>
@@ -939,6 +1014,7 @@ function renderPatronage() {
       <p>${currentTier.level === PATRON_TIERS.at(-1).level ? "今月の最高ランクを獲得済みです。" : `次の ${nextTier.label} まであと ${formatAnjuPay(nextCost)}`}</p>
     </div>
     ${!protectedData ? `<div class="patron-protection-lock"><strong>先にゲームデータを保護してください</strong><p>多額のAnjuPay利用は取り消せないため、Google保護後に昇格できます。</p></div>` : ""}
+    ${oshijoQualification}
     <div class="patron-tier-grid">${tierCards}</div>
     <section class="patron-circulation-card" aria-labelledby="patronFundTitle">
       <div class="patron-circulation-head"><div><span class="eyebrow">MARKET CIRCULATION FUND</span><h3 id="patronFundTitle">${fundSeasonLabel}の循環基金</h3></div>
@@ -966,7 +1042,7 @@ function renderPatronage() {
       <div class="patron-policy-options" role="group" aria-labelledby="patronPolicyTitle">${policyButtons}</div>
       <p class="patron-policy-status" role="status" aria-live="polite">${escapeHtml(policyStatus)}</p>
     </section>
-    <p class="account-fine-print">ランクと投票は日本時間の毎月1日に更新されます。利用したAnjuPayの払い戻しはなく、市場ウォレットと商談相手にバッジが表示されます。累計支援 ${formatAnjuPay(patron.lifetimeSpent)}。</p>
+    <p class="account-fine-print">ランクと投票は日本時間の毎月1日に更新されます。基金へ還元したAnjuPayの払い戻しはなく、市場ウォレットと商談相手に名誉バッジが表示されます。ランキング、採点、マッチング、Pay獲得量は優遇しません。累計支援 ${formatAnjuPay(patron.lifetimeSpent)}。</p>
   </section>`;
 }
 
@@ -1258,9 +1334,20 @@ async function upgradePatron(targetTier) {
   const target = tierForLevel(targetTier);
   const required = Math.max(0, target.threshold - requestState.patron.seasonSpent);
   if (!required || requestState.balance < required) return;
+  const oshijoProgram = requestState.patron.seasonKey >= OSHIJO_PATRON_START_KEY;
+  if (
+    oshijoProgram
+    && (
+      !requestState.oshijoPatron.popular
+      || requestState.oshijoPatron.availableProceeds < required
+    )
+  ) return;
   const fundContribution = Math.floor(required * 0.2);
   const burnedAmount = required - fundContribution;
-  if (!window.confirm(`${formatAnjuPay(required)}を払い戻しなしで支払い、今月の${target.label}へ昇格します。支払額の80%（${formatAnjuPay(burnedAmount)}）は消却、20%（${formatAnjuPay(fundContribution)}）は循環基金へ入ります。続けますか？`)) return;
+  const sourceCopy = oshijoProgram
+    ? `当月の推し嬢営業収益から${formatAnjuPay(required)}を基金へ還元し、今月の${target.label}へ昇格します。`
+    : `${formatAnjuPay(required)}を払い戻しなしで支払い、今月の${target.label}へ昇格します。`;
+  if (!window.confirm(`${sourceCopy} 80%（${formatAnjuPay(burnedAmount)}）は消却、20%（${formatAnjuPay(fundContribution)}）は循環基金へ入ります。続けますか？`)) return;
   requestState.busyAction = "patron";
   requestState.error = "";
   render();
@@ -1271,7 +1358,20 @@ async function upgradePatron(targetTier) {
         seasonKey: currentSeasonKey(),
         seasonSpent: target.threshold,
         lifetimeSpent: requestState.patron.lifetimeSpent + required,
+        oshijoSeasonSpent: oshijoProgram
+          ? requestState.patron.oshijoSeasonSpent + required
+          : requestState.patron.oshijoSeasonSpent,
+        oshijoLifetimeSpent: oshijoProgram
+          ? requestState.patron.oshijoLifetimeSpent + required
+          : requestState.patron.oshijoLifetimeSpent,
       });
+      if (oshijoProgram) {
+        requestState.oshijoPatron = normalizeOshijoPatronEligibility({
+          ...requestState.oshijoPatron,
+          proceedsUsed: requestState.oshijoPatron.proceedsUsed + required,
+          availableProceeds: requestState.oshijoPatron.availableProceeds - required,
+        });
+      }
       requestState.patronFund = normalizePatronFund({
         ...requestState.patronFund,
         seasonKey: currentSeasonKey(),
@@ -1288,7 +1388,7 @@ async function upgradePatron(targetTier) {
       addPreviewHistoryEntry({
         category: "spend",
         status: "posted",
-        labelKey: "patron_upgrade",
+        labelKey: oshijoProgram ? "oshijo_patron_upgrade" : "patron_upgrade",
         details: { targetTier: target.level },
         delta: -required,
       });
@@ -1296,19 +1396,27 @@ async function upgradePatron(targetTier) {
       return;
     }
     const response = await economyActionCallable({
-      action: "patron_upgrade",
+      action: oshijoProgram ? "oshijo_patron_upgrade" : "patron_upgrade",
       targetTier: target.level,
       actionId: newActionId(),
     });
     requireOperationUid(operationUid);
     if (!active || state !== requestState) return;
     if (response.data?.outcome === "short") throw new Error("AnjuPay残高が不足しています。");
+    if (response.data?.outcome === "ineligible") {
+      throw new Error("今月の人気推し嬢条件をまだ満たしていません。");
+    }
+    if (response.data?.outcome === "short-proceeds") {
+      throw new Error("基金へ還元できる今月の推し嬢営業収益が不足しています。");
+    }
     requestState.balance = Math.max(0, Math.floor(Number(response.data?.balance || 0)));
     requestState.patron = normalizePatronage(response.data?.patron);
     applyPatronEconomyResponse(requestState, response.data);
     await loadAnjuPayHistory({ force: true });
     if (!active || state !== requestState) return;
-    requestState.notice = `${target.label}へ昇格しました。市場で新しいバッジが表示されます。`;
+    requestState.notice = oshijoProgram
+      ? `推し嬢営業収益を基金へ還元し、${target.label}の名誉バッジを獲得しました。`
+      : `${target.label}へ昇格しました。市場で新しいバッジが表示されます。`;
   } catch (error) {
     if (state === requestState) {
       requestState.error = friendlyError(error, "パトロンランクを更新できませんでした。");

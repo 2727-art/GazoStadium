@@ -101,7 +101,7 @@ test("patron fund and impact responses are normalized on initialize and upgrade"
   assert.match(source, /patronImpact:\s*normalizePatronImpact\(null\)/);
   assert.match(initialize, /action:\s*"initialize"[\s\S]*applyPatronEconomyResponse\(requestState,\s*response\.data\)/);
   assert.match(upgrade, /const requestState = state/);
-  assert.match(upgrade, /action:\s*"patron_upgrade"[\s\S]*if \(!active \|\| state !== requestState\) return;[\s\S]*applyPatronEconomyResponse\(requestState,\s*response\.data\)/);
+  assert.match(upgrade, /action:\s*oshijoProgram \? "oshijo_patron_upgrade" : "patron_upgrade"[\s\S]*if \(!active \|\| state !== requestState\) return;[\s\S]*applyPatronEconomyResponse\(requestState,\s*response\.data\)/);
   assert.match(upgrade, /await loadAnjuPayHistory\(\{ force: true \}\);[\s\S]*if \(!active \|\| state !== requestState\) return;/);
   assert.match(upgrade, /if \(state === requestState\) \{[\s\S]*requestState\.busyAction = "";[\s\S]*if \(active\) render\(\)/);
   assert.match(source, /contributed:\s*patronMetric\(source\.contributed\)/);

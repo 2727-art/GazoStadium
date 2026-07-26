@@ -61,6 +61,7 @@ const {
 const {
   PATRON_TIERS,
   normalizePatronage,
+  oshijoPatronEligibility,
   patronUpgrade,
   publicPatronage,
 } = require("./patronage");
@@ -97,10 +98,23 @@ const {
   createAnjuPayFleaService,
 } = require("./anju-pay-flea-service");
 const {
+  MARKET_RANKING_CONTRIBUTION_CAP,
+  applyMarketRankingHonor,
+  applyMonthlyMarketSale,
+  marketRankingContribution,
+  normalizeMonthlyMarketStats,
+  publicMarketRankingHonors,
+} = require("./market-ranking");
+const {
+  MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
+  MARKET_OSHIJO_MAX_CLOSING_TURNS,
   marketClosingAllowsExtension,
   marketClosingAuditMode,
   marketClosingDecision,
   marketClosingLeaveReason,
+  marketOshijoClaimDecision,
+  marketOshijoSettlementDecision,
+  marketOshijoTurnDecision,
 } = require("./market-closing");
 const {
   DEFAULT_MARKET_SHOP,
@@ -143,6 +157,7 @@ const {
   settleDailyPlayRewardClaims,
 } = require("./daily-play-rewards");
 const {
+  ANJU_PAY_MAX_BALANCE,
   ANJU_PAY_HISTORY_DEFAULT_LIMIT,
   ANJU_PAY_HISTORY_MAX_LIMIT,
   ANJU_PAY_LEDGER_SCHEMA_VERSION,
@@ -233,11 +248,12 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 const firestore = getFirestore();
 const realtime = getDatabase();
 const adminAuth = getAuth();
-const MAX_POINTS = 999_999;
+const MAX_POINTS = ANJU_PAY_MAX_BALANCE;
 const MARKET_ENTRY_FEE = 5;
 const MARKET_MAX_TURNS = 3;
 const MARKET_MIN_PRICE = 10;
 const MARKET_MAX_PRICE = 500;
+const MARKET_MONTHLY_RANKING_START_KEY = "2026-08";
 const MARKET_EXTENSION_FEES = new Set([5, 10, 20]);
 const PATRON_RECOMMENDED_SHELF_MINIMUM = 3;
 const PATRON_RECOMMENDED_SHELF_LIMIT = 12;
@@ -820,6 +836,33 @@ function patronRecommendedShopRef(seasonKey, publicSellerId) {
 
 function verifiedMatchClaimRef(uid, mode, roomId) {
   return firestore.collection("verifiedMatchClaims").doc(eventId(`${uid}:${mode}:${roomId}`));
+}
+
+function marketMonthlyStatsRef(uid, seasonKey) {
+  return firestore.collection("valueMarketMonthlyPeriods")
+    .doc(seasonKey)
+    .collection("entries")
+    .doc(uid);
+}
+
+function marketMonthlyPairRef(sellerUid, buyerUid, seasonKey) {
+  return firestore.collection("valueMarketMonthlyPairs")
+    .doc(eventId(`${seasonKey}:${sellerUid}:${buyerUid}`));
+}
+
+function marketMonthlyOshijoPairRef(sellerUid, buyerUid, seasonKey) {
+  return firestore.collection("valueMarketMonthlyOshijoPairs")
+    .doc(eventId(`${seasonKey}:${sellerUid}:${buyerUid}`));
+}
+
+function marketRankingHonorRef(uid) {
+  return firestore.collection("valueMarketRankingHonors").doc(uid);
+}
+
+function marketRankingAwardRef(uid, seasonKey, role) {
+  return marketRankingHonorRef(uid)
+    .collection("awards")
+    .doc(eventId(`${seasonKey}:${role}`));
 }
 
 function soloProfileProjectionQueueRef(uid) {
@@ -2120,6 +2163,7 @@ function patronProgramResponse({
   voteValue,
   recommendationValue,
   patronageValue,
+  monthlyMarketValue,
   uid,
   seasonKey,
 }) {
@@ -2140,6 +2184,11 @@ function patronProgramResponse({
     seasonKey,
   );
   const patronage = normalizePatronage(patronageValue, seasonKey);
+  const oshijoPatron = oshijoPatronEligibility(
+    monthlyMarketValue,
+    patronage,
+    seasonKey,
+  );
   const viewerVote = voteValue?.uid === uid && voteValue?.seasonKey === seasonKey
     ? normalizePolicyVote(voteValue?.policyId)
     : null;
@@ -2167,6 +2216,7 @@ function patronProgramResponse({
       recommendedShopCount: recommendations.recommendations.length,
       recommendationLimit: patronRecommendationLimit(patronage.tier),
     },
+    oshijoPatron,
   };
 }
 
@@ -2179,6 +2229,7 @@ async function readPatronProgram(uid, patronageValue = null) {
     policySnapshot,
     voteSnapshot,
     recommendationSnapshot,
+    monthlyMarketSnapshot,
   ] = await Promise.all([
     patronageValue ? Promise.resolve(null) : patronageRef(uid).get(),
     patronFundRef(seasonKey).get(),
@@ -2186,6 +2237,7 @@ async function readPatronProgram(uid, patronageValue = null) {
     patronPolicyRef(seasonKey).get(),
     patronPolicyVoteRef(uid, seasonKey).get(),
     patronRecommendationProfileRef(uid, seasonKey).get(),
+    marketMonthlyStatsRef(uid, seasonKey).get(),
   ]);
   return patronProgramResponse({
     fundValue: fundSnapshot.data(),
@@ -2194,6 +2246,7 @@ async function readPatronProgram(uid, patronageValue = null) {
     voteValue: voteSnapshot.data(),
     recommendationValue: recommendationSnapshot.data(),
     patronageValue: patronageValue || patronSnapshot?.data(),
+    monthlyMarketValue: monthlyMarketSnapshot.data(),
     uid,
     seasonKey,
   });
@@ -2334,6 +2387,18 @@ async function upgradePatronage(uid, request, data) {
     if (upgrade.outcome !== "upgrade" || upgrade.cost <= 0) {
       throw new HttpsError("invalid-argument", "パトロンランクを確認できませんでした。");
     }
+    if (seasonKey >= MARKET_MONTHLY_RANKING_START_KEY) {
+      throw new HttpsError(
+        "failed-precondition",
+        "新しいパトロンバッジは、人気推し嬢が今月の営業収益を還元したときに獲得できます。",
+        {
+          reason: "oshijo_patron_required",
+          seasonKey,
+          currentTier: current.tier,
+          targetTier,
+        },
+      );
+    }
     if (before < upgrade.cost) {
       result = {
         outcome: "short",
@@ -2353,6 +2418,8 @@ async function upgradePatronage(uid, request, data) {
       seasonKey,
       seasonSpent: upgrade.target.threshold,
       lifetimeSpent: current.lifetimeSpent + upgrade.cost,
+      oshijoSeasonSpent: current.oshijoSeasonSpent,
+      oshijoLifetimeSpent: current.oshijoLifetimeSpent,
       updatedAt: now,
     }, seasonKey);
     const paymentSplit = splitPatronPayment(upgrade.cost);
@@ -3054,6 +3121,264 @@ async function finalizeSoloRoomResult(uid, roomId, requestedOutcome, now = Date.
       serverFinalized,
     },
     result,
+  };
+}
+
+async function upgradeOshijoPatronage(uid, request, data) {
+  if (!hasGoogleIdentity(request) || !await hasLiveGoogleIdentity(uid)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "高額のAnjuPayを使う前に、Googleでゲームデータを保護してください。",
+    );
+  }
+  const targetTier = Number(data?.targetTier);
+  const actionId = cleanText(data?.actionId, 80);
+  if (!Number.isSafeInteger(targetTier)
+      || targetTier < 1
+      || targetTier > PATRON_TIERS.at(-1).level
+      || !/^[A-Za-z0-9_-]{16,80}$/.test(actionId)) {
+    throw new HttpsError("invalid-argument", "推し嬢パトロン還元操作が正しくありません。");
+  }
+  if (await accountHasActiveSession(uid)) {
+    throw new HttpsError("failed-precondition", "対戦・待機・市場取引を終了してからパトロン還元を行ってください。");
+  }
+
+  await ensureWallet(uid);
+  const now = Date.now();
+  const seasonKey = periodKey("monthly", now);
+  const wallet = walletRef(uid);
+  const patronRef = patronageRef(uid);
+  const ledgerRef = patronageLedgerRef(uid, actionId);
+  const fundRef = patronFundRef(seasonKey);
+  const contributorRef = patronFundContributorRef(uid, seasonKey);
+  const monthlyStatsReference = marketMonthlyStatsRef(uid, seasonKey);
+  let result = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [
+      walletSnapshot,
+      patronSnapshot,
+      ledgerSnapshot,
+      ledgerConfigSnapshot,
+      fundSnapshot,
+      contributorSnapshot,
+      monthlyStatsSnapshot,
+    ] = await Promise.all([
+      transaction.get(wallet),
+      transaction.get(patronRef),
+      transaction.get(ledgerRef),
+      transaction.get(anjuPayLedgerConfigRef()),
+      transaction.get(fundRef),
+      transaction.get(contributorRef),
+      transaction.get(monthlyStatsReference),
+    ]);
+    const current = normalizePatronage(patronSnapshot.data(), seasonKey);
+    const monthlyStats = normalizeMonthlyMarketStats(
+      monthlyStatsSnapshot.data(),
+      uid,
+      seasonKey,
+      "",
+    );
+    const eligibility = oshijoPatronEligibility(monthlyStats, current, seasonKey);
+    const walletState = walletData(walletSnapshot);
+    const before = walletState.balance;
+    const activated = stageAnjuPayOpening(
+      transaction,
+      wallet,
+      walletState,
+      ledgerConfigSnapshot,
+      now,
+    );
+    const recognizePatronFund = (patronageValue) => {
+      const staged = stagePatronFundRecognition({
+        fundValue: fundSnapshot.data(),
+        contributorValue: contributorSnapshot.data(),
+        uid,
+        seasonKey,
+        patronageValue,
+        now,
+      });
+      if (staged.changed) {
+        transaction.set(fundRef, staged.fund);
+        transaction.set(contributorRef, staged.contributor);
+      }
+      return staged;
+    };
+
+    if (ledgerSnapshot.exists) {
+      const saved = ledgerSnapshot.data();
+      if (saved.uid !== uid
+          || saved.actionId !== actionId
+          || saved.seasonKey !== seasonKey
+          || saved.source !== "oshijo"
+          || Number(saved.targetTier) !== targetTier) {
+        throw new HttpsError("permission-denied", "推し嬢パトロン操作IDの内容が一致しません。");
+      }
+      result = {
+        outcome: "upgraded",
+        source: "oshijo",
+        balance: before,
+        debited: integer(saved.debited, 0, MAX_POINTS, 0),
+        patron: current,
+        eligibility,
+        repeated: true,
+      };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
+      return;
+    }
+
+    const upgrade = patronUpgrade(current, targetTier, seasonKey);
+    if (upgrade.outcome === "owned") {
+      result = {
+        outcome: "owned",
+        source: "oshijo",
+        balance: before,
+        debited: 0,
+        patron: current,
+        eligibility,
+        repeated: false,
+      };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
+      return;
+    }
+    if (upgrade.outcome !== "upgrade" || upgrade.cost <= 0) {
+      throw new HttpsError("invalid-argument", "パトロンランクを確認できませんでした。");
+    }
+    if (!eligibility.popular) {
+      result = {
+        outcome: "ineligible",
+        source: "oshijo",
+        balance: before,
+        required: upgrade.cost,
+        debited: 0,
+        patron: current,
+        eligibility,
+        repeated: false,
+      };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
+      return;
+    }
+    if (eligibility.availableProceeds < upgrade.cost) {
+      result = {
+        outcome: "short-proceeds",
+        source: "oshijo",
+        balance: before,
+        required: upgrade.cost,
+        debited: 0,
+        patron: current,
+        eligibility,
+        repeated: false,
+      };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
+      return;
+    }
+    if (before < upgrade.cost) {
+      result = {
+        outcome: "short",
+        source: "oshijo",
+        balance: before,
+        required: upgrade.cost,
+        debited: 0,
+        patron: current,
+        eligibility,
+        repeated: false,
+      };
+      persistAnjuPayOpening(transaction, wallet, walletState, activated, now);
+      recognizePatronFund(current);
+      return;
+    }
+
+    const after = before - upgrade.cost;
+    walletState.balance = after;
+    const patron = normalizePatronage({
+      seasonKey,
+      seasonSpent: upgrade.target.threshold,
+      lifetimeSpent: current.lifetimeSpent + upgrade.cost,
+      oshijoSeasonSpent: current.oshijoSeasonSpent + upgrade.cost,
+      oshijoLifetimeSpent: current.oshijoLifetimeSpent + upgrade.cost,
+      updatedAt: now,
+    }, seasonKey);
+    const paymentSplit = splitPatronPayment(upgrade.cost);
+    const groupId = anjuPayEntryId(`oshijo-patron:${actionId}:${seasonKey}`);
+    appendAnjuPayEntry(transaction, wallet, walletState, ledgerConfigSnapshot, {
+      entryId: groupId,
+      groupId,
+      kind: "oshijo_patron_upgrade",
+      category: "spend",
+      labelKey: "anju_pay_oshijo_patron_upgrade",
+      status: "posted",
+      delta: -upgrade.cost,
+      nominalAmount: upgrade.cost,
+      balanceBefore: before,
+      balanceAfter: after,
+      components: [{
+        kind: "oshijo_patron_upgrade",
+        labelKey: "anju_pay_oshijo_patron_upgrade",
+        delta: -upgrade.cost,
+        nominalAmount: upgrade.cost,
+        status: "posted",
+      }],
+      details: {
+        targetTier: upgrade.target.level,
+        source: "oshijo",
+        seasonKey,
+        qualifyingSales: eligibility.salesCount,
+        uniqueBuyers: eligibility.uniqueBuyers,
+        oshijoNetProceeds: eligibility.netProceeds,
+        patronFundContribution: paymentSplit.contributionAmount,
+        patronBurnAmount: paymentSplit.burnAmount,
+      },
+      occurredAt: now,
+    });
+    transaction.update(wallet, {
+      balance: after,
+      ...anjuPayWalletMetadataPatch(walletState),
+      updatedAt: now,
+    });
+    transaction.set(patronRef, patron);
+    recognizePatronFund(patron);
+    transaction.create(ledgerRef, {
+      uid,
+      actionId,
+      source: "oshijo",
+      seasonKey,
+      targetTier: upgrade.target.level,
+      debited: upgrade.cost,
+      balance: after,
+      patron,
+      popularity: {
+        salesCount: eligibility.salesCount,
+        uniqueBuyers: eligibility.uniqueBuyers,
+      },
+      proceeds: {
+        earned: eligibility.netProceeds,
+        usedBefore: eligibility.proceedsUsed,
+        usedAfter: eligibility.proceedsUsed + upgrade.cost,
+      },
+      split: paymentSplit,
+      createdAt: now,
+    });
+    result = {
+      outcome: "upgraded",
+      source: "oshijo",
+      balance: after,
+      debited: upgrade.cost,
+      patron,
+      eligibility: oshijoPatronEligibility(monthlyStats, patron, seasonKey),
+      repeated: false,
+    };
+  });
+
+  await bestEffort("upgradeOshijoPatronage", [
+    mirrorWallet(uid, result.balance),
+    mirrorPatronage(uid, result.patron),
+  ]);
+  return {
+    ...result,
+    ...await readPatronProgram(uid, result.patron),
   };
 }
 
@@ -8534,6 +8859,9 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
     if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
+    if (action === "oshijo_patron_upgrade") {
+      return await upgradeOshijoPatronage(uid, request, request.data);
+    }
     if (action === "patron_policy_vote") {
       return await votePatronPolicy(uid, request, request.data);
     }
@@ -9508,6 +9836,19 @@ async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
         roles: { [room.sellerUid]: "seller", [room.buyerUid]: "buyer" },
         names: { [room.sellerUid]: cleanName(room.sellerName), [room.buyerUid]: cleanName(room.buyerName) },
         status: room.status,
+        closingMode: room.closingMode === "oshijo" ? "oshijo" : "",
+        claimAmount: integer(
+          room.claimAmount,
+          0,
+          MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
+          0,
+        ),
+        oshijoClosingTurnCount: integer(
+          room.oshijoClosingTurnCount,
+          0,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          0,
+        ),
         turn: Number(room.turn || 1),
         stateVersion: incomingVersion,
         createdAt: Number(room.createdAt || now),
@@ -9974,7 +10315,6 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
         buyerPatron: publicPatronage(buyer.patron, periodKey("monthly")),
         listing: seller.listing,
         settlementQuote: marketSaleSettlement(seller.listing.askingPrice),
-        buyerMaxBudget: buyer.maxBudget,
         status: "preview",
         turn: 1,
         stateVersion: 1,
@@ -10989,12 +11329,14 @@ function defaultStats(uid, name) {
     name: cleanName(name),
     salesCount: 0,
     grossSales: 0,
+    actualGrossSales: 0,
     marketFeesPaid: 0,
     netSales: 0,
     bestSale: 0,
     laborFees: 0,
     purchases: 0,
     spent: 0,
+    actualSpent: 0,
     highestPurchase: 0,
     extensionIncome: 0,
     marketDays: 0,
@@ -11043,14 +11385,20 @@ function transferPoints(from, to, amount) {
 }
 
 function debitPoints(wallet, amount) {
-  const value = integer(amount, 1, MARKET_MAX_PRICE, 1);
+  const value = Number(amount);
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_POINTS) {
+    throw new HttpsError("invalid-argument", "AnjuPay支払額が正しくありません。");
+  }
   if (wallet.balance < value) throw new HttpsError("failed-precondition", "AnjuPay残高が不足しています。");
   wallet.balance -= value;
   return value;
 }
 
 function creditPoints(wallet, amount) {
-  const value = integer(amount, 1, MARKET_MAX_PRICE, 1);
+  const value = Number(amount);
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_POINTS) {
+    throw new HttpsError("invalid-argument", "AnjuPay受取額が正しくありません。");
+  }
   if (walletCreditCapacity(wallet) < value) throw new HttpsError("failed-precondition", "受取側のAnjuPay残高が上限に達しています。");
   wallet.balance += value;
   return value;
@@ -11113,10 +11461,22 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const buyerWalletRef = walletRef(initialRoom.buyerUid);
   const sellerStatsRef = marketStatsRef(initialRoom.sellerUid);
   const buyerStatsRef = marketStatsRef(initialRoom.buyerUid);
-  const sellerAchievementRef = achievementProfileRef(initialRoom.sellerUid);
-  const buyerAchievementRef = achievementProfileRef(initialRoom.buyerUid);
   const transactionDateKey = jstDateKey();
   const patronSeasonKey = transactionDateKey.slice(0, 7);
+  const sellerMonthlyStatsRef = marketMonthlyStatsRef(initialRoom.sellerUid, patronSeasonKey);
+  const buyerMonthlyStatsRef = marketMonthlyStatsRef(initialRoom.buyerUid, patronSeasonKey);
+  const monthlyPairRef = marketMonthlyPairRef(
+    initialRoom.sellerUid,
+    initialRoom.buyerUid,
+    patronSeasonKey,
+  );
+  const monthlyOshijoPairRef = marketMonthlyOshijoPairRef(
+    initialRoom.sellerUid,
+    initialRoom.buyerUid,
+    patronSeasonKey,
+  );
+  const sellerAchievementRef = achievementProfileRef(initialRoom.sellerUid);
+  const buyerAchievementRef = achievementProfileRef(initialRoom.buyerUid);
   const pairKey = eventId(`${[initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":")}:${transactionDateKey}`);
   const pairRef = firestore.collection("valueMarketRankedPairs").doc(pairKey);
   const relationshipKey = eventId([initialRoom.sellerUid, initialRoom.buyerUid].sort().join(":"));
@@ -11140,12 +11500,14 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const marketPatronPolicyRef = patronPolicyRef(patronSeasonKey);
   const marketActionTimestamp = Date.now();
   let result = null;
+  let buyerDecisionResult = null;
   const achievementResults = {};
   const newlyUnlockedResults = {};
   let sellerShopResult = null;
 
   await firestore.runTransaction(async (transaction) => {
     result = null;
+    buyerDecisionResult = null;
     sellerShopResult = null;
     Object.keys(achievementResults).forEach((key) => delete achievementResults[key]);
     Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
@@ -11167,6 +11529,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       ledgerSnapshot,
       ledgerConfigSnapshot,
       patronSubsidySnapshots,
+      monthlyMarketSnapshots,
     ] = await Promise.all([
       transaction.get(roomRef),
       transaction.get(sellerWalletRef),
@@ -11192,6 +11555,14 @@ async function performMarketAction(uid, data, appCheckVerified) {
           transaction.get(marketPatronPolicyRef),
         ])
         : Promise.resolve([null, null, null, null]),
+      action === "buy"
+        ? Promise.all([
+          transaction.get(sellerMonthlyStatsRef),
+          transaction.get(buyerMonthlyStatsRef),
+          transaction.get(monthlyPairRef),
+          transaction.get(monthlyOshijoPairRef),
+        ])
+        : Promise.resolve([null, null, null, null]),
     ]);
     const [
       marketPatronFundSnapshot,
@@ -11199,6 +11570,12 @@ async function performMarketAction(uid, data, appCheckVerified) {
       marketPatronSellerImpactSnapshot,
       marketPatronPolicySnapshot,
     ] = patronSubsidySnapshots;
+    const [
+      sellerMonthlyStatsSnapshot,
+      buyerMonthlyStatsSnapshot,
+      monthlyPairSnapshot,
+      monthlyOshijoPairSnapshot,
+    ] = monthlyMarketSnapshots;
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
     const room = { ...roomSnapshot.data() };
     const role = requireRoomActor(room, uid);
@@ -11240,6 +11617,59 @@ async function performMarketAction(uid, data, appCheckVerified) {
         if (marketClosingAuditMode(ledger.closingMode) !== replayClosingDecision.closingMode) {
           throw new HttpsError("permission-denied", "市場操作IDの営業クロージングモードが一致しません。");
         }
+        if (replayClosingDecision.closingMode === "oshijo") {
+          const replayClaim = marketOshijoClaimDecision(data?.claimAmount);
+          if (!replayClaim.allowed) {
+            throw new HttpsError("invalid-argument", "推し嬢の請求額は1〜999999 Payの整数で指定してください。");
+          }
+          if (Number(ledger.claimAmount) !== replayClaim.claimAmount) {
+            throw new HttpsError("permission-denied", "市場操作IDの推し嬢請求額が一致しません。");
+          }
+        }
+      }
+      if (action === "oshijo_closing_turn") {
+        const savedTurn = integer(
+          ledger.oshijoClosingTurnCount,
+          1,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          1,
+        );
+        const replayTurn = marketOshijoTurnDecision({
+          mediaKind: data?.mediaKind,
+          currentTurnCount: savedTurn - 1,
+          requestedTurn: data?.closingTurn,
+        });
+        if (!replayTurn.allowed
+            || replayTurn.mediaKind !== ledger.oshijoMediaKind
+            || replayTurn.turnCount !== savedTurn) {
+          throw new HttpsError("permission-denied", "市場操作IDの推し嬢クロージング手が一致しません。");
+        }
+      }
+      if (action === "buy" && marketClosingAuditMode(ledger.closingMode) === "oshijo") {
+        if (Number(data?.confirmedBalance) !== Number(ledger.confirmedBalance)
+            || Number(data?.confirmedPaidAmount) !== Number(ledger.paidAmount)
+            || data?.allIn !== (ledger.allIn === true)) {
+          throw new HttpsError("permission-denied", "市場操作IDの推し嬢購入確認が一致しません。");
+        }
+      }
+      if (["enter_silent_decision", "buy"].includes(action)
+          && marketClosingAuditMode(ledger.closingMode) === "oshijo") {
+        buyerDecisionResult = {
+          claimAmount: integer(
+            ledger.claimAmount,
+            1,
+            MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
+            1,
+          ),
+          confirmedBalance: integer(ledger.confirmedBalance, 0, MAX_POINTS, 0),
+          paidAmount: integer(
+            ledger.paidAmount,
+            0,
+            MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
+            0,
+          ),
+          allIn: ledger.allIn === true,
+        };
       }
       result = {
         status: room.status,
@@ -11247,6 +11677,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
         sellerBalance: sellerWallet.balance,
         buyerBalance: buyerWallet.balance,
         role,
+        buyerDecision: buyerDecisionResult,
         newlyUnlocked: sanitizeAchievementIds(ledger.achievementIds, { maximum: 100 }),
       };
       persistAnjuPayOpening(
@@ -11336,9 +11767,21 @@ async function performMarketAction(uid, data, appCheckVerified) {
         }
         throw new HttpsError("invalid-argument", "未対応の営業クロージングモードです。");
       }
+      const claimDecision = closingDecision.closingMode === "oshijo"
+        ? marketOshijoClaimDecision(data?.claimAmount)
+        : { allowed: true, claimAmount: 0 };
+      if (!claimDecision.allowed) {
+        throw new HttpsError(
+          "invalid-argument",
+          `推し嬢の請求額は1〜${MARKET_OSHIJO_MAX_CLAIM_AMOUNT} Payの整数で指定してください。`,
+        );
+      }
       const pitchCompletedAt = Date.now();
       room.closingMode = closingDecision.closingMode;
       room.closingActivatedAt = closingDecision.closingMode ? pitchCompletedAt : 0;
+      room.claimAmount = claimDecision.claimAmount;
+      room.oshijoClosingTurnCount = 0;
+      room.oshijoLastMediaKind = "";
       const heldFee = Math.max(0, Number(room.entryFeeHeld || 0));
       if (heldFee > 0) {
         const wasReserved = room.entryFeeReserved === true;
@@ -11386,12 +11829,120 @@ async function performMarketAction(uid, data, appCheckVerified) {
           kind: "entry_fee_settlement",
         };
       }
-      room.status = "decision";
+      room.status = closingDecision.closingMode === "oshijo"
+        ? "oshijo_warning"
+        : "decision";
       room.pitchCompletedAt = pitchCompletedAt;
+    } else if (action === "hear_oshijo_closing") {
+      requireRoomActor(room, uid, "buyer");
+      requireMarketState(room, "oshijo_warning");
+      if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
+      }
+      room.status = "oshijo_closing";
+      room.oshijoHeardAt = Date.now();
+    } else if (action === "oshijo_closing_turn") {
+      requireRoomActor(room, uid, "seller");
+      requireMarketState(room, "oshijo_closing");
+      if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
+      }
+      const turnDecision = marketOshijoTurnDecision({
+        mediaKind: data?.mediaKind,
+        currentTurnCount: integer(
+          room.oshijoClosingTurnCount,
+          0,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          0,
+        ),
+        requestedTurn: data?.closingTurn,
+      });
+      if (!turnDecision.allowed) {
+        if (turnDecision.errorCode === "turn-limit") {
+          throw new HttpsError("failed-precondition", "推し嬢クロージングは3手までです。");
+        }
+        if (turnDecision.errorCode === "turn-mismatch") {
+          throw new HttpsError("failed-precondition", "推し嬢クロージングの手順が変わりました。");
+        }
+        throw new HttpsError("invalid-argument", "営業手段は文字・画像・音声から選択してください。");
+      }
+      room.oshijoClosingTurnCount = turnDecision.turnCount;
+      room.oshijoLastMediaKind = turnDecision.mediaKind;
+      room.oshijoLastTurnAt = Date.now();
+    } else if (action === "enter_silent_decision") {
+      requireRoomActor(room, uid, "buyer");
+      requireMarketState(room, "oshijo_closing", "decision");
+      if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
+      }
+      const claimDecision = marketOshijoClaimDecision(
+        room.claimAmount || room.listing?.askingPrice,
+      );
+      if (!claimDecision.allowed) {
+        throw new HttpsError("failed-precondition", "推し嬢の請求額を確認できませんでした。");
+      }
+      room.claimAmount = claimDecision.claimAmount;
+      room.status = "decision";
+      room.silentDecisionAt = Date.now();
+      buyerDecisionResult = {
+        claimAmount: claimDecision.claimAmount,
+        confirmedBalance: buyerWallet.balance,
+        paidAmount: Math.min(claimDecision.claimAmount, buyerWallet.balance),
+        allIn: claimDecision.claimAmount > buyerWallet.balance
+          && buyerWallet.balance > 0,
+      };
     } else if (action === "buy") {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "decision");
-      const price = integer(room.listing?.askingPrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE);
+      const oshijoPurchase = marketClosingAuditMode(room.closingMode) === "oshijo";
+      let oshijoSettlement = null;
+      if (oshijoPurchase) {
+        const claimDecision = marketOshijoClaimDecision(
+          room.claimAmount || room.listing?.askingPrice,
+        );
+        if (!claimDecision.allowed) {
+          throw new HttpsError("failed-precondition", "推し嬢の請求額を確認できませんでした。");
+        }
+        oshijoSettlement = marketOshijoSettlementDecision({
+          claimAmount: claimDecision.claimAmount,
+          availableBalance: buyerWallet.balance,
+          confirmedBalance: data?.confirmedBalance,
+          confirmedPaidAmount: data?.confirmedPaidAmount,
+          allIn: data?.allIn,
+        });
+        if (!oshijoSettlement.allowed) {
+          throw new HttpsError(
+            "failed-precondition",
+            "AnjuPay残高が変わりました。静かな最終判断画面で金額をもう一度確認してください。",
+            {
+              reason: oshijoSettlement.reason || "wallet-changed",
+              claimAmount: claimDecision.claimAmount,
+              previousBalance: Number.isSafeInteger(data?.confirmedBalance)
+                ? data.confirmedBalance
+                : 0,
+              currentBalance: buyerWallet.balance,
+              paidAmount: Math.min(claimDecision.claimAmount, buyerWallet.balance),
+              allIn: claimDecision.claimAmount > buyerWallet.balance
+                && buyerWallet.balance > 0,
+              reconfirmAction: "enter_silent_decision",
+            },
+          );
+        }
+        buyerDecisionResult = {
+          claimAmount: oshijoSettlement.claimAmount,
+          confirmedBalance: buyerWallet.balance,
+          paidAmount: oshijoSettlement.paidAmount,
+          allIn: oshijoSettlement.allIn,
+        };
+      }
+      const price = oshijoPurchase
+        ? oshijoSettlement.paidAmount
+        : integer(
+          room.listing?.askingPrice,
+          MARKET_MIN_PRICE,
+          MARKET_MAX_PRICE,
+          MARKET_MIN_PRICE,
+        );
       const settlement = marketSaleSettlement(price);
       const patronFund = normalizePatronFund(
         marketPatronFundSnapshot?.data(),
@@ -11428,7 +11979,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       const actualSellerProceeds = settlement.sellerProceeds + patronSubsidy;
       const effectiveMarketFee = settlement.feeAmount - patronSubsidy;
       const amount = debitPoints(buyerWallet, settlement.grossAmount);
-      creditPoints(sellerWallet, actualSellerProceeds);
+      if (actualSellerProceeds > 0) creditPoints(sellerWallet, actualSellerProceeds);
       addMarketComponent(
         "buyer",
         "sale_purchase",
@@ -11484,6 +12035,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
       const sellerIssueNumber = sellerShopResult.issueCount;
       room.status = "sold";
       room.salePrice = amount;
+      room.claimAmount = oshijoPurchase ? oshijoSettlement.claimAmount : amount;
+      room.paidAmount = amount;
+      room.allIn = oshijoPurchase && oshijoSettlement.allIn;
       room.marketFee = settlement.feeAmount;
       room.effectiveMarketFee = effectiveMarketFee;
       room.patronFundSubsidy = patronSubsidy;
@@ -11502,6 +12056,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
       room.sellerIssueNumber = sellerIssueNumber;
       room.soldAt = issuedAt;
       room.rankingCounted = !pairSnapshot.exists;
+      room.rankingContribution = room.rankingCounted
+        ? marketRankingContribution(amount)
+        : 0;
       transfer = {
         fromUid: room.buyerUid,
         toUid: room.sellerUid,
@@ -11580,13 +12137,23 @@ async function performMarketAction(uid, data, appCheckVerified) {
       }
       sellerStats.marketFeesPaid = Number(sellerStats.marketFeesPaid || 0) + effectiveMarketFee;
       sellerStats.netSales = Number(sellerStats.netSales || 0) + actualSellerProceeds;
+      sellerStats.actualGrossSales = Number(sellerStats.actualGrossSales || 0) + amount;
+      buyerStats.actualSpent = Number(buyerStats.actualSpent || 0) + amount;
       if (!pairSnapshot.exists) {
         sellerStats.salesCount = Number(sellerStats.salesCount || 0) + 1;
-        sellerStats.grossSales = Number(sellerStats.grossSales || 0) + amount;
-        sellerStats.bestSale = Math.max(Number(sellerStats.bestSale || 0), amount);
+        sellerStats.grossSales = Number(sellerStats.grossSales || 0)
+          + room.rankingContribution;
+        sellerStats.bestSale = Math.max(
+          Number(sellerStats.bestSale || 0),
+          room.rankingContribution,
+        );
         buyerStats.purchases = Number(buyerStats.purchases || 0) + 1;
-        buyerStats.spent = Number(buyerStats.spent || 0) + amount;
-        buyerStats.highestPurchase = Math.max(Number(buyerStats.highestPurchase || 0), amount);
+        buyerStats.spent = Number(buyerStats.spent || 0)
+          + room.rankingContribution;
+        buyerStats.highestPurchase = Math.max(
+          Number(buyerStats.highestPurchase || 0),
+          room.rankingContribution,
+        );
         const dateKey = transactionDateKey;
         const sellerPreviousRole = normalizeMarketStats(sellerStats).lastRankedRole;
         const buyerPreviousRole = normalizeMarketStats(buyerStats).lastRankedRole;
@@ -11639,6 +12206,70 @@ async function performMarketAction(uid, data, appCheckVerified) {
           });
         }
       }
+      if (patronSeasonKey >= MARKET_MONTHLY_RANKING_START_KEY) {
+        const monthlyNewCounterparty = room.rankingCounted
+          && monthlyPairSnapshot?.exists !== true;
+        const monthlyNewOshijoCounterparty = room.rankingCounted
+          && oshijoPurchase
+          && monthlyOshijoPairSnapshot?.exists !== true;
+        const monthlySellerStats = applyMonthlyMarketSale(
+          sellerMonthlyStatsSnapshot?.data(),
+          {
+            uid: room.sellerUid,
+            seasonKey: patronSeasonKey,
+            name: room.sellerName,
+            role: "seller",
+            paidAmount: amount,
+            sellerProceeds: actualSellerProceeds,
+            oshijoProceeds: settlement.sellerProceeds,
+            effectiveFee: effectiveMarketFee,
+            rankingCounted: room.rankingCounted,
+            newCounterparty: monthlyNewCounterparty,
+            newOshijoCounterparty: monthlyNewOshijoCounterparty,
+            oshijo: oshijoPurchase,
+            publicProfile: sellerStats.publicProfile,
+            publicAchievements: sellerStats.publicAchievements,
+            now: issuedAt,
+          },
+        );
+        const monthlyBuyerStats = applyMonthlyMarketSale(
+          buyerMonthlyStatsSnapshot?.data(),
+          {
+            uid: room.buyerUid,
+            seasonKey: patronSeasonKey,
+            name: room.buyerName,
+            role: "buyer",
+            paidAmount: amount,
+            rankingCounted: room.rankingCounted,
+            newCounterparty: monthlyNewCounterparty,
+            publicProfile: buyerStats.publicProfile,
+            publicAchievements: buyerStats.publicAchievements,
+            now: issuedAt,
+          },
+        );
+        transaction.set(sellerMonthlyStatsRef, monthlySellerStats);
+        transaction.set(buyerMonthlyStatsRef, monthlyBuyerStats);
+        if (monthlyNewCounterparty) {
+          transaction.create(monthlyPairRef, {
+            schemaVersion: 1,
+            seasonKey: patronSeasonKey,
+            sellerUid: room.sellerUid,
+            buyerUid: room.buyerUid,
+            firstRoomId: roomId,
+            createdAt: issuedAt,
+          });
+        }
+        if (monthlyNewOshijoCounterparty) {
+          transaction.create(monthlyOshijoPairRef, {
+            schemaVersion: 1,
+            seasonKey: patronSeasonKey,
+            sellerUid: room.sellerUid,
+            buyerUid: room.buyerUid,
+            firstRoomId: roomId,
+            createdAt: issuedAt,
+          });
+        }
+      }
       const liveSellerShop = publicSellerShop(sellerShopResult, {
         marketStats: sellerStats,
       });
@@ -11671,7 +12302,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
           : {}),
       };
       transaction.create(certificateRef, {
-        schemaVersion: 1,
+        schemaVersion: 2,
         certificateNumber,
         buyerUid: room.buyerUid,
         sellerName: cleanName(room.sellerName),
@@ -11679,6 +12310,10 @@ async function performMarketAction(uid, data, appCheckVerified) {
         sellerIssueNumber,
         listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
         purchasePrice: amount,
+        claimAmount: room.claimAmount,
+        paidAmount: amount,
+        allIn: room.allIn === true,
+        rankingContribution: room.rankingContribution,
         marketFee: settlement.feeAmount,
         effectiveMarketFee,
         patronFundSubsidy: patronSubsidy,
@@ -11694,7 +12329,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       });
     } else if (action === "leave") {
       requireRoomActor(room, uid, "buyer");
-      requireMarketState(room, "decision");
+      requireMarketState(room, "oshijo_warning", "oshijo_closing", "decision");
       room.status = "ended";
       room.endReason = marketClosingLeaveReason(room.closingMode);
     } else if (action === "request_extension") {
@@ -11919,6 +12554,11 @@ async function performMarketAction(uid, data, appCheckVerified) {
               ? { publicSellerId: ensuredSellerShop.publicSellerId }
               : {}),
             listingTitle: cleanText(room.listing?.title, 30, "無題の推し"),
+            closingMode: room.closingMode === "oshijo" ? "oshijo" : "",
+            claimAmount: Number(room.claimAmount || 0),
+            paidAmount: Number(room.paidAmount || 0),
+            allIn: room.allIn === true,
+            rankingContribution: Number(room.rankingContribution || 0),
             marketFee: Number(room.marketFee || 0),
             effectiveMarketFee: Number(room.effectiveMarketFee || room.marketFee || 0),
             patronFundSubsidy: Number(room.patronFundSubsidy || 0),
@@ -11944,14 +12584,14 @@ async function performMarketAction(uid, data, appCheckVerified) {
       room.sellerName,
     );
     room.stateVersion = Math.max(0, Math.floor(Number(room.stateVersion || 0))) + 1;
-    room.updatedAt = Date.now();
+    room.updatedAt = marketActionTimestamp;
     sellerStats.name = cleanName(room.sellerName);
-    sellerStats.updatedAt = Date.now();
+    sellerStats.updatedAt = marketActionTimestamp;
     buyerStats.name = cleanName(room.buyerName);
-    buyerStats.updatedAt = Date.now();
+    buyerStats.updatedAt = marketActionTimestamp;
     transaction.set(roomRef, room);
-    transaction.set(sellerWalletRef, { ...sellerWallet, updatedAt: Date.now() }, { merge: true });
-    transaction.set(buyerWalletRef, { ...buyerWallet, updatedAt: Date.now() }, { merge: true });
+    transaction.set(sellerWalletRef, { ...sellerWallet, updatedAt: marketActionTimestamp }, { merge: true });
+    transaction.set(buyerWalletRef, { ...buyerWallet, updatedAt: marketActionTimestamp }, { merge: true });
     transaction.set(sellerStatsRef, sellerStats);
     transaction.set(buyerStatsRef, buyerStats);
     if (sellerShopResult) {
@@ -11973,6 +12613,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       sellerBalance: sellerWallet.balance,
       buyerBalance: buyerWallet.balance,
       role,
+      buyerDecision: buyerDecisionResult,
       newlyUnlocked: newlyUnlockedResults[uid] || [],
     };
     transaction.create(ledgerRef, {
@@ -11984,6 +12625,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
       sellerBalance: result.sellerBalance,
       buyerBalance: result.buyerBalance,
       rankingCounted: room.rankingCounted ?? null,
+      rankingContribution: Number(room.rankingContribution || 0),
       marketFee: Number(room.marketFee || 0),
       effectiveMarketFee: Number(room.effectiveMarketFee || room.marketFee || 0),
       patronFundSubsidy: Number(room.patronFundSubsidy || 0),
@@ -11991,12 +12633,20 @@ async function performMarketAction(uid, data, appCheckVerified) {
       patronFundKind: cleanText(room.patronFundKind, 16),
       sellerProceeds: Number(room.sellerProceeds || 0),
       closingMode: marketClosingAuditMode(room.closingMode),
+      claimAmount: Number(room.claimAmount || 0),
+      paidAmount: Number(room.paidAmount || buyerDecisionResult?.paidAmount || 0),
+      confirmedBalance: Number(buyerDecisionResult?.confirmedBalance || 0),
+      allIn: room.allIn === true || buyerDecisionResult?.allIn === true,
+      oshijoClosingTurnCount: Number(room.oshijoClosingTurnCount || 0),
+      oshijoMediaKind: action === "oshijo_closing_turn"
+        ? cleanText(room.oshijoLastMediaKind, 8)
+        : "",
       certificateNumber: cleanText(room.certificateNumber, 24),
       sellerIssueNumber: integer(room.sellerIssueNumber, 0, 1_000_000, 0),
       achievementIds: result.newlyUnlocked,
       transfer,
       turn: Number(room.turn || 1),
-      createdAt: Date.now(),
+      createdAt: marketActionTimestamp,
     });
   });
 
@@ -12025,11 +12675,59 @@ async function performMarketAction(uid, data, appCheckVerified) {
       });
     }
   }
+  let reentryGuide = null;
+  if (result.status === "sold" && uid === initialRoom.buyerUid) {
+    reentryGuide = {
+      buyerMinimumBalance: MARKET_ENTRY_FEE + MARKET_MIN_PRICE,
+      remainingPay: Math.max(
+        0,
+        MARKET_ENTRY_FEE + MARKET_MIN_PRICE - result.buyerBalance,
+      ),
+      sellerPitchReward: MARKET_ENTRY_FEE,
+      needsReentry: result.buyerBalance < MARKET_ENTRY_FEE + MARKET_MIN_PRICE,
+    };
+    if (reentryGuide.needsReentry) {
+      try {
+        const progressSnapshot = await economyProgressRef(uid).get();
+        const progress = normalizeEconomyProgress(progressSnapshot.data());
+        const dailyPlay = dailyPlayRewardSummary(
+          progress.periodRewards,
+          progress.dailyPlayClaims,
+        );
+        if (dailyPlay.pendingPoints > 0) {
+          reentryGuide.rewardLabel = "受取可能なデイリープレイ報酬";
+          reentryGuide.rewardAmount = dailyPlay.pendingPoints;
+          reentryGuide.rewardAvailable = true;
+          reentryGuide.matchesUntilReward = 0;
+        } else if (dailyPlay.nextReward > 0) {
+          reentryGuide.rewardLabel = "次のデイリープレイ報酬";
+          reentryGuide.rewardAmount = dailyPlay.nextReward;
+          reentryGuide.rewardAvailable = false;
+          reentryGuide.matchesUntilReward = Math.max(
+            0,
+            dailyPlay.nextTarget - dailyPlay.matches,
+          );
+        }
+      } catch (error) {
+        console.warn("performMarketAction reentry guide refresh failed", {
+          uid,
+          roomId,
+          error: error?.message || error,
+        });
+      }
+    }
+  }
   return {
     status: result.status,
     roomId,
     balance: uid === initialRoom.sellerUid ? result.sellerBalance : result.buyerBalance,
     rankingCounted: result.room.rankingCounted ?? null,
+    rankingContribution: integer(
+      result.room.rankingContribution,
+      0,
+      MARKET_RANKING_CONTRIBUTION_CAP,
+      0,
+    ),
     marketFee: Number(result.room.marketFee || 0),
     effectiveMarketFee: Number(result.room.effectiveMarketFee || result.room.marketFee || 0),
     patronFundSubsidy: Number(result.room.patronFundSubsidy || 0),
@@ -12037,10 +12735,30 @@ async function performMarketAction(uid, data, appCheckVerified) {
     patronFundKind: cleanText(result.room.patronFundKind, 16),
     sellerProceeds: Number(result.room.sellerProceeds || 0),
     closingMode: marketClosingAuditMode(result.room.closingMode),
+    claimAmount: integer(
+      result.room.claimAmount,
+      0,
+      MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
+      0,
+    ),
+    paidAmount: integer(result.room.paidAmount, 0, MAX_POINTS, 0),
+    allIn: result.room.allIn === true,
+    oshijoClosingTurnCount: integer(
+      result.room.oshijoClosingTurnCount,
+      0,
+      MARKET_OSHIJO_MAX_CLOSING_TURNS,
+      0,
+    ),
     certificateNumber: cleanText(result.room.certificateNumber, 24),
     sellerIssueNumber: integer(result.room.sellerIssueNumber, 0, 1_000_000, 0),
     sellerShop: result.room.sellerShop || null,
     newlyUnlocked: result.newlyUnlocked || [],
+    ...(result.buyerDecision ? {
+      decisionQuote: result.buyerDecision,
+      confirmedBalance: result.buyerDecision.confirmedBalance,
+      confirmedPaidAmount: result.buyerDecision.paidAmount,
+    } : {}),
+    ...(reentryGuide ? { reentryGuide } : {}),
     ...(patronProgram || {}),
   };
 }
@@ -12119,6 +12837,8 @@ async function saveMarketPublicProfile(uid, data) {
 
   const statsRef = marketStatsRef(uid);
   const now = Date.now();
+  const seasonKey = periodKey("monthly", now);
+  const monthlyStatsReference = marketMonthlyStatsRef(uid, seasonKey);
   const publicProfile = {
     xHandle: xPublic ? xHandle : "",
     tagline: taglinePublic ? tagline : "",
@@ -12127,7 +12847,10 @@ async function saveMarketPublicProfile(uid, data) {
   let savedProfile = sanitizeStoredMarketPublicProfile(publicProfile);
   let savedAt = now;
   await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(statsRef);
+    const [snapshot, monthlySnapshot] = await Promise.all([
+      transaction.get(statsRef),
+      transaction.get(monthlyStatsReference),
+    ]);
     const currentProfile = snapshot.exists ? snapshot.get("publicProfile") : undefined;
     const decision = marketPublicProfileUpdateDecision(
       currentProfile,
@@ -12151,6 +12874,9 @@ async function saveMarketPublicProfile(uid, data) {
       throw new HttpsError("resource-exhausted", "公開プロフィールは少し待ってから更新してください。");
     }
     transaction.set(statsRef, { publicProfile }, { merge: true });
+    if (monthlySnapshot.exists) {
+      transaction.set(monthlyStatsReference, { publicProfile }, { merge: true });
+    }
   });
   return {
     saved: true,
@@ -12163,15 +12889,128 @@ function rankingRow(snapshot, role, viewerUid) {
   return createMarketRankingRow(snapshot.data(), role, snapshot.id === viewerUid);
 }
 
+function previousMonthlyPeriodKey(seasonKey) {
+  if (!/^\d{4}-\d{2}$/.test(String(seasonKey || ""))) return "";
+  const [year, month] = seasonKey.split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 2, 1));
+  return previous.toISOString().slice(0, 7);
+}
+
+async function finalizeMarketRankingAward({ uid, seasonKey, role, rank }) {
+  const honorRef = marketRankingHonorRef(uid);
+  const awardRef = marketRankingAwardRef(uid, seasonKey, role);
+  await firestore.runTransaction(async (transaction) => {
+    const [honorSnapshot, awardSnapshot] = await Promise.all([
+      transaction.get(honorRef),
+      transaction.get(awardRef),
+    ]);
+    if (awardSnapshot.exists) return;
+    const applied = applyMarketRankingHonor(honorSnapshot.data(), {
+      uid,
+      role,
+      seasonKey,
+      rank,
+      now: Date.now(),
+    });
+    transaction.set(honorRef, applied.honors);
+    transaction.create(awardRef, {
+      schemaVersion: 1,
+      uid,
+      seasonKey,
+      role,
+      rank: applied.award.rank,
+      awardId: applied.award.id,
+      awardLabel: applied.award.label,
+      honorLevelAfter: applied.honors[role].level,
+      awardedAt: Date.now(),
+      payReward: 0,
+    });
+  });
+}
+
+function monthlyPeriodKeys(startSeasonKey, endSeasonKey) {
+  if (!/^\d{4}-\d{2}$/.test(String(startSeasonKey || ""))
+      || !/^\d{4}-\d{2}$/.test(String(endSeasonKey || ""))
+      || startSeasonKey > endSeasonKey) {
+    return [];
+  }
+  const keys = [];
+  let [year, month] = startSeasonKey.split("-").map(Number);
+  while (keys.length < 120) {
+    const key = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+    if (key > endSeasonKey) break;
+    keys.push(key);
+    month += 1;
+    if (month > 12) {
+      year += 1;
+      month = 1;
+    }
+  }
+  return keys;
+}
+
+async function finalizeMarketRankingMonth(seasonKey) {
+  if (!seasonKey || seasonKey < MARKET_MONTHLY_RANKING_START_KEY) return false;
+  const periodRef = firestore.collection("valueMarketMonthlyPeriods").doc(seasonKey);
+  const periodSnapshot = await periodRef.get();
+  if (periodSnapshot.get("honorsFinalized") === true) return false;
+  const entries = periodRef.collection("entries");
+  const [sellerSnapshot, buyerSnapshot] = await Promise.all([
+    entries.orderBy("grossSales", "desc").limit(10).get(),
+    entries.orderBy("spent", "desc").limit(10).get(),
+  ]);
+  const awards = [];
+  for (const [role, snapshot, field] of [
+    ["seller", sellerSnapshot, "grossSales"],
+    ["buyer", buyerSnapshot, "spent"],
+  ]) {
+    snapshot.docs
+      .filter((entry) => Number(entry.get(field) || 0) > 0)
+      .forEach((entry, index) => {
+        awards.push(finalizeMarketRankingAward({
+          uid: entry.id,
+          seasonKey,
+          role,
+          rank: index + 1,
+        }));
+      });
+  }
+  await Promise.all(awards);
+  await periodRef.set({
+    schemaVersion: 1,
+    seasonKey,
+    honorsFinalized: true,
+    honorsFinalizedAt: Date.now(),
+    honorAwardCount: awards.length,
+  }, { merge: true });
+  return true;
+}
+
+async function finalizeClosedMarketRankingMonths(currentSeasonKey) {
+  const latestClosedSeasonKey = previousMonthlyPeriodKey(currentSeasonKey);
+  const keys = monthlyPeriodKeys(
+    MARKET_MONTHLY_RANKING_START_KEY,
+    latestClosedSeasonKey,
+  );
+  const finalized = [];
+  for (const seasonKey of keys) {
+    if (await finalizeMarketRankingMonth(seasonKey)) finalized.push(seasonKey);
+  }
+  return {
+    latestClosedSeasonKey,
+    finalizedSeasonKeys: finalized,
+  };
+}
+
 function publicMarketCertificate(snapshot) {
   const value = snapshot.data();
   const sellerShop = publicSellerShop(value?.sellerShop);
-  const marketFee = integer(value?.marketFee, 1, MARKET_MAX_PRICE, 1);
+  const marketFee = integer(value?.marketFee, 1, MAX_POINTS, 1);
   const patronFundSubsidy = Math.min(
     Math.floor(marketFee / 2),
     PATRON_FUND_MAX_SUBSIDY_PER_SALE,
     marketFee - 1,
-    integer(value?.patronFundSubsidy, 0, MARKET_MAX_PRICE, 0),
+    integer(value?.patronFundSubsidy, 0, PATRON_FUND_MAX_SUBSIDY_PER_SALE, 0),
   );
   const patronFundKind = ["discovery", "trust"].includes(value?.patronFundKind)
     ? value.patronFundKind
@@ -12182,13 +13021,29 @@ function publicMarketCertificate(snapshot) {
     sellerName: cleanName(value?.sellerName),
     ...(sellerShop ? { sellerShop } : {}),
     sellerIssueNumber: integer(value?.sellerIssueNumber, 0, 1_000_000, 0),
-    purchasePrice: integer(value?.purchasePrice, MARKET_MIN_PRICE, MARKET_MAX_PRICE, MARKET_MIN_PRICE),
+    purchasePrice: integer(value?.paidAmount ?? value?.purchasePrice, 1, MAX_POINTS, 1),
+    claimAmount: integer(
+      value?.claimAmount ?? value?.purchasePrice,
+      1,
+      MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
+      1,
+    ),
+    paidAmount: integer(value?.paidAmount ?? value?.purchasePrice, 1, MAX_POINTS, 1),
+    allIn: value?.allIn === true,
+    rankingContribution: integer(
+      value?.rankingContribution,
+      0,
+      MARKET_RANKING_CONTRIBUTION_CAP,
+      value?.rankingCounted === true
+        ? marketRankingContribution(value?.paidAmount ?? value?.purchasePrice)
+        : 0,
+    ),
     marketFee,
     effectiveMarketFee: marketFee - patronFundSubsidy,
     patronFundSubsidy,
     patronFundPolicy: normalizeMarketPolicyId(value?.patronFundPolicy),
     patronFundKind,
-    sellerProceeds: integer(value?.sellerProceeds, 0, MARKET_MAX_PRICE, 0),
+    sellerProceeds: integer(value?.sellerProceeds, 0, MAX_POINTS, 0),
     closingMode: marketClosingAuditMode(value?.closingMode),
     turn: integer(value?.turn, 1, MARKET_MAX_TURNS, 1),
     extended: value?.extended === true,
@@ -12219,21 +13074,49 @@ exports.valueMarketRankings = onCall(callableOptions("valueMarketRankings"), asy
   if (action === "save_public_profile") return saveMarketPublicProfile(uid, request.data);
   if (action === "collection") return listMarketCertificates(uid);
   if (action !== "list") throw new HttpsError("invalid-argument", "未対応のランキング操作です。");
+  const rankingPeriod = cleanText(request.data?.period, 16, "monthly") || "monthly";
+  if (!["monthly", "lifetime"].includes(rankingPeriod)) {
+    throw new HttpsError("invalid-argument", "ランキング期間は月間または累計を選択してください。");
+  }
   const achievementState = await ensureAchievementState(uid);
   await syncAchievementPublicSurfaces(uid, achievementState.profile);
-
-  const [sellerSnapshot, buyerSnapshot, viewerSnapshot] = await Promise.all([
-    firestore.collection("valueMarketStats").orderBy("grossSales", "desc").limit(20).get(),
-    firestore.collection("valueMarketStats").orderBy("spent", "desc").limit(20).get(),
+  const currentSeasonKey = periodKey("monthly");
+  const finalization = await finalizeClosedMarketRankingMonths(currentSeasonKey);
+  const rankingCollection = rankingPeriod === "lifetime"
+    ? firestore.collection("valueMarketStats")
+    : currentSeasonKey >= MARKET_MONTHLY_RANKING_START_KEY
+      ? firestore.collection("valueMarketMonthlyPeriods")
+        .doc(currentSeasonKey)
+        .collection("entries")
+      : null;
+  const emptySnapshot = Object.freeze({ docs: [] });
+  const [sellerSnapshot, buyerSnapshot, viewerSnapshot, viewerHonorSnapshot] = await Promise.all([
+    rankingCollection
+      ? rankingCollection.orderBy("grossSales", "desc").limit(20).get()
+      : Promise.resolve(emptySnapshot),
+    rankingCollection
+      ? rankingCollection.orderBy("spent", "desc").limit(20).get()
+      : Promise.resolve(emptySnapshot),
     marketStatsRef(uid).get(),
+    marketRankingHonorRef(uid).get(),
   ]);
   const viewerStats = viewerSnapshot.exists ? viewerSnapshot.data() : null;
+  const viewerHonors = publicMarketRankingHonors(viewerHonorSnapshot.data(), uid);
   return {
+    period: rankingPeriod,
+    periodKey: rankingPeriod === "monthly" ? currentSeasonKey : "lifetime",
+    availablePeriods: ["monthly", "lifetime"],
+    monthlyStartKey: MARKET_MONTHLY_RANKING_START_KEY,
+    finalizedSeasonKey: finalization.latestClosedSeasonKey,
+    finalizedSeasonKeys: finalization.finalizedSeasonKeys,
+    rankingContributionCap: MARKET_RANKING_CONTRIBUTION_CAP,
     sellers: sellerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "seller", uid)).filter((entry) => entry.primary > 0),
     buyers: buyerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "buyer", uid)).filter((entry) => entry.primary > 0),
     viewerProfile: sanitizeStoredMarketPublicProfile(viewerStats?.publicProfile),
     viewerEligible: hasRankedMarketStats(viewerStats),
     viewerName: viewerStats ? cleanName(viewerStats.name) : "",
+    monthlyAchievements: viewerHonors,
+    viewerHonors,
     updatedAt: Date.now(),
   };
 });

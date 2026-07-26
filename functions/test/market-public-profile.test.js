@@ -69,6 +69,7 @@ test("public market ranking rows expose no UID or document identifier", () => {
     grossSales: 1_280,
     salesCount: 9,
     bestSale: 300,
+    uniqueCounterparties: 4,
     publicProfile: {
       xHandle: "market_player",
       tagline: "推しの価値を伝えます",
@@ -80,6 +81,7 @@ test("public market ranking rows expose no UID or document identifier", () => {
     primary: 1_280,
     count: 9,
     best: 300,
+    uniqueCounterparties: 4,
     publicProfile: {
       xHandle: "market_player",
       tagline: "推しの価値を伝えます",

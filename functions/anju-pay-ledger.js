@@ -6,7 +6,7 @@ const ANJU_PAY_LEDGER_SCHEMA_VERSION = 1;
 const ANJU_PAY_OPENING_ENTRY_ID = "opening-v1";
 const ANJU_PAY_HISTORY_DEFAULT_LIMIT = 20;
 const ANJU_PAY_HISTORY_MAX_LIMIT = 50;
-const MAX_BALANCE = 999_999;
+const MAX_BALANCE = 999_999_999;
 const MAX_COMPONENTS = 100;
 
 function boundedInteger(value, minimum, maximum, fallback = minimum) {
@@ -293,6 +293,7 @@ function sanitizeAnjuPayEntry(entryId, value) {
 }
 
 module.exports = {
+  ANJU_PAY_MAX_BALANCE: MAX_BALANCE,
   ANJU_PAY_HISTORY_DEFAULT_LIMIT,
   ANJU_PAY_HISTORY_MAX_LIMIT,
   ANJU_PAY_LEDGER_SCHEMA_VERSION,

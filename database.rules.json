@@ -630,7 +630,7 @@
           ".validate": "!newData.exists() || newData.hasChildren(['points', 'daily', 'updatedAt'])",
           "points": {
             ".write": false,
-            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999"
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999999"
           },
           "patron": {
             ".write": false,
@@ -834,7 +834,7 @@
           },
           "chat": {
             "$messageId": {
-              ".write": "auth != null && root.child('online/valueMarketRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/valueMarketRooms/' + $roomId + '/roles/' + auth.uid).val() === 'seller' && root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'pitch' && !data.exists() && newData.child('uid').val() === auth.uid",
+              ".write": "auth != null && root.child('online/valueMarketRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/valueMarketRooms/' + $roomId + '/roles/' + auth.uid).val() === 'seller' && (root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'pitch' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'oshijo_closing') && !data.exists() && newData.child('uid').val() === auth.uid",
               ".validate": "newData.hasChildren(['uid', 'name', 'text', 'turn', 'createdAt'])",
               "uid": {
                 ".validate": "newData.isString() && newData.val() === auth.uid"
@@ -851,6 +851,9 @@
               "createdAt": {
                 ".validate": "newData.isNumber() && newData.val() >= now - 300000 && newData.val() <= now + 300000"
               },
+              "phase": {
+                ".validate": "!newData.exists() || (newData.val() === 'oshijo_closing' && newData.parent().parent().parent().child('status').val() === 'oshijo_closing')"
+              },
               "$other": {
                 ".validate": false
               }
@@ -859,7 +862,7 @@
           "signals": {
             "$targetUid": {
               "$signalId": {
-                ".write": "auth != null && root.child('online/valueMarketRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/valueMarketRooms/' + $roomId + '/members/' + $targetUid).val() === true && ((data.exists() && !newData.exists() && auth.uid === $targetUid) || (!data.exists() && newData.child('fromUid').val() === auth.uid && (root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'preview' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'pitch' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'decision' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_request' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_offer')))",
+                ".write": "auth != null && root.child('online/valueMarketRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/valueMarketRooms/' + $roomId + '/members/' + $targetUid).val() === true && ((data.exists() && !newData.exists() && auth.uid === $targetUid) || (!data.exists() && newData.child('fromUid').val() === auth.uid && (root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'preview' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'pitch' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'oshijo_warning' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'oshijo_closing' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'decision' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_request' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_offer')))",
                 ".validate": "!newData.exists() || newData.hasChildren(['fromUid', 'type', 'payload', 'createdAt'])",
                 "fromUid": {
                   ".validate": "newData.isString() && newData.val() === auth.uid"
@@ -881,7 +884,7 @@
           },
           "presence": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && root.child('online/valueMarketRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/valueMarketRooms/' + $roomId + '/roles/' + auth.uid).val() === 'seller' || root.child('online/valueMarketRooms/' + $roomId + '/roles/' + auth.uid).val() === 'buyer') && (!newData.exists() || newData.child('online').val() === false || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'preview' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'pitch' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'decision' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_request' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_offer')",
+              ".write": "auth != null && auth.uid === $uid && root.child('online/valueMarketRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/valueMarketRooms/' + $roomId + '/roles/' + auth.uid).val() === 'seller' || root.child('online/valueMarketRooms/' + $roomId + '/roles/' + auth.uid).val() === 'buyer') && (!newData.exists() || newData.child('online').val() === false || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'preview' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'pitch' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'oshijo_warning' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'oshijo_closing' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'decision' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_request' || root.child('online/valueMarketRooms/' + $roomId + '/status').val() === 'extension_offer')",
               ".validate": "!newData.exists() || newData.hasChildren(['online', 'updatedAt'])",
               "online": {
                 ".validate": "newData.isBoolean()"

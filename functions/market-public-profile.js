@@ -85,6 +85,7 @@ function createMarketRankingRow(value, role, isViewer = false) {
     primary: role === "seller" ? Number(value?.grossSales || 0) : Number(value?.spent || 0),
     count: role === "seller" ? Number(value?.salesCount || 0) : Number(value?.purchases || 0),
     best: role === "seller" ? Number(value?.bestSale || 0) : Number(value?.highestPurchase || 0),
+    uniqueCounterparties: Number(value?.uniqueCounterparties || 0),
     publicProfile: sanitizeStoredMarketPublicProfile(value?.publicProfile),
     achievementShowcase: sanitizeAchievementIds(value?.publicAchievements),
     isViewer: isViewer === true,

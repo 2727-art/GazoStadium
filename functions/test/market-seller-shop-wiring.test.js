@@ -83,7 +83,7 @@ test("seller-shop UI and documentation cover identity, relationships, and safety
     "肯定タグ",
     "ブロック",
     "証書来歴",
-    "評価悪用",
+    "整合性ルール",
     "推し嬢（熱血クロージング）",
   ]) {
     assert.match(readme, new RegExp(term));
