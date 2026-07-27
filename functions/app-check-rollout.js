@@ -28,6 +28,7 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   // 接続診断は内部保存領域への書き込みとなるため、常時強制します。
   reportP2pConnectivity: true,
   reportMarketP2pConnectivity: true,
+  reportFreeTableP2pConnectivity: true,
   // 新規公開の非同期フリマは旧クライアント移行を待つ必要がないため、初日から強制します。
   anjuPayFleaAction: true,
   // 貼り合い自由卓は公開ID・承認・ブロック・通報を扱う新規サーバー境界のため、初日から強制します。

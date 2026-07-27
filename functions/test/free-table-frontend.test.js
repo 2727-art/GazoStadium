@@ -289,7 +289,8 @@ test("arrival is granted only from the dedicated DataChannel open path", () => {
   const enterEnd = frontendSource.indexOf("async function establishPresence", enterStart);
   const enterSource = frontendSource.slice(enterStart, enterEnd);
   assert.doesNotMatch(enterSource, /FREE_TABLE_ACTIONS\.ARRIVE/);
-  assert.match(frontendSource, /channel\.onopen\s*=\s*\(\)\s*=>\s*\{[\s\S]*?confirmArrivalAfterP2p\(channel\)/);
+  assert.match(frontendSource, /const markChannelReady = \(\) => \{[\s\S]*?confirmArrivalAfterP2p\(channel\)/);
+  assert.match(frontendSource, /channel\.onopen = markChannelReady/);
   const confirmStart = frontendSource.indexOf("async function confirmArrivalAfterP2p");
   const confirmEnd = frontendSource.indexOf("async function handleMediaChannelMessage", confirmStart);
   const confirmSource = frontendSource.slice(confirmStart, confirmEnd);
@@ -516,10 +517,11 @@ test("signals are generation-fenced, ordered, and recover with a fresh peer", ()
   assert.match(frontendSource, /FREE_TABLE_PEER_RECOVERY_DELAYS_MS\[attempt\]\s*\?\?\s*FREE_TABLE_PEER_RECOVERY_STEADY_MS/);
   assert.match(frontendSource, /const delay = immediate \? 0 : Math\.max\(recoveryDelay, Number\(minimumDelayMs\) \|\| 0\)/);
   assert.doesNotMatch(frontendSource, /peerRecoveryAttempts >= FREE_TABLE_PEER_RECOVERY_DELAYS_MS\.length/);
-  assert.match(frontendSource, /state\.peerRecoveryAttempts = Math\.min\(\s*attempt \+ 1,\s*FREE_TABLE_PEER_RECOVERY_DELAYS_MS\.length/);
+  assert.match(frontendSource, /const nextAttempt = Math\.min\(\s*attempt \+ 1,\s*FREE_TABLE_PEER_RECOVERY_DELAYS_MS\.length[\s\S]*?state\.peerRecoveryAttempts = nextAttempt/);
   assert.match(frontendSource, /const offerSent = await createAndSendHostOffer[\s\S]*?if \(offerSent && contextIsCurrent\(\) && !state\.mediaReady\)[\s\S]*?force: true,[\s\S]*?minimumDelayMs: FREE_TABLE_PEER_OFFER_WATCHDOG_MS/);
   assert.match(frontendSource, /const failed = peer\.connectionState === "failed" \|\| peer\.iceConnectionState === "failed";[\s\S]*?immediate: failed,[\s\S]*?force: failed/);
-  assert.match(frontendSource, /channel\.onopen = \(\) => \{[\s\S]*?clearPeerRecoveryTimer\(\);[\s\S]*?state\.peerRecoveryAttempts = 0/);
+  assert.match(frontendSource, /const markChannelReady = \(\) => \{[\s\S]*?clearPeerRecoveryTimer\(\);[\s\S]*?state\.peerRecoveryAttempts = 0/);
+  assert.match(frontendSource, /if \(channel\.readyState === "open"\) markChannelReady\(\)/);
   assert.match(frontendSource, /if \(state\.peerRecoveryTimer\) \{\s*if \(!immediate && \(!force \|\| state\.peerRecoveryForced\)\) return;[\s\S]*?window\.clearTimeout\(state\.peerRecoveryTimer\)/);
   assert.match(frontendSource, /if \(!state\.peerRecoveryForced\) \{\s*clearPeerRecoveryTimer\(\)/);
   const cleanupStart = frontendSource.indexOf("function cleanupSession");

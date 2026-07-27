@@ -116,6 +116,10 @@ const {
   createFreeTableService,
 } = require("./free-table");
 const {
+  currentFreeTableP2pDiagnosticContext,
+  freeTableP2pDiagnosticIdIsSafe,
+} = require("./free-table-p2p-diagnostics");
+const {
   MARKET_RANKING_CONTRIBUTION_CAP,
   applyMarketRankingHonor,
   applyMonthlyMarketSale,
@@ -448,6 +452,21 @@ function requireMarketP2pDiagnosticCallableData(value) {
   return value;
 }
 
+function requireFreeTableP2pDiagnosticCallableData(value) {
+  const allowedKeys = new Set(["sessionId", "diagnostic"]);
+  if (!isPlainCallableObject(value)
+      || Reflect.ownKeys(value).some((key) => (
+        typeof key !== "string" || !allowedKeys.has(key)
+      ))
+      || ![...allowedKeys].every((key) => Object.hasOwn(value, key))
+      || !freeTableP2pDiagnosticIdIsSafe(value.sessionId)
+      || !isPlainCallableObject(value.diagnostic)
+      || value.diagnostic.phase !== "free_table") {
+    throw new HttpsError("invalid-argument", "自由卓接続診断の形式が正しくありません。");
+  }
+  return value;
+}
+
 async function requireCurrentP2pDiagnosticContext(uid, data, now = Date.now()) {
   if (!isSafeToken(data.sessionId)
       || !/^[-0-9A-Z_a-z]{20}$/.test(String(data.roomId || ""))) {
@@ -473,6 +492,31 @@ async function requireCurrentP2pDiagnosticContext(uid, data, now = Date.now()) {
       "現在の通常版1on1接続として確認できませんでした。",
     );
   }
+}
+
+async function requireCurrentFreeTableP2pDiagnosticContext(
+  uid,
+  data,
+  now = Date.now(),
+) {
+  const [sessionSnapshot, activeSnapshot] = await Promise.all([
+    realtime.ref(`freeTables/sessions/${data.sessionId}`).get(),
+    realtime.ref(`freeTables/active/${uid}`).get(),
+  ]);
+  const context = currentFreeTableP2pDiagnosticContext({
+    uid,
+    sessionId: data.sessionId,
+    sessionValue: sessionSnapshot.val(),
+    activeValue: activeSnapshot.val(),
+    now,
+  });
+  if (!context) {
+    throw new HttpsError(
+      "failed-precondition",
+      "現在の貼り合い自由卓接続として確認できませんでした。",
+    );
+  }
+  return context;
 }
 
 function readCloudflareTurnApiToken() {
@@ -844,6 +888,81 @@ exports.reportMarketP2pConnectivity = onCall(
         safeP2PConnectivityError(error, "diagnostic_write"),
       );
       throw new HttpsError("unavailable", "市場接続診断を送信できませんでした。");
+    }
+    return { accepted: true };
+  },
+);
+
+exports.reportFreeTableP2pConnectivity = onCall(
+  callableOptions("reportFreeTableP2pConnectivity", [P2P_DIAGNOSTIC_HMAC_SECRET]),
+  async (request) => {
+    const uid = requireUid(request);
+    const data = requireFreeTableP2pDiagnosticCallableData(request.data);
+    const now = Date.now();
+    const context = await requireCurrentFreeTableP2pDiagnosticContext(uid, data, now);
+    let hmacSecret;
+    try {
+      hmacSecret = readP2pDiagnosticHmacSecret();
+    } catch (error) {
+      console.warn(
+        "reportFreeTableP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "自由卓接続診断を送信できませんでした。");
+    }
+    let record;
+    try {
+      record = createP2PDiagnosticRecord({
+        uid,
+        sessionId: `free-table-session-${context.sessionId}`,
+        roomId: `free-table-session-${context.sessionId}`,
+        hmacSecret,
+        payload: data.diagnostic,
+        now,
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new HttpsError(
+          "invalid-argument",
+          "自由卓接続診断の形式が正しくありません。",
+        );
+      }
+      console.warn(
+        "reportFreeTableP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "自由卓接続診断を送信できませんでした。");
+    }
+    await consumeP2pConnectivityRateLimit(
+      uid,
+      "diagnostic",
+      P2P_DIAGNOSTIC_RATE_LIMIT_POLICY,
+    );
+    try {
+      const eventId = realtime.ref(`online/p2pDiagnostics/${record.day}`).push().key;
+      if (!eventId) throw new Error("Free table P2P diagnostic id was not generated");
+      await realtime.ref().update({
+        [`online/p2pDiagnostics/${record.day}/${eventId}`]: {
+          ...record,
+          retentionDays: P2P_DIAGNOSTIC_RETENTION_DAYS,
+          deleteAt: now + P2P_DIAGNOSTIC_RETENTION_MS,
+        },
+        [`online/p2pDiagnosticDays/${record.day}`]: true,
+      });
+    } catch (error) {
+      console.warn(
+        "reportFreeTableP2pConnectivity unavailable",
+        safeP2PConnectivityError(error, "diagnostic_write"),
+      );
+      throw new HttpsError("unavailable", "自由卓接続診断を送信できませんでした。");
+    }
+    try {
+      await maybeCleanupExpiredP2pDiagnostics(now);
+    } catch (error) {
+      console.warn(
+        "P2P diagnostic retention cleanup unavailable",
+        safeP2PConnectivityError(error, "retention_cleanup"),
+      );
     }
     return { accepted: true };
   },

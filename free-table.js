@@ -154,6 +154,10 @@ const FREE_TABLE_DEPARTURE_PRESETS = Object.freeze([
 const freeTableActionCallable = httpsCallable(functions, "freeTableAction");
 const freeTableInviteActionCallable = httpsCallable(functions, "freeTableInviteAction");
 const freeTableInvitePreviewCallable = httpsCallable(functions, "freeTableInvitePreview");
+const reportFreeTableP2pConnectivityCallable = httpsCallable(
+  functions,
+  "reportFreeTableP2pConnectivity",
+);
 const app = document.querySelector("#app");
 
 let active = false;
@@ -245,11 +249,15 @@ function createFreeTableState() {
     peerRecoveryTimer: null,
     peerRecoveryForced: false,
     peerRecoveryAttempts: 0,
+    peerTurnAvailable: false,
+    peerStartedAt: 0,
+    peerDiagnosticSent: new Set(),
     hostOfferInFlight: false,
     negotiationCreatedAt: 0,
     negotiationOfferKey: "",
     pendingIce: [],
     signalDraining: false,
+    signalDrainOwner: null,
     deferredSignals: [],
     mediaChannel: null,
     mediaReady: false,
@@ -3291,7 +3299,8 @@ function armSessionExpiryTimer(
       || expiresAt <= 0) return;
   const serverNow = Date.now() + Number(state.serverTimeOffset || 0);
   const delay = Math.max(0, expiresAt - serverNow + 50);
-  state.sessionExpiryTimer = window.setTimeout(() => {
+  const expiryTimer = window.setTimeout(() => {
+    if (state.sessionExpiryTimer !== expiryTimer) return;
     state.sessionExpiryTimer = null;
     if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
     const currentExpiresAt = Number(state.session?.expiresAt || 0);
@@ -3302,6 +3311,7 @@ function armSessionExpiryTimer(
     }
     armSessionExpiryTimer(sessionId, sessionGeneration, currentExpiresAt);
   }, delay);
+  state.sessionExpiryTimer = expiryTimer;
 }
 
 async function enterSession(sessionId, initialSession = null) {
@@ -3532,13 +3542,88 @@ async function loadIceConfiguration() {
     try {
       const configuration = await loader();
       if (Array.isArray(configuration?.iceServers) && configuration.iceServers.length) {
-        return { iceServers: configuration.iceServers };
+        return {
+          iceServers: configuration.iceServers,
+          turnAvailable: configuration.turnAvailable === true,
+        };
       }
     } catch {
       console.warn("自由卓のTURN設定を取得できなかったため、STUN接続を試します。");
     }
   }
-  return { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+  return {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    turnAvailable: false,
+  };
+}
+
+async function selectedFreeTableCandidateSummary(peer) {
+  if (!peer?.getStats) return { candidateType: "none", transport: "none" };
+  try {
+    const stats = await peer.getStats();
+    let selectedPair = null;
+    for (const report of stats.values()) {
+      if (report.type === "transport" && report.selectedCandidatePairId) {
+        selectedPair = stats.get(report.selectedCandidatePairId);
+        break;
+      }
+      if (report.type === "candidate-pair" && report.state === "succeeded"
+          && (report.selected === true || report.nominated === true)) {
+        selectedPair = report;
+      }
+    }
+    const candidate = selectedPair?.localCandidateId
+      ? stats.get(selectedPair.localCandidateId)
+      : null;
+    const candidateType = ["host", "srflx", "prflx", "relay"].includes(candidate?.candidateType)
+      ? candidate.candidateType
+      : "none";
+    const rawTransport = String(candidate?.relayProtocol || candidate?.protocol || "none");
+    const transport = ["udp", "tcp", "tls"].includes(rawTransport) ? rawTransport : "none";
+    return { candidateType, transport };
+  } catch {
+    return { candidateType: "unknown", transport: "unknown" };
+  }
+}
+
+async function reportFreeTableP2pDiagnostic(event, peer = state.peer, {
+  sessionId = state.sessionId,
+  sessionGeneration = state.sessionGeneration,
+  peerGeneration = state.peerGeneration,
+  attempt = state.peerRecoveryAttempts,
+  peerStartedAt = state.peerStartedAt,
+  turnAvailable = state.peerTurnAvailable,
+} = {}) {
+  const diagnosticState = state;
+  if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
+  const normalizedAttempt = Math.min(3, Math.max(0, Math.trunc(Number(attempt) || 0)));
+  const dedupeKey = `${peerGeneration}:${event}:${normalizedAttempt}`;
+  if (diagnosticState.peerDiagnosticSent.has(dedupeKey)) return;
+  diagnosticState.peerDiagnosticSent.add(dedupeKey);
+  const connectionState = String(peer?.connectionState || "unknown");
+  const iceConnectionState = String(peer?.iceConnectionState || "unknown");
+  const iceGatheringState = String(peer?.iceGatheringState || "unknown");
+  const candidate = await selectedFreeTableCandidateSummary(peer);
+  if (state !== diagnosticState
+      || !sessionContextIsCurrent(sessionId, sessionGeneration)) return;
+  reportFreeTableP2pConnectivityCallable({
+    sessionId,
+    diagnostic: {
+      event,
+      phase: "free_table",
+      turnAvailable: turnAvailable === true,
+      connectionState,
+      iceConnectionState,
+      iceGatheringState,
+      candidateType: candidate.candidateType,
+      transport: candidate.transport,
+      attempt: normalizedAttempt,
+      elapsedMs: Math.min(
+        10 * 60 * 1000,
+        Math.max(0, Date.now() - Number(peerStartedAt || Date.now())),
+      ),
+    },
+  }).catch(() => {});
 }
 
 function createNegotiationId() {
@@ -3571,6 +3656,8 @@ function resetPeerTransport({
   preservePendingIce = false,
 } = {}) {
   clearPeerRecoveryTimer();
+  state.signalDrainOwner = null;
+  state.signalDraining = false;
   state.mediaGeneration += 1;
   state.mediaReady = false;
   state.mediaProgress = 0;
@@ -3652,6 +3739,7 @@ function schedulePeerRecovery(peer, {
   immediate = false,
   force = false,
   minimumDelayMs = 0,
+  diagnosticEvent = "",
 } = {}) {
   if (!peerContextIsCurrent(peer, sessionId, peerGeneration)
       || !isHost()
@@ -3668,16 +3756,32 @@ function schedulePeerRecovery(peer, {
     ?? FREE_TABLE_PEER_RECOVERY_STEADY_MS;
   const delay = immediate ? 0 : Math.max(recoveryDelay, Number(minimumDelayMs) || 0);
   state.peerRecoveryForced = force;
-  state.peerRecoveryTimer = window.setTimeout(async () => {
+  const recoveryTimer = window.setTimeout(async () => {
+    if (state.peerRecoveryTimer !== recoveryTimer) return;
     state.peerRecoveryTimer = null;
     state.peerRecoveryForced = false;
     if (!sessionContextIsCurrent(sessionId, sessionGeneration)
         || !peerContextIsCurrent(peer, sessionId, peerGeneration)
         || (!force && !peerNeedsRecovery(peer))) return;
-    state.peerRecoveryAttempts = Math.min(
+    const nextAttempt = Math.min(
       attempt + 1,
       FREE_TABLE_PEER_RECOVERY_DELAYS_MS.length,
     );
+    if (diagnosticEvent) {
+      reportFreeTableP2pDiagnostic(diagnosticEvent, peer, {
+        sessionId,
+        sessionGeneration,
+        peerGeneration,
+        attempt,
+      }).catch(() => {});
+    }
+    reportFreeTableP2pDiagnostic("restart_started", peer, {
+      sessionId,
+      sessionGeneration,
+      peerGeneration,
+      attempt: nextAttempt,
+    }).catch(() => {});
+    state.peerRecoveryAttempts = nextAttempt;
     resetPeerTransport({
       preserveDeferredSignals: true,
       preserveRecoveryAttempts: true,
@@ -3690,6 +3794,7 @@ function schedulePeerRecovery(peer, {
       }
     }
   }, delay);
+  state.peerRecoveryTimer = recoveryTimer;
 }
 
 async function setupPeerConnection() {
@@ -3704,7 +3809,8 @@ async function setupPeerConnection() {
   const opponentUid = state.opponentUid;
   const uid = state.uid;
   const peerGeneration = ++state.peerGeneration;
-  const peer = new RTCPeerConnection(await loadIceConfiguration());
+  const iceConfiguration = await loadIceConfiguration();
+  const peer = new RTCPeerConnection({ iceServers: iceConfiguration.iceServers });
   if (!sessionContextIsCurrent(sessionId, sessionGeneration)
       || state.peerGeneration !== peerGeneration
       || state.opponentUid !== opponentUid
@@ -3713,12 +3819,26 @@ async function setupPeerConnection() {
     return;
   }
   state.peer = peer;
+  state.peerTurnAvailable = iceConfiguration.turnAvailable === true;
+  state.peerStartedAt = Date.now();
   const contextIsCurrent = () => (
     peerContextIsCurrent(peer, sessionId, peerGeneration)
     && state.sessionGeneration === sessionGeneration
     && state.opponentUid === opponentUid
     && state.uid === uid
   );
+  reportFreeTableP2pDiagnostic("peer_created", peer, {
+    sessionId,
+    sessionGeneration,
+    peerGeneration,
+  }).catch(() => {});
+  if (!state.peerTurnAvailable) {
+    reportFreeTableP2pDiagnostic("turn_unavailable", peer, {
+      sessionId,
+      sessionGeneration,
+      peerGeneration,
+    }).catch(() => {});
+  }
   peer.onicecandidate = (event) => {
     const negotiationId = state.negotiationId;
     if (event.candidate
@@ -3744,6 +3864,11 @@ async function setupPeerConnection() {
     } else if (peerNeedsRecovery(peer)) {
       state.mediaReady = false;
       const failed = peer.connectionState === "failed" || peer.iceConnectionState === "failed";
+      reportFreeTableP2pDiagnostic(failed ? "ice_failed" : "ice_disconnected", peer, {
+        sessionId,
+        sessionGeneration,
+        peerGeneration,
+      }).catch(() => {});
       schedulePeerRecovery(peer, {
         sessionId,
         peerGeneration,
@@ -3797,6 +3922,7 @@ async function setupPeerConnection() {
           peerGeneration,
           force: true,
           minimumDelayMs: FREE_TABLE_PEER_OFFER_WATCHDOG_MS,
+          diagnosticEvent: "connection_timeout",
         });
       }
     } catch (error) {
@@ -3960,21 +4086,36 @@ async function handleSignal(rawSignal, {
 async function drainDeferredSignals() {
   if (state.signalDraining || !state.peer || !state.deferredSignals.length) return;
   const sessionId = state.sessionId;
+  const sessionGeneration = state.sessionGeneration;
   const peer = state.peer;
   const peerGeneration = state.peerGeneration;
   const opponentUid = state.opponentUid;
   const uid = state.uid;
   const role = state.role;
+  const drainOwner = {
+    sessionId,
+    sessionGeneration,
+    peer,
+    peerGeneration,
+  };
+  const drainContextIsCurrent = () => (
+    sessionContextIsCurrent(sessionId, sessionGeneration)
+    && state.peer === peer
+    && state.peerGeneration === peerGeneration
+    && state.opponentUid === opponentUid
+    && state.uid === uid
+    && state.role === role
+  );
+  const signalSessionContextIsCurrent = () => (
+    sessionContextIsCurrent(sessionId, sessionGeneration)
+    && state.opponentUid === opponentUid
+    && state.uid === uid
+    && state.role === role
+  );
+  state.signalDrainOwner = drainOwner;
   state.signalDraining = true;
   try {
-    while (active
-        && state.sessionId === sessionId
-        && state.peer === peer
-        && state.peerGeneration === peerGeneration
-        && state.opponentUid === opponentUid
-        && state.uid === uid
-        && state.role === role
-        && state.deferredSignals.length) {
+    while (drainContextIsCurrent() && state.deferredSignals.length) {
       const snapshot = state.deferredSignals.shift();
       try {
         const consumed = await handleSignal(snapshot.val(), {
@@ -3986,9 +4127,12 @@ async function drainDeferredSignals() {
           role,
           signalKey: snapshot.key,
         });
+        if (!drainContextIsCurrent()) {
+          if (signalSessionContextIsCurrent()) queueDeferredSignal(snapshot);
+          break;
+        }
         if (consumed?.replacePeerFor) {
           state.deferredSignals.unshift(snapshot);
-          state.signalDraining = false;
           resetPeerTransport({
             preserveDeferredSignals: true,
             preserveRecoveryAttempts: true,
@@ -4005,17 +4149,20 @@ async function drainDeferredSignals() {
           queueDeferredSignal(snapshot);
         }
       } catch {
+        if (!drainContextIsCurrent()) {
+          if (signalSessionContextIsCurrent()) queueDeferredSignal(snapshot);
+          break;
+        }
         console.warn("自由卓の接続信号を破棄しました。");
       }
     }
   } finally {
-    if (state.sessionId === sessionId
-        && state.peer === peer
-        && state.peerGeneration === peerGeneration) {
+    if (state.signalDrainOwner === drainOwner) {
+      state.signalDrainOwner = null;
       state.signalDraining = false;
-      if (active && state.deferredSignals.length) {
-        queueMicrotask(() => drainDeferredSignals().catch(handleError));
-      }
+    }
+    if (active && state.deferredSignals.length && !state.signalDraining) {
+      queueMicrotask(() => drainDeferredSignals().catch(handleError));
     }
   }
 }
@@ -4026,17 +4173,47 @@ async function flushPendingIce(
   negotiationId = state.negotiationId,
   peerGeneration = state.peerGeneration,
 ) {
+  const sessionGeneration = state.sessionGeneration;
   const queued = state.pendingIce.splice(0);
   const retained = [];
-  for (const entry of queued) {
+  const restoreQueuedIce = (entries) => {
+    if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
+    const seen = new Set();
+    state.pendingIce = [...entries, ...state.pendingIce]
+      .filter((entry) => {
+        const candidate = valueFromSnapshot(entry?.candidate);
+        const key = JSON.stringify([
+          String(entry?.negotiationId || ""),
+          String(candidate.candidate || ""),
+          candidate.sdpMid == null ? null : String(candidate.sdpMid),
+          candidate.sdpMLineIndex == null ? null : Number(candidate.sdpMLineIndex),
+          candidate.usernameFragment == null ? null : String(candidate.usernameFragment),
+        ]);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(-FREE_TABLE_SIGNAL_LIMIT);
+  };
+  for (let index = 0; index < queued.length; index += 1) {
+    const entry = queued[index];
     if (!peerContextIsCurrent(peer, sessionId, peerGeneration)
         || state.negotiationId !== negotiationId
-        || !peer?.remoteDescription) return;
+        || !peer?.remoteDescription) {
+      restoreQueuedIce(queued);
+      return;
+    }
     if (entry.negotiationId !== negotiationId) {
       retained.push(entry);
       continue;
     }
     await peer.addIceCandidate(entry.candidate).catch(() => {});
+    if (!peerContextIsCurrent(peer, sessionId, peerGeneration)
+        || state.negotiationId !== negotiationId
+        || !peer?.remoteDescription) {
+      restoreQueuedIce(queued);
+      return;
+    }
   }
   if (peerContextIsCurrent(peer, sessionId, peerGeneration)
       && state.negotiationId === negotiationId) {
@@ -4078,15 +4255,26 @@ function configureMediaDataChannel(channel, {
   const handleContextError = (error) => {
     if (contextIsCurrent()) handleSessionAuxiliaryError(error);
   };
-  channel.binaryType = "arraybuffer";
-  channel.onopen = () => {
+  const markChannelReady = () => {
     if (!contextIsCurrent()) return;
+    const wasReady = state.mediaReady;
+    const recoveryAttempt = state.peerRecoveryAttempts;
     state.mediaReady = true;
     clearPeerRecoveryTimer();
     state.peerRecoveryAttempts = 0;
-    confirmArrivalAfterP2p(channel).catch(handleContextError);
+    if (!wasReady) {
+      reportFreeTableP2pDiagnostic("channel_open", peer, {
+        sessionId,
+        sessionGeneration,
+        peerGeneration,
+        attempt: recoveryAttempt,
+      }).catch(() => {});
+      confirmArrivalAfterP2p(channel).catch(handleContextError);
+    }
     render();
   };
+  channel.binaryType = "arraybuffer";
+  channel.onopen = markChannelReady;
   channel.onclose = () => {
     if (!contextIsCurrent()) return;
     state.mediaGeneration += 1;
@@ -4136,11 +4324,7 @@ function configureMediaDataChannel(channel, {
         handleContextError(error);
       });
   };
-  if (channel.readyState === "open" && contextIsCurrent()) {
-    state.mediaReady = true;
-    confirmArrivalAfterP2p(channel).catch(handleContextError);
-    render();
-  }
+  if (channel.readyState === "open") markChannelReady();
 }
 
 function arrivalFailureIsTerminal(error) {
@@ -5072,8 +5256,12 @@ function cleanupSession({ keepIdentity = false, preserveOnDisconnect = false } =
   state.negotiationOfferKey = "";
   state.hostOfferInFlight = false;
   state.peerRecoveryAttempts = 0;
+  state.peerTurnAvailable = false;
+  state.peerStartedAt = 0;
+  state.peerDiagnosticSent.clear();
   state.pendingIce = [];
   state.deferredSignals = [];
+  state.signalDrainOwner = null;
   state.signalDraining = false;
   state.mediaProgress = 0;
   state.arrived = false;

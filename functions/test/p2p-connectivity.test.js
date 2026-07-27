@@ -185,6 +185,27 @@ test("anonymous diagnostics retain only connection state, candidate type, transp
   });
 });
 
+test("free-table diagnostics use the shared sanitized schema", () => {
+  assert.deepEqual(sanitizeP2PDiagnosticPayload({
+    event: "connection_timeout",
+    phase: "free_table",
+    turnAvailable: true,
+    connectionState: "connecting",
+    iceConnectionState: "checking",
+    attempt: 2,
+    elapsedMs: 35_000,
+  }), {
+    schemaVersion: 1,
+    event: "connection_timeout",
+    phase: "free_table",
+    turnAvailable: true,
+    connectionState: "connecting",
+    iceConnectionState: "checking",
+    attempt: 2,
+    elapsedMs: 35_000,
+  });
+});
+
 test("anonymous diagnostics reject raw IP, SDP, ICE candidate, identity, and arbitrary fields", () => {
   const base = {
     event: "ice_failed",
