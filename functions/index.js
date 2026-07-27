@@ -13131,6 +13131,39 @@ exports.freeTableAction = onCall(callableOptions("freeTableAction"), async (requ
   }
 });
 
+exports.freeTableInviteAction = onCall(
+  callableOptions("freeTableInviteAction"),
+  async (request) => {
+    const uid = requireUid(request);
+    try {
+      return await freeTableService.performInviteAction(uid, request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("freeTableInviteAction failed", {
+        uid,
+        action: request.data?.action,
+        error,
+      });
+      throw new HttpsError("internal", "灯り札の処理を完了できませんでした。");
+    }
+  },
+);
+
+exports.freeTableInvitePreview = onCall(
+  callableOptions("freeTableInvitePreview"),
+  async (request) => {
+    try {
+      return await freeTableService.getInvitePreview(request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("freeTableInvitePreview failed", {
+        code: typeof error?.code === "string" ? error.code : "unknown",
+      });
+      throw new HttpsError("internal", "灯り札を読み込めませんでした。");
+    }
+  },
+);
+
 exports.freeTablePublicStats = onCall(
   callableOptions("freeTablePublicStats"),
   async (request) => {

@@ -532,6 +532,7 @@ test("host-visible request projection contains a random member id but no uid", (
     publicMemberId: ID_B,
     hostUid: "secret-host",
     visitorUid: "secret-visitor",
+    sourceInviteId: "I".repeat(32),
     visitorCard: card(),
     requestedAt: NOW,
     expiresAt: NOW + 120_000,
@@ -544,6 +545,7 @@ test("host-visible request projection contains a random member id but no uid", (
     "expiresAt",
   ]);
   assert.doesNotMatch(JSON.stringify(projection), /secret-host|secret-visitor|Uid/);
+  assert.equal(JSON.stringify(projection).includes("I".repeat(32)), false);
 });
 
 test("one host claim and one visitor pending claim stay unique while fresh", () => {

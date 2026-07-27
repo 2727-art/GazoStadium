@@ -76,6 +76,12 @@ const FREE_TABLE_RETAINED_MEDIA_MAX_BYTES = 12 * 1024 * 1024;
 const FREE_TABLE_IGNORED_SESSION_STORAGE_KEY = "hariaiFreeTableIgnoredSessionsV1";
 const FREE_TABLE_IGNORED_SESSION_TTL_MS = 6 * 60 * 60 * 1_000;
 const FREE_TABLE_END_RETRY_DELAYS_MS = Object.freeze([0, 1_000, 3_000, 10_000, 30_000, 60_000, 120_000]);
+const FREE_TABLE_INVITE_QUERY_KEY = "freeTableInvite";
+const FREE_TABLE_INVITE_ID_PATTERN = /^[A-Za-z0-9_-]{32}$/;
+const FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH = 120;
+const FREE_TABLE_INVITE_PREVIEW_REFRESH_MS = 30_000;
+const FREE_TABLE_INVITE_PREVIEW_MAX_BACKOFF_MS = 4 * 60_000;
 const FREE_TABLE_ACTIONS = Object.freeze({
   SAVE_SPACE: "save_space",
   OPEN: "open",
@@ -91,6 +97,7 @@ const FREE_TABLE_ACTIONS = Object.freeze({
   UNBLOCK: "unblock",
   REPORT: "report",
   GET_MY_STATE: "get_my_state",
+  REQUEST_FROM_INVITE: "request_from_invite",
 });
 const FREE_TABLE_TABS = new Set(["open", "bookmarks", "mine"]);
 const FREE_TABLE_ROLEPLAY_LEVELS = Object.freeze({
@@ -123,6 +130,8 @@ const FREE_TABLE_DEPARTURE_PRESETS = Object.freeze([
 ]);
 
 const freeTableActionCallable = httpsCallable(functions, "freeTableAction");
+const freeTableInviteActionCallable = httpsCallable(functions, "freeTableInviteAction");
+const freeTableInvitePreviewCallable = httpsCallable(functions, "freeTableInvitePreview");
 const app = document.querySelector("#app");
 
 let active = false;
@@ -143,6 +152,7 @@ function createFreeTableState() {
     busy: false,
     error: "",
     uid: "",
+    authenticatedReady: false,
     serverTimeOffset: 0,
     publicMemberId: "",
     myState: null,
@@ -157,6 +167,21 @@ function createFreeTableState() {
       stageId: "none",
       topicToolbox: [],
     },
+    inviteId: "",
+    invitePreviewStatus: "idle",
+    invitePreview: null,
+    invitePreviewTimer: null,
+    invitePreviewRequest: null,
+    invitePreviewFailureCount: 0,
+    inviteAuthenticated: false,
+    inviteAuthenticating: false,
+    inviteReporting: false,
+    inviteReportedPreviewHash: "",
+    hostInvite: null,
+    hostInvitePanelOpen: false,
+    hostInviteShareText: "",
+    hostInviteImageBusy: false,
+    hostInviteExpiryTimer: null,
     selectedRoomId: "",
     publicRoomId: "",
     roomId: "",
@@ -574,6 +599,85 @@ function normalizePublicRoom(value, id = "") {
   };
 }
 
+function normalizeInviteId(value) {
+  const inviteId = String(value || "").trim();
+  return FREE_TABLE_INVITE_ID_PATTERN.test(inviteId) ? inviteId : "";
+}
+
+function normalizeHostInvite(value) {
+  const source = valueFromSnapshot(value);
+  const inviteId = normalizeInviteId(source.inviteId);
+  const expiresAt = Number(source.expiresAt || 0);
+  if (!inviteId || !Number.isFinite(expiresAt) || expiresAt <= 0) return null;
+  return { inviteId, expiresAt };
+}
+
+function hostInviteIsLive(invite = state.hostInvite) {
+  if (!invite) return false;
+  const serverNow = Date.now() + Number(state.serverTimeOffset || 0);
+  return normalizeInviteId(invite.inviteId)
+    && Number.isFinite(Number(invite.expiresAt))
+    && Number(invite.expiresAt) > serverNow;
+}
+
+function clearHostInviteUi({ keepPanelOpen = false } = {}) {
+  if (state.hostInviteExpiryTimer) window.clearTimeout(state.hostInviteExpiryTimer);
+  state.hostInviteExpiryTimer = null;
+  state.hostInvite = null;
+  state.hostInvitePanelOpen = Boolean(keepPanelOpen);
+  state.hostInviteShareText = "";
+  state.hostInviteImageBusy = false;
+}
+
+function armHostInviteExpiry(invite = state.hostInvite) {
+  if (state.hostInviteExpiryTimer) window.clearTimeout(state.hostInviteExpiryTimer);
+  state.hostInviteExpiryTimer = null;
+  if (!hostInviteIsLive(invite)) return;
+  const inviteState = state;
+  const inviteId = invite.inviteId;
+  const serverNow = Date.now() + Number(state.serverTimeOffset || 0);
+  const delay = Math.max(0, Number(invite.expiresAt) - serverNow + 50);
+  inviteState.hostInviteExpiryTimer = window.setTimeout(() => {
+    inviteState.hostInviteExpiryTimer = null;
+    if (state !== inviteState || state.hostInvite?.inviteId !== inviteId) return;
+    clearHostInviteUi({ keepPanelOpen: true });
+    if (active && state.roomOpen) render();
+  }, delay);
+}
+
+function normalizeInvitePreview(value, expectedInviteId = "") {
+  const data = valueFromSnapshot(value);
+  const inviteId = normalizeInviteId(data.inviteId);
+  const expected = normalizeInviteId(expectedInviteId);
+  const previewHash = String(data.previewHash || "");
+  const source = valueFromSnapshot(data.preview);
+  const rawSpace = valueFromSnapshot(source.space);
+  const open = Boolean(data.ok !== false
+    && data.active === true
+    && data.state === "open"
+    && inviteId
+    && FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN.test(previewHash)
+    && (!expected || inviteId === expected)
+    && boundedText(rawSpace.name, 24)
+    && boundedText(rawSpace.topic, 60));
+  if (!open) {
+    return {
+      active: false,
+      inviteId: expected || inviteId,
+      updatedAt: Number(data.updatedAt || 0),
+    };
+  }
+  return {
+    active: true,
+    inviteId,
+    expiresAt: Number(data.expiresAt || 0),
+    updatedAt: Number(data.updatedAt || 0),
+    previewHash,
+    space: normalizeSpace(rawSpace),
+    hostDisplayName: boundedText(source.hostDisplayName, 24),
+  };
+}
+
 function normalizeRequest(value, id = "") {
   const source = valueFromSnapshot(value);
   return {
@@ -676,6 +780,13 @@ async function callFreeTableAction(action, payload = {}) {
   const response = await freeTableActionCallable({ action, ...payload });
   const data = valueFromSnapshot(response?.data);
   if (data.ok === false) throw new Error(data.message || "自由卓の操作を完了できませんでした。");
+  return data;
+}
+
+async function callFreeTableInviteAction(action, payload = {}) {
+  const response = await freeTableInviteActionCallable({ action, ...payload });
+  const data = valueFromSnapshot(response?.data);
+  if (data.ok === false) throw new Error(data.message || "灯り札の操作を完了できませんでした。");
   return data;
 }
 
@@ -875,6 +986,7 @@ function applyMyState(value, { suppressSessionResume = false } = {}) {
     || state.publicRoomId,
   );
   state.roomOpen = Boolean(openRoom);
+  if (!state.roomOpen && state.hostInvite) clearHostInviteUi();
   state.requests = (Array.isArray(data.requests) ? data.requests : [])
     .map((request) => normalizeRequest(request))
     .filter((request) => request.id);
@@ -1017,6 +1129,7 @@ function startHallRefresh(expectedGeneration = state.generation) {
     const preservingUnsavedSetup = state.formDirty && (
       state.screen === "room"
       || (state.screen === "hall" && state.tab === "mine" && !state.roomOpen)
+      || (state.screen === "invite" && state.inviteAuthenticated)
     );
     if (preservingUnsavedSetup) return;
     const refreshOptions = { expectedSessionGeneration: sessionGeneration, requireNoSession: true };
@@ -1094,10 +1207,10 @@ function saveSpaceFromForm(form) {
   return { space, hostCard };
 }
 
-function visitorCardFromForm(form) {
+function visitorCardFromForm(form, allowedMedia = null) {
   const data = new FormData(form);
   const room = roomById(state.selectedRoomId);
-  const allowed = room?.space.media || {};
+  const allowed = allowedMedia || room?.space.media || {};
   const card = normalizeCard({
     name: data.get("visitorName"),
     activityTag: data.get("visitorActivityTag"),
@@ -1124,6 +1237,219 @@ function mediaLabels(media) {
   if (media?.audio) values.push("10秒音声");
   if (media?.video) values.push("10秒動画");
   return values;
+}
+
+function freeTableInviteUrl(inviteId = state.hostInvite?.inviteId || state.inviteId) {
+  const normalizedInviteId = normalizeInviteId(inviteId);
+  if (!normalizedInviteId) return "";
+  const base = String(shared()?.officialGameUrl || `${location.origin}${location.pathname}`);
+  const url = new URL(base, location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set(FREE_TABLE_INVITE_QUERY_KEY, normalizedInviteId);
+  return url.toString();
+}
+
+function defaultInviteShareText(space = state.space) {
+  const normalizedSpace = normalizeSpace(space);
+  const roomName = boundedText(normalizedSpace.name, 18);
+  const topic = boundedText(normalizedSpace.topic, 36);
+  const media = mediaLabels(normalizedSpace.media);
+  const mediaPhrase = media.length > 1
+    ? `${media.slice(0, -1).join("、")}や${media.at(-1)}`
+    : media[0];
+  return boundedText([
+    `今夜、「${roomName}」に灯りをつけました。`,
+    "",
+    `「${topic}」`,
+    `${mediaPhrase}で、${FREE_TABLE_DURATIONS[normalizedSpace.duration]}。手ぶらでもどうぞ。`,
+  ].join("\n"), FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH);
+}
+
+function currentInviteShareText() {
+  return boundedText(
+    state.hostInviteShareText || defaultInviteShareText(),
+    FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH,
+  );
+}
+
+function createXInvitePostUrl(text = currentInviteShareText(), inviteUrl = freeTableInviteUrl()) {
+  const url = new URL("https://x.com/intent/tweet");
+  url.searchParams.set("text", boundedText(text, FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH));
+  if (inviteUrl) url.searchParams.set("url", inviteUrl);
+  url.searchParams.set("lang", "ja");
+  return url.toString();
+}
+
+function formatInviteExpiry(expiresAt) {
+  const value = Number(expiresAt || 0);
+  if (!Number.isFinite(value) || value <= 0) return "部屋を閉じるまで";
+  return `${new Intl.DateTimeFormat("ja-JP", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value))}ごろまで`;
+}
+
+function inviteCanvasPalette(themeId) {
+  const palettes = {
+    engawa: ["#382820", "#b96c48", "#f8dfae", "#637e69"],
+    kitchen: ["#3a211b", "#c97646", "#ffe0ae", "#8b6b4b"],
+    library: ["#2c251e", "#8d7353", "#f1dfbd", "#64766a"],
+    garden: ["#243127", "#77916e", "#e9e2b5", "#b66f4e"],
+    observatory: ["#242538", "#747aa3", "#eee0b6", "#b87979"],
+  };
+  return palettes[themeId] || palettes.engawa;
+}
+
+function drawInviteWrappedText(context, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const lines = [];
+  let line = "";
+  for (const character of Array.from(String(text || ""))) {
+    const candidate = `${line}${character}`;
+    if (line && context.measureText(candidate).width > maxWidth) {
+      lines.push(line);
+      line = character;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) lines.push(line);
+  lines.slice(0, maxLines).forEach((entry, index) => {
+    const finalLine = index === maxLines - 1 && lines.length > maxLines
+      ? `${Array.from(entry).slice(0, -1).join("")}…`
+      : entry;
+    context.fillText(finalLine, x, y + (index * lineHeight));
+  });
+}
+
+function inviteCanvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("灯り札の画像を作成できませんでした。"));
+    }, "image/png");
+  });
+}
+
+async function createInviteCardPngBlob({
+  space = state.space,
+  hostDisplayName = state.hostCard.name,
+  growthStageId = state.growth.stageId,
+} = {}) {
+  const normalizedSpace = normalizeSpace(space);
+  const theme = themeFor(normalizedSpace.themeId);
+  await document.fonts?.ready;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  canvas.height = 675;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("灯り札の画像を作成できませんでした。");
+  const [surface, accent, paper, green] = inviteCanvasPalette(normalizedSpace.themeId);
+  const background = context.createLinearGradient(0, 0, 1200, 675);
+  background.addColorStop(0, "#17130f");
+  background.addColorStop(0.48, surface);
+  background.addColorStop(1, "#18211b");
+  context.fillStyle = background;
+  context.fillRect(0, 0, 1200, 675);
+
+  context.globalAlpha = 0.22;
+  context.fillStyle = accent;
+  context.beginPath();
+  context.arc(1040, 100, 330, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = green;
+  context.beginPath();
+  context.arc(110, 650, 260, 0, Math.PI * 2);
+  context.fill();
+  context.globalAlpha = 1;
+
+  context.fillStyle = "rgba(255, 249, 235, 0.94)";
+  context.beginPath();
+  context.roundRect(54, 48, 1092, 579, 42);
+  context.fill();
+  context.lineWidth = 3;
+  context.strokeStyle = `${accent}bb`;
+  context.stroke();
+
+  context.fillStyle = accent;
+  context.beginPath();
+  context.arc(1041, 152, 62, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = paper;
+  context.lineWidth = 5;
+  context.beginPath();
+  context.arc(1041, 152, 43, 0, Math.PI * 2);
+  context.stroke();
+  context.fillStyle = paper;
+  context.font = "700 38px serif";
+  context.textAlign = "center";
+  context.fillText(theme.icon, 1041, 166);
+  context.textAlign = "left";
+
+  const stageIds = ["light", "seat", "shelf", "window", "sendoff"];
+  const stageIndex = stageIds.indexOf(String(growthStageId || ""));
+  for (let index = 0; index <= stageIndex; index += 1) {
+    const x = 918 + (index * 42);
+    context.fillStyle = index % 2 ? `${green}dd` : `${accent}cc`;
+    context.beginPath();
+    context.ellipse(x, 564 - ((index % 2) * 10), 17, 9, -0.45, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.fillStyle = green;
+  context.font = "800 24px system-ui, sans-serif";
+  context.fillText("貼り合い自由卓", 96, 110);
+  context.fillStyle = accent;
+  context.font = "800 25px system-ui, sans-serif";
+  context.fillText("今夜の灯り札", 96, 153);
+  context.fillStyle = "#352b23";
+  context.font = "700 52px 'Noto Serif JP', 'Yu Mincho', serif";
+  drawInviteWrappedText(context, normalizedSpace.name, 96, 228, 850, 62, 2);
+  context.fillStyle = "#79695c";
+  context.font = "700 21px system-ui, sans-serif";
+  context.fillText("今日の貼り題", 96, 342);
+  context.fillStyle = "#3a3028";
+  context.font = "750 39px 'Noto Serif JP', 'Yu Mincho', serif";
+  drawInviteWrappedText(context, `「${normalizedSpace.topic}」`, 96, 397, 940, 51, 2);
+
+  const labels = [
+    FREE_TABLE_DURATIONS[normalizedSpace.duration],
+    FREE_TABLE_ROLEPLAY_LEVELS[normalizedSpace.roleplayLevel],
+    ...mediaLabels(normalizedSpace.media),
+  ];
+  context.font = "700 20px system-ui, sans-serif";
+  let badgeX = 96;
+  for (const label of labels) {
+    const width = Math.min(210, context.measureText(label).width + 34);
+    if (badgeX + width > 878) break;
+    context.fillStyle = "rgba(99, 126, 105, 0.12)";
+    context.beginPath();
+    context.roundRect(badgeX, 500, width, 43, 22);
+    context.fill();
+    context.fillStyle = green;
+    context.fillText(label, badgeX + 17, 529);
+    badgeX += width + 12;
+  }
+
+  context.fillStyle = "#6e6155";
+  context.font = "650 21px system-ui, sans-serif";
+  context.fillText("手ぶらでもどうぞ。ひと席だけ、灯りをつけています。", 96, 586);
+  context.textAlign = "right";
+  context.fillStyle = accent;
+  context.font = "700 21px system-ui, sans-serif";
+  context.fillText(
+    boundedText(hostDisplayName, 24) ? `部屋主  ${boundedText(hostDisplayName, 24)}` : "貼り合いスタジアム",
+    1098,
+    586,
+  );
+  return inviteCanvasToBlob(canvas);
+}
+
+function inviteCardFilename(space = state.space) {
+  const safeName = String(space?.name || "akari")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .slice(0, 24) || "akari";
+  return `hariai-akari-${safeName}.png`;
 }
 
 function renderTabs() {
@@ -1239,6 +1565,81 @@ function renderRequestCard(request) {
   </article>`;
 }
 
+function renderHostInvitePanel() {
+  if (!state.roomOpen) return "";
+  if (state.hostInvite && !hostInviteIsLive()) {
+    clearHostInviteUi({ keepPanelOpen: true });
+  }
+  if (!state.hostInvitePanelOpen && !state.hostInvite) {
+    return `<aside class="free-table-invite-host-callout">
+      <div><p class="free-table-eyebrow">今夜の灯り札</p>
+        <h3>Xに、そっと暖簾を出せます</h3>
+        <p>宣伝文ではなく、今日の貼り題を一枚の札にします。投稿するかどうかも、ことばも、最後まで自分で選べます。</p></div>
+      <button type="button" class="button free-table-noren-button" data-action="issue-invite">Xに暖簾を出す</button>
+    </aside>`;
+  }
+  if (!state.hostInvite) {
+    return `<aside class="free-table-invite-host-callout is-open">
+      <div><p class="free-table-eyebrow">今夜の灯り札</p>
+        <h3>今夜の一席だけに、暖簾を出します</h3>
+        <p>部屋を閉じた時、同席が始まった時、または期限を迎えた時に、この入口も静かに閉じます。</p></div>
+      <div class="free-table-invite-host-actions">
+        <button type="button" class="button free-table-noren-button" data-action="issue-invite">灯り札をつくる</button>
+        <button type="button" class="button text" data-action="close-invite-panel">今は出さない</button>
+      </div>
+    </aside>`;
+  }
+  const inviteUrl = freeTableInviteUrl(state.hostInvite.inviteId);
+  const shareText = currentInviteShareText();
+  const busy = state.hostInviteImageBusy ? " disabled" : "";
+  return `<aside class="free-table-invite-host-panel" aria-label="Xに出す今夜の灯り札">
+    <header>
+      <div><p class="free-table-eyebrow">今夜の灯り札</p><h3>暖簾ができました</h3></div>
+      <span>この灯りは${escapeHtml(formatInviteExpiry(state.hostInvite.expiresAt))}</span>
+    </header>
+    <div class="free-table-invite-card-preview theme-${escapeHtml(state.space.themeId)}" aria-hidden="true">
+      <span>${themeFor(state.space.themeId).icon}</span>
+      <div><small>今夜の灯り札</small><strong>${escapeHtml(state.space.name)}</strong>
+        <p>「${escapeHtml(state.space.topic)}」</p></div>
+    </div>
+    <section class="free-table-invite-public-preview" aria-label="入口で公開される内容">
+      <div>
+        <p class="free-table-eyebrow">公開前の確認</p>
+        <h4>この入口から見えるもの</h4>
+      </div>
+      <dl>
+        <div><dt>部屋主</dt><dd>${escapeHtml(state.hostCard.name)}</dd></div>
+        <div><dt>この部屋らしさ</dt><dd>${escapeHtml(state.space.description)}</dd></div>
+        <div><dt>はじまり</dt><dd>${escapeHtml(state.space.introduction)}</dd></div>
+        <div><dt>旅立ちのきっかけ</dt><dd>${escapeHtml(state.space.journeyCue)}</dd></div>
+        <div><dt>過ごし方</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[state.space.roleplayLevel])}・${escapeHtml(FREE_TABLE_DURATIONS[state.space.duration])}・${mediaLabels(state.space.media).map(escapeHtml).join("・")}</dd></div>
+        ${state.space.avoid ? `<div><dt>避けたい内容</dt><dd>${escapeHtml(state.space.avoid)}</dd></div>` : ""}
+        <div><dt>お迎えのことば</dt><dd>${escapeHtml(state.space.welcome)}</dd></div>
+      </dl>
+      <p>画像には、部屋名・貼り題・過ごし方・使えるもの・部屋主名と、部屋の育ちに応じた背景のしつらえが入ります。説明・避けたい内容・お迎えのことばは、入口を開いた先だけに表示します。</p>
+    </section>
+    <label class="free-table-invite-share-copy">Xへ添えることば
+      <textarea id="freeTableInviteShareText" rows="5" maxlength="${FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH}">${escapeHtml(shareText)}</textarea>
+    </label>
+    <p class="free-table-invite-url"><span>今夜だけの入口</span><code>${escapeHtml(inviteUrl)}</code></p>
+    <div class="free-table-invite-share-actions">
+      <button type="button" class="button primary" data-action="share-invite-card"${busy}>画像と一緒に共有</button>
+      <a class="button secondary" id="freeTableInviteXLink" href="${escapeHtml(createXInvitePostUrl(shareText, inviteUrl))}" target="_blank" rel="noopener noreferrer">Xで文章を開く</a>
+      <button type="button" class="button secondary" data-action="save-invite-card"${busy}>画像だけ保存</button>
+      <button type="button" class="button text" data-action="copy-invite-url">入口をコピー</button>
+    </div>
+    <details class="free-table-invite-host-settings">
+      <summary>この暖簾を整え直す</summary>
+      <p>掛け直すと、いまの入口は閉じて新しい入口になります。過去のポストから入室できる状態には戻りません。</p>
+      <div>
+        <button type="button" class="button secondary" data-action="rotate-invite"${busy}>入口を掛け直す</button>
+        <button type="button" class="button text danger" data-action="revoke-invite"${busy}>暖簾をしまう</button>
+      </div>
+    </details>
+    <p class="free-table-invite-privacy">札にはUID・部屋の公開ID・来訪数・会話履歴を載せません。Xへの投稿も自動では行いません。</p>
+  </aside>`;
+}
+
 function renderSpaceForm() {
   const space = state.space;
   const card = state.hostCard;
@@ -1285,6 +1686,7 @@ function renderSpaceForm() {
       </div>
     </form>
     ${state.roomOpen ? `<p class="free-table-open-status" role="status"><span></span> お迎え中です。席を外す時は部屋を閉じてください。</p>` : ""}
+    ${renderHostInvitePanel()}
   </section>
   <section class="free-table-request-shelf">
     <header><p class="free-table-eyebrow">届いた来訪札</p><h2>${state.requests.length ? "お迎えする人を選べます" : "いまは静かです"}</h2></header>
@@ -1319,6 +1721,102 @@ function renderHall() {
     <div class="free-table-tab-panel" role="tabpanel">
       ${state.error ? `<p class="free-table-error" role="alert">${escapeHtml(state.error)}</p>` : ""}
       ${state.tab === "open" ? renderOpenRooms() : state.tab === "bookmarks" ? renderBookmarks() : renderSpaceForm()}
+    </div>
+  </section>`;
+}
+
+function renderInviteInactive() {
+  return `<section class="free-table-invite-resting" aria-live="polite">
+    <span class="free-table-room-mark" aria-hidden="true">◌</span>
+    <p class="free-table-eyebrow">今夜の灯り札</p>
+    <h1>いまはお迎えを休んでいます。</h1>
+    <p>部屋が閉じた時も、誰かと過ごしている時も、期限を迎えた時も、入口には同じ案内を出しています。</p>
+    <button type="button" class="button primary" data-action="browse-invite-hall"${state.inviteAuthenticating ? " disabled" : ""}>${state.inviteAuthenticating ? "広間を用意しています…" : "ほかのお迎え中を見る"}</button>
+    <p class="free-table-invite-auth-note">「ほかのお迎え中を見る」を押すと、自由卓を使うための匿名ログインを始めます。</p>
+  </section>`;
+}
+
+function renderInviteVisitorForm(preview) {
+  const card = state.visitorCard;
+  const space = preview.space;
+  return `<section class="free-table-invite-visitor-form">
+    <p class="free-table-eyebrow">来訪札</p>
+    <h2>あなたの「ただいま」を整える</h2>
+    <p>この札が届いてから、部屋主がお迎えするかを選びます。入口を開いただけでは何も届きません。</p>
+    <form id="freeTableInviteVisitorForm" class="free-table-form">
+      <label>表示名<input name="visitorName" maxlength="24" required value="${escapeHtml(card.name)}"></label>
+      <label>今日の過ごし方<input name="visitorActivityTag" maxlength="24" required value="${escapeHtml(card.activityTag)}"></label>
+      <label>ひとこと<input name="visitorMessage" maxlength="40" required value="${escapeHtml(card.message)}"></label>
+      <label>なりきり温度<select name="visitorRoleplayLevel">${Object.entries(FREE_TABLE_ROLEPLAY_LEVELS).map(([id, label]) => `<option value="${id}"${card.roleplayLevel === id ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+      <div class="free-table-checks"><span>使いたいもの</span>
+        <label><input type="checkbox" checked disabled>文字</label>
+        ${space.media.image ? `<label><input type="checkbox" name="visitorMediaImage"${card.media.image ? " checked" : ""}>画像</label>` : ""}
+        ${space.media.audio ? `<label><input type="checkbox" name="visitorMediaAudio"${card.media.audio ? " checked" : ""}>10秒音声</label>` : ""}
+        ${space.media.video ? `<label><input type="checkbox" name="visitorMediaVideo"${card.media.video ? " checked" : ""}>10秒動画</label>` : ""}
+      </div>
+      <button type="submit" class="button primary">この部屋に「ただいま」</button>
+    </form>
+    <p class="free-table-muted">部屋主が今回は見送った場合、理由や履歴は表示されません。</p>
+  </section>`;
+}
+
+function renderInviteEntrance() {
+  const status = state.invitePreviewStatus;
+  if (status === "loading" || status === "idle") {
+    return `<section class="free-table free-table-invite-entrance">
+      <button type="button" class="button text free-table-home" data-action="invite-home">← 貼り合いスタジアムへ</button>
+      <section class="free-table-invite-loading" aria-live="polite">
+        <span class="free-table-room-mark is-pulsing" aria-hidden="true">◌</span>
+        <p class="free-table-eyebrow">今夜の灯り札</p>
+        <h1>玄関の灯りをたしかめています</h1>
+        <p>ここではまだ、来訪札もログインも始まりません。</p>
+      </section>
+    </section>`;
+  }
+  const preview = state.invitePreview;
+  if (!preview?.active) {
+    return `<section class="free-table free-table-invite-entrance">
+      <button type="button" class="button text free-table-home" data-action="invite-home">← 貼り合いスタジアムへ</button>
+      ${renderInviteInactive()}
+    </section>`;
+  }
+  const space = preview.space;
+  const theme = themeFor(space.themeId);
+  return `<section class="free-table free-table-invite-entrance theme-${escapeHtml(space.themeId)}">
+    <button type="button" class="button text free-table-home" data-action="invite-home">← 貼り合いスタジアムへ</button>
+    <div class="free-table-invite-entrance-layout">
+      <section class="free-table-invite-room">
+        <header><span class="free-table-room-mark" aria-hidden="true">${theme.icon}</span>
+          <div><p class="free-table-eyebrow">今夜、灯りがついています</p><h1>${escapeHtml(space.name)}</h1>
+            <p>${escapeHtml(space.description)}</p></div></header>
+        <dl class="free-table-room-meta is-large">
+          <div><dt>今日の貼り題</dt><dd>${escapeHtml(space.topic)}</dd></div>
+          <div><dt>はじまり</dt><dd>${escapeHtml(space.introduction)}</dd></div>
+          <div><dt>旅立ちのきっかけ</dt><dd>${escapeHtml(space.journeyCue)}</dd></div>
+          <div><dt>過ごし方</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[space.roleplayLevel])}・${escapeHtml(FREE_TABLE_DURATIONS[space.duration])}</dd></div>
+        </dl>
+        ${space.avoid ? `<aside class="free-table-invite-boundary" aria-label="この部屋で避けたい内容">
+          <strong>この部屋で避けたい内容</strong>
+          <p>${escapeHtml(space.avoid)}</p>
+        </aside>` : ""}
+        <div class="free-table-tags">${mediaLabels(space.media).map((label) => `<span>${escapeHtml(label)}</span>`).join("")}</div>
+        ${preview.hostDisplayName ? `<p class="free-table-invite-host-name">部屋主　<strong>${escapeHtml(preview.hostDisplayName)}</strong></p>` : ""}
+        <blockquote>${escapeHtml(space.welcome)}</blockquote>
+        <div class="free-table-invite-safety">
+          <button type="button" class="button text danger" data-action="report-invite-card"${state.inviteReporting || state.inviteReportedPreviewHash === preview.previewHash ? " disabled" : ""}>${state.inviteReportedPreviewHash === preview.previewHash ? "この灯り札を通報しました" : "この灯り札の内容を通報"}</button>
+          <p class="free-table-muted">未ログインの場合、通報を送る時だけ匿名ログインを始めます。入室や来訪札の作成は行いません。</p>
+        </div>
+      </section>
+      ${state.inviteAuthenticated
+    ? renderInviteVisitorForm(preview)
+    : `<section class="free-table-invite-welcome">
+          <p class="free-table-eyebrow">玄関</p>
+          <h2>もう少し話したくなったら</h2>
+          <p>「来訪札を置く」を押してから、この部屋だけに届ける自己紹介を整えます。部屋主の許可なく席へ入ることはありません。</p>
+          ${state.error ? `<p class="free-table-error" role="alert">${escapeHtml(state.error)}</p>` : ""}
+          <button type="button" class="button primary" data-action="authenticate-invite"${state.inviteAuthenticating ? " disabled" : ""}>${state.inviteAuthenticating ? "来訪札を用意しています…" : "来訪札を置く"}</button>
+          <p class="free-table-invite-auth-note">来訪札を置く、または通報を送るまで、匿名ログインは始めません。</p>
+        </section>`}
     </div>
   </section>`;
 }
@@ -1648,7 +2146,8 @@ function render() {
   const followTimeline = previousTimeline
     ? previousTimeline.scrollHeight - previousTimeline.scrollTop - previousTimeline.clientHeight < 80
     : true;
-  if (state.screen === "room") app.innerHTML = renderRoomDetail();
+  if (state.screen === "invite") app.innerHTML = renderInviteEntrance();
+  else if (state.screen === "room") app.innerHTML = renderRoomDetail();
   else if (state.screen === "connecting") app.innerHTML = renderConnecting();
   else if (state.screen === "session") app.innerHTML = renderSession();
   else if (state.screen === "departure") app.innerHTML = renderDepartureComposer();
@@ -1664,12 +2163,30 @@ function render() {
 function bindRenderedEvents() {
   const spaceForm = document.querySelector("#freeTableSpaceForm");
   const visitorForm = document.querySelector("#freeTableVisitorForm");
+  const inviteVisitorForm = document.querySelector("#freeTableInviteVisitorForm");
+  const inviteShareText = document.querySelector("#freeTableInviteShareText");
   spaceForm?.addEventListener("submit", handleSaveSpace);
   visitorForm?.addEventListener("submit", handleRequest);
+  inviteVisitorForm?.addEventListener("submit", handleInviteRequest);
   spaceForm?.addEventListener("input", () => { state.formDirty = true; });
   spaceForm?.addEventListener("change", () => { state.formDirty = true; });
   visitorForm?.addEventListener("input", () => { state.formDirty = true; });
   visitorForm?.addEventListener("change", () => { state.formDirty = true; });
+  inviteVisitorForm?.addEventListener("input", () => { state.formDirty = true; });
+  inviteVisitorForm?.addEventListener("change", () => { state.formDirty = true; });
+  inviteShareText?.addEventListener("input", (event) => {
+    state.hostInviteShareText = boundedText(
+      event.currentTarget.value,
+      FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH,
+    );
+    const xLink = document.querySelector("#freeTableInviteXLink");
+    if (xLink) {
+      xLink.href = createXInvitePostUrl(
+        state.hostInviteShareText,
+        freeTableInviteUrl(state.hostInvite?.inviteId),
+      );
+    }
+  });
   document.querySelector("#freeTableChatForm")?.addEventListener("submit", handleSendChat);
   document.querySelector("#freeTableChatText")?.addEventListener("input", (event) => {
     state.chatDraft = String(event.currentTarget.value || "").slice(0, FREE_TABLE_TEXT_MAX_LENGTH);
@@ -1738,6 +2255,7 @@ async function toggleRoom(open) {
     state.roomOpen = open;
     state.publicRoomId = String(data.room?.publicRoomId || data.publicRoomId || state.publicRoomId);
     if (open) {
+      clearHostInviteUi();
       startOpenHeartbeat();
       await refreshMyState(lifecycle, {
         expectedSessionGeneration: sessionGeneration,
@@ -1752,10 +2270,149 @@ async function toggleRoom(open) {
       state.formDirty = false;
       stopOpenHeartbeat();
       state.requests = [];
+      clearHostInviteUi();
       showToast("今日は部屋を閉じました。");
     }
     render();
   });
+}
+
+async function issueHostInvite(action = "issue") {
+  if (!state.roomOpen || !["issue", "rotate"].includes(action)) return;
+  if (action === "rotate" && !hostInviteIsLive()) {
+    clearHostInviteUi({ keepPanelOpen: true });
+    action = "issue";
+  }
+  const lifecycle = state.generation;
+  const sessionGeneration = state.sessionGeneration;
+  await runBusy(async () => {
+    const payload = action === "rotate" && state.hostInvite?.inviteId
+      ? { inviteId: state.hostInvite.inviteId }
+      : {};
+    const data = await callFreeTableInviteAction(action, payload);
+    if (!active
+        || state.generation !== lifecycle
+        || state.sessionGeneration !== sessionGeneration
+        || state.sessionId
+        || !state.roomOpen) return;
+    const invite = normalizeHostInvite(data.invite);
+    if (!invite) throw new Error("今夜の灯り札を確認できませんでした。");
+    state.hostInvite = invite;
+    state.hostInvitePanelOpen = true;
+    armHostInviteExpiry(invite);
+    if (!state.hostInviteShareText) {
+      state.hostInviteShareText = defaultInviteShareText(state.space);
+    }
+    showToast(action === "rotate"
+      ? "暖簾を掛け直しました。前の入口は静かに閉じました。"
+      : "今夜の灯り札ができました。投稿する前にことばを整えられます。");
+    render();
+  });
+}
+
+async function revokeHostInvite() {
+  const inviteId = normalizeInviteId(state.hostInvite?.inviteId);
+  if (!inviteId) return;
+  const lifecycle = state.generation;
+  const sessionGeneration = state.sessionGeneration;
+  await runBusy(async () => {
+    await callFreeTableInviteAction("revoke", { inviteId });
+    if (!active
+        || state.generation !== lifecycle
+        || state.sessionGeneration !== sessionGeneration) return;
+    if (state.hostInvite?.inviteId === inviteId) {
+      clearHostInviteUi({ keepPanelOpen: true });
+    }
+    showToast("Xの暖簾をしまいました。部屋の灯りはそのままです。");
+    render();
+  });
+}
+
+async function createCurrentInviteCardBlob() {
+  if (!state.roomOpen || !hostInviteIsLive()) {
+    clearHostInviteUi({ keepPanelOpen: true });
+    throw new Error("この灯り札は期限を迎えました。新しい灯り札をつくってください。");
+  }
+  return createInviteCardPngBlob({
+    space: state.space,
+    hostDisplayName: state.hostCard.name,
+    growthStageId: state.growth.stageId,
+  });
+}
+
+async function shareHostInviteCard() {
+  if (state.hostInviteImageBusy) return;
+  const inviteId = normalizeInviteId(state.hostInvite?.inviteId);
+  const inviteUrl = freeTableInviteUrl(inviteId);
+  if (!inviteId || !inviteUrl) return;
+  state.hostInviteImageBusy = true;
+  render();
+  try {
+    const blob = await createCurrentInviteCardBlob();
+    const filename = inviteCardFilename();
+    const file = new File([blob], filename, { type: "image/png" });
+    const shareText = currentInviteShareText();
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          title: "貼り合い自由卓｜今夜の灯り札",
+          text: shareText,
+          url: inviteUrl,
+          files: [file],
+        });
+        return;
+      } catch (error) {
+        if (String(error?.name || "") === "AbortError") return;
+        console.warn("端末の共有を開けなかったため、灯り札を保存します。", error);
+      }
+    }
+    shared()?.downloadBlob?.(blob, filename);
+    showToast("共有対応端末ではないため画像を保存しました。Xで文章を開き、添付できます。");
+  } finally {
+    state.hostInviteImageBusy = false;
+    if (active) render();
+  }
+}
+
+async function saveHostInviteCard() {
+  if (state.hostInviteImageBusy) return;
+  const inviteId = normalizeInviteId(state.hostInvite?.inviteId);
+  if (!inviteId) return;
+  state.hostInviteImageBusy = true;
+  render();
+  try {
+    const blob = await createCurrentInviteCardBlob();
+    shared()?.downloadBlob?.(blob, inviteCardFilename());
+    showToast("今夜の灯り札を保存しました。投稿する時に添付できます。");
+  } finally {
+    state.hostInviteImageBusy = false;
+    if (active) render();
+  }
+}
+
+async function copyHostInviteUrl() {
+  if (!hostInviteIsLive()) {
+    clearHostInviteUi({ keepPanelOpen: true });
+    render();
+    showToast("この灯り札は期限を迎えました。新しい灯り札をつくれます。");
+    return;
+  }
+  const inviteUrl = freeTableInviteUrl();
+  if (!inviteUrl) return;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(inviteUrl);
+  } else {
+    const input = document.createElement("textarea");
+    input.value = inviteUrl;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  }
+  showToast("今夜だけの入口をコピーしました。");
 }
 
 async function handleRequest(event) {
@@ -1786,6 +2443,55 @@ async function handleRequest(event) {
     state.tab = "open";
     showToast("来訪札を届けました。");
     render();
+  });
+}
+
+async function handleInviteRequest(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const preview = state.invitePreview;
+  const inviteId = normalizeInviteId(state.inviteId);
+  if (!state.inviteAuthenticated || !preview?.active || !inviteId) return;
+  await waitForPendingLeaveSettlement();
+  if (!active || state.screen !== "invite") return;
+  const lifecycle = state.generation;
+  const sessionGeneration = state.sessionGeneration;
+  await runBusy(async () => {
+    const visitorCard = visitorCardFromForm(form, preview.space.media);
+    try {
+      const data = await callFreeTableAction(FREE_TABLE_ACTIONS.REQUEST_FROM_INVITE, {
+        inviteId,
+        visitorCard,
+      });
+      if (active && state.generation === lifecycle && state.sessionId) return;
+      if (!active
+          || state.generation !== lifecycle
+          || state.sessionGeneration !== sessionGeneration) {
+        trackPendingLeaveSettlement(settlePendingAfterLeave());
+        return;
+      }
+      state.visitorCard = visitorCard;
+      state.formDirty = false;
+      state.pendingRequest = normalizeRequest(data.request || data, data.requestId);
+      state.screen = "hall";
+      state.tab = "open";
+      state.inviteId = "";
+      stopInvitePreviewRefresh();
+      clearInviteQueryFromUrl();
+      showToast("来訪札を届けました。部屋主からのお返事を待っています。");
+      render();
+    } catch (error) {
+      const code = String(error?.code || "").toLowerCase();
+      if (code.includes("failed-precondition") || code.includes("not-found")) {
+        state.invitePreviewStatus = "inactive";
+        state.invitePreview = { active: false, inviteId };
+        state.error = "";
+        stopInvitePreviewRefresh();
+        render();
+        return;
+      }
+      throw error;
+    }
   });
 }
 
@@ -1888,6 +2594,7 @@ async function respondToRequest(requestId, accept) {
       return;
     }
     state.roomOpen = false;
+    clearHostInviteUi();
     stopOpenHeartbeat();
     const sessionId = String(data.sessionId || data.session?.sessionId || "");
     if (!sessionId) throw new Error("自由卓の席を確認できませんでした。");
@@ -2067,6 +2774,8 @@ async function enterSession(sessionId, initialSession = null) {
   clearUnsubscribers(state.hallUnsubscribers);
   stopHallRefresh();
   stopOpenHeartbeat();
+  stopInvitePreviewRefresh();
+  clearHostInviteUi();
   cleanupSession({ keepIdentity: false });
   state.sessionId = sessionId;
   const sessionGeneration = state.sessionGeneration;
@@ -3560,6 +4269,89 @@ function promptReportPayload() {
   return { reason, details };
 }
 
+function inviteReportMustPreserveDraft() {
+  return state.screen === "invite"
+    && state.inviteAuthenticated
+    && state.formDirty;
+}
+
+function syncInviteReportButton() {
+  const button = app?.querySelector('[data-action="report-invite-card"]');
+  if (!button) return;
+  const reported = state.inviteReportedPreviewHash
+    && state.inviteReportedPreviewHash === state.invitePreview?.previewHash;
+  button.disabled = state.inviteReporting || reported;
+  button.textContent = reported
+    ? "この灯り札を通報しました"
+    : "この灯り札の内容を通報";
+}
+
+async function reportInvitePublicCard() {
+  const preview = state.invitePreview;
+  const inviteId = normalizeInviteId(state.inviteId);
+  const previewHash = String(preview?.previewHash || "");
+  if (!active
+      || state.screen !== "invite"
+      || !preview?.active
+      || !inviteId
+      || !FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN.test(previewHash)
+      || state.inviteReporting
+      || state.inviteReportedPreviewHash === previewHash) return;
+  const payload = promptReportPayload();
+  if (!payload) return;
+  if (!auth.currentUser) {
+    const confirmed = window.confirm(
+      "通報の送信には匿名ログインが必要です。入室や来訪札の作成は行いません。匿名ログインして通報しますか？",
+    );
+    if (!confirmed) return;
+  }
+  const reportingState = state;
+  const lifecycle = state.generation;
+  state.inviteReporting = true;
+  state.error = "";
+  if (inviteReportMustPreserveDraft()) syncInviteReportButton();
+  else render();
+  try {
+    await ensureAuthenticated();
+    if (!active
+        || state !== reportingState
+        || state.generation !== lifecycle
+        || state.screen !== "invite"
+        || state.inviteId !== inviteId
+        || state.invitePreview?.previewHash !== previewHash) return;
+    await callFreeTableInviteAction("report_public_card", {
+      inviteId,
+      previewHash,
+      reason: payload.reason,
+      ...(payload.details ? { details: payload.details } : {}),
+    });
+    if (active
+        && state === reportingState
+        && state.generation === lifecycle
+        && state.screen === "invite"
+        && state.inviteId === inviteId) {
+      state.inviteReportedPreviewHash = previewHash;
+      showToast("灯り札の通報を受け付けました。必要に応じて運営が確認します。");
+    }
+  } catch (error) {
+    if (active && state === reportingState && state.generation === lifecycle) {
+      console.error(error);
+      state.error = friendlyError(error);
+      showToast(state.error);
+    }
+  } finally {
+    reportingState.inviteReporting = false;
+    if (active
+        && state === reportingState
+        && state.generation === lifecycle
+        && state.screen === "invite"
+        && state.inviteId === inviteId) {
+      if (inviteReportMustPreserveDraft()) syncInviteReportButton();
+      else render();
+    }
+  }
+}
+
 async function submitReportContext(context, { recent = false } = {}) {
   const sessionId = String(context?.sessionId || "");
   const reporterUid = String(context?.reporterUid || state.uid || "");
@@ -3761,7 +4553,9 @@ async function leave({ reason = "safe_exit", returnHome = false } = {}) {
   const shouldCancelRequest = Boolean(state.pendingRequest?.id);
   if (sessionId) scheduleIgnoredSessionEnd(sessionId, reason);
   if (shouldCancelRequest) cancelPendingRequest({ bestEffort: true });
-  else if (!sessionId) trackPendingLeaveSettlement(settlePendingAfterLeave());
+  else if (!sessionId && state.uid) trackPendingLeaveSettlement(settlePendingAfterLeave());
+  stopInvitePreviewRefresh();
+  clearHostInviteUi();
   stopOpenHeartbeat();
   stopHallRefresh();
   clearUnsubscribers(state.hallUnsubscribers);
@@ -3770,11 +4564,221 @@ async function leave({ reason = "safe_exit", returnHome = false } = {}) {
   active = false;
   app?.classList.remove("is-busy");
   if (returnHome) window.HariaiApp?.returnHome?.();
-  callRoomOpen(false).catch(() => {});
+  if (state.uid) callRoomOpen(false).catch(() => {});
+}
+
+function clearInviteQueryFromUrl() {
+  const url = new URL(location.href);
+  if (!url.searchParams.has(FREE_TABLE_INVITE_QUERY_KEY)) return;
+  url.searchParams.delete(FREE_TABLE_INVITE_QUERY_KEY);
+  history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 async function requestHome() {
+  clearInviteQueryFromUrl();
   await leave({ reason: "safe_exit", returnHome: true });
+}
+
+async function initializeAuthenticatedFreeTable(generation = state.generation) {
+  if (state.uid && state.authenticatedReady) return state.uid;
+  try {
+    const user = await ensureAuthenticated();
+    if (!active || state.generation !== generation) return "";
+    state.uid = user.uid;
+    state.reportContext = loadReportContext(user.uid);
+    armReportContextExpiry(state.reportContext);
+    addUnsubscriber(state.unsubscribers, onValue(
+      ref(database, ".info/serverTimeOffset"),
+      (snapshot) => {
+        if (!active || state.generation !== generation) return;
+        state.serverTimeOffset = Number(snapshot.val() || 0);
+        if (state.sessionId && state.session) {
+          armSessionExpiryTimer(
+            state.sessionId,
+            state.sessionGeneration,
+            Number(state.session.expiresAt || 0),
+          );
+        }
+        if (state.hostInvite) {
+          if (hostInviteIsLive()) armHostInviteExpiry();
+          else {
+            clearHostInviteUi({ keepPanelOpen: true });
+            if (state.roomOpen) render();
+          }
+        }
+      },
+      () => {},
+    ));
+    await Promise.all([refreshMyState(generation), refreshRooms(generation)]);
+    if (!active || state.generation !== generation) return "";
+    listenToHall();
+    startOpenHeartbeat();
+    state.authenticatedReady = true;
+    return state.uid;
+  } catch (error) {
+    if (active && state.generation === generation && !state.authenticatedReady) {
+      clearUnsubscribers(state.unsubscribers);
+      state.uid = "";
+    }
+    throw error;
+  }
+}
+
+async function authenticateInvite() {
+  if (!active
+      || state.screen !== "invite"
+      || !state.invitePreview?.active
+      || state.inviteAuthenticating
+      || state.inviteAuthenticated) return;
+  const lifecycle = state.generation;
+  state.inviteAuthenticating = true;
+  state.error = "";
+  render();
+  try {
+    const uid = await initializeAuthenticatedFreeTable(lifecycle);
+    if (!uid
+        || !active
+        || state.generation !== lifecycle
+        || state.screen !== "invite"
+        || state.sessionId) return;
+    if (!state.invitePreview?.active) {
+      state.inviteAuthenticating = false;
+      render();
+      return;
+    }
+    state.inviteAuthenticated = true;
+    state.inviteAuthenticating = false;
+    render();
+  } catch (error) {
+    if (!active || state.generation !== lifecycle) return;
+    state.inviteAuthenticating = false;
+    handleError(error);
+  }
+}
+
+async function browseInviteHall() {
+  if (!active || state.screen !== "invite" || state.inviteAuthenticating) return;
+  const lifecycle = state.generation;
+  state.inviteAuthenticating = true;
+  render();
+  try {
+    const uid = await initializeAuthenticatedFreeTable(lifecycle);
+    if (!uid || !active || state.generation !== lifecycle || state.sessionId) return;
+    state.inviteAuthenticating = false;
+    state.screen = "hall";
+    state.tab = "open";
+    state.inviteId = "";
+    stopInvitePreviewRefresh();
+    clearInviteQueryFromUrl();
+    render();
+  } catch (error) {
+    if (!active || state.generation !== lifecycle) return;
+    state.inviteAuthenticating = false;
+    handleError(error);
+  }
+}
+
+function stopInvitePreviewRefresh() {
+  if (state.invitePreviewTimer) window.clearTimeout(state.invitePreviewTimer);
+  state.invitePreviewTimer = null;
+}
+
+function invitePreviewContextIsCurrent(generation, inviteId) {
+  return Boolean(active
+    && state.generation === generation
+    && state.screen === "invite"
+    && state.inviteId === inviteId);
+}
+
+function invitePreviewRefreshDelay() {
+  const failureCount = Math.max(0, Number(state.invitePreviewFailureCount) || 0);
+  if (!failureCount) return FREE_TABLE_INVITE_PREVIEW_REFRESH_MS;
+  return Math.min(
+    FREE_TABLE_INVITE_PREVIEW_MAX_BACKOFF_MS,
+    FREE_TABLE_INVITE_PREVIEW_REFRESH_MS * (2 ** Math.min(failureCount, 3)),
+  );
+}
+
+function scheduleInvitePreviewRefresh(generation, inviteId, delay = invitePreviewRefreshDelay()) {
+  stopInvitePreviewRefresh();
+  if (!invitePreviewContextIsCurrent(generation, inviteId)
+      || document.visibilityState !== "visible"
+      || state.invitePreviewStatus === "inactive") return;
+  const refreshDelay = Math.min(
+    FREE_TABLE_INVITE_PREVIEW_MAX_BACKOFF_MS,
+    Math.max(FREE_TABLE_INVITE_PREVIEW_REFRESH_MS, Number(delay) || 0),
+  );
+  state.invitePreviewTimer = window.setTimeout(() => {
+    state.invitePreviewTimer = null;
+    refreshInvitePreview(generation, inviteId).catch(() => {});
+  }, refreshDelay);
+}
+
+async function refreshInvitePreview(generation, expectedInviteId) {
+  if (!invitePreviewContextIsCurrent(generation, expectedInviteId)
+      || document.visibilityState !== "visible"
+      || state.invitePreviewStatus === "inactive") return;
+  if (state.invitePreviewRequest) {
+    await state.invitePreviewRequest;
+    return;
+  }
+  let request = null;
+  try {
+    request = freeTableInvitePreviewCallable({ inviteId: expectedInviteId });
+    state.invitePreviewRequest = request;
+    const response = await request;
+    if (!invitePreviewContextIsCurrent(generation, expectedInviteId)) return;
+    const preview = normalizeInvitePreview(response?.data, expectedInviteId);
+    const preservingInviteDraft = state.inviteAuthenticated
+      && state.formDirty
+      && state.invitePreview?.active
+      && preview.active;
+    state.invitePreviewFailureCount = 0;
+    state.invitePreview = preview;
+    state.invitePreviewStatus = preview.active ? "open" : "inactive";
+    if (!preservingInviteDraft) render();
+  } catch (error) {
+    console.warn("今夜の灯り札を確認できませんでした。", error);
+    if (!invitePreviewContextIsCurrent(generation, expectedInviteId)) return;
+    state.invitePreviewFailureCount = Math.min(
+      Number(state.invitePreviewFailureCount || 0) + 1,
+      8,
+    );
+    if (!state.invitePreview?.active) {
+      const shouldRender = state.invitePreviewStatus !== "retrying";
+      state.invitePreview = { active: false, inviteId: expectedInviteId };
+      state.invitePreviewStatus = "retrying";
+      if (shouldRender) render();
+    }
+  } finally {
+    if (state.invitePreviewRequest === request) state.invitePreviewRequest = null;
+    scheduleInvitePreviewRefresh(generation, expectedInviteId);
+  }
+}
+
+async function openInvite(inviteIdValue) {
+  if (location.protocol === "file:") {
+    showToast("自由卓はローカルサーバーまたは公開URLから開いてください。");
+    return;
+  }
+  if (active) {
+    if (state.screen === "invite" && state.inviteId === normalizeInviteId(inviteIdValue)) {
+      render();
+    }
+    return;
+  }
+  active = true;
+  state = createFreeTableState();
+  state.screen = "invite";
+  state.inviteId = normalizeInviteId(inviteIdValue);
+  state.invitePreviewStatus = state.inviteId ? "loading" : "inactive";
+  app?.classList.remove("is-busy");
+  const generation = ++lifecycleGeneration;
+  state.generation = generation;
+  render();
+  if (!state.inviteId) return;
+  const expectedInviteId = state.inviteId;
+  await refreshInvitePreview(generation, expectedInviteId);
 }
 
 async function start() {
@@ -3793,30 +4797,8 @@ async function start() {
   state.generation = generation;
   render();
   try {
-    const user = await ensureAuthenticated();
+    await initializeAuthenticatedFreeTable(generation);
     if (!active || state.generation !== generation) return;
-    state.uid = user.uid;
-    state.reportContext = loadReportContext(user.uid);
-    armReportContextExpiry(state.reportContext);
-    addUnsubscriber(state.unsubscribers, onValue(
-      ref(database, ".info/serverTimeOffset"),
-      (snapshot) => {
-        if (!active || state.generation !== generation) return;
-        state.serverTimeOffset = Number(snapshot.val() || 0);
-        if (state.sessionId && state.session) {
-          armSessionExpiryTimer(
-            state.sessionId,
-            state.sessionGeneration,
-            Number(state.session.expiresAt || 0),
-          );
-        }
-      },
-      () => {},
-    ));
-    await Promise.all([refreshMyState(generation), refreshRooms(generation)]);
-    if (!active || state.generation !== generation) return;
-    listenToHall();
-    startOpenHeartbeat();
     render();
   } catch (error) {
     if (active && state.generation === generation) handleError(error);
@@ -3884,6 +4866,22 @@ async function handleDocumentAction(event) {
   if (!button || !app?.contains(button)) return;
   const action = button.dataset.action;
   if (action === "home") await requestHome();
+  else if (action === "invite-home") await requestHome();
+  else if (action === "browse-invite-hall") await browseInviteHall();
+  else if (action === "authenticate-invite") await authenticateInvite();
+  else if (action === "report-invite-card") await reportInvitePublicCard();
+  else if (action === "issue-invite") {
+    state.hostInvitePanelOpen = true;
+    render();
+    await issueHostInvite("issue");
+  } else if (action === "close-invite-panel") {
+    state.hostInvitePanelOpen = false;
+    render();
+  } else if (action === "rotate-invite") await issueHostInvite("rotate");
+  else if (action === "revoke-invite") await revokeHostInvite();
+  else if (action === "share-invite-card") await shareHostInviteCard();
+  else if (action === "save-invite-card") await saveHostInviteCard();
+  else if (action === "copy-invite-url") await copyHostInviteUrl();
   else if (action === "back-hall") {
     state.formDirty = false;
     state.screen = "hall";
@@ -3932,6 +4930,19 @@ document.addEventListener("click", (event) => {
   handleDocumentAction(event).catch(handleError);
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") {
+    stopInvitePreviewRefresh();
+    return;
+  }
+  if (!active
+      || state.screen !== "invite"
+      || !state.inviteId
+      || state.invitePreviewStatus === "inactive") return;
+  stopInvitePreviewRefresh();
+  refreshInvitePreview(state.generation, state.inviteId).catch(() => {});
+});
+
 window.addEventListener("beforeunload", () => {
   stopOpenHeartbeat();
   stopHallRefresh();
@@ -3941,6 +4952,7 @@ window.addEventListener("beforeunload", () => {
 
 window.HariaiFreeTable = {
   start,
+  openInvite,
   isActive,
   leave,
   requestHome,
@@ -3953,5 +4965,15 @@ window.HariaiFreeTable = {
   },
   actions: FREE_TABLE_ACTIONS,
   mediaChannelLabel: FREE_TABLE_MEDIA_CHANNEL_LABEL,
+  createInviteCardPngBlob,
 };
 window.dispatchEvent(new Event("hariai-free-table-ready"));
+
+const initialInviteParams = new URLSearchParams(location.search);
+if (initialInviteParams.has(FREE_TABLE_INVITE_QUERY_KEY)) {
+  queueMicrotask(() => {
+    openInvite(initialInviteParams.get(FREE_TABLE_INVITE_QUERY_KEY) || "").catch((error) => {
+      console.warn("今夜の灯り札を開けませんでした。", error);
+    });
+  });
+}

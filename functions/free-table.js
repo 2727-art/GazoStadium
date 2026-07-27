@@ -21,7 +21,10 @@ const FREE_TABLE_BLOCK_LIMIT = 100;
 const FREE_TABLE_RELATIONSHIP_LIMIT = 100;
 const FREE_TABLE_REPORT_MESSAGE_LIMIT = 10;
 const FREE_TABLE_REPORT_CHAT_SCAN_LIMIT = 80;
+const FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS = 60 * 60 * 1000;
+const FREE_TABLE_PUBLIC_CARD_REPORT_RATE_LIMIT = 5;
 const FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS = 5 * 1000;
+const FREE_TABLE_INVITE_TTL_MS = 6 * 60 * 60 * 1000;
 const FREE_TABLE_GROWTH_MILESTONES = Object.freeze([1, 3, 7, 15, 30]);
 const FREE_TABLE_ROLEPLAY_LEVELS = Object.freeze(["none", "light", "full"]);
 const FREE_TABLE_DURATIONS = Object.freeze(["5m", "15m", "30m", "leisurely"]);
@@ -45,6 +48,7 @@ const FREE_TABLE_ACTIONS = Object.freeze([
   "open",
   "list",
   "request",
+  "request_from_invite",
   "cancel_request",
   "respond",
   "arrive",
@@ -57,6 +61,8 @@ const FREE_TABLE_ACTIONS = Object.freeze([
   "get_my_state",
 ]);
 const PUBLIC_ID_PATTERN = /^[A-Za-z0-9_-]{24}$/;
+const FREE_TABLE_INVITE_ID_PATTERN = /^[A-Za-z0-9_-]{32}$/;
+const FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const CHILD_ID_PATTERN = /^[A-Za-z0-9_-]{20,40}$/;
 const THEME_ID_PATTERN = /^[A-Za-z0-9_-]{0,48}$/;
 const UID_CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -207,6 +213,198 @@ function randomPublicId(randomBytes = crypto.randomBytes) {
   return value.toString("base64url");
 }
 
+function randomFreeTableInviteId(randomBytes = crypto.randomBytes) {
+  const value = randomBytes(24);
+  if (!Buffer.isBuffer(value) || value.length !== 24) {
+    throw new TypeError("free table invite ids require exactly 24 random bytes");
+  }
+  return value.toString("base64url");
+}
+
+function inactiveFreeTableInvitePreview(inviteId, now) {
+  return Object.freeze({
+    ok: true,
+    active: false,
+    state: "inactive",
+    inviteId,
+    updatedAt: Math.max(0, Number(now || 0)),
+  });
+}
+
+function freeTableInviteRecord(value, inviteId, now) {
+  const source = objectValue(value);
+  const allowedKeys = new Set([
+    "protocolVersion",
+    "inviteId",
+    "hostUid",
+    "roomId",
+    "publicRoomId",
+    "generation",
+    "createdAt",
+    "expiresAt",
+  ]);
+  const createdAt = Number(source.createdAt || 0);
+  const expiresAt = Number(source.expiresAt || 0);
+  const generation = Number(source.generation || 0);
+  if (value !== source
+      || Reflect.ownKeys(source).length !== allowedKeys.size
+      || Reflect.ownKeys(source).some((key) => (
+        typeof key !== "string" || !allowedKeys.has(key)
+      ))
+      || !FREE_TABLE_INVITE_ID_PATTERN.test(String(inviteId || ""))
+      || source.inviteId !== inviteId
+      || source.protocolVersion !== FREE_TABLE_PROTOCOL_VERSION
+      || !freeTablePublicStatsUidIsSafe(source.hostUid)
+      || !CHILD_ID_PATTERN.test(String(source.roomId || ""))
+      || !PUBLIC_ID_PATTERN.test(String(source.publicRoomId || ""))
+      || !Number.isSafeInteger(generation)
+      || generation <= 0
+      || !Number.isSafeInteger(createdAt)
+      || createdAt <= 0
+      || createdAt > Number(now) + 15_000
+      || !Number.isSafeInteger(expiresAt)
+      || expiresAt <= Number(now)
+      || expiresAt > createdAt + FREE_TABLE_INVITE_TTL_MS) return null;
+  return Object.freeze({
+    protocolVersion: FREE_TABLE_PROTOCOL_VERSION,
+    inviteId,
+    hostUid: source.hostUid,
+    roomId: source.roomId,
+    publicRoomId: source.publicRoomId,
+    generation,
+    createdAt,
+    expiresAt,
+  });
+}
+
+function freeTableInviteRecordsMatch(firstValue, secondValue) {
+  const first = objectValue(firstValue);
+  const second = objectValue(secondValue);
+  return first.protocolVersion === second.protocolVersion
+    && first.inviteId === second.inviteId
+    && first.hostUid === second.hostUid
+    && first.roomId === second.roomId
+    && first.publicRoomId === second.publicRoomId
+    && Number(first.generation || 0) === Number(second.generation || 0)
+    && Number(first.createdAt || 0) === Number(second.createdAt || 0)
+    && Number(first.expiresAt || 0) === Number(second.expiresAt || 0);
+}
+
+function freeTableInviteSpaceProjection(value) {
+  const space = normalizeRoomSettings(value);
+  return Object.freeze({
+    name: space.name,
+    description: space.description,
+    topic: space.topic,
+    introduction: space.introduction,
+    journeyCue: space.journeyCue,
+    roleplayLevel: space.roleplayLevel,
+    duration: space.duration,
+    media: space.media,
+    avoid: space.avoid,
+    welcome: space.welcome,
+    themeId: space.themeId,
+  });
+}
+
+function freeTableInviteRoomProjection(value) {
+  const room = objectValue(value);
+  if (!validateRoomSettings(room.space) || !validateCard(room.hostCard)) return null;
+  return Object.freeze({
+    space: freeTableInviteSpaceProjection(room.space),
+    hostDisplayName: normalizeCard(room.hostCard).name,
+  });
+}
+
+function freeTablePublicCardSnapshot(value) {
+  const source = objectValue(value);
+  const hostDisplayName = boundedLine(source.hostDisplayName, CARD_LIMITS.name);
+  if (!hostDisplayName || !validateRoomSettings(source.space)) return null;
+  return Object.freeze({
+    space: freeTableInviteSpaceProjection(source.space),
+    hostDisplayName,
+  });
+}
+
+function freeTablePublicCardSnapshotHash(value) {
+  const snapshot = freeTablePublicCardSnapshot(value);
+  if (!snapshot) return "";
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(snapshot))
+    .digest("hex");
+}
+
+function freeTableInvitePreviewProjection(
+  inviteId,
+  inviteValue,
+  hostInviteValue,
+  publicRoomValue,
+  hostActiveValue,
+  roomStateValue,
+  nowValue = Date.now(),
+) {
+  const now = Number(nowValue);
+  const inactive = () => inactiveFreeTableInvitePreview(inviteId, now);
+  const invite = freeTableInviteRecord(inviteValue, inviteId, now);
+  const hostInvite = freeTableInviteRecord(hostInviteValue, inviteId, now);
+  if (!invite
+      || !hostInvite
+      || hostInvite.hostUid !== invite.hostUid
+      || hostInvite.roomId !== invite.roomId
+      || hostInvite.publicRoomId !== invite.publicRoomId
+      || hostInvite.generation !== invite.generation
+      || hostInvite.createdAt !== invite.createdAt
+      || hostInvite.expiresAt !== invite.expiresAt) return inactive();
+  const publicRoom = objectValue(publicRoomValue);
+  const hostActive = objectValue(hostActiveValue);
+  const roomState = objectValue(roomStateValue);
+  const publicProjection = publicRoomProjection(publicRoom, now);
+  const publicGeneration = Number(publicRoom.generation || 0);
+  const hostGeneration = Number(hostActive.generation || 0);
+  const roomGeneration = Number(roomState.generation || 0);
+  const publicMatches = publicProjection
+    && publicRoom.hostUid === invite.hostUid
+    && publicRoom.roomId === invite.roomId
+    && publicRoom.publicRoomId === invite.publicRoomId
+    && Number.isSafeInteger(publicGeneration)
+    && publicGeneration >= invite.generation;
+  const hostMatches = hostActive.state === "open"
+    && hostActive.roomId === invite.roomId
+    && hostActive.publicRoomId === invite.publicRoomId
+    && Number.isSafeInteger(hostGeneration)
+    && hostGeneration >= invite.generation
+    && Number(hostActive.expiresAt || 0) > now;
+  const roomMatches = roomState.state === "open"
+    && roomState.hostUid === invite.hostUid
+    && roomState.roomId === invite.roomId
+    && roomState.publicRoomId === invite.publicRoomId
+    && Number.isSafeInteger(roomGeneration)
+    && roomGeneration >= invite.generation
+    && Number(roomState.expiresAt || 0) > now;
+  const preview = publicMatches
+    ? freeTableInviteRoomProjection(publicRoom)
+    : null;
+  const previewHash = freeTablePublicCardSnapshotHash(preview);
+  if (!publicMatches
+      || !hostMatches
+      || !roomMatches
+      || !preview
+      || !FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN.test(previewHash)) {
+    return inactive();
+  }
+  return Object.freeze({
+    ok: true,
+    active: true,
+    state: "open",
+    inviteId,
+    expiresAt: invite.expiresAt,
+    updatedAt: now,
+    previewHash,
+    preview,
+  });
+}
+
 function internalPairId(firstUid, secondUid) {
   return crypto
     .createHash("sha256")
@@ -221,6 +419,44 @@ function internalReportId(sessionId, reporterUid) {
     .update(`free-table-report:${String(sessionId)}:${String(reporterUid)}`)
     .digest("hex")
     .slice(0, 40);
+}
+
+function internalPublicCardReportId(publicRoomId, previewHash, reporterUid) {
+  return crypto
+    .createHash("sha256")
+    .update([
+      "free-table-public-card-report",
+      String(publicRoomId),
+      String(previewHash),
+      String(reporterUid),
+    ].join(":"))
+    .digest("hex")
+    .slice(0, 40);
+}
+
+function nextPublicCardReportRateLimit(value, reporterUid, nowValue = Date.now()) {
+  const now = Number(nowValue);
+  const windowStartedAt = Math.floor(now / FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS)
+    * FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS;
+  const windowEndsAt = windowStartedAt + FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS;
+  const source = objectValue(value);
+  const storedCount = Number(source.count || 0);
+  const sameWindow = source.protocolVersion === FREE_TABLE_PROTOCOL_VERSION
+    && source.reporterUid === reporterUid
+    && Number(source.windowStartedAt || 0) === windowStartedAt
+    && Number(source.windowEndsAt || 0) === windowEndsAt
+    && Number.isSafeInteger(storedCount)
+    && storedCount >= 0;
+  const count = sameWindow ? storedCount : 0;
+  if (count >= FREE_TABLE_PUBLIC_CARD_REPORT_RATE_LIMIT) return null;
+  return Object.freeze({
+    protocolVersion: FREE_TABLE_PROTOCOL_VERSION,
+    reporterUid,
+    windowStartedAt,
+    windowEndsAt,
+    count: count + 1,
+    updatedAt: now,
+  });
 }
 
 function fairShelfKey(uid, publicRoomId, now) {
@@ -1078,6 +1314,12 @@ function createFreeTableService(deps) {
   const reportRef = (reportId) => firestore
     .collection("freeTableReports")
     .doc(reportId);
+  const publicCardReportRef = (reportId) => firestore
+    .collection("freeTablePublicCardReports")
+    .doc(reportId);
+  const publicCardReportRateRef = (uid) => firestore
+    .collection("freeTablePublicCardReportLimits")
+    .doc(uid);
   const freeTablesRoot = () => realtime.ref("freeTables");
   const publicRoomsRef = () => realtime.ref("freeTables/publicRooms");
   const publicRoomRef = (publicRoomId) => realtime
@@ -1100,6 +1342,8 @@ function createFreeTableService(deps) {
   const presenceRef = (sessionId) => realtime.ref(`freeTables/presence/${sessionId}`);
   const signalsRef = (sessionId) => realtime.ref(`freeTables/signals/${sessionId}`);
   const chatRef = (sessionId) => realtime.ref(`freeTables/chat/${sessionId}`);
+  const inviteRef = (inviteId) => realtime.ref(`freeTables/invites/${inviteId}`);
+  const hostInviteRef = (uid) => realtime.ref(`freeTables/hostInvites/${uid}`);
 
   function httpsError(code, message) {
     return new HttpsError(code, message);
@@ -1176,6 +1420,14 @@ function createFreeTableService(deps) {
     const id = typeof value === "string" ? value.trim() : "";
     if (!CHILD_ID_PATTERN.test(id)) {
       throw httpsError("invalid-argument", `${label}を確認してください。`);
+    }
+    return id;
+  }
+
+  function requireInviteId(value) {
+    const id = typeof value === "string" ? value.trim() : "";
+    if (!FREE_TABLE_INVITE_ID_PATTERN.test(id)) {
+      throw httpsError("invalid-argument", "灯り札を確認してください。");
     }
     return id;
   }
@@ -1895,6 +2147,448 @@ function createFreeTableService(deps) {
     };
   }
 
+  function inviteRoomMatches(first, second) {
+    return first?.hostUid === second?.hostUid
+      && first?.roomId === second?.roomId
+      && first?.publicRoomId === second?.publicRoomId;
+  }
+
+  function inviteGenerationIsCurrent(invite, current) {
+    const inviteGeneration = Number(invite?.generation || 0);
+    const currentGeneration = Number(current?.generation || 0);
+    return Number.isSafeInteger(inviteGeneration)
+      && inviteGeneration > 0
+      && Number.isSafeInteger(currentGeneration)
+      && currentGeneration >= inviteGeneration;
+  }
+
+  async function activeInviteHostContext(uid, now) {
+    const host = objectValue((await hostActiveRef(uid).get()).val());
+    const roomId = String(host.roomId || "");
+    const publicRoomId = String(host.publicRoomId || "");
+    const hostGeneration = Number(host.generation || 0);
+    if (host.state !== "open"
+        || !CHILD_ID_PATTERN.test(roomId)
+        || !PUBLIC_ID_PATTERN.test(publicRoomId)
+        || !Number.isSafeInteger(hostGeneration)
+        || hostGeneration <= 0
+        || Number(host.expiresAt || 0) <= now) return null;
+    const [publicSnapshot, roomSnapshot] = await Promise.all([
+      publicRoomRef(publicRoomId).get(),
+      roomStateRef(roomId).get(),
+    ]);
+    const publicRoom = objectValue(publicSnapshot.val());
+    const room = objectValue(roomSnapshot.val());
+    const publicGeneration = Number(publicRoom.generation || 0);
+    const roomGeneration = Number(room.generation || 0);
+    const expected = {
+      hostUid: uid,
+      roomId,
+      publicRoomId,
+    };
+    if (!publicRoomProjection(publicRoom, now)
+        || !inviteRoomMatches(publicRoom, expected)
+        || !Number.isSafeInteger(publicGeneration)
+        || publicGeneration <= 0
+        || publicRoom.state !== "open"
+        || !inviteRoomMatches(room, expected)
+        || !Number.isSafeInteger(roomGeneration)
+        || roomGeneration <= 0
+        || room.state !== "open"
+        || Number(room.expiresAt || 0) <= now) return null;
+    return Object.freeze({
+      ...expected,
+      generation: Math.min(hostGeneration, publicGeneration, roomGeneration),
+      publicRoom,
+    });
+  }
+
+  async function resolveActiveInvite(inviteId, now) {
+    const inviteSnapshot = await inviteRef(inviteId).get();
+    const invite = freeTableInviteRecord(inviteSnapshot.val(), inviteId, now);
+    if (!invite) {
+      return Object.freeze({
+        invite: null,
+        preview: inactiveFreeTableInvitePreview(inviteId, now),
+        publicRoom: null,
+      });
+    }
+    const [hostInviteSnapshot, publicSnapshot, hostSnapshot, roomSnapshot] = await Promise.all([
+      hostInviteRef(invite.hostUid).get(),
+      publicRoomRef(invite.publicRoomId).get(),
+      hostActiveRef(invite.hostUid).get(),
+      roomStateRef(invite.roomId).get(),
+    ]);
+    const publicRoom = objectValue(publicSnapshot.val());
+    const preview = freeTableInvitePreviewProjection(
+      inviteId,
+      invite,
+      hostInviteSnapshot.val(),
+      publicRoom,
+      hostSnapshot.val(),
+      roomSnapshot.val(),
+      now,
+    );
+    return Object.freeze({
+      invite: preview.active ? invite : null,
+      preview,
+      publicRoom: preview.active ? publicRoomProjection(publicRoom, now) : null,
+    });
+  }
+
+  async function authorizeInviteRequest(invite, now) {
+    const matchesInvite = (current) => (
+      current
+      && inviteRoomMatches(current, invite)
+      && current.inviteId === invite.inviteId
+      && current.generation === invite.generation
+      && current.createdAt === invite.createdAt
+      && current.expiresAt === invite.expiresAt
+    );
+    let pointerAuthorized = false;
+    const pointerResult = await hostInviteRef(invite.hostUid).transaction(
+      (currentValue) => {
+        const current = freeTableInviteRecord(
+          currentValue,
+          invite.inviteId,
+          now,
+        );
+        pointerAuthorized = matchesInvite(current);
+        return currentValue;
+      },
+      undefined,
+      false,
+    );
+    if (pointerResult?.committed !== true || !pointerAuthorized) return false;
+    let authorized = false;
+    const result = await inviteRef(invite.inviteId).transaction(
+      (currentValue) => {
+        const current = freeTableInviteRecord(
+          currentValue,
+          invite.inviteId,
+          now,
+        );
+        authorized = matchesInvite(current);
+        return currentValue;
+      },
+      undefined,
+      false,
+    );
+    return result?.committed === true && authorized;
+  }
+
+  async function removeInviteIfMatches(inviteId, predicate) {
+    if (!FREE_TABLE_INVITE_ID_PATTERN.test(String(inviteId || ""))) return false;
+    return removeRealtimeIfMatches(inviteRef(inviteId), predicate);
+  }
+
+  async function issueInvite(uid, data, rotate) {
+    const payload = exactPayload(data, rotate ? ["inviteId"] : []);
+    if (!payload) {
+      throw httpsError("invalid-argument", "灯り札の発行内容を確認してください。");
+    }
+    const expectedInviteId = rotate ? requireInviteId(payload.inviteId) : "";
+    const now = currentTime();
+    const context = await activeInviteHostContext(uid, now);
+    if (!context) {
+      throw httpsError("failed-precondition", "お迎え中の自由卓を確認してください。");
+    }
+    const previous = objectValue((await hostInviteRef(uid).get()).val());
+    let reusableInviteId = "";
+    const previousPointer = freeTableInviteRecord(
+      previous,
+      String(previous.inviteId || ""),
+      now,
+    );
+    if (!rotate
+        && previousPointer
+        && inviteRoomMatches(previousPointer, context)
+        && inviteGenerationIsCurrent(previousPointer, context)) {
+      const previousInvite = freeTableInviteRecord(
+        (await inviteRef(previousPointer.inviteId).get()).val(),
+        previousPointer.inviteId,
+        now,
+      );
+      if (previousInvite
+          && freeTableInviteRecordsMatch(previousInvite, previousPointer)) {
+        reusableInviteId = previousPointer.inviteId;
+      }
+    }
+    let proposalInviteId = "";
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const candidate = randomFreeTableInviteId(randomBytes);
+      if (candidate !== previous.inviteId) {
+        proposalInviteId = candidate;
+        break;
+      }
+    }
+    if (!proposalInviteId) {
+      throw httpsError("resource-exhausted", "新しい灯り札を発行できませんでした。");
+    }
+    const proposal = Object.freeze({
+      protocolVersion: FREE_TABLE_PROTOCOL_VERSION,
+      inviteId: proposalInviteId,
+      hostUid: uid,
+      roomId: context.roomId,
+      publicRoomId: context.publicRoomId,
+      generation: context.generation,
+      createdAt: now,
+      expiresAt: now + FREE_TABLE_INVITE_TTL_MS,
+    });
+    const hostResult = await hostInviteRef(uid).transaction((currentValue) => {
+      const current = freeTableInviteRecord(
+        currentValue,
+        String(currentValue?.inviteId || ""),
+        now,
+      );
+      if (rotate) {
+        if (!current
+            || current.inviteId !== expectedInviteId
+            || !inviteRoomMatches(current, context)
+            || !inviteGenerationIsCurrent(current, context)) return currentValue;
+        return proposal;
+      }
+      if (current
+          && inviteRoomMatches(current, context)
+          && inviteGenerationIsCurrent(current, context)) {
+        if (current.inviteId === previousPointer?.inviteId
+            && current.inviteId !== reusableInviteId) return proposal;
+        return current;
+      }
+      return proposal;
+    });
+    const selected = committedTransactionValue(
+      hostResult,
+      (value) => (
+        freeTableInviteRecord(value, String(value?.inviteId || ""), now)
+        && value.hostUid === uid
+        && inviteRoomMatches(value, context)
+        && inviteGenerationIsCurrent(value, context)
+        && (!rotate || value.inviteId === proposal.inviteId)
+      ),
+    );
+    if (!selected) {
+      throw httpsError("aborted", "灯り札の状態が変わりました。もう一度お試しください。");
+    }
+    const selectedIsProposal = selected.inviteId === proposal.inviteId;
+    let materialized = null;
+    if (selectedIsProposal) {
+      const inviteResult = await inviteRef(selected.inviteId).transaction((currentValue) => {
+        if (!currentValue || freeTableInviteRecordsMatch(currentValue, selected)) {
+          return selected;
+        }
+        return currentValue;
+      });
+      materialized = committedTransactionValue(
+        inviteResult,
+        (value) => Boolean(
+          freeTableInviteRecord(value, selected.inviteId, now)
+          && freeTableInviteRecordsMatch(value, selected),
+        ),
+      );
+    } else {
+      const storedInvite = (await inviteRef(selected.inviteId).get()).val();
+      materialized = freeTableInviteRecord(storedInvite, selected.inviteId, now)
+        && freeTableInviteRecordsMatch(storedInvite, selected)
+        ? storedInvite
+        : null;
+    }
+    if (!materialized) {
+      if (selectedIsProposal
+          || selected.inviteId === reusableInviteId) {
+        await removeRealtimeIfMatches(
+          hostInviteRef(uid),
+          (current) => current.inviteId === selected.inviteId,
+        );
+      }
+      if (selectedIsProposal) {
+        await removeInviteIfMatches(
+          selected.inviteId,
+          (current) => freeTableInviteRecordsMatch(current, selected),
+        );
+      }
+      throw httpsError(
+        selectedIsProposal ? "resource-exhausted" : "aborted",
+        selectedIsProposal
+          ? "灯り札を発行できませんでした。"
+          : "灯り札の発行が重なりました。もう一度お試しください。",
+      );
+    }
+    const [latestHostInvite, latestContext] = await Promise.all([
+      hostInviteRef(uid).get(),
+      activeInviteHostContext(uid, currentTime()),
+    ]);
+    if (latestHostInvite.val()?.inviteId !== selected.inviteId
+        || !latestContext
+        || !inviteRoomMatches(latestContext, selected)
+        || !inviteGenerationIsCurrent(selected, latestContext)) {
+      await removeRealtimeIfMatches(
+        hostInviteRef(uid),
+        (current) => current.inviteId === selected.inviteId,
+      );
+      await removeInviteIfMatches(
+        selected.inviteId,
+        (current) => (
+          current.hostUid === uid && freeTableInviteRecordsMatch(current, selected)
+        ),
+      );
+      throw httpsError("aborted", "開室状態が変わりました。灯り札を発行し直してください。");
+    }
+    if (previous.inviteId
+        && previous.inviteId !== selected.inviteId) {
+      await removeInviteIfMatches(
+        previous.inviteId,
+        (current) => current.hostUid === uid && current.inviteId === previous.inviteId,
+      );
+    }
+    return Object.freeze({
+      ok: true,
+      invite: Object.freeze({
+        inviteId: selected.inviteId,
+        expiresAt: selected.expiresAt,
+      }),
+    });
+  }
+
+  async function revokeInvite(uid, data) {
+    const payload = exactPayload(data, ["inviteId"]);
+    if (!payload) {
+      throw httpsError("invalid-argument", "灯り札の取り消し内容を確認してください。");
+    }
+    const inviteId = requireInviteId(payload.inviteId);
+    await removeRealtimeIfMatches(
+      hostInviteRef(uid),
+      (current) => current.inviteId === inviteId,
+    );
+    await removeInviteIfMatches(
+      inviteId,
+      (current) => current.inviteId === inviteId && current.hostUid === uid,
+    );
+    return Object.freeze({ ok: true, revoked: true });
+  }
+
+  async function submitPublicCardReport(uid, data) {
+    const payload = exactPayload(
+      data,
+      ["inviteId", "previewHash", "reason"],
+      ["details"],
+    );
+    if (!payload
+        || !FREE_TABLE_REPORT_REASONS.includes(payload.reason)
+        || typeof payload.previewHash !== "string"
+        || !FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN.test(payload.previewHash)) {
+      throw httpsError("invalid-argument", "灯り札の通報内容を確認してください。");
+    }
+    if (payload.details !== undefined
+        && (typeof payload.details !== "string"
+          || codePointLength(safeMultiline(payload.details, 501)) > 500)) {
+      throw httpsError("invalid-argument", "通報の補足は500文字以内にしてください。");
+    }
+    const inviteId = requireInviteId(payload.inviteId);
+    const now = currentTime();
+    const resolved = await resolveActiveInvite(inviteId, now);
+    const invite = resolved.invite;
+    const snapshot = freeTablePublicCardSnapshot(resolved.preview?.preview);
+    const previewHash = freeTablePublicCardSnapshotHash(snapshot);
+    if (!invite
+        || !resolved.preview?.active
+        || !snapshot
+        || !FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN.test(previewHash)) {
+      throw httpsError("not-found", "この灯り札は、いま一息ついています。");
+    }
+    if (previewHash !== payload.previewHash
+        || resolved.preview.previewHash !== payload.previewHash) {
+      throw httpsError(
+        "failed-precondition",
+        "灯り札の内容が変わりました。最新の内容を確認してから、もう一度お試しください。",
+      );
+    }
+    if (invite.hostUid === uid) {
+      throw httpsError(
+        "failed-precondition",
+        "自分の灯り札は通報できません。内容を直すか、暖簾をしまってください。",
+      );
+    }
+    const reportId = internalPublicCardReportId(
+      invite.publicRoomId,
+      previewHash,
+      uid,
+    );
+    const proposedReport = Object.freeze({
+      protocolVersion: FREE_TABLE_PROTOCOL_VERSION,
+      reportType: "public_card",
+      reportId,
+      inviteId,
+      publicRoomId: invite.publicRoomId,
+      reporterUid: uid,
+      targetUid: invite.hostUid,
+      reason: payload.reason,
+      details: safeMultiline(payload.details, 500),
+      previewHash,
+      snapshot,
+      createdAt: now,
+      expireAt: Timestamp.fromMillis(now + FREE_TABLE_REPORT_RETENTION_MS),
+    });
+    await firestore.runTransaction(async (transaction) => {
+      const reportReference = publicCardReportRef(reportId);
+      const existingSnapshot = await transaction.get(reportReference);
+      if (existingSnapshot.exists) {
+        const existing = objectValue(existingSnapshot.data());
+        if (existing.reportType !== "public_card"
+            || existing.reportId !== reportId
+            || existing.publicRoomId !== invite.publicRoomId
+            || existing.reporterUid !== uid
+            || existing.targetUid !== invite.hostUid
+            || existing.previewHash !== previewHash) {
+          throw httpsError("aborted", "通報記録の整合性を確認できませんでした。");
+        }
+        return;
+      }
+      const rateReference = publicCardReportRateRef(uid);
+      const rateSnapshot = await transaction.get(rateReference);
+      const nextRate = nextPublicCardReportRateLimit(
+        rateSnapshot.exists ? rateSnapshot.data() : null,
+        uid,
+        now,
+      );
+      if (!nextRate) {
+        throw httpsError(
+          "resource-exhausted",
+          "短時間に送れる通報の上限に達しました。時間を置いてお試しください。",
+        );
+      }
+      transaction.set(rateReference, {
+        ...nextRate,
+        expireAt: Timestamp.fromMillis(
+          nextRate.windowEndsAt + FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS,
+        ),
+      });
+      transaction.create(reportReference, proposedReport);
+    });
+    return Object.freeze({ ok: true, reportId });
+  }
+
+  async function performInviteAction(uidValue, data) {
+    const uid = requireUid(uidValue);
+    const action = typeof data?.action === "string" ? data.action.trim() : "";
+    if (action === "issue") return issueInvite(uid, data, false);
+    if (action === "rotate") return issueInvite(uid, data, true);
+    if (action === "revoke") return revokeInvite(uid, data);
+    if (action === "report_public_card") return submitPublicCardReport(uid, data);
+    throw httpsError("invalid-argument", "未対応の灯り札操作です。");
+  }
+
+  async function getInvitePreview(data) {
+    const payload = objectValue(data);
+    if (data !== payload
+        || Reflect.ownKeys(payload).length !== 1
+        || !Object.hasOwn(payload, "inviteId")) {
+      throw httpsError("invalid-argument", "灯り札を確認してください。");
+    }
+    const inviteId = requireInviteId(payload.inviteId);
+    return (await resolveActiveInvite(inviteId, currentTime())).preview;
+  }
+
   async function listSpaces(uid, data) {
     if (!exactPayload(data, [])) {
       throw httpsError("invalid-argument", "部屋一覧の操作を確認してください。");
@@ -1933,7 +2627,7 @@ function createFreeTableService(deps) {
     };
   }
 
-  async function requestEntry(uid, data) {
+  async function requestEntry(uid, data, inviteContext = null) {
     const payload = exactPayload(data, ["publicRoomId", "visitorCard"]);
     if (!payload || !validateCard(payload.visitorCard)) {
       throw httpsError("invalid-argument", "来訪札の内容を確認してください。");
@@ -1948,6 +2642,19 @@ function createFreeTableService(deps) {
     const publicRoom = publicRoomProjection(roomSnapshot.val(), now);
     if (!publicRoom || !hostIdentity) {
       throw httpsError("not-found", "この部屋は、いま一息ついています。");
+    }
+    if (inviteContext
+        && (Number(inviteContext.expiresAt || 0) <= now
+          || inviteContext.publicRoomId !== publicRoomId
+          || inviteContext.hostUid !== roomSnapshot.val()?.hostUid
+          || inviteContext.roomId !== roomSnapshot.val()?.roomId
+          || Number(inviteContext.generation || 0)
+            > Number(roomSnapshot.val()?.generation || 0))) {
+      throw httpsError("not-found", "この灯り札は、いま一息ついています。");
+    }
+    if (inviteContext
+        && !await authorizeInviteRequest(inviteContext, now)) {
+      throw httpsError("not-found", "この灯り札は、いま一息ついています。");
     }
     if (hostIdentity.uid === uid) {
       throw httpsError("failed-precondition", "自分の部屋へ来訪札は送れません。");
@@ -2057,6 +2764,7 @@ function createFreeTableService(deps) {
       visitorCard: normalizeCard(payload.visitorCard),
       requestedAt: pending.requestedAt || now,
       expiresAt: pending.expiresAt || expiresAt,
+      ...(inviteContext ? { sourceInviteId: inviteContext.inviteId } : {}),
     };
     let requestRoomOutcome = "unavailable";
     const roomResult = await roomStateRef(roomId).transaction((current) => {
@@ -2150,12 +2858,110 @@ function createFreeTableService(deps) {
       }
       throw httpsError("permission-denied", "この部屋へ来訪札は送れません。");
     }
+    if (inviteContext
+        && !await authorizeInviteRequest(inviteContext, currentTime())) {
+      const claimRemoved = await removeRealtimeIfMatches(
+        engagementRef(uid),
+        (current) => (
+          current.state === "visitor_pending"
+          && current.requestId === requestId
+          && current.roomId === roomId
+        ),
+      );
+      await Promise.all([
+        clearPendingIfMatches(uid, requestId),
+        removeRealtimeIfMatches(
+          requestRef(roomId, requestId),
+          (current) => current.requestId === requestId,
+        ),
+        roomStateRef(roomId).transaction((current) => {
+          const storedRequest = current?.requests?.[requestId];
+          if (!storedRequest
+              || storedRequest.requestId !== requestId
+              || storedRequest.visitorUid !== uid) return current;
+          const requests = { ...objectValue(current.requests) };
+          delete requests[requestId];
+          return { ...current, requests };
+        }),
+      ]);
+      if (!claimRemoved) {
+        const [activeSnapshot, latestRoomSnapshot] = await Promise.all([
+          activeRef(uid).get(),
+          roomStateRef(roomId).get(),
+        ]);
+        const activeCandidate = activeSnapshot.val();
+        const latestRoom = latestRoomSnapshot.val();
+        const candidateSessionId = CHILD_ID_PATTERN.test(
+          String(activeCandidate?.sessionId || ""),
+        ) ? activeCandidate.sessionId : "";
+        if (candidateSessionId
+            && latestRoom?.acceptedRequestId === requestId
+            && latestRoom?.session?.sessionId === candidateSessionId
+            && latestRoom.session.visitorUid === uid
+            && latestRoom.session.hostUid === hostIdentity.uid) {
+          await endFixedPairSessionIfActive(
+            uid,
+            hostIdentity.uid,
+            candidateSessionId,
+          );
+        }
+      }
+      throw httpsError("not-found", "この灯り札は、いま一息ついています。");
+    }
+    const request = publicRequestProjection(internalRequest);
+    if (inviteContext) {
+      const inviteRoom = freeTableInviteRoomProjection(roomSnapshot.val());
+      if (!inviteRoom) {
+        throw httpsError("not-found", "この灯り札は、いま一息ついています。");
+      }
+      return {
+        ok: true,
+        pending: true,
+        inviteId: inviteContext.inviteId,
+        request: Object.freeze({
+          requestId: request.requestId,
+          visitorCard: request.visitorCard,
+          requestedAt: request.requestedAt,
+          expiresAt: request.expiresAt,
+        }),
+        room: inviteRoom,
+      };
+    }
     return {
       ok: true,
       pending: true,
-      request: publicRequestProjection(internalRequest),
+      request,
       room: publicRoom,
     };
+  }
+
+  async function requestEntryFromInvite(uid, data) {
+    const payload = exactPayload(data, ["inviteId", "visitorCard"]);
+    if (!payload || !validateCard(payload.visitorCard)) {
+      throw httpsError("invalid-argument", "来訪札の内容を確認してください。");
+    }
+    const inviteId = requireInviteId(payload.inviteId);
+    const resolved = await resolveActiveInvite(inviteId, currentTime());
+    if (!resolved.invite || !resolved.preview.active) {
+      throw httpsError("not-found", "この灯り札は、いま一息ついています。");
+    }
+    try {
+      return await requestEntry(uid, {
+        action: "request",
+        publicRoomId: resolved.invite.publicRoomId,
+        visitorCard: payload.visitorCard,
+      }, resolved.invite);
+    } catch (error) {
+      if ([
+        "not-found",
+        "permission-denied",
+        "resource-exhausted",
+        "failed-precondition",
+      ].includes(error?.code)) {
+        throw httpsError("not-found", "この灯り札は、いま一息ついています。");
+      }
+      throw error;
+    }
   }
 
   async function cancelEntryRequest(uid, data) {
@@ -4130,12 +4936,16 @@ function createFreeTableService(deps) {
       sessionSnapshot,
       engagementSnapshot,
       presenceSnapshot,
+      inviteSnapshot,
+      hostInviteSnapshot,
     ] = await Promise.all([
       publicRoomsRef().get(),
       realtime.ref("freeTables/visitorPending").get(),
       sessionsRef().get(),
       engagementsRef().get(),
       realtime.ref("freeTables/presence").get(),
+      realtime.ref("freeTables/invites").get(),
+      realtime.ref("freeTables/hostInvites").get(),
     ]);
     let rooms = 0;
     let requests = 0;
@@ -4143,6 +4953,8 @@ function createFreeTableService(deps) {
     let engagements = 0;
     let disconnectProbes = 0;
     let disconnectedSessions = 0;
+    let invites = 0;
+    let invitePointers = 0;
     for (const room of Object.values(objectValue(roomsSnapshot.val()))) {
       if (Number(room?.expiresAt || 0) > now
           || !PUBLIC_ID_PATTERN.test(String(room?.publicRoomId || ""))) continue;
@@ -4256,8 +5068,64 @@ function createFreeTableService(deps) {
       );
       if (engagementRemoved) engagements += 1;
     }
-    const [reports, visitLedgers] = await Promise.all([
+    const observedInvites = objectValue(inviteSnapshot.val());
+    for (const [inviteId, observedValue] of Object.entries(observedInvites)) {
+      const invite = freeTableInviteRecord(observedValue, inviteId, now);
+      let canonical = false;
+      if (invite) {
+        const pointerSnapshot = await hostInviteRef(invite.hostUid).get();
+        const pointer = freeTableInviteRecord(pointerSnapshot.val(), inviteId, now);
+        canonical = Boolean(pointer && freeTableInviteRecordsMatch(pointer, invite));
+      }
+      if (canonical) continue;
+      const inviteReference = FREE_TABLE_INVITE_ID_PATTERN.test(inviteId)
+        ? inviteRef(inviteId)
+        : realtime.ref("freeTables/invites").child(inviteId);
+      const removed = await removeRealtimeIfMatches(
+        inviteReference,
+        (current) => (
+          JSON.stringify(objectValue(current))
+            === JSON.stringify(objectValue(observedValue))
+        ),
+      );
+      if (removed) invites += 1;
+    }
+    for (const [hostUid, observedValue] of Object.entries(
+      objectValue(hostInviteSnapshot.val()),
+    )) {
+      const inviteId = String(observedValue?.inviteId || "");
+      const pointer = freeTableInviteRecord(observedValue, inviteId, now);
+      let canonical = false;
+      if (pointer && pointer.hostUid === hostUid) {
+        const storedInvite = freeTableInviteRecord(
+          (await inviteRef(inviteId).get()).val(),
+          inviteId,
+          now,
+        );
+        canonical = Boolean(
+          storedInvite && freeTableInviteRecordsMatch(storedInvite, pointer),
+        );
+        if (!canonical && now - pointer.createdAt <= 60_000) continue;
+      }
+      if (canonical) continue;
+      const removed = await removeRealtimeIfMatches(
+        hostInviteRef(hostUid),
+        (current) => (
+          JSON.stringify(objectValue(current))
+            === JSON.stringify(objectValue(observedValue))
+        ),
+      );
+      if (removed) invitePointers += 1;
+    }
+    const [
+      reports,
+      publicCardReports,
+      publicCardReportLimits,
+      visitLedgers,
+    ] = await Promise.all([
       cleanupExpiredFirestoreCollection("freeTableReports", now),
+      cleanupExpiredFirestoreCollection("freeTablePublicCardReports", now),
+      cleanupExpiredFirestoreCollection("freeTablePublicCardReportLimits", now),
       cleanupExpiredFirestoreCollection("freeTableVisitLedger", now),
     ]);
     return {
@@ -4267,7 +5135,11 @@ function createFreeTableService(deps) {
       engagements,
       disconnectProbes,
       disconnectedSessions,
+      invites,
+      invitePointers,
       reports,
+      publicCardReports,
+      publicCardReportLimits,
       visitLedgers,
       cleanedAt: now,
     };
@@ -4283,6 +5155,7 @@ function createFreeTableService(deps) {
     if (action === "open") return openSpace(uid, data);
     if (action === "list") return listSpaces(uid, data);
     if (action === "request") return requestEntry(uid, data);
+    if (action === "request_from_invite") return requestEntryFromInvite(uid, data);
     if (action === "cancel_request") return cancelEntryRequest(uid, data);
     if (action === "respond") return respondToRequest(uid, data);
     if (action === "arrive") return arriveAtSession(uid, data);
@@ -4298,8 +5171,10 @@ function createFreeTableService(deps) {
 
   return Object.freeze({
     cleanupExpired,
+    getInvitePreview,
     getPublicStats,
     performAction,
+    performInviteAction,
   });
 }
 
@@ -4312,11 +5187,15 @@ module.exports = Object.freeze({
   FREE_TABLE_DURATIONS,
   FREE_TABLE_ENDED_RETENTION_MS,
   FREE_TABLE_GROWTH_MILESTONES,
+  FREE_TABLE_INVITE_ID_PATTERN,
+  FREE_TABLE_INVITE_TTL_MS,
   FREE_TABLE_LIST_LIMIT,
   FREE_TABLE_LIST_SCAN_LIMIT,
   FREE_TABLE_PAIR_GROWTH_COOLDOWN_MS,
   FREE_TABLE_PROTOCOL_VERSION,
   FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS,
+  FREE_TABLE_PUBLIC_CARD_REPORT_RATE_LIMIT,
+  FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS,
   FREE_TABLE_PUBLIC_ROOM_TTL_MS,
   FREE_TABLE_RECONNECT_MERGE_MS,
   FREE_TABLE_REPORT_MESSAGE_LIMIT,
@@ -4330,8 +5209,12 @@ module.exports = Object.freeze({
   blockedInEitherDirection,
   fairShelfCursor,
   fairShelfKey,
+  freeTableInvitePreviewProjection,
+  freeTableInviteRoomProjection,
+  freeTablePublicCardSnapshotHash,
   growthStage,
   internalPairId,
+  internalPublicCardReportId,
   internalReportId,
   nextAdmissionState,
   nextArrivalState,
@@ -4340,6 +5223,7 @@ module.exports = Object.freeze({
   nextFinalHostAdmissionClaim,
   nextHostAdmissionClaim,
   nextHostOpenClaim,
+  nextPublicCardReportRateLimit,
   nextRoomRequests,
   nextVisitorAdmissionClaim,
   nextVisitorPendingClaim,
@@ -4354,6 +5238,7 @@ module.exports = Object.freeze({
   publicRequestProjection,
   publicRoomProjection,
   publicSessionProjection,
+  randomFreeTableInviteId,
   randomPublicId,
   restoredAcceptedHostOpenClaim,
   restoredHostOpenClaim,

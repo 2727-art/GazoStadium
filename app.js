@@ -13,6 +13,7 @@
   const GAME_AUDIO_MAX_SOURCE_BYTES = 20 * 1024 * 1024;
   const GAME_AUDIO_MAX_OUTPUT_BYTES = 480 * 1024;
   const OFFICIAL_GAME_URL = "https://gazostadium.anjugames.workers.dev/";
+  const FREE_TABLE_INVITE_QUERY_KEY = "freeTableInvite";
   const OVERALL_RATING_CLASSES = Object.freeze([
     { key: "beginner", label: "Beginner", emblem: "◇", min: 100, max: 1024, range: "100–1024" },
     { key: "great", label: "Great", emblem: "✦", min: 1025, max: 1049, range: "1025–1049" },
@@ -1320,6 +1321,22 @@
     window.addEventListener("hariai-free-table-ready", () => window.HariaiFreeTable?.start?.(), { once: true });
   }
 
+  function openInitialFreeTableInvite() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has(FREE_TABLE_INVITE_QUERY_KEY)) return false;
+    const inviteId = params.get(FREE_TABLE_INVITE_QUERY_KEY) || "";
+    if (window.HariaiFreeTable?.openInvite) {
+      window.HariaiFreeTable.openInvite(inviteId);
+      return true;
+    }
+    window.addEventListener(
+      "hariai-free-table-ready",
+      () => window.HariaiFreeTable?.openInvite?.(inviteId),
+      { once: true },
+    );
+    return true;
+  }
+
   function startValueMarket() {
     startValueMarketDestination("setup");
   }
@@ -1873,5 +1890,6 @@
   });
 
   renderLandingScreen();
+  openInitialFreeTableInvite();
   showAnjuPayUnitNoticeOnce();
 })();

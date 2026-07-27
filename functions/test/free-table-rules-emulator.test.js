@@ -21,6 +21,7 @@ const projectId = process.env.FREE_TABLE_RULES_TEST_PROJECT_ID || "demo-free-tab
 const safeEmulator = /^demo-[a-z0-9-]+$/.test(projectId)
   && /^(?:127\.0\.0\.1|localhost):\d+$/.test(emulatorHost);
 const SESSION_ID = "S".repeat(24);
+const INVITE_ID = "I".repeat(32);
 const HOST_UID = "free-table-host";
 const VISITOR_UID = "free-table-visitor";
 const OUTSIDER_UID = "free-table-outsider";
@@ -61,6 +62,21 @@ test("free table client records accept exact short-lived shapes and reject TTL b
           expiresAt: now + 120_000,
         },
       },
+      invites: {
+        [INVITE_ID]: {
+          inviteId: INVITE_ID,
+          hostUid: HOST_UID,
+          roomId: "O".repeat(24),
+          publicRoomId: "R".repeat(24),
+          expiresAt: now + 60_000,
+        },
+      },
+      hostInvites: {
+        [HOST_UID]: {
+          inviteId: INVITE_ID,
+          expiresAt: now + 60_000,
+        },
+      },
       active: {
         [HOST_UID]: {
           sessionId: SESSION_ID,
@@ -94,6 +110,12 @@ test("free table client records accept exact short-lived shapes and reject TTL b
   const outsiderDatabase = environment.authenticatedContext(OUTSIDER_UID).database();
 
   await assertFails(get(ref(hostDatabase, "freeTables/publicRooms")));
+  await assertFails(get(ref(hostDatabase, `freeTables/invites/${INVITE_ID}`)));
+  await assertFails(get(ref(hostDatabase, `freeTables/hostInvites/${HOST_UID}`)));
+  await assertFails(set(
+    ref(hostDatabase, `freeTables/invites/${INVITE_ID}`),
+    { inviteId: INVITE_ID },
+  ));
   await assertSucceeds(get(ref(hostDatabase, `freeTables/sessions/${SESSION_ID}`)));
   await assertFails(get(ref(outsiderDatabase, `freeTables/sessions/${SESSION_ID}`)));
 

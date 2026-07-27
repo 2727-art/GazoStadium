@@ -201,6 +201,8 @@ if (!RUN_REQUESTED) {
     return {
       uid,
       action: httpsCallable(functions, "freeTableAction"),
+      inviteAction: httpsCallable(functions, "freeTableInviteAction"),
+      invitePreview: httpsCallable(functions, "freeTableInvitePreview"),
       stats: httpsCallable(functions, "freeTablePublicStats"),
     };
   }
@@ -219,6 +221,55 @@ if (!RUN_REQUESTED) {
       ["seatedRooms", "updatedAt", "welcomingRooms"],
     );
     return result;
+  }
+
+  function assertInviteResponseIsPublic(value, seen = new Set()) {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    for (const [key, nested] of Object.entries(value)) {
+      assert.equal(
+        [
+          "uid",
+          "hostUid",
+          "visitorUid",
+          "publicRoomId",
+          "publicMemberId",
+          "roomId",
+          "generation",
+          "hostCard",
+        ].includes(key),
+        false,
+        `invite response exposed a private field: ${key}`,
+      );
+      assertInviteResponseIsPublic(nested, seen);
+    }
+  }
+
+  async function invokeInviteAction(caller, action, fields = {}) {
+    const result = (await caller.inviteAction({ action, ...fields })).data;
+    assertNoPrivateUid(result);
+    assertInviteResponseIsPublic(result);
+    return result;
+  }
+
+  async function invokeInvitePreview(caller, inviteId) {
+    const result = (await caller.invitePreview({ inviteId })).data;
+    assertNoPrivateUid(result);
+    assertInviteResponseIsPublic(result);
+    return result;
+  }
+
+  async function assertInactiveInviteRequest(caller, inviteId) {
+    await assert.rejects(
+      () => invoke(caller, "request_from_invite", {
+        inviteId,
+        visitorCard: card("灯りを訪ねる人"),
+      }),
+      (error) => (
+        error.code === "functions/not-found"
+        && error.message.includes("この灯り札は、いま一息ついています。")
+      ),
+    );
   }
 
   async function waitForStatsCacheExpiry(stats) {
@@ -274,6 +325,23 @@ if (!RUN_REQUESTED) {
       () => invokeStats(withoutAppCheck),
       (error) => error.code === "functions/unauthenticated",
     );
+    await assert.rejects(
+      () => withoutAppCheck.invitePreview({ inviteId: "I".repeat(32) }),
+      (error) => error.code === "functions/unauthenticated",
+    );
+    await assert.rejects(
+      () => withoutAppCheck.inviteAction({ action: "issue" }),
+      (error) => error.code === "functions/unauthenticated",
+    );
+    await assert.rejects(
+      () => withoutAppCheck.inviteAction({
+        action: "report_public_card",
+        inviteId: "I".repeat(32),
+        previewHash: "0".repeat(64),
+        reason: "other",
+      }),
+      (error) => error.code === "functions/unauthenticated",
+    );
     const withoutAuth = await createCaller("without-auth", {
       authenticate: false,
     });
@@ -285,6 +353,27 @@ if (!RUN_REQUESTED) {
       () => invokeStats(withoutAuth, { extra: true }),
       (error) => error.code === "functions/invalid-argument",
     );
+    await assert.rejects(
+      () => invokeInviteAction(withoutAuth, "issue"),
+      (error) => error.code === "functions/unauthenticated",
+    );
+    await assert.rejects(
+      () => invokeInviteAction(withoutAuth, "report_public_card", {
+        inviteId: "I".repeat(32),
+        previewHash: "0".repeat(64),
+        reason: "other",
+      }),
+      (error) => error.code === "functions/unauthenticated",
+    );
+    const missingPreview = await invokeInvitePreview(withoutAuth, "I".repeat(32));
+    assert.deepEqual(Object.keys(missingPreview).sort(), [
+      "active",
+      "inviteId",
+      "ok",
+      "state",
+      "updatedAt",
+    ]);
+    assert.equal(missingPreview.state, "inactive");
 
     const host = await createCaller("host");
     const visitor = await createCaller("visitor");
@@ -361,5 +450,223 @@ if (!RUN_REQUESTED) {
     assert.equal(hostClaim.exists(), false);
     assert.equal(visitorClaim.exists(), false);
     assert.equal(hostActive.exists(), false);
+  });
+
+  test("lamp-card invites survive heartbeats and fence rotation, closure, blocking, and full rooms", async () => {
+    const host = await createCaller("invite-host");
+    const visitor = await createCaller("invite-visitor");
+    const blockedVisitor = await createCaller("invite-blocked-visitor");
+    const publicViewer = await createCaller("invite-public-viewer", {
+      authenticate: false,
+    });
+    await invoke(host, "save_space", {
+      space,
+      hostCard: card("灯りをともす店主"),
+    });
+    const opened = await invoke(host, "open", { active: true });
+    const issued = await invokeInviteAction(host, "issue");
+    assert.equal(issued.invite.inviteId.length, 32);
+    assert.match(issued.invite.inviteId, /^[A-Za-z0-9_-]{32}$/);
+    const firstInviteId = issued.invite.inviteId;
+    const firstInviteRecord = (
+      await realtime.ref(`freeTables/invites/${firstInviteId}`).get()
+    ).val();
+    let preview = await invokeInvitePreview(publicViewer, firstInviteId);
+    assert.equal(preview.state, "open");
+    assert.equal(preview.preview.space.topic, space.topic);
+    assert.equal(preview.preview.hostDisplayName, "灯りをともす店主");
+    assert.equal(JSON.stringify(preview).includes(opened.room.publicRoomId), false);
+
+    const heartbeat = await invoke(host, "open", { active: true });
+    assert.equal(heartbeat.room.publicRoomId, opened.room.publicRoomId);
+    preview = await invokeInvitePreview(publicViewer, firstInviteId);
+    assert.equal(preview.state, "open");
+
+    await realtime.ref(`freeTables/invites/${firstInviteId}`).remove();
+    const recovered = await invokeInviteAction(host, "issue");
+    const recoveredInviteId = recovered.invite.inviteId;
+    assert.notEqual(recoveredInviteId, firstInviteId);
+    assert.equal(
+      (await realtime.ref(`freeTables/invites/${firstInviteId}`).get()).exists(),
+      false,
+    );
+    await realtime.ref(`freeTables/invites/${firstInviteId}`).set(firstInviteRecord);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, firstInviteId)).state,
+      "inactive",
+    );
+
+    await assert.rejects(
+      () => invokeInviteAction(host, "rotate", {
+        inviteId: "Z".repeat(32),
+      }),
+      (error) => error.code === "functions/aborted",
+    );
+    const rotated = await invokeInviteAction(host, "rotate", {
+      inviteId: recoveredInviteId,
+    });
+    const secondInviteId = rotated.invite.inviteId;
+    assert.notEqual(secondInviteId, recoveredInviteId);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, firstInviteId)).state,
+      "inactive",
+    );
+    await assertInactiveInviteRequest(visitor, firstInviteId);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, secondInviteId)).state,
+      "open",
+    );
+
+    const roomId = firstInviteRecord.roomId;
+    const roomState = (
+      await realtime.ref(`freeTables/roomStates/${roomId}`).get()
+    ).val();
+    assert.equal(roomState?.roomId, roomId);
+    const filledRequests = {};
+    for (let index = 0; index < 16; index += 1) {
+      filledRequests[String(index).padStart(24, "0")] = {
+        expiresAt: Date.now() + 120_000,
+      };
+    }
+    await realtime.ref(`freeTables/roomStates/${roomId}`).set({
+      ...roomState,
+      requests: filledRequests,
+    });
+    await assertInactiveInviteRequest(visitor, secondInviteId);
+    await realtime.ref(`freeTables/roomStates/${roomId}/requests`).remove();
+
+    const listedForBlock = await invoke(blockedVisitor, "list");
+    const target = listedForBlock.rooms.find((room) => (
+      room.publicRoomId === opened.room.publicRoomId
+    ));
+    assert.ok(target);
+    await invoke(blockedVisitor, "block", {
+      publicMemberId: target.publicMemberId,
+    });
+    await assertInactiveInviteRequest(blockedVisitor, secondInviteId);
+
+    const requested = await invoke(visitor, "request_from_invite", {
+      inviteId: secondInviteId,
+      visitorCard: card("灯りを訪ねる人"),
+    });
+    assert.equal(requested.pending, true);
+    assertInviteResponseIsPublic(requested);
+    const hostState = await invoke(host, "get_my_state");
+    const accepted = await invoke(host, "respond", {
+      requestId: hostState.requests[0].requestId,
+      accept: true,
+    });
+    assert.ok(accepted.session.sessionId);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, secondInviteId)).state,
+      "inactive",
+    );
+    await assertInactiveInviteRequest(blockedVisitor, secondInviteId);
+
+    await invoke(visitor, "end", {
+      sessionId: accepted.session.sessionId,
+      reason: "safe_exit",
+      message: "",
+    });
+    const reopened = await invoke(host, "open", { active: true });
+    assert.equal(reopened.opened, true);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, secondInviteId)).state,
+      "inactive",
+    );
+    const reopenedInvite = await invokeInviteAction(host, "issue");
+    assert.notEqual(reopenedInvite.invite.inviteId, secondInviteId);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, reopenedInvite.invite.inviteId)).state,
+      "open",
+    );
+    await realtime.ref(`freeTables/hostInvites/${host.uid}`).remove();
+    assert.equal(
+      (await realtime.ref(
+        `freeTables/invites/${reopenedInvite.invite.inviteId}`,
+      ).get()).exists(),
+      true,
+    );
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, reopenedInvite.invite.inviteId)).state,
+      "inactive",
+    );
+    const revoked = await invokeInviteAction(host, "revoke", {
+      inviteId: reopenedInvite.invite.inviteId,
+    });
+    assert.equal(revoked.revoked, true);
+    const repeatedRevoke = await invokeInviteAction(host, "revoke", {
+      inviteId: reopenedInvite.invite.inviteId,
+    });
+    assert.equal(repeatedRevoke.revoked, true);
+    assert.equal(
+      (await realtime.ref(`freeTables/hostInvites/${host.uid}`).get()).exists(),
+      false,
+    );
+    assert.equal(
+      (await realtime.ref(
+        `freeTables/invites/${reopenedInvite.invite.inviteId}`,
+      ).get()).exists(),
+      false,
+    );
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, reopenedInvite.invite.inviteId)).state,
+      "inactive",
+    );
+    await assertInactiveInviteRequest(visitor, reopenedInvite.invite.inviteId);
+    const afterRevoke = await invokeInviteAction(host, "issue");
+    assert.notEqual(
+      afterRevoke.invite.inviteId,
+      reopenedInvite.invite.inviteId,
+    );
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, afterRevoke.invite.inviteId)).state,
+      "open",
+    );
+    await invokeInviteAction(host, "revoke", {
+      inviteId: afterRevoke.invite.inviteId,
+    });
+    await invoke(host, "open", { active: false });
+  });
+
+  test("concurrent revoke and rotate never revive the revoked token", async () => {
+    const host = await createCaller("invite-race-host");
+    const publicViewer = await createCaller("invite-race-viewer", {
+      authenticate: false,
+    });
+    await invoke(host, "save_space", {
+      space,
+      hostCard: card("灯りを守る店主"),
+    });
+    await invoke(host, "open", { active: true });
+    const issued = await invokeInviteAction(host, "issue");
+    const revokedInviteId = issued.invite.inviteId;
+    const [revokeResult, rotateResult] = await Promise.allSettled([
+      invokeInviteAction(host, "revoke", {
+        inviteId: revokedInviteId,
+      }),
+      invokeInviteAction(host, "rotate", {
+        inviteId: revokedInviteId,
+      }),
+    ]);
+    assert.equal(revokeResult.status, "fulfilled");
+    assert.equal(revokeResult.value.revoked, true);
+    if (rotateResult.status === "rejected") {
+      assert.equal(rotateResult.reason.code, "functions/aborted");
+    }
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, revokedInviteId)).state,
+      "inactive",
+    );
+    const recovered = await invokeInviteAction(host, "issue");
+    assert.notEqual(recovered.invite.inviteId, revokedInviteId);
+    assert.equal(
+      (await invokeInvitePreview(publicViewer, recovered.invite.inviteId)).state,
+      "open",
+    );
+    await invokeInviteAction(host, "revoke", {
+      inviteId: recovered.invite.inviteId,
+    });
+    await invoke(host, "open", { active: false });
   });
 }

@@ -52,6 +52,7 @@ if (!RUN_REQUESTED) {
   const {
     FREE_TABLE_DISCONNECT_GRACE_MS,
     FREE_TABLE_ENDED_RETENTION_MS,
+    FREE_TABLE_INVITE_TTL_MS,
     FREE_TABLE_REQUEST_LIMIT,
     createFreeTableService,
   } = require("../free-table");
@@ -944,6 +945,222 @@ if (!RUN_REQUESTED) {
     await realtime.ref(`freeTables/active/${orphanedUid}`).remove();
   });
 
+  test("a revoke completed after invite request insertion rolls the card back", async () => {
+    await realtime.ref("freeTables").remove();
+    const raceHostUid = `invite-race-host-${suffix}`;
+    const raceVisitorUid = `invite-race-visitor-${suffix}`;
+    await perform(raceHostUid, "save_space", { space, hostCard });
+    const opened = await perform(raceHostUid, "open", { active: true });
+    assert.equal(opened.opened, true);
+    const roomId = (
+      await realtime.ref(`freeTables/hostActive/${raceHostUid}`).get()
+    ).val()?.roomId;
+    assert.match(String(roomId || ""), /^[A-Za-z0-9_-]{24}$/);
+    const issued = await service.performInviteAction(raceHostUid, {
+      action: "issue",
+    });
+    let signalInserted = () => {};
+    let releaseInserted = () => {};
+    let paused = false;
+    const inserted = new Promise((resolve) => {
+      signalInserted = resolve;
+    });
+    const released = new Promise((resolve) => {
+      releaseInserted = resolve;
+    });
+    const pausingRealtime = {
+      ref(pathValue) {
+        const reference = realtime.ref(pathValue);
+        return new Proxy(reference, {
+          get(target, property) {
+            if (property === "set"
+                && String(pathValue).startsWith("freeTables/requests/")) {
+              return async (...argumentsList) => {
+                const result = await target.set(...argumentsList);
+                if (!paused) {
+                  paused = true;
+                  signalInserted();
+                  await released;
+                }
+                return result;
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    };
+    const pausingService = createFreeTableService({
+      firestore,
+      realtime: pausingRealtime,
+      HttpsError,
+      Timestamp,
+      now: () => clock,
+    });
+    const pendingRequest = pausingService.performAction(raceVisitorUid, {
+      action: "request_from_invite",
+      inviteId: issued.invite.inviteId,
+      visitorCard,
+    });
+    await inserted;
+    assert.equal(
+      (await realtime.ref(`freeTables/requests/${roomId}`).get()).exists(),
+      true,
+    );
+    let revoked;
+    try {
+      revoked = await service.performInviteAction(raceHostUid, {
+        action: "revoke",
+        inviteId: issued.invite.inviteId,
+      });
+    } finally {
+      releaseInserted();
+    }
+    assert.equal(revoked.revoked, true);
+    await assert.rejects(
+      pendingRequest,
+      (error) => (
+        error.code === "not-found"
+        && error.message === "この灯り札は、いま一息ついています。"
+      ),
+    );
+    const [
+      visitorPending,
+      visitorEngagement,
+      publicRequests,
+      internalRoom,
+    ] = await Promise.all([
+      realtime.ref(`freeTables/visitorPending/${raceVisitorUid}`).get(),
+      realtime.ref(`freeTables/engagements/${raceVisitorUid}`).get(),
+      realtime.ref(`freeTables/requests/${roomId}`).get(),
+      realtime.ref(`freeTables/roomStates/${roomId}`).get(),
+    ]);
+    assert.equal(visitorPending.exists(), false);
+    assert.equal(visitorEngagement.exists(), false);
+    assert.equal(publicRequests.exists(), false);
+    assert.deepEqual(internalRoom.val()?.requests || {}, {});
+    assert.deepEqual(
+      (await perform(raceHostUid, "get_my_state")).requests,
+      [],
+    );
+    assert.equal(
+      (await service.getInvitePreview({
+        inviteId: issued.invite.inviteId,
+      })).state,
+      "inactive",
+    );
+    await perform(raceHostUid, "open", { active: false });
+  });
+
+  test("a public lamp card can be reported before entry without creating a session", async () => {
+    await realtime.ref("freeTables").remove();
+    const reportHostUid = `invite-report-host-${suffix}`;
+    const reportVisitorUid = `invite-report-visitor-${suffix}`;
+    await perform(reportHostUid, "save_space", { space, hostCard });
+    await perform(reportHostUid, "open", { active: true });
+    const issued = await service.performInviteAction(reportHostUid, {
+      action: "issue",
+    });
+    const preview = await service.getInvitePreview({
+      inviteId: issued.invite.inviteId,
+    });
+    assert.equal(preview.active, true);
+    assert.match(preview.previewHash, /^[a-f0-9]{64}$/);
+    const submitted = await service.performInviteAction(reportVisitorUid, {
+      action: "report_public_card",
+      inviteId: issued.invite.inviteId,
+      previewHash: preview.previewHash,
+      reason: "privacy",
+      details: "公開札に個人情報が含まれています。",
+    });
+    const repeated = await service.performInviteAction(reportVisitorUid, {
+      action: "report_public_card",
+      inviteId: issued.invite.inviteId,
+      previewHash: preview.previewHash,
+      reason: "other",
+    });
+    assert.equal(repeated.reportId, submitted.reportId);
+    const reportReference = firestore
+      .collection("freeTablePublicCardReports")
+      .doc(submitted.reportId);
+    const stored = (await reportReference.get()).data();
+    assert.equal(stored.reportType, "public_card");
+    assert.equal(stored.reporterUid, reportVisitorUid);
+    assert.equal(stored.targetUid, reportHostUid);
+    assert.equal(stored.reason, "privacy");
+    assert.equal(stored.previewHash, preview.previewHash);
+    assert.deepEqual(stored.snapshot, preview.preview);
+    assert.deepEqual(Object.keys(stored.snapshot).sort(), [
+      "hostDisplayName",
+      "space",
+    ]);
+    assert.equal(Object.hasOwn(stored, "sessionId"), false);
+    assert.equal(Object.hasOwn(stored, "messageIds"), false);
+    assert.equal(Object.hasOwn(stored.snapshot, "hostUid"), false);
+    assert.equal(
+      (await firestore.collection("freeTableReports").doc(submitted.reportId).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await firestore.collection("freeTableProfiles").doc(reportVisitorUid).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await realtime.ref(`freeTables/visitorPending/${reportVisitorUid}`).get()).exists(),
+      false,
+    );
+    assert.equal(
+      (await realtime.ref("freeTables/sessions").get()).exists(),
+      false,
+    );
+    assert.equal(
+      (await firestore
+        .collection("freeTablePublicCardReportLimits")
+        .doc(reportVisitorUid)
+        .get()).data()?.count,
+      1,
+    );
+    await assert.rejects(
+      () => service.performInviteAction(reportHostUid, {
+        action: "report_public_card",
+        inviteId: issued.invite.inviteId,
+        previewHash: preview.previewHash,
+        reason: "other",
+      }),
+      (error) => error.code === "failed-precondition",
+    );
+    await assert.rejects(
+      () => service.performInviteAction(reportVisitorUid, {
+        action: "report_public_card",
+        inviteId: issued.invite.inviteId,
+        previewHash: "0".repeat(64),
+        reason: "other",
+      }),
+      (error) => error.code === "failed-precondition",
+    );
+    await assert.rejects(
+      () => service.performInviteAction(reportVisitorUid, {
+        action: "report_public_card",
+        inviteId: issued.invite.inviteId,
+        previewHash: preview.previewHash,
+        reason: "other",
+        targetUid: reportHostUid,
+      }),
+      (error) => error.code === "invalid-argument",
+    );
+    await reportReference.update({ expireAt: Timestamp.fromMillis(clock - 1) });
+    await firestore
+      .collection("freeTablePublicCardReportLimits")
+      .doc(reportVisitorUid)
+      .update({ expireAt: Timestamp.fromMillis(clock - 1) });
+    const cleaned = await service.cleanupExpired(clock);
+    assert.equal(cleaned.publicCardReports, 1);
+    assert.equal(cleaned.publicCardReportLimits, 1);
+    assert.equal((await reportReference.get()).exists, false);
+    await perform(reportHostUid, "open", { active: false });
+  });
+
   test("cleanup fences fresh heartbeats, in-flight admission, reconnect grace, and replacement rooms", async () => {
     await realtime.ref("freeTables").remove();
     const id = (character) => character.repeat(24);
@@ -1000,8 +1217,83 @@ if (!RUN_REQUESTED) {
         expiresAt: freshExpiry,
       },
     });
+    const expiredInviteId = "e".repeat(32);
+    const orphanInviteId = "o".repeat(32);
+    const canonicalInviteId = "n".repeat(32);
+    const stalePointerInviteId = "s".repeat(32);
+    const expiredInviteHost = `expired-invite-host-${suffix}`;
+    const rotatedInviteHost = `rotated-invite-host-${suffix}`;
+    const stalePointerHost = `stale-pointer-host-${suffix}`;
+    const inviteRecord = (
+      inviteId,
+      inviteHostUid,
+      createdAt,
+      expiresAt,
+    ) => ({
+      protocolVersion: 1,
+      inviteId,
+      hostUid: inviteHostUid,
+      roomId: heartbeatRoomId,
+      publicRoomId: heartbeatPublicRoomId,
+      generation: 1,
+      createdAt,
+      expiresAt,
+    });
+    const expiredInvite = inviteRecord(
+      expiredInviteId,
+      expiredInviteHost,
+      clock - FREE_TABLE_INVITE_TTL_MS,
+      clock - 1,
+    );
+    const orphanInvite = inviteRecord(
+      orphanInviteId,
+      rotatedInviteHost,
+      clock - 120_000,
+      clock + FREE_TABLE_INVITE_TTL_MS - 120_000,
+    );
+    const canonicalInvite = inviteRecord(
+      canonicalInviteId,
+      rotatedInviteHost,
+      clock - 60_000,
+      clock + FREE_TABLE_INVITE_TTL_MS - 60_000,
+    );
+    const stalePointer = inviteRecord(
+      stalePointerInviteId,
+      stalePointerHost,
+      clock - 120_000,
+      clock + FREE_TABLE_INVITE_TTL_MS - 120_000,
+    );
+    await realtime.ref("freeTables").update({
+      [`invites/${expiredInviteId}`]: expiredInvite,
+      "invites/malformed": { broken: true },
+      [`invites/${orphanInviteId}`]: orphanInvite,
+      [`invites/${canonicalInviteId}`]: canonicalInvite,
+      [`hostInvites/${expiredInviteHost}`]: expiredInvite,
+      [`hostInvites/malformed-pointer-${suffix}`]: { inviteId: "bad" },
+      [`hostInvites/${rotatedInviteHost}`]: canonicalInvite,
+      [`hostInvites/${stalePointerHost}`]: stalePointer,
+    });
     let cleaned = await service.cleanupExpired(clock);
     assert.equal(cleaned.rooms, 0);
+    assert.equal(cleaned.invites, 3);
+    assert.equal(cleaned.invitePointers, 3);
+    assert.equal(
+      (await realtime.ref(`freeTables/invites/${canonicalInviteId}`).get()).exists(),
+      true,
+    );
+    assert.equal(
+      (await realtime.ref(`freeTables/hostInvites/${rotatedInviteHost}`).get())
+        .val()?.inviteId,
+      canonicalInviteId,
+    );
+    assert.equal(
+      (await realtime.ref(`freeTables/invites/${orphanInviteId}`).get()).exists(),
+      false,
+    );
+    assert.equal(
+      (await realtime.ref(`freeTables/hostInvites/${stalePointerHost}`).get()).exists(),
+      false,
+    );
     assert.equal(
       (await realtime.ref(`freeTables/roomStates/${heartbeatRoomId}`).get())
         .val()?.expiresAt,

@@ -8,9 +8,11 @@ const root = path.resolve(__dirname, "..", "..");
 const frontendPath = path.join(root, "free-table.js");
 const cssPath = path.join(root, "free-table.css");
 const mediaPath = path.join(root, "free-table-media.mjs");
+const appPath = path.join(root, "app.js");
 const frontendSource = fs.readFileSync(frontendPath, "utf8");
 const cssSource = fs.readFileSync(cssPath, "utf8");
 const mediaSource = fs.readFileSync(mediaPath, "utf8");
+const appSource = fs.readFileSync(appPath, "utf8");
 const mediaModule = import(pathToFileURL(mediaPath).href);
 
 function webpBytes(width = 320, height = 240) {
@@ -407,7 +409,7 @@ test("safety exit disconnects locally and converges the exact server session", (
     leaveSource,
     /cancelPendingRequest\(\{ bestEffort: true \}\)[\s\S]*?cleanupSession\(\)/,
   );
-  assert.match(leaveSource, /else if \(!sessionId\) trackPendingLeaveSettlement\(settlePendingAfterLeave\(\)\)/);
+  assert.match(leaveSource, /else if \(!sessionId && state\.uid\) trackPendingLeaveSettlement\(settlePendingAfterLeave\(\)\)/);
   assert.match(frontendSource, /settlePendingAfterLeave\(attempt \+ 1\)/);
   assert.match(frontendSource, /await waitForPendingLeaveSettlement\(\)/);
   assert.match(leaveSource, /cleanupSession\(\)[\s\S]*?callRoomOpen\(false\)/);
@@ -569,4 +571,155 @@ test("chat, media, arrival, and farewell callbacks cannot leak into a later sess
   assert.match(verifySource, /freshSession\.status === "ended"[\s\S]*?freshSession\.ending\.reason === "departure"/);
   assert.doesNotMatch(verifySource, /GET_MY_STATE/);
   assert.match(mediaSource, /FREE_TABLE_MEDIA_MAX_RECEIVE_CHUNK_BYTES/);
+});
+
+test("X invite opens a read-only玄関 before anonymous authentication", () => {
+  assert.match(frontendSource, /httpsCallable\(functions, "freeTableInvitePreview"\)/);
+  assert.match(frontendSource, /const FREE_TABLE_INVITE_ID_PATTERN = \/\^\[A-Za-z0-9_-\]\{32\}\$\//);
+  assert.match(appSource, /const FREE_TABLE_INVITE_QUERY_KEY = "freeTableInvite"/);
+  assert.match(appSource, /function openInitialFreeTableInvite\(\)/);
+  assert.match(appSource, /window\.HariaiFreeTable\.openInvite\(inviteId\)/);
+  assert.match(appSource, /renderLandingScreen\(\);\s*openInitialFreeTableInvite\(\);/);
+  const openStart = frontendSource.indexOf("async function openInvite");
+  const openEnd = frontendSource.indexOf("async function start", openStart);
+  const openSource = frontendSource.slice(openStart, openEnd);
+  const refreshStart = frontendSource.indexOf("async function refreshInvitePreview");
+  const refreshEnd = frontendSource.indexOf("async function openInvite", refreshStart);
+  const previewSource = frontendSource.slice(refreshStart, refreshEnd);
+  assert.match(openSource, /await refreshInvitePreview\(generation, expectedInviteId\)/);
+  assert.match(previewSource, /freeTableInvitePreviewCallable\(\{ inviteId: expectedInviteId \}\)/);
+  assert.doesNotMatch(
+    `${previewSource}\n${openSource}`,
+    /ensureAuthenticated|signInAnonymously|initializeAuthenticatedFreeTable/,
+  );
+  assert.match(frontendSource, /const FREE_TABLE_INVITE_PREVIEW_REFRESH_MS = 30_000/);
+  assert.match(frontendSource, /const FREE_TABLE_INVITE_PREVIEW_MAX_BACKOFF_MS = 4 \* 60_000/);
+  assert.match(frontendSource, /state\.screen === "invite" && state\.inviteAuthenticated/);
+  assert.match(
+    frontendSource,
+    /const preservingInviteDraft = state\.inviteAuthenticated[\s\S]*?state\.formDirty[\s\S]*?preview\.active[\s\S]*?if \(!preservingInviteDraft\) render\(\)/,
+  );
+  assert.match(
+    frontendSource,
+    /来訪札を置く、または通報を送るまで、匿名ログインは始めません。/,
+  );
+  assert.match(frontendSource, /data-action="authenticate-invite"[\s\S]*?来訪札を置く/);
+  assert.match(frontendSource, /この灯り札の内容を通報/);
+  assert.match(
+    frontendSource,
+    /通報を送る時だけ匿名ログインを始めます。入室や来訪札の作成は行いません。/,
+  );
+  const publicReportStart = frontendSource.indexOf(
+    "async function reportInvitePublicCard",
+  );
+  const publicReportEnd = frontendSource.indexOf(
+    "async function submitReportContext",
+    publicReportStart,
+  );
+  const publicReportSource = frontendSource.slice(publicReportStart, publicReportEnd);
+  assert.match(publicReportSource, /const payload = promptReportPayload\(\)/);
+  assert.match(publicReportSource, /window\.confirm\(/);
+  assert.match(publicReportSource, /await ensureAuthenticated\(\)/);
+  assert.match(
+    publicReportSource,
+    /callFreeTableInviteAction\("report_public_card",\s*\{\s*inviteId,\s*previewHash,\s*reason:/,
+  );
+  assert.doesNotMatch(
+    publicReportSource,
+    /initializeAuthenticatedFreeTable|inviteAuthenticated\s*=\s*true|FREE_TABLE_ACTIONS\.REQUEST_FROM_INVITE|handleError\(/,
+  );
+  assert.match(
+    frontendSource,
+    /function inviteReportMustPreserveDraft\(\)[\s\S]*?state\.inviteAuthenticated[\s\S]*?state\.formDirty/,
+  );
+  assert.match(
+    publicReportSource,
+    /if \(inviteReportMustPreserveDraft\(\)\) syncInviteReportButton\(\);\s*else render\(\);/,
+  );
+  assert.match(
+    publicReportSource,
+    /finally \{[\s\S]*?reportingState\.inviteReporting = false;[\s\S]*?if \(active[\s\S]*?state\.screen === "invite"[\s\S]*?state\.inviteId === inviteId\)/,
+  );
+  assert.match(frontendSource, /いまはお迎えを休んでいます。/);
+  assert.match(frontendSource, /ほかのお迎え中を見る/);
+  assert.match(frontendSource, /「ほかのお迎え中を見る」を押すと、自由卓を使うための匿名ログインを始めます。/);
+  const browseStart = frontendSource.indexOf("async function browseInviteHall");
+  const browseEnd = frontendSource.indexOf("function stopInvitePreviewRefresh", browseStart);
+  assert.match(
+    frontendSource.slice(browseStart, browseEnd),
+    /initializeAuthenticatedFreeTable\(lifecycle\)/,
+  );
+  assert.match(frontendSource, /document\.visibilityState !== "visible"[\s\S]*?stopInvitePreviewRefresh\(\)/);
+  assert.match(frontendSource, /document\.addEventListener\("visibilitychange"/);
+  assert.match(frontendSource, /state\.invitePreviewStatus === "inactive"\) return/);
+  assert.match(
+    frontendSource,
+    /FREE_TABLE_INVITE_PREVIEW_REFRESH_MS \* \(2 \*\* Math\.min\(failureCount, 3\)\)/,
+  );
+  assert.match(
+    previewSource,
+    /state\.invitePreviewFailureCount = 0[\s\S]*?state\.invitePreviewStatus = preview\.active \? "open" : "inactive"/,
+  );
+  assert.match(
+    previewSource,
+    /state\.invitePreviewFailureCount = Math\.min[\s\S]*?state\.invitePreviewStatus = "retrying"/,
+  );
+  assert.match(cssSource, /\.free-table-invite-boundary/);
+  assert.match(frontendSource, /state\.space\.avoid \? `<div><dt>避けたい内容/);
+  assert.match(frontendSource, /space\.avoid \? `<aside class="free-table-invite-boundary"/);
+});
+
+test("X invite requests resolve the opaque token on the server without a stable room id", () => {
+  assert.match(frontendSource, /REQUEST_FROM_INVITE: "request_from_invite"/);
+  const requestStart = frontendSource.indexOf("async function handleInviteRequest");
+  const requestEnd = frontendSource.indexOf("async function resolveCancelledRequestRace", requestStart);
+  const requestSource = frontendSource.slice(requestStart, requestEnd);
+  assert.match(
+    requestSource,
+    /FREE_TABLE_ACTIONS\.REQUEST_FROM_INVITE,\s*\{\s*inviteId,\s*visitorCard,/,
+  );
+  assert.doesNotMatch(requestSource, /publicRoomId/);
+  const urlStart = frontendSource.indexOf("function freeTableInviteUrl");
+  const urlEnd = frontendSource.indexOf("function defaultInviteShareText", urlStart);
+  const urlSource = frontendSource.slice(urlStart, urlEnd);
+  assert.match(urlSource, /url\.search = ""/);
+  assert.match(urlSource, /url\.searchParams\.set\(FREE_TABLE_INVITE_QUERY_KEY, normalizedInviteId\)/);
+  assert.doesNotMatch(urlSource, /publicRoomId|roomId|uid/i);
+});
+
+test("host controls a non-automatic editable X灯り札 with a 1200 by 675 PNG", () => {
+  assert.match(frontendSource, /httpsCallable\(functions, "freeTableInviteAction"\)/);
+  assert.match(frontendSource, /FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH = 120/);
+  assert.match(frontendSource, /Xに暖簾を出す/);
+  assert.match(frontendSource, /id="freeTableInviteShareText"/);
+  assert.match(frontendSource, /data-action="rotate-invite"/);
+  assert.match(frontendSource, /data-action="revoke-invite"/);
+  assert.match(frontendSource, /投稿も自動では行いません/);
+  assert.match(frontendSource, /aria-label="入口で公開される内容"/);
+  assert.match(frontendSource, /部屋の育ちに応じた背景のしつらえ/);
+  assert.match(frontendSource, /function hostInviteIsLive[\s\S]*?Date\.now\(\) \+ Number\(state\.serverTimeOffset \|\| 0\)/);
+  assert.match(frontendSource, /function armHostInviteExpiry[\s\S]*?window\.setTimeout/);
+  assert.match(frontendSource, /if \(open\) \{\s*clearHostInviteUi\(\);\s*startOpenHeartbeat\(\)/);
+  const respondStart = frontendSource.indexOf("async function respondToRequest");
+  const respondEnd = frontendSource.indexOf("async function toggleBookmark", respondStart);
+  assert.match(
+    frontendSource.slice(respondStart, respondEnd),
+    /state\.roomOpen = false;\s*clearHostInviteUi\(\);\s*stopOpenHeartbeat\(\)/,
+  );
+  const enterStart = frontendSource.indexOf("async function enterSession");
+  const enterEnd = frontendSource.indexOf("async function establishPresence", enterStart);
+  assert.match(
+    frontendSource.slice(enterStart, enterEnd),
+    /stopOpenHeartbeat\(\);\s*stopInvitePreviewRefresh\(\);\s*clearHostInviteUi\(\);\s*cleanupSession/,
+  );
+  const canvasStart = frontendSource.indexOf("async function createInviteCardPngBlob");
+  const canvasEnd = frontendSource.indexOf("function inviteCardFilename", canvasStart);
+  const canvasSource = frontendSource.slice(canvasStart, canvasEnd);
+  assert.match(canvasSource, /canvas\.width = 1200/);
+  assert.match(canvasSource, /canvas\.height = 675/);
+  assert.match(canvasSource, /growthStageId/);
+  assert.doesNotMatch(canvasSource, /inviteId|publicRoomId|来訪数|ランキング|報酬/);
+  assert.match(frontendSource, /navigator\.share\(\{/);
+  assert.match(frontendSource, /createXInvitePostUrl/);
+  assert.doesNotMatch(frontendSource, /window\.open\(createXInvitePostUrl/);
 });

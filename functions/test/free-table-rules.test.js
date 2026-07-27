@@ -19,11 +19,27 @@ function containsAll(value, parts) {
 
 test("free table Callables are App Check enforced and have a separate cleanup job", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableInviteAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableInvitePreview, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTablePublicStats, true);
   assert.match(
     functionsSource,
     /exports\.freeTableAction = onCall\(callableOptions\("freeTableAction"\)/,
   );
+  assert.match(
+    functionsSource,
+    /exports\.freeTableInviteAction = onCall\(\s*callableOptions\("freeTableInviteAction"\)/,
+  );
+  assert.match(
+    functionsSource,
+    /exports\.freeTableInvitePreview = onCall\(\s*callableOptions\("freeTableInvitePreview"\)/,
+  );
+  const invitePreviewSource = functionsSource.slice(
+    functionsSource.indexOf("exports.freeTableInvitePreview = onCall("),
+    functionsSource.indexOf("exports.freeTablePublicStats = onCall("),
+  );
+  assert.match(invitePreviewSource, /freeTableService\.getInvitePreview\(request\.data\)/);
+  assert.doesNotMatch(invitePreviewSource, /requireUid\(/);
   assert.match(
     functionsSource,
     /exports\.freeTablePublicStats = onCall\(\s*callableOptions\("freeTablePublicStats"\)/,
@@ -61,6 +77,10 @@ test("free table Callables are App Check enforced and have a separate cleanup jo
 });
 
 test("public shelf and coordination state are callable-only", () => {
+  assert.equal(databaseRules[".read"], false);
+  assert.equal(databaseRules[".write"], false);
+  assert.equal(databaseRules.invites, undefined);
+  assert.equal(databaseRules.hostInvites, undefined);
   for (const pathName of ["publicRooms", "roomStates", "roomOwners", "engagements"]) {
     assert.equal(databaseRules[pathName][".read"], false);
     assert.equal(databaseRules[pathName][".write"], false);
