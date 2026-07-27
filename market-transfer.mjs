@@ -2,6 +2,16 @@ function normalizeMime(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+const MARKET_TRANSFER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{15,63}$/;
+
+function normalizeOptionalTransferId(value) {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value !== "string") throw new Error("P2P転送IDが不正です。");
+  const transferId = value.trim();
+  if (!MARKET_TRANSFER_ID_PATTERN.test(transferId)) throw new Error("P2P転送IDが不正です。");
+  return transferId;
+}
+
 function bytesFrom(value) {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
@@ -84,6 +94,7 @@ export function createIncomingMarketTransfer(message, {
   return {
     kind: message.kind,
     turn,
+    transferId: normalizeOptionalTransferId(message.transferId),
     name: String(message.name || "").slice(0, 80),
     mime,
     size,
@@ -95,7 +106,16 @@ export function createIncomingMarketTransfer(message, {
 
 export function marketAssetEndStatus(transfer, message) {
   if (!transfer) return "orphan";
-  if (!message || message.kind !== transfer.kind || Number(message.turn || 0) !== transfer.turn) {
+  let transferId = "";
+  try {
+    transferId = normalizeOptionalTransferId(message?.transferId);
+  } catch {
+    return "mismatch";
+  }
+  if (!message
+      || message.kind !== transfer.kind
+      || Number(message.turn || 0) !== transfer.turn
+      || transferId !== String(transfer.transferId || "")) {
     return "mismatch";
   }
   return "complete";

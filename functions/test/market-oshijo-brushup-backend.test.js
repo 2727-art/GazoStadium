@@ -4,9 +4,14 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  MARKET_OSHIJO_DELIVERY_RESERVATION_TTL_MS,
   MARKET_OSHIJO_MAX_CLAIM_AMOUNT,
   MARKET_OSHIJO_MAX_CLOSING_TURNS,
   marketOshijoClaimDecision,
+  marketOshijoFinalizeDeliveryDecision,
+  marketOshijoMediaCounts,
+  marketOshijoReleaseDeliveryDecision,
+  marketOshijoReserveDeliveryDecision,
   marketOshijoSettlementDecision,
   marketOshijoTurnDecision,
 } = require("../market-closing");
@@ -180,6 +185,223 @@ test("closing turns audit media kind and sequence without storing content", () =
   }).errorCode, "turn-limit");
 });
 
+test("P2P media reservations protect capacity without consuming a closing turn", () => {
+  const now = 1_800_000_000_000;
+  const deliveryId = "delivery-0000000001";
+  const first = marketOshijoReserveDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 1,
+    mediaCounts: { text: 1 },
+    now,
+  });
+  assert.equal(MARKET_OSHIJO_DELIVERY_RESERVATION_TTL_MS, 120_000);
+  assert.equal(first.allowed, true);
+  assert.equal(first.state, "reserved");
+  assert.equal(first.turnCount, 1);
+  assert.equal(first.expiresAt, now + MARKET_OSHIJO_DELIVERY_RESERVATION_TTL_MS);
+  assert.equal(first.reservations[deliveryId].mediaKind, "image");
+
+  const replay = marketOshijoReserveDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 1,
+    mediaCounts: { text: 1 },
+    reservations: first.reservations,
+    now: now + 1,
+  });
+  assert.equal(replay.allowed, true);
+  assert.equal(replay.expiresAt, first.expiresAt);
+  assert.equal(Object.keys(replay.reservations).length, 1);
+
+  const duplicateImage = marketOshijoReserveDeliveryDecision({
+    deliveryId: "delivery-0000000002",
+    mediaKind: "image",
+    currentTurnCount: 1,
+    mediaCounts: { text: 1 },
+    reservations: first.reservations,
+    now: now + 1,
+  });
+  assert.equal(duplicateImage.errorCode, "media-limit");
+
+  const finalSlot = marketOshijoReserveDeliveryDecision({
+    deliveryId: "delivery-0000000003",
+    mediaKind: "audio",
+    currentTurnCount: 2,
+    mediaCounts: { text: 2 },
+    reservations: first.reservations,
+    now: now + 1,
+  });
+  assert.equal(finalSlot.errorCode, "turn-limit");
+});
+
+test("only finalization after an active reservation consumes exactly one P2P media turn", () => {
+  const now = 1_800_000_000_000;
+  const deliveryId = "delivery-0000000010";
+  const reservation = marketOshijoReserveDeliveryDecision({
+    deliveryId,
+    mediaKind: "audio",
+    currentTurnCount: 1,
+    mediaCounts: { text: 1 },
+    now,
+  });
+  const finalized = marketOshijoFinalizeDeliveryDecision({
+    deliveryId,
+    mediaKind: "audio",
+    currentTurnCount: 1,
+    mediaCounts: { text: 1 },
+    reservations: reservation.reservations,
+    now: now + 500,
+  });
+  assert.equal(finalized.allowed, true);
+  assert.equal(finalized.state, "finalized");
+  assert.equal(finalized.turnCount, 2);
+  assert.deepEqual(finalized.mediaCounts, { text: 1, image: 0, audio: 1 });
+  assert.equal(finalized.reservations[deliveryId], undefined);
+  assert.equal(finalized.deliveries[deliveryId].turnCount, 2);
+
+  const replayAfterAnotherTurn = marketOshijoFinalizeDeliveryDecision({
+    deliveryId,
+    mediaKind: "audio",
+    currentTurnCount: 3,
+    mediaCounts: { text: 2, audio: 1 },
+    deliveries: finalized.deliveries,
+    now: now + 1_000,
+  });
+  assert.equal(replayAfterAnotherTurn.allowed, true);
+  assert.equal(replayAfterAnotherTurn.turnCount, 3);
+  assert.deepEqual(replayAfterAnotherTurn.mediaCounts, { text: 2, image: 0, audio: 1 });
+
+  assert.equal(marketOshijoFinalizeDeliveryDecision({
+    deliveryId: "delivery-0000000011",
+    mediaKind: "image",
+    currentTurnCount: 1,
+    now: now + 500,
+  }).errorCode, "reservation-missing");
+});
+
+test("release and expiry never consume a turn, while a finalize winner cannot be rolled back", () => {
+  const now = 1_800_000_000_000;
+  const deliveryId = "delivery-0000000020";
+  const reservation = marketOshijoReserveDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    now,
+  });
+  const released = marketOshijoReleaseDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    reservations: reservation.reservations,
+    now: now + 1,
+  });
+  assert.equal(released.state, "released");
+  assert.equal(released.turnCount, 0);
+  assert.deepEqual(released.reservations, {});
+  assert.equal(marketOshijoFinalizeDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    reservations: released.reservations,
+    now: now + 2,
+  }).errorCode, "reservation-missing");
+
+  const expired = marketOshijoFinalizeDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    reservations: reservation.reservations,
+    now: reservation.expiresAt,
+  });
+  assert.equal(expired.errorCode, "reservation-missing");
+
+  const finalized = marketOshijoFinalizeDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    reservations: reservation.reservations,
+    now: now + 1,
+  });
+  const lateRelease = marketOshijoReleaseDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 1,
+    reservations: finalized.reservations,
+    deliveries: finalized.deliveries,
+    now: now + 2,
+  });
+  assert.equal(lateRelease.state, "finalized");
+  assert.equal(lateRelease.turnCount, 1);
+
+  assert.equal(marketOshijoReleaseDeliveryDecision({
+    deliveryId: "delivery-0000000021",
+    mediaKind: "audio",
+    currentTurnCount: 1,
+    now: now + 2,
+  }).errorCode, "reservation-missing");
+});
+
+test("successful delivery decisions expose every field consumed by the transaction wiring", () => {
+  const now = 1_800_000_000_000;
+  const deliveryId = "delivery-0000000030";
+  const reserved = marketOshijoReserveDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    now,
+  });
+  const finalized = marketOshijoFinalizeDeliveryDecision({
+    deliveryId,
+    mediaKind: "image",
+    currentTurnCount: 0,
+    reservations: reserved.reservations,
+    now: now + 1,
+  });
+  const audioReservation = marketOshijoReserveDeliveryDecision({
+    deliveryId: "delivery-0000000031",
+    mediaKind: "audio",
+    currentTurnCount: 1,
+    now: now + 1,
+  });
+  const released = marketOshijoReleaseDeliveryDecision({
+    deliveryId: "delivery-0000000031",
+    mediaKind: "audio",
+    currentTurnCount: 1,
+    reservations: audioReservation.reservations,
+    now: now + 2,
+  });
+  for (const [label, decision, keys] of [
+    ["reserve", reserved, [
+      "deliveryId", "mediaKind", "state", "expiresAt", "turnCount", "reservations",
+    ]],
+    ["finalize", finalized, [
+      "deliveryId", "mediaKind", "state", "deliveredAt", "turnCount",
+      "mediaCounts", "reservations", "deliveries",
+    ]],
+    ["release", released, [
+      "deliveryId", "mediaKind", "state", "expiresAt", "turnCount", "reservations",
+    ]],
+  ]) {
+    assert.equal(decision.allowed, true, `${label} must be allowed`);
+    for (const key of keys) {
+      assert.equal(
+        Object.hasOwn(decision, key),
+        true,
+        `${label} decision is missing ${key}`,
+      );
+    }
+  }
+});
+
+test("closing media counts normalize legacy or malformed room fields safely", () => {
+  assert.deepEqual(marketOshijoMediaCounts(), { text: 0, image: 0, audio: 0 });
+  assert.deepEqual(
+    marketOshijoMediaCounts({ text: 2, image: 99, audio: -1, video: 3 }),
+    { text: 2, image: 3, audio: 0 },
+  );
+});
+
 test("actual monthly economy stays intact while each qualifying ranking deal caps at 500", () => {
   assert.equal(MARKET_RANKING_CONTRIBUTION_CAP, 500);
   assert.equal(marketRankingContribution(3_000), 500);
@@ -291,6 +513,70 @@ test("backend wires warning, opt-in closing, silent decision, privacy, and idemp
   assert.doesNotMatch(indexSource, /room\.buyerMaxBudget|room\.decisionBalance|room\.decisionPaidAmount/);
   assert.match(indexSource, /if \(action === "buy" && marketClosingAuditMode\(ledger\.closingMode\) === "oshijo"\)/);
   assert.match(indexSource, /reconfirmAction: "enter_silent_decision"/);
+});
+
+test("backend keeps legacy turns while exposing seller reserve, buyer ACK, and release actions", () => {
+  assert.match(
+    indexSource,
+    /const requestedActionId = cleanText\(data\?\.actionId, 80\);[\s\S]*?canonicalMarketOshijoDeliveryActionId[\s\S]*?requestedActionId !== expectedActionId/,
+  );
+  assert.match(
+    indexSource,
+    /return `\$\{id\}-\$\{action\.replace\("oshijo_closing_turn_", ""\)\}`;/,
+    "each delivery phase must have one canonical ledger action ID",
+  );
+  assert.match(
+    indexSource,
+    /action === "oshijo_closing_turn_reserve"[\s\S]*?marketOshijoReserveDeliveryDecision/,
+  );
+  assert.match(
+    indexSource,
+    /action === "oshijo_closing_turn_ack"[\s\S]*?requireRoomActor\(room, uid, "buyer"\)[\s\S]*?marketOshijoFinalizeDeliveryDecision/,
+  );
+  assert.match(
+    indexSource,
+    /room\.oshijoClosingTurnCount = finalizeDecision\.turnCount;/,
+    "the room counter must use the finalize helper's documented turnCount field",
+  );
+  assert.doesNotMatch(
+    indexSource,
+    /finalizeDecision\.closingTurnCount/,
+    "the backend must not read a non-contract finalize field",
+  );
+  assert.match(
+    indexSource,
+    /action === "oshijo_closing_turn_release"[\s\S]*?marketOshijoReleaseDeliveryDecision/,
+  );
+  assert.match(
+    indexSource,
+    /if \(isMarketOshijoDeliveryAction\(action\)\)[\s\S]*?ledger\.oshijoDeliveryId[\s\S]*?ledger\.oshijoMediaKind/,
+  );
+  assert.match(
+    indexSource,
+    /action === "oshijo_closing_turn_reserve"[\s\S]*?currentDeliveries[\s\S]*?deliveryState = "finalized"[\s\S]*?currentReservation[\s\S]*?deliveryState = "released"/,
+    "reserve ledger replay must report the current finalized, active, or released state",
+  );
+  assert.match(
+    indexSource,
+    /if \(!finalizeDecision\.alreadyFinalized\) \{[\s\S]*?room\.oshijoLastTurnAt = finalizeDecision\.deliveredAt;/,
+    "a replayed buyer ACK must not rewind the latest media audit timestamp",
+  );
+  assert.match(
+    indexSource,
+    /oshijoDeliveryId: isMarketOshijoDeliveryAction\(action\)[\s\S]*?oshijoDeliveryState:[\s\S]*?oshijoReservationExpiresAt:/,
+  );
+  assert.match(
+    indexSource,
+    /closingMediaCounts: marketOshijoRoomMediaCounts\(result\.room\)[\s\S]*?oshijoClosingMediaCounts:/,
+  );
+  assert.match(
+    indexSource,
+    /action === "oshijo_closing_turn"[\s\S]*?activeReservations[\s\S]*?room\.oshijoClosingMediaCounts/,
+  );
+  assert.match(
+    indexSource,
+    /room\.oshijoClosingReservations = \{\};[\s\S]*?room\.status = "decision"/,
+  );
 });
 
 test("backend exposes monthly/lifetime rankings, honor finalization, and Oshijo Patron action", () => {

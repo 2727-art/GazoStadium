@@ -552,6 +552,9 @@ test("a pending room-A sync cannot block or mutate an active room-B transition",
     ${extractFunction("isCurrentLifecycle")}
     ${extractFunction("clearRoomSyncRetry")}
     ${extractFunction("clearMarketPeerRecoveryTimer")}
+    ${extractFunction("settleMarketPeerCapabilityWaiters")}
+    ${extractFunction("rejectMarketAssetAckWaiters")}
+    ${extractFunction("resetMarketPeerDeliveryProtocol")}
     ${extractFunction("releaseLocalImage")}
     ${extractFunction("releaseRemoteImage")}
     ${extractFunction("cleanupRoom")}
@@ -747,6 +750,55 @@ test("a delayed room-A diagnostic is discarded after switching to room B", async
   assert.deepEqual(callableRequests, []);
 });
 
+test("a delayed diagnostic is discarded after replacing the peer in the same room", async () => {
+  let resolveStats;
+  let statsStarted = false;
+  const statsGate = new Promise((resolve) => {
+    resolveStats = resolve;
+  });
+  const callableRequests = [];
+  const oldPeer = {
+    connectionState: "connected",
+    iceConnectionState: "connected",
+    iceGatheringState: "complete",
+    async getStats() {
+      statsStarted = true;
+      await statsGate;
+      return new Map();
+    },
+  };
+  const state = {
+    roomId: "room-A",
+    peer: oldPeer,
+    peerRecoveryAttempts: 1,
+    peerStartedAt: Date.now() - 1_000,
+    peerTurnAvailable: true,
+    peerDiagnosticSent: new Set(),
+  };
+  const factory = new Function("deps", `
+    const { reportMarketP2pConnectivityCallable } = deps;
+    const useMarketPreview = false;
+    let state = deps.initialState;
+    ${extractFunction("selectedMarketCandidateSummary")}
+    ${extractFunction("reportMarketP2pDiagnostic")}
+    return { reportMarketP2pDiagnostic };
+  `);
+  const runtime = factory({
+    reportMarketP2pConnectivityCallable: async (request) => {
+      callableRequests.push(request);
+    },
+    initialState: state,
+  });
+
+  const diagnostic = runtime.reportMarketP2pDiagnostic("channel_open", oldPeer);
+  await waitFor(() => statsStarted, "diagnostic candidate inspection should begin");
+  state.peer = { connectionState: "new" };
+  resolveStats();
+  await diagnostic;
+
+  assert.deepEqual(callableRequests, []);
+});
+
 function peerState(overrides = {}) {
   return {
     uid: "buyer-1",
@@ -773,7 +825,9 @@ function peerState(overrides = {}) {
 
 function compileSignalRuntime(initialState, extras = {}) {
   const factory = new Function("deps", `
-    const { sendSignal, scheduleMarketPeerConnectTimeout, clearMarketPeerRecoveryTimer } = deps;
+    const {
+      window, sendSignal, scheduleMarketPeerConnectTimeout, clearMarketPeerRecoveryTimer,
+    } = deps;
     const MARKET_MAX_PENDING_ICE_CANDIDATES = 128;
     let active = true;
     let lifecycleGeneration = deps.initialGeneration;
@@ -783,6 +837,13 @@ function compileSignalRuntime(initialState, extras = {}) {
     ${extractFunction("marketSignalConnectionId")}
     ${extractFunction("marketSignalConnectionMatches")}
     ${extractFunction("canSupersedeMarketOffer")}
+    ${extractFunction("abortMarketIncomingTransfer")}
+    ${extractFunction("settleMarketPeerCapabilityWaiters")}
+    ${extractFunction("rejectMarketAssetAckWaiters")}
+    ${extractFunction("resetMarketPeerDeliveryProtocol")}
+    ${extractFunction("marketIceCandidateKey")}
+    ${extractFunction("mergeMarketIceCandidateEntries")}
+    ${extractFunction("rememberMarketIceCandidate")}
     ${extractFunction("bufferMarketIceCandidate")}
     ${extractFunction("addMarketIceCandidate")}
     ${extractFunction("flushPendingIce")}
@@ -798,6 +859,7 @@ function compileSignalRuntime(initialState, extras = {}) {
   return factory({
     initialState,
     initialGeneration: 1,
+    window: { clearTimeout: () => {} },
     sendSignal: extras.sendSignal || (async () => {}),
     scheduleMarketPeerConnectTimeout: extras.scheduleMarketPeerConnectTimeout || (() => {}),
     clearMarketPeerRecoveryTimer: extras.clearMarketPeerRecoveryTimer || (() => {}),
@@ -868,8 +930,11 @@ test("pending ICE is connection-scoped, legacy-compatible, and failure-tolerant"
   );
   assert.deepEqual(
     state.pendingIce,
-    [{ connectionId: "connection-A", candidate: { id: "stale-A" } }],
-    "another connection's candidate must never be added to the current peer",
+    [
+      { connectionId: "connection-A", candidate: { id: "stale-A" } },
+      { connectionId: "connection-B", candidate: { id: "bad-B", fail: true } },
+    ],
+    "another connection and a transiently rejected current candidate must remain replayable",
   );
 });
 
@@ -958,8 +1023,9 @@ test("a delayed buyer supersedes a 20-second-old offer and answers the new conne
     peerStartedAt,
   );
   assert.deepEqual(
-    peer.candidateAttempts.slice(-2).map(({ id }) => id),
-    ["legacy-candidate", "bad-current"],
+    peer.candidateAttempts.map(({ id }) => id),
+    ["legacy-candidate", "bad-current", "bad-current"],
+    "legacy ICE is accepted and a rejected current candidate is retried after SDP",
   );
   assert.equal(sentSignals.at(-1)[5], "connection-B");
 });
@@ -1002,10 +1068,21 @@ test("stale recovery timers cannot touch replay state, while an ICE-only connect
     } = deps;
     const MARKET_P2P_DISCONNECT_GRACE_MS = 8_000;
     const MARKET_P2P_MAX_RECOVERY_ATTEMPTS = 3;
+    const MARKET_P2P_RECOVERY_SETUP_TIMEOUT_MS = 20_000;
+    const MARKET_MAX_PENDING_ICE_CANDIDATES = 128;
     let active = true;
     let lifecycleGeneration = 1;
     let state = deps.initialState;
     ${extractFunction("isCurrentLifecycle")}
+    ${extractFunction("clearMarketPeerRecoveryTimer")}
+    ${extractFunction("marketPeerNeedsRecovery")}
+    ${extractFunction("abortMarketIncomingTransfer")}
+    ${extractFunction("settleMarketPeerCapabilityWaiters")}
+    ${extractFunction("rejectMarketAssetAckWaiters")}
+    ${extractFunction("resetMarketPeerDeliveryProtocol")}
+    ${extractFunction("marketIceCandidateKey")}
+    ${extractFunction("mergeMarketIceCandidateEntries")}
+    ${extractFunction("resetMarketPeerTransport")}
     ${extractFunction("scheduleMarketPeerRecovery")}
     return {
       scheduleMarketPeerRecovery,
@@ -1021,6 +1098,7 @@ test("stale recovery timers cannot touch replay state, while an ICE-only connect
         timers.push(timer);
         return timer;
       },
+      clearTimeout: () => {},
     },
     TERMINAL_STATES: new Set(["sold", "declined", "canceled"]),
     render: () => {},
@@ -1068,10 +1146,14 @@ test("stale recovery timers cannot touch replay state, while an ICE-only connect
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(newState.peerRecoveryAttempts, 1);
-  assert.equal(unsubscribeCalls, 1);
+  assert.equal(unsubscribeCalls, 0, "P2P recovery must not tear down text/presence listeners");
   assert.equal(closeCalls, 1);
   assert.equal(newState.peer, null);
-  assert.deepEqual(newState.pendingIce, []);
+  assert.deepEqual(
+    newState.pendingIce,
+    [{ connectionId: "old", candidate: { id: "old" } }],
+    "remote ICE already seen by the old peer must remain replayable",
+  );
   assert.deepEqual(setupCalls, [
     { service: "realtime", generation: 2, roomId: "room-two" },
     { service: "peer", generation: 2, roomId: "room-two" },
@@ -1108,6 +1190,12 @@ function createPeerSetupHarness({ initialState, roomRole, handleSignal, useActua
   const functions = [
     extractFunction("isCurrentLifecycle"),
     extractFunction("isCurrentMarketPeer"),
+    extractFunction("marketPeerNeedsRecovery"),
+    extractFunction("marketSignalConnectionMatches"),
+    extractFunction("marketDataChannelContextIsCurrent"),
+    extractFunction("marketPeerCapabilityContextMatches"),
+    extractFunction("advertiseMarketPeerCapabilities"),
+    extractFunction("markMarketDataChannelReady"),
     extractFunction("setupPeerConnection"),
   ];
   if (useActualSendSignal) functions.push(extractFunction("sendSignal"));
@@ -1123,8 +1211,10 @@ function createPeerSetupHarness({ initialState, roomRole, handleSignal, useActua
       clearMarketPeerRecoveryTimer, scheduleMarketPeerRecovery, render,
       configureDataChannel, database, ref, onChildAdded, handleSignal,
       remove, set, push, serverTimestamp,
+      sendListingImage,
     } = deps;
     const MARKET_P2P_CONNECT_TIMEOUT_MS = 35_000;
+    const MARKET_OSHIJO_DELIVERY_PROTOCOL_VERSION = 1;
     let active = true;
     let lifecycleGeneration = 1;
     let state = deps.initialState;
@@ -1157,6 +1247,7 @@ function createPeerSetupHarness({ initialState, roomRole, handleSignal, useActua
     scheduleMarketPeerRecovery: () => {},
     render: () => {},
     configureDataChannel: () => {},
+    sendListingImage: async () => {},
     database: {},
     ref: (_database, value) => ({ path: value }),
     onChildAdded: (reference, callback) => {
@@ -1278,11 +1369,16 @@ function createChannelHarness() {
     const MAX_TURNS = 5;
     const OSHIJO_CLOSING_IMAGE_PREFIX = "oshijo-closing-image:";
     const OSHIJO_CLOSING_AUDIO_PREFIX = "oshijo-closing-audio:";
+    const MARKET_OSHIJO_DELIVERY_PROTOCOL_VERSION = 1;
     let active = true;
     let lifecycleGeneration = 1;
     let state = deps.initialState;
-    function finishIncomingAsset() {
+    async function finishIncomingAsset() {
       const transfer = state.incomingTransfer;
+      if (transfer.name === "buyer-ack-reject") {
+        state.incomingTransfer = null;
+        throw new Error("buyer ACK rejected");
+      }
       deps.finishedTransfers.push({
         roomId: state.roomId,
         name: transfer.name,
@@ -1291,7 +1387,17 @@ function createChannelHarness() {
       state.incomingTransfer = null;
     }
     ${extractFunction("isCurrentLifecycle")}
+    ${extractFunction("isCurrentMarketPeer")}
+    ${extractFunction("marketPeerNeedsRecovery")}
     ${extractFunction("marketSignalConnectionMatches")}
+    ${extractFunction("abortMarketIncomingTransfer")}
+    ${extractFunction("settleMarketPeerCapabilityWaiters")}
+    ${extractFunction("rejectMarketAssetAckWaiters")}
+    ${extractFunction("resetMarketPeerDeliveryProtocol")}
+    ${extractFunction("marketDataChannelContextIsCurrent")}
+    ${extractFunction("marketPeerCapabilityContextMatches")}
+    ${extractFunction("advertiseMarketPeerCapabilities")}
+    ${extractFunction("markMarketDataChannelReady")}
     ${extractFunction("handleChannelMessage")}
     ${extractFunction("configureDataChannel")}
     return {
@@ -1452,6 +1558,21 @@ test("data-channel Blob messages stay ordered and an old channel cannot contamin
   assert.equal(finishedTransfers.length, 2);
   assert.equal(state.incomingTransfer, null);
   assert.deepEqual(recoverableErrors, []);
+});
+
+test("a rejected buyer delivery ACK is caught by the ordered channel chain", async () => {
+  const { runtime, state, recoverableErrors } = createChannelHarness();
+  const channel = { readyState: "open" };
+  runtime.configureDataChannel(channel, 1, "room-order", "connection-order");
+  channel.onmessage({ data: assetStart("buyer-ack-reject", 1) });
+  channel.onmessage({ data: Uint8Array.of(1).buffer });
+  channel.onmessage({ data: assetEnd });
+  await waitFor(
+    () => recoverableErrors.length === 1,
+    "the channel wrapper should catch an asynchronous buyer ACK rejection",
+  );
+  assert.match(recoverableErrors[0].message, /buyer ACK rejected/);
+  assert.equal(state.incomingTransfer, null);
 });
 
 test("the same pair gets distinct room paths and connection IDs on consecutive lifecycles", async () => {

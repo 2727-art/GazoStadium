@@ -134,7 +134,14 @@ const {
   marketClosingAuditMode,
   marketClosingDecision,
   marketClosingLeaveReason,
+  marketOshijoActiveReservations,
   marketOshijoClaimDecision,
+  marketOshijoDeliveries,
+  marketOshijoDeliveryId,
+  marketOshijoFinalizeDeliveryDecision,
+  marketOshijoMediaCounts,
+  marketOshijoReleaseDeliveryDecision,
+  marketOshijoReserveDeliveryDecision,
   marketOshijoSettlementDecision,
   marketOshijoTurnDecision,
 } = require("./market-closing");
@@ -12761,6 +12768,55 @@ function requireMarketState(room, ...states) {
   if (!states.includes(room.status)) throw new HttpsError("failed-precondition", "市場ルームの状態が変わりました。");
 }
 
+const MARKET_OSHIJO_DELIVERY_ACTIONS = Object.freeze([
+  "oshijo_closing_turn_reserve",
+  "oshijo_closing_turn_ack",
+  "oshijo_closing_turn_release",
+]);
+
+function isMarketOshijoDeliveryAction(action) {
+  return MARKET_OSHIJO_DELIVERY_ACTIONS.includes(action);
+}
+
+function canonicalMarketOshijoDeliveryActionId(action, deliveryId) {
+  const id = marketOshijoDeliveryId(deliveryId);
+  if (!id || !isMarketOshijoDeliveryAction(action)) return "";
+  return `${id}-${action.replace("oshijo_closing_turn_", "")}`;
+}
+
+function marketOshijoRoomMediaCounts(room) {
+  const counts = { ...marketOshijoMediaCounts(room?.oshijoClosingMediaCounts) };
+  const currentTurnCount = integer(
+    room?.oshijoClosingTurnCount,
+    0,
+    MARKET_OSHIJO_MAX_CLOSING_TURNS,
+    0,
+  );
+  const lastMediaKind = cleanText(room?.oshijoLastMediaKind, 8).toLowerCase();
+  if (currentTurnCount > 0
+      && ["text", "image", "audio"].includes(lastMediaKind)
+      && counts[lastMediaKind] === 0) {
+    counts[lastMediaKind] = 1;
+  }
+  return counts;
+}
+
+function throwMarketOshijoDeliveryError(errorCode) {
+  if (errorCode === "turn-limit") {
+    throw new HttpsError("failed-precondition", "推し嬢クロージングは3手までです。");
+  }
+  if (errorCode === "media-limit") {
+    throw new HttpsError("failed-precondition", "画像と音声はそれぞれ1件までです。");
+  }
+  if (errorCode === "reservation-missing") {
+    throw new HttpsError("failed-precondition", "送信枠の有効期限が切れました。もう一度選択してください。");
+  }
+  if (errorCode === "delivery-mismatch") {
+    throw new HttpsError("permission-denied", "送信IDの営業手段が一致しません。");
+  }
+  throw new HttpsError("invalid-argument", "送信IDまたは営業手段が正しくありません。");
+}
+
 function isTerminalMarketState(status) {
   return ["sold", "ended", "canceled"].includes(status);
 }
@@ -12768,7 +12824,17 @@ function isTerminalMarketState(status) {
 async function performMarketAction(uid, data, appCheckVerified) {
   const roomId = cleanText(data?.roomId, 80);
   const action = cleanText(data?.action, 32);
-  const actionId = cleanText(data?.actionId, 80) || `${action}:${integer(data?.turn, 1, MARKET_MAX_TURNS, 1)}`;
+  const requestedActionId = cleanText(data?.actionId, 80);
+  if (isMarketOshijoDeliveryAction(action)) {
+    const expectedActionId = canonicalMarketOshijoDeliveryActionId(
+      action,
+      data?.deliveryId,
+    );
+    if (!expectedActionId || requestedActionId !== expectedActionId) {
+      throw new HttpsError("invalid-argument", "P2P送信操作IDが一致しません。");
+    }
+  }
+  const actionId = requestedActionId || `${action}:${integer(data?.turn, 1, MARKET_MAX_TURNS, 1)}`;
   const initialRoom = await loadMarketRoomWithPublicPresenceId(roomId);
   requireRoomActor(initialRoom, uid);
   if (MARKET_APP_CHECK_MIGRATION && initialRoom.appCheckVerified === true && appCheckVerified !== true) {
@@ -12827,6 +12893,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
   const marketActionTimestamp = Date.now();
   let result = null;
   let buyerDecisionResult = null;
+  let oshijoDeliveryResult = null;
   const achievementResults = {};
   const newlyUnlockedResults = {};
   let sellerShopResult = null;
@@ -12834,6 +12901,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
   await firestore.runTransaction(async (transaction) => {
     result = null;
     buyerDecisionResult = null;
+    oshijoDeliveryResult = null;
     sellerShopResult = null;
     Object.keys(achievementResults).forEach((key) => delete achievementResults[key]);
     Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
@@ -12971,6 +13039,72 @@ async function performMarketAction(uid, data, appCheckVerified) {
             || replayTurn.turnCount !== savedTurn) {
           throw new HttpsError("permission-denied", "市場操作IDの推し嬢クロージング手が一致しません。");
         }
+      }
+      if (isMarketOshijoDeliveryAction(action)) {
+        const deliveryId = marketOshijoDeliveryId(data?.deliveryId);
+        const mediaKind = cleanText(data?.mediaKind, 8).toLowerCase();
+        let deliveryState = cleanText(ledger.oshijoDeliveryState, 16);
+        if (!deliveryId
+            || !["text", "image", "audio"].includes(mediaKind)
+            || deliveryId !== ledger.oshijoDeliveryId
+            || mediaKind !== ledger.oshijoMediaKind
+            || !["reserved", "finalized", "released"].includes(deliveryState)) {
+          throw new HttpsError("permission-denied", "市場操作IDの推し嬢送信枠が一致しません。");
+        }
+        let expiresAt = integer(
+          ledger.oshijoReservationExpiresAt,
+          0,
+          Number.MAX_SAFE_INTEGER,
+          0,
+        );
+        if (action === "oshijo_closing_turn_reserve") {
+          const currentDeliveries = marketOshijoDeliveries(room.oshijoClosingDeliveries);
+          const currentDelivery = currentDeliveries[deliveryId];
+          const currentReservations = marketOshijoActiveReservations(
+            room.oshijoClosingReservations,
+            marketActionTimestamp,
+          );
+          const currentReservation = currentReservations[deliveryId];
+          if (currentDelivery) {
+            if (currentDelivery.mediaKind !== mediaKind) {
+              throw new HttpsError(
+                "permission-denied",
+                "市場操作IDの推し嬢送信枠が一致しません。",
+              );
+            }
+            deliveryState = "finalized";
+            expiresAt = 0;
+          } else if (currentReservation) {
+            if (currentReservation.mediaKind !== mediaKind) {
+              throw new HttpsError(
+                "permission-denied",
+                "市場操作IDの推し嬢送信枠が一致しません。",
+              );
+            }
+            deliveryState = "reserved";
+            expiresAt = currentReservation.expiresAt;
+          } else {
+            deliveryState = "released";
+            expiresAt = 0;
+          }
+        }
+        oshijoDeliveryResult = {
+          deliveryId,
+          mediaKind,
+          state: deliveryState,
+          expiresAt,
+          turnCount: integer(
+            room.oshijoClosingTurnCount,
+            0,
+            MARKET_OSHIJO_MAX_CLOSING_TURNS,
+            integer(
+              ledger.oshijoClosingTurnCount,
+              0,
+              MARKET_OSHIJO_MAX_CLOSING_TURNS,
+              0,
+            ),
+          ),
+        };
       }
       if (action === "buy" && marketClosingAuditMode(ledger.closingMode) === "oshijo") {
         if (Number(data?.confirmedBalance) !== Number(ledger.confirmedBalance)
@@ -13110,6 +13244,9 @@ async function performMarketAction(uid, data, appCheckVerified) {
       room.claimAmount = claimDecision.claimAmount;
       room.oshijoClosingTurnCount = 0;
       room.oshijoLastMediaKind = "";
+      room.oshijoClosingMediaCounts = marketOshijoMediaCounts();
+      room.oshijoClosingReservations = {};
+      room.oshijoClosingDeliveries = {};
       const heldFee = Math.max(0, Number(room.entryFeeHeld || 0));
       if (heldFee > 0) {
         const wasReserved = room.entryFeeReserved === true;
@@ -13175,14 +13312,23 @@ async function performMarketAction(uid, data, appCheckVerified) {
       if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
         throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
       }
+      const currentTurnCount = integer(
+        room.oshijoClosingTurnCount,
+        0,
+        MARKET_OSHIJO_MAX_CLOSING_TURNS,
+        0,
+      );
+      const activeReservations = marketOshijoActiveReservations(
+        room.oshijoClosingReservations,
+        marketActionTimestamp,
+      );
+      if (currentTurnCount + Object.keys(activeReservations).length
+          >= MARKET_OSHIJO_MAX_CLOSING_TURNS) {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングは3手までです。");
+      }
       const turnDecision = marketOshijoTurnDecision({
         mediaKind: data?.mediaKind,
-        currentTurnCount: integer(
-          room.oshijoClosingTurnCount,
-          0,
-          MARKET_OSHIJO_MAX_CLOSING_TURNS,
-          0,
-        ),
+        currentTurnCount,
         requestedTurn: data?.closingTurn,
       });
       if (!turnDecision.allowed) {
@@ -13194,9 +13340,143 @@ async function performMarketAction(uid, data, appCheckVerified) {
         }
         throw new HttpsError("invalid-argument", "営業手段は文字・画像・音声から選択してください。");
       }
+      const mediaCounts = marketOshijoRoomMediaCounts(room);
+      if (["image", "audio"].includes(turnDecision.mediaKind)
+          && mediaCounts[turnDecision.mediaKind]
+            + Object.values(activeReservations).filter(
+              (reservation) => reservation.mediaKind === turnDecision.mediaKind,
+            ).length >= 1) {
+        throw new HttpsError("failed-precondition", "画像と音声はそれぞれ1件までです。");
+      }
       room.oshijoClosingTurnCount = turnDecision.turnCount;
+      room.oshijoClosingMediaCounts = {
+        ...mediaCounts,
+        [turnDecision.mediaKind]: mediaCounts[turnDecision.mediaKind] + 1,
+      };
+      room.oshijoClosingReservations = { ...activeReservations };
+      room.oshijoClosingDeliveries = {
+        ...marketOshijoDeliveries(room.oshijoClosingDeliveries),
+      };
       room.oshijoLastMediaKind = turnDecision.mediaKind;
       room.oshijoLastTurnAt = Date.now();
+    } else if (action === "oshijo_closing_turn_reserve") {
+      requireRoomActor(room, uid, "seller");
+      requireMarketState(room, "oshijo_closing");
+      if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
+      }
+      const mediaKind = cleanText(data?.mediaKind, 8).toLowerCase();
+      if (!["image", "audio"].includes(mediaKind)) {
+        throw new HttpsError("invalid-argument", "P2P送信枠は画像または音声で指定してください。");
+      }
+      const reservationDecision = marketOshijoReserveDeliveryDecision({
+        deliveryId: data?.deliveryId,
+        mediaKind,
+        currentTurnCount: integer(
+          room.oshijoClosingTurnCount,
+          0,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          0,
+        ),
+        mediaCounts: marketOshijoRoomMediaCounts(room),
+        reservations: room.oshijoClosingReservations,
+        deliveries: room.oshijoClosingDeliveries,
+        now: marketActionTimestamp,
+      });
+      if (!reservationDecision.allowed) {
+        throwMarketOshijoDeliveryError(reservationDecision.errorCode);
+      }
+      room.oshijoClosingMediaCounts = marketOshijoRoomMediaCounts(room);
+      room.oshijoClosingReservations = { ...reservationDecision.reservations };
+      room.oshijoClosingDeliveries = {
+        ...marketOshijoDeliveries(room.oshijoClosingDeliveries),
+      };
+      oshijoDeliveryResult = {
+        deliveryId: reservationDecision.deliveryId,
+        mediaKind: reservationDecision.mediaKind,
+        state: reservationDecision.state,
+        expiresAt: reservationDecision.expiresAt,
+        turnCount: reservationDecision.turnCount,
+      };
+    } else if (action === "oshijo_closing_turn_ack") {
+      requireRoomActor(room, uid, "buyer");
+      requireMarketState(room, "oshijo_closing");
+      if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
+      }
+      const mediaKind = cleanText(data?.mediaKind, 8).toLowerCase();
+      if (!["image", "audio"].includes(mediaKind)) {
+        throw new HttpsError("invalid-argument", "P2P送信枠は画像または音声で指定してください。");
+      }
+      const finalizeDecision = marketOshijoFinalizeDeliveryDecision({
+        deliveryId: data?.deliveryId,
+        mediaKind,
+        currentTurnCount: integer(
+          room.oshijoClosingTurnCount,
+          0,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          0,
+        ),
+        mediaCounts: marketOshijoRoomMediaCounts(room),
+        reservations: room.oshijoClosingReservations,
+        deliveries: room.oshijoClosingDeliveries,
+        now: marketActionTimestamp,
+      });
+      if (!finalizeDecision.allowed) {
+        throwMarketOshijoDeliveryError(finalizeDecision.errorCode);
+      }
+      room.oshijoClosingTurnCount = finalizeDecision.turnCount;
+      room.oshijoClosingMediaCounts = { ...finalizeDecision.mediaCounts };
+      room.oshijoClosingReservations = { ...finalizeDecision.reservations };
+      room.oshijoClosingDeliveries = { ...finalizeDecision.deliveries };
+      if (!finalizeDecision.alreadyFinalized) {
+        room.oshijoLastMediaKind = finalizeDecision.mediaKind;
+        room.oshijoLastTurnAt = finalizeDecision.deliveredAt;
+      }
+      oshijoDeliveryResult = {
+        deliveryId: finalizeDecision.deliveryId,
+        mediaKind: finalizeDecision.mediaKind,
+        state: finalizeDecision.state,
+        expiresAt: 0,
+        turnCount: finalizeDecision.turnCount,
+      };
+    } else if (action === "oshijo_closing_turn_release") {
+      requireRoomActor(room, uid, "seller");
+      if (marketClosingAuditMode(room.closingMode) !== "oshijo") {
+        throw new HttpsError("failed-precondition", "推し嬢クロージングが発動していません。");
+      }
+      const mediaKind = cleanText(data?.mediaKind, 8).toLowerCase();
+      if (!["image", "audio"].includes(mediaKind)) {
+        throw new HttpsError("invalid-argument", "P2P送信枠は画像または音声で指定してください。");
+      }
+      const releaseDecision = marketOshijoReleaseDeliveryDecision({
+        deliveryId: data?.deliveryId,
+        mediaKind,
+        currentTurnCount: integer(
+          room.oshijoClosingTurnCount,
+          0,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          0,
+        ),
+        reservations: room.oshijoClosingReservations,
+        deliveries: room.oshijoClosingDeliveries,
+        now: marketActionTimestamp,
+      });
+      if (!releaseDecision.allowed) {
+        throwMarketOshijoDeliveryError(releaseDecision.errorCode);
+      }
+      room.oshijoClosingMediaCounts = marketOshijoRoomMediaCounts(room);
+      room.oshijoClosingReservations = { ...releaseDecision.reservations };
+      room.oshijoClosingDeliveries = {
+        ...marketOshijoDeliveries(room.oshijoClosingDeliveries),
+      };
+      oshijoDeliveryResult = {
+        deliveryId: releaseDecision.deliveryId,
+        mediaKind: releaseDecision.mediaKind,
+        state: releaseDecision.state,
+        expiresAt: releaseDecision.expiresAt,
+        turnCount: releaseDecision.turnCount,
+      };
     } else if (action === "enter_silent_decision") {
       requireRoomActor(room, uid, "buyer");
       requireMarketState(room, "oshijo_closing", "decision");
@@ -13210,6 +13490,7 @@ async function performMarketAction(uid, data, appCheckVerified) {
         throw new HttpsError("failed-precondition", "推し嬢の請求額を確認できませんでした。");
       }
       room.claimAmount = claimDecision.claimAmount;
+      room.oshijoClosingReservations = {};
       room.status = "decision";
       room.silentDecisionAt = Date.now();
       buyerDecisionResult = {
@@ -13968,9 +14249,18 @@ async function performMarketAction(uid, data, appCheckVerified) {
       confirmedBalance: Number(buyerDecisionResult?.confirmedBalance || 0),
       allIn: room.allIn === true || buyerDecisionResult?.allIn === true,
       oshijoClosingTurnCount: Number(room.oshijoClosingTurnCount || 0),
-      oshijoMediaKind: action === "oshijo_closing_turn"
-        ? cleanText(room.oshijoLastMediaKind, 8)
+      oshijoMediaKind: action === "oshijo_closing_turn" || isMarketOshijoDeliveryAction(action)
+        ? cleanText(oshijoDeliveryResult?.mediaKind || room.oshijoLastMediaKind, 8)
         : "",
+      oshijoDeliveryId: isMarketOshijoDeliveryAction(action)
+        ? marketOshijoDeliveryId(oshijoDeliveryResult?.deliveryId)
+        : "",
+      oshijoDeliveryState: isMarketOshijoDeliveryAction(action)
+        ? cleanText(oshijoDeliveryResult?.state, 16)
+        : "",
+      oshijoReservationExpiresAt: isMarketOshijoDeliveryAction(action)
+        ? integer(oshijoDeliveryResult?.expiresAt, 0, Number.MAX_SAFE_INTEGER, 0)
+        : 0,
       certificateNumber: cleanText(room.certificateNumber, 24),
       sellerIssueNumber: integer(room.sellerIssueNumber, 0, 1_000_000, 0),
       achievementIds: result.newlyUnlocked,
@@ -14079,6 +14369,27 @@ async function performMarketAction(uid, data, appCheckVerified) {
       MARKET_OSHIJO_MAX_CLOSING_TURNS,
       0,
     ),
+    closingMediaCounts: marketOshijoRoomMediaCounts(result.room),
+    oshijoClosingMediaCounts: marketOshijoRoomMediaCounts(result.room),
+    ...(oshijoDeliveryResult ? {
+      oshijoDelivery: {
+        deliveryId: marketOshijoDeliveryId(oshijoDeliveryResult.deliveryId),
+        mediaKind: cleanText(oshijoDeliveryResult.mediaKind, 8),
+        state: cleanText(oshijoDeliveryResult.state, 16),
+        expiresAt: integer(
+          oshijoDeliveryResult.expiresAt,
+          0,
+          Number.MAX_SAFE_INTEGER,
+          0,
+        ),
+        turnCount: integer(
+          oshijoDeliveryResult.turnCount,
+          0,
+          MARKET_OSHIJO_MAX_CLOSING_TURNS,
+          0,
+        ),
+      },
+    } : {}),
     certificateNumber: cleanText(result.room.certificateNumber, 24),
     sellerIssueNumber: integer(result.room.sellerIssueNumber, 0, 1_000_000, 0),
     sellerShop: result.room.sellerShop || null,

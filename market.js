@@ -38,7 +38,7 @@ import {
   marketAssetEndStatus,
   verifiedMarketImageMime,
   verifiedMarketImageMimeFromChunks,
-} from "./market-transfer.mjs?v=value-market-transfer-v1";
+} from "./market-transfer.mjs?v=value-market-transfer-v2";
 import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
@@ -65,6 +65,11 @@ const MAX_AUDIO_BYTES = 480 * 1024;
 const MARKET_P2P_CONNECT_TIMEOUT_MS = 35_000;
 const MARKET_P2P_DISCONNECT_GRACE_MS = 8_000;
 const MARKET_P2P_MAX_RECOVERY_ATTEMPTS = 3;
+const MARKET_P2P_RECOVERY_SETUP_TIMEOUT_MS = 20_000;
+const MARKET_P2P_CAPABILITY_WAIT_MS = 3_000;
+const MARKET_P2P_ASSET_ACK_TIMEOUT_MS = 15_000;
+const MARKET_P2P_FINALIZE_MARGIN_MS = 5_000;
+const MARKET_OSHIJO_DELIVERY_PROTOCOL_VERSION = 1;
 const MARKET_MAX_PENDING_ICE_CANDIDATES = 128;
 const MARKET_FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
@@ -213,17 +218,25 @@ function createState() {
     peer: null,
     peerTimeout: null,
     peerRecoveryTimer: null,
+    peerRecoveryForced: false,
+    peerRecoverySetupOwner: null,
     peerRecoveryAttempts: 0,
+    peerGeneration: 0,
     peerConnectionId: "",
     peerTurnAvailable: false,
     peerWasConnected: false,
     peerStartedAt: 0,
     peerDiagnosticSent: new Set(),
     peerSignalChain: Promise.resolve(),
+    peerSignalUnsubscribe: null,
+    peerCapabilities: null,
+    peerCapabilityWaiters: new Set(),
+    pendingAssetAcks: new Map(),
     channel: null,
     channelReady: false,
     peerStatus: "P2P接続を準備中…",
     pendingIce: [],
+    peerIceCandidates: [],
     imageSent: false,
     outgoingTransfer: Promise.resolve(),
     incomingTransfer: null,
@@ -3911,7 +3924,11 @@ async function connectMarketRoomServices(roomId, generation = lifecycleGeneratio
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
     clearRoomSyncRetry({ resetWarning: true });
     if (state.room && state.screen === "room") {
-      setupPeerConnection(generation, roomId).catch((error) => handleFatalError(error, generation));
+      const peerSetup = setupPeerConnection(generation, roomId);
+      const peerSetupGeneration = state.peerGeneration;
+      peerSetup.catch((error) => {
+        handleMarketPeerSetupFailure(error, generation, roomId, peerSetupGeneration);
+      });
     }
   } catch (error) {
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
@@ -4037,6 +4054,9 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
     if (incomingClosingAsset && normalizeOshijoPhase(state.room) !== "closing") {
       state.incomingTransfer = null;
     }
+    if (normalizeOshijoPhase(state.room) !== "closing" && state.pendingAssetAcks?.size) {
+      rejectMarketAssetAckWaiters(new Error("静かな最終判断へ進んだため、営業素材の送信を終了しました。"));
+    }
     if (TERMINAL_STATES.has(state.room.status)) {
       stopRoomHeartbeat();
       clearRoomSyncRetry();
@@ -4056,7 +4076,11 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
     }
     render();
     if (state.realtimeRoomId === roomId) {
-      setupPeerConnection(generation, roomId).catch((error) => handleFatalError(error, generation));
+      const peerSetup = setupPeerConnection(generation, roomId);
+      const peerSetupGeneration = state.peerGeneration;
+      peerSetup.catch((error) => {
+        handleMarketPeerSetupFailure(error, generation, roomId, peerSetupGeneration);
+      });
     }
   }, () => {
     if (state !== roomState || !isCurrentLifecycle(generation) || state.roomId !== roomId
@@ -4244,14 +4268,17 @@ async function reportMarketP2pDiagnostic(event, peer = state.peer) {
   const diagnosticState = state;
   const roomId = state.roomId;
   const recoveryAttempts = state.peerRecoveryAttempts;
+  const peerGeneration = state.peerGeneration;
+  const connectionId = state.peerConnectionId;
   const peerStartedAt = state.peerStartedAt;
   const turnAvailable = state.peerTurnAvailable === true;
   if (!roomId || useMarketPreview || (peer && state.peer !== peer)) return;
-  const dedupeKey = `${event}:${recoveryAttempts}`;
+  const dedupeKey = `${peerGeneration}:${connectionId}:${event}:${recoveryAttempts}`;
   if (diagnosticState.peerDiagnosticSent.has(dedupeKey) && event !== "ice_disconnected") return;
   diagnosticState.peerDiagnosticSent.add(dedupeKey);
   const candidate = await selectedMarketCandidateSummary(peer);
-  if (state !== diagnosticState || state.roomId !== roomId) return;
+  if (state !== diagnosticState || state.roomId !== roomId
+      || (peer && state.peer !== peer)) return;
   reportMarketP2pConnectivityCallable({
     roomId,
     diagnostic: {
@@ -4272,11 +4299,118 @@ async function reportMarketP2pDiagnostic(event, peer = state.peer) {
 function clearMarketPeerRecoveryTimer() {
   window.clearTimeout(state.peerRecoveryTimer);
   state.peerRecoveryTimer = null;
+  state.peerRecoveryForced = false;
 }
 
 function marketPeerConnectionId() {
   return globalThis.crypto?.randomUUID?.()
     || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function marketPeerNeedsRecovery(peer) {
+  if (!peer) return false;
+  return peer.connectionState === "disconnected"
+    || peer.iceConnectionState === "disconnected"
+    || ["failed", "closed"].includes(peer.connectionState)
+    || ["failed", "closed"].includes(peer.iceConnectionState);
+}
+
+function abortMarketIncomingTransfer() {
+  state.incomingTransfer = null;
+}
+
+function settleMarketPeerCapabilityWaiters(supported) {
+  if (!(state.peerCapabilityWaiters instanceof Set)) {
+    state.peerCapabilityWaiters = new Set();
+    return;
+  }
+  for (const waiter of state.peerCapabilityWaiters) {
+    window.clearTimeout(waiter.timer);
+    waiter.resolve(supported === true);
+  }
+  state.peerCapabilityWaiters.clear();
+}
+
+function rejectMarketAssetAckWaiters(error = new Error("P2P接続が切り替わりました。")) {
+  if (!(state.pendingAssetAcks instanceof Map)) {
+    state.pendingAssetAcks = new Map();
+    return;
+  }
+  for (const waiter of state.pendingAssetAcks.values()) {
+    window.clearTimeout(waiter.timer);
+    waiter.reject(error);
+  }
+  state.pendingAssetAcks.clear();
+}
+
+function resetMarketPeerDeliveryProtocol(error) {
+  settleMarketPeerCapabilityWaiters(false);
+  rejectMarketAssetAckWaiters(error);
+  state.peerCapabilities = null;
+}
+
+function resetMarketPeerTransport({
+  preserveRecoveryAttempts = true,
+  preserveIceCandidates = true,
+} = {}) {
+  window.clearTimeout(state.peerTimeout);
+  state.peerTimeout = null;
+  clearMarketPeerRecoveryTimer();
+  state.peerRecoverySetupOwner = null;
+  state.peerSignalUnsubscribe?.();
+  state.peerSignalUnsubscribe = null;
+  resetMarketPeerDeliveryProtocol();
+  abortMarketIncomingTransfer();
+  state.outgoingTransfer = Promise.resolve();
+
+  const channel = state.channel;
+  state.channel = null;
+  state.channelReady = false;
+  if (channel) {
+    channel.onopen = null;
+    channel.onclose = null;
+    channel.onerror = null;
+    channel.onmessage = null;
+    channel.close?.();
+  }
+
+  state.peerGeneration = Number(state.peerGeneration || 0) + 1;
+  const peer = state.peer;
+  state.peer = null;
+  if (peer) {
+    peer.onicecandidate = null;
+    peer.onconnectionstatechange = null;
+    peer.oniceconnectionstatechange = null;
+    peer.ondatachannel = null;
+    peer.close?.();
+  }
+
+  state.peerConnectionId = "";
+  state.peerSignalChain = Promise.resolve();
+  if (preserveIceCandidates) {
+    state.pendingIce = mergeMarketIceCandidateEntries(
+      state.peerIceCandidates,
+      state.pendingIce,
+    );
+  } else {
+    state.pendingIce = [];
+    state.peerIceCandidates = [];
+  }
+  if (!preserveRecoveryAttempts) state.peerRecoveryAttempts = 0;
+}
+
+function handleMarketPeerSetupFailure(error, generation, roomId, peerGeneration = null) {
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId
+      || (peerGeneration != null && state.peerGeneration !== peerGeneration)
+      || TERMINAL_STATES.has(state.room?.status)) return;
+  console.warn("VALUE MARKETのP2P接続を再試行します。", error);
+  state.channelReady = false;
+  state.peerStatus = "画像・音声を再接続しています…文字での交渉と取引操作は継続できます";
+  render();
+  scheduleMarketPeerRecovery(state.peer, generation, roomId, {
+    immediate: true,
+    force: true,
+  });
 }
 
 function scheduleMarketPeerConnectTimeout(peer, generation, roomId) {
@@ -4288,14 +4422,24 @@ function scheduleMarketPeerConnectTimeout(peer, generation, roomId) {
     if (state !== peerState || state.peerTimeout !== timeoutId
         || !isCurrentMarketPeer(peer, roomId, generation) || state.channelReady) return;
     reportMarketP2pDiagnostic("connection_timeout", peer);
-    scheduleMarketPeerRecovery(peer, generation, roomId, { immediate: true });
+    scheduleMarketPeerRecovery(peer, generation, roomId, { immediate: true, force: true });
   }, MARKET_P2P_CONNECT_TIMEOUT_MS);
   timeoutId = state.peerTimeout;
 }
 
-function scheduleMarketPeerRecovery(peer, generation, roomId, { immediate = false } = {}) {
+function scheduleMarketPeerRecovery(
+  peer,
+  generation,
+  roomId,
+  { immediate = false, force = false } = {},
+) {
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer
-      || TERMINAL_STATES.has(state.room?.status) || state.peerRecoveryTimer) return;
+      || TERMINAL_STATES.has(state.room?.status)) return;
+  if (state.peerRecoveryTimer) {
+    if (!immediate && (!force || state.peerRecoveryForced)) return;
+    window.clearTimeout(state.peerRecoveryTimer);
+    state.peerRecoveryTimer = null;
+  }
   const delay = immediate
     ? 0
     : MARKET_P2P_DISCONNECT_GRACE_MS + (state.peerRecoveryAttempts * 2_000);
@@ -4304,13 +4448,20 @@ function scheduleMarketPeerRecovery(peer, generation, roomId, { immediate = fals
     : "P2P接続先を切り替えています…";
   render();
   const peerState = state;
+  state.peerRecoveryForced = force;
   let recoveryTimer = null;
   state.peerRecoveryTimer = window.setTimeout(() => {
     if (state !== peerState || state.peerRecoveryTimer !== recoveryTimer) return;
     state.peerRecoveryTimer = null;
+    state.peerRecoveryForced = false;
+    const setupOwner = {};
     (async () => {
       if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer
-          || state.channelReady || state.channel?.readyState === "open") return;
+          || TERMINAL_STATES.has(state.room?.status)
+          || (!force
+            && !marketPeerNeedsRecovery(peer)
+            && state.channelReady
+            && state.channel?.readyState === "open")) return;
       if (state.peerRecoveryAttempts >= MARKET_P2P_MAX_RECOVERY_ATTEMPTS) {
         reportMarketP2pDiagnostic("restart_timeout", peer);
         state.peerStatus = "画像・音声の接続を復旧できませんでした。文字での交渉と取引操作は継続できます";
@@ -4319,21 +4470,46 @@ function scheduleMarketPeerRecovery(peer, generation, roomId, { immediate = fals
       }
       state.peerRecoveryAttempts += 1;
       reportMarketP2pDiagnostic("restart_started", peer);
-      state.realtimeUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-      state.realtimeRoomId = "";
-      state.peer = null;
-      state.channel = null;
-      state.channelReady = false;
-      state.pendingIce = [];
-      state.peerSignalChain = Promise.resolve();
-      peer.close();
-      await setupRealtimeRoom(generation, roomId);
-      await setupPeerConnection(generation, roomId);
+      resetMarketPeerTransport({
+        preserveRecoveryAttempts: true,
+        preserveIceCandidates: true,
+      });
+      state.peerStatus = "画像・音声を再接続しています…文字での交渉と取引操作は継続できます";
+      render();
+      state.peerRecoverySetupOwner = setupOwner;
+
+      let setupTimeout = null;
+      let setupCompleted = false;
+      try {
+        await Promise.race([
+          (async () => {
+            await setupRealtimeRoom(generation, roomId);
+            await setupPeerConnection(generation, roomId);
+          })(),
+          new Promise((resolve, reject) => {
+            setupTimeout = window.setTimeout(() => {
+              if (state.peerRecoverySetupOwner !== setupOwner) {
+                resolve();
+                return;
+              }
+              reject(new Error("P2P再接続の準備がタイムアウトしました。"));
+            }, MARKET_P2P_RECOVERY_SETUP_TIMEOUT_MS);
+          }),
+        ]);
+        setupCompleted = true;
+      } finally {
+        if (setupTimeout) window.clearTimeout?.(setupTimeout);
+      }
+      if (setupCompleted && state.peerRecoverySetupOwner === setupOwner) {
+        state.peerRecoverySetupOwner = null;
+      }
     })().catch(() => {
+      if (state.peerRecoverySetupOwner !== setupOwner) return;
+      state.peerRecoverySetupOwner = null;
       if (isCurrentLifecycle(generation) && state.roomId === roomId) {
         state.peerStatus = "画像・音声を再接続しています…文字での交渉と取引操作は継続できます";
         render();
-        scheduleMarketPeerRecovery(state.peer, generation, roomId);
+        scheduleMarketPeerRecovery(state.peer, generation, roomId, { force: true });
       }
     });
   }, delay);
@@ -4343,77 +4519,148 @@ function scheduleMarketPeerRecovery(peer, generation, roomId, { immediate = fals
 async function setupPeerConnection(generation = lifecycleGeneration, roomId = state.roomId) {
   if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer || !state.room) return;
   if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC転送に対応していません。");
+  const peerGeneration = Number(state.peerGeneration || 0) + 1;
+  state.peerGeneration = peerGeneration;
   const iceConfiguration = await loadMarketIceServers();
-  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer || !state.room) return;
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer
+      || !state.room || state.peerGeneration !== peerGeneration) return;
   const opponentUid = state.uid === state.room.sellerUid ? state.room.buyerUid : state.room.sellerUid;
   const peer = new RTCPeerConnection({
     iceServers: iceConfiguration.iceServers,
     iceTransportPolicy: "all",
   });
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer
+      || !state.room || state.peerGeneration !== peerGeneration) {
+    peer.close();
+    return;
+  }
   const peerStartedAt = Date.now();
   state.peer = peer;
-  if (!state.peerStartedAt) state.peerStartedAt = Date.now();
+  state.peerStartedAt = peerStartedAt;
   state.peerTurnAvailable = iceConfiguration.turnAvailable;
   state.peerConnectionId = roomRole() === "seller" ? marketPeerConnectionId() : "";
+  const peerContextIsCurrent = () => (
+    isCurrentMarketPeer(peer, roomId, generation, peerGeneration)
+    && state.uid
+    && state.room
+    && opponentUid === (state.uid === state.room.sellerUid ? state.room.buyerUid : state.room.sellerUid)
+  );
   reportMarketP2pDiagnostic("peer_created", peer);
   if (!iceConfiguration.turnAvailable) reportMarketP2pDiagnostic("turn_unavailable", peer);
   scheduleMarketPeerConnectTimeout(peer, generation, roomId);
   peer.onicecandidate = (event) => {
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
+    if (!peerContextIsCurrent()) return;
     if (event.candidate) {
       sendSignal(opponentUid, "candidate", event.candidate.toJSON(), roomId, generation).catch(handleRecoverableError);
     }
   };
-  peer.onconnectionstatechange = () => {
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
-    state.channelReady = state.channel?.readyState === "open";
-    state.peerStatus = peer.connectionState === "connected"
-      ? (state.channelReady ? "● P2P接続済み" : "P2P接続を仕上げています…")
-      : `P2P: ${peer.connectionState}`;
-    if (peer.connectionState === "connected") {
+  const handlePeerConnectionState = () => {
+    if (!peerContextIsCurrent()) return;
+    const needsRecovery = marketPeerNeedsRecovery(peer);
+    if (needsRecovery) state.channelReady = false;
+    const visibleState = peer.connectionState !== "new"
+      ? peer.connectionState
+      : peer.iceConnectionState;
+    state.peerStatus = !needsRecovery && state.channel?.readyState === "open"
+      ? "● P2P接続済み"
+      : (visibleState === "connected"
+        ? "P2P接続を仕上げています…"
+        : `P2P: ${visibleState || "connecting"}`);
+    if (!needsRecovery && (
+      peer.connectionState === "connected"
+      || peer.iceConnectionState === "connected"
+      || peer.iceConnectionState === "completed"
+    )) {
       state.peerWasConnected = true;
-      if (state.channelReady) clearMarketPeerRecoveryTimer();
-    } else if (peer.connectionState === "disconnected") {
-      reportMarketP2pDiagnostic("ice_disconnected", peer);
-      scheduleMarketPeerRecovery(peer, generation, roomId);
-    } else if (["failed", "closed"].includes(peer.connectionState)) {
-      if (peer.connectionState === "failed") reportMarketP2pDiagnostic("ice_failed", peer);
-      scheduleMarketPeerRecovery(peer, generation, roomId, { immediate: true });
+      if (state.channel?.readyState === "open") {
+        markMarketDataChannelReady(state.channel, {
+          generation,
+          roomId,
+          connectionId: state.peerConnectionId,
+          peer,
+          peerGeneration,
+        });
+      }
+    } else if (needsRecovery) {
+      const failed = ["failed", "closed"].includes(peer.connectionState)
+        || ["failed", "closed"].includes(peer.iceConnectionState);
+      reportMarketP2pDiagnostic(failed ? "ice_failed" : "ice_disconnected", peer);
+      scheduleMarketPeerRecovery(peer, generation, roomId, {
+        immediate: failed,
+        force: failed,
+      });
     }
     render();
   };
+  peer.onconnectionstatechange = handlePeerConnectionState;
+  peer.oniceconnectionstatechange = handlePeerConnectionState;
   peer.ondatachannel = (event) => {
-    if (isCurrentLifecycle(generation) && state.roomId === roomId && state.peer === peer) {
-      configureDataChannel(event.channel, generation, roomId);
+    if (peerContextIsCurrent()) {
+      configureDataChannel(
+        event.channel,
+        generation,
+        roomId,
+        state.peerConnectionId,
+        peer,
+        peerGeneration,
+      );
     }
   };
   const signalsRef = ref(database, `online/valueMarketRooms/${roomId}/signals/${state.uid}`);
   let signalChain = Promise.resolve();
   state.peerSignalChain = signalChain;
-  state.realtimeUnsubscribers.push(onChildAdded(signalsRef, (snapshot) => {
+  const signalUnsubscribe = onChildAdded(signalsRef, (snapshot) => {
     signalChain = signalChain.then(async () => {
       let claimedByCurrentPeer = false;
+      let consumedByCurrentPeer = false;
       try {
-        if (!isCurrentMarketPeer(peer, roomId, generation)) return;
+        if (!peerContextIsCurrent()) return;
         claimedByCurrentPeer = true;
-        await handleSignal(snapshot.val(), opponentUid, peer, roomId, generation, peerStartedAt);
+        consumedByCurrentPeer = await handleSignal(
+          snapshot.val(),
+          opponentUid,
+          peer,
+          roomId,
+          generation,
+          peerStartedAt,
+          peerGeneration,
+        ) !== false;
       } catch (error) {
-        if (isCurrentMarketPeer(peer, roomId, generation)) handleRecoverableError(error);
+        if (peerContextIsCurrent()) {
+          handleRecoverableError(error);
+          scheduleMarketPeerRecovery(peer, generation, roomId, {
+            immediate: true,
+            force: true,
+          });
+        }
       } finally {
-        if (claimedByCurrentPeer && isCurrentMarketPeer(peer, roomId, generation)) {
+        if (claimedByCurrentPeer && consumedByCurrentPeer && peerContextIsCurrent()) {
           await remove(snapshot.ref).catch(() => {});
         }
       }
     });
-    if (isCurrentMarketPeer(peer, roomId, generation)) state.peerSignalChain = signalChain;
-  }));
+    if (peerContextIsCurrent()) state.peerSignalChain = signalChain;
+  });
+  if (!peerContextIsCurrent()) {
+    signalUnsubscribe?.();
+    return;
+  }
+  state.peerSignalUnsubscribe?.();
+  state.peerSignalUnsubscribe = signalUnsubscribe;
   if (roomRole() === "seller") {
     const channel = peer.createDataChannel("value-market-assets", { ordered: true });
-    configureDataChannel(channel, generation, roomId);
+    configureDataChannel(
+      channel,
+      generation,
+      roomId,
+      state.peerConnectionId,
+      peer,
+      peerGeneration,
+    );
     const offer = await peer.createOffer();
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
+    if (!peerContextIsCurrent()) return;
     await peer.setLocalDescription(offer);
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.peer !== peer) return;
+    if (!peerContextIsCurrent()) return;
     await sendSignal(opponentUid, "offer", { type: offer.type, sdp: offer.sdp }, roomId, generation, state.peerConnectionId);
   }
 }
@@ -4436,8 +4683,11 @@ async function sendSignal(
   });
 }
 
-function isCurrentMarketPeer(peer, roomId, generation) {
-  return isCurrentLifecycle(generation) && state.roomId === roomId && state.peer === peer;
+function isCurrentMarketPeer(peer, roomId, generation, peerGeneration = null) {
+  return isCurrentLifecycle(generation)
+    && state.roomId === roomId
+    && state.peer === peer
+    && (peerGeneration == null || state.peerGeneration === peerGeneration);
 }
 
 function marketSignalConnectionId(value) {
@@ -4467,18 +4717,49 @@ function canSupersedeMarketOffer(peer, incomingConnectionId, activeConnectionId 
   );
 }
 
+function marketIceCandidateKey(connectionId, candidate) {
+  const value = candidate?.toJSON?.() || candidate || {};
+  return JSON.stringify([
+    String(connectionId || ""),
+    String(value.candidate || value.id || ""),
+    value.sdpMid == null ? null : String(value.sdpMid),
+    value.sdpMLineIndex == null ? null : Number(value.sdpMLineIndex),
+    value.usernameFragment == null ? null : String(value.usernameFragment),
+  ]);
+}
+
+function mergeMarketIceCandidateEntries(...groups) {
+  const merged = [];
+  const seen = new Set();
+  groups.flat().forEach((entry) => {
+    if (!entry?.candidate) return;
+    const key = marketIceCandidateKey(entry.connectionId, entry.candidate);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(entry);
+  });
+  return merged.slice(-MARKET_MAX_PENDING_ICE_CANDIDATES);
+}
+
+function rememberMarketIceCandidate(connectionId, candidate) {
+  const entry = { connectionId, candidate };
+  state.peerIceCandidates = mergeMarketIceCandidateEntries(
+    state.peerIceCandidates || [],
+    [entry],
+  );
+  return entry;
+}
+
 function bufferMarketIceCandidate(connectionId, candidate) {
-  state.pendingIce.push({ connectionId, candidate });
-  if (state.pendingIce.length > MARKET_MAX_PENDING_ICE_CANDIDATES) {
-    state.pendingIce.splice(0, state.pendingIce.length - MARKET_MAX_PENDING_ICE_CANDIDATES);
-  }
+  const entry = rememberMarketIceCandidate(connectionId, candidate);
+  state.pendingIce = mergeMarketIceCandidateEntries(state.pendingIce || [], [entry]);
 }
 
 async function addMarketIceCandidate(peer, candidate, roomId, generation) {
   if (!isCurrentMarketPeer(peer, roomId, generation)) return false;
   try {
     await peer.addIceCandidate(candidate);
-    return true;
+    return isCurrentMarketPeer(peer, roomId, generation);
   } catch {
     // A stale or unsupported candidate must not interrupt offer/answer processing.
     return false;
@@ -4492,12 +4773,19 @@ async function handleSignal(
   roomId = state.roomId,
   generation = lifecycleGeneration,
   peerStartedAt = Date.now(),
+  peerGeneration = null,
 ) {
-  if (!isCurrentMarketPeer(peer, roomId, generation) || !signal || signal.fromUid !== opponentUid) return;
+  const contextIsCurrent = () => isCurrentMarketPeer(
+    peer,
+    roomId,
+    generation,
+    peerGeneration,
+  );
+  if (!contextIsCurrent() || !signal || signal.fromUid !== opponentUid) return true;
   const signalCreatedAt = Number(signal.createdAt || 0);
-  if (signalCreatedAt > 0 && signalCreatedAt < peerStartedAt - 60_000) return;
+  if (signalCreatedAt > 0 && signalCreatedAt < peerStartedAt - 60_000) return true;
   const parsedConnectionId = marketSignalConnectionId(signal.connectionId);
-  if (!parsedConnectionId.valid) return;
+  if (!parsedConnectionId.valid) return true;
   const incomingConnectionId = parsedConnectionId.id;
   const activeConnectionId = state.peerConnectionId;
   const connectionMismatch = Boolean(
@@ -4507,61 +4795,268 @@ async function handleSignal(
   );
   const supersedingOffer = signal.type === "offer"
     && canSupersedeMarketOffer(peer, incomingConnectionId, activeConnectionId);
-  const payload = JSON.parse(signal.payload);
+  const supersedingLegacyOffer = signal.type === "offer"
+    && !incomingConnectionId
+    && Boolean(activeConnectionId)
+    && state.room?.buyerUid === state.uid
+    && !state.channelReady
+    && peer?.connectionState !== "closed"
+    && peer?.signalingState === "stable";
+  let payload;
+  try {
+    payload = JSON.parse(signal.payload);
+  } catch {
+    return true;
+  }
   if (connectionMismatch && signal.type === "candidate") {
     bufferMarketIceCandidate(incomingConnectionId, payload);
-    return;
+    return true;
   }
-  if (connectionMismatch && !supersedingOffer) return;
-  if (signal.type === "offer" && activeConnectionId && !incomingConnectionId) return;
+  if (connectionMismatch && !supersedingOffer) return true;
   if (signal.type === "offer") {
-    const previousChannel = supersedingOffer ? state.channel : null;
-    await peer.setRemoteDescription(payload);
-    if (!isCurrentMarketPeer(peer, roomId, generation)) return;
+    const replacingChannel = supersedingOffer || supersedingLegacyOffer;
+    if (replacingChannel) {
+      // Safari can dispatch `datachannel` while setRemoteDescription is pending.
+      // Commit the accepted offer generation first so the new channel cannot
+      // inherit the previous connectionId and be rejected after it opens.
+      const previousChannel = state.channel;
+      state.channel = null;
+      state.channelReady = false;
+      resetMarketPeerDeliveryProtocol();
+      if (previousChannel) {
+        previousChannel.onopen = null;
+        previousChannel.onclose = null;
+        previousChannel.onerror = null;
+        previousChannel.onmessage = null;
+        previousChannel.close?.();
+      }
+      abortMarketIncomingTransfer();
+      state.outgoingTransfer = Promise.resolve();
+      clearMarketPeerRecoveryTimer();
+      scheduleMarketPeerConnectTimeout(peer, generation, roomId);
+    }
     if (incomingConnectionId && incomingConnectionId !== state.peerConnectionId) {
       state.peerConnectionId = incomingConnectionId;
-      if (supersedingOffer) {
-        if (state.channel === previousChannel) state.channel = null;
-        state.channelReady = false;
-        previousChannel?.close();
-        clearMarketPeerRecoveryTimer();
-        scheduleMarketPeerConnectTimeout(peer, generation, roomId);
-      }
     }
-    await flushPendingIce(peer, roomId, generation);
+    await peer.setRemoteDescription(payload);
+    if (!contextIsCurrent()) return false;
+    await flushPendingIce(peer, roomId, generation, peerGeneration);
+    if (!contextIsCurrent()) return false;
     const answer = await peer.createAnswer();
-    if (!isCurrentMarketPeer(peer, roomId, generation)) return;
+    if (!contextIsCurrent()) return false;
     await peer.setLocalDescription(answer);
-    if (!isCurrentMarketPeer(peer, roomId, generation)) return;
+    if (!contextIsCurrent()) return false;
     await sendSignal(opponentUid, "answer", { type: answer.type, sdp: answer.sdp }, roomId, generation, state.peerConnectionId);
   } else if (signal.type === "answer") {
     await peer.setRemoteDescription(payload);
-    if (!isCurrentMarketPeer(peer, roomId, generation)) return;
-    await flushPendingIce(peer, roomId, generation);
+    if (!contextIsCurrent()) return false;
+    await flushPendingIce(peer, roomId, generation, peerGeneration);
   } else if (signal.type === "candidate") {
-    if (peer.remoteDescription) await addMarketIceCandidate(peer, payload, roomId, generation);
-    else bufferMarketIceCandidate(incomingConnectionId, payload);
+    rememberMarketIceCandidate(incomingConnectionId, payload);
+    if (peer.remoteDescription) {
+      const added = await addMarketIceCandidate(peer, payload, roomId, generation);
+      if (!added && contextIsCurrent()) bufferMarketIceCandidate(incomingConnectionId, payload);
+    } else {
+      bufferMarketIceCandidate(incomingConnectionId, payload);
+    }
+  } else {
+    return true;
   }
+  return contextIsCurrent();
 }
 
 async function flushPendingIce(
   peer = state.peer,
   roomId = state.roomId,
   generation = lifecycleGeneration,
+  peerGeneration = null,
 ) {
-  const pendingIce = state.pendingIce;
+  const pendingIce = (state.pendingIce || []).splice(0);
   const deferredIce = [];
-  while (isCurrentMarketPeer(peer, roomId, generation) && pendingIce.length) {
-    const pending = pendingIce.shift();
+  const restorePendingIce = (entries) => {
+    if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
+    state.pendingIce = mergeMarketIceCandidateEntries(entries, state.pendingIce || []);
+  };
+  for (let index = 0; index < pendingIce.length; index += 1) {
+    const pending = pendingIce[index];
+    if (!isCurrentMarketPeer(peer, roomId, generation, peerGeneration)) {
+      restorePendingIce(pendingIce);
+      return;
+    }
     if (!marketSignalConnectionMatches(pending.connectionId)) {
       deferredIce.push(pending);
       continue;
     }
-    await addMarketIceCandidate(peer, pending.candidate, roomId, generation);
+    const added = await addMarketIceCandidate(peer, pending.candidate, roomId, generation);
+    if (!isCurrentMarketPeer(peer, roomId, generation, peerGeneration)) {
+      restorePendingIce(pendingIce);
+      return;
+    }
+    if (!added) deferredIce.push(pending);
   }
-  if (isCurrentMarketPeer(peer, roomId, generation) && state.pendingIce === pendingIce) {
-    pendingIce.push(...deferredIce);
+  if (isCurrentMarketPeer(peer, roomId, generation, peerGeneration)) {
+    state.pendingIce = mergeMarketIceCandidateEntries(deferredIce, state.pendingIce || []);
   }
+}
+
+function marketDataChannelContextIsCurrent(channel, {
+  generation = lifecycleGeneration,
+  roomId = state.roomId,
+  connectionId = state.peerConnectionId,
+  peer = state.peer,
+  peerGeneration = state.peerGeneration,
+} = {}) {
+  return isCurrentLifecycle(generation)
+    && state.roomId === roomId
+    && state.channel === channel
+    && (!peer || isCurrentMarketPeer(peer, roomId, generation, peerGeneration))
+    && marketSignalConnectionMatches(connectionId);
+}
+
+function validMarketTransferId(value) {
+  return typeof value === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9-]{15,63}$/.test(value);
+}
+
+function marketPeerCapabilityContextMatches(channel, context = {}) {
+  const capabilities = state.peerCapabilities;
+  return Boolean(
+    capabilities
+    && capabilities.channel === channel
+    && capabilities.connectionId === context.connectionId
+    && capabilities.peerGeneration === context.peerGeneration
+    && marketDataChannelContextIsCurrent(channel, context)
+  );
+}
+
+function advertiseMarketPeerCapabilities(channel, context = {}) {
+  if (!marketPeerCapabilityContextMatches(channel, context)
+      || channel.readyState !== "open"
+      || state.peerCapabilities.advertised) return false;
+  try {
+    channel.send(JSON.stringify({
+      type: "market-capabilities",
+      version: MARKET_OSHIJO_DELIVERY_PROTOCOL_VERSION,
+      oshijoDeliveryAck: true,
+    }));
+    state.peerCapabilities.advertised = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acceptMarketPeerCapabilities(message, channel, context = {}) {
+  if (!marketPeerCapabilityContextMatches(channel, context)
+      || message?.version !== MARKET_OSHIJO_DELIVERY_PROTOCOL_VERSION
+      || message?.oshijoDeliveryAck !== true) return false;
+  state.peerCapabilities.remoteOshijoDeliveryAck = true;
+  settleMarketPeerCapabilityWaiters(true);
+  return true;
+}
+
+function waitForMarketOshijoDeliveryCapability(channel, context = {}) {
+  if (!marketPeerCapabilityContextMatches(channel, context)) return Promise.resolve(false);
+  if (state.peerCapabilities.remoteOshijoDeliveryAck === true) return Promise.resolve(true);
+  if (!(state.peerCapabilityWaiters instanceof Set)) state.peerCapabilityWaiters = new Set();
+  return new Promise((resolve) => {
+    const waiter = { resolve, timer: null };
+    waiter.timer = window.setTimeout(() => {
+      state.peerCapabilityWaiters.delete(waiter);
+      resolve(false);
+    }, MARKET_P2P_CAPABILITY_WAIT_MS);
+    state.peerCapabilityWaiters.add(waiter);
+  });
+}
+
+function createMarketAssetAckWaiter(transferId, mediaKind, channel, context = {}) {
+  if (!validMarketTransferId(transferId)
+      || !["image", "audio"].includes(mediaKind)
+      || !marketPeerCapabilityContextMatches(channel, context)) {
+    throw new Error("P2P受信確認を開始できませんでした。");
+  }
+  if (!(state.pendingAssetAcks instanceof Map)) state.pendingAssetAcks = new Map();
+  if (state.pendingAssetAcks.has(transferId)) {
+    throw new Error("同じP2P転送IDが進行中です。");
+  }
+  let resolveWaiter;
+  let rejectWaiter;
+  const promise = new Promise((resolve, reject) => {
+    resolveWaiter = resolve;
+    rejectWaiter = reject;
+  });
+  promise.catch(() => {});
+  const waiter = {
+    transferId,
+    mediaKind,
+    channel,
+    connectionId: context.connectionId,
+    peerGeneration: context.peerGeneration,
+    resolve: resolveWaiter,
+    reject: rejectWaiter,
+    timer: null,
+    promise,
+  };
+  state.pendingAssetAcks.set(transferId, waiter);
+  return waiter;
+}
+
+function armMarketAssetAckWaiter(waiter) {
+  if (!waiter || state.pendingAssetAcks?.get(waiter.transferId) !== waiter) return;
+  window.clearTimeout(waiter.timer);
+  waiter.timer = window.setTimeout(() => {
+    if (state.pendingAssetAcks?.get(waiter.transferId) !== waiter) return;
+    state.pendingAssetAcks.delete(waiter.transferId);
+    waiter.reject(new Error("相手の受信確認を取得できませんでした。"));
+  }, MARKET_P2P_ASSET_ACK_TIMEOUT_MS);
+}
+
+function cancelMarketAssetAckWaiter(waiter, error) {
+  if (!waiter || state.pendingAssetAcks?.get(waiter.transferId) !== waiter) return;
+  window.clearTimeout(waiter.timer);
+  state.pendingAssetAcks.delete(waiter.transferId);
+  waiter.reject(error || new Error("P2P転送を中止しました。"));
+}
+
+function acceptMarketAssetAck(message, channel, context = {}) {
+  const transferId = message?.transferId;
+  const mediaKind = message?.kind;
+  if (!validMarketTransferId(transferId)
+      || !["image", "audio"].includes(mediaKind)
+      || !marketPeerCapabilityContextMatches(channel, context)) return false;
+  const waiter = state.pendingAssetAcks?.get(transferId);
+  if (!waiter
+      || waiter.mediaKind !== mediaKind
+      || waiter.channel !== channel
+      || waiter.connectionId !== context.connectionId
+      || waiter.peerGeneration !== context.peerGeneration) return false;
+  window.clearTimeout(waiter.timer);
+  state.pendingAssetAcks.delete(transferId);
+  waiter.resolve({ transferId, mediaKind });
+  return true;
+}
+
+function markMarketDataChannelReady(channel, context = {}) {
+  const peer = context.peer ?? state.peer;
+  if (!marketDataChannelContextIsCurrent(channel, context)
+      || channel?.readyState !== "open"
+      || marketPeerNeedsRecovery(peer)) return false;
+  const wasReady = state.channelReady;
+  state.channelReady = true;
+  state.peerWasConnected = true;
+  state.peerRecoverySetupOwner = null;
+  window.clearTimeout(state.peerTimeout);
+  state.peerTimeout = null;
+  clearMarketPeerRecoveryTimer();
+  if (!wasReady) reportMarketP2pDiagnostic("channel_open", peer);
+  state.peerRecoveryAttempts = 0;
+  state.peerStatus = "● P2P接続済み";
+  if (!wasReady && roomRole() === "seller") {
+    sendListingImage().catch(handleRecoverableError);
+  }
+  advertiseMarketPeerCapabilities(channel, context);
+  render();
+  return true;
 }
 
 function configureDataChannel(
@@ -4569,53 +5064,89 @@ function configureDataChannel(
   generation = lifecycleGeneration,
   roomId = state.roomId,
   connectionId = state.peerConnectionId,
+  peer = state.peer,
+  peerGeneration = state.peerGeneration,
 ) {
+  const previousChannel = state.channel;
+  resetMarketPeerDeliveryProtocol();
+  if (previousChannel && previousChannel !== channel) {
+    previousChannel.onopen = null;
+    previousChannel.onclose = null;
+    previousChannel.onerror = null;
+    previousChannel.onmessage = null;
+    previousChannel.close?.();
+    abortMarketIncomingTransfer();
+    state.outgoingTransfer = Promise.resolve();
+  }
   state.channel = channel;
   let incomingMessageChain = Promise.resolve();
+  const channelContext = {
+    generation,
+    roomId,
+    connectionId,
+    peer,
+    peerGeneration,
+  };
+  state.peerCapabilities = {
+    channel,
+    connectionId,
+    peerGeneration,
+    advertised: false,
+    remoteOshijoDeliveryAck: false,
+  };
+  const contextIsCurrent = () => marketDataChannelContextIsCurrent(channel, channelContext);
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
-  channel.onopen = () => {
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel
-        || !marketSignalConnectionMatches(connectionId)) return;
-    window.clearTimeout(state.peerTimeout);
-    state.peerTimeout = null;
-    clearMarketPeerRecoveryTimer();
-    state.channelReady = true;
-    state.peerWasConnected = true;
-    reportMarketP2pDiagnostic("channel_open", state.peer);
-    state.peerStatus = "● P2P接続済み";
-    if (roomRole() === "seller") sendListingImage().catch(handleRecoverableError);
+  channel.onopen = () => markMarketDataChannelReady(channel, channelContext);
+  channel.onclose = () => {
+    if (!contextIsCurrent()) return;
+    state.channelReady = false;
+    resetMarketPeerDeliveryProtocol();
+    abortMarketIncomingTransfer();
+    state.outgoingTransfer = Promise.resolve();
+    scheduleMarketPeerRecovery(peer, generation, roomId, {
+      immediate: true,
+      force: true,
+    });
     render();
   };
-  channel.onclose = () => {
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel
-        || !marketSignalConnectionMatches(connectionId)) return;
-    state.channelReady = false;
-    scheduleMarketPeerRecovery(state.peer, generation, roomId);
-  };
   channel.onerror = () => {
-    if (isCurrentLifecycle(generation) && state.roomId === roomId && state.channel === channel
-        && marketSignalConnectionMatches(connectionId)) {
+    if (contextIsCurrent()) {
+      state.channelReady = false;
+      resetMarketPeerDeliveryProtocol();
+      abortMarketIncomingTransfer();
+      state.outgoingTransfer = Promise.resolve();
       showToast("P2P転送で通信エラーが発生しました。");
+      scheduleMarketPeerRecovery(peer, generation, roomId, {
+        immediate: true,
+        force: true,
+      });
+      render();
     }
   };
   channel.onmessage = (event) => {
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel
-        || !marketSignalConnectionMatches(connectionId)) return;
+    if (!contextIsCurrent()) return;
     const data = event.data;
     incomingMessageChain = incomingMessageChain.catch(() => {}).then(async () => {
-      if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel
-          || !marketSignalConnectionMatches(connectionId)) return;
+      if (!contextIsCurrent()) return;
       try {
-        await handleChannelMessage(data, { generation, roomId, channel, connectionId });
+        await handleChannelMessage(data, {
+          generation,
+          roomId,
+          channel,
+          connectionId,
+          peer,
+          peerGeneration,
+        });
       } catch (error) {
-        if (isCurrentLifecycle(generation) && state.roomId === roomId && state.channel === channel
-            && marketSignalConnectionMatches(connectionId)) {
+        if (contextIsCurrent()) {
+          abortMarketIncomingTransfer();
           handleRecoverableError(error);
         }
       }
     });
   };
+  if (channel.readyState === "open") markMarketDataChannelReady(channel, channelContext);
 }
 
 async function sendListingImage() {
@@ -4641,6 +5172,9 @@ function sendAsset(blob, options) {
     createdAt: options.createdAt ?? Date.now(),
     generation: options.generation ?? lifecycleGeneration,
     roomId: options.roomId ?? state.roomId,
+    connectionId: options.connectionId ?? state.peerConnectionId,
+    peer: options.peer ?? state.peer,
+    peerGeneration: options.peerGeneration ?? state.peerGeneration,
   };
   const task = transferState.outgoingTransfer
     .catch(() => {})
@@ -4656,31 +5190,69 @@ async function sendAssetNow(blob, {
   createdAt,
   generation,
   roomId,
+  connectionId,
+  peer,
+  peerGeneration,
+  transferId = "",
+  expiresAt = 0,
 }) {
   const channel = state.channel;
+  const channelContext = {
+    generation,
+    roomId,
+    connectionId,
+    peer,
+    peerGeneration,
+  };
   const closingOnly = String(name || "").startsWith(OSHIJO_CLOSING_IMAGE_PREFIX)
     || String(name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
   const closingStillOpen = () => !closingOnly
     || normalizeOshijoPhase(state.room) === "closing";
-  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || !channel || channel.readyState !== "open") {
+  const deliveryStillFresh = () => !transferId
+    || Number(expiresAt || 0) > Date.now() + MARKET_P2P_FINALIZE_MARGIN_MS;
+  if (transferId && !validMarketTransferId(transferId)) {
+    throw new Error("P2P転送IDが不正です。");
+  }
+  if (!marketDataChannelContextIsCurrent(channel, channelContext) || channel.readyState !== "open") {
     throw new Error("P2P接続が完了していません。");
   }
   if (!closingStillOpen()) throw new Error("静かな最終判断へ進んだため、営業素材は送信しませんでした。");
+  if (!deliveryStillFresh()) throw new Error("送信枠の有効期限が近いため、もう一度選択してください。");
   const buffer = await blob.arrayBuffer();
-  if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel || !closingStillOpen()) {
+  if (!marketDataChannelContextIsCurrent(channel, channelContext)
+      || !closingStillOpen()
+      || !deliveryStillFresh()) {
     throw new Error("P2P転送が中断されました。");
   }
   const mime = kind === "image" ? verifiedMarketImageMime(buffer) : blob.type;
-  channel.send(JSON.stringify({ type: "asset-start", kind, turn, name, mime, size: buffer.byteLength, createdAt }));
+  channel.send(JSON.stringify({
+    type: "asset-start",
+    kind,
+    turn,
+    name,
+    mime,
+    size: buffer.byteLength,
+    createdAt,
+    ...(transferId ? { transferId } : {}),
+  }));
   for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
     await waitForDataBuffer(channel, generation, roomId);
-    if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.channel !== channel || !closingStillOpen()) {
+    if (!marketDataChannelContextIsCurrent(channel, channelContext)
+        || !closingStillOpen()
+        || !deliveryStillFresh()) {
       throw new Error("P2P転送が中断されました。");
     }
     channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
   }
-  if (!closingStillOpen()) throw new Error("静かな最終判断へ進んだため、営業素材の転送を終了しました。");
-  channel.send(JSON.stringify({ type: "asset-end", kind, turn }));
+  if (!closingStillOpen() || !deliveryStillFresh()) {
+    throw new Error("静かな最終判断または送信枠の期限により、営業素材の転送を終了しました。");
+  }
+  channel.send(JSON.stringify({
+    type: "asset-end",
+    kind,
+    turn,
+    ...(transferId ? { transferId } : {}),
+  }));
 }
 
 function waitForDataBuffer(channel = state.channel, generation = lifecycleGeneration, roomId = state.roomId) {
@@ -4705,19 +5277,27 @@ async function handleChannelMessage(
     roomId = state.roomId,
     channel = state.channel,
     connectionId = state.peerConnectionId,
+    peer = state.peer,
+    peerGeneration = state.peerGeneration,
   } = {},
 ) {
-  const isCurrentChannel = () => (
-    isCurrentLifecycle(generation)
-    && state.roomId === roomId
-    && state.channel === channel
-    && marketSignalConnectionMatches(connectionId)
-  );
+  const channelContext = {
+    generation,
+    roomId,
+    connectionId,
+    peer,
+    peerGeneration,
+  };
+  const isCurrentChannel = () => marketDataChannelContextIsCurrent(channel, channelContext);
   if (!isCurrentChannel()) return;
   if (typeof data === "string") {
     if (data.length > 4_096) throw new Error("P2P制御データが大きすぎます。");
     const message = JSON.parse(data);
-    if (message.type === "asset-start") {
+    if (message.type === "market-capabilities") {
+      acceptMarketPeerCapabilities(message, channel, channelContext);
+    } else if (message.type === "asset-delivered") {
+      acceptMarketAssetAck(message, channel, channelContext);
+    } else if (message.type === "asset-start") {
       if (state.incomingTransfer) throw new Error("別のP2P転送が進行中です。");
       const closingAsset = String(message.name || "").startsWith(OSHIJO_CLOSING_IMAGE_PREFIX)
         || String(message.name || "").startsWith(OSHIJO_CLOSING_AUDIO_PREFIX);
@@ -4738,7 +5318,7 @@ async function handleChannelMessage(
         state.incomingTransfer = null;
         throw new Error("P2P転送の終端情報が一致しません。");
       }
-      finishIncomingAsset();
+      await finishIncomingAsset(channel, channelContext);
     }
     return;
   }
@@ -4754,7 +5334,7 @@ async function handleChannelMessage(
   }
 }
 
-function finishIncomingAsset() {
+async function finishIncomingAsset(channel = state.channel, channelContext = {}) {
   const transfer = state.incomingTransfer;
   if (!transfer || transfer.received !== transfer.size) {
     state.incomingTransfer = null;
@@ -4773,30 +5353,95 @@ function finishIncomingAsset() {
       state.oshijoDecisionRequested
       || normalizeOshijoPhase(state.room) !== "closing"
     )) return;
+    const acknowledgedDelivery = Boolean(
+      (closingImage || closingAudio) && transfer.transferId,
+    );
     if (closingImage) {
-      state.oshijoClosingImages.push({
-        uid: state.room?.sellerUid,
-        blob,
-        url: URL.createObjectURL(blob),
-        createdAt: transfer.createdAt,
-      });
+      const duplicate = transfer.transferId
+        ? state.oshijoClosingImages.some((item) => item.transferId === transfer.transferId)
+        : false;
+      const conflicting = transfer.transferId
+        ? state.audioMessages.some((item) => item.transferId === transfer.transferId)
+        : false;
+      if (conflicting) throw new Error("P2P転送IDの営業素材が一致しません。");
+      if (!duplicate) {
+        const url = URL.createObjectURL(blob);
+        const item = {
+          uid: state.room?.sellerUid,
+          blob,
+          url,
+          createdAt: transfer.createdAt,
+          transferId: transfer.transferId || "",
+        };
+        state.oshijoClosingImages.push(item);
+        try {
+          render();
+        } catch (error) {
+          const index = state.oshijoClosingImages.indexOf(item);
+          if (index >= 0) state.oshijoClosingImages.splice(index, 1);
+          URL.revokeObjectURL(url);
+          throw error;
+        }
+      }
     } else if (transfer.kind === "image") {
       releaseRemoteImage();
       state.remoteImage = { blob, url: URL.createObjectURL(blob) };
+      render();
     } else {
-      state.audioMessages.push({
-        uid: state.room?.sellerUid,
-        name: state.room?.sellerName || "SELLER",
-        turn: transfer.turn,
-        phase: closingAudio ? "oshijo_closing" : "",
-        blob,
-        url: URL.createObjectURL(blob),
-        createdAt: transfer.createdAt,
-      });
+      const duplicate = closingAudio && transfer.transferId
+        ? state.audioMessages.some((item) => item.transferId === transfer.transferId)
+        : false;
+      const conflicting = closingAudio && transfer.transferId
+        ? state.oshijoClosingImages.some((item) => item.transferId === transfer.transferId)
+        : false;
+      if (conflicting) throw new Error("P2P転送IDの営業素材が一致しません。");
+      if (!duplicate) {
+        const url = URL.createObjectURL(blob);
+        const item = {
+          uid: state.room?.sellerUid,
+          name: state.room?.sellerName || "SELLER",
+          turn: transfer.turn,
+          phase: closingAudio ? "oshijo_closing" : "",
+          blob,
+          url,
+          createdAt: transfer.createdAt,
+          transferId: transfer.transferId || "",
+        };
+        state.audioMessages.push(item);
+        try {
+          render();
+        } catch (error) {
+          const index = state.audioMessages.indexOf(item);
+          if (index >= 0) state.audioMessages.splice(index, 1);
+          URL.revokeObjectURL(url);
+          throw error;
+        }
+      }
     }
-    render();
+    if (acknowledgedDelivery) {
+      const acknowledged = await performOshijoDeliveryAction(
+        "oshijo_closing_turn_ack",
+        {
+          deliveryId: transfer.transferId,
+          mediaKind: transfer.kind,
+          generation: channelContext.generation ?? lifecycleGeneration,
+          roomId: channelContext.roomId ?? state.roomId,
+        },
+      );
+      if (acknowledged.oshijoDelivery.state !== "finalized") {
+        throw new Error("P2P受信をサーバーで確認できませんでした。");
+      }
+      if (marketDataChannelContextIsCurrent(channel, channelContext)
+          && state.incomingTransfer === transfer) {
+        channel.send(JSON.stringify({
+          type: "asset-delivered",
+          transferId: transfer.transferId,
+          kind: transfer.kind,
+        }));
+      }
+    }
   } finally {
-    state.incomingTransfer = null;
+    if (state.incomingTransfer === transfer) state.incomingTransfer = null;
   }
 }
 
@@ -4898,6 +5543,187 @@ async function submitOshijoClaim(event) {
   if (completed) state.oshijoClaimOpen = false;
 }
 
+function applyOshijoClosingActionResponse(data) {
+  if (!state.room || !data || typeof data !== "object") return;
+  const returnedCount = data.closingTurnsUsed
+    ?? data.closingTurnCount
+    ?? data.oshijoClosingTurnCount;
+  if (Number.isFinite(Number(returnedCount))) {
+    const count = normalizeNonNegativeInteger(returnedCount, OSHIJO_MAX_CLOSING_TURNS);
+    state.room.closingTurnsUsed = count;
+    state.room.oshijoClosingTurnCount = count;
+  }
+  const returnedCounts = data.closingMediaCounts || data.oshijoClosingMediaCounts;
+  if (returnedCounts && typeof returnedCounts === "object") {
+    state.room.closingMediaCounts = { ...returnedCounts };
+    state.room.oshijoClosingMediaCounts = { ...returnedCounts };
+  }
+}
+
+function marketOshijoDeliveryActionId(deliveryId, phase) {
+  if (!validMarketTransferId(deliveryId)
+      || !["reserve", "ack", "release"].includes(phase)) return "";
+  return `${deliveryId}-${phase}`;
+}
+
+async function performOshijoDeliveryAction(action, {
+  deliveryId,
+  mediaKind,
+  generation,
+  roomId,
+}) {
+  const phase = action.replace("oshijo_closing_turn_", "");
+  const actionId = marketOshijoDeliveryActionId(deliveryId, phase);
+  if (!actionId || !["image", "audio"].includes(mediaKind)) {
+    throw new Error("P2P送信操作を開始できませんでした。");
+  }
+  const response = await marketActionCallable({
+    action,
+    roomId,
+    mediaKind,
+    deliveryId,
+    actionId,
+    turn: Math.max(1, Number(state.room?.turn || 1)),
+  });
+  if (!isCurrentLifecycle(generation) || state.roomId !== roomId) {
+    throw new Error("別の取引へ移動したため、P2P送信を終了しました。");
+  }
+  applyOshijoClosingActionResponse(response.data);
+  const delivery = response.data?.oshijoDelivery;
+  if (!delivery
+      || delivery.deliveryId !== deliveryId
+      || delivery.mediaKind !== mediaKind
+      || !["reserved", "finalized", "released"].includes(delivery.state)) {
+    throw new Error("P2P送信枠の応答を確認できませんでした。");
+  }
+  return { ...response.data, oshijoDelivery: { ...delivery } };
+}
+
+async function deliverOshijoClosingAsset(blob, {
+  mediaKind,
+  turn,
+  name,
+  createdAt,
+  generation,
+  roomId,
+}) {
+  if (useMarketPreview) {
+    return { delivered: await authorizeOshijoClosingTurn(mediaKind), legacy: true };
+  }
+  const channel = state.channel;
+  const channelContext = {
+    generation,
+    roomId,
+    connectionId: state.peerConnectionId,
+    peer: state.peer,
+    peerGeneration: state.peerGeneration,
+  };
+  if (!marketDataChannelContextIsCurrent(channel, channelContext)
+      || channel?.readyState !== "open") {
+    throw new Error("P2P接続が完了していません。");
+  }
+  const supportsDeliveryAck = await waitForMarketOshijoDeliveryCapability(
+    channel,
+    channelContext,
+  );
+  if (!marketDataChannelContextIsCurrent(channel, channelContext)
+      || normalizeOshijoPhase(state.room) !== "closing") {
+    throw new Error("P2P接続または取引状態が変わりました。");
+  }
+  if (!supportsDeliveryAck) {
+    if (!await authorizeOshijoClosingTurn(mediaKind)) return { delivered: false, legacy: true };
+    await sendAsset(blob, {
+      kind: mediaKind,
+      turn,
+      name,
+      createdAt,
+      generation,
+      roomId,
+      ...channelContext,
+    });
+    return { delivered: true, legacy: true };
+  }
+
+  const deliveryId = marketPeerConnectionId();
+  const actionContext = { deliveryId, mediaKind, generation, roomId };
+  let reserved;
+  try {
+    reserved = await performOshijoDeliveryAction(
+      "oshijo_closing_turn_reserve",
+      actionContext,
+    );
+  } catch (error) {
+    await performOshijoDeliveryAction(
+      "oshijo_closing_turn_release",
+      actionContext,
+    ).catch(() => {});
+    throw error;
+  }
+  if (reserved.oshijoDelivery.state === "finalized") {
+    return { delivered: true, legacy: false, deliveryId };
+  }
+  const expiresAt = Number(reserved.oshijoDelivery.expiresAt || 0);
+  if (expiresAt <= Date.now() + MARKET_P2P_ASSET_ACK_TIMEOUT_MS + MARKET_P2P_FINALIZE_MARGIN_MS) {
+    await performOshijoDeliveryAction(
+      "oshijo_closing_turn_release",
+      actionContext,
+    ).catch(() => {});
+    throw new Error("P2P送信枠の残り時間が不足しています。もう一度選択してください。");
+  }
+
+  let ackWaiter = null;
+  let originalError = null;
+  try {
+    ackWaiter = createMarketAssetAckWaiter(
+      deliveryId,
+      mediaKind,
+      channel,
+      channelContext,
+    );
+    await sendAsset(blob, {
+      kind: mediaKind,
+      turn,
+      name,
+      createdAt,
+      generation,
+      roomId,
+      transferId: deliveryId,
+      expiresAt,
+      ...channelContext,
+    });
+    armMarketAssetAckWaiter(ackWaiter);
+    await ackWaiter.promise;
+    if (!marketDataChannelContextIsCurrent(channel, channelContext)
+        || normalizeOshijoPhase(state.room) !== "closing") {
+      throw new Error("静かな最終判断へ進んだため、営業素材の確定を終了しました。");
+    }
+    return { delivered: true, legacy: false, deliveryId };
+  } catch (error) {
+    originalError = error;
+    cancelMarketAssetAckWaiter(ackWaiter, error);
+  }
+
+  try {
+    const released = await performOshijoDeliveryAction(
+      "oshijo_closing_turn_release",
+      actionContext,
+    );
+    if (released.oshijoDelivery.state === "finalized") {
+      return { delivered: true, legacy: false, deliveryId };
+    }
+    if (released.status !== "oshijo_closing"
+        || normalizeOshijoPhase(state.room) !== "closing") {
+      return { delivered: false, legacy: false, phaseEnded: true, deliveryId };
+    }
+  } catch {
+    // Preserve the original send/finalize error when cleanup cannot be confirmed.
+  }
+  if (normalizeOshijoPhase(state.room) !== "closing") {
+    return { delivered: false, legacy: false, phaseEnded: true, deliveryId };
+  }
+  throw originalError || new Error("P2P転送を完了できませんでした。");
+}
+
 async function authorizeOshijoClosingTurn(mediaKind) {
   if (
     roomRole() !== "seller"
@@ -4934,18 +5760,7 @@ async function authorizeOshijoClosingTurn(mediaKind) {
     });
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return false;
     clearMarketActionIdentity(actionId);
-    if (state.room) {
-      const returnedCount = response.data?.closingTurnsUsed
-        ?? response.data?.closingTurnCount
-        ?? response.data?.oshijoClosingTurnCount;
-      if (Number.isFinite(Number(returnedCount))) {
-        state.room.closingTurnsUsed = normalizeNonNegativeInteger(returnedCount, OSHIJO_MAX_CLOSING_TURNS);
-      }
-      const returnedCounts = response.data?.closingMediaCounts || response.data?.oshijoClosingMediaCounts;
-      if (returnedCounts && typeof returnedCounts === "object") {
-        state.room.closingMediaCounts = { ...returnedCounts };
-      }
-    }
+    applyOshijoClosingActionResponse(response.data);
     return true;
   } catch (error) {
     if (isCurrentLifecycle(generation) && state.roomId === roomId) {
@@ -5010,18 +5825,16 @@ async function sendOshijoClosingImage(event) {
   try {
     processed = await shared().processImageFile(file, 0, { maxSide: 1200 });
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
-    if (!await authorizeOshijoClosingTurn("image")) return;
     const createdAt = Date.now();
-    if (!useMarketPreview) {
-      await sendAsset(processed.blob, {
-        kind: "image",
-        turn: 0,
-        name: `${OSHIJO_CLOSING_IMAGE_PREFIX}${createdAt}`,
-        createdAt,
-        generation,
-        roomId,
-      });
-    }
+    const delivery = await deliverOshijoClosingAsset(processed.blob, {
+      mediaKind: "image",
+      turn: 0,
+      name: `${OSHIJO_CLOSING_IMAGE_PREFIX}${createdAt}`,
+      createdAt,
+      generation,
+      roomId,
+    });
+    if (!delivery.delivered) return;
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
     state.oshijoClosingImages.push({
       uid: state.uid,
@@ -5060,19 +5873,17 @@ async function sendOshijoClosingAudio(event) {
   try {
     processed = await shared().processGameAudioFile(file, { audioName: file.name });
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
-    if (!await authorizeOshijoClosingTurn("audio")) return;
     const createdAt = Date.now();
     const name = `${OSHIJO_CLOSING_AUDIO_PREFIX}${processed.audioName}`;
-    if (!useMarketPreview) {
-      await sendAsset(processed.audioBlob, {
-        kind: "audio",
-        turn,
-        name,
-        createdAt,
-        generation,
-        roomId,
-      });
-    }
+    const delivery = await deliverOshijoClosingAsset(processed.audioBlob, {
+      mediaKind: "audio",
+      turn,
+      name,
+      createdAt,
+      generation,
+      roomId,
+    });
+    if (!delivery.delivered) return;
     if (!isCurrentLifecycle(generation) || state.roomId !== roomId || state.room?.status !== "oshijo_closing") return;
     state.audioMessages.push({
       uid: state.uid,
@@ -5805,14 +6616,32 @@ function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false 
   state.roomUnsubscribe?.();
   state.roomUnsubscribe = null;
   state.realtimeUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+  state.peerSignalUnsubscribe?.();
+  state.peerSignalUnsubscribe = null;
+  resetMarketPeerDeliveryProtocol();
   const presenceConnections = state.presenceConnections.splice(0);
   if (!preserveOnDisconnect) presenceConnections.forEach(markPresenceOffline);
-  state.peer?.close();
-  state.channel?.close();
+  if (state.peer) {
+    state.peer.onicecandidate = null;
+    state.peer.onconnectionstatechange = null;
+    state.peer.oniceconnectionstatechange = null;
+    state.peer.ondatachannel = null;
+    state.peer.close();
+  }
+  if (state.channel) {
+    state.channel.onopen = null;
+    state.channel.onclose = null;
+    state.channel.onerror = null;
+    state.channel.onmessage = null;
+    state.channel.close();
+  }
   window.clearTimeout(state.peerTimeout);
   state.peerTimeout = null;
   clearMarketPeerRecoveryTimer();
   state.peer = null;
+  state.peerGeneration = Number(state.peerGeneration || 0) + 1;
+  state.peerRecoveryForced = false;
+  state.peerRecoverySetupOwner = null;
   state.peerRecoveryAttempts = 0;
   state.peerConnectionId = "";
   state.peerTurnAvailable = false;
@@ -5820,9 +6649,13 @@ function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false 
   state.peerStartedAt = 0;
   state.peerDiagnosticSent = new Set();
   state.peerSignalChain = Promise.resolve();
+  state.peerCapabilities = null;
+  state.peerCapabilityWaiters = new Set();
+  state.pendingAssetAcks = new Map();
   state.channel = null;
   state.channelReady = false;
   state.pendingIce = [];
+  state.peerIceCandidates = [];
   state.outgoingTransfer = Promise.resolve();
   state.incomingTransfer = null;
   state.enteringRoomId = "";

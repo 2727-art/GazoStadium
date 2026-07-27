@@ -88,18 +88,51 @@ test("VALUE MARKET keeps transfer size and turn limits", async () => {
 });
 
 test("a rejected start does not turn its trailing end into a second error", async () => {
-  const { marketAssetEndStatus } = await transferModule;
+  const { createIncomingMarketTransfer, marketAssetEndStatus } = await transferModule;
 
   assert.equal(marketAssetEndStatus(null, { kind: "image", turn: 0 }), "orphan");
   assert.equal(marketAssetEndStatus({ kind: "image", turn: 0 }, { kind: "image", turn: 0 }), "complete");
   assert.equal(marketAssetEndStatus({ kind: "audio", turn: 1 }, { kind: "audio", turn: 2 }), "mismatch");
+
+  const transferId = "delivery-0000000099";
+  const transfer = createIncomingMarketTransfer({
+    kind: "image",
+    turn: 0,
+    mime: "image/webp",
+    size: 12,
+    transferId,
+  }, limits);
+  assert.equal(transfer.transferId, transferId);
+  assert.equal(
+    marketAssetEndStatus(transfer, { kind: "image", turn: 0, transferId }),
+    "complete",
+  );
+  assert.equal(
+    marketAssetEndStatus(transfer, { kind: "image", turn: 0 }),
+    "mismatch",
+  );
+  assert.equal(
+    marketAssetEndStatus(transfer, {
+      kind: "image",
+      turn: 0,
+      transferId: "delivery-0000000100",
+    }),
+    "mismatch",
+  );
+  assert.throws(() => createIncomingMarketTransfer({
+    kind: "image",
+    turn: 0,
+    mime: "image/webp",
+    size: 12,
+    transferId: "short",
+  }, limits), /P2P転送IDが不正です/);
 });
 
 test("the browser market handler uses the tested transfer validator", () => {
   const source = fs.readFileSync(path.join(root, "market.js"), "utf8");
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
-  assert.match(source, /market-transfer\.mjs\?v=value-market-transfer-v1/);
+  assert.match(source, /market-transfer\.mjs\?v=value-market-transfer-v2/);
   assert.match(source, /createIncomingMarketTransfer\(message/);
   assert.match(source, /verifiedMarketImageMime\(buffer\)/);
   assert.match(source, /verifiedMarketImageMimeFromChunks\(transfer\.chunks\)/);
