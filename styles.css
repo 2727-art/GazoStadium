@@ -4322,6 +4322,7 @@ button:disabled {
 }
 
 .button-cyan {
+  color: white;
   background: linear-gradient(135deg, var(--cyan-soft), var(--cyan));
 }
 
