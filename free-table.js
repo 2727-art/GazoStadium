@@ -43,6 +43,9 @@ import {
   releaseFreeTableMediaResources,
   sendFreeTableMedia,
 } from "./free-table-media.mjs?v=free-table-media-v1";
+import {
+  createFreeTableAmbienceController,
+} from "./free-table-ambience.mjs?v=free-table-ambience-v1";
 
 const FREE_TABLE_ROOT = "freeTables";
 const FREE_TABLE_CHAT_LIMIT = 80;
@@ -82,6 +85,10 @@ const FREE_TABLE_PUBLIC_CARD_PREVIEW_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH = 120;
 const FREE_TABLE_INVITE_PREVIEW_REFRESH_MS = 30_000;
 const FREE_TABLE_INVITE_PREVIEW_MAX_BACKOFF_MS = 4 * 60_000;
+const FREE_TABLE_AMBIENCE_VOLUME_STORAGE_KEY = "hariaiFreeTableAmbienceVolumeV1";
+const FREE_TABLE_AMBIENCE_NOTICE_MS = 7_000;
+const FREE_TABLE_METRONOME_MIN_BPM = 40;
+const FREE_TABLE_METRONOME_MAX_BPM = 160;
 const FREE_TABLE_ACTIONS = Object.freeze({
   SAVE_SPACE: "save_space",
   OPEN: "open",
@@ -90,6 +97,7 @@ const FREE_TABLE_ACTIONS = Object.freeze({
   CANCEL_REQUEST: "cancel_request",
   RESPOND: "respond",
   ARRIVE: "arrive",
+  UPDATE_AMBIENCE: "update_ambience",
   END: "end",
   BOOKMARK: "bookmark",
   RELATIONSHIP: "relationship",
@@ -118,6 +126,20 @@ const FREE_TABLE_THEMES = Object.freeze({
   garden: { label: "木漏れ日の庭", icon: "❋" },
   observatory: { label: "星待ちの窓辺", icon: "✦" },
 });
+const FREE_TABLE_LIGHTINGS = Object.freeze({
+  natural: { label: "いつもの灯り", icon: "○" },
+  indirect: { label: "間接照明", icon: "◒" },
+  daylight: { label: "昼光色", icon: "☼" },
+  headlight: { label: "ヘッドライトのみ", icon: "◉" },
+});
+const FREE_TABLE_AMBIENCE_PRESETS = Object.freeze([
+  { id: "silent", label: "音なし", metronomeBpm: 0, lightingId: "natural" },
+  { id: "quiet", label: "静かな夜", metronomeBpm: 48, lightingId: "indirect" },
+  { id: "mellow", label: "まったり", metronomeBpm: 60, lightingId: "indirect" },
+  { id: "family-restaurant", label: "ファミリーレストラン", metronomeBpm: 76, lightingId: "daylight" },
+  { id: "bar", label: "おしゃれなバー", metronomeBpm: 96, lightingId: "indirect" },
+  { id: "disco", label: "ディスコ", metronomeBpm: 120, lightingId: "headlight" },
+]);
 const FREE_TABLE_SENDOFF_PRESETS = Object.freeze([
   "いってらっしゃい。またいつでも",
   "いってらっしゃい。よい旅を",
@@ -154,6 +176,7 @@ function createFreeTableState() {
     uid: "",
     authenticatedReady: false,
     serverTimeOffset: 0,
+    serverTimeOffsetAuthoritative: false,
     publicMemberId: "",
     myState: null,
     space: defaultSpace(),
@@ -236,6 +259,18 @@ function createFreeTableState() {
     mediaSendChain: Promise.resolve(),
     mediaGeneration: 0,
     mediaProgress: 0,
+    ambienceController: null,
+    effectiveAmbience: null,
+    ambienceEffectiveTimer: null,
+    ambienceNotice: "",
+    ambienceNoticeTimer: null,
+    ambiencePanelOpen: false,
+    ambienceDraft: null,
+    ambienceDraftDirty: false,
+    ambienceUpdating: false,
+    ambienceSoundEnabled: false,
+    ambienceSoundDetailsOpen: false,
+    ambienceVolume: loadAmbienceVolume(),
     farewell: null,
     farewellTimer: null,
     farewellVerificationTimer: null,
@@ -470,6 +505,27 @@ function scheduleIgnoredSessionEnd(sessionId, reason = "safe_exit", attempt = 0,
   ignoredSessionEndRetries.set(normalizedSessionId, record);
 }
 
+function loadAmbienceVolume() {
+  try {
+    const stored = Number(window.localStorage.getItem(FREE_TABLE_AMBIENCE_VOLUME_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored >= 0 && stored <= 1) return stored;
+  } catch {
+    // The quiet default still works when localStorage is unavailable.
+  }
+  return 0.28;
+}
+
+function persistAmbienceVolume(volume) {
+  try {
+    window.localStorage.setItem(
+      FREE_TABLE_AMBIENCE_VOLUME_STORAGE_KEY,
+      String(Math.max(0, Math.min(1, Number(volume) || 0))),
+    );
+  } catch {
+    // The in-memory volume remains available for this visit.
+  }
+}
+
 function defaultSpace() {
   return {
     name: "よりみちの貼り場",
@@ -483,6 +539,10 @@ function defaultSpace() {
     avoid: "",
     welcome: "おかえり。どうぞゆっくりしていってください。",
     themeId: "engawa",
+    ambience: {
+      metronomeBpm: 0,
+      lightingId: "natural",
+    },
   };
 }
 
@@ -543,6 +603,66 @@ function normalizeMedia(value, fallback = {}) {
   };
 }
 
+function normalizeAmbience(value, fallbackValue = null) {
+  const fallback = fallbackValue && typeof fallbackValue === "object"
+    ? fallbackValue
+    : { metronomeBpm: 0, lightingId: "natural" };
+  const candidateBpm = Number(value?.metronomeBpm);
+  const fallbackBpm = Number(fallback.metronomeBpm);
+  const metronomeBpm = (
+    Number.isInteger(candidateBpm)
+    && (
+      candidateBpm === 0
+      || (candidateBpm >= FREE_TABLE_METRONOME_MIN_BPM
+        && candidateBpm <= FREE_TABLE_METRONOME_MAX_BPM)
+    )
+  )
+    ? candidateBpm
+    : (
+      Number.isInteger(fallbackBpm)
+      && (
+        fallbackBpm === 0
+        || (fallbackBpm >= FREE_TABLE_METRONOME_MIN_BPM
+          && fallbackBpm <= FREE_TABLE_METRONOME_MAX_BPM)
+      )
+        ? fallbackBpm
+        : 0
+    );
+  const fallbackLightingId = Object.hasOwn(FREE_TABLE_LIGHTINGS, fallback.lightingId)
+    ? fallback.lightingId
+    : "natural";
+  return {
+    metronomeBpm,
+    lightingId: Object.hasOwn(FREE_TABLE_LIGHTINGS, value?.lightingId)
+      ? value.lightingId
+      : fallbackLightingId,
+  };
+}
+
+function normalizeSessionAmbience(value, fallbackValue = null) {
+  const ambience = normalizeAmbience(value, fallbackValue);
+  const revision = Number(value?.revision);
+  const effectiveAt = Number(value?.effectiveAt);
+  const updatedAt = Number(value?.updatedAt);
+  return {
+    ...ambience,
+    revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
+    effectiveAt: Number.isFinite(effectiveAt) && effectiveAt >= 0 ? effectiveAt : 0,
+    updatedAt: Number.isFinite(updatedAt) && updatedAt >= 0 ? updatedAt : 0,
+  };
+}
+
+function parseMetronomeBpm(value) {
+  const bpm = Number(value);
+  if (!Number.isInteger(bpm)
+      || (bpm !== 0
+        && (bpm < FREE_TABLE_METRONOME_MIN_BPM
+          || bpm > FREE_TABLE_METRONOME_MAX_BPM))) {
+    throw new Error("BPMは「音なし」の0、または40〜160の整数で入力してください。");
+  }
+  return bpm;
+}
+
 function normalizeSpace(value) {
   const fallback = defaultSpace();
   const roleplayLevel = Object.hasOwn(FREE_TABLE_ROLEPLAY_LEVELS, value?.roleplayLevel)
@@ -564,6 +684,7 @@ function normalizeSpace(value) {
     avoid: boundedText(value?.avoid, 80),
     welcome: boundedText(value?.welcome, 80) || fallback.welcome,
     themeId,
+    ambience: normalizeAmbience(value?.ambience, fallback.ambience),
   };
 }
 
@@ -705,8 +826,13 @@ function normalizeSession(value, id = "") {
   const ending = valueFromSnapshot(source.ending || source.end);
   const canonicalRoomMedia = normalizeMedia(source.space?.media);
   const canonicalVisitorMedia = normalizeMedia(cards[visitorUid]?.media);
+  const space = normalizeSpace(source.space || source.spaceSnapshot);
   return {
     id: String(source.sessionId || source.id || id),
+    generation: Number.isSafeInteger(Number(source.generation))
+      && Number(source.generation) > 0
+      ? Number(source.generation)
+      : 0,
     status: String(source.status || "connecting"),
     hostUid,
     visitorUid,
@@ -732,7 +858,11 @@ function normalizeSession(value, id = "") {
       audio: canonicalRoomMedia.audio && canonicalVisitorMedia.audio,
       video: canonicalRoomMedia.video && canonicalVisitorMedia.video,
     }),
-    space: normalizeSpace(source.space || source.spaceSnapshot),
+    space,
+    ambience: normalizeSessionAmbience(
+      source.ambience || source.currentAmbience,
+      space.ambience,
+    ),
     arrivals: valueFromSnapshot(source.arrivals || source.arrived),
     ending: {
       reason: String(source.endReason || ending.reason || ending.kind || ""),
@@ -965,7 +1095,9 @@ function applyMyState(value, { suppressSessionResume = false } = {}) {
   const data = valueFromSnapshot(value);
   const serverUpdatedAt = Number(data.updatedAt || 0);
   const inferredOffset = serverUpdatedAt - Date.now();
-  if (Number.isFinite(inferredOffset) && Math.abs(inferredOffset) <= 24 * 60 * 60 * 1000) {
+  if (!state.serverTimeOffsetAuthoritative
+      && Number.isFinite(inferredOffset)
+      && Math.abs(inferredOffset) <= 24 * 60 * 60 * 1000) {
     state.serverTimeOffset = inferredOffset;
   }
   state.myState = data;
@@ -1178,6 +1310,7 @@ function stopOpenHeartbeat() {
 
 function saveSpaceFromForm(form) {
   const data = new FormData(form);
+  const metronomeBpm = parseMetronomeBpm(data.get("spaceMetronomeBpm"));
   const space = normalizeSpace({
     name: data.get("spaceName"),
     description: data.get("spaceDescription"),
@@ -1195,6 +1328,10 @@ function saveSpaceFromForm(form) {
     avoid: data.get("spaceAvoid"),
     welcome: data.get("spaceWelcome"),
     themeId: data.get("spaceThemeId"),
+    ambience: {
+      metronomeBpm,
+      lightingId: data.get("spaceLightingId"),
+    },
   });
   const hostCard = normalizeCard({
     name: data.get("hostName"),
@@ -1239,6 +1376,54 @@ function mediaLabels(media) {
   return values;
 }
 
+function lightingFor(lightingId) {
+  return FREE_TABLE_LIGHTINGS[lightingId] || FREE_TABLE_LIGHTINGS.natural;
+}
+
+function metronomeLabel(metronomeBpm) {
+  const bpm = Number(metronomeBpm);
+  return bpm === 0 ? "メトロノームなし" : `一定拍 ${bpm} BPM`;
+}
+
+function ambienceLabels(value) {
+  const ambience = normalizeAmbience(value);
+  return [
+    `${lightingFor(ambience.lightingId).icon} ${lightingFor(ambience.lightingId).label}`,
+    metronomeLabel(ambience.metronomeBpm),
+  ];
+}
+
+function ambienceSummary(value) {
+  return ambienceLabels(value).join("・");
+}
+
+function ambiencePresetFor(value) {
+  const ambience = normalizeAmbience(value);
+  return FREE_TABLE_AMBIENCE_PRESETS.find((preset) => (
+    preset.metronomeBpm === ambience.metronomeBpm
+    && preset.lightingId === ambience.lightingId
+  )) || null;
+}
+
+function renderAmbienceChips(value) {
+  return ambienceLabels(value)
+    .map((label) => `<span class="free-table-ambience-chip">${escapeHtml(label)}</span>`)
+    .join("");
+}
+
+function renderAmbiencePresetButtons(value, action) {
+  const ambience = normalizeAmbience(value);
+  return FREE_TABLE_AMBIENCE_PRESETS.map((preset) => {
+    const activePreset = preset.metronomeBpm === ambience.metronomeBpm
+      && preset.lightingId === ambience.lightingId;
+    return `<button type="button" class="free-table-ambience-chip${activePreset ? " is-active" : ""}" data-action="${escapeHtml(action)}" data-preset-id="${escapeHtml(preset.id)}" aria-pressed="${activePreset}">${escapeHtml(preset.label)} <small>${preset.metronomeBpm ? `${preset.metronomeBpm} BPM` : "無音"}</small></button>`;
+  }).join("");
+}
+
+function ambiencePresetById(presetId) {
+  return FREE_TABLE_AMBIENCE_PRESETS.find((preset) => preset.id === presetId) || null;
+}
+
 function freeTableInviteUrl(inviteId = state.hostInvite?.inviteId || state.inviteId) {
   const normalizedInviteId = normalizeInviteId(inviteId);
   if (!normalizedInviteId) return "";
@@ -1258,11 +1443,15 @@ function defaultInviteShareText(space = state.space) {
   const mediaPhrase = media.length > 1
     ? `${media.slice(0, -1).join("、")}や${media.at(-1)}`
     : media[0];
+  const ambience = normalizeAmbience(normalizedSpace.ambience);
+  const ambiencePhrase = ambience.metronomeBpm
+    ? `${lightingFor(ambience.lightingId).label}、一定拍${ambience.metronomeBpm} BPM`
+    : `${lightingFor(ambience.lightingId).label}、音なし`;
   return boundedText([
     `今夜、「${roomName}」に灯りをつけました。`,
     "",
     `「${topic}」`,
-    `${mediaPhrase}で、${FREE_TABLE_DURATIONS[normalizedSpace.duration]}。手ぶらでもどうぞ。`,
+    `${ambiencePhrase}。${mediaPhrase}で、${FREE_TABLE_DURATIONS[normalizedSpace.duration]}。手ぶらでもどうぞ。`,
   ].join("\n"), FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH);
 }
 
@@ -1413,34 +1602,42 @@ async function createInviteCardPngBlob({
   drawInviteWrappedText(context, `「${normalizedSpace.topic}」`, 96, 397, 940, 51, 2);
 
   const labels = [
+    lightingFor(normalizedSpace.ambience.lightingId).label,
+    metronomeLabel(normalizedSpace.ambience.metronomeBpm),
     FREE_TABLE_DURATIONS[normalizedSpace.duration],
     FREE_TABLE_ROLEPLAY_LEVELS[normalizedSpace.roleplayLevel],
     ...mediaLabels(normalizedSpace.media),
   ];
   context.font = "700 20px system-ui, sans-serif";
   let badgeX = 96;
+  let badgeY = 472;
+  const badgeRight = 878;
+  const badgeRowGap = 53;
   for (const label of labels) {
     const width = Math.min(210, context.measureText(label).width + 34);
-    if (badgeX + width > 878) break;
+    if (badgeX + width > badgeRight) {
+      badgeX = 96;
+      badgeY += badgeRowGap;
+    }
     context.fillStyle = "rgba(99, 126, 105, 0.12)";
     context.beginPath();
-    context.roundRect(badgeX, 500, width, 43, 22);
+    context.roundRect(badgeX, badgeY, width, 43, 22);
     context.fill();
     context.fillStyle = green;
-    context.fillText(label, badgeX + 17, 529);
+    context.fillText(label, badgeX + 17, badgeY + 29);
     badgeX += width + 12;
   }
 
   context.fillStyle = "#6e6155";
   context.font = "650 21px system-ui, sans-serif";
-  context.fillText("手ぶらでもどうぞ。ひと席だけ、灯りをつけています。", 96, 586);
+  context.fillText("手ぶらでもどうぞ。ひと席だけ、灯りをつけています。", 96, 604);
   context.textAlign = "right";
   context.fillStyle = accent;
   context.font = "700 21px system-ui, sans-serif";
   context.fillText(
     boundedText(hostDisplayName, 24) ? `部屋主  ${boundedText(hostDisplayName, 24)}` : "貼り合いスタジアム",
     1098,
-    586,
+    604,
   );
   return inviteCanvasToBlob(canvas);
 }
@@ -1465,7 +1662,7 @@ function renderTabs() {
 
 function renderRoomCard(room, { returning = false } = {}) {
   const theme = themeFor(room.space.themeId);
-  return `<article class="free-table-room-card theme-${escapeHtml(room.space.themeId)}">
+  return `<article class="free-table-room-card theme-${escapeHtml(room.space.themeId)} lighting-${escapeHtml(room.space.ambience.lightingId)}">
     <div class="free-table-room-mark" aria-hidden="true">${theme.icon}</div>
     <div class="free-table-room-copy">
       <p class="free-table-eyebrow">${returning ? "また帰れる場所" : escapeHtml(theme.label)}</p>
@@ -1475,6 +1672,7 @@ function renderRoomCard(room, { returning = false } = {}) {
         <div><dt>今日の貼り題</dt><dd>${escapeHtml(room.space.topic)}</dd></div>
         <div><dt>過ごし方</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[room.space.roleplayLevel])}・${escapeHtml(FREE_TABLE_DURATIONS[room.space.duration])}</dd></div>
       </dl>
+      <div class="free-table-ambience-chips" aria-label="部屋の音と灯り">${renderAmbienceChips(room.space.ambience)}</div>
       <div class="free-table-tags">${mediaLabels(room.space.media).map((label) => `<span>${escapeHtml(label)}</span>`).join("")}</div>
     </div>
     ${room.open
@@ -1600,7 +1798,8 @@ function renderHostInvitePanel() {
     <div class="free-table-invite-card-preview theme-${escapeHtml(state.space.themeId)}" aria-hidden="true">
       <span>${themeFor(state.space.themeId).icon}</span>
       <div><small>今夜の灯り札</small><strong>${escapeHtml(state.space.name)}</strong>
-        <p>「${escapeHtml(state.space.topic)}」</p></div>
+        <p>「${escapeHtml(state.space.topic)}」</p>
+        <small>${escapeHtml(ambienceSummary(state.space.ambience))}</small></div>
     </div>
     <section class="free-table-invite-public-preview" aria-label="入口で公開される内容">
       <div>
@@ -1613,10 +1812,11 @@ function renderHostInvitePanel() {
         <div><dt>はじまり</dt><dd>${escapeHtml(state.space.introduction)}</dd></div>
         <div><dt>旅立ちのきっかけ</dt><dd>${escapeHtml(state.space.journeyCue)}</dd></div>
         <div><dt>過ごし方</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[state.space.roleplayLevel])}・${escapeHtml(FREE_TABLE_DURATIONS[state.space.duration])}・${mediaLabels(state.space.media).map(escapeHtml).join("・")}</dd></div>
+        <div><dt>音と灯り</dt><dd>${escapeHtml(ambienceSummary(state.space.ambience))}</dd></div>
         ${state.space.avoid ? `<div><dt>避けたい内容</dt><dd>${escapeHtml(state.space.avoid)}</dd></div>` : ""}
         <div><dt>お迎えのことば</dt><dd>${escapeHtml(state.space.welcome)}</dd></div>
       </dl>
-      <p>画像には、部屋名・貼り題・過ごし方・使えるもの・部屋主名と、部屋の育ちに応じた背景のしつらえが入ります。説明・避けたい内容・お迎えのことばは、入口を開いた先だけに表示します。</p>
+      <p>画像には、部屋名・貼り題・音と灯り・過ごし方・使えるもの・部屋主名と、部屋の育ちに応じた背景のしつらえが入ります。説明・避けたい内容・お迎えのことばは、入口を開いた先だけに表示します。</p>
     </section>
     <label class="free-table-invite-share-copy">Xへ添えることば
       <textarea id="freeTableInviteShareText" rows="5" maxlength="${FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH}">${escapeHtml(shareText)}</textarea>
@@ -1644,7 +1844,7 @@ function renderSpaceForm() {
   const space = state.space;
   const card = state.hostCard;
   const theme = themeFor(space.themeId);
-  return `<section class="free-table-my-room theme-${escapeHtml(space.themeId)}">
+  return `<section class="free-table-my-room theme-${escapeHtml(space.themeId)} lighting-${escapeHtml(space.ambience.lightingId)}">
     <header class="free-table-my-room-header">
       <span class="free-table-room-mark" aria-hidden="true">${theme.icon}</span>
       <div><p class="free-table-eyebrow">しつらえを育てる</p><h2>${escapeHtml(space.name)}</h2>
@@ -1663,6 +1863,23 @@ function renderSpaceForm() {
           <label>目安の時間<select name="spaceDuration">${Object.entries(FREE_TABLE_DURATIONS).map(([id, label]) => `<option value="${id}"${space.duration === id ? " selected" : ""}>${label}</option>`).join("")}</select></label>
           <label>部屋のしつらえ<select name="spaceThemeId">${Object.entries(FREE_TABLE_THEMES).map(([id, item]) => `<option value="${id}"${space.themeId === id ? " selected" : ""}>${item.icon} ${item.label}</option>`).join("")}</select></label>
         </div>
+        <section class="free-table-ambience-panel" aria-labelledby="freeTableSpaceAmbienceTitle">
+          <header class="free-table-ambience-header">
+            <div><p class="free-table-eyebrow">最初の場面</p><h3 id="freeTableSpaceAmbienceTitle">音と灯りをしつらえる</h3></div>
+            <span class="free-table-ambience-status">${escapeHtml(ambienceSummary(space.ambience))}</span>
+          </header>
+          <p class="free-table-ambience-copy">音はメロディーではなく、一定の拍だけです。落ち着くほどBPMを低くできます。参加者の端末では、本人が「部屋の音をきく」を押すまで鳴りません。</p>
+          <div class="free-table-ambience-presets" aria-label="場面の例">${renderAmbiencePresetButtons(space.ambience, "apply-space-ambience-preset")}</div>
+          <div class="free-table-ambience-fields">
+            <label>一定拍のBPM
+              <input name="spaceMetronomeBpm" type="number" inputmode="numeric" min="0" max="${FREE_TABLE_METRONOME_MAX_BPM}" step="1" required value="${space.ambience.metronomeBpm}" aria-describedby="freeTableSpaceBpmNote">
+              <small id="freeTableSpaceBpmNote">0で音なし、または40〜160。ディスコの目安は120 BPMです。</small>
+            </label>
+            <label>照明
+              <select name="spaceLightingId">${Object.entries(FREE_TABLE_LIGHTINGS).map(([id, item]) => `<option value="${id}"${space.ambience.lightingId === id ? " selected" : ""}>${item.icon} ${item.label}</option>`).join("")}</select>
+            </label>
+          </div>
+        </section>
         <div class="free-table-checks" aria-label="この部屋で使えるもの">
           <span>使えるもの</span><label><input type="checkbox" checked disabled>文字</label>
           <label><input type="checkbox" name="spaceMediaImage"${space.media.image ? " checked" : ""}>画像</label>
@@ -1782,7 +1999,7 @@ function renderInviteEntrance() {
   }
   const space = preview.space;
   const theme = themeFor(space.themeId);
-  return `<section class="free-table free-table-invite-entrance theme-${escapeHtml(space.themeId)}">
+  return `<section class="free-table free-table-invite-entrance theme-${escapeHtml(space.themeId)} lighting-${escapeHtml(space.ambience.lightingId)}">
     <button type="button" class="button text free-table-home" data-action="invite-home">← 貼り合いスタジアムへ</button>
     <div class="free-table-invite-entrance-layout">
       <section class="free-table-invite-room">
@@ -1794,12 +2011,14 @@ function renderInviteEntrance() {
           <div><dt>はじまり</dt><dd>${escapeHtml(space.introduction)}</dd></div>
           <div><dt>旅立ちのきっかけ</dt><dd>${escapeHtml(space.journeyCue)}</dd></div>
           <div><dt>過ごし方</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[space.roleplayLevel])}・${escapeHtml(FREE_TABLE_DURATIONS[space.duration])}</dd></div>
+          <div><dt>音と灯り</dt><dd>${escapeHtml(ambienceSummary(space.ambience))}</dd></div>
         </dl>
         ${space.avoid ? `<aside class="free-table-invite-boundary" aria-label="この部屋で避けたい内容">
           <strong>この部屋で避けたい内容</strong>
           <p>${escapeHtml(space.avoid)}</p>
         </aside>` : ""}
         <div class="free-table-tags">${mediaLabels(space.media).map((label) => `<span>${escapeHtml(label)}</span>`).join("")}</div>
+        <p class="free-table-ambience-control-note">メトロノームは入室後、あなたが「部屋の音をきく」を押した端末でだけ鳴ります。</p>
         ${preview.hostDisplayName ? `<p class="free-table-invite-host-name">部屋主　<strong>${escapeHtml(preview.hostDisplayName)}</strong></p>` : ""}
         <blockquote>${escapeHtml(space.welcome)}</blockquote>
         <div class="free-table-invite-safety">
@@ -1830,7 +2049,7 @@ function renderRoomDetail() {
   const card = state.visitorCard;
   const theme = themeFor(room.space.themeId);
   const bookmarked = state.bookmarks.has(room.id) || room.bookmarked;
-  return `<section class="free-table free-table-detail theme-${escapeHtml(room.space.themeId)}">
+  return `<section class="free-table free-table-detail theme-${escapeHtml(room.space.themeId)} lighting-${escapeHtml(room.space.ambience.lightingId)}">
     <button type="button" class="button text free-table-home" data-action="back-hall">← 広間へ戻る</button>
     <section class="free-table-room-detail">
       <header><span class="free-table-room-mark" aria-hidden="true">${theme.icon}</span>
@@ -1841,6 +2060,7 @@ function renderRoomDetail() {
         <div><dt>はじまり</dt><dd>${escapeHtml(room.space.introduction)}</dd></div>
         <div><dt>旅立ちのきっかけ</dt><dd>${escapeHtml(room.space.journeyCue)}</dd></div>
         <div><dt>雰囲気</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[room.space.roleplayLevel])}・${escapeHtml(FREE_TABLE_DURATIONS[room.space.duration])}</dd></div>
+        <div><dt>音と灯り</dt><dd>${escapeHtml(ambienceSummary(room.space.ambience))}</dd></div>
         ${room.space.avoid ? `<div><dt>避けたい内容</dt><dd>${escapeHtml(room.space.avoid)}</dd></div>` : ""}
       </dl>
       <div class="free-table-host-card"><p class="free-table-eyebrow">部屋主</p><h2>${escapeHtml(room.hostCard.name || "部屋主")}</h2>
@@ -1888,12 +2108,14 @@ function otherRole() {
 
 function renderConnecting() {
   const space = state.session?.space || state.space;
-  return `<section class="free-table free-table-connecting theme-${escapeHtml(space.themeId)}">
+  const ambience = state.effectiveAmbience || state.session?.ambience || space.ambience;
+  return `<section class="free-table free-table-connecting theme-${escapeHtml(space.themeId)} lighting-${escapeHtml(normalizeAmbience(ambience).lightingId)}">
     <section class="free-table-connecting-card">
       <span class="free-table-room-mark is-pulsing" aria-hidden="true">${themeFor(space.themeId).icon}</span>
       <p class="free-table-eyebrow">席を整えています</p>
       <h1>${escapeHtml(space.name)}</h1>
       <p>${state.arrived ? "同席者とのP2P経路を結んでいます。文字の席は先に開けます。" : "「ただいま／おかえり」を交わす準備をしています。"}</p>
+      <div class="free-table-ambience-chips" aria-label="部屋の音と灯り">${renderAmbienceChips(ambience)}</div>
       <div class="free-table-connection-status" role="status"><span class="${state.mediaReady ? "is-ready" : ""}"></span>${state.mediaReady ? "メディアのP2P接続ができました" : "接続経路を調整中"}</div>
       <button type="button" class="button secondary" data-action="safe-exit">安全に退出</button>
     </section>
@@ -2039,17 +2261,185 @@ function renderMediaTools() {
   </div>`;
 }
 
+function effectiveSessionAmbience() {
+  return normalizeSessionAmbience(
+    state.effectiveAmbience || state.session?.ambience,
+    state.session?.space?.ambience || state.space.ambience,
+  );
+}
+
+function canHostUpdateAmbience() {
+  return Boolean(
+    isHost()
+    && isLiveSession()
+    && state.session?.status === "active"
+    && state.seatEstablished,
+  );
+}
+
+function ensureAmbienceController() {
+  if (state.ambienceController) return state.ambienceController;
+  state.ambienceController = createFreeTableAmbienceController();
+  state.ambienceController.setVolume(state.ambienceVolume);
+  return state.ambienceController;
+}
+
+function clearAmbienceNotice() {
+  if (state.ambienceNoticeTimer) window.clearTimeout(state.ambienceNoticeTimer);
+  state.ambienceNoticeTimer = null;
+  state.ambienceNotice = "";
+}
+
+function showAmbienceNotice(ambience) {
+  clearAmbienceNotice();
+  state.ambienceNotice = `場面が「${ambienceSummary(ambience)}」へ移りました。`;
+  const noticeState = state;
+  const sessionId = state.sessionId;
+  const revision = ambience.revision;
+  state.ambienceNoticeTimer = window.setTimeout(() => {
+    noticeState.ambienceNoticeTimer = null;
+    if (state !== noticeState
+        || state.sessionId !== sessionId
+        || state.effectiveAmbience?.revision !== revision) return;
+    state.ambienceNotice = "";
+    if (active && ["session", "connecting"].includes(state.screen)) render();
+  }, FREE_TABLE_AMBIENCE_NOTICE_MS);
+}
+
+function applyEffectiveSessionAmbience(ambience, { announce = false } = {}) {
+  const next = normalizeSessionAmbience(ambience, state.session?.space?.ambience);
+  const currentRevision = Number(state.effectiveAmbience?.revision ?? -1);
+  if (next.revision < currentRevision) return;
+  state.effectiveAmbience = next;
+  if (announce) showAmbienceNotice(next);
+  if (active && ["session", "connecting", "departure", "farewell"].includes(state.screen)) render();
+}
+
+function syncSessionAmbience(
+  ambience,
+  {
+    previousAmbience = null,
+    sessionId = state.sessionId,
+    sessionGeneration = state.sessionGeneration,
+  } = {},
+) {
+  if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
+  const next = normalizeSessionAmbience(ambience, state.session?.space?.ambience);
+  const canonicalRevision = Number(state.session?.ambience?.revision ?? -1);
+  const effectiveRevision = Number(state.effectiveAmbience?.revision ?? -1);
+  if (next.revision < canonicalRevision || next.revision < effectiveRevision) return;
+  const controller = ensureAmbienceController();
+  controller.setAmbience(next, { serverTimeOffset: state.serverTimeOffset });
+  state.ambienceSoundEnabled = controller.getState().enabled === true;
+
+  if (state.ambienceEffectiveTimer) window.clearTimeout(state.ambienceEffectiveTimer);
+  state.ambienceEffectiveTimer = null;
+  const previousRevision = Number(previousAmbience?.revision ?? -1);
+  const announce = (
+    previousRevision >= 0 && next.revision > previousRevision
+  ) || (
+    state.effectiveAmbience
+    && next.revision > effectiveRevision
+  );
+  const delay = next.effectiveAt - (Date.now() + Number(state.serverTimeOffset || 0));
+  if (!state.effectiveAmbience || delay <= 25) {
+    applyEffectiveSessionAmbience(next, { announce });
+    return;
+  }
+  state.ambienceEffectiveTimer = window.setTimeout(() => {
+    state.ambienceEffectiveTimer = null;
+    if (!sessionContextIsCurrent(sessionId, sessionGeneration)
+        || Number(state.session?.ambience?.revision ?? -1) !== next.revision) return;
+    applyEffectiveSessionAmbience(next, { announce });
+  }, Math.max(0, delay));
+  if (active && state.screen === "session") render();
+}
+
+function ambienceDraftValue() {
+  const canonical = state.session?.ambience || state.session?.space?.ambience || state.space.ambience;
+  const source = state.ambienceDraft || canonical;
+  return {
+    metronomeBpm: String(source?.metronomeBpm ?? 0),
+    lightingId: Object.hasOwn(FREE_TABLE_LIGHTINGS, source?.lightingId)
+      ? source.lightingId
+      : "natural",
+  };
+}
+
+function renderSessionAmbience() {
+  const ambience = effectiveSessionAmbience();
+  const targetAmbience = normalizeSessionAmbience(
+    state.session?.ambience,
+    state.session?.space?.ambience,
+  );
+  const draft = ambienceDraftValue();
+  const soundEnabled = state.ambienceSoundEnabled;
+  const transitioning = targetAmbience.revision > ambience.revision;
+  const volumePercent = Math.round(state.ambienceVolume * 100);
+  const soundStatus = soundEnabled
+    ? (ambience.metronomeBpm ? "一定拍を再生中" : "音をきく設定・いまは音なし")
+    : "音はまだ鳴っていません";
+  return `<section class="free-table-ambience-panel${transitioning ? " is-transitioning" : ""}" aria-labelledby="freeTableAmbienceTitle">
+    <header class="free-table-ambience-header">
+      <div><p class="free-table-eyebrow">いまの場面</p><h2 id="freeTableAmbienceTitle">${escapeHtml(ambienceSummary(ambience))}</h2></div>
+      <div class="free-table-ambience-chips" aria-label="現在の音と灯り">${renderAmbienceChips(ambience)}</div>
+    </header>
+    ${state.ambienceNotice ? `<p class="free-table-ambience-status" role="status">${escapeHtml(state.ambienceNotice)}</p>` : ""}
+    <details id="freeTableAmbienceSoundDetails" class="free-table-ambience-details"${state.ambienceSoundDetailsOpen ? " open" : ""}>
+      <summary><strong>この端末の音</strong><span class="free-table-ambience-status${soundEnabled ? "" : " is-paused"}">${soundStatus}</span></summary>
+      <div class="free-table-ambience-details-body">
+        <div class="free-table-ambience-local-controls">
+          <div class="free-table-ambience-sound-controls">
+            <button type="button" class="button secondary" data-action="toggle-ambience-sound" aria-pressed="${soundEnabled}">${soundEnabled ? "部屋の音を止める" : "部屋の音をきく"}</button>
+            <label class="free-table-ambience-volume">音量
+              <input id="freeTableAmbienceVolume" type="range" min="0" max="100" step="1" value="${volumePercent}" aria-valuetext="${volumePercent}%">
+              <output id="freeTableAmbienceVolumeOutput" for="freeTableAmbienceVolume">${volumePercent}%</output>
+            </label>
+          </div>
+          <p class="free-table-ambience-control-note">音は一定のリズムだけで、メロディーは流れません。端末ごとに自分で有効にします。タブを隠した時や席を離れた時は止まり、勝手には再開しません。</p>
+        </div>
+      </div>
+    </details>
+    ${canHostUpdateAmbience() ? `<div class="free-table-ambience-actions">
+      <button type="button" class="button secondary" data-action="toggle-ambience-panel">${state.ambiencePanelOpen ? "場面変更を閉じる" : "場面を移す"}</button>
+    </div>
+    ${state.ambiencePanelOpen ? `<form id="freeTableAmbienceForm" class="free-table-form">
+      <fieldset${state.ambienceUpdating ? " disabled" : ""}><legend>次の場面</legend>
+        <div class="free-table-ambience-presets" aria-label="場面の例">${renderAmbiencePresetButtons(normalizeAmbience({
+    metronomeBpm: Number(draft.metronomeBpm),
+    lightingId: draft.lightingId,
+  }), "apply-session-ambience-preset")}</div>
+        <div class="free-table-ambience-fields">
+          <label>一定拍のBPM
+            <input name="sessionMetronomeBpm" type="number" inputmode="numeric" min="0" max="${FREE_TABLE_METRONOME_MAX_BPM}" step="1" required value="${escapeHtml(draft.metronomeBpm)}">
+            <small>0で音なし、または40〜160。落ち着くほど低く、ディスコの目安は120です。</small>
+          </label>
+          <label>照明
+            <select name="sessionLightingId">${Object.entries(FREE_TABLE_LIGHTINGS).map(([id, item]) => `<option value="${id}"${draft.lightingId === id ? " selected" : ""}>${item.icon} ${item.label}</option>`).join("")}</select>
+          </label>
+        </div>
+      </fieldset>
+      <div class="free-table-ambience-actions">
+        <button type="submit" class="button primary"${state.ambienceUpdating ? " disabled" : ""}>${state.ambienceUpdating ? "場面を整えています…" : "この場面へ移す"}</button>
+      </div>
+      <p class="free-table-ambience-control-note">変更は同席している二人に同時に届きます。会話履歴には残さず、現在の場面だけを上書きします。</p>
+    </form>` : ""}` : ""}
+  </section>`;
+}
+
 function renderSession() {
   const session = state.session;
   if (!session) return renderConnecting();
   const opponentName = participantName(otherRole());
-  return `<section class="free-table free-table-session theme-${escapeHtml(session.space.themeId)}">
+  const ambience = effectiveSessionAmbience();
+  return `<section class="free-table free-table-session theme-${escapeHtml(session.space.themeId)} lighting-${escapeHtml(ambience.lightingId)}">
     <header class="free-table-session-header">
       <div><p class="free-table-eyebrow">${isHost() ? "おかえり" : "ただいま"}</p>
         <h1>${escapeHtml(session.space.topic)}</h1>
         <p>${escapeHtml(session.space.introduction)}</p></div>
       <div class="free-table-seat-status"><span class="${state.mediaReady ? "is-ready" : ""}"></span>${escapeHtml(opponentName)}さんと同席中</div>
     </header>
+    ${renderSessionAmbience()}
     <section class="free-table-timeline" id="freeTableTimeline" aria-live="polite" aria-label="貼り合いの会話">
       <p class="free-table-system-line">${escapeHtml(session.space.welcome)}</p>
       <p class="free-table-system-line">${state.seatEstablished
@@ -2078,7 +2468,8 @@ function renderSession() {
 }
 
 function renderDepartureComposer() {
-  return `<section class="free-table free-table-farewell theme-${escapeHtml(state.session?.space?.themeId || "engawa")}">
+  const ambience = effectiveSessionAmbience();
+  return `<section class="free-table free-table-farewell theme-${escapeHtml(state.session?.space?.themeId || "engawa")} lighting-${escapeHtml(ambience.lightingId)}">
     <section class="free-table-farewell-card">
       <p class="free-table-eyebrow">旅立ちのあいさつ</p>
       <h1>敗北は、負けではありません。</h1>
@@ -2106,8 +2497,9 @@ function renderFarewell() {
   const farewell = state.farewell || {};
   const visitorMessage = farewell.departureMessage || state.session?.ending?.message || "いってきます";
   const remaining = farewellRemainingSeconds();
+  const ambience = effectiveSessionAmbience();
   if (isHost()) {
-    return `<section class="free-table free-table-farewell theme-${escapeHtml(state.session?.space?.themeId || "engawa")}">
+    return `<section class="free-table free-table-farewell theme-${escapeHtml(state.session?.space?.themeId || "engawa")} lighting-${escapeHtml(ambience.lightingId)}">
       <section class="free-table-farewell-card">
         <p class="free-table-eyebrow">旅立ち</p>
         <h1>${escapeHtml(participantName("visitor"))}さんが「いってきます」を告げました。</h1>
@@ -2126,7 +2518,7 @@ function renderFarewell() {
       </section>
     </section>`;
   }
-  return `<section class="free-table free-table-farewell theme-${escapeHtml(state.session?.space?.themeId || "engawa")}">
+  return `<section class="free-table free-table-farewell theme-${escapeHtml(state.session?.space?.themeId || "engawa")} lighting-${escapeHtml(ambience.lightingId)}">
     <section class="free-table-farewell-card">
       <p class="free-table-eyebrow">いってきます</p>
       <h1>${farewell.responseReceived ? "「いってらっしゃい」が届きました。" : "見送りを待っても、先に出かけても大丈夫です。"}</h1>
@@ -2187,6 +2579,30 @@ function bindRenderedEvents() {
       );
     }
   });
+  const ambienceForm = document.querySelector("#freeTableAmbienceForm");
+  ambienceForm?.addEventListener("submit", (event) => {
+    handleUpdateAmbience(event).catch(handleError);
+  });
+  ambienceForm?.addEventListener("input", (event) => {
+    const form = event.currentTarget;
+    state.ambienceDraft = {
+      metronomeBpm: String(form.elements.sessionMetronomeBpm?.value ?? ""),
+      lightingId: String(form.elements.sessionLightingId?.value || "natural"),
+    };
+    state.ambienceDraftDirty = true;
+  });
+  ambienceForm?.addEventListener("change", (event) => {
+    const form = event.currentTarget;
+    state.ambienceDraft = {
+      metronomeBpm: String(form.elements.sessionMetronomeBpm?.value ?? ""),
+      lightingId: String(form.elements.sessionLightingId?.value || "natural"),
+    };
+    state.ambienceDraftDirty = true;
+  });
+  document.querySelector("#freeTableAmbienceSoundDetails")?.addEventListener("toggle", (event) => {
+    state.ambienceSoundDetailsOpen = event.currentTarget.open === true;
+  });
+  document.querySelector("#freeTableAmbienceVolume")?.addEventListener("input", handleAmbienceVolume);
   document.querySelector("#freeTableChatForm")?.addEventListener("submit", handleSendChat);
   document.querySelector("#freeTableChatText")?.addEventListener("input", (event) => {
     state.chatDraft = String(event.currentTarget.value || "").slice(0, FREE_TABLE_TEXT_MAX_LENGTH);
@@ -2196,6 +2612,127 @@ function bindRenderedEvents() {
   document.querySelectorAll("[data-media-kind]").forEach((input) => {
     input.addEventListener("change", handleMediaFile);
   });
+}
+
+function applySpaceAmbiencePreset(presetId) {
+  const preset = ambiencePresetById(presetId);
+  const form = document.querySelector("#freeTableSpaceForm");
+  if (!preset || !form) return;
+  const bpmInput = form.elements.spaceMetronomeBpm;
+  const lightingSelect = form.elements.spaceLightingId;
+  if (bpmInput) bpmInput.value = String(preset.metronomeBpm);
+  if (lightingSelect) lightingSelect.value = preset.lightingId;
+  state.formDirty = true;
+  showToast(`最初の場面を「${preset.label}」に整えました。保存すると反映されます。`);
+}
+
+function applySessionAmbiencePreset(presetId) {
+  const preset = ambiencePresetById(presetId);
+  if (!preset || !canHostUpdateAmbience()) return;
+  state.ambienceDraft = {
+    metronomeBpm: String(preset.metronomeBpm),
+    lightingId: preset.lightingId,
+  };
+  state.ambienceDraftDirty = true;
+  render();
+}
+
+async function toggleAmbienceSound() {
+  if (!state.sessionId || !state.session) return;
+  const controller = ensureAmbienceController();
+  controller.setAmbience(state.session.ambience, {
+    serverTimeOffset: state.serverTimeOffset,
+  });
+  if (state.ambienceSoundEnabled) {
+    controller.disable();
+    state.ambienceSoundEnabled = false;
+    showToast("この端末の部屋の音を止めました。");
+    render();
+    return;
+  }
+  try {
+    await controller.enable();
+    state.ambienceSoundEnabled = controller.getState().enabled === true;
+    const currentBpm = effectiveSessionAmbience().metronomeBpm;
+    showToast(state.ambienceSoundEnabled
+      ? (currentBpm
+        ? "この端末で、部屋の一定拍をきき始めました。"
+        : "この端末で部屋の音をきく設定にしました。いまは音なしです。")
+      : "この端末では部屋の音を再生できませんでした。");
+  } catch (error) {
+    state.ambienceSoundEnabled = false;
+    throw new Error("部屋の音を始められませんでした。端末の音声設定をご確認ください。", {
+      cause: error,
+    });
+  }
+  render();
+}
+
+function handleAmbienceVolume(event) {
+  const percent = Math.max(0, Math.min(100, Number(event.currentTarget.value) || 0));
+  const volume = percent / 100;
+  state.ambienceVolume = volume;
+  persistAmbienceVolume(volume);
+  state.ambienceController?.setVolume(volume);
+  event.currentTarget.setAttribute("aria-valuetext", `${Math.round(percent)}%`);
+  const output = document.querySelector("#freeTableAmbienceVolumeOutput");
+  if (output) output.value = `${Math.round(percent)}%`;
+}
+
+async function handleUpdateAmbience(event) {
+  event.preventDefault();
+  if (!canHostUpdateAmbience() || state.ambienceUpdating) return;
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const ambience = {
+    metronomeBpm: parseMetronomeBpm(data.get("sessionMetronomeBpm")),
+    lightingId: String(data.get("sessionLightingId") || ""),
+  };
+  if (!Object.hasOwn(FREE_TABLE_LIGHTINGS, ambience.lightingId)) {
+    throw new Error("照明を選び直してください。");
+  }
+  const sessionId = state.sessionId;
+  const sessionGeneration = state.sessionGeneration;
+  const canonicalGeneration = Number(state.session?.generation || 0);
+  if (!canonicalGeneration) {
+    throw new Error("この席の接続情報を確認できません。ページを読み直してお試しください。");
+  }
+  state.ambienceUpdating = true;
+  state.ambienceDraft = {
+    metronomeBpm: String(ambience.metronomeBpm),
+    lightingId: ambience.lightingId,
+  };
+  render();
+  try {
+    const dataValue = await callFreeTableAction(FREE_TABLE_ACTIONS.UPDATE_AMBIENCE, {
+      sessionId,
+      generation: canonicalGeneration,
+      ambience,
+    });
+    if (!sessionContextIsCurrent(sessionId, sessionGeneration)
+        || !canHostUpdateAmbience()) return;
+    const previousAmbience = state.session.ambience;
+    const nextAmbience = normalizeSessionAmbience(dataValue.ambience, previousAmbience);
+    if (nextAmbience.revision >= previousAmbience.revision) {
+      state.session.ambience = nextAmbience;
+      syncSessionAmbience(nextAmbience, {
+        previousAmbience,
+        sessionId,
+        sessionGeneration,
+      });
+    }
+    state.ambienceDraft = {
+      metronomeBpm: String(nextAmbience.metronomeBpm),
+      lightingId: nextAmbience.lightingId,
+    };
+    state.ambienceDraftDirty = false;
+    showToast("二人の場面を移します。音をきいている端末も新しい一定拍へ移ります。");
+  } finally {
+    if (sessionContextIsCurrent(sessionId, sessionGeneration)) {
+      state.ambienceUpdating = false;
+      render();
+    }
+  }
 }
 
 function handleError(error) {
@@ -2783,6 +3320,12 @@ async function enterSession(sessionId, initialSession = null) {
   state.role = state.session ? resolveRole(state.session) : "";
   state.opponentUid = state.session ? resolveOpponentUid(state.session) : "";
   state.opponentPublicMemberId = state.session ? resolveOpponentPublicMemberId(state.session) : "";
+  if (state.session) {
+    syncSessionAmbience(state.session.ambience, {
+      sessionId,
+      sessionGeneration,
+    });
+  }
   state.screen = "connecting";
   state.roomOpen = false;
   if (state.session) armSessionExpiryTimer(sessionId, sessionGeneration, state.session.expiresAt);
@@ -2796,10 +3339,31 @@ async function enterSession(sessionId, initialSession = null) {
       return;
     }
     const previousReason = state.session?.ending?.reason || "";
-    state.session = normalizeSession(snapshot.val(), sessionId);
+    const previousAmbience = state.session?.ambience || null;
+    const incomingSession = normalizeSession(snapshot.val(), sessionId);
+    const staleAmbienceSnapshot = Boolean(
+      previousAmbience
+      && incomingSession.ambience.revision < previousAmbience.revision,
+    );
+    if (staleAmbienceSnapshot) incomingSession.ambience = previousAmbience;
+    state.session = incomingSession;
     state.role = resolveRole(state.session);
     state.opponentUid = resolveOpponentUid(state.session);
     state.opponentPublicMemberId = resolveOpponentPublicMemberId(state.session);
+    if (!state.ambiencePanelOpen || !state.ambienceDraftDirty) {
+      state.ambienceDraft = {
+        metronomeBpm: String(state.session.ambience.metronomeBpm),
+        lightingId: state.session.ambience.lightingId,
+      };
+      state.ambienceDraftDirty = false;
+    }
+    if (!staleAmbienceSnapshot) {
+      syncSessionAmbience(state.session.ambience, {
+        previousAmbience,
+        sessionId,
+        sessionGeneration,
+      });
+    }
     armSessionExpiryTimer(sessionId, sessionGeneration, state.session.expiresAt);
     const ending = state.session.ending;
     if (ending.reason && ending.reason !== previousReason) {
@@ -2880,7 +3444,13 @@ async function enterSession(sessionId, initialSession = null) {
     if (!state.session) {
       const snapshot = await get(sessionRef);
       if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
-      if (snapshot.exists()) state.session = normalizeSession(snapshot.val(), sessionId);
+      if (snapshot.exists()) {
+        state.session = normalizeSession(snapshot.val(), sessionId);
+        syncSessionAmbience(state.session.ambience, {
+          sessionId,
+          sessionGeneration,
+        });
+      }
     }
     if (!sessionContextIsCurrent(sessionId, sessionGeneration)) return;
     if (state.session) {
@@ -4435,6 +5005,18 @@ function cleanupSession({ keepIdentity = false, preserveOnDisconnect = false } =
   const closingSessionId = state.sessionId;
   const closingUid = state.uid;
   clearSessionExpiryTimer();
+  if (state.ambienceEffectiveTimer) window.clearTimeout(state.ambienceEffectiveTimer);
+  state.ambienceEffectiveTimer = null;
+  clearAmbienceNotice();
+  state.ambienceController?.destroy();
+  state.ambienceController = null;
+  state.ambienceSoundEnabled = false;
+  state.ambienceSoundDetailsOpen = false;
+  state.effectiveAmbience = null;
+  state.ambiencePanelOpen = false;
+  state.ambienceDraft = null;
+  state.ambienceDraftDirty = false;
+  state.ambienceUpdating = false;
   clearUnsubscribers(state.sessionUnsubscribers);
   state.disconnectHandles.splice(0).forEach((handle) => {
     if (!preserveOnDisconnect) handle.cancel?.().catch?.(() => {});
@@ -4592,12 +5174,18 @@ async function initializeAuthenticatedFreeTable(generation = state.generation) {
       (snapshot) => {
         if (!active || state.generation !== generation) return;
         state.serverTimeOffset = Number(snapshot.val() || 0);
+        state.serverTimeOffsetAuthoritative = true;
         if (state.sessionId && state.session) {
           armSessionExpiryTimer(
             state.sessionId,
             state.sessionGeneration,
             Number(state.session.expiresAt || 0),
           );
+          syncSessionAmbience(state.session.ambience, {
+            previousAmbience: state.session.ambience,
+            sessionId: state.sessionId,
+            sessionGeneration: state.sessionGeneration,
+          });
         }
         if (state.hostInvite) {
           if (hostInviteIsLive()) armHostInviteExpiry();
@@ -4898,6 +5486,22 @@ async function handleDocumentAction(event) {
     state.screen = "room";
     render();
   } else if (action === "toggle-room") await toggleRoom(button.dataset.open === "true");
+  else if (action === "apply-space-ambience-preset") {
+    applySpaceAmbiencePreset(button.dataset.presetId || "");
+  } else if (action === "apply-session-ambience-preset") {
+    applySessionAmbiencePreset(button.dataset.presetId || "");
+  } else if (action === "toggle-ambience-panel") {
+    if (!canHostUpdateAmbience()) return;
+    state.ambiencePanelOpen = !state.ambiencePanelOpen;
+    if (state.ambiencePanelOpen) {
+      state.ambienceDraft = {
+        metronomeBpm: String(state.session.ambience.metronomeBpm),
+        lightingId: state.session.ambience.lightingId,
+      };
+      state.ambienceDraftDirty = false;
+    }
+    render();
+  } else if (action === "toggle-ambience-sound") await toggleAmbienceSound();
   else if (action === "use-topic") {
     const topicInput = document.querySelector("#freeTableSpaceForm [name='spaceTopic']");
     if (topicInput) {
@@ -4932,7 +5536,14 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") {
+    state.ambienceController?.suspendForVisibility(true);
+    state.ambienceSoundEnabled = false;
     stopInvitePreviewRefresh();
+    return;
+  }
+  if (active && state.sessionId) {
+    state.ambienceSoundEnabled = state.ambienceController?.getState().enabled === true;
+    render();
     return;
   }
   if (!active

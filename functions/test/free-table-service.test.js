@@ -6,6 +6,9 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   FREE_TABLE_ACTIONS,
+  FREE_TABLE_AMBIENCE_BPM_MAX,
+  FREE_TABLE_AMBIENCE_BPM_MIN,
+  FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS,
   FREE_TABLE_CONNECTING_TTL_MS,
   FREE_TABLE_DISCONNECT_GRACE_MS,
   FREE_TABLE_LIST_SCAN_LIMIT,
@@ -32,7 +35,10 @@ const {
   nextRoomRequests,
   nextVisitorAdmissionClaim,
   nextVisitorPendingClaim,
+  normalizeAmbience,
   normalizeDepartureLine,
+  normalizeRoomSettings,
+  normalizeSessionAmbience,
   ownerGrowthProjection,
   pairGrowthDecision,
   publicRoomProjection,
@@ -43,6 +49,7 @@ const {
   restoredHostOpenClaim,
   restoredVisitorPendingClaim,
   selectReportEvidence,
+  validateAmbience,
   validateCard,
   validateRoomSettings,
 } = require("../free-table");
@@ -70,6 +77,10 @@ function roomSettings(overrides = {}) {
     avoid: "辛すぎる食べ物",
     welcome: "おかえり。席は空いています",
     themeId: "midnight-diner",
+    ambience: {
+      metronomeBpm: 84,
+      lightingId: "indirect",
+    },
     ...overrides,
   };
 }
@@ -289,6 +300,67 @@ test("room and card validation follows the shared v1 schema", () => {
   assert.equal(validateRoomSettings(roomSettings({ duration: "leisurely" })), true);
   assert.equal(validateCard({ ...card(), name: "あ".repeat(25) }), false);
   assert.equal(FREE_TABLE_REQUEST_TTL_MS, 120_000);
+});
+
+test("ambience settings are bounded, allowlisted, and backward compatible", () => {
+  assert.deepEqual(normalizeAmbience(), {
+    metronomeBpm: 0,
+    lightingId: "natural",
+  });
+  assert.deepEqual(normalizeRoomSettings({
+    ...roomSettings(),
+    ambience: undefined,
+  }).ambience, {
+    metronomeBpm: 0,
+    lightingId: "natural",
+  });
+  assert.equal(validateAmbience({
+    metronomeBpm: 0,
+    lightingId: "natural",
+  }, { requireAll: true }), true);
+  assert.equal(validateAmbience({
+    metronomeBpm: FREE_TABLE_AMBIENCE_BPM_MIN,
+    lightingId: "daylight",
+  }), true);
+  assert.equal(validateAmbience({
+    metronomeBpm: FREE_TABLE_AMBIENCE_BPM_MAX,
+    lightingId: "headlight",
+  }), true);
+  assert.equal(validateAmbience({
+    metronomeBpm: FREE_TABLE_AMBIENCE_BPM_MIN - 1,
+    lightingId: "natural",
+  }), false);
+  assert.equal(validateAmbience({
+    metronomeBpm: FREE_TABLE_AMBIENCE_BPM_MAX + 1,
+    lightingId: "natural",
+  }), false);
+  assert.equal(validateAmbience({
+    metronomeBpm: 80.5,
+    lightingId: "natural",
+  }), false);
+  assert.equal(validateAmbience({
+    metronomeBpm: 80,
+    lightingId: "strobe",
+  }), false);
+  assert.equal(validateAmbience({
+    metronomeBpm: 80,
+    lightingId: "natural",
+    unknown: true,
+  }), false);
+  assert.equal(validateRoomSettings(roomSettings({
+    ambience: { metronomeBpm: 80, lightingId: "natural", unknown: true },
+  })), false);
+  assert.deepEqual(normalizeSessionAmbience(
+    {},
+    { metronomeBpm: 92, lightingId: "daylight" },
+    NOW,
+  ), {
+    metronomeBpm: 92,
+    lightingId: "daylight",
+    revision: 0,
+    effectiveAt: NOW,
+    updatedAt: NOW,
+  });
 });
 
 test("random public ids are opaque and contain no uid material", () => {
@@ -928,6 +1000,17 @@ test("concurrent accepts can materialize only the first accepted session", () =>
   assert.equal(first.acceptedRequestId, ID_A);
   assert.equal(first.session.sessionId, ID_C);
   assert.equal(first.session.admissionAccepted, true);
+  assert.deepEqual(first.session.space.ambience, {
+    metronomeBpm: 84,
+    lightingId: "indirect",
+  });
+  assert.deepEqual(first.session.ambience, {
+    metronomeBpm: 84,
+    lightingId: "indirect",
+    revision: 0,
+    effectiveAt: NOW + FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS,
+    updatedAt: NOW,
+  });
 
   const losingConcurrentAccept = nextAdmissionState(first, {
     hostUid: "host",
@@ -1073,6 +1156,7 @@ test("growth waits for both authenticated role arrivals and arrival retries are 
 
   const publicSession = publicSessionProjection("host", established);
   assert.equal(publicSession.seatEstablished, true);
+  assert.deepEqual(publicSession.ambience, established.ambience);
   assert.deepEqual(publicSession.negotiatedMedia, {
     text: true,
     image: true,

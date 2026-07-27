@@ -101,6 +101,10 @@ if (!RUN_REQUESTED) {
     avoid: "個人情報",
     welcome: "おかえり。温かい席へどうぞ。",
     themeId: "midnight-diner",
+    ambience: {
+      metronomeBpm: 84,
+      lightingId: "indirect",
+    },
   });
   const card = (name) => ({
     name,
@@ -390,6 +394,7 @@ if (!RUN_REQUESTED) {
       entry.publicRoomId === opened.room.publicRoomId
     ));
     assert.ok(room);
+    assert.deepEqual(room.space.ambience, space.ambience);
     const requested = await invoke(visitor, "request", {
       publicRoomId: room.publicRoomId,
       visitorCard: card("夜道の旅人"),
@@ -399,7 +404,11 @@ if (!RUN_REQUESTED) {
       accept: true,
     });
     const sessionId = accepted.session.sessionId;
+    const { generation } = accepted.session;
     assert.ok(sessionId);
+    assert.ok(Number.isSafeInteger(generation) && generation > 0);
+    assert.deepEqual(accepted.session.space.ambience, space.ambience);
+    assert.equal(accepted.session.ambience.revision, 0);
     await waitForStatsCacheExpiry(openStats);
     const connectingStats = await invokeStats(withoutAuth);
     assert.equal(connectingStats.welcomingRooms, 0);
@@ -432,6 +441,33 @@ if (!RUN_REQUESTED) {
     const seatedStats = await invokeStats(withoutAuth);
     assert.equal(seatedStats.welcomingRooms, 0);
     assert.equal(seatedStats.seatedRooms, 1);
+    await assert.rejects(
+      () => invoke(visitor, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 96,
+          lightingId: "daylight",
+        },
+      }),
+      (error) => error.code === "functions/permission-denied",
+    );
+    const ambienceUpdate = await invoke(host, "update_ambience", {
+      sessionId,
+      generation,
+      ambience: {
+        metronomeBpm: 96,
+        lightingId: "daylight",
+      },
+    });
+    assert.equal(ambienceUpdate.ambience.revision, 1);
+    assert.equal(ambienceUpdate.ambience.metronomeBpm, 96);
+    assert.equal(ambienceUpdate.ambience.lightingId, "daylight");
+    assert.ok(ambienceUpdate.ambience.effectiveAt >= ambienceUpdate.ambience.updatedAt + 800);
+    const storedAmbience = (
+      await realtime.ref(`freeTables/sessions/${sessionId}/ambience`).get()
+    ).val();
+    assert.deepEqual(storedAmbience, ambienceUpdate.ambience);
     const ended = await invoke(visitor, "end", {
       sessionId,
       reason: "departure",
@@ -474,6 +510,7 @@ if (!RUN_REQUESTED) {
     let preview = await invokeInvitePreview(publicViewer, firstInviteId);
     assert.equal(preview.state, "open");
     assert.equal(preview.preview.space.topic, space.topic);
+    assert.deepEqual(preview.preview.space.ambience, space.ambience);
     assert.equal(preview.preview.hostDisplayName, "灯りをともす店主");
     assert.equal(JSON.stringify(preview).includes(opened.room.publicRoomId), false);
 

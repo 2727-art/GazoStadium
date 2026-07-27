@@ -123,6 +123,106 @@ test("room settings reject unknown option ids, unsafe theme ids, and malformed m
   assert.ok(validation.errors.includes("image_media_invalid"));
 });
 
+test("legacy room settings receive the quiet default ambience without becoming invalid", async () => {
+  const {
+    FREE_TABLE_DEFAULT_AMBIENCE,
+    normalizeFreeTableRoomSettings,
+    validateFreeTableRoomSettings,
+  } = await freeTableModule;
+  const legacy = roomSettings();
+  delete legacy.ambience;
+
+  const normalized = normalizeFreeTableRoomSettings(legacy);
+  const validation = validateFreeTableRoomSettings(legacy);
+
+  assert.deepEqual(FREE_TABLE_DEFAULT_AMBIENCE, {
+    metronomeBpm: 0,
+    lightingId: "natural",
+  });
+  assert.deepEqual(normalized.ambience, FREE_TABLE_DEFAULT_AMBIENCE);
+  assert.equal(validation.valid, true);
+  assert.deepEqual(validation.value.ambience, FREE_TABLE_DEFAULT_AMBIENCE);
+});
+
+test("room ambience accepts silence or an integer 40 through 160 BPM and fixed lighting ids", async () => {
+  const {
+    FREE_TABLE_LIGHTING_IDS,
+    FREE_TABLE_METRONOME_MAX_BPM,
+    FREE_TABLE_METRONOME_MIN_BPM,
+    normalizeFreeTableAmbience,
+    validateFreeTableAmbience,
+    validateFreeTableRoomSettings,
+  } = await freeTableModule;
+
+  assert.equal(FREE_TABLE_METRONOME_MIN_BPM, 40);
+  assert.equal(FREE_TABLE_METRONOME_MAX_BPM, 160);
+  assert.deepEqual(FREE_TABLE_LIGHTING_IDS, [
+    "natural",
+    "indirect",
+    "daylight",
+    "headlight",
+  ]);
+
+  for (const metronomeBpm of [0, 40, 120, 160]) {
+    for (const lightingId of FREE_TABLE_LIGHTING_IDS) {
+      const ambience = { metronomeBpm, lightingId };
+      assert.deepEqual(normalizeFreeTableAmbience(ambience), ambience);
+      assert.equal(validateFreeTableAmbience(ambience).valid, true);
+      assert.equal(
+        validateFreeTableRoomSettings(roomSettings({ ambience })).valid,
+        true,
+      );
+    }
+  }
+});
+
+test("room ambience rejects out-of-range or non-integer BPM, unknown lighting, and extra fields", async () => {
+  const {
+    FREE_TABLE_DEFAULT_AMBIENCE,
+    normalizeFreeTableAmbience,
+    validateFreeTableAmbience,
+    validateFreeTableRoomSettings,
+  } = await freeTableModule;
+
+  for (const metronomeBpm of [39, 161, 60.5, "60", NaN]) {
+    const validation = validateFreeTableAmbience({
+      metronomeBpm,
+      lightingId: "natural",
+    });
+    assert.equal(validation.valid, false);
+    assert.ok(validation.errors.includes("metronomeBpm_invalid"));
+  }
+
+  const invalid = validateFreeTableAmbience({
+    metronomeBpm: 120,
+    lightingId: "strobe",
+    melodyId: "copyrighted-song",
+  });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.includes("lightingId_invalid"));
+  assert.ok(invalid.errors.includes("ambience_unknown_field"));
+  assert.deepEqual(invalid.value, {
+    metronomeBpm: 120,
+    lightingId: FREE_TABLE_DEFAULT_AMBIENCE.lightingId,
+  });
+
+  const roomValidation = validateFreeTableRoomSettings(roomSettings({
+    ambience: {
+      metronomeBpm: 120,
+      lightingId: "headlight",
+      melodyId: "not-allowed",
+    },
+  }));
+  assert.equal(roomValidation.valid, false);
+  assert.ok(roomValidation.errors.includes("ambience_unknown_field"));
+
+  assert.deepEqual(normalizeFreeTableAmbience(null), FREE_TABLE_DEFAULT_AMBIENCE);
+  assert.deepEqual(
+    normalizeFreeTableAmbience({ metronomeBpm: 39, lightingId: "unknown" }),
+    FREE_TABLE_DEFAULT_AMBIENCE,
+  );
+});
+
 test("visitor cards are whitelisted, bounded, and contain no competitive metadata", async () => {
   const {
     normalizeFreeTableVisitorCard,

@@ -723,3 +723,210 @@ test("host controls a non-automatic editable X灯り札 with a 1200 by 675 PNG",
   assert.match(frontendSource, /createXInvitePostUrl/);
   assert.doesNotMatch(frontendSource, /window\.open\(createXInvitePostUrl/);
 });
+
+test("room ambience is chosen before opening and appears on the shelf, entrance, and X invite", () => {
+  assert.match(frontendSource, /const FREE_TABLE_METRONOME_MIN_BPM = 40/);
+  assert.match(frontendSource, /const FREE_TABLE_METRONOME_MAX_BPM = 160/);
+  assert.match(
+    frontendSource,
+    /\{ id: "quiet", label: "静かな夜", metronomeBpm: 48, lightingId: "indirect" \}/,
+  );
+  assert.match(
+    frontendSource,
+    /\{ id: "mellow", label: "まったり", metronomeBpm: 60, lightingId: "indirect" \}/,
+  );
+  assert.match(
+    frontendSource,
+    /\{ id: "family-restaurant", label: "ファミリーレストラン", metronomeBpm: 76, lightingId: "daylight" \}/,
+  );
+  assert.match(
+    frontendSource,
+    /\{ id: "bar", label: "おしゃれなバー", metronomeBpm: 96, lightingId: "indirect" \}/,
+  );
+  assert.match(
+    frontendSource,
+    /\{ id: "disco", label: "ディスコ", metronomeBpm: 120, lightingId: "headlight" \}/,
+  );
+  assert.match(
+    frontendSource,
+    /ambience:\s*\{\s*metronomeBpm: 0,\s*lightingId: "natural",\s*\}/,
+  );
+  assert.match(frontendSource, /name="spaceMetronomeBpm"[\s\S]*?min="0"[\s\S]*?step="1"/);
+  assert.match(frontendSource, /name="spaceLightingId"/);
+  assert.match(frontendSource, /参加者の端末では、本人が「部屋の音をきく」を押すまで鳴りません。/);
+
+  const saveStart = frontendSource.indexOf("function saveSpaceFromForm");
+  const saveEnd = frontendSource.indexOf("function visitorCardFromForm", saveStart);
+  const saveSource = frontendSource.slice(saveStart, saveEnd);
+  assert.match(saveSource, /parseMetronomeBpm\(data\.get\("spaceMetronomeBpm"\)\)/);
+  assert.match(
+    saveSource,
+    /ambience:\s*\{\s*metronomeBpm,\s*lightingId: data\.get\("spaceLightingId"\),\s*\}/,
+  );
+
+  const cardStart = frontendSource.indexOf("function renderRoomCard");
+  const cardEnd = frontendSource.indexOf("function renderOpenRooms", cardStart);
+  const cardSource = frontendSource.slice(cardStart, cardEnd);
+  assert.match(cardSource, /lighting-\$\{escapeHtml\(room\.space\.ambience\.lightingId\)\}/);
+  assert.match(cardSource, /renderAmbienceChips\(room\.space\.ambience\)/);
+
+  const inviteStart = frontendSource.indexOf("function renderInviteEntrance");
+  const inviteEnd = frontendSource.indexOf("function renderRoomDetail", inviteStart);
+  const inviteSource = frontendSource.slice(inviteStart, inviteEnd);
+  assert.match(inviteSource, /lighting-\$\{escapeHtml\(space\.ambience\.lightingId\)\}/);
+  assert.match(inviteSource, /<dt>音と灯り<\/dt><dd>\$\{escapeHtml\(ambienceSummary\(space\.ambience\)\)\}<\/dd>/);
+
+  const shareStart = frontendSource.indexOf("function defaultInviteShareText");
+  const shareEnd = frontendSource.indexOf("function currentInviteShareText", shareStart);
+  const shareSource = frontendSource.slice(shareStart, shareEnd);
+  assert.match(shareSource, /lightingFor\(ambience\.lightingId\)\.label/);
+  assert.match(shareSource, /一定拍\$\{ambience\.metronomeBpm\} BPM/);
+
+  const canvasStart = frontendSource.indexOf("async function createInviteCardPngBlob");
+  const canvasEnd = frontendSource.indexOf("function inviteCardFilename", canvasStart);
+  const canvasSource = frontendSource.slice(canvasStart, canvasEnd);
+  assert.match(canvasSource, /lightingFor\(normalizedSpace\.ambience\.lightingId\)\.label/);
+  assert.match(canvasSource, /metronomeLabel\(normalizedSpace\.ambience\.metronomeBpm\)/);
+  assert.match(canvasSource, /\.\.\.mediaLabels\(normalizedSpace\.media\)/);
+  assert.match(canvasSource, /let badgeY = 472/);
+  assert.match(canvasSource, /if \(badgeX \+ width > badgeRight\) \{\s*badgeX = 96;\s*badgeY \+= badgeRowGap;/);
+  assert.doesNotMatch(canvasSource, /if \(badgeX \+ width > [^)]+\) break/);
+
+  const hostInviteStart = frontendSource.indexOf("function renderHostInvitePanel");
+  const hostInviteEnd = frontendSource.indexOf("function renderSpaceForm", hostInviteStart);
+  const hostInviteSource = frontendSource.slice(hostInviteStart, hostInviteEnd);
+  assert.match(hostInviteSource, /class="free-table-invite-card-preview theme-/);
+  assert.doesNotMatch(hostInviteSource, /free-table-invite-card-preview[^"]*lighting-/);
+
+  for (const lightingId of ["natural", "indirect", "daylight", "headlight"]) {
+    assert.match(cssSource, new RegExp(`\\.lighting-${lightingId}\\s*\\{`));
+  }
+  assert.match(cssSource, /\.free-table:is\([\s\S]*?\.lighting-headlight[\s\S]*?\)\s*\{/);
+  assert.doesNotMatch(cssSource, /\.free-table :is\(\s*\.lighting-natural/);
+  assert.doesNotMatch(cssSource, /transition:\s*background/);
+  assert.match(cssSource, /@media \(forced-colors: active\)/);
+  assert.match(cssSource, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test("live ambience is host-controlled, revisioned, opt-in, and torn down safely", () => {
+  assert.match(frontendSource, /UPDATE_AMBIENCE: "update_ambience"/);
+  assert.match(frontendSource, /ambienceSoundEnabled: false/);
+
+  const renderStart = frontendSource.indexOf("function renderSessionAmbience");
+  const renderEnd = frontendSource.indexOf("function renderSession()", renderStart);
+  const renderSource = frontendSource.slice(renderStart, renderEnd);
+  assert.match(renderSource, /data-action="toggle-ambience-sound"/);
+  assert.match(renderSource, /部屋の音をきく/);
+  assert.match(renderSource, /id="freeTableAmbienceSoundDetails"[\s\S]*?state\.ambienceSoundDetailsOpen \? " open" : ""/);
+  assert.doesNotMatch(renderSource, /metronomeBpm === 0 \? " disabled"/);
+  assert.match(
+    renderSource,
+    /\$\{canHostUpdateAmbience\(\) \? `<div class="free-table-ambience-actions">[\s\S]*?id="freeTableAmbienceForm"/,
+  );
+  assert.match(renderSource, /data-action="toggle-ambience-panel"[\s\S]*?場面を移す/);
+  assert.match(renderSource, /name="sessionMetronomeBpm"[\s\S]*?name="sessionLightingId"/);
+  assert.match(renderSource, /現在の場面だけを上書きします。/);
+
+  const hostGuardStart = frontendSource.indexOf("function canHostUpdateAmbience");
+  const hostGuardEnd = frontendSource.indexOf("function ensureAmbienceController", hostGuardStart);
+  const hostGuardSource = frontendSource.slice(hostGuardStart, hostGuardEnd);
+  assert.match(hostGuardSource, /isHost\(\)[\s\S]*?isLiveSession\(\)/);
+  assert.match(hostGuardSource, /state\.session\?\.status === "active"/);
+  assert.match(hostGuardSource, /state\.seatEstablished/);
+
+  const ensureStart = frontendSource.indexOf("function ensureAmbienceController");
+  const ensureEnd = frontendSource.indexOf("function clearAmbienceNotice", ensureStart);
+  assert.doesNotMatch(frontendSource.slice(ensureStart, ensureEnd), /\.enable\(/);
+
+  const toggleStart = frontendSource.indexOf("async function toggleAmbienceSound");
+  const toggleEnd = frontendSource.indexOf("function handleAmbienceVolume", toggleStart);
+  const toggleSource = frontendSource.slice(toggleStart, toggleEnd);
+  assert.match(toggleSource, /if \(state\.ambienceSoundEnabled\) \{[\s\S]*?controller\.disable\(\)/);
+  assert.match(toggleSource, /await controller\.enable\(\)/);
+  assert.doesNotMatch(toggleSource, /effectiveSessionAmbience\(\)\.metronomeBpm === 0\) return/);
+  assert.equal((frontendSource.match(/await controller\.enable\(\)/g) || []).length, 1);
+
+  const updateStart = frontendSource.indexOf("async function handleUpdateAmbience");
+  const updateEnd = frontendSource.indexOf("function handleError", updateStart);
+  const updateSource = frontendSource.slice(updateStart, updateEnd);
+  assert.match(updateSource, /if \(!canHostUpdateAmbience\(\) \|\| state\.ambienceUpdating\) return/);
+  assert.match(updateSource, /const canonicalGeneration = Number\(state\.session\?\.generation \|\| 0\)/);
+  assert.match(
+    updateSource,
+    /callFreeTableAction\(FREE_TABLE_ACTIONS\.UPDATE_AMBIENCE,\s*\{\s*sessionId,\s*generation: canonicalGeneration,\s*ambience,\s*\}\)/,
+  );
+  assert.match(updateSource, /nextAmbience\.revision >= previousAmbience\.revision/);
+  assert.doesNotMatch(
+    updateSource,
+    /chatMessages|mediaMessages|timelineEntries|pathFor\("chat"|type:\s*"system"/,
+  );
+
+  const enterStart = frontendSource.indexOf("async function enterSession");
+  const enterEnd = frontendSource.indexOf("async function establishPresence", enterStart);
+  const enterSource = frontendSource.slice(enterStart, enterEnd);
+  assert.match(enterSource, /const previousAmbience = state\.session\?\.ambience \|\| null/);
+  assert.match(
+    enterSource,
+    /const incomingSession = normalizeSession\(snapshot\.val\(\), sessionId\)[\s\S]*?incomingSession\.ambience\.revision < previousAmbience\.revision[\s\S]*?if \(staleAmbienceSnapshot\) incomingSession\.ambience = previousAmbience;[\s\S]*?state\.session = incomingSession;/,
+  );
+  assert.match(
+    enterSource,
+    /if \(!staleAmbienceSnapshot\) \{\s*syncSessionAmbience\(state\.session\.ambience,\s*\{\s*previousAmbience,\s*sessionId,\s*sessionGeneration,\s*\}\)/,
+  );
+
+  const syncStart = frontendSource.indexOf("function syncSessionAmbience");
+  const syncEnd = frontendSource.indexOf("function ambienceDraftValue", syncStart);
+  const syncSource = frontendSource.slice(syncStart, syncEnd);
+  assert.match(syncSource, /controller\.setAmbience\(next, \{ serverTimeOffset: state\.serverTimeOffset \}\)/);
+  assert.match(syncSource, /const delay = next\.effectiveAt - \(Date\.now\(\) \+ Number\(state\.serverTimeOffset \|\| 0\)\)/);
+  assert.match(syncSource, /next\.revision < canonicalRevision \|\| next\.revision < effectiveRevision/);
+  assert.match(syncSource, /Number\(state\.session\?\.ambience\?\.revision \?\? -1\) !== next\.revision/);
+  assert.ok(
+    syncSource.indexOf("next.revision < canonicalRevision")
+      < syncSource.indexOf("window.clearTimeout(state.ambienceEffectiveTimer)"),
+    "a stale ambience revision must be rejected before it can clear the pending effective timer",
+  );
+
+  const cleanupStart = frontendSource.indexOf("function cleanupSession");
+  const cleanupEnd = frontendSource.indexOf("function finishSessionLocally", cleanupStart);
+  const cleanupSource = frontendSource.slice(cleanupStart, cleanupEnd);
+  assert.match(cleanupSource, /state\.ambienceController\?\.destroy\(\)/);
+  assert.match(cleanupSource, /state\.ambienceController = null/);
+  assert.match(cleanupSource, /state\.ambienceSoundEnabled = false/);
+  assert.match(cleanupSource, /state\.ambienceSoundDetailsOpen = false/);
+  assert.match(cleanupSource, /state\.ambienceEffectiveTimer\) window\.clearTimeout/);
+  assert.match(cleanupSource, /clearAmbienceNotice\(\)/);
+
+  const visibilityStart = frontendSource.indexOf('document.addEventListener("visibilitychange"');
+  const visibilityEnd = frontendSource.indexOf('window.addEventListener("beforeunload"', visibilityStart);
+  const visibilitySource = frontendSource.slice(visibilityStart, visibilityEnd);
+  assert.match(
+    visibilitySource,
+    /document\.visibilityState !== "visible"[\s\S]*?suspendForVisibility\(true\)[\s\S]*?state\.ambienceSoundEnabled = false/,
+  );
+  assert.doesNotMatch(visibilitySource, /\.enable\(|suspendForVisibility\(false\)/);
+
+  assert.match(cssSource, /\.free-table-session > \.free-table-ambience-panel/);
+  assert.match(cssSource, /\.free-table-ambience-details > summary/);
+  assert.doesNotMatch(cssSource, /\.free-table-ambience-local-controls\s*\{[^}]*position:\s*sticky/s);
+});
+
+test("authoritative server time and duplicate ambience revisions rephase without stale overwrite", () => {
+  assert.match(frontendSource, /serverTimeOffsetAuthoritative: false/);
+
+  const applyStart = frontendSource.indexOf("function applyMyState");
+  const applyEnd = frontendSource.indexOf("async function refreshMyState", applyStart);
+  const applySource = frontendSource.slice(applyStart, applyEnd);
+  assert.match(
+    applySource,
+    /if \(!state\.serverTimeOffsetAuthoritative[\s\S]*?state\.serverTimeOffset = inferredOffset;/,
+  );
+
+  const initializeStart = frontendSource.indexOf("async function initializeAuthenticatedFreeTable");
+  const initializeEnd = frontendSource.indexOf("async function start", initializeStart);
+  const initializeSource = frontendSource.slice(initializeStart, initializeEnd);
+  assert.match(
+    initializeSource,
+    /\.info\/serverTimeOffset[\s\S]*?state\.serverTimeOffset = Number\(snapshot\.val\(\) \|\| 0\);[\s\S]*?state\.serverTimeOffsetAuthoritative = true;[\s\S]*?syncSessionAmbience\(state\.session\.ambience/,
+  );
+});

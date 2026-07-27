@@ -40,6 +40,10 @@ const space = Object.freeze({
   avoid: "個人情報",
   welcome: "おかえり。温かい席へどうぞ。",
   themeId: "midnight-diner",
+  ambience: {
+    metronomeBpm: 88,
+    lightingId: "indirect",
+  },
 });
 
 const hostCard = Object.freeze({
@@ -153,6 +157,7 @@ test("invite preview survives a heartbeat generation advance without exposing st
   assert.equal(preview.state, "open");
   assert.equal(preview.preview.hostDisplayName, hostCard.name);
   assert.deepEqual(Object.keys(preview.preview.space).sort(), [
+    "ambience",
     "avoid",
     "description",
     "duration",
@@ -165,6 +170,7 @@ test("invite preview survives a heartbeat generation advance without exposing st
     "topic",
     "welcome",
   ]);
+  assert.deepEqual(preview.preview.space.ambience, space.ambience);
   const serialized = JSON.stringify(preview);
   assert.equal(serialized.includes(HOST_UID), false);
   assert.equal(serialized.includes(PUBLIC_ROOM_ID), false);

@@ -25,9 +25,23 @@ const FREE_TABLE_PUBLIC_CARD_REPORT_RATE_WINDOW_MS = 60 * 60 * 1000;
 const FREE_TABLE_PUBLIC_CARD_REPORT_RATE_LIMIT = 5;
 const FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS = 5 * 1000;
 const FREE_TABLE_INVITE_TTL_MS = 6 * 60 * 60 * 1000;
+const FREE_TABLE_AMBIENCE_COOLDOWN_MS = 3 * 1000;
+const FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS = 800;
+const FREE_TABLE_AMBIENCE_BPM_MIN = 40;
+const FREE_TABLE_AMBIENCE_BPM_MAX = 160;
 const FREE_TABLE_GROWTH_MILESTONES = Object.freeze([1, 3, 7, 15, 30]);
 const FREE_TABLE_ROLEPLAY_LEVELS = Object.freeze(["none", "light", "full"]);
 const FREE_TABLE_DURATIONS = Object.freeze(["5m", "15m", "30m", "leisurely"]);
+const FREE_TABLE_LIGHTING_IDS = Object.freeze([
+  "natural",
+  "indirect",
+  "daylight",
+  "headlight",
+]);
+const FREE_TABLE_AMBIENCE_FIELDS = Object.freeze([
+  "metronomeBpm",
+  "lightingId",
+]);
 const FREE_TABLE_END_KINDS = Object.freeze([
   "departure",
   "wrap_up",
@@ -52,6 +66,7 @@ const FREE_TABLE_ACTIONS = Object.freeze([
   "cancel_request",
   "respond",
   "arrive",
+  "update_ambience",
   "end",
   "bookmark",
   "relationship",
@@ -136,6 +151,79 @@ function validateMedia(value) {
   ));
 }
 
+function normalizeAmbience(value) {
+  const source = objectValue(value);
+  const metronomeBpm = Number.isInteger(source.metronomeBpm)
+    && (
+      source.metronomeBpm === 0
+      || (
+        source.metronomeBpm >= FREE_TABLE_AMBIENCE_BPM_MIN
+        && source.metronomeBpm <= FREE_TABLE_AMBIENCE_BPM_MAX
+      )
+    )
+    ? source.metronomeBpm
+    : 0;
+  return Object.freeze({
+    metronomeBpm,
+    lightingId: FREE_TABLE_LIGHTING_IDS.includes(source.lightingId)
+      ? source.lightingId
+      : "natural",
+  });
+}
+
+function validateAmbience(value, { requireAll = false } = {}) {
+  if (value === undefined) return !requireAll;
+  const source = objectValue(value);
+  if (value !== source
+      || Reflect.ownKeys(source).some((key) => (
+        typeof key !== "string" || !FREE_TABLE_AMBIENCE_FIELDS.includes(key)
+      ))) return false;
+  if (requireAll
+      && FREE_TABLE_AMBIENCE_FIELDS.some((key) => !Object.hasOwn(source, key))) {
+    return false;
+  }
+  if (source.metronomeBpm !== undefined
+      && (
+        !Number.isInteger(source.metronomeBpm)
+        || (
+          source.metronomeBpm !== 0
+          && (
+            source.metronomeBpm < FREE_TABLE_AMBIENCE_BPM_MIN
+            || source.metronomeBpm > FREE_TABLE_AMBIENCE_BPM_MAX
+          )
+        )
+      )) return false;
+  return source.lightingId === undefined
+    || FREE_TABLE_LIGHTING_IDS.includes(source.lightingId);
+}
+
+function normalizeSessionAmbience(value, fallbackValue = {}, nowValue = 0) {
+  const source = objectValue(value);
+  const fallback = normalizeAmbience(fallbackValue);
+  const settings = normalizeAmbience({
+    metronomeBpm: source.metronomeBpm === undefined
+      ? fallback.metronomeBpm
+      : source.metronomeBpm,
+    lightingId: source.lightingId === undefined
+      ? fallback.lightingId
+      : source.lightingId,
+  });
+  const fallbackTime = Math.max(0, Number(nowValue || 0));
+  const revision = Number(source.revision);
+  const effectiveAt = Number(source.effectiveAt);
+  const updatedAt = Number(source.updatedAt);
+  return Object.freeze({
+    ...settings,
+    revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
+    effectiveAt: Number.isFinite(effectiveAt) && effectiveAt >= 0
+      ? effectiveAt
+      : fallbackTime,
+    updatedAt: Number.isFinite(updatedAt) && updatedAt >= 0
+      ? updatedAt
+      : fallbackTime,
+  });
+}
+
 function normalizeRoomSettings(value) {
   const source = objectValue(value);
   return Object.freeze({
@@ -155,6 +243,7 @@ function normalizeRoomSettings(value) {
     welcome: boundedLine(source.welcome || "おかえり", ROOM_LIMITS.welcome),
     themeId: boundedLine(source.themeId, ROOM_LIMITS.themeId)
       .replace(/[^A-Za-z0-9_-]/gu, ""),
+    ambience: normalizeAmbience(source.ambience),
   });
 }
 
@@ -172,6 +261,7 @@ function validateRoomSettings(value) {
       && !FREE_TABLE_ROLEPLAY_LEVELS.includes(source.roleplayLevel)) return false;
   if (source.duration !== undefined
       && !FREE_TABLE_DURATIONS.includes(source.duration)) return false;
+  if (!validateAmbience(source.ambience)) return false;
   if (!validateMedia(source.media)) return false;
   const normalized = normalizeRoomSettings(source);
   return Boolean(normalized.name && normalized.topic);
@@ -304,6 +394,7 @@ function freeTableInviteSpaceProjection(value) {
     avoid: space.avoid,
     welcome: space.welcome,
     themeId: space.themeId,
+    ambience: space.ambience,
   });
 }
 
@@ -748,6 +839,10 @@ function publicSessionProjection(uid, value) {
   return Object.freeze({
     protocolVersion: FREE_TABLE_PROTOCOL_VERSION,
     sessionId: source.sessionId,
+    generation: Number.isSafeInteger(Number(source.generation))
+      && Number(source.generation) > 0
+      ? Number(source.generation)
+      : 0,
     publicRoomId: String(source.publicRoomId || ""),
     status: String(source.status || ""),
     role,
@@ -767,6 +862,11 @@ function publicSessionProjection(uid, value) {
       video: roomMedia.video && visitorMedia.video,
     }),
     space: normalizeRoomSettings(source.space),
+    ambience: normalizeSessionAmbience(
+      source.ambience,
+      objectValue(source.space).ambience,
+      source.createdAt,
+    ),
     admissionAccepted: source.admissionAccepted === true,
     p2pConnected: source.p2pConnected === true,
     seatEstablished: source.admissionAccepted === true
@@ -1058,6 +1158,7 @@ function acceptedSessionValue(roomValue, requestValue, sessionId, now) {
   const request = objectValue(requestValue);
   const hardExpiresAt = now + FREE_TABLE_SESSION_TTL_MS;
   const expiresAt = now + FREE_TABLE_CONNECTING_TTL_MS;
+  const space = normalizeRoomSettings(room.space);
   return {
     protocolVersion: FREE_TABLE_PROTOCOL_VERSION,
     sessionId,
@@ -1081,7 +1182,13 @@ function acceptedSessionValue(roomValue, requestValue, sessionId, now) {
       [room.hostUid]: normalizeCard(room.hostCard),
       [request.visitorUid]: normalizeCard(request.visitorCard),
     },
-    space: normalizeRoomSettings(room.space),
+    space,
+    ambience: {
+      ...space.ambience,
+      revision: 0,
+      effectiveAt: now + FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS,
+      updatedAt: now,
+    },
     status: "connecting",
     admissionAccepted: true,
     p2pConnected: false,
@@ -3365,12 +3472,20 @@ function createFreeTableService(deps) {
       [`active/${session.hostUid}`]: {
         sessionId: session.sessionId,
         role: "host",
+        ...(Number.isSafeInteger(Number(session.generation))
+          && Number(session.generation) > 0
+          ? { generation: Number(session.generation) }
+          : {}),
         heartbeatAt: now,
         expiresAt: session.expiresAt,
       },
       [`active/${session.visitorUid}`]: {
         sessionId: session.sessionId,
         role: "visitor",
+        ...(Number.isSafeInteger(Number(session.generation))
+          && Number(session.generation) > 0
+          ? { generation: Number(session.generation) }
+          : {}),
         heartbeatAt: now,
         expiresAt: session.expiresAt,
       },
@@ -3609,6 +3724,329 @@ function createFreeTableService(deps) {
       seatEstablished: established,
       session: publicSessionProjection(uid, session),
       ...(growth ? { growth } : {}),
+    };
+  }
+
+  function ambienceActiveClaimIsCurrent(
+    sessionId,
+    generation,
+    now,
+    activeValue,
+  ) {
+    const active = objectValue(activeValue);
+    return active.sessionId === sessionId
+      && active.role === "host"
+      && active.generation === generation
+      && Number(active.expiresAt || 0) > now;
+  }
+
+  function ambienceHostActiveClaimIsCurrent(
+    sessionId,
+    generation,
+    now,
+    hostActiveValue,
+  ) {
+    const hostActive = objectValue(hostActiveValue);
+    return hostActive.sessionId === sessionId
+      && hostActive.state === "active"
+      && hostActive.generation === generation
+      && Number(hostActive.expiresAt || 0) > now;
+  }
+
+  function ambienceClaimsAreCurrent(
+    sessionId,
+    generation,
+    now,
+    activeValue,
+    hostActiveValue,
+  ) {
+    return ambienceActiveClaimIsCurrent(
+      sessionId,
+      generation,
+      now,
+      activeValue,
+    ) && ambienceHostActiveClaimIsCurrent(
+      sessionId,
+      generation,
+      now,
+      hostActiveValue,
+    );
+  }
+
+  function ambienceSessionMatchesHostClaim(
+    uid,
+    sessionId,
+    generation,
+    now,
+    sessionValue,
+    hostActiveValue,
+  ) {
+    const session = objectValue(sessionValue);
+    const hostActive = objectValue(hostActiveValue);
+    return session.sessionId === sessionId
+      && session.hostUid === uid
+      && session.participants?.[uid] === true
+      && typeof session.visitorUid === "string"
+      && session.visitorUid !== ""
+      && session.visitorUid !== uid
+      && session.participants?.[session.visitorUid] === true
+      && session.status === "active"
+      && session.admissionAccepted === true
+      && session.p2pConnected === true
+      && session.arrivals?.host === true
+      && session.arrivals?.visitor === true
+      && session.generation === generation
+      && session.roomId === hostActive.roomId
+      && session.publicRoomId === hostActive.publicRoomId
+      && Number(session.expiresAt || 0) > now
+      && Number(session.hardExpiresAt || session.expiresAt || 0) > now;
+  }
+
+  function isRepairableLegacyAmbienceActiveClaim(
+    sessionId,
+    now,
+    activeValue,
+  ) {
+    const active = objectValue(activeValue);
+    return active.sessionId === sessionId
+      && active.role === "host"
+      && !Object.hasOwn(active, "generation")
+      && Number(active.expiresAt || 0) > now;
+  }
+
+  async function repairLegacyAmbienceActiveClaim(
+    uid,
+    sessionId,
+    generation,
+    now,
+    activeValue,
+    hostActiveValue,
+  ) {
+    if (!isRepairableLegacyAmbienceActiveClaim(sessionId, now, activeValue)
+        || !ambienceHostActiveClaimIsCurrent(
+          sessionId,
+          generation,
+          now,
+          hostActiveValue,
+        )) return null;
+    const sessionSnapshot = await sessionRef(sessionId).get();
+    if (!ambienceSessionMatchesHostClaim(
+      uid,
+      sessionId,
+      generation,
+      now,
+      sessionSnapshot.val(),
+      hostActiveValue,
+    )) return null;
+
+    const repairResult = await activeRef(uid).transaction(
+      (current) => {
+        if (ambienceActiveClaimIsCurrent(
+          sessionId,
+          generation,
+          now,
+          current,
+        )) return current;
+        if (!isRepairableLegacyAmbienceActiveClaim(
+          sessionId,
+          now,
+          current,
+        )) return current;
+        return {
+          ...current,
+          generation,
+        };
+      },
+      undefined,
+      false,
+    );
+    const repairedActive = committedTransactionValue(
+      repairResult,
+      (value) => ambienceActiveClaimIsCurrent(
+        sessionId,
+        generation,
+        now,
+        value,
+      ),
+    );
+    if (!repairedActive) return null;
+
+    const [latestHostActiveSnapshot, latestSessionSnapshot] = await Promise.all([
+      hostActiveRef(uid).get(),
+      sessionRef(sessionId).get(),
+    ]);
+    const latestHostActive = latestHostActiveSnapshot.val();
+    if (!ambienceClaimsAreCurrent(
+      sessionId,
+      generation,
+      now,
+      repairedActive,
+      latestHostActive,
+    ) || !ambienceSessionMatchesHostClaim(
+      uid,
+      sessionId,
+      generation,
+      now,
+      latestSessionSnapshot.val(),
+      latestHostActive,
+    )) return null;
+    return Object.freeze({
+      active: repairedActive,
+      hostActive: latestHostActive,
+    });
+  }
+
+  async function updateSessionAmbience(uid, data) {
+    const payload = exactPayload(data, ["sessionId", "generation", "ambience"]);
+    if (!payload
+        || !Number.isSafeInteger(payload.generation)
+        || payload.generation <= 0
+        || !validateAmbience(payload.ambience, { requireAll: true })) {
+      throw httpsError("invalid-argument", "部屋の音と灯りの設定を確認してください。");
+    }
+    const sessionId = requireChildId(payload.sessionId, "自由卓");
+    const generation = payload.generation;
+    const proposedAmbience = normalizeAmbience(payload.ambience);
+    const now = currentTime();
+    const [activeSnapshot, hostActiveSnapshot] = await Promise.all([
+      activeRef(uid).get(),
+      hostActiveRef(uid).get(),
+    ]);
+    let active = activeSnapshot.val();
+    let hostActive = hostActiveSnapshot.val();
+    if (active?.sessionId === sessionId
+        && active.role !== "host") {
+      throw httpsError("permission-denied", "部屋の音と灯りは部屋主だけが変更できます。");
+    }
+    if (!ambienceClaimsAreCurrent(
+      sessionId,
+      generation,
+      now,
+      active,
+      hostActive,
+    )) {
+      const repairedClaims = await repairLegacyAmbienceActiveClaim(
+        uid,
+        sessionId,
+        generation,
+        now,
+        active,
+        hostActive,
+      );
+      if (!repairedClaims) {
+        throw httpsError("failed-precondition", "現在の一席として確認できません。");
+      }
+      ({ active, hostActive } = repairedClaims);
+    }
+
+    let transactionReason = "stale";
+    let previousAmbience = null;
+    const result = await sessionRef(sessionId).transaction(
+      (current) => {
+        transactionReason = "stale";
+        const source = objectValue(current);
+        if (source.sessionId !== sessionId
+            || source.hostUid !== uid
+            || source.participants?.[uid] !== true
+            || typeof source.visitorUid !== "string"
+            || source.visitorUid === ""
+            || source.visitorUid === uid
+            || source.participants?.[source.visitorUid] !== true
+            || source.status !== "active"
+            || source.admissionAccepted !== true
+            || source.p2pConnected !== true
+            || source.arrivals?.host !== true
+            || source.arrivals?.visitor !== true
+            || source.generation !== generation
+            || source.roomId !== hostActive.roomId
+            || source.publicRoomId !== hostActive.publicRoomId
+            || Number(source.expiresAt || 0) <= now
+            || Number(source.hardExpiresAt || source.expiresAt || 0) <= now) {
+          return current;
+        }
+        const currentAmbience = normalizeSessionAmbience(
+          source.ambience,
+          objectValue(source.space).ambience,
+          source.createdAt,
+        );
+        if (currentAmbience.revision > 0
+            && currentAmbience.updatedAt > 0
+            && now - currentAmbience.updatedAt < FREE_TABLE_AMBIENCE_COOLDOWN_MS) {
+          transactionReason = "cooldown";
+          return current;
+        }
+        if (currentAmbience.revision >= Number.MAX_SAFE_INTEGER) return current;
+        previousAmbience = currentAmbience;
+        transactionReason = "updated";
+        return {
+          ...source,
+          ambience: {
+            ...proposedAmbience,
+            revision: currentAmbience.revision + 1,
+            effectiveAt: now + FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS,
+            updatedAt: now,
+          },
+        };
+      },
+      undefined,
+      false,
+    );
+    const session = committedTransactionValue(
+      result,
+      (value) => (
+        transactionReason === "updated"
+        && value?.sessionId === sessionId
+        && value.hostUid === uid
+        && value.participants?.[uid] === true
+        && typeof value.visitorUid === "string"
+        && value.visitorUid !== ""
+        && value.visitorUid !== uid
+        && value.participants?.[value.visitorUid] === true
+        && value.status === "active"
+        && value.generation === generation
+        && value.ambience?.updatedAt === now
+        && value.ambience?.effectiveAt === now + FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS
+        && Number(value.ambience?.revision || 0)
+          === Number(previousAmbience?.revision || 0) + 1
+      ),
+    );
+    if (!session) {
+      if (transactionReason === "cooldown") {
+        throw httpsError(
+          "resource-exhausted",
+          "音と灯りの変更は3秒ほど待ってからお試しください。",
+        );
+      }
+      throw httpsError("failed-precondition", "この一席の状態が変わりました。");
+    }
+
+    const [latestActiveSnapshot, latestHostActiveSnapshot] = await Promise.all([
+      activeRef(uid).get(),
+      hostActiveRef(uid).get(),
+    ]);
+    if (!ambienceClaimsAreCurrent(
+      sessionId,
+      generation,
+      now,
+      latestActiveSnapshot.val(),
+      latestHostActiveSnapshot.val(),
+    )) {
+      throw httpsError(
+        "aborted",
+        "一席の状態が変わりました。音と灯りの反映状態を更新してください。",
+      );
+    }
+
+    return {
+      ok: true,
+      sessionId,
+      generation,
+      ambience: normalizeSessionAmbience(
+        session.ambience,
+        objectValue(session.space).ambience,
+        now,
+      ),
+      session: publicSessionProjection(uid, session),
     };
   }
 
@@ -5159,6 +5597,7 @@ function createFreeTableService(deps) {
     if (action === "cancel_request") return cancelEntryRequest(uid, data);
     if (action === "respond") return respondToRequest(uid, data);
     if (action === "arrive") return arriveAtSession(uid, data);
+    if (action === "update_ambience") return updateSessionAmbience(uid, data);
     if (action === "end") return endSession(uid, data);
     if (action === "bookmark") return setBookmark(uid, data);
     if (action === "relationship") return setRelationship(uid, data);
@@ -5180,6 +5619,10 @@ function createFreeTableService(deps) {
 
 module.exports = Object.freeze({
   FREE_TABLE_ACTIONS,
+  FREE_TABLE_AMBIENCE_BPM_MAX,
+  FREE_TABLE_AMBIENCE_BPM_MIN,
+  FREE_TABLE_AMBIENCE_COOLDOWN_MS,
+  FREE_TABLE_AMBIENCE_EFFECTIVE_DELAY_MS,
   FREE_TABLE_BLOCK_LIMIT,
   FREE_TABLE_BOOKMARK_LIMIT,
   FREE_TABLE_CONNECTING_TTL_MS,
@@ -5191,6 +5634,7 @@ module.exports = Object.freeze({
   FREE_TABLE_INVITE_TTL_MS,
   FREE_TABLE_LIST_LIMIT,
   FREE_TABLE_LIST_SCAN_LIMIT,
+  FREE_TABLE_LIGHTING_IDS,
   FREE_TABLE_PAIR_GROWTH_COOLDOWN_MS,
   FREE_TABLE_PROTOCOL_VERSION,
   FREE_TABLE_PUBLIC_STATS_CACHE_TTL_MS,
@@ -5227,11 +5671,13 @@ module.exports = Object.freeze({
   nextRoomRequests,
   nextVisitorAdmissionClaim,
   nextVisitorPendingClaim,
+  normalizeAmbience,
   normalizeCard,
   normalizeDepartureLine,
   normalizeEndKind,
   normalizeGrowth,
   normalizeRoomSettings,
+  normalizeSessionAmbience,
   ownerGrowthProjection,
   pairGrowthDecision,
   freeTablePublicStatsProjection,
@@ -5245,5 +5691,6 @@ module.exports = Object.freeze({
   restoredVisitorPendingClaim,
   selectReportEvidence,
   validateCard,
+  validateAmbience,
   validateRoomSettings,
 });

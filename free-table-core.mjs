@@ -63,6 +63,19 @@ export const FREE_TABLE_MEDIA_KEYS = Object.freeze([
   "video",
 ]);
 
+export const FREE_TABLE_METRONOME_MIN_BPM = 40;
+export const FREE_TABLE_METRONOME_MAX_BPM = 160;
+export const FREE_TABLE_LIGHTING_IDS = Object.freeze([
+  "natural",
+  "indirect",
+  "daylight",
+  "headlight",
+]);
+export const FREE_TABLE_DEFAULT_AMBIENCE = Object.freeze({
+  metronomeBpm: 0,
+  lightingId: "natural",
+});
+
 export const FREE_TABLE_ROOM_LIMITS = Object.freeze({
   name: 24,
   description: 80,
@@ -261,6 +274,62 @@ function normalizeMedia(value) {
   };
 }
 
+export function normalizeFreeTableAmbience(value) {
+  const source = objectValue(value);
+  const metronomeBpm = Number(source.metronomeBpm);
+  return {
+    metronomeBpm: Number.isInteger(metronomeBpm)
+      && metronomeBpm >= FREE_TABLE_METRONOME_MIN_BPM
+      && metronomeBpm <= FREE_TABLE_METRONOME_MAX_BPM
+      ? metronomeBpm
+      : FREE_TABLE_DEFAULT_AMBIENCE.metronomeBpm,
+    lightingId: FREE_TABLE_LIGHTING_IDS.includes(source.lightingId)
+      ? source.lightingId
+      : FREE_TABLE_DEFAULT_AMBIENCE.lightingId,
+  };
+}
+
+export function validateFreeTableAmbience(value) {
+  if (value === undefined) {
+    return {
+      valid: true,
+      errors: [],
+      value: normalizeFreeTableAmbience(value),
+    };
+  }
+  const errors = [];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    errors.push("ambience_invalid");
+    return {
+      valid: false,
+      errors,
+      value: normalizeFreeTableAmbience(value),
+    };
+  }
+  const allowedKeys = new Set(["metronomeBpm", "lightingId"]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+    errors.push("ambience_unknown_field");
+  }
+  const bpm = Number(value.metronomeBpm);
+  if (value.metronomeBpm !== undefined
+      && (!Number.isInteger(bpm)
+        || bpm !== value.metronomeBpm
+        || (bpm !== 0
+          && (bpm < FREE_TABLE_METRONOME_MIN_BPM
+            || bpm > FREE_TABLE_METRONOME_MAX_BPM)))) {
+    errors.push("metronomeBpm_invalid");
+  }
+  if (value.lightingId !== undefined
+      && !FREE_TABLE_LIGHTING_IDS.includes(value.lightingId)) {
+    errors.push("lightingId_invalid");
+  }
+  return {
+    valid: errors.length === 0,
+    errors,
+    value: normalizeFreeTableAmbience(value),
+  };
+}
+
 function validateTextField(errors, source, field, maximum, { required = false } = {}) {
   const line = normalizedSingleLine(source[field]);
   if (required && !line) errors.push(`${field}_required`);
@@ -305,6 +374,7 @@ export function normalizeFreeTableRoomSettings(value) {
     ),
     themeId: normalizeBoundedLine(source.themeId, FREE_TABLE_ROOM_LIMITS.themeId)
       .replace(/[^a-z0-9_-]/giu, ""),
+    ambience: normalizeFreeTableAmbience(source.ambience),
   };
 }
 
@@ -331,6 +401,7 @@ export function validateFreeTableRoomSettings(value) {
   validateChoiceField(errors, source, "roleplayLevel", FREE_TABLE_ROLEPLAY_LEVELS);
   validateChoiceField(errors, source, "duration", FREE_TABLE_DURATIONS);
   validateMedia(errors, source.media);
+  errors.push(...validateFreeTableAmbience(source.ambience).errors);
   return {
     valid: errors.length === 0,
     errors,

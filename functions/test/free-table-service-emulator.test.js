@@ -83,6 +83,10 @@ if (!RUN_REQUESTED) {
     avoid: "個人情報",
     welcome: "おかえり。温かい席へどうぞ。",
     themeId: "midnight-diner",
+    ambience: {
+      metronomeBpm: 84,
+      lightingId: "indirect",
+    },
   });
   const hostCard = Object.freeze({
     name: "夜更かし店主",
@@ -132,6 +136,32 @@ if (!RUN_REQUESTED) {
 
   async function perform(uid, action, fields = {}) {
     return service.performAction(uid, { action, ...fields });
+  }
+
+  async function establishSeat(host, visitor) {
+    await perform(host, "save_space", { space, hostCard });
+    const opened = await perform(host, "open", { active: true });
+    const requested = await perform(visitor, "request", {
+      publicRoomId: opened.room.publicRoomId,
+      visitorCard,
+    });
+    const accepted = await perform(host, "respond", {
+      requestId: requested.request.requestId,
+      accept: true,
+    });
+    const { sessionId, generation } = accepted.session;
+    await perform(host, "arrive", { sessionId });
+    await perform(visitor, "arrive", { sessionId });
+    const [activeSnapshot, hostActiveSnapshot] = await Promise.all([
+      realtime.ref(`freeTables/active/${host}`).get(),
+      realtime.ref(`freeTables/hostActive/${host}`).get(),
+    ]);
+    return Object.freeze({
+      sessionId,
+      generation,
+      active: activeSnapshot.val(),
+      hostActive: hostActiveSnapshot.val(),
+    });
   }
 
   function createBlockCommitPause(blockDocumentPath) {
@@ -309,6 +339,476 @@ if (!RUN_REQUESTED) {
     const hostOpen = await realtime.ref(`freeTables/hostActive/${hostUid}`).get();
     assert.equal(active.exists(), false);
     assert.equal(hostOpen.exists(), false);
+  });
+
+  test("ambience is host-only, revisioned, cooled down, and stored as one current snapshot", async () => {
+    const ambienceHostUid = `ambience-host-${suffix}`;
+    const ambienceVisitorUid = `ambience-visitor-${suffix}`;
+    await perform(ambienceHostUid, "save_space", { space, hostCard });
+    const opened = await perform(ambienceHostUid, "open", { active: true });
+    assert.deepEqual(opened.room.space.ambience, space.ambience);
+    const listed = await perform(ambienceVisitorUid, "list");
+    const room = listed.rooms.find((candidate) => (
+      candidate.publicRoomId === opened.room.publicRoomId
+    ));
+    assert.deepEqual(room?.space?.ambience, space.ambience);
+    const requested = await perform(ambienceVisitorUid, "request", {
+      publicRoomId: opened.room.publicRoomId,
+      visitorCard,
+    });
+    const accepted = await perform(ambienceHostUid, "respond", {
+      requestId: requested.request.requestId,
+      accept: true,
+    });
+    const { sessionId, generation } = accepted.session;
+    assert.ok(sessionId);
+    assert.ok(Number.isSafeInteger(generation) && generation > 0);
+    assert.deepEqual(accepted.session.space.ambience, space.ambience);
+    assert.deepEqual(accepted.session.ambience, {
+      ...space.ambience,
+      revision: 0,
+      effectiveAt: clock + 800,
+      updatedAt: clock,
+    });
+    await perform(ambienceHostUid, "arrive", { sessionId });
+    await perform(ambienceVisitorUid, "arrive", { sessionId });
+
+    await assert.rejects(
+      perform(ambienceVisitorUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 96,
+          lightingId: "daylight",
+        },
+      }),
+      (error) => error?.code === "permission-denied",
+    );
+    await assert.rejects(
+      perform(ambienceHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 96,
+          lightingId: "daylight",
+          unknown: true,
+        },
+      }),
+      (error) => error?.code === "invalid-argument",
+    );
+    await assert.rejects(
+      perform(ambienceHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 161,
+          lightingId: "daylight",
+        },
+      }),
+      (error) => error?.code === "invalid-argument",
+    );
+
+    const firstUpdate = await perform(ambienceHostUid, "update_ambience", {
+      sessionId,
+      generation,
+      ambience: {
+        metronomeBpm: 96,
+        lightingId: "daylight",
+      },
+    });
+    assert.deepEqual(firstUpdate.ambience, {
+      metronomeBpm: 96,
+      lightingId: "daylight",
+      revision: 1,
+      effectiveAt: clock + 800,
+      updatedAt: clock,
+    });
+    let storedSession = (
+      await realtime.ref(`freeTables/sessions/${sessionId}`).get()
+    ).val();
+    assert.deepEqual(storedSession.ambience, firstUpdate.ambience);
+    assert.equal(storedSession.ambienceHistory, undefined);
+    assert.deepEqual(Object.keys(storedSession.ambience).sort(), [
+      "effectiveAt",
+      "lightingId",
+      "metronomeBpm",
+      "revision",
+      "updatedAt",
+    ]);
+
+    await assert.rejects(
+      perform(ambienceHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 100,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "resource-exhausted",
+    );
+    clock += 3_000;
+    const secondUpdate = await perform(ambienceHostUid, "update_ambience", {
+      sessionId,
+      generation,
+      ambience: {
+        metronomeBpm: 0,
+        lightingId: "headlight",
+      },
+    });
+    assert.equal(secondUpdate.ambience.revision, 2);
+    assert.equal(secondUpdate.ambience.metronomeBpm, 0);
+    assert.equal(secondUpdate.ambience.effectiveAt, clock + 800);
+
+    await perform(ambienceHostUid, "end", {
+      sessionId,
+      reason: "wrap_up",
+    });
+    await assert.rejects(
+      perform(ambienceHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 80,
+          lightingId: "natural",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+
+    const expiredHostUid = `expired-ambience-host-${suffix}`;
+    const expiredVisitorUid = `expired-ambience-visitor-${suffix}`;
+    const expiredSessionId = crypto.randomBytes(18).toString("base64url");
+    const expiredRoomId = crypto.randomBytes(18).toString("base64url");
+    const expiredPublicRoomId = crypto.randomBytes(18).toString("base64url");
+    const expiredGeneration = 7;
+    await realtime.ref("freeTables").update({
+      [`sessions/${expiredSessionId}`]: {
+        protocolVersion: 1,
+        sessionId: expiredSessionId,
+        roomId: expiredRoomId,
+        publicRoomId: expiredPublicRoomId,
+        generation: expiredGeneration,
+        hostUid: expiredHostUid,
+        visitorUid: expiredVisitorUid,
+        participants: {
+          [expiredHostUid]: true,
+          [expiredVisitorUid]: true,
+        },
+        space,
+        ambience: {
+          ...space.ambience,
+          revision: 0,
+          effectiveAt: clock,
+          updatedAt: clock - 10_000,
+        },
+        status: "active",
+        admissionAccepted: true,
+        p2pConnected: true,
+        arrivals: { host: true, visitor: true },
+        createdAt: clock - 60_000,
+        startedAt: clock - 30_000,
+        hardExpiresAt: clock,
+        expiresAt: clock,
+      },
+      [`active/${expiredHostUid}`]: {
+        sessionId: expiredSessionId,
+        role: "host",
+        generation: expiredGeneration,
+        heartbeatAt: clock,
+        expiresAt: clock + 60_000,
+      },
+      [`hostActive/${expiredHostUid}`]: {
+        roomId: expiredRoomId,
+        publicRoomId: expiredPublicRoomId,
+        sessionId: expiredSessionId,
+        state: "active",
+        generation: expiredGeneration,
+        heartbeatAt: clock,
+        expiresAt: clock + 60_000,
+      },
+    });
+    await assert.rejects(
+      perform(expiredHostUid, "update_ambience", {
+        sessionId: expiredSessionId,
+        generation: expiredGeneration,
+        ambience: {
+          metronomeBpm: 80,
+          lightingId: "natural",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    storedSession = (
+      await realtime.ref(`freeTables/sessions/${expiredSessionId}`).get()
+    ).val();
+    assert.equal(storedSession.ambience.revision, 0);
+    await realtime.ref("freeTables").update({
+      [`sessions/${expiredSessionId}`]: null,
+      [`active/${expiredHostUid}`]: null,
+      [`hostActive/${expiredHostUid}`]: null,
+    });
+  });
+
+  test("an ambience claim race never rolls a committed revision backward", async (t) => {
+    const raceHostUid = `ambience-race-host-${suffix}`;
+    const raceVisitorUid = `ambience-race-visitor-${suffix}`;
+    const {
+      sessionId,
+      generation,
+      active,
+    } = await establishSeat(raceHostUid, raceVisitorUid);
+    const firstUpdate = await perform(raceHostUid, "update_ambience", {
+      sessionId,
+      generation,
+      ambience: {
+        metronomeBpm: 90,
+        lightingId: "indirect",
+      },
+    });
+    assert.equal(firstUpdate.ambience.revision, 1);
+    clock += 3_000;
+
+    let signalCommitted = () => {};
+    let releaseCommitted = () => {};
+    let paused = false;
+    const committed = new Promise((resolve) => {
+      signalCommitted = resolve;
+    });
+    const released = new Promise((resolve) => {
+      releaseCommitted = resolve;
+    });
+    t.after(() => releaseCommitted());
+    const sessionPath = `freeTables/sessions/${sessionId}`;
+    const pausingRealtime = {
+      ref(pathValue) {
+        const reference = realtime.ref(pathValue);
+        return new Proxy(reference, {
+          get(target, property) {
+            if (property === "transaction" && pathValue === sessionPath) {
+              return async (...argumentsList) => {
+                const result = await target.transaction(...argumentsList);
+                if (!paused) {
+                  paused = true;
+                  signalCommitted();
+                  await released;
+                }
+                return result;
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    };
+    const pausingService = createFreeTableService({
+      firestore,
+      realtime: pausingRealtime,
+      HttpsError,
+      Timestamp,
+      now: () => clock,
+    });
+    const racedUpdate = pausingService.performAction(raceHostUid, {
+      action: "update_ambience",
+      sessionId,
+      generation,
+      ambience: {
+        metronomeBpm: 112,
+        lightingId: "headlight",
+      },
+    });
+    await committed;
+    const committedAmbience = (
+      await realtime.ref(`${sessionPath}/ambience`).get()
+    ).val();
+    assert.deepEqual(committedAmbience, {
+      metronomeBpm: 112,
+      lightingId: "headlight",
+      revision: 2,
+      effectiveAt: clock + 800,
+      updatedAt: clock,
+    });
+    await realtime.ref(`freeTables/active/${raceHostUid}`).remove();
+    releaseCommitted();
+    await assert.rejects(
+      racedUpdate,
+      (error) => error?.code === "aborted",
+    );
+    assert.deepEqual(
+      (await realtime.ref(`${sessionPath}/ambience`).get()).val(),
+      committedAmbience,
+    );
+
+    await realtime.ref(`freeTables/active/${raceHostUid}`).set(active);
+    await perform(raceVisitorUid, "end", {
+      sessionId,
+      reason: "safe_exit",
+    });
+  });
+
+  test("a legacy host active claim repairs only against the exact current session", async () => {
+    const legacyHostUid = `ambience-legacy-host-${suffix}`;
+    const legacyVisitorUid = `ambience-legacy-visitor-${suffix}`;
+    const {
+      sessionId,
+      generation,
+      active,
+      hostActive,
+    } = await establishSeat(legacyHostUid, legacyVisitorUid);
+    const activePath = `freeTables/active/${legacyHostUid}`;
+    const hostActivePath = `freeTables/hostActive/${legacyHostUid}`;
+    const sessionPath = `freeTables/sessions/${sessionId}`;
+
+    await Promise.all([
+      realtime.ref(`${activePath}/generation`).remove(),
+      realtime.ref(`${sessionPath}/ambience`).remove(),
+    ]);
+    assert.equal(
+      (await realtime.ref(`${sessionPath}/ambience`).get()).exists(),
+      false,
+    );
+    const repairedUpdate = await perform(legacyHostUid, "update_ambience", {
+      sessionId,
+      generation,
+      ambience: {
+        metronomeBpm: 104,
+        lightingId: "daylight",
+      },
+    });
+    assert.deepEqual(repairedUpdate.ambience, {
+      metronomeBpm: 104,
+      lightingId: "daylight",
+      revision: 1,
+      effectiveAt: clock + 800,
+      updatedAt: clock,
+    });
+    assert.deepEqual(
+      (await realtime.ref(`${sessionPath}/ambience`).get()).val(),
+      repairedUpdate.ambience,
+    );
+    assert.equal(
+      (await realtime.ref(`${activePath}/generation`).get()).val(),
+      generation,
+    );
+    clock += 3_000;
+
+    await realtime.ref(`${activePath}/generation`).remove();
+    await realtime.ref(`${sessionPath}/participants/${legacyHostUid}`).remove();
+    await assert.rejects(
+      perform(legacyHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 108,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    assert.equal(
+      (await realtime.ref(`${activePath}/generation`).get()).exists(),
+      false,
+    );
+    await realtime.ref(`${sessionPath}/participants/${legacyHostUid}`).set(true);
+
+    const mismatchedRoomId = crypto.randomBytes(18).toString("base64url");
+    await realtime.ref(`${hostActivePath}/roomId`).set(mismatchedRoomId);
+    await assert.rejects(
+      perform(legacyHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 108,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    assert.equal(
+      (await realtime.ref(`${activePath}/generation`).get()).exists(),
+      false,
+    );
+    await realtime.ref(hostActivePath).set(hostActive);
+
+    await realtime.ref(hostActivePath).remove();
+    await assert.rejects(
+      perform(legacyHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 108,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    assert.equal(
+      (await realtime.ref(`${activePath}/generation`).get()).exists(),
+      false,
+    );
+    await realtime.ref(hostActivePath).set(hostActive);
+
+    await realtime.ref(`${activePath}/generation`).set(generation + 1);
+    await assert.rejects(
+      perform(legacyHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 108,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    assert.equal(
+      (await realtime.ref(`${activePath}/generation`).get()).val(),
+      generation + 1,
+    );
+
+    await realtime.ref(`${activePath}/generation`).set(String(generation));
+    await assert.rejects(
+      perform(legacyHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 108,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    assert.equal(
+      (await realtime.ref(`${activePath}/generation`).get()).val(),
+      String(generation),
+    );
+
+    await realtime.ref(activePath).remove();
+    await assert.rejects(
+      perform(legacyHostUid, "update_ambience", {
+        sessionId,
+        generation,
+        ambience: {
+          metronomeBpm: 108,
+          lightingId: "headlight",
+        },
+      }),
+      (error) => error?.code === "failed-precondition",
+    );
+    assert.equal((await realtime.ref(activePath).get()).exists(), false);
+    assert.equal(
+      (await realtime.ref(`${sessionPath}/ambience/revision`).get()).val(),
+      1,
+    );
+
+    await Promise.all([
+      realtime.ref(activePath).set(active),
+      realtime.ref(hostActivePath).set(hostActive),
+    ]);
+    await perform(legacyVisitorUid, "end", {
+      sessionId,
+      reason: "safe_exit",
+    });
   });
 
   test("an older open generation cannot overwrite or roll back a newer shelf heartbeat", async (t) => {

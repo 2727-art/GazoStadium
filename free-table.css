@@ -1097,7 +1097,7 @@
 .free-table-session {
   padding: 0;
   display: grid;
-  grid-template-rows: auto minmax(16rem, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(16rem, 1fr) auto auto;
 }
 
 .free-table-session-header {
@@ -1341,6 +1341,398 @@
   --free-warm-dark: #4d5278;
 }
 
+.lighting-natural {
+  --free-lighting-glow-left: rgba(247, 206, 137, 0.25);
+  --free-lighting-glow-right: rgba(117, 151, 121, 0.18);
+  --free-lighting-beam-left: rgba(255, 244, 213, 0.16);
+  --free-lighting-beam-right: rgba(239, 232, 190, 0.13);
+  --free-lighting-surface-start: #f3e9d8;
+  --free-lighting-surface-middle: #fffaf0;
+  --free-lighting-surface-end: #ebe3d4;
+}
+
+.lighting-indirect {
+  --free-lighting-glow-left: rgba(230, 157, 91, 0.25);
+  --free-lighting-glow-right: rgba(137, 100, 75, 0.15);
+  --free-lighting-beam-left: rgba(255, 216, 147, 0.2);
+  --free-lighting-beam-right: rgba(224, 167, 102, 0.13);
+  --free-lighting-surface-start: #eee1d2;
+  --free-lighting-surface-middle: #fff7e9;
+  --free-lighting-surface-end: #e8ddd1;
+}
+
+.lighting-daylight {
+  --free-lighting-glow-left: rgba(184, 216, 222, 0.25);
+  --free-lighting-glow-right: rgba(137, 178, 182, 0.16);
+  --free-lighting-beam-left: rgba(241, 250, 248, 0.25);
+  --free-lighting-beam-right: rgba(210, 230, 225, 0.15);
+  --free-lighting-surface-start: #edf1ed;
+  --free-lighting-surface-middle: #fffdf6;
+  --free-lighting-surface-end: #e6ece8;
+}
+
+.lighting-headlight {
+  --free-lighting-glow-left: rgba(214, 180, 122, 0.13);
+  --free-lighting-glow-right: rgba(115, 129, 125, 0.12);
+  --free-lighting-beam-left: rgba(255, 225, 164, 0.24);
+  --free-lighting-beam-right: rgba(255, 236, 195, 0.21);
+  --free-lighting-surface-start: #e9e2d7;
+  --free-lighting-surface-middle: #fff9ed;
+  --free-lighting-surface-end: #e4ded4;
+}
+
+.free-table:is(
+  .lighting-natural,
+  .lighting-indirect,
+  .lighting-daylight,
+  .lighting-headlight
+),
+.free-table-room-card:is(
+  .lighting-natural,
+  .lighting-indirect,
+  .lighting-daylight,
+  .lighting-headlight
+),
+.free-table-my-room:is(
+  .lighting-natural,
+  .lighting-indirect,
+  .lighting-daylight,
+  .lighting-headlight
+) {
+  background:
+    radial-gradient(circle at 12% 8%, var(--free-lighting-glow-left), transparent 31rem),
+    radial-gradient(circle at 88% 4%, var(--free-lighting-glow-right), transparent 29rem),
+    radial-gradient(ellipse at 24% 100%, var(--free-lighting-beam-left), transparent 37rem),
+    radial-gradient(ellipse at 76% 100%, var(--free-lighting-beam-right), transparent 37rem),
+    linear-gradient(
+      165deg,
+      var(--free-lighting-surface-start) 0%,
+      var(--free-lighting-surface-middle) 44%,
+      var(--free-lighting-surface-end) 100%
+    );
+}
+
+.free-table:is(
+  .lighting-natural,
+  .lighting-indirect,
+  .lighting-daylight,
+  .lighting-headlight
+) :is(
+  .button.danger,
+  [data-action="report-session"],
+  [data-action="report-recent-session"],
+  [data-action="report-invite-card"]
+) {
+  color: #7c332f;
+  border-color: rgba(124, 51, 47, 0.42);
+  background: rgba(255, 249, 245, 0.96);
+}
+
+.free-table:is(
+  .lighting-natural,
+  .lighting-indirect,
+  .lighting-daylight,
+  .lighting-headlight
+) :is(
+  button,
+  input,
+  textarea,
+  select,
+  summary,
+  a
+):focus-visible {
+  outline: 3px solid #6f3a27;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px #fffaf0;
+}
+
+.free-table-ambience-panel {
+  width: min(1120px, 100%);
+  margin: 0 auto 1rem;
+  padding: clamp(0.9rem, 2.5vw, 1.4rem);
+  border: 1px solid rgba(77, 67, 55, 0.24);
+  border-radius: 1.2rem;
+  display: grid;
+  gap: 0.9rem;
+  position: relative;
+  z-index: 2;
+  color: var(--free-ink);
+  background: rgba(255, 252, 245, 0.96);
+  box-shadow: 0 12px 30px rgba(54, 43, 32, 0.12);
+  font-family: system-ui, sans-serif;
+  transition:
+    border-color 500ms ease,
+    background-color 500ms ease,
+    box-shadow 500ms ease;
+}
+
+.free-table-ambience-panel.is-transitioning {
+  border-color: rgba(98, 125, 100, 0.48);
+  background: rgba(255, 253, 248, 0.99);
+  box-shadow: 0 14px 34px rgba(54, 43, 32, 0.15);
+}
+
+.free-table-ambience-panel > header,
+.free-table-ambience-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.free-table-ambience-panel h2,
+.free-table-ambience-panel h3,
+.free-table-ambience-panel p {
+  margin: 0;
+}
+
+.free-table-ambience-panel h2,
+.free-table-ambience-panel h3 {
+  color: var(--free-ink);
+  line-height: 1.4;
+}
+
+.free-table-ambience-panel p {
+  color: var(--free-muted);
+  line-height: 1.7;
+}
+
+.free-table-ambience-status {
+  max-width: 100%;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid rgba(78, 109, 85, 0.34);
+  border-radius: 999px;
+  color: #38563f;
+  background: #f0f5ed;
+  font-size: 0.75rem;
+  font-weight: 750;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.free-table-ambience-status.is-paused,
+.free-table-ambience-status.is-local {
+  color: #664f36;
+  border-color: rgba(112, 87, 58, 0.36);
+  background: #f8f0e4;
+}
+
+.free-table-ambience-status.is-error {
+  color: #7c332f;
+  border-color: rgba(124, 51, 47, 0.4);
+  background: #fff2ef;
+}
+
+.free-table-ambience-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: 0.8rem;
+}
+
+.free-table-ambience-fields > label,
+.free-table-ambience-fields > fieldset {
+  min-width: 0;
+}
+
+.free-table-ambience-fields label {
+  display: grid;
+  gap: 0.38rem;
+  color: var(--free-ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.free-table-ambience-fields :is(input, select) {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid rgba(77, 67, 55, 0.34);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  color: var(--free-ink);
+  background: #fffdf8;
+}
+
+.free-table-ambience-chips,
+.free-table-ambience-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.free-table-ambience-chip {
+  min-width: 0;
+  min-height: 2.55rem;
+  border: 1px solid rgba(77, 67, 55, 0.32);
+  border-radius: 999px;
+  padding: 0.55rem 0.8rem;
+  display: inline-flex;
+  gap: 0.38rem;
+  align-items: center;
+  justify-content: center;
+  color: var(--free-ink);
+  background: #fffdf8;
+  box-shadow: none;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: default;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+button.free-table-ambience-chip {
+  cursor: pointer;
+}
+
+button.free-table-ambience-chip:hover:not(:disabled) {
+  border-color: rgba(82, 111, 88, 0.58);
+  background: #f7faf3;
+}
+
+.free-table-ambience-chip[aria-pressed="true"],
+.free-table-ambience-chip.is-active,
+.free-table-ambience-chip:checked + label {
+  color: #294b33;
+  border-color: #54765c;
+  background: #edf5eb;
+  box-shadow: inset 0 0 0 1px #54765c;
+}
+
+.free-table-ambience-chip[aria-pressed="true"]::before,
+.free-table-ambience-chip.is-active::before {
+  content: "✓";
+  flex: 0 0 auto;
+  font-weight: 900;
+}
+
+.free-table-ambience-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.free-table-ambience-actions .button {
+  margin: 0;
+}
+
+.free-table-session > .free-table-ambience-panel {
+  margin-bottom: 0;
+  padding: 0.7rem clamp(1rem, 4vw, 2.5rem);
+  border-width: 0 0 1px;
+  border-radius: 0;
+  gap: 0.55rem;
+  box-shadow: 0 6px 18px rgba(54, 43, 32, 0.08);
+}
+
+.free-table-session .free-table-ambience-header {
+  align-items: center;
+}
+
+.free-table-session .free-table-ambience-header h2 {
+  font-size: clamp(1rem, 2.4vw, 1.25rem);
+}
+
+.free-table-session .free-table-ambience-header .free-table-eyebrow {
+  margin-bottom: 0.15rem;
+}
+
+.free-table-session .free-table-ambience-chip {
+  min-height: 2rem;
+  padding: 0.32rem 0.65rem;
+}
+
+.free-table-ambience-details {
+  border-top: 1px solid rgba(77, 67, 55, 0.2);
+  font-family: system-ui, sans-serif;
+}
+
+.free-table-ambience-details > summary {
+  min-height: 2.6rem;
+  padding: 0.45rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--free-ink);
+  cursor: pointer;
+}
+
+.free-table-ambience-details > summary::marker {
+  color: var(--free-warm-dark);
+}
+
+.free-table-ambience-details > summary > strong::before {
+  content: "▸";
+  margin-right: 0.4rem;
+  color: var(--free-warm-dark);
+}
+
+.free-table-ambience-details[open] > summary > strong::before {
+  content: "▾";
+}
+
+.free-table-ambience-details-body {
+  padding: 0.15rem 0 0.45rem;
+}
+
+.free-table-ambience-local-controls {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid rgba(77, 67, 55, 0.3);
+  border-radius: 1rem;
+  display: grid;
+  gap: 0.65rem;
+  color: var(--free-ink);
+  background: rgba(255, 253, 248, 0.98);
+  box-shadow: 0 5px 16px rgba(47, 37, 28, 0.1);
+}
+
+.free-table-ambience-sound-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.free-table-ambience-sound-controls .button {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.free-table-ambience-volume {
+  min-width: min(16rem, 100%);
+  flex: 1 1 18rem;
+  display: grid;
+  grid-template-columns: auto minmax(7rem, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  color: var(--free-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.free-table-ambience-volume input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 2rem;
+  margin: 0;
+  accent-color: #54765c;
+}
+
+.free-table-ambience-control-note {
+  color: var(--free-muted);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
 @media (max-width: 760px) {
   .free-table {
     padding: 0.75rem;
@@ -1476,6 +1868,57 @@
   }
 }
 
+@media (max-width: 480px) {
+  .free-table-ambience-panel {
+    padding: 0.85rem;
+    border-radius: 1rem;
+  }
+
+  .free-table-ambience-panel > header,
+  .free-table-ambience-header,
+  .free-table-ambience-actions,
+  .free-table-ambience-sound-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .free-table-ambience-status {
+    align-self: flex-start;
+  }
+
+  .free-table-ambience-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .free-table-ambience-chips,
+  .free-table-ambience-presets {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .free-table-ambience-chip,
+  .free-table-ambience-actions .button,
+  .free-table-ambience-sound-controls .button {
+    width: 100%;
+  }
+
+  .free-table-ambience-local-controls {
+    padding: 0.7rem;
+    backdrop-filter: none;
+  }
+
+  .free-table-ambience-volume {
+    min-width: 0;
+    flex: 0 0 auto;
+    grid-template-columns: 1fr auto;
+  }
+
+  .free-table-ambience-volume input[type="range"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .free-table *,
   .free-table *::before,
@@ -1484,5 +1927,164 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .free-table:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-room-card:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-my-room:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-ambience-panel,
+  .free-table-ambience-chip {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (prefers-contrast) {
+  .free-table:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-room-card:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-my-room:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ) {
+    background: var(--free-paper);
+  }
+
+  .free-table-ambience-panel,
+  .free-table-ambience-local-controls {
+    background: #fffdf8;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .free-table-ambience-panel,
+  .free-table-ambience-local-controls,
+  .free-table-ambience-chip,
+  .free-table-ambience-fields :is(input, select) {
+    border-width: 2px;
+    border-color: #2f2923;
+  }
+
+  .free-table-ambience-chip[aria-pressed="true"],
+  .free-table-ambience-chip.is-active,
+  .free-table-ambience-chip:checked + label {
+    color: #17371f;
+    border-color: #17371f;
+    background: #edf5eb;
+    box-shadow: inset 0 0 0 1px #17371f;
+  }
+
+  .free-table-ambience-status {
+    color: #17371f;
+    border: 2px solid #17371f;
+    background: #fff;
+  }
+
+  .free-table-ambience-status.is-error {
+    color: #711f1b;
+    border-color: #711f1b;
+    background: #fff;
+  }
+}
+
+@media (forced-colors: active) {
+  .free-table:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-room-card:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-my-room:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ),
+  .free-table-ambience-panel,
+  .free-table-ambience-local-controls {
+    color: CanvasText;
+    border-color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .free-table-ambience-panel :is(h2, h3, p, label, strong),
+  .free-table-ambience-control-note,
+  .free-table-ambience-volume {
+    color: CanvasText;
+  }
+
+  .free-table-ambience-chip,
+  .free-table-ambience-fields :is(input, select),
+  .free-table-ambience-status {
+    color: ButtonText;
+    border-color: ButtonText;
+    background: ButtonFace;
+    box-shadow: none;
+  }
+
+  .free-table-ambience-chip[aria-pressed="true"],
+  .free-table-ambience-chip.is-active,
+  .free-table-ambience-chip:checked + label {
+    color: HighlightText;
+    border-color: Highlight;
+    background: Highlight;
+    box-shadow: none;
+  }
+
+  .free-table-ambience-volume input[type="range"] {
+    accent-color: Highlight;
+  }
+
+  .free-table:is(
+    .lighting-natural,
+    .lighting-indirect,
+    .lighting-daylight,
+    .lighting-headlight
+  ) :is(
+    button,
+    input,
+    textarea,
+    select,
+    summary,
+    a
+  ):focus-visible {
+    outline: 3px solid Highlight;
+    box-shadow: none;
   }
 }
