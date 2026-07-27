@@ -10,6 +10,7 @@ const marketSource = fs.readFileSync(path.join(root, "market.js"), "utf8");
 const htmlSource = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const functionsSource = fs.readFileSync(path.join(root, "functions", "index.js"), "utf8");
 const rolloutSource = fs.readFileSync(path.join(root, "functions", "app-check-rollout.js"), "utf8");
+const databaseRules = JSON.parse(fs.readFileSync(path.join(root, "database.rules.json"), "utf8"));
 
 test("VALUE MARKET obtains validated TURN credentials with a safe STUN fallback", () => {
   assert.match(marketSource, /httpsCallable\(functions,\s*"getP2pIceServers"\)/);
@@ -42,6 +43,14 @@ test("reconnections fence stale signaling and clean up their timers", () => {
   assert.match(marketSource, /incomingConnectionId\s*!==\s*state\.peerConnectionId/);
   assert.match(marketSource, /clearMarketPeerRecoveryTimer\(\)/);
   assert.match(marketSource, /state\.peerRecoveryAttempts\s*=\s*0/);
+
+  const signalRules = databaseRules.rules.online.valueMarketRooms.$roomId
+    .signals.$targetUid.$signalId;
+  assert.equal(
+    signalRules.connectionId[".validate"],
+    "newData.isString() && (newData.val().length === 0 || (newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9-]+$/)))",
+  );
+  assert.equal(signalRules.$other[".validate"], false);
 });
 
 test("transient Firestore listener errors retry without dropping an active deal", () => {

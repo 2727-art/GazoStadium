@@ -912,6 +912,9 @@
                 "createdAt": {
                   ".validate": "newData.isNumber() && newData.val() >= now - 300000 && newData.val() <= now + 300000"
                 },
+                "connectionId": {
+                  ".validate": "newData.isString() && (newData.val().length === 0 || (newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9-]+$/)))"
+                },
                 "$other": {
                   ".validate": false
                 }
