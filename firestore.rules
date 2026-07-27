@@ -230,6 +230,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /valueMarketShopSalesModes/{uid} {
+      allow read, write: if false;
+    }
+
     match /valueMarketShopPublic/{publicSellerId} {
       allow read, write: if false;
     }

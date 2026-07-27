@@ -77,6 +77,7 @@ const MARKET_SHOP_TAGLINE_MAX_LENGTH = 40;
 const MARKET_SHOP_MAX_SPECIALTY_TAGS = 3;
 const MARKET_SHOP_MAX_SERVICE_STYLES = 2;
 const OSHIJO_SERVICE_STYLE_ID = "oshijo";
+const MARKET_SHOP_MAX_SERVICE_STYLE_IDS = MARKET_SHOP_MAX_SERVICE_STYLES + 1;
 const OSHIJO_CLOSING_MODE = "oshijo";
 const OSHIJO_MAX_CLAIM_AMOUNT = 999_999;
 const OSHIJO_RANKING_CAP = 500;
@@ -109,7 +110,7 @@ const MARKET_SHOP_FALLBACK_CATALOG = Object.freeze({
     Object.freeze({ id: "concise", label: "ひとこと勝負" }),
     Object.freeze({ id: "audio", label: "音声で熱く" }),
     Object.freeze({ id: "careful", label: "じっくり丁寧" }),
-    Object.freeze({ id: "oshijo", label: "推し嬢（熱血クロージング）" }),
+    Object.freeze({ id: "oshijo", label: "推し嬢モード（商談後に自由請求）" }),
   ]),
   themes: Object.freeze([
     Object.freeze({ id: "standard", label: "スタンダード" }),
@@ -256,6 +257,8 @@ function createState() {
     shopBusy: false,
     shopStatus: "idle",
     shopErrorMessage: "",
+    shopDirty: false,
+    shopSalesModeContractReady: false,
     matchMode: "discover",
     selectedFavoriteSellerId: "",
     relationshipFeedback: createRelationshipFeedbackState(),
@@ -413,10 +416,15 @@ function marketSettlement(price, room = null) {
   };
 }
 
-function renderMarketFeeBreakdown(price, { id = "", room = null, compact = false } = {}) {
+function renderMarketFeeBreakdown(price, {
+  id = "",
+  room = null,
+  compact = false,
+  estimate = false,
+} = {}) {
   const settlement = marketSettlement(price, room);
   return `<dl class="market-fee-breakdown ${compact ? "is-compact" : ""}" ${id ? `id="${id}" aria-live="polite"` : ""}>
-    <div><dt>成約価格</dt><dd>${formatAnjuPay(settlement.grossAmount)}</dd></div>
+    <div><dt>${estimate ? "基準額で通常成約" : "成約価格"}</dt><dd>${formatAnjuPay(settlement.grossAmount)}</dd></div>
     <div><dt>成約手数料（売り手負担）</dt><dd>−${formatAnjuPay(settlement.feeAmount)}</dd></div>
     ${settlement.patronFundSubsidy > 0 ? `<div><dt>パトロン基金補填</dt><dd>＋${formatAnjuPay(settlement.patronFundSubsidy)}</dd></div>` : ""}
     <div><dt>売り手受取</dt><dd>${formatAnjuPay(settlement.sellerProceeds)}</dd></div>
@@ -631,6 +639,23 @@ function normalizeShopIdList(value, maximum = 100) {
   return [...new Set(candidates.map(normalizeShopOptionId).filter(Boolean))].slice(0, maximum);
 }
 
+function normalizeMarketServiceStyles(value) {
+  const selected = normalizeShopIdList(value, MARKET_SHOP_MAX_SERVICE_STYLE_IDS);
+  return selected
+    .filter((id) => id !== OSHIJO_SERVICE_STYLE_ID)
+    .slice(0, MARKET_SHOP_MAX_SERVICE_STYLES);
+}
+
+function normalizeMarketSalesMode(value, legacyServiceStyles) {
+  const explicit = normalizeShopOptionId(value);
+  if (explicit === OSHIJO_CLOSING_MODE) return OSHIJO_CLOSING_MODE;
+  if (explicit === "normal") return "normal";
+  return normalizeShopIdList(legacyServiceStyles, MARKET_SHOP_MAX_SERVICE_STYLE_IDS)
+    .includes(OSHIJO_SERVICE_STYLE_ID)
+    ? OSHIJO_CLOSING_MODE
+    : "normal";
+}
+
 function normalizeOwnedTitleIds(value) {
   return normalizeShopIdList(value).filter((titleId) => Boolean(getPlayerTitleProduct(titleId)));
 }
@@ -691,6 +716,9 @@ function normalizeMarketShop(value) {
     : value && typeof value === "object"
       ? value
       : {};
+  const legacyServiceStyles = source.serviceStyles || source.styles;
+  const serviceStyles = source.regularServiceStyles || legacyServiceStyles;
+  const regularServiceStyles = normalizeMarketServiceStyles(serviceStyles);
   return {
     publicSellerId: normalizeShopText(source.publicSellerId || source.sellerPublicId, 96),
     shopName: normalizeShopText(source.shopName || source.name, MARKET_SHOP_NAME_MAX_LENGTH),
@@ -699,7 +727,8 @@ function normalizeMarketShop(value) {
       MARKET_SHOP_TAGLINE_MAX_LENGTH,
     ),
     specialtyTags: normalizeShopIdList(source.specialtyTags || source.specialties || source.tags, MARKET_SHOP_MAX_SPECIALTY_TAGS),
-    serviceStyles: normalizeShopIdList(source.serviceStyles || source.styles, MARKET_SHOP_MAX_SERVICE_STYLES),
+    serviceStyles: regularServiceStyles,
+    salesMode: normalizeMarketSalesMode(source.salesMode, legacyServiceStyles),
     themeId: normalizeShopOptionId(source.themeId || source.theme) || "standard",
     sealId: normalizeShopOptionId(source.sealId || source.seal) || "heart",
     titleId: normalizeShopOptionId(source.titleId),
@@ -710,7 +739,7 @@ function normalizeMarketShop(value) {
   };
 }
 function marketShopSupportsOshijo(value) {
-  return normalizeMarketShop(value).serviceStyles.includes(OSHIJO_SERVICE_STYLE_ID);
+  return normalizeMarketShop(value).salesMode === OSHIJO_CLOSING_MODE;
 }
 
 function isOshijoClosing(room) {
@@ -1196,6 +1225,13 @@ function previewMarketFavorites() {
 
 function applyMarketShopResponse(value) {
   const data = value && typeof value === "object" ? value : {};
+  const salesModeCatalog = Array.isArray(data.catalog?.salesModes)
+    ? data.catalog.salesModes.map((option) => normalizeShopOptionId(option?.id || option))
+    : [];
+  const savedSalesMode = normalizeShopOptionId(data.shop?.salesMode);
+  state.shopSalesModeContractReady = salesModeCatalog.includes("normal")
+    && salesModeCatalog.includes(OSHIJO_CLOSING_MODE)
+    && ["normal", OSHIJO_CLOSING_MODE].includes(savedSalesMode);
   applyMarketPatronExperience(data);
   state.shopCatalog = normalizeMarketShopCatalog(data.catalog || state.shopCatalog);
   state.shop = normalizeMarketShop(data.shop || state.shop);
@@ -1219,6 +1255,7 @@ function applyMarketShopResponse(value) {
   }
   state.shopStatus = "ready";
   state.shopErrorMessage = "";
+  state.shopDirty = false;
 }
 
 function favoriteForSeller(publicSellerId) {
@@ -1263,7 +1300,7 @@ function alignBudgetToMarketFavorite(favorite, { announce = false } = {}) {
   if (adjusted) {
     state.maxBudget = requiredBudget;
     if (announce) {
-      showToast(`前回価格に合わせて購入上限を${formatAnjuPay(requiredBudget)}へ調整しました。`);
+      showToast(`前回価格に合わせてマッチング上限を${formatAnjuPay(requiredBudget)}へ調整しました。`);
     }
   }
   return { ok: true, previousPrice, requiredBudget, shortage: 0, adjusted };
@@ -1417,6 +1454,7 @@ async function ensureAuthenticated(generation, { openLandingRankings = false } =
     ]);
     state.shopStatus = "ready";
     state.shopErrorMessage = "";
+    state.shopSalesModeContractReady = true;
     state.authReady = true;
     setMarketChrome("VALUE MARKET PREVIEW");
     if (openLandingRankings) {
@@ -1712,6 +1750,7 @@ function renderSellerShopCard(shopValue, {
     || shop.tagline
     || shop.specialtyTags.length
     || shop.serviceStyles.length
+    || shop.salesMode === OSHIJO_CLOSING_MODE
     || shop.titleId
     || shop.shopCharmId
     || shop.repeatWelcome,
@@ -1738,6 +1777,9 @@ function renderSellerShopCard(shopValue, {
   const specialtyTags = shop.specialtyTags
     .map((id) => `<span>#${escapeHtml(marketShopCatalogLabel("specialtyTags", id))}</span>`)
     .join("");
+  const salesMode = shop.salesMode === OSHIJO_CLOSING_MODE
+    ? `<span>${escapeHtml(marketShopCatalogLabel("serviceStyles", OSHIJO_SERVICE_STYLE_ID))}</span>`
+    : "";
   const serviceStyles = shop.serviceStyles
     .map((id) => `<span>${escapeHtml(marketShopCatalogLabel("serviceStyles", id))}</span>`)
     .join("");
@@ -1752,6 +1794,7 @@ function renderSellerShopCard(shopValue, {
     </div>
     ${relationshipBadges ? `<div class="market-shop-relationship">${relationshipBadges}</div>` : ""}
     ${specialtyTags ? `<div class="market-shop-tags" aria-label="得意タグ">${specialtyTags}</div>` : ""}
+    ${salesMode ? `<div class="market-shop-styles market-shop-sales-mode" aria-label="販売モード">${salesMode}</div>` : ""}
     ${serviceStyles ? `<div class="market-shop-styles" aria-label="接客スタイル">${serviceStyles}</div>` : ""}
     ${showVerified ? renderSellerVerified(shop.verified) : ""}
   </article>`;
@@ -1919,14 +1962,35 @@ function renderRecommendedShelf() {
   </section>`;
 }
 
-function renderMarketShopOptionChecks(group, selectedIds, maximum, inputName) {
-  const locked = state.busy || state.shopBusy || state.queueJoinPending;
-  return state.shopCatalog[group].map((option) => `<label><input type="checkbox" name="${inputName}" value="${escapeHtml(option.id)}" ${selectedIds.includes(option.id) ? "checked" : ""} ${locked ? "disabled" : ""} /><span>${escapeHtml(option.label)}</span></label>`).join("");
+function renderMarketShopOptionChecks(
+  group,
+  selectedIds,
+  maximum,
+  inputName,
+  { excludeIds = [] } = {},
+) {
+  const locked = state.busy
+    || state.shopBusy
+    || state.queueJoinPending
+    || state.shopStatus === "error"
+    || !state.shopSalesModeContractReady;
+  const excluded = new Set(excludeIds);
+  return state.shopCatalog[group]
+    .filter((option) => !excluded.has(option.id))
+    .map((option) => `<label><input type="checkbox" name="${inputName}" value="${escapeHtml(option.id)}" ${selectedIds.includes(option.id) ? "checked" : ""} ${locked ? "disabled" : ""} /><span>${escapeHtml(option.label)}</span></label>`)
+    .join("");
 }
 
 function renderMarketShopSettings() {
   const shop = normalizeMarketShop(state.shop);
-  const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  const shopUnavailable = state.shopStatus === "error";
+  const shopContractUnavailable = state.shopStatus === "ready"
+    && !state.shopSalesModeContractReady;
+  const locked = state.busy
+    || state.shopBusy
+    || state.queueJoinPending
+    || shopUnavailable
+    || shopContractUnavailable;
   const titleIds = [...state.ownedTitleIds];
   if (shop.titleId && getPlayerTitleProduct(shop.titleId) && !titleIds.includes(shop.titleId)) titleIds.push(shop.titleId);
   const titleOptions = titleIds.map((titleId) => {
@@ -1948,11 +2012,17 @@ function renderMarketShopSettings() {
   }).join("");
   const statusNote = state.shopStatus === "loading"
     ? `<p class="market-shop-status">推し値商店を読み込んでいます…</p>`
+    : state.shopStatus === "saving"
+      ? `<p id="marketShopSaveNotice" class="market-shop-status">店主カードの変更を保存しています…</p>`
     : state.shopStatus === "save-error"
-      ? `<p class="market-shop-status is-error"><strong>未保存です。</strong> ${escapeHtml(state.shopErrorMessage || "通信を確認して、もう一度保存してください。")}</p>`
+      ? `<p id="marketShopSaveNotice" class="market-shop-status is-error"><strong>未保存です。</strong> ${escapeHtml(state.shopErrorMessage || "通信を確認して、もう一度保存してください。")}</p>`
+      : state.shopDirty
+        ? `<p id="marketShopSaveNotice" class="market-shop-status is-unsaved"><strong>未保存の変更があります。</strong> 保存するまで売り手として待機できません。</p>`
       : state.shopStatus === "error"
-        ? `<p class="market-shop-status is-error">商店設定を読み込めませんでした。従来の市場にはそのまま参加できます。保存すると再接続します。</p>`
-        : "";
+        ? `<div id="marketShopSaveNotice" class="market-shop-status is-error"><strong>店主カードと販売モードを確認できませんでした。</strong> 売り手として待機する前に再読み込みしてください。<button type="button" class="button button-ghost button-small" data-market-reload-shop>店主カードを再読み込み</button></div>`
+        : shopContractUnavailable
+          ? `<div id="marketShopSaveNotice" class="market-shop-status is-error"><strong>販売モード設定の更新を確認できません。</strong> 現在の店主カードは使えますが、設定変更はページを再読み込みしてから行ってください。<button type="button" class="button button-ghost button-small" data-market-reload-shop>更新を再確認</button></div>`
+        : `<p id="marketShopSaveNotice" class="market-shop-status is-saved">店主カードは保存済みです。</p>`;
   return `<section class="market-shop-settings" aria-labelledby="marketShopSettingsTitle">
     <div class="market-shop-section-head"><div><span class="eyebrow">YOUR VALUE SHOP</span><h2 id="marketShopSettingsTitle">推し値商店</h2><p>何を売るかだけでなく、誰がどう届けるかを店主カードにします。</p></div><strong>公開する情報を自分で編集</strong></div>
     ${statusNote}
@@ -1963,7 +2033,11 @@ function renderMarketShopSettings() {
           <label class="field"><span>商店の理念（任意・${MARKET_SHOP_TAGLINE_MAX_LENGTH}文字）</span><input id="marketShopTagline" maxlength="${MARKET_SHOP_TAGLINE_MAX_LENGTH}" value="${escapeHtml(shop.tagline)}" placeholder="推しの魅力を丁寧に届けます" ${locked ? "disabled" : ""} /></label>
         </div>
         <fieldset class="market-shop-checks"><legend>得意タグ <small>最大${MARKET_SHOP_MAX_SPECIALTY_TAGS}個</small></legend><div class="market-shop-option-grid">${renderMarketShopOptionChecks("specialtyTags", shop.specialtyTags, MARKET_SHOP_MAX_SPECIALTY_TAGS, "marketShopSpecialty")}</div></fieldset>
-        <fieldset class="market-shop-checks"><legend>接客スタイル <small>最大${MARKET_SHOP_MAX_SERVICE_STYLES}個</small></legend><div class="market-shop-option-grid">${renderMarketShopOptionChecks("serviceStyles", shop.serviceStyles, MARKET_SHOP_MAX_SERVICE_STYLES, "marketShopServiceStyle")}</div></fieldset>
+        <fieldset class="market-shop-checks"><legend>接客スタイル <small>最大${MARKET_SHOP_MAX_SERVICE_STYLES}個・販売モードとは別</small></legend><div class="market-shop-option-grid">${renderMarketShopOptionChecks("serviceStyles", shop.serviceStyles, MARKET_SHOP_MAX_SERVICE_STYLES, "marketShopServiceStyle", { excludeIds: [OSHIJO_SERVICE_STYLE_ID] })}</div></fieldset>
+        <aside class="market-oshijo-setup-guide">
+          <strong>推し嬢モードの使い方</strong>
+          <ol><li><b>1</b><span>出品欄で「推し嬢モード」を選ぶ</span></li><li><b>2</b><span>店主カードの変更を保存する</span></li><li><b>3</b><span>マッチ後に営業を1回送り、自由請求額を決める</span></li></ol>
+        </aside>
         <div class="market-shop-fields is-three-column">
           <label class="field"><span>カードテーマ</span><select id="marketShopTheme" ${locked ? "disabled" : ""}>${state.shopCatalog.themes.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.themeId ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}</select></label>
           <label class="field"><span>商店の印</span><select id="marketShopSeal" ${locked ? "disabled" : ""}>${state.shopCatalog.seals.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === shop.sealId ? "selected" : ""}>${escapeHtml(`${option.icon ? `${option.icon} ` : ""}${option.label}`)}</option>`).join("")}</select></label>
@@ -1982,7 +2056,7 @@ function renderMarketShopSettings() {
           </div>
         </fieldset>
         <label class="market-profile-check market-shop-repeat-check"><input id="marketShopRepeatWelcome" type="checkbox" ${shop.repeatWelcome ? "checked" : ""} ${locked ? "disabled" : ""} /><span>「常連さん歓迎」を店主カードへ表示する</span></label>
-        <button class="button button-primary" type="submit" ${!state.authReady || locked ? "disabled" : ""}>${state.shopBusy ? "保存中…" : "推し値商店を保存"}</button>
+        <button class="button button-primary" id="marketShopSaveButton" type="submit" ${!state.authReady || locked ? "disabled" : ""}>${state.shopBusy ? "保存中…" : "店主カードの変更を保存"}</button>
       </form>
       <div class="market-shop-owner-preview">
         ${renderSellerShopCard(shop, { sellerName: state.name, force: true, heading: "PUBLIC OWNER CARD" })}
@@ -2002,9 +2076,9 @@ function favoritePriceCopy(favorite) {
   }
   const requiredBudget = marketFavoriteRequiredBudget(favorite);
   if (requiredBudget && Number(state.maxBudget) < requiredBudget) {
-    return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ 選ぶと購入上限を${formatAnjuPay(requiredBudget)}へ調整`;
+    return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ 選ぶとマッチング上限を${formatAnjuPay(requiredBudget)}へ調整`;
   }
-  return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ 現在の購入上限で届きます`;
+  return `前回 ${formatAnjuPay(price)} ＋ 着手料${formatAnjuPay(ENTRY_FEE)} ／ 現在のマッチング上限で届きます`;
 }
 
 function renderMarketFavoritesBook() {
@@ -2047,13 +2121,27 @@ function renderMarketFavoritesBook() {
 function renderSetup() {
   const seller = state.role === "seller";
   const locked = state.busy || state.shopBusy || state.queueJoinPending;
+  const sellerShop = normalizeMarketShop(state.shop);
+  const sellerOshijoMode = seller && marketShopSupportsOshijo(sellerShop);
+  const sellerShopUnconfirmed = seller && ![
+    "ready",
+    "dirty",
+    "saving",
+    "save-error",
+  ].includes(state.shopStatus);
+  const sellerShopContractUnavailable = seller
+    && state.shopStatus === "ready"
+    && !state.shopSalesModeContractReady;
+  const modeControlsLocked = locked
+    || sellerShopUnconfirmed
+    || sellerShopContractUnavailable;
   const selectedFavorite = !seller && state.matchMode === "favorites"
     ? matchableMarketFavorite(state.selectedFavoriteSellerId)
     : null;
   const preferredRecommended = !seller && state.matchMode === "discover"
     ? preferredRecommendedShop()
     : null;
-  const buyerSearchSummary = !seller
+  const setupSummary = !seller
     ? `<div class="market-safety-note market-preferred-summary" role="status">
       <strong>${selectedFavorite
     ? `常連帳「${escapeHtml(selectedFavorite.shopName || "選択した商店")}」を指名`
@@ -2067,10 +2155,24 @@ function renderSetup() {
       : "価格条件が合う売り手を一般市場から探します。"}</p>
       <button type="button" class="button button-ghost button-small" id="marketSetupOptionsButton" ${locked ? "disabled" : ""}>探し方・常連帳を変更</button>
     </div>`
-    : `<div class="market-safety-note market-preferred-summary">
-      <strong>店主カード：${escapeHtml(normalizeMarketShop(state.shop).shopName || "推し値商店")}</strong>
-      <p>現在保存されている店主カードで待機します。</p>
-      <button type="button" class="button button-ghost button-small" id="marketSetupOptionsButton" ${locked ? "disabled" : ""}>店主カードを編集</button>
+    : sellerShopUnconfirmed
+      ? `<div id="marketSellerModeStatus" class="market-safety-note market-preferred-summary market-seller-mode-status is-error" role="status" aria-live="polite">
+      <strong>販売モードを確認できません</strong>
+      <p>${state.shopStatus === "error" ? "店主カードの取得に失敗しました。実際の設定と画面表示が食い違う可能性があるため、売り手待機を停止しています。" : "店主カードと販売モードを確認しています。確認が終わるまでお待ちください。"}</p>
+      ${state.shopStatus === "error" ? `<button type="button" class="button button-ghost button-small" data-market-reload-shop>店主カードを再読み込み</button>` : ""}
+    </div>`
+      : sellerShopContractUnavailable
+        ? `<div id="marketSellerModeStatus" class="market-safety-note market-preferred-summary market-seller-mode-status is-error" role="status" aria-live="polite">
+      <strong>販売モード：${sellerOshijoMode ? "推し嬢モード ON" : "推し嬢モード OFF／通常営業"}（設定更新待ち）</strong>
+      <p>現在保存済みのモードでは待機できます。モードや店主カードを変更するには、更新を再確認してください。</p>
+      <button type="button" class="button button-ghost button-small" data-market-reload-shop>更新を再確認</button>
+    </div>`
+      : `<div id="marketSellerModeStatus" class="market-safety-note market-preferred-summary market-seller-mode-status ${sellerOshijoMode ? "is-oshijo" : ""} ${state.shopDirty ? "is-unsaved" : ""}" role="status" aria-live="polite">
+      <strong>販売モード：${sellerOshijoMode ? "推し嬢モード ON" : "推し嬢モード OFF／通常営業"}</strong>
+      <p>${sellerOshijoMode
+    ? `営業を1回送った後、1〜${formatAnjuPay(OSHIJO_MAX_CLAIM_AMOUNT)}を自由請求できます。`
+    : "現在は出品時の販売価格で判断してもらう通常営業です。自由請求を使うには、上の推し嬢モードを選んで保存してください。"} <span id="marketSellerModeSaveState">${state.shopDirty ? "未保存の変更があります。" : `店主カード「${escapeHtml(sellerShop.shopName || "推し値商店")}」へ保存済みです。`}</span></p>
+      <button type="button" class="button button-ghost button-small" id="marketSetupOptionsButton" ${locked ? "disabled" : ""}>${state.shopDirty ? "未保存の設定を確認" : "店主カードの詳細を編集"}</button>
     </div>`;
   const imagePreview = state.image?.url
     ? `<figure class="market-listing-preview"><img src="${escapeHtml(state.image.url)}" alt="出品する画像のプレビュー" /><figcaption>${escapeHtml(state.listingTitle || "無題の推し")} / ${formatAnjuPay(state.askingPrice)}</figcaption></figure>`
@@ -2088,20 +2190,36 @@ function renderSetup() {
     <div class="market-entry-grid">
       <form class="market-entry-card" id="marketEntryForm">
         <label class="field"><span>プレイヤーネーム</span><input id="marketName" maxlength="16" value="${escapeHtml(state.name)}" required /></label>
-        ${seller ? `<label class="market-image-picker">${imagePreview}<input id="marketImageInput" type="file" accept="image/*" /></label>
+        ${seller ? `<fieldset class="market-seller-sales-mode" aria-describedby="marketSellerSalesModeHelp">
+          <legend>販売モード</legend>
+          <div class="market-seller-sales-mode-options">
+            <label class="${!sellerShopUnconfirmed && !sellerOshijoMode ? "is-selected" : ""}"><input type="radio" name="marketSellerSalesMode" value="normal" ${!sellerShopUnconfirmed && !sellerOshijoMode ? "checked" : ""} ${modeControlsLocked ? "disabled" : ""} /><span><strong>通常営業</strong><small>出品時に決めた販売価格で商談</small></span></label>
+            <label class="${!sellerShopUnconfirmed && sellerOshijoMode ? "is-selected" : ""}"><input type="radio" name="marketSellerSalesMode" value="oshijo" ${!sellerShopUnconfirmed && sellerOshijoMode ? "checked" : ""} ${modeControlsLocked ? "disabled" : ""} /><span><strong>推し嬢モード（商談後に自由請求）</strong><small>営業後に1〜${formatAnjuPay(OSHIJO_MAX_CLAIM_AMOUNT)}を提示</small></span></label>
+          </div>
+          <p id="marketSellerSalesModeHelp">${sellerShopUnconfirmed
+    ? "店主カードを読み込むと、保存済みの販売モードをここへ表示します。"
+    : sellerShopContractUnavailable
+      ? "現在保存されている販売モードを表示しています。更新の確認が終わるまで設定は変更できません。"
+    : sellerOshijoMode
+    ? "マッチング基準額は相手探しと、通常価格で営業を完了する場合に使います。自由請求額は営業を1回送った後に決め、買い手には支払義務のない警告画面を先に表示します。"
+    : "通常営業では、出品時の販売価格がそのまま購入価格になります。推し嬢モードへ切り替えると、商談後に自由請求できます。"}</p>
+          <button type="button" class="button button-ghost button-small market-save-sales-mode" id="marketSaveSalesModeButton" ${state.shopDirty ? "" : "hidden"} ${locked ? "disabled" : ""}>販売モードと店主カードを保存</button>
+        </fieldset>
+        <label class="market-image-picker">${imagePreview}<input id="marketImageInput" type="file" accept="image/*" /></label>
           <label class="field"><span>出品タイトル（30文字）</span><input id="marketListingTitle" maxlength="30" value="${escapeHtml(state.listingTitle)}" placeholder="この一枚の呼び名" required /></label>
           <div class="market-inline-fields">
-            <label class="field"><span>販売価格</span><select id="marketAskingPrice" aria-describedby="marketSetupFeeBreakdown">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.askingPrice) ? "selected" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select></label>
+            <label class="field"><span>${sellerOshijoMode ? "マッチング基準額" : "販売価格"}</span><select id="marketAskingPrice" aria-describedby="marketAskingPriceHelp marketSetupFeeBreakdown">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.askingPrice) ? "selected" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select><small id="marketAskingPriceHelp">${sellerOshijoMode ? "この金額未満をマッチング上限にした買い手とはマッチしません。自由請求額は営業後に決めます。" : "通常営業では、この金額が購入価格になります。"}</small></label>
             <label class="field"><span>営業方法</span><select id="marketPitchStyle"><option value="either" ${state.pitchStyle === "either" ? "selected" : ""}>チャット／10秒音声</option><option value="chat" ${state.pitchStyle === "chat" ? "selected" : ""}>チャット中心</option><option value="audio" ${state.pitchStyle === "audio" ? "selected" : ""}>10秒音声中心</option></select></label>
           </div>
-          ${renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true })}`
-          : `<label class="field"><span>購入上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select><small>販売価格が上限以内の売り手だけとマッチします。着手料${formatAnjuPay(ENTRY_FEE)}は別途必要です。</small></label>`}
-        ${buyerSearchSummary}
-        <button class="button button-primary market-join-button" type="submit" ${!state.authReady || locked || (seller && !state.image) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.queueJoinPending || state.busy ? "参加処理中…" : seller ? "売り手として待機する" : "買い手として待機する"}</button>
+          ${renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true, estimate: sellerOshijoMode })}`
+          : `<label class="field"><span>マッチング上限</span><select id="marketMaxBudget">${MARKET_PRICES.map((price) => `<option value="${price}" ${price === Number(state.maxBudget) ? "selected" : ""} ${price + ENTRY_FEE > state.balance ? "disabled" : ""}>${formatAnjuPay(price)}</option>`).join("")}</select><small>この金額以下の販売価格の売り手とマッチします。推し嬢モードの自由請求額を制限する金額ではありません。着手料${formatAnjuPay(ENTRY_FEE)}は別途必要です。</small></label>`}
+        ${setupSummary}
+        <button class="button button-primary market-join-button" type="submit" ${!state.authReady || locked || (seller && (!state.image || state.shopStatus !== "ready")) || (!seller && state.balance < 15) ? "disabled" : ""}>${state.queueJoinPending || state.busy ? "参加処理中…" : seller ? state.shopDirty || state.shopStatus === "save-error" ? "先に店主カードを保存してください" : sellerShopUnconfirmed ? state.shopStatus === "error" ? "店主カードを再読み込みしてください" : "店主カードを確認しています…" : "売り手として待機する" : "買い手として待機する"}</button>
       </form>
       <aside class="market-rule-card">
         <span class="eyebrow">FAIR DEAL FLOW</span><h2>取引の流れ</h2>
         <ol><li><b>1</b><span>マッチ後、買い手は画像と価格を無料で確認します。</span></li><li><b>2</b><span>「営業を受ける」を選ぶと、着手料として${formatAnjuPay(ENTRY_FEE)}をAnjuPay残高からFunctionsが保留します。</span></li><li><b>3</b><span>売り手がチャットまたは10秒音声で営業し、完了時に保留中のAnjuPayを受け取ります。</span></li><li><b>4</b><span>購入成立時だけ売り手へ5%（端数切り上げ・最低${formatAnjuPay(1)}）の市場手数料が発生し、買い手へ非譲渡の推し値証書を発行します。</span></li></ol>
+        <div class="market-oshijo-rule-summary"><strong>推し嬢モードでは</strong><p>通常価格で完了する代わりに、営業を1回送った後で1〜${formatAnjuPay(OSHIJO_MAX_CLAIM_AMOUNT)}を自由請求できます。買い手は警告画面で営業を聞くか見送るかを選び、購入は自動では確定しません。</p></div>
         <div class="market-safety-note"><strong>ANJUPAY AUTHORITY</strong><p>AnjuPayの残高移動はCloud Functionsだけが確定し、売買と独立ランキングをFirestoreの同一トランザクションで更新します。</p></div>
         <p class="market-roleplay-note">売買はTRPGとしてのロールプレイです。画像データや著作権・所有権は移転しません。画像の一時判定、音声通報機能は設けません。</p>
         <div class="market-setup-links"><button class="button button-ghost" type="button" id="marketRankingsButton" ${locked ? "disabled" : ""}>売り手・買い手ランキング</button><button class="button button-ghost" type="button" id="marketCertificatesButton" ${locked ? "disabled" : ""}>推し値証書コレクション</button></div>
@@ -2126,6 +2244,7 @@ function renderSetup() {
 }
 
 function renderWaiting() {
+  const sellerOshijoMode = state.role === "seller" && marketShopSupportsOshijo(state.shop);
   const selectedFavorite = state.matchMode === "favorites"
     ? matchableMarketFavorite(state.selectedFavoriteSellerId)
     : null;
@@ -2141,8 +2260,10 @@ function renderWaiting() {
         ? `「${escapeHtml(preferredRecommended.shopName || "推薦商店")}」を優先して探しています`
       : "売り手を探しています";
   const waitingDetail = state.role === "seller"
-    ? `${escapeHtml(state.listingTitle)} / ${formatAnjuPay(state.askingPrice)}`
-    : `購入上限 ${formatAnjuPay(state.maxBudget)}${selectedFavorite
+    ? sellerOshijoMode
+      ? `${escapeHtml(state.listingTitle)} / 推し嬢モード ON / マッチング基準額 ${formatAnjuPay(state.askingPrice)} / 商談後に自由請求`
+      : `${escapeHtml(state.listingTitle)} / 通常営業 / 販売価格 ${formatAnjuPay(state.askingPrice)}`
+    : `マッチング上限 ${formatAnjuPay(state.maxBudget)}${selectedFavorite
       ? `${selectedFavoritePreviousPrice ? ` / 前回価格 ${formatAnjuPay(selectedFavoritePreviousPrice)}` : ""} / 指名店コード ${escapeHtml(selectedFavorite.publicSellerId)}`
       : preferredRecommended
         ? ` / 最初の${MARKET_RECOMMENDED_PREFERENCE_EXPAND_MS / 1000}秒だけ優先し、その後は通常検索`
@@ -2753,9 +2874,14 @@ function renderRoomControls(room, role) {
       const claimDefault = state.oshijoClaimDraft
         || String(Math.max(1, Number(room.listing?.askingPrice || state.askingPrice || 1)));
       const completionActions = supportsOshijo
-        ? `<div class="market-pitch-completion-actions">
-          <button class="button button-primary" data-market-action="pitch_complete" ${!sent || state.busy ? "disabled" : ""}>通常営業を完了</button>
-          <button type="button" class="button market-oshijo-trigger" id="marketOshijoClaimToggle" aria-expanded="${state.oshijoClaimOpen}" aria-controls="marketOshijoClaimForm" ${!sent || state.busy ? "disabled" : ""}>推し嬢モードの請求額を決める</button>
+        ? `<aside class="market-oshijo-pitch-guide" aria-labelledby="marketOshijoPitchGuideTitle">
+          <strong id="marketOshijoPitchGuideTitle">推し嬢モード・自由請求までの3ステップ</strong>
+          <ol><li class="${sent ? "is-complete" : "is-current"}"><b>①</b><span>営業を送る</span></li><li class="${sent ? "is-current" : ""}"><b>②</b><span>請求額を決める</span></li><li><b>③</b><span>警告画面を送る</span></li></ol>
+          <p id="marketOshijoPitchNextStep" role="status">${sent ? `営業を送りました。通常価格で完了するか、1〜${formatAnjuPay(OSHIJO_MAX_CLAIM_AMOUNT)}の自由請求へ進めます。` : "自由請求へ進むには、先にチャットまたは10秒音声を1回送ってください。"}</p>
+        </aside>
+        <div class="market-pitch-completion-actions">
+          <button class="button button-primary" data-market-action="pitch_complete" ${!sent || state.busy ? "disabled" : ""}>通常価格で営業を完了</button>
+          <button type="button" class="button market-oshijo-trigger" id="marketOshijoClaimToggle" aria-expanded="${state.oshijoClaimOpen}" aria-controls="marketOshijoClaimForm" aria-describedby="marketOshijoPitchNextStep" ${!sent || state.busy ? "disabled" : ""}>${state.oshijoClaimOpen ? "請求額入力を閉じる" : "自由請求へ進む"}</button>
         </div>
         <form id="marketOshijoClaimForm" class="market-oshijo-claim-form" ${state.oshijoClaimOpen ? "" : "hidden"}>
           <div><label for="marketOshijoClaimAmount">自由請求額</label><span><input id="marketOshijoClaimAmount" type="number" inputmode="numeric" min="1" max="${OSHIJO_MAX_CLAIM_AMOUNT}" step="1" value="${escapeHtml(claimDefault)}" ${state.busy ? "disabled" : ""} /><b>Pay</b></span></div>
@@ -2866,13 +2992,37 @@ function bindEvents() {
     render();
   }));
   document.querySelector("#marketEntryForm")?.addEventListener("submit", joinQueue);
+  document.querySelectorAll('input[name="marketSellerSalesMode"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (state.busy || state.shopBusy || state.queueJoinPending) return;
+      const selectedSalesMode = input.value === OSHIJO_CLOSING_MODE
+        ? OSHIJO_CLOSING_MODE
+        : "normal";
+      state.shop.salesMode = selectedSalesMode;
+      markMarketShopDirty();
+      render();
+      window.requestAnimationFrame(() => {
+        document.querySelector(`input[name="marketSellerSalesMode"][value="${selectedSalesMode}"]`)
+          ?.focus({ preventScroll: true });
+      });
+    });
+  });
+  document.querySelectorAll("[data-market-reload-shop]").forEach((button) => {
+    button.addEventListener("click", () => loadMarketShop(lifecycleGeneration));
+  });
+  document.querySelector("#marketSaveSalesModeButton")?.addEventListener("click", () => {
+    document.querySelector("#marketShopForm")?.requestSubmit();
+  });
   document.querySelector("#marketSetupOptionsButton")?.addEventListener("click", () => {
     const target = state.role === "seller"
-      ? document.querySelector("#marketShopForm")
+      ? document.querySelector(state.shopDirty ? "#marketShopSaveButton" : "#marketShopForm")
       : document.querySelector("#marketFavoritesTitle");
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
     window.requestAnimationFrame(() => {
-      if (state.role === "seller") document.querySelector("#marketShopName")?.focus({ preventScroll: true });
+      if (state.role === "seller") {
+        document.querySelector(state.shopDirty ? "#marketShopSaveButton" : "#marketShopName")
+          ?.focus({ preventScroll: true });
+      }
       else document.querySelector('input[name="marketMatchMode"]')?.focus({ preventScroll: true });
     });
   });
@@ -2880,9 +3030,11 @@ function bindEvents() {
   document.querySelector("#marketShopForm")?.addEventListener("submit", saveMarketShop);
   document.querySelector("#marketShopName")?.addEventListener("input", (event) => {
     state.shop.shopName = event.target.value.slice(0, MARKET_SHOP_NAME_MAX_LENGTH);
+    markMarketShopDirty();
   });
   document.querySelector("#marketShopTagline")?.addEventListener("input", (event) => {
     state.shop.tagline = event.target.value.slice(0, MARKET_SHOP_TAGLINE_MAX_LENGTH);
+    markMarketShopDirty();
   });
   document.querySelectorAll('input[name="marketShopSpecialty"]').forEach((input) => {
     input.addEventListener("change", () => updateMarketShopMultiChoice(
@@ -2900,16 +3052,29 @@ function bindEvents() {
       input,
     ));
   });
-  document.querySelector("#marketShopTheme")?.addEventListener("change", (event) => { state.shop.themeId = normalizeShopOptionId(event.target.value) || "standard"; });
-  document.querySelector("#marketShopSeal")?.addEventListener("change", (event) => { state.shop.sealId = normalizeShopOptionId(event.target.value) || "heart"; });
-  document.querySelector("#marketShopTitle")?.addEventListener("change", (event) => { state.shop.titleId = normalizeShopOptionId(event.target.value); });
+  document.querySelector("#marketShopTheme")?.addEventListener("change", (event) => {
+    state.shop.themeId = normalizeShopOptionId(event.target.value) || "standard";
+    markMarketShopDirty();
+  });
+  document.querySelector("#marketShopSeal")?.addEventListener("change", (event) => {
+    state.shop.sealId = normalizeShopOptionId(event.target.value) || "heart";
+    markMarketShopDirty();
+  });
+  document.querySelector("#marketShopTitle")?.addEventListener("change", (event) => {
+    state.shop.titleId = normalizeShopOptionId(event.target.value);
+    markMarketShopDirty();
+  });
   document.querySelectorAll('input[name="marketShopCharm"]').forEach((input) => {
     input.addEventListener("change", () => {
       state.shop.shopCharmId = normalizeShopOptionId(input.value);
+      markMarketShopDirty();
       render();
     });
   });
-  document.querySelector("#marketShopRepeatWelcome")?.addEventListener("change", (event) => { state.shop.repeatWelcome = event.target.checked; });
+  document.querySelector("#marketShopRepeatWelcome")?.addEventListener("change", (event) => {
+    state.shop.repeatWelcome = event.target.checked;
+    markMarketShopDirty();
+  });
   document.querySelectorAll('input[name="marketMatchMode"]').forEach((input) => {
     input.addEventListener("change", () => {
       if (state.busy || state.shopBusy || state.queueJoinPending) return;
@@ -2954,7 +3119,13 @@ function bindEvents() {
   document.querySelector("#marketAskingPrice")?.addEventListener("change", (event) => {
     state.askingPrice = Number(event.target.value);
     const breakdown = document.querySelector("#marketSetupFeeBreakdown");
-    if (breakdown) breakdown.outerHTML = renderMarketFeeBreakdown(state.askingPrice, { id: "marketSetupFeeBreakdown", compact: true });
+    if (breakdown) {
+      breakdown.outerHTML = renderMarketFeeBreakdown(state.askingPrice, {
+        id: "marketSetupFeeBreakdown",
+        compact: true,
+        estimate: marketShopSupportsOshijo(state.shop),
+      });
+    }
   });
   document.querySelector("#marketPitchStyle")?.addEventListener("change", (event) => { state.pitchStyle = event.target.value; });
   document.querySelector("#marketMaxBudget")?.addEventListener("change", (event) => { state.maxBudget = Number(event.target.value); });
@@ -3046,6 +3217,30 @@ function bindEvents() {
   document.querySelector("#marketErrorBack")?.addEventListener("click", requestHome);
 }
 
+function markMarketShopDirty() {
+  state.shopDirty = true;
+  if (state.shopStatus !== "save-error") {
+    state.shopStatus = "dirty";
+    state.shopErrorMessage = "";
+  }
+  const notice = document.querySelector("#marketShopSaveNotice");
+  if (notice && state.shopStatus !== "save-error") {
+    notice.className = "market-shop-status is-unsaved";
+    notice.innerHTML = "<strong>未保存の変更があります。</strong> 保存するまで売り手として待機できません。";
+  }
+  const modeStatus = document.querySelector("#marketSellerModeStatus");
+  modeStatus?.classList.add("is-unsaved");
+  const modeSaveState = document.querySelector("#marketSellerModeSaveState");
+  if (modeSaveState) modeSaveState.textContent = "未保存の変更があります。";
+  const saveModeButton = document.querySelector("#marketSaveSalesModeButton");
+  if (saveModeButton) saveModeButton.hidden = false;
+  const joinButton = document.querySelector(".market-join-button");
+  if (state.role === "seller" && joinButton) {
+    joinButton.disabled = true;
+    joinButton.textContent = "先に店主カードを保存してください";
+  }
+}
+
 function updateMarketShopMultiChoice(key, inputName, maximum, changedInput) {
   let selected = [...document.querySelectorAll(`input[name="${inputName}"]:checked`)]
     .map((input) => normalizeShopOptionId(input.value))
@@ -3056,11 +3251,15 @@ function updateMarketShopMultiChoice(key, inputName, maximum, changedInput) {
     showToast(`最大${maximum}個まで選べます。`);
   }
   state.shop[key] = selected.slice(0, maximum);
+  markMarketShopDirty();
 }
 
 function readMarketShopForm() {
   const ownedTitles = new Set(state.ownedTitleIds);
   const ownedShopCharms = new Set(state.ownedShopCharmIds);
+  const selectedServiceStyles = [
+    ...document.querySelectorAll('input[name="marketShopServiceStyle"]:checked'),
+  ].map((input) => input.value);
   const requestedTitleId = normalizeShopOptionId(document.querySelector("#marketShopTitle")?.value);
   const requestedShopCharmId = normalizeShopOptionId(
     document.querySelector('input[name="marketShopCharm"]:checked')?.value,
@@ -3070,7 +3269,11 @@ function readMarketShopForm() {
     shopName: document.querySelector("#marketShopName")?.value,
     tagline: document.querySelector("#marketShopTagline")?.value,
     specialtyTags: [...document.querySelectorAll('input[name="marketShopSpecialty"]:checked')].map((input) => input.value),
-    serviceStyles: [...document.querySelectorAll('input[name="marketShopServiceStyle"]:checked')].map((input) => input.value),
+    serviceStyles: selectedServiceStyles,
+    regularServiceStyles: selectedServiceStyles,
+    salesMode: document.querySelector('input[name="marketSellerSalesMode"]:checked')?.value === OSHIJO_CLOSING_MODE
+      ? OSHIJO_CLOSING_MODE
+      : "normal",
     themeId: document.querySelector("#marketShopTheme")?.value,
     sealId: document.querySelector("#marketShopSeal")?.value,
     titleId: requestedTitleId && ownedTitles.has(requestedTitleId) ? requestedTitleId : "",
@@ -3084,6 +3287,10 @@ function readMarketShopForm() {
 async function saveMarketShop(event) {
   event.preventDefault();
   if (state.busy || state.shopBusy || state.queueJoinPending || !state.authReady) return;
+  if (!state.shopSalesModeContractReady) {
+    showToast("販売モード設定の更新を確認できません。ページを再読み込みしてから保存してください。");
+    return;
+  }
   const shop = readMarketShopForm();
   if (!shop.shopName) {
     document.querySelector("#marketShopName")?.focus();
@@ -3108,6 +3315,7 @@ async function saveMarketShop(event) {
       state.shop = normalizeMarketShop({ ...shop, verified: state.shopReport });
       state.shopStatus = "ready";
       state.shopErrorMessage = "";
+      state.shopDirty = false;
     } else {
       const response = await marketShopCallable({ action: "save", shop, ...shop });
       if (!isCurrentLifecycle(generation)) return;
@@ -3126,12 +3334,14 @@ async function saveMarketShop(event) {
       }
       state.shopStatus = "ready";
       state.shopErrorMessage = "";
+      state.shopDirty = false;
     }
     if (isCurrentLifecycle(generation)) showToast("推し値商店の店主カードを保存しました。");
   } catch (error) {
     if (isCurrentLifecycle(generation)) {
       state.shopStatus = "save-error";
       state.shopErrorMessage = callableMessage(error, "推し値商店を保存できませんでした。");
+      state.shopDirty = true;
       showToast(state.shopErrorMessage);
     }
   } finally {
@@ -3455,9 +3665,24 @@ async function handleImageInput(event) {
 async function joinQueue(event) {
   event.preventDefault();
   if (!state.authReady || state.busy || state.shopBusy || state.queueJoinPending) return;
+  const joinedRole = state.role;
+  if (joinedRole === "seller" && state.shopStatus !== "ready") {
+    const needsSave = state.shopDirty || state.shopStatus === "save-error";
+    showToast(needsSave
+      ? "推し値商店の変更が未保存です。保存してから待機してください。"
+      : "店主カードと販売モードを確認できません。再読み込みしてから待機してください。");
+    render();
+    window.requestAnimationFrame(() => {
+      const target = needsSave
+        ? document.querySelector("#marketShopSaveButton")
+        : document.querySelector("[data-market-reload-shop]");
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+    });
+    return;
+  }
   const generation = lifecycleGeneration;
   const queueAttemptGeneration = beginQueueAttempt();
-  const joinedRole = state.role;
   state.name = normalizeMarketName(document.querySelector("#marketName")?.value || state.name);
   if (joinedRole === "seller") {
     state.listingTitle = String(document.querySelector("#marketListingTitle")?.value || state.listingTitle).trim().slice(0, 30);
@@ -3498,10 +3723,6 @@ async function joinQueue(event) {
       showToast("優先先が推薦棚から外れたため、もう一度選んでください。");
       return;
     }
-  }
-  if (joinedRole === "seller" && state.shopStatus === "save-error") {
-    showToast("店主カードが未保存です。再保存してから待機してください。");
-    return;
   }
   if (joinedRole === "seller" && (!state.image || !state.listingTitle)) return showToast("出品画像とタイトルを準備してください。");
   const joinedName = state.name;
@@ -5263,6 +5484,7 @@ function resetForReplay() {
   const favorites = state.favorites;
   const shopStatus = state.shopStatus;
   const shopErrorMessage = state.shopErrorMessage;
+  const shopSalesModeContractReady = state.shopSalesModeContractReady;
   const matchMode = state.matchMode;
   const preferredRecommendedSellerId = preferredRecommendedShop(recommendedShelf)?.publicSellerId || "";
   const preservedFavoriteSeller = matchableMarketFavorite(state.selectedFavoriteSellerId, favorites);
@@ -5298,6 +5520,7 @@ function resetForReplay() {
     favorites,
     shopStatus,
     shopErrorMessage,
+    shopSalesModeContractReady,
     matchMode: matchMode === "favorites" && preservedFavoriteSeller ? "favorites" : "discover",
     selectedFavoriteSellerId: preservedFavoriteSeller?.publicSellerId || "",
     preferredRecommendedSellerId: matchMode === "discover"

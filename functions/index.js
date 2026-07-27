@@ -138,9 +138,12 @@ const {
   marketQueuesCompatible,
   marketSaleRelationshipUpdate,
   marketShopReport,
+  marketShopSalesModeRecord,
   marketShopSalesCount,
   normalizeStoredMarketShop,
+  preserveLegacyMarketServiceStyles,
   publicSellerShop,
+  restoreMarketShopSalesModeRecord,
   selectMarketQueueCandidates,
   shouldReplaceMarketQueue,
   validateMarketShopInput,
@@ -10393,6 +10396,10 @@ function marketShopRef(uid) {
   return firestore.collection("valueMarketShops").doc(uid);
 }
 
+function marketShopSalesModeRef(uid) {
+  return firestore.collection("valueMarketShopSalesModes").doc(uid);
+}
+
 function marketShopPublicRef(publicSellerId) {
   return firestore.collection("valueMarketShopPublic").doc(publicSellerId);
 }
@@ -10462,13 +10469,21 @@ function marketShopPublicRecord(uid, shopValue, statsValue, timestamp = Date.now
 
 async function ensureMarketShop(uid, fallbackName = DEFAULT_MARKET_SHOP.shopName) {
   const shopRef = marketShopRef(uid);
+  const salesModeRef = marketShopSalesModeRef(uid);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const candidatePublicSellerId = createPublicSellerId();
     try {
       return await firestore.runTransaction(async (transaction) => {
-        const shopSnapshot = await transaction.get(shopRef);
+        const [shopSnapshot, salesModeSnapshot] = await Promise.all([
+          transaction.get(shopRef),
+          transaction.get(salesModeRef),
+        ]);
         const storedShopValue = shopSnapshot.data();
-        const stored = normalizeStoredMarketShop(storedShopValue, {
+        const restoredShopValue = restoreMarketShopSalesModeRecord(
+          storedShopValue,
+          salesModeSnapshot.data(),
+        );
+        const stored = normalizeStoredMarketShop(restoredShopValue, {
           fallbackName: cleanName(fallbackName),
           publicSellerId: candidatePublicSellerId,
         });
@@ -10501,6 +10516,7 @@ async function ensureMarketShop(uid, fallbackName = DEFAULT_MARKET_SHOP.shopName
           updatedAt: stored.updatedAt || now,
         };
         transaction.set(shopRef, shop);
+        transaction.set(salesModeRef, marketShopSalesModeRecord(shop, now));
         transaction.set(publicRef, marketShopPublicRecord(uid, shop, statsSnapshot.data(), now));
         return shop;
       });
@@ -11189,6 +11205,7 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
     const candidateQueueRef = marketQueueRef(candidate.uid);
     const candidateActiveRef = marketActiveRef(candidate.uid);
     const sellerShopRef = marketShopRef(sellerUid);
+    const sellerSalesModeRef = marketShopSalesModeRef(sellerUid);
     const sellerStatsRef = marketStatsRef(sellerUid);
     const relationshipRef = marketShopRelationshipRef(sellerUid, buyerUid);
     const sellerBlockRef = marketShopBlockRef(sellerUid, buyerUid);
@@ -11204,6 +11221,7 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
         candidateQueueSnapshot,
         candidateActiveSnapshot,
         sellerShopSnapshot,
+        sellerSalesModeSnapshot,
         sellerStatsSnapshot,
         shopRelationshipSnapshot,
         sellerBlockSnapshot,
@@ -11215,6 +11233,7 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
         transaction.get(candidateQueueRef),
         transaction.get(candidateActiveRef),
         transaction.get(sellerShopRef),
+        transaction.get(sellerSalesModeRef),
         transaction.get(sellerStatsRef),
         transaction.get(relationshipRef),
         transaction.get(sellerBlockRef),
@@ -11274,7 +11293,11 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       }
       const seller = currentOwn.role === "seller" ? currentOwn : currentCandidate;
       const buyer = currentOwn.role === "buyer" ? currentOwn : currentCandidate;
-      const liveSellerShop = publicSellerShop(sellerShopSnapshot.data(), {
+      const restoredSellerShop = restoreMarketShopSalesModeRecord(
+        sellerShopSnapshot.data(),
+        sellerSalesModeSnapshot.data(),
+      );
+      const liveSellerShop = publicSellerShop(restoredSellerShop, {
         marketStats: sellerStatsSnapshot.data(),
       });
       const targetedBuyer = buyer.matchMode === "favorites";
@@ -11319,6 +11342,11 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       };
       const roomId = roomRef.id;
       const now = Date.now();
+      transaction.set(sellerShopRef, restoredSellerShop);
+      transaction.set(
+        sellerSalesModeRef,
+        marketShopSalesModeRecord(restoredSellerShop, now),
+      );
       const room = {
         roomId,
         participants: { [seller.uid]: true, [buyer.uid]: true },
@@ -11892,7 +11920,8 @@ function marketShopValidationMessage(errors) {
   if (errors.includes("shopName")) return "店名はURLを含まない16文字以内の1行で入力してください。";
   if (errors.includes("tagline")) return "店主理念はURLを含まない40文字以内の1行で入力してください。";
   if (errors.includes("specialtyTags")) return "得意分野は一覧から重複なしで3個まで選んでください。";
-  if (errors.includes("serviceStyles")) return "接客スタイルは一覧から重複なしで2個まで選んでください。";
+  if (errors.includes("salesMode")) return "販売モードは通常営業または推し嬢モードから選んでください。";
+  if (errors.includes("serviceStyles")) return "接客スタイルは一覧から重複なしで2個まで選んでください。推し嬢モードは別枠です。";
   if (errors.includes("themeId") || errors.includes("sealId")) return "看板テーマまたは商印が正しくありません。";
   if (errors.includes("titleId")) return "所有していない称号は店主称号に設定できません。";
   if (errors.includes("shopCharmId")) return "無料または所有しているスタンプだけを商店チャームに設定できます。";
@@ -11911,33 +11940,50 @@ async function saveMarketShop(uid, data) {
   }
   const ensuredShop = await ensureMarketShop(uid, validation.shop.shopName);
   const shopRef = marketShopRef(uid);
+  const salesModeRef = marketShopSalesModeRef(uid);
   const publicRef = marketShopPublicRef(ensuredShop.publicSellerId);
   let savedShop = null;
   let statsValue = {};
   await firestore.runTransaction(async (transaction) => {
-    const [shopSnapshot, publicSnapshot, statsSnapshot, queueSnapshot] = await Promise.all([
+    const [
+      shopSnapshot,
+      salesModeSnapshot,
+      publicSnapshot,
+      statsSnapshot,
+      queueSnapshot,
+    ] = await Promise.all([
       transaction.get(shopRef),
+      transaction.get(salesModeRef),
       transaction.get(publicRef),
       transaction.get(marketStatsRef(uid)),
       transaction.get(marketQueueRef(uid)),
     ]);
-    const current = normalizeStoredMarketShop(shopSnapshot.data(), {
-      fallbackName: validation.shop.shopName,
-      publicSellerId: ensuredShop.publicSellerId,
-    });
+    const current = normalizeStoredMarketShop(
+      restoreMarketShopSalesModeRecord(shopSnapshot.data(), salesModeSnapshot.data()),
+      {
+        fallbackName: validation.shop.shopName,
+        publicSellerId: ensuredShop.publicSellerId,
+      },
+    );
     if (publicSnapshot.exists && cleanText(publicSnapshot.get("sellerUid"), 128) !== uid) {
       throw new HttpsError("failed-precondition", "店コードの所有関係を確認できませんでした。");
     }
     const now = Date.now();
+    const compatibleShop = preserveLegacyMarketServiceStyles(
+      current,
+      validation.shop,
+      validation.legacySalesModeContract,
+    );
     savedShop = {
       ...current,
-      ...validation.shop,
+      ...compatibleShop,
       publicSellerId: ensuredShop.publicSellerId,
       createdAt: current.createdAt || now,
       updatedAt: now,
     };
     statsValue = statsSnapshot.data() || {};
     transaction.set(shopRef, savedShop);
+    transaction.set(salesModeRef, marketShopSalesModeRecord(savedShop, now));
     transaction.set(publicRef, marketShopPublicRecord(uid, savedShop, statsValue, now));
     if (queueSnapshot.exists && queueSnapshot.get("role") === "seller"
       && queueSnapshot.get("status") === "waiting") {
@@ -12619,13 +12665,14 @@ async function performMarketAction(uid, data, appCheckVerified) {
       if (action === "pitch_complete") {
         const replayClosingDecision = marketClosingDecision({
           closingMode: data?.closingMode,
+          salesMode: room.sellerShop?.salesMode,
           serviceStyles: room.sellerShop?.serviceStyles,
         });
         if (!replayClosingDecision.allowed) {
           if (replayClosingDecision.errorCode === "failed-precondition") {
             throw new HttpsError(
               "failed-precondition",
-              "推し嬢モードは接客スタイルに設定している売り手だけが発動できます。",
+              "推し嬢モードをONにして保存した売り手だけが発動できます。",
             );
           }
           throw new HttpsError("invalid-argument", "未対応の営業クロージングモードです。");
@@ -12772,13 +12819,14 @@ async function performMarketAction(uid, data, appCheckVerified) {
       requireMarketState(room, "pitch");
       const closingDecision = marketClosingDecision({
         closingMode: data?.closingMode,
+        salesMode: room.sellerShop?.salesMode,
         serviceStyles: room.sellerShop?.serviceStyles,
       });
       if (!closingDecision.allowed) {
         if (closingDecision.errorCode === "failed-precondition") {
           throw new HttpsError(
             "failed-precondition",
-            "推し嬢モードは接客スタイルに設定している売り手だけが発動できます。",
+            "推し嬢モードをONにして保存した売り手だけが発動できます。",
           );
         }
         throw new HttpsError("invalid-argument", "未対応の営業クロージングモードです。");
@@ -13297,6 +13345,8 @@ async function performMarketAction(uid, data, appCheckVerified) {
           tagline: presentedSellerShop.tagline,
           specialtyTags: presentedSellerShop.specialtyTags,
           serviceStyles: presentedSellerShop.serviceStyles,
+          regularServiceStyles: presentedSellerShop.regularServiceStyles,
+          salesMode: presentedSellerShop.salesMode,
           themeId: presentedSellerShop.themeId,
           sealId: presentedSellerShop.sealId,
           titleId: presentedSellerShop.titleId,

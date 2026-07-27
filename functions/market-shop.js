@@ -2,11 +2,18 @@
 
 const PRODUCT_CATALOG = require("./product-catalog");
 
-const MARKET_SHOP_SCHEMA_VERSION = 1;
+const MARKET_SHOP_SCHEMA_VERSION = 2;
 const MARKET_SHOP_NAME_MAX_LENGTH = 16;
 const MARKET_SHOP_TAGLINE_MAX_LENGTH = 40;
 const MARKET_SHOP_MAX_SPECIALTY_TAGS = 3;
 const MARKET_SHOP_MAX_SERVICE_STYLES = 2;
+const OSHIJO_SERVICE_STYLE_ID = "oshijo";
+const MARKET_SHOP_SALES_MODE_NORMAL = "normal";
+const MARKET_SHOP_SALES_MODE_OSHIJO = "oshijo";
+const MARKET_SHOP_SALES_MODES = new Set([
+  MARKET_SHOP_SALES_MODE_NORMAL,
+  MARKET_SHOP_SALES_MODE_OSHIJO,
+]);
 const MARKET_SHOP_IMPRESSION_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 const FREE_MARKET_SHOP_CHARM_IDS = Object.freeze([
   "stamp_like",
@@ -47,7 +54,11 @@ const MARKET_SHOP_CATALOG = Object.freeze({
     ["concise", "ひとこと勝負"],
     ["audio", "音声で熱く"],
     ["careful", "じっくり丁寧"],
-    ["oshijo", "推し嬢（熱血クロージング）"],
+    ["oshijo", "推し嬢モード（商談後に自由請求）"],
+  ]),
+  salesModes: catalogEntries([
+    ["normal", "通常営業"],
+    ["oshijo", "推し嬢モード（商談後に自由請求）"],
   ]),
   themes: catalogEntries([
     ["standard", "スタンダード"],
@@ -76,12 +87,15 @@ const MARKET_SHOP_CATALOG = Object.freeze({
     tagline: MARKET_SHOP_TAGLINE_MAX_LENGTH,
     specialtyTags: MARKET_SHOP_MAX_SPECIALTY_TAGS,
     serviceStyles: MARKET_SHOP_MAX_SERVICE_STYLES,
+    regularServiceStyles: MARKET_SHOP_MAX_SERVICE_STYLES,
+    salesModes: 1,
   }),
 });
 
 const CATALOG_IDS = Object.freeze({
   specialtyTags: new Set(MARKET_SHOP_CATALOG.specialtyTags.map(({ id }) => id)),
   serviceStyles: new Set(MARKET_SHOP_CATALOG.serviceStyles.map(({ id }) => id)),
+  salesModes: new Set(MARKET_SHOP_CATALOG.salesModes.map(({ id }) => id)),
   themes: new Set(MARKET_SHOP_CATALOG.themes.map(({ id }) => id)),
   seals: new Set(MARKET_SHOP_CATALOG.seals.map(({ id }) => id)),
   impressionTags: new Set(MARKET_SHOP_CATALOG.impressionTags.map(({ id }) => id)),
@@ -92,6 +106,7 @@ const DEFAULT_MARKET_SHOP = Object.freeze({
   tagline: "",
   specialtyTags: Object.freeze([]),
   serviceStyles: Object.freeze([]),
+  salesMode: MARKET_SHOP_SALES_MODE_NORMAL,
   themeId: "standard",
   sealId: "heart",
   titleId: "",
@@ -120,6 +135,37 @@ function uniqueCatalogSelection(value, catalogIds, maximum) {
   return unique.length === normalized.length ? unique : null;
 }
 
+function marketSalesModeSelection(value, serviceStyles, explicit) {
+  const normalized = normalizedSingleLine(value);
+  if (explicit) return MARKET_SHOP_SALES_MODES.has(normalized) ? normalized : null;
+  return Array.isArray(serviceStyles) && serviceStyles.includes(OSHIJO_SERVICE_STYLE_ID)
+    ? MARKET_SHOP_SALES_MODE_OSHIJO
+    : MARKET_SHOP_SALES_MODE_NORMAL;
+}
+
+function marketRegularServiceStyleSelection(value, maximumIds) {
+  const selected = uniqueCatalogSelection(
+    value,
+    CATALOG_IDS.serviceStyles,
+    maximumIds,
+  );
+  if (!selected) return null;
+  const regularStyles = selected.filter((id) => id !== OSHIJO_SERVICE_STYLE_ID);
+  if (regularStyles.length > MARKET_SHOP_MAX_SERVICE_STYLES) return null;
+  return regularStyles;
+}
+
+function marketLegacyServiceStyles(regularStyles, salesMode) {
+  // Cached v1 Functions reject more than two IDs. Keep their marker and one
+  // visible style while schema v2 stores both regular styles separately.
+  return salesMode === MARKET_SHOP_SALES_MODE_OSHIJO
+    ? [
+      OSHIJO_SERVICE_STYLE_ID,
+      ...regularStyles.slice(0, MARKET_SHOP_MAX_SERVICE_STYLES - 1),
+    ]
+    : regularStyles.slice(0, MARKET_SHOP_MAX_SERVICE_STYLES);
+}
+
 function validateMarketShopInput(value, {
   ownedTitleIds = [],
   ownedShopCharmIds = FREE_MARKET_SHOP_CHARM_IDS,
@@ -132,11 +178,29 @@ function validateMarketShopInput(value, {
     CATALOG_IDS.specialtyTags,
     MARKET_SHOP_MAX_SPECIALTY_TAGS,
   );
-  const serviceStyles = uniqueCatalogSelection(
+  const hasExplicitSalesMode = Object.prototype.hasOwnProperty.call(source, "salesMode");
+  const salesMode = marketSalesModeSelection(
+    source.salesMode,
     source.serviceStyles,
-    CATALOG_IDS.serviceStyles,
-    MARKET_SHOP_MAX_SERVICE_STYLES,
+    hasExplicitSalesMode,
   );
+  const hasExplicitRegularServiceStyles = Object.prototype.hasOwnProperty.call(
+    source,
+    "regularServiceStyles",
+  );
+  const regularServiceStyles = salesMode
+    ? marketRegularServiceStyleSelection(
+      hasExplicitRegularServiceStyles ? source.regularServiceStyles : source.serviceStyles,
+      hasExplicitRegularServiceStyles
+        ? MARKET_SHOP_MAX_SERVICE_STYLES
+        : hasExplicitSalesMode
+          ? MARKET_SHOP_MAX_SERVICE_STYLES + 1
+          : MARKET_SHOP_MAX_SERVICE_STYLES,
+    )
+    : null;
+  const serviceStyles = regularServiceStyles
+    ? marketLegacyServiceStyles(regularServiceStyles, salesMode)
+    : null;
   const themeId = normalizedSingleLine(source.themeId);
   const sealId = normalizedSingleLine(source.sealId);
   const titleId = normalizedSingleLine(source.titleId);
@@ -165,6 +229,7 @@ function validateMarketShopInput(value, {
   }
   if (!specialtyTags) errors.push("specialtyTags");
   if (!serviceStyles) errors.push("serviceStyles");
+  if (!salesMode) errors.push("salesMode");
   if (!CATALOG_IDS.themes.has(themeId)) errors.push("themeId");
   if (!CATALOG_IDS.seals.has(sealId)) errors.push("sealId");
   if (titleId && !ownedTitles.has(titleId)) errors.push("titleId");
@@ -184,12 +249,15 @@ function validateMarketShopInput(value, {
       tagline,
       specialtyTags: specialtyTags || [],
       serviceStyles: serviceStyles || [],
+      regularServiceStyles: regularServiceStyles || [],
+      salesMode: salesMode || MARKET_SHOP_SALES_MODE_NORMAL,
       themeId: CATALOG_IDS.themes.has(themeId) ? themeId : DEFAULT_MARKET_SHOP.themeId,
       sealId: CATALOG_IDS.seals.has(sealId) ? sealId : DEFAULT_MARKET_SHOP.sealId,
       titleId,
       shopCharmId: MARKET_SHOP_CHARM_IDS.has(shopCharmId) ? shopCharmId : "",
       repeatWelcome: source.repeatWelcome === true,
     },
+    legacySalesModeContract: !hasExplicitSalesMode,
   };
 }
 
@@ -215,11 +283,26 @@ function normalizeStoredMarketShop(value, {
     CATALOG_IDS.specialtyTags,
     MARKET_SHOP_MAX_SPECIALTY_TAGS,
   ) || [];
-  const serviceStyles = uniqueCatalogSelection(
+  const hasExplicitSalesMode = Object.prototype.hasOwnProperty.call(source, "salesMode");
+  const salesMode = marketSalesModeSelection(
+    source.salesMode,
     source.serviceStyles,
-    CATALOG_IDS.serviceStyles,
-    MARKET_SHOP_MAX_SERVICE_STYLES,
+    hasExplicitSalesMode,
+  ) || marketSalesModeSelection(undefined, source.serviceStyles, false);
+  const storedRegularServiceStyles = Object.prototype.hasOwnProperty.call(
+    source,
+    "regularServiceStyles",
+  );
+  const regularServiceStyles = marketRegularServiceStyleSelection(
+    storedRegularServiceStyles ? source.regularServiceStyles : source.serviceStyles,
+    storedRegularServiceStyles
+      ? MARKET_SHOP_MAX_SERVICE_STYLES
+      : MARKET_SHOP_MAX_SERVICE_STYLES + 1,
+  ) || marketRegularServiceStyleSelection(
+    source.serviceStyles,
+    MARKET_SHOP_MAX_SERVICE_STYLES + 1,
   ) || [];
+  const serviceStyles = marketLegacyServiceStyles(regularServiceStyles, salesMode);
   const shopName = normalizedSingleLine(source.shopName || fallbackName);
   const tagline = normalizedSingleLine(source.tagline);
   const storedPublicSellerId = normalizedSingleLine(source.publicSellerId || publicSellerId);
@@ -240,6 +323,8 @@ function normalizeStoredMarketShop(value, {
       : "",
     specialtyTags,
     serviceStyles,
+    regularServiceStyles,
+    salesMode,
     themeId: CATALOG_IDS.themes.has(source.themeId) ? source.themeId : DEFAULT_MARKET_SHOP.themeId,
     sealId: CATALOG_IDS.seals.has(source.sealId) ? source.sealId : DEFAULT_MARKET_SHOP.sealId,
     titleId: normalizedSingleLine(source.titleId),
@@ -257,6 +342,89 @@ function normalizeStoredMarketShop(value, {
     createdAt: nonNegativeInteger(source.createdAt),
     updatedAt: nonNegativeInteger(source.updatedAt),
   };
+}
+
+function preserveLegacyMarketServiceStyles(currentValue, incomingShop, legacySalesModeContract) {
+  if (legacySalesModeContract !== true) return incomingShop;
+  const current = normalizeStoredMarketShop(currentValue);
+  if (current.salesMode !== MARKET_SHOP_SALES_MODE_OSHIJO) return incomingShop;
+  const incomingRegular = incomingShop.regularServiceStyles || [];
+  // A cached v1 client can see only [oshijo, firstRegular]. Preserve only the
+  // second schema-v2 regular style; the visible style remains editable.
+  const hiddenRegular = current.regularServiceStyles.slice(1);
+  const regularStyles = [...new Set([...incomingRegular, ...hiddenRegular])]
+    .slice(0, MARKET_SHOP_MAX_SERVICE_STYLES);
+  return {
+    ...incomingShop,
+    serviceStyles: marketLegacyServiceStyles(regularStyles, incomingShop.salesMode),
+    regularServiceStyles: regularStyles,
+  };
+}
+
+function normalizeMarketShopSalesModeRecord(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const salesMode = marketSalesModeSelection(source.salesMode, [], true);
+  const regularServiceStyles = marketRegularServiceStyleSelection(
+    source.regularServiceStyles,
+    MARKET_SHOP_MAX_SERVICE_STYLES,
+  );
+  if (!salesMode || !regularServiceStyles) return null;
+  return {
+    schemaVersion: MARKET_SHOP_SCHEMA_VERSION,
+    salesMode,
+    regularServiceStyles,
+    updatedAt: nonNegativeInteger(source.updatedAt),
+  };
+}
+
+function marketShopSalesModeRecord(value, now = Date.now()) {
+  const shop = normalizeStoredMarketShop(value);
+  return {
+    schemaVersion: MARKET_SHOP_SCHEMA_VERSION,
+    salesMode: shop.salesMode,
+    regularServiceStyles: shop.regularServiceStyles,
+    updatedAt: nonNegativeInteger(now),
+  };
+}
+
+function sameStringArray(first, second) {
+  return first.length === second.length
+    && first.every((entry, index) => entry === second[index]);
+}
+
+function restoreMarketShopSalesModeRecord(shopValue, recordValue) {
+  const source = shopValue && typeof shopValue === "object" ? shopValue : {};
+  const primary = normalizeStoredMarketShop(source);
+  const record = normalizeMarketShopSalesModeRecord(recordValue);
+  if (!record) return primary;
+
+  const nativeSalesMode = marketSalesModeSelection(source.salesMode, [], true);
+  const nativeRegularServiceStyles = marketRegularServiceStyleSelection(
+    source.regularServiceStyles,
+    MARKET_SHOP_MAX_SERVICE_STYLES,
+  );
+  if (nativeSalesMode && nativeRegularServiceStyles) return primary;
+
+  const recordedShop = normalizeStoredMarketShop({
+    ...primary,
+    salesMode: record.salesMode,
+    regularServiceStyles: record.regularServiceStyles,
+    serviceStyles: marketLegacyServiceStyles(record.regularServiceStyles, record.salesMode),
+  });
+  const primaryLegacyStyles = uniqueCatalogSelection(
+    source.serviceStyles,
+    CATALOG_IDS.serviceStyles,
+    MARKET_SHOP_MAX_SERVICE_STYLES,
+  );
+  if (!primaryLegacyStyles) return recordedShop;
+  if (sameStringArray(primaryLegacyStyles, recordedShop.serviceStyles)) {
+    return recordedShop;
+  }
+
+  // A v1 save can intentionally change the visible style or turn the legacy
+  // oshijo marker off. Apply that edit while retaining only the v2 style that
+  // the old form could not see.
+  return preserveLegacyMarketServiceStyles(recordedShop, primary, true);
 }
 
 function isValidPublicSellerId(value) {
@@ -324,6 +492,8 @@ function publicSellerShop(value, { marketStats = {} } = {}) {
     tagline: shop.tagline,
     specialtyTags: shop.specialtyTags,
     serviceStyles: shop.serviceStyles,
+    regularServiceStyles: shop.regularServiceStyles,
+    salesMode: shop.salesMode,
     themeId: shop.themeId,
     sealId: shop.sealId,
     titleId: shop.titleId,
@@ -491,6 +661,8 @@ module.exports = Object.freeze({
   MARKET_SHOP_MAX_SPECIALTY_TAGS,
   MARKET_SHOP_NAME_MAX_LENGTH,
   MARKET_SHOP_SCHEMA_VERSION,
+  MARKET_SHOP_SALES_MODE_NORMAL,
+  MARKET_SHOP_SALES_MODE_OSHIJO,
   MARKET_SHOP_TAGLINE_MAX_LENGTH,
   applyMarketSaleToShop,
   containsUrl,
@@ -500,8 +672,11 @@ module.exports = Object.freeze({
   marketQueuesCompatible,
   marketSaleRelationshipUpdate,
   marketShopReport,
+  marketShopSalesModeRecord,
   marketShopSalesCount,
   normalizeStoredMarketShop,
+  restoreMarketShopSalesModeRecord,
+  preserveLegacyMarketServiceStyles,
   publicSellerShop,
   selectMarketQueueCandidate,
   selectMarketQueueCandidates,

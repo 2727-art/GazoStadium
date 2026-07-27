@@ -181,15 +181,146 @@ test("new sales invalidate the certificate collection cache", () => {
   );
 });
 
-test("failed shop saves stay visibly unsaved and cannot enter the seller queue", () => {
+test("seller setup exposes the sales mode and explains its price before queueing", () => {
+  const setupStart = browser.indexOf("function renderSetup");
+  const setupEnd = browser.indexOf("function renderWaiting", setupStart);
+  assert.ok(setupStart >= 0 && setupEnd > setupStart);
+  const setup = browser.slice(setupStart, setupEnd);
+
+  assert.match(setup, /name="marketSellerSalesMode" value="normal"[\s\S]*?通常営業/);
+  assert.match(
+    setup,
+    /name="marketSellerSalesMode" value="oshijo"[\s\S]*?推し嬢モード（商談後に自由請求）/,
+  );
+  assert.match(
+    setup,
+    /id="marketSellerModeStatus"[^>]*role="status" aria-live="polite"/,
+  );
+  assert.match(setup, /推し嬢モード ON/);
+  assert.match(setup, /推し嬢モード OFF／通常営業/);
+  assert.match(setup, /自由請求を使うには、上の推し嬢モードを選んで保存してください/);
+  assert.ok(
+    setup.indexOf('id="marketSellerModeStatus"')
+      < setup.indexOf("market-join-button"),
+    "the saved mode status must appear before queue participation",
+  );
+  assert.match(setup, /\$\{sellerOshijoMode \? "マッチング基準額" : "販売価格"\}/);
+  assert.match(
+    setup,
+    /id="marketAskingPrice" aria-describedby="marketAskingPriceHelp marketSetupFeeBreakdown"/,
+  );
+  assert.match(setup, /id="marketAskingPriceHelp"[\s\S]*?マッチング上限[\s\S]*?自由請求額は営業後に決めます/);
+  assert.match(setup, /通常営業では、この金額が購入価格になります/);
+  assert.match(setup, /<span>マッチング上限<\/span>/);
+  assert.match(setup, /推し嬢モードの自由請求額を制限する金額ではありません/);
+  assert.match(
+    browser,
+    /renderMarketShopOptionChecks\("serviceStyles"[\s\S]*?excludeIds: \[OSHIJO_SERVICE_STYLE_ID\]/,
+    "oshijo must not remain buried as a duplicate contact-style checkbox",
+  );
+  assert.match(
+    browser,
+    /input\[name="marketSellerSalesMode"\][\s\S]*?state\.shop\.salesMode = selectedSalesMode/,
+    "the visible sales mode must update the dedicated persisted field",
+  );
+  assert.match(
+    browser,
+    /function readMarketShopForm\(\)[\s\S]*?salesMode: document\.querySelector\('input\[name="marketSellerSalesMode"\]:checked'\)/,
+  );
+  assert.match(
+    browser,
+    /const selectedServiceStyles = \[[\s\S]*?marketShopServiceStyle[\s\S]*?serviceStyles: selectedServiceStyles,\s*regularServiceStyles: selectedServiceStyles,/,
+    "the current form selection must override any older v2 style snapshot",
+  );
+});
+
+test("unsaved shop changes stay visible and cannot enter the seller queue", () => {
   assert.match(browser, /shopErrorMessage:\s*""/);
+  assert.match(browser, /shopDirty:\s*false/);
+  assert.match(
+    browser,
+    /function markMarketShopDirty\(\) \{[\s\S]*?state\.shopDirty = true;/,
+  );
+  assert.match(
+    browser,
+    /function applyMarketShopResponse\(value\) \{[\s\S]*?state\.shopDirty = false;/,
+  );
   assert.match(browser, /state\.shopStatus = "save-error";/);
   assert.match(browser, /<strong>未保存です。<\/strong>/);
   assert.match(
     browser,
-    /joinedRole === "seller" && state\.shopStatus === "save-error"/,
+    /joinedRole === "seller" && state\.shopStatus !== "ready"/,
   );
-  assert.match(browser, /店主カードが未保存です。再保存してから待機してください。/);
+  assert.match(browser, /推し値商店の変更が未保存です。保存してから待機してください。/);
+  assert.match(browser, /店主カードと販売モードを確認できません。再読み込みしてから待機してください。/);
+  assert.match(browser, /販売モードを確認できません/);
+  assert.match(browser, /data-market-reload-shop/);
+  assert.match(
+    browser,
+    /function renderMarketShopOptionChecks\([\s\S]*?state\.shopStatus === "error"/,
+    "failed shop loads must lock every shop checkbox as well as queueing",
+  );
+  assert.match(
+    browser,
+    /seller && \(!state\.image \|\| state\.shopStatus !== "ready"\)/,
+    "seller queue UI must remain blocked until the server shop is confirmed",
+  );
+  assert.match(
+    browser,
+    /state\.shopStatus = "ready";\s*state\.shopErrorMessage = "";\s*state\.shopDirty = false;/,
+    "only a successful save should clear the dirty flag",
+  );
+  for (const inputName of [
+    "marketShopName",
+    "marketShopTagline",
+    "marketShopSpecialty",
+    "marketShopServiceStyle",
+    "marketShopTheme",
+    "marketShopSeal",
+    "marketShopTitle",
+    "marketShopCharm",
+    "marketShopRepeatWelcome",
+  ]) {
+    const inputPosition = browser.indexOf(inputName, browser.indexOf("function bindEvents"));
+    assert.ok(inputPosition >= 0, `${inputName} edit binding should exist`);
+    assert.ok(
+      browser.indexOf("markMarketShopDirty()", inputPosition) > inputPosition,
+      `${inputName} edits should mark the shop dirty`,
+    );
+  }
+});
+
+test("sales-mode keyboard focus stays on the selected radio after rerender", () => {
+  assert.match(
+    browser,
+    /const selectedSalesMode = input\.value === OSHIJO_CLOSING_MODE[\s\S]*?render\(\);[\s\S]*?input\[name="marketSellerSalesMode"\]\[value="\$\{selectedSalesMode\}"\]/,
+  );
+  assert.doesNotMatch(
+    browser,
+    /input\[name="marketSellerSalesMode"\][\s\S]{0,800}?#marketSaveSalesModeButton"\)\?\.focus/,
+  );
+});
+
+test("new sales-mode UI fails closed when connected to legacy Functions", () => {
+  assert.match(browser, /shopSalesModeContractReady:\s*false/);
+  assert.match(
+    browser,
+    /const salesModeCatalog = Array\.isArray\(data\.catalog\?\.salesModes\)[\s\S]*?state\.shopSalesModeContractReady = salesModeCatalog\.includes\("normal"\)[\s\S]*?includes\(savedSalesMode\)/,
+  );
+  assert.match(
+    browser,
+    /async function saveMarketShop\(event\)[\s\S]*?if \(!state\.shopSalesModeContractReady\)[\s\S]*?ページを再読み込みしてから保存してください/,
+  );
+  assert.match(browser, /販売モード設定の更新を確認できません/);
+  assert.match(
+    browser,
+    /const modeControlsLocked = locked[\s\S]*?\|\| sellerShopContractUnavailable/,
+  );
+  assert.match(
+    browser,
+    /const shopSalesModeContractReady = state\.shopSalesModeContractReady;[\s\S]*?shopSalesModeContractReady,/,
+    "replay must preserve a confirmed server contract",
+  );
 });
 
 test("patron fund state is normalized from economy and shop responses", () => {

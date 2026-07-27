@@ -15,7 +15,7 @@ function requestedMarketClosingMode(value) {
   return { valid: true, closingMode: value.trim() };
 }
 
-function marketClosingDecision({ closingMode, serviceStyles } = {}) {
+function marketClosingDecision({ closingMode, salesMode, serviceStyles } = {}) {
   const requested = requestedMarketClosingMode(closingMode);
   if (!requested.valid) {
     return Object.freeze({
@@ -38,8 +38,10 @@ function marketClosingDecision({ closingMode, serviceStyles } = {}) {
       errorCode: "invalid-argument",
     });
   }
-  const equipped = Array.isArray(serviceStyles)
-    && serviceStyles.includes(MARKET_CLOSING_MODE_OSHIJO);
+  const configuredSalesMode = typeof salesMode === "string" ? salesMode.trim() : "";
+  const equipped = configuredSalesMode
+    ? configuredSalesMode === MARKET_CLOSING_MODE_OSHIJO
+    : Array.isArray(serviceStyles) && serviceStyles.includes(MARKET_CLOSING_MODE_OSHIJO);
   if (!equipped) {
     return Object.freeze({
       allowed: false,

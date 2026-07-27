@@ -20,6 +20,7 @@ test("seller-shop Firestore collections are server-only", () => {
   const server = read("functions/index.js");
   for (const collectionName of [
     "valueMarketShops",
+    "valueMarketShopSalesModes",
     "valueMarketShopPublic",
     "valueMarketShopFavorites",
     "valueMarketShopBlocks",
@@ -31,6 +32,7 @@ test("seller-shop Firestore collections are server-only", () => {
   }
   for (const pattern of [
     /match \/valueMarketShops\/\{uid\} \{\s*allow read, write: if false;/,
+    /match \/valueMarketShopSalesModes\/\{uid\} \{\s*allow read, write: if false;/,
     /match \/valueMarketShopPublic\/\{publicSellerId\} \{\s*allow read, write: if false;/,
     /match \/valueMarketShopFavorites\/\{buyerUid\} \{\s*allow read, write: if false;[\s\S]*?match \/sellers\/\{sellerUid\} \{\s*allow read, write: if false;/,
     /match \/valueMarketShopBlocks\/\{uid\} \{\s*allow read, write: if false;[\s\S]*?match \/users\/\{targetUid\} \{\s*allow read, write: if false;/,
@@ -40,6 +42,18 @@ test("seller-shop Firestore collections are server-only", () => {
   ]) {
     assert.match(rules, pattern);
   }
+  assert.match(
+    server,
+    /async function ensureMarketShop[\s\S]*?transaction\.get\(salesModeRef\)[\s\S]*?restoreMarketShopSalesModeRecord[\s\S]*?transaction\.set\(salesModeRef, marketShopSalesModeRecord\(shop, now\)\)/,
+  );
+  assert.match(
+    server,
+    /async function saveMarketShop[\s\S]*?transaction\.get\(salesModeRef\)[\s\S]*?restoreMarketShopSalesModeRecord\(shopSnapshot\.data\(\), salesModeSnapshot\.data\(\)\)[\s\S]*?transaction\.set\(salesModeRef, marketShopSalesModeRecord\(savedShop, now\)\)/,
+  );
+  assert.match(
+    server,
+    /async function tryMatchMarketQueueSession[\s\S]*?transaction\.get\(sellerSalesModeRef\)[\s\S]*?const restoredSellerShop = restoreMarketShopSalesModeRecord[\s\S]*?const liveSellerShop = publicSellerShop\(restoredSellerShop[\s\S]*?sellerShop,/,
+  );
 });
 
 test("seller-shop UI and documentation cover identity, relationships, and safety", () => {
@@ -84,12 +98,14 @@ test("seller-shop UI and documentation cover identity, relationships, and safety
     "ブロック",
     "証書来歴",
     "整合性ルール",
-    "推し嬢（熱血クロージング）",
+    "推し嬢モード（商談後に自由請求）",
   ]) {
     assert.match(readme, new RegExp(term));
   }
   assert.match(readme, /選択した1店に限定して待機/);
   assert.match(readme, /販売価格と着手料5 Payの合計以上/);
+  assert.match(readme, /マッチング基準額/);
+  assert.match(readme, /営業を1回送る/);
   assert.match(readme, /異なる買い手5人/);
   assert.match(readme, /同じ結果画面にいる間ならすぐ解除/);
   assert.doesNotMatch(readme, /ブロック一覧/);

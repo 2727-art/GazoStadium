@@ -5,14 +5,18 @@ const PRODUCT_CATALOG = require("../product-catalog");
 const {
   MARKET_SHOP_CATALOG,
   MARKET_SHOP_IMPRESSION_COOLDOWN_MS,
+  MARKET_SHOP_SCHEMA_VERSION,
   applyMarketSaleToShop,
   marketQueueCandidateSessionKey,
   marketImpressionDecision,
   marketQueuesCompatible,
   marketSaleRelationshipUpdate,
+  marketShopSalesModeRecord,
   marketShopSalesCount,
   normalizeStoredMarketShop,
+  preserveLegacyMarketServiceStyles,
   publicSellerShop,
+  restoreMarketShopSalesModeRecord,
   selectMarketQueueCandidate,
   selectMarketQueueCandidates,
   shouldReplaceMarketQueue,
@@ -25,6 +29,7 @@ function validInput(overrides = {}) {
     tagline: "物語のある一枚を届けます",
     specialtyTags: ["story", "night"],
     serviceStyles: ["story", "careful"],
+    salesMode: "normal",
     themeId: "lavender",
     sealId: "moon",
     titleId: "title_image_sommelier",
@@ -85,20 +90,205 @@ test("shop save input accepts only catalog selections and an owned title", () =>
     ["specialtyTags", "serviceStyles", "themeId", "sealId", "titleId", "shopCharmId"],
   );
 });
-test("shop save input accepts and stores the oshijo service style", () => {
+test("shop save input accepts and stores the explicit oshijo sales mode", () => {
   const result = validateMarketShopInput(validInput({
-    serviceStyles: ["story", "oshijo"],
+    serviceStyles: ["story"],
+    salesMode: "oshijo",
   }), {
     ownedTitleIds: ["title_image_sommelier"],
   });
 
   assert.equal(result.valid, true);
   assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.shop.serviceStyles, ["story", "oshijo"]);
+  assert.equal(result.shop.salesMode, "oshijo");
+  assert.deepEqual(result.shop.serviceStyles, ["oshijo", "story"]);
+  assert.deepEqual(result.shop.regularServiceStyles, ["story"]);
   assert.deepEqual(
     MARKET_SHOP_CATALOG.serviceStyles.find(({ id }) => id === "oshijo"),
-    { id: "oshijo", label: "推し嬢（熱血クロージング）" },
+    { id: "oshijo", label: "推し嬢モード（商談後に自由請求）" },
   );
+});
+
+test("oshijo sales mode does not consume either regular service-style slot", () => {
+  const result = validateMarketShopInput(validInput({
+    titleId: "",
+    serviceStyles: ["story", "careful"],
+    salesMode: "oshijo",
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.shop.salesMode, "oshijo");
+  assert.deepEqual(result.shop.serviceStyles, ["oshijo", "story"]);
+  assert.deepEqual(result.shop.regularServiceStyles, ["story", "careful"]);
+  assert.equal(MARKET_SHOP_SCHEMA_VERSION, 2);
+  assert.equal(MARKET_SHOP_CATALOG.limits.serviceStyles, 2);
+  assert.equal(MARKET_SHOP_CATALOG.limits.regularServiceStyles, 2);
+  assert.equal(MARKET_SHOP_CATALOG.limits.salesModes, 1);
+  assert.deepEqual(
+    MARKET_SHOP_CATALOG.salesModes.map(({ id }) => id),
+    ["normal", "oshijo"],
+  );
+  const normalized = normalizeStoredMarketShop({
+    ...validInput({ titleId: "" }),
+    serviceStyles: ["oshijo", "story"],
+    regularServiceStyles: ["story", "careful"],
+    salesMode: "oshijo",
+  });
+  assert.deepEqual(normalized.serviceStyles, ["oshijo", "story"]);
+  assert.deepEqual(normalized.regularServiceStyles, ["story", "careful"]);
+
+  const tooManyRegularStyles = validateMarketShopInput(validInput({
+    titleId: "",
+    serviceStyles: ["story", "careful", "audio"],
+  }));
+  assert.equal(tooManyRegularStyles.valid, false);
+  assert.ok(tooManyRegularStyles.errors.includes("serviceStyles"));
+});
+
+test("v2 oshijo settings are fully restored after cached v1 Functions rewrite the shop", () => {
+  const saved = validateMarketShopInput(validInput({
+    titleId: "",
+    serviceStyles: ["story", "careful"],
+    salesMode: "oshijo",
+  })).shop;
+  const durableRecord = marketShopSalesModeRecord(saved, 123);
+
+  assert.deepEqual(saved.serviceStyles, ["oshijo", "story"]);
+  assert.equal(saved.serviceStyles.length <= 2, true);
+  assert.deepEqual(durableRecord, {
+    schemaVersion: 2,
+    salesMode: "oshijo",
+    regularServiceStyles: ["story", "careful"],
+    updatedAt: 123,
+  });
+
+  // Cached v1 Functions know only serviceStyles and drop schema-v2 fields.
+  const rewrittenByV1 = { ...saved };
+  delete rewrittenByV1.salesMode;
+  delete rewrittenByV1.regularServiceStyles;
+  const restored = restoreMarketShopSalesModeRecord(rewrittenByV1, durableRecord);
+  assert.equal(restored.salesMode, "oshijo");
+  assert.deepEqual(restored.serviceStyles, ["oshijo", "story"]);
+  assert.deepEqual(restored.regularServiceStyles, ["story", "careful"]);
+
+  const legacyReplacement = restoreMarketShopSalesModeRecord({
+    ...rewrittenByV1,
+    serviceStyles: ["oshijo", "audio"],
+  }, durableRecord);
+  assert.equal(legacyReplacement.salesMode, "oshijo");
+  assert.deepEqual(legacyReplacement.serviceStyles, ["oshijo", "audio"]);
+  assert.deepEqual(legacyReplacement.regularServiceStyles, ["audio", "careful"]);
+
+  const legacyOptOut = restoreMarketShopSalesModeRecord({
+    ...rewrittenByV1,
+    serviceStyles: ["story"],
+  }, durableRecord);
+  assert.equal(legacyOptOut.salesMode, "normal");
+  assert.deepEqual(legacyOptOut.serviceStyles, ["story", "careful"]);
+  assert.deepEqual(legacyOptOut.regularServiceStyles, ["story", "careful"]);
+
+  const nativeV2Edit = restoreMarketShopSalesModeRecord({
+    ...saved,
+    salesMode: "normal",
+    serviceStyles: ["audio"],
+    regularServiceStyles: ["audio"],
+  }, durableRecord);
+  assert.equal(nativeV2Edit.salesMode, "normal");
+  assert.deepEqual(nativeV2Edit.regularServiceStyles, ["audio"]);
+});
+
+test("legacy oshijo saves retain a hidden second regular style without blocking opt-out", () => {
+  const current = {
+    ...validInput({ titleId: "" }),
+    salesMode: "oshijo",
+    serviceStyles: ["oshijo", "story"],
+    regularServiceStyles: ["story", "careful"],
+  };
+  const legacyPayload = validInput({
+    titleId: "",
+    serviceStyles: ["oshijo", "story"],
+  });
+  delete legacyPayload.salesMode;
+  const legacyValidation = validateMarketShopInput(legacyPayload);
+  assert.equal(legacyValidation.valid, true);
+  assert.equal(legacyValidation.legacySalesModeContract, true);
+  assert.equal(legacyValidation.shop.salesMode, "oshijo");
+  const preserved = preserveLegacyMarketServiceStyles(
+    current,
+    legacyValidation.shop,
+    legacyValidation.legacySalesModeContract,
+  );
+  assert.deepEqual(preserved.serviceStyles, ["oshijo", "story"]);
+  assert.deepEqual(preserved.regularServiceStyles, ["story", "careful"]);
+
+  const legacyReplacementPayload = validInput({
+    titleId: "",
+    serviceStyles: ["oshijo", "audio"],
+  });
+  delete legacyReplacementPayload.salesMode;
+  const legacyReplacement = validateMarketShopInput(legacyReplacementPayload);
+  const replaced = preserveLegacyMarketServiceStyles(current, legacyReplacement.shop, true);
+  assert.deepEqual(replaced.serviceStyles, ["oshijo", "audio"]);
+  assert.deepEqual(replaced.regularServiceStyles, ["audio", "careful"]);
+
+  const legacyOptOutPayload = validInput({
+    titleId: "",
+    serviceStyles: ["story"],
+  });
+  delete legacyOptOutPayload.salesMode;
+  const legacyOptOut = validateMarketShopInput(legacyOptOutPayload);
+  assert.equal(legacyOptOut.shop.salesMode, "normal");
+  const optedOut = preserveLegacyMarketServiceStyles(current, legacyOptOut.shop, true);
+  assert.deepEqual(optedOut.serviceStyles, ["story", "careful"]);
+  assert.deepEqual(optedOut.regularServiceStyles, ["story", "careful"]);
+
+  const legacyOptOutReplacementPayload = validInput({
+    titleId: "",
+    serviceStyles: ["audio"],
+  });
+  delete legacyOptOutReplacementPayload.salesMode;
+  const legacyOptOutReplacement = validateMarketShopInput(legacyOptOutReplacementPayload);
+  const optedOutReplacement = preserveLegacyMarketServiceStyles(
+    current,
+    legacyOptOutReplacement.shop,
+    legacyOptOutReplacement.legacySalesModeContract,
+  );
+  assert.deepEqual(optedOutReplacement.serviceStyles, ["audio", "careful"]);
+  assert.deepEqual(optedOutReplacement.regularServiceStyles, ["audio", "careful"]);
+
+  const legacyTwoVisiblePayload = validInput({
+    titleId: "",
+    serviceStyles: ["story", "audio"],
+  });
+  delete legacyTwoVisiblePayload.salesMode;
+  const legacyTwoVisible = validateMarketShopInput(legacyTwoVisiblePayload);
+  const twoVisible = preserveLegacyMarketServiceStyles(current, legacyTwoVisible.shop, true);
+  assert.deepEqual(twoVisible.serviceStyles, ["story", "audio"]);
+  assert.deepEqual(twoVisible.regularServiceStyles, ["story", "audio"]);
+});
+
+test("stored legacy oshijo tags migrate to salesMode and invalid explicit modes are rejected", () => {
+  const legacyStored = normalizeStoredMarketShop({
+    ...validInput({ titleId: "" }),
+    serviceStyles: ["careful", "oshijo"],
+  });
+  assert.equal(legacyStored.salesMode, "normal");
+
+  const withoutExplicitMode = validInput({
+    titleId: "",
+    serviceStyles: ["careful", "oshijo"],
+  });
+  delete withoutExplicitMode.salesMode;
+  const migrated = normalizeStoredMarketShop(withoutExplicitMode);
+  assert.equal(migrated.salesMode, "oshijo");
+  assert.deepEqual(migrated.serviceStyles, ["oshijo", "careful"]);
+  assert.deepEqual(migrated.regularServiceStyles, ["careful"]);
+
+  const invalidMode = validateMarketShopInput(validInput({
+    titleId: "",
+    salesMode: "unknown",
+  }));
+  assert.equal(invalidMode.valid, false);
+  assert.ok(invalidMode.errors.includes("salesMode"));
 });
 
 
@@ -190,6 +380,14 @@ test("public shop cards expose stable presentation and aggregate report without 
   assert.equal(card.favoriteCount, undefined);
   assert.equal(card.uid, undefined);
   assert.equal(card.sellerUid, undefined);
+
+  const oshijoCard = publicSellerShop({
+    publicSellerId: "shop_A1B2C3D4E5F6",
+    ...validInput({ salesMode: "oshijo" }),
+  });
+  assert.equal(oshijoCard.salesMode, "oshijo");
+  assert.deepEqual(oshijoCard.serviceStyles, ["oshijo", "story"]);
+  assert.deepEqual(oshijoCard.regularServiceStyles, ["story", "careful"]);
 
   const legacyCard = publicSellerShop({
     publicSellerId: "shop_A1B2C3D4E5F6",
@@ -416,7 +614,7 @@ test("the first later-day repeat sale adds one repeat buyer and seller issue num
 });
 
 test("catalog IDs are unique within each selectable family", () => {
-  for (const key of ["specialtyTags", "serviceStyles", "themes", "seals", "impressionTags"]) {
+  for (const key of ["specialtyTags", "serviceStyles", "salesModes", "themes", "seals", "impressionTags"]) {
     const ids = MARKET_SHOP_CATALOG[key].map(({ id }) => id);
     assert.equal(new Set(ids).size, ids.length);
   }

@@ -30,8 +30,16 @@ test("normal market pitch uses an empty closing mode", () => {
   assert.equal(marketClosingLeaveReason(""), "buyer_left");
 });
 
-test("oshijo closing requires the equipped service style", () => {
+test("oshijo closing requires the saved sales mode with a legacy style fallback", () => {
   assert.equal(MARKET_CLOSING_MODE_OSHIJO, "oshijo");
+  assert.deepEqual(
+    marketClosingDecision({
+      closingMode: "oshijo",
+      salesMode: "oshijo",
+      serviceStyles: ["careful"],
+    }),
+    { allowed: true, closingMode: "oshijo", errorCode: "" },
+  );
   assert.deepEqual(
     marketClosingDecision({
       closingMode: "oshijo",
@@ -40,7 +48,11 @@ test("oshijo closing requires the equipped service style", () => {
     { allowed: true, closingMode: "oshijo", errorCode: "" },
   );
   assert.deepEqual(
-    marketClosingDecision({ closingMode: "oshijo", serviceStyles: ["careful"] }),
+    marketClosingDecision({
+      closingMode: "oshijo",
+      salesMode: "normal",
+      serviceStyles: ["careful", "oshijo"],
+    }),
     { allowed: false, closingMode: "", errorCode: "failed-precondition" },
   );
   assert.deepEqual(
@@ -68,7 +80,7 @@ test("oshijo closing blocks extensions and records a distinct decline", () => {
 test("valueMarketAction wires oshijo decisions into the existing transaction", () => {
   assert.match(
     indexSource,
-    /const closingDecision = marketClosingDecision\(\{\s*closingMode: data\?\.closingMode,\s*serviceStyles: room\.sellerShop\?\.serviceStyles,\s*\}\);/,
+    /const closingDecision = marketClosingDecision\(\{\s*closingMode: data\?\.closingMode,\s*salesMode: room\.sellerShop\?\.salesMode,\s*serviceStyles: room\.sellerShop\?\.serviceStyles,\s*\}\);/,
   );
   assert.match(
     indexSource,
@@ -118,12 +130,17 @@ test("certificate, market ledger, and response retain the audit mode", () => {
     indexSource,
     /function publicMarketCertificate\(snapshot\)[\s\S]*?closingMode: marketClosingAuditMode\(value\?\.closingMode\)/,
   );
+  assert.match(
+    indexSource,
+    /const currentSellerShop = presentedSellerShop[\s\S]*?serviceStyles: presentedSellerShop\.serviceStyles,\s*regularServiceStyles: presentedSellerShop\.regularServiceStyles,\s*salesMode: presentedSellerShop\.salesMode,[\s\S]*?transaction\.create\(certificateRef/,
+    "the certificate must retain the sales mode presented when the negotiation began",
+  );
 });
 
 test("idempotent pitch retries validate and match the requested closing mode", () => {
   assert.match(
     indexSource,
-    /if \(ledgerSnapshot\.exists\)[\s\S]*?const replayClosingDecision = marketClosingDecision\(\{[\s\S]*?closingMode: data\?\.closingMode,[\s\S]*?serviceStyles: room\.sellerShop\?\.serviceStyles/,
+    /if \(ledgerSnapshot\.exists\)[\s\S]*?const replayClosingDecision = marketClosingDecision\(\{[\s\S]*?closingMode: data\?\.closingMode,[\s\S]*?salesMode: room\.sellerShop\?\.salesMode,[\s\S]*?serviceStyles: room\.sellerShop\?\.serviceStyles/,
   );
   assert.match(
     indexSource,
@@ -156,6 +173,25 @@ test("oshijo UI gives advance notice, an explicit final confirmation, and a decl
   assert.ok(oshijoDecision, "buyer oshijo decision block should exist");
   assert.doesNotMatch(oshijoDecision, /data-market-action="request_extension"/);
   assert.doesNotMatch(oshijoDecision, /setTimeout|setInterval|auto(?:matic)?Purchase/i);
+});
+
+test("seller pitch explains every step required to reach a free claim", () => {
+  const pitchStart = marketSource.indexOf('if (status === "pitch")');
+  const pitchEnd = marketSource.indexOf('if (status === "oshijo_warning")', pitchStart);
+  assert.ok(pitchStart >= 0 && pitchEnd > pitchStart);
+  const pitch = marketSource.slice(pitchStart, pitchEnd);
+
+  for (const copy of ["①</b><span>営業を送る", "②</b><span>請求額を決める", "③</b><span>警告画面を送る"]) {
+    assert.match(pitch, new RegExp(copy));
+  }
+  assert.ok(pitch.indexOf("営業を送る") < pitch.indexOf("請求額を決める"));
+  assert.ok(pitch.indexOf("請求額を決める") < pitch.indexOf("警告画面を送る"));
+  assert.match(
+    pitch,
+    /id="marketOshijoClaimToggle"[\s\S]*?\$\{!sent \|\| state\.busy \? "disabled" : ""\}/,
+  );
+  assert.match(pitch, /先にチャットまたは10秒音声を1回送ってください/);
+  assert.match(pitch, /自由請求へ進む/);
 });
 
 test("oshijo presentation announces state changes and respects reduced motion", () => {
