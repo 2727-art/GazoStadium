@@ -328,6 +328,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // 鍛え合い60の継続記録と冪等確定台帳は、App Check強制の
+    // trainingActionだけがAdmin SDKで読み書きします。
+    match /trainingProfiles/{uid} {
+      allow read, write: if false;
+    }
+
+    match /trainingClaims/{uid}/rooms/{roomId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

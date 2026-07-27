@@ -27,7 +27,7 @@ import {
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -42,7 +42,7 @@ import {
 import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
+} from "./player-titles.js?v=player-titles-v3-retire-team-v1-remove-royale-v1";
 import {
   getStamp,
 } from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
@@ -1382,7 +1382,7 @@ async function start({ initialScreen = "setup" } = {}) {
     return;
   }
   if (window.HariaiOnline?.isActive?.() || window.HariaiStrategy?.isActive?.()
-      || window.HariaiTeam?.isActive?.()) {
+      || window.HariaiTraining?.isActive?.()) {
     showToast("ほかのモードを終了してからVALUE MARKETを開始してください。");
     return;
   }

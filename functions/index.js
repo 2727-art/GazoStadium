@@ -17,6 +17,11 @@ const {
   createOnlinePublicPresenceCleanup,
 } = require("./online-public-presence-cleanup");
 const {
+  createTrainingQueueCleanup,
+  createTrainingRoomCleanup,
+  trainingActiveRoomIsLive,
+} = require("./training-room-cleanup");
+const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
 } = require("./app-check-rollout");
@@ -50,10 +55,12 @@ const {
   unlockAchievements,
 } = require("./achievements");
 const {
-  TEAM_DUO_VARIANT,
-  deriveTeamDuoChallengeResult,
-  isTeamDuoChallengeRoom,
-} = require("./team-duo-challenge");
+  TRAINING_ROOM_MAX_AGE_MS,
+  applyTrainingSession,
+  assertTrainingRoomFinalizable,
+  normalizeTrainingProfile,
+  trainingDailySettlement,
+} = require("./training");
 const {
   CREATOR_CARD_PREMIUM_PRODUCT_ID,
   CREATOR_CARD_TEXT_MAX_LENGTH,
@@ -186,6 +193,13 @@ const {
   startCrownRun,
 } = require("./crown-circuit");
 const PRODUCT_CATALOG = require("./product-catalog");
+const RETIRED_TEAM_PRODUCT_IDS = new Set([
+  "title_team_link_active",
+  "title_trust_my_partner",
+  "title_combo_romance",
+  "title_last_image",
+  "title_still_surviving",
+]);
 const {
   claimableDailyPlayRewards,
   dailyPlayRewardClaimKey,
@@ -311,6 +325,18 @@ const realtime = getDatabase();
 const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
 });
+const cleanupTrainingQueue = createTrainingQueueCleanup({
+  realtime,
+});
+const cleanupTrainingRooms = createTrainingRoomCleanup({
+  realtime,
+  finalizeRoom: ({ roomId, participantUid, now }) => (
+    finalizeTraining(participantUid, roomId, {
+      now,
+      maxRoomAgeMs: Number.MAX_SAFE_INTEGER,
+    })
+  ),
+});
 const adminAuth = getAuth();
 const MAX_POINTS = ANJU_PAY_MAX_BALANCE;
 const MARKET_ENTRY_FEE = 5;
@@ -370,7 +396,12 @@ const DAILY_MISSIONS = Object.freeze({
   give_critical: { progressKey: "criticals", target: 1, reward: 90 },
   play_solo: { progressKey: "soloMatches", target: 1, reward: 70 },
   play_strategy: { progressKey: "strategyMatches", target: 1, reward: 80 },
-  play_team: { progressKey: "teamMatches", target: 1, reward: 100 },
+  play_team: {
+    progressKey: "teamMatches", target: 1, reward: 100, endsAfter: "2026-07-28",
+  },
+  play_training: {
+    progressKey: "trainingSets", target: 1, reward: 100, startsOn: "2026-07-28",
+  },
 });
 
 function requireUid(request) {
@@ -884,6 +915,14 @@ function economyProgressRef(uid) {
   return firestore.collection("economyProgress").doc(uid);
 }
 
+function trainingProfileRef(uid) {
+  return firestore.collection("trainingProfiles").doc(uid);
+}
+
+function trainingClaimRef(uid, roomId) {
+  return firestore.collection("trainingClaims").doc(uid).collection("rooms").doc(roomId);
+}
+
 function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
 }
@@ -1016,10 +1055,6 @@ function marketRankingAwardRef(uid, seasonKey, role) {
   return marketRankingHonorRef(uid)
     .collection("awards")
     .doc(eventId(`${seasonKey}:${role}`));
-}
-
-function verifiedTeamDuoResultRef(roomId) {
-  return firestore.collection("verifiedTeamDuoResults").doc(roomId);
 }
 
 function soloProfileProjectionQueueRef(uid) {
@@ -1178,12 +1213,9 @@ function calculateServerRankingRating(currentRating, opponentRating, outcome) {
 }
 
 function serverRankingOpponentRating(mode, room, participantUid, participants, profiles) {
-  const playerTeam = room?.players?.[participantUid]?.team;
-  const opponentRatings = participants.filter((candidateUid) => {
-    if (candidateUid === participantUid) return false;
-    if (mode !== "team") return true;
-    return room?.players?.[candidateUid]?.team !== playerTeam;
-  }).map((candidateUid) => (
+  const opponentRatings = participants.filter((candidateUid) => (
+    candidateUid !== participantUid
+  )).map((candidateUid) => (
     profiles[candidateUid]?.rating
     || room?.players?.[candidateUid]?.rating
     || 1000
@@ -1420,6 +1452,7 @@ function emptyDaily(dateKey = jstDateKey()) {
     soloMatches: 0,
     strategyMatches: 0,
     teamMatches: 0,
+    trainingSets: 0,
     claimed: {},
   };
 }
@@ -1434,6 +1467,7 @@ function normalizeDaily(value, dateKey = jstDateKey()) {
     soloMatches: 1,
     strategyMatches: 1,
     teamMatches: 1,
+    trainingSets: 1,
   })) {
     daily[key] = integer(value[key], 0, limit, 0);
   }
@@ -3301,6 +3335,9 @@ async function claimDaily(uid, missionId) {
   if (mission.endsAfter && dateKey >= mission.endsAfter) {
     throw new HttpsError("failed-precondition", "このミッションの実施期間は終了しました。");
   }
+  if (mission.startsOn && dateKey < mission.startsOn) {
+    throw new HttpsError("failed-precondition", "このミッションはまだ始まっていません。");
+  }
   await Promise.all([ensureWallet(uid), ensureEconomyProgress(uid)]);
   const wallet = walletRef(uid);
   const progressRef = economyProgressRef(uid);
@@ -3611,6 +3648,12 @@ async function purchaseProduct(uid, productId) {
       );
       return;
     }
+    if (RETIRED_TEAM_PRODUCT_IDS.has(productId)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "この称号は終了したモードの商品です。購入済みの場合は引き続き利用できます。",
+      );
+    }
     if (before < product.price) {
       result = { outcome: "short", balance: before, price: product.price };
       persistAnjuPayOpening(
@@ -3802,30 +3845,218 @@ async function claimPeriods(uid) {
   return result;
 }
 
-async function prepareTeamChallenge(uid) {
-  const compatibilitySnapshot = {
-    uid: String(uid),
-    version: 2,
-    eligible: true,
-    reason: "roleplay",
-  };
+async function initializeTraining(uid) {
+  const profileRef = trainingProfileRef(uid);
+  const progressRef = economyProgressRef(uid);
+  const now = Date.now();
+  let profile = null;
+  let daily = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [profileSnapshot, progressSnapshot] = await Promise.all([
+      transaction.get(profileRef),
+      transaction.get(progressRef),
+    ]);
+    profile = normalizeTrainingProfile(profileSnapshot.data());
+    daily = normalizeEconomyProgress(
+      progressSnapshot.data(),
+      jstDateKey(now),
+    ).daily;
+    if (!profileSnapshot.exists) {
+      profile.updatedAt = now;
+      transaction.create(profileRef, profile);
+    }
+  });
   return {
-    ...compatibilitySnapshot,
-    roleplay: true,
-    message: "推し上手さんはロールプレイ。戦績や順位に関係なく、どなたでも選べます。",
-    eligibilitySnapshot: compatibilitySnapshot,
+    result: { status: "ready" },
+    profile,
+    daily,
+  };
+}
+
+function trainingServerFinalizationMatches(value, result) {
+  const finalized = objectValue(value);
+  return Number(finalized.version) === 1
+    && finalized.reason === result.reason
+    && Number(finalized.turnCount) === result.turnCount
+    && sameIds(
+      Object.keys(objectValue(finalized.outcomes)).sort(),
+      result.participants,
+    )
+    && sameIds(
+      Object.keys(objectValue(finalized.completedSetsByUid)).sort(),
+      result.participants,
+    )
+    && result.participants.every((participantUid) => (
+      finalized.outcomes?.[participantUid] === result.outcomes[participantUid]
+      && Number(finalized.completedSetsByUid?.[participantUid])
+        === result.completedSetsByUid[participantUid]
+    ));
+}
+
+async function finalizeTraining(uid, roomId, {
+  now = Date.now(),
+  maxRoomAgeMs = TRAINING_ROOM_MAX_AGE_MS,
+} = {}) {
+  const roomRef = realtime.ref(`online/trainingRooms/${roomId}`);
+  const roomSnapshot = await roomRef.get();
+  const room = roomSnapshot.val();
+  let derived;
+  try {
+    derived = assertTrainingRoomFinalizable(
+      room,
+      uid,
+      now,
+      { maxAgeMs: maxRoomAgeMs },
+    );
+  } catch {
+    throw new HttpsError(
+      "failed-precondition",
+      "鍛え合い60の有効な完走ルームを確認できませんでした。",
+    );
+  }
+  if (derived.status !== "final") {
+    return {
+      result: {
+        status: "pending",
+        retryAfterMs: derived.retryAfterMs,
+      },
+      profile: null,
+      daily: null,
+    };
+  }
+  if (room?.serverFinalized
+      && !trainingServerFinalizationMatches(room.serverFinalized, derived)) {
+    throw new HttpsError(
+      "failed-precondition",
+      "鍛え合い60の確定結果が一致しません。",
+    );
+  }
+
+  const participants = derived.participants;
+  const profileRefs = participants.map((participantUid) => trainingProfileRef(participantUid));
+  const claimRefs = participants.map((participantUid) => (
+    trainingClaimRef(participantUid, roomId)
+  ));
+  const progressRefs = participants.map((participantUid) => (
+    economyProgressRef(participantUid)
+  ));
+  const profileResults = {};
+  const progressResults = {};
+  let callerDuplicate = false;
+  await firestore.runTransaction(async (transaction) => {
+    Object.keys(profileResults).forEach((key) => delete profileResults[key]);
+    Object.keys(progressResults).forEach((key) => delete progressResults[key]);
+    const snapshots = await Promise.all([
+      ...profileRefs.map((ref) => transaction.get(ref)),
+      ...claimRefs.map((ref) => transaction.get(ref)),
+      ...progressRefs.map((ref) => transaction.get(ref)),
+    ]);
+    const count = participants.length;
+    const profileSnapshots = snapshots.slice(0, count);
+    const claimSnapshots = snapshots.slice(count, count * 2);
+    const progressSnapshots = snapshots.slice(count * 2);
+    callerDuplicate = claimSnapshots[participants.indexOf(uid)].exists;
+
+    participants.forEach((participantUid, index) => {
+      const completedSets = derived.completedSetsByUid[participantUid];
+      const claimSnapshot = claimSnapshots[index];
+      const completionTimestamps = derived.completedAtByUid[participantUid];
+      const dailySettlement = trainingDailySettlement(
+        progressSnapshots[index].data(),
+        completionTimestamps,
+        now,
+      );
+      const progress = normalizeEconomyProgress(
+        progressSnapshots[index].data(),
+        dailySettlement.dateKey,
+      );
+      if (claimSnapshot.exists) {
+        if (claimSnapshot.get("uid") !== participantUid
+            || claimSnapshot.get("roomId") !== roomId
+            || claimSnapshot.get("outcome") !== derived.outcomes[participantUid]
+            || Number(claimSnapshot.get("completedSets")) !== completedSets) {
+          throw new HttpsError(
+            "failed-precondition",
+            "鍛え合い60の保存済み確定記録が一致しません。",
+          );
+        }
+        profileResults[participantUid] = normalizeTrainingProfile(
+          profileSnapshots[index].data(),
+        );
+        progressResults[participantUid] = progress;
+        return;
+      }
+
+      const profile = applyTrainingSession(
+        profileSnapshots[index].data(),
+        completionTimestamps,
+        now,
+      );
+      if (completedSets > 0 && dailySettlement.creditTrainingSet) {
+        progress.daily.trainingSets = 1;
+      }
+      progress.updatedAt = now;
+      profileResults[participantUid] = profile;
+      progressResults[participantUid] = progress;
+      transaction.set(profileRefs[index], profile);
+      transaction.set(progressRefs[index], progress);
+      transaction.create(claimRefs[index], {
+        version: 1,
+        uid: participantUid,
+        roomId,
+        participants,
+        outcome: derived.outcomes[participantUid],
+        reason: derived.reason,
+        completedSets,
+        turnCount: derived.turnCount,
+        finalizedBy: uid,
+        createdAt: now,
+      });
+    });
+  });
+
+  const serverFinalized = {
+    version: 1,
+    reason: derived.reason,
+    turnCount: derived.turnCount,
+    outcomes: derived.outcomes,
+    completedSetsByUid: derived.completedSetsByUid,
+    finalizedAt: Number(room?.serverFinalized?.finalizedAt) || now,
+  };
+  const serverFinalizedTransaction = await roomRef.child("serverFinalized")
+    .transaction((current) => {
+      if (current == null) return serverFinalized;
+      if (!trainingServerFinalizationMatches(current, derived)) {
+        throw new TypeError("Training server finalization conflict");
+      }
+      return current;
+    });
+  if (!trainingServerFinalizationMatches(serverFinalizedTransaction.snapshot.val(), derived)) {
+    throw new HttpsError(
+      "aborted",
+      "鍛え合い60の確定結果を保存できませんでした。もう一度お試しください。",
+    );
+  }
+  await bestEffort("finalizeTraining", participants.map((participantUid) => (
+    mirrorEconomyProgress(participantUid, progressResults[participantUid])
+  )));
+  return {
+    result: {
+      status: "final",
+      finalization: callerDuplicate ? "duplicate" : "recorded",
+      outcome: derived.outcomes[uid],
+      reason: derived.reason,
+      completedSets: derived.completedSetsByUid[uid],
+      turnCount: derived.turnCount,
+    },
+    profile: profileResults[uid],
+    daily: progressResults[uid].daily,
   };
 }
 
 const VERIFIED_MATCH_MODES = Object.freeze({
   solo: { roomRoot: "rooms", members: 2 },
   strategy: { roomRoot: "strategyRooms", members: 2 },
-  team: { roomRoot: "teamRooms", members: 4, requireAccepted: true },
-});
-const TEAM_DUO_MATCH_CONFIG = Object.freeze({
-  roomRoot: "teamRooms",
-  members: 3,
-  requireAccepted: true,
 });
 
 function objectValue(value) {
@@ -4177,7 +4408,6 @@ async function upgradeOshijoPatronage(uid, request, data) {
 
 function validatedOutcomes(mode, room, participants, {
   requireServerFinalized = false,
-  teamDuoResult = null,
 } = {}) {
   if (mode === "solo" && requireServerFinalized) {
     const derived = deriveSoloMatchResult(room);
@@ -4193,23 +4423,12 @@ function validatedOutcomes(mode, room, participants, {
     };
   }
 
-  if (teamDuoResult) {
-    return {
-      pending: false,
-      missing: 0,
-      outcomes: Object.fromEntries(participants.map((participantUid) => [
-        participantUid,
-        teamDuoResult.outcomes[participantUid],
-      ])),
-    };
-  }
-
   const claims = objectValue(room.resultClaims);
   const claimedUids = Object.keys(claims);
   const finishedUids = verifiedMemberIds(room.finished);
-  if (teamDuoResult && (claimedUids.some((claimUid) => !participants.includes(claimUid))
-      || finishedUids.some((finishedUid) => !participants.includes(finishedUid)))) {
-    throw new HttpsError("failed-precondition", "三人分の結果申告が一発勝負の参加者と一致しません。");
+  if (claimedUids.some((claimUid) => !participants.includes(claimUid))
+      || finishedUids.some((finishedUid) => !participants.includes(finishedUid))) {
+    throw new HttpsError("failed-precondition", "結果申告が対戦参加者と一致しません。");
   }
   const missing = participants.filter((participantUid) => claims[participantUid]?.outcome === undefined
     || room.finished?.[participantUid] !== true);
@@ -4222,33 +4441,11 @@ function validatedOutcomes(mode, room, participants, {
     }
     outcomes[participantUid] = outcome;
   }
-  if (teamDuoResult) {
-    for (const participantUid of participants) {
-      if (teamDuoResult.outcomes?.[participantUid] !== outcomes[participantUid]) {
-        throw new HttpsError("failed-precondition", "申告した結果が一発勝負の確定採点と一致しません。");
-      }
-    }
-  } else if (mode === "solo" || mode === "strategy") {
+  if (mode === "solo" || mode === "strategy") {
     const values = participants.map((participantUid) => outcomes[participantUid]).sort();
     if (values.join(",") !== "draw,draw" && values.join(",") !== "loss,win") {
       throw new HttpsError("failed-precondition", "両者の試合結果が一致しません。");
     }
-  } else if (mode === "team") {
-    const teams = { A: [], B: [] };
-    participants.forEach((participantUid) => {
-      const team = room.players?.[participantUid]?.team;
-      if (!teams[team]) throw new HttpsError("failed-precondition", "チーム構成が不正です。");
-      teams[team].push(participantUid);
-    });
-    if (teams.A.length !== 2 || teams.B.length !== 2) throw new HttpsError("failed-precondition", "チーム人数が不正です。");
-    const teamOutcomes = {};
-    for (const team of ["A", "B"]) {
-      const values = new Set(teams[team].map((participantUid) => outcomes[participantUid]));
-      if (values.size !== 1) throw new HttpsError("failed-precondition", "同じチームの試合結果が一致しません。");
-      teamOutcomes[team] = [...values][0];
-    }
-    const pair = [teamOutcomes.A, teamOutcomes.B].sort().join(",");
-    if (pair !== "draw,draw" && pair !== "loss,win") throw new HttpsError("failed-precondition", "対戦チームの試合結果が一致しません。");
   } else {
     throw new HttpsError("failed-precondition", "未対応の対戦モードです。");
   }
@@ -4258,18 +4455,14 @@ function validatedOutcomes(mode, room, participants, {
 function dailyActivityForRoom(mode, room, uid) {
   let scores = 0;
   let criticals = 0;
-  const rounds = isTeamDuoChallengeRoom(room)
-    ? [objectValue(room?.rounds?.[1])]
-    : Object.values(objectValue(room.rounds));
+  const rounds = Object.values(objectValue(room.rounds));
   for (const round of rounds) {
     let values = [];
     if (mode === "solo") {
       values = [round?.scores?.[uid]];
     } else if (mode === "strategy") {
       values = [round?.ratings?.[uid]?.score, round?.actionRatings?.[uid]?.score];
-    } else {
-      values = Object.values(objectValue(round?.scores?.[uid]?.values));
-    }
+    } else throw new HttpsError("failed-precondition", "未対応の対戦モードです。");
     values.filter((value) => Number.isInteger(Number(value))
       && Number(value) >= 1 && Number(value) <= 10)
       .forEach((value) => {
@@ -4280,10 +4473,7 @@ function dailyActivityForRoom(mode, room, uid) {
   return { scores: Math.min(3, scores), criticals: Math.min(1, criticals) };
 }
 
-function addVerifiedMatch(progressValue, mode, outcome, activity, now, {
-  achievementMode = mode,
-  variant = "",
-} = {}) {
+function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
   const progress = normalizeEconomyProgress(progressValue, jstDateKey(now));
   progress.daily.matches = 1;
   progress.daily[`${mode}Matches`] = 1;
@@ -4314,14 +4504,13 @@ function addVerifiedMatch(progressValue, mode, outcome, activity, now, {
     record.variantMatches = {
       teamDuo: integer(record?.variantMatches?.teamDuo, 0, record.matches, 0),
     };
-    if (variant === TEAM_DUO_VARIANT) record.variantMatches.teamDuo += 1;
     record.points = (record.wins * 3) + record.draws;
     record.updatedAt = now;
     progress.periodRewards[period][key] = record;
   }
   progress.achievementStats = addBattleMatch(
     progress.achievementStats,
-    achievementMode,
+    mode,
     outcome,
     jstDateKey(now),
   );
@@ -4894,16 +5083,6 @@ async function recordVerifiedMatch(uid, data) {
   } else {
     room = (await realtime.ref(`online/${config.roomRoot}/${roomId}`).get()).val();
   }
-  const teamDuo = mode === "team" && isTeamDuoChallengeRoom(room);
-  if (teamDuo) {
-    const sealedScores = (await realtime.ref(`online/teamDuoScores/${roomId}`).get()).val();
-    room = {
-      ...room,
-      rounds: {
-        1: { scores: sealedScores },
-      },
-    };
-  }
   const createdAt = Number(room?.createdAt || 0);
   const minimumRoomAge = 30_000;
   if (!room || room?.status !== "active" || room?.members?.[uid] !== true
@@ -4925,25 +5104,9 @@ async function recordVerifiedMatch(uid, data) {
       };
     }
   }
-  let teamDuoResult = null;
-  if (teamDuo) {
-    if (!sameIds(verifiedMemberIds(room.members), verifiedMemberIds(room.scoreReady))) {
-      throw new HttpsError("failed-precondition", "三人全員の秘密採点がまだそろっていません。");
-    }
-    try {
-      teamDuoResult = deriveTeamDuoChallengeResult(room);
-    } catch {
-      throw new HttpsError("failed-precondition", "推し上手！ふたりチャレンジの確定採点を検証できませんでした。");
-    }
-  }
-  const participants = matchParticipants(
-    mode,
-    room,
-    teamDuo ? TEAM_DUO_MATCH_CONFIG : config,
-  );
+  const participants = matchParticipants(mode, room, config);
   const verification = validatedOutcomes(mode, room, participants, {
     requireServerFinalized: mode === "solo",
-    teamDuoResult,
   });
   if (verification.pending) {
     return { outcome: "pending", missing: verification.missing };
@@ -5009,7 +5172,6 @@ async function recordVerifiedMatch(uid, data) {
       crownCircuitPeriodEntryRef(participantUid, "daily", crownDailyKey)
     ))
     : [];
-  const teamDuoResultRef = teamDuo ? verifiedTeamDuoResultRef(roomId) : null;
   const legacyServerRankingSeeds = (serverPeriodInfos.length || rankingEligibleMode)
     ? Object.fromEntries(await Promise.all(participants.map(async (participantUid) => [
       participantUid,
@@ -5039,7 +5201,6 @@ async function recordVerifiedMatch(uid, data) {
       ...serverProfileRefs.map((ref) => transaction.get(ref)),
       ...serverEntryRefs.map((ref) => transaction.get(ref)),
       ...crownRunRefs.map((ref) => transaction.get(ref)),
-      ...(teamDuoResultRef ? [transaction.get(teamDuoResultRef)] : []),
       ...projectionQueueRefs.map((ref) => transaction.get(ref)),
     ]);
     const participantCount = participants.length;
@@ -5059,12 +5220,7 @@ async function recordVerifiedMatch(uid, data) {
     const postCrownOffset = (participantCount * 4)
       + serverEntryCount
       + crownRunRefs.length;
-    const teamDuoResultSnapshot = teamDuoResultRef
-      ? snapshots[postCrownOffset]
-      : null;
-    const projectionQueueSnapshots = snapshots.slice(
-      postCrownOffset + (teamDuoResultRef ? 1 : 0),
-    );
+    const projectionQueueSnapshots = snapshots.slice(postCrownOffset);
     const projectionQueueSnapshotByUid = Object.fromEntries(
       projectionEligibleUids.map((participantUid, index) => [
         participantUid,
@@ -5082,35 +5238,6 @@ async function recordVerifiedMatch(uid, data) {
         },
       ),
     ]));
-    if (teamDuoResultRef && !teamDuoResultSnapshot.exists) {
-      transaction.create(teamDuoResultRef, {
-        version: 1,
-        variant: TEAM_DUO_VARIANT,
-        roomId,
-        participants,
-        oshiJozuUid: teamDuoResult.oshiJozuUid,
-        challengerUids: teamDuoResult.challengerUids,
-        soloVotes: teamDuoResult.soloVotes,
-        duoVotes: teamDuoResult.duoVotes,
-        soloScore: teamDuoResult.soloScore,
-        duoScore: teamDuoResult.duoScore,
-        scoreDifference: teamDuoResult.scoreDifference,
-        clean: teamDuoResult.clean,
-        winnerRole: teamDuoResult.winnerRole,
-        outcomes: teamDuoResult.outcomes,
-        pointsByUid: Object.fromEntries(participants.map((participantUid) => [
-          participantUid,
-          teamDuoResult.outcomes[participantUid] === "win"
-            ? 3
-            : teamDuoResult.outcomes[participantUid] === "draw"
-              ? 1
-              : 0,
-        ])),
-        signalsByUid: teamDuoResult.signalsByUid,
-        createdAt,
-        finalizedAt: now,
-      });
-    }
     transactionOutcome = claimSnapshots[participants.indexOf(uid)].exists ? "duplicate" : "recorded";
     participants.forEach((participantUid, index) => {
       if (claimSnapshots[index].exists) {
@@ -5131,7 +5258,6 @@ async function recordVerifiedMatch(uid, data) {
       }
       const participantOutcome = verification.outcomes[participantUid];
       const participantActivity = activities[participantUid];
-      const participantSignals = teamDuoResult?.signalsByUid?.[participantUid] || {};
       const projectionQueueSnapshot = projectionQueueSnapshotByUid[participantUid];
       const projectionSequence = projectionEligibleUidSet.has(participantUid)
         ? nextSoloProjectionSequence(projectionQueueSnapshot)
@@ -5142,18 +5268,11 @@ async function recordVerifiedMatch(uid, data) {
         participantOutcome,
         participantActivity,
         now,
-        teamDuo
-          ? {
-            achievementMode: "team_duo",
-            variant: TEAM_DUO_VARIANT,
-          }
-          : {},
       );
       const unlockResult = unlockAchievements(
         profileSnapshots[index].data(),
         eligibleAchievementIds({
           battleStats: progress.achievementStats,
-          signals: participantSignals,
           scope: "battle",
         }),
         now,
@@ -5170,11 +5289,6 @@ async function recordVerifiedMatch(uid, data) {
         outcome: participantOutcome,
         participants,
         activity: participantActivity,
-        ...(teamDuo ? {
-          variant: TEAM_DUO_VARIANT,
-          signals: participantSignals,
-          resultId: roomId,
-        } : {}),
         achievementIds: unlockResult.newlyUnlocked,
         finalizedBy: uid,
         createdAt: now,
@@ -5363,17 +5477,6 @@ async function recordVerifiedMatch(uid, data) {
   return {
     outcome: transactionOutcome,
     ...(mode === "solo" ? { acceptedFinalizationVersion: finalizationVersion } : {}),
-    ...(teamDuo ? {
-      teamChallengeResult: {
-        variant: TEAM_DUO_VARIANT,
-        soloScore: teamDuoResult.soloScore,
-        duoScore: teamDuoResult.duoScore,
-        scoreDifference: teamDuoResult.scoreDifference,
-        clean: teamDuoResult.clean,
-        winnerRole: teamDuoResult.winnerRole,
-        outcome: teamDuoResult.outcomes[uid],
-      },
-    } : {}),
     ...(callerProjectionActivated
       ? {
         profileProjectionMode: "server-v2",
@@ -5427,42 +5530,18 @@ async function loadVerifiedTipMatch(uid, requestData) {
   const config = VERIFIED_MATCH_MODES[request.mode];
   const now = Date.now();
   const roomSnapshot = await realtime.ref(`online/${config.roomRoot}/${request.roomId}`).get();
-  let room = roomSnapshot.val();
-  const teamDuo = request.mode === "team" && isTeamDuoChallengeRoom(room);
-  let teamDuoResult = null;
-  if (teamDuo) {
-    const sealedScores = (await realtime.ref(`online/teamDuoScores/${request.roomId}`).get()).val();
-    room = {
-      ...room,
-      rounds: {
-        1: { scores: sealedScores },
-      },
-    };
-    if (!sameIds(verifiedMemberIds(room.members), verifiedMemberIds(room.scoreReady))) {
-      throw new HttpsError("failed-precondition", "三人全員の秘密採点がまだそろっていません。");
-    }
-    try {
-      teamDuoResult = deriveTeamDuoChallengeResult(room);
-    } catch {
-      throw new HttpsError("failed-precondition", "差し入れ対象の一発勝負を検証できませんでした。");
-    }
-  }
+  const room = roomSnapshot.val();
   const createdAt = Number(room?.createdAt || 0);
   if (!roomSnapshot.exists() || room?.status !== "active" || room?.members?.[uid] !== true
       || !Number.isFinite(createdAt) || createdAt > now - 30_000 || createdAt < now - (12 * 60 * 60 * 1000)) {
     throw new HttpsError("failed-precondition", "差し入れ可能な完走済み対戦を確認できませんでした。");
   }
-  const participants = matchParticipants(
-    request.mode,
-    room,
-    teamDuo ? TEAM_DUO_MATCH_CONFIG : config,
-  );
+  const participants = matchParticipants(request.mode, room, config);
   if (!participants.includes(request.targetUid)) {
     throw new HttpsError("permission-denied", "この対戦の参加者以外には差し入れできません。");
   }
   const verification = validatedOutcomes(request.mode, room, participants, {
     requireServerFinalized: request.mode === "solo" && Number(room.serverFinalized?.version) === 1,
-    teamDuoResult,
   });
   if (verification.pending) {
     throw new HttpsError("failed-precondition", "参加者全員の対戦結果が確定していません。");
@@ -9845,6 +9924,38 @@ exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (
   }
 });
 
+exports.trainingAction = onCall(callableOptions("trainingAction"), async (request) => {
+  const uid = requireUid(request);
+  const data = request.data;
+  const action = cleanText(data?.action, 16);
+  try {
+    if (!isPlainCallableObject(data)) {
+      throw new HttpsError("invalid-argument", "鍛え合い60の操作形式が正しくありません。");
+    }
+    if (action === "initialize") {
+      if (Reflect.ownKeys(data).some((key) => key !== "action")) {
+        throw new HttpsError("invalid-argument", "鍛え合い60の初期化情報が正しくありません。");
+      }
+      return await initializeTraining(uid);
+    }
+    if (action === "finalize") {
+      if (Reflect.ownKeys(data).some((key) => !["action", "roomId"].includes(key))
+          || !/^[-0-9A-Z_a-z]{20}$/.test(String(data.roomId || ""))) {
+        throw new HttpsError("invalid-argument", "鍛え合い60のルーム情報が正しくありません。");
+      }
+      return await finalizeTraining(uid, data.roomId);
+    }
+    throw new HttpsError("invalid-argument", "未対応の鍛え合い60操作です。");
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("trainingAction failed", {
+      action,
+      category: error instanceof TypeError ? "validation" : "internal",
+    });
+    throw new HttpsError("internal", "鍛え合い60の記録を処理できませんでした。");
+  }
+});
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -9875,13 +9986,6 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     }
     if (action === "patron_policy_vote") {
       return await votePatronPolicy(uid, request, request.data);
-    }
-    if (action === "prepare_team_challenge") {
-      if (!isPlainCallableObject(request.data)
-          || Reflect.ownKeys(request.data).some((key) => key !== "action")) {
-        throw new HttpsError("invalid-argument", "推し上手さんのロール準備情報が不正です。");
-      }
-      return await prepareTeamChallenge(uid);
     }
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
     if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);
@@ -9970,14 +10074,28 @@ async function realtimeActiveSessionIsLive(uid, roomPath, activeSnapshot) {
   return presenceSnapshot.child("online").val() === true;
 }
 
+async function trainingActiveSessionIsLive(uid, activeSnapshot, now) {
+  if (!activeSnapshot.exists()) return false;
+  const activeValue = objectValue(activeSnapshot.val());
+  const roomId = cleanText(activeValue.roomId, 80);
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(roomId)) return false;
+  const reservedRoomIds = Object.entries(objectValue(activeValue.rooms))
+    .filter(([, reserved]) => reserved === true)
+    .map(([reservedRoomId]) => reservedRoomId);
+  if (reservedRoomIds.length !== 1 || reservedRoomIds[0] !== roomId) return false;
+  const roomSnapshot = await realtime.ref(`online/trainingRooms/${roomId}`).get();
+  return roomSnapshot.exists()
+    && trainingActiveRoomIsLive(roomSnapshot.val(), uid, now);
+}
+
 async function accountHasActiveSession(uid) {
   const realtimePaths = [
     { path: "active", roomPath: "rooms" },
     { path: "queue", queue: true },
     { path: "strategyActive", roomPath: "strategyRooms" },
     { path: "strategyQueue", queue: true },
-    { path: "teamActive", roomPath: "teamRooms" },
-    { path: "teamQueue", queue: true },
+    { path: "trainingActive", roomPath: "trainingRooms" },
+    { path: "trainingQueue", queue: true },
   ];
   const now = Date.now();
   const snapshots = await Promise.all([
@@ -9994,7 +10112,9 @@ async function accountHasActiveSession(uid) {
   })) return true;
   const activeChecks = await Promise.all(realtimePaths.map((entry, index) => (
     entry.roomPath
-      ? realtimeActiveSessionIsLive(uid, entry.roomPath, realtimeSnapshots[index])
+      ? entry.path === "trainingActive"
+        ? trainingActiveSessionIsLive(uid, realtimeSnapshots[index], now)
+        : realtimeActiveSessionIsLive(uid, entry.roomPath, realtimeSnapshots[index])
       : false
   )));
   if (activeChecks.some(Boolean)) return true;
@@ -10013,7 +10133,15 @@ async function accountHasActiveSession(uid) {
 
 function economyProgressHasActivity(value) {
   const progress = normalizeEconomyProgress(value);
-  const dailyKeys = ["matches", "scores", "criticals", "soloMatches", "strategyMatches", "teamMatches"];
+  const dailyKeys = [
+    "matches",
+    "scores",
+    "criticals",
+    "soloMatches",
+    "strategyMatches",
+    "teamMatches",
+    "trainingSets",
+  ];
   if (dailyKeys.some((key) => Number(progress.daily?.[key] || 0) > 0)) return true;
   for (const period of ["daily", "weekly", "monthly"]) {
     if (Object.values(progress.periodRewards?.[period] || {}).some((record) => Number(record?.matches || 0) > 0)) return true;
@@ -10051,6 +10179,8 @@ async function transferTargetIsPristine(uid, request) {
     marketSnapshot,
     fleaSellerCardSnapshot,
     patronSnapshot,
+    trainingProfileSnapshot,
+    trainingClaimSnapshot,
     purchaseSnapshot,
     dailyClaimSnapshot,
     periodClaimSnapshot,
@@ -10071,6 +10201,8 @@ async function transferTargetIsPristine(uid, request) {
     marketStatsRef(uid).get(),
     firestore.collection("anjuPayFleaSellerCards").doc(uid).get(),
     patronageRef(uid).get(),
+    trainingProfileRef(uid).get(),
+    firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
     firestore.collection("economyPurchases").doc(uid).collection("items").limit(1).get(),
     firestore.collection("economyClaims").doc(uid).collection("daily").limit(1).get(),
     firestore.collection("economyClaims").doc(uid).collection("periods").limit(1).get(),
@@ -10092,6 +10224,11 @@ async function transferTargetIsPristine(uid, request) {
     return false;
   }
   if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
+  const trainingProfile = normalizeTrainingProfile(trainingProfileSnapshot.data());
+  if (trainingProfile.sessions > 0
+      || trainingProfile.completedSets > 0
+      || trainingProfile.completeDays > 0
+      || !trainingClaimSnapshot.empty) return false;
   if (marketSnapshot.exists || fleaSellerCardSnapshot.exists || patronSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
@@ -10237,6 +10374,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetMarketSnapshot,
       targetFleaSellerCardSnapshot,
       targetPatronSnapshot,
+      targetTrainingProfileSnapshot,
       targetFamiliarBookSnapshot,
       targetFamiliarBlockSnapshot,
     ] = await Promise.all([
@@ -10247,6 +10385,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(marketStatsRef(targetUid)),
       transaction.get(firestore.collection("anjuPayFleaSellerCards").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
+      transaction.get(trainingProfileRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
       transaction.get(soloFamiliarBlockRef(targetUid)),
     ]);
@@ -10279,10 +10418,16 @@ async function redeemAccountTransferCode(request, rawCode) {
       failure = "target-not-empty";
       return;
     }
+    const targetTrainingProfile = normalizeTrainingProfile(
+      targetTrainingProfileSnapshot.data(),
+    );
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
         || targetMarketSnapshot.exists
         || targetFleaSellerCardSnapshot.exists
         || targetPatronSnapshot.exists
+        || targetTrainingProfile.sessions > 0
+        || targetTrainingProfile.completedSets > 0
+        || targetTrainingProfile.completeDays > 0
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {
       failure = "target-not-empty";
@@ -14386,6 +14531,30 @@ exports.cleanupOnlinePublicPresence = onSchedule({
     return result;
   } catch (error) {
     console.error("cleanupOnlinePublicPresence failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
+});
+
+exports.cleanupTrainingRooms = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 120,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const now = Date.now();
+    const [rooms, queue] = await Promise.all([
+      cleanupTrainingRooms(now),
+      cleanupTrainingQueue(now),
+    ]);
+    const result = { rooms, queue };
+    console.info("cleanupTrainingRooms completed", result);
+    return result;
+  } catch (error) {
+    console.error("cleanupTrainingRooms failed", {
       code: typeof error?.code === "string" ? error.code : "unknown",
     });
     throw error;

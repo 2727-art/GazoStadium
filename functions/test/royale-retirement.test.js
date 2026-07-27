@@ -20,7 +20,7 @@ test("battle royale has no playable client or realtime room surface", () => {
 
   assert.equal(fs.existsSync(path.join(root, "royale.js")), false);
   assert.doesNotMatch(index, /src=["']royale\.js/);
-  for (const moduleName of ["account", "strategy", "online", "flea-market", "market", "team"]) {
+  for (const moduleName of ["account", "strategy", "online", "flea-market", "market", "training"]) {
     assert.match(index, new RegExp(`${moduleName}\\.js\\?v=[^"]*remove-royale-v1`), moduleName);
   }
   assert.doesNotMatch(app, /royaleBattleButton|HariaiRoyale/);
@@ -43,7 +43,7 @@ test("battle royale cannot receive new rewards or ranking results", () => {
   assert.doesNotMatch(server, /id:\s*"play_royale"/);
   assert.doesNotMatch(browser, /id:\s*"play_royale"/);
   assert.doesNotMatch(browser, /4モードのサーバー検証済み完走/);
-  assert.match(browser, /現在遊べる3モードのサーバー検証済み完走/);
+  assert.match(browser, /現在遊べる2(?:つの対戦)?モードのサーバー検証済み完走/);
   assert.equal(Object.hasOwn(daily, "royaleMatches"), false);
   assert.doesNotMatch(daily.claimed.$missionId[".validate"], /play_royale/);
   assert.deepEqual(ACTIVE_SERVER_RANKING_MODES, ["solo", "strategy"]);

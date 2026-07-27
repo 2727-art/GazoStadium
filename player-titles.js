@@ -3,7 +3,7 @@ export const PLAYER_TITLE_CATEGORIES = Object.freeze([
   { id: "expression", label: "画像表現", eyebrow: "IMAGE STYLE", icon: "✦", className: "title-category-expression", description: "構図・色・撮影へのこだわりを表す称号" },
   { id: "solo", label: "通常型1on1", eyebrow: "STANDARD 1ON1", icon: "◎", className: "title-category-solo", description: "純粋な画像勝負を楽しむプレイヤー向け称号" },
   { id: "strategy", label: "戦略型1on1", eyebrow: "STRATEGY 1ON1", icon: "?", className: "title-category-strategy", description: "推理・ブラフ・追撃を楽しむプレイヤー向け称号" },
-  { id: "multiplayer", label: "ふたりチャレンジ", eyebrow: "MULTIPLAYER", icon: "∞", className: "title-category-multiplayer", description: "推しの連携や一発勝負を楽しむプレイヤー向け称号" },
+  { id: "multiplayer", label: "ふたりチャレンジ（終了）", eyebrow: "LEGACY MODE", icon: "∞", className: "title-category-multiplayer", description: "終了したふたりチャレンジで入手した称号の記録", retired: true },
   { id: "community", label: "交流・ネタ", eyebrow: "COMMUNITY", icon: "☺", className: "title-category-community", description: "チャットや画像収集の個性を気軽に表す称号" },
   { id: "oshi_market", label: "推し活・ときめき", eyebrow: "OSHI MARKET", icon: "♡", className: "title-category-oshi-market", description: "推し値市場で店主の個性や得意を伝える称号", collection: "oshi_market" },
 ]);
@@ -46,11 +46,11 @@ export const PLAYER_TITLE_PRODUCTS = Object.freeze([
   { id: "title_pursuit_ready", type: "title", name: "追撃準備完了", title: "追撃準備完了", description: "弱点看破後の怒涛の追撃を準備する称号", price: 700, category: "strategy" },
   { id: "title_deck_building", type: "title", name: "デッキ構築中", title: "デッキ構築中", description: "相手に刺さる画像の組み合わせを考える人の称号", price: 550, category: "strategy" },
 
-  { id: "title_team_link_active", type: "title", name: "ふたり推し中", title: "ふたり推し中", description: "二人で推しの魅力を届けるプレイヤー向け称号", price: 600, category: "multiplayer" },
-  { id: "title_trust_my_partner", type: "title", name: "相方を信じる", title: "相方を信じる", description: "最後までチームメイトを信じて戦う人の称号", price: 550, category: "multiplayer" },
-  { id: "title_combo_romance", type: "title", name: "連携はロマン", title: "連携はロマン", description: "2枚と演出が噛み合う瞬間を愛する人の称号", price: 600, category: "multiplayer" },
-  { id: "title_last_image", type: "title", name: "最後の一枚", title: "最後の一枚", description: "勝負を決める切り札を最後まで残す人の称号", price: 650, category: "multiplayer" },
-  { id: "title_still_surviving", type: "title", name: "ただいま生存中", title: "ただいま生存中", description: "勝負の最後まで推しを届ける人の称号", price: 550, category: "multiplayer" },
+  { id: "title_team_link_active", type: "title", name: "ふたり推し中", title: "ふたり推し中", description: "終了したふたりチャレンジで入手した称号", price: 600, category: "multiplayer", retired: true },
+  { id: "title_trust_my_partner", type: "title", name: "相方を信じる", title: "相方を信じる", description: "終了したふたりチャレンジで入手した称号", price: 550, category: "multiplayer", retired: true },
+  { id: "title_combo_romance", type: "title", name: "連携はロマン", title: "連携はロマン", description: "終了したふたりチャレンジで入手した称号", price: 600, category: "multiplayer", retired: true },
+  { id: "title_last_image", type: "title", name: "最後の一枚", title: "最後の一枚", description: "終了したふたりチャレンジで入手した称号", price: 650, category: "multiplayer", retired: true },
+  { id: "title_still_surviving", type: "title", name: "ただいま生存中", title: "ただいま生存中", description: "終了したふたりチャレンジで入手した称号", price: 550, category: "multiplayer", retired: true },
 
   { id: "title_hariai_master", type: "title", name: "貼り合いマスター", title: "貼り合いマスター", description: "貼り合いを遊び込んだコレクション称号", price: 900, category: "community" },
   { id: "title_image_folder_guardian", type: "title", name: "画像フォルダの守護者", title: "画像フォルダの守護者", description: "大切な画像コレクションを見守る者の称号", price: 450, category: "community" },

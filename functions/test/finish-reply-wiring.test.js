@@ -574,7 +574,7 @@ test("finish replies remain absent from Firebase queue, room resources, rules, a
   assert.doesNotMatch(queueWrite, /finishReply|roleplayVoice/);
   assert.doesNotMatch(roomResources, /finishReply|roleplayVoice/);
   assert.doesNotMatch(rules, /finishReply|roleplayVoice/);
-  for (const file of ["strategy.js", "team.js"]) {
+  for (const file of ["strategy.js", "training.js"]) {
     assert.doesNotMatch(read(file), /finishReply|finish-reply|roleplayVoice/i);
   }
 });

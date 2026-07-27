@@ -850,7 +850,7 @@
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
-    const teamStats = modeStats("team");
+    const trainingStats = modeStats("training");
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
     const statValue = (value) => Number.isInteger(value) ? value : "--";
@@ -860,9 +860,9 @@
         <h1 aria-label="貼り合え。YOUR FAVORITE, YOUR POWER."><span class="hero-title-text">貼り合え</span><span class="hero-heart" aria-hidden="true"><svg viewBox="0 0 64 64" focusable="false"><defs><linearGradient id="heroHeartGradient" x1="10" y1="8" x2="54" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#ff6b85"/><stop offset="0.58" stop-color="#ff4f72"/><stop offset="1" stop-color="#66e9df"/></linearGradient></defs><path d="M32 58C28.8 54.8 8.1 42.8 5.1 26.1 2.6 12.1 10.1 4 20.1 4 25.9 4 30 7 32 11c2-4 6.1-7 11.9-7 10 0 17.5 8.1 15 22.1C55.9 42.8 35.2 54.8 32 58Z" fill="url(#heroHeartGradient)"/><path d="M13.5 19.5C15.2 12.4 22.5 9.4 27.4 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-linecap="round" stroke-width="3"/></svg></span><span class="hero-tagline">YOUR FAVORITE, YOUR POWER.</span></h1>
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
-          お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
-          1on1、三人で遊ぶふたりチャレンジ、AnjuPayで推し値を競う市場に加え、
-          勝敗をつけず会話とネタを貼り合う「貼り合い自由卓」も選べます。
+          好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
+          そして相手の指示を60秒やり切り、交代で一緒に鍛える「鍛え合い60」。
+          疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
           <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
@@ -870,7 +870,7 @@
         <div class="hero-actions">
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
-          <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ひとりの推し技、ふたりの推し愛。</small><span>推し上手！ふたりチャレンジ</span></button>
+          <button class="button button-training hero-mode-button" id="trainingButton"><small>相手の指示を60秒。やり切ったら、あなたの番。</small><span>鍛え合い60</span></button>
           <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
@@ -892,9 +892,9 @@
             <div><small>待機中</small><strong><span id="lobbyStrategyWaitingCount">${statValue(strategyStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyStrategyPlayingCount">${statValue(strategyStats.playing)}</span><em>人</em></strong></div>
           </div></article>
-          <article class="lobby-mode-card team"><div class="lobby-mode-head"><span>ふたりチャレンジ</span><small>1 vs 2</small></div><div class="lobby-mode-counts">
-            <div><small>待機中</small><strong><span id="lobbyTeamWaitingCount">${statValue(teamStats.waiting)}</span><em>人</em></strong></div>
-            <div><small>対戦中</small><strong><span id="lobbyTeamPlayingCount">${statValue(teamStats.playing)}</span><em>人</em></strong></div>
+          <article class="lobby-mode-card training"><div class="lobby-mode-head"><span>鍛え合い60</span><small>TRAINING</small></div><div class="lobby-mode-counts">
+            <div><small>待機中</small><strong><span id="lobbyTrainingWaitingCount">${statValue(trainingStats.waiting)}</span><em>人</em></strong></div>
+            <div><small>実行中</small><strong><span id="lobbyTrainingPlayingCount">${statValue(trainingStats.playing)}</span><em>人</em></strong></div>
           </div></article>
           <article class="lobby-mode-card free-table-status"><div class="lobby-mode-head"><span>貼り合い自由卓</span><small>FREE TABLE</small></div><div class="lobby-mode-counts">
             <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
@@ -930,7 +930,7 @@
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
-    document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
+    document.querySelector("#trainingButton")?.addEventListener("click", startTraining);
     document.querySelector("#freeTableButton")?.addEventListener("click", startFreeTable);
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
@@ -1585,13 +1585,13 @@
     window.addEventListener("hariai-strategy-ready", () => window.HariaiStrategy?.start?.(), { once: true });
   }
 
-  function startTeamBattle() {
-    if (window.HariaiTeam?.start) {
-      window.HariaiTeam.start();
+  function startTraining() {
+    if (window.HariaiTraining?.start) {
+      window.HariaiTraining.start();
       return;
     }
-    showToast("ふたりチャレンジを読み込んでいます…");
-    window.addEventListener("hariai-team-ready", () => window.HariaiTeam?.start?.(), { once: true });
+    showToast("鍛え合い60を読み込んでいます…");
+    window.addEventListener("hariai-training-ready", () => window.HariaiTraining?.start?.(), { once: true });
   }
 
   function startFreeTable() {
@@ -2036,7 +2036,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 1VS2 + FREE TABLE + VALUE MARKET + ANJUPAY FLEA";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + TRAINING 60 + FREE TABLE + VALUE MARKET + ANJUPAY FLEA";
     if (footerItems[1]) footerItems[1].textContent = "画像・音声・短尺動画は相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
@@ -2069,8 +2069,8 @@
       window.HariaiStrategy.requestHome();
       return;
     }
-    if (window.HariaiTeam?.isActive?.()) {
-      window.HariaiTeam.requestHome();
+    if (window.HariaiTraining?.isActive?.()) {
+      window.HariaiTraining.requestHome();
       return;
     }
     if (window.HariaiOnline?.isActive?.()) {
@@ -2085,8 +2085,8 @@
       window.setTimeout(() => window.HariaiStrategy.destroyRoom(), 0);
       return;
     }
-    if (window.HariaiTeam?.isActive?.()) {
-      window.setTimeout(() => window.HariaiTeam.destroyRoom(), 0);
+    if (window.HariaiTraining?.isActive?.()) {
+      window.setTimeout(() => window.HariaiTraining.destroyRoom(), 0);
       return;
     }
     if (window.HariaiOnline?.isActive?.()) {

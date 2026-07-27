@@ -1,11 +1,10 @@
 "use strict";
 
 const BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo", "royale"]);
-const ACTIVE_BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo"]);
+const ACTIVE_BATTLE_MODES = Object.freeze(["solo", "strategy"]);
 const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
-  Object.freeze(["team", "team_duo"]),
 ]);
 const VALID_SCOPES = new Set(["battle", "market"]);
 const MAX_SHOWCASE = 3;
@@ -22,6 +21,7 @@ function series({
   condition,
   autoPublic = true,
   legacy = false,
+  hint = "",
 }) {
   return thresholds.map((target, index) => Object.freeze({
     id: `${family}_${target}`,
@@ -34,7 +34,7 @@ function series({
     target,
     name: names[index],
     description: description(target),
-    hint: `${familyLabel}を続けると解除`,
+    hint: hint || `${familyLabel}を続けると解除`,
     autoPublic,
     legacy,
     condition: condition(target),
@@ -56,7 +56,6 @@ const battleDefinitions = [
   ...[
     ["solo", "通常型1on1", "◆", ["通常型の一歩", "スタンダード見習い", "通常型の常連", "五十戦の貼り手", "通常型百景", "スタンダードの主", "千試合の定番"]],
     ["strategy", "戦略型1on1", "◇", ["弱点捜査開始", "読み合い見習い", "読み合いの常連", "五十の読み筋", "読み合い百景", "戦略型の主", "千回の読み合い"]],
-    ["team", "2on2", "∞", ["相棒募集中", "連携見習い", "チームの常連", "五十の共闘", "連携百景", "2on2の主", "千回の共闘"]],
   ].flatMap(([mode, label, icon, names]) => series({
     scope: "battle",
     category: "battle_modes",
@@ -68,6 +67,19 @@ const battleDefinitions = [
     description: (target) => `${label}を${target}試合完走した`,
     condition: (target) => ({ type: "battle_mode", mode, target }),
   })),
+  ...series({
+    scope: "battle",
+    category: "battle_modes",
+    family: "battle_team",
+    familyLabel: "ふたりチャレンジ（終了）",
+    icon: "∞",
+    thresholds: [1, 5, 20, 50, 100, 300, 1000],
+    names: ["相棒募集中", "連携見習い", "チームの常連", "五十の共闘", "連携百景", "2on2の主", "千回の共闘"],
+    description: (target) => `終了したチーム対戦を${target}試合完走した記録`,
+    condition: (target) => ({ type: "battle_mode", mode: "team", target }),
+    hint: "終了したモードの記録",
+    legacy: true,
+  }),
   Object.freeze({
     id: "battle_variety_2",
     scope: "battle",
@@ -87,12 +99,14 @@ const battleDefinitions = [
     scope: "battle",
     category: "battle_variety",
     family: "battle_variety",
-    familyLabel: "モード回遊",
+    familyLabel: "旧3モード回遊",
     icon: "✦",
     thresholds: [1, 5, 20, 50, 100],
     names: ["三つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
-    description: (target) => `3種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
+    description: (target) => `旧3種類のオンライン対戦モードをそれぞれ${target}試合完走した記録`,
     condition: (target) => ({ type: "minimum_battle_modes", target }),
+    hint: "終了したモードを含む記録",
+    legacy: true,
   }).map((definition, index) => Object.freeze({
     ...definition,
     id: `battle_variety_three_${definition.target}`,
@@ -199,14 +213,15 @@ const battleDefinitions = [
     scope: "battle",
     category: "battle_honor",
     family: definition.family,
-    familyLabel: "推し上手！ふたりチャレンジ",
+    familyLabel: "推し上手！ふたりチャレンジ（終了）",
     icon: "❀",
     level: definition.level,
     target: 1,
     name: definition.name,
     description: definition.description,
-    hint: "推し上手！ふたりチャレンジの正式戦で解除",
+    hint: "終了したモードの記録",
     autoPublic: false,
+    legacy: true,
     condition: { type: "battle_signal", signal: definition.signal },
   })),
 ];

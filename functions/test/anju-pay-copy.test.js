@@ -35,7 +35,7 @@ test("post-match tips present transferred AnjuPay in Pay", () => {
 });
 
 test("all active match modes use the same post-match tip cache revision", () => {
-  for (const file of ["online.js", "strategy.js", "team.js"]) {
+  for (const file of ["online.js", "strategy.js"]) {
     assert.match(
       read(file),
       /post-match-tip\.js\?v=post-match-tip-v4/,

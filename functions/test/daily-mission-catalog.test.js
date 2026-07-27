@@ -18,14 +18,19 @@ function sourceBetween(source, startMarker, endMarker) {
 function browserDailyMissions() {
   const source = read("online.js");
   const catalog = sourceBetween(source, "const DAILY_MISSIONS = [", "\n];");
-  const rows = [...catalog.matchAll(
-    /\{\s*id:\s*"([^"]+)",\s*progressKey:\s*"([^"]+)"[\s\S]*?\btarget:\s*(\d+),\s*reward:\s*(\d+)\s*\}/g,
-  )].map((match) => ({
-    id: match[1],
-    progressKey: match[2],
-    target: Number(match[3]),
-    reward: Number(match[4]),
-  }));
+  const rows = [...catalog.matchAll(/\{([^{}]+)\}/g)].map((match) => {
+    const body = match[1];
+    const text = (key) => body.match(new RegExp(`\\b${key}:\\s*"([^"]+)"`))?.[1];
+    const number = (key) => Number(body.match(new RegExp(`\\b${key}:\\s*(\\d+)`))?.[1]);
+    return {
+      id: text("id"),
+      progressKey: text("progressKey"),
+      target: number("target"),
+      reward: number("reward"),
+      ...(text("startsOn") ? { startsOn: text("startsOn") } : {}),
+      ...(text("endsAfter") ? { endsAfter: text("endsAfter") } : {}),
+    };
+  });
   assert.ok(rows.length > 0, "browser daily mission catalog must be parseable");
   return { source, rows };
 }
@@ -37,15 +42,20 @@ function serverDailyMissions() {
     "const DAILY_MISSIONS = Object.freeze({",
     "\n});",
   );
-  const rows = [...catalog.matchAll(
-    /^\s*([a-z_]+):\s*\{\s*progressKey:\s*"([^"]+)",\s*target:\s*(\d+),\s*reward:\s*(\d+)(?:,\s*endsAfter:\s*"([^"]+)")?\s*\},?$/gm,
-  )].map((match) => ({
-    id: match[1],
-    progressKey: match[2],
-    target: Number(match[3]),
-    reward: Number(match[4]),
-    ...(match[5] ? { endsAfter: match[5] } : {}),
-  }));
+  const rows = [...catalog.matchAll(/^\s*([a-z_]+):\s*\{([^{}]+)\},?$/gm)]
+    .map((match) => {
+      const body = match[2];
+      const text = (key) => body.match(new RegExp(`\\b${key}:\\s*"([^"]+)"`))?.[1];
+      const number = (key) => Number(body.match(new RegExp(`\\b${key}:\\s*(\\d+)`))?.[1]);
+      return {
+        id: match[1],
+        progressKey: text("progressKey"),
+        target: number("target"),
+        reward: number("reward"),
+        ...(text("startsOn") ? { startsOn: text("startsOn") } : {}),
+        ...(text("endsAfter") ? { endsAfter: text("endsAfter") } : {}),
+      };
+    });
   assert.ok(rows.length > 0, "server daily mission catalog must be parseable");
   return rows;
 }
@@ -56,17 +66,23 @@ function comparableMission(mission) {
     progressKey: mission.progressKey,
     target: mission.target,
     reward: mission.reward,
+    ...(mission.id !== "complete_match" && mission.startsOn
+      ? { startsOn: mission.startsOn }
+      : {}),
+    ...(mission.id !== "complete_match" && mission.endsAfter
+      ? { endsAfter: mission.endsAfter }
+      : {}),
   };
 }
 
-test("client and server daily mission catalogs retire royale and redistribute its 90 Pay", () => {
+function availableOn(mission, dateKey) {
+  return (!mission.startsOn || dateKey >= mission.startsOn)
+    && (!mission.endsAfter || dateKey < mission.endsAfter);
+}
+
+test("client and server daily mission catalogs replace team with training at the JST cutover", () => {
   const { source: browserSource, rows: browserRows } = browserDailyMissions();
   const serverRows = serverDailyMissions();
-  const expectedModeRewards = {
-    play_solo: 70,
-    play_strategy: 80,
-    play_team: 100,
-  };
 
   assert.deepEqual(
     browserRows.map(comparableMission),
@@ -78,20 +94,30 @@ test("client and server daily mission catalogs retire royale and redistribute it
     const byId = new Map(rows.map((mission) => [mission.id, mission]));
     assert.equal(byId.has("play_royale"), false);
     assert.equal(rows.some((mission) => mission.progressKey === "royaleMatches"), false);
-    assert.deepEqual(
-      Object.fromEntries(Object.keys(expectedModeRewards).map((id) => [id, byId.get(id)?.reward])),
-      expectedModeRewards,
+    assert.equal(byId.get("play_team")?.endsAfter, "2026-07-28");
+    assert.equal(byId.get("play_training")?.startsOn, "2026-07-28");
+
+    const activeModeRewards = (dateKey) => Object.fromEntries(rows
+      .filter((mission) => mission.id.startsWith("play_") && availableOn(mission, dateKey))
+      .map((mission) => [mission.id, mission.reward]));
+    assert.deepEqual(activeModeRewards("2026-07-27"), {
+      play_solo: 70,
+      play_strategy: 80,
+      play_team: 100,
+    });
+    assert.deepEqual(activeModeRewards("2026-07-28"), {
+      play_solo: 70,
+      play_strategy: 80,
+      play_training: 100,
+    });
+    assert.equal(
+      Object.values(activeModeRewards("2026-07-27")).reduce((sum, reward) => sum + reward, 0),
+      250,
     );
-
-    const modeCompletionTotal = [...byId.entries()]
-      .filter(([id]) => id.startsWith("play_"))
-      .reduce((sum, [, mission]) => sum + mission.reward, 0);
-    assert.equal(modeCompletionTotal, 250);
-
-    const currentMissionTotal = rows
-      .filter((mission) => mission.id !== "complete_match")
-      .reduce((sum, mission) => sum + mission.reward, 0);
-    assert.equal(currentMissionTotal, 400);
+    assert.equal(
+      Object.values(activeModeRewards("2026-07-28")).reduce((sum, reward) => sum + reward, 0),
+      250,
+    );
   }
 
   assert.match(
@@ -106,4 +132,12 @@ test("client and server daily mission catalogs retire royale and redistribute it
     serverRows.find((mission) => mission.id === "complete_match")?.endsAfter,
     "2026-07-23",
   );
+  assert.match(browserSource, /!mission\.startsOn \|\| dateKey >= mission\.startsOn/);
+  assert.match(browserSource, /!mission\.endsAfter \|\| dateKey < mission\.endsAfter/);
+
+  const serverSource = read("functions/index.js");
+  assert.match(serverSource, /mission\.startsOn && dateKey < mission\.startsOn/);
+  assert.match(serverSource, /mission\.endsAfter && dateKey >= mission\.endsAfter/);
+  assert.match(serverSource, /trainingSets:\s*0/);
+  assert.match(serverSource, /trainingSets:\s*1/);
 });

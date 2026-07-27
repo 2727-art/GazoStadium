@@ -62,29 +62,29 @@ test("legacy verified monthly records backfill totals without inventing a loss s
   });
 });
 
-test("verified matches advance play days and reset loss streak on a draw", () => {
+test("only active 1on1 matches advance play days and loss streaks", () => {
   let stats = normalizeBattleStats(null);
   stats = addBattleMatch(stats, "solo", "loss", "2026-07-23");
   stats = addBattleMatch(stats, "strategy", "loss", "2026-07-23");
   stats = addBattleMatch(stats, "team", "loss", "2026-07-24");
-  assert.equal(stats.currentLossStreak, 3);
-  assert.equal(stats.bestLossStreak, 3);
-  assert.equal(stats.playDays, 2);
+  assert.equal(stats.currentLossStreak, 2);
+  assert.equal(stats.bestLossStreak, 2);
+  assert.equal(stats.playDays, 1);
   stats = addBattleMatch(stats, "solo", "draw", "2026-07-24");
   assert.equal(stats.currentLossStreak, 0);
-  assert.equal(stats.bestLossStreak, 3);
-  assert.equal(stats.losses, 3);
+  assert.equal(stats.bestLossStreak, 2);
+  assert.equal(stats.losses, 2);
 });
 
-test("the new one-versus-two variant does not advance legacy 2on2 achievements", () => {
+test("retired team variants cannot advance any current battle stats", () => {
   let stats = normalizeBattleStats({
     totalMatches: 4,
     modeMatches: { team: 4 },
   });
   stats = addBattleMatch(stats, "team_duo", "win", "2026-07-26");
-  assert.equal(stats.totalMatches, 5);
+  assert.equal(stats.totalMatches, 4);
   assert.equal(stats.modeMatches.team, 4);
-  assert.equal(stats.modeMatches.team_duo, 1);
+  assert.equal(stats.modeMatches.team_duo, 0);
   const ids = eligibleAchievementIds({ battleStats: stats, scope: "battle" });
   assert.equal(ids.includes("battle_team_5"), false);
   assert.equal(ids.includes("battle_total_1"), true);
@@ -104,17 +104,17 @@ test("mode variety and loss achievements unlock from neutral verified stats", ()
   for (const expected of [
     "battle_total_100",
     "battle_variety_2",
-    "battle_variety_three_5",
     "battle_losses_30",
     "battle_loss_streak_5",
     "battle_days_7",
   ]) assert.equal(ids.includes(expected), true, expected);
   assert.equal(ids.includes("battle_variety_three_20"), false);
+  assert.equal(ids.includes("battle_variety_three_5"), false);
   assert.equal(ids.includes("battle_royale_5"), false);
   assert.equal(ids.includes("battle_variety_all_5"), false);
 });
 
-test("server-only battle signals unlock the new honor achievements", () => {
+test("retired team honor signals no longer unlock new achievements", () => {
   const noSignals = eligibleAchievementIds({ battleStats: null, scope: "battle" });
   assert.equal(noSignals.includes("team_oshi_jouzu_defense"), false);
   const defense = eligibleAchievementIds({
@@ -125,8 +125,8 @@ test("server-only battle signals unlock the new honor achievements", () => {
     },
     scope: "battle",
   });
-  assert.equal(defense.includes("team_oshi_jouzu_defense"), true);
-  assert.equal(defense.includes("team_oshi_jouzu_clean_defense"), true);
+  assert.equal(defense.includes("team_oshi_jouzu_defense"), false);
+  assert.equal(defense.includes("team_oshi_jouzu_clean_defense"), false);
   const breakthrough = eligibleAchievementIds({
     battleStats: null,
     signals: {
@@ -135,12 +135,32 @@ test("server-only battle signals unlock the new honor achievements", () => {
     },
     scope: "battle",
   });
-  assert.equal(breakthrough.includes("team_duo_breakthrough"), true);
-  assert.equal(breakthrough.includes("team_duo_clean_breakthrough"), true);
-  for (const id of [...defense, ...breakthrough]) {
+  assert.equal(breakthrough.includes("team_duo_breakthrough"), false);
+  assert.equal(breakthrough.includes("team_duo_clean_breakthrough"), false);
+  for (const id of [
+    "battle_team_1",
+    "battle_variety_three_1",
+    "team_oshi_jouzu_defense",
+    "team_duo_breakthrough",
+  ]) {
     const definition = ACHIEVEMENT_DEFINITIONS.find((candidate) => candidate.id === id);
-    if (definition?.category === "battle_honor") assert.equal(definition.autoPublic, false);
+    assert.equal(definition.legacy, true, id);
   }
+});
+
+test("already unlocked retired achievements remain normalized and visible", () => {
+  const profile = normalizeAchievementProfile({
+    unlocked: {
+      battle_team_1: 10,
+      team_duo_breakthrough: 20,
+    },
+    customShowcase: ["team_duo_breakthrough"],
+  });
+  assert.deepEqual(Object.keys(profile.unlocked).sort(), [
+    "battle_team_1",
+    "team_duo_breakthrough",
+  ]);
+  assert.deepEqual(effectiveShowcase(profile), ["team_duo_breakthrough"]);
 });
 
 test("unlocking is idempotent and loss badges are not automatically public", () => {

@@ -15,7 +15,7 @@ import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -773,7 +773,7 @@ function modesAreActive() {
   return Boolean(
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
-    || window.HariaiTeam?.isActive?.()
+    || window.HariaiTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.(),
   );

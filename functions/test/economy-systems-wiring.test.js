@@ -115,11 +115,10 @@ test("post-match tip UI stays disabled until claim eligibility is confirmed and 
   assert.match(styles, /\.post-match-tip \[hidden\]\s*\{\s*display: none !important;/);
 });
 
-test("all three active final-result screens use the shared post-match tip UI", () => {
+test("the two active image-battle result screens use the shared post-match tip UI", () => {
   for (const [relativePath, mode] of [
     ["online.js", "solo"],
     ["strategy.js", "strategy"],
-    ["team.js", "team"],
   ]) {
     const source = read(relativePath);
     assert.match(source, /post-match-tip\.js\?v=post-match-tip-v4/);
@@ -127,6 +126,10 @@ test("all three active final-result screens use the shared post-match tip UI", (
     assert.match(source, new RegExp(`bindPostMatchTip\\([\\s\\S]*?mode: "${mode}"`));
     assert.equal((source.match(/renderPostMatchTip\(/g) || []).length, 1);
   }
+  assert.doesNotMatch(
+    read("training.js"),
+    /renderPostMatchTip|bindPostMatchTip|get_match_tip|send_match_tip/,
+  );
 });
 
 test("new economy ledgers are server-only in Firestore Rules", () => {

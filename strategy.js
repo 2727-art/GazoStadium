@@ -22,7 +22,7 @@ import {
   auth,
   database,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
@@ -32,7 +32,7 @@ import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
+} from "./player-titles.js?v=player-titles-v3-retire-team-v1-remove-royale-v1";
 import {
   STAMP_PRODUCTS,
   acquireStampCooldown,
@@ -49,7 +49,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   STRATEGY_VIDEO_MAX_BYTES,
   appendStrategyVideoChunk,
@@ -400,7 +400,7 @@ function start() {
     showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
     return;
   }
-  if (window.HariaiOnline?.isActive?.() || window.HariaiTeam?.isActive?.() || window.HariaiMarket?.isActive?.()) {
+  if (window.HariaiOnline?.isActive?.() || window.HariaiTraining?.isActive?.() || window.HariaiMarket?.isActive?.()) {
     showToast("進行中のオンライン画面を終了してから開いてください。");
     return;
   }

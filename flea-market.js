@@ -10,7 +10,7 @@ import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -18,7 +18,7 @@ import {
 } from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 import {
   getPlayerTitlePresentation,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
+} from "./player-titles.js?v=player-titles-v3-retire-team-v1-remove-royale-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const FLEA_DRAFT_KEY = "hariai-stadium-anju-pay-flea-draft-v1";
@@ -2223,7 +2223,7 @@ async function start({ initialScreen = "shelf" } = {}) {
   const anotherModeActive = window.HariaiAccount?.isActive?.()
     || window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
-    || window.HariaiTeam?.isActive?.()
+    || window.HariaiTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.();
   if (anotherModeActive) {
     showToast("ほかのモードを終了してからAnjuPayフリマを開いてください。");

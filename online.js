@@ -27,7 +27,7 @@ import {
   database,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -50,7 +50,7 @@ import {
   getPlayerTitleCategory,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
+} from "./player-titles.js?v=player-titles-v3-retire-team-v1-remove-royale-v1";
 import {
   MAX_EQUIPPED_STAMPS,
   STAMP_PRODUCTS,
@@ -68,7 +68,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   appendIncomingOnlineImageChunk,
   completeIncomingOnlineImageTransfer,
@@ -300,7 +300,7 @@ const OSHI_MARKET_COLLECTION_GROUPS = Object.freeze([
   }),
 ]);
 const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
-const ACTIVE_BATTLE_MODES = ["solo", "strategy", "team"];
+const ACTIVE_BATTLE_MODES = ["solo", "strategy"];
 // `royale` remains in persisted ranking records so already-earned history is not rewritten.
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
@@ -347,10 +347,13 @@ const DAILY_MISSIONS = [
   { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
   { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 70 },
   { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 80 },
-  { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "推し上手！ふたりチャレンジの正式な決着が対象です。", target: 1, reward: 100 },
+  { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "終了した推し上手！ふたりチャレンジの記録です。", target: 1, reward: 100, endsAfter: "2026-07-28" },
+  { id: "play_training", progressKey: "trainingSets", title: "鍛え合い60で1セット完遂", description: "60秒の指示をギブアップせず完遂すると進みます。", target: 1, reward: 100, startsOn: "2026-07-28" },
 ];
 const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
-  mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY
+  (mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY)
+  && (!mission.startsOn || dateKey >= mission.startsOn)
+  && (!mission.endsAfter || dateKey < mission.endsAfter)
 ));
 const DAILY_PROGRESS_LIMITS = Object.freeze({
   matches: 1,
@@ -359,6 +362,7 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   soloMatches: 1,
   strategyMatches: 1,
   teamMatches: 1,
+  trainingSets: 1,
 });
 const SHOP_PRODUCTS = [
   { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム仕上げ", description: "無料の推しカードでホログラム、スターダスト、ロイヤル箔を何度でも使える買い切り機能", price: 500 },
@@ -449,7 +453,7 @@ let freeTablePublicStatsLastSuccessAt = 0;
 let freeTablePublicStatsFailureCount = 0;
 let freeTablePublicStatsRequest = null;
 let freeTablePublicStatsTimer = null;
-const LOBBY_MODES = ACTIVE_BATTLE_MODES;
+const LOBBY_MODES = [...ACTIVE_BATTLE_MODES, "training"];
 const createLobbyStats = (value = null) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
   freeTable: { ...freeTablePublicStats },
@@ -1406,6 +1410,7 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
       soloMatches: 0,
       strategyMatches: 0,
       teamMatches: 0,
+      trainingSets: 0,
       claimed: {},
     },
     updatedAt: Date.now(),
@@ -1610,6 +1615,10 @@ function openOnlineScreen(screen) {
   }
   if (window.HariaiMarket?.isActive?.()) {
     showToast("推し値市場を終了してからオンライン画面を開いてください。");
+    return;
+  }
+  if (window.HariaiTraining?.isActive?.()) {
+    showToast("鍛え合い60を終了してからオンライン画面を開いてください。");
     return;
   }
   active = true;
@@ -2102,8 +2111,8 @@ function renderLobbyStats() {
     lobbySoloPlayingCount: lobbyStats.solo.playing,
     lobbyStrategyWaitingCount: lobbyStats.strategy.waiting,
     lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
-    lobbyTeamWaitingCount: lobbyStats.team.waiting,
-    lobbyTeamPlayingCount: lobbyStats.team.playing,
+    lobbyTrainingWaitingCount: lobbyStats.training.waiting,
+    lobbyTrainingPlayingCount: lobbyStats.training.playing,
     lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
     lobbyFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
     lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
@@ -3374,7 +3383,7 @@ function renderDailyPlayRewardPanel() {
     </div>
     <p class="daily-play-reward-copy">${escapeHtml(statusDetail)}</p>
     <details class="daily-play-reward-details"><summary>全${dailyPlay.tiers.length}段階を見る</summary><ol>${tiers}</ol></details>
-    <p class="daily-play-reward-note">勝敗を問わず、現在遊べる3モードのサーバー検証済み完走が対象です。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
+    <p class="daily-play-reward-note">勝敗を問わず、現在遊べる2つの対戦モードのサーバー検証済み完走が対象です（通常型・戦略型1on1）。鍛え合い60は専用ミッションだけに加算されます。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
   </section>`;
 }
 
@@ -3635,8 +3644,14 @@ function renderPointShop() {
   const equippedReactionCount = getEquippedReactionProducts().length;
   const equippedStampCount = getEquippedStampProducts().length;
   const equippedChatCosmetics = getEquippedChatCosmetics(state.economy);
-  const standardTitleCategories = PLAYER_TITLE_CATEGORIES.filter((category) => category.collection !== OSHI_MARKET_COLLECTION_ID);
-  const standardTitleProducts = PLAYER_TITLE_PRODUCTS.filter((product) => product.collection !== OSHI_MARKET_COLLECTION_ID);
+  const standardTitleProducts = PLAYER_TITLE_PRODUCTS.filter((product) => (
+    product.collection !== OSHI_MARKET_COLLECTION_ID
+    && (product.retired !== true || state.economy.inventory?.[product.id] === true)
+  ));
+  const standardTitleCategories = PLAYER_TITLE_CATEGORIES.filter((category) => (
+    category.collection !== OSHI_MARKET_COLLECTION_ID
+    && standardTitleProducts.some((product) => product.category === category.id)
+  ));
   const renderProduct = (product) => {
     const owned = state.economy.inventory?.[product.id] === true;
     const affordable = state.economy.points >= product.price;
@@ -5815,8 +5830,6 @@ async function recordOverallResult({
   if (!/^[a-f0-9]{40}$/.test(resultToken)) {
     throw new Error("検証済み対戦IDを確認できませんでした。");
   }
-  const preserveOverallRating = mode === "team"
-    && periodResult?.teamChallengeResult?.variant === "oshi_jouzu_duo";
   const serverProjection = mode === "solo"
     && periodResult?.profileProjectionMode === "server-v2";
   const projectionPending = serverProjection
@@ -5852,9 +5865,11 @@ async function recordOverallResult({
       modeRecord.points = (modeRecord.wins * 3) + modeRecord.draws;
       record.modes[mode] = modeRecord;
       record.name = displayName;
-      record.rating = preserveOverallRating
-        ? record.rating
-        : calculateRating(record.rating, Math.min(3000, Math.max(100, Number(opponentRating || INITIAL_RATING))), outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0);
+      record.rating = calculateRating(
+        record.rating,
+        Math.min(3000, Math.max(100, Number(opponentRating || INITIAL_RATING))),
+        outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0,
+      );
       record.updatedAt = Date.now();
       if (roomId) {
         record.lastResultRoomId = roomId;

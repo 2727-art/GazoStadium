@@ -138,6 +138,19 @@ test("a saved flea seller card makes an account-transfer target non-pristine", (
   );
 });
 
+test("redeem transaction rechecks private training activity against finalization races", () => {
+  const server = read("functions/index.js");
+  const start = server.indexOf("async function redeemAccountTransferCode");
+  const end = server.indexOf("async function cancelAccountTransferCode", start);
+  assert.ok(start >= 0 && end > start);
+  const redeem = server.slice(start, end);
+  assert.match(redeem, /transaction\.get\(trainingProfileRef\(targetUid\)\)/);
+  assert.match(redeem, /normalizeTrainingProfile\(\s*targetTrainingProfileSnapshot\.data\(\)/);
+  assert.match(redeem, /targetTrainingProfile\.sessions > 0/);
+  assert.match(redeem, /targetTrainingProfile\.completedSets > 0/);
+  assert.match(redeem, /targetTrainingProfile\.completeDays > 0/);
+});
+
 test("account transfer treats a fresh normal 1on1 V2 session as active", () => {
   const server = read("functions/index.js");
   const start = server.indexOf("async function accountHasActiveSession");

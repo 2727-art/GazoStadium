@@ -37,7 +37,6 @@ const indexSource = fs.readFileSync(path.join(functionsRoot, "index.js"), "utf8"
 const marketSource = fs.readFileSync(path.join(projectRoot, "market.js"), "utf8");
 const accountSource = fs.readFileSync(path.join(projectRoot, "account.js"), "utf8");
 const onlineSource = fs.readFileSync(path.join(projectRoot, "online.js"), "utf8");
-const teamSource = fs.readFileSync(path.join(projectRoot, "team.js"), "utf8");
 const databaseRules = JSON.parse(
   fs.readFileSync(path.join(projectRoot, "database.rules.json"), "utf8"),
 );
@@ -95,7 +94,6 @@ test("all clients and the Realtime Database mirror retain the expanded wallet ba
   assert.match(accountSource, /const ANJU_PAY_MAX_BALANCE = 999_999_999;/);
   assert.match(marketSource, /const ANJU_PAY_MAX_BALANCE = 999_999_999;/);
   assert.match(onlineSource, /const MAX_POINTS = 999_999_999;/);
-  assert.match(teamSource, /Math\.min\(999_999_999,/);
   assert.equal(
     databaseRules.rules.online.economy.$uid.points[".validate"].includes("<= 999999999"),
     true,

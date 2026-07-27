@@ -25,7 +25,7 @@ import {
   auth,
   database,
   functions,
-} from "./firebase-services.js?v=app-check-v3-oshi-jouzu-duo-v1-restore-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
 import {
   FREE_TABLE_AUDIO_MAX_SECONDS,
   FREE_TABLE_IMAGE_MAX_SIDE,
@@ -5372,6 +5372,10 @@ async function openInvite(inviteIdValue) {
 async function start() {
   if (active) {
     render();
+    return;
+  }
+  if (window.HariaiTraining?.isActive?.()) {
+    showToast("鍛え合い60を終了してから自由卓を開いてください。");
     return;
   }
   if (location.protocol === "file:") {

@@ -1,0 +1,542 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const {
+  TRAINING_DESTROYED_CLOCK_SKEW_MS,
+  TRAINING_ROOM_MAX_AGE_MS,
+  TRAINING_TURN_DURATION_MS,
+  TRAINING_VARIANT,
+  applyTrainingSession,
+  assertTrainingRoomFinalizable,
+  deriveTrainingRoomResult,
+  jstDateKey,
+  normalizeTrainingInstruction,
+  normalizeTrainingProfile,
+  trainingDailySettlement,
+} = require("../training");
+
+const firstUid = "first-player";
+const secondUid = "second-player";
+const createdAt = Date.parse("2026-07-28T10:00:00+09:00");
+
+function instruction(overrides = {}) {
+  return {
+    exercise: "スクワット",
+    completion: "拍に合わせて20回",
+    command: "背筋を伸ばして、無理のない深さで続けろ",
+    bpm: 80,
+    beatsPerRep: 2,
+    ...overrides,
+  };
+}
+
+function completedTurn(turnNumber, trainerUid, traineeUid, startedAt) {
+  return {
+    trainerUid,
+    traineeUid,
+    instruction: instruction(),
+    createdAt: startedAt - 100,
+    startedAt,
+    completedAt: startedAt + 50_000,
+  };
+}
+
+function room(overrides = {}) {
+  return {
+    protocolVersion: 1,
+    variant: TRAINING_VARIANT,
+    createdAt,
+    status: "active",
+    firstTrainerUid: firstUid,
+    members: {
+      [firstUid]: true,
+      [secondUid]: true,
+    },
+    players: {
+      [firstUid]: { uid: firstUid, name: "FIRST" },
+      [secondUid]: { uid: secondUid, name: "SECOND" },
+    },
+    accepted: {
+      [firstUid]: true,
+      [secondUid]: true,
+    },
+    turns: {},
+    ...overrides,
+  };
+}
+
+test("training instructions keep free roleplay text inside the protocol bounds", () => {
+  assert.deepEqual(normalizeTrainingInstruction(instruction({
+    exercise: "  腕立て伏せ  ",
+    completion: " 10回  できたらコンプリート ",
+    command: "  俺の画像を見ながら  やり切れ ",
+    bpm: 0,
+    beatsPerRep: 4,
+  })), {
+    exercise: "腕立て伏せ",
+    completion: "10回 できたらコンプリート",
+    command: "俺の画像を見ながら やり切れ",
+    bpm: 0,
+    beatsPerRep: 4,
+  });
+  assert.throws(
+    () => normalizeTrainingInstruction(instruction({ exercise: "あ".repeat(41) })),
+    /exercise length/,
+  );
+  assert.throws(
+    () => normalizeTrainingInstruction(instruction({ completion: "あ".repeat(61) })),
+    /completion length/,
+  );
+  assert.throws(
+    () => normalizeTrainingInstruction(instruction({ command: "あ".repeat(121) })),
+    /command length/,
+  );
+  assert.throws(
+    () => normalizeTrainingInstruction(instruction({ command: "1行目\n2行目" })),
+    /command length/,
+  );
+  for (const bpm of [39, 40.5, 161]) {
+    assert.throws(() => normalizeTrainingInstruction(instruction({ bpm })), /BPM/);
+  }
+  assert.throws(
+    () => normalizeTrainingInstruction(instruction({ beatsPerRep: 3 })),
+    /beats per rep/,
+  );
+});
+
+test("an active turn is pending until the server derives a timeout at exactly 60 seconds", () => {
+  const startedAt = createdAt + 1_000;
+  const activeRoom = room({
+    turns: {
+      1: {
+        trainerUid: firstUid,
+        traineeUid: secondUid,
+        instruction: instruction(),
+        createdAt: startedAt - 100,
+        startedAt,
+      },
+    },
+  });
+  const pending = deriveTrainingRoomResult(
+    activeRoom,
+    startedAt + TRAINING_TURN_DURATION_MS - 1,
+  );
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.retryAfterMs, 1);
+
+  const timedOut = deriveTrainingRoomResult(
+    activeRoom,
+    startedAt + TRAINING_TURN_DURATION_MS,
+  );
+  assert.equal(timedOut.status, "final");
+  assert.equal(timedOut.reason, "timeout");
+  assert.deepEqual(timedOut.outcomes, {
+    [firstUid]: "win",
+    [secondUid]: "loss",
+  });
+});
+
+test("a composed turn that the trainee has not started remains pending", () => {
+  const waiting = room({
+    turns: {
+      1: {
+        trainerUid: firstUid,
+        traineeUid: secondUid,
+        instruction: instruction(),
+        createdAt: createdAt + 1_000,
+      },
+    },
+  });
+  const result = deriveTrainingRoomResult(waiting, createdAt + 2_000);
+  assert.equal(result.status, "pending");
+  assert.equal(result.turnCount, 1);
+  assert.equal(result.retryAfterMs, 0);
+});
+
+test("surrender immediately gives the trainee a loss and stops later turns", () => {
+  const startedAt = createdAt + 1_000;
+  const surrendered = room({
+    turns: {
+      1: {
+        trainerUid: firstUid,
+        traineeUid: secondUid,
+        instruction: instruction(),
+        createdAt: startedAt - 100,
+        startedAt,
+        surrenderedAt: startedAt + 15_000,
+      },
+    },
+  });
+  const result = deriveTrainingRoomResult(surrendered, startedAt + 20_000);
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "surrender");
+  assert.equal(result.outcomes[firstUid], "win");
+  assert.equal(result.outcomes[secondUid], "loss");
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 0,
+    [secondUid]: 0,
+  });
+
+  surrendered.turns[2] = completedTurn(
+    2,
+    secondUid,
+    firstUid,
+    startedAt + 16_000,
+  );
+  assert.throws(
+    () => deriveTrainingRoomResult(surrendered, startedAt + 70_000),
+    /unfinished terminal state|roles do not alternate/,
+  );
+});
+
+test("completion reverses the roles, and an even pair waits for both continue votes", () => {
+  const turn1StartedAt = createdAt + 1_000;
+  const turn2StartedAt = turn1StartedAt + 51_000;
+  const paired = room({
+    turns: {
+      1: completedTurn(1, firstUid, secondUid, turn1StartedAt),
+      2: completedTurn(2, secondUid, firstUid, turn2StartedAt),
+    },
+  });
+  const waiting = deriveTrainingRoomResult(paired, turn2StartedAt + 55_000);
+  assert.equal(waiting.status, "pending");
+  assert.deepEqual(waiting.completedSetsByUid, {
+    [firstUid]: 1,
+    [secondUid]: 1,
+  });
+
+  paired.continueVotes = {
+    1: {
+      [firstUid]: "continue",
+      [secondUid]: "continue",
+    },
+  };
+  const continuing = deriveTrainingRoomResult(paired, turn2StartedAt + 55_000);
+  assert.equal(continuing.status, "pending");
+  paired.turns[3] = {
+    trainerUid: firstUid,
+    traineeUid: secondUid,
+    instruction: instruction({ exercise: "腹筋" }),
+    createdAt: turn2StartedAt + 50_500,
+    startedAt: turn2StartedAt + 51_000,
+  };
+  assert.equal(
+    deriveTrainingRoomResult(paired, turn2StartedAt + 52_000).turnCount,
+    3,
+  );
+});
+
+test("either finish vote closes an even pair as a mutual completion draw", () => {
+  const turn1StartedAt = createdAt + 1_000;
+  const turn2StartedAt = turn1StartedAt + 51_000;
+  const finished = room({
+    turns: {
+      1: completedTurn(1, firstUid, secondUid, turn1StartedAt),
+      2: completedTurn(2, secondUid, firstUid, turn2StartedAt),
+    },
+    continueVotes: {
+      1: {
+        [firstUid]: "finish",
+      },
+    },
+  });
+  const result = deriveTrainingRoomResult(finished, turn2StartedAt + 55_000);
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "mutual_complete");
+  assert.deepEqual(result.outcomes, {
+    [firstUid]: "draw",
+    [secondUid]: "draw",
+  });
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 1,
+    [secondUid]: 1,
+  });
+});
+
+test("turn six always closes as mutual completion without another vote", () => {
+  const turns = {};
+  const continueVotes = {};
+  let startedAt = createdAt + 1_000;
+  for (let turnNumber = 1; turnNumber <= 6; turnNumber += 1) {
+    const trainerUid = turnNumber % 2 === 1 ? firstUid : secondUid;
+    const traineeUid = trainerUid === firstUid ? secondUid : firstUid;
+    turns[turnNumber] = completedTurn(
+      turnNumber,
+      trainerUid,
+      traineeUid,
+      startedAt,
+    );
+    if (turnNumber === 2 || turnNumber === 4) {
+      continueVotes[turnNumber / 2] = {
+        [firstUid]: "continue",
+        [secondUid]: "continue",
+      };
+    }
+    startedAt += 51_000;
+  }
+  const result = deriveTrainingRoomResult(
+    room({ turns, continueVotes }),
+    startedAt,
+  );
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "mutual_complete");
+  assert.equal(result.turnCount, 6);
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 3,
+    [secondUid]: 3,
+  });
+});
+
+test("the server rejects forged rosters, turn jumps, role order, timing, and votes", () => {
+  const now = createdAt + 500_000;
+  assert.throws(
+    () => deriveTrainingRoomResult(room({
+      destroyed: { by: firstUid, at: now - 1 },
+    }), now),
+    /destroyed before its result became final/,
+  );
+  const outsider = room();
+  outsider.accepted.outsider = true;
+  assert.throws(() => deriveTrainingRoomResult(outsider, now), /acceptance/);
+
+  const jumped = room({
+    turns: {
+      2: completedTurn(2, firstUid, secondUid, createdAt + 1_000),
+    },
+  });
+  assert.throws(() => deriveTrainingRoomResult(jumped, now), /contiguous/);
+
+  const wrongRoles = room({
+    turns: {
+      1: completedTurn(1, secondUid, firstUid, createdAt + 1_000),
+    },
+  });
+  assert.throws(() => deriveTrainingRoomResult(wrongRoles, now), /roles do not alternate/);
+
+  const multipleTerminal = room({
+    turns: {
+      1: {
+        ...completedTurn(1, firstUid, secondUid, createdAt + 1_000),
+        surrenderedAt: createdAt + 10_000,
+      },
+    },
+  });
+  assert.throws(() => deriveTrainingRoomResult(multipleTerminal, now), /multiple terminal/);
+
+  const lateCompletion = room({
+    turns: {
+      1: {
+        ...completedTurn(1, firstUid, secondUid, createdAt + 1_000),
+        completedAt: createdAt + 61_001,
+      },
+    },
+  });
+  assert.throws(() => deriveTrainingRoomResult(lateCompletion, now), /timestamp is invalid/);
+
+  const prematureVote = room({
+    continueVotes: {
+      1: {
+        [firstUid]: "continue",
+      },
+    },
+  });
+  assert.throws(() => deriveTrainingRoomResult(prematureVote, now), /before any completed pair/);
+});
+
+test("a disconnect after terminal evidence preserves the result but not later evidence", () => {
+  const startedAt = createdAt + 1_000;
+  const surrenderedAt = startedAt + 15_000;
+  const finalizedThenDestroyed = room({
+    turns: {
+      1: {
+        trainerUid: firstUid,
+        traineeUid: secondUid,
+        instruction: instruction(),
+        createdAt: startedAt - 100,
+        startedAt,
+        surrenderedAt,
+      },
+    },
+    destroyed: {
+      by: secondUid,
+      at: surrenderedAt + 1,
+      reason: "disconnect",
+    },
+  });
+
+  const result = deriveTrainingRoomResult(
+    finalizedThenDestroyed,
+    surrenderedAt + 2,
+  );
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "surrender");
+  assert.equal(
+    assertTrainingRoomFinalizable(
+      finalizedThenDestroyed,
+      firstUid,
+      surrenderedAt + 2,
+    ).status,
+    "final",
+  );
+
+  finalizedThenDestroyed.destroyed.at = surrenderedAt - 1;
+  assert.equal(
+    deriveTrainingRoomResult(finalizedThenDestroyed, surrenderedAt + 2).status,
+    "final",
+  );
+
+  finalizedThenDestroyed.destroyed.at =
+    surrenderedAt - TRAINING_DESTROYED_CLOCK_SKEW_MS - 1;
+  assert.throws(
+    () => deriveTrainingRoomResult(finalizedThenDestroyed, surrenderedAt + 2),
+    /evidence occurred after room destruction/,
+  );
+});
+
+test("profile streaks use JST days and do not double count the same day", () => {
+  const beforeMidnight = Date.parse("2026-07-27T23:59:59+09:00");
+  const afterMidnight = Date.parse("2026-07-28T00:00:00+09:00");
+  assert.equal(jstDateKey(beforeMidnight), "2026-07-27");
+  assert.equal(jstDateKey(afterMidnight), "2026-07-28");
+
+  const first = applyTrainingSession(null, 2, beforeMidnight);
+  assert.deepEqual(first, {
+    sessions: 1,
+    completedSets: 2,
+    completeDays: 1,
+    currentStreak: 1,
+    bestStreak: 1,
+    lastCompletedDateKey: "2026-07-27",
+    updatedAt: beforeMidnight,
+  });
+  const sameDay = applyTrainingSession(first, 1, beforeMidnight + 500);
+  assert.equal(sameDay.sessions, 2);
+  assert.equal(sameDay.completedSets, 3);
+  assert.equal(sameDay.completeDays, 1);
+  assert.equal(sameDay.currentStreak, 1);
+
+  const nextDay = applyTrainingSession(sameDay, 1, afterMidnight);
+  assert.equal(nextDay.completeDays, 2);
+  assert.equal(nextDay.currentStreak, 2);
+  assert.equal(nextDay.bestStreak, 2);
+
+  const skippedDay = applyTrainingSession(
+    nextDay,
+    1,
+    Date.parse("2026-07-30T12:00:00+09:00"),
+  );
+  assert.equal(skippedDay.completeDays, 3);
+  assert.equal(skippedDay.currentStreak, 1);
+  assert.equal(skippedDay.bestStreak, 2);
+
+  const noCompletion = applyTrainingSession(skippedDay, 0, Date.parse("2026-07-31T12:00:00+09:00"));
+  assert.equal(noCompletion.sessions, 5);
+  assert.equal(noCompletion.completeDays, 3);
+  assert.equal(noCompletion.lastCompletedDateKey, "2026-07-30");
+});
+
+test("one long session can count both sides of JST midnight without regressing newer history", () => {
+  const beforeMidnight = Date.parse("2026-07-27T23:59:59+09:00");
+  const afterMidnight = Date.parse("2026-07-28T00:00:01+09:00");
+  const crossed = applyTrainingSession(
+    null,
+    [beforeMidnight, afterMidnight],
+    afterMidnight + 1_000,
+  );
+  assert.equal(crossed.sessions, 1);
+  assert.equal(crossed.completedSets, 2);
+  assert.equal(crossed.completeDays, 2);
+  assert.equal(crossed.currentStreak, 2);
+  assert.equal(crossed.lastCompletedDateKey, "2026-07-28");
+  assert.equal(crossed.updatedAt, afterMidnight + 1_000);
+
+  const olderReplay = applyTrainingSession(
+    crossed,
+    [beforeMidnight],
+    afterMidnight + 2_000,
+  );
+  assert.equal(olderReplay.sessions, 2);
+  assert.equal(olderReplay.completedSets, 3);
+  assert.equal(olderReplay.completeDays, 2);
+  assert.equal(olderReplay.currentStreak, 2);
+  assert.equal(olderReplay.lastCompletedDateKey, "2026-07-28");
+});
+
+test("delayed finalization credits only the completion day without overwriting a newer daily record", () => {
+  const completedAt = Date.parse("2026-07-28T23:59:00+09:00");
+  const nextDay = Date.parse("2026-07-29T12:00:00+09:00");
+  assert.deepEqual(trainingDailySettlement(
+    { daily: { dateKey: "2026-07-28", trainingSets: 0 } },
+    [completedAt],
+    nextDay,
+  ), {
+    dateKey: "2026-07-28",
+    sessionDateKey: "2026-07-28",
+    creditTrainingSet: true,
+  });
+  assert.deepEqual(trainingDailySettlement(
+    { daily: { dateKey: "2026-07-29", trainingSets: 0 } },
+    [completedAt],
+    nextDay,
+  ), {
+    dateKey: "2026-07-29",
+    sessionDateKey: "2026-07-28",
+    creditTrainingSet: false,
+  });
+  assert.deepEqual(trainingDailySettlement(
+    null,
+    [Date.parse("2026-07-29T00:01:00+09:00")],
+    nextDay,
+  ), {
+    dateKey: "2026-07-29",
+    sessionDateKey: "2026-07-29",
+    creditTrainingSet: true,
+  });
+  assert.equal(
+    trainingDailySettlement(null, [], nextDay).creditTrainingSet,
+    false,
+  );
+});
+
+test("profile normalization is private-record compatible and old rooms cannot finalize", () => {
+  assert.deepEqual(normalizeTrainingProfile({
+    sessions: 4.9,
+    completedSets: 7,
+    completeDays: 3,
+    currentStreak: 2,
+    bestStreak: 4,
+    lastCompletedDateKey: "not-a-date",
+    updatedAt: -1,
+    wins: 999,
+  }), {
+    sessions: 4,
+    completedSets: 7,
+    completeDays: 3,
+    currentStreak: 2,
+    bestStreak: 3,
+    lastCompletedDateKey: "",
+    updatedAt: 0,
+  });
+  assert.throws(
+    () => assertTrainingRoomFinalizable(
+      room(),
+      firstUid,
+      createdAt + (12 * 60 * 60 * 1000) + 1,
+    ),
+    /too old/,
+  );
+  assert.equal(
+    assertTrainingRoomFinalizable(
+      room(),
+      firstUid,
+      createdAt + TRAINING_ROOM_MAX_AGE_MS + 1,
+      { maxAgeMs: Number.MAX_SAFE_INTEGER },
+    ).status,
+    "pending",
+  );
+  assert.throws(
+    () => assertTrainingRoomFinalizable(room(), "outsider", createdAt + 1_000),
+    /not a room member/,
+  );
+});

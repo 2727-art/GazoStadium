@@ -37,6 +37,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   freeTableInvitePreview: true,
   // トップ向け統計も生の卓情報を読まず、App Check済みの集計境界だけを公開します。
   freeTablePublicStats: true,
+  // 鍛え合い60は非公開の継続記録とサーバー確定結果を扱う新規境界です。
+  trainingAction: true,
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),

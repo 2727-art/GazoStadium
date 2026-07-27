@@ -47,7 +47,6 @@
   [
     ["solo", "通常型1on1", "◆", ["通常型の一歩", "スタンダード見習い", "通常型の常連", "五十戦の貼り手", "通常型百景", "スタンダードの主", "千試合の定番"]],
     ["strategy", "戦略型1on1", "◇", ["弱点捜査開始", "読み合い見習い", "読み合いの常連", "五十の読み筋", "読み合い百景", "戦略型の主", "千回の読み合い"]],
-    ["team", "2on2", "∞", ["相棒募集中", "連携見習い", "チームの常連", "五十の共闘", "連携百景", "2on2の主", "千回の共闘"]],
   ].forEach(([mode, label, icon, names]) => addSeries({
     scope: "battle",
     category: "battle_modes",
@@ -58,6 +57,19 @@
     names,
     description: (target) => `${label}を${target}試合完走した`,
   }));
+
+  addSeries({
+    scope: "battle",
+    category: "battle_modes",
+    family: "battle_team",
+    familyLabel: "ふたりチャレンジ（終了）",
+    icon: "∞",
+    thresholds: [1, 5, 20, 50, 100, 300, 1000],
+    names: ["相棒募集中", "連携見習い", "チームの常連", "五十の共闘", "連携百景", "2on2の主", "千回の共闘"],
+    description: (target) => `終了したチーム対戦を${target}試合完走した記録`,
+    hint: "終了したモードの記録",
+    legacy: true,
+  });
 
   definitions.push(Object.freeze({
     id: "battle_variety_2",
@@ -78,12 +90,13 @@
     scope: "battle",
     category: "battle_variety",
     family: "battle_variety",
-    familyLabel: "モード回遊",
+    familyLabel: "旧3モード回遊",
     icon: "✦",
     thresholds: [1, 5, 20, 50, 100],
     names: ["三つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
-    description: (target) => `3種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
-    hint: "いつもと違う入口へ行くと解除",
+    description: (target) => `旧3種類のオンライン対戦モードをそれぞれ${target}試合完走した記録`,
+    hint: "終了したモードを含む記録",
+    legacy: true,
   });
   definitions.splice(varietyStart, 5, ...definitions.slice(varietyStart, varietyStart + 5).map((definition, index) => Object.freeze({
     ...definition,
@@ -165,14 +178,15 @@
     scope: "battle",
     category: "battle_honor",
     family,
-    familyLabel: "推し上手！ふたりチャレンジ",
+    familyLabel: "推し上手！ふたりチャレンジ（終了）",
     icon: "❀",
     level,
     target: 1,
     name,
     description,
-    hint: "推し上手！ふたりチャレンジの正式戦で解除",
+    hint: "終了したモードの記録",
     autoPublic: false,
+    legacy: true,
   })));
 
   addSeries({
@@ -250,11 +264,11 @@
   const byId = new Map(catalog.map((definition) => [definition.id, definition]));
   const categoryInfo = Object.freeze([
     { id: "battle_record", label: "通算対戦", copy: "勝敗に関係なく、正式な対戦を完走した記録" },
-    { id: "battle_modes", label: "モード別", copy: "現在遊べる3種類のオンライン対戦と、解除済みの旧モード記録" },
+    { id: "battle_modes", label: "モード別", copy: "現在遊べる2種類のオンライン対戦と、解除済みの旧モード記録" },
     { id: "battle_variety", label: "モード回遊", copy: "複数の入口を訪れたオールラウンダーの記録" },
     { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も貼り続けた記録" },
     { id: "battle_days", label: "継続", copy: "異なる日にスタジアムへ戻ってきた記録" },
-    { id: "battle_honor", label: "つよ推しの証", copy: "一発勝負で示した、推し上手さんとふたりの武勲" },
+    { id: "battle_honor", label: "つよ推しの証（終了）", copy: "終了したふたりチャレンジで刻んだ武勲" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },

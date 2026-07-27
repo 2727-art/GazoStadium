@@ -147,7 +147,7 @@ test("cut-in dialog is skippable, text-safe, responsive, and reduced-motion awar
 });
 
 test("signature finish is exclusive to normal 1on1", () => {
-  for (const file of ["strategy.js", "team.js"]) {
+  for (const file of ["strategy.js", "training.js"]) {
     const source = read(file);
     assert.doesNotMatch(source, /signatureCardId|CUSTOM_FINISH_VALUE|finishReply|finish-cutin-dialog/i, `${file} must not receive normal 1on1 finish state`);
   }
