@@ -34,8 +34,8 @@ test("post-match tips present transferred AnjuPay in Pay", () => {
   assert.doesNotMatch(tips, /[0-9}] ?PT|<small>PT|PTのAnjuPay|自分のポイント|<legend>ポイント<\/legend>/);
 });
 
-test("all match modes use the same post-match tip cache revision", () => {
-  for (const file of ["online.js", "strategy.js", "team.js", "royale.js"]) {
+test("all active match modes use the same post-match tip cache revision", () => {
+  for (const file of ["online.js", "strategy.js", "team.js"]) {
     assert.match(
       read(file),
       /post-match-tip\.js\?v=post-match-tip-v4/,
@@ -52,7 +52,7 @@ test("all currency surfaces share one Pay formatter and expose no legacy PT unit
       `${file} must import the shared Pay formatter`,
     );
   }
-  for (const file of ["account.js", "app.js", "market.js", "online.js", "post-match-tip.js", "royale.js"]) {
+  for (const file of ["account.js", "app.js", "market.js", "online.js", "post-match-tip.js"]) {
     assert.doesNotMatch(
       read(file),
       /[0-9}] ?PT|<small>PT|PERIOD PT|[0-9]+pt|期間ポイント|戦績ポイント|支持ポイント|\bPOINTS\b/,
@@ -100,6 +100,5 @@ test("README separates Pay from non-currency scores", () => {
   assert.match(readme, /戦績スコア/);
   assert.match(readme, /合計スコア、モード別スコア/);
   assert.match(read("app.js"), /PERIOD SCORE/);
-  assert.match(read("royale.js"), /支持値/);
   assert.doesNotMatch(readme, /[0-9,]+ ?PT|\bPT\b/);
 });

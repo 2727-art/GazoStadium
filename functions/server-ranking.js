@@ -2,6 +2,8 @@
 
 const SERVER_RANKING_VERSION = 1;
 const SERVER_RANKING_PERIODS = Object.freeze(["daily", "weekly", "monthly"]);
+const ACTIVE_SERVER_RANKING_MODES = Object.freeze(["solo", "strategy"]);
+// Keep excluded and retired keys when normalizing historical entries.
 const SERVER_RANKING_MODES = Object.freeze(["solo", "strategy", "team", "royale"]);
 const SERVER_RANKING_CUTOVER_KEYS = Object.freeze({
   daily: "2026-07-24",
@@ -125,7 +127,7 @@ function addServerRankingResult(value, {
   profile = {},
   now = Date.now(),
 } = {}) {
-  if (!SERVER_RANKING_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) {
+  if (!ACTIVE_SERVER_RANKING_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) {
     throw new Error("Invalid server ranking result");
   }
   const record = normalizeServerRankingEntry(value, value);
@@ -231,6 +233,7 @@ function resolveServerRankingAward(period, ownEntry, rankedEntries, {
 }
 
 module.exports = {
+  ACTIVE_SERVER_RANKING_MODES,
   SERVER_RANKING_AWARD_MINIMUM_MATCHES,
   SERVER_RANKING_CUTOVER_KEYS,
   SERVER_RANKING_MINIMUM_MATCHES,

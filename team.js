@@ -36,7 +36,7 @@ import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   STAMP_PRODUCTS,
   acquireStampCooldown,
@@ -48,7 +48,7 @@ import {
   renderChatTools,
   renderStampBubble,
   startStampButtonCooldown,
-} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1";
+} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   bindPostMatchTip,
   isPostMatchTipBusy,
@@ -265,7 +265,6 @@ function start() {
     return;
   }
   if (window.HariaiOnline?.isActive?.()
-    || window.HariaiRoyale?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiMarket?.isActive?.()) {
     showToast("ほかの対戦画面を終了してから、ふたりチャレンジを開始してください。");

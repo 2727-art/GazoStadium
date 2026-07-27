@@ -46,7 +46,9 @@ test("new client uses the roleplay protocol while Functions retain cached-client
   assert.match(team, /team-duo-challenge\.mjs\?v=oshi-jouzu-duo-v1-roleplay-v1-restore-v1/);
   assert.doesNotMatch(server, /TEAM_ELIGIBILITY|evaluateTeamEligibility|validateTeamEligibility/);
   assert.match(functions, /online\/teamDuoScores/);
-  assert.match(functions, /teamDuo\s*\?\s*serverProfile\.rating/);
+  assert.match(functions, /const rankingEligibleMode = ACTIVE_SERVER_RANKING_MODES\.includes\(mode\)/);
+  assert.match(functions, /const serverPeriodInfos = rankingEligibleMode\s*\?/);
+  assert.doesNotMatch(functions, /teamDuo\s*\?\s*serverProfile\.rating/);
   assert.match(functions, /achievementMode:\s*"team_duo"/);
 });
 

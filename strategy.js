@@ -32,7 +32,7 @@ import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   STAMP_PRODUCTS,
   acquireStampCooldown,
@@ -44,7 +44,7 @@ import {
   renderChatTools,
   renderStampBubble,
   startStampButtonCooldown,
-} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1";
+} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   bindPostMatchTip,
   isPostMatchTipBusy,
@@ -400,7 +400,7 @@ function start() {
     showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
     return;
   }
-  if (window.HariaiOnline?.isActive?.() || window.HariaiTeam?.isActive?.() || window.HariaiRoyale?.isActive?.() || window.HariaiMarket?.isActive?.()) {
+  if (window.HariaiOnline?.isActive?.() || window.HariaiTeam?.isActive?.() || window.HariaiMarket?.isActive?.()) {
     showToast("進行中のオンライン画面を終了してから開いてください。");
     return;
   }

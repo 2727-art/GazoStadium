@@ -27,10 +27,10 @@ export const STAMP_PRODUCTS = Object.freeze([
   { id: "stamp_success", type: "stamp", category: "team", name: "作戦成功", label: "作戦成功！", description: "チームの狙いが決まったときに", price: 220, asset: asset("stamp_success") },
   { id: "stamp_leave_it", type: "stamp", category: "team", name: "任せた", label: "任せた！", description: "相方へ意志を託す敬礼スタンプ", price: 240, asset: asset("stamp_leave_it") },
   { id: "stamp_combo", type: "stamp", category: "team", name: "コンボ成立", label: "コンボ成立！", description: "2枚と演出の組み合わせを祝う", price: 280, asset: asset("stamp_combo") },
-  { id: "stamp_survived", type: "stamp", category: "royale", name: "生き残った", label: "生き残った！", description: "脱落を回避した安堵を表現", price: 220, asset: asset("stamp_survived") },
-  { id: "stamp_close_call", type: "stamp", category: "royale", name: "危なかった", label: "危なかった！", description: "紙一重の投票結果に", price: 260, asset: asset("stamp_close_call") },
-  { id: "stamp_champion", type: "stamp", category: "royale", name: "優勝", label: "優勝！", description: "最後まで勝ち残った王者スタンプ", price: 300, asset: asset("stamp_champion") },
-  { id: "stamp_last_card", type: "stamp", category: "royale", name: "最後の一枚", label: "最後の一枚！", description: "勝負を決める最終カードに", price: 350, asset: asset("stamp_last_card") },
+  { id: "stamp_survived", type: "stamp", category: "battle", name: "生き残った", label: "生き残った！", description: "ぎりぎりの勝負を越えた安堵を表現", price: 220, asset: asset("stamp_survived") },
+  { id: "stamp_close_call", type: "stamp", category: "battle", name: "危なかった", label: "危なかった！", description: "紙一重の勝負結果に", price: 260, asset: asset("stamp_close_call") },
+  { id: "stamp_champion", type: "stamp", category: "battle", name: "優勝", label: "優勝！", description: "勝負を制した喜びを伝える王冠スタンプ", price: 300, asset: asset("stamp_champion") },
+  { id: "stamp_last_card", type: "stamp", category: "battle", name: "最後の一枚", label: "最後の一枚！", description: "勝負を決める最終カードに", price: 350, asset: asset("stamp_last_card") },
 ]);
 
 export const ALL_STAMPS = Object.freeze([...FREE_STAMPS, ...STAMP_PRODUCTS]);

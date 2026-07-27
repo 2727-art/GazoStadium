@@ -10,7 +10,6 @@ const sources = {
   solo: read("online.js"),
   strategy: read("strategy.js"),
   team: read("team.js"),
-  royale: read("royale.js"),
 };
 
 test("every online mode prepares the local deck for reuse", () => {
@@ -40,7 +39,6 @@ test("rematch resets release received media without releasing the local deck", (
   assert.match(sources.solo, /async function resetOnlineState[\s\S]*?releaseMatchMedia\(\);[\s\S]*?state\.deck = deck;/);
   assert.match(sources.strategy, /async function resetStrategySetup[\s\S]*?releaseMatchMedia\(\);[\s\S]*?state\.main = main;[\s\S]*?state\.reserve = reserve;/);
   assert.match(sources.team, /async function resetSetup[\s\S]*?releaseMatchMedia\(\);[\s\S]*?state\.deck = deck;/);
-  assert.match(sources.royale, /async function resetSetup[\s\S]*?releaseMatchMedia\(\);[\s\S]*?state\.deck = deck;/);
 });
 
 test("leaving a mode and closing the page still release every local deck", () => {
@@ -51,5 +49,4 @@ test("leaving a mode and closing the page still release every local deck", () =>
   assert.match(sources.solo, /function releaseAllImages\(\) \{[\s\S]*?state\.deck\.forEach/);
   assert.match(sources.strategy, /function releaseAllImages\(\) \{[\s\S]*?\[\.\.\.state\.main, \.\.\.state\.reserve\]\.forEach/);
   assert.match(sources.team, /function releaseAllImages\(\) \{[\s\S]*?state\.deck\.forEach/);
-  assert.match(sources.royale, /function releaseAllImages\(\) \{[\s\S]*?state\.deck\.forEach/);
 });

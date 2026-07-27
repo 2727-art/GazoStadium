@@ -34,12 +34,11 @@ test("initialize, verified match recording, and claims all return the server sum
   assert.match(source, /action === "claim_daily_play"\) return await claimDailyPlayRewards\(uid\)/);
 });
 
-test("all four modes feed the shared verified-match reward path", () => {
+test("all three active modes feed the shared verified-match reward path", () => {
   const online = read("online.js");
   const modeSources = [
     ["strategy", read("strategy.js")],
     ["team", read("team.js")],
-    ["royale", read("royale.js")],
   ];
   assert.match(online, /mode:\s*"solo"[\s\S]*?recordOverallResult/);
   assert.match(online, /await recordPeriodRewardResult\(user\.uid, mode, outcome, roomId, resultTimestamp\)/);
@@ -74,7 +73,7 @@ test("missions show one claim-all control, interval progress, and folded tier de
   assert.match(css, /\.daily-play-reward-details/);
   assert.match(html, /styles\.css\?v=[^"]*daily-play-v1/);
   assert.match(html, /online\.js\?v=[^"]*daily-play-v1/);
-  for (const moduleName of ["strategy", "team", "royale"]) {
+  for (const moduleName of ["strategy", "team"]) {
     assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*daily-play-v1`));
   }
   assert.match(html, /id="toast"[^>]*aria-atomic="true"/);

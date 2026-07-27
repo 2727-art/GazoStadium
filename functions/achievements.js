@@ -1,11 +1,11 @@
 "use strict";
 
 const BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo", "royale"]);
+const ACTIVE_BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo"]);
 const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
   Object.freeze(["team", "team_duo"]),
-  Object.freeze(["royale"]),
 ]);
 const VALID_SCOPES = new Set(["battle", "market"]);
 const MAX_SHOWCASE = 3;
@@ -21,6 +21,7 @@ function series({
   description,
   condition,
   autoPublic = true,
+  legacy = false,
 }) {
   return thresholds.map((target, index) => Object.freeze({
     id: `${family}_${target}`,
@@ -35,6 +36,7 @@ function series({
     description: description(target),
     hint: `${familyLabel}を続けると解除`,
     autoPublic,
+    legacy,
     condition: condition(target),
   }));
 }
@@ -55,7 +57,6 @@ const battleDefinitions = [
     ["solo", "通常型1on1", "◆", ["通常型の一歩", "スタンダード見習い", "通常型の常連", "五十戦の貼り手", "通常型百景", "スタンダードの主", "千試合の定番"]],
     ["strategy", "戦略型1on1", "◇", ["弱点捜査開始", "読み合い見習い", "読み合いの常連", "五十の読み筋", "読み合い百景", "戦略型の主", "千回の読み合い"]],
     ["team", "2on2", "∞", ["相棒募集中", "連携見習い", "チームの常連", "五十の共闘", "連携百景", "2on2の主", "千回の共闘"]],
-    ["royale", "バトルロワイヤル", "♛", ["四人寄れば", "混戦見習い", "混戦の常連", "五十の乱戦", "乱戦百景", "BRの主", "千回の混戦"]],
   ].flatMap(([mode, label, icon, names]) => series({
     scope: "battle",
     category: "battle_modes",
@@ -89,9 +90,37 @@ const battleDefinitions = [
     familyLabel: "モード回遊",
     icon: "✦",
     thresholds: [1, 5, 20, 50, 100],
-    names: ["四つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
-    description: (target) => `4種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
+    names: ["三つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
+    description: (target) => `3種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
     condition: (target) => ({ type: "minimum_battle_modes", target }),
+  }).map((definition, index) => Object.freeze({
+    ...definition,
+    id: `battle_variety_three_${definition.target}`,
+    level: index + 2,
+  })),
+  ...series({
+    scope: "battle",
+    category: "battle_modes",
+    family: "battle_royale",
+    familyLabel: "バトルロワイヤル（終了）",
+    icon: "♛",
+    thresholds: [1, 5, 20, 50, 100, 300, 1000],
+    names: ["四人寄れば", "混戦見習い", "混戦の常連", "五十の乱戦", "乱戦百景", "BRの主", "千回の混戦"],
+    description: (target) => `終了したバトルロワイヤルを${target}試合完走した記録`,
+    condition: (target) => ({ type: "battle_mode", mode: "royale", target }),
+    legacy: true,
+  }),
+  ...series({
+    scope: "battle",
+    category: "battle_variety",
+    family: "battle_variety_legacy",
+    familyLabel: "旧4モード回遊",
+    icon: "✦",
+    thresholds: [1, 5, 20, 50, 100],
+    names: ["四つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
+    description: (target) => `旧4種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
+    condition: (target) => ({ type: "minimum_battle_modes", target }),
+    legacy: true,
   }).map((definition, index) => Object.freeze({
     ...definition,
     id: `battle_variety_all_${definition.target}`,
@@ -324,7 +353,7 @@ function deriveBattleStatsFromPeriods(periodRewards) {
 
 function addBattleMatch(value, mode, outcome, dateKey) {
   const stats = normalizeBattleStats(value);
-  if (!BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return stats;
+  if (!ACTIVE_BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return stats;
   stats.totalMatches += 1;
   stats.modeMatches[mode] += 1;
   if (outcome === "loss") {
@@ -403,7 +432,8 @@ function achievementConditionMet(definition, battleStats, marketStats, signals =
 
 function eligibleAchievementIds({ battleStats, marketStats, signals = {}, scope = "" } = {}) {
   return ACHIEVEMENT_DEFINITIONS
-    .filter((definition) => (!scope || definition.scope === scope)
+    .filter((definition) => !definition.legacy
+      && (!scope || definition.scope === scope)
       && achievementConditionMet(definition, battleStats, marketStats, signals))
     .map((definition) => definition.id);
 }
@@ -500,13 +530,17 @@ function publicAchievementProfile(profileValue, battleStatsValue, marketStatsVal
   const profile = normalizeAchievementProfile(profileValue);
   const battleStats = normalizeBattleStats(battleStatsValue);
   const marketStats = normalizeMarketStats(marketStatsValue);
+  const unlockedLegacyCount = Object.keys(profile.unlocked)
+    .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.legacy === true)
+    .length;
   return {
     unlocked: profile.unlocked,
     pendingUnlocks: Object.keys(profile.pendingUnlocks),
     customShowcase: profile.customShowcase,
     showcase: effectiveShowcase(profile),
     unlockedCount: Object.keys(profile.unlocked).length,
-    totalCount: ACHIEVEMENT_DEFINITIONS.length,
+    totalCount: ACHIEVEMENT_DEFINITIONS.filter((definition) => !definition.legacy).length
+      + unlockedLegacyCount,
     stats: {
       battle: battleStats,
       market: {
@@ -522,6 +556,7 @@ function publicAchievementProfile(profileValue, battleStatsValue, marketStatsVal
 module.exports = Object.freeze({
   ACHIEVEMENT_BY_ID,
   ACHIEVEMENT_DEFINITIONS,
+  ACTIVE_BATTLE_MODES,
   BATTLE_MODES,
   MAX_SHOWCASE,
   VALID_SCOPES,

@@ -146,8 +146,8 @@ const {
   validateMarketShopInput,
 } = require("./market-shop");
 const {
+  ACTIVE_SERVER_RANKING_MODES,
   SERVER_RANKING_AWARD_MINIMUM_MATCHES,
-  SERVER_RANKING_MODES,
   SERVER_RANKING_PERIODS,
   SERVER_RANKING_VERSION,
   addServerRankingResult,
@@ -159,6 +159,29 @@ const {
   serverRankingEntryDocumentId,
   serverRankingMatches,
 } = require("./server-ranking");
+const {
+  CROWN_CIRCUIT_MODES,
+  CROWN_CIRCUIT_RULESET_VERSION,
+  CROWN_DAILY_MATCH_LIMIT,
+  CROWN_MONTHLY_BEST_WEEKS,
+  CROWN_MONTHLY_MIN_WEEKS,
+  CROWN_PROMOTION_MIN_PARTICIPANTS,
+  CROWN_SIGNATURE_IDS,
+  CROWN_THEMES,
+  CROWN_WEEKLY_BEST_DAYS,
+  CROWN_WEEKLY_MIN_DAYS,
+  addCrownRunResult,
+  applyDailyStarToWeekly,
+  applyWeeklyStarToMonthly,
+  compareCrownCircuitEntries,
+  compareCrownRunEntries,
+  crownAwardTier,
+  crownStarScore,
+  isCrownCircuitPeriod,
+  normalizeCrownRun,
+  normalizeSignatureIds,
+  startCrownRun,
+} = require("./crown-circuit");
 const PRODUCT_CATALOG = require("./product-catalog");
 const {
   claimableDailyPlayRewards,
@@ -342,10 +365,9 @@ const DAILY_MISSIONS = Object.freeze({
   complete_match: { progressKey: "matches", target: 1, reward: 100, endsAfter: "2026-07-23" },
   score_three: { progressKey: "scores", target: 3, reward: 60 },
   give_critical: { progressKey: "criticals", target: 1, reward: 90 },
-  play_solo: { progressKey: "soloMatches", target: 1, reward: 40 },
-  play_strategy: { progressKey: "strategyMatches", target: 1, reward: 50 },
-  play_team: { progressKey: "teamMatches", target: 1, reward: 70 },
-  play_royale: { progressKey: "royaleMatches", target: 1, reward: 90 },
+  play_solo: { progressKey: "soloMatches", target: 1, reward: 70 },
+  play_strategy: { progressKey: "strategyMatches", target: 1, reward: 80 },
+  play_team: { progressKey: "teamMatches", target: 1, reward: 100 },
 });
 
 function requireUid(request) {
@@ -883,6 +905,29 @@ function serverRankingPeriodEntryRef(uid, period, key) {
     .doc(uid);
 }
 
+function crownCircuitPeriodDocumentId(period, key) {
+  if (!isCrownCircuitPeriod(period, key)) throw new Error("Invalid crown circuit period");
+  return `${period}_${key}`;
+}
+
+function crownCircuitRunRef(uid, key) {
+  return serverRankingProfileRef(uid)
+    .collection("crownRuns")
+    .doc(crownCircuitPeriodDocumentId("daily", key));
+}
+
+function crownCircuitPeriodRef(period, key) {
+  return firestore
+    .collection("crownCircuitPeriods")
+    .doc(crownCircuitPeriodDocumentId(period, key));
+}
+
+function crownCircuitPeriodEntryRef(uid, period, key) {
+  return crownCircuitPeriodRef(period, key)
+    .collection("entries")
+    .doc(uid);
+}
+
 function patronageRef(uid) {
   return firestore.collection("valueMarketPatrons").doc(uid);
 }
@@ -1052,23 +1097,56 @@ function transferAttemptRef(uid) {
 function normalizeServerRankingProfile(value, fallback = {}) {
   const source = value && typeof value === "object" ? value : {};
   const fallbackRating = integer(fallback.rating, 100, 3000, 1000);
+  const competitiveRating = integer(
+    source.competitiveRating ?? source.rating,
+    100,
+    3000,
+    fallbackRating,
+  );
+  const competitiveMatches = integer(
+    source.competitiveMatches ?? source.serverMatches,
+    0,
+    100_000,
+    0,
+  );
   const xHandle = cleanText(source.xHandle || fallback.xHandle, 15);
   const achievementShowcase = cleanText(source.achievementShowcase || fallback.achievementShowcase, 160);
   const rankingAwardTier = cleanText(source.rankingAwardTier || fallback.rankingAwardTier, 40);
   const rankingAwardUntil = Number(source.rankingAwardUntil || fallback.rankingAwardUntil || 0);
+  const crownTheme = CROWN_THEMES.includes(source.crownTheme)
+    ? source.crownTheme
+    : CROWN_THEMES.includes(fallback.crownTheme)
+      ? fallback.crownTheme
+      : "rose";
+  const crownSignatureId = CROWN_SIGNATURE_IDS.includes(source.crownSignatureId)
+    ? source.crownSignatureId
+    : CROWN_SIGNATURE_IDS.includes(fallback.crownSignatureId)
+      ? fallback.crownSignatureId
+      : "";
   return {
     version: SERVER_RANKING_VERSION,
     enabled: source.enabled === true,
     entryId: cleanText(source.entryId || fallback.entryId, 40),
     name: cleanName(source.name || fallback.name),
-    rating: integer(source.rating, 100, 3000, fallbackRating),
+    rating: competitiveRating,
+    competitiveRating,
     legacyRating: integer(source.legacyRating, 100, 3000, fallbackRating),
-    serverMatches: integer(source.serverMatches, 0, 100_000, 0),
+    serverMatches: competitiveMatches,
+    competitiveMatches,
     commentsEnabled: source.commentsEnabled !== false,
+    crownTheme,
     enabledAt: Number(source.enabledAt || fallback.enabledAt || 0),
+    firstRatedAt: Number(source.firstRatedAt || fallback.firstRatedAt || 0),
+    bestOverallRank: integer(
+      source.bestOverallRank ?? fallback.bestOverallRank,
+      0,
+      100_000,
+      0,
+    ),
     updatedAt: Number(source.updatedAt || fallback.updatedAt || Date.now()),
     ...(xHandle && /^[A-Za-z0-9_]{1,15}$/.test(xHandle) ? { xHandle } : {}),
     ...(achievementShowcase ? { achievementShowcase } : {}),
+    ...(crownSignatureId ? { crownSignatureId } : {}),
     ...(rankingAwardTier && rankingAwardUntil > Date.now() ? {
       rankingAwardTier,
       rankingAwardLabel: cleanText(source.rankingAwardLabel || fallback.rankingAwardLabel, 40),
@@ -1097,7 +1175,6 @@ function calculateServerRankingRating(currentRating, opponentRating, outcome) {
 }
 
 function serverRankingOpponentRating(mode, room, participantUid, participants, profiles) {
-  if (mode === "royale") return 1000;
   const playerTeam = room?.players?.[participantUid]?.team;
   const opponentRatings = participants.filter((candidateUid) => {
     if (candidateUid === participantUid) return false;
@@ -1139,6 +1216,157 @@ function publicServerRankingEntry(value) {
   };
 }
 
+function publicServerOverallProfile(value) {
+  const profile = normalizeServerRankingProfile(value, value);
+  if (!profile.enabled || !profile.entryId) return null;
+  return {
+    serverVerified: true,
+    rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+    name: cleanName(profile.name),
+    rating: profile.rating,
+    serverMatches: profile.serverMatches,
+    provisional: profile.serverMatches < 10,
+    commentsEnabled: profile.commentsEnabled !== false,
+    crownTheme: profile.crownTheme,
+    updatedAt: profile.updatedAt,
+    ...(profile.xHandle ? { xHandle: profile.xHandle } : {}),
+    ...(profile.achievementShowcase
+      ? { achievementShowcase: profile.achievementShowcase }
+      : {}),
+    ...(profile.crownSignatureId
+      ? { crownSignatureId: profile.crownSignatureId }
+      : {}),
+    ...(profile.rankingAwardTier && Number(profile.rankingAwardUntil || 0) > Date.now()
+      ? {
+        rankingAwardTier: profile.rankingAwardTier,
+        rankingAwardLabel: profile.rankingAwardLabel,
+        rankingAwardUntil: profile.rankingAwardUntil,
+      }
+      : {}),
+  };
+}
+
+function publicCrownCircuitEntry(value) {
+  if (!value || typeof value !== "object") return null;
+  const period = cleanText(value.period, 16);
+  const key = cleanText(value.key, 16);
+  const entryId = cleanText(value.entryId, 40);
+  if (!entryId || !isCrownCircuitPeriod(period, key)) return null;
+  if (period === "daily") {
+    const run = normalizeCrownRun(value, value);
+    return {
+      serverVerified: true,
+      rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+      name: cleanName(run.name),
+      rating: run.rating,
+      status: run.status,
+      matchCount: run.matchCount,
+      ratingAtStart: run.ratingAtStart,
+      wins: run.wins,
+      losses: run.losses,
+      draws: run.draws,
+      modeMatches: run.modeMatches,
+      crownPower: run.crownPower,
+      rankScore: run.rankScore,
+      uniqueOpponents: run.uniqueOpponents,
+      signatureIds: run.signatureIds,
+      startedAt: run.startedAt,
+      commentsEnabled: run.commentsEnabled !== false,
+      endsAt: run.endsAt,
+      updatedAt: run.updatedAt,
+      ...(run.xHandle ? { xHandle: run.xHandle } : {}),
+      ...(run.achievementShowcase
+        ? { achievementShowcase: run.achievementShowcase }
+        : {}),
+      ...(run.crownTheme ? { crownTheme: run.crownTheme } : {}),
+      ...(run.crownSignatureId
+        ? { crownSignatureId: run.crownSignatureId }
+        : {}),
+      ...(run.rank
+        ? {
+          rank: run.rank,
+          participantCount: run.participantCount,
+          starScore: run.starScore,
+          finalizedAt: run.finalizedAt,
+        }
+        : {}),
+    };
+  }
+  return {
+    serverVerified: true,
+    rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+    name: cleanName(value.name),
+    rating: integer(value.rating, 100, 3000, 1000),
+    circuitScore: integer(value.circuitScore, 0, 300, 0),
+    rankScore: integer(value.rankScore, 0, 300, 0),
+    bestCrownPower: integer(value.bestCrownPower, 100, 3000, 100),
+    qualifyingCount: period === "weekly"
+      ? integer(value.qualifyingDays, 0, 7, 0)
+      : integer(value.qualifyingWeeks, 0, 6, 0),
+    commentsEnabled: value.commentsEnabled !== false,
+    endsAt: Number(value.endsAt || 0),
+    updatedAt: Number(value.updatedAt || 0),
+    ...(value.xHandle ? { xHandle: cleanText(value.xHandle, 15) } : {}),
+    ...(value.achievementShowcase
+      ? { achievementShowcase: cleanText(value.achievementShowcase, 160) }
+      : {}),
+    ...(CROWN_THEMES.includes(value.crownTheme)
+      ? { crownTheme: value.crownTheme }
+      : {}),
+    ...(CROWN_SIGNATURE_IDS.includes(value.crownSignatureId)
+      ? { crownSignatureId: value.crownSignatureId }
+      : {}),
+    ...(Number(value.rank || 0) > 0
+      ? {
+        rank: integer(value.rank, 1, 100_000, 100_000),
+        participantCount: integer(value.participantCount, 1, 100_000, 1),
+        starScore: integer(value.starScore, 0, 100, 0),
+        finalizedAt: Number(value.finalizedAt || 0),
+      }
+      : {}),
+  };
+}
+
+async function mirrorServerOverallProfiles(profilesByUid) {
+  const updates = {};
+  Object.entries(profilesByUid || {}).forEach(([uid, value]) => {
+    const profile = normalizeServerRankingProfile(value, value);
+    if (!profile.entryId) return;
+    updates[`online/serverOverallLeaderboard/${profile.entryId}`] = profile.enabled
+      ? publicServerOverallProfile(profile)
+      : null;
+    if (profile.enabled) {
+      updates[`online/serverOverallLeaderboardEntriesByUser/${uid}`] = profile.entryId;
+    } else {
+      updates[`online/serverOverallLeaderboardEntriesByUser/${uid}`] = null;
+    }
+  });
+  if (Object.keys(updates).length) await realtime.ref().update(updates);
+}
+
+async function mirrorCrownCircuitEntries(entriesByUid) {
+  const updates = {};
+  Object.entries(entriesByUid || {}).forEach(([uid, entries]) => {
+    Object.values(entries || {}).forEach((entry) => {
+      const publicSource = { ...entry };
+      // Period history proves the result, but does not permanently retain an
+      // external account. X promotion lives only in the expiring spotlight.
+      if (entry.status === "finalized") delete publicSource.xHandle;
+      const publicEntry = publicCrownCircuitEntry(publicSource);
+      if (!publicEntry || !entry.entryId) return;
+      const hidden = Number(entry.withdrawnAt || 0) > 0
+        || (entry.status === "finalized" && !Number(entry.rank || 0));
+      updates[`online/crownCircuitPeriods/${entry.period}/${entry.key}/${entry.entryId}`] = hidden
+        ? null
+        : publicEntry;
+      updates[`online/crownCircuitPeriodEntriesByUser/${uid}/${entry.period}/${entry.key}`] = hidden
+        ? null
+        : entry.entryId;
+    });
+  });
+  if (Object.keys(updates).length) await realtime.ref().update(updates);
+}
+
 async function mirrorServerRankingEntries(entriesByUid) {
   const updates = {};
   Object.entries(entriesByUid || {}).forEach(([uid, entries]) => {
@@ -1168,9 +1396,11 @@ async function legacyServerRankingSeed(uid) {
     enabled: true,
     entryId,
     name: cleanName(publicValue.name),
-    rating: integer(publicValue.rating, 100, 3000, 1000),
+    rating: 1000,
+    competitiveRating: 1000,
     legacyRating: integer(publicValue.rating, 100, 3000, 1000),
     serverMatches: 0,
+    competitiveMatches: 0,
     commentsEnabled: publicValue.commentsEnabled !== false,
     enabledAt: now,
     updatedAt: now,
@@ -1187,7 +1417,6 @@ function emptyDaily(dateKey = jstDateKey()) {
     soloMatches: 0,
     strategyMatches: 0,
     teamMatches: 0,
-    royaleMatches: 0,
     claimed: {},
   };
 }
@@ -1202,7 +1431,6 @@ function normalizeDaily(value, dateKey = jstDateKey()) {
     soloMatches: 1,
     strategyMatches: 1,
     teamMatches: 1,
-    royaleMatches: 1,
   })) {
     daily[key] = integer(value[key], 0, limit, 0);
   }
@@ -1587,6 +1815,86 @@ async function syncCurrentServerRankingMetadata(uid, profileValue) {
   return entries;
 }
 
+async function syncCurrentCrownCircuitMetadata(uid, profileValue) {
+  const profile = normalizeServerRankingProfile(profileValue, profileValue);
+  if (!profile.enabled || !profile.entryId) return {};
+  const now = Date.now();
+  const infos = SERVER_RANKING_PERIODS
+    .map((period) => ({ period, key: periodKey(period, now) }))
+    .filter(({ period, key }) => isCrownCircuitPeriod(period, key));
+  const periodRefs = infos.map(({ period, key }) => (
+    crownCircuitPeriodEntryRef(uid, period, key)
+  ));
+  const dailyInfo = infos.find(({ period }) => period === "daily");
+  const refs = [
+    ...periodRefs,
+    ...(dailyInfo ? [crownCircuitRunRef(uid, dailyInfo.key)] : []),
+  ];
+  const snapshots = refs.length ? await firestore.getAll(...refs) : [];
+  const entries = {};
+  const batch = firestore.batch();
+  snapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists) return;
+    const info = index < infos.length ? infos[index] : dailyInfo;
+    if (!info) return;
+    const metadata = {
+      name: profile.name,
+      rating: profile.rating,
+      commentsEnabled: profile.commentsEnabled !== false,
+      crownTheme: profile.crownTheme,
+      xHandle: profile.xHandle || FieldValue.delete(),
+      achievementShowcase: profile.achievementShowcase || FieldValue.delete(),
+      crownSignatureId: profile.crownSignatureId || FieldValue.delete(),
+      updatedAt: now,
+    };
+    batch.set(snapshot.ref, metadata, { merge: true });
+    const entry = {
+      ...snapshot.data(),
+      name: profile.name,
+      rating: profile.rating,
+      commentsEnabled: profile.commentsEnabled !== false,
+      crownTheme: profile.crownTheme,
+      updatedAt: now,
+    };
+    if (profile.xHandle) entry.xHandle = profile.xHandle;
+    else delete entry.xHandle;
+    if (profile.achievementShowcase) entry.achievementShowcase = profile.achievementShowcase;
+    else delete entry.achievementShowcase;
+    if (profile.crownSignatureId) entry.crownSignatureId = profile.crownSignatureId;
+    else delete entry.crownSignatureId;
+    entries[`${info.period}:${info.key}`] = entry;
+  });
+  if (Object.keys(entries).length) {
+    await batch.commit();
+    await mirrorCrownCircuitEntries({ [uid]: entries });
+  }
+  return entries;
+}
+
+async function syncRankingSpotlightConsent(profileValue) {
+  const profile = normalizeServerRankingProfile(profileValue, profileValue);
+  if (!profile.entryId) return;
+  const spotlightRef = realtime.ref("online/rankingSpotlights/current");
+  await spotlightRef.transaction((current) => {
+    if (!current
+        || cleanText(current.entryId, 40) !== profile.entryId) {
+      return undefined;
+    }
+    if (!profile.enabled || !profile.xHandle) return null;
+    const next = {
+      ...current,
+      name: profile.name,
+      xHandle: profile.xHandle,
+      crownTheme: profile.crownTheme,
+    };
+    if (profile.crownSignatureId) next.crownSignatureId = profile.crownSignatureId;
+    else delete next.crownSignatureId;
+    if (profile.achievementShowcase) next.achievementShowcase = profile.achievementShowcase;
+    else delete next.achievementShowcase;
+    return next;
+  });
+}
+
 async function finalizeServerRankingAwards(uid, timestamp = Date.now()) {
   const profileSnapshot = await serverRankingProfileRef(uid).get();
   if (!profileSnapshot.exists) return [];
@@ -1747,7 +2055,12 @@ async function removeServerRankingPublicEntries(uid, timestamp = Date.now()) {
   });
   if (withdrawalCount) await batch.commit();
 
-  const indexSnapshot = await realtime.ref(`online/serverLeaderboardPeriodEntriesByUser/${uid}`).get();
+  const [indexSnapshot, overallIndexSnapshot, crownIndexSnapshot, spotlightSnapshot] = await Promise.all([
+    realtime.ref(`online/serverLeaderboardPeriodEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/serverOverallLeaderboardEntriesByUser/${uid}`).get(),
+    realtime.ref(`online/crownCircuitPeriodEntriesByUser/${uid}`).get(),
+    realtime.ref("online/rankingSpotlights/current").get(),
+  ]);
   const index = objectValue(indexSnapshot.val());
   const updates = {};
   for (const [period, keys] of Object.entries(index)) {
@@ -1762,6 +2075,39 @@ async function removeServerRankingPublicEntries(uid, timestamp = Date.now()) {
       updates[`online/serverLeaderboardPeriodEntriesByUser/${uid}/${period}/${key}`] = null;
     }
   }
+  const overallEntryId = cleanText(overallIndexSnapshot.val(), 40);
+  if (overallEntryId) {
+    updates[`online/serverOverallLeaderboard/${overallEntryId}`] = null;
+    updates[`online/serverOverallLeaderboardEntriesByUser/${uid}`] = null;
+    if (cleanText(spotlightSnapshot.child("entryId").val(), 40) === overallEntryId) {
+      updates["online/rankingSpotlights/current"] = null;
+    }
+  }
+  const crownIndex = objectValue(crownIndexSnapshot.val());
+  const crownWithdrawals = [];
+  for (const [period, keys] of Object.entries(crownIndex)) {
+    if (!SERVER_RANKING_PERIODS.includes(period)) continue;
+    for (const [key, entryId] of Object.entries(objectValue(keys))) {
+      if (!isCrownCircuitPeriod(period, key)) continue;
+      const cleanEntryId = cleanText(entryId, 40);
+      if (!cleanEntryId || periodEndsAt(period, key) <= timestamp) continue;
+      updates[`online/crownCircuitPeriods/${period}/${key}/${cleanEntryId}`] = null;
+      updates[`online/crownCircuitPeriodEntriesByUser/${uid}/${period}/${key}`] = null;
+      crownWithdrawals.push(
+        crownCircuitPeriodEntryRef(uid, period, key).set({
+          withdrawnAt: timestamp,
+          updatedAt: timestamp,
+        }, { merge: true }),
+      );
+      if (period === "daily") {
+        crownWithdrawals.push(crownCircuitRunRef(uid, key).set({
+          withdrawnAt: timestamp,
+          updatedAt: timestamp,
+        }, { merge: true }));
+      }
+    }
+  }
+  if (crownWithdrawals.length) await Promise.all(crownWithdrawals);
   if (Object.keys(updates).length) await realtime.ref().update(updates);
 }
 
@@ -1776,7 +2122,13 @@ async function setServerRankingParticipation(uid, data) {
       disabledAt: now,
       updatedAt: now,
     }, { merge: true });
-    await removeServerRankingPublicEntries(uid, now);
+    const disabledProfile = normalizeServerRankingProfile((await profileRef.get()).data(), {
+      enabled: false,
+    });
+    await Promise.all([
+      removeServerRankingPublicEntries(uid, now),
+      syncRankingSpotlightConsent(disabledProfile),
+    ]);
     return { enabled: false, awards };
   }
 
@@ -1817,9 +2169,11 @@ async function setServerRankingParticipation(uid, data) {
       ...(showcase.length ? { achievementShowcase: showcase.join(",") } : {}),
     };
     if (!snapshot.exists) {
-      savedProfile.rating = integer(publicValue.rating, 100, 3000, 1000);
-      savedProfile.legacyRating = savedProfile.rating;
+      savedProfile.rating = 1000;
+      savedProfile.competitiveRating = 1000;
+      savedProfile.legacyRating = integer(publicValue.rating, 100, 3000, 1000);
       savedProfile.serverMatches = 0;
+      savedProfile.competitiveMatches = 0;
     }
     const xHandle = cleanText(publicValue.xHandle, 15);
     if (xHandle && /^[A-Za-z0-9_]{1,15}$/.test(xHandle)) savedProfile.xHandle = xHandle;
@@ -1828,7 +2182,12 @@ async function setServerRankingParticipation(uid, data) {
   });
   const awards = await finalizeServerRankingAwards(uid, now);
   const finalizedProfile = normalizeServerRankingProfile((await profileRef.get()).data(), savedProfile);
-  await syncCurrentServerRankingMetadata(uid, finalizedProfile);
+  await Promise.all([
+    syncCurrentServerRankingMetadata(uid, finalizedProfile),
+    syncCurrentCrownCircuitMetadata(uid, finalizedProfile),
+    mirrorServerOverallProfiles({ [uid]: finalizedProfile }),
+    syncRankingSpotlightConsent(finalizedProfile),
+  ]);
   return {
     enabled: true,
     rating: finalizedProfile.rating,
@@ -1841,10 +2200,310 @@ async function getServerRankingAwards(uid) {
   const awards = await finalizeServerRankingAwards(uid);
   const profileSnapshot = await serverRankingProfileRef(uid).get();
   if (profileSnapshot.exists) {
-    await syncCurrentServerRankingMetadata(uid, profileSnapshot.data());
+    const profile = normalizeServerRankingProfile(profileSnapshot.data(), profileSnapshot.data());
+    await Promise.all([
+      syncCurrentServerRankingMetadata(uid, profile),
+      syncCurrentCrownCircuitMetadata(uid, profile),
+      mirrorServerOverallProfiles({ [uid]: profile }),
+      syncRankingSpotlightConsent(profile),
+    ]);
   }
   return {
     awards,
+  };
+}
+
+function crownSignatureIdsFromAward(value) {
+  const tier = cleanText(value?.tier, 40);
+  if (tier === "daily_champion") return ["daily_champion"];
+  if (tier === "weekly_champion") return ["weekly_champion"];
+  if (tier === "monthly_champion") return ["monthly_champion"];
+  return [];
+}
+
+async function loadCrownCustomizationOptions(uid) {
+  const [runsSnapshot, awardsSnapshot] = await Promise.all([
+    serverRankingProfileRef(uid)
+      .collection("crownRuns")
+      .orderBy("updatedAt", "desc")
+      .limit(90)
+      .get(),
+    serverRankingProfileRef(uid)
+      .collection("awards")
+      .orderBy("awardedAt", "desc")
+      .limit(90)
+      .get(),
+  ]);
+  const signatures = new Set();
+  let completedRun = false;
+  let topThreeAward = false;
+  let championAward = false;
+  runsSnapshot.docs.forEach((snapshot) => {
+    if (Number(snapshot.get("matchCount") || 0) >= CROWN_DAILY_MATCH_LIMIT) {
+      completedRun = true;
+    }
+    normalizeSignatureIds(snapshot.get("signatureIds")).forEach((id) => signatures.add(id));
+  });
+  awardsSnapshot.docs.forEach((snapshot) => {
+    const award = snapshot.data();
+    const rank = Number(award?.rank || 0);
+    const participants = Number(award?.participantCount || 0);
+    if (participants >= 2 && rank > 0 && rank <= 3) topThreeAward = true;
+    if (crownSignatureIdsFromAward(award).length) championAward = true;
+    crownSignatureIdsFromAward(award).forEach((id) => signatures.add(id));
+  });
+  const availableThemes = ["rose"];
+  if (completedRun) availableThemes.push("aqua");
+  if (topThreeAward) availableThemes.push("violet");
+  if (championAward) availableThemes.push("gold");
+  return {
+    availableThemes,
+    availableSignatureIds: [...signatures],
+  };
+}
+
+function compareServerOverallProfiles(first, second) {
+  return Number(second.rating || 0) - Number(first.rating || 0)
+    || String(first.entryId || "").localeCompare(String(second.entryId || ""));
+}
+
+async function getRankingDashboard(uid) {
+  const now = Date.now();
+  const dailyKey = periodKey("daily", now);
+  const runRef = isCrownCircuitPeriod("daily", dailyKey)
+    ? crownCircuitRunRef(uid, dailyKey)
+    : null;
+  const [profileSnapshot, runSnapshot, publicProfilesSnapshot, customization, spotlightSnapshot] = await Promise.all([
+    serverRankingProfileRef(uid).get(),
+    runRef ? runRef.get() : Promise.resolve(null),
+    firestore.collection("serverRankingProfiles")
+      .where("enabled", "==", true)
+      .limit(2_000)
+      .get(),
+    loadCrownCustomizationOptions(uid),
+    realtime.ref("online/rankingSpotlights/current").get(),
+  ]);
+  const profile = normalizeServerRankingProfile(profileSnapshot.data(), {
+    rating: 1000,
+    updatedAt: now,
+  });
+  const rankedProfiles = publicProfilesSnapshot.docs
+    .map((snapshot) => {
+      const publicProfile = publicServerOverallProfile(snapshot.data());
+      if (!publicProfile) return null;
+      return {
+        ...publicProfile,
+        entryId: cleanText(snapshot.get("entryId"), 40),
+        ownerUid: snapshot.id,
+      };
+    })
+    .filter((entry) => entry?.entryId)
+    .sort(compareServerOverallProfiles);
+  const ownIndex = rankedProfiles.findIndex((entry) => entry.ownerUid === uid);
+  const rank = ownIndex >= 0 ? ownIndex + 1 : 0;
+  const participantCount = rankedProfiles.length;
+  const bestRank = rank
+    ? (profile.bestOverallRank ? Math.min(profile.bestOverallRank, rank) : rank)
+    : profile.bestOverallRank;
+  if (rank && bestRank !== profile.bestOverallRank) {
+    await serverRankingProfileRef(uid).set({
+      bestOverallRank: bestRank,
+    }, { merge: true });
+  }
+  const ownRating = ownIndex >= 0 ? rankedProfiles[ownIndex].rating : profile.rating;
+  const nextSeatGap = ownIndex > 0
+    ? Math.max(1, rankedProfiles[ownIndex - 1].rating - ownRating + 1)
+    : 0;
+  const publicRow = (entry, index) => {
+    if (!entry) return null;
+    const { ownerUid, ...publicEntry } = entry;
+    return { ...publicEntry, rank: index + 1 };
+  };
+  const neighborStart = ownIndex >= 0 ? Math.max(0, ownIndex - 3) : 0;
+  const neighborEnd = ownIndex >= 0
+    ? Math.min(participantCount, ownIndex + 4)
+    : Math.min(participantCount, 7);
+  const crownRun = runSnapshot?.exists
+    ? publicCrownCircuitEntry(runSnapshot.data())
+    : null;
+  return {
+    enabled: profile.enabled,
+    entryId: profile.entryId,
+    profile: {
+      rating: profile.rating,
+      serverMatches: profile.serverMatches,
+      provisional: profile.serverMatches < 10,
+    },
+    overall: {
+      rank,
+      participantCount,
+      percentile: rank && participantCount
+        ? Math.round((100 * (participantCount - rank + 1)) / participantCount)
+        : 0,
+      topPercent: rank && participantCount
+        ? Math.max(1, Math.ceil((100 * rank) / participantCount))
+        : 0,
+      bestRank,
+      rating: ownRating,
+      nextSeatGap,
+      top: rankedProfiles.slice(0, 50).map(publicRow),
+      neighbors: rankedProfiles.slice(neighborStart, neighborEnd)
+        .map((entry, offset) => publicRow(entry, neighborStart + offset)),
+    },
+    crownRun,
+    customization: {
+      crownTheme: profile.crownTheme,
+      crownSignatureId: profile.crownSignatureId || "",
+      ...customization,
+    },
+    rules: {
+      rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+      modes: [...CROWN_CIRCUIT_MODES],
+      dailyMatchLimit: CROWN_DAILY_MATCH_LIMIT,
+      weeklyBestDays: CROWN_WEEKLY_BEST_DAYS,
+      weeklyMinimumDays: CROWN_WEEKLY_MIN_DAYS,
+      monthlyBestWeeks: CROWN_MONTHLY_BEST_WEEKS,
+      monthlyMinimumWeeks: CROWN_MONTHLY_MIN_WEEKS,
+      promotionMinimumParticipants: CROWN_PROMOTION_MIN_PARTICIPANTS,
+      dailyKey,
+      dailyEndsAt: periodEndsAt("daily", dailyKey),
+    },
+    spotlight: spotlightSnapshot.exists
+      && Number(spotlightSnapshot.child("endsAt").val() || 0) > now
+      ? objectValue(spotlightSnapshot.val())
+      : null,
+  };
+}
+
+async function startRankingCrownRun(uid, data) {
+  const now = Date.now();
+  const key = periodKey("daily", now);
+  if (!isCrownCircuitPeriod("daily", key)) {
+    throw new HttpsError("failed-precondition", "今日の王座戦は開始日前です。");
+  }
+  const expectedKey = cleanText(data?.dateKey, 16);
+  if (expectedKey && expectedKey !== key) {
+    throw new HttpsError("failed-precondition", "日付が変わりました。ランキングを更新してください。");
+  }
+  const profileRef = serverRankingProfileRef(uid);
+  const runRef = crownCircuitRunRef(uid, key);
+  const periodEntryRef = crownCircuitPeriodEntryRef(uid, "daily", key);
+  let result = null;
+  await firestore.runTransaction(async (transaction) => {
+    const [profileSnapshot, runSnapshot] = await Promise.all([
+      transaction.get(profileRef),
+      transaction.get(runRef),
+    ]);
+    const profile = normalizeServerRankingProfile(profileSnapshot.data(), {
+      updatedAt: now,
+    });
+    if (!profile.enabled || !profile.entryId) {
+      throw new HttpsError(
+        "failed-precondition",
+        "王座戦に挑む前に、オンラインランキングを公開してください。",
+      );
+    }
+    result = startCrownRun(runSnapshot.data(), {
+      key,
+      entryId: profile.entryId,
+      profile,
+      endsAt: periodEndsAt("daily", key),
+      now,
+    });
+    if (result.started) {
+      transaction.create(runRef, result.run);
+      transaction.set(periodEntryRef, result.run);
+    }
+  });
+  await crownCircuitPeriodRef("daily", key).set({
+    rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+    period: "daily",
+    key,
+    status: "open",
+    endsAt: periodEndsAt("daily", key),
+    updatedAt: now,
+  }, { merge: true });
+  await mirrorCrownCircuitEntries({
+    [uid]: { [`daily:${key}`]: result.run },
+  });
+  return {
+    started: result.started,
+    crownRun: publicCrownCircuitEntry(result.run),
+  };
+}
+
+async function setCrownCustomization(uid, data) {
+  const crownTheme = cleanText(data?.crownTheme, 16);
+  const crownSignatureId = cleanText(data?.crownSignatureId, 40);
+  if (!CROWN_THEMES.includes(crownTheme)) {
+    throw new HttpsError("invalid-argument", "王冠テーマを確認できませんでした。");
+  }
+  const options = await loadCrownCustomizationOptions(uid);
+  if (!options.availableThemes.includes(crownTheme)) {
+    throw new HttpsError("failed-precondition", "まだ獲得していない王冠テーマです。");
+  }
+  if (crownSignatureId && !options.availableSignatureIds.includes(crownSignatureId)) {
+    throw new HttpsError("failed-precondition", "まだ獲得していないSIGNATUREです。");
+  }
+  const now = Date.now();
+  const profileRef = serverRankingProfileRef(uid);
+  const profileSnapshot = await profileRef.get();
+  if (!profileSnapshot.exists) {
+    throw new HttpsError("failed-precondition", "ランキングプロフィールがありません。");
+  }
+  await profileRef.set({
+    crownTheme,
+    crownSignatureId: crownSignatureId || FieldValue.delete(),
+    updatedAt: now,
+  }, { merge: true });
+  const profile = normalizeServerRankingProfile((await profileRef.get()).data(), {
+    crownTheme,
+    crownSignatureId,
+  });
+  const periodInfos = SERVER_RANKING_PERIODS
+    .map((period) => ({ period, key: periodKey(period, now) }))
+    .filter(({ period, key }) => isCrownCircuitPeriod(period, key));
+  const entryRefs = periodInfos.map(({ period, key }) => (
+    crownCircuitPeriodEntryRef(uid, period, key)
+  ));
+  const runRef = isCrownCircuitPeriod("daily", periodKey("daily", now))
+    ? crownCircuitRunRef(uid, periodKey("daily", now))
+    : null;
+  const refs = [...entryRefs, ...(runRef ? [runRef] : [])];
+  const snapshots = refs.length ? await firestore.getAll(...refs) : [];
+  const batch = firestore.batch();
+  const mirroredEntries = {};
+  snapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists) return;
+    const source = {
+      ...snapshot.data(),
+      crownTheme,
+      updatedAt: now,
+    };
+    if (crownSignatureId) source.crownSignatureId = crownSignatureId;
+    else delete source.crownSignatureId;
+    batch.set(snapshot.ref, {
+      crownTheme,
+      crownSignatureId: crownSignatureId || FieldValue.delete(),
+      updatedAt: now,
+    }, { merge: true });
+    const info = index < periodInfos.length
+      ? periodInfos[index]
+      : { period: "daily", key: periodKey("daily", now) };
+    mirroredEntries[`${info.period}:${info.key}`] = source;
+  });
+  if (Object.keys(mirroredEntries).length) await batch.commit();
+  await Promise.all([
+    mirrorServerOverallProfiles({ [uid]: profile }),
+    mirrorCrownCircuitEntries({ [uid]: mirroredEntries }),
+    syncRankingSpotlightConsent(profile),
+  ]);
+  return {
+    customization: {
+      crownTheme,
+      crownSignatureId,
+      ...options,
+    },
   };
 }
 
@@ -3159,7 +3818,6 @@ const VERIFIED_MATCH_MODES = Object.freeze({
   solo: { roomRoot: "rooms", members: 2 },
   strategy: { roomRoot: "strategyRooms", members: 2 },
   team: { roomRoot: "teamRooms", members: 4, requireAccepted: true },
-  royale: { roomRoot: "royaleRooms", members: 4, requireAccepted: true },
 });
 const TEAM_DUO_MATCH_CONFIG = Object.freeze({
   roomRoot: "teamRooms",
@@ -3589,15 +4247,7 @@ function validatedOutcomes(mode, room, participants, {
     const pair = [teamOutcomes.A, teamOutcomes.B].sort().join(",");
     if (pair !== "draw,draw" && pair !== "loss,win") throw new HttpsError("failed-precondition", "対戦チームの試合結果が一致しません。");
   } else {
-    const placements = participants.map((participantUid) => Number(claims[participantUid]?.placement));
-    if (new Set(placements).size !== 4 || placements.slice().sort((a, b) => a - b).join(",") !== "1,2,3,4") {
-      throw new HttpsError("failed-precondition", "順位申告が一致しません。");
-    }
-    participants.forEach((participantUid) => {
-      const placement = Number(claims[participantUid]?.placement);
-      const expected = placement === 1 ? "win" : placement === 2 ? "draw" : "loss";
-      if (outcomes[participantUid] !== expected) throw new HttpsError("failed-precondition", "順位と試合結果が一致しません。");
-    });
+    throw new HttpsError("failed-precondition", "未対応の対戦モードです。");
   }
   return { pending: false, missing: 0, outcomes };
 }
@@ -3618,10 +4268,10 @@ function dailyActivityForRoom(mode, room, uid) {
       values = Object.values(objectValue(round?.scores?.[uid]?.values));
     }
     values.filter((value) => Number.isInteger(Number(value))
-      && Number(value) >= 1 && Number(value) <= (mode === "royale" ? 4 : 10))
+      && Number(value) >= 1 && Number(value) <= 10)
       .forEach((value) => {
         scores += 1;
-        if (mode !== "royale" && Number(value) >= 8) criticals += 1;
+        if (Number(value) >= 8) criticals += 1;
       });
   }
   return { scores: Math.min(3, scores), criticals: Math.min(1, criticals) };
@@ -4332,7 +4982,15 @@ async function recordVerifiedMatch(uid, data) {
       ),
     ];
   }));
-  const serverPeriodInfos = activeServerRankingPeriodInfos(now);
+  const rankingEligibleMode = ACTIVE_SERVER_RANKING_MODES.includes(mode);
+  const serverPeriodInfos = rankingEligibleMode
+    ? activeServerRankingPeriodInfos(now).filter(({ period, key }) => (
+      !isCrownCircuitPeriod(period, key)
+    ))
+    : [];
+  const crownDailyKey = periodKey("daily", now);
+  const crownRunEligible = rankingEligibleMode
+    && isCrownCircuitPeriod("daily", crownDailyKey);
   const serverProfileRefs = participants.map((participantUid) => serverRankingProfileRef(participantUid));
   const serverEntryRefs = participants.flatMap((participantUid) => (
     serverPeriodInfos.map(({ period, key }) => serverRankingEntryRef(participantUid, period, key))
@@ -4340,8 +4998,16 @@ async function recordVerifiedMatch(uid, data) {
   const serverPeriodEntryRefs = participants.flatMap((participantUid) => (
     serverPeriodInfos.map(({ period, key }) => serverRankingPeriodEntryRef(participantUid, period, key))
   ));
+  const crownRunRefs = crownRunEligible
+    ? participants.map((participantUid) => crownCircuitRunRef(participantUid, crownDailyKey))
+    : [];
+  const crownPeriodEntryRefs = crownRunEligible
+    ? participants.map((participantUid) => (
+      crownCircuitPeriodEntryRef(participantUid, "daily", crownDailyKey)
+    ))
+    : [];
   const teamDuoResultRef = teamDuo ? verifiedTeamDuoResultRef(roomId) : null;
-  const legacyServerRankingSeeds = serverPeriodInfos.length
+  const legacyServerRankingSeeds = (serverPeriodInfos.length || rankingEligibleMode)
     ? Object.fromEntries(await Promise.all(participants.map(async (participantUid) => [
       participantUid,
       await legacyServerRankingSeed(participantUid),
@@ -4353,6 +5019,7 @@ async function recordVerifiedMatch(uid, data) {
   const newlyUnlockedResults = {};
   const serverRankingProfileResults = {};
   const serverRankingEntryResults = {};
+  const crownRunResults = {};
   await firestore.runTransaction(async (transaction) => {
     transactionOutcome = "recorded";
     Object.keys(progressResults).forEach((key) => delete progressResults[key]);
@@ -4360,6 +5027,7 @@ async function recordVerifiedMatch(uid, data) {
     Object.keys(newlyUnlockedResults).forEach((key) => delete newlyUnlockedResults[key]);
     Object.keys(serverRankingProfileResults).forEach((key) => delete serverRankingProfileResults[key]);
     Object.keys(serverRankingEntryResults).forEach((key) => delete serverRankingEntryResults[key]);
+    Object.keys(crownRunResults).forEach((key) => delete crownRunResults[key]);
     projectionActivatedUidSet.clear();
     const snapshots = await Promise.all([
       ...progressRefs.map((ref) => transaction.get(ref)),
@@ -4367,6 +5035,7 @@ async function recordVerifiedMatch(uid, data) {
       ...claimRefs.map((ref) => transaction.get(ref)),
       ...serverProfileRefs.map((ref) => transaction.get(ref)),
       ...serverEntryRefs.map((ref) => transaction.get(ref)),
+      ...crownRunRefs.map((ref) => transaction.get(ref)),
       ...(teamDuoResultRef ? [transaction.get(teamDuoResultRef)] : []),
       ...projectionQueueRefs.map((ref) => transaction.get(ref)),
     ]);
@@ -4380,11 +5049,18 @@ async function recordVerifiedMatch(uid, data) {
       participantCount * 4,
       (participantCount * 4) + serverEntryCount,
     );
+    const crownRunSnapshots = snapshots.slice(
+      (participantCount * 4) + serverEntryCount,
+      (participantCount * 4) + serverEntryCount + crownRunRefs.length,
+    );
+    const postCrownOffset = (participantCount * 4)
+      + serverEntryCount
+      + crownRunRefs.length;
     const teamDuoResultSnapshot = teamDuoResultRef
-      ? snapshots[(participantCount * 4) + serverEntryCount]
+      ? snapshots[postCrownOffset]
       : null;
     const projectionQueueSnapshots = snapshots.slice(
-      (participantCount * 4) + serverEntryCount + (teamDuoResultRef ? 1 : 0),
+      postCrownOffset + (teamDuoResultRef ? 1 : 0),
     );
     const projectionQueueSnapshotByUid = Object.fromEntries(
       projectionEligibleUids.map((participantUid, index) => [
@@ -4399,7 +5075,7 @@ async function recordVerifiedMatch(uid, data) {
           ? serverProfileSnapshots[index].data()
           : legacyServerRankingSeeds[participantUid],
         {
-          rating: room?.players?.[participantUid]?.rating,
+          rating: 1000,
         },
       ),
     ]));
@@ -4537,27 +5213,45 @@ async function recordVerifiedMatch(uid, data) {
       }
 
       const serverProfile = serverProfiles[participantUid];
-      if (serverProfile.enabled && serverProfile.entryId && serverPeriodInfos.length) {
-        const opponentRating = teamDuo
-          ? serverProfile.rating
-          : serverRankingOpponentRating(
-            mode,
-            room,
-            participantUid,
-            participants,
-            serverProfiles,
-          );
-        const updatedServerProfile = {
+      const opponentRating = rankingEligibleMode
+        ? serverRankingOpponentRating(
+          mode,
+          room,
+          participantUid,
+          participants,
+          serverProfiles,
+        )
+        : serverProfile.rating;
+      const updatedServerProfile = rankingEligibleMode
+        ? {
           ...serverProfile,
-          rating: teamDuo
-            ? serverProfile.rating
-            : calculateServerRankingRating(serverProfile.rating, opponentRating, participantOutcome),
+          rating: calculateServerRankingRating(
+            serverProfile.rating,
+            opponentRating,
+            participantOutcome,
+          ),
+          competitiveRating: calculateServerRankingRating(
+            serverProfile.rating,
+            opponentRating,
+            participantOutcome,
+          ),
           serverMatches: serverProfile.serverMatches + 1,
+          competitiveMatches: serverProfile.serverMatches + 1,
+          firstRatedAt: serverProfile.firstRatedAt || now,
+          updatedAt: now,
+        }
+        : {
+          ...serverProfile,
           updatedAt: now,
         };
+      if (rankingEligibleMode) {
         serverRankingProfileResults[participantUid] = updatedServerProfile;
-        serverRankingEntryResults[participantUid] = {};
         transaction.set(serverProfileRefs[index], updatedServerProfile);
+      }
+      if (updatedServerProfile.enabled
+          && updatedServerProfile.entryId
+          && serverPeriodInfos.length) {
+        serverRankingEntryResults[participantUid] = {};
         serverPeriodInfos.forEach((info, periodIndex) => {
           const flatIndex = (index * serverPeriodInfos.length) + periodIndex;
           const currentSnapshot = serverEntrySnapshots[flatIndex];
@@ -4580,6 +5274,32 @@ async function recordVerifiedMatch(uid, data) {
           transaction.set(serverPeriodEntryRefs[flatIndex], entry);
         });
       }
+      const crownRunSnapshot = crownRunSnapshots[index];
+      if (crownRunEligible
+          && updatedServerProfile.enabled
+          && updatedServerProfile.entryId
+          && crownRunSnapshot?.exists) {
+        const opponentUid = participants.find((candidateUid) => candidateUid !== participantUid);
+        const opponentKey = opponentUid
+          ? eventId(`${crownDailyKey}:${[participantUid, opponentUid].sort().join(":")}`)
+          : "";
+        const crownResult = addCrownRunResult(crownRunSnapshot.data(), {
+          mode,
+          outcome: participantOutcome,
+          playerRating: serverProfile.rating,
+          opponentRating,
+          opponentKey,
+          profile: updatedServerProfile,
+          now,
+        });
+        if (crownResult.accepted) {
+          crownRunResults[participantUid] = {
+            [`daily:${crownDailyKey}`]: crownResult.run,
+          };
+          transaction.set(crownRunRefs[index], crownResult.run);
+          transaction.set(crownPeriodEntryRefs[index], crownResult.run);
+        }
+      }
     });
   });
   const postMatchOperations = participants.flatMap((participantUid) => [
@@ -4591,6 +5311,12 @@ async function recordVerifiedMatch(uid, data) {
   ]);
   if (Object.keys(serverRankingEntryResults).length) {
     postMatchOperations.push(mirrorServerRankingEntries(serverRankingEntryResults));
+  }
+  if (Object.keys(serverRankingProfileResults).length) {
+    postMatchOperations.push(mirrorServerOverallProfiles(serverRankingProfileResults));
+  }
+  if (Object.keys(crownRunResults).length) {
+    postMatchOperations.push(mirrorCrownCircuitEntries(crownRunResults));
   }
   await bestEffort("recordVerifiedMatch", postMatchOperations);
   const projectionResults = {};
@@ -4662,6 +5388,9 @@ async function recordVerifiedMatch(uid, data) {
         rating: serverRankingProfileResults[uid].rating,
         serverMatches: serverRankingProfileResults[uid].serverMatches,
       }
+      : null,
+    crownRun: crownRunResults[uid]?.[`daily:${crownDailyKey}`]
+      ? publicCrownCircuitEntry(crownRunResults[uid][`daily:${crownDailyKey}`])
       : null,
     newlyUnlocked: newlyUnlockedResults[uid] || [],
     achievements: publicAchievementProfile(
@@ -9154,6 +9883,9 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
     if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);
     if (action === "get_server_ranking_awards") return await getServerRankingAwards(uid);
+    if (action === "get_ranking_dashboard") return await getRankingDashboard(uid);
+    if (action === "start_crown_run") return await startRankingCrownRun(uid, request.data);
+    if (action === "set_crown_customization") return await setCrownCustomization(uid, request.data);
     if (action === "get_match_tip") return await getPostMatchTip(uid, request.data);
     if (action === "send_match_tip") return await sendPostMatchTip(uid, request.data);
     if (action === "get_achievements") return await getAchievements(uid, { syncPublic: request.data?.syncPublic === true });
@@ -9243,8 +9975,6 @@ async function accountHasActiveSession(uid) {
     { path: "strategyQueue", queue: true },
     { path: "teamActive", roomPath: "teamRooms" },
     { path: "teamQueue", queue: true },
-    { path: "royaleActive", roomPath: "royaleRooms" },
-    { path: "royaleQueue", queue: true },
   ];
   const now = Date.now();
   const snapshots = await Promise.all([
@@ -9280,7 +10010,7 @@ async function accountHasActiveSession(uid) {
 
 function economyProgressHasActivity(value) {
   const progress = normalizeEconomyProgress(value);
-  const dailyKeys = ["matches", "scores", "criticals", "soloMatches", "strategyMatches", "teamMatches", "royaleMatches"];
+  const dailyKeys = ["matches", "scores", "criticals", "soloMatches", "strategyMatches", "teamMatches"];
   if (dailyKeys.some((key) => Number(progress.daily?.[key] || 0) > 0)) return true;
   for (const period of ["daily", "weekly", "monthly"]) {
     if (Object.values(progress.periodRewards?.[period] || {}).some((record) => Number(record?.matches || 0) > 0)) return true;
@@ -13193,6 +13923,402 @@ exports.cleanupExpiredFreeTables = onSchedule({
     return await freeTableService.cleanupExpired(Date.now());
   } catch (error) {
     console.error("cleanupExpiredFreeTables failed", { error });
+    throw error;
+  }
+});
+
+async function commitCrownCircuitWrites(writes) {
+  for (let offset = 0; offset < writes.length; offset += 350) {
+    const batch = firestore.batch();
+    writes.slice(offset, offset + 350).forEach(({ ref, data, options }) => {
+      if (options) batch.set(ref, data, options);
+      else batch.set(ref, data);
+    });
+    await batch.commit();
+  }
+}
+
+async function getCrownCircuitSnapshots(refs) {
+  const snapshots = [];
+  for (let offset = 0; offset < refs.length; offset += 300) {
+    snapshots.push(...await firestore.getAll(...refs.slice(offset, offset + 300)));
+  }
+  return snapshots;
+}
+
+function crownCircuitEntryEligible(period, value) {
+  if (!value || Number(value.withdrawnAt || 0) > 0 || Number(value.rankScore || 0) <= 0) {
+    return false;
+  }
+  if (period === "daily") {
+    const run = normalizeCrownRun(value, value);
+    return run.matchCount >= CROWN_DAILY_MATCH_LIMIT;
+  }
+  if (period === "weekly") {
+    return integer(value.qualifyingDays, 0, 7, 0) >= CROWN_WEEKLY_MIN_DAYS;
+  }
+  return integer(value.qualifyingWeeks, 0, 6, 0) >= CROWN_MONTHLY_MIN_WEEKS;
+}
+
+function crownCircuitAwardLabel(period, rank, participantCount) {
+  const periodLabel = period === "daily" ? "日間"
+    : period === "weekly" ? "週間"
+      : "月間";
+  if (participantCount < 2) return `${periodLabel} 開幕者`;
+  if (rank === 1) return `${periodLabel} 王者`;
+  if (rank <= 3) return `${periodLabel} 第${rank}席`;
+  return `${periodLabel} 入賞 #${rank}`;
+}
+
+function crownCircuitAwardActiveUntil(period, endsAt) {
+  if (period === "daily") return endsAt + (2 * 24 * 60 * 60 * 1000);
+  if (period === "weekly") return endsAt + (7 * 24 * 60 * 60 * 1000);
+  return endsAt + (31 * 24 * 60 * 60 * 1000);
+}
+
+function finalizedCrownCircuitEntry(period, source, {
+  rank,
+  participantCount,
+  finalizedAt,
+} = {}) {
+  const starScore = rank ? crownStarScore(rank, participantCount) : 0;
+  const tier = rank ? crownAwardTier(period, rank, participantCount) : "ineligible";
+  if (period === "daily") {
+    const signatureIds = new Set(normalizeSignatureIds(source.signatureIds));
+    if (rank === 1 && participantCount >= 2) signatureIds.add("daily_champion");
+    const run = normalizeCrownRun({
+      ...source,
+      status: "finalized",
+      rank,
+      participantCount,
+      starScore,
+      awardTier: tier,
+      signatureIds: [...signatureIds],
+      finalizedAt,
+      updatedAt: finalizedAt,
+    }, source);
+    return { ...run, awardTier: tier };
+  }
+  return {
+    ...source,
+    status: "finalized",
+    rank,
+    participantCount,
+    starScore,
+    awardTier: tier,
+    finalizedAt,
+    updatedAt: finalizedAt,
+  };
+}
+
+async function aggregateFinalizedCrownEntries(period, sourceKey, rankedEntries, now) {
+  if (!rankedEntries.length || !["daily", "weekly"].includes(period)) return [];
+  // A cross-month week belongs to the month in which that week closes.
+  const sourceTimestamp = period === "daily"
+    ? Date.parse(`${sourceKey}T12:00:00+09:00`)
+    : periodEndsAt("weekly", sourceKey) - 1;
+  const targetPeriod = period === "daily" ? "weekly" : "monthly";
+  const targetKey = periodKey(targetPeriod, sourceTimestamp);
+  if (!isCrownCircuitPeriod(targetPeriod, targetKey)) return [];
+  const targetRefs = rankedEntries.map(({ uid }) => (
+    crownCircuitPeriodEntryRef(uid, targetPeriod, targetKey)
+  ));
+  const currentSnapshots = await getCrownCircuitSnapshots(targetRefs);
+  const aggregated = rankedEntries.map(({ uid, entry }, index) => {
+    const current = currentSnapshots[index]?.data();
+    const profile = {
+      entryId: entry.entryId,
+      name: entry.name,
+      rating: entry.rating,
+      commentsEnabled: entry.commentsEnabled !== false,
+      crownTheme: entry.crownTheme,
+      crownSignatureId: entry.crownSignatureId,
+      xHandle: entry.xHandle,
+      achievementShowcase: entry.achievementShowcase,
+    };
+    const aggregate = period === "daily"
+      ? applyDailyStarToWeekly(current, {
+        key: targetKey,
+        dailyKey: sourceKey,
+        starScore: entry.starScore,
+        crownPower: entry.crownPower,
+        profile,
+        endsAt: periodEndsAt(targetPeriod, targetKey),
+        now,
+      })
+      : applyWeeklyStarToMonthly(current, {
+        key: targetKey,
+        weeklyKey: sourceKey,
+        starScore: entry.starScore,
+        bestCrownPower: entry.bestCrownPower,
+        profile,
+        endsAt: periodEndsAt(targetPeriod, targetKey),
+        now,
+      });
+    return { uid, entry: aggregate };
+  });
+  await commitCrownCircuitWrites([
+    ...aggregated.map(({ uid, entry }) => ({
+      ref: crownCircuitPeriodEntryRef(uid, targetPeriod, targetKey),
+      data: entry,
+    })),
+    {
+      ref: crownCircuitPeriodRef(targetPeriod, targetKey),
+      data: {
+        rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+        period: targetPeriod,
+        key: targetKey,
+        status: "open",
+        endsAt: periodEndsAt(targetPeriod, targetKey),
+        updatedAt: now,
+      },
+      options: { merge: true },
+    },
+  ]);
+  await mirrorCrownCircuitEntries({
+    ...Object.fromEntries(aggregated.map(({ uid, entry }) => [
+      uid,
+      { [`${targetPeriod}:${targetKey}`]: entry },
+    ])),
+  });
+  return aggregated;
+}
+
+async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
+  if (!isCrownCircuitPeriod(period, key)) return { period, key, skipped: "cutover" };
+  const endsAt = periodEndsAt(period, key);
+  if (!endsAt || endsAt > now) return { period, key, skipped: "open" };
+  const periodRef = crownCircuitPeriodRef(period, key);
+  const periodSnapshot = await periodRef.get();
+  if (periodSnapshot.exists && periodSnapshot.get("status") === "finalized") {
+    return {
+      period,
+      key,
+      skipped: "finalized",
+      participantCount: Number(periodSnapshot.get("participantCount") || 0),
+    };
+  }
+  const entriesSnapshot = await periodRef.collection("entries").get();
+  const sources = entriesSnapshot.docs.map((snapshot) => ({
+    uid: snapshot.id,
+    ref: snapshot.ref,
+    value: snapshot.data(),
+  }));
+  const ranked = sources
+    .filter(({ value }) => crownCircuitEntryEligible(period, value))
+    .sort((first, second) => (
+      period === "daily"
+        ? compareCrownRunEntries(first.value, second.value)
+        : compareCrownCircuitEntries(first.value, second.value)
+    ));
+  const participantCount = ranked.length;
+  const rankByUid = new Map(ranked.map(({ uid }, index) => [uid, index + 1]));
+  const finalized = sources.map(({ uid, value }) => {
+    const rank = rankByUid.get(uid) || 0;
+    return {
+      uid,
+      entry: finalizedCrownCircuitEntry(period, value, {
+        rank,
+        participantCount,
+        finalizedAt: now,
+      }),
+    };
+  });
+  const writes = [];
+  finalized.forEach(({ uid, entry }) => {
+    writes.push({
+      ref: crownCircuitPeriodEntryRef(uid, period, key),
+      data: entry,
+    });
+    if (period === "daily") {
+      writes.push({
+        ref: crownCircuitRunRef(uid, key),
+        data: entry,
+      });
+    }
+    if (!entry.rank) return;
+    const tier = crownAwardTier(period, entry.rank, participantCount);
+    writes.push({
+      ref: serverRankingAwardRef(uid, period, key),
+      data: {
+        source: "crown-circuit",
+        rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+        period,
+        key,
+        rank: entry.rank,
+        matches: period === "daily"
+          ? entry.matchCount
+          : period === "weekly"
+            ? entry.qualifyingDays
+            : entry.qualifyingWeeks,
+        participantCount,
+        tier,
+        label: crownCircuitAwardLabel(period, entry.rank, participantCount),
+        starScore: entry.starScore,
+        endsAt,
+        activeUntil: crownCircuitAwardActiveUntil(period, endsAt),
+        awardedAt: now,
+      },
+      options: { merge: true },
+    });
+  });
+  writes.push({
+    ref: periodRef,
+    data: {
+      rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+      period,
+      key,
+      status: "finalizing",
+      participantCount,
+      endsAt,
+      updatedAt: now,
+    },
+    options: { merge: true },
+  });
+  await commitCrownCircuitWrites(writes);
+  const rankedFinalized = ranked.map(({ uid }) => (
+    finalized.find((candidate) => candidate.uid === uid)
+  ));
+  await aggregateFinalizedCrownEntries(period, key, rankedFinalized, now);
+  await mirrorCrownCircuitEntries(Object.fromEntries(finalized.map(({ uid, entry }) => [
+    uid,
+    { [`${period}:${key}`]: entry },
+  ])));
+
+  const realtimeUpdates = {};
+  rankedFinalized.forEach(({ entry }) => {
+    const historicalEntry = { ...entry };
+    delete historicalEntry.xHandle;
+    realtimeUpdates[`online/crownCircuitSeatHistory/${period}/${key}/${entry.rank}`] = {
+      ...publicCrownCircuitEntry(historicalEntry),
+      entryId: entry.entryId,
+      awardTier: entry.awardTier,
+    };
+  });
+  const championRecord = rankedFinalized[0];
+  const champion = championRecord?.entry;
+  if (champion) {
+    let spotlightSource = { ...champion };
+    if (period === "daily") {
+      const liveProfileSnapshot = await serverRankingProfileRef(championRecord.uid).get();
+      const liveProfile = normalizeServerRankingProfile(
+        liveProfileSnapshot.data(),
+        liveProfileSnapshot.data(),
+      );
+      spotlightSource = {
+        ...spotlightSource,
+        name: liveProfile.name,
+        crownTheme: liveProfile.crownTheme,
+        commentsEnabled: liveProfile.commentsEnabled !== false,
+      };
+      if (liveProfile.enabled
+          && liveProfile.entryId === champion.entryId
+          && liveProfile.xHandle) {
+        spotlightSource.xHandle = liveProfile.xHandle;
+      } else {
+        delete spotlightSource.xHandle;
+      }
+      if (liveProfile.crownSignatureId) {
+        spotlightSource.crownSignatureId = liveProfile.crownSignatureId;
+      } else {
+        delete spotlightSource.crownSignatureId;
+      }
+      if (liveProfile.achievementShowcase) {
+        spotlightSource.achievementShowcase = liveProfile.achievementShowcase;
+      } else {
+        delete spotlightSource.achievementShowcase;
+      }
+    }
+    const spotlight = {
+      ...publicCrownCircuitEntry(spotlightSource),
+      entryId: champion.entryId,
+      period,
+      key,
+      rank: 1,
+      participantCount,
+      startsAt: now,
+      endsAt: now + (24 * 60 * 60 * 1000),
+    };
+    const historicalSpotlight = { ...spotlight };
+    delete historicalSpotlight.xHandle;
+    realtimeUpdates[`online/rankingSpotlights/history/${period}/${key}`] = historicalSpotlight;
+    if (period === "daily") realtimeUpdates["online/rankingSpotlights/current"] = null;
+    if (period === "daily"
+        && participantCount >= CROWN_PROMOTION_MIN_PARTICIPANTS
+        && Number(champion.uniqueOpponents || 0) >= 2
+        && spotlightSource.xHandle) {
+      realtimeUpdates["online/rankingSpotlights/current"] = spotlight;
+    }
+    if (period === "monthly" && participantCount >= 2) {
+      realtimeUpdates[`online/crownCircuitHallOfFame/monthly/${key}`] = {
+        ...historicalSpotlight,
+        finalizedAt: now,
+      };
+    }
+  }
+  if (Object.keys(realtimeUpdates).length) await realtime.ref().update(realtimeUpdates);
+  if (period === "daily" && championRecord) {
+    const latestProfileSnapshot = await serverRankingProfileRef(championRecord.uid).get();
+    await syncRankingSpotlightConsent(latestProfileSnapshot.data());
+  }
+  await periodRef.set({
+    status: "finalized",
+    participantCount,
+    finalizedAt: now,
+    updatedAt: now,
+  }, { merge: true });
+  return { period, key, finalized: true, participantCount };
+}
+
+async function finalizeClosedCrownCircuitPeriods(now = Date.now()) {
+  const closedTimestamp = now - (10 * 60 * 1000);
+  const dayMs = 24 * 60 * 60 * 1000;
+  // Bounded catch-up protects awards after a short scheduler/deployment outage.
+  // Oldest periods run first so their stars exist before week/month closure.
+  const dailyKeys = [...new Set(Array.from(
+    { length: 8 },
+    (_, index) => periodKey("daily", closedTimestamp - (index * dayMs)),
+  ))].sort();
+  const weeklyKeys = [...new Set(Array.from(
+    { length: 4 },
+    (_, index) => periodKey("weekly", closedTimestamp - (index * 7 * dayMs)),
+  ))].sort();
+  const monthlyKeys = [];
+  let monthlyKey = periodKey("monthly", closedTimestamp);
+  while (monthlyKey && monthlyKeys.length < 4) {
+    monthlyKeys.push(monthlyKey);
+    monthlyKey = previousMonthlyPeriodKey(monthlyKey);
+  }
+  monthlyKeys.sort();
+  const results = [];
+  for (const key of dailyKeys) {
+    results.push(await finalizeCrownCircuitPeriod("daily", key, now));
+  }
+  for (const key of weeklyKeys) {
+    results.push(await finalizeCrownCircuitPeriod("weekly", key, now));
+  }
+  for (const key of monthlyKeys) {
+    results.push(await finalizeCrownCircuitPeriod("monthly", key, now));
+  }
+  return results;
+}
+
+exports.finalizeCrownCircuit = onSchedule({
+  schedule: "every day 00:05",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 540,
+  memory: "512MiB",
+  maxInstances: 1,
+}, async () => {
+  const now = Date.now();
+  try {
+    const results = await finalizeClosedCrownCircuitPeriods(now);
+    console.info("finalizeCrownCircuit completed", { results });
+    return results;
+  } catch (error) {
+    console.error("finalizeCrownCircuit failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
     throw error;
   }
 });

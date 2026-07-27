@@ -335,6 +335,109 @@ if (!RUN_REQUESTED) {
     }
   });
 
+  test("retired royale history is retained but cannot receive new client results", async () => {
+    const entryId = "legacy-entry-01";
+    const legacyRoomId = "-LegacyRoyaleRoom001";
+    const activeRoomId = "-ActiveModeRoom00001";
+    await seed({
+      [`online/overallProfiles/${hostUid}`]: {
+        name: "HOST",
+        wins: 3,
+        losses: 1,
+        draws: 0,
+        streak: 0,
+        bestStreak: 1,
+        rating: 1_016,
+        modes: {
+          solo: { wins: 1, losses: 0, draws: 0, matches: 1, points: 3 },
+          strategy: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          team: { wins: 0, losses: 0, draws: 0, matches: 0, points: 0 },
+          royale: { wins: 2, losses: 1, draws: 0, matches: 3, points: 6 },
+        },
+        updatedAt: now,
+        lastResultRoomId: legacyRoomId,
+        lastResultMode: "royale",
+        lastResultOutcome: "win",
+      },
+      [`online/leaderboardOwners/${entryId}`]: hostUid,
+      [`online/leaderboard/${entryId}`]: {
+        name: "HOST",
+        rating: 1_016,
+        wins: 3,
+        losses: 1,
+        draws: 0,
+        streak: 0,
+        bestStreak: 1,
+        commentsEnabled: true,
+        updatedAt: now,
+      },
+      [`online/leaderboardPeriods/monthly/2026-07/${entryId}`]: {
+        name: "HOST",
+        points: 6,
+        wins: 2,
+        losses: 1,
+        draws: 0,
+        rating: 1_016,
+        modePoints: { solo: 0, strategy: 0, team: 0, royale: 6 },
+        modeMatches: { solo: 0, strategy: 0, team: 0, royale: 3 },
+        commentsEnabled: true,
+        updatedAt: now,
+        lastResultRoomId: legacyRoomId,
+        lastResultMode: "royale",
+        lastResultOutcome: "win",
+      },
+    });
+    const ownerDb = environment.authenticatedContext(hostUid).database();
+    const overallRef = ref(ownerDb, `online/overallProfiles/${hostUid}`);
+    const periodRef = ref(ownerDb, `online/leaderboardPeriods/monthly/2026-07/${entryId}`);
+
+    await assertSucceeds(update(overallRef, { name: "HOST NEW" }));
+    await assertSucceeds(update(overallRef, {
+      wins: 4,
+      "modes/solo/wins": 2,
+      "modes/solo/matches": 2,
+      "modes/solo/points": 6,
+      updatedAt: now + 1,
+      lastResultRoomId: activeRoomId,
+      lastResultMode: "solo",
+      lastResultOutcome: "win",
+    }));
+    await assertFails(update(overallRef, {
+      wins: 5,
+      "modes/royale/wins": 3,
+      "modes/royale/matches": 4,
+      "modes/royale/points": 9,
+      updatedAt: now + 2,
+    }));
+    await assertFails(update(overallRef, {
+      lastResultMode: "royale",
+      updatedAt: now + 2,
+    }));
+
+    await assertSucceeds(update(periodRef, {
+      points: 7,
+      draws: 1,
+      "modePoints/strategy": 1,
+      "modeMatches/strategy": 1,
+      updatedAt: now + 1,
+      lastResultRoomId: activeRoomId,
+      lastResultMode: "strategy",
+      lastResultOutcome: "draw",
+    }));
+    await assertFails(update(periodRef, {
+      points: 10,
+      wins: 3,
+      "modePoints/royale": 9,
+      "modeMatches/royale": 4,
+      updatedAt: now + 2,
+    }));
+    await assertFails(update(periodRef, {
+      lastResultMode: "royale",
+      updatedAt: now + 2,
+    }));
+    await assertSucceeds(remove(periodRef));
+  });
+
   test("queueV2 accepts only a fresh matching claim and never lets a client edit reserved state", async () => {
     await seed({
       [`online/soloSessionClaims/${hostUid}`]: claim(

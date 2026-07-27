@@ -4,7 +4,9 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  ACTIVE_SERVER_RANKING_MODES,
   SERVER_RANKING_CUTOVER_KEYS,
+  SERVER_RANKING_MODES,
   addServerRankingResult,
   compareServerRankingEntries,
   emptyServerRankingEntry,
@@ -60,6 +62,35 @@ test("verified ranking entries keep exact mode totals and deterministic ordering
     now: 30,
   });
   assert.ok(compareServerRankingEntries(win, draw) < 0);
+});
+
+test("excluded team and retired royale history stay readable but cannot receive new ranking results", () => {
+  assert.deepEqual(ACTIVE_SERVER_RANKING_MODES, ["solo", "strategy"]);
+  assert.deepEqual(SERVER_RANKING_MODES, ["solo", "strategy", "team", "royale"]);
+  const historical = emptyServerRankingEntry({
+    period: "monthly",
+    key: "2026-08",
+    entryId: "entry-legacy",
+    profile: { name: "LEGACY", rating: 1200 },
+    endsAt: Date.now() + 1000,
+    now: 10,
+  });
+  historical.modeMatches.royale = 4;
+  historical.modePoints.royale = 9;
+  assert.equal(historical.modeMatches.royale, 4);
+  assert.equal(historical.modePoints.royale, 9);
+  assert.throws(() => addServerRankingResult(historical, {
+    mode: "royale",
+    outcome: "win",
+    profile: { name: "LEGACY", rating: 1200 },
+    now: 20,
+  }), /Invalid server ranking result/);
+  assert.throws(() => addServerRankingResult(historical, {
+    mode: "team",
+    outcome: "win",
+    profile: { name: "LEGACY", rating: 1200 },
+    now: 20,
+  }), /Invalid server ranking result/);
 });
 
 test("ranking awards use participation gates and prestige tiers without AnjuPay rewards", () => {

@@ -70,7 +70,7 @@ test("verified matches advance play days and reset loss streak on a draw", () =>
   assert.equal(stats.currentLossStreak, 3);
   assert.equal(stats.bestLossStreak, 3);
   assert.equal(stats.playDays, 2);
-  stats = addBattleMatch(stats, "royale", "draw", "2026-07-24");
+  stats = addBattleMatch(stats, "solo", "draw", "2026-07-24");
   assert.equal(stats.currentLossStreak, 0);
   assert.equal(stats.bestLossStreak, 3);
   assert.equal(stats.losses, 3);
@@ -104,12 +104,14 @@ test("mode variety and loss achievements unlock from neutral verified stats", ()
   for (const expected of [
     "battle_total_100",
     "battle_variety_2",
-    "battle_variety_all_5",
+    "battle_variety_three_5",
     "battle_losses_30",
     "battle_loss_streak_5",
     "battle_days_7",
   ]) assert.equal(ids.includes(expected), true, expected);
-  assert.equal(ids.includes("battle_variety_all_20"), false);
+  assert.equal(ids.includes("battle_variety_three_20"), false);
+  assert.equal(ids.includes("battle_royale_5"), false);
+  assert.equal(ids.includes("battle_variety_all_5"), false);
 });
 
 test("server-only battle signals unlock the new honor achievements", () => {

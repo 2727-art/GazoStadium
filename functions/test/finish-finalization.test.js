@@ -309,6 +309,7 @@ test("overall profile also uses a verified result token across a retry", async (
     localStorage: { getItem: () => "" },
     PROFILE_NAME_KEY: "name",
     publicServerTimeOffset: 0,
+    ACTIVE_BATTLE_MODES: ["solo", "strategy", "team"],
     LEADERBOARD_MODES: ["solo", "strategy", "team", "royale"],
     INITIAL_RATING: 1_000,
     recordPeriodRewardResult: async (_uid, _mode, _outcome, roomId) => ({

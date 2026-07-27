@@ -50,7 +50,7 @@ import {
   getPlayerTitleCategory,
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   MAX_EQUIPPED_STAMPS,
   STAMP_PRODUCTS,
@@ -63,7 +63,7 @@ import {
   renderChatTools,
   renderStampBubble,
   startStampButtonCooldown,
-} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1";
+} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   bindPostMatchTip,
   isPostMatchTipBusy,
@@ -300,6 +300,8 @@ const OSHI_MARKET_COLLECTION_GROUPS = Object.freeze([
   }),
 ]);
 const LEADERBOARD_PERIODS = ["daily", "weekly", "monthly"];
+const ACTIVE_BATTLE_MODES = ["solo", "strategy", "team"];
+// `royale` remains in persisted ranking records so already-earned history is not rewritten.
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
 const PERIOD_REWARD_CONFIG = Object.freeze({
@@ -312,6 +314,24 @@ const SERVER_RANKING_CUTOVER_KEYS = Object.freeze({
   weekly: "2026-07-27",
   monthly: "2026-08",
 });
+const CROWN_CIRCUIT_CUTOVER_KEYS = Object.freeze({
+  daily: "2026-07-28",
+  weekly: "2026-08-03",
+  monthly: "2026-08",
+});
+const CROWN_CIRCUIT_MODES = Object.freeze(["solo", "strategy"]);
+const CROWN_DAILY_MATCH_LIMIT = 3;
+const CROWN_WEEKLY_BEST_DAYS = 3;
+const CROWN_MONTHLY_BEST_WEEKS = 3;
+const CROWN_THEMES = Object.freeze(["rose", "aqua", "violet", "gold"]);
+const CROWN_SIGNATURE_IDS = Object.freeze([
+  "upset",
+  "triple_unbeaten",
+  "dual_mode",
+  "daily_champion",
+  "weekly_champion",
+  "monthly_champion",
+]);
 const SERVER_RANKING_AWARD_MINIMUM_MATCHES = Object.freeze({
   daily: 1,
   weekly: 3,
@@ -325,10 +345,9 @@ const DAILY_MISSIONS = [
   { id: "complete_match", progressKey: "matches", title: "1試合を完走", description: "ルーム破棄では進みません。", target: 1, reward: 100 },
   { id: "score_three", progressKey: "scores", title: "3回採点する", description: "相手の画像を合計3回採点します。", target: 3, reward: 60 },
   { id: "give_critical", progressKey: "criticals", title: "8点以上をつける", description: "CRITICAL評価を1回つけます。", target: 1, reward: 90 },
-  { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 40 },
-  { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 50 },
-  { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "推し上手！ふたりチャレンジの正式な決着が対象です。", target: 1, reward: 70 },
-  { id: "play_royale", progressKey: "royaleMatches", title: "バトルロワイヤルを1回完走", description: "バトルロワイヤルの正式な決着が対象です。", target: 1, reward: 90 },
+  { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 70 },
+  { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 80 },
+  { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "推し上手！ふたりチャレンジの正式な決着が対象です。", target: 1, reward: 100 },
 ];
 const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
   mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY
@@ -340,7 +359,6 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   soloMatches: 1,
   strategyMatches: 1,
   teamMatches: 1,
-  royaleMatches: 1,
 });
 const SHOP_PRODUCTS = [
   { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム仕上げ", description: "無料の推しカードでホログラム、スターダスト、ロイヤル箔を何度でも使える買い切り機能", price: 500 },
@@ -431,7 +449,7 @@ let freeTablePublicStatsLastSuccessAt = 0;
 let freeTablePublicStatsFailureCount = 0;
 let freeTablePublicStatsRequest = null;
 let freeTablePublicStatsTimer = null;
-const LOBBY_MODES = ["solo", "strategy", "team", "royale"];
+const LOBBY_MODES = ACTIVE_BATTLE_MODES;
 const createLobbyStats = (value = null) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
   freeTable: { ...freeTablePublicStats },
@@ -446,6 +464,14 @@ let leaderboardRequestId = 0;
 let monthlyBeyondRanks = new Map();
 let monthlyBeyondPeriodKey = "";
 let monthlyHallOfFameRecords = [];
+let overallLeaderboardEntries = [];
+let overallLeaderboardStatus = "idle";
+let overallLeaderboardRequestId = 0;
+let rankingDashboard = null;
+let rankingDashboardStatus = "idle";
+let rankingDashboardError = "";
+let rankingDashboardRequestId = 0;
+let rankingDashboardBusy = false;
 let publicServerTimeOffset = 0;
 let publicServerTimeOffsetReady = false;
 let topMessageRecords = [];
@@ -933,6 +959,12 @@ function isServerRankingPeriod(period, key) {
     && key >= SERVER_RANKING_CUTOVER_KEYS[period];
 }
 
+function isCrownCircuitPeriod(period, key) {
+  return LEADERBOARD_PERIODS.includes(period)
+    && typeof key === "string"
+    && key >= CROWN_CIRCUIT_CUTOVER_KEYS[period];
+}
+
 function leaderboardPeriodKeyFor(period, timestamp = Date.now()) {
   const normalizedPeriod = normalizeLeaderboardPeriod(period);
   const shifted = new Date(timestamp + (9 * 60 * 60 * 1000));
@@ -966,15 +998,24 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
     : normalizedPeriod === "weekly"
       ? `${shortDate.format(startAt)}〜${shortDate.format(nextResetAt - 1)}`
       : new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", timeZone: "Asia/Tokyo" }).format(startAt);
+  const crownCircuit = isCrownCircuitPeriod(normalizedPeriod, key);
   return {
     period: normalizedPeriod,
     key,
     label,
     startAt,
     nextResetAt,
-    minimumMatches: normalizedPeriod === "daily" ? 1 : normalizedPeriod === "weekly" ? 3 : 5,
+    minimumMatches: crownCircuit
+      ? normalizedPeriod === "daily" ? CROWN_DAILY_MATCH_LIMIT : 2
+      : normalizedPeriod === "daily" ? 1 : normalizedPeriod === "weekly" ? 3 : 5,
     awardMinimumMatches: SERVER_RANKING_AWARD_MINIMUM_MATCHES[normalizedPeriod],
     serverAuthoritative: isServerRankingPeriod(normalizedPeriod, key),
+    crownCircuit,
+    bestCount: crownCircuit
+      ? normalizedPeriod === "weekly" ? CROWN_WEEKLY_BEST_DAYS
+        : normalizedPeriod === "monthly" ? CROWN_MONTHLY_BEST_WEEKS
+          : CROWN_DAILY_MATCH_LIMIT
+      : 0,
   };
 }
 
@@ -1296,21 +1337,21 @@ function renderOverallRankingParticipation({ controlId = "overallRankingParticip
   const commentsId = `${safeControlId}CommentsEnabled`;
   const saveId = `${safeControlId}Save`;
   const publicSettings = settings.enabled ? `<details class="overall-ranking-settings">
-    <summary><span><strong>公開プロフィール設定</strong><small>Xリンクと、自分の順位欄でコメントを受け付けるかを設定します。</small></span><b>設定を開く</b></summary>
+    <summary><span><strong>公開プロフィール設定</strong><small>Xリンク、王座スポットライト、コメント受付を設定します。</small></span><b>設定を開く</b></summary>
     <div class="overall-ranking-public-controls">
       <label class="ranking-x-handle" for="${handleId}"><span>@</span><input id="${handleId}" type="text" maxlength="15" value="${escapeHtml(settings.xHandle)}" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
-      <label class="ranking-x-public"><input type="checkbox" id="${publicId}" ${settings.xPublic ? "checked" : ""} /><span>ランキングでXを公開する</span></label>
+      <label class="ranking-x-public"><input type="checkbox" id="${publicId}" ${settings.xPublic ? "checked" : ""} /><span>ランキングと入賞スポットライトでXを公開する</span></label>
       <label class="ranking-x-public"><input type="checkbox" id="${commentsId}" ${settings.commentsEnabled ? "checked" : ""} /><span>自分の順位欄でコメントを受け付ける</span></label>
       <button class="button button-ghost button-small" type="button" id="${saveId}">公開設定を保存</button>
     </div>
-    <p>Xを公開すると匿名性が下がります。コメントはランキング参加者だけが1人1件、80文字以内で投稿できます。</p>
+    <p>Xを公開すると匿名性が下がります。入賞時だけ紹介枠にも同じリンクを表示します。フォロワー数や反応は順位へ影響しません。</p>
   </details>` : "";
   return `<section class="overall-ranking-panel ${settings.enabled ? "is-enabled" : "is-disabled"}">
     <div class="overall-ranking-copy"><span class="eyebrow">ONLINE OVERALL RANKING</span><div><strong>オンライン総合ランキング</strong>
-      <p>${settings.enabled ? "4モード共通で期間スコアを集計し、対称戦で更新した総合RATEを公開しています。" : "戦績と総合RATEは非公開で保持され、期間スコアは参加中の対戦だけ集計されます。"}</p></div></div>
+      <p>${settings.enabled ? "通常型・戦略型1on1の総合RATEと、任意で挑む王座サーキットを公開しています。" : "戦績と総合RATEは非公開で保持され、王座サーキットへは参加しません。"}</p></div></div>
     <div class="overall-ranking-control"><span class="overall-ranking-status">${settings.enabled ? "● 参加中" : "○ 非参加"}</span>
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
-    <small>通常型1on1・戦略型1on1・ふたりチャレンジ・バトルロワイヤルで同じ設定を使用します。匿名UIDとルーム履歴は公開しません。サーバー期間で確定したランキング実績と月間王者記録は、参加終了後も名誉記録として残ります。</small>
+    <small>強さの順位と三戦証明は通常型1on1・戦略型1on1だけが対象です。匿名UIDとルーム履歴は公開しません。確定済みの番号王座と歴代記録は、参加終了後も名誉記録として残ります。</small>
     ${publicSettings}
   </section>`;
 }
@@ -1365,7 +1406,6 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
       soloMatches: 0,
       strategyMatches: 0,
       teamMatches: 0,
-      royaleMatches: 0,
       claimed: {},
     },
     updatedAt: Date.now(),
@@ -1536,8 +1576,7 @@ function openOnlineScreen(screen) {
         "battle_solo_100",
         "battle_strategy_5",
         "battle_team_1",
-        "battle_royale_1",
-        "battle_variety_all_1",
+        "battle_variety_three_1",
         "battle_losses_30",
         "battle_loss_streak_5",
         "battle_days_3",
@@ -2065,8 +2104,6 @@ function renderLobbyStats() {
     lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
     lobbyTeamWaitingCount: lobbyStats.team.waiting,
     lobbyTeamPlayingCount: lobbyStats.team.playing,
-    lobbyRoyaleWaitingCount: lobbyStats.royale.waiting,
-    lobbyRoyalePlayingCount: lobbyStats.royale.playing,
     lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
     lobbyFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
     lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
@@ -2152,6 +2189,463 @@ function normalizeLeaderboardRecords(entries) {
     .slice(0, 50);
 }
 
+function normalizeCrownTheme(value) {
+  const theme = String(value || "");
+  return CROWN_THEMES.includes(theme) ? theme : "rose";
+}
+
+function normalizeCrownSignatureIds(value) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  return [...new Set(source
+    .map((id) => String(id || ""))
+    .filter((id) => CROWN_SIGNATURE_IDS.includes(id)))];
+}
+
+function normalizeOverallLeaderboardRecords(entries) {
+  return Object.entries(entries || {})
+    .map(([entryId, entry]) => ({
+      entryId,
+      ...entry,
+      rating: Math.min(3000, Math.max(100, Math.floor(Number(entry?.rating || INITIAL_RATING)))),
+      serverMatches: Math.max(0, Math.floor(Number(entry?.serverMatches || 0))),
+      crownTheme: normalizeCrownTheme(entry?.crownTheme),
+      crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(entry?.crownSignatureId || ""))
+        ? String(entry.crownSignatureId)
+        : "",
+    }))
+    .filter((entry) => entry.name && Number.isFinite(entry.rating))
+    .sort((first, second) => (
+      second.rating - first.rating
+      || String(first.entryId || "").localeCompare(String(second.entryId || ""))
+    ))
+    .slice(0, 50)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
+function crownCircuitEntryIsQualified(entry, period) {
+  if (period === "daily") {
+    return ["complete", "finalized"].includes(String(entry?.status || ""))
+      && Number(entry?.matchCount || 0) >= CROWN_DAILY_MATCH_LIMIT
+      && Number(entry?.rankScore || 0) > 0;
+  }
+  return Number(entry?.rankScore || 0) > 0;
+}
+
+function normalizeCrownCircuitRecords(entries, period) {
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const records = Object.entries(entries || {}).map(([entryId, value]) => {
+    const matchCount = Math.max(0, Math.floor(Number(value?.matchCount || 0)));
+    const qualifyingCount = Math.max(0, Math.floor(Number(value?.qualifyingCount || 0)));
+    const crownPower = Math.min(3000, Math.max(100, Math.floor(Number(value?.crownPower || value?.rating || INITIAL_RATING))));
+    const circuitScore = Math.max(0, Math.floor(Number(value?.circuitScore || 0)));
+    const rankScore = Math.max(0, Math.floor(Number(value?.rankScore || 0)));
+    const record = {
+      entryId,
+      ...value,
+      rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
+      wins: Math.max(0, Math.floor(Number(value?.wins || 0))),
+      losses: Math.max(0, Math.floor(Number(value?.losses || 0))),
+      draws: Math.max(0, Math.floor(Number(value?.draws || 0))),
+      matchCount,
+      qualifyingCount,
+      crownPower,
+      circuitScore,
+      rankScore,
+      uniqueOpponents: Math.max(0, Math.floor(Number(value?.uniqueOpponents || 0))),
+      modeMatches: {
+        solo: Math.max(0, Math.floor(Number(value?.modeMatches?.solo || 0))),
+        strategy: Math.max(0, Math.floor(Number(value?.modeMatches?.strategy || 0))),
+      },
+      crownTheme: normalizeCrownTheme(value?.crownTheme),
+      crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(value?.crownSignatureId || ""))
+        ? String(value.crownSignatureId)
+        : "",
+      signatureIds: normalizeCrownSignatureIds(value?.signatureIds),
+    };
+    record.qualified = crownCircuitEntryIsQualified(record, normalizedPeriod);
+    return record;
+  }).filter((entry) => entry.name && Number.isFinite(entry.rating));
+  records.sort((first, second) => (
+    Number(second.qualified) - Number(first.qualified)
+    || second.rankScore - first.rankScore
+    || (normalizedPeriod === "daily"
+      ? second.crownPower - first.crownPower
+      : Number(second.bestCrownPower || 0) - Number(first.bestCrownPower || 0))
+    || second.rating - first.rating
+    || second.uniqueOpponents - first.uniqueOpponents
+    || second.wins - first.wins
+    || String(first.entryId || "").localeCompare(String(second.entryId || ""))
+  ));
+  let liveRank = 0;
+  return records.slice(0, 50).map((entry) => {
+    if (!entry.qualified) return { ...entry, displayRank: 0 };
+    liveRank += 1;
+    const finalizedRank = Math.max(0, Math.floor(Number(entry.rank || 0)));
+    return { ...entry, displayRank: finalizedRank || liveRank };
+  });
+}
+
+function normalizeDashboardPerson(value, fallbackRank = 0) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    entryId: String(source.entryId || ""),
+    rank: Math.max(0, Math.floor(Number(source.rank || fallbackRank || 0))),
+    name: String(source.name || "PLAYER").slice(0, 16) || "PLAYER",
+    rating: Math.min(3000, Math.max(100, Math.floor(Number(source.rating || INITIAL_RATING)))),
+    xHandle: X_HANDLE_PATTERN.test(String(source.xHandle || "")) ? String(source.xHandle) : "",
+    achievementShowcase: source.achievementShowcase || "",
+    commentsEnabled: source.commentsEnabled !== false,
+    crownTheme: normalizeCrownTheme(source.crownTheme),
+    crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(source.crownSignatureId || ""))
+      ? String(source.crownSignatureId)
+      : "",
+  };
+}
+
+function normalizeRankingSpotlight(value) {
+  if (!value || typeof value !== "object") return null;
+  const source = value;
+  const entryId = String(source.entryId || "");
+  const xHandle = X_HANDLE_PATTERN.test(String(source.xHandle || ""))
+    ? String(source.xHandle)
+    : "";
+  if (!entryId || !xHandle) return null;
+  return {
+    ...normalizeDashboardPerson(source),
+    entryId,
+    period: normalizeLeaderboardPeriod(source.period),
+    key: String(source.key || ""),
+    rank: Math.max(0, Math.floor(Number(source.rank || 0))),
+    participantCount: Math.max(0, Math.floor(Number(source.participantCount || 0))),
+    crownPower: Math.min(3000, Math.max(100, Math.floor(Number(
+      source.crownPower || source.rating || INITIAL_RATING,
+    )))),
+    circuitScore: Math.max(0, Math.floor(Number(source.circuitScore || 0))),
+    signatureIds: normalizeCrownSignatureIds(source.signatureIds),
+    startsAt: Number(source.startsAt || 0),
+    endsAt: Number(source.endsAt || 0),
+    xHandle,
+  };
+}
+
+function normalizeRankingDashboard(value) {
+  const source = value?.dashboard && typeof value.dashboard === "object" ? value.dashboard : value || {};
+  const overallSource = source.overall || source.context || {};
+  const runSource = source.run || source.crownRun || source.proof || null;
+  const customizationSource = source.customization || {};
+  const rulesSource = source.rules && typeof source.rules === "object" ? source.rules : {};
+  const neighborsSource = Array.isArray(overallSource.neighbors)
+    ? overallSource.neighbors
+    : Array.isArray(source.neighbors) ? source.neighbors : [];
+  const participantCount = Math.max(0, Math.floor(Number(
+    overallSource.participantCount
+      ?? overallSource.total
+      ?? source.participantCount
+      ?? 0,
+  )));
+  const rank = Math.max(0, Math.floor(Number(overallSource.rank || source.rank || 0)));
+  const rating = Math.min(3000, Math.max(100, Math.floor(Number(
+    overallSource.rating
+      ?? source.rating
+      ?? INITIAL_RATING,
+  ))));
+  const rawStatus = String(runSource?.status || "idle");
+  const runStatus = ["active", "complete", "finalized", "expired"].includes(rawStatus)
+    ? rawStatus
+    : "idle";
+  const signatureIds = normalizeCrownSignatureIds(
+    customizationSource.availableSignatureIds
+      || source.availableSignatureIds
+      || runSource?.signatureIds,
+  );
+  const selectedSignatureId = String(
+    customizationSource.crownSignatureId
+      || source.crownSignatureId
+      || runSource?.crownSignatureId
+      || "",
+  );
+  const nextSeatSource = overallSource.nextSeat && typeof overallSource.nextSeat === "object"
+    ? overallSource.nextSeat
+    : {};
+  return {
+    enabled: source.enabled === true,
+    entryId: String(source.entryId || overallSource.entryId || ""),
+    rulesetVersion: Math.max(0, Math.floor(Number(source.rulesetVersion || 2))),
+    overall: {
+      rank,
+      participantCount,
+      percentile: Math.min(100, Math.max(0, Number(
+        overallSource.percentile
+          ?? (
+            rank > 0 && participantCount > 0
+              ? ((participantCount - rank + 1) / participantCount) * 100
+              : 0
+          ),
+      ))),
+      topPercent: Math.min(100, Math.max(0, Math.ceil(Number(
+        overallSource.topPercent
+          ?? (rank > 0 && participantCount > 0 ? (rank / participantCount) * 100 : 0),
+      )))),
+      bestRank: Math.max(0, Math.floor(Number(overallSource.bestRank || source.bestRank || 0))),
+      rating,
+      nextSeatGap: Math.max(0, Math.floor(Number(
+        overallSource.nextSeatGap
+          ?? nextSeatSource.gap
+          ?? source.nextSeatGap
+          ?? 0,
+      ))),
+      nextSeat: Object.keys(nextSeatSource).length ? normalizeDashboardPerson(nextSeatSource) : null,
+      neighbors: neighborsSource.map((entry, index) => normalizeDashboardPerson(entry, index + 1)),
+    },
+    run: runSource ? {
+      key: String(runSource.key || ""),
+      status: runStatus,
+      matchCount: Math.min(CROWN_DAILY_MATCH_LIMIT, Math.max(0, Math.floor(Number(runSource.matchCount || 0)))),
+      wins: Math.max(0, Math.floor(Number(runSource.wins || 0))),
+      losses: Math.max(0, Math.floor(Number(runSource.losses || 0))),
+      draws: Math.max(0, Math.floor(Number(runSource.draws || 0))),
+      crownPower: Math.min(3000, Math.max(100, Math.floor(Number(runSource.crownPower || rating)))),
+      ratingAtStart: Math.min(3000, Math.max(100, Math.floor(Number(runSource.ratingAtStart || rating)))),
+      uniqueOpponents: Math.max(0, Math.floor(Number(runSource.uniqueOpponents || 0))),
+      modeMatches: {
+        solo: Math.max(0, Math.floor(Number(runSource.modeMatches?.solo || 0))),
+        strategy: Math.max(0, Math.floor(Number(runSource.modeMatches?.strategy || 0))),
+      },
+      signatureIds: normalizeCrownSignatureIds(runSource.signatureIds),
+      startedAt: Number(runSource.startedAt || 0),
+      endsAt: Number(runSource.endsAt || 0),
+      rank: Math.max(0, Math.floor(Number(runSource.rank || 0))),
+      participantCount: Math.max(0, Math.floor(Number(runSource.participantCount || 0))),
+      spotlightEligible: runSource.spotlightEligible === true
+        || (
+          Math.max(0, Math.floor(Number(runSource.uniqueOpponents || 0))) >= 2
+          && Math.max(0, Math.floor(Number(runSource.participantCount || 0))) >= 4
+        ),
+    } : null,
+    customization: {
+      crownTheme: normalizeCrownTheme(
+        customizationSource.crownTheme
+          || source.crownTheme
+          || runSource?.crownTheme,
+      ),
+      crownSignatureId: CROWN_SIGNATURE_IDS.includes(selectedSignatureId)
+        ? selectedSignatureId
+        : "",
+      availableThemes: (Array.isArray(customizationSource.availableThemes)
+        ? customizationSource.availableThemes
+        : CROWN_THEMES
+      ).map(normalizeCrownTheme).filter((theme, index, themes) => themes.indexOf(theme) === index),
+      availableSignatureIds: signatureIds,
+    },
+    rules: {
+      rulesetVersion: Math.max(0, Math.floor(Number(rulesSource.rulesetVersion || source.rulesetVersion || 2))),
+      modes: (Array.isArray(rulesSource.modes) ? rulesSource.modes : CROWN_CIRCUIT_MODES)
+        .filter((mode) => CROWN_CIRCUIT_MODES.includes(mode)),
+      dailyMatchLimit: Math.max(1, Math.floor(Number(rulesSource.dailyMatchLimit || CROWN_DAILY_MATCH_LIMIT))),
+      weeklyBestDays: Math.max(1, Math.floor(Number(rulesSource.weeklyBestDays || CROWN_WEEKLY_BEST_DAYS))),
+      weeklyMinimumDays: Math.max(1, Math.floor(Number(rulesSource.weeklyMinimumDays || 2))),
+      monthlyBestWeeks: Math.max(1, Math.floor(Number(rulesSource.monthlyBestWeeks || CROWN_MONTHLY_BEST_WEEKS))),
+      monthlyMinimumWeeks: Math.max(1, Math.floor(Number(rulesSource.monthlyMinimumWeeks || 2))),
+      promotionMinimumParticipants: Math.max(1, Math.floor(Number(rulesSource.promotionMinimumParticipants || 4))),
+      dailyKey: String(rulesSource.dailyKey || ""),
+      dailyEndsAt: Number(rulesSource.dailyEndsAt || 0),
+    },
+    spotlight: normalizeRankingSpotlight(source.spotlight),
+  };
+}
+
+function dispatchRankingDashboardUpdated() {
+  window.dispatchEvent(new Event("hariai-ranking-dashboard-updated"));
+}
+
+function applyRankingDashboard(value) {
+  rankingDashboard = normalizeRankingDashboard(value);
+  rankingDashboardStatus = "ready";
+  rankingDashboardError = "";
+  dispatchRankingDashboardUpdated();
+  return rankingDashboard;
+}
+
+function applyCrownRunToRankingDashboard(value) {
+  if (!value || typeof value !== "object" || !rankingDashboard) return;
+  applyRankingDashboard({
+    ...rankingDashboard,
+    run: value,
+    customization: {
+      ...rankingDashboard.customization,
+      availableSignatureIds: [
+        ...rankingDashboard.customization.availableSignatureIds,
+        ...normalizeCrownSignatureIds(value.signatureIds),
+      ],
+    },
+  });
+}
+
+function getOverallLeaderboard() {
+  return overallLeaderboardEntries.map((entry) => ({ ...entry }));
+}
+
+function getOverallLeaderboardStatus() {
+  return overallLeaderboardStatus;
+}
+
+function getRankingDashboard() {
+  if (!rankingDashboard) return null;
+  return {
+    ...rankingDashboard,
+    overall: {
+      ...rankingDashboard.overall,
+      nextSeat: rankingDashboard.overall.nextSeat
+        ? { ...rankingDashboard.overall.nextSeat }
+        : null,
+      neighbors: rankingDashboard.overall.neighbors.map((entry) => ({ ...entry })),
+    },
+    run: rankingDashboard.run
+      ? {
+        ...rankingDashboard.run,
+        modeMatches: { ...rankingDashboard.run.modeMatches },
+        signatureIds: [...rankingDashboard.run.signatureIds],
+      }
+      : null,
+    customization: {
+      ...rankingDashboard.customization,
+      availableThemes: [...rankingDashboard.customization.availableThemes],
+      availableSignatureIds: [...rankingDashboard.customization.availableSignatureIds],
+    },
+    rules: {
+      ...rankingDashboard.rules,
+      modes: [...rankingDashboard.rules.modes],
+    },
+    spotlight: rankingDashboard.spotlight
+      ? {
+        ...rankingDashboard.spotlight,
+        signatureIds: [...rankingDashboard.spotlight.signatureIds],
+      }
+      : null,
+  };
+}
+
+function getRankingDashboardStatus() {
+  return {
+    status: rankingDashboardStatus,
+    error: rankingDashboardError,
+    busy: rankingDashboardBusy,
+  };
+}
+
+async function refreshOverallLeaderboard() {
+  if (useOfflineMarketPreview) {
+    overallLeaderboardEntries = [];
+    overallLeaderboardStatus = "ready";
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+    return [];
+  }
+  const requestId = ++overallLeaderboardRequestId;
+  overallLeaderboardStatus = "loading";
+  window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  try {
+    const records = await readPublicDatabasePath("online/serverOverallLeaderboard", {
+      orderByChildKey: "rating",
+      limit: 100,
+    });
+    if (requestId !== overallLeaderboardRequestId) return overallLeaderboardEntries;
+    overallLeaderboardEntries = normalizeOverallLeaderboardRecords(records);
+    overallLeaderboardStatus = "ready";
+  } catch {
+    if (requestId !== overallLeaderboardRequestId) return overallLeaderboardEntries;
+    overallLeaderboardEntries = [];
+    overallLeaderboardStatus = "error";
+  } finally {
+    if (requestId === overallLeaderboardRequestId) {
+      window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+    }
+  }
+  return getOverallLeaderboard();
+}
+
+async function refreshRankingDashboard() {
+  if (useOfflineMarketPreview) {
+    rankingDashboard = normalizeRankingDashboard({ enabled: false });
+    rankingDashboardStatus = "ready";
+    rankingDashboardError = "";
+    dispatchRankingDashboardUpdated();
+    return getRankingDashboard();
+  }
+  const requestId = ++rankingDashboardRequestId;
+  rankingDashboardStatus = "loading";
+  rankingDashboardError = "";
+  dispatchRankingDashboardUpdated();
+  try {
+    await ensureRankingCommentUser();
+    const response = await economyActionCallable({ action: "get_ranking_dashboard" });
+    if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
+    return applyRankingDashboard(response.data || {});
+  } catch (error) {
+    if (requestId !== rankingDashboardRequestId) return getRankingDashboard();
+    rankingDashboardStatus = "error";
+    rankingDashboardError = error?.message || "自分の順位情報を取得できませんでした。";
+    dispatchRankingDashboardUpdated();
+    return null;
+  }
+}
+
+async function startCrownRun() {
+  if (rankingDashboardBusy) return getRankingDashboard();
+  rankingDashboardBusy = true;
+  dispatchRankingDashboardUpdated();
+  try {
+    await ensureRankingCommentUser();
+    const response = await economyActionCallable({
+      action: "start_crown_run",
+      dateKey: leaderboardPeriodKeyFor("daily", Date.now() + publicServerTimeOffset),
+    });
+    const result = response.data || {};
+    if (result.dashboard) applyRankingDashboard(result.dashboard);
+    else if (result.run || result.crownRun) {
+      if (rankingDashboard) applyCrownRunToRankingDashboard(result.run || result.crownRun);
+      else await refreshRankingDashboard();
+    } else await refreshRankingDashboard();
+    await refreshLeaderboard("daily");
+    return getRankingDashboard();
+  } finally {
+    rankingDashboardBusy = false;
+    dispatchRankingDashboardUpdated();
+  }
+}
+
+async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "" } = {}) {
+  if (rankingDashboardBusy) return getRankingDashboard();
+  const normalizedTheme = normalizeCrownTheme(crownTheme);
+  const normalizedSignatureId = CROWN_SIGNATURE_IDS.includes(String(crownSignatureId || ""))
+    ? String(crownSignatureId)
+    : "";
+  rankingDashboardBusy = true;
+  dispatchRankingDashboardUpdated();
+  try {
+    await ensureRankingCommentUser();
+    const response = await economyActionCallable({
+      action: "set_crown_customization",
+      crownTheme: normalizedTheme,
+      crownSignatureId: normalizedSignatureId,
+    });
+    const result = response.data || {};
+    if (result.dashboard) applyRankingDashboard(result.dashboard);
+    else await refreshRankingDashboard();
+    await Promise.all([
+      refreshOverallLeaderboard(),
+      refreshLeaderboard(leaderboardPeriod),
+    ]);
+    return getRankingDashboard();
+  } finally {
+    rankingDashboardBusy = false;
+    dispatchRankingDashboardUpdated();
+  }
+}
+
 async function refreshLeaderboard(period = leaderboardPeriod) {
   const selectedPeriod = normalizeLeaderboardPeriod(period);
   const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
@@ -2175,28 +2669,36 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
   leaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const selectedRoot = periodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
-    const monthlyRoot = monthlyPeriodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
+    const selectedRoot = periodInfo.crownCircuit
+      ? "crownCircuitPeriods"
+      : periodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
+    const monthlyRoot = monthlyPeriodInfo.crownCircuit
+      ? "crownCircuitPeriods"
+      : monthlyPeriodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
     const selectedEntriesPromise = readPublicDatabasePath(`online/${selectedRoot}/${selectedPeriod}/${periodInfo.key}`, {
-      orderByChildKey: "points",
+      orderByChildKey: periodInfo.crownCircuit ? "rankScore" : "points",
       limit: 100,
     });
     const monthlyEntriesPromise = selectedPeriod === "monthly"
       ? selectedEntriesPromise
       : readPublicDatabasePath(`online/${monthlyRoot}/monthly/${monthlyPeriodInfo.key}`, {
-        orderByChildKey: "points",
+        orderByChildKey: monthlyPeriodInfo.crownCircuit ? "rankScore" : "points",
         limit: 100,
       }).catch(() => null);
-    const hallOfFamePromise = readPublicDatabasePath("online/serverRankingHallOfFame/monthly").catch(() => null);
-    const [entries, monthlyEntries, hallOfFame] = await Promise.all([
+    const legacyHallOfFamePromise = readPublicDatabasePath("online/serverRankingHallOfFame/monthly").catch(() => null);
+    const crownHallOfFamePromise = readPublicDatabasePath("online/crownCircuitHallOfFame/monthly").catch(() => null);
+    const [entries, monthlyEntries, legacyHallOfFame, crownHallOfFame] = await Promise.all([
       selectedEntriesPromise,
       monthlyEntriesPromise,
-      hallOfFamePromise,
+      legacyHallOfFamePromise,
+      crownHallOfFamePromise,
     ]);
     if (requestId !== leaderboardRequestId) return;
-    leaderboardEntries = normalizeLeaderboardRecords(entries);
-    if (hallOfFame !== null) {
-      monthlyHallOfFameRecords = Object.entries(hallOfFame || {})
+    leaderboardEntries = periodInfo.crownCircuit
+      ? normalizeCrownCircuitRecords(entries, selectedPeriod)
+      : normalizeLeaderboardRecords(entries);
+    if (legacyHallOfFame !== null || crownHallOfFame !== null) {
+      const legacyRecords = Object.entries(legacyHallOfFame || {})
         .map(([key, value]) => ({
           key,
           entryId: String(value?.entryId || ""),
@@ -2208,14 +2710,44 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
           rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
           participants: Math.max(1, Math.floor(Number(value?.participants || 1))),
           finalizedAt: Number(value?.finalizedAt || 0),
+          crownCircuit: false,
         }))
-        .filter((record) => isServerRankingPeriod("monthly", record.key))
+        .filter((record) => isServerRankingPeriod("monthly", record.key));
+      const crownRecords = Object.entries(crownHallOfFame || {})
+        .map(([key, value]) => ({
+          key,
+          entryId: String(value?.entryId || ""),
+          name: String(value?.name || "PLAYER").slice(0, 16) || "PLAYER",
+          rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
+          circuitScore: Math.max(0, Math.floor(Number(value?.circuitScore || 0))),
+          bestCrownPower: Math.min(3000, Math.max(100, Math.floor(Number(
+            value?.bestCrownPower || value?.crownPower || value?.rating || INITIAL_RATING,
+          )))),
+          participants: Math.max(1, Math.floor(Number(value?.participantCount || 1))),
+          crownTheme: normalizeCrownTheme(value?.crownTheme),
+          crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(value?.crownSignatureId || ""))
+            ? String(value.crownSignatureId)
+            : "",
+          finalizedAt: Number(value?.finalizedAt || 0),
+          crownCircuit: true,
+        }))
+        .filter((record) => isCrownCircuitPeriod("monthly", record.key));
+      const recordsByKey = new Map(legacyRecords.map((record) => [record.key, record]));
+      crownRecords.forEach((record) => recordsByKey.set(record.key, record));
+      monthlyHallOfFameRecords = [...recordsByKey.values()]
         .sort((first, second) => second.key.localeCompare(first.key))
         .slice(0, 12);
     }
     if (monthlyEntries !== null) {
-      const monthlyRecords = selectedPeriod === "monthly" ? leaderboardEntries : normalizeLeaderboardRecords(monthlyEntries);
-      monthlyBeyondRanks = new Map(monthlyRecords.slice(0, 10).map((entry, index) => [entry.entryId, index + 1]));
+      const monthlyRecords = selectedPeriod === "monthly"
+        ? leaderboardEntries
+        : monthlyPeriodInfo.crownCircuit
+          ? normalizeCrownCircuitRecords(monthlyEntries, "monthly")
+          : normalizeLeaderboardRecords(monthlyEntries);
+      const monthlyRankedRecords = monthlyPeriodInfo.crownCircuit
+        ? monthlyRecords.filter((entry) => entry.qualified)
+        : monthlyRecords;
+      monthlyBeyondRanks = new Map(monthlyRankedRecords.slice(0, 10).map((entry, index) => [entry.entryId, index + 1]));
       monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
     }
     leaderboardStatus = "ready";
@@ -2842,7 +3374,7 @@ function renderDailyPlayRewardPanel() {
     </div>
     <p class="daily-play-reward-copy">${escapeHtml(statusDetail)}</p>
     <details class="daily-play-reward-details"><summary>全${dailyPlay.tiers.length}段階を見る</summary><ol>${tiers}</ol></details>
-    <p class="daily-play-reward-note">勝敗を問わず、4モードのサーバー検証済み完走が対象です。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
+    <p class="daily-play-reward-note">勝敗を問わず、現在遊べる3モードのサーバー検証済み完走が対象です。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
   </section>`;
 }
 
@@ -4850,7 +5382,7 @@ async function toggleShopProductEquip(productId) {
 }
 
 async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = Date.now()) {
-  if (!uid || !roomId || !LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
+  if (!uid || !roomId || !ACTIVE_BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
   for (let attempt = 0; attempt < 48; attempt += 1) {
     const response = await economyActionCallable({
       action: "record_match",
@@ -4892,6 +5424,9 @@ async function recordPeriodRewardResult(uid, mode, outcome, roomId, timestamp = 
     } else {
       const progressMessage = dailyPlayProgressMessage(dailyPlay);
       if (progressMessage) showToast(progressMessage);
+    }
+    if (result.crownRun) {
+      applyCrownRunToRankingDashboard(result.crownRun);
     }
     return {
       ...result,
@@ -5035,7 +5570,7 @@ function periodLeaderboardRecord(current, outcome = null, mode = "solo", profile
   if (current?.appliedResults && typeof current.appliedResults === "object") {
     record.appliedResults = { ...current.appliedResults };
   }
-  if (["win", "loss", "draw"].includes(outcome) && LEADERBOARD_MODES.includes(mode)) {
+  if (["win", "loss", "draw"].includes(outcome) && ACTIVE_BATTLE_MODES.includes(mode)) {
     if (outcome === "win") record.wins += 1;
     else if (outcome === "loss") record.losses += 1;
     else record.draws += 1;
@@ -5076,7 +5611,9 @@ async function recordLeaderboardPeriodResult(
   roomId = "",
   resultToken = "",
 ) {
-  if (!LEADERBOARD_PERIODS.length || !["win", "loss", "draw"].includes(outcome) || !LEADERBOARD_MODES.includes(mode)) return;
+  if (!LEADERBOARD_PERIODS.length
+      || !["win", "loss", "draw"].includes(outcome)
+      || !CROWN_CIRCUIT_MODES.includes(mode)) return;
   const entryId = await ensureLeaderboardIdentityForUser(uid);
   const timestamp = serverNow();
   await Promise.all(LEADERBOARD_PERIODS.map(async (period) => {
@@ -5267,7 +5804,7 @@ async function recordOverallResult({
   sourceState = state,
   deferPublicSync = false,
 } = {}) {
-  if (!LEADERBOARD_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
+  if (!ACTIVE_BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
   await setPersistence(auth, browserLocalPersistence);
   const user = auth.currentUser || (await signInAnonymously(auth)).user;
   await economyActionCallable({ action: "initialize" });
@@ -5431,6 +5968,10 @@ async function setOverallRankingParticipation(enabled, name = "") {
     const saved = getOverallRankingPreference();
     applyOverallRankingPreferenceToState(saved);
     dispatchOverallRankingPreference(saved);
+    Promise.all([
+      refreshOverallLeaderboard(),
+      refreshRankingDashboard(),
+    ]).catch((refreshError) => console.error(refreshError));
     return saved;
   } catch (error) {
     persistOverallRankingPreference(previous);
@@ -5462,6 +6003,11 @@ async function saveOverallRankingPublicSettings({ xHandle = "", xPublic = false,
     const saved = getOverallRankingPreference();
     applyOverallRankingPreferenceToState(saved);
     dispatchOverallRankingPreference(saved);
+    Promise.all([
+      refreshOverallLeaderboard(),
+      refreshRankingDashboard(),
+      refreshLeaderboard(leaderboardPeriod),
+    ]).catch((refreshError) => console.error(refreshError));
     return saved;
   } catch (error) {
     persistOverallRankingPreference(previous);
@@ -9696,6 +10242,10 @@ window.HariaiOnline = {
   destroyRoom,
   getLobbyStats,
   getLeaderboard,
+  getOverallLeaderboard,
+  getOverallLeaderboardStatus,
+  getRankingDashboard,
+  getRankingDashboardStatus,
   getLeaderboardStatus,
   getLeaderboardPeriodInfo,
   getLeaderboardLoadedPeriod,
@@ -9705,7 +10255,12 @@ window.HariaiOnline = {
   getMonthlyBeyondPeriodKey,
   getP2pIceConfiguration: loadP2pIceServers,
   isServerRankingPeriod,
+  isCrownCircuitPeriod,
   refreshLeaderboard,
+  refreshOverallLeaderboard,
+  refreshRankingDashboard,
+  startCrownRun,
+  setCrownCustomization,
   getTopMessages,
   getTopMessagesStatus,
   getMutedTopMessageCount,

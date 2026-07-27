@@ -44,12 +44,16 @@ test("normal and overall profiles protect server projection fences while accepti
     "draw",
   ]);
   assert.match(rules.overallProfiles.$uid.lastResultRoomId[".validate"], /\{20\}/);
-  includesAll(rules.overallProfiles.$uid.lastResultMode[".validate"], [
+  const overallLastResultMode = rules.overallProfiles.$uid.lastResultMode[".validate"];
+  includesAll(overallLastResultMode, [
     "solo",
     "strategy",
     "team",
-    "royale",
+    "data.exists()",
+    "data.val() === 'royale'",
+    "newData.val() === data.val()",
   ]);
+  assert.doesNotMatch(overallLastResultMode, /newData\.val\(\) === 'royale'/);
   includesAll(rules.overallProfiles.$uid.lastResultOutcome[".validate"], [
     "win",
     "loss",
@@ -57,7 +61,16 @@ test("normal and overall profiles protect server projection fences while accepti
   ]);
   const periodEntry = rules.leaderboardPeriods.$period.$periodKey.$entryId;
   assert.match(periodEntry.lastResultRoomId[".validate"], /\{20\}/);
-  includesAll(periodEntry.lastResultMode[".validate"], ["solo", "strategy", "team", "royale"]);
+  const periodLastResultMode = periodEntry.lastResultMode[".validate"];
+  includesAll(periodLastResultMode, [
+    "solo",
+    "strategy",
+    "team",
+    "data.exists()",
+    "data.val() === 'royale'",
+    "newData.val() === data.val()",
+  ]);
+  assert.doesNotMatch(periodLastResultMode, /newData\.val\(\) === 'royale'/);
   includesAll(periodEntry.lastResultOutcome[".validate"], ["win", "loss", "draw"]);
   for (const appliedResults of [
     rules.profiles.$uid.appliedResults.$resultToken,
@@ -70,6 +83,50 @@ test("normal and overall profiles protect server projection fences while accepti
       "loss",
       "draw",
       "!data.exists()",
+      "newData.val() === data.val()",
+    ]);
+  }
+});
+
+test("retired royale counters are history-only in client-writable profiles", () => {
+  includesAll(rules.overallProfiles.$uid[".validate"], [
+    "data.child('modes/royale').exists()",
+    "newData.child('modes/royale/wins').val() === data.child('modes/royale/wins').val()",
+    "!data.child('modes/royale').exists()",
+    "newData.child('modes/royale/wins').val() === 0",
+    "newData.child('lastResultMode').val() === 'royale'",
+    "data.child('lastResultMode').val() === 'royale'",
+  ]);
+  const overallMode = rules.overallProfiles.$uid.modes.$mode[".validate"];
+  includesAll(overallMode, [
+    "$mode !== 'royale'",
+    "!data.exists()",
+    "newData.child('wins').val() === 0",
+    "newData.child('losses').val() === 0",
+    "newData.child('draws').val() === 0",
+    "newData.child('matches').val() === 0",
+    "newData.child('points').val() === 0",
+    "newData.child('wins').val() === data.child('wins').val()",
+    "newData.child('points').val() === data.child('points').val()",
+  ]);
+
+  const periodEntry = rules.leaderboardPeriods.$period.$periodKey.$entryId;
+  includesAll(periodEntry[".validate"], [
+    "data.child('modePoints/royale').exists()",
+    "newData.child('modePoints/royale').val() === data.child('modePoints/royale').val()",
+    "!data.child('modeMatches/royale').exists()",
+    "newData.child('modeMatches/royale').val() === 0",
+    "newData.child('lastResultMode').val() === 'royale'",
+    "data.child('lastResultMode').val() === 'royale'",
+  ]);
+  for (const counterRules of [
+    periodEntry.modePoints.royale,
+    periodEntry.modeMatches.royale,
+  ]) {
+    includesAll(counterRules[".validate"], [
+      "!data.exists()",
+      "newData.val() === 0",
+      "data.exists()",
       "newData.val() === data.val()",
     ]);
   }

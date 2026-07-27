@@ -42,10 +42,10 @@ import {
 import {
   getPlayerTitlePresentation,
   getPlayerTitleProduct,
-} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1";
+} from "./player-titles.js?v=player-titles-v2-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 import {
   getStamp,
-} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1";
+} from "./stamps.js?v=stamps-v1-oshi-jouzu-duo-v1-restore-v1-remove-royale-v1";
 
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const MARKET_ROLE_KEY = "hariai-stadium-value-market-role-v1";
@@ -1345,7 +1345,7 @@ async function start({ initialScreen = "setup" } = {}) {
     return;
   }
   if (window.HariaiOnline?.isActive?.() || window.HariaiStrategy?.isActive?.()
-      || window.HariaiTeam?.isActive?.() || window.HariaiRoyale?.isActive?.()) {
+      || window.HariaiTeam?.isActive?.()) {
     showToast("ほかのモードを終了してからVALUE MARKETを開始してください。");
     return;
   }

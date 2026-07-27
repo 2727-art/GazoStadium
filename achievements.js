@@ -14,6 +14,7 @@
     description,
     hint = `${familyLabel}を続けると解除`,
     autoPublic = true,
+    legacy = false,
   }) => {
     thresholds.forEach((target, index) => definitions.push(Object.freeze({
       id: `${family}_${target}`,
@@ -28,6 +29,7 @@
       description: description(target),
       hint,
       autoPublic,
+      legacy,
     })));
   };
 
@@ -46,7 +48,6 @@
     ["solo", "通常型1on1", "◆", ["通常型の一歩", "スタンダード見習い", "通常型の常連", "五十戦の貼り手", "通常型百景", "スタンダードの主", "千試合の定番"]],
     ["strategy", "戦略型1on1", "◇", ["弱点捜査開始", "読み合い見習い", "読み合いの常連", "五十の読み筋", "読み合い百景", "戦略型の主", "千回の読み合い"]],
     ["team", "2on2", "∞", ["相棒募集中", "連携見習い", "チームの常連", "五十の共闘", "連携百景", "2on2の主", "千回の共闘"]],
-    ["royale", "バトルロワイヤル", "♛", ["四人寄れば", "混戦見習い", "混戦の常連", "五十の乱戦", "乱戦百景", "BRの主", "千回の混戦"]],
   ].forEach(([mode, label, icon, names]) => addSeries({
     scope: "battle",
     category: "battle_modes",
@@ -80,11 +81,43 @@
     familyLabel: "モード回遊",
     icon: "✦",
     thresholds: [1, 5, 20, 50, 100],
-    names: ["四つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
-    description: (target) => `4種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
+    names: ["三つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
+    description: (target) => `3種類のオンライン対戦モードをそれぞれ${target}試合完走した`,
     hint: "いつもと違う入口へ行くと解除",
   });
   definitions.splice(varietyStart, 5, ...definitions.slice(varietyStart, varietyStart + 5).map((definition, index) => Object.freeze({
+    ...definition,
+    id: `battle_variety_three_${definition.target}`,
+    level: index + 2,
+  })));
+
+  addSeries({
+    scope: "battle",
+    category: "battle_modes",
+    family: "battle_royale",
+    familyLabel: "バトルロワイヤル（終了）",
+    icon: "♛",
+    thresholds: [1, 5, 20, 50, 100, 300, 1000],
+    names: ["四人寄れば", "混戦見習い", "混戦の常連", "五十の乱戦", "乱戦百景", "BRの主", "千回の混戦"],
+    description: (target) => `終了したバトルロワイヤルを${target}試合完走した記録`,
+    hint: "終了したモードの記録",
+    legacy: true,
+  });
+
+  const legacyVarietyStart = definitions.length;
+  addSeries({
+    scope: "battle",
+    category: "battle_variety",
+    family: "battle_variety_legacy",
+    familyLabel: "旧4モード回遊",
+    icon: "✦",
+    thresholds: [1, 5, 20, 50, 100],
+    names: ["四つの入口", "全方位型・初級", "全方位型・中級", "全方位型・上級", "スタジアムの旅人"],
+    description: (target) => `旧4種類のオンライン対戦モードをそれぞれ${target}試合完走した記録`,
+    hint: "終了したモードを含む記録",
+    legacy: true,
+  });
+  definitions.splice(legacyVarietyStart, 5, ...definitions.slice(legacyVarietyStart, legacyVarietyStart + 5).map((definition, index) => Object.freeze({
     ...definition,
     id: `battle_variety_all_${definition.target}`,
     level: index + 2,
@@ -217,7 +250,7 @@
   const byId = new Map(catalog.map((definition) => [definition.id, definition]));
   const categoryInfo = Object.freeze([
     { id: "battle_record", label: "通算対戦", copy: "勝敗に関係なく、正式な対戦を完走した記録" },
-    { id: "battle_modes", label: "モード別", copy: "4種類のオンライン対戦で遊んだ記録" },
+    { id: "battle_modes", label: "モード別", copy: "現在遊べる3種類のオンライン対戦と、解除済みの旧モード記録" },
     { id: "battle_variety", label: "モード回遊", copy: "複数の入口を訪れたオールラウンダーの記録" },
     { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も貼り続けた記録" },
     { id: "battle_days", label: "継続", copy: "異なる日にスタジアムへ戻ってきた記録" },
@@ -271,7 +304,8 @@
       customShowcase: canonicalShowcase(value?.customShowcase, unlocked),
       showcase: normalizeIds(value?.showcase, MAX_SHOWCASE).filter((id) => unlocked[id]),
       unlockedCount: Math.max(Object.keys(unlocked).length, Number(value?.unlockedCount || 0)),
-      totalCount: catalog.length,
+      totalCount: catalog.filter((definition) => !definition.legacy).length
+        + Object.keys(unlocked).filter((id) => byId.get(id)?.legacy === true).length,
       stats: value?.stats && typeof value.stats === "object" ? value.stats : {},
     };
   }
@@ -300,11 +334,17 @@
     const highest = highestUnlockedByFamily(profile);
     const showcased = new Set(profile.showcase);
     const sections = categoryInfo.map((category) => {
-      const families = [...new Set(catalog.filter((definition) => definition.category === category.id).map((definition) => definition.family))];
+      const families = [...new Set(catalog
+        .filter((definition) => definition.category === category.id
+          && (!definition.legacy || profile.unlocked[definition.id]))
+        .map((definition) => definition.family))];
       const cards = families.map((family) => {
         const familyDefinitions = catalog.filter((definition) => definition.family === family).sort((a, b) => a.level - b.level);
         const current = highest.get(family);
-        const next = current
+        const legacyFamily = familyDefinitions.every((definition) => definition.legacy);
+        const next = legacyFamily
+          ? null
+          : current
           ? familyDefinitions.find((definition) => definition.level > current.level)
           : familyDefinitions[0];
         const selected = current && showcased.has(current.id);
@@ -315,7 +355,7 @@
             <span>${escapeHtml(current?.familyLabel || next?.familyLabel || "隠し実績")}</span>
             <h3>${current ? escapeHtml(current.name) : "？？？"}</h3>
             <p>${current ? escapeHtml(current.description) : escapeHtml(next?.hint || "遊び続けると解除")}</p>
-            <small>${current ? `Lv.${current.level} / ${familyDefinitions.at(-1).level}` : `未解除 / 最大Lv.${familyDefinitions.at(-1).level}`}${next && current ? "・次の条件は非公開" : ""}</small>
+            <small>${legacyFamily ? "終了モードの記録" : `${current ? `Lv.${current.level} / ${familyDefinitions.at(-1).level}` : `未解除 / 最大Lv.${familyDefinitions.at(-1).level}`}${next && current ? "・次の条件は非公開" : ""}`}</small>
           </div>
           ${current ? `<button class="achievement-showcase-toggle ${selected ? "is-selected" : ""}" type="button" data-achievement-showcase="${escapeHtml(current.id)}" aria-pressed="${selected}">${selected ? "展示中" : "展示する"}</button>` : ""}
         </article>`;

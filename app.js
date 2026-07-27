@@ -31,6 +31,21 @@
     max: 3000,
     range: "1400+ / 月間TOP10",
   });
+  const CROWN_SIGNATURES = Object.freeze({
+    upset: Object.freeze({ label: "番狂わせ", icon: "⚡", description: "期待勝率25％以下の相手に勝利" }),
+    triple_unbeaten: Object.freeze({ label: "三戦無敗", icon: "✦", description: "三戦証明を無敗で完走" }),
+    dual_mode: Object.freeze({ label: "両門踏破", icon: "◆", description: "通常型と戦略型の両方で証明" }),
+    daily_champion: Object.freeze({ label: "デイリー王者", icon: "♛", description: "その日の第1王座を獲得" }),
+    weekly_champion: Object.freeze({ label: "週間王者", icon: "♛", description: "週間王座サーキット1位" }),
+    monthly_champion: Object.freeze({ label: "月間王者", icon: "✺", description: "月間王座サーキット1位" }),
+  });
+  const CROWN_THEMES = Object.freeze({
+    rose: "ローズ",
+    aqua: "アクア",
+    violet: "バイオレット",
+    gold: "ゴールド",
+  });
+  const CROWN_CIRCUIT_START_LABEL = "2026年7月28日";
   const CREATOR_CARD_TYPES = Object.freeze({
     illustration: Object.freeze({ label: "イラスト", icon: "✦" }),
     photo: Object.freeze({ label: "写真", icon: "▣" }),
@@ -836,7 +851,6 @@
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
     const teamStats = modeStats("team");
-    const royaleStats = modeStats("royale");
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
     const statValue = (value) => Number.isInteger(value) ? value : "--";
@@ -847,7 +861,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           お気に入りの画像を5枚選んで、知らない誰かと楽しく採点。
-          1on1、三人で遊ぶふたりチャレンジ、4人バトルロワイヤル、AnjuPayで推し値を競う市場に加え、
+          1on1、三人で遊ぶふたりチャレンジ、AnjuPayで推し値を競う市場に加え、
           勝敗をつけず会話とネタを貼り合う「貼り合い自由卓」も選べます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
@@ -857,7 +871,6 @@
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
           <button class="button button-cyan hero-mode-button" id="teamBattleButton"><small>ひとりの推し技、ふたりの推し愛。</small><span>推し上手！ふたりチャレンジ</span></button>
-          <button class="button button-royale hero-mode-button" id="royaleBattleButton"><small>最後のひとりへ</small><span>4人バトルロワイヤル</span></button>
           <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
@@ -882,10 +895,6 @@
           <article class="lobby-mode-card team"><div class="lobby-mode-head"><span>ふたりチャレンジ</span><small>1 vs 2</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbyTeamWaitingCount">${statValue(teamStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyTeamPlayingCount">${statValue(teamStats.playing)}</span><em>人</em></strong></div>
-          </div></article>
-          <article class="lobby-mode-card royale"><div class="lobby-mode-head"><span>BATTLE ROYALE</span><small>4 PLAYER</small></div><div class="lobby-mode-counts">
-            <div><small>待機中</small><strong><span id="lobbyRoyaleWaitingCount">${statValue(royaleStats.waiting)}</span><em>人</em></strong></div>
-            <div><small>対戦中</small><strong><span id="lobbyRoyalePlayingCount">${statValue(royaleStats.playing)}</span><em>人</em></strong></div>
           </div></article>
           <article class="lobby-mode-card free-table-status"><div class="lobby-mode-head"><span>貼り合い自由卓</span><small>FREE TABLE</small></div><div class="lobby-mode-counts">
             <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
@@ -922,7 +931,6 @@
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#teamBattleButton")?.addEventListener("click", startTeamBattle);
-    document.querySelector("#royaleBattleButton")?.addEventListener("click", startRoyaleBattle);
     document.querySelector("#freeTableButton")?.addEventListener("click", startFreeTable);
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
@@ -1117,6 +1125,194 @@
     }).format(new Date(Number(timestamp)));
   }
 
+  function renderRankingXLink(entry, { featured = false } = {}) {
+    const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry?.xHandle || ""))
+      ? String(entry.xHandle)
+      : "";
+    if (!xHandle) return "";
+    const label = featured ? `Xで見る @${xHandle}` : `X @${xHandle}`;
+    return `<a class="ranking-x-link ${featured ? "is-featured" : ""}" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer nofollow ugc" referrerpolicy="no-referrer">${escapeHtml(label)}</a>`;
+  }
+
+  function crownSignaturePresentation(value) {
+    return CROWN_SIGNATURES[String(value || "")] || null;
+  }
+
+  function renderCrownSignature(entry, { large = false } = {}) {
+    const signature = crownSignaturePresentation(entry?.crownSignatureId);
+    if (!signature) return "";
+    const theme = Object.hasOwn(CROWN_THEMES, entry?.crownTheme) ? entry.crownTheme : "rose";
+    return `<span class="ranking-signature crown-theme-${escapeHtml(theme)} ${large ? "is-large" : ""}" title="${escapeHtml(signature.description)}"><i aria-hidden="true">${escapeHtml(signature.icon)}</i><span><small>SIGNATURE</small>${escapeHtml(signature.label)}</span></span>`;
+  }
+
+  function renderOverallLeaderboardSection() {
+    const entries = window.HariaiOnline?.getOverallLeaderboard?.() || [];
+    const status = window.HariaiOnline?.getOverallLeaderboardStatus?.() || "idle";
+    const dashboard = window.HariaiOnline?.getRankingDashboard?.();
+    const ownEntryId = String(dashboard?.entryId || "");
+    const rows = entries.length ? entries.map((entry, index) => {
+      const entryId = String(entry.entryId || "");
+      const expanded = expandedRankingEntryId === entryId;
+      const commentsEnabled = entry.commentsEnabled !== false;
+      const overallRating = normalizeOverallRating(entry.rating);
+      const monthlyBeyondRank = Number(window.HariaiOnline?.getMonthlyBeyondRank?.(entryId, overallRating) || 0);
+      const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
+      const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
+      const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
+      const activeAward = entry.rankingAwardLabel && Number(entry.rankingAwardUntil || 0) > Date.now()
+        ? `<span class="ranking-award-earned">${escapeHtml(entry.rankingAwardLabel)}</span>`
+        : "";
+      const theme = Object.hasOwn(CROWN_THEMES, entry.crownTheme) ? entry.crownTheme : "rose";
+      return `<article class="ranking-entry overall-ranking-entry ranking-class-${ratingClass.key} crown-theme-${escapeHtml(theme)} ${entryId === ownEntryId ? "is-self" : ""} ${expanded ? "is-expanded" : ""}">
+        <div class="ranking-row">
+          <strong class="ranking-position">#${index + 1}</strong>
+          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${Math.max(0, Number(entry.serverMatches || 0))}戦の検証済みRATE</small>${activeAward}${renderCrownSignature(entry)}${achievementBadges}</div>
+          <div class="ranking-rating"><strong>${overallRating}</strong><small>OVERALL RATE</small></div>
+          <div class="ranking-record"><span>${entryId === ownEntryId ? "あなたの現在席" : `上位 ${index + 1}席`}</span><div class="ranking-overall-rate">${ratingClassBadge}</div></div>
+          <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
+        </div>
+        ${expanded ? renderRankingCommentPanel(entry) : ""}
+      </article>`;
+    }).join("") : status === "error"
+      ? `<div class="ranking-empty">総合RATEランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="overallRankingRetryButton">もう一度取得</button></div>`
+      : status === "ready"
+        ? `<div class="ranking-empty">総合RATEを公開しているプレイヤーはまだいません。</div>`
+        : `<div class="ranking-empty">総合RATEランキングを取得しています…</div>`;
+    return `<section class="ranking-overall-section" aria-labelledby="overallRateRankingTitle">
+      <div class="ranking-board-head"><div><span class="eyebrow">PERMANENT STRENGTH / TOP 50</span><h2 id="overallRateRankingTitle">総合RATEランキング</h2></div><p>期間でリセットされない、通常型・戦略型1on1の強さです。</p></div>
+      <div class="ranking-list" aria-label="総合RATEランキング">${rows}</div>
+    </section>`;
+  }
+
+  function renderRankingSpotlight() {
+    const dashboard = window.HariaiOnline?.getRankingDashboard?.();
+    const spotlight = dashboard?.spotlight;
+    if (!spotlight || (Number(spotlight.endsAt || 0) > 0 && Number(spotlight.endsAt) <= Date.now())) return "";
+    const periodLabel = spotlight.period === "monthly"
+      ? "MONTHLY CHAMPION"
+      : spotlight.period === "weekly"
+        ? "WEEKLY CHAMPION"
+        : "TODAY'S CROWN";
+    const score = spotlight.period === "daily"
+      ? Number(spotlight.crownPower || spotlight.rating || 1000)
+      : Number(spotlight.circuitScore || 0);
+    const scoreLabel = spotlight.period === "daily" ? "PROOF RATE" : "CIRCUIT SCORE";
+    const earnedSignatures = (spotlight.signatureIds || []).map((id) => {
+      const signature = crownSignaturePresentation(id);
+      return signature
+        ? `<span title="${escapeHtml(signature.description)}">${escapeHtml(signature.icon)} ${escapeHtml(signature.label)}</span>`
+        : "";
+    }).join("");
+    const theme = Object.hasOwn(CROWN_THEMES, spotlight.crownTheme) ? spotlight.crownTheme : "rose";
+    return `<section class="crown-spotlight crown-theme-${escapeHtml(theme)}" aria-labelledby="crownSpotlightTitle">
+      <div class="crown-spotlight-copy"><span class="eyebrow">24H X SPOTLIGHT</span><h2 id="crownSpotlightTitle">${escapeHtml(periodLabel)} — ${escapeHtml(spotlight.name)}</h2><p>王座を証明したプレイヤーのXを、24時間だけ主役席に掲示します。</p>${earnedSignatures ? `<div class="crown-proof-signatures">${earnedSignatures}</div>` : ""}</div>
+      <div class="crown-spotlight-score"><strong>${score}</strong><small>${escapeHtml(scoreLabel)}</small>${renderCrownSignature(spotlight, { large: true })}</div>
+      ${renderRankingXLink(spotlight, { featured: true })}
+    </section>`;
+  }
+
+  function renderCrownRunPanel(dashboard) {
+    const statusState = window.HariaiOnline?.getRankingDashboardStatus?.() || { status: "idle", busy: false };
+    const dailyInfo = window.HariaiOnline?.getLeaderboardPeriodInfo?.("daily") || {};
+    const run = dashboard?.run || null;
+    const enabled = dashboard?.enabled === true;
+    const count = Math.min(3, Math.max(0, Number(run?.matchCount || 0)));
+    const runStatus = run?.status || "idle";
+    const complete = runStatus === "complete" || runStatus === "finalized";
+    const active = runStatus === "active";
+    const crownPower = Number(run?.crownPower || dashboard?.overall?.rating || 1000);
+    const startRating = Number(run?.ratingAtStart || dashboard?.overall?.rating || 1000);
+    const progress = Math.round((count / 3) * 100);
+    let action = "";
+    let statusCopy = "好きな時間に開始し、その後の検証済み3試合だけで今日の席を決めます。";
+    if (!dailyInfo.crownCircuit) {
+      statusCopy = `三戦証明は${escapeHtml(CROWN_CIRCUIT_START_LABEL)}から始まります。`;
+      action = `<button class="button button-primary" type="button" disabled>開始前です</button>`;
+    } else if (!enabled) {
+      statusCopy = "ランキング参加を有効にすると、今日の三戦証明を始められます。";
+      action = `<button class="button button-primary" type="button" disabled>ランキング参加後に挑む</button>`;
+    } else if (!run || runStatus === "idle" || runStatus === "expired") {
+      action = `<button class="button button-primary" id="crownRunStartButton" type="button" ${statusState.busy ? "disabled" : ""}>今日の三戦証明を始める</button>`;
+    } else if (active) {
+      statusCopy = `次の正式対戦が${count + 1}戦目です。同じ相手は1日2戦まで。NO CONTESTは消費しません。`;
+      action = `<div class="crown-run-mode-actions"><button class="button button-primary" id="crownRunSoloButton" type="button">通常型1on1へ</button><button class="button button-strategy" id="crownRunStrategyButton" type="button">戦略型1on1へ</button></div>`;
+    } else if (complete) {
+      const seat = Number(run.rank || 0) > 0 ? ` / 暫定 第${Number(run.rank)}王座` : "";
+      statusCopy = `今日の証明RATE ${crownPower}${seat}。4戦目以降は今日の王座へ影響しません。`;
+      action = `<div class="crown-run-complete"><strong>PROOF COMPLETE</strong><span>${run.spotlightEligible ? "Xスポットライト条件を満たしています" : "順位記録は有効です"}</span></div>`;
+    }
+    const earned = (run?.signatureIds || []).map((id) => {
+      const signature = crownSignaturePresentation(id);
+      return signature ? `<span title="${escapeHtml(signature.description)}">${escapeHtml(signature.icon)} ${escapeHtml(signature.label)}</span>` : "";
+    }).join("");
+    return `<section class="crown-proof-panel ${complete ? "is-complete" : active ? "is-active" : ""}" aria-labelledby="crownProofTitle">
+      <div class="crown-proof-head"><div><span class="eyebrow">DAILY PROOF RUN</span><h2 id="crownProofTitle">今日の三戦証明</h2></div><strong>${count}<small>/3戦</small></strong></div>
+      <div class="crown-proof-meter" role="progressbar" aria-label="三戦証明の進捗" aria-valuemin="0" aria-valuemax="3" aria-valuenow="${count}"><i style="width:${progress}%"></i></div>
+      <div class="crown-proof-stats"><span><small>開始RATE</small><strong>${startRating}</strong></span><span><small>${complete ? "証明RATE" : "暫定証明RATE"}</small><strong>${crownPower}</strong></span><span><small>異なる相手</small><strong>${Number(run?.uniqueOpponents || 0)}人</strong></span></div>
+      <p>${statusCopy}${run?.endsAt ? ` 締切 ${escapeHtml(rankingResetLabel(run.endsAt))}` : ""}</p>
+      ${earned ? `<div class="crown-proof-signatures" aria-label="今回解除したSIGNATURE">${earned}</div>` : ""}
+      ${action}
+    </section>`;
+  }
+
+  function renderCrownCustomization(dashboard) {
+    if (!dashboard?.enabled) return "";
+    const customization = dashboard.customization || {};
+    const selectedTheme = Object.hasOwn(CROWN_THEMES, customization.crownTheme)
+      ? customization.crownTheme
+      : "rose";
+    const availableThemes = Array.isArray(customization.availableThemes) && customization.availableThemes.length
+      ? customization.availableThemes.filter((theme) => Object.hasOwn(CROWN_THEMES, theme))
+      : Object.keys(CROWN_THEMES);
+    const availableSignatureIds = Array.isArray(customization.availableSignatureIds)
+      ? customization.availableSignatureIds.filter((id) => crownSignaturePresentation(id))
+      : [];
+    const selectedSignatureId = crownSignaturePresentation(customization.crownSignatureId)
+      ? customization.crownSignatureId
+      : "";
+    const themeOptions = availableThemes.map((theme) => `<option value="${escapeHtml(theme)}" ${theme === selectedTheme ? "selected" : ""}>${escapeHtml(CROWN_THEMES[theme])}</option>`).join("");
+    const signatureOptions = [
+      `<option value="" ${selectedSignatureId ? "" : "selected"}>SIGNATUREを表示しない</option>`,
+      ...availableSignatureIds.map((id) => `<option value="${escapeHtml(id)}" ${id === selectedSignatureId ? "selected" : ""}>${escapeHtml(CROWN_SIGNATURES[id].label)}</option>`),
+    ].join("");
+    return `<section class="crown-customization crown-theme-${escapeHtml(selectedTheme)}" aria-labelledby="crownCustomizationTitle">
+      <div><span class="eyebrow">CROWN CUSTOMIZATION</span><h3 id="crownCustomizationTitle">王座の見せ方</h3><p>獲得済みのSIGNATUREと王座色を、自分で選んで公開できます。</p></div>
+      <div class="crown-customization-controls"><label>王座色<select id="crownThemeSelect">${themeOptions}</select></label><label>SIGNATURE<select id="crownSignatureSelect">${signatureOptions}</select></label><button class="button button-ghost button-small" id="crownCustomizationSave" type="button">表示を保存</button></div>
+    </section>`;
+  }
+
+  function renderRankingDashboardPanel() {
+    const dashboard = window.HariaiOnline?.getRankingDashboard?.();
+    const statusState = window.HariaiOnline?.getRankingDashboardStatus?.() || { status: "idle", error: "", busy: false };
+    if (!dashboard && (statusState.status === "idle" || statusState.status === "loading")) {
+      return `<section class="ranking-dashboard is-loading"><p>自分の順位と三戦証明を読み込んでいます…</p></section>`;
+    }
+    if (!dashboard && statusState.status === "error") {
+      return `<section class="ranking-dashboard is-error"><p>${escapeHtml(statusState.error || "自分の順位情報を取得できませんでした。")}</p><button class="button button-ghost button-small" id="rankingDashboardRetryButton" type="button">もう一度取得</button></section>`;
+    }
+    const overall = dashboard?.overall || {};
+    const rank = Number(overall.rank || 0);
+    const participants = Number(overall.participantCount || 0);
+    const topPercent = rank > 0 && participants > 0
+      ? Math.max(1, Math.ceil(Number(overall.topPercent || (rank / participants) * 100)))
+      : 0;
+    const neighbors = Array.isArray(overall.neighbors) ? overall.neighbors : [];
+    const neighborRows = neighbors.length ? neighbors.map((entry) => {
+      const own = String(entry.entryId || "") === String(dashboard.entryId || "");
+      return `<li class="${own ? "is-self" : ""}"><strong>#${Number(entry.rank || 0) || "—"}</strong><span>${escapeHtml(entry.name)}${own ? "<small>あなた</small>" : ""}</span><b>${Number(entry.rating || 1000)}<small>RATE</small></b></li>`;
+    }).join("") : `<li class="is-empty">前後席は正式順位が付くと表示されます。</li>`;
+    const nextSeatCopy = rank > 1
+      ? `ひとつ上の席まで <strong>+${Math.max(1, Number(overall.nextSeatGap || 1))} RATE</strong>`
+      : rank === 1 ? "<strong>現在、第1席です</strong>" : "正式順位を測定中です";
+    return `<section class="ranking-dashboard" aria-labelledby="rankingDashboardTitle">
+      <div class="ranking-dashboard-head"><div><span class="eyebrow">YOUR RIVAL ZONE</span><h2 id="rankingDashboardTitle">あなたの現在地</h2></div><div class="ranking-dashboard-rank"><strong>${rank ? `#${rank}` : "—"}</strong><span>${topPercent ? `上位${topPercent}%` : "測定中"}</span></div></div>
+      <div class="ranking-dashboard-summary"><span><small>総合RATE</small><strong>${Number(overall.rating || 1000)}</strong></span><span><small>自己最高</small><strong>${Number(overall.bestRank || 0) ? `#${Number(overall.bestRank)}` : "—"}</strong></span><p>${nextSeatCopy}</p></div>
+      <ol class="ranking-neighbor-list" aria-label="自分の前後3人">${neighborRows}</ol>
+      ${renderCrownRunPanel(dashboard)}
+      ${renderCrownCustomization(dashboard)}
+    </section>`;
+  }
+
   function rankingAwardPreview(periodInfo, rank, matches) {
     if (!periodInfo.serverAuthoritative) return "";
     const minimum = Number(periodInfo.awardMinimumMatches || 1);
@@ -1158,7 +1354,7 @@
     const champions = records.slice(0, 6).map((record) => `<li>
       <span>${escapeHtml(record.key)}</span>
       <strong>${escapeHtml(record.name)}</strong>
-      <small>${record.points}点・${record.wins}勝 ${record.losses}敗 ${record.draws}分・参加${record.participants}人</small>
+      <small>${record.crownCircuit ? `王座スコア ${Number(record.circuitScore || 0)}・BEST証明RATE ${Number(record.bestCrownPower || record.rating || 1000)}` : `${record.points}点・${record.wins}勝 ${record.losses}敗 ${record.draws}分`}・参加${record.participants}人</small>
     </li>`).join("");
     return `<section class="ranking-hall-of-fame" aria-labelledby="rankingHallTitle">
       <div><span class="eyebrow">MONTHLY HALL OF FAME</span><h2 id="rankingHallTitle">歴代月間王者</h2></div>
@@ -1175,6 +1371,12 @@
     window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod);
   }
 
+  function refreshRankingSurfaces() {
+    refreshSelectedRankingPeriod();
+    window.HariaiOnline?.refreshOverallLeaderboard?.();
+    window.HariaiOnline?.refreshRankingDashboard?.();
+  }
+
   function selectRankingPeriod(period) {
     if (!["daily", "weekly", "monthly"].includes(period) || period === rankingPeriod) return;
     rankingPeriod = period;
@@ -1189,7 +1391,46 @@
     if (
       (info.key && info.key !== rankingDisplayedPeriodKey)
       || (monthlyInfo?.key && monthlyInfo.key !== loadedMonthlyKey)
-    ) refreshSelectedRankingPeriod();
+    ) refreshRankingSurfaces();
+  }
+
+  async function beginDailyCrownRun() {
+    try {
+      setBusy(true, "今日の三戦証明を準備しています…");
+      await window.HariaiOnline?.startCrownRun?.();
+      showToast("三戦証明を開始しました。次の正式対戦から3試合を記録します。");
+    } catch (error) {
+      showToast(error?.message || "三戦証明を開始できませんでした。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveCrownCustomization() {
+    const crownTheme = document.querySelector("#crownThemeSelect")?.value || "rose";
+    const crownSignatureId = document.querySelector("#crownSignatureSelect")?.value || "";
+    try {
+      setBusy(true, "王座の見せ方を保存しています…");
+      await window.HariaiOnline?.setCrownCustomization?.({ crownTheme, crownSignatureId });
+      showToast("王座の見せ方を保存しました。");
+    } catch (error) {
+      showToast(error?.message || "王座の見せ方を保存できませんでした。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function bindRankingDashboardEvents() {
+    document.querySelector("#rankingDashboardRetryButton")?.addEventListener("click", () => {
+      window.HariaiOnline?.refreshRankingDashboard?.();
+    });
+    document.querySelector("#overallRankingRetryButton")?.addEventListener("click", () => {
+      window.HariaiOnline?.refreshOverallLeaderboard?.();
+    });
+    document.querySelector("#crownRunStartButton")?.addEventListener("click", beginDailyCrownRun);
+    document.querySelector("#crownRunSoloButton")?.addEventListener("click", startOnlineBattle);
+    document.querySelector("#crownRunStrategyButton")?.addEventListener("click", startStrategyLab);
+    document.querySelector("#crownCustomizationSave")?.addEventListener("click", saveCrownCustomization);
   }
 
   function renderRankingScreen({ refresh = false, preserveScroll = false } = {}) {
@@ -1203,18 +1444,6 @@
     const periodInfo = rankingPeriodInfo();
     const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
     const rows = entries.length ? entries.map((entry, index) => {
-      const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
-      const hasModePoints = entry.modePoints && typeof entry.modePoints === "object";
-      const modePoints = {
-        solo: Number(hasModePoints ? entry.modePoints.solo || 0 : entry.points || 0),
-        strategy: Number(hasModePoints ? entry.modePoints.strategy || 0 : 0),
-        team: Number(hasModePoints ? entry.modePoints.team || 0 : 0),
-        royale: Number(hasModePoints ? entry.modePoints.royale || 0 : 0),
-      };
-      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間スコア"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em><em>ふたり挑戦 ${modePoints.team}</em><em>BR ${modePoints.royale}</em></span>`;
-      const provisional = matches < Number(periodInfo.minimumMatches || 1);
-      const xHandle = /^[A-Za-z0-9_]{1,15}$/.test(String(entry.xHandle || "")) ? String(entry.xHandle) : "";
-      const xLink = xHandle ? `<a class="ranking-x-link" href="https://x.com/${encodeURIComponent(xHandle)}" target="_blank" rel="noopener noreferrer">X&nbsp;@${escapeHtml(xHandle)}</a>` : "";
       const entryId = String(entry.entryId || "");
       const expanded = expandedRankingEntryId === entryId;
       const commentsEnabled = entry.commentsEnabled !== false;
@@ -1223,14 +1452,52 @@
       const ratingClass = monthlyBeyondRank > 0 ? BEYOND_RATING_CLASS : overallRatingClass(overallRating);
       const ratingClassBadge = renderOverallRatingClassBadge(ratingClass, overallRating, { monthlyRank: monthlyBeyondRank });
       const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
-      const awardPreview = rankingAwardPreview(periodInfo, index + 1, matches);
       const activeAward = entry.rankingAwardLabel && Number(entry.rankingAwardUntil || 0) > Date.now()
         ? `<span class="ranking-award-earned">${escapeHtml(entry.rankingAwardLabel)}</span>`
         : "";
+      const theme = Object.hasOwn(CROWN_THEMES, entry.crownTheme) ? entry.crownTheme : "rose";
+      if (periodInfo.crownCircuit) {
+        const proofCount = periodInfo.period === "daily"
+          ? Number(entry.matchCount || 0)
+          : Number(entry.qualifyingCount || 0);
+        const score = periodInfo.period === "daily"
+          ? Number(entry.crownPower || overallRating)
+          : Number(entry.circuitScore || 0);
+        const scoreLabel = periodInfo.period === "daily" ? "PROOF RATE" : "CIRCUIT SCORE";
+        const seat = Number(entry.displayRank || 0);
+        const provisional = entry.qualified !== true;
+        const recordCopy = periodInfo.period === "daily"
+          ? `${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分`
+          : periodInfo.period === "weekly"
+            ? `成立デイリー ${proofCount}日 / BEST ${Number(periodInfo.bestCount || 3)}`
+            : `成立ウィークリー ${proofCount}週 / BEST ${Number(periodInfo.bestCount || 3)}`;
+        const modeBreakdown = periodInfo.period === "daily"
+          ? `<span class="ranking-mode-points" aria-label="証明に使ったモード"><em>通常 ${Number(entry.modeMatches?.solo || 0)}戦</em><em>戦略 ${Number(entry.modeMatches?.strategy || 0)}戦</em></span>`
+          : "";
+        return `<article class="ranking-entry crown-ranking-entry ranking-class-${ratingClass.key} crown-theme-${escapeHtml(theme)} is-server-verified ${provisional ? "is-provisional" : ""} ${expanded ? "is-expanded" : ""}">
+          <div class="ranking-row">
+            <strong class="ranking-position">${seat ? `#${seat}` : "審査中"}</strong>
+            <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${provisional ? `${proofCount}${periodInfo.period === "daily" ? "戦" : periodInfo.period === "weekly" ? "日" : "週"} / 成立条件まで挑戦中` : "王座スコア成立"}</small>${renderCrownSignature(entry)}${achievementBadges}</div>
+            <div class="ranking-rating"><strong>${score}</strong><small>${scoreLabel}</small></div>
+            <div class="ranking-record"><span>${recordCopy}</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
+            <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
+          </div>
+          ${expanded ? renderRankingCommentPanel(entry) : ""}
+        </article>`;
+      }
+      const matches = Number(entry.wins || 0) + Number(entry.losses || 0) + Number(entry.draws || 0);
+      const hasModePoints = entry.modePoints && typeof entry.modePoints === "object";
+      const modePoints = {
+        solo: Number(hasModePoints ? entry.modePoints.solo || 0 : entry.points || 0),
+        strategy: Number(hasModePoints ? entry.modePoints.strategy || 0 : 0),
+      };
+      const modeBreakdown = `<span class="ranking-mode-points" aria-label="モード別期間スコア"><em>通常 ${modePoints.solo}</em><em>戦略 ${modePoints.strategy}</em></span>`;
+      const provisional = matches < Number(periodInfo.minimumMatches || 1);
+      const awardPreview = rankingAwardPreview(periodInfo, index + 1, matches);
       return `<article class="ranking-entry ranking-class-${ratingClass.key} ${periodInfo.serverAuthoritative ? "is-server-verified" : "is-legacy-ranking"} ${expanded ? "is-expanded" : ""}">
         <div class="ranking-row">
           <strong class="ranking-position">${index + 1}</strong>
-          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${xLink}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${activeAward}${awardPreview}${achievementBadges}</div>
+          <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${activeAward}${awardPreview}${achievementBadges}</div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD SCORE</small></div>
           <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
           <button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>
@@ -1240,31 +1507,51 @@
     }).join("") : status === "error"
       ? `<div class="ranking-empty">ランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="rankingRetryButton">もう一度取得</button></div>`
       : status === "ready"
-        ? `<div class="ranking-empty">この期間にはまだ対戦記録がありません。<br />オンライン対戦4モードの完了後に集計されます。</div>`
+        ? `<div class="ranking-empty">${periodInfo.crownCircuit ? "この期間には、まだ成立した王座証明がありません。通常型・戦略型1on1の証明から最初の席が生まれます。" : "この期間にはまだ対戦記録がありません。"}</div>`
         : `<div class="ranking-empty">ランキングを取得しています…</div>`;
+    const periodScoreCopy = periodInfo.crownCircuit
+      ? periodInfo.period === "daily"
+        ? "宣言後の3戦だけ ／ 証明RATEで王座を決定"
+        : periodInfo.period === "weekly"
+          ? `成立デイリーのBEST ${Number(periodInfo.bestCount || 3)} ／ 2日で正式参加`
+          : `成立ウィークリーのBEST ${Number(periodInfo.bestCount || 3)} ／ 2週で正式参加`
+      : "勝利3点 ／ 引き分け1点";
+    const trustTitle = periodInfo.crownCircuit
+      ? "CROWN CIRCUIT V2"
+      : periodInfo.serverAuthoritative ? "SERVER VERIFIED" : "LEGACY PERIOD";
+    const trustCopy = periodInfo.crownCircuit
+      ? "通常型・戦略型1on1の検証済み対戦だけを集計。デイリーは開始を宣言してからの3戦で成立し、終了後に王座を確定します。"
+      : periodInfo.serverAuthoritative
+        ? "この期間は通常型・戦略型1on1の検証済み正式対戦だけをサーバーで集計し、終了後にランキング実績を確定します。"
+        : "移行前に始まった期間です。既存の期間記録を維持し、新しいランキングは通常型・戦略型1on1へ統一します。";
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
-        <div><span class="eyebrow">ONLINE OVERALL RANKING / TOP 50</span><h1>オンライン総合ランキング</h1>
-          <p>順位は4モード共通の期間スコア、基本クラスは累積総合RATEで決まります。</p></div>
+        <div><span class="eyebrow">STRENGTH / PROOF / PERSONAL CROWN</span><h1>オンライン総合ランキング</h1>
+          <p>期間で消えない総合RATEを主役に、通常型・戦略型1on1で今日の王座を証明します。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
       ${participationMenu}
-      <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
-        <button type="button" role="tab" data-ranking-period="daily" aria-selected="${rankingPeriod === "daily"}" class="${rankingPeriod === "daily" ? "is-active" : ""}">デイリー</button>
-        <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
-        <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
-      </div>
-      <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>勝利・BR優勝3点 ／ 引き分け・BR2位1点${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
-      <div class="ranking-trust-notice ${periodInfo.serverAuthoritative ? "is-verified" : "is-transition"}">
-        <strong>${periodInfo.serverAuthoritative ? "SERVER VERIFIED" : "LEGACY PERIOD"}</strong>
-        <span>${periodInfo.serverAuthoritative ? "この期間は検証済みの正式対戦だけをサーバーで集計し、終了後にランキング実績を確定します。" : "移行前に始まった期間です。現在の順位を期間終了まで維持し、次の期間からサーバー集計へ切り替わります。"}</span>
-      </div>
+      ${renderRankingDashboardPanel()}
+      ${renderRankingSpotlight()}
+      ${renderOverallLeaderboardSection()}
+      ${renderOverallRatingClassGuide()}
+      <section class="ranking-circuit-section" aria-labelledby="crownCircuitRankingTitle">
+        <div class="ranking-circuit-head"><div><span class="eyebrow">CROWN CIRCUIT / DAILY · WEEKLY · MONTHLY</span><h2 id="crownCircuitRankingTitle">期間王座サーキット</h2></div><p>義務的な周回ではなく、挑むと決めた日の短期決戦。デイリーの好成績が週間・月間へ昇格します。</p></div>
+        <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
+          <button type="button" role="tab" data-ranking-period="daily" aria-selected="${rankingPeriod === "daily"}" class="${rankingPeriod === "daily" ? "is-active" : ""}">デイリー</button>
+          <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
+          <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
+        </div>
+        <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>${escapeHtml(periodScoreCopy)}${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
+        <div class="ranking-trust-notice ${periodInfo.crownCircuit || periodInfo.serverAuthoritative ? "is-verified" : "is-transition"}">
+          <strong>${escapeHtml(trustTitle)}</strong>
+          <span>${escapeHtml(trustCopy)}</span>
+        </div>
+        <div class="ranking-list" aria-label="期間王座ランキング">${rows}</div>
+        <p class="ranking-casual-note">${periodInfo.crownCircuit ? "デイリーは毎日3戦で完結。週間は成立したデイリーの上位3日、月間は成立した週間の上位3週だけを採用します。参加しない日は減点されず、総合RATEもリセットされません。" : "移行前に確定した期間スコアは当時の記録として保持します。新しい集計対象は通常型・戦略型1on1だけです。"} BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。</p>
+      </section>
       ${renderMonthlyHallOfFame()}
       ${renderRankingAwardsPanel()}
-      <div class="ranking-notice">通常型1on1・戦略型1on1・ふたりチャレンジ・バトルロワイヤルを合算します。ふたりチャレンジは勝利3点・引き分け1点を加算しますが、非対称戦のため総合RATEは変動しません。期間戦績は日本時間で自動切替、総合RATEはリセットされません。BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。</div>
-      ${renderOverallRatingClassGuide()}
-      <div class="ranking-list" aria-label="プレイヤーランキング">${rows}</div>
-      <p class="ranking-casual-note">総合ランキング導入後に完了した4モードのオンライン対戦を集計します。バトルロワイヤルは1位を勝利、2位を引き分け、3・4位を敗北として扱います。${periodInfo.serverAuthoritative ? "期間スコア・試合数・勝敗・モード内訳はCloud Functionsが検証済み試合から確定します。総合RATEは移行時の旧RATEを初期値として引き継ぎ、対称戦の正式対戦だけで更新します。" : "この移行前期間のRATEと戦績は従来どおりブラウザからFirebaseへ送信されます。ランキング報酬は発生しません。"}</p>
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
@@ -1273,12 +1560,16 @@
     });
     window.HariaiOnline?.bindOverallRankingParticipation?.({
       controlId: "rankingOverallParticipation",
-      onUpdate: () => renderRankingScreen({ preserveScroll: true }),
+      onUpdate: () => {
+        renderRankingScreen({ preserveScroll: true });
+        refreshRankingSurfaces();
+      },
     });
+    bindRankingDashboardEvents();
     bindRankingCommentEvents();
     app.focus({ preventScroll: true });
     if (!preserveScroll) window.scrollTo({ top: 0, behavior: "smooth" });
-    if (refresh) refreshSelectedRankingPeriod();
+    if (refresh) refreshRankingSurfaces();
   }
 
   function startOnlineBattle() {
@@ -1301,15 +1592,6 @@
     }
     showToast("ふたりチャレンジを読み込んでいます…");
     window.addEventListener("hariai-team-ready", () => window.HariaiTeam?.start?.(), { once: true });
-  }
-
-  function startRoyaleBattle() {
-    if (window.HariaiRoyale?.start) {
-      window.HariaiRoyale.start();
-      return;
-    }
-    showToast("バトルロワイヤル機能を読み込んでいます…");
-    window.addEventListener("hariai-royale-ready", () => window.HariaiRoyale?.start?.(), { once: true });
   }
 
   function startFreeTable() {
@@ -1754,7 +2036,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 1VS2 + BATTLE ROYALE + FREE TABLE + VALUE MARKET + ANJUPAY FLEA";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + 1VS2 + FREE TABLE + VALUE MARKET + ANJUPAY FLEA";
     if (footerItems[1]) footerItems[1].textContent = "画像・音声・短尺動画は相手へ直接送信し、サーバーへ保存しません";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
@@ -1787,10 +2069,6 @@
       window.HariaiStrategy.requestHome();
       return;
     }
-    if (window.HariaiRoyale?.isActive?.()) {
-      window.HariaiRoyale.requestHome();
-      return;
-    }
     if (window.HariaiTeam?.isActive?.()) {
       window.HariaiTeam.requestHome();
       return;
@@ -1805,10 +2083,6 @@
   document.querySelector("#confirmDestroy")?.addEventListener("click", () => {
     if (window.HariaiStrategy?.isActive?.()) {
       window.setTimeout(() => window.HariaiStrategy.destroyRoom(), 0);
-      return;
-    }
-    if (window.HariaiRoyale?.isActive?.()) {
-      window.setTimeout(() => window.HariaiRoyale.destroyRoom(), 0);
       return;
     }
     if (window.HariaiTeam?.isActive?.()) {
@@ -1853,12 +2127,16 @@
     if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });
   });
 
+  window.addEventListener("hariai-ranking-dashboard-updated", () => {
+    if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });
+  });
+
   window.addEventListener("hariai-ranking-awards-updated", () => {
     if (currentScreen === "ranking") renderRankingScreen({ preserveScroll: true });
   });
 
   window.addEventListener("hariai-online-ready", () => {
-    if (currentScreen === "ranking") refreshSelectedRankingPeriod();
+    if (currentScreen === "ranking") refreshRankingSurfaces();
     if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.();
   });
 

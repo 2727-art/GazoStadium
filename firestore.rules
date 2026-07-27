@@ -90,6 +90,10 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      match /crownRuns/{runId} {
+        allow read, write: if false;
+      }
+
       match /awards/{awardId} {
         allow read, write: if false;
       }
@@ -97,6 +101,14 @@ service cloud.firestore {
 
     match /serverRankingPeriods/{periodKey}/entries/{uid} {
       allow read, write: if false;
+    }
+
+    match /crownCircuitPeriods/{periodKey} {
+      allow read, write: if false;
+
+      match /entries/{uid} {
+        allow read, write: if false;
+      }
     }
 
     match /valueMarketPatrons/{uid} {

@@ -9,7 +9,6 @@ const modes = {
   solo: { file: "online.js", stateFactory: "createOnlineState" },
   strategy: { file: "strategy.js", stateFactory: "createState" },
   team: { file: "team.js", stateFactory: "createState" },
-  royale: { file: "royale.js", stateFactory: "createState" },
 };
 
 function renderSource(source) {
@@ -65,7 +64,7 @@ test("every new online battle lifecycle resets the screen sentinel", () => {
   }
 });
 
-test("the four corrected modules use a new browser cache key", () => {
+test("the three active corrected modules use a new browser cache key", () => {
   const html = read("index.html");
   const marker = "setup-scroll-preserve-v1";
 
@@ -76,5 +75,5 @@ test("the four corrected modules use a new browser cache key", () => {
       `${file} must be reloaded after release`,
     );
   }
-  assert.equal((html.match(new RegExp(marker, "g")) || []).length, 4);
+  assert.equal((html.match(new RegExp(marker, "g")) || []).length, 3);
 });

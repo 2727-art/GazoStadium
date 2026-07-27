@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
 test("all Firebase entry modules use the shared App Check bootstrap", () => {
-  for (const relativePath of ["account.js", "online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
+  for (const relativePath of ["account.js", "online.js", "strategy.js", "team.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
     const source = read(relativePath);
     assert.match(source, /firebase-services\.js\?v=app-check-v3/);
     assert.doesNotMatch(source, /\binitializeApp\s*\(/);
@@ -34,7 +34,7 @@ test("Realtime Database browser traffic stays on the Firebase SDK", () => {
 
 test("cache busters load one App Check module generation", () => {
   const html = read("index.html");
-  for (const moduleName of ["account", "strategy", "online", "market", "flea-market", "free-table", "team", "royale"]) {
+  for (const moduleName of ["account", "strategy", "online", "market", "flea-market", "free-table", "team"]) {
     assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v3`));
   }
 
@@ -46,14 +46,13 @@ test("cache busters load one App Check module generation", () => {
     "online.js",
     "strategy.js",
     "team.js",
-    "royale.js",
     "market.js",
     "flea-market.js",
     "free-table.js",
     "post-match-tip.js",
   ].map(read).join("\n");
   assert.doesNotMatch(browserSources, /app-check-v[12]/);
-  for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js"]) {
+  for (const relativePath of ["online.js", "strategy.js", "team.js"]) {
     assert.match(read(relativePath), /post-match-tip\.js\?v=[^"]*app-check-v3/);
   }
 });
@@ -152,7 +151,7 @@ test("local integration mode redirects Authentication as well as data services",
     /isLocalhost && searchParams\.has\("firebaseEmulators"\)/,
   );
   assert.match(appCheckSource, /isTokenAutoRefreshEnabled: false/);
-  for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
+  for (const relativePath of ["online.js", "strategy.js", "team.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
     assert.match(read(relativePath), /firebase-services\.js\?v=app-check-v3/);
   }
   assert.match(read("README.md"), /--project demo-gazostadium/);
@@ -164,7 +163,7 @@ test("offline market preview does not initialize App Check or background Firebas
   assert.match(appCheckSource, /searchParams\.has\("marketPreview"\)/);
   assert.match(onlineSource, /if \(!useOfflineMarketPreview\) watchLobbyStats\(\);/);
   assert.match(onlineSource, /if \(useOfflineMarketPreview\) return null;/);
-  for (const relativePath of ["online.js", "strategy.js", "team.js", "royale.js"]) {
+  for (const relativePath of ["online.js", "strategy.js", "team.js"]) {
     assert.match(read(relativePath), /useOfflineMarketPreview/);
   }
   assert.match(read("market.js"), /const useMarketPreview = useOfflineMarketPreview;/);

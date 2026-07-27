@@ -774,7 +774,6 @@ function modesAreActive() {
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiTeam?.isActive?.()
-    || window.HariaiRoyale?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.(),
   );

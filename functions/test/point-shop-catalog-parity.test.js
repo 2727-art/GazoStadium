@@ -172,7 +172,7 @@ test("market shop charms use owned stamp IDs without consuming chat equipment sl
   const html = read("index.html");
   assert.match(html, /market\.css\?v=[^"]*shop-charm-v1/);
   assert.match(html, /market\.js\?v=[^"]*shop-charm-v1/);
-  for (const entry of ["online.js", "strategy.js", "team.js", "royale.js", "market.js"]) {
+  for (const entry of ["online.js", "strategy.js", "team.js", "market.js"]) {
     assert.match(read(entry), /player-titles\.js\?v=player-titles-v2/, entry);
   }
 });

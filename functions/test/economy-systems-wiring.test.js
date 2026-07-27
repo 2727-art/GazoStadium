@@ -115,12 +115,11 @@ test("post-match tip UI stays disabled until claim eligibility is confirmed and 
   assert.match(styles, /\.post-match-tip \[hidden\]\s*\{\s*display: none !important;/);
 });
 
-test("all four final-result screens use the shared post-match tip UI", () => {
+test("all three active final-result screens use the shared post-match tip UI", () => {
   for (const [relativePath, mode] of [
     ["online.js", "solo"],
     ["strategy.js", "strategy"],
     ["team.js", "team"],
-    ["royale.js", "royale"],
   ]) {
     const source = read(relativePath);
     assert.match(source, /post-match-tip\.js\?v=post-match-tip-v4/);
