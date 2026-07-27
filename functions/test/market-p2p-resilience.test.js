@@ -22,8 +22,11 @@ test("VALUE MARKET obtains validated TURN credentials with a safe STUN fallback"
 });
 
 test("VALUE MARKET recovers P2P without terminating the authoritative negotiation", () => {
+  assert.match(marketSource, /MARKET_P2P_CONNECT_TIMEOUT_MS\s*=\s*35_000/);
+  assert.match(marketSource, /heartbeatDelay\s*=\s*20_000\s*\+\s*Math\.floor\(Math\.random\(\)\s*\*\s*5_000\)/);
   assert.match(marketSource, /MARKET_P2P_DISCONNECT_GRACE_MS\s*=\s*8_000/);
   assert.match(marketSource, /MARKET_P2P_MAX_RECOVERY_ATTEMPTS\s*=\s*3/);
+  assert.match(marketSource, /MARKET_MAX_PENDING_ICE_CANDIDATES\s*=\s*128/);
   assert.match(marketSource, /scheduleMarketPeerRecovery\(peer,\s*generation,\s*roomId/);
   assert.match(marketSource, /peer\.connectionState\s*===\s*"disconnected"/);
   assert.match(marketSource, /\["failed",\s*"closed"\]\.includes\(peer\.connectionState\)/);
@@ -80,4 +83,5 @@ test("market P2P failures emit sanitized participant-only diagnostics", () => {
 
 test("hosting cache key exposes the resilient market client", () => {
   assert.match(htmlSource, /market\.js\?v=[^"]*p2p-resilience-v1/);
+  assert.match(htmlSource, /market\.js\?v=[^"]*market-rematch-resilience-v1/);
 });
