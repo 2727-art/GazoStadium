@@ -404,9 +404,34 @@ function memberIds(room) {
   return ids;
 }
 
+function indexedObjectOrRtdbArray(value, label) {
+  if (!Array.isArray(value)) {
+    const source = objectValue(value);
+    if (source !== value) {
+      throw new TypeError(`${label} must be an object or RTDB sparse array`);
+    }
+    return source;
+  }
+
+  const keys = Object.keys(value);
+  const expectedKeys = Array.from({ length: keys.length }, (_, index) => String(index + 1));
+  const allowedOwnKeys = new Set(["length", ...expectedKeys]);
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    keys.length === 0
+    || Object.hasOwn(value, "0")
+    || value.length !== expectedKeys.length + 1
+    || !sameIds([...keys].sort(), expectedKeys)
+    || ownKeys.length !== allowedOwnKeys.size
+    || ownKeys.some((key) => typeof key !== "string" || !allowedOwnKeys.has(key))
+  ) {
+    throw new TypeError(`${label} must be a contiguous RTDB sparse array starting at 1`);
+  }
+  return value;
+}
+
 function exactIndexedObject(value, count, label) {
-  const source = objectValue(value);
-  if (source !== value) throw new TypeError(`${label} must be an object`);
+  const source = indexedObjectOrRtdbArray(value, label);
   const expectedKeys = Array.from({ length: count }, (_, index) => String(index + 1));
   if (!sameIds(Object.keys(source).sort(), expectedKeys)) {
     throw new TypeError(`${label} must have exactly ${count} entries`);
@@ -697,10 +722,9 @@ function exactObjectKeys(value, expectedKeys, label) {
 }
 
 function normalizedV3Rounds(room, participants, now, createdAt) {
-  const source = room?.rounds == null ? {} : objectValue(room.rounds);
-  if (room?.rounds != null && source !== room.rounds) {
-    throw new TypeError("Training rounds must be an object");
-  }
+  const source = room?.rounds == null
+    ? {}
+    : indexedObjectOrRtdbArray(room.rounds, "Training rounds");
   const keys = Object.keys(source);
   if (keys.some((key) => !/^[1-5]$/.test(key))) {
     throw new TypeError("Training round number is invalid");

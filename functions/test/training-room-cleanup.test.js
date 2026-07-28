@@ -130,6 +130,22 @@ function fakeSnapshot(value, key = "") {
   };
 }
 
+// Mirror Admin RTDB: a cold local cache is offered first, then the server
+// rejects the null-hash write and reruns the callback with its current value.
+function runColdCacheTransaction(update, serverValue) {
+  let next = update(null);
+  if (next === undefined) {
+    return { committed: false, value: structuredClone(serverValue) };
+  }
+  if (serverValue != null) {
+    next = update(structuredClone(serverValue));
+    if (next === undefined) {
+      return { committed: false, value: structuredClone(serverValue) };
+    }
+  }
+  return { committed: true, value: structuredClone(next) };
+}
+
 function createFakeRealtime({
   rooms,
   active = {},
@@ -227,11 +243,12 @@ function createFakeRealtime({
             const current = state.rooms[roomId] == null
               ? null
               : structuredClone(state.rooms[roomId]);
-            const next = update(current);
-            if (next === undefined) {
+            const transaction = runColdCacheTransaction(update, current);
+            const next = transaction.value;
+            if (!transaction.committed) {
               return {
                 committed: false,
-                snapshot: fakeSnapshot(current, roomId),
+                snapshot: fakeSnapshot(next, roomId),
               };
             }
             if (next === null) delete state.rooms[roomId];
@@ -253,11 +270,12 @@ function createFakeRealtime({
             const current = roomId
               ? state.active[uid]?.rooms?.[roomId] ?? null
               : state.active[uid] ?? null;
-            const next = update(current);
-            if (next === undefined) {
+            const transaction = runColdCacheTransaction(update, current);
+            const next = transaction.value;
+            if (!transaction.committed) {
               return {
                 committed: false,
-                snapshot: fakeSnapshot(current, uid),
+                snapshot: fakeSnapshot(next, uid),
               };
             }
             if (roomId) {
@@ -288,11 +306,12 @@ function createFakeRealtime({
           async transaction(update) {
             maybeFail(targetPath);
             const current = state.invites[uid]?.[roomId] ?? null;
-            const next = update(current);
-            if (next === undefined) {
+            const transaction = runColdCacheTransaction(update, current);
+            const next = transaction.value;
+            if (!transaction.committed) {
               return {
                 committed: false,
-                snapshot: fakeSnapshot(current, roomId),
+                snapshot: fakeSnapshot(next, roomId),
               };
             }
             if (next === null) {
@@ -302,7 +321,7 @@ function createFakeRealtime({
                   delete state.invites[uid];
                 }
               }
-              state.removedInvites.push(targetPath);
+              if (current != null) state.removedInvites.push(targetPath);
             } else {
               state.invites[uid] ||= {};
               state.invites[uid][roomId] = structuredClone(next);
@@ -318,11 +337,12 @@ function createFakeRealtime({
         return {
           async transaction(update) {
             maybeFail(targetPath);
-            const next = update(state.matchLock);
-            if (next === undefined) {
+            const transaction = runColdCacheTransaction(update, state.matchLock);
+            const next = transaction.value;
+            if (!transaction.committed) {
               return {
                 committed: false,
-                snapshot: fakeSnapshot(state.matchLock),
+                snapshot: fakeSnapshot(next),
               };
             }
             state.matchLock = next;
@@ -396,11 +416,12 @@ function createFakeQueueRealtime(queue, beforeTransaction = () => {}) {
               const current = state.queue[uid] == null
                 ? null
                 : structuredClone(state.queue[uid]);
-              const next = update(current);
-              if (next === undefined) {
+              const transaction = runColdCacheTransaction(update, current);
+              const next = transaction.value;
+              if (!transaction.committed) {
                 return {
                   committed: false,
-                  snapshot: fakeSnapshot(current, uid),
+                  snapshot: fakeSnapshot(next, uid),
                 };
               }
               if (next === null) delete state.queue[uid];
@@ -701,6 +722,10 @@ test("stale rooms tombstone first, release matching pointers, and retry safely",
   assert.equal(Object.hasOwn(state.active, "alice"), true);
   assert.equal(Object.hasOwn(state.active, "bob"), false);
   assert.equal(state.matchLock, null);
+  assert.deepEqual(state.removedInvites.toSorted(), [
+    `online/trainingInvites/alice/${roomId}`,
+    `online/trainingInvites/bob/${roomId}`,
+  ]);
 
   state.failedPaths.delete(activePath);
   const retry = await cleanup(now + 5 * 60 * 1000);
@@ -750,7 +775,7 @@ test("cleanup cursor rotates beyond an unchanged oldest batch", async () => {
   );
 });
 
-test("stale queue cleanup is bounded and transactionally preserves a heartbeat race", async () => {
+test("cold-cache queue cleanup removes stale rows and preserves a heartbeat race", async () => {
   assert.equal(TRAINING_QUEUE_CLEANUP_BATCH_SIZE, 100);
   assert.equal(TRAINING_QUEUE_STALE_MS, 10 * 60 * 1000);
   const now = 50 * 24 * 60 * 60 * 1000;

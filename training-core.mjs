@@ -251,11 +251,41 @@ export function validTrainingQueueEntries(queue, {
     ));
 }
 
-export function selectTrainingPair(entries) {
+export function trainingQueueEntryKey(entry) {
+  const uid = typeof entry?.uid === "string" ? entry.uid : "";
+  const sessionId = normalizeTrainingSessionId(entry?.sessionId);
+  return uid && sessionId ? `${uid}/${sessionId}` : "";
+}
+
+export function selectTrainingPair(entries, {
+  requesterUid = "",
+  excludedEntryKeys = [],
+  allowHostTakeover = false,
+} = {}) {
   const source = Array.isArray(entries) ? entries : [];
-  return source.length >= TRAINING_PLAYER_COUNT
-    ? source.slice(0, TRAINING_PLAYER_COUNT)
-    : [];
+  const requester = typeof requesterUid === "string" ? requesterUid : "";
+  const excluded = new Set(
+    Array.from(excludedEntryKeys || []).filter((key) => typeof key === "string" && key),
+  );
+  const available = source.filter((entry) => (
+    entry?.uid === requester || !excluded.has(trainingQueueEntryKey(entry))
+  ));
+  if (!requester) {
+    return available.length >= TRAINING_PLAYER_COUNT
+      ? available.slice(0, TRAINING_PLAYER_COUNT)
+      : [];
+  }
+  for (let index = 0; index < available.length; index += TRAINING_PLAYER_COUNT) {
+    const pair = available.slice(index, index + TRAINING_PLAYER_COUNT);
+    if (pair.some((entry) => entry?.uid === requester)) {
+      if (pair.length !== TRAINING_PLAYER_COUNT) return [];
+      if (pair[0]?.uid === requester) return pair;
+      return allowHostTakeover && pair[1]?.uid === requester
+        ? [pair[1], pair[0]]
+        : [];
+    }
+  }
+  return [];
 }
 
 export function trainingActiveRoomAppearsLive(room, uid, now = Date.now()) {

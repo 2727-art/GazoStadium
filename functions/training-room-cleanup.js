@@ -195,10 +195,15 @@ function trainingRoomCleanupDisposition(room, now, {
 async function cleanupRelatedTrainingPointers(realtime, roomId, room) {
   const participants = trainingRoomParticipantUids(room);
   const cleanupActive = async (uid) => {
+    // A cold Admin SDK cache can yield null before the server value is loaded.
+    // Returning null keeps the CAS alive so a conflict reruns these ownership checks.
     await realtime.ref(`${TRAINING_ACTIVE_PATH}/${uid}/rooms/${roomId}`)
-      .transaction((current) => (current === true ? null : undefined));
+      .transaction((current) => (
+        current == null || current === true ? null : undefined
+      ));
     await realtime.ref(`${TRAINING_ACTIVE_PATH}/${uid}`)
       .transaction((current) => {
+        if (current == null) return null;
         if (current?.roomId !== roomId) return undefined;
         const rooms = objectValue(current?.rooms);
         return Object.keys(rooms).length === 0 ? null : undefined;
@@ -209,11 +214,11 @@ async function cleanupRelatedTrainingPointers(realtime, roomId, room) {
     ...participants.map((uid) => (
       realtime.ref(`${TRAINING_INVITES_PATH}/${uid}/${roomId}`)
         .transaction((current) => (
-          current?.roomId === roomId ? null : undefined
+          current == null || current?.roomId === roomId ? null : undefined
         ))
     )),
     realtime.ref(TRAINING_MATCH_LOCK_PATH).transaction((current) => (
-      current?.roomId === roomId ? null : undefined
+      current == null || current?.roomId === roomId ? null : undefined
     )),
   ];
   const results = await Promise.allSettled(operations);
@@ -261,7 +266,7 @@ function createTrainingQueueCleanup({
     const settled = await Promise.allSettled(uids.map(async (uid) => {
       const transaction = await realtime.ref(`${TRAINING_QUEUE_PATH}/${uid}`)
         .transaction((current) => {
-          if (current == null) return undefined;
+          if (current == null) return null;
           const lastSeen = validTimestamp(current?.lastSeen);
           return !lastSeen || lastSeen <= cutoff ? null : undefined;
         });
@@ -353,6 +358,7 @@ function createTrainingRoomCleanup({
           `${TRAINING_ROOMS_PATH}/${candidate.roomId}`,
         );
         const transaction = await roomReference.transaction((current) => {
+          if (current == null) return null;
           const latest = trainingRoomCleanupDisposition(
             current,
             timestamp,
@@ -404,6 +410,7 @@ function createTrainingRoomCleanup({
         `${TRAINING_ROOMS_PATH}/${candidate.roomId}`,
       );
       const transaction = await roomReference.transaction((current) => {
+        if (current == null) return null;
         const latest = trainingRoomCleanupDisposition(
           current,
           timestamp,

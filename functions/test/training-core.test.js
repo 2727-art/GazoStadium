@@ -206,6 +206,60 @@ test("selects the oldest two fresh waiting players", () => {
   assert.deepEqual(activeFiltered.map(({ uid }) => uid), ["old"]);
 });
 
+test("forms independent FIFO pairs and lets a blocked host skip only an unavailable session", () => {
+  const entries = ["first", "second", "third", "fourth"].map((uid, index) => ({
+    ...queuePreparation(),
+    uid,
+    sessionId: `session-${uid}`,
+    name: uid.toUpperCase(),
+    intensity: "standard",
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    joinedAt: (index + 1) * 100,
+    lastSeen: 1_000,
+    state: "waiting",
+  }));
+
+  assert.deepEqual(
+    core.selectTrainingPair(entries, { requesterUid: "first" }).map(({ uid }) => uid),
+    ["first", "second"],
+  );
+  assert.deepEqual(
+    core.selectTrainingPair(entries, { requesterUid: "second" }),
+    [],
+  );
+  assert.deepEqual(
+    core.selectTrainingPair(entries, {
+      requesterUid: "second",
+      allowHostTakeover: true,
+    }).map(({ uid }) => uid),
+    ["second", "first"],
+  );
+  assert.deepEqual(
+    core.selectTrainingPair(entries, { requesterUid: "third" }).map(({ uid }) => uid),
+    ["third", "fourth"],
+  );
+
+  const unavailableKey = core.trainingQueueEntryKey(entries[1]);
+  assert.equal(unavailableKey, "second/session-second");
+  assert.deepEqual(
+    core.selectTrainingPair(entries, {
+      requesterUid: "first",
+      excludedEntryKeys: [unavailableKey],
+    }).map(({ uid }) => uid),
+    ["first", "third"],
+  );
+
+  const unavailableHeadKey = core.trainingQueueEntryKey(entries[0]);
+  assert.deepEqual(
+    core.selectTrainingPair(entries.slice(0, 3), {
+      requesterUid: "second",
+      excludedEntryKeys: [unavailableHeadKey],
+    }).map(({ uid }) => uid),
+    ["second", "third"],
+  );
+});
+
 test("accepts an empty guest condition without rewriting the protected condition path", () => {
   assert.deepEqual(
     core.createTrainingAcceptanceUpdates("guest", ""),

@@ -623,7 +623,20 @@ test("queue and invites are fenced to the current matchmaking session", {
     ref(room.guestDatabase, `online/trainingQueue/${room.guest.uid}`),
     replacement,
   ));
-  await assertFails(remove(ref(room.guestDatabase, room.invitePath)));
+  await assertSucceeds(remove(ref(room.guestDatabase, room.invitePath)));
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await set(
+      ref(contextWithoutRules.database(), room.invitePath),
+      {
+        roomId,
+        hostUid: room.host.uid,
+        targetSessionId: room.guest.sessionId,
+        protocolVersion: 2,
+        variant: "kitaeai_60_v2",
+        createdAt: Date.now(),
+      },
+    );
+  });
   await reserveActive(room.guestDatabase, room.guest.uid, roomId);
   await assertFails(update(
     ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
@@ -637,6 +650,19 @@ test("queue and invites are fenced to the current matchmaking session", {
       .child("targetSessionId").val(),
     room.guest.sessionId,
   );
+  await assertFails(remove(ref(
+    environment.authenticatedContext("training-invite-outsider").database(),
+    room.invitePath,
+  )));
+  const malformedInvitePath =
+    `online/trainingInvites/${room.guest.uid}/-trainingMalformedInvite01`;
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await set(
+      ref(contextWithoutRules.database(), malformedInvitePath),
+      { hostUid: room.host.uid, createdAt: Date.now() },
+    );
+  });
+  await assertSucceeds(remove(ref(room.guestDatabase, malformedInvitePath)));
 });
 
 test("invite ownership replaces the long global lock without blocking an independent pair", {
@@ -836,7 +862,7 @@ test("invite ownership replaces the long global lock without blocking an indepen
     databases[guestTwo.uid],
     `online/trainingQueue/${guestTwo.uid}`,
   )));
-  await assertFails(remove(ref(databases[guestTwo.uid], inviteTwoPath)));
+  await assertSucceeds(remove(ref(databases[guestTwo.uid], inviteTwoPath)));
 });
 
 test("room bootstrap is fenced by the host reservation and an unreserved guest", {

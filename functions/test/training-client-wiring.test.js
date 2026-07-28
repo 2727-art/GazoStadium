@@ -18,7 +18,8 @@ function functionBlock(name) {
 
 test("loads the HP V3 client and retires the team client", () => {
   assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
-  assert.match(indexHtml, /src="training\.js\?v=kitaeai-hp-v3[^"]*"/);
+  assert.match(indexHtml, /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v1[^"]*"/);
+  assert.match(trainingJs, /training-core\.mjs\?v=kitaeai-hp-v3-matchmaking-v1/);
   assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
   assert.match(indexHtml, /src="online\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
   assert.doesNotMatch(indexHtml, /src="team\.js(?:\?|")/);
@@ -360,6 +361,77 @@ test("keeps a live legacy room behind a read-only compatibility boundary", () =>
   assert.match(staleBlock, /旧バージョンの鍛え合いが進行中です/);
   assert.ok(staleBlock.indexOf("room.protocolVersion !== TRAINING_PROTOCOL_VERSION")
     < staleBlock.indexOf("removeTrainingActiveChild(observedRoomId)"));
+  assert.match(staleBlock, /if \(!await removeTrainingActiveChild\(observedRoomId\)\)/);
+  assert.match(staleBlock, /if \(!await removeTrainingActiveParentIfOwned\(activeValue\.roomId\)\)/);
+  assert.match(staleBlock, /const remainingSnapshot = await get\(activeRef\)/);
+  assert.match(staleBlock, /if \(remainingSnapshot\.exists\(\)\)/);
+});
+
+test("skips unavailable candidates without exposing their private active or invite state", () => {
+  const hostBlock = functionBlock("attemptToHost");
+  const refreshBlock = functionBlock("refreshTrainingPair");
+  const lockBlock = functionBlock("acquireMatchLock");
+  const selectionBlock = functionBlock("selectCurrentTrainingPair");
+  const takeoverBlock = functionBlock("scheduleTrainingHostTakeover");
+  const staleInviteBlock = functionBlock("cleanupStaleTrainingInvites");
+  const staleInviteRemoveBlock = functionBlock("removeStaleTrainingInvite");
+  const activeSkipBlock = functionBlock("activeTrainingCandidateSkipKeys");
+  const markSkipBlock = functionBlock("markTrainingCandidateUnavailable");
+  const activeParentBlock = functionBlock("removeTrainingActiveParentIfOwned");
+  const createRoomBlock = functionBlock("createTrainingRoom");
+  const expireBlock = functionBlock("expirePendingRoom");
+  const cleanupBlock = functionBlock("cleanupMatchmaking");
+
+  assert.match(hostBlock, /selectCurrentTrainingPair\(entries\)/);
+  assert.match(hostBlock, /selectCurrentTrainingPair\(entries, true\)/);
+  assert.match(hostBlock, /scheduleTrainingHostTakeover/);
+  assert.match(refreshBlock, /selectCurrentTrainingPair\(entries\)/);
+  assert.match(selectionBlock, /requesterUid: state\.uid/);
+  assert.match(selectionBlock, /excludedEntryKeys: activeTrainingCandidateSkipKeys\(entries\)/);
+  assert.match(selectionBlock, /allowHostTakeover/);
+  assert.match(takeoverBlock, /attemptToHost\(\)/);
+  assert.match(lockBlock, /!transaction\.committed/);
+  assert.match(lockBlock, /lock\.uid !== state\.uid/);
+  assert.match(lockBlock, /lockExpiresAt > firebaseNow\(\)/);
+  assert.match(lockBlock, /scheduleTrainingHostTakeover\(lockExpiresAt \+ MATCH_LOCK_RETRY_GRACE_MS\)/);
+  assert.match(cleanupBlock, /clearTrainingHostTakeoverTimer\(\)/);
+  assert.match(activeSkipBlock, /delete state\.unavailableQueueEntries\[key\]/);
+  assert.match(markSkipBlock, /TRAINING_CANDIDATE_SKIP_MS/);
+  assert.match(activeParentBlock, /Object\.values\(rooms\)\.some\(\(claimed\) => claimed === true\)/);
+  assert.match(activeParentBlock, /current\?\.roomId === roomId && !hasClaimedRoom/);
+  assert.match(createRoomBlock, /isTrainingPermissionError\(error\)/);
+  assert.match(createRoomBlock, /candidatePermissionPhase = "room_bootstrap"/);
+  assert.match(createRoomBlock, /candidatePermissionPhase = "invite_create"/);
+  assert.match(createRoomBlock, /\["room_bootstrap", "invite_create"\]\.includes\(failedCandidatePermissionPhase\)/);
+  const roomPermissionPhase = createRoomBlock.indexOf('candidatePermissionPhase = "room_bootstrap"');
+  const roomBootstrapWrite = createRoomBlock.indexOf("await set(ref(database, `online/trainingRooms/");
+  const roomPermissionReset = createRoomBlock.indexOf('candidatePermissionPhase = "";', roomPermissionPhase);
+  const hostDisconnectArm = createRoomBlock.indexOf("await armFormingRoomDisconnects");
+  assert.ok(roomPermissionPhase < roomBootstrapWrite);
+  assert.ok(roomBootstrapWrite < roomPermissionReset);
+  assert.ok(roomPermissionReset < hostDisconnectArm);
+  const hostQueueWrite = createRoomBlock.indexOf("await updateOwnedTrainingQueue");
+  const invitePermissionPhase = createRoomBlock.indexOf('candidatePermissionPhase = "invite_create"');
+  const inviteWrite = createRoomBlock.indexOf("await set(ref(database, `online/trainingInvites/");
+  const invitePermissionReset = createRoomBlock.indexOf(
+    'candidatePermissionPhase = "";',
+    invitePermissionPhase,
+  );
+  assert.ok(hostQueueWrite < invitePermissionPhase);
+  assert.ok(invitePermissionPhase < inviteWrite);
+  assert.ok(inviteWrite < invitePermissionReset);
+  assert.match(createRoomBlock, /refreshCurrentTrainingInviteStatus\(\)/);
+  assert.match(createRoomBlock, /markTrainingCandidateUnavailable\(guestEntry\)/);
+  assert.match(createRoomBlock, /candidatePermissionFailure && currentInviteStatus === true/);
+  assert.match(expireBlock, /accepted\/\$\{guestUid\}/);
+  assert.match(expireBlock, /\.catch\(\(\) => null\)/);
+  assert.match(expireBlock, /acceptedSnapshot && acceptedSnapshot\.val\(\) !== true/);
+  assert.match(expireBlock, /markTrainingCandidateUnavailable/);
+  assert.match(staleInviteBlock, /invite\?\.targetSessionId !== currentSessionId/);
+  assert.match(staleInviteBlock, /removeStaleTrainingInvite/);
+  assert.match(staleInviteRemoveBlock, /remaining\?\.targetSessionId === currentSessionId/);
+  assert.doesNotMatch(selectionBlock, /trainingActive|trainingInvites/);
+  assert.doesNotMatch(refreshBlock, /trainingActive|trainingInvites/);
 });
 
 test("provides six local-only V3 preview screens without Firebase writes", () => {

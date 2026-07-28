@@ -838,6 +838,115 @@ function v3Round(roundNumber, firstScore, secondScore, {
   return round;
 }
 
+function rtdbSparseArray(indexedObject) {
+  const values = [];
+  for (const [key, value] of Object.entries(indexedObject)) {
+    values[Number(key)] = value;
+  }
+  return values;
+}
+
+test("protocol v3 accepts strict RTDB sparse arrays for decks, BPMs, and rounds", () => {
+  const roomWithSparseArrays = v3Room();
+  for (const uid of [firstUid, secondUid]) {
+    roomWithSparseArrays.players[uid].commandDeck = rtdbSparseArray(
+      roomWithSparseArrays.players[uid].commandDeck,
+    );
+    roomWithSparseArrays.players[uid].imageBpms = rtdbSparseArray(
+      roomWithSparseArrays.players[uid].imageBpms,
+    );
+    assert.equal(Object.hasOwn(roomWithSparseArrays.players[uid].commandDeck, "0"), false);
+    assert.equal(Object.hasOwn(roomWithSparseArrays.players[uid].imageBpms, "0"), false);
+  }
+
+  const round1 = v3Round(1, 9, 7);
+  const round2 = v3Round(2, 10, 8);
+  roomWithSparseArrays.rounds = rtdbSparseArray({ 1: round1, 2: round2 });
+  assert.equal(Object.hasOwn(roomWithSparseArrays.rounds, "0"), false);
+
+  const result = deriveTrainingRoomResult(roomWithSparseArrays, round2.completedAt + 1);
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "hp_zero");
+  assert.deepEqual(result.outcomes, {
+    [firstUid]: "loss",
+    [secondUid]: "win",
+  });
+});
+
+test("protocol v3 rejects malformed arrays instead of treating them as RTDB sparse arrays", () => {
+  const cases = [
+    {
+      label: "ordinary zero-indexed command deck",
+      mutate: (candidate) => {
+        candidate.players[firstUid].commandDeck = Object.values(commandDeck());
+      },
+    },
+    {
+      label: "explicit index zero",
+      mutate: (candidate) => {
+        const deck = rtdbSparseArray(commandDeck());
+        deck[0] = null;
+        candidate.players[firstUid].commandDeck = deck;
+      },
+    },
+    {
+      label: "missing indexed entry",
+      mutate: (candidate) => {
+        const deck = rtdbSparseArray(commandDeck());
+        delete deck[2];
+        candidate.players[firstUid].commandDeck = deck;
+      },
+    },
+    {
+      label: "extra array property",
+      mutate: (candidate) => {
+        const deck = rtdbSparseArray(commandDeck());
+        deck.extra = commandDeck()[1];
+        candidate.players[firstUid].commandDeck = deck;
+      },
+    },
+    {
+      label: "ordinary zero-indexed BPM deck",
+      mutate: (candidate) => {
+        candidate.players[firstUid].imageBpms = Object.values(firstImageBpms);
+      },
+    },
+    {
+      label: "ordinary zero-indexed rounds",
+      mutate: (candidate) => {
+        candidate.rounds = [v3Round(1, 1, 1)];
+      },
+    },
+    {
+      label: "missing round",
+      mutate: (candidate) => {
+        const rounds = [];
+        rounds[1] = v3Round(1, 1, 1);
+        rounds[3] = v3Round(3, 1, 1);
+        candidate.rounds = rounds;
+      },
+    },
+    {
+      label: "extra rounds property",
+      mutate: (candidate) => {
+        const rounds = rtdbSparseArray({ 1: v3Round(1, 1, 1) });
+        rounds.extra = {};
+        candidate.rounds = rounds;
+      },
+    },
+  ];
+
+  for (const { label, mutate } of cases) {
+    const candidate = v3Room();
+    mutate(candidate);
+    assert.throws(
+      () => deriveTrainingRoomResult(candidate, createdAt + 2_000_000),
+      /RTDB sparse array/,
+      label,
+    );
+  }
+});
+
 test("protocol v3 derives independent self-damage, image score, workout time, and overkill", () => {
   assert.equal(TRAINING_PROTOCOL_VERSION, 3);
   assert.equal(TRAINING_VARIANT, "kitaeai_hp_v3");

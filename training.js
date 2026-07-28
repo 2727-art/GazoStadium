@@ -51,14 +51,18 @@ import {
   trainingActiveRoomAppearsLive,
   trainingBeatState,
   trainingInstructionIsReady,
+  trainingQueueEntryKey,
   trainingServerFinalizedResult,
   validTrainingQueueEntries,
-} from "./training-core.mjs?v=kitaeai-hp-v3";
+} from "./training-core.mjs?v=kitaeai-hp-v3-matchmaking-v1";
 
 const MATCH_TIMEOUT_MS = 30_000;
 const MATCH_LOCK_TTL_MS = MATCH_TIMEOUT_MS + 10_000;
+const MATCH_LOCK_RETRY_GRACE_MS = 100;
 const HEARTBEAT_MS = 20_000;
 const TRAINING_QUEUE_RECLAIM_MS = 60_000;
+const TRAINING_CANDIDATE_SKIP_MS = TRAINING_QUEUE_FRESH_MS;
+const TRAINING_HOST_TAKEOVER_MS = 8_000;
 const IMAGE_EXCHANGE_TIMEOUT_MS = 45_000;
 const IMAGE_CHANNEL_LABEL = "hariai-training-image-v3";
 const MAX_IMAGE_TRANSFER_BYTES = 8 * 1024 * 1024;
@@ -213,10 +217,13 @@ function createState() {
     latestInvites: {},
     queueSessionId: "",
     pendingInviteTargetSessionId: "",
+    unavailableQueueEntries: {},
     startingMatchmaking: false,
     matchingBusy: false,
     acceptingInvite: false,
     inviteRetryTimer: null,
+    hostTakeoverTimer: null,
+    hostTakeoverDueAt: 0,
     enteringRoom: false,
     returningToQueue: false,
     pendingTeardown: null,
@@ -1563,10 +1570,24 @@ async function clearStaleTrainingActiveBeforeMatchmaking() {
       }
       throw new Error("別のタブで鍛え合い60が進行中です。そちらを終了してから開始してください。");
     }
-    await removeTrainingActiveChild(observedRoomId);
+    if (!await removeTrainingActiveChild(observedRoomId)) {
+      throw new Error(
+        "以前の鍛え合い予約を解除できませんでした。通信を確認して、もう一度開始してください。",
+      );
+    }
   }
   if (typeof activeValue.roomId === "string") {
-    await removeTrainingActiveParentIfOwned(activeValue.roomId);
+    if (!await removeTrainingActiveParentIfOwned(activeValue.roomId)) {
+      throw new Error(
+        "以前の鍛え合い予約を解除できませんでした。通信を確認して、もう一度開始してください。",
+      );
+    }
+  }
+  const remainingSnapshot = await get(activeRef);
+  if (remainingSnapshot.exists()) {
+    throw new Error(
+      "鍛え合い予約の解除を確認できませんでした。別の端末を確認して、もう一度開始してください。",
+    );
   }
 }
 
@@ -1677,6 +1698,40 @@ async function cleanupTrainingInvitesForSession(targetSessionId = state.queueSes
   return removals.every(Boolean);
 }
 
+async function removeStaleTrainingInvite(roomId, observedInvite, currentSessionId) {
+  if (!state.uid || !roomId || !currentSessionId || state.preview) return false;
+  const transaction = await runTransaction(
+    ref(database, `online/trainingInvites/${state.uid}/${roomId}`),
+    (current) => {
+      if (!current || current.targetSessionId === currentSessionId) return undefined;
+      const unchanged = [
+        "roomId", "hostUid", "targetSessionId", "protocolVersion", "variant", "createdAt",
+      ].every((key) => current[key] === observedInvite?.[key]);
+      return unchanged ? null : undefined;
+    },
+  ).catch(() => null);
+  const remaining = transaction?.snapshot?.val();
+  return Boolean(transaction && (
+    transaction.committed
+    || remaining === null
+    || remaining?.targetSessionId === currentSessionId
+  ));
+}
+
+async function cleanupStaleTrainingInvites(currentSessionId) {
+  if (!state.uid || !currentSessionId || state.preview) return true;
+  const snapshot = await get(ref(database, `online/trainingInvites/${state.uid}`)).catch(() => null);
+  if (!snapshot) return false;
+  const removals = await Promise.all(
+    Object.entries(snapshot.val() || {})
+      .filter(([, invite]) => invite?.targetSessionId !== currentSessionId)
+      .map(([roomId, invite]) => (
+        removeStaleTrainingInvite(roomId, invite, currentSessionId)
+      )),
+  );
+  return removals.every(Boolean);
+}
+
 async function beginMatchmaking() {
   state.name = normalizeTrainingName(state.name);
   state.conditions = normalizeTrainingConditions(state.conditions);
@@ -1697,6 +1752,13 @@ async function beginMatchmaking() {
     const offset = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
     state.serverTimeOffset = Number(offset?.val() || 0);
     const queueEntry = await claimTrainingQueueSession();
+    if (!await cleanupStaleTrainingInvites(queueEntry.sessionId)) {
+      await removeOwnedTrainingQueue(queueEntry.sessionId);
+      if (state.queueSessionId === queueEntry.sessionId) state.queueSessionId = "";
+      throw new Error(
+        "以前の鍛え合い招待を整理できませんでした。通信を確認して、もう一度開始してください。",
+      );
+    }
     localStorage.setItem(PROFILE_NAME_KEY, state.name);
     state.screen = "matching";
     setTrainingChrome("鍛え合い MATCHING");
@@ -1790,6 +1852,58 @@ function freshQueueEntries() {
   });
 }
 
+function activeTrainingCandidateSkipKeys(entries) {
+  const availableKeys = new Set((entries || []).map(trainingQueueEntryKey).filter(Boolean));
+  const now = firebaseNow();
+  Object.entries(state.unavailableQueueEntries).forEach(([key, expiresAt]) => {
+    if (!availableKeys.has(key) || Number(expiresAt || 0) <= now) {
+      delete state.unavailableQueueEntries[key];
+    }
+  });
+  return Object.keys(state.unavailableQueueEntries);
+}
+
+function markTrainingCandidateUnavailable(entry) {
+  const key = trainingQueueEntryKey(entry);
+  if (!key || entry?.uid === state.uid) return;
+  state.unavailableQueueEntries[key] = firebaseNow() + TRAINING_CANDIDATE_SKIP_MS;
+}
+
+function clearTrainingHostTakeoverTimer() {
+  window.clearTimeout(state.hostTakeoverTimer);
+  state.hostTakeoverTimer = null;
+  state.hostTakeoverDueAt = 0;
+}
+
+function scheduleTrainingHostTakeover(dueAt) {
+  const due = Number(dueAt || 0);
+  if (!Number.isFinite(due) || due <= 0) return;
+  if (state.hostTakeoverTimer && state.hostTakeoverDueAt <= due) return;
+  clearTrainingHostTakeoverTimer();
+  state.hostTakeoverDueAt = due;
+  state.hostTakeoverTimer = window.setTimeout(() => {
+    state.hostTakeoverTimer = null;
+    state.hostTakeoverDueAt = 0;
+    attemptToHost().catch(handleRecoverableError);
+  }, Math.max(0, due - firebaseNow()));
+}
+
+function selectCurrentTrainingPair(entries, forceHostTakeover = false) {
+  const ownEntry = (entries || []).find((entry) => entry.uid === state.uid);
+  const takeoverAt = Number(ownEntry?.joinedAt || 0) + TRAINING_HOST_TAKEOVER_MS;
+  const allowHostTakeover = forceHostTakeover
+    || (takeoverAt > 0 && firebaseNow() >= takeoverAt);
+  return selectTrainingPair(entries, {
+    requesterUid: state.uid,
+    excludedEntryKeys: activeTrainingCandidateSkipKeys(entries),
+    allowHostTakeover,
+  });
+}
+
+function isTrainingPermissionError(error) {
+  return String(error?.code || error?.message || "").toLowerCase().includes("permission");
+}
+
 async function attemptToHost() {
   if (!active
     || state.screen !== "matching"
@@ -1801,17 +1915,27 @@ async function attemptToHost() {
     await processInvites();
     return;
   }
-  const pair = selectTrainingPair(freshQueueEntries());
-  if (pair.length !== 2 || pair[0].uid !== state.uid) return;
+  const entries = freshQueueEntries();
+  const pair = selectCurrentTrainingPair(entries);
+  if (pair.length !== 2 || pair[0].uid !== state.uid) {
+    const takeoverPair = selectCurrentTrainingPair(entries, true);
+    const ownEntry = entries.find((entry) => entry.uid === state.uid);
+    if (takeoverPair.length === 2 && takeoverPair[0].uid === state.uid && ownEntry) {
+      scheduleTrainingHostTakeover(ownEntry.joinedAt + TRAINING_HOST_TAKEOVER_MS);
+    }
+    return;
+  }
+  clearTrainingHostTakeoverTimer();
   await createTrainingRoom(pair);
 }
 
 async function refreshTrainingPair(expectedPair) {
   const snapshot = await get(ref(database, "online/trainingQueue"));
-  const refreshedPair = selectTrainingPair(validTrainingQueueEntries(snapshot.val() || {}, {
+  const entries = validTrainingQueueEntries(snapshot.val() || {}, {
     now: firebaseNow(),
     freshnessMs: TRAINING_QUEUE_FRESH_MS,
-  }));
+  });
+  const refreshedPair = selectCurrentTrainingPair(entries);
   if (refreshedPair.length !== 2 || expectedPair.length !== 2) return [];
   const unchanged = refreshedPair.every((entry, index) => (
     entry.uid === expectedPair[index]?.uid
@@ -1827,6 +1951,13 @@ async function acquireMatchLock(roomId) {
     return { uid: state.uid, roomId, createdAt: now, expiresAt: now + MATCH_LOCK_TTL_MS };
   });
   const lock = transaction.snapshot.val();
+  const lockExpiresAt = Number(lock?.expiresAt || 0);
+  if (!transaction.committed
+    && lock?.uid
+    && lock.uid !== state.uid
+    && lockExpiresAt > firebaseNow()) {
+    scheduleTrainingHostTakeover(lockExpiresAt + MATCH_LOCK_RETRY_GRACE_MS);
+  }
   return transaction.committed && lock?.uid === state.uid && lock?.roomId === roomId;
 }
 
@@ -1920,15 +2051,27 @@ async function removeTrainingActiveChild(roomId) {
     ref(database, `online/trainingActive/${state.uid}/rooms/${roomId}`),
     (current) => current === true ? null : undefined,
   ).catch(() => null);
-  return Boolean(transaction?.committed);
+  return Boolean(transaction && (
+    transaction.committed
+    || transaction.snapshot.val() === null
+  ));
 }
 
 async function removeTrainingActiveParentIfOwned(roomId) {
   const transaction = await runTransaction(
     ref(database, `online/trainingActive/${state.uid}`),
-    (current) => current?.roomId === roomId ? null : undefined,
+    (current) => {
+      const rooms = current?.rooms && typeof current.rooms === "object"
+        ? current.rooms
+        : {};
+      const hasClaimedRoom = Object.values(rooms).some((claimed) => claimed === true);
+      return current?.roomId === roomId && !hasClaimedRoom ? null : undefined;
+    },
   ).catch(() => null);
-  return Boolean(transaction?.committed);
+  return Boolean(transaction && (
+    transaction.committed
+    || transaction.snapshot.val() === null
+  ));
 }
 
 async function reserveTrainingActiveRoom(roomId) {
@@ -2004,13 +2147,16 @@ async function createTrainingRoom(pair) {
   let roomDisconnects = [];
   let guestUid = "";
   let guestSessionId = "";
+  let guestEntry = null;
   let createdRoom = null;
+  let candidatePermissionPhase = "";
   try {
     ownsLock = await acquireMatchLock(roomId);
     if (!ownsLock || state.screen !== "matching") return;
     const refreshedPair = await refreshTrainingPair(pair);
     const host = refreshedPair[0];
     const guest = refreshedPair[1];
+    guestEntry = guest || null;
     guestUid = guest?.uid || "";
     guestSessionId = guest?.sessionId || "";
     if (host?.uid !== state.uid
@@ -2036,12 +2182,15 @@ async function createTrainingRoom(pair) {
       players,
       accepted: { [host.uid]: true },
     };
+    candidatePermissionPhase = "room_bootstrap";
     await set(ref(database, `online/trainingRooms/${roomId}`), createdRoom);
+    candidatePermissionPhase = "";
     roomCreated = true;
     await armFormingRoomDisconnects(roomId, true, roomDisconnects);
     if (!await updateOwnedTrainingQueue({ state: "forming" }, host.sessionId)) {
       throw new Error("待機セッションが別の端末へ移ったため、部屋作成を中止しました。");
     }
+    candidatePermissionPhase = "invite_create";
     await set(ref(database, `online/trainingInvites/${guest.uid}/${roomId}`), {
       roomId,
       hostUid: host.uid,
@@ -2050,6 +2199,7 @@ async function createTrainingRoom(pair) {
       variant: TRAINING_VARIANT,
       createdAt: firebaseNow(),
     });
+    candidatePermissionPhase = "";
     if (await releaseMatchLock(roomId)) ownsLock = false;
     state.pendingRoomId = roomId;
     state.pendingInviteTargetSessionId = guest.sessionId;
@@ -2059,6 +2209,8 @@ async function createTrainingRoom(pair) {
     watchPendingRoom(roomId, true);
     state.matchTimer = window.setTimeout(() => expirePendingRoom(roomId), MATCH_TIMEOUT_MS);
   } catch (error) {
+    const failedCandidatePermissionPhase = candidatePermissionPhase;
+    candidatePermissionPhase = "";
     retryMatching = active
       && state.screen === "matching"
       && !state.pendingRoomId
@@ -2095,6 +2247,23 @@ async function createTrainingRoom(pair) {
         lastSeen: firebaseNow(),
       });
     }
+    const permissionError = isTrainingPermissionError(error);
+    const candidatePermissionFailure = permissionError
+      && ["room_bootstrap", "invite_create"].includes(failedCandidatePermissionPhase);
+    let currentInviteStatus = hasCurrentTrainingInvite() ? true : false;
+    if (guestEntry && candidatePermissionFailure && !currentInviteStatus) {
+      currentInviteStatus = await refreshCurrentTrainingInviteStatus();
+    }
+    const candidateUnavailable = Boolean(
+      guestEntry
+      && candidatePermissionFailure
+      && currentInviteStatus === false
+    );
+    if (candidateUnavailable) {
+      markTrainingCandidateUnavailable(guestEntry);
+    }
+    if (candidateUnavailable
+      || (candidatePermissionFailure && currentInviteStatus === true)) return;
     throw error;
   } finally {
     if (ownsLock) {
@@ -2138,6 +2307,16 @@ function hasCurrentTrainingInvite() {
     && invite.protocolVersion === TRAINING_PROTOCOL_VERSION
     && invite.variant === TRAINING_VARIANT
   ));
+}
+
+async function refreshCurrentTrainingInviteStatus() {
+  try {
+    const snapshot = await get(ref(database, `online/trainingInvites/${state.uid}`));
+    state.latestInvites = snapshot.val() || {};
+    return hasCurrentTrainingInvite();
+  } catch {
+    return null;
+  }
 }
 
 function scheduleInviteProcessing(delay = 500) {
@@ -2439,9 +2618,24 @@ function watchPendingRoom(roomId, isHost) {
 
 async function expirePendingRoom(roomId) {
   if (state.roomId || state.pendingRoomId !== roomId || state.room.hostUid !== state.uid) return;
-  await runTransaction(ref(database, `online/trainingRooms/${roomId}/status`), (current) => (
+  const transaction = await runTransaction(ref(database, `online/trainingRooms/${roomId}/status`), (current) => (
     current === "forming" ? "expired" : undefined
   ));
+  if (transaction.snapshot.val() === "expired") {
+    const guestUid = state.room.guestUid;
+    const acceptedSnapshot = guestUid
+      ? await get(ref(
+        database,
+        `online/trainingRooms/${roomId}/accepted/${guestUid}`,
+      )).catch(() => null)
+      : null;
+    if (acceptedSnapshot && acceptedSnapshot.val() !== true) {
+      markTrainingCandidateUnavailable({
+        uid: guestUid,
+        sessionId: state.pendingInviteTargetSessionId,
+      });
+    }
+  }
   await releaseMatchLock(roomId);
 }
 
@@ -3790,6 +3984,7 @@ async function cleanupMatchmaking(keepActive) {
   window.clearTimeout(state.matchTimer);
   window.clearTimeout(state.enterRoomRetryTimer);
   window.clearTimeout(state.inviteRetryTimer);
+  clearTrainingHostTakeoverTimer();
   state.queueHeartbeat = null;
   state.matchTimer = null;
   state.enterRoomRetryTimer = null;
