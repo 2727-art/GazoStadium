@@ -132,6 +132,16 @@ import {
   resolveVisibleFinishReplyLine,
   sanitizeFinishReplyDraft,
 } from "./finish-roleplay.mjs?v=finish-reply-v2";
+import {
+  ONLINE_MAX_IMAGE_COUNT,
+  ONLINE_REQUIRED_IMAGE_COUNT,
+  ONLINE_RESERVE_IMAGE_LIMIT,
+  getDefaultAvailableCardId,
+  isOnlineDeckReady,
+  onlineRequiredImageCount,
+  onlineReserveImageCount,
+  onlineSampleFillCount,
+} from "./online-deck.mjs?v=online-deck-reserve-v1";
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
@@ -3157,6 +3167,8 @@ function renderSetup() {
   const sampleCount = getDeckSampleCount();
   const realImageCount = state.deck.length - sampleCount;
   const startingHp = getStartingHp(sampleCount);
+  const requiredImageCount = onlineRequiredImageCount(state.deck.length);
+  const reserveImageCount = onlineReserveImageCount(state.deck.length);
   const preferenceOptions = IMAGE_PREFERENCE_OPTIONS.map((option) => `
     <label class="image-preference-option">
       <input type="radio" name="onlineImagePreference" value="${option.id}" ${state.imagePreference === option.id ? "checked" : ""} />
@@ -3171,27 +3183,42 @@ function renderSetup() {
   const voiceSetSummary = activeVoiceSet
     ? `<strong>${escapeHtml(activeVoiceSet.label)}</strong><small>${escapeHtml(activeVoiceSet.description)}。下の各セリフは個別に変更できます。</small>`
     : "<strong>個別設定</strong><small>追撃・決着・返礼を自分のキャラクターに合わせて編集しています。</small>";
-  const slots = Array.from({ length: MAX_ROUNDS }, (_, index) => {
+  const renderDeckSlot = (index) => {
     const item = state.deck[index];
-    if (!item) return `<div class="deck-slot empty" aria-label="空きスロット ${index + 1}">${String(index + 1).padStart(2, "0")}</div>`;
+    const reserve = index >= ONLINE_REQUIRED_IMAGE_COUNT;
+    const slotNumber = reserve ? index - ONLINE_REQUIRED_IMAGE_COUNT + 1 : index + 1;
+    const slotLabel = reserve ? "控え" : "対戦画像";
+    if (!item) {
+      return `<div class="deck-slot empty ${reserve ? "reserve-slot" : ""}" aria-label="${slotLabel}の空きスロット ${slotNumber}">
+        <span>${reserve ? "OPTIONAL RESERVE" : "REQUIRED"}</span><b>${String(slotNumber).padStart(2, "0")}</b>
+      </div>`;
+    }
     const isSignature = item.id === state.signatureCardId;
-    return `<div class="deck-slot ${item.isSample ? "sample-card" : ""} ${isSignature ? "signature-card" : ""}">
+    return `<div class="deck-slot ${reserve ? "reserve-slot" : ""} ${item.isSample ? "sample-card" : ""} ${isSignature ? "signature-card" : ""}">
       <img src="${item.url}" alt="選択画像 ${index + 1}" draggable="false" />
       ${item.isSample ? '<span class="sample-card-badge">SAMPLE / HP−5</span>' : ""}
       <button class="signature-card-toggle ${isSignature ? "is-selected" : ""}" type="button"
         data-online-signature-card="${escapeHtml(item.id)}" aria-pressed="${isSignature}"
         aria-label="画像${index + 1}をシグネチャーカード${isSignature ? "から外す" : "に指定"}"><span aria-hidden="true">✦</span>${isSignature ? "SIGNATURE" : "切り札に指定"}</button>
-      <div class="deck-label"><span>${item.isSample ? "SAMPLE" : "ENTRY"} ${String(index + 1).padStart(2, "0")}</span>
+      <div class="deck-label"><span>${item.isSample ? "SAMPLE / " : ""}${reserve ? "RESERVE" : "ENTRY"} ${String(slotNumber).padStart(2, "0")}</span>
         <button class="remove-card" data-online-remove="${escapeHtml(item.id)}" aria-label="画像${index + 1}を削除">×</button>
       </div>
     </div>`;
-  }).join("");
+  };
+  const requiredSlots = Array.from(
+    { length: ONLINE_REQUIRED_IMAGE_COUNT },
+    (_, index) => renderDeckSlot(index),
+  ).join("");
+  const reserveSlots = Array.from(
+    { length: ONLINE_RESERVE_IMAGE_LIMIT },
+    (_, index) => renderDeckSlot(ONLINE_REQUIRED_IMAGE_COUNT + index),
+  ).join("");
   const ready = isMatchmakingSetupReady();
   const profile = state.profile;
   return `<section class="screen">
     <div class="section-head">
       <div><span class="eyebrow">ONLINE DECK SETUP</span><h1>オンライン対戦の準備</h1>
-        <p>画像を5枚選び、評価の好みが近いプレイヤーを優先して対戦します。</p></div>
+        <p>画像を5枚選ぶと対戦できます。控えを3枚まで追加すると、各ラウンドで最大8枚から選べます。</p></div>
       <button class="button button-ghost button-small" id="onlineBackHome">タイトルへ</button>
     </div>
     <div class="online-profile-strip">
@@ -3290,12 +3317,16 @@ function renderSetup() {
           <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。</small>
         </fieldset>
         <div class="deck-toolbar">
-          <div class="deck-counter"><strong>${state.deck.length}</strong> / 5 IMAGES</div>
+          <div class="deck-counter" aria-label="登録画像 ${state.deck.length}枚">
+            <span>対戦画像 <strong>${requiredImageCount}</strong> / ${ONLINE_REQUIRED_IMAGE_COUNT}</span>
+            <span class="reserve-count">控え <strong>${reserveImageCount}</strong> / ${ONLINE_RESERVE_IMAGE_LIMIT}</span>
+          </div>
           <div class="upload-actions">
-            <label class="button button-cyan button-small file-button">画像を追加
-              <input id="onlineImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= MAX_ROUNDS ? "disabled" : ""} />
+            <label class="button button-cyan button-small file-button ${state.deck.length >= ONLINE_MAX_IMAGE_COUNT ? "is-disabled" : ""}"
+              aria-disabled="${state.deck.length >= ONLINE_MAX_IMAGE_COUNT}">${state.deck.length >= ONLINE_MAX_IMAGE_COUNT ? `最大${ONLINE_MAX_IMAGE_COUNT}枚登録済み` : `画像を追加（最大${ONLINE_MAX_IMAGE_COUNT}枚）`}
+              <input id="onlineImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple ${state.deck.length >= ONLINE_MAX_IMAGE_COUNT ? "disabled" : ""} />
             </label>
-            <button class="button button-ghost button-small" id="onlineFillSample">不足分をサンプルで埋める（HP減少）</button>
+            <button class="button button-ghost button-small" id="onlineFillSample" ${state.deck.length >= ONLINE_REQUIRED_IMAGE_COUNT ? "disabled" : ""}>5枚になるまでサンプルで補う（HP減少）</button>
           </div>
         </div>
         <div class="deck-handicap-summary ${sampleCount ? "has-handicap" : ""}" aria-live="polite">
@@ -3307,7 +3338,16 @@ function renderSetup() {
           <p><strong>${state.signatureCardId ? "シグネチャーカード指定済み" : "シグネチャーカードは未指定"}</strong>
             <small>任意の1枚を指定できます。その画像でHPを0にすると、専用の強化演出になります。</small></p>
         </div>
-        <div class="deck-grid">${slots}</div>
+        <section class="deck-group" aria-labelledby="onlineRequiredDeckTitle">
+          <div class="deck-group-heading"><div><span>REQUIRED 5</span><h2 id="onlineRequiredDeckTitle">対戦画像</h2></div>
+            <p>まず5枚を登録してください。5枚だけでも、これまでどおり対戦できます。</p></div>
+          <div class="deck-grid">${requiredSlots}</div>
+        </section>
+        <section class="deck-group reserve-deck-group" aria-labelledby="onlineReserveDeckTitle">
+          <div class="deck-group-heading"><div><span>OPTIONAL 0–3</span><h2 id="onlineReserveDeckTitle">控え画像</h2></div>
+            <p>任意で3枚まで追加できます。対戦中は控えも同じ候補として選べ、使わずに終了してもかまいません。</p></div>
+          <div class="deck-grid deck-grid-reserve">${reserveSlots}</div>
+        </section>
         <div class="setup-actions">
           <button class="button button-primary" id="findOpponent" ${ready ? "" : "disabled"}>好みの近い対戦相手を探す</button>
         </div>
@@ -3862,18 +3902,18 @@ function renderRoundSelect() {
     data-online-card="${escapeHtml(item.id)}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
     <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" />
     ${item.id === state.signatureCardId ? '<i class="select-signature-badge" aria-label="シグネチャーカード">✦ SIGNATURE</i>' : ""}
-    <span>${item.used ? "USED" : item.isSample ? "SAMPLE / HP−5" : `ENTRY ${String(index + 1).padStart(2, "0")}`}</span>
+    <span>${item.used ? "USED" : item.isSample ? "SAMPLE / HP−5" : `CARD ${String(index + 1).padStart(2, "0")}`}</span>
   </button>`).join("");
   return `<section class="screen">${renderOnlineHud()}
     <div class="section-head"><div><span class="eyebrow">SECRET PICK</span><h1>あなたの画像選択</h1>
-      <p>相手の選択が完了するまで、どの画像を選んだかは送信されません。</p></div>
+      <p>未使用の登録画像から1枚を選びます。控え画像も同じように使用でき、選択をロックするまで相手には送信されません。</p></div>
       <div class="selection-heading-actions"><div class="selection-timer ${timerStarted ? "running" : "pending"} ${warning ? "warning" : ""}"
         data-selection-timer role="timer" aria-live="polite" aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}"
         style="--selection-progress:${progress}%"><small>SELECT LIMIT</small><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong>
         <span data-selection-unit>${timerStarted ? "SEC" : "SYNC"}</span><i></i></div>
         <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div></div>
     <div class="select-panel"><div class="select-grid">${cards}</div>
-      <div class="selection-footer"><p>${timerStarted ? "10秒以内に選択してください。時間切れ時は未使用画像を自動選択します。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
+      <div class="selection-footer"><p>${timerStarted ? "10秒以内に選択してください。時間切れ時は、選択中の画像を自動ロックします。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
         <button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この画像でロック</button></div></div>
     <div class="online-chat-standalone">${renderOnlineChat()}</div>
   </section>`;
@@ -4167,7 +4207,7 @@ function renderEngawa() {
 
   const selection = !state.engawaSharedCardId ? `<section class="engawa-selection" aria-labelledby="engawaSelectionTitle">
     <div class="engawa-section-copy"><span>ONE MORE PICTURE</span><h2 id="engawaSelectionTitle">いま見せたい一枚</h2>
-      <p>対戦用に用意した5枚から一枚だけ。勝負で使わなかった画像でもかまいません。</p></div>
+      <p>対戦用に登録した5〜8枚から一枚だけ。勝負で使わなかった画像でもかまいません。</p></div>
     <div class="engawa-pick-grid">${cards}</div>
     <div class="engawa-section-copy"><span>HOW IT FEELS</span><h2>今の気分を添える</h2></div>
     <div class="engawa-mood-grid">${moods}</div>
@@ -4931,7 +4971,7 @@ function bindSetupEvents() {
 function isMatchmakingSetupReady() {
   return Boolean(
     state.authReady
-    && state.deck.length === MAX_ROUNDS
+    && isOnlineDeckReady(state.deck.length)
     && state.name.trim()
     && normalizeImagePreference(state.imagePreference, ""),
   );
@@ -5136,7 +5176,7 @@ function bindChatEvents() {
 
 async function handleImageInput(event) {
   const files = Array.from(event.target.files || []);
-  const remaining = MAX_ROUNDS - state.deck.length;
+  const remaining = ONLINE_MAX_IMAGE_COUNT - state.deck.length;
   if (!files.length || remaining <= 0) return;
   setBusy(true, "画像を安全な形式に変換しています…");
   let added = 0;
@@ -5155,8 +5195,8 @@ async function handleImageInput(event) {
 }
 
 async function fillSampleDeck() {
-  const remaining = MAX_ROUNDS - state.deck.length;
-  if (remaining <= 0) return showToast("5枚すべて選択済みです。");
+  const remaining = onlineSampleFillCount(state.deck.length);
+  if (remaining <= 0) return showToast("対戦に必要な5枚はそろっています。控え画像は任意です。");
   setBusy(true, "サンプル画像を生成しています…");
   state.deck.push(...await shared().createSampleItems(0, remaining, state.deck.length));
   setBusy(false);
@@ -6550,7 +6590,7 @@ async function beginMatchmaking({ automatic = false } = {}) {
   expectedState.name = expectedState.name.trim().slice(0, 16);
   expectedState.imagePreference = normalizeImagePreference(expectedState.imagePreference, "");
   if (!expectedState.uid
-      || expectedState.deck.length !== MAX_ROUNDS
+      || !isOnlineDeckReady(expectedState.deck.length)
       || !expectedState.name
       || !expectedState.imagePreference) return;
   if (automatic && (
@@ -8597,6 +8637,7 @@ function startSelectionTimer(startedAt) {
     state.selectionLastSoundSecond = null;
     state.selectionTimeoutHandledRound = 0;
     state.selectionRemainingMs = Math.max(0, SELECTION_TIME_LIMIT_MS - ((Date.now() + state.serverTimeOffset) - startedAt));
+    state.selectedCardId = getDefaultAvailableCardId(state.deck, state.selectedCardId);
     if (state.screen === "select") render();
   }
   if (!state.selectionTimer && state.screen === "select") {
@@ -8640,16 +8681,10 @@ function updateSelectionTimerDisplay(remainingSeconds) {
 
 async function handleSelectionTimeout() {
   if (state.screen !== "select" || state.selectionLocking) return;
-  const hadSelection = Boolean(state.selectedCardId);
-  if (!hadSelection) {
-    const available = state.deck.filter((item) => !item.used);
-    if (!available.length) return;
-    state.selectedCardId = available[Math.floor(Math.random() * available.length)].id;
-  }
+  state.selectedCardId = getDefaultAvailableCardId(state.deck, state.selectedCardId);
+  if (!state.selectedCardId) return;
   window.HariaiAudio?.playCountdown?.(0);
-  showToast(hadSelection
-    ? "時間切れのため、選択中の画像を自動ロックしました。"
-    : "時間切れのため、未使用画像を自動選択しました。");
+  showToast("時間切れのため、選択中の画像を自動ロックしました。");
   await lockSelection();
 }
 

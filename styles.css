@@ -5446,8 +5446,24 @@ button:disabled {
 }
 
 .deck-counter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   color: var(--muted);
   font-weight: 800;
+}
+
+.deck-counter > span {
+  padding: 7px 10px;
+  border: 1px solid rgba(77, 232, 223, 0.2);
+  border-radius: 999px;
+  background: rgba(77, 232, 223, 0.05);
+}
+
+.deck-counter .reserve-count {
+  border-color: rgba(199, 169, 255, 0.24);
+  background: rgba(199, 169, 255, 0.06);
 }
 
 .deck-counter strong {
@@ -5541,11 +5557,74 @@ button:disabled {
   overflow: hidden;
 }
 
+.file-button.is-disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.45);
+  opacity: 0.48;
+}
+
 .file-button input {
   position: absolute;
   inset: 0;
   cursor: pointer;
   opacity: 0;
+}
+
+.deck-group {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.deck-group + .deck-group {
+  margin-top: 22px;
+}
+
+.deck-group-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.deck-group-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.deck-group-heading span {
+  color: var(--cyan);
+  font-size: 0.65rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+}
+
+.deck-group-heading h2,
+.deck-group-heading p {
+  margin: 0;
+}
+
+.deck-group-heading h2 {
+  font-size: 1rem;
+}
+
+.deck-group-heading p {
+  max-width: 560px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.65;
+  text-align: right;
+}
+
+.reserve-deck-group {
+  padding: 14px;
+  border: 1px solid rgba(199, 169, 255, 0.18);
+  border-radius: 15px;
+  background: rgba(199, 169, 255, 0.035);
+}
+
+.reserve-deck-group .deck-group-heading span {
+  color: #c7a9ff;
 }
 
 .deck-grid,
@@ -5567,6 +5646,15 @@ button:disabled {
 
 .deck-slot {
   aspect-ratio: 4 / 5;
+}
+
+.deck-slot.reserve-slot {
+  border-color: rgba(199, 169, 255, 0.25);
+}
+
+.deck-slot.empty.reserve-slot {
+  color: #6f6289;
+  background: rgba(199, 169, 255, 0.025);
 }
 
 .deck-slot.signature-card,
@@ -5976,7 +6064,7 @@ button:disabled {
 }
 
 .select-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 24px;
 }
 
@@ -8604,10 +8692,14 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .deck-slot:last-child,
-  .select-card:last-child {
-    grid-column: span 2;
-    aspect-ratio: 2 / 1;
+  .deck-group-heading {
+    align-items: start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .deck-group-heading p {
+    text-align: left;
   }
 
   .round-topbar {
@@ -9795,7 +9887,7 @@ button:disabled {
 
 .engawa-pick-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 

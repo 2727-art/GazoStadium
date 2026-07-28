@@ -32,14 +32,15 @@ function createFinishSandbox() {
       playerIndex: 0,
       round: 1,
       players: [{ name: "LOCAL" }, { name: "REMOTE" }],
-      signatureCardId: "card-signature",
+      signatureCardId: "reserve-signature",
       finishLine: "自分の決めセリフ",
       showOpponentCustomFinish: true,
       remoteImages: new Map(),
     },
     localItem: {
-      id: "card-signature",
+      id: "reserve-signature",
       url: "blob:local-finisher",
+      position: 7,
     },
     output: null,
   };
@@ -83,6 +84,7 @@ test("signature choice is optional, unique, cleared on removal, and retained for
   assert.match(online, /signatureCardId: ""/);
   assert.match(online, /state\.signatureCardId = state\.signatureCardId === id \? "" : id;/);
   assert.match(online, /function toggleSignatureCard\(id\) \{[\s\S]*?button\.replaceChildren\(/);
+  assert.match(online, /if \(!state\.deck\.some\(\(item\) => item\.id === id\)\) return;/);
   assert.doesNotMatch(extract(/function toggleSignatureCard\(id\) \{[\s\S]*?\n\}/, "signature toggle"), /\brender\(\)/);
   assert.match(online, /if \(state\.signatureCardId === id\) state\.signatureCardId = "";/);
   assert.match(online, /signatureCardId: expectedState\.signatureCardId,/);

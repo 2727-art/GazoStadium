@@ -22,15 +22,29 @@ test("deck preparation keeps the same media objects and clears only match usage"
   for (const [mode, source] of Object.entries(sources)) {
     const functionSource = source.match(/function prepareDeckForRematch\(items\) \{[\s\S]*?\n\}/)?.[0];
     assert.ok(functionSource, `${mode} rematch helper could not be loaded`);
-    const blob = { type: "image/webp" };
-    const items = [{ id: "card-1", blob, url: "blob:card-1", position: 7, used: true, role: "opening" }];
+    const items = Array.from({ length: 8 }, (_, index) => ({
+      id: `card-${index + 1}`,
+      blob: { type: "image/webp", index },
+      url: `blob:card-${index + 1}`,
+      position: 20 + index,
+      used: true,
+      role: index === 7 ? "reserve-signature" : "opening",
+    }));
+    const media = items.map(({ blob, url }) => ({ blob, url }));
     const sandbox = { items, result: null };
     vm.runInNewContext(`${functionSource}\nresult = prepareDeckForRematch(items);`, sandbox);
     assert.equal(sandbox.result, items, `${mode} should reuse the existing deck array`);
-    assert.equal(items[0].blob, blob, `${mode} should keep the local image Blob`);
-    assert.equal(items[0].url, "blob:card-1", `${mode} should keep the local Object URL`);
-    assert.equal(items[0].used, false, `${mode} should make used cards selectable again`);
-    assert.equal(items[0].role, "opening", `${mode} should preserve mode-specific card metadata`);
+    items.forEach((item, index) => {
+      assert.equal(item.blob, media[index].blob, `${mode} should keep Blob ${index + 1}`);
+      assert.equal(item.url, media[index].url, `${mode} should keep Object URL ${index + 1}`);
+      if (mode === "solo") {
+        assert.equal(item.position, index, `${mode} should renumber card ${index + 1}`);
+      } else {
+        assert.equal(item.position, 20 + index, `${mode} should preserve card ${index + 1} metadata`);
+      }
+      assert.equal(item.used, false, `${mode} should make card ${index + 1} selectable again`);
+    });
+    assert.equal(items[7].role, "reserve-signature", `${mode} should preserve reserve metadata`);
   }
 });
 
