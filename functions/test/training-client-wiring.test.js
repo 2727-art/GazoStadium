@@ -18,7 +18,10 @@ function functionBlock(name) {
 
 test("loads the HP V3 client and retires the team client", () => {
   assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
-  assert.match(indexHtml, /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2[^"]*"/);
+  assert.match(
+    indexHtml,
+    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1"/,
+  );
   assert.match(trainingJs, /training-core\.mjs\?v=kitaeai-hp-v3-matchmaking-v1/);
   assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
   assert.match(indexHtml, /src="online\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
@@ -334,6 +337,7 @@ test("prioritizes server finalization and blocks natural results until completed
 });
 
 test("bounds every P2P image exchange and routes failure away from scoring", () => {
+  const drawBlock = functionBlock("ensureLocalRoundDraw");
   assert.match(trainingJs, /IMAGE_EXCHANGE_TIMEOUT_MS = 45_000/);
   assert.match(trainingJs, /startImageExchangeWatchdog/);
   assert.match(trainingJs, /"image_exchange_timeout"/);
@@ -342,6 +346,14 @@ test("bounds every P2P image exchange and routes failure away from scoring", () 
   assert.match(trainingJs, /transitionToLocalNoContestPending/);
   assert.match(trainingJs, /45秒以内に画像交換を完了できなかったため、NO CONTEST/);
   assert.match(trainingJs, /!allRoundImagesReceived\(view\.round\)/);
+  assert.match(
+    drawBlock,
+    /rounds\/\$\{roundIndex\}\/createdAt/,
+  );
+  assert.match(drawBlock, /current == null \? firebaseNow\(\) : undefined/);
+  assert.match(drawBlock, /\{ applyLocally: false \}/);
+  assert.match(drawBlock, /ensureRoundLocal\(roundIndex\)\.createdAt = createdAt/);
+  assert.doesNotMatch(drawBlock, /current === null \? \{ createdAt:/);
 });
 
 test("shows V3-only private HP activity records while preserving old records outside new writes", () => {

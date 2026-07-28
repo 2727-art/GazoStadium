@@ -3526,10 +3526,13 @@ async function ensureLocalRoundDraw(roundIndex = currentRoundIndex()) {
   if (!Number(round.createdAt || 0)) {
     if (state.room.hostUid !== state.uid) return;
     const created = await runTransaction(
-      ref(database, `online/trainingRooms/${state.roomId}/rounds/${roundIndex}`),
-      (current) => current === null ? { createdAt: firebaseNow() } : current,
+      ref(database, `online/trainingRooms/${state.roomId}/rounds/${roundIndex}/createdAt`),
+      (current) => current == null ? firebaseNow() : undefined,
+      { applyLocally: false },
     );
-    Object.assign(ensureRoundLocal(roundIndex), created.snapshot.val() || {});
+    const createdAt = Number(created.snapshot.val() || 0);
+    if (!createdAt) throw new Error("ランダムDRAWの開始時刻を確定できませんでした。");
+    ensureRoundLocal(roundIndex).createdAt = createdAt;
     round = trainingRound(roundIndex);
   }
   let draw = roundDraw(round, state.uid);

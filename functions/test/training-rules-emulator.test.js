@@ -1567,10 +1567,51 @@ test("v3 draws are owner-scoped, scores stay secret, and early workouts are reje
     ref(room.guestDatabase, roundPath),
     { createdAt: Date.now() },
   ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, roundPath),
-    { createdAt: Date.now() },
+  await assertFails(runTransaction(
+    ref(room.guestDatabase, `${roundPath}/createdAt`),
+    (current) => current == null ? Date.now() : undefined,
+    { applyLocally: false },
   ));
+  const legacyParentDatabase = environment.authenticatedContext(room.host.uid).database();
+  await assertFails(runTransaction(
+    ref(legacyParentDatabase, roundPath),
+    (current) => current == null ? { createdAt: Date.now() } : undefined,
+    { applyLocally: false },
+  ));
+  const coldHostDatabase = environment.authenticatedContext(room.host.uid).database();
+  await assertFails(get(ref(coldHostDatabase, roundPath)));
+  const observedRoundCreatedAt = [];
+  const expectedRoundCreatedAt = Date.now();
+  const roundCreatedAtTransaction = await assertSucceeds(runTransaction(
+    ref(coldHostDatabase, `${roundPath}/createdAt`),
+    (current) => {
+      observedRoundCreatedAt.push(current);
+      return current == null ? expectedRoundCreatedAt : undefined;
+    },
+    { applyLocally: false },
+  ));
+  assert.equal(observedRoundCreatedAt.includes(null), true);
+  assert.equal(roundCreatedAtTransaction.committed, true);
+  assert.equal(roundCreatedAtTransaction.snapshot.val(), expectedRoundCreatedAt);
+  assert.equal(
+    (await get(ref(room.hostDatabase, `${roundPath}/createdAt`))).val(),
+    expectedRoundCreatedAt,
+  );
+  const reentryHostDatabase = environment.authenticatedContext(room.host.uid).database();
+  const reentryObserved = [];
+  const reentryTransaction = await assertSucceeds(runTransaction(
+    ref(reentryHostDatabase, `${roundPath}/createdAt`),
+    (current) => {
+      reentryObserved.push(current);
+      return current == null ? Date.now() : undefined;
+    },
+    { applyLocally: false },
+  ));
+  assert.equal(reentryObserved[0], null);
+  assert.equal(reentryObserved.includes(expectedRoundCreatedAt), true);
+  assert.equal(reentryTransaction.committed, false);
+  assert.equal(reentryTransaction.snapshot.val(), expectedRoundCreatedAt);
+  await assertFails(get(ref(reentryHostDatabase, roundPath)));
   await assertFails(set(
     ref(room.hostDatabase, `${roundPath}/unexpected`),
     true,
@@ -1585,10 +1626,14 @@ test("v3 draws are owner-scoped, scores stay secret, and early workouts are reje
     ref(room.guestDatabase, `${roundPath}/draws/${room.host.uid}`),
     hostDraw,
   ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roundPath}/draws/${room.host.uid}`),
-    hostDraw,
+  const coldHostDrawDatabase = environment.authenticatedContext(room.host.uid).database();
+  const hostDrawTransaction = await assertSucceeds(runTransaction(
+    ref(coldHostDrawDatabase, `${roundPath}/draws/${room.host.uid}`),
+    (current) => current == null ? hostDraw : undefined,
+    { applyLocally: false },
   ));
+  assert.equal(hostDrawTransaction.committed, true);
+  assert.deepEqual(hostDrawTransaction.snapshot.val(), hostDraw);
   await assertFails(set(
     ref(room.hostDatabase, `${roundPath}/imageReceived/${room.host.uid}`),
     true,
@@ -1605,14 +1650,26 @@ test("v3 draws are owner-scoped, scores stay secret, and early workouts are reje
       drawnAt: Date.now(),
     },
   ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${roundPath}/draws/${room.guest.uid}`),
-    {
-      imageIndex: 2,
-      bpm: 80,
-      drawnAt: Date.now(),
-    },
+  const guestDraw = {
+    imageIndex: 2,
+    bpm: 80,
+    drawnAt: Date.now(),
+  };
+  const coldGuestDrawDatabase = environment.authenticatedContext(room.guest.uid).database();
+  const guestDrawTransaction = await assertSucceeds(runTransaction(
+    ref(coldGuestDrawDatabase, `${roundPath}/draws/${room.guest.uid}`),
+    (current) => current == null ? guestDraw : undefined,
+    { applyLocally: false },
   ));
+  assert.equal(guestDrawTransaction.committed, true);
+  assert.deepEqual(guestDrawTransaction.snapshot.val(), guestDraw);
+  const committedDraws = (await get(
+    ref(room.hostDatabase, `${roundPath}/draws`),
+  )).val();
+  assert.deepEqual(committedDraws, {
+    [room.host.uid]: hostDraw,
+    [room.guest.uid]: guestDraw,
+  });
   await assertSucceeds(set(
     ref(room.hostDatabase, `${roundPath}/imageReceived/${room.host.uid}`),
     true,
