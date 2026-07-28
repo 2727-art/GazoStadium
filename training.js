@@ -37,15 +37,11 @@ import {
 } from "./free-table-ambience.mjs?v=free-table-ambience-v1";
 import {
   TRAINING_LIMITS,
-  TRAINING_MAX_TURNS,
   TRAINING_PROTOCOL_VERSION,
   TRAINING_QUEUE_FRESH_MS,
-  TRAINING_TARGET_DURATION_MS,
-  TRAINING_TURN_DURATION_MS,
   TRAINING_VARIANT,
   createTrainingAcceptanceUpdates,
   deriveTrainingRoomState,
-  normalizeTrainingCarrotChoice,
   normalizeTrainingConditions,
   normalizeTrainingInstruction,
   normalizeTrainingIntensity,
@@ -54,39 +50,42 @@ import {
   selectTrainingPair,
   trainingActiveRoomAppearsLive,
   trainingBeatState,
-  trainingImageOwnerUid,
   trainingInstructionIsReady,
   trainingServerFinalizedResult,
-  trainingTargetDurationMs,
   validTrainingQueueEntries,
-} from "./training-core.mjs?v=kitaeai-60-v2";
+} from "./training-core.mjs?v=kitaeai-hp-v3";
 
 const MATCH_TIMEOUT_MS = 30_000;
 const MATCH_LOCK_TTL_MS = MATCH_TIMEOUT_MS + 10_000;
 const HEARTBEAT_MS = 20_000;
 const TRAINING_QUEUE_RECLAIM_MS = 60_000;
 const IMAGE_EXCHANGE_TIMEOUT_MS = 45_000;
-const IMAGE_CHANNEL_LABEL = "hariai-training-image-v2";
-const IMAGE_ROUND = 1;
+const IMAGE_CHANNEL_LABEL = "hariai-training-image-v3";
 const MAX_IMAGE_TRANSFER_BYTES = 8 * 1024 * 1024;
 const IMAGE_CHUNK_BYTES = 64 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const TRAINING_VOLUME_KEY = "hariai-training-volume-v1";
 const TRAINING_MUTED_KEY = "hariai-training-muted-v1";
-const CARROT_CHOICE_POLL_MS = 800;
+const TRAINING_IMAGE_COUNT = 5;
+const TRAINING_COMMAND_COUNT = 3;
+const TRAINING_MAX_ROUNDS = 5;
+const TRAINING_START_HP = 30;
+const SCORE_POLL_MS = 800;
+const FINISHER_DURATION_MS = 30_000;
+const TRAINING_SCORE_CONFIG = Object.freeze({
+  8: Object.freeze({ label: "HIT 8", damage: 10, durationMs: 60_000 }),
+  9: Object.freeze({ label: "CRITICAL 9", damage: 15, durationMs: 75_000 }),
+  10: Object.freeze({ label: "PERFECT 10", damage: 20, durationMs: 90_000 }),
+});
 const TRAINING_HUD_PHASES = Object.freeze([
-  "ready",
-  "active",
-  "base_expired",
-  "boost_active",
-  "boost_expired",
+  "workout_ready",
+  "workout_active",
+  "workout_expired",
 ]);
 const TRAINING_RUNNING_PHASES = Object.freeze([
-  "active",
-  "base_expired",
-  "boost_active",
-  "boost_expired",
+  "workout_active",
+  "workout_expired",
 ]);
 const LOCAL_PREVIEW_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const FALLBACK_ICE_SERVERS = Object.freeze([
@@ -99,36 +98,6 @@ const CHEERS = Object.freeze({
   last: "ラスト！",
   complete: "よくやり切った！",
 });
-const CARROT_CHOICES = Object.freeze({
-  mine: Object.freeze({
-    label: "MY CARROT",
-    durationMs: TRAINING_TARGET_DURATION_MS.mine,
-    boostMs: 0,
-    image: "mine",
-    description: "自分の本命画像で、基本の60秒",
-  }),
-  boost8: Object.freeze({
-    label: "HIT 8",
-    durationMs: TRAINING_TARGET_DURATION_MS.boost8,
-    boostMs: 10_000,
-    image: "partner",
-    description: "相手画像で、60秒＋10秒",
-  }),
-  boost9: Object.freeze({
-    label: "CRITICAL 9",
-    durationMs: TRAINING_TARGET_DURATION_MS.boost9,
-    boostMs: 20_000,
-    image: "partner",
-    description: "相手画像で、60秒＋20秒",
-  }),
-  boost10: Object.freeze({
-    label: "PERFECT 10",
-    durationMs: TRAINING_TARGET_DURATION_MS.boost10,
-    boostMs: 30_000,
-    image: "partner",
-    description: "相手画像で、60秒＋30秒",
-  }),
-});
 const INTENSITY_LABELS = Object.freeze({
   light: "軽め",
   standard: "標準",
@@ -137,24 +106,21 @@ const INTENSITY_LABELS = Object.freeze({
 const PRESETS = Object.freeze({
   pushup: Object.freeze({
     exercise: "腕立て伏せ",
-    completion: "60秒間、自分のペースで続ける",
+    completion: "時間いっぱい、自分のペースで続ける",
     command: "メトロノームに合わせて、できる範囲で腕立て伏せを続けてください。",
-    bpm: 80,
     beatsPerRep: 4,
   }),
   squat: Object.freeze({
     exercise: "スクワット",
-    completion: "60秒間、止まらずに続ける",
+    completion: "時間いっぱい、無理のない範囲で続ける",
     command: "姿勢を意識しながら、拍に合わせてスクワットを続けてください。",
-    bpm: 100,
     beatsPerRep: 2,
   }),
   situp: Object.freeze({
     exercise: "腹筋",
-    completion: "60秒間、自分のリズムで続ける",
+    completion: "時間いっぱい、呼吸を止めずに続ける",
     command: "無理のない可動域で、呼吸を止めずに腹筋を続けてください。",
-    bpm: 60,
-    beatsPerRep: 2,
+    beatsPerRep: 8,
   }),
 });
 
@@ -231,8 +197,13 @@ function createState() {
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
     intensity: "standard",
     conditions: "",
-    localImage: null,
-    remoteImage: null,
+    localImages: Array(TRAINING_IMAGE_COUNT).fill(null),
+    remoteImages: {},
+    commandDeck: [
+      normalizeCommandCard(PRESETS.pushup),
+      normalizeCommandCard(PRESETS.squat),
+      normalizeCommandCard(PRESETS.situp),
+    ],
     profile: null,
     daily: null,
     roomId: "",
@@ -261,8 +232,11 @@ function createState() {
     publicPresenceOwnerDisconnect: null,
     matchmakingUnsubscribers: [],
     roomUnsubscribers: [],
-    carrotChoicePoll: null,
-    carrotChoicePollBusy: false,
+    scorePoll: null,
+    scorePollBusy: false,
+    resultScoreHydration: null,
+    resultScoreHydrationRetryAt: 0,
+    roomSyncing: false,
     disconnectHandles: [],
     activeDisconnect: null,
     activeDisconnectRoomId: "",
@@ -272,20 +246,20 @@ function createState() {
     channel: null,
     pendingIce: [],
     incomingImage: null,
-    outgoingImageSent: false,
+    outgoingImageRounds: new Set(),
+    outgoingImageBusy: false,
     imageExchangeTimer: null,
+    imageExchangeRound: 0,
     incomingMessageChain: Promise.resolve(),
     iceServers: FALLBACK_ICE_SERVERS.map((item) => ({ ...item })),
     ticker: null,
     currentView: null,
-    milestoneWriting: null,
+    roundProgressWriting: null,
     giveUpArmed: false,
-    carrotChoice: "",
-    carrotChoiceSubmitting: false,
+    scoreSubmitting: false,
+    commandSubmitting: false,
     freeCheerDraft: "",
-    freeCheerSentTurn: 0,
-    draftTurnIndex: 0,
-    draftInstruction: normalizeTrainingInstruction(PRESETS.squat),
+    freeCheerSentRound: 0,
     ambienceController,
     volume,
     muted,
@@ -295,6 +269,9 @@ function createState() {
     cheer: null,
     cheerTimer: null,
     outcome: null,
+    finisher: null,
+    finisherTicker: null,
+    finisherOfferTimer: null,
     finalizing: false,
     finalization: null,
     finalizeTimer: null,
@@ -314,13 +291,11 @@ function emptyRoom() {
     guestUid: "",
     createdAt: 0,
     status: "",
-    firstTrainerUid: "",
     members: {},
     players: {},
     accepted: {},
-    imageReceived: {},
-    carrotChoices: {},
-    turns: {},
+    rounds: {},
+    surrendered: null,
     presence: {},
     destroyed: null,
     serverFinalized: null,
@@ -342,61 +317,263 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function normalizeCarrotChoice(value) {
-  return normalizeTrainingCarrotChoice(value);
+function normalizeImageBpm(value) {
+  const bpm = Number(value);
+  return Number.isInteger(bpm) && bpm >= 40 && bpm <= 160 ? bpm : bpm === 0 ? 0 : -1;
 }
 
-function carrotChoiceConfig(value) {
-  return CARROT_CHOICES[normalizeCarrotChoice(value)] || CARROT_CHOICES.mine;
+function normalizeScore(value) {
+  const score = Number(value);
+  return Number.isInteger(score) && score >= 1 && score <= 10 ? score : 0;
 }
 
-function carrotChoiceForUid(uid) {
-  return normalizeCarrotChoice(state.room.carrotChoices?.[uid]);
+function scoreConfig(value) {
+  return TRAINING_SCORE_CONFIG[normalizeScore(value)] || Object.freeze({
+    label: "MISS",
+    damage: 0,
+    durationMs: 0,
+  });
 }
 
-function allCarrotChoicesReady() {
-  const uids = Object.keys(state.room.members || {});
-  return uids.length === 2 && uids.every((uid) => carrotChoiceForUid(uid));
+function normalizeCommandCard(value = {}) {
+  const instruction = normalizeTrainingInstruction({ ...value, bpm: 0 });
+  return {
+    exercise: instruction.exercise,
+    completion: instruction.completion,
+    command: instruction.command,
+    beatsPerRep: [2, 4, 8].includes(Number(value.beatsPerRep))
+      ? Number(value.beatsPerRep)
+      : 2,
+  };
 }
 
-function trainingSetNumber(turnIndex) {
-  return Math.min(3, Math.max(1, Math.ceil(Number(turnIndex || 1) / 2)));
+function commandCardIsReady(value) {
+  const card = normalizeCommandCard(value);
+  return Boolean(card.exercise && card.completion && card.command);
 }
 
-function trainingTurnTargetDuration(turn) {
-  const expected = trainingTargetDurationMs(turn?.carrotChoice);
-  const target = Number(turn?.targetDurationMs);
-  return target === expected ? target : expected || TRAINING_TURN_DURATION_MS;
+function commandDeckPayload(deck = state.commandDeck) {
+  return Object.fromEntries(
+    deck.map((card, index) => [index + 1, normalizeCommandCard(card)]),
+  );
 }
 
-function trainingTurnImageOwner(turn, traineeUid, trainerUid) {
-  const expected = trainingImageOwnerUid(turn?.carrotChoice, traineeUid, trainerUid);
-  return turn?.imageOwnerUid === expected ? turn.imageOwnerUid : expected;
+function imageBpmsPayload(images = state.localImages) {
+  return Object.fromEntries(
+    images.map((image, index) => [index + 1, normalizeImageBpm(image?.bpm)]),
+  );
 }
 
-function trainingTurnElapsed(turn, now = firebaseNow()) {
-  const startedAt = Number(turn?.startedAt || 0);
+function setupIsReady() {
+  return Boolean(
+    state.authReady
+    && normalizeTrainingName(state.name)
+    && state.localImages.length === TRAINING_IMAGE_COUNT
+    && state.localImages.every((image) => image?.blob && normalizeImageBpm(image.bpm) >= 0)
+    && state.commandDeck.length === TRAINING_COMMAND_COUNT
+    && state.commandDeck.every(commandCardIsReady),
+  );
+}
+
+function memberUids() {
+  return Object.entries(state.room.members || {})
+    .filter(([, included]) => included === true)
+    .map(([uid]) => uid)
+    .sort();
+}
+
+function trainingRound(roundIndex) {
+  return state.room.rounds?.[roundIndex]
+    || state.room.rounds?.[String(roundIndex)]
+    || {};
+}
+
+function roundDraw(round, uid) {
+  return round?.draws?.[uid] || null;
+}
+
+function roundScore(round, uid) {
+  return normalizeScore(round?.scores?.[uid]);
+}
+
+function currentRoundIndex() {
+  for (let index = 1; index <= TRAINING_MAX_ROUNDS; index += 1) {
+    const round = trainingRound(index);
+    if (!Number(round.completedAt || 0)) return index;
+  }
+  return TRAINING_MAX_ROUNDS;
+}
+
+function completedRoundCount() {
+  return Array.from({ length: TRAINING_MAX_ROUNDS }, (_, index) => trainingRound(index + 1))
+    .filter((round) => Number(round.completedAt || 0) > 0)
+    .length;
+}
+
+function damageTakenBy(uid) {
+  return Array.from({ length: TRAINING_MAX_ROUNDS }, (_, index) => {
+    const score = roundScore(trainingRound(index + 1), uid);
+    return scoreConfig(score).damage;
+  }).reduce((total, damage) => total + damage, 0);
+}
+
+function hpFor(uid) {
+  return Math.max(0, TRAINING_START_HP - damageTakenBy(uid));
+}
+
+function usedCommandIndexes(trainerUid) {
+  const used = new Set();
+  for (let index = 1; index <= TRAINING_MAX_ROUNDS; index += 1) {
+    const choices = trainingRound(index).commandChoices || {};
+    Object.values(choices).forEach((choice) => {
+      if (choice?.trainerUid === trainerUid) used.add(Number(choice.cardIndex));
+    });
+  }
+  return used;
+}
+
+function commandCardFor(uid, cardIndex) {
+  return normalizeCommandCard(
+    state.room.players?.[uid]?.commandDeck?.[cardIndex]
+    || state.room.players?.[uid]?.commandDeck?.[String(cardIndex)],
+  );
+}
+
+function ownWorkoutContext(roundIndex = currentRoundIndex()) {
+  const round = trainingRound(roundIndex);
+  const score = roundScore(round, state.uid);
+  const choice = round.commandChoices?.[state.uid];
+  const workout = round.workouts?.[state.uid];
+  if (score < 8 || !choice) return null;
+  const trainerUid = choice.trainerUid || opponentPlayer()?.uid || "";
+  const draw = roundDraw(round, trainerUid);
+  return {
+    roundIndex,
+    round,
+    score,
+    scoreInfo: scoreConfig(score),
+    choice,
+    workout: workout || {},
+    trainerUid,
+    card: commandCardFor(trainerUid, choice.cardIndex),
+    bpm: normalizeImageBpm(draw?.bpm) >= 0 ? Number(draw.bpm) : 0,
+  };
+}
+
+function workoutElapsed(workout, now = firebaseNow()) {
+  const startedAt = Number(workout?.startedAt || 0);
   return startedAt ? Math.max(0, Number(now) - startedAt) : 0;
 }
 
-function completedTrainingSeconds(turns) {
-  return Object.values(turns || {}).reduce((total, turn) => {
-    const startedAt = Number(turn?.startedAt || 0);
-    const completedAt = Number(turn?.completedAt || 0);
-    const baseCompletedAt = Number(turn?.baseCompletedAt || 0);
-    const recordedAt = completedAt || baseCompletedAt;
-    if (!startedAt || recordedAt < startedAt + TRAINING_TURN_DURATION_MS) return total;
-    return total + Math.floor(Math.min(
-      trainingTurnTargetDuration(turn),
-      Math.max(TRAINING_TURN_DURATION_MS, recordedAt - startedAt),
-    ) / 1000);
-  }, 0);
+function allRoundDrawsReady(round) {
+  const uids = memberUids();
+  return uids.length === 2 && uids.every((uid) => {
+    const draw = roundDraw(round, uid);
+    return Number.isInteger(Number(draw?.imageIndex))
+      && Number(draw.imageIndex) >= 1
+      && Number(draw.imageIndex) <= TRAINING_IMAGE_COUNT
+      && normalizeImageBpm(draw.bpm) >= 0;
+  });
+}
+
+function allRoundImagesReceived(round) {
+  const uids = memberUids();
+  return uids.length === 2 && uids.every((uid) => round?.imageReceived?.[uid] === true);
+}
+
+function allRoundScoresReady(round) {
+  const uids = memberUids();
+  return uids.length === 2 && uids.every((uid) => roundScore(round, uid));
+}
+
+function requiredRoundWorkoutsComplete(round) {
+  return memberUids().every((uid) => {
+    if (roundScore(round, uid) < 8) return true;
+    return Number(round?.workouts?.[uid]?.completedAt || 0) > 0;
+  });
+}
+
+function hpResultView() {
+  const uids = memberUids();
+  if (uids.length !== 2) return null;
+  const surrenderedUid = String(state.room.surrendered?.uid || "");
+  if (uids.includes(surrenderedUid)) {
+    const winnerUid = uids.find((uid) => uid !== surrenderedUid) || "";
+    return {
+      phase: "result",
+      roundIndex: currentRoundIndex(),
+      result: { type: winnerUid === state.uid ? "win" : "loss", winnerUid, loserUid: surrenderedUid, reason: "surrender" },
+    };
+  }
+  return null;
+}
+
+function trainingClientView() {
+  const result = hpResultView();
+  if (result) return result;
+  const roundIndex = currentRoundIndex();
+  const round = trainingRound(roundIndex);
+  const opponentUid = memberUids().find((uid) => uid !== state.uid) || "";
+  const base = { roundIndex, round, opponentUid, result: null };
+  if (!allRoundDrawsReady(round) || !allRoundImagesReceived(round)) return { ...base, phase: "drawing" };
+  if (!allRoundScoresReady(round)) return { ...base, phase: "scoring" };
+  const opponentScore = roundScore(round, opponentUid);
+  const ownScore = roundScore(round, state.uid);
+  if (opponentScore >= 8 && !round.commandChoices?.[opponentUid]) {
+    return { ...base, phase: "command_select", traineeUid: opponentUid, trainerUid: state.uid };
+  }
+  if (ownScore >= 8 && !round.commandChoices?.[state.uid]) {
+    return { ...base, phase: "waiting_command", traineeUid: state.uid, trainerUid: opponentUid };
+  }
+  const context = ownWorkoutContext(roundIndex);
+  if (context && !Number(context.workout?.completedAt || 0)) {
+    if (!Number(context.workout?.startedAt || 0)) return { ...base, phase: "workout_ready", ...context };
+    if (workoutElapsed(context.workout) >= context.scoreInfo.durationMs) {
+      return { ...base, phase: "workout_expired", ...context };
+    }
+    return { ...base, phase: "workout_active", ...context };
+  }
+  if (!requiredRoundWorkoutsComplete(round)) return { ...base, phase: "waiting_workout" };
+  return { ...base, phase: "round_complete" };
+}
+
+function completedTrainingSeconds(rounds) {
+  return Object.values(rounds || {}).reduce((total, round) => (
+    total + Object.entries(round?.workouts || {}).reduce((roundTotal, [uid, workout]) => {
+      if (uid !== state.uid || !Number(workout?.completedAt || 0)) return roundTotal;
+      return roundTotal + Math.floor(scoreConfig(roundScore(round, uid)).durationMs / 1000);
+    }, 0)
+  ), 0);
+}
+
+function imageScoreMetrics(uid) {
+  const scorerUid = memberUids().find((memberUid) => memberUid !== uid) || "";
+  const scores = Array.from({ length: TRAINING_MAX_ROUNDS }, (_, index) => (
+    roundScore(trainingRound(index + 1), scorerUid)
+  )).filter(Boolean);
+  return {
+    total: scores.reduce((sum, score) => sum + score, 0),
+    tens: scores.filter((score) => score === 10).length,
+    nines: scores.filter((score) => score === 9).length,
+  };
+}
+
+function resultImageScoreMetrics(view, uid) {
+  const fallback = imageScoreMetrics(uid);
+  const total = Number(view?.scoreTotalByUid?.[uid]);
+  const tens = Number(view?.score10CountByUid?.[uid]);
+  const nines = Number(view?.score9CountByUid?.[uid]);
+  return {
+    total: Number.isFinite(total) ? total : fallback.total,
+    tens: Number.isFinite(tens) ? tens : fallback.tens,
+    nines: Number.isFinite(nines) ? nines : fallback.nines,
+  };
 }
 
 function isPreviewRequest() {
   if (!LOCAL_PREVIEW_HOSTS.has(location.hostname)) return "";
   const requested = new URLSearchParams(location.search).get("trainingPreview") || "";
-  return ["setup", "choice", "coach", "active", "boost", "result"].includes(requested)
+  return ["setup", "draw", "score", "command", "workout", "result"].includes(requested)
     ? requested
     : "";
 }
@@ -471,8 +648,8 @@ function setTrainingChrome(label) {
   const body = destroyDialog?.querySelector("p");
   const confirm = destroyDialog?.querySelector("#confirmDestroy");
   if (title) title.textContent = "鍛え合い60を終了しますか？";
-  if (body) body.textContent = "進行中のセットはNO CONTESTになります。RATEへの影響はありません。";
-  if (confirm) confirm.textContent = "トレーニングを終了";
+  if (body) body.textContent = "進行中のHP対戦はNO CONTESTになります。RATEへの影響はありません。";
+  if (confirm) confirm.textContent = "HP対戦を終了";
 }
 
 function render() {
@@ -492,38 +669,64 @@ function render() {
 }
 
 function renderSetup() {
-  const ready = state.authReady && normalizeTrainingName(state.name) && state.localImage?.blob;
-  const preview = state.localImage?.url
-    ? `<img src="${escapeHtml(state.localImage.url)}" alt="選んだニンジン画像のプレビュー" />`
-    : `<div class="training-image-placeholder" aria-hidden="true"><span>YOUR CARROT</span><strong>画像を1枚選ぶ</strong></div>`;
+  const ready = setupIsReady();
   return `
     <section class="screen training-screen training-setup" aria-labelledby="trainingTitle">
       <div class="training-heading">
-        <span class="eyebrow">ROLEPLAY RHYTHM TRAINING / RATE FREE</span>
+        <span class="eyebrow">IMAGE DRAW × HP30 × RHYTHM TRAINING</span>
         <h1 id="trainingTitle">鍛え合い<span>60</span></h1>
-        <p>自分も3セット、相手も3セット。休む番には相手を応援して、二人で三日坊主を越えます。</p>
+        <p>刺さる5枚を厳選してDRAW。相手画像へ高得点を付けた自分が、相手のCOMMANDで鍛えられます。</p>
       </div>
-      <div class="training-setup-grid">
-        <section class="training-carrot-card" aria-labelledby="trainingCarrotTitle">
+      <form class="training-hp-setup" id="trainingSetupForm">
+        <section class="training-carrot-card training-deck-builder" aria-labelledby="trainingCarrotTitle">
           <div class="training-section-head">
             <span>01</span>
-            <div><h2 id="trainingCarrotTitle">MY CARROT</h2><p>刺さらない画像を見続けないための、自分の本命を1枚。</p></div>
+            <div><h2 id="trainingCarrotTitle">IMAGE DECK / 5</h2><p>相手へ刺す5枚を厳選し、画像ごとのリズムを決めます。</p></div>
           </div>
-          <div class="training-setup-image">${preview}</div>
-          <div class="training-image-actions">
+          <div class="training-image-deck">
+            ${state.localImages.map((image, index) => `
+              <article class="training-image-slot ${image ? "is-ready" : ""}">
+                <header><span>CARD ${index + 1}</span><strong>${image ? (normalizeImageBpm(image.bpm) >= 40 ? `${normalizeImageBpm(image.bpm)} BPM` : "FREE") : "EMPTY"}</strong></header>
+                <div class="training-setup-image">
+                  ${image?.url
+                    ? `<img src="${escapeHtml(image.url)}" alt="画像カード${index + 1}のプレビュー" />`
+                    : `<div class="training-image-placeholder" aria-hidden="true"><span>DRAW ${index + 1}</span><strong>画像を選ぶ</strong></div>`}
+                </div>
+                <label class="button button-training training-file-button">
+                  ${image ? "画像を差し替え" : "画像を選ぶ"}
+                  <input type="file" accept="image/*" data-training-image-input="${index}" />
+                </label>
+                <label class="training-image-bpm">
+                  <span>この画像のBPM</span>
+                  <input type="number" min="0" max="160" step="1" value="${image ? Math.max(0, normalizeImageBpm(image.bpm)) : 0}" data-training-image-bpm="${index}" ${image ? "" : "disabled"} />
+                  <small>0＝無音 / 40～160</small>
+                </label>
+                ${image ? `<button class="training-slot-remove" type="button" data-training-remove-image="${index}">外す</button>` : ""}
+              </article>
+            `).join("")}
+          </div>
+          <div class="training-image-actions training-deck-actions">
             <label class="button button-training training-file-button">
-              画像を選ぶ
-              <input id="trainingImageInput" type="file" accept="image/*" />
+              空き枠へ画像を追加
+              <input id="trainingImageInput" type="file" accept="image/*" multiple />
             </label>
-            <button class="button button-ghost" id="trainingSampleImage" type="button">サンプルを使う</button>
-            ${state.localImage ? `<button class="button button-ghost" id="trainingRemoveImage" type="button">画像を外す</button>` : ""}
+            <button class="button button-ghost" id="trainingSampleImage" type="button">5枚のサンプルを使う</button>
           </div>
-          <p class="training-privacy">最大1280pxのWebPへ端末内で変換。画像はP2Pで相手に一度だけ届き、Firebaseには保存されません。</p>
+          <p class="training-privacy">毎ラウンド未使用の1枚をランダムDRAW。最大1280pxのWebPへ端末内変換し、画像本体はP2Pで相手へ直接送りFirebaseへ保存しません。</p>
         </section>
-        <form class="training-profile-card" id="trainingSetupForm">
+        <section class="training-command-card training-command-deck" aria-labelledby="trainingCommandDeckTitle">
           <div class="training-section-head">
             <span>02</span>
-            <div><h2>今日の自分</h2><p>善意の指示役へ、今の調子を伝えます。</p></div>
+            <div><h2 id="trainingCommandDeckTitle">COMMAND DECK / 3</h2><p>相手に刺した時に選ぶ3つの筋トレ。各カードは1試合1回です。</p></div>
+          </div>
+          <div class="training-command-deck-list">
+            ${state.commandDeck.map((card, index) => renderSetupCommandCard(card, index)).join("")}
+          </div>
+        </section>
+        <section class="training-profile-card">
+          <div class="training-section-head">
+            <span>03</span>
+            <div><h2>今日の自分</h2><p>指示を受ける相手へ、強度と配慮条件を伝えます。</p></div>
           </div>
           <label class="training-field">
             <span>名前</span>
@@ -542,33 +745,52 @@ function renderSetup() {
             <textarea id="trainingConditions" maxlength="${TRAINING_LIMITS.conditions}" rows="3" placeholder="例：ジャンプなし／手首は軽め／今日は元気">${escapeHtml(state.conditions)}</textarea>
           </label>
           <div class="training-trust-note">
-            <strong>カメラ・センサーなし</strong>
-            <p>フォームの監視はしません。参加した二人は、交互に3セットをやり切る約束です。相手の運動中は応援しながら回復します。</p>
-            <p>痛み・めまい・体調の変化を感じたら、勝敗より中止を優先してください。</p>
+            <strong>ロールプレイを信頼する対戦です</strong>
+            <p>カメラやセンサーでフォームを監視しません。無理な指示で勝とうとせず、事前登録した3枚から相手の状態に合うCOMMANDを選びます。</p>
+            <p>痛み・めまい・体調変化は即NO CONTEST。単なるGIVE UPは敗北です。</p>
           </div>
           ${renderSetupTrainingRecord()}
           <button class="button button-training training-find-button" id="trainingFindMatch" type="submit" ${ready ? "" : "disabled"}>
-            1対1の相手を探す
+            HP30の相手を探す
           </button>
           <p class="training-rate-note">RATE・ランキングは変動しません。</p>
-        </form>
-      </div>
+        </section>
+      </form>
     </section>`;
+}
+
+function renderSetupCommandCard(cardValue, index) {
+  const card = normalizeCommandCard(cardValue);
+  const cardNumber = index + 1;
+  return `
+    <article class="training-command-deck-card">
+      <header><span>COMMAND ${cardNumber}</span><strong>${escapeHtml(card.exercise || "未設定")}</strong></header>
+      <div class="training-presets" aria-label="COMMAND ${cardNumber}の入力補助">
+        ${Object.keys(PRESETS).map((id) => `<button type="button" data-training-command-preset="${index}:${id}">${escapeHtml(PRESETS[id].exercise)}</button>`).join("")}
+      </div>
+      <label class="training-field"><span>種目名</span><input maxlength="${TRAINING_LIMITS.exercise}" value="${escapeHtml(card.exercise)}" data-training-command-field="${index}:exercise" /></label>
+      <label class="training-field"><span>指示 <small>${card.command.length}/${TRAINING_LIMITS.command}</small></span><textarea maxlength="${TRAINING_LIMITS.command}" rows="2" data-training-command-field="${index}:command">${escapeHtml(card.command)}</textarea></label>
+      <label class="training-field"><span>コンプリート条件</span><input maxlength="${TRAINING_LIMITS.completion}" value="${escapeHtml(card.completion)}" data-training-command-field="${index}:completion" /></label>
+      <fieldset class="training-command-beats">
+        <legend>1回あたりの拍</legend>
+        ${[2, 4, 8].map((beats) => `<label><input type="radio" name="trainingCommandBeats${index}" value="${beats}" data-training-command-beats="${index}" ${card.beatsPerRep === beats ? "checked" : ""} /><span>${beats}拍</span></label>`).join("")}
+      </fieldset>
+    </article>`;
 }
 
 function renderSetupTrainingRecord() {
   const profile = state.profile || {};
-  const missionComplete = Number(state.daily?.trainingSets || 0) >= 3;
+  const matchesToday = Math.min(1, Number(state.daily?.trainingMatches || 0));
   return `
     <section class="training-setup-record" aria-label="鍛え合い記録">
       <header><h3>鍛え合い記録</h3><span>NO RATE</span></header>
       <dl>
-        <div><dt>累計完了セット</dt><dd>${Number(profile.completedSets || 0)}</dd></div>
-        <div><dt>3セット完遂日</dt><dd>${Number(profile.threeSetDays || 0)}日</dd></div>
-        <div><dt>3セット連続</dt><dd>${Number(profile.currentThreeSetStreak || 0)}日</dd></div>
-        <div><dt>3セット最長</dt><dd>${Number(profile.bestThreeSetStreak || 0)}日</dd></div>
-        <div><dt>活動した日</dt><dd>${Number(profile.completeDays || 0)}日</dd></div>
-        <div class="training-setup-mission"><dt>今日の3セット</dt><dd>${missionComplete ? "達成 3/3" : `${Math.min(3, Number(state.daily?.trainingSets || 0))}/3`}</dd></div>
+        <div><dt>完遂ワークアウト</dt><dd>${Number(profile.hpCompletedWorkouts || 0)}</dd></div>
+        <div><dt>鍛え合い対戦</dt><dd>${Number(profile.hpSessions || 0)}</dd></div>
+        <div><dt>指示を受けた回数</dt><dd>${Number(profile.hpHitsTaken || 0)}</dd></div>
+        <div><dt>運動時間</dt><dd>${Number(profile.hpCompletedSeconds || 0)}秒</dd></div>
+        <div><dt>HP勝利</dt><dd>${Number(profile.hpWins || 0)}</dd></div>
+        <div class="training-setup-mission"><dt>今日のHP対戦</dt><dd>${matchesToday}/1</dd></div>
       </dl>
     </section>`;
 }
@@ -579,10 +801,11 @@ function renderMatching() {
       <div class="training-pulse-mark" aria-hidden="true"><i></i><i></i><i></i></div>
       <span class="eyebrow">ONE QUEUE / ROLEPLAY MATCH</span>
       <h1 id="trainingMatchingTitle">鍛え合う相手を探しています</h1>
-      <p>古くから待っている2人を順番に結びます。画像はまだ送信されていません。</p>
+      <p>古くから待っている2人を順番に結びます。5枚の画像本体はまだ送信されていません。</p>
       <dl class="training-waiting-profile">
         <div><dt>NAME</dt><dd>${escapeHtml(state.name)}</dd></div>
         <div><dt>INTENSITY</dt><dd>${escapeHtml(INTENSITY_LABELS[state.intensity])}</dd></div>
+        <div><dt>DECK</dt><dd>5 IMAGES / 3 COMMANDS</dd></div>
         <div><dt>CONDITION</dt><dd>${escapeHtml(state.conditions || "指定なし")}</dd></div>
       </dl>
       <button class="button button-ghost" id="trainingCancelMatch" type="button">準備画面へ戻る</button>
@@ -606,16 +829,43 @@ function renderForming() {
 }
 
 function renderRoom() {
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const canonicalView = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const finalizedView = viewFromServerFinalized(state.room.serverFinalized, canonicalView);
+  if (finalizedView) {
+    clearImageExchangeWatchdog();
+    clearScorePoll();
+    cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
+    state.currentView = finalizedView;
+    state.outcome = finalizedView;
+    state.screen = "result";
+    state.ambienceController.disable();
+    queueMicrotask(() => {
+      render();
+      ensureFinalization();
+    });
+    return "";
+  }
+  if (state.roomSyncing) return renderRoomSyncing();
+  if (completedRoundIndexesMissingScores().length
+    && !["health_stop", "surrender"].includes(canonicalView.result?.reason)) {
+    requestCompletedRoundScoreHydration();
+    return renderRoomSyncing();
+  }
+  const view = trainingClientView();
   state.currentView = view;
   configureAmbienceForView(view);
-  if (view.phase === "destroyed") {
+  if (canonicalView.phase === "destroyed" || canonicalView.phase === "no_contest") {
     state.screen = "cancelled";
     queueMicrotask(render);
     return "";
   }
-  if (view.phase === "result") {
-    state.outcome = view;
+  if (canonicalView.phase === "result" || view.phase === "result") {
+    const resultView = canonicalView.phase === "result" ? canonicalView : view;
+    clearImageExchangeWatchdog();
+    clearScorePoll();
+    cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
+    state.currentView = resultView;
+    state.outcome = resultView;
     state.screen = "result";
     state.ambienceController.disable();
     queueMicrotask(() => {
@@ -625,382 +875,55 @@ function renderRoom() {
     return "";
   }
   if (!TRAINING_HUD_PHASES.includes(view.phase)) state.ambienceController.disable();
-  if (view.phase === "waiting_images" || view.phase === "forming") return renderConnecting(view);
-  if (view.phase === "waiting_carrot_choices" || (allImagesReceived() && !allCarrotChoicesReady())) {
-    return renderCarrotChoice();
+  if (view.phase === "drawing") return renderConnecting(view);
+  if (view.phase === "scoring") return renderCarrotChoice(view);
+  if (view.phase === "command_select") return renderInstructionComposer(view);
+  if (view.phase === "waiting_command" || view.phase === "waiting_workout" || view.phase === "round_complete") {
+    return renderWaitingInstruction(view);
   }
-  if (view.phase === "compose") return renderInstructionComposer(view);
-  if (view.phase === "waiting_instruction") return renderWaitingInstruction(view);
   if (TRAINING_HUD_PHASES.includes(view.phase)) return renderTrainingHud(view);
   return renderConnecting(view);
 }
 
-function renderConnecting() {
+function renderRoomSyncing() {
+  return `
+    <section class="screen training-screen training-centred" aria-labelledby="trainingSyncTitle">
+      <div class="training-pair-mark" aria-hidden="true"><span>HP</span><i></i><span>✓</span></div>
+      <span class="eyebrow">SYNCING VERIFIED DRAW DATA</span>
+      <h1 id="trainingSyncTitle">対戦記録を再確認しています</h1>
+      <p>完了したDRAWの採点と筋トレ時刻を、許可された範囲だけ読み直しています。</p>
+      <p class="training-subtle">確認が終わるまで、次のDRAWや結果確定は開始しません。</p>
+    </section>`;
+}
+
+function renderConnecting(view = trainingClientView()) {
   const opponent = opponentPlayer();
-  const ownReceived = state.room.imageReceived?.[state.uid] === true;
-  const otherReceived = state.room.imageReceived?.[opponent?.uid] === true;
+  const round = view.round || trainingRound(view.roundIndex);
+  const ownDrawn = Boolean(roundDraw(round, state.uid));
+  const otherDrawn = Boolean(roundDraw(round, opponent?.uid));
+  const ownReceived = round.imageReceived?.[state.uid] === true;
+  const otherReceived = round.imageReceived?.[opponent?.uid] === true;
+  queueMicrotask(() => {
+    ensureLocalRoundDraw(view.roundIndex).catch((error) => {
+      failImageExchange("image_transfer_failed", error).catch(() => {});
+    });
+  });
   return `
     <section class="screen training-screen training-centred" aria-labelledby="trainingConnectTitle">
-      <div class="training-transfer-orbit" aria-hidden="true"><span>IMAGE</span><i></i><span>IMAGE</span></div>
-      <span class="eyebrow">P2P IMAGE HANDSHAKE</span>
-      <h1 id="trainingConnectTitle">${state.channel?.readyState === "open" ? "ニンジン画像を交換中" : "相手のブラウザへ接続中"}</h1>
-      <p>${escapeHtml(opponent?.name || "相手")}さんと、画像を保存しない1本のP2P接続を作っています。</p>
+      ${renderHpHeader(view.roundIndex)}
+      <div class="training-transfer-orbit" aria-hidden="true"><span>DRAW</span><i></i><span>${view.roundIndex}</span></div>
+      <span class="eyebrow">RANDOM DRAW / P2P IMAGE</span>
+      <h1 id="trainingConnectTitle">${state.channel?.readyState === "open" ? `DRAW ${view.roundIndex}を交換中` : "相手のブラウザへ接続中"}</h1>
+      <p>未使用の5枚から1枚ずつランダムにDRAW。画像とBPMは公開まで相手に見えません。</p>
       <ul class="training-transfer-checks" aria-label="画像受信状況">
-        <li class="${ownReceived ? "complete" : ""}"><i></i>あなたが相手画像を受信</li>
-        <li class="${otherReceived ? "complete" : ""}"><i></i>相手があなたの画像を受信</li>
+        <li class="${ownDrawn ? "complete" : ""}"><i></i>あなたのカードをDRAW</li>
+        <li class="${otherDrawn ? "complete" : ""}"><i></i>${escapeHtml(opponent?.name || "相手")}がDRAW</li>
+        <li class="${ownReceived ? "complete" : ""}"><i></i>相手画像を受信・検証</li>
+        <li class="${otherReceived ? "complete" : ""}"><i></i>自分の画像が相手へ到着</li>
       </ul>
-      <p class="training-subtle">画像の実バイト形式とサイズを確認してから開始します。</p>
+      <p class="training-subtle">実画像はFirebaseへ保存しません。実バイト形式・サイズ・DRAW番号・BPMを確認してから同時公開します。</p>
+      ${renderHealthStopButton()}
     </section>`;
-}
-
-function renderCarrotChoice() {
-  const ownChoice = state.carrotChoice || carrotChoiceForUid(state.uid);
-  const choice = ownChoice ? carrotChoiceConfig(ownChoice) : null;
-  const opponent = opponentPlayer();
-  return `
-    <section class="screen training-screen training-carrot-choice" aria-labelledby="trainingCarrotChoiceTitle">
-      <header class="training-turn-header">
-        <span>BEFORE SET 1 / SECRET CHOICE</span>
-        <strong>刺さった分だけ、身体で返す</strong>
-      </header>
-      ${ownChoice ? `
-        <div class="training-choice-wait">
-          <span class="eyebrow">CHOICE LOCKED</span>
-          <h1 id="trainingCarrotChoiceTitle">${escapeHtml(choice.label)}を選びました</h1>
-          <p>${escapeHtml(choice.description)}。相手が選び終えるまで、互いの選択は表示されません。</p>
-          <div class="training-choice-lock"><i></i><strong>${choice.durationMs / 1000} SEC × 3 SETS</strong></div>
-          <p class="training-subtle">${escapeHtml(opponent?.name || "相手")}さんの秘密選択を待っています…</p>
-        </div>
-      ` : `
-        <div class="training-choice-lead">
-          <span class="eyebrow">MY CARROT OR PARTNER BOOST</span>
-          <h1 id="trainingCarrotChoiceTitle">3セットで見る画像を選ぶ</h1>
-          <p>相手画像が本当に刺さったときだけ8・9・10を選択。低評価は送らず、刺さらなければ自分の本命で鍛えます。</p>
-        </div>
-        <div class="training-choice-grid">
-          <article class="training-choice-card is-mine">
-            ${renderTrainingImageByOwner(state.uid, "自分のMY CARROT画像", false)}
-            <div>
-              <span>NO SCORE / SAFE CHOICE</span>
-              <h2>MY CARROT</h2>
-              <p>自分の本命画像で60秒。画像相性に左右されず、今日の3セットを守ります。</p>
-              <button class="button button-training" type="button" data-training-carrot-choice="mine" ${state.carrotChoiceSubmitting ? "disabled" : ""}>60秒 × 3セット</button>
-            </div>
-          </article>
-          <article class="training-choice-card is-boost">
-            ${renderTrainingImageByOwner(opponent?.uid, "相手のCARROT画像", false)}
-            <div>
-              <span>PARTNER IMAGE / OPTIONAL BOOST</span>
-              <h2>CARROT BOOST</h2>
-              <p>高評価は公開採点ではなく、自分が追加で動く時間。BASE 60秒を越えた分は途中で終えても負けになりません。</p>
-              <div class="training-boost-choices">
-                ${["boost8", "boost9", "boost10"].map((value) => {
-                  const item = CARROT_CHOICES[value];
-                  return `<button type="button" data-training-carrot-choice="${value}" ${state.carrotChoiceSubmitting ? "disabled" : ""}><strong>${item.label}</strong><span>${item.durationMs / 1000}秒 × 3</span></button>`;
-                }).join("")}
-              </div>
-            </div>
-          </article>
-        </div>
-        <p class="training-choice-privacy">選択は一度だけ。二人とも決めるまで相手側には表示されません。RATE・ランキング・Payには影響しません。</p>
-      `}
-    </section>`;
-}
-
-function seedDraftForTurn(view) {
-  if (state.draftTurnIndex === view.turnIndex) return;
-  state.draftTurnIndex = view.turnIndex;
-  const previousInstruction = Object.entries(state.room.turns || {})
-    .map(([index, turn]) => ({ index: Number(index), turn }))
-    .filter(({ index, turn }) => (
-      index < view.turnIndex
-      && turn?.trainerUid === state.uid
-      && turn?.traineeUid === view.traineeUid
-      && trainingInstructionIsReady(turn?.instruction)
-    ))
-    .sort((first, second) => second.index - first.index)[0]?.turn?.instruction;
-  state.draftInstruction = normalizeTrainingInstruction(previousInstruction || PRESETS.squat);
-}
-
-function renderInstructionComposer(view) {
-  seedDraftForTurn(view);
-  const trainee = playerByUid(view.traineeUid);
-  const choice = carrotChoiceConfig(carrotChoiceForUid(view.traineeUid));
-  const imageOwnerUid = choice.image === "mine" ? view.traineeUid : state.uid;
-  const setNumber = trainingSetNumber(view.turnIndex);
-  const draft = state.draftInstruction;
-  return `
-    <section class="screen training-screen training-command-screen" aria-labelledby="trainingCommandTitle">
-      <header class="training-turn-header">
-        <span>SET ${setNumber} / 3 ・ TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span>
-        <strong>COACH &amp; RECOVERY</strong>
-      </header>
-      <div class="training-command-grid">
-        ${renderTrainingImageByOwner(imageOwnerUid, "相手がこのセットで見るCARROT画像", false)}
-        <form class="training-command-card" id="trainingInstructionForm">
-          <span class="eyebrow">YOUR FREE COMMAND</span>
-          <h1 id="trainingCommandTitle">${escapeHtml(trainee?.name || "相手")}さんへ、SET ${setNumber}の指示を。</h1>
-          <div class="training-trainee-state">
-            <span>${escapeHtml(choice.label)} / ${choice.durationMs / 1000}秒</span>
-            <p>希望強度：${escapeHtml(INTENSITY_LABELS[trainee?.intensity] || INTENSITY_LABELS.standard)}<br />配慮：${escapeHtml(trainee?.conditions || "指定なし")}</p>
-          </div>
-          <p class="training-command-lead">相手が動く間は、あなたの回復時間です。無理のない指示を送り、始まったら掛け声で支えます。</p>
-          <div class="training-presets" aria-label="入力補助">
-            <button type="button" data-training-preset="pushup">腕立て伏せ</button>
-            <button type="button" data-training-preset="squat">スクワット</button>
-            <button type="button" data-training-preset="situp">腹筋</button>
-          </div>
-          <label class="training-field">
-            <span>自由な指示 <small><b id="trainingCommandCount">${draft.command.length}</b> / ${TRAINING_LIMITS.command}</small></span>
-            <textarea id="trainingCommand" maxlength="${TRAINING_LIMITS.command}" rows="3">${escapeHtml(draft.command)}</textarea>
-          </label>
-          <div class="training-command-fields">
-            <label class="training-field">
-              <span>種目名</span>
-              <input id="trainingExercise" maxlength="${TRAINING_LIMITS.exercise}" value="${escapeHtml(draft.exercise)}" />
-            </label>
-            <label class="training-field">
-              <span>コンプリート条件</span>
-              <input id="trainingCompletion" maxlength="${TRAINING_LIMITS.completion}" value="${escapeHtml(draft.completion)}" />
-            </label>
-          </div>
-          <div class="training-rhythm-fields">
-            <label class="training-field">
-              <span>BPM（0で無音）</span>
-              <input id="trainingBpm" type="number" min="0" max="160" step="1" value="${draft.bpm}" />
-            </label>
-            <fieldset>
-              <legend>1回あたりの拍</legend>
-              ${[1, 2, 4].map((beats) => `
-                <label><input type="radio" name="trainingBeats" value="${beats}" ${draft.beatsPerRep === beats ? "checked" : ""} /><span>${beats}拍</span></label>
-              `).join("")}
-            </fieldset>
-          </div>
-          <button class="button button-training" id="trainingSendInstruction" type="submit">SET ${setNumber}の指示を送る</button>
-        </form>
-      </div>
-    </section>`;
-}
-
-function renderWaitingInstruction(view) {
-  const trainer = playerByUid(view.trainerUid);
-  const choice = carrotChoiceConfig(carrotChoiceForUid(state.uid));
-  const imageOwnerUid = choice.image === "mine" ? state.uid : view.trainerUid;
-  const setNumber = trainingSetNumber(view.turnIndex);
-  return `
-    <section class="screen training-screen training-waiting-command" aria-labelledby="trainingWaitingCommandTitle">
-      <header class="training-turn-header">
-        <span>SET ${setNumber} / 3 ・ TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span>
-        <strong>NEXT: ${escapeHtml(choice.label)} / ${choice.durationMs / 1000}秒</strong>
-      </header>
-      ${renderTrainingImageByOwner(imageOwnerUid, "次のセットで見るCARROT画像", false)}
-      <div class="training-waiting-copy">
-        <span class="eyebrow">COMMAND INCOMING</span>
-        <h1 id="trainingWaitingCommandTitle">${escapeHtml(trainer?.name || "相手")}さんが指示を考えています</h1>
-        <p>水分をひと口。呼吸を整え、SET ${setNumber}に備えましょう。</p>
-      </div>
-    </section>`;
-}
-
-function renderTrainingHud(view) {
-  const turn = view.turn;
-  const instruction = normalizeTrainingInstruction(turn?.instruction);
-  const isTrainer = view.trainerUid === state.uid;
-  const isTrainee = view.traineeUid === state.uid;
-  const startedAt = Number(turn?.startedAt || 0);
-  const choice = carrotChoiceConfig(turn?.carrotChoice);
-  const targetDuration = trainingTurnTargetDuration(turn);
-  const elapsed = trainingTurnElapsed(turn);
-  const baseComplete = Number(turn?.baseCompletedAt || 0) > 0
-    || elapsed >= TRAINING_TURN_DURATION_MS;
-  const inBoost = choice.boostMs > 0 && baseComplete;
-  const remaining = startedAt
-    ? Math.max(0, targetDuration - elapsed)
-    : targetDuration;
-  const stageRemaining = inBoost
-    ? remaining
-    : Math.max(0, TRAINING_TURN_DURATION_MS - elapsed);
-  const seconds = Math.ceil(stageRemaining / 1000);
-  const progress = (remaining / targetDuration) * 100;
-  const beats = instruction.beatsPerRep || 1;
-  const setNumber = trainingSetNumber(view.turnIndex);
-  const imageOwnerUid = trainingTurnImageOwner(turn, view.traineeUid, view.trainerUid);
-  const giveUpCopy = state.giveUpArmed ? "もう一度押して、負けを確定" : "GIVE UP";
-  const controls = isTrainee
-    ? (view.phase === "ready"
-      ? `<button class="button button-training training-start-button" id="trainingStartTurn" type="button">${choice.label}・${targetDuration / 1000}秒を開始</button>`
-      : (inBoost
-        ? `<button class="button button-training training-complete-button" id="trainingCompleteTurn" type="button">BASE COMPLETE｜BOOSTをここで終える</button>`
-        : `<div class="training-base-promise"><strong>BASE 60</strong><span>60秒到達で自動COMPLETE</span></div>`))
-    : renderCoachRecovery(view, { remaining, baseComplete, choice, setNumber });
-  return `
-    <section class="screen training-screen training-hud ${isTrainer ? "is-trainer" : "is-trainee"} ${inBoost ? "is-boost" : "is-base"}" aria-labelledby="trainingHudTitle">
-      <header class="training-hud-header">
-        <div><span>SET ${setNumber} / 3 ・ TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span><strong>${isTrainer ? "COACH & RECOVERY" : (inBoost ? "CARROT BOOST" : "BASE TRAINING")}</strong></div>
-        <div class="training-hud-name">${escapeHtml(playerByUid(view.opponentUid)?.name || "PARTNER")}</div>
-      </header>
-      <div class="training-image-arena">
-        <div
-          class="training-countdown-progress"
-          id="trainingCountdownProgress"
-          role="progressbar"
-          aria-label="${inBoost ? "BOOST" : "BASE"} 残り${seconds}秒"
-          aria-valuemin="0"
-          aria-valuemax="${inBoost ? choice.boostMs / 1000 : TRAINING_TURN_DURATION_MS / 1000}"
-          aria-valuenow="${seconds}"
-        ><i id="trainingCountdownFill" style="width:${progress}%"></i>${choice.boostMs ? `<b style="left:${(choice.boostMs / targetDuration) * 100}%"></b>` : ""}</div>
-        ${renderTrainingImageByOwner(imageOwnerUid, `${choice.label}で見るCARROT画像`, true)}
-        <div class="training-stage-badge" id="trainingStageBadge">${inBoost ? choice.label : "BASE 60"}</div>
-        <div class="training-countdown-clock" aria-hidden="true"><strong id="trainingCountdown">${seconds}</strong><span>${inBoost ? "BOOST" : "SEC"}</span></div>
-        <div class="training-cheer-overlay ${state.cheer ? "is-visible" : ""}" id="trainingCheerOverlay" role="status" aria-live="polite">
-          ${escapeHtml(state.cheer?.text || "")}
-        </div>
-      </div>
-      <section class="training-live-command" aria-labelledby="trainingHudTitle">
-        <span>${escapeHtml(instruction.exercise)}</span>
-        <h1 id="trainingHudTitle">${escapeHtml(instruction.command)}</h1>
-        <p>COMPLETE：${escapeHtml(instruction.completion)}</p>
-      </section>
-      <section class="training-beat-panel" aria-label="拍レーン">
-        <div class="training-beat-meta">
-          <strong>${instruction.bpm ? `${instruction.bpm} BPM` : "FREE RHYTHM"}</strong>
-          <span>${instruction.bpm ? `${beats}拍で1回` : "メトロノームなし"}</span>
-        </div>
-        <div class="training-beat-lane ${instruction.bpm ? "" : "is-off"}" id="trainingBeatLane" aria-hidden="true">
-          ${Array.from({ length: beats }, (_, index) => `<i data-beat="${index + 1}"></i>`).join("")}
-        </div>
-        <div class="training-audio-controls">
-          ${state.ambienceResumeRequired
-            ? `<button type="button" id="trainingResumeAmbience">メトロノームを再開</button>`
-            : ""}
-          <button type="button" id="trainingMute" aria-pressed="${state.muted}">${state.muted ? "音を出す" : "ミュート"}</button>
-          <label><span>音量</span><input id="trainingVolume" type="range" min="0" max="1" step="0.01" value="${state.volume}" /></label>
-        </div>
-      </section>
-      <div class="training-turn-actions">${controls}</div>
-      ${isTrainee && !baseComplete ? `
-        <div class="training-give-up-dock ${state.giveUpArmed ? "is-armed" : ""}">
-          <p>痛み・めまい・体調の変化を感じたら、勝敗より中止を優先</p>
-          ${state.giveUpArmed ? `<button type="button" id="trainingCancelGiveUp">続ける</button>` : ""}
-          <button type="button" id="trainingGiveUp">${giveUpCopy}</button>
-        </div>
-      ` : ""}
-    </section>`;
-}
-
-function renderCoachRecovery(view, { remaining, baseComplete, choice, setNumber }) {
-  if (view.phase === "ready") {
-    return `
-      <section class="training-recovery-panel">
-        <span>RECOVERY BEFORE YOUR SET ${setNumber}</span>
-        <strong>相手の開始を待ちながら、呼吸と水分を整える</strong>
-        <p>開始後は掛け声で伴走できます。</p>
-      </section>`;
-  }
-  const freeCheerSent = state.freeCheerSentTurn === view.turnIndex;
-  return `
-    <section class="training-coach-recovery" aria-label="応援と回復">
-      <div class="training-recovery-panel">
-        <span>COACH &amp; RECOVERY</span>
-        <strong>次の自分のセットまで、あと約${Math.ceil(remaining / 1000)}秒</strong>
-        <p>${baseComplete ? `${choice.label}の追加区間。相手はBASEを達成済みです。` : "深呼吸・水分補給。休みながら相手の60秒を支えます。"}</p>
-      </div>
-      <div class="training-cheer-buttons" aria-label="相手へ掛け声を送る">
-        ${Object.entries(CHEERS).map(([id, label]) => `<button type="button" data-training-cheer="${id}">${label}</button>`).join("")}
-      </div>
-      <div class="training-free-cheer">
-        <label for="trainingFreeCheer">自由なロールプレイ応援 <span>各ターン1回</span></label>
-        <div>
-          <input id="trainingFreeCheer" maxlength="40" value="${escapeHtml(freeCheerSent ? "" : state.freeCheerDraft)}" placeholder="${freeCheerSent ? "このターンは送信済み" : "例：その一回が明日の自信になる！"}" ${freeCheerSent ? "disabled" : ""} />
-          <button type="button" id="trainingSendFreeCheer" ${freeCheerSent ? "disabled" : ""}>${freeCheerSent ? "送信済み" : "応援する"}</button>
-        </div>
-      </div>
-    </section>`;
-}
-
-function renderTrainingImageByOwner(ownerUid, alt, compact) {
-  const ownImage = ownerUid === state.uid;
-  const image = ownImage ? state.localImage : state.remoteImage;
-  if (image?.url) {
-    return `<figure class="training-opponent-image ${ownImage ? "is-own-carrot" : "is-partner-carrot"} ${compact ? "is-compact" : ""}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(alt)}" /></figure>`;
-  }
-  return `<div class="training-opponent-image training-image-placeholder ${compact ? "is-compact" : ""}" aria-label="${escapeHtml(alt)}"><span>${ownImage ? "MY CARROT" : "PARTNER IMAGE"}</span></div>`;
-}
-
-function renderResult() {
-  const view = state.outcome || deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  const result = view.result || { type: "mutual_complete", reason: "mutual_complete" };
-  const serverResult = state.finalization?.result;
-  const completedSets = Number(serverResult?.completedSets ?? view.ownCompletedSets ?? 0);
-  const totalSeconds = Number(view.completedSeconds)
-    || completedTrainingSeconds(state.room.turns);
-  const baseSaved = [
-    "base_complete_interrupt",
-    "progress_complete_interrupt",
-  ].includes(result.reason);
-  const heading = baseSaved
-    ? "BASE SAVED"
-    : result.type === "win"
-    ? "YOU WIN"
-    : result.type === "loss"
-      ? "TRAINING LOSS"
-      : "3 SETS COMPLETE";
-  const japanese = baseSaved
-    ? "通信中断前に達成したBASEは記録しました。勝敗はつかず、未完のセットは次の機会にあらためて鍛えられます。"
-    : result.type === "win"
-      ? (result.reason === "timeout"
-        ? "相手はBASE 60秒をコンプリートできませんでした。最後まで伴走したあなたの勝ちです。"
-        : "相手のギブアップ。最後まで立っていたあなたの勝ちです。")
-      : result.type === "loss"
-        ? (result.reason === "timeout"
-        ? "BASE 60秒をコンプリートできませんでした。今日はここまででも大丈夫です。"
-        : "ギブアップを受け付けました。休んだら、また鍛え合いましょう。")
-      : "自分も3セット、相手も3セット。休みながら応援し、二人で今日の約束をやり切りました。";
-  const status = renderFinalizationStatus();
-  return `
-    <section class="screen training-screen training-result ${result.type}" aria-labelledby="trainingResultTitle">
-      <span class="eyebrow">KITA EAI 60 / 3 SETS EACH / NO RATE</span>
-      <h1 id="trainingResultTitle">${heading}</h1>
-      <p class="training-result-copy">${escapeHtml(japanese)}</p>
-      <div class="training-result-stats">
-        <div><strong>${completedSets}</strong><span>${baseSaved ? "保存されたBASEセット" : "あなたの完了セット"}</span></div>
-        <div><strong>${totalSeconds}</strong><span>ふたりで動いた秒数</span></div>
-      </div>
-      ${status}
-      <div class="training-result-actions">
-        <button class="button button-training" id="trainingToFreeTable" type="button">自由卓で一息つく</button>
-        <button class="button button-ghost" id="trainingResultHome" type="button">タイトルへ戻る</button>
-      </div>
-      <p class="training-rate-note">この結果でRATEやランキングは変動しません。</p>
-    </section>`;
-}
-
-function renderFinalizationStatus() {
-  if (state.finalization?.result?.status === "final") {
-    const profile = state.profile || {};
-    const daily = state.daily || {};
-    const todaySets = Math.min(3, Number(daily.trainingSets || 0));
-    const brokeThreeDayWall = Number(profile.currentThreeSetStreak || 0) >= 4;
-    return `
-      <section class="training-profile-result" aria-label="鍛え合い記録">
-        <h2>${brokeThreeDayWall ? "三日坊主を突破しました" : "今日の積み重ね"}</h2>
-        <dl>
-          <div><dt>累計完了セット</dt><dd>${Number(profile.completedSets || 0)}</dd></div>
-          <div><dt>3セット完遂日</dt><dd>${Number(profile.threeSetDays || 0)}日</dd></div>
-          <div><dt>3セット連続日数</dt><dd>${Number(profile.currentThreeSetStreak || 0)}日</dd></div>
-          <div><dt>活動した日</dt><dd>${Number(profile.completeDays || 0)}日</dd></div>
-          <div><dt>今日の3セット</dt><dd>${todaySets >= 3 ? "達成 3/3" : `${todaySets}/3`}</dd></div>
-        </dl>
-      </section>`;
-  }
-  if (state.finalization?.error) {
-    return `
-      <div class="training-save-status is-error" role="status">
-        <p>記録の確認に時間がかかっています。</p>
-        <button type="button" id="trainingRetryFinalize">記録を再確認</button>
-      </div>`;
-  }
-  return `<div class="training-save-status" role="status"><i></i>完了記録を確認しています…</div>`;
 }
 
 function renderCancelled() {
@@ -1008,7 +931,7 @@ function renderCancelled() {
     <section class="screen training-screen training-centred" aria-labelledby="trainingCancelledTitle">
       <span class="eyebrow">NO CONTEST</span>
       <h1 id="trainingCancelledTitle">鍛え合いは中断されました</h1>
-      <p>勝敗・RATEには影響しません。BASE到達済みのセットがある場合は、確認後にその分だけ記録します。画像はこの画面を離れると破棄されます。</p>
+      <p>体調中止または通信中断のため、勝敗・RATEには影響しません。受信画像はこの画面を離れると破棄されます。</p>
       <div class="training-result-actions">
         <button class="button button-training" id="trainingCancelledRetry" type="button">準備画面でもう一度</button>
         <button class="button button-ghost" id="trainingCancelledHome" type="button">タイトルへ戻る</button>
@@ -1026,10 +949,410 @@ function renderError() {
     </section>`;
 }
 
+function renderHpHeader(roundIndex = currentRoundIndex()) {
+  const opponentUid = opponentPlayer()?.uid || "";
+  const ownHp = hpFor(state.uid);
+  const opponentHp = hpFor(opponentUid);
+  const hpBar = (uid, hp, label, side) => `
+    <div class="training-hp-player is-${side}">
+      <div><span>${escapeHtml(label)}</span><strong>HP ${hp}</strong></div>
+      <div class="training-hp-track" role="progressbar" aria-label="${escapeHtml(label)} HP ${hp}" aria-valuemin="0" aria-valuemax="${TRAINING_START_HP}" aria-valuenow="${hp}"><i style="width:${(hp / TRAINING_START_HP) * 100}%"></i></div>
+    </div>`;
+  return `
+    <header class="training-hp-header">
+      ${hpBar(state.uid, ownHp, state.name || "YOU", "self")}
+      <div class="training-round-counter"><span>DRAW</span><strong>${roundIndex}</strong><small>/ ${TRAINING_MAX_ROUNDS}</small></div>
+      ${hpBar(opponentUid, opponentHp, opponentPlayer()?.name || "RIVAL", "rival")}
+    </header>`;
+}
+
+function renderHealthStopButton() {
+  return `<button class="training-health-stop" id="trainingHealthStop" type="button">体調変化のため中止（NO CONTEST）</button>`;
+}
+
+function renderCarrotChoice(view = trainingClientView()) {
+  const round = view.round || trainingRound(view.roundIndex);
+  const ownScore = roundScore(round, state.uid);
+  const remoteImage = state.remoteImages[view.roundIndex];
+  const opponent = opponentPlayer();
+  return `
+    <section class="screen training-screen training-score-screen" aria-labelledby="trainingScoreTitle">
+      ${renderHpHeader(view.roundIndex)}
+      <header class="training-turn-header">
+        <span>DRAW ${view.roundIndex} / SECRET SCORE</span>
+        <strong>刺さった自分がダメージを受ける</strong>
+      </header>
+      <div class="training-score-layout">
+        <div class="training-score-image">
+          ${renderTrainingImageByOwner(opponent?.uid, "相手がDRAWした画像", false, view.roundIndex)}
+          <div class="training-bpm-reveal"><span>IMAGE RHYTHM</span><strong>${remoteImage?.bpm ? `${remoteImage.bpm} BPM` : "FREE RHYTHM"}</strong></div>
+        </div>
+        <section class="training-score-panel">
+          ${ownScore ? `
+            <span class="eyebrow">SCORE LOCKED</span>
+            <h1 id="trainingScoreTitle">${ownScore >= 8 ? scoreConfig(ownScore).label : `${ownScore} / MISS`}</h1>
+            <p>${ownScore >= 8
+              ? `自分へ${scoreConfig(ownScore).damage}ダメージ。${scoreConfig(ownScore).durationMs / 1000}秒の指示が発動します。`
+              : "筋トレは発動しません。相手の秘密採点を待っています。"}</p>
+            <div class="training-score-lock"><i></i><span>相手が採点するまで点数は互いに非公開</span></div>
+          ` : `
+            <span class="eyebrow">HOW DEEP DID IT HIT?</span>
+            <h1 id="trainingScoreTitle">この画像は、どこまで刺さった？</h1>
+            <p>1～7はMISS。8以上を付けると、あなたのHPが減り、${escapeHtml(opponent?.name || "相手")}のCOMMANDで鍛えます。</p>
+            <div class="training-score-grid" aria-label="相手画像を1点から10点で採点">
+              ${Array.from({ length: 10 }, (_, index) => index + 1).map((score) => {
+                const info = scoreConfig(score);
+                return `<button type="button" data-training-score="${score}" class="${score >= 8 ? `is-hit score-${score}` : ""}" ${state.scoreSubmitting ? "disabled" : ""}><strong>${score}</strong><span>${score >= 8 ? `${info.damage} DMG / ${info.durationMs / 1000}s` : "MISS"}</span></button>`;
+              }).join("")}
+            </div>
+            <p class="training-choice-privacy">秘密採点は一度だけ。双方が確定するまで相手の点数は読み込みません。</p>
+          `}
+          ${renderHealthStopButton()}
+        </section>
+      </div>
+    </section>`;
+}
+
+function renderInstructionComposer(view = trainingClientView()) {
+  const round = view.round || trainingRound(view.roundIndex);
+  const traineeUid = view.traineeUid || opponentPlayer()?.uid || "";
+  const trainee = playerByUid(traineeUid);
+  const score = roundScore(round, traineeUid);
+  const info = scoreConfig(score);
+  const used = usedCommandIndexes(state.uid);
+  return `
+    <section class="screen training-screen training-command-screen" aria-labelledby="trainingCommandTitle">
+      ${renderHpHeader(view.roundIndex)}
+      <header class="training-turn-header">
+        <span>${escapeHtml(info.label)} / COMMAND SELECT</span>
+        <strong>${escapeHtml(trainee?.name || "相手")}へ${info.durationMs / 1000}秒の指示</strong>
+      </header>
+      <div class="training-command-grid">
+        ${renderTrainingImageByOwner(state.uid, "相手へ刺さった自分の画像", false, view.roundIndex)}
+        <section class="training-command-card">
+          <span class="eyebrow">CHOOSE 1 OF YOUR UNUSED CARDS</span>
+          <h1 id="trainingCommandTitle">どのCOMMANDで鍛える？</h1>
+          <div class="training-trainee-state">
+            <span>${info.damage} DAMAGE / ${info.durationMs / 1000} SEC</span>
+            <p>希望強度：${escapeHtml(INTENSITY_LABELS[trainee?.intensity] || INTENSITY_LABELS.standard)}<br />配慮：${escapeHtml(trainee?.conditions || "指定なし")}</p>
+          </div>
+          <div class="training-command-choice-list">
+            ${state.commandDeck.map((cardValue, index) => {
+              const card = normalizeCommandCard(cardValue);
+              const cardIndex = index + 1;
+              const disabled = used.has(cardIndex);
+              return `<button type="button" data-training-command-choice="${cardIndex}" ${disabled || state.commandSubmitting ? "disabled" : ""}>
+                <span>COMMAND ${cardIndex}${disabled ? " / USED" : ""}</span>
+                <strong>${escapeHtml(card.exercise)}</strong>
+                <p>${escapeHtml(card.command)}</p>
+                <small>${card.beatsPerRep}拍で1回</small>
+              </button>`;
+            }).join("")}
+          </div>
+          <p class="training-subtle">対戦中に負荷を盛ることはできません。準備画面で登録した3枚から選びます。</p>
+          ${renderHealthStopButton()}
+        </section>
+      </div>
+    </section>`;
+}
+
+function opponentWorkoutContext(roundIndex = currentRoundIndex()) {
+  const round = trainingRound(roundIndex);
+  const opponentUid = opponentPlayer()?.uid || "";
+  const score = roundScore(round, opponentUid);
+  const choice = round.commandChoices?.[opponentUid];
+  if (score < 8 || !choice) return null;
+  return {
+    roundIndex,
+    score,
+    info: scoreConfig(score),
+    workout: round.workouts?.[opponentUid] || {},
+    opponentUid,
+    card: commandCardFor(state.uid, choice.cardIndex),
+  };
+}
+
+function renderWaitingInstruction(view = trainingClientView()) {
+  const ownScore = roundScore(view.round, state.uid);
+  const partnerWorkout = opponentWorkoutContext(view.roundIndex);
+  const partnerActive = Number(partnerWorkout?.workout?.startedAt || 0) > 0
+    && !Number(partnerWorkout?.workout?.completedAt || 0);
+  const title = view.phase === "waiting_command"
+    ? `${escapeHtml(opponentPlayer()?.name || "相手")}がCOMMANDを選んでいます`
+    : view.phase === "round_complete"
+      ? "ラウンド結果を確定しています"
+      : partnerActive
+        ? `${escapeHtml(opponentPlayer()?.name || "相手")}が鍛えています`
+        : "相手の進行を待っています";
+  queueMicrotask(() => ensureRoundProgress().catch(handleRecoverableError));
+  return `
+    <section class="screen training-screen training-waiting-command" aria-labelledby="trainingWaitingCommandTitle">
+      ${renderHpHeader(view.roundIndex)}
+      <header class="training-turn-header">
+        <span>DRAW ${view.roundIndex} / ${ownScore >= 8 ? scoreConfig(ownScore).label : "STANDBY"}</span>
+        <strong>${partnerActive ? "COACH THE RIVAL" : "SYNCING ROUND"}</strong>
+      </header>
+      ${partnerWorkout
+        ? renderTrainingImageByOwner(state.uid, "相手へ刺さった画像", false, view.roundIndex)
+        : renderTrainingImageByOwner(opponentPlayer()?.uid, "今回DRAWされた相手画像", false, view.roundIndex)}
+      <div class="training-waiting-copy">
+        <span class="eyebrow">${partnerActive ? "P2P CHEER AVAILABLE" : "PLEASE WAIT"}</span>
+        <h1 id="trainingWaitingCommandTitle">${title}</h1>
+        <p>${partnerActive
+          ? "自分のターンが終わっていても、P2Pの掛け声で相手を応援できます。"
+          : "画像・採点・COMMAND・完遂を二人のブラウザで確認しています。"}</p>
+        ${partnerActive ? renderCoachRecovery(view, partnerWorkout) : ""}
+        ${renderHealthStopButton()}
+      </div>
+    </section>`;
+}
+
+function renderTrainingHud(view = trainingClientView()) {
+  const context = ownWorkoutContext(view.roundIndex);
+  if (!context) return renderWaitingInstruction(view);
+  const startedAt = Number(context.workout?.startedAt || 0);
+  const elapsed = workoutElapsed(context.workout);
+  const remaining = Math.max(0, context.scoreInfo.durationMs - elapsed);
+  const seconds = Math.ceil(remaining / 1000);
+  const progress = context.scoreInfo.durationMs
+    ? (remaining / context.scoreInfo.durationMs) * 100
+    : 0;
+  const trainer = playerByUid(context.trainerUid);
+  const card = normalizeCommandCard(context.card);
+  return `
+    <section class="screen training-screen training-hud is-trainee is-hp-workout" aria-labelledby="trainingHudTitle">
+      ${renderHpHeader(view.roundIndex)}
+      <header class="training-hud-header">
+        <div><span>${escapeHtml(context.scoreInfo.label)} / ${context.scoreInfo.damage} DAMAGE</span><strong>${startedAt ? "WORKOUT ACTIVE" : "COMMAND RECEIVED"}</strong></div>
+        <div class="training-hud-name">${escapeHtml(trainer?.name || "TRAINER")}</div>
+      </header>
+      <div class="training-image-arena">
+        <div class="training-countdown-progress" id="trainingCountdownProgress" role="progressbar" aria-label="筋トレ 残り${seconds}秒" aria-valuemin="0" aria-valuemax="${context.scoreInfo.durationMs / 1000}" aria-valuenow="${seconds}"><i id="trainingCountdownFill" style="width:${progress}%"></i></div>
+        ${renderTrainingImageByOwner(context.trainerUid, "自分へ刺さった相手画像", true, view.roundIndex)}
+        <div class="training-stage-badge" id="trainingStageBadge">${escapeHtml(context.scoreInfo.label)}</div>
+        <div class="training-countdown-clock" aria-hidden="true"><strong id="trainingCountdown">${seconds}</strong><span>SEC</span></div>
+        <div class="training-cheer-overlay ${state.cheer ? "is-visible" : ""}" id="trainingCheerOverlay" role="status" aria-live="polite">${escapeHtml(state.cheer?.text || "")}</div>
+      </div>
+      <section class="training-live-command">
+        <span>${escapeHtml(card.exercise)}</span>
+        <h1 id="trainingHudTitle">${escapeHtml(card.command)}</h1>
+        <p>COMPLETE：${escapeHtml(card.completion)}</p>
+      </section>
+      <section class="training-beat-panel" aria-label="拍レーン">
+        <div class="training-beat-meta">
+          <strong>${context.bpm ? `${context.bpm} BPM` : "FREE RHYTHM"}</strong>
+          <span>${context.bpm ? `${card.beatsPerRep}拍で1回` : "この画像はメトロノームなし"}</span>
+        </div>
+        <div class="training-beat-lane ${context.bpm ? "" : "is-off"}" id="trainingBeatLane" aria-hidden="true">${Array.from({ length: card.beatsPerRep }, (_, index) => `<i data-beat="${index + 1}"></i>`).join("")}</div>
+        <div class="training-audio-controls">
+          ${state.ambienceResumeRequired ? `<button type="button" id="trainingResumeAmbience">メトロノームを再開</button>` : ""}
+          <button type="button" id="trainingMute" aria-pressed="${state.muted}">${state.muted ? "音を出す" : "ミュート"}</button>
+          <label><span>音量</span><input id="trainingVolume" type="range" min="0" max="1" step="0.01" value="${state.volume}" /></label>
+        </div>
+      </section>
+      <div class="training-turn-actions">
+        ${startedAt
+          ? `<div class="training-base-promise"><strong>${context.scoreInfo.durationMs / 1000} SEC</strong><span>時間到達で自動COMPLETE</span></div>`
+          : `<button class="button button-training training-start-button" id="trainingStartWorkout" type="button">${escapeHtml(card.exercise)}を開始</button>`}
+      </div>
+      <div class="training-give-up-dock ${state.giveUpArmed ? "is-armed" : ""}">
+        <p>体調変化はNO CONTEST。続行可能だが指示を完遂しない場合はGIVE UP敗北です。</p>
+        ${state.giveUpArmed ? `<button type="button" id="trainingCancelGiveUp">続ける</button>` : ""}
+        <button type="button" id="trainingGiveUp">${state.giveUpArmed ? "もう一度押して敗北を確定" : "GIVE UP"}</button>
+        ${renderHealthStopButton()}
+      </div>
+    </section>`;
+}
+
+function renderCoachRecovery(view, context = opponentWorkoutContext(view.roundIndex)) {
+  const sent = state.freeCheerSentRound === view.roundIndex;
+  return `
+    <section class="training-coach-recovery" aria-label="相手を応援">
+      <div class="training-recovery-panel">
+        <span>YOUR IMAGE HIT / COACH</span>
+        <strong>${escapeHtml(context?.card?.exercise || "筋トレ")}を見守る</strong>
+        <p>画像厳選が刺さった結果です。相手の完遂をロールプレイで支えましょう。</p>
+      </div>
+      <div class="training-cheer-buttons" aria-label="相手へ掛け声を送る">
+        ${Object.entries(CHEERS).map(([id, label]) => `<button type="button" data-training-cheer="${id}">${label}</button>`).join("")}
+      </div>
+      <div class="training-free-cheer"><label for="trainingFreeCheer">自由なロールプレイ応援 <span>各DRAW 1回</span></label><div>
+        <input id="trainingFreeCheer" maxlength="40" value="${escapeHtml(sent ? "" : state.freeCheerDraft)}" placeholder="${sent ? "このDRAWは送信済み" : "例：その一回が明日の自信になる！"}" ${sent ? "disabled" : ""} />
+        <button type="button" id="trainingSendFreeCheer" ${sent ? "disabled" : ""}>${sent ? "送信済み" : "応援する"}</button>
+      </div></div>
+    </section>`;
+}
+
+function renderTrainingImageByOwner(ownerUid, alt, compact, roundIndex = currentRoundIndex()) {
+  const ownImage = ownerUid === state.uid;
+  const draw = roundDraw(trainingRound(roundIndex), ownerUid);
+  const image = ownImage
+    ? state.localImages[Number(draw?.imageIndex || 0) - 1]
+    : state.remoteImages[roundIndex];
+  if (image?.url) {
+    return `<figure class="training-opponent-image ${ownImage ? "is-own-carrot" : "is-partner-carrot"} ${compact ? "is-compact" : ""}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(alt)}" /><figcaption>DRAW ${roundIndex} · ${Number(draw?.bpm || image.bpm) ? `${Number(draw?.bpm || image.bpm)} BPM` : "FREE RHYTHM"}</figcaption></figure>`;
+  }
+  return `<div class="training-opponent-image training-image-placeholder ${compact ? "is-compact" : ""}" aria-label="${escapeHtml(alt)}"><span>DRAW ${roundIndex}</span><strong>画像を検証中</strong></div>`;
+}
+
+function resultOverkill(view) {
+  const canonical = Number(view?.result?.finisher?.overkill);
+  if (Number.isFinite(canonical) && canonical >= 0) return canonical;
+  const loserUid = view?.result?.loserUid || "";
+  if (!loserUid) return 0;
+  return Math.max(0, damageTakenBy(loserUid) - TRAINING_START_HP);
+}
+
+function renderFinisher(view) {
+  const overkill = resultOverkill(view);
+  if (view?.result?.finisher && view.result.finisher.eligible !== true) return "";
+  if (overkill <= 0 || !["win", "loss"].includes(view?.result?.type)) return "";
+  const winner = view.result.type === "win";
+  const finisher = state.finisher;
+  if (!finisher && winner) {
+    return `<section class="training-finisher"><span class="eyebrow">OVERKILL +${overkill}</span><h2>追い込みトレーニングを提案できます</h2><p>勝敗と記録はすでに確定。相手が自由に断れる、30秒の任意フィニッシュです。</p><div class="training-finisher-cards">${state.commandDeck.map((card, index) => `<button type="button" data-training-finisher-offer="${index + 1}"><strong>${escapeHtml(card.exercise)}</strong><span>30 SEC / 任意</span></button>`).join("")}</div></section>`;
+  }
+  if (!finisher) return `<section class="training-finisher"><span class="eyebrow">OVERKILL +${overkill}</span><p>相手から任意の追い込み提案が届く場合があります。勝敗・記録には影響しません。</p></section>`;
+  if (finisher.status === "offered" && !winner) {
+    const offerSeconds = Math.max(0, Math.ceil((Number(finisher.expiresAt || 0) - firebaseNow()) / 1000));
+    return `<section class="training-finisher"><span class="eyebrow">OPTIONAL FINISHER / ${offerSeconds} SEC TO ANSWER</span><h2>${escapeHtml(finisher.card?.exercise || "追い込み")}・30秒</h2><p>断っても敗北結果は変わらず、不利益はありません。</p><div><button class="button button-training" id="trainingFinisherAccept" type="button">受ける</button><button class="button button-ghost" id="trainingFinisherDecline" type="button">今回は断る</button></div></section>`;
+  }
+  if (finisher.status === "accepted" && !winner && !finisher.startedAt) {
+    return `<section class="training-finisher"><span class="eyebrow">FINISHER ACCEPTED</span><h2>${escapeHtml(finisher.card?.exercise || "追い込み")}・30秒</h2><button class="button button-training" id="trainingFinisherStart" type="button">追い込みを開始</button></section>`;
+  }
+  if (finisher.status === "active" && !winner) {
+    const remaining = Math.max(0, FINISHER_DURATION_MS - (firebaseNow() - Number(finisher.startedAt || 0)));
+    return `<section class="training-finisher is-active"><span class="eyebrow">OPTIONAL FINISHER</span><h2>${Math.ceil(remaining / 1000)} SEC</h2><p>${escapeHtml(finisher.card?.command || "")}</p></section>`;
+  }
+  const offerSeconds = Math.max(0, Math.ceil((Number(finisher.expiresAt || 0) - firebaseNow()) / 1000));
+  const labels = { offered: `相手の返答を待っています（残り${offerSeconds}秒）`, accepted: "相手が追い込みを受けました", active: "相手が追い込み中", complete: "追い込み完遂", declined: "相手は今回は断りました", expired: "提案の15秒が終了しました" };
+  return `<section class="training-finisher"><span class="eyebrow">OPTIONAL FINISHER</span><h2>${escapeHtml(labels[finisher.status] || "提案を終了しました")}</h2><p>勝敗・RATE・記録には影響しません。</p></section>`;
+}
+
+function renderResult() {
+  const view = state.outcome || trainingClientView();
+  const result = view.result || { type: "draw", reason: "round_limit" };
+  const rivalUid = opponentPlayer()?.uid || "";
+  const ownHp = Number(view.hpByUid?.[state.uid] ?? hpFor(state.uid));
+  const rivalHp = Number(view.hpByUid?.[rivalUid] ?? hpFor(rivalUid));
+  const finalizedRoundCount = Number(
+    view.roundCount
+    ?? (state.room.serverFinalized?.version === TRAINING_PROTOCOL_VERSION ? view.roundIndex : NaN),
+  );
+  const drawCount = Number.isSafeInteger(finalizedRoundCount)
+    && finalizedRoundCount >= 0
+    && finalizedRoundCount <= TRAINING_MAX_ROUNDS
+    ? finalizedRoundCount
+    : completedRoundCount();
+  const finalizedWorkoutSeconds = Number(view.workoutSecondsByUid?.[state.uid]);
+  const workoutSeconds = Number.isFinite(finalizedWorkoutSeconds) && finalizedWorkoutSeconds >= 0
+    ? finalizedWorkoutSeconds
+    : completedTrainingSeconds(state.room.rounds);
+  const ownImageScores = resultImageScoreMetrics(view, state.uid);
+  const rivalImageScores = resultImageScoreMetrics(view, rivalUid);
+  const showTieBreak = ownHp === rivalHp
+    && !result.noContest
+    && !["health_stop", "surrender"].includes(result.reason);
+  const heading = result.noContest || result.reason === "health_stop"
+    ? "NO CONTEST"
+    : result.type === "win"
+      ? "YOU WIN"
+      : result.type === "loss"
+        ? "TRAINING LOSS"
+        : "DRAW";
+  const copy = result.reason === "health_stop"
+    ? "体調変化を最優先し、勝敗なしで終了しました。"
+    : result.reason === "surrender"
+    ? (result.type === "win" ? "相手がGIVE UPしました。" : "GIVE UPが確定しました。")
+    : result.reason === "hp_zero" && ownHp === 0 && rivalHp === 0
+      ? "同じDRAWで二人のHPが0になりました。"
+      : result.reason === "round_limit"
+        ? "5枚をすべてDRAWしました。残りHPと画像の刺さり方で判定しました。"
+        : "画像厳選と筋トレのHP勝負が決着しました。";
+  return `
+    <section class="screen training-screen training-result ${result.type}" aria-labelledby="trainingResultTitle">
+      <span class="eyebrow">HP BATTLE COMPLETE / NO RATE</span>
+      <h1 id="trainingResultTitle">${heading}</h1>
+      <p class="training-result-copy">${copy} RATE・ランキングは変動しません。</p>
+      <div class="training-result-stats">
+        <div><strong>${ownHp}</strong><span>YOUR HP</span></div>
+        <div><strong>${rivalHp}</strong><span>RIVAL HP</span></div>
+        <div><strong>${ownImageScores.total}</strong><span>YOUR IMAGE SCORE</span></div>
+        <div><strong>${rivalImageScores.total}</strong><span>RIVAL IMAGE SCORE</span></div>
+        <div><strong>${drawCount}</strong><span>DRAWS</span></div>
+        <div><strong>${workoutSeconds}</strong><span>WORKOUT SEC</span></div>
+      </div>
+      ${showTieBreak ? `
+        <section class="training-tiebreak" aria-label="同HPの判定根拠">
+          <span class="eyebrow">SAME HP / TIE BREAK</span>
+          <h2>画像の刺さり方で判定</h2>
+          <div class="training-tiebreak-grid">
+            <div><strong>YOU</strong><span>合計 ${ownImageScores.total}点</span><span>10点 × ${ownImageScores.tens}</span><span>9点 × ${ownImageScores.nines}</span></div>
+            <div><strong>RIVAL</strong><span>合計 ${rivalImageScores.total}点</span><span>10点 × ${rivalImageScores.tens}</span><span>9点 × ${rivalImageScores.nines}</span></div>
+          </div>
+          <p>HP → 画像の合計点 → 10点の数 → 9点の数の順で判定します。</p>
+        </section>` : ""}
+      ${renderFinisher(view)}
+      ${renderFinalizationStatus()}
+      <div class="training-result-actions">
+        <button class="button button-training" id="trainingToFreeTable" type="button">自由卓で一息つく</button>
+        <button class="button button-ghost" id="trainingResultHome" type="button">タイトルへ戻る</button>
+      </div>
+    </section>`;
+}
+
+function renderFinalizationStatus() {
+  if (state.preview) return `<div class="training-save-status"><i></i>UI PREVIEW / Firebase書き込みなし</div>`;
+  if (trainingServerFinalizedResult(state.room.serverFinalized, state.uid)) {
+    return `<div class="training-save-status is-complete">対戦結果と完遂した運動を記録しました</div>`;
+  }
+  if (state.finalization?.error) return `<div class="training-save-status is-error"><p>${escapeHtml(state.finalization.error)}</p><button type="button" id="trainingRetryFinalize">記録を再確認</button></div>`;
+  if (state.finalization?.result?.status === "final") return `<div class="training-save-status is-complete">対戦結果と完遂した運動を記録しました</div>`;
+  return `<div class="training-save-status" role="status"><i></i>対戦記録を確認しています…</div>`;
+}
+
 function bindEvents() {
-  document.querySelector("#trainingImageInput")?.addEventListener("change", (event) => prepareImage(event.target.files?.[0]));
-  document.querySelector("#trainingSampleImage")?.addEventListener("click", fillSampleImage);
-  document.querySelector("#trainingRemoveImage")?.addEventListener("click", removeLocalImage);
+  document.querySelector("#trainingImageInput")?.addEventListener("change", (event) => prepareImages(event.target.files));
+  document.querySelectorAll("[data-training-image-input]").forEach((input) => input.addEventListener("change", (event) => {
+    prepareImage(event.target.files?.[0], Number(input.dataset.trainingImageInput)).catch(handleRecoverableError);
+  }));
+  document.querySelector("#trainingSampleImage")?.addEventListener("click", () => fillSampleImages().catch(handleRecoverableError));
+  document.querySelectorAll("[data-training-remove-image]").forEach((button) => button.addEventListener("click", () => {
+    removeLocalImage(Number(button.dataset.trainingRemoveImage));
+  }));
+  document.querySelectorAll("[data-training-image-bpm]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.dataset.trainingImageBpm);
+      const bpm = normalizeImageBpm(input.value);
+      if (state.localImages[index]) state.localImages[index].bpm = bpm;
+      input.setCustomValidity(bpm < 0 ? "BPMは0、または40～160で入力してください。" : "");
+      updateSetupButton();
+    });
+    input.addEventListener("change", () => {
+      const index = Number(input.dataset.trainingImageBpm);
+      if (state.localImages[index] && normalizeImageBpm(state.localImages[index].bpm) < 0) {
+        state.localImages[index].bpm = 0;
+      }
+      render();
+    });
+  });
+  document.querySelectorAll("[data-training-command-field]").forEach((input) => input.addEventListener("input", () => {
+    const [indexValue, key] = String(input.dataset.trainingCommandField).split(":");
+    const index = Number(indexValue);
+    const limit = TRAINING_LIMITS[key] || TRAINING_LIMITS.command;
+    if (!state.commandDeck[index]) return;
+    state.commandDeck[index][key] = input.value.slice(0, limit);
+    updateSetupButton();
+  }));
+  document.querySelectorAll("[data-training-command-beats]").forEach((input) => input.addEventListener("change", () => {
+    const index = Number(input.dataset.trainingCommandBeats);
+    if (state.commandDeck[index]) state.commandDeck[index].beatsPerRep = Number(input.value);
+    updateSetupButton();
+  }));
+  document.querySelectorAll("[data-training-command-preset]").forEach((button) => button.addEventListener("click", () => {
+    const [indexValue, presetId] = String(button.dataset.trainingCommandPreset).split(":");
+    applyCommandPreset(Number(indexValue), presetId);
+  }));
   document.querySelector("#trainingPlayerName")?.addEventListener("input", (event) => {
     state.name = event.target.value.slice(0, TRAINING_LIMITS.name);
     updateSetupButton();
@@ -1048,18 +1371,15 @@ function bindEvents() {
   });
   document.querySelector("#trainingCancelMatch")?.addEventListener("click", () => cancelMatchmaking().catch(handleRecoverableError));
   document.querySelector("#trainingCancelPending")?.addEventListener("click", () => cancelPendingRoom().catch(handleRecoverableError));
-  document.querySelectorAll("[data-training-carrot-choice]").forEach((button) => button.addEventListener("click", () => {
-    submitCarrotChoice(button.dataset.trainingCarrotChoice).catch(handleRecoverableError);
+  document.querySelectorAll("[data-training-score]").forEach((button) => button.addEventListener("click", () => {
+    submitScore(Number(button.dataset.trainingScore)).catch(handleRecoverableError);
   }));
-  document.querySelector("#trainingInstructionForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    submitInstruction().catch(handleRecoverableError);
-  });
-  document.querySelectorAll("[data-training-preset]").forEach((button) => button.addEventListener("click", () => applyPreset(button.dataset.trainingPreset)));
-  bindInstructionInputs();
-  document.querySelector("#trainingStartTurn")?.addEventListener("click", () => startTurn().catch(handleRecoverableError));
-  document.querySelector("#trainingCompleteTurn")?.addEventListener("click", () => completeTurn().catch(handleRecoverableError));
+  document.querySelectorAll("[data-training-command-choice]").forEach((button) => button.addEventListener("click", () => {
+    submitCommandChoice(Number(button.dataset.trainingCommandChoice)).catch(handleRecoverableError);
+  }));
+  document.querySelector("#trainingStartWorkout")?.addEventListener("click", () => startWorkout().catch(handleRecoverableError));
   document.querySelector("#trainingGiveUp")?.addEventListener("click", () => handleGiveUp().catch(handleRecoverableError));
+  document.querySelector("#trainingHealthStop")?.addEventListener("click", () => handleHealthStop().catch(handleRecoverableError));
   document.querySelector("#trainingCancelGiveUp")?.addEventListener("click", () => {
     state.giveUpArmed = false;
     render();
@@ -1074,6 +1394,12 @@ function bindEvents() {
     resumeTrainingAmbienceFromGesture().catch(handleRecoverableError);
   });
   document.querySelector("#trainingVolume")?.addEventListener("input", updateVolume);
+  document.querySelectorAll("[data-training-finisher-offer]").forEach((button) => button.addEventListener("click", () => {
+    offerFinisher(Number(button.dataset.trainingFinisherOffer));
+  }));
+  document.querySelector("#trainingFinisherAccept")?.addEventListener("click", () => respondFinisher(true));
+  document.querySelector("#trainingFinisherDecline")?.addEventListener("click", () => respondFinisher(false));
+  document.querySelector("#trainingFinisherStart")?.addEventListener("click", startFinisher);
   document.querySelector("#trainingRetryFinalize")?.addEventListener("click", () => ensureFinalization(true));
   document.querySelector("#trainingToFreeTable")?.addEventListener("click", () => moveToFreeTable().catch(handleRecoverableError));
   document.querySelector("#trainingResultHome")?.addEventListener("click", () => requestHome().catch(handleRecoverableError));
@@ -1083,56 +1409,55 @@ function bindEvents() {
   if (state.currentView && TRAINING_RUNNING_PHASES.includes(state.currentView.phase)) startTurnTicker(state.currentView);
 }
 
-function bindInstructionInputs() {
-  const mappings = [
-    ["#trainingCommand", "command", TRAINING_LIMITS.command],
-    ["#trainingExercise", "exercise", TRAINING_LIMITS.exercise],
-    ["#trainingCompletion", "completion", TRAINING_LIMITS.completion],
-  ];
-  mappings.forEach(([selector, key, limit]) => {
-    document.querySelector(selector)?.addEventListener("input", (event) => {
-      state.draftInstruction[key] = event.target.value.slice(0, limit);
-      if (key === "command") {
-        const count = document.querySelector("#trainingCommandCount");
-        if (count) count.textContent = String(state.draftInstruction.command.length);
-      }
-    });
-  });
-  document.querySelector("#trainingBpm")?.addEventListener("input", (event) => {
-    state.draftInstruction.bpm = Number(event.target.value);
-  });
-  document.querySelectorAll('input[name="trainingBeats"]').forEach((input) => input.addEventListener("change", () => {
-    state.draftInstruction.beatsPerRep = Number(input.value);
-  }));
-}
-
 function updateSetupButton() {
   const button = document.querySelector("#trainingFindMatch");
-  if (button) button.disabled = !(state.authReady && normalizeTrainingName(state.name) && state.localImage?.blob);
+  if (button) button.disabled = !setupIsReady();
 }
 
-async function prepareImage(file) {
+async function prepareImage(file, requestedIndex = -1, { deferRender = false } = {}) {
   if (!file) return;
-  setBusy(true, "ニンジン画像を整えています…");
+  const openIndex = requestedIndex >= 0
+    ? requestedIndex
+    : state.localImages.findIndex((image) => !image);
+  if (openIndex < 0 || openIndex >= TRAINING_IMAGE_COUNT) {
+    showToast("画像デッキは5枚そろっています。差し替えるカードを選んでください。");
+    return;
+  }
+  setBusy(true, `画像カード${openIndex + 1}を整えています…`);
   try {
     const item = await shared().processImageFile(file, 0, { maxSide: 1280, quality: 0.82 });
-    releaseImage(state.localImage);
-    state.localImage = { ...item, mime: "image/webp" };
-    showToast("鍛え合いのニンジン画像を選びました。");
+    releaseImage(state.localImages[openIndex]);
+    state.localImages[openIndex] = { ...item, mime: "image/webp", bpm: 0 };
+    showToast(`画像カード${openIndex + 1}をデッキへ加えました。`);
   } catch (error) {
     showToast(error?.message || "画像を準備できませんでした。");
   } finally {
     setBusy(false);
-    render();
+    if (!deferRender) render();
   }
 }
 
-async function fillSampleImage() {
-  if (state.localImage) return;
-  setBusy(true, "サンプル画像を準備しています…");
+async function prepareImages(fileList) {
+  const files = Array.from(fileList || []);
+  for (const file of files.slice(0, TRAINING_IMAGE_COUNT)) {
+    const openIndex = state.localImages.findIndex((image) => !image);
+    if (openIndex < 0) break;
+    await prepareImage(file, openIndex, { deferRender: true });
+  }
+  render();
+}
+
+async function fillSampleImages() {
+  setBusy(true, "5枚のサンプル画像を準備しています…");
   try {
-    const [item] = await shared().createSampleItems(3, 1, 0);
-    state.localImage = { ...item, mime: "image/webp" };
+    const items = await shared().createSampleItems(3, TRAINING_IMAGE_COUNT, 0);
+    state.localImages.forEach(releaseImage);
+    const bpms = [80, 100, 120, 140, 0];
+    state.localImages = items.slice(0, TRAINING_IMAGE_COUNT).map((item, index) => ({
+      ...item,
+      mime: "image/webp",
+      bpm: bpms[index],
+    }));
   } catch (error) {
     showToast(error?.message || "サンプル画像を準備できませんでした。");
   } finally {
@@ -1141,9 +1466,17 @@ async function fillSampleImage() {
   }
 }
 
-function removeLocalImage() {
-  releaseImage(state.localImage);
-  state.localImage = null;
+function removeLocalImage(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= TRAINING_IMAGE_COUNT) return;
+  releaseImage(state.localImages[index]);
+  state.localImages[index] = null;
+  render();
+}
+
+function applyCommandPreset(index, presetId) {
+  const preset = PRESETS[presetId];
+  if (!preset || !Number.isInteger(index) || index < 0 || index >= TRAINING_COMMAND_COUNT) return;
+  state.commandDeck[index] = normalizeCommandCard(preset);
   render();
 }
 
@@ -1259,6 +1592,8 @@ async function claimTrainingQueueSession() {
     sessionId,
     name: state.name,
     intensity: state.intensity,
+    commandDeck: commandDeckPayload(),
+    imageBpms: imageBpmsPayload(),
     protocolVersion: TRAINING_PROTOCOL_VERSION,
     variant: TRAINING_VARIANT,
     joinedAt: now,
@@ -1350,7 +1685,7 @@ async function beginMatchmaking() {
     || !state.authReady
     || !state.uid
     || !state.name
-    || !state.localImage?.blob) return;
+    || !setupIsReady()) return;
   if (state.preview) {
     showToast("UIプレビューではFirebaseへ接続しません。");
     return;
@@ -1697,7 +2032,6 @@ async function createTrainingRoom(pair) {
       guestUid: guest.uid,
       createdAt: serverTimestamp(),
       status: "forming",
-      firstTrainerUid: randomlyChooseUid(host.uid, guest.uid),
       members: { [host.uid]: true, [guest.uid]: true },
       players,
       accepted: { [host.uid]: true },
@@ -1781,6 +2115,18 @@ function playerFromQueue(entry, conditions = "") {
     name: normalizeTrainingName(entry.name),
     intensity: normalizeTrainingIntensity(entry.intensity),
     conditions: normalizeTrainingConditions(conditions),
+    commandDeck: Object.fromEntries(
+      Array.from({ length: TRAINING_COMMAND_COUNT }, (_, index) => {
+        const cardIndex = index + 1;
+        return [cardIndex, normalizeCommandCard(entry.commandDeck?.[cardIndex])];
+      }),
+    ),
+    imageBpms: Object.fromEntries(
+      Array.from({ length: TRAINING_IMAGE_COUNT }, (_, index) => {
+        const imageIndex = index + 1;
+        return [imageIndex, normalizeImageBpm(entry.imageBpms?.[imageIndex])];
+      }),
+    ),
   };
 }
 
@@ -1836,19 +2182,82 @@ async function readRoomSkeleton(roomId) {
   const base = `online/trainingRooms/${roomId}`;
   const keys = [
     "protocolVersion", "variant", "hostUid", "guestUid", "createdAt",
-    "status", "firstTrainerUid", "members", "players", "accepted",
+    "status", "members", "players", "accepted",
   ];
   const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
   return Object.fromEntries(keys.map((key, index) => [key, snapshots[index].val()]));
 }
 
+async function readRoundScoresBounded(roomId, roundIndex) {
+  const base = `online/trainingRooms/${roomId}/rounds/${roundIndex}/scores`;
+  const scores = {};
+  const ownSnapshot = await get(ref(database, `${base}/${state.uid}`)).catch(() => null);
+  const ownScore = normalizeScore(ownSnapshot?.val());
+  if (!ownScore) return scores;
+  scores[state.uid] = ownScore;
+
+  const opponentUid = opponentPlayer()?.uid || "";
+  if (!opponentUid) return scores;
+  const combinedSnapshot = await get(ref(database, base)).catch(() => null);
+  const combinedScores = combinedSnapshot?.val() || {};
+  const combinedOpponentScore = normalizeScore(combinedScores[opponentUid]);
+  if (combinedOpponentScore) {
+    scores[opponentUid] = combinedOpponentScore;
+    return scores;
+  }
+  const opponentSnapshot = await get(ref(database, `${base}/${opponentUid}`)).catch(() => null);
+  const opponentScore = normalizeScore(opponentSnapshot?.val());
+  if (opponentScore) scores[opponentUid] = opponentScore;
+  return scores;
+}
+
+async function readTrainingRoundBounded(roomId, roundIndex) {
+  const base = `online/trainingRooms/${roomId}/rounds/${roundIndex}`;
+  const keys = ["createdAt", "draws", "imageReceived", "commandChoices", "workouts", "completedAt"];
+  const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
+  const scores = await readRoundScoresBounded(roomId, roundIndex);
+  const round = {};
+  keys.forEach((key, index) => {
+    if (snapshots[index].exists()) round[key] = snapshots[index].val();
+  });
+  if (Object.keys(scores).length) round.scores = scores;
+  return Object.keys(round).length ? round : null;
+}
+
+async function readTrainingRoundsBounded(roomId) {
+  const rounds = await Promise.all(
+    Array.from({ length: TRAINING_MAX_ROUNDS }, (_, index) => (
+      readTrainingRoundBounded(roomId, index + 1)
+    )),
+  );
+  return Object.fromEntries(
+    rounds.flatMap((round, index) => round ? [[index + 1, round]] : []),
+  );
+}
+
+function mergeTrainingRounds(rounds) {
+  state.room.rounds ||= {};
+  Object.entries(rounds || {}).forEach(([roundIndex, round]) => {
+    const current = state.room.rounds[roundIndex] || {};
+    state.room.rounds[roundIndex] = {
+      ...current,
+      ...round,
+      ...(round.scores ? { scores: { ...(current.scores || {}), ...round.scores } } : {}),
+    };
+  });
+}
+
 async function readRoomLifecycle(roomId) {
   const base = `online/trainingRooms/${roomId}`;
-  const keys = ["status", "turns", "destroyed", "serverFinalized"];
-  const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
+  const keys = ["status", "surrendered", "destroyed", "serverFinalized"];
+  const [snapshots, rounds] = await Promise.all([
+    Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`)))),
+    readTrainingRoundsBounded(roomId),
+  ]);
   return {
     status: snapshots[0].val() || "",
-    turns: snapshots[1].val() || {},
+    rounds,
+    surrendered: snapshots[1].val() || null,
     destroyed: snapshots[2].val() || null,
     serverFinalized: snapshots[3].val() || null,
   };
@@ -1866,7 +2275,7 @@ function viewFromServerFinalized(serverFinalized, fallbackView) {
 
 function transitionToTrainingResult(view) {
   clearImageExchangeWatchdog();
-  clearCarrotChoicePoll();
+  clearScorePoll();
   cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
   state.currentView = view;
   state.outcome = view;
@@ -1876,58 +2285,22 @@ function transitionToTrainingResult(view) {
   ensureFinalization();
 }
 
-function interruptedProgressView() {
-  if (Number(state.room.protocolVersion) !== TRAINING_PROTOCOL_VERSION) return null;
-  const view = deriveTrainingRoomState(
-    { ...state.room, destroyed: null },
-    state.uid,
-    firebaseNow(),
-  );
-  if (view.phase === "result" || Number(view.completedSets || 0) <= 0) return null;
-  const currentBaseOnly = Number(view.turn?.baseCompletedAt || 0) > 0
-    && !Number(view.turn?.completedAt || 0);
-  const bothCompletedThreeSets = Number(view.completedSets || 0) === TRAINING_MAX_TURNS;
-  return {
-    ...view,
-    phase: "result",
-    result: {
-      type: "mutual_complete",
-      winnerUid: "",
-      loserUid: "",
-      reason: bothCompletedThreeSets
-        ? "mutual_base_complete"
-        : currentBaseOnly
-        ? "base_complete_interrupt"
-        : "progress_complete_interrupt",
-    },
-  };
-}
-
 function transitionToDestroyedRoom() {
   clearImageExchangeWatchdog();
-  clearCarrotChoicePoll();
+  clearScorePoll();
   cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
   state.channel?.close();
   state.peer?.close();
   state.channel = null;
   state.peer = null;
   state.ambienceController.disable();
-  const interruptedView = interruptedProgressView();
-  if (interruptedView) {
-    state.currentView = interruptedView;
-    state.outcome = interruptedView;
-    state.screen = "result";
-    render();
-    ensureFinalization();
-    return;
-  }
   state.screen = "cancelled";
   render();
 }
 
 function transitionToLocalNoContestPending() {
   clearImageExchangeWatchdog();
-  clearCarrotChoicePoll();
+  clearScorePoll();
   state.channel?.close();
   state.peer?.close();
   state.channel = null;
@@ -1951,23 +2324,6 @@ async function refreshRoomBeforeDestroy(roomId) {
   if (finalizedView) {
     transitionToTrainingResult(finalizedView);
     return "result";
-  }
-  if (!lifecycle.destroyed
-    && ["base_expired", "boost_expired"].includes(outcomeView.phase)) {
-    await syncTurnMilestones(outcomeView);
-    lifecycle = await readRoomLifecycle(roomId);
-    if (!active || state.roomId !== roomId) return "stale";
-    Object.assign(state.room, lifecycle);
-    outcomeView = deriveTrainingRoomState(
-      { ...state.room, destroyed: null },
-      state.uid,
-      firebaseNow(),
-    );
-    finalizedView = viewFromServerFinalized(lifecycle.serverFinalized, outcomeView);
-    if (finalizedView) {
-      transitionToTrainingResult(finalizedView);
-      return "result";
-    }
   }
   if (outcomeView.phase === "result") {
     transitionToTrainingResult(outcomeView);
@@ -2222,9 +2578,12 @@ async function enterRoom(roomId) {
     await cleanupMatchmaking(true);
     await updatePublicPresence("playing");
     state.screen = "room";
+    state.roomSyncing = true;
     setTrainingChrome("鍛え合い ACTIVE");
     render();
     await setupRoomListeners();
+    state.roomSyncing = false;
+    reactToRoomData();
     startImageExchangeWatchdog();
     try {
       const configuration = await window.HariaiOnline?.getP2pIceConfiguration?.();
@@ -2237,6 +2596,7 @@ async function enterRoom(roomId) {
     if (!active || state.roomId !== roomId || state.room.destroyed || state.outcome) return;
     await setupPeerConnection();
   } catch (error) {
+    state.roomSyncing = false;
     if (!roomAssigned || state.roomId !== roomId) {
       scheduleEnterRoomRetry(roomId, error);
       return;
@@ -2274,36 +2634,44 @@ function scheduleEnterRoomRetry(roomId, error) {
 }
 
 async function setupRoomListeners() {
-  const base = `online/trainingRooms/${state.roomId}`;
+  const roomId = state.roomId;
+  const base = `online/trainingRooms/${roomId}`;
   state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
     state.serverTimeOffset = Number(snapshot.val() || 0);
   }));
-  const childKeys = [
-    "status", "imageReceived", "turns", "destroyed", "serverFinalized",
-  ];
+  const childKeys = ["status", "surrendered", "destroyed", "serverFinalized"];
   childKeys.forEach((key) => {
     state.roomUnsubscribers.push(onValue(ref(database, `${base}/${key}`), (snapshot) => {
-      state.room[key] = snapshot.val()
-        || (["imageReceived", "turns"].includes(key) ? {} : null);
+      state.room[key] = snapshot.val() || null;
       reactToRoomData();
     }, handleRecoverableError));
   });
-  state.roomUnsubscribers.push(onValue(
-    ref(database, `${base}/carrotChoices/${state.uid}`),
-    (snapshot) => {
-      const choice = normalizeCarrotChoice(snapshot.val());
-      if (choice) {
-        state.carrotChoice = choice;
-        state.room.carrotChoices = {
-          ...(state.room.carrotChoices || {}),
-          [state.uid]: choice,
-        };
-        scheduleCarrotChoicePoll(0);
-      }
-      reactToRoomData();
-    },
-    handleRecoverableError,
-  ));
+  for (let roundIndex = 1; roundIndex <= TRAINING_MAX_ROUNDS; roundIndex += 1) {
+    const roundBase = `${base}/rounds/${roundIndex}`;
+    ["createdAt", "draws", "imageReceived", "commandChoices", "workouts", "completedAt"].forEach((key) => {
+      state.roomUnsubscribers.push(onValue(ref(database, `${roundBase}/${key}`), (snapshot) => {
+        const round = ensureRoundLocal(roundIndex);
+        round[key] = snapshot.val() || (["draws", "imageReceived", "commandChoices", "workouts"].includes(key) ? {} : 0);
+        reactToRoomData();
+      }, handleRecoverableError));
+    });
+    state.roomUnsubscribers.push(onValue(
+      ref(database, `${roundBase}/scores/${state.uid}`),
+      (snapshot) => {
+        const score = normalizeScore(snapshot.val());
+        const round = ensureRoundLocal(roundIndex);
+        round.scores = { ...(round.scores || {}) };
+        if (score) {
+          round.scores[state.uid] = score;
+          scheduleScorePoll(0);
+        } else {
+          delete round.scores[state.uid];
+        }
+        reactToRoomData();
+      },
+      handleRecoverableError,
+    ));
+  }
   if (state.activeDisconnectRoomId !== state.roomId) {
     await armTrainingActiveDisconnect(state.roomId);
   }
@@ -2322,88 +2690,177 @@ async function setupRoomListeners() {
       }
     }, handleRecoverableError));
   }
+  const refreshedRounds = await readTrainingRoundsBounded(roomId);
+  if (active && state.roomId === roomId) mergeTrainingRounds(refreshedRounds);
 }
 
-function clearCarrotChoicePoll() {
-  window.clearTimeout(state.carrotChoicePoll);
-  state.carrotChoicePoll = null;
+function ensureRoundLocal(roundIndex) {
+  state.room.rounds ||= {};
+  const key = String(roundIndex);
+  state.room.rounds[key] ||= {};
+  return state.room.rounds[key];
 }
 
-function scheduleCarrotChoicePoll(delay = CARROT_CHOICE_POLL_MS) {
-  clearCarrotChoicePoll();
-  if (!state.roomId || !state.carrotChoice || allCarrotChoicesReady()) return;
-  state.carrotChoicePoll = window.setTimeout(() => {
-    state.carrotChoicePoll = null;
-    pollRevealedCarrotChoices().catch(() => {
-      scheduleCarrotChoicePoll();
+function clearScorePoll() {
+  window.clearTimeout(state.scorePoll);
+  state.scorePoll = null;
+}
+
+function completedRoundIndexesMissingScores() {
+  const uids = memberUids();
+  if (uids.length !== 2) return [];
+  return Array.from({ length: TRAINING_MAX_ROUNDS }, (_, index) => index + 1)
+    .filter((roundIndex) => {
+      const round = trainingRound(roundIndex);
+      return Number(round.completedAt || 0) > 0
+        && uids.some((uid) => !roundScore(round, uid));
     });
+}
+
+function oldestPendingOpponentScoreRoundIndex() {
+  const opponentUid = opponentPlayer()?.uid || "";
+  if (!opponentUid) return 0;
+  for (let roundIndex = 1; roundIndex <= TRAINING_MAX_ROUNDS; roundIndex += 1) {
+    const round = trainingRound(roundIndex);
+    if (roundScore(round, state.uid) && !roundScore(round, opponentUid)) return roundIndex;
+  }
+  return 0;
+}
+
+function scheduleScorePoll(delay = SCORE_POLL_MS) {
+  if (state.scorePoll && delay > 0) return;
+  clearScorePoll();
+  if (!state.roomId || !oldestPendingOpponentScoreRoundIndex()) return;
+  state.scorePoll = window.setTimeout(() => {
+    state.scorePoll = null;
+    pollOpponentScore().catch(() => scheduleScorePoll());
   }, Math.max(0, delay));
 }
 
-async function pollRevealedCarrotChoices() {
-  if (state.carrotChoicePollBusy
-    || !state.roomId
-    || !state.carrotChoice
-    || allCarrotChoicesReady()) return;
-  state.carrotChoicePollBusy = true;
+async function pollOpponentScore() {
+  if (state.scorePollBusy || !state.roomId) return;
+  const roundIndex = oldestPendingOpponentScoreRoundIndex();
+  if (!roundIndex) return;
+  const roomId = state.roomId;
+  const opponentUid = opponentPlayer()?.uid;
+  if (!opponentUid) return;
+  state.scorePollBusy = true;
   try {
-    const opponentUid = opponentPlayer()?.uid;
-    if (!opponentUid) return;
-    const snapshot = await get(
-      ref(database, `online/trainingRooms/${state.roomId}/carrotChoices/${opponentUid}`),
-    );
-    const opponentChoice = normalizeCarrotChoice(snapshot.val());
-    if (opponentChoice) {
-      state.room.carrotChoices = {
-        ...(state.room.carrotChoices || {}),
-        [state.uid]: state.carrotChoice,
-        [opponentUid]: opponentChoice,
-      };
+    const scores = await readRoundScoresBounded(roomId, roundIndex);
+    const score = normalizeScore(scores[opponentUid]);
+    if (active && state.roomId === roomId && score) {
+      const localRound = ensureRoundLocal(roundIndex);
+      localRound.scores = { ...(localRound.scores || {}), ...scores };
       reactToRoomData();
-      return;
     }
   } finally {
-    state.carrotChoicePollBusy = false;
+    state.scorePollBusy = false;
   }
-  scheduleCarrotChoicePoll();
+  scheduleScorePoll();
+}
+
+function requestCompletedRoundScoreHydration() {
+  const roundIndexes = completedRoundIndexesMissingScores();
+  if (!roundIndexes.length
+    || state.resultScoreHydration
+    || firebaseNow() < Number(state.resultScoreHydrationRetryAt || 0)
+    || !state.roomId) return;
+  const roomId = state.roomId;
+  const operation = Promise.all(
+    roundIndexes.map(async (roundIndex) => ({
+      roundIndex,
+      scores: await readRoundScoresBounded(roomId, roundIndex),
+    })),
+  );
+  state.resultScoreHydration = operation;
+  operation
+    .then((results) => {
+      if (!active || state.roomId !== roomId) return;
+      results.forEach(({ roundIndex, scores }) => {
+        if (!Object.keys(scores).length) return;
+        const round = ensureRoundLocal(roundIndex);
+        round.scores = { ...(round.scores || {}), ...scores };
+      });
+    })
+    .catch(handleRecoverableError)
+    .finally(() => {
+      if (state.resultScoreHydration === operation) state.resultScoreHydration = null;
+      if (!active || state.roomId !== roomId || state.screen === "result") return;
+      if (completedRoundIndexesMissingScores().length) {
+        clearScorePoll();
+        state.resultScoreHydrationRetryAt = firebaseNow() + SCORE_POLL_MS;
+        state.scorePoll = window.setTimeout(() => {
+          state.scorePoll = null;
+          state.resultScoreHydrationRetryAt = 0;
+          requestCompletedRoundScoreHydration();
+        }, SCORE_POLL_MS);
+        return;
+      }
+      state.resultScoreHydrationRetryAt = 0;
+      reactToRoomData();
+    });
 }
 
 function reactToRoomData() {
   if (!active
     || !state.roomId
-    || state.screen === "result"
     || state.screen === "error") return;
-  let view = deriveTrainingRoomState(
-    { ...state.room, destroyed: null },
-    state.uid,
-    firebaseNow(),
-  );
-  const finalizedView = viewFromServerFinalized(state.room.serverFinalized, view);
+  const canonicalView = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const finalizedView = viewFromServerFinalized(state.room.serverFinalized, canonicalView);
   if (finalizedView) {
-    transitionToTrainingResult(finalizedView);
+    if (state.screen === "result") {
+      state.currentView = finalizedView;
+      state.outcome = finalizedView;
+      render();
+    } else {
+      transitionToTrainingResult(finalizedView);
+    }
     return;
   }
-  if (view.phase === "result") {
-    transitionToTrainingResult(view);
+  if (state.screen === "result") return;
+  if (state.roomSyncing) {
+    render();
+    return;
+  }
+  const immediateResult = canonicalView.phase === "result"
+    && ["health_stop", "surrender"].includes(canonicalView.result?.reason);
+  if (immediateResult) {
+    transitionToTrainingResult(canonicalView);
+    return;
+  }
+  if (completedRoundIndexesMissingScores().length) {
+    clearImageExchangeWatchdog();
+    requestCompletedRoundScoreHydration();
+    render();
+    return;
+  }
+  if (canonicalView.phase === "result") {
+    transitionToTrainingResult(canonicalView);
     return;
   }
   if (state.screen === "cancelled") return;
-  view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const view = trainingClientView();
   state.currentView = view;
-  if (allImagesReceived()) clearImageExchangeWatchdog();
-  if (view.phase === "destroyed") {
+  if (allRoundImagesReceived(trainingRound(view.roundIndex))) clearImageExchangeWatchdog();
+  if (canonicalView.phase === "destroyed" || canonicalView.phase === "no_contest") {
     transitionToDestroyedRoom();
     return;
   }
-  if (["base_expired", "boost_expired"].includes(view.phase)
-    && view.traineeUid === state.uid) {
-    syncTurnMilestones(view).catch(handleRecoverableError);
+  if (view.phase === "workout_expired") {
+    completeWorkout(view).catch(handleRecoverableError);
+  }
+  if (canonicalView.actions?.canSettleRound || view.phase === "round_complete") {
+    ensureRoundProgress().catch(handleRecoverableError);
   }
   if (view.phase === "result") {
     transitionToTrainingResult(view);
     return;
   }
   state.screen = "room";
+  if (view.phase === "drawing") {
+    startImageExchangeWatchdog(view.roundIndex);
+    ensureLocalRoundDraw(view.roundIndex).catch((error) => failImageExchange("image_transfer_failed", error));
+  }
   render();
 }
 
@@ -2432,15 +2889,12 @@ async function setupPeerConnection() {
   };
   peer.onconnectionstatechange = () => {
     if (["failed", "closed"].includes(peer.connectionState)
-      && !allImagesReceived()
       && state.roomId
       && !state.outcome) {
       failImageExchange(
         "p2p_image_connection_failed",
-        new Error("画像を交換するP2P接続を確立できませんでした。"),
+        new Error("次のDRAWを交換するP2P接続を維持できませんでした。"),
       ).catch(() => {});
-    } else if (peer.connectionState === "failed" && allImagesReceived()) {
-      showToast("P2P接続は切れましたが、受信済み画像とFirebaseの進行で鍛え合いを続けます。");
     }
   };
   if (state.room.hostUid === state.uid) {
@@ -2490,7 +2944,7 @@ function configureDataChannel(channel) {
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
-    sendLocalImageOnce().catch((error) => {
+    ensureLocalRoundDraw(currentRoundIndex()).catch((error) => {
       failImageExchange("image_transfer_failed", error).catch(() => {});
     });
     render();
@@ -2518,10 +2972,14 @@ function configureDataChannel(channel) {
   };
 }
 
-async function sendLocalImageOnce() {
-  if (state.outgoingImageSent || state.channel?.readyState !== "open" || !state.localImage?.blob) return;
-  state.outgoingImageSent = true;
-  const buffer = await state.localImage.blob.arrayBuffer();
+async function sendLocalRoundImage(roundIndex, draw) {
+  if (state.outgoingImageRounds.has(roundIndex)
+    || state.channel?.readyState !== "open") return;
+  const imageIndex = Number(draw?.imageIndex || 0);
+  const image = state.localImages[imageIndex - 1];
+  if (!image?.blob) throw new Error("DRAWした画像を端末で確認できませんでした。");
+  state.outgoingImageRounds.add(roundIndex);
+  const buffer = await image.blob.arrayBuffer();
   if (buffer.byteLength <= 0 || buffer.byteLength > MAX_IMAGE_TRANSFER_BYTES) {
     throw new Error("送信画像のサイズが鍛え合い60の上限を超えています。");
   }
@@ -2531,7 +2989,9 @@ async function sendLocalImageOnce() {
     protocolVersion: TRAINING_PROTOCOL_VERSION,
     variant: TRAINING_VARIANT,
     ownerUid: state.uid,
-    round: IMAGE_ROUND,
+    round: roundIndex,
+    imageIndex,
+    bpm: Number(draw.bpm),
     size: buffer.byteLength,
     mime,
   }));
@@ -2542,7 +3002,9 @@ async function sendLocalImageOnce() {
   state.channel.send(JSON.stringify({
     type: "training-image-end",
     ownerUid: state.uid,
-    round: IMAGE_ROUND,
+    round: roundIndex,
+    imageIndex,
+    bpm: Number(draw.bpm),
   }));
 }
 
@@ -2570,20 +3032,32 @@ async function handleChannelMessage(data) {
     if (data.length > 2048) throw new Error("P2P制御情報が大きすぎます。");
     const message = JSON.parse(data);
     if (message.type === "training-image-start") {
-      if (state.remoteImage || state.incomingImage) return;
+      const roundIndex = Number(message.round);
+      if (state.remoteImages[roundIndex] || state.incomingImage) return;
       if (message.protocolVersion !== TRAINING_PROTOCOL_VERSION
         || message.variant !== TRAINING_VARIANT
-        || message.ownerUid !== opponentPlayer()?.uid) {
+        || message.ownerUid !== opponentPlayer()?.uid
+        || !Number.isInteger(roundIndex)
+        || roundIndex < 1
+        || roundIndex > TRAINING_MAX_ROUNDS
+        || !Number.isInteger(Number(message.imageIndex))
+        || Number(message.imageIndex) < 1
+        || Number(message.imageIndex) > TRAINING_IMAGE_COUNT
+        || normalizeImageBpm(message.bpm) < 0) {
         throw new Error("受信画像の送信者情報が一致しません。");
       }
       state.incomingImage = createIncomingOnlineImageTransfer(message, {
-        expectedRound: IMAGE_ROUND,
+        expectedRound: roundIndex,
         maxBytes: MAX_IMAGE_TRANSFER_BYTES,
       });
+      state.incomingImage.imageIndex = Number(message.imageIndex);
+      state.incomingImage.bpm = Number(message.bpm);
     } else if (message.type === "training-image-end") {
       await finishIncomingImage(message);
     } else if (message.type === "training-cheer" || message.type === "training-free-cheer") {
       receiveCheer(message);
+    } else if (String(message.type || "").startsWith("training-finisher-")) {
+      receiveFinisherMessage(message);
     }
     return;
   }
@@ -2601,22 +3075,40 @@ async function finishIncomingImage(message) {
   const transfer = state.incomingImage;
   const endStatus = onlineImageEndStatus(transfer, message);
   if (endStatus === "orphan") return;
-  if (endStatus !== "complete" || message.ownerUid !== opponentPlayer()?.uid) {
+  const roundIndex = Number(message.round);
+  const opponentUid = opponentPlayer()?.uid || "";
+  if (endStatus !== "complete"
+    || message.ownerUid !== opponentUid
+    || Number(message.imageIndex) !== Number(transfer?.imageIndex)
+    || Number(message.bpm) !== Number(transfer?.bpm)) {
     state.incomingImage = null;
     throw new Error("受信画像の完了情報が一致しません。");
   }
+  const drawSnapshot = await get(
+    ref(database, `online/trainingRooms/${state.roomId}/rounds/${roundIndex}/draws/${opponentUid}`),
+  );
+  const draw = drawSnapshot.val();
+  if (Number(draw?.imageIndex) !== Number(transfer.imageIndex)
+    || Number(draw?.bpm) !== Number(transfer.bpm)) {
+    state.incomingImage = null;
+    throw new Error("P2P画像とFirebaseのDRAW情報が一致しません。");
+  }
   const mime = completeIncomingOnlineImageTransfer(transfer);
   state.incomingImage = null;
-  releaseImage(state.remoteImage);
   const blob = new Blob(transfer.chunks, { type: mime });
-  state.remoteImage = { blob, url: URL.createObjectURL(blob), mime };
-  await set(ref(database, `online/trainingRooms/${state.roomId}/imageReceived/${state.uid}`), true);
+  releaseImage(state.remoteImages[roundIndex]);
+  state.remoteImages[roundIndex] = {
+    blob,
+    url: URL.createObjectURL(blob),
+    mime,
+    bpm: Number(draw.bpm),
+    imageIndex: Number(draw.imageIndex),
+  };
+  await set(
+    ref(database, `online/trainingRooms/${state.roomId}/rounds/${roundIndex}/imageReceived/${state.uid}`),
+    true,
+  );
   render();
-}
-
-function allImagesReceived() {
-  const uids = Object.keys(state.room.members || {});
-  return uids.length === 2 && uids.every((uid) => state.room.imageReceived?.[uid] === true);
 }
 
 function clearImageExchangeWatchdog() {
@@ -2624,13 +3116,18 @@ function clearImageExchangeWatchdog() {
   state.imageExchangeTimer = null;
 }
 
-function startImageExchangeWatchdog() {
+function startImageExchangeWatchdog(roundIndex = currentRoundIndex()) {
   clearImageExchangeWatchdog();
-  if (!state.roomId || allImagesReceived() || state.outcome) return;
+  const round = trainingRound(roundIndex);
+  if (!state.roomId || allRoundImagesReceived(round) || state.outcome) return;
   const roomId = state.roomId;
+  state.imageExchangeRound = roundIndex;
   state.imageExchangeTimer = window.setTimeout(() => {
     state.imageExchangeTimer = null;
-    if (!active || state.roomId !== roomId || allImagesReceived() || state.outcome) return;
+    if (!active
+      || state.roomId !== roomId
+      || allRoundImagesReceived(trainingRound(roundIndex))
+      || state.outcome) return;
     failImageExchange(
       "image_exchange_timeout",
       new Error("45秒以内に画像交換を完了できなかったため、NO CONTESTにしました。"),
@@ -2642,13 +3139,15 @@ async function failImageExchange(reason, error) {
   if (!active
     || !state.roomId
     || state.room.destroyed
-    || state.outcome
-    || allImagesReceived()) return;
+    || state.outcome) return;
   const roomId = state.roomId;
-  const receipt = await get(ref(database, `online/trainingRooms/${roomId}/imageReceived`)).catch(() => null);
+  const roundIndex = state.imageExchangeRound || currentRoundIndex();
+  const receipt = await get(
+    ref(database, `online/trainingRooms/${roomId}/rounds/${roundIndex}/imageReceived`),
+  ).catch(() => null);
   if (receipt && active && state.roomId === roomId) {
-    state.room.imageReceived = receipt.val() || {};
-    if (allImagesReceived()) {
+    ensureRoundLocal(roundIndex).imageReceived = receipt.val() || {};
+    if (allRoundImagesReceived(trainingRound(roundIndex))) {
       clearImageExchangeWatchdog();
       return;
     }
@@ -2665,207 +3164,354 @@ async function failImageExchange(reason, error) {
   }
 }
 
-function applyPreset(id) {
-  const preset = PRESETS[id];
-  if (!preset) return;
-  state.draftInstruction = normalizeTrainingInstruction(preset);
-  const command = document.querySelector("#trainingCommand");
-  const exercise = document.querySelector("#trainingExercise");
-  const completion = document.querySelector("#trainingCompletion");
-  const bpm = document.querySelector("#trainingBpm");
-  if (command) command.value = state.draftInstruction.command;
-  if (exercise) exercise.value = state.draftInstruction.exercise;
-  if (completion) completion.value = state.draftInstruction.completion;
-  if (bpm) bpm.value = String(state.draftInstruction.bpm);
-  document.querySelectorAll('input[name="trainingBeats"]').forEach((input) => {
-    input.checked = Number(input.value) === state.draftInstruction.beatsPerRep;
-  });
-  const count = document.querySelector("#trainingCommandCount");
-  if (count) count.textContent = String(state.draftInstruction.command.length);
+function secureRandomChoice(values) {
+  if (!values.length) return 0;
+  if (globalThis.crypto?.getRandomValues) {
+    const sample = new Uint32Array(1);
+    globalThis.crypto.getRandomValues(sample);
+    return values[sample[0] % values.length];
+  }
+  return values[Math.floor(Math.random() * values.length)];
 }
 
-async function submitCarrotChoice(value) {
+async function ensureLocalRoundDraw(roundIndex = currentRoundIndex()) {
+  if (state.preview || !state.roomId || state.outcome || state.outgoingImageBusy) return;
+  if (!Number.isInteger(roundIndex) || roundIndex < 1 || roundIndex > TRAINING_MAX_ROUNDS) return;
+  let round = trainingRound(roundIndex);
+  if (!Number(round.createdAt || 0)) {
+    if (state.room.hostUid !== state.uid) return;
+    const created = await runTransaction(
+      ref(database, `online/trainingRooms/${state.roomId}/rounds/${roundIndex}`),
+      (current) => current === null ? { createdAt: firebaseNow() } : current,
+    );
+    Object.assign(ensureRoundLocal(roundIndex), created.snapshot.val() || {});
+    round = trainingRound(roundIndex);
+  }
+  let draw = roundDraw(round, state.uid);
+  if (!draw) {
+    const used = new Set(
+      Array.from({ length: roundIndex - 1 }, (_, index) => (
+        Number(roundDraw(trainingRound(index + 1), state.uid)?.imageIndex || 0)
+      )).filter(Boolean),
+    );
+    const available = Array.from({ length: TRAINING_IMAGE_COUNT }, (_, index) => index + 1)
+      .filter((imageIndex) => !used.has(imageIndex));
+    const imageIndex = secureRandomChoice(available);
+    const image = state.localImages[imageIndex - 1];
+    const bpm = normalizeImageBpm(image?.bpm);
+    if (!image?.blob || bpm < 0) throw new Error("5枚の画像デッキを端末で確認できませんでした。");
+    const candidate = { imageIndex, bpm, drawnAt: firebaseNow() };
+    const result = await runTransaction(
+      ref(database, `online/trainingRooms/${state.roomId}/rounds/${roundIndex}/draws/${state.uid}`),
+      (current) => current === null ? candidate : undefined,
+    );
+    draw = result.snapshot.val();
+    if (!draw) throw new Error("ランダムDRAWを確定できませんでした。");
+    ensureRoundLocal(roundIndex).draws = {
+      ...(ensureRoundLocal(roundIndex).draws || {}),
+      [state.uid]: draw,
+    };
+  }
+  if (state.channel?.readyState !== "open" || state.outgoingImageRounds.has(roundIndex)) return;
+  state.outgoingImageBusy = true;
+  try {
+    await sendLocalRoundImage(roundIndex, draw);
+  } finally {
+    state.outgoingImageBusy = false;
+  }
+}
+
+async function submitScore(value) {
   if (state.preview) return;
-  const choice = normalizeCarrotChoice(value);
-  if (!choice
-    || !state.roomId
-    || !allImagesReceived()
-    || state.carrotChoice
-    || state.carrotChoiceSubmitting) return;
-  state.carrotChoiceSubmitting = true;
+  const score = normalizeScore(value);
+  const view = trainingClientView();
+  if (!score
+    || view.phase !== "scoring"
+    || !allRoundImagesReceived(view.round)
+    || roundScore(view.round, state.uid)
+    || state.scoreSubmitting) return;
+  state.scoreSubmitting = true;
   render();
   try {
-    const transaction = await runTransaction(
-      ref(database, `online/trainingRooms/${state.roomId}/carrotChoices/${state.uid}`),
-      (current) => current === null ? choice : undefined,
+    const result = await runTransaction(
+      ref(database, `online/trainingRooms/${state.roomId}/rounds/${view.roundIndex}/scores/${state.uid}`),
+      (current) => current === null ? score : undefined,
     );
-    const committedChoice = normalizeCarrotChoice(transaction.snapshot.val());
-    if (!committedChoice) throw new Error("CARROTの秘密選択を保存できませんでした。");
-    state.carrotChoice = committedChoice;
-    state.room.carrotChoices = {
-      ...(state.room.carrotChoices || {}),
-      [state.uid]: committedChoice,
-    };
-    scheduleCarrotChoicePoll(0);
+    const committedScore = normalizeScore(result.snapshot.val());
+    if (!committedScore) throw new Error("秘密採点を確定できませんでした。");
+    const round = ensureRoundLocal(view.roundIndex);
+    round.scores = { ...(round.scores || {}), [state.uid]: committedScore };
+    scheduleScorePoll(0);
   } finally {
-    state.carrotChoiceSubmitting = false;
+    state.scoreSubmitting = false;
     render();
   }
 }
 
-async function submitInstruction() {
+async function submitCommandChoice(cardIndex) {
   if (state.preview) return;
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (view.phase !== "compose" || view.trainerUid !== state.uid || view.turnIndex > TRAINING_MAX_TURNS) return;
-  const instruction = normalizeTrainingInstruction(state.draftInstruction);
-  if (!trainingInstructionIsReady(instruction)) {
-    showToast("自由な指示・種目名・コンプリート条件をすべて入力してください。");
-    return;
-  }
-  const carrotChoice = carrotChoiceForUid(view.traineeUid);
-  if (!carrotChoice) {
-    showToast("相手のCARROT選択を確認しています。少し待ってからもう一度お試しください。");
-    scheduleCarrotChoicePoll(0);
-    return;
-  }
-  const choice = carrotChoiceConfig(carrotChoice);
-  const turn = {
-    trainerUid: state.uid,
-    traineeUid: view.traineeUid,
-    carrotChoice,
-    targetDurationMs: choice.durationMs,
-    imageOwnerUid: choice.image === "mine" ? view.traineeUid : state.uid,
-    instruction,
-    createdAt: firebaseNow(),
-  };
+  const view = trainingClientView();
+  const victimUid = view.traineeUid;
+  if (view.phase !== "command_select"
+    || view.trainerUid !== state.uid
+    || !victimUid
+    || !Number.isInteger(cardIndex)
+    || cardIndex < 1
+    || cardIndex > TRAINING_COMMAND_COUNT
+    || usedCommandIndexes(state.uid).has(cardIndex)
+    || state.commandSubmitting) return;
+  state.commandSubmitting = true;
+  render();
   try {
-    state.ambienceUnlocked = true;
-    state.ambienceResumeRequired = false;
-    primeTurnAmbience(view.turnIndex);
-    await state.ambienceController.enable();
-  } catch {
-    showToast("メトロノーム音を準備できませんでした。無音でもトレーニングは続けられます。");
+    const choice = {
+      trainerUid: state.uid,
+      cardIndex,
+      selectedAt: firebaseNow(),
+    };
+    const result = await runTransaction(
+      ref(database, `online/trainingRooms/${state.roomId}/rounds/${view.roundIndex}/commandChoices/${victimUid}`),
+      (current) => current === null ? choice : undefined,
+    );
+    if (!result.snapshot.val()) throw new Error("COMMANDを確定できませんでした。");
+  } finally {
+    state.commandSubmitting = false;
+    render();
   }
-  const result = await runTransaction(
-    ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}`),
-    (current) => current === null ? turn : undefined,
-  );
-  if (!result.committed) showToast("相手と同時に進行が更新されました。現在のターンを確認します。");
 }
 
-async function startTurn() {
+async function startWorkout() {
   if (state.preview) return;
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (view.phase !== "ready" || view.traineeUid !== state.uid) return;
-  state.giveUpArmed = false;
-  try {
-    state.ambienceUnlocked = true;
-    state.ambienceResumeRequired = false;
-    await state.ambienceController.enable();
-  } catch {
-    showToast("メトロノーム音を開始できませんでした。無音でもトレーニングは続けられます。");
-  }
+  const view = trainingClientView();
+  const context = ownWorkoutContext(view.roundIndex);
+  if (view.phase !== "workout_ready" || !context || context.workout?.startedAt) return;
   const startedAt = firebaseNow();
-  const transaction = await runTransaction(
-    ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}/startedAt`),
-    (current) => current === null ? startedAt : undefined,
+  const result = await runTransaction(
+    ref(database, `online/trainingRooms/${state.roomId}/rounds/${view.roundIndex}/workouts/${state.uid}`),
+    (current) => current === null ? { startedAt } : undefined,
   );
-  const effectiveAt = Number(transaction.snapshot.val() || startedAt);
-  if (transaction.committed) {
-    setTurnAmbience(view.turnIndex, view.turn.instruction, effectiveAt);
+  if (!result.snapshot.val()?.startedAt) throw new Error("トレーニング開始を確定できませんでした。");
+  try {
+    state.ambienceUnlocked = true;
+    state.ambienceResumeRequired = false;
+    setWorkoutAmbience(context, startedAt);
+    await state.ambienceController.enable();
+  } catch {
+    showToast("メトロノームを再生できませんでした。無音でも進行できます。");
   }
 }
 
-async function completeTurn() {
+async function completeWorkout(viewOverride = null) {
   if (state.preview) return;
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!TRAINING_RUNNING_PHASES.includes(view.phase)
-    || view.traineeUid !== state.uid) return;
-  await syncTurnMilestones(view, { endBoost: true });
+  const view = viewOverride || trainingClientView();
+  const context = ownWorkoutContext(view.roundIndex);
+  const startedAt = Number(context?.workout?.startedAt || 0);
+  if (!context || !startedAt || Number(context.workout.completedAt || 0)) return;
+  const completedAt = startedAt + context.scoreInfo.durationMs;
+  if (firebaseNow() < completedAt) return;
+  await runTransaction(
+    ref(database, `online/trainingRooms/${state.roomId}/rounds/${view.roundIndex}/workouts/${state.uid}`),
+    (current) => current
+      && Number(current.startedAt) === startedAt
+      && !current.completedAt
+      ? { ...current, completedAt }
+      : undefined,
+  );
+  state.ambienceController.disable();
+}
+
+function roundCreatesNaturalResult(roundIndex) {
+  const round = trainingRound(roundIndex);
+  if (!allRoundScoresReady(round) || !requiredRoundWorkoutsComplete(round)) return false;
+  const uids = memberUids();
+  if (uids.some((uid) => hpFor(uid) <= 0)) return true;
+  return roundIndex >= TRAINING_MAX_ROUNDS;
+}
+
+async function ensureRoundProgress() {
+  if (state.preview || state.roundProgressWriting || state.room.hostUid !== state.uid || !state.roomId) return;
+  const roundIndex = currentRoundIndex();
+  const round = trainingRound(roundIndex);
+  if (!Number(round.createdAt || 0)) {
+    await ensureLocalRoundDraw(roundIndex);
+    return;
+  }
+  if (!allRoundScoresReady(round)
+    || !requiredRoundWorkoutsComplete(round)
+    || Number(round.completedAt || 0)) return;
+  const completedAt = firebaseNow();
+  const updates = { [`rounds/${roundIndex}/completedAt`]: completedAt };
+  if (!roundCreatesNaturalResult(roundIndex) && roundIndex < TRAINING_MAX_ROUNDS) {
+    updates[`rounds/${roundIndex + 1}/createdAt`] = completedAt;
+  }
+  const operation = update(ref(database, `online/trainingRooms/${state.roomId}`), updates);
+  state.roundProgressWriting = operation;
+  try {
+    await operation;
+  } finally {
+    if (state.roundProgressWriting === operation) state.roundProgressWriting = null;
+  }
+}
+
+async function handleHealthStop() {
+  if (state.preview) return;
+  state.giveUpArmed = false;
+  await markRoomDestroyed("health_stop");
+}
+
+function sendFinisherMessage(payload) {
+  if (state.channel?.readyState !== "open") {
+    showToast("P2P接続が閉じているため、任意の追い込みは利用できません。");
+    return false;
+  }
+  state.channel.send(JSON.stringify({
+    ...payload,
+    protocolVersion: TRAINING_PROTOCOL_VERSION,
+    variant: TRAINING_VARIANT,
+    fromUid: state.uid,
+  }));
+  return true;
+}
+
+function scheduleFinisherOfferExpiry(expiresAt) {
+  window.clearInterval(state.finisherOfferTimer);
+  state.finisherOfferTimer = null;
+  const remaining = Number(expiresAt || 0) - firebaseNow();
+  if (remaining <= 0) {
+    if (state.finisher?.status === "offered") {
+      state.finisher = { ...state.finisher, status: "expired" };
+      render();
+    }
+    return;
+  }
+  state.finisherOfferTimer = window.setInterval(() => {
+    if (state.finisher?.status !== "offered") {
+      window.clearInterval(state.finisherOfferTimer);
+      state.finisherOfferTimer = null;
+      return;
+    }
+    if (firebaseNow() >= Number(state.finisher.expiresAt || 0)) {
+      window.clearInterval(state.finisherOfferTimer);
+      state.finisherOfferTimer = null;
+      state.finisher = { ...state.finisher, status: "expired" };
+    }
+    render();
+  }, 1_000);
+}
+
+function offerFinisher(cardIndex) {
+  if (state.outcome?.result?.type !== "win" || resultOverkill(state.outcome) <= 0 || state.finisher) return;
+  const card = normalizeCommandCard(state.commandDeck[cardIndex - 1]);
+  if (!commandCardIsReady(card)) return;
+  const expiresAt = firebaseNow() + 15_000;
+  if (!sendFinisherMessage({ type: "training-finisher-offer", cardIndex, expiresAt })) return;
+  state.finisher = { status: "offered", cardIndex, card, expiresAt };
+  scheduleFinisherOfferExpiry(expiresAt);
+  render();
+}
+
+function respondFinisher(accepted) {
+  if (state.outcome?.result?.type !== "loss"
+    || state.finisher?.status !== "offered"
+    || firebaseNow() >= Number(state.finisher.expiresAt || 0)) {
+    scheduleFinisherOfferExpiry(0);
+    return;
+  }
+  const status = accepted ? "accepted" : "declined";
+  window.clearInterval(state.finisherOfferTimer);
+  state.finisherOfferTimer = null;
+  sendFinisherMessage({ type: "training-finisher-response", status });
+  state.finisher = { ...state.finisher, status };
+  render();
+}
+
+function startFinisher() {
+  if (state.outcome?.result?.type !== "loss" || state.finisher?.status !== "accepted") return;
+  const startedAt = firebaseNow();
+  state.finisher = { ...state.finisher, status: "active", startedAt };
+  sendFinisherMessage({ type: "training-finisher-start", startedAt });
+  const roundIndex = Number(state.outcome?.roundIndex || currentRoundIndex());
+  const draw = roundDraw(trainingRound(roundIndex), opponentPlayer()?.uid || "");
+  state.ambienceController.setAmbience({
+    metronomeBpm: Number(draw?.bpm || 0),
+    effectiveAt: firebaseNow(),
+    revision: 10_000 + roundIndex,
+  }, { serverTimeOffset: state.serverTimeOffset });
+  state.ambienceController.enable().catch(() => {});
+  window.clearInterval(state.finisherTicker);
+  state.finisherTicker = window.setInterval(() => {
+    if (!state.finisher?.startedAt || firebaseNow() - state.finisher.startedAt < FINISHER_DURATION_MS) {
+      render();
+      return;
+    }
+    window.clearInterval(state.finisherTicker);
+    state.finisherTicker = null;
+    state.finisher = { ...state.finisher, status: "complete" };
+    state.ambienceController.disable();
+    sendFinisherMessage({ type: "training-finisher-complete" });
+    render();
+  }, 1_000);
+  render();
+}
+
+function receiveFinisherMessage(message) {
+  if (message.protocolVersion !== TRAINING_PROTOCOL_VERSION
+    || message.variant !== TRAINING_VARIANT
+    || message.fromUid !== opponentPlayer()?.uid
+    || !state.outcome) return;
+  if (message.type === "training-finisher-offer"
+    && state.outcome.result?.type === "loss"
+    && resultOverkill(state.outcome) > 0
+    && !state.finisher) {
+    const cardIndex = Number(message.cardIndex);
+    const expiresAt = Number(message.expiresAt);
+    const now = firebaseNow();
+    const card = commandCardFor(opponentPlayer()?.uid || "", cardIndex);
+    if (!commandCardIsReady(card)
+      || !Number.isFinite(expiresAt)
+      || expiresAt < now + 1_000
+      || expiresAt > now + 20_000) return;
+    state.finisher = { status: "offered", cardIndex, card, expiresAt };
+    scheduleFinisherOfferExpiry(expiresAt);
+  } else if (message.type === "training-finisher-response"
+    && state.outcome.result?.type === "win"
+    && ["accepted", "declined"].includes(message.status)
+    && state.finisher?.status === "offered"
+    && firebaseNow() < Number(state.finisher.expiresAt || 0)) {
+    window.clearInterval(state.finisherOfferTimer);
+    state.finisherOfferTimer = null;
+    state.finisher = { ...state.finisher, status: message.status };
+  } else if (message.type === "training-finisher-start"
+    && state.outcome.result?.type === "win"
+    && state.finisher?.status === "accepted") {
+    state.finisher = { ...state.finisher, status: "active", startedAt: Number(message.startedAt || firebaseNow()) };
+  } else if (message.type === "training-finisher-complete"
+    && state.outcome.result?.type === "win") {
+    state.finisher = { ...(state.finisher || {}), status: "complete" };
+  }
+  render();
 }
 
 async function handleGiveUp() {
   if (state.preview) return;
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!TRAINING_HUD_PHASES.includes(view.phase) || view.traineeUid !== state.uid) return;
-  if (trainingTurnElapsed(view.turn) >= TRAINING_TURN_DURATION_MS) {
-    await syncTurnMilestones(view, { endBoost: true });
-    return;
-  }
   if (!state.giveUpArmed) {
     state.giveUpArmed = true;
     render();
     return;
   }
-  if (view.phase === "ready") {
-    const startedAt = await runTransaction(
-      ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}/startedAt`),
-      (current) => current === null ? firebaseNow() : undefined,
-    );
-    if (!Number(startedAt.snapshot.val() || 0)) {
-      throw new Error("ギブアップを確定するための開始時刻を記録できませんでした。");
-    }
-  }
-  await runTransaction(
-    ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}/surrenderedAt`),
-    (current) => current === null ? firebaseNow() : undefined,
+  const surrendered = await runTransaction(
+    ref(database, `online/trainingRooms/${state.roomId}/surrendered`),
+    (current) => current === null ? { uid: state.uid, at: firebaseNow() } : undefined,
   );
-}
-
-async function syncTurnMilestones(viewOverride = null, { endBoost = false } = {}) {
-  if (state.preview) return;
-  if (state.milestoneWriting) return state.milestoneWriting;
-  if (!state.roomId) return;
-  const view = viewOverride || deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!TRAINING_RUNNING_PHASES.includes(view.phase)
-    || view.traineeUid !== state.uid
-    || !view.turn?.startedAt
-    || view.turn?.completedAt
-    || view.turn?.surrenderedAt
-    || view.turn?.timedOutAt) return;
-  const now = firebaseNow();
-  const elapsed = trainingTurnElapsed(view.turn, now);
-  if (elapsed < TRAINING_TURN_DURATION_MS) return;
-  const startedAt = Number(view.turn.startedAt);
-  const targetDuration = trainingTurnTargetDuration(view.turn);
-  const baseCompletedAt = startedAt + TRAINING_TURN_DURATION_MS;
-  const targetCompletedAt = startedAt + targetDuration;
-  const updates = {};
-  if (!view.turn.baseCompletedAt) updates.baseCompletedAt = baseCompletedAt;
-  const shouldComplete = targetDuration === TRAINING_TURN_DURATION_MS
-    || elapsed >= targetDuration
-    || endBoost;
-  if (shouldComplete) {
-    const fullyCompleted = elapsed >= targetDuration;
-    updates.completedAt = fullyCompleted
-      ? targetCompletedAt
-      : Math.max(baseCompletedAt, Math.min(now, targetCompletedAt));
-    if (targetDuration > TRAINING_TURN_DURATION_MS && elapsed >= targetDuration) {
-      updates.boostCompletedAt = targetCompletedAt;
-    }
-  }
-  if (!Object.keys(updates).length) return;
-  const milestoneWrite = update(
-    ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}`),
-    updates,
-  );
-  state.milestoneWriting = milestoneWrite;
-  try {
-    await milestoneWrite;
-    Object.assign(view.turn, updates);
-    const localTurn = state.room.turns?.[view.turnIndex]
-      || state.room.turns?.[String(view.turnIndex)];
-    if (localTurn) Object.assign(localTurn, updates);
-  } finally {
-    if (state.milestoneWriting === milestoneWrite) state.milestoneWriting = null;
-  }
+  if (!surrendered.snapshot.val()) throw new Error("GIVE UPを確定できませんでした。");
 }
 
 function sendCheer(id) {
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const view = trainingClientView();
+  const partner = opponentWorkoutContext(view.roundIndex);
   if (!CHEERS[id]
-    || !TRAINING_RUNNING_PHASES.includes(view.phase)
-    || view.trainerUid !== state.uid) return;
+    || !partner
+    || !Number(partner.workout?.startedAt || 0)
+    || Number(partner.workout?.completedAt || 0)) return;
   if (state.channel?.readyState !== "open") {
     showToast("掛け声用のP2P接続が閉じています。トレーニング進行は続けられます。");
     return;
@@ -2873,17 +3519,19 @@ function sendCheer(id) {
   state.channel.send(JSON.stringify({
     type: "training-cheer",
     cheerId: id,
-    turn: view.turnIndex,
+    round: view.roundIndex,
   }));
 }
 
 function sendFreeCheer() {
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const view = trainingClientView();
+  const partner = opponentWorkoutContext(view.roundIndex);
   const text = String(state.freeCheerDraft || "").trim().replace(/\s+/g, " ").slice(0, 40);
   if (!text
-    || state.freeCheerSentTurn === view.turnIndex
-    || !TRAINING_RUNNING_PHASES.includes(view.phase)
-    || view.trainerUid !== state.uid) return;
+    || state.freeCheerSentRound === view.roundIndex
+    || !partner
+    || !Number(partner.workout?.startedAt || 0)
+    || Number(partner.workout?.completedAt || 0)) return;
   if (state.channel?.readyState !== "open") {
     showToast("自由応援用のP2P接続が閉じています。定型の応援なしでも進行は続けられます。");
     return;
@@ -2891,24 +3539,22 @@ function sendFreeCheer() {
   state.channel.send(JSON.stringify({
     type: "training-free-cheer",
     text,
-    turn: view.turnIndex,
+    round: view.roundIndex,
   }));
-  state.freeCheerSentTurn = view.turnIndex;
+  state.freeCheerSentRound = view.roundIndex;
   state.freeCheerDraft = "";
   render();
 }
 
 function receiveCheer(message) {
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const view = trainingClientView();
   const text = message.type === "training-free-cheer"
     ? String(message.text || "").trim().replace(/\s+/g, " ").slice(0, 40)
     : CHEERS[message.cheerId];
   if (!text
-    || Number(message.turn) !== view.turnIndex
-    || view.traineeUid !== state.uid
-    || view.trainerUid !== opponentPlayer()?.uid
+    || Number(message.round) !== view.roundIndex
     || !TRAINING_RUNNING_PHASES.includes(view.phase)) return;
-  state.cheer = { text, turn: view.turnIndex };
+  state.cheer = { text, round: view.roundIndex };
   window.clearTimeout(state.cheerTimer);
   const overlay = document.querySelector("#trainingCheerOverlay");
   if (overlay) {
@@ -2922,18 +3568,19 @@ function receiveCheer(message) {
 }
 
 function configureAmbienceForView(view, { enableAudio = true } = {}) {
-  if (view.phase === "ready" && view.turn) {
-    primeTurnAmbience(view.turnIndex);
+  const context = ownWorkoutContext(view.roundIndex);
+  if (view.phase === "workout_ready" && context) {
+    primeWorkoutAmbience(view.roundIndex);
     return;
   }
-  const startedAt = Number(view.turn?.startedAt || 0);
+  const startedAt = Number(context?.workout?.startedAt || 0);
   if (!startedAt || !TRAINING_RUNNING_PHASES.includes(view.phase)) return;
-  setTurnAmbience(view.turnIndex, view.turn.instruction, startedAt);
+  setWorkoutAmbience(context, startedAt);
   if (enableAudio) state.ambienceController.enable().catch(() => {});
 }
 
-function primeTurnAmbience(turnIndex) {
-  const revision = (turnIndex * 2) - 1;
+function primeWorkoutAmbience(roundIndex) {
+  const revision = (roundIndex * 2) - 1;
   if (revision < state.ambienceRevision) return;
   state.ambienceController.setAmbience({
     metronomeBpm: 0,
@@ -2943,12 +3590,12 @@ function primeTurnAmbience(turnIndex) {
   state.ambienceRevision = revision;
 }
 
-function setTurnAmbience(turnIndex, instruction, effectiveAt) {
-  const revision = turnIndex * 2;
+function setWorkoutAmbience(context, effectiveAt) {
+  const revision = context.roundIndex * 2;
   if (revision < state.ambienceRevision) return;
   try {
     state.ambienceController.setAmbience({
-      metronomeBpm: normalizeTrainingInstruction(instruction).bpm,
+      metronomeBpm: context.bpm,
       effectiveAt,
       revision,
     }, { serverTimeOffset: state.serverTimeOffset });
@@ -2960,7 +3607,7 @@ function setTurnAmbience(turnIndex, instruction, effectiveAt) {
 
 async function resumeTrainingAmbienceFromGesture() {
   state.ambienceUnlocked = true;
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const view = trainingClientView();
   if (!TRAINING_HUD_PHASES.includes(view.phase)) return false;
   configureAmbienceForView(view, { enableAudio: false });
   const enabled = await state.ambienceController.enable();
@@ -2975,7 +3622,7 @@ async function resumeTrainingAmbienceAfterVisibility() {
     || !state.ambienceUnlocked
     || !state.roomId
     || state.screen !== "room") return;
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const view = trainingClientView();
   if (!TRAINING_HUD_PHASES.includes(view.phase)) return;
   configureAmbienceForView(view, { enableAudio: false });
   const enabled = await state.ambienceController.enable();
@@ -3012,48 +3659,34 @@ function startTurnTicker(view) {
   clearTurnTicker();
   const updateTimer = () => {
     if (!active || state.screen !== "room") return;
-    const startedAt = Number(view.turn?.startedAt || 0);
+    const context = ownWorkoutContext(view.roundIndex);
+    const startedAt = Number(context?.workout?.startedAt || 0);
     if (!startedAt) return;
     const elapsed = Math.max(0, firebaseNow() - startedAt);
-    const targetDuration = trainingTurnTargetDuration(view.turn);
+    const targetDuration = context.scoreInfo.durationMs;
     const remaining = Math.max(0, targetDuration - elapsed);
-    const baseComplete = Number(view.turn?.baseCompletedAt || 0) > 0
-      || elapsed >= TRAINING_TURN_DURATION_MS;
-    const stageRemaining = baseComplete
-      ? remaining
-      : Math.max(0, TRAINING_TURN_DURATION_MS - elapsed);
-    const seconds = Math.ceil(stageRemaining / 1000);
+    const seconds = Math.ceil(remaining / 1000);
     const fill = document.querySelector("#trainingCountdownFill");
     const clock = document.querySelector("#trainingCountdown");
     const progress = document.querySelector("#trainingCountdownProgress");
-    const stageBadge = document.querySelector("#trainingStageBadge");
     if (fill) fill.style.width = `${(remaining / targetDuration) * 100}%`;
     if (clock) clock.textContent = String(seconds);
-    if (stageBadge) stageBadge.textContent = baseComplete
-      ? carrotChoiceConfig(view.turn?.carrotChoice).label
-      : "BASE 60";
     if (progress) {
       progress.setAttribute("aria-valuenow", String(seconds));
-      progress.setAttribute(
-        "aria-valuemax",
-        String(baseComplete
-          ? carrotChoiceConfig(view.turn?.carrotChoice).boostMs / 1000
-          : TRAINING_TURN_DURATION_MS / 1000),
-      );
-      progress.setAttribute("aria-label", `${baseComplete ? "BOOST" : "BASE"} 残り${seconds}秒`);
+      progress.setAttribute("aria-valuemax", String(targetDuration / 1000));
+      progress.setAttribute("aria-label", `筋トレ 残り${seconds}秒`);
     }
-    const instruction = normalizeTrainingInstruction(view.turn?.instruction);
     const beat = trainingBeatState({
       startedAt,
       now: firebaseNow(),
-      bpm: instruction.bpm,
-      beatsPerRep: instruction.beatsPerRep,
+      bpm: context.bpm,
+      beatsPerRep: context.card.beatsPerRep,
     });
     document.querySelectorAll("#trainingBeatLane [data-beat]").forEach((item) => {
       item.classList.toggle("is-active", beat.enabled && Number(item.dataset.beat) === beat.beat);
     });
-    if (elapsed >= TRAINING_TURN_DURATION_MS) {
-      syncTurnMilestones(view).catch(handleRecoverableError);
+    if (elapsed >= targetDuration) {
+      completeWorkout(view).catch(handleRecoverableError);
     }
   };
   updateTimer();
@@ -3241,8 +3874,12 @@ async function deactivate({ returnHome }) {
   state.generation += 1;
   window.clearTimeout(state.finalizeTimer);
   window.clearTimeout(state.cheerTimer);
+  window.clearInterval(state.finisherTicker);
+  window.clearInterval(state.finisherOfferTimer);
+  state.finisherTicker = null;
+  state.finisherOfferTimer = null;
   clearImageExchangeWatchdog();
-  clearCarrotChoicePoll();
+  clearScorePoll();
   clearTurnTicker();
   await cleanupMatchmaking(false);
   await cleanupPublicPresence();
@@ -3261,10 +3898,10 @@ async function deactivate({ returnHome }) {
   state.channel?.close();
   state.peer?.close();
   state.ambienceController.destroy();
-  releaseImage(state.localImage);
-  releaseImage(state.remoteImage);
-  state.localImage = null;
-  state.remoteImage = null;
+  state.localImages.forEach(releaseImage);
+  Object.values(state.remoteImages).forEach(releaseImage);
+  state.localImages = Array(TRAINING_IMAGE_COUNT).fill(null);
+  state.remoteImages = {};
   state.roomId = "";
   state.pendingRoomId = "";
   releaseTrainingTabOwnership();
@@ -3320,51 +3957,107 @@ function installPreview(preview) {
   state.name = "ANJU";
   state.conditions = "ジャンプなし／今日は標準";
   state.profile = {
-    sessions: 8,
-    completedSets: 14,
+    hpSessions: 8,
+    hpCompletedWorkouts: 14,
+    hpHitsTaken: 14,
+    hpCompletedSeconds: 960,
+    hpWins: 4,
     completeDays: 6,
-    currentStreak: 3,
-    bestStreak: 5,
-    threeSetDays: 2,
-    currentThreeSetStreak: 2,
-    bestThreeSetStreak: 2,
   };
-  state.daily = { trainingSets: 1 };
-  state.localImage = {
+  state.daily = { trainingMatches: 1 };
+  const previewCards = [
+    ["ICE COLD BEER", "#117f99", "#081322", 120],
+    ["GYUDON", "#d46d25", "#32130b", 100],
+    ["STEAK", "#a32b35", "#26070d", 80],
+    ["TONKOTSU", "#e8b567", "#2c1a10", 140],
+    ["LEMON SOUR", "#b5d84b", "#14260b", 0],
+  ];
+  state.localImages = previewCards.map(([label, colorA, colorB, bpm]) => ({
     blob: new Blob(["preview"], { type: "image/webp" }),
-    url: previewImageUrl("ICE COLD BEER", "#117f99", "#081322"),
-  };
+    url: previewImageUrl(label, colorA, colorB),
+    mime: "image/webp",
+    bpm,
+  }));
   if (preview === "setup") {
     state.screen = "setup";
     render();
     return;
   }
   const now = Date.now();
-  state.remoteImage = {
+  state.remoteImages[1] = {
     blob: new Blob(["preview"], { type: "image/webp" }),
     url: previewImageUrl("TONKOTSU RAMEN", "#e66a2c", "#2b1012"),
+    mime: "image/webp",
+    bpm: 128,
+    imageIndex: 2,
+  };
+  state.remoteImages[2] = {
+    blob: new Blob(["preview"], { type: "image/webp" }),
+    url: previewImageUrl("DRAFT BEER", "#d9a321", "#151d28"),
+    mime: "image/webp",
+    bpm: 140,
+    imageIndex: 4,
   };
   state.roomId = "training-preview-room";
-  const selfIsCoach = preview === "coach";
-  const choicePreview = preview === "choice";
-  const boostPreview = preview === "boost";
-  const trainerUid = selfIsCoach ? "preview-self" : "preview-partner";
-  const traineeUid = selfIsCoach ? "preview-partner" : "preview-self";
-  const traineeChoice = selfIsCoach ? "mine" : (boostPreview ? "boost9" : "mine");
-  const targetDurationMs = trainingTargetDurationMs(traineeChoice);
-  const startedAt = now - (boostPreview ? 65_000 : 17_000);
-  const previewTurn = {
-    trainerUid,
-    traineeUid,
-    carrotChoice: traineeChoice,
-    targetDurationMs,
-    imageOwnerUid: trainingImageOwnerUid(traineeChoice, traineeUid, trainerUid),
-    instruction: normalizeTrainingInstruction(PRESETS.squat),
-    createdAt: startedAt - 3_000,
-    startedAt,
-    ...(boostPreview ? { baseCompletedAt: startedAt + TRAINING_TURN_DURATION_MS } : {}),
-    ...(preview === "result" ? { surrenderedAt: now - 1_000 } : {}),
+  const partnerDeck = commandDeckPayload([
+    PRESETS.squat,
+    PRESETS.pushup,
+    PRESETS.situp,
+  ]);
+  const ownDeck = commandDeckPayload();
+  const roundOne = {
+    createdAt: now - 120_000,
+    draws: {
+      "preview-self": { imageIndex: 1, bpm: 120, drawnAt: now - 119_000 },
+      "preview-partner": { imageIndex: 2, bpm: 128, drawnAt: now - 119_000 },
+    },
+    imageReceived: { "preview-self": true, "preview-partner": true },
+    scores: {},
+    commandChoices: {},
+    workouts: {},
   };
+  if (preview === "command") {
+    roundOne.scores = { "preview-self": 7, "preview-partner": 9 };
+  } else if (preview === "workout") {
+    roundOne.scores = { "preview-self": 9, "preview-partner": 7 };
+    roundOne.commandChoices["preview-self"] = {
+      trainerUid: "preview-partner",
+      cardIndex: 1,
+      selectedAt: now - 20_000,
+    };
+    roundOne.workouts["preview-self"] = { startedAt: now - 17_000 };
+  }
+  if (preview === "result") {
+    roundOne.scores = { "preview-self": 10, "preview-partner": 8 };
+    roundOne.commandChoices = {
+      "preview-self": { trainerUid: "preview-partner", cardIndex: 1, selectedAt: now - 110_000 },
+      "preview-partner": { trainerUid: "preview-self", cardIndex: 1, selectedAt: now - 110_000 },
+    };
+    roundOne.workouts = {
+      "preview-self": { startedAt: now - 108_000, completedAt: now - 18_000 },
+      "preview-partner": { startedAt: now - 108_000, completedAt: now - 48_000 },
+    };
+    roundOne.completedAt = now - 17_000;
+  }
+  const rounds = preview === "draw" ? { 1: { createdAt: now - 2_000 } } : { 1: roundOne };
+  if (preview === "result") {
+    rounds[2] = {
+      createdAt: now - 16_000,
+      draws: {
+        "preview-self": { imageIndex: 3, bpm: 80, drawnAt: now - 15_000 },
+        "preview-partner": { imageIndex: 4, bpm: 140, drawnAt: now - 15_000 },
+      },
+      imageReceived: { "preview-self": true, "preview-partner": true },
+      scores: { "preview-self": 9, "preview-partner": 6 },
+      commandChoices: {
+        "preview-self": { trainerUid: "preview-partner", cardIndex: 2, selectedAt: now - 14_000 },
+      },
+      workouts: {
+        "preview-self": { startedAt: now - 90_000, completedAt: now - 15_000 },
+      },
+      completedAt: now - 1_000,
+    };
+  }
   state.room = {
     ...emptyRoom(),
     protocolVersion: TRAINING_PROTOCOL_VERSION,
@@ -3372,45 +4065,34 @@ function installPreview(preview) {
     hostUid: "preview-partner",
     guestUid: "preview-self",
     status: "active",
-    firstTrainerUid: trainerUid,
     members: { "preview-partner": true, "preview-self": true },
     players: {
       "preview-partner": {
         uid: "preview-partner", name: "TRAINER", intensity: "standard", conditions: "指定なし",
+        commandDeck: partnerDeck,
+        imageBpms: { 1: 90, 2: 128, 3: 110, 4: 140, 5: 0 },
       },
       "preview-self": {
         uid: "preview-self", name: "ANJU", intensity: "standard", conditions: "ジャンプなし",
+        commandDeck: ownDeck,
+        imageBpms: imageBpmsPayload(),
       },
     },
     accepted: { "preview-partner": true, "preview-self": true },
-    imageReceived: { "preview-partner": true, "preview-self": true },
-    carrotChoices: choicePreview
-      ? {}
-      : { "preview-partner": selfIsCoach ? "mine" : "boost8", "preview-self": traineeChoice },
-    turns: choicePreview ? {} : { 1: previewTurn },
+    rounds,
   };
-  state.carrotChoice = normalizeCarrotChoice(state.room.carrotChoices?.[state.uid]);
   if (preview === "result") {
     state.outcome = deriveTrainingRoomState(state.room, state.uid, now);
     state.finalization = {
       result: {
         status: "final",
         outcome: "loss",
-        reason: "surrender",
-        completedSets: 2,
-        turnCount: 3,
+        reason: "hp_zero",
+        completedWorkouts: 2,
+        roundCount: 2,
       },
-      profile: {
-        sessions: 8,
-        completedSets: 14,
-        completeDays: 6,
-        currentStreak: 3,
-        bestStreak: 5,
-        threeSetDays: 2,
-        currentThreeSetStreak: 2,
-        bestThreeSetStreak: 2,
-      },
-      daily: { trainingSets: 3 },
+      profile: state.profile,
+      daily: state.daily,
     };
     state.profile = state.finalization.profile;
     state.daily = state.finalization.daily;
@@ -3424,14 +4106,18 @@ function installPreview(preview) {
 window.addEventListener("pagehide", () => {
   releaseTrainingTabOwnership();
   if (!active) return;
+  window.clearInterval(state.finisherTicker);
+  window.clearInterval(state.finisherOfferTimer);
+  state.finisherTicker = null;
+  state.finisherOfferTimer = null;
   clearImageExchangeWatchdog();
-  clearCarrotChoicePoll();
+  clearScorePoll();
   clearTurnTicker();
   state.ambienceController.destroy();
   state.channel?.close();
   state.peer?.close();
-  releaseImage(state.localImage);
-  releaseImage(state.remoteImage);
+  state.localImages.forEach(releaseImage);
+  Object.values(state.remoteImages).forEach(releaseImage);
 }, { once: true });
 
 window.HariaiTraining = {

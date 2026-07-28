@@ -74,6 +74,88 @@ function roomPayload(host, guest, now, {
   };
 }
 
+function v3CommandDeck() {
+  return {
+    1: {
+      exercise: "スクワット",
+      completion: "60秒続ける",
+      command: "リズムに合わせてスクワット",
+      beatsPerRep: 2,
+    },
+    2: {
+      exercise: "腕立て伏せ",
+      completion: "姿勢を保って続ける",
+      command: "無理のないフォームで腕立て伏せ",
+      beatsPerRep: 4,
+    },
+    3: {
+      exercise: "腹筋",
+      completion: "呼吸を止めずに続ける",
+      command: "8拍ごとに丁寧な腹筋",
+      beatsPerRep: 8,
+    },
+  };
+}
+
+function v3QueueEntry(uid, name, now, overrides = {}) {
+  return {
+    uid,
+    sessionId: `${uid}-session`,
+    name,
+    intensity: "standard",
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    commandDeck: v3CommandDeck(),
+    imageBpms: {
+      1: 0,
+      2: 80,
+      3: 100,
+      4: 120,
+      5: 160,
+    },
+    joinedAt: now,
+    lastSeen: now,
+    state: "waiting",
+    ...overrides,
+  };
+}
+
+function v3Player(entry, conditions = "") {
+  return {
+    uid: entry.uid,
+    name: entry.name,
+    intensity: entry.intensity,
+    conditions,
+    commandDeck: entry.commandDeck,
+    imageBpms: entry.imageBpms,
+  };
+}
+
+function v3RoomPayload(host, guest, now, {
+  hostConditions = "ジャンプは控えめ",
+  guestConditions = "",
+} = {}) {
+  return {
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    hostUid: host.uid,
+    guestUid: guest.uid,
+    createdAt: now,
+    status: "forming",
+    members: {
+      [host.uid]: true,
+      [guest.uid]: true,
+    },
+    players: {
+      [host.uid]: v3Player(host, hostConditions),
+      [guest.uid]: v3Player(guest, guestConditions),
+    },
+    accepted: {
+      [host.uid]: true,
+    },
+  };
+}
+
 function instruction(overrides = {}) {
   return {
     exercise: "スクワット",
@@ -214,6 +296,68 @@ async function bootstrapRoom(environment, now, roomId) {
     "active",
   ));
 
+  return room;
+}
+
+async function createV3FormingRoom(environment, now, roomId, suffix) {
+  const host = v3QueueEntry(`training-v3-host-${suffix}`, "HP HOST", now);
+  const guest = v3QueueEntry(`training-v3-guest-${suffix}`, "HP GUEST", now, {
+    intensity: "light",
+  });
+  const hostDatabase = environment.authenticatedContext(host.uid).database();
+  const guestDatabase = environment.authenticatedContext(guest.uid).database();
+
+  await assertSucceeds(set(ref(hostDatabase, `online/trainingQueue/${host.uid}`), host));
+  await assertSucceeds(set(ref(guestDatabase, `online/trainingQueue/${guest.uid}`), guest));
+  await assertSucceeds(set(
+    ref(hostDatabase, "online/trainingMatchLock"),
+    matchLockPayload(host.uid, roomId),
+  ));
+  await reserveActive(hostDatabase, host.uid, roomId);
+  await assertSucceeds(set(
+    ref(hostDatabase, `online/trainingRooms/${roomId}`),
+    v3RoomPayload(host, guest, now),
+  ));
+  await assertSucceeds(update(
+    ref(hostDatabase, `online/trainingQueue/${host.uid}`),
+    { state: "forming" },
+  ));
+  const invitePath = `online/trainingInvites/${guest.uid}/${roomId}`;
+  await assertSucceeds(set(ref(hostDatabase, invitePath), {
+    roomId,
+    hostUid: host.uid,
+    targetSessionId: guest.sessionId,
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    createdAt: Date.now(),
+  }));
+  await assertSucceeds(remove(ref(hostDatabase, "online/trainingMatchLock")));
+
+  return {
+    host,
+    guest,
+    hostDatabase,
+    guestDatabase,
+    invitePath,
+    guestConditions: "ジャンプなし",
+  };
+}
+
+async function bootstrapV3Room(environment, now, roomId, suffix) {
+  const room = await createV3FormingRoom(environment, now, roomId, suffix);
+  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
+  await assertSucceeds(update(
+    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
+    {
+      [`players/${room.guest.uid}/conditions`]: room.guestConditions,
+      [`accepted/${room.guest.uid}`]: true,
+    },
+  ));
+  await assertSucceeds(remove(ref(room.guestDatabase, room.invitePath)));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `online/trainingRooms/${roomId}/status`),
+    "active",
+  ));
   return room;
 }
 
@@ -1369,6 +1513,345 @@ test("existing protocol v1 rooms keep their old early-completion writes", {
     (await get(ref(guestDatabase, `${turnOnePath}/completedAt`))).val(),
     startedAt + 1,
   );
+});
+
+test("v3 draws are owner-scoped, scores stay secret, and early workouts are rejected", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const now = Date.now();
+  const roomId = "-trainingV3RoundPrivacy01";
+  const invalidUid = "training-v3-invalid-deck";
+  const invalidDatabase = environment.authenticatedContext(invalidUid).database();
+  const invalidQueue = v3QueueEntry(invalidUid, "INVALID", now);
+  delete invalidQueue.commandDeck[3];
+  await assertFails(set(
+    ref(invalidDatabase, `online/trainingQueue/${invalidUid}`),
+    invalidQueue,
+  ));
+
+  const room = await bootstrapV3Room(environment, now, roomId, "privacy");
+  const outsiderDatabase = environment
+    .authenticatedContext("training-v3-outsider")
+    .database();
+  const roundPath = `online/trainingRooms/${roomId}/rounds/1`;
+  await assertFails(set(
+    ref(room.guestDatabase, roundPath),
+    { createdAt: Date.now() },
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, roundPath),
+    { createdAt: Date.now() },
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roundPath}/unexpected`),
+    true,
+  ));
+
+  const hostDraw = {
+    imageIndex: 1,
+    bpm: 0,
+    drawnAt: Date.now(),
+  };
+  await assertFails(set(
+    ref(room.guestDatabase, `${roundPath}/draws/${room.host.uid}`),
+    hostDraw,
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roundPath}/draws/${room.host.uid}`),
+    hostDraw,
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roundPath}/imageReceived/${room.host.uid}`),
+    true,
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${roundPath}/imageReceived/${room.guest.uid}`),
+    true,
+  ));
+  await assertFails(set(
+    ref(room.guestDatabase, `${roundPath}/draws/${room.guest.uid}`),
+    {
+      imageIndex: 2,
+      bpm: 100,
+      drawnAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${roundPath}/draws/${room.guest.uid}`),
+    {
+      imageIndex: 2,
+      bpm: 80,
+      drawnAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roundPath}/imageReceived/${room.host.uid}`),
+    true,
+  ));
+  await assertFails(set(
+    ref(room.guestDatabase, `${roundPath}/imageReceived/${room.guest.uid}`),
+    true,
+  ));
+
+  const hostScorePath = `${roundPath}/scores/${room.host.uid}`;
+  const guestScorePath = `${roundPath}/scores/${room.guest.uid}`;
+  await assertSucceeds(set(ref(room.hostDatabase, hostScorePath), 9));
+  await assertSucceeds(get(ref(room.hostDatabase, hostScorePath)));
+  await assertFails(get(ref(room.guestDatabase, hostScorePath)));
+  await assertFails(get(ref(outsiderDatabase, hostScorePath)));
+  await assertSucceeds(set(ref(room.guestDatabase, guestScorePath), 8));
+  assert.equal((await get(ref(room.guestDatabase, hostScorePath))).val(), 9);
+
+  await assertFails(set(
+    ref(room.hostDatabase, `${roundPath}/commandChoices/${room.host.uid}`),
+    {
+      trainerUid: room.host.uid,
+      cardIndex: 1,
+      selectedAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${roundPath}/commandChoices/${room.host.uid}`),
+    {
+      trainerUid: room.guest.uid,
+      cardIndex: 1,
+      selectedAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roundPath}/commandChoices/${room.guest.uid}`),
+    {
+      trainerUid: room.host.uid,
+      cardIndex: 1,
+      selectedAt: Date.now(),
+    },
+  ));
+
+  const hostStartedAt = Date.now();
+  const guestStartedAt = Date.now();
+  await assertFails(set(
+    ref(room.guestDatabase, `${roundPath}/workouts/${room.host.uid}`),
+    { startedAt: hostStartedAt },
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roundPath}/workouts/${room.host.uid}`),
+    { startedAt: hostStartedAt },
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${roundPath}/workouts/${room.guest.uid}`),
+    { startedAt: guestStartedAt },
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roundPath}/workouts/${room.host.uid}/completedAt`),
+    hostStartedAt + 75_000,
+  ));
+  await assertFails(set(
+    ref(room.guestDatabase, `${roundPath}/workouts/${room.guest.uid}/completedAt`),
+    guestStartedAt + 60_000,
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roundPath}/completedAt`),
+    Date.now(),
+  ));
+});
+
+test("v3 canonical completion advances atomically and rejects reused images or commands", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const now = Date.now();
+  const roomId = "-trainingV3Canonical01";
+  const room = await bootstrapV3Room(environment, now, roomId, "canonical");
+  const roomPath = `online/trainingRooms/${roomId}`;
+  const startedAt = Date.now() - 61_000;
+  const completedAt = startedAt + 60_000;
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await set(ref(contextWithoutRules.database(), `${roomPath}/rounds/1`), {
+      createdAt: startedAt - 5_000,
+      draws: {
+        [room.host.uid]: {
+          imageIndex: 1,
+          bpm: 0,
+          drawnAt: startedAt - 4_000,
+        },
+        [room.guest.uid]: {
+          imageIndex: 1,
+          bpm: 0,
+          drawnAt: startedAt - 4_000,
+        },
+      },
+      imageReceived: {
+        [room.host.uid]: true,
+        [room.guest.uid]: true,
+      },
+      scores: {
+        [room.host.uid]: 8,
+        [room.guest.uid]: 1,
+      },
+      commandChoices: {
+        [room.host.uid]: {
+          trainerUid: room.guest.uid,
+          cardIndex: 1,
+          selectedAt: startedAt - 1_000,
+        },
+      },
+      workouts: {
+        [room.host.uid]: {
+          startedAt,
+        },
+      },
+    });
+  });
+
+  await assertFails(set(
+    ref(room.guestDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
+    completedAt,
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
+    completedAt + 1,
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
+    completedAt,
+  ));
+  await assertFails(set(
+    ref(room.guestDatabase, `${roomPath}/rounds/1/completedAt`),
+    Date.now(),
+  ));
+
+  const nextRoundAt = Date.now();
+  await assertSucceeds(update(
+    ref(room.hostDatabase, `${roomPath}/rounds`),
+    {
+      "1/completedAt": nextRoundAt,
+      2: { createdAt: nextRoundAt },
+    },
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/2/draws/${room.host.uid}`),
+    {
+      imageIndex: 1,
+      bpm: 0,
+      drawnAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/2/draws/${room.host.uid}`),
+    {
+      imageIndex: 2,
+      bpm: 80,
+      drawnAt: Date.now(),
+    },
+  ));
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    const adminDatabase = contextWithoutRules.database();
+    await update(ref(adminDatabase, `${roomPath}/rounds/2`), {
+      [`draws/${room.guest.uid}`]: {
+        imageIndex: 2,
+        bpm: 80,
+        drawnAt: Date.now(),
+      },
+      [`imageReceived/${room.host.uid}`]: true,
+      [`imageReceived/${room.guest.uid}`]: true,
+      [`scores/${room.host.uid}`]: 8,
+      [`scores/${room.guest.uid}`]: 1,
+    });
+  });
+  await assertFails(set(
+    ref(room.guestDatabase, `${roomPath}/rounds/2/commandChoices/${room.host.uid}`),
+    {
+      trainerUid: room.guest.uid,
+      cardIndex: 1,
+      selectedAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${roomPath}/rounds/2/commandChoices/${room.host.uid}`),
+    {
+      trainerUid: room.guest.uid,
+      cardIndex: 2,
+      selectedAt: Date.now(),
+    },
+  ));
+
+  await assertFails(set(
+    ref(room.hostDatabase, `${roomPath}/surrendered`),
+    {
+      uid: room.host.uid,
+      at: Date.now(),
+      unexpected: true,
+    },
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${roomPath}/surrendered`),
+    {
+      uid: room.guest.uid,
+      at: Date.now(),
+    },
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/3`),
+    { createdAt: Date.now() },
+  ));
+});
+
+test("v3 recomputes HP from prior scores before allowing another round", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const now = Date.now();
+  const roomId = "-trainingV3HpFence01";
+  const room = await bootstrapV3Room(environment, now, roomId, "hp-fence");
+  const roomPath = `online/trainingRooms/${roomId}`;
+  const completedAt = Date.now() - 1_000;
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    const adminDatabase = contextWithoutRules.database();
+    await set(ref(adminDatabase, `${roomPath}/rounds`), {
+      1: {
+        createdAt: completedAt - 10_000,
+        scores: {
+          [room.host.uid]: 9,
+          [room.guest.uid]: 1,
+        },
+        completedAt: completedAt - 5_000,
+      },
+      2: {
+        createdAt: completedAt - 4_000,
+        scores: {
+          [room.host.uid]: 8,
+          [room.guest.uid]: 1,
+        },
+        completedAt,
+      },
+    });
+  });
+  await assertSucceeds(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/3`),
+    { createdAt: Date.now() },
+  ));
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    const adminDatabase = contextWithoutRules.database();
+    await remove(ref(adminDatabase, `${roomPath}/rounds/3`));
+    await set(
+      ref(adminDatabase, `${roomPath}/rounds/2/scores/${room.host.uid}`),
+      9,
+    );
+  });
+  await assertFails(set(
+    ref(room.hostDatabase, `${roomPath}/rounds/3`),
+    { createdAt: Date.now() },
+  ));
 });
 
 test("retired team data survives but no authenticated client can read or mutate it", {

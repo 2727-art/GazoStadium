@@ -1,12 +1,29 @@
 "use strict";
 
-const TRAINING_PROTOCOL_VERSION = 2;
-const TRAINING_VARIANT = "kitaeai_60_v2";
+const TRAINING_PROTOCOL_VERSION = 3;
+const TRAINING_VARIANT = "kitaeai_hp_v3";
+const V2_TRAINING_PROTOCOL_VERSION = 2;
+const V2_TRAINING_VARIANT = "kitaeai_60_v2";
 const LEGACY_TRAINING_PROTOCOL_VERSION = 1;
 const LEGACY_TRAINING_VARIANT = "kitaeai_60";
 const TRAINING_BASE_DURATION_MS = 60_000;
 const TRAINING_TURN_DURATION_MS = TRAINING_BASE_DURATION_MS;
 const TRAINING_MAX_TURNS = 6;
+const TRAINING_START_HP = 30;
+const TRAINING_MAX_ROUNDS = 5;
+const TRAINING_IMAGE_COUNT = 5;
+const TRAINING_COMMAND_COUNT = 3;
+const TRAINING_COMMAND_BEATS_PER_REP = Object.freeze([2, 4, 8]);
+const TRAINING_DAMAGE_BY_SCORE = Object.freeze({
+  8: 10,
+  9: 15,
+  10: 20,
+});
+const TRAINING_DURATION_MS_BY_SCORE = Object.freeze({
+  8: 60_000,
+  9: 75_000,
+  10: 90_000,
+});
 const TRAINING_ROOM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const TRAINING_DESTROYED_CLOCK_SKEW_MS = 15_000;
 const TRAINING_OUTCOMES = Object.freeze(["win", "loss", "draw"]);
@@ -106,8 +123,54 @@ function normalizeTrainingProfile(value) {
     currentStreak,
     bestStreak,
     lastCompletedDateKey: validDateKey(source.lastCompletedDateKey),
+    hpSessions: boundedCount(source.hpSessions),
+    hpWins: boundedCount(source.hpWins),
+    hpLosses: boundedCount(source.hpLosses),
+    hpDraws: boundedCount(source.hpDraws),
+    hpNoContests: boundedCount(source.hpNoContests),
+    hpRounds: boundedCount(source.hpRounds),
+    hpDamageTaken: boundedCount(source.hpDamageTaken),
+    hpScoreReceived: boundedCount(source.hpScoreReceived),
+    hpHitsTaken: boundedCount(source.hpHitsTaken),
+    hpPerfect10sReceived: boundedCount(source.hpPerfect10sReceived),
+    hpCritical9sReceived: boundedCount(source.hpCritical9sReceived),
+    hpCompletedWorkouts: boundedCount(source.hpCompletedWorkouts),
+    hpCompletedSeconds: boundedCount(source.hpCompletedSeconds),
+    hpOverkillDealt: boundedCount(source.hpOverkillDealt),
+    hpUpdatedAt: boundedCount(source.hpUpdatedAt),
     updatedAt: boundedCount(source.updatedAt),
   };
+}
+
+function applyTrainingHpSession(
+  profileValue,
+  outcome,
+  metricsValue = {},
+  updatedAt = Date.now(),
+) {
+  if (!TRAINING_OUTCOMES.includes(outcome)) {
+    throw new TypeError("Training HP outcome is invalid");
+  }
+  const profile = normalizeTrainingProfile(profileValue);
+  const metrics = objectValue(metricsValue);
+  const noContest = metrics.noContest === true;
+  profile.hpSessions += 1;
+  if (noContest) profile.hpNoContests += 1;
+  else if (outcome === "win") profile.hpWins += 1;
+  else if (outcome === "loss") profile.hpLosses += 1;
+  else profile.hpDraws += 1;
+  profile.hpRounds += boundedCount(metrics.rounds);
+  profile.hpDamageTaken += boundedCount(metrics.damageTaken);
+  profile.hpScoreReceived += boundedCount(metrics.scoreReceived);
+  profile.hpHitsTaken += boundedCount(metrics.hitsTaken);
+  profile.hpPerfect10sReceived += boundedCount(metrics.perfect10sReceived);
+  profile.hpCritical9sReceived += boundedCount(metrics.critical9sReceived);
+  profile.hpCompletedWorkouts += boundedCount(metrics.completedWorkouts);
+  profile.hpCompletedSeconds += boundedCount(metrics.completedSeconds);
+  profile.hpOverkillDealt += boundedCount(metrics.overkillDealt);
+  profile.hpUpdatedAt = Math.floor(Number(updatedAt));
+  profile.updatedAt = Math.floor(Number(updatedAt));
+  return normalizeTrainingProfile(profile);
 }
 
 function applyTrainingSession(
@@ -275,6 +338,46 @@ function normalizeTrainingInstruction(value) {
   };
 }
 
+function normalizeTrainingCommandCard(value) {
+  const source = objectValue(value);
+  const beatsPerRep = source.beatsPerRep;
+  if (!TRAINING_COMMAND_BEATS_PER_REP.includes(beatsPerRep)) {
+    throw new TypeError("Training command beats per rep must be 2, 4, or 8");
+  }
+  return {
+    exercise: normalizeBoundedText(source.exercise, 40, "Training exercise"),
+    completion: normalizeBoundedText(source.completion, 60, "Training completion"),
+    command: normalizeBoundedText(source.command, 120, "Training command"),
+    beatsPerRep,
+  };
+}
+
+function normalizeTrainingBpm(value) {
+  const bpm = value;
+  if (!Number.isInteger(bpm) || (bpm !== 0 && (bpm < 40 || bpm > 160))) {
+    throw new TypeError("Training BPM must be 0 or an integer from 40 to 160");
+  }
+  return bpm;
+}
+
+function normalizeTrainingScore(value) {
+  const score = value;
+  if (!Number.isInteger(score) || score < 1 || score > 10) {
+    throw new TypeError("Training score must be an integer from 1 to 10");
+  }
+  return score;
+}
+
+function trainingDamageForScore(value) {
+  const score = normalizeTrainingScore(value);
+  return TRAINING_DAMAGE_BY_SCORE[score] || 0;
+}
+
+function trainingDurationForScore(value) {
+  const score = normalizeTrainingScore(value);
+  return TRAINING_DURATION_MS_BY_SCORE[score] || 0;
+}
+
 function normalizeTrainingCarrotChoice(value) {
   if (!TRAINING_CARROT_CHOICES.includes(value)) {
     throw new TypeError("Training carrot choice is invalid");
@@ -301,12 +404,24 @@ function memberIds(room) {
   return ids;
 }
 
+function exactIndexedObject(value, count, label) {
+  const source = objectValue(value);
+  if (source !== value) throw new TypeError(`${label} must be an object`);
+  const expectedKeys = Array.from({ length: count }, (_, index) => String(index + 1));
+  if (!sameIds(Object.keys(source).sort(), expectedKeys)) {
+    throw new TypeError(`${label} must have exactly ${count} entries`);
+  }
+  return source;
+}
+
 function trainingRoomParticipants(room) {
-  const legacy = Number(room?.protocolVersion) === LEGACY_TRAINING_PROTOCOL_VERSION
+  const legacy = room?.protocolVersion === LEGACY_TRAINING_PROTOCOL_VERSION
     && room?.variant === LEGACY_TRAINING_VARIANT;
-  const current = Number(room?.protocolVersion) === TRAINING_PROTOCOL_VERSION
+  const v2 = room?.protocolVersion === V2_TRAINING_PROTOCOL_VERSION
+    && room?.variant === V2_TRAINING_VARIANT;
+  const current = room?.protocolVersion === TRAINING_PROTOCOL_VERSION
     && room?.variant === TRAINING_VARIANT;
-  if (!legacy && !current) {
+  if (!legacy && !v2 && !current) {
     throw new TypeError("Unsupported training room protocol");
   }
   if (room?.status !== "active") {
@@ -323,15 +438,50 @@ function trainingRoomParticipants(room) {
       || participants.some((uid) => accepted[uid] !== true)) {
     throw new TypeError("Training room acceptance does not match members");
   }
-  if (!participants.includes(room?.firstTrainerUid)) {
+  if ((legacy || v2) && !participants.includes(room?.firstTrainerUid)) {
     throw new TypeError("Training room first trainer is not a member");
   }
-  if (current) {
+  if (v2) {
     const carrotChoices = objectValue(room?.carrotChoices);
     if (!sameIds(participants, Object.keys(carrotChoices).sort())) {
       throw new TypeError("Training carrot choices do not match members");
     }
     participants.forEach((uid) => normalizeTrainingCarrotChoice(carrotChoices[uid]));
+  }
+  if (current) {
+    if (!sameIds(
+      participants,
+      [String(room?.hostUid || ""), String(room?.guestUid || "")].sort(),
+    )) {
+      throw new TypeError("Training room host and guest do not match members");
+    }
+    if (room?.firstTrainerUid != null
+        || room?.carrotChoices != null
+        || room?.turns != null
+        || room?.continueVotes != null
+        || room?.imageReceived != null) {
+      throw new TypeError("Training protocol v3 contains legacy state");
+    }
+    for (const uid of participants) {
+      const commandDeck = exactIndexedObject(
+        players[uid]?.commandDeck,
+        TRAINING_COMMAND_COUNT,
+        "Training command deck",
+      );
+      Object.values(commandDeck).forEach((card) => normalizeTrainingCommandCard(
+        exactObjectKeys(
+          card,
+          ["exercise", "completion", "command", "beatsPerRep"],
+          "Training command card",
+        ),
+      ));
+      const imageBpms = exactIndexedObject(
+        players[uid]?.imageBpms,
+        TRAINING_IMAGE_COUNT,
+        "Training image BPM deck",
+      );
+      Object.values(imageBpms).forEach(normalizeTrainingBpm);
+    }
   }
   return participants;
 }
@@ -342,6 +492,17 @@ function requireTimestamp(value, label, { minimum = 1, maximum = Number.MAX_SAFE
     throw new TypeError(`${label} timestamp is invalid`);
   }
   return timestamp;
+}
+
+function requireV3Timestamp(
+  value,
+  label,
+  { minimum = 1, maximum = Number.MAX_SAFE_INTEGER } = {},
+) {
+  if (typeof value !== "number") {
+    throw new TypeError(`${label} timestamp is invalid`);
+  }
+  return requireTimestamp(value, label, { minimum, maximum });
 }
 
 function normalizedV2Turns(room, participants, now, createdAt) {
@@ -515,6 +676,240 @@ function normalizedV2Turns(room, participants, now, createdAt) {
     }
   }
   return turns;
+}
+
+function memberSubset(value, participants, label) {
+  if (value == null) return {};
+  const source = objectValue(value);
+  if (source !== value) throw new TypeError(`${label} must be an object`);
+  if (Object.keys(source).some((uid) => !participants.includes(uid))) {
+    throw new TypeError(`${label} has an outsider`);
+  }
+  return source;
+}
+
+function exactObjectKeys(value, expectedKeys, label) {
+  const source = objectValue(value);
+  if (source !== value || !sameIds(Object.keys(source).sort(), [...expectedKeys].sort())) {
+    throw new TypeError(`${label} fields are invalid`);
+  }
+  return source;
+}
+
+function normalizedV3Rounds(room, participants, now, createdAt) {
+  const source = room?.rounds == null ? {} : objectValue(room.rounds);
+  if (room?.rounds != null && source !== room.rounds) {
+    throw new TypeError("Training rounds must be an object");
+  }
+  const keys = Object.keys(source);
+  if (keys.some((key) => !/^[1-5]$/.test(key))) {
+    throw new TypeError("Training round number is invalid");
+  }
+  const numbers = keys.map(Number).sort((first, second) => first - second);
+  if (numbers.some((roundNumber, index) => roundNumber !== index + 1)) {
+    throw new TypeError("Training rounds must be contiguous");
+  }
+
+  const usedImagesByUid = Object.fromEntries(participants.map((uid) => [uid, new Set()]));
+  const usedCommandsByUid = Object.fromEntries(participants.map((uid) => [uid, new Set()]));
+  const rounds = [];
+  let previousCompletedAt = createdAt;
+  for (const roundNumber of numbers) {
+    const rawRound = objectValue(source[roundNumber]);
+    if (rawRound !== source[roundNumber]) {
+      throw new TypeError("Training round must be an object");
+    }
+    const sourceRound = exactObjectKeys(
+      rawRound,
+      [
+        "createdAt",
+        ...(Object.hasOwn(rawRound, "draws") ? ["draws"] : []),
+        ...(Object.hasOwn(rawRound, "imageReceived") ? ["imageReceived"] : []),
+        ...(Object.hasOwn(rawRound, "scores") ? ["scores"] : []),
+        ...(Object.hasOwn(rawRound, "commandChoices") ? ["commandChoices"] : []),
+        ...(Object.hasOwn(rawRound, "workouts") ? ["workouts"] : []),
+        ...(Object.hasOwn(rawRound, "completedAt") ? ["completedAt"] : []),
+      ],
+      "Training round",
+    );
+    if (roundNumber > 1 && !rounds.at(-1)?.completedAt) {
+      throw new TypeError("Training continued after an incomplete round");
+    }
+    const roundCreatedAt = requireV3Timestamp(
+      sourceRound.createdAt,
+      "Training round creation",
+      { minimum: previousCompletedAt, maximum: now },
+    );
+    const drawsSource = memberSubset(sourceRound.draws, participants, "Training draws");
+    const draws = {};
+    for (const [ownerUid, drawValue] of Object.entries(drawsSource)) {
+      const draw = exactObjectKeys(
+        drawValue,
+        ["imageIndex", "bpm", "drawnAt"],
+        "Training draw",
+      );
+      const imageIndex = draw.imageIndex;
+      if (!Number.isInteger(imageIndex)
+          || imageIndex < 1
+          || imageIndex > TRAINING_IMAGE_COUNT
+          || usedImagesByUid[ownerUid].has(imageIndex)) {
+        throw new TypeError("Training draw image is invalid or reused");
+      }
+      const bpm = normalizeTrainingBpm(draw.bpm);
+      if (bpm !== room.players?.[ownerUid]?.imageBpms?.[imageIndex]) {
+        throw new TypeError("Training draw BPM does not match its image");
+      }
+      const drawnAt = requireV3Timestamp(draw.drawnAt, "Training draw", {
+        minimum: roundCreatedAt,
+        maximum: now,
+      });
+      usedImagesByUid[ownerUid].add(imageIndex);
+      draws[ownerUid] = { imageIndex, bpm, drawnAt };
+    }
+
+    const imageReceivedSource = memberSubset(
+      sourceRound.imageReceived,
+      participants,
+      "Training image receipts",
+    );
+    const imageReceived = {};
+    for (const [recipientUid, received] of Object.entries(imageReceivedSource)) {
+      const opponentUid = participants.find((uid) => uid !== recipientUid);
+      if (received !== true || !draws[opponentUid]) {
+        throw new TypeError("Training image receipt is invalid");
+      }
+      imageReceived[recipientUid] = true;
+    }
+
+    const scoresSource = memberSubset(sourceRound.scores, participants, "Training scores");
+    const scores = {};
+    for (const [scorerUid, scoreValue] of Object.entries(scoresSource)) {
+      if (Object.keys(draws).length !== participants.length
+          || imageReceived[scorerUid] !== true) {
+        throw new TypeError("Training score was submitted before its image");
+      }
+      scores[scorerUid] = normalizeTrainingScore(scoreValue);
+    }
+
+    const commandChoicesSource = memberSubset(
+      sourceRound.commandChoices,
+      participants,
+      "Training command choices",
+    );
+    const commandChoices = {};
+    for (const [traineeUid, choiceValue] of Object.entries(commandChoicesSource)) {
+      const choice = exactObjectKeys(
+        choiceValue,
+        ["trainerUid", "cardIndex", "selectedAt"],
+        "Training command choice",
+      );
+      const trainerUid = participants.find((uid) => uid !== traineeUid);
+      const cardIndex = choice.cardIndex;
+      if (Object.keys(scores).length !== participants.length
+          || trainingDamageForScore(scores[traineeUid]) === 0
+          || choice.trainerUid !== trainerUid
+          || !Number.isInteger(cardIndex)
+          || cardIndex < 1
+          || cardIndex > TRAINING_COMMAND_COUNT
+          || usedCommandsByUid[trainerUid].has(cardIndex)) {
+        throw new TypeError("Training command choice is invalid or reused");
+      }
+      const minimumSelectedAt = Math.max(
+        roundCreatedAt,
+        ...Object.values(draws).map((draw) => draw.drawnAt),
+      );
+      const selectedAt = requireV3Timestamp(
+        choice.selectedAt,
+        "Training command selection",
+        { minimum: minimumSelectedAt, maximum: now },
+      );
+      usedCommandsByUid[trainerUid].add(cardIndex);
+      commandChoices[traineeUid] = { trainerUid, cardIndex, selectedAt };
+    }
+
+    const workoutsSource = memberSubset(
+      sourceRound.workouts,
+      participants,
+      "Training workouts",
+    );
+    const workouts = {};
+    for (const [traineeUid, workoutValue] of Object.entries(workoutsSource)) {
+      const rawWorkout = objectValue(workoutValue);
+      if (rawWorkout !== workoutValue) {
+        throw new TypeError("Training workout must be an object");
+      }
+      const keysForWorkout = Object.hasOwn(rawWorkout, "completedAt")
+        ? ["startedAt", "completedAt"]
+        : ["startedAt"];
+      const workout = exactObjectKeys(
+        rawWorkout,
+        keysForWorkout,
+        "Training workout",
+      );
+      const choice = commandChoices[traineeUid];
+      if (!choice) throw new TypeError("Training workout has no command choice");
+      const startedAt = requireV3Timestamp(workout.startedAt, "Training workout start", {
+        minimum: choice.selectedAt,
+        maximum: now,
+      });
+      const durationMs = trainingDurationForScore(scores[traineeUid]);
+      const completedAt = Object.hasOwn(workout, "completedAt")
+        ? requireV3Timestamp(workout.completedAt, "Training workout completion", {
+          minimum: startedAt + durationMs,
+          maximum: Math.min(now, startedAt + durationMs),
+        })
+        : 0;
+      workouts[traineeUid] = {
+        startedAt,
+        completedAt,
+        durationMs,
+        trainerUid: choice.trainerUid,
+        cardIndex: choice.cardIndex,
+        bpm: draws[choice.trainerUid].bpm,
+      };
+    }
+
+    const allScoresSubmitted = participants.every((uid) => Number.isInteger(scores[uid]));
+    const hitUids = allScoresSubmitted
+      ? participants.filter((uid) => trainingDamageForScore(scores[uid]) > 0)
+      : [];
+    if (Object.keys(commandChoices).some((uid) => !hitUids.includes(uid))
+        || Object.keys(workouts).some((uid) => !hitUids.includes(uid))) {
+      throw new TypeError("Training round has an unexpected hit action");
+    }
+    const readyToComplete = allScoresSubmitted && hitUids.every((uid) => (
+      commandChoices[uid] && workouts[uid]?.completedAt > 0
+    ));
+    const evidenceAt = Math.max(
+      roundCreatedAt,
+      ...Object.values(draws).map((draw) => draw.drawnAt),
+      ...Object.values(commandChoices).map((choice) => choice.selectedAt),
+      ...Object.values(workouts).map((workout) => workout.completedAt || workout.startedAt),
+    );
+    const completedAt = Object.hasOwn(sourceRound, "completedAt")
+      ? requireV3Timestamp(sourceRound.completedAt, "Training round completion", {
+        minimum: evidenceAt,
+        maximum: now,
+      })
+      : 0;
+    if (completedAt && !readyToComplete) {
+      throw new TypeError("Training round completed before all hit workouts");
+    }
+    rounds.push({
+      roundNumber,
+      createdAt: roundCreatedAt,
+      draws,
+      imageReceived,
+      scores,
+      commandChoices,
+      workouts,
+      hitUids,
+      readyToComplete,
+      completedAt,
+    });
+    if (completedAt) previousCompletedAt = completedAt;
+  }
+  return rounds;
 }
 
 function normalizedLegacyTurns(room, participants, now, createdAt) {
@@ -1080,24 +1475,278 @@ function deriveV2TrainingRoomResult(room, participants, turns, timestamp) {
   ));
 }
 
+function emptyV3Metrics(participants) {
+  return {
+    hpByUid: Object.fromEntries(participants.map((uid) => [uid, TRAINING_START_HP])),
+    damageReceivedByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    scoreTotalByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    score10CountByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    score9CountByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    hitsReceivedByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    completedWorkoutsByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    workoutSecondsByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    overkillByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    completedSetsByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    completedAtByUid: Object.fromEntries(participants.map((uid) => [uid, []])),
+    completedSecondsByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    completedSetSecondsByUid: Object.fromEntries(participants.map((uid) => [uid, []])),
+    boostCompletedSetsByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+    boostSecondsByUid: Object.fromEntries(participants.map((uid) => [uid, 0])),
+  };
+}
+
+function normalizeV3Surrender(room, participants, now, createdAt) {
+  if (room?.surrendered == null) return null;
+  const surrendered = exactObjectKeys(
+    room.surrendered,
+    ["uid", "at"],
+    "Training surrender",
+  );
+  const uid = String(surrendered.uid || "");
+  if (!participants.includes(uid)) {
+    throw new TypeError("Training surrender has an outsider");
+  }
+  return {
+    uid,
+    at: requireV3Timestamp(surrendered.at, "Training surrender", {
+      minimum: createdAt,
+      maximum: now,
+    }),
+  };
+}
+
+function v3MetricWinner(participants, metrics) {
+  const [firstUid, secondUid] = participants;
+  const comparisons = [
+    metrics.hpByUid[firstUid] - metrics.hpByUid[secondUid],
+    metrics.scoreTotalByUid[firstUid] - metrics.scoreTotalByUid[secondUid],
+    metrics.score10CountByUid[firstUid] - metrics.score10CountByUid[secondUid],
+    metrics.score9CountByUid[firstUid] - metrics.score9CountByUid[secondUid],
+  ];
+  const decision = comparisons.find((comparison) => comparison !== 0) || 0;
+  if (decision === 0) return "";
+  return decision > 0 ? firstUid : secondUid;
+}
+
+function v3Result({
+  participants,
+  metrics,
+  status,
+  reason,
+  roundCount,
+  winnerUid = "",
+  noContest = false,
+  retryAfterMs = 0,
+}) {
+  const loserUid = winnerUid
+    ? participants.find((uid) => uid !== winnerUid)
+    : "";
+  const outcomes = status === "final"
+    ? Object.fromEntries(participants.map((uid) => [
+      uid,
+      winnerUid ? (uid === winnerUid ? "win" : "loss") : "draw",
+    ]))
+    : {};
+  const finisherOverkill = winnerUid && loserUid
+    ? metrics.overkillByUid[loserUid]
+    : 0;
+  return {
+    status,
+    reason,
+    participants,
+    outcomes,
+    ...metrics,
+    roundCount,
+    // Kept as a compatibility alias while Functions/index transitions from V2 turns.
+    turnCount: roundCount,
+    noContest,
+    finisher: {
+      eligible: status === "final"
+        && !noContest
+        && reason !== "surrender"
+        && finisherOverkill > 0,
+      winnerUid: winnerUid || "",
+      loserUid: loserUid || "",
+      overkill: finisherOverkill,
+    },
+    retryAfterMs: Math.max(0, Math.ceil(retryAfterMs)),
+  };
+}
+
+function deriveV3TrainingRoomResult(room, participants, rounds, timestamp, createdAt) {
+  if (room?.continueVotes != null
+      || room?.turns != null
+      || room?.carrotChoices != null
+      || room?.imageReceived != null) {
+    throw new TypeError("Training protocol v3 contains legacy match state");
+  }
+  const surrender = normalizeV3Surrender(room, participants, timestamp, createdAt);
+  const healthStop = room?.destroyed?.reason === "health_stop";
+  const healthStoppedAt = healthStop
+    ? requireV3Timestamp(room.destroyed?.at, "Training health stop", {
+      minimum: createdAt,
+      maximum: timestamp,
+    })
+    : 0;
+  if (healthStop && !participants.includes(room.destroyed?.by)) {
+    throw new TypeError("Training health stop has an outsider");
+  }
+  const metrics = emptyV3Metrics(participants);
+  let roundCount = 0;
+  let naturalReason = "";
+  let naturalWinnerUid = "";
+  let terminalEvidenceAt = 0;
+  let latestEvidenceAt = createdAt;
+
+  for (const round of rounds) {
+    if (naturalReason) {
+      throw new TypeError("Training continued after its HP result");
+    }
+    for (const [scorerUid, score] of Object.entries(round.scores)) {
+      const imageOwnerUid = participants.find((uid) => uid !== scorerUid);
+      const damage = trainingDamageForScore(score);
+      const hpBefore = metrics.hpByUid[scorerUid];
+      metrics.scoreTotalByUid[imageOwnerUid] += score;
+      if (score === 10) metrics.score10CountByUid[imageOwnerUid] += 1;
+      if (score === 9) metrics.score9CountByUid[imageOwnerUid] += 1;
+      metrics.damageReceivedByUid[scorerUid] += damage;
+      if (damage > 0) metrics.hitsReceivedByUid[scorerUid] += 1;
+      metrics.overkillByUid[scorerUid] += Math.max(0, damage - hpBefore);
+      metrics.hpByUid[scorerUid] = Math.max(0, hpBefore - damage);
+    }
+    for (const [traineeUid, workout] of Object.entries(round.workouts)) {
+      if (!workout.completedAt) continue;
+      metrics.completedWorkoutsByUid[traineeUid] += 1;
+      metrics.workoutSecondsByUid[traineeUid] += workout.durationMs / 1_000;
+    }
+    latestEvidenceAt = Math.max(
+      latestEvidenceAt,
+      round.createdAt,
+      ...Object.values(round.draws).map((draw) => draw.drawnAt),
+      ...Object.values(round.commandChoices).map((choice) => choice.selectedAt),
+      ...Object.values(round.workouts).map((workout) => (
+        workout.completedAt || workout.startedAt
+      )),
+      round.completedAt || 0,
+    );
+    if (!round.completedAt) continue;
+    roundCount += 1;
+    terminalEvidenceAt = round.completedAt;
+    const hpExhausted = participants.some((uid) => metrics.hpByUid[uid] === 0);
+    if (hpExhausted || roundCount === TRAINING_MAX_ROUNDS) {
+      naturalReason = hpExhausted ? "hp_zero" : "round_limit";
+      naturalWinnerUid = v3MetricWinner(participants, metrics);
+    }
+  }
+
+  if (naturalReason) {
+    if (surrender && surrender.at < terminalEvidenceAt) {
+      throw new TypeError("Training result evidence occurred after surrender");
+    }
+    if (healthStop && healthStoppedAt < terminalEvidenceAt) {
+      throw new TypeError("Training result evidence occurred after health stop");
+    }
+    if (room?.destroyed != null && !healthStop) {
+      const destroyedAt = requireV3Timestamp(room.destroyed?.at, "Training destruction", {
+        maximum: timestamp,
+      });
+      if (terminalEvidenceAt > destroyedAt + TRAINING_DESTROYED_CLOCK_SKEW_MS) {
+        throw new TypeError("Training result evidence occurred after room destruction");
+      }
+    }
+    return v3Result({
+      participants,
+      metrics,
+      status: "final",
+      reason: naturalReason,
+      roundCount,
+      winnerUid: naturalWinnerUid,
+    });
+  }
+
+  if (surrender && healthStop) {
+    throw new TypeError("Training room has multiple terminal states");
+  }
+
+  if (surrender) {
+    if (latestEvidenceAt > surrender.at + TRAINING_DESTROYED_CLOCK_SKEW_MS) {
+      throw new TypeError("Training evidence occurred after surrender");
+    }
+    const winnerUid = participants.find((uid) => uid !== surrender.uid);
+    return v3Result({
+      participants,
+      metrics,
+      status: "final",
+      reason: "surrender",
+      roundCount,
+      winnerUid,
+    });
+  }
+
+  if (healthStop) {
+    if (latestEvidenceAt > healthStoppedAt + TRAINING_DESTROYED_CLOCK_SKEW_MS) {
+      throw new TypeError("Training evidence occurred after health stop");
+    }
+    return v3Result({
+      participants,
+      metrics,
+      status: "final",
+      reason: "health_stop",
+      roundCount,
+      noContest: true,
+    });
+  }
+
+  const currentWorkoutDeadline = rounds.at(-1)
+    ? Math.max(
+      0,
+      ...Object.values(rounds.at(-1).workouts)
+        .filter((workout) => !workout.completedAt)
+        .map((workout) => workout.startedAt + workout.durationMs),
+    )
+    : 0;
+  return v3Result({
+    participants,
+    metrics,
+    status: "pending",
+    reason: "pending",
+    roundCount,
+    retryAfterMs: Math.max(0, currentWorkoutDeadline - timestamp),
+  });
+}
+
 function deriveTrainingRoomResult(room, now = Date.now()) {
   const timestamp = requireTimestamp(now, "Training current");
   const participants = trainingRoomParticipants(room);
   const createdAt = requireTimestamp(room?.createdAt, "Training room creation", {
     maximum: timestamp,
   });
-  const legacy = Number(room?.protocolVersion) === LEGACY_TRAINING_PROTOCOL_VERSION;
-  const turns = legacy
-    ? normalizedLegacyTurns(room, participants, timestamp, createdAt)
-    : normalizedV2Turns(room, participants, timestamp, createdAt);
-  const result = legacy
-    ? deriveLegacyTrainingRoomResult(room, participants, turns, timestamp)
-    : deriveV2TrainingRoomResult(room, participants, turns, timestamp);
+  const legacy = room?.protocolVersion === LEGACY_TRAINING_PROTOCOL_VERSION;
+  const v2 = room?.protocolVersion === V2_TRAINING_PROTOCOL_VERSION;
+  let result;
+  if (legacy) {
+    const turns = normalizedLegacyTurns(room, participants, timestamp, createdAt);
+    result = deriveLegacyTrainingRoomResult(room, participants, turns, timestamp);
+  } else if (v2) {
+    const turns = normalizedV2Turns(room, participants, timestamp, createdAt);
+    result = deriveV2TrainingRoomResult(room, participants, turns, timestamp);
+  } else {
+    const rounds = normalizedV3Rounds(room, participants, timestamp, createdAt);
+    result = deriveV3TrainingRoomResult(
+      room,
+      participants,
+      rounds,
+      timestamp,
+      createdAt,
+    );
+  }
   return {
     ...result,
     protocolVersion: legacy
       ? LEGACY_TRAINING_PROTOCOL_VERSION
-      : TRAINING_PROTOCOL_VERSION,
+      : v2
+        ? V2_TRAINING_PROTOCOL_VERSION
+        : TRAINING_PROTOCOL_VERSION,
   };
 }
 
@@ -1128,26 +1777,41 @@ function assertTrainingRoomFinalizable(
 module.exports = Object.freeze({
   LEGACY_TRAINING_PROTOCOL_VERSION,
   LEGACY_TRAINING_VARIANT,
+  V2_TRAINING_PROTOCOL_VERSION,
+  V2_TRAINING_VARIANT,
   TRAINING_BASE_DURATION_MS,
   TRAINING_CARROT_CHOICES,
+  TRAINING_COMMAND_BEATS_PER_REP,
+  TRAINING_COMMAND_COUNT,
   TRAINING_CONTINUE_VOTES,
+  TRAINING_DAMAGE_BY_SCORE,
   TRAINING_DESTROYED_CLOCK_SKEW_MS,
+  TRAINING_DURATION_MS_BY_SCORE,
+  TRAINING_IMAGE_COUNT,
+  TRAINING_MAX_ROUNDS,
   TRAINING_MAX_TURNS,
   TRAINING_OUTCOMES,
   TRAINING_PROTOCOL_VERSION,
   TRAINING_ROOM_MAX_AGE_MS,
+  TRAINING_START_HP,
   TRAINING_TURN_DURATION_MS,
   TRAINING_TARGET_DURATION_MS,
   TRAINING_VARIANT,
+  applyTrainingHpSession,
   applyTrainingSession,
   assertTrainingRoomFinalizable,
   deriveTrainingRoomResult,
   jstDateKey,
+  normalizeTrainingBpm,
+  normalizeTrainingCommandCard,
   normalizeTrainingInstruction,
   normalizeTrainingCarrotChoice,
   normalizeTrainingProfile,
+  normalizeTrainingScore,
   previousJstDateKey,
   trainingDailySettlement,
+  trainingDamageForScore,
+  trainingDurationForScore,
   trainingImageOwnerUid,
   trainingRoomParticipants,
   trainingTargetDurationMs,

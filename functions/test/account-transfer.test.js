@@ -149,6 +149,9 @@ test("redeem transaction rechecks private training activity against finalization
   assert.match(redeem, /targetTrainingProfile\.sessions > 0/);
   assert.match(redeem, /targetTrainingProfile\.completedSets > 0/);
   assert.match(redeem, /targetTrainingProfile\.completeDays > 0/);
+  assert.match(redeem, /targetTrainingProfile\.hpSessions > 0/);
+  assert.match(redeem, /targetTrainingProfile\.hpCompletedSeconds > 0/);
+  assert.match(redeem, /targetTrainingProfile\.hpOverkillDealt > 0/);
 });
 
 test("account transfer treats a fresh normal 1on1 V2 session as active", () => {

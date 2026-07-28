@@ -56,6 +56,7 @@ const {
 } = require("./achievements");
 const {
   TRAINING_ROOM_MAX_AGE_MS,
+  applyTrainingHpSession,
   applyTrainingSession,
   assertTrainingRoomFinalizable,
   normalizeTrainingProfile,
@@ -411,7 +412,7 @@ const DAILY_MISSIONS = Object.freeze({
     progressKey: "teamMatches", target: 1, reward: 100, endsAfter: "2026-07-28",
   },
   play_training: {
-    progressKey: "trainingSets", target: 3, reward: 100, startsOn: "2026-07-28",
+    progressKey: "trainingMatches", target: 1, reward: 100, startsOn: "2026-07-28",
   },
 });
 
@@ -1580,6 +1581,7 @@ function emptyDaily(dateKey = jstDateKey()) {
     teamMatches: 0,
     trainingSets: 0,
     trainingSeconds: 0,
+    trainingMatches: 0,
     claimed: {},
   };
 }
@@ -1596,9 +1598,11 @@ function normalizeDaily(value, dateKey = jstDateKey()) {
     teamMatches: 1,
     trainingSets: 3,
     trainingSeconds: 86_400,
+    trainingMatches: 1,
   })) {
     daily[key] = integer(value[key], 0, limit, 0);
   }
+  if (daily.trainingSets > 0) daily.trainingMatches = 1;
   for (const missionId of Object.keys(DAILY_MISSIONS)) {
     if (value.claimed?.[missionId] === true) daily.claimed[missionId] = true;
   }
@@ -4003,31 +4007,62 @@ async function initializeTraining(uid) {
 
 function trainingServerFinalizationMatches(value, result) {
   const finalized = objectValue(value);
-  return Number(finalized.version) === result.protocolVersion
+  const baseMatches = Number(finalized.version) === result.protocolVersion
     && finalized.reason === result.reason
     && Number(finalized.turnCount) === result.turnCount
     && sameIds(
       Object.keys(objectValue(finalized.outcomes)).sort(),
       result.participants,
     )
-    && sameIds(
-      Object.keys(objectValue(finalized.completedSetsByUid)).sort(),
-      result.participants,
-    )
     && result.participants.every((participantUid) => (
       finalized.outcomes?.[participantUid] === result.outcomes[participantUid]
-      && Number(finalized.completedSetsByUid?.[participantUid])
-        === result.completedSetsByUid[participantUid]
-      && (result.protocolVersion === 1
-        || (
-          Number(finalized.completedSecondsByUid?.[participantUid])
-            === result.completedSecondsByUid[participantUid]
-          && Number(finalized.boostCompletedSetsByUid?.[participantUid])
-            === result.boostCompletedSetsByUid[participantUid]
-          && Number(finalized.boostSecondsByUid?.[participantUid])
-            === result.boostSecondsByUid[participantUid]
-        ))
     ));
+  if (!baseMatches) return false;
+  if (result.protocolVersion === 3) {
+    const metricKeys = [
+      "hpByUid",
+      "damageReceivedByUid",
+      "scoreTotalByUid",
+      "score10CountByUid",
+      "score9CountByUid",
+      "hitsReceivedByUid",
+      "completedWorkoutsByUid",
+      "workoutSecondsByUid",
+      "overkillByUid",
+    ];
+    return Number(finalized.roundCount) === result.roundCount
+      && finalized.noContest === result.noContest
+      && metricKeys.every((key) => (
+        sameIds(
+          Object.keys(objectValue(finalized[key])).sort(),
+          result.participants,
+        )
+        && result.participants.every((participantUid) => (
+          Number(finalized[key]?.[participantUid])
+            === result[key][participantUid]
+        ))
+      ))
+      && finalized.finisher?.eligible === result.finisher.eligible
+      && finalized.finisher?.winnerUid === result.finisher.winnerUid
+      && finalized.finisher?.loserUid === result.finisher.loserUid
+      && Number(finalized.finisher?.overkill) === result.finisher.overkill;
+  }
+  return sameIds(
+    Object.keys(objectValue(finalized.completedSetsByUid)).sort(),
+    result.participants,
+  ) && result.participants.every((participantUid) => (
+    Number(finalized.completedSetsByUid?.[participantUid])
+      === result.completedSetsByUid[participantUid]
+    && (result.protocolVersion === 1
+      || (
+        Number(finalized.completedSecondsByUid?.[participantUid])
+          === result.completedSecondsByUid[participantUid]
+        && Number(finalized.boostCompletedSetsByUid?.[participantUid])
+          === result.boostCompletedSetsByUid[participantUid]
+        && Number(finalized.boostSecondsByUid?.[participantUid])
+          === result.boostSecondsByUid[participantUid]
+      ))
+  ));
 }
 
 async function finalizeTraining(uid, roomId, {
@@ -4095,6 +4130,7 @@ async function finalizeTraining(uid, roomId, {
     callerDuplicate = claimSnapshots[participants.indexOf(uid)].exists;
 
     participants.forEach((participantUid, index) => {
+      const hpMode = derived.protocolVersion === 3;
       const completedSets = derived.completedSetsByUid[participantUid];
       const completedSeconds = derived.completedSecondsByUid[participantUid];
       const boostCompletedSets = derived.boostCompletedSetsByUid[participantUid];
@@ -4109,9 +4145,9 @@ async function finalizeTraining(uid, roomId, {
       );
       const progress = normalizeEconomyProgress(
         progressSnapshots[index].data(),
-        dailySettlement.dateKey,
+        hpMode ? jstDateKey(now) : dailySettlement.dateKey,
       );
-      const trainingSetDelta = dailySettlement.creditTrainingSet
+      const trainingSetDelta = !hpMode && dailySettlement.creditTrainingSet
         ? derived.protocolVersion === 2
           ? dailySettlement.creditTrainingSets
           : 1
@@ -4121,6 +4157,12 @@ async function finalizeTraining(uid, roomId, {
         3,
         trainingSetsBefore + trainingSetDelta,
       );
+      const trainingMatchEligible = hpMode
+        ? !derived.noContest
+          && ["hp_zero", "round_limit", "surrender"].includes(derived.reason)
+        : ["mutual_complete", "mutual_base_complete", "surrender"].includes(
+          derived.reason,
+        );
       if (claimSnapshot.exists) {
         if (claimSnapshot.get("uid") !== participantUid
             || claimSnapshot.get("roomId") !== roomId
@@ -4131,6 +4173,28 @@ async function finalizeTraining(uid, roomId, {
                 Number(claimSnapshot.get("completedSeconds")) !== completedSeconds
                 || Number(claimSnapshot.get("boostCompletedSets")) !== boostCompletedSets
                 || Number(claimSnapshot.get("boostSeconds")) !== boostSeconds
+              ))
+            || (hpMode
+              && (
+                Number(claimSnapshot.get("roundCount")) !== derived.roundCount
+                || Number(claimSnapshot.get("hp")) !== derived.hpByUid[participantUid]
+                || Number(claimSnapshot.get("damageReceived"))
+                  !== derived.damageReceivedByUid[participantUid]
+                || Number(claimSnapshot.get("scoreReceived"))
+                  !== derived.scoreTotalByUid[participantUid]
+                || Number(claimSnapshot.get("score10Count"))
+                  !== derived.score10CountByUid[participantUid]
+                || Number(claimSnapshot.get("score9Count"))
+                  !== derived.score9CountByUid[participantUid]
+                || Number(claimSnapshot.get("hitsReceived"))
+                  !== derived.hitsReceivedByUid[participantUid]
+                || Number(claimSnapshot.get("completedWorkouts"))
+                  !== derived.completedWorkoutsByUid[participantUid]
+                || Number(claimSnapshot.get("workoutSeconds"))
+                  !== derived.workoutSecondsByUid[participantUid]
+                || Number(claimSnapshot.get("overkill"))
+                  !== derived.overkillByUid[participantUid]
+                || claimSnapshot.get("noContest") !== derived.noContest
               ))) {
           throw new HttpsError(
             "failed-precondition",
@@ -4144,21 +4208,43 @@ async function finalizeTraining(uid, roomId, {
         return;
       }
 
-      const profile = applyTrainingSession(
-        profileSnapshots[index].data(),
-        completionTimestamps,
-        now,
-        now,
-        {
-          completedSeconds,
-          boostCompletedSets,
-          boostSeconds,
-          threeSetSessionComplete:
-            derived.protocolVersion === 2 && completedSets === 3,
-          threeSetDayComplete:
-            trainingSetsBefore < 3 && trainingSetsAfter === 3,
-        },
-      );
+      const profile = hpMode
+        ? applyTrainingHpSession(
+          profileSnapshots[index].data(),
+          derived.outcomes[participantUid],
+          {
+            noContest: derived.noContest,
+            rounds: derived.roundCount,
+            damageTaken: derived.damageReceivedByUid[participantUid],
+            scoreReceived: derived.scoreTotalByUid[participantUid],
+            hitsTaken: derived.hitsReceivedByUid[participantUid],
+            perfect10sReceived: derived.score10CountByUid[participantUid],
+            critical9sReceived: derived.score9CountByUid[participantUid],
+            completedWorkouts: derived.completedWorkoutsByUid[participantUid],
+            completedSeconds: derived.workoutSecondsByUid[participantUid],
+            overkillDealt:
+              derived.finisher.eligible
+              && derived.finisher.winnerUid === participantUid
+                ? derived.finisher.overkill
+                : 0,
+          },
+          now,
+        )
+        : applyTrainingSession(
+          profileSnapshots[index].data(),
+          completionTimestamps,
+          now,
+          now,
+          {
+            completedSeconds,
+            boostCompletedSets,
+            boostSeconds,
+            threeSetSessionComplete:
+              derived.protocolVersion === 2 && completedSets === 3,
+            threeSetDayComplete:
+              trainingSetsBefore < 3 && trainingSetsAfter === 3,
+          },
+        );
       if (trainingSetDelta > 0) {
         progress.daily.trainingSets = trainingSetsAfter;
         if (derived.protocolVersion === 2) {
@@ -4168,6 +4254,7 @@ async function finalizeTraining(uid, roomId, {
           );
         }
       }
+      if (trainingMatchEligible) progress.daily.trainingMatches = 1;
       progress.updatedAt = now;
       profileResults[participantUid] = profile;
       progressResults[participantUid] = progress;
@@ -4186,6 +4273,19 @@ async function finalizeTraining(uid, roomId, {
         boostCompletedSets,
         boostSeconds,
         turnCount: derived.turnCount,
+        ...(hpMode ? {
+          roundCount: derived.roundCount,
+          hp: derived.hpByUid[participantUid],
+          damageReceived: derived.damageReceivedByUid[participantUid],
+          scoreReceived: derived.scoreTotalByUid[participantUid],
+          score10Count: derived.score10CountByUid[participantUid],
+          score9Count: derived.score9CountByUid[participantUid],
+          hitsReceived: derived.hitsReceivedByUid[participantUid],
+          completedWorkouts: derived.completedWorkoutsByUid[participantUid],
+          workoutSeconds: derived.workoutSecondsByUid[participantUid],
+          overkill: derived.overkillByUid[participantUid],
+          noContest: derived.noContest,
+        } : {}),
         finalizedBy: uid,
         createdAt: now,
       });
@@ -4201,6 +4301,20 @@ async function finalizeTraining(uid, roomId, {
     completedSecondsByUid: derived.completedSecondsByUid,
     boostCompletedSetsByUid: derived.boostCompletedSetsByUid,
     boostSecondsByUid: derived.boostSecondsByUid,
+    ...(derived.protocolVersion === 3 ? {
+      roundCount: derived.roundCount,
+      hpByUid: derived.hpByUid,
+      damageReceivedByUid: derived.damageReceivedByUid,
+      scoreTotalByUid: derived.scoreTotalByUid,
+      score10CountByUid: derived.score10CountByUid,
+      score9CountByUid: derived.score9CountByUid,
+      hitsReceivedByUid: derived.hitsReceivedByUid,
+      completedWorkoutsByUid: derived.completedWorkoutsByUid,
+      workoutSecondsByUid: derived.workoutSecondsByUid,
+      overkillByUid: derived.overkillByUid,
+      noContest: derived.noContest,
+      finisher: derived.finisher,
+    } : {}),
     finalizedAt: Number(room?.serverFinalized?.finalizedAt) || now,
   };
   const serverFinalizedTransaction = await roomRef.child("serverFinalized")
@@ -4231,6 +4345,20 @@ async function finalizeTraining(uid, roomId, {
       boostCompletedSets: derived.boostCompletedSetsByUid[uid],
       boostSeconds: derived.boostSecondsByUid[uid],
       turnCount: derived.turnCount,
+      ...(derived.protocolVersion === 3 ? {
+        roundCount: derived.roundCount,
+        hp: derived.hpByUid[uid],
+        damageReceived: derived.damageReceivedByUid[uid],
+        scoreReceived: derived.scoreTotalByUid[uid],
+        score10Count: derived.score10CountByUid[uid],
+        score9Count: derived.score9CountByUid[uid],
+        hitsReceived: derived.hitsReceivedByUid[uid],
+        completedWorkouts: derived.completedWorkoutsByUid[uid],
+        workoutSeconds: derived.workoutSecondsByUid[uid],
+        overkill: derived.overkillByUid[uid],
+        noContest: derived.noContest,
+        finisher: derived.finisher,
+      } : {}),
     },
     profile: profileResults[uid],
     daily: progressResults[uid].daily,
@@ -10324,6 +10452,7 @@ function economyProgressHasActivity(value) {
     "strategyMatches",
     "teamMatches",
     "trainingSets",
+    "trainingMatches",
   ];
   if (dailyKeys.some((key) => Number(progress.daily?.[key] || 0) > 0)) return true;
   for (const period of ["daily", "weekly", "monthly"]) {
@@ -10416,6 +10545,20 @@ async function transferTargetIsPristine(uid, request) {
       || trainingProfile.threeSetCompletions > 0
       || trainingProfile.threeSetDays > 0
       || trainingProfile.completeDays > 0
+      || trainingProfile.hpSessions > 0
+      || trainingProfile.hpWins > 0
+      || trainingProfile.hpLosses > 0
+      || trainingProfile.hpDraws > 0
+      || trainingProfile.hpNoContests > 0
+      || trainingProfile.hpRounds > 0
+      || trainingProfile.hpDamageTaken > 0
+      || trainingProfile.hpScoreReceived > 0
+      || trainingProfile.hpHitsTaken > 0
+      || trainingProfile.hpPerfect10sReceived > 0
+      || trainingProfile.hpCritical9sReceived > 0
+      || trainingProfile.hpCompletedWorkouts > 0
+      || trainingProfile.hpCompletedSeconds > 0
+      || trainingProfile.hpOverkillDealt > 0
       || !trainingClaimSnapshot.empty) return false;
   if (marketSnapshot.exists || fleaSellerCardSnapshot.exists || patronSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
@@ -10621,6 +10764,20 @@ async function redeemAccountTransferCode(request, rawCode) {
         || targetTrainingProfile.threeSetCompletions > 0
         || targetTrainingProfile.threeSetDays > 0
         || targetTrainingProfile.completeDays > 0
+        || targetTrainingProfile.hpSessions > 0
+        || targetTrainingProfile.hpWins > 0
+        || targetTrainingProfile.hpLosses > 0
+        || targetTrainingProfile.hpDraws > 0
+        || targetTrainingProfile.hpNoContests > 0
+        || targetTrainingProfile.hpRounds > 0
+        || targetTrainingProfile.hpDamageTaken > 0
+        || targetTrainingProfile.hpScoreReceived > 0
+        || targetTrainingProfile.hpHitsTaken > 0
+        || targetTrainingProfile.hpPerfect10sReceived > 0
+        || targetTrainingProfile.hpCritical9sReceived > 0
+        || targetTrainingProfile.hpCompletedWorkouts > 0
+        || targetTrainingProfile.hpCompletedSeconds > 0
+        || targetTrainingProfile.hpOverkillDealt > 0
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {
       failure = "target-not-empty";

@@ -4,12 +4,19 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   LEGACY_TRAINING_VARIANT,
+  V2_TRAINING_PROTOCOL_VERSION,
+  V2_TRAINING_VARIANT,
   TRAINING_BASE_DURATION_MS,
+  TRAINING_COMMAND_COUNT,
+  TRAINING_DAMAGE_BY_SCORE,
+  TRAINING_DURATION_MS_BY_SCORE,
+  TRAINING_MAX_ROUNDS,
   TRAINING_PROTOCOL_VERSION,
   TRAINING_DESTROYED_CLOCK_SKEW_MS,
   TRAINING_ROOM_MAX_AGE_MS,
   TRAINING_TURN_DURATION_MS,
   TRAINING_VARIANT,
+  applyTrainingHpSession,
   applyTrainingSession,
   assertTrainingRoomFinalizable,
   deriveTrainingRoomResult,
@@ -22,6 +29,26 @@ const {
 const firstUid = "first-player";
 const secondUid = "second-player";
 const createdAt = Date.parse("2026-07-28T10:00:00+09:00");
+
+function emptyHpProfile() {
+  return {
+    hpSessions: 0,
+    hpWins: 0,
+    hpLosses: 0,
+    hpDraws: 0,
+    hpNoContests: 0,
+    hpRounds: 0,
+    hpDamageTaken: 0,
+    hpScoreReceived: 0,
+    hpHitsTaken: 0,
+    hpPerfect10sReceived: 0,
+    hpCritical9sReceived: 0,
+    hpCompletedWorkouts: 0,
+    hpCompletedSeconds: 0,
+    hpOverkillDealt: 0,
+    hpUpdatedAt: 0,
+  };
+}
 
 function instruction(overrides = {}) {
   return {
@@ -400,8 +427,8 @@ test("a disconnect after terminal evidence preserves the result but not later ev
 function v2Room(overrides = {}) {
   return {
     ...room(),
-    protocolVersion: TRAINING_PROTOCOL_VERSION,
-    variant: TRAINING_VARIANT,
+    protocolVersion: V2_TRAINING_PROTOCOL_VERSION,
+    variant: V2_TRAINING_VARIANT,
     carrotChoices: {
       [firstUid]: "boost10",
       [secondUid]: "boost8",
@@ -693,6 +720,458 @@ test("disconnect after a completed set preserves earlier verified progress", () 
   );
 });
 
+function commandDeck() {
+  return {
+    1: {
+      exercise: "スクワット",
+      completion: "最後まで続ける",
+      command: "拍に合わせて続けろ",
+      beatsPerRep: 2,
+    },
+    2: {
+      exercise: "腕立て伏せ",
+      completion: "最後まで続ける",
+      command: "無理のないフォームで続けろ",
+      beatsPerRep: 4,
+    },
+    3: {
+      exercise: "腹筋",
+      completion: "最後まで続ける",
+      command: "呼吸を止めずに続けろ",
+      beatsPerRep: 8,
+    },
+  };
+}
+
+const firstImageBpms = { 1: 0, 2: 80, 3: 100, 4: 120, 5: 140 };
+const secondImageBpms = { 1: 60, 2: 90, 3: 110, 4: 130, 5: 150 };
+
+function v3Room(overrides = {}) {
+  return {
+    protocolVersion: TRAINING_PROTOCOL_VERSION,
+    variant: TRAINING_VARIANT,
+    createdAt,
+    status: "active",
+    hostUid: firstUid,
+    guestUid: secondUid,
+    members: {
+      [firstUid]: true,
+      [secondUid]: true,
+    },
+    players: {
+      [firstUid]: {
+        uid: firstUid,
+        name: "FIRST",
+        commandDeck: commandDeck(),
+        imageBpms: firstImageBpms,
+      },
+      [secondUid]: {
+        uid: secondUid,
+        name: "SECOND",
+        commandDeck: commandDeck(),
+        imageBpms: secondImageBpms,
+      },
+    },
+    accepted: {
+      [firstUid]: true,
+      [secondUid]: true,
+    },
+    rounds: {},
+    ...overrides,
+  };
+}
+
+function v3Round(roundNumber, firstScore, secondScore, {
+  completed = true,
+  cardIndexes = {},
+  imageIndexes = {},
+  workoutCompletionOffsets = {},
+} = {}) {
+  const roundCreatedAt = createdAt + (roundNumber * 500_000);
+  const firstImageIndex = imageIndexes[firstUid] || roundNumber;
+  const secondImageIndex = imageIndexes[secondUid] || roundNumber;
+  const round = {
+    createdAt: roundCreatedAt,
+    draws: {
+      [firstUid]: {
+        imageIndex: firstImageIndex,
+        bpm: firstImageBpms[firstImageIndex],
+        drawnAt: roundCreatedAt + 1_000,
+      },
+      [secondUid]: {
+        imageIndex: secondImageIndex,
+        bpm: secondImageBpms[secondImageIndex],
+        drawnAt: roundCreatedAt + 1_000,
+      },
+    },
+    imageReceived: {
+      [firstUid]: true,
+      [secondUid]: true,
+    },
+    scores: {
+      [firstUid]: firstScore,
+      [secondUid]: secondScore,
+    },
+  };
+  let evidenceAt = roundCreatedAt + 2_000;
+  for (const traineeUid of [firstUid, secondUid]) {
+    const score = traineeUid === firstUid ? firstScore : secondScore;
+    const durationMs = TRAINING_DURATION_MS_BY_SCORE[score] || 0;
+    if (!durationMs) continue;
+    const trainerUid = traineeUid === firstUid ? secondUid : firstUid;
+    const selectedAt = roundCreatedAt + 3_000;
+    const startedAt = roundCreatedAt + 4_000;
+    const cardIndex = cardIndexes[traineeUid] || roundNumber;
+    round.commandChoices ||= {};
+    round.commandChoices[traineeUid] = {
+      trainerUid,
+      cardIndex,
+      selectedAt,
+    };
+    round.workouts ||= {};
+    const completedAt = startedAt + durationMs
+      + (workoutCompletionOffsets[traineeUid] || 0);
+    round.workouts[traineeUid] = { startedAt, completedAt };
+    evidenceAt = Math.max(evidenceAt, completedAt);
+  }
+  if (completed) round.completedAt = evidenceAt;
+  return round;
+}
+
+test("protocol v3 derives independent self-damage, image score, workout time, and overkill", () => {
+  assert.equal(TRAINING_PROTOCOL_VERSION, 3);
+  assert.equal(TRAINING_VARIANT, "kitaeai_hp_v3");
+  assert.equal(TRAINING_MAX_ROUNDS, 5);
+  assert.equal(TRAINING_COMMAND_COUNT, 3);
+  assert.deepEqual(TRAINING_DAMAGE_BY_SCORE, { 8: 10, 9: 15, 10: 20 });
+  assert.deepEqual(TRAINING_DURATION_MS_BY_SCORE, {
+    8: 60_000,
+    9: 75_000,
+    10: 90_000,
+  });
+
+  const round1 = v3Round(1, 9, 7);
+  const round2 = v3Round(2, 10, 8);
+  const result = deriveTrainingRoomResult(v3Room({
+    rounds: { 1: round1, 2: round2 },
+  }), round2.completedAt + 1);
+
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "hp_zero");
+  assert.equal(result.outcomes[firstUid], "loss");
+  assert.equal(result.outcomes[secondUid], "win");
+  assert.deepEqual(result.hpByUid, {
+    [firstUid]: 0,
+    [secondUid]: 20,
+  });
+  assert.deepEqual(result.damageReceivedByUid, {
+    [firstUid]: 35,
+    [secondUid]: 10,
+  });
+  assert.deepEqual(result.scoreTotalByUid, {
+    [firstUid]: 15,
+    [secondUid]: 19,
+  });
+  assert.deepEqual(result.completedWorkoutsByUid, {
+    [firstUid]: 2,
+    [secondUid]: 1,
+  });
+  assert.deepEqual(result.workoutSecondsByUid, {
+    [firstUid]: 165,
+    [secondUid]: 60,
+  });
+  assert.equal(result.overkillByUid[firstUid], 5);
+  assert.deepEqual(result.finisher, {
+    eligible: true,
+    winnerUid: secondUid,
+    loserUid: firstUid,
+    overkill: 5,
+  });
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 0,
+    [secondUid]: 0,
+  });
+  assert.deepEqual(result.completedSecondsByUid, {
+    [firstUid]: 0,
+    [secondUid]: 0,
+  });
+});
+
+test("v3 HP profiles credit overkill only to an eligible finisher winner", () => {
+  const overkillDealtFor = (result, participantUid) => (
+    result.finisher.eligible
+    && result.finisher.winnerUid === participantUid
+      ? result.finisher.overkill
+      : 0
+  );
+  const profileFor = (result, participantUid) => applyTrainingHpSession(
+    null,
+    result.outcomes[participantUid],
+    {
+      noContest: result.noContest,
+      overkillDealt: overkillDealtFor(result, participantUid),
+    },
+    createdAt + 2_000_000,
+  );
+
+  const knockoutRounds = {
+    1: v3Round(1, 9, 7),
+    2: v3Round(2, 10, 8),
+  };
+  const knockout = deriveTrainingRoomResult(
+    v3Room({ rounds: knockoutRounds }),
+    knockoutRounds[2].completedAt + 1,
+  );
+  assert.equal(knockout.finisher.eligible, true);
+  assert.equal(profileFor(knockout, secondUid).hpOverkillDealt, 5);
+  assert.equal(profileFor(knockout, firstUid).hpOverkillDealt, 0);
+
+  const doubleKnockoutRounds = {
+    1: v3Round(1, 10, 10),
+    2: v3Round(2, 10, 9),
+  };
+  const doubleKnockout = deriveTrainingRoomResult(
+    v3Room({ rounds: doubleKnockoutRounds }),
+    doubleKnockoutRounds[2].completedAt + 1,
+  );
+  assert.equal(doubleKnockout.hpByUid[firstUid], 0);
+  assert.equal(doubleKnockout.hpByUid[secondUid], 0);
+  assert.equal(doubleKnockout.finisher.winnerUid, secondUid);
+  assert.equal(profileFor(doubleKnockout, secondUid).hpOverkillDealt, 10);
+  assert.equal(profileFor(doubleKnockout, firstUid).hpOverkillDealt, 0);
+
+  for (const interrupted of [
+    deriveTrainingRoomResult(v3Room({
+      surrendered: { uid: firstUid, at: createdAt + 1_000 },
+    }), createdAt + 2_000),
+    deriveTrainingRoomResult(v3Room({
+      destroyed: {
+        by: secondUid,
+        at: createdAt + 1_000,
+        reason: "health_stop",
+      },
+    }), createdAt + 2_000),
+  ]) {
+    assert.equal(interrupted.finisher.eligible, false);
+    assert.equal(profileFor(interrupted, firstUid).hpOverkillDealt, 0);
+    assert.equal(profileFor(interrupted, secondUid).hpOverkillDealt, 0);
+  }
+});
+
+test("v3 resolves equal HP by image score, then received 10s and 9s, with draws after all ties", () => {
+  const scoreTieRounds = {
+    1: v3Round(1, 10, 9),
+    2: v3Round(2, 8, 9),
+  };
+  const scoreTie = deriveTrainingRoomResult(
+    v3Room({ rounds: scoreTieRounds }),
+    scoreTieRounds[2].completedAt + 1,
+  );
+  assert.equal(scoreTie.hpByUid[firstUid], 0);
+  assert.equal(scoreTie.hpByUid[secondUid], 0);
+  assert.equal(scoreTie.scoreTotalByUid[firstUid], 18);
+  assert.equal(scoreTie.scoreTotalByUid[secondUid], 18);
+  assert.equal(scoreTie.score10CountByUid[secondUid], 1);
+  assert.equal(scoreTie.outcomes[secondUid], "win");
+
+  const limitRounds = {};
+  for (let round = 1; round <= 5; round += 1) {
+    limitRounds[round] = v3Round(round, 7, 6);
+  }
+  const limit = deriveTrainingRoomResult(
+    v3Room({ rounds: limitRounds }),
+    limitRounds[5].completedAt + 1,
+  );
+  assert.equal(limit.reason, "round_limit");
+  assert.equal(limit.hpByUid[firstUid], 30);
+  assert.equal(limit.hpByUid[secondUid], 30);
+  assert.equal(limit.scoreTotalByUid[secondUid], 35);
+  assert.equal(limit.outcomes[secondUid], "win");
+
+  const drawRounds = {};
+  for (let round = 1; round <= 5; round += 1) {
+    drawRounds[round] = v3Round(round, 5, 5);
+  }
+  const draw = deriveTrainingRoomResult(
+    v3Room({ rounds: drawRounds }),
+    drawRounds[5].completedAt + 1,
+  );
+  assert.equal(draw.outcomes[firstUid], "draw");
+  assert.equal(draw.outcomes[secondUid], "draw");
+});
+
+test("v3 rejects reused images and commands, mismatched BPM, and forged workout timing", () => {
+  const round1 = v3Round(1, 8, 1);
+  const reusedImage = v3Round(2, 1, 1, {
+    imageIndexes: { [firstUid]: 1 },
+  });
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v3Room({ rounds: { 1: round1, 2: reusedImage } }),
+      reusedImage.completedAt + 1,
+    ),
+    /image is invalid or reused/,
+  );
+
+  const reusedCommand = v3Round(2, 8, 1, {
+    cardIndexes: { [firstUid]: 1 },
+  });
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v3Room({ rounds: { 1: round1, 2: reusedCommand } }),
+      reusedCommand.completedAt + 1,
+    ),
+    /command choice is invalid or reused/,
+  );
+
+  const badBpm = v3Round(1, 1, 1);
+  badBpm.draws[firstUid].bpm = 160;
+  assert.throws(
+    () => deriveTrainingRoomResult(v3Room({ rounds: { 1: badBpm } }), badBpm.completedAt + 1),
+    /BPM does not match/,
+  );
+
+  const badDuration = v3Round(1, 9, 1, {
+    workoutCompletionOffsets: { [firstUid]: 1 },
+  });
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v3Room({ rounds: { 1: badDuration } }),
+      badDuration.completedAt + 1,
+    ),
+    /workout completion timestamp/,
+  );
+
+  const textScore = v3Round(1, 1, 1);
+  textScore.scores[firstUid] = "8";
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v3Room({ rounds: { 1: textScore } }),
+      textScore.completedAt + 1,
+    ),
+    /score must be an integer/,
+  );
+
+  const extraCardField = v3Room();
+  extraCardField.players[firstUid].commandDeck[1].bpm = 100;
+  assert.throws(
+    () => deriveTrainingRoomResult(extraCardField, createdAt + 1),
+    /command card fields/,
+  );
+});
+
+test("v3 requires every triggered workout before round settlement", () => {
+  const incomplete = v3Round(1, 9, 1);
+  delete incomplete.workouts[firstUid].completedAt;
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v3Room({ rounds: { 1: incomplete } }),
+      incomplete.completedAt + 1,
+    ),
+    /completed before all hit workouts/,
+  );
+  delete incomplete.completedAt;
+  const pending = deriveTrainingRoomResult(
+    v3Room({ rounds: { 1: incomplete } }),
+    incomplete.workouts[firstUid].startedAt + 1,
+  );
+  assert.equal(pending.status, "pending");
+  assert.equal(pending.hpByUid[firstUid], 15);
+});
+
+test("v3 surrender and health stop finalize safely without overriding a prior natural result", () => {
+  const surrendered = deriveTrainingRoomResult(v3Room({
+    surrendered: { uid: firstUid, at: createdAt + 1_000 },
+  }), createdAt + 2_000);
+  assert.equal(surrendered.reason, "surrender");
+  assert.equal(surrendered.outcomes[firstUid], "loss");
+
+  const healthStopped = deriveTrainingRoomResult(v3Room({
+    destroyed: { by: secondUid, at: createdAt + 1_000, reason: "health_stop" },
+  }), createdAt + 2_000);
+  assert.equal(healthStopped.reason, "health_stop");
+  assert.equal(healthStopped.noContest, true);
+  assert.equal(healthStopped.outcomes[firstUid], "draw");
+
+  const finalRound = v3Round(1, 10, 10);
+  const secondFinalRound = v3Round(2, 8, 8);
+  const naturallyFinal = v3Room({
+    rounds: { 1: finalRound, 2: secondFinalRound },
+    surrendered: {
+      uid: secondUid,
+      at: secondFinalRound.completedAt + 1,
+    },
+  });
+  const naturalResult = deriveTrainingRoomResult(
+    naturallyFinal,
+    secondFinalRound.completedAt + 2,
+  );
+  assert.equal(naturalResult.reason, "hp_zero");
+  assert.equal(naturalResult.outcomes[firstUid], "draw");
+
+  delete naturallyFinal.surrendered;
+  naturallyFinal.destroyed = {
+    by: secondUid,
+    at: secondFinalRound.completedAt + 1,
+    reason: "health_stop",
+  };
+  assert.equal(
+    deriveTrainingRoomResult(
+      naturallyFinal,
+      secondFinalRound.completedAt + 2,
+    ).reason,
+    "hp_zero",
+  );
+
+  naturallyFinal.destroyed.at = secondFinalRound.completedAt - 1;
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      naturallyFinal,
+      secondFinalRound.completedAt + 2,
+    ),
+    /evidence occurred after health stop/,
+  );
+  delete naturallyFinal.destroyed;
+  naturallyFinal.surrendered = {
+    uid: secondUid,
+    at: secondFinalRound.completedAt - 1,
+  };
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      naturallyFinal,
+      secondFinalRound.completedAt + 2,
+    ),
+    /evidence occurred after surrender/,
+  );
+});
+
+test("v3 HP profile metrics never increment legacy set or three-set history", () => {
+  const legacy = applyTrainingSession(null, [createdAt], createdAt, createdAt, {
+    completedSeconds: 60,
+  });
+  const hp = applyTrainingHpSession(legacy, "win", {
+    rounds: 2,
+    damageTaken: 10,
+    scoreReceived: 19,
+    hitsTaken: 1,
+    perfect10sReceived: 1,
+    critical9sReceived: 0,
+    completedWorkouts: 1,
+    completedSeconds: 60,
+    overkillDealt: 5,
+  }, createdAt + 1_000);
+  assert.equal(hp.sessions, legacy.sessions);
+  assert.equal(hp.completedSets, legacy.completedSets);
+  assert.equal(hp.completedSeconds, legacy.completedSeconds);
+  assert.equal(hp.threeSetCompletions, legacy.threeSetCompletions);
+  assert.equal(hp.threeSetDays, legacy.threeSetDays);
+  assert.equal(hp.hpSessions, 1);
+  assert.equal(hp.hpWins, 1);
+  assert.equal(hp.hpRounds, 2);
+  assert.equal(hp.hpScoreReceived, 19);
+  assert.equal(hp.hpOverkillDealt, 5);
+});
+
 test("three-set day streak is separate from legacy activity streak and crosses 1 to 3 once", () => {
   const dayOne = Date.parse("2026-07-28T12:00:00+09:00");
   const firstPartial = applyTrainingSession(
@@ -760,6 +1239,7 @@ test("profile streaks use JST days and do not double count the same day", () => 
     currentStreak: 1,
     bestStreak: 1,
     lastCompletedDateKey: "2026-07-27",
+    ...emptyHpProfile(),
     updatedAt: beforeMidnight,
   });
   const sameDay = applyTrainingSession(first, 1, beforeMidnight + 500);
@@ -896,6 +1376,7 @@ test("profile normalization is private-record compatible and old rooms cannot fi
     currentStreak: 2,
     bestStreak: 3,
     lastCompletedDateKey: "",
+    ...emptyHpProfile(),
     updatedAt: 0,
   });
   assert.throws(

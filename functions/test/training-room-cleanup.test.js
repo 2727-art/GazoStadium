@@ -82,6 +82,46 @@ function surrenderedRoom(now, suffix = "") {
   };
 }
 
+function hpRoom(now, overrides = {}) {
+  const commandDeck = {
+    1: {
+      exercise: "スクワット",
+      completion: "最後まで続ける",
+      command: "拍に合わせて続けろ",
+      beatsPerRep: 2,
+    },
+    2: {
+      exercise: "腕立て伏せ",
+      completion: "最後まで続ける",
+      command: "自分のペースで続けろ",
+      beatsPerRep: 4,
+    },
+    3: {
+      exercise: "腹筋",
+      completion: "最後まで続ける",
+      command: "呼吸を止めずに続けろ",
+      beatsPerRep: 8,
+    },
+  };
+  const imageBpms = { 1: 0, 2: 80, 3: 100, 4: 120, 5: 140 };
+  return {
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    hostUid: "alice",
+    guestUid: "bob",
+    createdAt: now - 60_000,
+    status: "active",
+    members: { alice: true, bob: true },
+    players: {
+      alice: { uid: "alice", name: "ALICE", commandDeck, imageBpms },
+      bob: { uid: "bob", name: "BOB", commandDeck, imageBpms },
+    },
+    accepted: { alice: true, bob: true },
+    rounds: {},
+    ...overrides,
+  };
+}
+
 function fakeSnapshot(value, key = "") {
   return {
     key,
@@ -448,7 +488,7 @@ test("training cleanup retention boundaries protect fresh and live rooms", () =>
   );
 });
 
-test("cleanup recognizes both legacy v1 and three-set v2 natural results", () => {
+test("cleanup recognizes legacy v1, three-set v2, and HP v3 terminal results", () => {
   const now = 12 * 24 * 60 * 60 * 1000;
   assert.equal(
     trainingRoomCleanupDisposition(surrenderedRoom(now), now).action,
@@ -480,6 +520,24 @@ test("cleanup recognizes both legacy v1 and three-set v2 natural results", () =>
     },
   });
   assert.equal(trainingRoomCleanupDisposition(v2, now).action, "finalize");
+  const v3Surrender = hpRoom(now, {
+    surrendered: { uid: "alice", at: now - 1_000 },
+  });
+  assert.equal(
+    trainingRoomCleanupDisposition(v3Surrender, now).action,
+    "finalize",
+  );
+  const v3HealthStop = hpRoom(now, {
+    destroyed: {
+      by: "bob",
+      at: now - 1_000,
+      reason: "health_stop",
+    },
+  });
+  assert.equal(
+    trainingRoomCleanupDisposition(v3HealthStop, now).action,
+    "finalize",
+  );
 });
 
 test("old forming reservations without presence stop blocking account actions", () => {

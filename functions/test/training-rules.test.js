@@ -24,8 +24,20 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
   assert.match(queueEntry[".validate"], /'sessionId'/);
   assert.equal(Object.hasOwn(queueEntry, "conditions"), false);
   assert.match(queueEntry.sessionId[".validate"], /length <= 64/);
-  assert.equal(queueEntry.protocolVersion[".validate"], "newData.val() === 2");
-  assert.equal(queueEntry.variant[".validate"], "newData.val() === 'kitaeai_60_v2'");
+  assert.match(queueEntry.protocolVersion[".validate"], /newData\.val\(\) === 2/);
+  assert.match(queueEntry.protocolVersion[".validate"], /newData\.val\(\) === 3/);
+  assert.match(queueEntry.variant[".validate"], /kitaeai_60_v2/);
+  assert.match(queueEntry.variant[".validate"], /kitaeai_hp_v3/);
+  assert.match(queueEntry[".validate"], /commandDeck/);
+  assert.match(queueEntry[".validate"], /imageBpms/);
+  assert.match(queueEntry.commandDeck[".validate"], /protocolVersion/);
+  assert.match(queueEntry.commandDeck.$card[".validate"], /\$card === '1'/);
+  assert.match(queueEntry.commandDeck.$card[".validate"], /\$card === '3'/);
+  assert.match(queueEntry.commandDeck.$card.beatsPerRep[".validate"], /=== 8/);
+  assert.equal(queueEntry.commandDeck.$card.$other[".validate"], false);
+  assert.match(queueEntry.imageBpms.$image[".validate"], /newData\.val\(\) === 0/);
+  assert.match(queueEntry.imageBpms.$image[".validate"], /newData\.val\(\) >= 40/);
+  assert.match(queueEntry.imageBpms.$image[".validate"], /newData\.val\(\) <= 160/);
   assert.match(queueEntry.intensity[".validate"], /light/);
   assert.match(queueEntry.intensity[".validate"], /standard/);
   assert.match(queueEntry.intensity[".validate"], /strong/);
@@ -105,8 +117,10 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
   );
   assert.match(invite[".validate"], /protocolVersion/);
   assert.match(invite[".validate"], /variant/);
-  assert.equal(invite.protocolVersion[".validate"], "newData.val() === 2");
-  assert.equal(invite.variant[".validate"], "newData.val() === 'kitaeai_60_v2'");
+  assert.match(invite.protocolVersion[".validate"], /newData\.val\(\) === 2/);
+  assert.match(invite.protocolVersion[".validate"], /newData\.val\(\) === 3/);
+  assert.match(invite.variant[".validate"], /kitaeai_60_v2/);
+  assert.match(invite.variant[".validate"], /kitaeai_hp_v3/);
   assert.match(invite.targetSessionId[".validate"], /length <= 64/);
   assert.equal(invite.$other[".validate"], false);
   assert.deepEqual(online.trainingRoomCleanupCursor, {
@@ -126,7 +140,11 @@ test("training room bootstrap fixes both identities and keeps signals target-pri
   assert.match(room[".write"], /trainingQueue/);
   assert.match(room[".write"], /protocolVersion'\)\.val\(\) === 2/);
   assert.match(room[".write"], /variant'\)\.val\(\) === 'kitaeai_60_v2'/);
+  assert.match(room[".write"], /protocolVersion'\)\.val\(\) === 3/);
+  assert.match(room[".write"], /variant'\)\.val\(\) === 'kitaeai_hp_v3'/);
   assert.match(room[".write"], /!newData\.child\('carrotChoices'\)\.exists\(\)/);
+  assert.match(room[".write"], /!newData\.child\('rounds'\)\.exists\(\)/);
+  assert.match(room[".write"], /!newData\.child\('surrendered'\)\.exists\(\)/);
   assert.match(room[".write"], /members\//);
   assert.match(room[".write"], /players\//);
   assert.match(
@@ -291,6 +309,66 @@ test("training turns can only be authored and resolved by the assigned roles", (
   assert.equal(room.$other[".validate"], false);
 });
 
+test("training v3 HP rounds keep draws owner-scoped, scores secret, and workouts canonical", () => {
+  const room = online.trainingRooms.$roomId;
+  const round = room.rounds.$round;
+  const draw = round.draws.$uid;
+  const score = round.scores.$scorerUid;
+  const choice = round.commandChoices.$traineeUid;
+  const workout = round.workouts.$traineeUid;
+
+  assert.match(round[".write"], /protocolVersion'\)\.val\(\) === 3/);
+  assert.match(round[".write"], /auth\.uid === root\.child\('online\/trainingRooms\/' \+ \$roomId \+ '\/hostUid'\)\.val\(\)/);
+  assert.match(round[".write"], /\$round === '1'/);
+  assert.match(round[".write"], /\$round === '5'/);
+  assert.match(round[".write"], /scores\//);
+  assert.match(round[".write"], /<= 7 \? 0/);
+  assert.match(round[".write"], /< 30/);
+  assert.match(round[".write"], /!newData\.child\('draws'\)\.exists\(\)/);
+  assert.match(round.createdAt[".validate"], /parent\(\)\.parent\(\)\.child\('4\/completedAt'\)/);
+
+  assert.match(draw[".write"], /auth\.uid === \$uid/);
+  assert.match(draw[".write"], /!data\.exists\(\)/);
+  assert.match(draw[".validate"], /rounds\/4\/draws/);
+  assert.match(draw.imageIndex[".validate"], /newData\.val\(\) <= 5/);
+  assert.match(draw.bpm[".validate"], /imageBpms/);
+  assert.match(draw.drawnAt[".validate"], /now - 15000/);
+  assert.equal(draw.$other[".validate"], false);
+
+  assert.match(round.imageReceived.$recipientUid[".write"], /auth\.uid === \$recipientUid/);
+  assert.match(round.imageReceived.$recipientUid[".write"], /draws/);
+  assert.match(round.scores[".read"], /hostUid/);
+  assert.match(round.scores[".read"], /guestUid/);
+  assert.match(score[".read"], /auth\.uid === \$scorerUid/);
+  assert.match(score[".write"], /imageReceived/);
+  assert.match(score[".validate"], /newData\.val\(\) >= 1/);
+  assert.match(score[".validate"], /newData\.val\(\) <= 10/);
+
+  assert.match(choice[".write"], /trainerUid'\)\.val\(\) === auth\.uid/);
+  assert.match(choice[".write"], /scores/);
+  assert.match(choice[".validate"], /rounds\/4\/commandChoices/);
+  assert.match(choice.cardIndex[".validate"], /newData\.val\(\) <= 3/);
+  assert.match(choice.selectedAt[".validate"], /now \+ 15000/);
+  assert.equal(choice.$other[".validate"], false);
+
+  assert.match(workout[".write"], /auth\.uid === \$traineeUid/);
+  assert.match(workout[".write"], /commandChoices/);
+  assert.match(workout.completedAt[".write"], /!data\.exists\(\)/);
+  assert.match(workout.completedAt[".validate"], /\+ 60000/);
+  assert.match(workout.completedAt[".validate"], /\+ 75000/);
+  assert.match(workout.completedAt[".validate"], /\+ 90000/);
+  assert.match(workout.completedAt[".validate"], /<= now/);
+  assert.equal(workout.$other[".validate"], false);
+
+  assert.match(round.completedAt[".write"], /workouts/);
+  assert.match(round.completedAt[".write"], /auth\.uid === root\.child\('online\/trainingRooms\/' \+ \$roomId \+ '\/hostUid'\)\.val\(\)/);
+  assert.match(round.completedAt[".validate"], /now - 15000/);
+  assert.equal(round.$other[".validate"], false);
+  assert.match(room.surrendered[".write"], /protocolVersion'\)\.val\(\) === 3/);
+  assert.match(room.surrendered[".write"], /newData\.child\('uid'\)\.val\(\) === auth\.uid/);
+  assert.equal(room.surrendered.$other[".validate"], false);
+});
+
 test("training is public-presence eligible but remains outside RATE", () => {
   const presence = online.publicPresence.$sessionId;
   const daily = online.economy.$uid.daily;
@@ -301,6 +379,7 @@ test("training is public-presence eligible but remains outside RATE", () => {
   assert.doesNotMatch(presence.mode[".validate"], /team/);
   assert.equal(daily.trainingSets[".validate"].includes("<= 3"), true);
   assert.match(daily.trainingSeconds[".validate"], /<= 86400/);
+  assert.match(daily.trainingMatches[".validate"], /<= 1/);
   assert.match(daily.claimed.$missionId[".validate"], /play_training/);
 
   assert.equal(Object.hasOwn(online.overallProfiles.$uid.modes, "training"), false);

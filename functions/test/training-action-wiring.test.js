@@ -48,16 +48,34 @@ test("training finalization processes both private profiles and claims exactly o
   assert.match(finalization, /claimSnapshot\.exists/);
   assert.match(finalization, /transaction\.create\(claimRefs\[index\]/);
   assert.match(finalization, /applyTrainingSession/);
+  assert.match(finalization, /applyTrainingHpSession/);
   assert.match(finalization, /trainingDailySettlement/);
   assert.match(finalization, /dailySettlement\.creditTrainingSet/);
   assert.match(finalization, /progress\.daily\.trainingSets = trainingSetsAfter/);
   assert.match(finalization, /progress\.daily\.trainingSeconds/);
+  assert.match(finalization, /progress\.daily\.trainingMatches = 1/);
+  assert.match(finalization, /\["hp_zero", "round_limit", "surrender"\]/);
+  assert.match(finalization, /derived\.damageReceivedByUid\[participantUid\]/);
+  assert.match(finalization, /derived\.scoreTotalByUid\[participantUid\]/);
+  assert.match(finalization, /derived\.workoutSecondsByUid\[participantUid\]/);
+  assert.match(finalization, /derived\.overkillByUid/);
+  assert.match(
+    finalization,
+    /overkillDealt:\s*derived\.finisher\.eligible\s*&&\s*derived\.finisher\.winnerUid === participantUid\s*\?\s*derived\.finisher\.overkill\s*:\s*0/,
+  );
+  assert.doesNotMatch(
+    finalization,
+    /overkillDealt:\s*derived\.overkillByUid/,
+  );
   assert.match(finalization, /child\("serverFinalized"\)/);
   assert.match(finalization, /status:\s*"pending"/);
   assert.match(finalization, /status:\s*"final"/);
   assert.match(finalization, /completedSets:/);
   assert.match(finalization, /completedSeconds:/);
   assert.match(finalization, /boostCompletedSets:/);
+  assert.match(finalization, /roundCount:/);
+  assert.match(finalization, /noContest:/);
+  assert.match(finalization, /finisher:/);
 });
 
 test("training never enters battle economy, RATE, period, ranking, crown, or tip pipelines", () => {
@@ -107,6 +125,9 @@ test("account transfer treats completed private training history as non-pristine
   assert.match(pristine, /trainingProfile\.sessions > 0/);
   assert.match(pristine, /trainingProfile\.completedSeconds > 0/);
   assert.match(pristine, /trainingProfile\.threeSetDays > 0/);
+  assert.match(pristine, /trainingProfile\.hpSessions > 0/);
+  assert.match(pristine, /trainingProfile\.hpCompletedSeconds > 0/);
+  assert.match(pristine, /trainingProfile\.hpOverkillDealt > 0/);
   assert.match(pristine, /!trainingClaimSnapshot\.empty/);
   const redemption = between(
     "async function redeemAccountTransferCode",
@@ -119,4 +140,21 @@ test("account transfer treats completed private training history as non-pristine
   assert.match(redemption, /targetTrainingProfile\.completedSeconds > 0/);
   assert.match(redemption, /targetTrainingProfile\.threeSetDays > 0/);
   assert.match(redemption, /targetTrainingProfile\.completeDays > 0/);
+  assert.match(redemption, /targetTrainingProfile\.hpSessions > 0/);
+  assert.match(redemption, /targetTrainingProfile\.hpCompletedSeconds > 0/);
+  assert.match(redemption, /targetTrainingProfile\.hpOverkillDealt > 0/);
+});
+
+test("training daily migration preserves legacy progress under the HP match mission", () => {
+  const dailyNormalization = between(
+    "function emptyDaily(dateKey = jstDateKey())",
+    "function normalizePeriodRecords",
+  );
+  assert.match(source, /progressKey:\s*"trainingMatches", target:\s*1/);
+  assert.match(dailyNormalization, /trainingMatches:\s*0/);
+  assert.match(dailyNormalization, /trainingMatches:\s*1/);
+  assert.match(
+    dailyNormalization,
+    /if \(daily\.trainingSets > 0\) daily\.trainingMatches = 1/,
+  );
 });

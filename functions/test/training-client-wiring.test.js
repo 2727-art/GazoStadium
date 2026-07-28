@@ -5,15 +5,78 @@ const test = require("node:test");
 
 const projectRoot = path.resolve(__dirname, "../..");
 const indexHtml = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
+const appJs = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
 const trainingJs = fs.readFileSync(path.join(projectRoot, "training.js"), "utf8");
 const trainingCss = fs.readFileSync(path.join(projectRoot, "training.css"), "utf8");
 const trainingCore = fs.readFileSync(path.join(projectRoot, "training-core.mjs"), "utf8");
+const trainingDesign = fs.readFileSync(path.join(projectRoot, "TRAINING_60_DESIGN.md"), "utf8");
 const freeTableJs = fs.readFileSync(path.join(projectRoot, "free-table.js"), "utf8");
 
-test("loads the new training client and no longer loads the retired team client", () => {
-  assert.match(indexHtml, /href="training\.css\?v=[^"]+"/);
-  assert.match(indexHtml, /src="training\.js\?v=[^"]+"/);
+function functionBlock(name) {
+  return trainingJs.match(new RegExp(`(?:async )?function ${name}\\b[\\s\\S]*?\\n\\}`))?.[0] || "";
+}
+
+test("loads the HP V3 client and retires the team client", () => {
+  assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
+  assert.match(indexHtml, /src="training\.js\?v=kitaeai-hp-v3[^"]*"/);
+  assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
+  assert.match(indexHtml, /src="online\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
   assert.doesNotMatch(indexHtml, /src="team\.js(?:\?|")/);
+  assert.match(appJs, /厳選した5枚をDRAW/);
+  assert.match(appJs, /HP制の「鍛え合い60」/);
+});
+
+test("pins protocol 3, HP30, five DRAWs, and three COMMAND cards", () => {
+  assert.match(trainingCore, /TRAINING_PROTOCOL_VERSION = 3/);
+  assert.match(trainingCore, /TRAINING_VARIANT = "kitaeai_hp_v3"/);
+  assert.match(trainingJs, /TRAINING_IMAGE_COUNT = 5/);
+  assert.match(trainingJs, /TRAINING_COMMAND_COUNT = 3/);
+  assert.match(trainingJs, /TRAINING_MAX_ROUNDS = 5/);
+  assert.match(trainingJs, /TRAINING_START_HP = 30/);
+  assert.doesNotMatch(trainingJs, /TRAINING_MAX_TURNS|firstTrainerUid|carrotChoices/);
+});
+
+test("builds a five-image deck with an independently validated BPM per image", () => {
+  assert.match(trainingJs, /state\.localImages\.length === TRAINING_IMAGE_COUNT/);
+  assert.match(trainingJs, /data-training-image-bpm="\$\{index\}"/);
+  assert.match(trainingJs, /BPMは0、または40～160/);
+  assert.match(trainingJs, /normalizeImageBpm/);
+  assert.match(trainingJs, /createSampleItems\(3, TRAINING_IMAGE_COUNT, 0\)/);
+  assert.match(trainingCss, /\.training-image-deck/);
+  assert.match(trainingDesign, /画像番号とBPMはRTDBへ確定してP2Pメタデータと照合/);
+});
+
+test("builds three reusable-preparation COMMAND cards with 2, 4, or 8 beats", () => {
+  assert.match(trainingJs, /exercise: "腕立て伏せ"/);
+  assert.match(trainingJs, /exercise: "スクワット"/);
+  assert.match(trainingJs, /exercise: "腹筋"/);
+  assert.match(trainingJs, /\[2, 4, 8\]\.includes/);
+  assert.match(trainingJs, /data-training-command-choice/);
+  assert.match(trainingJs, /各カードは1試合1回/);
+  assert.match(trainingCss, /\.training-command-deck-list/);
+});
+
+test("publishes COMMAND and BPM preparation in the queue but keeps conditions private", () => {
+  const queueBlock = trainingJs.match(/const queueEntry = \{([\s\S]*?)\n  \};/)?.[1] || "";
+  assert.ok(queueBlock);
+  assert.match(queueBlock, /commandDeck: commandDeckPayload\(\)/);
+  assert.match(queueBlock, /imageBpms: imageBpmsPayload\(\)/);
+  assert.match(queueBlock, /protocolVersion: TRAINING_PROTOCOL_VERSION/);
+  assert.match(queueBlock, /variant: TRAINING_VARIANT/);
+  assert.doesNotMatch(queueBlock, /conditions/);
+  assert.match(trainingJs, /\[host\.uid\]: playerFromQueue\(host, state\.conditions\)/);
+  assert.match(trainingJs, /\[guest\.uid\]: playerFromQueue\(guest, ""\)/);
+  assert.match(trainingJs, /createTrainingAcceptanceUpdates\(state\.uid, state\.conditions\)/);
+});
+
+test("copies prepared decks into both room player records", () => {
+  const playerBlock = functionBlock("playerFromQueue");
+  assert.match(playerBlock, /commandDeck: Object\.fromEntries/);
+  assert.match(playerBlock, /TRAINING_COMMAND_COUNT/);
+  assert.match(playerBlock, /imageBpms: Object\.fromEntries/);
+  assert.match(playerBlock, /TRAINING_IMAGE_COUNT/);
+  assert.match(playerBlock, /normalizeCommandCard/);
+  assert.match(playerBlock, /normalizeImageBpm/);
 });
 
 test("reuses verified P2P image transfer and the free-table metronome", () => {
@@ -22,440 +85,303 @@ test("reuses verified P2P image transfer and the free-table metronome", () => {
   assert.match(trainingJs, /completeIncomingOnlineImageTransfer/);
   assert.match(trainingJs, /from "\.\/free-table-ambience\.mjs\?v=[^"]+"/);
   assert.match(trainingJs, /createFreeTableAmbienceController/);
-  assert.match(trainingJs, /\.enable\(\)/);
-  assert.match(trainingJs, /effectiveAt/);
-  assert.match(
-    trainingJs,
-    /if \(!TRAINING_HUD_PHASES\.includes\(view\.phase\)\) state\.ambienceController\.disable\(\)/,
-  );
-  assert.match(trainingJs, /primeTurnAmbience\(view\.turnIndex\);\s*await state\.ambienceController\.enable\(\)/s);
-  assert.match(trainingJs, /if \(view\.phase === "ready" && view\.turn\) \{\s*primeTurnAmbience\(view\.turnIndex\)/s);
-  assert.match(
-    trainingJs,
-    /setTurnAmbience\(view\.turnIndex, view\.turn\.instruction, startedAt\);\s*if \(enableAudio\) state\.ambienceController\.enable\(\)/s,
-  );
-  assert.match(trainingJs, /function toggleMute\(\)[\s\S]*?state\.ambienceController\.enable\(\)/s);
-});
-
-test("recovers the opted-in metronome after mobile visibility suspension", () => {
-  assert.match(trainingJs, /document\.addEventListener\("visibilitychange"/);
-  assert.match(trainingJs, /queueMicrotask\(\(\) => \{\s*resumeTrainingAmbienceAfterVisibility\(\)/s);
-  assert.match(trainingJs, /async function resumeTrainingAmbienceAfterVisibility/);
-  assert.match(trainingJs, /!state\.ambienceUnlocked/);
-  assert.match(
-    trainingJs,
-    /configureAmbienceForView\(view, \{ enableAudio: false \}\);\s*const enabled = await state\.ambienceController\.enable\(\)/s,
-  );
-  assert.match(trainingJs, /id="trainingResumeAmbience"/);
-  assert.match(trainingJs, /resumeTrainingAmbienceFromGesture\(\)/);
-  assert.match(trainingCss, /\.training-audio-controls \{\s*display: flex;\s*flex-wrap: wrap/s);
-});
-
-test("shares one Firebase services module identity with the existing clients", () => {
+  assert.match(trainingJs, /\.info\/serverTimeOffset/);
+  assert.match(trainingJs, /const firebaseNow = \(\) => Date\.now\(\) \+ Number\(state\.serverTimeOffset/);
   const servicesPattern = /from "(\.\/firebase-services\.js\?v=[^"]+)"/;
   assert.equal(trainingJs.match(servicesPattern)?.[1], freeTableJs.match(servicesPattern)?.[1]);
 });
 
-test("renders separate BASE and BOOST countdown states with a beat lane", () => {
-  assert.match(trainingJs, /training-countdown-progress/);
+test("selects an unused local image randomly and commits DRAW metadata before sending bytes", () => {
+  const drawBlock = functionBlock("ensureLocalRoundDraw");
+  assert.match(drawBlock, /const used = new Set/);
+  assert.match(drawBlock, /\.filter\(\(imageIndex\) => !used\.has\(imageIndex\)\)/);
+  assert.match(drawBlock, /secureRandomChoice\(available\)/);
+  assert.match(drawBlock, /candidate = \{ imageIndex, bpm, drawnAt: firebaseNow\(\) \}/);
+  assert.ok(drawBlock.indexOf("/draws/${state.uid}`)") < drawBlock.indexOf("sendLocalRoundImage(roundIndex, draw)"));
+});
+
+test("sends only image bytes over P2P and verifies RTDB DRAW metadata before acknowledging", () => {
+  const sendBlock = functionBlock("sendLocalRoundImage");
+  const receiveBlock = functionBlock("finishIncomingImage");
+  assert.match(sendBlock, /type: "training-image-start"/);
+  assert.match(sendBlock, /round: roundIndex/);
+  assert.match(sendBlock, /imageIndex/);
+  assert.match(sendBlock, /bpm: Number\(draw\.bpm\)/);
+  assert.match(receiveBlock, /rounds\/\$\{roundIndex\}\/draws\/\$\{opponentUid\}/);
+  assert.match(receiveBlock, /P2P画像とFirebaseのDRAW情報が一致しません/);
+  assert.ok(receiveBlock.indexOf("P2P画像とFirebaseのDRAW情報が一致しません")
+    < receiveBlock.indexOf("/imageReceived/${state.uid}`)"));
+  assert.doesNotMatch(trainingJs, /(?:set|update|runTransaction)\([^)]*Firebase[^)]*(?:blob|imageUrl|imageData)/i);
+});
+
+test("keeps score secret until the local score is committed", () => {
+  const listenerBlock = functionBlock("setupRoomListeners");
+  const pollBlock = functionBlock("pollOpponentScore");
+  const boundedScoreBlock = functionBlock("readRoundScoresBounded");
+  const submitBlock = functionBlock("submitScore");
+  assert.match(listenerBlock, /scores\/\$\{state\.uid\}/);
+  assert.doesNotMatch(listenerBlock, /onValue\([\s\S]*?scores\/\$\{opponentUid\}/);
+  assert.match(submitBlock, /current === null \? score : undefined/);
+  assert.match(submitBlock, /scheduleScorePoll\(0\)/);
+  assert.match(pollBlock, /oldestPendingOpponentScoreRoundIndex\(\)/);
+  assert.match(pollBlock, /readRoundScoresBounded\(roomId, roundIndex\)/);
+  assert.ok(boundedScoreBlock.indexOf("`${base}/${state.uid}`")
+    < boundedScoreBlock.indexOf("get(ref(database, base))"));
+  assert.match(boundedScoreBlock, /if \(!ownScore\) return scores/);
+  assert.match(boundedScoreBlock, /get\(ref\(database, `\$\{base\}\/\$\{opponentUid\}`\)\)\.catch/);
+});
+
+test("queues the oldest missing opponent score and performs one bounded reconnect refresh", () => {
+  const queueBlock = functionBlock("oldestPendingOpponentScoreRoundIndex");
+  const setupBlock = functionBlock("setupRoomListeners");
+  assert.match(queueBlock, /for \(let roundIndex = 1; roundIndex <= TRAINING_MAX_ROUNDS; roundIndex \+= 1\)/);
+  assert.match(queueBlock, /roundScore\(round, state\.uid\) && !roundScore\(round, opponentUid\)/);
+  assert.match(setupBlock, /readTrainingRoundsBounded\(roomId\)/);
+  assert.match(setupBlock, /mergeTrainingRounds\(refreshedRounds\)/);
+});
+
+test("maps 8, 9, and 10 to damage 10/15/20 and workouts 60/75/90 seconds", () => {
+  assert.match(trainingJs, /8: Object\.freeze\(\{ label: "HIT 8", damage: 10, durationMs: 60_000 \}\)/);
+  assert.match(trainingJs, /9: Object\.freeze\(\{ label: "CRITICAL 9", damage: 15, durationMs: 75_000 \}\)/);
+  assert.match(trainingJs, /10: Object\.freeze\(\{ label: "PERFECT 10", damage: 20, durationMs: 90_000 \}\)/);
+  assert.match(trainingJs, /Math\.max\(0, TRAINING_START_HP - damageTakenBy\(uid\)\)/);
+  assert.match(trainingCss, /\.training-hp-track/);
+});
+
+test("allows independent DOUBLE HIT command and workout paths without alternating turns", () => {
+  const viewBlock = functionBlock("trainingClientView");
+  assert.match(viewBlock, /opponentScore >= 8 && !round\.commandChoices\?\.\[opponentUid\]/);
+  assert.match(viewBlock, /ownScore >= 8 && !round\.commandChoices\?\.\[state\.uid\]/);
+  assert.match(trainingJs, /requiredRoundWorkoutsComplete/);
+  assert.doesNotMatch(trainingJs, /firstTrainerUid|trainerOrder|turnIndex|交互ターン/);
+});
+
+test("uses each trainer COMMAND at most once and writes the choice under the trainee", () => {
+  const choiceBlock = functionBlock("submitCommandChoice");
+  assert.match(choiceBlock, /usedCommandIndexes\(state\.uid\)\.has\(cardIndex\)/);
+  assert.match(choiceBlock, /trainerUid: state\.uid/);
+  assert.match(choiceBlock, /selectedAt: firebaseNow\(\)/);
+  assert.match(choiceBlock, /commandChoices\/\$\{victimUid\}/);
+  assert.match(choiceBlock, /current === null \? choice : undefined/);
+});
+
+test("derives workout timing from the score, image BPM, and COMMAND beat count", () => {
+  const completeBlock = functionBlock("completeWorkout");
+  const ambienceBlock = functionBlock("setWorkoutAmbience");
+  assert.match(completeBlock, /completedAt = startedAt \+ context\.scoreInfo\.durationMs/);
+  assert.match(completeBlock, /firebaseNow\(\) < completedAt/);
+  assert.match(ambienceBlock, /metronomeBpm: context\.bpm/);
+  assert.match(trainingJs, /beatsPerRep: context\.card\.beatsPerRep/);
   assert.match(trainingJs, /trainingCountdownFill/);
-  assert.match(trainingJs, /training-beat-lane/);
   assert.match(trainingCss, /\.training-countdown-progress/);
   assert.match(trainingCss, /\.training-beat-lane/);
-  assert.match(trainingCore, /TRAINING_BASE_DURATION_MS = 60_000/);
-  assert.match(trainingJs, /trainingStageBadge/);
-  assert.match(trainingJs, /BASE 60/);
-  assert.match(trainingJs, /CARROT BOOST/);
 });
 
-test("wires canonical BASE and BOOST completion across six fixed turns", () => {
-  assert.match(trainingJs, /updates\.baseCompletedAt = baseCompletedAt/);
-  assert.match(trainingJs, /updates\.completedAt = fullyCompleted/);
-  assert.match(trainingJs, /updates\.boostCompletedAt = targetCompletedAt/);
-  assert.match(trainingJs, /\/surrenderedAt/);
-  assert.match(trainingJs, /"base_complete_interrupt",\s*"progress_complete_interrupt"/);
-  assert.match(trainingJs, /BASE SAVED/);
-  assert.match(trainingJs, /通信中断前に達成したBASEは記録しました/);
-  assert.match(trainingJs, /BASE到達済みのセットがある場合は、確認後にその分だけ記録します/);
-  assert.match(trainingJs, /function interruptedProgressView/);
-  assert.match(trainingJs, /Number\(view\.completedSets \|\| 0\) <= 0/);
-  assert.match(trainingJs, /bothCompletedThreeSets[\s\S]*?"mutual_base_complete"/);
-  assert.match(trainingJs, /state\.outcome = interruptedView[\s\S]*?ensureFinalization\(\)/);
-  assert.match(trainingCore, /TRAINING_MAX_TURNS = 6/);
-  assert.match(trainingCore, /mutual_complete/);
-  assert.match(trainingJs, /"base_expired", "boost_expired"/);
-  assert.match(trainingJs, /syncTurnMilestones\(view\)/);
-  assert.doesNotMatch(trainingJs, /continueVotes|submitContinueVote|data-training-vote/);
+test("settles each completed DRAW once and stops after HP zero or five DRAWs", () => {
+  const settleBlock = functionBlock("ensureRoundProgress");
+  const terminalBlock = functionBlock("roundCreatesNaturalResult");
+  assert.match(settleBlock, /state\.room\.hostUid !== state\.uid/);
+  assert.match(settleBlock, /updates = \{ \[`rounds\/\$\{roundIndex\}\/completedAt`\]: completedAt \}/);
+  assert.match(settleBlock, /updates\[`rounds\/\$\{roundIndex \+ 1\}\/createdAt`\] = completedAt/);
+  assert.match(terminalBlock, /uids\.some\(\(uid\) => hpFor\(uid\) <= 0\)/);
+  assert.match(terminalBlock, /roundIndex >= TRAINING_MAX_ROUNDS/);
 });
 
-test("keeps CARROT choice secret until both players choose and resolves one shared image owner", () => {
-  assert.match(trainingJs, /data-training-carrot-choice="mine"/);
-  assert.match(trainingJs, /"boost8", "boost9", "boost10"/);
-  assert.match(trainingJs, /carrotChoices\/\$\{state\.uid\}/);
-  assert.match(trainingJs, /carrotChoices\/\$\{opponentUid\}/);
-  assert.match(trainingJs, /相手が選び終えるまで、互いの選択は表示されません/);
-  assert.match(trainingJs, /trainingImageOwnerUid\(turn\?\.carrotChoice, traineeUid, trainerUid\)/);
-  assert.match(trainingJs, /renderTrainingImageByOwner\(imageOwnerUid/);
+test("shows canonical HP tie-break evidence in the result", () => {
+  assert.match(trainingJs, /view\?\.scoreTotalByUid\?\.\[uid\]/);
+  assert.match(trainingJs, /view\?\.score10CountByUid\?\.\[uid\]/);
+  assert.match(trainingJs, /view\?\.score9CountByUid\?\.\[uid\]/);
+  assert.match(trainingJs, /YOUR IMAGE SCORE/);
+  assert.match(trainingJs, /RIVAL IMAGE SCORE/);
+  assert.match(trainingJs, /HP → 画像の合計点 → 10点の数 → 9点の数の順で判定/);
+  assert.match(trainingJs, /view\.workoutSecondsByUid\?\.\[state\.uid\]/);
+  assert.match(trainingJs, /state\.room\.serverFinalized\?\.version === TRAINING_PROTOCOL_VERSION \? view\.roundIndex/);
+  assert.match(trainingCss, /\.training-tiebreak/);
 });
 
-test("turns the coaching half into recovery and P2P-only encouragement", () => {
-  assert.match(trainingJs, /COACH &amp; RECOVERY/);
-  assert.match(trainingJs, /次の自分のセットまで、あと約/);
+test("separates GIVE UP loss from health-stop NO CONTEST", () => {
+  const giveUpBlock = functionBlock("handleGiveUp");
+  const healthBlock = functionBlock("handleHealthStop");
+  assert.match(giveUpBlock, /\/surrendered`/);
+  assert.match(giveUpBlock, /\{ uid: state\.uid, at: firebaseNow\(\) \}/);
+  assert.match(healthBlock, /markRoomDestroyed\("health_stop"\)/);
+  assert.match(trainingJs, /result\.reason === "health_stop"/);
+  assert.match(trainingJs, /体調変化を最優先/);
+  assert.match(trainingJs, /GIVE UPが確定/);
+});
+
+test("keeps OVERKILL finisher optional, P2P-only, and bounded by a Firebase-adjusted 15-second offer", () => {
+  const offerBlock = functionBlock("offerFinisher");
+  const receiveBlock = functionBlock("receiveFinisherMessage");
+  assert.match(offerBlock, /expiresAt = firebaseNow\(\) \+ 15_000/);
+  assert.match(receiveBlock, /const now = firebaseNow\(\)/);
+  assert.match(receiveBlock, /expiresAt < now \+ 1_000/);
+  assert.match(receiveBlock, /expiresAt > now \+ 20_000/);
+  assert.match(receiveBlock, /firebaseNow\(\) < Number\(state\.finisher\.expiresAt/);
+  assert.match(trainingJs, /type: "training-finisher-offer"/);
+  assert.match(trainingJs, /勝敗・RATE・記録には影響しません/);
+  assert.doesNotMatch(trainingJs, /trainingRooms\/[^`]*(?:finisher|overkill)/i);
+});
+
+test("cleans both finisher intervals at every client teardown boundary", () => {
+  const deactivateBlock = functionBlock("deactivate");
+  assert.match(deactivateBlock, /clearInterval\(state\.finisherTicker\)/);
+  assert.match(deactivateBlock, /clearInterval\(state\.finisherOfferTimer\)/);
+  assert.match(deactivateBlock, /state\.finisherOfferTimer = null/);
+  assert.match(trainingJs, /window\.addEventListener\("pagehide"[\s\S]*?clearInterval\(state\.finisherTicker\)[\s\S]*?clearInterval\(state\.finisherOfferTimer\)/);
+});
+
+test("keeps coaching encouragement ephemeral on the P2P channel", () => {
+  assert.match(trainingJs, /type: "training-cheer"/);
   assert.match(trainingJs, /type: "training-free-cheer"/);
-  assert.match(trainingJs, /state\.channel\.send\(JSON\.stringify/);
-  assert.doesNotMatch(
-    trainingJs,
-    /ref\(database,\s*`online\/trainingRooms\/[^`]*(?:cheer|message)/i,
-  );
-  assert.match(trainingCss, /\.training-coach-recovery/);
+  assert.match(trainingJs, /state\.freeCheerSentRound = view\.roundIndex/);
+  assert.doesNotMatch(trainingJs, /ref\(database,\s*`online\/trainingRooms\/[^`]*(?:cheer|message)/i);
   assert.match(trainingCss, /\.training-free-cheer/);
 });
 
-test("prefills sets two and three from the last instruction to the same trainee", () => {
-  const seedBlock = trainingJs.match(/function seedDraftForTurn[\s\S]*?\n\}/)?.[0] || "";
-  assert.match(seedBlock, /turn\?\.trainerUid === state\.uid/);
-  assert.match(seedBlock, /turn\?\.traineeUid === view\.traineeUid/);
-  assert.match(seedBlock, /sort\(\(first, second\) => second\.index - first\.index\)/);
-  assert.match(seedBlock, /previousInstruction \|\| PRESETS\.squat/);
-});
-
-test("keeps the trainee intensity and conditions visible while composing each set", () => {
-  assert.match(trainingJs, /希望強度：\$\{escapeHtml\(INTENSITY_LABELS\[trainee\?\.intensity\]/);
-  assert.match(trainingJs, /配慮：\$\{escapeHtml\(trainee\?\.conditions \|\| "指定なし"\)/);
-});
-
-test("keeps training outside overall RATE and offers the free-table recovery path", () => {
+test("keeps training outside RATE and offers free-table recovery", () => {
   assert.doesNotMatch(trainingJs, /recordOverallResult|recordVerifiedResult|rating\s*:/);
   assert.match(trainingJs, /RATE・ランキングは変動しません/);
   assert.match(trainingJs, /window\.HariaiFreeTable\?\.start/);
   assert.match(trainingJs, /自由卓で一息つく/);
 });
 
-test("does not install a room-root value listener", () => {
-  assert.doesNotMatch(
-    trainingJs,
-    /onValue\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)/,
-  );
-  assert.doesNotMatch(
-    trainingJs,
-    /get\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)\s*\)/,
-  );
-  assert.match(trainingJs, /"status", "imageReceived", "turns", "destroyed", "serverFinalized"/);
-  assert.match(trainingJs, /signals\/\$\{state\.uid\}/);
+test("does not install a room-root value listener and subscribes only to bounded V3 children", () => {
+  assert.doesNotMatch(trainingJs, /onValue\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)/);
+  assert.doesNotMatch(trainingJs, /get\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)\s*\)/);
+  assert.match(trainingJs, /const childKeys = \["status", "surrendered", "destroyed", "serverFinalized"\]/);
+  assert.match(trainingJs, /\["createdAt", "draws", "imageReceived", "commandChoices", "workouts", "completedAt"\]/);
+  assert.match(trainingJs, /for \(let roundIndex = 1; roundIndex <= TRAINING_MAX_ROUNDS; roundIndex \+= 1\)/);
 });
 
-test("publishes training lobby presence without reading the private active root", () => {
+test("publishes privacy-safe lobby presence without reading the private active root", () => {
   assert.match(trainingJs, /mode: "training"/);
   assert.match(trainingJs, /state\.publicPresenceState = "waiting"/);
   assert.match(trainingJs, /updatePublicPresence\("playing"\)/);
   assert.match(trainingJs, /lastSeen: firebaseNow\(\)/);
-  assert.doesNotMatch(
-    trainingJs,
-    /onValue\(\s*ref\(database,\s*"online\/trainingActive"\)/,
-  );
+  assert.doesNotMatch(trainingJs, /onValue\(\s*ref\(database,\s*"online\/trainingActive"\)/);
 });
 
-test("keeps health conditions out of the public queue until the guest accepts", () => {
-  const queueWrite = trainingJs.match(/const queueEntry = \{([\s\S]*?)\n  \};/)?.[1] || "";
-  assert.ok(queueWrite);
-  assert.doesNotMatch(queueWrite, /conditions/);
-  assert.doesNotMatch(trainingCore.match(/function validTrainingQueueEntries[\s\S]*?\n\}/)?.[0] || "", /conditions/);
-  assert.match(trainingJs, /\[host\.uid\]: playerFromQueue\(host, state\.conditions\)/);
-  assert.match(trainingJs, /\[guest\.uid\]: playerFromQueue\(guest, ""\)/);
-  assert.match(
-    trainingJs,
-    /createTrainingAcceptanceUpdates\(state\.uid, state\.conditions\)[\s\S]*?await update\(ref\(database, `online\/trainingRooms\/\$\{roomId\}`\), acceptanceUpdates\)/,
-  );
-});
-
-test("arms disconnect cleanup as soon as a forming room is claimed", () => {
-  assert.match(trainingJs, /online\/trainingActive\/\$\{state\.uid\}\/rooms\/\$\{roomId\}/);
-  assert.match(trainingJs, /statusDisconnect\.set\("expired"\)/);
-  assert.match(trainingJs, /reason: isHost \? "forming_host_disconnected" : "forming_guest_disconnected"/);
-  assert.match(trainingJs, /onDisconnect\(ownerRef\)/);
-  assert.match(trainingJs, /await ownerDisconnect\.remove\(\)/);
-});
-
-test("keeps an active-room terminal fallback armed until terminal evidence is confirmed", () => {
+test("arms an active-room terminal fallback until terminal evidence is confirmed", () => {
+  const enterBlock = functionBlock("enterRoom");
+  const deactivateBlock = functionBlock("deactivate");
   assert.match(trainingJs, /async function armActiveRoomDestroyedDisconnect/);
   assert.match(trainingJs, /reason: "active_member_disconnected"/);
-  const enterBlock = trainingJs.match(/async function enterRoom[\s\S]*?\n\}/)?.[0] || "";
-  assert.ok(enterBlock.indexOf("armActiveRoomDestroyedDisconnect(roomId)") >= 0);
-  assert.ok(
-    enterBlock.indexOf("armActiveRoomDestroyedDisconnect(roomId)")
-      < enterBlock.indexOf("cleanupMatchmaking(true)"),
-  );
+  assert.ok(enterBlock.indexOf("armActiveRoomDestroyedDisconnect(roomId)")
+    < enterBlock.indexOf("cleanupMatchmaking(true)"));
   assert.match(trainingJs, /transitionToTrainingResult[\s\S]*?cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
   assert.match(trainingJs, /transitionToDestroyedRoom[\s\S]*?cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
-  assert.match(
-    trainingJs,
-    /async function deactivate[\s\S]*?await markRoomDestroyed\("player_exit"\)[\s\S]*?if \(!\["marked", "destroyed", "result"\]\.includes\(resolution\)\)[\s\S]*?await cancelActiveRoomDestroyedDisconnect\(state\.roomId\);\s*active = false/s,
-  );
+  assert.match(deactivateBlock, /await markRoomDestroyed\("player_exit"\)/);
+  assert.match(deactivateBlock, /await cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
 });
 
-test("fences same-uid tabs before queueing and never yields an established tab lease", () => {
+test("fences same-uid tabs and queue ownership by opaque session", () => {
   assert.match(trainingJs, /new BroadcastChannel\("hariai-stadium-training-tab-v1"\)/);
-  assert.match(trainingJs, /let trainingSharedStateOwned = false/);
-  assert.match(
-    trainingJs,
-    /if \(message\.type === "claim" && trainingTabLeaseHeld\) \{\s*if \(trainingTabClaiming &&/,
-  );
   assert.match(trainingJs, /type: "claim-denied"/);
-  assert.match(trainingJs, /message\.targetTabId === trainingTabId\s*&& trainingTabClaiming/);
-  assert.match(trainingJs, /await claimTrainingTabOwnership\(\);\s*await clearStaleTrainingActiveBeforeMatchmaking\(\)/s);
-  assert.match(trainingJs, /trainingSharedStateOwned = true;\s*\}/);
-  assert.match(
-    trainingJs,
-    /if \(!state\.uid \|\| state\.preview \|\| !trainingSharedStateOwned \|\| !queueSessionId\) return;\s*const invitesCleared = await cleanupTrainingInvitesForSession\(queueSessionId\);\s*if \(!invitesCleared\) return;\s*const queueCleared = await removeOwnedTrainingQueue\(queueSessionId\)/s,
-  );
-  assert.match(trainingJs, /function releaseTrainingTabOwnership\(\) \{[\s\S]*?trainingSharedStateOwned = false/);
-  assert.match(trainingJs, /if \(state\.startingMatchmaking[\s\S]*?state\.startingMatchmaking = true;[\s\S]*?finally \{\s*state\.startingMatchmaking = false/s);
-  assert.match(trainingJs, /async function cancelMatchmaking[\s\S]*?releaseTrainingTabOwnership\(\)/);
-  assert.match(trainingJs, /async function cancelPendingRoom[\s\S]*?releaseTrainingTabOwnership\(\)/);
-  assert.match(trainingJs, /async function deactivate[\s\S]*?releaseTrainingTabOwnership\(\)/);
-  assert.match(trainingJs, /window\.addEventListener\("pagehide", \(\) => \{\s*releaseTrainingTabOwnership\(\)/s);
-});
-
-test("fences queue and invitations to one opaque matchmaking session", () => {
-  assert.match(trainingCore, /export function normalizeTrainingSessionId/);
-  assert.match(trainingCore, /normalizeTrainingSessionId\(entry\.sessionId\)/);
-  assert.match(trainingJs, /async function claimTrainingQueueSession/);
+  assert.match(trainingJs, /await claimTrainingTabOwnership\(\)/);
   assert.match(trainingJs, /normalizeTrainingSessionId\(current\.sessionId\) !== sessionId/);
-  assert.match(trainingJs, /lastSeen >= now - TRAINING_QUEUE_RECLAIM_MS/);
-  assert.match(trainingJs, /async function updateOwnedTrainingQueue/);
-  assert.match(trainingJs, /async function removeOwnedTrainingQueue/);
   assert.match(trainingJs, /queueEntryBelongsToSession\(current, sessionId\) \? null : undefined/);
   assert.doesNotMatch(trainingJs, /onDisconnect\(queueRef\)/);
-  assert.doesNotMatch(trainingJs, /onDisconnect\([^)]*trainingMatchLock/);
-  assert.doesNotMatch(
-    trainingJs,
-    /remove\(ref\(database, `online\/trainingQueue\/\$\{state\.uid\}`\)\)/,
-  );
-  assert.doesNotMatch(
-    trainingJs,
-    /remove\(ref\(database, `online\/trainingInvites\/\$\{state\.uid\}`\)\)/,
-  );
-  assert.match(trainingJs, /if \(!queueEntryBelongsToSession\(state\.latestQueue\?\.\[state\.uid\]\)\) return/);
+  assert.match(trainingJs, /releaseTrainingTabOwnership\(\)/);
+});
+
+test("fences invitations by protocol, variant, and queue session", () => {
   assert.match(trainingJs, /targetSessionId: guest\.sessionId/);
+  assert.match(trainingJs, /protocolVersion: TRAINING_PROTOCOL_VERSION/);
+  assert.match(trainingJs, /variant: TRAINING_VARIANT/);
   assert.match(trainingJs, /invite\.targetSessionId === state\.queueSessionId/);
-  assert.match(trainingJs, /current\?\.targetSessionId === targetSessionId \? null : undefined/);
-  const acceptBlock = trainingJs.match(/async function acceptInvite[\s\S]*?\n\}/)?.[0] || "";
-  assert.match(acceptBlock, /updateOwnedTrainingQueue\(\{ state: "forming" \}, invite\.targetSessionId\)/);
-  assert.match(acceptBlock, /removeTrainingInviteForSession\(state\.uid, roomId, acceptedSessionId\)/);
-  assert.doesNotMatch(acceptBlock, /removeOwnedTrainingQueue/);
-  const cleanupBlock = trainingJs.match(/async function cleanupMatchmaking[\s\S]*?\n\}/)?.[0] || "";
-  assert.ok(
-    cleanupBlock.indexOf("cleanupTrainingInvitesForSession(queueSessionId)")
-      < cleanupBlock.indexOf("removeOwnedTrainingQueue(queueSessionId)"),
-  );
-  assert.match(cleanupBlock, /if \(!invitesCleared\) return/);
+  assert.match(trainingJs, /invite\.protocolVersion === TRAINING_PROTOCOL_VERSION/);
+  assert.match(trainingJs, /invite\.variant === TRAINING_VARIANT/);
+  assert.match(trainingJs, /removeTrainingInviteForSession\(state\.uid, roomId, acceptedSessionId\)/);
 });
 
-test("prioritizes a current-session invite over hosting and retries after host contention", () => {
-  assert.match(trainingJs, /function hasCurrentTrainingInvite/);
-  const attemptBlock = trainingJs.match(/async function attemptToHost[\s\S]*?\n\}/)?.[0] || "";
-  assert.ok(
-    attemptBlock.indexOf("if (hasCurrentTrainingInvite())")
-      < attemptBlock.indexOf("selectTrainingPair(freshQueueEntries())"),
-  );
-  assert.match(
-    trainingJs,
-    /async function processInvites\(\) \{\s*if \(state\.matchingBusy\) \{\s*scheduleInviteProcessing\(\);\s*return;/s,
-  );
-  assert.match(
-    trainingJs,
-    /if \(!await reserveTrainingActiveRoom\(roomId\)\) \{\s*scheduleInviteProcessing\(1_500\);\s*return false;/s,
-  );
-  const createBlock = trainingJs.match(/async function createTrainingRoom[\s\S]*?\n\}/)?.[0] || "";
-  assert.match(
-    createBlock,
-    /state\.matchingBusy = false;\s*if \(hasCurrentTrainingInvite\(\)\) \{\s*scheduleInviteProcessing\(0\);/s,
-  );
-  assert.match(trainingJs, /window\.clearTimeout\(state\.inviteRetryTimer\)/);
-});
-
-test("uses sentinel-fenced room children so old disconnects cannot delete new sessions", () => {
-  assert.doesNotMatch(trainingJs, /remove\(ref\(database, `online\/trainingActive\/\$\{state\.uid\}`\)\)/);
-  assert.doesNotMatch(trainingJs, /onDisconnect\(ref\(database, `online\/trainingActive\/\$\{state\.uid\}`\)\)/);
-  assert.match(trainingJs, /online\/trainingActive\/\$\{state\.uid\}\/rooms\/\$\{roomId\}/);
-  assert.match(trainingJs, /\(current\) => current === true \? null : undefined/);
-  assert.match(trainingJs, /return \{ roomId, rooms: \{ \[roomId\]: true \} \}/);
-  assert.match(trainingJs, /current\?\.roomId === roomId \? null : undefined/);
-  assert.match(
-    trainingJs,
-    /const keys = \[\s*"protocolVersion", "variant", "createdAt", "status",\s*"members", "presence", "destroyed", "serverFinalized",\s*\]/s,
-  );
-  assert.match(trainingJs, /trainingActiveRoomAppearsLive\(room, state\.uid, firebaseNow\(\)\)/);
-});
-
-test("rolls back partial host and guest claims without deleting a newer active room", () => {
-  assert.match(trainingJs, /removeTrainingActiveChild\(roomId\)/);
-  assert.match(trainingJs, /confirmPendingRoomTerminal\(roomId, "forming_setup_failed", true\)/);
-  assert.match(trainingJs, /state: "waiting",\s*lastSeen: firebaseNow\(\)/s);
-  assert.match(trainingJs, /if \(activeReserved\) await releaseTrainingActiveReservation\(roomId\)/);
-  assert.match(trainingJs, /processInvites\(\)\.catch\(handleRecoverableError\)/);
-  const createBlock = trainingJs.match(/async function createTrainingRoom[\s\S]*?\n\}/)?.[0] || "";
-  assert.ok(
-    createBlock.indexOf('confirmPendingRoomTerminal(roomId, "forming_setup_failed", true)')
-      < createBlock.indexOf("cancelDisconnectHandles(roomDisconnects)"),
-  );
-  assert.match(
-    createBlock,
-    /catch \(terminalError\) \{[\s\S]*?state\.pendingRoomId = roomId;[\s\S]*?state\.screen = "forming";[\s\S]*?throw terminalError;/,
-  );
-});
-
-test("refreshes terminal room children before any no-contest write", () => {
-  assert.match(trainingJs, /const keys = \["status", "turns", "destroyed", "serverFinalized"\]/);
-  const destroyBlock = trainingJs.match(/async function markRoomDestroyed[\s\S]*?\n\}/)?.[0] || "";
+test("refreshes terminal round data before writing a destroy reason", () => {
+  const refreshBlock = functionBlock("refreshRoomBeforeDestroy");
+  const destroyBlock = functionBlock("markRoomDestroyed");
+  const lifecycleBlock = functionBlock("readRoomLifecycle");
+  const boundedRoundBlock = functionBlock("readTrainingRoundBounded");
+  assert.match(lifecycleBlock, /const keys = \["status", "surrendered", "destroyed", "serverFinalized"\]/);
+  assert.match(lifecycleBlock, /readTrainingRoundsBounded\(roomId\)/);
+  assert.doesNotMatch(lifecycleBlock, /`\$\{base\}\/rounds`/);
+  assert.match(boundedRoundBlock, /\["createdAt", "draws", "imageReceived", "commandChoices", "workouts", "completedAt"\]/);
+  assert.match(boundedRoundBlock, /readRoundScoresBounded\(roomId, roundIndex\)/);
   assert.ok(destroyBlock.indexOf("refreshRoomBeforeDestroy(roomId)") >= 0);
-  assert.ok(
-    destroyBlock.indexOf("refreshRoomBeforeDestroy(roomId)")
-      < destroyBlock.indexOf("/destroyed`"),
-  );
-  assert.match(trainingJs, /if \(outcomeView\.phase === "result"\) \{\s*transitionToTrainingResult\(outcomeView\)/s);
-  assert.match(trainingJs, /viewFromServerFinalized\(lifecycle\.serverFinalized, outcomeView\)/);
-  assert.match(trainingJs, /viewFromServerFinalized\(state\.room\.serverFinalized, view\)/);
-  assert.match(trainingJs, /if \(resolution === "result"\) \{\s*destroyDialog\?\.close\?\.\(\);\s*return;/s);
+  assert.ok(destroyBlock.indexOf("refreshRoomBeforeDestroy(roomId)") < destroyBlock.indexOf("/destroyed`"));
+  assert.match(refreshBlock, /if \(outcomeView\.phase === "result"\)/);
+  assert.match(refreshBlock, /viewFromServerFinalized\(lifecycle\.serverFinalized, outcomeView\)/);
 });
 
-test("turns room setup failures into an explicit terminal screen", () => {
-  assert.match(trainingJs, /markRoomDestroyed\("room_setup_failed"\)/);
-  assert.match(trainingJs, /state\.screen = "error"/);
-  assert.match(trainingJs, /state\.channel\?\.close\(\)/);
-  assert.match(trainingJs, /state\.peer\?\.close\(\)/);
+test("prioritizes server finalization and blocks natural results until completed scores hydrate", () => {
+  const reactBlock = functionBlock("reactToRoomData");
+  const renderBlock = functionBlock("renderRoom");
+  const hydrationBlock = functionBlock("requestCompletedRoundScoreHydration");
+  const finalizationStatusBlock = functionBlock("renderFinalizationStatus");
+  assert.ok(reactBlock.indexOf("viewFromServerFinalized(state.room.serverFinalized")
+    < reactBlock.indexOf("completedRoundIndexesMissingScores().length"));
+  assert.ok(reactBlock.indexOf("completedRoundIndexesMissingScores().length")
+    < reactBlock.indexOf('if (canonicalView.phase === "result")'));
+  assert.match(reactBlock, /if \(state\.screen === "result"\) \{[\s\S]*?state\.outcome = finalizedView;[\s\S]*?render\(\)/);
+  assert.ok(renderBlock.indexOf("finalizedView")
+    < renderBlock.indexOf("completedRoundIndexesMissingScores().length"));
+  assert.match(renderBlock, /if \(finalizedView\) \{[\s\S]*?clearImageExchangeWatchdog\(\);[\s\S]*?clearScorePoll\(\);[\s\S]*?state\.currentView = finalizedView/);
+  assert.match(renderBlock, /if \(canonicalView\.phase === "result" \|\| view\.phase === "result"\) \{[\s\S]*?clearImageExchangeWatchdog\(\);[\s\S]*?clearScorePoll\(\);[\s\S]*?state\.currentView = resultView/);
+  assert.match(hydrationBlock, /readRoundScoresBounded\(roomId, roundIndex\)/);
+  assert.match(hydrationBlock, /requestCompletedRoundScoreHydration\(\)/);
+  assert.ok(finalizationStatusBlock.indexOf("trainingServerFinalizedResult(state.room.serverFinalized")
+    < finalizationStatusBlock.indexOf("state.finalization?.error"));
+  assert.match(trainingJs, /確認が終わるまで、次のDRAWや結果確定は開始しません/);
 });
 
-test("keeps forming cleanup armed while retrying a transient active-room entry failure", () => {
-  const enterBlock = trainingJs.match(/async function enterRoom[\s\S]*?\n\}/)?.[0] || "";
-  assert.ok(
-    enterBlock.indexOf("await armActiveRoomDestroyedDisconnect(roomId)")
-      < enterBlock.indexOf("window.clearTimeout(state.matchTimer)"),
-  );
-  assert.match(trainingJs, /function scheduleEnterRoomRetry/);
-  assert.match(trainingJs, /state\.pendingRoomId !== roomId \|\| state\.room\.status !== "active"/);
-  assert.match(trainingJs, /state\.enterRoomRetryAttempts > 6/);
-  assert.match(trainingJs, /enterRoom\(roomId\)\.catch\(handleRecoverableError\)/);
-});
-
-test("bounds P2P image exchange and routes every transfer failure to NO CONTEST", () => {
+test("bounds every P2P image exchange and routes failure away from scoring", () => {
   assert.match(trainingJs, /IMAGE_EXCHANGE_TIMEOUT_MS = 45_000/);
-  assert.match(trainingJs, /startImageExchangeWatchdog\(\)/);
+  assert.match(trainingJs, /startImageExchangeWatchdog/);
   assert.match(trainingJs, /"image_exchange_timeout"/);
   assert.match(trainingJs, /"image_channel_error"/);
   assert.match(trainingJs, /"image_receive_failed"/);
-  assert.match(trainingJs, /clearImageExchangeWatchdog\(\)/);
-  assert.match(trainingJs, /id="trainingCancelledRetry"/);
-  assert.match(trainingJs, /function transitionToLocalNoContestPending/);
-  const localPendingBlock = trainingJs.match(/function transitionToLocalNoContestPending[\s\S]*?\n\}/)?.[0] || "";
-  assert.doesNotMatch(localPendingBlock, /cancelActiveRoomDestroyedDisconnect|state\.room\.destroyed/);
-  assert.doesNotMatch(trainingJs, /reason: `local:\$\{reason\}`/);
+  assert.match(trainingJs, /transitionToLocalNoContestPending/);
+  assert.match(trainingJs, /45秒以内に画像交換を完了できなかったため、NO CONTEST/);
+  assert.match(trainingJs, /!allRoundImagesReceived\(view\.round\)/);
 });
 
-test("shows condition-aware timeout copy and a persistent stop-safety reminder", () => {
-  assert.match(trainingJs, /result\.type === "win"[\s\S]*?result\.reason === "timeout"/);
-  assert.match(trainingJs, /BASE 60秒をコンプリートできませんでした/);
-  assert.match(trainingJs, /痛み・めまい・体調の変化を感じたら、勝敗より中止を優先/);
-  assert.match(trainingCss, /\.training-give-up-dock p/);
-});
-
-test("separates legacy activity records from private three-set continuity", () => {
-  assert.match(trainingJs, /function renderSetupTrainingRecord/);
-  assert.match(trainingJs, /累計完了セット/);
-  assert.match(trainingJs, /3セット完遂日/);
-  assert.match(trainingJs, /3セット連続/);
-  assert.match(trainingJs, /活動した日/);
-  assert.match(trainingJs, /今日の3セット/);
-  assert.match(trainingJs, /達成 3\/3/);
-  assert.match(trainingJs, /currentThreeSetStreak/);
-  assert.match(trainingCss, /\.training-setup-record/);
-});
-
-test("tombstones a forming room before cancelling disconnect handlers", () => {
-  assert.match(trainingJs, /if \(state\.pendingTeardown\) return state\.pendingTeardown/);
-  assert.match(trainingJs, /teardownPendingRoom\("player_cancelled"\)/);
-  assert.match(trainingJs, /teardownPendingRoom\("player_exit"\)[\s\S]*?active = false/);
-  assert.match(trainingJs, /teardownPendingRoom\("fatal_error"\)[\s\S]*?cleanupMatchmaking\(false\)/);
-  assert.match(trainingJs, /destroyPendingRoom\(roomId, reason\)/);
-  assert.match(trainingJs, /if \(!statusTerminal && !destroyedTerminal\) \{\s*throw new Error/s);
-  assert.match(trainingJs, /removeTrainingInviteForSession\(inviteTargetUid, roomId, targetSessionId\)/);
-  assert.match(trainingJs, /releaseMatchLock\(roomId\)/);
-  assert.match(
-    trainingJs,
-    /async function deactivate[\s\S]*?await teardownPendingRoom\("player_exit"\);\s*\} catch \(error\) \{\s*handleRecoverableError\(error\);\s*return false;\s*\}[\s\S]*?active = false/s,
-  );
-  assert.match(
-    trainingJs,
-    /async function handleFatalError[\s\S]*?await teardownPendingRoom\("fatal_error"\);\s*\} catch \(teardownError\) \{\s*handleRecoverableError\(teardownError\);\s*return;\s*\}[\s\S]*?cleanupMatchmaking\(false\)/s,
-  );
-});
-
-test("creates protocol-fenced invitations that match the Rules schema", () => {
-  assert.match(
-    trainingJs,
-    /trainingInvites\/\$\{guest\.uid\}\/\$\{roomId\}`\), \{\s*roomId,\s*hostUid: host\.uid,\s*targetSessionId: guest\.sessionId,\s*protocolVersion: TRAINING_PROTOCOL_VERSION,\s*variant: TRAINING_VARIANT,\s*createdAt:/s,
-  );
-  assert.match(trainingJs, /invite\.protocolVersion === TRAINING_PROTOCOL_VERSION/);
-  assert.match(trainingJs, /invite\.variant === TRAINING_VARIANT/);
-  const createBlock = trainingJs.match(/async function createTrainingRoom[\s\S]*?\n\}/)?.[0] || "";
-  const inviteWrite = createBlock.indexOf("await set(ref(database, `online/trainingInvites/${guest.uid}/${roomId}`)");
-  const earlyRelease = createBlock.indexOf("if (await releaseMatchLock(roomId)) ownsLock = false");
-  const pendingAssignment = createBlock.indexOf("state.pendingRoomId = roomId");
-  assert.ok(inviteWrite >= 0 && inviteWrite < earlyRelease);
-  assert.ok(earlyRelease < pendingAssignment);
-  assert.match(createBlock, /finally \{\s*if \(ownsLock\) \{\s*await releaseMatchLock\(roomId\);/s);
+test("shows V3-only private HP activity records while preserving old records outside new writes", () => {
+  assert.match(trainingJs, /profile\.hpSessions/);
+  assert.match(trainingJs, /profile\.hpWins/);
+  assert.match(trainingJs, /profile\.hpCompletedWorkouts/);
+  assert.match(trainingJs, /profile\.hpHitsTaken/);
+  assert.match(trainingJs, /profile\.hpCompletedSeconds/);
+  assert.match(trainingJs, /daily\?\.trainingMatches/);
+  assert.doesNotMatch(functionBlock("renderSetupTrainingRecord"), /currentStreak|threeSet|trainingSets/);
 });
 
 test("keeps a live legacy room behind a read-only compatibility boundary", () => {
-  assert.match(
-    trainingJs,
-    /const keys = \[\s*"protocolVersion", "variant", "createdAt", "status",\s*"members", "presence", "destroyed", "serverFinalized",\s*\]/s,
-  );
-  assert.match(
-    trainingJs,
-    /if \(live\) \{\s*if \(room\.protocolVersion !== TRAINING_PROTOCOL_VERSION\s*\|\| room\.variant !== TRAINING_VARIANT\) \{\s*throw new Error\(\s*"旧バージョンの鍛え合いが進行中です。元のタブで最後まで進めてください。"/s,
-  );
-  const staleGuard = trainingJs.match(
-    /async function clearStaleTrainingActiveBeforeMatchmaking[\s\S]*?\n\}/,
-  )?.[0] || "";
-  const compatibilityGuard = staleGuard.indexOf("room.protocolVersion !== TRAINING_PROTOCOL_VERSION");
-  const activeRemoval = staleGuard.indexOf("await removeTrainingActiveChild(observedRoomId)");
-  assert.ok(compatibilityGuard >= 0 && compatibilityGuard < activeRemoval);
+  const staleBlock = functionBlock("clearStaleTrainingActiveBeforeMatchmaking");
+  assert.match(staleBlock, /room\.protocolVersion !== TRAINING_PROTOCOL_VERSION/);
+  assert.match(staleBlock, /room\.variant !== TRAINING_VARIANT/);
+  assert.match(staleBlock, /旧バージョンの鍛え合いが進行中です/);
+  assert.ok(staleBlock.indexOf("room.protocolVersion !== TRAINING_PROTOCOL_VERSION")
+    < staleBlock.indexOf("removeTrainingActiveChild(observedRoomId)"));
 });
 
-test("turns exhausted finalize polling into an explicit retry state", () => {
-  assert.match(trainingJs, /if \(force\) state\.finalizeAttempts = 0/);
-  assert.match(trainingJs, /完了記録の確認が長引いています/);
-  assert.match(trainingJs, /id="trainingRetryFinalize"/);
+test("provides six local-only V3 preview screens without Firebase writes", () => {
+  assert.match(trainingJs, /\["setup", "draw", "score", "command", "workout", "result"\]/);
+  assert.match(trainingJs, /preview === "draw"/);
+  assert.match(trainingJs, /preview === "command"/);
+  assert.match(trainingJs, /preview === "workout"/);
+  assert.match(trainingJs, /preview === "result"/);
+  for (const name of [
+    "ensureLocalRoundDraw",
+    "submitScore",
+    "submitCommandChoice",
+    "startWorkout",
+    "completeWorkout",
+    "handleGiveUp",
+    "ensureRoundProgress",
+  ]) {
+    assert.match(functionBlock(name), /if \(state\.preview/);
+  }
 });
 
 test("publishes the complete HariaiTraining lifecycle API", () => {
-  assert.match(
-    trainingJs,
-    /window\.HariaiTraining\s*=\s*\{\s*start,\s*isActive,\s*requestHome,\s*destroyRoom,\s*\}/s,
-  );
+  assert.match(trainingJs, /window\.HariaiTraining\s*=\s*\{\s*start,\s*isActive,\s*requestHome,\s*destroyRoom,\s*\}/s);
   assert.match(trainingJs, /hariai-training-ready/);
-});
-
-test("offline previews never write turn progress when controls or the timer fire", () => {
-  assert.match(
-    trainingJs,
-    /\["setup", "choice", "coach", "active", "boost", "result"\]/,
-  );
-  assert.match(trainingJs, /const choicePreview = preview === "choice"/);
-  assert.match(trainingJs, /const selfIsCoach = preview === "coach"/);
-  assert.match(trainingJs, /const boostPreview = preview === "boost"/);
-  for (const functionName of [
-    "submitCarrotChoice",
-    "submitInstruction",
-    "startTurn",
-    "completeTurn",
-    "handleGiveUp",
-    "syncTurnMilestones",
-  ]) {
-    assert.match(
-      trainingJs,
-      new RegExp(`async function ${functionName}\\([^)]*\\) \\{\\s*if \\(state\\.preview\\) return;`),
-    );
-  }
 });
