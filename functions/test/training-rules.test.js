@@ -41,6 +41,7 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
   assert.match(queueEntry.intensity[".validate"], /light/);
   assert.match(queueEntry.intensity[".validate"], /standard/);
   assert.match(queueEntry.intensity[".validate"], /strong/);
+  assert.match(queueEntry.lastSeen[".validate"], /now - 60000/);
   assert.equal(queueEntry.$other[".validate"], false);
 
   const active = online.trainingActive.$uid;
@@ -78,12 +79,16 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
     active.rooms.$roomId[".validate"],
     /\$roomId === newData\.parent\(\)\.parent\(\)\.child\('roomId'\)\.val\(\)/,
   );
+  assert.match(active.reservedAt[".validate"], /now - 60000/);
+  assert.match(active.reservedAt[".validate"], /now \+ 15000/);
   assert.equal(active.$other[".validate"], false);
+  assert.match(lock[".write"], /!data\.exists\(\) && !newData\.exists\(\)/);
   assert.match(lock[".write"], /expiresAt/);
   assert.match(lock.expiresAt[".validate"], /now \+ 60000/);
   assert.equal(lock.$other[".validate"], false);
 
   assert.match(online.trainingInvites.$targetUid[".read"], /auth\.uid === \$targetUid/);
+  assert.match(invite[".write"], /!data\.exists\(\) && !newData\.exists\(\)/);
   assert.match(invite[".write"], /auth\.uid === \$targetUid/);
   assert.match(invite[".write"], /trainingRooms/);
   assert.match(invite[".write"], /guestUid/);
@@ -124,6 +129,14 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
   assert.match(invite.targetSessionId[".validate"], /length <= 64/);
   assert.equal(invite.$other[".validate"], false);
   assert.deepEqual(online.trainingRoomCleanupCursor, {
+    ".read": false,
+    ".write": false,
+  });
+  assert.deepEqual(online.trainingActiveCleanupCursor, {
+    ".read": false,
+    ".write": false,
+  });
+  assert.deepEqual(online.trainingActiveCleanupGuards, {
     ".read": false,
     ".write": false,
   });
@@ -181,6 +194,8 @@ test("training room bootstrap fixes both identities and keeps signals target-pri
   );
   assert.match(room[".write"], /\/conditions'\)\.val\(\) === ''/);
   assert.match(room[".write"], /!newData\.child\('accepted\/'/);
+  assert.match(room.createdAt[".validate"], /trainingActiveCleanupGuards/);
+  assert.match(room.createdAt[".validate"], /expiresAt/);
 
   for (const immutable of [
     "protocolVersion",

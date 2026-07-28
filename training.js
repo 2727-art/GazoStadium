@@ -61,6 +61,7 @@ const MATCH_LOCK_TTL_MS = MATCH_TIMEOUT_MS + 10_000;
 const MATCH_LOCK_RETRY_GRACE_MS = 100;
 const HEARTBEAT_MS = 20_000;
 const TRAINING_QUEUE_RECLAIM_MS = 60_000;
+const MATCHMAKING_CLEANUP_RETRY_DELAYS_MS = Object.freeze([0, 250, 750]);
 const TRAINING_CANDIDATE_SKIP_MS = TRAINING_QUEUE_FRESH_MS;
 const TRAINING_HOST_TAKEOVER_MS = 8_000;
 const IMAGE_EXCHANGE_TIMEOUT_MS = 45_000;
@@ -1644,12 +1645,21 @@ async function claimTrainingQueueSession() {
 
 async function updateOwnedTrainingQueue(patch, sessionId = state.queueSessionId) {
   if (!state.uid || !sessionId || state.preview) return false;
+  const lastSeen = firebaseNow();
   const transaction = await runTransaction(
     ref(database, `online/trainingQueue/${state.uid}`),
     (current) => {
+      if (current == null) return null;
       if (!queueEntryBelongsToSession(current, sessionId)) return undefined;
-      return { ...current, ...patch, uid: state.uid, sessionId };
+      return {
+        ...current,
+        ...patch,
+        uid: state.uid,
+        sessionId,
+        lastSeen,
+      };
     },
+    { applyLocally: false },
   ).catch(() => null);
   return Boolean(
     transaction?.committed
@@ -1661,12 +1671,16 @@ async function removeOwnedTrainingQueue(sessionId = state.queueSessionId) {
   if (!state.uid || !sessionId || state.preview) return false;
   const transaction = await runTransaction(
     ref(database, `online/trainingQueue/${state.uid}`),
-    (current) => queueEntryBelongsToSession(current, sessionId) ? null : undefined,
+    (current) => {
+      if (current == null) return null;
+      return queueEntryBelongsToSession(current, sessionId) ? null : undefined;
+    },
+    { applyLocally: false },
   ).catch(() => null);
-  return Boolean(transaction && (
-    transaction.committed
-    || transaction.snapshot.val() === null
-  ));
+  return Boolean(
+    transaction?.committed
+    && transaction.snapshot.val() === null
+  );
 }
 
 async function removeTrainingInviteForSession(
@@ -1675,14 +1689,27 @@ async function removeTrainingInviteForSession(
   targetSessionId = state.queueSessionId,
 ) {
   if (!targetUid || !roomId || !targetSessionId || state.preview) return false;
+  const inviteRef = ref(database, `online/trainingInvites/${targetUid}/${roomId}`);
+  if (targetUid !== state.uid) {
+    try {
+      await remove(inviteRef);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const transaction = await runTransaction(
-    ref(database, `online/trainingInvites/${targetUid}/${roomId}`),
-    (current) => current?.targetSessionId === targetSessionId ? null : undefined,
+    inviteRef,
+    (current) => {
+      if (current == null) return null;
+      return current.targetSessionId === targetSessionId ? null : undefined;
+    },
+    { applyLocally: false },
   ).catch(() => null);
-  return Boolean(transaction && (
-    transaction.committed
-    || transaction.snapshot.val() === null
-  ));
+  return Boolean(
+    transaction?.committed
+    && transaction.snapshot.val() === null
+  );
 }
 
 async function cleanupTrainingInvitesForSession(targetSessionId = state.queueSessionId) {
@@ -1703,17 +1730,18 @@ async function removeStaleTrainingInvite(roomId, observedInvite, currentSessionI
   const transaction = await runTransaction(
     ref(database, `online/trainingInvites/${state.uid}/${roomId}`),
     (current) => {
-      if (!current || current.targetSessionId === currentSessionId) return undefined;
+      if (current == null) return null;
+      if (current.targetSessionId === currentSessionId) return undefined;
       const unchanged = [
         "roomId", "hostUid", "targetSessionId", "protocolVersion", "variant", "createdAt",
       ].every((key) => current[key] === observedInvite?.[key]);
       return unchanged ? null : undefined;
     },
+    { applyLocally: false },
   ).catch(() => null);
   const remaining = transaction?.snapshot?.val();
   return Boolean(transaction && (
-    transaction.committed
-    || remaining === null
+    (transaction.committed && remaining === null)
     || remaining?.targetSessionId === currentSessionId
   ));
 }
@@ -1753,8 +1781,10 @@ async function beginMatchmaking() {
     state.serverTimeOffset = Number(offset?.val() || 0);
     const queueEntry = await claimTrainingQueueSession();
     if (!await cleanupStaleTrainingInvites(queueEntry.sessionId)) {
-      await removeOwnedTrainingQueue(queueEntry.sessionId);
-      if (state.queueSessionId === queueEntry.sessionId) state.queueSessionId = "";
+      const queueRemoved = await removeOwnedTrainingQueue(queueEntry.sessionId);
+      if (queueRemoved && state.queueSessionId === queueEntry.sessionId) {
+        state.queueSessionId = "";
+      }
       throw new Error(
         "以前の鍛え合い招待を整理できませんでした。通信を確認して、もう一度開始してください。",
       );
@@ -1776,6 +1806,7 @@ async function beginMatchmaking() {
     }, HEARTBEAT_MS);
     state.matchmakingUnsubscribers.push(onValue(ref(database, "online/trainingQueue"), (snapshot) => {
       state.latestQueue = snapshot.val() || {};
+      scheduleInviteProcessing(0);
       attemptToHost().catch(handleRecoverableError);
     }, handleRecoverableError));
     state.matchmakingUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
@@ -1786,7 +1817,7 @@ async function beginMatchmaking() {
     }));
     state.matchmakingUnsubscribers.push(onValue(ref(database, `online/trainingInvites/${state.uid}`), (snapshot) => {
       state.latestInvites = snapshot.val() || {};
-      processInvites().catch(handleRecoverableError);
+      scheduleInviteProcessing(0);
     }, handleRecoverableError));
   } finally {
     state.startingMatchmaking = false;
@@ -1962,12 +1993,19 @@ async function acquireMatchLock(roomId) {
 }
 
 async function releaseMatchLock(roomId) {
-  const transaction = await runTransaction(ref(database, "online/trainingMatchLock"), (current) => (
-    current?.uid === state.uid && current?.roomId === roomId ? null : undefined
-  )).catch(() => null);
+  const transaction = await runTransaction(
+    ref(database, "online/trainingMatchLock"),
+    (current) => {
+      if (current == null) return null;
+      return current.uid === state.uid && current.roomId === roomId
+        ? null
+        : undefined;
+    },
+    { applyLocally: false },
+  ).catch(() => null);
   if (!transaction) return false;
   const current = transaction.snapshot.val();
-  return transaction.committed
+  return (transaction.committed && current === null)
     || current?.uid !== state.uid
     || current?.roomId !== roomId;
 }
@@ -2049,32 +2087,37 @@ async function cancelActiveRoomDestroyedDisconnect(roomId = "") {
 async function removeTrainingActiveChild(roomId) {
   const transaction = await runTransaction(
     ref(database, `online/trainingActive/${state.uid}/rooms/${roomId}`),
-    (current) => current === true ? null : undefined,
+    (current) => current == null || current === true ? null : undefined,
+    { applyLocally: false },
   ).catch(() => null);
-  return Boolean(transaction && (
-    transaction.committed
-    || transaction.snapshot.val() === null
-  ));
+  return Boolean(
+    transaction?.committed
+    && transaction.snapshot.val() === null
+  );
 }
 
 async function removeTrainingActiveParentIfOwned(roomId) {
   const transaction = await runTransaction(
     ref(database, `online/trainingActive/${state.uid}`),
     (current) => {
+      if (current == null) return null;
       const rooms = current?.rooms && typeof current.rooms === "object"
         ? current.rooms
         : {};
       const hasClaimedRoom = Object.values(rooms).some((claimed) => claimed === true);
       return current?.roomId === roomId && !hasClaimedRoom ? null : undefined;
     },
+    { applyLocally: false },
   ).catch(() => null);
+  const current = transaction?.snapshot?.val();
   return Boolean(transaction && (
-    transaction.committed
-    || transaction.snapshot.val() === null
+    (transaction.committed && current === null)
+    || (current != null && current.roomId !== roomId)
   ));
 }
 
 async function reserveTrainingActiveRoom(roomId) {
+  const reservedAt = firebaseNow();
   const transaction = await runTransaction(
     ref(database, `online/trainingActive/${state.uid}`),
     (current) => {
@@ -2082,19 +2125,29 @@ async function reserveTrainingActiveRoom(roomId) {
         ? current.rooms
         : {};
       if (Object.values(sessions).some((claimed) => claimed === true)) return undefined;
-      return { roomId, rooms: { [roomId]: true } };
+      return { roomId, reservedAt, rooms: { [roomId]: true } };
     },
   );
   const reservation = transaction.snapshot.val();
   return transaction.committed
     && reservation?.roomId === roomId
+    && reservation?.reservedAt === reservedAt
     && reservation?.rooms?.[roomId] === true;
 }
 
 async function releaseTrainingActiveReservation(roomId) {
-  await cancelTrainingActiveDisconnect(roomId);
-  await removeTrainingActiveChild(roomId);
-  return removeTrainingActiveParentIfOwned(roomId);
+  const childReleased = await removeTrainingActiveChild(roomId);
+  const parentReleased = childReleased
+    ? await removeTrainingActiveParentIfOwned(roomId)
+    : false;
+  if (!childReleased || !parentReleased) return false;
+  const remaining = await get(
+    ref(database, `online/trainingActive/${state.uid}`),
+  ).catch(() => null);
+  if (!remaining) return false;
+  const released = remaining.val()?.rooms?.[roomId] !== true;
+  if (released) await cancelTrainingActiveDisconnect(roomId);
+  return released;
 }
 
 async function armFormingRoomDisconnects(roomId, isHost, handles = []) {
@@ -2200,14 +2253,19 @@ async function createTrainingRoom(pair) {
       createdAt: firebaseNow(),
     });
     candidatePermissionPhase = "";
-    if (await releaseMatchLock(roomId)) ownsLock = false;
+    if (!await releaseMatchLockReliably(roomId)) {
+      throw new Error("対戦準備ロックを終了できませんでした。");
+    }
+    ownsLock = false;
     state.pendingRoomId = roomId;
     state.pendingInviteTargetSessionId = guest.sessionId;
     state.room = { ...emptyRoom(), ...createdRoom, createdAt: firebaseNow() };
     state.screen = "forming";
     render();
     watchPendingRoom(roomId, true);
-    state.matchTimer = window.setTimeout(() => expirePendingRoom(roomId), MATCH_TIMEOUT_MS);
+    state.matchTimer = window.setTimeout(() => {
+      expirePendingRoom(roomId).catch(handleRecoverableError);
+    }, MATCH_TIMEOUT_MS);
   } catch (error) {
     const failedCandidatePermissionPhase = candidatePermissionPhase;
     candidatePermissionPhase = "";
@@ -2233,19 +2291,34 @@ async function createTrainingRoom(pair) {
       }
     }
     await cancelDisconnectHandles(roomDisconnects);
-    if (guestUid) {
-      await removeTrainingInviteForSession(guestUid, roomId, guestSessionId);
+    const inviteCleared = !roomCreated
+      || !guestUid
+      || await removeTrainingInviteReliably(guestUid, roomId, guestSessionId);
+    const activeReleased = !activeReserved
+      || await releaseTrainingActiveReservation(roomId);
+    const queueReturnedToWaiting = !retryMatching
+      || await updateOwnedTrainingQueue({ state: "waiting" });
+    if (!inviteCleared || !activeReleased || !queueReturnedToWaiting) {
+      retryMatching = false;
+      if (roomCreated) {
+        state.pendingRoomId = roomId;
+        state.pendingInviteTargetSessionId = guestSessionId;
+        state.room = {
+          ...emptyRoom(),
+          ...(createdRoom || {}),
+          createdAt: firebaseNow(),
+        };
+        state.screen = "forming";
+        render();
+      }
+      await handleFatalError(new Error(
+        "対戦準備の後始末を確認できませんでした。通信を確認して、もう一度開始してください。",
+      ));
+      return;
     }
-    if (activeReserved) await releaseTrainingActiveReservation(roomId);
     if (state.pendingRoomId === roomId) state.pendingRoomId = "";
     if (state.pendingInviteTargetSessionId === guestSessionId) {
       state.pendingInviteTargetSessionId = "";
-    }
-    if (retryMatching) {
-      await updateOwnedTrainingQueue({
-        state: "waiting",
-        lastSeen: firebaseNow(),
-      });
     }
     const permissionError = isTrainingPermissionError(error);
     const candidatePermissionFailure = permissionError
@@ -2327,7 +2400,10 @@ function scheduleInviteProcessing(delay = 500) {
     || state.roomId) return;
   state.inviteRetryTimer = window.setTimeout(() => {
     state.inviteRetryTimer = null;
-    processInvites().catch(handleRecoverableError);
+    processInvites().catch((error) => {
+      handleRecoverableError(error);
+      scheduleInviteProcessing(2_000);
+    });
   }, Math.max(0, delay));
 }
 
@@ -2532,7 +2608,16 @@ async function acceptInvite(roomId, invite) {
     || room.members?.[state.uid] !== true
     || room.players?.[state.uid]?.uid !== state.uid
     || invite.hostUid !== room.hostUid) {
-    await removeTrainingInviteForSession(state.uid, roomId, invite.targetSessionId);
+    if (!await removeTrainingInviteReliably(
+      state.uid,
+      roomId,
+      invite.targetSessionId,
+    )) {
+      handleRecoverableError(new Error(
+        "無効な対戦招待の整理を再試行します。",
+      ));
+      scheduleInviteProcessing(2_000);
+    }
     return false;
   }
   let activeReserved = false;
@@ -2554,12 +2639,18 @@ async function acceptInvite(roomId, invite) {
     await update(ref(database, `online/trainingRooms/${roomId}`), acceptanceUpdates);
   } catch (error) {
     await cancelDisconnectHandles(roomDisconnects);
-    if (activeReserved) await releaseTrainingActiveReservation(roomId);
-    if (guestQueueForming) {
-      await updateOwnedTrainingQueue({
-        state: "waiting",
-        lastSeen: firebaseNow(),
-      }, invite.targetSessionId);
+    const activeReleased = !activeReserved
+      || await releaseTrainingActiveReservation(roomId);
+    const queueReturnedToWaiting = !guestQueueForming
+      || await updateOwnedTrainingQueue(
+        { state: "waiting" },
+        invite.targetSessionId,
+      );
+    if (!activeReleased || !queueReturnedToWaiting) {
+      await handleFatalError(new Error(
+        "対戦参加の後始末を確認できませんでした。通信を確認して、もう一度開始してください。",
+      ));
+      return false;
     }
     if (active && state.screen === "matching" && !state.pendingRoomId && !state.roomId) {
       scheduleInviteProcessing(1_500);
@@ -2567,7 +2658,11 @@ async function acceptInvite(roomId, invite) {
     throw error;
   }
   const acceptedSessionId = invite.targetSessionId;
-  await removeTrainingInviteForSession(state.uid, roomId, acceptedSessionId);
+  if (!await removeTrainingInviteReliably(state.uid, roomId, acceptedSessionId)) {
+    handleRecoverableError(new Error(
+      "受け取った対戦招待の整理を入室時に再試行します。",
+    ));
+  }
   state.pendingRoomId = roomId;
   state.pendingInviteTargetSessionId = acceptedSessionId;
   state.room = {
@@ -2585,7 +2680,9 @@ async function acceptInvite(roomId, invite) {
   state.screen = "forming";
   render();
   watchPendingRoom(roomId, false);
-  state.matchTimer = window.setTimeout(() => abandonPendingRoom(roomId), MATCH_TIMEOUT_MS + 5_000);
+  state.matchTimer = window.setTimeout(() => {
+    abandonPendingRoom(roomId).catch(handleFatalError);
+  }, MATCH_TIMEOUT_MS + 5_000);
   return true;
 }
 
@@ -2597,11 +2694,11 @@ function watchPendingRoom(roomId, isHost) {
     if (isHost
       && state.room.status === "forming"
       && Object.keys(state.room.accepted || {}).length === 2) {
-      runTransaction(ref(database, `${base}/status`), (current) => current === "forming" ? "active" : undefined)
+      transitionTrainingRoomStatus(roomId, "forming", "active")
         .catch(handleRecoverableError);
     }
     if (state.room.status === "active") enterRoom(roomId).catch(handleRecoverableError);
-    if (state.room.status === "expired") returnToWaitingQueue(roomId).catch(handleRecoverableError);
+    if (state.room.status === "expired") returnToWaitingQueue(roomId).catch(handleFatalError);
   };
   state.matchmakingUnsubscribers.push(onValue(ref(database, `${base}/accepted`), (snapshot) => {
     state.room.accepted = snapshot.val() || {};
@@ -2612,15 +2709,25 @@ function watchPendingRoom(roomId, isHost) {
     react();
   }, handleRecoverableError));
   state.matchmakingUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {
-    if (snapshot.exists() && state.pendingRoomId === roomId) returnToWaitingQueue(roomId).catch(handleRecoverableError);
+    if (snapshot.exists() && state.pendingRoomId === roomId) {
+      returnToWaitingQueue(roomId).catch(handleFatalError);
+    }
   }, handleRecoverableError));
+}
+
+function transitionTrainingRoomStatus(roomId, expected, next) {
+  return runTransaction(
+    ref(database, `online/trainingRooms/${roomId}/status`),
+    (current) => (
+      current == null || current === expected ? next : undefined
+    ),
+    { applyLocally: false },
+  );
 }
 
 async function expirePendingRoom(roomId) {
   if (state.roomId || state.pendingRoomId !== roomId || state.room.hostUid !== state.uid) return;
-  const transaction = await runTransaction(ref(database, `online/trainingRooms/${roomId}/status`), (current) => (
-    current === "forming" ? "expired" : undefined
-  ));
+  const transaction = await transitionTrainingRoomStatus(roomId, "forming", "expired");
   if (transaction.snapshot.val() === "expired") {
     const guestUid = state.room.guestUid;
     const acceptedSnapshot = guestUid
@@ -2656,9 +2763,10 @@ async function confirmPendingRoomTerminal(roomId, reason, isHost) {
   let statusTerminal = false;
   let destroyedTerminal = false;
   if (isHost) {
-    const statusTransaction = await runTransaction(
-      ref(database, `online/trainingRooms/${roomId}/status`),
-      (current) => current === "forming" ? "expired" : undefined,
+    const statusTransaction = await transitionTrainingRoomStatus(
+      roomId,
+      "forming",
+      "expired",
     ).catch(() => null);
     statusTerminal = statusTransaction?.snapshot?.val() === "expired";
   }
@@ -2686,12 +2794,17 @@ async function teardownPendingRoom(reason = "player_exit") {
     const isHost = state.room.hostUid === state.uid;
     await confirmPendingRoomTerminal(roomId, reason, isHost);
     const inviteTargetUid = isHost ? state.room.guestUid : state.uid;
-    await Promise.allSettled([
+    const [inviteCleared, lockReleased] = await Promise.all([
       inviteTargetUid && targetSessionId
-        ? removeTrainingInviteForSession(inviteTargetUid, roomId, targetSessionId)
-        : Promise.resolve(),
-      releaseMatchLock(roomId),
+        ? removeTrainingInviteReliably(inviteTargetUid, roomId, targetSessionId)
+        : Promise.resolve(true),
+      releaseMatchLockReliably(roomId),
     ]);
+    if (!inviteCleared || !lockReleased) {
+      throw new Error(
+        "対戦準備の後始末を確認できませんでした。通信を確認して、もう一度終了してください。",
+      );
+    }
     return true;
   })();
   state.pendingTeardown = pendingTeardown;
@@ -2723,12 +2836,29 @@ async function returnToWaitingQueue(roomId) {
     ? state.room.guestUid
     : state.uid;
   try {
-    if (inviteTargetUid && targetSessionId) {
-      await removeTrainingInviteForSession(inviteTargetUid, roomId, targetSessionId);
+    if (inviteTargetUid
+      && targetSessionId
+      && !await removeTrainingInviteReliably(
+        inviteTargetUid,
+        roomId,
+        targetSessionId,
+      )) {
+      throw new Error(
+        "対戦招待の終了を確認できませんでした。通信を確認して、もう一度お試しください。",
+      );
     }
-    await cleanupMatchmaking(false);
+    const matchmakingCleared = await cleanupMatchmakingReliably(false);
+    if (!matchmakingCleared) {
+      throw new Error(
+        "以前の待機セッションを終了できませんでした。通信を確認して、もう一度開始してください。",
+      );
+    }
     await cleanupPublicPresence();
-    await releaseMatchLock(roomId);
+    if (!await releaseMatchLockReliably(roomId)) {
+      throw new Error(
+        "対戦準備ロックの終了を確認できませんでした。通信を確認して、もう一度お試しください。",
+      );
+    }
     state.pendingRoomId = "";
     state.pendingInviteTargetSessionId = "";
     state.room = emptyRoom();
@@ -2754,6 +2884,28 @@ async function enterRoom(roomId) {
       throw new Error("鍛え合い60の部屋へ参加できませんでした。");
     }
     await armActiveRoomDestroyedDisconnect(roomId);
+    const targetSessionId = state.pendingInviteTargetSessionId;
+    if (room.guestUid
+      && targetSessionId
+      && !await removeTrainingInviteReliably(
+        room.guestUid,
+        roomId,
+        targetSessionId,
+      )) {
+      throw new Error(
+        "対戦招待を終了できなかったため、入室を保留しました。通信を確認してください。",
+      );
+    }
+    if (!await releaseMatchLockReliably(roomId)) {
+      throw new Error(
+        "対戦準備ロックを終了できなかったため、入室を保留しました。通信を確認してください。",
+      );
+    }
+    if (!await cleanupMatchmakingReliably(true)) {
+      throw new Error(
+        "待機セッションを終了できなかったため、対戦開始を中止しました。通信を確認してください。",
+      );
+    }
     state.roomId = roomId;
     roomAssigned = true;
     window.clearTimeout(state.matchTimer);
@@ -2761,15 +2913,9 @@ async function enterRoom(roomId) {
     state.matchTimer = null;
     state.enterRoomRetryTimer = null;
     state.enterRoomRetryAttempts = 0;
-    const targetSessionId = state.pendingInviteTargetSessionId;
     state.pendingRoomId = "";
     state.pendingInviteTargetSessionId = "";
     state.room = { ...emptyRoom(), ...room };
-    if (room.guestUid && targetSessionId) {
-      await removeTrainingInviteForSession(room.guestUid, roomId, targetSessionId);
-    }
-    await releaseMatchLock(roomId);
-    await cleanupMatchmaking(true);
     await updatePublicPresence("playing");
     state.screen = "room";
     state.roomSyncing = true;
@@ -2818,7 +2964,12 @@ function scheduleEnterRoomRetry(roomId, error) {
   }
   handleRecoverableError(error);
   state.enterRoomRetryAttempts += 1;
-  if (state.enterRoomRetryAttempts > 6) return;
+  if (state.enterRoomRetryAttempts > 6) {
+    handleFatalError(new Error(
+      "対戦開始の再確認を完了できませんでした。通信を確認して、もう一度開始してください。",
+    )).catch(handleRecoverableError);
+    return;
+  }
   window.clearTimeout(state.enterRoomRetryTimer);
   const delay = Math.min(4_000, 500 * (2 ** (state.enterRoomRetryAttempts - 1)));
   state.enterRoomRetryTimer = window.setTimeout(() => {
@@ -3954,7 +4105,11 @@ async function markRoomDestroyed(reason) {
 }
 
 async function cancelMatchmaking() {
-  await cleanupMatchmaking(false);
+  if (!await cleanupMatchmakingReliably(false)) {
+    throw new Error(
+      "参加待ちの終了を確認できませんでした。通信を確認して、もう一度お試しください。",
+    );
+  }
   await cleanupPublicPresence();
   releaseTrainingTabOwnership();
   state.screen = "setup";
@@ -3963,12 +4118,14 @@ async function cancelMatchmaking() {
 }
 
 async function cancelPendingRoom() {
-  const roomId = state.pendingRoomId;
   await teardownPendingRoom("player_cancelled");
-  await cleanupMatchmaking(false);
+  if (!await cleanupMatchmakingReliably(false)) {
+    throw new Error(
+      "対戦準備の終了を確認できませんでした。通信を確認して、もう一度お試しください。",
+    );
+  }
   await cleanupPublicPresence();
   releaseTrainingTabOwnership();
-  if (roomId) await releaseMatchLock(roomId);
   state.room = emptyRoom();
   state.screen = "setup";
   setTrainingChrome("鍛え合い READY");
@@ -3988,19 +4145,48 @@ async function cleanupMatchmaking(keepActive) {
   state.queueHeartbeat = null;
   state.matchTimer = null;
   state.enterRoomRetryTimer = null;
-  state.enterRoomRetryAttempts = 0;
+  if (!keepActive) state.enterRoomRetryAttempts = 0;
   state.inviteRetryTimer = null;
   state.matchmakingUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   const handles = state.disconnectHandles.splice(0);
   await Promise.allSettled(handles.map((handle) => handle?.cancel?.()));
   if (!keepActive && expectedRoomId && state.uid && !state.preview) {
-    await releaseTrainingActiveReservation(expectedRoomId);
+    if (!await releaseTrainingActiveReservation(expectedRoomId)) return false;
   }
-  if (!state.uid || state.preview || !trainingSharedStateOwned || !queueSessionId) return;
+  if (!state.uid || state.preview || !trainingSharedStateOwned || !queueSessionId) return true;
   const invitesCleared = await cleanupTrainingInvitesForSession(queueSessionId);
-  if (!invitesCleared) return;
+  if (!invitesCleared) return false;
   const queueCleared = await removeOwnedTrainingQueue(queueSessionId);
   if (queueCleared && state.queueSessionId === queueSessionId) state.queueSessionId = "";
+  return queueCleared;
+}
+
+async function retryTrainingCleanup(operation) {
+  for (const delay of MATCHMAKING_CLEANUP_RETRY_DELAYS_MS) {
+    if (delay > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+    }
+    try {
+      if (await operation()) return true;
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  return false;
+}
+
+function cleanupMatchmakingReliably(keepActive) {
+  return retryTrainingCleanup(() => cleanupMatchmaking(keepActive));
+}
+
+function removeTrainingInviteReliably(targetUid, roomId, targetSessionId) {
+  return retryTrainingCleanup(() => (
+    removeTrainingInviteForSession(targetUid, roomId, targetSessionId)
+  ));
+}
+
+function releaseMatchLockReliably(roomId) {
+  return retryTrainingCleanup(() => releaseMatchLock(roomId));
 }
 
 async function requestHome() {
@@ -4064,6 +4250,12 @@ async function deactivate({ returnHome }) {
       return false;
     }
   }
+  if (!await cleanupMatchmakingReliably(false)) {
+    handleRecoverableError(new Error(
+      "鍛え合い60の終了を確認できませんでした。通信を確認して、もう一度お試しください。",
+    ));
+    return false;
+  }
   await cancelActiveRoomDestroyedDisconnect(state.roomId);
   active = false;
   state.generation += 1;
@@ -4076,7 +4268,6 @@ async function deactivate({ returnHome }) {
   clearImageExchangeWatchdog();
   clearScorePoll();
   clearTurnTicker();
-  await cleanupMatchmaking(false);
   await cleanupPublicPresence();
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   const disconnects = state.disconnectHandles.splice(0);
@@ -4126,10 +4317,14 @@ async function handleFatalError(error) {
     handleRecoverableError(teardownError);
     return;
   }
-  await cleanupMatchmaking(false).catch(() => {});
+  const matchmakingCleared = await cleanupMatchmakingReliably(false)
+    .catch(() => false);
   await cleanupPublicPresence().catch(() => {});
-  releaseTrainingTabOwnership();
-  state.errorMessage = error?.message || "鍛え合い60を開始できませんでした。";
+  if (matchmakingCleared) releaseTrainingTabOwnership();
+  state.errorMessage = matchmakingCleared
+    ? error?.message || "鍛え合い60を開始できませんでした。"
+    : "通信が不安定なため、待機情報の終了を確認できませんでした。"
+      + "接続を戻してから「タイトルへ戻る」をもう一度押してください。";
   state.screen = "error";
   render();
 }

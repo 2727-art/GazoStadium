@@ -17,6 +17,7 @@ const {
   createOnlinePublicPresenceCleanup,
 } = require("./online-public-presence-cleanup");
 const {
+  createTrainingActiveCleanup,
   createTrainingQueueCleanup,
   createTrainingRoomCleanup,
   trainingActiveRoomIsLive,
@@ -338,6 +339,9 @@ const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
 });
 const cleanupTrainingQueue = createTrainingQueueCleanup({
+  realtime,
+});
+const cleanupTrainingActive = createTrainingActiveCleanup({
   realtime,
 });
 const cleanupTrainingRooms = createTrainingRoomCleanup({
@@ -15200,11 +15204,12 @@ exports.cleanupTrainingRooms = onSchedule({
 }, async () => {
   try {
     const now = Date.now();
-    const [rooms, queue] = await Promise.all([
+    const [rooms, queue, active] = await Promise.all([
       cleanupTrainingRooms(now),
       cleanupTrainingQueue(now),
+      cleanupTrainingActive(now),
     ]);
-    const result = { rooms, queue };
+    const result = { rooms, queue, active };
     console.info("cleanupTrainingRooms completed", result);
     return result;
   } catch (error) {

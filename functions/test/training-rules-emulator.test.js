@@ -1915,3 +1915,306 @@ test("retired team data survives but no authenticated client can read or mutate 
     await assertFails(remove(legacyRef));
   }
 });
+
+test("queue lastSeen uses a 60-second lease for state transitions", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const cases = [
+    {
+      uid: "training-lease-20s",
+      lastSeenOffsetMs: -20_000,
+      succeeds: true,
+    },
+    {
+      uid: "training-lease-stale",
+      lastSeenOffsetMs: -65_000,
+      succeeds: false,
+    },
+    {
+      uid: "training-lease-future",
+      lastSeenOffsetMs: 20_000,
+      succeeds: false,
+    },
+  ];
+
+  for (const leaseCase of cases) {
+    const seededAt = Date.now();
+    const queuePath = `online/trainingQueue/${leaseCase.uid}`;
+    const database = environment.authenticatedContext(leaseCase.uid).database();
+    await assertSucceeds(set(
+      ref(database, queuePath),
+      queueEntry(leaseCase.uid, "LEASE", seededAt),
+    ));
+    const transition = update(ref(database, queuePath), {
+      lastSeen: seededAt + leaseCase.lastSeenOffsetMs,
+      state: "forming",
+    });
+    if (leaseCase.succeeds) {
+      await assertSucceeds(transition);
+      assert.equal((await get(ref(database, `${queuePath}/state`))).val(), "forming");
+    } else {
+      await assertFails(transition);
+    }
+  }
+});
+
+test("training active accepts optional in-range reservedAt and rejects invalid bounds", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const reservations = [
+    {
+      uid: "training-active-legacy",
+      roomId: "-trainingActiveLegacy01",
+      succeeds: true,
+    },
+    {
+      uid: "training-active-current",
+      roomId: "-trainingActiveCurrent01",
+      reservedAt: Date.now(),
+      succeeds: true,
+    },
+    {
+      uid: "training-active-old",
+      roomId: "-trainingActiveOld01",
+      reservedAt: Date.now() - 65_000,
+      succeeds: false,
+    },
+    {
+      uid: "training-active-future",
+      roomId: "-trainingActiveFuture01",
+      reservedAt: Date.now() + 20_000,
+      succeeds: false,
+    },
+  ];
+
+  for (const reservation of reservations) {
+    const database = environment.authenticatedContext(reservation.uid).database();
+    const payload = activeReservation(reservation.roomId);
+    if (reservation.reservedAt !== undefined) {
+      payload.reservedAt = reservation.reservedAt;
+    }
+    const write = set(
+      ref(database, `online/trainingActive/${reservation.uid}`),
+      payload,
+    );
+    if (reservation.succeeds) {
+      await assertSucceeds(write);
+    } else {
+      await assertFails(write);
+    }
+  }
+});
+
+test("cleanup cursor and guards are server-only and guard room creation until expiry", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const now = Date.now();
+  const roomId = "-trainingCleanupGuard01";
+  const host = queueEntry("training-guard-host", "HOST", now);
+  const guest = queueEntry("training-guard-guest", "GUEST", now);
+  const hostDatabase = environment.authenticatedContext(host.uid).database();
+  const guestDatabase = environment.authenticatedContext(guest.uid).database();
+  const cursorPath = "online/trainingActiveCleanupCursor";
+  const guardPath = `online/trainingActiveCleanupGuards/${roomId}`;
+  const guard = {
+    cleanupId: "cleanup-guard-regression",
+    uid: host.uid,
+    roomId,
+    createdAt: now,
+    expiresAt: now + 60_000,
+  };
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    const adminDatabase = contextWithoutRules.database();
+    await Promise.all([
+      set(ref(adminDatabase, cursorPath), {
+        uid: host.uid,
+        updatedAt: now,
+      }),
+      set(ref(adminDatabase, guardPath), guard),
+    ]);
+  });
+  await assertFails(get(ref(hostDatabase, cursorPath)));
+  await assertFails(get(ref(hostDatabase, guardPath)));
+  await assertFails(set(ref(hostDatabase, cursorPath), {
+    uid: guest.uid,
+    updatedAt: Date.now(),
+  }));
+  await assertFails(set(ref(hostDatabase, guardPath), {
+    ...guard,
+    expiresAt: Date.now() + 120_000,
+  }));
+
+  await assertSucceeds(set(
+    ref(hostDatabase, `online/trainingQueue/${host.uid}`),
+    host,
+  ));
+  await assertSucceeds(set(
+    ref(guestDatabase, `online/trainingQueue/${guest.uid}`),
+    guest,
+  ));
+  await assertSucceeds(set(
+    ref(hostDatabase, "online/trainingMatchLock"),
+    matchLockPayload(host.uid, roomId),
+  ));
+  await reserveActive(hostDatabase, host.uid, roomId);
+  await assertFails(set(
+    ref(hostDatabase, `online/trainingRooms/${roomId}`),
+    roomPayload(host, guest, Date.now()),
+  ));
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await update(
+      ref(contextWithoutRules.database(), guardPath),
+      { expiresAt: Date.now() - 1 },
+    );
+  });
+  await assertSucceeds(set(
+    ref(hostDatabase, `online/trainingRooms/${roomId}`),
+    roomPayload(host, guest, Date.now()),
+  ));
+  await assertSucceeds(remove(ref(
+    hostDatabase,
+    "online/trainingMatchLock",
+  )));
+});
+
+test("cold-cache status transaction activates a forming room with applyLocally false", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const roomId = "-trainingColdStatus01";
+  const room = await createFormingRoom(environment, Date.now(), roomId);
+  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
+  await assertSucceeds(update(
+    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
+    {
+      [`players/${room.guest.uid}/conditions`]: room.guestConditions,
+      [`accepted/${room.guest.uid}`]: true,
+    },
+  ));
+
+  const coldHostDatabase = environment.authenticatedContext(room.host.uid).database();
+  const observed = [];
+  const transaction = await runTransaction(
+    ref(coldHostDatabase, `online/trainingRooms/${roomId}/status`),
+    (current) => {
+      observed.push(current);
+      return current == null || current === "forming" ? "active" : undefined;
+    },
+    { applyLocally: false },
+  );
+
+  assert.equal(observed[0], null);
+  assert.equal(observed.includes("forming"), true);
+  assert.equal(transaction.committed, true);
+  assert.equal(transaction.snapshot.val(), "active");
+  assert.equal(
+    (await get(ref(
+      coldHostDatabase,
+      `online/trainingRooms/${roomId}/status`,
+    ))).val(),
+    "active",
+  );
+});
+
+test("cold-cache active child and parent transactions release with applyLocally false", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const uid = "training-cold-release";
+  const roomId = "-trainingColdRelease01";
+  const warmDatabase = environment.authenticatedContext(uid).database();
+  await assertSucceeds(set(
+    ref(warmDatabase, `online/trainingActive/${uid}`),
+    {
+      ...activeReservation(roomId),
+      reservedAt: Date.now(),
+    },
+  ));
+
+  const coldChildDatabase = environment.authenticatedContext(uid).database();
+  const childObserved = [];
+  const childTransaction = await runTransaction(
+    ref(coldChildDatabase, `online/trainingActive/${uid}/rooms/${roomId}`),
+    (current) => {
+      childObserved.push(current);
+      return current == null || current === true ? null : undefined;
+    },
+    { applyLocally: false },
+  );
+  assert.equal(childObserved[0], null);
+  assert.equal(childObserved.includes(true), true);
+  assert.equal(childTransaction.committed, true);
+  assert.equal(childTransaction.snapshot.val(), null);
+
+  const coldParentDatabase = environment.authenticatedContext(uid).database();
+  const parentObserved = [];
+  const parentTransaction = await runTransaction(
+    ref(coldParentDatabase, `online/trainingActive/${uid}`),
+    (current) => {
+      parentObserved.push(current);
+      if (current == null) return null;
+      const rooms = current?.rooms && typeof current.rooms === "object"
+        ? current.rooms
+        : {};
+      const hasClaimedRoom = Object.values(rooms).some((claimed) => claimed === true);
+      return current?.roomId === roomId && !hasClaimedRoom ? null : undefined;
+    },
+    { applyLocally: false },
+  );
+  assert.equal(parentObserved[0], null);
+  assert.equal(parentObserved.some((current) => current?.roomId === roomId), true);
+  assert.equal(parentTransaction.committed, true);
+  assert.equal(parentTransaction.snapshot.val(), null);
+  assert.equal(
+    (await get(ref(coldParentDatabase, `online/trainingActive/${uid}`))).val(),
+    null,
+  );
+});
+
+test("cold-cache cleanup treats already-missing locks and invites as idempotent", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const uid = "training-cold-missing";
+  const database = environment.authenticatedContext(uid).database();
+  const paths = [
+    "online/trainingMatchLock",
+    `online/trainingInvites/${uid}/-missingOwnInvite01`,
+  ];
+
+  for (const targetPath of paths) {
+    const observed = [];
+    const transaction = await assertSucceeds(runTransaction(
+      ref(database, targetPath),
+      (current) => {
+        observed.push(current);
+        return current == null ? null : undefined;
+      },
+      { applyLocally: false },
+    ));
+    assert.deepEqual(observed, [null]);
+    assert.equal(transaction.committed, true);
+    assert.equal(transaction.snapshot.val(), null);
+  }
+  await assertSucceeds(remove(ref(
+    database,
+    "online/trainingInvites/training-other/-missingHostInvite01",
+  )));
+});

@@ -18,7 +18,7 @@ function functionBlock(name) {
 
 test("loads the HP V3 client and retires the team client", () => {
   assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
-  assert.match(indexHtml, /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v1[^"]*"/);
+  assert.match(indexHtml, /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2[^"]*"/);
   assert.match(trainingJs, /training-core\.mjs\?v=kitaeai-hp-v3-matchmaking-v1/);
   assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
   assert.match(indexHtml, /src="online\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
@@ -269,7 +269,7 @@ test("arms an active-room terminal fallback until terminal evidence is confirmed
   assert.match(trainingJs, /async function armActiveRoomDestroyedDisconnect/);
   assert.match(trainingJs, /reason: "active_member_disconnected"/);
   assert.ok(enterBlock.indexOf("armActiveRoomDestroyedDisconnect(roomId)")
-    < enterBlock.indexOf("cleanupMatchmaking(true)"));
+    < enterBlock.indexOf("cleanupMatchmakingReliably(true)"));
   assert.match(trainingJs, /transitionToTrainingResult[\s\S]*?cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
   assert.match(trainingJs, /transitionToDestroyedRoom[\s\S]*?cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
   assert.match(deactivateBlock, /await markRoomDestroyed\("player_exit"\)/);
@@ -293,7 +293,7 @@ test("fences invitations by protocol, variant, and queue session", () => {
   assert.match(trainingJs, /invite\.targetSessionId === state\.queueSessionId/);
   assert.match(trainingJs, /invite\.protocolVersion === TRAINING_PROTOCOL_VERSION/);
   assert.match(trainingJs, /invite\.variant === TRAINING_VARIANT/);
-  assert.match(trainingJs, /removeTrainingInviteForSession\(state\.uid, roomId, acceptedSessionId\)/);
+  assert.match(trainingJs, /removeTrainingInviteReliably\(state\.uid, roomId, acceptedSessionId\)/);
 });
 
 test("refreshes terminal round data before writing a destroy reason", () => {
@@ -365,6 +365,101 @@ test("keeps a live legacy room behind a read-only compatibility boundary", () =>
   assert.match(staleBlock, /if \(!await removeTrainingActiveParentIfOwned\(activeValue\.roomId\)\)/);
   assert.match(staleBlock, /const remainingSnapshot = await get\(activeRef\)/);
   assert.match(staleBlock, /if \(remainingSnapshot\.exists\(\)\)/);
+});
+
+test("refreshes queue leases and completes cold-cache cleanup before retrying", () => {
+  const updateQueueBlock = functionBlock("updateOwnedTrainingQueue");
+  const removeQueueBlock = functionBlock("removeOwnedTrainingQueue");
+  const removeInviteBlock = functionBlock("removeTrainingInviteForSession");
+  const scheduleInviteBlock = functionBlock("scheduleInviteProcessing");
+  const releaseLockBlock = functionBlock("releaseMatchLock");
+  const removeActiveChildBlock = functionBlock("removeTrainingActiveChild");
+  const removeActiveParentBlock = functionBlock("removeTrainingActiveParentIfOwned");
+  const reserveActiveBlock = functionBlock("reserveTrainingActiveRoom");
+  const releaseActiveBlock = functionBlock("releaseTrainingActiveReservation");
+  const statusBlock = functionBlock("transitionTrainingRoomStatus");
+  const createRoomBlock = functionBlock("createTrainingRoom");
+  const acceptInviteBlock = functionBlock("acceptInvite");
+  const beginBlock = functionBlock("beginMatchmaking");
+  const teardownBlock = functionBlock("teardownPendingRoom");
+  const returnBlock = functionBlock("returnToWaitingQueue");
+  const enterBlock = functionBlock("enterRoom");
+  const cleanupBlock = functionBlock("cleanupMatchmaking");
+  const retryBlock = functionBlock("retryTrainingCleanup");
+  const deactivateBlock = functionBlock("deactivate");
+  const fatalBlock = functionBlock("handleFatalError");
+  const enterRetryBlock = functionBlock("scheduleEnterRoomRetry");
+
+  assert.match(updateQueueBlock, /const lastSeen = firebaseNow\(\)/);
+  assert.match(updateQueueBlock, /if \(current == null\) return null/);
+  assert.ok(updateQueueBlock.lastIndexOf("lastSeen")
+    > updateQueueBlock.indexOf("...patch"));
+  assert.match(removeQueueBlock, /if \(current == null\) return null/);
+  assert.match(removeQueueBlock, /transaction\?\.committed/);
+  assert.doesNotMatch(removeQueueBlock, /transaction\.committed\s*\|\|/);
+  assert.match(removeInviteBlock, /targetUid !== state\.uid/);
+  assert.match(removeInviteBlock, /await remove\(inviteRef\)/);
+  assert.match(removeInviteBlock, /if \(current == null\) return null/);
+  assert.match(scheduleInviteBlock, /processInvites\(\)\.catch\(\(error\) =>/);
+  assert.match(scheduleInviteBlock, /scheduleInviteProcessing\(2_000\)/);
+  assert.match(
+    trainingJs,
+    /state\.latestInvites = snapshot\.val\(\) \|\| \{\};\s*scheduleInviteProcessing\(0\)/,
+  );
+  assert.match(
+    trainingJs,
+    /state\.latestQueue = snapshot\.val\(\) \|\| \{\};\s*scheduleInviteProcessing\(0\)/,
+  );
+  assert.equal((trainingJs.match(/processInvites\(\)\.catch/g) || []).length, 1);
+  assert.match(releaseLockBlock, /if \(current == null\) return null/);
+  assert.match(removeActiveChildBlock, /current == null \|\| current === true/);
+  assert.match(removeActiveChildBlock, /transaction\?\.committed/);
+  assert.match(removeActiveParentBlock, /if \(current == null\) return null/);
+  assert.match(reserveActiveBlock, /const reservedAt = firebaseNow\(\)/);
+  assert.match(reserveActiveBlock, /return \{ roomId, reservedAt, rooms:/);
+  assert.ok(releaseActiveBlock.indexOf("childReleased")
+    < releaseActiveBlock.indexOf("parentReleased"));
+  assert.match(releaseActiveBlock, /remaining\.val\(\)\?\.rooms\?\.\[roomId\] !== true/);
+  assert.match(statusBlock, /current == null \|\| current === expected/);
+  assert.match(statusBlock, /applyLocally: false/);
+  assert.match(beginBlock, /const queueRemoved = await removeOwnedTrainingQueue/);
+  assert.match(beginBlock, /if \(queueRemoved && state\.queueSessionId/);
+  assert.match(createRoomBlock, /const inviteCleared = !roomCreated/);
+  assert.match(createRoomBlock, /const activeReleased = !activeReserved/);
+  assert.match(createRoomBlock, /const queueReturnedToWaiting = !retryMatching/);
+  assert.match(
+    createRoomBlock,
+    /if \(!inviteCleared \|\| !activeReleased \|\| !queueReturnedToWaiting\)/,
+  );
+  assert.match(createRoomBlock, /if \(roomCreated\) \{[\s\S]*state\.pendingRoomId = roomId/);
+  assert.match(createRoomBlock, /await handleFatalError/);
+  assert.match(acceptInviteBlock, /removeTrainingInviteReliably/);
+  assert.match(acceptInviteBlock, /scheduleInviteProcessing\(2_000\)/);
+  assert.match(acceptInviteBlock, /const activeReleased = !activeReserved/);
+  assert.match(acceptInviteBlock, /const queueReturnedToWaiting = !guestQueueForming/);
+  assert.match(acceptInviteBlock, /if \(!activeReleased \|\| !queueReturnedToWaiting\)/);
+  assert.match(acceptInviteBlock, /await handleFatalError/);
+  assert.match(teardownBlock, /removeTrainingInviteReliably/);
+  assert.match(teardownBlock, /releaseMatchLockReliably/);
+  assert.match(teardownBlock, /if \(!inviteCleared \|\| !lockReleased\)/);
+  assert.match(returnBlock, /removeTrainingInviteReliably/);
+  assert.match(returnBlock, /const matchmakingCleared = await cleanupMatchmakingReliably/);
+  assert.match(returnBlock, /if \(!matchmakingCleared\)/);
+  assert.match(returnBlock, /releaseMatchLockReliably/);
+  assert.ok(enterBlock.indexOf("removeTrainingInviteReliably")
+    < enterBlock.indexOf("state.roomId = roomId"));
+  assert.ok(enterBlock.indexOf("releaseMatchLockReliably")
+    < enterBlock.indexOf("state.roomId = roomId"));
+  assert.ok(enterBlock.indexOf("cleanupMatchmakingReliably(true)")
+    < enterBlock.indexOf("state.roomId = roomId"));
+  assert.match(cleanupBlock, /return queueCleared/);
+  assert.match(retryBlock, /MATCHMAKING_CLEANUP_RETRY_DELAYS_MS/);
+  assert.match(retryBlock, /if \(await operation\(\)\) return true/);
+  assert.match(deactivateBlock, /if \(!await cleanupMatchmakingReliably\(false\)\)/);
+  assert.match(fatalBlock, /const matchmakingCleared = await cleanupMatchmakingReliably/);
+  assert.match(fatalBlock, /if \(matchmakingCleared\) releaseTrainingTabOwnership/);
+  assert.match(enterRetryBlock, /if \(state\.enterRoomRetryAttempts > 6\)/);
+  assert.match(enterRetryBlock, /handleFatalError/);
 });
 
 test("skips unavailable candidates without exposing their private active or invite state", () => {

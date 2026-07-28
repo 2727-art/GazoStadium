@@ -6,8 +6,14 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  TRAINING_ACTIVE_CLEANUP_BATCH_SIZE,
+  TRAINING_ACTIVE_CLEANUP_COMMIT_MARGIN_MS,
+  TRAINING_ACTIVE_CLEANUP_CURSOR_PATH,
+  TRAINING_ACTIVE_CLEANUP_GUARD_MS,
+  TRAINING_ACTIVE_CLEANUP_GUARDS_PATH,
   TRAINING_ACTIVE_PRESENCE_GRACE_MS,
   TRAINING_FORMING_RESERVATION_MAX_AGE_MS,
+  TRAINING_ORPHAN_ACTIVE_GRACE_MS,
   TRAINING_QUEUE_CLEANUP_BATCH_SIZE,
   TRAINING_QUEUE_STALE_MS,
   TRAINING_ROOM_ACTIVE_STALE_MS,
@@ -16,8 +22,10 @@ const {
   TRAINING_ROOM_FORMING_STALE_MS,
   TRAINING_ROOM_PRESENCE_FRESH_MS,
   TRAINING_ROOM_TERMINAL_RETENTION_MS,
+  createTrainingActiveCleanup,
   createTrainingQueueCleanup,
   createTrainingRoomCleanup,
+  firebasePushIdTimestamp,
   trainingActiveRoomIsLive,
   trainingRoomCleanupDisposition,
 } = require("../training-room-cleanup");
@@ -439,6 +447,193 @@ function createFakeQueueRealtime(queue, beforeTransaction = () => {}) {
   };
 }
 
+function createFakeActiveCleanupRealtime({
+  active = {},
+  rooms = {},
+  matchLock = null,
+  cursor = null,
+  guards = {},
+  beforeGet = async () => {},
+  beforeTransaction = async () => {},
+} = {}) {
+  const state = {
+    active: structuredClone(active),
+    rooms: structuredClone(rooms),
+    matchLock: structuredClone(matchLock),
+    cursor: structuredClone(cursor),
+    guards: structuredClone(guards),
+    queryCalls: [],
+    getCounts: {},
+    transactionCounts: {},
+  };
+
+  const invokeGetHook = async (targetPath) => {
+    state.getCounts[targetPath] = (state.getCounts[targetPath] || 0) + 1;
+    await beforeGet(state, targetPath, state.getCounts[targetPath]);
+  };
+  const invokeTransactionHook = async (targetPath) => {
+    state.transactionCounts[targetPath] =
+      (state.transactionCounts[targetPath] || 0) + 1;
+    await beforeTransaction(
+      state,
+      targetPath,
+      state.transactionCounts[targetPath],
+    );
+  };
+
+  const activeQuery = () => {
+    const queryState = {
+      afterUid: "",
+      limit: Number.MAX_SAFE_INTEGER,
+    };
+    return {
+      orderByKey() {
+        state.queryCalls.push(["orderByKey"]);
+        return this;
+      },
+      startAfter(uid) {
+        queryState.afterUid = String(uid);
+        state.queryCalls.push(["startAfter", uid]);
+        return this;
+      },
+      limitToFirst(value) {
+        queryState.limit = Number(value);
+        state.queryCalls.push(["limitToFirst", value]);
+        return this;
+      },
+      async get() {
+        const targetPath = "online/trainingActive";
+        await invokeGetHook(targetPath);
+        const entries = Object.entries(state.active)
+          .sort((first, second) => first[0].localeCompare(second[0]))
+          .filter(([uid]) => !queryState.afterUid || uid > queryState.afterUid)
+          .slice(0, queryState.limit);
+        return {
+          forEach(callback) {
+            for (const [uid, value] of entries) {
+              callback(fakeSnapshot(structuredClone(value), uid));
+            }
+          },
+        };
+      },
+    };
+  };
+
+  const realtime = {
+    ref(targetPath) {
+      if (targetPath === TRAINING_ACTIVE_CLEANUP_CURSOR_PATH) {
+        return {
+          async get() {
+            await invokeGetHook(targetPath);
+            return fakeSnapshot(structuredClone(state.cursor));
+          },
+          async set(value) {
+            state.cursor = structuredClone(value);
+          },
+          async remove() {
+            state.cursor = null;
+          },
+        };
+      }
+      if (targetPath === "online/trainingActive") return activeQuery();
+      if (targetPath.startsWith("online/trainingActive/")) {
+        const uid = targetPath.split("/").pop();
+        return {
+          async transaction(update) {
+            await invokeTransactionHook(targetPath);
+            const current = state.active[uid] == null
+              ? null
+              : structuredClone(state.active[uid]);
+            const transaction = runColdCacheTransaction(update, current);
+            const next = transaction.value;
+            if (!transaction.committed) {
+              return {
+                committed: false,
+                snapshot: fakeSnapshot(next, uid),
+              };
+            }
+            if (next === null) delete state.active[uid];
+            else state.active[uid] = structuredClone(next);
+            return {
+              committed: true,
+              snapshot: fakeSnapshot(next, uid),
+            };
+          },
+        };
+      }
+      if (targetPath.startsWith(`${TRAINING_ACTIVE_CLEANUP_GUARDS_PATH}/`)) {
+        const roomId = targetPath.split("/").pop();
+        return {
+          async get() {
+            await invokeGetHook(targetPath);
+            const guard = state.guards[roomId] == null
+              ? null
+              : structuredClone(state.guards[roomId]);
+            return fakeSnapshot(guard, roomId);
+          },
+          async transaction(update) {
+            await invokeTransactionHook(targetPath);
+            const current = state.guards[roomId] == null
+              ? null
+              : structuredClone(state.guards[roomId]);
+            const transaction = runColdCacheTransaction(update, current);
+            const next = transaction.value;
+            if (!transaction.committed) {
+              return {
+                committed: false,
+                snapshot: fakeSnapshot(next, roomId),
+              };
+            }
+            if (next === null) delete state.guards[roomId];
+            else state.guards[roomId] = structuredClone(next);
+            return {
+              committed: true,
+              snapshot: fakeSnapshot(next, roomId),
+            };
+          },
+        };
+      }
+      if (targetPath.startsWith("online/trainingRooms/")) {
+        const roomId = targetPath.split("/").pop();
+        return {
+          async get() {
+            await invokeGetHook(targetPath);
+            const room = state.rooms[roomId] == null
+              ? null
+              : structuredClone(state.rooms[roomId]);
+            return fakeSnapshot(room, roomId);
+          },
+        };
+      }
+      if (targetPath === "online/trainingMatchLock") {
+        return {
+          async get() {
+            await invokeGetHook(targetPath);
+            return fakeSnapshot(structuredClone(state.matchLock));
+          },
+        };
+      }
+      throw new Error(`Unexpected realtime path: ${targetPath}`);
+    },
+  };
+  return { realtime, state };
+}
+
+const FIREBASE_PUSH_ID_ALPHABET =
+  "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+
+function firebasePushIdAt(timestamp, suffix = "aaaaaaaaaaaa") {
+  let remaining = Number(timestamp);
+  const prefix = Array(8);
+  for (let index = prefix.length - 1; index >= 0; index -= 1) {
+    prefix[index] = FIREBASE_PUSH_ID_ALPHABET[remaining % 64];
+    remaining = Math.floor(remaining / 64);
+  }
+  assert.equal(remaining, 0);
+  assert.match(suffix, /^[A-Za-z0-9_-]{12}$/);
+  return `${prefix.join("")}${suffix}`;
+}
+
 test("training cleanup retention boundaries protect fresh and live rooms", () => {
   assert.equal(TRAINING_ROOM_FINALIZED_RETENTION_MS, 24 * 60 * 60 * 1000);
   assert.equal(TRAINING_ROOM_TERMINAL_RETENTION_MS, 60 * 60 * 1000);
@@ -775,6 +970,289 @@ test("cleanup cursor rotates beyond an unchanged oldest batch", async () => {
   );
 });
 
+test("active cleanup removes an exact old orphan only after the five-minute grace", async () => {
+  assert.equal(TRAINING_ACTIVE_CLEANUP_BATCH_SIZE, 10);
+  assert.equal(TRAINING_ORPHAN_ACTIVE_GRACE_MS, 5 * 60 * 1000);
+  const now = Date.UTC(2026, 6, 28, 10, 0, 0);
+  const cutoff = now - TRAINING_ORPHAN_ACTIVE_GRACE_MS;
+  const oldRoomId = "old-orphan-room";
+  const recentRoomId = "recent-orphan-room";
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active: {
+      "old-user": {
+        roomId: oldRoomId,
+        rooms: { [oldRoomId]: true },
+        reservedAt: cutoff,
+      },
+      "recent-user": {
+        roomId: recentRoomId,
+        rooms: { [recentRoomId]: true },
+        reservedAt: cutoff + 1,
+      },
+    },
+  });
+  const cleanup = createTrainingActiveCleanup({ realtime, clock: () => now });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.examined, 2);
+  assert.equal(result.claimsExamined, 2);
+  assert.equal(result.removed, 1);
+  assert.equal(result.protectedRecent, 1);
+  assert.equal(result.failures, 0);
+  assert.equal(Object.hasOwn(state.active, "old-user"), false);
+  assert.deepEqual(state.active["recent-user"], {
+    roomId: recentRoomId,
+    rooms: { [recentRoomId]: true },
+    reservedAt: cutoff + 1,
+  });
+  assert.deepEqual(state.guards, {});
+  assert.equal(state.cursor, null);
+  assert.deepEqual(state.queryCalls, [
+    ["orderByKey"],
+    ["limitToFirst", TRAINING_ACTIVE_CLEANUP_BATCH_SIZE],
+  ]);
+});
+
+test("active cleanup preserves reservations with a room or a live matching lock", async () => {
+  const now = Date.UTC(2026, 6, 28, 10, 5, 0);
+  const reservedAt = now - TRAINING_ORPHAN_ACTIVE_GRACE_MS - 1;
+  const existingRoomId = "existing-training-room";
+  const lockedRoomId = "locked-training-room";
+  const active = {
+    "room-user": {
+      roomId: existingRoomId,
+      rooms: { [existingRoomId]: true },
+      reservedAt,
+    },
+    "lock-user": {
+      roomId: lockedRoomId,
+      rooms: { [lockedRoomId]: true },
+      reservedAt,
+    },
+  };
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active,
+    rooms: {
+      [existingRoomId]: {
+        createdAt: now - 1_000,
+        status: "forming",
+      },
+    },
+    matchLock: {
+      uid: "lock-user",
+      roomId: lockedRoomId,
+      expiresAt: now + 1,
+    },
+  });
+  const cleanup = createTrainingActiveCleanup({ realtime, clock: () => now });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.removed, 0);
+  assert.equal(result.protectedRoom, 1);
+  assert.equal(result.protectedLock, 1);
+  assert.equal(result.protectedRace, 0);
+  assert.deepEqual(state.active, active);
+  assert.deepEqual(state.guards, {});
+});
+
+test("active cleanup migrates legacy push-ID timestamps and fails closed without one", async () => {
+  const now = Date.UTC(2026, 6, 28, 10, 10, 0);
+  const oldTimestamp = now - TRAINING_ORPHAN_ACTIVE_GRACE_MS;
+  const recentTimestamp = oldTimestamp + 1;
+  const oldRoomId = firebasePushIdAt(oldTimestamp, "aaaaaaaaaaaa");
+  const recentRoomId = firebasePushIdAt(recentTimestamp, "bbbbbbbbbbbb");
+  const unknownTimestampRoomId = "legacy-without-time";
+  assert.equal(firebasePushIdTimestamp(oldRoomId), oldTimestamp);
+  assert.equal(firebasePushIdTimestamp(recentRoomId), recentTimestamp);
+  assert.equal(firebasePushIdTimestamp(unknownTimestampRoomId), 0);
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active: {
+      "old-legacy-user": {
+        roomId: oldRoomId,
+        rooms: { [oldRoomId]: true },
+      },
+      "recent-legacy-user": {
+        roomId: recentRoomId,
+        rooms: { [recentRoomId]: true },
+      },
+      "unknown-legacy-user": {
+        roomId: unknownTimestampRoomId,
+        rooms: { [unknownTimestampRoomId]: true },
+      },
+    },
+  });
+  const cleanup = createTrainingActiveCleanup({ realtime, clock: () => now });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.examined, 3);
+  assert.equal(result.claimsExamined, 3);
+  assert.equal(result.removed, 1);
+  assert.equal(result.protectedRecent, 2);
+  assert.equal(Object.hasOwn(state.active, "old-legacy-user"), false);
+  assert.equal(Object.hasOwn(state.active, "recent-legacy-user"), true);
+  assert.equal(Object.hasOwn(state.active, "unknown-legacy-user"), true);
+});
+
+test("active cleanup guard protects a room-created race", async () => {
+  const now = Date.UTC(2026, 6, 28, 10, 15, 0);
+  const roomId = "guarded-room-race";
+  const reservation = {
+    roomId,
+    rooms: { [roomId]: true },
+    reservedAt: now - TRAINING_ORPHAN_ACTIVE_GRACE_MS - 1,
+  };
+  const roomPath = `online/trainingRooms/${roomId}`;
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active: { alice: reservation },
+    beforeGet(currentState, targetPath, count) {
+      if (targetPath === roomPath && count === 2) {
+        currentState.rooms[roomId] = {
+          createdAt: now,
+          status: "forming",
+        };
+      }
+    },
+  });
+  const cleanup = createTrainingActiveCleanup({ realtime, clock: () => now });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.removed, 0);
+  assert.equal(result.protectedRoom, 1);
+  assert.equal(result.protectedRace, 0);
+  assert.deepEqual(state.active.alice, reservation);
+  assert.equal(Object.hasOwn(state.rooms, roomId), true);
+  assert.deepEqual(state.guards, {});
+  assert.equal(
+    state.transactionCounts[
+      `${TRAINING_ACTIVE_CLEANUP_GUARDS_PATH}/${roomId}`
+    ],
+    2,
+  );
+});
+
+test("active cleanup fails closed when its guard loses the commit margin", async () => {
+  const now = Date.UTC(2026, 6, 28, 10, 17, 0);
+  const roomId = "expiring-guard-room";
+  const reservation = {
+    roomId,
+    rooms: { [roomId]: true },
+    reservedAt: now - TRAINING_ORPHAN_ACTIVE_GRACE_MS - 1,
+  };
+  let clockNow = now;
+  const guardPath = `${TRAINING_ACTIVE_CLEANUP_GUARDS_PATH}/${roomId}`;
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active: { alice: reservation },
+    beforeGet(_state, targetPath) {
+      if (targetPath === guardPath) {
+        clockNow = now
+          + TRAINING_ACTIVE_CLEANUP_GUARD_MS
+          - TRAINING_ACTIVE_CLEANUP_COMMIT_MARGIN_MS
+          + 1;
+      }
+    },
+  });
+  const cleanup = createTrainingActiveCleanup({
+    realtime,
+    clock: () => clockNow,
+  });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.removed, 0);
+  assert.equal(result.protectedRace, 1);
+  assert.deepEqual(state.active.alice, reservation);
+  assert.deepEqual(state.guards, {});
+});
+
+test("active cleanup exact CAS preserves a replacement reservation", async () => {
+  const now = Date.UTC(2026, 6, 28, 10, 20, 0);
+  const oldRoomId = "old-raced-room";
+  const newRoomId = "replacement-room";
+  const replacement = {
+    roomId: newRoomId,
+    rooms: { [newRoomId]: true },
+    reservedAt: now,
+  };
+  const activePath = "online/trainingActive/alice";
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active: {
+      alice: {
+        roomId: oldRoomId,
+        rooms: { [oldRoomId]: true },
+        reservedAt: now - TRAINING_ORPHAN_ACTIVE_GRACE_MS - 1,
+      },
+    },
+    beforeTransaction(currentState, targetPath, count) {
+      if (targetPath === activePath && count === 1) {
+        currentState.active.alice = structuredClone(replacement);
+      }
+    },
+  });
+  const cleanup = createTrainingActiveCleanup({ realtime, clock: () => now });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.removed, 0);
+  assert.equal(result.protectedRace, 1);
+  assert.deepEqual(state.active.alice, replacement);
+  assert.deepEqual(state.guards, {});
+});
+
+test("active cleanup cursor rotates beyond an unchanged protected batch", async () => {
+  const now = Date.UTC(2026, 6, 28, 10, 25, 0);
+  const reservedAt = now - TRAINING_ORPHAN_ACTIVE_GRACE_MS - 1;
+  const entries = [
+    ["active-a", "room-a"],
+    ["active-b", "room-b"],
+    ["active-c", "room-c"],
+  ];
+  const active = Object.fromEntries(entries.map(([uid, roomId]) => [
+    uid,
+    {
+      roomId,
+      rooms: { [roomId]: true },
+      reservedAt,
+    },
+  ]));
+  const rooms = Object.fromEntries(entries.map(([, roomId]) => [
+    roomId,
+    { createdAt: now, status: "forming" },
+  ]));
+  const { realtime, state } = createFakeActiveCleanupRealtime({
+    active,
+    rooms,
+  });
+  const cleanup = createTrainingActiveCleanup({
+    realtime,
+    batchSize: 2,
+    clock: () => now,
+  });
+
+  const first = await cleanup(now);
+  assert.equal(first.examined, 2);
+  assert.equal(first.protectedRoom, 2);
+  assert.equal(first.hasMore, true);
+  assert.deepEqual(state.cursor, {
+    uid: "active-b",
+    updatedAt: now,
+  });
+
+  const second = await cleanup(now);
+  assert.equal(second.examined, 1);
+  assert.equal(second.protectedRoom, 1);
+  assert.equal(second.hasMore, false);
+  assert.equal(state.cursor, null);
+  assert.deepEqual(
+    state.queryCalls.filter((entry) => entry[0] === "startAfter"),
+    [["startAfter", "active-b"]],
+  );
+  assert.deepEqual(state.active, active);
+});
+
 test("cold-cache queue cleanup removes stale rows and preserves a heartbeat race", async () => {
   assert.equal(TRAINING_QUEUE_CLEANUP_BATCH_SIZE, 100);
   assert.equal(TRAINING_QUEUE_STALE_MS, 10 * 60 * 1000);
@@ -821,11 +1299,20 @@ test("scheduled cleanup and training-only active-session check are wired", () =>
   );
   assert.match(source, /createTrainingRoomCleanup/);
   assert.match(source, /createTrainingQueueCleanup/);
+  assert.match(source, /createTrainingActiveCleanup/);
+  assert.match(
+    source,
+    /const cleanupTrainingActive = createTrainingActiveCleanup\(\{\s*realtime,\s*\}\)/,
+  );
   assert.match(source, /finalizeTraining\(participantUid, roomId, \{/);
   assert.match(source, /maxRoomAgeMs: Number\.MAX_SAFE_INTEGER/);
   assert.match(
     source,
     /exports\.cleanupTrainingRooms = onSchedule\(\{[\s\S]*schedule: "every 5 minutes"[\s\S]*timeZone: "Asia\/Tokyo"/,
+  );
+  assert.match(
+    source,
+    /const \[rooms, queue, active\] = await Promise\.all\(\[[\s\S]*cleanupTrainingActive\(now\),[\s\S]*const result = \{ rooms, queue, active \}/,
   );
   assert.match(source, /entry\.path === "trainingActive"/);
   assert.match(source, /trainingActiveSessionIsLive/);

@@ -1470,7 +1470,7 @@
             ".validate": "newData.isNumber() && newData.val() >= now - 43200000 && newData.val() <= now + 15000"
           },
           "lastSeen": {
-            ".validate": "newData.isNumber() && newData.val() >= now - 15000 && newData.val() <= now + 15000"
+            ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
           },
           "state": {
             ".validate": "newData.val() === 'waiting' || newData.val() === 'forming'"
@@ -1489,6 +1489,9 @@
             ".write": "auth != null && auth.uid === $uid && !root.child('online/trainingActive/' + $uid + '/rooms').exists()",
             ".validate": "!newData.exists() || (newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[A-Za-z0-9_-]+$/))"
           },
+          "reservedAt": {
+            ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000)"
+          },
           "rooms": {
             "$roomId": {
               ".write": "auth != null && auth.uid === $uid && ((!data.exists() && newData.val() === true && !root.child('online/trainingActive/' + $uid + '/rooms').exists()) || (data.val() === true && !newData.exists()))",
@@ -1504,9 +1507,17 @@
         ".read": false,
         ".write": false
       },
+      "trainingActiveCleanupCursor": {
+        ".read": false,
+        ".write": false
+      },
+      "trainingActiveCleanupGuards": {
+        ".read": false,
+        ".write": false
+      },
       "trainingMatchLock": {
         ".read": "auth != null",
-        ".write": "auth != null && ((!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && !newData.exists()) || (data.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now && newData.exists() && newData.child('uid').val() === auth.uid))",
+        ".write": "auth != null && ((!data.exists() && !newData.exists()) || (!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && !newData.exists()) || (data.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now && newData.exists() && newData.child('uid').val() === auth.uid))",
         ".validate": "!newData.exists() || newData.hasChildren(['uid', 'roomId', 'createdAt', 'expiresAt'])",
         "uid": {
           ".validate": "newData.isString() && newData.val() === auth.uid"
@@ -1528,7 +1539,7 @@
         "$targetUid": {
           ".read": "auth != null && auth.uid === $targetUid",
           "$roomId": {
-            ".write": "auth != null && ((auth.uid === $targetUid && data.exists() && !newData.exists()) || (data.exists() && data.child('hostUid').val() === auth.uid && !newData.exists()) || (!data.exists() && newData.exists() && newData.child('hostUid').val() === auth.uid && auth.uid !== $targetUid && root.child('online/trainingMatchLock/uid').val() === auth.uid && root.child('online/trainingMatchLock/roomId').val() === $roomId && root.child('online/trainingMatchLock/expiresAt').isNumber() && root.child('online/trainingMatchLock/expiresAt').val() > now && !root.child('online/trainingInvites/' + $targetUid).exists() && root.child('online/trainingQueue/' + auth.uid + '/state').val() === 'forming' && root.child('online/trainingQueue/' + $targetUid + '/state').val() === 'waiting' && newData.child('targetSessionId').val() === root.child('online/trainingQueue/' + $targetUid + '/sessionId').val() && root.child('online/trainingRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/trainingRooms/' + $roomId + '/guestUid').val() === $targetUid && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true))",
+            ".write": "auth != null && ((!data.exists() && !newData.exists()) || (auth.uid === $targetUid && data.exists() && !newData.exists()) || (data.exists() && data.child('hostUid').val() === auth.uid && !newData.exists()) || (!data.exists() && newData.exists() && newData.child('hostUid').val() === auth.uid && auth.uid !== $targetUid && root.child('online/trainingMatchLock/uid').val() === auth.uid && root.child('online/trainingMatchLock/roomId').val() === $roomId && root.child('online/trainingMatchLock/expiresAt').isNumber() && root.child('online/trainingMatchLock/expiresAt').val() > now && !root.child('online/trainingInvites/' + $targetUid).exists() && root.child('online/trainingQueue/' + auth.uid + '/state').val() === 'forming' && root.child('online/trainingQueue/' + $targetUid + '/state').val() === 'waiting' && newData.child('targetSessionId').val() === root.child('online/trainingQueue/' + $targetUid + '/sessionId').val() && root.child('online/trainingRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/trainingRooms/' + $roomId + '/guestUid').val() === $targetUid && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true))",
             ".validate": "!newData.exists() || newData.hasChildren(['roomId', 'hostUid', 'targetSessionId', 'protocolVersion', 'variant', 'createdAt'])",
             "roomId": {
               ".validate": "newData.isString() && newData.val() === $roomId"
@@ -1583,7 +1594,7 @@
           "createdAt": {
             ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
             ".write": false,
-            ".validate": "newData.isNumber() && newData.val() >= now - 15000 && newData.val() <= now + 15000"
+            ".validate": "newData.isNumber() && newData.val() >= now - 15000 && newData.val() <= now + 15000 && (data.exists() || !root.child('online/trainingActiveCleanupGuards/' + $roomId + '/expiresAt').isNumber() || root.child('online/trainingActiveCleanupGuards/' + $roomId + '/expiresAt').val() <= now)"
           },
           "status": {
             ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
