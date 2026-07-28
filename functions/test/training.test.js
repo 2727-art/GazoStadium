@@ -3,6 +3,9 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  LEGACY_TRAINING_VARIANT,
+  TRAINING_BASE_DURATION_MS,
+  TRAINING_PROTOCOL_VERSION,
   TRAINING_DESTROYED_CLOCK_SKEW_MS,
   TRAINING_ROOM_MAX_AGE_MS,
   TRAINING_TURN_DURATION_MS,
@@ -45,7 +48,7 @@ function completedTurn(turnNumber, trainerUid, traineeUid, startedAt) {
 function room(overrides = {}) {
   return {
     protocolVersion: 1,
-    variant: TRAINING_VARIANT,
+    variant: LEGACY_TRAINING_VARIANT,
     createdAt,
     status: "active",
     firstTrainerUid: firstUid,
@@ -394,6 +397,347 @@ test("a disconnect after terminal evidence preserves the result but not later ev
   );
 });
 
+function v2Room(overrides = {}) {
+  return {
+    ...room(),
+    protocolVersion: TRAINING_PROTOCOL_VERSION,
+    variant: TRAINING_VARIANT,
+    carrotChoices: {
+      [firstUid]: "boost10",
+      [secondUid]: "boost8",
+    },
+    turns: {},
+    ...overrides,
+  };
+}
+
+function v2CompletedTurn(
+  trainerUid,
+  traineeUid,
+  startedAt,
+  { partialAt = 0 } = {},
+) {
+  const carrotChoice = traineeUid === firstUid ? "boost10" : "boost8";
+  const targetDurationMs = carrotChoice === "boost10" ? 90_000 : 70_000;
+  const completedAt = partialAt || startedAt + targetDurationMs;
+  return {
+    trainerUid,
+    traineeUid,
+    carrotChoice,
+    targetDurationMs,
+    imageOwnerUid: trainerUid,
+    instruction: instruction(),
+    createdAt: startedAt - 100,
+    startedAt,
+    baseCompletedAt: startedAt + TRAINING_BASE_DURATION_MS,
+    completedAt,
+    ...(partialAt ? {} : { boostCompletedAt: completedAt }),
+  };
+}
+
+test("protocol v2 fixes three sets each and records full BOOST seconds separately", () => {
+  const turns = {};
+  let startedAt = createdAt + 1_000;
+  for (let turnNumber = 1; turnNumber <= 6; turnNumber += 1) {
+    const trainerUid = turnNumber % 2 === 1 ? firstUid : secondUid;
+    const traineeUid = trainerUid === firstUid ? secondUid : firstUid;
+    turns[turnNumber] = v2CompletedTurn(trainerUid, traineeUid, startedAt);
+    startedAt = turns[turnNumber].completedAt + 1_000;
+  }
+  const result = deriveTrainingRoomResult(v2Room({ turns }), startedAt);
+  assert.equal(result.protocolVersion, 2);
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "mutual_complete");
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 3,
+    [secondUid]: 3,
+  });
+  assert.deepEqual(result.completedSecondsByUid, {
+    [firstUid]: 270,
+    [secondUid]: 210,
+  });
+  assert.deepEqual(result.completedSetSecondsByUid, {
+    [firstUid]: [90, 90, 90],
+    [secondUid]: [70, 70, 70],
+  });
+  assert.deepEqual(result.boostCompletedSetsByUid, {
+    [firstUid]: 3,
+    [secondUid]: 3,
+  });
+  assert.deepEqual(result.boostSecondsByUid, {
+    [firstUid]: 90,
+    [secondUid]: 30,
+  });
+});
+
+test("ending BOOST after BASE preserves the set while a pre-BASE surrender loses", () => {
+  const firstStartedAt = createdAt + 1_000;
+  const firstTurn = v2CompletedTurn(firstUid, secondUid, firstStartedAt, {
+    partialAt: firstStartedAt + 65_000,
+  });
+  const secondStartedAt = firstTurn.completedAt + 1_000;
+  const partialThenLoss = v2Room({
+    turns: {
+      1: firstTurn,
+      2: {
+        trainerUid: secondUid,
+        traineeUid: firstUid,
+        carrotChoice: "boost10",
+        targetDurationMs: 90_000,
+        imageOwnerUid: secondUid,
+        instruction: instruction(),
+        createdAt: secondStartedAt - 100,
+        startedAt: secondStartedAt,
+        surrenderedAt: secondStartedAt + 59_999,
+      },
+    },
+  });
+  const result = deriveTrainingRoomResult(
+    partialThenLoss,
+    secondStartedAt + 60_000,
+  );
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "surrender");
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 0,
+    [secondUid]: 1,
+  });
+  assert.equal(result.completedSecondsByUid[secondUid], 65);
+  assert.equal(result.boostSecondsByUid[secondUid], 5);
+  assert.equal(result.boostCompletedSetsByUid[secondUid], 0);
+});
+
+test("v2 rejects continue votes, timedOutAt, forged choice metadata, and later turns before terminal", () => {
+  const startedAt = createdAt + 1_000;
+  const baseTurn = v2CompletedTurn(firstUid, secondUid, startedAt);
+
+  assert.throws(
+    () => deriveTrainingRoomResult(v2Room({
+      turns: { 1: baseTurn },
+      continueVotes: { 1: { [firstUid]: "continue" } },
+    }), baseTurn.completedAt + 1),
+    /does not support continue votes/,
+  );
+
+  const timedOut = structuredClone(baseTurn);
+  delete timedOut.baseCompletedAt;
+  delete timedOut.completedAt;
+  delete timedOut.boostCompletedAt;
+  timedOut.timedOutAt = startedAt + 59_999;
+  assert.throws(
+    () => deriveTrainingRoomResult(v2Room({ turns: { 1: timedOut } }), startedAt + 60_000),
+    /does not support timed out/,
+  );
+
+  const forged = structuredClone(baseTurn);
+  forged.targetDurationMs = 80_000;
+  assert.throws(
+    () => deriveTrainingRoomResult(v2Room({ turns: { 1: forged } }), baseTurn.completedAt + 1),
+    /target duration/,
+  );
+
+  const shiftedBase = structuredClone(baseTurn);
+  shiftedBase.baseCompletedAt += 1;
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v2Room({ turns: { 1: shiftedBase } }),
+      shiftedBase.completedAt + 1,
+    ),
+    /base completion timestamp/,
+  );
+
+  const shiftedFullBoost = structuredClone(baseTurn);
+  shiftedFullBoost.completedAt += 1;
+  shiftedFullBoost.boostCompletedAt += 1;
+  assert.throws(
+    () => deriveTrainingRoomResult(
+      v2Room({ turns: { 1: shiftedFullBoost } }),
+      shiftedFullBoost.completedAt + 1,
+    ),
+    /full completion timestamp|boost completion timestamp/,
+  );
+
+  const unfinished = structuredClone(baseTurn);
+  delete unfinished.completedAt;
+  delete unfinished.boostCompletedAt;
+  assert.throws(
+    () => deriveTrainingRoomResult(v2Room({
+      turns: {
+        1: unfinished,
+        2: v2CompletedTurn(secondUid, firstUid, startedAt + 61_000),
+      },
+    }), startedAt + 200_000),
+    /roles do not alternate|unfinished terminal state/,
+  );
+});
+
+test("canonical BASE and full BOOST timestamps remain valid after a throttled client returns", () => {
+  const startedAt = createdAt + 1_000;
+  const completed = v2CompletedTurn(firstUid, secondUid, startedAt);
+  const result = deriveTrainingRoomResult(
+    v2Room({ turns: { 1: completed } }),
+    completed.completedAt + 10 * 60_000,
+  );
+  assert.equal(result.status, "pending");
+  assert.equal(result.completedSetsByUid[secondUid], 1);
+  assert.equal(result.completedSecondsByUid[secondUid], 70);
+});
+
+test("disconnect during BOOST keeps the verified BASE set without inventing boost seconds", () => {
+  const startedAt = createdAt + 1_000;
+  const interrupted = v2Room({
+    turns: {
+      1: {
+        ...v2CompletedTurn(firstUid, secondUid, startedAt),
+        completedAt: undefined,
+        boostCompletedAt: undefined,
+      },
+    },
+    destroyed: {
+      by: secondUid,
+      at: startedAt + 65_000,
+      reason: "disconnect",
+    },
+  });
+  delete interrupted.turns[1].completedAt;
+  delete interrupted.turns[1].boostCompletedAt;
+  const result = deriveTrainingRoomResult(interrupted, startedAt + 66_000);
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "base_complete_interrupt");
+  assert.equal(result.outcomes[firstUid], "draw");
+  assert.equal(result.outcomes[secondUid], "draw");
+  assert.equal(result.completedSetsByUid[secondUid], 1);
+  assert.equal(result.completedSecondsByUid[secondUid], 60);
+  assert.deepEqual(result.completedSetSecondsByUid[secondUid], [60]);
+  assert.equal(result.boostSecondsByUid[secondUid], 0);
+  assert.equal(result.boostCompletedSetsByUid[secondUid], 0);
+});
+
+test("both players completing their third BASE is mutual completion even if final BOOST disconnects", () => {
+  const turns = {};
+  let startedAt = createdAt + 1_000;
+  for (let turnNumber = 1; turnNumber <= 6; turnNumber += 1) {
+    const trainerUid = turnNumber % 2 === 1 ? firstUid : secondUid;
+    const traineeUid = trainerUid === firstUid ? secondUid : firstUid;
+    turns[turnNumber] = v2CompletedTurn(trainerUid, traineeUid, startedAt);
+    startedAt = turns[turnNumber].completedAt + 1_000;
+  }
+  delete turns[6].completedAt;
+  delete turns[6].boostCompletedAt;
+  const interruptedAt = turns[6].baseCompletedAt + 1_000;
+  const result = deriveTrainingRoomResult(v2Room({
+    turns,
+    destroyed: {
+      by: turns[6].traineeUid,
+      at: interruptedAt,
+      reason: "disconnect",
+    },
+  }), interruptedAt + 1);
+
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "mutual_base_complete");
+  assert.deepEqual(result.completedSetsByUid, {
+    [firstUid]: 3,
+    [secondUid]: 3,
+  });
+  assert.equal(result.completedSecondsByUid[turns[6].traineeUid] % 60, 0);
+  assert.equal(result.boostCompletedSetsByUid[turns[6].traineeUid], 2);
+});
+
+test("disconnect after a completed set preserves earlier verified progress", () => {
+  const firstStartedAt = createdAt + 1_000;
+  const firstTurn = v2CompletedTurn(firstUid, secondUid, firstStartedAt);
+  const secondStartedAt = firstTurn.completedAt + 1_000;
+  const interrupted = v2Room({
+    turns: {
+      1: firstTurn,
+      2: {
+        trainerUid: secondUid,
+        traineeUid: firstUid,
+        carrotChoice: "boost10",
+        targetDurationMs: 90_000,
+        imageOwnerUid: secondUid,
+        instruction: instruction(),
+        createdAt: secondStartedAt - 100,
+        startedAt: secondStartedAt,
+      },
+    },
+    destroyed: {
+      by: firstUid,
+      at: secondStartedAt + 30_000,
+      reason: "disconnect",
+    },
+  });
+
+  const result = deriveTrainingRoomResult(interrupted, secondStartedAt + 31_000);
+  assert.equal(result.status, "final");
+  assert.equal(result.reason, "progress_complete_interrupt");
+  assert.equal(result.turnCount, 1);
+  assert.equal(result.completedSetsByUid[secondUid], 1);
+  assert.equal(result.completedSecondsByUid[secondUid], 70);
+  assert.equal(result.boostCompletedSetsByUid[secondUid], 1);
+  assert.equal(result.boostSecondsByUid[secondUid], 10);
+  assert.equal(result.completedSetsByUid[firstUid], 0);
+
+  const destructionBeforeCompletion = v2Room({
+    turns: { 1: firstTurn },
+    destroyed: {
+      by: firstUid,
+      at: firstTurn.completedAt - TRAINING_DESTROYED_CLOCK_SKEW_MS - 1,
+      reason: "disconnect",
+    },
+  });
+  assert.throws(
+    () => deriveTrainingRoomResult(destructionBeforeCompletion, firstTurn.completedAt + 1),
+    /evidence occurred after room destruction/,
+  );
+});
+
+test("three-set day streak is separate from legacy activity streak and crosses 1 to 3 once", () => {
+  const dayOne = Date.parse("2026-07-28T12:00:00+09:00");
+  const firstPartial = applyTrainingSession(
+    null,
+    [dayOne],
+    dayOne,
+    dayOne,
+    {
+      completedSeconds: 60,
+      threeSetSessionComplete: false,
+      threeSetDayComplete: false,
+    },
+  );
+  const crossed = applyTrainingSession(
+    firstPartial,
+    [dayOne + 1_000, dayOne + 2_000],
+    dayOne + 2_000,
+    dayOne + 2_000,
+    {
+      completedSeconds: 120,
+      threeSetSessionComplete: false,
+      threeSetDayComplete: true,
+    },
+  );
+  assert.equal(crossed.completeDays, 1);
+  assert.equal(crossed.threeSetCompletions, 0);
+  assert.equal(crossed.threeSetDays, 1);
+  assert.equal(crossed.currentThreeSetStreak, 1);
+  assert.equal(crossed.bestThreeSetStreak, 1);
+  assert.equal(crossed.lastThreeSetDateKey, "2026-07-28");
+
+  const sameDayReplay = applyTrainingSession(
+    crossed,
+    [dayOne + 3_000],
+    dayOne + 3_000,
+    dayOne + 3_000,
+    {
+      completedSeconds: 60,
+      threeSetSessionComplete: false,
+      threeSetDayComplete: true,
+    },
+  );
+  assert.equal(sameDayReplay.threeSetDays, 1);
+});
+
 test("profile streaks use JST days and do not double count the same day", () => {
   const beforeMidnight = Date.parse("2026-07-27T23:59:59+09:00");
   const afterMidnight = Date.parse("2026-07-28T00:00:00+09:00");
@@ -404,6 +748,14 @@ test("profile streaks use JST days and do not double count the same day", () => 
   assert.deepEqual(first, {
     sessions: 1,
     completedSets: 2,
+    completedSeconds: 0,
+    boostCompletedSets: 0,
+    boostSeconds: 0,
+    threeSetCompletions: 0,
+    threeSetDays: 0,
+    currentThreeSetStreak: 0,
+    bestThreeSetStreak: 0,
+    lastThreeSetDateKey: "",
     completeDays: 1,
     currentStreak: 1,
     bestStreak: 1,
@@ -474,6 +826,8 @@ test("delayed finalization credits only the completion day without overwriting a
     dateKey: "2026-07-28",
     sessionDateKey: "2026-07-28",
     creditTrainingSet: true,
+    creditTrainingSets: 1,
+    creditTrainingSeconds: 0,
   });
   assert.deepEqual(trainingDailySettlement(
     { daily: { dateKey: "2026-07-29", trainingSets: 0 } },
@@ -483,6 +837,8 @@ test("delayed finalization credits only the completion day without overwriting a
     dateKey: "2026-07-29",
     sessionDateKey: "2026-07-28",
     creditTrainingSet: false,
+    creditTrainingSets: 0,
+    creditTrainingSeconds: 0,
   });
   assert.deepEqual(trainingDailySettlement(
     null,
@@ -492,6 +848,22 @@ test("delayed finalization credits only the completion day without overwriting a
     dateKey: "2026-07-29",
     sessionDateKey: "2026-07-29",
     creditTrainingSet: true,
+    creditTrainingSets: 1,
+    creditTrainingSeconds: 0,
+  });
+  const beforeMidnight = Date.parse("2026-07-28T23:59:30+09:00");
+  const afterMidnight = Date.parse("2026-07-29T00:01:00+09:00");
+  assert.deepEqual(trainingDailySettlement(
+    null,
+    [beforeMidnight, afterMidnight, afterMidnight + 70_000],
+    nextDay,
+    [70, 80, 90],
+  ), {
+    dateKey: "2026-07-29",
+    sessionDateKey: "2026-07-29",
+    creditTrainingSet: true,
+    creditTrainingSets: 2,
+    creditTrainingSeconds: 170,
   });
   assert.equal(
     trainingDailySettlement(null, [], nextDay).creditTrainingSet,
@@ -512,6 +884,14 @@ test("profile normalization is private-record compatible and old rooms cannot fi
   }), {
     sessions: 4,
     completedSets: 7,
+    completedSeconds: 0,
+    boostCompletedSets: 0,
+    boostSeconds: 0,
+    threeSetCompletions: 0,
+    threeSetDays: 0,
+    currentThreeSetStreak: 0,
+    bestThreeSetStreak: 0,
+    lastThreeSetDateKey: "",
     completeDays: 3,
     currentStreak: 2,
     bestStreak: 3,

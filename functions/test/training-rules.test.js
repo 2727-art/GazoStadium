@@ -24,8 +24,8 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
   assert.match(queueEntry[".validate"], /'sessionId'/);
   assert.equal(Object.hasOwn(queueEntry, "conditions"), false);
   assert.match(queueEntry.sessionId[".validate"], /length <= 64/);
-  assert.equal(queueEntry.protocolVersion[".validate"], "newData.val() === 1");
-  assert.equal(queueEntry.variant[".validate"], "newData.val() === 'kitaeai_60'");
+  assert.equal(queueEntry.protocolVersion[".validate"], "newData.val() === 2");
+  assert.equal(queueEntry.variant[".validate"], "newData.val() === 'kitaeai_60_v2'");
   assert.match(queueEntry.intensity[".validate"], /light/);
   assert.match(queueEntry.intensity[".validate"], /standard/);
   assert.match(queueEntry.intensity[".validate"], /strong/);
@@ -105,8 +105,8 @@ test("training matchmaking is owner-scoped and protocol-fenced", () => {
   );
   assert.match(invite[".validate"], /protocolVersion/);
   assert.match(invite[".validate"], /variant/);
-  assert.equal(invite.protocolVersion[".validate"], "newData.val() === 1");
-  assert.equal(invite.variant[".validate"], "newData.val() === 'kitaeai_60'");
+  assert.equal(invite.protocolVersion[".validate"], "newData.val() === 2");
+  assert.equal(invite.variant[".validate"], "newData.val() === 'kitaeai_60_v2'");
   assert.match(invite.targetSessionId[".validate"], /length <= 64/);
   assert.equal(invite.$other[".validate"], false);
   assert.deepEqual(online.trainingRoomCleanupCursor, {
@@ -124,8 +124,9 @@ test("training room bootstrap fixes both identities and keeps signals target-pri
   assert.equal(room[".read"], false);
   assert.match(room[".write"], /!newData\.child\('turns'\)\.exists\(\)/);
   assert.match(room[".write"], /trainingQueue/);
-  assert.match(room[".write"], /protocolVersion'\)\.val\(\) === 1/);
-  assert.match(room[".write"], /variant'\)\.val\(\) === 'kitaeai_60'/);
+  assert.match(room[".write"], /protocolVersion'\)\.val\(\) === 2/);
+  assert.match(room[".write"], /variant'\)\.val\(\) === 'kitaeai_60_v2'/);
+  assert.match(room[".write"], /!newData\.child\('carrotChoices'\)\.exists\(\)/);
   assert.match(room[".write"], /members\//);
   assert.match(room[".write"], /players\//);
   assert.match(
@@ -229,13 +230,15 @@ test("training turns can only be authored and resolved by the assigned roles", (
   assert.match(turn[".write"], /!newData\.child\('startedAt'\)\.exists\(\)/);
   assert.match(turn[".write"], /firstTrainerUid/);
   assert.match(turn[".write"], /turns\/1\/completedAt/);
-  assert.match(turn[".write"], /turns\/1\/traineeUid/);
-  assert.match(turn[".write"], /turns\/1\/trainerUid/);
+  assert.match(turn[".write"], /turns\/1\/completedAt/);
   assert.match(turn[".write"], /continueVotes\/1/);
   assert.match(turn[".write"], /continueVotes\/2/);
   assert.match(turn[".write"], /imageReceived/);
   assert.match(turn[".write"], /hostUid/);
   assert.match(turn[".write"], /guestUid/);
+  assert.match(turn[".write"], /carrotChoices/);
+  assert.match(turn[".write"], /targetDurationMs/);
+  assert.match(turn[".write"], /imageOwnerUid/);
   assert.match(turn[".validate"], /\$turn === '1'/);
   assert.match(turn[".validate"], /\$turn === '6'/);
   assert.match(turn[".validate"], /completedAt/);
@@ -257,6 +260,11 @@ test("training turns can only be authored and resolved by the assigned roles", (
     assert.match(turn[field][".write"], /!data\.exists\(\)/);
   }
   assert.match(turn.completedAt[".validate"], /\+ 60000/);
+  assert.match(turn.completedAt[".validate"], /targetDurationMs/);
+  assert.match(turn.baseCompletedAt[".validate"], /=== newData\.parent\(\)\.child\('startedAt'\)\.val\(\) \+ 60000/);
+  assert.match(turn.baseCompletedAt[".validate"], /<= now/);
+  assert.match(turn.boostCompletedAt[".validate"], /targetDurationMs/);
+  assert.match(turn.boostCompletedAt[".validate"], /<= now/);
   assert.match(turn.surrenderedAt[".validate"], /\+ 60000/);
   assert.doesNotMatch(turn.completedAt[".validate"], /\+ 65000/);
   assert.doesNotMatch(turn.surrenderedAt[".validate"], /\+ 65000/);
@@ -265,6 +273,11 @@ test("training turns can only be authored and resolved by the assigned roles", (
   assert.doesNotMatch(turn.timedOutAt[".validate"], /\+ 90000/);
 
   assert.match(room.imageReceived.$uid[".write"], /auth\.uid === \$uid/);
+  assert.match(room.carrotChoices[".read"], /hostUid/);
+  assert.match(room.carrotChoices[".read"], /guestUid/);
+  assert.match(room.carrotChoices.$uid[".read"], /auth\.uid === \$uid/);
+  assert.match(room.carrotChoices.$uid[".write"], /!data\.exists\(\)/);
+  assert.match(room.carrotChoices.$uid[".write"], /!root\.child\('online\/trainingRooms\/' \+ \$roomId \+ '\/turns'\)\.exists\(\)/);
   assert.match(room.continueVotes.$pair.$uid[".write"], /\$pair === '3'/);
   assert.match(room.continueVotes.$pair.$uid[".write"], /turns\/2\/completedAt/);
   assert.match(room.continueVotes.$pair.$uid[".write"], /turns\/4\/completedAt/);
@@ -286,7 +299,8 @@ test("training is public-presence eligible but remains outside RATE", () => {
   assert.match(presence.mode[".validate"], /training/);
   assert.doesNotMatch(presence[".validate"], /team/);
   assert.doesNotMatch(presence.mode[".validate"], /team/);
-  assert.equal(daily.trainingSets[".validate"].includes("<= 1"), true);
+  assert.equal(daily.trainingSets[".validate"].includes("<= 3"), true);
+  assert.match(daily.trainingSeconds[".validate"], /<= 86400/);
   assert.match(daily.claimed.$missionId[".validate"], /play_training/);
 
   assert.equal(Object.hasOwn(online.overallProfiles.$uid.modes, "training"), false);

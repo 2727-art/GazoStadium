@@ -1,8 +1,21 @@
-export const TRAINING_PROTOCOL_VERSION = 1;
-export const TRAINING_VARIANT = "kitaeai_60";
+export const TRAINING_PROTOCOL_VERSION = 2;
+export const TRAINING_VARIANT = "kitaeai_60_v2";
 export const TRAINING_PLAYER_COUNT = 2;
 export const TRAINING_MAX_TURNS = 6;
-export const TRAINING_TURN_DURATION_MS = 60_000;
+export const TRAINING_BASE_DURATION_MS = 60_000;
+export const TRAINING_TURN_DURATION_MS = TRAINING_BASE_DURATION_MS;
+export const TRAINING_CARROT_CHOICES = Object.freeze([
+  "mine",
+  "boost8",
+  "boost9",
+  "boost10",
+]);
+export const TRAINING_TARGET_DURATION_MS = Object.freeze({
+  mine: TRAINING_BASE_DURATION_MS,
+  boost8: 70_000,
+  boost9: 80_000,
+  boost10: 90_000,
+});
 export const TRAINING_QUEUE_FRESH_MS = 45_000;
 export const TRAINING_ACTIVE_PRESENCE_GRACE_MS = 90_000;
 export const TRAINING_FORMING_PRESENCE_GRACE_MS = 45_000;
@@ -42,6 +55,20 @@ export function normalizeTrainingConditions(value) {
 
 export function normalizeTrainingIntensity(value) {
   return TRAINING_INTENSITIES.includes(value) ? value : "standard";
+}
+
+export function normalizeTrainingCarrotChoice(value) {
+  return TRAINING_CARROT_CHOICES.includes(value) ? value : "";
+}
+
+export function trainingTargetDurationMs(value) {
+  return TRAINING_TARGET_DURATION_MS[normalizeTrainingCarrotChoice(value)] || 0;
+}
+
+export function trainingImageOwnerUid(choice, traineeUid, trainerUid) {
+  const normalized = normalizeTrainingCarrotChoice(choice);
+  if (!normalized) return "";
+  return normalized === "mine" ? String(traineeUid || "") : String(trainerUid || "");
 }
 
 export function normalizeTrainingSessionId(value) {
@@ -157,7 +184,7 @@ export function trainingActiveRoomAppearsLive(room, uid, now = Date.now()) {
 }
 
 export function trainingServerFinalizedResult(serverFinalized, uid) {
-  if (Number(serverFinalized?.version) !== 1) return null;
+  if (Number(serverFinalized?.version) !== 2) return null;
   const ownOutcome = serverFinalized.outcomes?.[uid];
   if (!["win", "loss", "draw"].includes(ownOutcome)) return null;
   const outcomes = serverFinalized.outcomes || {};
@@ -171,6 +198,16 @@ export function trainingServerFinalizedResult(serverFinalized, uid) {
     completedSets: Object.values(completedSetsByUid)
       .reduce((total, value) => total + Math.max(0, Number(value) || 0), 0),
     ownCompletedSets: Math.max(0, Number(completedSetsByUid[uid]) || 0),
+    completedSeconds: Object.values(serverFinalized.completedSecondsByUid || {})
+      .reduce((total, value) => total + Math.max(0, Number(value) || 0), 0),
+    ownCompletedSeconds: Math.max(
+      0,
+      Number(serverFinalized.completedSecondsByUid?.[uid]) || 0,
+    ),
+    ownBoostCompletedSets: Math.max(
+      0,
+      Number(serverFinalized.boostCompletedSetsByUid?.[uid]) || 0,
+    ),
     result: {
       type: ownOutcome === "draw" ? "mutual_complete" : ownOutcome,
       winnerUid: Object.keys(outcomes).find((memberUid) => outcomes[memberUid] === "win") || "",
@@ -187,8 +224,16 @@ export function trainingTurnStatus(turn, now = Date.now()) {
   if (finiteTimestamp(turn.completedAt) > 0) return "completed";
   const startedAt = finiteTimestamp(turn.startedAt);
   if (!startedAt) return "ready";
-  return finiteTimestamp(now) >= startedAt + TRAINING_TURN_DURATION_MS
-    ? "expired"
+  const targetDurationMs = trainingTargetDurationMs(turn.carrotChoice);
+  if (!targetDurationMs) return "missing";
+  const currentTime = finiteTimestamp(now);
+  if (finiteTimestamp(turn.baseCompletedAt) > 0) {
+    return currentTime >= startedAt + targetDurationMs
+      ? "boost_expired"
+      : "boost_active";
+  }
+  return currentTime >= startedAt + TRAINING_BASE_DURATION_MS
+    ? "base_expired"
     : "active";
 }
 
@@ -205,7 +250,7 @@ export function orderedTrainingTurns(turns) {
 
 export function completedTrainingSets(turns, uid = "") {
   const completed = orderedTrainingTurns(turns)
-    .filter((turn) => trainingTurnStatus(turn, Number.POSITIVE_INFINITY) === "completed");
+    .filter((turn) => finiteTimestamp(turn.baseCompletedAt) > 0);
   if (!uid) return completed.length;
   return completed.filter((turn) => turn.traineeUid === uid).length;
 }
@@ -218,10 +263,7 @@ function memberUids(room) {
 }
 
 export function continueVotePairForTurn(turnIndex) {
-  const index = Number(turnIndex);
-  return Number.isSafeInteger(index) && index > 0 && index % 2 === 0
-    ? index / 2
-    : 0;
+  return 0;
 }
 
 export function deriveTrainingRoomState(room, uid, now = Date.now()) {
@@ -246,6 +288,11 @@ export function deriveTrainingRoomState(room, uid, now = Date.now()) {
   if (room?.destroyed) return { ...base, phase: "destroyed" };
   if (room?.status !== "active") return { ...base, phase: "forming" };
   if (!members.every((memberUid) => room?.imageReceived?.[memberUid] === true)) return base;
+  if (!members.every((memberUid) => (
+    normalizeTrainingCarrotChoice(room?.carrotChoices?.[memberUid])
+  ))) {
+    return { ...base, phase: "waiting_carrot_choices" };
+  }
 
   const turns = orderedTrainingTurns(room?.turns);
   const last = turns.at(-1);
@@ -281,7 +328,9 @@ export function deriveTrainingRoomState(room, uid, now = Date.now()) {
     };
   }
   if (status === "ready") return { ...current, phase: "ready" };
-  if (status === "active" || status === "expired") return { ...current, phase: status };
+  if (["active", "base_expired", "boost_active", "boost_expired"].includes(status)) {
+    return { ...current, phase: status };
+  }
   if (status !== "completed") return { ...current, phase: "waiting_instruction" };
 
   if (last.index >= TRAINING_MAX_TURNS) {
@@ -299,28 +348,6 @@ export function deriveTrainingRoomState(room, uid, now = Date.now()) {
 
   const nextTrainerUid = last.traineeUid;
   const nextTraineeUid = last.trainerUid;
-  const pair = continueVotePairForTurn(last.index);
-  if (pair) {
-    const votes = room?.continueVotes?.[pair] || room?.continueVotes?.[String(pair)] || {};
-    const values = members.map((memberUid) => votes?.[memberUid]).filter(Boolean);
-    if (values.includes("finish")) {
-      return {
-        ...current,
-        pair,
-        phase: "result",
-        result: {
-          type: "mutual_complete",
-          winnerUid: "",
-          loserUid: "",
-          reason: "mutual_complete",
-        },
-      };
-    }
-    if (!members.every((memberUid) => votes?.[memberUid] === "continue")) {
-      return { ...current, pair, phase: "continue_vote" };
-    }
-  }
-
   return {
     ...current,
     phase: uid === nextTrainerUid ? "compose" : "waiting_instruction",
@@ -328,7 +355,7 @@ export function deriveTrainingRoomState(room, uid, now = Date.now()) {
     turn: null,
     trainerUid: nextTrainerUid,
     traineeUid: nextTraineeUid,
-    pair,
+    pair: Math.ceil((last.index + 1) / 2),
   };
 }
 

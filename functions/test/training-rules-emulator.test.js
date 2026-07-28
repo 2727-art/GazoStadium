@@ -30,8 +30,8 @@ function queueEntry(uid, name, now, overrides = {}) {
     sessionId: `${uid}-session`,
     name,
     intensity: "standard",
-    protocolVersion: 1,
-    variant: "kitaeai_60",
+    protocolVersion: 2,
+    variant: "kitaeai_60_v2",
     joinedAt: now,
     lastSeen: now,
     state: "waiting",
@@ -53,8 +53,8 @@ function roomPayload(host, guest, now, {
   guestConditions = "",
 } = {}) {
   return {
-    protocolVersion: 1,
-    variant: "kitaeai_60",
+    protocolVersion: 2,
+    variant: "kitaeai_60_v2",
     hostUid: host.uid,
     guestUid: guest.uid,
     createdAt: now,
@@ -179,8 +179,8 @@ async function createFormingRoom(environment, now, roomId) {
     roomId,
     hostUid: host.uid,
     targetSessionId: guest.sessionId,
-    protocolVersion: 1,
-    variant: "kitaeai_60",
+    protocolVersion: 2,
+    variant: "kitaeai_60_v2",
     createdAt: Date.now(),
   }));
   await assertSucceeds(remove(ref(
@@ -232,6 +232,59 @@ async function markBothImagesReceived(room, roomId) {
     ),
     true,
   ));
+}
+
+async function chooseCarrots(room, roomId, {
+  hostChoice = "mine",
+  guestChoice = "boost8",
+} = {}) {
+  await assertSucceeds(set(
+    ref(
+      room.hostDatabase,
+      `online/trainingRooms/${roomId}/carrotChoices/${room.host.uid}`,
+    ),
+    hostChoice,
+  ));
+  await assertSucceeds(set(
+    ref(
+      room.guestDatabase,
+      `online/trainingRooms/${roomId}/carrotChoices/${room.guest.uid}`,
+    ),
+    guestChoice,
+  ));
+}
+
+function v2Turn(trainerUid, traineeUid, carrotChoice, createdAt = Date.now()) {
+  const targetDurationMs = {
+    mine: 60_000,
+    boost8: 70_000,
+    boost9: 80_000,
+    boost10: 90_000,
+  }[carrotChoice];
+  return {
+    trainerUid,
+    traineeUid,
+    carrotChoice,
+    targetDurationMs,
+    imageOwnerUid: carrotChoice === "mine" ? traineeUid : trainerUid,
+    instruction: instruction(),
+    createdAt,
+  };
+}
+
+async function setLegacyRoomProtocol(environment, roomId) {
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await update(
+      ref(
+        contextWithoutRules.database(),
+        `online/trainingRooms/${roomId}`,
+      ),
+      {
+        protocolVersion: 1,
+        variant: "kitaeai_60",
+      },
+    );
+  });
 }
 
 test("training bootstrap, child reads, and target-only signaling are enforced", {
@@ -486,8 +539,8 @@ test("invite ownership replaces the long global lock without blocking an indepen
     roomId,
     hostUid: host.uid,
     targetSessionId: guest.sessionId,
-    protocolVersion: 1,
-    variant: "kitaeai_60",
+    protocolVersion: 2,
+    variant: "kitaeai_60_v2",
     createdAt: Date.now(),
   });
 
@@ -809,6 +862,7 @@ test("turns are contiguous, alternate roles, and require both continuation votes
     hostDatabase,
     guestDatabase,
   } = await bootstrapRoom(environment, now, roomId);
+  await setLegacyRoomProtocol(environment, roomId);
   const turnOnePath = `online/trainingRooms/${roomId}/turns/1`;
   const turnTwoPath = `online/trainingRooms/${roomId}/turns/2`;
   const turnThreePath = `online/trainingRooms/${roomId}/turns/3`;
@@ -964,6 +1018,7 @@ test("completion and surrender are rejected after the strict sixty-second window
   const now = Date.now();
   const completionRoomId = "-trainingRulesRoom04";
   const completionRoom = await bootstrapRoom(environment, now, completionRoomId);
+  await setLegacyRoomProtocol(environment, completionRoomId);
   const completionTurnPath =
     `online/trainingRooms/${completionRoomId}/turns/1`;
   await markBothImagesReceived(completionRoom, completionRoomId);
@@ -1013,6 +1068,7 @@ test("completion and surrender are rejected after the strict sixty-second window
 
   const surrenderRoomId = "-trainingRulesRoom05";
   const surrenderRoom = await bootstrapRoom(environment, Date.now(), surrenderRoomId);
+  await setLegacyRoomProtocol(environment, surrenderRoomId);
   const surrenderTurnPath =
     `online/trainingRooms/${surrenderRoomId}/turns/1`;
   await markBothImagesReceived(surrenderRoom, surrenderRoomId);
@@ -1065,6 +1121,7 @@ test("either participant may record timeout after a long suspended session", {
     hostDatabase,
     guestDatabase,
   } = await bootstrapRoom(environment, now, roomId);
+  await setLegacyRoomProtocol(environment, roomId);
   const turnPath = `online/trainingRooms/${roomId}/turns/1`;
   await markBothImagesReceived({
     host,
@@ -1103,6 +1160,215 @@ test("either participant may record timeout after a long suspended session", {
     ref(guestDatabase, `${turnPath}/completedAt`),
     Date.now(),
   ));
+});
+
+test("v2 carrot choices stay secret until both lock and turns advance without votes", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const roomId = "-trainingV2Choices01";
+  const room = await bootstrapRoom(environment, Date.now(), roomId);
+  const basePath = `online/trainingRooms/${roomId}`;
+  const outsiderDatabase = environment
+    .authenticatedContext("training-choice-outsider")
+    .database();
+  await markBothImagesReceived(room, roomId);
+
+  await assertSucceeds(get(ref(
+    room.hostDatabase,
+    `${basePath}/carrotChoices/${room.host.uid}`,
+  )));
+  await assertFails(get(ref(
+    room.hostDatabase,
+    `${basePath}/carrotChoices/${room.guest.uid}`,
+  )));
+  await assertFails(get(ref(room.hostDatabase, `${basePath}/carrotChoices`)));
+
+  await assertSucceeds(set(ref(
+    room.hostDatabase,
+    `${basePath}/carrotChoices/${room.host.uid}`,
+  ), "mine"));
+  await assertFails(get(ref(
+    room.guestDatabase,
+    `${basePath}/carrotChoices/${room.host.uid}`,
+  )));
+  await assertFails(set(ref(room.hostDatabase, `${basePath}/turns/1`), v2Turn(
+    room.host.uid,
+    room.guest.uid,
+    "boost8",
+  )));
+
+  await assertSucceeds(set(ref(
+    room.guestDatabase,
+    `${basePath}/carrotChoices/${room.guest.uid}`,
+  ), "boost8"));
+  await assertSucceeds(get(ref(room.hostDatabase, `${basePath}/carrotChoices`)));
+  await assertSucceeds(get(ref(
+    room.guestDatabase,
+    `${basePath}/carrotChoices/${room.host.uid}`,
+  )));
+  await assertFails(get(ref(outsiderDatabase, `${basePath}/carrotChoices`)));
+  await assertFails(set(ref(
+    room.guestDatabase,
+    `${basePath}/carrotChoices/${room.guest.uid}`,
+  ), "boost10"));
+
+  const turnOnePath = `${basePath}/turns/1`;
+  await assertSucceeds(set(ref(room.hostDatabase, turnOnePath), v2Turn(
+    room.host.uid,
+    room.guest.uid,
+    "boost8",
+  )));
+  const turnTwoPath = `${basePath}/turns/2`;
+  await assertFails(set(ref(room.guestDatabase, turnTwoPath), v2Turn(
+    room.guest.uid,
+    room.host.uid,
+    "mine",
+  )));
+  const startedAt = Date.now();
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${turnOnePath}/startedAt`),
+    startedAt,
+  ));
+  await assertFails(set(
+    ref(room.guestDatabase, `${turnOnePath}/baseCompletedAt`),
+    startedAt + 60_000,
+  ));
+  await assertFails(set(
+    ref(room.hostDatabase, `${turnOnePath}/timedOutAt`),
+    startedAt + 60_000,
+  ));
+
+  const delayedStartedAt = Date.now() - 10 * 60_000;
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await set(
+      ref(contextWithoutRules.database(), `${turnOnePath}/startedAt`),
+      delayedStartedAt,
+    );
+  });
+  await assertSucceeds(update(ref(room.guestDatabase, turnOnePath), {
+    baseCompletedAt: delayedStartedAt + 60_000,
+    completedAt: delayedStartedAt + 70_000,
+    boostCompletedAt: delayedStartedAt + 70_000,
+  }));
+  await assertFails(set(
+    ref(
+      room.hostDatabase,
+      `${basePath}/continueVotes/1/${room.host.uid}`,
+    ),
+    "continue",
+  ));
+  await assertSucceeds(set(ref(room.guestDatabase, turnTwoPath), v2Turn(
+    room.guest.uid,
+    room.host.uid,
+    "mine",
+  )));
+});
+
+test("v2 enforces the 59,999/60,000 boundary and canonical delayed completion", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const roomId = "-trainingV2Boundary01";
+  const room = await bootstrapRoom(environment, Date.now(), roomId);
+  await markBothImagesReceived(room, roomId);
+  await chooseCarrots(room, roomId, {
+    hostChoice: "mine",
+    guestChoice: "boost10",
+  });
+  const turnPath = `online/trainingRooms/${roomId}/turns/1`;
+  await assertSucceeds(set(ref(room.hostDatabase, turnPath), v2Turn(
+    room.host.uid,
+    room.guest.uid,
+    "boost10",
+  )));
+
+  const startedAt = Date.now() - 10 * 60_000;
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await set(
+      ref(contextWithoutRules.database(), `${turnPath}/startedAt`),
+      startedAt,
+    );
+  });
+  await assertFails(set(
+    ref(room.guestDatabase, `${turnPath}/baseCompletedAt`),
+    startedAt + 59_999,
+  ));
+  await assertSucceeds(set(
+    ref(room.guestDatabase, `${turnPath}/baseCompletedAt`),
+    startedAt + 60_000,
+  ));
+  await assertFails(set(
+    ref(room.guestDatabase, `${turnPath}/completedAt`),
+    startedAt + 90_000,
+  ));
+  await assertSucceeds(update(ref(room.guestDatabase, turnPath), {
+    completedAt: startedAt + 90_000,
+    boostCompletedAt: startedAt + 90_000,
+  }));
+});
+
+test("existing protocol v1 rooms keep their old early-completion writes", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const roomId = "-trainingLegacyV1Room";
+  const hostUid = "training-legacy-host";
+  const guestUid = "training-legacy-guest";
+  const hostDatabase = environment.authenticatedContext(hostUid).database();
+  const guestDatabase = environment.authenticatedContext(guestUid).database();
+  const createdAt = Date.now();
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await set(
+      ref(contextWithoutRules.database(), `online/trainingRooms/${roomId}`),
+      {
+        protocolVersion: 1,
+        variant: "kitaeai_60",
+        hostUid,
+        guestUid,
+        createdAt,
+        status: "active",
+        firstTrainerUid: hostUid,
+        members: { [hostUid]: true, [guestUid]: true },
+        players: {
+          [hostUid]: {
+            uid: hostUid, name: "LEGACY-H", intensity: "standard", conditions: "",
+          },
+          [guestUid]: {
+            uid: guestUid, name: "LEGACY-G", intensity: "standard", conditions: "",
+          },
+        },
+        accepted: { [hostUid]: true, [guestUid]: true },
+        imageReceived: { [hostUid]: true, [guestUid]: true },
+      },
+    );
+  });
+  const turnOnePath = `online/trainingRooms/${roomId}/turns/1`;
+  await assertSucceeds(set(ref(hostDatabase, turnOnePath), {
+    trainerUid: hostUid,
+    traineeUid: guestUid,
+    instruction: instruction(),
+    createdAt: Date.now(),
+  }));
+  const startedAt = Date.now();
+  await assertSucceeds(set(
+    ref(guestDatabase, `${turnOnePath}/startedAt`),
+    startedAt,
+  ));
+  await assertSucceeds(set(
+    ref(guestDatabase, `${turnOnePath}/completedAt`),
+    startedAt + 1,
+  ));
+  assert.equal(
+    (await get(ref(guestDatabase, `${turnOnePath}/completedAt`))).val(),
+    startedAt + 1,
+  );
 });
 
 test("retired team data survives but no authenticated client can read or mutate it", {

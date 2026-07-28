@@ -348,7 +348,7 @@ const DAILY_MISSIONS = [
   { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 70 },
   { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 80 },
   { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "終了した推し上手！ふたりチャレンジの記録です。", target: 1, reward: 100, endsAfter: "2026-07-28" },
-  { id: "play_training", progressKey: "trainingSets", title: "鍛え合い60で1セット完遂", description: "60秒の指示をギブアップせず完遂すると進みます。", target: 1, reward: 100, startsOn: "2026-07-28" },
+  { id: "play_training", progressKey: "trainingSets", title: "鍛え合い60で3セット完遂", description: "本人のBASE 60秒を3セット完遂すると達成です。", target: 3, reward: 100, startsOn: "2026-07-28" },
 ];
 const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
   (mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY)
@@ -362,7 +362,8 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   soloMatches: 1,
   strategyMatches: 1,
   teamMatches: 1,
-  trainingSets: 1,
+  trainingSets: 3,
+  trainingSeconds: 86_400,
 });
 const SHOP_PRODUCTS = [
   { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム仕上げ", description: "無料の推しカードでホログラム、スターダスト、ロイヤル箔を何度でも使える買い切り機能", price: 500 },
@@ -1411,6 +1412,7 @@ function createEmptyEconomy(dateKey = jstDateKey()) {
       strategyMatches: 0,
       teamMatches: 0,
       trainingSets: 0,
+      trainingSeconds: 0,
       claimed: {},
     },
     updatedAt: Date.now(),

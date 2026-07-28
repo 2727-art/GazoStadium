@@ -50,11 +50,14 @@ test("training finalization processes both private profiles and claims exactly o
   assert.match(finalization, /applyTrainingSession/);
   assert.match(finalization, /trainingDailySettlement/);
   assert.match(finalization, /dailySettlement\.creditTrainingSet/);
-  assert.match(finalization, /progress\.daily\.trainingSets = 1/);
+  assert.match(finalization, /progress\.daily\.trainingSets = trainingSetsAfter/);
+  assert.match(finalization, /progress\.daily\.trainingSeconds/);
   assert.match(finalization, /child\("serverFinalized"\)/);
   assert.match(finalization, /status:\s*"pending"/);
   assert.match(finalization, /status:\s*"final"/);
   assert.match(finalization, /completedSets:/);
+  assert.match(finalization, /completedSeconds:/);
+  assert.match(finalization, /boostCompletedSets:/);
 });
 
 test("training never enters battle economy, RATE, period, ranking, crown, or tip pipelines", () => {
@@ -102,6 +105,8 @@ test("account transfer treats completed private training history as non-pristine
     /firestore\.collection\("trainingClaims"\)\.doc\(uid\)\.collection\("rooms"\)\.limit\(1\)\.get\(\)/,
   );
   assert.match(pristine, /trainingProfile\.sessions > 0/);
+  assert.match(pristine, /trainingProfile\.completedSeconds > 0/);
+  assert.match(pristine, /trainingProfile\.threeSetDays > 0/);
   assert.match(pristine, /!trainingClaimSnapshot\.empty/);
   const redemption = between(
     "async function redeemAccountTransferCode",
@@ -111,5 +116,7 @@ test("account transfer treats completed private training history as non-pristine
   assert.match(redemption, /transaction\.get\(trainingProfileRef\(targetUid\)\)/);
   assert.match(redemption, /targetTrainingProfile\.sessions > 0/);
   assert.match(redemption, /targetTrainingProfile\.completedSets > 0/);
+  assert.match(redemption, /targetTrainingProfile\.completedSeconds > 0/);
+  assert.match(redemption, /targetTrainingProfile\.threeSetDays > 0/);
   assert.match(redemption, /targetTrainingProfile\.completeDays > 0/);
 });

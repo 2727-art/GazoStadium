@@ -411,7 +411,7 @@ const DAILY_MISSIONS = Object.freeze({
     progressKey: "teamMatches", target: 1, reward: 100, endsAfter: "2026-07-28",
   },
   play_training: {
-    progressKey: "trainingSets", target: 1, reward: 100, startsOn: "2026-07-28",
+    progressKey: "trainingSets", target: 3, reward: 100, startsOn: "2026-07-28",
   },
 });
 
@@ -1579,6 +1579,7 @@ function emptyDaily(dateKey = jstDateKey()) {
     strategyMatches: 0,
     teamMatches: 0,
     trainingSets: 0,
+    trainingSeconds: 0,
     claimed: {},
   };
 }
@@ -1593,7 +1594,8 @@ function normalizeDaily(value, dateKey = jstDateKey()) {
     soloMatches: 1,
     strategyMatches: 1,
     teamMatches: 1,
-    trainingSets: 1,
+    trainingSets: 3,
+    trainingSeconds: 86_400,
   })) {
     daily[key] = integer(value[key], 0, limit, 0);
   }
@@ -4001,7 +4003,7 @@ async function initializeTraining(uid) {
 
 function trainingServerFinalizationMatches(value, result) {
   const finalized = objectValue(value);
-  return Number(finalized.version) === 1
+  return Number(finalized.version) === result.protocolVersion
     && finalized.reason === result.reason
     && Number(finalized.turnCount) === result.turnCount
     && sameIds(
@@ -4016,6 +4018,15 @@ function trainingServerFinalizationMatches(value, result) {
       finalized.outcomes?.[participantUid] === result.outcomes[participantUid]
       && Number(finalized.completedSetsByUid?.[participantUid])
         === result.completedSetsByUid[participantUid]
+      && (result.protocolVersion === 1
+        || (
+          Number(finalized.completedSecondsByUid?.[participantUid])
+            === result.completedSecondsByUid[participantUid]
+          && Number(finalized.boostCompletedSetsByUid?.[participantUid])
+            === result.boostCompletedSetsByUid[participantUid]
+          && Number(finalized.boostSecondsByUid?.[participantUid])
+            === result.boostSecondsByUid[participantUid]
+        ))
     ));
 }
 
@@ -4085,22 +4096,42 @@ async function finalizeTraining(uid, roomId, {
 
     participants.forEach((participantUid, index) => {
       const completedSets = derived.completedSetsByUid[participantUid];
+      const completedSeconds = derived.completedSecondsByUid[participantUid];
+      const boostCompletedSets = derived.boostCompletedSetsByUid[participantUid];
+      const boostSeconds = derived.boostSecondsByUid[participantUid];
       const claimSnapshot = claimSnapshots[index];
       const completionTimestamps = derived.completedAtByUid[participantUid];
       const dailySettlement = trainingDailySettlement(
         progressSnapshots[index].data(),
         completionTimestamps,
         now,
+        derived.completedSetSecondsByUid[participantUid],
       );
       const progress = normalizeEconomyProgress(
         progressSnapshots[index].data(),
         dailySettlement.dateKey,
       );
+      const trainingSetDelta = dailySettlement.creditTrainingSet
+        ? derived.protocolVersion === 2
+          ? dailySettlement.creditTrainingSets
+          : 1
+        : 0;
+      const trainingSetsBefore = progress.daily.trainingSets;
+      const trainingSetsAfter = Math.min(
+        3,
+        trainingSetsBefore + trainingSetDelta,
+      );
       if (claimSnapshot.exists) {
         if (claimSnapshot.get("uid") !== participantUid
             || claimSnapshot.get("roomId") !== roomId
             || claimSnapshot.get("outcome") !== derived.outcomes[participantUid]
-            || Number(claimSnapshot.get("completedSets")) !== completedSets) {
+            || Number(claimSnapshot.get("completedSets")) !== completedSets
+            || (derived.protocolVersion === 2
+              && (
+                Number(claimSnapshot.get("completedSeconds")) !== completedSeconds
+                || Number(claimSnapshot.get("boostCompletedSets")) !== boostCompletedSets
+                || Number(claimSnapshot.get("boostSeconds")) !== boostSeconds
+              ))) {
           throw new HttpsError(
             "failed-precondition",
             "鍛え合い60の保存済み確定記録が一致しません。",
@@ -4117,9 +4148,25 @@ async function finalizeTraining(uid, roomId, {
         profileSnapshots[index].data(),
         completionTimestamps,
         now,
+        now,
+        {
+          completedSeconds,
+          boostCompletedSets,
+          boostSeconds,
+          threeSetSessionComplete:
+            derived.protocolVersion === 2 && completedSets === 3,
+          threeSetDayComplete:
+            trainingSetsBefore < 3 && trainingSetsAfter === 3,
+        },
       );
-      if (completedSets > 0 && dailySettlement.creditTrainingSet) {
-        progress.daily.trainingSets = 1;
+      if (trainingSetDelta > 0) {
+        progress.daily.trainingSets = trainingSetsAfter;
+        if (derived.protocolVersion === 2) {
+          progress.daily.trainingSeconds = Math.min(
+            86_400,
+            progress.daily.trainingSeconds + dailySettlement.creditTrainingSeconds,
+          );
+        }
       }
       progress.updatedAt = now;
       profileResults[participantUid] = profile;
@@ -4127,13 +4174,17 @@ async function finalizeTraining(uid, roomId, {
       transaction.set(profileRefs[index], profile);
       transaction.set(progressRefs[index], progress);
       transaction.create(claimRefs[index], {
-        version: 1,
+        version: derived.protocolVersion,
+        protocolVersion: derived.protocolVersion,
         uid: participantUid,
         roomId,
         participants,
         outcome: derived.outcomes[participantUid],
         reason: derived.reason,
         completedSets,
+        completedSeconds,
+        boostCompletedSets,
+        boostSeconds,
         turnCount: derived.turnCount,
         finalizedBy: uid,
         createdAt: now,
@@ -4142,11 +4193,14 @@ async function finalizeTraining(uid, roomId, {
   });
 
   const serverFinalized = {
-    version: 1,
+    version: derived.protocolVersion,
     reason: derived.reason,
     turnCount: derived.turnCount,
     outcomes: derived.outcomes,
     completedSetsByUid: derived.completedSetsByUid,
+    completedSecondsByUid: derived.completedSecondsByUid,
+    boostCompletedSetsByUid: derived.boostCompletedSetsByUid,
+    boostSecondsByUid: derived.boostSecondsByUid,
     finalizedAt: Number(room?.serverFinalized?.finalizedAt) || now,
   };
   const serverFinalizedTransaction = await roomRef.child("serverFinalized")
@@ -4173,6 +4227,9 @@ async function finalizeTraining(uid, roomId, {
       outcome: derived.outcomes[uid],
       reason: derived.reason,
       completedSets: derived.completedSetsByUid[uid],
+      completedSeconds: derived.completedSecondsByUid[uid],
+      boostCompletedSets: derived.boostCompletedSetsByUid[uid],
+      boostSeconds: derived.boostSecondsByUid[uid],
       turnCount: derived.turnCount,
     },
     profile: profileResults[uid],
@@ -10353,6 +10410,11 @@ async function transferTargetIsPristine(uid, request) {
   const trainingProfile = normalizeTrainingProfile(trainingProfileSnapshot.data());
   if (trainingProfile.sessions > 0
       || trainingProfile.completedSets > 0
+      || trainingProfile.completedSeconds > 0
+      || trainingProfile.boostCompletedSets > 0
+      || trainingProfile.boostSeconds > 0
+      || trainingProfile.threeSetCompletions > 0
+      || trainingProfile.threeSetDays > 0
       || trainingProfile.completeDays > 0
       || !trainingClaimSnapshot.empty) return false;
   if (marketSnapshot.exists || fleaSellerCardSnapshot.exists || patronSnapshot.exists
@@ -10553,6 +10615,11 @@ async function redeemAccountTransferCode(request, rawCode) {
         || targetPatronSnapshot.exists
         || targetTrainingProfile.sessions > 0
         || targetTrainingProfile.completedSets > 0
+        || targetTrainingProfile.completedSeconds > 0
+        || targetTrainingProfile.boostCompletedSets > 0
+        || targetTrainingProfile.boostSeconds > 0
+        || targetTrainingProfile.threeSetCompletions > 0
+        || targetTrainingProfile.threeSetDays > 0
         || targetTrainingProfile.completeDays > 0
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {

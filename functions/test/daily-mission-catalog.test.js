@@ -139,5 +139,6 @@ test("client and server daily mission catalogs replace team with training at the
   assert.match(serverSource, /mission\.startsOn && dateKey < mission\.startsOn/);
   assert.match(serverSource, /mission\.endsAfter && dateKey >= mission\.endsAfter/);
   assert.match(serverSource, /trainingSets:\s*0/);
-  assert.match(serverSource, /trainingSets:\s*1/);
+  assert.match(serverSource, /trainingSets:\s*3/);
+  assert.match(serverSource, /trainingSeconds:\s*0/);
 });

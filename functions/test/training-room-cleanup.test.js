@@ -448,6 +448,40 @@ test("training cleanup retention boundaries protect fresh and live rooms", () =>
   );
 });
 
+test("cleanup recognizes both legacy v1 and three-set v2 natural results", () => {
+  const now = 12 * 24 * 60 * 60 * 1000;
+  assert.equal(
+    trainingRoomCleanupDisposition(surrenderedRoom(now), now).action,
+    "finalize",
+  );
+  const startedAt = now - 30_000;
+  const v2 = activeRoom(now - 60_000, {
+    protocolVersion: 2,
+    variant: "kitaeai_60_v2",
+    carrotChoices: { alice: "mine", bob: "boost8" },
+    turns: {
+      1: {
+        trainerUid: "alice",
+        traineeUid: "bob",
+        carrotChoice: "boost8",
+        targetDurationMs: 70_000,
+        imageOwnerUid: "alice",
+        instruction: {
+          exercise: "スクワット",
+          completion: "60秒",
+          command: "続けろ",
+          bpm: 80,
+          beatsPerRep: 2,
+        },
+        createdAt: startedAt - 100,
+        startedAt,
+        surrenderedAt: startedAt + 10_000,
+      },
+    },
+  });
+  assert.equal(trainingRoomCleanupDisposition(v2, now).action, "finalize");
+});
+
 test("old forming reservations without presence stop blocking account actions", () => {
   const now = 5_000_000;
   const room = {

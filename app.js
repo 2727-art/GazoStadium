@@ -861,7 +861,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
-          そして相手の指示を60秒やり切り、交代で一緒に鍛える「鍛え合い60」。
+          そして1人3セット、鍛える番と応援する番を交代する「鍛え合い60」。
           疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
@@ -870,7 +870,7 @@
         <div class="hero-actions">
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
-          <button class="button button-training hero-mode-button" id="trainingButton"><small>相手の指示を60秒。やり切ったら、あなたの番。</small><span>鍛え合い60</span></button>
+          <button class="button button-training hero-mode-button" id="trainingButton"><small>1人3セット。鍛えて、休んで、相手を応援。</small><span>鍛え合い60</span></button>
           <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>

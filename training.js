@@ -40,11 +40,12 @@ import {
   TRAINING_MAX_TURNS,
   TRAINING_PROTOCOL_VERSION,
   TRAINING_QUEUE_FRESH_MS,
+  TRAINING_TARGET_DURATION_MS,
   TRAINING_TURN_DURATION_MS,
   TRAINING_VARIANT,
-  continueVotePairForTurn,
   createTrainingAcceptanceUpdates,
   deriveTrainingRoomState,
+  normalizeTrainingCarrotChoice,
   normalizeTrainingConditions,
   normalizeTrainingInstruction,
   normalizeTrainingIntensity,
@@ -53,17 +54,19 @@ import {
   selectTrainingPair,
   trainingActiveRoomAppearsLive,
   trainingBeatState,
+  trainingImageOwnerUid,
   trainingInstructionIsReady,
   trainingServerFinalizedResult,
+  trainingTargetDurationMs,
   validTrainingQueueEntries,
-} from "./training-core.mjs?v=kitaeai-60-v1";
+} from "./training-core.mjs?v=kitaeai-60-v2";
 
 const MATCH_TIMEOUT_MS = 30_000;
 const MATCH_LOCK_TTL_MS = MATCH_TIMEOUT_MS + 10_000;
 const HEARTBEAT_MS = 20_000;
 const TRAINING_QUEUE_RECLAIM_MS = 60_000;
 const IMAGE_EXCHANGE_TIMEOUT_MS = 45_000;
-const IMAGE_CHANNEL_LABEL = "hariai-training-image-v1";
+const IMAGE_CHANNEL_LABEL = "hariai-training-image-v2";
 const IMAGE_ROUND = 1;
 const MAX_IMAGE_TRANSFER_BYTES = 8 * 1024 * 1024;
 const IMAGE_CHUNK_BYTES = 64 * 1024;
@@ -71,16 +74,60 @@ const DATA_BUFFER_LIMIT = 512 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const TRAINING_VOLUME_KEY = "hariai-training-volume-v1";
 const TRAINING_MUTED_KEY = "hariai-training-muted-v1";
+const CARROT_CHOICE_POLL_MS = 800;
+const TRAINING_HUD_PHASES = Object.freeze([
+  "ready",
+  "active",
+  "base_expired",
+  "boost_active",
+  "boost_expired",
+]);
+const TRAINING_RUNNING_PHASES = Object.freeze([
+  "active",
+  "base_expired",
+  "boost_active",
+  "boost_expired",
+]);
 const LOCAL_PREVIEW_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
   Object.freeze({ urls: "stun:stun1.l.google.com:19302" }),
 ]);
 const CHEERS = Object.freeze({
-  twenty: "あと20秒",
-  good: "その調子",
-  more: "まだ終わってないぞ",
-  complete: "よくやり切った",
+  go: "いける！",
+  halfway: "あと半分！",
+  last: "ラスト！",
+  complete: "よくやり切った！",
+});
+const CARROT_CHOICES = Object.freeze({
+  mine: Object.freeze({
+    label: "MY CARROT",
+    durationMs: TRAINING_TARGET_DURATION_MS.mine,
+    boostMs: 0,
+    image: "mine",
+    description: "自分の本命画像で、基本の60秒",
+  }),
+  boost8: Object.freeze({
+    label: "HIT 8",
+    durationMs: TRAINING_TARGET_DURATION_MS.boost8,
+    boostMs: 10_000,
+    image: "partner",
+    description: "相手画像で、60秒＋10秒",
+  }),
+  boost9: Object.freeze({
+    label: "CRITICAL 9",
+    durationMs: TRAINING_TARGET_DURATION_MS.boost9,
+    boostMs: 20_000,
+    image: "partner",
+    description: "相手画像で、60秒＋20秒",
+  }),
+  boost10: Object.freeze({
+    label: "PERFECT 10",
+    durationMs: TRAINING_TARGET_DURATION_MS.boost10,
+    boostMs: 30_000,
+    image: "partner",
+    description: "相手画像で、60秒＋30秒",
+  }),
 });
 const INTENSITY_LABELS = Object.freeze({
   light: "軽め",
@@ -214,6 +261,8 @@ function createState() {
     publicPresenceOwnerDisconnect: null,
     matchmakingUnsubscribers: [],
     roomUnsubscribers: [],
+    carrotChoicePoll: null,
+    carrotChoicePollBusy: false,
     disconnectHandles: [],
     activeDisconnect: null,
     activeDisconnectRoomId: "",
@@ -229,8 +278,12 @@ function createState() {
     iceServers: FALLBACK_ICE_SERVERS.map((item) => ({ ...item })),
     ticker: null,
     currentView: null,
-    timeoutWriting: null,
+    milestoneWriting: null,
     giveUpArmed: false,
+    carrotChoice: "",
+    carrotChoiceSubmitting: false,
+    freeCheerDraft: "",
+    freeCheerSentTurn: 0,
     draftTurnIndex: 0,
     draftInstruction: normalizeTrainingInstruction(PRESETS.squat),
     ambienceController,
@@ -266,8 +319,8 @@ function emptyRoom() {
     players: {},
     accepted: {},
     imageReceived: {},
+    carrotChoices: {},
     turns: {},
-    continueVotes: {},
     presence: {},
     destroyed: null,
     serverFinalized: null,
@@ -289,10 +342,63 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function normalizeCarrotChoice(value) {
+  return normalizeTrainingCarrotChoice(value);
+}
+
+function carrotChoiceConfig(value) {
+  return CARROT_CHOICES[normalizeCarrotChoice(value)] || CARROT_CHOICES.mine;
+}
+
+function carrotChoiceForUid(uid) {
+  return normalizeCarrotChoice(state.room.carrotChoices?.[uid]);
+}
+
+function allCarrotChoicesReady() {
+  const uids = Object.keys(state.room.members || {});
+  return uids.length === 2 && uids.every((uid) => carrotChoiceForUid(uid));
+}
+
+function trainingSetNumber(turnIndex) {
+  return Math.min(3, Math.max(1, Math.ceil(Number(turnIndex || 1) / 2)));
+}
+
+function trainingTurnTargetDuration(turn) {
+  const expected = trainingTargetDurationMs(turn?.carrotChoice);
+  const target = Number(turn?.targetDurationMs);
+  return target === expected ? target : expected || TRAINING_TURN_DURATION_MS;
+}
+
+function trainingTurnImageOwner(turn, traineeUid, trainerUid) {
+  const expected = trainingImageOwnerUid(turn?.carrotChoice, traineeUid, trainerUid);
+  return turn?.imageOwnerUid === expected ? turn.imageOwnerUid : expected;
+}
+
+function trainingTurnElapsed(turn, now = firebaseNow()) {
+  const startedAt = Number(turn?.startedAt || 0);
+  return startedAt ? Math.max(0, Number(now) - startedAt) : 0;
+}
+
+function completedTrainingSeconds(turns) {
+  return Object.values(turns || {}).reduce((total, turn) => {
+    const startedAt = Number(turn?.startedAt || 0);
+    const completedAt = Number(turn?.completedAt || 0);
+    const baseCompletedAt = Number(turn?.baseCompletedAt || 0);
+    const recordedAt = completedAt || baseCompletedAt;
+    if (!startedAt || recordedAt < startedAt + TRAINING_TURN_DURATION_MS) return total;
+    return total + Math.floor(Math.min(
+      trainingTurnTargetDuration(turn),
+      Math.max(TRAINING_TURN_DURATION_MS, recordedAt - startedAt),
+    ) / 1000);
+  }, 0);
+}
+
 function isPreviewRequest() {
   if (!LOCAL_PREVIEW_HOSTS.has(location.hostname)) return "";
   const requested = new URLSearchParams(location.search).get("trainingPreview") || "";
-  return ["setup", "active", "result"].includes(requested) ? requested : "";
+  return ["setup", "choice", "coach", "active", "boost", "result"].includes(requested)
+    ? requested
+    : "";
 }
 
 function start() {
@@ -395,13 +501,13 @@ function renderSetup() {
       <div class="training-heading">
         <span class="eyebrow">ROLEPLAY RHYTHM TRAINING / RATE FREE</span>
         <h1 id="trainingTitle">鍛え合い<span>60</span></h1>
-        <p>相手の自由な指示を60秒。やり切ったら、今度はあなたが指示役です。</p>
+        <p>自分も3セット、相手も3セット。休む番には相手を応援して、二人で三日坊主を越えます。</p>
       </div>
       <div class="training-setup-grid">
         <section class="training-carrot-card" aria-labelledby="trainingCarrotTitle">
           <div class="training-section-head">
             <span>01</span>
-            <div><h2 id="trainingCarrotTitle">ニンジン画像</h2><p>食べ物でも、推しでも、何でもOK。</p></div>
+            <div><h2 id="trainingCarrotTitle">MY CARROT</h2><p>刺さらない画像を見続けないための、自分の本命を1枚。</p></div>
           </div>
           <div class="training-setup-image">${preview}</div>
           <div class="training-image-actions">
@@ -437,7 +543,7 @@ function renderSetup() {
           </label>
           <div class="training-trust-note">
             <strong>カメラ・センサーなし</strong>
-            <p>フォームの監視はしません。お互いのロールプレイと自己申告で鍛え合うモードです。ギブアップは、その一戦の負けになるだけです。</p>
+            <p>フォームの監視はしません。参加した二人は、交互に3セットをやり切る約束です。相手の運動中は応援しながら回復します。</p>
             <p>痛み・めまい・体調の変化を感じたら、勝敗より中止を優先してください。</p>
           </div>
           ${renderSetupTrainingRecord()}
@@ -452,16 +558,17 @@ function renderSetup() {
 
 function renderSetupTrainingRecord() {
   const profile = state.profile || {};
-  const missionComplete = Number(state.daily?.trainingSets || 0) >= 1;
+  const missionComplete = Number(state.daily?.trainingSets || 0) >= 3;
   return `
     <section class="training-setup-record" aria-label="鍛え合い記録">
       <header><h3>鍛え合い記録</h3><span>NO RATE</span></header>
       <dl>
         <div><dt>累計完了セット</dt><dd>${Number(profile.completedSets || 0)}</dd></div>
-        <div><dt>続けた日数</dt><dd>${Number(profile.completeDays || 0)}日</dd></div>
-        <div><dt>現在の連続</dt><dd>${Number(profile.currentStreak || 0)}日</dd></div>
-        <div><dt>最長連続</dt><dd>${Number(profile.bestStreak || 0)}日</dd></div>
-        <div class="training-setup-mission"><dt>今日の専用ミッション</dt><dd>${missionComplete ? "達成 1/1" : "未達 0/1"}</dd></div>
+        <div><dt>3セット完遂日</dt><dd>${Number(profile.threeSetDays || 0)}日</dd></div>
+        <div><dt>3セット連続</dt><dd>${Number(profile.currentThreeSetStreak || 0)}日</dd></div>
+        <div><dt>3セット最長</dt><dd>${Number(profile.bestThreeSetStreak || 0)}日</dd></div>
+        <div><dt>活動した日</dt><dd>${Number(profile.completeDays || 0)}日</dd></div>
+        <div class="training-setup-mission"><dt>今日の3セット</dt><dd>${missionComplete ? "達成 3/3" : `${Math.min(3, Number(state.daily?.trainingSets || 0))}/3`}</dd></div>
       </dl>
     </section>`;
 }
@@ -517,12 +624,14 @@ function renderRoom() {
     });
     return "";
   }
-  if (!["ready", "active", "expired"].includes(view.phase)) state.ambienceController.disable();
+  if (!TRAINING_HUD_PHASES.includes(view.phase)) state.ambienceController.disable();
   if (view.phase === "waiting_images" || view.phase === "forming") return renderConnecting(view);
+  if (view.phase === "waiting_carrot_choices" || (allImagesReceived() && !allCarrotChoicesReady())) {
+    return renderCarrotChoice();
+  }
   if (view.phase === "compose") return renderInstructionComposer(view);
   if (view.phase === "waiting_instruction") return renderWaitingInstruction(view);
-  if (view.phase === "continue_vote") return renderContinueVote(view);
-  if (["ready", "active", "expired"].includes(view.phase)) return renderTrainingHud(view);
+  if (TRAINING_HUD_PHASES.includes(view.phase)) return renderTrainingHud(view);
   return renderConnecting(view);
 }
 
@@ -544,32 +653,98 @@ function renderConnecting() {
     </section>`;
 }
 
+function renderCarrotChoice() {
+  const ownChoice = state.carrotChoice || carrotChoiceForUid(state.uid);
+  const choice = ownChoice ? carrotChoiceConfig(ownChoice) : null;
+  const opponent = opponentPlayer();
+  return `
+    <section class="screen training-screen training-carrot-choice" aria-labelledby="trainingCarrotChoiceTitle">
+      <header class="training-turn-header">
+        <span>BEFORE SET 1 / SECRET CHOICE</span>
+        <strong>刺さった分だけ、身体で返す</strong>
+      </header>
+      ${ownChoice ? `
+        <div class="training-choice-wait">
+          <span class="eyebrow">CHOICE LOCKED</span>
+          <h1 id="trainingCarrotChoiceTitle">${escapeHtml(choice.label)}を選びました</h1>
+          <p>${escapeHtml(choice.description)}。相手が選び終えるまで、互いの選択は表示されません。</p>
+          <div class="training-choice-lock"><i></i><strong>${choice.durationMs / 1000} SEC × 3 SETS</strong></div>
+          <p class="training-subtle">${escapeHtml(opponent?.name || "相手")}さんの秘密選択を待っています…</p>
+        </div>
+      ` : `
+        <div class="training-choice-lead">
+          <span class="eyebrow">MY CARROT OR PARTNER BOOST</span>
+          <h1 id="trainingCarrotChoiceTitle">3セットで見る画像を選ぶ</h1>
+          <p>相手画像が本当に刺さったときだけ8・9・10を選択。低評価は送らず、刺さらなければ自分の本命で鍛えます。</p>
+        </div>
+        <div class="training-choice-grid">
+          <article class="training-choice-card is-mine">
+            ${renderTrainingImageByOwner(state.uid, "自分のMY CARROT画像", false)}
+            <div>
+              <span>NO SCORE / SAFE CHOICE</span>
+              <h2>MY CARROT</h2>
+              <p>自分の本命画像で60秒。画像相性に左右されず、今日の3セットを守ります。</p>
+              <button class="button button-training" type="button" data-training-carrot-choice="mine" ${state.carrotChoiceSubmitting ? "disabled" : ""}>60秒 × 3セット</button>
+            </div>
+          </article>
+          <article class="training-choice-card is-boost">
+            ${renderTrainingImageByOwner(opponent?.uid, "相手のCARROT画像", false)}
+            <div>
+              <span>PARTNER IMAGE / OPTIONAL BOOST</span>
+              <h2>CARROT BOOST</h2>
+              <p>高評価は公開採点ではなく、自分が追加で動く時間。BASE 60秒を越えた分は途中で終えても負けになりません。</p>
+              <div class="training-boost-choices">
+                ${["boost8", "boost9", "boost10"].map((value) => {
+                  const item = CARROT_CHOICES[value];
+                  return `<button type="button" data-training-carrot-choice="${value}" ${state.carrotChoiceSubmitting ? "disabled" : ""}><strong>${item.label}</strong><span>${item.durationMs / 1000}秒 × 3</span></button>`;
+                }).join("")}
+              </div>
+            </div>
+          </article>
+        </div>
+        <p class="training-choice-privacy">選択は一度だけ。二人とも決めるまで相手側には表示されません。RATE・ランキング・Payには影響しません。</p>
+      `}
+    </section>`;
+}
+
 function seedDraftForTurn(view) {
   if (state.draftTurnIndex === view.turnIndex) return;
   state.draftTurnIndex = view.turnIndex;
-  state.draftInstruction = normalizeTrainingInstruction(PRESETS.squat);
+  const previousInstruction = Object.entries(state.room.turns || {})
+    .map(([index, turn]) => ({ index: Number(index), turn }))
+    .filter(({ index, turn }) => (
+      index < view.turnIndex
+      && turn?.trainerUid === state.uid
+      && turn?.traineeUid === view.traineeUid
+      && trainingInstructionIsReady(turn?.instruction)
+    ))
+    .sort((first, second) => second.index - first.index)[0]?.turn?.instruction;
+  state.draftInstruction = normalizeTrainingInstruction(previousInstruction || PRESETS.squat);
 }
 
 function renderInstructionComposer(view) {
   seedDraftForTurn(view);
   const trainee = playerByUid(view.traineeUid);
+  const choice = carrotChoiceConfig(carrotChoiceForUid(view.traineeUid));
+  const imageOwnerUid = choice.image === "mine" ? view.traineeUid : state.uid;
+  const setNumber = trainingSetNumber(view.turnIndex);
   const draft = state.draftInstruction;
   return `
     <section class="screen training-screen training-command-screen" aria-labelledby="trainingCommandTitle">
       <header class="training-turn-header">
-        <span>TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span>
-        <strong>あなたが指示役</strong>
+        <span>SET ${setNumber} / 3 ・ TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span>
+        <strong>COACH &amp; RECOVERY</strong>
       </header>
       <div class="training-command-grid">
-        ${renderOpponentImage("指示を受ける相手のニンジン画像", false)}
+        ${renderTrainingImageByOwner(imageOwnerUid, "相手がこのセットで見るCARROT画像", false)}
         <form class="training-command-card" id="trainingInstructionForm">
           <span class="eyebrow">YOUR FREE COMMAND</span>
-          <h1 id="trainingCommandTitle">${escapeHtml(trainee?.name || "相手")}さんへ、60秒の指示を。</h1>
+          <h1 id="trainingCommandTitle">${escapeHtml(trainee?.name || "相手")}さんへ、SET ${setNumber}の指示を。</h1>
           <div class="training-trainee-state">
-            <span>${escapeHtml(INTENSITY_LABELS[trainee?.intensity] || "標準")}</span>
-            <p>${escapeHtml(trainee?.conditions || "今日の条件：指定なし")}</p>
+            <span>${escapeHtml(choice.label)} / ${choice.durationMs / 1000}秒</span>
+            <p>希望強度：${escapeHtml(INTENSITY_LABELS[trainee?.intensity] || INTENSITY_LABELS.standard)}<br />配慮：${escapeHtml(trainee?.conditions || "指定なし")}</p>
           </div>
-          <p class="training-command-lead">自由な指示が主役です。下のプリセットは入力のきっかけとしてだけ使えます。</p>
+          <p class="training-command-lead">相手が動く間は、あなたの回復時間です。無理のない指示を送り、始まったら掛け声で支えます。</p>
           <div class="training-presets" aria-label="入力補助">
             <button type="button" data-training-preset="pushup">腕立て伏せ</button>
             <button type="button" data-training-preset="squat">スクワット</button>
@@ -601,7 +776,7 @@ function renderInstructionComposer(view) {
               `).join("")}
             </fieldset>
           </div>
-          <button class="button button-training" id="trainingSendInstruction" type="submit">この指示を送る</button>
+          <button class="button button-training" id="trainingSendInstruction" type="submit">SET ${setNumber}の指示を送る</button>
         </form>
       </div>
     </section>`;
@@ -609,42 +784,21 @@ function renderInstructionComposer(view) {
 
 function renderWaitingInstruction(view) {
   const trainer = playerByUid(view.trainerUid);
+  const choice = carrotChoiceConfig(carrotChoiceForUid(state.uid));
+  const imageOwnerUid = choice.image === "mine" ? state.uid : view.trainerUid;
+  const setNumber = trainingSetNumber(view.turnIndex);
   return `
     <section class="screen training-screen training-waiting-command" aria-labelledby="trainingWaitingCommandTitle">
       <header class="training-turn-header">
-        <span>TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span>
-        <strong>あなたはチャレンジャー</strong>
+        <span>SET ${setNumber} / 3 ・ TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span>
+        <strong>NEXT: ${escapeHtml(choice.label)} / ${choice.durationMs / 1000}秒</strong>
       </header>
-      ${renderOpponentImage("指示を考えている相手のニンジン画像", false)}
+      ${renderTrainingImageByOwner(imageOwnerUid, "次のセットで見るCARROT画像", false)}
       <div class="training-waiting-copy">
         <span class="eyebrow">COMMAND INCOMING</span>
         <h1 id="trainingWaitingCommandTitle">${escapeHtml(trainer?.name || "相手")}さんが指示を考えています</h1>
-        <p>画像を眺めながら、呼吸を整えて待ちましょう。</p>
+        <p>水分をひと口。呼吸を整え、SET ${setNumber}に備えましょう。</p>
       </div>
-    </section>`;
-}
-
-function renderContinueVote(view) {
-  const pair = view.pair || continueVotePairForTurn(view.turnIndex);
-  const ownVote = state.room.continueVotes?.[pair]?.[state.uid] || "";
-  const otherVote = state.room.continueVotes?.[pair]?.[view.opponentUid] || "";
-  return `
-    <section class="screen training-screen training-centred training-continue" aria-labelledby="trainingContinueTitle">
-      <span class="eyebrow">PAIR ${pair} COMPLETE</span>
-      <h1 id="trainingContinueTitle">もう1往復、鍛え合いますか？</h1>
-      <p>ここまでで2人ともコンプリートです。どちらかが終了を選べば、気持ちよく完了になります。</p>
-      <div class="training-complete-count"><strong>${view.completedSets}</strong><span>COMPLETED SETS</span></div>
-      ${ownVote ? `
-        <div class="training-vote-wait">
-          <strong>${ownVote === "continue" ? "もう1往復を希望しました" : "ここで完了を選びました"}</strong>
-          <p>${otherVote ? "相手の回答を受け取りました。" : "相手の回答を待っています…"}</p>
-        </div>
-      ` : `
-        <div class="training-vote-actions">
-          <button class="button button-training" type="button" data-training-vote="continue">もう1往復する</button>
-          <button class="button button-ghost" type="button" data-training-vote="finish">ここで二人ともCOMPLETE</button>
-        </div>
-      `}
     </section>`;
 }
 
@@ -654,22 +808,35 @@ function renderTrainingHud(view) {
   const isTrainer = view.trainerUid === state.uid;
   const isTrainee = view.traineeUid === state.uid;
   const startedAt = Number(turn?.startedAt || 0);
+  const choice = carrotChoiceConfig(turn?.carrotChoice);
+  const targetDuration = trainingTurnTargetDuration(turn);
+  const elapsed = trainingTurnElapsed(turn);
+  const baseComplete = Number(turn?.baseCompletedAt || 0) > 0
+    || elapsed >= TRAINING_TURN_DURATION_MS;
+  const inBoost = choice.boostMs > 0 && baseComplete;
   const remaining = startedAt
-    ? Math.max(0, TRAINING_TURN_DURATION_MS - (firebaseNow() - startedAt))
-    : TRAINING_TURN_DURATION_MS;
-  const seconds = Math.ceil(remaining / 1000);
-  const progress = (remaining / TRAINING_TURN_DURATION_MS) * 100;
+    ? Math.max(0, targetDuration - elapsed)
+    : targetDuration;
+  const stageRemaining = inBoost
+    ? remaining
+    : Math.max(0, TRAINING_TURN_DURATION_MS - elapsed);
+  const seconds = Math.ceil(stageRemaining / 1000);
+  const progress = (remaining / targetDuration) * 100;
   const beats = instruction.beatsPerRep || 1;
+  const setNumber = trainingSetNumber(view.turnIndex);
+  const imageOwnerUid = trainingTurnImageOwner(turn, view.traineeUid, view.trainerUid);
   const giveUpCopy = state.giveUpArmed ? "もう一度押して、負けを確定" : "GIVE UP";
   const controls = isTrainee
     ? (view.phase === "ready"
-      ? `<button class="button button-training training-start-button" id="trainingStartTurn" type="button">60秒を開始</button>`
-      : `<button class="button button-training training-complete-button" id="trainingCompleteTurn" type="button" ${view.phase === "expired" ? "disabled" : ""}>COMPLETE</button>`)
-    : renderCheerButtons(view);
+      ? `<button class="button button-training training-start-button" id="trainingStartTurn" type="button">${choice.label}・${targetDuration / 1000}秒を開始</button>`
+      : (inBoost
+        ? `<button class="button button-training training-complete-button" id="trainingCompleteTurn" type="button">BASE COMPLETE｜BOOSTをここで終える</button>`
+        : `<div class="training-base-promise"><strong>BASE 60</strong><span>60秒到達で自動COMPLETE</span></div>`))
+    : renderCoachRecovery(view, { remaining, baseComplete, choice, setNumber });
   return `
-    <section class="screen training-screen training-hud ${isTrainer ? "is-trainer" : "is-trainee"}" aria-labelledby="trainingHudTitle">
+    <section class="screen training-screen training-hud ${isTrainer ? "is-trainer" : "is-trainee"} ${inBoost ? "is-boost" : "is-base"}" aria-labelledby="trainingHudTitle">
       <header class="training-hud-header">
-        <div><span>TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span><strong>${isTrainer ? "指示役" : "チャレンジャー"}</strong></div>
+        <div><span>SET ${setNumber} / 3 ・ TURN ${view.turnIndex} / ${TRAINING_MAX_TURNS}</span><strong>${isTrainer ? "COACH & RECOVERY" : (inBoost ? "CARROT BOOST" : "BASE TRAINING")}</strong></div>
         <div class="training-hud-name">${escapeHtml(playerByUid(view.opponentUid)?.name || "PARTNER")}</div>
       </header>
       <div class="training-image-arena">
@@ -677,13 +844,14 @@ function renderTrainingHud(view) {
           class="training-countdown-progress"
           id="trainingCountdownProgress"
           role="progressbar"
-          aria-label="残り${seconds}秒"
+          aria-label="${inBoost ? "BOOST" : "BASE"} 残り${seconds}秒"
           aria-valuemin="0"
-          aria-valuemax="60"
+          aria-valuemax="${inBoost ? choice.boostMs / 1000 : TRAINING_TURN_DURATION_MS / 1000}"
           aria-valuenow="${seconds}"
-        ><i id="trainingCountdownFill" style="width:${progress}%"></i></div>
-        ${renderOpponentImage("相手のニンジン画像", true)}
-        <div class="training-countdown-clock" aria-hidden="true"><strong id="trainingCountdown">${seconds}</strong><span>SEC</span></div>
+        ><i id="trainingCountdownFill" style="width:${progress}%"></i>${choice.boostMs ? `<b style="left:${(choice.boostMs / targetDuration) * 100}%"></b>` : ""}</div>
+        ${renderTrainingImageByOwner(imageOwnerUid, `${choice.label}で見るCARROT画像`, true)}
+        <div class="training-stage-badge" id="trainingStageBadge">${inBoost ? choice.label : "BASE 60"}</div>
+        <div class="training-countdown-clock" aria-hidden="true"><strong id="trainingCountdown">${seconds}</strong><span>${inBoost ? "BOOST" : "SEC"}</span></div>
         <div class="training-cheer-overlay ${state.cheer ? "is-visible" : ""}" id="trainingCheerOverlay" role="status" aria-live="polite">
           ${escapeHtml(state.cheer?.text || "")}
         </div>
@@ -710,7 +878,7 @@ function renderTrainingHud(view) {
         </div>
       </section>
       <div class="training-turn-actions">${controls}</div>
-      ${isTrainee ? `
+      ${isTrainee && !baseComplete ? `
         <div class="training-give-up-dock ${state.giveUpArmed ? "is-armed" : ""}">
           <p>痛み・めまい・体調の変化を感じたら、勝敗より中止を優先</p>
           ${state.giveUpArmed ? `<button type="button" id="trainingCancelGiveUp">続ける</button>` : ""}
@@ -720,19 +888,43 @@ function renderTrainingHud(view) {
     </section>`;
 }
 
-function renderCheerButtons(view) {
-  if (view.phase !== "active") return `<p class="training-role-wait">相手が開始ボタンを押すと、60秒が始まります。</p>`;
+function renderCoachRecovery(view, { remaining, baseComplete, choice, setNumber }) {
+  if (view.phase === "ready") {
+    return `
+      <section class="training-recovery-panel">
+        <span>RECOVERY BEFORE YOUR SET ${setNumber}</span>
+        <strong>相手の開始を待ちながら、呼吸と水分を整える</strong>
+        <p>開始後は掛け声で伴走できます。</p>
+      </section>`;
+  }
+  const freeCheerSent = state.freeCheerSentTurn === view.turnIndex;
   return `
-    <div class="training-cheer-buttons" aria-label="相手へ掛け声を送る">
-      ${Object.entries(CHEERS).map(([id, label]) => `<button type="button" data-training-cheer="${id}">${label}</button>`).join("")}
-    </div>`;
+    <section class="training-coach-recovery" aria-label="応援と回復">
+      <div class="training-recovery-panel">
+        <span>COACH &amp; RECOVERY</span>
+        <strong>次の自分のセットまで、あと約${Math.ceil(remaining / 1000)}秒</strong>
+        <p>${baseComplete ? `${choice.label}の追加区間。相手はBASEを達成済みです。` : "深呼吸・水分補給。休みながら相手の60秒を支えます。"}</p>
+      </div>
+      <div class="training-cheer-buttons" aria-label="相手へ掛け声を送る">
+        ${Object.entries(CHEERS).map(([id, label]) => `<button type="button" data-training-cheer="${id}">${label}</button>`).join("")}
+      </div>
+      <div class="training-free-cheer">
+        <label for="trainingFreeCheer">自由なロールプレイ応援 <span>各ターン1回</span></label>
+        <div>
+          <input id="trainingFreeCheer" maxlength="40" value="${escapeHtml(freeCheerSent ? "" : state.freeCheerDraft)}" placeholder="${freeCheerSent ? "このターンは送信済み" : "例：その一回が明日の自信になる！"}" ${freeCheerSent ? "disabled" : ""} />
+          <button type="button" id="trainingSendFreeCheer" ${freeCheerSent ? "disabled" : ""}>${freeCheerSent ? "送信済み" : "応援する"}</button>
+        </div>
+      </div>
+    </section>`;
 }
 
-function renderOpponentImage(alt, compact) {
-  if (state.remoteImage?.url) {
-    return `<figure class="training-opponent-image ${compact ? "is-compact" : ""}"><img src="${escapeHtml(state.remoteImage.url)}" alt="${escapeHtml(alt)}" /></figure>`;
+function renderTrainingImageByOwner(ownerUid, alt, compact) {
+  const ownImage = ownerUid === state.uid;
+  const image = ownImage ? state.localImage : state.remoteImage;
+  if (image?.url) {
+    return `<figure class="training-opponent-image ${ownImage ? "is-own-carrot" : "is-partner-carrot"} ${compact ? "is-compact" : ""}"><img src="${escapeHtml(image.url)}" alt="${escapeHtml(alt)}" /></figure>`;
   }
-  return `<div class="training-opponent-image training-image-placeholder ${compact ? "is-compact" : ""}" aria-label="${escapeHtml(alt)}"><span>PARTNER IMAGE</span></div>`;
+  return `<div class="training-opponent-image training-image-placeholder ${compact ? "is-compact" : ""}" aria-label="${escapeHtml(alt)}"><span>${ownImage ? "MY CARROT" : "PARTNER IMAGE"}</span></div>`;
 }
 
 function renderResult() {
@@ -740,29 +932,39 @@ function renderResult() {
   const result = view.result || { type: "mutual_complete", reason: "mutual_complete" };
   const serverResult = state.finalization?.result;
   const completedSets = Number(serverResult?.completedSets ?? view.ownCompletedSets ?? 0);
-  const heading = result.type === "win"
+  const totalSeconds = Number(view.completedSeconds)
+    || completedTrainingSeconds(state.room.turns);
+  const baseSaved = [
+    "base_complete_interrupt",
+    "progress_complete_interrupt",
+  ].includes(result.reason);
+  const heading = baseSaved
+    ? "BASE SAVED"
+    : result.type === "win"
     ? "YOU WIN"
     : result.type === "loss"
       ? "TRAINING LOSS"
-      : "MUTUAL COMPLETE";
-  const japanese = result.type === "win"
-    ? (result.reason === "timeout"
-      ? "相手は60秒をコンプリートできませんでした。最後まで立っていたあなたの勝ちです。"
-      : "相手のギブアップ。最後まで立っていたあなたの勝ちです。")
-    : result.type === "loss"
+      : "3 SETS COMPLETE";
+  const japanese = baseSaved
+    ? "通信中断前に達成したBASEは記録しました。勝敗はつかず、未完のセットは次の機会にあらためて鍛えられます。"
+    : result.type === "win"
       ? (result.reason === "timeout"
-        ? "60秒をコンプリートできませんでした。今日はここまででも大丈夫です。"
+        ? "相手はBASE 60秒をコンプリートできませんでした。最後まで伴走したあなたの勝ちです。"
+        : "相手のギブアップ。最後まで立っていたあなたの勝ちです。")
+      : result.type === "loss"
+        ? (result.reason === "timeout"
+        ? "BASE 60秒をコンプリートできませんでした。今日はここまででも大丈夫です。"
         : "ギブアップを受け付けました。休んだら、また鍛え合いましょう。")
-      : "二人とも、今日の鍛え合いをやり切りました。";
+      : "自分も3セット、相手も3セット。休みながら応援し、二人で今日の約束をやり切りました。";
   const status = renderFinalizationStatus();
   return `
     <section class="screen training-screen training-result ${result.type}" aria-labelledby="trainingResultTitle">
-      <span class="eyebrow">KITA EAI 60 / NO RATE</span>
+      <span class="eyebrow">KITA EAI 60 / 3 SETS EACH / NO RATE</span>
       <h1 id="trainingResultTitle">${heading}</h1>
       <p class="training-result-copy">${escapeHtml(japanese)}</p>
       <div class="training-result-stats">
-        <div><strong>${completedSets}</strong><span>あなたの完了セット</span></div>
-        <div><strong>${Number(serverResult?.turnCount ?? view.turnIndex ?? 0)}</strong><span>今回の総ターン</span></div>
+        <div><strong>${completedSets}</strong><span>${baseSaved ? "保存されたBASEセット" : "あなたの完了セット"}</span></div>
+        <div><strong>${totalSeconds}</strong><span>ふたりで動いた秒数</span></div>
       </div>
       ${status}
       <div class="training-result-actions">
@@ -777,14 +979,17 @@ function renderFinalizationStatus() {
   if (state.finalization?.result?.status === "final") {
     const profile = state.profile || {};
     const daily = state.daily || {};
+    const todaySets = Math.min(3, Number(daily.trainingSets || 0));
+    const brokeThreeDayWall = Number(profile.currentThreeSetStreak || 0) >= 4;
     return `
       <section class="training-profile-result" aria-label="鍛え合い記録">
-        <h2>今日の積み重ね</h2>
+        <h2>${brokeThreeDayWall ? "三日坊主を突破しました" : "今日の積み重ね"}</h2>
         <dl>
           <div><dt>累計完了セット</dt><dd>${Number(profile.completedSets || 0)}</dd></div>
-          <div><dt>続けた日数</dt><dd>${Number(profile.completeDays || 0)}日</dd></div>
-          <div><dt>現在の連続日数</dt><dd>${Number(profile.currentStreak || 0)}日</dd></div>
-          <div><dt>今日の専用ミッション</dt><dd>${Number(daily.trainingSets || 0) >= 1 ? "達成 1/1" : "未達 0/1"}</dd></div>
+          <div><dt>3セット完遂日</dt><dd>${Number(profile.threeSetDays || 0)}日</dd></div>
+          <div><dt>3セット連続日数</dt><dd>${Number(profile.currentThreeSetStreak || 0)}日</dd></div>
+          <div><dt>活動した日</dt><dd>${Number(profile.completeDays || 0)}日</dd></div>
+          <div><dt>今日の3セット</dt><dd>${todaySets >= 3 ? "達成 3/3" : `${todaySets}/3`}</dd></div>
         </dl>
       </section>`;
   }
@@ -803,7 +1008,7 @@ function renderCancelled() {
     <section class="screen training-screen training-centred" aria-labelledby="trainingCancelledTitle">
       <span class="eyebrow">NO CONTEST</span>
       <h1 id="trainingCancelledTitle">鍛え合いは中断されました</h1>
-      <p>勝敗・RATE・完了記録には影響しません。画像はこの画面を離れると破棄されます。</p>
+      <p>勝敗・RATEには影響しません。BASE到達済みのセットがある場合は、確認後にその分だけ記録します。画像はこの画面を離れると破棄されます。</p>
       <div class="training-result-actions">
         <button class="button button-training" id="trainingCancelledRetry" type="button">準備画面でもう一度</button>
         <button class="button button-ghost" id="trainingCancelledHome" type="button">タイトルへ戻る</button>
@@ -843,6 +1048,9 @@ function bindEvents() {
   });
   document.querySelector("#trainingCancelMatch")?.addEventListener("click", () => cancelMatchmaking().catch(handleRecoverableError));
   document.querySelector("#trainingCancelPending")?.addEventListener("click", () => cancelPendingRoom().catch(handleRecoverableError));
+  document.querySelectorAll("[data-training-carrot-choice]").forEach((button) => button.addEventListener("click", () => {
+    submitCarrotChoice(button.dataset.trainingCarrotChoice).catch(handleRecoverableError);
+  }));
   document.querySelector("#trainingInstructionForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     submitInstruction().catch(handleRecoverableError);
@@ -857,9 +1065,10 @@ function bindEvents() {
     render();
   });
   document.querySelectorAll("[data-training-cheer]").forEach((button) => button.addEventListener("click", () => sendCheer(button.dataset.trainingCheer)));
-  document.querySelectorAll("[data-training-vote]").forEach((button) => button.addEventListener("click", () => {
-    submitContinueVote(button.dataset.trainingVote).catch(handleRecoverableError);
-  }));
+  document.querySelector("#trainingFreeCheer")?.addEventListener("input", (event) => {
+    state.freeCheerDraft = event.target.value.slice(0, 40);
+  });
+  document.querySelector("#trainingSendFreeCheer")?.addEventListener("click", sendFreeCheer);
   document.querySelector("#trainingMute")?.addEventListener("click", toggleMute);
   document.querySelector("#trainingResumeAmbience")?.addEventListener("click", () => {
     resumeTrainingAmbienceFromGesture().catch(handleRecoverableError);
@@ -871,7 +1080,7 @@ function bindEvents() {
   document.querySelector("#trainingCancelledRetry")?.addEventListener("click", () => restartTraining().catch(handleRecoverableError));
   document.querySelector("#trainingCancelledHome")?.addEventListener("click", () => requestHome().catch(handleRecoverableError));
   document.querySelector("#trainingErrorHome")?.addEventListener("click", () => requestHome().catch(handleRecoverableError));
-  if (state.currentView && ["active", "expired"].includes(state.currentView.phase)) startTurnTicker(state.currentView);
+  if (state.currentView && TRAINING_RUNNING_PHASES.includes(state.currentView.phase)) startTurnTicker(state.currentView);
 }
 
 function bindInstructionInputs() {
@@ -987,7 +1196,10 @@ function releaseTrainingTabOwnership() {
 
 async function readTrainingActiveRoomState(roomId) {
   const base = `online/trainingRooms/${roomId}`;
-  const keys = ["createdAt", "status", "members", "presence", "destroyed", "serverFinalized"];
+  const keys = [
+    "protocolVersion", "variant", "createdAt", "status",
+    "members", "presence", "destroyed", "serverFinalized",
+  ];
   const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
   return Object.fromEntries(keys.map((key, index) => [key, snapshots[index].val()]));
 }
@@ -1009,6 +1221,13 @@ async function clearStaleTrainingActiveBeforeMatchmaking() {
     }
     const live = trainingActiveRoomAppearsLive(room, state.uid, firebaseNow());
     if (live) {
+      if (room.protocolVersion !== TRAINING_PROTOCOL_VERSION
+        || room.variant !== TRAINING_VARIANT) {
+        throw new Error(
+          "旧バージョンの鍛え合いが進行中です。元のタブで最後まで進めてください。"
+          + "難しい場合は、そのタブから退出してから新しく開始してください。",
+        );
+      }
       throw new Error("別のタブで鍛え合い60が進行中です。そちらを終了してから開始してください。");
     }
     await removeTrainingActiveChild(observedRoomId);
@@ -1625,14 +1844,13 @@ async function readRoomSkeleton(roomId) {
 
 async function readRoomLifecycle(roomId) {
   const base = `online/trainingRooms/${roomId}`;
-  const keys = ["status", "turns", "continueVotes", "destroyed", "serverFinalized"];
+  const keys = ["status", "turns", "destroyed", "serverFinalized"];
   const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
   return {
     status: snapshots[0].val() || "",
     turns: snapshots[1].val() || {},
-    continueVotes: snapshots[2].val() || {},
-    destroyed: snapshots[3].val() || null,
-    serverFinalized: snapshots[4].val() || null,
+    destroyed: snapshots[2].val() || null,
+    serverFinalized: snapshots[3].val() || null,
   };
 }
 
@@ -1648,6 +1866,7 @@ function viewFromServerFinalized(serverFinalized, fallbackView) {
 
 function transitionToTrainingResult(view) {
   clearImageExchangeWatchdog();
+  clearCarrotChoicePoll();
   cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
   state.currentView = view;
   state.outcome = view;
@@ -1657,20 +1876,58 @@ function transitionToTrainingResult(view) {
   ensureFinalization();
 }
 
+function interruptedProgressView() {
+  if (Number(state.room.protocolVersion) !== TRAINING_PROTOCOL_VERSION) return null;
+  const view = deriveTrainingRoomState(
+    { ...state.room, destroyed: null },
+    state.uid,
+    firebaseNow(),
+  );
+  if (view.phase === "result" || Number(view.completedSets || 0) <= 0) return null;
+  const currentBaseOnly = Number(view.turn?.baseCompletedAt || 0) > 0
+    && !Number(view.turn?.completedAt || 0);
+  const bothCompletedThreeSets = Number(view.completedSets || 0) === TRAINING_MAX_TURNS;
+  return {
+    ...view,
+    phase: "result",
+    result: {
+      type: "mutual_complete",
+      winnerUid: "",
+      loserUid: "",
+      reason: bothCompletedThreeSets
+        ? "mutual_base_complete"
+        : currentBaseOnly
+        ? "base_complete_interrupt"
+        : "progress_complete_interrupt",
+    },
+  };
+}
+
 function transitionToDestroyedRoom() {
   clearImageExchangeWatchdog();
+  clearCarrotChoicePoll();
   cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
   state.channel?.close();
   state.peer?.close();
   state.channel = null;
   state.peer = null;
-  state.screen = "cancelled";
   state.ambienceController.disable();
+  const interruptedView = interruptedProgressView();
+  if (interruptedView) {
+    state.currentView = interruptedView;
+    state.outcome = interruptedView;
+    state.screen = "result";
+    render();
+    ensureFinalization();
+    return;
+  }
+  state.screen = "cancelled";
   render();
 }
 
 function transitionToLocalNoContestPending() {
   clearImageExchangeWatchdog();
+  clearCarrotChoicePoll();
   state.channel?.close();
   state.peer?.close();
   state.channel = null;
@@ -1695,8 +1952,9 @@ async function refreshRoomBeforeDestroy(roomId) {
     transitionToTrainingResult(finalizedView);
     return "result";
   }
-  if (!lifecycle.destroyed && outcomeView.phase === "expired") {
-    await markTimeout(outcomeView);
+  if (!lifecycle.destroyed
+    && ["base_expired", "boost_expired"].includes(outcomeView.phase)) {
+    await syncTurnMilestones(outcomeView);
     lifecycle = await readRoomLifecycle(roomId);
     if (!active || state.roomId !== roomId) return "stale";
     Object.assign(state.room, lifecycle);
@@ -2021,15 +2279,31 @@ async function setupRoomListeners() {
     state.serverTimeOffset = Number(snapshot.val() || 0);
   }));
   const childKeys = [
-    "status", "imageReceived", "turns", "continueVotes", "destroyed", "serverFinalized",
+    "status", "imageReceived", "turns", "destroyed", "serverFinalized",
   ];
   childKeys.forEach((key) => {
     state.roomUnsubscribers.push(onValue(ref(database, `${base}/${key}`), (snapshot) => {
       state.room[key] = snapshot.val()
-        || (["imageReceived", "turns", "continueVotes"].includes(key) ? {} : null);
+        || (["imageReceived", "turns"].includes(key) ? {} : null);
       reactToRoomData();
     }, handleRecoverableError));
   });
+  state.roomUnsubscribers.push(onValue(
+    ref(database, `${base}/carrotChoices/${state.uid}`),
+    (snapshot) => {
+      const choice = normalizeCarrotChoice(snapshot.val());
+      if (choice) {
+        state.carrotChoice = choice;
+        state.room.carrotChoices = {
+          ...(state.room.carrotChoices || {}),
+          [state.uid]: choice,
+        };
+        scheduleCarrotChoicePoll(0);
+      }
+      reactToRoomData();
+    },
+    handleRecoverableError,
+  ));
   if (state.activeDisconnectRoomId !== state.roomId) {
     await armTrainingActiveDisconnect(state.roomId);
   }
@@ -2048,6 +2322,50 @@ async function setupRoomListeners() {
       }
     }, handleRecoverableError));
   }
+}
+
+function clearCarrotChoicePoll() {
+  window.clearTimeout(state.carrotChoicePoll);
+  state.carrotChoicePoll = null;
+}
+
+function scheduleCarrotChoicePoll(delay = CARROT_CHOICE_POLL_MS) {
+  clearCarrotChoicePoll();
+  if (!state.roomId || !state.carrotChoice || allCarrotChoicesReady()) return;
+  state.carrotChoicePoll = window.setTimeout(() => {
+    state.carrotChoicePoll = null;
+    pollRevealedCarrotChoices().catch(() => {
+      scheduleCarrotChoicePoll();
+    });
+  }, Math.max(0, delay));
+}
+
+async function pollRevealedCarrotChoices() {
+  if (state.carrotChoicePollBusy
+    || !state.roomId
+    || !state.carrotChoice
+    || allCarrotChoicesReady()) return;
+  state.carrotChoicePollBusy = true;
+  try {
+    const opponentUid = opponentPlayer()?.uid;
+    if (!opponentUid) return;
+    const snapshot = await get(
+      ref(database, `online/trainingRooms/${state.roomId}/carrotChoices/${opponentUid}`),
+    );
+    const opponentChoice = normalizeCarrotChoice(snapshot.val());
+    if (opponentChoice) {
+      state.room.carrotChoices = {
+        ...(state.room.carrotChoices || {}),
+        [state.uid]: state.carrotChoice,
+        [opponentUid]: opponentChoice,
+      };
+      reactToRoomData();
+      return;
+    }
+  } finally {
+    state.carrotChoicePollBusy = false;
+  }
+  scheduleCarrotChoicePoll();
 }
 
 function reactToRoomData() {
@@ -2077,7 +2395,10 @@ function reactToRoomData() {
     transitionToDestroyedRoom();
     return;
   }
-  if (view.phase === "expired" && view.traineeUid === state.uid) markTimeout().catch(handleRecoverableError);
+  if (["base_expired", "boost_expired"].includes(view.phase)
+    && view.traineeUid === state.uid) {
+    syncTurnMilestones(view).catch(handleRecoverableError);
+  }
   if (view.phase === "result") {
     transitionToTrainingResult(view);
     return;
@@ -2261,7 +2582,7 @@ async function handleChannelMessage(data) {
       });
     } else if (message.type === "training-image-end") {
       await finishIncomingImage(message);
-    } else if (message.type === "training-cheer") {
+    } else if (message.type === "training-cheer" || message.type === "training-free-cheer") {
       receiveCheer(message);
     }
     return;
@@ -2363,6 +2684,35 @@ function applyPreset(id) {
   if (count) count.textContent = String(state.draftInstruction.command.length);
 }
 
+async function submitCarrotChoice(value) {
+  if (state.preview) return;
+  const choice = normalizeCarrotChoice(value);
+  if (!choice
+    || !state.roomId
+    || !allImagesReceived()
+    || state.carrotChoice
+    || state.carrotChoiceSubmitting) return;
+  state.carrotChoiceSubmitting = true;
+  render();
+  try {
+    const transaction = await runTransaction(
+      ref(database, `online/trainingRooms/${state.roomId}/carrotChoices/${state.uid}`),
+      (current) => current === null ? choice : undefined,
+    );
+    const committedChoice = normalizeCarrotChoice(transaction.snapshot.val());
+    if (!committedChoice) throw new Error("CARROTの秘密選択を保存できませんでした。");
+    state.carrotChoice = committedChoice;
+    state.room.carrotChoices = {
+      ...(state.room.carrotChoices || {}),
+      [state.uid]: committedChoice,
+    };
+    scheduleCarrotChoicePoll(0);
+  } finally {
+    state.carrotChoiceSubmitting = false;
+    render();
+  }
+}
+
 async function submitInstruction() {
   if (state.preview) return;
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
@@ -2372,9 +2722,19 @@ async function submitInstruction() {
     showToast("自由な指示・種目名・コンプリート条件をすべて入力してください。");
     return;
   }
+  const carrotChoice = carrotChoiceForUid(view.traineeUid);
+  if (!carrotChoice) {
+    showToast("相手のCARROT選択を確認しています。少し待ってからもう一度お試しください。");
+    scheduleCarrotChoicePoll(0);
+    return;
+  }
+  const choice = carrotChoiceConfig(carrotChoice);
   const turn = {
     trainerUid: state.uid,
     traineeUid: view.traineeUid,
+    carrotChoice,
+    targetDurationMs: choice.durationMs,
+    imageOwnerUid: choice.image === "mine" ? view.traineeUid : state.uid,
     instruction,
     createdAt: firebaseNow(),
   };
@@ -2419,25 +2779,24 @@ async function startTurn() {
 async function completeTurn() {
   if (state.preview) return;
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (view.phase !== "active" || view.traineeUid !== state.uid) return;
-  const startedAt = Number(view.turn?.startedAt || 0);
-  if (!startedAt || firebaseNow() >= startedAt + TRAINING_TURN_DURATION_MS) return markTimeout();
-  await runTransaction(
-    ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}/completedAt`),
-    (current) => current === null ? firebaseNow() : undefined,
-  );
+  if (!TRAINING_RUNNING_PHASES.includes(view.phase)
+    || view.traineeUid !== state.uid) return;
+  await syncTurnMilestones(view, { endBoost: true });
 }
 
 async function handleGiveUp() {
   if (state.preview) return;
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!["ready", "active", "expired"].includes(view.phase) || view.traineeUid !== state.uid) return;
+  if (!TRAINING_HUD_PHASES.includes(view.phase) || view.traineeUid !== state.uid) return;
+  if (trainingTurnElapsed(view.turn) >= TRAINING_TURN_DURATION_MS) {
+    await syncTurnMilestones(view, { endBoost: true });
+    return;
+  }
   if (!state.giveUpArmed) {
     state.giveUpArmed = true;
     render();
     return;
   }
-  if (view.phase === "expired") return markTimeout();
   if (view.phase === "ready") {
     const startedAt = await runTransaction(
       ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}/startedAt`),
@@ -2453,38 +2812,60 @@ async function handleGiveUp() {
   );
 }
 
-async function markTimeout(viewOverride = null) {
+async function syncTurnMilestones(viewOverride = null, { endBoost = false } = {}) {
   if (state.preview) return;
-  if (state.timeoutWriting) return state.timeoutWriting;
+  if (state.milestoneWriting) return state.milestoneWriting;
   if (!state.roomId) return;
   const view = viewOverride || deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (view.phase !== "expired") return;
-  const timeoutWrite = runTransaction(
-      ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}/timedOutAt`),
-      (current) => current === null ? firebaseNow() : undefined,
-  );
-  state.timeoutWriting = timeoutWrite;
-  try {
-    await timeoutWrite;
-  } finally {
-    if (state.timeoutWriting === timeoutWrite) state.timeoutWriting = null;
+  if (!TRAINING_RUNNING_PHASES.includes(view.phase)
+    || view.traineeUid !== state.uid
+    || !view.turn?.startedAt
+    || view.turn?.completedAt
+    || view.turn?.surrenderedAt
+    || view.turn?.timedOutAt) return;
+  const now = firebaseNow();
+  const elapsed = trainingTurnElapsed(view.turn, now);
+  if (elapsed < TRAINING_TURN_DURATION_MS) return;
+  const startedAt = Number(view.turn.startedAt);
+  const targetDuration = trainingTurnTargetDuration(view.turn);
+  const baseCompletedAt = startedAt + TRAINING_TURN_DURATION_MS;
+  const targetCompletedAt = startedAt + targetDuration;
+  const updates = {};
+  if (!view.turn.baseCompletedAt) updates.baseCompletedAt = baseCompletedAt;
+  const shouldComplete = targetDuration === TRAINING_TURN_DURATION_MS
+    || elapsed >= targetDuration
+    || endBoost;
+  if (shouldComplete) {
+    const fullyCompleted = elapsed >= targetDuration;
+    updates.completedAt = fullyCompleted
+      ? targetCompletedAt
+      : Math.max(baseCompletedAt, Math.min(now, targetCompletedAt));
+    if (targetDuration > TRAINING_TURN_DURATION_MS && elapsed >= targetDuration) {
+      updates.boostCompletedAt = targetCompletedAt;
+    }
   }
-}
-
-async function submitContinueVote(vote) {
-  if (state.preview) return;
-  const normalized = vote === "continue" ? "continue" : vote === "finish" ? "finish" : "";
-  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!normalized || view.phase !== "continue_vote" || !view.pair) return;
-  await runTransaction(
-    ref(database, `online/trainingRooms/${state.roomId}/continueVotes/${view.pair}/${state.uid}`),
-    (current) => current === null ? normalized : undefined,
+  if (!Object.keys(updates).length) return;
+  const milestoneWrite = update(
+    ref(database, `online/trainingRooms/${state.roomId}/turns/${view.turnIndex}`),
+    updates,
   );
+  state.milestoneWriting = milestoneWrite;
+  try {
+    await milestoneWrite;
+    Object.assign(view.turn, updates);
+    const localTurn = state.room.turns?.[view.turnIndex]
+      || state.room.turns?.[String(view.turnIndex)];
+    if (localTurn) Object.assign(localTurn, updates);
+  } finally {
+    if (state.milestoneWriting === milestoneWrite) state.milestoneWriting = null;
+  }
 }
 
 function sendCheer(id) {
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!CHEERS[id] || view.phase !== "active" || view.trainerUid !== state.uid) return;
+  if (!CHEERS[id]
+    || !TRAINING_RUNNING_PHASES.includes(view.phase)
+    || view.trainerUid !== state.uid) return;
   if (state.channel?.readyState !== "open") {
     showToast("掛け声用のP2P接続が閉じています。トレーニング進行は続けられます。");
     return;
@@ -2496,14 +2877,38 @@ function sendCheer(id) {
   }));
 }
 
+function sendFreeCheer() {
+  const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
+  const text = String(state.freeCheerDraft || "").trim().replace(/\s+/g, " ").slice(0, 40);
+  if (!text
+    || state.freeCheerSentTurn === view.turnIndex
+    || !TRAINING_RUNNING_PHASES.includes(view.phase)
+    || view.trainerUid !== state.uid) return;
+  if (state.channel?.readyState !== "open") {
+    showToast("自由応援用のP2P接続が閉じています。定型の応援なしでも進行は続けられます。");
+    return;
+  }
+  state.channel.send(JSON.stringify({
+    type: "training-free-cheer",
+    text,
+    turn: view.turnIndex,
+  }));
+  state.freeCheerSentTurn = view.turnIndex;
+  state.freeCheerDraft = "";
+  render();
+}
+
 function receiveCheer(message) {
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!CHEERS[message.cheerId]
+  const text = message.type === "training-free-cheer"
+    ? String(message.text || "").trim().replace(/\s+/g, " ").slice(0, 40)
+    : CHEERS[message.cheerId];
+  if (!text
     || Number(message.turn) !== view.turnIndex
     || view.traineeUid !== state.uid
     || view.trainerUid !== opponentPlayer()?.uid
-    || view.phase !== "active") return;
-  state.cheer = { text: CHEERS[message.cheerId], turn: view.turnIndex };
+    || !TRAINING_RUNNING_PHASES.includes(view.phase)) return;
+  state.cheer = { text, turn: view.turnIndex };
   window.clearTimeout(state.cheerTimer);
   const overlay = document.querySelector("#trainingCheerOverlay");
   if (overlay) {
@@ -2522,7 +2927,7 @@ function configureAmbienceForView(view, { enableAudio = true } = {}) {
     return;
   }
   const startedAt = Number(view.turn?.startedAt || 0);
-  if (!startedAt || !["active", "expired"].includes(view.phase)) return;
+  if (!startedAt || !TRAINING_RUNNING_PHASES.includes(view.phase)) return;
   setTurnAmbience(view.turnIndex, view.turn.instruction, startedAt);
   if (enableAudio) state.ambienceController.enable().catch(() => {});
 }
@@ -2556,7 +2961,7 @@ function setTurnAmbience(turnIndex, instruction, effectiveAt) {
 async function resumeTrainingAmbienceFromGesture() {
   state.ambienceUnlocked = true;
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!["ready", "active", "expired"].includes(view.phase)) return false;
+  if (!TRAINING_HUD_PHASES.includes(view.phase)) return false;
   configureAmbienceForView(view, { enableAudio: false });
   const enabled = await state.ambienceController.enable();
   state.ambienceResumeRequired = !enabled;
@@ -2571,7 +2976,7 @@ async function resumeTrainingAmbienceAfterVisibility() {
     || !state.roomId
     || state.screen !== "room") return;
   const view = deriveTrainingRoomState(state.room, state.uid, firebaseNow());
-  if (!["ready", "active", "expired"].includes(view.phase)) return;
+  if (!TRAINING_HUD_PHASES.includes(view.phase)) return;
   configureAmbienceForView(view, { enableAudio: false });
   const enabled = await state.ambienceController.enable();
   if (enabled) {
@@ -2609,16 +3014,33 @@ function startTurnTicker(view) {
     if (!active || state.screen !== "room") return;
     const startedAt = Number(view.turn?.startedAt || 0);
     if (!startedAt) return;
-    const remaining = Math.max(0, TRAINING_TURN_DURATION_MS - (firebaseNow() - startedAt));
-    const seconds = Math.ceil(remaining / 1000);
+    const elapsed = Math.max(0, firebaseNow() - startedAt);
+    const targetDuration = trainingTurnTargetDuration(view.turn);
+    const remaining = Math.max(0, targetDuration - elapsed);
+    const baseComplete = Number(view.turn?.baseCompletedAt || 0) > 0
+      || elapsed >= TRAINING_TURN_DURATION_MS;
+    const stageRemaining = baseComplete
+      ? remaining
+      : Math.max(0, TRAINING_TURN_DURATION_MS - elapsed);
+    const seconds = Math.ceil(stageRemaining / 1000);
     const fill = document.querySelector("#trainingCountdownFill");
     const clock = document.querySelector("#trainingCountdown");
     const progress = document.querySelector("#trainingCountdownProgress");
-    if (fill) fill.style.width = `${(remaining / TRAINING_TURN_DURATION_MS) * 100}%`;
+    const stageBadge = document.querySelector("#trainingStageBadge");
+    if (fill) fill.style.width = `${(remaining / targetDuration) * 100}%`;
     if (clock) clock.textContent = String(seconds);
+    if (stageBadge) stageBadge.textContent = baseComplete
+      ? carrotChoiceConfig(view.turn?.carrotChoice).label
+      : "BASE 60";
     if (progress) {
       progress.setAttribute("aria-valuenow", String(seconds));
-      progress.setAttribute("aria-label", `残り${seconds}秒`);
+      progress.setAttribute(
+        "aria-valuemax",
+        String(baseComplete
+          ? carrotChoiceConfig(view.turn?.carrotChoice).boostMs / 1000
+          : TRAINING_TURN_DURATION_MS / 1000),
+      );
+      progress.setAttribute("aria-label", `${baseComplete ? "BOOST" : "BASE"} 残り${seconds}秒`);
     }
     const instruction = normalizeTrainingInstruction(view.turn?.instruction);
     const beat = trainingBeatState({
@@ -2630,7 +3052,9 @@ function startTurnTicker(view) {
     document.querySelectorAll("#trainingBeatLane [data-beat]").forEach((item) => {
       item.classList.toggle("is-active", beat.enabled && Number(item.dataset.beat) === beat.beat);
     });
-    if (remaining <= 0) markTimeout().catch(handleRecoverableError);
+    if (elapsed >= TRAINING_TURN_DURATION_MS) {
+      syncTurnMilestones(view).catch(handleRecoverableError);
+    }
   };
   updateTimer();
   state.ticker = window.setInterval(updateTimer, 100);
@@ -2818,6 +3242,7 @@ async function deactivate({ returnHome }) {
   window.clearTimeout(state.finalizeTimer);
   window.clearTimeout(state.cheerTimer);
   clearImageExchangeWatchdog();
+  clearCarrotChoicePoll();
   clearTurnTicker();
   await cleanupMatchmaking(false);
   await cleanupPublicPresence();
@@ -2900,6 +3325,9 @@ function installPreview(preview) {
     completeDays: 6,
     currentStreak: 3,
     bestStreak: 5,
+    threeSetDays: 2,
+    currentThreeSetStreak: 2,
+    bestThreeSetStreak: 2,
   };
   state.daily = { trainingSets: 1 };
   state.localImage = {
@@ -2917,6 +3345,26 @@ function installPreview(preview) {
     url: previewImageUrl("TONKOTSU RAMEN", "#e66a2c", "#2b1012"),
   };
   state.roomId = "training-preview-room";
+  const selfIsCoach = preview === "coach";
+  const choicePreview = preview === "choice";
+  const boostPreview = preview === "boost";
+  const trainerUid = selfIsCoach ? "preview-self" : "preview-partner";
+  const traineeUid = selfIsCoach ? "preview-partner" : "preview-self";
+  const traineeChoice = selfIsCoach ? "mine" : (boostPreview ? "boost9" : "mine");
+  const targetDurationMs = trainingTargetDurationMs(traineeChoice);
+  const startedAt = now - (boostPreview ? 65_000 : 17_000);
+  const previewTurn = {
+    trainerUid,
+    traineeUid,
+    carrotChoice: traineeChoice,
+    targetDurationMs,
+    imageOwnerUid: trainingImageOwnerUid(traineeChoice, traineeUid, trainerUid),
+    instruction: normalizeTrainingInstruction(PRESETS.squat),
+    createdAt: startedAt - 3_000,
+    startedAt,
+    ...(boostPreview ? { baseCompletedAt: startedAt + TRAINING_TURN_DURATION_MS } : {}),
+    ...(preview === "result" ? { surrenderedAt: now - 1_000 } : {}),
+  };
   state.room = {
     ...emptyRoom(),
     protocolVersion: TRAINING_PROTOCOL_VERSION,
@@ -2924,7 +3372,7 @@ function installPreview(preview) {
     hostUid: "preview-partner",
     guestUid: "preview-self",
     status: "active",
-    firstTrainerUid: "preview-partner",
+    firstTrainerUid: trainerUid,
     members: { "preview-partner": true, "preview-self": true },
     players: {
       "preview-partner": {
@@ -2936,17 +3384,12 @@ function installPreview(preview) {
     },
     accepted: { "preview-partner": true, "preview-self": true },
     imageReceived: { "preview-partner": true, "preview-self": true },
-    turns: {
-      1: {
-        trainerUid: "preview-partner",
-        traineeUid: "preview-self",
-        instruction: normalizeTrainingInstruction(PRESETS.squat),
-        createdAt: now - 20_000,
-        startedAt: now - 17_000,
-        ...(preview === "result" ? { surrenderedAt: now - 1_000 } : {}),
-      },
-    },
+    carrotChoices: choicePreview
+      ? {}
+      : { "preview-partner": selfIsCoach ? "mine" : "boost8", "preview-self": traineeChoice },
+    turns: choicePreview ? {} : { 1: previewTurn },
   };
+  state.carrotChoice = normalizeCarrotChoice(state.room.carrotChoices?.[state.uid]);
   if (preview === "result") {
     state.outcome = deriveTrainingRoomState(state.room, state.uid, now);
     state.finalization = {
@@ -2963,8 +3406,11 @@ function installPreview(preview) {
         completeDays: 6,
         currentStreak: 3,
         bestStreak: 5,
+        threeSetDays: 2,
+        currentThreeSetStreak: 2,
+        bestThreeSetStreak: 2,
       },
-      daily: { trainingSets: 1 },
+      daily: { trainingSets: 3 },
     };
     state.profile = state.finalization.profile;
     state.daily = state.finalization.daily;
@@ -2979,6 +3425,7 @@ window.addEventListener("pagehide", () => {
   releaseTrainingTabOwnership();
   if (!active) return;
   clearImageExchangeWatchdog();
+  clearCarrotChoicePoll();
   clearTurnTicker();
   state.ambienceController.destroy();
   state.channel?.close();

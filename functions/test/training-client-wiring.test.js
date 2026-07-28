@@ -26,7 +26,7 @@ test("reuses verified P2P image transfer and the free-table metronome", () => {
   assert.match(trainingJs, /effectiveAt/);
   assert.match(
     trainingJs,
-    /if \(!\["ready", "active", "expired"\]\.includes\(view\.phase\)\) state\.ambienceController\.disable\(\)/,
+    /if \(!TRAINING_HUD_PHASES\.includes\(view\.phase\)\) state\.ambienceController\.disable\(\)/,
   );
   assert.match(trainingJs, /primeTurnAmbience\(view\.turnIndex\);\s*await state\.ambienceController\.enable\(\)/s);
   assert.match(trainingJs, /if \(view\.phase === "ready" && view\.turn\) \{\s*primeTurnAmbience\(view\.turnIndex\)/s);
@@ -56,24 +56,72 @@ test("shares one Firebase services module identity with the existing clients", (
   assert.equal(trainingJs.match(servicesPattern)?.[1], freeTableJs.match(servicesPattern)?.[1]);
 });
 
-test("renders a separate 60-second countdown overlay and beat lane", () => {
+test("renders separate BASE and BOOST countdown states with a beat lane", () => {
   assert.match(trainingJs, /training-countdown-progress/);
   assert.match(trainingJs, /trainingCountdownFill/);
   assert.match(trainingJs, /training-beat-lane/);
   assert.match(trainingCss, /\.training-countdown-progress/);
   assert.match(trainingCss, /\.training-beat-lane/);
-  assert.match(trainingCore, /TRAINING_TURN_DURATION_MS = 60_000/);
+  assert.match(trainingCore, /TRAINING_BASE_DURATION_MS = 60_000/);
+  assert.match(trainingJs, /trainingStageBadge/);
+  assert.match(trainingJs, /BASE 60/);
+  assert.match(trainingJs, /CARROT BOOST/);
 });
 
-test("wires complete, surrender, timeout, six turns, and pair continuation", () => {
-  assert.match(trainingJs, /\/completedAt/);
+test("wires canonical BASE and BOOST completion across six fixed turns", () => {
+  assert.match(trainingJs, /updates\.baseCompletedAt = baseCompletedAt/);
+  assert.match(trainingJs, /updates\.completedAt = fullyCompleted/);
+  assert.match(trainingJs, /updates\.boostCompletedAt = targetCompletedAt/);
   assert.match(trainingJs, /\/surrenderedAt/);
-  assert.match(trainingJs, /\/timedOutAt/);
-  assert.match(trainingJs, /continueVotes\/\$\{view\.pair\}\/\$\{state\.uid\}/);
+  assert.match(trainingJs, /"base_complete_interrupt",\s*"progress_complete_interrupt"/);
+  assert.match(trainingJs, /BASE SAVED/);
+  assert.match(trainingJs, /通信中断前に達成したBASEは記録しました/);
+  assert.match(trainingJs, /BASE到達済みのセットがある場合は、確認後にその分だけ記録します/);
+  assert.match(trainingJs, /function interruptedProgressView/);
+  assert.match(trainingJs, /Number\(view\.completedSets \|\| 0\) <= 0/);
+  assert.match(trainingJs, /bothCompletedThreeSets[\s\S]*?"mutual_base_complete"/);
+  assert.match(trainingJs, /state\.outcome = interruptedView[\s\S]*?ensureFinalization\(\)/);
   assert.match(trainingCore, /TRAINING_MAX_TURNS = 6/);
-  assert.match(trainingCore, /continueVotePairForTurn/);
   assert.match(trainingCore, /mutual_complete/);
-  assert.match(trainingJs, /if \(remaining <= 0\) markTimeout\(\)/);
+  assert.match(trainingJs, /"base_expired", "boost_expired"/);
+  assert.match(trainingJs, /syncTurnMilestones\(view\)/);
+  assert.doesNotMatch(trainingJs, /continueVotes|submitContinueVote|data-training-vote/);
+});
+
+test("keeps CARROT choice secret until both players choose and resolves one shared image owner", () => {
+  assert.match(trainingJs, /data-training-carrot-choice="mine"/);
+  assert.match(trainingJs, /"boost8", "boost9", "boost10"/);
+  assert.match(trainingJs, /carrotChoices\/\$\{state\.uid\}/);
+  assert.match(trainingJs, /carrotChoices\/\$\{opponentUid\}/);
+  assert.match(trainingJs, /相手が選び終えるまで、互いの選択は表示されません/);
+  assert.match(trainingJs, /trainingImageOwnerUid\(turn\?\.carrotChoice, traineeUid, trainerUid\)/);
+  assert.match(trainingJs, /renderTrainingImageByOwner\(imageOwnerUid/);
+});
+
+test("turns the coaching half into recovery and P2P-only encouragement", () => {
+  assert.match(trainingJs, /COACH &amp; RECOVERY/);
+  assert.match(trainingJs, /次の自分のセットまで、あと約/);
+  assert.match(trainingJs, /type: "training-free-cheer"/);
+  assert.match(trainingJs, /state\.channel\.send\(JSON\.stringify/);
+  assert.doesNotMatch(
+    trainingJs,
+    /ref\(database,\s*`online\/trainingRooms\/[^`]*(?:cheer|message)/i,
+  );
+  assert.match(trainingCss, /\.training-coach-recovery/);
+  assert.match(trainingCss, /\.training-free-cheer/);
+});
+
+test("prefills sets two and three from the last instruction to the same trainee", () => {
+  const seedBlock = trainingJs.match(/function seedDraftForTurn[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(seedBlock, /turn\?\.trainerUid === state\.uid/);
+  assert.match(seedBlock, /turn\?\.traineeUid === view\.traineeUid/);
+  assert.match(seedBlock, /sort\(\(first, second\) => second\.index - first\.index\)/);
+  assert.match(seedBlock, /previousInstruction \|\| PRESETS\.squat/);
+});
+
+test("keeps the trainee intensity and conditions visible while composing each set", () => {
+  assert.match(trainingJs, /希望強度：\$\{escapeHtml\(INTENSITY_LABELS\[trainee\?\.intensity\]/);
+  assert.match(trainingJs, /配慮：\$\{escapeHtml\(trainee\?\.conditions \|\| "指定なし"\)/);
 });
 
 test("keeps training outside overall RATE and offers the free-table recovery path", () => {
@@ -92,7 +140,7 @@ test("does not install a room-root value listener", () => {
     trainingJs,
     /get\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)\s*\)/,
   );
-  assert.match(trainingJs, /"status", "imageReceived", "turns", "continueVotes", "destroyed", "serverFinalized"/);
+  assert.match(trainingJs, /"status", "imageReceived", "turns", "destroyed", "serverFinalized"/);
   assert.match(trainingJs, /signals\/\$\{state\.uid\}/);
 });
 
@@ -233,7 +281,10 @@ test("uses sentinel-fenced room children so old disconnects cannot delete new se
   assert.match(trainingJs, /\(current\) => current === true \? null : undefined/);
   assert.match(trainingJs, /return \{ roomId, rooms: \{ \[roomId\]: true \} \}/);
   assert.match(trainingJs, /current\?\.roomId === roomId \? null : undefined/);
-  assert.match(trainingJs, /const keys = \["createdAt", "status", "members", "presence", "destroyed", "serverFinalized"\]/);
+  assert.match(
+    trainingJs,
+    /const keys = \[\s*"protocolVersion", "variant", "createdAt", "status",\s*"members", "presence", "destroyed", "serverFinalized",\s*\]/s,
+  );
   assert.match(trainingJs, /trainingActiveRoomAppearsLive\(room, state\.uid, firebaseNow\(\)\)/);
 });
 
@@ -255,7 +306,7 @@ test("rolls back partial host and guest claims without deleting a newer active r
 });
 
 test("refreshes terminal room children before any no-contest write", () => {
-  assert.match(trainingJs, /const keys = \["status", "turns", "continueVotes", "destroyed", "serverFinalized"\]/);
+  assert.match(trainingJs, /const keys = \["status", "turns", "destroyed", "serverFinalized"\]/);
   const destroyBlock = trainingJs.match(/async function markRoomDestroyed[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(destroyBlock.indexOf("refreshRoomBeforeDestroy(roomId)") >= 0);
   assert.ok(
@@ -303,20 +354,20 @@ test("bounds P2P image exchange and routes every transfer failure to NO CONTEST"
 
 test("shows condition-aware timeout copy and a persistent stop-safety reminder", () => {
   assert.match(trainingJs, /result\.type === "win"[\s\S]*?result\.reason === "timeout"/);
-  assert.match(trainingJs, /serverResult\?\.turnCount \?\? view\.turnIndex \?\? 0/);
+  assert.match(trainingJs, /BASE 60秒をコンプリートできませんでした/);
   assert.match(trainingJs, /痛み・めまい・体調の変化を感じたら、勝敗より中止を優先/);
   assert.match(trainingCss, /\.training-give-up-dock p/);
 });
 
-test("shows private continuity records before play and labels the daily flag as a mission", () => {
+test("separates legacy activity records from private three-set continuity", () => {
   assert.match(trainingJs, /function renderSetupTrainingRecord/);
   assert.match(trainingJs, /累計完了セット/);
-  assert.match(trainingJs, /続けた日数/);
-  assert.match(trainingJs, /現在の連続/);
-  assert.match(trainingJs, /最長連続/);
-  assert.match(trainingJs, /今日の専用ミッション/);
-  assert.match(trainingJs, /達成 1\/1/);
-  assert.doesNotMatch(trainingJs, /今日のセット/);
+  assert.match(trainingJs, /3セット完遂日/);
+  assert.match(trainingJs, /3セット連続/);
+  assert.match(trainingJs, /活動した日/);
+  assert.match(trainingJs, /今日の3セット/);
+  assert.match(trainingJs, /達成 3\/3/);
+  assert.match(trainingJs, /currentThreeSetStreak/);
   assert.match(trainingCss, /\.training-setup-record/);
 });
 
@@ -355,6 +406,23 @@ test("creates protocol-fenced invitations that match the Rules schema", () => {
   assert.match(createBlock, /finally \{\s*if \(ownsLock\) \{\s*await releaseMatchLock\(roomId\);/s);
 });
 
+test("keeps a live legacy room behind a read-only compatibility boundary", () => {
+  assert.match(
+    trainingJs,
+    /const keys = \[\s*"protocolVersion", "variant", "createdAt", "status",\s*"members", "presence", "destroyed", "serverFinalized",\s*\]/s,
+  );
+  assert.match(
+    trainingJs,
+    /if \(live\) \{\s*if \(room\.protocolVersion !== TRAINING_PROTOCOL_VERSION\s*\|\| room\.variant !== TRAINING_VARIANT\) \{\s*throw new Error\(\s*"旧バージョンの鍛え合いが進行中です。元のタブで最後まで進めてください。"/s,
+  );
+  const staleGuard = trainingJs.match(
+    /async function clearStaleTrainingActiveBeforeMatchmaking[\s\S]*?\n\}/,
+  )?.[0] || "";
+  const compatibilityGuard = staleGuard.indexOf("room.protocolVersion !== TRAINING_PROTOCOL_VERSION");
+  const activeRemoval = staleGuard.indexOf("await removeTrainingActiveChild(observedRoomId)");
+  assert.ok(compatibilityGuard >= 0 && compatibilityGuard < activeRemoval);
+});
+
 test("turns exhausted finalize polling into an explicit retry state", () => {
   assert.match(trainingJs, /if \(force\) state\.finalizeAttempts = 0/);
   assert.match(trainingJs, /完了記録の確認が長引いています/);
@@ -370,13 +438,20 @@ test("publishes the complete HariaiTraining lifecycle API", () => {
 });
 
 test("offline previews never write turn progress when controls or the timer fire", () => {
+  assert.match(
+    trainingJs,
+    /\["setup", "choice", "coach", "active", "boost", "result"\]/,
+  );
+  assert.match(trainingJs, /const choicePreview = preview === "choice"/);
+  assert.match(trainingJs, /const selfIsCoach = preview === "coach"/);
+  assert.match(trainingJs, /const boostPreview = preview === "boost"/);
   for (const functionName of [
+    "submitCarrotChoice",
     "submitInstruction",
     "startTurn",
     "completeTurn",
     "handleGiveUp",
-    "markTimeout",
-    "submitContinueVote",
+    "syncTurnMilestones",
   ]) {
     assert.match(
       trainingJs,

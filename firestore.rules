@@ -328,8 +328,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 鍛え合い60の継続記録と冪等確定台帳は、App Check強制の
-    // trainingActionだけがAdmin SDKで読み書きします。
+    // 鍛え合い60の3セット継続・検証済み秒数・BOOST記録と
+    // protocol別の冪等確定台帳は、App Check強制のtrainingActionだけが
+    // Admin SDKで読み書きします。
     match /trainingProfiles/{uid} {
       allow read, write: if false;
     }
