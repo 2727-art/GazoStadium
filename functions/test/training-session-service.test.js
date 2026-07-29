@@ -138,7 +138,33 @@ class FakeReference {
       callback(this.database);
     }
     const current = clone(getAt(this.database.data, this.path));
+    if (current != null && this.database.coldCacheNullOncePaths.delete(this.path)) {
+      const coldCacheNext = update(null);
+      if (coldCacheNext === undefined) {
+        return {
+          committed: false,
+          snapshot: new FakeSnapshot(null),
+        };
+      }
+    }
     const next = update(current);
+    if (next !== undefined
+        && current != null
+        && this.database.deleteBeforeCommitOncePaths.delete(this.path)) {
+      setAt(this.database.data, this.path, null);
+      const retryNext = update(null);
+      if (retryNext === undefined) {
+        return {
+          committed: false,
+          snapshot: new FakeSnapshot(null),
+        };
+      }
+      setAt(this.database.data, this.path, retryNext);
+      return {
+        committed: true,
+        snapshot: new FakeSnapshot(getAt(this.database.data, this.path)),
+      };
+    }
     if (next === undefined) {
       return {
         committed: false,
@@ -159,6 +185,8 @@ class FakeRealtime {
     this.pushCount = 0;
     this.transactionCounts = new Map();
     this.transactionHooks = new Map();
+    this.coldCacheNullOncePaths = new Set();
+    this.deleteBeforeCommitOncePaths = new Set();
     for (const [value, entry] of Object.entries(initial)) {
       setAt(this.data, value, entry);
     }
@@ -182,6 +210,14 @@ class FakeRealtime {
     const hooks = this.transactionHooks.get(normalizedPath) || [];
     hooks.push({ at, callback });
     this.transactionHooks.set(normalizedPath, hooks);
+  }
+
+  coldCacheNullOnce(value) {
+    this.coldCacheNullOncePaths.add(segments(value).join("/"));
+  }
+
+  deleteBeforeCommitOnce(value) {
+    this.deleteBeforeCommitOncePaths.add(segments(value).join("/"));
   }
 }
 
@@ -495,6 +531,58 @@ test("try_match materializes a V4 offer and accept atomically opens round 1", as
   assert.equal(h.realtime.read(`${PATHS.permits}/${offer.roomId}`), undefined);
   assert.equal(h.realtime.read(`${PATHS.locks}/${HOST_UID}`), undefined);
   assert.equal(h.realtime.read(`${PATHS.locks}/${GUEST_UID}`), undefined);
+});
+
+test("accept survives an Admin RTDB cold-cache null during room activation", async () => {
+  const h = harness();
+  const { guest, offer } = await offeredPair(h);
+  const roomPath = `${PATHS.rooms}/${offer.roomId}`;
+  h.realtime.beforeFutureTransaction(roomPath, 2, (database) => {
+    database.coldCacheNullOnce(roomPath);
+  });
+
+  const accepted = await h.service.accept(GUEST_UID, {
+    sessionId: guest.sessionId,
+    leaseToken: guest.leaseToken,
+    roomId: offer.roomId,
+    conditions: "",
+  });
+
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.role, "guest");
+  assert.equal(h.realtime.read(roomPath).status, "active");
+});
+
+test("accept cleans exact reservations when the offered room is deleted during activation", async () => {
+  const h = harness();
+  const { host, guest, offer } = await offeredPair(h);
+  const roomPath = `${PATHS.rooms}/${offer.roomId}`;
+  h.realtime.beforeFutureTransaction(roomPath, 2, (database) => {
+    database.deleteBeforeCommitOnce(roomPath);
+  });
+
+  const accepted = await h.service.accept(GUEST_UID, {
+    sessionId: guest.sessionId,
+    leaseToken: guest.leaseToken,
+    roomId: offer.roomId,
+    conditions: "",
+  });
+
+  assert.deepEqual(accepted, { accepted: false, reason: "offer-stale" });
+  assert.equal(h.realtime.read(roomPath), undefined);
+  assert.equal(
+    h.realtime.read(`${PATHS.active}/${HOST_UID}/${host.sessionId}`),
+    undefined,
+  );
+  assert.equal(
+    h.realtime.read(`${PATHS.active}/${GUEST_UID}/${guest.sessionId}`),
+    undefined,
+  );
+  assert.equal(h.realtime.read(queuePath(HOST_UID, host)).state, "waiting");
+  assert.equal(h.realtime.read(queuePath(GUEST_UID, guest)).state, "waiting");
+  assert.equal(h.realtime.read(`${PATHS.locks}/${HOST_UID}`), undefined);
+  assert.equal(h.realtime.read(`${PATHS.locks}/${GUEST_UID}`), undefined);
+  assert.equal(h.realtime.read(`${PATHS.permits}/${offer.roomId}`), undefined);
 });
 
 test("try_match restores both roles after the successful accept response is lost", async () => {

@@ -61,7 +61,7 @@ import {
   trainingSessionPresencePath as buildTrainingSessionPresencePath,
   trainingSessionRoomMemberMatches,
   trainingSessionSignalPath as buildTrainingSessionSignalPath,
-} from "./training-session-v2.mjs?v=training-session-v2";
+} from "./training-session-v2.mjs?v=training-session-v2-rtdb-array-v1";
 import {
   TRAINING_LIMITS,
   TRAINING_PROTOCOL_VERSION,
@@ -168,6 +168,7 @@ const trainingTabId = globalThis.crypto?.randomUUID?.()
 const trainingTabChannel = "BroadcastChannel" in window
   ? new BroadcastChannel("hariai-stadium-training-tab-v1")
   : null;
+const TRAINING_SESSION_OWNER_PROBE_VERSION = 1;
 
 let active = false;
 let state = createState();
@@ -179,6 +180,24 @@ let trainingTabClaiming = false;
 trainingTabChannel?.addEventListener("message", (event) => {
   const message = event.data || {};
   if (message.tabId === trainingTabId) return;
+  if (message.type === "probe"
+      && message.sessionOwnerProbeVersion === TRAINING_SESSION_OWNER_PROBE_VERSION
+      && message.sessionId) {
+    if (state.sessionLeaseHeld
+        && message.sessionId === state.clientSessionId
+        && typeof message.leaseToken === "string"
+        && message.leaseToken !== state.clientLeaseToken) {
+      trainingTabChannel.postMessage({
+        type: "probe-response",
+        sessionOwnerProbeVersion: TRAINING_SESSION_OWNER_PROBE_VERSION,
+        probeId: message.probeId,
+        tabId: trainingTabId,
+        sessionId: state.clientSessionId,
+        leaseToken: state.clientLeaseToken,
+      });
+    }
+    return;
+  }
   if (message.type === "probe" && trainingTabLeaseHeld) {
     trainingTabChannel.postMessage({
       type: "probe-response",
@@ -317,6 +336,7 @@ function createState() {
     enterRoomRetryTimer: null,
     enterRoomRetryAttempts: 0,
     serverTimeOffset: 0,
+    serverTimeOffsetKnown: false,
     publicPresenceId: "",
     publicPresenceState: "",
     publicPresenceHeartbeat: null,
@@ -413,6 +433,14 @@ const shared = () => window.HariaiApp?.shared;
 const showToast = (message) => shared()?.showToast?.(message);
 const setBusy = (busy, message) => shared()?.setBusy?.(busy, message);
 const firebaseNow = () => Date.now() + Number(state.serverTimeOffset || 0);
+
+function applyTrainingServerTimeOffset(targetState, snapshot) {
+  const offset = snapshot?.val?.();
+  if (typeof offset !== "number" || !Number.isFinite(offset)) return false;
+  targetState.serverTimeOffset = offset;
+  targetState.serverTimeOffsetKnown = true;
+  return true;
+}
 
 function trainingWorkoutNeedsWakeLock(targetState = state) {
   if (!active
@@ -1713,6 +1741,39 @@ function releaseTrainingTabOwnership() {
   trainingTabClaiming = false;
 }
 
+async function confirmSameTrainingSessionOwnerGone(expectedState = state) {
+  if (!trainingTabChannel) return false;
+  const probeId = createOnlineSessionToken(globalThis.crypto);
+  let ownerResponded = false;
+  let responseWasUnverifiable = false;
+  const listener = (event) => {
+    const message = event.data || {};
+    if (message.type !== "probe-response"
+        || message.probeId !== probeId
+        || message.tabId === trainingTabId) return;
+    const exactOwnerResponse = message.sessionOwnerProbeVersion
+        === TRAINING_SESSION_OWNER_PROBE_VERSION
+      && message.sessionId === expectedState.clientSessionId
+      && typeof message.leaseToken === "string"
+      && message.leaseToken.length > 0
+      && message.leaseToken !== expectedState.clientLeaseToken;
+    if (exactOwnerResponse) ownerResponded = true;
+    else responseWasUnverifiable = true;
+  };
+  trainingTabChannel.addEventListener("message", listener);
+  trainingTabChannel.postMessage({
+    type: "probe",
+    sessionOwnerProbeVersion: TRAINING_SESSION_OWNER_PROBE_VERSION,
+    probeId,
+    tabId: trainingTabId,
+    sessionId: expectedState.clientSessionId,
+    leaseToken: expectedState.clientLeaseToken,
+  });
+  await new Promise((resolve) => window.setTimeout(resolve, 300));
+  trainingTabChannel.removeEventListener("message", listener);
+  return !ownerResponded && !responseWasUnverifiable;
+}
+
 async function readTrainingActiveRoomState(roomId) {
   const base = `online/trainingRooms/${roomId}`;
   const keys = [
@@ -2005,6 +2066,13 @@ async function claimTrainingSessionLease(
 ) {
   const sessionId = expectedState.clientSessionId;
   const leaseToken = expectedState.clientLeaseToken;
+  const contextIsCurrent = () => trainingMatchmakingGenerationIsCurrent(
+    expectedGeneration,
+    expectedState,
+  );
+  const ownershipConflictError = () => new Error(
+    "鍛え合い60は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。",
+  );
   const request = (sameSessionOwnerConfirmedGone = false) => (
     trainingSessionActionCallable({
       action: "claim",
@@ -2035,32 +2103,56 @@ async function claimTrainingSessionLease(
     ));
     return response;
   };
+  const abandonStaleResponse = async (candidateResponse) => {
+    if (contextIsCurrent()) return false;
+    const staleGeneration = String(
+      candidateResponse?.data?.sessionGeneration || "",
+    );
+    const newerAttemptMayAdopt = active
+      && state === expectedState
+      && state.clientSessionId === sessionId
+      && state.clientLeaseToken === leaseToken
+      && (
+        state.sessionLeaseHeld
+        || (state.startingMatchmaking
+          && state.matchmakingGeneration !== expectedGeneration)
+      );
+    if (candidateResponse?.data?.claimed === true && !newerAttemptMayAdopt) {
+      await releaseTrainingSessionClaimExact({
+        sessionId,
+        leaseToken,
+        generation: staleGeneration,
+      });
+    }
+    return true;
+  };
 
   let response;
   try {
     response = await requestWithLegacyDrain(false);
   } catch (error) {
+    if (!contextIsCurrent()) return false;
     const reason = String(error?.details?.reason || "");
-    if (reason !== "same-session-owned-by-another-page") throw error;
+    if (reason !== "same-session-owned-by-another-page"
+        || !await confirmSameTrainingSessionOwnerGone(expectedState)) {
+      if (reason === "same-session-owned-by-another-page") {
+        throw ownershipConflictError();
+      }
+      throw error;
+    }
+    if (!contextIsCurrent()) return false;
     response = await requestWithLegacyDrain(true);
   }
-  if (!trainingMatchmakingGenerationIsCurrent(
-    expectedGeneration,
-    expectedState,
-  )) {
-    if (response?.data?.claimed === true) {
-      await releaseTrainingSessionClaimExact({
-        sessionId,
-        leaseToken,
-        generation: String(response.data.sessionGeneration || ""),
-      });
-    }
-    return false;
-  }
+  if (await abandonStaleResponse(response)) return false;
   if (response?.data?.claimed === false
       && response.data.reason === "same-session-owned") {
+    if (!await confirmSameTrainingSessionOwnerGone(expectedState)) {
+      throw ownershipConflictError();
+    }
+    if (!contextIsCurrent()) return false;
     response = await requestWithLegacyDrain(true);
   }
+  if (await abandonStaleResponse(response)) return false;
   if (response?.data?.claimed !== true) {
     const reason = String(response?.data?.reason || "");
     throw new Error(
@@ -2077,10 +2169,7 @@ async function claimTrainingSessionLease(
       || !/^[-_0-9A-Za-z]{20,80}$/.test(sessionGeneration)) {
     throw new Error("鍛え合い60のセッション所有権を確認できませんでした。");
   }
-  if (!trainingMatchmakingGenerationIsCurrent(
-    expectedGeneration,
-    expectedState,
-  )) {
+  if (!contextIsCurrent()) {
     await releaseTrainingSessionClaimExact({
       sessionId,
       leaseToken,
@@ -2108,19 +2197,26 @@ function scheduleTrainingSessionHeartbeat(
   if (!active
       || state !== expectedState
       || !expectedState.sessionLeaseHeld) return;
+  const serverTimeKnown = expectedState.serverTimeOffsetKnown === true;
   const now = Date.now() + Number(expectedState.serverTimeOffset || 0);
   const remainingMs = Number(expectedState.sessionLease?.expiresAt || 0) - now;
-  if (remainingMs <= 0) {
+  if (serverTimeKnown && remainingMs <= 0) {
     handleTrainingSessionLeaseLost(expectedState);
     return;
   }
+  const requestedDelay = Number.isFinite(Number(delayMs))
+    ? Math.max(1, Math.floor(Number(delayMs)))
+    : ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs;
+  const boundedDelay = serverTimeKnown
+    ? Math.max(1, Math.min(requestedDelay, remainingMs))
+    : requestedDelay;
   const timer = window.setTimeout(() => {
     if (expectedState.sessionHeartbeat !== timer) return;
     expectedState.sessionHeartbeat = null;
     refreshTrainingSessionLease(expectedState).catch((error) => {
       if (active && state === expectedState) handleRecoverableError(error);
     });
-  }, Math.max(1, Math.min(Number(delayMs) || 1, remainingMs)));
+  }, boundedDelay);
   expectedState.sessionHeartbeat = timer;
 }
 
@@ -2146,7 +2242,11 @@ async function refreshTrainingSessionLease(expectedState = state) {
     if (!active
         || state !== expectedState
         || !expectedState.sessionLeaseHeld) return false;
-    const now = Date.now() + Number(expectedState.serverTimeOffset || 0);
+    const observedNow = Date.now() + Number(expectedState.serverTimeOffset || 0);
+    const currentExpiresAt = Number(expectedState.sessionLease?.expiresAt || 0);
+    const now = expectedState.serverTimeOffsetKnown === true
+      ? observedNow
+      : Math.min(observedNow, Math.max(0, currentExpiresAt - 1));
     const decision = decideOnlineSessionHeartbeatResult({
       responseData,
       currentLease: expectedState.sessionLease,
@@ -2161,7 +2261,12 @@ async function refreshTrainingSessionLease(expectedState = state) {
       return false;
     }
     if (decision.action === "retry") {
-      scheduleTrainingSessionHeartbeat(expectedState, decision.retryDelayMs);
+      scheduleTrainingSessionHeartbeat(
+        expectedState,
+        expectedState.serverTimeOffsetKnown === true
+          ? decision.retryDelayMs
+          : ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs,
+      );
       return false;
     }
     expectedState.sessionLease = decision.lease;
@@ -2430,6 +2535,14 @@ function watchTrainingSessionOffers(
   expectedState = state,
 ) {
   if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
+  const offsetUnsubscribe = onValue(
+    ref(database, ".info/serverTimeOffset"),
+    (snapshot) => {
+      if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
+      applyTrainingServerTimeOffset(expectedState, snapshot);
+    },
+    () => {},
+  );
   const offersRef = ref(database, trainingSessionOfferPath(
     expectedState.uid,
     expectedState.clientSessionId,
@@ -2454,7 +2567,7 @@ function watchTrainingSessionOffers(
       handleRecoverableError(error);
     }
   });
-  expectedState.matchmakingUnsubscribers.push(unsubscribe);
+  expectedState.matchmakingUnsubscribers.push(offsetUnsubscribe, unsubscribe);
 }
 
 async function prepareTrainingSessionRoom(roomId, context, role) {
@@ -2681,7 +2794,7 @@ async function beginMatchmaking() {
     if (!contextIsCurrent()) return;
     const offset = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
     if (!contextIsCurrent()) return;
-    expectedState.serverTimeOffset = Number(offset?.val() || 0);
+    applyTrainingServerTimeOffset(expectedState, offset);
     if (!await claimTrainingSessionLease(
       expectedState.matchmakingGeneration,
       expectedState,
@@ -2751,7 +2864,7 @@ async function beginLegacyTrainingMatchmaking() {
     await claimTrainingTabOwnership();
     await clearStaleTrainingActiveBeforeMatchmaking();
     const offset = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
-    state.serverTimeOffset = Number(offset?.val() || 0);
+    applyTrainingServerTimeOffset(state, offset);
     const queueEntry = await claimTrainingQueueSession();
     if (!await cleanupStaleTrainingInvites(queueEntry.sessionId)) {
       const queueRemoved = await removeOwnedTrainingQueue(queueEntry.sessionId);
@@ -2783,7 +2896,7 @@ async function beginLegacyTrainingMatchmaking() {
       attemptToHost().catch(handleRecoverableError);
     }, handleRecoverableError));
     state.matchmakingUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
-      state.serverTimeOffset = Number(snapshot.val() || 0);
+      applyTrainingServerTimeOffset(state, snapshot);
     }));
     state.matchmakingUnsubscribers.push(onValue(ref(database, "online/trainingMatchLock"), () => {
       attemptToHost().catch(handleRecoverableError);
@@ -4099,7 +4212,7 @@ async function setupRoomListeners(
   const base = `online/trainingRooms/${roomId}`;
   state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
     if (!contextIsCurrent()) return;
-    state.serverTimeOffset = Number(snapshot.val() || 0);
+    applyTrainingServerTimeOffset(state, snapshot);
   }));
   const childKeys = ["status", "surrendered", "destroyed", "serverFinalized"];
   childKeys.forEach((key) => {

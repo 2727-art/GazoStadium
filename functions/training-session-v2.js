@@ -88,6 +88,16 @@ function exactKeys(value, expected) {
     && Object.keys(value).sort().join("\n") === [...expected].sort().join("\n");
 }
 
+function exactIndexedKeys(value, count) {
+  const expected = Array.from(
+    { length: count },
+    (_, index) => String(index + 1),
+  );
+  if (!Array.isArray(value)) return exactKeys(value, expected);
+  return value.length === count + 1
+    && Object.keys(value).sort().join("\n") === expected.join("\n");
+}
+
 function normalizedText(value, maximum, { allowEmpty = false } = {}) {
   if (typeof value !== "string"
       || !Number.isSafeInteger(maximum)
@@ -129,7 +139,7 @@ function normalizeTrainingCommandDeck(value) {
     { length: TRAINING_COMMAND_COUNT },
     (_, index) => String(index + 1),
   );
-  if (!exactKeys(value, expectedKeys)) return null;
+  if (!exactIndexedKeys(value, TRAINING_COMMAND_COUNT)) return null;
   const result = {};
   for (const cardIndex of expectedKeys) {
     const card = value[cardIndex];
@@ -161,7 +171,7 @@ function normalizeTrainingImageBpms(value) {
     { length: TRAINING_IMAGE_COUNT },
     (_, index) => String(index + 1),
   );
-  if (!exactKeys(value, expectedKeys)) return null;
+  if (!exactIndexedKeys(value, TRAINING_IMAGE_COUNT)) return null;
   const result = {};
   for (const imageIndex of expectedKeys) {
     const bpm = value[imageIndex];

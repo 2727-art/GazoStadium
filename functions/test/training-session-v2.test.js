@@ -46,6 +46,14 @@ function imageBpms(offset = 0) {
   };
 }
 
+function rtdbSparseArray(value) {
+  const restored = [];
+  for (const [key, child] of Object.entries(value)) {
+    restored[Number(key)] = structuredClone(child);
+  }
+  return restored;
+}
+
 function claim(uid, {
   sessionId = `${uid}-session-token-123456`,
   leaseToken = `${uid}-lease-token-12345678`,
@@ -183,6 +191,46 @@ test("a valid private training queue row is normalized against its exact claim",
     ),
     true,
   );
+});
+
+test("RTDB sparse indexed preparation is accepted and canonicalized without weakening shape checks", () => {
+  const deck = commandDeck("HOST");
+  const bpms = imageBpms();
+  const sparseDeck = rtdbSparseArray(deck);
+  const sparseBpms = rtdbSparseArray(bpms);
+
+  const normalizedDeck = training.normalizeTrainingCommandDeck(sparseDeck);
+  const normalizedBpms = training.normalizeTrainingImageBpms(sparseBpms);
+  assert.deepEqual(normalizedDeck, deck);
+  assert.deepEqual(normalizedBpms, bpms);
+  assert.equal(Array.isArray(normalizedDeck), false);
+  assert.equal(Array.isArray(normalizedBpms), false);
+
+  const missingDeck = rtdbSparseArray(deck);
+  delete missingDeck[2];
+  const invalidDecks = [
+    Object.assign(rtdbSparseArray(deck), { 0: deck[1] }),
+    Object.assign(rtdbSparseArray(deck), { 4: deck[1] }),
+    Object.assign(rtdbSparseArray(deck), { extra: deck[1] }),
+    Object.assign(rtdbSparseArray(deck), { length: 5 }),
+    missingDeck,
+  ];
+  for (const value of invalidDecks) {
+    assert.equal(training.normalizeTrainingCommandDeck(value), null);
+  }
+
+  const missingBpm = rtdbSparseArray(bpms);
+  delete missingBpm[3];
+  const invalidBpms = [
+    Object.assign(rtdbSparseArray(bpms), { 0: 60 }),
+    Object.assign(rtdbSparseArray(bpms), { 6: 60 }),
+    Object.assign(rtdbSparseArray(bpms), { extra: 60 }),
+    Object.assign(rtdbSparseArray(bpms), { length: 7 }),
+    missingBpm,
+  ];
+  for (const value of invalidBpms) {
+    assert.equal(training.normalizeTrainingImageBpms(value), null);
+  }
 });
 
 test("conditions and unknown fields are rejected from the private queue", () => {
@@ -386,6 +434,35 @@ test("flattening keeps only the current fresh claimed training session", () => {
   assert.deepEqual(Object.keys(fresh).sort(), [GUEST_UID, HOST_UID].sort());
   assert.equal(fresh[HOST_UID].sessionId, hostClaim.sessionId);
   assert.equal(fresh[GUEST_UID].sessionId, guestClaim.sessionId);
+});
+
+test("flattening retains two fresh queue rows after RTDB restores indexed maps as sparse arrays", () => {
+  const hostClaim = claim(HOST_UID);
+  const guestClaim = claim(GUEST_UID);
+  const hostEntry = queueEntry(HOST_UID, hostClaim);
+  const guestEntry = queueEntry(GUEST_UID, guestClaim);
+  for (const entry of [hostEntry, guestEntry]) {
+    entry.commandDeck = rtdbSparseArray(entry.commandDeck);
+    entry.imageBpms = rtdbSparseArray(entry.imageBpms);
+  }
+
+  const fresh = training.flattenFreshTrainingQueueV4({
+    [HOST_UID]: { [hostClaim.sessionId]: hostEntry },
+    [GUEST_UID]: { [guestClaim.sessionId]: guestEntry },
+  }, {
+    [HOST_UID]: hostClaim,
+    [GUEST_UID]: guestClaim,
+  }, NOW);
+
+  assert.deepEqual(Object.keys(fresh).sort(), [GUEST_UID, HOST_UID].sort());
+  for (const uid of [HOST_UID, GUEST_UID]) {
+    assert.equal(Array.isArray(fresh[uid].commandDeck), false);
+    assert.equal(Array.isArray(fresh[uid].imageBpms), false);
+  }
+  assert.equal(training.selectTrainingSessionMatch({
+    requesterUid: HOST_UID,
+    queue: fresh,
+  })?.candidate.uid, GUEST_UID);
 });
 
 test("FIFO selection chooses the oldest available opponent with soft avoid fallback", () => {

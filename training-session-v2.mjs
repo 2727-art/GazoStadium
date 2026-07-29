@@ -186,10 +186,15 @@ function normalizeWireText(value, maximum, label, { allowEmpty = false } = {}) {
 }
 
 function exactIndexedKeys(value, count) {
-  return hasExactKeys(
-    value,
-    Array.from({ length: count }, (_, index) => String(index + 1)),
+  const expected = Array.from(
+    { length: count },
+    (_, index) => String(index + 1),
   );
+  if (!Array.isArray(value)) return hasExactKeys(value, expected);
+  const actual = Object.keys(value).sort();
+  return value.length === count + 1
+    && actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
 }
 
 function normalizeQueueCommandDeck(value) {

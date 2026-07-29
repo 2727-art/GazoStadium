@@ -2399,6 +2399,13 @@ function createTrainingSessionService({
     const activationTime = currentTime();
     let activated = false;
     const activation = await roomRef(data.roomId).transaction((current) => {
+      // Admin RTDB may invoke a cold-cache transaction once with null even when
+      // the server path exists. Returning null forces the server comparison and
+      // retry; returning undefined here would abort a valid accept immediately.
+      if (current == null) {
+        activated = false;
+        return null;
+      }
       const next = activateTrainingSessionRoom(current, {
         expected: trainingSessionTransitionExpected(resources),
         transitionToken: transition.token,
@@ -2425,6 +2432,10 @@ function createTrainingSessionService({
       };
     });
     if (!activated || !activation.committed) {
+      await cleanupOffered(resources, {
+        transitionAction: "accept",
+        transitionToken: transition.token,
+      }).catch(() => false);
       return { accepted: false, reason: "offer-stale" };
     }
     resources.room = activation.snapshot.val();

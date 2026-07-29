@@ -20,7 +20,11 @@ test("loads the HP V3 client and retires the team client", () => {
   assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
   assert.match(
     indexHtml,
-    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2-achievements-v1"/,
+    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2-achievements-v1-rtdb-array-v1-session-owner-v1"/,
+  );
+  assert.match(
+    trainingJs,
+    /from "\.\/training-session-v2\.mjs\?v=training-session-v2-rtdb-array-v1"/,
   );
   assert.match(trainingJs, /training-core\.mjs\?v=kitaeai-hp-v3-matchmaking-v1/);
   assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
@@ -710,6 +714,111 @@ test("session V2 retries use server-owned queue identity and keep disconnect pre
     sessionCleanupBlock,
     /\["finalized", "resolved", "terminal", "not-owner"\]/,
   );
+});
+
+test("session V2 confirms the exact same-session owner is gone before takeover", () => {
+  const channelBlock = trainingJs.match(
+    /trainingTabChannel\?\.addEventListener\("message",[\s\S]*?\n\}\);/,
+  )?.[0] || "";
+  const confirmBlock = functionBlock("confirmSameTrainingSessionOwnerGone");
+  const claimBlock = functionBlock("claimTrainingSessionLease");
+
+  assert.match(trainingJs, /new BroadcastChannel\("hariai-stadium-training-tab-v1"\)/);
+  assert.match(channelBlock, /message\.sessionOwnerProbeVersion === TRAINING_SESSION_OWNER_PROBE_VERSION/);
+  assert.match(channelBlock, /message\.sessionId === state\.clientSessionId/);
+  assert.match(channelBlock, /message\.leaseToken !== state\.clientLeaseToken/);
+  assert.match(channelBlock, /state\.sessionLeaseHeld/);
+  assert.match(confirmBlock, /if \(!trainingTabChannel\) return false/);
+  assert.match(confirmBlock, /message\.sessionId === expectedState\.clientSessionId/);
+  assert.match(confirmBlock, /message\.leaseToken !== expectedState\.clientLeaseToken/);
+  assert.match(confirmBlock, /else responseWasUnverifiable = true/);
+  assert.match(confirmBlock, /return !ownerResponded && !responseWasUnverifiable/);
+
+  const thrownConflict = claimBlock.indexOf('"same-session-owned-by-another-page"');
+  const thrownProbe = claimBlock.indexOf(
+    "confirmSameTrainingSessionOwnerGone(expectedState)",
+    thrownConflict,
+  );
+  const thrownTakeover = claimBlock.indexOf(
+    "requestWithLegacyDrain(true)",
+    thrownProbe,
+  );
+  assert.ok(thrownConflict >= 0 && thrownConflict < thrownProbe);
+  assert.ok(thrownProbe < thrownTakeover);
+
+  const returnedConflict = claimBlock.indexOf('"same-session-owned"', thrownTakeover);
+  const returnedProbe = claimBlock.indexOf(
+    "confirmSameTrainingSessionOwnerGone(expectedState)",
+    returnedConflict,
+  );
+  const returnedTakeover = claimBlock.indexOf(
+    "requestWithLegacyDrain(true)",
+    returnedProbe,
+  );
+  assert.ok(returnedConflict >= 0 && returnedConflict < returnedProbe);
+  assert.ok(returnedProbe < returnedTakeover);
+});
+
+test("session V2 releases stale claims without deleting a newer adopted attempt", () => {
+  const claimBlock = functionBlock("claimTrainingSessionLease");
+
+  assert.match(claimBlock, /const abandonStaleResponse = async \(candidateResponse\)/);
+  assert.match(claimBlock, /if \(contextIsCurrent\(\)\) return false/);
+  assert.match(claimBlock, /candidateResponse\?\.data\?\.sessionGeneration/);
+  assert.match(claimBlock, /const newerAttemptMayAdopt = active/);
+  assert.match(claimBlock, /state\.clientSessionId === sessionId/);
+  assert.match(claimBlock, /state\.clientLeaseToken === leaseToken/);
+  assert.match(
+    claimBlock,
+    /candidateResponse\?\.data\?\.claimed === true && !newerAttemptMayAdopt/,
+  );
+  assert.match(claimBlock, /await releaseTrainingSessionClaimExact/);
+  assert.ok((claimBlock.match(/await abandonStaleResponse\(response\)/g) || []).length >= 2);
+});
+
+test("session V2 asks the server before declaring lease loss when clock offset is unknown", () => {
+  const createStateBlock = functionBlock("createState");
+  const scheduleBlock = functionBlock("scheduleTrainingSessionHeartbeat");
+  const refreshBlock = functionBlock("refreshTrainingSessionLease");
+  const beginBlock = functionBlock("beginMatchmaking");
+  const watchBlock = functionBlock("watchTrainingSessionOffers");
+  const roomListenersBlock = functionBlock("setupRoomListeners");
+  const offsetBlock = functionBlock("applyTrainingServerTimeOffset");
+
+  assert.match(createStateBlock, /serverTimeOffsetKnown: false/);
+  assert.match(offsetBlock, /typeof offset !== "number" \|\| !Number\.isFinite\(offset\)/);
+  assert.match(offsetBlock, /targetState\.serverTimeOffsetKnown = true/);
+  const applyOffset = Function(
+    `"use strict"; ${offsetBlock}; return applyTrainingServerTimeOffset;`,
+  )();
+  const unknownClock = { serverTimeOffset: 0, serverTimeOffsetKnown: false };
+  assert.equal(applyOffset(unknownClock, { val: () => null }), false);
+  assert.deepEqual(unknownClock, {
+    serverTimeOffset: 0,
+    serverTimeOffsetKnown: false,
+  });
+  assert.equal(applyOffset(unknownClock, { val: () => Number.POSITIVE_INFINITY }), false);
+  assert.equal(applyOffset(unknownClock, { val: () => -4321 }), true);
+  assert.deepEqual(unknownClock, {
+    serverTimeOffset: -4321,
+    serverTimeOffsetKnown: true,
+  });
+  assert.match(scheduleBlock, /const serverTimeKnown = expectedState\.serverTimeOffsetKnown === true/);
+  assert.match(scheduleBlock, /if \(serverTimeKnown && remainingMs <= 0\)/);
+  assert.match(scheduleBlock, /const boundedDelay = serverTimeKnown/);
+  assert.match(refreshBlock, /const currentExpiresAt = Number\(expectedState\.sessionLease\?\.expiresAt/);
+  assert.match(
+    refreshBlock,
+    /expectedState\.serverTimeOffsetKnown === true[\s\S]*Math\.min\(observedNow, Math\.max\(0, currentExpiresAt - 1\)\)/,
+  );
+  assert.match(
+    refreshBlock,
+    /expectedState\.serverTimeOffsetKnown === true[\s\S]*decision\.retryDelayMs[\s\S]*ONLINE_SESSION_LEASE_DEFAULTS\.retryIntervalMs/,
+  );
+  assert.match(beginBlock, /applyTrainingServerTimeOffset\(expectedState, offset\)/);
+  assert.match(watchBlock, /ref\(database, "\.info\/serverTimeOffset"\)/);
+  assert.match(watchBlock, /applyTrainingServerTimeOffset\(expectedState, snapshot\)/);
+  assert.match(roomListenersBlock, /applyTrainingServerTimeOffset\(state, snapshot\)/);
 });
 
 test("session V2 restarts an established transport and replaces a closed image channel", () => {

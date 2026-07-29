@@ -62,6 +62,14 @@ function imageBpms(offset = 0) {
   };
 }
 
+function rtdbSparseArray(value) {
+  const restored = [];
+  for (const [key, child] of Object.entries(value)) {
+    restored[Number(key)] = structuredClone(child);
+  }
+  return restored;
+}
+
 function queueInput(overrides = {}) {
   return {
     uid: HOST_UID,
@@ -280,6 +288,50 @@ test("queue payload is canonical, immutable, and never carries conditions", () =
     ),
     /must not be stored/,
   );
+});
+
+test("queue and room validation accept only exact RTDB sparse indexed maps", () => {
+  const sparseDeck = rtdbSparseArray(commandDeck());
+  const sparseBpms = rtdbSparseArray(imageBpms());
+  const payload = client.createTrainingSessionQueuePayload(queueInput({
+    commandDeck: sparseDeck,
+    imageBpms: sparseBpms,
+  }));
+  assert.deepEqual(payload.commandDeck, commandDeck());
+  assert.deepEqual(payload.imageBpms, imageBpms());
+  assert.equal(Array.isArray(payload.commandDeck), false);
+  assert.equal(Array.isArray(payload.imageBpms), false);
+
+  const restoredRoom = room();
+  for (const value of Object.values(restoredRoom.players)) {
+    value.commandDeck = rtdbSparseArray(value.commandDeck);
+    value.imageBpms = rtdbSparseArray(value.imageBpms);
+  }
+  assert.equal(client.validateTrainingSessionRoom(restoredRoom), true);
+
+  const invalidInputs = [
+    { commandDeck: Object.assign(rtdbSparseArray(commandDeck()), { 0: commandDeck()[1] }) },
+    { commandDeck: Object.assign(rtdbSparseArray(commandDeck()), { 4: commandDeck()[1] }) },
+    { commandDeck: Object.assign(rtdbSparseArray(commandDeck()), { extra: commandDeck()[1] }) },
+    { commandDeck: Object.assign(rtdbSparseArray(commandDeck()), { length: 5 }) },
+    { imageBpms: Object.assign(rtdbSparseArray(imageBpms()), { 0: 60 }) },
+    { imageBpms: Object.assign(rtdbSparseArray(imageBpms()), { 6: 60 }) },
+    { imageBpms: Object.assign(rtdbSparseArray(imageBpms()), { extra: 60 }) },
+    { imageBpms: Object.assign(rtdbSparseArray(imageBpms()), { length: 7 }) },
+  ];
+  const missingDeck = rtdbSparseArray(commandDeck());
+  delete missingDeck[2];
+  invalidInputs.push({ commandDeck: missingDeck });
+  const missingBpm = rtdbSparseArray(imageBpms());
+  delete missingBpm[4];
+  invalidInputs.push({ imageBpms: missingBpm });
+
+  for (const invalid of invalidInputs) {
+    assert.throws(
+      () => client.createTrainingSessionQueuePayload(queueInput(invalid)),
+      /must contain exactly/,
+    );
+  }
 });
 
 test("queue payload rejects malformed preparation and resource fences", () => {
