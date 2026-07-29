@@ -18,6 +18,7 @@ const {
   resourceFenceMatches,
   roomTransitionOwned,
 } = require("./solo-session-v2");
+const PRODUCT_CATALOG = require("./product-catalog");
 
 const TRAINING_SESSION_PATH_GENERATION = 4;
 const TRAINING_SESSION_PROTOCOL_VERSION = SOLO_SESSION_PROTOCOL_VERSION;
@@ -34,6 +35,12 @@ const TRAINING_COMMAND_COUNT = 3;
 const TRAINING_IMAGE_COUNT = 5;
 const TRAINING_INTENSITIES = Object.freeze(["light", "standard", "strong"]);
 const TRAINING_COMMAND_BEATS_PER_REP = Object.freeze([2, 4, 8]);
+const TRAINING_CHAT_FRAME_IDS = Object.freeze(
+  Object.values(PRODUCT_CATALOG)
+    .filter((product) => product?.type === "chatFrame")
+    .map((product) => product.id),
+);
+const TRAINING_CHAT_FRAME_ID_SET = new Set(TRAINING_CHAT_FRAME_IDS);
 const ROOM_ID_PATTERN = /^[-0-9A-Z_a-z]{20}$/;
 
 function claimDecision(options = {}) {
@@ -74,6 +81,7 @@ const TRAINING_QUEUE_RESERVED_KEYS = Object.freeze([
   "attemptId",
   "roomId",
 ]);
+const TRAINING_QUEUE_CHAT_FRAME_KEY = "chatFrameId";
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -112,25 +120,45 @@ function normalizeTrainingSessionConditions(value) {
   return normalizedText(value, 80, { allowEmpty: true });
 }
 
+function normalizeTrainingChatFrameId(value) {
+  if (value === "") return "";
+  return typeof value === "string" && TRAINING_CHAT_FRAME_ID_SET.has(value)
+    ? value
+    : null;
+}
+
 function normalizeTrainingSessionPreparation(value) {
-  if (!exactKeys(value, [
+  const baseKeys = [
     "name",
     "intensity",
     "commandDeck",
     "imageBpms",
-  ])) return null;
+  ];
+  const hasChatFrameId = isRecord(value)
+    && Object.hasOwn(value, TRAINING_QUEUE_CHAT_FRAME_KEY);
+  if (!exactKeys(
+    value,
+    hasChatFrameId
+      ? [...baseKeys, TRAINING_QUEUE_CHAT_FRAME_KEY]
+      : baseKeys,
+  )) return null;
   const name = normalizedText(value.name, 16);
   const commandDeck = normalizeTrainingCommandDeck(value.commandDeck);
   const imageBpms = normalizeTrainingImageBpms(value.imageBpms);
+  const chatFrameId = hasChatFrameId
+    ? normalizeTrainingChatFrameId(value.chatFrameId)
+    : "";
   if (name == null
       || !TRAINING_INTENSITIES.includes(value.intensity)
       || commandDeck == null
-      || imageBpms == null) return null;
+      || imageBpms == null
+      || chatFrameId == null) return null;
   return {
     name,
     intensity: value.intensity,
     commandDeck,
     imageBpms,
+    ...(hasChatFrameId ? { chatFrameId } : {}),
   };
 }
 
@@ -200,9 +228,14 @@ function trainingQueueEntryShape(
 ) {
   const state = typeof value?.state === "string" ? value.state : "";
   const reserved = state === "offering" || state === "reserved";
-  const expectedKeys = reserved
+  const baseExpectedKeys = reserved
     ? TRAINING_QUEUE_RESERVED_KEYS
     : TRAINING_QUEUE_BASE_KEYS;
+  const hasChatFrameId = isRecord(value)
+    && Object.hasOwn(value, TRAINING_QUEUE_CHAT_FRAME_KEY);
+  const expectedKeys = hasChatFrameId
+    ? [...baseExpectedKeys, TRAINING_QUEUE_CHAT_FRAME_KEY]
+    : baseExpectedKeys;
   if (!isSafeUid(uid)
       || !isSafeToken(sessionId)
       || !isRecord(value)
@@ -234,7 +267,13 @@ function trainingQueueEntryShape(
   const name = normalizedText(value.name, 16);
   const commandDeck = normalizeTrainingCommandDeck(value.commandDeck);
   const imageBpms = normalizeTrainingImageBpms(value.imageBpms);
-  if (name == null || commandDeck == null || imageBpms == null) return null;
+  const chatFrameId = hasChatFrameId
+    ? normalizeTrainingChatFrameId(value.chatFrameId)
+    : "";
+  if (name == null
+      || commandDeck == null
+      || imageBpms == null
+      || chatFrameId == null) return null;
   if (reserved
       && (!ROOM_ID_PATTERN.test(String(value.roomId || ""))
         || !isSafeToken(value.attemptId))) return null;
@@ -251,6 +290,7 @@ function trainingQueueEntryShape(
     intensity: value.intensity,
     commandDeck,
     imageBpms,
+    ...(hasChatFrameId ? { chatFrameId } : {}),
     joinedAt: value.joinedAt,
     lastSeen: value.lastSeen,
     expiresAt: value.expiresAt,
@@ -444,6 +484,20 @@ function trainingSessionFromQueue(entry) {
   };
 }
 
+function normalizeTrainingChatFrames(value, hostUid, guestUid) {
+  if (!isSafeUid(hostUid)
+      || !isSafeUid(guestUid)
+      || hostUid === guestUid
+      || !exactKeys(value, [hostUid, guestUid])) return null;
+  const hostFrameId = normalizeTrainingChatFrameId(value[hostUid]);
+  const guestFrameId = normalizeTrainingChatFrameId(value[guestUid]);
+  if (hostFrameId == null || guestFrameId == null) return null;
+  return {
+    [hostUid]: hostFrameId,
+    [guestUid]: guestFrameId,
+  };
+}
+
 function buildTrainingSessionResources({
   roomId,
   attemptId,
@@ -451,6 +505,7 @@ function buildTrainingSessionResources({
   host,
   guest,
   hostConditions = "",
+  chatFrames = null,
   now,
   expiresAt = now + TRAINING_SESSION_MATCH_TTL_MS,
 } = {}) {
@@ -469,6 +524,17 @@ function buildTrainingSessionResources({
   }
   const hostPlayer = trainingSessionPlayerFromQueue(host, hostConditions);
   const guestPlayer = trainingSessionPlayerFromQueue(guest, "");
+  const normalizedChatFrames = normalizeTrainingChatFrames(
+    chatFrames ?? {
+      [host.uid]: "",
+      [guest.uid]: "",
+    },
+    host.uid,
+    guest.uid,
+  );
+  if (!normalizedChatFrames) {
+    throw new TypeError("invalid training chat frames");
+  }
   const sessions = {
     [host.uid]: trainingSessionFromQueue(host),
     [guest.uid]: trainingSessionFromQueue(guest),
@@ -512,6 +578,7 @@ function buildTrainingSessionResources({
       [guest.uid]: true,
     },
     players,
+    chatFrames: normalizedChatFrames,
     accepted: {
       [host.uid]: true,
     },
@@ -729,6 +796,7 @@ function activateTrainingSessionRoom(room, {
 module.exports = Object.freeze({
   TRAINING_COMMAND_BEATS_PER_REP,
   TRAINING_COMMAND_COUNT,
+  TRAINING_CHAT_FRAME_IDS,
   TRAINING_GAME_PROTOCOL_VERSION,
   TRAINING_GAME_VARIANT,
   TRAINING_IMAGE_COUNT,
@@ -751,6 +819,8 @@ module.exports = Object.freeze({
   materializationFenceMatches,
   normalizeClaim,
   normalizeTrainingCommandDeck,
+  normalizeTrainingChatFrameId,
+  normalizeTrainingChatFrames,
   normalizeTrainingImageBpms,
   normalizeTrainingSessionPreparation,
   normalizeTrainingSessionConditions,

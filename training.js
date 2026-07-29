@@ -50,6 +50,11 @@ import {
   resolveOnlineSessionId,
 } from "./online-session-guard.mjs?v=online-session-guard-v2";
 import {
+  CHAT_FRAME_PRODUCTS,
+  chatCosmeticClassNames,
+  getEquippedChatCosmetics,
+} from "./chat-cosmetics.js?v=chat-cosmetics-v1";
+import {
   TRAINING_SESSION_STORAGE_KEY,
   createTrainingSessionPresencePayload,
   createTrainingSessionSignalEnvelope,
@@ -122,6 +127,11 @@ const TRAINING_RUNNING_PHASES = Object.freeze([
   "workout_active",
   "workout_expired",
 ]);
+const TRAINING_WORKOUT_MESSAGE_HISTORY_LIMIT = 20;
+const TRAINING_WORKOUT_MESSAGE_OVERLAY_LIMIT = 3;
+const TRAINING_WORKOUT_MESSAGE_SEND_INTERVAL_MS = 800;
+const TRAINING_WORKOUT_MESSAGE_OVERLAY_MS = 5_200;
+const TRAINING_WORKOUT_MESSAGE_RETRY_DELAYS_MS = Object.freeze([900, 1_600]);
 const LOCAL_PREVIEW_HOSTS = new Set(["127.0.0.1", "localhost"]);
 const FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
@@ -132,6 +142,18 @@ const CHEERS = Object.freeze({
   halfway: "あと半分！",
   last: "ラスト！",
   complete: "よくやり切った！",
+});
+const WORKOUT_REPLIES = Object.freeze({
+  heard: "届いてる！",
+  thanks: "ありがとう！",
+  still: "まだいける！",
+  tough: "きつい！",
+  last: "ラスト！",
+  finish: "完遂する！",
+});
+const WORKOUT_QUICK_MESSAGES = Object.freeze({
+  ...CHEERS,
+  ...WORKOUT_REPLIES,
 });
 const INTENSITY_LABELS = Object.freeze({
   light: "軽め",
@@ -380,16 +402,28 @@ function createState() {
     giveUpArmed: false,
     scoreSubmitting: false,
     commandSubmitting: false,
-    freeCheerDraft: "",
-    freeCheerSentRound: 0,
+    workoutMessageRoomId: "",
+    workoutMessageRound: 0,
+    workoutMessageDraft: "",
+    workoutMessages: [],
+    workoutMessageIds: new Set(),
+    workoutMessageAcks: {},
+    workoutMessageOverlayIds: [],
+    workoutMessageOverlayTimers: new Map(),
+    workoutMessageRetryTimers: new Map(),
+    workoutMessageLastSentAt: 0,
+    workoutMessageCooldownTimer: null,
+    chatFrameInventory: {},
+    selectedChatFrameId: "",
+    chatFramesReady: false,
+    chatFrameSaving: false,
+    chatFrameSavePromise: null,
     ambienceController,
     volume,
     muted,
     ambienceRevision: 0,
     ambienceUnlocked: false,
     ambienceResumeRequired: false,
-    cheer: null,
-    cheerTimer: null,
     outcome: null,
     finisher: null,
     finisherTicker: null,
@@ -420,6 +454,7 @@ function emptyRoom() {
     status: "",
     members: {},
     players: {},
+    chatFrames: {},
     accepted: {},
     rounds: {},
     surrendered: null,
@@ -576,6 +611,7 @@ function imageBpmsPayload(images = state.localImages) {
 function setupIsReady() {
   return Boolean(
     state.authReady
+    && !state.chatFrameSaving
     && normalizeTrainingName(state.name)
     && state.localImages.length === TRAINING_IMAGE_COUNT
     && state.localImages.every((image) => image?.blob && normalizeImageBpm(image.bpm) >= 0)
@@ -841,8 +877,108 @@ async function ensureAuthenticated() {
   if (!active) return;
   state.profile = initialized.data?.profile || null;
   state.daily = initialized.data?.daily || null;
+  await loadTrainingChatFrameLoadout(state);
+  if (!active) return;
   state.authReady = true;
   render();
+}
+
+function ownedTrainingChatFrames(targetState = state) {
+  const inventory = targetState.chatFrameInventory || {};
+  return CHAT_FRAME_PRODUCTS.filter((product) => inventory[product.id] === true);
+}
+
+function validOwnedTrainingChatFrameId(
+  chatFrameId,
+  targetState = state,
+) {
+  const normalized = String(chatFrameId || "");
+  if (!normalized) return "";
+  return ownedTrainingChatFrames(targetState).some((product) => product.id === normalized)
+    ? normalized
+    : "";
+}
+
+async function loadTrainingChatFrameLoadout(targetState = state) {
+  try {
+    const snapshot = await get(ref(database, `online/economy/${targetState.uid}`));
+    if (state !== targetState || !active) return;
+    const economy = snapshot.val() || {};
+    targetState.chatFrameInventory = economy.inventory && typeof economy.inventory === "object"
+      ? economy.inventory
+      : {};
+    const equipped = getEquippedChatCosmetics(economy);
+    targetState.selectedChatFrameId = validOwnedTrainingChatFrameId(
+      equipped.chatFrameId,
+      targetState,
+    );
+  } catch (error) {
+    console.warn("鍛え合い60のチャット枠を読み込めませんでした。", error);
+    if (state === targetState) {
+      targetState.chatFrameInventory = {};
+      targetState.selectedChatFrameId = "";
+    }
+  } finally {
+    if (state === targetState) targetState.chatFramesReady = true;
+  }
+}
+
+async function saveTrainingChatFrame(chatFrameId) {
+  const targetState = state;
+  const nextChatFrameId = validOwnedTrainingChatFrameId(chatFrameId, targetState);
+  if (String(chatFrameId || "") && !nextChatFrameId) {
+    throw new Error("購入済みのチャット枠を確認できませんでした。");
+  }
+  if (!targetState.uid || targetState.chatFrameSaving) return;
+  if (nextChatFrameId === targetState.selectedChatFrameId) return;
+  if (targetState.preview) {
+    targetState.selectedChatFrameId = nextChatFrameId;
+    refreshTrainingChatFramePreview();
+    return;
+  }
+  const previousChatFrameId = targetState.selectedChatFrameId;
+  targetState.chatFrameSaving = true;
+  document.querySelector("#trainingChatFrame")?.setAttribute("disabled", "");
+  updateSetupButton();
+  const operation = runTransaction(
+    ref(database, `online/economy/${targetState.uid}/equipped/chatFrame`),
+    () => nextChatFrameId,
+  );
+  targetState.chatFrameSavePromise = operation;
+  try {
+    const result = await operation;
+    if (state !== targetState) return;
+    if (!result.committed || String(result.snapshot.val() || "") !== nextChatFrameId) {
+      throw new Error("チャット枠の選択を保存できませんでした。");
+    }
+    targetState.selectedChatFrameId = nextChatFrameId;
+    refreshTrainingChatFramePreview();
+  } catch (error) {
+    if (state === targetState) {
+      targetState.selectedChatFrameId = previousChatFrameId;
+      const select = document.querySelector("#trainingChatFrame");
+      if (select) select.value = previousChatFrameId;
+    }
+    throw error;
+  } finally {
+    if (state === targetState) {
+      targetState.chatFrameSaving = false;
+      targetState.chatFrameSavePromise = null;
+      document.querySelector("#trainingChatFrame")?.removeAttribute("disabled");
+      updateSetupButton();
+    }
+  }
+}
+
+function refreshTrainingChatFramePreview() {
+  const preview = document.querySelector("#trainingChatFramePreview");
+  if (!preview) return;
+  const selectedFrame = validOwnedTrainingChatFrameId(state.selectedChatFrameId);
+  const selectedProduct = CHAT_FRAME_PRODUCTS.find((product) => product.id === selectedFrame);
+  preview.className = chatCosmeticClassNames(selectedFrame, "");
+  preview.textContent = selectedProduct
+    ? `${selectedProduct.name}で鍛え合う！`
+    : "一緒に完遂しよう！";
 }
 
 function setTrainingChrome(label) {
@@ -955,6 +1091,7 @@ function renderSetup() {
             <span>今日の条件 <small><b id="trainingConditionsCount">${state.conditions.length}</b> / ${TRAINING_LIMITS.conditions}</small></span>
             <textarea id="trainingConditions" maxlength="${TRAINING_LIMITS.conditions}" rows="3" placeholder="例：ジャンプなし／手首は軽め／今日は元気">${escapeHtml(state.conditions)}</textarea>
           </label>
+          ${renderTrainingChatFrameSelector()}
           <div class="training-trust-note">
             <strong>ロールプレイを信頼する対戦です</strong>
             <p>カメラやセンサーでフォームを監視しません。無理な指示で勝とうとせず、事前登録した3枚から相手の状態に合うCOMMANDを選びます。</p>
@@ -967,6 +1104,36 @@ function renderSetup() {
           <p class="training-rate-note">RATE・ランキングは変動しません。</p>
         </section>
       </form>
+    </section>`;
+}
+
+function renderTrainingChatFrameSelector() {
+  const ownedFrames = ownedTrainingChatFrames();
+  const selectedFrame = validOwnedTrainingChatFrameId(state.selectedChatFrameId);
+  const selectedProduct = CHAT_FRAME_PRODUCTS.find((product) => product.id === selectedFrame);
+  const previewClasses = chatCosmeticClassNames(selectedFrame, "");
+  return `
+    <section class="training-chat-frame-loadout" aria-labelledby="trainingChatFrameTitle">
+      <div>
+        <span>WORKOUT CHAT FRAME</span>
+        <strong id="trainingChatFrameTitle">応援メッセージの枠</strong>
+        <p>AnjuPayストアで購入した枠から選択。全モード共通の装備として保存し、対戦中は固定されます。</p>
+      </div>
+      <label for="trainingChatFrame">
+        <span>使用するチャット枠</span>
+        <select id="trainingChatFrame" ${state.chatFrameSaving ? "disabled" : ""}>
+          <option value="" ${selectedFrame ? "" : "selected"}>標準</option>
+          ${ownedFrames.map((product) => `<option value="${escapeHtml(product.id)}" ${selectedFrame === product.id ? "selected" : ""}>${escapeHtml(product.name)}</option>`).join("")}
+        </select>
+      </label>
+      <div class="training-chat-frame-preview chat-message">
+        <p id="trainingChatFramePreview" class="${previewClasses}">${escapeHtml(selectedProduct ? `${selectedProduct.name}で鍛え合う！` : "一緒に完遂しよう！")}</p>
+      </div>
+      <small>${state.chatFramesReady
+        ? ownedFrames.length
+          ? `購入済み ${ownedFrames.length}枠`
+          : "購入済み枠はありません。標準枠を使用します。"
+        : "購入済み枠を確認しています…"}</small>
     </section>`;
 }
 
@@ -1286,6 +1453,146 @@ function opponentWorkoutContext(roundIndex = currentRoundIndex()) {
   };
 }
 
+function workoutIsActive(round, uid) {
+  const workout = round?.workouts?.[uid] || {};
+  return Number(workout.startedAt || 0) > 0
+    && !Number(workout.completedAt || 0);
+}
+
+function workoutCommunicationContext(view = trainingClientView()) {
+  const roundIndex = Number(view?.roundIndex || currentRoundIndex());
+  const round = view?.round || trainingRound(roundIndex);
+  const opponentUid = opponentPlayer()?.uid || "";
+  const ownActive = workoutIsActive(round, state.uid);
+  const opponentActive = workoutIsActive(round, opponentUid);
+  return {
+    round,
+    roundIndex,
+    opponentUid,
+    ownActive,
+    opponentActive,
+    enabled: Boolean(opponentUid && (ownActive || opponentActive)),
+    workoutUid: ownActive ? state.uid : opponentActive ? opponentUid : "",
+  };
+}
+
+function clearWorkoutMessageOverlayTimers(targetState = state) {
+  targetState.workoutMessageOverlayTimers.forEach((timer) => window.clearTimeout(timer));
+  targetState.workoutMessageOverlayTimers.clear();
+  targetState.workoutMessageOverlayIds = [];
+}
+
+function clearWorkoutMessageRetryTimers(targetState = state) {
+  targetState.workoutMessageRetryTimers.forEach((timer) => window.clearTimeout(timer));
+  targetState.workoutMessageRetryTimers.clear();
+}
+
+function ensureWorkoutMessageRound(roundIndex) {
+  const normalizedRound = Number(roundIndex);
+  const roomId = String(state.roomId || "");
+  if (state.workoutMessageRoomId === roomId
+    && state.workoutMessageRound === normalizedRound) return;
+  clearWorkoutMessageOverlayTimers();
+  clearWorkoutMessageRetryTimers();
+  state.workoutMessageRoomId = roomId;
+  state.workoutMessageRound = normalizedRound;
+  state.giveUpArmed = false;
+  state.workoutMessageDraft = "";
+  state.workoutMessages = [];
+  state.workoutMessageIds = new Set();
+  state.workoutMessageAcks = {};
+  state.workoutMessageLastSentAt = 0;
+  window.clearTimeout(state.workoutMessageCooldownTimer);
+  state.workoutMessageCooldownTimer = null;
+}
+
+function verifiedTrainingChatFrameId(uid) {
+  const chatFrameId = String(state.room.chatFrames?.[uid] || "");
+  return chatCosmeticClassNames(chatFrameId, "") ? chatFrameId : "";
+}
+
+function workoutMessageDeliveryLabel(message) {
+  if (message.fromUid !== state.uid) return "";
+  return state.workoutMessageAcks[message.messageId] === "displayed"
+    ? "相手画面に表示済み"
+    : "送信済み";
+}
+
+function renderWorkoutMessage(message, { overlay = false } = {}) {
+  const own = message.fromUid === state.uid;
+  const sender = playerByUid(message.fromUid);
+  const roleLabel = message.workoutUid === message.fromUid ? "WORKOUT" : "CHEER";
+  const frameClasses = chatCosmeticClassNames(
+    verifiedTrainingChatFrameId(message.fromUid),
+    "",
+  );
+  const delivery = workoutMessageDeliveryLabel(message);
+  return `
+    <article class="training-workout-message chat-message ${own ? "is-own" : "is-partner"} ${overlay ? "is-overlay" : ""}" data-workout-message-id="${escapeHtml(message.messageId)}">
+      <div class="training-workout-message-meta">
+        <span>${escapeHtml(own ? "自分" : sender?.name || "相手")} · ${roleLabel}</span>
+        ${delivery ? `<small>${escapeHtml(delivery)}</small>` : ""}
+      </div>
+      <p class="training-workout-message-bubble ${frameClasses}">${escapeHtml(message.text)}</p>
+    </article>`;
+}
+
+function workoutMessagesForRound(roundIndex) {
+  return state.workoutMessages.filter((message) => message.round === Number(roundIndex));
+}
+
+function renderWorkoutMessageHistory(roundIndex) {
+  const messages = workoutMessagesForRound(roundIndex);
+  if (!messages.length) {
+    return `<p class="training-workout-message-empty">最初の一言を送って、一緒に完遂を目指しましょう。</p>`;
+  }
+  return messages.map((message) => renderWorkoutMessage(message)).join("");
+}
+
+function renderWorkoutMessageOverlay(roundIndex) {
+  const visibleIds = new Set(state.workoutMessageOverlayIds);
+  return workoutMessagesForRound(roundIndex)
+    .filter((message) => visibleIds.has(message.messageId))
+    .slice(-TRAINING_WORKOUT_MESSAGE_OVERLAY_LIMIT)
+    .map((message) => renderWorkoutMessage(message, { overlay: true }))
+    .join("");
+}
+
+function renderWorkoutCommunication(
+  view = trainingClientView(),
+  { role = "coach" } = {},
+) {
+  const context = workoutCommunicationContext(view);
+  ensureWorkoutMessageRound(context.roundIndex);
+  const quickMessages = role === "trainee" ? WORKOUT_REPLIES : CHEERS;
+  const inputPlaceholder = role === "trainee"
+    ? "例：届いてる、ここから完遂する！"
+    : "例：その一回が明日の自信になる！";
+  const coolingDown = Date.now() - state.workoutMessageLastSentAt
+    < TRAINING_WORKOUT_MESSAGE_SEND_INTERVAL_MS;
+  return `
+    <section class="training-workout-communication ${role === "trainee" ? "is-trainee" : "is-coach"}" data-training-workout-communication aria-label="ワークアウトチャット">
+      <header>
+        <div><span>TWO-WAY P2P</span><strong>${role === "trainee" ? "筋トレ中の一言を返す" : "相手を応援する"}</strong></div>
+        <small>回数上限なし · 保存なし</small>
+      </header>
+      <div class="training-workout-quick-buttons" aria-label="${role === "trainee" ? "ワンタップ返信" : "ワンタップ応援"}">
+        ${Object.entries(quickMessages).map(([id, label]) => `<button type="button" data-training-workout-quick="${id}" ${!context.enabled || coolingDown ? "disabled" : ""}>${escapeHtml(label)}</button>`).join("")}
+      </div>
+      <div class="training-workout-free-message">
+        <label for="trainingWorkoutMessage">自由な一言 <span>40文字以内</span></label>
+        <div>
+          <input id="trainingWorkoutMessage" maxlength="40" value="${escapeHtml(state.workoutMessageDraft)}" placeholder="${escapeHtml(inputPlaceholder)}" ${context.enabled ? "" : "disabled"} />
+          <button type="button" id="trainingSendWorkoutMessage" ${!context.enabled || coolingDown ? "disabled" : ""}>送信</button>
+        </div>
+      </div>
+      <div class="training-workout-message-history" id="trainingWorkoutMessageHistory" role="log" aria-live="polite">
+        ${renderWorkoutMessageHistory(context.roundIndex)}
+      </div>
+      <p class="training-workout-delivery-note">「表示済み」は相手のブラウザに表示された合図です。返信は任意です。</p>
+    </section>`;
+}
+
 function renderWaitingInstruction(view = trainingClientView()) {
   const ownScore = roundScore(view.round, state.uid);
   const partnerWorkout = opponentWorkoutContext(view.roundIndex);
@@ -1306,9 +1613,12 @@ function renderWaitingInstruction(view = trainingClientView()) {
         <span>DRAW ${view.roundIndex} / ${ownScore >= 8 ? scoreConfig(ownScore).label : "STANDBY"}</span>
         <strong>${partnerActive ? "COACH THE RIVAL" : "SYNCING ROUND"}</strong>
       </header>
-      ${partnerWorkout
-        ? renderTrainingImageByOwner(state.uid, "相手へ刺さった画像", false, view.roundIndex)
-        : renderTrainingImageByOwner(opponentPlayer()?.uid, "今回DRAWされた相手画像", false, view.roundIndex)}
+      <div class="training-workout-image-stage">
+        ${partnerWorkout
+          ? renderTrainingImageByOwner(state.uid, "相手へ刺さった画像", false, view.roundIndex)
+          : renderTrainingImageByOwner(opponentPlayer()?.uid, "今回DRAWされた相手画像", false, view.roundIndex)}
+        <div class="training-workout-message-overlay" id="trainingWorkoutMessageOverlay" aria-hidden="true">${renderWorkoutMessageOverlay(view.roundIndex)}</div>
+      </div>
       <div class="training-waiting-copy">
         <span class="eyebrow">${partnerActive ? "P2P CHEER AVAILABLE" : "PLEASE WAIT"}</span>
         <h1 id="trainingWaitingCommandTitle">${title}</h1>
@@ -1345,7 +1655,7 @@ function renderTrainingHud(view = trainingClientView()) {
         ${renderTrainingImageByOwner(context.trainerUid, "自分へ刺さった相手画像", true, view.roundIndex)}
         <div class="training-stage-badge" id="trainingStageBadge">${escapeHtml(context.scoreInfo.label)}</div>
         <div class="training-countdown-clock" aria-hidden="true"><strong id="trainingCountdown">${seconds}</strong><span>SEC</span></div>
-        <div class="training-cheer-overlay ${state.cheer ? "is-visible" : ""}" id="trainingCheerOverlay" role="status" aria-live="polite">${escapeHtml(state.cheer?.text || "")}</div>
+        <div class="training-workout-message-overlay" id="trainingWorkoutMessageOverlay" aria-hidden="true">${renderWorkoutMessageOverlay(view.roundIndex)}</div>
       </div>
       <section class="training-live-command">
         <span>${escapeHtml(card.exercise)}</span>
@@ -1364,22 +1674,17 @@ function renderTrainingHud(view = trainingClientView()) {
           <label><span>音量</span><input id="trainingVolume" type="range" min="0" max="1" step="0.01" value="${state.volume}" /></label>
         </div>
       </section>
+      ${renderWorkoutCommunication(view, { role: startedAt ? "trainee" : "coach" })}
       <div class="training-turn-actions">
         ${startedAt
           ? `<div class="training-base-promise"><strong>${context.scoreInfo.durationMs / 1000} SEC</strong><span>時間到達で自動COMPLETE</span></div>`
           : `<button class="button button-training training-start-button" id="trainingStartWorkout" type="button">${escapeHtml(card.exercise)}を開始</button>`}
       </div>
-      <div class="training-give-up-dock ${state.giveUpArmed ? "is-armed" : ""}">
-        <p>体調変化はNO CONTEST。続行可能だが指示を完遂しない場合はGIVE UP敗北です。</p>
-        ${state.giveUpArmed ? `<button type="button" id="trainingCancelGiveUp">続ける</button>` : ""}
-        <button type="button" id="trainingGiveUp">${state.giveUpArmed ? "もう一度押して敗北を確定" : "GIVE UP"}</button>
-        ${renderHealthStopButton()}
-      </div>
+      ${renderTrainingSafetyBar()}
     </section>`;
 }
 
 function renderCoachRecovery(view, context = opponentWorkoutContext(view.roundIndex)) {
-  const sent = state.freeCheerSentRound === view.roundIndex;
   return `
     <section class="training-coach-recovery" aria-label="相手を応援">
       <div class="training-recovery-panel">
@@ -1387,14 +1692,28 @@ function renderCoachRecovery(view, context = opponentWorkoutContext(view.roundIn
         <strong>${escapeHtml(context?.card?.exercise || "筋トレ")}を見守る</strong>
         <p>画像厳選が刺さった結果です。相手の完遂をロールプレイで支えましょう。</p>
       </div>
-      <div class="training-cheer-buttons" aria-label="相手へ掛け声を送る">
-        ${Object.entries(CHEERS).map(([id, label]) => `<button type="button" data-training-cheer="${id}">${label}</button>`).join("")}
-      </div>
-      <div class="training-free-cheer"><label for="trainingFreeCheer">自由なロールプレイ応援 <span>各DRAW 1回</span></label><div>
-        <input id="trainingFreeCheer" maxlength="40" value="${escapeHtml(sent ? "" : state.freeCheerDraft)}" placeholder="${sent ? "このDRAWは送信済み" : "例：その一回が明日の自信になる！"}" ${sent ? "disabled" : ""} />
-        <button type="button" id="trainingSendFreeCheer" ${sent ? "disabled" : ""}>${sent ? "送信済み" : "応援する"}</button>
-      </div></div>
+      ${renderWorkoutCommunication(view, { role: "coach" })}
     </section>`;
+}
+
+function renderTrainingSafetyBar() {
+  return `
+    <div class="training-safety-bar" aria-label="トレーニング中止操作">
+      <button type="button" id="trainingHealthStop">体調変化で中止 <span>NO CONTEST</span></button>
+      <button type="button" id="trainingGiveUp">GIVE UP</button>
+    </div>
+    ${state.giveUpArmed ? `
+      <div class="training-give-up-confirm-backdrop" id="trainingGiveUpConfirmBackdrop">
+        <section class="training-give-up-confirm" role="dialog" aria-modal="true" aria-labelledby="trainingGiveUpConfirmTitle">
+          <span>GIVE UP / 敗北</span>
+          <h2 id="trainingGiveUpConfirmTitle">筋トレを完遂せず、敗北を確定しますか？</h2>
+          <p>痛み・めまい・体調変化がある場合は戻って「体調変化で中止」を選んでください。NO CONTESTになります。</p>
+          <div>
+            <button type="button" id="trainingCancelGiveUp">トレーニングへ戻る</button>
+            <button type="button" id="trainingGiveUpConfirm">GIVE UPを確定</button>
+          </div>
+        </section>
+      </div>` : ""}`;
 }
 
 function renderTrainingImageByOwner(ownerUid, alt, compact, roundIndex = currentRoundIndex()) {
@@ -1579,6 +1898,9 @@ function bindEvents() {
   document.querySelectorAll('input[name="trainingIntensity"]').forEach((input) => input.addEventListener("change", () => {
     state.intensity = normalizeTrainingIntensity(input.value);
   }));
+  document.querySelector("#trainingChatFrame")?.addEventListener("change", (event) => {
+    saveTrainingChatFrame(event.target.value).catch(handleRecoverableError);
+  });
   document.querySelector("#trainingSetupForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     beginMatchmaking().catch(handleFatalError);
@@ -1593,16 +1915,29 @@ function bindEvents() {
   }));
   document.querySelector("#trainingStartWorkout")?.addEventListener("click", () => startWorkout().catch(handleRecoverableError));
   document.querySelector("#trainingGiveUp")?.addEventListener("click", () => handleGiveUp().catch(handleRecoverableError));
+  document.querySelector("#trainingGiveUpConfirm")?.addEventListener("click", () => handleGiveUp().catch(handleRecoverableError));
   document.querySelector("#trainingHealthStop")?.addEventListener("click", () => handleHealthStop().catch(handleRecoverableError));
   document.querySelector("#trainingCancelGiveUp")?.addEventListener("click", () => {
     state.giveUpArmed = false;
     render();
   });
-  document.querySelectorAll("[data-training-cheer]").forEach((button) => button.addEventListener("click", () => sendCheer(button.dataset.trainingCheer)));
-  document.querySelector("#trainingFreeCheer")?.addEventListener("input", (event) => {
-    state.freeCheerDraft = event.target.value.slice(0, 40);
+  document.querySelector("#trainingGiveUpConfirmBackdrop")?.addEventListener("click", (event) => {
+    if (event.target.id !== "trainingGiveUpConfirmBackdrop") return;
+    state.giveUpArmed = false;
+    render();
   });
-  document.querySelector("#trainingSendFreeCheer")?.addEventListener("click", sendFreeCheer);
+  document.querySelectorAll("[data-training-workout-quick]").forEach((button) => button.addEventListener("click", () => {
+    sendWorkoutMessage({ kind: "quick", quickId: button.dataset.trainingWorkoutQuick });
+  }));
+  document.querySelector("#trainingWorkoutMessage")?.addEventListener("input", (event) => {
+    state.workoutMessageDraft = event.target.value.slice(0, 40);
+  });
+  document.querySelector("#trainingWorkoutMessage")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    sendFreeCheer();
+  });
+  document.querySelector("#trainingSendWorkoutMessage")?.addEventListener("click", sendFreeCheer);
   document.querySelector("#trainingMute")?.addEventListener("click", toggleMute);
   document.querySelector("#trainingResumeAmbience")?.addEventListener("click", () => {
     resumeTrainingAmbienceFromGesture().catch(handleRecoverableError);
@@ -2377,6 +2712,10 @@ function trainingSessionPreparationPayload(targetState = state) {
     intensity: targetState.intensity,
     commandDeck: commandDeckPayload(targetState.commandDeck),
     imageBpms: imageBpmsPayload(targetState.localImages),
+    chatFrameId: validOwnedTrainingChatFrameId(
+      targetState.selectedChatFrameId,
+      targetState,
+    ),
   };
 }
 
@@ -2790,6 +3129,10 @@ async function beginMatchmaking() {
   expectedState.startingMatchmaking = true;
   expectedState.matchmakingGeneration = createOnlineSessionToken(globalThis.crypto);
   try {
+    if (expectedState.chatFrameSavePromise) {
+      await expectedState.chatFrameSavePromise;
+    }
+    if (!contextIsCurrent()) return;
     await claimTrainingTabOwnership();
     if (!contextIsCurrent()) return;
     const offset = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
@@ -3550,7 +3893,7 @@ async function readRoomSkeleton(roomId) {
   const keys = [
     "protocolVersion", "variant", "sessionProtocolVersion", "signalingVersion",
     "attemptId", "connectionGeneration", "sessions", "hostUid", "guestUid",
-    "createdAt", "expiresAt", "status", "members", "players", "accepted",
+    "createdAt", "expiresAt", "status", "members", "players", "chatFrames", "accepted",
   ];
   const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
   return Object.fromEntries(keys.map((key, index) => [key, snapshots[index].val()]));
@@ -4214,11 +4557,11 @@ async function setupRoomListeners(
     if (!contextIsCurrent()) return;
     applyTrainingServerTimeOffset(state, snapshot);
   }));
-  const childKeys = ["status", "surrendered", "destroyed", "serverFinalized"];
+  const childKeys = ["status", "chatFrames", "surrendered", "destroyed", "serverFinalized"];
   childKeys.forEach((key) => {
     state.roomUnsubscribers.push(onValue(ref(database, `${base}/${key}`), (snapshot) => {
       if (!contextIsCurrent()) return;
-      state.room[key] = snapshot.val() || null;
+      state.room[key] = snapshot.val() || (key === "chatFrames" ? {} : null);
       reactToRoomData();
     }, handleContextError));
   });
@@ -5265,6 +5608,12 @@ async function handleChannelMessage(data, contextIsCurrent = () => true) {
       state.incomingImage.bpm = Number(message.bpm);
     } else if (message.type === "training-image-end") {
       await finishIncomingImage(message, contextIsCurrent);
+    } else if (message.type === "training-workout-message") {
+      if (!contextIsCurrent()) return;
+      receiveWorkoutMessage(message);
+    } else if (message.type === "training-workout-message-ack") {
+      if (!contextIsCurrent()) return;
+      receiveWorkoutMessageAck(message);
     } else if (message.type === "training-cheer" || message.type === "training-free-cheer") {
       if (!contextIsCurrent()) return;
       receiveCheer(message);
@@ -5792,12 +6141,13 @@ function receiveFinisherMessage(message) {
 }
 
 async function handleGiveUp() {
-  if (state.preview) return;
   if (!state.giveUpArmed) {
     state.giveUpArmed = true;
     render();
+    queueMicrotask(() => document.querySelector("#trainingCancelGiveUp")?.focus());
     return;
   }
+  if (state.preview) return;
   const surrendered = await runTransaction(
     ref(database, `online/trainingRooms/${state.roomId}/surrendered`),
     (current) => current === null ? { uid: state.uid, at: firebaseNow() } : undefined,
@@ -5805,66 +6155,301 @@ async function handleGiveUp() {
   if (!surrendered.snapshot.val()) throw new Error("GIVE UPを確定できませんでした。");
 }
 
-function sendCheer(id) {
-  const view = trainingClientView();
-  const partner = opponentWorkoutContext(view.roundIndex);
-  if (!CHEERS[id]
-    || !partner
-    || !Number(partner.workout?.startedAt || 0)
-    || Number(partner.workout?.completedAt || 0)) return;
-  if (state.channel?.readyState !== "open") {
-    showToast("掛け声用のP2P接続が閉じています。トレーニング進行は続けられます。");
-    return;
+function normalizeWorkoutMessageText(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 40);
+}
+
+function createWorkoutMessageId() {
+  const generated = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `workout-${generated}`.slice(0, 96);
+}
+
+function validWorkoutMessageId(value) {
+  return /^[-_0-9A-Za-z]{8,128}$/.test(String(value || ""));
+}
+
+function scheduleWorkoutMessageOverlay(messageId) {
+  const targetState = state;
+  const currentTimer = targetState.workoutMessageOverlayTimers.get(messageId);
+  if (currentTimer) window.clearTimeout(currentTimer);
+  targetState.workoutMessageOverlayIds = [
+    ...targetState.workoutMessageOverlayIds.filter((id) => id !== messageId),
+    messageId,
+  ].slice(-TRAINING_WORKOUT_MESSAGE_OVERLAY_LIMIT);
+  const timer = window.setTimeout(() => {
+    if (state !== targetState) return;
+    targetState.workoutMessageOverlayTimers.delete(messageId);
+    targetState.workoutMessageOverlayIds = targetState.workoutMessageOverlayIds
+      .filter((id) => id !== messageId);
+    refreshWorkoutCommunication();
+  }, TRAINING_WORKOUT_MESSAGE_OVERLAY_MS);
+  targetState.workoutMessageOverlayTimers.set(messageId, timer);
+}
+
+function addWorkoutMessage(message) {
+  ensureWorkoutMessageRound(message.round);
+  if (state.workoutMessageIds.has(message.messageId)) return false;
+  const nextMessages = [...state.workoutMessages, message]
+    .slice(-TRAINING_WORKOUT_MESSAGE_HISTORY_LIMIT);
+  const retainedIds = new Set(nextMessages.map((item) => item.messageId));
+  Object.keys(state.workoutMessageAcks).forEach((messageId) => {
+    if (!retainedIds.has(messageId)) delete state.workoutMessageAcks[messageId];
+  });
+  state.workoutMessages = nextMessages;
+  state.workoutMessageIds = retainedIds;
+  scheduleWorkoutMessageOverlay(message.messageId);
+  return true;
+}
+
+function refreshWorkoutCommunication() {
+  if (!active || state.screen !== "room" || !state.currentView) return;
+  const view = state.currentView;
+  const context = workoutCommunicationContext(view);
+  if (state.workoutMessageRound !== context.roundIndex) return;
+  const overlay = document.querySelector("#trainingWorkoutMessageOverlay");
+  if (overlay) overlay.innerHTML = renderWorkoutMessageOverlay(context.roundIndex);
+  const history = document.querySelector("#trainingWorkoutMessageHistory");
+  if (history) {
+    history.innerHTML = renderWorkoutMessageHistory(context.roundIndex);
+    history.scrollTop = history.scrollHeight;
   }
-  state.channel.send(JSON.stringify({
-    type: "training-cheer",
-    cheerId: id,
-    round: view.roundIndex,
-  }));
+  const coolingDown = Date.now() - state.workoutMessageLastSentAt
+    < TRAINING_WORKOUT_MESSAGE_SEND_INTERVAL_MS;
+  document.querySelectorAll("[data-training-workout-quick]").forEach((button) => {
+    button.disabled = !context.enabled || coolingDown;
+  });
+  const input = document.querySelector("#trainingWorkoutMessage");
+  if (input) input.disabled = !context.enabled;
+  const sendButton = document.querySelector("#trainingSendWorkoutMessage");
+  if (sendButton) sendButton.disabled = !context.enabled || coolingDown;
+}
+
+function scheduleWorkoutMessageCooldownRefresh() {
+  window.clearTimeout(state.workoutMessageCooldownTimer);
+  const remaining = Math.max(
+    0,
+    TRAINING_WORKOUT_MESSAGE_SEND_INTERVAL_MS
+      - (Date.now() - state.workoutMessageLastSentAt),
+  );
+  state.workoutMessageCooldownTimer = window.setTimeout(() => {
+    state.workoutMessageCooldownTimer = null;
+    refreshWorkoutCommunication();
+  }, remaining + 20);
+}
+
+function scheduleWorkoutMessageRetry(payload, retryIndex = 0, targetState = state) {
+  if (retryIndex >= TRAINING_WORKOUT_MESSAGE_RETRY_DELAYS_MS.length) return;
+  const messageId = payload.messageId;
+  const expectedRoomId = String(targetState.roomId || "");
+  const timer = window.setTimeout(() => {
+    targetState.workoutMessageRetryTimers.delete(messageId);
+    if (state !== targetState
+      || String(targetState.roomId || "") !== expectedRoomId
+      || targetState.workoutMessageRound !== payload.round
+      || targetState.workoutMessageAcks[messageId] === "displayed"
+      || !targetState.workoutMessageIds.has(messageId)
+      || targetState.channel?.readyState !== "open") return;
+    const context = workoutCommunicationContext();
+    if (context.roundIndex !== payload.round
+      || !workoutIsActive(context.round, payload.workoutUid)) return;
+    try {
+      targetState.channel.send(JSON.stringify(payload));
+    } catch {
+      return;
+    }
+    scheduleWorkoutMessageRetry(payload, retryIndex + 1, targetState);
+  }, TRAINING_WORKOUT_MESSAGE_RETRY_DELAYS_MS[retryIndex]);
+  targetState.workoutMessageRetryTimers.set(messageId, timer);
+}
+
+function sendWorkoutMessage({ kind, quickId = "", text = "" }) {
+  const view = trainingClientView();
+  const context = workoutCommunicationContext(view);
+  ensureWorkoutMessageRound(context.roundIndex);
+  if (!context.enabled || !context.opponentUid || !context.workoutUid) return false;
+  const now = Date.now();
+  if (now - state.workoutMessageLastSentAt
+    < TRAINING_WORKOUT_MESSAGE_SEND_INTERVAL_MS) return false;
+  const normalizedKind = kind === "quick" ? "quick" : kind === "text" ? "text" : "";
+  const normalizedQuickId = normalizedKind === "quick" && WORKOUT_QUICK_MESSAGES[quickId]
+    ? quickId
+    : "";
+  const normalizedText = normalizedQuickId
+    ? WORKOUT_QUICK_MESSAGES[normalizedQuickId]
+    : normalizedKind === "text"
+      ? normalizeWorkoutMessageText(text)
+      : "";
+  if (!normalizedKind || !normalizedText) return false;
+  if (state.channel?.readyState !== "open") {
+    showToast("ワークアウトチャットのP2P接続が閉じています。筋トレ進行は続けられます。");
+    return false;
+  }
+  const messageId = createWorkoutMessageId();
+  const payload = {
+    type: "training-workout-message",
+    protocolVersion: TRAINING_PROTOCOL_VERSION,
+    variant: TRAINING_VARIANT,
+    messageId,
+    round: context.roundIndex,
+    workoutUid: context.workoutUid,
+    fromUid: state.uid,
+    toUid: context.opponentUid,
+    kind: normalizedKind,
+    ...(normalizedQuickId ? { quickId: normalizedQuickId } : { text: normalizedText }),
+    sentAt: firebaseNow(),
+  };
+  try {
+    state.channel.send(JSON.stringify(payload));
+  } catch (error) {
+    handleRecoverableError(error);
+    return false;
+  }
+  state.workoutMessageLastSentAt = now;
+  state.workoutMessageAcks[messageId] = "sent";
+  addWorkoutMessage({
+    ...payload,
+    text: normalizedText,
+    receivedAt: now,
+  });
+  if (normalizedKind === "text") {
+    state.workoutMessageDraft = "";
+    const input = document.querySelector("#trainingWorkoutMessage");
+    if (input) input.value = "";
+  }
+  refreshWorkoutCommunication();
+  scheduleWorkoutMessageCooldownRefresh();
+  scheduleWorkoutMessageRetry(payload);
+  return true;
+}
+
+function sendCheer(id) {
+  return sendWorkoutMessage({ kind: "quick", quickId: id });
 }
 
 function sendFreeCheer() {
-  const view = trainingClientView();
-  const partner = opponentWorkoutContext(view.roundIndex);
-  const text = String(state.freeCheerDraft || "").trim().replace(/\s+/g, " ").slice(0, 40);
-  if (!text
-    || state.freeCheerSentRound === view.roundIndex
-    || !partner
-    || !Number(partner.workout?.startedAt || 0)
-    || Number(partner.workout?.completedAt || 0)) return;
-  if (state.channel?.readyState !== "open") {
-    showToast("自由応援用のP2P接続が閉じています。定型の応援なしでも進行は続けられます。");
-    return;
+  return sendWorkoutMessage({
+    kind: "text",
+    text: state.workoutMessageDraft,
+  });
+}
+
+function sendWorkoutMessageAck(message) {
+  if (state.channel?.readyState !== "open") return false;
+  try {
+    state.channel.send(JSON.stringify({
+      type: "training-workout-message-ack",
+      protocolVersion: TRAINING_PROTOCOL_VERSION,
+      variant: TRAINING_VARIANT,
+      messageId: message.messageId,
+      round: message.round,
+      fromUid: state.uid,
+      toUid: message.fromUid,
+      status: "displayed",
+    }));
+    return true;
+  } catch {
+    return false;
   }
-  state.channel.send(JSON.stringify({
-    type: "training-free-cheer",
+}
+
+function receiveWorkoutMessage(message) {
+  const view = trainingClientView();
+  const context = workoutCommunicationContext(view);
+  const roundIndex = Number(message.round);
+  const messageId = String(message.messageId || "");
+  const workoutUid = String(message.workoutUid || "");
+  const fromUid = String(message.fromUid || "");
+  const toUid = String(message.toUid || "");
+  const normalizedKind = message.kind === "quick"
+    ? "quick"
+    : message.kind === "text"
+      ? "text"
+      : "";
+  const quickId = normalizedKind === "quick" && WORKOUT_QUICK_MESSAGES[message.quickId]
+    ? String(message.quickId)
+    : "";
+  const text = quickId
+    ? WORKOUT_QUICK_MESSAGES[quickId]
+    : normalizedKind === "text"
+      ? normalizeWorkoutMessageText(message.text)
+      : "";
+  if (message.protocolVersion !== TRAINING_PROTOCOL_VERSION
+    || message.variant !== TRAINING_VARIANT
+    || !validWorkoutMessageId(messageId)
+    || roundIndex !== context.roundIndex
+    || fromUid !== context.opponentUid
+    || toUid !== state.uid
+    || !memberUids().includes(workoutUid)
+    || !workoutIsActive(context.round, workoutUid)
+    || !normalizedKind
+    || !text) return false;
+  ensureWorkoutMessageRound(roundIndex);
+  const added = addWorkoutMessage({
+    type: "training-workout-message",
+    messageId,
+    round: roundIndex,
+    workoutUid,
+    fromUid,
+    toUid,
+    kind: normalizedKind,
+    ...(quickId ? { quickId } : {}),
     text,
-    round: view.roundIndex,
-  }));
-  state.freeCheerSentRound = view.roundIndex;
-  state.freeCheerDraft = "";
-  render();
+    sentAt: Number(message.sentAt || 0),
+    receivedAt: Date.now(),
+  });
+  refreshWorkoutCommunication();
+  sendWorkoutMessageAck(message);
+  return added;
+}
+
+function receiveWorkoutMessageAck(message) {
+  const messageId = String(message.messageId || "");
+  const roundIndex = Number(message.round);
+  const ownMessage = state.workoutMessages.find((item) => (
+    item.messageId === messageId
+      && item.fromUid === state.uid
+      && item.round === roundIndex
+  ));
+  if (message.protocolVersion !== TRAINING_PROTOCOL_VERSION
+    || message.variant !== TRAINING_VARIANT
+    || !ownMessage
+    || String(message.fromUid || "") !== opponentPlayer()?.uid
+    || String(message.toUid || "") !== state.uid
+    || message.status !== "displayed") return false;
+  state.workoutMessageAcks[messageId] = "displayed";
+  const retryTimer = state.workoutMessageRetryTimers.get(messageId);
+  if (retryTimer) window.clearTimeout(retryTimer);
+  state.workoutMessageRetryTimers.delete(messageId);
+  refreshWorkoutCommunication();
+  return true;
 }
 
 function receiveCheer(message) {
   const view = trainingClientView();
+  const context = workoutCommunicationContext(view);
   const text = message.type === "training-free-cheer"
-    ? String(message.text || "").trim().replace(/\s+/g, " ").slice(0, 40)
+    ? normalizeWorkoutMessageText(message.text)
     : CHEERS[message.cheerId];
   if (!text
-    || Number(message.round) !== view.roundIndex
-    || !TRAINING_RUNNING_PHASES.includes(view.phase)) return;
-  state.cheer = { text, round: view.roundIndex };
-  window.clearTimeout(state.cheerTimer);
-  const overlay = document.querySelector("#trainingCheerOverlay");
-  if (overlay) {
-    overlay.textContent = state.cheer.text;
-    overlay.classList.add("is-visible");
-  }
-  state.cheerTimer = window.setTimeout(() => {
-    state.cheer = null;
-    document.querySelector("#trainingCheerOverlay")?.classList.remove("is-visible");
-  }, 2400);
+    || Number(message.round) !== context.roundIndex
+    || !context.ownActive) return false;
+  ensureWorkoutMessageRound(context.roundIndex);
+  addWorkoutMessage({
+    type: message.type,
+    messageId: createWorkoutMessageId(),
+    round: context.roundIndex,
+    workoutUid: state.uid,
+    fromUid: context.opponentUid,
+    toUid: state.uid,
+    kind: message.type === "training-free-cheer" ? "text" : "quick",
+    text,
+    sentAt: firebaseNow(),
+    receivedAt: Date.now(),
+    legacy: true,
+  });
+  refreshWorkoutCommunication();
+  return true;
 }
 
 function configureAmbienceForView(view, { enableAudio = true } = {}) {
@@ -6280,7 +6865,9 @@ async function deactivate({ returnHome }) {
   active = false;
   state.generation += 1;
   window.clearTimeout(state.finalizeTimer);
-  window.clearTimeout(state.cheerTimer);
+  window.clearTimeout(state.workoutMessageCooldownTimer);
+  clearWorkoutMessageOverlayTimers(state);
+  clearWorkoutMessageRetryTimers(state);
   window.clearInterval(state.finisherTicker);
   window.clearInterval(state.finisherOfferTimer);
   state.finisherTicker = null;
@@ -6368,6 +6955,12 @@ function previewImageUrl(label, colorA, colorB) {
 function installPreview(preview) {
   state.uid = "preview-self";
   state.authReady = true;
+  state.chatFramesReady = true;
+  state.chatFrameInventory = {
+    chat_frame_heart_ribbon: true,
+    chat_frame_neon: true,
+  };
+  state.selectedChatFrameId = "chat_frame_heart_ribbon";
   state.name = "ANJU";
   state.conditions = "ジャンプなし／今日は標準";
   state.profile = {
@@ -6480,6 +7073,10 @@ function installPreview(preview) {
     guestUid: "preview-self",
     status: "active",
     members: { "preview-partner": true, "preview-self": true },
+    chatFrames: {
+      "preview-partner": "chat_frame_neon",
+      "preview-self": "chat_frame_heart_ribbon",
+    },
     players: {
       "preview-partner": {
         uid: "preview-partner", name: "TRAINER", intensity: "standard", conditions: "指定なし",
@@ -6495,6 +7092,39 @@ function installPreview(preview) {
     accepted: { "preview-partner": true, "preview-self": true },
     rounds,
   };
+  if (preview === "workout") {
+    state.workoutMessageRoomId = state.roomId;
+    state.workoutMessageRound = 1;
+    state.workoutMessages = [
+      {
+        type: "training-workout-message",
+        messageId: "preview-message-1",
+        round: 1,
+        workoutUid: "preview-self",
+        fromUid: "preview-partner",
+        toUid: "preview-self",
+        kind: "quick",
+        text: "いける！",
+        sentAt: now - 3_000,
+        receivedAt: now - 3_000,
+      },
+      {
+        type: "training-workout-message",
+        messageId: "preview-message-2",
+        round: 1,
+        workoutUid: "preview-self",
+        fromUid: "preview-self",
+        toUid: "preview-partner",
+        kind: "quick",
+        text: "届いてる！",
+        sentAt: now - 1_000,
+        receivedAt: now - 1_000,
+      },
+    ];
+    state.workoutMessageIds = new Set(state.workoutMessages.map((message) => message.messageId));
+    state.workoutMessageAcks = { "preview-message-2": "displayed" };
+    state.workoutMessageOverlayIds = state.workoutMessages.map((message) => message.messageId);
+  }
   if (preview === "result") {
     state.outcome = deriveTrainingRoomState(state.room, state.uid, now);
     state.finalization = {

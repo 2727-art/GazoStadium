@@ -17,10 +17,10 @@ function functionBlock(name) {
 }
 
 test("loads the HP V3 client and retires the team client", () => {
-  assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
+  assert.match(indexHtml, /href="training\.css\?v=kitaeai-workout-chat-v1"/);
   assert.match(
     indexHtml,
-    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2-achievements-v1-rtdb-array-v1-session-owner-v1"/,
+    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2-achievements-v1-rtdb-array-v1-session-owner-v1-workout-chat-v1"/,
   );
   assert.match(
     trainingJs,
@@ -279,12 +279,18 @@ test("cleans both finisher intervals at every client teardown boundary", () => {
   assert.match(trainingJs, /window\.addEventListener\("pagehide"[\s\S]*?clearInterval\(state\.finisherTicker\)[\s\S]*?clearInterval\(state\.finisherOfferTimer\)/);
 });
 
-test("keeps coaching encouragement ephemeral on the P2P channel", () => {
-  assert.match(trainingJs, /type: "training-cheer"/);
-  assert.match(trainingJs, /type: "training-free-cheer"/);
-  assert.match(trainingJs, /state\.freeCheerSentRound = view\.roundIndex/);
+test("keeps bidirectional workout communication ephemeral on the P2P channel", () => {
+  assert.match(trainingJs, /type: "training-workout-message"/);
+  assert.match(trainingJs, /type: "training-workout-message-ack"/);
+  assert.match(
+    trainingJs,
+    /message\.type === "training-cheer"\s*\|\|\s*message\.type === "training-free-cheer"/,
+  );
+  assert.doesNotMatch(trainingJs, /freeCheerSentRound/);
+  assert.match(trainingJs, /TRAINING_WORKOUT_MESSAGE_HISTORY_LIMIT = 20/);
+  assert.match(trainingJs, /TRAINING_WORKOUT_MESSAGE_SEND_INTERVAL_MS = 800/);
   assert.doesNotMatch(trainingJs, /ref\(database,\s*`online\/trainingRooms\/[^`]*(?:cheer|message)/i);
-  assert.match(trainingCss, /\.training-free-cheer/);
+  assert.match(trainingCss, /\.training-workout-free-message/);
 });
 
 test("keeps training outside RATE and offers free-table recovery", () => {
@@ -297,7 +303,10 @@ test("keeps training outside RATE and offers free-table recovery", () => {
 test("does not install a room-root value listener and subscribes only to bounded V3 children", () => {
   assert.doesNotMatch(trainingJs, /onValue\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)/);
   assert.doesNotMatch(trainingJs, /get\(\s*ref\(database,\s*`online\/trainingRooms\/\$\{[^}]+\}`\s*\)\s*\)/);
-  assert.match(trainingJs, /const childKeys = \["status", "surrendered", "destroyed", "serverFinalized"\]/);
+  assert.match(
+    trainingJs,
+    /const childKeys = \["status", "chatFrames", "surrendered", "destroyed", "serverFinalized"\]/,
+  );
   assert.match(trainingJs, /\["createdAt", "draws", "imageReceived", "commandChoices", "workouts", "completedAt"\]/);
   assert.match(trainingJs, /for \(let roundIndex = 1; roundIndex <= TRAINING_MAX_ROUNDS; roundIndex \+= 1\)/);
 });

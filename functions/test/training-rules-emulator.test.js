@@ -2561,6 +2561,95 @@ test("session V4 matchmaking resources are server-owned and offers are session-t
   await assertFails(get(ref(guestDatabase, offerPath)));
 });
 
+test("training chat-frame snapshots are member-readable, immutable, and legacy rooms cannot inject them", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const fixture = trainingSessionV4Fixture("frames");
+  fixture.room.chatFrames = {
+    [fixture.hostUid]: "chat_frame_neon",
+    [fixture.guestUid]: "",
+  };
+  await seedTrainingSessionV4(environment, fixture);
+
+  const hostDatabase = environment.authenticatedContext(fixture.hostUid).database();
+  const guestDatabase = environment.authenticatedContext(fixture.guestUid).database();
+  const outsiderDatabase =
+    environment.authenticatedContext("training-v4-outsider-frames").database();
+  const chatFramesPath =
+    `online/trainingRooms/${fixture.roomId}/chatFrames`;
+
+  assert.deepEqual(
+    (await assertSucceeds(get(ref(hostDatabase, chatFramesPath)))).val(),
+    fixture.room.chatFrames,
+  );
+  assert.deepEqual(
+    (await assertSucceeds(get(ref(guestDatabase, chatFramesPath)))).val(),
+    fixture.room.chatFrames,
+  );
+  await assertFails(get(ref(outsiderDatabase, chatFramesPath)));
+  await assertFails(set(
+    ref(hostDatabase, `${chatFramesPath}/${fixture.hostUid}`),
+    "chat_frame_lace",
+  ));
+  await assertFails(set(
+    ref(guestDatabase, chatFramesPath),
+    {
+      [fixture.hostUid]: "",
+      [fixture.guestUid]: "chat_frame_royal_gold",
+    },
+  ));
+
+  const now = Date.now();
+  const roomId = "-trainingLegacyFrame01";
+  const legacyHost = v3QueueEntry(
+    "training-legacy-frame-host",
+    "FRAME HOST",
+    now,
+  );
+  const legacyGuest = v3QueueEntry(
+    "training-legacy-frame-guest",
+    "FRAME GUEST",
+    now,
+  );
+  const legacyHostDatabase =
+    environment.authenticatedContext(legacyHost.uid).database();
+  const legacyGuestDatabase =
+    environment.authenticatedContext(legacyGuest.uid).database();
+
+  await assertSucceeds(set(
+    ref(legacyHostDatabase, `online/trainingQueue/${legacyHost.uid}`),
+    legacyHost,
+  ));
+  await assertSucceeds(set(
+    ref(legacyGuestDatabase, `online/trainingQueue/${legacyGuest.uid}`),
+    legacyGuest,
+  ));
+  await assertSucceeds(set(
+    ref(legacyHostDatabase, "online/trainingMatchLock"),
+    matchLockPayload(legacyHost.uid, roomId),
+  ));
+  await reserveActive(legacyHostDatabase, legacyHost.uid, roomId);
+
+  const legacyRoom = v3RoomPayload(legacyHost, legacyGuest, now);
+  await assertFails(set(
+    ref(legacyHostDatabase, `online/trainingRooms/${roomId}`),
+    {
+      ...legacyRoom,
+      chatFrames: {
+        [legacyHost.uid]: "chat_frame_neon",
+        [legacyGuest.uid]: "",
+      },
+    },
+  ));
+  await assertSucceeds(set(
+    ref(legacyHostDatabase, `online/trainingRooms/${roomId}`),
+    legacyRoom,
+  ));
+});
+
 test("session V2 training presence and signals enforce leases and target ownership", {
   skip: runsAgainstSafeEmulator
     ? false

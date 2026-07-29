@@ -98,6 +98,9 @@ class FakeReference {
   }
 
   async get() {
+    if (this.database.getFailurePaths.has(this.path)) {
+      throw new Error(`forced get failure: ${this.path}`);
+    }
     return new FakeSnapshot(getAt(this.database.data, this.path));
   }
 
@@ -187,6 +190,7 @@ class FakeRealtime {
     this.transactionHooks = new Map();
     this.coldCacheNullOncePaths = new Set();
     this.deleteBeforeCommitOncePaths = new Set();
+    this.getFailurePaths = new Set();
     for (const [value, entry] of Object.entries(initial)) {
       setAt(this.data, value, entry);
     }
@@ -218,6 +222,10 @@ class FakeRealtime {
 
   deleteBeforeCommitOnce(value) {
     this.deleteBeforeCommitOncePaths.add(segments(value).join("/"));
+  }
+
+  failGet(value) {
+    this.getFailurePaths.add(segments(value).join("/"));
   }
 }
 
@@ -449,6 +457,138 @@ test("enqueue rejects malformed preparation before rate or queue mutation", asyn
   );
   assert.deepEqual(h.realtime.read(PATHS.rates), ratesBefore);
   assert.equal(h.realtime.read(queuePath(HOST_UID, lease)), undefined);
+});
+
+test("matchmaking snapshots only purchased and equipped training chat frames", async () => {
+  const h = harness();
+  const host = await claim(h, HOST_UID);
+  const guest = await claim(h, GUEST_UID);
+  const hostFrameId = "chat_frame_neon";
+  const guestFrameId = "chat_frame_lace";
+
+  h.realtime.write(`${PATHS.economy}/${HOST_UID}`, {
+    inventory: { [hostFrameId]: true },
+    equipped: { chatFrame: hostFrameId },
+  });
+  h.realtime.write(`${PATHS.economy}/${GUEST_UID}`, {
+    inventory: { [guestFrameId]: true },
+    equipped: { chatFrame: guestFrameId },
+  });
+
+  assert.equal((await h.service.enqueue(
+    HOST_UID,
+    enqueueInput(HOST_UID, host, { chatFrameId: hostFrameId }),
+  )).queued, true);
+  assert.equal((await h.service.enqueue(
+    GUEST_UID,
+    enqueueInput(GUEST_UID, guest, { chatFrameId: guestFrameId }),
+  )).queued, true);
+
+  const offer = await h.service.tryMatch(HOST_UID, {
+    sessionId: host.sessionId,
+    leaseToken: host.leaseToken,
+    conditions: "",
+  });
+  assert.equal(offer.outcome, "offered");
+
+  const room = h.realtime.read(`${PATHS.rooms}/${offer.roomId}`);
+  const permit = h.realtime.read(`${PATHS.permits}/${offer.roomId}`);
+  assert.deepEqual(room.chatFrames, {
+    [HOST_UID]: hostFrameId,
+    [GUEST_UID]: guestFrameId,
+  });
+  assert.equal(Object.hasOwn(permit, "chatFrames"), false);
+  assert.equal(Object.hasOwn(room.players[HOST_UID], "chatFrameId"), false);
+  assert.equal(Object.hasOwn(room.players[GUEST_UID], "chatFrameId"), false);
+});
+
+test("legacy, stale, and unowned training frame selections fall back to standard", async () => {
+  const h = harness();
+  const host = await claim(h, HOST_UID);
+  const guest = await claim(h, GUEST_UID);
+  const requested = "chat_frame_neon";
+
+  h.realtime.write(`${PATHS.economy}/${HOST_UID}`, {
+    inventory: { [requested]: true },
+    equipped: { chatFrame: "chat_frame_lace" },
+  });
+  h.realtime.write(`${PATHS.economy}/${GUEST_UID}`, {
+    inventory: {},
+    equipped: { chatFrame: "" },
+  });
+
+  assert.equal((await h.service.enqueue(
+    HOST_UID,
+    enqueueInput(HOST_UID, host, { chatFrameId: requested }),
+  )).queued, true);
+  assert.equal((await h.service.enqueue(
+    GUEST_UID,
+    enqueueInput(GUEST_UID, guest),
+  )).queued, true);
+
+  const hostQueue = h.realtime.read(queuePath(HOST_UID, host));
+  const guestQueue = h.realtime.read(queuePath(GUEST_UID, guest));
+  assert.equal(hostQueue.chatFrameId, requested);
+  assert.equal(Object.hasOwn(guestQueue, "chatFrameId"), false);
+
+  const offer = await h.service.tryMatch(HOST_UID, {
+    sessionId: host.sessionId,
+    leaseToken: host.leaseToken,
+    conditions: "",
+  });
+  assert.equal(offer.outcome, "offered");
+  assert.deepEqual(
+    h.realtime.read(`${PATHS.rooms}/${offer.roomId}`).chatFrames,
+    {
+      [HOST_UID]: "",
+      [GUEST_UID]: "",
+    },
+  );
+});
+
+test("chat-frame economy read failure keeps matchmaking available with standard frames", async () => {
+  const h = harness();
+  const host = await claim(h, HOST_UID);
+  const guest = await claim(h, GUEST_UID);
+  const frameId = "chat_frame_neon";
+
+  for (const uid of [HOST_UID, GUEST_UID]) {
+    h.realtime.write(`${PATHS.economy}/${uid}`, {
+      inventory: { [frameId]: true },
+      equipped: { chatFrame: frameId },
+    });
+  }
+  assert.equal((await h.service.enqueue(
+    HOST_UID,
+    enqueueInput(HOST_UID, host, { chatFrameId: frameId }),
+  )).queued, true);
+  assert.equal((await h.service.enqueue(
+    GUEST_UID,
+    enqueueInput(GUEST_UID, guest, { chatFrameId: frameId }),
+  )).queued, true);
+  h.realtime.failGet(`${PATHS.economy}/${HOST_UID}`);
+
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let offer;
+  try {
+    offer = await h.service.tryMatch(HOST_UID, {
+      sessionId: host.sessionId,
+      leaseToken: host.leaseToken,
+      conditions: "",
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(offer.outcome, "offered");
+  assert.deepEqual(
+    h.realtime.read(`${PATHS.rooms}/${offer.roomId}`).chatFrames,
+    {
+      [HOST_UID]: "",
+      [GUEST_UID]: "",
+    },
+  );
 });
 
 test("try_match materializes a V4 offer and accept atomically opens round 1", async () => {

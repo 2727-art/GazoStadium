@@ -20,6 +20,7 @@ const {
   isSafeUid,
   isSafeToken,
   normalizeClaim,
+  normalizeTrainingChatFrameId,
   normalizeTrainingSessionConditions,
   normalizeTrainingSessionPreparation,
   publicClaimLease,
@@ -56,6 +57,7 @@ const PATHS = Object.freeze({
   locks: "online/trainingMatchLocksV4",
   permits: "online/trainingMatchPermitsV4",
   rooms: "online/trainingRooms",
+  economy: "online/economy",
   legacyQueue: "online/trainingQueue",
   legacyActive: "online/trainingActive",
   legacyInvites: "online/trainingInvites",
@@ -126,6 +128,38 @@ function createTrainingSessionService({
   const lockRef = (uid) => realtime.ref(path(PATHS.locks, uid));
   const permitRef = (roomId) => realtime.ref(path(PATHS.permits, roomId));
   const roomRef = (roomId) => realtime.ref(path(PATHS.rooms, roomId));
+  const economyRef = (uid) => realtime.ref(path(PATHS.economy, uid));
+
+  function verifiedTrainingChatFrameId(entry, economy) {
+    const requestedId = Object.hasOwn(objectValue(entry), "chatFrameId")
+      ? normalizeTrainingChatFrameId(entry.chatFrameId)
+      : "";
+    if (!requestedId
+        || requestedId !== economy?.equipped?.chatFrame
+        || economy?.inventory?.[requestedId] !== true) return "";
+    return requestedId;
+  }
+
+  async function verifiedPairChatFrames(host, guest) {
+    try {
+      const [hostEconomy, guestEconomy] = await Promise.all([
+        economyRef(host.uid).get(),
+        economyRef(guest.uid).get(),
+      ]);
+      return {
+        [host.uid]: verifiedTrainingChatFrameId(host, hostEconomy.val()),
+        [guest.uid]: verifiedTrainingChatFrameId(guest, guestEconomy.val()),
+      };
+    } catch (error) {
+      console.warn("training chat frame verification failed; using standard frames", {
+        error: String(error?.message || error),
+      });
+      return {
+        [host.uid]: "",
+        [guest.uid]: "",
+      };
+    }
+  }
 
   function token() {
     const value = crypto.randomBytes(16);
@@ -181,6 +215,7 @@ function createTrainingSessionService({
         "intensity",
         "commandDeck",
         "imageBpms",
+        "chatFrameId",
       ]),
       release: new Set(["action", "sessionId", "leaseToken", "generation"]),
       try_match: new Set([
@@ -233,12 +268,16 @@ function createTrainingSessionService({
         value.sameSessionOwnerConfirmedGone === true;
     }
     if (action === "enqueue") {
-      const preparation = normalizeTrainingSessionPreparation({
+      const preparationInput = {
         name: value.name,
         intensity: value.intensity,
         commandDeck: value.commandDeck,
         imageBpms: value.imageBpms,
-      });
+      };
+      if (Object.hasOwn(value, "chatFrameId")) {
+        preparationInput.chatFrameId = value.chatFrameId;
+      }
+      const preparation = normalizeTrainingSessionPreparation(preparationInput);
       if (!preparation) {
         throw new HttpsError(
           "invalid-argument",
@@ -1276,6 +1315,9 @@ function createTrainingSessionService({
               intensity: data.intensity,
               commandDeck: data.commandDeck,
               imageBpms: data.imageBpms,
+              ...(Object.hasOwn(data, "chatFrameId")
+                ? { chatFrameId: data.chatFrameId }
+                : {}),
               joinedAt: queuedAt,
               lastSeen: queuedAt,
               expiresAt: claim.expiresAt,
@@ -1890,6 +1932,10 @@ function createTrainingSessionService({
       throw new HttpsError("unavailable", "鍛え合いルームを準備できませんでした。");
     }
     const createdAt = currentTime();
+    const chatFrames = await verifiedPairChatFrames(
+      selection.host,
+      selection.candidate,
+    );
     const resources = buildTrainingSessionResources({
       roomId: newRoomId,
       attemptId: token(),
@@ -1897,6 +1943,7 @@ function createTrainingSessionService({
       host: selection.host,
       guest: selection.candidate,
       hostConditions: data.conditions,
+      chatFrames,
       now: createdAt,
       expiresAt: createdAt + TRAINING_SESSION_MATCH_TTL_MS,
     });
@@ -2036,6 +2083,10 @@ function createTrainingSessionService({
           protocolVersion: TRAINING_SESSION_PROTOCOL_VERSION,
         },
         hostConditions: room.players[hostUid].conditions,
+        chatFrames: room.chatFrames ?? {
+          [hostUid]: "",
+          [guestUid]: "",
+        },
         now: Number(room.createdAt),
         expiresAt: Math.max(
           Number(room.expiresAt || 0),
