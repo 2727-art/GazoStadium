@@ -487,6 +487,7 @@ GitHub Pagesにはフロントエンドの静的ファイルだけを配置で�
 - `stamps.js`: 無料4種・ショップ20種のスタンプカタログ、装備、チャットUI共通処理
 - `post-match-tip.js`: 2つの1on1共通の対戦後差し入れUI、送信状態、Callable連携
 - `training.js` / `training-core.mjs` / `training.css`: Firebase/WebRTC「鍛え合い60」の1対1マッチング、5枚ランダムDRAW、秘密採点、HP30、COMMAND DECK、筋トレHUD、応援、同期メトロノーム、任意OVERKILL追い込み、画面スタイル
+- 鍛え合い60の実績は、勝利数やRATEではなく、旧版とHP版を合算した参加回数・完了した運動本数・累計運動時間で解除されます。過去の`trainingProfiles`も実績コレクションを開いたときにサーバーで再評価されます。
 - `TRAINING_60_DESIGN.md`: 鍛え合い60の目的、進行、同期、保存境界、旧モード退役方針
 - `market.js`: 推し値市場のロール別UI、推し嬢の自由請求・警告下クロージング・静かな最終判断・オールイン・0 Pay再出発、月間／累計ランキング、推し値商店・常連帳・パトロン推薦棚、推し値証書、P2P画像・10秒音声
 - `flea-market.js`: 文章だけの一日棚、出品下書き、任意X外部リンク、推しカード、推し帳、出会い記録と専用Callable連携

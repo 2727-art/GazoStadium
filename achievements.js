@@ -168,6 +168,36 @@
     names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手"],
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
   });
+  addSeries({
+    scope: "training",
+    category: "training_record",
+    family: "training_sessions",
+    familyLabel: "鍛え合い参加",
+    icon: "拳",
+    thresholds: [1, 5, 20, 50, 100, 300],
+    names: ["最初の一歩", "鍛錬の入口", "二十のセッション", "五十回の積み重ね", "百鍛錬", "鍛え合いの住人"],
+    description: (target) => `鍛え合い60を${target}回記録した`,
+  });
+  addSeries({
+    scope: "training",
+    category: "training_workout",
+    family: "training_workouts",
+    familyLabel: "運動完了",
+    icon: "力",
+    thresholds: [1, 10, 30, 100, 300, 1000],
+    names: ["一本やりきった", "十本の鍛錬", "三十本の汗", "百本稽古", "積み重ねの証", "千本鍛錬"],
+    description: (target) => `鍛え合い60で運動を${target}本完了した`,
+  });
+  addSeries({
+    scope: "training",
+    category: "training_workout",
+    family: "training_minutes",
+    familyLabel: "累計運動時間",
+    icon: "秒",
+    thresholds: [1, 10, 30, 60, 300, 1000],
+    names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証"],
+    description: (target) => `鍛え合い60で累計${target}分の運動を完了した`,
+  });
   [
     ["team_oshi_jouzu_defense", "team_oshi_jouzu_defense", 1, "つよ推しの証", "推し上手さんとして、ふたりの挑戦を退けた"],
     ["team_oshi_jouzu_clean_defense", "team_oshi_jouzu_defense", 2, "ひとりで魅せきった", "推し上手さんとして、2点以上の差で防衛した"],
@@ -269,6 +299,8 @@
     { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も貼り続けた記録" },
     { id: "battle_days", label: "継続", copy: "異なる日にスタジアムへ戻ってきた記録" },
     { id: "battle_honor", label: "つよ推しの証（終了）", copy: "終了したふたりチャレンジで刻んだ武勲" },
+    { id: "training_record", label: "鍛え合い60", copy: "勝敗ではなく、鍛え合いへ参加した歩み" },
+    { id: "training_workout", label: "鍛錬の積み重ね", copy: "実際に完了した運動の本数と時間" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },

@@ -78,7 +78,7 @@ test("training finalization processes both private profiles and claims exactly o
   assert.match(finalization, /finisher:/);
 });
 
-test("training never enters battle economy, RATE, period, ranking, crown, or tip pipelines", () => {
+test("training achievements remain separate from battle economy, RATE, rankings, crowns, and tips", () => {
   const finalization = between(
     "async function finalizeTraining(uid, roomId, {",
     "const VERIFIED_MATCH_MODES",
@@ -88,7 +88,6 @@ test("training never enters battle economy, RATE, period, ranking, crown, or tip
     "addBattleMatch",
     "periodRewards[",
     "dailyPlayClaims",
-    "achievementStats",
     "serverRanking",
     "crown",
     "postMatchTip",
@@ -97,6 +96,9 @@ test("training never enters battle economy, RATE, period, ranking, crown, or tip
   ]) {
     assert.equal(finalization.includes(forbidden), false, forbidden);
   }
+  assert.match(finalization, /scope:\s*"training"/);
+  assert.match(finalization, /achievementProfileRef/);
+  assert.match(finalization, /syncAchievementPublicSurfaces/);
   const modes = between("const VERIFIED_MATCH_MODES", "function objectValue");
   assert.doesNotMatch(modes, /training/);
 });

@@ -15,6 +15,7 @@ const {
   normalizeAchievementProfile,
   normalizeBattleStats,
   normalizeMarketStats,
+  normalizeTrainingStats,
   publicAchievementProfile,
   unlockAchievements,
 } = require("../achievements");
@@ -74,6 +75,36 @@ test("only active 1on1 matches advance play days and loss streaks", () => {
   assert.equal(stats.currentLossStreak, 0);
   assert.equal(stats.bestLossStreak, 2);
   assert.equal(stats.losses, 2);
+});
+
+test("training achievements combine legacy sets with current HP workouts without rewarding wins", () => {
+  const trainingStats = normalizeTrainingStats({
+    sessions: 4,
+    completedSets: 9,
+    completedSeconds: 540,
+    hpSessions: 1,
+    hpWins: 99,
+    hpCompletedWorkouts: 1,
+    hpCompletedSeconds: 60,
+  });
+  assert.deepEqual(trainingStats, {
+    sessions: 5,
+    workouts: 10,
+    seconds: 600,
+  });
+  const ids = eligibleAchievementIds({ trainingStats, scope: "training" });
+  for (const expected of [
+    "training_sessions_5",
+    "training_workouts_10",
+    "training_minutes_10",
+  ]) assert.equal(ids.includes(expected), true, expected);
+  assert.equal(
+    ACHIEVEMENT_DEFINITIONS.some((definition) => (
+      definition.scope === "training"
+      && JSON.stringify(definition.condition).includes("Wins")
+    )),
+    false,
+  );
 });
 
 test("retired team variants cannot advance any current battle stats", () => {

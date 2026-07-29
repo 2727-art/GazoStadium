@@ -1824,18 +1824,22 @@ async function ensureAchievementState(uid) {
   const progressRef = economyProgressRef(uid);
   const profileRef = achievementProfileRef(uid);
   const statsRef = marketStatsRef(uid);
+  const trainingRef = trainingProfileRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
-    const [progressSnapshot, profileSnapshot, marketSnapshot] = await Promise.all([
+    const [progressSnapshot, profileSnapshot, marketSnapshot, trainingSnapshot] = await Promise.all([
       transaction.get(progressRef),
       transaction.get(profileRef),
       transaction.get(statsRef),
+      transaction.get(trainingRef),
     ]);
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
     const marketStats = normalizeMarketStats(marketSnapshot.data());
+    const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
     const eligibleIds = eligibleAchievementIds({
       battleStats: progress.achievementStats,
+      trainingStats: trainingProfile,
       marketStats,
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
@@ -1851,6 +1855,7 @@ async function ensureAchievementState(uid) {
     result = {
       progress,
       marketStats,
+      trainingProfile,
       profile: unlockResult.profile,
       newlyUnlocked: unlockResult.newlyUnlocked,
     };
@@ -2695,7 +2700,12 @@ async function setCrownCustomization(uid, data) {
 async function getAchievements(uid, { syncPublic = false } = {}) {
   const state = await ensureAchievementState(uid);
   if (syncPublic) await syncAchievementPublicSurfaces(uid, state.profile);
-  return publicAchievementProfile(state.profile, state.progress.achievementStats, state.marketStats);
+  return publicAchievementProfile(
+    state.profile,
+    state.progress.achievementStats,
+    state.marketStats,
+    state.trainingProfile,
+  );
 }
 
 function isCreatorCardEntryId(value) {
@@ -4128,21 +4138,28 @@ async function finalizeTraining(uid, roomId, {
   const progressRefs = participants.map((participantUid) => (
     economyProgressRef(participantUid)
   ));
+  const achievementRefs = participants.map((participantUid) => (
+    achievementProfileRef(participantUid)
+  ));
   const profileResults = {};
   const progressResults = {};
+  const achievementResults = {};
   let callerDuplicate = false;
   await firestore.runTransaction(async (transaction) => {
     Object.keys(profileResults).forEach((key) => delete profileResults[key]);
     Object.keys(progressResults).forEach((key) => delete progressResults[key]);
+    Object.keys(achievementResults).forEach((key) => delete achievementResults[key]);
     const snapshots = await Promise.all([
       ...profileRefs.map((ref) => transaction.get(ref)),
       ...claimRefs.map((ref) => transaction.get(ref)),
       ...progressRefs.map((ref) => transaction.get(ref)),
+      ...achievementRefs.map((ref) => transaction.get(ref)),
     ]);
     const count = participants.length;
     const profileSnapshots = snapshots.slice(0, count);
     const claimSnapshots = snapshots.slice(count, count * 2);
     const progressSnapshots = snapshots.slice(count * 2);
+    const achievementSnapshots = progressSnapshots.splice(count);
     callerDuplicate = claimSnapshots[participants.indexOf(uid)].exists;
 
     participants.forEach((participantUid, index) => {
@@ -4221,6 +4238,18 @@ async function finalizeTraining(uid, roomId, {
           profileSnapshots[index].data(),
         );
         progressResults[participantUid] = progress;
+        const unlockResult = unlockAchievements(
+          achievementSnapshots[index].data(),
+          eligibleAchievementIds({
+            trainingStats: profileResults[participantUid],
+            scope: "training",
+          }),
+          now,
+        );
+        achievementResults[participantUid] = unlockResult.profile;
+        if (!achievementSnapshots[index].exists || unlockResult.newlyUnlocked.length) {
+          transaction.set(achievementRefs[index], unlockResult.profile);
+        }
         return;
       }
 
@@ -4274,8 +4303,17 @@ async function finalizeTraining(uid, roomId, {
       progress.updatedAt = now;
       profileResults[participantUid] = profile;
       progressResults[participantUid] = progress;
+      const unlockResult = unlockAchievements(
+        achievementSnapshots[index].data(),
+        eligibleAchievementIds({ trainingStats: profile, scope: "training" }),
+        now,
+      );
+      achievementResults[participantUid] = unlockResult.profile;
       transaction.set(profileRefs[index], profile);
       transaction.set(progressRefs[index], progress);
+      if (!achievementSnapshots[index].exists || unlockResult.newlyUnlocked.length) {
+        transaction.set(achievementRefs[index], unlockResult.profile);
+      }
       transaction.create(claimRefs[index], {
         version: derived.protocolVersion,
         protocolVersion: derived.protocolVersion,
@@ -4348,7 +4386,10 @@ async function finalizeTraining(uid, roomId, {
     );
   }
   await bestEffort("finalizeTraining", participants.map((participantUid) => (
-    mirrorEconomyProgress(participantUid, progressResults[participantUid])
+    Promise.all([
+      mirrorEconomyProgress(participantUid, progressResults[participantUid]),
+      syncAchievementPublicSurfaces(participantUid, achievementResults[participantUid]),
+    ])
   )));
   return {
     result: {
@@ -4378,6 +4419,12 @@ async function finalizeTraining(uid, roomId, {
     },
     profile: profileResults[uid],
     daily: progressResults[uid].daily,
+    achievements: publicAchievementProfile(
+      achievementResults[uid],
+      progressResults[uid].achievementStats,
+      null,
+      profileResults[uid],
+    ),
   };
 }
 

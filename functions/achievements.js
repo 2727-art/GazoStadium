@@ -6,7 +6,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["battle", "market"]);
+const VALID_SCOPES = new Set(["battle", "training", "market"]);
 const MAX_SHOWCASE = 3;
 
 function series({
@@ -174,6 +174,39 @@ const battleDefinitions = [
     names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手"],
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
     condition: (target) => ({ type: "battle_stat", key: "playDays", target }),
+  }),
+  ...series({
+    scope: "training",
+    category: "training_record",
+    family: "training_sessions",
+    familyLabel: "鍛え合い参加",
+    icon: "拳",
+    thresholds: [1, 5, 20, 50, 100, 300],
+    names: ["最初の一歩", "鍛錬の入口", "二十のセッション", "五十回の積み重ね", "百鍛錬", "鍛え合いの住人"],
+    description: (target) => `鍛え合い60を${target}回記録した`,
+    condition: (target) => ({ type: "training_stat", key: "sessions", target }),
+  }),
+  ...series({
+    scope: "training",
+    category: "training_workout",
+    family: "training_workouts",
+    familyLabel: "運動完了",
+    icon: "力",
+    thresholds: [1, 10, 30, 100, 300, 1000],
+    names: ["一本やりきった", "十本の鍛錬", "三十本の汗", "百本稽古", "積み重ねの証", "千本鍛錬"],
+    description: (target) => `鍛え合い60で運動を${target}本完了した`,
+    condition: (target) => ({ type: "training_stat", key: "workouts", target }),
+  }),
+  ...series({
+    scope: "training",
+    category: "training_workout",
+    family: "training_minutes",
+    familyLabel: "累計運動時間",
+    icon: "秒",
+    thresholds: [1, 10, 30, 60, 300, 1000],
+    names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証"],
+    description: (target) => `鍛え合い60で累計${target}分の運動を完了した`,
+    condition: (target) => ({ type: "training_stat", key: "seconds", target: target * 60 }),
   }),
   ...[
     {
@@ -406,6 +439,14 @@ function normalizeMarketStats(value) {
   };
 }
 
+function normalizeTrainingStats(value) {
+  return {
+    sessions: count(value?.sessions) + count(value?.hpSessions),
+    workouts: count(value?.completedSets) + count(value?.hpCompletedWorkouts),
+    seconds: count(value?.completedSeconds) + count(value?.hpCompletedSeconds),
+  };
+}
+
 function addMarketTransaction(value, role, dateKey, { newCounterparty = false } = {}) {
   const stats = normalizeMarketStats(value);
   if (!["seller", "buyer"].includes(role)) return stats;
@@ -422,7 +463,7 @@ function addMarketTransaction(value, role, dateKey, { newCounterparty = false } 
   return normalizeMarketStats({ ...value, ...stats });
 }
 
-function achievementConditionMet(definition, battleStats, marketStats, signals = {}) {
+function achievementConditionMet(definition, battleStats, trainingStats, marketStats, signals = {}) {
   const condition = definition.condition;
   if (condition.type === "battle_stat") return count(battleStats?.[condition.key]) >= condition.target;
   if (condition.type === "battle_mode") return count(battleStats?.modeMatches?.[condition.mode]) >= condition.target;
@@ -437,6 +478,7 @@ function achievementConditionMet(definition, battleStats, marketStats, signals =
     ));
   }
   if (condition.type === "battle_signal") return signals?.[condition.signal] === true;
+  if (condition.type === "training_stat") return count(trainingStats?.[condition.key]) >= condition.target;
   if (condition.type === "market_stat") return count(marketStats?.[condition.key]) >= condition.target;
   if (condition.type === "market_both") {
     return count(marketStats?.salesCount) >= condition.target && count(marketStats?.purchases) >= condition.target;
@@ -445,11 +487,13 @@ function achievementConditionMet(definition, battleStats, marketStats, signals =
   return false;
 }
 
-function eligibleAchievementIds({ battleStats, marketStats, signals = {}, scope = "" } = {}) {
+function eligibleAchievementIds({
+  battleStats, trainingStats, marketStats, signals = {}, scope = "",
+} = {}) {
   return ACHIEVEMENT_DEFINITIONS
     .filter((definition) => !definition.legacy
       && (!scope || definition.scope === scope)
-      && achievementConditionMet(definition, battleStats, marketStats, signals))
+      && achievementConditionMet(definition, battleStats, trainingStats, marketStats, signals))
     .map((definition) => definition.id);
 }
 
@@ -541,10 +585,11 @@ function publicShowcaseMap(profileValue) {
   return Object.fromEntries(effectiveShowcase(profileValue).map((id) => [id, true]));
 }
 
-function publicAchievementProfile(profileValue, battleStatsValue, marketStatsValue) {
+function publicAchievementProfile(profileValue, battleStatsValue, marketStatsValue, trainingStatsValue) {
   const profile = normalizeAchievementProfile(profileValue);
   const battleStats = normalizeBattleStats(battleStatsValue);
   const marketStats = normalizeMarketStats(marketStatsValue);
+  const trainingStats = normalizeTrainingStats(trainingStatsValue);
   const unlockedLegacyCount = Object.keys(profile.unlocked)
     .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.legacy === true)
     .length;
@@ -558,6 +603,7 @@ function publicAchievementProfile(profileValue, battleStatsValue, marketStatsVal
       + unlockedLegacyCount,
     stats: {
       battle: battleStats,
+      training: trainingStats,
       market: {
         salesCount: marketStats.salesCount,
         purchases: marketStats.purchases,
@@ -584,6 +630,7 @@ module.exports = Object.freeze({
   normalizeAchievementProfile,
   normalizeBattleStats,
   normalizeMarketStats,
+  normalizeTrainingStats,
   publicAchievementProfile,
   publicShowcaseMap,
   sanitizeAchievementIds,

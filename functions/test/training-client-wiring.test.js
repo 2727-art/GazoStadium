@@ -20,7 +20,7 @@ test("loads the HP V3 client and retires the team client", () => {
   assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
   assert.match(
     indexHtml,
-    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2"/,
+    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2-achievements-v1"/,
   );
   assert.match(trainingJs, /training-core\.mjs\?v=kitaeai-hp-v3-matchmaking-v1/);
   assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);

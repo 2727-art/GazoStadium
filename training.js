@@ -5900,6 +5900,7 @@ async function ensureFinalization(force = false) {
     if (payload.result?.status === "final") {
       state.profile = payload.profile || state.profile;
       state.daily = payload.daily || state.daily;
+      window.HariaiAchievements?.notify?.(payload.achievements?.pendingUnlocks || []);
     } else if (payload.result?.status === "pending" && state.finalizeAttempts < 8) {
       state.finalizeAttempts += 1;
       const delay = Math.min(10_000, Math.max(500, Number(payload.result.retryAfterMs || 1500)));
