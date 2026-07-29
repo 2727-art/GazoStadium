@@ -92,7 +92,7 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     .map(({ id, type, price }) => [id, type, price])
     .sort(([firstId], [secondId]) => firstId.localeCompare(secondId));
   assert.deepEqual(browserRows, serverRows);
-  assert.equal(browserRows.length, 129);
+  assert.equal(browserRows.length, 130);
 
   const rules = JSON.parse(read("database.rules.json")).rules;
   const economyRules = rules.online.economy["$uid"];
@@ -121,6 +121,11 @@ test("AI text training styles are permanent store unlocks with a guarded private
     type: "aiTextTrainingStyle",
     price: 500,
   });
+  assert.deepEqual(serverCatalog.ai_training_style_crimson_azure, {
+    id: "ai_training_style_crimson_azure",
+    type: "aiTextTrainingStyle",
+    price: 800,
+  });
   assert.deepEqual(serverCatalog.ai_training_style_stardust_stage, {
     id: "ai_training_style_stardust_stage",
     type: "aiTextTrainingStyle",
@@ -134,6 +139,8 @@ test("AI text training styles are permanent store unlocks with a guarded private
   assert.match(online, /現在残高:[\s\S]*商品価格:[\s\S]*購入後残高:/);
   assert.match(online, /応援台本の1回利用料とは別の商品/);
   assert.match(online, /購入済み・文字コラ準備で選択/);
+  assert.match(online, /標準を含め最大25通り/);
+  assert.match(read("README.md"), /韓堕ちダークネオン.*800 Pay/);
 });
 
 test("oshi activity collection has the agreed titles and only reuses valid shared products", () => {

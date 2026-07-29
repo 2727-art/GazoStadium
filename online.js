@@ -46,7 +46,7 @@ import {
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 import {
   AI_TEXT_TRAINING_STYLE_PRODUCTS,
-} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v1";
+} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v2";
 import {
   PLAYER_TITLE_CATEGORIES,
   PLAYER_TITLE_PRODUCTS,
@@ -3812,7 +3812,7 @@ function renderPointShop() {
       </section>
       <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードの仕上げ</h2></div><p>推しカードに関する選択と解放は、自分のカードを見ながら行える編集ルームへまとめました。</p></div>
         <div class="shop-free-card-callout"><div><strong>推しカード編集ルームへ移動しました</strong><span>無料テーマもプレミアム仕上げも、自分のカードで試してから選べます。プレミアム3種の500 Pay買い切り解放も編集ルーム内で行います。</span></div><button class="button button-cyan" type="button" data-open-creator-card>推しカード編集へ</button></div></section>
-      <section class="shop-category shop-ai-training-category"><div class="shop-category-head"><div><span>AI TEXT TRAINING / ${AI_TEXT_TRAINING_STYLE_PRODUCTS.length} SETS</span><h2>文字コラトレーニング演出セット</h2></div><p>買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放します。購入済みセット同士は文字コラ準備画面で自由に組み合わせられ、BPM・運動結果・安全操作には影響しません。</p></div><div class="shop-grid">${aiTextTrainingStyleProducts}</div></section>
+      <section class="shop-category shop-ai-training-category"><div class="shop-category-head"><div><span>AI TEXT TRAINING / ${AI_TEXT_TRAINING_STYLE_PRODUCTS.length} SETS</span><h2>文字コラトレーニング演出セット</h2></div><p>買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放します。購入済みセット同士は文字コラ準備画面で自由に組み合わせられ、標準を含め最大25通り。BPM・運動結果・安全操作には影響しません。</p></div><div class="shop-grid">${aiTextTrainingStyleProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>対戦チャットの吹き出し背景を1個装備できます。文字コラ専用演出とは別の商品です。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
       <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / ${CHAT_SPECIAL_FRAME_PRODUCTS.length} STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>

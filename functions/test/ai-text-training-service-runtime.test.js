@@ -343,26 +343,26 @@ async function publishPreset(harness, overrides = {}) {
 }
 
 test("private cosmetics can mix owned styles and reject an unowned trial", async () => {
-  const [softGlow, neonBeat, stardustStage] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;
+  const [softGlow, neonBeat, crimsonAzure, stardustStage] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;
   const harness = createHarness({
     balances: { player: 0 },
-    ownedProducts: { player: [softGlow, neonBeat] },
+    ownedProducts: { player: [softGlow, neonBeat, crimsonAzure] },
   });
   const saved = await harness.service.performAction("player", {
     action: "save_cosmetics",
-    panelThemeId: softGlow,
+    panelThemeId: crimsonAzure,
     messageDecorationId: neonBeat,
   });
   assert.deepEqual(saved.cosmetics, {
-    panelThemeId: softGlow,
+    panelThemeId: crimsonAzure,
     messageDecorationId: neonBeat,
-    ownedStyleIds: [softGlow, neonBeat],
+    ownedStyleIds: [softGlow, neonBeat, crimsonAzure],
   });
   assert.deepEqual(
     harness.firestore.read("aiTextTrainingPreferences/player"),
     {
       schemaVersion: 1,
-      panelThemeId: softGlow,
+      panelThemeId: crimsonAzure,
       messageDecorationId: neonBeat,
       updatedAt: Date.parse("2026-07-29T03:00:00.000Z"),
     },

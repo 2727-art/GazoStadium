@@ -2305,6 +2305,42 @@
     0 0 11px rgba(255, 220, 116, 0.12);
 }
 
+[data-att-panel-theme="ai_training_style_crimson_azure"]
+  :is(.ai-text-training-opponent, .ai-text-training-cosmetic-preview-window, .shop-ai-training-style-window) {
+  border-color: rgba(248, 251, 255, 0.42);
+  border-radius: 18px 8px 18px 8px;
+  background:
+    radial-gradient(circle at 40% 42%, rgba(255, 43, 61, 0.24), transparent 29%),
+    radial-gradient(circle at 62% 48%, rgba(22, 136, 255, 0.24), transparent 31%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 16px),
+    linear-gradient(180deg, #05070d 0%, #090d18 52%, #030409 100%);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.48),
+    0 0 18px rgba(255, 43, 61, 0.28),
+    0 0 18px rgba(22, 136, 255, 0.27),
+    inset 0 1px 0 rgba(248, 251, 255, 0.12);
+}
+
+[data-att-panel-theme="ai_training_style_crimson_azure"]
+  :is(.ai-text-training-opponent, .ai-text-training-cosmetic-preview-window, .shop-ai-training-style-window)::after {
+  border: 1px solid rgba(248, 251, 255, 0.18);
+  border-radius: 14px 5px 14px 5px;
+  background:
+    linear-gradient(90deg, #ff2b3d, rgba(248, 251, 255, 0.9), #1688ff) bottom / 100% 2px no-repeat,
+    radial-gradient(circle at 50% 46%, rgba(5, 7, 13, 0.62) 0 20px, transparent 21px),
+    conic-gradient(
+      from 18deg at 50% 46%,
+      rgba(255, 43, 61, 0.16) 0 48%,
+      rgba(248, 251, 255, 0.14) 48% 52%,
+      rgba(22, 136, 255, 0.16) 52% 100%
+    ) center 46% / 86px 86px no-repeat,
+    linear-gradient(90deg, rgba(255, 43, 61, 0.13), transparent 42%, rgba(22, 136, 255, 0.13));
+  box-shadow:
+    inset 0 0 18px rgba(0, 0, 0, 0.38),
+    0 0 14px rgba(255, 43, 61, 0.16),
+    0 0 16px rgba(22, 136, 255, 0.16);
+}
+
 [data-att-message-decoration]
   :is(
     .ai-text-training-message-surface,
@@ -2467,6 +2503,59 @@
   inset: 4px;
   border: 1px solid rgba(255, 235, 169, 0.35);
   border-radius: max(7px, calc(1em - 2px));
+}
+
+[data-att-message-decoration="ai_training_style_crimson_azure"]
+  :is(
+    .ai-text-training-message-surface,
+    .ai-text-training-cosmetic-preview-message,
+    .shop-ai-training-style-message,
+    .shop-ai-training-style-window > p
+  ) {
+  border-color: rgba(248, 251, 255, 0.3);
+  border-radius: 14px 14px 6px 14px;
+  color: #f8fbff;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent 32%),
+    linear-gradient(90deg, rgba(255, 43, 61, 0.28), transparent 48%, rgba(22, 136, 255, 0.24)),
+    rgba(5, 8, 16, 0.96);
+  box-shadow:
+    0 12px 31px rgba(0, 0, 0, 0.4),
+    0 0 18px rgba(255, 43, 61, 0.22),
+    0 0 18px rgba(22, 136, 255, 0.2),
+    inset 0 1px 0 rgba(248, 251, 255, 0.11);
+  text-shadow:
+    0 0 9px rgba(255, 255, 255, 0.65),
+    0 0 16px rgba(255, 43, 61, 0.42),
+    0 0 16px rgba(22, 136, 255, 0.38);
+}
+
+[data-att-message-decoration="ai_training_style_crimson_azure"]
+  :is(
+    .ai-text-training-message-surface,
+    .ai-text-training-cosmetic-preview-message,
+    .shop-ai-training-style-message,
+    .shop-ai-training-style-window > p
+  )::before {
+  z-index: -1;
+  inset: 0;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 12px),
+    linear-gradient(90deg, rgba(255, 43, 61, 0.12), transparent 40%, rgba(22, 136, 255, 0.12));
+}
+
+[data-att-message-decoration="ai_training_style_crimson_azure"]
+  :is(
+    .ai-text-training-message-surface,
+    .ai-text-training-cosmetic-preview-message,
+    .shop-ai-training-style-message,
+    .shop-ai-training-style-window > p
+  )::after {
+  z-index: 2;
+  inset: 4px;
+  border: 1px solid rgba(248, 251, 255, 0.12);
+  border-radius: 10px 10px 3px 10px;
+  background: linear-gradient(90deg, #ff2b3d, rgba(248, 251, 255, 0.9), #1688ff) bottom / 100% 2px no-repeat;
 }
 
 @keyframes ai-text-training-countdown-pop {

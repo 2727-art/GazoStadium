@@ -45,7 +45,7 @@ import {
   aiTextTrainingCosmeticsAreOwned,
   getAiTextTrainingStyleProduct,
   normalizeAiTextTrainingCosmetics,
-} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v1";
+} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v2";
 import {
   createFreeTableAmbienceController,
 } from "./free-table-ambience.mjs?v=free-table-ambience-v1";
@@ -552,8 +552,8 @@ function installPreview(requestedScreen) {
     ],
   };
   state.cosmeticDraft = {
-    panelThemeId: "ai_training_style_stardust_stage",
-    messageDecorationId: "ai_training_style_neon_beat",
+    panelThemeId: "ai_training_style_crimson_azure",
+    messageDecorationId: "ai_training_style_crimson_azure",
   };
   state.policy = { ...DEFAULT_POLICY, prices: [...DEFAULT_POLICY.prices] };
   state.images = Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => ({
@@ -920,7 +920,7 @@ function renderCosmeticsPanel() {
       <button class="button button-primary" type="button" data-ai-text-training-action="save-cosmetics" ${saveDisabled ? "disabled" : ""}>${escapeHtml(saveLabel)}</button>
       ${state.cosmeticDraft ? '<button class="button button-ghost" type="button" data-ai-text-training-action="cancel-cosmetics">試着を取り消す</button>' : ""}
     </div>
-    <p class="ai-text-training-cosmetic-note">未購入品もここで試着できますが、保存はされません。購入はトップのAnjuPayストアから。購入済みの窓とセリフは別々に組み合わせて何度でも変更できます。</p>
+    <p class="ai-text-training-cosmetic-note">未購入品もここで試着できますが、保存はされません。購入はトップのAnjuPayストアから。購入済みの窓とセリフは別々に組み合わせ、標準を含め最大25通りから何度でも変更できます。</p>
     <p class="ai-text-training-mode-note">演出は見た目だけです。BPM・運動時間・結果・即停止などの安全操作は変わりません。</p>
   </section>`;
 }

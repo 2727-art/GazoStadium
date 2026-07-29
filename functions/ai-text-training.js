@@ -10,6 +10,7 @@ const AI_TEXT_TRAINING_MODES = Object.freeze(["mama", "imouto", "oneechan"]);
 const AI_TEXT_TRAINING_STYLE_PRODUCT_IDS = Object.freeze([
   "ai_training_style_soft_glow",
   "ai_training_style_neon_beat",
+  "ai_training_style_crimson_azure",
   "ai_training_style_stardust_stage",
 ]);
 const AI_TEXT_TRAINING_PRICE_OPTIONS = Object.freeze([5, 10, 25]);

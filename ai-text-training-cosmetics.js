@@ -18,6 +18,15 @@ export const AI_TEXT_TRAINING_STYLE_PRODUCTS = Object.freeze([
     price: 500,
   }),
   Object.freeze({
+    id: "ai_training_style_crimson_azure",
+    type: "aiTextTrainingStyle",
+    name: "韓堕ちダークネオン",
+    description: "黒・濃紺に赤青ネオンと太極リアクター風ラインを重ねる、韓堕ちモード配色の窓とセリフ枠を解放",
+    panelLabel: "赤青太極ネオンHUD",
+    messageLabel: "K-DROP黒ガラスカード",
+    price: 800,
+  }),
+  Object.freeze({
     id: "ai_training_style_stardust_stage",
     type: "aiTextTrainingStyle",
     name: "スターダストステージ",

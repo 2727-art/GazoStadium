@@ -13,6 +13,7 @@ const app = read("app.js");
 const styles = read("styles.css");
 const trainingStyles = read("ai-text-training.css");
 const cosmetics = read("ai-text-training-cosmetics.js");
+const online = read("online.js");
 
 test("landing loads a separate solo mode and never routes it through Training 60", () => {
   assert.match(html, /ai-text-training\.css\?v=ai-text-training-v1/);
@@ -114,6 +115,7 @@ test("partial elapsed time is counted once when a playing, paused, or countdown 
 test("training cosmetics are trial-only until server-verified equip and freeze per session", () => {
   assert.match(cosmetics, /ai_training_style_soft_glow/);
   assert.match(cosmetics, /ai_training_style_neon_beat/);
+  assert.match(cosmetics, /ai_training_style_crimson_azure/);
   assert.match(cosmetics, /ai_training_style_stardust_stage/);
   assert.match(cosmetics, /panelThemeId/);
   assert.match(cosmetics, /messageDecorationId/);
@@ -126,6 +128,17 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
   assert.match(client, /data-att-panel-theme=/);
   assert.match(client, /data-att-message-decoration=/);
   assert.match(client, /ai-text-training-message-surface/);
+  assert.match(client, /ai-text-training-cosmetics-v2/);
+  assert.match(online, /ai-text-training-cosmetics-v2/);
+  assert.match(html, /ai-text-training-customization-v2/);
+  assert.match(
+    trainingStyles,
+    /\[data-att-panel-theme="ai_training_style_crimson_azure"\][\s\S]*?#ff2b3d[\s\S]*?#1688ff/,
+  );
+  assert.match(
+    trainingStyles,
+    /\[data-att-message-decoration="ai_training_style_crimson_azure"\][\s\S]*?rgba\(5, 8, 16, 0\.96\)/,
+  );
   assert.match(trainingStyles, /forced-colors:\s*active/);
   assert.match(
     trainingStyles,

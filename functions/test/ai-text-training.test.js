@@ -82,12 +82,15 @@ test("safe BPM-aware placeholders are retained", () => {
 });
 
 test("training cosmetics keep the two slots independent and reject unknown products", () => {
-  const [softGlow, neonBeat] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;
+  const neonBeat = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS[1];
+  const crimsonAzure = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS
+    .find((productId) => productId === "ai_training_style_crimson_azure");
+  assert.equal(crimsonAzure, "ai_training_style_crimson_azure");
   assert.deepEqual(normalizeAiTextTrainingCosmetics({
-    panelThemeId: softGlow,
+    panelThemeId: crimsonAzure,
     messageDecorationId: neonBeat,
   }), {
-    panelThemeId: softGlow,
+    panelThemeId: crimsonAzure,
     messageDecorationId: neonBeat,
   });
   assert.deepEqual(normalizeAiTextTrainingCosmetics({
