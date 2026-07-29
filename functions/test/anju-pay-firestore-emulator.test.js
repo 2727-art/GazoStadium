@@ -319,6 +319,74 @@ if (!RUN_REQUESTED) {
       }
     });
 
+    test("AI text training market collections reject every direct client read and write", async () => {
+      await testEnvironment.clearFirestore();
+      const presetId = "d".repeat(40);
+      const useId = "e".repeat(40);
+      const pairId = "f".repeat(40);
+      const fixturePaths = [
+        ["aiTextTrainingPresets", presetId],
+        ["aiTextTrainingPresets", presetId, "revisions", "00000001"],
+        ["aiTextTrainingSellerProfiles", "wallet-owner"],
+        ["aiTextTrainingUses", useId],
+        ["aiTextTrainingActiveUses", "wallet-owner"],
+        ["aiTextTrainingPublishActions", pairId],
+        ["aiTextTrainingSellerStats", "wallet-owner"],
+        ["aiTextTrainingMonthlyPeriods", "2026-07"],
+        ["aiTextTrainingMonthlyPeriods", "2026-07", "entries", "wallet-owner"],
+        ["aiTextTrainingRankingPairs", pairId],
+        ["aiTextTrainingSellerBuyerPairs", pairId],
+        ["aiTextTrainingMonthlyBuyerPairs", pairId],
+        ["aiTextTrainingPresetRevisionBuyers", pairId],
+        ["aiTextTrainingReports", pairId],
+      ];
+      await testEnvironment.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all(fixturePaths.map((segments) => (
+          firestoreClient.setDoc(firestoreClient.doc(db, ...segments), {
+            marker: "server-only",
+          })
+        )));
+      });
+
+      const ownerDb = testEnvironment.authenticatedContext("wallet-owner").firestore();
+      const anonymousDb = testEnvironment.unauthenticatedContext().firestore();
+      for (const segments of fixturePaths) {
+        const ownerDocument = firestoreClient.doc(ownerDb, ...segments);
+        const anonymousDocument = firestoreClient.doc(anonymousDb, ...segments);
+        await rulesUnitTesting.assertFails(firestoreClient.getDoc(ownerDocument));
+        await rulesUnitTesting.assertFails(firestoreClient.getDoc(anonymousDocument));
+        await rulesUnitTesting.assertFails(
+          firestoreClient.setDoc(ownerDocument, { marker: "client" }),
+        );
+        await rulesUnitTesting.assertFails(
+          firestoreClient.updateDoc(ownerDocument, { marker: "client" }),
+        );
+        await rulesUnitTesting.assertFails(firestoreClient.deleteDoc(ownerDocument));
+      }
+
+      for (const segments of [
+        ["aiTextTrainingPresets"],
+        ["aiTextTrainingPresets", presetId, "revisions"],
+        ["aiTextTrainingSellerProfiles"],
+        ["aiTextTrainingUses"],
+        ["aiTextTrainingActiveUses"],
+        ["aiTextTrainingPublishActions"],
+        ["aiTextTrainingSellerStats"],
+        ["aiTextTrainingMonthlyPeriods"],
+        ["aiTextTrainingMonthlyPeriods", "2026-07", "entries"],
+        ["aiTextTrainingRankingPairs"],
+        ["aiTextTrainingSellerBuyerPairs"],
+        ["aiTextTrainingMonthlyBuyerPairs"],
+        ["aiTextTrainingPresetRevisionBuyers"],
+        ["aiTextTrainingReports"],
+      ]) {
+        await rulesUnitTesting.assertFails(
+          firestoreClient.getDocs(firestoreClient.collection(ownerDb, ...segments)),
+        );
+      }
+    });
+
     test("solo profile projection queues and jobs reject every direct client access", async () => {
       await testEnvironment.clearFirestore();
       await testEnvironment.withSecurityRulesDisabled(async (context) => {

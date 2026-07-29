@@ -24,7 +24,7 @@ import {
   database,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
 import {
   appendIncomingOnlineImageChunk,
   completeIncomingOnlineImageTransfer,
@@ -857,6 +857,7 @@ function anotherModeIsActive() {
   return Boolean(
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
+    || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()
     || window.HariaiFreeTable?.isActive?.()

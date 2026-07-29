@@ -10,7 +10,7 @@ import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -2224,6 +2224,7 @@ async function start({ initialScreen = "shelf" } = {}) {
     || window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiTraining?.isActive?.()
+    || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.();
   if (anotherModeActive) {
     showToast("ほかのモードを終了してからAnjuPayフリマを開いてください。");

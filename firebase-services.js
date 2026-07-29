@@ -14,14 +14,14 @@ import {
   connectFunctionsEmulator,
   getFunctions,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
-import { firebaseApp } from "./firebase-client.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
+import { firebaseApp } from "./firebase-client.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
 
 const isLocalhost = ["127.0.0.1", "localhost"].includes(location.hostname);
 const searchParams = new URLSearchParams(location.search);
 
 export const useFirebaseEmulators = isLocalhost && searchParams.has("firebaseEmulators");
 export const useOfflineMarketPreview = isLocalhost
-  && searchParams.has("marketPreview")
+  && (searchParams.has("marketPreview") || searchParams.has("aiTextTrainingPreview"))
   && !useFirebaseEmulators;
 
 export const auth = getAuth(firebaseApp);

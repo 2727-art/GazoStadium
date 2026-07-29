@@ -32,6 +32,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   reportFreeTableP2pConnectivity: true,
   // 新規公開の非同期フリマは旧クライアント移行を待つ必要がないため、初日から強制します。
   anjuPayFleaAction: true,
+  // ソロ台本市場は残高・UGC・公開プロフィールを扱う新規境界のため、初日から強制します。
+  aiTextTrainingAction: true,
   // 貼り合い自由卓は公開ID・承認・ブロック・通報を扱う新規サーバー境界のため、初日から強制します。
   freeTableAction: true,
   // Xへ置く灯り札も、発行・取り消しと公開プレビューを別境界で常時保護します。

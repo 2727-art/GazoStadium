@@ -3,7 +3,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
 import {
   functions,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,

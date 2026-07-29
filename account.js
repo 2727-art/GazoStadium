@@ -15,7 +15,7 @@ import {
   auth,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -63,6 +63,10 @@ const ANJU_PAY_LABELS = Object.freeze({
   flea_purchase: "AnjuPayフリマで一品を選んだ",
   flea_sale: "AnjuPayフリマで一品が選ばれた",
   flea_success_fee: "AnjuPayフリマの販売手数料",
+  ai_text_training_publish: "応援台本の公開・改訂料",
+  ai_text_training_publish_fee: "応援台本の公開・改訂料",
+  ai_text_training_use: "文字コラの応援を1回利用",
+  ai_text_training_sale: "文字コラの応援が1回利用された",
 });
 const ANJU_PAY_STATUS_LABELS = Object.freeze({
   posted: "反映済み",
@@ -333,6 +337,9 @@ function historyLabel(entry) {
   if (key.includes("flea_sale")) return ANJU_PAY_LABELS.flea_sale;
   if (key.includes("flea") && entry.delta < 0) return ANJU_PAY_LABELS.flea_purchase;
   if (key.includes("flea")) return ANJU_PAY_LABELS.flea_sale;
+  if (key.includes("ai_text_training_publish")) return ANJU_PAY_LABELS.ai_text_training_publish;
+  if (key.includes("ai_text_training_use")) return ANJU_PAY_LABELS.ai_text_training_use;
+  if (key.includes("ai_text_training_sale")) return ANJU_PAY_LABELS.ai_text_training_sale;
   if (!key.includes("market") && (key.includes("purchase") || key.includes("shop"))) {
     return ANJU_PAY_LABELS.shop_purchase;
   }
@@ -774,6 +781,7 @@ function modesAreActive() {
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiTraining?.isActive?.()
+    || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.(),
   );

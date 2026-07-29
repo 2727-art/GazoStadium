@@ -179,9 +179,42 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "aiTextTrainingPresets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "modeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "actualUseCount",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
+    {
+      "collectionGroup": "aiTextTrainingPresets",
+      "fieldPath": "lines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiTextTrainingUses",
+      "fieldPath": "presetSnapshot.lines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiTextTrainingReports",
+      "fieldPath": "presetSnapshot.lines",
+      "indexes": []
+    },
     {
       "collectionGroup": "accountTransferCodes",
       "fieldPath": "deleteAt",

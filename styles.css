@@ -1671,6 +1671,22 @@ button:disabled {
   border-radius: 20px;
 }
 
+.hero-ai-text-training-button {
+  grid-column: span 9;
+  min-height: 96px;
+  color: #07111b;
+  border-color: rgba(126, 255, 221, 0.78);
+  background:
+    radial-gradient(circle at 14% 15%, rgba(255, 255, 255, 0.48), transparent 30%),
+    linear-gradient(135deg, #87f7dc 0%, #74c9ff 48%, #d6a5ff 100%);
+  box-shadow: 0 16px 40px rgba(77, 213, 202, 0.2);
+}
+
+.hero-ai-text-training-button:hover {
+  border-color: #fff;
+  box-shadow: 0 18px 46px rgba(77, 213, 202, 0.3);
+}
+
 .hero-mode-button::after {
   position: absolute;
   top: -48px;

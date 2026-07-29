@@ -192,6 +192,63 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // 文字コラトレーニングの台本・利用・売上・X公開はすべてCallableで検証します。
+    match /aiTextTrainingPresets/{presetId} {
+      allow read, write: if false;
+
+      match /revisions/{revisionId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /aiTextTrainingSellerProfiles/{uid} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingUses/{useId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingActiveUses/{uid} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingPublishActions/{actionId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingSellerStats/{uid} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingMonthlyPeriods/{periodKey} {
+      allow read, write: if false;
+
+      match /entries/{uid} {
+        allow read, write: if false;
+      }
+    }
+
+    match /aiTextTrainingRankingPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingSellerBuyerPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingMonthlyBuyerPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingPresetRevisionBuyers/{revisionBuyerId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingReports/{reportId} {
+      allow read, write: if false;
+    }
+
     match /accountTransferCodes/{codeHash} {
       allow read, write: if false;
     }

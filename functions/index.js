@@ -119,6 +119,9 @@ const {
   createAnjuPayFleaService,
 } = require("./anju-pay-flea-service");
 const {
+  createAiTextTrainingService,
+} = require("./ai-text-training-service");
+const {
   createFreeTableService,
 } = require("./free-table");
 const {
@@ -10586,6 +10589,10 @@ async function transferTargetIsPristine(uid, request) {
     progressSnapshot,
     marketSnapshot,
     fleaSellerCardSnapshot,
+    aiTextTrainingPresetSnapshot,
+    aiTextTrainingUseSnapshot,
+    aiTextTrainingReportSnapshot,
+    aiTextTrainingProfileSnapshot,
     patronSnapshot,
     trainingProfileSnapshot,
     trainingClaimSnapshot,
@@ -10608,6 +10615,10 @@ async function transferTargetIsPristine(uid, request) {
     economyProgressRef(uid).get(),
     marketStatsRef(uid).get(),
     firestore.collection("anjuPayFleaSellerCards").doc(uid).get(),
+    firestore.collection("aiTextTrainingPresets").where("sellerUid", "==", uid).limit(1).get(),
+    firestore.collection("aiTextTrainingUses").where("buyerUid", "==", uid).limit(1).get(),
+    firestore.collection("aiTextTrainingReports").where("reporterUid", "==", uid).limit(1).get(),
+    firestore.collection("aiTextTrainingSellerProfiles").doc(uid).get(),
     patronageRef(uid).get(),
     trainingProfileRef(uid).get(),
     firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
@@ -10657,6 +10668,9 @@ async function transferTargetIsPristine(uid, request) {
       || trainingProfile.hpOverkillDealt > 0
       || !trainingClaimSnapshot.empty) return false;
   if (marketSnapshot.exists || fleaSellerCardSnapshot.exists || patronSnapshot.exists
+      || !aiTextTrainingPresetSnapshot.empty || !aiTextTrainingUseSnapshot.empty
+      || !aiTextTrainingReportSnapshot.empty
+      || aiTextTrainingProfileSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
   return !soloProfileSnapshot.exists()
@@ -10800,6 +10814,10 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetProgressSnapshot,
       targetMarketSnapshot,
       targetFleaSellerCardSnapshot,
+      targetAiTextTrainingPresetSnapshot,
+      targetAiTextTrainingUseSnapshot,
+      targetAiTextTrainingReportSnapshot,
+      targetAiTextTrainingProfileSnapshot,
       targetPatronSnapshot,
       targetTrainingProfileSnapshot,
       targetFamiliarBookSnapshot,
@@ -10811,6 +10829,22 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(economyProgressRef(targetUid)),
       transaction.get(marketStatsRef(targetUid)),
       transaction.get(firestore.collection("anjuPayFleaSellerCards").doc(targetUid)),
+      transaction.get(
+        firestore.collection("aiTextTrainingPresets")
+          .where("sellerUid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(
+        firestore.collection("aiTextTrainingUses")
+          .where("buyerUid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(
+        firestore.collection("aiTextTrainingReports")
+          .where("reporterUid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(firestore.collection("aiTextTrainingSellerProfiles").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
       transaction.get(trainingProfileRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
@@ -10852,6 +10886,10 @@ async function redeemAccountTransferCode(request, rawCode) {
         || targetMarketSnapshot.exists
         || targetFleaSellerCardSnapshot.exists
         || targetPatronSnapshot.exists
+        || !targetAiTextTrainingPresetSnapshot.empty
+        || !targetAiTextTrainingUseSnapshot.empty
+        || !targetAiTextTrainingReportSnapshot.empty
+        || targetAiTextTrainingProfileSnapshot.exists
         || targetTrainingProfile.sessions > 0
         || targetTrainingProfile.completedSets > 0
         || targetTrainingProfile.completedSeconds > 0
@@ -14805,6 +14843,45 @@ exports.freeTableAction = onCall(callableOptions("freeTableAction"), async (requ
     throw new HttpsError("internal", "貼り合い自由卓の処理を完了できませんでした。");
   }
 });
+
+const aiTextTrainingService = createAiTextTrainingService({
+  firestore,
+  HttpsError,
+  ensureWallet,
+  walletRef,
+  anjuPayLedgerConfigRef,
+  walletData,
+  walletCreditCapacity,
+  debitPoints,
+  creditPoints,
+  stageAnjuPayOpening,
+  appendAnjuPayEntry,
+  anjuPayWalletMetadataPatch,
+  anjuPayEntryId,
+  mirrorWallet,
+  bestEffort,
+});
+
+exports.aiTextTrainingAction = onCall(
+  callableOptions("aiTextTrainingAction"),
+  async (request) => {
+    const uid = requireUid(request);
+    try {
+      return await aiTextTrainingService.performAction(uid, request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("aiTextTrainingAction failed", {
+        uid,
+        action: request.data?.action,
+        error,
+      });
+      throw new HttpsError(
+        "internal",
+        "文字コラトレーニングの処理を完了できませんでした。",
+      );
+    }
+  },
+);
 
 exports.freeTableInviteAction = onCall(
   callableOptions("freeTableInviteAction"),
