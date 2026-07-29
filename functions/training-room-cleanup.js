@@ -1,22 +1,41 @@
 "use strict";
 
 const { randomUUID } = require("node:crypto");
+const { isDeepStrictEqual } = require("node:util");
 const {
   assertTrainingRoomFinalizable,
   deriveTrainingRoomResult,
 } = require("./training");
+const {
+  TRAINING_SESSION_LEASE_TTL_MS,
+} = require("./training-session-v2");
 
 const TRAINING_ROOMS_PATH = "online/trainingRooms";
 const TRAINING_QUEUE_PATH = "online/trainingQueue";
 const TRAINING_ACTIVE_PATH = "online/trainingActive";
 const TRAINING_INVITES_PATH = "online/trainingInvites";
 const TRAINING_MATCH_LOCK_PATH = "online/trainingMatchLock";
+const TRAINING_QUEUE_V4_PATH = "online/trainingQueueV4";
+const TRAINING_ACTIVE_V4_PATH = "online/trainingActiveV4";
+const TRAINING_OFFERS_V4_PATH = "online/trainingOffersV4";
+const TRAINING_MATCH_LOCKS_V4_PATH = "online/trainingMatchLocksV4";
+const TRAINING_MATCH_PERMITS_V4_PATH = "online/trainingMatchPermitsV4";
+const TRAINING_SESSION_CLAIMS_PATH = "online/trainingSessionClaims";
+const TRAINING_SESSION_ACTION_RATES_PATH =
+  "online/trainingSessionActionRates";
+const TRAINING_SESSION_CLEANUP_CURSORS_PATH =
+  "online/trainingSessionCleanupCursors";
 const TRAINING_ROOM_CLEANUP_CURSOR_PATH = "online/trainingRoomCleanupCursor";
 const TRAINING_ACTIVE_CLEANUP_CURSOR_PATH = "online/trainingActiveCleanupCursor";
 const TRAINING_ACTIVE_CLEANUP_GUARDS_PATH = "online/trainingActiveCleanupGuards";
 const TRAINING_ROOM_CLEANUP_BATCH_SIZE = 100;
 const TRAINING_QUEUE_CLEANUP_BATCH_SIZE = 100;
 const TRAINING_ACTIVE_CLEANUP_BATCH_SIZE = 10;
+const TRAINING_SESSION_CLEANUP_BATCH_SIZE = 25;
+const TRAINING_SESSION_CLEANUP_OWNER_SCAN_SIZE = 10;
+const TRAINING_SESSION_CLEANUP_OFFER_SESSION_SCAN_SIZE = 20;
+const TRAINING_SESSION_LIVE_PRESENCE_MS =
+  TRAINING_SESSION_LEASE_TTL_MS + 15_000;
 const TRAINING_QUEUE_STALE_MS = 10 * 60 * 1000;
 const TRAINING_ORPHAN_ACTIVE_GRACE_MS = 5 * 60 * 1000;
 const TRAINING_ACTIVE_CLEANUP_GUARD_MS = 5 * 60 * 1000;
@@ -91,7 +110,12 @@ function trainingRoomHasFreshPresence(
   freshMs = TRAINING_ROOM_PRESENCE_FRESH_MS,
 ) {
   const freshAfter = Number(now) - freshMs;
-  return Object.values(objectValue(room?.presence)).some((value) => {
+  const sessionPresence = Object.values(objectValue(room?.presenceV2))
+    .flatMap((sessions) => Object.values(objectValue(sessions)));
+  return [
+    ...Object.values(objectValue(room?.presence)),
+    ...sessionPresence,
+  ].some((value) => {
     const presence = objectValue(value);
     const updatedAt = validTimestamp(presence.updatedAt);
     return presence.online === true
@@ -114,7 +138,9 @@ function trainingActiveRoomIsLive(
       || source.members?.[uid] !== true) {
     return false;
   }
-  const ownPresence = source.presence?.[uid];
+  const ownSessionId = source.sessions?.[uid]?.sessionId;
+  const ownPresence = source.presence?.[uid]
+    || (ownSessionId ? source.presenceV2?.[uid]?.[ownSessionId] : null);
   if (ownPresence && typeof ownPresence === "object") {
     return ownPresence.online === true;
   }
@@ -125,6 +151,655 @@ function trainingActiveRoomIsLive(
   return createdAt > 0
     && createdAt <= Number(now) + 15_000
     && createdAt >= Number(now) - maximumAge;
+}
+
+function validRealtimeKey(value) {
+  const key = typeof value === "string" ? value : "";
+  return key.length > 0
+    && key.length <= 128
+    && !/[\u0000-\u001f\u007f.#$/\[\]]/.test(key)
+    ? key
+    : "";
+}
+
+function trainingSessionCleanupCursor(value, now) {
+  const source = objectValue(value);
+  const updatedAt = validTimestamp(source.updatedAt);
+  const ownerKey = validRealtimeKey(source.ownerKey);
+  if (!updatedAt || updatedAt > Number(now) || !ownerKey) return null;
+  if (source.mode === "after_owner") {
+    return { mode: source.mode, ownerKey, updatedAt };
+  }
+  const recordKey = validRealtimeKey(source.recordKey);
+  const expiresAt = Number(source.expiresAt);
+  if (source.mode === "record"
+      && recordKey
+      && Number.isSafeInteger(expiresAt)
+      && expiresAt <= Number(now)) {
+    return {
+      mode: source.mode,
+      ownerKey,
+      recordKey,
+      expiresAt,
+      updatedAt,
+    };
+  }
+  const sessionKey = validRealtimeKey(source.sessionKey);
+  if (source.mode === "offer_session" && sessionKey) {
+    return {
+      mode: source.mode,
+      ownerKey,
+      sessionKey,
+      updatedAt,
+    };
+  }
+  if (source.mode === "offer_record"
+      && sessionKey
+      && recordKey
+      && Number.isSafeInteger(expiresAt)
+      && expiresAt <= Number(now)) {
+    return {
+      mode: source.mode,
+      ownerKey,
+      sessionKey,
+      recordKey,
+      expiresAt,
+      updatedAt,
+    };
+  }
+  return null;
+}
+
+function trainingSessionFlatCleanupCursor(value, now) {
+  const source = objectValue(value);
+  const updatedAt = validTimestamp(source.updatedAt);
+  const recordKey = validRealtimeKey(source.recordKey);
+  const expiresAt = Number(source.expiresAt);
+  return updatedAt
+    && updatedAt <= Number(now)
+    && recordKey
+    && Number.isSafeInteger(expiresAt)
+    && expiresAt <= Number(now)
+    ? { recordKey, expiresAt, updatedAt }
+    : null;
+}
+
+function snapshotEntries(snapshot) {
+  const entries = [];
+  snapshot.forEach((entry) => {
+    const key = validRealtimeKey(entry.key);
+    if (key) entries.push({ key, value: entry.val() });
+  });
+  return entries;
+}
+
+async function removeExactExpiredRecord(reference, candidate, now) {
+  let exactExpiredObserved = false;
+  const transaction = await reference.transaction((current) => {
+    if (current == null) return null;
+    exactExpiredObserved = isDeepStrictEqual(current, candidate)
+      && Number(current?.expiresAt || 0) <= Number(now);
+    return exactExpiredObserved ? null : undefined;
+  });
+  return transaction.committed
+    && exactExpiredObserved
+    && !transaction.snapshot.exists();
+}
+
+function trainingSessionRoomAttemptMatchesRecord(room, record, roomId) {
+  const source = objectValue(room);
+  const candidate = objectValue(record);
+  return validRoomId(roomId)
+    && source.protocolVersion === 3
+    && source.variant === "kitaeai_hp_v3"
+    && source.sessionProtocolVersion === 2
+    && source.signalingVersion === 2
+    && source.attemptId === candidate.attemptId
+    && source.connectionGeneration === candidate.connectionGeneration;
+}
+
+function trainingSessionRoomHasFreshPresence(
+  room,
+  now,
+  freshMs = TRAINING_SESSION_LIVE_PRESENCE_MS,
+) {
+  const source = objectValue(room);
+  const freshAfter = Number(now) - freshMs;
+  return Object.entries(objectValue(source.sessions)).some(([uid, session]) => {
+    const sessionId = validRealtimeKey(session?.sessionId);
+    const presence = objectValue(source.presenceV2?.[uid]?.[sessionId]);
+    const updatedAt = validTimestamp(presence.updatedAt);
+    return sessionId
+      && presence.protocolVersion === 2
+      && presence.sessionId === sessionId
+      && presence.generation === session?.generation
+      && presence.online === true
+      && updatedAt >= freshAfter
+      && updatedAt <= Number(now) + 15_000;
+  });
+}
+
+function trainingSessionRecordHasLiveRoom(room, record, roomId, now) {
+  const source = objectValue(room);
+  if (!trainingSessionRoomAttemptMatchesRecord(source, record, roomId)
+      || source.destroyed != null
+      || source.serverFinalized != null) {
+    return false;
+  }
+  if (source.status === "offered") {
+    return validTimestamp(source.expiresAt) > Number(now);
+  }
+  if (source.status !== "active"
+      || source.accepted?.[source.hostUid] !== true
+      || source.accepted?.[source.guestUid] !== true) {
+    return false;
+  }
+  if (trainingSessionRoomHasFreshPresence(source, now)) return true;
+  const activatedAt = validTimestamp(source.activatedAt)
+    || validTimestamp(source.createdAt);
+  return activatedAt > Number(now) - TRAINING_SESSION_LIVE_PRESENCE_MS
+    && activatedAt <= Number(now) + 15_000;
+}
+
+function trainingSessionActiveHasLiveRoom(room, active, roomId, now) {
+  if (!trainingSessionRecordHasLiveRoom(room, active, roomId, now)) {
+    return false;
+  }
+  const source = objectValue(room);
+  const candidate = objectValue(active);
+  const uid = validUid(candidate.uid);
+  const sessionId = validRealtimeKey(candidate.sessionId);
+  if (!uid
+      || !sessionId
+      || source.members?.[uid] !== true
+      || source.sessions?.[uid]?.sessionId !== sessionId
+      || source.sessions?.[uid]?.generation !== candidate.generation) {
+    return false;
+  }
+  if (source.status === "offered") return true;
+  const presence = objectValue(source.presenceV2?.[uid]?.[sessionId]);
+  const updatedAt = validTimestamp(presence.updatedAt);
+  if (presence.protocolVersion === 2
+    && presence.sessionId === sessionId
+    && presence.leaseToken === candidate.leaseToken
+    && presence.generation === candidate.generation
+    && presence.online === true
+    && updatedAt >= Number(now) - TRAINING_SESSION_LIVE_PRESENCE_MS
+    && updatedAt <= Number(now) + 15_000) {
+    return true;
+  }
+  const activatedAt = validTimestamp(source.activatedAt)
+    || validTimestamp(source.createdAt);
+  return activatedAt > Number(now) - TRAINING_SESSION_LIVE_PRESENCE_MS
+    && activatedAt <= Number(now) + 15_000;
+}
+
+function trainingSessionQueueHasLiveRoom(room, queue, roomId, now) {
+  const source = objectValue(room);
+  const candidate = objectValue(queue);
+  const uid = validUid(candidate.uid);
+  const sessionId = validRealtimeKey(candidate.sessionId);
+  if (!uid
+      || !sessionId
+      || !validRoomId(roomId)
+      || candidate.protocolVersion !== 2
+      || candidate.trainingProtocolVersion !== 3
+      || candidate.variant !== "kitaeai_hp_v3"
+      || candidate.roomId !== roomId
+      || candidate.attemptId !== source.attemptId
+      || !["offering", "reserved"].includes(candidate.state)
+      || source.protocolVersion !== 3
+      || source.variant !== "kitaeai_hp_v3"
+      || source.sessionProtocolVersion !== 2
+      || source.signalingVersion !== 2
+      || source.members?.[uid] !== true
+      || source.sessions?.[uid]?.sessionId !== sessionId
+      || source.sessions?.[uid]?.generation !== candidate.generation
+      || source.destroyed != null
+      || source.serverFinalized != null) {
+    return false;
+  }
+  if (source.status === "offered") {
+    return validTimestamp(source.expiresAt) > Number(now);
+  }
+  if (source.status !== "active"
+      || source.accepted?.[source.hostUid] !== true
+      || source.accepted?.[source.guestUid] !== true) {
+    return false;
+  }
+  if (trainingSessionRoomHasFreshPresence(source, now)) return true;
+  const activatedAt = validTimestamp(source.activatedAt)
+    || validTimestamp(source.createdAt);
+  return activatedAt > Number(now) - TRAINING_SESSION_LIVE_PRESENCE_MS
+    && activatedAt <= Number(now) + 15_000;
+}
+
+function cleanupFamilyResult() {
+  return {
+    examined: 0,
+    removed: 0,
+    protected: 0,
+    failures: 0,
+    hasMore: false,
+  };
+}
+
+async function writeTrainingSessionCleanupCursor(
+  realtime,
+  family,
+  value,
+) {
+  const reference = realtime.ref(
+    `${TRAINING_SESSION_CLEANUP_CURSORS_PATH}/${family}`,
+  );
+  if (value) await reference.set(value);
+  else await reference.remove();
+}
+
+async function cleanupFlatTrainingSessionFamily({
+  realtime,
+  family,
+  path,
+  now,
+  batchSize,
+  protect = null,
+}) {
+  const result = cleanupFamilyResult();
+  const cursorReference = realtime.ref(
+    `${TRAINING_SESSION_CLEANUP_CURSORS_PATH}/${family}`,
+  );
+  const cursor = trainingSessionFlatCleanupCursor(
+    (await cursorReference.get()).val(),
+    now,
+  );
+  let query = realtime.ref(path).orderByChild("expiresAt");
+  if (cursor) query = query.startAfter(cursor.expiresAt, cursor.recordKey);
+  const snapshot = await query.endAt(now).limitToFirst(batchSize).get();
+  const candidates = snapshotEntries(snapshot);
+  result.examined = candidates.length;
+  for (const candidate of candidates) {
+    try {
+      if (protect && await protect(candidate.key, candidate.value)) {
+        result.protected += 1;
+        continue;
+      }
+      if (await removeExactExpiredRecord(
+        realtime.ref(`${path}/${candidate.key}`),
+        candidate.value,
+        now,
+      )) result.removed += 1;
+    } catch {
+      result.failures += 1;
+    }
+  }
+  result.hasMore = candidates.length >= batchSize;
+  if (result.hasMore) {
+    const last = candidates.at(-1);
+    await writeTrainingSessionCleanupCursor(realtime, family, {
+      recordKey: last.key,
+      expiresAt: Number(last.value?.expiresAt || 0),
+      updatedAt: now,
+    });
+  } else {
+    await writeTrainingSessionCleanupCursor(realtime, family, null);
+  }
+  return result;
+}
+
+async function trainingSessionOwnerPage(
+  realtime,
+  path,
+  cursor,
+  ownerScanSize,
+) {
+  let query = realtime.ref(path).orderByKey();
+  if (cursor?.mode === "after_owner") {
+    query = query.startAfter(cursor.ownerKey);
+  } else if (cursor?.ownerKey) {
+    query = query.startAt(cursor.ownerKey);
+  }
+  return snapshotEntries(await query.limitToFirst(ownerScanSize).get());
+}
+
+async function cleanupNestedTrainingSessionFamily({
+  realtime,
+  family,
+  path,
+  now,
+  batchSize,
+  ownerScanSize,
+  eligible,
+  protect = null,
+}) {
+  const result = cleanupFamilyResult();
+  const cursorReference = realtime.ref(
+    `${TRAINING_SESSION_CLEANUP_CURSORS_PATH}/${family}`,
+  );
+  const cursor = trainingSessionCleanupCursor(
+    (await cursorReference.get()).val(),
+    now,
+  );
+  const owners = await trainingSessionOwnerPage(
+    realtime,
+    path,
+    cursor,
+    ownerScanSize,
+  );
+  for (const owner of owners) {
+    let query = realtime.ref(`${path}/${owner.key}`)
+      .orderByChild("expiresAt");
+    const resumesOwner = cursor?.mode === "record"
+      && cursor.ownerKey === owner.key;
+    if (resumesOwner) {
+      query = query.startAfter(cursor.expiresAt, cursor.recordKey);
+    }
+    const remaining = batchSize - result.examined;
+    const candidates = snapshotEntries(
+      await query.endAt(now).limitToFirst(remaining).get(),
+    );
+    for (const candidate of candidates) {
+      result.examined += 1;
+      try {
+        if (!eligible(candidate.value)) {
+          result.protected += 1;
+          continue;
+        }
+        if (protect && await protect(
+          owner.key,
+          candidate.key,
+          candidate.value,
+        )) {
+          result.protected += 1;
+          continue;
+        }
+        if (await removeExactExpiredRecord(
+          realtime.ref(`${path}/${owner.key}/${candidate.key}`),
+          candidate.value,
+          now,
+        )) result.removed += 1;
+      } catch {
+        result.failures += 1;
+      }
+    }
+    if (result.examined >= batchSize) {
+      const last = candidates.at(-1);
+      result.hasMore = true;
+      await writeTrainingSessionCleanupCursor(realtime, family, {
+        mode: "record",
+        ownerKey: owner.key,
+        recordKey: last.key,
+        expiresAt: Number(last.value?.expiresAt || 0),
+        updatedAt: now,
+      });
+      return result;
+    }
+  }
+  result.hasMore = owners.length >= ownerScanSize;
+  if (result.hasMore) {
+    await writeTrainingSessionCleanupCursor(realtime, family, {
+      mode: "after_owner",
+      ownerKey: owners.at(-1).key,
+      updatedAt: now,
+    });
+  } else {
+    await writeTrainingSessionCleanupCursor(realtime, family, null);
+  }
+  return result;
+}
+
+async function cleanupTrainingSessionOffers({
+  realtime,
+  now,
+  batchSize,
+  ownerScanSize,
+  sessionScanSize,
+}) {
+  const family = "offers";
+  const result = cleanupFamilyResult();
+  const cursorReference = realtime.ref(
+    `${TRAINING_SESSION_CLEANUP_CURSORS_PATH}/${family}`,
+  );
+  const cursor = trainingSessionCleanupCursor(
+    (await cursorReference.get()).val(),
+    now,
+  );
+  const owners = await trainingSessionOwnerPage(
+    realtime,
+    TRAINING_OFFERS_V4_PATH,
+    cursor,
+    ownerScanSize,
+  );
+  let sessionsExamined = 0;
+  for (const owner of owners) {
+    let sessionsQuery = realtime.ref(
+      `${TRAINING_OFFERS_V4_PATH}/${owner.key}`,
+    ).orderByKey();
+    const resumesOwner = cursor?.ownerKey === owner.key;
+    if (resumesOwner && cursor.mode === "offer_session") {
+      sessionsQuery = sessionsQuery.startAfter(cursor.sessionKey);
+    } else if (resumesOwner && cursor.mode === "offer_record") {
+      sessionsQuery = sessionsQuery.startAt(cursor.sessionKey);
+    }
+    const sessions = snapshotEntries(
+      await sessionsQuery
+        .limitToFirst(sessionScanSize - sessionsExamined)
+        .get(),
+    );
+    for (const session of sessions) {
+      sessionsExamined += 1;
+      let offersQuery = realtime.ref(
+        `${TRAINING_OFFERS_V4_PATH}/${owner.key}/${session.key}`,
+      ).orderByChild("expiresAt");
+      const resumesSession = cursor?.mode === "offer_record"
+        && cursor.ownerKey === owner.key
+        && cursor.sessionKey === session.key;
+      if (resumesSession) {
+        offersQuery = offersQuery.startAfter(
+          cursor.expiresAt,
+          cursor.recordKey,
+        );
+      }
+      const remaining = batchSize - result.examined;
+      const offers = snapshotEntries(
+        await offersQuery.endAt(now).limitToFirst(remaining).get(),
+      );
+      for (const offer of offers) {
+        result.examined += 1;
+        try {
+          if (await removeExactExpiredRecord(
+            realtime.ref(
+              `${TRAINING_OFFERS_V4_PATH}/${owner.key}/${session.key}/${offer.key}`,
+            ),
+            offer.value,
+            now,
+          )) result.removed += 1;
+        } catch {
+          result.failures += 1;
+        }
+      }
+      if (result.examined >= batchSize) {
+        const last = offers.at(-1);
+        result.hasMore = true;
+        await writeTrainingSessionCleanupCursor(realtime, family, {
+          mode: "offer_record",
+          ownerKey: owner.key,
+          sessionKey: session.key,
+          recordKey: last.key,
+          expiresAt: Number(last.value?.expiresAt || 0),
+          updatedAt: now,
+        });
+        return result;
+      }
+      if (sessionsExamined >= sessionScanSize) {
+        result.hasMore = true;
+        await writeTrainingSessionCleanupCursor(realtime, family, {
+          mode: "offer_session",
+          ownerKey: owner.key,
+          sessionKey: session.key,
+          updatedAt: now,
+        });
+        return result;
+      }
+    }
+  }
+  result.hasMore = owners.length >= ownerScanSize;
+  if (result.hasMore) {
+    await writeTrainingSessionCleanupCursor(realtime, family, {
+      mode: "after_owner",
+      ownerKey: owners.at(-1).key,
+      updatedAt: now,
+    });
+  } else {
+    await writeTrainingSessionCleanupCursor(realtime, family, null);
+  }
+  return result;
+}
+
+function createTrainingSessionResourceCleanup({
+  realtime,
+  batchSize = TRAINING_SESSION_CLEANUP_BATCH_SIZE,
+  ownerScanSize = TRAINING_SESSION_CLEANUP_OWNER_SCAN_SIZE,
+  offerSessionScanSize = TRAINING_SESSION_CLEANUP_OFFER_SESSION_SCAN_SIZE,
+} = {}) {
+  if (!realtime) throw new Error("realtime is required");
+  const maximum = Math.min(
+    TRAINING_SESSION_CLEANUP_BATCH_SIZE,
+    Math.max(1, Math.floor(Number(batchSize) || 0)),
+  );
+  const ownersMaximum = Math.min(
+    TRAINING_SESSION_CLEANUP_OWNER_SCAN_SIZE,
+    Math.max(1, Math.floor(Number(ownerScanSize) || 0)),
+  );
+  const offerSessionsMaximum = Math.min(
+    TRAINING_SESSION_CLEANUP_OFFER_SESSION_SCAN_SIZE,
+    Math.max(1, Math.floor(Number(offerSessionScanSize) || 0)),
+  );
+
+  return async function cleanupTrainingSessionResources(now = Date.now()) {
+    const timestamp = Number(now);
+    if (!Number.isSafeInteger(timestamp) || timestamp <= 0) {
+      throw new TypeError("Training session cleanup time is invalid");
+    }
+    const protectLiveRecord = async (_key, record) => {
+      const roomId = validRoomId(record?.roomId);
+      if (!roomId) return false;
+      const room = (
+        await realtime.ref(`${TRAINING_ROOMS_PATH}/${roomId}`).get()
+      ).val();
+      return trainingSessionRecordHasLiveRoom(
+        room,
+        record,
+        roomId,
+        timestamp,
+      );
+    };
+    const protectLiveActive = async (_uid, _sessionId, active) => {
+      const roomId = validRoomId(active?.roomId);
+      if (!roomId) return false;
+      const room = (
+        await realtime.ref(`${TRAINING_ROOMS_PATH}/${roomId}`).get()
+      ).val();
+      return trainingSessionActiveHasLiveRoom(
+        room,
+        active,
+        roomId,
+        timestamp,
+      );
+    };
+    const protectLiveQueue = async (_uid, _sessionId, queue) => {
+      if (!["offering", "reserved"].includes(queue?.state)) return false;
+      const roomId = validRoomId(queue?.roomId);
+      if (!roomId) return false;
+      const room = (
+        await realtime.ref(`${TRAINING_ROOMS_PATH}/${roomId}`).get()
+      ).val();
+      return trainingSessionQueueHasLiveRoom(
+        room,
+        queue,
+        roomId,
+        timestamp,
+      );
+    };
+    const [
+      claims,
+      queue,
+      active,
+      locks,
+      permits,
+      offers,
+      rates,
+    ] = await Promise.all([
+      cleanupFlatTrainingSessionFamily({
+        realtime,
+        family: "claims",
+        path: TRAINING_SESSION_CLAIMS_PATH,
+        now: timestamp,
+        batchSize: maximum,
+      }),
+      cleanupNestedTrainingSessionFamily({
+        realtime,
+        family: "queue",
+        path: TRAINING_QUEUE_V4_PATH,
+        now: timestamp,
+        batchSize: maximum,
+        ownerScanSize: ownersMaximum,
+        eligible: (entry) => (
+          ["waiting", "offering", "reserved"].includes(entry?.state)
+        ),
+        protect: protectLiveQueue,
+      }),
+      cleanupNestedTrainingSessionFamily({
+        realtime,
+        family: "active",
+        path: TRAINING_ACTIVE_V4_PATH,
+        now: timestamp,
+        batchSize: maximum,
+        ownerScanSize: ownersMaximum,
+        eligible: () => true,
+        protect: protectLiveActive,
+      }),
+      cleanupFlatTrainingSessionFamily({
+        realtime,
+        family: "locks",
+        path: TRAINING_MATCH_LOCKS_V4_PATH,
+        now: timestamp,
+        batchSize: maximum,
+      }),
+      cleanupFlatTrainingSessionFamily({
+        realtime,
+        family: "permits",
+        path: TRAINING_MATCH_PERMITS_V4_PATH,
+        now: timestamp,
+        batchSize: maximum,
+        protect: protectLiveRecord,
+      }),
+      cleanupTrainingSessionOffers({
+        realtime,
+        now: timestamp,
+        batchSize: maximum,
+        ownerScanSize: ownersMaximum,
+        sessionScanSize: offerSessionsMaximum,
+      }),
+      cleanupNestedTrainingSessionFamily({
+        realtime,
+        family: "rates",
+        path: TRAINING_SESSION_ACTION_RATES_PATH,
+        now: timestamp,
+        batchSize: maximum,
+        ownerScanSize: ownersMaximum,
+        eligible: () => true,
+      }),
+    ]);
+    return {
+      claims,
+      queue,
+      active,
+      locks,
+      permits,
+      offers,
+      rates,
+    };
+  };
 }
 
 function unfinalizedTrainingRoomState(room, now) {
@@ -202,18 +877,30 @@ function trainingRoomCleanupDisposition(room, now, {
       participantUid: state.participantUid,
     };
   }
+  if (source.status === "offered"
+      && validTimestamp(source.expiresAt) <= timestamp) {
+    return {
+      action: "tombstone",
+      reason: "offer_expired",
+      participantUid: state.participantUid,
+    };
+  }
 
   const hasFreshPresence = trainingRoomHasFreshPresence(
     source,
     timestamp,
     presenceFreshMs,
   );
-  if (source.status === "forming") {
+  if (source.status === "forming" || source.status === "offered") {
     return createdAt > 0
       && createdAt <= timestamp - formingStaleMs
       && !hasFreshPresence
       ? { action: "tombstone", reason: "stale_forming", participantUid: state.participantUid }
-      : { action: "keep", reason: "forming", participantUid: state.participantUid };
+      : {
+        action: "keep",
+        reason: source.status === "offered" ? "offered" : "forming",
+        participantUid: state.participantUid,
+      };
   }
   if (source.status === "active") {
     return createdAt > 0
@@ -242,8 +929,65 @@ async function cleanupRelatedTrainingPointers(realtime, roomId, room) {
         return Object.keys(rooms).length === 0 ? null : undefined;
       });
   };
+  const cleanupSessionV4 = async (uid) => {
+    const session = room?.sessions?.[uid];
+    const sessionId = session?.sessionId;
+    if (!sessionId || !session?.generation) return;
+    const removeActiveIfConnectionMatches = (path) => (
+      realtime.ref(path).transaction((current) => (
+        current == null || (
+          current?.protocolVersion === 2
+          && current?.uid === uid
+          && current?.sessionId === sessionId
+          && current?.generation === session.generation
+          && current?.roomId === roomId
+          && current?.attemptId === room?.attemptId
+          && current?.connectionGeneration === room?.connectionGeneration
+        )
+          ? null
+          : undefined
+      ))
+    );
+    const removeLockIfAttemptMatches = (path) => (
+      realtime.ref(path).transaction((current) => (
+        current == null || (
+          current?.protocolVersion === 2
+          && current?.sessionId === sessionId
+          && current?.generation === session.generation
+          && current?.roomId === roomId
+          && current?.attemptId === room?.attemptId
+          && current?.hostUid === room?.hostUid
+          && current?.guestUid === room?.guestUid
+          && current?.role === (uid === room?.hostUid ? "host" : "guest")
+        )
+          ? null
+          : undefined
+      ))
+    );
+    await Promise.all([
+      removeActiveIfConnectionMatches(
+        `${TRAINING_ACTIVE_V4_PATH}/${uid}/${sessionId}`,
+      ),
+      realtime.ref(`${TRAINING_QUEUE_V4_PATH}/${uid}/${sessionId}`)
+        .transaction((current) => (
+          current == null || (
+            current?.protocolVersion === 2
+            && current?.uid === uid
+            && current?.sessionId === sessionId
+            && current?.generation === session.generation
+            && current?.roomId === roomId
+            && current?.attemptId === room?.attemptId
+            && ["offering", "reserved"].includes(current?.state)
+          )
+            ? null
+            : undefined
+        )),
+      removeLockIfAttemptMatches(`${TRAINING_MATCH_LOCKS_V4_PATH}/${uid}`),
+    ]);
+  };
   const operations = [
     ...participants.map((uid) => cleanupActive(uid)),
+    ...participants.map((uid) => cleanupSessionV4(uid)),
     ...participants.map((uid) => (
       realtime.ref(`${TRAINING_INVITES_PATH}/${uid}/${roomId}`)
         .transaction((current) => (
@@ -254,6 +998,34 @@ async function cleanupRelatedTrainingPointers(realtime, roomId, room) {
       current == null || current?.roomId === roomId ? null : undefined
     )),
   ];
+  if (room?.sessionProtocolVersion === 2) {
+    operations.push(
+      realtime.ref(`${TRAINING_MATCH_PERMITS_V4_PATH}/${roomId}`)
+        .transaction((current) => (
+          current == null || (
+            current?.attemptId === room?.attemptId
+            && current?.connectionGeneration === room?.connectionGeneration
+          )
+            ? null
+            : undefined
+        )),
+    );
+  }
+  const guestSessionId = room?.sessions?.[room?.guestUid]?.sessionId;
+  if (room?.guestUid && guestSessionId) {
+    operations.push(
+      realtime.ref(
+        `${TRAINING_OFFERS_V4_PATH}/${room.guestUid}/${guestSessionId}/${roomId}`,
+      ).transaction((current) => (
+        current == null || (
+          current?.attemptId === room?.attemptId
+          && current?.connectionGeneration === room?.connectionGeneration
+        )
+          ? null
+          : undefined
+      )),
+    );
+  }
   const results = await Promise.allSettled(operations);
   return results.filter((result) => result.status === "rejected").length;
 }
@@ -707,6 +1479,13 @@ module.exports = Object.freeze({
   TRAINING_QUEUE_CLEANUP_BATCH_SIZE,
   TRAINING_QUEUE_PATH,
   TRAINING_QUEUE_STALE_MS,
+  TRAINING_SESSION_ACTION_RATES_PATH,
+  TRAINING_SESSION_CLAIMS_PATH,
+  TRAINING_SESSION_CLEANUP_BATCH_SIZE,
+  TRAINING_SESSION_CLEANUP_CURSORS_PATH,
+  TRAINING_SESSION_CLEANUP_OFFER_SESSION_SCAN_SIZE,
+  TRAINING_SESSION_CLEANUP_OWNER_SCAN_SIZE,
+  TRAINING_SESSION_LIVE_PRESENCE_MS,
   TRAINING_ROOM_ACTIVE_STALE_MS,
   TRAINING_ROOM_CLEANUP_BATCH_SIZE,
   TRAINING_ROOM_CLEANUP_CURSOR_PATH,
@@ -719,12 +1498,19 @@ module.exports = Object.freeze({
   createTrainingActiveCleanup,
   createTrainingQueueCleanup,
   createTrainingRoomCleanup,
+  createTrainingSessionResourceCleanup,
   exactTrainingActiveReservation,
   firebasePushIdTimestamp,
   liveTrainingMatchLock,
   trainingActiveCleanupCursor,
   trainingActiveRoomIsLive,
   trainingActiveReservationTimestamp,
+  trainingSessionActiveHasLiveRoom,
+  trainingSessionCleanupCursor,
+  trainingSessionFlatCleanupCursor,
+  trainingSessionQueueHasLiveRoom,
+  trainingSessionRecordHasLiveRoom,
+  trainingSessionRoomHasFreshPresence,
   trainingRoomCleanupDisposition,
   trainingRoomHasFreshPresence,
   trainingRoomParticipantUids,

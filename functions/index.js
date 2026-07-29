@@ -20,8 +20,12 @@ const {
   createTrainingActiveCleanup,
   createTrainingQueueCleanup,
   createTrainingRoomCleanup,
+  createTrainingSessionResourceCleanup,
   trainingActiveRoomIsLive,
 } = require("./training-room-cleanup");
+const {
+  createTrainingSessionService,
+} = require("./training-session-service");
 const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
@@ -335,6 +339,11 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
+const trainingSessionService = createTrainingSessionService({
+  realtime,
+  HttpsError,
+  crypto,
+});
 const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
 });
@@ -342,6 +351,9 @@ const cleanupTrainingQueue = createTrainingQueueCleanup({
   realtime,
 });
 const cleanupTrainingActive = createTrainingActiveCleanup({
+  realtime,
+});
+const cleanupTrainingSessionResources = createTrainingSessionResourceCleanup({
   realtime,
 });
 const cleanupTrainingRooms = createTrainingRoomCleanup({
@@ -10239,6 +10251,27 @@ exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (
   }
 });
 
+exports.trainingSessionAction = onCall(
+  callableOptions("trainingSessionAction"),
+  async (request) => {
+    const uid = requireUid(request);
+    const action = cleanText(request.data?.action, 24);
+    try {
+      return await trainingSessionService.dispatch(uid, request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("trainingSessionAction failed", {
+        action,
+        category: error instanceof TypeError ? "validation" : "internal",
+      });
+      throw new HttpsError(
+        "internal",
+        "鍛え合い60のセッション処理を完了できませんでした。",
+      );
+    }
+  },
+);
+
 exports.trainingAction = onCall(callableOptions("trainingAction"), async (request) => {
   const uid = requireUid(request);
   const data = request.data;
@@ -10403,6 +10436,10 @@ async function trainingActiveSessionIsLive(uid, activeSnapshot, now) {
     && trainingActiveRoomIsLive(roomSnapshot.val(), uid, now);
 }
 
+function trainingSessionClaimRef(uid) {
+  return realtime.ref(`online/trainingSessionClaims/${uid}`);
+}
+
 async function accountHasActiveSession(uid) {
   const realtimePaths = [
     { path: "active", roomPath: "rooms" },
@@ -10419,6 +10456,8 @@ async function accountHasActiveSession(uid) {
     marketQueueRef(uid).get(),
     soloSessionClaimRef(uid).get(),
     liveSoloSessionV2Room(uid, now),
+    trainingSessionClaimRef(uid).get(),
+    trainingSessionService.liveRoom(uid, now),
   ]);
   const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
   if (realtimeSnapshots.some((snapshot, index) => {
@@ -10437,8 +10476,14 @@ async function accountHasActiveSession(uid) {
   const marketQueueSnapshot = snapshots[realtimePaths.length + 1];
   const soloSessionClaimSnapshot = snapshots[realtimePaths.length + 2];
   const soloSessionRoom = snapshots[realtimePaths.length + 3];
+  const trainingSessionClaimSnapshot = snapshots[realtimePaths.length + 4];
+  const trainingSessionRoom = snapshots[realtimePaths.length + 5];
   const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
-  if ((soloSessionClaim && soloSessionClaim.expiresAt > now) || soloSessionRoom) return true;
+  const trainingSessionClaim = normalizeClaim(trainingSessionClaimSnapshot.val());
+  if ((soloSessionClaim && soloSessionClaim.expiresAt > now)
+      || soloSessionRoom
+      || (trainingSessionClaim && trainingSessionClaim.expiresAt > now)
+      || trainingSessionRoom) return true;
   const marketQueue = marketQueueSnapshot.data();
   if (marketQueueSnapshot.exists
       && marketQueue?.status === "waiting"
@@ -15204,12 +15249,13 @@ exports.cleanupTrainingRooms = onSchedule({
 }, async () => {
   try {
     const now = Date.now();
-    const [rooms, queue, active] = await Promise.all([
+    const [rooms, queue, active, sessions] = await Promise.all([
       cleanupTrainingRooms(now),
       cleanupTrainingQueue(now),
       cleanupTrainingActive(now),
+      cleanupTrainingSessionResources(now),
     ]);
-    const result = { rooms, queue, active };
+    const result = { rooms, queue, active, sessions };
     console.info("cleanupTrainingRooms completed", result);
     return result;
   } catch (error) {

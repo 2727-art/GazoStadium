@@ -156,6 +156,220 @@ function v3RoomPayload(host, guest, now, {
   };
 }
 
+function trainingSessionV4Fixture(suffix, now = Date.now()) {
+  const hostUid = `training-v4-host-${suffix}`;
+  const guestUid = `training-v4-guest-${suffix}`;
+  const hostSessionId = `training-v4-host-session-${suffix}`;
+  const guestSessionId = `training-v4-guest-session-${suffix}`;
+  const hostLeaseToken = `training-v4-host-lease-${suffix}`;
+  const guestLeaseToken = `training-v4-guest-lease-${suffix}`;
+  const hostGeneration = "H".repeat(22);
+  const guestGeneration = "G".repeat(22);
+  const roomId = `-trainingV4${suffix.padEnd(9, "0")}`.slice(0, 20);
+  const attemptId = `training-v4-attempt-${suffix}`;
+  const connectionGeneration = `training-v4-connection-${suffix}`;
+  const expiresAt = now + 60_000;
+  const imageBpms = {
+    1: 0,
+    2: 80,
+    3: 100,
+    4: 120,
+    5: 160,
+  };
+  const queueEntryFor = ({
+    uid,
+    sessionId,
+    leaseToken,
+    generation,
+    name,
+  }) => ({
+    protocolVersion: 2,
+    trainingProtocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    uid,
+    sessionId,
+    leaseToken,
+    generation,
+    connectionGeneration: `queue-${connectionGeneration}-${uid}`,
+    name,
+    intensity: "standard",
+    commandDeck: v3CommandDeck(),
+    imageBpms,
+    joinedAt: now,
+    lastSeen: now,
+    expiresAt,
+    state: "waiting",
+  });
+  const claimFor = ({ sessionId, leaseToken, generation }) => ({
+    protocolVersion: 2,
+    sessionId,
+    leaseToken,
+    generation,
+    claimedAt: now,
+    heartbeatAt: now,
+    expiresAt,
+  });
+  const hostQueue = queueEntryFor({
+    uid: hostUid,
+    sessionId: hostSessionId,
+    leaseToken: hostLeaseToken,
+    generation: hostGeneration,
+    name: "V4 HOST",
+  });
+  const guestQueue = queueEntryFor({
+    uid: guestUid,
+    sessionId: guestSessionId,
+    leaseToken: guestLeaseToken,
+    generation: guestGeneration,
+    name: "V4 GUEST",
+  });
+  const sessions = {
+    [hostUid]: {
+      sessionId: hostSessionId,
+      generation: hostGeneration,
+    },
+    [guestUid]: {
+      sessionId: guestSessionId,
+      generation: guestGeneration,
+    },
+  };
+  const players = {
+    [hostUid]: v3Player(hostQueue, "ジャンプは控えめ"),
+    [guestUid]: v3Player(guestQueue, ""),
+  };
+  const common = {
+    protocolVersion: 2,
+    signalingVersion: 2,
+    trainingProtocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    hostUid,
+    guestUid,
+    attemptId,
+    connectionGeneration,
+    createdAt: now,
+    expiresAt,
+    sessions,
+  };
+  const room = {
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    sessionProtocolVersion: 2,
+    signalingVersion: 2,
+    hostUid,
+    guestUid,
+    attemptId,
+    connectionGeneration,
+    createdAt: now,
+    expiresAt,
+    status: "active",
+    sessions,
+    members: {
+      [hostUid]: true,
+      [guestUid]: true,
+    },
+    players,
+    accepted: {
+      [hostUid]: true,
+      [guestUid]: true,
+    },
+  };
+  const activeFor = (queue, role) => ({
+    protocolVersion: 2,
+    uid: queue.uid,
+    sessionId: queue.sessionId,
+    leaseToken: queue.leaseToken,
+    generation: queue.generation,
+    roomId,
+    attemptId,
+    connectionGeneration,
+    role,
+    lastSeen: now,
+    expiresAt,
+  });
+  const lockFor = (queue, role) => ({
+    protocolVersion: 2,
+    roomId,
+    attemptId,
+    role,
+    sessionId: queue.sessionId,
+    generation: queue.generation,
+    hostUid,
+    guestUid,
+    acquiredAt: now,
+    expiresAt,
+  });
+  return {
+    hostUid,
+    guestUid,
+    hostSessionId,
+    guestSessionId,
+    hostLeaseToken,
+    guestLeaseToken,
+    hostGeneration,
+    guestGeneration,
+    roomId,
+    attemptId,
+    connectionGeneration,
+    expiresAt,
+    hostQueue,
+    guestQueue,
+    hostClaim: claimFor({
+      sessionId: hostSessionId,
+      leaseToken: hostLeaseToken,
+      generation: hostGeneration,
+    }),
+    guestClaim: claimFor({
+      sessionId: guestSessionId,
+      leaseToken: guestLeaseToken,
+      generation: guestGeneration,
+    }),
+    room,
+    permit: {
+      ...common,
+      players,
+    },
+    hostActive: activeFor(hostQueue, "host"),
+    guestActive: activeFor(guestQueue, "guest"),
+    hostLock: lockFor(hostQueue, "host"),
+    guestLock: lockFor(guestQueue, "guest"),
+    offer: {
+      ...common,
+      roomId,
+      fromUid: hostUid,
+      toUid: guestUid,
+      fromSessionId: hostSessionId,
+      toSessionId: guestSessionId,
+      fromName: hostQueue.name,
+    },
+  };
+}
+
+async function seedTrainingSessionV4(environment, fixture, {
+  includeRoom = true,
+} = {}) {
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    const values = {
+      [`trainingSessionClaims/${fixture.hostUid}`]: fixture.hostClaim,
+      [`trainingSessionClaims/${fixture.guestUid}`]: fixture.guestClaim,
+      [`trainingQueueV4/${fixture.hostUid}/${fixture.hostSessionId}`]:
+        fixture.hostQueue,
+      [`trainingQueueV4/${fixture.guestUid}/${fixture.guestSessionId}`]:
+        fixture.guestQueue,
+      [`trainingActiveV4/${fixture.hostUid}/${fixture.hostSessionId}`]:
+        fixture.hostActive,
+      [`trainingActiveV4/${fixture.guestUid}/${fixture.guestSessionId}`]:
+        fixture.guestActive,
+      [`trainingMatchPermitsV4/${fixture.roomId}`]: fixture.permit,
+      [`trainingMatchLocksV4/${fixture.hostUid}`]: fixture.hostLock,
+      [`trainingMatchLocksV4/${fixture.guestUid}`]: fixture.guestLock,
+      [`trainingOffersV4/${fixture.guestUid}/${fixture.guestSessionId}/${fixture.roomId}`]:
+        fixture.offer,
+    };
+    if (includeRoom) values[`trainingRooms/${fixture.roomId}`] = fixture.room;
+    await update(ref(contextWithoutRules.database(), "online"), values);
+  });
+}
+
 function instruction(overrides = {}) {
   return {
     exercise: "スクワット",
@@ -1800,10 +2014,24 @@ test("v3 canonical completion advances atomically and rejects reused images or c
     ref(room.hostDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
     completedAt + 1,
   ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
-    completedAt,
+  const completionRef = ref(
+    room.hostDatabase,
+    `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`,
+  );
+  const completionTransaction = await assertSucceeds(runTransaction(
+    completionRef,
+    (current) => current == null ? completedAt : undefined,
+    { applyLocally: false },
   ));
+  assert.equal(completionTransaction.committed, true);
+  assert.equal(completionTransaction.snapshot.val(), completedAt);
+  const replayedCompletion = await assertSucceeds(runTransaction(
+    completionRef,
+    (current) => current == null ? completedAt : undefined,
+    { applyLocally: false },
+  ));
+  assert.equal(replayedCompletion.committed, false);
+  assert.equal(replayedCompletion.snapshot.val(), completedAt);
   await assertFails(set(
     ref(room.guestDatabase, `${roomPath}/rounds/1/completedAt`),
     Date.now(),
@@ -2274,4 +2502,245 @@ test("cold-cache cleanup treats already-missing locks and invites as idempotent"
     database,
     "online/trainingInvites/training-other/-missingHostInvite01",
   )));
+});
+
+test("session V4 matchmaking resources are server-owned and offers are session-targeted", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const fixture = trainingSessionV4Fixture("private");
+  await seedTrainingSessionV4(environment, fixture, { includeRoom: false });
+
+  const hostDatabase = environment.authenticatedContext(fixture.hostUid).database();
+  const guestDatabase = environment.authenticatedContext(fixture.guestUid).database();
+  const outsiderDatabase =
+    environment.authenticatedContext("training-v4-outsider-private").database();
+  const privatePaths = [
+    `online/trainingSessionClaims/${fixture.hostUid}`,
+    `online/trainingQueueV4/${fixture.hostUid}/${fixture.hostSessionId}`,
+    `online/trainingActiveV4/${fixture.hostUid}/${fixture.hostSessionId}`,
+    `online/trainingMatchPermitsV4/${fixture.roomId}`,
+    `online/trainingMatchLocksV4/${fixture.hostUid}`,
+  ];
+
+  for (const privatePath of privatePaths) {
+    await assertFails(get(ref(hostDatabase, privatePath)));
+    await assertFails(set(ref(hostDatabase, privatePath), {
+      clientControlled: true,
+    }));
+  }
+
+  const offerPath =
+    `online/trainingOffersV4/${fixture.guestUid}/${fixture.guestSessionId}/${fixture.roomId}`;
+  const offerSnapshot = await assertSucceeds(get(ref(guestDatabase, offerPath)));
+  assert.equal(offerSnapshot.val()?.roomId, fixture.roomId);
+  assert.equal(offerSnapshot.val()?.toSessionId, fixture.guestSessionId);
+  await assertFails(get(ref(hostDatabase, offerPath)));
+  await assertFails(get(ref(outsiderDatabase, offerPath)));
+  await assertFails(get(ref(
+    guestDatabase,
+    `online/trainingOffersV4/${fixture.guestUid}/wrong-session-private/${fixture.roomId}`,
+  )));
+  await assertFails(set(ref(guestDatabase, offerPath), {
+    ...fixture.offer,
+    fromName: "TAMPERED",
+  }));
+  await assertFails(remove(ref(guestDatabase, offerPath)));
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await update(
+      ref(
+        contextWithoutRules.database(),
+        `online/trainingSessionClaims/${fixture.guestUid}`,
+      ),
+      { expiresAt: Date.now() - 1 },
+    );
+  });
+  await assertFails(get(ref(guestDatabase, offerPath)));
+});
+
+test("session V2 training presence and signals enforce leases and target ownership", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const fixture = trainingSessionV4Fixture("signal");
+  await seedTrainingSessionV4(environment, fixture);
+
+  const hostDatabase = environment.authenticatedContext(fixture.hostUid).database();
+  const guestDatabase = environment.authenticatedContext(fixture.guestUid).database();
+  const outsiderDatabase =
+    environment.authenticatedContext("training-v4-outsider-signal").database();
+  const hostPresencePath =
+    `online/trainingRooms/${fixture.roomId}/presenceV2/${fixture.hostUid}/${fixture.hostSessionId}`;
+  const presence = {
+    protocolVersion: 2,
+    sessionId: fixture.hostSessionId,
+    leaseToken: fixture.hostLeaseToken,
+    generation: fixture.hostGeneration,
+    online: true,
+    updatedAt: Date.now(),
+  };
+
+  await assertSucceeds(set(ref(hostDatabase, hostPresencePath), presence));
+  await assertSucceeds(get(ref(
+    guestDatabase,
+    `online/trainingRooms/${fixture.roomId}/presenceV2`,
+  )));
+  await assertFails(get(ref(
+    outsiderDatabase,
+    `online/trainingRooms/${fixture.roomId}/presenceV2`,
+  )));
+  await assertFails(set(ref(guestDatabase, hostPresencePath), {
+    ...presence,
+    updatedAt: Date.now(),
+  }));
+  await assertFails(set(
+    ref(
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/presenceV2/${fixture.hostUid}/wrong-session-signal`,
+    ),
+    {
+      ...presence,
+      sessionId: "wrong-session-signal",
+      updatedAt: Date.now(),
+    },
+  ));
+  await assertFails(set(ref(hostDatabase, hostPresencePath), {
+    ...presence,
+    leaseToken: "wrong-lease-token-signal",
+    updatedAt: Date.now(),
+  }));
+
+  const signalPath =
+    `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/${fixture.guestSessionId}/signal-v4-1`;
+  const signal = {
+    protocolVersion: 2,
+    signalingVersion: 2,
+    fromUid: fixture.hostUid,
+    fromSessionId: fixture.hostSessionId,
+    toUid: fixture.guestUid,
+    toSessionId: fixture.guestSessionId,
+    connectionGeneration: fixture.connectionGeneration,
+    attemptId: fixture.attemptId,
+    type: "offer",
+    payload: "{\"type\":\"offer\",\"sdp\":\"v=0\"}",
+    createdAt: Date.now(),
+  };
+  await assertSucceeds(set(ref(hostDatabase, signalPath), signal));
+  assert.equal(
+    (await assertSucceeds(get(ref(guestDatabase, signalPath)))).val()?.attemptId,
+    fixture.attemptId,
+  );
+  await assertFails(get(ref(hostDatabase, signalPath)));
+  await assertFails(get(ref(outsiderDatabase, signalPath)));
+  await assertFails(set(
+    ref(
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/${fixture.guestSessionId}/signal-v4-wrong-attempt`,
+    ),
+    {
+      ...signal,
+      attemptId: "wrong-attempt-signal",
+      createdAt: Date.now(),
+    },
+  ));
+  await assertFails(set(
+    ref(
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/wrong-session-signal/signal-v4-wrong-session`,
+    ),
+    {
+      ...signal,
+      toSessionId: "wrong-session-signal",
+      createdAt: Date.now(),
+    },
+  ));
+  await assertSucceeds(remove(ref(guestDatabase, signalPath)));
+  await assertSucceeds(remove(ref(hostDatabase, hostPresencePath)));
+
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await update(
+      ref(
+        contextWithoutRules.database(),
+        `online/trainingSessionClaims/${fixture.hostUid}`,
+      ),
+      { expiresAt: Date.now() - 1 },
+    );
+  });
+  await assertFails(set(ref(hostDatabase, hostPresencePath), {
+    ...presence,
+    updatedAt: Date.now(),
+  }));
+  await assertFails(set(
+    ref(
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/${fixture.guestSessionId}/signal-v4-stale-claim`,
+    ),
+    {
+      ...signal,
+      createdAt: Date.now(),
+    },
+  ));
+});
+
+test("fresh session V2 claims fence legacy matchmaking without blocking expired claims", {
+  skip: runsAgainstSafeEmulator
+    ? false
+    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const fixture = trainingSessionV4Fixture("legacy");
+  const expiredUid = "training-v4-expired-legacy";
+  const expiredSessionId = "training-v4-expired-session";
+  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
+    await update(ref(contextWithoutRules.database(), "online"), {
+      [`trainingSessionClaims/${fixture.hostUid}`]: fixture.hostClaim,
+      [`trainingSessionClaims/${expiredUid}`]: {
+        protocolVersion: 2,
+        sessionId: expiredSessionId,
+        leaseToken: "training-v4-expired-lease",
+        generation: "E".repeat(22),
+        claimedAt: Date.now() - 120_000,
+        heartbeatAt: Date.now() - 120_000,
+        expiresAt: Date.now() - 1,
+      },
+    });
+  });
+
+  const freshDatabase = environment.authenticatedContext(fixture.hostUid).database();
+  const freshLegacyQueue = v3QueueEntry(
+    fixture.hostUid,
+    "FRESH V4",
+    Date.now(),
+    { sessionId: "fresh-v4-legacy-session" },
+  );
+  await assertFails(set(
+    ref(freshDatabase, `online/trainingQueue/${fixture.hostUid}`),
+    freshLegacyQueue,
+  ));
+  await assertFails(set(
+    ref(freshDatabase, `online/trainingActive/${fixture.hostUid}`),
+    activeReservation("-freshV4LegacyRoom01"),
+  ));
+  await assertFails(set(
+    ref(freshDatabase, "online/trainingMatchLock"),
+    matchLockPayload(fixture.hostUid, "-freshV4LegacyRoom01"),
+  ));
+
+  const expiredDatabase = environment.authenticatedContext(expiredUid).database();
+  const expiredLegacyQueue = v3QueueEntry(expiredUid, "EXPIRED V4", Date.now(), {
+    sessionId: expiredSessionId,
+  });
+  await assertSucceeds(set(
+    ref(expiredDatabase, `online/trainingQueue/${expiredUid}`),
+    expiredLegacyQueue,
+  ));
+  await assertSucceeds(set(
+    ref(expiredDatabase, `online/trainingActive/${expiredUid}`),
+    activeReservation("-expiredV4Legacy01"),
+  ));
 });

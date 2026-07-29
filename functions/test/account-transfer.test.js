@@ -154,7 +154,7 @@ test("redeem transaction rechecks private training activity against finalization
   assert.match(redeem, /targetTrainingProfile\.hpOverkillDealt > 0/);
 });
 
-test("account transfer treats a fresh normal 1on1 V2 session as active", () => {
+test("account transfer treats fresh normal and training V2 sessions as active", () => {
   const server = read("functions/index.js");
   const start = server.indexOf("async function accountHasActiveSession");
   const end = server.indexOf("function economyProgressHasActivity", start);
@@ -162,11 +162,21 @@ test("account transfer treats a fresh normal 1on1 V2 session as active", () => {
   const activeSessionCheck = server.slice(start, end);
   assert.match(activeSessionCheck, /soloSessionClaimRef\(uid\)\.get\(\)/);
   assert.match(activeSessionCheck, /liveSoloSessionV2Room\(uid, now\)/);
+  assert.match(activeSessionCheck, /trainingSessionClaimRef\(uid\)\.get\(\)/);
+  assert.match(
+    activeSessionCheck,
+    /trainingSessionService\.liveRoom\(uid, now\)/,
+  );
   assert.match(
     activeSessionCheck,
     /soloSessionClaim && soloSessionClaim\.expiresAt > now/,
   );
   assert.match(activeSessionCheck, /\|\| soloSessionRoom/);
+  assert.match(
+    activeSessionCheck,
+    /trainingSessionClaim && trainingSessionClaim\.expiresAt > now/,
+  );
+  assert.match(activeSessionCheck, /\|\| trainingSessionRoom/);
 });
 
 test("high-value patron spending is Google-gated and server-priced", () => {

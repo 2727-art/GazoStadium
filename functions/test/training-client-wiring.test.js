@@ -20,7 +20,7 @@ test("loads the HP V3 client and retires the team client", () => {
   assert.match(indexHtml, /href="training\.css\?v=kitaeai-hp-v3"/);
   assert.match(
     indexHtml,
-    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1"/,
+    /src="training\.js\?v=kitaeai-hp-v3-matchmaking-v2-app-check-v3-remove-royale-v1-retire-team-v1-round-start-v1-session-v2"/,
   );
   assert.match(trainingJs, /training-core\.mjs\?v=kitaeai-hp-v3-matchmaking-v1/);
   assert.match(indexHtml, /src="app\.js\?v=[^"]*kitaeai-hp-v3[^"]*"/);
@@ -101,7 +101,8 @@ test("selects an unused local image randomly and commits DRAW metadata before se
   assert.match(drawBlock, /\.filter\(\(imageIndex\) => !used\.has\(imageIndex\)\)/);
   assert.match(drawBlock, /secureRandomChoice\(available\)/);
   assert.match(drawBlock, /candidate = \{ imageIndex, bpm, drawnAt: firebaseNow\(\) \}/);
-  assert.ok(drawBlock.indexOf("/draws/${state.uid}`)") < drawBlock.indexOf("sendLocalRoundImage(roundIndex, draw)"));
+  assert.ok(drawBlock.indexOf("/draws/${ownUid}`)")
+    < drawBlock.indexOf("sendLocalRoundImage(roundIndex, draw, contextIsCurrent)"));
 });
 
 test("sends only image bytes over P2P and verifies RTDB DRAW metadata before acknowledging", () => {
@@ -114,7 +115,7 @@ test("sends only image bytes over P2P and verifies RTDB DRAW metadata before ack
   assert.match(receiveBlock, /rounds\/\$\{roundIndex\}\/draws\/\$\{opponentUid\}/);
   assert.match(receiveBlock, /P2P画像とFirebaseのDRAW情報が一致しません/);
   assert.ok(receiveBlock.indexOf("P2P画像とFirebaseのDRAW情報が一致しません")
-    < receiveBlock.indexOf("/imageReceived/${state.uid}`)"));
+    < receiveBlock.indexOf("/imageReceived/${ownUid}`)"));
   assert.doesNotMatch(trainingJs, /(?:set|update|runTransaction)\([^)]*Firebase[^)]*(?:blob|imageUrl|imageData)/i);
 });
 
@@ -123,7 +124,7 @@ test("keeps score secret until the local score is committed", () => {
   const pollBlock = functionBlock("pollOpponentScore");
   const boundedScoreBlock = functionBlock("readRoundScoresBounded");
   const submitBlock = functionBlock("submitScore");
-  assert.match(listenerBlock, /scores\/\$\{state\.uid\}/);
+  assert.match(listenerBlock, /scores\/\$\{context\.uid\}/);
   assert.doesNotMatch(listenerBlock, /onValue\([\s\S]*?scores\/\$\{opponentUid\}/);
   assert.match(submitBlock, /current === null \? score : undefined/);
   assert.match(submitBlock, /scheduleScorePoll\(0\)/);
@@ -141,7 +142,7 @@ test("queues the oldest missing opponent score and performs one bounded reconnec
   assert.match(queueBlock, /for \(let roundIndex = 1; roundIndex <= TRAINING_MAX_ROUNDS; roundIndex \+= 1\)/);
   assert.match(queueBlock, /roundScore\(round, state\.uid\) && !roundScore\(round, opponentUid\)/);
   assert.match(setupBlock, /readTrainingRoundsBounded\(roomId\)/);
-  assert.match(setupBlock, /mergeTrainingRounds\(refreshedRounds\)/);
+  assert.match(setupBlock, /mergeTrainingRounds\(refreshedRounds\.value\)/);
 });
 
 test("maps 8, 9, and 10 to damage 10/15/20 and workouts 60/75/90 seconds", () => {
@@ -179,6 +180,45 @@ test("derives workout timing from the score, image BPM, and COMMAND beat count",
   assert.match(trainingJs, /trainingCountdownFill/);
   assert.match(trainingCss, /\.training-countdown-progress/);
   assert.match(trainingCss, /\.training-beat-lane/);
+});
+
+test("completes a workout through the Rules-authorized child path exactly once", () => {
+  const completeBlock = functionBlock("completeWorkout");
+  assert.match(trainingJs, /workoutCompletion: null/);
+  assert.match(
+    completeBlock,
+    /rounds\/\$\{roundIndex\}\/workouts\/\$\{uid\}\/completedAt/,
+  );
+  assert.doesNotMatch(
+    completeBlock,
+    /runTransaction\(\s*ref\(database,\s*`[^`]*\/workouts\/\$\{(?:state|targetState)\.uid\}`/,
+  );
+  assert.match(completeBlock, /pending\.key === completionKey \? pending\.promise : false/);
+  assert.match(completeBlock, /current == null \? completedAt : undefined/);
+  assert.match(completeBlock, /\{ applyLocally: false \}/);
+  assert.match(completeBlock, /storedCompletedAt !== completedAt/);
+  assert.match(
+    completeBlock,
+    /targetState\.workoutCompletion\?\.promise === operation[\s\S]*targetState\.workoutCompletion = null/,
+  );
+});
+
+test("keeps the 90-second workout alive across mobile screen lifecycle events", () => {
+  const startBlock = functionBlock("startWorkout");
+  const completeBlock = functionBlock("completeWorkout");
+  const visibilityBlock = trainingJs.match(
+    /document\.addEventListener\("visibilitychange",[\s\S]*?\n\}\);/,
+  )?.[0] || "";
+
+  assert.match(trainingJs, /workoutWakeLock: null/);
+  assert.match(trainingJs, /navigator\.wakeLock\.request\("screen"\)/);
+  assert.match(trainingJs, /function trainingWorkoutNeedsWakeLock/);
+  assert.match(startBlock, /syncTrainingWorkoutWakeLock\(state\)/);
+  assert.match(completeBlock, /releaseTrainingWorkoutWakeLock\(targetState\)/);
+  assert.match(visibilityBlock, /refreshTrainingSessionLease\(targetState\)/);
+  assert.match(visibilityBlock, /syncTrainingWorkoutWakeLock\(targetState\)/);
+  assert.match(trainingDesign, /鍛え合い専用180秒lease/);
+  assert.match(trainingDesign, /Screen Wake Lock/);
 });
 
 test("settles each completed DRAW once and stops after HP zero or five DRAWs", () => {
@@ -260,19 +300,33 @@ test("does not install a room-root value listener and subscribes only to bounded
 
 test("publishes privacy-safe lobby presence without reading the private active root", () => {
   assert.match(trainingJs, /mode: "training"/);
-  assert.match(trainingJs, /state\.publicPresenceState = "waiting"/);
+  assert.match(trainingJs, /targetState\.publicPresenceState = "waiting"/);
   assert.match(trainingJs, /updatePublicPresence\("playing"\)/);
-  assert.match(trainingJs, /lastSeen: firebaseNow\(\)/);
+  assert.match(
+    trainingJs,
+    /lastSeen: Date\.now\(\) \+ Number\(targetState\.serverTimeOffset \|\| 0\)/,
+  );
   assert.doesNotMatch(trainingJs, /onValue\(\s*ref\(database,\s*"online\/trainingActive"\)/);
 });
 
-test("arms an active-room terminal fallback until terminal evidence is confirmed", () => {
+test("keeps destroyed-onDisconnect only for legacy rooms", () => {
   const enterBlock = functionBlock("enterRoom");
+  const listenersBlock = functionBlock("setupRoomListeners");
   const deactivateBlock = functionBlock("deactivate");
   assert.match(trainingJs, /async function armActiveRoomDestroyedDisconnect/);
   assert.match(trainingJs, /reason: "active_member_disconnected"/);
-  assert.ok(enterBlock.indexOf("armActiveRoomDestroyedDisconnect(roomId)")
-    < enterBlock.indexOf("cleanupMatchmakingReliably(true)"));
+  assert.match(
+    enterBlock,
+    /if \(sessionV2\) \{\s*await cancelActiveRoomDestroyedDisconnect\(\);\s*\} else \{\s*await armActiveRoomDestroyedDisconnect\(roomId\)/,
+  );
+  assert.match(
+    listenersBlock,
+    /if \(!context\.sessionV2[\s\S]*armTrainingActiveDisconnect\(roomId\)/,
+  );
+  assert.match(
+    listenersBlock,
+    /if \(!context\.sessionV2[\s\S]*presence\?\.online === false[\s\S]*markRoomDestroyed/,
+  );
   assert.match(trainingJs, /transitionToTrainingResult[\s\S]*?cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
   assert.match(trainingJs, /transitionToDestroyedRoom[\s\S]*?cancelActiveRoomDestroyedDisconnect\(state\.roomId\)/);
   assert.match(deactivateBlock, /await markRoomDestroyed\("player_exit"\)/);
@@ -434,8 +488,28 @@ test("refreshes queue leases and completes cold-cache cleanup before retrying", 
   assert.match(releaseActiveBlock, /remaining\.val\(\)\?\.rooms\?\.\[roomId\] !== true/);
   assert.match(statusBlock, /current == null \|\| current === expected/);
   assert.match(statusBlock, /applyLocally: false/);
-  assert.match(beginBlock, /const queueRemoved = await removeOwnedTrainingQueue/);
-  assert.match(beginBlock, /if \(queueRemoved && state\.queueSessionId/);
+  assert.match(
+    beginBlock,
+    /claimTrainingSessionLease\([\s\S]*expectedState\.matchmakingGeneration,[\s\S]*expectedState/,
+  );
+  assert.match(
+    beginBlock,
+    /enqueueTrainingSessionQueue\([\s\S]*expectedState\.matchmakingGeneration,[\s\S]*expectedState/,
+  );
+  assert.match(beginBlock, /startPublicPresence\(expectedState\)\.catch/);
+  assert.match(
+    beginBlock,
+    /watchTrainingSessionOffers\([\s\S]*expectedState\.matchmakingGeneration,[\s\S]*expectedState/,
+  );
+  assert.ok(
+    beginBlock.indexOf("scheduleTrainingSessionTryMatch(0)")
+      < beginBlock.indexOf("startPublicPresence(expectedState).catch"),
+  );
+  assert.match(
+    beginBlock,
+    /if \(released\) \{[\s\S]*expectedState\.sessionLeaseHeld = false/,
+  );
+  assert.doesNotMatch(beginBlock, /online\/trainingQueue|online\/trainingInvites|trainingMatchLock/);
   assert.match(createRoomBlock, /const inviteCleared = !roomCreated/);
   assert.match(createRoomBlock, /const activeReleased = !activeReserved/);
   assert.match(createRoomBlock, /const queueReturnedToWaiting = !retryMatching/);
@@ -539,6 +613,137 @@ test("skips unavailable candidates without exposing their private active or invi
   assert.match(staleInviteRemoveBlock, /remaining\?\.targetSessionId === currentSessionId/);
   assert.doesNotMatch(selectionBlock, /trainingActive|trainingInvites/);
   assert.doesNotMatch(refreshBlock, /trainingActive|trainingInvites/);
+});
+
+test("session V2 retries use server-owned queue identity and keep disconnect presence fresh", () => {
+  const restartBlock = functionBlock("restartTrainingSessionSearch");
+  const enqueueBlock = functionBlock("enqueueTrainingSessionQueue");
+  const preparationBlock = functionBlock("trainingSessionPreparationPayload");
+  const tryMatchBlock = functionBlock("tryTrainingSessionMatch");
+  const prepareRoomBlock = functionBlock("prepareTrainingSessionRoom");
+  const watchRoomBlock = functionBlock("watchTrainingSessionRoom");
+  const listenersBlock = functionBlock("setupRoomListeners");
+  const enterRoomBlock = functionBlock("enterRoom");
+  const roomContextBlock = functionBlock("trainingRoomRuntimeContextIsCurrent");
+  const channelBlock = functionBlock("configureDataChannel");
+  const channelContextBlock = functionBlock("trainingDataChannelContextIsCurrent");
+  const heartbeatBlock = functionBlock("refreshTrainingSessionLease");
+  const cleanupBlock = functionBlock("cleanupMatchmaking");
+  const sessionCleanupBlock = functionBlock("cleanupTrainingSessionMatchmaking");
+  const p2pCleanupBlock = functionBlock("cleanupFailedTrainingSessionRoom");
+
+  assert.match(restartBlock, /expectedState\.sessionRestartPromise/);
+  assert.match(restartBlock, /state === expectedState/);
+  assert.match(restartBlock, /enqueueTrainingSessionQueue/);
+  assert.doesNotMatch(restartBlock, /trainingQueueV4|get\(ref\(database/);
+  assert.match(enqueueBlock, /trainingSessionPreparationPayload\(expectedState\)/);
+  assert.match(
+    enqueueBlock,
+    /expectedState\.matchmakingGeneration = String\(result\.connectionGeneration\)/,
+  );
+  assert.match(enqueueBlock, /result\.reason === "active"[\s\S]*return true/);
+  assert.match(preparationBlock, /action: "enqueue"/);
+  assert.match(
+    preparationBlock,
+    /commandDeck: commandDeckPayload\(targetState\.commandDeck\)/,
+  );
+  assert.match(
+    preparationBlock,
+    /imageBpms: imageBpmsPayload\(targetState\.localImages\)/,
+  );
+  assert.doesNotMatch(preparationBlock, /conditions/);
+  assert.match(watchRoomBlock, /status === "" && lastKnownStatus === "offered"/);
+  assert.match(tryMatchBlock, /\["offered", "join"\]\.includes\(payload\.outcome\)/);
+  assert.match(tryMatchBlock, /const expectedState = state/);
+  assert.match(tryMatchBlock, /expectedState\.sessionTryMatchBusy = false/);
+  assert.match(
+    functionBlock("acceptTrainingSessionOffer"),
+    /expectedState\.sessionOfferHandling = false/,
+  );
+  assert.match(enterRoomBlock, /expectedState\.enteringRoom = false/);
+  assert.doesNotMatch(
+    tryMatchBlock,
+    /state\.matchmakingGeneration = connectionGeneration/,
+  );
+  assert.match(
+    prepareRoomBlock,
+    /state\.matchmakingGeneration = String\(room\.connectionGeneration\)/,
+  );
+  assert.match(
+    prepareRoomBlock,
+    /state\.matchmakingGeneration !== expectedMatchmakingGeneration/,
+  );
+  assert.match(enterRoomBlock, /const roomSetupContext = createTrainingRoomRuntimeContext\(roomId\)/);
+  assert.match(
+    enterRoomBlock,
+    /!roomReady \|\| !trainingRoomRuntimeContextIsCurrent\(roomSetupContext\)/,
+  );
+  assert.match(listenersBlock, /const abandonPresence = async/);
+  assert.match(listenersBlock, /presenceDisconnect\?\.cancel\?\.\(\)/);
+  assert.match(listenersBlock, /set\(ownPresenceRef, ownPresence\(false\)\)/);
+  assert.match(
+    listenersBlock,
+    /createTrainingSessionPresencePayload\(\{[\s\S]*updatedAt: firebaseNow\(\)/,
+  );
+  assert.match(listenersBlock, /ownPresence\(false, true\)/);
+  assert.match(
+    listenersBlock,
+    /useServerTimestamp \? serverTimestamp\(\) : firebaseNow\(\)/,
+  );
+  assert.match(listenersBlock, /if \(!contextIsCurrent\(\)\) return/);
+  assert.match(listenersBlock, /awaitCurrent\(readTrainingRoundsBounded\(roomId\)\)/);
+  assert.match(roomContextBlock, /state !== context\.expectedState/);
+  assert.match(roomContextBlock, /state\.signalingAttemptId === context\.attemptId/);
+  assert.match(
+    roomContextBlock,
+    /state\.roomConnectionGeneration === context\.connectionGeneration/,
+  );
+  assert.match(channelContextBlock, /state\.channel === channel/);
+  assert.match(channelBlock, /if \(!contextIsCurrent\(\)\) return/);
+  assert.match(channelBlock, /handleChannelMessage\(payload, contextIsCurrent\)/);
+  assert.match(heartbeatBlock, /state !== expectedState/);
+  assert.match(heartbeatBlock, /expectedState\.sessionGeneration/);
+  assert.match(cleanupBlock, /if \(state\.sessionLease\)/);
+  assert.match(p2pCleanupBlock, /preserveResolvedTrainingMatchBeforeP2pCleanup/);
+  assert.match(p2pCleanupBlock, /\["finalized", "resolved"\]/);
+  assert.match(
+    sessionCleanupBlock,
+    /\["finalized", "resolved", "terminal", "not-owner"\]/,
+  );
+});
+
+test("session V2 restarts an established transport and replaces a closed image channel", () => {
+  const peerBlock = functionBlock("setupTrainingSessionPeerConnection");
+  const restartStart = peerBlock.indexOf("state.p2pRestartIce = async");
+  const restartEnd = peerBlock.indexOf("scheduleTrainingP2pRecoveryTimer", restartStart);
+  const restartBlock = peerBlock.slice(restartStart, restartEnd);
+
+  assert.ok(restartStart >= 0);
+  assert.doesNotMatch(restartBlock, /recovery\.channelWasOpened/);
+  assert.match(
+    restartBlock,
+    /\["closing", "closed"\]\.includes\(state\.channel\.readyState\)/,
+  );
+  assert.match(
+    restartBlock,
+    /peer\.createDataChannel\([\s\S]*IMAGE_CHANNEL_LABEL[\s\S]*configureDataChannel\(replacementChannel, channelContext\)/,
+  );
+  assert.ok(
+    restartBlock.indexOf("configureDataChannel(replacementChannel, channelContext)")
+      < restartBlock.indexOf("peer.restartIce?.()"),
+  );
+  assert.match(restartBlock, /peer\.createOffer\(\{ iceRestart: true \}\)/);
+  assert.match(trainingJs, /function rearmTrainingImageTransferForReplacement/);
+  assert.match(trainingJs, /trainingImageRoundsNeedingResend/);
+  assert.match(trainingJs, /targetState\.incomingImage = null/);
+  assert.match(trainingJs, /targetState\.incomingMessageChain = Promise\.resolve\(\)/);
+  assert.match(
+    trainingJs,
+    /if \(replacement\) \{\s*startImageExchangeWatchdog\(currentRoundIndex\(\)\)/,
+  );
+  assert.match(trainingJs, /function trainingImageTransferRecoveryPending/);
+  assert.match(trainingJs, /handleTrainingImageTransferFailure/);
+  assert.match(trainingJs, /outgoingImageChannel/);
 });
 
 test("provides six local-only V3 preview screens without Firebase writes", () => {

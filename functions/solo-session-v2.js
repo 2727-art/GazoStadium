@@ -84,6 +84,7 @@ function claimDecision({
   now,
   sameSessionOwnerConfirmedGone = false,
   ttlMs = SOLO_SESSION_LEASE_TTL_MS,
+  maxTtlMs = 120_000,
 } = {}) {
   if (!isSafeToken(sessionId)
       || !isSafeToken(leaseToken)
@@ -91,7 +92,10 @@ function claimDecision({
       || !finiteTimestamp(now)
       || !Number.isSafeInteger(ttlMs)
       || ttlMs < 10_000
-      || ttlMs > 120_000
+      || !Number.isSafeInteger(maxTtlMs)
+      || maxTtlMs < 10_000
+      || maxTtlMs > 5 * 60_000
+      || ttlMs > maxTtlMs
       || typeof sameSessionOwnerConfirmedGone !== "boolean") {
     throw new TypeError("invalid solo session claim input");
   }

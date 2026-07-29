@@ -27,8 +27,34 @@ const {
   createTrainingRoomCleanup,
   firebasePushIdTimestamp,
   trainingActiveRoomIsLive,
+  trainingRoomHasFreshPresence,
   trainingRoomCleanupDisposition,
 } = require("../training-room-cleanup");
+
+test("session V2 presence protects the exact active training room", () => {
+  const now = 1_720_000_000_000;
+  const room = activeRoom(now - 30_000, {
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    sessionProtocolVersion: 2,
+    sessions: {
+      alice: { sessionId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", generation: "a".repeat(22) },
+      bob: { sessionId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", generation: "b".repeat(22) },
+    },
+    presence: {},
+    presenceV2: {
+      alice: {
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: {
+          online: true,
+          updatedAt: now - 1_000,
+        },
+      },
+    },
+  });
+  assert.equal(trainingRoomHasFreshPresence(room, now), true);
+  assert.equal(trainingActiveRoomIsLive(room, "alice", now), true);
+  assert.equal(trainingActiveRoomIsLive(room, "bob", now), true);
+});
 
 const functionsRoot = path.resolve(__dirname, "..");
 
@@ -1312,7 +1338,7 @@ test("scheduled cleanup and training-only active-session check are wired", () =>
   );
   assert.match(
     source,
-    /const \[rooms, queue, active\] = await Promise\.all\(\[[\s\S]*cleanupTrainingActive\(now\),[\s\S]*const result = \{ rooms, queue, active \}/,
+    /const \[rooms, queue, active, sessions\] = await Promise\.all\(\[[\s\S]*cleanupTrainingActive\(now\),[\s\S]*cleanupTrainingSessionResources\(now\),[\s\S]*const result = \{ rooms, queue, active, sessions \}/,
   );
   assert.match(source, /entry\.path === "trainingActive"/);
   assert.match(source, /trainingActiveSessionIsLive/);
