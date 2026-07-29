@@ -205,6 +205,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /aiTextTrainingPreferences/{uid} {
+      allow read, write: if false;
+    }
+
     match /aiTextTrainingUses/{useId} {
       allow read, write: if false;
     }

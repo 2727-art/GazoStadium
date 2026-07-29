@@ -7,6 +7,11 @@ const {
 
 const AI_TEXT_TRAINING_SCHEMA_VERSION = 1;
 const AI_TEXT_TRAINING_MODES = Object.freeze(["mama", "imouto", "oneechan"]);
+const AI_TEXT_TRAINING_STYLE_PRODUCT_IDS = Object.freeze([
+  "ai_training_style_soft_glow",
+  "ai_training_style_neon_beat",
+  "ai_training_style_stardust_stage",
+]);
 const AI_TEXT_TRAINING_PRICE_OPTIONS = Object.freeze([5, 10, 25]);
 const AI_TEXT_TRAINING_PUBLISH_FEE = 1;
 const AI_TEXT_TRAINING_SUCCESS_FEE_BASIS_POINTS = 2_000;
@@ -154,6 +159,41 @@ function normalizeAiTextTrainingMode(value) {
     );
   }
   return modeId;
+}
+
+function normalizeAiTextTrainingStyleId(value, label) {
+  if (value == null || value === "") return "";
+  const id = normalizedString(
+    value,
+    "invalid_ai_text_training_style",
+    `${label}を選び直してください。`,
+  );
+  if (!AI_TEXT_TRAINING_STYLE_PRODUCT_IDS.includes(id)) {
+    throw aiTextTrainingError(
+      "invalid_ai_text_training_style",
+      `${label}を選び直してください。`,
+    );
+  }
+  return id;
+}
+
+function normalizeAiTextTrainingCosmetics(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw aiTextTrainingError(
+      "invalid_ai_text_training_cosmetics",
+      "トレーニング演出を選び直してください。",
+    );
+  }
+  return Object.freeze({
+    panelThemeId: normalizeAiTextTrainingStyleId(
+      value.panelThemeId,
+      "画像ウィンドウ",
+    ),
+    messageDecorationId: normalizeAiTextTrainingStyleId(
+      value.messageDecorationId,
+      "セリフ装飾",
+    ),
+  });
 }
 
 function normalizeAiTextTrainingSellerName(value) {
@@ -424,6 +464,7 @@ module.exports = Object.freeze({
   AI_TEXT_TRAINING_REPORT_REASONS,
   AI_TEXT_TRAINING_SCHEMA_VERSION,
   AI_TEXT_TRAINING_SCRIPT_SLOT_IDS,
+  AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
   AI_TEXT_TRAINING_SUCCESS_FEE_BASIS_POINTS,
   AI_TEXT_TRAINING_TITLE_MAX_LENGTH,
   aiTextTrainingActionDocumentId,
@@ -441,6 +482,7 @@ module.exports = Object.freeze({
   aiTextTrainingUseId,
   isAiTextTrainingReportReason,
   normalizeAiTextTrainingActionId,
+  normalizeAiTextTrainingCosmetics,
   normalizeAiTextTrainingDocumentId,
   normalizeAiTextTrainingMode,
   normalizeAiTextTrainingPresetInput,

@@ -10593,6 +10593,7 @@ async function transferTargetIsPristine(uid, request) {
     aiTextTrainingUseSnapshot,
     aiTextTrainingReportSnapshot,
     aiTextTrainingProfileSnapshot,
+    aiTextTrainingPreferencesSnapshot,
     patronSnapshot,
     trainingProfileSnapshot,
     trainingClaimSnapshot,
@@ -10619,6 +10620,7 @@ async function transferTargetIsPristine(uid, request) {
     firestore.collection("aiTextTrainingUses").where("buyerUid", "==", uid).limit(1).get(),
     firestore.collection("aiTextTrainingReports").where("reporterUid", "==", uid).limit(1).get(),
     firestore.collection("aiTextTrainingSellerProfiles").doc(uid).get(),
+    firestore.collection("aiTextTrainingPreferences").doc(uid).get(),
     patronageRef(uid).get(),
     trainingProfileRef(uid).get(),
     firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
@@ -10671,6 +10673,7 @@ async function transferTargetIsPristine(uid, request) {
       || !aiTextTrainingPresetSnapshot.empty || !aiTextTrainingUseSnapshot.empty
       || !aiTextTrainingReportSnapshot.empty
       || aiTextTrainingProfileSnapshot.exists
+      || aiTextTrainingPreferencesSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
   return !soloProfileSnapshot.exists()
@@ -10818,6 +10821,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetAiTextTrainingUseSnapshot,
       targetAiTextTrainingReportSnapshot,
       targetAiTextTrainingProfileSnapshot,
+      targetAiTextTrainingPreferencesSnapshot,
       targetPatronSnapshot,
       targetTrainingProfileSnapshot,
       targetFamiliarBookSnapshot,
@@ -10845,6 +10849,7 @@ async function redeemAccountTransferCode(request, rawCode) {
           .limit(1),
       ),
       transaction.get(firestore.collection("aiTextTrainingSellerProfiles").doc(targetUid)),
+      transaction.get(firestore.collection("aiTextTrainingPreferences").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
       transaction.get(trainingProfileRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
@@ -10890,6 +10895,7 @@ async function redeemAccountTransferCode(request, rawCode) {
         || !targetAiTextTrainingUseSnapshot.empty
         || !targetAiTextTrainingReportSnapshot.empty
         || targetAiTextTrainingProfileSnapshot.exists
+        || targetAiTextTrainingPreferencesSnapshot.exists
         || targetTrainingProfile.sessions > 0
         || targetTrainingProfile.completedSets > 0
         || targetTrainingProfile.completedSeconds > 0
@@ -14860,6 +14866,7 @@ const aiTextTrainingService = createAiTextTrainingService({
   anjuPayEntryId,
   mirrorWallet,
   bestEffort,
+  ownedProductIds: ownedMarketProductIds,
 });
 
 exports.aiTextTrainingAction = onCall(

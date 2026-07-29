@@ -11,6 +11,8 @@ const client = read("ai-text-training.js");
 const html = read("index.html");
 const app = read("app.js");
 const styles = read("styles.css");
+const trainingStyles = read("ai-text-training.css");
+const cosmetics = read("ai-text-training-cosmetics.js");
 
 test("landing loads a separate solo mode and never routes it through Training 60", () => {
   assert.match(html, /ai-text-training\.css\?v=ai-text-training-v1/);
@@ -57,6 +59,82 @@ test("all three personalities, exact BPM boundary, and separate emergency stop a
   assert.match(client, /data-ai-text-training-reaction/);
   assert.match(client, /data-ai-text-training-action="emergency-stop"/);
   assert.match(client, /completeSession\("safety_stopped"\)/);
+});
+
+test("round duration extends safely to 60 seconds while keeping the 20-second default", () => {
+  assert.match(
+    client,
+    /const ROUND_SECONDS_OPTIONS = Object\.freeze\(\[15, 20, 30, 45, 60\]\)/,
+  );
+  assert.match(client, /roundSeconds: 20/);
+  assert.match(client, /1ラウンドは最大60秒[\s\S]*5ラウンドの運動時間は最大5分/);
+  assert.match(
+    client,
+    /id="aiTextTrainingEditorPreviewRemaining" type="number" min="1" max="60"/,
+  );
+  assert.match(client, /Math\.min\(60, Number\(event\.currentTarget\.value\)/);
+  assert.match(client, /if \(!ROUND_SECONDS_OPTIONS\.includes\(seconds\)\) return/);
+  assert.match(
+    client,
+    /state\.roundSeconds >= 45[\s\S]*?remainingSeconds === 30[\s\S]*?残り30秒です/,
+  );
+  assert.match(
+    client,
+    /function formatActiveDuration[\s\S]*?padStart\(2, "0"\)[\s\S]*?formatActiveDuration\(state\.completedActiveSeconds\)/,
+  );
+});
+
+test("partial elapsed time is counted once when a playing, paused, or countdown session ends", () => {
+  const elapsedStart = client.indexOf("function currentRoundElapsedSeconds");
+  const elapsedEnd = client.indexOf("function chooseReaction", elapsedStart);
+  const elapsed = client.slice(elapsedStart, elapsedEnd);
+  assert.match(elapsed, /Math\.max\(0, Math\.min\(roundMs, rawRemainingMs\)\)/);
+  assert.match(elapsed, /if \(state\.completedRounds > state\.roundIndex\) return/);
+  assert.match(elapsed, /state\.completedActiveSeconds \+= currentRoundElapsedSeconds\(\)/);
+  assert.match(elapsed, /function finishRound\(\)[\s\S]*?recordCurrentRoundElapsed\(\)/);
+
+  const completeStart = client.indexOf("function completeSession");
+  const completeEnd = client.indexOf("function emergencyStop", completeStart);
+  const complete = client.slice(completeStart, completeEnd);
+  assert.match(
+    complete,
+    /state\.remainingMs = Math\.max\(0, state\.roundEndsAt - performance\.now\(\)\)/,
+  );
+  assert.match(
+    complete,
+    /\["playing", "paused", "countdown"\]\.includes\(state\.phase\)[\s\S]*?recordCurrentRoundElapsed\(\)/,
+  );
+
+  const beginStart = client.indexOf("function beginRound");
+  const beginEnd = client.indexOf("function startRoundCountdown", beginStart);
+  assert.doesNotMatch(client.slice(beginStart, beginEnd), /lastAnnouncedSecond = null/);
+  assert.match(client, /function advanceRound\(\)[\s\S]*?lastAnnouncedSecond = null/);
+});
+
+test("training cosmetics are trial-only until server-verified equip and freeze per session", () => {
+  assert.match(cosmetics, /ai_training_style_soft_glow/);
+  assert.match(cosmetics, /ai_training_style_neon_beat/);
+  assert.match(cosmetics, /ai_training_style_stardust_stage/);
+  assert.match(cosmetics, /panelThemeId/);
+  assert.match(cosmetics, /messageDecorationId/);
+  assert.match(client, /name="aiTextTrainingCosmetic_\$\{slot\}"/);
+  assert.match(client, /未購入品もここで試着できますが、保存はされません/);
+  assert.match(client, /aiTextTrainingCosmeticsAreOwned/);
+  assert.match(client, /action: "save_cosmetics"/);
+  assert.match(client, /state\.sessionCosmetics = equippedCosmetics\(\)/);
+  assert.match(client, /cosmetics: state\.sessionCosmetics/);
+  assert.match(client, /data-att-panel-theme=/);
+  assert.match(client, /data-att-message-decoration=/);
+  assert.match(client, /ai-text-training-message-surface/);
+  assert.match(trainingStyles, /forced-colors:\s*active/);
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-cosmetic-actions \.button\s*\{\s*flex:\s*0 0 auto;\s*min-height:\s*48px;/,
+  );
+  assert.doesNotMatch(
+    trainingStyles,
+    /\[data-att-(?:panel-theme|message-decoration)[^\{]*\{[^}]*\.ai-text-training-(?:emergency|safety-controls)/,
+  );
 });
 
 test("paid one-use review shows balance, price, post-payment balance, and voluntariness", () => {

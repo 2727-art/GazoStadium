@@ -36,6 +36,7 @@ test("AI text training is an injected App Check callable service", () => {
     "anjuPayEntryId",
     "mirrorWallet",
     "bestEffort",
+    "ownedProductIds",
   ]) {
     assert.match(service, new RegExp(`"${dependency}"`));
   }
@@ -50,6 +51,7 @@ test("all dedicated persistence is callable-only and public responses reject UID
   for (const collection of [
     "aiTextTrainingPresets",
     "aiTextTrainingSellerProfiles",
+    "aiTextTrainingPreferences",
     "aiTextTrainingUses",
     "aiTextTrainingActiveUses",
     "aiTextTrainingPublishActions",
@@ -183,6 +185,7 @@ test("account transfer refuses a supposedly pristine target with solo-market his
     /firestore\.collection\("aiTextTrainingReports"\)\.where\("reporterUid", "==", uid\)\.limit\(1\)\.get\(\)/,
   );
   assert.match(index, /aiTextTrainingProfileSnapshot\.exists/);
+  assert.match(index, /aiTextTrainingPreferencesSnapshot\.exists/);
   assert.match(
     index,
     /transaction\.get\(\s*firestore\.collection\("aiTextTrainingPresets"\)[\s\S]*?\.where\("sellerUid", "==", targetUid\)[\s\S]*?\.limit\(1\)/,
@@ -196,4 +199,5 @@ test("account transfer refuses a supposedly pristine target with solo-market his
     /transaction\.get\(\s*firestore\.collection\("aiTextTrainingReports"\)[\s\S]*?\.where\("reporterUid", "==", targetUid\)[\s\S]*?\.limit\(1\)/,
   );
   assert.match(index, /targetAiTextTrainingProfileSnapshot\.exists/);
+  assert.match(index, /targetAiTextTrainingPreferencesSnapshot\.exists/);
 });

@@ -5,6 +5,7 @@ const {
   AI_TEXT_TRAINING_PRICE_OPTIONS,
   AI_TEXT_TRAINING_PUBLISH_FEE,
   AI_TEXT_TRAINING_SCHEMA_VERSION,
+  AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
   AI_TEXT_TRAINING_SUCCESS_FEE_BASIS_POINTS,
   aiTextTrainingActionDocumentId,
   aiTextTrainingJstDateKey,
@@ -21,6 +22,7 @@ const {
   aiTextTrainingUseId,
   isAiTextTrainingReportReason,
   normalizeAiTextTrainingActionId,
+  normalizeAiTextTrainingCosmetics,
   normalizeAiTextTrainingDocumentId,
   normalizeAiTextTrainingMode,
   normalizeAiTextTrainingPresetInput,
@@ -36,6 +38,7 @@ const AI_TEXT_TRAINING_ACTIONS = Object.freeze([
   "resume_use",
   "finish_use",
   "save_profile",
+  "save_cosmetics",
   "rankings",
   "report",
 ]);
@@ -55,6 +58,7 @@ const REQUIRED_DEPENDENCIES = Object.freeze([
   "anjuPayEntryId",
   "mirrorWallet",
   "bestEffort",
+  "ownedProductIds",
 ]);
 const PRIVATE_RESPONSE_FIELDS = Object.freeze(new Set([
   "uid",
@@ -104,6 +108,7 @@ function createAiTextTrainingService(deps) {
     anjuPayEntryId,
     mirrorWallet,
     bestEffort,
+    ownedProductIds,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -118,6 +123,7 @@ function createAiTextTrainingService(deps) {
     .collection("revisions")
     .doc(String(revision).padStart(8, "0"));
   const profileRef = (uid) => firestore.collection("aiTextTrainingSellerProfiles").doc(uid);
+  const preferencesRef = (uid) => firestore.collection("aiTextTrainingPreferences").doc(uid);
   const useRef = (useId) => firestore.collection("aiTextTrainingUses").doc(useId);
   const activeUseRef = (uid) => firestore.collection("aiTextTrainingActiveUses").doc(uid);
   const publishActionRef = (uid, actionId) => firestore
@@ -226,6 +232,24 @@ function createAiTextTrainingService(deps) {
       xPublic: xPublic && /^[A-Za-z0-9_]{1,15}$/.test(xHandle),
       xHandle: xPublic && /^[A-Za-z0-9_]{1,15}$/.test(xHandle) ? xHandle : "",
       updatedAt: safeInteger(source.updatedAt),
+    };
+  }
+
+  function publicCosmetics(value, ownedProductIdsValue = []) {
+    const source = value && typeof value === "object" ? value : {};
+    const owned = ownedProductIdsValue instanceof Set
+      ? ownedProductIdsValue
+      : new Set(Array.isArray(ownedProductIdsValue) ? ownedProductIdsValue : []);
+    const ownedStyleIds = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS.filter((id) => owned.has(id));
+    const allowed = new Set(ownedStyleIds);
+    const panelThemeId = allowed.has(source.panelThemeId) ? source.panelThemeId : "";
+    const messageDecorationId = allowed.has(source.messageDecorationId)
+      ? source.messageDecorationId
+      : "";
+    return {
+      panelThemeId,
+      messageDecorationId,
+      ownedStyleIds,
     };
   }
 
@@ -382,10 +406,20 @@ function createAiTextTrainingService(deps) {
   async function getState(uid, data = {}) {
     requireUid(uid);
     await ensureWallet(uid);
-    const [walletSnapshot, ownSnapshot, profileSnapshot, presets, activeUse] = await Promise.all([
+    const [
+      walletSnapshot,
+      ownSnapshot,
+      profileSnapshot,
+      preferencesSnapshot,
+      ownedProductIdsValue,
+      presets,
+      activeUse,
+    ] = await Promise.all([
       walletRef(uid).get(),
       presetsCollection().where("sellerUid", "==", uid).limit(3).get(),
       profileRef(uid).get(),
+      preferencesRef(uid).get(),
+      ownedProductIds(uid),
       getBrowsePresets(uid, data.modeId || ""),
       readActiveUse(uid),
     ]);
@@ -397,6 +431,7 @@ function createAiTextTrainingService(deps) {
         .map((document) => publicPreset({ id: document.id, ...document.data() }, uid))
         .sort((left, right) => left.modeId.localeCompare(right.modeId)),
       profile: publicProfile(profileSnapshot.data()),
+      cosmetics: publicCosmetics(preferencesSnapshot.data(), ownedProductIdsValue),
       activeUse,
       serverNow: currentTime(),
     };
@@ -407,6 +442,44 @@ function createAiTextTrainingService(deps) {
     return {
       presets: await getBrowsePresets(uid, data.modeId || ""),
       serverNow: currentTime(),
+    };
+  }
+
+  async function saveCosmetics(uid, data) {
+    requireUid(uid);
+    const allowedKeys = new Set(["action", "panelThemeId", "messageDecorationId"]);
+    if (!data || typeof data !== "object" || Array.isArray(data)
+        || Reflect.ownKeys(data).some((key) => !allowedKeys.has(key))) {
+      throw httpsError("invalid-argument", "トレーニング演出を選び直してください。");
+    }
+    let selected;
+    try {
+      selected = normalizeAiTextTrainingCosmetics(data);
+    } catch (error) {
+      throw mapHelperError(error);
+    }
+    const ownedProductIdsValue = await ownedProductIds(uid);
+    const owned = ownedProductIdsValue instanceof Set
+      ? ownedProductIdsValue
+      : new Set(Array.isArray(ownedProductIdsValue) ? ownedProductIdsValue : []);
+    for (const productId of [selected.panelThemeId, selected.messageDecorationId]) {
+      if (productId && !owned.has(productId)) {
+        throw httpsError(
+          "failed-precondition",
+          "未購入の演出は試着できますが、装着はできません。",
+        );
+      }
+    }
+    const stored = {
+      schemaVersion: 1,
+      panelThemeId: selected.panelThemeId,
+      messageDecorationId: selected.messageDecorationId,
+      updatedAt: currentTime(),
+    };
+    await preferencesRef(uid).set(stored);
+    return {
+      saved: true,
+      cosmetics: publicCosmetics(stored, owned),
     };
   }
 
@@ -1254,6 +1327,7 @@ function createAiTextTrainingService(deps) {
     if (action === "resume_use") result = await resumeUse(uid, data);
     if (action === "finish_use") result = await finishUse(uid, data);
     if (action === "save_profile") result = await saveProfile(uid, data);
+    if (action === "save_cosmetics") result = await saveCosmetics(uid, data);
     if (action === "rankings") result = await rankings(uid, data);
     if (action === "report") result = await report(uid, data);
     assertNoPrivateFields(result);
@@ -1269,6 +1343,7 @@ function createAiTextTrainingService(deps) {
     rankings,
     report,
     resumeUse,
+    saveCosmetics,
     saveProfile,
     startPaidUse,
     unpublish,

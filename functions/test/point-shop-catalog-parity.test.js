@@ -38,11 +38,15 @@ const COLLECTION_PRODUCT_IDS = Object.freeze([
 function parseProductRows(relativePaths) {
   const products = [];
   for (const relativePath of relativePaths) {
-    for (const line of read(relativePath).split(/\r?\n/)) {
-      const match = line.match(
-        /\{\s*id:\s*"([^"]+)",\s*type:\s*"([^"]+)"[^}]*\bprice:\s*(\d+)(?:\s*[,}])/,
-      );
-      if (match) products.push({ id: match[1], type: match[2], price: Number(match[3]) });
+    const source = read(relativePath);
+    for (const match of source.matchAll(
+      /\{\s*id:\s*"([^"]+)",\s*type:\s*"([^"]+)"[^}]*\bprice:\s*([\d_]+)(?:\s*[,}])/g,
+    )) {
+      products.push({
+        id: match[1],
+        type: match[2],
+        price: Number(match[3].replaceAll("_", "")),
+      });
     }
   }
   return products;
@@ -65,6 +69,7 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     "stamps.js",
     "player-titles.js",
     "chat-cosmetics.js",
+    "ai-text-training-cosmetics.js",
   ]);
   const online = read("online.js");
   const topMessageId = online.match(/const TOP_MESSAGE_PRODUCT_ID = "([^"]+)"/)?.[1];
@@ -87,7 +92,7 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
     .map(({ id, type, price }) => [id, type, price])
     .sort(([firstId], [secondId]) => firstId.localeCompare(secondId));
   assert.deepEqual(browserRows, serverRows);
-  assert.equal(browserRows.length, 126);
+  assert.equal(browserRows.length, 129);
 
   const rules = JSON.parse(read("database.rules.json")).rules;
   const economyRules = rules.online.economy["$uid"];
@@ -103,6 +108,32 @@ test("browser, Functions, and Realtime Database point-shop catalogs stay identic
   const equippedTitleIds = idsAllowedByValidation(economyRules.equipped.title[".validate"]);
   assert.deepEqual(equippedTitleIds, titleIds);
   assert.equal(titleIds.length, 55);
+});
+
+test("AI text training styles are permanent store unlocks with a guarded private equip flow", () => {
+  assert.deepEqual(serverCatalog.ai_training_style_soft_glow, {
+    id: "ai_training_style_soft_glow",
+    type: "aiTextTrainingStyle",
+    price: 300,
+  });
+  assert.deepEqual(serverCatalog.ai_training_style_neon_beat, {
+    id: "ai_training_style_neon_beat",
+    type: "aiTextTrainingStyle",
+    price: 500,
+  });
+  assert.deepEqual(serverCatalog.ai_training_style_stardust_stage, {
+    id: "ai_training_style_stardust_stage",
+    type: "aiTextTrainingStyle",
+    price: 1000,
+  });
+
+  const online = read("online.js");
+  assert.match(online, /文字コラトレーニング演出セット/);
+  assert.match(online, /買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放/);
+  assert.match(online, /窓とセリフを別々に組み合わせ可能/);
+  assert.match(online, /現在残高:[\s\S]*商品価格:[\s\S]*購入後残高:/);
+  assert.match(online, /応援台本の1回利用料とは別の商品/);
+  assert.match(online, /購入済み・文字コラ準備で選択/);
 });
 
 test("oshi activity collection has the agreed titles and only reuses valid shared products", () => {

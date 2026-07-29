@@ -2,6 +2,9 @@
 
 const PRODUCT_ROWS = [
   ["feature_top_message", "feature", 500],
+  ["ai_training_style_soft_glow", "aiTextTrainingStyle", 300],
+  ["ai_training_style_neon_beat", "aiTextTrainingStyle", 500],
+  ["ai_training_style_stardust_stage", "aiTextTrainingStyle", 1000],
   ["reaction_color", "reaction", 120],
   ["reaction_best_shot", "reaction", 150],
   ["reaction_composition", "reaction", 160],

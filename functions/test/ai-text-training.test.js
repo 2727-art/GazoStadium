@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const {
   AI_TEXT_TRAINING_SCRIPT_SLOT_IDS,
+  AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
   aiTextTrainingJstDateKey,
   aiTextTrainingJstMonthKey,
   aiTextTrainingPayloadHash,
@@ -15,6 +16,7 @@ const {
   aiTextTrainingSaleSettlement,
   aiTextTrainingUseId,
   normalizeAiTextTrainingPresetInput,
+  normalizeAiTextTrainingCosmetics,
   normalizeAiTextTrainingXHandle,
 } = require("../ai-text-training");
 
@@ -77,6 +79,31 @@ test("safe BPM-aware placeholders are retained", () => {
   lines.final_mid[0] = "あと{remaining}秒、呼吸も大切に";
   const normalized = normalizeAiTextTrainingPresetInput(validPreset({ lines }));
   assert.equal(normalized.lines.active_mid[0], "{bpm} BPM、ラウンド{round}を進もう");
+});
+
+test("training cosmetics keep the two slots independent and reject unknown products", () => {
+  const [softGlow, neonBeat] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;
+  assert.deepEqual(normalizeAiTextTrainingCosmetics({
+    panelThemeId: softGlow,
+    messageDecorationId: neonBeat,
+  }), {
+    panelThemeId: softGlow,
+    messageDecorationId: neonBeat,
+  });
+  assert.deepEqual(normalizeAiTextTrainingCosmetics({
+    panelThemeId: "",
+    messageDecorationId: "",
+  }), {
+    panelThemeId: "",
+    messageDecorationId: "",
+  });
+  assert.throws(
+    () => normalizeAiTextTrainingCosmetics({
+      panelThemeId: "unknown_style",
+      messageDecorationId: "",
+    }),
+    /画像ウィンドウ/,
+  );
 });
 
 test("pricing absorbs 20 percent with a one Pay minimum", () => {

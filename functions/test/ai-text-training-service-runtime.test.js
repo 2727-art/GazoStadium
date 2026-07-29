@@ -10,6 +10,9 @@ const {
 const {
   createAiTextTrainingService,
 } = require("../ai-text-training-service");
+const {
+  AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
+} = require("../ai-text-training");
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
@@ -247,6 +250,7 @@ function publishInput(actionId, overrides = {}) {
 
 function createHarness({
   balances = {},
+  ownedProducts = {},
   maximumBalance = 1_000,
   now = Date.parse("2026-07-29T03:00:00.000Z"),
 } = {}) {
@@ -311,6 +315,7 @@ function createHarness({
     bestEffort: async (_label, operations) => {
       await Promise.allSettled(operations);
     },
+    ownedProductIds: async (uid) => new Set(ownedProducts[uid] || []),
     now: () => clock,
   });
   return {
@@ -336,6 +341,43 @@ async function publishPreset(harness, overrides = {}) {
   );
   return result.preset;
 }
+
+test("private cosmetics can mix owned styles and reject an unowned trial", async () => {
+  const [softGlow, neonBeat, stardustStage] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;
+  const harness = createHarness({
+    balances: { player: 0 },
+    ownedProducts: { player: [softGlow, neonBeat] },
+  });
+  const saved = await harness.service.performAction("player", {
+    action: "save_cosmetics",
+    panelThemeId: softGlow,
+    messageDecorationId: neonBeat,
+  });
+  assert.deepEqual(saved.cosmetics, {
+    panelThemeId: softGlow,
+    messageDecorationId: neonBeat,
+    ownedStyleIds: [softGlow, neonBeat],
+  });
+  assert.deepEqual(
+    harness.firestore.read("aiTextTrainingPreferences/player"),
+    {
+      schemaVersion: 1,
+      panelThemeId: softGlow,
+      messageDecorationId: neonBeat,
+      updatedAt: Date.parse("2026-07-29T03:00:00.000Z"),
+    },
+  );
+  const state = await harness.service.performAction("player", { action: "state" });
+  assert.deepEqual(state.cosmetics, saved.cosmetics);
+  await assert.rejects(
+    harness.service.performAction("player", {
+      action: "save_cosmetics",
+      panelThemeId: stardustStage,
+      messageDecorationId: "",
+    }),
+    (error) => error.code === "failed-precondition" && /未購入/.test(error.message),
+  );
+});
 
 test("publishing charges one Pay once and fixes an immutable revision", async () => {
   const harness = createHarness({ balances: { seller: 20 } });

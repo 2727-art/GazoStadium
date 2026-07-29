@@ -41,6 +41,12 @@ import {
   renderAiTextTrainingLine,
 } from "./ai-text-training-core.mjs?v=ai-text-training-core-v1";
 import {
+  AI_TEXT_TRAINING_STYLE_PRODUCTS,
+  aiTextTrainingCosmeticsAreOwned,
+  getAiTextTrainingStyleProduct,
+  normalizeAiTextTrainingCosmetics,
+} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v1";
+import {
   createFreeTableAmbienceController,
 } from "./free-table-ambience.mjs?v=free-table-ambience-v1";
 
@@ -73,7 +79,7 @@ const REPORT_REASONS = Object.freeze([
   Object.freeze({ id: "external", label: "外部連絡・外部取引への誘導" }),
   Object.freeze({ id: "other", label: "その他" }),
 ]);
-const ROUND_SECONDS_OPTIONS = Object.freeze([15, 20, 30]);
+const ROUND_SECONDS_OPTIONS = Object.freeze([15, 20, 30, 45, 60]);
 const DEFAULT_BPMS = Object.freeze([80, 90, 100, 110, 120]);
 const DEFAULT_POLICY = Object.freeze({
   prices: Object.freeze([5, 10, 25]),
@@ -184,6 +190,14 @@ function createState() {
     marketPresets: [],
     ownPresets: [],
     profile: { xPublic: false, xHandle: "" },
+    cosmetics: {
+      panelThemeId: "",
+      messageDecorationId: "",
+      ownedStyleIds: [],
+    },
+    cosmeticDraft: null,
+    cosmeticBusy: false,
+    sessionCosmetics: null,
     activeUse: null,
     selectedPreset: normalizeAiTextTrainingScriptSnapshot(
       AI_TEXT_TRAINING_BUILTIN_SCRIPTS.mama,
@@ -333,6 +347,7 @@ function persistSession() {
     sessionStartedAt: state.sessionStartedAt,
     selectedPreset: state.selectedPreset,
     selectedPresetSource: state.selectedPresetSource,
+    cosmetics: state.sessionCosmetics,
     resultOutcome: state.resultOutcome,
     updatedAt: Date.now(),
   };
@@ -471,6 +486,52 @@ function selectedPresetForMode() {
   return state.selectedPreset;
 }
 
+function normalizeServerCosmetics(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const ownedStyleIds = AI_TEXT_TRAINING_STYLE_PRODUCTS
+    .map((product) => product.id)
+    .filter((productId) => Array.isArray(source.ownedStyleIds)
+      && source.ownedStyleIds.includes(productId));
+  return {
+    ...normalizeAiTextTrainingCosmetics(source, { ownedStyleIds }),
+    ownedStyleIds,
+  };
+}
+
+function equippedCosmetics() {
+  return normalizeAiTextTrainingCosmetics(state.cosmetics, {
+    ownedStyleIds: state.cosmetics?.ownedStyleIds,
+  });
+}
+
+function previewCosmetics() {
+  return state.cosmeticDraft
+    ? normalizeAiTextTrainingCosmetics(state.cosmeticDraft, { allowUnowned: true })
+    : equippedCosmetics();
+}
+
+function activeCosmetics() {
+  if (["play", "result"].includes(state.screen) && state.sessionCosmetics) {
+    return normalizeAiTextTrainingCosmetics(state.sessionCosmetics, {
+      ownedStyleIds: state.cosmetics?.ownedStyleIds,
+    });
+  }
+  if (state.screen === "setup") return previewCosmetics();
+  return equippedCosmetics();
+}
+
+function cosmeticDataAttributes(value = activeCosmetics()) {
+  const cosmetics = normalizeAiTextTrainingCosmetics(value, { allowUnowned: true });
+  return `data-att-panel-theme="${escapeHtml(cosmetics.panelThemeId || "default")}" data-att-message-decoration="${escapeHtml(cosmetics.messageDecorationId || "default")}"`;
+}
+
+function sameCosmetics(left, right) {
+  const normalizedLeft = normalizeAiTextTrainingCosmetics(left, { allowUnowned: true });
+  const normalizedRight = normalizeAiTextTrainingCosmetics(right, { allowUnowned: true });
+  return normalizedLeft.panelThemeId === normalizedRight.panelThemeId
+    && normalizedLeft.messageDecorationId === normalizedRight.messageDecorationId;
+}
+
 function previewImageData(index) {
   const colors = ["#ff6f91", "#8f7cff", "#50d6c7", "#f6b84b", "#ff875f"];
   const label = `IMAGE ${index + 1}`;
@@ -482,6 +543,18 @@ function installPreview(requestedScreen) {
   state.authReady = true;
   state.uid = "preview-player";
   state.balance = 120;
+  state.cosmetics = {
+    panelThemeId: "ai_training_style_soft_glow",
+    messageDecorationId: "ai_training_style_neon_beat",
+    ownedStyleIds: [
+      "ai_training_style_soft_glow",
+      "ai_training_style_neon_beat",
+    ],
+  };
+  state.cosmeticDraft = {
+    panelThemeId: "ai_training_style_stardust_stage",
+    messageDecorationId: "ai_training_style_neon_beat",
+  };
   state.policy = { ...DEFAULT_POLICY, prices: [...DEFAULT_POLICY.prices] };
   state.images = Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => ({
     id: `preview-${index}`,
@@ -538,6 +611,7 @@ function installPreview(requestedScreen) {
     state.pendingPaidPreset = samplePreset;
   }
   if (["play", "reaction", "result"].includes(requestedScreen)) {
+    state.sessionCosmetics = equippedCosmetics();
     state.plan = createAiTextTrainingPlan({ modeId: "mama", bpms: state.bpms });
     state.screen = requestedScreen === "result" ? "result" : "play";
     state.phase = requestedScreen === "reaction" ? "reaction" : "paused";
@@ -572,6 +646,7 @@ async function initializeAuthenticatedState(targetState = state) {
     targetState.marketPresets = Array.isArray(data.presets) ? data.presets : [];
     targetState.ownPresets = Array.isArray(data.ownPresets) ? data.ownPresets : [];
     targetState.profile = data.profile || targetState.profile;
+    targetState.cosmetics = normalizeServerCosmetics(data.cosmetics);
     targetState.activeUse = data.activeUse || null;
     targetState.authReady = true;
     targetState.authError = "";
@@ -647,6 +722,12 @@ function recoverPaidSession() {
     state.selectedPreset = presetSnapshot(state.activeUse.preset);
     state.selectedPresetSource = "active_use";
     state.paidUseId = state.activeUse.id;
+    state.sessionCosmetics = normalizeAiTextTrainingCosmetics(
+      saved.cosmetics || equippedCosmetics(),
+      {
+      ownedStyleIds: state.cosmetics?.ownedStyleIds,
+      },
+    );
     if (saved.resultOutcome) {
       state.resultOutcome = saved.resultOutcome;
       state.screen = "result";
@@ -702,7 +783,7 @@ function renderFrame(content, {
   backLabel = "トップへ戻る",
   backAction = "home",
 } = {}) {
-  return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}">
+  return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" ${cosmeticDataAttributes()}>
     <header class="ai-text-training-header">
       <div><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1></div>
       <button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}">${escapeHtml(backLabel)}</button>
@@ -771,6 +852,79 @@ function activeUseBanner() {
   </aside>`;
 }
 
+function cosmeticOptionHtml(slot, product = null) {
+  const selection = previewCosmetics();
+  const productId = product?.id || "";
+  const selected = selection[slot] === productId;
+  const owned = !productId || state.cosmetics.ownedStyleIds.includes(productId);
+  const isPanel = slot === "panelThemeId";
+  const label = product
+    ? (isPanel ? product.panelLabel : product.messageLabel)
+    : (isPanel ? "標準ウィンドウ" : "標準メッセージ");
+  const description = product
+    ? product.name
+    : "最初から使えるシンプルな見た目";
+  const badge = !productId ? "FREE" : owned ? "OWNED" : "試着";
+  return `<label class="ai-text-training-cosmetic-option ${selected ? "is-selected" : ""} ${owned ? "" : "is-locked"}">
+    <input type="radio" name="aiTextTrainingCosmetic_${slot}" value="${escapeHtml(productId)}" ${selected ? "checked" : ""} ${state.cosmeticBusy ? "disabled" : ""} />
+    <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(description)}</small></span>
+    <em class="ai-text-training-cosmetic-badge">${escapeHtml(badge)}</em>
+  </label>`;
+}
+
+function renderCosmeticsPanel() {
+  const selection = previewCosmetics();
+  const equipped = equippedCosmetics();
+  const draftChanged = Boolean(state.cosmeticDraft) && !sameCosmetics(selection, equipped);
+  const selectionOwned = aiTextTrainingCosmeticsAreOwned(
+    selection,
+    state.cosmetics.ownedStyleIds,
+  );
+  const selectedPanel = getAiTextTrainingStyleProduct(selection.panelThemeId);
+  const selectedMessage = getAiTextTrainingStyleProduct(selection.messageDecorationId);
+  const saveDisabled = !state.authReady
+    || state.cosmeticBusy
+    || !draftChanged
+    || !selectionOwned;
+  const saveLabel = state.cosmeticBusy
+    ? "装着を保存中…"
+    : !selectionOwned
+      ? "未購入のため装着できません"
+      : draftChanged
+        ? "この組み合わせを装着"
+        : "装着済み";
+  return `<section class="ai-text-training-panel ai-text-training-cosmetics-panel">
+    <div class="ai-text-training-section-heading"><span>STEP 4</span><h2>トレーニングルームを飾る</h2><em>買い切り演出</em></div>
+    <div class="ai-text-training-cosmetics-layout">
+      <div class="ai-text-training-cosmetic-controls">
+        <fieldset class="ai-text-training-cosmetic-slot">
+          <legend>画像ウィンドウ</legend>
+          <div class="ai-text-training-cosmetic-options">${[null, ...AI_TEXT_TRAINING_STYLE_PRODUCTS].map((product) => cosmeticOptionHtml("panelThemeId", product)).join("")}</div>
+        </fieldset>
+        <fieldset class="ai-text-training-cosmetic-slot">
+          <legend>応援メッセージ</legend>
+          <div class="ai-text-training-cosmetic-options">${[null, ...AI_TEXT_TRAINING_STYLE_PRODUCTS].map((product) => cosmeticOptionHtml("messageDecorationId", product)).join("")}</div>
+        </fieldset>
+      </div>
+      <div class="ai-text-training-cosmetic-preview" ${cosmeticDataAttributes(selection)}>
+        <span>PRIVATE TRAINING PREVIEW</span>
+        <div class="ai-text-training-cosmetic-preview-window">
+          <div><span>ROUND 1 / 5</span><strong>80 BPM</strong></div>
+          <em>20</em>
+          <p class="ai-text-training-cosmetic-preview-message ai-text-training-message-surface">今日の気分で、一緒に始めよう</p>
+        </div>
+        <dl><div><dt>窓</dt><dd>${escapeHtml(selectedPanel?.panelLabel || "標準ウィンドウ")}</dd></div><div><dt>セリフ</dt><dd>${escapeHtml(selectedMessage?.messageLabel || "標準メッセージ")}</dd></div></dl>
+      </div>
+    </div>
+    <div class="ai-text-training-cosmetic-actions">
+      <button class="button button-primary" type="button" data-ai-text-training-action="save-cosmetics" ${saveDisabled ? "disabled" : ""}>${escapeHtml(saveLabel)}</button>
+      ${state.cosmeticDraft ? '<button class="button button-ghost" type="button" data-ai-text-training-action="cancel-cosmetics">試着を取り消す</button>' : ""}
+    </div>
+    <p class="ai-text-training-cosmetic-note">未購入品もここで試着できますが、保存はされません。購入はトップのAnjuPayストアから。購入済みの窓とセリフは別々に組み合わせて何度でも変更できます。</p>
+    <p class="ai-text-training-mode-note">演出は見た目だけです。BPM・運動時間・結果・即停止などの安全操作は変わりません。</p>
+  </section>`;
+}
+
 function renderSetup() {
   const imagesReady = state.images.every(Boolean);
   const script = selectedPresetForMode();
@@ -779,6 +933,8 @@ function renderSetup() {
     : Number(script.price || 0) > 0 && state.selectedPresetSource === "market"
       ? `${formatAnjuPay(script.price)}で1回使って開始`
       : "無料で5ラウンド開始";
+  const startReady = imagesReady && !state.cosmeticDraft;
+  const displayedStartCopy = state.cosmeticDraft ? "試着を確定して開始" : startCopy;
   const todayComplete = readLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`) === "true";
   return renderFrame(`
     <div class="ai-text-training-setup-intro">
@@ -811,9 +967,11 @@ function renderSetup() {
         <label>運動<select id="aiTextTrainingExercise">${AI_TEXT_TRAINING_EXERCISES.map((exercise) => `<option value="${exercise.id}" ${state.exerciseId === exercise.id ? "selected" : ""}>${escapeHtml(exercise.label)}</option>`).join("")}</select><small>${escapeHtml(aiTextTrainingExercise(state.exerciseId).cue)}</small></label>
         <fieldset><legend>1ラウンド</legend><div>${ROUND_SECONDS_OPTIONS.map((seconds) => `<label><input type="radio" name="aiTextTrainingRoundSeconds" value="${seconds}" ${state.roundSeconds === seconds ? "checked" : ""} /><span>${seconds}秒</span></label>`).join("")}</div></fieldset>
       </div>
+      <p class="ai-text-training-mode-note">1ラウンドは最大60秒。5ラウンドの運動時間は最大5分です（3秒カウントと、自分で次へ進むまでの休憩は含みません）。</p>
     </section>
+    ${renderCosmeticsPanel()}
     <section class="ai-text-training-panel">
-      <div class="ai-text-training-section-heading"><span>STEP 4</span><h2>応援台本</h2><em>1セッション単位</em></div>
+      <div class="ai-text-training-section-heading"><span>STEP 5</span><h2>応援台本</h2><em>1セッション単位</em></div>
       ${selectedSupportHtml()}
       <div class="ai-text-training-support-actions">
         <button class="button button-ghost" type="button" data-ai-text-training-action="builtin-support">無料の標準応援</button>
@@ -824,8 +982,8 @@ function renderSetup() {
       <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用し、開始後に自主終了・即停止した場合も使い切りです。</p>
     </section>
     <section class="ai-text-training-start-panel">
-      <div><strong>${imagesReady ? "5枚の準備OK" : `あと${5 - state.images.filter(Boolean).length}枚`}</strong><small>痛み・めまい・息苦しさ・体調不良がある時は開始せず、運動中は即停止してください。</small></div>
-      <button class="button button-primary ai-text-training-start" type="button" data-ai-text-training-action="start-session" ${imagesReady ? "" : "disabled"}>${escapeHtml(startCopy)}</button>
+      <div><strong>${state.cosmeticDraft ? "演出を試着中" : imagesReady ? "5枚の準備OK" : `あと${5 - state.images.filter(Boolean).length}枚`}</strong><small>痛み・めまい・息苦しさ・体調不良がある時は開始せず、運動中は即停止してください。</small></div>
+      <button class="button button-primary ai-text-training-start" type="button" data-ai-text-training-action="start-session" ${startReady ? "" : "disabled"}>${escapeHtml(displayedStartCopy)}</button>
     </section>
   `);
 }
@@ -966,7 +1124,7 @@ function renderEditor() {
         <div class="ai-text-training-simulator-controls">
           <label>場面<select id="aiTextTrainingEditorPreviewPhase"><option value="active" ${state.editorPreview.phase === "active" ? "selected" : ""}>運動中</option><option value="start" ${state.editorPreview.phase === "start" ? "selected" : ""}>開始</option><option value="transition" ${state.editorPreview.phase === "transition" ? "selected" : ""}>テンポ変化</option><option value="rest" ${state.editorPreview.phase === "rest" ? "selected" : ""}>休憩</option><option value="clear" ${state.editorPreview.phase === "clear" ? "selected" : ""}>完走</option></select></label>
           <label>BPM<input id="aiTextTrainingEditorPreviewBpm" type="number" min="0" max="160" value="${state.editorPreview.bpm}" /></label>
-          <label>残り秒<input id="aiTextTrainingEditorPreviewRemaining" type="number" min="1" max="30" value="${state.editorPreview.remaining}" /></label>
+          <label>残り秒<input id="aiTextTrainingEditorPreviewRemaining" type="number" min="1" max="60" value="${state.editorPreview.remaining}" /></label>
           <label>変化<select id="aiTextTrainingEditorPreviewDirection"><option value="down" ${state.editorPreview.direction === "down" ? "selected" : ""}>遅くなる</option><option value="same" ${state.editorPreview.direction === "same" ? "selected" : ""}>同じ・FREE</option><option value="up" ${state.editorPreview.direction === "up" ? "selected" : ""}>速くなる</option></select></label>
         </div>
         <blockquote id="aiTextTrainingEditorPreviewMessage">${escapeHtml(editorSimulatorMessage(draft))}</blockquote>
@@ -1052,6 +1210,16 @@ function tempoCopy(bpm) {
   return bpm === 0 ? "FREE RHYTHM" : `${bpm} BPM · ${aiTextTrainingTempoBand(bpm).toUpperCase()}`;
 }
 
+function trainingMood() {
+  if (state.screen === "result") {
+    return state.resultOutcome === "safety_stopped" ? "safety" : "clear";
+  }
+  if (["reaction", "next_preview", "paused"].includes(state.phase)) return "rest";
+  if (state.phase === "countdown") return "ready";
+  if (state.phase === "playing" && state.remainingMs <= 5_000) return "final";
+  return "active";
+}
+
 function renderPlayingImage() {
   const image = state.images[state.roundIndex];
   return image
@@ -1108,8 +1276,8 @@ function renderPlay() {
   } else if (state.phase === "next_preview") {
     const nextBpm = Number(state.plan.effectiveBpms[state.roundIndex + 1] ?? 0);
     center = `<section class="ai-text-training-next-preview">
-      <span>NEXT ROUND ${state.roundIndex + 2}</span><h2>${escapeHtml(tempoCopy(nextBpm))}</h2><blockquote>${escapeHtml(transitionMessage())}</blockquote>
-      <p>${escapeHtml(restMessage())}</p>
+      <span>NEXT ROUND ${state.roundIndex + 2}</span><h2>${escapeHtml(tempoCopy(nextBpm))}</h2><blockquote class="ai-text-training-message-surface">${escapeHtml(transitionMessage())}</blockquote>
+      <p class="ai-text-training-message-surface">${escapeHtml(restMessage())}</p>
       <small>メトロノームはまだ停止中です。自分で次へ進むまで休めます。</small>
       <button class="button button-primary" type="button" data-ai-text-training-action="next-round">3秒後に次のラウンド</button>
     </section>`;
@@ -1121,12 +1289,12 @@ function renderPlay() {
       <div class="ai-text-training-round-top"><span>ROUND ${state.roundIndex + 1} / 5</span><strong>${escapeHtml(tempoCopy(bpm))}</strong></div>
       <div class="ai-text-training-timer"><strong id="aiTextTrainingRemaining">${remainingSeconds}</strong><small>SEC</small></div>
       <div class="ai-text-training-progress" aria-hidden="true"><i id="aiTextTrainingProgress" style="width:${Math.max(0, Math.min(100, (state.remainingMs / (state.roundSeconds * 1_000)) * 100))}%"></i></div>
-      <div class="ai-text-training-cheer" id="aiTextTrainingCheer">${escapeHtml(state.currentMessage || "準備できたら、自分のペースで")}</div>
+      <div class="ai-text-training-cheer ai-text-training-message-surface" id="aiTextTrainingCheer">${escapeHtml(state.currentMessage || "準備できたら、自分のペースで")}</div>
       <div class="ai-text-training-exercise"><strong>${escapeHtml(exercise.label)}</strong><small>${escapeHtml(exercise.cue)}</small></div>
     </div>`;
   }
   return renderFrame(`
-    <section class="ai-text-training-arena ${state.phase === "countdown" ? "is-countdown" : ""}">
+    <section class="ai-text-training-arena ${state.phase === "countdown" ? "is-countdown" : ""}" data-att-mood="${escapeHtml(trainingMood())}" data-att-tempo="${escapeHtml(aiTextTrainingTempoBand(bpm))}">
       <div class="ai-text-training-opponent">${renderPlayingImage()}<div class="ai-text-training-vignette" aria-hidden="true"></div></div>
       ${center}
       <div class="ai-text-training-safety-controls">
@@ -1146,6 +1314,14 @@ function resultTitle() {
   return "ここでトレーニング終了";
 }
 
+function formatActiveDuration(value) {
+  const totalSeconds = Math.max(0, Math.round(Number(value) || 0));
+  if (totalSeconds < 60) return `${totalSeconds}秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}分${seconds}秒`;
+}
+
 function renderResult() {
   const completedRounds = state.resultOutcome === "completed"
     ? AI_TEXT_TRAINING_ROUND_COUNT
@@ -1155,8 +1331,8 @@ function renderResult() {
       <span>${state.resultOutcome === "completed" ? "SESSION CLEAR" : "SESSION ENDED"}</span>
       <h2>${escapeHtml(resultTitle())}</h2>
       <p>${state.resultOutcome === "safety_stopped" ? "止まる判断は失敗ではありません。体調が戻らない場合は運動を再開しないでください。" : "動作の回数やフォームは判定していません。実際に到達した範囲だけを記録します。"}</p>
-      ${state.resultOutcome === "completed" ? `<blockquote>${escapeHtml(clearMessage())}</blockquote>` : ""}
-      <dl><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${Math.max(0, Math.round(state.completedActiveSeconds))}秒</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
+      ${state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
+      <dl><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
       ${state.finishPending ? `<p class="ai-text-training-pending">${state.finishInFlight ? "有料利用の終了記録を送信中です。" : "有料利用の終了記録を確認できませんでした。再送してください。"}追加請求はありません。</p>` : ""}
       <div><button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "5枚を残してもう一度"}</button>${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
       <small>水分を取り、必要なら十分に休んでください。</small>
@@ -1425,6 +1601,7 @@ function validateDeck() {
 
 function newSessionPlan() {
   const bpms = validateDeck();
+  state.sessionCosmetics = equippedCosmetics();
   state.plan = createAiTextTrainingPlan({
     modeId: state.modeId,
     bpms,
@@ -1432,6 +1609,7 @@ function newSessionPlan() {
   });
   state.roundIndex = 0;
   state.remainingMs = state.roundSeconds * 1_000;
+  state.lastAnnouncedSecond = null;
   state.completedActiveSeconds = 0;
   state.completedRounds = 0;
   state.sessionStartedAt = Date.now();
@@ -1441,6 +1619,9 @@ function newSessionPlan() {
 
 function prepareStartSession() {
   validateDeck();
+  if (state.cosmeticDraft) {
+    throw new Error("演出を試着中です。「この組み合わせを装着」または「試着を取り消す」を選んでください。");
+  }
   if (state.activeUse?.preset) {
     state.modeId = state.activeUse.preset.modeId;
     state.marketModeFilter = state.modeId;
@@ -1477,6 +1658,49 @@ function prepareStartSession() {
   state.screen = "play";
   persistSession();
   render();
+}
+
+async function saveCosmetics() {
+  const selection = previewCosmetics();
+  if (!state.cosmeticDraft || sameCosmetics(selection, equippedCosmetics())) {
+    state.cosmeticDraft = null;
+    render();
+    return;
+  }
+  if (!aiTextTrainingCosmeticsAreOwned(selection, state.cosmetics.ownedStyleIds)) {
+    throw new Error("未購入の演出は試着できますが、装着はできません。AnjuPayストアで購入してください。");
+  }
+  if (!state.authReady) {
+    throw new Error("市場との接続を確認できないため、装着を保存できません。");
+  }
+  if (state.preview) {
+    state.cosmetics = {
+      ...selection,
+      ownedStyleIds: [...state.cosmetics.ownedStyleIds],
+    };
+    state.cosmeticDraft = null;
+    showToast("プレビュー上で装着しました。");
+    render();
+    return;
+  }
+  state.cosmeticBusy = true;
+  render();
+  try {
+    const response = await aiTextTrainingAction({
+      action: "save_cosmetics",
+      panelThemeId: selection.panelThemeId,
+      messageDecorationId: selection.messageDecorationId,
+    });
+    if (!active) return;
+    state.cosmetics = normalizeServerCosmetics(response.data?.cosmetics);
+    state.cosmeticDraft = null;
+    showToast("トレーニング演出を装着しました。次のセッションから固定して使います。");
+  } finally {
+    if (active) {
+      state.cosmeticBusy = false;
+      render();
+    }
+  }
 }
 
 async function confirmPaidUse() {
@@ -1624,6 +1848,16 @@ function updatePlayingDom() {
   if (timer) timer.textContent = String(remainingSeconds);
   const progress = document.querySelector("#aiTextTrainingProgress");
   if (progress) progress.style.width = `${Math.max(0, (state.remainingMs / (state.roundSeconds * 1_000)) * 100)}%`;
+  const arena = document.querySelector(".ai-text-training-arena");
+  if (arena) arena.dataset.attMood = remainingSeconds <= 5 ? "final" : "active";
+  if (
+    state.roundSeconds >= 45
+    && remainingSeconds === 30
+    && state.lastAnnouncedSecond !== 30
+  ) {
+    state.lastAnnouncedSecond = 30;
+    announce(`ラウンド${state.roundIndex + 1}、残り30秒です。`);
+  }
   if (remainingSeconds === 5 && state.lastAnnouncedSecond !== 5) {
     state.lastAnnouncedSecond = 5;
     announce(`ラウンド${state.roundIndex + 1}、残り5秒です。`);
@@ -1637,7 +1871,6 @@ function beginRound() {
   state.countdownTimer = null;
   state.phase = "playing";
   state.roundEndsAt = performance.now() + state.remainingMs;
-  state.lastAnnouncedSecond = null;
   render();
   announce(`ラウンド${state.roundIndex + 1}を開始します。${tempoCopy(currentBpm())}です。`);
   supportMessage({ initial: true });
@@ -1680,13 +1913,23 @@ function pauseSession({ fromVisibility = false } = {}) {
   if (fromVisibility) announce("画面が非表示になったため一時停止しました。");
 }
 
+function currentRoundElapsedSeconds() {
+  const roundMs = Math.max(0, (Number(state.roundSeconds) || 0) * 1_000);
+  const rawRemainingMs = Number(state.remainingMs);
+  const remainingMs = Number.isFinite(rawRemainingMs)
+    ? Math.max(0, Math.min(roundMs, rawRemainingMs))
+    : roundMs;
+  return (roundMs - remainingMs) / 1_000;
+}
+
+function recordCurrentRoundElapsed() {
+  if (state.completedRounds > state.roundIndex) return;
+  state.completedActiveSeconds += currentRoundElapsedSeconds();
+}
+
 function finishRound() {
   if (state.phase !== "playing") return;
-  const playedSeconds = Math.max(
-    0,
-    state.roundSeconds - (state.remainingMs / 1_000),
-  );
-  state.completedActiveSeconds += playedSeconds;
+  recordCurrentRoundElapsed();
   state.completedRounds = Math.max(state.completedRounds, state.roundIndex + 1);
   state.remainingMs = 0;
   stopRuntimeTimers();
@@ -1717,6 +1960,7 @@ function chooseReaction(reactionId) {
 function advanceRound() {
   state.roundIndex += 1;
   state.remainingMs = state.roundSeconds * 1_000;
+  state.lastAnnouncedSecond = null;
   state.phase = "paused";
   persistSession();
   startRoundCountdown();
@@ -1762,8 +2006,10 @@ async function retryFinishPaidUse() {
 
 function completeSession(outcome) {
   if (state.phase === "playing" && state.roundEndsAt) {
-    const unplayedSeconds = Math.max(0, state.remainingMs / 1_000);
-    state.completedActiveSeconds += Math.max(0, state.roundSeconds - unplayedSeconds);
+    state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+  }
+  if (["playing", "paused", "countdown"].includes(state.phase)) {
+    recordCurrentRoundElapsed();
   }
   stopRuntimeTimers();
   state.ambienceController.disable();
@@ -1806,6 +2052,7 @@ function resetForAnotherSession() {
   state.screen = "setup";
   state.phase = "idle";
   state.plan = null;
+  state.sessionCosmetics = null;
   state.roundIndex = 0;
   state.remainingMs = state.roundSeconds * 1_000;
   state.completedRounds = 0;
@@ -1911,8 +2158,24 @@ function bindEvents() {
   });
   document.querySelectorAll('input[name="aiTextTrainingRoundSeconds"]').forEach((input) => {
     input.addEventListener("change", () => {
-      state.roundSeconds = Number(input.value);
+      const seconds = Number(input.value);
+      if (!ROUND_SECONDS_OPTIONS.includes(seconds)) return;
+      state.roundSeconds = seconds;
       state.remainingMs = state.roundSeconds * 1_000;
+      render();
+    });
+  });
+  document.querySelectorAll('input[name^="aiTextTrainingCosmetic_"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      const slot = input.name.replace("aiTextTrainingCosmetic_", "");
+      if (!["panelThemeId", "messageDecorationId"].includes(slot)) return;
+      const nextSelection = {
+        ...previewCosmetics(),
+        [slot]: input.value,
+      };
+      state.cosmeticDraft = sameCosmetics(nextSelection, equippedCosmetics())
+        ? null
+        : nextSelection;
       render();
     });
   });
@@ -2043,6 +2306,11 @@ function bindEvents() {
         showToast(error?.message || "開始準備を確認してください。");
       }
     },
+    "save-cosmetics": saveCosmetics,
+    "cancel-cosmetics": () => {
+      state.cosmeticDraft = null;
+      render();
+    },
     "resume-paid": () => {
       if (!state.activeUse) return;
       state.modeId = state.activeUse.preset.modeId;
@@ -2124,7 +2392,7 @@ function bindEvents() {
     if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
   });
   document.querySelector("#aiTextTrainingEditorPreviewRemaining")?.addEventListener("input", (event) => {
-    state.editorPreview.remaining = Math.max(1, Math.min(30, Number(event.currentTarget.value) || 10));
+    state.editorPreview.remaining = Math.max(1, Math.min(60, Number(event.currentTarget.value) || 10));
     const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
     if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
   });

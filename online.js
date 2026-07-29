@@ -45,6 +45,9 @@ import {
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 import {
+  AI_TEXT_TRAINING_STYLE_PRODUCTS,
+} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v1";
+import {
   PLAYER_TITLE_CATEGORIES,
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitleCategory,
@@ -378,6 +381,7 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
 });
 const SHOP_PRODUCTS = [
   { id: TOP_MESSAGE_PRODUCT_ID, type: "feature", name: "推しカード プレミアム仕上げ", description: "無料の推しカードでホログラム、スターダスト、ロイヤル箔を何度でも使える買い切り機能", price: 500 },
+  ...AI_TEXT_TRAINING_STYLE_PRODUCTS,
   { id: "reaction_color", type: "reaction", name: "カラーパレット", reaction: "色づかいが好き！", description: "色の組み合わせを褒める追加リアクション", price: 120 },
   { id: "reaction_best_shot", type: "reaction", name: "ベストショット", reaction: "最高の一枚！", description: "力強く褒める追加リアクション", price: 150 },
   { id: "reaction_composition", type: "reaction", name: "コンポジション", reaction: "構図がうまい！", description: "画面構成に注目した追加リアクション", price: 160 },
@@ -3725,10 +3729,14 @@ function renderPointShop() {
         ? `<span class="player-title-badge shop-title-preview ${titlePresentation?.className || ""}"><span aria-hidden="true">${escapeHtml(titlePresentation?.icon || "◆")}</span>${escapeHtml(product.title)}</span>`
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
+          : product.type === "aiTextTrainingStyle"
+            ? `<div class="shop-ai-training-style-preview" data-att-panel-theme="${escapeHtml(product.id)}" data-att-message-decoration="${escapeHtml(product.id)}"><div class="shop-ai-training-style-window"><span>ROUND 1</span><strong>20</strong><p>今日のペースでいこう</p></div><small>窓とセリフを別々に組み合わせ可能</small></div>`
           : `<div class="shop-message-preview"><span>✦ FAVORITE CARD FINISH</span><strong>推しカードを特別な一枚へ</strong></div>`;
     let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(product.price)}で購入` : `あと${formatAnjuPay(product.price - state.economy.points)}`}</button>`;
     if (owned && product.type === "feature") {
       action = `<button class="button button-wide button-cyan" data-open-creator-card ${state.topMessageBusy ? "disabled" : ""}>プレミアム仕上げを選ぶ</button>`;
+    } else if (owned && product.type === "aiTextTrainingStyle") {
+      action = '<button class="button button-wide button-cyan" type="button" disabled>購入済み・文字コラ準備で選択</button>';
     } else if (owned) {
       action = `<button class="button button-wide ${equipped ? "button-cyan" : "button-ghost"}" data-equip-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || equipDisabled ? "disabled" : ""}>${equipped ? "装備を外す" : equipDisabled ? `装備枠 ${equipLimit}/${equipLimit}` : "装備する"}</button>`;
     }
@@ -3736,7 +3744,9 @@ function renderPointShop() {
       : product.type === "stamp" ? "CHAT STAMP"
       : product.type === "title" ? (getPlayerTitleCategory(product.category)?.eyebrow || "PLAYER TITLE")
         : product.type === "chatFrame" ? (product.special ? "SPECIAL CHAT FRAME" : "CHAT FRAME")
-          : product.type === "chatBackground" ? "CHAT BACKGROUND" : "FAVORITE CARD PREMIUM";
+        : product.type === "chatBackground" ? "CHAT BACKGROUND"
+          : product.type === "aiTextTrainingStyle" ? "AI TRAINING STYLE"
+            : "FAVORITE CARD PREMIUM";
     return `<article class="shop-card ${owned ? "is-owned" : ""} ${equipped ? "is-equipped" : ""}">
       <div class="shop-card-top"><span>${equipped ? "EQUIPPED" : owned ? "OWNED" : productTypeLabel}</span><strong>${formatAnjuPay(product.price)}</strong></div>
       <h2>${escapeHtml(product.name)}</h2>${preview}
@@ -3746,6 +3756,7 @@ function renderPointShop() {
   };
   const reactionProducts = SHOP_PRODUCTS.filter((product) => product.type === "reaction").map(renderProduct).join("");
   const stampProducts = SHOP_PRODUCTS.filter((product) => product.type === "stamp").map(renderProduct).join("");
+  const aiTextTrainingStyleProducts = AI_TEXT_TRAINING_STYLE_PRODUCTS.map(renderProduct).join("");
   const shopProductById = new Map(SHOP_PRODUCTS.map((product) => [product.id, product]));
   const oshiMarketCollectionGroups = OSHI_MARKET_COLLECTION_GROUPS.map((group) => {
     const products = group.productIds.map((productId) => shopProductById.get(productId)).filter(Boolean);
@@ -3801,7 +3812,8 @@ function renderPointShop() {
       </section>
       <section class="shop-category"><div class="shop-category-head"><div><span>FAVORITE CARD</span><h2>推しカードの仕上げ</h2></div><p>推しカードに関する選択と解放は、自分のカードを見ながら行える編集ルームへまとめました。</p></div>
         <div class="shop-free-card-callout"><div><strong>推しカード編集ルームへ移動しました</strong><span>無料テーマもプレミアム仕上げも、自分のカードで試してから選べます。プレミアム3種の500 Pay買い切り解放も編集ルーム内で行います。</span></div><button class="button button-cyan" type="button" data-open-creator-card>推しカード編集へ</button></div></section>
-      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>吹き出しの背景を1個装備できます。フレームと自由に組み合わせられます。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
+      <section class="shop-category shop-ai-training-category"><div class="shop-category-head"><div><span>AI TEXT TRAINING / ${AI_TEXT_TRAINING_STYLE_PRODUCTS.length} SETS</span><h2>文字コラトレーニング演出セット</h2></div><p>買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放します。購入済みセット同士は文字コラ準備画面で自由に組み合わせられ、BPM・運動結果・安全操作には影響しません。</p></div><div class="shop-grid">${aiTextTrainingStyleProducts}</div></section>
+      <section class="shop-category"><div class="shop-category-head"><div><span>CHAT BACKGROUND / ${CHAT_BACKGROUND_PRODUCTS.length} COLORS</span><h2>チャット背景</h2></div><p>対戦チャットの吹き出し背景を1個装備できます。文字コラ専用演出とは別の商品です。</p></div><div class="shop-grid">${chatBackgroundProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT FRAME / ${CHAT_STANDARD_FRAME_PRODUCTS.length} STYLES</span><h2>チャットフレーム</h2></div><p>かわいい・クール・ネタ系から、吹き出しの枠を1個装備できます。</p></div><div class="shop-grid">${chatFrameProducts}</div></section>
       <section class="shop-category shop-special-category"><div class="shop-category-head"><div><span>PREMIUM FRAME / ${CHAT_SPECIAL_FRAME_PRODUCTS.length} STYLES</span><h2>特別なアニメフレーム</h2></div><p>長期目標として集められる、控えめな動きと光を持つ最高級フレームです。</p></div><div class="shop-grid">${specialChatFrameProducts}</div></section>
       <section class="shop-category"><div class="shop-category-head"><div><span>CHAT REACTION</span><h2>追加リアクション</h2></div><p>購入品から最大${MAX_EQUIPPED_REACTIONS}個を装備できます。</p></div><div class="shop-grid">${reactionProducts}</div></section>
@@ -5331,6 +5343,18 @@ async function purchaseShopProduct(productId) {
     showToast("LOCAL UI PREVIEWではAnjuPayを使用しません。");
     return;
   }
+  if (product.type === "aiTextTrainingStyle") {
+    const after = Math.max(0, state.economy.points - product.price);
+    const confirmed = window.confirm(
+      `${product.name}を購入しますか？\n\n`
+      + `現在残高: ${formatAnjuPay(state.economy.points)}\n`
+      + `商品価格: ${formatAnjuPay(product.price)}\n`
+      + `購入後残高: ${formatAnjuPay(after)}\n\n`
+      + "買い切りで、画像ウィンドウとセリフ装飾を何度でも使えます。\n"
+      + "応援台本の1回利用料とは別の商品で、BPMや運動結果には影響しません。",
+    );
+    if (!confirmed) return;
+  }
   const dateKey = currentDailyDateKey();
   const expectedState = state;
   const expectedUid = expectedState.uid;
@@ -5368,6 +5392,7 @@ async function purchaseShopProduct(productId) {
     render();
     if (result.outcome === "purchased" && isEquipped && !wasEquipped) showToast(`「${product.reaction || product.title || product.name}」を購入し、装備しました。`);
     else if (result.outcome === "purchased" && product.type === "feature") showToast("推しカードのプレミアム仕上げ3種を解放しました。カードを更新して飾るまでは、公開中のカードはそのままです。");
+    else if (result.outcome === "purchased" && product.type === "aiTextTrainingStyle") showToast(`「${product.name}」を解放しました。文字コラトレーニングの準備画面で、窓とセリフを別々に試着・装着できます。`);
     else if (result.outcome === "purchased") showToast(`「${product.reaction || product.title || product.name}」を購入しました。装備枠を空けると使用できます。`);
     else if (result.outcome === "owned") showToast("この商品は購入済みです。");
     else showToast("AnjuPay残高が不足しています。");
