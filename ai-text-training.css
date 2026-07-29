@@ -725,6 +725,57 @@
   font-size: 0.68rem;
 }
 
+.ai-text-training-metronome-volume {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid rgba(99, 238, 229, 0.2);
+  border-radius: 15px;
+  background:
+    linear-gradient(135deg, rgba(99, 238, 229, 0.075), rgba(170, 145, 255, 0.045)),
+    rgba(255, 255, 255, 0.025);
+}
+
+.ai-text-training-metronome-volume > label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: #ecfffd;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.ai-text-training-metronome-volume input {
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  accent-color: var(--att-cyan);
+  cursor: pointer;
+}
+
+.ai-text-training-metronome-volume output {
+  min-width: 3.5rem;
+  padding: 7px 9px;
+  border: 1px solid rgba(99, 238, 229, 0.24);
+  border-radius: 999px;
+  color: #cafffa;
+  background: rgba(5, 9, 16, 0.66);
+  font-size: 0.77rem;
+  font-weight: 1000;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-text-training-metronome-volume > small {
+  grid-column: 1 / -1;
+  color: #9fa9bc;
+  font-size: 0.66rem;
+  line-height: 1.55;
+}
+
 .ai-text-training-mode-note,
 .ai-text-training-economy-note,
 .ai-text-training-ranking-rule {
@@ -3246,6 +3297,8 @@
   .ai-text-training-cosmetic-preview,
   .ai-text-training-cosmetic-preview-window,
   .ai-text-training-cosmetic-preview-message,
+  .ai-text-training-metronome-volume,
+  .ai-text-training-metronome-volume output,
   .shop-ai-training-style-preview,
   .shop-ai-training-style-window,
   .shop-card .shop-ai-training-style-window > p,

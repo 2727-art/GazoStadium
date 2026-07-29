@@ -1068,6 +1068,147 @@ test("five explicit beat auditions freeze into the session and every round reque
   );
 });
 
+test("the AI metronome starts louder, stays locally adjustable, and preserves explicit playback", () => {
+  assert.match(client, /const DEFAULT_METRONOME_VOLUME = 0\.36;/);
+  assert.match(
+    client,
+    /const METRONOME_VOLUME_PREFERENCE_KEY = "hariai-ai-text-training-metronome-volume-v1";/,
+  );
+
+  const storedVolumeSource = sourceBlock(
+    client,
+    "function storedMetronomeVolume",
+    "function storedSession",
+  );
+  const readStoredVolume = (storedValue) => {
+    const context = vm.createContext({
+      DEFAULT_METRONOME_VOLUME: 0.36,
+      METRONOME_VOLUME_PREFERENCE_KEY: "volume-key",
+      readLocalValue(_key, fallback) {
+        return storedValue === undefined ? fallback : storedValue;
+      },
+    });
+    vm.runInContext(`
+      ${storedVolumeSource}
+      globalThis.__storedMetronomeVolume = storedMetronomeVolume;
+    `, context);
+    return context.__storedMetronomeVolume();
+  };
+  assert.equal(readStoredVolume(undefined), 0.36);
+  assert.equal(readStoredVolume("0.72"), 0.72);
+  assert.equal(readStoredVolume("2"), 1);
+  assert.equal(readStoredVolume("-0.2"), 0);
+  assert.equal(readStoredVolume("loud"), 0.36);
+
+  const createStateSource = sourceBlock(client, "function createState()", "function modeIsActiveElsewhere");
+  assert.match(
+    createStateSource,
+    /const metronomeVolume = storedMetronomeVolume\(\);[\s\S]*?createFreeTableAmbienceController\(\{[\s\S]*?initialVolume: metronomeVolume/,
+  );
+  assert.match(createStateSource, /\bmetronomeVolume,\s*[\r\n]+\s*muted: false/);
+
+  const volumeMarkup = sourceBlock(
+    client,
+    "function metronomeVolumeControlHtml",
+    "function renderBeatCharacterPanel",
+  );
+  assert.match(volumeMarkup, /type="range" min="0" max="100" step="1"/);
+  assert.match(volumeMarkup, /data-ai-text-training-metronome-volume-output/);
+  assert.match(volumeMarkup, /ヘッダーのSE設定とは別です/);
+
+  const volumeUpdateSource = sourceBlock(
+    client,
+    "function updateMetronomeVolume",
+    "function configureRoundAmbience",
+  );
+  const saved = [];
+  const setVolumeCalls = [];
+  const toasts = [];
+  let saveSucceeds = true;
+  const output = { value: "", textContent: "" };
+  const input = {
+    value: "72",
+    attributes: {},
+    setAttribute(name, value) {
+      this.attributes[name] = value;
+    },
+  };
+  const context = vm.createContext({
+    METRONOME_VOLUME_PREFERENCE_KEY: "volume-key",
+    state: {
+      metronomeVolume: 0.36,
+      ambienceController: {
+        setVolume(value) {
+          setVolumeCalls.push(value);
+          return Math.min(1, Math.max(0, value));
+        },
+      },
+    },
+    writeLocalValue(key, value) {
+      saved.push([key, value]);
+      return saveSucceeds;
+    },
+    showToast(message) {
+      toasts.push(message);
+    },
+    document: {
+      querySelectorAll() {
+        return [output];
+      },
+    },
+  });
+  vm.runInContext(`
+    ${volumeUpdateSource}
+    globalThis.__updateMetronomeVolume = updateMetronomeVolume;
+  `, context);
+  context.__updateMetronomeVolume(input);
+  assert.deepEqual(setVolumeCalls, [0.72]);
+  assert.equal(context.state.metronomeVolume, 0.72);
+  assert.deepEqual(saved, [["volume-key", "0.72"]]);
+  assert.equal(input.attributes["aria-valuetext"], "72%");
+  assert.equal(output.value, "72%");
+  assert.equal(output.textContent, "72%");
+
+  saveSucceeds = false;
+  input.value = "150";
+  context.__updateMetronomeVolume(input);
+  assert.deepEqual(setVolumeCalls, [0.72, 1]);
+  assert.equal(context.state.metronomeVolume, 1);
+  assert.equal(input.value, "100");
+  assert.equal(output.textContent, "100%");
+  assert.match(toasts[0], /端末へ保存できませんでした/);
+
+  saveSucceeds = true;
+  input.value = "-20";
+  context.__updateMetronomeVolume(input);
+  assert.deepEqual(setVolumeCalls, [0.72, 1, 0]);
+  assert.equal(context.state.metronomeVolume, 0);
+  assert.equal(input.value, "0");
+  assert.equal(output.textContent, "0%");
+  assert.doesNotMatch(volumeUpdateSource, /\.enable\(/);
+
+  const eventBinding = sourceBlock(
+    client,
+    "function bindEvents",
+    'document.addEventListener("visibilitychange"',
+  );
+  assert.match(
+    eventBinding,
+    /\[data-ai-text-training-metronome-volume\][\s\S]*?addEventListener\("input", \(\) => updateMetronomeVolume\(input\)\)/,
+  );
+  assert.match(
+    client,
+    /data-ai-text-training-action="toggle-mute" aria-pressed="\$\{!state\.muted\}"/,
+  );
+  assert.equal(html.match(/metronome-volume-v2/gu)?.length, 2);
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-metronome-volume input \{[\s\S]*?accent-color: var\(--att-cyan\)/,
+  );
+  assert.match(readme, /文字コラ専用の初期音量は36%/);
+  assert.match(design, /初期音量は36%。準備画面の0〜100%スライダー/);
+});
+
 test("DRAW, playback, and motion fallbacks expose the necessary accessibility contract", () => {
   assert.match(
     client,

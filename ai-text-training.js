@@ -66,6 +66,7 @@ const ACHIEVEMENT_RETRY_QUEUE_KEY = "hariai-ai-text-training-achievement-retry-v
 const DAILY_COMPLETE_PREFIX = "hariai-ai-text-training-daily-v1:";
 const DECK_PERSISTENCE_KEY = "hariai-ai-text-training-deck-persistence-v1";
 const BEAT_CHARACTER_PREFERENCE_KEY = "hariai-ai-text-training-beat-character-v1";
+const METRONOME_VOLUME_PREFERENCE_KEY = "hariai-ai-text-training-metronome-volume-v1";
 const DECK_DATABASE_NAME = "hariai-ai-text-training-deck-v1";
 const DECK_STORE_NAME = "decks";
 const DECK_RECORD_KEY = "latest";
@@ -130,6 +131,7 @@ const AI_TEXT_TRAINING_BEAT_CHARACTERS = Object.freeze([
   }),
 ]);
 const DEFAULT_BEAT_CHARACTER_ID = "clear_tap";
+const DEFAULT_METRONOME_VOLUME = 0.36;
 const SESSION_SCHEMA_VERSION = 2;
 const DECK_SCHEMA_VERSION = 2;
 const DEFAULT_POLICY = Object.freeze({
@@ -223,6 +225,16 @@ function removeLocalValue(key) {
   } catch {
     return false;
   }
+}
+
+function storedMetronomeVolume() {
+  const value = Number(readLocalValue(
+    METRONOME_VOLUME_PREFERENCE_KEY,
+    String(DEFAULT_METRONOME_VOLUME),
+  ));
+  return Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : DEFAULT_METRONOME_VOLUME;
 }
 
 function storedSession() {
@@ -507,7 +519,10 @@ function createState() {
   const beatCharacterId = normalizeBeatCharacterId(
     readLocalValue(BEAT_CHARACTER_PREFERENCE_KEY, DEFAULT_BEAT_CHARACTER_ID),
   );
-  const ambienceController = createFreeTableAmbienceController({ initialVolume: 0.16 });
+  const metronomeVolume = storedMetronomeVolume();
+  const ambienceController = createFreeTableAmbienceController({
+    initialVolume: metronomeVolume,
+  });
   return {
     generation: 0,
     preview: "",
@@ -600,6 +615,7 @@ function createState() {
     wakeLock: null,
     ambienceController,
     ambienceRevision: 0,
+    metronomeVolume,
     muted: false,
   };
 }
@@ -1505,11 +1521,24 @@ function beatCharacterCard(character) {
   </article>`;
 }
 
+function metronomeVolumeControlHtml() {
+  const percent = Math.round(state.metronomeVolume * 100);
+  return `<div class="ai-text-training-metronome-volume">
+    <label for="aiTextTrainingMetronomeVolume">
+      <span>メトロノーム音量（この端末）</span>
+      <input id="aiTextTrainingMetronomeVolume" type="range" min="0" max="100" step="1" value="${percent}" data-ai-text-training-metronome-volume aria-valuetext="${percent}%" aria-describedby="aiTextTrainingMetronomeVolumeHelp" />
+    </label>
+    <output for="aiTextTrainingMetronomeVolume" data-ai-text-training-metronome-volume-output>${percent}%</output>
+    <small id="aiTextTrainingMetronomeVolumeHelp">初期値36%。試聴とトレーニングへ反映し、この端末だけに保存します。ヘッダーのSE設定とは別です。</small>
+  </div>`;
+}
+
 function renderBeatCharacterPanel() {
   const locked = paidRecoverySettingsLocked();
   return `<section class="ai-text-training-panel ai-text-training-beat-panel">
     <div class="ai-text-training-section-heading"><span>STEP 4</span><h2>ビートキャラクター</h2><em>5 TONES</em></div>
     <div class="ai-text-training-beat-grid">${AI_TEXT_TRAINING_BEAT_CHARACTERS.map(beatCharacterCard).join("")}</div>
+    ${metronomeVolumeControlHtml()}
     <p class="ai-text-training-mode-note">${locked ? "開始済み利用のビートは開始時設定に固定されています。試聴はできますが、再開する音色は変更しません。" : "音色はAIの人物像だけを演出し、BPM・難易度・実績には影響しません。「音を試す」を押した時だけ短く再生します。トレーニング中はいつでもメトロノームをOFFにできます。"}</p>
   </section>`;
 }
@@ -2068,7 +2097,7 @@ function renderPlay() {
       ${center}
       <div class="ai-text-training-safety-controls">
         ${["playing", "countdown"].includes(state.phase) ? `<button class="button button-ghost" type="button" data-ai-text-training-action="pause">一時停止</button>` : ""}
-        <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${state.muted}">${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)} ${state.muted ? "OFF" : "ON"}</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${!state.muted}">${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)} ${state.muted ? "OFF" : "ON"}</button>
         <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="emergency-stop">無理・痛い・めまい／即停止</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="exit-session">運動を終了</button>
       </div>
@@ -2740,6 +2769,27 @@ async function previewBeatCharacter(value) {
   render();
 }
 
+function updateMetronomeVolume(input) {
+  const requestedPercent = Number(input?.value);
+  if (!Number.isFinite(requestedPercent)) return;
+  const volume = state.ambienceController.setVolume(
+    Math.min(100, Math.max(0, requestedPercent)) / 100,
+  );
+  state.metronomeVolume = volume;
+  const saved = writeLocalValue(METRONOME_VOLUME_PREFERENCE_KEY, String(volume));
+  if (!saved) {
+    showToast("音量はこの画面に反映しましたが、端末へ保存できませんでした。");
+  }
+  const displayValue = `${Math.round(volume * 100)}%`;
+  input.value = String(Math.round(volume * 100));
+  input.setAttribute("aria-valuetext", displayValue);
+  document.querySelectorAll("[data-ai-text-training-metronome-volume-output]")
+    .forEach((output) => {
+      output.value = displayValue;
+      output.textContent = displayValue;
+    });
+}
+
 function configureRoundAmbience(effectiveAt) {
   state.ambienceRevision += 1;
   state.ambienceController.setToneProfile(
@@ -3316,6 +3366,9 @@ function bindEvents() {
         showToast(error?.message || "音色を試聴できませんでした。無音でも利用できます。");
       });
     });
+  });
+  document.querySelectorAll("[data-ai-text-training-metronome-volume]").forEach((input) => {
+    input.addEventListener("input", () => updateMetronomeVolume(input));
   });
   document.querySelectorAll('input[name^="aiTextTrainingCosmetic_"]').forEach((input) => {
     input.addEventListener("change", () => {

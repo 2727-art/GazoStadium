@@ -991,6 +991,26 @@ test("timer throttling skips missed beats instead of playing catch-up tones", as
   assert.deepEqual(oscillatorStartTimes(contexts[0]), [6]);
 });
 
+test("a caller-specific louder volume stays isolated and returns after mute", async () => {
+  const louder = await makeController({ initialVolume: 0.36 });
+  const sharedDefault = await makeController();
+  louder.controller.setAmbience(snapshot(), { serverTimeOffset: 10_000 });
+  sharedDefault.controller.setAmbience(snapshot(), { serverTimeOffset: 10_000 });
+  await louder.controller.enable();
+  await sharedDefault.controller.enable();
+
+  assert.equal(louder.controller.getState().volume, 0.36);
+  assert.equal(louder.contexts[0].gains[0].gain.value, 0.36);
+  assert.equal(sharedDefault.controller.getState().volume, 0.18);
+  assert.equal(sharedDefault.contexts[0].gains[0].gain.value, 0.18);
+
+  assert.equal(louder.controller.setMuted(true), true);
+  assert.equal(louder.contexts[0].gains[0].gain.value, 0);
+  assert.equal(louder.controller.setMuted(false), false);
+  assert.equal(louder.contexts[0].gains[0].gain.value, 0.36);
+  assert.equal(sharedDefault.contexts[0].gains[0].gain.value, 0.18);
+});
+
 test("volume and mute remain local, bounded, and do not alter shared ambience", async () => {
   const {
     controller,
