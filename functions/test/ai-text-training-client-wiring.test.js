@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -14,6 +15,107 @@ const styles = read("styles.css");
 const trainingStyles = read("ai-text-training.css");
 const cosmetics = read("ai-text-training-cosmetics.js");
 const online = read("online.js");
+const readme = read("README.md");
+const design = read("AI_TEXT_TRAINING_DESIGN.md");
+
+function achievementQueueHarness({
+  storage = new Map(),
+  uid = "",
+  actionHandler = null,
+} = {}) {
+  const calls = [];
+  const events = [];
+  const state = {
+    preview: false,
+    screen: "setup",
+    achievementActionId: "",
+    achievementSessionId: "",
+    achievementRetryInFlight: false,
+    achievementRetryError: "",
+    notifiedAchievementIds: new Set(),
+  };
+  const auth = { currentUser: uid ? { uid } : null };
+  let handler = actionHandler;
+  const context = vm.createContext({
+    ACHIEVEMENT_RETRY_QUEUE_KEY: "hariai-ai-text-training-achievement-retry-v1",
+    AI_TEXT_TRAINING_MODES: [{ id: "mama" }, { id: "imouto" }, { id: "oneechan" }],
+    AI_TEXT_TRAINING_ROUND_COUNT: 5,
+    ROUND_SECONDS_OPTIONS: [15, 20, 30, 45, 60],
+    active: false,
+    auth,
+    state,
+    readLocalValue(key, fallback = "") {
+      return storage.has(key) ? storage.get(key) : fallback;
+    },
+    writeLocalValue(key, value) {
+      storage.set(key, value);
+      return true;
+    },
+    removeLocalValue(key) {
+      storage.delete(key);
+      return true;
+    },
+    async aiTextTrainingAction(payload) {
+      calls.push({ ...payload, uid: auth.currentUser?.uid || "" });
+      if (handler) return await handler(payload, auth);
+      const sessionId = payload.sessionId || "a".repeat(40);
+      return { data: { session: { id: sessionId }, newlyUnlocked: [] } };
+    },
+    async economyActionCallable() {
+      return { data: {} };
+    },
+    persistSession() {},
+    render() {},
+    window: {
+      HariaiAchievements: {
+        normalizeIds(value) {
+          return Array.isArray(value) ? value : [];
+        },
+      },
+      dispatchEvent(event) {
+        events.push(event);
+      },
+    },
+    CustomEvent: class CustomEvent {
+      constructor(type, init = {}) {
+        this.type = type;
+        this.detail = init.detail;
+      }
+    },
+  });
+  const start = client.indexOf("function normalizeAchievementOwnerUid");
+  const end = client.indexOf("function createState", start);
+  assert.ok(start >= 0 && end > start, "achievement queue runtime block is available");
+  vm.runInContext(`
+    let achievementRetryFlushPromise = null;
+    ${client.slice(start, end)}
+    globalThis.__achievementQueueApi = {
+      achievementRetryOwnerMatches,
+      bindPendingAchievementRetryRecords,
+      currentAchievementOwner,
+      flushAchievementRetryQueue,
+      readAchievementRetryQueue,
+      sanitizeAchievementRetryRecord,
+      upsertAchievementRetryRecord,
+      writeAchievementRetryQueue,
+    };
+  `, context);
+  return {
+    api: context.__achievementQueueApi,
+    auth,
+    calls,
+    events,
+    state,
+    storage,
+    setActionHandler(nextHandler) {
+      handler = nextHandler;
+    },
+  };
+}
+
+function plainQueue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 test("landing loads a separate solo mode and never routes it through Training 60", () => {
   assert.match(html, /ai-text-training\.css\?v=ai-text-training-v1/);
@@ -253,4 +355,326 @@ test("other modes reciprocally exclude the new solo lifecycle", () => {
   }
   assert.match(app, /HariaiAiTextTraining\?\.isActive\?\.\(\)/);
   assert.match(app, /HariaiAiTextTraining\.requestHome\(\)/);
+});
+
+test("achievement tracking begins once at the first countdown and survives paid recovery", () => {
+  assert.match(client, /httpsCallable\(functions, "economyAction"\)/);
+  assert.match(client, /state\.achievementActionId = generatedActionId\("achievement_session"\)/);
+  assert.match(client, /achievementActionId: state\.achievementActionId/);
+  assert.match(client, /achievementSessionId: state\.achievementSessionId/);
+  assert.match(client, /achievementBeginRequested: state\.achievementBeginRequested/);
+
+  const beginStart = client.indexOf("function beginAchievementTracking");
+  const beginEnd = client.indexOf("function startRoundCountdown", beginStart);
+  const begin = client.slice(beginStart, beginEnd);
+  assert.match(begin, /state\.preview/);
+  assert.match(begin, /state\.roundIndex !== 0/);
+  assert.match(begin, /state\.achievementBeginRequested/);
+  assert.match(begin, /state\.achievementBeginRequested = true/);
+  assert.match(begin, /flushAchievementRetryQueue\(\)/);
+  assert.match(
+    client,
+    /function startRoundCountdown\(\)[\s\S]*?beginAchievementTracking\(\)/,
+  );
+
+  const flushStart = client.indexOf("function flushAchievementRetryQueue");
+  const flushEnd = client.indexOf("function createState", flushStart);
+  const flush = client.slice(flushStart, flushEnd);
+  assert.match(flush, /action: "begin_achievement_session"/);
+  assert.match(flush, /actionId: record\.actionId/);
+  assert.match(flush, /modeId: record\.modeId/);
+  assert.match(flush, /roundSeconds: record\.roundSeconds/);
+  assert.match(flush, /response\.data\?\.session\?\.id/);
+
+  const recoveryStart = client.indexOf("function recoverPaidSession");
+  const recoveryEnd = client.indexOf("function start()", recoveryStart);
+  const recovery = client.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /saved\.achievementActionId/);
+  assert.match(recovery, /saved\.achievementSessionId/);
+  assert.match(recovery, /saved\.achievementBeginRequested === true/);
+  assert.match(recovery, /upsertAchievementRetryRecord/);
+});
+
+test("achievement retry storage is an allowlisted metadata-only queue", () => {
+  assert.match(
+    client,
+    /const ACHIEVEMENT_RETRY_QUEUE_KEY = "hariai-ai-text-training-achievement-retry-v1"/,
+  );
+  const sanitizeStart = client.indexOf("function sanitizeAchievementRetryRecord");
+  const sanitizeEnd = client.indexOf("function readAchievementRetryQueue", sanitizeStart);
+  const sanitize = client.slice(sanitizeStart, sanitizeEnd);
+  for (const field of [
+    "ownerState",
+    "ownerUid",
+    "actionId",
+    "modeId",
+    "roundSeconds",
+    "sessionId",
+    "outcome",
+    "completedRounds",
+    "activeSeconds",
+  ]) {
+    assert.match(sanitize, new RegExp(`\\b${field}\\b`, "u"));
+  }
+  assert.doesNotMatch(
+    sanitize,
+    /\b(?:images?|bpms?|preset|script|lines?|dialogue|message|cosmetics?)\b/iu,
+  );
+  assert.match(client, /writeLocalValue\(ACHIEVEMENT_RETRY_QUEUE_KEY, JSON\.stringify\(sanitized\)\)/);
+  assert.match(client, /\.slice\(-12\)/);
+});
+
+test("achievement retry records bind pending ownership once and never cross Firebase UIDs", async () => {
+  const storage = new Map();
+  const actionId = "achievement_session_runtime_owner_001";
+  const pendingHarness = achievementQueueHarness({ storage });
+  pendingHarness.api.upsertAchievementRetryRecord({
+    ownerState: "pending",
+    ownerUid: "",
+    actionId,
+    modeId: "mama",
+    roundSeconds: 20,
+    sessionId: "",
+    outcome: "exited",
+    completedRounds: 2,
+    activeSeconds: 31.25,
+    images: ["never-store"],
+    bpms: [160],
+    script: { lines: ["never-store"] },
+    dialogue: "never-store",
+  });
+  assert.deepEqual(plainQueue(pendingHarness.api.readAchievementRetryQueue()), [{
+    ownerState: "pending",
+    ownerUid: "",
+    actionId,
+    modeId: "mama",
+    roundSeconds: 20,
+    sessionId: "",
+    outcome: "exited",
+    completedRounds: 2,
+    activeSeconds: 31.25,
+  }]);
+  const serializedPending = storage.get("hariai-ai-text-training-achievement-retry-v1");
+  assert.doesNotMatch(serializedPending, /images|bpms|script|lines|dialogue|never-store/u);
+
+  const ownerAHarness = achievementQueueHarness({
+    storage,
+    uid: "firebase-uid-A",
+    actionHandler: async () => {
+      throw new Error("first network failure");
+    },
+  });
+  assert.equal(await ownerAHarness.api.flushAchievementRetryQueue(), false);
+  assert.equal(ownerAHarness.calls.length, 1);
+  assert.deepEqual(
+    plainQueue(ownerAHarness.api.readAchievementRetryQueue())
+      .map(({ ownerState, ownerUid }) => ({ ownerState, ownerUid })),
+    [{ ownerState: "bound", ownerUid: "firebase-uid-A" }],
+  );
+
+  const ownerBHarness = achievementQueueHarness({
+    storage,
+    uid: "firebase-uid-B",
+  });
+  assert.equal(await ownerBHarness.api.flushAchievementRetryQueue(), true);
+  assert.equal(ownerBHarness.calls.length, 0);
+  const boundToA = ownerBHarness.api.readAchievementRetryQueue()[0];
+  ownerBHarness.api.upsertAchievementRetryRecord({
+    ...boundToA,
+    ownerState: "bound",
+    ownerUid: "firebase-uid-B",
+  });
+  assert.equal(
+    ownerBHarness.api.readAchievementRetryQueue()[0].ownerUid,
+    "firebase-uid-A",
+  );
+
+  const reloadedOwnerAHarness = achievementQueueHarness({
+    storage,
+    uid: "firebase-uid-A",
+  });
+  assert.equal(await reloadedOwnerAHarness.api.flushAchievementRetryQueue(), true);
+  assert.deepEqual(
+    reloadedOwnerAHarness.calls.map(({ action, uid: callUid }) => [action, callUid]),
+    [
+      ["begin_achievement_session", "firebase-uid-A"],
+      ["finish_achievement_session", "firebase-uid-A"],
+    ],
+  );
+  assert.deepEqual(plainQueue(reloadedOwnerAHarness.api.readAchievementRetryQueue()), []);
+});
+
+test("starting a new session only supersedes unfinished records for the same owner", () => {
+  const harness = achievementQueueHarness({ uid: "firebase-uid-A" });
+  const boundA = { ownerState: "bound", ownerUid: "firebase-uid-A" };
+  const boundB = { ownerState: "bound", ownerUid: "firebase-uid-B" };
+  const pending = { ownerState: "pending", ownerUid: "" };
+  assert.equal(harness.api.achievementRetryOwnerMatches(boundA, boundA), true);
+  assert.equal(harness.api.achievementRetryOwnerMatches(boundB, boundA), false);
+  assert.equal(harness.api.achievementRetryOwnerMatches(pending, boundA), false);
+  assert.equal(harness.api.achievementRetryOwnerMatches(pending, pending), true);
+
+  const beginStart = client.indexOf("function beginAchievementTracking");
+  const beginEnd = client.indexOf("function startRoundCountdown", beginStart);
+  const begin = client.slice(beginStart, beginEnd);
+  assert.match(begin, /achievementRetryOwnerMatches\(record, currentOwner\)/);
+});
+
+test("achievement retry continues past mismatched owners and a failed earlier record", async () => {
+  const storage = new Map();
+  const ownerAHarness = achievementQueueHarness({ storage, uid: "firebase-uid-A" });
+  const records = [
+    {
+      ownerState: "bound",
+      ownerUid: "firebase-uid-A",
+      actionId: "achievement_session_runtime_order_A1",
+      modeId: "mama",
+      roundSeconds: 20,
+      sessionId: "1".repeat(40),
+      outcome: "exited",
+      completedRounds: 1,
+      activeSeconds: 10,
+    },
+    {
+      ownerState: "bound",
+      ownerUid: "firebase-uid-B",
+      actionId: "achievement_session_runtime_order_B1",
+      modeId: "imouto",
+      roundSeconds: 30,
+      sessionId: "b".repeat(40),
+      outcome: "safety_stopped",
+      completedRounds: 2,
+      activeSeconds: 44,
+    },
+    {
+      ownerState: "bound",
+      ownerUid: "firebase-uid-A",
+      actionId: "achievement_session_runtime_order_A2",
+      modeId: "oneechan",
+      roundSeconds: 15,
+      sessionId: "2".repeat(40),
+      outcome: "exited",
+      completedRounds: 3,
+      activeSeconds: 42,
+    },
+  ];
+  ownerAHarness.api.writeAchievementRetryQueue(records);
+  ownerAHarness.setActionHandler(async (payload) => {
+    if (payload.sessionId === "1".repeat(40)) throw new Error("record A1 failed");
+    return { data: { session: { id: payload.sessionId }, newlyUnlocked: [] } };
+  });
+  assert.equal(await ownerAHarness.api.flushAchievementRetryQueue(), false);
+  assert.deepEqual(
+    ownerAHarness.calls.map(({ sessionId, uid: callUid }) => [sessionId, callUid]),
+    [
+      ["1".repeat(40), "firebase-uid-A"],
+      ["2".repeat(40), "firebase-uid-A"],
+    ],
+  );
+  assert.deepEqual(
+    plainQueue(ownerAHarness.api.readAchievementRetryQueue())
+      .map(({ actionId }) => actionId),
+    [
+      "achievement_session_runtime_order_A1",
+      "achievement_session_runtime_order_B1",
+    ],
+  );
+
+  const ownerBHarness = achievementQueueHarness({
+    storage,
+    uid: "firebase-uid-B",
+  });
+  assert.equal(await ownerBHarness.api.flushAchievementRetryQueue(), true);
+  assert.deepEqual(
+    ownerBHarness.calls.map(({ sessionId, uid: callUid }) => [sessionId, callUid]),
+    [["b".repeat(40), "firebase-uid-B"]],
+  );
+  assert.deepEqual(
+    plainQueue(ownerBHarness.api.readAchievementRetryQueue())
+      .map(({ actionId }) => actionId),
+    ["achievement_session_runtime_order_A1"],
+  );
+
+  const retryOwnerAHarness = achievementQueueHarness({
+    storage,
+    uid: "firebase-uid-A",
+  });
+  assert.equal(await retryOwnerAHarness.api.flushAchievementRetryQueue(), true);
+  assert.deepEqual(plainQueue(retryOwnerAHarness.api.readAchievementRetryQueue()), []);
+});
+
+test("every started outcome queues an independent achievement finish without blocking exercise", () => {
+  const finishQueueStart = client.indexOf("function queueAchievementFinish");
+  const finishQueueEnd = client.indexOf("async function finishPaidUse", finishQueueStart);
+  const finishQueue = client.slice(finishQueueStart, finishQueueEnd);
+  assert.match(finishQueue, /\["completed", "safety_stopped", "exited"\]/);
+  assert.match(finishQueue, /completedRounds/);
+  assert.match(finishQueue, /activeSeconds/);
+  assert.match(finishQueue, /upsertAchievementRetryRecord/);
+
+  const flushStart = client.indexOf("function flushAchievementRetryQueue");
+  const flushEnd = client.indexOf("function createState", flushStart);
+  const flush = client.slice(flushStart, flushEnd);
+  assert.match(flush, /action: "finish_achievement_session"/);
+  assert.match(flush, /sessionId: record\.sessionId/);
+  assert.match(flush, /outcome: record\.outcome/);
+  assert.match(flush, /completedRounds: record\.completedRounds/);
+  assert.match(flush, /activeSeconds: record\.activeSeconds/);
+
+  const completeStart = client.indexOf("function completeSession");
+  const completeEnd = client.indexOf("function emergencyStop", completeStart);
+  const complete = client.slice(completeStart, completeEnd);
+  assert.match(complete, /queueAchievementFinish\(outcome\)/);
+  assert.match(complete, /flushAchievementRetryQueue\(\)\.catch/);
+  assert.match(complete, /finishPaidUse\(outcome\)\.finally/);
+  assert.ok(
+    complete.indexOf("queueAchievementFinish(outcome)") < complete.indexOf("finishPaidUse(outcome)"),
+  );
+  assert.match(
+    client,
+    /function requestHome\(\)[\s\S]*?completeSession\("exited"\)/,
+  );
+});
+
+test("achievement unlocks use the shared event and best-effort acknowledgement", () => {
+  const notifyStart = client.indexOf("function notifyAchievementUnlocks");
+  const notifyEnd = client.indexOf("function flushAchievementRetryQueue", notifyStart);
+  const notify = client.slice(notifyStart, notifyEnd);
+  assert.match(notify, /hariai-achievements-unlocked/);
+  assert.match(notify, /action: "ack_achievements"/);
+  assert.match(notify, /achievementIds: ids/);
+  assert.match(notify, /\.catch\(\(\) =>/);
+  assert.match(client, /notifyAchievementUnlocks\(response\.data\?\.newlyUnlocked\)/);
+});
+
+test("setup and result explain verified completion, safe non-progress, and manual retry", () => {
+  assert.match(client, /カメラや動作判定は使いません/);
+  assert.match(client, /5ラウンド完走だけが実績へ加算/);
+  assert.match(client, /安全停止・途中終了で今までの進捗は減りません/);
+  assert.match(client, /解除済み実績や既存の進捗も減りません/);
+  assert.match(client, /画像・BPM・台詞を含まない最小限の記録/);
+  assert.match(client, /data-ai-text-training-action="retry-achievement-finish"/);
+  assert.match(client, /"retry-achievement-finish": retryAchievementFinish/);
+  assert.match(client, /次回接続時にも再送します/);
+  assert.match(client, /if \(state\.preview[\s\S]*?return;/);
+});
+
+test("achievement documentation fixes collection boundaries and migration policy", () => {
+  assert.match(design, /aiTextTrainingAchievementSessions\/\{sessionId\}/);
+  assert.match(design, /aiTextTrainingActiveAchievementSessions\/\{uid\}/);
+  assert.match(design, /aiTextTrainingPlayerStats\/\{uid\}/);
+  assert.match(design, /begin_achievement_session \{ actionId, modeId, roundSeconds \}/);
+  assert.match(
+    design,
+    /finish_achievement_session \{ sessionId, outcome, completedRounds, activeSeconds \}/,
+  );
+  assert.match(design, /導入前の無料トレーニング[\s\S]*?遡及加算しない/);
+  assert.match(design, /aiTextTrainingSellerStats[\s\S]*?再評価/);
+  assert.match(design, /ownerState \/ ownerUid/);
+  assert.match(design, /最初に確定したUIDへ一度だけ束縛/);
+  assert.match(design, /現在の認証UIDと一致する記録だけを送る/);
+  assert.match(readme, /旧版の無料プレイ履歴は安全に再構成できないため遡及せず/);
+  assert.match(readme, /台本販売は既存の`aiTextTrainingSellerStats`を再評価/);
+  assert.match(html, /achievements\.js\?v=[^"]*ai-text-training-v1/);
+  assert.match(html, /ai-text-training\.js\?v=[^"]*achievements-v1/);
 });

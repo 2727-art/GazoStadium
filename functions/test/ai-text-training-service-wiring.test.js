@@ -36,11 +36,25 @@ test("AI text training is an injected App Check callable service", () => {
     "anjuPayEntryId",
     "mirrorWallet",
     "bestEffort",
+    "syncAchievementPublicSurfaces",
     "ownedProductIds",
   ]) {
     assert.match(service, new RegExp(`"${dependency}"`));
   }
   assert.match(index, /createAiTextTrainingService/);
+  const injectionStart = index.indexOf(
+    "const aiTextTrainingService = createAiTextTrainingService({",
+  );
+  const injectionEnd = index.indexOf(
+    "exports.aiTextTrainingAction = onCall(",
+    injectionStart,
+  );
+  assert.notEqual(injectionStart, -1);
+  assert.notEqual(injectionEnd, -1);
+  assert.match(
+    index.slice(injectionStart, injectionEnd),
+    /syncAchievementPublicSurfaces/,
+  );
   assert.match(
     index,
     /exports\.aiTextTrainingAction = onCall\(\s*callableOptions\("aiTextTrainingAction"\)/,
@@ -54,6 +68,9 @@ test("all dedicated persistence is callable-only and public responses reject UID
     "aiTextTrainingPreferences",
     "aiTextTrainingUses",
     "aiTextTrainingActiveUses",
+    "aiTextTrainingAchievementSessions",
+    "aiTextTrainingActiveAchievementSessions",
+    "aiTextTrainingPlayerStats",
     "aiTextTrainingPublishActions",
     "aiTextTrainingSellerStats",
     "aiTextTrainingMonthlyPeriods",
@@ -75,6 +92,56 @@ test("all dedicated persistence is callable-only and public responses reject UID
   );
   assert.match(service, /function assertNoPrivateFields/);
   assert.match(service, /assertNoPrivateFields\(result\)/);
+});
+
+test("achievement sessions are server-timed, idempotent, private, and unlock in their finish transaction", () => {
+  const begin = between(
+    "async function beginAchievementSession",
+    "async function finishAchievementSession",
+  );
+  assert.match(service, /"begin_achievement_session"/);
+  assert.match(service, /"finish_achievement_session"/);
+  assert.match(begin, /normalizeAiTextTrainingActionId/);
+  assert.match(begin, /normalizeAiTextTrainingMode/);
+  assert.match(begin, /AI_TEXT_TRAINING_ACHIEVEMENT_ROUND_SECONDS/);
+  assert.match(begin, /AI_TEXT_TRAINING_ACHIEVEMENT_BEGIN_COOLDOWN_MS/);
+  assert.match(begin, /aiTextTrainingActionDocumentId\(\s*uid,\s*actionId,\s*"achievement-session"/);
+  assert.match(begin, /payloadHash/);
+  assert.match(begin, /transaction\.get\(statsReference\)/);
+  assert.match(begin, /lastAchievementSessionStartedAt/);
+  assert.match(begin, /"resource-exhausted"/);
+  assert.match(begin, /deleteAt: achievementSessionDeleteAt\(now, now\)/);
+  assert.match(begin, /transaction\.create\(reference, stored\)/);
+  assert.match(begin, /transaction\.set\(activeReference/);
+  assert.match(begin, /supersededAt/);
+  assert.doesNotMatch(begin, /\b(?:images|script|lines)\s*:/);
+
+  const finish = between(
+    "async function finishAchievementSession",
+    "async function publish",
+  );
+  assert.match(finish, /now - safeInteger\(stored\.startedAt\) < expectedActiveSeconds \* 1_000/);
+  assert.match(finish, /Math\.abs\(activeSeconds - expectedActiveSeconds\)/);
+  assert.match(finish, /completedRounds !== AI_TEXT_TRAINING_ACHIEVEMENT_ROUND_COUNT/);
+  assert.match(finish, /normalizeAiTextTrainingStats\(statsSnapshot\.data\(\)\)/);
+  assert.match(finish, /scope: "ai_training"/);
+  assert.match(finish, /unlockAchievements/);
+  assert.match(finish, /transaction\.set\(statsReference, nextStats\)/);
+  assert.match(finish, /transaction\.set\(profileReference, unlockResult\.profile\)/);
+  assert.match(finish, /transaction\.delete\(activeReference\)/);
+  assert.match(finish, /idempotent: true/);
+  assert.match(
+    finish,
+    /stored\.status === "completed" && profileSnapshot\.exists/,
+  );
+  assert.match(
+    finish,
+    /bestEffortAchievementSync\(\s*"ai-text-training-achievement-showcase",\s*uid,\s*achievementProfileToSync/,
+  );
+  assert.doesNotMatch(
+    finish,
+    /result\.(?:sellerUid|achievementProfileToSync)\s*=/,
+  );
 });
 
 test("paid use validates displayed revision, price, and balance before atomic wallet writes", () => {
@@ -145,6 +212,22 @@ test("daily ranking contribution and actual settlement are deliberately separate
   assert.match(start, /uniqueLifetimeBuyer/);
   assert.match(start, /uniqueMonthlyBuyer/);
   assert.match(start, /sellerProceeds: settlement\.sellerProceeds/);
+  assert.match(start, /rankingUseCount: nextStats\.rankingUseCount/);
+  assert.match(start, /uniqueBuyers: nextStats\.uniqueBuyers/);
+  assert.match(start, /scope: "ai_training"/);
+  assert.match(start, /transaction\.set\(sellerAchievementReference, sellerUnlockResult\.profile\)/);
+  assert.match(
+    start,
+    /sellerAchievementProfileToSync = sellerUnlockResult\.profile/,
+  );
+  assert.match(
+    start,
+    /bestEffortAchievementSync\(\s*"ai-text-training-seller-achievement-showcase",\s*preliminarySellerUid,\s*sellerAchievementProfileToSync/,
+  );
+  assert.doesNotMatch(
+    start,
+    /result\.(?:sellerUid|sellerAchievementProfileToSync)\s*=/,
+  );
 });
 
 test("browse index and large-script index exemptions are declared", () => {
@@ -168,6 +251,13 @@ test("browse index and large-script index exemptions are declared", () => {
   assert.ok(indexes.fieldOverrides.some((override) => (
     override.collectionGroup === "aiTextTrainingReports"
     && override.fieldPath === "presetSnapshot.lines"
+  )));
+  assert.ok(indexes.fieldOverrides.some((override) => (
+    override.collectionGroup === "aiTextTrainingAchievementSessions"
+    && override.fieldPath === "deleteAt"
+    && override.ttl === true
+    && Array.isArray(override.indexes)
+    && override.indexes.length === 0
   )));
 });
 

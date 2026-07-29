@@ -13,6 +13,7 @@ const {
   effectiveShowcase,
   eligibleAchievementIds,
   normalizeAchievementProfile,
+  normalizeAiTextTrainingStats,
   normalizeBattleStats,
   normalizeMarketStats,
   normalizeTrainingStats,
@@ -32,9 +33,11 @@ test("battle thresholds keep 100 matches below the long-term ceiling", () => {
 });
 
 test("achievement conditions never depend on wins, rating, rank, or AnjuPay market totals", () => {
-  const serializedConditions = JSON.stringify(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.condition));
+  const conditionKeys = new Set(
+    ACHIEVEMENT_DEFINITIONS.map((definition) => definition.condition?.key).filter(Boolean),
+  );
   for (const forbidden of ["wins", "rating", "rank", "grossSales", "spent", "bestSale", "highestPurchase"]) {
-    assert.equal(serializedConditions.includes(forbidden), false, `${forbidden} must not be an achievement condition`);
+    assert.equal(conditionKeys.has(forbidden), false, `${forbidden} must not be an achievement condition`);
   }
 });
 
@@ -103,6 +106,101 @@ test("training achievements combine legacy sets with current HP workouts without
       definition.scope === "training"
       && JSON.stringify(definition.condition).includes("Wins")
     )),
+    false,
+  );
+});
+
+test("AI text training achievements reward safe completion and script reach, not intensity or price", () => {
+  const thresholdsByFamily = Object.fromEntries([
+    "ai_training_sessions",
+    "ai_training_days",
+    "ai_training_script_uses",
+    "ai_training_unique_buyers",
+  ].map((family) => [
+    family,
+    ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === family)
+      .map((definition) => definition.target),
+  ]));
+  assert.deepEqual(thresholdsByFamily, {
+    ai_training_sessions: [1, 5, 20, 50, 100, 300],
+    ai_training_days: [3, 7, 14, 30, 60, 100],
+    ai_training_script_uses: [1, 3, 10, 30, 100, 300],
+    ai_training_unique_buyers: [3, 10, 30, 100],
+  });
+
+  const definitions = ACHIEVEMENT_DEFINITIONS
+    .filter((definition) => definition.scope === "ai_training");
+  assert.equal(definitions.length, 22);
+  assert.deepEqual(
+    [...new Set(definitions.map((definition) => definition.condition.type))],
+    ["ai_training_stat"],
+  );
+  const conditionKeys = new Set(
+    definitions.map((definition) => definition.condition?.key).filter(Boolean),
+  );
+  for (const forbidden of [
+    "bpm",
+    "seconds",
+    "roundSeconds",
+    "streak",
+    "price",
+    "actualGross",
+    "netSales",
+    "rank",
+  ]) {
+    assert.equal(conditionKeys.has(forbidden), false, forbidden);
+  }
+});
+
+test("AI text training stats normalize independently and unlock only their own scope", () => {
+  assert.deepEqual(normalizeAiTextTrainingStats({
+    completedSessions: 20.9,
+    completionDays: 7.8,
+    rankingUseCount: 30.2,
+    uniqueBuyers: 10.7,
+  }), {
+    completedSessions: 20,
+    completionDays: 7,
+    rankingUseCount: 30,
+    uniqueBuyers: 10,
+  });
+  assert.deepEqual(normalizeAiTextTrainingStats({
+    completedSessions: -1,
+    completionDays: Number.NaN,
+    rankingUseCount: Number.POSITIVE_INFINITY,
+    uniqueBuyers: "3",
+  }), {
+    completedSessions: 0,
+    completionDays: 0,
+    rankingUseCount: 0,
+    uniqueBuyers: 3,
+  });
+
+  const ids = eligibleAchievementIds({
+    aiTextTrainingStats: {
+      completedSessions: 20,
+      completionDays: 7,
+      rankingUseCount: 30,
+      uniqueBuyers: 10,
+    },
+    scope: "ai_training",
+  });
+  for (const expected of [
+    "ai_training_sessions_20",
+    "ai_training_days_7",
+    "ai_training_script_uses_30",
+    "ai_training_unique_buyers_10",
+  ]) {
+    assert.equal(ids.includes(expected), true, expected);
+  }
+  assert.equal(ids.includes("ai_training_sessions_50"), false);
+  assert.equal(ids.some((id) => id.startsWith("market_")), false);
+  assert.equal(
+    eligibleAchievementIds({
+      aiTextTrainingStats: { rankingUseCount: 300, uniqueBuyers: 100 },
+      scope: "market",
+    }).some((id) => id.startsWith("ai_training_")),
     false,
   );
 });
@@ -227,6 +325,44 @@ test("custom showcases advance to the highest unlocked level in the same family"
   assert.deepEqual(effectiveShowcase(profile), ["battle_total_10"]);
 });
 
+test("AI text training achievements can be showcased and advance within their family", () => {
+  const profile = unlockAchievements(null, [
+    "ai_training_sessions_1",
+    "ai_training_sessions_20",
+    "ai_training_script_uses_10",
+  ], 100).profile;
+  profile.customShowcase = [
+    "ai_training_sessions_1",
+    "ai_training_script_uses_10",
+  ];
+  assert.deepEqual(effectiveShowcase(profile), [
+    "ai_training_sessions_20",
+    "ai_training_script_uses_10",
+  ]);
+  const payload = publicAchievementProfile(
+    profile,
+    null,
+    null,
+    null,
+    {
+      completedSessions: 20,
+      completionDays: 7,
+      rankingUseCount: 10,
+      uniqueBuyers: 3,
+    },
+  );
+  assert.deepEqual(payload.showcase, [
+    "ai_training_sessions_20",
+    "ai_training_script_uses_10",
+  ]);
+  assert.deepEqual(payload.stats.aiTraining, {
+    completedSessions: 20,
+    completionDays: 7,
+    rankingUseCount: 10,
+    uniqueBuyers: 3,
+  });
+});
+
 test("market stats count days and unique counterparties independently of AnjuPay totals", () => {
   let stats = normalizeMarketStats({ salesCount: 3, purchases: 1 });
   stats = addMarketTransaction(stats, "seller", "2026-07-23", { newCounterparty: true });
@@ -257,4 +393,35 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
   const browserIds = [...window.HariaiAchievements.catalog].map((definition) => definition.id).sort();
   const serverIds = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id).sort();
   assert.deepEqual(browserIds, serverIds);
+  const browserAiTraining = [...window.HariaiAchievements.catalog]
+    .filter((definition) => definition.scope === "ai_training")
+    .map(({
+      id, scope, category, family, familyLabel, icon, level, target, name, description, hint,
+    }) => ({
+      id, scope, category, family, familyLabel, icon, level, target, name, description, hint,
+    }));
+  const serverAiTraining = ACHIEVEMENT_DEFINITIONS
+    .filter((definition) => definition.scope === "ai_training")
+    .map(({
+      id, scope, category, family, familyLabel, icon, level, target, name, description, hint,
+    }) => ({
+      id, scope, category, family, familyLabel, icon, level, target, name, description, hint,
+    }));
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(browserAiTraining)),
+    serverAiTraining,
+  );
+  const collectionHtml = window.HariaiAchievements.renderCollection({ unlocked: {} });
+  for (const copy of [
+    "文字コラトレーニング",
+    "BPMや運動強度ではなく、自分のペースで5ラウンドを終えた歩み",
+    "応援台本の販売",
+    "価格や売上額ではなく、応援が利用された回数と広がりの記録",
+    "自分のペースで5ラウンドを終えると解除",
+    "日にちを分けて文字コラを続けると解除",
+    "同じ利用者からはJSTの1日1回だけ数える",
+    "いろいろな人へ応援が届くと解除",
+  ]) {
+    assert.match(collectionHtml, new RegExp(copy));
+  }
 });

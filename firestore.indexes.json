@@ -216,6 +216,12 @@
       "indexes": []
     },
     {
+      "collectionGroup": "aiTextTrainingAchievementSessions",
+      "fieldPath": "deleteAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "accountTransferCodes",
       "fieldPath": "deleteAt",
       "ttl": true,

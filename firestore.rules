@@ -217,6 +217,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /aiTextTrainingPlayerStats/{uid} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingAchievementSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /aiTextTrainingActiveAchievementSessions/{uid} {
+      allow read, write: if false;
+    }
+
     match /aiTextTrainingPublishActions/{actionId} {
       allow read, write: if false;
     }

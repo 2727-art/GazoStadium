@@ -1603,6 +1603,10 @@ function openOnlineScreen(screen) {
         "battle_losses_30",
         "battle_loss_streak_5",
         "battle_days_3",
+        "ai_training_sessions_20",
+        "ai_training_days_7",
+        "ai_training_script_uses_10",
+        "ai_training_unique_buyers_3",
         "market_seller_3",
         "market_buyer_1",
         "market_both_1",
@@ -3497,16 +3501,16 @@ function renderAchievements() {
     : `<div class="economy-unavailable"><strong>実績情報を読み込んでいます…</strong><p>匿名アカウントの検証済み記録を確認しています。</p></div>`;
   return `<section class="screen achievement-screen">
     <div class="section-head"><div><span class="eyebrow">ACHIEVEMENT COLLECTION</span><h1>実績コレクション</h1>
-      <p>勝利・連勝・RATEではなく、遊んだ回数、モード回遊、敗北、市場での成立取引を記録します。</p></div>
+      <p>勝利・RATE・運動強度・売上額ではなく、遊んだ歩みや応援の言葉が届いた広がりを記録します。</p></div>
       <button class="button button-ghost button-small" id="achievementHomeButton">タイトルへ</button></div>
     <div class="achievement-policy">
-      <span>条件は解除まで非公開</span><span>AnjuPay報酬なし</span><span>ランキング展示は最大3件</span>
+      <span>条件は解除まで非公開</span><span>AnjuPay報酬なし</span><span>強度・価格・順位は条件外</span><span>ランキング展示は最大3件</span>
     </div>
     ${state.achievementsBusy ? `<div class="achievement-loading">実績情報を更新しています…</div>` : ""}
     ${content || `<div class="economy-unavailable"><strong>実績表示を準備できませんでした</strong><p>ページを読み直してお試しください。</p></div>`}
     <div class="economy-actions"><button class="button button-ghost" id="achievementRefreshButton" ${state.achievementsBusy ? "disabled" : ""}>実績を再読み込み</button>
       <button class="button button-primary" id="achievementBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">対戦実績はFunctionsが参加人数・完走・双方の結果を確認した試合だけ、市場実績は同じ相手との1日最初の成立取引だけを数えます。</p>
+    <p class="economy-note">対戦実績はFunctionsが確認した正式対戦だけ、文字コラ実績は開始と5ラウンド分の経過を確認した完走だけを数えます。カメラや動作は判定せず、安全停止で既存進捗は減りません。市場と台本販売のランキング対象利用は同じ相手からJSTの1日1回だけ、台本販売の異なる有料利用者数は生涯で数えます。</p>
   </section>`;
 }
 

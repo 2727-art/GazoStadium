@@ -305,6 +305,9 @@ aiTextTrainingPresets/{presetId}/revisions/{revisionId}
 aiTextTrainingSellerProfiles/{uid}
 aiTextTrainingUses/{useId}
 aiTextTrainingActiveUses/{uid}
+aiTextTrainingAchievementSessions/{sessionId}
+aiTextTrainingActiveAchievementSessions/{uid}
+aiTextTrainingPlayerStats/{uid}
 aiTextTrainingPublishActions/{actionId}
 aiTextTrainingSellerStats/{uid}
 aiTextTrainingMonthlyPeriods/{YYYY-MM}/entries/{uid}
@@ -325,12 +328,35 @@ aiTextTrainingPreferences/{uid}
 - `start_paid_use`
 - `resume_use`
 - `finish_use`
+- `begin_achievement_session`
+- `finish_achievement_session`
 - `save_profile`
 - `save_cosmetics`
 - `rankings`
 - `report`
 
 公開レスポンスへUIDや装着設定を含めない。作者は決定的な公開IDで表し、サーバー内部のUIDと分離する。`aiTextTrainingPreferences`は本人用Callableだけが読み書きし、装着可能商品はサーバー権威の商品カタログと購入済み記録から判定する。
+
+### 11.1 実績コレクション
+
+文字コラトレーニングと応援台本販売は、競技実績・鍛え合い60実績・VALUE MARKET実績から分離した2カテゴリで表示する。AnjuPay報酬、RATE、順位、BPM、運動強度は解除条件にしない。
+
+- `文字コラトレーニング`
+  - 5ラウンド完走回数: `1 / 5 / 20 / 50 / 100 / 300`
+  - 5ラウンドを完走した異なるJST日数: `3 / 7 / 14 / 30 / 60 / 100`
+- `応援台本の販売`
+  - ランキング対象利用回数: `1 / 3 / 10 / 30 / 100 / 300`（同じ利用者からはJSTの1日1回）
+  - 異なる有料利用者数: `3 / 10 / 30 / 100`（生涯のユニーク利用者数）
+
+トレーニング実績は、最初のラウンドの3秒カウントダウンを始める時にだけ`begin_achievement_session { actionId, modeId, roundSeconds }`を送る。準備画面と`aiTextTrainingPreview`によるローカル画面プレビューでは開始しない。サーバーが返した`session.id`を通常のセッション復元情報にも保存し、有料応援の再読込復元後も同じ実績セッションを使う。
+
+開始はUIDごとにサーバー権威の30秒間隔で制限し、同じ`actionId`の冪等再送だけは制限中も受け付ける。異なる開始で置き換えた旧セッションは完走扱いにせず、実績セッション文書には開始24時間後のFirestore Timestampを`deleteAt`として保存し、TTLポリシーで自動削除する。
+
+結果では有料台本の`finish_use`とは独立して、`finish_achievement_session { sessionId, outcome, completedRounds, activeSeconds }`を送る。`completed / safety_stopped / exited`をすべて終端として記録するが、実績進捗へ加えるのは、開始時のラウンド秒数と整合する5ラウンド完走だけとする。安全停止・途中終了は既存進捗や解除済み実績を減らさない。カメラ、モーションセンサー、自己申告の回数・フォームは判定根拠にしない。
+
+通信失敗は運動、一時停止、安全停止、有料利用の終了処理を妨げない。未送信記録は`ownerState / ownerUid / actionId / modeId / roundSeconds / sessionId / outcome / completedRounds / activeSeconds`だけを端末の`localStorage`再送キューへ最大12件保存し、画像、画像参照、5枚のBPM、台本ID、台詞本文、演出設定を含めない。Firebase UIDが未確定なら`ownerState: pending`として保存し、最初に確定したUIDへ一度だけ束縛する。束縛済みレコードを別UIDへ付け替えず、現在の認証UIDと一致する記録だけを送る。別UIDの記録と送信に失敗した記録はキューへ残しつつ、現在UIDに属する後続記録の再送を妨げない。結果画面の手動再送と、次回認証接続時の自動再送を用意する。解除応答の`newlyUnlocked`は共通の`hariai-achievements-unlocked`通知へ渡し、表示後のACKはベストエフォートとする。
+
+導入前の無料トレーニングは、サーバーで開始・完走時間を検証できる履歴がないため遡及加算しない。台本販売側は既存のサーバー正本`aiTextTrainingSellerStats`にあるランキング対象利用回数と異なる購入者数を実績コレクション取得時に再評価し、導入前から成立済みの販売を失わせない。
 
 ## 12. クライアント状態
 
@@ -366,6 +392,7 @@ reaction after round 5 → result
 - round-numbered reactions
 - immutable script snapshot
 - paid/free marker and completion state
+- achievement action ID / server session ID / begin-requested marker
 
 未購入品の試着状態は保存するセッション状態へ含めない。
 
@@ -389,6 +416,10 @@ reaction after round 5 → result
 - 5画像と全BPM境界 `0 / 40 / 160` を扱える。
 - 15 / 20 / 30 / 45 / 60秒を選択でき、1ラウンドが60秒を超えず、5ラウンド60秒設定の運動時間が最大5分になる。
 - 一時停止、カウント、反応待ちを運動時間へ加算せず、途中終了時は現在ラウンドの実運動時間だけを結果へ加算する。
+- 実績記録を最初のカウントダウンで一度だけ開始し、完走・安全停止・途中終了を有料利用終了と独立して冪等に確定できる。
+- 5ラウンド完走だけが文字コラ実績へ加算され、安全停止・途中終了で既存進捗が減らない。
+- 実績通信失敗が運動を止めず、画像・BPM・台詞を含まない端末内キューから結果画面または次回接続時に再送できる。
+- 旧無料プレイを遡及せず、既存の台本販売統計は販売実績へ反映する。
 - 3性格の実効BPMが仕様どおりで、再読込しても変わらない。
 - お姉ちゃんの注意と常設即停止がある。
 - 低BPM終盤へ高速追い込み台詞が混ざらない。

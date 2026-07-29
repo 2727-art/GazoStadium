@@ -6,7 +6,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["battle", "training", "market"]);
+const VALID_SCOPES = new Set(["battle", "training", "ai_training", "market"]);
 const MAX_SHOWCASE = 3;
 
 function series({
@@ -259,6 +259,57 @@ const battleDefinitions = [
   })),
 ];
 
+const aiTrainingDefinitions = [
+  ...series({
+    scope: "ai_training",
+    category: "ai_training_record",
+    family: "ai_training_sessions",
+    familyLabel: "文字コラ完走",
+    icon: "五",
+    thresholds: [1, 5, 20, 50, 100, 300],
+    names: ["文字コラ開幕", "五回のエール", "文字コラ日和", "五十回の歩み", "百回トレーニー", "文字コラの住人"],
+    description: (target) => `文字コラトレーニングを5ラウンド${target}回完走した`,
+    hint: "自分のペースで5ラウンドを終えると解除",
+    condition: (target) => ({ type: "ai_training_stat", key: "completedSessions", target }),
+  }),
+  ...series({
+    scope: "ai_training",
+    category: "ai_training_record",
+    family: "ai_training_days",
+    familyLabel: "文字コラ日数",
+    icon: "日",
+    thresholds: [3, 7, 14, 30, 60, 100],
+    names: ["三日分の一歩", "七日の文字コラ", "二週間のエール", "月のトレーニー", "六十日の歩み", "百日の文字コラ"],
+    description: (target) => `異なる${target}日で文字コラトレーニングを5ラウンド完走した`,
+    hint: "日にちを分けて文字コラを続けると解除",
+    condition: (target) => ({ type: "ai_training_stat", key: "completionDays", target }),
+  }),
+  ...series({
+    scope: "ai_training",
+    category: "ai_training_script_sales",
+    family: "ai_training_script_uses",
+    familyLabel: "台本利用成立",
+    icon: "文",
+    thresholds: [1, 3, 10, 30, 100, 300],
+    names: ["台本販売第一号", "駆け出し応援作者", "十回届いた言葉", "頼られる台本", "百回届いた言葉", "言葉で支える人"],
+    description: (target) => `応援台本のランキング対象利用が${target}回成立した`,
+    hint: "同じ利用者からはJSTの1日1回だけ数える",
+    condition: (target) => ({ type: "ai_training_stat", key: "rankingUseCount", target }),
+  }),
+  ...series({
+    scope: "ai_training",
+    category: "ai_training_script_sales",
+    family: "ai_training_unique_buyers",
+    familyLabel: "台本の利用者",
+    icon: "輪",
+    thresholds: [3, 10, 30, 100],
+    names: ["三人に届いた", "十人の応援仲間", "広がるエール", "百人に届く声"],
+    description: (target) => `異なる${target}人が応援台本を有料利用した`,
+    hint: "いろいろな人へ応援が届くと解除",
+    condition: (target) => ({ type: "ai_training_stat", key: "uniqueBuyers", target }),
+  }),
+];
+
 const marketDefinitions = [
   ...series({
     scope: "market",
@@ -338,7 +389,11 @@ const marketDefinitions = [
   })),
 ];
 
-const ACHIEVEMENT_DEFINITIONS = Object.freeze([...battleDefinitions, ...marketDefinitions]);
+const ACHIEVEMENT_DEFINITIONS = Object.freeze([
+  ...battleDefinitions,
+  ...aiTrainingDefinitions,
+  ...marketDefinitions,
+]);
 const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition]));
 
 function objectValue(value) {
@@ -447,6 +502,15 @@ function normalizeTrainingStats(value) {
   };
 }
 
+function normalizeAiTextTrainingStats(value) {
+  return {
+    completedSessions: count(value?.completedSessions),
+    completionDays: count(value?.completionDays),
+    rankingUseCount: count(value?.rankingUseCount),
+    uniqueBuyers: count(value?.uniqueBuyers),
+  };
+}
+
 function addMarketTransaction(value, role, dateKey, { newCounterparty = false } = {}) {
   const stats = normalizeMarketStats(value);
   if (!["seller", "buyer"].includes(role)) return stats;
@@ -463,7 +527,14 @@ function addMarketTransaction(value, role, dateKey, { newCounterparty = false } 
   return normalizeMarketStats({ ...value, ...stats });
 }
 
-function achievementConditionMet(definition, battleStats, trainingStats, marketStats, signals = {}) {
+function achievementConditionMet(
+  definition,
+  battleStats,
+  trainingStats,
+  aiTextTrainingStats,
+  marketStats,
+  signals = {},
+) {
   const condition = definition.condition;
   if (condition.type === "battle_stat") return count(battleStats?.[condition.key]) >= condition.target;
   if (condition.type === "battle_mode") return count(battleStats?.modeMatches?.[condition.mode]) >= condition.target;
@@ -479,6 +550,9 @@ function achievementConditionMet(definition, battleStats, trainingStats, marketS
   }
   if (condition.type === "battle_signal") return signals?.[condition.signal] === true;
   if (condition.type === "training_stat") return count(trainingStats?.[condition.key]) >= condition.target;
+  if (condition.type === "ai_training_stat") {
+    return count(aiTextTrainingStats?.[condition.key]) >= condition.target;
+  }
   if (condition.type === "market_stat") return count(marketStats?.[condition.key]) >= condition.target;
   if (condition.type === "market_both") {
     return count(marketStats?.salesCount) >= condition.target && count(marketStats?.purchases) >= condition.target;
@@ -488,12 +562,24 @@ function achievementConditionMet(definition, battleStats, trainingStats, marketS
 }
 
 function eligibleAchievementIds({
-  battleStats, trainingStats, marketStats, signals = {}, scope = "",
+  battleStats,
+  trainingStats,
+  aiTextTrainingStats,
+  marketStats,
+  signals = {},
+  scope = "",
 } = {}) {
   return ACHIEVEMENT_DEFINITIONS
     .filter((definition) => !definition.legacy
       && (!scope || definition.scope === scope)
-      && achievementConditionMet(definition, battleStats, trainingStats, marketStats, signals))
+      && achievementConditionMet(
+        definition,
+        battleStats,
+        trainingStats,
+        aiTextTrainingStats,
+        marketStats,
+        signals,
+      ))
     .map((definition) => definition.id);
 }
 
@@ -585,11 +671,18 @@ function publicShowcaseMap(profileValue) {
   return Object.fromEntries(effectiveShowcase(profileValue).map((id) => [id, true]));
 }
 
-function publicAchievementProfile(profileValue, battleStatsValue, marketStatsValue, trainingStatsValue) {
+function publicAchievementProfile(
+  profileValue,
+  battleStatsValue,
+  marketStatsValue,
+  trainingStatsValue,
+  aiTextTrainingStatsValue,
+) {
   const profile = normalizeAchievementProfile(profileValue);
   const battleStats = normalizeBattleStats(battleStatsValue);
   const marketStats = normalizeMarketStats(marketStatsValue);
   const trainingStats = normalizeTrainingStats(trainingStatsValue);
+  const aiTextTrainingStats = normalizeAiTextTrainingStats(aiTextTrainingStatsValue);
   const unlockedLegacyCount = Object.keys(profile.unlocked)
     .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.legacy === true)
     .length;
@@ -604,6 +697,7 @@ function publicAchievementProfile(profileValue, battleStatsValue, marketStatsVal
     stats: {
       battle: battleStats,
       training: trainingStats,
+      aiTraining: aiTextTrainingStats,
       market: {
         salesCount: marketStats.salesCount,
         purchases: marketStats.purchases,
@@ -627,6 +721,7 @@ module.exports = Object.freeze({
   effectiveShowcase,
   eligibleAchievementIds,
   emptyBattleStats,
+  normalizeAiTextTrainingStats,
   normalizeAchievementProfile,
   normalizeBattleStats,
   normalizeMarketStats,

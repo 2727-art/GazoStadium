@@ -52,6 +52,7 @@ const {
   deriveBattleStatsFromPeriods,
   effectiveShowcase,
   eligibleAchievementIds,
+  normalizeAiTextTrainingStats,
   normalizeAchievementProfile,
   normalizeBattleStats,
   normalizeMarketStats,
@@ -1073,6 +1074,18 @@ function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
 }
 
+function aiTextTrainingPlayerStatsRef(uid) {
+  return firestore.collection("aiTextTrainingPlayerStats").doc(uid);
+}
+
+function aiTextTrainingSellerStatsRef(uid) {
+  return firestore.collection("aiTextTrainingSellerStats").doc(uid);
+}
+
+function aiTextTrainingActiveAchievementSessionRef(uid) {
+  return firestore.collection("aiTextTrainingActiveAchievementSessions").doc(uid);
+}
+
 function serverRankingProfileRef(uid) {
   return firestore.collection("serverRankingProfiles").doc(uid);
 }
@@ -1828,22 +1841,39 @@ async function ensureAchievementState(uid) {
   const profileRef = achievementProfileRef(uid);
   const statsRef = marketStatsRef(uid);
   const trainingRef = trainingProfileRef(uid);
+  const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
+  const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
-    const [progressSnapshot, profileSnapshot, marketSnapshot, trainingSnapshot] = await Promise.all([
+    const [
+      progressSnapshot,
+      profileSnapshot,
+      marketSnapshot,
+      trainingSnapshot,
+      aiPlayerStatsSnapshot,
+      aiSellerStatsSnapshot,
+    ] = await Promise.all([
       transaction.get(progressRef),
       transaction.get(profileRef),
       transaction.get(statsRef),
       transaction.get(trainingRef),
+      transaction.get(aiPlayerStatsRef),
+      transaction.get(aiSellerStatsRef),
     ]);
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
     const marketStats = normalizeMarketStats(marketSnapshot.data());
     const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
+    const aiTextTrainingStats = normalizeAiTextTrainingStats({
+      ...aiPlayerStatsSnapshot.data(),
+      rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
+      uniqueBuyers: aiSellerStatsSnapshot.get("uniqueBuyers"),
+    });
     const eligibleIds = eligibleAchievementIds({
       battleStats: progress.achievementStats,
       trainingStats: trainingProfile,
       marketStats,
+      aiTextTrainingStats,
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
     if (!progressSnapshot.exists
@@ -1859,6 +1889,7 @@ async function ensureAchievementState(uid) {
       progress,
       marketStats,
       trainingProfile,
+      aiTextTrainingStats,
       profile: unlockResult.profile,
       newlyUnlocked: unlockResult.newlyUnlocked,
     };
@@ -2708,6 +2739,7 @@ async function getAchievements(uid, { syncPublic = false } = {}) {
     state.progress.achievementStats,
     state.marketStats,
     state.trainingProfile,
+    state.aiTextTrainingStats,
   );
 }
 
@@ -2932,15 +2964,34 @@ async function setAchievementShowcase(uid, idsValue) {
   const profileRef = achievementProfileRef(uid);
   const progressRef = economyProgressRef(uid);
   const statsRef = marketStatsRef(uid);
+  const trainingRef = trainingProfileRef(uid);
+  const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
+  const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
-    const [profileSnapshot, progressSnapshot, marketSnapshot] = await Promise.all([
+    const [
+      profileSnapshot,
+      progressSnapshot,
+      marketSnapshot,
+      trainingSnapshot,
+      aiPlayerStatsSnapshot,
+      aiSellerStatsSnapshot,
+    ] = await Promise.all([
       transaction.get(profileRef),
       transaction.get(progressRef),
       transaction.get(statsRef),
+      transaction.get(trainingRef),
+      transaction.get(aiPlayerStatsRef),
+      transaction.get(aiSellerStatsRef),
     ]);
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
+    const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
+    const aiTextTrainingStats = normalizeAiTextTrainingStats({
+      ...aiPlayerStatsSnapshot.data(),
+      rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
+      uniqueBuyers: aiSellerStatsSnapshot.get("uniqueBuyers"),
+    });
     const profile = normalizeAchievementProfile(profileSnapshot.data());
     const customShowcase = sanitizeAchievementIds(requestedIds, { unlocked: profile.unlocked });
     if (customShowcase.length !== requestedIds.length) {
@@ -2949,12 +3000,24 @@ async function setAchievementShowcase(uid, idsValue) {
     profile.customShowcase = customShowcase;
     profile.updatedAt = Date.now();
     transaction.set(profileRef, profile);
-    result = { profile, progress, marketStats };
+    result = {
+      profile,
+      progress,
+      marketStats,
+      trainingProfile,
+      aiTextTrainingStats,
+    };
   });
   await syncAchievementPublicSurfaces(uid, result.profile);
   return {
     saved: true,
-    achievements: publicAchievementProfile(result.profile, result.progress.achievementStats, result.marketStats),
+    achievements: publicAchievementProfile(
+      result.profile,
+      result.progress.achievementStats,
+      result.marketStats,
+      result.trainingProfile,
+      result.aiTextTrainingStats,
+    ),
   };
 }
 
@@ -3459,7 +3522,13 @@ async function initializeEconomy(uid) {
     ensureAchievementState(uid),
     readPatronage(uid),
   ]);
-  const { progress, profile, marketStats } = achievementState;
+  const {
+    progress,
+    profile,
+    marketStats,
+    trainingProfile,
+    aiTextTrainingStats,
+  } = achievementState;
   const patronProgram = await ensurePatronFundRecognition(uid, patron);
   await Promise.all([
     mirrorWallet(uid, balance),
@@ -3475,7 +3544,13 @@ async function initializeEconomy(uid) {
     daily: progress.daily,
     periodRewards: progress.periodRewards,
     dailyPlay: dailyPlayRewardSummary(progress.periodRewards, progress.dailyPlayClaims),
-    achievements: publicAchievementProfile(profile, progress.achievementStats, marketStats),
+    achievements: publicAchievementProfile(
+      profile,
+      progress.achievementStats,
+      marketStats,
+      trainingProfile,
+      aiTextTrainingStats,
+    ),
     patron: {
       ...publicPatronage(patron, periodKey("monthly")),
       lifetimeSpent: patron.lifetimeSpent,
@@ -10508,6 +10583,8 @@ async function accountHasActiveSession(uid) {
     liveSoloSessionV2Room(uid, now),
     trainingSessionClaimRef(uid).get(),
     trainingSessionService.liveRoom(uid, now),
+    firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
+    aiTextTrainingActiveAchievementSessionRef(uid).get(),
   ]);
   const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
   if (realtimeSnapshots.some((snapshot, index) => {
@@ -10528,12 +10605,20 @@ async function accountHasActiveSession(uid) {
   const soloSessionRoom = snapshots[realtimePaths.length + 3];
   const trainingSessionClaimSnapshot = snapshots[realtimePaths.length + 4];
   const trainingSessionRoom = snapshots[realtimePaths.length + 5];
+  const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 6];
+  const aiTextTrainingActiveAchievementSessionSnapshot =
+    snapshots[realtimePaths.length + 7];
   const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
   const trainingSessionClaim = normalizeClaim(trainingSessionClaimSnapshot.val());
   if ((soloSessionClaim && soloSessionClaim.expiresAt > now)
       || soloSessionRoom
       || (trainingSessionClaim && trainingSessionClaim.expiresAt > now)
-      || trainingSessionRoom) return true;
+      || trainingSessionRoom
+      || aiTextTrainingActiveUseSnapshot.exists
+      || (
+        aiTextTrainingActiveAchievementSessionSnapshot.exists
+        && Number(aiTextTrainingActiveAchievementSessionSnapshot.get("expiresAt") || 0) > now
+      )) return true;
   const marketQueue = marketQueueSnapshot.data();
   if (marketQueueSnapshot.exists
       && marketQueue?.status === "waiting"
@@ -10594,6 +10679,10 @@ async function transferTargetIsPristine(uid, request) {
     aiTextTrainingReportSnapshot,
     aiTextTrainingProfileSnapshot,
     aiTextTrainingPreferencesSnapshot,
+    aiTextTrainingPlayerStatsSnapshot,
+    aiTextTrainingAchievementSessionSnapshot,
+    aiTextTrainingActiveAchievementSessionSnapshot,
+    aiTextTrainingActiveUseSnapshot,
     patronSnapshot,
     trainingProfileSnapshot,
     trainingClaimSnapshot,
@@ -10621,6 +10710,13 @@ async function transferTargetIsPristine(uid, request) {
     firestore.collection("aiTextTrainingReports").where("reporterUid", "==", uid).limit(1).get(),
     firestore.collection("aiTextTrainingSellerProfiles").doc(uid).get(),
     firestore.collection("aiTextTrainingPreferences").doc(uid).get(),
+    aiTextTrainingPlayerStatsRef(uid).get(),
+    firestore.collection("aiTextTrainingAchievementSessions")
+      .where("uid", "==", uid)
+      .limit(1)
+      .get(),
+    aiTextTrainingActiveAchievementSessionRef(uid).get(),
+    firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
     patronageRef(uid).get(),
     trainingProfileRef(uid).get(),
     firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
@@ -10674,6 +10770,10 @@ async function transferTargetIsPristine(uid, request) {
       || !aiTextTrainingReportSnapshot.empty
       || aiTextTrainingProfileSnapshot.exists
       || aiTextTrainingPreferencesSnapshot.exists
+      || aiTextTrainingPlayerStatsSnapshot.exists
+      || !aiTextTrainingAchievementSessionSnapshot.empty
+      || aiTextTrainingActiveAchievementSessionSnapshot.exists
+      || aiTextTrainingActiveUseSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
   return !soloProfileSnapshot.exists()
@@ -10822,6 +10922,10 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetAiTextTrainingReportSnapshot,
       targetAiTextTrainingProfileSnapshot,
       targetAiTextTrainingPreferencesSnapshot,
+      targetAiTextTrainingPlayerStatsSnapshot,
+      targetAiTextTrainingAchievementSessionSnapshot,
+      targetAiTextTrainingActiveAchievementSessionSnapshot,
+      targetAiTextTrainingActiveUseSnapshot,
       targetPatronSnapshot,
       targetTrainingProfileSnapshot,
       targetFamiliarBookSnapshot,
@@ -10850,6 +10954,14 @@ async function redeemAccountTransferCode(request, rawCode) {
       ),
       transaction.get(firestore.collection("aiTextTrainingSellerProfiles").doc(targetUid)),
       transaction.get(firestore.collection("aiTextTrainingPreferences").doc(targetUid)),
+      transaction.get(aiTextTrainingPlayerStatsRef(targetUid)),
+      transaction.get(
+        firestore.collection("aiTextTrainingAchievementSessions")
+          .where("uid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(aiTextTrainingActiveAchievementSessionRef(targetUid)),
+      transaction.get(firestore.collection("aiTextTrainingActiveUses").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
       transaction.get(trainingProfileRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
@@ -10896,6 +11008,10 @@ async function redeemAccountTransferCode(request, rawCode) {
         || !targetAiTextTrainingReportSnapshot.empty
         || targetAiTextTrainingProfileSnapshot.exists
         || targetAiTextTrainingPreferencesSnapshot.exists
+        || targetAiTextTrainingPlayerStatsSnapshot.exists
+        || !targetAiTextTrainingAchievementSessionSnapshot.empty
+        || targetAiTextTrainingActiveAchievementSessionSnapshot.exists
+        || targetAiTextTrainingActiveUseSnapshot.exists
         || targetTrainingProfile.sessions > 0
         || targetTrainingProfile.completedSets > 0
         || targetTrainingProfile.completedSeconds > 0
@@ -14866,6 +14982,7 @@ const aiTextTrainingService = createAiTextTrainingService({
   anjuPayEntryId,
   mirrorWallet,
   bestEffort,
+  syncAchievementPublicSurfaces,
   ownedProductIds: ownedMarketProductIds,
 });
 

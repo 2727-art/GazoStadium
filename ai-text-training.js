@@ -52,8 +52,10 @@ import {
 
 const appRoot = document.querySelector("#app");
 const aiTextTrainingAction = httpsCallable(functions, "aiTextTrainingAction");
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const SESSION_STORAGE_KEY = "hariai-ai-text-training-session-v1";
+const ACHIEVEMENT_RETRY_QUEUE_KEY = "hariai-ai-text-training-achievement-retry-v1";
 const DAILY_COMPLETE_PREFIX = "hariai-ai-text-training-daily-v1:";
 const DECK_PERSISTENCE_KEY = "hariai-ai-text-training-deck-persistence-v1";
 const DECK_DATABASE_NAME = "hariai-ai-text-training-deck-v1";
@@ -93,6 +95,7 @@ const DEFAULT_POLICY = Object.freeze({
 
 let active = false;
 let state = createState();
+let achievementRetryFlushPromise = null;
 
 function shared() {
   return window.HariaiApp?.shared;
@@ -173,6 +176,273 @@ function storedSession() {
   }
 }
 
+function normalizeAchievementOwnerUid(value) {
+  if (typeof value !== "string") return "";
+  const uid = value.trim();
+  if (!uid || uid.length > 128 || /[\u0000-\u001f\u007f]/u.test(uid)) return "";
+  return uid;
+}
+
+function currentAchievementOwner() {
+  const ownerUid = normalizeAchievementOwnerUid(auth.currentUser?.uid);
+  return ownerUid
+    ? { ownerState: "bound", ownerUid }
+    : { ownerState: "pending", ownerUid: "" };
+}
+
+function achievementRetryOwnerMatches(record, owner) {
+  if (!record || !owner || record.ownerState !== owner.ownerState) return false;
+  if (owner.ownerState === "pending") return !record.ownerUid && !owner.ownerUid;
+  return Boolean(owner.ownerUid) && record.ownerUid === owner.ownerUid;
+}
+
+function sanitizeAchievementRetryRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const requestedOwnerState = String(value.ownerState || "pending");
+  const requestedOwnerUid = normalizeAchievementOwnerUid(value.ownerUid);
+  let ownerState = "pending";
+  let ownerUid = "";
+  if (requestedOwnerState === "bound") {
+    if (!requestedOwnerUid) return null;
+    ownerState = "bound";
+    ownerUid = requestedOwnerUid;
+  } else if (requestedOwnerState !== "pending" || requestedOwnerUid) {
+    return null;
+  }
+  const actionId = String(value.actionId || "");
+  const modeId = String(value.modeId || "");
+  const roundSeconds = Number(value.roundSeconds);
+  if (!/^[A-Za-z0-9_-]{16,80}$/u.test(actionId)
+      || !AI_TEXT_TRAINING_MODES.some((mode) => mode.id === modeId)
+      || !ROUND_SECONDS_OPTIONS.includes(roundSeconds)) {
+    return null;
+  }
+  const sessionId = /^[a-f0-9]{40}$/u.test(String(value.sessionId || ""))
+    ? String(value.sessionId)
+    : "";
+  const outcome = ["completed", "safety_stopped", "exited"].includes(value.outcome)
+    ? value.outcome
+    : "";
+  const completedRounds = Number.isSafeInteger(Number(value.completedRounds))
+    ? Math.max(0, Math.min(AI_TEXT_TRAINING_ROUND_COUNT, Number(value.completedRounds)))
+    : 0;
+  const maximumActiveSeconds = roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT;
+  const activeSeconds = Number.isFinite(Number(value.activeSeconds))
+    ? Math.max(0, Math.min(maximumActiveSeconds, Number(value.activeSeconds)))
+    : 0;
+  return {
+    ownerState,
+    ownerUid,
+    actionId,
+    modeId,
+    roundSeconds,
+    sessionId,
+    outcome,
+    completedRounds,
+    activeSeconds,
+  };
+}
+
+function readAchievementRetryQueue() {
+  try {
+    const parsed = JSON.parse(readLocalValue(ACHIEVEMENT_RETRY_QUEUE_KEY, "[]"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(sanitizeAchievementRetryRecord)
+      .filter(Boolean)
+      .slice(-12);
+  } catch {
+    return [];
+  }
+}
+
+function writeAchievementRetryQueue(records) {
+  const sanitized = (Array.isArray(records) ? records : [])
+    .map(sanitizeAchievementRetryRecord)
+    .filter(Boolean)
+    .slice(-12);
+  if (!sanitized.length) {
+    removeLocalValue(ACHIEVEMENT_RETRY_QUEUE_KEY);
+    return [];
+  }
+  writeLocalValue(ACHIEVEMENT_RETRY_QUEUE_KEY, JSON.stringify(sanitized));
+  return sanitized;
+}
+
+function upsertAchievementRetryRecord(value) {
+  const incoming = sanitizeAchievementRetryRecord(value);
+  if (!incoming) return null;
+  const records = readAchievementRetryQueue();
+  const index = records.findIndex((record) => record.actionId === incoming.actionId);
+  if (index >= 0) {
+    const previous = records[index];
+    const outcome = incoming.outcome || previous.outcome;
+    const owner = previous.ownerState === "bound"
+      ? { ownerState: "bound", ownerUid: previous.ownerUid }
+      : incoming.ownerState === "bound"
+        ? { ownerState: "bound", ownerUid: incoming.ownerUid }
+        : { ownerState: "pending", ownerUid: "" };
+    records[index] = sanitizeAchievementRetryRecord({
+      ...previous,
+      ...incoming,
+      ...owner,
+      sessionId: incoming.sessionId || previous.sessionId,
+      outcome,
+      completedRounds: incoming.outcome
+        ? incoming.completedRounds
+        : previous.outcome
+          ? previous.completedRounds
+          : incoming.completedRounds,
+      activeSeconds: incoming.outcome
+        ? incoming.activeSeconds
+        : previous.outcome
+          ? previous.activeSeconds
+          : incoming.activeSeconds,
+    });
+  } else {
+    records.push(incoming);
+  }
+  return writeAchievementRetryQueue(records)
+    .find((record) => record.actionId === incoming.actionId) || null;
+}
+
+function bindPendingAchievementRetryRecords(ownerUidValue) {
+  const ownerUid = normalizeAchievementOwnerUid(ownerUidValue);
+  const records = readAchievementRetryQueue();
+  if (!ownerUid) return records;
+  let changed = false;
+  const bound = records.map((record) => {
+    if (record.ownerState === "bound") return record;
+    changed = true;
+    return sanitizeAchievementRetryRecord({
+      ...record,
+      ownerState: "bound",
+      ownerUid,
+    });
+  }).filter(Boolean);
+  return changed ? writeAchievementRetryQueue(bound) : bound;
+}
+
+function currentAchievementRetryRecord() {
+  if (!state.achievementActionId) return null;
+  return readAchievementRetryQueue()
+    .find((record) => record.actionId === state.achievementActionId) || null;
+}
+
+function notifyAchievementUnlocks(idsValue) {
+  const normalizedIds = window.HariaiAchievements?.normalizeIds?.(idsValue)
+    || (Array.isArray(idsValue)
+      ? [...new Set(idsValue
+        .map((id) => String(id || ""))
+        .filter((id) => /^[a-z0-9_]{1,80}$/u.test(id)))]
+      : []);
+  const ids = normalizedIds
+    .filter((id) => !state.notifiedAchievementIds.has(id));
+  if (!ids.length) return;
+  ids.forEach((id) => state.notifiedAchievementIds.add(id));
+  window.dispatchEvent(new CustomEvent(
+    "hariai-achievements-unlocked",
+    { detail: { ids } },
+  ));
+  economyActionCallable({
+    action: "ack_achievements",
+    achievementIds: ids,
+  }).catch(() => {
+    ids.forEach((id) => state.notifiedAchievementIds.delete(id));
+  });
+}
+
+function flushAchievementRetryQueue() {
+  if (achievementRetryFlushPromise) return achievementRetryFlushPromise;
+  const authenticatedUid = normalizeAchievementOwnerUid(auth.currentUser?.uid);
+  if (state.preview || !authenticatedUid) return Promise.resolve(false);
+  achievementRetryFlushPromise = (async () => {
+    state.achievementRetryInFlight = true;
+    state.achievementRetryError = "";
+    let allSucceeded = true;
+    try {
+      const records = bindPendingAchievementRetryRecords(authenticatedUid);
+      const authenticatedOwner = { ownerState: "bound", ownerUid: authenticatedUid };
+      for (const queuedRecord of records) {
+        if (!achievementRetryOwnerMatches(queuedRecord, authenticatedOwner)) {
+          continue;
+        }
+        if (normalizeAchievementOwnerUid(auth.currentUser?.uid) !== authenticatedUid) {
+          allSucceeded = false;
+          break;
+        }
+        try {
+          let record = readAchievementRetryQueue()
+            .find((item) => item.actionId === queuedRecord.actionId);
+          if (!record
+              || record.ownerState !== "bound"
+              || record.ownerUid !== authenticatedUid) {
+            continue;
+          }
+          if (!record.sessionId) {
+            const response = await aiTextTrainingAction({
+              action: "begin_achievement_session",
+              actionId: record.actionId,
+              modeId: record.modeId,
+              roundSeconds: record.roundSeconds,
+            });
+            const sessionId = String(response.data?.session?.id || "");
+            if (!/^[a-f0-9]{40}$/u.test(sessionId)) {
+              throw new Error("実績記録の開始を確認できませんでした。");
+            }
+            const latest = readAchievementRetryQueue()
+              .find((item) => item.actionId === record.actionId);
+            if (!latest
+                || latest.ownerState !== "bound"
+                || latest.ownerUid !== authenticatedUid) {
+              continue;
+            }
+            record = upsertAchievementRetryRecord({ ...latest, sessionId });
+            if (state.achievementActionId === queuedRecord.actionId) {
+              state.achievementSessionId = sessionId;
+              persistSession();
+            }
+          }
+          if (!record?.outcome) continue;
+          if (normalizeAchievementOwnerUid(auth.currentUser?.uid) !== authenticatedUid) {
+            allSucceeded = false;
+            break;
+          }
+          const response = await aiTextTrainingAction({
+            action: "finish_achievement_session",
+            sessionId: record.sessionId,
+            outcome: record.outcome,
+            completedRounds: record.completedRounds,
+            activeSeconds: record.activeSeconds,
+          });
+          writeAchievementRetryQueue(
+            readAchievementRetryQueue()
+              .filter((item) => item.actionId !== record.actionId),
+          );
+          if (state.achievementActionId === record.actionId) {
+            state.achievementSessionId = String(
+              response.data?.session?.id || record.sessionId,
+            );
+            persistSession();
+          }
+          notifyAchievementUnlocks(response.data?.newlyUnlocked);
+        } catch (error) {
+          allSucceeded = false;
+          state.achievementRetryError = error?.message
+            || "実績記録を送信できませんでした。";
+        }
+      }
+      return allSucceeded;
+    } finally {
+      state.achievementRetryInFlight = false;
+    }
+  })().finally(() => {
+    achievementRetryFlushPromise = null;
+    if (active && state.screen === "result") render();
+  });
+  return achievementRetryFlushPromise;
+}
+
 function createState() {
   const persistDeck = readLocalValue(DECK_PERSISTENCE_KEY) === "true";
   const ambienceController = createFreeTableAmbienceController({ initialVolume: 0.16 });
@@ -231,6 +501,12 @@ function createState() {
     completedActiveSeconds: 0,
     completedRounds: 0,
     resultOutcome: "",
+    achievementActionId: "",
+    achievementSessionId: "",
+    achievementBeginRequested: false,
+    achievementRetryInFlight: false,
+    achievementRetryError: "",
+    notifiedAchievementIds: new Set(),
     paidUseId: "",
     purchaseActionId: "",
     pendingPaidPreset: null,
@@ -345,6 +621,9 @@ function persistSession() {
     completedActiveSeconds: state.completedActiveSeconds,
     completedRounds: state.completedRounds,
     sessionStartedAt: state.sessionStartedAt,
+    achievementActionId: state.achievementActionId,
+    achievementSessionId: state.achievementSessionId,
+    achievementBeginRequested: state.achievementBeginRequested,
     selectedPreset: state.selectedPreset,
     selectedPresetSource: state.selectedPresetSource,
     cosmetics: state.sessionCosmetics,
@@ -684,11 +963,13 @@ async function initializeAuthenticatedState(targetState = state) {
     if (!active || state !== targetState) return;
     recoverPaidSession();
     render();
+    flushAchievementRetryQueue().catch(() => {});
   } catch (error) {
     if (!active || state !== targetState) return;
     targetState.authReady = false;
     targetState.authError = error?.message || "市場へ接続できませんでした。";
     render();
+    flushAchievementRetryQueue().catch(() => {});
   }
 }
 
@@ -719,6 +1000,18 @@ function recoverPaidSession() {
       Math.min(AI_TEXT_TRAINING_ROUND_COUNT, Number(saved.completedRounds) || 0),
     );
     state.sessionStartedAt = Number(saved.sessionStartedAt) || Date.now();
+    state.achievementActionId = /^[A-Za-z0-9_-]{16,80}$/u.test(
+      String(saved.achievementActionId || ""),
+    )
+      ? String(saved.achievementActionId)
+      : "";
+    state.achievementSessionId = /^[a-f0-9]{40}$/u.test(
+      String(saved.achievementSessionId || ""),
+    )
+      ? String(saved.achievementSessionId)
+      : "";
+    state.achievementBeginRequested = saved.achievementBeginRequested === true
+      && Boolean(state.achievementActionId);
     state.selectedPreset = presetSnapshot(state.activeUse.preset);
     state.selectedPresetSource = "active_use";
     state.paidUseId = state.activeUse.id;
@@ -728,6 +1021,25 @@ function recoverPaidSession() {
       ownedStyleIds: state.cosmetics?.ownedStyleIds,
       },
     );
+    if (state.achievementBeginRequested) {
+      const pending = upsertAchievementRetryRecord({
+        ...currentAchievementOwner(),
+        actionId: state.achievementActionId,
+        modeId: state.modeId,
+        roundSeconds: state.roundSeconds,
+        sessionId: state.achievementSessionId,
+        outcome: ["completed", "safety_stopped", "exited"].includes(saved.resultOutcome)
+          ? saved.resultOutcome
+          : "",
+        completedRounds: saved.resultOutcome === "completed"
+          ? AI_TEXT_TRAINING_ROUND_COUNT
+          : state.completedRounds,
+        activeSeconds: saved.resultOutcome === "completed"
+          ? state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT
+          : state.completedActiveSeconds,
+      });
+      if (pending?.sessionId) state.achievementSessionId = pending.sessionId;
+    }
     if (saved.resultOutcome) {
       state.resultOutcome = saved.resultOutcome;
       state.screen = "result";
@@ -945,7 +1257,7 @@ function renderSetup() {
     <section class="ai-text-training-daily ${todayComplete ? "is-complete" : ""}" aria-label="今日のチャレンジ">
       <span>${todayComplete ? "TODAY COMPLETE" : "TODAY'S QUICK CHALLENGE"}</span>
       <strong>${todayComplete ? "今日の5ラウンドを完走しました" : "好きな性格で5ラウンド完走しよう"}</strong>
-      <small>有料応援は任意です。完走によるPay還元はありません。</small>
+      <small>カメラや動作判定は使いません。5ラウンド完走だけが実績へ加算され、安全停止・途中終了で今までの進捗は減りません。有料応援は任意で、完走によるPay還元はありません。</small>
     </section>
     <section class="ai-text-training-panel">
       <div class="ai-text-training-section-heading"><span>STEP 1</span><h2>5枚とBPMを用意</h2><em>${state.images.filter(Boolean).length} / 5</em></div>
@@ -1326,6 +1638,7 @@ function renderResult() {
   const completedRounds = state.resultOutcome === "completed"
     ? AI_TEXT_TRAINING_ROUND_COUNT
     : Math.min(AI_TEXT_TRAINING_ROUND_COUNT, state.completedRounds);
+  const achievementPending = Boolean(currentAchievementRetryRecord()?.outcome);
   return renderFrame(`
     <section class="ai-text-training-result ${state.resultOutcome === "safety_stopped" ? "is-safety" : ""}">
       <span>${state.resultOutcome === "completed" ? "SESSION CLEAR" : "SESSION ENDED"}</span>
@@ -1334,8 +1647,10 @@ function renderResult() {
       ${state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
       <dl><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
       ${state.finishPending ? `<p class="ai-text-training-pending">${state.finishInFlight ? "有料利用の終了記録を送信中です。" : "有料利用の終了記録を確認できませんでした。再送してください。"}追加請求はありません。</p>` : ""}
-      <div><button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "5枚を残してもう一度"}</button>${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
-      <small>水分を取り、必要なら十分に休んでください。</small>
+      ${achievementPending ? `<p class="ai-text-training-pending">${state.achievementRetryInFlight ? "実績記録を送信中です。" : "実績記録を送信できませんでした。"}運動結果を妨げず、画像・BPM・台詞を含まない最小限の記録だけをこの端末に残して再送します。</p>` : ""}
+      <p>実績はカメラや動作判定を使わず、5ラウンド完走時だけ1回加算します。安全停止・途中終了では加算せず、解除済み実績や既存の進捗も減りません。</p>
+      <div><button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "5枚を残してもう一度"}</button>${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}${achievementPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-achievement-finish" ${state.achievementRetryInFlight ? "disabled" : ""}>実績記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
+      <small>水分を取り、必要なら十分に休んでください。実績送信の失敗を理由に運動を続ける必要はありません。</small>
     </section>
   `, { eyebrow: "SOLO RESULT", title: "文字コラトレーニング結果", backLabel: "トップへ", backAction: "home" });
 }
@@ -1614,6 +1929,10 @@ function newSessionPlan() {
   state.completedRounds = 0;
   state.sessionStartedAt = Date.now();
   state.resultOutcome = "";
+  state.achievementActionId = generatedActionId("achievement_session");
+  state.achievementSessionId = "";
+  state.achievementBeginRequested = false;
+  state.achievementRetryError = "";
   state.phase = "paused";
 }
 
@@ -1879,8 +2198,52 @@ function beginRound() {
   persistSession();
 }
 
+function beginAchievementTracking() {
+  if (state.preview
+      || state.roundIndex !== 0
+      || state.achievementBeginRequested
+      || !state.achievementActionId) {
+    return;
+  }
+  state.achievementBeginRequested = true;
+  const currentOwner = currentAchievementOwner();
+  writeAchievementRetryQueue(readAchievementRetryQueue().map((record) => (
+    record.actionId !== state.achievementActionId
+      && !record.outcome
+      && achievementRetryOwnerMatches(record, currentOwner)
+      ? {
+        ...record,
+        outcome: "exited",
+        completedRounds: 0,
+        activeSeconds: 0,
+      }
+      : record
+  )));
+  const pending = upsertAchievementRetryRecord({
+    ...currentOwner,
+    actionId: state.achievementActionId,
+    modeId: state.modeId,
+    roundSeconds: state.roundSeconds,
+    sessionId: state.achievementSessionId,
+    outcome: "",
+    completedRounds: 0,
+    activeSeconds: 0,
+  });
+  if (pending?.sessionId) state.achievementSessionId = pending.sessionId;
+  if (pending) {
+    writeAchievementRetryQueue([
+      pending,
+      ...readAchievementRetryQueue()
+        .filter((record) => record.actionId !== pending.actionId),
+    ]);
+  }
+  persistSession();
+  flushAchievementRetryQueue().catch(() => {});
+}
+
 function startRoundCountdown() {
   if (!state.plan) return;
+  beginAchievementTracking();
   stopRuntimeTimers();
   releaseWakeLock();
   state.phase = "countdown";
@@ -1966,6 +2329,41 @@ function advanceRound() {
   startRoundCountdown();
 }
 
+function queueAchievementFinish(outcome) {
+  if (state.preview
+      || !state.achievementBeginRequested
+      || !state.achievementActionId
+      || !["completed", "safety_stopped", "exited"].includes(outcome)) {
+    return false;
+  }
+  const completedRounds = outcome === "completed"
+    ? AI_TEXT_TRAINING_ROUND_COUNT
+    : Math.max(0, Math.min(
+      AI_TEXT_TRAINING_ROUND_COUNT,
+      Number(state.completedRounds) || 0,
+    ));
+  const maximumActiveSeconds = state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT;
+  const measuredActiveSeconds = outcome === "completed"
+    ? maximumActiveSeconds
+    : Number(state.completedActiveSeconds) || 0;
+  const activeSeconds = Math.round(
+    Math.max(0, Math.min(maximumActiveSeconds, measuredActiveSeconds)) * 1_000,
+  ) / 1_000;
+  const pending = upsertAchievementRetryRecord({
+    ...currentAchievementOwner(),
+    actionId: state.achievementActionId,
+    modeId: state.modeId,
+    roundSeconds: state.roundSeconds,
+    sessionId: state.achievementSessionId,
+    outcome,
+    completedRounds,
+    activeSeconds,
+  });
+  if (pending?.sessionId) state.achievementSessionId = pending.sessionId;
+  state.achievementRetryError = "";
+  return Boolean(pending);
+}
+
 async function finishPaidUse(outcome) {
   if (!state.paidUseId) return true;
   if (state.preview) {
@@ -2004,6 +2402,17 @@ async function retryFinishPaidUse() {
   if (active && state.screen === "result") render();
 }
 
+async function retryAchievementFinish() {
+  const pending = currentAchievementRetryRecord();
+  if (!pending?.outcome) return;
+  state.achievementRetryError = "";
+  render();
+  const sent = await flushAchievementRetryQueue();
+  if (!sent && active && state.screen === "result") {
+    showToast("実績記録を再送できませんでした。端末内に残し、次回接続時にも再送します。");
+  }
+}
+
 function completeSession(outcome) {
   if (state.phase === "playing" && state.roundEndsAt) {
     state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
@@ -2020,7 +2429,9 @@ function completeSession(outcome) {
   if (outcome === "completed") {
     writeLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`, "true");
   }
+  queueAchievementFinish(outcome);
   persistSession();
+  flushAchievementRetryQueue().catch(() => {});
   finishPaidUse(outcome).finally(() => {
     if (active && state.screen === "result") render();
   });
@@ -2057,6 +2468,10 @@ function resetForAnotherSession() {
   state.remainingMs = state.roundSeconds * 1_000;
   state.completedRounds = 0;
   state.resultOutcome = "";
+  state.achievementActionId = "";
+  state.achievementSessionId = "";
+  state.achievementBeginRequested = false;
+  state.achievementRetryError = "";
   state.finishPending = false;
   state.previousRenderedScreen = "";
   if (!state.activeUse) {
@@ -2079,9 +2494,7 @@ function requestHome() {
       ? "開始済みの有料応援は使い切りになります。"
       : "";
     if (!window.confirm(`${paidWarning} トレーニングを終了してトップへ戻りますか？`.trim())) return;
-    if (state.paidUseId) {
-      completeSession("exited");
-    }
+    completeSession("exited");
   }
   if (!state.finishPending) clearPersistedSession();
   cleanup({ releaseDeck: true });
@@ -2346,6 +2759,7 @@ function bindEvents() {
     "exit-session": exitSession,
     "setup-after-result": resetForAnotherSession,
     "retry-finish": retryFinishPaidUse,
+    "retry-achievement-finish": retryAchievementFinish,
   };
   document.querySelectorAll("[data-ai-text-training-action]").forEach((button) => {
     button.addEventListener("click", () => {

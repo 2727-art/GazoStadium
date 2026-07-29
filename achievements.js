@@ -198,6 +198,50 @@
     names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証"],
     description: (target) => `鍛え合い60で累計${target}分の運動を完了した`,
   });
+  addSeries({
+    scope: "ai_training",
+    category: "ai_training_record",
+    family: "ai_training_sessions",
+    familyLabel: "文字コラ完走",
+    icon: "五",
+    thresholds: [1, 5, 20, 50, 100, 300],
+    names: ["文字コラ開幕", "五回のエール", "文字コラ日和", "五十回の歩み", "百回トレーニー", "文字コラの住人"],
+    description: (target) => `文字コラトレーニングを5ラウンド${target}回完走した`,
+    hint: "自分のペースで5ラウンドを終えると解除",
+  });
+  addSeries({
+    scope: "ai_training",
+    category: "ai_training_record",
+    family: "ai_training_days",
+    familyLabel: "文字コラ日数",
+    icon: "日",
+    thresholds: [3, 7, 14, 30, 60, 100],
+    names: ["三日分の一歩", "七日の文字コラ", "二週間のエール", "月のトレーニー", "六十日の歩み", "百日の文字コラ"],
+    description: (target) => `異なる${target}日で文字コラトレーニングを5ラウンド完走した`,
+    hint: "日にちを分けて文字コラを続けると解除",
+  });
+  addSeries({
+    scope: "ai_training",
+    category: "ai_training_script_sales",
+    family: "ai_training_script_uses",
+    familyLabel: "台本利用成立",
+    icon: "文",
+    thresholds: [1, 3, 10, 30, 100, 300],
+    names: ["台本販売第一号", "駆け出し応援作者", "十回届いた言葉", "頼られる台本", "百回届いた言葉", "言葉で支える人"],
+    description: (target) => `応援台本のランキング対象利用が${target}回成立した`,
+    hint: "同じ利用者からはJSTの1日1回だけ数える",
+  });
+  addSeries({
+    scope: "ai_training",
+    category: "ai_training_script_sales",
+    family: "ai_training_unique_buyers",
+    familyLabel: "台本の利用者",
+    icon: "輪",
+    thresholds: [3, 10, 30, 100],
+    names: ["三人に届いた", "十人の応援仲間", "広がるエール", "百人に届く声"],
+    description: (target) => `異なる${target}人が応援台本を有料利用した`,
+    hint: "いろいろな人へ応援が届くと解除",
+  });
   [
     ["team_oshi_jouzu_defense", "team_oshi_jouzu_defense", 1, "つよ推しの証", "推し上手さんとして、ふたりの挑戦を退けた"],
     ["team_oshi_jouzu_clean_defense", "team_oshi_jouzu_defense", 2, "ひとりで魅せきった", "推し上手さんとして、2点以上の差で防衛した"],
@@ -301,6 +345,8 @@
     { id: "battle_honor", label: "つよ推しの証（終了）", copy: "終了したふたりチャレンジで刻んだ武勲" },
     { id: "training_record", label: "鍛え合い60", copy: "勝敗ではなく、鍛え合いへ参加した歩み" },
     { id: "training_workout", label: "鍛錬の積み重ね", copy: "実際に完了した運動の本数と時間" },
+    { id: "ai_training_record", label: "文字コラトレーニング", copy: "BPMや運動強度ではなく、自分のペースで5ラウンドを終えた歩み" },
+    { id: "ai_training_script_sales", label: "応援台本の販売", copy: "価格や売上額ではなく、応援が利用された回数と広がりの記録" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },

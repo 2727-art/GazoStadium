@@ -179,6 +179,79 @@ test("account transfer treats fresh normal and training V2 sessions as active", 
   assert.match(activeSessionCheck, /\|\| trainingSessionRoom/);
 });
 
+test("AI text training achievement history and active uses block account transfer", () => {
+  const server = read("functions/index.js");
+
+  const activeStart = server.indexOf("async function accountHasActiveSession");
+  const activeEnd = server.indexOf("function economyProgressHasActivity", activeStart);
+  assert.ok(activeStart >= 0 && activeEnd > activeStart);
+  const activeSessionCheck = server.slice(activeStart, activeEnd);
+  assert.match(
+    activeSessionCheck,
+    /firestore\.collection\("aiTextTrainingActiveUses"\)\.doc\(uid\)\.get\(\)/,
+  );
+  assert.match(
+    activeSessionCheck,
+    /aiTextTrainingActiveAchievementSessionRef\(uid\)\.get\(\)/,
+  );
+  assert.match(activeSessionCheck, /aiTextTrainingActiveUseSnapshot\.exists/);
+  assert.match(
+    activeSessionCheck,
+    /aiTextTrainingActiveAchievementSessionSnapshot\.exists/,
+  );
+  assert.match(
+    activeSessionCheck,
+    /aiTextTrainingActiveAchievementSessionSnapshot\.get\("expiresAt"\)[\s\S]*?> now/,
+  );
+
+  const pristineStart = server.indexOf("async function transferTargetIsPristine");
+  const pristineEnd = server.indexOf("async function registerTransferFailure", pristineStart);
+  assert.ok(pristineStart >= 0 && pristineEnd > pristineStart);
+  const pristine = server.slice(pristineStart, pristineEnd);
+  assert.match(pristine, /aiTextTrainingPlayerStatsRef\(uid\)\.get\(\)/);
+  assert.match(
+    pristine,
+    /firestore\.collection\("aiTextTrainingAchievementSessions"\)[\s\S]*?\.where\("uid", "==", uid\)[\s\S]*?\.limit\(1\)[\s\S]*?\.get\(\)/,
+  );
+  assert.match(pristine, /aiTextTrainingActiveAchievementSessionRef\(uid\)\.get\(\)/);
+  assert.match(
+    pristine,
+    /firestore\.collection\("aiTextTrainingActiveUses"\)\.doc\(uid\)\.get\(\)/,
+  );
+  assert.match(pristine, /aiTextTrainingPlayerStatsSnapshot\.exists/);
+  assert.match(pristine, /!aiTextTrainingAchievementSessionSnapshot\.empty/);
+  assert.match(pristine, /aiTextTrainingActiveAchievementSessionSnapshot\.exists/);
+  assert.match(pristine, /aiTextTrainingActiveUseSnapshot\.exists/);
+
+  const redeemStart = server.indexOf("async function redeemAccountTransferCode");
+  const redeemEnd = server.indexOf("async function cancelAccountTransferCode", redeemStart);
+  assert.ok(redeemStart >= 0 && redeemEnd > redeemStart);
+  const redeem = server.slice(redeemStart, redeemEnd);
+  assert.match(
+    redeem,
+    /transaction\.get\(aiTextTrainingPlayerStatsRef\(targetUid\)\)/,
+  );
+  assert.match(
+    redeem,
+    /transaction\.get\([\s\S]*?firestore\.collection\("aiTextTrainingAchievementSessions"\)[\s\S]*?\.where\("uid", "==", targetUid\)[\s\S]*?\.limit\(1\)[\s\S]*?\)/,
+  );
+  assert.match(
+    redeem,
+    /transaction\.get\(aiTextTrainingActiveAchievementSessionRef\(targetUid\)\)/,
+  );
+  assert.match(
+    redeem,
+    /transaction\.get\(firestore\.collection\("aiTextTrainingActiveUses"\)\.doc\(targetUid\)\)/,
+  );
+  assert.match(redeem, /targetAiTextTrainingPlayerStatsSnapshot\.exists/);
+  assert.match(redeem, /!targetAiTextTrainingAchievementSessionSnapshot\.empty/);
+  assert.match(
+    redeem,
+    /targetAiTextTrainingActiveAchievementSessionSnapshot\.exists/,
+  );
+  assert.match(redeem, /targetAiTextTrainingActiveUseSnapshot\.exists/);
+});
+
 test("high-value patron spending is Google-gated and server-priced", () => {
   const server = read("functions/index.js");
   const patronStart = server.indexOf("async function upgradePatronage");

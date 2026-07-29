@@ -253,9 +253,11 @@ function createHarness({
   ownedProducts = {},
   maximumBalance = 1_000,
   now = Date.parse("2026-07-29T03:00:00.000Z"),
+  achievementSyncError = null,
 } = {}) {
   const firestore = new FakeFirestore();
   const mirrors = [];
+  const achievementSyncs = [];
   let clock = now;
   for (const [uid, balance] of Object.entries(balances)) {
     firestore.write(`wallets/${uid}`, {
@@ -315,10 +317,15 @@ function createHarness({
     bestEffort: async (_label, operations) => {
       await Promise.allSettled(operations);
     },
+    syncAchievementPublicSurfaces: async (uid, profile) => {
+      achievementSyncs.push({ uid, profile: clone(profile) });
+      if (achievementSyncError) throw achievementSyncError;
+    },
     ownedProductIds: async (uid) => new Set(ownedProducts[uid] || []),
     now: () => clock,
   });
   return {
+    achievementSyncs,
     firestore,
     mirrors,
     service,
@@ -340,6 +347,37 @@ async function publishPreset(harness, overrides = {}) {
     }),
   );
   return result.preset;
+}
+
+async function beginAchievementSession(
+  harness,
+  uid,
+  suffix,
+  overrides = {},
+) {
+  return harness.service.performAction(uid, {
+    action: "begin_achievement_session",
+    actionId: `achievement_session_${suffix}`,
+    modeId: "mama",
+    roundSeconds: 20,
+    ...overrides,
+  });
+}
+
+async function finishAchievementSession(
+  harness,
+  uid,
+  sessionId,
+  overrides = {},
+) {
+  return harness.service.performAction(uid, {
+    action: "finish_achievement_session",
+    sessionId,
+    outcome: "completed",
+    completedRounds: 5,
+    activeSeconds: 100,
+    ...overrides,
+  });
 }
 
 test("private cosmetics can mix owned styles and reject an unowned trial", async () => {
@@ -377,6 +415,266 @@ test("private cosmetics can mix owned styles and reject an unowned trial", async
     }),
     (error) => error.code === "failed-precondition" && /未購入/.test(error.message),
   );
+});
+
+test("achievement session begin rate-limits new actions, preserves retries, and expires storage", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const beginCooldownMs = 30_000;
+  const sessionTtlMs = 24 * 60 * 60 * 1_000;
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const first = await beginAchievementSession(harness, "player", "begin_00000001");
+  const retry = await beginAchievementSession(harness, "player", "begin_00000001");
+  assert.equal(retry.idempotent, true);
+  assert.deepEqual(retry.session, first.session);
+  assert.equal(first.session.roundCount, 5);
+  assert.equal(first.session.expectedActiveSeconds, 100);
+  assert.equal(Object.hasOwn(first.session, "uid"), false);
+  assert.equal(Object.hasOwn(first.session, "actionId"), false);
+  assert.equal(Object.hasOwn(first.session, "payloadHash"), false);
+
+  const storedFirst = harness.firestore.read(
+    `aiTextTrainingAchievementSessions/${first.session.id}`,
+  );
+  assert.equal(Object.hasOwn(storedFirst, "images"), false);
+  assert.equal(Object.hasOwn(storedFirst, "script"), false);
+  assert.ok(storedFirst.deleteAt instanceof Date);
+  assert.equal(storedFirst.deleteAt.getTime(), now + sessionTtlMs);
+  const activeFirst = harness.firestore.read(
+    "aiTextTrainingActiveAchievementSessions/player",
+  );
+  assert.equal(activeFirst.sessionId, first.session.id);
+  assert.equal(activeFirst.expiresAt, now + sessionTtlMs);
+  await assert.rejects(
+    beginAchievementSession(harness, "player", "begin_00000001", {
+      modeId: "imouto",
+    }),
+    (error) => error.code === "already-exists",
+  );
+  await assert.rejects(
+    harness.service.performAction("player", {
+      action: "begin_achievement_session",
+      actionId: "achievement_bad_payload_0001",
+      modeId: "mama",
+      roundSeconds: 20,
+      images: ["private"],
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    beginAchievementSession(harness, "player", "invalid_seconds_1", {
+      roundSeconds: 10,
+    }),
+    (error) => error.code === "invalid-argument" && /秒数/.test(error.message),
+  );
+  await assert.rejects(
+    beginAchievementSession(harness, "player", "invalid_mode_0001", {
+      modeId: "hard",
+    }),
+    (error) => error.code === "invalid-argument" && /AIモード/.test(error.message),
+  );
+
+  harness.setNow(now + 1_000);
+  await assert.rejects(
+    beginAchievementSession(harness, "player", "begin_00000002"),
+    (error) => error.code === "resource-exhausted" && /少し待って/.test(error.message),
+  );
+  assert.equal(
+    harness.firestore.count("aiTextTrainingAchievementSessions/"),
+    1,
+  );
+  assert.equal(
+    harness.firestore.read(`aiTextTrainingAchievementSessions/${first.session.id}`).status,
+    "active",
+  );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").sessionId,
+    first.session.id,
+  );
+
+  harness.setNow(now + beginCooldownMs);
+  const second = await beginAchievementSession(harness, "player", "begin_00000002");
+  const superseded = harness.firestore.read(
+    `aiTextTrainingAchievementSessions/${first.session.id}`,
+  );
+  assert.equal(superseded.status, "exited");
+  assert.equal(superseded.outcome, "exited");
+  assert.equal(superseded.supersededAt, now + beginCooldownMs);
+  const storedSecond = harness.firestore.read(
+    `aiTextTrainingAchievementSessions/${second.session.id}`,
+  );
+  assert.ok(storedSecond.deleteAt instanceof Date);
+  assert.equal(
+    storedSecond.deleteAt.getTime(),
+    now + beginCooldownMs + sessionTtlMs,
+  );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").sessionId,
+    second.session.id,
+  );
+  const oldRetry = await beginAchievementSession(harness, "player", "begin_00000001");
+  assert.equal(oldRetry.idempotent, true);
+  assert.equal(oldRetry.session.status, "exited");
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").sessionId,
+    second.session.id,
+  );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingPlayerStats/player")
+      .lastAchievementSessionStartedAt,
+    now + beginCooldownMs,
+  );
+});
+
+test("completed achievement session validates rounds, active time, and server elapsed time once", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const started = await beginAchievementSession(harness, "player", "complete_000001");
+  await assert.rejects(
+    finishAchievementSession(harness, "player", started.session.id),
+    (error) => error.code === "failed-precondition" && /まだ経過/.test(error.message),
+  );
+
+  harness.setNow(now + 100_000);
+  await assert.rejects(
+    finishAchievementSession(harness, "player", started.session.id, {
+      completedRounds: 4,
+    }),
+    (error) => error.code === "failed-precondition" && /5ラウンド/.test(error.message),
+  );
+  await assert.rejects(
+    finishAchievementSession(harness, "player", started.session.id, {
+      activeSeconds: 98.9,
+    }),
+    (error) => error.code === "failed-precondition" && /5ラウンド/.test(error.message),
+  );
+
+  const completed = await finishAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+    { activeSeconds: 99 },
+  );
+  assert.equal(completed.idempotent, false);
+  assert.equal(completed.session.status, "completed");
+  assert.deepEqual(completed.stats, {
+    completedSessions: 1,
+    completionDays: 1,
+    lastCompletionDateKey: "2026-07-29",
+  });
+  assert.ok(completed.newlyUnlocked.includes("ai_training_sessions_1"));
+  assert.equal(
+    harness.firestore.read("achievementProfiles/player")
+      .unlocked.ai_training_sessions_1,
+    now + 100_000,
+  );
+  assert.equal(harness.achievementSyncs.length, 1);
+  assert.equal(harness.achievementSyncs[0].uid, "player");
+  assert.ok(
+    harness.achievementSyncs[0].profile.unlocked.ai_training_sessions_1,
+  );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player"),
+    undefined,
+  );
+
+  const retry = await finishAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+  );
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.session.status, "completed");
+  assert.equal(retry.stats.completedSessions, 1);
+  assert.deepEqual(retry.newlyUnlocked, []);
+  assert.equal(
+    harness.firestore.read("aiTextTrainingPlayerStats/player").completedSessions,
+    1,
+  );
+  assert.equal(harness.achievementSyncs.length, 2);
+  assert.equal(harness.achievementSyncs[1].uid, "player");
+  assert.deepEqual(
+    harness.achievementSyncs[1].profile,
+    harness.firestore.read("achievementProfiles/player"),
+  );
+});
+
+test("safety stop is terminal, clears the active pointer, and never counts as completion", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const started = await beginAchievementSession(harness, "player", "safety_0000001");
+  const stopped = await finishAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+    {
+      outcome: "safety_stopped",
+      completedRounds: 1,
+      activeSeconds: 8,
+    },
+  );
+  assert.equal(stopped.session.status, "safety_stopped");
+  assert.equal(stopped.stats.completedSessions, 0);
+  assert.deepEqual(stopped.newlyUnlocked, []);
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player"),
+    undefined,
+  );
+  const rateLimitedStats = harness.firestore.read("aiTextTrainingPlayerStats/player");
+  assert.equal(Number(rateLimitedStats.completedSessions || 0), 0);
+  assert.equal(rateLimitedStats.lastAchievementSessionStartedAt, now);
+  assert.equal(harness.firestore.read("achievementProfiles/player"), undefined);
+
+  harness.setNow(now + 1_000);
+  await assert.rejects(
+    beginAchievementSession(harness, "player", "safety_restart_0001"),
+    (error) => error.code === "resource-exhausted",
+  );
+
+  harness.setNow(now + 100_000);
+  const terminalRetry = await finishAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+  );
+  assert.equal(terminalRetry.idempotent, true);
+  assert.equal(terminalRetry.session.status, "safety_stopped");
+  assert.equal(
+    harness.firestore.read("aiTextTrainingPlayerStats/player")
+      .lastAchievementSessionStartedAt,
+    now,
+  );
+  assert.deepEqual(harness.achievementSyncs, []);
+});
+
+test("completionDays counts different JST dates while sessions always accumulate", async () => {
+  const harness = createHarness({
+    balances: { player: 0 },
+    now: Date.parse("2026-07-29T03:00:00.000Z"),
+  });
+  const completeAt = async (suffix, startedAt) => {
+    harness.setNow(startedAt);
+    const started = await beginAchievementSession(harness, "player", suffix, {
+      roundSeconds: 15,
+    });
+    harness.setNow(startedAt + 75_000);
+    return finishAchievementSession(harness, "player", started.session.id, {
+      activeSeconds: 75,
+    });
+  };
+  await completeAt("days_same_000001", Date.parse("2026-07-29T03:00:00.000Z"));
+  const sameDay = await completeAt(
+    "days_same_000002",
+    Date.parse("2026-07-29T05:00:00.000Z"),
+  );
+  assert.equal(sameDay.stats.completedSessions, 2);
+  assert.equal(sameDay.stats.completionDays, 1);
+  const nextDay = await completeAt(
+    "days_next_000001",
+    Date.parse("2026-07-30T03:00:00.000Z"),
+  );
+  assert.equal(nextDay.stats.completedSessions, 3);
+  assert.equal(nextDay.stats.completionDays, 2);
+  assert.equal(nextDay.stats.lastCompletionDateKey, "2026-07-30");
 });
 
 test("publishing charges one Pay once and fixes an immutable revision", async () => {
@@ -453,6 +751,14 @@ test("paid use is one transaction, snapshots the script, and is action-idempoten
   assert.equal(retry.use.id, first.use.id);
   assert.equal(retry.idempotent, true);
   assert.equal(harness.firestore.count("aiTextTrainingUses/"), 1);
+  assert.equal(harness.achievementSyncs.length, 2);
+  assert.deepEqual(
+    harness.achievementSyncs.map(({ uid }) => uid),
+    ["seller", "seller"],
+  );
+  assert.ok(
+    harness.achievementSyncs[1].profile.unlocked.ai_training_script_uses_1,
+  );
 });
 
 test("paid use rejects a balance changed since the buyer review", async () => {
@@ -508,6 +814,140 @@ test("same buyer and seller pay every use but count only once per JST day in ran
   assert.equal(stats.useCount, 2);
   assert.equal(stats.rankingUseCount, 1);
   assert.equal(stats.uniqueBuyers, 1);
+});
+
+test("paid uses unlock seller AI achievements from ranked uses and unique buyers without leaking to buyers", async () => {
+  const harness = createHarness({
+    balances: {
+      seller: 100,
+      buyer1: 100,
+      buyer2: 100,
+      buyer3: 100,
+    },
+  });
+  const preset = await publishPreset(harness);
+  const use = async (buyer, suffix) => {
+    const response = await harness.service.performAction(buyer, {
+      action: "start_paid_use",
+      actionId: `seller_unlock_use_${suffix}`,
+      presetId: preset.id,
+      expectedPrice: 10,
+      expectedRevision: 1,
+      expectedBalance: harness.wallet(buyer).balance,
+    });
+    assert.equal(Object.hasOwn(response, "newlyUnlocked"), false);
+    assert.equal(Object.hasOwn(response, "sellerUid"), false);
+    assert.doesNotMatch(JSON.stringify(response), /"sellerUid"/);
+    assert.doesNotMatch(
+      JSON.stringify(response),
+      /ai_training_(?:script_uses|unique_buyers)_/,
+    );
+    await harness.service.performAction(buyer, {
+      action: "finish_use",
+      useId: response.use.id,
+      outcome: "safety_stopped",
+    });
+  };
+
+  await use("buyer1", "buyer1_first_001");
+  let profile = harness.firestore.read("achievementProfiles/seller");
+  assert.ok(profile.unlocked.ai_training_script_uses_1);
+  assert.equal(profile.unlocked.ai_training_script_uses_3, undefined);
+  assert.equal(harness.achievementSyncs.length, 1);
+  assert.equal(harness.achievementSyncs[0].uid, "seller");
+  assert.ok(
+    harness.achievementSyncs[0].profile.unlocked.ai_training_script_uses_1,
+  );
+
+  await use("buyer1", "buyer1_repeat_01");
+  let stats = harness.firestore.read("aiTextTrainingSellerStats/seller");
+  assert.equal(stats.useCount, 2);
+  assert.equal(stats.rankingUseCount, 1);
+  assert.equal(stats.uniqueBuyers, 1);
+  profile = harness.firestore.read("achievementProfiles/seller");
+  assert.equal(profile.unlocked.ai_training_script_uses_3, undefined);
+  assert.equal(harness.achievementSyncs.length, 1);
+
+  await use("buyer2", "buyer2_first_001");
+  await use("buyer3", "buyer3_first_001");
+  stats = harness.firestore.read("aiTextTrainingSellerStats/seller");
+  assert.equal(stats.useCount, 4);
+  assert.equal(stats.rankingUseCount, 3);
+  assert.equal(stats.uniqueBuyers, 3);
+  profile = harness.firestore.read("achievementProfiles/seller");
+  assert.ok(profile.unlocked.ai_training_script_uses_3);
+  assert.ok(profile.unlocked.ai_training_unique_buyers_3);
+  assert.equal(harness.achievementSyncs.length, 2);
+  assert.deepEqual(
+    harness.achievementSyncs.map(({ uid }) => uid),
+    ["seller", "seller"],
+  );
+  assert.ok(
+    harness.achievementSyncs[1].profile.unlocked.ai_training_script_uses_3,
+  );
+  assert.ok(
+    harness.achievementSyncs[1].profile.unlocked.ai_training_unique_buyers_3,
+  );
+});
+
+test("public showcase sync failures never undo a completed workout or paid use", async () => {
+  const syncError = new Error("public showcase unavailable");
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const workoutHarness = createHarness({
+    balances: { player: 0 },
+    now,
+    achievementSyncError: syncError,
+  });
+  const started = await beginAchievementSession(
+    workoutHarness,
+    "player",
+    "sync_failure_workout_01",
+  );
+  workoutHarness.setNow(now + 100_000);
+  const completed = await finishAchievementSession(
+    workoutHarness,
+    "player",
+    started.session.id,
+  );
+  assert.equal(completed.session.status, "completed");
+  assert.equal(completed.stats.completedSessions, 1);
+  assert.equal(workoutHarness.achievementSyncs.length, 1);
+  assert.equal(
+    workoutHarness.firestore.read("aiTextTrainingPlayerStats/player").completedSessions,
+    1,
+  );
+  assert.ok(
+    workoutHarness.firestore.read("achievementProfiles/player")
+      .unlocked.ai_training_sessions_1,
+  );
+
+  const saleHarness = createHarness({
+    balances: { seller: 20, buyer: 100 },
+    achievementSyncError: syncError,
+  });
+  const preset = await publishPreset(saleHarness);
+  const paidUse = await saleHarness.service.performAction("buyer", {
+    action: "start_paid_use",
+    actionId: "sync_failure_use_000001",
+    presetId: preset.id,
+    expectedPrice: 10,
+    expectedRevision: 1,
+    expectedBalance: saleHarness.wallet("buyer").balance,
+  });
+  assert.equal(paidUse.use.status, "active");
+  assert.equal(Object.hasOwn(paidUse, "sellerUid"), false);
+  assert.equal(Object.hasOwn(paidUse, "newlyUnlocked"), false);
+  assert.equal(saleHarness.wallet("buyer").balance, 90);
+  assert.equal(saleHarness.achievementSyncs.length, 1);
+  assert.equal(saleHarness.achievementSyncs[0].uid, "seller");
+  assert.ok(
+    saleHarness.firestore.read("achievementProfiles/seller")
+      .unlocked.ai_training_script_uses_1,
+  );
+  assert.equal(
+    saleHarness.firestore.read(`aiTextTrainingUses/${paidUse.use.id}`).status,
+    "active",
+  );
 });
 
 test("active use blocks stockpiling and finish is idempotent", async () => {
