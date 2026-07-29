@@ -288,6 +288,14 @@
   grid-row: 1 / span 2;
 }
 
+.ai-text-training-active-use > div {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .ai-text-training-panel {
   min-width: 0;
   margin: 0 0 16px;
@@ -421,6 +429,34 @@
   overflow: hidden;
   padding-inline: 10px;
   font-size: 0.76rem;
+}
+
+.ai-text-training-image-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: stretch;
+  margin-top: 9px;
+}
+
+.ai-text-training-image-actions .ai-text-training-file-button {
+  margin-top: 0;
+}
+
+.ai-text-training-image-remove {
+  min-width: 54px;
+  padding-inline: 9px;
+  color: #ffd2dc;
+  border-color: rgba(255, 111, 145, 0.27);
+  font-size: 0.68rem;
+}
+
+.ai-text-training-expand-roster {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 12px;
+  border-style: dashed;
+  color: #cffffa;
 }
 
 .ai-text-training-file-button input {
@@ -607,6 +643,86 @@
   font-style: normal;
   font-weight: 850;
   line-height: 1.45;
+}
+
+.ai-text-training-beat-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-text-training-beat-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ai-text-training-beat-card.is-selected {
+  border-color: rgba(99, 238, 229, 0.5);
+  background:
+    radial-gradient(circle at 0 0, rgba(99, 238, 229, 0.11), transparent 48%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.ai-text-training-beat-card > label {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-content: center;
+  column-gap: 10px;
+  cursor: pointer;
+}
+
+.ai-text-training-beat-card input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.ai-text-training-beat-card label > span {
+  grid-row: 1 / span 2;
+  width: 48px;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(99, 238, 229, 0.25);
+  border-radius: 13px;
+  color: #c9fff9;
+  background: rgba(99, 238, 229, 0.065);
+  font-size: 0.6rem;
+  font-weight: 1000;
+  letter-spacing: 0.07em;
+}
+
+.ai-text-training-beat-card label > strong {
+  align-self: end;
+  font-size: 0.88rem;
+}
+
+.ai-text-training-beat-card label > small {
+  align-self: start;
+  margin-top: 3px;
+  color: #9ca5b8;
+  font-size: 0.65rem;
+  line-height: 1.45;
+}
+
+.ai-text-training-beat-card input:focus-visible ~ span {
+  outline: 3px solid var(--att-cyan);
+  outline-offset: 3px;
+}
+
+.ai-text-training-beat-card > button {
+  align-self: center;
+  min-height: 46px;
+  padding-inline: 11px;
+  font-size: 0.68rem;
 }
 
 .ai-text-training-mode-note,
@@ -1159,6 +1275,123 @@
 
 .ai-text-training-start {
   min-width: min(330px, 43vw);
+}
+
+.ai-text-training-draw-hero,
+.ai-text-training-draw-summary,
+.ai-text-training-draw-error {
+  padding: clamp(18px, 4vw, 30px);
+  border: 1px solid var(--att-line);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 8% 0, rgba(99, 238, 229, 0.1), transparent 34%),
+    var(--att-panel);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
+}
+
+.ai-text-training-draw-hero > span,
+.ai-text-training-draw-error > span {
+  color: var(--att-cyan);
+  font-size: 0.68rem;
+  font-weight: 1000;
+  letter-spacing: 0.13em;
+}
+
+.ai-text-training-draw-hero h2,
+.ai-text-training-draw-error h2 {
+  margin: 8px 0;
+  font-size: clamp(1.5rem, 5vw, 2.55rem);
+  line-height: 1.15;
+}
+
+.ai-text-training-draw-hero p,
+.ai-text-training-draw-error p,
+.ai-text-training-draw-summary p {
+  margin: 0;
+  color: #aab3c5;
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.ai-text-training-draw-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.ai-text-training-draw-card {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(99, 238, 229, 0.25);
+  border-radius: 17px;
+  background: rgba(7, 10, 18, 0.79);
+  box-shadow: inset 0 0 0 1px rgba(99, 238, 229, 0.035);
+}
+
+.ai-text-training-draw-card > strong,
+.ai-text-training-draw-card > small {
+  display: block;
+}
+
+.ai-text-training-draw-card > strong {
+  margin-top: 9px;
+  color: #effffc;
+  font-size: 0.86rem;
+}
+
+.ai-text-training-draw-card > small {
+  margin-top: 3px;
+  color: #7f899e;
+  font-size: 0.6rem;
+  font-weight: 850;
+}
+
+.ai-text-training-draw-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 13px;
+}
+
+.ai-text-training-draw-summary dl > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ai-text-training-draw-summary dt {
+  color: #7f899d;
+  font-size: 0.59rem;
+  font-weight: 850;
+}
+
+.ai-text-training-draw-summary dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: #f5f7fc;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.ai-text-training-draw-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.ai-text-training-draw-error {
+  max-width: 720px;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.ai-text-training-draw-error .button {
+  margin-top: 18px;
 }
 
 .ai-text-training-subnav {
@@ -2089,6 +2322,40 @@
   text-align: left;
 }
 
+.ai-text-training-result-lineup {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 18px;
+}
+
+.ai-text-training-result-lineup figure {
+  min-width: 0;
+  margin: 0;
+}
+
+.ai-text-training-result-lineup img,
+.ai-text-training-result-lineup figure > span {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  border: 1px solid rgba(99, 238, 229, 0.2);
+  border-radius: 10px;
+  color: #cffffa;
+  background: rgba(99, 238, 229, 0.05);
+}
+
+.ai-text-training-result-lineup figcaption {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: #8c96a9;
+  font-size: 0.56rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
 .ai-text-training-result > div {
   display: flex;
   justify-content: center;
@@ -2577,6 +2844,11 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .ai-text-training-beat-grid,
+  .ai-text-training-draw-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .ai-text-training-mode-grid,
   .ai-text-training-market-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2608,6 +2880,14 @@
 
   .ai-text-training-mode-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ai-text-training-beat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ai-text-training-draw-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .ai-text-training-market-grid {
@@ -2675,9 +2955,14 @@
 
   .ai-text-training-active-use strong,
   .ai-text-training-active-use p,
+  .ai-text-training-active-use > div,
   .ai-text-training-active-use .button {
     grid-column: 1;
     grid-row: auto;
+  }
+
+  .ai-text-training-active-use > div .button {
+    width: 100%;
   }
 
   .ai-text-training-selected-support {
@@ -2773,7 +3058,8 @@
   .ai-text-training-detail-actions,
   .ai-text-training-review-actions,
   .ai-text-training-result > div,
-  .ai-text-training-cosmetic-actions {
+  .ai-text-training-cosmetic-actions,
+  .ai-text-training-draw-actions {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2784,8 +3070,25 @@
   .ai-text-training-detail-actions .button,
   .ai-text-training-review-actions .button,
   .ai-text-training-result > div .button,
-  .ai-text-training-cosmetic-actions .button {
+  .ai-text-training-cosmetic-actions .button,
+  .ai-text-training-draw-actions .button {
     width: 100%;
+  }
+
+  .ai-text-training-beat-card {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-text-training-beat-card > button {
+    width: 100%;
+  }
+
+  .ai-text-training-draw-summary dl {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-text-training-result-lineup {
+    gap: 4px;
   }
 
   .ai-text-training-cosmetic-actions .button {
@@ -2957,6 +3260,11 @@
 
   .ai-text-training-cosmetic-option.is-selected > span,
   .ai-text-training-cosmetic-option > input:checked + span {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .ai-text-training-beat-card.is-selected {
     outline: 2px solid Highlight;
     outline-offset: 2px;
   }

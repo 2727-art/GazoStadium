@@ -34,7 +34,7 @@ import {
 } from "./online-image-transfer.mjs?v=online-image-transfer-v1";
 import {
   createFreeTableAmbienceController,
-} from "./free-table-ambience.mjs?v=free-table-ambience-v1";
+} from "./free-table-ambience.mjs?v=free-table-ambience-v2";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,

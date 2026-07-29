@@ -221,6 +221,7 @@ async function makeController({
   now = 0,
   hidden = false,
   initialVolume,
+  initialToneProfileId,
 } = {}) {
   const {
     createFreeTableAmbienceController,
@@ -238,6 +239,7 @@ async function makeController({
     lookaheadMs: 25,
     scheduleAheadMs: 100,
     ...(initialVolume === undefined ? {} : { initialVolume }),
+    ...(initialToneProfileId === undefined ? {} : { initialToneProfileId }),
   });
   return {
     controller,
@@ -254,6 +256,81 @@ function oscillatorStartTimes(context) {
 function roundedOscillatorStartTimes(context) {
   return oscillatorStartTimes(context).map((value) => Number(value.toFixed(6)));
 }
+
+test("the fixed tone-profile catalog contains five bounded synthesis recipes", async () => {
+  const {
+    FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID,
+    FREE_TABLE_AMBIENCE_TONE_DURATION_SECONDS,
+    FREE_TABLE_AMBIENCE_TONE_FREQUENCY_HZ,
+    FREE_TABLE_AMBIENCE_TONE_PROFILES,
+    FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS,
+  } = await ambienceModule;
+
+  assert.equal(FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID, "clear_tap");
+  assert.deepEqual(FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS, [
+    "heavy_pulse",
+    "soft_bell",
+    "clear_tap",
+    "glass_spark",
+    "machine_ai",
+  ]);
+  assert.equal(Object.isFrozen(FREE_TABLE_AMBIENCE_TONE_PROFILES), true);
+  assert.equal(Object.isFrozen(FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS), true);
+
+  for (const id of FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS) {
+    const profile = FREE_TABLE_AMBIENCE_TONE_PROFILES[id];
+    assert.equal(Object.isFrozen(profile), true);
+    assert.equal(profile.id, id);
+    assert.ok(["sine", "triangle"].includes(profile.oscillatorType));
+    assert.ok(profile.frequencyHz >= 220 && profile.frequencyHz <= 660);
+    assert.ok(profile.durationSeconds >= 0.026 && profile.durationSeconds <= 0.052);
+    assert.ok(profile.attackSeconds >= 0.004 && profile.attackSeconds <= 0.008);
+    assert.ok(profile.attackSeconds <= profile.durationSeconds / 2);
+    assert.ok(profile.peakGain > 0 && profile.peakGain <= 1);
+  }
+
+  assert.deepEqual(FREE_TABLE_AMBIENCE_TONE_PROFILES.clear_tap, {
+    id: "clear_tap",
+    oscillatorType: "sine",
+    frequencyHz: FREE_TABLE_AMBIENCE_TONE_FREQUENCY_HZ,
+    durationSeconds: FREE_TABLE_AMBIENCE_TONE_DURATION_SECONDS,
+    attackSeconds: 0.006,
+    peakGain: 1,
+  });
+});
+
+test("tone-profile selection is local, silent, and falls back to clear_tap", async () => {
+  const {
+    controller,
+    contexts,
+  } = await makeController({ initialToneProfileId: "unknown_profile" });
+
+  assert.deepEqual(controller.getToneProfileState(), {
+    toneProfileId: "clear_tap",
+    pendingToneProfileId: null,
+    pendingEffectiveAt: null,
+  });
+  assert.equal(controller.setToneProfile("heavy_pulse", { effectiveAt: 500 }), "heavy_pulse");
+  assert.deepEqual(controller.getToneProfileState(), {
+    toneProfileId: "clear_tap",
+    pendingToneProfileId: "heavy_pulse",
+    pendingEffectiveAt: 500,
+  });
+  assert.equal(contexts.length, 0);
+
+  assert.equal(controller.setToneProfile("not-allowlisted"), "clear_tap");
+  assert.deepEqual(controller.getToneProfileState(), {
+    toneProfileId: "clear_tap",
+    pendingToneProfileId: null,
+    pendingEffectiveAt: null,
+  });
+  assert.equal(controller.setToneProfile(), "clear_tap");
+  assert.equal(contexts.length, 0);
+  assert.throws(
+    () => controller.setToneProfile("soft_bell", { effectiveAt: -1 }),
+    /effectiveAtが不正/,
+  );
+});
 
 test("setAmbience stays silent until explicit enable and schedules one constant tone per beat", async () => {
   const {
@@ -288,6 +365,171 @@ test("setAmbience stays silent until explicit enable and schedules one constant 
   ));
   assert.ok(toneGainShapes.length >= 3);
   for (const shape of toneGainShapes.slice(1)) assert.deepEqual(shape, toneGainShapes[0]);
+});
+
+test("each allowlisted profile uses only its bounded oscillator and envelope recipe", async () => {
+  const {
+    FREE_TABLE_AMBIENCE_TONE_PROFILES,
+    FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS,
+  } = await ambienceModule;
+
+  for (const id of FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS) {
+    const {
+      controller,
+      clock,
+      contexts,
+    } = await makeController();
+    controller.setAmbience(snapshot(), { serverTimeOffset: 10_000 });
+    assert.equal(controller.setToneProfile(id), id);
+    assert.equal(contexts.length, 0);
+
+    assert.equal(await controller.enable(), true);
+    clock.advanceBy(1_100);
+    const context = contexts[0];
+    const oscillator = context.oscillators[0];
+    const voiceGain = context.gains[1];
+    const profile = FREE_TABLE_AMBIENCE_TONE_PROFILES[id];
+
+    assert.equal(oscillator.type, profile.oscillatorType);
+    assert.deepEqual(
+      oscillator.frequency.events.map(({ method, value }) => ({ method, value })),
+      [{ method: "setValueAtTime", value: profile.frequencyHz }],
+    );
+    assert.equal(Number(oscillator.starts[0].toFixed(6)), 1);
+    assert.equal(
+      Number(oscillator.stops[0].toFixed(6)),
+      Number((1 + profile.durationSeconds).toFixed(6)),
+    );
+    assert.deepEqual(
+      voiceGain.gain.events.map(({ method, value, time }) => ({
+        method,
+        value,
+        time: Number(time.toFixed(6)),
+      })),
+      [
+        { method: "setValueAtTime", value: 0.0001, time: 1 },
+        {
+          method: "linearRampToValueAtTime",
+          value: profile.peakGain,
+          time: Number((1 + profile.attackSeconds).toFixed(6)),
+        },
+        {
+          method: "exponentialRampToValueAtTime",
+          value: 0.0001,
+          time: Number((1 + profile.durationSeconds).toFixed(6)),
+        },
+      ],
+    );
+    controller.destroy();
+  }
+});
+
+test("a staged tone profile replaces a lookahead tone at the boundary without rephasing", async () => {
+  const {
+    controller,
+    clock,
+    contexts,
+  } = await makeController();
+  controller.setAmbience(snapshot({
+    metronomeBpm: 120,
+    effectiveAt: 10_000,
+  }), { serverTimeOffset: 10_000 });
+  await controller.enable();
+  clock.advanceBy(450);
+
+  const queuedLegacyTone = contexts[0].oscillators[0];
+  assert.equal(Number(queuedLegacyTone.starts[0].toFixed(6)), 0.5);
+  assert.equal(queuedLegacyTone.frequency.events[0].value, 440);
+
+  assert.equal(
+    controller.setToneProfile("heavy_pulse", { effectiveAt: 10_500 }),
+    "heavy_pulse",
+  );
+  assert.equal(Number(queuedLegacyTone.stops.at(-1).toFixed(6)), 0.45);
+  assert.deepEqual(controller.getToneProfileState(), {
+    toneProfileId: "clear_tap",
+    pendingToneProfileId: "heavy_pulse",
+    pendingEffectiveAt: 10_500,
+  });
+
+  const boundaryTone = contexts[0].oscillators[1];
+  assert.equal(Number(boundaryTone.starts[0].toFixed(6)), 0.5);
+  assert.equal(boundaryTone.type, "triangle");
+  assert.equal(boundaryTone.frequency.events[0].value, 220);
+  assert.equal(contexts[0].resumeCalls, 1);
+
+  clock.advanceBy(600);
+  const playableStarts = contexts[0].oscillators
+    .filter((oscillator) => oscillator.stops.at(-1) >= oscillator.starts[0])
+    .map((oscillator) => Number(oscillator.starts[0].toFixed(6)));
+  assert.deepEqual(playableStarts, [0.5, 1]);
+  assert.deepEqual(controller.getToneProfileState(), {
+    toneProfileId: "heavy_pulse",
+    pendingToneProfileId: null,
+    pendingEffectiveAt: null,
+  });
+});
+
+test("explicit rephase keeps a same-BPM round silent until its boundary and starts the new tone once", async () => {
+  const {
+    controller,
+    clock,
+    contexts,
+  } = await makeController();
+  controller.setAmbience(snapshot({
+    metronomeBpm: 60,
+    effectiveAt: 10_000,
+  }), { serverTimeOffset: 10_000 });
+  await controller.enable();
+  clock.advanceBy(1_100);
+  assert.deepEqual(roundedOscillatorStartTimes(contexts[0]), [1]);
+
+  controller.disable();
+  const previousRoundToneCount = contexts[0].oscillators.length;
+  const nextRoundEffectiveAt = 14_100;
+  assert.equal(
+    controller.setToneProfile("machine_ai", { effectiveAt: nextRoundEffectiveAt }),
+    "machine_ai",
+  );
+  assert.equal(controller.setAmbience(snapshot({
+    metronomeBpm: 60,
+    revision: 2,
+    effectiveAt: nextRoundEffectiveAt,
+  }), {
+    serverTimeOffset: 10_000,
+    rephase: true,
+  }), true);
+
+  assert.equal(await controller.enable(), true);
+  assert.equal(contexts[0].resumeCalls, 2);
+  clock.advanceBy(2_800);
+  assert.equal(contexts[0].oscillators.length, previousRoundToneCount);
+
+  // The scheduler may now queue the boundary beat, but Web Audio must not have
+  // any second-round start before the exact end of the three-second countdown.
+  clock.advanceBy(100);
+  let nextRoundTones = contexts[0].oscillators.slice(previousRoundToneCount);
+  assert.equal(nextRoundTones.length, 1);
+  assert.equal(Number(nextRoundTones[0].starts[0].toFixed(6)), 4.1);
+  assert.equal(nextRoundTones[0].type, "triangle");
+  assert.equal(nextRoundTones[0].frequency.events[0].value, 520);
+
+  clock.advanceBy(1_200);
+  nextRoundTones = contexts[0].oscillators.slice(previousRoundToneCount);
+  const nextRoundStarts = nextRoundTones.map(
+    (oscillator) => Number(oscillator.starts[0].toFixed(6)),
+  );
+  assert.deepEqual(nextRoundStarts, [4.1, 5.1]);
+  assert.equal(new Set(nextRoundStarts).size, nextRoundStarts.length);
+  assert.ok(nextRoundTones.every((oscillator) => oscillator.type === "triangle"));
+  assert.ok(nextRoundTones.every(
+    (oscillator) => oscillator.frequency.events[0].value === 520,
+  ));
+  assert.deepEqual(controller.getToneProfileState(), {
+    toneProfileId: "machine_ai",
+    pendingToneProfileId: null,
+    pendingEffectiveAt: null,
+  });
 });
 
 test("an enabled controller follows a new BPM and realigns on its effectiveAt grid", async () => {
@@ -571,6 +813,26 @@ test("disable cancels lookahead tones and suspends the AudioContext", async () =
 
   clock.advanceBy(3_000);
   assert.equal(contexts[0].oscillators.length, 1);
+});
+
+test("changing a tone profile after disable never resumes audio without another enable", async () => {
+  const {
+    controller,
+    clock,
+    contexts,
+  } = await makeController();
+  controller.setAmbience(snapshot(), { serverTimeOffset: 10_000 });
+  await controller.enable();
+  controller.disable();
+
+  assert.equal(controller.setToneProfile("machine_ai"), "machine_ai");
+  assert.equal(controller.getState().enabled, false);
+  assert.equal(contexts[0].resumeCalls, 1);
+  assert.equal(contexts[0].state, "suspended");
+  assert.equal(clock.intervals.size, 0);
+
+  clock.advanceBy(2_000);
+  assert.equal(contexts[0].oscillators.length, 0);
 });
 
 test("visibility and recording interruptions never restart without another enable", async () => {

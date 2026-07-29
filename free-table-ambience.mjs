@@ -4,11 +4,90 @@ export const FREE_TABLE_AMBIENCE_TONE_FREQUENCY_HZ = 440;
 export const FREE_TABLE_AMBIENCE_TONE_DURATION_SECONDS = 0.04;
 export const FREE_TABLE_AMBIENCE_LOOKAHEAD_MS = 25;
 export const FREE_TABLE_AMBIENCE_SCHEDULE_AHEAD_MS = 120;
+export const FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID = "clear_tap";
 
 const DEFAULT_VOLUME = 0.18;
 const MINIMUM_GAIN = 0.0001;
 const ATTACK_SECONDS = 0.006;
 const TIME_EPSILON_MS = 0.001;
+
+function frozenToneProfile({
+  id,
+  oscillatorType,
+  frequencyHz,
+  durationSeconds,
+  attackSeconds,
+  peakGain,
+}) {
+  return Object.freeze({
+    id,
+    oscillatorType,
+    frequencyHz,
+    durationSeconds,
+    attackSeconds,
+    peakGain,
+  });
+}
+
+/**
+ * Fixed, synthesis-only profiles. The default profile intentionally preserves
+ * the original 440 Hz / 40 ms sine click exactly. The remaining profiles keep
+ * frequencies, envelopes, and peak gain deliberately conservative so a caller
+ * can offer timbral choice without accepting arbitrary audio parameters.
+ */
+export const FREE_TABLE_AMBIENCE_TONE_PROFILES = Object.freeze({
+  heavy_pulse: frozenToneProfile({
+    id: "heavy_pulse",
+    oscillatorType: "triangle",
+    frequencyHz: 220,
+    durationSeconds: 0.052,
+    attackSeconds: 0.008,
+    peakGain: 1,
+  }),
+  soft_bell: frozenToneProfile({
+    id: "soft_bell",
+    oscillatorType: "sine",
+    frequencyHz: 330,
+    durationSeconds: 0.052,
+    attackSeconds: 0.008,
+    peakGain: 0.88,
+  }),
+  clear_tap: frozenToneProfile({
+    id: "clear_tap",
+    oscillatorType: "sine",
+    frequencyHz: FREE_TABLE_AMBIENCE_TONE_FREQUENCY_HZ,
+    durationSeconds: FREE_TABLE_AMBIENCE_TONE_DURATION_SECONDS,
+    attackSeconds: ATTACK_SECONDS,
+    peakGain: 1,
+  }),
+  glass_spark: frozenToneProfile({
+    id: "glass_spark",
+    oscillatorType: "sine",
+    frequencyHz: 660,
+    durationSeconds: 0.026,
+    attackSeconds: 0.004,
+    peakGain: 0.86,
+  }),
+  machine_ai: frozenToneProfile({
+    id: "machine_ai",
+    oscillatorType: "triangle",
+    frequencyHz: 520,
+    durationSeconds: 0.032,
+    attackSeconds: 0.004,
+    peakGain: 0.92,
+  }),
+});
+
+export const FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS = Object.freeze(
+  Object.keys(FREE_TABLE_AMBIENCE_TONE_PROFILES),
+);
+
+export function normalizeFreeTableAmbienceToneProfileId(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return Object.hasOwn(FREE_TABLE_AMBIENCE_TONE_PROFILES, normalized)
+    ? normalized
+    : FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID;
+}
 
 function validatedRevision(value) {
   const revision = Number(value);
@@ -71,6 +150,7 @@ export function createFreeTableAmbienceController({
   lookaheadMs = FREE_TABLE_AMBIENCE_LOOKAHEAD_MS,
   scheduleAheadMs = FREE_TABLE_AMBIENCE_SCHEDULE_AHEAD_MS,
   initialVolume = DEFAULT_VOLUME,
+  initialToneProfileId = FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID,
 } = {}) {
   if (typeof setIntervalFn !== "function" || typeof clearIntervalFn !== "function") {
     throw new TypeError("自由卓の部屋の呼吸に使うtimerがありません。");
@@ -95,6 +175,8 @@ export function createFreeTableAmbienceController({
   let visibilitySuspended = Boolean(documentRef?.hidden);
   let recordingSuspended = false;
   let destroyed = false;
+  let activeToneProfileId = normalizeFreeTableAmbienceToneProfileId(initialToneProfileId);
+  let pendingToneProfile = null;
 
   let audioContext = null;
   let masterGain = null;
@@ -118,6 +200,16 @@ export function createFreeTableAmbienceController({
       visibilitySuspended,
       recordingSuspended,
       destroyed,
+    };
+  }
+
+  function getToneProfileState() {
+    const serverNow = currentServerNow();
+    if (serverNow !== null) promotePendingToneProfile(serverNow);
+    return {
+      toneProfileId: activeToneProfileId,
+      pendingToneProfileId: pendingToneProfile?.toneProfileId ?? null,
+      pendingEffectiveAt: pendingToneProfile?.effectiveAt ?? null,
     };
   }
 
@@ -212,13 +304,38 @@ export function createFreeTableAmbienceController({
     }
   }
 
+  function toneProfileForBeat(startServerTime) {
+    const toneProfileId = (
+      pendingToneProfile
+      && startServerTime >= pendingToneProfile.effectiveAt - TIME_EPSILON_MS
+    )
+      ? pendingToneProfile.toneProfileId
+      : activeToneProfileId;
+    return FREE_TABLE_AMBIENCE_TONE_PROFILES[toneProfileId]
+      || FREE_TABLE_AMBIENCE_TONE_PROFILES[FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID];
+  }
+
+  function toneProfileBoundaryAfter(startServerTime, toneProfileId) {
+    if (
+      !pendingToneProfile
+      || toneProfileId !== activeToneProfileId
+      || startServerTime >= pendingToneProfile.effectiveAt - TIME_EPSILON_MS
+    ) {
+      return Infinity;
+    }
+    return pendingToneProfile.effectiveAt;
+  }
+
   function scheduleTone(startServerTime, serverNow, ambience, stopAtServerTime = Infinity) {
     if (!audioContext || !masterGain) return;
-    const maximumDurationSeconds = Number.isFinite(stopAtServerTime)
-      ? Math.max(0, (stopAtServerTime - startServerTime) / 1000)
-      : FREE_TABLE_AMBIENCE_TONE_DURATION_SECONDS;
+    const toneProfile = toneProfileForBeat(startServerTime);
+    const profileBoundary = toneProfileBoundaryAfter(startServerTime, toneProfile.id);
+    const effectiveStopAtServerTime = Math.min(stopAtServerTime, profileBoundary);
+    const maximumDurationSeconds = Number.isFinite(effectiveStopAtServerTime)
+      ? Math.max(0, (effectiveStopAtServerTime - startServerTime) / 1000)
+      : toneProfile.durationSeconds;
     const durationSeconds = Math.min(
-      FREE_TABLE_AMBIENCE_TONE_DURATION_SECONDS,
+      toneProfile.durationSeconds,
       maximumDurationSeconds,
     );
     if (durationSeconds <= TIME_EPSILON_MS / 1000) return;
@@ -227,19 +344,20 @@ export function createFreeTableAmbienceController({
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
     const stopTime = startTime + durationSeconds;
-    const attackSeconds = Math.min(ATTACK_SECONDS, durationSeconds / 2);
+    const attackSeconds = Math.min(toneProfile.attackSeconds, durationSeconds / 2);
     const voice = {
       oscillator,
       gain,
       revision: ambience.revision,
+      toneProfileId: toneProfile.id,
       startServerTime,
       stopServerTime: startServerTime + (durationSeconds * 1000),
     };
 
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(FREE_TABLE_AMBIENCE_TONE_FREQUENCY_HZ, startTime);
+    oscillator.type = toneProfile.oscillatorType;
+    oscillator.frequency.setValueAtTime(toneProfile.frequencyHz, startTime);
     gain.gain.setValueAtTime(MINIMUM_GAIN, startTime);
-    gain.gain.linearRampToValueAtTime(1, startTime + attackSeconds);
+    gain.gain.linearRampToValueAtTime(toneProfile.peakGain, startTime + attackSeconds);
     gain.gain.exponentialRampToValueAtTime(MINIMUM_GAIN, stopTime);
     oscillator.connect(gain);
     gain.connect(masterGain);
@@ -260,6 +378,18 @@ export function createFreeTableAmbienceController({
       activeAmbience?.metronomeBpm
       || pendingAmbience?.metronomeBpm,
     );
+  }
+
+  function promotePendingToneProfile(serverNow) {
+    if (
+      !pendingToneProfile
+      || serverNow + TIME_EPSILON_MS < pendingToneProfile.effectiveAt
+    ) {
+      return false;
+    }
+    activeToneProfileId = pendingToneProfile.toneProfileId;
+    pendingToneProfile = null;
+    return true;
   }
 
   function promotePendingAmbience(serverNow) {
@@ -322,6 +452,7 @@ export function createFreeTableAmbienceController({
     const serverNow = currentServerNow();
     if (serverNow === null) return;
     promotePendingAmbience(serverNow);
+    promotePendingToneProfile(serverNow);
     if (!hasSchedulerWork()) {
       clearScheduler();
       return;
@@ -456,8 +587,18 @@ export function createFreeTableAmbienceController({
     scheduleLookahead();
   }
 
+  function installRephasedAmbience(nextAmbience) {
+    // Training rounds may deliberately require a silent countdown even when the
+    // next BPM matches the previous round. Removing the active grid here makes
+    // the pending effectiveAt the one and only origin for the next cadence.
+    activeAmbience = null;
+    pendingAmbience = nextAmbience;
+    restartForCurrentAmbience();
+  }
+
   function setAmbience(snapshot, {
     serverTimeOffset: nextServerTimeOffset = serverTimeOffset,
+    rephase = false,
   } = {}) {
     const nextRevision = validatedRevision(snapshot?.revision);
     if (revision !== null && nextRevision < revision) return false;
@@ -490,12 +631,25 @@ export function createFreeTableAmbienceController({
     lightingIdentity = normalizedLightingIdentity(snapshot?.lightingId);
     updatedAtIdentity = normalizedUpdatedAtIdentity(snapshot?.updatedAt);
     serverTimeOffset = normalizedServerTimeOffset;
-    if (hadCanonicalAmbience && nextMetronomeBpm === previousMetronomeBpm) {
+    const shouldRephase = rephase === true;
+    if (
+      hadCanonicalAmbience
+      && nextMetronomeBpm === previousMetronomeBpm
+      && !shouldRephase
+    ) {
       if (serverTimeOffsetChanged) restartForCurrentAmbience();
       else continueCurrentCadence();
       return true;
     }
     const serverNow = currentServerNow();
+    if (
+      shouldRephase
+      && serverNow !== null
+      && nextEffectiveAt > serverNow + TIME_EPSILON_MS
+    ) {
+      installRephasedAmbience(nextAmbience);
+      return true;
+    }
     if (
       activeAmbience
       && serverNow !== null
@@ -510,12 +664,91 @@ export function createFreeTableAmbienceController({
     return true;
   }
 
+  function rescheduleUpcomingTones(serverNow) {
+    if (
+      !enabled
+      || destroyed
+      || visibilitySuspended
+      || recordingSuspended
+      || !audioContext
+      || audioContext.state !== "running"
+    ) {
+      return;
+    }
+    for (const voice of [...scheduledVoices]) {
+      if (voice.startServerTime > serverNow + TIME_EPSILON_MS) {
+        stopScheduledVoice(voice);
+        continue;
+      }
+      if (
+        pendingToneProfile
+        && voice.toneProfileId === activeToneProfileId
+        && voice.startServerTime < pendingToneProfile.effectiveAt - TIME_EPSILON_MS
+        && voice.stopServerTime > pendingToneProfile.effectiveAt + TIME_EPSILON_MS
+      ) {
+        truncateScheduledVoice(voice, pendingToneProfile.effectiveAt, serverNow);
+      }
+    }
+    activeNextBeatServerTime = null;
+    pendingNextBeatServerTime = null;
+    if (!hasSchedulerWork()) return;
+    beginScheduler();
+    scheduleLookahead();
+  }
+
+  /**
+   * Selects one fixed local tone recipe. Supplying effectiveAt stages the change
+   * on the same corrected server timeline used by ambience snapshots, allowing a
+   * caller to switch only at a round boundary without rephasing the BPM grid.
+   * Unknown or omitted IDs deliberately fall back to the legacy-compatible tap.
+   */
+  function setToneProfile(value, {
+    effectiveAt: requestedEffectiveAt,
+  } = {}) {
+    const toneProfileId = normalizeFreeTableAmbienceToneProfileId(value);
+    const serverNow = currentServerNow();
+    if (serverNow !== null) promotePendingToneProfile(serverNow);
+    const nextEffectiveAt = requestedEffectiveAt === undefined
+      ? (serverNow ?? 0)
+      : validatedEffectiveAt(requestedEffectiveAt);
+    const appliesNow = serverNow === null
+      || nextEffectiveAt <= serverNow + TIME_EPSILON_MS;
+
+    if (appliesNow) {
+      if (toneProfileId === activeToneProfileId && pendingToneProfile === null) {
+        return toneProfileId;
+      }
+      activeToneProfileId = toneProfileId;
+      pendingToneProfile = null;
+    } else {
+      if (
+        pendingToneProfile?.toneProfileId === toneProfileId
+        && pendingToneProfile.effectiveAt === nextEffectiveAt
+      ) {
+        return toneProfileId;
+      }
+      if (toneProfileId === activeToneProfileId && pendingToneProfile === null) {
+        return toneProfileId;
+      }
+      pendingToneProfile = {
+        toneProfileId,
+        effectiveAt: nextEffectiveAt,
+      };
+    }
+
+    if (serverNow !== null) rescheduleUpcomingTones(serverNow);
+    return toneProfileId;
+  }
+
   async function enable() {
     if (destroyed || visibilitySuspended || recordingSuspended) return false;
     if (enabled) return true;
     enabled = true;
     const serverNow = currentServerNow();
-    if (serverNow !== null) promotePendingAmbience(serverNow);
+    if (serverNow !== null) {
+      promotePendingAmbience(serverNow);
+      promotePendingToneProfile(serverNow);
+    }
     // Even at BPM 0, resume the context inside this explicit user gesture.
     // Keeping the unlocked context running silently lets a later room BPM
     // follow automatically without a second autoplay-gated gesture.
@@ -586,6 +819,7 @@ export function createFreeTableAmbienceController({
 
   return Object.freeze({
     setAmbience,
+    setToneProfile,
     enable,
     disable,
     setVolume,
@@ -595,5 +829,6 @@ export function createFreeTableAmbienceController({
     resumeAfterRecording,
     destroy,
     getState,
+    getToneProfileState,
   });
 }

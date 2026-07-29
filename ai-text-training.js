@@ -41,6 +41,12 @@ import {
   renderAiTextTrainingLine,
 } from "./ai-text-training-core.mjs?v=ai-text-training-core-v1";
 import {
+  AI_TEXT_TRAINING_ROSTER_MAX_COUNT,
+  drawAiTextTrainingRosterIndices,
+  isAiTextTrainingRosterCount,
+  normalizeAiTextTrainingDrawIndices,
+} from "./ai-text-training-roster.mjs?v=ai-text-training-roster-v1";
+import {
   AI_TEXT_TRAINING_STYLE_PRODUCTS,
   aiTextTrainingCosmeticsAreOwned,
   getAiTextTrainingStyleProduct,
@@ -48,7 +54,8 @@ import {
 } from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v2";
 import {
   createFreeTableAmbienceController,
-} from "./free-table-ambience.mjs?v=free-table-ambience-v1";
+  normalizeFreeTableAmbienceToneProfileId,
+} from "./free-table-ambience.mjs?v=free-table-ambience-v2";
 
 const appRoot = document.querySelector("#app");
 const aiTextTrainingAction = httpsCallable(functions, "aiTextTrainingAction");
@@ -58,6 +65,7 @@ const SESSION_STORAGE_KEY = "hariai-ai-text-training-session-v1";
 const ACHIEVEMENT_RETRY_QUEUE_KEY = "hariai-ai-text-training-achievement-retry-v1";
 const DAILY_COMPLETE_PREFIX = "hariai-ai-text-training-daily-v1:";
 const DECK_PERSISTENCE_KEY = "hariai-ai-text-training-deck-persistence-v1";
+const BEAT_CHARACTER_PREFERENCE_KEY = "hariai-ai-text-training-beat-character-v1";
 const DECK_DATABASE_NAME = "hariai-ai-text-training-deck-v1";
 const DECK_STORE_NAME = "decks";
 const DECK_RECORD_KEY = "latest";
@@ -68,9 +76,11 @@ const PREVIEW_SCREENS = new Set([
   "market",
   "editor",
   "purchase",
+  "draw",
   "play",
   "reaction",
   "result",
+  "safety",
   "rankings",
 ]);
 const REPORT_REASONS = Object.freeze([
@@ -83,6 +93,45 @@ const REPORT_REASONS = Object.freeze([
 ]);
 const ROUND_SECONDS_OPTIONS = Object.freeze([15, 20, 30, 45, 60]);
 const DEFAULT_BPMS = Object.freeze([80, 90, 100, 110, 120]);
+const DEFAULT_ROSTER_BPMS = Object.freeze([
+  80, 90, 100, 110, 120,
+  80, 90, 100, 110, 120,
+]);
+const AI_TEXT_TRAINING_BEAT_CHARACTERS = Object.freeze([
+  Object.freeze({
+    id: "heavy_pulse",
+    label: "重厚パルス",
+    description: "低く太い、渋く落ち着いたビート",
+    glyph: "LOW",
+  }),
+  Object.freeze({
+    id: "soft_bell",
+    label: "まろやかベル",
+    description: "丸く柔らかい、包み込むようなビート",
+    glyph: "SOFT",
+  }),
+  Object.freeze({
+    id: "clear_tap",
+    label: "クリアタップ",
+    description: "聞き取りやすい、現在の標準に近いビート",
+    glyph: "CLEAR",
+  }),
+  Object.freeze({
+    id: "glass_spark",
+    label: "グラススパーク",
+    description: "高く軽快で、若々しい印象のビート",
+    glyph: "HIGH",
+  }),
+  Object.freeze({
+    id: "machine_ai",
+    label: "無機質AI",
+    description: "感情を抑えた、電子的なビート",
+    glyph: "AI",
+  }),
+]);
+const DEFAULT_BEAT_CHARACTER_ID = "clear_tap";
+const SESSION_SCHEMA_VERSION = 2;
+const DECK_SCHEMA_VERSION = 2;
 const DEFAULT_POLICY = Object.freeze({
   prices: Object.freeze([5, 10, 25]),
   publishFee: 1,
@@ -113,6 +162,16 @@ function escapeHtml(value) {
 
 function showToast(message) {
   shared()?.showToast?.(message);
+}
+
+function normalizeBeatCharacterId(value) {
+  return normalizeFreeTableAmbienceToneProfileId(value);
+}
+
+function beatCharacter(value = state.beatCharacterId) {
+  const normalized = normalizeBeatCharacterId(value);
+  return AI_TEXT_TRAINING_BEAT_CHARACTERS.find((character) => character.id === normalized)
+    || AI_TEXT_TRAINING_BEAT_CHARACTERS[2];
 }
 
 function setBusy(busy, message = "") {
@@ -169,7 +228,7 @@ function removeLocalValue(key) {
 function storedSession() {
   try {
     const parsed = JSON.parse(readLocalValue(SESSION_STORAGE_KEY, "null"));
-    if (!parsed || Number(parsed.schemaVersion) !== 1) return null;
+    if (!parsed || ![1, SESSION_SCHEMA_VERSION].includes(Number(parsed.schemaVersion))) return null;
     return parsed;
   } catch {
     return null;
@@ -445,6 +504,9 @@ function flushAchievementRetryQueue() {
 
 function createState() {
   const persistDeck = readLocalValue(DECK_PERSISTENCE_KEY) === "true";
+  const beatCharacterId = normalizeBeatCharacterId(
+    readLocalValue(BEAT_CHARACTER_PREFERENCE_KEY, DEFAULT_BEAT_CHARACTER_ID),
+  );
   const ambienceController = createFreeTableAmbienceController({ initialVolume: 0.16 });
   return {
     generation: 0,
@@ -453,6 +515,7 @@ function createState() {
     phase: "idle",
     previousRenderedScreen: "",
     authReady: false,
+    authSettled: false,
     authError: "",
     uid: "",
     balance: 0,
@@ -482,10 +545,21 @@ function createState() {
     modeId: "mama",
     exerciseId: "march",
     roundSeconds: 20,
+    rosterImages: Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null),
+    rosterBpms: [...DEFAULT_ROSTER_BPMS],
+    rosterExpanded: false,
+    pendingDrawIndices: [],
+    sessionDrawIndices: [],
+    drawLeg: 1,
+    recoveryRosterCount: 0,
+    recoveryError: "",
     images: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null),
     bpms: [...DEFAULT_BPMS],
+    beatCharacterId,
+    sessionBeatCharacterId: beatCharacterId,
     persistDeck,
     storedDeckAvailable: false,
+    initialDeckRestorePromise: null,
     plan: null,
     roundIndex: 0,
     remainingMs: 20_000,
@@ -494,6 +568,7 @@ function createState() {
     countdownTimer: null,
     ticker: null,
     messageTimer: null,
+    beatPreviewTimer: null,
     currentMessage: "",
     lastMessage: "",
     lastAnnouncedSecond: null,
@@ -545,7 +620,7 @@ function setModeChrome() {
   const status = document.querySelector(".status-dot");
   if (status) status.innerHTML = "<i></i> SOLO TRAINING";
   const privacy = document.querySelector(".privacy-badge");
-  if (privacy) privacy.textContent = "5画像は端末内";
+  if (privacy) privacy.textContent = "最大10画像は端末内";
   document.title = "AIと対戦しよう 文字コラトレーニング | 貼り合いスタジアム";
 }
 
@@ -553,8 +628,9 @@ function releaseImage(item) {
   if (item?.url?.startsWith("blob:")) URL.revokeObjectURL(item.url);
 }
 
-function releaseImages() {
-  state.images.forEach(releaseImage);
+function releaseRosterImages() {
+  state.rosterImages.forEach(releaseImage);
+  state.rosterImages = Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null);
   state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
 }
 
@@ -562,9 +638,11 @@ function stopRuntimeTimers() {
   window.clearInterval(state.ticker);
   window.clearInterval(state.countdownTimer);
   window.clearTimeout(state.messageTimer);
+  window.clearTimeout(state.beatPreviewTimer);
   state.ticker = null;
   state.countdownTimer = null;
   state.messageTimer = null;
+  state.beatPreviewTimer = null;
   state.roundEndsAt = 0;
 }
 
@@ -606,12 +684,16 @@ function persistSession() {
     ? Math.max(0, state.roundEndsAt - performance.now())
     : state.remainingMs;
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: SESSION_SCHEMA_VERSION,
     paidUseId: state.paidUseId,
     modeId: state.modeId,
     exerciseId: state.exerciseId,
     roundSeconds: state.roundSeconds,
     bpms: [...state.bpms],
+    rosterCount: rosterEntries().length,
+    drawIndices: [...state.sessionDrawIndices],
+    drawLeg: state.drawLeg === 2 ? 2 : 1,
+    beatCharacterId: state.sessionBeatCharacterId,
     plan: state.plan,
     roundIndex: state.roundIndex,
     remainingMs,
@@ -641,6 +723,23 @@ function clearPersistedSession() {
   removeLocalValue(SESSION_STORAGE_KEY);
 }
 
+function rosterEntries() {
+  return state.rosterImages.flatMap((image, slotIndex) => (
+    image
+      ? [{
+        image,
+        bpm: state.rosterBpms[slotIndex],
+        slotIndex,
+      }]
+      : []
+  ));
+}
+
+function invalidatePendingDraw() {
+  state.pendingDrawIndices = [];
+  state.drawLeg = 1;
+}
+
 function openDeckDatabase() {
   if (!("indexedDB" in window)) {
     return Promise.reject(new Error("このブラウザーは画像の端末保存に対応していません。"));
@@ -658,16 +757,21 @@ function openDeckDatabase() {
 }
 
 async function writeStoredDeck() {
-  if (!state.persistDeck || state.images.some((item) => !item?.blob)) return false;
+  const entries = rosterEntries();
+  if (!state.persistDeck
+      || !isAiTextTrainingRosterCount(entries.length)
+      || entries.some((entry) => !entry.image?.blob)) {
+    return false;
+  }
   const database = await openDeckDatabase();
   try {
     await new Promise((resolve, reject) => {
       const transaction = database.transaction(DECK_STORE_NAME, "readwrite");
       transaction.objectStore(DECK_STORE_NAME).put({
-        schemaVersion: 1,
-        items: state.images.map((item, index) => ({
-          blob: item.blob,
-          bpm: state.bpms[index],
+        schemaVersion: DECK_SCHEMA_VERSION,
+        items: entries.map((entry) => ({
+          blob: entry.image.blob,
+          bpm: entry.bpm,
         })),
         updatedAt: Date.now(),
       }, DECK_RECORD_KEY);
@@ -711,35 +815,85 @@ async function deleteStoredDeck() {
   }
 }
 
+function normalizeStoredRosterRecord(value) {
+  const source = value && typeof value === "object" ? value : null;
+  const schemaVersion = Number(source?.schemaVersion);
+  const items = Array.isArray(source?.items) ? source.items : [];
+  const validItemCount = schemaVersion === 1
+    ? items.length === AI_TEXT_TRAINING_ROUND_COUNT
+    : schemaVersion === DECK_SCHEMA_VERSION
+      ? isAiTextTrainingRosterCount(items.length)
+      : false;
+  if (!validItemCount) {
+    return null;
+  }
+  const normalizedItems = items.map((item) => ({
+    blob: item?.blob || null,
+    bpm: normalizeAiTextTrainingBpm(item?.bpm),
+  }));
+  if (normalizedItems.some((item) => !item.blob || item.bpm === null)) return null;
+  return {
+    schemaVersion,
+    items: normalizedItems,
+    updatedAt: Number(source.updatedAt) || 0,
+  };
+}
+
 async function restoreStoredDeck({ quiet = false } = {}) {
+  const targetState = state;
+  const targetGeneration = targetState.generation;
+  const rosterSnapshot = [...targetState.rosterImages];
+  const bpmSnapshot = [...targetState.rosterBpms];
+  if (!active || targetState.screen !== "setup" || targetState.plan) return false;
   try {
     const record = await readStoredDeck();
-    state.storedDeckAvailable = Boolean(
-      record?.schemaVersion === 1
-      && Array.isArray(record.items)
-      && record.items.length === AI_TEXT_TRAINING_ROUND_COUNT,
-    );
-    if (!state.persistDeck || !state.storedDeckAvailable) return false;
-    const nextImages = record.items.map((item, index) => ({
-      id: `stored-${index}-${Date.now()}`,
-      blob: item.blob,
-      url: URL.createObjectURL(item.blob),
-      position: index,
-      used: false,
-      isSample: false,
-    }));
-    releaseImages();
-    state.images = nextImages;
-    state.bpms = record.items.map((item) => (
-      normalizeAiTextTrainingBpm(item.bpm) ?? DEFAULT_BPMS[0]
-    ));
-    if (!quiet) showToast("この端末に保存した5枚を読み込みました。");
-    if (active && state.screen === "setup") render();
+    const normalizedRecord = normalizeStoredRosterRecord(record);
+    const storedItems = normalizedRecord?.items || [];
+    if (!active
+        || state !== targetState
+        || targetState.generation !== targetGeneration
+        || targetState.screen !== "setup"
+        || targetState.plan
+        || targetState.rosterImages.some((item, index) => item !== rosterSnapshot[index])
+        || targetState.rosterBpms.some((bpm, index) => bpm !== bpmSnapshot[index])) {
+      return false;
+    }
+    targetState.storedDeckAvailable = Boolean(normalizedRecord);
+    if (!targetState.persistDeck || !targetState.storedDeckAvailable) return false;
+    const nextImages = Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null);
+    const nextBpms = [...DEFAULT_ROSTER_BPMS];
+    storedItems.forEach((item, index) => {
+      nextImages[index] = {
+        id: `stored-${index}-${Date.now()}`,
+        blob: item.blob,
+        url: URL.createObjectURL(item.blob),
+        position: index,
+        used: false,
+        isSample: false,
+      };
+      nextBpms[index] = normalizeAiTextTrainingBpm(item.bpm) ?? DEFAULT_ROSTER_BPMS[index];
+    });
+    releaseRosterImages();
+    targetState.rosterImages = nextImages;
+    targetState.rosterBpms = nextBpms;
+    targetState.rosterExpanded = storedItems.length > AI_TEXT_TRAINING_ROUND_COUNT;
+    invalidatePendingDraw();
+    if (!quiet) showToast(`この端末に保存した${storedItems.length}枚のロスターを読み込みました。`);
+    if (active && state === targetState && targetState.screen === "setup") render();
     return true;
   } catch (error) {
     if (!quiet) showToast(error?.message || "保存画像を読み込めませんでした。");
     return false;
   }
+}
+
+async function persistRosterIfConsented() {
+  if (!state.persistDeck) return;
+  if (isAiTextTrainingRosterCount(rosterEntries().length)) {
+    await writeStoredDeck();
+    return;
+  }
+  await deleteStoredDeck();
 }
 
 function presetSnapshot(value) {
@@ -812,7 +966,10 @@ function sameCosmetics(left, right) {
 }
 
 function previewImageData(index) {
-  const colors = ["#ff6f91", "#8f7cff", "#50d6c7", "#f6b84b", "#ff875f"];
+  const colors = [
+    "#ff6f91", "#8f7cff", "#50d6c7", "#f6b84b", "#ff875f",
+    "#4d8dff", "#ec69d4", "#71c96b", "#ff5c65", "#7381a8",
+  ];
   const label = `IMAGE ${index + 1}`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="960"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${colors[index]}"/><stop offset="1" stop-color="#11162a"/></linearGradient></defs><rect width="720" height="960" fill="url(#g)"/><circle cx="360" cy="360" r="180" fill="rgba(255,255,255,.14)"/><text x="360" y="500" fill="white" font-family="sans-serif" font-size="64" text-anchor="middle">${label}</text></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -820,6 +977,7 @@ function previewImageData(index) {
 
 function installPreview(requestedScreen) {
   state.authReady = true;
+  state.authSettled = true;
   state.uid = "preview-player";
   state.balance = 120;
   state.cosmetics = {
@@ -835,12 +993,13 @@ function installPreview(requestedScreen) {
     messageDecorationId: "ai_training_style_crimson_azure",
   };
   state.policy = { ...DEFAULT_POLICY, prices: [...DEFAULT_POLICY.prices] };
-  state.images = Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => ({
+  state.rosterImages = Array.from({ length: AI_TEXT_TRAINING_ROSTER_MAX_COUNT }, (_, index) => ({
     id: `preview-${index}`,
     url: previewImageData(index),
     blob: null,
     position: index,
   }));
+  state.rosterExpanded = true;
   const samplePreset = presetSnapshot({
     ...AI_TEXT_TRAINING_BUILTIN_SCRIPTS.mama,
     id: "1111111111111111111111111111111111111111",
@@ -888,18 +1047,36 @@ function installPreview(requestedScreen) {
   if (requestedScreen === "purchase") {
     state.screen = "purchase_review";
     state.pendingPaidPreset = samplePreset;
+    state.pendingDrawIndices = [7, 2, 9, 0, 4];
   }
-  if (["play", "reaction", "result"].includes(requestedScreen)) {
+  if (requestedScreen === "draw") {
+    state.pendingDrawIndices = [7, 2, 9, 0, 4];
+    state.screen = "draw_review";
+  }
+  if (["play", "reaction", "result", "safety"].includes(requestedScreen)) {
+    state.sessionDrawIndices = [0, 1, 2, 3, 4];
+    state.images = state.sessionDrawIndices.map((index) => state.rosterImages[index]);
+    state.bpms = state.sessionDrawIndices.map((index) => state.rosterBpms[index]);
+    state.sessionBeatCharacterId = state.beatCharacterId;
     state.sessionCosmetics = equippedCosmetics();
     state.plan = createAiTextTrainingPlan({ modeId: "mama", bpms: state.bpms });
-    state.screen = requestedScreen === "result" ? "result" : "play";
+    state.screen = ["result", "safety"].includes(requestedScreen) ? "result" : "play";
     state.phase = requestedScreen === "reaction" ? "reaction" : "paused";
     state.roundIndex = requestedScreen === "reaction" ? 1 : 0;
     state.remainingMs = 12_000;
-    state.resultOutcome = requestedScreen === "result" ? "completed" : "";
-    if (requestedScreen === "result") {
-      state.completedActiveSeconds = state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT;
-      state.completedRounds = AI_TEXT_TRAINING_ROUND_COUNT;
+    state.resultOutcome = requestedScreen === "result"
+      ? "completed"
+      : requestedScreen === "safety"
+        ? "safety_stopped"
+        : "";
+    if (["result", "safety"].includes(requestedScreen)) {
+      state.selectedPresetSource = "active_use";
+      state.completedActiveSeconds = requestedScreen === "result"
+        ? state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT
+        : 24;
+      state.completedRounds = requestedScreen === "result"
+        ? AI_TEXT_TRAINING_ROUND_COUNT
+        : 1;
     }
   }
   if (requestedScreen === "rankings") state.screen = "rankings";
@@ -959,34 +1136,182 @@ async function initializeAuthenticatedState(targetState = state) {
       },
       () => {},
     );
-    await restoreStoredDeck({ quiet: true });
+    await (targetState.initialDeckRestorePromise || restoreStoredDeck({ quiet: true }));
     if (!active || state !== targetState) return;
     recoverPaidSession();
+    targetState.authSettled = true;
     render();
     flushAchievementRetryQueue().catch(() => {});
   } catch (error) {
     if (!active || state !== targetState) return;
     targetState.authReady = false;
+    targetState.authSettled = true;
     targetState.authError = error?.message || "市場へ接続できませんでした。";
     render();
     flushAchievementRetryQueue().catch(() => {});
   }
 }
 
+function normalizeRecoveredPlan(value, {
+  modeId,
+  bpms,
+  roundIndex,
+} = {}) {
+  const source = value && typeof value === "object" ? value : null;
+  if (!source
+      || Number(source.schemaVersion) !== 1
+      || !AI_TEXT_TRAINING_MODES.some((mode) => mode.id === modeId)
+      || source.modeId !== modeId
+      || !Array.isArray(source.baseBpms)
+      || !Array.isArray(source.imoutoOffsets)
+      || !Array.isArray(source.effectiveBpms)
+      || !Array.isArray(source.reactions)
+      || [
+        source.baseBpms,
+        source.imoutoOffsets,
+        source.effectiveBpms,
+        source.reactions,
+      ].some((items) => items.length !== AI_TEXT_TRAINING_ROUND_COUNT)) {
+    throw new Error("保存されたトレーニング計画を確認できません。");
+  }
+  const baseBpms = source.baseBpms.map((value) => normalizeAiTextTrainingBpm(value));
+  if (baseBpms.some((value) => value === null)
+      || !Array.isArray(bpms)
+      || bpms.some((value, index) => normalizeAiTextTrainingBpm(value) !== baseBpms[index])) {
+    throw new Error("保存されたBPMを確認できません。");
+  }
+  const imoutoOffsets = source.imoutoOffsets.map((value) => Number(value));
+  const allowedImoutoOffsets = new Set([-20, -10, 0, 10, 20]);
+  if (imoutoOffsets[0] !== 0 || imoutoOffsets.some((value, index) => (
+    !allowedImoutoOffsets.has(value)
+    || (index > 0 && value === imoutoOffsets[index - 1])
+  ))) {
+    throw new Error("保存されたテンポ補正を確認できません。");
+  }
+  const effectiveBpms = source.effectiveBpms.map((value) => (
+    value === null ? null : normalizeAiTextTrainingBpm(value)
+  ));
+  if (effectiveBpms.some((value, index) => (
+    source.effectiveBpms[index] !== null && value === null
+  )) || effectiveBpms.some((value, index) => index <= roundIndex && value === null)) {
+    throw new Error("保存された実効BPMを確認できません。");
+  }
+  const reactionIds = new Set(AI_TEXT_TRAINING_REACTIONS.map((reaction) => reaction.id));
+  const reactions = source.reactions.map((value) => (
+    value === null ? null : String(value)
+  ));
+  let reactionGapFound = false;
+  if (reactions.some((value) => {
+    if (value === null) {
+      reactionGapFound = true;
+      return false;
+    }
+    return reactionGapFound || !reactionIds.has(value);
+  }) || reactions.some((value, index) => (
+    (index < roundIndex && value === null)
+    || (index > roundIndex && value !== null)
+  ))) {
+    throw new Error("保存された体感回答を確認できません。");
+  }
+  const expectedPlan = {
+    schemaVersion: 1,
+    modeId,
+    baseBpms: [...baseBpms],
+    imoutoOffsets: [...imoutoOffsets],
+    effectiveBpms: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null),
+    reactions: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null),
+  };
+  expectedPlan.effectiveBpms[0] = baseBpms[0];
+  if (modeId === "imouto") {
+    for (let index = 1; index < AI_TEXT_TRAINING_ROUND_COUNT; index += 1) {
+      expectedPlan.effectiveBpms[index] = baseBpms[index] === 0
+        ? 0
+        : Math.max(40, Math.min(160, baseBpms[index] + imoutoOffsets[index]));
+    }
+  }
+  reactions.forEach((reactionId, index) => {
+    if (reactionId !== null) {
+      applyAiTextTrainingReaction(expectedPlan, index, reactionId);
+    }
+  });
+  if (effectiveBpms.some((value, index) => value !== expectedPlan.effectiveBpms[index])) {
+    throw new Error("保存された実効BPMと体感回答が一致しません。");
+  }
+  return {
+    schemaVersion: 1,
+    modeId,
+    baseBpms,
+    imoutoOffsets,
+    effectiveBpms,
+    reactions,
+  };
+}
+
 function recoverPaidSession() {
+  state.recoveryError = "";
   const saved = storedSession();
   if (!saved || !state.activeUse || saved.paidUseId !== state.activeUse.id) return false;
   try {
+    const activeModeId = String(state.activeUse.preset?.modeId || "");
+    const savedResultOutcome = String(saved.resultOutcome || "");
+    if (saved.modeId !== activeModeId
+        || !["", "completed", "safety_stopped", "exited"].includes(savedResultOutcome)) {
+      throw new Error("保存された利用状態を確認できません。");
+    }
     state.modeId = saved.modeId;
     state.exerciseId = saved.exerciseId;
     state.roundSeconds = ROUND_SECONDS_OPTIONS.includes(saved.roundSeconds)
       ? saved.roundSeconds
       : 20;
-    state.bpms = Array.isArray(saved.bpms) && saved.bpms.length === 5
-      ? saved.bpms
-      : [...DEFAULT_BPMS];
-    state.plan = saved.plan;
+    if (!Array.isArray(saved.bpms) || saved.bpms.length !== AI_TEXT_TRAINING_ROUND_COUNT) {
+      throw new Error("保存されたBPMを確認できません。");
+    }
+    state.bpms = saved.bpms.map((value) => {
+      const bpm = normalizeAiTextTrainingBpm(value);
+      if (bpm === null) throw new Error("保存されたBPMを確認できません。");
+      return bpm;
+    });
+    const entries = rosterEntries();
+    const savedSchemaVersion = Number(saved.schemaVersion);
+    const savedRosterCount = savedSchemaVersion === SESSION_SCHEMA_VERSION
+      ? isAiTextTrainingRosterCount(saved.rosterCount)
+        ? Number(saved.rosterCount)
+        : null
+      : AI_TEXT_TRAINING_ROUND_COUNT;
+    const savedDrawIndices = savedRosterCount === null
+      ? null
+      : normalizeAiTextTrainingDrawIndices(
+        saved.drawIndices,
+        savedRosterCount,
+      );
+    if (savedSchemaVersion === SESSION_SCHEMA_VERSION
+        && (savedRosterCount === null || savedDrawIndices === null)) {
+      throw new Error("保存されたDRAWを確認できません。");
+    }
+    state.recoveryRosterCount = savedSchemaVersion === SESSION_SCHEMA_VERSION
+      ? savedRosterCount || 0
+      : AI_TEXT_TRAINING_ROUND_COUNT;
+    state.sessionDrawIndices = savedSchemaVersion === SESSION_SCHEMA_VERSION
+      ? savedDrawIndices && entries.length === savedRosterCount
+        ? savedDrawIndices
+        : []
+      : entries.length >= AI_TEXT_TRAINING_ROUND_COUNT
+        ? Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => index)
+        : [];
+    state.drawLeg = Number(saved.drawLeg) === 2 ? 2 : 1;
+    state.images = state.sessionDrawIndices.map((index) => entries[index]?.image || null);
+    state.sessionDrawIndices.forEach((entryIndex, roundIndex) => {
+      const slotIndex = entries[entryIndex]?.slotIndex;
+      if (Number.isInteger(slotIndex)) state.rosterBpms[slotIndex] = state.bpms[roundIndex];
+    });
+    state.sessionBeatCharacterId = normalizeBeatCharacterId(saved.beatCharacterId);
+    state.beatCharacterId = state.sessionBeatCharacterId;
     state.roundIndex = Math.max(0, Math.min(4, Number(saved.roundIndex) || 0));
+    state.plan = normalizeRecoveredPlan(saved.plan, {
+      modeId: state.modeId,
+      bpms: state.bpms,
+      roundIndex: state.roundIndex,
+    });
     state.remainingMs = Math.max(
       0,
       Math.min(state.roundSeconds * 1_000, Number(saved.remainingMs) || state.roundSeconds * 1_000),
@@ -1028,29 +1353,35 @@ function recoverPaidSession() {
         modeId: state.modeId,
         roundSeconds: state.roundSeconds,
         sessionId: state.achievementSessionId,
-        outcome: ["completed", "safety_stopped", "exited"].includes(saved.resultOutcome)
-          ? saved.resultOutcome
+        outcome: ["completed", "safety_stopped", "exited"].includes(savedResultOutcome)
+          ? savedResultOutcome
           : "",
-        completedRounds: saved.resultOutcome === "completed"
+        completedRounds: savedResultOutcome === "completed"
           ? AI_TEXT_TRAINING_ROUND_COUNT
           : state.completedRounds,
-        activeSeconds: saved.resultOutcome === "completed"
+        activeSeconds: savedResultOutcome === "completed"
           ? state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT
           : state.completedActiveSeconds,
       });
       if (pending?.sessionId) state.achievementSessionId = pending.sessionId;
     }
-    if (saved.resultOutcome) {
-      state.resultOutcome = saved.resultOutcome;
+    if (savedResultOutcome) {
+      state.resultOutcome = savedResultOutcome;
       state.screen = "result";
       state.phase = "result";
       state.finishPending = true;
-      finishPaidUse(saved.resultOutcome).finally(() => {
-        if (active && state.screen === "result") render();
+      const recoveryState = state;
+      finishPaidUse(savedResultOutcome).finally(() => {
+        if (active && state === recoveryState && recoveryState.screen === "result") render();
       });
     }
     return true;
   } catch {
+    state.plan = null;
+    state.sessionDrawIndices = [];
+    state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+    state.recoveryRosterCount = 0;
+    state.recoveryError = "端末に残った開始済み利用の計画またはDRAWを確認できません。";
     return false;
   }
 }
@@ -1081,7 +1412,7 @@ function start() {
     return;
   }
   render();
-  restoreStoredDeck({ quiet: true }).catch(() => {});
+  state.initialDeckRestorePromise = restoreStoredDeck({ quiet: true });
   initializeAuthenticatedState(state);
 }
 
@@ -1098,7 +1429,7 @@ function renderFrame(content, {
   return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" ${cosmeticDataAttributes()}>
     <header class="ai-text-training-header">
       <div><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1></div>
-      <button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}">${escapeHtml(backLabel)}</button>
+      <button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}" ${state.finishInFlight ? "disabled" : ""}>${escapeHtml(backLabel)}</button>
     </header>
     ${content}
     <div class="ai-text-training-sr-status" id="aiTextTrainingAnnouncer" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -1107,32 +1438,46 @@ function renderFrame(content, {
 
 function authStatusHtml() {
   if (state.preview) return `<span class="ai-text-training-connection is-ready">PREVIEW · 残高 ${formatAnjuPay(state.balance)}</span>`;
+  if (!state.authSettled) return `<span class="ai-text-training-connection">開始済み利用と残高を確認中…</span>`;
   if (state.authError) return `<span class="ai-text-training-connection is-error">市場オフライン · 無料トレーニングは利用できます</span>`;
-  if (!state.authReady) return `<span class="ai-text-training-connection">市場と残高を確認中…</span>`;
   return `<span class="ai-text-training-connection is-ready">AnjuPay <strong data-ai-text-training-balance>${formatAnjuPayNumber(state.balance)}</strong> Pay</span>`;
 }
 
+function paidRecoverySettingsLocked() {
+  const saved = storedSession();
+  return Boolean(
+    state.activeUse
+    && saved?.paidUseId === state.activeUse.id
+    && saved?.plan,
+  );
+}
+
 function imageSetupCard(item, index) {
-  const bpm = state.bpms[index];
+  const bpm = state.rosterBpms[index];
   const bpmCopy = bpm === 0 ? "FREE RHYTHM" : `${bpm} BPM`;
+  const bpmLocked = paidRecoverySettingsLocked()
+    && state.sessionDrawIndices.length === AI_TEXT_TRAINING_ROUND_COUNT;
   return `<article class="ai-text-training-image-card ${item ? "has-image" : ""}">
     <div class="ai-text-training-image-stage">
       ${item
-        ? `<img src="${escapeHtml(item.url)}" alt="ラウンド${index + 1}の選択画像" />`
+        ? `<img src="${escapeHtml(item.url)}" alt="対戦候補${index + 1}の選択画像" />`
         : `<span><strong>${index + 1}</strong><small>IMAGE</small></span>`}
-      <em>ROUND ${index + 1}</em>
+      <em>ROSTER ${String(index + 1).padStart(2, "0")}</em>
     </div>
-    <label class="button button-ghost ai-text-training-file-button">
-      ${item ? "画像を差し替え" : "画像を選ぶ"}
-      <input type="file" accept="image/*" data-ai-text-training-image="${index}" />
-    </label>
+    <div class="ai-text-training-image-actions">
+      <label class="button button-ghost ai-text-training-file-button">
+        ${item ? "画像を差し替え" : "画像を選ぶ"}
+        <input type="file" accept="image/*" data-ai-text-training-image="${index}" aria-label="対戦候補${index + 1}の画像を${item ? "差し替える" : "選ぶ"}" />
+      </label>
+      ${item ? `<button class="button button-ghost ai-text-training-image-remove" type="button" data-ai-text-training-remove-image="${index}" aria-label="対戦候補${index + 1}を外す">外す</button>` : ""}
+    </div>
     <div class="ai-text-training-bpm-control">
-      <label for="aiTextTrainingBpm${index}">画像${index + 1}のBPM</label>
+      <label for="aiTextTrainingBpm${index}">候補${index + 1}のBPM</label>
       <div>
-        <input id="aiTextTrainingBpm${index}" type="number" inputmode="numeric" min="0" max="160" step="1" value="${bpm}" data-ai-text-training-bpm="${index}" aria-describedby="aiTextTrainingBpmHelp${index}" />
-        <button type="button" data-ai-text-training-free="${index}">FREE</button>
+        <input id="aiTextTrainingBpm${index}" type="number" inputmode="numeric" min="0" max="160" step="1" value="${bpm}" data-ai-text-training-bpm="${index}" aria-describedby="aiTextTrainingBpmHelp${index}" ${bpmLocked ? "disabled" : ""} />
+        <button type="button" data-ai-text-training-free="${index}" ${bpmLocked ? "disabled" : ""}>FREE</button>
       </div>
-      <small id="aiTextTrainingBpmHelp${index}">${escapeHtml(bpmCopy)} · 0または40〜160</small>
+      <small id="aiTextTrainingBpmHelp${index}">${escapeHtml(bpmCopy)} · ${bpmLocked ? "開始時設定に固定" : "0または40〜160"}</small>
     </div>
   </article>`;
 }
@@ -1146,6 +1491,29 @@ function modeCard(mode) {
   </label>`;
 }
 
+function beatCharacterCard(character) {
+  const selected = state.beatCharacterId === character.id;
+  const locked = paidRecoverySettingsLocked();
+  return `<article class="ai-text-training-beat-card ${selected ? "is-selected" : ""}">
+    <label>
+      <input type="radio" name="aiTextTrainingBeatCharacter" value="${escapeHtml(character.id)}" ${selected ? "checked" : ""} ${locked ? "disabled" : ""} />
+      <span aria-hidden="true">${escapeHtml(character.glyph)}</span>
+      <strong>${escapeHtml(character.label)}</strong>
+      <small>${escapeHtml(character.description)}</small>
+    </label>
+    <button class="button button-ghost" type="button" data-ai-text-training-preview-beat="${escapeHtml(character.id)}" aria-label="${escapeHtml(character.label)}を試聴">音を試す</button>
+  </article>`;
+}
+
+function renderBeatCharacterPanel() {
+  const locked = paidRecoverySettingsLocked();
+  return `<section class="ai-text-training-panel ai-text-training-beat-panel">
+    <div class="ai-text-training-section-heading"><span>STEP 4</span><h2>ビートキャラクター</h2><em>5 TONES</em></div>
+    <div class="ai-text-training-beat-grid">${AI_TEXT_TRAINING_BEAT_CHARACTERS.map(beatCharacterCard).join("")}</div>
+    <p class="ai-text-training-mode-note">${locked ? "開始済み利用のビートは開始時設定に固定されています。試聴はできますが、再開する音色は変更しません。" : "音色はAIの人物像だけを演出し、BPM・難易度・実績には影響しません。「音を試す」を押した時だけ短く再生します。トレーニング中はいつでもメトロノームをOFFにできます。"}</p>
+  </section>`;
+}
+
 function selectedSupportHtml() {
   const script = selectedPresetForMode();
   const free = Number(script.price || 0) === 0 || state.selectedPresetSource === "author_preview";
@@ -1157,9 +1525,25 @@ function selectedSupportHtml() {
 
 function activeUseBanner() {
   if (!state.activeUse) return "";
+  const saved = storedSession();
+  const recoveryCount = state.recoveryRosterCount || Number(saved?.rosterCount) || 5;
+  if (state.recoveryError) {
+    return `<aside class="ai-text-training-active-use">
+      <strong>開始済み応援の復旧を止めています</strong>
+      <p>${escapeHtml(state.recoveryError)}確定済みの内容を再抽選せず、追加請求も行いません。</p>
+      <p>復旧できない場合は、この1回分を自主終了できます。応援は使い切りとなり返金はありませんが、新しい支払いは発生しません。</p>
+      <div>
+        <button class="button button-primary" type="button" data-ai-text-training-action="resume-paid" ${state.finishInFlight ? "disabled" : ""}>復旧状態をもう一度確認</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="abandon-corrupt-paid-use" ${state.finishInFlight ? "disabled" : ""}>${state.finishInFlight ? "自主終了を送信中…" : state.finishPending ? "自主終了を再送" : "この1回分を自主終了"}</button>
+      </div>
+    </aside>`;
+  }
+  const recoveryCopy = saved?.plan
+    ? `画像を失った場合は開始時と同じ${recoveryCount}枚を同じロスター順で選び直してください。確定済みの5枚・順番・運動・時間・BPM・ビート・演出は開始時設定に固定し、再抽選や途中変更をしません。`
+    : "利用開始だけが確定しています。5〜10枚を準備すると、追加支払いなしで今回の5枚をDRAWできます。";
   return `<aside class="ai-text-training-active-use">
     <strong>追加支払いなしで再開できる応援があります</strong>
-    <p>「${escapeHtml(state.activeUse.preset?.title || "応援台本")}」は開始済みです。画像を選び直しても同じ利用記録で再開できます。</p>
+    <p>「${escapeHtml(state.activeUse.preset?.title || "応援台本")}」は開始済みです。${escapeHtml(recoveryCopy)}同じ利用記録で再開します。</p>
     <button class="button button-primary" type="button" data-ai-text-training-action="resume-paid">この応援で再開準備</button>
   </aside>`;
 }
@@ -1206,7 +1590,7 @@ function renderCosmeticsPanel() {
         ? "この組み合わせを装着"
         : "装着済み";
   return `<section class="ai-text-training-panel ai-text-training-cosmetics-panel">
-    <div class="ai-text-training-section-heading"><span>STEP 4</span><h2>トレーニングルームを飾る</h2><em>買い切り演出</em></div>
+    <div class="ai-text-training-section-heading"><span>STEP 5</span><h2>トレーニングルームを飾る</h2><em>買い切り演出</em></div>
     <div class="ai-text-training-cosmetics-layout">
       <div class="ai-text-training-cosmetic-controls">
         <fieldset class="ai-text-training-cosmetic-slot">
@@ -1238,19 +1622,33 @@ function renderCosmeticsPanel() {
 }
 
 function renderSetup() {
-  const imagesReady = state.images.every(Boolean);
+  const registeredCount = rosterEntries().length;
+  const imagesReady = isAiTextTrainingRosterCount(registeredCount);
+  const visibleRosterSlots = state.rosterExpanded || registeredCount > AI_TEXT_TRAINING_ROUND_COUNT
+    ? AI_TEXT_TRAINING_ROSTER_MAX_COUNT
+    : AI_TEXT_TRAINING_ROUND_COUNT;
   const script = selectedPresetForMode();
+  const authChecking = !state.preview && !state.authSettled;
+  const recoverySettingsLocked = paidRecoverySettingsLocked();
   const startCopy = state.activeUse
     ? "追加支払いなしで再開"
     : Number(script.price || 0) > 0 && state.selectedPresetSource === "market"
-      ? `${formatAnjuPay(script.price)}で1回使って開始`
-      : "無料で5ラウンド開始";
-  const startReady = imagesReady && !state.cosmeticDraft;
-  const displayedStartCopy = state.cosmeticDraft ? "試着を確定して開始" : startCopy;
+      ? registeredCount > AI_TEXT_TRAINING_ROUND_COUNT
+        ? "AI DRAWへ"
+        : `${formatAnjuPay(script.price)}で1回使って開始`
+      : registeredCount > AI_TEXT_TRAINING_ROUND_COUNT
+        ? "AI DRAWへ"
+        : "無料で5ラウンド開始";
+  const startReady = imagesReady && !state.cosmeticDraft && !authChecking;
+  const displayedStartCopy = authChecking
+    ? "開始済み利用を確認中…"
+    : state.cosmeticDraft
+      ? "試着を確定して開始"
+      : startCopy;
   const todayComplete = readLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`) === "true";
   return renderFrame(`
     <div class="ai-text-training-setup-intro">
-      <div><p>好きな画像5枚がAI対戦相手。文字の応援とBPMに合わせて、ひとりで短く運動できます。</p><small>カメラ・動作判定・P2Pなし。画像は市場や作者へ送られません。</small></div>
+      <div><p>好きな画像を5〜10枚登録。AIが内容を見ずに5枚をDRAWし、文字の応援とBPMで対戦します。</p><small>カメラ・動作判定・P2Pなし。画像・BPM・DRAW結果は市場や作者へ送られません。</small></div>
       ${authStatusHtml()}
     </div>
     ${activeUseBanner()}
@@ -1260,12 +1658,14 @@ function renderSetup() {
       <small>カメラや動作判定は使いません。5ラウンド完走だけが実績へ加算され、安全停止・途中終了で今までの進捗は減りません。有料応援は任意で、完走によるPay還元はありません。</small>
     </section>
     <section class="ai-text-training-panel">
-      <div class="ai-text-training-section-heading"><span>STEP 1</span><h2>5枚とBPMを用意</h2><em>${state.images.filter(Boolean).length} / 5</em></div>
-      <div class="ai-text-training-image-grid">${state.images.map(imageSetupCard).join("")}</div>
+      <div class="ai-text-training-section-heading"><span>STEP 1</span><h2>対戦ロスターとBPM</h2><em>${registeredCount} / 10 · 最低5</em></div>
+      <div class="ai-text-training-image-grid">${state.rosterImages.slice(0, visibleRosterSlots).map(imageSetupCard).join("")}</div>
+      ${visibleRosterSlots < AI_TEXT_TRAINING_ROSTER_MAX_COUNT ? `<button class="button button-ghost ai-text-training-expand-roster" type="button" data-ai-text-training-action="expand-roster">候補を10枚まで追加する</button>` : ""}
+      <p class="ai-text-training-mode-note">5枚なら登録順で対戦します。6〜10枚なら開始前に重複なしで5枚をDRAWし、選ばれた順番とBPMを確認してから開始できます。</p>
       <div class="ai-text-training-local-save">
-        <label><input type="checkbox" id="aiTextTrainingPersistDeck" ${state.persistDeck ? "checked" : ""} /> この端末に5枚を保存し、次回すぐ使う</label>
+        <label><input type="checkbox" id="aiTextTrainingPersistDeck" ${state.persistDeck ? "checked" : ""} /> この端末にロスターを保存し、次回すぐ使う</label>
         <p>明示的にONにした時だけIndexedDBへ保存します。Firebaseへは送信しません。</p>
-        <div><button class="button button-ghost" type="button" data-ai-text-training-action="load-deck" ${state.storedDeckAvailable ? "" : "disabled"}>保存した5枚を読み込む</button><button class="button button-ghost" type="button" data-ai-text-training-action="forget-deck" ${state.storedDeckAvailable ? "" : "disabled"}>端末保存を削除</button></div>
+        <div><button class="button button-ghost" type="button" data-ai-text-training-action="load-deck" ${state.storedDeckAvailable ? "" : "disabled"}>保存ロスターを読み込む</button><button class="button button-ghost" type="button" data-ai-text-training-action="forget-deck" ${state.storedDeckAvailable ? "" : "disabled"}>端末保存を削除</button></div>
       </div>
     </section>
     <section class="ai-text-training-panel">
@@ -1276,14 +1676,15 @@ function renderSetup() {
     <section class="ai-text-training-panel">
       <div class="ai-text-training-section-heading"><span>STEP 3</span><h2>運動と長さ</h2></div>
       <div class="ai-text-training-config-grid">
-        <label>運動<select id="aiTextTrainingExercise">${AI_TEXT_TRAINING_EXERCISES.map((exercise) => `<option value="${exercise.id}" ${state.exerciseId === exercise.id ? "selected" : ""}>${escapeHtml(exercise.label)}</option>`).join("")}</select><small>${escapeHtml(aiTextTrainingExercise(state.exerciseId).cue)}</small></label>
-        <fieldset><legend>1ラウンド</legend><div>${ROUND_SECONDS_OPTIONS.map((seconds) => `<label><input type="radio" name="aiTextTrainingRoundSeconds" value="${seconds}" ${state.roundSeconds === seconds ? "checked" : ""} /><span>${seconds}秒</span></label>`).join("")}</div></fieldset>
+        <label>運動<select id="aiTextTrainingExercise" ${recoverySettingsLocked ? "disabled" : ""}>${AI_TEXT_TRAINING_EXERCISES.map((exercise) => `<option value="${exercise.id}" ${state.exerciseId === exercise.id ? "selected" : ""}>${escapeHtml(exercise.label)}</option>`).join("")}</select><small>${escapeHtml(aiTextTrainingExercise(state.exerciseId).cue)}</small></label>
+        <fieldset><legend>1ラウンド</legend><div>${ROUND_SECONDS_OPTIONS.map((seconds) => `<label><input type="radio" name="aiTextTrainingRoundSeconds" value="${seconds}" ${state.roundSeconds === seconds ? "checked" : ""} ${recoverySettingsLocked ? "disabled" : ""} /><span>${seconds}秒</span></label>`).join("")}</div></fieldset>
       </div>
-      <p class="ai-text-training-mode-note">1ラウンドは最大60秒。5ラウンドの運動時間は最大5分です（3秒カウントと、自分で次へ進むまでの休憩は含みません）。</p>
+      <p class="ai-text-training-mode-note">${recoverySettingsLocked ? "開始済み利用の運動と時間は、支払い時の設定に固定されています。" : "1ラウンドは最大60秒。5ラウンドの運動時間は最大5分です（3秒カウントと、自分で次へ進むまでの休憩は含みません）。"}</p>
     </section>
+    ${renderBeatCharacterPanel()}
     ${renderCosmeticsPanel()}
     <section class="ai-text-training-panel">
-      <div class="ai-text-training-section-heading"><span>STEP 5</span><h2>応援台本</h2><em>1セッション単位</em></div>
+      <div class="ai-text-training-section-heading"><span>STEP 6</span><h2>応援台本</h2><em>1セッション単位</em></div>
       ${selectedSupportHtml()}
       <div class="ai-text-training-support-actions">
         <button class="button button-ghost" type="button" data-ai-text-training-action="builtin-support">無料の標準応援</button>
@@ -1294,10 +1695,66 @@ function renderSetup() {
       <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用し、開始後に自主終了・即停止した場合も使い切りです。</p>
     </section>
     <section class="ai-text-training-start-panel">
-      <div><strong>${state.cosmeticDraft ? "演出を試着中" : imagesReady ? "5枚の準備OK" : `あと${5 - state.images.filter(Boolean).length}枚`}</strong><small>痛み・めまい・息苦しさ・体調不良がある時は開始せず、運動中は即停止してください。</small></div>
+      <div><strong>${state.cosmeticDraft ? "演出を試着中" : imagesReady ? registeredCount > 5 ? `${registeredCount}枚からAI DRAW` : "5枚の準備OK" : `あと${AI_TEXT_TRAINING_ROUND_COUNT - registeredCount}枚`}</strong><small>痛み・めまい・息苦しさ・体調不良がある時は開始せず、運動中は即停止してください。</small></div>
       <button class="button button-primary ai-text-training-start" type="button" data-ai-text-training-action="start-session" ${startReady ? "" : "disabled"}>${escapeHtml(displayedStartCopy)}</button>
     </section>
   `);
+}
+
+function drawReviewCard(entry, roundIndex) {
+  const bpm = normalizeAiTextTrainingBpm(entry?.bpm) ?? 0;
+  return `<article class="ai-text-training-draw-card">
+    <div class="ai-text-training-image-stage">
+      ${entry?.image
+        ? `<img src="${escapeHtml(entry.image.url)}" alt="DRAWされたラウンド${roundIndex + 1}の画像" />`
+        : `<span><strong>${roundIndex + 1}</strong><small>IMAGE</small></span>`}
+      <em>ROUND ${roundIndex + 1}</em>
+    </div>
+    <strong>${bpm === 0 ? "FREE RHYTHM" : `${bpm} BPM`}</strong>
+    <small>ROSTER ${String((entry?.slotIndex ?? 0) + 1).padStart(2, "0")}</small>
+  </article>`;
+}
+
+function renderDrawReview() {
+  const entries = rosterEntries();
+  const drawIndices = normalizeAiTextTrainingDrawIndices(
+    state.pendingDrawIndices,
+    entries.length,
+  );
+  if (!drawIndices) {
+    return renderFrame(`
+      <section class="ai-text-training-draw-error">
+        <span>DRAW RESET</span>
+        <h2>ロスターを確認してください</h2>
+        <p>登録画像が変更されたため、DRAWをやり直します。支払いと台本消費は発生していません。</p>
+        <button class="button button-primary" type="button" data-ai-text-training-action="setup">準備へ戻る</button>
+      </section>
+    `, { eyebrow: "AI DRAW", title: "対戦相手を選出", backLabel: "準備へ戻る", backAction: "setup" });
+  }
+  const script = selectedPresetForMode();
+  const paid = Number(script.price || 0) > 0
+    && ["market", "active_use"].includes(state.selectedPresetSource);
+  const confirmLabel = state.activeUse
+    ? "この5枚で追加支払いなしで再開"
+    : paid
+      ? `この5枚で${formatAnjuPay(script.price)}の支払い確認へ`
+      : "この5枚で無料トレーニング開始";
+  return renderFrame(`
+    <section class="ai-text-training-draw-hero">
+      <span>AI DRAW · ${entries.length} → 5</span>
+      <h2>今回の対戦相手をDRAWしました</h2>
+      <p>画像の中身は解析せず、登録ロスターから重複なしで選んでいます。順番とBPMを確認し、無理のない構成で開始してください。</p>
+    </section>
+    <section class="ai-text-training-draw-grid">${drawIndices.map((index, roundIndex) => drawReviewCard(entries[index], roundIndex)).join("")}</section>
+    <aside class="ai-text-training-draw-summary">
+      <dl><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter().label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(script.title)}</dd></div><div><dt>1ラウンド</dt><dd>${state.roundSeconds}秒</dd></div></dl>
+      <p>DRAWし直しても料金はかかりません。有料応援は、この5枚を確定した後の支払い確認で同意し、実際に利用開始が成立した時だけ消費します。</p>
+    </aside>
+    <div class="ai-text-training-draw-actions">
+      ${state.activeUse || (state.drawLeg === 2 && entries.length === AI_TEXT_TRAINING_ROSTER_MAX_COUNT) ? "" : '<button class="button button-ghost" type="button" data-ai-text-training-action="redraw">別の5枚をDRAW</button>'}
+      <button class="button button-primary" type="button" data-ai-text-training-action="confirm-draw">${escapeHtml(confirmLabel)}</button>
+    </div>
+  `, { eyebrow: "AI DRAW · NO IMAGE ANALYSIS", title: "対戦相手を選出", backLabel: "準備へ戻る", backAction: "setup" });
 }
 
 function marketPresetCard(preset) {
@@ -1611,7 +2068,7 @@ function renderPlay() {
       ${center}
       <div class="ai-text-training-safety-controls">
         ${["playing", "countdown"].includes(state.phase) ? `<button class="button button-ghost" type="button" data-ai-text-training-action="pause">一時停止</button>` : ""}
-        <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${state.muted}">メトロノーム ${state.muted ? "OFF" : "ON"}</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${state.muted}">${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)} ${state.muted ? "OFF" : "ON"}</button>
         <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="emergency-stop">無理・痛い・めまい／即停止</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="exit-session">運動を終了</button>
       </div>
@@ -1634,22 +2091,37 @@ function formatActiveDuration(value) {
   return `${minutes}分${seconds}秒`;
 }
 
+function renderResultLineup() {
+  return `<section class="ai-text-training-result-lineup" aria-label="今回DRAWされた5枚">
+    ${state.images.map((image, index) => `<figure>
+      ${image ? `<img src="${escapeHtml(image.url)}" alt="今回のラウンド${index + 1}の画像" />` : `<span>${index + 1}</span>`}
+      <figcaption>R${index + 1} · ${state.bpms[index] === 0 ? "FREE" : `${state.bpms[index]} BPM`}</figcaption>
+    </figure>`).join("")}
+  </section>`;
+}
+
 function renderResult() {
   const completedRounds = state.resultOutcome === "completed"
     ? AI_TEXT_TRAINING_ROUND_COUNT
     : Math.min(AI_TEXT_TRAINING_ROUND_COUNT, state.completedRounds);
   const achievementPending = Boolean(currentAchievementRetryRecord()?.outcome);
+  const rosterCount = rosterEntries().length;
+  const replayAllowed = state.resultOutcome !== "safety_stopped";
+  const alternateDrawAllowed = state.resultOutcome === "completed"
+    && rosterCount > AI_TEXT_TRAINING_ROUND_COUNT
+    && !(rosterCount === AI_TEXT_TRAINING_ROSTER_MAX_COUNT && state.drawLeg === 2);
   return renderFrame(`
     <section class="ai-text-training-result ${state.resultOutcome === "safety_stopped" ? "is-safety" : ""}">
       <span>${state.resultOutcome === "completed" ? "SESSION CLEAR" : "SESSION ENDED"}</span>
       <h2>${escapeHtml(resultTitle())}</h2>
       <p>${state.resultOutcome === "safety_stopped" ? "止まる判断は失敗ではありません。体調が戻らない場合は運動を再開しないでください。" : "動作の回数やフォームは判定していません。実際に到達した範囲だけを記録します。"}</p>
       ${state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
-      <dl><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
+      ${renderResultLineup()}
+      <dl><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
       ${state.finishPending ? `<p class="ai-text-training-pending">${state.finishInFlight ? "有料利用の終了記録を送信中です。" : "有料利用の終了記録を確認できませんでした。再送してください。"}追加請求はありません。</p>` : ""}
       ${achievementPending ? `<p class="ai-text-training-pending">${state.achievementRetryInFlight ? "実績記録を送信中です。" : "実績記録を送信できませんでした。"}運動結果を妨げず、画像・BPM・台詞を含まない最小限の記録だけをこの端末に残して再送します。</p>` : ""}
       <p>実績はカメラや動作判定を使わず、5ラウンド完走時だけ1回加算します。安全停止・途中終了では加算せず、解除済み実績や既存の進捗も減りません。</p>
-      <div><button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "5枚を残してもう一度"}</button>${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}${achievementPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-achievement-finish" ${state.achievementRetryInFlight ? "disabled" : ""}>実績記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
+      <div>${replayAllowed ? `<button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "同じ5枚で再戦準備"}</button>` : ""}${alternateDrawAllowed ? `<button class="button button-ghost" type="button" data-ai-text-training-action="alternate-draw-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${rosterCount === AI_TEXT_TRAINING_ROSTER_MAX_COUNT ? "未登場の残り5枚で再戦" : "別の5枚をDRAWして再戦"}</button>` : ""}${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}${achievementPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-achievement-finish" ${state.achievementRetryInFlight ? "disabled" : ""}>実績記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
       <small>水分を取り、必要なら十分に休んでください。実績送信の失敗を理由に運動を続ける必要はありません。</small>
     </section>
   `, { eyebrow: "SOLO RESULT", title: "文字コラトレーニング結果", backLabel: "トップへ", backAction: "home" });
@@ -1664,6 +2136,7 @@ function render() {
   if (state.screen === "editor") html = renderEditor();
   if (state.screen === "editor_review") html = renderEditorReview();
   if (state.screen === "purchase_review") html = renderPurchaseReview();
+  if (state.screen === "draw_review") html = renderDrawReview();
   if (state.screen === "rankings") html = renderRankings();
   if (state.screen === "play") html = renderPlay();
   if (state.screen === "result") html = renderResult();
@@ -1672,7 +2145,8 @@ function render() {
   const renderedKey = `${state.screen}:${state.phase}`;
   if (renderedKey !== state.previousRenderedScreen) {
     appRoot.focus({ preventScroll: true });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
     state.previousRenderedScreen = renderedKey;
   }
 }
@@ -1732,7 +2206,12 @@ function validateEditorDraft(draft) {
 async function handleImageSelection(input) {
   const index = Number(input.dataset.aiTextTrainingImage);
   const file = input.files?.[0];
-  if (!file || !Number.isInteger(index) || index < 0 || index >= 5) return;
+  if (!file
+      || !Number.isInteger(index)
+      || index < 0
+      || index >= AI_TEXT_TRAINING_ROSTER_MAX_COUNT) {
+    return;
+  }
   input.disabled = true;
   try {
     const item = await shared()?.processImageFile?.(file, index, {
@@ -1740,14 +2219,34 @@ async function handleImageSelection(input) {
       quality: 0.82,
     });
     if (!item) throw new Error("画像を準備できませんでした。");
-    releaseImage(state.images[index]);
-    state.images[index] = item;
-    if (state.persistDeck && state.images.every(Boolean)) await writeStoredDeck();
+    releaseImage(state.rosterImages[index]);
+    state.rosterImages[index] = item;
+    state.rosterExpanded = state.rosterExpanded || index >= AI_TEXT_TRAINING_ROUND_COUNT;
+    invalidatePendingDraw();
+    await persistRosterIfConsented();
     render();
   } catch (error) {
     showToast(error?.message || "画像を準備できませんでした。");
     input.disabled = false;
   }
+}
+
+async function removeRosterImage(index) {
+  if (!Number.isInteger(index)
+      || index < 0
+      || index >= AI_TEXT_TRAINING_ROSTER_MAX_COUNT
+      || !state.rosterImages[index]) {
+    return;
+  }
+  releaseImage(state.rosterImages[index]);
+  state.rosterImages[index] = null;
+  invalidatePendingDraw();
+  try {
+    await persistRosterIfConsented();
+  } catch {
+    showToast("画面から外しましたが、端末保存を更新できませんでした。保存ロスターを確認してください。");
+  }
+  render();
 }
 
 async function refreshMarketState() {
@@ -1905,21 +2404,69 @@ async function reportSelectedPreset(form) {
   }
 }
 
-function validateDeck() {
-  if (state.images.some((item) => !item)) throw new Error("画像を5枚そろえてください。");
-  const bpms = state.bpms.map((value) => normalizeAiTextTrainingBpm(value));
-  if (bpms.some((value) => value === null)) {
+function validateRoster() {
+  const entries = rosterEntries();
+  if (!isAiTextTrainingRosterCount(entries.length)) {
+    throw new Error("対戦候補の画像を5〜10枚登録してください。");
+  }
+  const normalizedEntries = entries.map((entry) => ({
+    ...entry,
+    bpm: normalizeAiTextTrainingBpm(entry.bpm),
+  }));
+  if (normalizedEntries.some((entry) => entry.bpm === null)) {
     throw new Error("BPMは0または40〜160の整数で設定してください。");
   }
-  return bpms;
+  return normalizedEntries;
+}
+
+function currentPendingDrawIndices(entries = validateRoster()) {
+  if (entries.length === AI_TEXT_TRAINING_ROUND_COUNT) {
+    return Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => index);
+  }
+  return normalizeAiTextTrainingDrawIndices(
+    state.pendingDrawIndices,
+    entries.length,
+  );
+}
+
+function drawRoster({ previousIndices = null } = {}) {
+  const entries = validateRoster();
+  state.drawLeg = 1;
+  state.pendingDrawIndices = drawAiTextTrainingRosterIndices({
+    rosterCount: entries.length,
+    previousIndices,
+  });
+  state.screen = "draw_review";
+  state.previousRenderedScreen = "";
+  render();
+  announceCurrentDraw(entries);
+}
+
+function announceCurrentDraw(entries = validateRoster()) {
+  const indices = normalizeAiTextTrainingDrawIndices(
+    state.pendingDrawIndices,
+    entries.length,
+  );
+  if (!indices) return;
+  const summary = indices.map((index, roundIndex) => {
+    const bpm = entries[index].bpm;
+    return `ラウンド${roundIndex + 1}、${bpm === 0 ? "フリーリズム" : `${bpm} BPM`}`;
+  }).join("。");
+  announce(`AI DRAWが決まりました。${summary}。`);
 }
 
 function newSessionPlan() {
-  const bpms = validateDeck();
+  const entries = validateRoster();
+  const drawIndices = currentPendingDrawIndices(entries);
+  if (!drawIndices) throw new Error("AI DRAWを確認してから開始してください。");
+  state.sessionDrawIndices = [...drawIndices];
+  state.images = drawIndices.map((index) => entries[index].image);
+  state.bpms = drawIndices.map((index) => entries[index].bpm);
+  state.sessionBeatCharacterId = normalizeBeatCharacterId(state.beatCharacterId);
   state.sessionCosmetics = equippedCosmetics();
   state.plan = createAiTextTrainingPlan({
     modeId: state.modeId,
-    bpms,
+    bpms: state.bpms,
     randomValues: Array.from({ length: 4 }, () => Math.random()),
   });
   state.roundIndex = 0;
@@ -1933,34 +2480,17 @@ function newSessionPlan() {
   state.achievementSessionId = "";
   state.achievementBeginRequested = false;
   state.achievementRetryError = "";
+  state.recoveryRosterCount = 0;
+  state.recoveryError = "";
   state.phase = "paused";
 }
 
-function prepareStartSession() {
-  validateDeck();
-  if (state.cosmeticDraft) {
-    throw new Error("演出を試着中です。「この組み合わせを装着」または「試着を取り消す」を選んでください。");
-  }
-  if (state.activeUse?.preset) {
-    state.modeId = state.activeUse.preset.modeId;
-    state.marketModeFilter = state.modeId;
-  }
-  selectedPresetForMode();
+function continuePreparedSession() {
+  currentPendingDrawIndices();
   if (state.activeUse) {
-    state.selectedPreset = presetSnapshot(state.activeUse.preset);
-    state.selectedPresetSource = "active_use";
-    state.paidUseId = state.activeUse.id;
-    const recovered = recoverPaidSession();
-    if (recovered && state.resultOutcome) {
-      showToast("この1回分は終了記録の確認中です。完了後に新しい利用を開始できます。");
-      render();
-      return;
-    }
-    if (!recovered || !state.plan) newSessionPlan();
+    newSessionPlan();
     state.screen = "play";
-    state.phase = state.phase === "reaction" || state.phase === "next_preview"
-      ? state.phase
-      : "paused";
+    state.phase = "paused";
     persistSession();
     render();
     return;
@@ -1977,6 +2507,71 @@ function prepareStartSession() {
   state.screen = "play";
   persistSession();
   render();
+}
+
+function prepareStartSession() {
+  window.clearTimeout(state.beatPreviewTimer);
+  state.beatPreviewTimer = null;
+  state.ambienceController.disable();
+  if (!state.preview && !state.authSettled) {
+    throw new Error("開始済みの有料応援と残高の確認が終わるまでお待ちください。");
+  }
+  const entries = validateRoster();
+  if (state.cosmeticDraft) {
+    throw new Error("演出を試着中です。「この組み合わせを装着」または「試着を取り消す」を選んでください。");
+  }
+  if (state.activeUse?.preset) {
+    state.modeId = state.activeUse.preset.modeId;
+    state.marketModeFilter = state.modeId;
+  }
+  selectedPresetForMode();
+  if (state.activeUse) {
+    state.selectedPreset = presetSnapshot(state.activeUse.preset);
+    state.selectedPresetSource = "active_use";
+    state.paidUseId = state.activeUse.id;
+    const recovered = recoverPaidSession();
+    if (!recovered && state.recoveryError) {
+      throw new Error(`${state.recoveryError}確定済み利用の内容を変更せず停止しています。`);
+    }
+    if (recovered && state.resultOutcome) {
+      showToast("この1回分は終了記録の確認中です。完了後に新しい利用を開始できます。");
+      render();
+      return;
+    }
+    if (recovered && state.plan) {
+      if (state.sessionDrawIndices.length !== AI_TEXT_TRAINING_ROUND_COUNT
+          || state.images.some((image) => !image)) {
+        throw new Error(`開始時と同じ${state.recoveryRosterCount || AI_TEXT_TRAINING_ROUND_COUNT}枚のロスターを選び直してください。DRAW結果と追加請求は変わりません。`);
+      }
+      state.screen = "play";
+      state.phase = state.phase === "reaction" || state.phase === "next_preview"
+        ? state.phase
+        : "paused";
+      persistSession();
+      render();
+      return;
+    }
+  }
+  selectedPresetForMode();
+  if (entries.length > AI_TEXT_TRAINING_ROUND_COUNT) {
+    const existingDraw = currentPendingDrawIndices(entries);
+    if (!existingDraw) {
+      state.pendingDrawIndices = drawAiTextTrainingRosterIndices({
+        rosterCount: entries.length,
+      });
+      state.drawLeg = 1;
+    }
+    state.screen = "draw_review";
+    render();
+    announceCurrentDraw(entries);
+    return;
+  }
+  state.pendingDrawIndices = Array.from(
+    { length: AI_TEXT_TRAINING_ROUND_COUNT },
+    (_, index) => index,
+  );
+  state.drawLeg = 1;
+  continuePreparedSession();
 }
 
 async function saveCosmetics() {
@@ -2111,15 +2706,56 @@ async function confirmPaidUse() {
   }
 }
 
+async function previewBeatCharacter(value) {
+  if (state.screen !== "setup") return;
+  const characterId = normalizeBeatCharacterId(value);
+  if (!paidRecoverySettingsLocked()) {
+    state.beatCharacterId = characterId;
+    writeLocalValue(BEAT_CHARACTER_PREFERENCE_KEY, characterId);
+  }
+  window.clearTimeout(state.beatPreviewTimer);
+  state.beatPreviewTimer = null;
+  state.ambienceController.disable();
+  const effectiveAt = Date.now() + 120;
+  state.ambienceRevision += 1;
+  state.ambienceController.setToneProfile(characterId, { effectiveAt });
+  state.ambienceController.setAmbience({
+    metronomeBpm: 96,
+    revision: state.ambienceRevision,
+    effectiveAt,
+    lightingId: "ai-text-training-beat-preview",
+    updatedAt: Date.now(),
+  }, {
+    serverTimeOffset: 0,
+    rephase: true,
+  });
+  state.ambienceController.setMuted(false);
+  const enabled = await state.ambienceController.enable();
+  if (!enabled) throw new Error("このブラウザーでは音色を再生できません。");
+  state.beatPreviewTimer = window.setTimeout(() => {
+    state.beatPreviewTimer = null;
+    state.ambienceController.disable();
+    state.ambienceController.setMuted(state.muted);
+  }, 2_200);
+  render();
+}
+
 function configureRoundAmbience(effectiveAt) {
   state.ambienceRevision += 1;
+  state.ambienceController.setToneProfile(
+    state.sessionBeatCharacterId,
+    { effectiveAt },
+  );
   state.ambienceController.setAmbience({
     metronomeBpm: currentBpm(),
     revision: state.ambienceRevision,
     effectiveAt,
     lightingId: `ai-text-training-${state.roundIndex}`,
     updatedAt: Date.now(),
-  }, { serverTimeOffset: 0 });
+  }, {
+    serverTimeOffset: 0,
+    rephase: true,
+  });
   state.ambienceController.setMuted(state.muted);
 }
 
@@ -2365,41 +3001,84 @@ function queueAchievementFinish(outcome) {
 }
 
 async function finishPaidUse(outcome) {
-  if (!state.paidUseId) return true;
-  if (state.preview) {
-    state.finishPending = false;
-    state.activeUse = null;
-    state.paidUseId = "";
+  const targetState = state;
+  const useId = String(targetState.paidUseId || "");
+  if (!useId) return true;
+  if (targetState.preview) {
+    targetState.finishPending = false;
+    targetState.activeUse = null;
+    targetState.paidUseId = "";
     return true;
   }
-  if (state.finishInFlight) return false;
-  state.finishInFlight = true;
-  state.finishPending = true;
+  if (targetState.finishInFlight) return false;
+  targetState.finishInFlight = true;
+  targetState.finishPending = true;
   persistSession();
   try {
     await aiTextTrainingAction({
       action: "finish_use",
-      useId: state.paidUseId,
+      useId,
       outcome,
     });
-    state.finishPending = false;
-    state.activeUse = null;
-    state.paidUseId = "";
-    clearPersistedSession();
+    if (state === targetState && targetState.paidUseId === useId) {
+      targetState.finishPending = false;
+      targetState.activeUse = null;
+      targetState.paidUseId = "";
+      const saved = storedSession();
+      if (!saved || String(saved.paidUseId || "") === useId) clearPersistedSession();
+    }
     return true;
   } catch {
-    state.finishPending = true;
-    persistSession();
+    if (state === targetState && targetState.paidUseId === useId) {
+      targetState.finishPending = true;
+      persistSession();
+    }
     return false;
   } finally {
-    state.finishInFlight = false;
+    targetState.finishInFlight = false;
   }
 }
 
 async function retryFinishPaidUse() {
-  if (!state.paidUseId) return;
-  await finishPaidUse(state.resultOutcome || "exited");
-  if (active && state.screen === "result") render();
+  const targetState = state;
+  if (!targetState.paidUseId) return;
+  await finishPaidUse(targetState.resultOutcome || "exited");
+  if (active && state === targetState && targetState.screen === "result") render();
+}
+
+async function abandonCorruptPaidUse() {
+  const targetState = state;
+  if (!targetState.activeUse || !targetState.recoveryError || targetState.finishInFlight) return;
+  const title = targetState.activeUse.preset?.title || "開始済みの応援";
+  const confirmed = window.confirm(
+    `「${title}」のこの1回分を自主終了します。\n\n`
+    + "応援は使い切りとなり返金されません。新しい支払いは発生しません。\n"
+    + "復旧をやめて終了記録を送信しますか？",
+  );
+  if (!confirmed) return;
+  if (state !== targetState) return;
+  targetState.paidUseId = targetState.paidUseId || targetState.activeUse.id;
+  const finishPromise = finishPaidUse("exited");
+  if (active && state === targetState) render();
+  const finished = await finishPromise;
+  if (state !== targetState) return;
+  if (!finished) {
+    showToast("自主終了の記録を確認できませんでした。追加請求はありません。通信を確認して再送してください。");
+    if (active && state === targetState) render();
+    return;
+  }
+  targetState.recoveryError = "";
+  targetState.finishPending = false;
+  targetState.resultOutcome = "";
+  targetState.pendingPaidPreset = null;
+  targetState.purchaseActionId = "";
+  targetState.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
+    AI_TEXT_TRAINING_BUILTIN_SCRIPTS[targetState.modeId],
+  );
+  targetState.selectedPresetSource = "builtin";
+  targetState.screen = "setup";
+  showToast("この1回分を自主終了しました。新しい支払いは発生していません。");
+  if (active && state === targetState) render();
 }
 
 async function retryAchievementFinish() {
@@ -2432,8 +3111,9 @@ function completeSession(outcome) {
   queueAchievementFinish(outcome);
   persistSession();
   flushAchievementRetryQueue().catch(() => {});
+  const completedState = state;
   finishPaidUse(outcome).finally(() => {
-    if (active && state.screen === "result") render();
+    if (active && state === completedState && completedState.screen === "result") render();
   });
   render();
 }
@@ -2451,12 +3131,21 @@ function exitSession() {
   completeSession("exited");
 }
 
-function resetForAnotherSession() {
+function resetForAnotherSession({ drawMode = "same" } = {}) {
   if (state.paidUseId || state.activeUse) {
     showToast("有料利用の終了記録を確認してから、次のセッションを開始できます。");
     retryFinishPaidUse().catch(() => {});
     return;
   }
+  if (drawMode === "alternate" && state.resultOutcome !== "completed") return;
+  const entries = rosterEntries();
+  const previousDrawIndices = normalizeAiTextTrainingDrawIndices(
+    state.sessionDrawIndices,
+    entries.length,
+  );
+  const repeatPaidPreset = state.selectedPresetSource === "active_use"
+    && Number(state.selectedPreset?.price || 0) > 0;
+  const previousPreset = state.selectedPreset;
   stopRuntimeTimers();
   state.ambienceController.disable();
   releaseWakeLock();
@@ -2464,8 +3153,27 @@ function resetForAnotherSession() {
   state.phase = "idle";
   state.plan = null;
   state.sessionCosmetics = null;
+  state.sessionBeatCharacterId = state.beatCharacterId;
+  state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+  state.bpms = [...DEFAULT_BPMS];
+  state.pendingDrawIndices = previousDrawIndices ? [...previousDrawIndices] : [];
+  state.drawLeg = 1;
+  if (drawMode === "alternate"
+      && entries.length > AI_TEXT_TRAINING_ROUND_COUNT
+      && previousDrawIndices) {
+    state.pendingDrawIndices = drawAiTextTrainingRosterIndices({
+      rosterCount: entries.length,
+      previousIndices: previousDrawIndices,
+    });
+    state.drawLeg = entries.length === AI_TEXT_TRAINING_ROSTER_MAX_COUNT ? 2 : 1;
+    state.screen = "draw_review";
+  }
+  state.sessionDrawIndices = [];
+  state.recoveryRosterCount = 0;
+  state.recoveryError = "";
   state.roundIndex = 0;
   state.remainingMs = state.roundSeconds * 1_000;
+  state.completedActiveSeconds = 0;
   state.completedRounds = 0;
   state.resultOutcome = "";
   state.achievementActionId = "";
@@ -2474,7 +3182,10 @@ function resetForAnotherSession() {
   state.achievementRetryError = "";
   state.finishPending = false;
   state.previousRenderedScreen = "";
-  if (!state.activeUse) {
+  if (repeatPaidPreset) {
+    state.selectedPreset = previousPreset;
+    state.selectedPresetSource = "market";
+  } else if (!state.activeUse) {
     state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
       AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.modeId],
     );
@@ -2482,11 +3193,16 @@ function resetForAnotherSession() {
   }
   clearPersistedSession();
   render();
+  if (state.screen === "draw_review") announceCurrentDraw(entries);
 }
 
 function requestHome() {
   if (!active) {
     window.HariaiApp?.returnHome?.();
+    return;
+  }
+  if (state.finishInFlight) {
+    showToast("有料利用の終了記録を確認しています。完了するまでお待ちください。");
     return;
   }
   if (state.screen === "play" && state.phase !== "result") {
@@ -2507,7 +3223,7 @@ function cleanup({ releaseDeck = false } = {}) {
   state.ambienceController.destroy();
   state.unsubscribeWallet?.();
   state.unsubscribeWallet = null;
-  if (releaseDeck) releaseImages();
+  if (releaseDeck) releaseRosterImages();
   active = false;
   document.title = "貼り合いスタジアム | Online Image Battle";
 }
@@ -2531,21 +3247,30 @@ function bindEvents() {
       const index = Number(input.dataset.aiTextTrainingBpm);
       const bpm = normalizeAiTextTrainingBpm(Number(input.value));
       if (bpm === null) {
-        input.value = String(state.bpms[index]);
+        input.value = String(state.rosterBpms[index]);
         showToast("BPMは0または40〜160の整数で設定してください。");
         return;
       }
-      state.bpms[index] = bpm;
-      if (state.persistDeck && state.images.every(Boolean)) writeStoredDeck().catch(() => {});
+      state.rosterBpms[index] = bpm;
+      persistRosterIfConsented().catch(() => {
+        showToast("BPMは変更しましたが、端末保存を更新できませんでした。");
+      });
       render();
     });
   });
   document.querySelectorAll("[data-ai-text-training-free]").forEach((button) => {
     button.addEventListener("click", () => {
       const index = Number(button.dataset.aiTextTrainingFree);
-      state.bpms[index] = 0;
-      if (state.persistDeck && state.images.every(Boolean)) writeStoredDeck().catch(() => {});
+      state.rosterBpms[index] = 0;
+      persistRosterIfConsented().catch(() => {
+        showToast("BPMは変更しましたが、端末保存を更新できませんでした。");
+      });
       render();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-remove-image]").forEach((button) => {
+    button.addEventListener("click", () => {
+      removeRosterImage(Number(button.dataset.aiTextTrainingRemoveImage)).catch(() => {});
     });
   });
   document.querySelectorAll('input[name="aiTextTrainingMode"]').forEach((input) => {
@@ -2578,6 +3303,20 @@ function bindEvents() {
       render();
     });
   });
+  document.querySelectorAll('input[name="aiTextTrainingBeatCharacter"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.beatCharacterId = normalizeBeatCharacterId(input.value);
+      writeLocalValue(BEAT_CHARACTER_PREFERENCE_KEY, state.beatCharacterId);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-preview-beat]").forEach((button) => {
+    button.addEventListener("click", () => {
+      previewBeatCharacter(button.dataset.aiTextTrainingPreviewBeat).catch((error) => {
+        showToast(error?.message || "音色を試聴できませんでした。無音でも利用できます。");
+      });
+    });
+  });
   document.querySelectorAll('input[name^="aiTextTrainingCosmetic_"]').forEach((input) => {
     input.addEventListener("change", () => {
       const slot = input.name.replace("aiTextTrainingCosmetic_", "");
@@ -2597,13 +3336,15 @@ function bindEvents() {
     if (requestedPersistence) {
       state.persistDeck = true;
       writeLocalValue(DECK_PERSISTENCE_KEY, "true");
-      if (state.images.every(Boolean)) {
+      if (isAiTextTrainingRosterCount(rosterEntries().length)) {
         try {
           await writeStoredDeck();
-          showToast("5枚をこの端末に保存しました。");
+          showToast(`${rosterEntries().length}枚のロスターをこの端末に保存しました。`);
         } catch (error) {
           showToast(error?.message || "画像を端末に保存できませんでした。");
         }
+      } else {
+        showToast("端末保存をONにしました。画像が5枚そろうとロスターを保存します。");
       }
     } else {
       try {
@@ -2719,6 +3460,22 @@ function bindEvents() {
         showToast(error?.message || "開始準備を確認してください。");
       }
     },
+    "expand-roster": () => {
+      state.rosterExpanded = true;
+      render();
+    },
+    redraw: () => {
+      if (state.activeUse) {
+        throw new Error("開始済みの有料応援では、確定したDRAWを変更できません。");
+      }
+      const entries = validateRoster();
+      const previousIndices = normalizeAiTextTrainingDrawIndices(
+        state.pendingDrawIndices,
+        entries.length,
+      );
+      drawRoster({ previousIndices });
+    },
+    "confirm-draw": continuePreparedSession,
     "save-cosmetics": saveCosmetics,
     "cancel-cosmetics": () => {
       state.cosmeticDraft = null;
@@ -2732,6 +3489,7 @@ function bindEvents() {
       state.screen = "setup";
       render();
     },
+    "abandon-corrupt-paid-use": abandonCorruptPaidUse,
     "confirm-purchase": confirmPaidUse,
     "load-deck": () => restoreStoredDeck(),
     "forget-deck": async () => {
@@ -2757,7 +3515,8 @@ function bindEvents() {
     },
     "emergency-stop": emergencyStop,
     "exit-session": exitSession,
-    "setup-after-result": resetForAnotherSession,
+    "setup-after-result": () => resetForAnotherSession({ drawMode: "same" }),
+    "alternate-draw-after-result": () => resetForAnotherSession({ drawMode: "alternate" }),
     "retry-finish": retryFinishPaidUse,
     "retry-achievement-finish": retryAchievementFinish,
   };
@@ -2855,7 +3614,7 @@ window.addEventListener("pagehide", () => {
   releaseWakeLock();
   state.ambienceController.destroy();
   state.unsubscribeWallet?.();
-  releaseImages();
+  releaseRosterImages();
 }, { once: true });
 
 window.HariaiAiTextTraining = Object.freeze({

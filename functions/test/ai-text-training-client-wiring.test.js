@@ -4,11 +4,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const { pathToFileURL } = require("node:url");
 const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 const client = read("ai-text-training.js");
+const ambienceSource = read("free-table-ambience.mjs");
 const html = read("index.html");
 const app = read("app.js");
 const styles = read("styles.css");
@@ -17,6 +19,17 @@ const cosmetics = read("ai-text-training-cosmetics.js");
 const online = read("online.js");
 const readme = read("README.md");
 const design = read("AI_TEXT_TRAINING_DESIGN.md");
+const coreModule = import(pathToFileURL(path.join(root, "ai-text-training-core.mjs")).href);
+const rosterModule = import(pathToFileURL(path.join(root, "ai-text-training-roster.mjs")).href);
+const ambienceModule = import(pathToFileURL(path.join(root, "free-table-ambience.mjs")).href);
+
+function sourceBlock(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.ok(start >= 0, `source marker is available: ${startMarker}`);
+  assert.ok(end > start, `source marker follows ${startMarker}: ${endMarker}`);
+  return source.slice(start, end);
+}
 
 function achievementQueueHarness({
   storage = new Map(),
@@ -677,4 +690,757 @@ test("achievement documentation fixes collection boundaries and migration policy
   assert.match(readme, /台本販売は既存の`aiTextTrainingSellerStats`を再評価/);
   assert.match(html, /achievements\.js\?v=[^"]*ai-text-training-v1/);
   assert.match(html, /ai-text-training\.js\?v=[^"]*achievements-v1/);
+});
+
+test("the client accepts 5-10 roster images, reviews every larger DRAW, and uses the exact remaining five for a 10-card second leg", async () => {
+  const roster = await rosterModule;
+  for (let count = 5; count <= 10; count += 1) {
+    assert.equal(roster.isAiTextTrainingRosterCount(count), true);
+  }
+  assert.equal(roster.isAiTextTrainingRosterCount(4), false);
+  assert.equal(roster.isAiTextTrainingRosterCount(11), false);
+
+  const firstLeg = [9, 2, 7, 0, 4];
+  const secondLeg = roster.drawAiTextTrainingRosterIndices({
+    rosterCount: 10,
+    previousIndices: firstLeg,
+    rng: () => 0.375,
+  });
+  assert.deepEqual(
+    [...secondLeg].sort((left, right) => left - right),
+    [1, 3, 5, 6, 8],
+  );
+  assert.equal(new Set([...firstLeg, ...secondLeg]).size, 10);
+  assert.equal(
+    roster.normalizeAiTextTrainingDrawIndices([0, 1, 2, 3, 3], 10),
+    null,
+  );
+
+  const prepare = sourceBlock(
+    client,
+    "function prepareStartSession",
+    "async function saveCosmetics",
+  );
+  assert.match(
+    prepare,
+    /entries\.length > AI_TEXT_TRAINING_ROUND_COUNT[\s\S]*?state\.screen = "draw_review"[\s\S]*?return;/,
+  );
+  assert.match(
+    prepare,
+    /entries\.length > AI_TEXT_TRAINING_ROUND_COUNT[\s\S]*?drawAiTextTrainingRosterIndices/,
+  );
+  assert.match(
+    prepare,
+    /state\.pendingDrawIndices = Array\.from\([\s\S]*?continuePreparedSession\(\)/,
+  );
+
+  const drawReview = sourceBlock(client, "function renderDrawReview", "function marketPresetCard");
+  assert.match(drawReview, /normalizeAiTextTrainingDrawIndices/);
+  assert.match(drawReview, /data-ai-text-training-action="confirm-draw"/);
+  assert.match(drawReview, /支払い確認で同意し、実際に利用開始が成立した時だけ消費/);
+
+  const replay = sourceBlock(client, "function resetForAnotherSession", "function requestHome");
+  assert.match(
+    replay,
+    /rosterCount: entries\.length,[\s\S]*?previousIndices: previousDrawIndices/,
+  );
+  assert.match(
+    replay,
+    /entries\.length === AI_TEXT_TRAINING_ROSTER_MAX_COUNT \? 2 : 1/,
+  );
+});
+
+test("active paid uses can only resume their confirmed DRAW and never expose or execute redraw", () => {
+  const drawReview = sourceBlock(client, "function renderDrawReview", "function marketPresetCard");
+  assert.match(
+    drawReview,
+    /state\.activeUse \|\| \(state\.drawLeg === 2 && entries\.length === AI_TEXT_TRAINING_ROSTER_MAX_COUNT\) \? "" : [\s\S]*?data-ai-text-training-action="redraw"/,
+  );
+
+  const prepare = sourceBlock(
+    client,
+    "function prepareStartSession",
+    "async function saveCosmetics",
+  );
+  assert.match(
+    prepare,
+    /if \(state\.activeUse\)[\s\S]*?recoverPaidSession\(\)[\s\S]*?state\.screen = "play"[\s\S]*?return;/,
+  );
+  assert.match(
+    prepare,
+    /DRAW結果と追加請求は変わりません/,
+  );
+
+  const actionHandlers = sourceBlock(
+    client,
+    "const actionHandlers = {",
+    'document.querySelectorAll("[data-ai-text-training-action]")',
+  );
+  assert.match(
+    actionHandlers,
+    /redraw: \(\) => \{[\s\S]*?if \(state\.activeUse\)[\s\S]*?確定したDRAWを変更できません/,
+  );
+  assert.match(actionHandlers, /"confirm-draw": continuePreparedSession/);
+});
+
+test("stored deck and recovery normalizers execute v1/v2 compatibility and reject corrupt state", async () => {
+  const [core, roster] = await Promise.all([coreModule, rosterModule]);
+
+  const deckContext = vm.createContext({
+    DECK_SCHEMA_VERSION: 2,
+    AI_TEXT_TRAINING_ROUND_COUNT: core.AI_TEXT_TRAINING_ROUND_COUNT,
+    isAiTextTrainingRosterCount: roster.isAiTextTrainingRosterCount,
+    normalizeAiTextTrainingBpm: core.normalizeAiTextTrainingBpm,
+  });
+  vm.runInContext(`
+    ${sourceBlock(
+      client,
+      "function normalizeStoredRosterRecord",
+      "async function restoreStoredDeck",
+    )}
+    globalThis.__normalizeStoredRosterRecord = normalizeStoredRosterRecord;
+  `, deckContext);
+  const normalizeDeck = deckContext.__normalizeStoredRosterRecord;
+  const deck = (schemaVersion, count) => ({
+    schemaVersion,
+    items: Array.from({ length: count }, (_, index) => ({
+      blob: { index },
+      bpm: index === 0 ? 0 : 80 + index,
+    })),
+    updatedAt: 123,
+  });
+  const legacyFive = normalizeDeck(deck(1, 5));
+  const currentTen = normalizeDeck(deck(2, 10));
+  assert.equal(legacyFive?.schemaVersion, 1);
+  assert.equal(legacyFive?.items.length, 5);
+  assert.equal(currentTen?.schemaVersion, 2);
+  assert.equal(currentTen?.items.length, 10);
+  assert.equal(normalizeDeck(deck(1, 10)), null);
+  assert.equal(normalizeDeck(deck(2, 4)), null);
+  assert.equal(normalizeDeck(deck(2, 11)), null);
+  const badBpmDeck = deck(2, 5);
+  badBpmDeck.items[2].bpm = 161;
+  assert.equal(normalizeDeck(badBpmDeck), null);
+
+  let storedValue = "null";
+  const sessionContext = vm.createContext({
+    SESSION_SCHEMA_VERSION: 2,
+    SESSION_STORAGE_KEY: "session",
+    readLocalValue: () => storedValue,
+  });
+  vm.runInContext(`
+    ${sourceBlock(client, "function storedSession", "function normalizeAchievementOwnerUid")}
+    globalThis.__storedSession = storedSession;
+  `, sessionContext);
+  storedValue = JSON.stringify({ schemaVersion: 1, plan: { schemaVersion: 1 } });
+  assert.equal(sessionContext.__storedSession()?.schemaVersion, 1);
+  storedValue = JSON.stringify({ schemaVersion: 2, plan: { schemaVersion: 1 } });
+  assert.equal(sessionContext.__storedSession()?.schemaVersion, 2);
+  storedValue = JSON.stringify({ schemaVersion: 3 });
+  assert.equal(sessionContext.__storedSession(), null);
+  storedValue = "{broken-json";
+  assert.equal(sessionContext.__storedSession(), null);
+
+  const planContext = vm.createContext({
+    AI_TEXT_TRAINING_MODES: core.AI_TEXT_TRAINING_MODES,
+    AI_TEXT_TRAINING_REACTIONS: core.AI_TEXT_TRAINING_REACTIONS,
+    AI_TEXT_TRAINING_ROUND_COUNT: core.AI_TEXT_TRAINING_ROUND_COUNT,
+    applyAiTextTrainingReaction: core.applyAiTextTrainingReaction,
+    normalizeAiTextTrainingBpm: core.normalizeAiTextTrainingBpm,
+  });
+  vm.runInContext(`
+    ${sourceBlock(client, "function normalizeRecoveredPlan", "function recoverPaidSession")}
+    globalThis.__normalizeRecoveredPlan = normalizeRecoveredPlan;
+  `, planContext);
+  const normalizePlan = planContext.__normalizeRecoveredPlan;
+  const bpms = [80, 90, 100, 110, 120];
+  const validPlan = core.createAiTextTrainingPlan({
+    modeId: "mama",
+    bpms,
+    randomValues: [0.1, 0.3, 0.5, 0.7],
+  });
+  core.applyAiTextTrainingReaction(validPlan, 0, "just_right");
+  core.applyAiTextTrainingReaction(validPlan, 1, "just_right");
+  const normalizedPlan = normalizePlan(validPlan, {
+    modeId: "mama",
+    bpms,
+    roundIndex: 2,
+  });
+  assert.equal(normalizedPlan.modeId, "mama");
+  assert.deepEqual(Array.from(normalizedPlan.baseBpms), bpms);
+  assert.throws(
+    () => normalizePlan({ ...validPlan, baseBpms: [80, 90, 100, 110] }, {
+      modeId: "mama",
+      bpms,
+      roundIndex: 2,
+    }),
+    /保存されたトレーニング計画/,
+  );
+  assert.throws(
+    () => normalizePlan({
+      ...validPlan,
+      effectiveBpms: [80, 90, null, 110, 120],
+    }, {
+      modeId: "mama",
+      bpms,
+      roundIndex: 2,
+    }),
+    /保存された実効BPM/,
+  );
+  assert.throws(
+    () => normalizePlan({
+      ...validPlan,
+      reactions: ["not-a-reaction", null, null, null, null],
+    }, {
+      modeId: "mama",
+      bpms,
+      roundIndex: 2,
+    }),
+    /保存された体感回答/,
+  );
+
+  const recovery = sourceBlock(client, "function recoverPaidSession", "function start()");
+  assert.match(
+    recovery,
+    /savedSchemaVersion === SESSION_SCHEMA_VERSION[\s\S]*?\? isAiTextTrainingRosterCount\(saved\.rosterCount\)[\s\S]*?: null[\s\S]*?: AI_TEXT_TRAINING_ROUND_COUNT/,
+  );
+  assert.match(
+    recovery,
+    /saved\.modeId !== activeModeId[\s\S]*?!\["", "completed", "safety_stopped", "exited"\]\.includes\(savedResultOutcome\)/,
+  );
+  assert.match(
+    recovery,
+    /savedSchemaVersion === SESSION_SCHEMA_VERSION[\s\S]*?savedRosterCount === null \|\| savedDrawIndices === null[\s\S]*?throw new Error\("保存されたDRAWを確認できません。"\)/,
+  );
+  assert.match(
+    recovery,
+    /savedSchemaVersion === SESSION_SCHEMA_VERSION[\s\S]*?savedDrawIndices && entries\.length === savedRosterCount/,
+  );
+  assert.match(
+    recovery,
+    /: entries\.length >= AI_TEXT_TRAINING_ROUND_COUNT[\s\S]*?Array\.from/,
+  );
+  assert.match(
+    recovery,
+    /catch \{[\s\S]*?state\.plan = null;[\s\S]*?state\.sessionDrawIndices = \[\];[\s\S]*?state\.recoveryError = "端末に残った開始済み利用の計画またはDRAWを確認できません。";[\s\S]*?return false;/,
+  );
+  assert.match(
+    client,
+    /if \(!recovered && state\.recoveryError\) \{[\s\S]*?確定済み利用の内容を変更せず停止しています。/,
+  );
+});
+
+test("paid consumption starts only after DRAW confirmation and a replay requires a fresh review", () => {
+  const prepare = sourceBlock(
+    client,
+    "function prepareStartSession",
+    "async function saveCosmetics",
+  );
+  const continueSession = sourceBlock(
+    client,
+    "function continuePreparedSession",
+    "function prepareStartSession",
+  );
+  const confirmPurchase = sourceBlock(
+    client,
+    "async function confirmPaidUse",
+    "async function previewBeatCharacter",
+  );
+  const replay = sourceBlock(client, "function resetForAnotherSession", "function requestHome");
+  const actionHandlers = sourceBlock(
+    client,
+    "const actionHandlers = {",
+    'document.querySelectorAll("[data-ai-text-training-action]")',
+  );
+
+  assert.doesNotMatch(prepare, /start_paid_use/);
+  assert.doesNotMatch(continueSession, /start_paid_use/);
+  assert.match(actionHandlers, /"confirm-draw": continuePreparedSession/);
+  assert.match(
+    continueSession,
+    /currentPendingDrawIndices\(\)[\s\S]*?state\.pendingPaidPreset = state\.selectedPreset;[\s\S]*?state\.purchaseActionId = "";[\s\S]*?state\.screen = "purchase_review"/,
+  );
+  assert.match(confirmPurchase, /if \(!consent\?\.checked\)[\s\S]*?return;/);
+  assert.ok(
+    confirmPurchase.indexOf("if (!state.purchaseActionId)")
+      < confirmPurchase.indexOf('action: "start_paid_use"'),
+  );
+  assert.match(
+    replay,
+    /repeatPaidPreset[\s\S]*?state\.selectedPreset = previousPreset;[\s\S]*?state\.selectedPresetSource = "market"/,
+  );
+});
+
+test("a safety stop offers no replay CTA while preserving a home exit", () => {
+  const result = sourceBlock(client, "function renderResult()", "function render()");
+  assert.match(
+    result,
+    /const replayAllowed = state\.resultOutcome !== "safety_stopped"/,
+  );
+  assert.match(
+    result,
+    /\$\{replayAllowed \? `<button[\s\S]*?data-ai-text-training-action="setup-after-result"[\s\S]*?` : ""\}/,
+  );
+  assert.match(
+    result,
+    /const alternateDrawAllowed = state\.resultOutcome === "completed"/,
+  );
+  assert.match(
+    result,
+    /\$\{alternateDrawAllowed \? `<button[\s\S]*?data-ai-text-training-action="alternate-draw-after-result"[\s\S]*?` : ""\}/,
+  );
+  assert.match(result, /data-ai-text-training-action="home"/);
+});
+
+test("five explicit beat auditions freeze into the session and every round requests a fresh phase", async () => {
+  const ambience = await ambienceModule;
+  const definitions = sourceBlock(
+    client,
+    "const AI_TEXT_TRAINING_BEAT_CHARACTERS",
+    "const DEFAULT_BEAT_CHARACTER_ID",
+  );
+  const clientIds = Array.from(
+    definitions.matchAll(/\bid:\s*"([a-z_]+)"/gu),
+    (match) => match[1],
+  );
+  assert.deepEqual(clientIds, [...ambience.FREE_TABLE_AMBIENCE_TONE_PROFILE_IDS]);
+  assert.equal(clientIds.length, 5);
+  assert.equal(
+    ambience.normalizeFreeTableAmbienceToneProfileId("unknown-tone"),
+    ambience.FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID,
+  );
+
+  const beatCard = sourceBlock(client, "function beatCharacterCard", "function renderBeatCharacterPanel");
+  assert.match(beatCard, /aria-hidden="true"/);
+  assert.match(beatCard, /data-ai-text-training-preview-beat/);
+  assert.match(beatCard, /aria-label="\$\{escapeHtml\(character\.label\)\}を試聴"/);
+  assert.match(beatCard, />音を試す</);
+
+  const preview = sourceBlock(
+    client,
+    "async function previewBeatCharacter",
+    "function configureRoundAmbience",
+  );
+  assert.match(preview, /if \(state\.screen !== "setup"\) return/);
+  assert.match(preview, /state\.ambienceController\.enable\(\)/);
+  assert.match(preview, /rephase: true/);
+
+  const newSession = sourceBlock(
+    client,
+    "function newSessionPlan",
+    "function continuePreparedSession",
+  );
+  assert.match(
+    newSession,
+    /state\.sessionBeatCharacterId = normalizeBeatCharacterId\(state\.beatCharacterId\)/,
+  );
+  const roundAmbience = sourceBlock(
+    client,
+    "function configureRoundAmbience",
+    "function announce(",
+  );
+  assert.match(roundAmbience, /state\.sessionBeatCharacterId/);
+  assert.match(roundAmbience, /rephase: true/);
+
+  const eventBinding = sourceBlock(
+    client,
+    "function bindEvents",
+    'document.addEventListener("visibilitychange"',
+  );
+  const beatChoiceStart = eventBinding.indexOf('input[name="aiTextTrainingBeatCharacter"]');
+  const beatPreviewStart = eventBinding.indexOf("[data-ai-text-training-preview-beat]");
+  assert.ok(beatChoiceStart >= 0 && beatPreviewStart > beatChoiceStart);
+  const beatChoiceBinding = eventBinding.slice(beatChoiceStart, beatPreviewStart);
+  assert.match(beatChoiceBinding, /state\.beatCharacterId = normalizeBeatCharacterId/);
+  assert.doesNotMatch(beatChoiceBinding, /previewBeatCharacter|ambienceController\.enable/);
+  assert.match(
+    eventBinding.slice(beatPreviewStart),
+    /previewBeatCharacter\(button\.dataset\.aiTextTrainingPreviewBeat\)/,
+  );
+
+  assert.match(
+    ambienceSource,
+    /const shouldRephase = rephase === true;[\s\S]*?nextMetronomeBpm === previousMetronomeBpm[\s\S]*?!shouldRephase/,
+  );
+  assert.match(
+    ambienceSource,
+    /shouldRephase[\s\S]*?installRephasedAmbience\(nextAmbience\)/,
+  );
+});
+
+test("DRAW, playback, and motion fallbacks expose the necessary accessibility contract", () => {
+  assert.match(
+    client,
+    /id="aiTextTrainingAnnouncer" role="status" aria-live="polite" aria-atomic="true"/,
+  );
+  assert.match(
+    client,
+    /aria-label="対戦候補\$\{index \+ 1\}の画像を\$\{item \? "差し替える" : "選ぶ"\}"/,
+  );
+  assert.match(client, /aria-label="対戦候補\$\{index \+ 1\}を外す"/);
+  assert.match(client, /alt="DRAWされたラウンド\$\{roundIndex \+ 1\}の画像"/);
+  assert.match(client, /aria-label="今回DRAWされた5枚"/);
+  assert.match(client, /class="ai-text-training-progress" aria-hidden="true"/);
+  assert.match(client, /class="ai-text-training-vignette" aria-hidden="true"/);
+  assert.match(
+    client,
+    /matchMedia\?\.\("\(prefers-reduced-motion: reduce\)"\)\?\.matches[\s\S]*?behavior: reducedMotion \? "auto" : "smooth"/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation-duration: 0\.01ms !important;[\s\S]*?transition-duration: 0\.01ms !important;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.ai-text-training-countdown\s*\{[\s\S]*?animation: none;/,
+  );
+});
+
+test("authentication must settle before start, and both authentication outcomes release the gate", async () => {
+  const setup = sourceBlock(client, "function renderSetup", "function drawReviewCard");
+  assert.match(setup, /const authChecking = !state\.preview && !state\.authSettled/);
+  assert.match(
+    setup,
+    /const startReady = imagesReady && !state\.cosmeticDraft && !authChecking/,
+  );
+  assert.match(
+    setup,
+    /data-ai-text-training-action="start-session" \$\{startReady \? "" : "disabled"\}/,
+  );
+
+  let validateRosterCalls = 0;
+  const prepareContext = vm.createContext({
+    state: {
+      preview: "",
+      authSettled: false,
+      beatPreviewTimer: null,
+      ambienceController: { disable() {} },
+    },
+    window: { clearTimeout() {} },
+    validateRoster() {
+      validateRosterCalls += 1;
+      return [];
+    },
+  });
+  vm.runInContext(`
+    ${sourceBlock(client, "function prepareStartSession", "async function saveCosmetics")}
+    globalThis.__prepareStartSession = prepareStartSession;
+  `, prepareContext);
+  assert.throws(
+    () => prepareContext.__prepareStartSession(),
+    /開始済みの有料応援と残高の確認が終わるまで/,
+  );
+  assert.equal(validateRosterCalls, 0);
+
+  const initializeSource = sourceBlock(
+    client,
+    "async function initializeAuthenticatedState",
+    "function normalizeRecoveredPlan",
+  );
+  async function runAuthentication({ failure = null } = {}) {
+    const calls = { recover: 0, render: 0 };
+    const targetState = {
+      modeId: "mama",
+      marketModeFilter: "mama",
+      authReady: false,
+      authSettled: false,
+      authError: "",
+      balance: 0,
+      policy: {},
+      marketPresets: [],
+      ownPresets: [],
+      profile: {},
+      cosmetics: {},
+      activeUse: null,
+      paidUseId: "",
+      unsubscribeWallet: null,
+    };
+    const context = vm.createContext({
+      active: true,
+      state: targetState,
+      auth: { currentUser: null },
+      browserLocalPersistence: {},
+      firestore: {},
+      setPersistence: async () => {
+        if (failure === "persistence") throw new Error("auth failed");
+      },
+      signInAnonymously: async () => ({ user: { uid: "runtime-user" } }),
+      aiTextTrainingAction: async () => ({
+        data: {
+          balance: 25,
+          policy: { prices: [0, 5] },
+          presets: [],
+          ownPresets: [],
+          profile: { xPublic: false, xHandle: "" },
+          cosmetics: { ownedStyleIds: [] },
+          activeUse: null,
+        },
+      }),
+      normalizeServerCosmetics: (value) => value,
+      presetSnapshot: (value) => value,
+      storedSession: () => null,
+      clearPersistedSession() {},
+      doc: () => ({}),
+      onSnapshot: () => () => {},
+      document: { querySelectorAll: () => [] },
+      restoreStoredDeck: async () => true,
+      recoverPaidSession() {
+        calls.recover += 1;
+        return false;
+      },
+      render() {
+        calls.render += 1;
+      },
+      flushAchievementRetryQueue: () => Promise.resolve(true),
+    });
+    vm.runInContext(`
+      ${initializeSource}
+      globalThis.__initializeAuthenticatedState = initializeAuthenticatedState;
+    `, context);
+    await context.__initializeAuthenticatedState(targetState);
+    return { calls, targetState };
+  }
+
+  const success = await runAuthentication();
+  assert.equal(success.targetState.authReady, true);
+  assert.equal(success.targetState.authSettled, true);
+  assert.equal(success.targetState.authError, "");
+  assert.equal(success.calls.recover, 1);
+  assert.equal(success.calls.render, 1);
+
+  const failure = await runAuthentication({ failure: "persistence" });
+  assert.equal(failure.targetState.authReady, false);
+  assert.equal(failure.targetState.authSettled, true);
+  assert.equal(failure.targetState.authError, "auth failed");
+  assert.equal(failure.calls.recover, 0);
+  assert.equal(failure.calls.render, 1);
+});
+
+test("an awaited stored-deck restore revalidates every setup identity guard before mutating UI state", async () => {
+  const restoreSource = sourceBlock(
+    client,
+    "async function restoreStoredDeck",
+    "async function persistRosterIfConsented",
+  );
+
+  async function runRestoreRace(mutate) {
+    const originalImages = Array.from({ length: 10 }, (_, index) => ({
+      id: `original-${index}`,
+    }));
+    const targetState = {
+      generation: 7,
+      screen: "setup",
+      plan: null,
+      rosterImages: [...originalImages],
+      rosterBpms: [80, 90, 100, 110, 120, 80, 90, 100, 110, 120],
+      persistDeck: true,
+      storedDeckAvailable: false,
+      rosterExpanded: false,
+    };
+    let resolveRead;
+    const readPromise = new Promise((resolve) => {
+      resolveRead = resolve;
+    });
+    const calls = {
+      release: 0,
+      invalidate: 0,
+      render: 0,
+      toast: 0,
+    };
+    const context = vm.createContext({
+      active: true,
+      state: targetState,
+      AI_TEXT_TRAINING_ROSTER_MAX_COUNT: 10,
+      AI_TEXT_TRAINING_ROUND_COUNT: 5,
+      DEFAULT_ROSTER_BPMS: [80, 90, 100, 110, 120, 80, 90, 100, 110, 120],
+      readStoredDeck: () => readPromise,
+      normalizeStoredRosterRecord: (value) => value,
+      normalizeAiTextTrainingBpm: (value) => Number(value),
+      URL: { createObjectURL: () => "blob:stored" },
+      releaseRosterImages() {
+        calls.release += 1;
+      },
+      invalidatePendingDraw() {
+        calls.invalidate += 1;
+      },
+      render() {
+        calls.render += 1;
+      },
+      showToast() {
+        calls.toast += 1;
+      },
+    });
+    vm.runInContext(`
+      ${restoreSource}
+      globalThis.__restoreStoredDeck = restoreStoredDeck;
+    `, context);
+
+    const pending = context.__restoreStoredDeck({ quiet: true });
+    mutate({ context, targetState });
+    const currentState = context.state;
+    const expectedImages = [...currentState.rosterImages];
+    const expectedBpms = [...currentState.rosterBpms];
+    const expectedScreen = currentState.screen;
+    const expectedPlan = currentState.plan;
+    resolveRead({
+      schemaVersion: 2,
+      items: Array.from({ length: 5 }, (_, index) => ({
+        blob: { stored: index },
+        bpm: 120 + index,
+      })),
+    });
+    const result = await pending;
+    assert.equal(result, false);
+    assert.equal(context.state, currentState);
+    assert.deepEqual([...currentState.rosterImages], expectedImages);
+    assert.deepEqual([...currentState.rosterBpms], expectedBpms);
+    assert.equal(currentState.screen, expectedScreen);
+    assert.equal(currentState.plan, expectedPlan);
+    assert.equal(currentState.storedDeckAvailable, false);
+    assert.deepEqual(calls, {
+      release: 0,
+      invalidate: 0,
+      render: 0,
+      toast: 0,
+    });
+  }
+
+  const replacementPlayState = {
+    generation: 8,
+    screen: "play",
+    plan: { schemaVersion: 1 },
+    rosterImages: Array.from({ length: 10 }, (_, index) => ({ id: `play-${index}` })),
+    rosterBpms: [120, 120, 120, 120, 120, 80, 90, 100, 110, 120],
+    persistDeck: true,
+    storedDeckAvailable: false,
+  };
+  const races = [
+    ({ context }) => {
+      context.active = false;
+    },
+    ({ context }) => {
+      context.state = replacementPlayState;
+    },
+    ({ targetState }) => {
+      targetState.generation += 1;
+    },
+    ({ targetState }) => {
+      targetState.screen = "play";
+    },
+    ({ targetState }) => {
+      targetState.plan = { schemaVersion: 1 };
+    },
+    ({ targetState }) => {
+      targetState.rosterImages[0] = { id: "new-user-image" };
+    },
+    ({ targetState }) => {
+      targetState.rosterBpms[0] = 159;
+    },
+  ];
+  for (const mutate of races) {
+    await runRestoreRace(mutate);
+  }
+});
+
+test("corrupt paid-use abandonment needs confirmation and returns successful exits to builtin support", async () => {
+  const abandonSource = sourceBlock(
+    client,
+    "async function abandonCorruptPaidUse",
+    "async function retryAchievementFinish",
+  );
+  const banner = sourceBlock(client, "function activeUseBanner", "function cosmeticOptionHtml");
+  assert.match(
+    banner,
+    /state\.recoveryError[\s\S]*?data-ai-text-training-action="abandon-corrupt-paid-use"/,
+  );
+  const actionHandlers = sourceBlock(
+    client,
+    "const actionHandlers = {",
+    'document.querySelectorAll("[data-ai-text-training-action]")',
+  );
+  assert.match(
+    actionHandlers,
+    /"abandon-corrupt-paid-use": abandonCorruptPaidUse/,
+  );
+
+  async function runAbandon({ confirmed, finishSucceeded = true }) {
+    const calls = {
+      confirms: [],
+      outcomes: [],
+      renders: 0,
+      toasts: [],
+    };
+    const state = {
+      activeUse: {
+        id: "paid-use-runtime",
+        preset: { title: "有料応援", modeId: "mama" },
+      },
+      recoveryError: "復旧できません。",
+      finishInFlight: false,
+      finishPending: false,
+      paidUseId: "",
+      pendingPaidPreset: { id: "paid-preset" },
+      purchaseActionId: "previous-action",
+      selectedPreset: { title: "有料応援", price: 10 },
+      selectedPresetSource: "active_use",
+      resultOutcome: "",
+      modeId: "mama",
+      screen: "setup",
+    };
+    const builtin = { title: "標準応援", price: 0, modeId: "mama" };
+    const context = vm.createContext({
+      active: true,
+      state,
+      window: {
+        confirm(message) {
+          calls.confirms.push(message);
+          return confirmed;
+        },
+      },
+      async finishPaidUse(outcome) {
+        calls.outcomes.push(outcome);
+        if (!finishSucceeded) return false;
+        state.activeUse = null;
+        state.paidUseId = "";
+        return true;
+      },
+      render() {
+        calls.renders += 1;
+      },
+      showToast(message) {
+        calls.toasts.push(message);
+      },
+      normalizeAiTextTrainingScriptSnapshot: (value) => ({ ...value }),
+      AI_TEXT_TRAINING_BUILTIN_SCRIPTS: { mama: builtin },
+    });
+    vm.runInContext(`
+      ${abandonSource}
+      globalThis.__abandonCorruptPaidUse = abandonCorruptPaidUse;
+    `, context);
+    await context.__abandonCorruptPaidUse();
+    return { builtin, calls, state };
+  }
+
+  const declined = await runAbandon({ confirmed: false });
+  assert.equal(declined.calls.confirms.length, 1);
+  assert.match(declined.calls.confirms[0], /使い切りとなり返金されません/);
+  assert.match(declined.calls.confirms[0], /新しい支払いは発生しません/);
+  assert.deepEqual(declined.calls.outcomes, []);
+  assert.equal(declined.state.selectedPresetSource, "active_use");
+
+  const failed = await runAbandon({ confirmed: true, finishSucceeded: false });
+  assert.deepEqual(failed.calls.outcomes, ["exited"]);
+  assert.equal(failed.state.recoveryError, "復旧できません。");
+  assert.equal(failed.state.selectedPresetSource, "active_use");
+  assert.match(failed.calls.toasts[0], /通信を確認して再送/);
+
+  const finished = await runAbandon({ confirmed: true });
+  assert.deepEqual(finished.calls.outcomes, ["exited"]);
+  assert.equal(finished.state.activeUse, null);
+  assert.equal(finished.state.recoveryError, "");
+  assert.equal(finished.state.selectedPresetSource, "builtin");
+  assert.equal(finished.state.selectedPreset.title, finished.builtin.title);
+  assert.equal(finished.state.pendingPaidPreset, null);
+  assert.equal(finished.state.purchaseActionId, "");
+  assert.equal(finished.state.screen, "setup");
 });

@@ -862,7 +862,7 @@
         <p class="hero-copy">
           好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
           そして厳選した5枚をDRAWし、画像に刺さった側が相手の指示で鍛えるHP制の「鍛え合い60」。
-          5枚とBPMですぐ始められるソロの「AI文字コラトレーニング」も選べます。
+          最大10枚のロスターからAIが5枚をDRAWする、ソロの「AI文字コラトレーニング」も選べます。
           疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
@@ -874,7 +874,7 @@
           <button class="button button-training hero-mode-button" id="trainingButton"><small>5枚を厳選。刺さったら、相手の指示で鍛える。</small><span>鍛え合い60</span></button>
           <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
-          <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>対戦相手を待たず、5枚とBPMですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
+          <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
@@ -909,7 +909,7 @@
           </div></article>
         </div>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
-        <p class="mode-note">文字コラトレーニングの5画像は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
+        <p class="mode-note">文字コラトレーニングの候補画像（最大10枚）とDRAW結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
   }
@@ -2053,7 +2053,7 @@
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
     if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + TRAINING 60 + SOLO AI TEXT TRAINING + FREE TABLE + MARKETS";
-    if (footerItems[1]) footerItems[1].textContent = "ソロの5画像は端末内。対人モードのメディアはP2Pで一時転送します";
+    if (footerItems[1]) footerItems[1].textContent = "ソロの最大10画像とDRAW結果は端末内。対人モードのメディアはP2Pで一時転送します";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
     const confirm = destroyDialog?.querySelector("#confirmDestroy");

@@ -45,7 +45,7 @@ import {
 } from "./free-table-media.mjs?v=free-table-media-v1";
 import {
   createFreeTableAmbienceController,
-} from "./free-table-ambience.mjs?v=free-table-ambience-v1";
+} from "./free-table-ambience.mjs?v=free-table-ambience-v2";
 
 const FREE_TABLE_ROOT = "freeTables";
 const FREE_TABLE_CHAT_LIMIT = 80;
