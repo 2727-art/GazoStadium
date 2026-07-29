@@ -1672,7 +1672,7 @@ button:disabled {
 }
 
 .hero-ai-text-training-button {
-  grid-column: span 9;
+  grid-column: 1 / -1;
   min-height: 96px;
   color: #07111b;
   border-color: rgba(126, 255, 221, 0.78);

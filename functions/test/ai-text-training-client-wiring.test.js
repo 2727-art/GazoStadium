@@ -10,6 +10,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 const client = read("ai-text-training.js");
 const html = read("index.html");
 const app = read("app.js");
+const styles = read("styles.css");
 
 test("landing loads a separate solo mode and never routes it through Training 60", () => {
   assert.match(html, /ai-text-training\.css\?v=ai-text-training-v1/);
@@ -20,6 +21,21 @@ test("landing loads a separate solo mode and never routes it through Training 60
   assert.match(client, /window\.HariaiAiTextTraining = Object\.freeze/);
   assert.match(client, /hariai-ai-text-training-ready/);
   assert.doesNotMatch(client, /HariaiTraining\.start/);
+});
+
+test("the desktop solo banner spans the complete hero grid", () => {
+  assert.match(
+    styles,
+    /\.hero-ai-text-training-button\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1\s*;/,
+  );
+  assert.doesNotMatch(
+    styles,
+    /\.hero-ai-text-training-button\s*\{[\s\S]*?grid-column:\s*span\s+9\s*;/,
+  );
+  assert.match(
+    html,
+    /styles\.css\?v=[^"]*ai-text-training-banner-fullwidth-v1/,
+  );
 });
 
 test("the client is Firebase-callable solo play with no P2P or RTDB transport", () => {
