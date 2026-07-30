@@ -359,6 +359,7 @@ test("signalsV5 are exact target-run mailboxes with exact transport envelopes", 
 
 test("the V3 HP gameplay and secret-score rules remain in place", () => {
   const round = room.rounds.$round;
+  const receipt = round.imageReceived.$recipientUid;
   const score = round.scores.$scorerUid;
 
   includesAll(round[".write"], [
@@ -370,6 +371,12 @@ test("the V3 HP gameplay and secret-score rules remain in place", () => {
   includesAll(round.draws.$uid[".write"], [
     "auth.uid === $uid",
     "/status').val() === 'active'",
+  ]);
+  includesAll(receipt[".write"], [
+    "auth.uid === $recipientUid",
+    "(!data.exists() || data.val() === true)",
+    "newData.val() === true",
+    "/draws/",
   ]);
   includesAll(round.scores[".read"], [
     "/hostUid",

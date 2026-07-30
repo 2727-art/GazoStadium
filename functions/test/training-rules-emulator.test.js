@@ -479,6 +479,27 @@ test("training V5 Rules enforce canonical attempts, room fences, and retired pat
     drawnAt: Date.now(),
   }));
 
+  const hostReceiptPath =
+    `online/trainingRooms/${fixture.roomId}/rounds/1/imageReceived/${
+      fixture.hostUid
+    }`;
+  await assertSucceeds(set(ref(hostDatabase, hostReceiptPath), true));
+  await assertSucceeds(set(ref(hostDatabase, hostReceiptPath), true));
+  await assertFails(set(ref(guestDatabase, hostReceiptPath), true));
+  await assertFails(set(ref(hostDatabase, hostReceiptPath), false));
+  await assertFails(remove(ref(hostDatabase, hostReceiptPath)));
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.hostUid}/transportEpoch`,
+    token("wrong-receipt-transport"),
+  );
+  await assertFails(set(ref(hostDatabase, hostReceiptPath), true));
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.hostUid}/transportEpoch`,
+    fixture.transportEpoch,
+  );
+
   const retiredWrites = [
     [
       hostDatabase,

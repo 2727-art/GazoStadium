@@ -185,7 +185,7 @@ function createTrainingSessionV5Service({
         lastAt: timestamp,
         expiresAt: timestamp + (2 * policy.windowMs),
       };
-    });
+    }, undefined, false);
     if (!result.committed || !allowed) {
       throw new HttpsError(
         "resource-exhausted",
@@ -274,18 +274,25 @@ function createTrainingSessionV5Service({
     const cleanup = normalizePendingRoomCleanup(before?.pendingRoomCleanup);
     if (!cleanup) return { drained: true, attempt: before };
     const timestamp = currentTime();
-    let roomSettled = false;
-    await roomRef(cleanup.roomId).transaction((current) => {
+    const result = await roomRef(cleanup.roomId).transaction((current) => {
       if (current == null) {
-        roomSettled = true;
+        if (cleanup.reason === "room-ended") {
+          // The room was already authoritatively absent. Keep it absent;
+          // recreating a destroyed fence would turn cleanup metadata back into
+          // a room and could confuse later lifecycle checks.
+          return null;
+        }
+        // applyLocally=false prevents this synthetic fence from leaking into
+        // concurrent calls before the server accepts it. If the server room
+        // exists, Firebase retries with that canonical value.
         return buildDestroyedTrainingRoomFence(cleanup, timestamp);
       }
       if (!roomMatchesCleanupDescriptor(current, cleanup)) {
-        roomSettled = true;
-        return undefined;
+        // Commit the unchanged value. Returning undefined would abort against
+        // the local cache and would not confirm that this is the server value.
+        return current;
       }
-      roomSettled = true;
-      if (current.destroyed || current.serverFinalized) return undefined;
+      if (current.destroyed || current.serverFinalized) return current;
       return {
         ...current,
         destroyed: {
@@ -294,8 +301,12 @@ function createTrainingSessionV5Service({
           reason: cleanup.reason,
         },
       };
-    });
-    if (!roomSettled) {
+    }, undefined, false);
+    const settledRoom = result.snapshot.val();
+    const roomSettled = settledRoom == null
+      || !roomMatchesCleanupDescriptor(settledRoom, cleanup)
+      || Boolean(settledRoom.destroyed || settledRoom.serverFinalized);
+    if (!result.committed || !roomSettled) {
       throw new Error("training V5 room cleanup did not settle");
     }
     await attemptRef(uid).transaction((current) => {
@@ -309,7 +320,7 @@ function createTrainingSessionV5Service({
       next.revision += 1;
       next.updatedAt = currentTime();
       return next;
-    });
+    }, undefined, false);
     const after = normalizeTrainingAttempt(
       uid,
       (await attemptRef(uid).get()).val(),
@@ -351,6 +362,21 @@ function createTrainingSessionV5Service({
     return ownedAttempt(root, uid, data);
   }
 
+  async function confirmCanonicalPair(uid, data, expectedOwned, expectedPair) {
+    const root = objectValue((await attemptsRef().get()).val());
+    const owned = ownedAttempt(root, uid, data);
+    const pair = ["reserved", "active"].includes(owned.outcome)
+      ? pairFromRoot(root, owned.attempt)
+      : null;
+    const matches = Boolean(
+      pair
+      && reservationFenceMatches(owned.attempt, expectedOwned)
+      && reservationFenceMatches(pair.host, expectedPair.host)
+      && reservationFenceMatches(pair.guest, expectedPair.guest),
+    );
+    return { matches, owned, pair };
+  }
+
   async function convergeOwned(
     uid,
     data,
@@ -374,7 +400,7 @@ function createTrainingSessionV5Service({
         forceTerminal,
       });
       return decision.changed ? decision.attempts : undefined;
-    });
+    }, undefined, false);
     if (decision?.changed) await drainPendingRoomCleanup(uid);
     return latestOwned(uid, data);
   }
@@ -446,7 +472,7 @@ function createTrainingSessionV5Service({
         forceTerminal: true,
       });
       return convergence.changed ? convergence.attempts : undefined;
-    });
+    }, undefined, false);
     if (!result.committed || !convergence?.changed) return false;
     await drainPendingRoomCleanup(uid);
     return true;
@@ -502,7 +528,7 @@ function createTrainingSessionV5Service({
           cleanupReason: "reservation-stale",
         });
         return staleConvergence.changed ? staleConvergence.attempts : undefined;
-      });
+      }, undefined, false);
       if (confirmation.committed && staleReservation && staleConvergence?.changed) {
         await drainPendingRoomCleanup(uid);
         return ownedResponse(await latestOwned(uid, data), "recovering");
@@ -531,66 +557,72 @@ function createTrainingSessionV5Service({
       chatFrames,
       now: currentTime(),
     });
-    let roomReady = false;
-    let roomRequiresTerminal = false;
-    let roomRejected = false;
-    let roomEpochMismatch = false;
-    await roomRef(owned.attempt.roomId).transaction((current) => {
-      roomReady = false;
-      roomRequiresTerminal = false;
-      roomRejected = false;
-      roomEpochMismatch = false;
+    const roomResult = await roomRef(owned.attempt.roomId).transaction((current) => {
       if (current == null) {
         if (pair.host.state !== "reserved" || pair.guest.state !== "reserved") {
-          roomRejected = true;
-          roomRequiresTerminal = true;
           // Admin RTDB can invoke a transaction once with a cold-cache null
           // even when the server room exists. Returning null lets Firebase
           // compare with the server and retry; undefined would abort locally.
           return null;
         }
-        roomReady = true;
         return room;
       }
-      if (!roomMatchesAttemptIdentity(current, pair.host)
-          || !roomMatchesAttemptIdentity(current, pair.guest)) {
-        roomRejected = true;
-        return undefined;
-      }
-      if (current.destroyed || current.serverFinalized) {
-        roomRejected = true;
-        roomRequiresTerminal = true;
-        return undefined;
-      }
-      roomReady = current.status === "active"
-        && current.accepted?.[current.hostUid] === true
-        && current.accepted?.[current.guestUid] === true
-        && current.rounds?.[1]?.createdAt != null;
-      if (!roomReady) {
-        roomRejected = true;
-        return undefined;
-      }
-      if (current.transportEpoch !== pair.host.transportEpoch) {
-        roomRejected = true;
-        roomEpochMismatch = true;
-        return undefined;
-      }
+      // Commit the unchanged room so the returned snapshot reflects the
+      // server comparison. An undefined return would classify only the
+      // speculative shared Repo cache, which can temporarily contain null or
+      // a value from another in-flight transaction.
       return current;
-    });
-    if (roomEpochMismatch
+    }, undefined, false);
+    const settledRoom = roomResult.snapshot.val();
+    if (settledRoom == null) {
+      if (!roomResult.committed) {
+        return ownedResponse(await latestOwned(uid, data), "recovering");
+      }
+      const confirmed = await confirmCanonicalPair(uid, data, owned.attempt, pair);
+      if (!confirmed.matches
+          || confirmed.pair.host.state !== "active"
+          || confirmed.pair.guest.state !== "active") {
+        return ownedResponse(confirmed.owned, "recovering");
+      }
+      const converged = await convergeOwned(uid, data, confirmed.owned.attempt, {
+        terminalReason: "room-ended",
+        cleanupReason: "room-ended",
+        forceTerminal: true,
+      });
+      return ownedResponse(converged, "recovering");
+    }
+    const roomIdentityMatches = roomMatchesAttemptIdentity(settledRoom, pair.host)
+      && roomMatchesAttemptIdentity(settledRoom, pair.guest);
+    if (!roomIdentityMatches) {
+      const converged = await convergeOwned(uid, data, owned.attempt, {
+        terminalReason: "room-mismatch",
+        cleanupReason: "room-mismatch",
+        forceTerminal: pair.host.state === "active" || pair.guest.state === "active",
+      });
+      return ownedResponse(converged, "recovering");
+    }
+    if (settledRoom.destroyed || settledRoom.serverFinalized) {
+      const converged = await convergeOwned(uid, data, owned.attempt, {
+        terminalReason: "room-ended",
+        cleanupReason: "room-ended",
+        forceTerminal: true,
+      });
+      return ownedResponse(converged, "recovering");
+    }
+    const roomReady = settledRoom.status === "active"
+      && settledRoom.accepted?.[settledRoom.hostUid] === true
+      && settledRoom.accepted?.[settledRoom.guestUid] === true
+      && settledRoom.rounds?.[1]?.createdAt != null;
+    if (!roomReady) {
+      return ownedResponse(await latestOwned(uid, data), "recovering");
+    }
+    if (settledRoom.transportEpoch !== pair.host.transportEpoch
         && pair.host.state === "active"
         && pair.guest.state === "active") {
       return settleReconnectRoom(uid, data);
     }
-    if (roomRejected || !roomReady) {
-      const converged = await convergeOwned(uid, data, owned.attempt, {
-        terminalReason: roomRequiresTerminal ? "room-ended" : "room-mismatch",
-        cleanupReason: roomRequiresTerminal ? "room-ended" : "room-mismatch",
-        forceTerminal: roomRequiresTerminal
-          || pair.host.state === "active"
-          || pair.guest.state === "active",
-      });
-      return ownedResponse(converged, "recovering");
+    if (settledRoom.transportEpoch !== pair.host.transportEpoch) {
+      return ownedResponse(await latestOwned(uid, data), "recovering");
     }
     let activation = null;
     const activated = await attemptsRef().transaction((current) => {
@@ -604,7 +636,7 @@ function createTrainingSessionV5Service({
       return activation.activated || activation.changed
         ? activation.attempts
         : undefined;
-    });
+    }, undefined, false);
     if (activation?.changed && !activation.activated) {
       await drainPendingRoomCleanup(uid);
       return ownedResponse(await latestOwned(uid, data), "recovering");
@@ -640,7 +672,7 @@ function createTrainingSessionV5Service({
         now: currentTime(),
       });
       return decision.allowed ? decision.attempts : undefined;
-    });
+    }, undefined, false);
     if (!result.committed || !decision?.allowed) {
       return { started: false, reason: decision?.reason || "owner-replaced" };
     }
@@ -679,7 +711,7 @@ function createTrainingSessionV5Service({
         now: currentTime(),
       });
       return decision.allowed ? decision.attempt : undefined;
-    });
+    }, undefined, false);
     if (!result.committed || !decision?.allowed) {
       return {
         owned: false,
@@ -722,7 +754,7 @@ function createTrainingSessionV5Service({
         now: currentTime(),
       });
       return decision.outcome === "reserved" ? decision.attempts : undefined;
-    });
+    }, undefined, false);
     const outcome = decision?.outcome || "not-started";
     if (result.committed && outcome === "reserved") return materializeOwned(uid, data);
     if (["reserved", "active"].includes(outcome)) return materializeOwned(uid, data);
@@ -774,19 +806,6 @@ function createTrainingSessionV5Service({
         return ownedResponse(converged, "recovering");
       }
       const observedRoom = (await roomRef(owned.attempt.roomId).get()).val();
-      if (!observedRoom
-          || observedRoom.destroyed
-          || observedRoom.serverFinalized
-          || !roomMatchesAttemptIdentity(observedRoom, pair.host)
-          || !roomMatchesAttemptIdentity(observedRoom, pair.guest)) {
-        const converged = await convergeOwned(uid, data, owned.attempt, {
-          terminalReason: "room-ended",
-          cleanupReason: "room-ended",
-          forceTerminal: true,
-        });
-        return ownedResponse(converged, "recovering");
-      }
-      const observedTransportEpoch = observedRoom.transportEpoch;
       const confirmationRoot = objectValue((await attemptsRef().get()).val());
       const confirmedOwned = ownedAttempt(confirmationRoot, uid, data);
       const confirmedPair = confirmedOwned.outcome === "active"
@@ -797,35 +816,84 @@ function createTrainingSessionV5Service({
         && reservationFenceMatches(confirmedPair.host, pair.host)
         && reservationFenceMatches(confirmedPair.guest, pair.guest);
       if (!sameCanonicalPair) continue;
-      if (observedTransportEpoch === owned.attempt.transportEpoch) {
-        return activeResponse(owned.attempt);
-      }
-      let rejected = false;
-      await roomRef(owned.attempt.roomId).transaction((current) => {
-        if (current == null
-            || current.destroyed
+      const observedTransportEpoch = observedRoom?.transportEpoch;
+      const roomResult = await roomRef(owned.attempt.roomId).transaction((current) => {
+        if (current == null) {
+          // Do not abort locally. Returning null makes Firebase compare this
+          // speculative cache value with the server and retry the callback
+          // when the active room still exists.
+          return null;
+        }
+        if (current.destroyed
             || current.serverFinalized
             || !roomMatchesAttemptIdentity(current, pair.host)
-            || !roomMatchesAttemptIdentity(current, pair.guest)) {
-          rejected = true;
-          return undefined;
+            || !roomMatchesAttemptIdentity(current, pair.guest)
+            || current.transportEpoch === owned.attempt.transportEpoch) {
+          // Commit unchanged so result.snapshot is based on the server CAS,
+          // not only on the shared Admin SDK Repo cache.
+          return current;
         }
-        if (current.transportEpoch === owned.attempt.transportEpoch) {
-          return undefined;
-        }
-        if (current.transportEpoch !== observedTransportEpoch) {
-          // A newer reconnect won the room CAS. Never roll its epoch back;
-          // re-read the canonical pair and follow that winner.
-          return undefined;
+        if (observedRoom == null
+            || current.transportEpoch !== observedTransportEpoch) {
+          // A null observation has no epoch fence, or a newer reconnect won
+          // the room CAS. Confirm unchanged and follow the canonical winner.
+          return current;
         }
         return {
           ...current,
           transportEpoch: owned.attempt.transportEpoch,
         };
-      });
-      if (rejected) {
-        const latest = await latestOwned(uid, data);
-        if (latest.outcome !== "active") return ownedResponse(latest, "recovering");
+      }, undefined, false);
+      const settledRoom = roomResult.snapshot.val();
+      if (!roomResult.committed) continue;
+      if (settledRoom == null) {
+        const confirmed = await confirmCanonicalPair(
+          uid,
+          data,
+          confirmedOwned.attempt,
+          confirmedPair,
+        );
+        if (!confirmed.matches
+            || confirmed.pair.host.state !== "active"
+            || confirmed.pair.guest.state !== "active") {
+          continue;
+        }
+        const converged = await convergeOwned(uid, data, confirmed.owned.attempt, {
+          terminalReason: "room-ended",
+          cleanupReason: "room-ended",
+          forceTerminal: true,
+        });
+        return ownedResponse(converged, "recovering");
+      }
+      if (settledRoom.destroyed || settledRoom.serverFinalized) {
+        const converged = await convergeOwned(
+          uid,
+          data,
+          confirmedOwned.attempt,
+          {
+            terminalReason: "room-ended",
+            cleanupReason: "room-ended",
+            forceTerminal: true,
+          },
+        );
+        return ownedResponse(converged, "recovering");
+      }
+      if (!roomMatchesAttemptIdentity(settledRoom, confirmedPair.host)
+          || !roomMatchesAttemptIdentity(settledRoom, confirmedPair.guest)) {
+        const converged = await convergeOwned(
+          uid,
+          data,
+          confirmedOwned.attempt,
+          {
+            terminalReason: "room-mismatch",
+            cleanupReason: "room-mismatch",
+            forceTerminal: true,
+          },
+        );
+        return ownedResponse(converged, "recovering");
+      }
+      if (settledRoom.transportEpoch === confirmedOwned.attempt.transportEpoch) {
+        return activeResponse(confirmedOwned.attempt);
       }
     }
     return ownedResponse(await latestOwned(uid, data), "recovering");
@@ -853,15 +921,54 @@ function createTrainingSessionV5Service({
       });
       return ownedResponse(converged, "recovering");
     }
-    const initialRoom = (await roomRef(initialOwned.attempt.roomId).get()).val();
+    const initialRoomResult = await roomRef(initialOwned.attempt.roomId)
+      .transaction(
+        (current) => (current == null ? null : current),
+        undefined,
+        false,
+      );
+    const initialRoom = initialRoomResult.snapshot.val();
+    if (!initialRoomResult.committed) {
+      return ownedResponse(initialOwned, "recovering");
+    }
+    if (initialRoom == null) {
+      // The transaction snapshot is authoritative only after its server CAS.
+      // Re-check the exact attempt pair before ending a genuinely missing room;
+      // a concurrent reconnect may have advanced the canonical fence meanwhile.
+      const confirmed = await confirmCanonicalPair(
+        uid,
+        data,
+        initialOwned.attempt,
+        initialPair,
+      );
+      if (!confirmed.matches
+          || confirmed.pair.host.state !== "active"
+          || confirmed.pair.guest.state !== "active") {
+        return ownedResponse(confirmed.owned, "recovering");
+      }
+      const converged = await convergeOwned(uid, data, confirmed.owned.attempt, {
+        terminalReason: "room-ended",
+        cleanupReason: "room-ended",
+        forceTerminal: true,
+      });
+      return ownedResponse(converged, "recovering");
+    }
     const roomHasPairIdentity = roomMatchesAttemptIdentity(
       initialRoom,
       initialPair.host,
     ) && roomMatchesAttemptIdentity(initialRoom, initialPair.guest);
-    if (!roomHasPairIdentity || initialRoom.destroyed || initialRoom.serverFinalized) {
+    if (initialRoom.destroyed || initialRoom.serverFinalized) {
       const converged = await convergeOwned(uid, data, initialOwned.attempt, {
         terminalReason: "room-ended",
         cleanupReason: "room-ended",
+        forceTerminal: true,
+      });
+      return ownedResponse(converged, "recovering");
+    }
+    if (!roomHasPairIdentity) {
+      const converged = await convergeOwned(uid, data, initialOwned.attempt, {
+        terminalReason: "room-mismatch",
+        cleanupReason: "room-mismatch",
         forceTerminal: true,
       });
       return ownedResponse(converged, "recovering");
@@ -880,7 +987,7 @@ function createTrainingSessionV5Service({
         now: currentTime(),
       });
       return decision.rotated ? decision.attempts : undefined;
-    });
+    }, undefined, false);
     if (decision?.outcome !== "active") {
       if (decision?.outcome === "recovering" && decision.attempt) {
         const converged = await convergeOwned(uid, data, decision.attempt, {
@@ -912,7 +1019,7 @@ function createTrainingSessionV5Service({
         now: currentTime(),
       });
       return decision.cancelled ? decision.attempts : undefined;
-    });
+    }, undefined, false);
     if (!decision?.cancelled || (!result.committed && decision.attempt?.state !== "terminal")) {
       return { cancelled: false, reason: decision?.reason || "owner-replaced" };
     }

@@ -85,9 +85,13 @@ class FakeReference {
     );
   }
 
-  async transaction(update) {
+  async transaction(update, _onComplete, applyLocally = true) {
     const count = (this.database.transactionCounts.get(this.path) || 0) + 1;
     this.database.transactionCounts.set(this.path, count);
+    const applyLocallyValues = this.database.transactionApplyLocally
+      .get(this.path) || [];
+    applyLocallyValues.push(applyLocally);
+    this.database.transactionApplyLocally.set(this.path, applyLocallyValues);
     const transactionFailures = this.database.transactionFailures.get(this.path);
     if (transactionFailures?.delete(count)) {
       throw new Error(`forced transaction failure: ${this.path}`);
@@ -141,6 +145,7 @@ class FakeRealtime {
     this.data = {};
     this.pushCount = 0;
     this.transactionCounts = new Map();
+    this.transactionApplyLocally = new Map();
     this.transactionFailures = new Map();
     this.transactionBlockers = new Map();
     this.afterCommitFailures = new Map();
@@ -435,6 +440,23 @@ test("two concurrent match calls reserve one atomic pair and one room", async ()
   assert.ok(room.rounds[1].createdAt);
 });
 
+test("every server transaction disables speculative local application", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  await h.service.reconnect(HOST_UID, {
+    ...host,
+    roomAttemptId: matched.roomAttemptId,
+    transportEpoch: matched.transportEpoch,
+  });
+  await h.service.cancel(HOST_UID, host);
+
+  const applyLocallyValues = [
+    ...h.realtime.transactionApplyLocally.values(),
+  ].flat();
+  assert.ok(applyLocallyValues.length > 0);
+  assert.equal(applyLocallyValues.every((value) => value === false), true);
+});
+
 test("inspect completes materialization after the room write response is lost", async () => {
   const h = harness();
   const host = await start(h, HOST_UID);
@@ -679,7 +701,7 @@ test("heartbeat survives an Admin RTDB cold-cache null for an active room", asyn
   assert.equal(roomAfter.destroyed, undefined);
 });
 
-test("heartbeat terminalizes an active room deleted during transaction commit", async () => {
+test("heartbeat terminalizes a room confirmed missing after pair revalidation", async () => {
   const h = harness();
   const { host, matched } = await pair(h);
   const roomPath = `${PATHS.rooms}/${matched.roomId}`;
@@ -698,8 +720,7 @@ test("heartbeat terminalizes an active room deleted during transaction commit", 
     h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).terminalReason,
     "room-ended",
   );
-  assert.equal(h.realtime.read(roomPath).destroyed.reason, "room-ended");
-  assert.equal(h.realtime.read(roomPath).status, "destroyed");
+  assert.equal(h.realtime.read(roomPath), undefined);
 });
 
 test("materialization rejects a room whose peer session identity is corrupted", async () => {
@@ -753,6 +774,100 @@ test("lost reconnect response is retried idempotently and materializes one epoch
     h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).revision,
     rotated.revision,
   );
+});
+
+test("reconnect survives a cold-cache null and preserves the active room", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const roomBefore = h.realtime.read(roomPath);
+  h.realtime.coldCacheNullOnce(roomPath);
+
+  const reconnected = await h.service.reconnect(HOST_UID, {
+    ...host,
+    roomAttemptId: matched.roomAttemptId,
+    transportEpoch: matched.transportEpoch,
+  });
+
+  const roomAfter = h.realtime.read(roomPath);
+  const hostAfter = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
+  const guestAfter = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  assert.equal(reconnected.outcome, "active");
+  assert.equal(hostAfter.state, "active");
+  assert.equal(guestAfter.state, "active");
+  assert.equal(hostAfter.transportEpoch, guestAfter.transportEpoch);
+  assert.equal(roomAfter.transportEpoch, hostAfter.transportEpoch);
+  assert.equal(roomAfter.destroyed, undefined);
+  assert.deepEqual(roomAfter.rounds, roomBefore.rounds);
+});
+
+test("reconnect terminalizes a server-confirmed missing room after pair revalidation", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  h.realtime.write(`${PATHS.rooms}/${matched.roomId}`, null);
+
+  const reconnected = await h.service.reconnect(HOST_UID, {
+    ...host,
+    roomAttemptId: matched.roomAttemptId,
+    transportEpoch: matched.transportEpoch,
+  });
+
+  assert.equal(reconnected.outcome, "terminal");
+  assert.equal(reconnected.terminalReason, "room-ended");
+  assert.equal(h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).state, "terminal");
+  assert.equal(h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).state, "terminal");
+  assert.equal(h.realtime.read(`${PATHS.rooms}/${matched.roomId}`), undefined);
+});
+
+test("reconnect terminalizes only a server-confirmed destroyed room", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const room = h.realtime.read(roomPath);
+  room.destroyed = {
+    at: h.now(),
+    byUid: GUEST_UID,
+    reason: "health_stop",
+  };
+  h.realtime.write(roomPath, room);
+
+  const reconnected = await h.service.reconnect(HOST_UID, {
+    ...host,
+    roomAttemptId: matched.roomAttemptId,
+    transportEpoch: matched.transportEpoch,
+  });
+
+  assert.equal(reconnected.outcome, "terminal");
+  assert.equal(reconnected.terminalReason, "room-ended");
+  assert.equal(h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).state, "terminal");
+  assert.equal(h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).state, "terminal");
+  assert.equal(h.realtime.read(roomPath).destroyed.reason, "health_stop");
+});
+
+test("parallel reconnect inspect and heartbeat converge without terminal attempts", async () => {
+  const h = harness();
+  const { host, guest, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  h.realtime.coldCacheNullOnce(roomPath);
+
+  await Promise.all([
+    h.service.reconnect(HOST_UID, {
+      ...host,
+      roomAttemptId: matched.roomAttemptId,
+      transportEpoch: matched.transportEpoch,
+    }),
+    h.service.inspect(GUEST_UID, guest),
+    h.service.heartbeat(HOST_UID, host),
+  ]);
+
+  const roomAfter = h.realtime.read(roomPath);
+  const hostAfter = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
+  const guestAfter = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  assert.equal(hostAfter.state, "active");
+  assert.equal(guestAfter.state, "active");
+  assert.equal(hostAfter.transportEpoch, guestAfter.transportEpoch);
+  assert.equal(roomAfter.transportEpoch, hostAfter.transportEpoch);
+  assert.equal(roomAfter.destroyed, undefined);
 });
 
 test("heartbeat repairs the room after reconnect committed only the attempt epoch", async () => {

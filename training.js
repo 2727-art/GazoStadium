@@ -87,7 +87,11 @@ const TRAINING_V5_RECOVERY_MAX_MS = 8_000;
 const IMAGE_EXCHANGE_TIMEOUT_MS = 45_000;
 const IMAGE_CHANNEL_LABEL = "hariai-training-image-v3";
 const MAX_IMAGE_TRANSFER_BYTES = 8 * 1024 * 1024;
-const IMAGE_CHUNK_BYTES = 64 * 1024;
+const IMAGE_CHUNK_BYTES = 60 * 1024;
+const MAX_IMAGE_CHANNEL_FRAME_BYTES = 65_535;
+const TRAINING_IMAGE_CHUNK_MAGIC = Object.freeze([0x48, 0x54, 0x49, 0x31]);
+const TRAINING_IMAGE_TRANSFER_ID_MIN_LENGTH = 20;
+const TRAINING_IMAGE_TRANSFER_ID_MAX_LENGTH = 80;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
 const TRAINING_VOLUME_KEY = "hariai-training-volume-v1";
@@ -333,8 +337,9 @@ function createState() {
     p2pCleanupPromise: null,
     incomingImage: null,
     outgoingImageRounds: new Set(),
-    outgoingImageBusy: false,
-    outgoingImageChannel: null,
+    localRoundDrawFlights: new Map(),
+    outgoingImageFlights: new Map(),
+    outgoingImageSendQueues: new Map(),
     imageExchangeTimer: null,
     imageExchangeRound: 0,
     incomingMessageChain: Promise.resolve(),
@@ -4428,7 +4433,241 @@ function configureDataChannel(
   return true;
 }
 
-async function sendLocalRoundImage(
+function runTrainingRoundChannelFlight(
+  flights,
+  channel,
+  roundIndex,
+  operation,
+) {
+  let channelFlights = flights.get(channel);
+  if (!channelFlights) {
+    channelFlights = new Map();
+    flights.set(channel, channelFlights);
+  }
+  const existing = channelFlights.get(roundIndex);
+  if (existing) return existing;
+  const flight = Promise.resolve().then(operation);
+  channelFlights.set(roundIndex, flight);
+  const release = () => {
+    if (channelFlights.get(roundIndex) !== flight) return;
+    channelFlights.delete(roundIndex);
+    if (!channelFlights.size && flights.get(channel) === channelFlights) {
+      flights.delete(channel);
+    }
+  };
+  flight.then(release, release);
+  return flight;
+}
+
+function runTrainingImageSendFlight(
+  targetState,
+  channel,
+  roundIndex,
+  operation,
+) {
+  let queue = targetState.outgoingImageSendQueues.get(channel);
+  if (!queue) {
+    queue = {
+      roundFlights: new Map(),
+      tail: Promise.resolve(),
+    };
+    targetState.outgoingImageSendQueues.set(channel, queue);
+  }
+  const existing = queue.roundFlights.get(roundIndex);
+  if (existing) return existing;
+  const flight = queue.tail.then(operation);
+  const tail = flight.then(() => undefined, () => undefined);
+  queue.roundFlights.set(roundIndex, flight);
+  queue.tail = tail;
+  const release = () => {
+    if (queue.roundFlights.get(roundIndex) === flight) {
+      queue.roundFlights.delete(roundIndex);
+    }
+    if (!queue.roundFlights.size
+        && queue.tail === tail
+        && targetState.outgoingImageSendQueues.get(channel) === queue) {
+      targetState.outgoingImageSendQueues.delete(channel);
+    }
+  };
+  flight.then(release, release);
+  return flight;
+}
+
+function runLocalRoundDrawFlight(
+  targetState,
+  roomId,
+  roundIndex,
+  operation,
+) {
+  const key = `${roomId}:${roundIndex}`;
+  const existing = targetState.localRoundDrawFlights.get(key);
+  if (existing) return existing;
+  const flight = Promise.resolve().then(operation);
+  targetState.localRoundDrawFlights.set(key, flight);
+  const release = () => {
+    if (targetState.localRoundDrawFlights.get(key) === flight) {
+      targetState.localRoundDrawFlights.delete(key);
+    }
+  };
+  flight.then(release, release);
+  return flight;
+}
+
+function validTrainingImageTransferId(value) {
+  const transferId = String(value || "");
+  return transferId.length >= TRAINING_IMAGE_TRANSFER_ID_MIN_LENGTH
+    && transferId.length <= TRAINING_IMAGE_TRANSFER_ID_MAX_LENGTH
+    && /^[-_0-9A-Za-z]+$/.test(transferId);
+}
+
+function createTrainingImageTransferId() {
+  const transferId = createTrainingSessionV5Token();
+  if (!validTrainingImageTransferId(transferId)) {
+    throw new Error("画像転送IDを作成できませんでした。");
+  }
+  return transferId;
+}
+
+function trainingImageChunkCount(size) {
+  const bytes = Number(size);
+  if (!Number.isSafeInteger(bytes)
+      || bytes <= 0
+      || bytes > MAX_IMAGE_TRANSFER_BYTES) return 0;
+  return Math.ceil(bytes / IMAGE_CHUNK_BYTES);
+}
+
+function encodeTrainingImageChunkFrame(transferId, sequence, value) {
+  if (!validTrainingImageTransferId(transferId)
+      || !Number.isSafeInteger(sequence)
+      || sequence < 0) {
+    throw new Error("送信画像のチャンク情報が不正です。");
+  }
+  const payload = value instanceof ArrayBuffer
+    ? new Uint8Array(value)
+    : ArrayBuffer.isView(value)
+      ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+      : null;
+  if (!payload?.byteLength || payload.byteLength > IMAGE_CHUNK_BYTES) {
+    throw new Error("送信画像のチャンクサイズが不正です。");
+  }
+  const transferBytes = Uint8Array.from(
+    transferId,
+    (character) => character.charCodeAt(0),
+  );
+  const headerLength = 9 + transferBytes.byteLength;
+  const frame = new Uint8Array(headerLength + payload.byteLength);
+  if (frame.byteLength > MAX_IMAGE_CHANNEL_FRAME_BYTES) {
+    throw new Error("送信画像のP2Pフレームサイズが上限を超えています。");
+  }
+  frame.set(TRAINING_IMAGE_CHUNK_MAGIC, 0);
+  frame[4] = transferBytes.byteLength;
+  frame.set(transferBytes, 5);
+  new DataView(frame.buffer).setUint32(5 + transferBytes.byteLength, sequence);
+  frame.set(payload, headerLength);
+  return frame.buffer;
+}
+
+function decodeTrainingImageChunkFrame(value) {
+  const bytes = value instanceof ArrayBuffer
+    ? new Uint8Array(value)
+    : ArrayBuffer.isView(value)
+      ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+      : null;
+  if (!bytes || bytes.byteLength < 10
+      || bytes.byteLength > MAX_IMAGE_CHANNEL_FRAME_BYTES
+      || TRAINING_IMAGE_CHUNK_MAGIC.some((byte, index) => bytes[index] !== byte)) {
+    throw new Error("受信画像のチャンク形式が不正です。");
+  }
+  const transferLength = Number(bytes[4]);
+  const headerLength = 9 + transferLength;
+  if (transferLength < TRAINING_IMAGE_TRANSFER_ID_MIN_LENGTH
+      || transferLength > TRAINING_IMAGE_TRANSFER_ID_MAX_LENGTH
+      || bytes.byteLength <= headerLength) {
+    throw new Error("受信画像の転送IDが不正です。");
+  }
+  let transferId = "";
+  for (let index = 0; index < transferLength; index += 1) {
+    transferId += String.fromCharCode(bytes[5 + index]);
+  }
+  if (!validTrainingImageTransferId(transferId)) {
+    throw new Error("受信画像の転送IDが不正です。");
+  }
+  const sequence = new DataView(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  ).getUint32(5 + transferLength);
+  const payload = bytes.slice(headerLength);
+  if (!payload.byteLength || payload.byteLength > IMAGE_CHUNK_BYTES) {
+    throw new Error("受信画像のチャンクサイズが不正です。");
+  }
+  return {
+    transferId,
+    sequence,
+    payload: payload.buffer,
+  };
+}
+
+function appendTrainingImageChunkFrame(targetState, frame) {
+  const transfer = targetState.incomingImage;
+  if (!transfer || frame.transferId !== transfer.transferId) return "drained";
+  if (frame.sequence < transfer.nextChunkSequence) return "duplicate";
+  if (frame.sequence !== transfer.nextChunkSequence
+      || frame.sequence >= transfer.chunkCount) {
+    targetState.incomingImage = null;
+    throw new Error("受信画像のチャンク順序が一致しません。");
+  }
+  const expectedBytes = frame.sequence === transfer.chunkCount - 1
+    ? transfer.size - (frame.sequence * IMAGE_CHUNK_BYTES)
+    : IMAGE_CHUNK_BYTES;
+  if (frame.payload.byteLength !== expectedBytes) {
+    targetState.incomingImage = null;
+    throw new Error("受信画像のチャンクサイズが宣言値と一致しません。");
+  }
+  try {
+    appendIncomingOnlineImageChunk(transfer, frame.payload);
+    transfer.nextChunkSequence += 1;
+    return "accepted";
+  } catch (error) {
+    if (targetState.incomingImage === transfer) {
+      targetState.incomingImage = null;
+    }
+    throw error;
+  }
+}
+
+function trainingImageEndDisposition(transfer, message) {
+  const transferId = String(message?.transferId || "");
+  if (!validTrainingImageTransferId(transferId)) {
+    throw new Error("受信画像の完了転送IDが不正です。");
+  }
+  return !transfer || transferId !== transfer.transferId
+    ? "drained"
+    : "accepted";
+}
+
+function trainingRoundImageSendIsCurrent(
+  targetState,
+  channel,
+  roundIndex,
+  contextIsCurrent = () => true,
+) {
+  const opponentUid = Object.keys(targetState.room?.members || {})
+    .find((uid) => uid !== targetState.uid) || "";
+  const round = targetState.room?.rounds?.[roundIndex] || {};
+  return contextIsCurrent()
+    && state === targetState
+    && targetState.channel === channel
+    && channel?.readyState === "open"
+    && targetState.roomId
+    && !targetState.outcome
+    && currentRoundIndex() === roundIndex
+    && !targetState.outgoingImageRounds.has(roundIndex)
+    && Boolean(opponentUid)
+    && round.imageReceived?.[opponentUid] !== true;
+}
+
+function sendLocalRoundImage(
   roundIndex,
   draw,
   contextIsCurrent = () => true,
@@ -4436,50 +4675,95 @@ async function sendLocalRoundImage(
   const targetState = state;
   const channel = targetState.channel;
   if (!contextIsCurrent()
-    || targetState.outgoingImageRounds.has(roundIndex)
-    || channel?.readyState !== "open") return false;
+      || targetState.outgoingImageRounds.has(roundIndex)
+      || channel?.readyState !== "open") return Promise.resolve(false);
+  return runTrainingImageSendFlight(
+    targetState,
+    channel,
+    roundIndex,
+    () => sendLocalRoundImageOnce(
+      targetState,
+      channel,
+      roundIndex,
+      draw,
+      contextIsCurrent,
+    ),
+  );
+}
+
+async function sendLocalRoundImageOnce(
+  targetState,
+  channel,
+  roundIndex,
+  draw,
+  contextIsCurrent = () => true,
+) {
+  if (!trainingRoundImageSendIsCurrent(
+    targetState,
+    channel,
+    roundIndex,
+    contextIsCurrent,
+  )) return false;
   const imageIndex = Number(draw?.imageIndex || 0);
   const image = targetState.localImages[imageIndex - 1];
   if (!image?.blob) throw new Error("DRAWした画像を端末で確認できませんでした。");
   try {
     const buffer = await image.blob.arrayBuffer();
-    if (!contextIsCurrent()
-        || state !== targetState
-        || targetState.channel !== channel
-        || channel.readyState !== "open") return false;
+    if (!trainingRoundImageSendIsCurrent(
+      targetState,
+      channel,
+      roundIndex,
+      contextIsCurrent,
+    )) return false;
     if (buffer.byteLength <= 0 || buffer.byteLength > MAX_IMAGE_TRANSFER_BYTES) {
       throw new Error("送信画像のサイズが鍛え合い60の上限を超えています。");
     }
     const mime = verifiedOnlineImageMime(buffer);
+    const transferId = createTrainingImageTransferId();
+    const chunkCount = trainingImageChunkCount(buffer.byteLength);
     channel.send(JSON.stringify({
       type: "training-image-start",
       protocolVersion: TRAINING_PROTOCOL_VERSION,
       variant: TRAINING_VARIANT,
       ownerUid: state.uid,
+      transferId,
       round: roundIndex,
       imageIndex,
       bpm: Number(draw.bpm),
       size: buffer.byteLength,
+      chunkCount,
       mime,
     }));
-    for (let offset = 0; offset < buffer.byteLength; offset += IMAGE_CHUNK_BYTES) {
+    for (
+      let offset = 0, sequence = 0;
+      offset < buffer.byteLength;
+      offset += IMAGE_CHUNK_BYTES, sequence += 1
+    ) {
       await waitForDataBuffer(channel);
       if (!contextIsCurrent()
           || state !== targetState
           || targetState.channel !== channel
           || channel.readyState !== "open") return false;
-      channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + IMAGE_CHUNK_BYTES)));
+      channel.send(encodeTrainingImageChunkFrame(
+        transferId,
+        sequence,
+        buffer.slice(offset, Math.min(buffer.byteLength, offset + IMAGE_CHUNK_BYTES)),
+      ));
     }
-    if (!contextIsCurrent()
-        || state !== targetState
-        || targetState.channel !== channel
-        || channel.readyState !== "open") return false;
+    if (!trainingRoundImageSendIsCurrent(
+      targetState,
+      channel,
+      roundIndex,
+      contextIsCurrent,
+    )) return false;
     channel.send(JSON.stringify({
       type: "training-image-end",
       ownerUid: state.uid,
+      transferId,
       round: roundIndex,
       imageIndex,
       bpm: Number(draw.bpm),
+      chunkCount,
     }));
     targetState.outgoingImageRounds.add(roundIndex);
     return true;
@@ -4506,6 +4790,34 @@ function waitForDataBuffer(channel) {
     channel.addEventListener("bufferedamountlow", onLow, { once: true });
     channel.addEventListener("close", onClose, { once: true });
   });
+}
+
+async function acknowledgeTrainingRoundImageReceipt(
+  targetState,
+  roomId,
+  roundIndex,
+  ownUid,
+  contextIsCurrent = () => true,
+) {
+  if (!contextIsCurrent()
+      || state !== targetState
+      || targetState.roomId !== roomId
+      || targetState.uid !== ownUid) return false;
+  const result = await runTransaction(
+    ref(
+      database,
+      `online/trainingRooms/${roomId}/rounds/${roundIndex}/imageReceived/${ownUid}`,
+    ),
+    (current) => current == null ? true : undefined,
+  );
+  if (!contextIsCurrent()
+      || state !== targetState
+      || targetState.roomId !== roomId
+      || targetState.uid !== ownUid) return false;
+  if (result.snapshot.val() !== true) {
+    throw new Error("画像の受信確認を確定できませんでした。");
+  }
+  return true;
 }
 
 async function acknowledgeExistingTrainingRoundImage(
@@ -4541,14 +4853,15 @@ async function acknowledgeExistingTrainingRoundImage(
       || Number(draw?.bpm) !== Number(existingImage.bpm)) {
     throw new Error("受信済み画像とFirebaseのDRAW情報が一致しません。");
   }
-  await set(
-    ref(
-      database,
-      `online/trainingRooms/${roomId}/rounds/${roundIndex}/imageReceived/${ownUid}`,
-    ),
-    true,
+  const acknowledged = await acknowledgeTrainingRoundImageReceipt(
+    targetState,
+    roomId,
+    roundIndex,
+    ownUid,
+    contextIsCurrent,
   );
-  return contextIsCurrent()
+  return acknowledged
+    && contextIsCurrent()
     && state === targetState
     && targetState.roomId === roomId
     && targetState.remoteImages[roundIndex] === existingImage;
@@ -4561,19 +4874,35 @@ async function handleChannelMessage(data, contextIsCurrent = () => true) {
     const message = JSON.parse(data);
     if (message.type === "training-image-start") {
       const roundIndex = Number(message.round);
+      const transferId = String(message.transferId || "");
+      const declaredChunkCount = trainingImageChunkCount(message.size);
       if (!contextIsCurrent()) return;
-      if (state.incomingImage) return;
       if (message.protocolVersion !== TRAINING_PROTOCOL_VERSION
         || message.variant !== TRAINING_VARIANT
         || message.ownerUid !== opponentPlayer()?.uid
+        || !validTrainingImageTransferId(transferId)
         || !Number.isInteger(roundIndex)
         || roundIndex < 1
         || roundIndex > TRAINING_MAX_ROUNDS
         || !Number.isInteger(Number(message.imageIndex))
         || Number(message.imageIndex) < 1
         || Number(message.imageIndex) > TRAINING_IMAGE_COUNT
-        || normalizeImageBpm(message.bpm) < 0) {
+        || normalizeImageBpm(message.bpm) < 0
+        || !declaredChunkCount
+        || Number(message.chunkCount) !== declaredChunkCount) {
         throw new Error("受信画像の送信者情報が一致しません。");
+      }
+      if (state.incomingImage) {
+        const activeTransfer = state.incomingImage;
+        if (activeTransfer.transferId === transferId
+            && (activeTransfer.round !== roundIndex
+              || activeTransfer.size !== Number(message.size)
+              || activeTransfer.chunkCount !== declaredChunkCount
+              || Number(activeTransfer.imageIndex) !== Number(message.imageIndex)
+              || Number(activeTransfer.bpm) !== Number(message.bpm))) {
+          throw new Error("受信中画像の再送情報が一致しません。");
+        }
+        return;
       }
       const existingImage = state.remoteImages[roundIndex];
       if (existingImage) {
@@ -4590,6 +4919,9 @@ async function handleChannelMessage(data, contextIsCurrent = () => true) {
       });
       state.incomingImage.imageIndex = Number(message.imageIndex);
       state.incomingImage.bpm = Number(message.bpm);
+      state.incomingImage.transferId = transferId;
+      state.incomingImage.chunkCount = declaredChunkCount;
+      state.incomingImage.nextChunkSequence = 0;
     } else if (message.type === "training-image-end") {
       await finishIncomingImage(message, contextIsCurrent);
     } else if (message.type === "training-workout-message") {
@@ -4607,63 +4939,65 @@ async function handleChannelMessage(data, contextIsCurrent = () => true) {
     }
     return;
   }
-  if (!state.incomingImage) return;
-  const transfer = state.incomingImage;
-  const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
-  if (!contextIsCurrent() || state.incomingImage !== transfer) return;
-  try {
-    appendIncomingOnlineImageChunk(transfer, chunk);
-  } catch (error) {
-    if (contextIsCurrent() && state.incomingImage === transfer) {
-      state.incomingImage = null;
-    }
-    throw error;
-  }
+  const encodedChunk = data instanceof Blob ? await data.arrayBuffer() : data;
+  const frame = decodeTrainingImageChunkFrame(encodedChunk);
+  if (!contextIsCurrent()) return;
+  appendTrainingImageChunkFrame(state, frame);
 }
 
 async function finishIncomingImage(message, contextIsCurrent = () => true) {
   if (!contextIsCurrent()) return;
-  const transfer = state.incomingImage;
+  const targetState = state;
+  const transfer = targetState.incomingImage;
+  if (trainingImageEndDisposition(transfer, message) === "drained") return;
   const endStatus = onlineImageEndStatus(transfer, message);
-  if (endStatus === "orphan") return;
   const roundIndex = Number(message.round);
   const opponentUid = opponentPlayer()?.uid || "";
-  const roomId = state.roomId;
-  const ownUid = state.uid;
+  const roomId = targetState.roomId;
+  const ownUid = targetState.uid;
   if (endStatus !== "complete"
     || message.ownerUid !== opponentUid
     || Number(message.imageIndex) !== Number(transfer?.imageIndex)
-    || Number(message.bpm) !== Number(transfer?.bpm)) {
-    state.incomingImage = null;
+    || Number(message.bpm) !== Number(transfer?.bpm)
+    || Number(message.chunkCount) !== transfer.chunkCount
+    || transfer.nextChunkSequence !== transfer.chunkCount) {
+    targetState.incomingImage = null;
     throw new Error("受信画像の完了情報が一致しません。");
   }
   const drawSnapshot = await get(
     ref(database, `online/trainingRooms/${roomId}/rounds/${roundIndex}/draws/${opponentUid}`),
   );
-  if (!contextIsCurrent() || state.incomingImage !== transfer) return;
+  if (!contextIsCurrent()
+      || state !== targetState
+      || targetState.incomingImage !== transfer) return;
   const draw = drawSnapshot.val();
   if (Number(draw?.imageIndex) !== Number(transfer.imageIndex)
     || Number(draw?.bpm) !== Number(transfer.bpm)) {
-    state.incomingImage = null;
+    targetState.incomingImage = null;
     throw new Error("P2P画像とFirebaseのDRAW情報が一致しません。");
   }
   const mime = completeIncomingOnlineImageTransfer(transfer);
-  if (!contextIsCurrent() || state.incomingImage !== transfer) return;
-  state.incomingImage = null;
+  if (!contextIsCurrent()
+      || state !== targetState
+      || targetState.incomingImage !== transfer) return;
+  targetState.incomingImage = null;
   const blob = new Blob(transfer.chunks, { type: mime });
-  releaseImage(state.remoteImages[roundIndex]);
-  state.remoteImages[roundIndex] = {
+  releaseImage(targetState.remoteImages[roundIndex]);
+  targetState.remoteImages[roundIndex] = {
     blob,
     url: URL.createObjectURL(blob),
     mime,
     bpm: Number(draw.bpm),
     imageIndex: Number(draw.imageIndex),
   };
-  await set(
-    ref(database, `online/trainingRooms/${roomId}/rounds/${roundIndex}/imageReceived/${ownUid}`),
-    true,
+  await acknowledgeTrainingRoundImageReceipt(
+    targetState,
+    roomId,
+    roundIndex,
+    ownUid,
+    contextIsCurrent,
   );
-  if (!contextIsCurrent()) return;
+  if (!contextIsCurrent() || state !== targetState) return;
   render();
 }
 
@@ -4715,45 +5049,79 @@ function secureRandomChoice(values) {
   return values[Math.floor(Math.random() * values.length)];
 }
 
-async function ensureLocalRoundDraw(
-  roundIndex = currentRoundIndex(),
-  contextIsCurrent = () => true,
+function localRoundDrawContextIsCurrent(
+  targetState,
+  roomId,
+  ownUid,
+  generation,
 ) {
-  if (state.preview
-      || !contextIsCurrent()
-      || !state.roomId
-      || state.outcome
-      || (state.outgoingImageBusy
-        && state.outgoingImageChannel === state.channel)) return;
-  if (!Number.isInteger(roundIndex) || roundIndex < 1 || roundIndex > TRAINING_MAX_ROUNDS) return;
-  const targetState = state;
-  const roomId = state.roomId;
-  const ownUid = state.uid;
+  return state === targetState
+    && targetState.generation === generation
+    && targetState.roomId === roomId
+    && targetState.uid === ownUid
+    && !targetState.outcome;
+}
+
+function ensureLocalRoundDrawMetadata(
+  targetState,
+  roomId,
+  ownUid,
+  roundIndex,
+) {
+  const generation = targetState.generation;
+  return runLocalRoundDrawFlight(
+    targetState,
+    roomId,
+    roundIndex,
+    () => ensureLocalRoundDrawMetadataOnce(
+      targetState,
+      roomId,
+      ownUid,
+      roundIndex,
+      generation,
+    ),
+  );
+}
+
+async function ensureLocalRoundDrawMetadataOnce(
+  targetState,
+  roomId,
+  ownUid,
+  roundIndex,
+  generation,
+) {
+  const metadataContextIsCurrent = () => localRoundDrawContextIsCurrent(
+    targetState,
+    roomId,
+    ownUid,
+    generation,
+  );
+  if (!metadataContextIsCurrent()) return null;
   let round = trainingRound(roundIndex);
   if (!Number(round.createdAt || 0)) {
-    if (state.room.hostUid !== state.uid) return;
+    if (targetState.room.hostUid !== ownUid) return null;
     const created = await runTransaction(
       ref(database, `online/trainingRooms/${roomId}/rounds/${roundIndex}/createdAt`),
       (current) => current == null ? firebaseNow() : undefined,
       { applyLocally: false },
     );
-    if (!contextIsCurrent() || state.roomId !== roomId || state.uid !== ownUid) return;
+    if (!metadataContextIsCurrent()) return null;
     const createdAt = Number(created.snapshot.val() || 0);
     if (!createdAt) throw new Error("ランダムDRAWの開始時刻を確定できませんでした。");
     ensureRoundLocal(roundIndex).createdAt = createdAt;
     round = trainingRound(roundIndex);
   }
-  let draw = roundDraw(round, state.uid);
+  let draw = roundDraw(round, ownUid);
   if (!draw) {
     const used = new Set(
       Array.from({ length: roundIndex - 1 }, (_, index) => (
-        Number(roundDraw(trainingRound(index + 1), state.uid)?.imageIndex || 0)
+        Number(roundDraw(trainingRound(index + 1), ownUid)?.imageIndex || 0)
       )).filter(Boolean),
     );
     const available = Array.from({ length: TRAINING_IMAGE_COUNT }, (_, index) => index + 1)
       .filter((imageIndex) => !used.has(imageIndex));
     const imageIndex = secureRandomChoice(available);
-    const image = state.localImages[imageIndex - 1];
+    const image = targetState.localImages[imageIndex - 1];
     const bpm = normalizeImageBpm(image?.bpm);
     if (!image?.blob || bpm < 0) throw new Error("5枚の画像デッキを端末で確認できませんでした。");
     const candidate = { imageIndex, bpm, drawnAt: firebaseNow() };
@@ -4761,7 +5129,7 @@ async function ensureLocalRoundDraw(
       ref(database, `online/trainingRooms/${roomId}/rounds/${roundIndex}/draws/${ownUid}`),
       (current) => current === null ? candidate : undefined,
     );
-    if (!contextIsCurrent() || state.roomId !== roomId || state.uid !== ownUid) return;
+    if (!metadataContextIsCurrent()) return null;
     draw = result.snapshot.val();
     if (!draw) throw new Error("ランダムDRAWを確定できませんでした。");
     ensureRoundLocal(roundIndex).draws = {
@@ -4769,18 +5137,46 @@ async function ensureLocalRoundDraw(
       [ownUid]: draw,
     };
   }
-  const channel = state.channel;
-  if (channel?.readyState !== "open" || state.outgoingImageRounds.has(roundIndex)) return;
-  state.outgoingImageBusy = true;
-  state.outgoingImageChannel = channel;
-  try {
-    await sendLocalRoundImage(roundIndex, draw, contextIsCurrent);
-  } finally {
-    if (targetState.outgoingImageChannel === channel) {
-      targetState.outgoingImageBusy = false;
-      targetState.outgoingImageChannel = null;
-    }
-  }
+  return draw;
+}
+
+function ensureLocalRoundDraw(
+  roundIndex = currentRoundIndex(),
+  contextIsCurrent = () => true,
+) {
+  const targetState = state;
+  const channel = targetState.channel;
+  if (state.preview
+      || !contextIsCurrent()
+      || !targetState.roomId
+      || targetState.outcome
+      || !Number.isInteger(roundIndex)
+      || roundIndex < 1
+      || roundIndex > TRAINING_MAX_ROUNDS) return Promise.resolve(false);
+  const roomId = targetState.roomId;
+  const ownUid = targetState.uid;
+  return runTrainingRoundChannelFlight(
+    targetState.outgoingImageFlights,
+    channel,
+    roundIndex,
+    async () => {
+      const draw = await ensureLocalRoundDrawMetadata(
+        targetState,
+        roomId,
+        ownUid,
+        roundIndex,
+      );
+      if (!draw
+          || !contextIsCurrent()
+          || state !== targetState
+          || targetState.roomId !== roomId
+          || targetState.uid !== ownUid
+          || targetState.channel !== channel
+          || channel?.readyState !== "open"
+          || targetState.outgoingImageRounds.has(roundIndex)) return false;
+      return sendLocalRoundImage(roundIndex, draw, contextIsCurrent);
+    },
+  );
 }
 
 async function submitScore(value) {
@@ -5670,9 +6066,10 @@ function resetTrainingSessionV5AfterCancellation(targetState = state) {
   targetState.channelWasOpened = false;
   targetState.incomingImage = null;
   targetState.incomingMessageChain = Promise.resolve();
-  targetState.outgoingImageBusy = false;
-  targetState.outgoingImageChannel = null;
   targetState.outgoingImageRounds.clear();
+  targetState.localRoundDrawFlights.clear();
+  targetState.outgoingImageFlights.clear();
+  targetState.outgoingImageSendQueues.clear();
   Object.values(targetState.remoteImages).forEach(releaseImage);
   targetState.remoteImages = {};
   targetState.outcome = null;

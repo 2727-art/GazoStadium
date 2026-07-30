@@ -107,26 +107,262 @@ test("reuses verified P2P image transfer and the free-table metronome", () => {
 
 test("selects an unused local image randomly and commits DRAW metadata before sending bytes", () => {
   const drawBlock = functionBlock("ensureLocalRoundDraw");
-  assert.match(drawBlock, /const used = new Set/);
-  assert.match(drawBlock, /\.filter\(\(imageIndex\) => !used\.has\(imageIndex\)\)/);
-  assert.match(drawBlock, /secureRandomChoice\(available\)/);
-  assert.match(drawBlock, /candidate = \{ imageIndex, bpm, drawnAt: firebaseNow\(\) \}/);
-  assert.ok(drawBlock.indexOf("/draws/${ownUid}`)")
+  const metadataBlock = functionBlock("ensureLocalRoundDrawMetadataOnce");
+  assert.match(metadataBlock, /const used = new Set/);
+  assert.match(metadataBlock, /\.filter\(\(imageIndex\) => !used\.has\(imageIndex\)\)/);
+  assert.match(metadataBlock, /secureRandomChoice\(available\)/);
+  assert.match(metadataBlock, /candidate = \{ imageIndex, bpm, drawnAt: firebaseNow\(\) \}/);
+  assert.ok(drawBlock.indexOf("ensureLocalRoundDrawMetadata(")
     < drawBlock.indexOf("sendLocalRoundImage(roundIndex, draw, contextIsCurrent)"));
 });
 
 test("sends only image bytes over P2P and verifies RTDB DRAW metadata before acknowledging", () => {
-  const sendBlock = functionBlock("sendLocalRoundImage");
+  const sendBlock = functionBlock("sendLocalRoundImageOnce");
+  const sendGuardBlock = functionBlock("trainingRoundImageSendIsCurrent");
   const receiveBlock = functionBlock("finishIncomingImage");
   assert.match(sendBlock, /type: "training-image-start"/);
+  assert.match(sendBlock, /transferId/);
+  assert.match(sendBlock, /chunkCount/);
+  assert.match(sendBlock, /encodeTrainingImageChunkFrame/);
   assert.match(sendBlock, /round: roundIndex/);
   assert.match(sendBlock, /imageIndex/);
   assert.match(sendBlock, /bpm: Number\(draw\.bpm\)/);
+  assert.match(sendBlock, /trainingRoundImageSendIsCurrent/);
+  assert.match(sendGuardBlock, /currentRoundIndex\(\) === roundIndex/);
+  assert.match(sendGuardBlock, /round\.imageReceived\?\.\[opponentUid\] !== true/);
+  assert.match(sendGuardBlock, /!targetState\.outgoingImageRounds\.has\(roundIndex\)/);
   assert.match(receiveBlock, /rounds\/\$\{roundIndex\}\/draws\/\$\{opponentUid\}/);
   assert.match(receiveBlock, /P2P画像とFirebaseのDRAW情報が一致しません/);
   assert.ok(receiveBlock.indexOf("P2P画像とFirebaseのDRAW情報が一致しません")
-    < receiveBlock.indexOf("/imageReceived/${ownUid}`)"));
+    < receiveBlock.indexOf("acknowledgeTrainingRoundImageReceipt("));
   assert.doesNotMatch(trainingJs, /(?:set|update|runTransaction)\([^)]*Firebase[^)]*(?:blob|imageUrl|imageData)/i);
+});
+
+test("single-flights DRAW preparation and one round on the same DataChannel", async () => {
+  const runtime = new Function(`
+    ${functionBlock("runTrainingRoundChannelFlight")}
+    ${functionBlock("runLocalRoundDrawFlight")}
+    return { runTrainingRoundChannelFlight, runLocalRoundDrawFlight };
+  `)();
+  const channel = {};
+  const channelFlights = new Map();
+  let releaseChannelFlight;
+  const channelGate = new Promise((resolve) => {
+    releaseChannelFlight = resolve;
+  });
+  let channelCalls = 0;
+  const first = runtime.runTrainingRoundChannelFlight(
+    channelFlights,
+    channel,
+    2,
+    async () => {
+      channelCalls += 1;
+      await channelGate;
+      return "sent";
+    },
+  );
+  const duplicate = runtime.runTrainingRoundChannelFlight(
+    channelFlights,
+    channel,
+    2,
+    async () => {
+      channelCalls += 1;
+      return "duplicate";
+    },
+  );
+  assert.strictEqual(duplicate, first);
+  assert.equal(channelCalls, 0);
+  await Promise.resolve();
+  assert.equal(channelCalls, 1);
+  releaseChannelFlight();
+  assert.equal(await first, "sent");
+
+  const targetState = { localRoundDrawFlights: new Map() };
+  let releaseDrawFlight;
+  const drawGate = new Promise((resolve) => {
+    releaseDrawFlight = resolve;
+  });
+  let drawTransactions = 0;
+  const draw = runtime.runLocalRoundDrawFlight(
+    targetState,
+    "room-123",
+    2,
+    async () => {
+      drawTransactions += 1;
+      await drawGate;
+      return { imageIndex: 2 };
+    },
+  );
+  const duplicateDraw = runtime.runLocalRoundDrawFlight(
+    targetState,
+    "room-123",
+    2,
+    async () => {
+      drawTransactions += 1;
+      return { imageIndex: 4 };
+    },
+  );
+  assert.strictEqual(duplicateDraw, draw);
+  await Promise.resolve();
+  assert.equal(drawTransactions, 1);
+  releaseDrawFlight();
+  assert.deepEqual(await draw, { imageIndex: 2 });
+});
+
+test("serializes different image rounds across one DataChannel", async () => {
+  const { runTrainingImageSendFlight } = new Function(`
+    ${functionBlock("runTrainingImageSendFlight")}
+    return { runTrainingImageSendFlight };
+  `)();
+  const targetState = { outgoingImageSendQueues: new Map() };
+  const channel = {};
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const first = runTrainingImageSendFlight(
+    targetState,
+    channel,
+    1,
+    async () => {
+      events.push("round-1-start");
+      await firstGate;
+      events.push("round-1-end");
+    },
+  );
+  const duplicateFirst = runTrainingImageSendFlight(
+    targetState,
+    channel,
+    1,
+    async () => events.push("round-1-duplicate"),
+  );
+  const second = runTrainingImageSendFlight(
+    targetState,
+    channel,
+    2,
+    async () => {
+      events.push("round-2-start");
+      events.push("round-2-end");
+    },
+  );
+  assert.strictEqual(duplicateFirst, first);
+  await Promise.resolve();
+  assert.deepEqual(events, ["round-1-start"]);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(events, [
+    "round-1-start",
+    "round-1-end",
+    "round-2-start",
+    "round-2-end",
+  ]);
+});
+
+test("frames P2P chunks below the SCTP boundary and drains another transfer", () => {
+  const messageBlock = functionBlock("handleChannelMessage");
+  const appendBlock = functionBlock("appendTrainingImageChunkFrame");
+  const finishBlock = functionBlock("finishIncomingImage");
+  assert.match(messageBlock, /Number\(message\.chunkCount\) !== declaredChunkCount/);
+  assert.match(appendBlock, /transfer\.size - \(frame\.sequence \* IMAGE_CHUNK_BYTES\)/);
+  assert.match(appendBlock, /frame\.payload\.byteLength !== expectedBytes/);
+  assert.match(finishBlock, /Number\(message\.chunkCount\) !== transfer\.chunkCount/);
+  assert.match(finishBlock, /transfer\.nextChunkSequence !== transfer\.chunkCount/);
+  const runtime = new Function(`
+    const IMAGE_CHUNK_BYTES = 60 * 1024;
+    const MAX_IMAGE_TRANSFER_BYTES = 8 * 1024 * 1024;
+    const MAX_IMAGE_CHANNEL_FRAME_BYTES = 65_535;
+    const TRAINING_IMAGE_CHUNK_MAGIC = Object.freeze([0x48, 0x54, 0x49, 0x31]);
+    const TRAINING_IMAGE_TRANSFER_ID_MIN_LENGTH = 20;
+    const TRAINING_IMAGE_TRANSFER_ID_MAX_LENGTH = 80;
+    function appendIncomingOnlineImageChunk(transfer, payload) {
+      transfer.chunks.push(payload);
+      transfer.received += payload.byteLength;
+    }
+    ${functionBlock("validTrainingImageTransferId")}
+    ${functionBlock("encodeTrainingImageChunkFrame")}
+    ${functionBlock("decodeTrainingImageChunkFrame")}
+    ${functionBlock("appendTrainingImageChunkFrame")}
+    ${functionBlock("trainingImageEndDisposition")}
+    return {
+      encodeTrainingImageChunkFrame,
+      decodeTrainingImageChunkFrame,
+      appendTrainingImageChunkFrame,
+      trainingImageEndDisposition,
+    };
+  `)();
+  const transferA = "a".repeat(80);
+  const transferB = "b".repeat(80);
+  const maximumPayload = new Uint8Array(60 * 1024);
+  const encodedMaximum = runtime.encodeTrainingImageChunkFrame(
+    transferA,
+    0,
+    maximumPayload,
+  );
+  assert.ok(encodedMaximum.byteLength <= 65_535);
+  assert.equal(encodedMaximum.byteLength, (60 * 1024) + 89);
+  const decodedMaximum = runtime.decodeTrainingImageChunkFrame(encodedMaximum);
+  assert.equal(decodedMaximum.transferId, transferA);
+  assert.equal(decodedMaximum.sequence, 0);
+  assert.equal(decodedMaximum.payload.byteLength, maximumPayload.byteLength);
+
+  const current = {
+    transferId: transferA,
+    size: 4,
+    chunkCount: 1,
+    nextChunkSequence: 0,
+    chunks: [],
+    received: 0,
+  };
+  const targetState = { incomingImage: current };
+  const otherFrame = runtime.decodeTrainingImageChunkFrame(
+    runtime.encodeTrainingImageChunkFrame(transferB, 0, new Uint8Array(4)),
+  );
+  assert.equal(
+    runtime.appendTrainingImageChunkFrame(targetState, otherFrame),
+    "drained",
+  );
+  assert.equal(current.received, 0);
+  assert.equal(current.nextChunkSequence, 0);
+  assert.equal(
+    runtime.trainingImageEndDisposition(current, { transferId: transferB }),
+    "drained",
+  );
+
+  const ownFrame = runtime.decodeTrainingImageChunkFrame(
+    runtime.encodeTrainingImageChunkFrame(transferA, 0, new Uint8Array(4)),
+  );
+  assert.equal(
+    runtime.appendTrainingImageChunkFrame(targetState, ownFrame),
+    "accepted",
+  );
+  assert.equal(current.received, 4);
+  assert.equal(current.nextChunkSequence, 1);
+  assert.equal(
+    runtime.appendTrainingImageChunkFrame(targetState, ownFrame),
+    "duplicate",
+  );
+  assert.equal(current.received, 4);
+
+  const wrongSizeState = {
+    incomingImage: {
+      transferId: transferA,
+      size: 3,
+      chunkCount: 1,
+      nextChunkSequence: 0,
+      chunks: [],
+      received: 0,
+    },
+  };
+  assert.throws(
+    () => runtime.appendTrainingImageChunkFrame(wrongSizeState, ownFrame),
+    /チャンクサイズが宣言値と一致しません/,
+  );
+  assert.equal(wrongSizeState.incomingImage, null);
+  assert.throws(
+    () => runtime.decodeTrainingImageChunkFrame(new ArrayBuffer(65_536)),
+    /チャンク形式が不正です/,
+  );
 });
 
 test("keeps score secret until the local score is committed", () => {
@@ -411,7 +647,7 @@ test("prioritizes server finalization and blocks natural results until completed
 });
 
 test("bounds every P2P image exchange and routes failure away from scoring", () => {
-  const drawBlock = functionBlock("ensureLocalRoundDraw");
+  const drawBlock = functionBlock("ensureLocalRoundDrawMetadataOnce");
   const failureBlock = functionBlock("handleTrainingImageTransferFailure");
   const timeoutBlock = functionBlock("startImageExchangeWatchdog");
   assert.match(trainingJs, /IMAGE_EXCHANGE_TIMEOUT_MS = 45_000/);
@@ -601,7 +837,7 @@ test("V5 restarts ICE in-place before escalating to a new transport epoch", () =
   );
   assert.match(trainingJs, /function trainingImageTransferRecoveryPending/);
   assert.match(trainingJs, /handleTrainingImageTransferFailure/);
-  assert.match(trainingJs, /outgoingImageChannel/);
+  assert.match(trainingJs, /outgoingImageSendQueues/);
 });
 
 test("provides six local-only V3 preview screens without Firebase writes", () => {
@@ -631,6 +867,7 @@ test("publishes the complete HariaiTraining lifecycle API", () => {
 test("retries the RTDB receipt for a verified duplicate image without replacing bytes", () => {
   const messageBlock = functionBlock("handleChannelMessage");
   const duplicateAckBlock = functionBlock("acknowledgeExistingTrainingRoundImage");
+  const receiptBlock = functionBlock("acknowledgeTrainingRoundImageReceipt");
   assert.match(messageBlock, /const existingImage = state\.remoteImages\[roundIndex\]/);
   assert.match(
     messageBlock,
@@ -645,8 +882,12 @@ test("retries the RTDB receipt for a verified duplicate image without replacing 
     duplicateAckBlock,
     /Number\(draw\?\.imageIndex\) !== Number\(existingImage\.imageIndex\)/,
   );
-  assert.match(duplicateAckBlock, /imageReceived\/\$\{ownUid\}/);
-  assert.match(duplicateAckBlock, /await set\(/);
+  assert.match(receiptBlock, /imageReceived\/\$\{ownUid\}/);
+  assert.match(duplicateAckBlock, /acknowledgeTrainingRoundImageReceipt/);
+  assert.match(receiptBlock, /await runTransaction\(/);
+  assert.match(receiptBlock, /current == null \? true : undefined/);
+  assert.match(receiptBlock, /result\.snapshot\.val\(\) !== true/);
+  assert.doesNotMatch(receiptBlock, /await set\(/);
   assert.doesNotMatch(
     duplicateAckBlock,
     /targetState\.remoteImages\[roundIndex\]\s*=(?!=)/,
