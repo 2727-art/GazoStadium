@@ -103,6 +103,20 @@ class FakeReference {
       this.database.transactionBlockers.delete(blockerKey);
     }
     const current = clone(getAt(this.database.data, this.path));
+    const speculativeValues = this.database.speculativeValuesOncePaths.get(this.path);
+    if (speculativeValues?.length) {
+      const speculativeValue = speculativeValues.shift();
+      if (!speculativeValues.length) {
+        this.database.speculativeValuesOncePaths.delete(this.path);
+      }
+      const speculativeNext = update(clone(speculativeValue));
+      if (speculativeNext === undefined) {
+        return {
+          committed: false,
+          snapshot: new FakeSnapshot(speculativeValue),
+        };
+      }
+    }
     if (current != null && this.database.coldCacheNullOncePaths.delete(this.path)) {
       const coldCacheNext = update(null);
       if (coldCacheNext === undefined) {
@@ -150,6 +164,7 @@ class FakeRealtime {
     this.afterCommitFailures = new Map();
     this.getFailures = new Set();
     this.coldCacheNullOncePaths = new Set();
+    this.speculativeValuesOncePaths = new Map();
     this.deleteBeforeCommitOncePaths = new Set();
   }
 
@@ -171,6 +186,13 @@ class FakeRealtime {
 
   coldCacheNullOnce(value) {
     this.coldCacheNullOncePaths.add(segments(value).join("/"));
+  }
+
+  speculativeValueOnce(value, entry) {
+    const normalized = segments(value).join("/");
+    const entries = this.speculativeValuesOncePaths.get(normalized) || [];
+    entries.push(clone(entry));
+    this.speculativeValuesOncePaths.set(normalized, entries);
   }
 
   deleteBeforeCommitOnce(value) {
@@ -1063,6 +1085,50 @@ test("heartbeat survives an Admin RTDB cold-cache null for an active room", asyn
   assert.equal(roomAfter.destroyed, undefined);
 });
 
+test("parallel heartbeats survive partial non-null attempts transaction caches", async () => {
+  const h = harness();
+  const { host, guest, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const roomBefore = h.realtime.read(roomPath);
+  roomBefore.rounds[1].scores = {
+    [HOST_UID]: 7,
+    [GUEST_UID]: 10,
+  };
+  roomBefore.rounds[1].commandChoices = {
+    [HOST_UID]: {
+      trainerUid: GUEST_UID,
+      cardIndex: 3,
+      selectedAt: h.now(),
+    },
+  };
+  h.realtime.write(roomPath, roomBefore);
+  const attemptsBefore = h.realtime.read(PATHS.attempts);
+  h.realtime.speculativeValueOnce(PATHS.attempts, {
+    [HOST_UID]: attemptsBefore[HOST_UID],
+  });
+  h.realtime.speculativeValueOnce(PATHS.attempts, {
+    [GUEST_UID]: attemptsBefore[GUEST_UID],
+  });
+
+  const [hostHeartbeat, guestHeartbeat] = await Promise.all([
+    h.service.heartbeat(HOST_UID, host),
+    h.service.heartbeat(GUEST_UID, guest),
+  ]);
+
+  const attemptsAfter = h.realtime.read(PATHS.attempts);
+  const roomAfter = h.realtime.read(roomPath);
+  assert.equal(hostHeartbeat.owned, true);
+  assert.equal(hostHeartbeat.outcome, "active");
+  assert.equal(guestHeartbeat.owned, true);
+  assert.equal(guestHeartbeat.outcome, "active");
+  assert.equal(attemptsAfter[HOST_UID].state, "active");
+  assert.equal(attemptsAfter[GUEST_UID].state, "active");
+  assert.equal(attemptsAfter[HOST_UID].terminalReason, undefined);
+  assert.equal(attemptsAfter[GUEST_UID].terminalReason, undefined);
+  assert.equal(roomAfter.destroyed, undefined);
+  assert.deepEqual(roomAfter.rounds, roomBefore.rounds);
+});
+
 test("heartbeat terminalizes a room confirmed missing after pair revalidation", async () => {
   const h = harness();
   const { host, matched } = await pair(h);
@@ -1159,6 +1225,35 @@ test("reconnect survives a cold-cache null and preserves the active room", async
   assert.equal(guestAfter.state, "active");
   assert.equal(hostAfter.transportEpoch, guestAfter.transportEpoch);
   assert.equal(roomAfter.transportEpoch, hostAfter.transportEpoch);
+  assert.equal(roomAfter.destroyed, undefined);
+  assert.deepEqual(roomAfter.rounds, roomBefore.rounds);
+});
+
+test("reconnect survives a partial non-null attempts transaction cache", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const roomBefore = h.realtime.read(roomPath);
+  const attemptsBefore = h.realtime.read(PATHS.attempts);
+  h.realtime.speculativeValueOnce(PATHS.attempts, {
+    [HOST_UID]: attemptsBefore[HOST_UID],
+  });
+
+  const reconnected = await h.service.reconnect(HOST_UID, {
+    ...host,
+    roomAttemptId: matched.roomAttemptId,
+    transportEpoch: matched.transportEpoch,
+  });
+
+  const attemptsAfter = h.realtime.read(PATHS.attempts);
+  const roomAfter = h.realtime.read(roomPath);
+  assert.equal(reconnected.outcome, "active");
+  assert.equal(attemptsAfter[HOST_UID].state, "active");
+  assert.equal(attemptsAfter[GUEST_UID].state, "active");
+  assert.equal(attemptsAfter[HOST_UID].terminalReason, undefined);
+  assert.equal(attemptsAfter[GUEST_UID].terminalReason, undefined);
+  assert.equal(attemptsAfter[HOST_UID].transportEpoch, roomAfter.transportEpoch);
+  assert.equal(attemptsAfter[GUEST_UID].transportEpoch, roomAfter.transportEpoch);
   assert.equal(roomAfter.destroyed, undefined);
   assert.deepEqual(roomAfter.rounds, roomBefore.rounds);
 });

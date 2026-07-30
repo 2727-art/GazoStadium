@@ -2271,11 +2271,31 @@ function handleTrainingRtdbListenerError(
   contextIsCurrent,
   targetState = state,
 ) {
-  if ((targetState.outcome || targetState.trainingProtectedRtdbReleased)
-      && trainingPermissionWasRevoked(error)) {
+  if (!contextIsCurrent()) return;
+  if (!trainingPermissionWasRevoked(error)) {
+    handleRecoverableError(error);
+    return;
+  }
+  if (targetState.outcome || targetState.trainingProtectedRtdbReleased) {
     console.info("Training 60 listener closed after the canonical result.");
     return;
   }
+  if (!trainingSessionV5ContextIsCurrent(targetState)) return;
+  console.info(
+    "Training 60 protected listener permission changed; inspecting the canonical session.",
+  );
+  if (targetState.sessionV5.phase !== "recovering"
+      || targetState.sessionV5.recoveryReason !== "room-permission-revoked") {
+    enterTrainingSessionV5Recovery(
+      targetState,
+      "room-permission-revoked",
+    );
+  }
+  invalidateTrainingTransportRefreshes(targetState);
+  scheduleTrainingSessionV5Inspect(targetState, true);
+}
+
+function handleTrainingRtdbOperationError(error, contextIsCurrent) {
   if (contextIsCurrent()) handleRecoverableError(error);
 }
 
@@ -4343,10 +4363,9 @@ async function setupTrainingSessionPeerConnection() {
   peer.onicecandidate = (event) => {
     if (event.candidate && contextIsCurrent()) {
       sendRoomSignal("candidate", event.candidate.toJSON())
-        .catch((error) => handleTrainingRtdbListenerError(
+        .catch((error) => handleTrainingRtdbOperationError(
           error,
           contextIsCurrent,
-          state,
         ));
     }
   };
@@ -4418,7 +4437,7 @@ async function setupTrainingSessionPeerConnection() {
           });
           handledSuccessfully = true;
         } catch (error) {
-          handleTrainingRtdbListenerError(error, contextIsCurrent, state);
+          handleTrainingRtdbOperationError(error, contextIsCurrent);
         }
         if (shouldConsumeTrainingSessionV5Signal(decision, {
           handledSuccessfully,

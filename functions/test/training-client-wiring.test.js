@@ -1188,6 +1188,12 @@ test("detaches protected RTDB listeners at result while preserving the finisher 
   assert.match(listenerErrorBlock, /targetState\.outcome/);
   assert.match(listenerErrorBlock, /targetState\.trainingProtectedRtdbReleased/);
   assert.match(listenerErrorBlock, /trainingPermissionWasRevoked\(error\)/);
+  assert.match(listenerErrorBlock, /room-permission-revoked/);
+  assert.match(listenerErrorBlock, /invalidateTrainingTransportRefreshes\(targetState\)/);
+  assert.match(
+    listenerErrorBlock,
+    /scheduleTrainingSessionV5Inspect\(targetState, true\)/,
+  );
   assert.doesNotMatch(finalizeBlock, /await state\.trainingResultRtdbRelease/);
   assert.ok(
     deactivateBlock.indexOf("detachTrainingSessionV5RtdbTransport")
@@ -1195,16 +1201,45 @@ test("detaches protected RTDB listeners at result while preserving the finisher 
   );
 });
 
-test("suppresses permission revocation only after protected RTDB release begins", () => {
+test("silently inspects live protected-listener revocation and still reports operation errors", () => {
   const runtime = new Function("runtimeConsole", `
     let recoverableErrors = 0;
+    let recoveryCalls = 0;
+    let transportInvalidations = 0;
+    let immediateInspections = 0;
+    let sessionContextCurrent = true;
     const console = runtimeConsole;
     function handleRecoverableError() { recoverableErrors += 1; }
+    function trainingSessionV5ContextIsCurrent() {
+      return sessionContextCurrent;
+    }
+    function enterTrainingSessionV5Recovery(targetState, reason) {
+      recoveryCalls += 1;
+      targetState.sessionV5 = {
+        ...targetState.sessionV5,
+        phase: "recovering",
+        recoveryReason: reason,
+      };
+    }
+    function invalidateTrainingTransportRefreshes() {
+      transportInvalidations += 1;
+    }
+    function scheduleTrainingSessionV5Inspect(targetState, immediate) {
+      if (targetState && immediate) immediateInspections += 1;
+    }
     ${functionBlock("trainingPermissionWasRevoked")}
     ${functionBlock("handleTrainingRtdbListenerError")}
+    ${functionBlock("handleTrainingRtdbOperationError")}
     return {
       handleTrainingRtdbListenerError,
+      handleTrainingRtdbOperationError,
       recoverableErrorCount: () => recoverableErrors,
+      recoveryCallCount: () => recoveryCalls,
+      transportInvalidationCount: () => transportInvalidations,
+      immediateInspectionCount: () => immediateInspections,
+      setSessionContextCurrent: (value) => {
+        sessionContextCurrent = value;
+      },
     };
   `)({ info() {} });
   const permissionError = {
@@ -1214,13 +1249,29 @@ test("suppresses permission revocation only after protected RTDB release begins"
   const targetState = {
     outcome: null,
     trainingProtectedRtdbReleased: false,
+    sessionV5: {
+      phase: "active",
+      recoveryReason: null,
+    },
   };
   runtime.handleTrainingRtdbListenerError(
     permissionError,
     () => true,
     targetState,
   );
-  assert.equal(runtime.recoverableErrorCount(), 1);
+  assert.equal(runtime.recoverableErrorCount(), 0);
+  assert.equal(runtime.recoveryCallCount(), 1);
+  assert.equal(runtime.transportInvalidationCount(), 1);
+  assert.equal(runtime.immediateInspectionCount(), 1);
+
+  runtime.handleTrainingRtdbListenerError(
+    permissionError,
+    () => true,
+    targetState,
+  );
+  assert.equal(runtime.recoveryCallCount(), 1);
+  assert.equal(runtime.transportInvalidationCount(), 2);
+  assert.equal(runtime.immediateInspectionCount(), 2);
 
   targetState.trainingProtectedRtdbReleased = true;
   runtime.handleTrainingRtdbListenerError(
@@ -1228,14 +1279,51 @@ test("suppresses permission revocation only after protected RTDB release begins"
     () => true,
     targetState,
   );
-  assert.equal(runtime.recoverableErrorCount(), 1);
+  assert.equal(runtime.transportInvalidationCount(), 2);
+  assert.equal(runtime.immediateInspectionCount(), 2);
 
   runtime.handleTrainingRtdbListenerError(
     new Error("different live error"),
     () => true,
     targetState,
   );
+  assert.equal(runtime.recoverableErrorCount(), 1);
+
+  runtime.handleTrainingRtdbOperationError(permissionError, () => true);
   assert.equal(runtime.recoverableErrorCount(), 2);
+
+  runtime.setSessionContextCurrent(false);
+  targetState.trainingProtectedRtdbReleased = false;
+  runtime.handleTrainingRtdbListenerError(
+    permissionError,
+    () => true,
+    targetState,
+  );
+  assert.equal(runtime.transportInvalidationCount(), 2);
+});
+
+test("routes protected subscription cancellation separately from signal operations", () => {
+  const roomListenersBlock = functionBlock("setupRoomListeners");
+  const peerBlock = trainingJs.slice(
+    trainingJs.indexOf("async function setupTrainingSessionPeerConnection"),
+    trainingJs.indexOf("function trainingDataChannelContextIsCurrent"),
+  );
+  assert.match(
+    roomListenersBlock,
+    /handleTrainingRtdbListenerError\(error, contextIsCurrent, state\)/,
+  );
+  assert.match(
+    peerBlock,
+    /sendRoomSignal\("candidate"[\s\S]*?\.catch\(\(error\) => handleTrainingRtdbOperationError/,
+  );
+  assert.match(
+    peerBlock,
+    /catch \(error\) \{\s*handleTrainingRtdbOperationError\(error, contextIsCurrent\)/,
+  );
+  assert.match(
+    peerBlock,
+    /\(error\) => handleTrainingRtdbListenerError\(\s*error,\s*contextIsCurrent,\s*state/,
+  );
 });
 
 test("fails closed without Web Locks and repairs a dead BFCache transport", () => {

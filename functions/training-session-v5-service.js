@@ -782,10 +782,18 @@ function createTrainingSessionV5Service({
         roomAttemptId: owned.attempt.roomAttemptId,
         now: currentTime(),
       });
-      return activation.activated || activation.changed
-        ? activation.attempts
-        : undefined;
+      // A shared Admin SDK Repo cache can temporarily expose only this
+      // caller's attempt while the reciprocal peer still exists on the
+      // server. Commit the unchanged candidate instead of aborting locally so
+      // Firebase performs the server CAS and retries with the canonical pair.
+      return activation.attempts;
     }, undefined, false);
+    if (!activated.committed) {
+      // Without a committed snapshot there is no authoritative proof that the
+      // reciprocal reservation was lost. Leave the live lease untouched and
+      // let the next inspect/heartbeat retry the confirmation.
+      return ownedResponse(await latestOwned(uid, data), "recovering");
+    }
     if (activation?.changed && !activation.activated) {
       await drainPendingRoomCleanup(uid);
       return ownedResponse(await latestOwned(uid, data), "recovering");
@@ -1125,7 +1133,7 @@ function createTrainingSessionV5Service({
     const rotate = initialRoom.transportEpoch === initialOwned.attempt.transportEpoch;
     const nextTransportEpoch = token();
     let decision = null;
-    await attemptsRef().transaction((current) => {
+    const rotation = await attemptsRef().transaction((current) => {
       if (current == null) return null;
       decision = reconnectAttemptDecision({
         attempts: objectValue(current),
@@ -1135,8 +1143,15 @@ function createTrainingSessionV5Service({
         rotate,
         now: currentTime(),
       });
-      return decision.rotated ? decision.attempts : undefined;
+      // Do not classify a speculative partial parent cache as a broken pair.
+      // Returning the unchanged root forces an authoritative server compare;
+      // a real reciprocal pair then retries and rotates normally.
+      return decision.attempts;
     }, undefined, false);
+    if (!rotation.committed) {
+      // A non-committed attempt cannot prove that the pair is broken.
+      return ownedResponse(await latestOwned(uid, data), "recovering");
+    }
     if (decision?.outcome !== "active") {
       if (decision?.outcome === "recovering" && decision.attempt) {
         const converged = await convergeOwned(uid, data, decision.attempt, {
