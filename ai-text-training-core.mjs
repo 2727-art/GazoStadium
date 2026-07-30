@@ -3,6 +3,7 @@ export const AI_TEXT_TRAINING_ROUND_COUNT = 5;
 export const AI_TEXT_TRAINING_BPM_MIN = 40;
 export const AI_TEXT_TRAINING_BPM_MAX = 160;
 export const AI_TEXT_TRAINING_FREE_BPM = 0;
+export const AI_TEXT_TRAINING_FINAL_GAUGE_MS = 10_000;
 
 export const AI_TEXT_TRAINING_MODES = Object.freeze([
   Object.freeze({
@@ -204,6 +205,64 @@ export function aiTextTrainingTempoBand(bpm) {
   if (normalized <= 79) return "low";
   if (normalized <= 119) return "mid";
   return "high";
+}
+
+export function aiTextTrainingBeatGaugeState({
+  bpm,
+  effectiveAt = 0,
+  now = 0,
+  remainingMs = 0,
+  phase = "paused",
+} = {}) {
+  const normalizedBpm = normalizeAiTextTrainingBpm(bpm);
+  const numericRemainingMs = Number(remainingMs);
+  const safeRemainingMs = Number.isFinite(numericRemainingMs)
+    ? Math.max(0, numericRemainingMs)
+    : 0;
+  const finalTen = phase === "playing"
+    && safeRemainingMs <= AI_TEXT_TRAINING_FINAL_GAUGE_MS;
+  const urgency = finalTen
+    ? Math.max(
+      0,
+      Math.min(
+        1,
+        (AI_TEXT_TRAINING_FINAL_GAUGE_MS - safeRemainingMs)
+          / AI_TEXT_TRAINING_FINAL_GAUGE_MS,
+      ),
+    )
+    : 0;
+  const freeRhythm = normalizedBpm === AI_TEXT_TRAINING_FREE_BPM;
+  if (phase !== "playing" || normalizedBpm === null || freeRhythm) {
+    return Object.freeze({
+      active: false,
+      freeRhythm,
+      finalTen,
+      urgency,
+      beatDurationMs: 0,
+      cycleDurationMs: 0,
+      phaseOffsetMs: 0,
+    });
+  }
+
+  const beatDurationMs = 60_000 / normalizedBpm;
+  const cycleDurationMs = beatDurationMs * 2;
+  const numericEffectiveAt = Number(effectiveAt);
+  const numericNow = Number(now);
+  const elapsedMs = Number.isFinite(numericEffectiveAt)
+      && numericEffectiveAt > 0
+      && Number.isFinite(numericNow)
+    ? Math.max(0, numericNow - numericEffectiveAt)
+    : 0;
+  const phaseOffsetMs = elapsedMs % cycleDurationMs;
+  return Object.freeze({
+    active: true,
+    freeRhythm: false,
+    finalTen,
+    urgency,
+    beatDurationMs,
+    cycleDurationMs,
+    phaseOffsetMs,
+  });
 }
 
 export function aiTextTrainingTempoDirection(previousBpm, nextBpm) {

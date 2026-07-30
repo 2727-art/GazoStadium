@@ -1209,6 +1209,120 @@ test("the AI metronome starts louder, stays locally adjustable, and preserves ex
   assert.match(design, /初期音量は36%。準備画面の0〜100%スライダー/);
 });
 
+test("the in-round timer and beat gauge use opposite edges with a ten-second finale", () => {
+  assert.match(
+    client,
+    /aiTextTrainingBeatGaugeState[\s\S]*?ai-text-training-core-v1-beat-edge-hud-v3/,
+  );
+  const gaugeStateSource = sourceBlock(
+    client,
+    "function currentBeatGaugeState",
+    "function trainingMood",
+  );
+  assert.match(gaugeStateSource, /bpm: currentBpm\(\)/);
+  assert.match(gaugeStateSource, /effectiveAt: state\.roundBeatEffectiveAt/);
+  assert.match(gaugeStateSource, /remainingMs: state\.remainingMs/);
+  assert.doesNotMatch(gaugeStateSource, /state\.muted/);
+
+  const edgeHudSource = sourceBlock(
+    client,
+    "function renderTrainingEdgeHud",
+    "function renderPlayingImage",
+  );
+  assert.match(
+    edgeHudSource,
+    /class="ai-text-training-timer" role="timer" aria-live="off" aria-label="残り時間 \$\{remainingSeconds\}秒"/,
+  );
+  assert.match(
+    edgeHudSource,
+    /id="aiTextTrainingRemaining"[\s\S]*?class="ai-text-training-beat-gauge"[\s\S]*?aria-hidden="true"/,
+  );
+  assert.match(edgeHudSource, /--att-beat-duration:\$\{beatDurationMs\.toFixed\(3\)\}ms/);
+  assert.match(edgeHudSource, /--att-beat-delay:\$\{beatDelayMs\.toFixed\(3\)\}ms/);
+  assert.match(edgeHudSource, /--att-gauge-urgency:\$\{visualState\.urgency\.toFixed\(3\)\}/);
+
+  const playSource = sourceBlock(client, "function renderPlay", "function resultTitle");
+  assert.match(
+    playSource,
+    /state\.phase === "countdown" \? `<strong class="ai-text-training-countdown"/,
+  );
+  assert.match(
+    playSource,
+    /state\.phase === "playing" \? renderTrainingEdgeHud\(remainingSeconds\) : ""/,
+  );
+  assert.equal(client.match(/id="aiTextTrainingRemaining"/gu)?.length, 1);
+
+  const configureSource = sourceBlock(
+    client,
+    "function configureRoundAmbience",
+    "function announce",
+  );
+  assert.match(configureSource, /state\.roundBeatEffectiveAt = Number\(effectiveAt\) \|\| 0/);
+  assert.match(configureSource, /setAmbience\(\{[\s\S]*?effectiveAt,/);
+
+  const updateSource = sourceBlock(
+    client,
+    "function updatePlayingDom",
+    "function beginRound",
+  );
+  assert.match(updateSource, /const visualState = currentBeatGaugeState\(\)/);
+  assert.match(updateSource, /timerContainer\.setAttribute\("aria-label", `残り時間 \$\{remainingSeconds\}秒`\)/);
+  assert.match(updateSource, /edgeHud\.classList\.toggle\("is-final-ten", visualState\.finalTen\)/);
+  assert.match(updateSource, /--att-gauge-urgency/);
+  assert.match(updateSource, /remainingSeconds === 10[\s\S]*?残り10秒です/);
+  assert.match(updateSource, /remainingSeconds === 5[\s\S]*?残り5秒です/);
+  assert.doesNotMatch(updateSource, /remainingSeconds <= 5 \? "final"/);
+
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-timer\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?left:\s*clamp\(/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-timer\s*\{[\s\S]*?top:\s*31%;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-beat-gauge\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?right:\s*clamp\([\s\S]*?height:\s*clamp\(132px,\s*27%,\s*180px\)/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-edge-hud\s*\{[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-edge-hud\.is-active \.ai-text-training-beat-runner\s*\{[\s\S]*?var\(--att-beat-duration\)[\s\S]*?infinite alternate;[\s\S]*?animation-delay:\s*var\(--att-beat-delay\)/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-edge-hud\.is-free \.ai-text-training-beat-runner\s*\{[\s\S]*?top:\s*50%;[\s\S]*?animation:\s*none;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.ai-text-training-edge-hud \.ai-text-training-beat-runner\s*\{[\s\S]*?animation:\s*none !important;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(forced-colors: active\)[\s\S]*?\.ai-text-training-timer,[\s\S]*?\.ai-text-training-beat-gauge,[\s\S]*?\.ai-text-training-beat-runner/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-safety-controls\s*\{[\s\S]*?z-index:\s*7;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-safety-controls \.ai-text-training-emergency\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1;[\s\S]*?min-height:\s*64px;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(orientation: landscape\) and \(max-height: 650px\)[\s\S]*?\.ai-text-training-round-top > span\s*\{[\s\S]*?margin-left:\s*58px;[\s\S]*?\.ai-text-training-round-overlay \.ai-text-training-progress\s*\{[\s\S]*?width:\s*calc\(100% - 58px\);/,
+  );
+
+  assert.equal(html.match(/beat-edge-hud-v3/gu)?.length, 2);
+  assert.match(readme, /残り秒数を画像左端[\s\S]*?ビートゲージを右端[\s\S]*?残り10秒/);
+  assert.match(design, /残り時間が厳密に10秒以下[\s\S]*?全面フラッシュを使わない/);
+});
+
 test("DRAW, playback, and motion fallbacks expose the necessary accessibility contract", () => {
   assert.match(
     client,

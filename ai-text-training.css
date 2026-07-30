@@ -2075,6 +2075,10 @@
   text-align: center;
 }
 
+.ai-text-training-round-overlay {
+  position: relative;
+}
+
 .ai-text-training-round-top {
   width: 100%;
   display: flex;
@@ -2101,26 +2105,182 @@
 }
 
 .ai-text-training-timer {
+  position: absolute;
+  top: 31%;
+  left: clamp(8px, 2.5vw, 14px);
   display: grid;
   justify-items: center;
-  margin-block: auto;
+  min-width: 58px;
+  margin: 0;
+  padding: 8px 7px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 14px;
   color: white;
-  text-shadow: 0 5px 26px rgba(0, 0, 0, 0.72);
+  background: rgba(5, 8, 14, 0.68);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.72);
+  transform: translateY(-50%);
+  backdrop-filter: blur(9px);
 }
 
 .ai-text-training-timer strong {
   font-variant-numeric: tabular-nums;
-  font-size: clamp(5rem, 28vw, 8.4rem);
+  font-size: clamp(2.35rem, 10vw, 3.6rem);
   font-weight: 1000;
-  letter-spacing: -0.08em;
-  line-height: 0.82;
+  letter-spacing: -0.07em;
+  line-height: 0.88;
 }
 
 .ai-text-training-timer small {
-  margin-top: 9px;
-  font-size: 0.65rem;
+  margin-top: 5px;
+  color: #c5ccd9;
+  font-size: 0.54rem;
   font-weight: 1000;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.18em;
+}
+
+.ai-text-training-edge-hud {
+  --att-beat-duration: 750ms;
+  --att-beat-delay: 0ms;
+  --att-gauge-urgency: 0;
+  --att-gauge-start: var(--att-cyan);
+  --att-gauge-end: var(--att-rose);
+  --att-gauge-runner-size: 22px;
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ai-text-training-beat-gauge {
+  position: absolute;
+  top: clamp(60px, 12%, 78px);
+  right: clamp(7px, 2.4vw, 12px);
+  width: clamp(10px, 2.8vw, 14px);
+  height: clamp(132px, 27%, 180px);
+  min-height: 90px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background:
+    linear-gradient(to bottom, rgba(99, 238, 229, 0.18), rgba(255, 111, 145, 0.18)),
+    rgba(5, 8, 14, 0.66);
+  box-shadow:
+    0 0 18px rgba(99, 238, 229, 0.12),
+    inset 0 0 8px rgba(255, 255, 255, 0.08);
+}
+
+.ai-text-training-beat-gauge::before {
+  position: absolute;
+  inset: 8px 50%;
+  width: 1px;
+  content: "";
+  background: linear-gradient(var(--att-gauge-start), rgba(255, 255, 255, 0.72), var(--att-gauge-end));
+  opacity: 0.55;
+  transform: translateX(-50%);
+}
+
+.ai-text-training-beat-gauge::after {
+  position: absolute;
+  inset: -10px;
+  content: "";
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 16% 14%, var(--att-gauge-start) 0 1px, transparent 2px),
+    radial-gradient(circle at 86% 31%, var(--att-gauge-end) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 8% 67%, var(--att-gauge-end) 0 1px, transparent 2px),
+    radial-gradient(circle at 92% 88%, var(--att-gauge-start) 0 1.5px, transparent 2.5px);
+  opacity: var(--att-gauge-urgency);
+  filter: drop-shadow(0 0 5px var(--att-gauge-start));
+}
+
+.ai-text-training-beat-runner {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 50%;
+  width: 10px;
+  height: var(--att-gauge-runner-size);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  background: linear-gradient(to bottom, var(--att-gauge-start), #f8fbff 48%, var(--att-gauge-end));
+  box-shadow:
+    0 0 9px var(--att-gauge-start),
+    0 0 15px rgba(255, 111, 145, 0.3);
+  transform: translateX(-50%);
+}
+
+.ai-text-training-beat-runner::before,
+.ai-text-training-beat-runner::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+
+.ai-text-training-beat-runner::before {
+  inset: -8px -6px;
+  border-radius: inherit;
+  background: linear-gradient(to bottom, var(--att-gauge-start), var(--att-gauge-end));
+  opacity: var(--att-gauge-urgency);
+  filter: blur(7px);
+}
+
+.ai-text-training-beat-runner::after {
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 58px;
+  border-radius: 999px;
+  background: linear-gradient(to bottom, transparent, var(--att-gauge-start), var(--att-gauge-end), transparent);
+  opacity: var(--att-gauge-urgency);
+  transform: translate(-50%, -50%);
+  filter: blur(2px);
+}
+
+.ai-text-training-edge-hud.is-active .ai-text-training-beat-runner {
+  animation: ai-text-training-beat-shuttle var(--att-beat-duration) linear infinite alternate;
+  animation-delay: var(--att-beat-delay);
+}
+
+.ai-text-training-edge-hud.is-free .ai-text-training-beat-runner {
+  top: 50%;
+  animation: none;
+  transform: translate(-50%, -50%);
+}
+
+.ai-text-training-edge-hud.is-final-ten .ai-text-training-timer {
+  border-color: rgba(255, 222, 131, 0.68);
+  color: #fff3c0;
+  background:
+    linear-gradient(135deg, rgba(255, 67, 104, 0.25), rgba(64, 164, 255, 0.18)),
+    rgba(5, 8, 14, 0.76);
+  box-shadow:
+    0 0 16px rgba(255, 111, 145, 0.24),
+    0 10px 28px rgba(0, 0, 0, 0.34);
+}
+
+.ai-text-training-edge-hud.is-final-ten .ai-text-training-beat-gauge {
+  border-color: rgba(255, 238, 186, 0.68);
+  background:
+    linear-gradient(to bottom, rgba(99, 238, 229, 0.34), rgba(255, 214, 118, 0.18), rgba(255, 71, 112, 0.38)),
+    rgba(5, 8, 14, 0.78);
+  box-shadow:
+    0 0 20px var(--att-gauge-start),
+    0 0 30px rgba(255, 111, 145, 0.22),
+    inset 0 0 12px rgba(255, 255, 255, 0.15);
+}
+
+.ai-text-training-edge-hud.is-final-ten .ai-text-training-beat-runner {
+  --att-gauge-runner-size: 30px;
+  width: 14px;
+  box-shadow:
+    0 0 13px var(--att-gauge-start),
+    0 0 25px var(--att-gauge-end),
+    0 0 34px rgba(255, 222, 131, 0.26);
+}
+
+[data-att-panel-theme="ai_training_style_crimson_azure"] .ai-text-training-edge-hud {
+  --att-gauge-start: #ff2b3d;
+  --att-gauge-end: #1688ff;
 }
 
 .ai-text-training-progress {
@@ -2139,6 +2299,10 @@
   background: linear-gradient(90deg, var(--att-cyan), var(--att-rose));
   box-shadow: 0 0 16px rgba(99, 238, 229, 0.44);
   transition: width 220ms linear;
+}
+
+.ai-text-training-round-overlay .ai-text-training-progress {
+  margin-top: auto;
 }
 
 .ai-text-training-cheer {
@@ -2876,6 +3040,16 @@
   background: linear-gradient(90deg, #ff2b3d, rgba(248, 251, 255, 0.9), #1688ff) bottom / 100% 2px no-repeat;
 }
 
+@keyframes ai-text-training-beat-shuttle {
+  from {
+    top: 0;
+  }
+
+  to {
+    top: calc(100% - var(--att-gauge-runner-size));
+  }
+}
+
 @keyframes ai-text-training-countdown-pop {
   0% {
     opacity: 0;
@@ -3195,7 +3369,18 @@
   }
 
   .ai-text-training-timer strong {
-    font-size: clamp(4.4rem, 29vw, 7rem);
+    font-size: clamp(2.15rem, 10.5vw, 2.8rem);
+  }
+
+  .ai-text-training-timer {
+    min-width: 52px;
+    padding: 7px 6px 6px;
+  }
+
+  .ai-text-training-beat-gauge {
+    right: 7px;
+    width: 10px;
+    height: clamp(124px, 30%, 165px);
   }
 
   .ai-text-training-cheer {
@@ -3244,7 +3429,30 @@
   }
 
   .ai-text-training-timer strong {
-    font-size: clamp(3.4rem, 13vh, 5.4rem);
+    font-size: clamp(1.8rem, 8vh, 2.5rem);
+  }
+
+  .ai-text-training-timer {
+    left: 7px;
+    min-width: 48px;
+    padding: 5px;
+  }
+
+  .ai-text-training-round-top > span {
+    margin-left: 58px;
+  }
+
+  .ai-text-training-round-overlay .ai-text-training-progress {
+    align-self: flex-end;
+    width: calc(100% - 58px);
+  }
+
+  .ai-text-training-beat-gauge {
+    top: 48px;
+    right: 7px;
+    width: 10px;
+    height: clamp(70px, 34%, 110px);
+    min-height: 70px;
   }
 
   .ai-text-training-cheer {
@@ -3276,6 +3484,12 @@
     opacity: 1;
   }
 
+  .ai-text-training-edge-hud .ai-text-training-beat-runner {
+    top: 50% !important;
+    animation: none !important;
+    transform: translate(-50%, -50%) !important;
+  }
+
   .ai-text-training-cosmetic-option > span,
   [data-att-panel-theme]
     :is(.ai-text-training-opponent, .ai-text-training-cosmetic-preview-window, .shop-ai-training-style-window),
@@ -3299,6 +3513,9 @@
   .ai-text-training-cosmetic-preview-message,
   .ai-text-training-metronome-volume,
   .ai-text-training-metronome-volume output,
+  .ai-text-training-timer,
+  .ai-text-training-beat-gauge,
+  .ai-text-training-beat-runner,
   .shop-ai-training-style-preview,
   .shop-ai-training-style-window,
   .shop-card .shop-ai-training-style-window > p,
@@ -3309,6 +3526,20 @@
     background: Canvas;
     box-shadow: none;
     text-shadow: none;
+  }
+
+  .ai-text-training-beat-runner {
+    background: Highlight;
+  }
+
+  .ai-text-training-beat-gauge::before {
+    background: CanvasText;
+  }
+
+  .ai-text-training-beat-gauge::after,
+  .ai-text-training-beat-runner::before,
+  .ai-text-training-beat-runner::after {
+    display: none;
   }
 
   .ai-text-training-cosmetic-option.is-selected > span,

@@ -118,6 +118,90 @@ test("support slots use actual BPM and never select a high chase line at low BPM
   assert.equal(core.aiTextTrainingTempoDirection(0, 120), "same");
 });
 
+test("the edge gauge follows beat phase and enters its finale at exactly ten seconds", async () => {
+  const core = await import(coreUrl);
+  for (const [bpm, expectedBeatDurationMs] of [
+    [40, 1_500],
+    [60, 1_000],
+    [120, 500],
+    [160, 375],
+  ]) {
+    const state = core.aiTextTrainingBeatGaugeState({
+      bpm,
+      effectiveAt: 10_000,
+      now: 11_750,
+      remainingMs: 10_001,
+      phase: "playing",
+    });
+    assert.equal(state.active, true);
+    assert.equal(state.beatDurationMs, expectedBeatDurationMs);
+    assert.equal(state.cycleDurationMs, expectedBeatDurationMs * 2);
+    assert.ok(Number.isFinite(state.phaseOffsetMs));
+    assert.equal(state.finalTen, false);
+    assert.equal(state.urgency, 0);
+  }
+
+  const phased = core.aiTextTrainingBeatGaugeState({
+    bpm: 60,
+    effectiveAt: 10_000,
+    now: 11_750,
+    remainingMs: 10_001,
+    phase: "playing",
+  });
+  assert.equal(phased.phaseOffsetMs, 1_750);
+  assert.equal(core.aiTextTrainingBeatGaugeState({
+    bpm: 60,
+    effectiveAt: 10_000,
+    now: 13_750,
+    remainingMs: 10_001,
+    phase: "playing",
+  }).phaseOffsetMs, 1_750);
+
+  const threshold = core.aiTextTrainingBeatGaugeState({
+    bpm: 120,
+    remainingMs: 10_000,
+    phase: "playing",
+  });
+  assert.equal(threshold.finalTen, true);
+  assert.equal(threshold.urgency, 0);
+  assert.equal(core.aiTextTrainingBeatGaugeState({
+    bpm: 120,
+    remainingMs: 5_000,
+    phase: "playing",
+  }).urgency, 0.5);
+  assert.equal(core.aiTextTrainingBeatGaugeState({
+    bpm: 120,
+    remainingMs: 0,
+    phase: "playing",
+  }).urgency, 1);
+
+  const paused = core.aiTextTrainingBeatGaugeState({
+    bpm: 120,
+    remainingMs: 5_000,
+    phase: "paused",
+  });
+  assert.equal(paused.active, false);
+  assert.equal(paused.finalTen, false);
+
+  for (const bpm of [0, "invalid"]) {
+    const fallback = core.aiTextTrainingBeatGaugeState({
+      bpm,
+      remainingMs: 5_000,
+      phase: "playing",
+    });
+    assert.equal(fallback.active, false);
+    assert.equal(fallback.freeRhythm, bpm === 0);
+    for (const value of [
+      fallback.urgency,
+      fallback.beatDurationMs,
+      fallback.cycleDurationMs,
+      fallback.phaseOffsetMs,
+    ]) {
+      assert.ok(Number.isFinite(value));
+    }
+  }
+});
+
 test("all built-in scripts completely cover the author schema", async () => {
   const core = await import(coreUrl);
   for (const modeId of ["mama", "imouto", "oneechan"]) {

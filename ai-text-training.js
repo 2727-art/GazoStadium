@@ -27,6 +27,7 @@ import {
   AI_TEXT_TRAINING_REACTIONS,
   AI_TEXT_TRAINING_ROUND_COUNT,
   AI_TEXT_TRAINING_SCRIPT_SLOTS,
+  aiTextTrainingBeatGaugeState,
   aiTextTrainingExercise,
   aiTextTrainingMessageCadenceMs,
   aiTextTrainingMode,
@@ -39,7 +40,7 @@ import {
   normalizeAiTextTrainingScriptSnapshot,
   pickAiTextTrainingLine,
   renderAiTextTrainingLine,
-} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1";
+} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1-beat-edge-hud-v3";
 import {
   AI_TEXT_TRAINING_ROSTER_MAX_COUNT,
   drawAiTextTrainingRosterIndices,
@@ -615,6 +616,7 @@ function createState() {
     wakeLock: null,
     ambienceController,
     ambienceRevision: 0,
+    roundBeatEffectiveAt: 0,
     metronomeVolume,
     muted: false,
   };
@@ -2008,14 +2010,47 @@ function tempoCopy(bpm) {
   return bpm === 0 ? "FREE RHYTHM" : `${bpm} BPM · ${aiTextTrainingTempoBand(bpm).toUpperCase()}`;
 }
 
+function currentBeatGaugeState(now = Date.now()) {
+  return aiTextTrainingBeatGaugeState({
+    bpm: currentBpm(),
+    effectiveAt: state.roundBeatEffectiveAt,
+    now,
+    remainingMs: state.remainingMs,
+    phase: state.phase,
+  });
+}
+
 function trainingMood() {
   if (state.screen === "result") {
     return state.resultOutcome === "safety_stopped" ? "safety" : "clear";
   }
   if (["reaction", "next_preview", "paused"].includes(state.phase)) return "rest";
   if (state.phase === "countdown") return "ready";
-  if (state.phase === "playing" && state.remainingMs <= 5_000) return "final";
+  if (currentBeatGaugeState().finalTen) return "final";
   return "active";
+}
+
+function renderTrainingEdgeHud(remainingSeconds) {
+  const visualState = currentBeatGaugeState();
+  const classNames = ["ai-text-training-edge-hud"];
+  if (visualState.active) classNames.push("is-active");
+  if (visualState.freeRhythm) classNames.push("is-free");
+  if (visualState.finalTen) classNames.push("is-final-ten");
+  const beatDurationMs = visualState.active ? visualState.beatDurationMs : 1_000;
+  const beatDelayMs = visualState.active ? -visualState.phaseOffsetMs : 0;
+  const style = [
+    `--att-beat-duration:${beatDurationMs.toFixed(3)}ms`,
+    `--att-beat-delay:${beatDelayMs.toFixed(3)}ms`,
+    `--att-gauge-urgency:${visualState.urgency.toFixed(3)}`,
+  ].join(";");
+  return `<div class="${classNames.join(" ")}" id="aiTextTrainingEdgeHud" style="${style}">
+    <div class="ai-text-training-timer" role="timer" aria-live="off" aria-label="残り時間 ${remainingSeconds}秒">
+      <strong id="aiTextTrainingRemaining">${remainingSeconds}</strong><small>SEC</small>
+    </div>
+    <div class="ai-text-training-beat-gauge" data-ai-text-training-beat-gauge aria-hidden="true">
+      <i class="ai-text-training-beat-runner"></i>
+    </div>
+  </div>`;
 }
 
 function renderPlayingImage() {
@@ -2084,8 +2119,8 @@ function renderPlay() {
   } else {
     center = `<div class="ai-text-training-round-overlay">
       ${state.phase === "countdown" ? `<strong class="ai-text-training-countdown">${state.countdownValue}</strong>` : ""}
+      ${state.phase === "playing" ? renderTrainingEdgeHud(remainingSeconds) : ""}
       <div class="ai-text-training-round-top"><span>ROUND ${state.roundIndex + 1} / 5</span><strong>${escapeHtml(tempoCopy(bpm))}</strong></div>
-      <div class="ai-text-training-timer"><strong id="aiTextTrainingRemaining">${remainingSeconds}</strong><small>SEC</small></div>
       <div class="ai-text-training-progress" aria-hidden="true"><i id="aiTextTrainingProgress" style="width:${Math.max(0, Math.min(100, (state.remainingMs / (state.roundSeconds * 1_000)) * 100))}%"></i></div>
       <div class="ai-text-training-cheer ai-text-training-message-surface" id="aiTextTrainingCheer">${escapeHtml(state.currentMessage || "準備できたら、自分のペースで")}</div>
       <div class="ai-text-training-exercise"><strong>${escapeHtml(exercise.label)}</strong><small>${escapeHtml(exercise.cue)}</small></div>
@@ -2791,6 +2826,7 @@ function updateMetronomeVolume(input) {
 }
 
 function configureRoundAmbience(effectiveAt) {
+  state.roundBeatEffectiveAt = Number(effectiveAt) || 0;
   state.ambienceRevision += 1;
   state.ambienceController.setToneProfile(
     state.sessionBeatCharacterId,
@@ -2849,12 +2885,20 @@ function updatePlayingDom() {
   if (state.phase !== "playing") return;
   state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
   const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
+  const visualState = currentBeatGaugeState();
   const timer = document.querySelector("#aiTextTrainingRemaining");
   if (timer) timer.textContent = String(remainingSeconds);
+  const timerContainer = timer?.closest('[role="timer"]');
+  if (timerContainer) timerContainer.setAttribute("aria-label", `残り時間 ${remainingSeconds}秒`);
   const progress = document.querySelector("#aiTextTrainingProgress");
   if (progress) progress.style.width = `${Math.max(0, (state.remainingMs / (state.roundSeconds * 1_000)) * 100)}%`;
   const arena = document.querySelector(".ai-text-training-arena");
-  if (arena) arena.dataset.attMood = remainingSeconds <= 5 ? "final" : "active";
+  if (arena) arena.dataset.attMood = visualState.finalTen ? "final" : "active";
+  const edgeHud = document.querySelector("#aiTextTrainingEdgeHud");
+  if (edgeHud) {
+    edgeHud.classList.toggle("is-final-ten", visualState.finalTen);
+    edgeHud.style.setProperty("--att-gauge-urgency", visualState.urgency.toFixed(3));
+  }
   if (
     state.roundSeconds >= 45
     && remainingSeconds === 30
@@ -2862,6 +2906,10 @@ function updatePlayingDom() {
   ) {
     state.lastAnnouncedSecond = 30;
     announce(`ラウンド${state.roundIndex + 1}、残り30秒です。`);
+  }
+  if (remainingSeconds === 10 && state.lastAnnouncedSecond !== 10) {
+    state.lastAnnouncedSecond = 10;
+    announce(`ラウンド${state.roundIndex + 1}、残り10秒です。`);
   }
   if (remainingSeconds === 5 && state.lastAnnouncedSecond !== 5) {
     state.lastAnnouncedSecond = 5;
