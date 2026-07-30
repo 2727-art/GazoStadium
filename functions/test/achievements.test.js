@@ -24,11 +24,14 @@ const {
 
 const root = path.resolve(__dirname, "..", "..");
 
-test("battle thresholds keep 100 matches below the long-term ceiling", () => {
+test("battle thresholds keep early levels stable while opening a level-ten ceiling", () => {
   const totalThresholds = ACHIEVEMENT_DEFINITIONS
     .filter((definition) => definition.family === "battle_total")
     .map((definition) => definition.target);
-  assert.deepEqual(totalThresholds, [1, 10, 30, 100, 300, 1000, 3000]);
+  assert.deepEqual(
+    totalThresholds,
+    [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
+  );
   assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "battle_total_100").level, 4);
   assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "battle_solo_100").level, 5);
 });
@@ -127,12 +130,12 @@ test("AI text training achievements reward safe completion and script reach, not
     ai_training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
     ai_training_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
     ai_training_script_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
-    ai_training_unique_buyers: [3, 10, 30, 100],
+    ai_training_unique_buyers: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
   });
 
   const definitions = ACHIEVEMENT_DEFINITIONS
     .filter((definition) => definition.scope === "ai_training");
-  assert.equal(definitions.length, 34);
+  assert.equal(definitions.length, 40);
   assert.deepEqual(
     [...new Set(definitions.map((definition) => definition.condition.type))],
     ["ai_training_stat"],
@@ -387,9 +390,13 @@ test("market stats count days and unique counterparties independently of AnjuPay
   assert.equal(ids.includes("market_role_switch"), true);
 });
 
-test("active level-six families extend in place to level ten while retired records stay frozen", () => {
+test("all active progression families extend in place to level ten while retired and discovery records stay frozen", () => {
   const expectedThresholds = {
+    battle_total: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
+    battle_solo: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
+    battle_strategy: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
     battle_losses: [1, 10, 30, 100, 300, 1000, 2000, 3000, 5000, 10000],
+    battle_loss_streak: [3, 5, 8, 12, 16, 20, 25, 30, 40, 50],
     battle_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
     training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
     training_workouts: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
@@ -397,8 +404,12 @@ test("active level-six families extend in place to level ten while retired recor
     ai_training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
     ai_training_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
     ai_training_script_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    ai_training_unique_buyers: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
     market_seller: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
     market_buyer: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    market_both: [1, 3, 10, 30, 100, 200, 300, 500, 1000, 3000],
+    market_days: [2, 7, 30, 100, 180, 300, 365, 500, 730, 1000],
+    market_partners: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
   };
   for (const [family, thresholds] of Object.entries(expectedThresholds)) {
     const definitions = ACHIEVEMENT_DEFINITIONS
@@ -408,6 +419,18 @@ test("active level-six families extend in place to level ten while retired recor
     assert.deepEqual(definitions.map((definition) => definition.level), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], family);
     assert.equal(definitions.at(-1).level, 10, family);
     assert.equal(definitions.slice(0, 6).every((definition) => definition.legacy !== true), true);
+  }
+  assert.equal(
+    ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === "battle_loss_streak")
+      .every((definition) => definition.autoPublic === false),
+    true,
+  );
+  for (const family of ["battle_team", "battle_royale"]) {
+    const definitions = ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === family);
+    assert.equal(Math.max(...definitions.map((definition) => definition.level)), 7, family);
+    assert.equal(definitions.every((definition) => definition.legacy === true), true, family);
   }
   assert.equal(
     Math.max(...ACHIEVEMENT_DEFINITIONS
@@ -421,6 +444,87 @@ test("active level-six families extend in place to level ten while retired recor
       .map((definition) => definition.level)),
     6,
   );
+  for (const family of [
+    "market_first_turn",
+    "market_extended",
+    "market_third_turn",
+    "market_both_roles_day",
+    "market_role_switch",
+  ]) {
+    assert.equal(
+      Math.max(...ACHIEVEMENT_DEFINITIONS
+        .filter((definition) => definition.family === family)
+        .map((definition) => definition.level)),
+      1,
+      family,
+    );
+  }
+});
+
+test("new level-ten progression achievements unlock from their existing neutral stats only", () => {
+  const battleIds = eligibleAchievementIds({
+    battleStats: {
+      totalMatches: 30_000,
+      losses: 10_000,
+      bestLossStreak: 50,
+      modeMatches: {
+        solo: 10_000,
+        strategy: 10_000,
+      },
+      playDays: 1000,
+    },
+    scope: "battle",
+  });
+  for (const id of [
+    "battle_total_30000",
+    "battle_solo_10000",
+    "battle_strategy_10000",
+    "battle_loss_streak_50",
+  ]) assert.equal(battleIds.includes(id), true, id);
+
+  const aiIds = eligibleAchievementIds({
+    aiTextTrainingStats: { uniqueBuyers: 3000 },
+    scope: "ai_training",
+  });
+  assert.equal(aiIds.includes("ai_training_unique_buyers_3000"), true);
+
+  const marketIds = eligibleAchievementIds({
+    marketStats: {
+      salesCount: 3000,
+      purchases: 3000,
+      marketDays: 1000,
+      uniqueCounterparties: 3000,
+    },
+    scope: "market",
+  });
+  for (const id of [
+    "market_both_3000",
+    "market_days_1000",
+    "market_partners_3000",
+  ]) assert.equal(marketIds.includes(id), true, id);
+});
+
+test("the final achievement preview and cache marker cover the newly opened families", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const online = fs.readFileSync(path.join(root, "online.js"), "utf8");
+  const marker = "all-active-achievements-lv10-v1";
+  assert.equal((html.match(new RegExp(marker, "g")) || []).length, 2);
+  assert.match(html, new RegExp(`achievements\\.js\\?v=[^"]*${marker}`));
+  assert.match(html, new RegExp(`online\\.js\\?v=[^"]*${marker}`));
+  for (const asset of ["styles.css", "app.js", "flea-market.js"]) {
+    const reference = html.match(new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]+`))?.[0] || "";
+    assert.equal(reference.includes(marker), false, asset);
+  }
+  for (const id of [
+    "battle_total_30000",
+    "battle_solo_10000",
+    "battle_strategy_10000",
+    "battle_loss_streak_50",
+    "ai_training_unique_buyers_3000",
+    "market_both_3000",
+    "market_days_1000",
+    "market_partners_3000",
+  ]) assert.match(online, new RegExp(id), id);
 });
 
 test("AnjuPay flea achievements use only dedicated authoritative counts", () => {
@@ -510,7 +614,11 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     legacy: definition.legacy === true,
   });
   const synchronizedFamilies = new Set([
+    "battle_total",
+    "battle_solo",
+    "battle_strategy",
     "battle_losses",
+    "battle_loss_streak",
     "battle_days",
     "training_sessions",
     "training_workouts",
@@ -518,8 +626,12 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "ai_training_sessions",
     "ai_training_days",
     "ai_training_script_uses",
+    "ai_training_unique_buyers",
     "market_seller",
     "market_buyer",
+    "market_both",
+    "market_days",
+    "market_partners",
     "flea_listings",
     "flea_sales",
     "flea_purchases",
@@ -568,11 +680,15 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     assert.match(collectionHtml, new RegExp(copy));
   }
   const finalCollectionHtml = window.HariaiAchievements.renderCollection({
-    unlocked: { market_seller_10000: 100 },
+    unlocked: {
+      battle_total_30000: 100,
+      market_seller_10000: 99,
+    },
   });
   assert.match(finalCollectionHtml, /achievement-level-10 is-final/);
   assert.match(finalCollectionHtml, /FINAL ACHIEVEMENT/);
   assert.match(finalCollectionHtml, /Lv\.10 \/ 10・最終実績/);
+  assert.match(finalCollectionHtml, /スタジアムの歴史/);
   const finalBadgeHtml = window.HariaiAchievements.renderBadges(["market_seller_10000"]);
   assert.match(finalBadgeHtml, /achievement-level-10 is-final/);
   assert.match(finalBadgeHtml, /FINAL Lv\.10/);

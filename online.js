@@ -1597,21 +1597,23 @@ function openOnlineScreen(screen) {
       const finalAchievementPreview = new URLSearchParams(location.search)
         .get("achievementPreview") === "final";
       const previewUnlocked = Object.fromEntries([
-        "battle_total_100",
-        "battle_solo_100",
-        "battle_strategy_5",
+        finalAchievementPreview ? "battle_total_30000" : "battle_total_100",
+        finalAchievementPreview ? "battle_solo_10000" : "battle_solo_100",
+        finalAchievementPreview ? "battle_strategy_10000" : "battle_strategy_5",
         "battle_team_1",
         "battle_variety_three_1",
         finalAchievementPreview ? "battle_losses_10000" : "battle_losses_30",
-        "battle_loss_streak_5",
+        finalAchievementPreview ? "battle_loss_streak_50" : "battle_loss_streak_5",
         finalAchievementPreview ? "battle_days_1000" : "battle_days_3",
         "ai_training_sessions_20",
         "ai_training_days_7",
         "ai_training_script_uses_10",
-        "ai_training_unique_buyers_3",
+        finalAchievementPreview ? "ai_training_unique_buyers_3000" : "ai_training_unique_buyers_3",
         finalAchievementPreview ? "market_seller_10000" : "market_seller_3",
         "market_buyer_1",
-        "market_both_1",
+        finalAchievementPreview ? "market_both_3000" : "market_both_1",
+        finalAchievementPreview ? "market_days_1000" : "market_days_2",
+        finalAchievementPreview ? "market_partners_3000" : "market_partners_3",
         "market_first_turn",
         ...(finalAchievementPreview
           ? ["flea_listings_1000", "flea_sales_1000", "flea_purchases_10000"]
@@ -1621,15 +1623,15 @@ function openOnlineScreen(screen) {
         unlocked: previewUnlocked,
         customShowcase: [],
         showcase: finalAchievementPreview
-          ? ["flea_purchases_10000", "market_seller_10000", "battle_days_1000"]
+          ? ["battle_total_30000", "ai_training_unique_buyers_3000", "market_both_3000"]
           : ["market_first_turn", "market_both_1", "battle_days_3"],
       }) || state.achievements;
       setOnlineChrome("ACHIEVEMENTS PREVIEW");
       render();
       if (finalAchievementPreview) {
         window.HariaiAchievements?.notify?.([
-          "flea_listings_365",
-          "flea_listings_1000",
+          "battle_total_10000",
+          "battle_total_30000",
         ]);
       }
       return;
