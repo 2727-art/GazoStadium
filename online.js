@@ -1594,31 +1594,44 @@ function openOnlineScreen(screen) {
       state.authReady = true;
       state.economyReady = true;
       state.achievementsReady = true;
+      const finalAchievementPreview = new URLSearchParams(location.search)
+        .get("achievementPreview") === "final";
       const previewUnlocked = Object.fromEntries([
         "battle_total_100",
         "battle_solo_100",
         "battle_strategy_5",
         "battle_team_1",
         "battle_variety_three_1",
-        "battle_losses_30",
+        finalAchievementPreview ? "battle_losses_10000" : "battle_losses_30",
         "battle_loss_streak_5",
-        "battle_days_3",
+        finalAchievementPreview ? "battle_days_1000" : "battle_days_3",
         "ai_training_sessions_20",
         "ai_training_days_7",
         "ai_training_script_uses_10",
         "ai_training_unique_buyers_3",
-        "market_seller_3",
+        finalAchievementPreview ? "market_seller_10000" : "market_seller_3",
         "market_buyer_1",
         "market_both_1",
         "market_first_turn",
+        ...(finalAchievementPreview
+          ? ["flea_listings_1000", "flea_sales_1000", "flea_purchases_10000"]
+          : []),
       ].map((id, index) => [id, Date.now() - (index * 60_000)]));
       state.achievements = window.HariaiAchievements?.normalizeProfile?.({
         unlocked: previewUnlocked,
         customShowcase: [],
-        showcase: ["market_first_turn", "market_both_1", "battle_days_3"],
+        showcase: finalAchievementPreview
+          ? ["flea_purchases_10000", "market_seller_10000", "battle_days_1000"]
+          : ["market_first_turn", "market_both_1", "battle_days_3"],
       }) || state.achievements;
       setOnlineChrome("ACHIEVEMENTS PREVIEW");
       render();
+      if (finalAchievementPreview) {
+        window.HariaiAchievements?.notify?.([
+          "flea_listings_365",
+          "flea_listings_1000",
+        ]);
+      }
       return;
     }
     showToast("LOCAL UI PREVIEW中は市場・実績・ミッション・AnjuPayストア・推しカード以外のオンライン機能へ接続しません。");
@@ -3510,7 +3523,7 @@ function renderAchievements() {
     ${content || `<div class="economy-unavailable"><strong>実績表示を準備できませんでした</strong><p>ページを読み直してお試しください。</p></div>`}
     <div class="economy-actions"><button class="button button-ghost" id="achievementRefreshButton" ${state.achievementsBusy ? "disabled" : ""}>実績を再読み込み</button>
       <button class="button button-primary" id="achievementBattleButton">オンライン対戦へ</button></div>
-    <p class="economy-note">対戦実績はFunctionsが確認した正式対戦だけ、文字コラ実績は開始と5ラウンド分の経過を確認した完走だけを数えます。カメラや動作は判定せず、安全停止で既存進捗は減りません。市場と台本販売のランキング対象利用は同じ相手からJSTの1日1回だけ、台本販売の異なる有料利用者数は生涯で数えます。</p>
+    <p class="economy-note">対戦実績はFunctionsが確認した正式対戦だけ、文字コラ実績は開始と5ラウンド分の経過を確認した完走だけを数えます。カメラや動作は判定せず、安全停止で既存進捗は減りません。AnjuPayフリマ実績は一日棚への出品日数・売却成立・購入成立だけを数え、価格・売上額・順位には使いません。市場と台本販売のランキング対象利用は同じ相手からJSTの1日1回だけ、台本販売の異なる有料利用者数は生涯で数えます。</p>
   </section>`;
 }
 
@@ -3647,7 +3660,7 @@ function renderCreatorCardEditor() {
   const premiumThemeOptions = CREATOR_CARD_THEMES.filter((theme) => theme.premium).map(renderThemeOption).join("");
   const achievementOptions = unlockedAchievements.length
     ? unlockedAchievements.map((achievement) => `<button class="creator-card-achievement-option" type="button" data-creator-card-achievement="${achievement.id}" aria-pressed="${initialAchievementIds.includes(achievement.id)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>Lv.${achievement.level}</small></button>`).join("")
-    : `<p class="creator-card-achievement-empty">検証済みの対戦や市場成立で実績を解除すると、ここから最大3件を飾れます。</p>`;
+    : `<p class="creator-card-achievement-empty">対戦・トレーニング・市場・AnjuPayフリマで実績を解除すると、ここから最大3件を選んで飾れます。</p>`;
   const shareUrl = premiumTrial ? "#" : shared()?.createXCreatorCardPostUrl?.(preview) || "#";
   return `<section class="screen creator-card-screen">
     <div class="section-head"><div><span class="eyebrow">MY FAVORITE CARD</span><h1>あなたの推しカード</h1>

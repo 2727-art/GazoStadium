@@ -787,7 +787,7 @@
         <h2 id="fleaMarketPanelTitle">AnjuPayフリマ</h2>
         <p class="landing-flea-lead">ことばから、推しに出会う。</p>
         <p>イラスト・実写・衣装コーデを、画像ではなく言葉で紹介する今日だけの一日棚です。売りっ子カードから人柄を見つけることも、紹介する一品から読むこともできます。</p>
-        <small>フリマの取引は、推し値市場の販売実績・ランキング・常連帳・店主評価へ加算しません。本人が選んだ解除済みの推し値市場実績だけを、売りっ子カードに飾れます。実物・画像データ・衣服・権利の受け渡しはありません。</small>
+        <small>フリマの取引は、推し値市場の販売実績・ランキング・常連帳・店主評価へ加算しません。出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録され、本人が選んだ解除済みの推し値市場実績は売りっ子カードへ飾れます。実物・画像データ・衣服・権利の受け渡しはありません。</small>
         <div class="landing-flea-actions"><button class="button button-primary" id="fleaMarketSellersButton" type="button">今日の売りっ子を見る</button><button class="button button-ghost" id="fleaMarketBrowseButton" type="button">一品から見る</button><button class="button button-ghost" id="fleaMarketSellButton" type="button">今日の一品を出す</button></div>
       </div>
     </section>`;

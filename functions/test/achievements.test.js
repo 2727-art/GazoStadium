@@ -15,6 +15,7 @@ const {
   normalizeAchievementProfile,
   normalizeAiTextTrainingStats,
   normalizeBattleStats,
+  normalizeFleaStats,
   normalizeMarketStats,
   normalizeTrainingStats,
   publicAchievementProfile,
@@ -123,15 +124,15 @@ test("AI text training achievements reward safe completion and script reach, not
       .map((definition) => definition.target),
   ]));
   assert.deepEqual(thresholdsByFamily, {
-    ai_training_sessions: [1, 5, 20, 50, 100, 300],
-    ai_training_days: [3, 7, 14, 30, 60, 100],
-    ai_training_script_uses: [1, 3, 10, 30, 100, 300],
+    ai_training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    ai_training_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    ai_training_script_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
     ai_training_unique_buyers: [3, 10, 30, 100],
   });
 
   const definitions = ACHIEVEMENT_DEFINITIONS
     .filter((definition) => definition.scope === "ai_training");
-  assert.equal(definitions.length, 22);
+  assert.equal(definitions.length, 34);
   assert.deepEqual(
     [...new Set(definitions.map((definition) => definition.condition.type))],
     ["ai_training_stat"],
@@ -386,6 +387,106 @@ test("market stats count days and unique counterparties independently of AnjuPay
   assert.equal(ids.includes("market_role_switch"), true);
 });
 
+test("active level-six families extend in place to level ten while retired records stay frozen", () => {
+  const expectedThresholds = {
+    battle_losses: [1, 10, 30, 100, 300, 1000, 2000, 3000, 5000, 10000],
+    battle_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    training_workouts: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
+    training_minutes: [1, 10, 30, 60, 300, 1000, 3000, 10000, 30000, 60000],
+    ai_training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    ai_training_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    ai_training_script_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    market_seller: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    market_buyer: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+  };
+  for (const [family, thresholds] of Object.entries(expectedThresholds)) {
+    const definitions = ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === family)
+      .sort((first, second) => first.level - second.level);
+    assert.deepEqual(definitions.map((definition) => definition.target), thresholds, family);
+    assert.deepEqual(definitions.map((definition) => definition.level), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], family);
+    assert.equal(definitions.at(-1).level, 10, family);
+    assert.equal(definitions.slice(0, 6).every((definition) => definition.legacy !== true), true);
+  }
+  assert.equal(
+    Math.max(...ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === "battle_variety")
+      .map((definition) => definition.level)),
+    6,
+  );
+  assert.equal(
+    Math.max(...ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === "battle_variety_legacy")
+      .map((definition) => definition.level)),
+    6,
+  );
+});
+
+test("AnjuPay flea achievements use only dedicated authoritative counts", () => {
+  const stats = normalizeFleaStats({
+    listings: 14.9,
+    sales: 7.8,
+    purchases: 30.2,
+    grossSales: 999_999,
+    spent: 999_999,
+    favorites: 999_999,
+  });
+  assert.deepEqual(stats, {
+    listings: 14,
+    sales: 7,
+    purchases: 30,
+  });
+  const ids = eligibleAchievementIds({ fleaStats: stats, scope: "flea" });
+  for (const expected of [
+    "flea_listings_14",
+    "flea_sales_7",
+    "flea_purchases_30",
+  ]) assert.equal(ids.includes(expected), true, expected);
+  assert.equal(ids.includes("flea_listings_30"), false);
+  assert.equal(ids.some((id) => id.startsWith("market_")), false);
+  assert.equal(
+    eligibleAchievementIds({ fleaStats: stats, scope: "market" })
+      .some((id) => id.startsWith("flea_")),
+    false,
+  );
+  const definitions = ACHIEVEMENT_DEFINITIONS
+    .filter((definition) => definition.scope === "flea");
+  assert.equal(definitions.length, 30);
+  assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
+  assert.deepEqual(
+    [...new Set(definitions.map((definition) => definition.condition.type))],
+    ["flea_stat"],
+  );
+  for (const forbidden of ["price", "grossSales", "spent", "favorites", "rank", "streak"]) {
+    assert.equal(
+      definitions.some((definition) => definition.condition.key === forbidden),
+      false,
+      forbidden,
+    );
+  }
+  const profile = unlockAchievements(null, [
+    "flea_listings_1",
+    "flea_listings_14",
+    "flea_sales_1",
+  ], 100).profile;
+  assert.deepEqual(effectiveShowcase(profile), []);
+  profile.customShowcase = ["flea_listings_1", "flea_sales_1"];
+  assert.deepEqual(effectiveShowcase(profile), [
+    "flea_listings_14",
+    "flea_sales_1",
+  ]);
+  const payload = publicAchievementProfile(
+    profile,
+    null,
+    null,
+    null,
+    null,
+    stats,
+  );
+  assert.deepEqual(payload.stats.flea, stats);
+});
+
 test("browser and Functions catalogs expose the same achievement IDs", () => {
   const source = fs.readFileSync(path.join(root, "achievements.js"), "utf8");
   const window = { addEventListener() {} };
@@ -393,6 +494,44 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
   const browserIds = [...window.HariaiAchievements.catalog].map((definition) => definition.id).sort();
   const serverIds = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id).sort();
   assert.deepEqual(browserIds, serverIds);
+  const metadata = (definition) => ({
+    id: definition.id,
+    scope: definition.scope,
+    category: definition.category,
+    family: definition.family,
+    familyLabel: definition.familyLabel,
+    icon: definition.icon,
+    level: definition.level,
+    target: definition.target,
+    name: definition.name,
+    description: definition.description,
+    hint: definition.hint,
+    autoPublic: definition.autoPublic,
+    legacy: definition.legacy === true,
+  });
+  const synchronizedFamilies = new Set([
+    "battle_losses",
+    "battle_days",
+    "training_sessions",
+    "training_workouts",
+    "training_minutes",
+    "ai_training_sessions",
+    "ai_training_days",
+    "ai_training_script_uses",
+    "market_seller",
+    "market_buyer",
+    "flea_listings",
+    "flea_sales",
+    "flea_purchases",
+  ]);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify([...window.HariaiAchievements.catalog]
+      .filter((definition) => synchronizedFamilies.has(definition.family))
+      .map(metadata))),
+    ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => synchronizedFamilies.has(definition.family))
+      .map(metadata),
+  );
   const browserAiTraining = [...window.HariaiAchievements.catalog]
     .filter((definition) => definition.scope === "ai_training")
     .map(({
@@ -421,7 +560,29 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "日にちを分けて文字コラを続けると解除",
     "同じ利用者からはJSTの1日1回だけ数える",
     "いろいろな人へ応援が届くと解除",
+    "AnjuPayフリマ・一日棚",
+    "AnjuPayフリマ・ご縁",
+    "連続日数ではなく、自分のペースで一品を言葉にした日々の記録",
+    "売上額や順位ではなく、一品が届いた回数と出会いの記録",
   ]) {
     assert.match(collectionHtml, new RegExp(copy));
   }
+  const finalCollectionHtml = window.HariaiAchievements.renderCollection({
+    unlocked: { market_seller_10000: 100 },
+  });
+  assert.match(finalCollectionHtml, /achievement-level-10 is-final/);
+  assert.match(finalCollectionHtml, /FINAL ACHIEVEMENT/);
+  assert.match(finalCollectionHtml, /Lv\.10 \/ 10・最終実績/);
+  const finalBadgeHtml = window.HariaiAchievements.renderBadges(["market_seller_10000"]);
+  assert.match(finalBadgeHtml, /achievement-level-10 is-final/);
+  assert.match(finalBadgeHtml, /FINAL Lv\.10/);
+  assert.deepEqual(
+    [...window.HariaiAchievements.orderUnlockIds([
+      "market_seller_500",
+      "market_seller_1000",
+      "market_seller_3000",
+      "market_seller_10000",
+    ])],
+    ["market_seller_10000", "market_seller_3000", "market_seller_1000", "market_seller_500"],
+  );
 });

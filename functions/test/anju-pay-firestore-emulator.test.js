@@ -271,6 +271,7 @@ if (!RUN_REQUESTED) {
       const fixturePaths = [
         ["anjuPayFleaListings", listingId],
         ["anjuPayFleaSellerCards", "wallet-owner"],
+        ["anjuPayFleaAchievementStats", "wallet-owner"],
         ["anjuPayFleaSales", listingId],
         ["anjuPayFleaReceipts", "wallet-owner", "items", listingId],
         ["anjuPayFleaReceipts", "wallet-owner"],
@@ -306,6 +307,7 @@ if (!RUN_REQUESTED) {
       for (const collectionSegments of [
         ["anjuPayFleaListings"],
         ["anjuPayFleaSellerCards"],
+        ["anjuPayFleaAchievementStats"],
         ["anjuPayFleaSales"],
         ["anjuPayFleaReceipts", "wallet-owner", "items"],
         ["anjuPayFleaReceipts"],

@@ -142,8 +142,8 @@
     family: "battle_losses",
     familyLabel: "通算敗北",
     icon: "☂",
-    thresholds: [1, 10, 30, 100, 300, 1000],
-    names: ["黒星デビュー", "負けても貼る", "敗北を知る者", "百敗将軍", "負けの向こう側", "千敗の景色"],
+    thresholds: [1, 10, 30, 100, 300, 1000, 2000, 3000, 5000, 10000],
+    names: ["黒星デビュー", "負けても貼る", "敗北を知る者", "百敗将軍", "負けの向こう側", "千敗の景色", "二千敗の轍", "三千敗の不屈", "五千の黒星を越えて", "黒星の果ての星"],
     description: (target) => `オンライン対戦で通算${target}敗を記録した`,
     autoPublic: false,
   });
@@ -164,8 +164,8 @@
     family: "battle_days",
     familyLabel: "対戦日数",
     icon: "◷",
-    thresholds: [3, 7, 14, 30, 60, 100],
-    names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手"],
+    thresholds: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手", "百八十日の観客席", "一年の貼り合い", "二年分の一枚", "千日のスタジアム"],
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
   });
   addSeries({
@@ -174,8 +174,8 @@
     family: "training_sessions",
     familyLabel: "鍛え合い参加",
     icon: "拳",
-    thresholds: [1, 5, 20, 50, 100, 300],
-    names: ["最初の一歩", "鍛錬の入口", "二十のセッション", "五十回の積み重ね", "百鍛錬", "鍛え合いの住人"],
+    thresholds: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    names: ["最初の一歩", "鍛錬の入口", "二十のセッション", "五十回の積み重ね", "百鍛錬", "鍛え合いの住人", "五百回の構え", "千日の鍛錬", "三千の積み重ね", "万鍛錬の到達者"],
     description: (target) => `鍛え合い60を${target}回記録した`,
   });
   addSeries({
@@ -184,8 +184,8 @@
     family: "training_workouts",
     familyLabel: "運動完了",
     icon: "力",
-    thresholds: [1, 10, 30, 100, 300, 1000],
-    names: ["一本やりきった", "十本の鍛錬", "三十本の汗", "百本稽古", "積み重ねの証", "千本鍛錬"],
+    thresholds: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
+    names: ["一本やりきった", "十本の鍛錬", "三十本の汗", "百本稽古", "積み重ねの証", "千本鍛錬", "三千本の呼吸", "五千本の力", "万本鍛錬", "三万本の極み"],
     description: (target) => `鍛え合い60で運動を${target}本完了した`,
   });
   addSeries({
@@ -194,8 +194,8 @@
     family: "training_minutes",
     familyLabel: "累計運動時間",
     icon: "秒",
-    thresholds: [1, 10, 30, 60, 300, 1000],
-    names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証"],
+    thresholds: [1, 10, 30, 60, 300, 1000, 3000, 10000, 30000, 60000],
+    names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証", "五十時間の鍛錬", "一万分の集中", "五百時間の軌跡", "千時間の極み"],
     description: (target) => `鍛え合い60で累計${target}分の運動を完了した`,
   });
   addSeries({
@@ -204,8 +204,8 @@
     family: "ai_training_sessions",
     familyLabel: "文字コラ完走",
     icon: "五",
-    thresholds: [1, 5, 20, 50, 100, 300],
-    names: ["文字コラ開幕", "五回のエール", "文字コラ日和", "五十回の歩み", "百回トレーニー", "文字コラの住人"],
+    thresholds: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    names: ["文字コラ開幕", "五回のエール", "文字コラ日和", "五十回の歩み", "百回トレーニー", "文字コラの住人", "五百のエール", "千回トレーニー", "三千回の伴走", "万回の文字コラ"],
     description: (target) => `文字コラトレーニングを5ラウンド${target}回完走した`,
     hint: "自分のペースで5ラウンドを終えると解除",
   });
@@ -215,8 +215,8 @@
     family: "ai_training_days",
     familyLabel: "文字コラ日数",
     icon: "日",
-    thresholds: [3, 7, 14, 30, 60, 100],
-    names: ["三日分の一歩", "七日の文字コラ", "二週間のエール", "月のトレーニー", "六十日の歩み", "百日の文字コラ"],
+    thresholds: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    names: ["三日分の一歩", "七日の文字コラ", "二週間のエール", "月のトレーニー", "六十日の歩み", "百日の文字コラ", "百八十日の伴走", "一年のエール", "二年の文字コラ", "千日のトレーニー"],
     description: (target) => `異なる${target}日で文字コラトレーニングを5ラウンド完走した`,
     hint: "日にちを分けて文字コラを続けると解除",
   });
@@ -226,8 +226,8 @@
     family: "ai_training_script_uses",
     familyLabel: "台本利用成立",
     icon: "文",
-    thresholds: [1, 3, 10, 30, 100, 300],
-    names: ["台本販売第一号", "駆け出し応援作者", "十回届いた言葉", "頼られる台本", "百回届いた言葉", "言葉で支える人"],
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["台本販売第一号", "駆け出し応援作者", "十回届いた言葉", "頼られる台本", "百回届いた言葉", "言葉で支える人", "五百回の応援", "千回届いた言葉", "三千のエール", "万の言葉を届けた人"],
     description: (target) => `応援台本のランキング対象利用が${target}回成立した`,
     hint: "同じ利用者からはJSTの1日1回だけ数える",
   });
@@ -269,8 +269,8 @@
     family: "market_seller",
     familyLabel: "売り手成約",
     icon: "◆",
-    thresholds: [1, 3, 10, 30, 100, 300],
-    names: ["成約第一号", "駆け出しセラー", "推しの営業担当", "市場の顔役", "百戦錬磨の売り手", "価値をつくる人"],
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["成約第一号", "駆け出しセラー", "推しの営業担当", "市場の顔役", "百戦錬磨の売り手", "価値をつくる人", "五百の価値を結ぶ", "千件の営業譚", "三千の推し値", "万の価値をつくる人"],
     description: (target) => `ランキング集計対象の売買を売り手として${target}件成立させた`,
   });
   addSeries({
@@ -279,8 +279,8 @@
     family: "market_buyer",
     familyLabel: "買い手購入",
     icon: "◈",
-    thresholds: [1, 3, 10, 30, 100, 300],
-    names: ["はじめての推し買い", "目利き見習い", "推し値コレクター", "市場の目利き", "百の価値を見た者", "推し値の証人"],
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["はじめての推し買い", "目利き見習い", "推し値コレクター", "市場の目利き", "百の価値を見た者", "推し値の証人", "五百の価値を見届ける", "千件の推し買い", "三千の証人", "万の価値を見届けた人"],
     description: (target) => `ランキング集計対象の売買を買い手として${target}件成立させた`,
   });
   addSeries({
@@ -334,6 +334,43 @@
     autoPublic: true,
   })));
 
+  addSeries({
+    scope: "flea",
+    category: "flea_listing",
+    family: "flea_listings",
+    familyLabel: "一日棚への出品",
+    icon: "棚",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
+    names: ["今日の棚開き", "三日の店主", "七つの一品", "二週間の棚", "三十日のことば", "六十日の店先", "百日の売りっ子", "半年の一日棚", "一年分のことば", "千日のフリマ店主"],
+    description: (target) => `AnjuPayフリマへ異なる${target}日で一品を出品した`,
+    hint: "連続でなくても、一日棚へ出品した日が積み重なると解除",
+    autoPublic: false,
+  });
+  addSeries({
+    scope: "flea",
+    category: "flea_connections",
+    family: "flea_sales",
+    familyLabel: "届いた一品",
+    icon: "縁",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
+    names: ["ご縁第一号", "三つのご縁", "七つの旅立ち", "二週間分のご縁", "三十の旅立ち", "六十の出会い", "百のご縁", "百八十の旅立ち", "三百六十五のご縁", "千のご縁を結ぶ人"],
+    description: (target) => `AnjuPayフリマで出品した一品が${target}件届いた`,
+    hint: "価格の高さではなく、一品が誰かへ届くと解除",
+    autoPublic: false,
+  });
+  addSeries({
+    scope: "flea",
+    category: "flea_connections",
+    family: "flea_purchases",
+    familyLabel: "出会いの記録",
+    icon: "帖",
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["はじめての出会い記録", "三つのことば", "十の出会い", "三十の一品", "百のことばを受け取る", "三百の出会い記録", "五百の店主を知る", "千の一日棚", "三千のことば", "万のご縁を見届けた人"],
+    description: (target) => `AnjuPayフリマで${target}件の出会いの記録を残した`,
+    hint: "価格の高さではなく、ことばから一品を選ぶと解除",
+    autoPublic: false,
+  });
+
   const catalog = Object.freeze(definitions);
   const byId = new Map(catalog.map((definition) => [definition.id, definition]));
   const categoryInfo = Object.freeze([
@@ -347,6 +384,8 @@
     { id: "training_workout", label: "鍛錬の積み重ね", copy: "実際に完了した運動の本数と時間" },
     { id: "ai_training_record", label: "文字コラトレーニング", copy: "BPMや運動強度ではなく、自分のペースで5ラウンドを終えた歩み" },
     { id: "ai_training_script_sales", label: "応援台本の販売", copy: "価格や売上額ではなく、応援が利用された回数と広がりの記録" },
+    { id: "flea_listing", label: "AnjuPayフリマ・一日棚", copy: "連続日数ではなく、自分のペースで一品を言葉にした日々の記録" },
+    { id: "flea_connections", label: "AnjuPayフリマ・ご縁", copy: "売上額や順位ではなく、一品が届いた回数と出会いの記録" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },
@@ -402,12 +441,28 @@
     };
   }
 
+  function achievementPresentationClass(definition) {
+    const level = Math.min(10, Math.max(1, Math.floor(Number(definition?.level) || 1)));
+    return `achievement-level-${level}${level === 10 ? " is-final" : ""}`;
+  }
+
+  function orderUnlockIds(value) {
+    return normalizeIds(value).sort((firstId, secondId) => {
+      const first = byId.get(firstId);
+      const second = byId.get(secondId);
+      return Number(second?.level === 10) - Number(first?.level === 10)
+        || Number(second?.level || 0) - Number(first?.level || 0)
+        || catalog.indexOf(first) - catalog.indexOf(second);
+    });
+  }
+
   function renderBadges(value, { compact = true, empty = "" } = {}) {
     const ids = normalizeIds(value, MAX_SHOWCASE);
     if (!ids.length) return empty;
     return `<span class="achievement-badges ${compact ? "is-compact" : ""}" aria-label="実績ショーケース">${ids.map((id) => {
       const achievement = byId.get(id);
-      return `<span class="achievement-badge achievement-scope-${achievement.scope}" title="${escapeHtml(`${achievement.name} / ${achievement.description}`)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>Lv.${achievement.level}</small></span>`;
+      const levelLabel = achievement.level === 10 ? "FINAL Lv.10" : `Lv.${achievement.level}`;
+      return `<span class="achievement-badge achievement-scope-${achievement.scope} ${achievementPresentationClass(achievement)}" title="${escapeHtml(`${achievement.name} / ${achievement.description}`)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>${levelLabel}</small></span>`;
     }).join("")}</span>`;
   }
 
@@ -441,13 +496,20 @@
           : familyDefinitions[0];
         const selected = current && showcased.has(current.id);
         const unlockedClass = current ? "is-unlocked" : "is-locked";
-        return `<article class="achievement-family-card ${unlockedClass} ${selected ? "is-showcased" : ""}">
+        const finalAchievement = current?.level === 10;
+        const progressLabel = legacyFamily
+          ? "終了モードの記録"
+          : finalAchievement
+            ? "Lv.10 / 10・最終実績"
+            : `${current ? `Lv.${current.level} / ${familyDefinitions.at(-1).level}` : `未解除 / 最大Lv.${familyDefinitions.at(-1).level}`}${next && current ? "・次の条件は非公開" : ""}`;
+        return `<article class="achievement-family-card ${unlockedClass} ${selected ? "is-showcased" : ""} ${current ? achievementPresentationClass(current) : ""}">
           <div class="achievement-family-icon" aria-hidden="true">${current ? escapeHtml(current.icon) : "?"}</div>
           <div class="achievement-family-copy">
             <span>${escapeHtml(current?.familyLabel || next?.familyLabel || "隠し実績")}</span>
             <h3>${current ? escapeHtml(current.name) : "？？？"}</h3>
             <p>${current ? escapeHtml(current.description) : escapeHtml(next?.hint || "遊び続けると解除")}</p>
-            <small>${legacyFamily ? "終了モードの記録" : `${current ? `Lv.${current.level} / ${familyDefinitions.at(-1).level}` : `未解除 / 最大Lv.${familyDefinitions.at(-1).level}`}${next && current ? "・次の条件は非公開" : ""}`}</small>
+            <small>${progressLabel}</small>
+            ${finalAchievement ? '<b class="achievement-final-mark"><span aria-hidden="true">✦</span> FINAL ACHIEVEMENT <span aria-hidden="true">✦</span></b>' : ""}
           </div>
           ${current ? `<button class="achievement-showcase-toggle ${selected ? "is-selected" : ""}" type="button" data-achievement-showcase="${escapeHtml(current.id)}" aria-pressed="${selected}">${selected ? "展示中" : "展示する"}</button>` : ""}
         </article>`;
@@ -461,7 +523,7 @@
         <div><span>UNLOCKED</span><strong>${profile.unlockedCount}<small> / ${profile.totalCount}</small></strong></div>
         <div><span>SHOWCASE</span>${renderBadges(profile.showcase, { compact: false, empty: "<em>自動選択される実績はまだありません</em>" })}</div>
       </div>
-      <div class="achievement-showcase-guide"><p>ランキングへ表示する実績は最大${MAX_SHOWCASE}件です。敗北実績は自動公開されません。</p>
+      <div class="achievement-showcase-guide"><p>ランキングへ表示する実績は最大${MAX_SHOWCASE}件です。敗北実績とAnjuPayフリマ実績は自動公開されず、展示するかは本人が選べます。</p>
         <button class="button button-ghost button-small" type="button" data-achievement-showcase-auto ${profile.customShowcase.length ? "" : "disabled"}>自動選択に戻す</button></div>
       ${sections}`;
   }
@@ -472,10 +534,11 @@
 
   function showNextUnlock() {
     unlockTimer = null;
-    const ids = unlockQueue.splice(0, unlockQueue.length);
+    const ids = orderUnlockIds(unlockQueue.splice(0, unlockQueue.length));
     if (!ids.length) return;
     const first = byId.get(ids[0]);
     if (!first) return;
+    const finalAchievement = first.level === 10;
     let layer = document.querySelector("#achievementUnlockLayer");
     if (!layer) {
       layer = document.createElement("div");
@@ -484,9 +547,10 @@
       layer.setAttribute("aria-live", "polite");
       document.body.append(layer);
     }
-    layer.innerHTML = `<article class="achievement-unlock-card">
-      <span class="achievement-unlock-kicker">ACHIEVEMENT UNLOCKED</span>
+    layer.innerHTML = `<article class="achievement-unlock-card ${achievementPresentationClass(first)}">
+      <span class="achievement-unlock-kicker">${finalAchievement ? "FINAL ACHIEVEMENT UNLOCKED" : "ACHIEVEMENT UNLOCKED"}</span>
       <div><i aria-hidden="true">${escapeHtml(first.icon)}</i><span><strong>${escapeHtml(first.name)}</strong><small>${escapeHtml(first.description)}</small></span></div>
+      ${finalAchievement ? '<b class="achievement-unlock-final"><span aria-hidden="true">✦</span> Lv.10・最終実績 <span aria-hidden="true">✦</span></b>' : ""}
       ${ids.length > 1 ? `<p>ほか${ids.length - 1}件の実績も解除しました</p>` : ""}
     </article>`;
     layer.classList.add("is-visible");
@@ -512,6 +576,7 @@
     normalizeIds,
     normalizeProfile,
     notify,
+    orderUnlockIds,
     renderBadges,
     renderCollection,
   });

@@ -9,6 +9,12 @@ const serviceModule = require("../anju-pay-flea-service");
 
 const servicePath = path.resolve(__dirname, "..", "anju-pay-flea-service.js");
 const source = fs.readFileSync(servicePath, "utf8");
+const achievementStatsPath = path.resolve(
+  __dirname,
+  "..",
+  "anju-pay-flea-achievement-stats.js",
+);
+const achievementStatsSource = fs.readFileSync(achievementStatsPath, "utf8");
 
 function between(startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -38,6 +44,8 @@ test("service is an injected factory with the three required operations", () => 
     "anjuPayEntryId",
     "mirrorWallet",
     "bestEffort",
+    "ensureFleaAchievementStats",
+    "fleaAchievementStatsRef",
   ]) {
     assert.match(source, new RegExp(`"${dependency}"`));
   }
@@ -46,14 +54,23 @@ test("service is an injected factory with the three required operations", () => 
   assert.match(source, /async expireListings\(now\)/);
 });
 
-test("market achievements are read-only decoration and never mutate market progression", () => {
+test("flea achievements advance only dedicated flea state and never VALUE MARKET progression", () => {
   assert.match(source, /require\("\.\/achievements"\)/);
   assert.match(source, /firestore\.collection\("achievementProfiles"\)\.doc\(uid\)/);
   assert.match(source, /definition\.scope !== "market"/);
   assert.match(source, /normalizeAchievementProfile/);
+  const ensureState = between("async function ensureFleaAchievementState", "function httpsError");
+  assert.match(ensureState, /await ensureFleaAchievementStats\(uid\)/);
+  assert.match(ensureState, /const statsReference = fleaAchievementStatsRef\(uid\)/);
+  assert.match(
+    ensureState,
+    /eligibleAchievementIds\(\{ fleaStats: stats, scope: "flea" \}\)/,
+  );
+  assert.match(ensureState, /unlockAchievements\(/);
+  assert.match(ensureState, /transaction\.set\(profileReference, unlockResult\.profile\)/);
   assert.doesNotMatch(source, /collection\("valueMarket/);
   assert.doesNotMatch(source, /marketStatsRef|addMarketTransaction|ensureAchievementState/);
-  assert.doesNotMatch(source, /unlockAchievements|ensureMarketShop|applyMarketSaleToShop/);
+  assert.doesNotMatch(source, /ensureMarketShop|applyMarketSaleToShop/);
   assert.doesNotMatch(source, /syncCreatorCardGrowth|RankedPairs|AchievementPairs/);
   assert.doesNotMatch(source, /MarketCertificates|patronFund|marketShop/i);
   const save = between("async function saveUrikkoCard", "async function setFavorite");
@@ -61,10 +78,11 @@ test("market achievements are read-only decoration and never mutate market progr
     save,
     /walletRef|ensureWallet|debitPoints|creditPoints|stageAnjuPayOpening|appendAnjuPayEntry/,
   );
+  assert.doesNotMatch(save, /fleaAchievementStatsRef|eligibleAchievementIds|unlockAchievements/);
   assert.doesNotMatch(save, /transaction\.(?:set|update|create)\(profileReference/);
 });
 
-test("all flea persistence stays in dedicated callable-only collections", () => {
+test("all flea persistence and historical achievement counts stay in dedicated callable-only collections", () => {
   const rules = fs.readFileSync(
     path.resolve(__dirname, "..", "..", "firestore.rules"),
     "utf8",
@@ -95,6 +113,35 @@ test("all flea persistence stays in dedicated callable-only collections", () => 
   assert.match(
     rules,
     /match \/anjuPayFleaSellerCards\/\{uid\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+  );
+  assert.match(
+    rules,
+    /match \/anjuPayFleaAchievementStats\/\{uid\} \{[\s\S]*?allow read, write: if false;[\s\S]*?\}/,
+  );
+  assert.match(
+    achievementStatsSource,
+    /\.collection\("anjuPayFleaAchievementStats"\)[\s\S]*?\.doc\(uid\)/,
+  );
+  assert.match(
+    achievementStatsSource,
+    /\.collection\("anjuPayFleaListings"\)[\s\S]*?\.where\("sellerUid", "==", uid\)/,
+  );
+  assert.match(
+    achievementStatsSource,
+    /\.collection\("anjuPayFleaSales"\)[\s\S]*?\.where\("sellerUid", "==", uid\)/,
+  );
+  assert.match(
+    achievementStatsSource,
+    /\.collection\("anjuPayFleaSales"\)[\s\S]*?\.where\("buyerUid", "==", uid\)/,
+  );
+  assert.match(
+    achievementStatsSource,
+    /listings: Math\.max\(current\.listings, historicalListings\)[\s\S]*?sales: Math\.max\(current\.sales, historicalSales\)[\s\S]*?purchases: Math\.max\(current\.purchases, historicalPurchases\)/,
+  );
+  assert.match(achievementStatsSource, /historyBackfilled: true/);
+  assert.doesNotMatch(
+    achievementStatsSource,
+    /valueMarket|marketStats|favorite|ranking|grossSales|spent/i,
   );
 });
 
@@ -209,12 +256,17 @@ test("state returns a bounded first page in stable browse order", () => {
   assert.match(state, /fleaJstDateKey\(serverNow\) !== dateKey/);
   assert.match(state, /getStateInternal\(uid, false\)/);
   assert.match(state, /sellerCardRef\(uid\)\.get\(\)/);
-  assert.match(state, /achievementProfileRef\(uid\)\.get\(\)/);
+  assert.match(state, /ensureFleaAchievementState\(uid\)/);
   assert.match(state, /receiptItemsRef\(uid\)[\s\S]*?\.orderBy\("createdAt", "desc"\)[\s\S]*?\.limit\(STATE_RECEIPT_LIMIT\)/);
   assert.match(
     state,
     /serverNow,[\s\S]*?dateKey,[\s\S]*?expiresAt,[\s\S]*?policy: policy\(\),[\s\S]*?balance:[\s\S]*?\.\.\.browsePage,[\s\S]*?ownListing,[\s\S]*?favorites,[\s\S]*?receipts,[\s\S]*?urikkoCard:[\s\S]*?unlockedMarketAchievementIds:/,
   );
+  assert.match(
+    state,
+    /newlyUnlocked: Object\.keys\(achievementState\.profile\.pendingUnlocks\)[\s\S]*?ACHIEVEMENT_BY_ID\.get\(id\)\?\.scope === "flea"/,
+  );
+  assert.match(state, /fleaAchievementStats: achievementState\.stats/);
 });
 
 
@@ -359,9 +411,12 @@ test("listing creation reads every transaction dependency before charging once",
     "transaction.get(listingReference)",
     "transaction.get(anjuPayLedgerConfigRef())",
     "transaction.get(sellerCardReference)",
+    "transaction.get(fleaStatsReference)",
+    "transaction.get(profileReference)",
   ]) {
     assert.ok(create.indexOf(read) >= 0 && create.indexOf(read) < firstWrite, read);
   }
+  assert.match(create, /ensureFleaAchievementState\(uid\)/);
   assert.match(create, /current\.payloadHash === payloadHash/);
   assert.match(create, /const attemptNow = currentTime\(\)/);
   assert.match(create, /fleaJstDateKey\(attemptNow\) !== dateKey \|\| attemptNow >= expiresAt/);
@@ -387,6 +442,22 @@ test("listing creation reads every transaction dependency before charging once",
   assert.doesNotMatch(feeEntry, /listingTitle/);
   assert.match(create, /transaction\.create\(listingReference, storedListing\)/);
   assert.match(create, /urikkoCard: publicUrikkoCard\(sellerCardSnapshot\.data\(\)\)/);
+  assert.match(create, /fleaStats\.listings \+= 1/);
+  assert.match(
+    create,
+    /eligibleAchievementIds\(\{ fleaStats, scope: "flea" \}\)/,
+  );
+  assert.match(create, /transaction\.set\(fleaStatsReference, \{/);
+  assert.match(
+    create,
+    /unlockResult\.newlyUnlocked\.length[\s\S]*?transaction\.set\(profileReference, unlockResult\.profile\)/,
+  );
+  assert.ok(
+    create.indexOf("return;", create.indexOf("if (listingSnapshot.exists)"))
+      < create.indexOf("fleaStats.listings += 1"),
+    "an idempotent listing replay must return before achievement counters advance",
+  );
+  assert.doesNotMatch(create, /valueMarket|marketStatsRef|addMarketTransaction/);
   assert.match(create, /mirrorCommittedBalances\("anjuPayFleaCreate"/);
 });
 
@@ -398,6 +469,10 @@ test("purchase is one atomic sale with two wallets, two receipts, and one fee si
     "transaction.get(buyerWalletReference)",
     "transaction.get(sellerWalletReference)",
     "transaction.get(anjuPayLedgerConfigRef())",
+    "transaction.get(buyerFleaStatsReference)",
+    "transaction.get(sellerFleaStatsReference)",
+    "transaction.get(buyerAchievementReference)",
+    "transaction.get(sellerAchievementReference)",
   ]) {
     assert.match(purchase, new RegExp(read.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -416,11 +491,38 @@ test("purchase is one atomic sale with two wallets, two receipts, and one fee si
   assert.equal((purchase.match(/transaction\.create\([^,]*ReceiptReference/g) || []).length, 2);
   assert.match(purchase, /transaction\.create\(saleReference, saleRecord\)/);
   assert.match(purchase, /if \(saleSnapshot\.exists\)[\s\S]*?saved\.buyerUid !== uid/);
+  assert.match(purchase, /buyerFleaStats\.purchases \+= 1/);
+  assert.match(purchase, /sellerFleaStats\.sales \+= 1/);
+  assert.match(
+    purchase,
+    /eligibleAchievementIds\(\{ fleaStats: buyerFleaStats, scope: "flea" \}\)/,
+  );
+  assert.match(
+    purchase,
+    /eligibleAchievementIds\(\{ fleaStats: sellerFleaStats, scope: "flea" \}\)/,
+  );
+  assert.match(purchase, /transaction\.set\(buyerFleaStatsReference, \{/);
+  assert.match(purchase, /transaction\.set\(sellerFleaStatsReference, \{/);
+  assert.match(
+    purchase,
+    /buyerUnlockResult\.newlyUnlocked\.length[\s\S]*?transaction\.set\(buyerAchievementReference, buyerUnlockResult\.profile\)/,
+  );
+  assert.match(
+    purchase,
+    /sellerUnlockResult\.newlyUnlocked\.length[\s\S]*?transaction\.set\(sellerAchievementReference, sellerUnlockResult\.profile\)/,
+  );
+  const replayBranch = purchase.slice(
+    purchase.indexOf("if (saleSnapshot.exists)"),
+    purchase.indexOf("const attemptNow = currentTime()"),
+  );
+  assert.match(replayBranch, /replayed = true;[\s\S]*?return;/);
+  assert.doesNotMatch(replayBranch, /FleaStats|unlockAchievements|eligibleAchievementIds/);
+  assert.doesNotMatch(purchase, /valueMarket|marketStatsRef|addMarketTransaction/);
   assert.match(purchase, /mirrorCommittedBalances\("anjuPayFleaPurchase"/);
 });
 
 test("cancel, favorite, and report remain non-rewarding and idempotent", () => {
-  const cancel = between("async function cancelListing", "async function setFavorite");
+  const cancel = between("async function cancelListing", "async function saveUrikkoCard");
   const favorite = between("async function setFavorite", "async function reportListing");
   const report = between("async function reportListing", "async function performActionInternal");
   assert.match(cancel, /status: "canceled"/);
@@ -486,6 +588,10 @@ test("cancel, favorite, and report remain non-rewarding and idempotent", () => {
   );
   assert.match(report, /xQuarantined = true/);
   assert.doesNotMatch(report, /status: "hidden"|status: "canceled"|auto/i);
+  assert.doesNotMatch(
+    `${cancel}${favorite}${report}`,
+    /fleaAchievementStatsRef|eligibleAchievementIds|unlockAchievements|achievementProfileRef/,
+  );
 });
 
 test("expiry materialization rechecks each document transactionally", () => {

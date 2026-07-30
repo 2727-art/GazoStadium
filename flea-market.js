@@ -90,6 +90,7 @@ const BROWSE_CURSOR_PATTERN = /^[a-f0-9]{40}$/;
 const FLEA_X_EXTERNAL_CONFIRM_MESSAGE = "このXリンクは店主が自己申告したものです。運営は店主とXアカウントの本人確認も、リンク先の内容確認も行っていません。外部サイトのXへ移動しますか？";
 const appRoot = document.querySelector("#app");
 const fleaActionCallable = httpsCallable(functions, "anjuPayFleaAction");
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const useFleaPreview = useOfflineMarketPreview;
 const requestedPreviewScreen = new URLSearchParams(location.search).get("fleaPreview") || "shelf";
 
@@ -157,6 +158,22 @@ function normalizeAchievementIds(value) {
     : String(value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
   return window.HariaiAchievements?.normalizeIds?.(candidates, 3)
     || candidates.filter((entry) => /^[a-z0-9_]{1,64}$/.test(entry)).slice(0, 3);
+}
+
+function notifyFleaAchievementUnlocks(value) {
+  const maximum = window.HariaiAchievements?.catalog?.length || 200;
+  const ids = (window.HariaiAchievements?.normalizeIds?.(value, maximum) || [])
+    .filter((id) => window.HariaiAchievements?.byId?.get?.(id)?.scope === "flea");
+  if (!ids.length) return;
+  window.dispatchEvent(new CustomEvent("hariai-achievements-unlocked", {
+    detail: { ids },
+  }));
+  economyActionCallable({
+    action: "ack_achievements",
+    achievementIds: ids,
+  }).catch(() => {
+    // Pending unlocks are safe to acknowledge on the next authenticated refresh.
+  });
 }
 
 function normalizeMarketAchievementIds(value, maximum = 3) {
@@ -609,6 +626,9 @@ function applyServerState(value, { browseMode = "replace" } = {}) {
       data.unlockedMarketAchievementIds,
       50,
     );
+  }
+  if (Array.isArray(data.newlyUnlocked)) {
+    notifyFleaAchievementUnlocks(data.newlyUnlocked);
   }
   if (Array.isArray(data.sellerListings)) {
     const category = CATEGORY_IDS.has(data.category) ? data.category : "";
@@ -1153,7 +1173,7 @@ function renderShelf() {
     ${renderCategoryFilters()}
     ${body}
     ${browseMore}
-    <p class="flea-market-boundary"><strong>推し値市場の成績へ加算しません。</strong>ここでの購入・販売は、市場のランキング・実績・常連帳・店主評価へ加算しません。本人が選んだ解除済みの市場実績だけを、売りっ子カードの飾りとして表示できます。</p>
+    <p class="flea-market-boundary"><strong>推し値市場の成績へ加算しません。</strong>ここでの出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録し、市場のランキング・実績・常連帳・店主評価へは加算しません。本人が選んだ解除済みの市場実績だけを、売りっ子カードの飾りとして表示できます。</p>
   </section>`);
 }
 
@@ -1366,7 +1386,7 @@ function renderSellerCardEditor() {
       const selected = draft.achievementIds.includes(definition.id);
       return `<label class="flea-urikko-achievement-choice"><input type="checkbox" name="fleaUrikkoAchievement" value="${escapeHtml(definition.id)}" ${selected ? "checked" : ""} ${inputDisabled} /><span><i aria-hidden="true">${escapeHtml(definition.icon)}</i><strong>${escapeHtml(definition.name)}</strong><small>${escapeHtml(definition.familyLabel)}の歩み</small></span></label>`;
     }).join("")}</div>`
-    : `<div class="flea-urikko-no-achievements"><strong>飾れる推し値市場実績は、まだありません</strong><p>カードは実績なしでも同じ高さで表示されます。営業を急かす条件や、フリマ側の達成報酬はありません。</p><button class="button button-ghost button-small" type="button" data-flea-open-value-market>推し値市場を見る</button></div>`;
+    : `<div class="flea-urikko-no-achievements"><strong>飾れる推し値市場実績は、まだありません</strong><p>カードは実績なしでも同じ高さで表示されます。AnjuPayフリマ専用実績は、共通の実績コレクションで確認・展示できます。</p><button class="button button-ghost button-small" type="button" data-flea-open-value-market>推し値市場を見る</button></div>`;
   return renderFrame(`<section class="flea-urikko-card-editor" aria-labelledby="fleaUrikkoEditorHeading">
     <div class="flea-section-head"><div><span>CUSTOMIZE YOUR CARD</span><h2 id="fleaUrikkoEditorHeading">売りっ子カードを整える</h2><p>今日の出品を「誰が紹介しているか」から見つけてもらうためのカードです。既存の推しカードや推し値商店カードは変更しません。</p></div><small>保存無料 / 公開項目だけ</small></div>
     <div class="flea-urikko-editor-layout">
@@ -1485,7 +1505,7 @@ function renderPublishReview() {
         ${renderFeeSummary(draft.price)}
         <div class="flea-balance-check"><span>現在の残高 <strong>${formatAnjuPay(state.balance)}</strong></span><span>出品後 <strong>${balanceAfter >= 0 ? formatAnjuPay(balanceAfter) : "残高不足"}</strong></span></div>
         <div class="flea-review-caution"><strong>本日23:59で店じまいします</strong><p>売れなくても紹介文の下書きはこの端末に残ります。取り下げても本日の出品回数と手数料は戻りません。</p></div>
-        <div class="flea-market-boundary"><strong>推し値市場とは別に記録されます</strong><span>ランキング、実績、常連帳、店主評価、パトロンには加算しません。</span></div>
+        <div class="flea-market-boundary"><strong>推し値市場とは別に記録されます</strong><span>推し値市場のランキング、実績、常連帳、店主評価、パトロンには加算せず、AnjuPayフリマ専用実績だけを進めます。</span></div>
       </section>
     </div>
     <div class="flea-review-actions"><button class="button button-primary" type="button" data-flea-publish ${state.busyAction || balanceAfter < 0 ? "disabled" : ""}>${state.busyAction === "create_listing" ? "出品を確定しています…" : balanceAfter < 0 ? `あと${formatAnjuPay(-balanceAfter)}` : `${formatAnjuPay(state.policy.listingFee)}を支払い出品を確定`}</button><button class="button button-ghost" type="button" data-flea-nav="sell" ${state.busyAction ? "disabled" : ""}>内容を直す</button></div>

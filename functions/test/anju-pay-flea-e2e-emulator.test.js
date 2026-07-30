@@ -13,6 +13,7 @@ const MIDNIGHT_GUARD_MS = 6 * 60 * 1_000;
 const FLEA_COLLECTIONS = Object.freeze([
   "anjuPayFleaListings",
   "anjuPayFleaSellerCards",
+  "anjuPayFleaAchievementStats",
   "anjuPayFleaSales",
   "anjuPayFleaReceipts",
   "anjuPayFleaFavorites",
@@ -247,7 +248,7 @@ if (!RUN_REQUESTED) {
         name,
         titleId: "flea-e2e-title",
         text: "ことばから想像してね",
-        creatorType: "illustrator",
+        creatorType: "illustration",
         cardTheme: "sunset",
         growthLevel: 3,
         achievementShowcase: "",
@@ -396,7 +397,7 @@ if (!RUN_REQUESTED) {
       assertStableJstWindow();
       adminApp = initializeAdminApp({
         projectId: target.projectId,
-        databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
+        databaseURL: `https://${target.projectId}-default-rtdb.firebaseio.com`,
       }, `anju-pay-flea-admin-${suiteId}`);
       adminAuth = getAdminAuth(adminApp);
       firestore = getFirestore(adminApp);
@@ -474,10 +475,30 @@ if (!RUN_REQUESTED) {
       const seller = await createCaller("sale-seller");
       const buyer = await createCaller("sale-buyer");
       const visitor = await createCaller("sold-listing-visitor");
+      const sellerMarketStatsReference = firestore.doc(`valueMarketStats/${seller.uid}`);
+      const buyerMarketStatsReference = firestore.doc(`valueMarketStats/${buyer.uid}`);
+      const sellerMarketStats = {
+        uid: seller.uid,
+        salesCount: 4,
+        purchases: 2,
+        marketDays: 3,
+        publicAchievements: ["market_seller_3"],
+        testMarker: `${suiteId}:seller-value-market-must-not-change`,
+      };
+      const buyerMarketStats = {
+        uid: buyer.uid,
+        salesCount: 1,
+        purchases: 5,
+        marketDays: 4,
+        publicAchievements: ["market_buyer_3"],
+        testMarker: `${suiteId}:buyer-value-market-must-not-change`,
+      };
       await Promise.all([
         seedLegacyWallet(seller.uid, 100),
         seedLegacyWallet(buyer.uid, 100),
         seedLegacyWallet(visitor.uid, 10),
+        sellerMarketStatsReference.set(sellerMarketStats),
+        buyerMarketStatsReference.set(buyerMarketStats),
         seedCreatorCard(seller.uid, {
           name: "SELLER X",
           xHandle: "flea_e2e",
@@ -497,6 +518,14 @@ if (!RUN_REQUESTED) {
       assert.equal(replayedCreate.createdListing.id, listingId);
       assert.equal(created.balance, 99);
       assert.equal(replayedCreate.balance, 99);
+      assert.deepEqual(created.fleaAchievementStats, {
+        listings: 1,
+        sales: 0,
+        purchases: 0,
+      });
+      assert.deepEqual(replayedCreate.fleaAchievementStats, created.fleaAchievementStats);
+      assert.ok(created.newlyUnlocked.includes("flea_listings_1"));
+      assert.equal(created.newlyUnlocked.some((id) => id.startsWith("market_")), false);
       assert.equal(created.createdListing.seller.name, "SELLER X");
       assert.equal(
         created.createdListing.xPostUrl,
@@ -529,6 +558,13 @@ if (!RUN_REQUESTED) {
         assert.equal(result.purchase.feeAmount, 2);
         assert.equal(result.purchase.sellerProceeds, 23);
         assert.equal(result.balance, 75);
+        assert.deepEqual(result.fleaAchievementStats, {
+          listings: 0,
+          sales: 0,
+          purchases: 1,
+        });
+        assert.ok(result.newlyUnlocked.includes("flea_purchases_1"));
+        assert.equal(result.newlyUnlocked.some((id) => id.startsWith("market_")), false);
       }
 
       const soldBrowseState = await invoke(visitor.fleaAction, { action: "state" });
@@ -582,6 +618,12 @@ if (!RUN_REQUESTED) {
         buyerLedger,
         sellerMirror,
         buyerMirror,
+        sellerFleaStats,
+        buyerFleaStats,
+        sellerAchievements,
+        buyerAchievements,
+        sellerMarketStatsAfter,
+        buyerMarketStatsAfter,
       ] = await Promise.all([
         firestore.doc(`anjuPayFleaListings/${listingId}`).get(),
         firestore.doc(`anjuPayFleaSales/${listingId}`).get(),
@@ -593,6 +635,12 @@ if (!RUN_REQUESTED) {
         readLedger(buyer.uid),
         realtime.ref(`online/economy/${seller.uid}/points`).get(),
         realtime.ref(`online/economy/${buyer.uid}/points`).get(),
+        firestore.doc(`anjuPayFleaAchievementStats/${seller.uid}`).get(),
+        firestore.doc(`anjuPayFleaAchievementStats/${buyer.uid}`).get(),
+        firestore.doc(`achievementProfiles/${seller.uid}`).get(),
+        firestore.doc(`achievementProfiles/${buyer.uid}`).get(),
+        sellerMarketStatsReference.get(),
+        buyerMarketStatsReference.get(),
       ]);
       assert.equal(rawListing.get("status"), "sold");
       assert.equal(rawListing.get("sellerUid"), seller.uid);
@@ -614,6 +662,52 @@ if (!RUN_REQUESTED) {
       }
       assert.equal(sellerState.balance, 122);
       assert.equal(buyerState.balance, 75);
+      assert.deepEqual(sellerState.fleaAchievementStats, {
+        listings: 1,
+        sales: 1,
+        purchases: 0,
+      });
+      assert.deepEqual(buyerState.fleaAchievementStats, {
+        listings: 0,
+        sales: 0,
+        purchases: 1,
+      });
+      assert.ok(sellerState.newlyUnlocked.includes("flea_listings_1"));
+      assert.ok(sellerState.newlyUnlocked.includes("flea_sales_1"));
+      assert.ok(buyerState.newlyUnlocked.includes("flea_purchases_1"));
+      assert.deepEqual(
+        {
+          listings: sellerFleaStats.get("listings"),
+          sales: sellerFleaStats.get("sales"),
+          purchases: sellerFleaStats.get("purchases"),
+        },
+        sellerState.fleaAchievementStats,
+      );
+      assert.deepEqual(
+        {
+          listings: buyerFleaStats.get("listings"),
+          sales: buyerFleaStats.get("sales"),
+          purchases: buyerFleaStats.get("purchases"),
+        },
+        buyerState.fleaAchievementStats,
+      );
+      assert.equal(sellerFleaStats.get("historyBackfilled"), true);
+      assert.equal(buyerFleaStats.get("historyBackfilled"), true);
+      assert.ok(sellerAchievements.get("unlocked.flea_listings_1"));
+      assert.ok(sellerAchievements.get("unlocked.flea_sales_1"));
+      assert.ok(buyerAchievements.get("unlocked.flea_purchases_1"));
+      assert.equal(
+        Object.keys(sellerAchievements.get("unlocked") || {})
+          .some((id) => id.startsWith("market_")),
+        false,
+      );
+      assert.equal(
+        Object.keys(buyerAchievements.get("unlocked") || {})
+          .some((id) => id.startsWith("market_")),
+        false,
+      );
+      assert.deepEqual(sellerMarketStatsAfter.data(), sellerMarketStats);
+      assert.deepEqual(buyerMarketStatsAfter.data(), buyerMarketStats);
       assert.equal(
         sellerState.receipts.find((receipt) => receipt.id === listingId)?.role,
         "seller",
@@ -1243,6 +1337,119 @@ if (!RUN_REQUESTED) {
         ["achievementIds", "schemaVersion", "sealId", "tagline", "themeId"].sort(),
       );
       assertNoMarketStatistics(sellerPage);
+    });
+
+    test("旧フリマ履歴をprivate統計と専用実績へ一度だけ復元しVALUE MARKETを変えない", async () => {
+      const seller = await createCaller("legacy-achievement-seller");
+      const buyer = await createCaller("legacy-achievement-buyer");
+      const sellerMarketStatsReference = firestore.doc(`valueMarketStats/${seller.uid}`);
+      const buyerMarketStatsReference = firestore.doc(`valueMarketStats/${buyer.uid}`);
+      const sellerMarketStats = {
+        uid: seller.uid,
+        salesCount: 8,
+        purchases: 1,
+        marketDays: 6,
+        testMarker: `${suiteId}:legacy-seller-value-market`,
+      };
+      const buyerMarketStats = {
+        uid: buyer.uid,
+        salesCount: 2,
+        purchases: 9,
+        marketDays: 7,
+        testMarker: `${suiteId}:legacy-buyer-value-market`,
+      };
+      await Promise.all([
+        seedLegacyWallet(seller.uid, 50),
+        seedLegacyWallet(buyer.uid, 50),
+        sellerMarketStatsReference.set(sellerMarketStats),
+        buyerMarketStatsReference.set(buyerMarketStats),
+      ]);
+
+      const batch = firestore.batch();
+      const legacyListingIds = Array.from({ length: 3 }, (_, index) => crypto
+        .createHash("sha256")
+        .update(`${suiteId}:legacy-achievement-listing:${index}`)
+        .digest("hex")
+        .slice(0, 40));
+      legacyListingIds.forEach((listingId, index) => {
+        batch.set(firestore.doc(`anjuPayFleaListings/${listingId}`), {
+          schemaVersion: 1,
+          sellerUid: seller.uid,
+          status: "expired",
+          dateKey: `2026-01-0${index + 1}`,
+          createdAt: index + 1,
+          expiresAt: index + 1,
+          updatedAt: index + 1,
+        });
+      });
+      legacyListingIds.slice(0, 2).forEach((listingId, index) => {
+        batch.set(firestore.doc(`anjuPayFleaSales/${listingId}`), {
+          schemaVersion: 1,
+          listingId,
+          sellerUid: seller.uid,
+          buyerUid: buyer.uid,
+          createdAt: index + 1,
+        });
+      });
+      await batch.commit();
+
+      const [sellerState, buyerState] = await Promise.all([
+        invoke(seller.fleaAction, { action: "state" }),
+        invoke(buyer.fleaAction, { action: "state" }),
+      ]);
+      assert.deepEqual(sellerState.fleaAchievementStats, {
+        listings: 3,
+        sales: 2,
+        purchases: 0,
+      });
+      assert.deepEqual(buyerState.fleaAchievementStats, {
+        listings: 0,
+        sales: 0,
+        purchases: 2,
+      });
+      for (const id of ["flea_listings_1", "flea_listings_3", "flea_sales_1"]) {
+        assert.ok(sellerState.newlyUnlocked.includes(id), id);
+      }
+      assert.ok(buyerState.newlyUnlocked.includes("flea_purchases_1"));
+      assert.equal(sellerState.newlyUnlocked.some((id) => id.startsWith("market_")), false);
+      assert.equal(buyerState.newlyUnlocked.some((id) => id.startsWith("market_")), false);
+
+      const [
+        sellerStatsBeforeReplay,
+        buyerStatsBeforeReplay,
+        sellerProfile,
+        buyerProfile,
+        sellerMarketStatsAfter,
+        buyerMarketStatsAfter,
+      ] = await Promise.all([
+        firestore.doc(`anjuPayFleaAchievementStats/${seller.uid}`).get(),
+        firestore.doc(`anjuPayFleaAchievementStats/${buyer.uid}`).get(),
+        firestore.doc(`achievementProfiles/${seller.uid}`).get(),
+        firestore.doc(`achievementProfiles/${buyer.uid}`).get(),
+        sellerMarketStatsReference.get(),
+        buyerMarketStatsReference.get(),
+      ]);
+      assert.equal(sellerStatsBeforeReplay.get("schemaVersion"), 1);
+      assert.equal(sellerStatsBeforeReplay.get("historyBackfilled"), true);
+      assert.equal(buyerStatsBeforeReplay.get("historyBackfilled"), true);
+      assert.ok(sellerProfile.get("unlocked.flea_listings_3"));
+      assert.ok(sellerProfile.get("unlocked.flea_sales_1"));
+      assert.ok(buyerProfile.get("unlocked.flea_purchases_1"));
+      assert.deepEqual(sellerMarketStatsAfter.data(), sellerMarketStats);
+      assert.deepEqual(buyerMarketStatsAfter.data(), buyerMarketStats);
+
+      const [sellerReplay, buyerReplay] = await Promise.all([
+        invoke(seller.fleaAction, { action: "state" }),
+        invoke(buyer.fleaAction, { action: "state" }),
+      ]);
+      assert.deepEqual(sellerReplay.fleaAchievementStats, sellerState.fleaAchievementStats);
+      assert.deepEqual(buyerReplay.fleaAchievementStats, buyerState.fleaAchievementStats);
+      const [sellerStatsAfterReplay, buyerStatsAfterReplay] = await Promise.all([
+        firestore.doc(`anjuPayFleaAchievementStats/${seller.uid}`).get(),
+        firestore.doc(`anjuPayFleaAchievementStats/${buyer.uid}`).get(),
+      ]);
+      assert.deepEqual(sellerStatsAfterReplay.data(), sellerStatsBeforeReplay.data());
+      assert.deepEqual(buyerStatsAfterReplay.data(), buyerStatsBeforeReplay.data());
     });
   });
 }

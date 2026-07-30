@@ -29,7 +29,10 @@ const {
 const {
   ACHIEVEMENT_BY_ID,
   ACHIEVEMENT_DEFINITIONS,
+  eligibleAchievementIds,
   normalizeAchievementProfile,
+  normalizeFleaStats,
+  unlockAchievements,
 } = require("./achievements");
 
 const FLEA_ACTIONS = Object.freeze([
@@ -66,6 +69,8 @@ const REQUIRED_DEPENDENCIES = Object.freeze([
   "anjuPayEntryId",
   "mirrorWallet",
   "bestEffort",
+  "ensureFleaAchievementStats",
+  "fleaAchievementStatsRef",
 ]);
 const FLEA_ID_PATTERN = /^[a-f0-9]{40}$/;
 const CREATOR_CARD_ENTRY_ID_PATTERN = /^[-0-9A-Z_a-z]{16,40}$/;
@@ -128,6 +133,8 @@ function createAnjuPayFleaService(deps) {
     anjuPayEntryId,
     mirrorWallet,
     bestEffort,
+    ensureFleaAchievementStats,
+    fleaAchievementStatsRef,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -153,6 +160,33 @@ function createAnjuPayFleaService(deps) {
   const reportRef = (reportId) => firestore.collection("anjuPayFleaReports").doc(reportId);
   const sellerCardRef = (uid) => firestore.collection("anjuPayFleaSellerCards").doc(uid);
   const achievementProfileRef = (uid) => firestore.collection("achievementProfiles").doc(uid);
+
+  async function ensureFleaAchievementState(uid) {
+    await ensureFleaAchievementStats(uid);
+    const statsReference = fleaAchievementStatsRef(uid);
+    const profileReference = achievementProfileRef(uid);
+    let result = null;
+    await firestore.runTransaction(async (transaction) => {
+      const [statsSnapshot, profileSnapshot] = await Promise.all([
+        transaction.get(statsReference),
+        transaction.get(profileReference),
+      ]);
+      const stats = normalizeFleaStats(statsSnapshot.data());
+      const unlockResult = unlockAchievements(
+        profileSnapshot.data(),
+        eligibleAchievementIds({ fleaStats: stats, scope: "flea" }),
+      );
+      if (!profileSnapshot.exists || unlockResult.newlyUnlocked.length) {
+        transaction.set(profileReference, unlockResult.profile);
+      }
+      result = {
+        stats,
+        profile: unlockResult.profile,
+        newlyUnlocked: unlockResult.newlyUnlocked,
+      };
+    });
+    return result;
+  }
 
   function httpsError(code, message) {
     return new HttpsError(code, message);
@@ -556,7 +590,7 @@ function createAnjuPayFleaService(deps) {
       favoritesSnapshot,
       receiptsSnapshot,
       sellerCardSnapshot,
-      achievementProfileSnapshot,
+      achievementState,
     ] = await Promise.all([
       ensureWallet(uid),
       getFirstBrowsePage(dateKey),
@@ -567,7 +601,7 @@ function createAnjuPayFleaService(deps) {
         .limit(STATE_RECEIPT_LIMIT)
         .get(),
       sellerCardRef(uid).get(),
-      achievementProfileRef(uid).get(),
+      ensureFleaAchievementState(uid),
     ]);
     const serverNow = currentTime();
     if (fleaJstDateKey(serverNow) !== dateKey) {
@@ -604,8 +638,11 @@ function createAnjuPayFleaService(deps) {
       receipts,
       urikkoCard: publicUrikkoCard(sellerCardSnapshot.data()),
       unlockedMarketAchievementIds: highestUnlockedMarketAchievements(
-        achievementProfileSnapshot.data(),
+        achievementState.profile,
       ).map((definition) => definition.id),
+      newlyUnlocked: Object.keys(achievementState.profile.pendingUnlocks)
+        .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.scope === "flea"),
+      fleaAchievementStats: achievementState.stats,
     });
   }
 
@@ -726,7 +763,12 @@ function createAnjuPayFleaService(deps) {
     const walletReference = walletRef(uid);
     const listingReference = listingRef(listingId);
     const sellerCardReference = sellerCardRef(uid);
-    await ensureWallet(uid);
+    const fleaStatsReference = fleaAchievementStatsRef(uid);
+    const profileReference = achievementProfileRef(uid);
+    await Promise.all([
+      ensureWallet(uid),
+      ensureFleaAchievementState(uid),
+    ]);
 
     let storedListing = null;
     let committedBalance = 0;
@@ -738,11 +780,15 @@ function createAnjuPayFleaService(deps) {
         listingSnapshot,
         ledgerConfigSnapshot,
         sellerCardSnapshot,
+        fleaStatsSnapshot,
+        profileSnapshot,
       ] = await Promise.all([
         transaction.get(walletReference),
         transaction.get(listingReference),
         transaction.get(anjuPayLedgerConfigRef()),
         transaction.get(sellerCardReference),
+        transaction.get(fleaStatsReference),
+        transaction.get(profileReference),
       ]);
       const wallet = walletData(walletSnapshot);
       const attemptNow = currentTime();
@@ -841,6 +887,20 @@ function createAnjuPayFleaService(deps) {
         updatedAt: attemptNow,
       };
       transaction.create(listingReference, storedListing);
+      const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
+      fleaStats.listings += 1;
+      const unlockResult = unlockAchievements(
+        profileSnapshot.data(),
+        eligibleAchievementIds({ fleaStats, scope: "flea" }),
+        attemptNow,
+      );
+      transaction.set(fleaStatsReference, {
+        ...fleaStats,
+        updatedAt: attemptNow,
+      }, { merge: true });
+      if (unlockResult.newlyUnlocked.length) {
+        transaction.set(profileReference, unlockResult.profile);
+      }
       transaction.set(
         walletReference,
         {
@@ -879,10 +939,19 @@ function createAnjuPayFleaService(deps) {
       throw httpsError("failed-precondition", "自分の出品は購入できません。");
     }
     const buyerName = safeOneLine(data?.buyerName, 16, "PLAYER");
-    await Promise.all([ensureWallet(uid), ensureWallet(sellerUid)]);
+    await Promise.all([
+      ensureWallet(uid),
+      ensureWallet(sellerUid),
+      ensureFleaAchievementState(uid),
+      ensureFleaAchievementState(sellerUid),
+    ]);
 
     const buyerWalletReference = walletRef(uid);
     const sellerWalletReference = walletRef(sellerUid);
+    const buyerFleaStatsReference = fleaAchievementStatsRef(uid);
+    const sellerFleaStatsReference = fleaAchievementStatsRef(sellerUid);
+    const buyerAchievementReference = achievementProfileRef(uid);
+    const sellerAchievementReference = achievementProfileRef(sellerUid);
     const saleReference = saleRef(listingId);
     const buyerReceiptReference = receiptRef(uid, listingId);
     const sellerReceiptReference = receiptRef(sellerUid, listingId);
@@ -898,12 +967,20 @@ function createAnjuPayFleaService(deps) {
         buyerWalletSnapshot,
         sellerWalletSnapshot,
         ledgerConfigSnapshot,
+        buyerFleaStatsSnapshot,
+        sellerFleaStatsSnapshot,
+        buyerAchievementSnapshot,
+        sellerAchievementSnapshot,
       ] = await Promise.all([
         transaction.get(listingReference),
         transaction.get(saleReference),
         transaction.get(buyerWalletReference),
         transaction.get(sellerWalletReference),
         transaction.get(anjuPayLedgerConfigRef()),
+        transaction.get(buyerFleaStatsReference),
+        transaction.get(sellerFleaStatsReference),
+        transaction.get(buyerAchievementReference),
+        transaction.get(sellerAchievementReference),
       ]);
       const buyerWallet = walletData(buyerWalletSnapshot);
       const sellerWallet = walletData(sellerWalletSnapshot);
@@ -1076,6 +1153,34 @@ function createAnjuPayFleaService(deps) {
       transaction.create(saleReference, saleRecord);
       transaction.create(buyerReceiptReference, buyerReceipt);
       transaction.create(sellerReceiptReference, sellerReceipt);
+      const buyerFleaStats = normalizeFleaStats(buyerFleaStatsSnapshot.data());
+      const sellerFleaStats = normalizeFleaStats(sellerFleaStatsSnapshot.data());
+      buyerFleaStats.purchases += 1;
+      sellerFleaStats.sales += 1;
+      const buyerUnlockResult = unlockAchievements(
+        buyerAchievementSnapshot.data(),
+        eligibleAchievementIds({ fleaStats: buyerFleaStats, scope: "flea" }),
+        attemptNow,
+      );
+      const sellerUnlockResult = unlockAchievements(
+        sellerAchievementSnapshot.data(),
+        eligibleAchievementIds({ fleaStats: sellerFleaStats, scope: "flea" }),
+        attemptNow,
+      );
+      transaction.set(buyerFleaStatsReference, {
+        ...buyerFleaStats,
+        updatedAt: attemptNow,
+      }, { merge: true });
+      transaction.set(sellerFleaStatsReference, {
+        ...sellerFleaStats,
+        updatedAt: attemptNow,
+      }, { merge: true });
+      if (buyerUnlockResult.newlyUnlocked.length) {
+        transaction.set(buyerAchievementReference, buyerUnlockResult.profile);
+      }
+      if (sellerUnlockResult.newlyUnlocked.length) {
+        transaction.set(sellerAchievementReference, sellerUnlockResult.profile);
+      }
       transaction.set(
         buyerWalletReference,
         {

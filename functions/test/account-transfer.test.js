@@ -99,6 +99,7 @@ test("account protection wiring preserves UID and never copies wallet data", () 
     "valueMarketPatrons",
     "valueMarketPatronLedger",
     "anjuPayFleaSellerCards",
+    "anjuPayFleaAchievementStats",
     "accountTransferCodes",
     "accountTransferSources",
     "accountTransferAttempts",
@@ -120,7 +121,7 @@ test("a saved flea seller card makes an account-transfer target non-pristine", (
   );
   assert.match(
     pristine,
-    /marketSnapshot\.exists \|\| fleaSellerCardSnapshot\.exists \|\| patronSnapshot\.exists/,
+    /marketSnapshot\.exists[\s\S]*?\|\| fleaSellerCardSnapshot\.exists \|\| patronSnapshot\.exists/,
   );
 
   const redeemStart = server.indexOf("async function redeemAccountTransferCode");
@@ -135,6 +136,60 @@ test("a saved flea seller card makes an account-transfer target non-pristine", (
   assert.match(
     redeem,
     /targetMarketSnapshot\.exists[\s\S]*?\|\| targetFleaSellerCardSnapshot\.exists[\s\S]*?\|\| targetPatronSnapshot\.exists/,
+  );
+});
+
+test("only nonzero flea achievement activity makes an account-transfer target non-pristine", () => {
+  const server = read("functions/index.js");
+  const activityStart = server.indexOf("function fleaAchievementStatsHaveActivity");
+  const activityEnd = server.indexOf("function hasMeaningfulEquippedValue", activityStart);
+  assert.ok(activityStart >= 0 && activityEnd > activityStart);
+  const activity = server.slice(activityStart, activityEnd);
+  assert.match(activity, /const stats = normalizeFleaStats\(value\)/);
+  assert.match(
+    activity,
+    /stats\.listings > 0 \|\| stats\.sales > 0 \|\| stats\.purchases > 0/,
+  );
+  assert.doesNotMatch(activity, /\.exists/);
+
+  const pristineStart = server.indexOf("async function transferTargetIsPristine");
+  const pristineEnd = server.indexOf("async function registerTransferFailure", pristineStart);
+  assert.ok(pristineStart >= 0 && pristineEnd > pristineStart);
+  const pristine = server.slice(pristineStart, pristineEnd);
+  assert.match(pristine, /\bfleaAchievementStatsSnapshot\b/);
+  assert.match(
+    pristine,
+    /await anjuPayFleaAchievementStatsStore\.ensure\(uid\)/,
+  );
+  assert.match(
+    pristine,
+    /anjuPayFleaAchievementStatsStore\.statsRef\(uid\)\.get\(\)/,
+  );
+  assert.match(
+    pristine,
+    /fleaAchievementStatsHaveActivity\(fleaAchievementStatsSnapshot\.data\(\)\)/,
+  );
+  assert.doesNotMatch(
+    pristine,
+    /\|\|\s*fleaAchievementStatsSnapshot\.exists/,
+  );
+
+  const redeemStart = server.indexOf("async function redeemAccountTransferCode");
+  const redeemEnd = server.indexOf("async function cancelAccountTransferCode", redeemStart);
+  assert.ok(redeemStart >= 0 && redeemEnd > redeemStart);
+  const redeem = server.slice(redeemStart, redeemEnd);
+  assert.match(redeem, /\btargetFleaAchievementStatsSnapshot\b/);
+  assert.match(
+    redeem,
+    /transaction\.get\(anjuPayFleaAchievementStatsStore\.statsRef\(targetUid\)\)/,
+  );
+  assert.match(
+    redeem,
+    /fleaAchievementStatsHaveActivity\(targetFleaAchievementStatsSnapshot\.data\(\)\)/,
+  );
+  assert.doesNotMatch(
+    redeem,
+    /\|\|\s*targetFleaAchievementStatsSnapshot\.exists/,
   );
 });
 

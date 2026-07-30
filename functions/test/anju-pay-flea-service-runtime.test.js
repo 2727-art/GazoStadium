@@ -5,6 +5,9 @@ const crypto = require("node:crypto");
 const test = require("node:test");
 
 const { createAnjuPayFleaService } = require("../anju-pay-flea-service");
+const {
+  createAnjuPayFleaAchievementStatsStore,
+} = require("../anju-pay-flea-achievement-stats");
 const { fleaPublicSellerId } = require("../anju-pay-flea");
 
 function clone(value) {
@@ -294,6 +297,10 @@ function createHarness({
   }
 
   const realtime = new FakeRealtime(realtimeValues);
+  const fleaAchievementStatsStore = createAnjuPayFleaAchievementStatsStore({
+    firestore,
+    now: () => clock,
+  });
   const walletReference = (uid) => firestore.collection("wallets").doc(uid);
   const ensureWallet = async (uid) => {
     const path = `wallets/${uid}`;
@@ -345,6 +352,8 @@ function createHarness({
     bestEffort: async (_label, promises) => {
       await Promise.allSettled(promises);
     },
+    ensureFleaAchievementStats: fleaAchievementStatsStore.ensure,
+    fleaAchievementStatsRef: fleaAchievementStatsStore.statsRef,
     now: () => queuedClockReadings.shift() ?? clock,
   });
 
@@ -411,12 +420,29 @@ test("create charges one Pay once, replays identical payload, and rejects a chan
   assert.equal(harness.walletLedger("seller").length, 1);
   assert.equal(harness.walletLedger("seller")[0].kind, "flea_listing_fee");
   assert.equal(harness.firestore.count("anjuPayFleaListings/"), 1);
+  assert.deepEqual(
+    {
+      listings: harness.firestore.read("anjuPayFleaAchievementStats/seller").listings,
+      sales: harness.firestore.read("anjuPayFleaAchievementStats/seller").sales,
+      purchases: harness.firestore.read("anjuPayFleaAchievementStats/seller").purchases,
+    },
+    { listings: 1, sales: 0, purchases: 0 },
+  );
+  assert.equal(
+    Boolean(harness.firestore.read("achievementProfiles/seller").unlocked.flea_listings_1),
+    true,
+  );
+  assert.equal(first.newlyUnlocked.includes("flea_listings_1"), true);
 
   const replay = await harness.service.performAction("seller", listingInput());
   assert.equal(replay.createdListing.id, listingId);
   assert.equal(replay.balance, 99);
   assert.equal(harness.wallet("seller").balance, 99);
   assert.equal(harness.walletLedger("seller").length, 1);
+  assert.equal(
+    harness.firestore.read("anjuPayFleaAchievementStats/seller").listings,
+    1,
+  );
 
   await assert.rejects(
     harness.service.performAction("seller", listingInput({ title: "別の一枚" })),
@@ -612,6 +638,32 @@ test("25 Pay sale is atomic, credits 23 Pay, sinks 2 Pay, and is purchase-idempo
   assert.equal(harness.firestore.count("anjuPayFleaReceipts/"), 2);
   assert.equal(harness.walletLedger("buyer").length, 1);
   assert.equal(harness.walletLedger("seller").length, 2);
+  assert.deepEqual(
+    {
+      listings: harness.firestore.read("anjuPayFleaAchievementStats/seller").listings,
+      sales: harness.firestore.read("anjuPayFleaAchievementStats/seller").sales,
+      purchases: harness.firestore.read("anjuPayFleaAchievementStats/seller").purchases,
+    },
+    { listings: 1, sales: 1, purchases: 0 },
+  );
+  assert.deepEqual(
+    {
+      listings: harness.firestore.read("anjuPayFleaAchievementStats/buyer").listings,
+      sales: harness.firestore.read("anjuPayFleaAchievementStats/buyer").sales,
+      purchases: harness.firestore.read("anjuPayFleaAchievementStats/buyer").purchases,
+    },
+    { listings: 0, sales: 0, purchases: 1 },
+  );
+  assert.equal(
+    Boolean(harness.firestore.read("achievementProfiles/seller").unlocked.flea_sales_1),
+    true,
+  );
+  assert.equal(
+    Boolean(harness.firestore.read("achievementProfiles/buyer").unlocked.flea_purchases_1),
+    true,
+  );
+  assert.equal(bought.newlyUnlocked.includes("flea_purchases_1"), true);
+  assert.equal(bought.newlyUnlocked.includes("flea_sales_1"), false);
 
   const replay = await harness.service.performAction("buyer", {
     action: "buy",
@@ -625,6 +677,14 @@ test("25 Pay sale is atomic, credits 23 Pay, sinks 2 Pay, and is purchase-idempo
   assert.equal(harness.firestore.count("anjuPayFleaReceipts/"), 2);
   assert.equal(harness.walletLedger("buyer").length, 1);
   assert.equal(harness.walletLedger("seller").length, 2);
+  assert.equal(
+    harness.firestore.read("anjuPayFleaAchievementStats/seller").sales,
+    1,
+  );
+  assert.equal(
+    harness.firestore.read("anjuPayFleaAchievementStats/buyer").purchases,
+    1,
+  );
 
   await assert.rejects(
     harness.service.performAction("otherBuyer", {
@@ -661,6 +721,63 @@ test("insufficient buyer balance rolls back every sale-side write", async () => 
   assert.equal(
     harness.firestore.read(`anjuPayFleaListings/${listingId}`).status,
     "active",
+  );
+  assert.equal(
+    harness.firestore.read("anjuPayFleaAchievementStats/seller").sales,
+    0,
+  );
+  assert.equal(
+    harness.firestore.read("anjuPayFleaAchievementStats/buyer").purchases,
+    0,
+  );
+});
+
+test("state backfills historical flea records once and unlocks only the viewer's flea collection", async () => {
+  const harness = createHarness({ balances: { legacy: 0 } });
+  harness.firestore.write("anjuPayFleaListings/legacy-listing-1", {
+    sellerUid: "legacy",
+    status: "expired",
+  });
+  harness.firestore.write("anjuPayFleaListings/legacy-listing-2", {
+    sellerUid: "legacy",
+    status: "canceled",
+  });
+  harness.firestore.write("anjuPayFleaListings/other-listing", {
+    sellerUid: "other",
+    status: "expired",
+  });
+  harness.firestore.write("anjuPayFleaSales/legacy-sale", {
+    sellerUid: "legacy",
+    buyerUid: "other",
+  });
+  harness.firestore.write("anjuPayFleaSales/legacy-purchase", {
+    sellerUid: "other",
+    buyerUid: "legacy",
+  });
+
+  const first = await harness.service.performAction("legacy", { action: "state" });
+  assert.deepEqual(first.fleaAchievementStats, {
+    listings: 2,
+    sales: 1,
+    purchases: 1,
+  });
+  assert.deepEqual(first.newlyUnlocked.sort(), [
+    "flea_listings_1",
+    "flea_purchases_1",
+    "flea_sales_1",
+  ]);
+  const storedStats = harness.firestore.read("anjuPayFleaAchievementStats/legacy");
+  assert.equal(storedStats.historyBackfilled, true);
+  assert.equal(storedStats.listings, 2);
+  assert.equal(storedStats.sales, 1);
+  assert.equal(storedStats.purchases, 1);
+
+  const second = await harness.service.performAction("legacy", { action: "state" });
+  assert.deepEqual(second.fleaAchievementStats, first.fleaAchievementStats);
+  assert.deepEqual(second.newlyUnlocked.sort(), first.newlyUnlocked.sort());
+  assert.equal(
+    harness.firestore.read("anjuPayFleaAchievementStats/legacy").historyBackfilledAt,
+    storedStats.historyBackfilledAt,
   );
 });
 

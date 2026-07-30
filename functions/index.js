@@ -51,6 +51,7 @@ const {
   sanitizeStoredMarketPublicProfile,
 } = require("./market-public-profile");
 const {
+  ACHIEVEMENT_DEFINITIONS,
   addBattleMatch,
   addMarketTransaction,
   deriveBattleStatsFromPeriods,
@@ -59,6 +60,7 @@ const {
   normalizeAiTextTrainingStats,
   normalizeAchievementProfile,
   normalizeBattleStats,
+  normalizeFleaStats,
   normalizeMarketStats,
   publicAchievementProfile,
   sanitizeAchievementIds,
@@ -123,6 +125,9 @@ const {
 const {
   createAnjuPayFleaService,
 } = require("./anju-pay-flea-service");
+const {
+  createAnjuPayFleaAchievementStatsStore,
+} = require("./anju-pay-flea-achievement-stats");
 const {
   createAiTextTrainingService,
 } = require("./ai-text-training-service");
@@ -347,6 +352,9 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
+const anjuPayFleaAchievementStatsStore = createAnjuPayFleaAchievementStatsStore({
+  firestore,
+});
 // Deploy-window safety only: retired V4 clients cannot write new state, but an
 // in-flight V4 claim/room must still block account transfer until it expires.
 // Remove this reader after the retired-resource cleanup has drained the rollout.
@@ -1846,9 +1854,11 @@ async function ensureEconomyProgress(uid) {
 }
 
 async function ensureAchievementState(uid) {
+  await anjuPayFleaAchievementStatsStore.ensure(uid);
   const progressRef = economyProgressRef(uid);
   const profileRef = achievementProfileRef(uid);
   const statsRef = marketStatsRef(uid);
+  const fleaStatsRef = anjuPayFleaAchievementStatsStore.statsRef(uid);
   const trainingRef = trainingProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
@@ -1858,6 +1868,7 @@ async function ensureAchievementState(uid) {
       progressSnapshot,
       profileSnapshot,
       marketSnapshot,
+      fleaStatsSnapshot,
       trainingSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
@@ -1865,6 +1876,7 @@ async function ensureAchievementState(uid) {
       transaction.get(progressRef),
       transaction.get(profileRef),
       transaction.get(statsRef),
+      transaction.get(fleaStatsRef),
       transaction.get(trainingRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
@@ -1872,6 +1884,7 @@ async function ensureAchievementState(uid) {
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
     const marketStats = normalizeMarketStats(marketSnapshot.data());
+    const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
     const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
@@ -1882,6 +1895,7 @@ async function ensureAchievementState(uid) {
       battleStats: progress.achievementStats,
       trainingStats: trainingProfile,
       marketStats,
+      fleaStats,
       aiTextTrainingStats,
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
@@ -1897,6 +1911,7 @@ async function ensureAchievementState(uid) {
     result = {
       progress,
       marketStats,
+      fleaStats,
       trainingProfile,
       aiTextTrainingStats,
       profile: unlockResult.profile,
@@ -2749,6 +2764,7 @@ async function getAchievements(uid, { syncPublic = false } = {}) {
     state.marketStats,
     state.trainingProfile,
     state.aiTextTrainingStats,
+    state.fleaStats,
   );
 }
 
@@ -2939,7 +2955,9 @@ async function syncCreatorCardGrowth(uid, achievementStateValue = null) {
 }
 
 async function acknowledgeAchievements(uid, idsValue) {
-  const ids = sanitizeAchievementIds(idsValue, { maximum: 100 });
+  const ids = sanitizeAchievementIds(idsValue, {
+    maximum: ACHIEVEMENT_DEFINITIONS.length,
+  });
   if (!ids.length) return { acknowledged: [] };
   const profileRef = achievementProfileRef(uid);
   const acknowledged = [];
@@ -2970,9 +2988,11 @@ async function setAchievementShowcase(uid, idsValue) {
   if (requestedIds.length !== rawIds.length) {
     throw new HttpsError("invalid-argument", "ショーケースの実績IDが正しくありません。");
   }
+  await anjuPayFleaAchievementStatsStore.ensure(uid);
   const profileRef = achievementProfileRef(uid);
   const progressRef = economyProgressRef(uid);
   const statsRef = marketStatsRef(uid);
+  const fleaStatsRef = anjuPayFleaAchievementStatsStore.statsRef(uid);
   const trainingRef = trainingProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
@@ -2982,6 +3002,7 @@ async function setAchievementShowcase(uid, idsValue) {
       profileSnapshot,
       progressSnapshot,
       marketSnapshot,
+      fleaStatsSnapshot,
       trainingSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
@@ -2989,12 +3010,14 @@ async function setAchievementShowcase(uid, idsValue) {
       transaction.get(profileRef),
       transaction.get(progressRef),
       transaction.get(statsRef),
+      transaction.get(fleaStatsRef),
       transaction.get(trainingRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
     ]);
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
+    const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
     const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
@@ -3013,6 +3036,7 @@ async function setAchievementShowcase(uid, idsValue) {
       profile,
       progress,
       marketStats,
+      fleaStats,
       trainingProfile,
       aiTextTrainingStats,
     };
@@ -3026,6 +3050,7 @@ async function setAchievementShowcase(uid, idsValue) {
       result.marketStats,
       result.trainingProfile,
       result.aiTextTrainingStats,
+      result.fleaStats,
     ),
   };
 }
@@ -3535,6 +3560,7 @@ async function initializeEconomy(uid) {
     progress,
     profile,
     marketStats,
+    fleaStats,
     trainingProfile,
     aiTextTrainingStats,
   } = achievementState;
@@ -3559,6 +3585,7 @@ async function initializeEconomy(uid) {
       marketStats,
       trainingProfile,
       aiTextTrainingStats,
+      fleaStats,
     ),
     patron: {
       ...publicPatronage(patron, periodKey("monthly")),
@@ -10702,6 +10729,11 @@ function economyProgressHasActivity(value) {
     || Number(progress.achievementStats?.totalMatches || 0) > 0;
 }
 
+function fleaAchievementStatsHaveActivity(value) {
+  const stats = normalizeFleaStats(value);
+  return stats.listings > 0 || stats.sales > 0 || stats.purchases > 0;
+}
+
 function hasMeaningfulEquippedValue(value) {
   if (value === true) return true;
   if (typeof value === "string") return value.length > 0;
@@ -10724,11 +10756,13 @@ function realtimeEconomyHasActivity(value) {
 
 async function transferTargetIsPristine(uid, request) {
   if (request.auth?.token?.firebase?.sign_in_provider !== "anonymous") return false;
+  await anjuPayFleaAchievementStatsStore.ensure(uid);
   const [
     userRecord,
     walletSnapshot,
     progressSnapshot,
     marketSnapshot,
+    fleaAchievementStatsSnapshot,
     fleaSellerCardSnapshot,
     aiTextTrainingPresetSnapshot,
     aiTextTrainingUseSnapshot,
@@ -10760,6 +10794,7 @@ async function transferTargetIsPristine(uid, request) {
     walletRef(uid).get(),
     economyProgressRef(uid).get(),
     marketStatsRef(uid).get(),
+    anjuPayFleaAchievementStatsStore.statsRef(uid).get(),
     firestore.collection("anjuPayFleaSellerCards").doc(uid).get(),
     firestore.collection("aiTextTrainingPresets").where("sellerUid", "==", uid).limit(1).get(),
     firestore.collection("aiTextTrainingUses").where("buyerUid", "==", uid).limit(1).get(),
@@ -10821,7 +10856,9 @@ async function transferTargetIsPristine(uid, request) {
       || trainingProfile.hpCompletedSeconds > 0
       || trainingProfile.hpOverkillDealt > 0
       || !trainingClaimSnapshot.empty) return false;
-  if (marketSnapshot.exists || fleaSellerCardSnapshot.exists || patronSnapshot.exists
+  if (marketSnapshot.exists
+      || fleaAchievementStatsHaveActivity(fleaAchievementStatsSnapshot.data())
+      || fleaSellerCardSnapshot.exists || patronSnapshot.exists
       || !aiTextTrainingPresetSnapshot.empty || !aiTextTrainingUseSnapshot.empty
       || !aiTextTrainingReportSnapshot.empty
       || aiTextTrainingProfileSnapshot.exists
@@ -10972,6 +11009,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetWalletSnapshot,
       targetProgressSnapshot,
       targetMarketSnapshot,
+      targetFleaAchievementStatsSnapshot,
       targetFleaSellerCardSnapshot,
       targetAiTextTrainingPresetSnapshot,
       targetAiTextTrainingUseSnapshot,
@@ -10992,6 +11030,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(walletRef(targetUid)),
       transaction.get(economyProgressRef(targetUid)),
       transaction.get(marketStatsRef(targetUid)),
+      transaction.get(anjuPayFleaAchievementStatsStore.statsRef(targetUid)),
       transaction.get(firestore.collection("anjuPayFleaSellerCards").doc(targetUid)),
       transaction.get(
         firestore.collection("aiTextTrainingPresets")
@@ -11057,6 +11096,7 @@ async function redeemAccountTransferCode(request, rawCode) {
     );
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
         || targetMarketSnapshot.exists
+        || fleaAchievementStatsHaveActivity(targetFleaAchievementStatsSnapshot.data())
         || targetFleaSellerCardSnapshot.exists
         || targetPatronSnapshot.exists
         || !targetAiTextTrainingPresetSnapshot.empty
@@ -14968,6 +15008,8 @@ const anjuPayFleaService = createAnjuPayFleaService({
   anjuPayEntryId,
   mirrorWallet,
   bestEffort,
+  ensureFleaAchievementStats: anjuPayFleaAchievementStatsStore.ensure,
+  fleaAchievementStatsRef: anjuPayFleaAchievementStatsStore.statsRef,
 });
 
 exports.anjuPayFleaAction = onCall(callableOptions("anjuPayFleaAction"), async (request) => {

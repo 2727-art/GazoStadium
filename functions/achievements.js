@@ -6,7 +6,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["battle", "training", "ai_training", "market"]);
+const VALID_SCOPES = new Set(["battle", "training", "ai_training", "market", "flea"]);
 const MAX_SHOWCASE = 3;
 
 function series({
@@ -146,8 +146,8 @@ const battleDefinitions = [
     family: "battle_losses",
     familyLabel: "通算敗北",
     icon: "☂",
-    thresholds: [1, 10, 30, 100, 300, 1000],
-    names: ["黒星デビュー", "負けても貼る", "敗北を知る者", "百敗将軍", "負けの向こう側", "千敗の景色"],
+    thresholds: [1, 10, 30, 100, 300, 1000, 2000, 3000, 5000, 10000],
+    names: ["黒星デビュー", "負けても貼る", "敗北を知る者", "百敗将軍", "負けの向こう側", "千敗の景色", "二千敗の轍", "三千敗の不屈", "五千の黒星を越えて", "黒星の果ての星"],
     description: (target) => `オンライン対戦で通算${target}敗を記録した`,
     condition: (target) => ({ type: "battle_stat", key: "losses", target }),
     autoPublic: false,
@@ -170,8 +170,8 @@ const battleDefinitions = [
     family: "battle_days",
     familyLabel: "対戦日数",
     icon: "◷",
-    thresholds: [3, 7, 14, 30, 60, 100],
-    names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手"],
+    thresholds: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    names: ["三日通い", "七日分の一枚", "二週間の顔", "月の常連", "二か月の住人", "百日の貼り手", "百八十日の観客席", "一年の貼り合い", "二年分の一枚", "千日のスタジアム"],
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
     condition: (target) => ({ type: "battle_stat", key: "playDays", target }),
   }),
@@ -181,8 +181,8 @@ const battleDefinitions = [
     family: "training_sessions",
     familyLabel: "鍛え合い参加",
     icon: "拳",
-    thresholds: [1, 5, 20, 50, 100, 300],
-    names: ["最初の一歩", "鍛錬の入口", "二十のセッション", "五十回の積み重ね", "百鍛錬", "鍛え合いの住人"],
+    thresholds: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    names: ["最初の一歩", "鍛錬の入口", "二十のセッション", "五十回の積み重ね", "百鍛錬", "鍛え合いの住人", "五百回の構え", "千日の鍛錬", "三千の積み重ね", "万鍛錬の到達者"],
     description: (target) => `鍛え合い60を${target}回記録した`,
     condition: (target) => ({ type: "training_stat", key: "sessions", target }),
   }),
@@ -192,8 +192,8 @@ const battleDefinitions = [
     family: "training_workouts",
     familyLabel: "運動完了",
     icon: "力",
-    thresholds: [1, 10, 30, 100, 300, 1000],
-    names: ["一本やりきった", "十本の鍛錬", "三十本の汗", "百本稽古", "積み重ねの証", "千本鍛錬"],
+    thresholds: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
+    names: ["一本やりきった", "十本の鍛錬", "三十本の汗", "百本稽古", "積み重ねの証", "千本鍛錬", "三千本の呼吸", "五千本の力", "万本鍛錬", "三万本の極み"],
     description: (target) => `鍛え合い60で運動を${target}本完了した`,
     condition: (target) => ({ type: "training_stat", key: "workouts", target }),
   }),
@@ -203,8 +203,8 @@ const battleDefinitions = [
     family: "training_minutes",
     familyLabel: "累計運動時間",
     icon: "秒",
-    thresholds: [1, 10, 30, 60, 300, 1000],
-    names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証"],
+    thresholds: [1, 10, 30, 60, 300, 1000, 3000, 10000, 30000, 60000],
+    names: ["最初の60秒", "十分の集中", "三十分の汗", "一時間の鍛錬", "五時間の積み重ね", "千分の証", "五十時間の鍛錬", "一万分の集中", "五百時間の軌跡", "千時間の極み"],
     description: (target) => `鍛え合い60で累計${target}分の運動を完了した`,
     condition: (target) => ({ type: "training_stat", key: "seconds", target: target * 60 }),
   }),
@@ -266,8 +266,8 @@ const aiTrainingDefinitions = [
     family: "ai_training_sessions",
     familyLabel: "文字コラ完走",
     icon: "五",
-    thresholds: [1, 5, 20, 50, 100, 300],
-    names: ["文字コラ開幕", "五回のエール", "文字コラ日和", "五十回の歩み", "百回トレーニー", "文字コラの住人"],
+    thresholds: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
+    names: ["文字コラ開幕", "五回のエール", "文字コラ日和", "五十回の歩み", "百回トレーニー", "文字コラの住人", "五百のエール", "千回トレーニー", "三千回の伴走", "万回の文字コラ"],
     description: (target) => `文字コラトレーニングを5ラウンド${target}回完走した`,
     hint: "自分のペースで5ラウンドを終えると解除",
     condition: (target) => ({ type: "ai_training_stat", key: "completedSessions", target }),
@@ -278,8 +278,8 @@ const aiTrainingDefinitions = [
     family: "ai_training_days",
     familyLabel: "文字コラ日数",
     icon: "日",
-    thresholds: [3, 7, 14, 30, 60, 100],
-    names: ["三日分の一歩", "七日の文字コラ", "二週間のエール", "月のトレーニー", "六十日の歩み", "百日の文字コラ"],
+    thresholds: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    names: ["三日分の一歩", "七日の文字コラ", "二週間のエール", "月のトレーニー", "六十日の歩み", "百日の文字コラ", "百八十日の伴走", "一年のエール", "二年の文字コラ", "千日のトレーニー"],
     description: (target) => `異なる${target}日で文字コラトレーニングを5ラウンド完走した`,
     hint: "日にちを分けて文字コラを続けると解除",
     condition: (target) => ({ type: "ai_training_stat", key: "completionDays", target }),
@@ -290,8 +290,8 @@ const aiTrainingDefinitions = [
     family: "ai_training_script_uses",
     familyLabel: "台本利用成立",
     icon: "文",
-    thresholds: [1, 3, 10, 30, 100, 300],
-    names: ["台本販売第一号", "駆け出し応援作者", "十回届いた言葉", "頼られる台本", "百回届いた言葉", "言葉で支える人"],
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["台本販売第一号", "駆け出し応援作者", "十回届いた言葉", "頼られる台本", "百回届いた言葉", "言葉で支える人", "五百回の応援", "千回届いた言葉", "三千のエール", "万の言葉を届けた人"],
     description: (target) => `応援台本のランキング対象利用が${target}回成立した`,
     hint: "同じ利用者からはJSTの1日1回だけ数える",
     condition: (target) => ({ type: "ai_training_stat", key: "rankingUseCount", target }),
@@ -317,8 +317,8 @@ const marketDefinitions = [
     family: "market_seller",
     familyLabel: "売り手成約",
     icon: "◆",
-    thresholds: [1, 3, 10, 30, 100, 300],
-    names: ["成約第一号", "駆け出しセラー", "推しの営業担当", "市場の顔役", "百戦錬磨の売り手", "価値をつくる人"],
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["成約第一号", "駆け出しセラー", "推しの営業担当", "市場の顔役", "百戦錬磨の売り手", "価値をつくる人", "五百の価値を結ぶ", "千件の営業譚", "三千の推し値", "万の価値をつくる人"],
     description: (target) => `ランキング集計対象の売買を売り手として${target}件成立させた`,
     condition: (target) => ({ type: "market_stat", key: "salesCount", target }),
   }),
@@ -328,8 +328,8 @@ const marketDefinitions = [
     family: "market_buyer",
     familyLabel: "買い手購入",
     icon: "◈",
-    thresholds: [1, 3, 10, 30, 100, 300],
-    names: ["はじめての推し買い", "目利き見習い", "推し値コレクター", "市場の目利き", "百の価値を見た者", "推し値の証人"],
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["はじめての推し買い", "目利き見習い", "推し値コレクター", "市場の目利き", "百の価値を見た者", "推し値の証人", "五百の価値を見届ける", "千件の推し買い", "三千の証人", "万の価値を見届けた人"],
     description: (target) => `ランキング集計対象の売買を買い手として${target}件成立させた`,
     condition: (target) => ({ type: "market_stat", key: "purchases", target }),
   }),
@@ -389,10 +389,53 @@ const marketDefinitions = [
   })),
 ];
 
+const fleaDefinitions = [
+  ...series({
+    scope: "flea",
+    category: "flea_listing",
+    family: "flea_listings",
+    familyLabel: "一日棚への出品",
+    icon: "棚",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
+    names: ["今日の棚開き", "三日の店主", "七つの一品", "二週間の棚", "三十日のことば", "六十日の店先", "百日の売りっ子", "半年の一日棚", "一年分のことば", "千日のフリマ店主"],
+    description: (target) => `AnjuPayフリマへ異なる${target}日で一品を出品した`,
+    hint: "連続でなくても、一日棚へ出品した日が積み重なると解除",
+    condition: (target) => ({ type: "flea_stat", key: "listings", target }),
+    autoPublic: false,
+  }),
+  ...series({
+    scope: "flea",
+    category: "flea_connections",
+    family: "flea_sales",
+    familyLabel: "届いた一品",
+    icon: "縁",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
+    names: ["ご縁第一号", "三つのご縁", "七つの旅立ち", "二週間分のご縁", "三十の旅立ち", "六十の出会い", "百のご縁", "百八十の旅立ち", "三百六十五のご縁", "千のご縁を結ぶ人"],
+    description: (target) => `AnjuPayフリマで出品した一品が${target}件届いた`,
+    hint: "価格の高さではなく、一品が誰かへ届くと解除",
+    condition: (target) => ({ type: "flea_stat", key: "sales", target }),
+    autoPublic: false,
+  }),
+  ...series({
+    scope: "flea",
+    category: "flea_connections",
+    family: "flea_purchases",
+    familyLabel: "出会いの記録",
+    icon: "帖",
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["はじめての出会い記録", "三つのことば", "十の出会い", "三十の一品", "百のことばを受け取る", "三百の出会い記録", "五百の店主を知る", "千の一日棚", "三千のことば", "万のご縁を見届けた人"],
+    description: (target) => `AnjuPayフリマで${target}件の出会いの記録を残した`,
+    hint: "価格の高さではなく、ことばから一品を選ぶと解除",
+    condition: (target) => ({ type: "flea_stat", key: "purchases", target }),
+    autoPublic: false,
+  }),
+];
+
 const ACHIEVEMENT_DEFINITIONS = Object.freeze([
   ...battleDefinitions,
   ...aiTrainingDefinitions,
   ...marketDefinitions,
+  ...fleaDefinitions,
 ]);
 const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition]));
 
@@ -511,6 +554,14 @@ function normalizeAiTextTrainingStats(value) {
   };
 }
 
+function normalizeFleaStats(value) {
+  return {
+    listings: count(value?.listings),
+    sales: count(value?.sales),
+    purchases: count(value?.purchases),
+  };
+}
+
 function addMarketTransaction(value, role, dateKey, { newCounterparty = false } = {}) {
   const stats = normalizeMarketStats(value);
   if (!["seller", "buyer"].includes(role)) return stats;
@@ -533,6 +584,7 @@ function achievementConditionMet(
   trainingStats,
   aiTextTrainingStats,
   marketStats,
+  fleaStats,
   signals = {},
 ) {
   const condition = definition.condition;
@@ -558,6 +610,7 @@ function achievementConditionMet(
     return count(marketStats?.salesCount) >= condition.target && count(marketStats?.purchases) >= condition.target;
   }
   if (condition.type === "market_signal") return signals?.[condition.signal] === true;
+  if (condition.type === "flea_stat") return count(fleaStats?.[condition.key]) >= condition.target;
   return false;
 }
 
@@ -566,6 +619,7 @@ function eligibleAchievementIds({
   trainingStats,
   aiTextTrainingStats,
   marketStats,
+  fleaStats,
   signals = {},
   scope = "",
 } = {}) {
@@ -578,6 +632,7 @@ function eligibleAchievementIds({
         trainingStats,
         aiTextTrainingStats,
         marketStats,
+        fleaStats,
         signals,
       ))
     .map((definition) => definition.id);
@@ -677,12 +732,14 @@ function publicAchievementProfile(
   marketStatsValue,
   trainingStatsValue,
   aiTextTrainingStatsValue,
+  fleaStatsValue,
 ) {
   const profile = normalizeAchievementProfile(profileValue);
   const battleStats = normalizeBattleStats(battleStatsValue);
   const marketStats = normalizeMarketStats(marketStatsValue);
   const trainingStats = normalizeTrainingStats(trainingStatsValue);
   const aiTextTrainingStats = normalizeAiTextTrainingStats(aiTextTrainingStatsValue);
+  const fleaStats = normalizeFleaStats(fleaStatsValue);
   const unlockedLegacyCount = Object.keys(profile.unlocked)
     .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.legacy === true)
     .length;
@@ -704,6 +761,7 @@ function publicAchievementProfile(
         marketDays: marketStats.marketDays,
         uniqueCounterparties: marketStats.uniqueCounterparties,
       },
+      flea: fleaStats,
     },
   };
 }
@@ -724,6 +782,7 @@ module.exports = Object.freeze({
   normalizeAiTextTrainingStats,
   normalizeAchievementProfile,
   normalizeBattleStats,
+  normalizeFleaStats,
   normalizeMarketStats,
   normalizeTrainingStats,
   publicAchievementProfile,

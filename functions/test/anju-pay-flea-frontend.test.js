@@ -49,10 +49,154 @@ test("the flea market is a separate top-level discovery panel, not another VALUE
   assert.match(app, /const initialScreen = \["sellers", "sell"\]\.includes\(destination\) \? destination : "shelf"/);
   assert.match(app, /#fleaMarketSellersButton, #fleaMarketBrowseButton, #fleaMarketSellButton/);
   assert.match(app, /フリマの取引は、推し値市場の販売実績・ランキング・常連帳・店主評価へ加算しません/);
-  assert.match(app, /本人が選んだ解除済みの推し値市場実績だけを、売りっ子カードに飾れます/);
+  assert.match(app, /出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録され/);
+  assert.match(app, /本人が選んだ解除済みの推し値市場実績は売りっ子カードへ飾れます/);
+  assert.match(
+    flea,
+    /ここでの出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録し、市場のランキング・実績・常連帳・店主評価へは加算しません/,
+  );
   assert.match(flea, /httpsCallable\(functions, "anjuPayFleaAction"\)/);
   assert.doesNotMatch(flea, /valueMarketAction|valueMarketQueue|valueMarketShop/);
   assert.doesNotMatch(flea, /marketStats|unlockAchievements|MarketCertificates|patronFund/);
+});
+
+test("server flea unlocks notify the collection and ACK only flea-scoped IDs", () => {
+  const source = read("flea-market.js");
+  const notifier = between(
+    source,
+    "function notifyFleaAchievementUnlocks",
+    "function normalizeMarketAchievementIds",
+  );
+  const applyState = between(source, "function applyServerState", "function isCurrentLifecycle");
+  assert.match(
+    source,
+    /const economyActionCallable = httpsCallable\(functions, "economyAction"\)/,
+  );
+  assert.match(
+    applyState,
+    /Array\.isArray\(data\.newlyUnlocked\)[\s\S]*?notifyFleaAchievementUnlocks\(data\.newlyUnlocked\)/,
+  );
+  assert.match(
+    notifier,
+    /window\.HariaiAchievements\?\.byId\?\.get\?\.\(id\)\?\.scope === "flea"/,
+  );
+  assert.match(notifier, /"hariai-achievements-unlocked"/);
+  assert.match(
+    notifier,
+    /action: "ack_achievements",[\s\S]*?achievementIds: ids/,
+  );
+
+  const definitions = new Map([
+    ["flea_listings_1", { id: "flea_listings_1", scope: "flea" }],
+    ["flea_purchases_1", { id: "flea_purchases_1", scope: "flea" }],
+    ["market_seller_1", { id: "market_seller_1", scope: "market" }],
+  ]);
+  const trace = [];
+  const sandbox = {
+    window: {
+      HariaiAchievements: {
+        catalog: [...definitions.values()],
+        byId: definitions,
+        normalizeIds: (value, maximum) => [...new Set(value)]
+          .filter((id) => definitions.has(id))
+          .slice(0, maximum),
+      },
+      dispatchEvent: (event) => {
+        trace.push({
+          kind: "event",
+          type: event.type,
+          ids: Array.from(event.detail.ids),
+        });
+      },
+    },
+    CustomEvent: class CustomEvent {
+      constructor(type, init) {
+        this.type = type;
+        this.detail = init.detail;
+      }
+    },
+    economyActionCallable: (payload) => {
+      trace.push({
+        kind: "ack",
+        payload: JSON.parse(JSON.stringify(payload)),
+      });
+      return Promise.resolve();
+    },
+  };
+  vm.runInNewContext(notifier, sandbox);
+  sandbox.notifyFleaAchievementUnlocks([
+    "market_seller_1",
+    "flea_listings_1",
+    "flea_listings_1",
+    "unknown",
+    "flea_purchases_1",
+  ]);
+  assert.deepEqual(trace, [
+    {
+      kind: "event",
+      type: "hariai-achievements-unlocked",
+      ids: ["flea_listings_1", "flea_purchases_1"],
+    },
+    {
+      kind: "ack",
+      payload: {
+        action: "ack_achievements",
+        achievementIds: ["flea_listings_1", "flea_purchases_1"],
+      },
+    },
+  ]);
+
+  sandbox.notifyFleaAchievementUnlocks(["market_seller_1", "unknown"]);
+  assert.equal(trace.length, 2, "non-flea IDs must produce neither a banner nor an ACK");
+});
+
+test("Lv10 is final across achievement surfaces with luxurious motion-safe styling", () => {
+  const achievements = read("achievements.js");
+  const css = read("styles.css");
+
+  assert.match(
+    achievements,
+    /Math\.min\(10, Math\.max\(1, Math\.floor\(Number\(definition\?\.level\) \|\| 1\)\)\)/,
+  );
+  assert.match(achievements, /level === 10 \? " is-final" : ""/);
+  assert.match(achievements, /achievement\.level === 10 \? "FINAL Lv\.10"/);
+  assert.match(achievements, /Lv\.10 \/ 10・最終実績/);
+  assert.match(achievements, /FINAL ACHIEVEMENT UNLOCKED/);
+  assert.match(achievements, /class="achievement-final-mark"/);
+  assert.match(achievements, /class="achievement-unlock-final"/);
+  assert.match(
+    achievements,
+    /Number\(second\?\.level === 10\) - Number\(first\?\.level === 10\)/,
+  );
+
+  for (const selector of [
+    ".achievement-family-card.is-final {",
+    ".achievement-family-card.is-final::before {",
+    ".achievement-family-card.is-final::after {",
+    ".achievement-badge.is-final {",
+    ".achievement-badge.is-final::before {",
+    ".achievement-unlock-card.is-final {",
+    ".achievement-unlock-card.is-final::before {",
+    ".achievement-unlock-card.is-final::after {",
+    ".achievement-final-mark {",
+    ".achievement-unlock-final {",
+    ".achievement-badge.achievement-scope-flea {",
+  ]) {
+    assert.ok(css.includes(selector), `missing final-achievement style: ${selector}`);
+  }
+  assert.match(
+    css,
+    /\.achievement-family-card\.is-final \{[\s\S]*?border-color:[\s\S]*?radial-gradient[\s\S]*?box-shadow:/,
+  );
+  assert.match(
+    css,
+    /\.achievement-unlock-card\.is-final \{[\s\S]*?border: 2px[\s\S]*?radial-gradient[\s\S]*?box-shadow:/,
+  );
+  assert.match(css, /@keyframes achievement-final-sheen/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.achievement-family-card\.is-final::after,[\s\S]*?\.achievement-unlock-card\.is-final::after \{[\s\S]*?animation: none;/,
+  );
 });
 
 test("the seller directory is a category-based daily discovery view, never a fifth ranking tab", () => {
@@ -449,6 +593,7 @@ test("direct Firestore access is denied and the callable starts with enforced Ap
     "anjuPayFleaReceipts",
     "anjuPayFleaSales",
     "anjuPayFleaReports",
+    "anjuPayFleaAchievementStats",
   ]) {
     const start = rules.indexOf(`match /${collection}/`);
     assert.notEqual(start, -1, `${collection} rules are missing`);

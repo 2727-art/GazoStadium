@@ -66,5 +66,8 @@ test("retired history and purchased cosmetics remain compatible", () => {
     assert.match(stamps, new RegExp(`id:\\s*"${id}"`), id);
   }
   assert.match(titles, /id:\s*"title_still_surviving"/);
-  assert.match(achievements, /legacyFamily \? "終了モードの記録"/);
+  assert.match(
+    achievements,
+    /const progressLabel = legacyFamily\s*\?\s*"終了モードの記録"/,
+  );
 });
