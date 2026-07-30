@@ -544,7 +544,10 @@ function createTrainingSessionV5Service({
         if (pair.host.state !== "reserved" || pair.guest.state !== "reserved") {
           roomRejected = true;
           roomRequiresTerminal = true;
-          return undefined;
+          // Admin RTDB can invoke a transaction once with a cold-cache null
+          // even when the server room exists. Returning null lets Firebase
+          // compare with the server and retry; undefined would abort locally.
+          return null;
         }
         roomReady = true;
         return room;

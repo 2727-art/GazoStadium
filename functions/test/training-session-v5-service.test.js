@@ -100,7 +100,27 @@ class FakeReference {
       this.database.transactionBlockers.delete(blockerKey);
     }
     const current = clone(getAt(this.database.data, this.path));
+    if (current != null && this.database.coldCacheNullOncePaths.delete(this.path)) {
+      const coldCacheNext = update(null);
+      if (coldCacheNext === undefined) {
+        return { committed: false, snapshot: new FakeSnapshot(null) };
+      }
+    }
     const next = update(current);
+    if (next !== undefined
+        && current != null
+        && this.database.deleteBeforeCommitOncePaths.delete(this.path)) {
+      setAt(this.database.data, this.path, null);
+      const retryNext = update(null);
+      if (retryNext === undefined) {
+        return { committed: false, snapshot: new FakeSnapshot(null) };
+      }
+      setAt(this.database.data, this.path, retryNext);
+      return {
+        committed: true,
+        snapshot: new FakeSnapshot(getAt(this.database.data, this.path)),
+      };
+    }
     if (next === undefined) {
       return { committed: false, snapshot: new FakeSnapshot(current) };
     }
@@ -125,6 +145,8 @@ class FakeRealtime {
     this.transactionBlockers = new Map();
     this.afterCommitFailures = new Map();
     this.getFailures = new Set();
+    this.coldCacheNullOncePaths = new Set();
+    this.deleteBeforeCommitOncePaths = new Set();
   }
 
   ref(value) {
@@ -141,6 +163,14 @@ class FakeRealtime {
 
   failGet(value) {
     this.getFailures.add(segments(value).join("/"));
+  }
+
+  coldCacheNullOnce(value) {
+    this.coldCacheNullOncePaths.add(segments(value).join("/"));
+  }
+
+  deleteBeforeCommitOnce(value) {
+    this.deleteBeforeCommitOncePaths.add(segments(value).join("/"));
   }
 
   failAfterCommit(value, offset = 1) {
@@ -426,6 +456,32 @@ test("inspect completes materialization after the room write response is lost", 
   assert.equal(h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).state, "active");
 });
 
+test("inspect creates a missing reserved room once and remains idempotent", async () => {
+  const h = harness();
+  const host = await start(h, HOST_UID);
+  await start(h, GUEST_UID);
+  const roomId = "-0000000000000000001";
+  const roomPath = `${PATHS.rooms}/${roomId}`;
+  h.realtime.failTransaction(roomPath);
+  await assert.rejects(
+    h.service.match(HOST_UID, host),
+    /forced transaction failure/,
+  );
+  assert.equal(h.realtime.read(roomPath), undefined);
+
+  const recovered = await h.service.inspect(HOST_UID, host);
+  const roomAfterRecovery = h.realtime.read(roomPath);
+  const attemptsAfterRecovery = h.realtime.read(PATHS.attempts);
+  const inspectedAgain = await h.service.inspect(HOST_UID, host);
+
+  assert.equal(recovered.outcome, "active");
+  assert.equal(inspectedAgain.outcome, "active");
+  assert.equal(inspectedAgain.roomId, roomId);
+  assert.deepEqual(h.realtime.read(roomPath), roomAfterRecovery);
+  assert.deepEqual(h.realtime.read(PATHS.attempts), attemptsAfterRecovery);
+  assert.equal(Object.keys(h.realtime.read(PATHS.rooms)).length, 1);
+});
+
 test("active liveRoom ignores an expired queue timestamp", async () => {
   const h = harness();
   const { host, matched } = await pair(h);
@@ -582,6 +638,70 @@ test("heartbeat also converges an active attempt whose peer disappeared", async 
   assert.equal(heartbeat.terminalReason, "pair-broken");
 });
 
+test("heartbeat survives an Admin RTDB cold-cache null for an active room", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const roomWithProgress = h.realtime.read(roomPath);
+  roomWithProgress.rounds[1].scores = {
+    [HOST_UID]: 9,
+    [GUEST_UID]: 8,
+  };
+  roomWithProgress.rounds[1].commandChoices = {
+    [GUEST_UID]: {
+      trainerUid: HOST_UID,
+      cardIndex: 2,
+      selectedAt: h.now(),
+    },
+  };
+  h.realtime.write(roomPath, roomWithProgress);
+  const roomBefore = h.realtime.read(roomPath);
+  const hostBefore = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
+  const guestBefore = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  h.realtime.coldCacheNullOnce(roomPath);
+
+  const heartbeat = await h.service.heartbeat(HOST_UID, host);
+
+  const hostAfter = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
+  const guestAfter = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  const roomAfter = h.realtime.read(roomPath);
+  assert.equal(heartbeat.owned, true);
+  assert.equal(heartbeat.outcome, "active");
+  assert.equal(heartbeat.roomId, matched.roomId);
+  assert.equal(heartbeat.roomAttemptId, matched.roomAttemptId);
+  assert.equal(heartbeat.transportEpoch, matched.transportEpoch);
+  assert.equal(hostAfter.state, "active");
+  assert.equal(hostAfter.revision, hostBefore.revision + 1);
+  assert.equal(hostAfter.terminalReason, undefined);
+  assert.equal(hostAfter.pendingRoomCleanup, undefined);
+  assert.deepEqual(guestAfter, guestBefore);
+  assert.deepEqual(roomAfter, roomBefore);
+  assert.equal(roomAfter.destroyed, undefined);
+});
+
+test("heartbeat terminalizes an active room deleted during transaction commit", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  h.realtime.deleteBeforeCommitOnce(roomPath);
+
+  const heartbeat = await h.service.heartbeat(HOST_UID, host);
+
+  assert.equal(heartbeat.owned, true);
+  assert.equal(heartbeat.outcome, "terminal");
+  assert.equal(heartbeat.terminalReason, "room-ended");
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).terminalReason,
+    "room-ended",
+  );
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).terminalReason,
+    "room-ended",
+  );
+  assert.equal(h.realtime.read(roomPath).destroyed.reason, "room-ended");
+  assert.equal(h.realtime.read(roomPath).status, "destroyed");
+});
+
 test("materialization rejects a room whose peer session identity is corrupted", async () => {
   const h = harness();
   const { host, matched } = await pair(h);
@@ -638,6 +758,20 @@ test("lost reconnect response is retried idempotently and materializes one epoch
 test("heartbeat repairs the room after reconnect committed only the attempt epoch", async () => {
   const h = harness();
   const { host, guest, matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const roomWithProgress = h.realtime.read(roomPath);
+  roomWithProgress.rounds[1].scores = {
+    [HOST_UID]: 10,
+    [GUEST_UID]: 9,
+  };
+  roomWithProgress.rounds[1].commandChoices = {
+    [GUEST_UID]: {
+      trainerUid: HOST_UID,
+      cardIndex: 1,
+      selectedAt: h.now(),
+    },
+  };
+  h.realtime.write(roomPath, roomWithProgress);
   const request = {
     ...host,
     roomAttemptId: matched.roomAttemptId,
@@ -650,6 +784,7 @@ test("heartbeat repairs the room after reconnect committed only the attempt epoc
   );
   const rotated = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
   assert.notEqual(rotated.transportEpoch, matched.transportEpoch);
+  h.realtime.coldCacheNullOnce(roomPath);
 
   const heartbeat = await h.service.heartbeat(GUEST_UID, guest);
   const hostAfter = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
@@ -663,6 +798,14 @@ test("heartbeat repairs the room after reconnect committed only the attempt epoc
   assert.equal(hostAfter.transportEpoch, rotated.transportEpoch);
   assert.equal(guestAfter.transportEpoch, rotated.transportEpoch);
   assert.equal(roomAfter.transportEpoch, rotated.transportEpoch);
+  assert.deepEqual(
+    roomAfter.rounds[1].scores,
+    roomWithProgress.rounds[1].scores,
+  );
+  assert.deepEqual(
+    roomAfter.rounds[1].commandChoices,
+    roomWithProgress.rounds[1].commandChoices,
+  );
   assert.equal(roomAfter.destroyed, undefined);
 });
 
