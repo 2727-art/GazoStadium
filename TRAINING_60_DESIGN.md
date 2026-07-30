@@ -95,23 +95,29 @@ Realtime Databaseへ保存する対戦メタデータは次のとおり。
 
 秘密採点は本人の領域だけへ一度書く。クライアントは自分の採点を確定するまで相手の採点を取得せず、双方確定後にだけ相手側を読み込む。筋トレ中の双方向メッセージとOVERKILL提案はP2Pでその場だけ表示し、Firebaseへ会話履歴を保存しない。チャット枠はマッチ成立時にサーバーが確定したIDだけを参加者へ公開する。
 
-## 通常1on1 V2共通基盤
+## Session V5正本
 
-マッチング、単一セッション所有権、接続世代、シグナリング、切断復旧は通常1on1 V2と同じ契約に統一する。一方、HP、採点、COMMAND、筋トレ、OVERKILLは鍛え合い60のゲームプロトコルV3として分離する。
+マッチング、単一所有権、復帰、シグナリングを鍛え合い60専用のSession V5として管理する。HP、採点、COMMAND、筋トレ、OVERKILLはゲームプロトコルV3のまま分離する。
 
-- 待機列、対戦候補の選定、OFFER、ACTIVE予約はCloud Functionsだけが更新する
-- クライアントは待機列を直接読み書きせず、自分宛てOFFERと参加ルームだけを購読する
-- `sessionId`、lease、generation、`attemptId`、`connectionGeneration`を全段階で照合し、古いタブや古い接続の書き込みを拒否する
-- 通常1on1と同じlease契約を使いつつ、90秒Workoutを覆う鍛え合い専用180秒leaseと復帰直後のheartbeatを使用する
+- `trainingAttemptsV5/{uid}`を参加状態の唯一の正本とし、クライアントは本人分を読むだけで直接書かない
+- クライアント操作は`start`、`heartbeat`、`match`、`inspect`、`reconnect`、`cancel`のCallableだけを使用する
+- 待機者2人の予約は一つのサーバートランザクションで同時に確定し、OFFERやクライアント作成ルームを挟まない
+- ルーム生成・ACTIVE化の直前にも両者の待機期限を同じroot transactionで再確認し、期限切れ予約はルームを開始せず両者を待機へ戻す
+- `runId`、`endpointId`、`ownerEpoch`、`roomAttemptId`、`transportEpoch`を別々の識別子として扱い、一つのgenerationへ意味を重ねない
+- 待機期限はマッチング候補の鮮度だけに使う。ACTIVE参加権は待機期限から分離し、期限切れだけで進行中ルームを破棄しない
+- ACTIVEは最後のactivityから10分以内、または本人の正確な`presenceV5`がfresh onlineなら維持する。10分を越えてactivityがなく本人presenceもfresh onlineでない参加者がいれば、放置ルームとして両attemptを同時に終端し、新しいendpointから開始し直せるようにする
+- 同じ所有者が180秒を越えて復帰した場合は同じattemptを再取得する。通信結果が不明なだけでは終了せず`recovering`から`inspect`する
+- 別所有者への移動はサーバーが`owner-replaced`を確定した場合だけ受け入れ、古い画面はローカル接続だけを停止してルームを書き換えない
+- 同一ブラウザの多重起動はWeb Locksで排他し、BroadcastChannelは通知だけに使う
+- `presenceV5`と`signalsV5`は両参加者のrun、endpoint、room attempt、transport epochが一致する場合だけ読み書きできる
+- PeerConnectionを作り直すたび、サーバーが両者共通の新しい`transportEpoch`を発行する。旧epochの遅延信号は新接続へ渡さず破棄する
+- 再接続中にattemptとroomの`transportEpoch`が一時的に異なる状態は破損とみなさず、確認済みのcanonical attempt側へroomをCASで収束させる
+- キャンセルや破損ルームの後処理はfence付きの再試行可能な清掃情報を残し、Callable応答喪失や一時的なRTDB失敗後も収束させる
 - Workout実行中は対応ブラウザでScreen Wake Lockを保持し、完了・中止・画面非表示で解放する
-- 配慮条件は公開待機列へ保存せず、マッチング成立後の参加者限定ルームだけへ保存する
-- DataChannel確立前の失敗はICE restartを1回、その後は別相手への自動再検索を1回だけ行う
-- 一度DataChannelが確立した後の切断は別相手へ差し替えず、結果を再確認して未決着の場合だけ`NO CONTEST`とする
+- 配慮条件は公開待機列へ保存せず、参加者限定ルームだけへ保存する
 - 確立後の再接続では受信途中データを破棄し、相手のRTDB受信確認がないDRAWだけを新しいDataChannelで再送する
-- Callableの応答喪失後も、同じセッションに紐づくOFFERまたはACTIVEルームへ再参加できる
-- V2セッションが有効な間は旧マッチング経路からの新規書き込みを拒否し、二重参加を防ぐ
 
-鍛え合い60専用の名前空間を使用するため、通常1on1の相手と交差したり、通常1on1のルームを筋トレ用スキーマで書き換えたりしない。
+この名前空間は通常1on1と独立しており、通常1on1の待機者やルームと交差しない。
 
 ## サーバー確定と記録
 
@@ -119,8 +125,10 @@ Cloud Functionsの`trainingAction`が、5枚の未使用DRAW、採点、HP、未
 
 専用プロフィールにはHP対戦数、完遂ワークアウト数、被弾数、画像が受けた得点、運動秒数などを非公開で保存する。専用デイリーミッションはGIVE UPを含む正式決着1回で達成し、NO CONTESTと通信中断は除外する。旧V1・V2のセット数、連続日数、活動履歴は過去記録として保持し、V3から新規加算しない。
 
-## V1・V2互換
+## 旧セッション経路の廃止
 
-新規マッチングは`protocolVersion: 3`と`kitaeai_hp_v3`だけを組み合わせる。配備前から進行中のV1・V2ルームは旧クライアントでのみ完了でき、新クライアントは書き換えず互換案内を表示する。
+新規セッションはゲームプロトコル3、Session/Signaling 5の組み合わせだけを受け入れる。旧queue、invite、active、claim、presence、signalsへのクライアントアクセスは許可せず、キャッシュ済み旧クライアントとのセッション互換は持たせない。
 
-Functionsと清掃処理はV1・V2の既存ルームを従来の意味で確定できる状態を保つ。過去記録を削除したり、V3のHP記録へ変換したりしない。
+旧Realtime Database資源はサーバー清掃だけで排出する。過去の非公開トレーニング記録は履歴として保持するが、旧セッションを再開したりV5へ変換したりしない。
+
+本番切替は旧クライアントとの同時稼働を前提にしない。既存V4セッションを停止・排出するメンテナンス境界を設け、Functions、Database Rules、Hostingを一つの切替として扱う。移行中のアカウント移行事故だけを防ぐため、V4 claim／live roomの読取専用guardは退役資源が空になるまでサーバー側に残す。

@@ -13,68 +13,29 @@ const {
   get,
   ref,
   remove,
-  runTransaction,
   set,
   update,
 } = require("firebase/database");
 
 const root = path.resolve(__dirname, "..", "..");
-const emulatorHost = process.env.FIREBASE_DATABASE_EMULATOR_HOST || "";
-const projectId = process.env.TRAINING_RULES_TEST_PROJECT_ID || "demo-training-rules";
-const runsAgainstSafeEmulator = /^demo-[a-z0-9-]+$/.test(projectId)
+const emulatorHost = String(
+  process.env.FIREBASE_DATABASE_EMULATOR_HOST || "",
+).trim();
+const projectId = String(
+  process.env.TRAINING_RULES_TEST_PROJECT_ID || "demo-training-rules",
+).trim();
+const runsAgainstSafeEmulator = /^demo-[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$/
+  .test(projectId)
   && /^(?:127\.0\.0\.1|localhost):\d+$/.test(emulatorHost);
+const optInMessage =
+  "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID";
 
-function queueEntry(uid, name, now, overrides = {}) {
-  return {
-    uid,
-    sessionId: `${uid}-session`,
-    name,
-    intensity: "standard",
-    protocolVersion: 2,
-    variant: "kitaeai_60_v2",
-    joinedAt: now,
-    lastSeen: now,
-    state: "waiting",
-    ...overrides,
-  };
+function token(label) {
+  return `${label.replace(/[^A-Za-z0-9_-]/g, "_")}_000000000000000000000000`
+    .slice(0, 32);
 }
 
-function player(entry, conditions = "") {
-  return {
-    uid: entry.uid,
-    name: entry.name,
-    intensity: entry.intensity,
-    conditions,
-  };
-}
-
-function roomPayload(host, guest, now, {
-  hostConditions = "ジャンプは控えめ",
-  guestConditions = "",
-} = {}) {
-  return {
-    protocolVersion: 2,
-    variant: "kitaeai_60_v2",
-    hostUid: host.uid,
-    guestUid: guest.uid,
-    createdAt: now,
-    status: "forming",
-    firstTrainerUid: host.uid,
-    members: {
-      [host.uid]: true,
-      [guest.uid]: true,
-    },
-    players: {
-      [host.uid]: player(host, hostConditions),
-      [guest.uid]: player(guest, guestConditions),
-    },
-    accepted: {
-      [host.uid]: true,
-    },
-  };
-}
-
-function v3CommandDeck() {
+function commandDeck() {
   return {
     1: {
       exercise: "スクワット",
@@ -97,331 +58,203 @@ function v3CommandDeck() {
   };
 }
 
-function v3QueueEntry(uid, name, now, overrides = {}) {
+function imageBpms() {
   return {
-    uid,
-    sessionId: `${uid}-session`,
-    name,
-    intensity: "standard",
-    protocolVersion: 3,
-    variant: "kitaeai_hp_v3",
-    commandDeck: v3CommandDeck(),
-    imageBpms: {
-      1: 0,
-      2: 80,
-      3: 100,
-      4: 120,
-      5: 160,
-    },
-    joinedAt: now,
-    lastSeen: now,
-    state: "waiting",
-    ...overrides,
-  };
-}
-
-function v3Player(entry, conditions = "") {
-  return {
-    uid: entry.uid,
-    name: entry.name,
-    intensity: entry.intensity,
-    conditions,
-    commandDeck: entry.commandDeck,
-    imageBpms: entry.imageBpms,
-  };
-}
-
-function v3RoomPayload(host, guest, now, {
-  hostConditions = "ジャンプは控えめ",
-  guestConditions = "",
-} = {}) {
-  return {
-    protocolVersion: 3,
-    variant: "kitaeai_hp_v3",
-    hostUid: host.uid,
-    guestUid: guest.uid,
-    createdAt: now,
-    status: "forming",
-    members: {
-      [host.uid]: true,
-      [guest.uid]: true,
-    },
-    players: {
-      [host.uid]: v3Player(host, hostConditions),
-      [guest.uid]: v3Player(guest, guestConditions),
-    },
-    accepted: {
-      [host.uid]: true,
-    },
-  };
-}
-
-function trainingSessionV4Fixture(suffix, now = Date.now()) {
-  const hostUid = `training-v4-host-${suffix}`;
-  const guestUid = `training-v4-guest-${suffix}`;
-  const hostSessionId = `training-v4-host-session-${suffix}`;
-  const guestSessionId = `training-v4-guest-session-${suffix}`;
-  const hostLeaseToken = `training-v4-host-lease-${suffix}`;
-  const guestLeaseToken = `training-v4-guest-lease-${suffix}`;
-  const hostGeneration = "H".repeat(22);
-  const guestGeneration = "G".repeat(22);
-  const roomId = `-trainingV4${suffix.padEnd(9, "0")}`.slice(0, 20);
-  const attemptId = `training-v4-attempt-${suffix}`;
-  const connectionGeneration = `training-v4-connection-${suffix}`;
-  const expiresAt = now + 60_000;
-  const imageBpms = {
-    1: 0,
-    2: 80,
+    1: 80,
+    2: 90,
     3: 100,
     4: 120,
     5: 160,
   };
-  const queueEntryFor = ({
-    uid,
-    sessionId,
-    leaseToken,
-    generation,
-    name,
-  }) => ({
-    protocolVersion: 2,
-    trainingProtocolVersion: 3,
-    variant: "kitaeai_hp_v3",
-    uid,
-    sessionId,
-    leaseToken,
-    generation,
-    connectionGeneration: `queue-${connectionGeneration}-${uid}`,
+}
+
+function preparation(name) {
+  return {
     name,
     intensity: "standard",
-    commandDeck: v3CommandDeck(),
-    imageBpms,
-    joinedAt: now,
+    conditions: "",
+    commandDeck: commandDeck(),
+    imageBpms: imageBpms(),
+    chatFrameId: "",
+  };
+}
+
+function player(uid, name) {
+  const prepared = preparation(name);
+  return {
+    uid,
+    name: prepared.name,
+    intensity: prepared.intensity,
+    conditions: prepared.conditions,
+    commandDeck: prepared.commandDeck,
+    imageBpms: prepared.imageBpms,
+  };
+}
+
+function activeAttempt({
+  uid,
+  runId,
+  endpointId,
+  ownerEpoch,
+  opponentUid,
+  role,
+  roomId,
+  roomAttemptId,
+  transportEpoch,
+  name,
+  now,
+}) {
+  return {
+    protocolVersion: 5,
+    signalingVersion: 5,
+    uid,
+    runId,
+    endpointId,
+    ownerEpoch,
+    revision: 2,
+    state: "active",
+    preparation: preparation(name),
+    createdAt: now,
+    updatedAt: now,
     lastSeen: now,
-    expiresAt,
-    state: "waiting",
-  });
-  const claimFor = ({ sessionId, leaseToken, generation }) => ({
-    protocolVersion: 2,
-    sessionId,
-    leaseToken,
-    generation,
-    claimedAt: now,
-    heartbeatAt: now,
-    expiresAt,
-  });
-  const hostQueue = queueEntryFor({
-    uid: hostUid,
-    sessionId: hostSessionId,
-    leaseToken: hostLeaseToken,
-    generation: hostGeneration,
-    name: "V4 HOST",
-  });
-  const guestQueue = queueEntryFor({
-    uid: guestUid,
-    sessionId: guestSessionId,
-    leaseToken: guestLeaseToken,
-    generation: guestGeneration,
-    name: "V4 GUEST",
-  });
-  const sessions = {
+    queueExpiresAt: now + 180_000,
+    roomId,
+    roomAttemptId,
+    transportEpoch,
+    role,
+    opponentUid,
+  };
+}
+
+function trainingSessionV5Fixture(now = Date.now()) {
+  const hostUid = "training-v5-host";
+  const guestUid = "training-v5-guest";
+  const roomId = "-V5RulesRoom00000001";
+  const roomAttemptId = token("room-attempt");
+  const transportEpoch = token("transport-epoch");
+  const hostRunId = token("host-run");
+  const guestRunId = token("guest-run");
+  const hostEndpointId = token("host-endpoint");
+  const guestEndpointId = token("guest-endpoint");
+  const hostOwnerEpoch = token("host-owner");
+  const guestOwnerEpoch = token("guest-owner");
+  assert.equal(roomId.length, 20);
+  const identities = {
     [hostUid]: {
-      sessionId: hostSessionId,
-      generation: hostGeneration,
+      runId: hostRunId,
+      endpointId: hostEndpointId,
+      ownerEpoch: hostOwnerEpoch,
     },
     [guestUid]: {
-      sessionId: guestSessionId,
-      generation: guestGeneration,
+      runId: guestRunId,
+      endpointId: guestEndpointId,
+      ownerEpoch: guestOwnerEpoch,
     },
   };
-  const players = {
-    [hostUid]: v3Player(hostQueue, "ジャンプは控えめ"),
-    [guestUid]: v3Player(guestQueue, ""),
-  };
-  const common = {
-    protocolVersion: 2,
-    signalingVersion: 2,
-    trainingProtocolVersion: 3,
-    variant: "kitaeai_hp_v3",
-    hostUid,
-    guestUid,
-    attemptId,
-    connectionGeneration,
-    createdAt: now,
-    expiresAt,
-    sessions,
+  const attempts = {
+    [hostUid]: activeAttempt({
+      uid: hostUid,
+      ...identities[hostUid],
+      opponentUid: guestUid,
+      role: "host",
+      roomId,
+      roomAttemptId,
+      transportEpoch,
+      name: "V5 HOST",
+      now,
+    }),
+    [guestUid]: activeAttempt({
+      uid: guestUid,
+      ...identities[guestUid],
+      opponentUid: hostUid,
+      role: "guest",
+      roomId,
+      roomAttemptId,
+      transportEpoch,
+      name: "V5 GUEST",
+      now,
+    }),
   };
   const room = {
     protocolVersion: 3,
     variant: "kitaeai_hp_v3",
-    sessionProtocolVersion: 2,
-    signalingVersion: 2,
+    sessionProtocolVersion: 5,
+    signalingVersion: 5,
+    roomAttemptId,
+    transportEpoch,
     hostUid,
     guestUid,
-    attemptId,
-    connectionGeneration,
     createdAt: now,
-    expiresAt,
+    activatedAt: now,
     status: "active",
-    sessions,
+    sessions: identities,
     members: {
       [hostUid]: true,
       [guestUid]: true,
     },
-    players,
+    players: {
+      [hostUid]: player(hostUid, "V5 HOST"),
+      [guestUid]: player(guestUid, "V5 GUEST"),
+    },
+    chatFrames: {
+      [hostUid]: "",
+      [guestUid]: "",
+    },
     accepted: {
       [hostUid]: true,
       [guestUid]: true,
     },
+    rounds: {
+      1: { createdAt: now },
+    },
   };
-  const activeFor = (queue, role) => ({
-    protocolVersion: 2,
-    uid: queue.uid,
-    sessionId: queue.sessionId,
-    leaseToken: queue.leaseToken,
-    generation: queue.generation,
-    roomId,
-    attemptId,
-    connectionGeneration,
-    role,
-    lastSeen: now,
-    expiresAt,
-  });
-  const lockFor = (queue, role) => ({
-    protocolVersion: 2,
-    roomId,
-    attemptId,
-    role,
-    sessionId: queue.sessionId,
-    generation: queue.generation,
-    hostUid,
-    guestUid,
-    acquiredAt: now,
-    expiresAt,
-  });
   return {
     hostUid,
     guestUid,
-    hostSessionId,
-    guestSessionId,
-    hostLeaseToken,
-    guestLeaseToken,
-    hostGeneration,
-    guestGeneration,
     roomId,
-    attemptId,
-    connectionGeneration,
-    expiresAt,
-    hostQueue,
-    guestQueue,
-    hostClaim: claimFor({
-      sessionId: hostSessionId,
-      leaseToken: hostLeaseToken,
-      generation: hostGeneration,
-    }),
-    guestClaim: claimFor({
-      sessionId: guestSessionId,
-      leaseToken: guestLeaseToken,
-      generation: guestGeneration,
-    }),
+    roomAttemptId,
+    transportEpoch,
+    hostRunId,
+    guestRunId,
+    hostEndpointId,
+    guestEndpointId,
+    hostOwnerEpoch,
+    guestOwnerEpoch,
+    attempts,
     room,
-    permit: {
-      ...common,
-      players,
-    },
-    hostActive: activeFor(hostQueue, "host"),
-    guestActive: activeFor(guestQueue, "guest"),
-    hostLock: lockFor(hostQueue, "host"),
-    guestLock: lockFor(guestQueue, "guest"),
-    offer: {
-      ...common,
-      roomId,
-      fromUid: hostUid,
-      toUid: guestUid,
-      fromSessionId: hostSessionId,
-      toSessionId: guestSessionId,
-      fromName: hostQueue.name,
-    },
   };
 }
 
-async function seedTrainingSessionV4(environment, fixture, {
-  includeRoom = true,
-} = {}) {
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const values = {
-      [`trainingSessionClaims/${fixture.hostUid}`]: fixture.hostClaim,
-      [`trainingSessionClaims/${fixture.guestUid}`]: fixture.guestClaim,
-      [`trainingQueueV4/${fixture.hostUid}/${fixture.hostSessionId}`]:
-        fixture.hostQueue,
-      [`trainingQueueV4/${fixture.guestUid}/${fixture.guestSessionId}`]:
-        fixture.guestQueue,
-      [`trainingActiveV4/${fixture.hostUid}/${fixture.hostSessionId}`]:
-        fixture.hostActive,
-      [`trainingActiveV4/${fixture.guestUid}/${fixture.guestSessionId}`]:
-        fixture.guestActive,
-      [`trainingMatchPermitsV4/${fixture.roomId}`]: fixture.permit,
-      [`trainingMatchLocksV4/${fixture.hostUid}`]: fixture.hostLock,
-      [`trainingMatchLocksV4/${fixture.guestUid}`]: fixture.guestLock,
-      [`trainingOffersV4/${fixture.guestUid}/${fixture.guestSessionId}/${fixture.roomId}`]:
-        fixture.offer,
-    };
-    if (includeRoom) values[`trainingRooms/${fixture.roomId}`] = fixture.room;
-    await update(ref(contextWithoutRules.database(), "online"), values);
-  });
-}
-
-function instruction(overrides = {}) {
+function presencePayload(fixture, overrides = {}) {
   return {
-    exercise: "スクワット",
-    completion: "60秒続ける",
-    command: "メトロノームに合わせて続けてください",
-    bpm: 80,
-    beatsPerRep: 2,
+    protocolVersion: 5,
+    runId: fixture.hostRunId,
+    endpointId: fixture.hostEndpointId,
+    ownerEpoch: fixture.hostOwnerEpoch,
+    roomAttemptId: fixture.roomAttemptId,
+    transportEpoch: fixture.transportEpoch,
+    online: true,
+    updatedAt: Date.now(),
     ...overrides,
   };
 }
 
-function activeReservation(roomId) {
+function signalPayload(fixture, overrides = {}) {
   return {
-    roomId,
-    rooms: {
-      [roomId]: true,
-    },
+    protocolVersion: 5,
+    roomAttemptId: fixture.roomAttemptId,
+    transportEpoch: fixture.transportEpoch,
+    fromUid: fixture.hostUid,
+    toUid: fixture.guestUid,
+    fromRunId: fixture.hostRunId,
+    toRunId: fixture.guestRunId,
+    fromEndpointId: fixture.hostEndpointId,
+    toEndpointId: fixture.guestEndpointId,
+    type: "offer",
+    payload: JSON.stringify({ type: "offer", sdp: "v=0" }),
+    createdAt: Date.now(),
+    ...overrides,
   };
-}
-
-function matchLockPayload(uid, roomId, createdAt = Date.now(), ttlMs = 59_000) {
-  return {
-    uid,
-    roomId,
-    createdAt,
-    expiresAt: createdAt + ttlMs,
-  };
-}
-
-async function reserveActive(database, uid, roomId) {
-  await assertSucceeds(set(
-    ref(database, `online/trainingActive/${uid}`),
-    activeReservation(roomId),
-  ));
-}
-
-async function releaseActive(database, uid, roomId) {
-  await assertSucceeds(remove(ref(
-    database,
-    `online/trainingActive/${uid}/rooms/${roomId}`,
-  )));
-  await assertSucceeds(runTransaction(
-    ref(database, `online/trainingActive/${uid}`),
-    (current) => {
-      const rooms = current?.rooms && typeof current.rooms === "object"
-        ? current.rooms
-        : {};
-      return current?.roomId === roomId && Object.keys(rooms).length === 0
-        ? null
-        : undefined;
-    },
-  ));
 }
 
 async function createEnvironment(context) {
@@ -432,2404 +265,288 @@ async function createEnvironment(context) {
       rules: fs.readFileSync(path.join(root, "database.rules.json"), "utf8"),
     },
   });
-  context.after(() => environment.cleanup());
+  await environment.clearDatabase();
+  context.after(async () => {
+    await environment.clearDatabase();
+    await environment.cleanup();
+  });
   return environment;
 }
 
-async function createFormingRoom(environment, now, roomId) {
-  const host = queueEntry("training-host", "HOST", now);
-  const guest = queueEntry("training-guest", "GUEST", now, {
-    intensity: "light",
-  });
-  const hostDatabase = environment.authenticatedContext(host.uid).database();
-  const guestDatabase = environment.authenticatedContext(guest.uid).database();
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    await Promise.all([
-      remove(ref(adminDatabase, `online/trainingActive/${host.uid}`)),
-      remove(ref(adminDatabase, `online/trainingActive/${guest.uid}`)),
-      remove(ref(adminDatabase, `online/trainingQueue/${host.uid}`)),
-      remove(ref(adminDatabase, `online/trainingQueue/${guest.uid}`)),
-      remove(ref(adminDatabase, `online/trainingInvites/${host.uid}`)),
-      remove(ref(adminDatabase, `online/trainingInvites/${guest.uid}`)),
-    ]);
-  });
-  await assertSucceeds(set(ref(hostDatabase, `online/trainingQueue/${host.uid}`), host));
-  await assertSucceeds(set(ref(guestDatabase, `online/trainingQueue/${guest.uid}`), guest));
-  await assertSucceeds(set(
-    ref(hostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(host.uid, roomId),
-  ));
-  await reserveActive(hostDatabase, host.uid, roomId);
-  await assertSucceeds(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}`),
-    roomPayload(host, guest, now),
-  ));
-  await assertSucceeds(update(
-    ref(hostDatabase, `online/trainingQueue/${host.uid}`),
-    { state: "forming" },
-  ));
-  const invitePath = `online/trainingInvites/${guest.uid}/${roomId}`;
-  await assertSucceeds(set(ref(hostDatabase, invitePath), {
-    roomId,
-    hostUid: host.uid,
-    targetSessionId: guest.sessionId,
-    protocolVersion: 2,
-    variant: "kitaeai_60_v2",
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(remove(ref(
-    hostDatabase,
-    "online/trainingMatchLock",
-  )));
-
-  return {
-    host,
-    guest,
-    hostDatabase,
-    guestDatabase,
-    invitePath,
-    guestConditions: "ジャンプなし",
-  };
-}
-
-async function bootstrapRoom(environment, now, roomId) {
-  const room = await createFormingRoom(environment, now, roomId);
-  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
-  await assertSucceeds(update(
-    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
-    {
-      [`players/${room.guest.uid}/conditions`]: room.guestConditions,
-      [`accepted/${room.guest.uid}`]: true,
-    },
-  ));
-  await assertSucceeds(remove(ref(room.guestDatabase, room.invitePath)));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `online/trainingRooms/${roomId}/status`),
-    "active",
-  ));
-
-  return room;
-}
-
-async function createV3FormingRoom(environment, now, roomId, suffix) {
-  const host = v3QueueEntry(`training-v3-host-${suffix}`, "HP HOST", now);
-  const guest = v3QueueEntry(`training-v3-guest-${suffix}`, "HP GUEST", now, {
-    intensity: "light",
-  });
-  const hostDatabase = environment.authenticatedContext(host.uid).database();
-  const guestDatabase = environment.authenticatedContext(guest.uid).database();
-
-  await assertSucceeds(set(ref(hostDatabase, `online/trainingQueue/${host.uid}`), host));
-  await assertSucceeds(set(ref(guestDatabase, `online/trainingQueue/${guest.uid}`), guest));
-  await assertSucceeds(set(
-    ref(hostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(host.uid, roomId),
-  ));
-  await reserveActive(hostDatabase, host.uid, roomId);
-  await assertSucceeds(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}`),
-    v3RoomPayload(host, guest, now),
-  ));
-  await assertSucceeds(update(
-    ref(hostDatabase, `online/trainingQueue/${host.uid}`),
-    { state: "forming" },
-  ));
-  const invitePath = `online/trainingInvites/${guest.uid}/${roomId}`;
-  await assertSucceeds(set(ref(hostDatabase, invitePath), {
-    roomId,
-    hostUid: host.uid,
-    targetSessionId: guest.sessionId,
-    protocolVersion: 3,
-    variant: "kitaeai_hp_v3",
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(remove(ref(hostDatabase, "online/trainingMatchLock")));
-
-  return {
-    host,
-    guest,
-    hostDatabase,
-    guestDatabase,
-    invitePath,
-    guestConditions: "ジャンプなし",
-  };
-}
-
-async function bootstrapV3Room(environment, now, roomId, suffix) {
-  const room = await createV3FormingRoom(environment, now, roomId, suffix);
-  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
-  await assertSucceeds(update(
-    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
-    {
-      [`players/${room.guest.uid}/conditions`]: room.guestConditions,
-      [`accepted/${room.guest.uid}`]: true,
-    },
-  ));
-  await assertSucceeds(remove(ref(room.guestDatabase, room.invitePath)));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `online/trainingRooms/${roomId}/status`),
-    "active",
-  ));
-  return room;
-}
-
-async function markBothImagesReceived(room, roomId) {
-  await assertSucceeds(set(
-    ref(
-      room.hostDatabase,
-      `online/trainingRooms/${roomId}/imageReceived/${room.host.uid}`,
-    ),
-    true,
-  ));
-  await assertSucceeds(set(
-    ref(
-      room.guestDatabase,
-      `online/trainingRooms/${roomId}/imageReceived/${room.guest.uid}`,
-    ),
-    true,
-  ));
-}
-
-async function chooseCarrots(room, roomId, {
-  hostChoice = "mine",
-  guestChoice = "boost8",
-} = {}) {
-  await assertSucceeds(set(
-    ref(
-      room.hostDatabase,
-      `online/trainingRooms/${roomId}/carrotChoices/${room.host.uid}`,
-    ),
-    hostChoice,
-  ));
-  await assertSucceeds(set(
-    ref(
-      room.guestDatabase,
-      `online/trainingRooms/${roomId}/carrotChoices/${room.guest.uid}`,
-    ),
-    guestChoice,
-  ));
-}
-
-function v2Turn(trainerUid, traineeUid, carrotChoice, createdAt = Date.now()) {
-  const targetDurationMs = {
-    mine: 60_000,
-    boost8: 70_000,
-    boost9: 80_000,
-    boost10: 90_000,
-  }[carrotChoice];
-  return {
-    trainerUid,
-    traineeUid,
-    carrotChoice,
-    targetDurationMs,
-    imageOwnerUid: carrotChoice === "mine" ? traineeUid : trainerUid,
-    instruction: instruction(),
-    createdAt,
-  };
-}
-
-async function setLegacyRoomProtocol(environment, roomId) {
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await update(
-      ref(
-        contextWithoutRules.database(),
-        `online/trainingRooms/${roomId}`,
-      ),
-      {
-        protocolVersion: 1,
-        variant: "kitaeai_60",
-      },
-    );
+async function seedFixture(environment, fixture) {
+  await environment.withSecurityRulesDisabled(async (adminContext) => {
+    await update(ref(adminContext.database(), "online"), {
+      trainingAttemptsV5: fixture.attempts,
+      [`trainingRooms/${fixture.roomId}`]: fixture.room,
+    });
   });
 }
 
-test("training bootstrap, child reads, and target-only signaling are enforced", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
+async function adminSet(environment, targetPath, value) {
+  await environment.withSecurityRulesDisabled(async (adminContext) => {
+    await set(ref(adminContext.database(), targetPath), value);
+  });
+}
+
+test("training V5 Rules enforce canonical attempts, room fences, and retired paths", {
+  skip: runsAgainstSafeEmulator ? false : optInMessage,
 }, async (context) => {
   const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingRulesRoom01";
-  const outsiderUid = "training-outsider";
-  const outsiderDatabase = environment.authenticatedContext(outsiderUid).database();
-  const {
-    host,
-    guest,
-    hostDatabase,
-    guestDatabase,
-  } = await bootstrapRoom(environment, now, roomId);
+  const fixture = trainingSessionV5Fixture();
+  await seedFixture(environment, fixture);
 
-  await assertFails(get(ref(hostDatabase, `online/trainingRooms/${roomId}`)));
-  await assertSucceeds(get(ref(hostDatabase, `online/trainingRooms/${roomId}/status`)));
-  await assertSucceeds(get(ref(guestDatabase, `online/trainingRooms/${roomId}/players`)));
-  await assertFails(get(ref(outsiderDatabase, `online/trainingRooms/${roomId}/status`)));
+  const hostDatabase = environment.authenticatedContext(
+    fixture.hostUid,
+  ).database();
+  const guestDatabase = environment.authenticatedContext(
+    fixture.guestUid,
+  ).database();
+  const outsiderDatabase = environment.authenticatedContext(
+    "training-v5-outsider",
+  ).database();
 
-  const signalPath = `online/trainingRooms/${roomId}/signals/${guest.uid}/signal-1`;
-  await assertSucceeds(set(ref(hostDatabase, signalPath), {
-    fromUid: host.uid,
-    type: "offer",
-    payload: "offer-sdp",
-    createdAt: Date.now(),
-    connectionId: "connection-1",
-  }));
-  await assertFails(get(ref(hostDatabase, signalPath)));
-  await assertSucceeds(get(ref(guestDatabase, signalPath)));
-  await assertFails(remove(ref(hostDatabase, signalPath)));
-  await assertSucceeds(remove(ref(guestDatabase, signalPath)));
-
-  await assertFails(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}/imageReceived/${guest.uid}`),
-    true,
-  ));
-  await assertSucceeds(set(
-    ref(guestDatabase, `online/trainingRooms/${roomId}/imageReceived/${guest.uid}`),
-    true,
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}/continueVotes/1/${host.uid}`),
-    "continue",
-  ));
-  await assertFails(set(
-    ref(guestDatabase, `online/trainingRooms/${roomId}/continueVotes/pair1/${guest.uid}`),
-    "continue",
-  ));
-  await assertFails(set(
-    ref(outsiderDatabase, `online/trainingRooms/${roomId}/destroyed`),
-    { by: outsiderUid, at: Date.now() },
-  ));
-});
-
-test("health conditions stay out of queue and guest disclosure is private and one-shot", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingPrivateConditions01";
-  const outsiderDatabase = environment
-    .authenticatedContext("training-outsider")
-    .database();
-  const room = await createFormingRoom(environment, now, roomId);
-
-  await assertFails(set(
-    ref(room.hostDatabase, `online/trainingQueue/${room.host.uid}`),
-    { ...room.host, conditions: "待機列には出さない" },
-  ));
-  await releaseActive(room.hostDatabase, room.host.uid, roomId);
-  await reserveActive(
-    room.hostDatabase,
-    room.host.uid,
-    "-trainingPrivacyLeak01",
-  );
-  await assertFails(set(
-    ref(room.hostDatabase, "online/trainingRooms/-trainingPrivacyLeak01"),
-    roomPayload(room.host, room.guest, Date.now(), {
-      guestConditions: "ホストが代理入力",
-    }),
-  ));
-  await releaseActive(
-    room.hostDatabase,
-    room.host.uid,
-    "-trainingPrivacyLeak01",
-  );
-  await reserveActive(room.hostDatabase, room.host.uid, roomId);
-  await assertFails(get(ref(
-    outsiderDatabase,
-    `online/trainingRooms/${roomId}/players`,
-  )));
-
-  const guestConditionsPath =
-    `online/trainingRooms/${roomId}/players/${room.guest.uid}/conditions`;
-  await assertFails(set(
-    ref(room.hostDatabase, guestConditionsPath),
-    room.guestConditions,
-  ));
-  await assertFails(set(
-    ref(outsiderDatabase, guestConditionsPath),
-    room.guestConditions,
-  ));
-  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
-  await assertSucceeds(set(
-    ref(room.guestDatabase, guestConditionsPath),
-    room.guestConditions,
-  ));
-  await assertFails(set(
-    ref(room.guestDatabase, guestConditionsPath),
-    "二度目の変更",
-  ));
-
-  await assertSucceeds(set(
-    ref(
-      room.guestDatabase,
-      `online/trainingRooms/${roomId}/accepted/${room.guest.uid}`,
-    ),
-    true,
-  ));
-  await assertSucceeds(remove(ref(room.guestDatabase, room.invitePath)));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `online/trainingRooms/${roomId}/status`),
-    "active",
-  ));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), guestConditionsPath),
-      "",
-    );
-  });
-  await assertFails(set(
-    ref(room.guestDatabase, guestConditionsPath),
-    "active後の変更",
-  ));
-});
-
-test("queue and invites are fenced to the current matchmaking session", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const queueUid = "training-session-owner";
-  const queueDatabase = environment.authenticatedContext(queueUid).database();
-  const first = queueEntry(queueUid, "FIRST", now, {
-    sessionId: "queue-session-first",
-  });
-  const second = queueEntry(queueUid, "SECOND", now, {
-    sessionId: "queue-session-second",
-  });
-  const queuePath = `online/trainingQueue/${queueUid}`;
-  await assertSucceeds(set(ref(queueDatabase, queuePath), first));
-  await assertFails(set(ref(queueDatabase, queuePath), second));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${queuePath}/lastSeen`),
-      now - 60_001,
-    );
-  });
-  await assertSucceeds(set(ref(queueDatabase, queuePath), second));
-
-  const roomId = "-trainingSessionFence01";
-  const room = await createFormingRoom(environment, Date.now(), roomId);
-  const replacement = {
-    ...room.guest,
-    sessionId: "replacement-session",
-    joinedAt: Date.now(),
-    lastSeen: Date.now(),
-  };
-  await assertFails(set(
-    ref(room.guestDatabase, `online/trainingQueue/${room.guest.uid}`),
-    replacement,
-  ));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(
-        contextWithoutRules.database(),
-        `online/trainingQueue/${room.guest.uid}/lastSeen`,
-      ),
-      Date.now() - 60_001,
-    );
-  });
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `online/trainingQueue/${room.guest.uid}`),
-    replacement,
-  ));
-  await assertSucceeds(remove(ref(room.guestDatabase, room.invitePath)));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), room.invitePath),
-      {
-        roomId,
-        hostUid: room.host.uid,
-        targetSessionId: room.guest.sessionId,
-        protocolVersion: 2,
-        variant: "kitaeai_60_v2",
-        createdAt: Date.now(),
-      },
-    );
-  });
-  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
-  await assertFails(update(
-    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
-    {
-      [`players/${room.guest.uid}/conditions`]: room.guestConditions,
-      [`accepted/${room.guest.uid}`]: true,
-    },
-  ));
-  assert.equal(
-    (await get(ref(room.guestDatabase, room.invitePath)))
-      .child("targetSessionId").val(),
-    room.guest.sessionId,
-  );
-  await assertFails(remove(ref(
-    environment.authenticatedContext("training-invite-outsider").database(),
-    room.invitePath,
-  )));
-  const malformedInvitePath =
-    `online/trainingInvites/${room.guest.uid}/-trainingMalformedInvite01`;
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), malformedInvitePath),
-      { hostUid: room.host.uid, createdAt: Date.now() },
-    );
-  });
-  await assertSucceeds(remove(ref(room.guestDatabase, malformedInvitePath)));
-});
-
-test("invite ownership replaces the long global lock without blocking an independent pair", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const hostOne = queueEntry("training-pair1-host", "HOST1", now);
-  const guestOne = queueEntry("training-pair1-guest", "GUEST1", now);
-  const competingHost = queueEntry("training-race-host", "RACE", now);
-  const guestAsHostTarget = queueEntry("training-race-target", "TARGET", now);
-  const hostTwo = queueEntry("training-pair2-host", "HOST2", now);
-  const guestTwo = queueEntry("training-pair2-guest", "GUEST2", now);
-  const entries = [
-    hostOne,
-    guestOne,
-    competingHost,
-    guestAsHostTarget,
-    hostTwo,
-    guestTwo,
-  ];
-  const databases = Object.fromEntries(entries.map((entry) => [
-    entry.uid,
-    environment.authenticatedContext(entry.uid).database(),
+  const ownAttemptPath = `online/trainingAttemptsV5/${fixture.hostUid}`;
+  await assertSucceeds(get(ref(hostDatabase, ownAttemptPath)));
+  await assertFails(get(ref(guestDatabase, ownAttemptPath)));
+  await assertFails(set(ref(hostDatabase, ownAttemptPath), fixture.attempts[
+    fixture.hostUid
   ]));
-  await Promise.all(entries.map((entry) => assertSucceeds(set(
-    ref(databases[entry.uid], `online/trainingQueue/${entry.uid}`),
-    entry,
-  ))));
 
-  const lockPath = "online/trainingMatchLock";
-  const lock = (uid, roomId) => {
-    const createdAt = Date.now();
-    return {
-      uid,
-      roomId,
-      createdAt,
-      expiresAt: createdAt + 59_000,
-    };
-  };
-  const invite = (host, guest, roomId) => ({
-    roomId,
-    hostUid: host.uid,
-    targetSessionId: guest.sessionId,
-    protocolVersion: 2,
-    variant: "kitaeai_60_v2",
-    createdAt: Date.now(),
-  });
+  const hostPresencePath =
+    `online/trainingRooms/${fixture.roomId}/presenceV5/${
+      fixture.hostUid
+    }/${fixture.hostRunId}`;
+  await assertSucceeds(set(
+    ref(hostDatabase, hostPresencePath),
+    presencePayload(fixture),
+  ));
+  await assertSucceeds(get(ref(guestDatabase,
+    `online/trainingRooms/${fixture.roomId}/presenceV5`)));
+  await assertFails(get(ref(outsiderDatabase,
+    `online/trainingRooms/${fixture.roomId}/presenceV5`)));
 
-  const roomOneId = "-trainingConcurrentPair01";
-  await assertSucceeds(set(
-    ref(databases[hostOne.uid], lockPath),
-    lock(hostOne.uid, roomOneId),
-  ));
-  await reserveActive(databases[hostOne.uid], hostOne.uid, roomOneId);
-  await assertSucceeds(set(
-    ref(databases[hostOne.uid], `online/trainingRooms/${roomOneId}`),
-    roomPayload(hostOne, guestOne, now),
-  ));
-  await assertSucceeds(update(
-    ref(databases[hostOne.uid], `online/trainingQueue/${hostOne.uid}`),
-    { state: "forming" },
-  ));
-  const inviteOnePath =
-    `online/trainingInvites/${guestOne.uid}/${roomOneId}`;
-  const inviteOne = invite(hostOne, guestOne, roomOneId);
-  await assertSucceeds(remove(ref(databases[hostOne.uid], lockPath)));
-  await assertFails(set(
-    ref(databases[hostOne.uid], inviteOnePath),
-    inviteOne,
-  ));
-  await assertSucceeds(set(
-    ref(databases[hostOne.uid], lockPath),
-    lock(hostOne.uid, "-differentInviteRoom"),
-  ));
-  await assertFails(set(
-    ref(databases[hostOne.uid], inviteOnePath),
-    inviteOne,
-  ));
-  await assertSucceeds(remove(ref(databases[hostOne.uid], lockPath)));
-  const expiredInviteLockAt = Date.now() - 2_000;
-  await assertSucceeds(set(
-    ref(databases[hostOne.uid], lockPath),
-    matchLockPayload(hostOne.uid, roomOneId, expiredInviteLockAt, 1_000),
-  ));
-  await assertFails(set(
-    ref(databases[hostOne.uid], inviteOnePath),
-    inviteOne,
-  ));
-  await assertSucceeds(remove(ref(databases[hostOne.uid], lockPath)));
-  await assertSucceeds(set(
-    ref(databases[hostOne.uid], lockPath),
-    lock(hostOne.uid, roomOneId),
-  ));
-  await assertSucceeds(set(
-    ref(databases[hostOne.uid], inviteOnePath),
-    inviteOne,
-  ));
-  await assertSucceeds(remove(ref(databases[hostOne.uid], lockPath)));
-
-  const competingRoomId = "-trainingConcurrentRace1";
-  await assertSucceeds(set(
-    ref(databases[competingHost.uid], lockPath),
-    lock(competingHost.uid, competingRoomId),
-  ));
-  await reserveActive(
-    databases[competingHost.uid],
-    competingHost.uid,
-    competingRoomId,
-  );
+  const invalidPresenceCases = [
+    ["ownerEpoch", token("wrong-owner")],
+    ["endpointId", token("wrong-endpoint")],
+    ["roomAttemptId", token("wrong-room-attempt")],
+    ["transportEpoch", token("wrong-transport")],
+  ];
+  for (const [field, value] of invalidPresenceCases) {
+    await assertFails(set(
+      ref(hostDatabase, hostPresencePath),
+      presencePayload(fixture, { [field]: value }),
+    ));
+  }
+  const wrongRunId = token("wrong-run");
   await assertFails(set(
     ref(
-      databases[competingHost.uid],
-      `online/trainingRooms/${competingRoomId}`,
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/presenceV5/${
+        fixture.hostUid
+      }/${wrongRunId}`,
     ),
-    roomPayload(competingHost, guestOne, Date.now()),
+    presencePayload(fixture, { runId: wrongRunId }),
   ));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
+  await assertFails(set(
+    ref(guestDatabase, hostPresencePath),
+    presencePayload(fixture),
+  ));
+
+  const signalBase =
+    `online/trainingRooms/${fixture.roomId}/signalsV5/${
+      fixture.guestUid
+    }/${fixture.guestRunId}`;
+  const validSignalPath = `${signalBase}/${token("signal-current")}`;
+  const validSignal = signalPayload(fixture);
+  await assertSucceeds(set(ref(hostDatabase, validSignalPath), validSignal));
+  assert.equal(
+    (await assertSucceeds(get(ref(guestDatabase, validSignalPath))))
+      .val()?.roomAttemptId,
+    fixture.roomAttemptId,
+  );
+  await assertFails(get(ref(hostDatabase, validSignalPath)));
+  await assertFails(get(ref(outsiderDatabase, validSignalPath)));
+  await assertFails(remove(ref(hostDatabase, validSignalPath)));
+
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.guestUid}/ownerEpoch`,
+    token("wrong-guest-owner"),
+  );
+  await assertFails(remove(ref(guestDatabase, validSignalPath)));
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.guestUid}/ownerEpoch`,
+    fixture.guestOwnerEpoch,
+  );
+  await assertSucceeds(remove(ref(guestDatabase, validSignalPath)));
+
+  const staleSignalPath = `${signalBase}/${token("signal-old-epoch")}`;
+  await assertSucceeds(set(
+    ref(hostDatabase, staleSignalPath),
+    signalPayload(fixture),
+  ));
+  const nextTransportEpoch = token("transport-next");
+  await environment.withSecurityRulesDisabled(async (adminContext) => {
+    await update(ref(adminContext.database(), "online"), {
+      [`trainingAttemptsV5/${fixture.hostUid}/transportEpoch`]:
+        nextTransportEpoch,
+      [`trainingAttemptsV5/${fixture.guestUid}/transportEpoch`]:
+        nextTransportEpoch,
+      [`trainingRooms/${fixture.roomId}/transportEpoch`]:
+        nextTransportEpoch,
+    });
+  });
+  await assertSucceeds(remove(ref(guestDatabase, staleSignalPath)));
+  await environment.withSecurityRulesDisabled(async (adminContext) => {
+    await update(ref(adminContext.database(), "online"), {
+      [`trainingAttemptsV5/${fixture.hostUid}/transportEpoch`]:
+        fixture.transportEpoch,
+      [`trainingAttemptsV5/${fixture.guestUid}/transportEpoch`]:
+        fixture.transportEpoch,
+      [`trainingRooms/${fixture.roomId}/transportEpoch`]:
+        fixture.transportEpoch,
+    });
+  });
+
+  const invalidSignalCases = [
+    ["roomAttemptId", token("wrong-signal-room")],
+    ["transportEpoch", token("wrong-signal-transport")],
+    ["fromRunId", token("wrong-signal-from-run")],
+    ["toRunId", token("wrong-signal-to-run")],
+    ["fromEndpointId", token("wrong-signal-from-endpoint")],
+    ["toEndpointId", token("wrong-signal-to-endpoint")],
+  ];
+  let invalidSignalIndex = 0;
+  for (const [field, value] of invalidSignalCases) {
+    invalidSignalIndex += 1;
+    await assertFails(set(
       ref(
-        contextWithoutRules.database(),
-        `online/trainingRooms/${competingRoomId}`,
+        hostDatabase,
+        `${signalBase}/${token(`signal-invalid-${invalidSignalIndex}`)}`,
       ),
-      roomPayload(competingHost, guestOne, Date.now()),
-    );
-  });
-  await assertSucceeds(update(
-    ref(
-      databases[competingHost.uid],
-      `online/trainingQueue/${competingHost.uid}`,
-    ),
-    { state: "forming" },
-  ));
-  await assertFails(set(
-    ref(
-      databases[competingHost.uid],
-      `online/trainingInvites/${guestOne.uid}/${competingRoomId}`,
-    ),
-    invite(competingHost, guestOne, competingRoomId),
-  ));
-  await assertSucceeds(remove(ref(databases[competingHost.uid], lockPath)));
+      signalPayload(fixture, { [field]: value }),
+    ));
+  }
 
-  const guestHostedRoomId = "-trainingInvitedHostRace";
-  await assertSucceeds(set(
-    ref(databases[guestOne.uid], lockPath),
-    lock(guestOne.uid, guestHostedRoomId),
-  ));
-  await reserveActive(
-    databases[guestOne.uid],
-    guestOne.uid,
-    guestHostedRoomId,
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.hostUid}/ownerEpoch`,
+    token("wrong-host-owner"),
   );
   await assertFails(set(
-    ref(
-      databases[guestOne.uid],
-      `online/trainingRooms/${guestHostedRoomId}`,
-    ),
-    roomPayload(guestOne, guestAsHostTarget, Date.now()),
+    ref(hostDatabase, `${signalBase}/${token("signal-wrong-owner")}`),
+    signalPayload(fixture),
   ));
-  await assertSucceeds(remove(ref(databases[guestOne.uid], lockPath)));
-
-  const roomTwoId = "-trainingConcurrentPair02";
-  await assertSucceeds(set(
-    ref(databases[hostTwo.uid], lockPath),
-    lock(hostTwo.uid, roomTwoId),
-  ));
-  await reserveActive(databases[hostTwo.uid], hostTwo.uid, roomTwoId);
-  await assertSucceeds(set(
-    ref(databases[hostTwo.uid], `online/trainingRooms/${roomTwoId}`),
-    roomPayload(hostTwo, guestTwo, Date.now()),
-  ));
-  await assertSucceeds(update(
-    ref(databases[hostTwo.uid], `online/trainingQueue/${hostTwo.uid}`),
-    { state: "forming" },
-  ));
-  const inviteTwoPath =
-    `online/trainingInvites/${guestTwo.uid}/${roomTwoId}`;
-  await assertSucceeds(set(
-    ref(databases[hostTwo.uid], inviteTwoPath),
-    invite(hostTwo, guestTwo, roomTwoId),
-  ));
-  await assertSucceeds(remove(ref(databases[hostTwo.uid], lockPath)));
-
-  await assertSucceeds(remove(ref(databases[guestTwo.uid], inviteTwoPath)));
-  await assertSucceeds(set(
-    ref(databases[hostTwo.uid], lockPath),
-    lock(hostTwo.uid, roomTwoId),
-  ));
-  await assertSucceeds(set(
-    ref(databases[hostTwo.uid], inviteTwoPath),
-    invite(hostTwo, guestTwo, roomTwoId),
-  ));
-  await assertSucceeds(remove(ref(databases[hostTwo.uid], lockPath)));
-  await assertSucceeds(remove(ref(
-    databases[guestTwo.uid],
-    `online/trainingQueue/${guestTwo.uid}`,
-  )));
-  await assertSucceeds(remove(ref(databases[guestTwo.uid], inviteTwoPath)));
-});
-
-test("room bootstrap is fenced by the host reservation and an unreserved guest", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingReservationFence01";
-  const host = queueEntry("training-host", "HOST", now);
-  const guest = queueEntry("training-guest", "GUEST", now);
-  const hostDatabase = environment.authenticatedContext(host.uid).database();
-  const guestDatabase = environment.authenticatedContext(guest.uid).database();
-  const roomRef = ref(hostDatabase, `online/trainingRooms/${roomId}`);
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    await Promise.all([
-      remove(ref(adminDatabase, `online/trainingActive/${host.uid}`)),
-      remove(ref(adminDatabase, `online/trainingActive/${guest.uid}`)),
-      remove(ref(adminDatabase, `online/trainingQueue/${host.uid}`)),
-      remove(ref(adminDatabase, `online/trainingQueue/${guest.uid}`)),
-      remove(ref(adminDatabase, `online/trainingInvites/${host.uid}`)),
-      remove(ref(adminDatabase, `online/trainingInvites/${guest.uid}`)),
-    ]);
-  });
-  await assertSucceeds(set(ref(
-    hostDatabase,
-    `online/trainingQueue/${host.uid}`,
-  ), host));
-  await assertSucceeds(set(ref(
-    guestDatabase,
-    `online/trainingQueue/${guest.uid}`,
-  ), guest));
-  await assertFails(set(roomRef, roomPayload(host, guest, now)));
-
-  await reserveActive(hostDatabase, host.uid, roomId);
-  await assertFails(set(roomRef, roomPayload(host, guest, now)));
-  await assertSucceeds(set(
-    ref(hostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(host.uid, "-differentTrainingRoom"),
-  ));
-  await assertFails(set(roomRef, roomPayload(host, guest, now)));
-  await assertSucceeds(remove(ref(
-    hostDatabase,
-    "online/trainingMatchLock",
-  )));
-  const expiredLockCreatedAt = Date.now() - 2_000;
-  await assertSucceeds(set(
-    ref(hostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(host.uid, roomId, expiredLockCreatedAt, 1_000),
-  ));
-  await assertFails(set(roomRef, roomPayload(host, guest, now)));
-  await assertSucceeds(remove(ref(
-    hostDatabase,
-    "online/trainingMatchLock",
-  )));
-  await assertSucceeds(set(
-    ref(hostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(host.uid, roomId),
-  ));
-  await reserveActive(
-    guestDatabase,
-    guest.uid,
-    "-anotherTrainingRoom01",
-  );
-  await assertFails(set(roomRef, roomPayload(host, guest, now)));
-  await releaseActive(
-    guestDatabase,
-    guest.uid,
-    "-anotherTrainingRoom01",
-  );
-  await assertSucceeds(set(roomRef, roomPayload(host, guest, now)));
-  await assertSucceeds(remove(ref(
-    hostDatabase,
-    "online/trainingMatchLock",
-  )));
-
-  await assertFails(set(
-    ref(hostDatabase, `online/trainingActive/${host.uid}`),
-    {
-      roomId,
-      rooms: {
-        [roomId]: true,
-        "-anotherTrainingRoom02": true,
-      },
-    },
-  ));
-  await assertFails(remove(ref(
-    hostDatabase,
-    `online/trainingActive/${host.uid}`,
-  )));
-  await releaseActive(hostDatabase, host.uid, roomId);
-  const newerRoomId = "-newerTrainingRoom03";
-  await reserveActive(hostDatabase, host.uid, newerRoomId);
-  await assertSucceeds(remove(ref(
-    hostDatabase,
-    `online/trainingActive/${host.uid}/rooms/${roomId}`,
-  )));
-  assert.deepEqual(
-    (await get(ref(
-      hostDatabase,
-      `online/trainingActive/${host.uid}`,
-    ))).val(),
-    activeReservation(newerRoomId),
-  );
-});
-
-test("a guest with no health condition can accept with the client multi-path update", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const roomId = "-trainingEmptyConditions01";
-  const room = await createFormingRoom(environment, Date.now(), roomId);
-
-  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
-  await assertSucceeds(update(
-    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
-    {
-      [`players/${room.guest.uid}/conditions`]: "",
-      [`accepted/${room.guest.uid}`]: true,
-    },
-  ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `online/trainingRooms/${roomId}/status`),
-    "active",
-  ));
-});
-
-test("only the host may expire a forming room", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingRulesExpired01";
-  const room = await createFormingRoom(environment, now, roomId);
-  const statusPath = `online/trainingRooms/${roomId}/status`;
-
-  await assertFails(set(ref(room.hostDatabase, statusPath), "active"));
-  await assertFails(set(ref(room.guestDatabase, statusPath), "expired"));
-  await assertSucceeds(set(ref(room.hostDatabase, statusPath), "expired"));
-  await assertFails(set(
-    ref(
-      room.guestDatabase,
-      `online/trainingRooms/${roomId}/accepted/${room.guest.uid}`,
-    ),
-    true,
-  ));
-});
-
-test("turns are contiguous, alternate roles, and require both continuation votes", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingRulesRoom02";
-  const {
-    host,
-    guest,
-    hostDatabase,
-    guestDatabase,
-  } = await bootstrapRoom(environment, now, roomId);
-  await setLegacyRoomProtocol(environment, roomId);
-  const turnOnePath = `online/trainingRooms/${roomId}/turns/1`;
-  const turnTwoPath = `online/trainingRooms/${roomId}/turns/2`;
-  const turnThreePath = `online/trainingRooms/${roomId}/turns/3`;
-
-  await assertFails(set(ref(hostDatabase, turnOnePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(
-    ref(
-      guestDatabase,
-      `online/trainingRooms/${roomId}/imageReceived/${guest.uid}`,
-    ),
-    true,
-  ));
-  await assertFails(set(ref(hostDatabase, turnOnePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(
-    ref(
-      hostDatabase,
-      `online/trainingRooms/${roomId}/imageReceived/${host.uid}`,
-    ),
-    true,
-  ));
-  await assertFails(set(ref(guestDatabase, turnOnePath), {
-    trainerUid: guest.uid,
-    traineeUid: host.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertFails(set(ref(hostDatabase, turnOnePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction({ bpm: 161 }),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(ref(hostDatabase, turnOnePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-
-  await assertFails(set(ref(guestDatabase, turnTwoPath), {
-    trainerUid: guest.uid,
-    traineeUid: host.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertFails(set(ref(hostDatabase, turnThreePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-
-  const turnOneStartedAt = Date.now();
-  await assertFails(set(
-    ref(hostDatabase, `${turnOnePath}/startedAt`),
-    turnOneStartedAt,
-  ));
-  await assertSucceeds(set(
-    ref(guestDatabase, `${turnOnePath}/startedAt`),
-    turnOneStartedAt,
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `${turnOnePath}/completedAt`),
-    Date.now(),
-  ));
-  const turnOneCompletedAt = Date.now();
-  await assertSucceeds(set(
-    ref(guestDatabase, `${turnOnePath}/completedAt`),
-    turnOneCompletedAt,
-  ));
-  await assertFails(set(
-    ref(guestDatabase, `${turnOnePath}/surrenderedAt`),
-    Date.now(),
-  ));
-
-  await assertFails(set(ref(guestDatabase, turnTwoPath), {
-    trainerUid: guest.uid,
-    traineeUid: host.uid,
-    instruction: instruction(),
-    createdAt: turnOneCompletedAt - 1,
-  }));
-  await assertFails(set(ref(hostDatabase, turnThreePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(ref(guestDatabase, turnTwoPath), {
-    trainerUid: guest.uid,
-    traineeUid: host.uid,
-    instruction: instruction(),
-    createdAt: Math.max(Date.now(), turnOneCompletedAt),
-  }));
-  await assertFails(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}/continueVotes/1/${host.uid}`),
-    "continue",
-  ));
-
-  const turnTwoStartedAt = Date.now();
-  await assertSucceeds(set(
-    ref(hostDatabase, `${turnTwoPath}/startedAt`),
-    turnTwoStartedAt,
-  ));
-  const turnTwoCompletedAt = Date.now();
-  await assertSucceeds(set(
-    ref(hostDatabase, `${turnTwoPath}/completedAt`),
-    turnTwoCompletedAt,
-  ));
-  await assertSucceeds(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}/continueVotes/1/${host.uid}`),
-    "continue",
-  ));
-  await assertFails(set(ref(hostDatabase, turnThreePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Math.max(Date.now(), turnTwoCompletedAt),
-  }));
-  await assertSucceeds(set(
-    ref(guestDatabase, `online/trainingRooms/${roomId}/continueVotes/1/${guest.uid}`),
-    "continue",
-  ));
-  await assertFails(set(ref(guestDatabase, turnThreePath), {
-    trainerUid: guest.uid,
-    traineeUid: host.uid,
-    instruction: instruction(),
-    createdAt: Math.max(Date.now(), turnTwoCompletedAt),
-  }));
-  await assertSucceeds(set(ref(hostDatabase, turnThreePath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Math.max(Date.now(), turnTwoCompletedAt),
-  }));
-});
-
-test("completion and surrender are rejected after the strict sixty-second window", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const completionRoomId = "-trainingRulesRoom04";
-  const completionRoom = await bootstrapRoom(environment, now, completionRoomId);
-  await setLegacyRoomProtocol(environment, completionRoomId);
-  const completionTurnPath =
-    `online/trainingRooms/${completionRoomId}/turns/1`;
-  await markBothImagesReceived(completionRoom, completionRoomId);
-
-  await assertSucceeds(set(ref(completionRoom.hostDatabase, completionTurnPath), {
-    trainerUid: completionRoom.host.uid,
-    traineeUid: completionRoom.guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(
-    ref(completionRoom.guestDatabase, `${completionTurnPath}/startedAt`),
-    Date.now(),
-  ));
-
-  const completionAt = Date.now();
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${completionTurnPath}/startedAt`),
-      completionAt - 60_001,
-    );
-  });
-  await assertFails(set(
-    ref(completionRoom.guestDatabase, `${completionTurnPath}/completedAt`),
-    completionAt,
-  ));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${completionTurnPath}/startedAt`),
-      completionAt - 60_000,
-    );
-  });
-  await assertSucceeds(set(
-    ref(completionRoom.guestDatabase, `${completionTurnPath}/completedAt`),
-    completionAt,
-  ));
-  await releaseActive(
-    completionRoom.hostDatabase,
-    completionRoom.host.uid,
-    completionRoomId,
-  );
-  await releaseActive(
-    completionRoom.guestDatabase,
-    completionRoom.guest.uid,
-    completionRoomId,
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.hostUid}/ownerEpoch`,
+    fixture.hostOwnerEpoch,
   );
 
-  const surrenderRoomId = "-trainingRulesRoom05";
-  const surrenderRoom = await bootstrapRoom(environment, Date.now(), surrenderRoomId);
-  await setLegacyRoomProtocol(environment, surrenderRoomId);
-  const surrenderTurnPath =
-    `online/trainingRooms/${surrenderRoomId}/turns/1`;
-  await markBothImagesReceived(surrenderRoom, surrenderRoomId);
-
-  await assertSucceeds(set(ref(surrenderRoom.hostDatabase, surrenderTurnPath), {
-    trainerUid: surrenderRoom.host.uid,
-    traineeUid: surrenderRoom.guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(
-    ref(surrenderRoom.guestDatabase, `${surrenderTurnPath}/startedAt`),
-    Date.now(),
-  ));
-
-  const surrenderedAt = Date.now();
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${surrenderTurnPath}/startedAt`),
-      surrenderedAt - 60_001,
-    );
-  });
-  await assertFails(set(
-    ref(surrenderRoom.guestDatabase, `${surrenderTurnPath}/surrenderedAt`),
-    surrenderedAt,
-  ));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${surrenderTurnPath}/startedAt`),
-      surrenderedAt - 60_000,
-    );
-  });
-  await assertSucceeds(set(
-    ref(surrenderRoom.guestDatabase, `${surrenderTurnPath}/surrenderedAt`),
-    surrenderedAt,
-  ));
-});
-
-test("either participant may record timeout after a long suspended session", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingRulesRoom03";
-  const {
-    host,
-    guest,
-    hostDatabase,
-    guestDatabase,
-  } = await bootstrapRoom(environment, now, roomId);
-  await setLegacyRoomProtocol(environment, roomId);
-  const turnPath = `online/trainingRooms/${roomId}/turns/1`;
-  await markBothImagesReceived({
-    host,
-    guest,
-    hostDatabase,
-    guestDatabase,
-  }, roomId);
-
-  await assertSucceeds(set(ref(hostDatabase, turnPath), {
-    trainerUid: host.uid,
-    traineeUid: guest.uid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  await assertSucceeds(set(
-    ref(guestDatabase, `${turnPath}/startedAt`),
-    Date.now(),
-  ));
-  await assertFails(set(
-    ref(hostDatabase, `${turnPath}/timedOutAt`),
-    Date.now(),
-  ));
-
-  const timedOutAt = Date.now();
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${turnPath}/startedAt`),
-      timedOutAt - 10 * 60_000,
-    );
-  });
-  await assertSucceeds(set(
-    ref(hostDatabase, `${turnPath}/timedOutAt`),
-    timedOutAt,
-  ));
-  await assertFails(set(
-    ref(guestDatabase, `${turnPath}/completedAt`),
-    Date.now(),
-  ));
-});
-
-test("v2 carrot choices stay secret until both lock and turns advance without votes", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const roomId = "-trainingV2Choices01";
-  const room = await bootstrapRoom(environment, Date.now(), roomId);
-  const basePath = `online/trainingRooms/${roomId}`;
-  const outsiderDatabase = environment
-    .authenticatedContext("training-choice-outsider")
-    .database();
-  await markBothImagesReceived(room, roomId);
-
-  await assertSucceeds(get(ref(
-    room.hostDatabase,
-    `${basePath}/carrotChoices/${room.host.uid}`,
-  )));
-  await assertFails(get(ref(
-    room.hostDatabase,
-    `${basePath}/carrotChoices/${room.guest.uid}`,
-  )));
-  await assertFails(get(ref(room.hostDatabase, `${basePath}/carrotChoices`)));
-
-  await assertSucceeds(set(ref(
-    room.hostDatabase,
-    `${basePath}/carrotChoices/${room.host.uid}`,
-  ), "mine"));
-  await assertFails(get(ref(
-    room.guestDatabase,
-    `${basePath}/carrotChoices/${room.host.uid}`,
-  )));
-  await assertFails(set(ref(room.hostDatabase, `${basePath}/turns/1`), v2Turn(
-    room.host.uid,
-    room.guest.uid,
-    "boost8",
-  )));
-
-  await assertSucceeds(set(ref(
-    room.guestDatabase,
-    `${basePath}/carrotChoices/${room.guest.uid}`,
-  ), "boost8"));
-  await assertSucceeds(get(ref(room.hostDatabase, `${basePath}/carrotChoices`)));
-  await assertSucceeds(get(ref(
-    room.guestDatabase,
-    `${basePath}/carrotChoices/${room.host.uid}`,
-  )));
-  await assertFails(get(ref(outsiderDatabase, `${basePath}/carrotChoices`)));
-  await assertFails(set(ref(
-    room.guestDatabase,
-    `${basePath}/carrotChoices/${room.guest.uid}`,
-  ), "boost10"));
-
-  const turnOnePath = `${basePath}/turns/1`;
-  await assertSucceeds(set(ref(room.hostDatabase, turnOnePath), v2Turn(
-    room.host.uid,
-    room.guest.uid,
-    "boost8",
-  )));
-  const turnTwoPath = `${basePath}/turns/2`;
-  await assertFails(set(ref(room.guestDatabase, turnTwoPath), v2Turn(
-    room.guest.uid,
-    room.host.uid,
-    "mine",
-  )));
-  const startedAt = Date.now();
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${turnOnePath}/startedAt`),
-    startedAt,
-  ));
-  await assertFails(set(
-    ref(room.guestDatabase, `${turnOnePath}/baseCompletedAt`),
-    startedAt + 60_000,
-  ));
-  await assertFails(set(
-    ref(room.hostDatabase, `${turnOnePath}/timedOutAt`),
-    startedAt + 60_000,
-  ));
-
-  const delayedStartedAt = Date.now() - 10 * 60_000;
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${turnOnePath}/startedAt`),
-      delayedStartedAt,
-    );
-  });
-  await assertSucceeds(update(ref(room.guestDatabase, turnOnePath), {
-    baseCompletedAt: delayedStartedAt + 60_000,
-    completedAt: delayedStartedAt + 70_000,
-    boostCompletedAt: delayedStartedAt + 70_000,
-  }));
-  await assertFails(set(
-    ref(
-      room.hostDatabase,
-      `${basePath}/continueVotes/1/${room.host.uid}`,
-    ),
-    "continue",
-  ));
-  await assertSucceeds(set(ref(room.guestDatabase, turnTwoPath), v2Turn(
-    room.guest.uid,
-    room.host.uid,
-    "mine",
-  )));
-});
-
-test("v2 enforces the 59,999/60,000 boundary and canonical delayed completion", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const roomId = "-trainingV2Boundary01";
-  const room = await bootstrapRoom(environment, Date.now(), roomId);
-  await markBothImagesReceived(room, roomId);
-  await chooseCarrots(room, roomId, {
-    hostChoice: "mine",
-    guestChoice: "boost10",
-  });
-  const turnPath = `online/trainingRooms/${roomId}/turns/1`;
-  await assertSucceeds(set(ref(room.hostDatabase, turnPath), v2Turn(
-    room.host.uid,
-    room.guest.uid,
-    "boost10",
-  )));
-
-  const startedAt = Date.now() - 10 * 60_000;
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `${turnPath}/startedAt`),
-      startedAt,
-    );
-  });
-  await assertFails(set(
-    ref(room.guestDatabase, `${turnPath}/baseCompletedAt`),
-    startedAt + 59_999,
-  ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${turnPath}/baseCompletedAt`),
-    startedAt + 60_000,
-  ));
-  await assertFails(set(
-    ref(room.guestDatabase, `${turnPath}/completedAt`),
-    startedAt + 90_000,
-  ));
-  await assertSucceeds(update(ref(room.guestDatabase, turnPath), {
-    completedAt: startedAt + 90_000,
-    boostCompletedAt: startedAt + 90_000,
-  }));
-});
-
-test("existing protocol v1 rooms keep their old early-completion writes", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const roomId = "-trainingLegacyV1Room";
-  const hostUid = "training-legacy-host";
-  const guestUid = "training-legacy-guest";
-  const hostDatabase = environment.authenticatedContext(hostUid).database();
-  const guestDatabase = environment.authenticatedContext(guestUid).database();
-  const createdAt = Date.now();
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(
-      ref(contextWithoutRules.database(), `online/trainingRooms/${roomId}`),
-      {
-        protocolVersion: 1,
-        variant: "kitaeai_60",
-        hostUid,
-        guestUid,
-        createdAt,
-        status: "active",
-        firstTrainerUid: hostUid,
-        members: { [hostUid]: true, [guestUid]: true },
-        players: {
-          [hostUid]: {
-            uid: hostUid, name: "LEGACY-H", intensity: "standard", conditions: "",
-          },
-          [guestUid]: {
-            uid: guestUid, name: "LEGACY-G", intensity: "standard", conditions: "",
-          },
-        },
-        accepted: { [hostUid]: true, [guestUid]: true },
-        imageReceived: { [hostUid]: true, [guestUid]: true },
-      },
-    );
-  });
-  const turnOnePath = `online/trainingRooms/${roomId}/turns/1`;
-  await assertSucceeds(set(ref(hostDatabase, turnOnePath), {
-    trainerUid: hostUid,
-    traineeUid: guestUid,
-    instruction: instruction(),
-    createdAt: Date.now(),
-  }));
-  const startedAt = Date.now();
-  await assertSucceeds(set(
-    ref(guestDatabase, `${turnOnePath}/startedAt`),
-    startedAt,
-  ));
-  await assertSucceeds(set(
-    ref(guestDatabase, `${turnOnePath}/completedAt`),
-    startedAt + 1,
-  ));
-  assert.equal(
-    (await get(ref(guestDatabase, `${turnOnePath}/completedAt`))).val(),
-    startedAt + 1,
-  );
-});
-
-test("v3 draws are owner-scoped, scores stay secret, and early workouts are rejected", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingV3RoundPrivacy01";
-  const invalidUid = "training-v3-invalid-deck";
-  const invalidDatabase = environment.authenticatedContext(invalidUid).database();
-  const invalidQueue = v3QueueEntry(invalidUid, "INVALID", now);
-  delete invalidQueue.commandDeck[3];
-  await assertFails(set(
-    ref(invalidDatabase, `online/trainingQueue/${invalidUid}`),
-    invalidQueue,
-  ));
-
-  const room = await bootstrapV3Room(environment, now, roomId, "privacy");
-  const outsiderDatabase = environment
-    .authenticatedContext("training-v3-outsider")
-    .database();
-  const roundPath = `online/trainingRooms/${roomId}/rounds/1`;
-  await assertFails(set(
-    ref(room.guestDatabase, roundPath),
-    { createdAt: Date.now() },
-  ));
-  await assertFails(runTransaction(
-    ref(room.guestDatabase, `${roundPath}/createdAt`),
-    (current) => current == null ? Date.now() : undefined,
-    { applyLocally: false },
-  ));
-  const legacyParentDatabase = environment.authenticatedContext(room.host.uid).database();
-  await assertFails(runTransaction(
-    ref(legacyParentDatabase, roundPath),
-    (current) => current == null ? { createdAt: Date.now() } : undefined,
-    { applyLocally: false },
-  ));
-  const coldHostDatabase = environment.authenticatedContext(room.host.uid).database();
-  await assertFails(get(ref(coldHostDatabase, roundPath)));
-  const observedRoundCreatedAt = [];
-  const expectedRoundCreatedAt = Date.now();
-  const roundCreatedAtTransaction = await assertSucceeds(runTransaction(
-    ref(coldHostDatabase, `${roundPath}/createdAt`),
-    (current) => {
-      observedRoundCreatedAt.push(current);
-      return current == null ? expectedRoundCreatedAt : undefined;
-    },
-    { applyLocally: false },
-  ));
-  assert.equal(observedRoundCreatedAt.includes(null), true);
-  assert.equal(roundCreatedAtTransaction.committed, true);
-  assert.equal(roundCreatedAtTransaction.snapshot.val(), expectedRoundCreatedAt);
-  assert.equal(
-    (await get(ref(room.hostDatabase, `${roundPath}/createdAt`))).val(),
-    expectedRoundCreatedAt,
-  );
-  const reentryHostDatabase = environment.authenticatedContext(room.host.uid).database();
-  const reentryObserved = [];
-  const reentryTransaction = await assertSucceeds(runTransaction(
-    ref(reentryHostDatabase, `${roundPath}/createdAt`),
-    (current) => {
-      reentryObserved.push(current);
-      return current == null ? Date.now() : undefined;
-    },
-    { applyLocally: false },
-  ));
-  assert.equal(reentryObserved[0], null);
-  assert.equal(reentryObserved.includes(expectedRoundCreatedAt), true);
-  assert.equal(reentryTransaction.committed, false);
-  assert.equal(reentryTransaction.snapshot.val(), expectedRoundCreatedAt);
-  await assertFails(get(ref(reentryHostDatabase, roundPath)));
-  await assertFails(set(
-    ref(room.hostDatabase, `${roundPath}/unexpected`),
-    true,
-  ));
-
-  const hostDraw = {
+  const hostDrawPath =
+    `online/trainingRooms/${fixture.roomId}/rounds/1/draws/${
+      fixture.hostUid
+    }`;
+  await assertSucceeds(set(ref(hostDatabase, hostDrawPath), {
     imageIndex: 1,
-    bpm: 0,
-    drawnAt: Date.now(),
-  };
-  await assertFails(set(
-    ref(room.guestDatabase, `${roundPath}/draws/${room.host.uid}`),
-    hostDraw,
-  ));
-  const coldHostDrawDatabase = environment.authenticatedContext(room.host.uid).database();
-  const hostDrawTransaction = await assertSucceeds(runTransaction(
-    ref(coldHostDrawDatabase, `${roundPath}/draws/${room.host.uid}`),
-    (current) => current == null ? hostDraw : undefined,
-    { applyLocally: false },
-  ));
-  assert.equal(hostDrawTransaction.committed, true);
-  assert.deepEqual(hostDrawTransaction.snapshot.val(), hostDraw);
-  await assertFails(set(
-    ref(room.hostDatabase, `${roundPath}/imageReceived/${room.host.uid}`),
-    true,
-  ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${roundPath}/imageReceived/${room.guest.uid}`),
-    true,
-  ));
-  await assertFails(set(
-    ref(room.guestDatabase, `${roundPath}/draws/${room.guest.uid}`),
-    {
-      imageIndex: 2,
-      bpm: 100,
-      drawnAt: Date.now(),
-    },
-  ));
-  const guestDraw = {
-    imageIndex: 2,
     bpm: 80,
     drawnAt: Date.now(),
-  };
-  const coldGuestDrawDatabase = environment.authenticatedContext(room.guest.uid).database();
-  const guestDrawTransaction = await assertSucceeds(runTransaction(
-    ref(coldGuestDrawDatabase, `${roundPath}/draws/${room.guest.uid}`),
-    (current) => current == null ? guestDraw : undefined,
-    { applyLocally: false },
-  ));
-  assert.equal(guestDrawTransaction.committed, true);
-  assert.deepEqual(guestDrawTransaction.snapshot.val(), guestDraw);
-  const committedDraws = (await get(
-    ref(room.hostDatabase, `${roundPath}/draws`),
-  )).val();
-  assert.deepEqual(committedDraws, {
-    [room.host.uid]: hostDraw,
-    [room.guest.uid]: guestDraw,
-  });
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roundPath}/imageReceived/${room.host.uid}`),
-    true,
-  ));
-  await assertFails(set(
-    ref(room.guestDatabase, `${roundPath}/imageReceived/${room.guest.uid}`),
-    true,
-  ));
-
-  const hostScorePath = `${roundPath}/scores/${room.host.uid}`;
-  const guestScorePath = `${roundPath}/scores/${room.guest.uid}`;
-  await assertSucceeds(set(ref(room.hostDatabase, hostScorePath), 9));
-  await assertSucceeds(get(ref(room.hostDatabase, hostScorePath)));
-  await assertFails(get(ref(room.guestDatabase, hostScorePath)));
-  await assertFails(get(ref(outsiderDatabase, hostScorePath)));
-  await assertSucceeds(set(ref(room.guestDatabase, guestScorePath), 8));
-  assert.equal((await get(ref(room.guestDatabase, hostScorePath))).val(), 9);
-
-  await assertFails(set(
-    ref(room.hostDatabase, `${roundPath}/commandChoices/${room.host.uid}`),
-    {
-      trainerUid: room.host.uid,
-      cardIndex: 1,
-      selectedAt: Date.now(),
-    },
-  ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${roundPath}/commandChoices/${room.host.uid}`),
-    {
-      trainerUid: room.guest.uid,
-      cardIndex: 1,
-      selectedAt: Date.now(),
-    },
-  ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roundPath}/commandChoices/${room.guest.uid}`),
-    {
-      trainerUid: room.host.uid,
-      cardIndex: 1,
-      selectedAt: Date.now(),
-    },
-  ));
-
-  const hostStartedAt = Date.now();
-  const guestStartedAt = Date.now();
-  await assertFails(set(
-    ref(room.guestDatabase, `${roundPath}/workouts/${room.host.uid}`),
-    { startedAt: hostStartedAt },
-  ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roundPath}/workouts/${room.host.uid}`),
-    { startedAt: hostStartedAt },
-  ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${roundPath}/workouts/${room.guest.uid}`),
-    { startedAt: guestStartedAt },
-  ));
-  await assertFails(set(
-    ref(room.hostDatabase, `${roundPath}/workouts/${room.host.uid}/completedAt`),
-    hostStartedAt + 75_000,
-  ));
-  await assertFails(set(
-    ref(room.guestDatabase, `${roundPath}/workouts/${room.guest.uid}/completedAt`),
-    guestStartedAt + 60_000,
-  ));
-  await assertFails(set(
-    ref(room.hostDatabase, `${roundPath}/completedAt`),
-    Date.now(),
-  ));
-});
-
-test("v3 canonical completion advances atomically and rejects reused images or commands", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingV3Canonical01";
-  const room = await bootstrapV3Room(environment, now, roomId, "canonical");
-  const roomPath = `online/trainingRooms/${roomId}`;
-  const startedAt = Date.now() - 61_000;
-  const completedAt = startedAt + 60_000;
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await set(ref(contextWithoutRules.database(), `${roomPath}/rounds/1`), {
-      createdAt: startedAt - 5_000,
-      draws: {
-        [room.host.uid]: {
-          imageIndex: 1,
-          bpm: 0,
-          drawnAt: startedAt - 4_000,
-        },
-        [room.guest.uid]: {
-          imageIndex: 1,
-          bpm: 0,
-          drawnAt: startedAt - 4_000,
-        },
-      },
-      imageReceived: {
-        [room.host.uid]: true,
-        [room.guest.uid]: true,
-      },
-      scores: {
-        [room.host.uid]: 8,
-        [room.guest.uid]: 1,
-      },
-      commandChoices: {
-        [room.host.uid]: {
-          trainerUid: room.guest.uid,
-          cardIndex: 1,
-          selectedAt: startedAt - 1_000,
-        },
-      },
-      workouts: {
-        [room.host.uid]: {
-          startedAt,
-        },
-      },
-    });
-  });
-
-  await assertFails(set(
-    ref(room.guestDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
-    completedAt,
-  ));
-  await assertFails(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`),
-    completedAt + 1,
-  ));
-  const completionRef = ref(
-    room.hostDatabase,
-    `${roomPath}/rounds/1/workouts/${room.host.uid}/completedAt`,
-  );
-  const completionTransaction = await assertSucceeds(runTransaction(
-    completionRef,
-    (current) => current == null ? completedAt : undefined,
-    { applyLocally: false },
-  ));
-  assert.equal(completionTransaction.committed, true);
-  assert.equal(completionTransaction.snapshot.val(), completedAt);
-  const replayedCompletion = await assertSucceeds(runTransaction(
-    completionRef,
-    (current) => current == null ? completedAt : undefined,
-    { applyLocally: false },
-  ));
-  assert.equal(replayedCompletion.committed, false);
-  assert.equal(replayedCompletion.snapshot.val(), completedAt);
-  await assertFails(set(
-    ref(room.guestDatabase, `${roomPath}/rounds/1/completedAt`),
-    Date.now(),
-  ));
-
-  const nextRoundAt = Date.now();
-  await assertSucceeds(update(
-    ref(room.hostDatabase, `${roomPath}/rounds`),
-    {
-      "1/completedAt": nextRoundAt,
-      2: { createdAt: nextRoundAt },
-    },
-  ));
-  await assertFails(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/2/draws/${room.host.uid}`),
-    {
-      imageIndex: 1,
-      bpm: 0,
-      drawnAt: Date.now(),
-    },
-  ));
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/2/draws/${room.host.uid}`),
-    {
-      imageIndex: 2,
-      bpm: 80,
-      drawnAt: Date.now(),
-    },
-  ));
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    await update(ref(adminDatabase, `${roomPath}/rounds/2`), {
-      [`draws/${room.guest.uid}`]: {
-        imageIndex: 2,
-        bpm: 80,
-        drawnAt: Date.now(),
-      },
-      [`imageReceived/${room.host.uid}`]: true,
-      [`imageReceived/${room.guest.uid}`]: true,
-      [`scores/${room.host.uid}`]: 8,
-      [`scores/${room.guest.uid}`]: 1,
-    });
-  });
-  await assertFails(set(
-    ref(room.guestDatabase, `${roomPath}/rounds/2/commandChoices/${room.host.uid}`),
-    {
-      trainerUid: room.guest.uid,
-      cardIndex: 1,
-      selectedAt: Date.now(),
-    },
-  ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${roomPath}/rounds/2/commandChoices/${room.host.uid}`),
-    {
-      trainerUid: room.guest.uid,
-      cardIndex: 2,
-      selectedAt: Date.now(),
-    },
-  ));
-
-  await assertFails(set(
-    ref(room.hostDatabase, `${roomPath}/surrendered`),
-    {
-      uid: room.host.uid,
-      at: Date.now(),
-      unexpected: true,
-    },
-  ));
-  await assertSucceeds(set(
-    ref(room.guestDatabase, `${roomPath}/surrendered`),
-    {
-      uid: room.guest.uid,
-      at: Date.now(),
-    },
-  ));
-  await assertFails(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/3`),
-    { createdAt: Date.now() },
-  ));
-});
-
-test("v3 recomputes HP from prior scores before allowing another round", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingV3HpFence01";
-  const room = await bootstrapV3Room(environment, now, roomId, "hp-fence");
-  const roomPath = `online/trainingRooms/${roomId}`;
-  const completedAt = Date.now() - 1_000;
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    await set(ref(adminDatabase, `${roomPath}/rounds`), {
-      1: {
-        createdAt: completedAt - 10_000,
-        scores: {
-          [room.host.uid]: 9,
-          [room.guest.uid]: 1,
-        },
-        completedAt: completedAt - 5_000,
-      },
-      2: {
-        createdAt: completedAt - 4_000,
-        scores: {
-          [room.host.uid]: 8,
-          [room.guest.uid]: 1,
-        },
-        completedAt,
-      },
-    });
-  });
-  await assertSucceeds(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/3`),
-    { createdAt: Date.now() },
-  ));
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    await remove(ref(adminDatabase, `${roomPath}/rounds/3`));
-    await set(
-      ref(adminDatabase, `${roomPath}/rounds/2/scores/${room.host.uid}`),
-      9,
-    );
-  });
-  await assertFails(set(
-    ref(room.hostDatabase, `${roomPath}/rounds/3`),
-    { createdAt: Date.now() },
-  ));
-});
-
-test("retired team data survives but no authenticated client can read or mutate it", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const uid = "legacy-team-player";
-  const database = environment.authenticatedContext(uid).database();
-  const legacyPaths = [
-    "teamQueue",
-    "teamActive",
-    "teamMatchLock",
-    "teamInvites",
-    "teamProfiles",
-    "teamChats",
-    "teamDuoScores",
-    "teamRooms",
-  ];
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    for (const legacyPath of legacyPaths) {
-      await set(ref(adminDatabase, `online/${legacyPath}/legacy`), {
-        preserved: true,
-      });
-    }
-  });
-
-  for (const legacyPath of legacyPaths) {
-    const legacyRef = ref(database, `online/${legacyPath}/legacy`);
-    await assertFails(get(legacyRef));
-    await assertFails(set(legacyRef, { preserved: false }));
-    await assertFails(remove(legacyRef));
-  }
-});
-
-test("queue lastSeen uses a 60-second lease for state transitions", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const cases = [
-    {
-      uid: "training-lease-20s",
-      lastSeenOffsetMs: -20_000,
-      succeeds: true,
-    },
-    {
-      uid: "training-lease-stale",
-      lastSeenOffsetMs: -65_000,
-      succeeds: false,
-    },
-    {
-      uid: "training-lease-future",
-      lastSeenOffsetMs: 20_000,
-      succeeds: false,
-    },
-  ];
-
-  for (const leaseCase of cases) {
-    const seededAt = Date.now();
-    const queuePath = `online/trainingQueue/${leaseCase.uid}`;
-    const database = environment.authenticatedContext(leaseCase.uid).database();
-    await assertSucceeds(set(
-      ref(database, queuePath),
-      queueEntry(leaseCase.uid, "LEASE", seededAt),
-    ));
-    const transition = update(ref(database, queuePath), {
-      lastSeen: seededAt + leaseCase.lastSeenOffsetMs,
-      state: "forming",
-    });
-    if (leaseCase.succeeds) {
-      await assertSucceeds(transition);
-      assert.equal((await get(ref(database, `${queuePath}/state`))).val(), "forming");
-    } else {
-      await assertFails(transition);
-    }
-  }
-});
-
-test("training active accepts optional in-range reservedAt and rejects invalid bounds", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const reservations = [
-    {
-      uid: "training-active-legacy",
-      roomId: "-trainingActiveLegacy01",
-      succeeds: true,
-    },
-    {
-      uid: "training-active-current",
-      roomId: "-trainingActiveCurrent01",
-      reservedAt: Date.now(),
-      succeeds: true,
-    },
-    {
-      uid: "training-active-old",
-      roomId: "-trainingActiveOld01",
-      reservedAt: Date.now() - 65_000,
-      succeeds: false,
-    },
-    {
-      uid: "training-active-future",
-      roomId: "-trainingActiveFuture01",
-      reservedAt: Date.now() + 20_000,
-      succeeds: false,
-    },
-  ];
-
-  for (const reservation of reservations) {
-    const database = environment.authenticatedContext(reservation.uid).database();
-    const payload = activeReservation(reservation.roomId);
-    if (reservation.reservedAt !== undefined) {
-      payload.reservedAt = reservation.reservedAt;
-    }
-    const write = set(
-      ref(database, `online/trainingActive/${reservation.uid}`),
-      payload,
-    );
-    if (reservation.succeeds) {
-      await assertSucceeds(write);
-    } else {
-      await assertFails(write);
-    }
-  }
-});
-
-test("cleanup cursor and guards are server-only and guard room creation until expiry", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const now = Date.now();
-  const roomId = "-trainingCleanupGuard01";
-  const host = queueEntry("training-guard-host", "HOST", now);
-  const guest = queueEntry("training-guard-guest", "GUEST", now);
-  const hostDatabase = environment.authenticatedContext(host.uid).database();
-  const guestDatabase = environment.authenticatedContext(guest.uid).database();
-  const cursorPath = "online/trainingActiveCleanupCursor";
-  const guardPath = `online/trainingActiveCleanupGuards/${roomId}`;
-  const guard = {
-    cleanupId: "cleanup-guard-regression",
-    uid: host.uid,
-    roomId,
-    createdAt: now,
-    expiresAt: now + 60_000,
-  };
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    const adminDatabase = contextWithoutRules.database();
-    await Promise.all([
-      set(ref(adminDatabase, cursorPath), {
-        uid: host.uid,
-        updatedAt: now,
-      }),
-      set(ref(adminDatabase, guardPath), guard),
-    ]);
-  });
-  await assertFails(get(ref(hostDatabase, cursorPath)));
-  await assertFails(get(ref(hostDatabase, guardPath)));
-  await assertFails(set(ref(hostDatabase, cursorPath), {
-    uid: guest.uid,
-    updatedAt: Date.now(),
-  }));
-  await assertFails(set(ref(hostDatabase, guardPath), {
-    ...guard,
-    expiresAt: Date.now() + 120_000,
   }));
 
-  await assertSucceeds(set(
-    ref(hostDatabase, `online/trainingQueue/${host.uid}`),
-    host,
-  ));
-  await assertSucceeds(set(
-    ref(guestDatabase, `online/trainingQueue/${guest.uid}`),
-    guest,
-  ));
-  await assertSucceeds(set(
-    ref(hostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(host.uid, roomId),
-  ));
-  await reserveActive(hostDatabase, host.uid, roomId);
-  await assertFails(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}`),
-    roomPayload(host, guest, Date.now()),
-  ));
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await update(
-      ref(contextWithoutRules.database(), guardPath),
-      { expiresAt: Date.now() - 1 },
-    );
-  });
-  await assertSucceeds(set(
-    ref(hostDatabase, `online/trainingRooms/${roomId}`),
-    roomPayload(host, guest, Date.now()),
-  ));
-  await assertSucceeds(remove(ref(
-    hostDatabase,
-    "online/trainingMatchLock",
-  )));
-});
-
-test("cold-cache status transaction activates a forming room with applyLocally false", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const roomId = "-trainingColdStatus01";
-  const room = await createFormingRoom(environment, Date.now(), roomId);
-  await reserveActive(room.guestDatabase, room.guest.uid, roomId);
-  await assertSucceeds(update(
-    ref(room.guestDatabase, `online/trainingRooms/${roomId}`),
-    {
-      [`players/${room.guest.uid}/conditions`]: room.guestConditions,
-      [`accepted/${room.guest.uid}`]: true,
-    },
-  ));
-
-  const coldHostDatabase = environment.authenticatedContext(room.host.uid).database();
-  const observed = [];
-  const transaction = await runTransaction(
-    ref(coldHostDatabase, `online/trainingRooms/${roomId}/status`),
-    (current) => {
-      observed.push(current);
-      return current == null || current === "forming" ? "active" : undefined;
-    },
-    { applyLocally: false },
+  const guestDrawPath =
+    `online/trainingRooms/${fixture.roomId}/rounds/1/draws/${
+      fixture.guestUid
+    }`;
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.guestUid}/transportEpoch`,
+    token("wrong-gameplay-transport"),
   );
-
-  assert.equal(observed[0], null);
-  assert.equal(observed.includes("forming"), true);
-  assert.equal(transaction.committed, true);
-  assert.equal(transaction.snapshot.val(), "active");
-  assert.equal(
-    (await get(ref(
-      coldHostDatabase,
-      `online/trainingRooms/${roomId}/status`,
-    ))).val(),
-    "active",
-  );
-});
-
-test("cold-cache active child and parent transactions release with applyLocally false", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const uid = "training-cold-release";
-  const roomId = "-trainingColdRelease01";
-  const warmDatabase = environment.authenticatedContext(uid).database();
-  await assertSucceeds(set(
-    ref(warmDatabase, `online/trainingActive/${uid}`),
-    {
-      ...activeReservation(roomId),
-      reservedAt: Date.now(),
-    },
-  ));
-
-  const coldChildDatabase = environment.authenticatedContext(uid).database();
-  const childObserved = [];
-  const childTransaction = await runTransaction(
-    ref(coldChildDatabase, `online/trainingActive/${uid}/rooms/${roomId}`),
-    (current) => {
-      childObserved.push(current);
-      return current == null || current === true ? null : undefined;
-    },
-    { applyLocally: false },
-  );
-  assert.equal(childObserved[0], null);
-  assert.equal(childObserved.includes(true), true);
-  assert.equal(childTransaction.committed, true);
-  assert.equal(childTransaction.snapshot.val(), null);
-
-  const coldParentDatabase = environment.authenticatedContext(uid).database();
-  const parentObserved = [];
-  const parentTransaction = await runTransaction(
-    ref(coldParentDatabase, `online/trainingActive/${uid}`),
-    (current) => {
-      parentObserved.push(current);
-      if (current == null) return null;
-      const rooms = current?.rooms && typeof current.rooms === "object"
-        ? current.rooms
-        : {};
-      const hasClaimedRoom = Object.values(rooms).some((claimed) => claimed === true);
-      return current?.roomId === roomId && !hasClaimedRoom ? null : undefined;
-    },
-    { applyLocally: false },
-  );
-  assert.equal(parentObserved[0], null);
-  assert.equal(parentObserved.some((current) => current?.roomId === roomId), true);
-  assert.equal(parentTransaction.committed, true);
-  assert.equal(parentTransaction.snapshot.val(), null);
-  assert.equal(
-    (await get(ref(coldParentDatabase, `online/trainingActive/${uid}`))).val(),
-    null,
-  );
-});
-
-test("cold-cache cleanup treats already-missing locks and invites as idempotent", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const uid = "training-cold-missing";
-  const database = environment.authenticatedContext(uid).database();
-  const paths = [
-    "online/trainingMatchLock",
-    `online/trainingInvites/${uid}/-missingOwnInvite01`,
-  ];
-
-  for (const targetPath of paths) {
-    const observed = [];
-    const transaction = await assertSucceeds(runTransaction(
-      ref(database, targetPath),
-      (current) => {
-        observed.push(current);
-        return current == null ? null : undefined;
-      },
-      { applyLocally: false },
-    ));
-    assert.deepEqual(observed, [null]);
-    assert.equal(transaction.committed, true);
-    assert.equal(transaction.snapshot.val(), null);
-  }
-  await assertSucceeds(remove(ref(
-    database,
-    "online/trainingInvites/training-other/-missingHostInvite01",
-  )));
-});
-
-test("session V4 matchmaking resources are server-owned and offers are session-targeted", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const fixture = trainingSessionV4Fixture("private");
-  await seedTrainingSessionV4(environment, fixture, { includeRoom: false });
-
-  const hostDatabase = environment.authenticatedContext(fixture.hostUid).database();
-  const guestDatabase = environment.authenticatedContext(fixture.guestUid).database();
-  const outsiderDatabase =
-    environment.authenticatedContext("training-v4-outsider-private").database();
-  const privatePaths = [
-    `online/trainingSessionClaims/${fixture.hostUid}`,
-    `online/trainingQueueV4/${fixture.hostUid}/${fixture.hostSessionId}`,
-    `online/trainingActiveV4/${fixture.hostUid}/${fixture.hostSessionId}`,
-    `online/trainingMatchPermitsV4/${fixture.roomId}`,
-    `online/trainingMatchLocksV4/${fixture.hostUid}`,
-  ];
-
-  for (const privatePath of privatePaths) {
-    await assertFails(get(ref(hostDatabase, privatePath)));
-    await assertFails(set(ref(hostDatabase, privatePath), {
-      clientControlled: true,
-    }));
-  }
-
-  const offerPath =
-    `online/trainingOffersV4/${fixture.guestUid}/${fixture.guestSessionId}/${fixture.roomId}`;
-  const offerSnapshot = await assertSucceeds(get(ref(guestDatabase, offerPath)));
-  assert.equal(offerSnapshot.val()?.roomId, fixture.roomId);
-  assert.equal(offerSnapshot.val()?.toSessionId, fixture.guestSessionId);
-  await assertFails(get(ref(hostDatabase, offerPath)));
-  await assertFails(get(ref(outsiderDatabase, offerPath)));
-  await assertFails(get(ref(
-    guestDatabase,
-    `online/trainingOffersV4/${fixture.guestUid}/wrong-session-private/${fixture.roomId}`,
-  )));
-  await assertFails(set(ref(guestDatabase, offerPath), {
-    ...fixture.offer,
-    fromName: "TAMPERED",
+  await assertFails(set(ref(guestDatabase, guestDrawPath), {
+    imageIndex: 1,
+    bpm: 80,
+    drawnAt: Date.now(),
   }));
-  await assertFails(remove(ref(guestDatabase, offerPath)));
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await update(
-      ref(
-        contextWithoutRules.database(),
-        `online/trainingSessionClaims/${fixture.guestUid}`,
-      ),
-      { expiresAt: Date.now() - 1 },
-    );
-  });
-  await assertFails(get(ref(guestDatabase, offerPath)));
-});
-
-test("training chat-frame snapshots are member-readable, immutable, and legacy rooms cannot inject them", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const fixture = trainingSessionV4Fixture("frames");
-  fixture.room.chatFrames = {
-    [fixture.hostUid]: "chat_frame_neon",
-    [fixture.guestUid]: "",
-  };
-  await seedTrainingSessionV4(environment, fixture);
-
-  const hostDatabase = environment.authenticatedContext(fixture.hostUid).database();
-  const guestDatabase = environment.authenticatedContext(fixture.guestUid).database();
-  const outsiderDatabase =
-    environment.authenticatedContext("training-v4-outsider-frames").database();
-  const chatFramesPath =
-    `online/trainingRooms/${fixture.roomId}/chatFrames`;
-
-  assert.deepEqual(
-    (await assertSucceeds(get(ref(hostDatabase, chatFramesPath)))).val(),
-    fixture.room.chatFrames,
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.guestUid}/transportEpoch`,
+    fixture.transportEpoch,
   );
-  assert.deepEqual(
-    (await assertSucceeds(get(ref(guestDatabase, chatFramesPath)))).val(),
-    fixture.room.chatFrames,
-  );
-  await assertFails(get(ref(outsiderDatabase, chatFramesPath)));
-  await assertFails(set(
-    ref(hostDatabase, `${chatFramesPath}/${fixture.hostUid}`),
-    "chat_frame_lace",
-  ));
-  await assertFails(set(
-    ref(guestDatabase, chatFramesPath),
-    {
-      [fixture.hostUid]: "",
-      [fixture.guestUid]: "chat_frame_royal_gold",
-    },
-  ));
-
-  const now = Date.now();
-  const roomId = "-trainingLegacyFrame01";
-  const legacyHost = v3QueueEntry(
-    "training-legacy-frame-host",
-    "FRAME HOST",
-    now,
-  );
-  const legacyGuest = v3QueueEntry(
-    "training-legacy-frame-guest",
-    "FRAME GUEST",
-    now,
-  );
-  const legacyHostDatabase =
-    environment.authenticatedContext(legacyHost.uid).database();
-  const legacyGuestDatabase =
-    environment.authenticatedContext(legacyGuest.uid).database();
-
-  await assertSucceeds(set(
-    ref(legacyHostDatabase, `online/trainingQueue/${legacyHost.uid}`),
-    legacyHost,
-  ));
-  await assertSucceeds(set(
-    ref(legacyGuestDatabase, `online/trainingQueue/${legacyGuest.uid}`),
-    legacyGuest,
-  ));
-  await assertSucceeds(set(
-    ref(legacyHostDatabase, "online/trainingMatchLock"),
-    matchLockPayload(legacyHost.uid, roomId),
-  ));
-  await reserveActive(legacyHostDatabase, legacyHost.uid, roomId);
-
-  const legacyRoom = v3RoomPayload(legacyHost, legacyGuest, now);
-  await assertFails(set(
-    ref(legacyHostDatabase, `online/trainingRooms/${roomId}`),
-    {
-      ...legacyRoom,
-      chatFrames: {
-        [legacyHost.uid]: "chat_frame_neon",
-        [legacyGuest.uid]: "",
-      },
-    },
-  ));
-  await assertSucceeds(set(
-    ref(legacyHostDatabase, `online/trainingRooms/${roomId}`),
-    legacyRoom,
-  ));
-});
-
-test("session V2 training presence and signals enforce leases and target ownership", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const fixture = trainingSessionV4Fixture("signal");
-  await seedTrainingSessionV4(environment, fixture);
-
-  const hostDatabase = environment.authenticatedContext(fixture.hostUid).database();
-  const guestDatabase = environment.authenticatedContext(fixture.guestUid).database();
-  const outsiderDatabase =
-    environment.authenticatedContext("training-v4-outsider-signal").database();
-  const hostPresencePath =
-    `online/trainingRooms/${fixture.roomId}/presenceV2/${fixture.hostUid}/${fixture.hostSessionId}`;
-  const presence = {
-    protocolVersion: 2,
-    sessionId: fixture.hostSessionId,
-    leaseToken: fixture.hostLeaseToken,
-    generation: fixture.hostGeneration,
-    online: true,
-    updatedAt: Date.now(),
-  };
-
-  await assertSucceeds(set(ref(hostDatabase, hostPresencePath), presence));
-  await assertSucceeds(get(ref(
-    guestDatabase,
-    `online/trainingRooms/${fixture.roomId}/presenceV2`,
-  )));
-  await assertFails(get(ref(
-    outsiderDatabase,
-    `online/trainingRooms/${fixture.roomId}/presenceV2`,
-  )));
-  await assertFails(set(ref(guestDatabase, hostPresencePath), {
-    ...presence,
-    updatedAt: Date.now(),
+  await assertSucceeds(set(ref(guestDatabase, guestDrawPath), {
+    imageIndex: 1,
+    bpm: 80,
+    drawnAt: Date.now(),
   }));
-  await assertFails(set(
-    ref(
+
+  const retiredWrites = [
+    [
       hostDatabase,
-      `online/trainingRooms/${fixture.roomId}/presenceV2/${fixture.hostUid}/wrong-session-signal`,
-    ),
-    {
-      ...presence,
-      sessionId: "wrong-session-signal",
-      updatedAt: Date.now(),
-    },
-  ));
-  await assertFails(set(ref(hostDatabase, hostPresencePath), {
-    ...presence,
-    leaseToken: "wrong-lease-token-signal",
-    updatedAt: Date.now(),
-  }));
-
-  const signalPath =
-    `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/${fixture.guestSessionId}/signal-v4-1`;
-  const signal = {
-    protocolVersion: 2,
-    signalingVersion: 2,
-    fromUid: fixture.hostUid,
-    fromSessionId: fixture.hostSessionId,
-    toUid: fixture.guestUid,
-    toSessionId: fixture.guestSessionId,
-    connectionGeneration: fixture.connectionGeneration,
-    attemptId: fixture.attemptId,
-    type: "offer",
-    payload: "{\"type\":\"offer\",\"sdp\":\"v=0\"}",
-    createdAt: Date.now(),
-  };
-  await assertSucceeds(set(ref(hostDatabase, signalPath), signal));
-  assert.equal(
-    (await assertSucceeds(get(ref(guestDatabase, signalPath)))).val()?.attemptId,
-    fixture.attemptId,
-  );
-  await assertFails(get(ref(hostDatabase, signalPath)));
-  await assertFails(get(ref(outsiderDatabase, signalPath)));
-  await assertFails(set(
-    ref(
+      `online/trainingQueue/${fixture.hostUid}`,
+      { uid: fixture.hostUid, state: "waiting", lastSeen: Date.now() },
+    ],
+    [
       hostDatabase,
-      `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/${fixture.guestSessionId}/signal-v4-wrong-attempt`,
-    ),
-    {
-      ...signal,
-      attemptId: "wrong-attempt-signal",
-      createdAt: Date.now(),
-    },
-  ));
-  await assertFails(set(
-    ref(
+      `online/trainingQueueV4/${fixture.hostUid}/${fixture.hostRunId}`,
+      { uid: fixture.hostUid, state: "waiting", lastSeen: Date.now() },
+    ],
+    [
       hostDatabase,
-      `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/wrong-session-signal/signal-v4-wrong-session`,
-    ),
-    {
-      ...signal,
-      toSessionId: "wrong-session-signal",
-      createdAt: Date.now(),
-    },
-  ));
-  await assertSucceeds(remove(ref(guestDatabase, signalPath)));
-  await assertSucceeds(remove(ref(hostDatabase, hostPresencePath)));
-
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await update(
-      ref(
-        contextWithoutRules.database(),
-        `online/trainingSessionClaims/${fixture.hostUid}`,
-      ),
-      { expiresAt: Date.now() - 1 },
-    );
-  });
-  await assertFails(set(ref(hostDatabase, hostPresencePath), {
-    ...presence,
-    updatedAt: Date.now(),
-  }));
-  await assertFails(set(
-    ref(
+      `online/trainingActiveV4/${fixture.hostUid}/${fixture.hostRunId}`,
+      { uid: fixture.hostUid, roomId: fixture.roomId },
+    ],
+    [
       hostDatabase,
-      `online/trainingRooms/${fixture.roomId}/signalsV2/${fixture.guestUid}/${fixture.guestSessionId}/signal-v4-stale-claim`,
-    ),
-    {
-      ...signal,
-      createdAt: Date.now(),
-    },
-  ));
-});
-
-test("fresh session V2 claims fence legacy matchmaking without blocking expired claims", {
-  skip: runsAgainstSafeEmulator
-    ? false
-    : "set FIREBASE_DATABASE_EMULATOR_HOST and a demo-* TRAINING_RULES_TEST_PROJECT_ID",
-}, async (context) => {
-  const environment = await createEnvironment(context);
-  const fixture = trainingSessionV4Fixture("legacy");
-  const expiredUid = "training-v4-expired-legacy";
-  const expiredSessionId = "training-v4-expired-session";
-  await environment.withSecurityRulesDisabled(async (contextWithoutRules) => {
-    await update(ref(contextWithoutRules.database(), "online"), {
-      [`trainingSessionClaims/${fixture.hostUid}`]: fixture.hostClaim,
-      [`trainingSessionClaims/${expiredUid}`]: {
+      `online/trainingRooms/${fixture.roomId}/presence/${fixture.hostUid}`,
+      { online: true, updatedAt: Date.now() },
+    ],
+    [
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/presenceV2/${
+        fixture.hostUid
+      }/${fixture.hostRunId}`,
+      {
         protocolVersion: 2,
-        sessionId: expiredSessionId,
-        leaseToken: "training-v4-expired-lease",
-        generation: "E".repeat(22),
-        claimedAt: Date.now() - 120_000,
-        heartbeatAt: Date.now() - 120_000,
-        expiresAt: Date.now() - 1,
+        sessionId: fixture.hostRunId,
+        leaseToken: token("legacy-lease"),
+        generation: token("legacy-generation"),
+        online: true,
+        updatedAt: Date.now(),
       },
-    });
-  });
-
-  const freshDatabase = environment.authenticatedContext(fixture.hostUid).database();
-  const freshLegacyQueue = v3QueueEntry(
-    fixture.hostUid,
-    "FRESH V4",
-    Date.now(),
-    { sessionId: "fresh-v4-legacy-session" },
-  );
-  await assertFails(set(
-    ref(freshDatabase, `online/trainingQueue/${fixture.hostUid}`),
-    freshLegacyQueue,
-  ));
-  await assertFails(set(
-    ref(freshDatabase, `online/trainingActive/${fixture.hostUid}`),
-    activeReservation("-freshV4LegacyRoom01"),
-  ));
-  await assertFails(set(
-    ref(freshDatabase, "online/trainingMatchLock"),
-    matchLockPayload(fixture.hostUid, "-freshV4LegacyRoom01"),
-  ));
-
-  const expiredDatabase = environment.authenticatedContext(expiredUid).database();
-  const expiredLegacyQueue = v3QueueEntry(expiredUid, "EXPIRED V4", Date.now(), {
-    sessionId: expiredSessionId,
-  });
-  await assertSucceeds(set(
-    ref(expiredDatabase, `online/trainingQueue/${expiredUid}`),
-    expiredLegacyQueue,
-  ));
-  await assertSucceeds(set(
-    ref(expiredDatabase, `online/trainingActive/${expiredUid}`),
-    activeReservation("-expiredV4Legacy01"),
-  ));
+    ],
+    [
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/signals/${
+        fixture.guestUid
+      }/${token("legacy-signal")}`,
+      {
+        fromUid: fixture.hostUid,
+        type: "offer",
+        payload: "legacy-offer",
+        createdAt: Date.now(),
+      },
+    ],
+    [
+      hostDatabase,
+      `online/trainingRooms/${fixture.roomId}/signalsV2/${
+        fixture.guestUid
+      }/${fixture.guestRunId}/${token("legacy-v2-signal")}`,
+      {
+        protocolVersion: 2,
+        signalingVersion: 2,
+        fromUid: fixture.hostUid,
+        fromSessionId: fixture.hostRunId,
+        toUid: fixture.guestUid,
+        toSessionId: fixture.guestRunId,
+        connectionGeneration: token("legacy-connection"),
+        attemptId: token("legacy-attempt"),
+        type: "offer",
+        payload: "legacy-v2-offer",
+        createdAt: Date.now(),
+      },
+    ],
+  ];
+  for (const [database, targetPath, value] of retiredWrites) {
+    await assertFails(set(ref(database, targetPath), value));
+  }
 });

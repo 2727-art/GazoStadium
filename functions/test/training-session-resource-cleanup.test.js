@@ -782,7 +782,7 @@ test("V4 cleanup indexes and scheduled wiring are explicit", () => {
   );
   assert.match(
     source,
-    /const \[rooms, queue, active, sessions\] = await Promise\.all\(\[[\s\S]*cleanupTrainingSessionResources\(now\)/,
+    /const \[rooms, attempts, retiredResources\] = await Promise\.all\(\[[\s\S]*cleanupTrainingSessionV5\(now\),[\s\S]*cleanupTrainingSessionResources\(now\)/,
   );
-  assert.match(source, /const result = \{ rooms, queue, active, sessions \}/);
+  assert.match(source, /const result = \{ rooms, attempts, retiredResources \}/);
 });

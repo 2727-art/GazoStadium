@@ -21,6 +21,7 @@ const TRAINING_OFFERS_V4_PATH = "online/trainingOffersV4";
 const TRAINING_MATCH_LOCKS_V4_PATH = "online/trainingMatchLocksV4";
 const TRAINING_MATCH_PERMITS_V4_PATH = "online/trainingMatchPermitsV4";
 const TRAINING_SESSION_CLAIMS_PATH = "online/trainingSessionClaims";
+const TRAINING_ATTEMPTS_V5_PATH = "online/trainingAttemptsV5";
 const TRAINING_SESSION_ACTION_RATES_PATH =
   "online/trainingSessionActionRates";
 const TRAINING_SESSION_CLEANUP_CURSORS_PATH =
@@ -112,9 +113,12 @@ function trainingRoomHasFreshPresence(
   const freshAfter = Number(now) - freshMs;
   const sessionPresence = Object.values(objectValue(room?.presenceV2))
     .flatMap((sessions) => Object.values(objectValue(sessions)));
+  const sessionPresenceV5 = Object.values(objectValue(room?.presenceV5))
+    .flatMap((runs) => Object.values(objectValue(runs)));
   return [
     ...Object.values(objectValue(room?.presence)),
     ...sessionPresence,
+    ...sessionPresenceV5,
   ].some((value) => {
     const presence = objectValue(value);
     const updatedAt = validTimestamp(presence.updatedAt);
@@ -914,6 +918,51 @@ function trainingRoomCleanupDisposition(room, now, {
 
 async function cleanupRelatedTrainingPointers(realtime, roomId, room) {
   const participants = trainingRoomParticipantUids(room);
+  const cleanupAttemptV5 = async (uid) => {
+    if (room?.sessionProtocolVersion !== 5) return;
+    const session = room?.sessions?.[uid];
+    if (!session?.runId || !session?.endpointId || !session?.ownerEpoch) return;
+    const endedAt = validTimestamp(room?.serverFinalized?.finalizedAt)
+      || validTimestamp(room?.destroyed?.at)
+      || Date.now();
+    await realtime.ref(`${TRAINING_ATTEMPTS_V5_PATH}/${uid}`)
+      .transaction((current) => {
+        if (current == null) return null;
+        if (current?.protocolVersion !== 5
+            || current?.uid !== uid
+            || current?.runId !== session.runId
+            || current?.endpointId !== session.endpointId
+            || current?.ownerEpoch !== session.ownerEpoch
+            || current?.roomId !== roomId
+            || current?.roomAttemptId !== room?.roomAttemptId
+            || current?.transportEpoch !== room?.transportEpoch
+            || !["reserved", "active"].includes(current?.state)) {
+          return undefined;
+        }
+        const terminal = {
+          ...current,
+          revision: Number(current.revision || 0) + 1,
+          state: "terminal",
+          terminalReason: room?.serverFinalized
+            ? "server_finalized"
+            : "room_destroyed",
+          queueExpiresAt: 0,
+          updatedAt: endedAt,
+          lastSeen: endedAt,
+        };
+        for (const key of [
+          "roomId",
+          "roomAttemptId",
+          "transportEpoch",
+          "reservedAt",
+          "role",
+          "opponentUid",
+        ]) {
+          delete terminal[key];
+        }
+        return terminal;
+      });
+  };
   const cleanupActive = async (uid) => {
     // A cold Admin SDK cache can yield null before the server value is loaded.
     // Returning null keeps the CAS alive so a conflict reruns these ownership checks.
@@ -988,6 +1037,7 @@ async function cleanupRelatedTrainingPointers(realtime, roomId, room) {
   const operations = [
     ...participants.map((uid) => cleanupActive(uid)),
     ...participants.map((uid) => cleanupSessionV4(uid)),
+    ...participants.map((uid) => cleanupAttemptV5(uid)),
     ...participants.map((uid) => (
       realtime.ref(`${TRAINING_INVITES_PATH}/${uid}/${roomId}`)
         .transaction((current) => (
@@ -1371,11 +1421,24 @@ function createTrainingRoomCleanup({
           });
           if (finalized?.result?.status === "final") {
             result.finalized += 1;
-            result.pointerFailures += await cleanupRelatedTrainingPointers(
-              realtime,
-              candidate.roomId,
-              candidate.room,
-            );
+            try {
+              const finalizedRoomSnapshot = await realtime.ref(
+                `${TRAINING_ROOMS_PATH}/${candidate.roomId}`,
+              ).get();
+              const finalizedRoom = finalizedRoomSnapshot.val();
+              if (!finalizedRoomSnapshot.exists()
+                  || finalizedRoom?.serverFinalized == null) {
+                result.pointerFailures += 1;
+              } else {
+                result.pointerFailures += await cleanupRelatedTrainingPointers(
+                  realtime,
+                  candidate.roomId,
+                  finalizedRoom,
+                );
+              }
+            } catch {
+              result.pointerFailures += 1;
+            }
           } else result.finalizationPending += 1;
         } catch {
           result.finalizationFailed += 1;
@@ -1480,6 +1543,7 @@ module.exports = Object.freeze({
   TRAINING_QUEUE_PATH,
   TRAINING_QUEUE_STALE_MS,
   TRAINING_SESSION_ACTION_RATES_PATH,
+  TRAINING_ATTEMPTS_V5_PATH,
   TRAINING_SESSION_CLAIMS_PATH,
   TRAINING_SESSION_CLEANUP_BATCH_SIZE,
   TRAINING_SESSION_CLEANUP_CURSORS_PATH,

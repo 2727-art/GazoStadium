@@ -166,7 +166,7 @@ test("setup offers only standard or owned frames and snapshots the selected ID",
   const owned = functionBlock("ownedTrainingChatFrames");
   const selector = functionBlock("renderTrainingChatFrameSelector");
   const saver = functionBlock("saveTrainingChatFrame");
-  const payload = functionBlock("trainingSessionPreparationPayload");
+  const payload = functionBlock("trainingSessionV5Preparation");
   const roomReader = functionBlock("readRoomSkeleton");
 
   assert.match(loader, /online\/economy\/\$\{targetState\.uid\}/);

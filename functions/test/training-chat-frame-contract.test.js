@@ -173,16 +173,16 @@ test("chat-frame snapshots live only on the room root, not permits or players", 
   assert.equal(Object.hasOwn(resources.room.players[GUEST_UID], "chatFrameId"), false);
 });
 
-test("RTDB Rules make the room chat-frame snapshot member-readable and server-only", () => {
+test("RTDB Rules make the V5 room chat-frame snapshot member-readable and server-only", () => {
   const room = rules.trainingRooms.$roomId;
   const chatFrames = room.chatFrames;
   assert.ok(chatFrames);
-  assert.match(
-    room[".write"],
-    /!newData\.child\('chatFrames'\)\.exists\(\)/,
-  );
+  assert.equal(room[".write"], false);
   assert.equal(chatFrames[".write"], false);
   assert.match(chatFrames[".read"], /members/);
+  assert.match(chatFrames[".read"], /trainingAttemptsV5/);
+  assert.match(chatFrames[".validate"], /sessionProtocolVersion/);
+  assert.match(chatFrames[".validate"], /=== 5/);
   assert.match(chatFrames[".validate"], /hostUid/);
   assert.match(chatFrames[".validate"], /guestUid/);
   assert.match(chatFrames[".validate"], /hasChildren/);

@@ -17,12 +17,16 @@ const {
   createOnlinePublicPresenceCleanup,
 } = require("./online-public-presence-cleanup");
 const {
-  createTrainingActiveCleanup,
-  createTrainingQueueCleanup,
   createTrainingRoomCleanup,
   createTrainingSessionResourceCleanup,
   trainingActiveRoomIsLive,
 } = require("./training-room-cleanup");
+const {
+  createTrainingSessionV5Cleanup,
+} = require("./training-session-v5-cleanup");
+const {
+  createTrainingSessionV5Service,
+} = require("./training-session-v5-service");
 const {
   createTrainingSessionService,
 } = require("./training-session-service");
@@ -343,7 +347,15 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
-const trainingSessionService = createTrainingSessionService({
+// Deploy-window safety only: retired V4 clients cannot write new state, but an
+// in-flight V4 claim/room must still block account transfer until it expires.
+// Remove this reader after the retired-resource cleanup has drained the rollout.
+const retiredTrainingSessionService = createTrainingSessionService({
+  realtime,
+  HttpsError,
+  crypto,
+});
+const trainingSessionService = createTrainingSessionV5Service({
   realtime,
   HttpsError,
   crypto,
@@ -351,10 +363,7 @@ const trainingSessionService = createTrainingSessionService({
 const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
 });
-const cleanupTrainingQueue = createTrainingQueueCleanup({
-  realtime,
-});
-const cleanupTrainingActive = createTrainingActiveCleanup({
+const cleanupTrainingSessionV5 = createTrainingSessionV5Cleanup({
   realtime,
 });
 const cleanupTrainingSessionResources = createTrainingSessionResourceCleanup({
@@ -10376,13 +10385,36 @@ exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (
   }
 });
 
+function trainingSessionV5DiagnosticId(uid, data) {
+  return crypto.createHash("sha256")
+    .update("training-session-v5:")
+    .update(String(uid || ""))
+    .update(":")
+    .update(String(data?.runId || ""))
+    .update(":")
+    .update(String(data?.endpointId || ""))
+    .digest("hex")
+    .slice(0, 16);
+}
+
 exports.trainingSessionAction = onCall(
   callableOptions("trainingSessionAction"),
   async (request) => {
     const uid = requireUid(request);
     const action = cleanText(request.data?.action, 24);
     try {
-      return await trainingSessionService.dispatch(uid, request.data);
+      const result = await trainingSessionService.dispatch(uid, request.data);
+      const reason = cleanText(result?.reason || result?.outcome, 32);
+      if (["reclaimed", "owner-replaced", "replaced-stale", "recovering"]
+        .includes(reason)) {
+        console.info("trainingSessionAction ownership transition", {
+          action,
+          reason,
+          diagnosticId: trainingSessionV5DiagnosticId(uid, request.data),
+          attemptState: cleanText(result?.state, 16),
+        });
+      }
+      return result;
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       console.error("trainingSessionAction failed", {
@@ -10561,7 +10593,11 @@ async function trainingActiveSessionIsLive(uid, activeSnapshot, now) {
     && trainingActiveRoomIsLive(roomSnapshot.val(), uid, now);
 }
 
-function trainingSessionClaimRef(uid) {
+function trainingAttemptV5Ref(uid) {
+  return realtime.ref(`online/trainingAttemptsV5/${uid}`);
+}
+
+function retiredTrainingSessionClaimRef(uid) {
   return realtime.ref(`online/trainingSessionClaims/${uid}`);
 }
 
@@ -10581,7 +10617,9 @@ async function accountHasActiveSession(uid) {
     marketQueueRef(uid).get(),
     soloSessionClaimRef(uid).get(),
     liveSoloSessionV2Room(uid, now),
-    trainingSessionClaimRef(uid).get(),
+    retiredTrainingSessionClaimRef(uid).get(),
+    retiredTrainingSessionService.liveRoom(uid, now),
+    trainingAttemptV5Ref(uid).get(),
     trainingSessionService.liveRoom(uid, now),
     firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
     aiTextTrainingActiveAchievementSessionRef(uid).get(),
@@ -10603,16 +10641,34 @@ async function accountHasActiveSession(uid) {
   const marketQueueSnapshot = snapshots[realtimePaths.length + 1];
   const soloSessionClaimSnapshot = snapshots[realtimePaths.length + 2];
   const soloSessionRoom = snapshots[realtimePaths.length + 3];
-  const trainingSessionClaimSnapshot = snapshots[realtimePaths.length + 4];
-  const trainingSessionRoom = snapshots[realtimePaths.length + 5];
-  const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 6];
+  const retiredTrainingSessionClaimSnapshot =
+    snapshots[realtimePaths.length + 4];
+  const retiredTrainingSessionRoom = snapshots[realtimePaths.length + 5];
+  const trainingAttemptSnapshot = snapshots[realtimePaths.length + 6];
+  const trainingSessionRoom = snapshots[realtimePaths.length + 7];
+  const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 8];
   const aiTextTrainingActiveAchievementSessionSnapshot =
-    snapshots[realtimePaths.length + 7];
+    snapshots[realtimePaths.length + 9];
   const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
-  const trainingSessionClaim = normalizeClaim(trainingSessionClaimSnapshot.val());
+  const retiredTrainingSessionClaim = normalizeClaim(
+    retiredTrainingSessionClaimSnapshot.val(),
+  );
+  const trainingAttempt = objectValue(trainingAttemptSnapshot.val());
+  const trainingAttemptState = cleanText(trainingAttempt.state, 16);
+  const trainingAttemptBlocksTransfer = (
+    trainingAttempt.protocolVersion === 5
+    && (
+      ((trainingAttemptState === "waiting" || trainingAttemptState === "reserved")
+        && Number(trainingAttempt.queueExpiresAt || 0) > now)
+      || trainingAttemptState === "active"
+    )
+  );
   if ((soloSessionClaim && soloSessionClaim.expiresAt > now)
       || soloSessionRoom
-      || (trainingSessionClaim && trainingSessionClaim.expiresAt > now)
+      || (retiredTrainingSessionClaim
+        && retiredTrainingSessionClaim.expiresAt > now)
+      || retiredTrainingSessionRoom
+      || trainingAttemptBlocksTransfer
       || trainingSessionRoom
       || aiTextTrainingActiveUseSnapshot.exists
       || (
@@ -15497,13 +15553,12 @@ exports.cleanupTrainingRooms = onSchedule({
 }, async () => {
   try {
     const now = Date.now();
-    const [rooms, queue, active, sessions] = await Promise.all([
+    const [rooms, attempts, retiredResources] = await Promise.all([
       cleanupTrainingRooms(now),
-      cleanupTrainingQueue(now),
-      cleanupTrainingActive(now),
+      cleanupTrainingSessionV5(now),
       cleanupTrainingSessionResources(now),
     ]);
-    const result = { rooms, queue, active, sessions };
+    const result = { rooms, attempts, retiredResources };
     console.info("cleanupTrainingRooms completed", result);
     return result;
   } catch (error) {

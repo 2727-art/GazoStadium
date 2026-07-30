@@ -1416,9 +1416,20 @@
         ".write": false
       },
       "trainingSessionClaims": {
+        ".read": false,
+        ".write": false,
         ".indexOn": ["expiresAt"],
         "$uid": {
           ".read": false,
+          ".write": false
+        }
+      },
+      "trainingAttemptsV5": {
+        ".read": false,
+        ".write": false,
+        ".indexOn": ["queueExpiresAt", "updatedAt"],
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
           ".write": false
         }
       },
@@ -1531,6 +1542,8 @@
         }
       },
       "trainingActiveV4": {
+        ".read": false,
+        ".write": false,
         "$uid": {
           ".read": false,
           ".indexOn": ["expiresAt"],
@@ -1541,19 +1554,21 @@
         }
       },
       "trainingOffersV4": {
+        ".read": false,
         ".write": false,
         "$targetUid": {
           "$targetSessionId": {
-            ".read": "auth != null && auth.uid === $targetUid && root.child('online/trainingSessionClaims/' + $targetUid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/trainingSessionClaims/' + $targetUid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + $targetUid + '/expiresAt').val() > now",
+            ".read": false,
             ".indexOn": ["expiresAt"]
           }
         }
       },
       "trainingQueue": {
-        ".read": "auth != null",
+        ".read": false,
+        ".write": false,
         ".indexOn": ["lastSeen"],
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid && !(root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now) && (!newData.exists() || !data.exists() || data.child('sessionId').val() === newData.child('sessionId').val() || (data.child('lastSeen').isNumber() && data.child('lastSeen').val() <= now - 60000))",
+          ".write": false,
           ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'sessionId', 'name', 'intensity', 'protocolVersion', 'variant', 'joinedAt', 'lastSeen', 'state']) && ((newData.child('protocolVersion').val() === 2 && newData.child('variant').val() === 'kitaeai_60_v2' && !newData.child('commandDeck').exists() && !newData.child('imageBpms').exists()) || (newData.child('protocolVersion').val() === 3 && newData.child('variant').val() === 'kitaeai_hp_v3' && newData.hasChildren(['commandDeck', 'imageBpms']))))",
           "uid": {
             ".validate": "newData.isString() && newData.val() === $uid"
@@ -1615,12 +1630,14 @@
         }
       },
       "trainingActive": {
+        ".read": false,
+        ".write": false,
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid && !(root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now) && ((!newData.exists() && !data.child('rooms').exists()) || (newData.exists() && !data.child('rooms').exists()) || (newData.exists() && data.child('roomId').val() === newData.child('roomId').val() && data.child('rooms/' + data.child('roomId').val()).val() === true && newData.child('rooms/' + newData.child('roomId').val()).val() === true))",
+          ".read": false,
+          ".write": false,
           ".validate": "!newData.exists() || (newData.child('roomId').isString() && (!newData.child('rooms').exists() || newData.child('rooms/' + newData.child('roomId').val()).val() === true))",
           "roomId": {
-            ".write": "auth != null && auth.uid === $uid && !(root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now) && !root.child('online/trainingActive/' + $uid + '/rooms').exists()",
+            ".write": false,
             ".validate": "!newData.exists() || (newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && newData.val().matches(/^[A-Za-z0-9_-]+$/))"
           },
           "reservedAt": {
@@ -1628,7 +1645,7 @@
           },
           "rooms": {
             "$roomId": {
-              ".write": "auth != null && auth.uid === $uid && !(root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now) && ((!data.exists() && newData.val() === true && !root.child('online/trainingActive/' + $uid + '/rooms').exists()) || (data.val() === true && !newData.exists()))",
+              ".write": false,
               ".validate": "!newData.exists() || (newData.val() === true && $roomId === newData.parent().parent().child('roomId').val())"
             }
           },
@@ -1650,8 +1667,8 @@
         ".write": false
       },
       "trainingMatchLock": {
-        ".read": "auth != null",
-        ".write": "auth != null && !(root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now) && ((!data.exists() && !newData.exists()) || (!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && !newData.exists()) || (data.exists() && data.child('expiresAt').isNumber() && data.child('expiresAt').val() <= now && newData.exists() && newData.child('uid').val() === auth.uid))",
+        ".read": false,
+        ".write": false,
         ".validate": "!newData.exists() || newData.hasChildren(['uid', 'roomId', 'createdAt', 'expiresAt'])",
         "uid": {
           ".validate": "newData.isString() && newData.val() === auth.uid"
@@ -1670,10 +1687,12 @@
         }
       },
       "trainingInvites": {
+        ".read": false,
+        ".write": false,
         "$targetUid": {
-          ".read": "auth != null && auth.uid === $targetUid",
+          ".read": false,
           "$roomId": {
-            ".write": "auth != null && !(root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now) && ((!data.exists() && !newData.exists()) || (auth.uid === $targetUid && data.exists() && !newData.exists()) || (data.exists() && data.child('hostUid').val() === auth.uid && !newData.exists()) || (!data.exists() && newData.exists() && newData.child('hostUid').val() === auth.uid && auth.uid !== $targetUid && root.child('online/trainingMatchLock/uid').val() === auth.uid && root.child('online/trainingMatchLock/roomId').val() === $roomId && root.child('online/trainingMatchLock/expiresAt').isNumber() && root.child('online/trainingMatchLock/expiresAt').val() > now && !root.child('online/trainingInvites/' + $targetUid).exists() && root.child('online/trainingQueue/' + auth.uid + '/state').val() === 'forming' && root.child('online/trainingQueue/' + $targetUid + '/state').val() === 'waiting' && newData.child('targetSessionId').val() === root.child('online/trainingQueue/' + $targetUid + '/sessionId').val() && root.child('online/trainingRooms/' + $roomId + '/hostUid').val() === auth.uid && root.child('online/trainingRooms/' + $roomId + '/guestUid').val() === $targetUid && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true))",
+            ".write": false,
             ".validate": "!newData.exists() || newData.hasChildren(['roomId', 'hostUid', 'targetSessionId', 'protocolVersion', 'variant', 'createdAt'])",
             "roomId": {
               ".validate": "newData.isString() && newData.val() === $roomId"
@@ -1703,49 +1722,52 @@
         ".indexOn": ["createdAt"],
         "$roomId": {
           ".read": false,
-          ".write": "auth != null && !data.exists() && newData.hasChildren(['protocolVersion', 'variant', 'hostUid', 'guestUid', 'createdAt', 'status', 'members', 'players', 'accepted']) && ((newData.child('protocolVersion').val() === 2 && newData.child('variant').val() === 'kitaeai_60_v2' && newData.child('firstTrainerUid').isString()) || (newData.child('protocolVersion').val() === 3 && newData.child('variant').val() === 'kitaeai_hp_v3' && !newData.child('firstTrainerUid').exists())) && !newData.child('sessionProtocolVersion').exists() && !newData.child('signalingVersion').exists() && !newData.child('attemptId').exists() && !newData.child('connectionGeneration').exists() && !newData.child('sessions').exists() && !newData.child('chatFrames').exists() && newData.child('hostUid').val() === auth.uid && root.child('online/trainingMatchLock/uid').val() === auth.uid && root.child('online/trainingMatchLock/roomId').val() === $roomId && root.child('online/trainingMatchLock/expiresAt').isNumber() && root.child('online/trainingMatchLock/expiresAt').val() > now && !root.child('online/trainingInvites/' + auth.uid).exists() && root.child('online/trainingActive/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingActive/' + auth.uid + '/rooms/' + $roomId).val() === true && newData.child('guestUid').isString() && newData.child('guestUid').val() !== auth.uid && !root.child('online/trainingInvites/' + newData.child('guestUid').val()).exists() && !root.child('online/trainingActive/' + newData.child('guestUid').val() + '/rooms').exists() && newData.child('status').val() === 'forming' && (newData.child('protocolVersion').val() === 3 || newData.child('firstTrainerUid').val() === auth.uid || newData.child('firstTrainerUid').val() === newData.child('guestUid').val()) && newData.child('members/' + auth.uid).val() === true && newData.child('members/' + newData.child('guestUid').val()).val() === true && newData.child('players/' + auth.uid + '/uid').val() === auth.uid && newData.child('players/' + auth.uid + '/conditions').isString() && newData.child('players/' + auth.uid + '/conditions').val().length <= 80 && !newData.child('players/' + auth.uid + '/conditions').val().contains('\\r') && !newData.child('players/' + auth.uid + '/conditions').val().contains('\\n') && newData.child('players/' + newData.child('guestUid').val() + '/uid').val() === newData.child('guestUid').val() && newData.child('players/' + newData.child('guestUid').val() + '/conditions').val() === '' && newData.child('accepted/' + auth.uid).val() === true && !newData.child('accepted/' + newData.child('guestUid').val()).exists() && !newData.child('presence').exists() && !newData.child('signals').exists() && !newData.child('imageReceived').exists() && !newData.child('carrotChoices').exists() && !newData.child('turns').exists() && !newData.child('continueVotes').exists() && !newData.child('rounds').exists() && !newData.child('surrendered').exists() && !newData.child('destroyed').exists() && !newData.child('serverFinalized').exists() && root.child('online/trainingQueue/' + auth.uid + '/protocolVersion').val() === newData.child('protocolVersion').val() && root.child('online/trainingQueue/' + auth.uid + '/variant').val() === newData.child('variant').val() && root.child('online/trainingQueue/' + newData.child('guestUid').val() + '/protocolVersion').val() === newData.child('protocolVersion').val() && root.child('online/trainingQueue/' + newData.child('guestUid').val() + '/variant').val() === newData.child('variant').val()",
-          ".validate": "newData.hasChildren(['protocolVersion', 'variant', 'hostUid', 'guestUid', 'createdAt', 'status', 'members', 'players', 'accepted']) && ((newData.child('protocolVersion').val() === 1 && newData.child('variant').val() === 'kitaeai_60' && newData.child('firstTrainerUid').isString()) || (newData.child('protocolVersion').val() === 2 && newData.child('variant').val() === 'kitaeai_60_v2' && newData.child('firstTrainerUid').isString()) || (newData.child('protocolVersion').val() === 3 && newData.child('variant').val() === 'kitaeai_hp_v3' && !newData.child('firstTrainerUid').exists())) && newData.child('hostUid').isString() && newData.child('guestUid').isString() && newData.child('hostUid').val() !== newData.child('guestUid').val() && (newData.child('protocolVersion').val() === 3 || newData.child('firstTrainerUid').val() === newData.child('hostUid').val() || newData.child('firstTrainerUid').val() === newData.child('guestUid').val()) && ((!newData.child('sessionProtocolVersion').exists() && !newData.child('signalingVersion').exists() && !newData.child('attemptId').exists() && !newData.child('connectionGeneration').exists() && !newData.child('sessions').exists()) || (newData.child('protocolVersion').val() === 3 && newData.child('sessionProtocolVersion').val() === 2 && newData.child('signalingVersion').val() === 2 && newData.child('attemptId').isString() && newData.child('attemptId').val().matches(/^[-_0-9A-Za-z]{8,128}$/) && ((newData.child('connectionGeneration').isNumber() && newData.child('connectionGeneration').val() > 0) || (newData.child('connectionGeneration').isString() && newData.child('connectionGeneration').val().matches(/^[-_0-9A-Za-z]{8,128}$/))) && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() > newData.child('createdAt').val() && (newData.child('status').val() === 'offered' || newData.child('status').val() === 'active' || newData.child('status').val() === 'expired' || newData.child('status').val() === 'cancelled') && newData.child('sessions/' + newData.child('hostUid').val() + '/sessionId').isString() && newData.child('sessions/' + newData.child('hostUid').val() + '/generation').isString() && newData.child('sessions/' + newData.child('guestUid').val() + '/sessionId').isString() && newData.child('sessions/' + newData.child('guestUid').val() + '/generation').isString() && auth != null && newData.child('members/' + auth.uid).val() === true && root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/sessionId').val() === newData.child('sessions/' + auth.uid + '/sessionId').val() && root.child('online/trainingSessionClaims/' + auth.uid + '/generation').val() === newData.child('sessions/' + auth.uid + '/generation').val() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now))",
+          ".write": false,
+          ".validate": "newData.hasChildren(['protocolVersion', 'variant', 'sessionProtocolVersion', 'signalingVersion', 'roomAttemptId', 'transportEpoch', 'hostUid', 'guestUid', 'createdAt', 'activatedAt', 'status', 'members', 'players', 'accepted', 'sessions', 'chatFrames', 'rounds']) && newData.child('protocolVersion').val() === 3 && newData.child('variant').val() === 'kitaeai_hp_v3' && newData.child('sessionProtocolVersion').val() === 5 && newData.child('signalingVersion').val() === 5 && newData.child('status').val() === 'active' && newData.child('hostUid').isString() && newData.child('guestUid').isString() && newData.child('hostUid').val() !== newData.child('guestUid').val() && newData.child('members/' + newData.child('hostUid').val()).val() === true && newData.child('members/' + newData.child('guestUid').val()).val() === true && newData.child('players/' + newData.child('hostUid').val()).exists() && newData.child('players/' + newData.child('guestUid').val()).exists() && newData.child('accepted/' + newData.child('hostUid').val()).val() === true && newData.child('accepted/' + newData.child('guestUid').val()).val() === true && newData.child('sessions/' + newData.child('hostUid').val()).exists() && newData.child('sessions/' + newData.child('guestUid').val()).exists() && newData.child('chatFrames/' + newData.child('hostUid').val()).exists() && newData.child('chatFrames/' + newData.child('guestUid').val()).exists() && newData.child('rounds/1/createdAt').isNumber() && !newData.child('attemptId').exists() && !newData.child('connectionGeneration').exists() && !newData.child('firstTrainerUid').exists() && !newData.child('expiresAt').exists() && !newData.child('matchTransition').exists() && !newData.child('presence').exists() && !newData.child('presenceV2').exists() && !newData.child('signals').exists() && !newData.child('signalsV2').exists() && !newData.child('imageReceived').exists() && !newData.child('carrotChoices').exists() && !newData.child('turns').exists() && !newData.child('continueVotes').exists() && auth != null && root.child('online/trainingAttemptsV5/' + auth.uid + '/protocolVersion').val() === 5 && root.child('online/trainingAttemptsV5/' + auth.uid + '/signalingVersion').val() === 5 && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === newData.child('roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === newData.child('transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === newData.child('sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === newData.child('sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === newData.child('sessions/' + auth.uid + '/ownerEpoch').val()",
           "protocolVersion": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.val() === 1 || newData.val() === 2 || newData.val() === 3"
+            ".validate": "newData.val() === 3"
           },
           "variant": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "(newData.parent().child('protocolVersion').val() === 1 && newData.val() === 'kitaeai_60') || (newData.parent().child('protocolVersion').val() === 2 && newData.val() === 'kitaeai_60_v2') || (newData.parent().child('protocolVersion').val() === 3 && newData.val() === 'kitaeai_hp_v3')"
+            ".validate": "newData.parent().child('protocolVersion').val() === 3 && newData.val() === 'kitaeai_hp_v3'"
           },
           "sessionProtocolVersion": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('protocolVersion').val() === 3 && newData.val() === 2"
+            ".validate": "newData.parent().child('protocolVersion').val() === 3 && newData.val() === 5"
           },
           "signalingVersion": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.val() === 2"
+            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 5 && newData.val() === 5"
           },
-          "attemptId": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+          "roomAttemptId": {
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 5 && newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
           },
-          "connectionGeneration": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+          "transportEpoch": {
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && ((newData.isNumber() && newData.val() > 0) || (newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)))"
+            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 5 && newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
           },
           "sessions": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.child(newData.parent().child('hostUid').val()).exists() && newData.child(newData.parent().child('guestUid').val()).exists()",
+            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 5 && newData.child(newData.parent().child('hostUid').val()).exists() && newData.child(newData.parent().child('guestUid').val()).exists()",
             "$uid": {
-              ".validate": "($uid === newData.parent().parent().child('hostUid').val() || $uid === newData.parent().parent().child('guestUid').val()) && newData.hasChildren(['sessionId', 'generation'])",
-              "sessionId": {
-                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+              ".validate": "($uid === newData.parent().parent().child('hostUid').val() || $uid === newData.parent().parent().child('guestUid').val()) && newData.hasChildren(['runId', 'endpointId', 'ownerEpoch'])",
+              "runId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
               },
-              "generation": {
-                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{22}$/)"
+              "endpointId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+              },
+              "ownerEpoch": {
+                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
               },
               "$other": {
                 ".validate": false
@@ -1753,34 +1775,34 @@
             }
           },
           "hostUid": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.isString() && (data.exists() || !(root.child('online/trainingSessionClaims/' + newData.val() + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + newData.val() + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + newData.val() + '/expiresAt').val() > now))"
+            ".validate": "newData.isString()"
           },
           "guestUid": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.isString() && newData.val() !== newData.parent().child('hostUid').val() && (data.exists() || !(root.child('online/trainingSessionClaims/' + newData.val() + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + newData.val() + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + newData.val() + '/expiresAt').val() > now))"
+            ".validate": "newData.isString() && newData.val() !== newData.parent().child('hostUid').val()"
           },
           "createdAt": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.isNumber() && newData.val() >= now - 15000 && newData.val() <= now + 15000 && (data.exists() || !root.child('online/trainingActiveCleanupGuards/' + $roomId + '/expiresAt').isNumber() || root.child('online/trainingActiveCleanupGuards/' + $roomId + '/expiresAt').val() <= now)"
+            ".validate": "newData.isNumber()"
           },
           "expiresAt": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.isNumber() && newData.val() > newData.parent().child('createdAt').val()"
+            ".validate": false
           },
           "activatedAt": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.isNumber() && newData.val() >= newData.parent().child('createdAt').val()"
+            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 5 && newData.isNumber() && newData.val() >= newData.parent().child('createdAt').val()"
           },
           "matchTransition": {
             ".read": false,
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.hasChildren(['action', 'token', 'startedAt'])",
+            ".validate": false,
             "action": {
               ".validate": "newData.val() === 'accept' || newData.val() === 'cancel' || newData.val() === 'expire'"
             },
@@ -1795,17 +1817,17 @@
             }
           },
           "status": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
-            ".write": "auth != null && !root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').exists() && auth.uid === root.child('online/trainingRooms/' + $roomId + '/hostUid').val() && data.val() === 'forming' && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists() && ((newData.val() === 'active' && root.child('online/trainingRooms/' + $roomId + '/accepted/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/trainingRooms/' + $roomId + '/accepted/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).val() === true && root.child('online/trainingActive/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val() + '/roomId').val() === $roomId && root.child('online/trainingActive/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val() + '/rooms/' + $roomId).val() === true && root.child('online/trainingActive/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/trainingActive/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val() + '/rooms/' + $roomId).val() === true) || newData.val() === 'expired')",
-            ".validate": "newData.val() === 'forming' || newData.val() === 'active' || newData.val() === 'expired' || (newData.parent().child('sessionProtocolVersion').val() === 2 && (newData.val() === 'offered' || newData.val() === 'cancelled'))"
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
+            ".write": false,
+            ".validate": "newData.val() === 'active'"
           },
           "firstTrainerUid": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
             ".write": false,
-            ".validate": "newData.parent().child('protocolVersion').val() !== 3 && newData.isString() && (newData.val() === newData.parent().child('hostUid').val() || newData.val() === newData.parent().child('guestUid').val())"
+            ".validate": false
           },
           "members": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
             ".validate": "newData.child(newData.parent().child('hostUid').val()).val() === true && newData.child(newData.parent().child('guestUid').val()).val() === true",
             "$uid": {
@@ -1813,7 +1835,7 @@
             }
           },
           "players": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
             ".validate": "newData.child(newData.parent().child('hostUid').val()).exists() && newData.child(newData.parent().child('guestUid').val()).exists()",
             "$uid": {
@@ -1866,26 +1888,28 @@
             }
           },
           "chatFrames": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
             ".write": false,
-            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 2 && newData.hasChildren([newData.parent().child('hostUid').val(), newData.parent().child('guestUid').val()]) && newData.child(newData.parent().child('hostUid').val()).exists() && newData.child(newData.parent().child('guestUid').val()).exists()",
+            ".validate": "newData.parent().child('sessionProtocolVersion').val() === 5 && newData.hasChildren([newData.parent().child('hostUid').val(), newData.parent().child('guestUid').val()]) && newData.child(newData.parent().child('hostUid').val()).exists() && newData.child(newData.parent().child('guestUid').val()).exists()",
             "$uid": {
               ".write": false,
               ".validate": "($uid === newData.parent().parent().child('hostUid').val() || $uid === newData.parent().parent().child('guestUid').val()) && newData.isString() && (newData.val() === '' || newData.val().matches(/^chat_frame_(heart_ribbon|lace|cat_paw|flower|candy|jewel|antique|stained_glass|moon|film|polaroid|manga|pixel|neon|cyber|ice|flame|lightning|cardboard|ramen|aurora|stardust|royal_gold|beyond)$/))"
             }
           },
           "accepted": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
-            ".validate": "newData.child(newData.parent().child('hostUid').val()).val() === true",
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
+            ".write": false,
+            ".validate": "newData.child(newData.parent().child('hostUid').val()).val() === true && newData.child(newData.parent().child('guestUid').val()).val() === true",
             "$uid": {
-              ".write": "auth != null && !root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').exists() && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/trainingActive/' + $uid + '/roomId').val() === $roomId && root.child('online/trainingActive/' + $uid + '/rooms/' + $roomId).val() === true && root.child('online/trainingInvites/' + $uid + '/' + $roomId + '/targetSessionId').val() === root.child('online/trainingQueue/' + $uid + '/sessionId').val() && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/status').val() === 'forming'",
+              ".write": false,
               ".validate": "($uid === newData.parent().parent().child('hostUid').val() || $uid === newData.parent().parent().child('guestUid').val()) && newData.val() === true"
             }
           },
           "presence": {
-            ".read": "auth != null && !root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').exists() && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
+            ".write": false,
             "$uid": {
-              ".write": "auth != null && !root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').exists() && auth.uid === $uid && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true",
+              ".write": false,
               ".validate": "!newData.exists() || newData.hasChildren(['online', 'updatedAt'])",
               "online": {
                 ".validate": "newData.isBoolean()"
@@ -1899,10 +1923,11 @@
             }
           },
           "presenceV2": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
+            ".write": false,
             "$uid": {
               "$sessionId": {
-                ".write": "auth != null && auth.uid === $uid && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/sessionId').val() === $sessionId && ((!newData.exists() && data.child('protocolVersion').val() === 2 && data.child('sessionId').val() === $sessionId && data.child('generation').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/generation').val()) || (newData.exists() && root.child('online/trainingSessionClaims/' + $uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + $uid + '/sessionId').val() === $sessionId && root.child('online/trainingSessionClaims/' + $uid + '/leaseToken').val() === newData.child('leaseToken').val() && root.child('online/trainingSessionClaims/' + $uid + '/generation').val() === newData.child('generation').val() && root.child('online/trainingSessionClaims/' + $uid + '/generation').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/generation').val() && root.child('online/trainingSessionClaims/' + $uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + $uid + '/expiresAt').val() > now))",
+                ".write": false,
                 ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'sessionId', 'leaseToken', 'generation', 'online', 'updatedAt']) && newData.child('protocolVersion').val() === 2 && newData.child('sessionId').val() === $sessionId && newData.child('leaseToken').val() === root.child('online/trainingSessionClaims/' + $uid + '/leaseToken').val() && newData.child('generation').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/generation').val() && newData.child('online').isBoolean() && newData.child('updatedAt').isNumber() && newData.child('updatedAt').val() >= now - 60000 && newData.child('updatedAt').val() <= now + 15000)",
                 "protocolVersion": {
                   ".validate": "newData.val() === 2"
@@ -1928,11 +1953,49 @@
               }
             }
           },
+          "presenceV5": {
+            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/trainingAttemptsV5/' + auth.uid + '/protocolVersion').val() === 5 && root.child('online/trainingAttemptsV5/' + auth.uid + '/signalingVersion').val() === 5 && (root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + auth.uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + auth.uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/runId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + auth.uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/ownerEpoch').val()",
+            "$uid": {
+              "$runId": {
+                ".write": "auth != null && auth.uid === $uid && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/trainingAttemptsV5/' + $uid + '/protocolVersion').val() === 5 && root.child('online/trainingAttemptsV5/' + $uid + '/signalingVersion').val() === 5 && (root.child('online/trainingAttemptsV5/' + $uid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + $uid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + $uid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + $uid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + $uid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + $uid + '/runId').val() === $runId && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/runId').val() === $runId && root.child('online/trainingAttemptsV5/' + $uid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + $uid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/ownerEpoch').val()",
+                ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'runId', 'endpointId', 'ownerEpoch', 'roomAttemptId', 'transportEpoch', 'online', 'updatedAt']) && newData.child('protocolVersion').val() === 5 && newData.child('runId').val() === $runId && newData.child('endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/endpointId').val() && newData.child('ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/ownerEpoch').val() && newData.child('roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && newData.child('transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && newData.child('online').isBoolean() && newData.child('updatedAt').isNumber() && newData.child('updatedAt').val() >= now - 60000 && newData.child('updatedAt').val() <= now + 15000)",
+                "protocolVersion": {
+                  ".validate": "newData.val() === 5"
+                },
+                "runId": {
+                  ".validate": "newData.isString() && newData.val() === $runId && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+                },
+                "endpointId": {
+                  ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/endpointId').val() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+                },
+                "ownerEpoch": {
+                  ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $uid + '/ownerEpoch').val() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+                },
+                "roomAttemptId": {
+                  ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+                },
+                "transportEpoch": {
+                  ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+                },
+                "online": {
+                  ".validate": "newData.isBoolean()"
+                },
+                "updatedAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            }
+          },
           "signals": {
+            ".read": false,
+            ".write": false,
             "$targetUid": {
-              ".read": "auth != null && !root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').exists() && auth.uid === $targetUid && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true",
+              ".read": false,
               "$signalId": {
-                ".write": "auth != null && !root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').exists() && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && ((auth.uid === $targetUid && data.exists() && !newData.exists()) || (!data.exists() && newData.exists() && auth.uid !== $targetUid && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true && newData.child('fromUid').val() === auth.uid && (root.child('online/trainingRooms/' + $roomId + '/status').val() === 'forming' || root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active') && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists()))",
+                ".write": false,
                 ".validate": "!newData.exists() || newData.hasChildren(['fromUid', 'type', 'payload', 'createdAt'])",
                 "fromUid": {
                   ".validate": "newData.isString() && newData.val() === auth.uid"
@@ -1956,11 +2019,13 @@
             }
           },
           "signalsV2": {
+            ".read": false,
+            ".write": false,
             "$targetUid": {
               "$targetSessionId": {
-                ".read": "auth != null && auth.uid === $targetUid && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/trainingSessionClaims/' + $targetUid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/trainingSessionClaims/' + $targetUid + '/generation').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/generation').val() && root.child('online/trainingSessionClaims/' + $targetUid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + $targetUid + '/expiresAt').val() > now",
+                ".read": false,
                 "$signalId": {
-                  ".write": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true && ((auth.uid === $targetUid && data.exists() && !newData.exists() && data.child('toUid').val() === $targetUid && data.child('toSessionId').val() === $targetSessionId && data.child('connectionGeneration').val() === root.child('online/trainingRooms/' + $roomId + '/connectionGeneration').val() && data.child('attemptId').val() === root.child('online/trainingRooms/' + $roomId + '/attemptId').val() && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/trainingSessionClaims/' + $targetUid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + $targetUid + '/sessionId').val() === $targetSessionId && root.child('online/trainingSessionClaims/' + $targetUid + '/generation').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/generation').val() && root.child('online/trainingSessionClaims/' + $targetUid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + $targetUid + '/expiresAt').val() > now) || (auth.uid !== $targetUid && !data.exists() && newData.exists() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid && newData.child('fromSessionId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/sessionId').val() && newData.child('toSessionId').val() === $targetSessionId && newData.child('toSessionId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/sessionId').val() && root.child('online/trainingSessionClaims/' + auth.uid + '/protocolVersion').val() === 2 && root.child('online/trainingSessionClaims/' + auth.uid + '/sessionId').val() === newData.child('fromSessionId').val() && root.child('online/trainingSessionClaims/' + auth.uid + '/generation').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/generation').val() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').isNumber() && root.child('online/trainingSessionClaims/' + auth.uid + '/expiresAt').val() > now && newData.child('connectionGeneration').val() === root.child('online/trainingRooms/' + $roomId + '/connectionGeneration').val() && newData.child('attemptId').val() === root.child('online/trainingRooms/' + $roomId + '/attemptId').val() && (root.child('online/trainingRooms/' + $roomId + '/status').val() === 'forming' || root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active') && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists()))",
+                  ".write": false,
                   ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'signalingVersion', 'fromUid', 'fromSessionId', 'toUid', 'toSessionId', 'connectionGeneration', 'attemptId', 'type', 'payload', 'createdAt']) && newData.child('protocolVersion').val() === 2 && newData.child('signalingVersion').val() === 2 && newData.child('fromUid').isString() && newData.child('toUid').val() === $targetUid && newData.child('fromUid').val() !== $targetUid && newData.child('fromSessionId').isString() && newData.child('toSessionId').val() === $targetSessionId && newData.child('connectionGeneration').val() === root.child('online/trainingRooms/' + $roomId + '/connectionGeneration').val() && newData.child('attemptId').val() === root.child('online/trainingRooms/' + $roomId + '/attemptId').val() && (newData.child('type').val() === 'offer' || newData.child('type').val() === 'answer' || newData.child('type').val() === 'candidate') && newData.child('payload').isString() && newData.child('payload').val().length > 0 && newData.child('payload').val().length <= 30000 && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 60000 && newData.child('createdAt').val() <= now + 15000)",
                   "protocolVersion": {
                     ".validate": "newData.val() === 2"
@@ -2002,23 +2067,79 @@
               }
             }
           },
+          "signalsV5": {
+            ".read": false,
+            ".write": false,
+            "$targetUid": {
+              "$targetRunId": {
+                ".read": "auth != null && auth.uid === $targetUid && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true && root.child('online/trainingAttemptsV5/' + $targetUid + '/protocolVersion').val() === 5 && root.child('online/trainingAttemptsV5/' + $targetUid + '/signalingVersion').val() === 5 && (root.child('online/trainingAttemptsV5/' + $targetUid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + $targetUid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + $targetUid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + $targetUid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/runId').val() === $targetRunId && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/runId').val() === $targetRunId && root.child('online/trainingAttemptsV5/' + $targetUid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/ownerEpoch').val()",
+                ".indexOn": ["createdAt"],
+                "$signalId": {
+                  ".write": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 3 && root.child('online/trainingRooms/' + $roomId + '/sessionProtocolVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/signalingVersion').val() === 5 && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/members/' + $targetUid).val() === true && ((auth.uid === $targetUid && data.exists() && !newData.exists() && root.child('online/trainingAttemptsV5/' + $targetUid + '/protocolVersion').val() === 5 && root.child('online/trainingAttemptsV5/' + $targetUid + '/signalingVersion').val() === 5 && (root.child('online/trainingAttemptsV5/' + $targetUid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + $targetUid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + $targetUid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + $targetUid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/runId').val() === $targetRunId && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/runId').val() === $targetRunId && root.child('online/trainingAttemptsV5/' + $targetUid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/ownerEpoch').val()) || (auth.uid !== $targetUid && !data.exists() && newData.exists() && root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active' && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid && newData.child('fromRunId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && newData.child('toRunId').val() === $targetRunId && root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/runId').val() === $targetRunId && root.child('online/trainingAttemptsV5/' + $targetUid + '/protocolVersion').val() === 5 && root.child('online/trainingAttemptsV5/' + $targetUid + '/signalingVersion').val() === 5 && (root.child('online/trainingAttemptsV5/' + $targetUid + '/state').val() === 'reserved' || root.child('online/trainingAttemptsV5/' + $targetUid + '/state').val() === 'active') && root.child('online/trainingAttemptsV5/' + $targetUid + '/roomId').val() === $roomId && root.child('online/trainingAttemptsV5/' + $targetUid + '/roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/runId').val() === $targetRunId && root.child('online/trainingAttemptsV5/' + $targetUid + '/endpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/endpointId').val() && root.child('online/trainingAttemptsV5/' + $targetUid + '/ownerEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/ownerEpoch').val()))",
+                  ".validate": "!newData.exists() || (newData.hasChildren(['protocolVersion', 'roomAttemptId', 'transportEpoch', 'fromUid', 'toUid', 'fromRunId', 'toRunId', 'fromEndpointId', 'toEndpointId', 'type', 'payload', 'createdAt']) && newData.child('protocolVersion').val() === 5 && newData.child('roomAttemptId').val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val() && newData.child('transportEpoch').val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val() && newData.child('fromUid').val() === auth.uid && newData.child('toUid').val() === $targetUid && newData.child('fromRunId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val() && newData.child('toRunId').val() === $targetRunId && newData.child('toRunId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/runId').val() && newData.child('fromEndpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val() && newData.child('toEndpointId').val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/endpointId').val() && (newData.child('type').val() === 'offer' || newData.child('type').val() === 'answer' || newData.child('type').val() === 'candidate') && newData.child('payload').isString() && newData.child('payload').val().length > 0 && newData.child('payload').val().length <= 30000 && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 60000 && newData.child('createdAt').val() <= now + 15000)",
+                  "protocolVersion": {
+                    ".validate": "newData.val() === 5"
+                  },
+                  "roomAttemptId": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/roomAttemptId').val()"
+                  },
+                  "transportEpoch": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/transportEpoch').val()"
+                  },
+                  "fromUid": {
+                    ".validate": "newData.isString() && newData.val() === auth.uid"
+                  },
+                  "toUid": {
+                    ".validate": "newData.isString() && newData.val() === $targetUid"
+                  },
+                  "fromRunId": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/runId').val()"
+                  },
+                  "toRunId": {
+                    ".validate": "newData.isString() && newData.val() === $targetRunId && newData.val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/runId').val()"
+                  },
+                  "fromEndpointId": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + auth.uid + '/endpointId').val()"
+                  },
+                  "toEndpointId": {
+                    ".validate": "newData.isString() && newData.val() === root.child('online/trainingRooms/' + $roomId + '/sessions/' + $targetUid + '/endpointId').val()"
+                  },
+                  "type": {
+                    ".validate": "newData.val() === 'offer' || newData.val() === 'answer' || newData.val() === 'candidate'"
+                  },
+                  "payload": {
+                    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 30000"
+                  },
+                  "createdAt": {
+                    ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                }
+              }
+            }
+          },
           "imageReceived": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
+            ".write": false,
             "$uid": {
-              ".write": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() !== 3 && auth.uid === $uid && !data.exists() && newData.val() === true && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active' && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists()",
+              ".write": false,
               ".validate": "root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() !== 3 && newData.val() === true"
             }
           },
           "carrotChoices": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).isString() && root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).isString()",
+            ".read": false,
+            ".write": false,
             "$uid": {
-              ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && (auth.uid === $uid || (root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).isString() && root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).isString()))",
-              ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active' && root.child('online/trainingRooms/' + $roomId + '/imageReceived/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/trainingRooms/' + $roomId + '/imageReceived/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).val() === true && !root.child('online/trainingRooms/' + $roomId + '/turns').exists() && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists()",
+              ".read": false,
+              ".write": false,
               ".validate": "newData.val() === 'mine' || newData.val() === 'boost8' || newData.val() === 'boost9' || newData.val() === 'boost10'"
             }
           },
           "turns": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
+            ".write": false,
             "$turn": {
               ".write": "auth != null && !data.exists() && ($turn === '1' || $turn === '2' || $turn === '3' || $turn === '4' || $turn === '5' || $turn === '6') && newData.hasChildren(['trainerUid', 'traineeUid', 'instruction', 'createdAt']) && !newData.child('startedAt').exists() && !newData.child('baseCompletedAt').exists() && !newData.child('completedAt').exists() && !newData.child('boostCompletedAt').exists() && !newData.child('surrenderedAt').exists() && !newData.child('timedOutAt').exists() && newData.child('trainerUid').val() === auth.uid && newData.child('traineeUid').isString() && newData.child('traineeUid').val() !== auth.uid && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/members/' + newData.child('traineeUid').val()).val() === true && root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active' && root.child('online/trainingRooms/' + $roomId + '/imageReceived/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/trainingRooms/' + $roomId + '/imageReceived/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).val() === true && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists() && ((($turn === '1' || $turn === '3' || $turn === '5') && newData.child('trainerUid').val() === root.child('online/trainingRooms/' + $roomId + '/firstTrainerUid').val()) || (($turn === '2' || $turn === '4' || $turn === '6') && newData.child('traineeUid').val() === root.child('online/trainingRooms/' + $roomId + '/firstTrainerUid').val())) && ($turn === '1' || ($turn === '2' && root.child('online/trainingRooms/' + $roomId + '/turns/1/completedAt').isNumber()) || ($turn === '3' && root.child('online/trainingRooms/' + $roomId + '/turns/2/completedAt').isNumber()) || ($turn === '4' && root.child('online/trainingRooms/' + $roomId + '/turns/3/completedAt').isNumber()) || ($turn === '5' && root.child('online/trainingRooms/' + $roomId + '/turns/4/completedAt').isNumber()) || ($turn === '6' && root.child('online/trainingRooms/' + $roomId + '/turns/5/completedAt').isNumber())) && ((root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 1 && !newData.child('carrotChoice').exists() && !newData.child('targetDurationMs').exists() && !newData.child('imageOwnerUid').exists() && ($turn !== '3' || (root.child('online/trainingRooms/' + $roomId + '/continueVotes/1/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).val() === 'continue' && root.child('online/trainingRooms/' + $roomId + '/continueVotes/1/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).val() === 'continue')) && ($turn !== '5' || (root.child('online/trainingRooms/' + $roomId + '/continueVotes/2/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).val() === 'continue' && root.child('online/trainingRooms/' + $roomId + '/continueVotes/2/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).val() === 'continue'))) || (root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 2 && root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + root.child('online/trainingRooms/' + $roomId + '/hostUid').val()).isString() && root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + root.child('online/trainingRooms/' + $roomId + '/guestUid').val()).isString() && newData.hasChildren(['carrotChoice', 'targetDurationMs', 'imageOwnerUid']) && newData.child('carrotChoice').val() === root.child('online/trainingRooms/' + $roomId + '/carrotChoices/' + newData.child('traineeUid').val()).val() && ((newData.child('carrotChoice').val() === 'mine' && newData.child('targetDurationMs').val() === 60000 && newData.child('imageOwnerUid').val() === newData.child('traineeUid').val()) || (newData.child('carrotChoice').val() === 'boost8' && newData.child('targetDurationMs').val() === 70000 && newData.child('imageOwnerUid').val() === newData.child('trainerUid').val()) || (newData.child('carrotChoice').val() === 'boost9' && newData.child('targetDurationMs').val() === 80000 && newData.child('imageOwnerUid').val() === newData.child('trainerUid').val()) || (newData.child('carrotChoice').val() === 'boost10' && newData.child('targetDurationMs').val() === 90000 && newData.child('imageOwnerUid').val() === newData.child('trainerUid').val()))))",
               ".validate": "($turn === '1' || $turn === '2' || $turn === '3' || $turn === '4' || $turn === '5' || $turn === '6') && newData.hasChildren(['trainerUid', 'traineeUid', 'instruction', 'createdAt']) && newData.child('trainerUid').val() !== newData.child('traineeUid').val() && root.child('online/trainingRooms/' + $roomId + '/members/' + newData.child('trainerUid').val()).val() === true && root.child('online/trainingRooms/' + $roomId + '/members/' + newData.child('traineeUid').val()).val() === true && ((root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 1 && !newData.child('carrotChoice').exists() && !newData.child('targetDurationMs').exists() && !newData.child('imageOwnerUid').exists() && !newData.child('baseCompletedAt').exists() && !newData.child('boostCompletedAt').exists() && !(newData.child('completedAt').exists() && newData.child('surrenderedAt').exists()) && !(newData.child('timedOutAt').exists() && (newData.child('completedAt').exists() || newData.child('surrenderedAt').exists())) && ((!newData.child('completedAt').exists() && !newData.child('surrenderedAt').exists() && !newData.child('timedOutAt').exists()) || newData.child('startedAt').isNumber())) || (root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 2 && newData.hasChildren(['carrotChoice', 'targetDurationMs', 'imageOwnerUid']) && !newData.child('timedOutAt').exists() && !(newData.child('baseCompletedAt').exists() && newData.child('surrenderedAt').exists()) && (!newData.child('completedAt').exists() || newData.child('baseCompletedAt').exists()) && (!newData.child('boostCompletedAt').exists() || (newData.child('carrotChoice').val() !== 'mine' && newData.child('completedAt').val() === newData.child('boostCompletedAt').val())) && (!newData.child('completedAt').exists() || newData.child('carrotChoice').val() === 'mine' || newData.child('completedAt').val() < newData.child('startedAt').val() + newData.child('targetDurationMs').val() || newData.child('boostCompletedAt').exists()) && ((!newData.child('baseCompletedAt').exists() && !newData.child('completedAt').exists() && !newData.child('boostCompletedAt').exists() && !newData.child('surrenderedAt').exists()) || newData.child('startedAt').isNumber())))",
@@ -2098,7 +2219,8 @@
             }
           },
           "continueVotes": {
-            ".read": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 1 && root.child('online/trainingRooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".read": false,
+            ".write": false,
             "$pair": {
               "$uid": {
                 ".write": "auth != null && root.child('online/trainingRooms/' + $roomId + '/protocolVersion').val() === 1 && auth.uid === $uid && !data.exists() && ($pair === '1' || $pair === '2' || $pair === '3') && root.child('online/trainingRooms/' + $roomId + '/members/' + $uid).val() === true && root.child('online/trainingRooms/' + $roomId + '/status').val() === 'active' && !root.child('online/trainingRooms/' + $roomId + '/destroyed').exists() && (($pair === '1' && root.child('online/trainingRooms/' + $roomId + '/turns/2/completedAt').isNumber()) || ($pair === '2' && root.child('online/trainingRooms/' + $roomId + '/turns/4/completedAt').isNumber()) || ($pair === '3' && root.child('online/trainingRooms/' + $roomId + '/turns/6/completedAt').isNumber()))",

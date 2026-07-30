@@ -56,6 +56,33 @@ test("session V2 presence protects the exact active training room", () => {
   assert.equal(trainingActiveRoomIsLive(room, "bob", now), true);
 });
 
+test("session V5 presence protects a long-running active training room", () => {
+  const now = 1_720_000_000_000;
+  const room = activeRoom(now - TRAINING_ROOM_ACTIVE_STALE_MS - 1, {
+    protocolVersion: 3,
+    variant: "kitaeai_hp_v3",
+    sessionProtocolVersion: 5,
+    signalingVersion: 5,
+    presence: {},
+    presenceV5: {
+      alice: {
+        "run-alice-12345678": {
+          protocolVersion: 5,
+          runId: "run-alice-12345678",
+          online: true,
+          updatedAt: now - 1_000,
+        },
+      },
+    },
+  });
+  assert.equal(trainingRoomHasFreshPresence(room, now), true);
+  assert.deepEqual(trainingRoomCleanupDisposition(room, now), {
+    action: "keep",
+    reason: "active",
+    participantUid: "alice",
+  });
+});
+
 const functionsRoot = path.resolve(__dirname, "..");
 
 function activeRoom(createdAt, overrides = {}) {
@@ -184,6 +211,7 @@ function createFakeRealtime({
   rooms,
   active = {},
   invites = {},
+  attemptsV5 = {},
   matchLock = null,
   cursor = null,
   failPaths = [],
@@ -192,6 +220,7 @@ function createFakeRealtime({
     rooms: structuredClone(rooms),
     active: structuredClone(active),
     invites: structuredClone(invites),
+    attemptsV5: structuredClone(attemptsV5),
     matchLock: structuredClone(matchLock),
     cursor: structuredClone(cursor),
     removedInvites: [],
@@ -272,6 +301,15 @@ function createFakeRealtime({
       if (targetPath.startsWith("online/trainingRooms/")) {
         const roomId = targetPath.split("/").pop();
         return {
+          async get() {
+            maybeFail(targetPath);
+            return fakeSnapshot(
+              state.rooms[roomId] == null
+                ? null
+                : structuredClone(state.rooms[roomId]),
+              roomId,
+            );
+          },
           async transaction(update) {
             maybeFail(targetPath);
             const current = state.rooms[roomId] == null
@@ -290,6 +328,31 @@ function createFakeRealtime({
             return {
               committed: true,
               snapshot: fakeSnapshot(next, roomId),
+            };
+          },
+        };
+      }
+      if (targetPath.startsWith("online/trainingAttemptsV5/")) {
+        const uid = targetPath.split("/").pop();
+        return {
+          async transaction(update) {
+            maybeFail(targetPath);
+            const current = state.attemptsV5[uid] == null
+              ? null
+              : structuredClone(state.attemptsV5[uid]);
+            const transaction = runColdCacheTransaction(update, current);
+            const next = transaction.value;
+            if (!transaction.committed) {
+              return {
+                committed: false,
+                snapshot: fakeSnapshot(next, uid),
+              };
+            }
+            if (next === null) delete state.attemptsV5[uid];
+            else state.attemptsV5[uid] = structuredClone(next);
+            return {
+              committed: true,
+              snapshot: fakeSnapshot(next, uid),
             };
           },
         };
@@ -866,6 +929,9 @@ test("cleanup finalizes natural results before deleting and cleans only matching
     finalizeRoom: async (request) => {
       finalizeCalls.push(request);
       if (request.roomId === failureRoomId) throw new Error("temporary");
+      state.rooms[request.roomId].serverFinalized = {
+        finalizedAt: request.now,
+      };
       return { result: { status: "final" } };
     },
   });
@@ -905,6 +971,84 @@ test("cleanup finalizes natural results before deleting and cleans only matching
     pointerFailures: 0,
     hasMore: false,
   });
+});
+
+test("natural V5 finalization reloads the finalized room before terminating attempts", async () => {
+  const now = 25 * 24 * 60 * 60 * 1000;
+  const roomId = "natural-v5-final";
+  const roomAttemptId = "room-attempt-12345678";
+  const transportEpoch = "transport-12345678";
+  const identities = {
+    alice: {
+      runId: "run-alice-12345678",
+      endpointId: "endpoint-alice-12345678",
+      ownerEpoch: "owner-alice-12345678",
+    },
+    bob: {
+      runId: "run-bob-12345678",
+      endpointId: "endpoint-bob-12345678",
+      ownerEpoch: "owner-bob-12345678",
+    },
+  };
+  const room = surrenderedRoom(now);
+  Object.assign(room, {
+    sessionProtocolVersion: 5,
+    signalingVersion: 5,
+    roomAttemptId,
+    transportEpoch,
+    sessions: structuredClone(identities),
+  });
+  const attemptsV5 = Object.fromEntries(
+    Object.entries(identities).map(([uid, identity], index) => ([
+      uid,
+      {
+        protocolVersion: 5,
+        uid,
+        ...identity,
+        revision: index + 4,
+        state: "active",
+        roomId,
+        roomAttemptId,
+        transportEpoch,
+        role: uid === "alice" ? "host" : "guest",
+        opponentUid: uid === "alice" ? "bob" : "alice",
+        reservedAt: now - 30_000,
+        updatedAt: now - 1_000,
+        lastSeen: now - 1_000,
+      },
+    ])),
+  );
+  const { realtime, state } = createFakeRealtime({
+    rooms: { [roomId]: room },
+    attemptsV5,
+  });
+  const cleanup = createTrainingRoomCleanup({
+    realtime,
+    finalizeRoom: async (request) => {
+      assert.equal(request.roomId, roomId);
+      state.rooms[roomId].serverFinalized = {
+        finalizedAt: request.now,
+      };
+      return { result: { status: "final" } };
+    },
+  });
+
+  const result = await cleanup(now);
+
+  assert.equal(result.finalized, 1);
+  assert.equal(result.pointerFailures, 0);
+  for (const [uid, original] of Object.entries(attemptsV5)) {
+    const terminal = state.attemptsV5[uid];
+    assert.equal(terminal.state, "terminal");
+    assert.equal(terminal.terminalReason, "server_finalized");
+    assert.equal(terminal.revision, original.revision + 1);
+    assert.equal(terminal.updatedAt, now);
+    assert.equal(terminal.lastSeen, now);
+    assert.equal(terminal.queueExpiresAt, 0);
+    assert.equal(Object.hasOwn(terminal, "roomId"), false);
+    assert.equal(Object.hasOwn(terminal, "roomAttemptId"), false);
+    assert.equal(Object.hasOwn(terminal, "transportEpoch"), false);
+  }
 });
 
 test("stale rooms tombstone first, release matching pointers, and retry safely", async () => {
@@ -1323,12 +1467,16 @@ test("scheduled cleanup and training-only active-session check are wired", () =>
     path.join(functionsRoot, "index.js"),
     "utf8",
   );
+  const cleanupSource = fs.readFileSync(
+    path.join(functionsRoot, "training-room-cleanup.js"),
+    "utf8",
+  );
   assert.match(source, /createTrainingRoomCleanup/);
-  assert.match(source, /createTrainingQueueCleanup/);
-  assert.match(source, /createTrainingActiveCleanup/);
+  assert.match(source, /createTrainingSessionV5Cleanup/);
+  assert.match(source, /createTrainingSessionResourceCleanup/);
   assert.match(
     source,
-    /const cleanupTrainingActive = createTrainingActiveCleanup\(\{\s*realtime,\s*\}\)/,
+    /const cleanupTrainingSessionV5 = createTrainingSessionV5Cleanup\(\{\s*realtime,\s*\}\)/,
   );
   assert.match(source, /finalizeTraining\(participantUid, roomId, \{/);
   assert.match(source, /maxRoomAgeMs: Number\.MAX_SAFE_INTEGER/);
@@ -1338,9 +1486,14 @@ test("scheduled cleanup and training-only active-session check are wired", () =>
   );
   assert.match(
     source,
-    /const \[rooms, queue, active, sessions\] = await Promise\.all\(\[[\s\S]*cleanupTrainingActive\(now\),[\s\S]*cleanupTrainingSessionResources\(now\),[\s\S]*const result = \{ rooms, queue, active, sessions \}/,
+    /const \[rooms, attempts, retiredResources\] = await Promise\.all\(\[[\s\S]*cleanupTrainingSessionV5\(now\),[\s\S]*cleanupTrainingSessionResources\(now\),[\s\S]*const result = \{ rooms, attempts, retiredResources \}/,
   );
+  assert.match(source, /online\/trainingAttemptsV5/);
   assert.match(source, /entry\.path === "trainingActive"/);
   assert.match(source, /trainingActiveSessionIsLive/);
   assert.match(source, /trainingActiveRoomIsLive/);
+  assert.match(
+    cleanupSource,
+    /"transportEpoch",\s*"reservedAt",\s*"role",\s*"opponentUid"/,
+  );
 });

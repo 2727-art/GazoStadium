@@ -43,62 +43,47 @@ import {
   transitionOnlineP2pRecovery,
 } from "./online-p2p-hardening.mjs?v=online-p2p-hardening-v2";
 import {
-  ONLINE_SESSION_LEASE_DEFAULTS,
-  createOnlineSessionToken,
-  decideOnlineSessionHeartbeatResult,
-  isOnlineSessionLeaseOwner,
-  resolveOnlineSessionId,
-} from "./online-session-guard.mjs?v=online-session-guard-v2";
-import {
   CHAT_FRAME_PRODUCTS,
   chatCosmeticClassNames,
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 import {
-  TRAINING_SESSION_STORAGE_KEY,
-  createTrainingSessionPresencePayload,
-  createTrainingSessionSignalEnvelope,
-  decideTrainingSessionOffer,
-  decideTrainingSessionSignal,
-  shouldConsumeTrainingSessionSignal,
+  TRAINING_SESSION_V5_PROTOCOL_VERSION,
+  TRAINING_SESSION_V5_SIGNALING_VERSION,
+  createTrainingSessionV5PresencePayload,
+  createTrainingSessionV5SignalEnvelope,
+  decideTrainingSessionV5Signal,
+  shouldConsumeTrainingSessionV5Signal,
   trainingImageRoundsNeedingResend,
-  trainingSessionOfferPath as buildTrainingSessionOfferPath,
-  trainingSessionPresencePath as buildTrainingSessionPresencePath,
-  trainingSessionRoomMemberMatches,
-  trainingSessionSignalPath as buildTrainingSessionSignalPath,
-} from "./training-session-v2.mjs?v=training-session-v2-rtdb-array-v1";
+  trainingSessionV5AttemptPath,
+  trainingSessionV5PresencePath,
+  trainingSessionV5SignalPath,
+} from "./training-session-v5.mjs?v=training-session-v5-canonical-v1";
+import {
+  createTrainingSessionV5State,
+  trainingSessionV5Screen,
+  transitionTrainingSessionV5,
+} from "./training-session-v5-machine.mjs?v=training-session-v5-canonical-v1";
 import {
   TRAINING_LIMITS,
   TRAINING_PROTOCOL_VERSION,
-  TRAINING_QUEUE_FRESH_MS,
   TRAINING_VARIANT,
-  createTrainingAcceptanceUpdates,
   deriveTrainingRoomState,
   normalizeTrainingConditions,
   normalizeTrainingInstruction,
   normalizeTrainingIntensity,
   normalizeTrainingName,
-  normalizeTrainingSessionId,
-  selectTrainingPair,
-  trainingActiveRoomAppearsLive,
   trainingBeatState,
-  trainingInstructionIsReady,
-  trainingQueueEntryKey,
   trainingServerFinalizedResult,
-  validTrainingQueueEntries,
 } from "./training-core.mjs?v=kitaeai-hp-v3-matchmaking-v1";
 
-const MATCH_TIMEOUT_MS = 30_000;
-const MATCH_LOCK_TTL_MS = MATCH_TIMEOUT_MS + 10_000;
-const MATCH_LOCK_RETRY_GRACE_MS = 100;
-const HEARTBEAT_MS = 20_000;
-const TRAINING_QUEUE_RECLAIM_MS = 60_000;
+const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
 const MATCHMAKING_CLEANUP_RETRY_DELAYS_MS = Object.freeze([0, 250, 750]);
-const TRAINING_SESSION_RESTART_QUEUE_DELAYS_MS = Object.freeze([
-  0, 100, 250, 500, 1_000, 2_000,
-]);
-const TRAINING_CANDIDATE_SKIP_MS = TRAINING_QUEUE_FRESH_MS;
-const TRAINING_HOST_TAKEOVER_MS = 8_000;
+const TRAINING_V5_RUN_STORAGE_KEY = "hariai-training-v5-run-id";
+const TRAINING_V5_ENDPOINT_STORAGE_KEY = "hariai-training-v5-endpoint-id";
+const TRAINING_V5_HEARTBEAT_MS = 15_000;
+const TRAINING_V5_MATCH_RETRY_MS = 1_200;
+const TRAINING_V5_RECOVERY_MAX_MS = 8_000;
 const IMAGE_EXCHANGE_TIMEOUT_MS = 45_000;
 const IMAGE_CHANNEL_LABEL = "hariai-training-image-v3";
 const MAX_IMAGE_TRANSFER_BYTES = 8 * 1024 * 1024;
@@ -188,64 +173,26 @@ const destroyDialog = document.querySelector("#destroyDialog");
 const trainingTabId = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const trainingTabChannel = "BroadcastChannel" in window
-  ? new BroadcastChannel("hariai-stadium-training-tab-v1")
+  ? new BroadcastChannel("hariai-stadium-training-tab-v5")
   : null;
-const TRAINING_SESSION_OWNER_PROBE_VERSION = 1;
+const TRAINING_TAB_LOCK_NAME = "hariai-stadium-training-v5";
 
 let active = false;
+let trainingLifecycleGeneration = 0;
 let state = createState();
-let trainingTabLeaseHeld = false;
 let trainingSharedStateOwned = false;
-let trainingTabClaimConflict = false;
-let trainingTabClaiming = false;
+let releaseTrainingTabLock = null;
+let trainingTabLockRequest = null;
 
 trainingTabChannel?.addEventListener("message", (event) => {
   const message = event.data || {};
   if (message.tabId === trainingTabId) return;
-  if (message.type === "probe"
-      && message.sessionOwnerProbeVersion === TRAINING_SESSION_OWNER_PROBE_VERSION
-      && message.sessionId) {
-    if (state.sessionLeaseHeld
-        && message.sessionId === state.clientSessionId
-        && typeof message.leaseToken === "string"
-        && message.leaseToken !== state.clientLeaseToken) {
-      trainingTabChannel.postMessage({
-        type: "probe-response",
-        sessionOwnerProbeVersion: TRAINING_SESSION_OWNER_PROBE_VERSION,
-        probeId: message.probeId,
-        tabId: trainingTabId,
-        sessionId: state.clientSessionId,
-        leaseToken: state.clientLeaseToken,
-      });
-    }
-    return;
-  }
-  if (message.type === "probe" && trainingTabLeaseHeld) {
+  if (message.type === "probe" && trainingSharedStateOwned) {
     trainingTabChannel.postMessage({
       type: "probe-response",
       probeId: message.probeId,
       tabId: trainingTabId,
     });
-    return;
-  }
-  if (message.type === "claim" && trainingTabLeaseHeld) {
-    if (trainingTabClaiming && String(message.tabId || "") < trainingTabId) {
-      trainingTabClaimConflict = true;
-      trainingTabLeaseHeld = false;
-    } else {
-      trainingTabChannel.postMessage({
-        type: "claim-denied",
-        targetTabId: message.tabId,
-        tabId: trainingTabId,
-      });
-    }
-    return;
-  }
-  if (message.type === "claim-denied"
-    && message.targetTabId === trainingTabId
-    && trainingTabClaiming) {
-    trainingTabClaimConflict = true;
-    trainingTabLeaseHeld = false;
   }
 });
 
@@ -260,11 +207,9 @@ document.addEventListener("visibilitychange", () => {
   }
   if (active
       && targetState.sessionLeaseHeld
-      && !targetState.sessionHeartbeatInFlight) {
-    clearTrainingSessionHeartbeat(targetState);
-    refreshTrainingSessionLease(targetState).catch((error) => {
-      if (active && state === targetState) handleRecoverableError(error);
-    });
+      && !targetState.trainingAttemptHeartbeatBusy
+      && !targetState.trainingAttemptInspectBusy) {
+    inspectTrainingSessionV5(targetState, { immediate: true }).catch(() => {});
   }
   queueMicrotask(() => {
     resumeTrainingAmbienceAfterVisibility().catch(() => {});
@@ -273,9 +218,11 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("online", () => {
   dispatchTrainingP2pRecoveryEvent?.("NETWORK_CHANGED", state, { online: true });
+  inspectTrainingSessionV5(state, { immediate: true }).catch(() => {});
 });
 window.addEventListener("offline", () => {
   dispatchTrainingP2pRecoveryEvent?.("NETWORK_CHANGED", state, { online: false });
+  enterTrainingSessionV5Recovery(state, "network-offline");
 });
 
 function storedVolume() {
@@ -283,16 +230,24 @@ function storedVolume() {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.18;
 }
 
-function resolveTrainingSessionId() {
-  const storedSessionId = sessionStorage.getItem(TRAINING_SESSION_STORAGE_KEY);
-  const resolution = resolveOnlineSessionId({
-    storedSessionId,
-    generatedSessionId: createOnlineSessionToken(globalThis.crypto),
-  });
-  if (resolution.shouldPersist) {
-    sessionStorage.setItem(TRAINING_SESSION_STORAGE_KEY, resolution.sessionId);
-  }
-  return resolution.sessionId;
+function createTrainingSessionV5Token() {
+  return globalThis.crypto?.randomUUID?.()
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${
+      Math.random().toString(36).slice(2)
+    }`;
+}
+
+function resolveTrainingSessionV5EndpointId() {
+  const stored = sessionStorage.getItem(TRAINING_V5_ENDPOINT_STORAGE_KEY);
+  if (/^[-_0-9A-Za-z]{20,80}$/.test(String(stored || ""))) return stored;
+  const endpointId = createTrainingSessionV5Token();
+  sessionStorage.setItem(TRAINING_V5_ENDPOINT_STORAGE_KEY, endpointId);
+  return endpointId;
+}
+
+function resolveTrainingSessionV5RunId() {
+  const stored = sessionStorage.getItem(TRAINING_V5_RUN_STORAGE_KEY);
+  return /^[-_0-9A-Za-z]{20,80}$/.test(String(stored || "")) ? stored : "";
 }
 
 function createState() {
@@ -301,7 +256,7 @@ function createState() {
   const ambienceController = createFreeTableAmbienceController({ initialVolume: volume });
   ambienceController.setMuted(muted);
   return {
-    generation: 0,
+    generation: ++trainingLifecycleGeneration,
     screen: "setup",
     authReady: false,
     uid: "",
@@ -320,51 +275,46 @@ function createState() {
     roomId: "",
     pendingRoomId: "",
     room: emptyRoom(),
-    latestQueue: {},
-    latestInvites: {},
-    queueSessionId: "",
-    clientSessionId: resolveTrainingSessionId(),
-    clientLeaseToken: createOnlineSessionToken(globalThis.crypto),
+    sessionV5: createTrainingSessionV5State(),
+    trainingRunId: "",
+    trainingRunRestored: false,
+    trainingEndpointId: resolveTrainingSessionV5EndpointId(),
+    trainingOwnerEpoch: "",
+    trainingAttemptRevision: 0,
+    trainingAttemptState: "",
+    trainingAttempt: null,
+    trainingAttemptUnsubscribe: null,
+    trainingAttemptHeartbeat: null,
+    trainingAttemptHeartbeatBusy: false,
+    trainingAttemptMatchTimer: null,
+    trainingAttemptMatchBusy: false,
+    trainingAttemptInspectTimer: null,
+    trainingAttemptInspectBusy: false,
+    trainingAttemptRecoveryCount: 0,
+    trainingSessionCancelling: false,
+    trainingOwnerSuperseded: false,
+    opponentRunId: "",
+    opponentEndpointId: "",
+    opponentOwnerEpoch: "",
+    roomAttemptId: "",
+    transportEpoch: "",
+    trainingSignalUnsubscribe: null,
+    trainingReconnectPromise: null,
+    trainingReconnectTimer: null,
+    trainingTransportRefreshPromise: null,
+    trainingTransportRefreshEpoch: "",
     sessionLeaseHeld: false,
-    sessionLease: null,
-    sessionGeneration: "",
-    sessionHeartbeat: null,
-    sessionHeartbeatInFlight: false,
-    matchmakingGeneration: "",
-    opponentSessionId: "",
-    roomConnectionGeneration: "",
-    signalingAttemptId: "",
-    sessionOfferRoomId: "",
-    sessionOfferHandling: false,
-    sessionOfferRetryTimer: null,
-    sessionTryMatchTimer: null,
-    sessionTryMatchBusy: false,
-    sessionRestartPromise: null,
-    sessionAvoidUid: "",
     sessionAutoRequeueCount: 0,
-    pendingInviteTargetSessionId: "",
-    unavailableQueueEntries: {},
     startingMatchmaking: false,
-    matchingBusy: false,
-    acceptingInvite: false,
-    inviteRetryTimer: null,
-    hostTakeoverTimer: null,
-    hostTakeoverDueAt: 0,
     enteringRoom: false,
-    returningToQueue: false,
-    pendingTeardown: null,
-    queueHeartbeat: null,
-    matchTimer: null,
     enterRoomRetryTimer: null,
     enterRoomRetryAttempts: 0,
     serverTimeOffset: 0,
-    serverTimeOffsetKnown: false,
     publicPresenceId: "",
     publicPresenceState: "",
     publicPresenceHeartbeat: null,
     publicPresenceDisconnect: null,
     publicPresenceOwnerDisconnect: null,
-    matchmakingUnsubscribers: [],
     roomUnsubscribers: [],
     scorePoll: null,
     scorePollBusy: false,
@@ -372,10 +322,6 @@ function createState() {
     resultScoreHydrationRetryAt: 0,
     roomSyncing: false,
     disconnectHandles: [],
-    activeDisconnect: null,
-    activeDisconnectRoomId: "",
-    activeRoomDestroyedDisconnect: null,
-    activeRoomDestroyedDisconnectRoomId: "",
     peer: null,
     channel: null,
     channelWasOpened: false,
@@ -445,8 +391,8 @@ function emptyRoom() {
     variant: "",
     sessionProtocolVersion: 0,
     signalingVersion: 0,
-    attemptId: "",
-    connectionGeneration: "",
+    roomAttemptId: "",
+    transportEpoch: "",
     sessions: {},
     hostUid: "",
     guestUid: "",
@@ -473,7 +419,6 @@ function applyTrainingServerTimeOffset(targetState, snapshot) {
   const offset = snapshot?.val?.();
   if (typeof offset !== "number" || !Number.isFinite(offset)) return false;
   targetState.serverTimeOffset = offset;
-  targetState.serverTimeOffsetKnown = true;
   return true;
 }
 
@@ -842,7 +787,6 @@ function start() {
   active = true;
   state.ambienceController?.destroy();
   state = createState();
-  state.generation += 1;
   state.preview = preview;
   setTrainingChrome("鍛え合い READY");
   if (preview) {
@@ -850,7 +794,15 @@ function start() {
     return;
   }
   render();
-  ensureAuthenticated().catch(handleFatalError);
+  const targetState = state;
+  const generation = targetState.generation;
+  ensureAuthenticated(targetState, generation).catch((error) => {
+    if (active
+        && state === targetState
+        && targetState.generation === generation) {
+      handleFatalError(error);
+    }
+  });
 }
 
 function anotherModeIsActive() {
@@ -869,18 +821,27 @@ function isActive() {
   return active;
 }
 
-async function ensureAuthenticated() {
+async function ensureAuthenticated(
+  targetState = state,
+  generation = targetState.generation,
+) {
+  const contextIsCurrent = () => (
+    active
+    && state === targetState
+    && targetState.generation === generation
+    && !targetState.trainingSessionCancelling
+  );
   await setPersistence(auth, browserLocalPersistence);
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
-  if (!active) return;
-  state.uid = credential.user.uid;
+  if (!contextIsCurrent()) return;
+  targetState.uid = credential.user.uid;
   const initialized = await trainingActionCallable({ action: "initialize" });
-  if (!active) return;
-  state.profile = initialized.data?.profile || null;
-  state.daily = initialized.data?.daily || null;
-  await loadTrainingChatFrameLoadout(state);
-  if (!active) return;
-  state.authReady = true;
+  if (!contextIsCurrent()) return;
+  targetState.profile = initialized.data?.profile || null;
+  targetState.daily = initialized.data?.daily || null;
+  await loadTrainingChatFrameLoadout(targetState);
+  if (!contextIsCurrent()) return;
+  targetState.authReady = true;
   render();
 }
 
@@ -1175,12 +1136,17 @@ function renderSetupTrainingRecord() {
 }
 
 function renderMatching() {
+  const recovering = state.sessionV5.phase === "recovering";
   return `
     <section class="screen training-screen training-centred" aria-labelledby="trainingMatchingTitle">
       <div class="training-pulse-mark" aria-hidden="true"><i></i><i></i><i></i></div>
-      <span class="eyebrow">ONE QUEUE / ROLEPLAY MATCH</span>
-      <h1 id="trainingMatchingTitle">鍛え合う相手を探しています</h1>
-      <p>古くから待っている2人を順番に結びます。5枚の画像本体はまだ送信されていません。</p>
+      <span class="eyebrow">${recovering ? "SESSION RECOVERING" : "ONE QUEUE / ROLEPLAY MATCH"}</span>
+      <h1 id="trainingMatchingTitle">${recovering
+        ? "同じ参加待ちへ戻っています"
+        : "鍛え合う相手を探しています"}</h1>
+      <p>${recovering
+        ? "通信状態をサーバーへ確認しています。待機を終了したり、別の対戦を作り直したりはしません。"
+        : "古くから待っている2人を順番に結びます。5枚の画像本体はまだ送信されていません。"}</p>
       <dl class="training-waiting-profile">
         <div><dt>NAME</dt><dd>${escapeHtml(state.name)}</dd></div>
         <div><dt>INTENSITY</dt><dd>${escapeHtml(INTENSITY_LABELS[state.intensity])}</dd></div>
@@ -1193,16 +1159,21 @@ function renderMatching() {
 
 function renderForming() {
   const accepted = Object.keys(state.room.accepted || {}).length;
+  const recovering = state.sessionV5.phase === "recovering";
   return `
     <section class="screen training-screen training-centred" aria-labelledby="trainingFormingTitle">
       <div class="training-pair-mark" aria-hidden="true"><span>1</span><i></i><span>1</span></div>
-      <span class="eyebrow">PAIR FOUND</span>
-      <h1 id="trainingFormingTitle">鍛え合いの約束を結んでいます</h1>
+      <span class="eyebrow">${recovering ? "ROOM RECOVERING" : "PAIR FOUND"}</span>
+      <h1 id="trainingFormingTitle">${recovering
+        ? "成立した対戦ルームを確認しています"
+        : "鍛え合いの約束を結んでいます"}</h1>
       <p><strong>${accepted} / 2</strong> 人が参加を確認しました。</p>
       <div class="training-forming-bar" role="progressbar" aria-label="参加確認" aria-valuemin="0" aria-valuemax="2" aria-valuenow="${accepted}">
         <i style="width:${accepted * 50}%"></i>
       </div>
-      <p class="training-subtle">成立後にだけ、2人のブラウザをP2Pでつないで画像を交換します。</p>
+      <p class="training-subtle">${recovering
+        ? "通信が戻り次第、同じ相手・同じ対戦ルームへ接続します。"
+        : "成立後にだけ、2人のブラウザをP2Pでつないで画像を交換します。"}</p>
       <button class="button button-ghost" id="trainingCancelPending" type="button">参加を取り消す</button>
     </section>`;
 }
@@ -1213,7 +1184,6 @@ function renderRoom() {
   if (finalizedView) {
     clearImageExchangeWatchdog();
     clearScorePoll();
-    cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
     state.currentView = finalizedView;
     state.outcome = finalizedView;
     state.screen = "result";
@@ -1242,7 +1212,6 @@ function renderRoom() {
     const resultView = canonicalView.phase === "result" ? canonicalView : view;
     clearImageExchangeWatchdog();
     clearScorePoll();
-    cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
     state.currentView = resultView;
     state.outcome = resultView;
     state.screen = "result";
@@ -2036,681 +2005,540 @@ function releaseImage(image) {
 
 async function claimTrainingTabOwnership() {
   if (trainingSharedStateOwned) return;
-  if (!trainingTabChannel) {
-    trainingTabLeaseHeld = true;
-    trainingSharedStateOwned = true;
-    return;
+  if (!navigator.locks?.request) {
+    throw new Error(
+      "このブラウザでは鍛え合い60の多重起動を安全に防げません。"
+      + "Web Locks対応ブラウザでお試しください。",
+    );
   }
-  const probeId = `${trainingTabId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-  let ownerResponded = false;
-  const listener = (event) => {
-    const message = event.data || {};
-    if (message.type === "probe-response"
-      && message.probeId === probeId
-      && message.tabId !== trainingTabId) {
-      ownerResponded = true;
-    }
-  };
-  trainingTabChannel.addEventListener("message", listener);
-  trainingTabChannel.postMessage({ type: "probe", probeId, tabId: trainingTabId });
-  await new Promise((resolve) => window.setTimeout(resolve, 300));
-  trainingTabChannel.removeEventListener("message", listener);
-  if (ownerResponded) throw new Error("別のタブで鍛え合い60が進行中です。そちらを終了してから開始してください。");
-
-  trainingTabClaimConflict = false;
-  trainingTabClaiming = true;
-  trainingTabLeaseHeld = true;
-  trainingTabChannel.postMessage({ type: "claim", tabId: trainingTabId });
-  await new Promise((resolve) => window.setTimeout(resolve, 300));
-  trainingTabClaiming = false;
-  if (trainingTabClaimConflict || !trainingTabLeaseHeld) {
-    trainingTabLeaseHeld = false;
-    throw new Error("別のタブでも同時に鍛え合い60が開始されました。開始するタブを1つにしてください。");
+  let resolveAcquired;
+  const acquired = new Promise((resolve) => {
+    resolveAcquired = resolve;
+  });
+  trainingTabLockRequest = navigator.locks.request(
+    TRAINING_TAB_LOCK_NAME,
+    { mode: "exclusive", ifAvailable: true },
+    async (lock) => {
+      resolveAcquired(Boolean(lock));
+      if (!lock) return;
+      await new Promise((resolve) => {
+        releaseTrainingTabLock = resolve;
+      });
+    },
+  ).catch((error) => {
+    resolveAcquired(false);
+    throw error;
+  });
+  if (!await acquired) {
+    trainingTabLockRequest?.catch(() => {});
+    trainingTabLockRequest = null;
+    throw new Error("別のタブで鍛え合い60が進行中です。そちらを終了してから開始してください。");
   }
   trainingSharedStateOwned = true;
+  trainingTabChannel?.postMessage({ type: "active", tabId: trainingTabId });
 }
 
 function releaseTrainingTabOwnership() {
-  trainingTabLeaseHeld = false;
   trainingSharedStateOwned = false;
-  trainingTabClaimConflict = false;
-  trainingTabClaiming = false;
+  releaseTrainingTabLock?.();
+  releaseTrainingTabLock = null;
+  trainingTabLockRequest?.catch(() => {});
+  trainingTabLockRequest = null;
 }
 
-async function confirmSameTrainingSessionOwnerGone(expectedState = state) {
-  if (!trainingTabChannel) return false;
-  const probeId = createOnlineSessionToken(globalThis.crypto);
-  let ownerResponded = false;
-  let responseWasUnverifiable = false;
-  const listener = (event) => {
-    const message = event.data || {};
-    if (message.type !== "probe-response"
-        || message.probeId !== probeId
-        || message.tabId === trainingTabId) return;
-    const exactOwnerResponse = message.sessionOwnerProbeVersion
-        === TRAINING_SESSION_OWNER_PROBE_VERSION
-      && message.sessionId === expectedState.clientSessionId
-      && typeof message.leaseToken === "string"
-      && message.leaseToken.length > 0
-      && message.leaseToken !== expectedState.clientLeaseToken;
-    if (exactOwnerResponse) ownerResponded = true;
-    else responseWasUnverifiable = true;
-  };
-  trainingTabChannel.addEventListener("message", listener);
-  trainingTabChannel.postMessage({
-    type: "probe",
-    sessionOwnerProbeVersion: TRAINING_SESSION_OWNER_PROBE_VERSION,
-    probeId,
-    tabId: trainingTabId,
-    sessionId: expectedState.clientSessionId,
-    leaseToken: expectedState.clientLeaseToken,
-  });
-  await new Promise((resolve) => window.setTimeout(resolve, 300));
-  trainingTabChannel.removeEventListener("message", listener);
-  return !ownerResponded && !responseWasUnverifiable;
+function trainingSessionV5ContextIsCurrent(targetState = state) {
+  return active
+    && state === targetState
+    && Boolean(targetState.trainingRunId)
+    && Boolean(targetState.trainingEndpointId)
+    && !targetState.trainingSessionCancelling
+    && !["idle", "terminal", "superseded"].includes(targetState.sessionV5.phase)
+    && targetState.sessionV5.runId === targetState.trainingRunId
+    && !targetState.trainingOwnerSuperseded;
 }
 
-async function readTrainingActiveRoomState(roomId) {
-  const base = `online/trainingRooms/${roomId}`;
-  const keys = [
-    "protocolVersion", "variant", "createdAt", "status",
-    "members", "presence", "destroyed", "serverFinalized",
-  ];
-  const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
-  return Object.fromEntries(keys.map((key, index) => [key, snapshots[index].val()]));
-}
-
-async function clearStaleTrainingActiveBeforeMatchmaking() {
-  const activeRef = ref(database, `online/trainingActive/${state.uid}`);
-  const activeSnapshot = await get(activeRef);
-  const activeValue = activeSnapshot.val() || {};
-  const sessions = activeValue.rooms || {};
-  const roomIds = Object.entries(sessions)
-    .filter(([, claimed]) => claimed === true)
-    .map(([roomId]) => roomId);
-  for (const observedRoomId of roomIds) {
-    let room = null;
-    try {
-      room = await readTrainingActiveRoomState(observedRoomId);
-    } catch (error) {
-      if (!String(error?.code || "").toLowerCase().includes("permission")) throw error;
-    }
-    const live = trainingActiveRoomAppearsLive(room, state.uid, firebaseNow());
-    if (live) {
-      if (room.protocolVersion !== TRAINING_PROTOCOL_VERSION
-        || room.variant !== TRAINING_VARIANT) {
-        throw new Error(
-          "旧バージョンの鍛え合いが進行中です。元のタブで最後まで進めてください。"
-          + "難しい場合は、そのタブから退出してから新しく開始してください。",
-        );
-      }
-      throw new Error("別のタブで鍛え合い60が進行中です。そちらを終了してから開始してください。");
-    }
-    if (!await removeTrainingActiveChild(observedRoomId)) {
-      throw new Error(
-        "以前の鍛え合い予約を解除できませんでした。通信を確認して、もう一度開始してください。",
-      );
-    }
-  }
-  if (typeof activeValue.roomId === "string") {
-    if (!await removeTrainingActiveParentIfOwned(activeValue.roomId)) {
-      throw new Error(
-        "以前の鍛え合い予約を解除できませんでした。通信を確認して、もう一度開始してください。",
-      );
-    }
-  }
-  const remainingSnapshot = await get(activeRef);
-  if (remainingSnapshot.exists()) {
-    throw new Error(
-      "鍛え合い予約の解除を確認できませんでした。別の端末を確認して、もう一度開始してください。",
-    );
-  }
-}
-
-function createTrainingQueueSessionId() {
-  return normalizeTrainingSessionId(globalThis.crypto?.randomUUID?.())
-    || normalizeTrainingSessionId(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
-}
-
-function queueEntryBelongsToSession(entry, sessionId = state.queueSessionId) {
-  return Boolean(
-    sessionId
-    && normalizeTrainingSessionId(entry?.sessionId) === sessionId
-    && entry?.uid === state.uid
-  );
-}
-
-async function claimTrainingQueueSession() {
-  const sessionId = createTrainingQueueSessionId();
-  if (!sessionId) throw new Error("待機セッションを作成できませんでした。");
-  const now = firebaseNow();
-  const queueEntry = {
-    uid: state.uid,
-    sessionId,
-    name: state.name,
-    intensity: state.intensity,
-    commandDeck: commandDeckPayload(),
-    imageBpms: imageBpmsPayload(),
-    protocolVersion: TRAINING_PROTOCOL_VERSION,
-    variant: TRAINING_VARIANT,
-    joinedAt: now,
-    lastSeen: now,
-    state: "waiting",
-  };
-  state.queueSessionId = sessionId;
-  const transaction = await runTransaction(
-    ref(database, `online/trainingQueue/${state.uid}`),
-    (current) => {
-      const lastSeen = Number(current?.lastSeen || 0);
-      const otherFreshSession = current
-        && normalizeTrainingSessionId(current.sessionId) !== sessionId
-        && Number.isFinite(lastSeen)
-        && lastSeen >= now - TRAINING_QUEUE_RECLAIM_MS;
-      if (otherFreshSession) return undefined;
-      return queueEntry;
-    },
-  );
-  const claimed = transaction.snapshot.val();
-  if (!transaction.committed || !queueEntryBelongsToSession(claimed, sessionId)) {
-    if (state.queueSessionId === sessionId) state.queueSessionId = "";
-    throw new Error("別の端末で鍛え合い60の参加待ちが進行中です。そちらを終了してから開始してください。");
-  }
-  return queueEntry;
-}
-
-async function updateOwnedTrainingQueue(patch, sessionId = state.queueSessionId) {
-  if (!state.uid || !sessionId || state.preview) return false;
-  const lastSeen = firebaseNow();
-  const transaction = await runTransaction(
-    ref(database, `online/trainingQueue/${state.uid}`),
-    (current) => {
-      if (current == null) return null;
-      if (!queueEntryBelongsToSession(current, sessionId)) return undefined;
-      return {
-        ...current,
-        ...patch,
-        uid: state.uid,
-        sessionId,
-        lastSeen,
-      };
-    },
-    { applyLocally: false },
-  ).catch(() => null);
-  return Boolean(
-    transaction?.committed
-    && queueEntryBelongsToSession(transaction.snapshot.val(), sessionId)
-  );
-}
-
-async function removeOwnedTrainingQueue(sessionId = state.queueSessionId) {
-  if (!state.uid || !sessionId || state.preview) return false;
-  const transaction = await runTransaction(
-    ref(database, `online/trainingQueue/${state.uid}`),
-    (current) => {
-      if (current == null) return null;
-      return queueEntryBelongsToSession(current, sessionId) ? null : undefined;
-    },
-    { applyLocally: false },
-  ).catch(() => null);
-  return Boolean(
-    transaction?.committed
-    && transaction.snapshot.val() === null
-  );
-}
-
-async function removeTrainingInviteForSession(
-  targetUid,
-  roomId,
-  targetSessionId = state.queueSessionId,
-) {
-  if (!targetUid || !roomId || !targetSessionId || state.preview) return false;
-  const inviteRef = ref(database, `online/trainingInvites/${targetUid}/${roomId}`);
-  if (targetUid !== state.uid) {
-    try {
-      await remove(inviteRef);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  const transaction = await runTransaction(
-    inviteRef,
-    (current) => {
-      if (current == null) return null;
-      return current.targetSessionId === targetSessionId ? null : undefined;
-    },
-    { applyLocally: false },
-  ).catch(() => null);
-  return Boolean(
-    transaction?.committed
-    && transaction.snapshot.val() === null
-  );
-}
-
-async function cleanupTrainingInvitesForSession(targetSessionId = state.queueSessionId) {
-  if (!state.uid || !targetSessionId || state.preview) return true;
-  const snapshot = await get(ref(database, `online/trainingInvites/${state.uid}`)).catch(() => null);
-  if (!snapshot) return false;
-  const invites = snapshot.val() || {};
-  const removals = await Promise.all(
-    Object.entries(invites)
-      .filter(([, invite]) => invite?.targetSessionId === targetSessionId)
-      .map(([roomId]) => removeTrainingInviteForSession(state.uid, roomId, targetSessionId)),
-  );
-  return removals.every(Boolean);
-}
-
-async function removeStaleTrainingInvite(roomId, observedInvite, currentSessionId) {
-  if (!state.uid || !roomId || !currentSessionId || state.preview) return false;
-  const transaction = await runTransaction(
-    ref(database, `online/trainingInvites/${state.uid}/${roomId}`),
-    (current) => {
-      if (current == null) return null;
-      if (current.targetSessionId === currentSessionId) return undefined;
-      const unchanged = [
-        "roomId", "hostUid", "targetSessionId", "protocolVersion", "variant", "createdAt",
-      ].every((key) => current[key] === observedInvite?.[key]);
-      return unchanged ? null : undefined;
-    },
-    { applyLocally: false },
-  ).catch(() => null);
-  const remaining = transaction?.snapshot?.val();
-  return Boolean(transaction && (
-    (transaction.committed && remaining === null)
-    || remaining?.targetSessionId === currentSessionId
-  ));
-}
-
-async function cleanupStaleTrainingInvites(currentSessionId) {
-  if (!state.uid || !currentSessionId || state.preview) return true;
-  const snapshot = await get(ref(database, `online/trainingInvites/${state.uid}`)).catch(() => null);
-  if (!snapshot) return false;
-  const removals = await Promise.all(
-    Object.entries(snapshot.val() || {})
-      .filter(([, invite]) => invite?.targetSessionId !== currentSessionId)
-      .map(([roomId, invite]) => (
-        removeStaleTrainingInvite(roomId, invite, currentSessionId)
-      )),
-  );
-  return removals.every(Boolean);
-}
-
-function trainingSessionOfferPath(
-  uid = state.uid,
-  sessionId = state.clientSessionId,
-) {
-  return buildTrainingSessionOfferPath(uid, sessionId);
-}
-
-function trainingSessionSignalPath(roomId, uid, sessionId) {
-  return buildTrainingSessionSignalPath(roomId, uid, sessionId);
-}
-
-function trainingSessionPresencePath(roomId, uid, sessionId) {
-  return buildTrainingSessionPresencePath(roomId, uid, sessionId);
-}
-
-function ownTrainingSessionPresence(online = true) {
-  return createTrainingSessionPresencePayload({
-    sessionId: state.clientSessionId,
-    leaseToken: state.clientLeaseToken,
-    generation: state.sessionGeneration,
-    online,
-    updatedAt: firebaseNow(),
+function createTrainingSessionV5RequestFence(targetState = state) {
+  return Object.freeze({
+    generation: targetState.generation,
+    runId: targetState.trainingRunId,
+    endpointId: targetState.trainingEndpointId,
+    ownerEpoch: targetState.trainingOwnerEpoch,
   });
 }
 
-function trainingSessionContextIsCurrent(expectedGeneration, expectedState = state) {
-  return active
-    && state === expectedState
-    && state.sessionLeaseHeld
-    && state.matchmakingGeneration === expectedGeneration;
-}
-
-function trainingMatchmakingGenerationIsCurrent(
-  expectedGeneration,
-  expectedState = state,
+function trainingSessionV5RequestFenceIsCurrent(
+  targetState,
+  requestFence,
 ) {
-  return active
-    && state === expectedState
-    && state.matchmakingGeneration === expectedGeneration;
+  return trainingSessionV5ContextIsCurrent(targetState)
+    && targetState.generation === requestFence.generation
+    && targetState.trainingRunId === requestFence.runId
+    && targetState.trainingEndpointId === requestFence.endpointId
+    && (
+      !requestFence.ownerEpoch
+      || targetState.trainingOwnerEpoch === requestFence.ownerEpoch
+    );
 }
 
-async function releaseTrainingSessionClaimExact({
-  sessionId,
-  leaseToken,
-  generation,
-} = {}) {
-  if (!sessionId || !leaseToken || !generation) return false;
-  try {
-    const response = await trainingSessionActionCallable({
-      action: "release",
-      sessionId,
-      leaseToken,
-      generation,
-    });
-    const result = response?.data || {};
-    return result.released === true || result.reason === "lease-lost";
-  } catch {
-    return false;
+function beginTrainingSessionV5Cancellation(targetState = state) {
+  if (state !== targetState) return false;
+  if (!targetState.trainingSessionCancelling) {
+    targetState.trainingSessionCancelling = true;
+    targetState.generation = ++trainingLifecycleGeneration;
   }
-}
-
-async function claimTrainingSessionLease(
-  expectedGeneration,
-  expectedState = state,
-) {
-  const sessionId = expectedState.clientSessionId;
-  const leaseToken = expectedState.clientLeaseToken;
-  const contextIsCurrent = () => trainingMatchmakingGenerationIsCurrent(
-    expectedGeneration,
-    expectedState,
-  );
-  const ownershipConflictError = () => new Error(
-    "鍛え合い60は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。",
-  );
-  const request = (sameSessionOwnerConfirmedGone = false) => (
-    trainingSessionActionCallable({
-      action: "claim",
-      sessionId,
-      leaseToken,
-      sameSessionOwnerConfirmedGone,
-    })
-  );
-  const requestWithLegacyDrain = async (sameSessionOwnerConfirmedGone = false) => {
-    const deadline = Date.now() + 50_000;
-    let response;
-    do {
-      response = await request(sameSessionOwnerConfirmedGone);
-      if (response?.data?.claimed !== false
-          || response.data.reason !== "legacy-waiting"
-          || !trainingMatchmakingGenerationIsCurrent(
-            expectedGeneration,
-            expectedState,
-          )
-          || document.visibilityState !== "visible"
-          || !navigator.onLine
-          || Date.now() + 5_000 >= deadline) return response;
-      showToast("前の鍛え合い待機が終了するのを確認しています。少しお待ちください。");
-      await new Promise((resolve) => window.setTimeout(resolve, 5_000));
-    } while (trainingMatchmakingGenerationIsCurrent(
-      expectedGeneration,
-      expectedState,
-    ));
-    return response;
-  };
-  const abandonStaleResponse = async (candidateResponse) => {
-    if (contextIsCurrent()) return false;
-    const staleGeneration = String(
-      candidateResponse?.data?.sessionGeneration || "",
-    );
-    const newerAttemptMayAdopt = active
-      && state === expectedState
-      && state.clientSessionId === sessionId
-      && state.clientLeaseToken === leaseToken
-      && (
-        state.sessionLeaseHeld
-        || (state.startingMatchmaking
-          && state.matchmakingGeneration !== expectedGeneration)
-      );
-    if (candidateResponse?.data?.claimed === true && !newerAttemptMayAdopt) {
-      await releaseTrainingSessionClaimExact({
-        sessionId,
-        leaseToken,
-        generation: staleGeneration,
-      });
-    }
-    return true;
-  };
-
-  let response;
-  try {
-    response = await requestWithLegacyDrain(false);
-  } catch (error) {
-    if (!contextIsCurrent()) return false;
-    const reason = String(error?.details?.reason || "");
-    if (reason !== "same-session-owned-by-another-page"
-        || !await confirmSameTrainingSessionOwnerGone(expectedState)) {
-      if (reason === "same-session-owned-by-another-page") {
-        throw ownershipConflictError();
-      }
-      throw error;
-    }
-    if (!contextIsCurrent()) return false;
-    response = await requestWithLegacyDrain(true);
-  }
-  if (await abandonStaleResponse(response)) return false;
-  if (response?.data?.claimed === false
-      && response.data.reason === "same-session-owned") {
-    if (!await confirmSameTrainingSessionOwnerGone(expectedState)) {
-      throw ownershipConflictError();
-    }
-    if (!contextIsCurrent()) return false;
-    response = await requestWithLegacyDrain(true);
-  }
-  if (await abandonStaleResponse(response)) return false;
-  if (response?.data?.claimed !== true) {
-    const reason = String(response?.data?.reason || "");
-    throw new Error(
-      reason === "legacy-waiting"
-        ? "前の鍛え合い待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
-        : reason === "occupied"
-          ? "別のタブまたは端末で鍛え合い60が進行中です。"
-          : "鍛え合い60は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。",
-    );
-  }
-  const lease = response.data.lease;
-  const sessionGeneration = String(response.data.sessionGeneration || "");
-  if (!isOnlineSessionLeaseOwner(lease, { sessionId, leaseToken })
-      || !/^[-_0-9A-Za-z]{20,80}$/.test(sessionGeneration)) {
-    throw new Error("鍛え合い60のセッション所有権を確認できませんでした。");
-  }
-  if (!contextIsCurrent()) {
-    await releaseTrainingSessionClaimExact({
-      sessionId,
-      leaseToken,
-      generation: sessionGeneration,
-    });
-    return false;
-  }
-  expectedState.sessionLeaseHeld = true;
-  expectedState.sessionLease = lease;
-  expectedState.sessionGeneration = sessionGeneration;
-  scheduleTrainingSessionHeartbeat(expectedState);
   return true;
 }
 
-function clearTrainingSessionHeartbeat(expectedState = state) {
-  window.clearTimeout(expectedState.sessionHeartbeat);
-  expectedState.sessionHeartbeat = null;
-}
-
-function scheduleTrainingSessionHeartbeat(
-  expectedState = state,
-  delayMs = ONLINE_SESSION_LEASE_DEFAULTS.heartbeatIntervalMs,
-) {
-  clearTrainingSessionHeartbeat(expectedState);
-  if (!active
-      || state !== expectedState
-      || !expectedState.sessionLeaseHeld) return;
-  const serverTimeKnown = expectedState.serverTimeOffsetKnown === true;
-  const now = Date.now() + Number(expectedState.serverTimeOffset || 0);
-  const remainingMs = Number(expectedState.sessionLease?.expiresAt || 0) - now;
-  if (serverTimeKnown && remainingMs <= 0) {
-    handleTrainingSessionLeaseLost(expectedState);
-    return;
+function applyTrainingSessionV5Transition(targetState, type, detail = {}) {
+  if (state !== targetState) return false;
+  const current = targetState.sessionV5;
+  const event = type === "BEGIN"
+    ? { type, runId: detail.runId, revision: current.revision }
+    : {
+      type,
+      runId: current.runId,
+      revision: current.revision,
+      ...detail,
+    };
+  const transition = transitionTrainingSessionV5(current, event);
+  if (!transition.accepted) return false;
+  targetState.sessionV5 = transition.state;
+  if (!targetState.outcome && !targetState.roomId) {
+    targetState.screen = trainingSessionV5Screen(transition.state);
   }
-  const requestedDelay = Number.isFinite(Number(delayMs))
-    ? Math.max(1, Math.floor(Number(delayMs)))
-    : ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs;
-  const boundedDelay = serverTimeKnown
-    ? Math.max(1, Math.min(requestedDelay, remainingMs))
-    : requestedDelay;
-  const timer = window.setTimeout(() => {
-    if (expectedState.sessionHeartbeat !== timer) return;
-    expectedState.sessionHeartbeat = null;
-    refreshTrainingSessionLease(expectedState).catch((error) => {
-      if (active && state === expectedState) handleRecoverableError(error);
-    });
-  }, boundedDelay);
-  expectedState.sessionHeartbeat = timer;
+  return true;
 }
 
-async function refreshTrainingSessionLease(expectedState = state) {
-  if (!active
-      || state !== expectedState
-      || !expectedState.sessionLeaseHeld
-      || expectedState.sessionHeartbeatInFlight) return false;
-  expectedState.sessionHeartbeatInFlight = true;
-  let responseData = null;
-  try {
-    try {
-      const response = await trainingSessionActionCallable({
-        action: "heartbeat",
-        sessionId: expectedState.clientSessionId,
-        leaseToken: expectedState.clientLeaseToken,
-        generation: expectedState.sessionGeneration,
-      });
-      responseData = response?.data || null;
-    } catch {
-      responseData = null;
-    }
-    if (!active
-        || state !== expectedState
-        || !expectedState.sessionLeaseHeld) return false;
-    const observedNow = Date.now() + Number(expectedState.serverTimeOffset || 0);
-    const currentExpiresAt = Number(expectedState.sessionLease?.expiresAt || 0);
-    const now = expectedState.serverTimeOffsetKnown === true
-      ? observedNow
-      : Math.min(observedNow, Math.max(0, currentExpiresAt - 1));
-    const decision = decideOnlineSessionHeartbeatResult({
-      responseData,
-      currentLease: expectedState.sessionLease,
-      sessionId: expectedState.clientSessionId,
-      leaseToken: expectedState.clientLeaseToken,
-      sessionGeneration: expectedState.sessionGeneration,
-      now,
-      retryIntervalMs: ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs,
-    });
-    if (decision.action === "lost") {
-      handleTrainingSessionLeaseLost(expectedState);
-      return false;
-    }
-    if (decision.action === "retry") {
-      scheduleTrainingSessionHeartbeat(
-        expectedState,
-        expectedState.serverTimeOffsetKnown === true
-          ? decision.retryDelayMs
-          : ONLINE_SESSION_LEASE_DEFAULTS.retryIntervalMs,
-      );
-      return false;
-    }
-    expectedState.sessionLease = decision.lease;
-    const refreshes = [];
-    if (expectedState.roomId) {
-      refreshes.push(set(ref(database, trainingSessionPresencePath(
-        expectedState.roomId,
-        expectedState.uid,
-        expectedState.clientSessionId,
-      )), createTrainingSessionPresencePayload({
-        sessionId: expectedState.clientSessionId,
-        leaseToken: expectedState.clientLeaseToken,
-        generation: expectedState.sessionGeneration,
-        online: true,
-        updatedAt: now,
-      })));
-    }
-    await Promise.allSettled(refreshes);
-    if (!active
-        || state !== expectedState
-        || !expectedState.sessionLeaseHeld) return false;
-    scheduleTrainingSessionHeartbeat(expectedState);
-    return true;
-  } finally {
-    expectedState.sessionHeartbeatInFlight = false;
-  }
-}
-
-function handleTrainingSessionLeaseLost(targetState = state) {
-  if (!targetState.sessionLeaseHeld) return;
-  targetState.sessionLeaseHeld = false;
-  clearTrainingSessionHeartbeat(targetState);
-  if (!active || state !== targetState) return;
-  const roomId = targetState.roomId;
-  const message = new Error(
-    roomId
-      ? "別のタブまたは端末へ鍛え合い60の接続が移ったため、対戦を終了します。"
-      : "別のタブまたは端末へ鍛え合い60の待機が移ったため、検索を終了します。",
-  );
-  (async () => {
-    if (roomId && !targetState.outcome) {
-      const beforeDestroy = await refreshRoomBeforeDestroy(roomId)
-        .catch(() => "live");
-      if (beforeDestroy === "result") return;
-      await markRoomDestroyed("session_lease_lost").catch(() => {});
-      const afterDestroy = await refreshRoomBeforeDestroy(roomId)
-        .catch(() => "live");
-      if (afterDestroy === "result") return;
-    }
-    await handleFatalError(message);
-  })().catch(handleRecoverableError);
-}
-
-async function enqueueTrainingSessionQueue(
-  expectedGeneration,
-  expectedState = state,
-) {
-  let lastError = null;
-  for (const delayMs of TRAINING_SESSION_RESTART_QUEUE_DELAYS_MS) {
-    if (delayMs) {
-      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-    }
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return false;
-    let response;
-    try {
-      response = await trainingSessionActionCallable(
-        trainingSessionPreparationPayload(expectedState),
-      );
-      lastError = null;
-    } catch (error) {
-      lastError = error;
-      continue;
-    }
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return false;
-    const result = response?.data || {};
-    if (result.queued === true
-        && /^[-_0-9A-Za-z]{8,128}$/.test(
-          String(result.connectionGeneration || ""),
-        )) {
-      expectedState.matchmakingGeneration = String(result.connectionGeneration);
-      return true;
-    }
-    if (result.reason === "lease-lost") {
-      handleTrainingSessionLeaseLost(expectedState);
-      return false;
-    }
-    if (result.reason === "active") {
-      // The enqueue response may have been lost after the server activated a
-      // room. Let try_match recover the exact active room and generation.
-      return true;
-    }
-    if (result.reason !== "busy") {
-      throw new Error("鍛え合い60の待機情報を準備できませんでした。");
-    }
-  }
-  if (lastError) throw lastError;
-  throw new Error(
-    "鍛え合い60の再検索準備を確認できませんでした。通信を確認して、もう一度お試しください。",
-  );
-}
-
-function trainingSessionPreparationPayload(targetState = state) {
+function trainingSessionV5AttemptView(payload = {}) {
+  const source = payload?.attempt && typeof payload.attempt === "object"
+    ? payload.attempt
+    : payload;
+  const explicitReason = String(payload?.reason || "");
   return {
-    action: "enqueue",
-    sessionId: targetState.clientSessionId,
-    leaseToken: targetState.clientLeaseToken,
+    outcome: String(
+      payload?.outcome
+      || source?.state
+      || (["owner-replaced", "not-started"].includes(explicitReason)
+        ? explicitReason
+        : ""),
+    ),
+    reason: String(source?.terminalReason || payload?.reason || ""),
+    uid: String(source?.uid || payload?.uid || ""),
+    runId: String(source?.runId || payload?.runId || ""),
+    endpointId: String(source?.endpointId || payload?.endpointId || ""),
+    ownerEpoch: String(source?.ownerEpoch || payload?.ownerEpoch || ""),
+    revision: source?.revision ?? payload?.revision ?? 0,
+    state: String(source?.state || payload?.state || payload?.outcome || ""),
+    roomId: String(source?.roomId || payload?.roomId || ""),
+    roomAttemptId: String(
+      source?.roomAttemptId || payload?.roomAttemptId || "",
+    ),
+    transportEpoch: String(
+      source?.transportEpoch || payload?.transportEpoch || "",
+    ),
+    role: String(source?.role || payload?.role || ""),
+    opponentUid: String(source?.opponentUid || payload?.opponentUid || ""),
+    preparation: source?.preparation || payload?.preparation || null,
+  };
+}
+
+function trainingSessionV5TokenIsValid(value) {
+  return /^[-_0-9A-Za-z]{20,80}$/.test(String(value || ""));
+}
+
+function trainingSessionV5AttemptRevisionMatches(left, right) {
+  if (!left || !right) return false;
+  const keys = [
+    "ownerEpoch",
+    "state",
+    "roomId",
+    "roomAttemptId",
+    "transportEpoch",
+    "role",
+    "opponentUid",
+  ];
+  return keys.every((key) => String(left[key] || "") === String(right[key] || ""))
+    && (
+      left.state !== "terminal"
+      || String(left.reason || "") === String(right.reason || "")
+    );
+}
+
+function clearTrainingSessionV5MatchTimer(targetState = state) {
+  window.clearTimeout(targetState.trainingAttemptMatchTimer);
+  targetState.trainingAttemptMatchTimer = null;
+}
+
+function clearTrainingSessionV5InspectTimer(targetState = state) {
+  window.clearTimeout(targetState.trainingAttemptInspectTimer);
+  targetState.trainingAttemptInspectTimer = null;
+}
+
+function clearTrainingSessionV5Heartbeat(targetState = state) {
+  window.clearTimeout(targetState.trainingAttemptHeartbeat);
+  targetState.trainingAttemptHeartbeat = null;
+}
+
+function clearTrainingSessionV5ReconnectTimer(targetState = state) {
+  window.clearTimeout(targetState.trainingReconnectTimer);
+  targetState.trainingReconnectTimer = null;
+}
+
+function scheduleTrainingSessionV5Heartbeat(
+  targetState = state,
+  delayMs = TRAINING_V5_HEARTBEAT_MS,
+) {
+  clearTrainingSessionV5Heartbeat(targetState);
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || !targetState.trainingOwnerEpoch) return;
+  targetState.trainingAttemptHeartbeat = window.setTimeout(() => {
+    targetState.trainingAttemptHeartbeat = null;
+    heartbeatTrainingSessionV5(targetState).catch(() => {});
+  }, Math.max(500, delayMs));
+}
+
+function scheduleTrainingSessionV5Match(
+  targetState = state,
+  delayMs = TRAINING_V5_MATCH_RETRY_MS,
+) {
+  clearTrainingSessionV5MatchTimer(targetState);
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || !targetState.trainingOwnerEpoch
+      || targetState.trainingAttemptState !== "waiting"
+      || targetState.sessionV5.phase === "recovering"
+      || !navigator.onLine
+      || targetState.roomId
+      || targetState.pendingRoomId) return;
+  targetState.trainingAttemptMatchTimer = window.setTimeout(() => {
+    targetState.trainingAttemptMatchTimer = null;
+    matchTrainingSessionV5(targetState).catch(() => {});
+  }, Math.max(0, delayMs));
+}
+
+function scheduleTrainingSessionV5Inspect(targetState = state, immediate = false) {
+  clearTrainingSessionV5InspectTimer(targetState);
+  if (!trainingSessionV5ContextIsCurrent(targetState)) return;
+  const exponent = Math.min(4, targetState.trainingAttemptRecoveryCount);
+  const delay = immediate
+    ? 0
+    : Math.min(TRAINING_V5_RECOVERY_MAX_MS, 500 * (2 ** exponent));
+  targetState.trainingAttemptInspectTimer = window.setTimeout(() => {
+    targetState.trainingAttemptInspectTimer = null;
+    inspectTrainingSessionV5(targetState).catch(() => {});
+  }, delay);
+}
+
+function enterTrainingSessionV5Recovery(
+  targetState = state,
+  reason = "network-unknown",
+) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || ["terminal", "superseded"].includes(targetState.sessionV5.phase)) return;
+  if (targetState.sessionV5.phase !== "recovering") {
+    applyTrainingSessionV5Transition(targetState, "RECOVER", {
+      reason: trainingSessionV5TokenIsValid(reason)
+        ? reason
+        : "network-unknown",
+    });
+  }
+  targetState.trainingAttemptRecoveryCount += 1;
+  scheduleTrainingSessionV5Inspect(targetState);
+}
+
+async function stopTrainingSessionV5LocalTransport(targetState = state) {
+  clearTrainingSessionV5Heartbeat(targetState);
+  clearTrainingSessionV5MatchTimer(targetState);
+  clearTrainingSessionV5InspectTimer(targetState);
+  window.clearTimeout(targetState.enterRoomRetryTimer);
+  targetState.enterRoomRetryTimer = null;
+  clearTrainingSessionV5ReconnectTimer(targetState);
+  targetState.trainingAttemptUnsubscribe?.();
+  targetState.trainingAttemptUnsubscribe = null;
+  targetState.roomUnsubscribers.splice(0)
+    .forEach((unsubscribe) => unsubscribe?.());
+  targetState.trainingSignalUnsubscribe?.();
+  targetState.trainingSignalUnsubscribe = null;
+  const disconnects = targetState.disconnectHandles.splice(0);
+  await Promise.allSettled(disconnects.map((handle) => handle?.cancel?.()));
+  targetState.channel?.close();
+  targetState.peer?.close();
+  targetState.channel = null;
+  targetState.peer = null;
+  targetState.pendingIce = [];
+  clearImageExchangeWatchdog();
+  clearScorePoll();
+  clearTurnTicker();
+  clearTrainingP2pRecoveryTimer(targetState);
+  targetState.p2pRestartIce = null;
+  targetState.p2pRecovery = null;
+  targetState.p2pGenerationToken = null;
+  targetState.ambienceController.disable();
+  await releaseTrainingWorkoutWakeLock(targetState);
+}
+
+async function handleTrainingSessionV5OwnerReplaced(targetState = state) {
+  if (state !== targetState || targetState.trainingOwnerSuperseded) return;
+  targetState.trainingOwnerSuperseded = true;
+  applyTrainingSessionV5Transition(targetState, "OWNER_STATUS", {
+    status: "owner-replaced",
+  });
+  await stopTrainingSessionV5LocalTransport(targetState);
+  await cleanupPublicPresence(targetState).catch(() => {});
+  releaseTrainingTabOwnership();
+  sessionStorage.removeItem(TRAINING_V5_RUN_STORAGE_KEY);
+  targetState.errorMessage = targetState.roomId
+    ? "別の端末で同じ鍛え合い60が再開されました。この画面は接続だけを停止し、対戦ルームには変更を加えていません。"
+    : "別の端末で同じ鍛え合い60が開始されました。この画面の待機を終了しました。";
+  targetState.screen = "error";
+  render();
+}
+
+function syncTrainingSessionV5Machine(targetState, attempt) {
+  if (targetState.sessionV5.phase === "recovering") {
+    applyTrainingSessionV5Transition(targetState, "OWNER_STATUS", {
+      status: "reclaimed",
+    });
+  }
+  if (targetState.sessionV5.phase === "starting") {
+    applyTrainingSessionV5Transition(targetState, "CLAIMED");
+  }
+  if (attempt.state === "waiting"
+      && ["reserved", "connecting"].includes(targetState.sessionV5.phase)) {
+    applyTrainingSessionV5Transition(targetState, "WAIT");
+  }
+  if (["reserved", "active"].includes(attempt.state)
+      && targetState.sessionV5.phase === "waiting") {
+    applyTrainingSessionV5Transition(targetState, "RESERVE", {
+      roomId: attempt.roomId,
+      roomAttemptId: attempt.roomAttemptId,
+    });
+  }
+  const transportChanged = targetState.sessionV5.transportEpoch
+    !== attempt.transportEpoch;
+  if (attempt.state === "active"
+      && (
+        targetState.sessionV5.phase === "reserved"
+        || (
+          ["connecting", "active"].includes(targetState.sessionV5.phase)
+          && transportChanged
+        )
+      )) {
+    applyTrainingSessionV5Transition(targetState, "CONNECT", {
+      transportEpoch: attempt.transportEpoch,
+    });
+  }
+}
+
+function finishTrainingSessionV5ResultOwnership(
+  targetState,
+  attempt = targetState.trainingAttempt,
+) {
+  if (state !== targetState || !targetState.outcome) return false;
+  targetState.trainingAttemptState = "terminal";
+  targetState.trainingAttempt = attempt || targetState.trainingAttempt;
+  if (!["terminal", "superseded"].includes(targetState.sessionV5.phase)) {
+    applyTrainingSessionV5Transition(targetState, "TERMINATE", {
+      terminalKind: "result",
+    });
+  }
+  clearTrainingSessionV5Heartbeat(targetState);
+  clearTrainingSessionV5MatchTimer(targetState);
+  clearTrainingSessionV5InspectTimer(targetState);
+  clearTrainingSessionV5ReconnectTimer(targetState);
+  targetState.trainingAttemptUnsubscribe?.();
+  targetState.trainingAttemptUnsubscribe = null;
+  targetState.trainingAttemptRecoveryCount = 0;
+  releaseTrainingTabOwnership();
+  sessionStorage.removeItem(TRAINING_V5_RUN_STORAGE_KEY);
+  return true;
+}
+
+async function finishTrainingSessionV5TerminalLocally(
+  targetState,
+  attempt,
+) {
+  if (targetState.roomId) {
+    const resolution = await refreshRoomBeforeDestroy(targetState.roomId)
+      .catch(() => "live");
+    if (resolution === "result") {
+      return finishTrainingSessionV5ResultOwnership(targetState, attempt);
+    }
+  }
+  targetState.trainingAttemptState = "terminal";
+  applyTrainingSessionV5Transition(targetState, "TERMINATE", {
+    terminalKind: "cancelled",
+  });
+  await stopTrainingSessionV5LocalTransport(targetState);
+  await cleanupPublicPresence(targetState).catch(() => {});
+  releaseTrainingTabOwnership();
+  sessionStorage.removeItem(TRAINING_V5_RUN_STORAGE_KEY);
+  targetState.errorMessage = ["room-destroyed", "room_destroyed"].includes(attempt.reason)
+    ? "対戦ルームの終了を確認しました。"
+    : attempt.reason === "opponent-cancelled"
+      ? "相手が鍛え合い60を終了しました。"
+      : "鍛え合い60の参加は終了しています。";
+  targetState.screen = "error";
+  render();
+  return true;
+}
+
+async function applyTrainingSessionV5Attempt(
+  payload,
+  targetState = state,
+) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)) return false;
+  const attempt = trainingSessionV5AttemptView(payload);
+  const previousRoomId = targetState.roomId;
+  const previousRoomAttemptId = targetState.roomAttemptId;
+  const previousTransportEpoch = targetState.transportEpoch;
+  if (attempt.outcome === "owner-replaced"
+      || payload?.reason === "owner-replaced") {
+    await handleTrainingSessionV5OwnerReplaced(targetState);
+    return false;
+  }
+  if (attempt.outcome === "not-started") {
+    if (!targetState.roomId && !targetState.pendingRoomId) {
+      targetState.trainingOwnerEpoch = "";
+      targetState.sessionLeaseHeld = false;
+    }
+    enterTrainingSessionV5Recovery(targetState, "attempt-not-started");
+    return false;
+  }
+  if (attempt.runId && (
+    attempt.runId !== targetState.trainingRunId
+    || attempt.endpointId !== targetState.trainingEndpointId
+  )) {
+    if (targetState.trainingOwnerEpoch) {
+      await handleTrainingSessionV5OwnerReplaced(targetState);
+    }
+    return false;
+  }
+  if (attempt.outcome === "terminal"
+      && !trainingSessionV5TokenIsValid(attempt.ownerEpoch)) {
+    enterTrainingSessionV5Recovery(targetState, "terminal-response-unfenced");
+    return false;
+  }
+  if (!trainingSessionV5TokenIsValid(attempt.ownerEpoch)
+      || !["waiting", "reserved", "active", "terminal"].includes(
+        attempt.state,
+      )) return false;
+  if (!Number.isSafeInteger(attempt.revision) || attempt.revision < 1) {
+    enterTrainingSessionV5Recovery(targetState, "attempt-revision-invalid");
+    return false;
+  }
+  if (attempt.revision < targetState.trainingAttemptRevision) return false;
+  if (attempt.revision === targetState.trainingAttemptRevision
+      && targetState.trainingAttempt
+      && !trainingSessionV5AttemptRevisionMatches(
+        targetState.trainingAttempt,
+        attempt,
+      )) {
+    enterTrainingSessionV5Recovery(targetState, "attempt-revision-conflict");
+    return false;
+  }
+  if (targetState.trainingOwnerEpoch
+      && targetState.trainingOwnerEpoch !== attempt.ownerEpoch) {
+    await handleTrainingSessionV5OwnerReplaced(targetState);
+    return false;
+  }
+  const effectivePhase = targetState.sessionV5.phase === "recovering"
+    ? targetState.sessionV5.resumePhase
+    : targetState.sessionV5.phase;
+  if (attempt.state === "waiting" && effectivePhase === "active") {
+    enterTrainingSessionV5Recovery(targetState, "active-state-regression");
+    return false;
+  }
+  targetState.trainingOwnerEpoch = attempt.ownerEpoch;
+  targetState.trainingAttemptRevision = attempt.revision;
+  targetState.trainingAttemptState = attempt.state;
+  targetState.trainingAttempt = attempt;
+  targetState.sessionLeaseHeld = true;
+  syncTrainingSessionV5Machine(targetState, attempt);
+  targetState.trainingAttemptRecoveryCount = 0;
+  clearTrainingSessionV5InspectTimer(targetState);
+  scheduleTrainingSessionV5Heartbeat(targetState);
+  if (attempt.state === "terminal") {
+    if (targetState.outcome) {
+      return finishTrainingSessionV5ResultOwnership(targetState, attempt);
+    }
+    return finishTrainingSessionV5TerminalLocally(targetState, attempt);
+  }
+  if (attempt.state === "waiting") {
+    targetState.trainingRunRestored = false;
+    targetState.pendingRoomId = "";
+    targetState.roomAttemptId = "";
+    targetState.transportEpoch = "";
+    targetState.opponentRunId = "";
+    targetState.opponentEndpointId = "";
+    targetState.opponentOwnerEpoch = "";
+    if (!targetState.roomId) targetState.room = emptyRoom();
+    targetState.screen = "matching";
+    setTrainingChrome("鍛え合い MATCHING");
+    render();
+    scheduleTrainingSessionV5Match(targetState, 0);
+    return true;
+  }
+  if (!trainingSessionV5TokenIsValid(attempt.roomId)
+      || !trainingSessionV5TokenIsValid(attempt.roomAttemptId)
+      || !trainingSessionV5TokenIsValid(attempt.transportEpoch)) {
+    enterTrainingSessionV5Recovery(targetState, "room-fence-missing");
+    return false;
+  }
+  if (attempt.state === "active"
+      && targetState.roomId === attempt.roomId
+      && targetState.roomAttemptId === attempt.roomAttemptId
+      && targetState.transportEpoch === attempt.transportEpoch
+      && targetState.room.roomAttemptId === attempt.roomAttemptId
+      && targetState.room.transportEpoch === attempt.transportEpoch) {
+    targetState.pendingRoomId = "";
+    if (targetState.trainingTransportRefreshPromise
+        && targetState.trainingTransportRefreshEpoch
+          === attempt.transportEpoch) {
+      return await targetState.trainingTransportRefreshPromise;
+    }
+    return true;
+  }
+  targetState.pendingRoomId = attempt.roomId;
+  targetState.roomAttemptId = attempt.roomAttemptId;
+  targetState.transportEpoch = attempt.transportEpoch;
+  const sameRoomAttempt = previousRoomId === attempt.roomId
+    && previousRoomAttemptId === attempt.roomAttemptId;
+  targetState.screen = sameRoomAttempt ? "room" : "forming";
+  render();
+  if (attempt.state === "reserved") {
+    scheduleTrainingSessionV5Match(targetState, 0);
+    return true;
+  }
+  return await prepareTrainingSessionV5Room(attempt, targetState, {
+    previousTransportEpoch,
+  });
+}
+
+function watchTrainingSessionV5Attempt(targetState = state) {
+  targetState.trainingAttemptUnsubscribe?.();
+  const watchFence = createTrainingSessionV5RequestFence(targetState);
+  targetState.trainingAttemptUnsubscribe = onValue(
+    ref(database, trainingSessionV5AttemptPath(targetState.uid)),
+    (snapshot) => {
+      if (!trainingSessionV5RequestFenceIsCurrent(
+        targetState,
+        watchFence,
+      )) return;
+      const attempt = snapshot.val();
+      if (!attempt) return;
+      applyTrainingSessionV5Attempt(attempt, targetState).catch(
+        handleRecoverableError,
+      );
+    },
+    () => enterTrainingSessionV5Recovery(targetState, "attempt-watch-failed"),
+  );
+}
+
+function trainingSessionV5Preparation(targetState = state) {
+  return {
     name: targetState.name,
     intensity: targetState.intensity,
+    conditions: targetState.conditions,
     commandDeck: commandDeckPayload(targetState.commandDeck),
     imageBpms: imageBpmsPayload(targetState.localImages),
     chatFrameId: validOwnedTrainingChatFrameId(
@@ -2720,400 +2548,488 @@ function trainingSessionPreparationPayload(targetState = state) {
   };
 }
 
-function clearTrainingSessionTryMatchTimer(targetState = state) {
-  window.clearTimeout(targetState.sessionTryMatchTimer);
-  targetState.sessionTryMatchTimer = null;
+function restoreTrainingSessionV5ImageBpms(room, targetState = state) {
+  const canonicalBpms = room.players?.[targetState.uid]?.imageBpms;
+  const bpms = Array.from(
+    { length: TRAINING_IMAGE_COUNT },
+    (_, index) => normalizeImageBpm(canonicalBpms?.[index + 1]),
+  );
+  if (bpms.some((bpm) => bpm < 0)
+      || targetState.localImages.some((image) => !image?.blob)) {
+    throw new Error("中断前の画像デッキ設定を確認できませんでした。");
+  }
+  targetState.localImages.forEach((image, index) => {
+    image.bpm = bpms[index];
+  });
+  targetState.trainingRunRestored = false;
+  showToast("中断した対戦を、選び直した5枚で再開します。BPMは対戦開始時の設定に合わせました。");
 }
 
-function scheduleTrainingSessionTryMatch(delayMs = 1_200) {
-  const expectedState = state;
-  clearTrainingSessionTryMatchTimer(expectedState);
-  const generation = expectedState.matchmakingGeneration;
-  if (!trainingSessionContextIsCurrent(generation, expectedState)
-      || expectedState.screen !== "matching"
-      || expectedState.pendingRoomId
-      || expectedState.roomId) return;
-  expectedState.sessionTryMatchTimer = window.setTimeout(() => {
-    expectedState.sessionTryMatchTimer = null;
-    if (!trainingSessionContextIsCurrent(generation, expectedState)) return;
-    tryTrainingSessionMatch(generation).catch(handleRecoverableError);
-  }, Math.max(0, delayMs));
-}
-
-async function tryTrainingSessionMatch(expectedGeneration = state.matchmakingGeneration) {
-  const expectedState = state;
-  if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)
-      || state.screen !== "matching"
-      || state.sessionTryMatchBusy
-      || state.pendingRoomId
-      || state.roomId) return;
-  expectedState.sessionTryMatchBusy = true;
+async function startTrainingSessionV5(targetState = state) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)) return false;
+  const requestFence = createTrainingSessionV5RequestFence(targetState);
   try {
     const response = await trainingSessionActionCallable({
-      action: "try_match",
-      sessionId: expectedState.clientSessionId,
-      leaseToken: expectedState.clientLeaseToken,
-      avoidUid: expectedState.sessionAvoidUid || "",
-      conditions: expectedState.conditions,
+      action: "start",
+      runId: requestFence.runId,
+      endpointId: requestFence.endpointId,
+      preparation: trainingSessionV5Preparation(targetState),
     });
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
-    const payload = response?.data || {};
-    if (payload.outcome === "lease-lost") {
-      handleTrainingSessionLeaseLost(expectedState);
-      return;
+    if (!trainingSessionV5RequestFenceIsCurrent(
+      targetState,
+      requestFence,
+    )) return false;
+    const applied = await applyTrainingSessionV5Attempt(
+      response?.data || {},
+      targetState,
+    );
+    if (applied
+        && targetState.roomId
+        && targetState.roomAttemptId
+        && targetState.transportEpoch) {
+      await set(ref(database, trainingSessionV5PresencePath(
+        targetState.roomId,
+        targetState.uid,
+        targetState.trainingRunId,
+      )), createTrainingSessionV5PresencePayload({
+        runId: targetState.trainingRunId,
+        endpointId: targetState.trainingEndpointId,
+        ownerEpoch: targetState.trainingOwnerEpoch,
+        roomAttemptId: targetState.roomAttemptId,
+        transportEpoch: targetState.transportEpoch,
+        online: true,
+        updatedAt: firebaseNow(),
+      })).catch(() => {});
     }
-    if (["offered", "join"].includes(payload.outcome) && payload.roomId) {
-      const connectionGeneration = String(payload.connectionGeneration || "");
-      if (!/^[-_0-9A-Za-z]{8,128}$/.test(connectionGeneration)) {
-        throw new Error("鍛え合い60の接続世代を確認できませんでした。");
-      }
-      await prepareTrainingSessionRoom(
-        payload.roomId,
-        payload,
-        payload.role === "guest" ? "guest" : "host",
+    return applied;
+  } catch {
+    if (trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)) {
+      enterTrainingSessionV5Recovery(targetState, "start-response-unknown");
+    }
+    return false;
+  }
+}
+
+async function heartbeatTrainingSessionV5(targetState = state) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || !targetState.trainingOwnerEpoch
+      || targetState.trainingAttemptHeartbeatBusy) return false;
+  targetState.trainingAttemptHeartbeatBusy = true;
+  const requestFence = createTrainingSessionV5RequestFence(targetState);
+  try {
+    const response = await trainingSessionActionCallable({
+      action: "heartbeat",
+      runId: requestFence.runId,
+      endpointId: requestFence.endpointId,
+      ownerEpoch: requestFence.ownerEpoch,
+    });
+    if (!trainingSessionV5RequestFenceIsCurrent(
+      targetState,
+      requestFence,
+    )) return false;
+    const applied = await applyTrainingSessionV5Attempt(
+      response?.data || {},
+      targetState,
+    );
+    if (applied
+        && targetState.roomId
+        && targetState.roomAttemptId
+        && targetState.transportEpoch) {
+      await set(ref(database, trainingSessionV5PresencePath(
+        targetState.roomId,
+        targetState.uid,
+        targetState.trainingRunId,
+      )), createTrainingSessionV5PresencePayload({
+        runId: targetState.trainingRunId,
+        endpointId: targetState.trainingEndpointId,
+        ownerEpoch: targetState.trainingOwnerEpoch,
+        roomAttemptId: targetState.roomAttemptId,
+        transportEpoch: targetState.transportEpoch,
+        online: true,
+        updatedAt: firebaseNow(),
+      })).catch(() => {});
+    }
+    return applied;
+  } catch {
+    if (trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)) {
+      enterTrainingSessionV5Recovery(
+        targetState,
+        "heartbeat-response-unknown",
       );
-      return;
     }
-  } catch (error) {
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
-    throw error;
+    return false;
   } finally {
-    expectedState.sessionTryMatchBusy = false;
-    if (trainingSessionContextIsCurrent(expectedGeneration, expectedState)
-        && state.screen === "matching"
-        && !state.pendingRoomId
-        && !state.roomId) {
-      scheduleTrainingSessionTryMatch();
+    if (targetState.generation === requestFence.generation) {
+      targetState.trainingAttemptHeartbeatBusy = false;
     }
   }
 }
 
-async function acceptTrainingSessionOffer(roomId, offer) {
-  const expectedState = state;
-  if (state.sessionOfferHandling
-      || state.pendingRoomId
-      || state.roomId
-      || state.screen !== "matching"
-      || !state.sessionLeaseHeld) return false;
-  const expectedGeneration = state.matchmakingGeneration;
-  expectedState.sessionOfferHandling = true;
+async function matchTrainingSessionV5(targetState = state) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || !targetState.trainingOwnerEpoch
+      || targetState.trainingAttemptMatchBusy) return false;
+  targetState.trainingAttemptMatchBusy = true;
+  const requestFence = createTrainingSessionV5RequestFence(targetState);
   try {
-    let response;
-    try {
-      response = await trainingSessionActionCallable({
-        action: "accept",
-        sessionId: expectedState.clientSessionId,
-        leaseToken: expectedState.clientLeaseToken,
-        roomId,
-        conditions: expectedState.conditions,
-      });
-    } catch (error) {
-      scheduleTrainingSessionOfferRetry(
-        roomId,
-        offer,
-        2_000,
-        expectedGeneration,
-        expectedState,
+    const response = await trainingSessionActionCallable({
+      action: "match",
+      runId: requestFence.runId,
+      endpointId: requestFence.endpointId,
+      ownerEpoch: requestFence.ownerEpoch,
+    });
+    if (!trainingSessionV5RequestFenceIsCurrent(
+      targetState,
+      requestFence,
+    )) return false;
+    return await applyTrainingSessionV5Attempt(
+      response?.data || {},
+      targetState,
+    );
+  } catch {
+    if (trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)) {
+      enterTrainingSessionV5Recovery(targetState, "match-response-unknown");
+    }
+    return false;
+  } finally {
+    if (targetState.generation === requestFence.generation) {
+      targetState.trainingAttemptMatchBusy = false;
+    }
+    if (trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)
+        && targetState.trainingAttemptState === "waiting") {
+      scheduleTrainingSessionV5Match(targetState);
+    }
+  }
+}
+
+async function inspectTrainingSessionV5(
+  targetState = state,
+  { immediate = false } = {},
+) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || targetState.trainingAttemptInspectBusy) return false;
+  clearTrainingSessionV5InspectTimer(targetState);
+  if (!navigator.onLine) {
+    scheduleTrainingSessionV5Inspect(targetState);
+    return false;
+  }
+  if (!targetState.trainingOwnerEpoch) {
+    return startTrainingSessionV5(targetState);
+  }
+  targetState.trainingAttemptInspectBusy = true;
+  const requestFence = createTrainingSessionV5RequestFence(targetState);
+  try {
+    const response = await trainingSessionActionCallable({
+      action: "inspect",
+      runId: requestFence.runId,
+      endpointId: requestFence.endpointId,
+      ownerEpoch: requestFence.ownerEpoch,
+    });
+    if (!trainingSessionV5RequestFenceIsCurrent(
+      targetState,
+      requestFence,
+    )) return false;
+    return await applyTrainingSessionV5Attempt(
+      response?.data || {},
+      targetState,
+    );
+  } catch {
+    if (trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)) {
+      enterTrainingSessionV5Recovery(
+        targetState,
+        immediate ? "resume-response-unknown" : "inspect-response-unknown",
       );
-      if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) {
+    }
+    return false;
+  } finally {
+    if (targetState.generation === requestFence.generation) {
+      targetState.trainingAttemptInspectBusy = false;
+    }
+  }
+}
+
+function trainingSessionV5ActiveRoomFenceIsCurrent(
+  targetState,
+  expected = {},
+) {
+  return trainingSessionV5ContextIsCurrent(targetState)
+    && targetState.trainingAttemptState === "active"
+    && targetState.roomId === expected.roomId
+    && targetState.roomAttemptId === expected.roomAttemptId
+    && targetState.transportEpoch === expected.transportEpoch
+    && targetState.room.roomAttemptId === expected.roomAttemptId
+    && targetState.room.transportEpoch === expected.transportEpoch
+    && !targetState.room.destroyed
+    && !targetState.outcome;
+}
+
+async function refreshTrainingSessionV5Transport(
+  targetState,
+  expected,
+) {
+  const previousRefresh = targetState.trainingTransportRefreshPromise;
+  const refresh = Promise.resolve(previousRefresh)
+    .catch(() => false)
+    .then(async () => {
+      if (!trainingSessionV5ActiveRoomFenceIsCurrent(targetState, expected)) {
         return false;
       }
-      throw error;
-    }
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)
-        || state.screen !== "matching") return false;
-    const payload = response?.data || {};
-    if (payload.accepted !== true) {
-      if (payload.reason === "lease-lost") {
-        handleTrainingSessionLeaseLost(expectedState);
-      } else if (payload.reason === "transition-busy") {
-        scheduleTrainingSessionOfferRetry(
-          roomId,
-          offer,
-          2_000,
-          expectedGeneration,
-          expectedState,
-        );
+      clearTrainingSessionV5ReconnectTimer(targetState);
+      clearTrainingP2pRecoveryTimer(targetState);
+      clearImageExchangeWatchdog();
+      targetState.trainingSignalUnsubscribe?.();
+      targetState.trainingSignalUnsubscribe = null;
+      targetState.roomUnsubscribers.splice(0)
+        .forEach((unsubscribe) => unsubscribe?.());
+      const disconnects = targetState.disconnectHandles.splice(0);
+      await Promise.allSettled(
+        disconnects.map((handle) => handle?.cancel?.()),
+      );
+      if (!trainingSessionV5ActiveRoomFenceIsCurrent(targetState, expected)) {
+        return false;
       }
-      return false;
-    }
-    window.clearTimeout(state.sessionOfferRetryTimer);
-    state.sessionOfferRetryTimer = null;
-    await prepareTrainingSessionRoom(roomId, { ...offer, ...payload }, "guest");
-    return true;
-  } catch (error) {
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) {
-      return false;
-    }
-    throw error;
-  } finally {
-    expectedState.sessionOfferHandling = false;
-  }
-}
-
-function scheduleTrainingSessionOfferRetry(
-  roomId,
-  offer,
-  delayMs = 2_000,
-  expectedGeneration = state.matchmakingGeneration,
-  expectedState = state,
-) {
-  if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
-  window.clearTimeout(expectedState.sessionOfferRetryTimer);
-  expectedState.sessionOfferRetryTimer = window.setTimeout(() => {
-    expectedState.sessionOfferRetryTimer = null;
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)
-        || state.screen !== "matching"
-        || state.pendingRoomId
-        || state.roomId) return;
-    acceptTrainingSessionOffer(roomId, offer).catch(handleRecoverableError);
-  }, Math.max(250, delayMs));
-}
-
-function watchTrainingSessionOffers(
-  expectedGeneration,
-  expectedState = state,
-) {
-  if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
-  const offsetUnsubscribe = onValue(
-    ref(database, ".info/serverTimeOffset"),
-    (snapshot) => {
-      if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)) return;
-      applyTrainingServerTimeOffset(expectedState, snapshot);
-    },
-    () => {},
-  );
-  const offersRef = ref(database, trainingSessionOfferPath(
-    expectedState.uid,
-    expectedState.clientSessionId,
-  ));
-  const unsubscribe = onChildAdded(offersRef, (snapshot) => {
-    if (!trainingSessionContextIsCurrent(expectedGeneration, expectedState)
-        || state.screen !== "matching") return;
-    const offer = snapshot.val() || {};
-    const decision = decideTrainingSessionOffer({
-      offer,
-      roomId: snapshot.key,
-      ownUid: expectedState.uid,
-      ownSessionId: expectedState.clientSessionId,
-      ownGeneration: expectedState.sessionGeneration,
-      now: Date.now() + Number(expectedState.serverTimeOffset || 0),
-      isCurrentLeaseOwner: expectedState.sessionLeaseHeld,
-    });
-    if (!decision.accepted) return;
-    acceptTrainingSessionOffer(snapshot.key, offer).catch(handleRecoverableError);
-  }, (error) => {
-    if (trainingSessionContextIsCurrent(expectedGeneration, expectedState)) {
-      handleRecoverableError(error);
-    }
-  });
-  expectedState.matchmakingUnsubscribers.push(offsetUnsubscribe, unsubscribe);
-}
-
-async function prepareTrainingSessionRoom(roomId, context, role) {
-  const expectedState = state;
-  if (!state.sessionLeaseHeld || state.pendingRoomId || state.roomId) return false;
-  const expectedMatchmakingGeneration = state.matchmakingGeneration;
-  const expectedSessionGeneration = state.sessionGeneration;
-  const expectedSessionId = state.clientSessionId;
-  const room = await readRoomSkeleton(roomId);
-  if (!active
-      || state !== expectedState
-      || !state.sessionLeaseHeld
-      || state.matchmakingGeneration !== expectedMatchmakingGeneration
-      || state.sessionGeneration !== expectedSessionGeneration
-      || state.clientSessionId !== expectedSessionId
-      || state.pendingRoomId
-      || state.roomId) return false;
-  const ownSession = room.sessions?.[state.uid];
-  if (!trainingSessionRoomMemberMatches(room, {
-    uid: state.uid,
-    sessionId: state.clientSessionId,
-    generation: state.sessionGeneration,
-    attemptId: context.attemptId,
-    connectionGeneration: context.connectionGeneration,
-  }) || ownSession?.sessionId !== state.clientSessionId) {
-    throw new Error("現在の鍛え合いセッションに一致する対戦ルームを確認できませんでした。");
-  }
-  // Commit the server generation only after the room can be read and its
-  // immutable session fence is verified. A transient read failure must leave
-  // the current offer watcher and try_match retry generation usable.
-  state.matchmakingGeneration = String(room.connectionGeneration);
-  const opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
-  state.sessionAvoidUid = "";
-  state.opponentSessionId = String(room.sessions?.[opponentUid]?.sessionId || "");
-  state.roomConnectionGeneration = room.connectionGeneration;
-  state.signalingAttemptId = room.attemptId;
-  state.pendingRoomId = roomId;
-  state.sessionOfferRoomId = roomId;
-  state.pendingInviteTargetSessionId = state.clientSessionId;
-  state.room = { ...emptyRoom(), ...room };
-  state.screen = "forming";
-  clearTrainingSessionTryMatchTimer();
-  render();
-  watchTrainingSessionRoom(roomId, role);
-  state.matchTimer = window.setTimeout(() => {
-    expireTrainingSessionRoom(roomId).catch(handleFatalError);
-  }, MATCH_TIMEOUT_MS + 5_000);
-  if (room.status === "active") await enterRoom(roomId);
-  return true;
-}
-
-function watchTrainingSessionRoom(roomId) {
-  const context = Object.freeze({
-    expectedState: state,
-    sessionId: state.clientSessionId,
-    sessionGeneration: state.sessionGeneration,
-    attemptId: state.signalingAttemptId,
-    connectionGeneration: state.roomConnectionGeneration,
-  });
-  const contextIsCurrent = () => (
-    active
-    && state === context.expectedState
-    && state.sessionLeaseHeld
-    && state.pendingRoomId === roomId
-    && !state.roomId
-    && state.clientSessionId === context.sessionId
-    && state.sessionGeneration === context.sessionGeneration
-    && state.signalingAttemptId === context.attemptId
-    && state.roomConnectionGeneration === context.connectionGeneration
-    && state.room.attemptId === context.attemptId
-    && state.room.connectionGeneration === context.connectionGeneration
-  );
-  const handleContextError = (error) => {
-    if (contextIsCurrent()) handleRecoverableError(error);
-  };
-  const base = `online/trainingRooms/${roomId}`;
-  let lastKnownStatus = state.room.status;
-  const react = ({ roomMissing = false } = {}) => {
-    if (!contextIsCurrent()) return;
-    if (state.room.status === "active") {
-      enterRoom(roomId).catch(handleRecoverableError);
-    } else if (roomMissing
-        || ["expired", "cancelled"].includes(state.room.status)
-        || state.room.destroyed) {
-      restartTrainingSessionSearch(roomId).catch(handleFatalError);
-    } else {
+      rearmTrainingImageTransferForReplacement(targetState);
+      const previousChannel = targetState.channel;
+      const previousPeer = targetState.peer;
+      targetState.channel = null;
+      targetState.peer = null;
+      previousChannel?.close();
+      previousPeer?.close();
+      targetState.pendingIce = [];
+      targetState.p2pRestartIce = null;
+      targetState.p2pRecovery = null;
+      targetState.p2pGenerationToken = null;
+      targetState.incomingImage = null;
+      targetState.incomingMessageChain = Promise.resolve();
+      await remove(ref(
+        database,
+        `online/trainingRooms/${expected.roomId}/signalsV5/${
+          targetState.uid
+        }/${targetState.trainingRunId}`,
+      )).catch(() => {});
+      if (!trainingSessionV5ActiveRoomFenceIsCurrent(targetState, expected)) {
+        return false;
+      }
+      targetState.roomSyncing = true;
       render();
-    }
-  };
-  state.matchmakingUnsubscribers.push(onValue(
-    ref(database, `${base}/status`),
-    (snapshot) => {
-      if (!contextIsCurrent()) return;
-      const status = snapshot.val() || "";
-      const roomMissing = status === "" && lastKnownStatus === "offered";
-      if (status) lastKnownStatus = status;
-      state.room.status = status;
-      react({ roomMissing });
-    },
-    handleContextError,
-  ));
-  state.matchmakingUnsubscribers.push(onValue(
-    ref(database, `${base}/destroyed`),
-    (snapshot) => {
-      if (!contextIsCurrent()) return;
-      state.room.destroyed = snapshot.val() || null;
-      react();
-    },
-    handleContextError,
-  ));
-}
-
-async function expireTrainingSessionRoom(roomId) {
-  if (state.pendingRoomId !== roomId || state.roomId) return;
-  const response = await trainingSessionActionCallable({
-    action: "expire",
-    sessionId: state.clientSessionId,
-    leaseToken: state.clientLeaseToken,
-    roomId,
-  });
-  if (state.pendingRoomId !== roomId || state.roomId) return;
-  const result = response?.data || {};
-  if (result.status === "active" || result.reason === "active") {
-    state.room.status = "active";
-    await enterRoom(roomId);
-    return;
-  }
-  if (result.cancelled === true
-      || ["terminal", "not-owner"].includes(String(result.reason || ""))
-      || ["expired", "cancelled"].includes(String(result.status || ""))) {
-    await restartTrainingSessionSearch(roomId);
-    return;
-  }
-  if (result.status === "offered"
-      || ["transition-busy", "stale", "room-changed"].includes(
-        String(result.reason || ""),
-      )) {
-    window.clearTimeout(state.matchTimer);
-    state.matchTimer = window.setTimeout(() => {
-      expireTrainingSessionRoom(roomId).catch(handleFatalError);
-    }, 2_000);
-    return;
-  }
-  throw new Error("鍛え合い60の対戦準備状態を確認できませんでした。");
-}
-
-async function restartTrainingSessionSearch(roomId, { avoidUid = "" } = {}) {
-  const expectedState = state;
-  if (expectedState.sessionRestartPromise) {
-    return expectedState.sessionRestartPromise;
-  }
-  if (!active
-      || state !== expectedState
-      || !expectedState.sessionLeaseHeld
-      || (roomId && (
-        expectedState.roomId
-        || !expectedState.pendingRoomId
-        || expectedState.pendingRoomId !== roomId
-      ))) return false;
-  const contextIsCurrent = () => active
-    && state === expectedState
-    && expectedState.sessionLeaseHeld;
-  const restart = (async () => {
-    window.clearTimeout(expectedState.matchTimer);
-    window.clearTimeout(expectedState.sessionOfferRetryTimer);
-    expectedState.matchTimer = null;
-    expectedState.sessionOfferRetryTimer = null;
-    expectedState.matchmakingUnsubscribers.splice(0)
-      .forEach((unsubscribe) => unsubscribe?.());
-    expectedState.pendingRoomId = "";
-    expectedState.sessionOfferRoomId = "";
-    expectedState.opponentSessionId = "";
-    expectedState.roomConnectionGeneration = "";
-    expectedState.signalingAttemptId = "";
-    expectedState.room = emptyRoom();
-    expectedState.sessionAvoidUid = avoidUid;
-
-    const expectedGeneration = expectedState.matchmakingGeneration;
-    if (!await enqueueTrainingSessionQueue(
-      expectedGeneration,
-      expectedState,
-    ) || !contextIsCurrent()) return false;
-    expectedState.screen = "matching";
-    render();
-    watchTrainingSessionOffers(
-      expectedState.matchmakingGeneration,
-      expectedState,
-    );
-    scheduleTrainingSessionTryMatch(0);
-    updatePublicPresence("waiting", expectedState).catch((error) => {
-      if (contextIsCurrent()) handleRecoverableError(error);
+      const roomContext = createTrainingRoomRuntimeContext(expected.roomId);
+      const roomReady = await setupRoomListeners(roomContext);
+      if (!roomReady
+          || !trainingSessionV5ActiveRoomFenceIsCurrent(targetState, expected)
+          || !trainingRoomRuntimeContextIsCurrent(roomContext)) {
+        return false;
+      }
+      targetState.roomSyncing = false;
+      reactToRoomData();
+      startImageExchangeWatchdog();
+      await setupPeerConnection();
+      return trainingSessionV5ActiveRoomFenceIsCurrent(targetState, expected);
     });
-    return true;
-  })();
-  expectedState.sessionRestartPromise = restart;
+  targetState.trainingTransportRefreshPromise = refresh;
+  targetState.trainingTransportRefreshEpoch = expected.transportEpoch;
   try {
-    return await restart;
+    return await refresh;
   } finally {
-    if (expectedState.sessionRestartPromise === restart) {
-      expectedState.sessionRestartPromise = null;
+    if (targetState.trainingTransportRefreshPromise === refresh) {
+      targetState.trainingTransportRefreshPromise = null;
+      targetState.trainingTransportRefreshEpoch = "";
     }
+  }
+}
+
+function scheduleTrainingSessionV5Reconnect(
+  targetState = state,
+  delayMs = TRAINING_V5_MATCH_RETRY_MS,
+) {
+  clearTrainingSessionV5ReconnectTimer(targetState);
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || targetState.trainingAttemptState !== "active"
+      || !targetState.roomId
+      || !targetState.roomAttemptId
+      || !targetState.transportEpoch
+      || targetState.room.destroyed
+      || targetState.outcome) return;
+  targetState.trainingReconnectTimer = window.setTimeout(() => {
+    targetState.trainingReconnectTimer = null;
+    requestTrainingSessionV5Reconnect(targetState).catch(() => {});
+  }, Math.max(500, delayMs));
+}
+
+async function requestTrainingSessionV5Reconnect(targetState = state) {
+  if (targetState.trainingReconnectPromise) {
+    return targetState.trainingReconnectPromise;
+  }
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || targetState.trainingAttemptState !== "active"
+      || !targetState.trainingOwnerEpoch
+      || !targetState.roomId
+      || !targetState.roomAttemptId
+      || !targetState.transportEpoch
+      || targetState.room.destroyed
+      || targetState.outcome) return false;
+  const previousTransportEpoch = targetState.transportEpoch;
+  const requestFence = Object.freeze({
+    ...createTrainingSessionV5RequestFence(targetState),
+    roomId: targetState.roomId,
+    roomAttemptId: targetState.roomAttemptId,
+    transportEpoch: previousTransportEpoch,
+  });
+  clearTrainingSessionV5ReconnectTimer(targetState);
+  enterTrainingSessionV5Recovery(targetState, "transport-reconnecting");
+  const reconnect = (async () => {
+    let response = null;
+    try {
+      response = await trainingSessionActionCallable({
+        action: "reconnect",
+        runId: requestFence.runId,
+        endpointId: requestFence.endpointId,
+        ownerEpoch: requestFence.ownerEpoch,
+        roomAttemptId: requestFence.roomAttemptId,
+        transportEpoch: requestFence.transportEpoch,
+      });
+    } catch {
+      response = null;
+    }
+    if (!trainingSessionV5RequestFenceIsCurrent(
+      targetState,
+      requestFence,
+    )) return false;
+    if (response) {
+      await applyTrainingSessionV5Attempt(response.data || {}, targetState);
+    } else {
+      await inspectTrainingSessionV5(targetState, { immediate: true });
+    }
+    if (!trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)
+        || targetState.trainingAttemptState !== "active"
+        || targetState.roomId !== requestFence.roomId
+        || targetState.roomAttemptId !== requestFence.roomAttemptId
+        || targetState.room.destroyed
+        || targetState.outcome) return false;
+    if (targetState.transportEpoch !== previousTransportEpoch) {
+      return true;
+    }
+    enterTrainingSessionV5Recovery(targetState, "reconnect-response-unknown");
+    scheduleTrainingSessionV5Reconnect(
+      targetState,
+      Math.min(
+        TRAINING_V5_RECOVERY_MAX_MS,
+        TRAINING_V5_MATCH_RETRY_MS
+          * (2 ** Math.min(3, targetState.trainingAttemptRecoveryCount)),
+      ),
+    );
+    return false;
+  })();
+  targetState.trainingReconnectPromise = reconnect;
+  try {
+    return await reconnect;
+  } finally {
+    if (targetState.trainingReconnectPromise === reconnect) {
+      targetState.trainingReconnectPromise = null;
+    }
+  }
+}
+
+async function prepareTrainingSessionV5Room(
+  attempt,
+  targetState = state,
+  { previousTransportEpoch = "" } = {},
+) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || attempt.state !== "active") return false;
+  const requestFence = createTrainingSessionV5RequestFence(targetState);
+  const attemptIsCurrent = () => (
+    trainingSessionV5RequestFenceIsCurrent(targetState, requestFence)
+    && targetState.trainingAttemptState === "active"
+    && targetState.trainingAttempt?.roomId === attempt.roomId
+    && targetState.trainingAttempt?.roomAttemptId === attempt.roomAttemptId
+    && targetState.trainingAttempt?.transportEpoch === attempt.transportEpoch
+  );
+  if (targetState.roomId === attempt.roomId
+      && targetState.roomAttemptId === attempt.roomAttemptId
+      && targetState.transportEpoch === attempt.transportEpoch
+      && targetState.room.roomAttemptId === attempt.roomAttemptId
+      && targetState.room.transportEpoch === attempt.transportEpoch) {
+    return targetState.trainingTransportRefreshPromise || true;
+  }
+  try {
+    const room = await readRoomSkeleton(attempt.roomId);
+    if (!attemptIsCurrent()) return false;
+    const ownSession = room.sessions?.[targetState.uid];
+    const valid = room.status === "active"
+      && room.protocolVersion === TRAINING_PROTOCOL_VERSION
+      && room.variant === TRAINING_VARIANT
+      && room.sessionProtocolVersion === TRAINING_SESSION_V5_PROTOCOL_VERSION
+      && room.signalingVersion === TRAINING_SESSION_V5_SIGNALING_VERSION
+      && room.roomAttemptId === attempt.roomAttemptId
+      && room.transportEpoch === attempt.transportEpoch
+      && room.members?.[targetState.uid] === true
+      && [room.hostUid, room.guestUid].includes(targetState.uid)
+      && room.hostUid !== room.guestUid
+      && ownSession?.runId === targetState.trainingRunId
+      && ownSession?.endpointId === targetState.trainingEndpointId
+      && ownSession?.ownerEpoch === targetState.trainingOwnerEpoch;
+    if (!valid) {
+      throw new Error("現在の鍛え合いセッションに一致する対戦ルームを確認できませんでした。");
+    }
+    const opponentUid = room.hostUid === targetState.uid
+      ? room.guestUid
+      : room.hostUid;
+    const opponentSession = room.sessions?.[opponentUid] || {};
+    if (!trainingSessionV5TokenIsValid(opponentSession.runId)
+        || !trainingSessionV5TokenIsValid(opponentSession.endpointId)
+        || !trainingSessionV5TokenIsValid(opponentSession.ownerEpoch)) {
+      throw new Error("鍛え合う相手の接続識別子を確認できませんでした。");
+    }
+    if (targetState.trainingRunRestored) {
+      restoreTrainingSessionV5ImageBpms(room, targetState);
+    }
+    targetState.opponentRunId = opponentSession.runId;
+    targetState.opponentEndpointId = opponentSession.endpointId;
+    targetState.opponentOwnerEpoch = opponentSession.ownerEpoch;
+    targetState.roomAttemptId = room.roomAttemptId;
+    targetState.transportEpoch = room.transportEpoch;
+    targetState.pendingRoomId = attempt.roomId;
+    const existingRefresh = targetState.trainingTransportRefreshPromise;
+    const existingRefreshEpoch = targetState.trainingTransportRefreshEpoch;
+    const replacingTransport = targetState.roomId === attempt.roomId;
+    const localRoomAlreadyCurrent = targetState.room.roomAttemptId
+        === room.roomAttemptId
+      && targetState.room.transportEpoch === room.transportEpoch;
+    const roomBase = replacingTransport && previousTransportEpoch
+      ? targetState.room
+      : emptyRoom();
+    targetState.room = { ...roomBase, ...room };
+    targetState.screen = replacingTransport ? "room" : "forming";
+    render();
+    if (replacingTransport) {
+      targetState.pendingRoomId = "";
+      if (existingRefresh && existingRefreshEpoch === room.transportEpoch) {
+        return await existingRefresh;
+      }
+      if (localRoomAlreadyCurrent && targetState.peer) return true;
+      return await refreshTrainingSessionV5Transport(targetState, {
+        roomId: attempt.roomId,
+        roomAttemptId: room.roomAttemptId,
+        transportEpoch: room.transportEpoch,
+      });
+    }
+    return await enterRoom(attempt.roomId);
+  } catch (error) {
+    if (!attemptIsCurrent()) return false;
+    enterTrainingSessionV5Recovery(targetState, "room-read-unknown");
+    if (targetState.roomId === attempt.roomId) {
+      handleRecoverableError(error);
+      scheduleTrainingSessionV5Reconnect(targetState);
+    } else {
+      scheduleEnterRoomRetry(attempt.roomId);
+    }
+    return false;
   }
 }
 
 async function beginMatchmaking() {
   const expectedState = state;
+  const expectedGeneration = expectedState.generation;
   expectedState.name = normalizeTrainingName(expectedState.name);
   expectedState.conditions = normalizeTrainingConditions(expectedState.conditions);
   expectedState.intensity = normalizeTrainingIntensity(expectedState.intensity);
@@ -3126,9 +3042,13 @@ async function beginMatchmaking() {
     showToast("UIプレビューではFirebaseへ接続しません。");
     return;
   }
-  const contextIsCurrent = () => active && state === expectedState;
+  const contextIsCurrent = () => (
+    active
+    && state === expectedState
+    && expectedState.generation === expectedGeneration
+    && !expectedState.trainingSessionCancelling
+  );
   expectedState.startingMatchmaking = true;
-  expectedState.matchmakingGeneration = createOnlineSessionToken(globalThis.crypto);
   try {
     if (expectedState.chatFrameSavePromise) {
       await expectedState.chatFrameSavePromise;
@@ -3139,118 +3059,55 @@ async function beginMatchmaking() {
     const offset = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
     if (!contextIsCurrent()) return;
     applyTrainingServerTimeOffset(expectedState, offset);
-    if (!await claimTrainingSessionLease(
-      expectedState.matchmakingGeneration,
-      expectedState,
-    )) {
-      throw new Error("鍛え合い60の待機セッションを開始できませんでした。");
-    }
-    if (!contextIsCurrent()) return;
-    if (!await enqueueTrainingSessionQueue(
-      expectedState.matchmakingGeneration,
-      expectedState,
-    )) {
-      throw new Error("鍛え合い60の待機情報を準備できませんでした。");
-    }
-    if (!contextIsCurrent()) return;
+    clearTrainingSessionV5Heartbeat(expectedState);
+    clearTrainingSessionV5MatchTimer(expectedState);
+    clearTrainingSessionV5InspectTimer(expectedState);
+    clearTrainingSessionV5ReconnectTimer(expectedState);
+    expectedState.trainingAttemptHeartbeatBusy = false;
+    expectedState.trainingAttemptMatchBusy = false;
+    expectedState.trainingAttemptInspectBusy = false;
+    expectedState.trainingAttemptRecoveryCount = 0;
+    expectedState.trainingReconnectPromise = null;
+    expectedState.trainingTransportRefreshPromise = null;
+    expectedState.trainingTransportRefreshEpoch = "";
+    const restoredRunId = resolveTrainingSessionV5RunId();
+    expectedState.trainingRunId = restoredRunId
+      || createTrainingSessionV5Token();
+    expectedState.trainingRunRestored = Boolean(restoredRunId);
+    sessionStorage.setItem(
+      TRAINING_V5_RUN_STORAGE_KEY,
+      expectedState.trainingRunId,
+    );
+    expectedState.trainingOwnerEpoch = "";
+    expectedState.trainingOwnerSuperseded = false;
+    expectedState.trainingAttemptRevision = 0;
+    expectedState.trainingAttemptState = "";
+    expectedState.trainingAttempt = null;
+    expectedState.sessionV5 = createTrainingSessionV5State({
+      revision: expectedState.sessionV5.revision,
+    });
+    applyTrainingSessionV5Transition(expectedState, "BEGIN", {
+      runId: expectedState.trainingRunId,
+    });
     localStorage.setItem(PROFILE_NAME_KEY, expectedState.name);
     expectedState.screen = "matching";
     setTrainingChrome("鍛え合い MATCHING");
     render();
-    watchTrainingSessionOffers(
-      expectedState.matchmakingGeneration,
-      expectedState,
-    );
-    scheduleTrainingSessionTryMatch(0);
+    watchTrainingSessionV5Attempt(expectedState);
     // Public lobby presence is observational; a counter update must never
     // prevent the private server-owned matcher from starting.
-    await startPublicPresence(expectedState).catch((error) => {
+    startPublicPresence(expectedState).catch((error) => {
       if (contextIsCurrent()) handleRecoverableError(error);
     });
+    await startTrainingSessionV5(expectedState);
   } catch (error) {
     if (!contextIsCurrent()) return;
-    if (expectedState.sessionLeaseHeld) {
-      const released = await releaseTrainingSessionClaimExact({
-        sessionId: expectedState.clientSessionId,
-        leaseToken: expectedState.clientLeaseToken,
-        generation: expectedState.sessionGeneration,
-      });
-      if (!contextIsCurrent()) return;
-      if (released) {
-        expectedState.sessionLeaseHeld = false;
-        expectedState.sessionLease = null;
-        expectedState.sessionGeneration = "";
-        clearTrainingSessionHeartbeat(expectedState);
-      }
-    }
-    if (!expectedState.sessionLeaseHeld) releaseTrainingTabOwnership();
+    if (!expectedState.trainingOwnerEpoch) releaseTrainingTabOwnership();
     throw error;
   } finally {
-    expectedState.startingMatchmaking = false;
-  }
-}
-
-async function beginLegacyTrainingMatchmaking() {
-  state.name = normalizeTrainingName(state.name);
-  state.conditions = normalizeTrainingConditions(state.conditions);
-  state.intensity = normalizeTrainingIntensity(state.intensity);
-  if (state.startingMatchmaking
-    || !state.authReady
-    || !state.uid
-    || !state.name
-    || !setupIsReady()) return;
-  if (state.preview) {
-    showToast("UIプレビューではFirebaseへ接続しません。");
-    return;
-  }
-  state.startingMatchmaking = true;
-  try {
-    await claimTrainingTabOwnership();
-    await clearStaleTrainingActiveBeforeMatchmaking();
-    const offset = await get(ref(database, ".info/serverTimeOffset")).catch(() => null);
-    applyTrainingServerTimeOffset(state, offset);
-    const queueEntry = await claimTrainingQueueSession();
-    if (!await cleanupStaleTrainingInvites(queueEntry.sessionId)) {
-      const queueRemoved = await removeOwnedTrainingQueue(queueEntry.sessionId);
-      if (queueRemoved && state.queueSessionId === queueEntry.sessionId) {
-        state.queueSessionId = "";
-      }
-      throw new Error(
-        "以前の鍛え合い招待を整理できませんでした。通信を確認して、もう一度開始してください。",
-      );
+    if (expectedState.generation === expectedGeneration) {
+      expectedState.startingMatchmaking = false;
     }
-    localStorage.setItem(PROFILE_NAME_KEY, state.name);
-    state.screen = "matching";
-    setTrainingChrome("鍛え合い MATCHING");
-    render();
-    await startPublicPresence();
-    state.queueHeartbeat = window.setInterval(() => {
-      updateOwnedTrainingQueue({ lastSeen: firebaseNow() }, queueEntry.sessionId)
-        .then((owned) => {
-          if (owned) attemptToHost().catch(handleRecoverableError);
-          else if (state.screen === "matching" && state.queueSessionId === queueEntry.sessionId) {
-            handleFatalError(new Error("別の端末へ参加待ちが移ったため、この画面の待機を終了しました。"));
-          }
-        })
-        .catch(() => {});
-    }, HEARTBEAT_MS);
-    state.matchmakingUnsubscribers.push(onValue(ref(database, "online/trainingQueue"), (snapshot) => {
-      state.latestQueue = snapshot.val() || {};
-      scheduleInviteProcessing(0);
-      attemptToHost().catch(handleRecoverableError);
-    }, handleRecoverableError));
-    state.matchmakingUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
-      applyTrainingServerTimeOffset(state, snapshot);
-    }));
-    state.matchmakingUnsubscribers.push(onValue(ref(database, "online/trainingMatchLock"), () => {
-      attemptToHost().catch(handleRecoverableError);
-    }));
-    state.matchmakingUnsubscribers.push(onValue(ref(database, `online/trainingInvites/${state.uid}`), (snapshot) => {
-      state.latestInvites = snapshot.val() || {};
-      scheduleInviteProcessing(0);
-    }, handleRecoverableError));
-  } finally {
-    state.startingMatchmaking = false;
   }
 }
 
@@ -3291,7 +3148,7 @@ async function startPublicPresence(targetState = state) {
   targetState.publicPresenceHeartbeat = window.setInterval(() => {
     if (!active || state !== targetState) return;
     writePublicPresence(targetState).catch(() => {});
-  }, HEARTBEAT_MS);
+  }, PUBLIC_PRESENCE_HEARTBEAT_MS);
   return true;
 }
 
@@ -3332,569 +3189,12 @@ async function cleanupPublicPresence(targetState = state) {
   ]);
 }
 
-function freshQueueEntries() {
-  return validTrainingQueueEntries(state.latestQueue, {
-    now: firebaseNow(),
-    freshnessMs: TRAINING_QUEUE_FRESH_MS,
-  });
-}
-
-function activeTrainingCandidateSkipKeys(entries) {
-  const availableKeys = new Set((entries || []).map(trainingQueueEntryKey).filter(Boolean));
-  const now = firebaseNow();
-  Object.entries(state.unavailableQueueEntries).forEach(([key, expiresAt]) => {
-    if (!availableKeys.has(key) || Number(expiresAt || 0) <= now) {
-      delete state.unavailableQueueEntries[key];
-    }
-  });
-  return Object.keys(state.unavailableQueueEntries);
-}
-
-function markTrainingCandidateUnavailable(entry) {
-  const key = trainingQueueEntryKey(entry);
-  if (!key || entry?.uid === state.uid) return;
-  state.unavailableQueueEntries[key] = firebaseNow() + TRAINING_CANDIDATE_SKIP_MS;
-}
-
-function clearTrainingHostTakeoverTimer() {
-  window.clearTimeout(state.hostTakeoverTimer);
-  state.hostTakeoverTimer = null;
-  state.hostTakeoverDueAt = 0;
-}
-
-function scheduleTrainingHostTakeover(dueAt) {
-  const due = Number(dueAt || 0);
-  if (!Number.isFinite(due) || due <= 0) return;
-  if (state.hostTakeoverTimer && state.hostTakeoverDueAt <= due) return;
-  clearTrainingHostTakeoverTimer();
-  state.hostTakeoverDueAt = due;
-  state.hostTakeoverTimer = window.setTimeout(() => {
-    state.hostTakeoverTimer = null;
-    state.hostTakeoverDueAt = 0;
-    attemptToHost().catch(handleRecoverableError);
-  }, Math.max(0, due - firebaseNow()));
-}
-
-function selectCurrentTrainingPair(entries, forceHostTakeover = false) {
-  const ownEntry = (entries || []).find((entry) => entry.uid === state.uid);
-  const takeoverAt = Number(ownEntry?.joinedAt || 0) + TRAINING_HOST_TAKEOVER_MS;
-  const allowHostTakeover = forceHostTakeover
-    || (takeoverAt > 0 && firebaseNow() >= takeoverAt);
-  return selectTrainingPair(entries, {
-    requesterUid: state.uid,
-    excludedEntryKeys: activeTrainingCandidateSkipKeys(entries),
-    allowHostTakeover,
-  });
-}
-
-function isTrainingPermissionError(error) {
-  return String(error?.code || error?.message || "").toLowerCase().includes("permission");
-}
-
-async function attemptToHost() {
-  if (!active
-    || state.screen !== "matching"
-    || state.matchingBusy
-    || state.acceptingInvite
-    || state.pendingRoomId) return;
-  if (!queueEntryBelongsToSession(state.latestQueue?.[state.uid])) return;
-  if (hasCurrentTrainingInvite()) {
-    await processInvites();
-    return;
-  }
-  const entries = freshQueueEntries();
-  const pair = selectCurrentTrainingPair(entries);
-  if (pair.length !== 2 || pair[0].uid !== state.uid) {
-    const takeoverPair = selectCurrentTrainingPair(entries, true);
-    const ownEntry = entries.find((entry) => entry.uid === state.uid);
-    if (takeoverPair.length === 2 && takeoverPair[0].uid === state.uid && ownEntry) {
-      scheduleTrainingHostTakeover(ownEntry.joinedAt + TRAINING_HOST_TAKEOVER_MS);
-    }
-    return;
-  }
-  clearTrainingHostTakeoverTimer();
-  await createTrainingRoom(pair);
-}
-
-async function refreshTrainingPair(expectedPair) {
-  const snapshot = await get(ref(database, "online/trainingQueue"));
-  const entries = validTrainingQueueEntries(snapshot.val() || {}, {
-    now: firebaseNow(),
-    freshnessMs: TRAINING_QUEUE_FRESH_MS,
-  });
-  const refreshedPair = selectCurrentTrainingPair(entries);
-  if (refreshedPair.length !== 2 || expectedPair.length !== 2) return [];
-  const unchanged = refreshedPair.every((entry, index) => (
-    entry.uid === expectedPair[index]?.uid
-    && entry.sessionId === expectedPair[index]?.sessionId
-  ));
-  return unchanged ? refreshedPair : [];
-}
-
-async function acquireMatchLock(roomId) {
-  const transaction = await runTransaction(ref(database, "online/trainingMatchLock"), (current) => {
-    const now = firebaseNow();
-    if (current && current.uid !== state.uid && Number(current.expiresAt || 0) > now) return undefined;
-    return { uid: state.uid, roomId, createdAt: now, expiresAt: now + MATCH_LOCK_TTL_MS };
-  });
-  const lock = transaction.snapshot.val();
-  const lockExpiresAt = Number(lock?.expiresAt || 0);
-  if (!transaction.committed
-    && lock?.uid
-    && lock.uid !== state.uid
-    && lockExpiresAt > firebaseNow()) {
-    scheduleTrainingHostTakeover(lockExpiresAt + MATCH_LOCK_RETRY_GRACE_MS);
-  }
-  return transaction.committed && lock?.uid === state.uid && lock?.roomId === roomId;
-}
-
-async function releaseMatchLock(roomId) {
-  const transaction = await runTransaction(
-    ref(database, "online/trainingMatchLock"),
-    (current) => {
-      if (current == null) return null;
-      return current.uid === state.uid && current.roomId === roomId
-        ? null
-        : undefined;
-    },
-    { applyLocally: false },
-  ).catch(() => null);
-  if (!transaction) return false;
-  const current = transaction.snapshot.val();
-  return (transaction.committed && current === null)
-    || current?.uid !== state.uid
-    || current?.roomId !== roomId;
-}
-
-async function armTrainingActiveDisconnect(roomId) {
-  if (state.activeDisconnect) {
-    await cancelTrainingActiveDisconnect();
-  }
-  const disconnect = onDisconnect(
-    ref(database, `online/trainingActive/${state.uid}/rooms/${roomId}`),
-  );
-  await disconnect.remove();
-  state.activeDisconnect = disconnect;
-  state.activeDisconnectRoomId = roomId;
-}
-
-async function cancelTrainingActiveDisconnect(roomId = "") {
-  if (roomId && state.activeDisconnectRoomId !== roomId) return false;
-  const disconnect = state.activeDisconnect;
-  if (!disconnect) {
-    if (!roomId || state.activeDisconnectRoomId === roomId) {
-      state.activeDisconnectRoomId = "";
-    }
-    return true;
-  }
-  let cancelled = false;
-  try {
-    await disconnect.cancel();
-    cancelled = true;
-  } catch (error) {
-    console.error(error);
-  } finally {
-    if (state.activeDisconnect === disconnect) {
-      state.activeDisconnect = null;
-      state.activeDisconnectRoomId = "";
-    }
-  }
-  return cancelled;
-}
-
-async function armActiveRoomDestroyedDisconnect(roomId) {
-  await cancelActiveRoomDestroyedDisconnect();
-  const disconnect = onDisconnect(
-    ref(database, `online/trainingRooms/${roomId}/destroyed`),
-  );
-  await disconnect.set({
-    by: state.uid,
-    at: serverTimestamp(),
-    reason: "active_member_disconnected",
-  });
-  state.activeRoomDestroyedDisconnect = disconnect;
-  state.activeRoomDestroyedDisconnectRoomId = roomId;
-}
-
-async function cancelActiveRoomDestroyedDisconnect(roomId = "") {
-  if (roomId && state.activeRoomDestroyedDisconnectRoomId !== roomId) return false;
-  const disconnect = state.activeRoomDestroyedDisconnect;
-  if (!disconnect) {
-    if (!roomId || state.activeRoomDestroyedDisconnectRoomId === roomId) {
-      state.activeRoomDestroyedDisconnectRoomId = "";
-    }
-    return true;
-  }
-  let cancelled = false;
-  try {
-    await disconnect.cancel();
-    cancelled = true;
-  } catch (error) {
-    console.error(error);
-  } finally {
-    if (state.activeRoomDestroyedDisconnect === disconnect) {
-      state.activeRoomDestroyedDisconnect = null;
-      state.activeRoomDestroyedDisconnectRoomId = "";
-    }
-  }
-  return cancelled;
-}
-
-async function removeTrainingActiveChild(roomId) {
-  const transaction = await runTransaction(
-    ref(database, `online/trainingActive/${state.uid}/rooms/${roomId}`),
-    (current) => current == null || current === true ? null : undefined,
-    { applyLocally: false },
-  ).catch(() => null);
-  return Boolean(
-    transaction?.committed
-    && transaction.snapshot.val() === null
-  );
-}
-
-async function removeTrainingActiveParentIfOwned(roomId) {
-  const transaction = await runTransaction(
-    ref(database, `online/trainingActive/${state.uid}`),
-    (current) => {
-      if (current == null) return null;
-      const rooms = current?.rooms && typeof current.rooms === "object"
-        ? current.rooms
-        : {};
-      const hasClaimedRoom = Object.values(rooms).some((claimed) => claimed === true);
-      return current?.roomId === roomId && !hasClaimedRoom ? null : undefined;
-    },
-    { applyLocally: false },
-  ).catch(() => null);
-  const current = transaction?.snapshot?.val();
-  return Boolean(transaction && (
-    (transaction.committed && current === null)
-    || (current != null && current.roomId !== roomId)
-  ));
-}
-
-async function reserveTrainingActiveRoom(roomId) {
-  const reservedAt = firebaseNow();
-  const transaction = await runTransaction(
-    ref(database, `online/trainingActive/${state.uid}`),
-    (current) => {
-      const sessions = current?.rooms && typeof current.rooms === "object"
-        ? current.rooms
-        : {};
-      if (Object.values(sessions).some((claimed) => claimed === true)) return undefined;
-      return { roomId, reservedAt, rooms: { [roomId]: true } };
-    },
-  );
-  const reservation = transaction.snapshot.val();
-  return transaction.committed
-    && reservation?.roomId === roomId
-    && reservation?.reservedAt === reservedAt
-    && reservation?.rooms?.[roomId] === true;
-}
-
-async function releaseTrainingActiveReservation(roomId) {
-  const childReleased = await removeTrainingActiveChild(roomId);
-  const parentReleased = childReleased
-    ? await removeTrainingActiveParentIfOwned(roomId)
-    : false;
-  if (!childReleased || !parentReleased) return false;
-  const remaining = await get(
-    ref(database, `online/trainingActive/${state.uid}`),
-  ).catch(() => null);
-  if (!remaining) return false;
-  const released = remaining.val()?.rooms?.[roomId] !== true;
-  if (released) await cancelTrainingActiveDisconnect(roomId);
-  return released;
-}
-
-async function armFormingRoomDisconnects(roomId, isHost, handles = []) {
-  try {
-    if (isHost) {
-      const statusDisconnect = onDisconnect(ref(database, `online/trainingRooms/${roomId}/status`));
-      await statusDisconnect.set("expired");
-      handles.push(statusDisconnect);
-      state.disconnectHandles.push(statusDisconnect);
-    }
-    const destroyedDisconnect = onDisconnect(ref(database, `online/trainingRooms/${roomId}/destroyed`));
-    await destroyedDisconnect.set({
-      by: state.uid,
-      at: serverTimestamp(),
-      reason: isHost ? "forming_host_disconnected" : "forming_guest_disconnected",
-    });
-    handles.push(destroyedDisconnect);
-    state.disconnectHandles.push(destroyedDisconnect);
-    return handles;
-  } catch (error) {
-    throw error;
-  }
-}
-
-async function cancelDisconnectHandles(handles) {
-  await Promise.allSettled((handles || []).map((handle) => handle?.cancel?.()));
-  state.disconnectHandles = state.disconnectHandles.filter((handle) => !handles?.includes(handle));
-}
-
-function randomlyChooseUid(firstUid, secondUid) {
-  if (globalThis.crypto?.getRandomValues) {
-    const value = new Uint32Array(1);
-    globalThis.crypto.getRandomValues(value);
-    return value[0] % 2 === 0 ? firstUid : secondUid;
-  }
-  return Math.random() < 0.5 ? firstUid : secondUid;
-}
-
-async function createTrainingRoom(pair) {
-  state.matchingBusy = true;
-  const roomId = push(ref(database, "online/trainingRooms")).key;
-  if (!roomId) {
-    state.matchingBusy = false;
-    throw new Error("鍛え合いの部屋を作れませんでした。");
-  }
-  let ownsLock = false;
-  let activeReserved = false;
-  let roomCreated = false;
-  let retryMatching = false;
-  let roomDisconnects = [];
-  let guestUid = "";
-  let guestSessionId = "";
-  let guestEntry = null;
-  let createdRoom = null;
-  let candidatePermissionPhase = "";
-  try {
-    ownsLock = await acquireMatchLock(roomId);
-    if (!ownsLock || state.screen !== "matching") return;
-    const refreshedPair = await refreshTrainingPair(pair);
-    const host = refreshedPair[0];
-    const guest = refreshedPair[1];
-    guestEntry = guest || null;
-    guestUid = guest?.uid || "";
-    guestSessionId = guest?.sessionId || "";
-    if (host?.uid !== state.uid
-      || host.sessionId !== state.queueSessionId
-      || !guestUid
-      || !guestSessionId
-      || host.uid === guestUid) return;
-    if (!await reserveTrainingActiveRoom(roomId)) return;
-    activeReserved = true;
-    await armTrainingActiveDisconnect(roomId);
-    const players = {
-      [host.uid]: playerFromQueue(host, state.conditions),
-      [guest.uid]: playerFromQueue(guest, ""),
-    };
-    createdRoom = {
-      protocolVersion: TRAINING_PROTOCOL_VERSION,
-      variant: TRAINING_VARIANT,
-      hostUid: host.uid,
-      guestUid: guest.uid,
-      createdAt: serverTimestamp(),
-      status: "forming",
-      members: { [host.uid]: true, [guest.uid]: true },
-      players,
-      accepted: { [host.uid]: true },
-    };
-    candidatePermissionPhase = "room_bootstrap";
-    await set(ref(database, `online/trainingRooms/${roomId}`), createdRoom);
-    candidatePermissionPhase = "";
-    roomCreated = true;
-    await armFormingRoomDisconnects(roomId, true, roomDisconnects);
-    if (!await updateOwnedTrainingQueue({ state: "forming" }, host.sessionId)) {
-      throw new Error("待機セッションが別の端末へ移ったため、部屋作成を中止しました。");
-    }
-    candidatePermissionPhase = "invite_create";
-    await set(ref(database, `online/trainingInvites/${guest.uid}/${roomId}`), {
-      roomId,
-      hostUid: host.uid,
-      targetSessionId: guest.sessionId,
-      protocolVersion: TRAINING_PROTOCOL_VERSION,
-      variant: TRAINING_VARIANT,
-      createdAt: firebaseNow(),
-    });
-    candidatePermissionPhase = "";
-    if (!await releaseMatchLockReliably(roomId)) {
-      throw new Error("対戦準備ロックを終了できませんでした。");
-    }
-    ownsLock = false;
-    state.pendingRoomId = roomId;
-    state.pendingInviteTargetSessionId = guest.sessionId;
-    state.room = { ...emptyRoom(), ...createdRoom, createdAt: firebaseNow() };
-    state.screen = "forming";
-    render();
-    watchPendingRoom(roomId, true);
-    state.matchTimer = window.setTimeout(() => {
-      expirePendingRoom(roomId).catch(handleRecoverableError);
-    }, MATCH_TIMEOUT_MS);
-  } catch (error) {
-    const failedCandidatePermissionPhase = candidatePermissionPhase;
-    candidatePermissionPhase = "";
-    retryMatching = active
-      && state.screen === "matching"
-      && !state.pendingRoomId
-      && !state.roomId;
-    if (roomCreated) {
-      try {
-        await confirmPendingRoomTerminal(roomId, "forming_setup_failed", true);
-      } catch (terminalError) {
-        retryMatching = false;
-        state.pendingRoomId = roomId;
-        state.pendingInviteTargetSessionId = guestSessionId;
-        state.room = {
-          ...emptyRoom(),
-          ...(createdRoom || {}),
-          createdAt: firebaseNow(),
-        };
-        state.screen = "forming";
-        render();
-        throw terminalError;
-      }
-    }
-    await cancelDisconnectHandles(roomDisconnects);
-    const inviteCleared = !roomCreated
-      || !guestUid
-      || await removeTrainingInviteReliably(guestUid, roomId, guestSessionId);
-    const activeReleased = !activeReserved
-      || await releaseTrainingActiveReservation(roomId);
-    const queueReturnedToWaiting = !retryMatching
-      || await updateOwnedTrainingQueue({ state: "waiting" });
-    if (!inviteCleared || !activeReleased || !queueReturnedToWaiting) {
-      retryMatching = false;
-      if (roomCreated) {
-        state.pendingRoomId = roomId;
-        state.pendingInviteTargetSessionId = guestSessionId;
-        state.room = {
-          ...emptyRoom(),
-          ...(createdRoom || {}),
-          createdAt: firebaseNow(),
-        };
-        state.screen = "forming";
-        render();
-      }
-      await handleFatalError(new Error(
-        "対戦準備の後始末を確認できませんでした。通信を確認して、もう一度開始してください。",
-      ));
-      return;
-    }
-    if (state.pendingRoomId === roomId) state.pendingRoomId = "";
-    if (state.pendingInviteTargetSessionId === guestSessionId) {
-      state.pendingInviteTargetSessionId = "";
-    }
-    const permissionError = isTrainingPermissionError(error);
-    const candidatePermissionFailure = permissionError
-      && ["room_bootstrap", "invite_create"].includes(failedCandidatePermissionPhase);
-    let currentInviteStatus = hasCurrentTrainingInvite() ? true : false;
-    if (guestEntry && candidatePermissionFailure && !currentInviteStatus) {
-      currentInviteStatus = await refreshCurrentTrainingInviteStatus();
-    }
-    const candidateUnavailable = Boolean(
-      guestEntry
-      && candidatePermissionFailure
-      && currentInviteStatus === false
-    );
-    if (candidateUnavailable) {
-      markTrainingCandidateUnavailable(guestEntry);
-    }
-    if (candidateUnavailable
-      || (candidatePermissionFailure && currentInviteStatus === true)) return;
-    throw error;
-  } finally {
-    if (ownsLock) {
-      await releaseMatchLock(roomId);
-    }
-    state.matchingBusy = false;
-    if (hasCurrentTrainingInvite()) {
-      scheduleInviteProcessing(0);
-    } else if (retryMatching) {
-      window.setTimeout(() => attemptToHost().catch(handleRecoverableError), 2_000);
-    }
-  }
-}
-
-function playerFromQueue(entry, conditions = "") {
-  return {
-    uid: entry.uid,
-    name: normalizeTrainingName(entry.name),
-    intensity: normalizeTrainingIntensity(entry.intensity),
-    conditions: normalizeTrainingConditions(conditions),
-    commandDeck: Object.fromEntries(
-      Array.from({ length: TRAINING_COMMAND_COUNT }, (_, index) => {
-        const cardIndex = index + 1;
-        return [cardIndex, normalizeCommandCard(entry.commandDeck?.[cardIndex])];
-      }),
-    ),
-    imageBpms: Object.fromEntries(
-      Array.from({ length: TRAINING_IMAGE_COUNT }, (_, index) => {
-        const imageIndex = index + 1;
-        return [imageIndex, normalizeImageBpm(entry.imageBpms?.[imageIndex])];
-      }),
-    ),
-  };
-}
-
-function hasCurrentTrainingInvite() {
-  return Object.values(state.latestInvites || {}).some((invite) => (
-    invite?.roomId
-    && invite?.hostUid
-    && invite.targetSessionId === state.queueSessionId
-    && invite.protocolVersion === TRAINING_PROTOCOL_VERSION
-    && invite.variant === TRAINING_VARIANT
-  ));
-}
-
-async function refreshCurrentTrainingInviteStatus() {
-  try {
-    const snapshot = await get(ref(database, `online/trainingInvites/${state.uid}`));
-    state.latestInvites = snapshot.val() || {};
-    return hasCurrentTrainingInvite();
-  } catch {
-    return null;
-  }
-}
-
-function scheduleInviteProcessing(delay = 500) {
-  if (state.inviteRetryTimer
-    || !active
-    || state.screen !== "matching"
-    || state.pendingRoomId
-    || state.roomId) return;
-  state.inviteRetryTimer = window.setTimeout(() => {
-    state.inviteRetryTimer = null;
-    processInvites().catch((error) => {
-      handleRecoverableError(error);
-      scheduleInviteProcessing(2_000);
-    });
-  }, Math.max(0, delay));
-}
-
-async function processInvites() {
-  if (state.matchingBusy) {
-    scheduleInviteProcessing();
-    return;
-  }
-  if (state.acceptingInvite || state.pendingRoomId || state.roomId || state.screen !== "matching") return;
-  if (!queueEntryBelongsToSession(state.latestQueue?.[state.uid])) return;
-  state.acceptingInvite = true;
-  try {
-    const invites = Object.entries(state.latestInvites)
-      .filter(([, invite]) => (
-        invite?.roomId
-        && invite?.hostUid
-        && invite.targetSessionId === state.queueSessionId
-        && invite.protocolVersion === TRAINING_PROTOCOL_VERSION
-        && invite.variant === TRAINING_VARIANT
-      ))
-      .sort(([, first], [, second]) => Number(first.createdAt || 0) - Number(second.createdAt || 0));
-    for (const [roomId, invite] of invites) {
-      if (await acceptInvite(roomId, invite)) return;
-    }
-  } finally {
-    state.acceptingInvite = false;
-  }
-}
-
 async function readRoomSkeleton(roomId) {
   const base = `online/trainingRooms/${roomId}`;
   const keys = [
     "protocolVersion", "variant", "sessionProtocolVersion", "signalingVersion",
-    "attemptId", "connectionGeneration", "sessions", "hostUid", "guestUid",
-    "createdAt", "expiresAt", "status", "members", "players", "chatFrames", "accepted",
+    "roomAttemptId", "transportEpoch", "sessions", "hostUid", "guestUid",
+    "createdAt", "status", "members", "players", "chatFrames", "accepted",
   ];
   const snapshots = await Promise.all(keys.map((key) => get(ref(database, `${base}/${key}`))));
   return Object.fromEntries(keys.map((key, index) => [key, snapshots[index].val()]));
@@ -3988,7 +3288,6 @@ function viewFromServerFinalized(serverFinalized, fallbackView) {
 function transitionToTrainingResult(view) {
   clearImageExchangeWatchdog();
   clearScorePoll();
-  cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
   state.currentView = view;
   state.outcome = view;
   state.screen = "result";
@@ -4000,25 +3299,12 @@ function transitionToTrainingResult(view) {
 function transitionToDestroyedRoom() {
   clearImageExchangeWatchdog();
   clearScorePoll();
-  cancelActiveRoomDestroyedDisconnect(state.roomId).catch(() => {});
   state.channel?.close();
   state.peer?.close();
   state.channel = null;
   state.peer = null;
   state.ambienceController.disable();
   state.screen = "cancelled";
-  render();
-}
-
-function transitionToLocalNoContestPending() {
-  clearImageExchangeWatchdog();
-  clearScorePoll();
-  state.channel?.close();
-  state.peer?.close();
-  state.channel = null;
-  state.peer = null;
-  state.screen = "cancelled";
-  state.ambienceController.disable();
   render();
 }
 
@@ -4049,368 +3335,38 @@ async function refreshRoomBeforeDestroy(roomId) {
   return "live";
 }
 
-async function acceptInvite(roomId, invite) {
-  const [room, queueSnapshot] = await Promise.all([
-    readRoomSkeleton(roomId),
-    get(ref(database, `online/trainingQueue/${state.uid}`)),
-  ]);
-  if (invite.targetSessionId !== state.queueSessionId
-    || !queueEntryBelongsToSession(queueSnapshot.val(), invite.targetSessionId)) {
-    return false;
-  }
-  if (room.protocolVersion !== TRAINING_PROTOCOL_VERSION
-    || room.variant !== TRAINING_VARIANT
-    || room.status !== "forming"
-    || room.guestUid !== state.uid
-    || room.members?.[state.uid] !== true
-    || room.players?.[state.uid]?.uid !== state.uid
-    || invite.hostUid !== room.hostUid) {
-    if (!await removeTrainingInviteReliably(
-      state.uid,
-      roomId,
-      invite.targetSessionId,
-    )) {
-      handleRecoverableError(new Error(
-        "無効な対戦招待の整理を再試行します。",
-      ));
-      scheduleInviteProcessing(2_000);
-    }
-    return false;
-  }
-  let activeReserved = false;
-  let guestQueueForming = false;
-  let roomDisconnects = [];
-  try {
-    if (!await reserveTrainingActiveRoom(roomId)) {
-      scheduleInviteProcessing(1_500);
-      return false;
-    }
-    activeReserved = true;
-    await armTrainingActiveDisconnect(roomId);
-    await armFormingRoomDisconnects(roomId, false, roomDisconnects);
-    if (!await updateOwnedTrainingQueue({ state: "forming" }, invite.targetSessionId)) {
-      throw new Error("この端末の待機セッションを確認できませんでした。");
-    }
-    guestQueueForming = true;
-    const acceptanceUpdates = createTrainingAcceptanceUpdates(state.uid, state.conditions);
-    await update(ref(database, `online/trainingRooms/${roomId}`), acceptanceUpdates);
-  } catch (error) {
-    await cancelDisconnectHandles(roomDisconnects);
-    const activeReleased = !activeReserved
-      || await releaseTrainingActiveReservation(roomId);
-    const queueReturnedToWaiting = !guestQueueForming
-      || await updateOwnedTrainingQueue(
-        { state: "waiting" },
-        invite.targetSessionId,
-      );
-    if (!activeReleased || !queueReturnedToWaiting) {
-      await handleFatalError(new Error(
-        "対戦参加の後始末を確認できませんでした。通信を確認して、もう一度開始してください。",
-      ));
-      return false;
-    }
-    if (active && state.screen === "matching" && !state.pendingRoomId && !state.roomId) {
-      scheduleInviteProcessing(1_500);
-    }
-    throw error;
-  }
-  const acceptedSessionId = invite.targetSessionId;
-  if (!await removeTrainingInviteReliably(state.uid, roomId, acceptedSessionId)) {
-    handleRecoverableError(new Error(
-      "受け取った対戦招待の整理を入室時に再試行します。",
-    ));
-  }
-  state.pendingRoomId = roomId;
-  state.pendingInviteTargetSessionId = acceptedSessionId;
-  state.room = {
-    ...emptyRoom(),
-    ...room,
-    players: {
-      ...(room.players || {}),
-      [state.uid]: {
-        ...(room.players?.[state.uid] || {}),
-        conditions: normalizeTrainingConditions(state.conditions),
-      },
-    },
-    accepted: { ...(room.accepted || {}), [state.uid]: true },
-  };
-  state.screen = "forming";
-  render();
-  watchPendingRoom(roomId, false);
-  state.matchTimer = window.setTimeout(() => {
-    abandonPendingRoom(roomId).catch(handleFatalError);
-  }, MATCH_TIMEOUT_MS + 5_000);
-  return true;
-}
-
-function watchPendingRoom(roomId, isHost) {
-  const base = `online/trainingRooms/${roomId}`;
-  const react = () => {
-    if (state.pendingRoomId !== roomId) return;
-    if (state.screen === "forming") render();
-    if (isHost
-      && state.room.status === "forming"
-      && Object.keys(state.room.accepted || {}).length === 2) {
-      transitionTrainingRoomStatus(roomId, "forming", "active")
-        .catch(handleRecoverableError);
-    }
-    if (state.room.status === "active") enterRoom(roomId).catch(handleRecoverableError);
-    if (state.room.status === "expired") returnToWaitingQueue(roomId).catch(handleFatalError);
-  };
-  state.matchmakingUnsubscribers.push(onValue(ref(database, `${base}/accepted`), (snapshot) => {
-    state.room.accepted = snapshot.val() || {};
-    react();
-  }, handleRecoverableError));
-  state.matchmakingUnsubscribers.push(onValue(ref(database, `${base}/status`), (snapshot) => {
-    state.room.status = snapshot.val() || "";
-    react();
-  }, handleRecoverableError));
-  state.matchmakingUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {
-    if (snapshot.exists() && state.pendingRoomId === roomId) {
-      returnToWaitingQueue(roomId).catch(handleFatalError);
-    }
-  }, handleRecoverableError));
-}
-
-function transitionTrainingRoomStatus(roomId, expected, next) {
-  return runTransaction(
-    ref(database, `online/trainingRooms/${roomId}/status`),
-    (current) => (
-      current == null || current === expected ? next : undefined
-    ),
-    { applyLocally: false },
-  );
-}
-
-async function expirePendingRoom(roomId) {
-  if (state.roomId || state.pendingRoomId !== roomId || state.room.hostUid !== state.uid) return;
-  const transaction = await transitionTrainingRoomStatus(roomId, "forming", "expired");
-  if (transaction.snapshot.val() === "expired") {
-    const guestUid = state.room.guestUid;
-    const acceptedSnapshot = guestUid
-      ? await get(ref(
-        database,
-        `online/trainingRooms/${roomId}/accepted/${guestUid}`,
-      )).catch(() => null)
-      : null;
-    if (acceptedSnapshot && acceptedSnapshot.val() !== true) {
-      markTrainingCandidateUnavailable({
-        uid: guestUid,
-        sessionId: state.pendingInviteTargetSessionId,
-      });
-    }
-  }
-  await releaseMatchLock(roomId);
-}
-
-async function destroyPendingRoom(roomId, reason) {
-  if (!roomId || !state.uid) return false;
-  const transaction = await runTransaction(
-    ref(database, `online/trainingRooms/${roomId}/destroyed`),
-    (current) => current || {
-      by: state.uid,
-      at: firebaseNow(),
-      reason: String(reason || "forming_cancelled").slice(0, 80),
-    },
-  );
-  return Boolean(transaction.snapshot.val());
-}
-
-async function confirmPendingRoomTerminal(roomId, reason, isHost) {
-  let statusTerminal = false;
-  let destroyedTerminal = false;
-  if (isHost) {
-    const statusTransaction = await transitionTrainingRoomStatus(
-      roomId,
-      "forming",
-      "expired",
-    ).catch(() => null);
-    statusTerminal = statusTransaction?.snapshot?.val() === "expired";
-  }
-  destroyedTerminal = await destroyPendingRoom(roomId, reason).catch(() => false);
-  if (!statusTerminal && !destroyedTerminal) {
-    const [statusSnapshot, destroyedSnapshot] = await Promise.all([
-      get(ref(database, `online/trainingRooms/${roomId}/status`)).catch(() => null),
-      get(ref(database, `online/trainingRooms/${roomId}/destroyed`)).catch(() => null),
-    ]);
-    statusTerminal = statusSnapshot?.val() === "expired";
-    destroyedTerminal = Boolean(destroyedSnapshot?.val());
-  }
-  if (!statusTerminal && !destroyedTerminal) {
-    throw new Error("対戦準備中の部屋を終了できませんでした。通信を確認して、もう一度終了してください。");
-  }
-  return true;
-}
-
-async function teardownPendingRoom(reason = "player_exit") {
-  if (state.pendingTeardown) return state.pendingTeardown;
-  const roomId = state.pendingRoomId;
-  if (!roomId || !state.uid || state.preview) return true;
-  if (state.sessionLease) {
-    const sessionTeardown = trainingSessionActionCallable({
-      action: "cancel",
-      sessionId: state.clientSessionId,
-      leaseToken: state.clientLeaseToken,
-      roomId,
-      abort: false,
-    }).then((response) => {
-      const result = response?.data || {};
-      if (result.cancelled !== true
-          && !["terminal", "not-owner"].includes(String(result.reason || ""))) {
-        throw new Error(
-          "対戦準備の後始末を確認できませんでした。通信を確認して、もう一度終了してください。",
-        );
-      }
-      if (state.pendingRoomId === roomId) state.pendingRoomId = "";
-      state.sessionOfferRoomId = "";
-      return true;
-    });
-    state.pendingTeardown = sessionTeardown;
-    try {
-      return await sessionTeardown;
-    } finally {
-      if (state.pendingTeardown === sessionTeardown) state.pendingTeardown = null;
-    }
-  }
-  const targetSessionId = state.pendingInviteTargetSessionId;
-  const pendingTeardown = (async () => {
-    const isHost = state.room.hostUid === state.uid;
-    await confirmPendingRoomTerminal(roomId, reason, isHost);
-    const inviteTargetUid = isHost ? state.room.guestUid : state.uid;
-    const [inviteCleared, lockReleased] = await Promise.all([
-      inviteTargetUid && targetSessionId
-        ? removeTrainingInviteReliably(inviteTargetUid, roomId, targetSessionId)
-        : Promise.resolve(true),
-      releaseMatchLockReliably(roomId),
-    ]);
-    if (!inviteCleared || !lockReleased) {
-      throw new Error(
-        "対戦準備の後始末を確認できませんでした。通信を確認して、もう一度終了してください。",
-      );
-    }
-    return true;
-  })();
-  state.pendingTeardown = pendingTeardown;
-  try {
-    await pendingTeardown;
-    if (state.pendingRoomId === roomId) state.pendingRoomId = "";
-    if (state.pendingInviteTargetSessionId === targetSessionId) {
-      state.pendingInviteTargetSessionId = "";
-    }
-    return true;
-  } finally {
-    if (state.pendingTeardown === pendingTeardown) state.pendingTeardown = null;
-  }
-}
-
-async function abandonPendingRoom(roomId) {
-  if (state.roomId || state.pendingRoomId !== roomId) return;
-  const status = (await get(ref(database, `online/trainingRooms/${roomId}/status`))).val();
-  if (status === "active") return enterRoom(roomId);
-  await destroyPendingRoom(roomId, "forming_timeout");
-  await returnToWaitingQueue(roomId);
-}
-
-async function returnToWaitingQueue(roomId) {
-  if (state.returningToQueue || state.pendingTeardown) return;
-  state.returningToQueue = true;
-  const targetSessionId = state.pendingInviteTargetSessionId;
-  const inviteTargetUid = state.room.hostUid === state.uid
-    ? state.room.guestUid
-    : state.uid;
-  try {
-    if (inviteTargetUid
-      && targetSessionId
-      && !await removeTrainingInviteReliably(
-        inviteTargetUid,
-        roomId,
-        targetSessionId,
-      )) {
-      throw new Error(
-        "対戦招待の終了を確認できませんでした。通信を確認して、もう一度お試しください。",
-      );
-    }
-    const matchmakingCleared = await cleanupMatchmakingReliably(false);
-    if (!matchmakingCleared) {
-      throw new Error(
-        "以前の待機セッションを終了できませんでした。通信を確認して、もう一度開始してください。",
-      );
-    }
-    await cleanupPublicPresence();
-    if (!await releaseMatchLockReliably(roomId)) {
-      throw new Error(
-        "対戦準備ロックの終了を確認できませんでした。通信を確認して、もう一度お試しください。",
-      );
-    }
-    state.pendingRoomId = "";
-    state.pendingInviteTargetSessionId = "";
-    state.room = emptyRoom();
-    state.screen = "matching";
-    await beginMatchmaking();
-  } finally {
-    state.returningToQueue = false;
-  }
-}
-
 async function enterRoom(roomId) {
   const expectedState = state;
-  const contextIsCurrent = () => active && state === expectedState;
+  const requestFence = createTrainingSessionV5RequestFence(expectedState);
+  const expectedRoomAttemptId = expectedState.roomAttemptId;
+  const expectedTransportEpoch = expectedState.transportEpoch;
+  const contextIsCurrent = () => (
+    trainingSessionV5RequestFenceIsCurrent(expectedState, requestFence)
+    && ["", roomId].includes(expectedState.roomId)
+    && expectedState.roomAttemptId === expectedRoomAttemptId
+    && expectedState.transportEpoch === expectedTransportEpoch
+  );
   if (expectedState.roomId || expectedState.enteringRoom) return;
   expectedState.enteringRoom = true;
   let roomAssigned = false;
   try {
     const room = await readRoomSkeleton(roomId);
     if (!contextIsCurrent()) return;
-    const sessionV2 = room.sessionProtocolVersion === 2;
+    const ownSession = room.sessions?.[state.uid] || {};
     if (room.status !== "active"
       || room.protocolVersion !== TRAINING_PROTOCOL_VERSION
       || room.variant !== TRAINING_VARIANT
-      || (sessionV2 && (
-        !state.sessionLeaseHeld
-        || room.signalingVersion !== 2
-        || room.sessions?.[state.uid]?.sessionId !== state.clientSessionId
-        || room.sessions?.[state.uid]?.generation !== state.sessionGeneration
-        || room.attemptId !== state.signalingAttemptId
-        || room.connectionGeneration !== state.roomConnectionGeneration
-      ))
-      || (!sessionV2 && state.sessionLeaseHeld)
-      || (!sessionV2 && (
-        room.sessionProtocolVersion != null
-        || room.signalingVersion != null
-      ))
+      || room.sessionProtocolVersion !== TRAINING_SESSION_V5_PROTOCOL_VERSION
+      || room.signalingVersion !== TRAINING_SESSION_V5_SIGNALING_VERSION
+      || room.roomAttemptId !== state.roomAttemptId
+      || room.transportEpoch !== state.transportEpoch
+      || ownSession.runId !== state.trainingRunId
+      || ownSession.endpointId !== state.trainingEndpointId
+      || ownSession.ownerEpoch !== state.trainingOwnerEpoch
       || room.members?.[state.uid] !== true
       || ![room.hostUid, room.guestUid].includes(state.uid)
       || room.hostUid === room.guestUid) {
       throw new Error("鍛え合い60の部屋へ参加できませんでした。");
-    }
-    if (sessionV2) {
-      await cancelActiveRoomDestroyedDisconnect();
-    } else {
-      await armActiveRoomDestroyedDisconnect(roomId);
-    }
-    if (!contextIsCurrent()) return;
-    const targetSessionId = state.pendingInviteTargetSessionId;
-    if (!state.sessionLeaseHeld && room.guestUid && targetSessionId) {
-      const inviteRemoved = await removeTrainingInviteReliably(
-        room.guestUid,
-        roomId,
-        targetSessionId,
-      );
-      if (!contextIsCurrent()) return;
-      if (!inviteRemoved) {
-        throw new Error(
-          "対戦招待を終了できなかったため、入室を保留しました。通信を確認してください。",
-        );
-      }
-    }
-    if (!state.sessionLeaseHeld) {
-      const lockReleased = await releaseMatchLockReliably(roomId);
-      if (!contextIsCurrent()) return;
-      if (!lockReleased) {
-        throw new Error(
-          "対戦準備ロックを終了できなかったため、入室を保留しました。通信を確認してください。",
-        );
-      }
     }
     const matchmakingCleaned = await cleanupMatchmakingReliably(true);
     if (!contextIsCurrent()) return;
@@ -4421,13 +3377,10 @@ async function enterRoom(roomId) {
     }
     state.roomId = roomId;
     roomAssigned = true;
-    window.clearTimeout(state.matchTimer);
     window.clearTimeout(state.enterRoomRetryTimer);
-    state.matchTimer = null;
     state.enterRoomRetryTimer = null;
     state.enterRoomRetryAttempts = 0;
     state.pendingRoomId = "";
-    state.pendingInviteTargetSessionId = "";
     state.room = { ...emptyRoom(), ...room };
     await updatePublicPresence("playing").catch(handleRecoverableError);
     if (!contextIsCurrent() || state.roomId !== roomId) return;
@@ -4460,79 +3413,95 @@ async function enterRoom(roomId) {
       return;
     }
     clearImageExchangeWatchdog();
-    await markRoomDestroyed("room_setup_failed").catch(() => {});
-    if (state.outcome) return;
     state.channel?.close();
     state.peer?.close();
     state.channel = null;
     state.peer = null;
+    state.roomUnsubscribers.splice(0)
+      .forEach((unsubscribe) => unsubscribe?.());
+    const failedDisconnects = state.disconnectHandles.splice(0);
+    await Promise.allSettled(
+      failedDisconnects.map((handle) => handle?.cancel?.()),
+    );
+    state.roomId = "";
+    state.pendingRoomId = roomId;
     state.ambienceController.disable();
-    state.errorMessage = error?.message || "相手との接続を準備できませんでした。";
-    state.screen = "error";
-    render();
+    enterTrainingSessionV5Recovery(state, "room-setup-unknown");
+    handleRecoverableError(error);
+    scheduleEnterRoomRetry(roomId, error);
   } finally {
-    expectedState.enteringRoom = false;
+    if (expectedState.generation === requestFence.generation) {
+      expectedState.enteringRoom = false;
+    }
   }
 }
 
 function scheduleEnterRoomRetry(roomId, error) {
-  if (!active || state.pendingRoomId !== roomId || state.room.status !== "active") {
-    handleRecoverableError(error);
-    return;
-  }
-  handleRecoverableError(error);
+  if (!active
+      || state.trainingOwnerSuperseded
+      || ![state.pendingRoomId, state.roomId].includes(roomId)) return;
+  if (error) handleRecoverableError(error);
   state.enterRoomRetryAttempts += 1;
-  if (state.enterRoomRetryAttempts > 6) {
-    handleFatalError(new Error(
-      "対戦開始の再確認を完了できませんでした。通信を確認して、もう一度開始してください。",
-    )).catch(handleRecoverableError);
-    return;
-  }
   window.clearTimeout(state.enterRoomRetryTimer);
-  const delay = Math.min(4_000, 500 * (2 ** (state.enterRoomRetryAttempts - 1)));
+  const delay = Math.min(
+    TRAINING_V5_RECOVERY_MAX_MS,
+    500 * (2 ** Math.min(4, state.enterRoomRetryAttempts - 1)),
+  );
   state.enterRoomRetryTimer = window.setTimeout(() => {
     state.enterRoomRetryTimer = null;
-    enterRoom(roomId).catch(handleRecoverableError);
+    inspectTrainingSessionV5(state, { immediate: true }).catch(() => {});
+    if (!state.roomId) {
+      prepareTrainingSessionV5Room(state.trainingAttempt, state).catch(() => {});
+    } else if (!state.peer) {
+      requestTrainingSessionV5Reconnect(state).catch(() => {});
+    }
   }, delay);
 }
 
 function createTrainingRoomRuntimeContext(roomId = state.roomId) {
-  const sessionV2 = state.sessionLeaseHeld
-    && state.room.sessionProtocolVersion === 2;
+  const opponentUid = state.room.hostUid === state.uid
+    ? state.room.guestUid
+    : state.room.hostUid;
+  const opponentSession = state.room.sessions?.[opponentUid] || {};
   return Object.freeze({
     expectedState: state,
+    generation: state.generation,
     roomId,
     uid: state.uid,
-    sessionV2,
-    sessionId: sessionV2 ? state.clientSessionId : "",
-    leaseToken: sessionV2 ? state.clientLeaseToken : "",
-    opponentSessionId: sessionV2 ? state.opponentSessionId : "",
-    sessionGeneration: sessionV2 ? state.sessionGeneration : "",
-    attemptId: sessionV2 ? state.signalingAttemptId : "",
-    connectionGeneration: sessionV2 ? state.roomConnectionGeneration : "",
+    runId: state.trainingRunId,
+    endpointId: state.trainingEndpointId,
+    ownerEpoch: state.trainingOwnerEpoch,
+    opponentUid,
+    opponentRunId: opponentSession.runId || state.opponentRunId,
+    opponentEndpointId: opponentSession.endpointId || state.opponentEndpointId,
+    opponentOwnerEpoch: opponentSession.ownerEpoch || state.opponentOwnerEpoch,
+    roomAttemptId: state.roomAttemptId,
+    transportEpoch: state.transportEpoch,
   });
 }
 
 function trainingRoomRuntimeContextIsCurrent(context) {
-  if (!context
-      || !active
-      || state !== context.expectedState
-      || state.roomId !== context.roomId
-      || state.uid !== context.uid) return false;
-  if (!context.sessionV2) {
-    return !state.sessionLeaseHeld
-      && state.room.sessionProtocolVersion !== 2;
-  }
-  return state.sessionLeaseHeld
-    && state.clientSessionId === context.sessionId
-    && state.clientLeaseToken === context.leaseToken
-    && state.opponentSessionId === context.opponentSessionId
-    && state.sessionGeneration === context.sessionGeneration
-    && state.signalingAttemptId === context.attemptId
-    && state.roomConnectionGeneration === context.connectionGeneration
-    && state.room.sessionProtocolVersion === 2
-    && state.room.attemptId === context.attemptId
-    && state.room.connectionGeneration === context.connectionGeneration;
+  return Boolean(context)
+    && active
+    && state === context.expectedState
+    && state.generation === context.generation
+    && !state.trainingSessionCancelling
+    && state.roomId === context.roomId
+    && state.uid === context.uid
+    && state.sessionLeaseHeld
+    && !state.trainingOwnerSuperseded
+    && state.trainingRunId === context.runId
+    && state.trainingEndpointId === context.endpointId
+    && state.trainingOwnerEpoch === context.ownerEpoch
+    && state.opponentRunId === context.opponentRunId
+    && state.opponentEndpointId === context.opponentEndpointId
+    && state.opponentOwnerEpoch === context.opponentOwnerEpoch
+    && state.roomAttemptId === context.roomAttemptId
+    && state.transportEpoch === context.transportEpoch
+    && state.room.sessionProtocolVersion === TRAINING_SESSION_V5_PROTOCOL_VERSION
+    && state.room.signalingVersion === TRAINING_SESSION_V5_SIGNALING_VERSION
+    && state.room.roomAttemptId === context.roomAttemptId
+    && state.room.transportEpoch === context.transportEpoch;
 }
 
 async function setupRoomListeners(
@@ -4594,25 +3563,19 @@ async function setupRoomListeners(
       handleContextError,
     ));
   }
-  if (!context.sessionV2 && state.activeDisconnectRoomId !== roomId) {
-    if (!(await awaitCurrent(armTrainingActiveDisconnect(roomId))).current) {
-      return false;
-    }
-  }
-  const ownPresenceRef = ref(database, context.sessionV2
-    ? trainingSessionPresencePath(
-      roomId,
-      context.uid,
-      context.sessionId,
-    )
-    : `${base}/presence/${context.uid}`);
+  const ownPresenceRef = ref(database, trainingSessionV5PresencePath(
+    roomId,
+    context.uid,
+    context.runId,
+  ));
   const ownPresence = (online, useServerTimestamp = false) => {
     const updatedAt = useServerTimestamp ? serverTimestamp() : firebaseNow();
-    if (!context.sessionV2) return { online, updatedAt };
-    const payload = createTrainingSessionPresencePayload({
-      sessionId: context.sessionId,
-      leaseToken: context.leaseToken,
-      generation: context.sessionGeneration,
+    const payload = createTrainingSessionV5PresencePayload({
+      runId: context.runId,
+      endpointId: context.endpointId,
+      ownerEpoch: context.ownerEpoch,
+      roomAttemptId: context.roomAttemptId,
+      transportEpoch: context.transportEpoch,
       online,
       updatedAt: firebaseNow(),
     });
@@ -4649,24 +3612,15 @@ async function setupRoomListeners(
   state.disconnectHandles.push(presenceDisconnect);
   const opponentUid = opponentPlayer()?.uid;
   if (opponentUid) {
-    const opponentPresencePath = context.sessionV2
-      ? trainingSessionPresencePath(
-        roomId,
-        opponentUid,
-        context.opponentSessionId,
-      )
-      : `${base}/presence/${opponentUid}`;
+    const opponentPresencePath = trainingSessionV5PresencePath(
+      roomId,
+      opponentUid,
+      context.opponentRunId,
+    );
     state.roomUnsubscribers.push(onValue(ref(database, opponentPresencePath), (snapshot) => {
       if (!contextIsCurrent()) return;
       const presence = snapshot.val();
       if (presence?.online === true) state.opponentWasOnline = true;
-      if (!context.sessionV2
-          && presence?.online === false
-          && state.opponentWasOnline
-          && !state.outcome
-          && state.roomId) {
-        markRoomDestroyed(`disconnect:${opponentUid}`).catch(() => {});
-      }
     }, handleContextError));
   }
   const refreshedRounds = await awaitCurrent(readTrainingRoundsBounded(roomId));
@@ -4915,31 +3869,10 @@ function dispatchTrainingP2pRecoveryEvent(type, targetState = state, detail = {}
 async function cleanupFailedTrainingSessionRoom(targetState, effect) {
   if (await preserveResolvedTrainingMatchBeforeP2pCleanup(targetState)) return;
   if (targetState.p2pCleanupPromise) return targetState.p2pCleanupPromise;
-  const roomId = targetState.roomId;
   targetState.p2pCleanupPromise = (async () => {
     if (await preserveResolvedTrainingMatchBeforeP2pCleanup(targetState)) return;
-    const response = await trainingSessionActionCallable({
-      action: "cancel",
-      sessionId: targetState.clientSessionId,
-      leaseToken: targetState.clientLeaseToken,
-      roomId,
-      abort: true,
-    }).catch(() => null);
-    const cancellation = response?.data || {};
-    if (["finalized", "resolved"].includes(String(cancellation.reason || ""))) {
-      await retryTrainingCleanup(() => (
-        preserveResolvedTrainingMatchBeforeP2pCleanup(targetState)
-      ));
-      return;
-    }
-    if (cancellation.cancelled !== true
-        && !["terminal", "not-owner"].includes(String(cancellation.reason || ""))) {
-      targetState.p2pRecovery = null;
-      targetState.p2pGenerationToken = null;
-      transitionToLocalNoContestPending();
-      showToast("接続先の終了を確認できなかったため、自動再検索を停止しました。");
-      return;
-    }
+    enterTrainingSessionV5Recovery(targetState, "p2p-status-unknown");
+    await inspectTrainingSessionV5(targetState, { immediate: true });
     const recovery = targetState.p2pRecovery;
     if (state !== targetState
         || recovery?.generationToken !== effect.generationToken
@@ -4955,48 +3888,9 @@ async function cleanupFailedTrainingSessionRoom(targetState, effect) {
 
 async function resetTrainingRoomForAutoRequeue(targetState, effect) {
   if (state !== targetState || !active || !targetState.sessionLeaseHeld) return;
-  const failedOpponentUid = opponentPlayer()?.uid || "";
-  clearTrainingP2pRecoveryTimer(targetState);
-  targetState.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  const disconnects = targetState.disconnectHandles.splice(0);
-  await Promise.allSettled(disconnects.map((handle) => handle?.cancel?.()));
-  if (targetState.roomId) {
-    await Promise.allSettled([
-      remove(ref(database, trainingSessionPresencePath(
-        targetState.roomId,
-        targetState.uid,
-        targetState.clientSessionId,
-      ))),
-      remove(ref(database, trainingSessionSignalPath(
-        targetState.roomId,
-        targetState.uid,
-        targetState.clientSessionId,
-      ))),
-    ]);
-  }
-  targetState.channel?.close();
-  targetState.peer?.close();
-  targetState.channel = null;
-  targetState.peer = null;
-  targetState.pendingIce = [];
-  targetState.p2pRestartIce = null;
-  targetState.p2pRecovery = null;
-  targetState.p2pGenerationToken = null;
-  targetState.roomId = "";
-  targetState.pendingRoomId = "";
-  targetState.sessionOfferRoomId = "";
-  targetState.room = emptyRoom();
-  targetState.outgoingImageRounds.clear();
-  targetState.outgoingImageBusy = false;
-  targetState.outgoingImageChannel = null;
-  targetState.incomingImage = null;
-  targetState.incomingMessageChain = Promise.resolve();
-  targetState.channelWasOpened = false;
   targetState.sessionAutoRequeueCount = effect.autoRequeueCount;
-  showToast("接続先を切り替えて、鍛え合う相手をもう一度探しています。");
-  await restartTrainingSessionSearch("", {
-    avoidUid: effect.opponentCooldown?.opponentUid || failedOpponentUid,
-  });
+  showToast("同じ対戦ルームへの接続を確認し直しています。");
+  await requestTrainingSessionV5Reconnect(targetState);
 }
 
 async function handleTrainingP2pRecoveryEffect(effect, targetState = state) {
@@ -5020,21 +3914,29 @@ async function handleTrainingP2pRecoveryEffect(effect, targetState = state) {
     return;
   }
   if (effect.type === "show-connection-failure") {
-    targetState.p2pRecovery = null;
-    targetState.p2pGenerationToken = null;
-    transitionToLocalNoContestPending();
+    await resetTrainingRoomForAutoRequeue(targetState, {
+      ...effect,
+      autoRequeueCount: targetState.sessionAutoRequeueCount,
+    });
   }
 }
 
 function trainingSessionPeerContextIsCurrent(context, peer = state.peer) {
   return active
     && state === context.expectedState
+    && state.generation === context.generation
+    && !state.trainingSessionCancelling
     && state.roomId === context.roomId
     && state.peer === peer
     && state.sessionLeaseHeld
-    && state.sessionGeneration === context.sessionGeneration
-    && state.signalingAttemptId === context.attemptId
-    && state.roomConnectionGeneration === context.connectionGeneration;
+    && !state.trainingOwnerSuperseded
+    && state.trainingRunId === context.ownRunId
+    && state.trainingEndpointId === context.ownEndpointId
+    && state.trainingOwnerEpoch === context.ownOwnerEpoch
+    && state.opponentRunId === context.opponentRunId
+    && state.opponentEndpointId === context.opponentEndpointId
+    && state.roomAttemptId === context.roomAttemptId
+    && state.transportEpoch === context.transportEpoch;
 }
 
 async function setupTrainingSessionPeerConnection() {
@@ -5042,19 +3944,26 @@ async function setupTrainingSessionPeerConnection() {
     throw new Error("このブラウザはP2P画像転送に対応していません。");
   }
   const opponentUid = opponentPlayer()?.uid;
-  if (!opponentUid || !state.opponentSessionId) {
+  if (!opponentUid
+      || !state.opponentRunId
+      || !state.opponentEndpointId
+      || !state.opponentOwnerEpoch) {
     throw new Error("鍛え合う相手の接続セッションを確認できませんでした。");
   }
   const context = Object.freeze({
     expectedState: state,
+    generation: state.generation,
     roomId: state.roomId,
     ownUid: state.uid,
     opponentUid,
-    ownSessionId: state.clientSessionId,
-    opponentSessionId: state.opponentSessionId,
-    sessionGeneration: state.sessionGeneration,
-    attemptId: state.signalingAttemptId,
-    connectionGeneration: state.roomConnectionGeneration,
+    ownRunId: state.trainingRunId,
+    ownEndpointId: state.trainingEndpointId,
+    ownOwnerEpoch: state.trainingOwnerEpoch,
+    opponentRunId: state.opponentRunId,
+    opponentEndpointId: state.opponentEndpointId,
+    opponentOwnerEpoch: state.opponentOwnerEpoch,
+    roomAttemptId: state.roomAttemptId,
+    transportEpoch: state.transportEpoch,
   });
   const peer = new RTCPeerConnection({
     iceServers: state.iceServers,
@@ -5067,30 +3976,79 @@ async function setupTrainingSessionPeerConnection() {
   });
   state.pendingIce = [];
   const contextIsCurrent = () => trainingSessionPeerContextIsCurrent(context, peer);
+  let connectionCycleId = state.room.hostUid === state.uid
+    ? createTrainingSessionV5Token()
+    : "";
+  let connectionCycleStartedAt = 0;
+  const pendingIceByCycle = new Map();
+  const purgePendingIceCycles = () => {
+    const cutoff = firebaseNow() - 60_000;
+    for (const [cycleId, entries] of pendingIceByCycle) {
+      const fresh = entries.filter((entry) => entry.createdAt >= cutoff);
+      if (fresh.length) pendingIceByCycle.set(cycleId, fresh.slice(-128));
+      else pendingIceByCycle.delete(cycleId);
+    }
+    while (pendingIceByCycle.size > 4) {
+      pendingIceByCycle.delete(pendingIceByCycle.keys().next().value);
+    }
+  };
+  const queuePendingCandidate = (cycleId, candidate, createdAt) => {
+    if (!trainingSessionV5TokenIsValid(cycleId)
+        || !Number.isSafeInteger(Number(createdAt))) return false;
+    purgePendingIceCycles();
+    const entries = pendingIceByCycle.get(cycleId) || [];
+    entries.push({ candidate, createdAt: Number(createdAt) });
+    pendingIceByCycle.set(cycleId, entries.slice(-128));
+    purgePendingIceCycles();
+    return true;
+  };
+  const takePendingCandidates = (cycleId) => {
+    purgePendingIceCycles();
+    const entries = pendingIceByCycle.get(cycleId) || [];
+    pendingIceByCycle.delete(cycleId);
+    return entries.map((entry) => entry.candidate);
+  };
+  const adoptConnectionCycle = (nextCycleId, createdAt) => {
+    if (!trainingSessionV5TokenIsValid(nextCycleId)
+        || !Number.isSafeInteger(Number(createdAt))
+        || (connectionCycleId
+          && Number(createdAt) < connectionCycleStartedAt)) return false;
+    if (connectionCycleId && connectionCycleId !== nextCycleId) {
+      state.pendingIce = [];
+    }
+    connectionCycleId = nextCycleId;
+    connectionCycleStartedAt = Number(createdAt);
+    return true;
+  };
   const sendRoomSignal = async (type, payload) => {
-    if (!contextIsCurrent()) return;
-    const envelope = createTrainingSessionSignalEnvelope({
+    if (!contextIsCurrent()
+        || !trainingSessionV5TokenIsValid(connectionCycleId)) return;
+    const signalId = createTrainingSessionV5Token();
+    const envelope = createTrainingSessionV5SignalEnvelope({
+      roomAttemptId: context.roomAttemptId,
+      transportEpoch: context.transportEpoch,
       fromUid: context.ownUid,
-      fromSessionId: context.ownSessionId,
       toUid: context.opponentUid,
-      toSessionId: context.opponentSessionId,
-      connectionGeneration: context.connectionGeneration,
-      attemptId: context.attemptId,
+      fromRunId: context.ownRunId,
+      toRunId: context.opponentRunId,
+      fromEndpointId: context.ownEndpointId,
+      toEndpointId: context.opponentEndpointId,
       type,
-      payload: JSON.stringify(payload),
+      payload: JSON.stringify({ ...payload, connectionCycleId }),
       createdAt: firebaseNow(),
     });
-    await set(push(ref(database, trainingSessionSignalPath(
+    await set(ref(database, trainingSessionV5SignalPath(
       context.roomId,
       context.opponentUid,
-      context.opponentSessionId,
-    ))), envelope);
+      context.opponentRunId,
+      signalId,
+    )), envelope);
   };
 
   state.p2pGenerationToken = createOnlineP2pGenerationToken({
-    matchmakingGeneration: state.matchmakingGeneration,
+    matchmakingGeneration: state.trainingRunId,
     roomId: context.roomId,
-    sessionId: context.ownSessionId,
+    sessionId: context.transportEpoch,
   });
   state.p2pRecovery = createOnlineP2pRecoveryState({
     generationToken: state.p2pGenerationToken,
@@ -5160,39 +4118,50 @@ async function setupTrainingSessionPeerConnection() {
 
   let signalChain = Promise.resolve();
   const signalUnsubscribe = onChildAdded(
-    ref(database, trainingSessionSignalPath(
-      context.roomId,
-      context.ownUid,
-      context.ownSessionId,
-    )),
+    ref(
+      database,
+      `online/trainingRooms/${context.roomId}/signalsV5/${
+        context.ownUid
+      }/${context.ownRunId}`,
+    ),
     (snapshot) => {
       signalChain = signalChain.catch(() => {}).then(async () => {
         if (!contextIsCurrent()) return;
         const signal = snapshot.val();
-        const decision = decideTrainingSessionSignal({
+        const decision = decideTrainingSessionV5Signal({
           envelope: signal,
           ownUid: context.ownUid,
+          ownRunId: context.ownRunId,
+          ownEndpointId: context.ownEndpointId,
           remoteUid: context.opponentUid,
-          ownSessionId: context.ownSessionId,
-          remoteSessionId: context.opponentSessionId,
-          connectionGeneration: context.connectionGeneration,
-          attemptId: context.attemptId,
-          isCurrentLeaseOwner: state.sessionLeaseHeld,
+          remoteRunId: context.opponentRunId,
+          remoteEndpointId: context.opponentEndpointId,
+          roomAttemptId: context.roomAttemptId,
+          transportEpoch: context.transportEpoch,
           now: firebaseNow(),
         });
-        if (!decision.accepted) return;
+        if (!decision.accepted) {
+          if (contextIsCurrent()) {
+            await remove(snapshot.ref).catch(() => {});
+          }
+          return;
+        }
         let handledSuccessfully = false;
         try {
           await handleTrainingSessionSignal(signal, {
             context,
             peer,
             sendRoomSignal,
+            getConnectionCycleId: () => connectionCycleId,
+            adoptConnectionCycle,
+            queuePendingCandidate,
+            takePendingCandidates,
           });
           handledSuccessfully = true;
         } catch (error) {
           if (contextIsCurrent()) handleRecoverableError(error);
         }
-        if (shouldConsumeTrainingSessionSignal(decision, {
+        if (shouldConsumeTrainingSessionV5Signal(decision, {
           handledSuccessfully,
           contextStillCurrent: contextIsCurrent(),
         })) {
@@ -5202,7 +4171,8 @@ async function setupTrainingSessionPeerConnection() {
     },
     handleRecoverableError,
   );
-  state.roomUnsubscribers.push(signalUnsubscribe);
+  state.trainingSignalUnsubscribe?.();
+  state.trainingSignalUnsubscribe = signalUnsubscribe;
 
   if (state.room.hostUid === state.uid) {
     const channel = peer.createDataChannel(IMAGE_CHANNEL_LABEL, { ordered: true });
@@ -5224,23 +4194,38 @@ async function handleTrainingSessionSignal(signal, {
   context,
   peer,
   sendRoomSignal,
+  getConnectionCycleId,
+  adoptConnectionCycle,
+  queuePendingCandidate,
+  takePendingCandidates,
 }) {
   const contextIsCurrent = () => trainingSessionPeerContextIsCurrent(context, peer);
   if (!contextIsCurrent()
       || signal?.fromUid !== context.opponentUid
       || signal?.toUid !== context.ownUid
-      || signal?.attemptId !== context.attemptId
+      || signal?.fromRunId !== context.opponentRunId
+      || signal?.toRunId !== context.ownRunId
+      || signal?.fromEndpointId !== context.opponentEndpointId
+      || signal?.toEndpointId !== context.ownEndpointId
+      || signal?.roomAttemptId !== context.roomAttemptId
+      || signal?.transportEpoch !== context.transportEpoch
       || typeof signal.payload !== "string"
       || signal.payload.length > 30_000) {
     throw new Error("現在の接続試行と異なるP2P接続情報です。");
   }
   const payload = JSON.parse(signal.payload);
+  const receivedCycleId = String(payload?.connectionCycleId || "");
   if (signal.type === "offer") {
+    if (state.room.hostUid === context.ownUid
+        || !adoptConnectionCycle(receivedCycleId, signal.createdAt)) {
+      throw new Error("以前のP2P接続試行から届いたofferです。");
+    }
     if (payload?.iceRestart === true) {
       dispatchTrainingP2pRecoveryEvent("RESTART_OFFER_RECEIVED", state);
     }
     await peer.setRemoteDescription({ type: payload.type, sdp: payload.sdp });
     if (!contextIsCurrent()) return;
+    state.pendingIce.push(...takePendingCandidates(receivedCycleId));
     await flushTrainingSessionPendingIce(peer, contextIsCurrent);
     const answer = await peer.createAnswer();
     if (!contextIsCurrent()) return;
@@ -5248,12 +4233,33 @@ async function handleTrainingSessionSignal(signal, {
     if (!contextIsCurrent()) return;
     await sendRoomSignal("answer", { type: answer.type, sdp: answer.sdp });
   } else if (signal.type === "answer") {
+    if (state.room.hostUid !== context.ownUid
+        || receivedCycleId !== getConnectionCycleId()) {
+      throw new Error("以前のP2P接続試行から届いたanswerです。");
+    }
     await peer.setRemoteDescription({ type: payload.type, sdp: payload.sdp });
     if (!contextIsCurrent()) return;
     await flushTrainingSessionPendingIce(peer, contextIsCurrent);
   } else if (signal.type === "candidate") {
-    if (peer.remoteDescription) await peer.addIceCandidate(payload);
-    else state.pendingIce.push(payload);
+    const candidate = {
+      candidate: payload.candidate,
+      sdpMid: payload.sdpMid,
+      sdpMLineIndex: payload.sdpMLineIndex,
+      usernameFragment: payload.usernameFragment,
+    };
+    if (receivedCycleId !== getConnectionCycleId()) {
+      if (state.room.hostUid === context.ownUid
+          || !queuePendingCandidate(
+            receivedCycleId,
+            candidate,
+            signal.createdAt,
+          )) {
+        throw new Error("現在のP2P接続試行と異なるcandidateです。");
+      }
+      return;
+    }
+    if (peer.remoteDescription) await peer.addIceCandidate(candidate);
+    else state.pendingIce.push(candidate);
   } else {
     throw new Error("未対応のP2P接続情報です。");
   }
@@ -5266,88 +4272,7 @@ async function flushTrainingSessionPendingIce(peer, contextIsCurrent) {
 }
 
 async function setupPeerConnection() {
-  if (state.sessionLeaseHeld) return setupTrainingSessionPeerConnection();
-  if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはP2P画像転送に対応していません。");
-  const opponentUid = opponentPlayer()?.uid;
-  if (!opponentUid) throw new Error("鍛え合う相手を確認できませんでした。");
-  const signalsRef = ref(database, `online/trainingRooms/${state.roomId}/signals/${state.uid}`);
-  state.roomUnsubscribers.push(onChildAdded(signalsRef, async (snapshot) => {
-    try {
-      await handleSignal(snapshot.val());
-    } catch (error) {
-      handleRecoverableError(error);
-    } finally {
-      await remove(snapshot.ref).catch(() => {});
-    }
-  }, handleRecoverableError));
-  const peer = new RTCPeerConnection({ iceServers: state.iceServers });
-  state.peer = peer;
-  const channelContext = Object.freeze({
-    ...createTrainingRoomRuntimeContext(state.roomId),
-    peer,
-  });
-  peer.onicecandidate = (event) => {
-    if (event.candidate) sendSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError);
-  };
-  peer.ondatachannel = (event) => {
-    if (event.channel.label === IMAGE_CHANNEL_LABEL) {
-      configureDataChannel(event.channel, channelContext);
-    }
-    else event.channel.close();
-  };
-  peer.onconnectionstatechange = () => {
-    if (["failed", "closed"].includes(peer.connectionState)
-      && state.roomId
-      && !state.outcome) {
-      failImageExchange(
-        "p2p_image_connection_failed",
-        new Error("次のDRAWを交換するP2P接続を維持できませんでした。"),
-      ).catch(() => {});
-    }
-  };
-  if (state.room.hostUid === state.uid) {
-    configureDataChannel(
-      peer.createDataChannel(IMAGE_CHANNEL_LABEL, { ordered: true }),
-      channelContext,
-    );
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
-  }
-}
-
-async function sendSignal(type, payload) {
-  const targetUid = opponentPlayer()?.uid;
-  if (!targetUid || !state.roomId) return;
-  await set(push(ref(database, `online/trainingRooms/${state.roomId}/signals/${targetUid}`)), {
-    fromUid: state.uid,
-    type,
-    payload: JSON.stringify(payload),
-    createdAt: firebaseNow(),
-  });
-}
-
-async function handleSignal(signal) {
-  if (!signal || signal.fromUid !== opponentPlayer()?.uid || !state.peer) return;
-  if (typeof signal.payload !== "string" || signal.payload.length > 100_000) throw new Error("P2P接続情報が不正です。");
-  const payload = JSON.parse(signal.payload);
-  if (signal.type === "offer") {
-    await state.peer.setRemoteDescription(payload);
-    await flushPendingIce();
-    const answer = await state.peer.createAnswer();
-    await state.peer.setLocalDescription(answer);
-    await sendSignal("answer", { type: answer.type, sdp: answer.sdp });
-  } else if (signal.type === "answer") {
-    await state.peer.setRemoteDescription(payload);
-    await flushPendingIce();
-  } else if (signal.type === "candidate") {
-    if (state.peer.remoteDescription) await state.peer.addIceCandidate(payload);
-    else state.pendingIce.push(payload);
-  }
-}
-
-async function flushPendingIce() {
-  while (state.pendingIce.length) await state.peer.addIceCandidate(state.pendingIce.shift());
+  return setupTrainingSessionPeerConnection();
 }
 
 function trainingDataChannelContextIsCurrent(context, channel) {
@@ -5402,6 +4327,16 @@ function handleTrainingImageTransferFailure(
     rearmTrainingImageTransferForReplacement(targetState);
     return Promise.resolve(false);
   }
+  if (state === targetState
+      && targetState.trainingRunId
+      && targetState.roomId
+      && !targetState.outcome) {
+    rearmTrainingImageTransferForReplacement(targetState);
+    enterTrainingSessionV5Recovery(targetState, "image-transport-unknown");
+    dispatchTrainingP2pRecoveryEvent("ICE_FAILED", targetState);
+    handleRecoverableError(error || new Error(reason));
+    return Promise.resolve(false);
+  }
   return failImageExchange(reason, error);
 }
 
@@ -5441,8 +4376,9 @@ function configureDataChannel(
       return;
     }
     state.channelWasOpened = true;
-    if (context.sessionV2) {
-      dispatchTrainingP2pRecoveryEvent("CHANNEL_OPENED", state);
+    dispatchTrainingP2pRecoveryEvent("CHANNEL_OPENED", state);
+    if (state.sessionV5.phase === "connecting") {
+      applyTrainingSessionV5Transition(state, "ACTIVATE");
     }
     if (replacement) {
       startImageExchangeWatchdog(currentRoundIndex());
@@ -5459,25 +4395,17 @@ function configureDataChannel(
   };
   channel.onclose = () => {
     if (!contextIsCurrent()) return;
-    if (context.sessionV2 && state.roomId && !state.outcome) {
+    if (state.roomId && !state.outcome) {
       dispatchTrainingP2pRecoveryEvent("ICE_FAILED", state);
       return;
     }
-    failImageExchange(
-      "image_channel_closed",
-      new Error("画像交換が終わる前にP2P接続が閉じました。"),
-    ).catch(() => {});
   };
   channel.onerror = () => {
     if (!contextIsCurrent()) return;
-    if (context.sessionV2 && state.roomId && !state.outcome) {
+    if (state.roomId && !state.outcome) {
       dispatchTrainingP2pRecoveryEvent("ICE_FAILED", state);
       return;
     }
-    failImageExchange(
-      "image_channel_error",
-      new Error("画像のP2P転送で通信エラーが発生しました。"),
-    ).catch(() => {});
   };
   channel.onmessage = (event) => {
     if (!contextIsCurrent()) return;
@@ -5580,6 +4508,52 @@ function waitForDataBuffer(channel) {
   });
 }
 
+async function acknowledgeExistingTrainingRoundImage(
+  message,
+  existingImage,
+  contextIsCurrent = () => true,
+) {
+  if (!contextIsCurrent()) return false;
+  const targetState = state;
+  const roomId = targetState.roomId;
+  const roundIndex = Number(message.round);
+  const opponentUid = opponentPlayer()?.uid || "";
+  const ownUid = targetState.uid;
+  if (!roomId
+      || !opponentUid
+      || targetState.remoteImages[roundIndex] !== existingImage
+      || Number(existingImage?.imageIndex) !== Number(message.imageIndex)
+      || Number(existingImage?.bpm) !== Number(message.bpm)) {
+    throw new Error("受信済み画像と再送された画像情報が一致しません。");
+  }
+  const drawSnapshot = await get(
+    ref(
+      database,
+      `online/trainingRooms/${roomId}/rounds/${roundIndex}/draws/${opponentUid}`,
+    ),
+  );
+  if (!contextIsCurrent()
+      || state !== targetState
+      || targetState.roomId !== roomId
+      || targetState.remoteImages[roundIndex] !== existingImage) return false;
+  const draw = drawSnapshot.val();
+  if (Number(draw?.imageIndex) !== Number(existingImage.imageIndex)
+      || Number(draw?.bpm) !== Number(existingImage.bpm)) {
+    throw new Error("受信済み画像とFirebaseのDRAW情報が一致しません。");
+  }
+  await set(
+    ref(
+      database,
+      `online/trainingRooms/${roomId}/rounds/${roundIndex}/imageReceived/${ownUid}`,
+    ),
+    true,
+  );
+  return contextIsCurrent()
+    && state === targetState
+    && targetState.roomId === roomId
+    && targetState.remoteImages[roundIndex] === existingImage;
+}
+
 async function handleChannelMessage(data, contextIsCurrent = () => true) {
   if (!contextIsCurrent()) return;
   if (typeof data === "string") {
@@ -5588,7 +4562,7 @@ async function handleChannelMessage(data, contextIsCurrent = () => true) {
     if (message.type === "training-image-start") {
       const roundIndex = Number(message.round);
       if (!contextIsCurrent()) return;
-      if (state.remoteImages[roundIndex] || state.incomingImage) return;
+      if (state.incomingImage) return;
       if (message.protocolVersion !== TRAINING_PROTOCOL_VERSION
         || message.variant !== TRAINING_VARIANT
         || message.ownerUid !== opponentPlayer()?.uid
@@ -5600,6 +4574,15 @@ async function handleChannelMessage(data, contextIsCurrent = () => true) {
         || Number(message.imageIndex) > TRAINING_IMAGE_COUNT
         || normalizeImageBpm(message.bpm) < 0) {
         throw new Error("受信画像の送信者情報が一致しません。");
+      }
+      const existingImage = state.remoteImages[roundIndex];
+      if (existingImage) {
+        await acknowledgeExistingTrainingRoundImage(
+          message,
+          existingImage,
+          contextIsCurrent,
+        );
+        return;
       }
       state.incomingImage = createIncomingOnlineImageTransfer(message, {
         expectedRound: roundIndex,
@@ -5701,9 +4684,9 @@ function startImageExchangeWatchdog(roundIndex = currentRoundIndex()) {
       || state.roomId !== roomId
       || allRoundImagesReceived(trainingRound(roundIndex))
       || state.outcome) return;
-    failImageExchange(
+    handleTrainingImageTransferFailure(
       "image_exchange_timeout",
-      new Error("45秒以内に画像交換を完了できなかったため、NO CONTESTにしました。"),
+      new Error("画像交換を確認し直しています。対戦ルームは終了していません。"),
     ).catch(() => {});
   }, IMAGE_EXCHANGE_TIMEOUT_MS);
 }
@@ -5713,28 +4696,13 @@ async function failImageExchange(reason, error) {
     || !state.roomId
     || state.room.destroyed
     || state.outcome) return;
-  const roomId = state.roomId;
-  const roundIndex = state.imageExchangeRound || currentRoundIndex();
-  const receipt = await get(
-    ref(database, `online/trainingRooms/${roomId}/rounds/${roundIndex}/imageReceived`),
-  ).catch(() => null);
-  if (receipt && active && state.roomId === roomId) {
-    ensureRoundLocal(roundIndex).imageReceived = receipt.val() || {};
-    if (allRoundImagesReceived(trainingRound(roundIndex))) {
-      clearImageExchangeWatchdog();
-      return;
-    }
-  }
-  clearImageExchangeWatchdog();
   if (error) handleRecoverableError(error);
-  try {
-    await markRoomDestroyed(reason);
-  } catch (destroyError) {
-    handleRecoverableError(destroyError);
-    if (active && state.roomId === roomId && !state.outcome) {
-      transitionToLocalNoContestPending();
-    }
-  }
+  enterTrainingSessionV5Recovery(
+    state,
+    trainingSessionV5TokenIsValid(reason) ? reason : "image-status-unknown",
+  );
+  dispatchTrainingP2pRecoveryEvent("ICE_FAILED", state);
+  await inspectTrainingSessionV5(state, { immediate: true }).catch(() => {});
 }
 
 function secureRandomChoice(values) {
@@ -6660,7 +5628,6 @@ async function cancelMatchmaking() {
 }
 
 async function cancelPendingRoom() {
-  await teardownPendingRoom("player_cancelled");
   if (!await cleanupMatchmakingReliably(false)) {
     throw new Error(
       "対戦準備の終了を確認できませんでした。通信を確認して、もう一度お試しください。",
@@ -6674,97 +5641,130 @@ async function cancelPendingRoom() {
   render();
 }
 
-async function cleanupTrainingSessionMatchmaking(keepActive) {
-  const roomId = state.roomId || state.pendingRoomId || state.sessionOfferRoomId;
-  clearTrainingSessionTryMatchTimer();
-  window.clearTimeout(state.sessionOfferRetryTimer);
-  state.sessionOfferRetryTimer = null;
-  window.clearTimeout(state.matchTimer);
-  window.clearTimeout(state.enterRoomRetryTimer);
-  state.matchTimer = null;
-  state.enterRoomRetryTimer = null;
-  state.matchmakingUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  if (keepActive) return true;
-
-  const disconnects = state.disconnectHandles.splice(0);
-  await Promise.allSettled(disconnects.map((handle) => handle?.cancel?.()));
-  if (roomId) {
-    await Promise.allSettled([
-      remove(ref(database, trainingSessionPresencePath(
-        roomId,
-        state.uid,
-        state.clientSessionId,
-      ))),
-      remove(ref(database, trainingSessionSignalPath(
-        roomId,
-        state.uid,
-        state.clientSessionId,
-      ))),
-    ]);
-  }
-  if (roomId) {
-    const response = await trainingSessionActionCallable({
-      action: "cancel",
-      sessionId: state.clientSessionId,
-      leaseToken: state.clientLeaseToken,
-      roomId,
-      abort: Boolean(state.roomId && !state.outcome),
-    }).catch(() => null);
-    const cancellation = response?.data || {};
-    if (cancellation.cancelled !== true
-        && !["finalized", "resolved", "terminal", "not-owner"].includes(
-          String(cancellation.reason || ""),
-        )) return false;
-  }
-  const released = await releaseTrainingSessionClaimExact({
-    sessionId: state.clientSessionId,
-    leaseToken: state.clientLeaseToken,
-    generation: state.sessionGeneration,
+function resetTrainingSessionV5AfterCancellation(targetState = state) {
+  targetState.sessionLeaseHeld = false;
+  targetState.trainingOwnerEpoch = "";
+  targetState.trainingAttemptRevision = 0;
+  targetState.trainingAttemptState = "";
+  targetState.trainingAttempt = null;
+  targetState.trainingAttemptHeartbeatBusy = false;
+  targetState.trainingAttemptMatchBusy = false;
+  targetState.trainingAttemptInspectBusy = false;
+  targetState.trainingAttemptRecoveryCount = 0;
+  targetState.trainingOwnerSuperseded = false;
+  targetState.opponentRunId = "";
+  targetState.opponentEndpointId = "";
+  targetState.opponentOwnerEpoch = "";
+  targetState.roomAttemptId = "";
+  targetState.transportEpoch = "";
+  targetState.roomId = "";
+  targetState.pendingRoomId = "";
+  targetState.room = emptyRoom();
+  targetState.roomSyncing = false;
+  targetState.startingMatchmaking = false;
+  targetState.enteringRoom = false;
+  targetState.enterRoomRetryAttempts = 0;
+  targetState.trainingReconnectPromise = null;
+  targetState.trainingTransportRefreshPromise = null;
+  targetState.trainingTransportRefreshEpoch = "";
+  targetState.channelWasOpened = false;
+  targetState.incomingImage = null;
+  targetState.incomingMessageChain = Promise.resolve();
+  targetState.outgoingImageBusy = false;
+  targetState.outgoingImageChannel = null;
+  targetState.outgoingImageRounds.clear();
+  Object.values(targetState.remoteImages).forEach(releaseImage);
+  targetState.remoteImages = {};
+  targetState.outcome = null;
+  targetState.currentView = null;
+  targetState.trainingRunId = "";
+  targetState.trainingRunRestored = false;
+  targetState.sessionV5 = createTrainingSessionV5State({
+    revision: targetState.sessionV5.revision + 1,
   });
-  if (!released) return false;
-  state.sessionLeaseHeld = false;
-  state.sessionLease = null;
-  state.sessionGeneration = "";
-  state.matchmakingGeneration = "";
-  state.opponentSessionId = "";
-  state.roomConnectionGeneration = "";
-  state.signalingAttemptId = "";
-  state.sessionOfferRoomId = "";
-  state.pendingRoomId = "";
-  clearTrainingSessionHeartbeat();
+  sessionStorage.removeItem(TRAINING_V5_RUN_STORAGE_KEY);
+  targetState.trainingSessionCancelling = false;
+}
+
+async function cleanupTrainingSessionMatchmaking(keepActive) {
+  const targetState = state;
+  clearTrainingSessionV5MatchTimer(targetState);
+  clearTrainingSessionV5InspectTimer(targetState);
+  if (keepActive) return true;
+  if (!beginTrainingSessionV5Cancellation(targetState)) return false;
+  const cancellationIdentity = Object.freeze({
+    roomId: targetState.roomId || targetState.pendingRoomId,
+    uid: targetState.uid,
+    runId: targetState.trainingRunId,
+    endpointId: targetState.trainingEndpointId,
+    ownerEpoch: targetState.trainingOwnerEpoch,
+    roomAttemptId: targetState.roomAttemptId,
+    transportEpoch: targetState.transportEpoch,
+  });
+  await stopTrainingSessionV5LocalTransport(targetState);
+  if (cancellationIdentity.roomId && cancellationIdentity.runId) {
+    const cleanupOperations = [
+      remove(ref(
+        database,
+        `online/trainingRooms/${cancellationIdentity.roomId}/signalsV5/${
+          cancellationIdentity.uid
+        }/${cancellationIdentity.runId}`,
+      )),
+    ];
+    if (cancellationIdentity.ownerEpoch
+        && cancellationIdentity.roomAttemptId
+        && cancellationIdentity.transportEpoch) {
+      cleanupOperations.push(set(
+        ref(database, trainingSessionV5PresencePath(
+          cancellationIdentity.roomId,
+          cancellationIdentity.uid,
+          cancellationIdentity.runId,
+        )),
+        createTrainingSessionV5PresencePayload({
+          runId: cancellationIdentity.runId,
+          endpointId: cancellationIdentity.endpointId,
+          ownerEpoch: cancellationIdentity.ownerEpoch,
+          roomAttemptId: cancellationIdentity.roomAttemptId,
+          transportEpoch: cancellationIdentity.transportEpoch,
+          online: false,
+          updatedAt: firebaseNow(),
+        }),
+      ));
+    }
+    await Promise.allSettled(cleanupOperations);
+  }
+  if (cancellationIdentity.runId
+      && cancellationIdentity.ownerEpoch
+      && !targetState.trainingOwnerSuperseded) {
+    let response;
+    try {
+      response = await trainingSessionActionCallable({
+        action: "cancel",
+        runId: cancellationIdentity.runId,
+        endpointId: cancellationIdentity.endpointId,
+        ownerEpoch: cancellationIdentity.ownerEpoch,
+      });
+    } catch {
+      return false;
+    }
+    const cancellation = response?.data || {};
+    if (cancellation.outcome === "owner-replaced"
+        || cancellation.reason === "owner-replaced") {
+      await handleTrainingSessionV5OwnerReplaced(targetState);
+    } else if (cancellation.cancelled !== true
+        && !["terminal", "cancelled", "not-started"].includes(
+          String(cancellation.outcome || cancellation.reason || ""),
+        )) {
+      return false;
+    }
+  }
+  await stopTrainingSessionV5LocalTransport(targetState);
+  resetTrainingSessionV5AfterCancellation(targetState);
   return true;
 }
 
 async function cleanupMatchmaking(keepActive) {
-  if (state.sessionLease) {
-    return cleanupTrainingSessionMatchmaking(keepActive);
-  }
-  const expectedRoomId = state.roomId
-    || state.pendingRoomId
-    || state.activeDisconnectRoomId;
-  const queueSessionId = state.queueSessionId;
-  window.clearInterval(state.queueHeartbeat);
-  window.clearTimeout(state.matchTimer);
-  window.clearTimeout(state.enterRoomRetryTimer);
-  window.clearTimeout(state.inviteRetryTimer);
-  clearTrainingHostTakeoverTimer();
-  state.queueHeartbeat = null;
-  state.matchTimer = null;
-  state.enterRoomRetryTimer = null;
-  if (!keepActive) state.enterRoomRetryAttempts = 0;
-  state.inviteRetryTimer = null;
-  state.matchmakingUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  const handles = state.disconnectHandles.splice(0);
-  await Promise.allSettled(handles.map((handle) => handle?.cancel?.()));
-  if (!keepActive && expectedRoomId && state.uid && !state.preview) {
-    if (!await releaseTrainingActiveReservation(expectedRoomId)) return false;
-  }
-  if (!state.uid || state.preview || !trainingSharedStateOwned || !queueSessionId) return true;
-  const invitesCleared = await cleanupTrainingInvitesForSession(queueSessionId);
-  if (!invitesCleared) return false;
-  const queueCleared = await removeOwnedTrainingQueue(queueSessionId);
-  if (queueCleared && state.queueSessionId === queueSessionId) state.queueSessionId = "";
-  return queueCleared;
+  return cleanupTrainingSessionMatchmaking(keepActive);
 }
 
 async function retryTrainingCleanup(operation) {
@@ -6785,16 +5785,6 @@ function cleanupMatchmakingReliably(keepActive) {
   return retryTrainingCleanup(() => cleanupMatchmaking(keepActive));
 }
 
-function removeTrainingInviteReliably(targetUid, roomId, targetSessionId) {
-  return retryTrainingCleanup(() => (
-    removeTrainingInviteForSession(targetUid, roomId, targetSessionId)
-  ));
-}
-
-function releaseMatchLockReliably(roomId) {
-  return retryTrainingCleanup(() => releaseMatchLock(roomId));
-}
-
 async function requestHome() {
   if (!active) return;
   const liveRoom = (state.roomId || state.pendingRoomId)
@@ -6810,6 +5800,10 @@ async function requestHome() {
 
 async function destroyRoom() {
   if (!active) return;
+  if (state.trainingOwnerSuperseded) {
+    await deactivate({ returnHome: true });
+    return;
+  }
   if (state.roomId && !state.outcome && !state.preview) {
     const resolution = await markRoomDestroyed("player_exit");
     if (resolution === "result") {
@@ -6837,11 +5831,14 @@ async function restartTraining() {
 
 async function deactivate({ returnHome }) {
   if (!active) return;
-  try {
-    await teardownPendingRoom("player_exit");
-  } catch (error) {
-    handleRecoverableError(error);
-    return false;
+  if (state.trainingOwnerSuperseded) {
+    beginTrainingSessionV5Cancellation(state);
+    await stopTrainingSessionV5LocalTransport(state);
+    await cleanupPublicPresence().catch(() => {});
+    active = false;
+    releaseTrainingTabOwnership();
+    if (returnHome) window.HariaiApp?.returnHome?.();
+    return true;
   }
   if (state.roomId && !state.outcome && !state.preview) {
     let resolution = "";
@@ -6862,9 +5859,7 @@ async function deactivate({ returnHome }) {
     ));
     return false;
   }
-  await cancelActiveRoomDestroyedDisconnect(state.roomId);
   active = false;
-  state.generation += 1;
   window.clearTimeout(state.finalizeTimer);
   window.clearTimeout(state.workoutMessageCooldownTimer);
   clearWorkoutMessageOverlayTimers(state);
@@ -6880,18 +5875,8 @@ async function deactivate({ returnHome }) {
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   const disconnects = state.disconnectHandles.splice(0);
   await Promise.allSettled(disconnects.map((handle) => handle?.cancel?.()));
-  if (state.uid
-      && state.roomId
-      && !state.preview
-      && state.room.sessionProtocolVersion !== 2) {
-    await Promise.allSettled([
-      set(ref(database, `online/trainingRooms/${state.roomId}/presence/${state.uid}`), {
-        online: false,
-        updatedAt: serverTimestamp(),
-      }),
-      remove(ref(database, `online/trainingRooms/${state.roomId}/signals/${state.uid}`)),
-    ]);
-  }
+  state.trainingSignalUnsubscribe?.();
+  state.trainingSignalUnsubscribe = null;
   state.channel?.close();
   state.peer?.close();
   await releaseTrainingWorkoutWakeLock(state);
@@ -6923,12 +5908,6 @@ function handleRecoverableError(error) {
 
 async function handleFatalError(error) {
   console.error(error);
-  try {
-    await teardownPendingRoom("fatal_error");
-  } catch (teardownError) {
-    handleRecoverableError(teardownError);
-    return;
-  }
   const matchmakingCleared = await cleanupMatchmakingReliably(false)
     .catch(() => false);
   await cleanupPublicPresence().catch(() => {});
@@ -7148,9 +6127,11 @@ function installPreview(preview) {
   render();
 }
 
-window.addEventListener("pagehide", () => {
-  releaseTrainingTabOwnership();
+window.addEventListener("pagehide", (event) => {
   if (!active) return;
+  releaseTrainingWorkoutWakeLock(state);
+  if (event.persisted) return;
+  releaseTrainingTabOwnership();
   window.clearInterval(state.finisherTicker);
   window.clearInterval(state.finisherOfferTimer);
   state.finisherTicker = null;
@@ -7158,13 +6139,51 @@ window.addEventListener("pagehide", () => {
   clearImageExchangeWatchdog();
   clearScorePoll();
   clearTurnTicker();
-  releaseTrainingWorkoutWakeLock(state);
   state.ambienceController.destroy();
   state.channel?.close();
   state.peer?.close();
   state.localImages.forEach(releaseImage);
   Object.values(state.remoteImages).forEach(releaseImage);
-}, { once: true });
+});
+
+function trainingSessionV5TransportNeedsReconnect(targetState = state) {
+  if (!trainingSessionV5ContextIsCurrent(targetState)
+      || targetState.trainingAttemptState !== "active"
+      || !targetState.roomId
+      || targetState.room.destroyed
+      || targetState.outcome
+      || targetState.enteringRoom
+      || targetState.trainingTransportRefreshPromise) return false;
+  const peerUnavailable = (targetState.channelWasOpened && !targetState.peer)
+    || ["failed", "closed"].includes(targetState.peer?.connectionState)
+    || ["failed", "closed"].includes(targetState.peer?.iceConnectionState);
+  const channelUnavailable = (targetState.channelWasOpened && !targetState.channel)
+    || ["closing", "closed"].includes(targetState.channel?.readyState);
+  return peerUnavailable || channelUnavailable;
+}
+
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted || !active || state.preview) return;
+  const targetState = state;
+  if (trainingSessionV5ContextIsCurrent(targetState)) {
+    claimTrainingTabOwnership()
+      .then(async () => {
+        await inspectTrainingSessionV5(targetState, { immediate: true });
+        if (trainingSessionV5TransportNeedsReconnect(targetState)) {
+          await requestTrainingSessionV5Reconnect(targetState);
+        }
+      })
+      .catch(() => {
+        if (!trainingSessionV5ContextIsCurrent(targetState)) return;
+        enterTrainingSessionV5Recovery(targetState, "page-resume-unknown");
+        showToast("鍛え合い60の接続状態を確認しています。");
+      });
+  }
+  queueMicrotask(() => {
+    resumeTrainingAmbienceAfterVisibility().catch(() => {});
+    syncTrainingWorkoutWakeLock(state);
+  });
+});
 
 window.HariaiTraining = {
   start,

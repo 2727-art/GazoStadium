@@ -154,7 +154,7 @@ test("redeem transaction rechecks private training activity against finalization
   assert.match(redeem, /targetTrainingProfile\.hpOverkillDealt > 0/);
 });
 
-test("account transfer treats fresh normal and training V2 sessions as active", () => {
+test("account transfer preserves the retired V4 deploy guard and canonical V5 guard", () => {
   const server = read("functions/index.js");
   const start = server.indexOf("async function accountHasActiveSession");
   const end = server.indexOf("function economyProgressHasActivity", start);
@@ -162,7 +162,7 @@ test("account transfer treats fresh normal and training V2 sessions as active", 
   const activeSessionCheck = server.slice(start, end);
   assert.match(activeSessionCheck, /soloSessionClaimRef\(uid\)\.get\(\)/);
   assert.match(activeSessionCheck, /liveSoloSessionV2Room\(uid, now\)/);
-  assert.match(activeSessionCheck, /trainingSessionClaimRef\(uid\)\.get\(\)/);
+  assert.match(activeSessionCheck, /trainingAttemptV5Ref\(uid\)\.get\(\)/);
   assert.match(
     activeSessionCheck,
     /trainingSessionService\.liveRoom\(uid, now\)/,
@@ -174,8 +174,23 @@ test("account transfer treats fresh normal and training V2 sessions as active", 
   assert.match(activeSessionCheck, /\|\| soloSessionRoom/);
   assert.match(
     activeSessionCheck,
-    /trainingSessionClaim && trainingSessionClaim\.expiresAt > now/,
+    /retiredTrainingSessionClaimRef\(uid\)\.get\(\)/,
   );
+  assert.match(
+    activeSessionCheck,
+    /retiredTrainingSessionService\.liveRoom\(uid, now\)/,
+  );
+  assert.doesNotMatch(server, /retiredTrainingSessionService\.dispatch/);
+  assert.match(
+    activeSessionCheck,
+    /retiredTrainingSessionClaim[\s\S]*retiredTrainingSessionClaim\.expiresAt > now/,
+  );
+  assert.match(activeSessionCheck, /\|\| retiredTrainingSessionRoom/);
+  assert.match(
+    activeSessionCheck,
+    /\(trainingAttemptState === "waiting" \|\| trainingAttemptState === "reserved"\)[\s\S]*trainingAttempt\.queueExpiresAt \|\| 0\) > now/,
+  );
+  assert.match(activeSessionCheck, /trainingAttemptState === "active"/);
   assert.match(activeSessionCheck, /\|\| trainingSessionRoom/);
 });
 
