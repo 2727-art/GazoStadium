@@ -25,10 +25,12 @@ const {
   startAttemptDecision,
 } = require("./training-session-v5");
 const {
-  ACTIVE_ORPHAN_GRACE_MS,
   ACTIVE_PRESENCE_FRESH_MS,
-  activeParticipantIsAbandoned,
+  trainingPresenceV5IsFreshOnline,
 } = require("./training-session-v5-cleanup");
+
+const ACTIVE_START_PRESENCE_GRACE_MS = 90 * 1000;
+const ACTIVE_START_TRANSPORT_HANDOFF_GRACE_MS = 30 * 1000;
 
 const PATHS = Object.freeze({
   attempts: "online/trainingAttemptsV5",
@@ -405,38 +407,184 @@ function createTrainingSessionV5Service({
     return latestOwned(uid, data);
   }
 
+  function activeRoomMatchesPair(room, first, second) {
+    return Boolean(
+      reciprocalReservation(first, second)
+      && first.state === "active"
+      && second.state === "active"
+      && !first.pendingRoomCleanup
+      && !second.pendingRoomCleanup
+      && roomMatchesAttempt(room, first)
+      && roomMatchesAttempt(room, second)
+      && !room?.destroyed
+      && !room?.serverFinalized
+      && room?.status === "active"
+      && room.accepted?.[room.hostUid] === true
+      && room.accepted?.[room.guestUid] === true,
+    );
+  }
+
+  function activeRoomIsWithinStartPresenceGrace(room, timestamp) {
+    const activatedAt = Number(room?.activatedAt || room?.createdAt || 0);
+    return Number.isSafeInteger(activatedAt)
+      && activatedAt > timestamp - ACTIVE_START_PRESENCE_GRACE_MS
+      && activatedAt <= timestamp + 15_000;
+  }
+
+  function activePairHasFreshPresence(room, first, second, timestamp) {
+    return [first, second].some((attempt) => (
+      trainingPresenceV5IsFreshOnline(
+        room,
+        attempt,
+        timestamp,
+        ACTIVE_PRESENCE_FRESH_MS,
+      )
+    ));
+  }
+
+  function activePairHasRecentTransportHandoff(room, first, second, timestamp) {
+    return [first, second].some((attempt) => {
+      const presence = room?.presenceV5?.[attempt?.uid]?.[attempt?.runId];
+      return presence?.protocolVersion === 5
+        && presence.runId === attempt?.runId
+        && presence.endpointId === attempt?.endpointId
+        && presence.ownerEpoch === attempt?.ownerEpoch
+        && presence.roomAttemptId === attempt?.roomAttemptId
+        && Number.isSafeInteger(presence.updatedAt)
+        && presence.updatedAt
+          > timestamp - ACTIVE_START_TRANSPORT_HANDOFF_GRACE_MS
+        && presence.updatedAt <= timestamp + 15_000;
+    });
+  }
+
+  function activeReservationIdentityMatches(current, observed) {
+    // transportEpoch is deliberately excluded: reconnect rotates it inside
+    // the same immutable run/owner/room attempt. Once the room CAS has
+    // authoritatively destroyed that attempt, a concurrent epoch rotation
+    // must converge with the destroyed room instead of leaving active
+    // attempts behind.
+    if (!current || !observed) return current == null && observed == null;
+    return [
+        "protocolVersion",
+        "signalingVersion",
+        "uid",
+        "runId",
+        "endpointId",
+        "ownerEpoch",
+        "state",
+        "roomId",
+        "roomAttemptId",
+        "role",
+        "opponentUid",
+    ].every((key) => current[key] === observed[key]);
+  }
+
+  function activeRoomHasRecoverableTransportGap(room, first, second) {
+    return Boolean(
+      reciprocalReservation(first, second)
+      && first.state === "active"
+      && second.state === "active"
+      && !first.pendingRoomCleanup
+      && !second.pendingRoomCleanup
+      && roomMatchesAttemptIdentity(room, first)
+      && roomMatchesAttemptIdentity(room, second)
+      && room?.transportEpoch !== first.transportEpoch
+      && !room.destroyed
+      && !room.serverFinalized
+      && room.status === "active"
+      && room.accepted?.[room.hostUid] === true
+      && room.accepted?.[room.guestUid] === true,
+    );
+  }
+
+  function activeStartConvergenceReason(room, attempt, peer, timestamp) {
+    if (!reciprocalReservation(attempt, peer)
+        || attempt?.state !== "active"
+        || peer?.state !== "active"
+        || attempt.pendingRoomCleanup
+        || peer.pendingRoomCleanup) {
+      return "pair-broken";
+    }
+    if (room?.destroyed?.reason === "active_abandoned") {
+      return "active_abandoned";
+    }
+    if (room == null || room.destroyed || room.serverFinalized) {
+      return "room-ended";
+    }
+    if (activeRoomHasRecoverableTransportGap(room, attempt, peer)
+        && (activeRoomIsWithinStartPresenceGrace(room, timestamp)
+          || activePairHasRecentTransportHandoff(
+            room,
+            attempt,
+            peer,
+            timestamp,
+          ))) {
+      return "";
+    }
+    if (!roomMatchesAttempt(room, attempt)
+        || !roomMatchesAttempt(room, peer)) {
+      return "room-mismatch";
+    }
+    if (room.status !== "active"
+        || room.accepted?.[room.hostUid] !== true
+        || room.accepted?.[room.guestUid] !== true) {
+      return "room-ended";
+    }
+    return "";
+  }
+
   async function releaseAbandonedActiveForStart(uid, data) {
     const timestamp = currentTime();
     const observedRoot = objectValue((await attemptsRef().get()).val());
     const observed = normalizeTrainingAttempt(uid, observedRoot[uid]);
     if (observed?.state !== "active"
         || (observed.runId === data.runId
-          && observed.endpointId === data.endpointId)
-        || Math.max(observed.lastSeen, observed.updatedAt)
-          > timestamp - ACTIVE_ORPHAN_GRACE_MS) {
+          && observed.endpointId === data.endpointId)) {
       return false;
     }
     const observedPeer = normalizeTrainingAttempt(
       observed.opponentUid,
       observedRoot[observed.opponentUid],
     );
-    if (!reciprocalReservation(observed, observedPeer)
-        || observedPeer.state !== "active"
-        || observed.pendingRoomCleanup
-        || observedPeer.pendingRoomCleanup) {
-      return false;
-    }
-    const room = (await roomRef(observed.roomId).get()).val();
-    if (!roomMatchesAttempt(room, observed)
-        || !roomMatchesAttempt(room, observedPeer)
-        || room.destroyed
-        || room.serverFinalized
-        || !activeParticipantIsAbandoned(room, observed, timestamp, {
-          graceMs: ACTIVE_ORPHAN_GRACE_MS,
-          presenceFreshMs: ACTIVE_PRESENCE_FRESH_MS,
-        })) {
-      return false;
-    }
+    const observedPairIsActive = reciprocalReservation(observed, observedPeer)
+      && observedPeer.state === "active"
+      && !observed.pendingRoomCleanup
+      && !observedPeer.pendingRoomCleanup;
+    const roomResult = await roomRef(observed.roomId).transaction((current) => {
+      if (current == null) {
+        // Confirm canonical absence instead of aborting against an Admin SDK
+        // cold-cache null. A server room makes Firebase retry this callback.
+        return null;
+      }
+      if (!observedPairIsActive
+          || !activeRoomMatchesPair(current, observed, observedPeer)
+          || activeRoomIsWithinStartPresenceGrace(current, timestamp)
+          || activePairHasFreshPresence(
+            current,
+            observed,
+            observedPeer,
+            timestamp,
+          )
+          || activePairHasRecentTransportHandoff(
+            current,
+            observed,
+            observedPeer,
+            timestamp,
+          )) {
+        // Commit unchanged so the returned snapshot reflects the server CAS.
+        return current;
+      }
+      return {
+        ...current,
+        destroyed: {
+          at: timestamp,
+          byUid: uid,
+          reason: "active_abandoned",
+        },
+      };
+    }, undefined, false);
+    if (!roomResult.committed) return false;
+    const settledRoom = roomResult.snapshot.val();
     let convergence = null;
     const result = await attemptsRef().transaction((current) => {
       convergence = null;
@@ -450,25 +598,26 @@ function createTrainingSessionV5Service({
         )
         : null;
       if (currentAttempt?.state !== "active"
-          || currentPeer?.state !== "active"
-          || !reciprocalReservation(currentAttempt, currentPeer)
-          || !roomMatchesAttempt(room, currentAttempt)
-          || !roomMatchesAttempt(room, currentPeer)
-          || currentAttempt.pendingRoomCleanup
-          || currentPeer.pendingRoomCleanup
-          || !activeParticipantIsAbandoned(room, currentAttempt, timestamp, {
-            graceMs: ACTIVE_ORPHAN_GRACE_MS,
-            presenceFreshMs: ACTIVE_PRESENCE_FRESH_MS,
-          })) {
+          || (currentAttempt.runId === data.runId
+            && currentAttempt.endpointId === data.endpointId)
+          || !activeReservationIdentityMatches(currentAttempt, observed)
+          || !activeReservationIdentityMatches(currentPeer, observedPeer)) {
         return undefined;
       }
+      const terminalReason = activeStartConvergenceReason(
+        settledRoom,
+        currentAttempt,
+        currentPeer,
+        timestamp,
+      );
+      if (!terminalReason) return undefined;
       convergence = convergeReservationDecision({
         attempts: currentRoot,
         uid,
         expected: currentAttempt,
         now: timestamp,
-        terminalReason: "active_abandoned",
-        cleanupReason: "active_abandoned",
+        terminalReason,
+        cleanupReason: terminalReason,
         forceTerminal: true,
       });
       return convergence.changed ? convergence.attempts : undefined;
@@ -1089,6 +1238,8 @@ function createTrainingSessionV5Service({
 }
 
 module.exports = Object.freeze({
+  ACTIVE_START_PRESENCE_GRACE_MS,
+  ACTIVE_START_TRANSPORT_HANDOFF_GRACE_MS,
   ACTION_RATE_POLICIES,
   PATHS,
   createTrainingSessionV5Service,

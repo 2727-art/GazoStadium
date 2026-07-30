@@ -8,9 +8,8 @@ const {
   TRAINING_ATTEMPT_TTL_MS,
 } = require("../training-session-v5");
 const {
-  ACTIVE_ORPHAN_GRACE_MS,
-} = require("../training-session-v5-cleanup");
-const {
+  ACTIVE_START_PRESENCE_GRACE_MS,
+  ACTIVE_START_TRANSPORT_HANDOFF_GRACE_MS,
   PATHS,
   createTrainingSessionV5Service,
 } = require("../training-session-v5-service");
@@ -308,6 +307,19 @@ async function pair(h) {
   return { host, guest, matched };
 }
 
+function rotateAttemptPairOnly(h, transportEpoch) {
+  for (const uid of [HOST_UID, GUEST_UID]) {
+    const attempt = h.realtime.read(`${PATHS.attempts}/${uid}`);
+    h.realtime.write(`${PATHS.attempts}/${uid}`, {
+      ...attempt,
+      revision: attempt.revision + 1,
+      updatedAt: h.now(),
+      lastSeen: h.now(),
+      transportEpoch,
+    });
+  }
+}
+
 test("heartbeat reclaims the same attempt after 181 seconds", async () => {
   const h = harness();
   const owner = await start(h, HOST_UID);
@@ -359,10 +371,19 @@ test("a fresh owner is not replaced, while a stale waiter can be taken over", as
   assert.deepEqual(oldHeartbeat, { owned: false, reason: "owner-replaced" });
 });
 
-test("a new endpoint can replace an abandoned active attempt without scheduler delay", async () => {
+test("a new endpoint can replace an unattended active pair after the connection grace", async () => {
   const h = harness();
   const { matched } = await pair(h);
-  h.advance(ACTIVE_ORPHAN_GRACE_MS + 1);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  for (const uid of [HOST_UID, GUEST_UID]) {
+    const attempt = h.realtime.read(`${PATHS.attempts}/${uid}`);
+    h.realtime.write(`${PATHS.attempts}/${uid}`, {
+      ...attempt,
+      revision: attempt.revision + 1,
+      updatedAt: h.now(),
+      lastSeen: h.now(),
+    });
+  }
   const replacement = identity(HOST_UID, "replacement-");
 
   const replaced = await h.service.start(HOST_UID, {
@@ -387,7 +408,7 @@ test("a new endpoint can replace an abandoned active attempt without scheduler d
 test("a fresh exact online presence protects an active attempt from endpoint takeover", async () => {
   const h = harness();
   const { matched } = await pair(h);
-  h.advance(ACTIVE_ORPHAN_GRACE_MS + 1);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
   const roomPath = `${PATHS.rooms}/${matched.roomId}`;
   const room = h.realtime.read(roomPath);
   const hostAttempt = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
@@ -411,6 +432,347 @@ test("a fresh exact online presence protects an active attempt from endpoint tak
     "active",
   );
   assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+});
+
+test("either participant's fresh exact presence protects the whole active pair", async () => {
+  for (const protectedUid of [HOST_UID, GUEST_UID]) {
+    const h = harness();
+    const { matched } = await pair(h);
+    h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+    const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+    const room = h.realtime.read(roomPath);
+    const protectedAttempt = h.realtime.read(
+      `${PATHS.attempts}/${protectedUid}`,
+    );
+    room.presenceV5 = {
+      [protectedUid]: {
+        [protectedAttempt.runId]: exactPresence(protectedAttempt, h.now()),
+      },
+    };
+    h.realtime.write(roomPath, room);
+
+    const blocked = await h.service.start(HOST_UID, {
+      ...identity(HOST_UID, `replacement-${protectedUid}-`),
+      preparation: preparation("REPLACEMENT"),
+    });
+
+    assert.deepEqual(blocked, {
+      started: false,
+      reason: "owner-replaced",
+    });
+    assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+  }
+});
+
+test("a recent old-transport presence protects a long active match during handoff", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const room = h.realtime.read(roomPath);
+  const hostAttempt = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
+  room.presenceV5 = {
+    [HOST_UID]: {
+      [hostAttempt.runId]: exactPresence({
+        ...hostAttempt,
+        transportEpoch: "old-transport-1234567890",
+      }, h.now(), false),
+    },
+  };
+  h.realtime.write(roomPath, room);
+
+  const blocked = await h.service.start(HOST_UID, {
+    ...identity(HOST_UID, "replacement-recent-handoff-"),
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.deepEqual(blocked, { started: false, reason: "owner-replaced" });
+  assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+});
+
+test("the initial room grace protects an attempts-first transport rotation", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  rotateAttemptPairOnly(h, "next-transport-initial-1234567890");
+
+  const blocked = await h.service.start(HOST_UID, {
+    ...identity(HOST_UID, "replacement-initial-gap-"),
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.deepEqual(blocked, { started: false, reason: "owner-replaced" });
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).state,
+    "active",
+  );
+  assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+});
+
+test("recent same-identity presence protects an attempts-first transport rotation", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const room = h.realtime.read(roomPath);
+  const oldGuestAttempt = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  room.presenceV5 = {
+    [GUEST_UID]: {
+      [oldGuestAttempt.runId]: exactPresence(oldGuestAttempt, h.now(), false),
+    },
+  };
+  h.realtime.write(roomPath, room);
+  rotateAttemptPairOnly(h, "next-transport-handoff-1234567890");
+
+  const blocked = await h.service.start(HOST_UID, {
+    ...identity(HOST_UID, "replacement-transport-gap-"),
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.deepEqual(blocked, { started: false, reason: "owner-replaced" });
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).state,
+    "active",
+  );
+  assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+});
+
+test("an expired attempts-first transport gap converges as room-mismatch", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const room = h.realtime.read(roomPath);
+  const oldGuestAttempt = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  room.presenceV5 = {
+    [GUEST_UID]: {
+      [oldGuestAttempt.runId]: exactPresence(
+        oldGuestAttempt,
+        h.now() - ACTIVE_START_TRANSPORT_HANDOFF_GRACE_MS - 1,
+        false,
+      ),
+    },
+  };
+  h.realtime.write(roomPath, room);
+  rotateAttemptPairOnly(h, "next-transport-expired-1234567890");
+  const replacement = identity(HOST_UID, "replacement-expired-gap-");
+
+  const replaced = await h.service.start(HOST_UID, {
+    ...replacement,
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.equal(replaced.started, true);
+  assert.equal(replaced.reason, "replaced-stale");
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).terminalReason,
+    "room-mismatch",
+  );
+  assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+});
+
+test("stale presence from an old transport does not protect an unattended active pair", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const room = h.realtime.read(roomPath);
+  const hostAttempt = h.realtime.read(`${PATHS.attempts}/${HOST_UID}`);
+  room.presenceV5 = {
+    [HOST_UID]: {
+      [hostAttempt.runId]: exactPresence({
+        ...hostAttempt,
+        transportEpoch: "old-transport-1234567890",
+      }, h.now() - ACTIVE_START_TRANSPORT_HANDOFF_GRACE_MS - 1, false),
+    },
+  };
+  h.realtime.write(roomPath, room);
+
+  const replaced = await h.service.start(HOST_UID, {
+    ...identity(HOST_UID, "replacement-old-transport-"),
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.equal(replaced.started, true);
+  assert.equal(replaced.reason, "replaced-stale");
+  assert.equal(
+    h.realtime.read(roomPath).destroyed.reason,
+    "active_abandoned",
+  );
+});
+
+test("the room CAS preserves presence that arrives during a replacement start", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const guestAttempt = h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`);
+  const blocker = h.realtime.blockNextTransaction(roomPath);
+  const replacement = h.service.start(HOST_UID, {
+    ...identity(HOST_UID, "replacement-race-"),
+    preparation: preparation("REPLACEMENT"),
+  });
+  await blocker.entered;
+  const room = h.realtime.read(roomPath);
+  room.presenceV5 = {
+    [GUEST_UID]: {
+      [guestAttempt.runId]: exactPresence(guestAttempt, h.now()),
+    },
+  };
+  h.realtime.write(roomPath, room);
+  blocker.release();
+
+  const blocked = await replacement;
+
+  assert.deepEqual(blocked, { started: false, reason: "owner-replaced" });
+  assert.equal(h.realtime.read(roomPath).destroyed, undefined);
+});
+
+test("a transport rotation after the room destroy CAS still converges the same pair", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+  const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+  const blocker = h.realtime.blockNextTransaction(PATHS.attempts);
+  const replacementIdentity = identity(
+    HOST_UID,
+    "replacement-after-destroy-",
+  );
+  const replacement = h.service.start(HOST_UID, {
+    ...replacementIdentity,
+    preparation: preparation("REPLACEMENT"),
+  });
+  await blocker.entered;
+  assert.equal(
+    h.realtime.read(roomPath).destroyed.reason,
+    "active_abandoned",
+  );
+  rotateAttemptPairOnly(h, "next-transport-after-destroy-1234567890");
+  blocker.release();
+
+  const replaced = await replacement;
+
+  assert.equal(replaced.started, true);
+  assert.equal(replaced.reason, "replaced-stale");
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).runId,
+    replacementIdentity.runId,
+  );
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).terminalReason,
+    "active_abandoned",
+  );
+  assert.equal(
+    h.realtime.read(roomPath).destroyed.reason,
+    "active_abandoned",
+  );
+});
+
+test("an active pair without presence is protected during the connection grace", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+
+  const blocked = await h.service.start(HOST_UID, {
+    ...identity(HOST_UID, "replacement-grace-"),
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.deepEqual(blocked, { started: false, reason: "owner-replaced" });
+  assert.equal(
+    h.realtime.read(`${PATHS.rooms}/${matched.roomId}`).destroyed,
+    undefined,
+  );
+});
+
+test("the same endpoint resumes its active room even after the presence grace", async () => {
+  const h = harness();
+  const { host, matched } = await pair(h);
+  h.advance(ACTIVE_START_PRESENCE_GRACE_MS + 1);
+
+  const resumed = await h.service.start(HOST_UID, {
+    runId: host.runId,
+    endpointId: host.endpointId,
+    preparation: preparation(HOST_UID),
+  });
+
+  assert.equal(resumed.started, true);
+  assert.equal(resumed.reason, "active");
+  assert.equal(resumed.outcome, "active");
+  assert.equal(resumed.ownerEpoch, host.ownerEpoch);
+  assert.equal(
+    h.realtime.read(`${PATHS.rooms}/${matched.roomId}`).destroyed,
+    undefined,
+  );
+});
+
+test("a new endpoint immediately replaces a one-sided active attempt", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.realtime.write(`${PATHS.attempts}/${GUEST_UID}`, null);
+  const replacement = identity(HOST_UID, "replacement-one-sided-");
+
+  const replaced = await h.service.start(HOST_UID, {
+    ...replacement,
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.equal(replaced.started, true);
+  assert.equal(replaced.reason, "replaced-stale");
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${HOST_UID}`).runId,
+    replacement.runId,
+  );
+  assert.equal(
+    h.realtime.read(`${PATHS.rooms}/${matched.roomId}`).destroyed.reason,
+    "pair-broken",
+  );
+});
+
+test("a new endpoint immediately replaces active attempts whose room is missing", async () => {
+  const h = harness();
+  const { matched } = await pair(h);
+  h.realtime.write(`${PATHS.rooms}/${matched.roomId}`, null);
+  const replacement = identity(HOST_UID, "replacement-missing-");
+
+  const replaced = await h.service.start(HOST_UID, {
+    ...replacement,
+    preparation: preparation("REPLACEMENT"),
+  });
+
+  assert.equal(replaced.started, true);
+  assert.equal(replaced.reason, "replaced-stale");
+  assert.equal(
+    h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).terminalReason,
+    "room-ended",
+  );
+  assert.equal(h.realtime.read(`${PATHS.rooms}/${matched.roomId}`), undefined);
+});
+
+test("a new endpoint immediately replaces active attempts in an ended room", async () => {
+  for (const ending of ["destroyed", "serverFinalized"]) {
+    const h = harness();
+    const { matched } = await pair(h);
+    const roomPath = `${PATHS.rooms}/${matched.roomId}`;
+    const room = h.realtime.read(roomPath);
+    room[ending] = ending === "destroyed"
+      ? { at: h.now(), byUid: GUEST_UID, reason: "cancelled" }
+      : { version: 1, finalizedAt: h.now(), reason: "hp_zero" };
+    h.realtime.write(roomPath, room);
+    const replacement = identity(HOST_UID, `replacement-${ending}-`);
+
+    const replaced = await h.service.start(HOST_UID, {
+      ...replacement,
+      preparation: preparation("REPLACEMENT"),
+    });
+
+    assert.equal(replaced.started, true);
+    assert.equal(replaced.reason, "replaced-stale");
+    assert.deepEqual(h.realtime.read(roomPath)[ending], room[ending]);
+    assert.equal(
+      h.realtime.read(`${PATHS.attempts}/${GUEST_UID}`).terminalReason,
+      "room-ended",
+    );
+  }
 });
 
 test("two concurrent match calls reserve one atomic pair and one room", async () => {

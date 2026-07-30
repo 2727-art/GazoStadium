@@ -744,12 +744,195 @@ test("bumps the canonical transport epoch before replacing a failed peer", () =>
   assert.match(applyBlock, /targetState\.room\.transportEpoch === attempt\.transportEpoch/);
   assert.match(applyBlock, /previousTransportEpoch/);
   assert.match(refreshBlock, /trainingSessionV5ActiveRoomFenceIsCurrent/);
-  assert.match(refreshBlock, /trainingSignalUnsubscribe/);
+  assert.match(refreshBlock, /detachTrainingSessionV5RtdbTransport/);
+  assert.match(refreshBlock, /trainingTransportRefreshIsLatest\(targetState, refreshTicket\)/);
   assert.match(refreshBlock, /previousPeer\?\.close\(\)/);
   assert.match(refreshBlock, /setupRoomListeners\(roomContext\)/);
   assert.match(refreshBlock, /setupPeerConnection\(\)/);
   assert.match(resetBlock, /requestTrainingSessionV5Reconnect\(targetState\)/);
   assert.doesNotMatch(resetBlock, /\.close\(\)|signalsV5|remove\(ref/);
+});
+
+test("converges room and attempt epochs locally before requesting another rotation", () => {
+  const convergeBlock = functionBlock("readTrainingSessionV5ConvergedRoom");
+  const prepareBlock = functionBlock("prepareTrainingSessionV5Room");
+  const applyBlock = functionBlock("applyTrainingSessionV5Attempt");
+  const readinessBlock = functionBlock("trainingSessionV5TransportIsReady");
+  assert.match(trainingJs, /TRAINING_V5_ROOM_CONVERGENCE_DELAYS_MS = Object\.freeze/);
+  assert.match(convergeBlock, /for \(const delayMs of TRAINING_V5_ROOM_CONVERGENCE_DELAYS_MS\)/);
+  assert.match(convergeBlock, /room\.roomAttemptId === attempt\.roomAttemptId/);
+  assert.match(convergeBlock, /room\.transportEpoch === attempt\.transportEpoch/);
+  assert.match(prepareBlock, /readTrainingSessionV5ConvergedRoom/);
+  assert.match(prepareBlock, /scheduleTrainingSessionV5Inspect\(targetState\)/);
+  assert.doesNotMatch(prepareBlock, /scheduleTrainingSessionV5Reconnect/);
+  assert.match(readinessBlock, /trainingTransportReadyEpoch === expected\.transportEpoch/);
+  assert.match(readinessBlock, /trainingSignalUnsubscribe/);
+  assert.match(readinessBlock, /disconnectHandles\.length > 0/);
+  assert.match(applyBlock, /trainingSessionV5TransportIsReady/);
+  assert.match(applyBlock, /refreshTrainingSessionV5Transport/);
+  const enterBlock = functionBlock("enterRoom");
+  assert.match(
+    enterBlock,
+    /trainingTransportReadyEpoch = expectedTransportEpoch/,
+  );
+});
+
+test("marks the superseded epoch presence offline before rebuilding the latest transport", () => {
+  const handleBlock = trainingJs.slice(
+    trainingJs.indexOf("function createTrainingPresenceDisconnectHandle"),
+    trainingJs.indexOf("async function releaseTrainingDisconnectHandles"),
+  );
+  const releaseBlock = functionBlock("releaseTrainingDisconnectHandles");
+  const refreshBlock = functionBlock("refreshTrainingSessionV5Transport");
+  const listenersBlock = functionBlock("setupRoomListeners");
+  const deactivateBlock = handleBlock.slice(
+    handleBlock.indexOf("async deactivate"),
+  );
+  assert.match(handleBlock, /disconnect\?\.cancel/);
+  assert.match(handleBlock, /online: false/);
+  assert.match(handleBlock, /updatedAt: firebaseNow\(\)/);
+  assert.ok(
+    deactivateBlock.indexOf("await set(presenceRef")
+      < deactivateBlock.indexOf("await disconnect?.cancel?.()"),
+  );
+  assert.match(releaseBlock, /handle\?\.deactivate\?\.\(overrides\)/);
+  assert.match(
+    refreshBlock,
+    /\{ transportEpoch: expected\.transportEpoch \}/,
+  );
+  assert.match(listenersBlock, /createTrainingPresenceDisconnectHandle/);
+});
+
+test("lets only the latest deferred transport rebuild commit its runtime", async () => {
+  const runtime = new Function(`
+    ${functionBlock("beginTrainingTransportRefresh")}
+    ${functionBlock("trainingTransportRefreshIsLatest")}
+    ${functionBlock("commitTrainingTransportRefresh")}
+    ${functionBlock("invalidateTrainingTransportRefreshes")}
+    ${functionBlock("runTrainingTransportRefreshSteps")}
+    function trainingSessionV5ActiveRoomFenceIsCurrent() { return true; }
+    ${functionBlock("trainingSessionV5TransportIsReady")}
+    return {
+      beginTrainingTransportRefresh,
+      trainingTransportRefreshIsLatest,
+      commitTrainingTransportRefresh,
+      invalidateTrainingTransportRefreshes,
+      runTrainingTransportRefreshSteps,
+      trainingSessionV5TransportIsReady,
+    };
+  `)();
+  const targetState = {
+    trainingTransportRefreshSequence: 0,
+    trainingTransportReadyEpoch: "E0",
+    transportEpoch: "E0",
+    peer: { epoch: "E0" },
+    trainingSignalUnsubscribe: () => {},
+    roomUnsubscribers: [{ epoch: "E0" }],
+    disconnectHandles: [{ epoch: "E0" }],
+  };
+  const resources = {
+    listeners: ["E0"],
+    presence: ["E0"],
+    signals: ["E0"],
+    peers: ["E0"],
+  };
+  const committed = [];
+  let previousRefresh = Promise.resolve(true);
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((next) => {
+      resolve = next;
+    });
+    return { promise, resolve };
+  };
+  const startRefresh = (
+    epoch,
+    roomGate = Promise.resolve(),
+    roomStarted = null,
+  ) => {
+    targetState.transportEpoch = epoch;
+    const ticket = runtime.beginTrainingTransportRefresh(
+      targetState,
+      epoch,
+    );
+    const isLatest = () => runtime.trainingTransportRefreshIsLatest(
+      targetState,
+      ticket,
+    );
+    const operation = Promise.resolve(previousRefresh).then(() => (
+      runtime.runTrainingTransportRefreshSteps({
+        isLatest,
+        detach: async () => {
+          resources.listeners = [];
+          resources.presence = [];
+          resources.signals = [];
+        },
+        resetPeer: async () => {
+          resources.peers = [];
+        },
+        clearSignals: async () => {},
+        setupRoom: async () => {
+          roomStarted?.resolve();
+          await roomGate;
+          resources.listeners.push(epoch);
+          resources.presence.push(epoch);
+          resources.signals.push(epoch);
+          return true;
+        },
+        setupPeer: async () => {
+          resources.peers.push(epoch);
+          return true;
+        },
+        commit: () => {
+          if (!runtime.commitTrainingTransportRefresh(targetState, ticket)) {
+            return false;
+          }
+          committed.push(epoch);
+          targetState.peer = { epoch };
+          targetState.trainingSignalUnsubscribe = () => {};
+          targetState.roomUnsubscribers = [{ epoch }];
+          targetState.disconnectHandles = [{ epoch }];
+          return true;
+        },
+      })
+    ));
+    previousRefresh = operation;
+    return operation;
+  };
+
+  const e1Gate = deferred();
+  const e1Started = deferred();
+  const e1 = startRefresh("E1", e1Gate.promise, e1Started);
+  await e1Started.promise;
+  const e2 = startRefresh("E2");
+  e1Gate.resolve();
+  assert.equal(await e1, false);
+  assert.equal(await e2, true);
+  assert.deepEqual(committed, ["E2"]);
+  assert.deepEqual(resources, {
+    listeners: ["E2"],
+    presence: ["E2"],
+    signals: ["E2"],
+    peers: ["E2"],
+  });
+  assert.equal(targetState.trainingTransportReadyEpoch, "E2");
+
+  const sameEpochSequence = targetState.trainingTransportRefreshSequence;
+  const sameEpochReady = runtime.trainingSessionV5TransportIsReady(
+    targetState,
+    { transportEpoch: "E2" },
+  );
+  if (!sameEpochReady) await startRefresh("E2");
+  assert.equal(targetState.trainingTransportRefreshSequence, sameEpochSequence);
+  assert.deepEqual(committed, ["E2"]);
+
+  const e3Gate = deferred();
+  const e3 = startRefresh("E3", e3Gate.promise);
+  runtime.invalidateTrainingTransportRefreshes(targetState);
+  e3Gate.resolve();
+  assert.equal(await e3, false);
+  assert.equal(targetState.trainingTransportReadyEpoch, "");
+  assert.deepEqual(committed, ["E2"]);
 });
 
 test("converges unknown responses by inspect and keeps owner replacement local-only", () => {
@@ -763,7 +946,8 @@ test("converges unknown responses by inspect and keeps owner replacement local-o
   assert.match(ownerBlock, /cleanupPublicPresence/);
   assert.match(ownerBlock, /releaseTrainingTabOwnership/);
   assert.doesNotMatch(ownerBlock, /trainingSessionActionCallable|markRoomDestroyed/);
-  assert.match(terminalBlock, /refreshRoomBeforeDestroy/);
+  assert.match(terminalBlock, /recoverTrainingResultAfterTerminal/);
+  assert.doesNotMatch(terminalBlock, /refreshRoomBeforeDestroy|readRoomLifecycle/);
   assert.match(terminalBlock, /stopTrainingSessionV5LocalTransport/);
   assert.match(
     terminalBlock,
@@ -963,6 +1147,95 @@ test("ends V5 ownership monitoring after a preserved canonical result", () => {
     resultOwnershipBlock,
     /stopTrainingSessionV5LocalTransport|peer\?\.close|channel\?\.close/,
   );
+});
+
+test("detaches protected RTDB listeners at result while preserving the finisher peer", () => {
+  const transitionBlock = functionBlock("transitionToTrainingResult");
+  const detachBlock = functionBlock("detachTrainingSessionV5RtdbTransport");
+  const protectedReleaseBlock = functionBlock(
+    "releaseTrainingProtectedRtdbTransport",
+  );
+  const terminalBlock = functionBlock("finishTrainingSessionV5TerminalLocally");
+  const terminalRecoveryBlock = functionBlock(
+    "recoverTrainingResultAfterTerminal",
+  );
+  const listenerErrorBlock = functionBlock("handleTrainingRtdbListenerError");
+  const finalizeBlock = functionBlock("ensureFinalization");
+  const deactivateBlock = functionBlock("deactivate");
+  assert.ok(
+    transitionBlock.indexOf("state.outcome = view")
+      < transitionBlock.indexOf("releaseTrainingProtectedRtdbTransport"),
+  );
+  assert.ok(
+    protectedReleaseBlock.indexOf("trainingProtectedRtdbReleased = true")
+      < protectedReleaseBlock.indexOf("detachTrainingSessionV5RtdbTransport"),
+  );
+  assert.ok(
+    terminalBlock.indexOf("releaseTrainingProtectedRtdbTransport")
+      < terminalBlock.indexOf("recoverTrainingResultAfterTerminal"),
+  );
+  assert.match(detachBlock, /roomUnsubscribers\.splice\(0\)/);
+  assert.match(detachBlock, /trainingSignalUnsubscribe\?\.\(\)/);
+  assert.doesNotMatch(detachBlock, /peer\?\.close|channel\?\.close/);
+  assert.match(
+    terminalRecoveryBlock,
+    /online\/trainingRooms\/\$\{roomId\}\/serverFinalized/,
+  );
+  assert.doesNotMatch(
+    terminalRecoveryBlock,
+    /readRoomLifecycle|readTrainingRoundsBounded|\/status/,
+  );
+  assert.match(listenerErrorBlock, /targetState\.outcome/);
+  assert.match(listenerErrorBlock, /targetState\.trainingProtectedRtdbReleased/);
+  assert.match(listenerErrorBlock, /trainingPermissionWasRevoked\(error\)/);
+  assert.doesNotMatch(finalizeBlock, /await state\.trainingResultRtdbRelease/);
+  assert.ok(
+    deactivateBlock.indexOf("detachTrainingSessionV5RtdbTransport")
+      < deactivateBlock.indexOf("cleanupMatchmakingReliably(false)"),
+  );
+});
+
+test("suppresses permission revocation only after protected RTDB release begins", () => {
+  const runtime = new Function("runtimeConsole", `
+    let recoverableErrors = 0;
+    const console = runtimeConsole;
+    function handleRecoverableError() { recoverableErrors += 1; }
+    ${functionBlock("trainingPermissionWasRevoked")}
+    ${functionBlock("handleTrainingRtdbListenerError")}
+    return {
+      handleTrainingRtdbListenerError,
+      recoverableErrorCount: () => recoverableErrors,
+    };
+  `)({ info() {} });
+  const permissionError = {
+    code: "database/permission-denied",
+    message: "permission_denied",
+  };
+  const targetState = {
+    outcome: null,
+    trainingProtectedRtdbReleased: false,
+  };
+  runtime.handleTrainingRtdbListenerError(
+    permissionError,
+    () => true,
+    targetState,
+  );
+  assert.equal(runtime.recoverableErrorCount(), 1);
+
+  targetState.trainingProtectedRtdbReleased = true;
+  runtime.handleTrainingRtdbListenerError(
+    permissionError,
+    () => true,
+    targetState,
+  );
+  assert.equal(runtime.recoverableErrorCount(), 1);
+
+  runtime.handleTrainingRtdbListenerError(
+    new Error("different live error"),
+    () => true,
+    targetState,
+  );
+  assert.equal(runtime.recoverableErrorCount(), 2);
 });
 
 test("fails closed without Web Locks and repairs a dead BFCache transport", () => {

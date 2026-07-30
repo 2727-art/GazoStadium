@@ -571,3 +571,37 @@ test("training V5 Rules enforce canonical attempts, room fences, and retired pat
     await assertFails(set(ref(database, targetPath), value));
   }
 });
+
+test("training V5 terminal members retain only the canonical finalized result read", {
+  skip: runsAgainstSafeEmulator ? false : optInMessage,
+}, async (context) => {
+  const environment = await createEnvironment(context);
+  const fixture = trainingSessionV5Fixture();
+  await seedFixture(environment, fixture);
+
+  const hostDatabase = environment.authenticatedContext(
+    fixture.hostUid,
+  ).database();
+  const chatFramesPath =
+    `online/trainingRooms/${fixture.roomId}/chatFrames`;
+  const finalizedPath =
+    `online/trainingRooms/${fixture.roomId}/serverFinalized`;
+
+  await assertSucceeds(get(ref(hostDatabase, chatFramesPath)));
+  await adminSet(environment, finalizedPath, {
+    version: 1,
+    at: Date.now(),
+    reason: "hp_zero",
+  });
+  await adminSet(
+    environment,
+    `online/trainingAttemptsV5/${fixture.hostUid}/state`,
+    "terminal",
+  );
+
+  await assertFails(get(ref(hostDatabase, chatFramesPath)));
+  const finalized = await assertSucceeds(
+    get(ref(hostDatabase, finalizedPath)),
+  );
+  assert.equal(finalized.val()?.reason, "hp_zero");
+});
