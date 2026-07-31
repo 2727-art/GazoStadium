@@ -3143,6 +3143,66 @@ button:disabled {
   color: var(--cyan);
 }
 
+.crown-monthly-opening {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 22px;
+  margin: 0 0 12px;
+  padding: 18px 20px;
+  border: 1px solid rgba(255, 209, 102, 0.34);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 92% 12%, rgba(255, 209, 102, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(54, 39, 18, 0.52), rgba(12, 19, 28, 0.96));
+}
+
+.crown-monthly-opening > div:first-child > span,
+.crown-monthly-opening-progress > span {
+  display: block;
+  color: #d9ba72;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.crown-monthly-opening > div:first-child > strong {
+  display: block;
+  margin-top: 4px;
+  color: #ffe4a6;
+  font-size: 1rem;
+}
+
+.crown-monthly-opening > div:first-child > p,
+.crown-monthly-opening-note {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.65;
+}
+
+.crown-monthly-opening-progress {
+  min-width: 112px;
+  text-align: right;
+}
+
+.crown-monthly-opening-progress strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--gold);
+  font-size: 1.65rem;
+  line-height: 1;
+}
+
+.crown-monthly-opening-progress small {
+  font-size: 0.72rem;
+}
+
+.crown-monthly-opening-note {
+  grid-column: 1 / -1;
+  padding-top: 9px;
+  border-top: 1px solid rgba(255, 209, 102, 0.13);
+}
+
 .ranking-hall-of-fame {
   display: grid;
   grid-template-columns: minmax(180px, 0.32fr) minmax(0, 1fr);
@@ -8796,6 +8856,19 @@ button:disabled {
   .setup-actions .button,
   .selection-footer .button {
     width: 100%;
+  }
+
+  .crown-monthly-opening {
+    grid-template-columns: 1fr;
+    padding: 15px;
+  }
+
+  .crown-monthly-opening-progress {
+    text-align: left;
+  }
+
+  .crown-monthly-opening-note {
+    grid-column: 1;
   }
 
   .crown-matchmaking-status {

@@ -8,6 +8,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
 ]);
 const VALID_SCOPES = new Set(["battle", "training", "ai_training", "market", "flea"]);
 const MAX_SHOWCASE = 3;
+const CROWN_MONTHLY_ACHIEVEMENT_START_KEY = "2026-08";
 
 function series({
   scope,
@@ -40,6 +41,34 @@ function series({
     condition: condition(target),
   }));
 }
+
+const crownMonthlyDefinitions = [
+  ["crown_monthly_participated_1", 1, 1, "月間への第一歩", "2026年8月以降、成立ウィークリーを月間王座へ初めてつないだ", { participations: 1 }],
+  ["crown_monthly_qualified_1", 2, 1, "月間証明成立", "2026年8月以降、月間王座を初めて成立させた", { qualifiedMonths: 1 }],
+  ["crown_monthly_top10_1", 3, 1, "月間十傑", "2026年8月以降、月間王座でTOP10に入った", { top10Months: 1 }],
+  ["crown_monthly_top3_1", 4, 1, "月間三席", "2026年8月以降、月間王座でTOP3に入った", { top3Months: 1 }],
+  ["crown_monthly_champion_1", 5, 1, "月間王者", "2026年8月以降、月間王座の頂点に立った", { championMonths: 1 }],
+  ["crown_monthly_qualified_3", 6, 3, "三月の証明", "月間王座を3回成立させた", { qualifiedMonths: 3 }],
+  ["crown_monthly_top10_3", 7, 3, "三度の十傑", "月間TOP10へ3回入った", { top10Months: 3 }],
+  ["crown_monthly_top3_3", 8, 3, "三度の三席", "月間TOP3へ3回入った", { top3Months: 3 }],
+  ["crown_monthly_champion_3", 9, 3, "月間三冠", "月間王者を3回獲得した", { championMonths: 3 }],
+  ["crown_monthly_champion_10", 10, 10, "十冠の伝説", "2026年8月以降の月間王者を10回獲得した", { championMonths: 10 }],
+].map(([id, level, target, name, description, requirements]) => Object.freeze({
+  id,
+  scope: "battle",
+  category: "battle_crown",
+  family: "crown_monthly",
+  familyLabel: "月間王座",
+  icon: "✺",
+  level,
+  target,
+  name,
+  description,
+  hint: "2026年8月以降の検証済み月間王座で解除",
+  autoPublic: true,
+  legacy: false,
+  condition: { type: "crown_monthly_requirements", requirements },
+}));
 
 const battleDefinitions = [
   ...series({
@@ -175,6 +204,7 @@ const battleDefinitions = [
     description: (target) => `異なる${target}日でオンライン対戦を完走した`,
     condition: (target) => ({ type: "battle_stat", key: "playDays", target }),
   }),
+  ...crownMonthlyDefinitions,
   ...series({
     scope: "training",
     category: "training_record",
@@ -562,6 +592,93 @@ function normalizeFleaStats(value) {
   };
 }
 
+function normalizeCrownMonthlyStats(value) {
+  const periods = {};
+  for (const [key, recordValue] of Object.entries(objectValue(value?.periods))) {
+    if (!/^\d{4}-\d{2}$/.test(key) || key < CROWN_MONTHLY_ACHIEVEMENT_START_KEY) continue;
+    const record = objectValue(recordValue);
+    const finalized = record.finalized === true;
+    const rank = finalized ? count(record.rank, 100_000) : 0;
+    const participantCount = finalized ? count(record.participantCount, 100_000) : 0;
+    const participated = record.participated === true || finalized || rank > 0;
+    if (!participated) continue;
+    periods[key] = {
+      participated: true,
+      finalized,
+      rank,
+      participantCount,
+      updatedAt: count(record.updatedAt, Number.MAX_SAFE_INTEGER),
+      ...(finalized
+        ? { finalizedAt: count(record.finalizedAt || record.updatedAt, Number.MAX_SAFE_INTEGER) }
+        : {}),
+    };
+  }
+  const records = Object.values(periods);
+  return {
+    schemaVersion: 1,
+    periods,
+    participations: records.length,
+    qualifiedMonths: records.filter((record) => record.finalized && record.rank > 0).length,
+    top10Months: records.filter((record) => record.finalized && record.participantCount >= 2 && record.rank > 0 && record.rank <= 10).length,
+    top3Months: records.filter((record) => record.finalized && record.participantCount >= 2 && record.rank > 0 && record.rank <= 3).length,
+    championMonths: records.filter((record) => record.finalized && record.participantCount >= 2 && record.rank === 1).length,
+    updatedAt: count(value?.updatedAt, Number.MAX_SAFE_INTEGER),
+  };
+}
+
+function addCrownMonthlyParticipation(value, key, timestamp = Date.now()) {
+  const stats = normalizeCrownMonthlyStats(value);
+  if (!/^\d{4}-\d{2}$/.test(String(key || "")) || key < CROWN_MONTHLY_ACHIEVEMENT_START_KEY) {
+    return stats;
+  }
+  const previous = stats.periods[key] || {};
+  const updatedAt = Math.max(
+    count(previous.updatedAt, Number.MAX_SAFE_INTEGER),
+    count(timestamp, Number.MAX_SAFE_INTEGER),
+  );
+  return normalizeCrownMonthlyStats({
+    ...stats,
+    periods: {
+      ...stats.periods,
+      [key]: {
+        ...previous,
+        participated: true,
+        updatedAt,
+      },
+    },
+    updatedAt: Math.max(stats.updatedAt, updatedAt),
+  });
+}
+
+function finalizeCrownMonthlyAchievement(value, {
+  key,
+  rank = 0,
+  participantCount = 0,
+  finalizedAt = Date.now(),
+} = {}) {
+  const stats = addCrownMonthlyParticipation(value, key, finalizedAt);
+  if (!/^\d{4}-\d{2}$/.test(String(key || "")) || key < CROWN_MONTHLY_ACHIEVEMENT_START_KEY) {
+    return stats;
+  }
+  const normalizedFinalizedAt = count(finalizedAt, Number.MAX_SAFE_INTEGER);
+  return normalizeCrownMonthlyStats({
+    ...stats,
+    periods: {
+      ...stats.periods,
+      [key]: {
+        ...stats.periods[key],
+        participated: true,
+        finalized: true,
+        rank: count(rank, 100_000),
+        participantCount: count(participantCount, 100_000),
+        finalizedAt: normalizedFinalizedAt,
+        updatedAt: normalizedFinalizedAt,
+      },
+    },
+    updatedAt: Math.max(stats.updatedAt, normalizedFinalizedAt),
+  });
+}
+
 function addMarketTransaction(value, role, dateKey, { newCounterparty = false } = {}) {
   const stats = normalizeMarketStats(value);
   if (!["seller", "buyer"].includes(role)) return stats;
@@ -585,6 +702,7 @@ function achievementConditionMet(
   aiTextTrainingStats,
   marketStats,
   fleaStats,
+  crownMonthlyStats,
   signals = {},
 ) {
   const condition = definition.condition;
@@ -611,6 +729,11 @@ function achievementConditionMet(
   }
   if (condition.type === "market_signal") return signals?.[condition.signal] === true;
   if (condition.type === "flea_stat") return count(fleaStats?.[condition.key]) >= condition.target;
+  if (condition.type === "crown_monthly_requirements") {
+    const stats = normalizeCrownMonthlyStats(crownMonthlyStats);
+    return Object.entries(objectValue(condition.requirements))
+      .every(([key, target]) => count(stats[key]) >= count(target));
+  }
   return false;
 }
 
@@ -620,6 +743,7 @@ function eligibleAchievementIds({
   aiTextTrainingStats,
   marketStats,
   fleaStats,
+  crownMonthlyStats,
   signals = {},
   scope = "",
 } = {}) {
@@ -633,6 +757,7 @@ function eligibleAchievementIds({
         aiTextTrainingStats,
         marketStats,
         fleaStats,
+        crownMonthlyStats,
         signals,
       ))
     .map((definition) => definition.id);
@@ -771,9 +896,11 @@ module.exports = Object.freeze({
   ACHIEVEMENT_DEFINITIONS,
   ACTIVE_BATTLE_MODES,
   BATTLE_MODES,
+  CROWN_MONTHLY_ACHIEVEMENT_START_KEY,
   MAX_SHOWCASE,
   VALID_SCOPES,
   addBattleMatch,
+  addCrownMonthlyParticipation,
   addMarketTransaction,
   deriveBattleStatsFromPeriods,
   effectiveShowcase,
@@ -782,11 +909,13 @@ module.exports = Object.freeze({
   normalizeAiTextTrainingStats,
   normalizeAchievementProfile,
   normalizeBattleStats,
+  normalizeCrownMonthlyStats,
   normalizeFleaStats,
   normalizeMarketStats,
   normalizeTrainingStats,
   publicAchievementProfile,
   publicShowcaseMap,
   sanitizeAchievementIds,
+  finalizeCrownMonthlyAchievement,
   unlockAchievements,
 });

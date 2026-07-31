@@ -83,6 +83,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /crownMonthlyAchievementStats/{uid} {
+      allow read, write: if false;
+    }
+
     match /serverRankingProfiles/{uid} {
       allow read, write: if false;
 

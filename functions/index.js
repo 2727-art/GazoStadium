@@ -59,6 +59,7 @@ const {
 const {
   ACHIEVEMENT_DEFINITIONS,
   addBattleMatch,
+  addCrownMonthlyParticipation,
   addMarketTransaction,
   deriveBattleStatsFromPeriods,
   effectiveShowcase,
@@ -66,10 +67,12 @@ const {
   normalizeAiTextTrainingStats,
   normalizeAchievementProfile,
   normalizeBattleStats,
+  normalizeCrownMonthlyStats,
   normalizeFleaStats,
   normalizeMarketStats,
   publicAchievementProfile,
   sanitizeAchievementIds,
+  finalizeCrownMonthlyAchievement,
   unlockAchievements,
 } = require("./achievements");
 const {
@@ -1106,6 +1109,10 @@ function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
 }
 
+function crownMonthlyAchievementStatsRef(uid) {
+  return firestore.collection("crownMonthlyAchievementStats").doc(uid);
+}
+
 function aiTextTrainingPlayerStatsRef(uid) {
   return firestore.collection("aiTextTrainingPlayerStats").doc(uid);
 }
@@ -1872,6 +1879,7 @@ async function ensureAchievementState(uid) {
   await anjuPayFleaAchievementStatsStore.ensure(uid);
   const progressRef = economyProgressRef(uid);
   const profileRef = achievementProfileRef(uid);
+  const crownMonthlyStatsRef = crownMonthlyAchievementStatsRef(uid);
   const statsRef = marketStatsRef(uid);
   const fleaStatsRef = anjuPayFleaAchievementStatsStore.statsRef(uid);
   const trainingRef = trainingProfileRef(uid);
@@ -1882,6 +1890,7 @@ async function ensureAchievementState(uid) {
     const [
       progressSnapshot,
       profileSnapshot,
+      crownMonthlyStatsSnapshot,
       marketSnapshot,
       fleaStatsSnapshot,
       trainingSnapshot,
@@ -1890,6 +1899,7 @@ async function ensureAchievementState(uid) {
     ] = await Promise.all([
       transaction.get(progressRef),
       transaction.get(profileRef),
+      transaction.get(crownMonthlyStatsRef),
       transaction.get(statsRef),
       transaction.get(fleaStatsRef),
       transaction.get(trainingRef),
@@ -1898,6 +1908,7 @@ async function ensureAchievementState(uid) {
     ]);
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
+    const crownMonthlyStats = normalizeCrownMonthlyStats(crownMonthlyStatsSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
     const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
     const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
@@ -1912,6 +1923,7 @@ async function ensureAchievementState(uid) {
       marketStats,
       fleaStats,
       aiTextTrainingStats,
+      crownMonthlyStats,
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
     if (!progressSnapshot.exists
@@ -1929,6 +1941,7 @@ async function ensureAchievementState(uid) {
       fleaStats,
       trainingProfile,
       aiTextTrainingStats,
+      crownMonthlyStats,
       profile: unlockResult.profile,
       newlyUnlocked: unlockResult.newlyUnlocked,
     };
@@ -1972,6 +1985,8 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
   const showcase = effectiveShowcase(profile);
   const marketSnapshot = await marketStatsRef(uid).get();
   const updates = [];
+  let syncCrownShowcase = false;
+  let crownAchievementShowcase = null;
   if (marketSnapshot.exists) {
     updates.push(marketStatsRef(uid).set({
       publicAchievements: effectiveShowcase(profile),
@@ -2007,6 +2022,8 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
   }
   if (serverProfileSnapshot.exists) {
     const achievementShowcase = showcase.length ? showcase.join(",") : null;
+    syncCrownShowcase = true;
+    crownAchievementShowcase = achievementShowcase;
     const activeRefs = activeServerRankingPeriodInfos().map(({ period, key }) => (
       serverRankingEntryRef(uid, period, key)
     ));
@@ -2026,6 +2043,9 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
     updates.push(batch.commit());
   }
   await Promise.all(updates);
+  if (syncCrownShowcase) {
+    await syncCurrentCrownCircuitAchievementShowcase(uid, crownAchievementShowcase);
+  }
   return effectiveShowcase(profile);
 }
 
@@ -2132,6 +2152,50 @@ async function syncCurrentCrownCircuitMetadata(uid, profileValue) {
     await mirrorCrownCircuitEntries({ [uid]: entries });
   }
   return entries;
+}
+
+async function syncCurrentCrownCircuitAchievementShowcase(uid, achievementShowcaseValue) {
+  const achievementShowcase = cleanText(achievementShowcaseValue, 500);
+  const now = Date.now();
+  const infos = SERVER_RANKING_PERIODS
+    .map((period) => ({ period, key: periodKey(period, now) }))
+    .filter(({ period, key }) => isCrownCircuitPeriod(period, key));
+  const dailyInfo = infos.find(({ period }) => period === "daily");
+  const refs = [
+    ...infos.map(({ period, key }) => crownCircuitPeriodEntryRef(uid, period, key)),
+    ...(dailyInfo ? [crownCircuitRunRef(uid, dailyInfo.key)] : []),
+  ];
+  const snapshots = refs.length ? await firestore.getAll(...refs) : [];
+  const batch = firestore.batch();
+  const publicRefs = new Map();
+  let writeCount = 0;
+  snapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists) return;
+    const info = index < infos.length ? infos[index] : dailyInfo;
+    const entry = snapshot.data();
+    if (!info || !entry?.entryId) return;
+    batch.set(snapshot.ref, {
+      achievementShowcase: achievementShowcase || FieldValue.delete(),
+      updatedAt: now,
+    }, { merge: true });
+    writeCount += 1;
+    const hidden = Number(entry.withdrawnAt || 0) > 0
+      || (entry.status === "finalized" && !Number(entry.rank || 0));
+    if (!hidden) {
+      const path = `online/crownCircuitPeriods/${info.period}/${info.key}/${entry.entryId}`;
+      publicRefs.set(path, realtime.ref(path));
+    }
+  });
+  if (!writeCount) return 0;
+  await batch.commit();
+  await Promise.all([...publicRefs.values()].map((publicRef) => publicRef.transaction((current) => {
+    if (!current || typeof current !== "object") return undefined;
+    const next = { ...current };
+    if (achievementShowcase) next.achievementShowcase = achievementShowcase;
+    else delete next.achievementShowcase;
+    return next;
+  })));
+  return publicRefs.size;
 }
 
 async function syncRankingSpotlightConsent(profileValue) {
@@ -3585,7 +3649,8 @@ async function initializeEconomy(uid) {
     mirrorEconomyProgress(uid, progress),
     mirrorPatronage(uid, patron),
   ]);
-  await bestEffort("initializeEconomy creator card", [
+  await bestEffort("initializeEconomy public achievements", [
+    syncAchievementPublicSurfaces(uid, profile),
     syncCreatorCardGrowth(uid, achievementState),
   ]);
   return {
@@ -15570,6 +15635,8 @@ async function commitCrownCircuitWrites(writes) {
   }
 }
 
+const CROWN_MONTHLY_ACHIEVEMENT_REVISION = 1;
+
 async function getCrownCircuitSnapshots(refs) {
   const snapshots = [];
   for (let offset = 0; offset < refs.length; offset += 300) {
@@ -15643,6 +15710,47 @@ function finalizedCrownCircuitEntry(period, source, {
   };
 }
 
+async function reconcileCrownMonthlyAchievements(key, sources, participantCount, finalizedAt) {
+  if (!isCrownCircuitPeriod("monthly", key)) return 0;
+  const participants = sources.filter(({ value }) => (
+    integer(value?.qualifyingWeeks, 0, 6, 0) >= 1
+  ));
+  if (!participants.length) return 0;
+  for (let offset = 0; offset < participants.length; offset += 100) {
+    await Promise.all(participants.slice(offset, offset + 100).map(({ uid, value }) => (
+      firestore.runTransaction(async (transaction) => {
+        const statsRef = crownMonthlyAchievementStatsRef(uid);
+        const statsSnapshot = await transaction.get(statsRef);
+        transaction.set(statsRef, finalizeCrownMonthlyAchievement(statsSnapshot.data(), {
+          key,
+          rank: integer(value?.rank, 0, 100_000, 0),
+          participantCount,
+          finalizedAt,
+        }));
+      })
+    )));
+  }
+  return participants.length;
+}
+
+async function recordCrownMonthlyParticipations(key, participants, timestamp) {
+  if (!isCrownCircuitPeriod("monthly", key)) return 0;
+  const uids = [...new Set(participants.map(({ uid }) => cleanText(uid, 128)).filter(Boolean))];
+  for (let offset = 0; offset < uids.length; offset += 100) {
+    await Promise.all(uids.slice(offset, offset + 100).map((uid) => (
+      firestore.runTransaction(async (transaction) => {
+        const statsRef = crownMonthlyAchievementStatsRef(uid);
+        const statsSnapshot = await transaction.get(statsRef);
+        transaction.set(
+          statsRef,
+          addCrownMonthlyParticipation(statsSnapshot.data(), key, timestamp),
+        );
+      })
+    )));
+  }
+  return uids.length;
+}
+
 async function aggregateFinalizedCrownEntries(period, sourceKey, rankedEntries, now) {
   if (!rankedEntries.length || !["daily", "weekly"].includes(period)) return [];
   // A cross-month week belongs to the month in which that week closes.
@@ -15689,6 +15797,7 @@ async function aggregateFinalizedCrownEntries(period, sourceKey, rankedEntries, 
       });
     return { uid, entry: aggregate };
   });
+  const achievementTimestamp = periodEndsAt(period, sourceKey) || now;
   await commitCrownCircuitWrites([
     ...aggregated.map(({ uid, entry }) => ({
       ref: crownCircuitPeriodEntryRef(uid, targetPeriod, targetKey),
@@ -15707,6 +15816,9 @@ async function aggregateFinalizedCrownEntries(period, sourceKey, rankedEntries, 
       options: { merge: true },
     },
   ]);
+  if (targetPeriod === "monthly") {
+    await recordCrownMonthlyParticipations(targetKey, aggregated, achievementTimestamp);
+  }
   await mirrorCrownCircuitEntries({
     ...Object.fromEntries(aggregated.map(({ uid, entry }) => [
       uid,
@@ -15722,7 +15834,10 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
   if (!endsAt || endsAt > now) return { period, key, skipped: "open" };
   const periodRef = crownCircuitPeriodRef(period, key);
   const periodSnapshot = await periodRef.get();
-  if (periodSnapshot.exists && periodSnapshot.get("status") === "finalized") {
+  const alreadyFinalized = periodSnapshot.exists && periodSnapshot.get("status") === "finalized";
+  const achievementRevision = Number(periodSnapshot.get("achievementRevision") || 0);
+  if (alreadyFinalized && (period !== "monthly"
+      || achievementRevision >= CROWN_MONTHLY_ACHIEVEMENT_REVISION)) {
     return {
       period,
       key,
@@ -15736,6 +15851,28 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
     ref: snapshot.ref,
     value: snapshot.data(),
   }));
+  if (alreadyFinalized) {
+    const participantCount = Number(periodSnapshot.get("participantCount") || 0)
+      || sources.filter(({ value }) => integer(value?.rank, 0, 100_000, 0) > 0).length;
+    const reconciledAchievements = await reconcileCrownMonthlyAchievements(
+      key,
+      sources,
+      participantCount,
+      endsAt,
+    );
+    await periodRef.set({
+      achievementRevision: CROWN_MONTHLY_ACHIEVEMENT_REVISION,
+      achievementReconciledAt: now,
+      updatedAt: now,
+    }, { merge: true });
+    return {
+      period,
+      key,
+      skipped: "finalized",
+      participantCount,
+      reconciledAchievements,
+    };
+  }
   const ranked = sources
     .filter(({ value }) => crownCircuitEntryEligible(period, value))
     .sort((first, second) => (
@@ -15808,6 +15945,14 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
     options: { merge: true },
   });
   await commitCrownCircuitWrites(writes);
+  if (period === "monthly") {
+    await reconcileCrownMonthlyAchievements(
+      key,
+      finalized.map(({ uid, entry }) => ({ uid, value: entry })),
+      participantCount,
+      endsAt,
+    );
+  }
   const rankedFinalized = ranked.map(({ uid }) => (
     finalized.find((candidate) => candidate.uid === uid)
   ));
@@ -15897,6 +16042,12 @@ async function finalizeCrownCircuitPeriod(period, key, now = Date.now()) {
     status: "finalized",
     participantCount,
     finalizedAt: now,
+    ...(period === "monthly"
+      ? {
+        achievementRevision: CROWN_MONTHLY_ACHIEVEMENT_REVISION,
+        achievementReconciledAt: now,
+      }
+      : {}),
     updatedAt: now,
   }, { merge: true });
   return { period, key, finalized: true, participantCount };

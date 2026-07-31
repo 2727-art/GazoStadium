@@ -335,7 +335,9 @@ const CROWN_CIRCUIT_CUTOVER_KEYS = Object.freeze({
 const CROWN_CIRCUIT_MODES = Object.freeze(["solo", "strategy"]);
 const CROWN_DAILY_MATCH_LIMIT = 3;
 const CROWN_WEEKLY_BEST_DAYS = 3;
+const CROWN_WEEKLY_MIN_DAYS = 2;
 const CROWN_MONTHLY_BEST_WEEKS = 3;
+const CROWN_MONTHLY_MIN_WEEKS = 2;
 const CROWN_THEMES = Object.freeze(["rose", "aqua", "violet", "gold"]);
 const CROWN_SIGNATURE_IDS = Object.freeze([
   "upset",
@@ -1031,7 +1033,8 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
     startAt,
     nextResetAt,
     minimumMatches: crownCircuit
-      ? normalizedPeriod === "daily" ? CROWN_DAILY_MATCH_LIMIT : 2
+      ? normalizedPeriod === "daily" ? CROWN_DAILY_MATCH_LIMIT
+        : normalizedPeriod === "weekly" ? CROWN_WEEKLY_MIN_DAYS : CROWN_MONTHLY_MIN_WEEKS
       : normalizedPeriod === "daily" ? 1 : normalizedPeriod === "weekly" ? 3 : 5,
     awardMinimumMatches: SERVER_RANKING_AWARD_MINIMUM_MATCHES[normalizedPeriod],
     serverAuthoritative: isServerRankingPeriod(normalizedPeriod, key),
@@ -1041,6 +1044,58 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
         : normalizedPeriod === "monthly" ? CROWN_MONTHLY_BEST_WEEKS
           : CROWN_DAILY_MATCH_LIMIT
       : 0,
+  };
+}
+
+function crownMonthlyEarliestOpeningAt(key) {
+  if (!isCrownCircuitPeriod("monthly", key)) return 0;
+  const monthStartAt = leaderboardPeriodStartAt("monthly", key);
+  const shiftedStart = new Date(monthStartAt + (9 * 60 * 60 * 1000));
+  const monthEndAt = Date.UTC(
+    shiftedStart.getUTCFullYear(),
+    shiftedStart.getUTCMonth() + 1,
+    1,
+  ) - (9 * 60 * 60 * 1000);
+  const weeklyCutoverAt = leaderboardPeriodStartAt("weekly", CROWN_CIRCUIT_CUTOVER_KEYS.weekly);
+  let weeklyStartAt = Math.max(
+    leaderboardPeriodStartAt("weekly", leaderboardPeriodKeyFor("weekly", monthStartAt)),
+    weeklyCutoverAt,
+  );
+  const closes = [];
+  while (weeklyStartAt < monthEndAt && closes.length < CROWN_MONTHLY_MIN_WEEKS) {
+    const weeklyEndAt = weeklyStartAt + (7 * 24 * 60 * 60 * 1000);
+    if (leaderboardPeriodKeyFor("monthly", weeklyEndAt - 1) === key) closes.push(weeklyEndAt);
+    weeklyStartAt = weeklyEndAt;
+  }
+  return closes.length >= CROWN_MONTHLY_MIN_WEEKS
+    ? closes[CROWN_MONTHLY_MIN_WEEKS - 1] + (5 * 60 * 1000)
+    : 0;
+}
+
+function crownMonthlyOpeningProgress(entries) {
+  const records = Array.isArray(entries) ? entries : [];
+  return {
+    opened: records.some((entry) => entry?.qualified === true),
+    highestQualifyingWeeks: Math.min(
+      CROWN_MONTHLY_MIN_WEEKS,
+      Math.max(0, ...records.map((entry) => Math.floor(Number(entry?.qualifyingCount || 0)))),
+    ),
+  };
+}
+
+function getCrownMonthlyOpeningStatus(timestamp = Date.now() + publicServerTimeOffset) {
+  const periodInfo = leaderboardPeriodInfoFor("monthly", timestamp);
+  const entries = leaderboardPeriod === "monthly" && leaderboardPeriodKey === periodInfo.key
+    ? leaderboardEntries
+    : [];
+  const { opened, highestQualifyingWeeks } = crownMonthlyOpeningProgress(entries);
+  const earliestOpeningAt = crownMonthlyEarliestOpeningAt(periodInfo.key);
+  return {
+    pending: periodInfo.crownCircuit && !opened,
+    opened,
+    highestQualifyingWeeks,
+    requiredQualifyingWeeks: CROWN_MONTHLY_MIN_WEEKS,
+    earliestOpeningAt: earliestOpeningAt > timestamp ? earliestOpeningAt : 0,
   };
 }
 
@@ -1605,6 +1660,7 @@ function openOnlineScreen(screen) {
         finalAchievementPreview ? "battle_total_30000" : "battle_total_100",
         finalAchievementPreview ? "battle_solo_10000" : "battle_solo_100",
         finalAchievementPreview ? "battle_strategy_10000" : "battle_strategy_5",
+        ...(finalAchievementPreview ? ["crown_monthly_champion_10"] : []),
         "battle_team_1",
         "battle_variety_three_1",
         finalAchievementPreview ? "battle_losses_10000" : "battle_losses_30",
@@ -10789,6 +10845,7 @@ window.HariaiOnline = {
   focusCrownRankingParticipation,
   getLeaderboardStatus,
   getLeaderboardPeriodInfo,
+  getCrownMonthlyOpeningStatus,
   getLeaderboardLoadedPeriod,
   getServerRankingAwards,
   getMonthlyRankingHallOfFame,

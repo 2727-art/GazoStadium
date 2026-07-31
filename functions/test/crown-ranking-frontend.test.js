@@ -26,6 +26,61 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function monthlyOpeningHarness(online) {
+  const periodKey = sourceBetween(
+    online,
+    "function leaderboardPeriodKeyFor",
+    "function leaderboardPeriodStartAt",
+  );
+  const periodStart = sourceBetween(
+    online,
+    "function leaderboardPeriodStartAt",
+    "function leaderboardPeriodInfoFor",
+  );
+  const earliestOpening = sourceBetween(
+    online,
+    "function crownMonthlyEarliestOpeningAt",
+    "function crownMonthlyOpeningProgress",
+  );
+  const openingProgress = sourceBetween(
+    online,
+    "function crownMonthlyOpeningProgress",
+    "function getCrownMonthlyOpeningStatus",
+  );
+  const openingStatus = sourceBetween(
+    online,
+    "function getCrownMonthlyOpeningStatus",
+    "function getLeaderboardPeriodInfo",
+  );
+  return Function(`
+    "use strict";
+    const CROWN_CIRCUIT_CUTOVER_KEYS = { weekly: "2026-08-03", monthly: "2026-08" };
+    const CROWN_MONTHLY_MIN_WEEKS = 2;
+    const normalizeLeaderboardPeriod = (value) => value;
+    const isCrownCircuitPeriod = (period, key) => period === "monthly" && key >= "2026-08";
+    ${periodKey}
+    ${periodStart}
+    ${earliestOpening}
+    ${openingProgress}
+    const publicServerTimeOffset = 0;
+    let leaderboardPeriod = "monthly";
+    let leaderboardPeriodKey = "2026-08";
+    let leaderboardEntries = [];
+    const leaderboardPeriodInfoFor = (_period, timestamp) => {
+      const key = leaderboardPeriodKeyFor("monthly", timestamp);
+      return { key, crownCircuit: isCrownCircuitPeriod("monthly", key) };
+    };
+    ${openingStatus}
+    const openingStatusAt = (timestamp, entries = []) => {
+      leaderboardPeriod = "monthly";
+      leaderboardPeriodKey = leaderboardPeriodKeyFor("monthly", timestamp);
+      leaderboardEntries = entries;
+      return getCrownMonthlyOpeningStatus(timestamp);
+    };
+    return { crownMonthlyEarliestOpeningAt, crownMonthlyOpeningProgress, openingStatusAt };
+  `)();
+}
+
 function normalCrownLaunchHarness(online, dependencies) {
   const isCurrent = sourceBetween(
     online,
@@ -127,6 +182,53 @@ test("overall RATE and proof dashboard precede the period circuit without retire
   assert.match(rankingScreen, /成立ウィークリーのBEST/);
   assert.match(rankingScreen, /通常型・戦略型1on1/);
   assert.doesNotMatch(rankingScreen, /ふたりチャレンジ|旧BR|modePoints\.team|modePoints\.royale/);
+});
+
+test("monthly Crown opening guidance reports per-player progress and the August earliest date", () => {
+  const online = read("online.js");
+  const app = read("app.js");
+  const {
+    crownMonthlyEarliestOpeningAt,
+    crownMonthlyOpeningProgress,
+    openingStatusAt,
+  } = monthlyOpeningHarness(online);
+
+  assert.equal(
+    crownMonthlyEarliestOpeningAt("2026-08"),
+    Date.parse("2026-08-17T00:05:00+09:00"),
+  );
+  assert.equal(crownMonthlyEarliestOpeningAt("2026-07"), 0);
+  assert.equal(
+    crownMonthlyEarliestOpeningAt("2026-09"),
+    Date.parse("2026-09-14T00:05:00+09:00"),
+  );
+  assert.deepEqual(crownMonthlyOpeningProgress([]), {
+    opened: false,
+    highestQualifyingWeeks: 0,
+  });
+  assert.deepEqual(crownMonthlyOpeningProgress([{ qualifyingCount: 1, qualified: false }]), {
+    opened: false,
+    highestQualifyingWeeks: 1,
+  });
+  assert.deepEqual(crownMonthlyOpeningProgress([{ qualifyingCount: 2, qualified: true }]), {
+    opened: true,
+    highestQualifyingWeeks: 2,
+  });
+  assert.equal(
+    openingStatusAt(Date.parse("2026-08-17T00:04:59+09:00")).earliestOpeningAt,
+    Date.parse("2026-08-17T00:05:00+09:00"),
+  );
+  assert.equal(
+    openingStatusAt(Date.parse("2026-08-17T00:05:00+09:00")).earliestOpeningAt,
+    0,
+  );
+
+  const rankingScreen = sourceBetween(app, "function renderRankingScreen", "function startOnlineBattle");
+  assert.match(rankingScreen, /monthlyOpening\?\.pending === true/);
+  assert.match(rankingScreen, /月間王座 開幕準備中/);
+  assert.match(rankingScreen, /最高進捗/);
+  assert.match(rankingScreen, /最短開幕目安/);
+  assert.match(rankingScreen, /同じプレイヤーが成立ウィークリー/);
 });
 
 test("proof run, crown customization, SIGNATURE, and safe X promotion controls are present", () => {
@@ -330,6 +432,7 @@ test("ranking V2 styles and browser cache keys are wired", () => {
     ".ranking-signature",
     ".ranking-overall-section",
     ".ranking-circuit-section",
+    ".crown-monthly-opening",
   ]) {
     assert.match(styles, new RegExp(selector.replace(".", "\\.")));
   }
@@ -337,6 +440,9 @@ test("ranking V2 styles and browser cache keys are wired", () => {
   assert.match(html, /styles\.css\?v=[^"]*crown-circuit-v2/);
   assert.match(html, /app\.js\?v=[^"]*crown-circuit-v2/);
   assert.match(html, /online\.js\?v=[^"]*crown-circuit-v2/);
+  assert.match(html, /styles\.css\?v=[^"]*crown-monthly-achievements-v1/);
+  assert.match(html, /app\.js\?v=[^"]*crown-monthly-achievements-v1/);
+  assert.match(html, /online\.js\?v=[^"]*crown-monthly-achievements-v1/);
   assert.match(styles, /\.crown-matchmaking-actions/);
   assert.match(styles, /\.button-crown-proof/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.crown-matchmaking-status/);
