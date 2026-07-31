@@ -192,6 +192,10 @@ test("automatic requeue is cancelled if visibility or connectivity changes mid-s
 });
 
 test("matchmaking initialization failures release the lease and return to setup", () => {
+  const continuation = sourceBetween(
+    "async function continueRequestedMatchmaking",
+    "function requestMatchmaking",
+  );
   const request = sourceBetween(
     "function requestMatchmaking",
     "function bindOnlinePursuitFields",
@@ -204,8 +208,9 @@ test("matchmaking initialization failures release the lease and return to setup"
     'sampleHandicapDialog?.addEventListener("close"',
     'finishCutInDialog?.addEventListener("cancel"',
   );
-  assert.match(request, /beginMatchmaking\(\)\.catch\(handleRecoverableError\)/);
-  assert.match(dialog, /beginMatchmaking\(\)\.catch\(handleRecoverableError\)/);
+  assert.match(request, /continueRequestedMatchmaking\(context\)/);
+  assert.match(dialog, /continueRequestedMatchmaking\(context\)/);
+  assert.match(continuation, /await beginMatchmaking\(\)/);
   assert.match(begin, /try \{/);
   assert.match(begin, /catch \(error\)/);
   assert.match(begin, /"matchmaking-initialization-failed"/);

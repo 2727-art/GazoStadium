@@ -5835,6 +5835,101 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.crown-matchmaking-actions {
+  align-items: stretch;
+}
+
+.crown-matchmaking-actions .button,
+.crown-matchmaking-status {
+  flex: 1 1 260px;
+  min-height: 48px;
+}
+
+.button-crown-proof {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(255, 201, 107, 0.62);
+  color: #fff4d5;
+  background:
+    linear-gradient(118deg, rgba(70, 35, 82, 0.96), rgba(25, 92, 100, 0.94)),
+    var(--panel);
+  box-shadow: 0 8px 26px rgba(34, 14, 49, 0.22), inset 0 0 20px rgba(255, 201, 107, 0.07);
+}
+
+.button-crown-proof::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.13) 48%, transparent 72%);
+  content: "";
+  pointer-events: none;
+  transform: translateX(-115%);
+  transition: transform 260ms ease;
+}
+
+.button-crown-proof:hover::after,
+.button-crown-proof:focus-visible::after {
+  transform: translateX(115%);
+}
+
+.button-crown-proof.is-active {
+  border-color: rgba(100, 232, 213, 0.68);
+  background:
+    linear-gradient(118deg, rgba(42, 55, 94, 0.98), rgba(19, 112, 105, 0.96)),
+    var(--panel);
+  box-shadow: 0 9px 28px rgba(18, 88, 85, 0.24), inset 0 0 22px rgba(100, 232, 213, 0.09);
+}
+
+.button-crown-proof.is-secondary {
+  border-color: rgba(255, 201, 107, 0.34);
+  color: #efdba9;
+  background: rgba(255, 201, 107, 0.055);
+  box-shadow: none;
+}
+
+.crown-matchmaking-status {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 15px;
+  border: 1px solid rgba(255, 201, 107, 0.28);
+  border-radius: 12px;
+  color: #ffe0a3;
+  background: rgba(255, 201, 107, 0.055);
+}
+
+.crown-matchmaking-status b,
+.crown-matchmaking-status small {
+  display: block;
+}
+
+.crown-matchmaking-status b {
+  font-size: 0.78rem;
+}
+
+.crown-matchmaking-status small {
+  margin-top: 3px;
+  color: #aa9f88;
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
+.crown-matchmaking-status.is-muted {
+  border-color: rgba(255, 255, 255, 0.09);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.crown-matchmaking-hint {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.55;
+  text-align: right;
+}
+
 .handoff-wrap {
   min-height: 660px;
   display: grid;
@@ -8701,6 +8796,15 @@ button:disabled {
   .setup-actions .button,
   .selection-footer .button {
     width: 100%;
+  }
+
+  .crown-matchmaking-status {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .crown-matchmaking-hint {
+    text-align: left;
   }
 
   .deck-grid,

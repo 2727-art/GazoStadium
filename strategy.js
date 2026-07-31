@@ -260,6 +260,8 @@ function createState() {
     peerStatus: "P2P接続を準備中…",
     pendingIce: [],
     matchingBusy: false,
+    matchmakingLaunchBusy: false,
+    matchmakingLaunchGeneration: 0,
     acceptingOffer: false,
     pendingIncomingOffer: null,
     pendingOffer: null,
@@ -437,9 +439,13 @@ async function ensureAuthenticated() {
   ]);
   if (profileSnapshot.exists()) state.profile = normalizeProfile(profileSnapshot.val());
   if (economySnapshot.exists()) state.economy = normalizeChatCosmeticEconomy(economySnapshot.val());
+  if (state.screen === "profile") syncStrategyProfileDraft();
   state.authReady = true;
   setStrategyChrome("STRATEGY READY");
   render();
+  if (window.HariaiOnline?.getOverallRankingPreference?.().enabled) {
+    window.HariaiOnline.refreshRankingDashboard?.().catch((error) => console.error(error));
+  }
 }
 
 function normalizeProfile(value) {
@@ -547,7 +553,7 @@ function renderProfile() {
         <small>${escapeHtml(option.description)}</small>
       </span>
     </label>`).join("");
-  const matchmakingReady = state.authReady && Boolean(normalizeImagePreference(state.imagePreference, ""));
+  const crownMatchmakingActions = renderStrategyCrownMatchmakingActions();
   return `<section class="screen strategy-screen">
     <div class="section-head"><div><span class="eyebrow">ONLINE STRATEGY 1ON1 / PROFILE</span><h1>秘密のプロフィール登録</h1>
       <p>弱点候補を3つ登録し、本当の弱点を1つ選びます。残り2つは相手を惑わせるブラフです。</p></div>
@@ -580,8 +586,43 @@ function renderProfile() {
           <input class="text-input" id="strategyCustomPursuitLine" maxlength="${MAX_PURSUIT_LINE_LENGTH}" autocomplete="off" value="${usesCustom ? escapeHtml(state.pursuitLine) : ""}" /></label>
           <span class="pursuit-character-count"><b id="strategyPursuitCharacterCount">${usesCustom ? state.pursuitLine.length : 0}</b> / ${MAX_PURSUIT_LINE_LENGTH}</span></div>
       </div>
-      <div class="screen-actions setup-actions"><button class="button button-primary" id="strategyFindOpponent" type="submit" ${matchmakingReady ? "" : "disabled"}>プロフィールを封印して対戦相手を探す</button></div>
+      <div class="screen-actions setup-actions crown-matchmaking-actions" id="strategyCrownMatchmakingActions">${crownMatchmakingActions}</div>
     </form></div></section>`;
+}
+
+function renderStrategyCrownMatchmakingActions() {
+  const matchmakingReady = state.authReady && Boolean(normalizeImagePreference(state.imagePreference, ""));
+  return window.HariaiOnline?.renderCrownMatchmakingActions?.({
+    mode: "strategy",
+    regularButtonId: "strategyFindOpponent",
+    regularLabel: "プロフィールを封印して対戦相手を探す",
+    crownButtonId: "strategyCrownMatchmaking",
+    regularType: "submit",
+    ready: matchmakingReady,
+    busy: state.matchmakingLaunchBusy,
+  }) || `<button class="button button-primary" id="strategyFindOpponent" type="submit" ${matchmakingReady ? "" : "disabled"}>プロフィールを封印して対戦相手を探す</button>`;
+}
+
+function bindStrategyCrownMatchmakingActions() {
+  const crownButton = document.querySelector("#strategyCrownMatchmaking");
+  crownButton?.addEventListener("click", () => {
+    const action = crownButton.dataset.crownMatchmakingAction;
+    if (action === "participation") {
+      window.HariaiOnline?.focusCrownRankingParticipation?.("strategyOverallRanking");
+      return;
+    }
+    if (action === "retry") {
+      window.HariaiOnline?.refreshRankingDashboard?.().catch(handleRecoverableError);
+    }
+  });
+}
+
+function updateStrategyCrownMatchmakingActions() {
+  if (!active || state.screen !== "profile") return;
+  const container = document.querySelector("#strategyCrownMatchmakingActions");
+  if (!container) return;
+  container.innerHTML = renderStrategyCrownMatchmakingActions();
+  bindStrategyCrownMatchmakingActions();
 }
 
 function renderMatching() {
@@ -1206,12 +1247,12 @@ function bindScreenEvents() {
       name: () => document.querySelector("#strategyName")?.value || state.name,
       onUpdate: () => { syncStrategyProfileDraft(); render(); },
     });
+    bindStrategyCrownMatchmakingActions();
     shared()?.profileAvatar?.bindSetting?.({ controlId: "strategyProfileAvatar", onUpdate: () => { syncStrategyProfileDraft(); render(); } });
     document.querySelectorAll('input[name="strategyImagePreference"]').forEach((input) => input.addEventListener("change", () => {
       state.imagePreference = normalizeImagePreference(input.value, "");
       if (state.imagePreference) localStorage.setItem(PROFILE_IMAGE_PREFERENCE_KEY, state.imagePreference);
-      const button = document.querySelector("#strategyFindOpponent");
-      if (button) button.disabled = !state.authReady || !state.imagePreference;
+      updateStrategyCrownMatchmakingActions();
     }));
   }
   document.querySelectorAll("[data-strategy-avatar-visibility]").forEach((button) => button.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); }));
@@ -2032,8 +2073,28 @@ function bindScoreButtons() {
   }));
 }
 
+function strategyMatchmakingLaunchIsCurrent(context, { requireProfile = true } = {}) {
+  return Boolean(
+    context
+    && active
+    && state === context.expectedState
+    && context.expectedState.matchmakingLaunchGeneration === context.generation
+    && (!requireProfile || context.expectedState.screen === "profile"),
+  );
+}
+
+function finishStrategyMatchmakingLaunch(context) {
+  if (!context
+      || state !== context.expectedState
+      || context.expectedState.matchmakingLaunchGeneration !== context.generation) return;
+  context.expectedState.matchmakingLaunchBusy = false;
+  if (active && context.expectedState.screen === "profile") updateStrategyCrownMatchmakingActions();
+}
+
 async function saveProfile(event) {
   event.preventDefault();
+  if (state.matchmakingLaunchBusy) return;
+  const crownIntent = event.submitter?.dataset.crownMatchmakingAction === "start";
   const name = document.querySelector("#strategyName")?.value.trim().slice(0, 16) || "";
   const clues = [...document.querySelectorAll(".strategy-clue-input")].map((input) => input.value.trim());
   const weakness = document.querySelector('input[name="weakness"]:checked');
@@ -2053,7 +2114,47 @@ async function saveProfile(event) {
   localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
   localStorage.setItem(PROFILE_IMAGE_PREFERENCE_KEY, state.imagePreference);
   window.HariaiAudio?.playButton?.("confirm");
-  await beginMatchmaking();
+  const expectedState = state;
+  const context = {
+    crownIntent,
+    expectedState,
+    generation: expectedState.matchmakingLaunchGeneration + 1,
+  };
+  expectedState.matchmakingLaunchGeneration = context.generation;
+  expectedState.matchmakingLaunchBusy = true;
+  updateStrategyCrownMatchmakingActions();
+  let crownReady = !crownIntent;
+  try {
+    if (crownIntent) {
+      const startRun = window.HariaiOnline?.startCrownRun;
+      if (typeof startRun !== "function") throw new Error("三戦証明を準備できませんでした。");
+      await startRun();
+      if (!strategyMatchmakingLaunchIsCurrent(context)) return;
+      const crownState = window.HariaiOnline?.getCrownMatchmakingState?.("strategy");
+      if (!["active", "complete"].includes(crownState?.phase)) {
+        throw new Error("三戦証明の開始状態を確認できませんでした。");
+      }
+      crownReady = true;
+      showToast(crownState.phase === "complete"
+        ? "本日の三戦証明は完了済みです。通常対戦を探します。"
+        : "三戦証明を開始しました。次の正式対戦から記録します。");
+    }
+    if (!strategyMatchmakingLaunchIsCurrent(context)) return;
+    await beginMatchmaking();
+  } catch (error) {
+    if (!strategyMatchmakingLaunchIsCurrent(context, { requireProfile: false })) return;
+    if (context.expectedState.screen === "matching" && !context.expectedState.roomId) {
+      await cancelMatching();
+    } else if (context.expectedState.screen !== "profile") {
+      return;
+    }
+    console.error(error);
+    showToast(crownIntent && !crownReady
+      ? (error?.message || "三戦証明を開始できませんでした。通常対戦は開始していません。")
+      : (error?.message || "対戦相手を探せませんでした。もう一度お試しください。"));
+  } finally {
+    finishStrategyMatchmakingLaunch(context);
+  }
 }
 
 function isCurrentStrategyMatchmakingGeneration(generation) {
@@ -3879,6 +3980,8 @@ async function leaveToLanding() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
+  state.matchmakingLaunchGeneration += 1;
+  state.matchmakingLaunchBusy = false;
   await cleanupOnlineResources(false);
   releaseAllImages();
   active = false;
@@ -3983,6 +4086,10 @@ window.addEventListener("beforeunload", () => {
   stopReviewClock();
   releaseAllImages();
   state.peer?.close();
+});
+
+window.addEventListener("hariai-ranking-dashboard-updated", () => {
+  if (active && state.screen === "profile") updateStrategyCrownMatchmakingActions();
 });
 
 window.HariaiStrategy = { start, isActive, requestHome, destroyRoom };

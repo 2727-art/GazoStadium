@@ -458,6 +458,7 @@ let lastRenderedScreen = "";
 let finishCutInGeneration = 0;
 let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
+let pendingSampleMatchmakingLaunch = null;
 let lobbyPresenceEntries = null;
 let marketPresenceEntries = null;
 let freeTablePublicStats = {
@@ -598,6 +599,8 @@ function createOnlineState() {
     chatMessages: [],
     seenChatIds: new Set(),
     matchingBusy: false,
+    matchmakingLaunchBusy: false,
+    matchmakingLaunchGeneration: 0,
     acceptingOffer: false,
     pendingIncomingOffer: null,
     activeUsers: {},
@@ -2210,6 +2213,9 @@ function watchDailyDateRollover() {
     const nextDateKey = currentDailyDateKey();
     if (nextDateKey === observedDateKey) return;
     observedDateKey = nextDateKey;
+    if (getOverallRankingPreference().enabled) {
+      refreshRankingDashboard().catch((error) => console.error(error));
+    }
     if (!active || !state.uid || !state.authReady) return;
     initializeEconomy().then(() => {
       state.periodRewardReminderShown = false;
@@ -2587,6 +2593,175 @@ function getRankingDashboardStatus() {
   };
 }
 
+function getCrownMatchmakingState(mode = "solo") {
+  const normalizedMode = CROWN_CIRCUIT_MODES.includes(mode) ? mode : "solo";
+  const preference = getOverallRankingPreference();
+  const dashboard = getRankingDashboard();
+  const dashboardStatus = getRankingDashboardStatus();
+  const dailyInfo = getLeaderboardPeriodInfo("daily");
+  const locallyEnabled = preference.enabled === true;
+
+  if (!dailyInfo.crownCircuit) {
+    return {
+      phase: "unavailable",
+      mode: normalizedMode,
+      message: "三戦証明は現在のデイリー期間では利用できません。",
+    };
+  }
+  if (!locallyEnabled) {
+    return {
+      phase: "participation",
+      mode: normalizedMode,
+      message: "ランキング参加を有効にすると、三戦証明へ挑戦できます。",
+    };
+  }
+  if (dashboardStatus.status === "error") {
+    return {
+      phase: "error",
+      mode: normalizedMode,
+      message: dashboardStatus.error || "三戦証明の状態を確認できませんでした。",
+    };
+  }
+  if (!dashboard || dashboardStatus.status === "idle" || dashboardStatus.status === "loading") {
+    return {
+      phase: "loading",
+      mode: normalizedMode,
+      message: "今日の三戦証明を確認しています…",
+    };
+  }
+  if (!dashboard.enabled) {
+    return {
+      phase: "participation",
+      mode: normalizedMode,
+      message: "ランキング参加を有効にすると、三戦証明へ挑戦できます。",
+    };
+  }
+  const dashboardDailyKey = String(dashboard.rules.dailyKey || "");
+  if (!dashboardDailyKey || dashboardDailyKey !== dailyInfo.key) {
+    return {
+      phase: "loading",
+      mode: normalizedMode,
+      message: "本日の三戦証明へ更新しています…",
+    };
+  }
+  if (!dashboard.rules.modes.includes(normalizedMode)) {
+    return {
+      phase: "unavailable",
+      mode: normalizedMode,
+      message: "この対戦モードは三戦証明の対象外です。",
+    };
+  }
+
+  const limit = Math.max(1, Math.floor(Number(
+    dashboard.rules.dailyMatchLimit || CROWN_DAILY_MATCH_LIMIT,
+  )));
+  const expectedKey = dashboardDailyKey;
+  const now = Date.now() + Number(publicServerTimeOffset || 0);
+  const run = dashboard.run;
+  const currentRun = run
+    && run.key === expectedKey
+    && (!Number(run.endsAt || 0) || Number(run.endsAt) > now)
+      ? run
+      : null;
+  const matchCount = Math.min(limit, Math.max(0, Math.floor(Number(currentRun?.matchCount || 0))));
+
+  if (currentRun && (
+    ["complete", "finalized"].includes(currentRun.status)
+    || matchCount >= limit
+  )) {
+    return {
+      phase: "complete",
+      mode: normalizedMode,
+      key: expectedKey,
+      matchCount,
+      limit,
+      crownPower: Math.floor(Number(currentRun.crownPower || dashboard.overall.rating || INITIAL_RATING)),
+      rank: Math.max(0, Math.floor(Number(currentRun.rank || 0))),
+      message: "4戦目以降は今日の王座へ影響せず、通常対戦として遊べます。",
+    };
+  }
+  if (currentRun?.status === "active") {
+    return {
+      phase: "active",
+      mode: normalizedMode,
+      key: expectedKey,
+      matchCount,
+      limit,
+      nextMatch: Math.min(limit, matchCount + 1),
+      crownPower: Math.floor(Number(currentRun.crownPower || dashboard.overall.rating || INITIAL_RATING)),
+      message: "次の正式対戦が三戦証明へ記録されます。",
+    };
+  }
+  return {
+    phase: dashboardStatus.busy ? "loading" : "idle",
+    mode: normalizedMode,
+    key: expectedKey,
+    matchCount: 0,
+    limit,
+    message: dashboardStatus.busy
+      ? "今日の三戦証明を準備しています…"
+      : `開始後の正式${limit}戦が対象です。通常型と戦略型をまたいで挑戦できます。`,
+  };
+}
+
+function renderCrownMatchmakingActions({
+  mode = "solo",
+  regularButtonId = "findOpponent",
+  regularLabel = "対戦相手を探す",
+  crownButtonId = "crownMatchmakingButton",
+  regularType = "button",
+  ready = false,
+  busy = false,
+} = {}) {
+  const safeRegularId = normalizeRankingControlId(regularButtonId);
+  const safeCrownId = normalizeRankingControlId(crownButtonId);
+  const safeRegularType = regularType === "submit" ? "submit" : "button";
+  const crownState = getCrownMatchmakingState(mode);
+  const disabled = !ready || busy;
+  const busyAttributes = busy ? ' aria-busy="true"' : "";
+  const regularDisabled = disabled ? ' disabled' : "";
+  const regularButton = (label = regularLabel, crownActive = false) => (
+    `<button class="button button-primary ${crownActive ? "button-crown-proof is-active" : ""}" id="${safeRegularId}" type="${safeRegularType}"${regularDisabled}${busyAttributes}>${escapeHtml(label)}</button>`
+  );
+  const supportingCopy = (message) => `<small class="crown-matchmaking-hint">${escapeHtml(message)}</small>`;
+
+  if (crownState.phase === "active") {
+    return `${regularButton(
+      busy
+        ? "三戦証明の対戦を準備しています…"
+        : `♛ 三戦証明 ${crownState.nextMatch}/${crownState.limit}戦目の相手を探す`,
+      true,
+    )}${supportingCopy(`現在 ${crownState.matchCount}/${crownState.limit}戦・暫定証明RATE ${crownState.crownPower}。通常型と戦略型の次の正式対戦が対象です。`)}`;
+  }
+
+  const secondaryButton = crownState.phase === "idle"
+    ? `<button class="button button-crown-proof" id="${safeCrownId}" type="${safeRegularType}" data-crown-matchmaking-action="start"${disabled ? " disabled" : ""}${busyAttributes}>${busy ? "三戦証明を開始中…" : "♛ 三戦証明で対戦相手を探す"}</button>`
+    : crownState.phase === "participation"
+      ? `<button class="button button-ghost button-crown-proof is-secondary" id="${safeCrownId}" type="button" data-crown-matchmaking-action="participation"${busy ? " disabled" : ""}${busyAttributes}>♛ ランキング参加で三戦証明</button>`
+      : crownState.phase === "error"
+        ? `<button class="button button-ghost button-crown-proof is-secondary" id="${safeCrownId}" type="button" data-crown-matchmaking-action="retry"${busy ? " disabled" : ""}${busyAttributes}>三戦証明を読み込み直す</button>`
+        : "";
+  const completeStatus = crownState.phase === "complete"
+    ? `<span class="crown-matchmaking-status" role="status"><b>♛ 本日の三戦証明 完了</b><small>${crownState.matchCount}/${crownState.limit}戦・証明RATE ${crownState.crownPower}${crownState.rank ? `・暫定第${crownState.rank}王座` : ""}</small></span>`
+    : "";
+  const passiveStatus = ["loading", "unavailable"].includes(crownState.phase)
+    ? `<span class="crown-matchmaking-status is-muted" role="status"><b>${crownState.phase === "loading" ? "三戦証明を確認中" : "三戦証明は対象外"}</b><small>${escapeHtml(crownState.message)}</small></span>`
+    : "";
+  const hint = ["loading", "unavailable"].includes(crownState.phase)
+    ? ""
+    : supportingCopy(crownState.message);
+
+  return `${regularButton()}${secondaryButton}${completeStatus}${passiveStatus}${hint}`;
+}
+
+function focusCrownRankingParticipation(controlId) {
+  const button = document.getElementById(normalizeRankingControlId(controlId));
+  button?.scrollIntoView({ behavior: "smooth", block: "center" });
+  button?.focus({ preventScroll: true });
+  showToast("先にオンライン総合ランキングへの参加を有効にしてください。");
+  return Boolean(button);
+}
+
 async function refreshOverallLeaderboard() {
   if (useOfflineMarketPreview) {
     overallLeaderboardEntries = [];
@@ -2876,6 +3051,9 @@ async function ensureAuthenticated() {
     }
   } else {
     loadServerRankingAwards().catch((error) => console.error(error));
+  }
+  if (state.leaderboardPublic) {
+    refreshRankingDashboard().catch((error) => console.error(error));
   }
   setOnlineChrome("ONLINE READY");
   render();
@@ -3375,8 +3553,15 @@ function renderSetup() {
             <p>任意で3枚まで追加できます。対戦中は控えも同じ候補として選べ、使わずに終了してもかまいません。</p></div>
           <div class="deck-grid deck-grid-reserve">${reserveSlots}</div>
         </section>
-        <div class="setup-actions">
-          <button class="button button-primary" id="findOpponent" ${ready ? "" : "disabled"}>好みの近い対戦相手を探す</button>
+        <div class="screen-actions setup-actions crown-matchmaking-actions" id="soloCrownMatchmakingActions">
+          ${renderCrownMatchmakingActions({
+            mode: "solo",
+            regularButtonId: "findOpponent",
+            regularLabel: "好みの近い対戦相手を探す",
+            crownButtonId: "soloCrownMatchmaking",
+            ready,
+            busy: state.matchmakingLaunchBusy,
+          })}
         </div>
       </div>
     </div>
@@ -5000,7 +5185,7 @@ function bindSetupEvents() {
   document.querySelectorAll("[data-online-signature-card]").forEach((button) => button.addEventListener("click", () => {
     toggleSignatureCard(button.dataset.onlineSignatureCard);
   }));
-  document.querySelector("#findOpponent")?.addEventListener("click", requestMatchmaking);
+  bindSoloCrownMatchmakingActions();
 }
 
 function isMatchmakingSetupReady() {
@@ -5013,8 +5198,17 @@ function isMatchmakingSetupReady() {
 }
 
 function updateMatchmakingSetupButton() {
+  const disabled = !isMatchmakingSetupReady() || state.matchmakingLaunchBusy;
   const button = document.querySelector("#findOpponent");
-  if (button) button.disabled = !isMatchmakingSetupReady();
+  const crownButton = document.querySelector('[data-crown-matchmaking-action="start"]');
+  if (button) {
+    button.disabled = disabled;
+    button.setAttribute("aria-busy", state.matchmakingLaunchBusy ? "true" : "false");
+  }
+  if (crownButton) {
+    crownButton.disabled = disabled || getRankingDashboardStatus().busy;
+    crownButton.setAttribute("aria-busy", state.matchmakingLaunchBusy ? "true" : "false");
+  }
 }
 
 function normalizeSampleCount(value) {
@@ -5029,21 +5223,122 @@ function getStartingHp(sampleCount) {
   return Math.max(MIN_STARTING_HP, MAX_HP - normalizeSampleCount(sampleCount) * SAMPLE_HP_PENALTY);
 }
 
-function requestMatchmaking() {
+function renderSoloCrownMatchmakingActions() {
+  return renderCrownMatchmakingActions({
+    mode: "solo",
+    regularButtonId: "findOpponent",
+    regularLabel: "好みの近い対戦相手を探す",
+    crownButtonId: "soloCrownMatchmaking",
+    ready: isMatchmakingSetupReady(),
+    busy: state.matchmakingLaunchBusy,
+  });
+}
+
+function bindSoloCrownMatchmakingActions() {
+  document.querySelector("#findOpponent")?.addEventListener("click", () => {
+    requestMatchmaking({ intent: "regular" });
+  });
+  const crownButton = document.querySelector("#soloCrownMatchmaking");
+  crownButton?.addEventListener("click", () => {
+    const action = crownButton.dataset.crownMatchmakingAction;
+    if (action === "start") {
+      requestMatchmaking({ intent: "crown" });
+      return;
+    }
+    if (action === "participation") {
+      focusCrownRankingParticipation("soloOverallRanking");
+      return;
+    }
+    if (action === "retry") {
+      refreshRankingDashboard().catch(handleRecoverableError);
+    }
+  });
+  updateMatchmakingSetupButton();
+}
+
+function updateSoloCrownMatchmakingActions() {
+  if (!active || state.screen !== "setup") return;
+  const container = document.querySelector("#soloCrownMatchmakingActions");
+  if (!container) return;
+  container.innerHTML = renderSoloCrownMatchmakingActions();
+  bindSoloCrownMatchmakingActions();
+}
+
+function crownMatchmakingLaunchIsCurrent(context, { requireSetup = true } = {}) {
+  return Boolean(
+    context
+    && active
+    && state === context.expectedState
+    && context.expectedState.matchmakingLaunchGeneration === context.generation
+    && (!requireSetup || context.expectedState.screen === "setup"),
+  );
+}
+
+function finishCrownMatchmakingLaunch(context) {
+  if (!context
+      || state !== context.expectedState
+      || context.expectedState.matchmakingLaunchGeneration !== context.generation) return;
+  context.expectedState.matchmakingLaunchBusy = false;
+  if (active && context.expectedState.screen === "setup") updateSoloCrownMatchmakingActions();
+}
+
+async function continueRequestedMatchmaking(context) {
+  let crownReady = context.intent !== "crown";
+  try {
+    if (!crownMatchmakingLaunchIsCurrent(context)) return;
+    if (context.intent === "crown") {
+      await startCrownRun();
+      if (!crownMatchmakingLaunchIsCurrent(context)) return;
+      const crownState = getCrownMatchmakingState("solo");
+      if (!["active", "complete"].includes(crownState.phase)) {
+        throw new Error("三戦証明の開始状態を確認できませんでした。");
+      }
+      crownReady = true;
+      showToast(crownState.phase === "complete"
+        ? "本日の三戦証明は完了済みです。通常対戦を探します。"
+        : "三戦証明を開始しました。次の正式対戦から記録します。");
+    }
+    if (!crownMatchmakingLaunchIsCurrent(context)) return;
+    await beginMatchmaking();
+  } catch (error) {
+    if (!crownMatchmakingLaunchIsCurrent(context, { requireSetup: false })) return;
+    console.error(error);
+    showToast(context.intent === "crown" && !crownReady
+      ? (error?.message || "三戦証明を開始できませんでした。通常対戦は開始していません。")
+      : (error?.message || "対戦相手を探せませんでした。もう一度お試しください。"));
+  } finally {
+    finishCrownMatchmakingLaunch(context);
+  }
+}
+
+function requestMatchmaking({ intent = "regular" } = {}) {
+  if (state.matchmakingLaunchBusy || !isMatchmakingSetupReady()) return;
+  const expectedState = state;
+  const context = {
+    intent: intent === "crown" ? "crown" : "regular",
+    expectedState,
+    generation: expectedState.matchmakingLaunchGeneration + 1,
+  };
+  expectedState.matchmakingLaunchGeneration = context.generation;
+  expectedState.matchmakingLaunchBusy = true;
+  updateSoloCrownMatchmakingActions();
   const sampleCount = getDeckSampleCount();
   if (!sampleCount) {
-    beginMatchmaking().catch(handleRecoverableError);
+    continueRequestedMatchmaking(context);
     return;
   }
   const startingHp = getStartingHp(sampleCount);
   if (!sampleHandicapDialog || !sampleHandicapMessage || !confirmSampleMatch) {
     if (window.confirm(`サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦を探しますか？`)) {
-      beginMatchmaking().catch(handleRecoverableError);
-    }
+      continueRequestedMatchmaking(context);
+    } else finishCrownMatchmakingLaunch(context);
     return;
   }
+  pendingSampleMatchmakingLaunch = context;
   sampleHandicapMessage.textContent = `サンプル画像${sampleCount}枚を含むため、最大HP${startingHp}で開始します。対戦相手にもサンプル枚数と開始HPが表示されます。`;
-  confirmSampleMatch.textContent = `HP ${startingHp}で対戦を探す`;
+  confirmSampleMatch.textContent = context.intent === "crown"
+    ? `HP ${startingHp}で三戦証明を始める`
+    : `HP ${startingHp}で対戦を探す`;
   sampleHandicapDialog.returnValue = "";
   sampleHandicapDialog.showModal();
 }
@@ -10087,6 +10382,9 @@ async function leaveToLanding() {
     return;
   }
   const expectedState = state;
+  expectedState.matchmakingLaunchGeneration += 1;
+  expectedState.matchmakingLaunchBusy = false;
+  pendingSampleMatchmakingLaunch = null;
   dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
   const transitionToken = beginOnlineStateTransition(expectedState, "leave");
   await cleanupOnlineResources(false, expectedState);
@@ -10294,6 +10592,16 @@ document.addEventListener("visibilitychange", () => {
     visible: document.visibilityState === "visible",
   });
   cancelUnavailableAutomaticMatchmaking();
+  const currentDashboard = getRankingDashboard();
+  if (document.visibilityState === "visible"
+      && getOverallRankingPreference().enabled
+      && currentDashboard?.rules.dailyKey !== getLeaderboardPeriodInfo("daily").key) {
+    refreshRankingDashboard().catch((error) => console.error(error));
+  }
+});
+
+window.addEventListener("hariai-ranking-dashboard-updated", () => {
+  if (active && state.screen === "setup") updateSoloCrownMatchmakingActions();
 });
 
 window.addEventListener("online", () => {
@@ -10317,9 +10625,10 @@ window.addEventListener("beforeunload", () => {
 sampleHandicapDialog?.addEventListener("close", () => {
   const confirmed = sampleHandicapDialog.returnValue === "confirm";
   sampleHandicapDialog.returnValue = "";
-  if (confirmed && active && state.screen === "setup") {
-    beginMatchmaking().catch(handleRecoverableError);
-  }
+  const context = pendingSampleMatchmakingLaunch;
+  pendingSampleMatchmakingLaunch = null;
+  if (confirmed && crownMatchmakingLaunchIsCurrent(context)) continueRequestedMatchmaking(context);
+  else finishCrownMatchmakingLaunch(context);
 });
 
 finishCutInDialog?.addEventListener("cancel", (event) => {
@@ -10348,6 +10657,9 @@ window.HariaiOnline = {
   getOverallLeaderboardStatus,
   getRankingDashboard,
   getRankingDashboardStatus,
+  getCrownMatchmakingState,
+  renderCrownMatchmakingActions,
+  focusCrownRankingParticipation,
   getLeaderboardStatus,
   getLeaderboardPeriodInfo,
   getLeaderboardLoadedPeriod,

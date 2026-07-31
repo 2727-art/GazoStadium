@@ -16,6 +16,53 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function normalCrownLaunchHarness(online, dependencies) {
+  const isCurrent = sourceBetween(
+    online,
+    "function crownMatchmakingLaunchIsCurrent",
+    "function finishCrownMatchmakingLaunch",
+  );
+  const finish = sourceBetween(
+    online,
+    "function finishCrownMatchmakingLaunch",
+    "async function continueRequestedMatchmaking",
+  );
+  const continueLaunch = sourceBetween(
+    online,
+    "async function continueRequestedMatchmaking",
+    "function requestMatchmaking",
+  );
+  return Function("dependencies", `
+    "use strict";
+    let active = true;
+    let state = dependencies.state;
+    const startCrownRun = dependencies.startCrownRun;
+    const getCrownMatchmakingState = dependencies.getCrownMatchmakingState;
+    const beginMatchmaking = dependencies.beginMatchmaking;
+    const updateSoloCrownMatchmakingActions = dependencies.updateActions;
+    const showToast = dependencies.showToast;
+    const console = { error() {} };
+    ${isCurrent}
+    ${finish}
+    ${continueLaunch}
+    return {
+      continueRequestedMatchmaking,
+      setActive(value) { active = value; },
+      setState(value) { state = value; },
+    };
+  `)(dependencies);
+}
+
 test("frontend reads V2 public boards while private spotlight data stays behind the dashboard action", () => {
   const online = read("online.js");
 
@@ -102,6 +149,173 @@ test("proof run, crown customization, SIGNATURE, and safe X promotion controls a
   assert.match(app, /referrerpolicy="no-referrer"/);
 });
 
+test("normal and strategy setup screens expose one contextual proof-run matchmaking state", () => {
+  const online = read("online.js");
+  const strategy = read("strategy.js");
+
+  const crownState = sourceBetween(
+    online,
+    "function getCrownMatchmakingState",
+    "function renderCrownMatchmakingActions",
+  );
+  assert.match(crownState, /dashboard\.rules\.dailyMatchLimit/);
+  assert.match(crownState, /dashboard\.rules\.dailyKey/);
+  assert.match(crownState, /dashboardDailyKey !== dailyInfo\.key/);
+  assert.match(crownState, /dashboard\.rules\.modes\.includes\(normalizedMode\)/);
+  assert.match(crownState, /run\.key === expectedKey/);
+  assert.match(crownState, /\["complete", "finalized"\]/);
+  assert.match(crownState, /matchCount >= limit/);
+
+  const actions = sourceBetween(
+    online,
+    "function renderCrownMatchmakingActions",
+    "function focusCrownRankingParticipation",
+  );
+  assert.match(actions, /♛ 三戦証明で対戦相手を探す/);
+  assert.match(actions, /三戦証明 \$\{crownState\.nextMatch\}\/\$\{crownState\.limit\}戦目の相手を探す/);
+  assert.match(actions, /♛ 本日の三戦証明 完了/);
+  assert.match(actions, /data-crown-matchmaking-action="participation"/);
+  assert.match(actions, /data-crown-matchmaking-action="retry"/);
+
+  assert.match(online, /id="soloCrownMatchmakingActions"/);
+  assert.match(online, /crownButtonId:\s*"soloCrownMatchmaking"/);
+  assert.match(strategy, /id="strategyCrownMatchmakingActions"/);
+  assert.match(strategy, /crownButtonId:\s*"strategyCrownMatchmaking"/);
+  assert.match(strategy, /regularType:\s*"submit"/);
+  assert.match(strategy, /event\.submitter\?\.dataset\.crownMatchmakingAction === "start"/);
+  const strategyAuth = sourceBetween(
+    strategy,
+    "async function ensureAuthenticated",
+    "function normalizeProfile",
+  );
+  assert.ok(strategyAuth.indexOf("syncStrategyProfileDraft()") < strategyAuth.indexOf("render()"));
+});
+
+test("proof matchmaking starts only after confirmation and never creates a second queue path", () => {
+  const online = read("online.js");
+  const strategy = read("strategy.js");
+  const normalLaunch = sourceBetween(
+    online,
+    "async function continueRequestedMatchmaking",
+    "function requestMatchmaking",
+  );
+  const normalRequest = sourceBetween(
+    online,
+    "function requestMatchmaking",
+    "function bindOnlineRoleplayVoiceField",
+  );
+  const strategySubmit = sourceBetween(
+    strategy,
+    "async function saveProfile",
+    "function isCurrentStrategyMatchmakingGeneration",
+  );
+
+  assert.ok(normalLaunch.indexOf("await startCrownRun()") < normalLaunch.indexOf("await beginMatchmaking()"));
+  assert.match(normalLaunch, /crownMatchmakingLaunchIsCurrent\(context\)/);
+  assert.match(normalLaunch, /\["active", "complete"\]\.includes\(crownState\.phase\)/);
+  assert.doesNotMatch(normalLaunch, /\bset\(ref\(database|\bupdate\(ref\(database/);
+  assert.match(normalRequest, /if \(state\.matchmakingLaunchBusy \|\| !isMatchmakingSetupReady\(\)\) return/);
+  assert.match(normalRequest, /pendingSampleMatchmakingLaunch = context/);
+  assert.match(normalRequest, /if \(window\.confirm[\s\S]*continueRequestedMatchmaking\(context\)/);
+
+  assert.ok(strategySubmit.indexOf("await startRun()") < strategySubmit.indexOf("await beginMatchmaking()"));
+  assert.match(strategySubmit, /strategyMatchmakingLaunchIsCurrent\(context\)/);
+  assert.match(strategySubmit, /if \(state\.matchmakingLaunchBusy\) return/);
+  assert.match(strategySubmit, /context\.expectedState\.screen === "matching"[\s\S]*await cancelMatching\(\)/);
+  assert.doesNotMatch(strategySubmit, /\bset\(ref\(database|\bupdate\(ref\(database/);
+
+  assert.match(online, /matchmakingLaunchGeneration/);
+  assert.match(strategy, /matchmakingLaunchGeneration/);
+  assert.match(online, /pendingSampleMatchmakingLaunch = null/);
+  assert.match(online, /confirmed && crownMatchmakingLaunchIsCurrent\(context\)/);
+  assert.match(online, /currentDashboard\?\.rules\.dailyKey !== getLeaderboardPeriodInfo\("daily"\)\.key/);
+});
+
+test("proof matchmaking waits for declaration, blocks the queue on rejection, and ignores late completion", async () => {
+  const online = read("online.js");
+
+  {
+    const start = deferred();
+    const state = {
+      screen: "setup",
+      matchmakingLaunchBusy: true,
+      matchmakingLaunchGeneration: 1,
+    };
+    let queueStarts = 0;
+    const harness = normalCrownLaunchHarness(online, {
+      state,
+      startCrownRun: () => start.promise,
+      getCrownMatchmakingState: () => ({ phase: "active" }),
+      beginMatchmaking: async () => { queueStarts += 1; },
+      updateActions() {},
+      showToast() {},
+    });
+    const launch = harness.continueRequestedMatchmaking({
+      intent: "crown",
+      expectedState: state,
+      generation: 1,
+    });
+    await Promise.resolve();
+    assert.equal(queueStarts, 0);
+    start.resolve();
+    await launch;
+    assert.equal(queueStarts, 1);
+    assert.equal(state.matchmakingLaunchBusy, false);
+  }
+
+  {
+    const state = {
+      screen: "setup",
+      matchmakingLaunchBusy: true,
+      matchmakingLaunchGeneration: 2,
+    };
+    let queueStarts = 0;
+    const harness = normalCrownLaunchHarness(online, {
+      state,
+      startCrownRun: async () => { throw new Error("rejected"); },
+      getCrownMatchmakingState: () => ({ phase: "idle" }),
+      beginMatchmaking: async () => { queueStarts += 1; },
+      updateActions() {},
+      showToast() {},
+    });
+    await harness.continueRequestedMatchmaking({
+      intent: "crown",
+      expectedState: state,
+      generation: 2,
+    });
+    assert.equal(queueStarts, 0);
+    assert.equal(state.matchmakingLaunchBusy, false);
+  }
+
+  {
+    const start = deferred();
+    const state = {
+      screen: "setup",
+      matchmakingLaunchBusy: true,
+      matchmakingLaunchGeneration: 3,
+    };
+    let queueStarts = 0;
+    const harness = normalCrownLaunchHarness(online, {
+      state,
+      startCrownRun: () => start.promise,
+      getCrownMatchmakingState: () => ({ phase: "active" }),
+      beginMatchmaking: async () => { queueStarts += 1; },
+      updateActions() {},
+      showToast() {},
+    });
+    const launch = harness.continueRequestedMatchmaking({
+      intent: "crown",
+      expectedState: state,
+      generation: 3,
+    });
+    await Promise.resolve();
+    harness.setActive(false);
+    start.resolve();
+    await launch;
+    assert.equal(queueStarts, 0);
+  }
+});
+
 test("ranking V2 styles and browser cache keys are wired", () => {
   const styles = read("styles.css");
   const html = read("index.html");
@@ -123,4 +337,10 @@ test("ranking V2 styles and browser cache keys are wired", () => {
   assert.match(html, /styles\.css\?v=[^"]*crown-circuit-v2/);
   assert.match(html, /app\.js\?v=[^"]*crown-circuit-v2/);
   assert.match(html, /online\.js\?v=[^"]*crown-circuit-v2/);
+  assert.match(styles, /\.crown-matchmaking-actions/);
+  assert.match(styles, /\.button-crown-proof/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.crown-matchmaking-status/);
+  assert.match(html, /styles\.css\?v=[^"]*crown-matchmaking-v1/);
+  assert.match(html, /strategy\.js\?v=[^"]*crown-matchmaking-v1/);
+  assert.match(html, /online\.js\?v=[^"]*crown-matchmaking-v1/);
 });
