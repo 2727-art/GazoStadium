@@ -68,6 +68,10 @@ test("crown circuit Firestore state is Admin-only", () => {
     firestoreRules,
     /match \/crownCircuitPeriods\/\{periodKey\}\s*\{\s*allow read, write: if false;[\s\S]*match \/entries\/\{uid\}\s*\{\s*allow read, write: if false;/,
   );
+  assert.match(
+    firestoreRules,
+    /match \/crownMonthlyAchievementStats\/\{uid\}\s*\{\s*allow read, write: if false;/,
+  );
 });
 
 test("public crown mirrors are read-only while UID indexes are owner-only", () => {
@@ -216,6 +220,67 @@ test("period finalization keeps awards serializable and respects expiry boundari
   assert.match(catchUp, /monthlyKey = previousMonthlyPeriodKey\(monthlyKey\)/);
   assert.match(catchUp, /dailyKeys[\s\S]*weeklyKeys[\s\S]*monthlyKeys/);
   assert.doesNotMatch(catchUp, /index\s*\*\s*32\s*\*\s*dayMs/);
+});
+
+test("monthly Crown achievements are recorded idempotently before finalization and backfilled by revision", () => {
+  const server = read("functions/index.js");
+  const aggregation = sourceBetween(
+    server,
+    "async function aggregateFinalizedCrownEntries",
+    "async function finalizeCrownCircuitPeriod",
+  );
+  assert.match(aggregation, /targetPeriod === "monthly"[\s\S]*recordCrownMonthlyParticipations/);
+
+  const participation = sourceBetween(
+    server,
+    "async function recordCrownMonthlyParticipations",
+    "async function aggregateFinalizedCrownEntries",
+  );
+  assert.match(participation, /firestore\.runTransaction[\s\S]*addCrownMonthlyParticipation/);
+
+  const reconciliation = sourceBetween(
+    server,
+    "async function reconcileCrownMonthlyAchievements",
+    "async function recordCrownMonthlyParticipations",
+  );
+  assert.match(reconciliation, /firestore\.runTransaction[\s\S]*finalizeCrownMonthlyAchievement/);
+
+  const finalization = sourceBetween(
+    server,
+    "async function finalizeCrownCircuitPeriod",
+    "async function finalizeClosedCrownCircuitPeriods",
+  );
+  assert.match(
+    finalization,
+    /alreadyFinalized[\s\S]*achievementRevision[\s\S]*reconcileCrownMonthlyAchievements/,
+  );
+  assert.match(
+    finalization,
+    /await commitCrownCircuitWrites\(writes\);[\s\S]*period === "monthly"[\s\S]*reconcileCrownMonthlyAchievements[\s\S]*status: "finalized"/,
+  );
+  assert.match(finalization, /achievementRevision: CROWN_MONTHLY_ACHIEVEMENT_REVISION/);
+  assert.match(server, /const crownMonthlyStats = normalizeCrownMonthlyStats\(crownMonthlyStatsSnapshot\.data\(\)\)/);
+});
+
+test("achievement showcase refreshes propagate to active Crown Circuit entries", () => {
+  const server = read("functions/index.js");
+  const sync = sourceBetween(
+    server,
+    "async function syncAchievementPublicSurfaces",
+    "async function syncCurrentServerRankingMetadata",
+  );
+  assert.match(sync, /await Promise\.all\(updates\);[\s\S]*syncCurrentCrownCircuitAchievementShowcase/);
+  assert.doesNotMatch(sync, /syncCurrentCrownCircuitMetadata/);
+  const crownShowcaseSync = sourceBetween(
+    server,
+    "async function syncCurrentCrownCircuitAchievementShowcase",
+    "async function syncRankingSpotlightConsent",
+  );
+  assert.match(crownShowcaseSync, /achievementShowcase: achievementShowcase \|\| FieldValue\.delete\(\)/);
+  assert.match(crownShowcaseSync, /publicRef\.transaction/);
+  assert.doesNotMatch(crownShowcaseSync, /name:|rating:|commentsEnabled:|crownTheme:|xHandle:|crownSignatureId:/);
+  const initialize = sourceBetween(server, "async function initializeEconomy", "async function claimDaily");
+  assert.match(initialize, /syncAchievementPublicSurfaces\(uid, profile\)/);
 });
 
 test("live Crown metadata and X consent stay synchronized without private history links", () => {

@@ -1643,6 +1643,18 @@
     }) || "";
     const periodInfo = rankingPeriodInfo();
     const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
+    const monthlyOpening = window.HariaiOnline?.getCrownMonthlyOpeningStatus?.() || null;
+    const monthlyOpeningPending = status === "ready"
+      && periodInfo.period === "monthly"
+      && periodInfo.crownCircuit
+      && monthlyOpening?.pending === true;
+    const monthlyOpeningNotice = monthlyOpeningPending
+      ? `<aside class="crown-monthly-opening" aria-label="月間王座の開幕状況">
+          <div><span>MONTHLY CROWN</span><strong>月間王座 開幕準備中</strong><p>月間王座は、同じプレイヤーが成立ウィークリーを${Number(monthlyOpening.requiredQualifyingWeeks || 2)}週そろえると開幕します。</p></div>
+          <div class="crown-monthly-opening-progress"><span>最高進捗</span><strong>${Number(monthlyOpening.highestQualifyingWeeks || 0)}<small> / ${Number(monthlyOpening.requiredQualifyingWeeks || 2)}週</small></strong></div>
+          <p class="crown-monthly-opening-note">${monthlyOpening.earliestOpeningAt ? `最短開幕目安 ${escapeHtml(rankingResetLabel(monthlyOpening.earliestOpeningAt))}以降。` : "同じプレイヤーの成立ウィークリーが2週そろった時点で開幕します。"} 各ウィークリーは成立デイリー2日以上で確定し、参加状況や集計処理により開幕は後ろへ延びる場合があります。</p>
+        </aside>`
+      : "";
     const rows = entries.length ? entries.map((entry, index) => {
       const entryId = String(entry.entryId || "");
       const expanded = expandedRankingEntryId === entryId;
@@ -1707,7 +1719,7 @@
     }).join("") : status === "error"
       ? `<div class="ranking-empty">ランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="rankingRetryButton">もう一度取得</button></div>`
       : status === "ready"
-        ? `<div class="ranking-empty">${periodInfo.crownCircuit ? "この期間には、まだ成立した王座証明がありません。通常型・戦略型1on1の証明から最初の席が生まれます。" : "この期間にはまだ対戦記録がありません。"}</div>`
+        ? `<div class="ranking-empty">${monthlyOpeningPending ? "まだ月間へ昇格したウィークリーはありません。デイリーの証明から最初の進捗が生まれます。" : periodInfo.crownCircuit ? "この期間には、まだ成立した王座証明がありません。通常型・戦略型1on1の証明から最初の席が生まれます。" : "この期間にはまだ対戦記録がありません。"}</div>`
         : `<div class="ranking-empty">ランキングを取得しています…</div>`;
     const periodScoreCopy = periodInfo.crownCircuit
       ? periodInfo.period === "daily"
@@ -1747,6 +1759,7 @@
           <strong>${escapeHtml(trustTitle)}</strong>
           <span>${escapeHtml(trustCopy)}</span>
         </div>
+        ${monthlyOpeningNotice}
         <div class="ranking-list" aria-label="期間王座ランキング">${rows}</div>
         <p class="ranking-casual-note">${periodInfo.crownCircuit ? "デイリーは毎日3戦で完結。週間は成立したデイリーの上位3日、月間は成立した週間の上位3週だけを採用します。参加しない日は減点されず、総合RATEもリセットされません。" : "移行前に確定した期間スコアは当時の記録として保持します。新しい集計対象は通常型・戦略型1on1だけです。"} BEYONDはRATE 1400以上＋月間10位以内の名誉クラスです。</p>
       </section>

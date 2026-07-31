@@ -7,7 +7,9 @@ const test = require("node:test");
 const vm = require("node:vm");
 const {
   ACHIEVEMENT_DEFINITIONS,
+  CROWN_MONTHLY_ACHIEVEMENT_START_KEY,
   addBattleMatch,
+  addCrownMonthlyParticipation,
   addMarketTransaction,
   deriveBattleStatsFromPeriods,
   effectiveShowcase,
@@ -15,12 +17,15 @@ const {
   normalizeAchievementProfile,
   normalizeAiTextTrainingStats,
   normalizeBattleStats,
+  normalizeCrownMonthlyStats,
   normalizeFleaStats,
   normalizeMarketStats,
   normalizeTrainingStats,
   publicAchievementProfile,
+  finalizeCrownMonthlyAchievement,
   unlockAchievements,
 } = require("../achievements");
+const { CROWN_CIRCUIT_CUTOVER_KEYS } = require("../crown-circuit");
 
 const root = path.resolve(__dirname, "..", "..");
 
@@ -36,13 +41,126 @@ test("battle thresholds keep early levels stable while opening a level-ten ceili
   assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "battle_solo_100").level, 5);
 });
 
-test("achievement conditions never depend on wins, rating, rank, or AnjuPay market totals", () => {
+test("generic progression avoids wins, rating, raw rank, and AnjuPay totals while Crown uses finalized counters", () => {
   const conditionKeys = new Set(
     ACHIEVEMENT_DEFINITIONS.map((definition) => definition.condition?.key).filter(Boolean),
   );
   for (const forbidden of ["wins", "rating", "rank", "grossSales", "spent", "bestSale", "highestPurchase"]) {
     assert.equal(conditionKeys.has(forbidden), false, `${forbidden} must not be an achievement condition`);
   }
+});
+
+test("monthly Crown achievements start in August and participation receipts are idempotent", () => {
+  assert.equal(CROWN_MONTHLY_ACHIEVEMENT_START_KEY, "2026-08");
+  assert.equal(CROWN_MONTHLY_ACHIEVEMENT_START_KEY, CROWN_CIRCUIT_CUTOVER_KEYS.monthly);
+  const july = addCrownMonthlyParticipation(null, "2026-07", 100);
+  assert.equal(july.participations, 0);
+  let stats = addCrownMonthlyParticipation(july, "2026-08", 200);
+  stats = addCrownMonthlyParticipation(stats, "2026-08", 300);
+  assert.equal(stats.participations, 1);
+  assert.deepEqual(
+    eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+      .filter((id) => id.startsWith("crown_monthly_")),
+    ["crown_monthly_participated_1"],
+  );
+});
+
+test("a lone monthly opening qualifies without granting placement or champion achievements", () => {
+  let stats = finalizeCrownMonthlyAchievement(null, {
+    key: "2026-08",
+    rank: 1,
+    participantCount: 1,
+    finalizedAt: 1000,
+  });
+  stats = addCrownMonthlyParticipation(stats, "2026-09", 2000);
+  stats = addCrownMonthlyParticipation(stats, "2026-08", 3000);
+  assert.deepEqual({
+    participations: stats.participations,
+    qualifiedMonths: stats.qualifiedMonths,
+    top10Months: stats.top10Months,
+    top3Months: stats.top3Months,
+    championMonths: stats.championMonths,
+  }, {
+    participations: 2,
+    qualifiedMonths: 1,
+    top10Months: 0,
+    top3Months: 0,
+    championMonths: 0,
+  });
+  assert.deepEqual(
+    eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+      .filter((id) => id.startsWith("crown_monthly_")),
+    ["crown_monthly_participated_1", "crown_monthly_qualified_1"],
+  );
+  assert.equal(stats.periods["2026-08"].finalized, true);
+  assert.equal(stats.periods["2026-08"].rank, 1);
+});
+
+test("three monthly Crown results unlock repeat milestones without requiring a championship", () => {
+  let stats = null;
+  for (const key of ["2026-08", "2026-09", "2026-10"]) {
+    stats = finalizeCrownMonthlyAchievement(stats, {
+      key,
+      rank: 10,
+      participantCount: 20,
+      finalizedAt: Date.parse(`${key}-28T00:00:00+09:00`),
+    });
+  }
+  const ids = eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+    .filter((id) => id.startsWith("crown_monthly_"));
+  assert.equal(ids.includes("crown_monthly_qualified_3"), true);
+  assert.equal(ids.includes("crown_monthly_top10_3"), true);
+  assert.equal(ids.includes("crown_monthly_top3_3"), false);
+  assert.equal(ids.includes("crown_monthly_champion_1"), false);
+});
+
+test("monthly Crown milestones reach the tenth championship", () => {
+  let stats = null;
+  const finalize = (key, rank) => {
+    stats = finalizeCrownMonthlyAchievement(stats, {
+      key,
+      rank,
+      participantCount: 20,
+      finalizedAt: Date.parse(`${key}-28T00:00:00+09:00`),
+    });
+  };
+  finalize("2026-08", 10);
+  finalize("2026-09", 3);
+  finalize("2026-10", 1);
+  let ids = eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+    .filter((id) => id.startsWith("crown_monthly_"));
+  assert.deepEqual(ids, [
+    "crown_monthly_participated_1",
+    "crown_monthly_qualified_1",
+    "crown_monthly_top10_1",
+    "crown_monthly_top3_1",
+    "crown_monthly_champion_1",
+    "crown_monthly_qualified_3",
+    "crown_monthly_top10_3",
+  ]);
+  finalize("2026-11", 2);
+  finalize("2026-12", 1);
+  finalize("2027-01", 1);
+  ids = eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+    .filter((id) => id.startsWith("crown_monthly_"));
+  assert.equal(ids.includes("crown_monthly_top3_3"), true);
+  assert.equal(ids.includes("crown_monthly_champion_3"), true);
+  assert.equal(ids.includes("crown_monthly_champion_10"), false);
+  for (const key of ["2027-02", "2027-03", "2027-04", "2027-05", "2027-06", "2027-07", "2027-08"]) {
+    finalize(key, 1);
+  }
+  assert.equal(stats.championMonths, 10);
+  ids = eligibleAchievementIds({ crownMonthlyStats: stats, scope: "battle" })
+    .filter((id) => id.startsWith("crown_monthly_"));
+  assert.equal(ids.at(-1), "crown_monthly_champion_10");
+  const replayed = finalizeCrownMonthlyAchievement(stats, {
+    key: "2027-08",
+    rank: 1,
+    participantCount: 20,
+    finalizedAt: Date.parse("2027-08-28T00:00:00+09:00"),
+  });
+  assert.equal(replayed.championMonths, 10);
+  assert.deepEqual(normalizeCrownMonthlyStats(replayed), replayed);
 });
 
 test("legacy verified monthly records backfill totals without inventing a loss streak", () => {
@@ -406,6 +524,7 @@ test("all active progression families extend in place to level ten while retired
     battle_losses: [1, 10, 30, 100, 300, 1000, 2000, 3000, 5000, 10000],
     battle_loss_streak: [3, 5, 8, 12, 16, 20, 25, 30, 40, 50],
     battle_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
+    crown_monthly: [1, 1, 1, 1, 1, 3, 3, 3, 3, 10],
     training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
     training_workouts: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
     training_minutes: [1, 10, 30, 60, 300, 1000, 3000, 10000, 30000, 60000],
@@ -525,7 +644,9 @@ test("the final achievement preview and cache marker cover the newly opened fami
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const online = fs.readFileSync(path.join(root, "online.js"), "utf8");
   const marker = "all-active-achievements-lv10-v1";
+  const crownMarker = "crown-monthly-achievements-v1";
   assert.equal((html.match(new RegExp(marker, "g")) || []).length, 2);
+  assert.equal((html.match(new RegExp(crownMarker, "g")) || []).length, 4);
   assert.match(html, new RegExp(`achievements\\.js\\?v=[^"]*${marker}`));
   assert.match(html, new RegExp(`online\\.js\\?v=[^"]*${marker}`));
   for (const asset of ["styles.css", "app.js", "flea-market.js"]) {
@@ -541,6 +662,7 @@ test("the final achievement preview and cache marker cover the newly opened fami
     "market_both_3000",
     "market_days_1000",
     "market_partners_3000",
+    "crown_monthly_champion_10",
   ]) assert.match(online, new RegExp(id), id);
 });
 
@@ -637,6 +759,7 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "battle_losses",
     "battle_loss_streak",
     "battle_days",
+    "crown_monthly",
     "training_sessions",
     "training_workouts",
     "training_minutes",
@@ -691,6 +814,8 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "いろいろな人へ応援が届くと解除",
     "AnjuPayフリマ・一日棚",
     "AnjuPayフリマ・ご縁",
+    "月間王座",
+    "2026年8月以降の検証済み月間王座で刻む、参加・入賞・戴冠の記録",
     "連続日数ではなく、自分のペースで一品を言葉にした日々の記録",
     "売上額や順位ではなく、一品が届いた回数と出会いの記録",
   ]) {
@@ -700,6 +825,7 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     unlocked: {
       battle_total_30000: 100,
       market_seller_10000: 99,
+      crown_monthly_champion_10: 98,
     },
   });
   assert.match(finalCollectionHtml, /achievement-level-10 is-final/);
