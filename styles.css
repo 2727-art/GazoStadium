@@ -1715,6 +1715,163 @@ button:disabled {
   white-space: nowrap;
 }
 
+.training-lights-card {
+  position: relative;
+  max-width: 780px;
+  min-height: 132px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 18px 20px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 190, 104, 0.4);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 9% 48%, rgba(255, 180, 84, 0.18), transparent 28%),
+    radial-gradient(circle at 87% 18%, rgba(255, 115, 99, 0.1), transparent 34%),
+    linear-gradient(135deg, rgba(63, 40, 42, 0.86), rgba(23, 28, 43, 0.95));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 16px 38px rgba(0, 0, 0, 0.17);
+}
+
+.training-lights-card::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(100deg, rgba(255, 213, 150, 0.05), transparent 38% 68%, rgba(255, 127, 112, 0.04));
+  content: "";
+  pointer-events: none;
+}
+
+.training-lights-visual,
+.training-lights-copy,
+.training-lights-start {
+  position: relative;
+  z-index: 1;
+}
+
+.training-lights-visual {
+  min-width: 108px;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.training-lights-visual > small {
+  color: #ffc881;
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.17em;
+  white-space: nowrap;
+}
+
+.training-lights-dots {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.training-lights-dots i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(255, 240, 207, 0.68);
+  border-radius: 50%;
+  background: #ffb45f;
+  box-shadow: 0 0 8px rgba(255, 166, 74, 0.78), 0 0 22px rgba(255, 130, 78, 0.42);
+  animation: training-light-breathe 3.4s ease-in-out infinite;
+  animation-delay: calc(var(--training-light-index, 0) * -0.38s);
+}
+
+.training-lights-dots b {
+  color: #ffd49a;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.training-lights-card.is-checking .training-lights-dots i {
+  opacity: 0.38;
+  animation-name: training-light-checking;
+}
+
+.training-lights-card.is-recent .training-lights-dots i {
+  opacity: 0.48;
+  background: #d69a62;
+  box-shadow: 0 0 11px rgba(255, 171, 88, 0.34);
+  animation: none;
+}
+
+.training-lights-card.is-quiet .training-lights-dots i {
+  opacity: 0.24;
+  background: transparent;
+  box-shadow: inset 0 0 7px rgba(255, 189, 112, 0.3);
+  animation: none;
+}
+
+.training-lights-copy {
+  min-width: 0;
+}
+
+.training-lights-copy > span {
+  display: block;
+  margin-bottom: 3px;
+  color: #ffc477;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.training-lights-copy > strong {
+  display: block;
+  color: #fff4e3;
+  font-family: "Zen Kaku Gothic New", "Noto Sans JP", sans-serif;
+  font-size: clamp(0.92rem, 1.7vw, 1.12rem);
+  line-height: 1.45;
+}
+
+.training-lights-copy > p {
+  margin: 4px 0 0;
+  color: #ffd7b0;
+  font-size: 0.77rem;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.training-lights-copy > small {
+  display: block;
+  margin-top: 6px;
+  color: #9ea3b0;
+  font-size: 0.6rem;
+  line-height: 1.45;
+}
+
+.button.training-lights-start {
+  min-height: 48px;
+  padding-inline: 16px;
+  border-color: rgba(255, 211, 145, 0.72);
+  color: #2a1720;
+  background: linear-gradient(135deg, #ffd591, #ffad77);
+  box-shadow: 0 10px 25px rgba(255, 132, 82, 0.17);
+  white-space: nowrap;
+}
+
+.button.training-lights-start:hover {
+  border-color: #fff2d9;
+  background: linear-gradient(135deg, #ffe1ad, #ffba89);
+}
+
+@keyframes training-light-breathe {
+  0%, 100% { opacity: 0.62; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+@keyframes training-light-checking {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.68; }
+}
+
 .hero-utility-button {
   grid-column: span 4;
   border-radius: 999px;
@@ -8098,6 +8255,7 @@ button:disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .matching-pulse i { animation: none; }
+  .training-lights-dots i { animation: none; }
 }
 
 @keyframes screen-in {
@@ -8312,6 +8470,21 @@ button:disabled {
 
   .hero-actions {
     grid-template-columns: 1fr;
+  }
+
+  .training-lights-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 13px;
+    padding: 17px 15px;
+  }
+
+  .training-lights-visual {
+    min-width: 82px;
+  }
+
+  .training-lights-start {
+    width: 100%;
+    grid-column: 1 / -1;
   }
 
   .hero-mode-button,

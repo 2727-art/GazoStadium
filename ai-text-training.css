@@ -3038,6 +3038,68 @@
   backdrop-filter: blur(15px);
 }
 
+.ai-text-training-companion {
+  z-index: 4;
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 190, 104, 0.25);
+  border-radius: 14px;
+  color: #d6dae4;
+  background: rgba(30, 25, 31, 0.86);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.ai-text-training-companion > i,
+.ai-text-training-light-result > i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffb45f;
+  box-shadow: 0 0 9px rgba(255, 168, 76, 0.7), 0 0 18px rgba(255, 130, 78, 0.3);
+  animation: ai-text-training-light-breathe 3.4s ease-in-out infinite;
+}
+
+.ai-text-training-companion > span {
+  color: #ffc681;
+  font-size: 0.48rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.ai-text-training-companion > p {
+  min-width: 0;
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 780;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.ai-text-training-companion.is-paused > i {
+  opacity: 0.35;
+  background: transparent;
+  animation: none;
+}
+
+.ai-text-training-zone-arena .ai-text-training-companion {
+  grid-row: 2;
+}
+
+.ai-text-training-safety-controls.ai-text-training-zone-safety-controls {
+  grid-row: 3;
+}
+
+.ai-text-training-zone-arena .ai-text-training-system-safety {
+  grid-row: 4;
+}
+
 .ai-text-training-safety-controls .button {
   width: 100%;
   min-height: 50px;
@@ -3089,6 +3151,41 @@
 
 .ai-text-training-result > span {
   color: var(--ai-text-training-green);
+}
+
+.ai-text-training-light-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 3px 9px;
+  margin: 18px 0 4px;
+  padding: 13px 15px;
+  border: 1px solid rgba(255, 190, 104, 0.28);
+  border-radius: 16px;
+  color: #f4e7d8;
+  background: linear-gradient(135deg, rgba(255, 174, 91, 0.09), rgba(255, 109, 104, 0.04));
+  text-align: left;
+}
+
+.ai-text-training-light-result > i {
+  grid-row: 1 / span 2;
+}
+
+.ai-text-training-light-result > strong {
+  color: #ffe2b9;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.ai-text-training-light-result > span {
+  color: #aeb4c2;
+  font-size: 0.63rem;
+  line-height: 1.5;
+}
+
+@keyframes ai-text-training-light-breathe {
+  0%, 100% { opacity: 0.6; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.12); }
 }
 
 .ai-text-training-result.is-safety {

@@ -47,6 +47,8 @@ const AI_TEXT_TRAINING_ACTIONS = Object.freeze([
   "resume_use",
   "finish_use",
   "begin_achievement_session",
+  "heartbeat_achievement_session",
+  "close_achievement_presence",
   "finish_achievement_session",
   "save_profile",
   "save_cosmetics",
@@ -98,6 +100,10 @@ const AI_TEXT_TRAINING_ACHIEVEMENT_ROUND_SECONDS = Object.freeze([
 const AI_TEXT_TRAINING_ACHIEVEMENT_ACTIVE_SECONDS_TOLERANCE = 1;
 const AI_TEXT_TRAINING_ACHIEVEMENT_BEGIN_COOLDOWN_MS = 30 * 1_000;
 const AI_TEXT_TRAINING_ACHIEVEMENT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
+const AI_TEXT_TRAINING_PRESENCE_FRESHNESS_MS = 45 * 1_000;
+const AI_TEXT_TRAINING_RECENT_ACTIVITY_WINDOW_MS = 30 * 60 * 1_000;
+const AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS = 5 * 1_000;
+const AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT = 100;
 const FINISH_OUTCOMES = Object.freeze(new Set([
   "completed",
   "safety_stopped",
@@ -109,6 +115,39 @@ const HIGH_RISK_REPORT_REASONS = Object.freeze(new Set([
   "privacy",
 ]));
 const VERIFIED_BUYER_QUARANTINE_THRESHOLD = 3;
+
+function createAiTextTrainingPublicStatsLoader({
+  load,
+  now = Date.now,
+  ttlMs = AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS,
+}) {
+  if (typeof load !== "function" || typeof now !== "function") {
+    throw new TypeError("AI text training public stats loader dependencies are invalid.");
+  }
+  const cacheTtlMs = Math.max(0, Number(ttlMs) || 0);
+  let cached = null;
+  let inFlight = null;
+  return async function loadPublicStats() {
+    const startedAt = Math.max(0, Number(now()) || 0);
+    if (cached && cached.expiresAt > startedAt) return cached.value;
+    if (inFlight) return inFlight;
+    const pending = Promise.resolve()
+      .then(() => load(startedAt))
+      .then((value) => {
+        cached = {
+          expiresAt: startedAt + cacheTtlMs,
+          value,
+        };
+        return value;
+      });
+    inFlight = pending;
+    try {
+      return await pending;
+    } finally {
+      if (inFlight === pending) inFlight = null;
+    }
+  };
+}
 
 function createAiTextTrainingService(deps) {
   if (!deps || typeof deps !== "object") {
@@ -713,12 +752,14 @@ function createAiTextTrainingService(deps) {
             "同じ操作IDが別のトレーニング条件で使われています。画面を読み直してください。",
           );
         }
-        if (!saved.deleteAt) {
-          transaction.set(reference, {
-            deleteAt: achievementSessionDeleteAt(saved.startedAt, now),
-          }, { merge: true });
-        }
         const savedStartedAt = safeInteger(saved.startedAt);
+        const sessionUpdate = {};
+        if (!saved.deleteAt) {
+          sessionUpdate.deleteAt = achievementSessionDeleteAt(saved.startedAt, now);
+        }
+        if (Reflect.ownKeys(sessionUpdate).length) {
+          transaction.set(reference, sessionUpdate, { merge: true });
+        }
         if (savedStartedAt > safeInteger(
           statsSnapshot.get("lastAchievementSessionStartedAt"),
         )) {
@@ -730,7 +771,7 @@ function createAiTextTrainingService(deps) {
           }, { merge: true });
         }
         result = {
-          session: publicAchievementSession(saved),
+          session: publicAchievementSession({ ...saved, ...sessionUpdate }),
           idempotent: true,
         };
         return;
@@ -753,14 +794,24 @@ function createAiTextTrainingService(deps) {
         const previousReference = achievementSessionRef(previousSessionId);
         const previousSnapshot = await transaction.get(previousReference);
         if (previousSnapshot.exists
-            && previousSnapshot.get("uid") === uid
-            && previousSnapshot.get("status") === "active") {
-          transaction.update(previousReference, {
-            status: "exited",
-            outcome: "exited",
-            endedAt: now,
-            supersededAt: now,
-          });
+            && previousSnapshot.get("uid") === uid) {
+          const previousStatus = String(previousSnapshot.get("status") || "");
+          const previousClosedAt = safeInteger(previousSnapshot.get("presenceClosedAt"));
+          const previousUpdate = {
+            ...(previousStatus === "active" ? {
+              status: "exited",
+              outcome: "exited",
+              endedAt: now,
+              supersededAt: now,
+            } : {}),
+            ...(!previousClosedAt ? {
+              presenceClosedAt: now,
+              lastSeenAt: now,
+            } : {}),
+          };
+          if (Reflect.ownKeys(previousUpdate).length) {
+            transaction.update(previousReference, previousUpdate);
+          }
         }
       }
       const stored = {
@@ -779,6 +830,8 @@ function createAiTextTrainingService(deps) {
         activeSeconds: 0,
         startedAt: now,
         endedAt: 0,
+        lastSeenAt: now,
+        presenceClosedAt: 0,
         deleteAt: achievementSessionDeleteAt(now, now),
       };
       transaction.set(statsReference, {
@@ -794,11 +847,148 @@ function createAiTextTrainingService(deps) {
         sessionId,
         startedAt: now,
         expiresAt: now + AI_TEXT_TRAINING_ACHIEVEMENT_SESSION_TTL_MS,
+        lastSeenAt: 0,
+        presenceClosedAt: 0,
+        deleteAt: achievementSessionDeleteAt(now, now),
       });
       result = {
         session: publicAchievementSession(stored),
         idempotent: false,
       };
+    });
+    return result;
+  }
+
+  async function heartbeatAchievementSession(uid, data) {
+    requireUid(uid);
+    const allowedKeys = new Set(["action", "sessionId", "active"]);
+    if (!data || typeof data !== "object" || Array.isArray(data)
+        || Reflect.ownKeys(data).some((key) => !allowedKeys.has(key))
+        || typeof data.active !== "boolean") {
+      throw httpsError("invalid-argument", "実績記録の継続状態を確認してください。");
+    }
+    let sessionId;
+    try {
+      sessionId = normalizeAiTextTrainingDocumentId(data.sessionId, "実績記録");
+    } catch (error) {
+      throw mapHelperError(error);
+    }
+    const active = data.active;
+    const reference = achievementSessionRef(sessionId);
+    const activeReference = activeAchievementSessionRef(uid);
+    let result;
+    await firestore.runTransaction(async (transaction) => {
+      const [snapshot, activeSnapshot] = await Promise.all([
+        transaction.get(reference),
+        transaction.get(activeReference),
+      ]);
+      if (!snapshot.exists || snapshot.get("uid") !== uid) {
+        throw httpsError("not-found", "実績記録を確認できませんでした。");
+      }
+      if (!["active", "completed"].includes(snapshot.get("status"))) {
+        throw httpsError("failed-precondition", "終了した実績記録は更新できません。");
+      }
+      if (safeInteger(snapshot.get("presenceClosedAt"))) {
+        throw httpsError("failed-precondition", "実績記録の灯りは終了しています。");
+      }
+      const now = currentTime();
+      const startedAt = safeInteger(snapshot.get("startedAt"));
+      if (!startedAt
+          || startedAt > now
+          || now - startedAt >= AI_TEXT_TRAINING_ACHIEVEMENT_SESSION_TTL_MS) {
+        throw httpsError("failed-precondition", "実績記録の有効期限が切れています。");
+      }
+      if (!activeSnapshot.exists
+          || activeSnapshot.get("sessionId") !== sessionId
+          || safeInteger(activeSnapshot.get("presenceClosedAt"))) {
+        throw httpsError("failed-precondition", "現在の実績記録が切り替わっています。");
+      }
+      transaction.update(reference, { lastSeenAt: now });
+      transaction.set(activeReference, {
+        schemaVersion: AI_TEXT_TRAINING_SCHEMA_VERSION,
+        uid,
+        sessionId,
+        startedAt,
+        expiresAt: startedAt + AI_TEXT_TRAINING_ACHIEVEMENT_SESSION_TTL_MS,
+        lastSeenAt: active ? now : 0,
+        presenceClosedAt: 0,
+        deleteAt: achievementSessionDeleteAt(startedAt, now),
+      }, { merge: true });
+      result = { active, updatedAt: now };
+    });
+    return result;
+  }
+
+  async function closeAchievementPresence(uid, data) {
+    requireUid(uid);
+    const allowedKeys = new Set(["action", "sessionId"]);
+    if (!data || typeof data !== "object" || Array.isArray(data)
+        || Reflect.ownKeys(data).some((key) => !allowedKeys.has(key))) {
+      throw httpsError("invalid-argument", "実績記録の灯りを終了する条件を確認してください。");
+    }
+    let sessionId;
+    try {
+      sessionId = normalizeAiTextTrainingDocumentId(data.sessionId, "実績記録");
+    } catch (error) {
+      throw mapHelperError(error);
+    }
+    const reference = achievementSessionRef(sessionId);
+    const activeReference = activeAchievementSessionRef(uid);
+    let result;
+    await firestore.runTransaction(async (transaction) => {
+      const [snapshot, activeSnapshot] = await Promise.all([
+        transaction.get(reference),
+        transaction.get(activeReference),
+      ]);
+      if (!snapshot.exists || snapshot.get("uid") !== uid) {
+        throw httpsError("not-found", "実績記録を確認できませんでした。");
+      }
+      const startedAt = safeInteger(snapshot.get("startedAt"));
+      const status = String(snapshot.get("status") || "");
+      const savedClosedAt = safeInteger(snapshot.get("presenceClosedAt"));
+      if (savedClosedAt) {
+        if (activeSnapshot.exists && activeSnapshot.get("sessionId") === sessionId) {
+          if (status === "active") {
+            transaction.set(activeReference, {
+              lastSeenAt: 0,
+              presenceClosedAt: savedClosedAt,
+              deleteAt: achievementSessionDeleteAt(startedAt, savedClosedAt),
+            }, { merge: true });
+          } else {
+            transaction.delete(activeReference);
+          }
+        }
+        result = { closed: true, updatedAt: savedClosedAt, idempotent: true };
+        return;
+      }
+      const now = currentTime();
+      if (!startedAt || startedAt > now) {
+        throw httpsError("failed-precondition", "実績記録の開始時刻を確認できませんでした。");
+      }
+      const closedAt = Math.min(
+        now,
+        startedAt + AI_TEXT_TRAINING_ACHIEVEMENT_SESSION_TTL_MS,
+      );
+      const closeUpdate = {
+        presenceClosedAt: closedAt,
+        lastSeenAt: closedAt,
+      };
+      if (!snapshot.get("deleteAt")) {
+        closeUpdate.deleteAt = achievementSessionDeleteAt(startedAt, now);
+      }
+      transaction.update(reference, closeUpdate);
+      if (activeSnapshot.exists && activeSnapshot.get("sessionId") === sessionId) {
+        if (status === "active") {
+          transaction.set(activeReference, {
+            lastSeenAt: 0,
+            presenceClosedAt: closedAt,
+            deleteAt: achievementSessionDeleteAt(startedAt, now),
+          }, { merge: true });
+        } else {
+          transaction.delete(activeReference);
+        }
+      }
+      result = { closed: true, updatedAt: closedAt, idempotent: false };
     });
     return result;
   }
@@ -863,20 +1053,38 @@ function createAiTextTrainingService(deps) {
         throw httpsError("not-found", "実績記録を確認できませんでした。");
       }
       const stored = snapshot.data();
+      const now = currentTime();
       if (stored.status !== "active") {
-        if (activeSnapshot.exists && activeSnapshot.get("sessionId") === sessionId) {
-          transaction.delete(activeReference);
+        const terminalRetryUpdate = {};
+        const preservedLastSeenAt = safeInteger(stored.lastSeenAt)
+          || safeInteger(stored.endedAt);
+        if (!safeInteger(stored.lastSeenAt) && preservedLastSeenAt) {
+          terminalRetryUpdate.lastSeenAt = preservedLastSeenAt;
         }
         if (!stored.deleteAt) {
-          transaction.set(reference, {
-            deleteAt: achievementSessionDeleteAt(stored.startedAt, currentTime()),
-          }, { merge: true });
+          terminalRetryUpdate.deleteAt = achievementSessionDeleteAt(stored.startedAt, now);
+        }
+        const autoClosePresence = ["safety_stopped", "exited"].includes(stored.status);
+        const preservedClosedAt = safeInteger(stored.presenceClosedAt)
+          || (autoClosePresence
+            ? safeInteger(stored.endedAt) || preservedLastSeenAt
+            : 0);
+        if (!safeInteger(stored.presenceClosedAt) && preservedClosedAt) {
+          terminalRetryUpdate.presenceClosedAt = preservedClosedAt;
+        }
+        if (Reflect.ownKeys(terminalRetryUpdate).length) {
+          transaction.set(reference, terminalRetryUpdate, { merge: true });
+        }
+        if (preservedClosedAt
+            && activeSnapshot.exists
+            && activeSnapshot.get("sessionId") === sessionId) {
+          transaction.delete(activeReference);
         }
         if (stored.status === "completed" && profileSnapshot.exists) {
           achievementProfileToSync = profileSnapshot.data();
         }
         result = {
-          session: publicAchievementSession(stored),
+          session: publicAchievementSession({ ...stored, ...terminalRetryUpdate }),
           stats: publicPlayerStats(statsSnapshot.data()),
           newlyUnlocked: [],
           idempotent: true,
@@ -898,7 +1106,6 @@ function createAiTextTrainingService(deps) {
       )) {
         throw httpsError("invalid-argument", "運動時間が開始条件と一致しません。");
       }
-      const now = currentTime();
       if (outcome === "completed") {
         if (completedRounds !== AI_TEXT_TRAINING_ACHIEVEMENT_ROUND_COUNT
             || Math.abs(activeSeconds - expectedActiveSeconds)
@@ -915,6 +1122,9 @@ function createAiTextTrainingService(deps) {
           );
         }
       }
+      const autoClosePresence = outcome !== "completed";
+      const presenceClosedAt = safeInteger(stored.presenceClosedAt)
+        || (autoClosePresence ? now : 0);
       const terminal = {
         ...stored,
         status: outcome,
@@ -922,6 +1132,8 @@ function createAiTextTrainingService(deps) {
         completedRounds,
         activeSeconds,
         endedAt: now,
+        lastSeenAt: now,
+        ...(presenceClosedAt ? { presenceClosedAt } : {}),
       };
       const terminalUpdate = {
         status: outcome,
@@ -929,12 +1141,16 @@ function createAiTextTrainingService(deps) {
         completedRounds,
         activeSeconds,
         endedAt: now,
+        lastSeenAt: now,
+        ...(presenceClosedAt ? { presenceClosedAt } : {}),
       };
       if (!stored.deleteAt) {
         terminalUpdate.deleteAt = achievementSessionDeleteAt(stored.startedAt, now);
       }
       transaction.update(reference, terminalUpdate);
-      if (activeSnapshot.exists && activeSnapshot.get("sessionId") === sessionId) {
+      if (presenceClosedAt
+          && activeSnapshot.exists
+          && activeSnapshot.get("sessionId") === sessionId) {
         transaction.delete(activeReference);
       }
 
@@ -1907,6 +2123,71 @@ function createAiTextTrainingService(deps) {
     return result;
   }
 
+  async function cleanupActivePresence(nowValue = currentTime()) {
+    const now = safeInteger(nowValue);
+    const snapshot = await firestore
+      .collection("aiTextTrainingActiveAchievementSessions")
+      .where("expiresAt", "<=", now)
+      .limit(AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT)
+      .get();
+    const documents = Array.isArray(snapshot.docs) ? snapshot.docs : [];
+    if (!documents.length) {
+      return { examined: 0, removed: 0, hasMore: false };
+    }
+    const removed = await firestore.runTransaction(async (transaction) => {
+      let attemptRemoved = 0;
+      const currentSnapshots = await Promise.all(
+        documents.map((document) => transaction.get(document.ref)),
+      );
+      for (const currentSnapshot of currentSnapshots) {
+        if (currentSnapshot.exists
+            && safeInteger(currentSnapshot.get("expiresAt")) <= now) {
+          transaction.delete(currentSnapshot.ref);
+          attemptRemoved += 1;
+        }
+      }
+      return attemptRemoved;
+    });
+    return {
+      examined: documents.length,
+      removed,
+      hasMore: documents.length === AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT,
+    };
+  }
+
+  async function readPublicStats(now) {
+    const [activeCountSnapshot, recentSnapshot] = await Promise.all([
+      firestore.collection("aiTextTrainingActiveAchievementSessions")
+        .where("lastSeenAt", ">=", now - AI_TEXT_TRAINING_PRESENCE_FRESHNESS_MS)
+        .count()
+        .get(),
+      firestore.collection("aiTextTrainingAchievementSessions")
+        .where("lastSeenAt", ">=", now - AI_TEXT_TRAINING_RECENT_ACTIVITY_WINDOW_MS)
+        .limit(1)
+        .get(),
+    ]);
+    return Object.freeze({
+      activeCount: safeInteger(activeCountSnapshot.data().count),
+      hasRecentActivity: !recentSnapshot.empty,
+      updatedAt: now,
+      freshnessMs: AI_TEXT_TRAINING_PRESENCE_FRESHNESS_MS,
+      recentWindowMs: AI_TEXT_TRAINING_RECENT_ACTIVITY_WINDOW_MS,
+    });
+  }
+
+  const loadPublicStats = createAiTextTrainingPublicStatsLoader({
+    load: readPublicStats,
+    now: currentTime,
+  });
+
+  async function getPublicStats(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)
+        || Reflect.ownKeys(data).length !== 0) {
+      throw httpsError("invalid-argument", "文字コラトレーニングの公開状況を確認してください。");
+    }
+    return loadPublicStats();
+  }
+
   async function performAction(uid, data = {}) {
     requireUid(uid);
     const action = String(data?.action || "state");
@@ -1922,6 +2203,12 @@ function createAiTextTrainingService(deps) {
     if (action === "resume_use") result = await resumeUse(uid, data);
     if (action === "finish_use") result = await finishUse(uid, data);
     if (action === "begin_achievement_session") result = await beginAchievementSession(uid, data);
+    if (action === "heartbeat_achievement_session") {
+      result = await heartbeatAchievementSession(uid, data);
+    }
+    if (action === "close_achievement_presence") {
+      result = await closeAchievementPresence(uid, data);
+    }
     if (action === "finish_achievement_session") result = await finishAchievementSession(uid, data);
     if (action === "save_profile") result = await saveProfile(uid, data);
     if (action === "save_cosmetics") result = await saveCosmetics(uid, data);
@@ -1934,9 +2221,13 @@ function createAiTextTrainingService(deps) {
   return Object.freeze({
     beginAchievementSession,
     browse,
+    cleanupActivePresence,
+    closeAchievementPresence,
     finishAchievementSession,
     finishUse,
+    getPublicStats,
     getState,
+    heartbeatAchievementSession,
     performAction,
     publish,
     rankings,
@@ -1951,5 +2242,8 @@ function createAiTextTrainingService(deps) {
 
 module.exports = Object.freeze({
   AI_TEXT_TRAINING_ACTIONS,
+  AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT,
+  AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS,
+  createAiTextTrainingPublicStatsLoader,
   createAiTextTrainingService,
 });

@@ -15493,6 +15493,41 @@ exports.aiTextTrainingAction = onCall(
   },
 );
 
+exports.aiTextTrainingPublicStats = onCall(
+  callableOptions("aiTextTrainingPublicStats"),
+  async (request) => {
+    try {
+      return await aiTextTrainingService.getPublicStats(request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("aiTextTrainingPublicStats failed", {
+        code: typeof error?.code === "string" ? error.code : "unknown",
+      });
+      throw new HttpsError(
+        "internal",
+        "文字コラトレーニングの公開状況を取得できませんでした。",
+      );
+    }
+  },
+);
+
+exports.cleanupAiTextTrainingActivePresence = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    return await aiTextTrainingService.cleanupActivePresence(Date.now());
+  } catch (error) {
+    console.error("cleanupAiTextTrainingActivePresence failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
+});
+
 exports.freeTableInviteAction = onCall(
   callableOptions("freeTableInviteAction"),
   async (request) => {

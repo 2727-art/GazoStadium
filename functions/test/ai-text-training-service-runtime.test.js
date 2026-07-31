@@ -10,6 +10,9 @@ const {
   aiTextTrainingPayloadHash,
 } = require("../ai-text-training");
 const {
+  AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT,
+  AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS,
+  createAiTextTrainingPublicStatsLoader,
   createAiTextTrainingService,
 } = require("../ai-text-training-service");
 const {
@@ -131,6 +134,18 @@ class FakeQuery {
     );
   }
 
+  count() {
+    const query = this;
+    return {
+      async get() {
+        const snapshot = await query.get();
+        return {
+          data: () => ({ count: snapshot.docs.length }),
+        };
+      },
+    };
+  }
+
   async get() {
     this.firestore.queryReads += 1;
     const prefix = `${this.path}/`;
@@ -141,8 +156,15 @@ class FakeQuery {
         value: clone(value),
       }));
     for (const filter of this.filters) {
-      if (filter.operator !== "==") throw new Error(`Unsupported operator ${filter.operator}`);
-      rows = rows.filter((row) => row.value?.[filter.field] === filter.value);
+      if (filter.operator === "==") {
+        rows = rows.filter((row) => row.value?.[filter.field] === filter.value);
+      } else if (filter.operator === ">=") {
+        rows = rows.filter((row) => row.value?.[filter.field] >= filter.value);
+      } else if (filter.operator === "<=") {
+        rows = rows.filter((row) => row.value?.[filter.field] <= filter.value);
+      } else {
+        throw new Error(`Unsupported operator ${filter.operator}`);
+      }
     }
     rows.sort((left, right) => {
       for (const order of this.orders) {
@@ -417,6 +439,21 @@ async function finishAchievementSession(
   });
 }
 
+async function heartbeatAchievementSession(harness, uid, sessionId, active) {
+  return harness.service.performAction(uid, {
+    action: "heartbeat_achievement_session",
+    sessionId,
+    active,
+  });
+}
+
+async function closeAchievementPresence(harness, uid, sessionId) {
+  return harness.service.performAction(uid, {
+    action: "close_achievement_presence",
+    sessionId,
+  });
+}
+
 test("private cosmetics can mix owned styles and reject an unowned trial", async () => {
   const [softGlow, neonBeat, crimsonAzure, stardustStage] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;
   const harness = createHarness({
@@ -476,11 +513,16 @@ test("achievement session begin rate-limits new actions, preserves retries, and 
   assert.equal(Object.hasOwn(storedFirst, "script"), false);
   assert.ok(storedFirst.deleteAt instanceof Date);
   assert.equal(storedFirst.deleteAt.getTime(), now + sessionTtlMs);
+  assert.equal(storedFirst.lastSeenAt, now);
   const activeFirst = harness.firestore.read(
     "aiTextTrainingActiveAchievementSessions/player",
   );
   assert.equal(activeFirst.sessionId, first.session.id);
   assert.equal(activeFirst.expiresAt, now + sessionTtlMs);
+  assert.equal(activeFirst.lastSeenAt, 0);
+  assert.equal(activeFirst.presenceClosedAt, 0);
+  assert.ok(activeFirst.deleteAt instanceof Date);
+  assert.equal(activeFirst.deleteAt.getTime(), now + sessionTtlMs);
   await assert.rejects(
     beginAchievementSession(harness, "player", "begin_00000001", {
       modeId: "imouto",
@@ -536,6 +578,7 @@ test("achievement session begin rate-limits new actions, preserves retries, and 
   assert.equal(superseded.status, "exited");
   assert.equal(superseded.outcome, "exited");
   assert.equal(superseded.supersededAt, now + beginCooldownMs);
+  assert.equal(superseded.presenceClosedAt, now + beginCooldownMs);
   const storedSecond = harness.firestore.read(
     `aiTextTrainingAchievementSessions/${second.session.id}`,
   );
@@ -548,6 +591,10 @@ test("achievement session begin rate-limits new actions, preserves retries, and 
     harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").sessionId,
     second.session.id,
   );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").lastSeenAt,
+    0,
+  );
   const oldRetry = await beginAchievementSession(harness, "player", "begin_00000001");
   assert.equal(oldRetry.idempotent, true);
   assert.equal(oldRetry.session.status, "exited");
@@ -559,6 +606,341 @@ test("achievement session begin rate-limits new actions, preserves retries, and 
     harness.firestore.read("aiTextTrainingPlayerStats/player")
       .lastAchievementSessionStartedAt,
     now + beginCooldownMs,
+  );
+});
+
+test("achievement heartbeat records active and paused presence without exposing session data", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const started = await beginAchievementSession(harness, "player", "presence_000001");
+  const sessionPath = `aiTextTrainingAchievementSessions/${started.session.id}`;
+  const activePath = "aiTextTrainingActiveAchievementSessions/player";
+
+  harness.setNow(now + 10_000);
+  const paused = await heartbeatAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+    false,
+  );
+  assert.deepEqual(paused, { active: false, updatedAt: now + 10_000 });
+  assert.equal(harness.firestore.read(sessionPath).lastSeenAt, now + 10_000);
+  assert.equal(harness.firestore.read(activePath).lastSeenAt, 0);
+  harness.setNow(now + 11_000);
+  const pausedBeginRetry = await beginAchievementSession(
+    harness,
+    "player",
+    "presence_000001",
+  );
+  assert.equal(pausedBeginRetry.idempotent, true);
+  assert.equal(harness.firestore.read(activePath).lastSeenAt, 0);
+  assert.equal(harness.firestore.read(sessionPath).lastSeenAt, now + 10_000);
+  assert.deepEqual(await harness.service.getPublicStats({}), {
+    activeCount: 0,
+    hasRecentActivity: true,
+    updatedAt: now + 11_000,
+    freshnessMs: 45_000,
+    recentWindowMs: 1_800_000,
+  });
+
+  harness.setNow(now + 20_000);
+  const active = await heartbeatAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+    true,
+  );
+  assert.deepEqual(active, { active: true, updatedAt: now + 20_000 });
+  assert.equal(harness.firestore.read(sessionPath).lastSeenAt, now + 20_000);
+  assert.equal(harness.firestore.read(activePath).lastSeenAt, now + 20_000);
+  assert.ok(harness.firestore.read(activePath).deleteAt instanceof Date);
+  assert.equal((await harness.service.getPublicStats({})).activeCount, 1);
+
+  await assert.rejects(
+    heartbeatAchievementSession(harness, "other-player", started.session.id, true),
+    (error) => error.code === "not-found",
+  );
+  await assert.rejects(
+    harness.service.performAction("player", {
+      action: "heartbeat_achievement_session",
+      sessionId: started.session.id,
+      active: "yes",
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+
+  harness.setNow(now + 25_000);
+  await finishAchievementSession(harness, "player", started.session.id, {
+    outcome: "exited",
+    completedRounds: 1,
+    activeSeconds: 10,
+  });
+  assert.equal(harness.firestore.read(sessionPath).lastSeenAt, now + 25_000);
+  assert.equal(harness.firestore.read(sessionPath).presenceClosedAt, now + 25_000);
+  assert.equal(harness.firestore.read(activePath), undefined);
+  assert.deepEqual(await harness.service.getPublicStats({}), {
+    activeCount: 0,
+    hasRecentActivity: true,
+    updatedAt: now + 25_000,
+    freshnessMs: 45_000,
+    recentWindowMs: 1_800_000,
+  });
+  await assert.rejects(
+    heartbeatAchievementSession(harness, "player", started.session.id, true),
+    (error) => error.code === "failed-precondition" && /終了/.test(error.message),
+  );
+  const closeRetry = await closeAchievementPresence(
+    harness,
+    "player",
+    started.session.id,
+  );
+  assert.deepEqual(closeRetry, {
+    closed: true,
+    updatedAt: now + 25_000,
+    idempotent: true,
+  });
+
+  harness.setNow(now + 25_000 + 1_800_001);
+  const finishRetry = await finishAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+  );
+  assert.equal(finishRetry.idempotent, true);
+  const beginRetry = await beginAchievementSession(
+    harness,
+    "player",
+    "presence_000001",
+  );
+  assert.equal(beginRetry.idempotent, true);
+  assert.equal(beginRetry.session.status, "exited");
+  assert.equal(harness.firestore.read(sessionPath).lastSeenAt, now + 25_000);
+  assert.equal(harness.firestore.read(activePath), undefined);
+  assert.deepEqual(await harness.service.getPublicStats({}), {
+    activeCount: 0,
+    hasRecentActivity: false,
+    updatedAt: now + 25_000 + 1_800_001,
+    freshnessMs: 45_000,
+    recentWindowMs: 1_800_000,
+  });
+});
+
+test("achievement heartbeat cannot resurrect an expired active session", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ now });
+  const sessionId = "a".repeat(40);
+  harness.firestore.write(`aiTextTrainingAchievementSessions/${sessionId}`, {
+    id: sessionId,
+    uid: "player",
+    status: "active",
+    startedAt: now - 24 * 60 * 60 * 1_000,
+    lastSeenAt: now - 24 * 60 * 60 * 1_000,
+  });
+  await assert.rejects(
+    heartbeatAchievementSession(harness, "player", sessionId, true),
+    (error) => error.code === "failed-precondition" && /有効期限/.test(error.message),
+  );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player"),
+    undefined,
+  );
+  assert.equal(
+    harness.firestore.read(`aiTextTrainingAchievementSessions/${sessionId}`).lastSeenAt,
+    now - 24 * 60 * 60 * 1_000,
+  );
+});
+
+test("a closed unfinished session is superseded and can never relight or complete later", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const first = await beginAchievementSession(harness, "player", "closed_old_0001");
+  const firstPath = `aiTextTrainingAchievementSessions/${first.session.id}`;
+
+  harness.setNow(now + 1_000);
+  await closeAchievementPresence(harness, "player", first.session.id);
+  assert.equal(harness.firestore.read(firstPath).status, "active");
+  assert.equal(harness.firestore.read(firstPath).presenceClosedAt, now + 1_000);
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").sessionId,
+    first.session.id,
+  );
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").lastSeenAt,
+    0,
+  );
+
+  harness.setNow(now + 30_000);
+  const second = await beginAchievementSession(harness, "player", "closed_new_0001");
+  const superseded = harness.firestore.read(firstPath);
+  assert.equal(superseded.status, "exited");
+  assert.equal(superseded.outcome, "exited");
+  assert.equal(superseded.presenceClosedAt, now + 1_000);
+  assert.equal(superseded.lastSeenAt, now + 1_000);
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").sessionId,
+    second.session.id,
+  );
+
+  const delayedFinish = await finishAchievementSession(
+    harness,
+    "player",
+    first.session.id,
+  );
+  assert.equal(delayedFinish.idempotent, true);
+  assert.equal(delayedFinish.session.status, "exited");
+  assert.equal(delayedFinish.stats.completedSessions, 0);
+
+  harness.setNow(now + 31_000);
+  await closeAchievementPresence(harness, "player", second.session.id);
+  await assert.rejects(
+    heartbeatAchievementSession(harness, "player", first.session.id, true),
+    (error) => error.code === "failed-precondition",
+  );
+  const currentPointer = harness.firestore.read(
+    "aiTextTrainingActiveAchievementSessions/player",
+  );
+  assert.equal(currentPointer.sessionId, second.session.id);
+  assert.equal(currentPointer.lastSeenAt, 0);
+  assert.equal(currentPointer.presenceClosedAt, now + 31_000);
+});
+
+test("public stats loader coalesces in-flight reads and expires after five seconds", async () => {
+  const nowValue = Date.parse("2026-07-29T03:00:00.000Z");
+  let now = nowValue;
+  let loadCount = 0;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const loader = createAiTextTrainingPublicStatsLoader({
+    load: async (startedAt) => {
+      loadCount += 1;
+      await gate;
+      return Object.freeze({ activeCount: loadCount, updatedAt: startedAt });
+    },
+    now: () => now,
+  });
+
+  const first = loader();
+  const second = loader();
+  await Promise.resolve();
+  assert.equal(loadCount, 1);
+  release();
+  const [firstValue, secondValue] = await Promise.all([first, second]);
+  assert.strictEqual(firstValue, secondValue);
+  assert.strictEqual(await loader(), firstValue);
+  assert.equal(loadCount, 1);
+
+  now += AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS - 1;
+  assert.strictEqual(await loader(), firstValue);
+  assert.equal(loadCount, 1);
+  now += 1;
+  const refreshed = await loader();
+  assert.equal(refreshed.activeCount, 2);
+  assert.equal(refreshed.updatedAt, nowValue + AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS);
+  assert.equal(loadCount, 2);
+});
+
+test("public stats count unique fresh users and expose only aggregate freshness metadata", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ now });
+  harness.firestore.write("aiTextTrainingActiveAchievementSessions/fresh-a", {
+    uid: "fresh-a",
+    lastSeenAt: now - 45_000,
+  });
+  harness.firestore.write("aiTextTrainingActiveAchievementSessions/stale", {
+    uid: "stale",
+    lastSeenAt: now - 45_001,
+  });
+  harness.firestore.write("aiTextTrainingActiveAchievementSessions/fresh-b", {
+    uid: "fresh-b",
+    lastSeenAt: now,
+  });
+  harness.firestore.write("aiTextTrainingAchievementSessions/recent", {
+    uid: "private-player",
+    lastSeenAt: now - 1_800_000,
+  });
+
+  const stats = await harness.service.getPublicStats({});
+  assert.deepEqual(stats, {
+    activeCount: 2,
+    hasRecentActivity: true,
+    updatedAt: now,
+    freshnessMs: 45_000,
+    recentWindowMs: 1_800_000,
+  });
+  assert.deepEqual(Object.keys(stats).toSorted(), [
+    "activeCount",
+    "freshnessMs",
+    "hasRecentActivity",
+    "recentWindowMs",
+    "updatedAt",
+  ]);
+  assert.equal(harness.firestore.queryReads, 2);
+  assert.strictEqual(await harness.service.getPublicStats({}), stats);
+  assert.equal(harness.firestore.queryReads, 2);
+
+  harness.firestore.write("aiTextTrainingAchievementSessions/recent", {
+    uid: "private-player",
+    lastSeenAt: now - 1_800_001,
+  });
+  harness.setNow(now + AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS);
+  const refreshed = await harness.service.getPublicStats({});
+  assert.equal(refreshed.hasRecentActivity, false);
+  assert.equal(
+    refreshed.updatedAt,
+    now + AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS,
+  );
+  assert.equal(harness.firestore.queryReads, 4);
+  await assert.rejects(
+    harness.service.getPublicStats({ uid: "private-player" }),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("active presence cleanup drains legacy expired pointers in bounded pages", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ now });
+  for (let index = 0; index <= AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT; index += 1) {
+    harness.firestore.write(
+      `aiTextTrainingActiveAchievementSessions/expired-${String(index).padStart(3, "0")}`,
+      {
+        uid: `expired-${index}`,
+        sessionId: String(index).padStart(40, "0"),
+        expiresAt: now - 1,
+        lastSeenAt: 0,
+      },
+    );
+  }
+  harness.firestore.write("aiTextTrainingActiveAchievementSessions/fresh", {
+    uid: "fresh",
+    sessionId: "f".repeat(40),
+    expiresAt: now + 1,
+    lastSeenAt: now,
+  });
+
+  assert.deepEqual(await harness.service.cleanupActivePresence(now), {
+    examined: 100,
+    removed: 100,
+    hasMore: true,
+  });
+  assert.equal(
+    harness.firestore.count("aiTextTrainingActiveAchievementSessions/"),
+    2,
+  );
+  assert.deepEqual(await harness.service.cleanupActivePresence(now), {
+    examined: 1,
+    removed: 1,
+    hasMore: false,
+  });
+  assert.deepEqual(await harness.service.cleanupActivePresence(now), {
+    examined: 0,
+    removed: 0,
+    hasMore: false,
+  });
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/fresh").expiresAt,
+    now + 1,
   );
 });
 
@@ -584,6 +966,7 @@ test("completed achievement session validates rounds, active time, and server el
     }),
     (error) => error.code === "failed-precondition" && /5ラウンド/.test(error.message),
   );
+  await heartbeatAchievementSession(harness, "player", started.session.id, true);
 
   const completed = await finishAchievementSession(
     harness,
@@ -609,10 +992,12 @@ test("completed achievement session validates rounds, active time, and server el
   assert.ok(
     harness.achievementSyncs[0].profile.unlocked.ai_training_sessions_1,
   );
-  assert.equal(
-    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player"),
-    undefined,
+  const completedPointer = harness.firestore.read(
+    "aiTextTrainingActiveAchievementSessions/player",
   );
+  assert.equal(completedPointer.sessionId, started.session.id);
+  assert.equal(completedPointer.lastSeenAt, now + 100_000);
+  assert.equal(completedPointer.presenceClosedAt, 0);
 
   const retry = await finishAchievementSession(
     harness,
@@ -627,15 +1012,89 @@ test("completed achievement session validates rounds, active time, and server el
     harness.firestore.read("aiTextTrainingPlayerStats/player").completedSessions,
     1,
   );
+  assert.deepEqual(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player"),
+    completedPointer,
+  );
   assert.equal(harness.achievementSyncs.length, 2);
   assert.equal(harness.achievementSyncs[1].uid, "player");
   assert.deepEqual(
     harness.achievementSyncs[1].profile,
     harness.firestore.read("achievementProfiles/player"),
   );
+
+  harness.setNow(now + 101_000);
+  await heartbeatAchievementSession(harness, "player", started.session.id, false);
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").lastSeenAt,
+    0,
+  );
+  harness.setNow(now + 102_000);
+  await heartbeatAchievementSession(harness, "player", started.session.id, true);
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player").lastSeenAt,
+    now + 102_000,
+  );
+  harness.setNow(now + 103_000);
+  const closed = await closeAchievementPresence(harness, "player", started.session.id);
+  assert.deepEqual(closed, {
+    closed: true,
+    updatedAt: now + 103_000,
+    idempotent: false,
+  });
+  assert.equal(
+    harness.firestore.read("aiTextTrainingActiveAchievementSessions/player"),
+    undefined,
+  );
+  await assert.rejects(
+    heartbeatAchievementSession(harness, "player", started.session.id, true),
+    (error) => error.code === "failed-precondition" && /灯りは終了/.test(error.message),
+  );
+
+  harness.setNow(now + 103_000 + 1_800_001);
+  const closeRetry = await closeAchievementPresence(harness, "player", started.session.id);
+  assert.equal(closeRetry.idempotent, true);
+  assert.equal(closeRetry.updatedAt, now + 103_000);
+  assert.equal(
+    harness.firestore.read(`aiTextTrainingAchievementSessions/${started.session.id}`)
+      .lastSeenAt,
+    now + 103_000,
+  );
+  assert.equal((await harness.service.getPublicStats({})).hasRecentActivity, false);
 });
 
-test("safety stop is terminal, clears the active pointer, and never counts as completion", async () => {
+test("a close before completed finish preserves the close marker and releases the pointer", async () => {
+  const now = Date.parse("2026-07-29T03:00:00.000Z");
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const started = await beginAchievementSession(harness, "player", "close_race_00001");
+  const sessionPath = `aiTextTrainingAchievementSessions/${started.session.id}`;
+  const activePath = "aiTextTrainingActiveAchievementSessions/player";
+
+  harness.setNow(now + 5_000);
+  await heartbeatAchievementSession(harness, "player", started.session.id, true);
+  harness.setNow(now + 10_000);
+  await closeAchievementPresence(harness, "player", started.session.id);
+  assert.equal(harness.firestore.read(sessionPath).status, "active");
+  assert.equal(harness.firestore.read(sessionPath).presenceClosedAt, now + 10_000);
+  assert.equal(harness.firestore.read(activePath).lastSeenAt, 0);
+
+  harness.setNow(now + 100_000);
+  const completed = await finishAchievementSession(
+    harness,
+    "player",
+    started.session.id,
+  );
+  assert.equal(completed.session.status, "completed");
+  assert.equal(completed.stats.completedSessions, 1);
+  assert.equal(harness.firestore.read(sessionPath).presenceClosedAt, now + 10_000);
+  assert.equal(harness.firestore.read(activePath), undefined);
+  await assert.rejects(
+    heartbeatAchievementSession(harness, "player", started.session.id, true),
+    (error) => error.code === "failed-precondition",
+  );
+});
+
+test("safety stop is terminal, closes the presence lease, and never counts as completion", async () => {
   const now = Date.parse("2026-07-29T03:00:00.000Z");
   const harness = createHarness({ balances: { player: 0 }, now });
   const started = await beginAchievementSession(harness, "player", "safety_0000001");

@@ -431,6 +431,10 @@ const FREE_TABLE_PUBLIC_STATS_POLL_MS = 60_000;
 const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;
 const FREE_TABLE_PUBLIC_STATS_MAX_BACKOFF_MS = 240_000;
 const FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
+const AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS = 30_000;
+const AI_TEXT_TRAINING_PUBLIC_STATS_STALE_FALLBACK_MS = 90_000;
+const AI_TEXT_TRAINING_PUBLIC_STATS_MAX_BACKOFF_MS = 120_000;
+const AI_TEXT_TRAINING_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
 const SOLO_REMATCH_SOFT_WIDEN_MS = 20_000;
 const FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
@@ -443,6 +447,7 @@ const soloSessionActionCallable = httpsCallable(functions, "soloSessionAction");
 const getP2pIceServersCallable = httpsCallable(functions, "getP2pIceServers");
 const reportP2pConnectivityCallable = httpsCallable(functions, "reportP2pConnectivity");
 const freeTablePublicStatsCallable = httpsCallable(functions, "freeTablePublicStats");
+const aiTextTrainingPublicStatsCallable = httpsCallable(functions, "aiTextTrainingPublicStats");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
@@ -471,11 +476,24 @@ let freeTablePublicStatsFailureCount = 0;
 let freeTablePublicStatsRequest = null;
 let freeTablePublicStatsTimer = null;
 let lastFreeTablePublicStatsEventSignature = "";
+let aiTextTrainingPublicStats = {
+  activeCount: null,
+  hasRecentActivity: null,
+  updatedAt: null,
+  freshnessMs: null,
+  recentWindowMs: null,
+};
+let aiTextTrainingPublicStatsLastSuccessAt = 0;
+let aiTextTrainingPublicStatsFailureCount = 0;
+let aiTextTrainingPublicStatsRequest = null;
+let aiTextTrainingPublicStatsTimer = null;
+let lastAiTextTrainingPublicStatsEventSignature = "";
 let freeTableResultTransitionBusy = false;
 const LOBBY_MODES = [...ACTIVE_BATTLE_MODES, "training"];
 const createLobbyStats = (value = null) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
   freeTable: { ...freeTablePublicStats },
+  aiTextTraining: { ...aiTextTrainingPublicStats },
   market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
 });
 let lobbyStats = createLobbyStats();
@@ -1704,9 +1722,11 @@ function isActive() {
 
 function getLobbyStats() {
   expireFreeTablePublicStats(Date.now(), false);
+  expireAiTextTrainingPublicStats(Date.now(), false);
   return {
     ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
     freeTable: { ...lobbyStats.freeTable },
+    aiTextTraining: { ...lobbyStats.aiTextTraining },
     market: { ...lobbyStats.market },
   };
 }
@@ -2129,8 +2149,166 @@ function refreshFreeTablePublicStatsImmediately() {
   return refreshFreeTablePublicStats();
 }
 
+function emptyAiTextTrainingPublicStats() {
+  return {
+    activeCount: null,
+    hasRecentActivity: null,
+    updatedAt: null,
+    freshnessMs: null,
+    recentWindowMs: null,
+  };
+}
+
+function normalizeAiTextTrainingPublicStats(value, receivedAt) {
+  const activeCount = value?.activeCount;
+  const hasRecentActivity = value?.hasRecentActivity;
+  const updatedAt = value?.updatedAt;
+  const freshnessMs = value?.freshnessMs;
+  const recentWindowMs = value?.recentWindowMs;
+  if (!Number.isSafeInteger(activeCount)
+      || activeCount < 0
+      || typeof hasRecentActivity !== "boolean"
+      || !Number.isSafeInteger(updatedAt)
+      || updatedAt < 0
+      || !Number.isSafeInteger(freshnessMs)
+      || freshnessMs < 10_000
+      || freshnessMs > 10 * 60_000
+      || !Number.isSafeInteger(recentWindowMs)
+      || recentWindowMs < freshnessMs
+      || recentWindowMs > 24 * 60 * 60_000) return null;
+  if (Number.isSafeInteger(aiTextTrainingPublicStats.updatedAt)
+      && updatedAt < aiTextTrainingPublicStats.updatedAt) return null;
+  if (publicServerTimeOffsetReady) {
+    const estimatedServerNow = receivedAt + publicServerTimeOffset;
+    if (updatedAt > estimatedServerNow + AI_TEXT_TRAINING_PUBLIC_STATS_FUTURE_TOLERANCE_MS
+        || updatedAt <= estimatedServerNow - freshnessMs) return null;
+  }
+  return {
+    activeCount,
+    hasRecentActivity,
+    updatedAt,
+    freshnessMs,
+    recentWindowMs,
+  };
+}
+
+function canRefreshAiTextTrainingPublicStats() {
+  return document.visibilityState === "visible"
+    && document.querySelector("#aiTextTrainingLights") !== null;
+}
+
+function aiTextTrainingPublicStatsExpiresAt() {
+  if (!aiTextTrainingPublicStatsLastSuccessAt) return 0;
+  const freshnessMs = Number.isSafeInteger(aiTextTrainingPublicStats.freshnessMs)
+    ? aiTextTrainingPublicStats.freshnessMs
+    : AI_TEXT_TRAINING_PUBLIC_STATS_STALE_FALLBACK_MS;
+  let expiresAt = aiTextTrainingPublicStatsLastSuccessAt + freshnessMs;
+  if (publicServerTimeOffsetReady && Number.isSafeInteger(aiTextTrainingPublicStats.updatedAt)) {
+    const serverUpdatedAtInLocalTime = aiTextTrainingPublicStats.updatedAt - publicServerTimeOffset;
+    expiresAt = Math.min(expiresAt, serverUpdatedAtInLocalTime + freshnessMs);
+  }
+  return expiresAt;
+}
+
+function aiTextTrainingPublicStatsAreExpired(now = Date.now()) {
+  const expiresAt = aiTextTrainingPublicStatsExpiresAt();
+  return expiresAt > 0 && now >= expiresAt;
+}
+
+function expireAiTextTrainingPublicStats(now = Date.now(), shouldRender = true) {
+  if (!aiTextTrainingPublicStatsAreExpired(now)) return false;
+  aiTextTrainingPublicStats = emptyAiTextTrainingPublicStats();
+  aiTextTrainingPublicStatsLastSuccessAt = 0;
+  lobbyStats.aiTextTraining = { ...aiTextTrainingPublicStats };
+  lastAiTextTrainingPublicStatsEventSignature = "";
+  if (shouldRender) renderLobbyStats();
+  return true;
+}
+
+function clearAiTextTrainingPublicStatsTimer() {
+  window.clearTimeout(aiTextTrainingPublicStatsTimer);
+  aiTextTrainingPublicStatsTimer = null;
+}
+
+function scheduleAiTextTrainingPublicStatsRefresh(delay) {
+  clearAiTextTrainingPublicStatsTimer();
+  if (!canRefreshAiTextTrainingPublicStats()) return;
+  aiTextTrainingPublicStatsTimer = window.setTimeout(() => {
+    aiTextTrainingPublicStatsTimer = null;
+    refreshAiTextTrainingPublicStats();
+  }, delay);
+}
+
+function nextAiTextTrainingPublicStatsDelay(succeeded) {
+  const refreshDelay = succeeded
+    ? AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS
+    : Math.min(
+      AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS
+        * (2 ** Math.min(aiTextTrainingPublicStatsFailureCount, 2)),
+      AI_TEXT_TRAINING_PUBLIC_STATS_MAX_BACKOFF_MS,
+    );
+  const expiresAt = aiTextTrainingPublicStatsExpiresAt();
+  if (!expiresAt) return refreshDelay;
+  return Math.min(refreshDelay, Math.max(0, expiresAt - Date.now()));
+}
+
+function refreshAiTextTrainingPublicStats({ force = false } = {}) {
+  expireAiTextTrainingPublicStats();
+  if (!force && !canRefreshAiTextTrainingPublicStats()) {
+    return Promise.resolve({ ...aiTextTrainingPublicStats });
+  }
+  if (aiTextTrainingPublicStatsRequest) {
+    return force
+      ? aiTextTrainingPublicStatsRequest.then(
+        () => refreshAiTextTrainingPublicStats({ force: true }),
+      )
+      : aiTextTrainingPublicStatsRequest;
+  }
+  let succeeded = false;
+  const request = Promise.resolve()
+    .then(() => aiTextTrainingPublicStatsCallable({}))
+    .then((response) => {
+      const receivedAt = Date.now();
+      const nextStats = normalizeAiTextTrainingPublicStats(response?.data, receivedAt);
+      if (!nextStats) throw new Error("Invalid AI text training public stats response.");
+      aiTextTrainingPublicStats = nextStats;
+      aiTextTrainingPublicStatsLastSuccessAt = receivedAt;
+      aiTextTrainingPublicStatsFailureCount = 0;
+      lobbyStats.aiTextTraining = { ...nextStats };
+      renderLobbyStats();
+      succeeded = true;
+      return { ...nextStats };
+    })
+    .catch(() => {
+      aiTextTrainingPublicStatsFailureCount = Math.min(
+        aiTextTrainingPublicStatsFailureCount + 1,
+        8,
+      );
+      expireAiTextTrainingPublicStats();
+      return { ...aiTextTrainingPublicStats };
+    })
+    .finally(() => {
+      if (aiTextTrainingPublicStatsRequest === request) {
+        aiTextTrainingPublicStatsRequest = null;
+      }
+      if (canRefreshAiTextTrainingPublicStats()) {
+        scheduleAiTextTrainingPublicStatsRefresh(
+          nextAiTextTrainingPublicStatsDelay(succeeded),
+        );
+      }
+    });
+  aiTextTrainingPublicStatsRequest = request;
+  return request;
+}
+
+function refreshAiTextTrainingPublicStatsImmediately() {
+  clearAiTextTrainingPublicStatsTimer();
+  return refreshAiTextTrainingPublicStats({ force: true });
+}
+
 function refreshLobbyStats() {
   expireFreeTablePublicStats(Date.now(), false);
+  expireAiTextTrainingPublicStats(Date.now(), false);
   const now = Date.now() + Number(publicServerTimeOffset || 0);
   const freshAfter = now - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries || {}).filter((entry) => (
@@ -2180,6 +2358,19 @@ function renderLobbyStats() {
   if (signature !== lastFreeTablePublicStatsEventSignature) {
     lastFreeTablePublicStatsEventSignature = signature;
     window.dispatchEvent(new CustomEvent("hariai-free-table-public-stats-updated", { detail }));
+  }
+  const aiTextTrainingDetail = { ...lobbyStats.aiTextTraining };
+  const aiTextTrainingSignature = [
+    aiTextTrainingDetail.activeCount ?? "unknown",
+    aiTextTrainingDetail.hasRecentActivity ?? "unknown",
+    aiTextTrainingDetail.recentWindowMs ?? "unknown",
+  ].join(":");
+  if (aiTextTrainingSignature !== lastAiTextTrainingPublicStatsEventSignature) {
+    lastAiTextTrainingPublicStatsEventSignature = aiTextTrainingSignature;
+    window.dispatchEvent(new CustomEvent(
+      "hariai-ai-text-training-public-stats-updated",
+      { detail: aiTextTrainingDetail },
+    ));
   }
 }
 
@@ -2244,6 +2435,7 @@ function syncFreeTableResultLampSlot({
 
 function watchLobbyStats() {
   refreshFreeTablePublicStatsImmediately();
+  refreshAiTextTrainingPublicStatsImmediately();
   onValue(ref(database, "online/publicPresence"), (snapshot) => {
     lobbyPresenceEntries = snapshot.val() || {};
     refreshLobbyStats();
@@ -2273,11 +2465,17 @@ function watchLobbyStats() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       refreshFreeTablePublicStatsImmediately();
+      refreshAiTextTrainingPublicStats({ force: false });
     } else {
       clearFreeTablePublicStatsTimer();
+      clearAiTextTrainingPublicStatsTimer();
     }
   });
   window.addEventListener("hariai-landing-rendered", refreshFreeTablePublicStatsImmediately);
+  window.addEventListener(
+    "hariai-landing-rendered",
+    () => refreshAiTextTrainingPublicStats({ force: false }),
+  );
 }
 
 function watchDailyDateRollover() {

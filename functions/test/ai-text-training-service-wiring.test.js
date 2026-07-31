@@ -59,6 +59,16 @@ test("AI text training is an injected App Check callable service", () => {
     index,
     /exports\.aiTextTrainingAction = onCall\(\s*callableOptions\("aiTextTrainingAction"\)/,
   );
+  assert.match(
+    index,
+    /exports\.aiTextTrainingPublicStats = onCall\(\s*callableOptions\("aiTextTrainingPublicStats"\)/,
+  );
+  assert.match(index, /aiTextTrainingService\.getPublicStats\(request\.data\)/);
+  assert.match(
+    index,
+    /exports\.cleanupAiTextTrainingActivePresence = onSchedule\(\{[\s\S]*?schedule: "every 5 minutes"[\s\S]*?maxInstances: 1/,
+  );
+  assert.match(index, /aiTextTrainingService\.cleanupActivePresence\(Date\.now\(\)\)/);
 });
 
 test("all dedicated persistence is callable-only and public responses reject UIDs", () => {
@@ -97,9 +107,11 @@ test("all dedicated persistence is callable-only and public responses reject UID
 test("achievement sessions are server-timed, idempotent, private, and unlock in their finish transaction", () => {
   const begin = between(
     "async function beginAchievementSession",
-    "async function finishAchievementSession",
+    "async function heartbeatAchievementSession",
   );
   assert.match(service, /"begin_achievement_session"/);
+  assert.match(service, /"heartbeat_achievement_session"/);
+  assert.match(service, /"close_achievement_presence"/);
   assert.match(service, /"finish_achievement_session"/);
   assert.match(begin, /normalizeAiTextTrainingActionId/);
   assert.match(begin, /normalizeAiTextTrainingMode/);
@@ -113,8 +125,36 @@ test("achievement sessions are server-timed, idempotent, private, and unlock in 
   assert.match(begin, /deleteAt: achievementSessionDeleteAt\(now, now\)/);
   assert.match(begin, /transaction\.create\(reference, stored\)/);
   assert.match(begin, /transaction\.set\(activeReference/);
+  assert.match(begin, /lastSeenAt: 0/);
+  assert.match(begin, /presenceClosedAt: 0/);
+  assert.match(begin, /deleteAt: achievementSessionDeleteAt\(now, now\)/);
   assert.match(begin, /supersededAt/);
   assert.doesNotMatch(begin, /\b(?:images|script|lines)\s*:/);
+
+  const heartbeat = between(
+    "async function heartbeatAchievementSession",
+    "async function closeAchievementPresence",
+  );
+  assert.match(heartbeat, /normalizeAiTextTrainingDocumentId/);
+  assert.match(heartbeat, /typeof data\.active !== "boolean"/);
+  assert.match(heartbeat, /snapshot\.get\("uid"\) !== uid/);
+  assert.match(heartbeat, /\["active", "completed"\]\.includes\(snapshot\.get\("status"\)\)/);
+  assert.match(heartbeat, /snapshot\.get\("presenceClosedAt"\)/);
+  assert.match(heartbeat, /!activeSnapshot\.exists/);
+  assert.match(heartbeat, /now - startedAt >= AI_TEXT_TRAINING_ACHIEVEMENT_SESSION_TTL_MS/);
+  assert.match(heartbeat, /transaction\.update\(reference, \{ lastSeenAt: now \}\)/);
+  assert.match(heartbeat, /lastSeenAt: active \? now : 0/);
+  assert.match(heartbeat, /deleteAt: achievementSessionDeleteAt\(startedAt, now\)/);
+
+  const close = between(
+    "async function closeAchievementPresence",
+    "async function finishAchievementSession",
+  );
+  assert.match(close, /presenceClosedAt: closedAt/);
+  assert.match(close, /lastSeenAt: closedAt/);
+  assert.match(close, /status === "active"/);
+  assert.match(close, /transaction\.delete\(activeReference\)/);
+  assert.match(close, /idempotent: true/);
 
   const finish = between(
     "async function finishAchievementSession",
@@ -142,6 +182,47 @@ test("achievement sessions are server-timed, idempotent, private, and unlock in 
     finish,
     /result\.(?:sellerUid|achievementProfileToSync)\s*=/,
   );
+});
+
+test("public training stats expose only fresh aggregate activity", () => {
+  const publicStats = between(
+    "async function readPublicStats",
+    "async function performAction",
+  );
+  assert.match(service, /const AI_TEXT_TRAINING_PUBLIC_STATS_CACHE_TTL_MS = 5 \* 1_000/);
+  assert.match(service, /function createAiTextTrainingPublicStatsLoader/);
+  assert.match(publicStats, /AI_TEXT_TRAINING_PRESENCE_FRESHNESS_MS/);
+  assert.match(publicStats, /AI_TEXT_TRAINING_RECENT_ACTIVITY_WINDOW_MS/);
+  assert.match(publicStats, /collection\("aiTextTrainingActiveAchievementSessions"\)/);
+  assert.match(publicStats, /collection\("aiTextTrainingAchievementSessions"\)/);
+  assert.match(publicStats, /\.where\("lastSeenAt", ">=",/);
+  assert.match(publicStats, /\.count\(\)\s*\.get\(\)/);
+  assert.match(publicStats, /activeCount: safeInteger\(activeCountSnapshot\.data\(\)\.count\)/);
+  assert.match(publicStats, /hasRecentActivity: !recentSnapshot\.empty/);
+  assert.match(
+    publicStats,
+    /const loadPublicStats = createAiTextTrainingPublicStatsLoader\(\{\s*load: readPublicStats,\s*now: currentTime/,
+  );
+  assert.match(publicStats, /return loadPublicStats\(\)/);
+  assert.doesNotMatch(publicStats, /\b(?:uid|sessionId|modeId)\b\s*:/);
+  assert.match(
+    service,
+    /module\.exports = Object\.freeze\(\{[\s\S]*?createAiTextTrainingPublicStatsLoader/,
+  );
+});
+
+test("expired active-presence migration is bounded and transactionally rechecked", () => {
+  const cleanup = between(
+    "async function cleanupActivePresence",
+    "async function readPublicStats",
+  );
+  assert.match(service, /const AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT = 100/);
+  assert.match(cleanup, /\.where\("expiresAt", "<=", now\)/);
+  assert.match(cleanup, /\.limit\(AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT\)/);
+  assert.match(cleanup, /documents\.map\(\(document\) => transaction\.get\(document\.ref\)\)/);
+  assert.match(cleanup, /currentSnapshot\.get\("expiresAt"\)/);
+  assert.match(cleanup, /transaction\.delete\(currentSnapshot\.ref\)/);
+  assert.match(cleanup, /hasMore: documents\.length === AI_TEXT_TRAINING_ACTIVE_PRESENCE_CLEANUP_LIMIT/);
 });
 
 test("paid use validates displayed revision, price, and balance before atomic wallet writes", () => {
@@ -285,6 +366,13 @@ test("browse index and large-script index exemptions are declared", () => {
   )));
   assert.ok(indexes.fieldOverrides.some((override) => (
     override.collectionGroup === "aiTextTrainingAchievementSessions"
+    && override.fieldPath === "deleteAt"
+    && override.ttl === true
+    && Array.isArray(override.indexes)
+    && override.indexes.length === 0
+  )));
+  assert.ok(indexes.fieldOverrides.some((override) => (
+    override.collectionGroup === "aiTextTrainingActiveAchievementSessions"
     && override.fieldPath === "deleteAt"
     && override.ttl === true
     && Array.isArray(override.indexes)
