@@ -4,6 +4,40 @@ export const AI_TEXT_TRAINING_BPM_MIN = 40;
 export const AI_TEXT_TRAINING_BPM_MAX = 160;
 export const AI_TEXT_TRAINING_FREE_BPM = 0;
 export const AI_TEXT_TRAINING_FINAL_GAUGE_MS = 10_000;
+export const AI_TEXT_TRAINING_PRODUCT_TYPES = Object.freeze([
+  Object.freeze({
+    id: "standard",
+    label: "通常台本",
+    shortLabel: "通常",
+    description: "5ラウンドの応援台詞を収録した、通常トレーニング向けの商品です。",
+  }),
+  Object.freeze({
+    id: "defeat_zone",
+    label: "敗北ZONE専用台本",
+    shortLabel: "ZONE専用",
+    description: "5ラウンドに加え、最終攻勢・敗北・クールダウン・敗北証明まで収録します。",
+  }),
+]);
+export const AI_TEXT_TRAINING_PLAY_STYLES = Object.freeze([
+  Object.freeze({
+    id: "standard",
+    label: "通常トレーニング",
+    shortLabel: "通常",
+    description: "5ラウンドを終えたら、そのまま結果へ進む短時間モードです。",
+  }),
+  Object.freeze({
+    id: "defeat_zone",
+    label: "敗北ZONE",
+    shortLabel: "敗北ZONE",
+    description: "5枚の最終攻勢にギブアップし、クールダウンを経て敗北証明を受け取ります。",
+  }),
+]);
+export const AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM = 200;
+export const AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS = 20_000;
+export const AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS = 6_000;
+export const AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM = 30;
+export const AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS = 60_000;
+export const AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS = 3;
 
 export const AI_TEXT_TRAINING_MODES = Object.freeze([
   Object.freeze({
@@ -78,8 +112,22 @@ export const AI_TEXT_TRAINING_SCRIPT_SLOTS = Object.freeze([
 export const AI_TEXT_TRAINING_SCRIPT_SLOT_IDS = Object.freeze(
   AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => slot.id),
 );
+export const AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS = Object.freeze([
+  Object.freeze({ id: "zone_rush", label: "最終攻勢・200 BPM" }),
+  Object.freeze({ id: "zone_surrendered", label: "ギブアップ後・敗北確定" }),
+  Object.freeze({ id: "zone_overpowered", label: "時間切れ後・敗北確定" }),
+  Object.freeze({ id: "zone_cooldown", label: "クールダウン・30 BPM" }),
+  Object.freeze({ id: "zone_certificate", label: "敗北証明" }),
+]);
+export const AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS = Object.freeze(
+  AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => slot.id),
+);
 
 const MODE_IDS = new Set(AI_TEXT_TRAINING_MODES.map((mode) => mode.id));
+const PLAY_STYLE_IDS = new Set(AI_TEXT_TRAINING_PLAY_STYLES.map((style) => style.id));
+const PRODUCT_TYPE_IDS = new Set(
+  AI_TEXT_TRAINING_PRODUCT_TYPES.map((productType) => productType.id),
+);
 const REACTION_IDS = new Set(AI_TEXT_TRAINING_REACTIONS.map((reaction) => reaction.id));
 const IMOUTO_OFFSETS = Object.freeze([-20, -10, 0, 10, 20]);
 
@@ -102,6 +150,7 @@ export const AI_TEXT_TRAINING_BUILTIN_SCRIPTS = Object.freeze({
     title: "ママの見守り応援",
     description: "急がせすぎず、今の自分に合わせて進める標準台本です。",
     modeId: "mama",
+    productType: "standard",
     authorName: "SYSTEM",
     price: 0,
     revision: 1,
@@ -127,6 +176,7 @@ export const AI_TEXT_TRAINING_BUILTIN_SCRIPTS = Object.freeze({
     title: "いもうとの気まぐれ応援",
     description: "次のテンポを予想できない、明るい標準台本です。",
     modeId: "imouto",
+    productType: "standard",
     authorName: "SYSTEM",
     price: 0,
     revision: 1,
@@ -152,6 +202,7 @@ export const AI_TEXT_TRAINING_BUILTIN_SCRIPTS = Object.freeze({
     title: "お姉ちゃんの攻める応援",
     description: "続けられる「きつい」にはテンポアップで返す標準台本です。",
     modeId: "oneechan",
+    productType: "standard",
     authorName: "SYSTEM",
     price: 0,
     revision: 1,
@@ -177,6 +228,26 @@ export const AI_TEXT_TRAINING_BUILTIN_SCRIPTS = Object.freeze({
 export function aiTextTrainingMode(modeId) {
   return AI_TEXT_TRAINING_MODES.find((mode) => mode.id === modeId)
     || AI_TEXT_TRAINING_MODES[0];
+}
+
+export function aiTextTrainingPlayStyle(playStyleId) {
+  return AI_TEXT_TRAINING_PLAY_STYLES.find((style) => style.id === playStyleId)
+    || AI_TEXT_TRAINING_PLAY_STYLES[0];
+}
+
+export function aiTextTrainingProductType(productTypeId) {
+  return AI_TEXT_TRAINING_PRODUCT_TYPES.find((productType) => productType.id === productTypeId)
+    || AI_TEXT_TRAINING_PRODUCT_TYPES[0];
+}
+
+export function normalizeAiTextTrainingProductType(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return PRODUCT_TYPE_IDS.has(normalized) ? normalized : "standard";
+}
+
+export function normalizeAiTextTrainingPlayStyle(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return PLAY_STYLE_IDS.has(normalized) ? normalized : "standard";
 }
 
 export function aiTextTrainingExercise(exerciseId) {
@@ -263,6 +334,46 @@ export function aiTextTrainingBeatGaugeState({
     cycleDurationMs,
     phaseOffsetMs,
   });
+}
+
+export function aiTextTrainingDefeatZoneBeatGaugeState({
+  bpm,
+  effectiveAt = 0,
+  now = 0,
+  remainingMs = 0,
+  phase = "zone_paused",
+} = {}) {
+  const normalizedBpm = Number(bpm);
+  const active = Number.isInteger(normalizedBpm)
+    && normalizedBpm >= AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM
+    && normalizedBpm <= AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM
+    && ["zone_rush", "zone_deceleration", "zone_cooldown"].includes(phase);
+  const safeBpm = active ? normalizedBpm : AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM;
+  const beatDurationMs = 60_000 / safeBpm;
+  const cycleDurationMs = beatDurationMs * 2;
+  const numericNow = Number(now);
+  const numericEffectiveAt = Number(effectiveAt);
+  const elapsedMs = Number.isFinite(numericNow) && Number.isFinite(numericEffectiveAt)
+    ? Math.max(0, numericNow - numericEffectiveAt)
+    : 0;
+  const numericRemainingMs = Number(remainingMs);
+  const safeRemainingMs = Number.isFinite(numericRemainingMs)
+    ? Math.max(0, numericRemainingMs)
+    : 0;
+  const rush = phase === "zone_rush";
+  return {
+    active,
+    freeRhythm: false,
+    finalTen: active && rush && safeRemainingMs <= AI_TEXT_TRAINING_FINAL_GAUGE_MS,
+    urgency: active && rush
+      ? Math.max(0, Math.min(1, (
+        AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS - safeRemainingMs
+      ) / AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS))
+      : 0,
+    beatDurationMs,
+    cycleDurationMs,
+    phaseOffsetMs: elapsedMs % cycleDurationMs,
+  };
 }
 
 export function aiTextTrainingTempoDirection(previousBpm, nextBpm) {
@@ -387,8 +498,15 @@ export function renderAiTextTrainingLine(
   line,
   { bpm = 0, round = 1, remaining = 0 } = {},
 ) {
+  const normalizedBpm = normalizeAiTextTrainingBpm(bpm);
+  const zoneBpm = Number(bpm);
+  const renderedBpm = normalizedBpm
+    ?? ([AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM,
+      AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM].includes(zoneBpm)
+      ? zoneBpm
+      : 0);
   return String(line ?? "")
-    .replaceAll("{bpm}", String(normalizeAiTextTrainingBpm(bpm) ?? 0))
+    .replaceAll("{bpm}", String(renderedBpm))
     .replaceAll("{round}", String(Math.max(1, Math.min(5, Math.floor(Number(round) || 1)))))
     .replaceAll("{remaining}", String(Math.max(0, Math.ceil(Number(remaining) || 0))));
 }
@@ -417,8 +535,12 @@ export function aiTextTrainingMessageCadenceMs(bpm) {
 export function normalizeAiTextTrainingScriptSnapshot(value, fallbackModeId = "mama") {
   const source = value && typeof value === "object" ? value : {};
   const modeId = MODE_IDS.has(source.modeId) ? source.modeId : fallbackModeId;
+  const productType = normalizeAiTextTrainingProductType(source.productType);
   const builtin = AI_TEXT_TRAINING_BUILTIN_SCRIPTS[modeId];
   const sourceLines = source.lines && typeof source.lines === "object" ? source.lines : {};
+  const sourceZoneLines = source.zoneLines && typeof source.zoneLines === "object"
+    ? source.zoneLines
+    : {};
   const lines = {};
   for (const slotId of AI_TEXT_TRAINING_SCRIPT_SLOT_IDS) {
     const candidates = Array.isArray(sourceLines[slotId])
@@ -426,15 +548,28 @@ export function normalizeAiTextTrainingScriptSnapshot(value, fallbackModeId = "m
       : [];
     lines[slotId] = candidates.length >= 2 ? candidates : [...builtin.lines[slotId]];
   }
+  const zoneLines = Object.fromEntries(
+    AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS.map((slotId) => {
+      const candidates = Array.isArray(sourceZoneLines[slotId])
+        ? sourceZoneLines[slotId]
+          .map((line) => String(line || "").trim())
+          .filter(Boolean)
+          .slice(0, 4)
+        : [];
+      return [slotId, productType === "defeat_zone" ? candidates : []];
+    }),
+  );
   return {
     id: String(source.id || builtin.id),
     title: String(source.title || builtin.title).slice(0, 30),
     description: String(source.description || builtin.description).slice(0, 120),
     modeId,
+    productType,
     authorName: String(source.authorName || builtin.authorName).slice(0, 16),
     publicSellerId: String(source.publicSellerId || ""),
     price: Math.max(0, Math.floor(Number(source.price) || 0)),
     revision: Math.max(1, Math.floor(Number(source.revision) || 1)),
     lines,
+    zoneLines,
   };
 }

@@ -197,6 +197,60 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "aiTextTrainingPresets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "actualUseCount",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "aiTextTrainingPresets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "productType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "actualUseCount",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "aiTextTrainingPresets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "modeId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "productType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "actualUseCount",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -206,13 +260,48 @@
       "indexes": []
     },
     {
+      "collectionGroup": "aiTextTrainingPresets",
+      "fieldPath": "zoneLines",
+      "indexes": []
+    },
+    {
       "collectionGroup": "aiTextTrainingUses",
       "fieldPath": "presetSnapshot.lines",
       "indexes": []
     },
     {
+      "collectionGroup": "aiTextTrainingUses",
+      "fieldPath": "presetSnapshot.zoneLines",
+      "indexes": []
+    },
+    {
       "collectionGroup": "aiTextTrainingReports",
       "fieldPath": "presetSnapshot.lines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiTextTrainingReports",
+      "fieldPath": "presetSnapshot.zoneLines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiTextTrainingPublishActions",
+      "fieldPath": "preset.lines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "aiTextTrainingPublishActions",
+      "fieldPath": "preset.zoneLines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "lines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "zoneLines",
       "indexes": []
     },
     {

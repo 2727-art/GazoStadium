@@ -2,7 +2,9 @@
 
 const {
   AI_TEXT_TRAINING_MODES,
+  AI_TEXT_TRAINING_PLAY_STYLES,
   AI_TEXT_TRAINING_PRICE_OPTIONS,
+  AI_TEXT_TRAINING_PRODUCT_TYPES,
   AI_TEXT_TRAINING_PUBLISH_FEE,
   AI_TEXT_TRAINING_SCHEMA_VERSION,
   AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
@@ -25,7 +27,9 @@ const {
   normalizeAiTextTrainingCosmetics,
   normalizeAiTextTrainingDocumentId,
   normalizeAiTextTrainingMode,
+  normalizeAiTextTrainingPlayStyle,
   normalizeAiTextTrainingPresetInput,
+  normalizeAiTextTrainingProductType,
   normalizeAiTextTrainingXHandle,
 } = require("./ai-text-training");
 const {
@@ -77,6 +81,10 @@ const PRIVATE_RESPONSE_FIELDS = Object.freeze(new Set([
   "payloadHash",
 ]));
 const ACTIVE_PRESET_LIMIT = 100;
+// Legacy standard products have no productType field, so their compatibility
+// lookup may need to page past newer ZONE products. Keep that fallback bounded
+// to at most 500 documents per request until legacy rows are backfilled.
+const LEGACY_STANDARD_BROWSE_MAX_PAGES = 5;
 const RANKING_LIMIT = 20;
 const ACTIVE_USE_STATUSES = Object.freeze(new Set(["active"]));
 const AI_TEXT_TRAINING_ACHIEVEMENT_ROUND_COUNT = 5;
@@ -230,19 +238,32 @@ function createAiTextTrainingService(deps) {
     ]));
   }
 
+  function storedProductType(value) {
+    return AI_TEXT_TRAINING_PRODUCT_TYPES.includes(value) ? value : "standard";
+  }
+
+  function storedPlayStyle(value) {
+    return AI_TEXT_TRAINING_PLAY_STYLES.includes(value) ? value : "standard";
+  }
+
   function publicPreset(value, viewerUid = "") {
     const source = value && typeof value === "object" ? value : {};
+    const productType = storedProductType(source.productType);
     return {
       id: safeOneLine(source.id, 40),
       schemaVersion: AI_TEXT_TRAINING_SCHEMA_VERSION,
       publicSellerId: safeOneLine(source.publicSellerId, 40),
       sellerName: safeOneLine(source.sellerName, 16, "匿名作者"),
       modeId: AI_TEXT_TRAINING_MODES.includes(source.modeId) ? source.modeId : "mama",
+      productType,
       title: safeOneLine(source.title, 30, "応援台本"),
       description: String(source.description || "").slice(0, 120),
       price: AI_TEXT_TRAINING_PRICE_OPTIONS.includes(source.price) ? source.price : 5,
       revision: safeInteger(source.revision, 1, 1_000_000, 1),
       lines: normalizeStoredLines(source.lines),
+      zoneLines: productType === "defeat_zone"
+        ? normalizeStoredLines(source.zoneLines)
+        : {},
       status: ["active", "hidden"].includes(source.status) ? source.status : "hidden",
       actualUseCount: safeInteger(source.actualUseCount),
       rankingUseCount: safeInteger(source.rankingUseCount),
@@ -297,6 +318,7 @@ function createAiTextTrainingService(deps) {
       sellerProceeds: safeInteger(source.sellerProceeds),
       buyerBalanceAfter: safeInteger(source.buyerBalanceAfter),
       rankingCounted: source.rankingCounted === true,
+      playStyle: storedPlayStyle(source.playStyle),
       startedAt: safeInteger(source.startedAt),
       endedAt: safeInteger(source.endedAt),
       preset: {
@@ -308,10 +330,27 @@ function createAiTextTrainingService(deps) {
         modeId: AI_TEXT_TRAINING_MODES.includes(snapshot.modeId)
           ? snapshot.modeId
           : "mama",
+        productType: storedProductType(snapshot.productType),
         revision: safeInteger(snapshot.revision, 1, 1_000_000, 1),
         price: safeInteger(snapshot.price),
         lines: normalizeStoredLines(snapshot.lines),
+        zoneLines: storedProductType(snapshot.productType) === "defeat_zone"
+          ? normalizeStoredLines(snapshot.zoneLines)
+          : {},
       },
+    };
+  }
+
+  function presetModerationPayload(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const productType = storedProductType(source.productType);
+    return {
+      modeId: AI_TEXT_TRAINING_MODES.includes(source.modeId) ? source.modeId : "mama",
+      productType,
+      lines: normalizeStoredLines(source.lines),
+      zoneLines: productType === "defeat_zone"
+        ? normalizeStoredLines(source.zoneLines)
+        : {},
     };
   }
 
@@ -383,6 +422,8 @@ function createAiTextTrainingService(deps) {
   function publicPolicy() {
     return {
       prices: [...AI_TEXT_TRAINING_PRICE_OPTIONS],
+      productTypes: [...AI_TEXT_TRAINING_PRODUCT_TYPES],
+      playStyles: [...AI_TEXT_TRAINING_PLAY_STYLES],
       publishFee: AI_TEXT_TRAINING_PUBLISH_FEE,
       successFeeBasisPoints: AI_TEXT_TRAINING_SUCCESS_FEE_BASIS_POINTS,
       minimumSuccessFee: 1,
@@ -484,18 +525,54 @@ function createAiTextTrainingService(deps) {
     return ACTIVE_USE_STATUSES.has(value?.status) ? publicUse(value) : null;
   }
 
-  async function getBrowsePresets(uid, modeId = "") {
+  async function getBrowsePresets(uid, modeId = "", productType = "") {
     const requestedMode = modeId ? normalizeAiTextTrainingMode(modeId) : "";
+    const requestedProductType = productType
+      ? normalizeAiTextTrainingProductType(productType)
+      : "";
     let query = presetsCollection().where("status", "==", "active");
     if (requestedMode) {
-      query = query
-        .where("modeId", "==", requestedMode)
-        .orderBy("actualUseCount", "desc");
+      query = query.where("modeId", "==", requestedMode);
     }
-    const snapshot = await query.limit(ACTIVE_PRESET_LIMIT).get();
-    return snapshot.docs
+    if (requestedProductType === "defeat_zone") {
+      query = query.where("productType", "==", requestedProductType);
+    }
+    if (requestedMode || requestedProductType) {
+      query = query.orderBy("actualUseCount", "desc");
+    }
+    let documents = [];
+    if (requestedProductType === "standard") {
+      // Legacy standard products have no productType field. Walk the already
+      // ordered result until we have the true top standard rows instead of
+      // letting popular ZONE products crowd them out of the first page. The
+      // compatibility walk is deliberately bounded by the constant above.
+      let cursor = null;
+      let pageCount = 0;
+      while (documents.length < ACTIVE_PRESET_LIMIT
+          && pageCount < LEGACY_STANDARD_BROWSE_MAX_PAGES) {
+        let pageQuery = query.limit(ACTIVE_PRESET_LIMIT);
+        if (cursor) pageQuery = pageQuery.startAfter(cursor);
+        const page = await pageQuery.get();
+        pageCount += 1;
+        for (const document of page.docs) {
+          if (storedProductType(document.get("productType")) === "standard") {
+            documents.push(document);
+            if (documents.length >= ACTIVE_PRESET_LIMIT) break;
+          }
+        }
+        if (page.docs.length < ACTIVE_PRESET_LIMIT) break;
+        cursor = page.docs.at(-1);
+      }
+    } else {
+      const snapshot = await query.limit(ACTIVE_PRESET_LIMIT).get();
+      documents = snapshot.docs;
+    }
+    return documents
       .map((document) => publicPreset({ id: document.id, ...document.data() }, uid))
       .filter((preset) => !requestedMode || preset.modeId === requestedMode)
+      .filter((preset) => (
+        !requestedProductType || preset.productType === requestedProductType
+      ))
       .sort((left, right) => (
         right.actualUseCount - left.actualUseCount
         || right.updatedAt - left.updatedAt
@@ -516,11 +593,11 @@ function createAiTextTrainingService(deps) {
       activeUse,
     ] = await Promise.all([
       walletRef(uid).get(),
-      presetsCollection().where("sellerUid", "==", uid).limit(3).get(),
+      presetsCollection().where("sellerUid", "==", uid).limit(6).get(),
       profileRef(uid).get(),
       preferencesRef(uid).get(),
       ownedProductIds(uid),
-      getBrowsePresets(uid, data.modeId || ""),
+      getBrowsePresets(uid, data.modeId || "", data.productType || ""),
       readActiveUse(uid),
     ]);
     return {
@@ -529,7 +606,10 @@ function createAiTextTrainingService(deps) {
       presets,
       ownPresets: ownSnapshot.docs
         .map((document) => publicPreset({ id: document.id, ...document.data() }, uid))
-        .sort((left, right) => left.modeId.localeCompare(right.modeId)),
+        .sort((left, right) => (
+          left.modeId.localeCompare(right.modeId)
+          || left.productType.localeCompare(right.productType)
+        )),
       profile: publicProfile(profileSnapshot.data()),
       cosmetics: publicCosmetics(preferencesSnapshot.data(), ownedProductIdsValue),
       activeUse,
@@ -540,7 +620,7 @@ function createAiTextTrainingService(deps) {
   async function browse(uid, data = {}) {
     requireUid(uid);
     return {
-      presets: await getBrowsePresets(uid, data.modeId || ""),
+      presets: await getBrowsePresets(uid, data.modeId || "", data.productType || ""),
       serverNow: currentTime(),
     };
   }
@@ -921,8 +1001,16 @@ function createAiTextTrainingService(deps) {
     } catch (error) {
       throw mapHelperError(error);
     }
-    const presetId = aiTextTrainingPresetId(uid, input.modeId);
+    const presetId = aiTextTrainingPresetId(uid, input.modeId, input.productType);
     const payloadHash = aiTextTrainingPayloadHash(input);
+    const legacyPayloadHash = input.productType === "standard"
+      ? aiTextTrainingPayloadHash(Object.fromEntries(
+        Object.entries(input).filter(([key]) => !["productType", "zoneLines"].includes(key)),
+      ))
+      : "";
+    const moderationPayloadHash = aiTextTrainingPayloadHash(
+      presetModerationPayload(input),
+    );
     const actionReference = publishActionRef(uid, actionId);
     const presetReference = presetRef(presetId);
     const walletReference = walletRef(uid);
@@ -944,7 +1032,11 @@ function createAiTextTrainingService(deps) {
 
       if (actionSnapshot.exists) {
         const saved = actionSnapshot.data();
-        if (saved.sellerUid !== uid || saved.payloadHash !== payloadHash) {
+        const legacyStandardRetry = input.productType === "standard"
+          && saved.payloadHash === legacyPayloadHash
+          && storedProductType(saved.preset?.productType) === "standard";
+        if (saved.sellerUid !== uid
+            || (saved.payloadHash !== payloadHash && !legacyStandardRetry)) {
           throw httpsError(
             "already-exists",
             "同じ操作IDが別の公開内容で使われています。画面を読み直してください。",
@@ -970,8 +1062,9 @@ function createAiTextTrainingService(deps) {
       }
       if (presetSnapshot.exists
           && presetSnapshot.get("moderationStatus") === "quarantined"
-          && aiTextTrainingPayloadHash(presetSnapshot.get("lines") || {})
-            === aiTextTrainingPayloadHash(input.lines)) {
+          && aiTextTrainingPayloadHash(
+            presetModerationPayload(presetSnapshot.data()),
+          ) === moderationPayloadHash) {
         throw httpsError(
           "failed-precondition",
           "安全上の通報で非公開になった台本は、応援台詞を見直してから再公開してください。",
@@ -1000,11 +1093,14 @@ function createAiTextTrainingService(deps) {
         publicSellerId: aiTextTrainingPublicSellerId(uid),
         sellerName: input.sellerName,
         modeId: input.modeId,
+        productType: input.productType,
         title: input.title,
         description: input.description,
         price: input.price,
         revision: nextRevision,
         lines: input.lines,
+        zoneLines: input.zoneLines,
+        moderationPayloadHash,
         status: "active",
         actualUseCount: safeInteger(presetSnapshot.get("actualUseCount")),
         rankingUseCount: safeInteger(presetSnapshot.get("rankingUseCount")),
@@ -1039,6 +1135,7 @@ function createAiTextTrainingService(deps) {
         details: {
           productId: presetId,
           mode: input.modeId,
+          productType: input.productType,
           listingTitle: input.title,
         },
         occurredAt: now,
@@ -1109,9 +1206,11 @@ function createAiTextTrainingService(deps) {
     requireUid(uid);
     let actionId;
     let presetId;
+    let playStyle;
     try {
       actionId = normalizeAiTextTrainingActionId(data?.actionId);
       presetId = normalizeAiTextTrainingDocumentId(data?.presetId);
+      playStyle = normalizeAiTextTrainingPlayStyle(data?.playStyle);
     } catch (error) {
       throw mapHelperError(error);
     }
@@ -1128,12 +1227,27 @@ function createAiTextTrainingService(deps) {
       presetId,
       expectedPrice,
       expectedRevision,
+      playStyle,
+    });
+    const legacyPayloadHash = aiTextTrainingPayloadHash({
+      presetId,
+      expectedPrice,
+      expectedRevision,
     });
     const useId = aiTextTrainingUseId(uid, actionId);
     const presetReference = presetRef(presetId);
     const preliminaryPresetSnapshot = await presetReference.get();
     if (!preliminaryPresetSnapshot.exists) {
       throw httpsError("not-found", "応援台本を確認できませんでした。");
+    }
+    const preliminaryProductType = storedProductType(
+      preliminaryPresetSnapshot.get("productType"),
+    );
+    if (preliminaryProductType === "defeat_zone" && playStyle !== "defeat_zone") {
+      throw httpsError(
+        "failed-precondition",
+        "敗北ZONE専用台本は敗北ZONEを選択したトレーニングでのみ利用できます。",
+      );
     }
     const preliminarySellerUid = preliminaryPresetSnapshot.get("sellerUid");
     if (preliminarySellerUid === uid) {
@@ -1203,7 +1317,11 @@ function createAiTextTrainingService(deps) {
 
       if (useSnapshot.exists) {
         const saved = useSnapshot.data();
-        if (saved.buyerUid !== uid || saved.payloadHash !== payloadHash) {
+        const legacyStandardRetry = saved.playStyle == null
+          && playStyle === "standard"
+          && saved.payloadHash === legacyPayloadHash;
+        if (saved.buyerUid !== uid
+            || (saved.payloadHash !== payloadHash && !legacyStandardRetry)) {
           throw httpsError(
             "already-exists",
             "同じ操作IDが別の利用内容で使われています。画面を読み直してください。",
@@ -1234,6 +1352,7 @@ function createAiTextTrainingService(deps) {
         throw httpsError("not-found", "この応援台本は現在利用できません。");
       }
       const preset = presetSnapshot.data();
+      const productType = storedProductType(preset.productType);
       const sellerUid = preset.sellerUid;
       if (sellerUid !== preliminarySellerUid || sellerUid === uid) {
         throw httpsError("failed-precondition", "作者情報が更新されました。台本を読み直してください。");
@@ -1243,6 +1362,12 @@ function createAiTextTrainingService(deps) {
         throw httpsError(
           "failed-precondition",
           "価格または台本が更新されています。決済前にもう一度確認してください。",
+        );
+      }
+      if (productType === "defeat_zone" && playStyle !== "defeat_zone") {
+        throw httpsError(
+          "failed-precondition",
+          "敗北ZONE専用台本は敗北ZONEを選択したトレーニングでのみ利用できます。",
         );
       }
 
@@ -1309,11 +1434,13 @@ function createAiTextTrainingService(deps) {
         publicSellerId: preset.publicSellerId,
         sellerName: preset.sellerName,
         modeId: preset.modeId,
+        productType,
         title: preset.title,
         description: preset.description,
         price: preset.price,
         revision: preset.revision,
         lines: preset.lines,
+        zoneLines: productType === "defeat_zone" ? preset.zoneLines : {},
       };
       const storedUse = {
         schemaVersion: AI_TEXT_TRAINING_SCHEMA_VERSION,
@@ -1322,6 +1449,7 @@ function createAiTextTrainingService(deps) {
         sellerUid,
         actionId,
         payloadHash,
+        playStyle,
         status: "active",
         outcome: "",
         presetId,
@@ -1364,6 +1492,8 @@ function createAiTextTrainingService(deps) {
           details: {
             productId: presetId,
             mode: preset.modeId,
+            productType,
+            playStyle,
             counterpartyName: preset.sellerName,
             publicSellerId: preset.publicSellerId,
             listingTitle: preset.title,
@@ -1397,6 +1527,8 @@ function createAiTextTrainingService(deps) {
           details: {
             productId: presetId,
             mode: preset.modeId,
+            productType,
+            playStyle,
             listingTitle: preset.title,
           },
           occurredAt: now,
@@ -1462,6 +1594,8 @@ function createAiTextTrainingService(deps) {
           buyerUid: uid,
           presetId,
           presetRevision: expectedRevision,
+          productType,
+          playStyle,
           firstUseId: useId,
           createdAt: now,
         });
@@ -1590,8 +1724,10 @@ function createAiTextTrainingService(deps) {
       xHandle: xPublic ? xHandle : "",
       updatedAt: now,
     };
-    const ownPresetReferences = AI_TEXT_TRAINING_MODES.map((modeId) => (
-      presetRef(aiTextTrainingPresetId(uid, modeId))
+    const ownPresetReferences = AI_TEXT_TRAINING_MODES.flatMap((modeId) => (
+      AI_TEXT_TRAINING_PRODUCT_TYPES.map((productType) => (
+        presetRef(aiTextTrainingPresetId(uid, modeId, productType))
+      ))
     ));
     const profileReference = profileRef(uid);
     await firestore.runTransaction(async (transaction) => {

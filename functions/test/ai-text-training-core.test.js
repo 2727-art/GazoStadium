@@ -202,6 +202,69 @@ test("the edge gauge follows beat phase and enters its finale at exactly ten sec
   }
 });
 
+test("defeat ZONE is a separate play style with bounded 200 and 30 BPM presentation gauges", async () => {
+  const core = await import(coreUrl);
+  assert.equal(core.normalizeAiTextTrainingPlayStyle("defeat_zone"), "defeat_zone");
+  assert.equal(core.normalizeAiTextTrainingPlayStyle("unknown"), "standard");
+  assert.equal(core.aiTextTrainingPlayStyle("defeat_zone").label, "敗北ZONE");
+  assert.equal(core.AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM, 200);
+  assert.equal(core.AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS, 20_000);
+  assert.equal(core.AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM, 30);
+  assert.equal(core.AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS, 60_000);
+
+  const rush = core.aiTextTrainingDefeatZoneBeatGaugeState({
+    bpm: 200,
+    effectiveAt: 10_000,
+    now: 10_450,
+    remainingMs: 10_000,
+    phase: "zone_rush",
+  });
+  assert.equal(rush.active, true);
+  assert.equal(rush.beatDurationMs, 300);
+  assert.equal(rush.phaseOffsetMs, 450);
+  assert.equal(rush.finalTen, true);
+  assert.equal(rush.urgency, 0.5);
+
+  const cooldown = core.aiTextTrainingDefeatZoneBeatGaugeState({
+    bpm: 30,
+    remainingMs: 10_000,
+    phase: "zone_cooldown",
+  });
+  assert.equal(cooldown.active, true);
+  assert.equal(cooldown.beatDurationMs, 2_000);
+  assert.equal(cooldown.finalTen, false);
+  assert.equal(cooldown.urgency, 0);
+
+  for (const invalid of [
+    { bpm: 200, phase: "paused" },
+    { bpm: 201, phase: "zone_rush" },
+    { bpm: 29, phase: "zone_cooldown" },
+  ]) {
+    const gauge = core.aiTextTrainingDefeatZoneBeatGaugeState({
+      ...invalid,
+      remainingMs: 5_000,
+    });
+    assert.equal(gauge.active, false);
+    assert.equal(gauge.finalTen, false);
+    assert.equal(gauge.urgency, 0);
+  }
+
+  assert.throws(
+    () => core.createAiTextTrainingPlan({
+      modeId: "mama",
+      bpms: [200, 80, 90, 100, 110],
+    }),
+    /40〜160/,
+  );
+  assert.throws(
+    () => core.createAiTextTrainingPlan({
+      modeId: "mama",
+      bpms: [30, 80, 90, 100, 110],
+    }),
+    /40〜160/,
+  );
+});
+
 test("all built-in scripts completely cover the author schema", async () => {
   const core = await import(coreUrl);
   for (const modeId of ["mama", "imouto", "oneechan"]) {
@@ -214,4 +277,60 @@ test("all built-in scripts completely cover the author schema", async () => {
       assert.ok(lines.length >= 2);
     }
   }
+});
+
+test("script products keep legacy presets standard and preserve all defeat ZONE slots", async () => {
+  const core = await import(coreUrl);
+  assert.equal(core.normalizeAiTextTrainingProductType(), "standard");
+  assert.equal(core.normalizeAiTextTrainingProductType("unknown"), "standard");
+  assert.equal(
+    core.aiTextTrainingProductType("defeat_zone").label,
+    "敗北ZONE専用台本",
+  );
+  assert.deepEqual(
+    core.AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS,
+    [
+      "zone_rush",
+      "zone_surrendered",
+      "zone_overpowered",
+      "zone_cooldown",
+      "zone_certificate",
+    ],
+  );
+
+  const legacy = core.normalizeAiTextTrainingScriptSnapshot({
+    ...core.AI_TEXT_TRAINING_BUILTIN_SCRIPTS.mama,
+    productType: undefined,
+    zoneLines: {
+      zone_rush: ["保存してはいけない行1", "保存してはいけない行2"],
+    },
+  });
+  assert.equal(legacy.productType, "standard");
+  assert.deepEqual(legacy.zoneLines.zone_rush, []);
+
+  const zoneLines = Object.fromEntries(
+    core.AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS.map((slotId) => [
+      slotId,
+      [`${slotId} A`, `${slotId} B`],
+    ]),
+  );
+  const zone = core.normalizeAiTextTrainingScriptSnapshot({
+    ...core.AI_TEXT_TRAINING_BUILTIN_SCRIPTS.oneechan,
+    id: "zone-product",
+    productType: "defeat_zone",
+    zoneLines,
+  });
+  assert.equal(zone.productType, "defeat_zone");
+  assert.deepEqual(zone.zoneLines, zoneLines);
+  assert.equal(
+    core.renderAiTextTrainingLine("{bpm} BPMで残り{remaining}秒", {
+      bpm: 200,
+      remaining: 7,
+    }),
+    "200 BPMで残り7秒",
+  );
+  assert.equal(
+    core.renderAiTextTrainingLine("{bpm} BPM", { bpm: 30 }),
+    "30 BPM",
+  );
 });

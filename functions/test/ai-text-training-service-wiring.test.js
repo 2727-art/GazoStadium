@@ -146,6 +146,8 @@ test("achievement sessions are server-timed, idempotent, private, and unlock in 
 
 test("paid use validates displayed revision, price, and balance before atomic wallet writes", () => {
   const start = between("async function startPaidUse", "async function resumeUse");
+  assert.match(start, /normalizeAiTextTrainingPlayStyle/);
+  assert.match(start, /productType === "defeat_zone" && playStyle !== "defeat_zone"/);
   assert.match(start, /expectedPrice/);
   assert.match(start, /expectedRevision/);
   assert.match(start, /expectedBalance/);
@@ -162,6 +164,10 @@ test("paid use validates displayed revision, price, and balance before atomic wa
   assert.match(start, /appendAnjuPayEntry\([\s\S]*?sellerWalletReference/);
   assert.match(start, /transaction\.create\(useReference, storedUse\)/);
   assert.match(start, /transaction\.set\(activeReference/);
+  assert.match(start, /presetSnapshot: snapshot/);
+  assert.match(start, /productType/);
+  assert.match(start, /zoneLines/);
+  assert.match(start, /playStyle/);
 
   const firstWrite = start.search(/transaction\.(?:create|set|update|delete)\(/);
   const lastRead = start.lastIndexOf("transaction.get(");
@@ -196,6 +202,10 @@ test("terminal use, report revision, and idempotent wallet mirrors are guarded",
     publish,
     /if \(actionSnapshot\.exists\)[\s\S]*?balance: walletData\(walletSnapshot\)\.balance/,
   );
+  assert.match(publish, /aiTextTrainingPresetId\(uid, input\.modeId, input\.productType\)/);
+  assert.match(publish, /presetModerationPayload\(input\)/);
+  assert.match(publish, /presetModerationPayload\(presetSnapshot\.data\(\)\)/);
+  assert.match(publish, /zoneLines: input\.zoneLines/);
   const start = between("async function startPaidUse", "async function resumeUse");
   assert.match(start, /const stillActive = ACTIVE_USE_STATUSES\.has\(saved\.status\)/);
   assert.match(start, /terminalAction: true/);
@@ -238,12 +248,33 @@ test("browse index and large-script index exemptions are declared", () => {
       indexDefinition.fields.some((field) => field.fieldPath === fieldPath)
     ))
   )));
+  assert.ok(indexes.indexes.some((indexDefinition) => (
+    indexDefinition.collectionGroup === "aiTextTrainingPresets"
+    && ["status", "modeId", "productType", "actualUseCount"].every((fieldPath) => (
+      indexDefinition.fields.some((field) => field.fieldPath === fieldPath)
+    ))
+  )));
   assert.ok(indexes.fieldOverrides.some((override) => (
     override.collectionGroup === "aiTextTrainingPresets"
     && override.fieldPath === "lines"
     && Array.isArray(override.indexes)
     && override.indexes.length === 0
   )));
+  for (const [collectionGroup, fieldPath] of [
+    ["aiTextTrainingPresets", "zoneLines"],
+    ["aiTextTrainingUses", "presetSnapshot.zoneLines"],
+    ["aiTextTrainingReports", "presetSnapshot.zoneLines"],
+    ["aiTextTrainingPublishActions", "preset.zoneLines"],
+    ["revisions", "lines"],
+    ["revisions", "zoneLines"],
+  ]) {
+    assert.ok(indexes.fieldOverrides.some((override) => (
+      override.collectionGroup === collectionGroup
+      && override.fieldPath === fieldPath
+      && Array.isArray(override.indexes)
+      && override.indexes.length === 0
+    )), `missing index exemption ${collectionGroup}.${fieldPath}`);
+  }
   assert.ok(indexes.fieldOverrides.some((override) => (
     override.collectionGroup === "aiTextTrainingUses"
     && override.fieldPath === "presetSnapshot.lines"
@@ -259,6 +290,18 @@ test("browse index and large-script index exemptions are declared", () => {
     && Array.isArray(override.indexes)
     && override.indexes.length === 0
   )));
+});
+
+test("standard browse pages past ZONE rows and seller safety checks cover all six products", () => {
+  const browse = between("async function getBrowsePresets", "async function getState");
+  assert.match(browse, /requestedProductType === "standard"/);
+  assert.match(browse, /pageQuery\.startAfter\(cursor\)/);
+  assert.match(browse, /storedProductType\(document\.get\("productType"\)\) === "standard"/);
+  const state = between("async function getState", "async function browse");
+  assert.match(state, /\.limit\(6\)\.get\(\)/);
+  const profile = between("async function saveProfile", "function publicRankingRow");
+  assert.match(profile, /AI_TEXT_TRAINING_MODES\.flatMap/);
+  assert.match(profile, /AI_TEXT_TRAINING_PRODUCT_TYPES\.map/);
 });
 
 test("account transfer refuses a supposedly pristine target with solo-market history", () => {

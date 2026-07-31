@@ -222,6 +222,8 @@ async function makeController({
   hidden = false,
   initialVolume,
   initialToneProfileId,
+  minimumBpm,
+  maximumBpm,
 } = {}) {
   const {
     createFreeTableAmbienceController,
@@ -240,6 +242,8 @@ async function makeController({
     scheduleAheadMs: 100,
     ...(initialVolume === undefined ? {} : { initialVolume }),
     ...(initialToneProfileId === undefined ? {} : { initialToneProfileId }),
+    ...(minimumBpm === undefined ? {} : { minimumBpm }),
+    ...(maximumBpm === undefined ? {} : { maximumBpm }),
   });
   return {
     controller,
@@ -1046,5 +1050,32 @@ test("only BPM zero or integer BPM values from 40 through 160 are accepted", asy
   assert.throws(
     () => controller.setAmbience(snapshot({ metronomeBpm: 161, revision: 6 })),
     /0または40〜160の整数BPM/,
+  );
+});
+
+test("a caller may opt in to the defeat ZONE 30-200 range without changing the shared default", async () => {
+  const shared = await makeController();
+  assert.throws(
+    () => shared.controller.setAmbience(snapshot({ metronomeBpm: 30 })),
+    /0または40〜160の整数BPM/,
+  );
+  assert.throws(
+    () => shared.controller.setAmbience(snapshot({ metronomeBpm: 200 })),
+    /0または40〜160の整数BPM/,
+  );
+
+  const zone = await makeController({ minimumBpm: 30, maximumBpm: 200 });
+  assert.equal(zone.controller.setAmbience(snapshot({ metronomeBpm: 30 })), true);
+  assert.equal(
+    zone.controller.setAmbience(snapshot({ metronomeBpm: 200, revision: 2 })),
+    true,
+  );
+  assert.throws(
+    () => zone.controller.setAmbience(snapshot({ metronomeBpm: 29, revision: 3 })),
+    /0または30〜200の整数BPM/,
+  );
+  assert.throws(
+    () => zone.controller.setAmbience(snapshot({ metronomeBpm: 201, revision: 4 })),
+    /0または30〜200の整数BPM/,
   );
 });

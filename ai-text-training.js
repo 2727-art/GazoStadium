@@ -22,25 +22,39 @@ import {
 } from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 import {
   AI_TEXT_TRAINING_BUILTIN_SCRIPTS,
+  AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM,
+  AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS,
+  AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS,
+  AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS,
+  AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM,
+  AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
   AI_TEXT_TRAINING_EXERCISES,
   AI_TEXT_TRAINING_MODES,
+  AI_TEXT_TRAINING_PLAY_STYLES,
+  AI_TEXT_TRAINING_PRODUCT_TYPES,
   AI_TEXT_TRAINING_REACTIONS,
   AI_TEXT_TRAINING_ROUND_COUNT,
   AI_TEXT_TRAINING_SCRIPT_SLOTS,
+  AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS,
   aiTextTrainingBeatGaugeState,
+  aiTextTrainingDefeatZoneBeatGaugeState,
   aiTextTrainingExercise,
   aiTextTrainingMessageCadenceMs,
   aiTextTrainingMode,
+  aiTextTrainingPlayStyle,
+  aiTextTrainingProductType,
   aiTextTrainingScriptSlot,
   aiTextTrainingTempoBand,
   aiTextTrainingTempoDirection,
   applyAiTextTrainingReaction,
   createAiTextTrainingPlan,
   normalizeAiTextTrainingBpm,
+  normalizeAiTextTrainingPlayStyle,
+  normalizeAiTextTrainingProductType,
   normalizeAiTextTrainingScriptSnapshot,
   pickAiTextTrainingLine,
   renderAiTextTrainingLine,
-} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1-beat-edge-hud-v3";
+} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1-beat-edge-hud-v3-defeat-zone-v1-defeat-zone-scripts-v1";
 import {
   AI_TEXT_TRAINING_ROSTER_MAX_COUNT,
   drawAiTextTrainingRosterIndices,
@@ -56,7 +70,7 @@ import {
 import {
   createFreeTableAmbienceController,
   normalizeFreeTableAmbienceToneProfileId,
-} from "./free-table-ambience.mjs?v=free-table-ambience-v2";
+} from "./free-table-ambience.mjs?v=free-table-ambience-v2-defeat-zone-range-v1";
 
 const appRoot = document.querySelector("#app");
 const aiTextTrainingAction = httpsCallable(functions, "aiTextTrainingAction");
@@ -81,6 +95,9 @@ const PREVIEW_SCREENS = new Set([
   "draw",
   "play",
   "reaction",
+  "zone",
+  "cooldown",
+  "defeat_result",
   "result",
   "safety",
   "rankings",
@@ -133,8 +150,47 @@ const AI_TEXT_TRAINING_BEAT_CHARACTERS = Object.freeze([
 ]);
 const DEFAULT_BEAT_CHARACTER_ID = "clear_tap";
 const DEFAULT_METRONOME_VOLUME = 0.36;
-const SESSION_SCHEMA_VERSION = 2;
+const SESSION_SCHEMA_VERSION = 4;
 const DECK_SCHEMA_VERSION = 2;
+const DEFEAT_ZONE_PHASES = new Set([
+  "zone_ready",
+  "zone_rush",
+  "zone_deceleration",
+  "zone_cooldown",
+  "zone_paused",
+]);
+const DEFEAT_ZONE_TIMED_PHASES = new Set([
+  "zone_rush",
+  "zone_deceleration",
+  "zone_cooldown",
+]);
+const DEFEAT_ZONE_MESSAGES = Object.freeze({
+  ready: "5枚の最終攻勢が始まります",
+  rush: Object.freeze([
+    "まだ負けを認めないの？",
+    "5人全員で、最後まで追い込むよ",
+    "動作は自分のペース。負ける時は自分で決めて",
+    "もうギブアップしても、今日の5ラウンドは完了だよ",
+  ]),
+  surrendered: Object.freeze([
+    "やっと負けを認めたね。今日は私たちの勝ち",
+    "ギブアップを受け取ったよ。今日の勝者は私たち",
+  ]),
+  overpowered: Object.freeze([
+    "最後まで受け止めたね。今日は私たちの勝ち",
+    "最終攻勢はここまで。今日の勝者は私たち",
+  ]),
+  cooldown: Object.freeze([
+    "もう力を抜いていいよ",
+    "今日は私たちの勝ち。最後までよく頑張ったね",
+    "楽な呼吸で、動きをゆるめよう",
+    "ゆっくり休んでね",
+  ]),
+  certificate: Object.freeze([
+    "今日は私たちの勝ち。最後までよく頑張ったね",
+    "敗北を証明します。5ラウンド完走、おつかれさま",
+  ]),
+});
 const DEFAULT_POLICY = Object.freeze({
   prices: Object.freeze([5, 10, 25]),
   publishFee: 1,
@@ -241,7 +297,7 @@ function storedMetronomeVolume() {
 function storedSession() {
   try {
     const parsed = JSON.parse(readLocalValue(SESSION_STORAGE_KEY, "null"));
-    if (!parsed || ![1, SESSION_SCHEMA_VERSION].includes(Number(parsed.schemaVersion))) return null;
+    if (!parsed || ![1, 2, 3, SESSION_SCHEMA_VERSION].includes(Number(parsed.schemaVersion))) return null;
     return parsed;
   } catch {
     return null;
@@ -253,6 +309,16 @@ function normalizeAchievementOwnerUid(value) {
   const uid = value.trim();
   if (!uid || uid.length > 128 || /[\u0000-\u001f\u007f]/u.test(uid)) return "";
   return uid;
+}
+
+function currentSessionOwnerUid(targetState = state) {
+  return normalizeAchievementOwnerUid(targetState?.uid || auth.currentUser?.uid);
+}
+
+function savedSessionOwnerMatches(saved, targetState = state) {
+  const currentUid = currentSessionOwnerUid(targetState);
+  return Boolean(currentUid)
+    && normalizeAchievementOwnerUid(saved?.ownerUid) === currentUid;
 }
 
 function currentAchievementOwner() {
@@ -523,6 +589,8 @@ function createState() {
   const metronomeVolume = storedMetronomeVolume();
   const ambienceController = createFreeTableAmbienceController({
     initialVolume: metronomeVolume,
+    minimumBpm: AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM,
+    maximumBpm: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM,
   });
   return {
     generation: 0,
@@ -558,6 +626,8 @@ function createState() {
     ranking: null,
     rankingLoading: false,
     rankingError: "",
+    playStyle: "standard",
+    sessionPlayStyle: "standard",
     modeId: "mama",
     exerciseId: "march",
     roundSeconds: 20,
@@ -591,7 +661,15 @@ function createState() {
     sessionStartedAt: 0,
     completedActiveSeconds: 0,
     completedRounds: 0,
+    workoutFinalized: false,
     resultOutcome: "",
+    defeatResolution: "",
+    defeatSettled: false,
+    postWorkoutSafetyStopped: false,
+    postWorkoutExited: false,
+    defeatCertificateMessage: "",
+    defeatResumePhase: "",
+    defeatDecelerationStage: 0,
     achievementActionId: "",
     achievementSessionId: "",
     achievementBeginRequested: false,
@@ -604,6 +682,7 @@ function createState() {
     finishPending: false,
     finishInFlight: false,
     editorDraft: null,
+    editorProductType: "standard",
     editorActionId: "",
     editorPreview: {
       phase: "active",
@@ -677,13 +756,13 @@ async function releaseWakeLock() {
 
 async function acquireWakeLock() {
   if (!active
-      || state.phase !== "playing"
+      || !["playing", "zone_rush"].includes(state.phase)
       || document.visibilityState !== "visible"
       || !navigator.wakeLock?.request) return;
   await releaseWakeLock();
   try {
     const sentinel = await navigator.wakeLock.request("screen");
-    if (!active || state.phase !== "playing") {
+    if (!active || !["playing", "zone_rush"].includes(state.phase)) {
       await sentinel.release();
       return;
     }
@@ -698,12 +777,25 @@ async function acquireWakeLock() {
 
 function persistSession() {
   if (!state.plan || !["play", "result"].includes(state.screen)) return;
-  const remainingMs = state.phase === "playing" && state.roundEndsAt
+  const timedPhase = state.phase === "playing" || DEFEAT_ZONE_TIMED_PHASES.has(state.phase);
+  const remainingMs = timedPhase && state.roundEndsAt
     ? Math.max(0, state.roundEndsAt - performance.now())
     : state.remainingMs;
+  const persistedPhase = state.phase === "playing" || state.phase === "countdown"
+    ? "paused"
+    : state.phase === "zone_ready" || DEFEAT_ZONE_TIMED_PHASES.has(state.phase)
+      ? "zone_paused"
+      : state.phase;
+  const defeatResumePhase = state.phase === "zone_ready"
+    ? "zone_rush"
+    : DEFEAT_ZONE_TIMED_PHASES.has(state.phase)
+      ? state.phase
+      : state.defeatResumePhase;
   const payload = {
     schemaVersion: SESSION_SCHEMA_VERSION,
+    ownerUid: currentSessionOwnerUid(),
     paidUseId: state.paidUseId,
+    playStyle: state.sessionPlayStyle,
     modeId: state.modeId,
     exerciseId: state.exerciseId,
     roundSeconds: state.roundSeconds,
@@ -715,11 +807,10 @@ function persistSession() {
     plan: state.plan,
     roundIndex: state.roundIndex,
     remainingMs,
-    phase: state.phase === "playing" || state.phase === "countdown"
-      ? "paused"
-      : state.phase,
+    phase: persistedPhase,
     completedActiveSeconds: state.completedActiveSeconds,
     completedRounds: state.completedRounds,
+    workoutFinalized: state.workoutFinalized,
     sessionStartedAt: state.sessionStartedAt,
     achievementActionId: state.achievementActionId,
     achievementSessionId: state.achievementSessionId,
@@ -728,6 +819,13 @@ function persistSession() {
     selectedPresetSource: state.selectedPresetSource,
     cosmetics: state.sessionCosmetics,
     resultOutcome: state.resultOutcome,
+    defeatResolution: state.defeatResolution,
+    defeatSettled: state.defeatSettled,
+    postWorkoutSafetyStopped: state.postWorkoutSafetyStopped,
+    postWorkoutExited: state.postWorkoutExited,
+    defeatCertificateMessage: state.defeatCertificateMessage,
+    defeatResumePhase,
+    defeatDecelerationStage: state.defeatDecelerationStage,
     updatedAt: Date.now(),
   };
   try {
@@ -922,14 +1020,105 @@ function presetSnapshot(value) {
   }, source.modeId || state.modeId);
 }
 
+function presetProductType(value) {
+  return normalizeAiTextTrainingProductType(value?.productType);
+}
+
+function presetSupportsPlayStyle(value, playStyle = state.playStyle) {
+  const normalizedPlayStyle = normalizeAiTextTrainingPlayStyle(playStyle);
+  const productType = presetProductType(value);
+  if (normalizedPlayStyle === "standard") return productType === "standard";
+  return ["standard", "defeat_zone"].includes(productType);
+}
+
+function activeUsePlayStyle(value = state.activeUse) {
+  return normalizeAiTextTrainingPlayStyle(value?.playStyle);
+}
+
+function ownPresetFor(modeId, productType) {
+  const normalizedProductType = normalizeAiTextTrainingProductType(productType);
+  return state.ownPresets.find((preset) => (
+    preset.modeId === modeId
+    && presetProductType(preset) === normalizedProductType
+  ));
+}
+
+function productUseScope(value, playStyle = state.playStyle) {
+  const productType = presetProductType(value);
+  if (productType === "defeat_zone") {
+    return "5ラウンド＋最終攻勢＋敗北＋クールダウン＋敗北証明";
+  }
+  return normalizeAiTextTrainingPlayStyle(playStyle) === "defeat_zone"
+    ? "5ラウンド＋システム標準の敗北ZONE"
+    : "5ラウンド";
+}
+
+function marketProductTypes(playStyle = state.playStyle) {
+  return normalizeAiTextTrainingPlayStyle(playStyle) === "defeat_zone"
+    ? ["defeat_zone", "standard"]
+    : ["standard"];
+}
+
+function normalizeMarketPresetList(value, productType) {
+  if (!Array.isArray(value)) return [];
+  return value.map((preset) => ({
+    ...preset,
+    productType: normalizeAiTextTrainingProductType(
+      preset?.productType || productType,
+    ),
+  }));
+}
+
+async function browseMarketPresets({
+  modeId,
+  playStyle,
+  seededPresets = [],
+  seededProductTypes = [],
+} = {}) {
+  const orderedTypes = marketProductTypes(playStyle);
+  const seeded = normalizeMarketPresetList(seededPresets);
+  const seededTypeSet = new Set(
+    seededProductTypes.map(normalizeAiTextTrainingProductType),
+  );
+  const seededByType = new Map(orderedTypes.map((productType) => [
+    productType,
+    seeded.filter((preset) => presetProductType(preset) === productType),
+  ]));
+  const groups = [];
+  for (const productType of orderedTypes) {
+    const existing = seededByType.get(productType) || [];
+    if (existing.length || seededTypeSet.has(productType)) {
+      groups.push(existing);
+      continue;
+    }
+    const response = await aiTextTrainingAction({
+      action: "browse",
+      modeId,
+      productType,
+    });
+    groups.push(normalizeMarketPresetList(response.data?.presets, productType));
+  }
+  const byId = new Map();
+  groups.flat().forEach((preset) => {
+    if (preset?.id && !byId.has(preset.id)) byId.set(preset.id, preset);
+  });
+  return [...byId.values()];
+}
+
 function selectedPresetForMode() {
   if (state.activeUse?.preset) {
+    const lockedPlayStyle = activeUsePlayStyle();
+    state.playStyle = lockedPlayStyle;
+    state.sessionPlayStyle = lockedPlayStyle;
     state.modeId = state.activeUse.preset.modeId;
     state.selectedPreset = presetSnapshot(state.activeUse.preset);
     state.selectedPresetSource = "active_use";
     return state.selectedPreset;
   }
-  if (state.selectedPreset?.modeId === state.modeId) return state.selectedPreset;
+  if (state.selectedPreset?.modeId === state.modeId
+      && presetSupportsPlayStyle(state.selectedPreset)) {
+    return state.selectedPreset;
+  }
   state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
     AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.modeId],
   );
@@ -1030,11 +1219,33 @@ function installPreview(requestedScreen) {
     actualUseCount: 42,
     rankingUseCount: 28,
   });
+  const sampleZonePreset = presetSnapshot({
+    ...samplePreset,
+    id: "4444444444444444444444444444444444444444",
+    productType: "defeat_zone",
+    title: "最後まで見届ける敗北ZONE",
+    description: "5ラウンドから最終攻勢、クールダウン、敗北証明まで言葉で演出します。",
+    revision: 1,
+    zoneLines: {
+      zone_rush: ["専用台本の最終攻勢、5枚全員でいくよ", "ギブアップするまで、言葉で追い込むよ"],
+      zone_surrendered: ["専用台本でギブアップを受け取ったよ", "負けを認めたね。今日は5枚の勝ち"],
+      zone_overpowered: ["専用台本の最終攻勢を受け切ったね", "時間切れ。今日は5枚全員の勝ち"],
+      zone_cooldown: ["専用台本のクールダウン、力を抜いてね", "私たちの勝ち。ゆっくり休もう"],
+      zone_certificate: ["専用台本から、今日の敗北を証明します", "5ラウンド完走と敗北、おつかれさま"],
+    },
+  });
   state.marketPresets = [{
     ...samplePreset,
     sellerName: samplePreset.authorName,
     actualUseCount: 42,
     rankingUseCount: 28,
+    status: "active",
+    isOwn: false,
+  }, {
+    ...sampleZonePreset,
+    sellerName: sampleZonePreset.authorName,
+    actualUseCount: 18,
+    rankingUseCount: 15,
     status: "active",
     isOwn: false,
   }];
@@ -1071,14 +1282,14 @@ function installPreview(requestedScreen) {
     state.pendingDrawIndices = [7, 2, 9, 0, 4];
     state.screen = "draw_review";
   }
-  if (["play", "reaction", "result", "safety"].includes(requestedScreen)) {
+  if (["play", "reaction", "zone", "cooldown", "defeat_result", "result", "safety"].includes(requestedScreen)) {
     state.sessionDrawIndices = [0, 1, 2, 3, 4];
     state.images = state.sessionDrawIndices.map((index) => state.rosterImages[index]);
     state.bpms = state.sessionDrawIndices.map((index) => state.rosterBpms[index]);
     state.sessionBeatCharacterId = state.beatCharacterId;
     state.sessionCosmetics = equippedCosmetics();
     state.plan = createAiTextTrainingPlan({ modeId: "mama", bpms: state.bpms });
-    state.screen = ["result", "safety"].includes(requestedScreen) ? "result" : "play";
+    state.screen = ["result", "defeat_result", "safety"].includes(requestedScreen) ? "result" : "play";
     state.phase = requestedScreen === "reaction" ? "reaction" : "paused";
     state.roundIndex = requestedScreen === "reaction" ? 1 : 0;
     state.remainingMs = 12_000;
@@ -1094,7 +1305,33 @@ function installPreview(requestedScreen) {
         : 24;
       state.completedRounds = requestedScreen === "result"
         ? AI_TEXT_TRAINING_ROUND_COUNT
-        : 1;
+          : 1;
+    }
+    if (["zone", "cooldown", "defeat_result"].includes(requestedScreen)) {
+      state.selectedPreset = sampleZonePreset;
+      state.selectedPresetSource = "market";
+      state.playStyle = "defeat_zone";
+      state.sessionPlayStyle = "defeat_zone";
+      state.workoutFinalized = true;
+      state.resultOutcome = "completed";
+      state.completedActiveSeconds = state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT;
+      state.completedRounds = AI_TEXT_TRAINING_ROUND_COUNT;
+      state.roundIndex = AI_TEXT_TRAINING_ROUND_COUNT - 1;
+      state.remainingMs = requestedScreen === "cooldown" ? 38_000 : 12_000;
+      state.phase = requestedScreen === "zone"
+        ? "zone_rush"
+        : requestedScreen === "cooldown"
+          ? "zone_cooldown"
+          : "result";
+      state.defeatResolution = requestedScreen === "zone" ? "" : "surrendered";
+      state.defeatSettled = requestedScreen === "defeat_result";
+      state.defeatCertificateMessage = requestedScreen === "defeat_result"
+        ? sampleZonePreset.zoneLines.zone_certificate[0]
+        : "";
+      state.currentMessage = requestedScreen === "zone"
+        ? sampleZonePreset.zoneLines.zone_rush[0]
+        : sampleZonePreset.zoneLines.zone_cooldown[0];
+      state.plan.reactions = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill("just_right");
     }
   }
   if (requestedScreen === "rankings") state.screen = "rankings";
@@ -1112,12 +1349,13 @@ async function initializeAuthenticatedState(targetState = state) {
     const response = await aiTextTrainingAction({
       action: "state",
       modeId: targetState.modeId,
+      productType: "standard",
     });
     if (!active || state !== targetState) return;
     const data = response.data || {};
     targetState.balance = Number(data.balance || 0);
     targetState.policy = data.policy || targetState.policy;
-    targetState.marketPresets = Array.isArray(data.presets) ? data.presets : [];
+    targetState.marketPresets = normalizeMarketPresetList(data.presets, "standard");
     targetState.ownPresets = Array.isArray(data.ownPresets) ? data.ownPresets : [];
     targetState.profile = data.profile || targetState.profile;
     targetState.cosmetics = normalizeServerCosmetics(data.cosmetics);
@@ -1125,14 +1363,27 @@ async function initializeAuthenticatedState(targetState = state) {
     targetState.authReady = true;
     targetState.authError = "";
     if (targetState.activeUse?.preset) {
+      const lockedPlayStyle = activeUsePlayStyle(targetState.activeUse);
+      targetState.playStyle = lockedPlayStyle;
+      targetState.sessionPlayStyle = lockedPlayStyle;
       targetState.modeId = targetState.activeUse.preset.modeId;
       targetState.marketModeFilter = targetState.modeId;
       targetState.selectedPreset = presetSnapshot(targetState.activeUse.preset);
       targetState.selectedPresetSource = "active_use";
       targetState.paidUseId = targetState.activeUse.id;
-    } else if (storedSession()?.resultOutcome) {
-      clearPersistedSession();
     }
+    try {
+      targetState.marketPresets = await browseMarketPresets({
+        modeId: targetState.marketModeFilter,
+        playStyle: targetState.playStyle,
+        seededPresets: targetState.marketPresets,
+        seededProductTypes: ["standard"],
+      });
+    } catch {
+      // Market discovery is optional. Keep the authenticated active-use snapshot
+      // recoverable when an index is still building or browse briefly fails.
+    }
+    if (!active || state !== targetState) return;
     targetState.unsubscribeWallet?.();
     targetState.unsubscribeWallet = onSnapshot(
       doc(firestore, "wallets", targetState.uid),
@@ -1156,15 +1407,27 @@ async function initializeAuthenticatedState(targetState = state) {
     );
     await (targetState.initialDeckRestorePromise || restoreStoredDeck({ quiet: true }));
     if (!active || state !== targetState) return;
-    recoverPaidSession();
+    if (targetState.activeUse) {
+      recoverPaidSession();
+    } else {
+      recoverPendingDefeatPresentation();
+    }
     targetState.authSettled = true;
     render();
     flushAchievementRetryQueue().catch(() => {});
   } catch (error) {
     if (!active || state !== targetState) return;
+    try {
+      await (targetState.initialDeckRestorePromise || restoreStoredDeck({ quiet: true }));
+    } catch {
+      // Authentication and local deck recovery fail independently.
+    }
+    if (!active || state !== targetState) return;
     targetState.authReady = false;
     targetState.authSettled = true;
     targetState.authError = error?.message || "市場へ接続できませんでした。";
+    const saved = storedSession();
+    if (!saved?.paidUseId) recoverPendingDefeatPresentation();
     render();
     flushAchievementRetryQueue().catch(() => {});
   }
@@ -1265,17 +1528,103 @@ function normalizeRecoveredPlan(value, {
   };
 }
 
+function validateRecoveredDefeatPresentation({
+  phase,
+  resumePhase,
+  resultOutcome,
+  workoutFinalized,
+  completedRounds,
+  roundIndex,
+  finalReaction,
+  defeatResolution,
+  postWorkoutSafetyStopped,
+  postWorkoutExited,
+} = {}) {
+  if (resultOutcome !== "completed"
+      || workoutFinalized !== true
+      || completedRounds !== AI_TEXT_TRAINING_ROUND_COUNT
+      || roundIndex !== AI_TEXT_TRAINING_ROUND_COUNT - 1
+      || !["reaction", "zone_paused", "result"].includes(phase)) {
+    throw new Error("保存された敗北ZONEの完了状態を確認できません。");
+  }
+  if (phase === "reaction") {
+    if (finalReaction !== null
+        || defeatResolution
+        || postWorkoutSafetyStopped
+        || postWorkoutExited) {
+      throw new Error("保存された敗北ZONEの最終反応を確認できません。");
+    }
+    return true;
+  }
+  if (phase === "zone_paused") {
+    const waitingForDefeat = resumePhase === "zone_rush";
+    if (finalReaction === null
+        || (waitingForDefeat && defeatResolution)
+        || (!waitingForDefeat && !defeatResolution)
+        || postWorkoutSafetyStopped
+        || postWorkoutExited) {
+      throw new Error("保存された敗北ZONEの勝敗状態を確認できません。");
+    }
+    return true;
+  }
+  const stoppedBeforeDefeat = (
+    postWorkoutSafetyStopped === true
+    || postWorkoutExited === true
+  )
+    && !defeatResolution;
+  if (!stoppedBeforeDefeat
+      && (finalReaction === null || !defeatResolution)) {
+    throw new Error("保存された敗北ZONEの敗北証明を確認できません。");
+  }
+  return true;
+}
+
 function recoverPaidSession() {
   state.recoveryError = "";
   const saved = storedSession();
   if (!saved || !state.activeUse || saved.paidUseId !== state.activeUse.id) return false;
   try {
+    const savedSchemaVersion = Number(saved.schemaVersion);
+    if (savedSchemaVersion >= 4 && !savedSessionOwnerMatches(saved)) {
+      throw new Error("保存された利用者を確認できません。");
+    }
     const activeModeId = String(state.activeUse.preset?.modeId || "");
+    const lockedPlayStyle = activeUsePlayStyle();
+    if (!presetSupportsPlayStyle(state.activeUse.preset, lockedPlayStyle)) {
+      throw new Error("開始済み商品のプレイスタイルを確認できません。");
+    }
     const savedResultOutcome = String(saved.resultOutcome || "");
     if (saved.modeId !== activeModeId
         || !["", "completed", "safety_stopped", "exited"].includes(savedResultOutcome)) {
       throw new Error("保存された利用状態を確認できません。");
     }
+    if (savedSchemaVersion >= 3
+        && (!AI_TEXT_TRAINING_PLAY_STYLES.some((style) => style.id === saved.playStyle)
+          || saved.playStyle !== lockedPlayStyle)) {
+      throw new Error("保存されたプレイスタイルを確認できません。");
+    }
+    if (savedSchemaVersion >= 3) {
+      const savedRoundSeconds = Number(saved.roundSeconds);
+      const recordedWorkoutFinalized = saved.workoutFinalized === true;
+      const completedOutcome = savedResultOutcome === "completed";
+      if (!ROUND_SECONDS_OPTIONS.includes(savedRoundSeconds)
+          || recordedWorkoutFinalized !== completedOutcome
+          || (completedOutcome
+            && (Number(saved.completedRounds) !== AI_TEXT_TRAINING_ROUND_COUNT
+              || Number(saved.completedActiveSeconds)
+                !== savedRoundSeconds * AI_TEXT_TRAINING_ROUND_COUNT))
+          || ((saved.postWorkoutSafetyStopped === true || saved.postWorkoutExited === true)
+            && !completedOutcome)
+          || (saved.playStyle === "standard"
+            && (saved.defeatResolution
+              || saved.defeatSettled === true
+              || saved.postWorkoutSafetyStopped === true
+              || saved.postWorkoutExited === true))) {
+        throw new Error("保存されたセッション完了状態を確認できません。");
+      }
+    }
+    state.sessionPlayStyle = lockedPlayStyle;
+    state.playStyle = state.sessionPlayStyle;
     state.modeId = saved.modeId;
     state.exerciseId = saved.exerciseId;
     state.roundSeconds = ROUND_SECONDS_OPTIONS.includes(saved.roundSeconds)
@@ -1290,8 +1639,7 @@ function recoverPaidSession() {
       return bpm;
     });
     const entries = rosterEntries();
-    const savedSchemaVersion = Number(saved.schemaVersion);
-    const savedRosterCount = savedSchemaVersion === SESSION_SCHEMA_VERSION
+    const savedRosterCount = savedSchemaVersion >= 2
       ? isAiTextTrainingRosterCount(saved.rosterCount)
         ? Number(saved.rosterCount)
         : null
@@ -1302,14 +1650,14 @@ function recoverPaidSession() {
         saved.drawIndices,
         savedRosterCount,
       );
-    if (savedSchemaVersion === SESSION_SCHEMA_VERSION
+    if (savedSchemaVersion >= 2
         && (savedRosterCount === null || savedDrawIndices === null)) {
       throw new Error("保存されたDRAWを確認できません。");
     }
-    state.recoveryRosterCount = savedSchemaVersion === SESSION_SCHEMA_VERSION
+    state.recoveryRosterCount = savedSchemaVersion >= 2
       ? savedRosterCount || 0
       : AI_TEXT_TRAINING_ROUND_COUNT;
-    state.sessionDrawIndices = savedSchemaVersion === SESSION_SCHEMA_VERSION
+    state.sessionDrawIndices = savedSchemaVersion >= 2
       ? savedDrawIndices && entries.length === savedRosterCount
         ? savedDrawIndices
         : []
@@ -1330,18 +1678,76 @@ function recoverPaidSession() {
       bpms: state.bpms,
       roundIndex: state.roundIndex,
     });
+    const savedPhase = String(saved.phase || "");
+    const savedResumePhase = [
+      "zone_rush",
+      "zone_deceleration",
+      "zone_cooldown",
+    ].includes(saved.defeatResumePhase)
+      ? saved.defeatResumePhase
+      : "zone_rush";
+    const remainingLimit = state.sessionPlayStyle === "defeat_zone"
+      && savedPhase === "zone_paused"
+      ? savedResumePhase === "zone_cooldown"
+        ? AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS
+        : savedResumePhase === "zone_deceleration"
+          ? AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS
+          : AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS
+      : state.roundSeconds * 1_000;
+    const savedRemainingMs = Number(saved.remainingMs);
     state.remainingMs = Math.max(
       0,
-      Math.min(state.roundSeconds * 1_000, Number(saved.remainingMs) || state.roundSeconds * 1_000),
+      Math.min(remainingLimit, Number.isFinite(savedRemainingMs) ? savedRemainingMs : remainingLimit),
     );
-    state.phase = ["paused", "reaction", "next_preview"].includes(saved.phase)
-      ? saved.phase
-      : "paused";
-    state.completedActiveSeconds = Math.max(0, Number(saved.completedActiveSeconds) || 0);
+    state.phase = state.sessionPlayStyle === "defeat_zone"
+      && savedPhase === "zone_paused"
+      ? "zone_paused"
+      : ["paused", "reaction", "next_preview"].includes(savedPhase)
+        ? savedPhase
+        : "paused";
+    const maximumActiveSeconds = state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT;
+    state.completedActiveSeconds = savedResultOutcome === "completed"
+      ? maximumActiveSeconds
+      : Math.max(
+        0,
+        Math.min(maximumActiveSeconds, Number(saved.completedActiveSeconds) || 0),
+      );
     state.completedRounds = Math.max(
       0,
       Math.min(AI_TEXT_TRAINING_ROUND_COUNT, Number(saved.completedRounds) || 0),
     );
+    state.workoutFinalized = savedSchemaVersion >= 3
+      ? saved.workoutFinalized === true
+      : savedResultOutcome === "completed";
+    state.defeatResolution = ["surrendered", "overpowered"].includes(saved.defeatResolution)
+      ? saved.defeatResolution
+      : "";
+    state.defeatSettled = saved.defeatSettled === true;
+    state.postWorkoutSafetyStopped = saved.postWorkoutSafetyStopped === true;
+    state.postWorkoutExited = saved.postWorkoutExited === true;
+    state.defeatResumePhase = state.phase === "zone_paused" ? savedResumePhase : "";
+    state.defeatDecelerationStage = Number(saved.defeatDecelerationStage) === 2 ? 2 : 0;
+    const finalReaction = state.plan.reactions[AI_TEXT_TRAINING_ROUND_COUNT - 1];
+    const defeatPresentationState = state.sessionPlayStyle === "defeat_zone"
+      && (state.workoutFinalized
+        || savedResultOutcome === "completed"
+        || savedPhase === "zone_paused"
+        || (savedPhase === "reaction"
+          && state.roundIndex === AI_TEXT_TRAINING_ROUND_COUNT - 1));
+    if (defeatPresentationState) {
+      validateRecoveredDefeatPresentation({
+        phase: savedPhase,
+        resumePhase: savedResumePhase,
+        resultOutcome: savedResultOutcome,
+        workoutFinalized: state.workoutFinalized,
+        completedRounds: state.completedRounds,
+        roundIndex: state.roundIndex,
+        finalReaction,
+        defeatResolution: state.defeatResolution,
+        postWorkoutSafetyStopped: state.postWorkoutSafetyStopped,
+        postWorkoutExited: state.postWorkoutExited,
+      });
+    }
     state.sessionStartedAt = Number(saved.sessionStartedAt) || Date.now();
     state.achievementActionId = /^[A-Za-z0-9_-]{16,80}$/u.test(
       String(saved.achievementActionId || ""),
@@ -1358,6 +1764,12 @@ function recoverPaidSession() {
     state.selectedPreset = presetSnapshot(state.activeUse.preset);
     state.selectedPresetSource = "active_use";
     state.paidUseId = state.activeUse.id;
+    state.defeatCertificateMessage = String(saved.defeatCertificateMessage || "").slice(0, 42);
+    if (savedPhase === "result"
+        && state.defeatResolution
+        && !state.defeatCertificateMessage) {
+      state.defeatCertificateMessage = defeatZoneMessage("zone_certificate");
+    }
     state.sessionCosmetics = normalizeAiTextTrainingCosmetics(
       saved.cosmetics || equippedCosmetics(),
       {
@@ -1385,13 +1797,18 @@ function recoverPaidSession() {
     }
     if (savedResultOutcome) {
       state.resultOutcome = savedResultOutcome;
-      state.screen = "result";
-      state.phase = "result";
-      state.finishPending = true;
-      const recoveryState = state;
-      finishPaidUse(savedResultOutcome).finally(() => {
-        if (active && state === recoveryState && recoveryState.screen === "result") render();
-      });
+      const presentationPending = state.sessionPlayStyle === "defeat_zone"
+        && savedResultOutcome === "completed"
+        && ["reaction", "zone_paused"].includes(state.phase);
+      state.screen = presentationPending ? "play" : "result";
+      if (!presentationPending) state.phase = "result";
+      state.finishPending = !presentationPending;
+      if (!presentationPending) {
+        const recoveryState = state;
+        finishPaidUse(savedResultOutcome).finally(() => {
+          if (active && state === recoveryState) render();
+        });
+      }
     }
     return true;
   } catch {
@@ -1400,6 +1817,157 @@ function recoverPaidSession() {
     state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
     state.recoveryRosterCount = 0;
     state.recoveryError = "端末に残った開始済み利用の計画またはDRAWを確認できません。";
+    return false;
+  }
+}
+
+function recoverPendingDefeatPresentation() {
+  const saved = storedSession();
+  if (!saved) return false;
+  const savedSchemaVersion = Number(saved.schemaVersion);
+  if (savedSchemaVersion < 4
+      || !savedSessionOwnerMatches(saved)
+      || saved.playStyle !== "defeat_zone"
+      || saved.resultOutcome !== "completed") {
+    return false;
+  }
+  try {
+    if (saved.workoutFinalized !== true
+        || Number(saved.completedRounds) !== AI_TEXT_TRAINING_ROUND_COUNT
+        || !AI_TEXT_TRAINING_MODES.some((mode) => mode.id === saved.modeId)
+        || !ROUND_SECONDS_OPTIONS.includes(Number(saved.roundSeconds))
+        || Number(saved.completedActiveSeconds)
+          !== Number(saved.roundSeconds) * AI_TEXT_TRAINING_ROUND_COUNT
+        || !Array.isArray(saved.bpms)
+        || saved.bpms.length !== AI_TEXT_TRAINING_ROUND_COUNT) {
+      throw new Error("保存された敗北ZONEの完了状態を確認できません。");
+    }
+    const savedPhase = String(saved.phase || "");
+    if (!["reaction", "zone_paused", "result"].includes(savedPhase)) {
+      throw new Error("保存された敗北ZONEの表示状態を確認できません。");
+    }
+    const resumePhase = [
+      "zone_rush",
+      "zone_deceleration",
+      "zone_cooldown",
+    ].includes(saved.defeatResumePhase)
+      ? saved.defeatResumePhase
+      : "zone_rush";
+    const defeatResolution = ["surrendered", "overpowered"].includes(saved.defeatResolution)
+      ? saved.defeatResolution
+      : "";
+    state.playStyle = "defeat_zone";
+    state.sessionPlayStyle = "defeat_zone";
+    state.modeId = saved.modeId;
+    state.marketModeFilter = state.modeId;
+    state.exerciseId = AI_TEXT_TRAINING_EXERCISES.some((exercise) => exercise.id === saved.exerciseId)
+      ? saved.exerciseId
+      : "march";
+    state.roundSeconds = Number(saved.roundSeconds);
+    state.bpms = saved.bpms.map((value) => {
+      const bpm = normalizeAiTextTrainingBpm(value);
+      if (bpm === null) throw new Error("保存されたBPMを確認できません。");
+      return bpm;
+    });
+    state.roundIndex = AI_TEXT_TRAINING_ROUND_COUNT - 1;
+    state.plan = normalizeRecoveredPlan(saved.plan, {
+      modeId: state.modeId,
+      bpms: state.bpms,
+      roundIndex: state.roundIndex,
+    });
+    const finalReaction = state.plan.reactions[AI_TEXT_TRAINING_ROUND_COUNT - 1];
+    validateRecoveredDefeatPresentation({
+      phase: savedPhase,
+      resumePhase,
+      resultOutcome: saved.resultOutcome,
+      workoutFinalized: saved.workoutFinalized,
+      completedRounds: Number(saved.completedRounds),
+      roundIndex: Number(saved.roundIndex),
+      finalReaction,
+      defeatResolution,
+      postWorkoutSafetyStopped: saved.postWorkoutSafetyStopped === true,
+      postWorkoutExited: saved.postWorkoutExited === true,
+    });
+    const entries = rosterEntries();
+    const savedRosterCount = isAiTextTrainingRosterCount(saved.rosterCount)
+      ? Number(saved.rosterCount)
+      : AI_TEXT_TRAINING_ROUND_COUNT;
+    const drawIndices = normalizeAiTextTrainingDrawIndices(
+      saved.drawIndices,
+      savedRosterCount,
+    );
+    state.recoveryRosterCount = savedRosterCount;
+    state.sessionDrawIndices = drawIndices && entries.length === savedRosterCount
+      ? drawIndices
+      : [];
+    state.images = state.sessionDrawIndices.length === AI_TEXT_TRAINING_ROUND_COUNT
+      ? state.sessionDrawIndices.map((index) => entries[index]?.image || null)
+      : Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+    state.drawLeg = Number(saved.drawLeg) === 2 ? 2 : 1;
+    state.sessionBeatCharacterId = normalizeBeatCharacterId(saved.beatCharacterId);
+    state.beatCharacterId = state.sessionBeatCharacterId;
+    state.sessionCosmetics = normalizeAiTextTrainingCosmetics(
+      saved.cosmetics || equippedCosmetics(),
+      { ownedStyleIds: state.cosmetics?.ownedStyleIds },
+    );
+    state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
+      saved.selectedPreset,
+      state.modeId,
+    );
+    state.selectedPresetSource = String(saved.selectedPresetSource || "builtin");
+    state.completedActiveSeconds = state.roundSeconds * AI_TEXT_TRAINING_ROUND_COUNT;
+    state.completedRounds = AI_TEXT_TRAINING_ROUND_COUNT;
+    state.workoutFinalized = true;
+    state.resultOutcome = "completed";
+    state.defeatResolution = defeatResolution;
+    state.defeatSettled = saved.defeatSettled === true;
+    state.defeatCertificateMessage = String(saved.defeatCertificateMessage || "").slice(0, 42);
+    if (savedPhase === "result"
+        && defeatResolution
+        && !state.defeatCertificateMessage) {
+      state.defeatCertificateMessage = defeatZoneMessage("zone_certificate");
+    }
+    state.postWorkoutSafetyStopped = saved.postWorkoutSafetyStopped === true;
+    state.postWorkoutExited = saved.postWorkoutExited === true;
+    state.defeatResumePhase = savedPhase === "zone_paused" ? resumePhase : "";
+    state.defeatDecelerationStage = Number(saved.defeatDecelerationStage) === 2 ? 2 : 0;
+    const remainingLimit = resumePhase === "zone_cooldown"
+      ? AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS
+      : resumePhase === "zone_deceleration"
+        ? AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS
+        : AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS;
+    const savedRemainingMs = Number(saved.remainingMs);
+    state.remainingMs = savedPhase === "reaction"
+      ? 0
+      : Math.max(
+        0,
+        Math.min(remainingLimit, Number.isFinite(savedRemainingMs) ? savedRemainingMs : remainingLimit),
+      );
+    state.achievementActionId = /^[A-Za-z0-9_-]{16,80}$/u.test(
+      String(saved.achievementActionId || ""),
+    )
+      ? String(saved.achievementActionId)
+      : "";
+    state.achievementSessionId = /^[a-f0-9]{40}$/u.test(
+      String(saved.achievementSessionId || ""),
+    )
+      ? String(saved.achievementSessionId)
+      : "";
+    state.achievementBeginRequested = saved.achievementBeginRequested === true
+      && Boolean(state.achievementActionId);
+    state.screen = savedPhase === "result" ? "result" : "play";
+    state.phase = savedPhase === "result"
+      ? "result"
+      : savedPhase === "reaction"
+        ? "reaction"
+        : "zone_paused";
+    state.finishPending = false;
+    return true;
+  } catch {
+    clearPersistedSession();
+    state.plan = null;
+    state.sessionDrawIndices = [];
+    state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
     return false;
   }
 }
@@ -1457,8 +2025,14 @@ function renderFrame(content, {
 function authStatusHtml() {
   if (state.preview) return `<span class="ai-text-training-connection is-ready">PREVIEW · 残高 ${formatAnjuPay(state.balance)}</span>`;
   if (!state.authSettled) return `<span class="ai-text-training-connection">開始済み利用と残高を確認中…</span>`;
+  if (hasUnverifiedPaidRecovery()) return `<span class="ai-text-training-connection is-error">開始済み利用を未確認 · 接続後に再開できます</span>`;
   if (state.authError) return `<span class="ai-text-training-connection is-error">市場オフライン · 無料トレーニングは利用できます</span>`;
   return `<span class="ai-text-training-connection is-ready">AnjuPay <strong data-ai-text-training-balance>${formatAnjuPayNumber(state.balance)}</strong> Pay</span>`;
+}
+
+function hasUnverifiedPaidRecovery() {
+  if (state.preview || state.authReady || !state.authSettled || !state.authError) return false;
+  return Boolean(storedSession()?.paidUseId);
 }
 
 function paidRecoverySettingsLocked() {
@@ -1509,6 +2083,21 @@ function modeCard(mode) {
   </label>`;
 }
 
+function playStyleCard(playStyle) {
+  const checked = state.playStyle === playStyle.id;
+  const locked = Boolean(state.activeUse);
+  const defeatZone = playStyle.id === "defeat_zone";
+  return `<label class="ai-text-training-play-style-card ${checked ? "is-selected" : ""} ${defeatZone ? "is-defeat-zone" : ""} ${locked ? "is-locked" : ""}">
+    <input type="radio" name="aiTextTrainingPlayStyle" value="${escapeHtml(playStyle.id)}" ${checked ? "checked" : ""} ${locked ? "disabled" : ""} />
+    <span>
+      <em>${defeatZone ? "ZONE DEFEAT" : "QUICK 5"}</em>
+      <strong>${escapeHtml(playStyle.label)}</strong>
+      <small>${escapeHtml(playStyle.description)}</small>
+      ${defeatZone ? "<b>最終攻勢 200 BPM演出 · クールダウン 30 BPM</b>" : "<b>現在の遊び方をそのまま利用</b>"}
+    </span>
+  </label>`;
+}
+
 function beatCharacterCard(character) {
   const selected = state.beatCharacterId === character.id;
   const locked = paidRecoverySettingsLocked();
@@ -1548,9 +2137,12 @@ function renderBeatCharacterPanel() {
 function selectedSupportHtml() {
   const script = selectedPresetForMode();
   const free = Number(script.price || 0) === 0 || state.selectedPresetSource === "author_preview";
+  const product = aiTextTrainingProductType(presetProductType(script));
+  const standardZoneFallback = state.playStyle === "defeat_zone"
+    && presetProductType(script) === "standard";
   return `<article class="ai-text-training-selected-support ${free ? "is-free" : "is-paid"}">
-    <div><span>${free ? "FREE SUPPORT" : `${formatAnjuPay(script.price)} · 1 SESSION`}</span><h3>${escapeHtml(script.title)}</h3><p>${escapeHtml(script.description)}</p></div>
-    <dl><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(script.modeId).label)}</dd></div><div><dt>作者</dt><dd>${escapeHtml(script.authorName)}</dd></div><div><dt>改訂</dt><dd>REV.${Number(script.revision || 1)}</dd></div></dl>
+    <div><span>${free ? "FREE SUPPORT" : `${formatAnjuPay(script.price)} · 1 SESSION`} · ${escapeHtml(product.shortLabel)}</span><h3>${escapeHtml(script.title)}</h3><p>${escapeHtml(script.description)}</p>${standardZoneFallback ? "<small>5ラウンドはこの台本、敗北ZONE部分は安全なシステム標準台詞で進行します。</small>" : ""}</div>
+    <dl><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(script))}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(script.modeId).label)}</dd></div><div><dt>作者</dt><dd>${escapeHtml(script.authorName)}</dd></div><div><dt>改訂</dt><dd>REV.${Number(script.revision || 1)}</dd></div></dl>
   </article>`;
 }
 
@@ -1574,7 +2166,7 @@ function activeUseBanner() {
     : "利用開始だけが確定しています。5〜10枚を準備すると、追加支払いなしで今回の5枚をDRAWできます。";
   return `<aside class="ai-text-training-active-use">
     <strong>追加支払いなしで再開できる応援があります</strong>
-    <p>「${escapeHtml(state.activeUse.preset?.title || "応援台本")}」は開始済みです。${escapeHtml(recoveryCopy)}同じ利用記録で再開します。</p>
+    <p>「${escapeHtml(state.activeUse.preset?.title || "応援台本")}」の${escapeHtml(aiTextTrainingPlayStyle(activeUsePlayStyle()).label)}利用は開始済みです。${escapeHtml(recoveryCopy)}同じ利用記録で再開します。</p>
     <button class="button button-primary" type="button" data-ai-text-training-action="resume-paid">この応援で再開準備</button>
   </aside>`;
 }
@@ -1659,27 +2251,35 @@ function renderSetup() {
     ? AI_TEXT_TRAINING_ROSTER_MAX_COUNT
     : AI_TEXT_TRAINING_ROUND_COUNT;
   const script = selectedPresetForMode();
+  const defeatZone = state.playStyle === "defeat_zone";
+  const sessionLabel = defeatZone ? "敗北ZONE" : "5ラウンド";
   const authChecking = !state.preview && !state.authSettled;
+  const paidRecoveryBlocked = hasUnverifiedPaidRecovery();
   const recoverySettingsLocked = paidRecoverySettingsLocked();
   const startCopy = state.activeUse
     ? "追加支払いなしで再開"
     : Number(script.price || 0) > 0 && state.selectedPresetSource === "market"
       ? registeredCount > AI_TEXT_TRAINING_ROUND_COUNT
         ? "AI DRAWへ"
-        : `${formatAnjuPay(script.price)}で1回使って開始`
+        : `${formatAnjuPay(script.price)}で${sessionLabel}開始`
       : registeredCount > AI_TEXT_TRAINING_ROUND_COUNT
         ? "AI DRAWへ"
-        : "無料で5ラウンド開始";
-  const startReady = imagesReady && !state.cosmeticDraft && !authChecking;
+        : `無料で${sessionLabel}開始`;
+  const startReady = imagesReady
+    && !state.cosmeticDraft
+    && !authChecking
+    && !paidRecoveryBlocked;
   const displayedStartCopy = authChecking
     ? "開始済み利用を確認中…"
-    : state.cosmeticDraft
-      ? "試着を確定して開始"
-      : startCopy;
+    : paidRecoveryBlocked
+      ? "接続後に開始済み利用を確認"
+      : state.cosmeticDraft
+        ? "試着を確定して開始"
+        : startCopy;
   const todayComplete = readLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`) === "true";
   return renderFrame(`
     <div class="ai-text-training-setup-intro">
-      <div><p>好きな画像を5〜10枚登録。AIが内容を見ずに5枚をDRAWし、文字の応援とBPMで対戦します。</p><small>カメラ・動作判定・P2Pなし。画像・BPM・DRAW結果は市場や作者へ送られません。</small></div>
+      <div><p>好きな画像を5〜10枚登録。AIが内容を見ずに5枚をDRAWし、文字の応援とBPMで対戦します。</p><small>通常トレーニングと、厳選した5枚に負けて終わる敗北ZONEを選べます。カメラ・動作判定・P2Pはありません。</small></div>
       ${authStatusHtml()}
     </div>
     ${activeUseBanner()}
@@ -1687,6 +2287,14 @@ function renderSetup() {
       <span>${todayComplete ? "TODAY COMPLETE" : "TODAY'S QUICK CHALLENGE"}</span>
       <strong>${todayComplete ? "今日の5ラウンドを完走しました" : "好きな性格で5ラウンド完走しよう"}</strong>
       <small>カメラや動作判定は使いません。5ラウンド完走だけが実績へ加算され、安全停止・途中終了で今までの進捗は減りません。有料応援は任意で、完走によるPay還元はありません。</small>
+    </section>
+    <section class="ai-text-training-panel ai-text-training-play-style-panel">
+      <div class="ai-text-training-section-heading"><span>PLAY STYLE</span><h2>今日の終わり方を選ぶ</h2><em>${defeatZone ? "敗北して完了" : "5ラウンドで完了"}</em></div>
+      <fieldset class="ai-text-training-play-style-fieldset">
+        <legend>プレイスタイル</legend>
+        <div class="ai-text-training-play-style-grid">${AI_TEXT_TRAINING_PLAY_STYLES.map(playStyleCard).join("")}</div>
+      </fieldset>
+      <p class="ai-text-training-mode-note">${defeatZone ? "5ラウンド完走後だけ最終攻勢へ進みます。200 BPMは音と画面の演出で、動作速度・心拍数・呼吸数の目標ではありません。ギブアップは敗北確定とクールダウンへの安全な移行操作です。" : "5ラウンド後にすぐ結果へ進む、これまでと同じ短時間のトレーニングです。"}</p>
     </section>
     <section class="ai-text-training-panel">
       <div class="ai-text-training-section-heading"><span>STEP 1</span><h2>対戦ロスターとBPM</h2><em>${registeredCount} / 10 · 最低5</em></div>
@@ -1723,7 +2331,7 @@ function renderSetup() {
         <button class="button button-ghost" type="button" data-ai-text-training-action="editor">応援台本を売る</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="rankings">売上ランキング</button>
       </div>
-      <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用し、開始後に自主終了・即停止した場合も使い切りです。</p>
+      <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用します。敗北ZONEの最終攻勢とクールダウンを含めても追加消費はありません。開始後に自主終了・即停止した場合も使い切りです。</p>
     </section>
     <section class="ai-text-training-start-panel">
       <div><strong>${state.cosmeticDraft ? "演出を試着中" : imagesReady ? registeredCount > 5 ? `${registeredCount}枚からAI DRAW` : "5枚の準備OK" : `あと${AI_TEXT_TRAINING_ROUND_COUNT - registeredCount}枚`}</strong><small>痛み・めまい・息苦しさ・体調不良がある時は開始せず、運動中は即停止してください。</small></div>
@@ -1766,10 +2374,10 @@ function renderDrawReview() {
   const paid = Number(script.price || 0) > 0
     && ["market", "active_use"].includes(state.selectedPresetSource);
   const confirmLabel = state.activeUse
-    ? "この5枚で追加支払いなしで再開"
+    ? `この5枚で追加支払いなしで${aiTextTrainingPlayStyle(state.playStyle).shortLabel}を再開`
     : paid
       ? `この5枚で${formatAnjuPay(script.price)}の支払い確認へ`
-      : "この5枚で無料トレーニング開始";
+      : `この5枚で無料${aiTextTrainingPlayStyle(state.playStyle).shortLabel}開始`;
   return renderFrame(`
     <section class="ai-text-training-draw-hero">
       <span>AI DRAW · ${entries.length} → 5</span>
@@ -1778,7 +2386,7 @@ function renderDrawReview() {
     </section>
     <section class="ai-text-training-draw-grid">${drawIndices.map((index, roundIndex) => drawReviewCard(entries[index], roundIndex)).join("")}</section>
     <aside class="ai-text-training-draw-summary">
-      <dl><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter().label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(script.title)}</dd></div><div><dt>1ラウンド</dt><dd>${state.roundSeconds}秒</dd></div></dl>
+      <dl><div><dt>プレイスタイル</dt><dd>${escapeHtml(aiTextTrainingPlayStyle(state.playStyle).label)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter().label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(script.title)}</dd></div><div><dt>1ラウンド</dt><dd>${state.roundSeconds}秒</dd></div></dl>
       <p>DRAWし直しても料金はかかりません。有料応援は、この5枚を確定した後の支払い確認で同意し、実際に利用開始が成立した時だけ消費します。</p>
     </aside>
     <div class="ai-text-training-draw-actions">
@@ -1790,17 +2398,70 @@ function renderDrawReview() {
 
 function marketPresetCard(preset) {
   const own = preset.isOwn === true;
-  return `<article class="ai-text-training-market-card">
+  const product = aiTextTrainingProductType(presetProductType(preset));
+  const zoneProduct = product.id === "defeat_zone";
+  return `<article class="ai-text-training-market-card ${zoneProduct ? "is-defeat-zone" : "is-standard"}">
     <div class="ai-text-training-market-card-head"><span>${formatAnjuPay(preset.price)} / 1回</span><em>REV.${Number(preset.revision || 1)}</em></div>
+    <strong class="ai-text-training-product-badge">${escapeHtml(product.label)}</strong>
     <h3>${escapeHtml(preset.title)}</h3>
     <p>${escapeHtml(preset.description)}</p>
-    <dl><div><dt>作者</dt><dd>${escapeHtml(preset.sellerName || preset.authorName || "匿名作者")}</dd></div><div><dt>実利用</dt><dd>${Number(preset.actualUseCount || 0)}回</dd></div><div><dt>ランキング対象</dt><dd>${Number(preset.rankingUseCount || 0)}回</dd></div></dl>
+    <dl><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(preset))}</dd></div><div><dt>作者</dt><dd>${escapeHtml(preset.sellerName || preset.authorName || "匿名作者")}</dd></div><div><dt>実利用</dt><dd>${Number(preset.actualUseCount || 0)}回</dd></div><div><dt>ランキング対象</dt><dd>${Number(preset.rankingUseCount || 0)}回</dd></div></dl>
     <button class="button ${own ? "button-ghost" : "button-primary"}" type="button" data-ai-text-training-preset="${escapeHtml(preset.id)}">${own ? "作者プレビュー" : "全文を見て選ぶ"}</button>
   </article>`;
 }
 
+function marketProductSection({
+  title,
+  description,
+  presets,
+  emptyTitle,
+  emptyCopy,
+  zone = false,
+}) {
+  return `<section class="ai-text-training-market-product-section ${zone ? "is-defeat-zone" : "is-standard"}">
+    <header><span>${zone ? "DEFEAT ZONE FIRST" : "STANDARD SUPPORT"}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p></header>
+    <div class="ai-text-training-market-grid">
+      ${presets.length ? presets.map(marketPresetCard).join("") : `<div class="ai-text-training-empty"><strong>${escapeHtml(emptyTitle)}</strong><p>${escapeHtml(emptyCopy)}</p></div>`}
+    </div>
+  </section>`;
+}
+
 function renderMarket() {
-  const presets = state.marketPresets.filter((preset) => preset.modeId === state.marketModeFilter);
+  const modePresets = state.marketPresets.filter(
+    (preset) => preset.modeId === state.marketModeFilter,
+  );
+  const standardPresets = modePresets.filter(
+    (preset) => presetProductType(preset) === "standard",
+  );
+  const zonePresets = modePresets.filter(
+    (preset) => presetProductType(preset) === "defeat_zone",
+  );
+  const defeatZone = state.playStyle === "defeat_zone";
+  const productSections = defeatZone
+    ? [
+      marketProductSection({
+        title: "敗北ZONE専用台本",
+        description: "5ラウンドから最終攻勢、敗北、クールダウン、敗北証明まで同じ作者の言葉で進みます。",
+        presets: zonePresets,
+        emptyTitle: "この性格の敗北ZONE専用台本はまだありません",
+        emptyCopy: "通常台本＋システム標準ZONEで遊ぶか、最初の専用作者になれます。",
+        zone: true,
+      }),
+      marketProductSection({
+        title: "通常台本＋システム標準ZONE",
+        description: "5ラウンドは購入した通常台本、最終攻勢以降は安全なシステム標準台詞で進みます。",
+        presets: standardPresets,
+        emptyTitle: "この性格の通常台本はまだありません",
+        emptyCopy: "無料の標準応援を利用できます。",
+      }),
+    ].join("")
+    : marketProductSection({
+      title: "通常トレーニング用台本",
+      description: "5ラウンドの応援に使います。敗北ZONE専用商品は通常トレーニングには使用できません。",
+      presets: standardPresets,
+      emptyTitle: "この性格の公開台本はまだありません",
+      emptyCopy: "無料の標準応援で遊ぶか、最初の作者になれます。",
+    });
   return renderFrame(`
     <nav class="ai-text-training-subnav" aria-label="応援市場メニュー">
       <button class="button button-ghost" type="button" data-ai-text-training-action="setup">トレーニング準備</button>
@@ -1811,14 +2472,12 @@ function renderMarket() {
     <section class="ai-text-training-market-hero">
       <span>CONSUMABLE SUPPORT MARKET</span>
       <h2>同じ5枚でも、応援の言葉で体験が変わる。</h2>
-      <p>全文を確認してから、5ラウンド1回だけ使います。無料の標準応援はいつでも選べます。</p>
+      <p>${defeatZone ? "敗北ZONE専用商品を先に表示しています。通常台本も選べますが、ZONE部分はシステム標準台詞になります。" : "通常トレーニングで使える通常台本だけを表示しています。全文を確認してから、5ラウンド1回だけ使います。"}</p>
     </section>
     <div class="ai-text-training-mode-tabs" role="tablist" aria-label="AI性格で絞り込み">
       ${AI_TEXT_TRAINING_MODES.map((mode) => `<button type="button" role="tab" aria-selected="${state.marketModeFilter === mode.id}" data-ai-text-training-market-mode="${mode.id}">${escapeHtml(mode.label)}</button>`).join("")}
     </div>
-    <section class="ai-text-training-market-grid">
-      ${presets.length ? presets.map(marketPresetCard).join("") : `<div class="ai-text-training-empty"><strong>この性格の公開台本はまだありません</strong><p>無料の標準応援で遊ぶか、最初の作者になれます。</p></div>`}
-    </section>
+    ${productSections}
     <aside class="ai-text-training-market-policy"><strong>経済とランキング</strong><p>利用料から20%（最低1 Pay）を市場手数料として吸収し、残りを作者へ渡します。同じ購入者→作者のランキング加算はJST同日1回ですが、実際の支払いと作者受取は毎回行われます。</p></aside>
   `, { eyebrow: "SUPPORT SCRIPT MARKET", backLabel: "準備へ戻る", backAction: "setup" });
 }
@@ -1836,14 +2495,23 @@ function renderPresetDetail() {
   }
   const script = presetSnapshot(raw);
   const own = raw.isOwn === true;
+  const product = aiTextTrainingProductType(script.productType);
+  const compatible = presetSupportsPlayStyle(script);
+  const zoneProduct = script.productType === "defeat_zone";
+  const zoneSlots = zoneProduct
+    ? AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map(
+      (slot) => scriptSlotPreview({ lines: script.zoneLines }, slot),
+    ).join("")
+    : "";
   return renderFrame(`
     <article class="ai-text-training-detail">
-      <header><span>${formatAnjuPay(script.price)} / 5ラウンド1回</span><h2>${escapeHtml(script.title)}</h2><p>${escapeHtml(script.description)}</p></header>
-      <dl class="ai-text-training-detail-meta"><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(script.modeId).label)}</dd></div><div><dt>作者</dt><dd>${escapeHtml(script.authorName)}</dd></div><div><dt>改訂</dt><dd>REV.${script.revision}</dd></div></dl>
-      <div class="ai-text-training-script-preview">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => scriptSlotPreview(script, slot)).join("")}</div>
+      <header><span>${formatAnjuPay(script.price)} / 1セッション · ${escapeHtml(product.label)}</span><h2>${escapeHtml(script.title)}</h2><p>${escapeHtml(script.description)}</p></header>
+      <dl class="ai-text-training-detail-meta"><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(script))}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(script.modeId).label)}</dd></div><div><dt>作者</dt><dd>${escapeHtml(script.authorName)}</dd></div><div><dt>改訂</dt><dd>REV.${script.revision}</dd></div></dl>
+      <div class="ai-text-training-script-group"><h3>5ラウンドの台詞 · 14場面</h3><div class="ai-text-training-script-preview">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => scriptSlotPreview(script, slot)).join("")}</div></div>
+      ${zoneProduct ? `<div class="ai-text-training-script-group is-defeat-zone"><h3>敗北ZONE専用台詞 · 5場面</h3><div class="ai-text-training-script-preview">${zoneSlots}</div></div>` : state.playStyle === "defeat_zone" ? '<aside class="ai-text-training-standard-zone-note"><strong>ZONE部分はシステム標準台詞です</strong><p>この商品が担当するのは5ラウンドまでです。最終攻勢・敗北・クールダウン・敗北証明は安全なシステム台詞で進み、追加消費はありません。</p></aside>' : ""}
       <aside><strong>台本が変更できるのは文字だけです</strong><p>BPM・運動時間・安全停止・休憩操作はシステムが管理し、この台本から変更できません。</p></aside>
       <div class="ai-text-training-detail-actions">
-        <button class="button button-primary" type="button" data-ai-text-training-action="${own ? "select-own-preset" : "select-market-preset"}">${own ? "無料で作者プレビュー" : "この応援を選んで準備へ"}</button>
+        <button class="button button-primary" type="button" data-ai-text-training-action="${own ? "select-own-preset" : "select-market-preset"}" ${compatible ? "" : "disabled"}>${compatible ? own ? "無料で作者プレビュー" : "この応援を選んで準備へ" : "通常トレーニングでは選べません"}</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="market">一覧へ戻る</button>
       </div>
       ${own ? "" : `<form class="ai-text-training-report-form" id="aiTextTrainingReportForm"><label>問題を通報<select name="reason">${REPORT_REASONS.map((reason) => `<option value="${reason.id}">${escapeHtml(reason.label)}</option>`).join("")}</select></label><button class="button button-ghost" type="submit">この台本を通報</button><small>通報時の改訂全文を証跡として保存します。危険・性的・個人情報の問題は、利用実績のある${Number(state.policy.verifiedBuyerQuarantineThreshold || 3)}人の通報で台本とXリンクを確認のため非公開にします。</small></form>`}
@@ -1851,20 +2519,51 @@ function renderPresetDetail() {
   `, { eyebrow: "FULL SCRIPT PREVIEW", title: "応援台本の全文確認", backLabel: "市場へ戻る", backAction: "market" });
 }
 
-function createEditorDraft() {
-  const existing = state.ownPresets.find((preset) => preset.modeId === state.modeId);
+function defaultDefeatZoneLines() {
+  return {
+    zone_rush: [...DEFEAT_ZONE_MESSAGES.rush],
+    zone_surrendered: [...DEFEAT_ZONE_MESSAGES.surrendered],
+    zone_overpowered: [...DEFEAT_ZONE_MESSAGES.overpowered],
+    zone_cooldown: [...DEFEAT_ZONE_MESSAGES.cooldown],
+    zone_certificate: [...DEFEAT_ZONE_MESSAGES.certificate],
+  };
+}
+
+function createEditorDraft({
+  modeId = state.modeId,
+  productType = state.editorProductType,
+} = {}) {
+  const normalizedProductType = normalizeAiTextTrainingProductType(productType);
+  state.editorProductType = normalizedProductType;
+  if (normalizedProductType === "standard"
+      && AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.some(
+        (slot) => slot.id === state.editorPreview.phase,
+      )) {
+    state.editorPreview.phase = "active";
+  }
+  const rawExisting = ownPresetFor(modeId, normalizedProductType);
+  const existing = rawExisting ? presetSnapshot(rawExisting) : null;
+  const standardExisting = ownPresetFor(modeId, "standard");
   const fallback = normalizeAiTextTrainingScriptSnapshot(
-    AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.modeId],
+    AI_TEXT_TRAINING_BUILTIN_SCRIPTS[modeId],
   );
   return {
     presetId: existing?.id || "",
     baseRevision: Number(existing?.revision || 0),
     sellerName: existing?.sellerName
+      || existing?.authorName
+      || standardExisting?.sellerName
+      || standardExisting?.authorName
       || readLocalValue(PROFILE_NAME_KEY)
       || "PLAYER",
-    modeId: state.modeId,
-    title: existing?.title || `${aiTextTrainingMode(state.modeId).shortLabel}の応援`,
-    description: existing?.description || "実際のBPMと残り時間に合わせて、短い言葉で応援します。",
+    modeId,
+    productType: normalizedProductType,
+    title: existing?.title || (normalizedProductType === "defeat_zone"
+      ? `${aiTextTrainingMode(modeId).shortLabel}の敗北ZONE`
+      : `${aiTextTrainingMode(modeId).shortLabel}の応援`),
+    description: existing?.description || (normalizedProductType === "defeat_zone"
+      ? "5ラウンドから敗北証明まで、場面に合わせた短い言葉で演出します。"
+      : "実際のBPMと残り時間に合わせて、短い言葉で応援します。"),
     price: Number(existing?.price || 10),
     lines: Object.fromEntries(AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => [
       slot.id,
@@ -1872,6 +2571,14 @@ function createEditorDraft() {
         ? [...existing.lines[slot.id]]
         : [...fallback.lines[slot.id]],
     ])),
+    zoneLines: normalizedProductType === "defeat_zone"
+      ? Object.fromEntries(AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => [
+        slot.id,
+        existing?.zoneLines?.[slot.id]?.length
+          ? [...existing.zoneLines[slot.id]]
+          : [...defaultDefeatZoneLines()[slot.id]],
+      ]))
+      : {},
   };
 }
 
@@ -1880,6 +2587,16 @@ function editorSlotField(slot, draft) {
 }
 
 function editorSimulatorMessage(draft) {
+  if (AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.some(
+    (slot) => slot.id === state.editorPreview.phase,
+  )) {
+    const line = draft.zoneLines?.[state.editorPreview.phase]?.[0] || "";
+    return renderAiTextTrainingLine(line, {
+      bpm: defeatZoneScriptBpm(state.editorPreview.phase, 120),
+      round: 5,
+      remaining: state.editorPreview.remaining,
+    });
+  }
   const slotId = aiTextTrainingScriptSlot({
     phase: state.editorPreview.phase,
     bpm: state.editorPreview.bpm,
@@ -1897,11 +2614,14 @@ function editorSimulatorMessage(draft) {
 function renderEditor() {
   if (!state.editorDraft) state.editorDraft = createEditorDraft();
   const draft = state.editorDraft;
-  const current = state.ownPresets.find((preset) => preset.modeId === draft.modeId);
+  const current = ownPresetFor(draft.modeId, draft.productType);
+  const product = aiTextTrainingProductType(draft.productType);
+  const zoneProduct = draft.productType === "defeat_zone";
+  const standardSource = ownPresetFor(draft.modeId, "standard");
   return renderFrame(`
     <section class="ai-text-training-editor-intro">
       <span>AUTHOR STUDIO</span><h2>実際のBPMに合う言葉をつくる</h2>
-      <p>1商品は1つのAI性格専用です。公開・改訂は1 Pay、利用成立時は20%（最低1 Pay）が市場手数料です。</p>
+      <p>1商品は1つのAI性格・1つの商品種別専用です。性格ごとに通常版と敗北ZONE版を別々に販売できます。公開・改訂は1 Pay、利用成立時は20%（最低1 Pay）が市場手数料です。</p>
     </section>
     <form id="aiTextTrainingEditorForm" class="ai-text-training-editor">
       <fieldset ${state.busyAction ? "disabled" : ""}>
@@ -1909,26 +2629,33 @@ function renderEditor() {
         <div class="ai-text-training-editor-basics">
           <label>作者名<input name="sellerName" maxlength="16" required value="${escapeHtml(draft.sellerName)}" /></label>
           <label>AI性格<select name="modeId">${AI_TEXT_TRAINING_MODES.map((mode) => `<option value="${mode.id}" ${draft.modeId === mode.id ? "selected" : ""}>${escapeHtml(mode.label)}</option>`).join("")}</select></label>
+          <label>商品種別<select name="productType">${AI_TEXT_TRAINING_PRODUCT_TYPES.map((entry) => `<option value="${entry.id}" ${draft.productType === entry.id ? "selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}</select><small>${escapeHtml(product.description)}</small></label>
           <label>台本名<input name="title" maxlength="30" required value="${escapeHtml(draft.title)}" /></label>
           <label>価格<select name="price">${state.policy.prices.map((price) => `<option value="${price}" ${draft.price === price ? "selected" : ""}>${formatAnjuPay(price)} / 1回</option>`).join("")}</select></label>
           <label class="is-wide">紹介文<textarea name="description" minlength="10" maxlength="120" rows="3" required>${escapeHtml(draft.description)}</textarea></label>
         </div>
       </fieldset>
       <fieldset ${state.busyAction ? "disabled" : ""}>
-        <legend>場面別の応援台詞</legend>
+        <legend>5ラウンドの応援台詞 · 14場面</legend>
         <p>各場面へ2〜4行、1行4〜42文字。使える差し込みは <code>{bpm}</code> <code>{round}</code> <code>{remaining}</code> だけです。</p>
+        ${zoneProduct && !current && standardSource ? '<button class="button button-ghost ai-text-training-copy-standard" type="button" data-ai-text-training-action="copy-standard-to-zone">公開中の通常版から14枠を複製</button>' : ""}
         <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => editorSlotField(slot, draft)).join("")}</div>
       </fieldset>
+      ${zoneProduct ? `<fieldset class="ai-text-training-zone-script-editor" ${state.busyAction ? "disabled" : ""}>
+        <legend>敗北ZONE専用台詞 · 5場面</legend>
+        <p>最終攻勢・敗北確定・クールダウン・敗北証明へ各2〜4行を入力します。行は場面ごとにランダム表示されます。ギブアップ・一時停止・即停止・安全文言・BPM・時間はシステム固定です。停止を妨げる台詞は禁止です。</p>
+        <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => editorSlotField(slot, { lines: draft.zoneLines })).join("")}</div>
+      </fieldset>` : ""}
       <section class="ai-text-training-simulator">
         <div><span>SIMULATOR</span><h3>テンポ別プレビュー</h3></div>
         <div class="ai-text-training-simulator-controls">
-          <label>場面<select id="aiTextTrainingEditorPreviewPhase"><option value="active" ${state.editorPreview.phase === "active" ? "selected" : ""}>運動中</option><option value="start" ${state.editorPreview.phase === "start" ? "selected" : ""}>開始</option><option value="transition" ${state.editorPreview.phase === "transition" ? "selected" : ""}>テンポ変化</option><option value="rest" ${state.editorPreview.phase === "rest" ? "selected" : ""}>休憩</option><option value="clear" ${state.editorPreview.phase === "clear" ? "selected" : ""}>完走</option></select></label>
-          <label>BPM<input id="aiTextTrainingEditorPreviewBpm" type="number" min="0" max="160" value="${state.editorPreview.bpm}" /></label>
+          <label>場面<select id="aiTextTrainingEditorPreviewPhase"><option value="active" ${state.editorPreview.phase === "active" ? "selected" : ""}>運動中</option><option value="start" ${state.editorPreview.phase === "start" ? "selected" : ""}>開始</option><option value="transition" ${state.editorPreview.phase === "transition" ? "selected" : ""}>テンポ変化</option><option value="rest" ${state.editorPreview.phase === "rest" ? "selected" : ""}>休憩</option><option value="clear" ${state.editorPreview.phase === "clear" ? "selected" : ""}>完走</option>${zoneProduct ? AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => `<option value="${slot.id}" ${state.editorPreview.phase === slot.id ? "selected" : ""}>${escapeHtml(slot.label)}</option>`).join("") : ""}</select></label>
+          <label>BPM<input id="aiTextTrainingEditorPreviewBpm" type="number" min="0" max="200" value="${state.editorPreview.bpm}" /></label>
           <label>残り秒<input id="aiTextTrainingEditorPreviewRemaining" type="number" min="1" max="60" value="${state.editorPreview.remaining}" /></label>
           <label>変化<select id="aiTextTrainingEditorPreviewDirection"><option value="down" ${state.editorPreview.direction === "down" ? "selected" : ""}>遅くなる</option><option value="same" ${state.editorPreview.direction === "same" ? "selected" : ""}>同じ・FREE</option><option value="up" ${state.editorPreview.direction === "up" ? "selected" : ""}>速くなる</option></select></label>
         </div>
         <blockquote id="aiTextTrainingEditorPreviewMessage">${escapeHtml(editorSimulatorMessage(draft))}</blockquote>
-        <small>公開台本はBPM・時間・安全UIを変更できません。視覚表示だけを確認するシミュレーターです。</small>
+        <small>公開台本はBPM・時間・ギブアップ・一時停止・即停止・安全UIを変更できません。視覚表示だけを確認するシミュレーターです。</small>
       </section>
       <div class="ai-text-training-editor-actions">
         <button class="button button-primary" type="submit">${current ? "改訂内容を確認" : "公開内容を確認"}</button>
@@ -1942,13 +2669,16 @@ function renderEditor() {
 function renderEditorReview() {
   const draft = state.editorDraft;
   const after = state.balance - Number(state.policy.publishFee || 1);
+  const product = aiTextTrainingProductType(draft.productType);
+  const zoneProduct = draft.productType === "defeat_zone";
   return renderFrame(`
     <section class="ai-text-training-review-card">
       <span>PUBLISH REVIEW</span><h2>${escapeHtml(draft.title)}</h2>
       <p>${escapeHtml(draft.description)}</p>
-      <dl><div><dt>現在残高</dt><dd>${formatAnjuPay(state.balance)}</dd></div><div><dt>公開・改訂料</dt><dd>− ${formatAnjuPay(state.policy.publishFee)}</dd></div><div><dt>公開後残高</dt><dd>${formatAnjuPay(after)}</dd></div><div><dt>販売価格</dt><dd>${formatAnjuPay(draft.price)} / 1回</dd></div></dl>
-      <div class="ai-text-training-review-script">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => scriptSlotPreview(draft, slot)).join("")}</div>
-      <aside><strong>公開前の最終確認</strong><p>危険な運動指示、停止を妨げる言葉、性的な家族表現、個人情報、外部連絡先は禁止です。自動検査と通報の対象になります。</p></aside>
+      <dl><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(draft, draft.productType === "defeat_zone" ? "defeat_zone" : "standard"))}</dd></div><div><dt>現在残高</dt><dd>${formatAnjuPay(state.balance)}</dd></div><div><dt>公開・改訂料</dt><dd>− ${formatAnjuPay(state.policy.publishFee)}</dd></div><div><dt>公開後残高</dt><dd>${formatAnjuPay(after)}</dd></div><div><dt>販売価格</dt><dd>${formatAnjuPay(draft.price)} / 1回</dd></div></dl>
+      <div class="ai-text-training-script-group"><h3>5ラウンド · 14場面</h3><div class="ai-text-training-review-script">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => scriptSlotPreview(draft, slot)).join("")}</div></div>
+      ${zoneProduct ? `<div class="ai-text-training-script-group is-defeat-zone"><h3>敗北ZONE · 5場面</h3><div class="ai-text-training-review-script">${AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => scriptSlotPreview({ lines: draft.zoneLines }, slot)).join("")}</div></div>` : ""}
+      <aside><strong>公開前の最終確認</strong><p>危険な運動指示、停止を妨げる言葉、性的な家族表現、個人情報、外部連絡先は禁止です。${zoneProduct ? "ギブアップ・一時停止・即停止・安全文言はシステム固定で、作者台詞から変更できません。" : ""}自動検査と通報の対象になります。</p></aside>
       <div class="ai-text-training-review-actions"><button class="button button-primary" type="button" data-ai-text-training-action="confirm-publish" ${after < 0 || state.busyAction ? "disabled" : ""}>${state.busyAction ? "公開中…" : `${formatAnjuPay(state.policy.publishFee)}で公開する`}</button><button class="button button-ghost" type="button" data-ai-text-training-action="editor" ${state.busyAction ? "disabled" : ""}>入力へ戻る</button></div>
     </section>
   `, { eyebrow: "AUTHOR CONFIRMATION", title: "全文と残高を確認", backLabel: "入力へ戻る", backAction: "editor" });
@@ -1957,15 +2687,20 @@ function renderEditorReview() {
 function renderPurchaseReview() {
   const script = state.pendingPaidPreset || state.selectedPreset;
   const after = state.balance - Number(script.price || 0);
+  const defeatZone = state.playStyle === "defeat_zone";
+  const product = aiTextTrainingProductType(presetProductType(script));
+  const zoneProduct = product.id === "defeat_zone";
+  const compatible = presetSupportsPlayStyle(script, state.playStyle);
   return renderFrame(`
     <section class="ai-text-training-purchase-review">
       <span>ONE SESSION CONFIRMATION</span><h2>「${escapeHtml(script.title)}」を今回だけ使いますか？</h2>
       <p>${escapeHtml(script.description)}</p>
-      <dl><div><dt>現在残高</dt><dd>${formatAnjuPay(state.balance)}</dd></div><div><dt>今回の価格</dt><dd>− ${formatAnjuPay(script.price)}</dd></div><div><dt>支払後残高</dt><dd>${formatAnjuPay(after)}</dd></div><div><dt>利用範囲</dt><dd>5ラウンド1セッション</dd></div></dl>
-      <ul><li>買い切り・在庫ではなく、今回の開始と同時に使う応援です。</li><li>全文は安全確認のため公開されています。支払い対象は、BPMに同期した5ラウンド自動演出の1回利用です。</li><li>開始後の自主終了・「無理／痛い／めまい」即停止でも使い切りです。</li><li>通信切断や再読込では同じ利用を追加支払いなしで再開できます。</li><li>無料の標準応援へ戻ることもでき、購入は完全に任意です。</li></ul>
+      <dl><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>現在残高</dt><dd>${formatAnjuPay(state.balance)}</dd></div><div><dt>今回の価格</dt><dd>− ${formatAnjuPay(script.price)}</dd></div><div><dt>支払後残高</dt><dd>${formatAnjuPay(after)}</dd></div><div><dt>プレイスタイル</dt><dd>${escapeHtml(aiTextTrainingPlayStyle(state.playStyle).label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(script))} · 1セッション</dd></div></dl>
+      <ul><li>買い切り・在庫ではなく、今回の開始と同時に使う応援です。</li><li>全文は安全確認のため公開されています。支払い対象は、表示中の利用範囲を自動演出する1回利用です。</li>${defeatZone && zoneProduct ? "<li>5ラウンド・最終攻勢・敗北・クールダウン・敗北証明まで専用台詞を使い、追加消費はありません。</li>" : defeatZone ? "<li>5ラウンドはこの通常台本、最終攻勢・敗北・クールダウン・敗北証明は安全なシステム標準台詞を使い、追加消費はありません。</li>" : ""}<li>開始後の自主終了・「無理／痛い／めまい」即停止でも使い切りです。</li><li>通信切断や再読込では同じ利用を追加支払いなしで再開できます。</li><li>無料の標準応援へ戻ることもでき、購入は完全に任意です。</li></ul>
       <label class="ai-text-training-voluntary-check"><input type="checkbox" id="aiTextTrainingPurchaseConsent" /> 使い切り条件と支払後残高を確認し、自分の判断で使います</label>
       <div class="ai-text-training-review-actions"><button class="button button-primary" id="aiTextTrainingConfirmPurchase" type="button" data-ai-text-training-action="confirm-purchase" disabled>${state.busyAction ? "決済を確認中…" : `${formatAnjuPay(script.price)}で今回の応援を開始`}</button><button class="button button-ghost" type="button" data-ai-text-training-action="setup" ${state.busyAction ? "disabled" : ""}>支払わず準備へ戻る</button></div>
       ${after < 0 ? `<p class="ai-text-training-error">残高が不足しています。無料の標準応援はそのまま利用できます。</p>` : ""}
+      ${compatible ? "" : '<p class="ai-text-training-error">この敗北ZONE専用台本は通常トレーニングでは使用できません。支払わず準備へ戻ってください。</p>'}
     </section>
   `, { eyebrow: "VOLUNTARY ONE-USE PAYMENT", title: "使い切り応援の確認", backLabel: "支払わず戻る", backAction: "setup" });
 }
@@ -2003,14 +2738,43 @@ function renderRankings() {
 }
 
 function currentBpm() {
+  if (state.phase === "zone_rush" || state.phase === "zone_ready") {
+    return AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM;
+  }
+  if (state.phase === "zone_deceleration") {
+    return state.defeatDecelerationStage >= 2 ? 60 : 120;
+  }
+  if (state.phase === "zone_cooldown") {
+    return AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM;
+  }
+  if (state.phase === "zone_paused") {
+    if (state.defeatResumePhase === "zone_cooldown") {
+      return AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM;
+    }
+    if (state.defeatResumePhase === "zone_deceleration") {
+      return state.defeatDecelerationStage >= 2 ? 60 : 120;
+    }
+    return AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM;
+  }
   return Number(state.plan?.effectiveBpms?.[state.roundIndex] ?? state.bpms[state.roundIndex] ?? 0);
 }
 
 function tempoCopy(bpm) {
+  if (bpm === AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM) return "ZONE BEAT 200";
+  if (bpm === AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM) return "COOLDOWN BEAT 30";
   return bpm === 0 ? "FREE RHYTHM" : `${bpm} BPM · ${aiTextTrainingTempoBand(bpm).toUpperCase()}`;
 }
 
 function currentBeatGaugeState(now = Date.now()) {
+  if (DEFEAT_ZONE_PHASES.has(state.phase)) {
+    return aiTextTrainingDefeatZoneBeatGaugeState({
+      bpm: currentBpm(),
+      effectiveAt: state.roundBeatEffectiveAt,
+      now,
+      remainingMs: state.remainingMs,
+      phase: state.phase,
+    });
+  }
   return aiTextTrainingBeatGaugeState({
     bpm: currentBpm(),
     effectiveAt: state.roundBeatEffectiveAt,
@@ -2022,15 +2786,21 @@ function currentBeatGaugeState(now = Date.now()) {
 
 function trainingMood() {
   if (state.screen === "result") {
-    return state.resultOutcome === "safety_stopped" ? "safety" : "clear";
+    if (state.resultOutcome === "safety_stopped" || state.postWorkoutSafetyStopped) return "safety";
+    if (state.sessionPlayStyle === "defeat_zone" && state.defeatResolution) return "defeat";
+    return "clear";
   }
+  if (state.phase === "zone_rush") return "zone";
+  if (state.phase === "zone_deceleration") return "defeat";
+  if (state.phase === "zone_cooldown") return "cooldown";
+  if (["zone_ready", "zone_paused"].includes(state.phase)) return "ready";
   if (["reaction", "next_preview", "paused"].includes(state.phase)) return "rest";
   if (state.phase === "countdown") return "ready";
   if (currentBeatGaugeState().finalTen) return "final";
   return "active";
 }
 
-function renderTrainingEdgeHud(remainingSeconds) {
+function renderTrainingEdgeHud(remainingSeconds, label = "残り時間") {
   const visualState = currentBeatGaugeState();
   const classNames = ["ai-text-training-edge-hud"];
   if (visualState.active) classNames.push("is-active");
@@ -2044,7 +2814,7 @@ function renderTrainingEdgeHud(remainingSeconds) {
     `--att-gauge-urgency:${visualState.urgency.toFixed(3)}`,
   ].join(";");
   return `<div class="${classNames.join(" ")}" id="aiTextTrainingEdgeHud" style="${style}">
-    <div class="ai-text-training-timer" role="timer" aria-live="off" aria-label="残り時間 ${remainingSeconds}秒">
+    <div class="ai-text-training-timer" role="timer" aria-live="off" aria-label="${escapeHtml(label)} ${remainingSeconds}秒">
       <strong id="aiTextTrainingRemaining">${remainingSeconds}</strong><small>SEC</small>
     </div>
     <div class="ai-text-training-beat-gauge" data-ai-text-training-beat-gauge aria-hidden="true">
@@ -2094,7 +2864,151 @@ function clearMessage() {
   });
 }
 
+function renderDefeatZoneLineup({ winner = false } = {}) {
+  return `<div class="ai-text-training-zone-lineup" role="group" aria-label="${winner ? "本日あなたを倒した5枚" : "最終攻勢を行う5枚"}">
+    ${state.images.map((image, index) => `<figure>
+      ${image
+        ? `<img src="${escapeHtml(image.url)}" alt="${winner ? "勝者" : "対戦相手"}${index + 1}" />`
+        : `<span>${index + 1}</span>`}
+      ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
+    </figure>`).join("")}
+  </div>`;
+}
+
+function defeatZoneFallbackLines(slotId) {
+  const fallbackId = String(slotId || "").replace(/^zone_/u, "");
+  const fallback = DEFEAT_ZONE_MESSAGES[fallbackId];
+  return Array.isArray(fallback) ? fallback : [String(fallback || "")];
+}
+
+function defeatZoneScriptLines(slotId) {
+  if (state.sessionPlayStyle === "defeat_zone"
+      && presetProductType(state.selectedPreset) === "defeat_zone") {
+    const authored = state.selectedPreset.zoneLines?.[slotId];
+    if (Array.isArray(authored) && authored.length >= 2) return authored;
+  }
+  return defeatZoneFallbackLines(slotId);
+}
+
+function defeatZoneScriptBpm(slotId, contextualBpm = currentBpm()) {
+  if (slotId === "zone_rush") return AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM;
+  if (slotId === "zone_cooldown" || slotId === "zone_certificate") {
+    return AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM;
+  }
+  return contextualBpm;
+}
+
+function defeatZoneMessage(slotId) {
+  const candidates = defeatZoneScriptLines(slotId);
+  const line = pickAiTextTrainingLine(candidates, state.lastMessage);
+  if (line) state.lastMessage = line;
+  return renderAiTextTrainingLine(line, {
+    bpm: defeatZoneScriptBpm(slotId),
+    round: AI_TEXT_TRAINING_ROUND_COUNT,
+    remaining: Math.max(0, Math.ceil(state.remainingMs / 1_000)),
+  });
+}
+
+function renderDefeatZoneSafetyControls() {
+  const pauseAvailable = ["zone_rush", "zone_deceleration", "zone_cooldown"].includes(state.phase);
+  return `<div class="ai-text-training-safety-controls ai-text-training-zone-safety-controls">
+    ${pauseAvailable ? '<button class="button button-ghost" type="button" data-ai-text-training-action="pause-defeat-zone">一時停止</button>' : ""}
+    <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${!state.muted}">${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)} ${state.muted ? "OFF" : "ON"}</button>
+    <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="emergency-stop">無理・痛い・めまい／即停止</button>
+  </div>`;
+}
+
+function renderDefeatZonePlay() {
+  const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
+  const bpm = currentBpm();
+  const cooldownCanEnd = state.phase === "zone_cooldown"
+    || (state.phase === "zone_paused" && state.defeatResumePhase === "zone_cooldown");
+  const decelerating = state.phase === "zone_deceleration"
+    || (state.phase === "zone_paused" && state.defeatResumePhase === "zone_deceleration");
+  const backLabel = cooldownCanEnd
+    ? "敗北証明を見る"
+    : decelerating
+      ? "クールダウンへ"
+      : "ギブアップ";
+  const backAction = cooldownCanEnd
+    ? "finish-defeat-zone"
+    : decelerating
+      ? "skip-to-cooldown"
+      : "surrender-defeat-zone";
+  let center = "";
+  if (state.phase === "zone_ready") {
+    center = `<section class="ai-text-training-zone-overlay is-ready">
+      <span>FINAL ATTACK READY</span>
+      <h2>5枚の最終攻勢</h2>
+      <strong class="ai-text-training-zone-countdown">${state.countdownValue}</strong>
+      <p>200 BPMは音と画面の演出です。動作は自分のペースで。ギブアップは開始直後から選べます。</p>
+      <button class="button button-ghost" type="button" data-ai-text-training-action="surrender-defeat-zone">今すぐギブアップする</button>
+    </section>`;
+  } else if (state.phase === "zone_rush") {
+    center = `<section class="ai-text-training-zone-overlay is-rush">
+      ${renderTrainingEdgeHud(remainingSeconds, "最終攻勢 残り")}
+      <span>FINAL ATTACK · ZONE BEAT 200</span>
+      <h2>5枚の最終攻勢</h2>
+       <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_rush")[0])}</blockquote>
+      <p>演出テンポ200 BPM · 動作速度、心拍数、呼吸数の目標ではありません。</p>
+      <button class="button button-primary ai-text-training-surrender" type="button" data-ai-text-training-action="surrender-defeat-zone"><strong>ギブアップする</strong><small>敗北を認めてクールダウンへ</small></button>
+    </section>`;
+  } else if (state.phase === "zone_deceleration") {
+    center = `<section class="ai-text-training-zone-overlay is-defeated">
+      <span>AI WIN · TEMPO DOWN</span>
+      <h2>あなたの敗北</h2>
+      <strong>${escapeHtml(tempoCopy(bpm))}</strong>
+       <blockquote class="ai-text-training-message-surface">${escapeHtml(state.currentMessage || defeatZoneFallbackLines(state.defeatResolution === "overpowered" ? "zone_overpowered" : "zone_surrendered")[0])}</blockquote>
+      <p>運動を続けず、楽な姿勢へ移ってください。音は段階的に減速しています。</p>
+    </section>`;
+  } else if (state.phase === "zone_cooldown") {
+    center = `<section class="ai-text-training-zone-overlay is-cooldown">
+      ${renderTrainingEdgeHud(remainingSeconds, "クールダウン 残り")}
+      <span>AI WIN · COOLDOWN BEAT 30</span>
+      <h2>もう力を抜いて大丈夫</h2>
+       <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_cooldown")[0])}</blockquote>
+      <p>30 BPMは余韻の演出です。心拍数や呼吸数の指示ではありません。</p>
+      <div class="ai-text-training-cooldown-actions">
+        <button class="button button-primary" type="button" data-ai-text-training-action="settle-defeat-zone">ととのった／敗北証明を見る</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="finish-defeat-zone">今日はここまで／敗北証明を見る</button>
+      </div>
+    </section>`;
+  } else {
+    const resumeCooldown = state.defeatResumePhase === "zone_cooldown";
+    const continueAfterDefeat = state.defeatResumePhase === "zone_deceleration";
+    center = `<section class="ai-text-training-zone-overlay is-paused">
+      <span>PAUSED · AUTO RESUME OFF</span>
+      <h2>${resumeCooldown ? "クールダウンを停止中" : continueAfterDefeat ? "敗北後の減速を停止中" : "最終攻勢を停止中"}</h2>
+      <p>${continueAfterDefeat ? "あなたの敗北は確定済みです。音を止めたまま、操作してクールダウンへ進めます。" : `画面が非表示になったため音とタイマーを止めました。自動では${resumeCooldown ? "30" : "200"} BPMを再開しません。`}</p>
+      <div class="ai-text-training-cooldown-actions">
+        <button class="button button-primary" type="button" data-ai-text-training-action="resume-defeat-zone">${resumeCooldown ? "クールダウンを再開" : continueAfterDefeat ? "クールダウンへ進む" : "3秒後に最終攻勢を再開"}</button>
+        ${resumeCooldown || continueAfterDefeat ? "" : '<button class="button button-ghost" type="button" data-ai-text-training-action="surrender-defeat-zone">再開せずギブアップする</button>'}
+      </div>
+    </section>`;
+  }
+  return renderFrame(`
+    <section class="ai-text-training-arena ai-text-training-zone-arena" data-att-mood="${escapeHtml(trainingMood())}" data-att-tempo="${escapeHtml(bpm >= 120 ? "high" : "low")}">
+      <div class="ai-text-training-opponent ai-text-training-zone-opponents">${renderDefeatZoneLineup({ winner: Boolean(state.defeatResolution) })}<div class="ai-text-training-vignette" aria-hidden="true"></div></div>
+      ${center}
+      ${renderDefeatZoneSafetyControls()}
+      <p class="ai-text-training-system-safety">痛み・めまい・息苦しさ・体調不良がある時は、演出に関係なく即停止してください。</p>
+    </section>
+  `, {
+    eyebrow: `${aiTextTrainingMode(state.modeId).label} · 敗北ZONE`,
+    title: cooldownCanEnd
+      ? "AI WIN · COOLDOWN"
+      : decelerating
+        ? "AI WIN · TEMPO DOWN"
+        : "FINAL ATTACK",
+    backLabel,
+    backAction,
+  });
+}
+
 function renderPlay() {
+  if (state.sessionPlayStyle === "defeat_zone" && DEFEAT_ZONE_PHASES.has(state.phase)) {
+    return renderDefeatZonePlay();
+  }
   const bpm = currentBpm();
   const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
   const exercise = aiTextTrainingExercise(state.exerciseId);
@@ -2142,6 +3056,17 @@ function renderPlay() {
 }
 
 function resultTitle() {
+  if (state.postWorkoutSafetyStopped && !state.defeatResolution) {
+    return "安全のため演出を停止しました";
+  }
+  if (state.postWorkoutExited && !state.defeatResolution) {
+    return "敗北ZONE演出を終了しました";
+  }
+  if (state.resultOutcome === "completed"
+      && state.sessionPlayStyle === "defeat_zone"
+      && state.defeatResolution) {
+    return "あなたの敗北";
+  }
   if (state.resultOutcome === "completed") return "5ラウンド完走";
   if (state.resultOutcome === "safety_stopped") return "安全のため停止しました";
   return "ここでトレーニング終了";
@@ -2155,10 +3080,11 @@ function formatActiveDuration(value) {
   return `${minutes}分${seconds}秒`;
 }
 
-function renderResultLineup() {
-  return `<section class="ai-text-training-result-lineup" aria-label="今回DRAWされた5枚">
+function renderResultLineup({ winner = false } = {}) {
+  return `<section class="ai-text-training-result-lineup" aria-label="${winner ? "本日あなたを倒した5枚" : "今回DRAWされた5枚"}">
     ${state.images.map((image, index) => `<figure>
       ${image ? `<img src="${escapeHtml(image.url)}" alt="今回のラウンド${index + 1}の画像" />` : `<span>${index + 1}</span>`}
+      ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
       <figcaption>R${index + 1} · ${state.bpms[index] === 0 ? "FREE" : `${state.bpms[index]} BPM`}</figcaption>
     </figure>`).join("")}
   </section>`;
@@ -2170,21 +3096,28 @@ function renderResult() {
     : Math.min(AI_TEXT_TRAINING_ROUND_COUNT, state.completedRounds);
   const achievementPending = Boolean(currentAchievementRetryRecord()?.outcome);
   const rosterCount = rosterEntries().length;
-  const replayAllowed = state.resultOutcome !== "safety_stopped";
+  const replayAllowed = state.resultOutcome !== "safety_stopped"
+    && !state.postWorkoutSafetyStopped
+    && !state.postWorkoutExited;
   const alternateDrawAllowed = state.resultOutcome === "completed"
+    && !state.postWorkoutSafetyStopped
+    && !state.postWorkoutExited
     && rosterCount > AI_TEXT_TRAINING_ROUND_COUNT
     && !(rosterCount === AI_TEXT_TRAINING_ROSTER_MAX_COUNT && state.drawLeg === 2);
+  const defeatCertificate = state.resultOutcome === "completed"
+    && state.sessionPlayStyle === "defeat_zone"
+    && Boolean(state.defeatResolution);
   return renderFrame(`
-    <section class="ai-text-training-result ${state.resultOutcome === "safety_stopped" ? "is-safety" : ""}">
-      <span>${state.resultOutcome === "completed" ? "SESSION CLEAR" : "SESSION ENDED"}</span>
+    <section class="ai-text-training-result ${state.resultOutcome === "safety_stopped" || state.postWorkoutSafetyStopped ? "is-safety" : ""} ${defeatCertificate ? "is-defeat" : ""}">
+      <span>${defeatCertificate ? "AI WIN · DEFEAT CERTIFICATE" : state.postWorkoutSafetyStopped ? "TRAINING COMPLETE · SAFETY STOP" : state.postWorkoutExited ? "TRAINING COMPLETE · ZONE EXIT" : state.resultOutcome === "completed" ? "SESSION CLEAR" : "SESSION ENDED"}</span>
       <h2>${escapeHtml(resultTitle())}</h2>
-      <p>${state.resultOutcome === "safety_stopped" ? "止まる判断は失敗ではありません。体調が戻らない場合は運動を再開しないでください。" : "動作の回数やフォームは判定していません。実際に到達した範囲だけを記録します。"}</p>
-      ${state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
-      ${renderResultLineup()}
-      <dl><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
+      <p>${state.resultOutcome === "safety_stopped" || state.postWorkoutSafetyStopped ? `${state.workoutFinalized ? "5ラウンドの完了記録は保持しました。" : ""}止まる判断は失敗ではありません。体調が戻らない場合は運動を再開しないでください。` : state.postWorkoutExited && !state.defeatResolution ? "5ラウンドの完了記録は保持しました。敗北は確定せず、今回の対戦演出だけを終了しました。" : defeatCertificate ? "厳選した5枚が最終攻勢を制しました。対戦には敗北、トレーニングは5ラウンド完了です。" : "動作の回数やフォームは判定していません。実際に到達した範囲だけを記録します。"}</p>
+      ${defeatCertificate ? `<section class="ai-text-training-outcome-grid" aria-label="今回の結果"><article><small>対戦結果</small><strong>DEFEAT</strong><span>あなたの敗北</span></article><article><small>トレーニング結果</small><strong>COMPLETE</strong><span>5ラウンド達成</span></article></section><blockquote class="ai-text-training-message-surface">${escapeHtml(state.defeatCertificateMessage || defeatZoneFallbackLines("zone_certificate")[0])}</blockquote>` : state.postWorkoutExited ? '<blockquote class="ai-text-training-message-surface">対戦結果は未確定です。今日はここまでにしました。</blockquote>' : state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
+      ${renderResultLineup({ winner: defeatCertificate })}
+      <dl><div><dt>プレイスタイル</dt><dd>${escapeHtml(aiTextTrainingPlayStyle(state.sessionPlayStyle).label)}</dd></div><div><dt>台本種別</dt><dd>${escapeHtml(aiTextTrainingProductType(presetProductType(state.selectedPreset)).label)}</dd></div><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
       ${state.finishPending ? `<p class="ai-text-training-pending">${state.finishInFlight ? "有料利用の終了記録を送信中です。" : "有料利用の終了記録を確認できませんでした。再送してください。"}追加請求はありません。</p>` : ""}
       ${achievementPending ? `<p class="ai-text-training-pending">${state.achievementRetryInFlight ? "実績記録を送信中です。" : "実績記録を送信できませんでした。"}運動結果を妨げず、画像・BPM・台詞を含まない最小限の記録だけをこの端末に残して再送します。</p>` : ""}
-      <p>実績はカメラや動作判定を使わず、5ラウンド完走時だけ1回加算します。安全停止・途中終了では加算せず、解除済み実績や既存の進捗も減りません。</p>
+      <p>実績はカメラや動作判定を使わず、5ラウンド完走時だけ1回加算します。敗北ZONEの継続時間や「ととのった」の選択による報酬差はありません。安全停止・途中終了で解除済み実績や既存の進捗も減りません。</p>
       <div>${replayAllowed ? `<button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "同じ5枚で再戦準備"}</button>` : ""}${alternateDrawAllowed ? `<button class="button button-ghost" type="button" data-ai-text-training-action="alternate-draw-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${rosterCount === AI_TEXT_TRAINING_ROSTER_MAX_COUNT ? "未登場の残り5枚で再戦" : "別の5枚をDRAWして再戦"}</button>` : ""}${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}${achievementPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-achievement-finish" ${state.achievementRetryInFlight ? "disabled" : ""}>実績記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
       <small>水分を取り、必要なら十分に休んでください。実績送信の失敗を理由に運動を続ける必要はありません。</small>
     </section>
@@ -2218,7 +3151,9 @@ function render() {
 function updateEditorDraftFromForm(form) {
   const formData = new FormData(form);
   const modeId = String(formData.get("modeId") || "mama");
+  const productType = normalizeAiTextTrainingProductType(formData.get("productType"));
   const previousMode = state.editorDraft?.modeId;
+  const previousProductType = state.editorDraft?.productType;
   const fallback = normalizeAiTextTrainingScriptSnapshot(
     AI_TEXT_TRAINING_BUILTIN_SCRIPTS[modeId],
   );
@@ -2230,22 +3165,41 @@ function updateEditorDraftFromForm(form) {
       lines[slot.id] = [...fallback.lines[slot.id]];
     }
   }
-  const existing = state.ownPresets.find((preset) => preset.modeId === modeId);
+  const zoneLines = {};
+  if (productType === "defeat_zone") {
+    for (const slot of AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS) {
+      const value = String(formData.get(`slot_${slot.id}`) || "");
+      zoneLines[slot.id] = value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+      if ((previousMode !== modeId || previousProductType !== productType)
+          && !zoneLines[slot.id].length) {
+        zoneLines[slot.id] = [...defaultDefeatZoneLines()[slot.id]];
+      }
+    }
+  }
+  const existing = ownPresetFor(modeId, productType);
+  state.editorProductType = productType;
   state.editorDraft = {
     presetId: existing?.id || "",
     baseRevision: Number(existing?.revision || 0),
     sellerName: String(formData.get("sellerName") || "").trim(),
     modeId,
+    productType,
     title: String(formData.get("title") || "").trim(),
     description: String(formData.get("description") || "").trim(),
     price: Number(formData.get("price") || 10),
     lines,
+    zoneLines,
   };
 }
 
 function validateEditorDraft(draft) {
   if (!AI_TEXT_TRAINING_MODES.some((mode) => mode.id === draft.modeId)) {
     throw new Error("AI性格を選び直してください。");
+  }
+  if (!AI_TEXT_TRAINING_PRODUCT_TYPES.some(
+    (productType) => productType.id === draft.productType,
+  )) {
+    throw new Error("商品種別を選び直してください。");
   }
   if (!draft.sellerName || draft.sellerName.length > 16) {
     throw new Error("作者名は1行16文字以内で入力してください。");
@@ -2263,6 +3217,17 @@ function validateEditorDraft(draft) {
     }
     if (lines.some((line) => line.length < 4 || line.length > 42)) {
       throw new Error(`「${slot.label}」は1行4〜42文字で入力してください。`);
+    }
+  }
+  if (draft.productType === "defeat_zone") {
+    for (const slot of AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS) {
+      const lines = draft.zoneLines?.[slot.id] || [];
+      if (lines.length < 2 || lines.length > 4) {
+        throw new Error(`「${slot.label}」へ2〜4行入力してください。`);
+      }
+      if (lines.some((line) => line.length < 4 || line.length > 42)) {
+        throw new Error(`「${slot.label}」は1行4〜42文字で入力してください。`);
+      }
     }
   }
 }
@@ -2318,14 +3283,28 @@ async function refreshMarketState() {
   const response = await aiTextTrainingAction({
     action: "state",
     modeId: state.marketModeFilter,
+    productType: "standard",
   });
   const data = response.data || {};
   state.balance = Number(data.balance || state.balance);
   state.policy = data.policy || state.policy;
-  state.marketPresets = Array.isArray(data.presets) ? data.presets : [];
+  state.marketPresets = normalizeMarketPresetList(data.presets, "standard");
   state.ownPresets = Array.isArray(data.ownPresets) ? data.ownPresets : [];
   state.profile = data.profile || state.profile;
   state.activeUse = data.activeUse || null;
+  if (state.activeUse?.preset) {
+    const lockedPlayStyle = activeUsePlayStyle();
+    state.playStyle = lockedPlayStyle;
+    state.sessionPlayStyle = lockedPlayStyle;
+    state.modeId = state.activeUse.preset.modeId;
+    state.marketModeFilter = state.modeId;
+  }
+  state.marketPresets = await browseMarketPresets({
+    modeId: state.marketModeFilter,
+    playStyle: state.playStyle,
+    seededPresets: state.marketPresets,
+    seededProductTypes: ["standard"],
+  });
 }
 
 async function loadRankings(period = state.rankingPeriod) {
@@ -2378,6 +3357,7 @@ async function publishEditorDraft() {
     state.busyAction = "";
     await refreshMarketState();
     state.modeId = state.editorDraft.modeId;
+    state.editorProductType = state.editorDraft.productType;
     state.marketModeFilter = state.modeId;
     state.screen = "editor";
     state.editorDraft = createEditorDraft();
@@ -2391,7 +3371,10 @@ async function publishEditorDraft() {
 }
 
 async function unpublishCurrentPreset() {
-  const preset = state.ownPresets.find((item) => item.modeId === state.editorDraft?.modeId);
+  const preset = ownPresetFor(
+    state.editorDraft?.modeId,
+    state.editorDraft?.productType,
+  );
   if (!preset) return;
   if (!window.confirm("この台本の新しい利用を停止しますか？ 開始済みの利用内容は変わりません。")) return;
   if (state.preview) {
@@ -2520,12 +3503,21 @@ function announceCurrentDraw(entries = validateRoster()) {
 }
 
 function newSessionPlan() {
+  const script = selectedPresetForMode();
+  if (!presetSupportsPlayStyle(script, state.playStyle)) {
+    throw new Error("選んだ台本は、このプレイスタイルでは利用できません。");
+  }
+  if (state.activeUse
+      && normalizeAiTextTrainingPlayStyle(state.playStyle) !== activeUsePlayStyle()) {
+    throw new Error("開始済み利用のプレイスタイルを確認できません。");
+  }
   const entries = validateRoster();
   const drawIndices = currentPendingDrawIndices(entries);
   if (!drawIndices) throw new Error("AI DRAWを確認してから開始してください。");
   state.sessionDrawIndices = [...drawIndices];
   state.images = drawIndices.map((index) => entries[index].image);
   state.bpms = drawIndices.map((index) => entries[index].bpm);
+  state.sessionPlayStyle = normalizeAiTextTrainingPlayStyle(state.playStyle);
   state.sessionBeatCharacterId = normalizeBeatCharacterId(state.beatCharacterId);
   state.sessionCosmetics = equippedCosmetics();
   state.plan = createAiTextTrainingPlan({
@@ -2538,8 +3530,16 @@ function newSessionPlan() {
   state.lastAnnouncedSecond = null;
   state.completedActiveSeconds = 0;
   state.completedRounds = 0;
+  state.workoutFinalized = false;
   state.sessionStartedAt = Date.now();
   state.resultOutcome = "";
+  state.defeatResolution = "";
+  state.defeatSettled = false;
+  state.postWorkoutSafetyStopped = false;
+  state.postWorkoutExited = false;
+  state.defeatCertificateMessage = "";
+  state.defeatResumePhase = "";
+  state.defeatDecelerationStage = 0;
   state.achievementActionId = generatedActionId("achievement_session");
   state.achievementSessionId = "";
   state.achievementBeginRequested = false;
@@ -2550,7 +3550,17 @@ function newSessionPlan() {
 }
 
 function continuePreparedSession() {
+  if (hasUnverifiedPaidRecovery()) {
+    state.screen = "setup";
+    showToast("開始済みの有料応援を確認できていません。接続が戻ってから同じ利用を再開してください。");
+    render();
+    return;
+  }
   currentPendingDrawIndices();
+  const script = selectedPresetForMode();
+  if (!presetSupportsPlayStyle(script, state.playStyle)) {
+    throw new Error("選んだ台本は、このプレイスタイルでは利用できません。");
+  }
   if (state.activeUse) {
     newSessionPlan();
     state.screen = "play";
@@ -2559,8 +3569,8 @@ function continuePreparedSession() {
     render();
     return;
   }
-  if (state.selectedPresetSource === "market" && Number(state.selectedPreset.price || 0) > 0) {
-    state.pendingPaidPreset = state.selectedPreset;
+  if (state.selectedPresetSource === "market" && Number(script.price || 0) > 0) {
+    state.pendingPaidPreset = script;
     state.purchaseActionId = "";
     state.screen = "purchase_review";
     render();
@@ -2580,11 +3590,16 @@ function prepareStartSession() {
   if (!state.preview && !state.authSettled) {
     throw new Error("開始済みの有料応援と残高の確認が終わるまでお待ちください。");
   }
+  if (hasUnverifiedPaidRecovery()) {
+    throw new Error("開始済みの有料応援をサーバーで確認できていません。接続が戻ってから同じ利用を再開してください。");
+  }
   const entries = validateRoster();
   if (state.cosmeticDraft) {
     throw new Error("演出を試着中です。「この組み合わせを装着」または「試着を取り消す」を選んでください。");
   }
   if (state.activeUse?.preset) {
+    state.playStyle = activeUsePlayStyle();
+    state.sessionPlayStyle = state.playStyle;
     state.modeId = state.activeUse.preset.modeId;
     state.marketModeFilter = state.modeId;
   }
@@ -2597,18 +3612,22 @@ function prepareStartSession() {
     if (!recovered && state.recoveryError) {
       throw new Error(`${state.recoveryError}確定済み利用の内容を変更せず停止しています。`);
     }
-    if (recovered && state.resultOutcome) {
+    if (recovered && state.screen === "result") {
       showToast("この1回分は終了記録の確認中です。完了後に新しい利用を開始できます。");
       render();
       return;
     }
     if (recovered && state.plan) {
-      if (state.sessionDrawIndices.length !== AI_TEXT_TRAINING_ROUND_COUNT
-          || state.images.some((image) => !image)) {
+      const pendingDefeatPresentation = state.sessionPlayStyle === "defeat_zone"
+        && state.workoutFinalized
+        && ["reaction", "zone_paused"].includes(state.phase);
+      if (!pendingDefeatPresentation
+          && (state.sessionDrawIndices.length !== AI_TEXT_TRAINING_ROUND_COUNT
+          || state.images.some((image) => !image))) {
         throw new Error(`開始時と同じ${state.recoveryRosterCount || AI_TEXT_TRAINING_ROUND_COUNT}枚のロスターを選び直してください。DRAW結果と追加請求は変わりません。`);
       }
       state.screen = "play";
-      state.phase = state.phase === "reaction" || state.phase === "next_preview"
+      state.phase = ["reaction", "next_preview", "zone_paused"].includes(state.phase)
         ? state.phase
         : "paused";
       persistSession();
@@ -2689,10 +3708,16 @@ async function confirmPaidUse() {
     return;
   }
   if (state.preview) {
+    if (!presetSupportsPlayStyle(state.pendingPaidPreset, state.playStyle)) {
+      throw new Error("この台本は、選んだプレイスタイルでは利用できません。");
+    }
     state.activeUse = {
       id: "3333333333333333333333333333333333333333",
       preset: state.pendingPaidPreset,
+      playStyle: normalizeAiTextTrainingPlayStyle(state.playStyle),
     };
+    state.playStyle = activeUsePlayStyle();
+    state.sessionPlayStyle = state.playStyle;
     state.modeId = state.pendingPaidPreset.modeId;
     state.selectedPreset = state.pendingPaidPreset;
     state.selectedPresetSource = "active_use";
@@ -2711,6 +3736,10 @@ async function confirmPaidUse() {
   render();
   try {
     const script = state.pendingPaidPreset;
+    const requestedPlayStyle = normalizeAiTextTrainingPlayStyle(state.playStyle);
+    if (!presetSupportsPlayStyle(script, requestedPlayStyle)) {
+      throw new Error("この台本は、選んだプレイスタイルでは利用できません。");
+    }
     const response = await aiTextTrainingAction({
       action: "start_paid_use",
       actionId: state.purchaseActionId,
@@ -2718,6 +3747,7 @@ async function confirmPaidUse() {
       expectedPrice: script.price,
       expectedRevision: script.revision,
       expectedBalance: state.balance,
+      playStyle: requestedPlayStyle,
     });
     if (response.data?.terminalAction === true) {
       state.activeUse = null;
@@ -2740,6 +3770,13 @@ async function confirmPaidUse() {
       return;
     }
     state.activeUse = use;
+    const lockedPlayStyle = activeUsePlayStyle(use);
+    if (lockedPlayStyle !== requestedPlayStyle
+        || !presetSupportsPlayStyle(use.preset, lockedPlayStyle)) {
+      throw new Error("利用記録のプレイスタイルまたは商品種別を確認できませんでした。");
+    }
+    state.playStyle = lockedPlayStyle;
+    state.sessionPlayStyle = lockedPlayStyle;
     state.modeId = use.preset.modeId;
     state.balance = Number(use.buyerBalanceAfter ?? state.balance);
     state.selectedPreset = presetSnapshot(use.preset);
@@ -3033,6 +4070,10 @@ function finishRound() {
   state.ambienceController.disable();
   releaseWakeLock();
   state.phase = "reaction";
+  if (state.roundIndex >= AI_TEXT_TRAINING_ROUND_COUNT - 1
+      && state.sessionPlayStyle === "defeat_zone") {
+    commitTrainingCompletion();
+  }
   persistSession();
   render();
   announce(`ラウンド${state.roundIndex + 1}が終わりました。体感を選んでください。`);
@@ -3046,7 +4087,11 @@ function chooseReaction(reactionId) {
     return;
   }
   if (state.roundIndex >= AI_TEXT_TRAINING_ROUND_COUNT - 1) {
-    completeSession("completed");
+    if (state.sessionPlayStyle === "defeat_zone") {
+      startDefeatZoneReady();
+    } else {
+      completeSession("completed");
+    }
     return;
   }
   state.phase = "next_preview";
@@ -3061,6 +4106,262 @@ function advanceRound() {
   state.phase = "paused";
   persistSession();
   startRoundCountdown();
+}
+
+function commitTrainingCompletion() {
+  if (state.workoutFinalized) return false;
+  state.workoutFinalized = true;
+  state.resultOutcome = "completed";
+  writeLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`, "true");
+  queueAchievementFinish("completed");
+  persistSession();
+  flushAchievementRetryQueue().catch(() => {});
+  if (state.sessionPlayStyle !== "defeat_zone") {
+    const completedState = state;
+    finishPaidUse("completed").finally(() => {
+      if (active && state === completedState) render();
+    });
+  }
+  return true;
+}
+
+function scheduleDefeatZoneMessage(slotId, cadenceMs) {
+  if (!active
+      || state.screen !== "play"
+      || !["zone_rush", "zone_cooldown"].includes(state.phase)) return;
+  state.currentMessage = defeatZoneMessage(slotId);
+  const element = document.querySelector("#aiTextTrainingZoneMessage");
+  if (element) element.textContent = state.currentMessage;
+  window.clearTimeout(state.messageTimer);
+  state.messageTimer = window.setTimeout(
+    () => scheduleDefeatZoneMessage(slotId, cadenceMs),
+    cadenceMs,
+  );
+}
+
+function startDefeatZoneReady({
+  remainingMs = AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+} = {}) {
+  if (state.sessionPlayStyle !== "defeat_zone" || !state.workoutFinalized) return;
+  stopRuntimeTimers();
+  releaseWakeLock();
+  state.ambienceController.setVolume(state.metronomeVolume);
+  state.phase = "zone_ready";
+  state.defeatResumePhase = "zone_rush";
+  state.countdownValue = AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS;
+  const requestedRemainingMs = Number(remainingMs);
+  state.remainingMs = Math.max(
+    0,
+    Math.min(
+      AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+      Number.isFinite(requestedRemainingMs)
+        ? requestedRemainingMs
+        : AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+    ),
+  );
+  state.currentMessage = DEFEAT_ZONE_MESSAGES.ready;
+  configureRoundAmbience(Date.now() + (AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS * 1_000));
+  state.ambienceController.enable().catch(() => {
+    showToast("ZONE BEATを再生できませんでした。無音でも進行できます。");
+  });
+  persistSession();
+  render();
+  announce(`${AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS}秒後に5枚の最終攻勢を開始します。200 BPMは演出テンポです。`);
+  state.countdownTimer = window.setInterval(() => {
+    state.countdownValue -= 1;
+    const element = document.querySelector(".ai-text-training-zone-countdown");
+    if (element) element.textContent = String(Math.max(0, state.countdownValue));
+    if (state.countdownValue <= 0) beginDefeatZoneRush();
+  }, 1_000);
+}
+
+function beginDefeatZoneRush({ remainingMs = state.remainingMs } = {}) {
+  window.clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+  state.phase = "zone_rush";
+  state.defeatResumePhase = "zone_rush";
+  state.remainingMs = Math.max(
+    0,
+    Math.min(AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS, Number(remainingMs) || 0),
+  );
+  if (state.remainingMs <= 0) {
+    confirmPlayerDefeat("overpowered");
+    return;
+  }
+  state.lastAnnouncedSecond = null;
+  state.currentMessage = defeatZoneMessage("zone_rush");
+  state.roundEndsAt = performance.now() + state.remainingMs;
+  state.ambienceController.setVolume(state.metronomeVolume);
+  configureRoundAmbience(Date.now());
+  state.ambienceController.enable().catch(() => {
+    showToast("ZONE BEATを再生できませんでした。無音でも進行できます。");
+  });
+  render();
+  scheduleDefeatZoneMessage("zone_rush", 2_800);
+  state.ticker = window.setInterval(updateDefeatZoneDom, 100);
+  acquireWakeLock();
+  persistSession();
+  announce("5枚の最終攻勢を開始します。ギブアップはいつでも選べます。");
+}
+
+function confirmPlayerDefeat(reason = "surrendered") {
+  if (state.sessionPlayStyle !== "defeat_zone" || !state.workoutFinalized) return;
+  const waitingForDefeat = ["zone_ready", "zone_rush"].includes(state.phase)
+    || (state.phase === "zone_paused"
+      && state.defeatResumePhase === "zone_rush"
+      && !state.defeatResolution);
+  if (!waitingForDefeat) return;
+  stopRuntimeTimers();
+  releaseWakeLock();
+  state.defeatResolution = reason === "overpowered" ? "overpowered" : "surrendered";
+  state.defeatResumePhase = "zone_deceleration";
+  state.phase = "zone_deceleration";
+  state.defeatDecelerationStage = 1;
+  state.remainingMs = AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS;
+  state.roundEndsAt = performance.now() + state.remainingMs;
+  state.currentMessage = defeatZoneMessage(
+    state.defeatResolution === "overpowered"
+      ? "zone_overpowered"
+      : "zone_surrendered",
+  );
+  state.ambienceController.setVolume(state.metronomeVolume * 0.82);
+  configureRoundAmbience(Date.now());
+  state.ambienceController.enable().catch(() => {});
+  render();
+  state.ticker = window.setInterval(updateDefeatZoneDom, 100);
+  persistSession();
+  announce(`あなたの敗北です。${state.currentMessage}。テンポを落としてクールダウンへ進みます。`);
+}
+
+function beginDefeatZoneCooldown({ remainingMs = AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS } = {}) {
+  stopRuntimeTimers();
+  releaseWakeLock();
+  state.phase = "zone_cooldown";
+  state.defeatResumePhase = "zone_cooldown";
+  state.remainingMs = Math.max(
+    0,
+    Math.min(AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS, Number(remainingMs) || 0),
+  );
+  if (state.remainingMs <= 0) {
+    finishDefeatPresentation();
+    return;
+  }
+  state.lastAnnouncedSecond = null;
+  state.currentMessage = defeatZoneMessage("zone_cooldown");
+  state.roundEndsAt = performance.now() + state.remainingMs;
+  state.ambienceController.setVolume(state.metronomeVolume * 0.55);
+  configureRoundAmbience(Date.now());
+  state.ambienceController.enable().catch(() => {
+    showToast("クールダウン音を再生できませんでした。無音でも終了できます。");
+  });
+  render();
+  scheduleDefeatZoneMessage("zone_cooldown", 5_200);
+  state.ticker = window.setInterval(updateDefeatZoneDom, 100);
+  persistSession();
+  announce("クールダウンを開始します。30 BPMは余韻の演出です。いつでも終了できます。");
+}
+
+function updateDefeatZoneDom() {
+  if (!DEFEAT_ZONE_TIMED_PHASES.has(state.phase)) return;
+  state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+  const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
+  const timer = document.querySelector("#aiTextTrainingRemaining");
+  if (timer) timer.textContent = String(remainingSeconds);
+  const timerContainer = timer?.closest('[role="timer"]');
+  if (timerContainer) {
+    const label = state.phase === "zone_cooldown" ? "クールダウン 残り" : "最終攻勢 残り";
+    timerContainer.setAttribute("aria-label", `${label} ${remainingSeconds}秒`);
+  }
+  const visualState = currentBeatGaugeState();
+  const edgeHud = document.querySelector("#aiTextTrainingEdgeHud");
+  if (edgeHud) {
+    edgeHud.classList.toggle("is-final-ten", visualState.finalTen);
+    edgeHud.style.setProperty("--att-gauge-urgency", visualState.urgency.toFixed(3));
+  }
+  if (state.phase === "zone_rush") {
+    if (remainingSeconds === 10 && state.lastAnnouncedSecond !== 10) {
+      state.lastAnnouncedSecond = 10;
+      announce("最終攻勢、残り10秒です。ギブアップはいつでも選べます。");
+    }
+    if (remainingSeconds === 5 && state.lastAnnouncedSecond !== 5) {
+      state.lastAnnouncedSecond = 5;
+      announce("最終攻勢、残り5秒です。");
+      scheduleDefeatZoneMessage("zone_rush", 2_800);
+    }
+  } else if (state.phase === "zone_deceleration"
+      && state.remainingMs <= AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS / 2
+      && state.defeatDecelerationStage < 2) {
+    state.defeatDecelerationStage = 2;
+    configureRoundAmbience(Date.now());
+    render();
+  } else if (state.phase === "zone_cooldown"
+      && remainingSeconds === 10
+      && state.lastAnnouncedSecond !== 10) {
+    state.lastAnnouncedSecond = 10;
+    announce("クールダウンは残り10秒です。いつでも終了できます。");
+  }
+  if (state.remainingMs > 0) return;
+  if (state.phase === "zone_rush") {
+    confirmPlayerDefeat("overpowered");
+  } else if (state.phase === "zone_deceleration") {
+    beginDefeatZoneCooldown();
+  } else if (state.phase === "zone_cooldown") {
+    finishDefeatPresentation();
+  }
+}
+
+function pauseDefeatZone({ fromVisibility = false } = {}) {
+  if (!["zone_ready", ...DEFEAT_ZONE_TIMED_PHASES].includes(state.phase)) return;
+  const previousPhase = state.phase === "zone_ready" ? "zone_rush" : state.phase;
+  if (DEFEAT_ZONE_TIMED_PHASES.has(state.phase) && state.roundEndsAt) {
+    state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+  }
+  stopRuntimeTimers();
+  state.ambienceController.disable();
+  state.ambienceController.setVolume(state.metronomeVolume);
+  releaseWakeLock();
+  state.defeatResumePhase = previousPhase;
+  state.phase = "zone_paused";
+  persistSession();
+  render();
+  if (fromVisibility) announce("画面が非表示になったため敗北ZONEを一時停止しました。自動では再開しません。");
+}
+
+function resumeDefeatZone() {
+  if (state.phase !== "zone_paused") return;
+  if (state.defeatResumePhase === "zone_cooldown") {
+    beginDefeatZoneCooldown({ remainingMs: state.remainingMs });
+    return;
+  }
+  if (state.defeatResumePhase === "zone_deceleration") {
+    beginDefeatZoneCooldown();
+    return;
+  }
+  startDefeatZoneReady({ remainingMs: state.remainingMs });
+}
+
+function finishDefeatPresentation({ settled = false } = {}) {
+  if (state.sessionPlayStyle !== "defeat_zone" || !state.workoutFinalized) return;
+  stopRuntimeTimers();
+  state.ambienceController.disable();
+  state.ambienceController.setVolume(state.metronomeVolume);
+  releaseWakeLock();
+  state.defeatSettled = settled === true;
+  if (state.defeatResolution && !state.defeatCertificateMessage) {
+    state.defeatCertificateMessage = defeatZoneMessage("zone_certificate");
+  }
+  state.screen = "result";
+  state.phase = "result";
+  state.defeatResumePhase = "";
+  persistSession();
+  const completedState = state;
+  finishPaidUse("completed").finally(() => {
+    if (active && state === completedState && completedState.screen === "result") render();
+  });
+  render();
+  announce(state.defeatResolution
+    ? "敗北証明を表示しました。対戦結果は敗北、トレーニング結果は完了です。"
+    : "5ラウンド完了結果を表示しました。");
 }
 
 function queueAchievementFinish(outcome) {
@@ -3122,8 +4423,15 @@ async function finishPaidUse(outcome) {
       targetState.finishPending = false;
       targetState.activeUse = null;
       targetState.paidUseId = "";
-      const saved = storedSession();
-      if (!saved || String(saved.paidUseId || "") === useId) clearPersistedSession();
+      const keepDefeatPresentation = targetState.sessionPlayStyle === "defeat_zone"
+        && targetState.resultOutcome === "completed"
+        && ["play", "result"].includes(targetState.screen);
+      if (keepDefeatPresentation) {
+        persistSession();
+      } else {
+        const saved = storedSession();
+        if (!saved || String(saved.paidUseId || "") === useId) clearPersistedSession();
+      }
     }
     return true;
   } catch {
@@ -3140,7 +4448,7 @@ async function finishPaidUse(outcome) {
 async function retryFinishPaidUse() {
   const targetState = state;
   if (!targetState.paidUseId) return;
-  await finishPaidUse(targetState.resultOutcome || "exited");
+  await finishPaidUse(targetState.workoutFinalized ? "completed" : targetState.resultOutcome || "exited");
   if (active && state === targetState && targetState.screen === "result") render();
 }
 
@@ -3191,6 +4499,11 @@ async function retryAchievementFinish() {
 }
 
 function completeSession(outcome) {
+  if (state.workoutFinalized) {
+    if (outcome === "exited") state.postWorkoutExited = true;
+    finishDefeatPresentation();
+    return;
+  }
   if (state.phase === "playing" && state.roundEndsAt) {
     state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
   }
@@ -3199,25 +4512,34 @@ function completeSession(outcome) {
   }
   stopRuntimeTimers();
   state.ambienceController.disable();
+  state.ambienceController.setVolume(state.metronomeVolume);
   releaseWakeLock();
-  state.resultOutcome = outcome;
+  if (outcome === "completed") {
+    commitTrainingCompletion();
+  } else {
+    state.resultOutcome = outcome;
+  }
   state.screen = "result";
   state.phase = "result";
-  if (outcome === "completed") {
-    writeLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`, "true");
+  if (outcome !== "completed") {
+    queueAchievementFinish(outcome);
+    flushAchievementRetryQueue().catch(() => {});
+    const completedState = state;
+    finishPaidUse(outcome).finally(() => {
+      if (active && state === completedState && completedState.screen === "result") render();
+    });
   }
-  queueAchievementFinish(outcome);
   persistSession();
-  flushAchievementRetryQueue().catch(() => {});
-  const completedState = state;
-  finishPaidUse(outcome).finally(() => {
-    if (active && state === completedState && completedState.screen === "result") render();
-  });
   render();
 }
 
 function emergencyStop() {
   if (["result", "idle"].includes(state.phase)) return;
+  if (state.workoutFinalized) {
+    state.postWorkoutSafetyStopped = true;
+    finishDefeatPresentation();
+    return;
+  }
   completeSession("safety_stopped");
 }
 
@@ -3226,6 +4548,11 @@ function exitSession() {
     ? "開始済みの有料応援は使い切りになります。追加請求はありません。"
     : "ここまでの運動を終了します。";
   if (!window.confirm(`${paidWarning}\n\nトレーニングを終了しますか？`)) return;
+  if (state.workoutFinalized) {
+    state.postWorkoutExited = true;
+    finishDefeatPresentation();
+    return;
+  }
   completeSession("exited");
 }
 
@@ -3251,6 +4578,7 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   state.phase = "idle";
   state.plan = null;
   state.sessionCosmetics = null;
+  state.sessionPlayStyle = state.playStyle;
   state.sessionBeatCharacterId = state.beatCharacterId;
   state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
   state.bpms = [...DEFAULT_BPMS];
@@ -3273,7 +4601,15 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   state.remainingMs = state.roundSeconds * 1_000;
   state.completedActiveSeconds = 0;
   state.completedRounds = 0;
+  state.workoutFinalized = false;
   state.resultOutcome = "";
+  state.defeatResolution = "";
+  state.defeatSettled = false;
+  state.postWorkoutSafetyStopped = false;
+  state.postWorkoutExited = false;
+  state.defeatCertificateMessage = "";
+  state.defeatResumePhase = "";
+  state.defeatDecelerationStage = 0;
   state.achievementActionId = "";
   state.achievementSessionId = "";
   state.achievementBeginRequested = false;
@@ -3299,6 +4635,7 @@ function requestHome() {
     window.HariaiApp?.returnHome?.();
     return;
   }
+  const preserveUnverifiedPaidRecovery = hasUnverifiedPaidRecovery();
   if (state.finishInFlight) {
     showToast("有料利用の終了記録を確認しています。完了するまでお待ちください。");
     return;
@@ -3310,7 +4647,7 @@ function requestHome() {
     if (!window.confirm(`${paidWarning} トレーニングを終了してトップへ戻りますか？`.trim())) return;
     completeSession("exited");
   }
-  if (!state.finishPending) clearPersistedSession();
+  if (!state.finishPending && !preserveUnverifiedPaidRecovery) clearPersistedSession();
   cleanup({ releaseDeck: true });
   window.HariaiApp?.returnHome?.();
 }
@@ -3369,6 +4706,30 @@ function bindEvents() {
   document.querySelectorAll("[data-ai-text-training-remove-image]").forEach((button) => {
     button.addEventListener("click", () => {
       removeRosterImage(Number(button.dataset.aiTextTrainingRemoveImage)).catch(() => {});
+    });
+  });
+  document.querySelectorAll('input[name="aiTextTrainingPlayStyle"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (state.activeUse) {
+        state.playStyle = activeUsePlayStyle();
+        state.sessionPlayStyle = state.playStyle;
+        showToast("開始済みセッションのプレイスタイルは変更できません。");
+        render();
+        return;
+      }
+      state.playStyle = normalizeAiTextTrainingPlayStyle(input.value);
+      state.sessionPlayStyle = state.playStyle;
+      state.editorProductType = state.playStyle === "defeat_zone"
+        ? "defeat_zone"
+        : "standard";
+      if (!presetSupportsPlayStyle(state.selectedPreset)) {
+        state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
+          AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.modeId],
+        );
+        state.selectedPresetSource = "builtin";
+        showToast("選んだプレイスタイルでは使えない商品だったため、無料の標準応援へ戻しました。");
+      }
+      render();
     });
   });
   document.querySelectorAll('input[name="aiTextTrainingMode"]').forEach((input) => {
@@ -3466,11 +4827,10 @@ function bindEvents() {
       state.marketModeFilter = button.dataset.aiTextTrainingMarketMode;
       if (!state.preview && state.authReady) {
         try {
-          const response = await aiTextTrainingAction({
-            action: "browse",
+          state.marketPresets = await browseMarketPresets({
             modeId: state.marketModeFilter,
+            playStyle: state.playStyle,
           });
-          state.marketPresets = response.data?.presets || [];
         } catch (error) {
           showToast(error?.message || "応援台本を読み込めませんでした。");
         }
@@ -3496,7 +4856,11 @@ function bindEvents() {
     if (!confirmButton) return;
     const script = state.pendingPaidPreset || state.selectedPreset;
     const affordable = state.balance - Number(script?.price || 0) >= 0;
-    confirmButton.disabled = !event.currentTarget.checked || !affordable || Boolean(state.busyAction);
+    const compatible = presetSupportsPlayStyle(script, state.playStyle);
+    confirmButton.disabled = !event.currentTarget.checked
+      || !affordable
+      || !compatible
+      || Boolean(state.busyAction);
   });
 
   const actionHandlers = {
@@ -3523,8 +4887,14 @@ function bindEvents() {
     },
     "reload-rankings": () => loadRankings(state.rankingPeriod),
     editor: () => {
+      const returnToDraft = state.screen === "editor_review" && state.editorDraft;
       state.screen = "editor";
-      state.editorDraft = createEditorDraft();
+      if (!returnToDraft) {
+        state.editorProductType = state.playStyle === "defeat_zone"
+          ? "defeat_zone"
+          : "standard";
+        state.editorDraft = createEditorDraft();
+      }
       state.editorActionId = "";
       render();
     },
@@ -3539,6 +4909,10 @@ function bindEvents() {
     "select-market-preset": () => {
       const preset = state.marketPresets.find((item) => item.id === state.selectedMarketPresetId);
       if (!preset) return;
+      if (!presetSupportsPlayStyle(preset)) {
+        showToast("この敗北ZONE専用台本は、通常トレーニングには使用できません。");
+        return;
+      }
       state.modeId = preset.modeId;
       state.selectedPreset = presetSnapshot(preset);
       state.selectedPresetSource = "market";
@@ -3548,6 +4922,10 @@ function bindEvents() {
     "select-own-preset": () => {
       const preset = state.marketPresets.find((item) => item.id === state.selectedMarketPresetId);
       if (!preset) return;
+      if (!presetSupportsPlayStyle(preset)) {
+        showToast("この敗北ZONE専用台本は、通常トレーニングには使用できません。");
+        return;
+      }
       state.modeId = preset.modeId;
       state.selectedPreset = presetSnapshot(preset);
       state.selectedPresetSource = "author_preview";
@@ -3584,6 +4962,8 @@ function bindEvents() {
     },
     "resume-paid": () => {
       if (!state.activeUse) return;
+      state.playStyle = activeUsePlayStyle();
+      state.sessionPlayStyle = state.playStyle;
       state.modeId = state.activeUse.preset.modeId;
       state.selectedPreset = presetSnapshot(state.activeUse.preset);
       state.selectedPresetSource = "active_use";
@@ -3605,10 +4985,46 @@ function bindEvents() {
       }
     },
     "confirm-publish": publishEditorDraft,
+    "copy-standard-to-zone": () => {
+      const form = document.querySelector("#aiTextTrainingEditorForm");
+      if (form) updateEditorDraftFromForm(form);
+      if (state.editorDraft?.productType !== "defeat_zone") return;
+      const standard = ownPresetFor(state.editorDraft.modeId, "standard");
+      if (!standard) {
+        showToast("複製できる公開済みの通常版がありません。");
+        return;
+      }
+      const snapshot = presetSnapshot(standard);
+      state.editorDraft.lines = Object.fromEntries(
+        AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => [
+          slot.id,
+          [...snapshot.lines[slot.id]],
+        ]),
+      );
+      showToast("通常版から5ラウンドの14枠を複製しました。ZONE専用5枠は変更していません。");
+      render();
+    },
     unpublish: unpublishCurrentPreset,
     "resume-round": startRoundCountdown,
     "next-round": advanceRound,
     pause: () => pauseSession(),
+    "pause-defeat-zone": () => pauseDefeatZone(),
+    "resume-defeat-zone": resumeDefeatZone,
+    "surrender-defeat-zone": () => confirmPlayerDefeat("surrendered"),
+    "skip-to-cooldown": () => beginDefeatZoneCooldown(),
+    "settle-defeat-zone": () => finishDefeatPresentation({ settled: true }),
+    "finish-defeat-zone": () => {
+      if (state.phase === "zone_cooldown"
+          || (state.phase === "zone_paused" && state.defeatResumePhase === "zone_cooldown")) {
+        finishDefeatPresentation();
+        return;
+      }
+      if (state.phase === "zone_deceleration") {
+        beginDefeatZoneCooldown();
+        return;
+      }
+      confirmPlayerDefeat("surrendered");
+    },
     "toggle-mute": () => {
       state.muted = !state.muted;
       state.ambienceController.setMuted(state.muted);
@@ -3643,17 +5059,22 @@ function bindEvents() {
     }
   });
   document.querySelector('select[name="modeId"]')?.addEventListener("change", (event) => {
-    const form = event.currentTarget.form;
-    updateEditorDraftFromForm(form);
-    state.editorDraft.modeId = event.currentTarget.value;
-    const existing = state.ownPresets.find((preset) => preset.modeId === state.editorDraft.modeId);
-    if (existing) {
-      state.modeId = existing.modeId;
-      state.editorDraft = createEditorDraft();
-    }
+    const nextModeId = event.currentTarget.value;
+    state.editorDraft = createEditorDraft({
+      modeId: nextModeId,
+      productType: state.editorProductType,
+    });
     render();
   });
-  document.querySelectorAll("#aiTextTrainingEditorForm textarea, #aiTextTrainingEditorForm input, #aiTextTrainingEditorForm select").forEach((control) => {
+  document.querySelector('select[name="productType"]')?.addEventListener("change", (event) => {
+    state.editorProductType = normalizeAiTextTrainingProductType(event.currentTarget.value);
+    state.editorDraft = createEditorDraft({
+      modeId: state.editorDraft.modeId,
+      productType: state.editorProductType,
+    });
+    render();
+  });
+  document.querySelectorAll('#aiTextTrainingEditorForm textarea, #aiTextTrainingEditorForm input, #aiTextTrainingEditorForm select:not([name="modeId"]):not([name="productType"])').forEach((control) => {
     control.addEventListener("input", () => {
       updateEditorDraftFromForm(control.form);
       const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
@@ -3697,12 +5118,15 @@ document.addEventListener("visibilitychange", () => {
   if (!active) return;
   if (document.visibilityState === "hidden") {
     if (["playing", "countdown"].includes(state.phase)) pauseSession({ fromVisibility: true });
+    else if (["zone_ready", ...DEFEAT_ZONE_TIMED_PHASES].includes(state.phase)) {
+      pauseDefeatZone({ fromVisibility: true });
+    }
     state.ambienceController.suspendForVisibility(true);
     releaseWakeLock();
   }
 });
 
-window.addEventListener("pagehide", () => {
+window.addEventListener("pagehide", (event) => {
   if (!active) return;
   if (["playing", "countdown"].includes(state.phase)) {
     if (state.phase === "playing" && state.roundEndsAt) {
@@ -3710,13 +5134,30 @@ window.addEventListener("pagehide", () => {
     }
     state.phase = "paused";
     persistSession();
+  } else if (["zone_ready", ...DEFEAT_ZONE_TIMED_PHASES].includes(state.phase)) {
+    const previousPhase = state.phase === "zone_ready" ? "zone_rush" : state.phase;
+    if (DEFEAT_ZONE_TIMED_PHASES.has(state.phase) && state.roundEndsAt) {
+      state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+    }
+    state.defeatResumePhase = previousPhase;
+    state.phase = "zone_paused";
+    persistSession();
   }
   stopRuntimeTimers();
   releaseWakeLock();
+  state.ambienceController.disable();
+  if (event.persisted) return;
   state.ambienceController.destroy();
   state.unsubscribeWallet?.();
   releaseRosterImages();
-}, { once: true });
+});
+
+window.addEventListener("pageshow", (event) => {
+  if (!active || !event.persisted) return;
+  state.ambienceController.suspendForVisibility(false);
+  render();
+  announce("画面へ戻りました。音とタイマーは停止中です。自分で再開してください。");
+});
 
 window.HariaiAiTextTraining = Object.freeze({
   isActive,

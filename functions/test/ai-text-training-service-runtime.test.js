@@ -6,6 +6,8 @@ const test = require("node:test");
 
 const {
   AI_TEXT_TRAINING_SCRIPT_SLOT_IDS,
+  AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS,
+  aiTextTrainingPayloadHash,
 } = require("../ai-text-training");
 const {
   createAiTextTrainingService,
@@ -69,12 +71,20 @@ class FakeDocumentReference {
 }
 
 class FakeQuery {
-  constructor(firestore, path, filters = [], orders = [], maximum = Infinity) {
+  constructor(
+    firestore,
+    path,
+    filters = [],
+    orders = [],
+    maximum = Infinity,
+    cursorPath = "",
+  ) {
     this.firestore = firestore;
     this.path = path;
     this.filters = filters;
     this.orders = orders;
     this.maximum = maximum;
+    this.cursorPath = cursorPath;
   }
 
   where(field, operator, value) {
@@ -84,6 +94,7 @@ class FakeQuery {
       [...this.filters, { field, operator, value }],
       this.orders,
       this.maximum,
+      this.cursorPath,
     );
   }
 
@@ -94,6 +105,7 @@ class FakeQuery {
       this.filters,
       [...this.orders, { field, direction }],
       this.maximum,
+      this.cursorPath,
     );
   }
 
@@ -104,10 +116,23 @@ class FakeQuery {
       this.filters,
       this.orders,
       maximum,
+      this.cursorPath,
+    );
+  }
+
+  startAfter(snapshot) {
+    return new FakeQuery(
+      this.firestore,
+      this.path,
+      this.filters,
+      this.orders,
+      this.maximum,
+      snapshot?.ref?.path || "",
     );
   }
 
   async get() {
+    this.firestore.queryReads += 1;
     const prefix = `${this.path}/`;
     let rows = [...this.firestore.documents.entries()]
       .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes("/"))
@@ -129,6 +154,10 @@ class FakeQuery {
       }
       return left.reference.id.localeCompare(right.reference.id);
     });
+    if (this.cursorPath) {
+      const cursorIndex = rows.findIndex((row) => row.reference.path === this.cursorPath);
+      rows = cursorIndex >= 0 ? rows.slice(cursorIndex + 1) : rows;
+    }
     return {
       empty: rows.length === 0,
       docs: rows.slice(0, this.maximum).map((row) => (
@@ -189,6 +218,7 @@ class FakeTransaction {
 class FakeFirestore {
   constructor() {
     this.documents = new Map();
+    this.queryReads = 0;
   }
 
   collection(name) {
@@ -229,6 +259,13 @@ function validLines() {
   return Object.fromEntries(AI_TEXT_TRAINING_SCRIPT_SLOT_IDS.map((slotId) => [
     slotId,
     [`${slotId} 応援その1`, `${slotId} 応援その2`],
+  ]));
+}
+
+function validZoneLines() {
+  return Object.fromEntries(AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS.map((slotId) => [
+    slotId,
+    [`${slotId} 演出その1`, `${slotId} 演出その2`],
   ]));
 }
 
@@ -695,6 +732,133 @@ test("publishing charges one Pay once and fixes an immutable revision", async ()
   assert.equal(harness.firestore.count("wallets/seller/ledger/"), 1);
 });
 
+test("standard and defeat-zone scripts are separate products for each personality", async () => {
+  const harness = createHarness({ balances: { seller: 20 } });
+  const standard = await harness.service.performAction(
+    "seller",
+    publishInput("publish_standard_0001"),
+  );
+  const zone = await harness.service.performAction("seller", publishInput(
+    "publish_zone_0000001",
+    {
+      productType: "defeat_zone",
+      zoneLines: validZoneLines(),
+      title: "最後まで敗北ZONE台本",
+      baseRevision: 0,
+      expectedBalance: 19,
+    },
+  ));
+
+  assert.notEqual(standard.preset.id, zone.preset.id);
+  assert.equal(standard.preset.productType, "standard");
+  assert.deepEqual(standard.preset.zoneLines, {});
+  assert.equal(zone.preset.productType, "defeat_zone");
+  assert.deepEqual(Object.keys(zone.preset.zoneLines), AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS);
+  const state = await harness.service.performAction("seller", { action: "state" });
+  assert.equal(state.ownPresets.length, 2);
+  assert.deepEqual(
+    state.ownPresets.map(({ productType }) => productType).sort(),
+    ["defeat_zone", "standard"],
+  );
+  const zoneBrowse = await harness.service.performAction("seller", {
+    action: "browse",
+    modeId: "mama",
+    productType: "defeat_zone",
+  });
+  assert.deepEqual(zoneBrowse.presets.map(({ id }) => id), [zone.preset.id]);
+  const revision = harness.firestore.read(
+    `aiTextTrainingPresets/${zone.preset.id}/revisions/00000001`,
+  );
+  assert.equal(revision.productType, "defeat_zone");
+  assert.deepEqual(revision.zoneLines, validZoneLines());
+});
+
+test("legacy standard browse pages past a full page of defeat-zone products", async () => {
+  const harness = createHarness();
+  for (let index = 0; index < 100; index += 1) {
+    const id = stableId(`zone-crowd-${index}`);
+    harness.firestore.write(`aiTextTrainingPresets/${id}`, {
+      schemaVersion: 2,
+      sellerUid: `zone-seller-${index}`,
+      publicSellerId: stableId(`zone-seller-${index}`),
+      sellerName: "ZONE作者",
+      modeId: "mama",
+      productType: "defeat_zone",
+      title: "敗北ZONE台本",
+      description: "敗北ZONEの専用場面まで収録した応援台本です。",
+      price: 10,
+      revision: 1,
+      lines: validLines(),
+      zoneLines: validZoneLines(),
+      status: "active",
+      actualUseCount: 1_000 - index,
+      rankingUseCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+  }
+  const legacyId = stableId("legacy-standard-after-zone-page");
+  harness.firestore.write(`aiTextTrainingPresets/${legacyId}`, {
+    schemaVersion: 1,
+    sellerUid: "legacy-seller",
+    publicSellerId: stableId("legacy-seller"),
+    sellerName: "旧台本作者",
+    modeId: "mama",
+    title: "旧通常応援台本",
+    description: "productType追加前から公開されている通常応援台本です。",
+    price: 10,
+    revision: 1,
+    lines: validLines(),
+    status: "active",
+    actualUseCount: 1,
+    rankingUseCount: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  const result = await harness.service.performAction("viewer", {
+    action: "browse",
+    modeId: "mama",
+    productType: "standard",
+  });
+  assert.deepEqual(result.presets.map(({ id }) => id), [legacyId]);
+  assert.equal(result.presets[0].productType, "standard");
+});
+
+test("legacy standard compatibility browse stops after five pages of ZONE products", async () => {
+  const harness = createHarness();
+  for (let index = 0; index < 600; index += 1) {
+    const id = stableId(`zone-only-crowd-${index}`);
+    harness.firestore.write(`aiTextTrainingPresets/${id}`, {
+      schemaVersion: 2,
+      sellerUid: `zone-only-seller-${index}`,
+      publicSellerId: stableId(`zone-only-seller-${index}`),
+      sellerName: "ZONE作者",
+      modeId: "mama",
+      productType: "defeat_zone",
+      title: "敗北ZONE台本",
+      description: "敗北ZONEの専用場面まで収録した応援台本です。",
+      price: 10,
+      revision: 1,
+      lines: validLines(),
+      zoneLines: validZoneLines(),
+      status: "active",
+      actualUseCount: 10_000 - index,
+      rankingUseCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+  }
+
+  const result = await harness.service.performAction("viewer", {
+    action: "browse",
+    modeId: "mama",
+    productType: "standard",
+  });
+  assert.deepEqual(result.presets, []);
+  assert.equal(harness.firestore.queryReads, 5);
+});
+
 test("an old publish retry mirrors the current wallet balance, never its saved balance", async () => {
   const harness = createHarness({ balances: { seller: 20 } });
   const input = publishInput("publish_action_0001");
@@ -707,6 +871,34 @@ test("an old publish retry mirrors the current wallet balance, never its saved b
   assert.equal(retry.idempotent, true);
   assert.equal(retry.balance, 12);
   assert.deepEqual(harness.mirrors.at(-1), { uid: "seller", balance: 12 });
+  assert.equal(harness.firestore.count("wallets/seller/ledger/"), 1);
+});
+
+test("legacy standard publish payload hashes remain retry-compatible", async () => {
+  const harness = createHarness({ balances: { seller: 20 } });
+  const input = publishInput("publish_legacy_retry_1");
+  const first = await harness.service.performAction("seller", input);
+  const actionEntry = [...harness.firestore.documents.entries()]
+    .find(([path]) => path.startsWith("aiTextTrainingPublishActions/"));
+  assert.ok(actionEntry);
+  const [actionPath, action] = actionEntry;
+  action.payloadHash = aiTextTrainingPayloadHash({
+    modeId: input.modeId,
+    sellerName: input.sellerName,
+    title: input.title,
+    description: input.description,
+    price: input.price,
+    baseRevision: input.baseRevision,
+    lines: input.lines,
+  });
+  delete action.preset.productType;
+  delete action.preset.zoneLines;
+  harness.firestore.write(actionPath, action);
+
+  const retry = await harness.service.performAction("seller", input);
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.preset.id, first.preset.id);
+  assert.equal(retry.preset.productType, "standard");
   assert.equal(harness.firestore.count("wallets/seller/ledger/"), 1);
 });
 
@@ -759,6 +951,92 @@ test("paid use is one transaction, snapshots the script, and is action-idempoten
   assert.ok(
     harness.achievementSyncs[1].profile.unlocked.ai_training_script_uses_1,
   );
+});
+
+test("defeat-zone products bind play style and snapshot every dedicated line", async () => {
+  const harness = createHarness({ balances: { seller: 20, buyer: 50 } });
+  const zonePreset = await publishPreset(harness, {
+    productType: "defeat_zone",
+    zoneLines: validZoneLines(),
+    title: "敗北ZONE専用台本",
+  });
+  const purchase = {
+    action: "start_paid_use",
+    actionId: "zone_use_action_0001",
+    presetId: zonePreset.id,
+    expectedPrice: zonePreset.price,
+    expectedRevision: zonePreset.revision,
+    expectedBalance: 50,
+  };
+  await assert.rejects(
+    harness.service.performAction("buyer", purchase),
+    (error) => error.code === "failed-precondition" && /敗北ZONE専用/.test(error.message),
+  );
+  assert.equal(harness.wallet("buyer").balance, 50);
+
+  const started = await harness.service.performAction("buyer", {
+    ...purchase,
+    playStyle: "defeat_zone",
+  });
+  assert.equal(started.use.playStyle, "defeat_zone");
+  assert.equal(started.use.preset.productType, "defeat_zone");
+  assert.deepEqual(started.use.preset.zoneLines, validZoneLines());
+  const storedUse = harness.firestore.read(`aiTextTrainingUses/${started.use.id}`);
+  assert.equal(storedUse.playStyle, "defeat_zone");
+  assert.equal(storedUse.presetSnapshot.productType, "defeat_zone");
+  assert.deepEqual(storedUse.presetSnapshot.zoneLines, validZoneLines());
+  const revisionBuyer = [...harness.firestore.documents.entries()]
+    .find(([path]) => path.startsWith("aiTextTrainingPresetRevisionBuyers/"))?.[1];
+  assert.equal(revisionBuyer.productType, "defeat_zone");
+  assert.equal(revisionBuyer.playStyle, "defeat_zone");
+  assert.equal(Object.hasOwn(revisionBuyer, "zoneLines"), false);
+  const buyerLedger = [...harness.firestore.documents.entries()]
+    .find(([path]) => path.startsWith("wallets/buyer/ledger/"))?.[1];
+  assert.equal(buyerLedger.details.productType, "defeat_zone");
+  assert.equal(buyerLedger.details.playStyle, "defeat_zone");
+});
+
+test("standard scripts can support defeat-zone play and old active uses fall back to standard", async () => {
+  const harness = createHarness({ balances: { seller: 20, buyer: 50 } });
+  const preset = await publishPreset(harness);
+  const defeatUse = await harness.service.performAction("buyer", {
+    action: "start_paid_use",
+    actionId: "standard_in_zone_0001",
+    presetId: preset.id,
+    expectedPrice: preset.price,
+    expectedRevision: preset.revision,
+    expectedBalance: 50,
+    playStyle: "defeat_zone",
+  });
+  assert.equal(defeatUse.use.playStyle, "defeat_zone");
+  assert.equal(defeatUse.use.preset.productType, "standard");
+  assert.deepEqual(defeatUse.use.preset.zoneLines, {});
+  await harness.service.performAction("buyer", {
+    action: "finish_use",
+    useId: defeatUse.use.id,
+    outcome: "completed",
+  });
+
+  const legacyData = {
+    action: "start_paid_use",
+    actionId: "legacy_use_retry_0001",
+    presetId: preset.id,
+    expectedPrice: preset.price,
+    expectedRevision: preset.revision,
+    expectedBalance: 40,
+  };
+  const legacyUse = await harness.service.performAction("buyer", legacyData);
+  const stored = harness.firestore.read(`aiTextTrainingUses/${legacyUse.use.id}`);
+  delete stored.playStyle;
+  stored.payloadHash = aiTextTrainingPayloadHash({
+    presetId: preset.id,
+    expectedPrice: preset.price,
+    expectedRevision: preset.revision,
+  });
+  harness.firestore.write(`aiTextTrainingUses/${legacyUse.use.id}`, stored);
+  const retry = await harness.service.performAction("buyer", legacyData);
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.use.playStyle, "standard");
 });
 
 test("paid use rejects a balance changed since the buyer review", async () => {
@@ -814,6 +1092,48 @@ test("same buyer and seller pay every use but count only once per JST day in ran
   assert.equal(stats.useCount, 2);
   assert.equal(stats.rankingUseCount, 1);
   assert.equal(stats.uniqueBuyers, 1);
+});
+
+test("daily ranking pair cap stays shared across standard and defeat-zone products", async () => {
+  const harness = createHarness({ balances: { seller: 30, buyer: 100 } });
+  const standard = await publishPreset(harness);
+  const zone = await harness.service.performAction("seller", publishInput(
+    "publish_zone_ranking_1",
+    {
+      productType: "defeat_zone",
+      zoneLines: validZoneLines(),
+      title: "敗北ZONEランキング台本",
+      expectedBalance: harness.wallet("seller").balance,
+    },
+  ));
+  const first = await harness.service.performAction("buyer", {
+    action: "start_paid_use",
+    actionId: "ranking_standard_0001",
+    presetId: standard.id,
+    expectedPrice: standard.price,
+    expectedRevision: standard.revision,
+    expectedBalance: 100,
+    playStyle: "standard",
+  });
+  await harness.service.performAction("buyer", {
+    action: "finish_use",
+    useId: first.use.id,
+    outcome: "completed",
+  });
+  const second = await harness.service.performAction("buyer", {
+    action: "start_paid_use",
+    actionId: "ranking_zone_0000001",
+    presetId: zone.preset.id,
+    expectedPrice: zone.preset.price,
+    expectedRevision: zone.preset.revision,
+    expectedBalance: 90,
+    playStyle: "defeat_zone",
+  });
+  assert.equal(first.use.rankingCounted, true);
+  assert.equal(second.use.rankingCounted, false);
+  const stats = harness.firestore.read("aiTextTrainingSellerStats/seller");
+  assert.equal(stats.actualGross, 20);
+  assert.equal(stats.rankingGross, 10);
 });
 
 test("paid uses unlock seller AI achievements from ranked uses and unique buyers without leaking to buyers", async () => {
@@ -1180,6 +1500,92 @@ test("reports snapshot the exact revision and allow a later revision to be repor
     harness.firestore.read(`aiTextTrainingPresets/${firstPreset.id}`).reportCount,
     2,
   );
+});
+
+test("reports and quarantine republish checks preserve the full defeat-zone payload", async () => {
+  const harness = createHarness({ balances: { seller: 30, reporter: 30 } });
+  const zoneLines = validZoneLines();
+  const title = "敗北ZONE通報確認台本";
+  const preset = await publishPreset(harness, {
+    productType: "defeat_zone",
+    zoneLines,
+    title,
+  });
+  await harness.service.performAction("reporter", {
+    action: "report",
+    presetId: preset.id,
+    expectedRevision: 1,
+    reason: "other",
+  });
+  const report = [...harness.firestore.documents.entries()]
+    .find(([path]) => path.startsWith("aiTextTrainingReports/"))?.[1];
+  assert.equal(report.presetSnapshot.productType, "defeat_zone");
+  assert.deepEqual(report.presetSnapshot.zoneLines, zoneLines);
+
+  const presetPath = `aiTextTrainingPresets/${preset.id}`;
+  const quarantinedPreset = harness.firestore.read(presetPath);
+  // Pre-existing products do not have this derived hash. Quarantine
+  // recovery must remain compatible by deriving it from the stored script.
+  delete quarantinedPreset.moderationPayloadHash;
+  harness.firestore.write(presetPath, {
+    ...quarantinedPreset,
+    status: "hidden",
+    moderationStatus: "quarantined",
+  });
+  await assert.rejects(
+    harness.service.performAction("seller", {
+      action: "save_profile",
+      xPublic: true,
+      xHandle: "seller_zone",
+    }),
+    (error) => error.code === "failed-precondition" && /安全確認中/.test(error.message),
+  );
+  await assert.rejects(
+    harness.service.performAction("seller", publishInput(
+      "zone_quarantine_same_1",
+      {
+        productType: "defeat_zone",
+        zoneLines,
+        title,
+        baseRevision: 1,
+        expectedBalance: harness.wallet("seller").balance,
+      },
+    )),
+    (error) => error.code === "failed-precondition" && /台詞を見直して/.test(error.message),
+  );
+  const balanceBeforeMetadataEdit = harness.wallet("seller").balance;
+  await assert.rejects(
+    harness.service.performAction("seller", publishInput(
+      "zone_quarantine_metadata_1",
+      {
+        productType: "defeat_zone",
+        zoneLines,
+        sellerName: "作者B",
+        title: "名前だけ変えた敗北ZONE台本",
+        description: "紹介文と価格だけを変更した、台詞内容が同じ敗北ZONE台本です。",
+        price: 5,
+        baseRevision: 1,
+        expectedBalance: balanceBeforeMetadataEdit,
+      },
+    )),
+    (error) => error.code === "failed-precondition" && /台詞を見直して/.test(error.message),
+  );
+  assert.equal(harness.wallet("seller").balance, balanceBeforeMetadataEdit);
+
+  const revisedZoneLines = validZoneLines();
+  revisedZoneLines.zone_cooldown[0] = "呼吸を整えて、ゆっくり休もう";
+  const republished = await harness.service.performAction("seller", publishInput(
+    "zone_quarantine_edit_1",
+    {
+      productType: "defeat_zone",
+      zoneLines: revisedZoneLines,
+      title,
+      baseRevision: 1,
+      expectedBalance: harness.wallet("seller").balance,
+    },
+  ));
+  assert.equal(republished.preset.revision, 2);
+  assert.deepEqual(republished.preset.zoneLines, revisedZoneLines);
 });
 
 test("three verified-buyer high-risk reports quarantine the revision and its X link", async () => {

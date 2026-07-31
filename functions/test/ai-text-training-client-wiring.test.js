@@ -272,7 +272,9 @@ test("paid one-use review shows balance, price, post-payment balance, and volunt
   assert.match(review, /現在残高/);
   assert.match(review, /今回の価格/);
   assert.match(review, /支払後残高/);
-  assert.match(review, /5ラウンド1セッション/);
+  assert.match(review, /商品種別/);
+  assert.match(review, /利用範囲/);
+  assert.match(review, /5ラウンド・最終攻勢・敗北・クールダウン・敗北証明/);
   assert.match(review, /自主終了・「無理／痛い／めまい」即停止でも使い切り/);
   assert.match(review, /追加支払いなしで再開/);
   assert.match(review, /購入は完全に任意/);
@@ -293,7 +295,11 @@ test("one paid use cannot replay while or after its terminal acknowledgement", (
   );
   assert.match(client, /data-ai-text-training-action="retry-finish"/);
   assert.match(client, /if \(state\.paidUseId \|\| state\.activeUse\)/);
-  assert.match(client, /if \(recovered && state\.resultOutcome\)/);
+  assert.match(client, /if \(recovered && state\.screen === "result"\)/);
+  assert.match(
+    client,
+    /presentationPending[\s\S]*?\["reaction", "zone_paused"\]\.includes\(state\.phase\)/,
+  );
   assert.match(client, /state\.screen = "result";[\s\S]*?state\.phase = "result";/);
   assert.match(client, /state\.finishInFlight/);
 });
@@ -315,6 +321,215 @@ test("sold script phases and paid personality are the phases actually played", (
   assert.match(client, /escapeHtml\(clearMessage\(\)\)/);
   assert.match(client, /state\.modeId = state\.activeUse\.preset\.modeId/);
   assert.match(client, /name="aiTextTrainingMode"[\s\S]*?\$\{locked \? "disabled" : ""\}/);
+});
+
+test("the shared market separates standard and defeat ZONE products after play-style choice", () => {
+  const productHelpers = sourceBlock(
+    client,
+    "function presetProductType",
+    "function selectedPresetForMode",
+  );
+  const market = sourceBlock(client, "function marketPresetCard", "function scriptSlotPreview");
+  const detail = sourceBlock(client, "function renderPresetDetail", "function defaultDefeatZoneLines");
+  const initialize = sourceBlock(
+    client,
+    "async function initializeAuthenticatedState",
+    "function normalizeRecoveredPlan",
+  );
+  const refresh = sourceBlock(client, "async function refreshMarketState", "async function loadRankings");
+
+  assert.match(
+    productHelpers,
+    /normalizedPlayStyle === "standard"\) return productType === "standard"/,
+  );
+  assert.match(
+    productHelpers,
+    /\? \["defeat_zone", "standard"\][\s\S]*?: \["standard"\]/,
+  );
+  assert.match(
+    productHelpers,
+    /action: "browse"[\s\S]*?modeId,[\s\S]*?productType/,
+  );
+  assert.match(initialize, /action: "state"[\s\S]*?productType: "standard"/);
+  assert.match(initialize, /browseMarketPresets\(\{[\s\S]*?playStyle: targetState\.playStyle/);
+  assert.match(refresh, /productType: "standard"/);
+  assert.match(refresh, /browseMarketPresets\(\{[\s\S]*?playStyle: state\.playStyle/);
+  assert.match(market, /敗北ZONE専用台本[\s\S]*?通常台本＋システム標準ZONE/);
+  assert.match(market, /敗北ZONE専用商品を先に表示しています/);
+  assert.match(market, /presetProductType\(preset\) === "defeat_zone"/);
+  assert.match(market, /商品種別|ai-text-training-product-badge/);
+  assert.match(detail, /5ラウンドの台詞 · 14場面/);
+  assert.match(detail, /敗北ZONE専用台詞 · 5場面/);
+  assert.match(detail, /通常トレーニングでは選べません/);
+});
+
+test("authors sell six separate personality-product combinations and can clone only the 14 normal slots", () => {
+  const ownLookup = sourceBlock(client, "function ownPresetFor", "function productUseScope");
+  const editorDraft = sourceBlock(client, "function createEditorDraft", "function editorSlotField");
+  const editor = sourceBlock(client, "function renderEditor()", "function renderEditorReview");
+  const editorUpdate = sourceBlock(
+    client,
+    "function updateEditorDraftFromForm",
+    "async function handleImageSelection",
+  );
+  const events = sourceBlock(client, "function bindEvents", 'document.addEventListener("visibilitychange"');
+
+  assert.match(
+    ownLookup,
+    /preset\.modeId === modeId[\s\S]*?presetProductType\(preset\) === normalizedProductType/,
+  );
+  assert.match(editorDraft, /ownPresetFor\(modeId, normalizedProductType\)/);
+  assert.match(
+    editorDraft,
+    /existing\?\.sellerName[\s\S]*?existing\?\.authorName[\s\S]*?standardExisting\?\.sellerName/,
+  );
+  assert.match(editorDraft, /productType: normalizedProductType/);
+  assert.match(
+    editorDraft,
+    /zoneLines: normalizedProductType === "defeat_zone"[\s\S]*?Object\.fromEntries\(AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS[\s\S]*?: \{\}/,
+  );
+  assert.match(editor, /name="productType"/);
+  assert.match(editor, /性格ごとに通常版と敗北ZONE版を別々に販売できます/);
+  assert.match(editor, /data-ai-text-training-action="copy-standard-to-zone"/);
+  assert.match(editor, /敗北ZONE専用台詞 · 5場面/);
+  assert.match(editor, /ギブアップ・一時停止・即停止・安全文言・BPM・時間はシステム固定/);
+  assert.match(editor, /停止を妨げる台詞は禁止/);
+  assert.match(editorUpdate, /const productType = normalizeAiTextTrainingProductType/);
+  assert.match(editorUpdate, /for \(const slot of AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS\)/);
+  assert.match(editorUpdate, /if \(draft\.productType === "defeat_zone"\)/);
+  assert.match(
+    editorUpdate,
+    /const zoneLines = \{\};[\s\S]*?if \(productType === "defeat_zone"\)[\s\S]*?zoneLines,/,
+  );
+  assert.match(events, /"copy-standard-to-zone"[\s\S]*?AI_TEXT_TRAINING_SCRIPT_SLOTS\.map/);
+  assert.match(events, /ZONE専用5枠は変更していません/);
+  assert.match(
+    events,
+    /select:not\(\[name="modeId"\]\):not\(\[name="productType"\]\)/,
+  );
+  assert.match(
+    events,
+    /select\[name="productType"\][\s\S]*?createEditorDraft\(\{[\s\S]*?productType: state\.editorProductType/,
+  );
+  assert.match(
+    sourceBlock(client, "async function publishEditorDraft", "async function unpublishCurrentPreset"),
+    /\.\.\.state\.editorDraft/,
+  );
+});
+
+test("defeat ZONE products play their five random phases while safety controls remain system-owned", () => {
+  const zoneRuntime = sourceBlock(
+    client,
+    "function defeatZoneFallbackLines",
+    "function renderDefeatZoneSafetyControls",
+  );
+  const zoneLifecycle = sourceBlock(
+    client,
+    "function scheduleDefeatZoneMessage",
+    "function finishDefeatPresentation",
+  );
+  const renderer = sourceBlock(client, "function renderDefeatZonePlay", "function renderPlay");
+  const safetyControls = sourceBlock(
+    client,
+    "function renderDefeatZoneSafetyControls",
+    "function renderDefeatZonePlay",
+  );
+
+  assert.match(
+    zoneRuntime,
+    /presetProductType\(state\.selectedPreset\) === "defeat_zone"[\s\S]*?state\.selectedPreset\.zoneLines\?\.\[slotId\]/,
+  );
+  assert.match(zoneRuntime, /pickAiTextTrainingLine\(candidates, state\.lastMessage\)/);
+  const bpmSource = sourceBlock(
+    client,
+    "function defeatZoneScriptBpm",
+    "function defeatZoneMessage",
+  );
+  const bpmContext = vm.createContext({
+    AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM: 200,
+    AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM: 30,
+    currentBpm: () => 120,
+  });
+  vm.runInContext(`
+    ${bpmSource}
+    globalThis.__sceneBpm = defeatZoneScriptBpm;
+  `, bpmContext);
+  assert.equal(bpmContext.__sceneBpm("zone_rush"), 200);
+  assert.equal(bpmContext.__sceneBpm("zone_surrendered"), 120);
+  assert.equal(bpmContext.__sceneBpm("zone_overpowered"), 120);
+  assert.equal(bpmContext.__sceneBpm("zone_cooldown"), 30);
+  assert.equal(bpmContext.__sceneBpm("zone_certificate"), 30);
+  assert.match(
+    sourceBlock(client, "function editorSimulatorMessage", "function renderEditor"),
+    /defeatZoneScriptBpm\(state\.editorPreview\.phase, 120\)/,
+  );
+  for (const slotId of [
+    "zone_rush",
+    "zone_surrendered",
+    "zone_overpowered",
+    "zone_cooldown",
+  ]) {
+    assert.match(zoneLifecycle, new RegExp(`"${slotId}"`));
+  }
+  assert.match(renderer, /data-ai-text-training-action="surrender-defeat-zone"/);
+  assert.match(safetyControls, /data-ai-text-training-action="emergency-stop"/);
+  assert.match(renderer, /200 BPMは音と画面の演出です/);
+  assert.doesNotMatch(
+    sourceBlock(client, "function defaultDefeatZoneLines", "function createEditorDraft"),
+    /zone_ready|zone_deceleration/,
+  );
+});
+
+test("paid defeat ZONE snapshots and certificate text survive five-round completion and recovery", () => {
+  const persist = sourceBlock(client, "function persistSession", "function clearPersistedSession");
+  const paidRecovery = sourceBlock(
+    client,
+    "function recoverPaidSession",
+    "function recoverPendingDefeatPresentation",
+  );
+  const freeRecovery = sourceBlock(
+    client,
+    "function recoverPendingDefeatPresentation",
+    "function start()",
+  );
+  const finish = sourceBlock(client, "async function finishPaidUse", "async function retryFinishPaidUse");
+  const certificate = sourceBlock(
+    client,
+    "function finishDefeatPresentation",
+    "function queueAchievementFinish",
+  );
+  const result = sourceBlock(client, "function renderResult()", "function render()");
+  const purchase = sourceBlock(
+    client,
+    "async function confirmPaidUse",
+    "async function previewBeatCharacter",
+  );
+
+  assert.match(persist, /selectedPreset: state\.selectedPreset/);
+  assert.match(persist, /ownerUid: currentSessionOwnerUid\(\)/);
+  assert.match(persist, /defeatCertificateMessage: state\.defeatCertificateMessage/);
+  assert.match(
+    paidRecovery,
+    /saved\.playStyle !== lockedPlayStyle[\s\S]*?state\.selectedPreset = presetSnapshot\(state\.activeUse\.preset\)/,
+  );
+  assert.match(paidRecovery, /saved\.defeatCertificateMessage/);
+  assert.match(freeRecovery, /saved\.selectedPreset[\s\S]*?saved\.defeatCertificateMessage/);
+  assert.match(
+    finish,
+    /keepDefeatPresentation[\s\S]*?persistSession\(\)/,
+  );
+  assert.doesNotMatch(finish, /selectedPreset\s*=/);
+  assert.match(certificate, /defeatZoneMessage\("zone_certificate"\)[\s\S]*?persistSession\(\)/);
+  assert.match(certificate, /finishPaidUse\("completed"\)/);
+  assert.match(
+    result,
+    /state\.defeatCertificateMessage \|\| defeatZoneFallbackLines\("zone_certificate"\)\[0\]/,
+  );
+  assert.match(purchase, /playStyle: requestedPlayStyle/);
+  assert.match(
+    purchase,
+    /lockedPlayStyle !== requestedPlayStyle[\s\S]*?!presetSupportsPlayStyle\(use\.preset, lockedPlayStyle\)/,
+  );
 });
 
 test("local image deletion failure keeps consent truthful and reports the failure", () => {
@@ -824,7 +1039,7 @@ test("stored deck and recovery normalizers execute v1/v2 compatibility and rejec
 
   let storedValue = "null";
   const sessionContext = vm.createContext({
-    SESSION_SCHEMA_VERSION: 2,
+    SESSION_SCHEMA_VERSION: 4,
     SESSION_STORAGE_KEY: "session",
     readLocalValue: () => storedValue,
   });
@@ -836,7 +1051,11 @@ test("stored deck and recovery normalizers execute v1/v2 compatibility and rejec
   assert.equal(sessionContext.__storedSession()?.schemaVersion, 1);
   storedValue = JSON.stringify({ schemaVersion: 2, plan: { schemaVersion: 1 } });
   assert.equal(sessionContext.__storedSession()?.schemaVersion, 2);
-  storedValue = JSON.stringify({ schemaVersion: 3 });
+  storedValue = JSON.stringify({ schemaVersion: 3, plan: { schemaVersion: 1 } });
+  assert.equal(sessionContext.__storedSession()?.schemaVersion, 3);
+  storedValue = JSON.stringify({ schemaVersion: 4, plan: { schemaVersion: 1 } });
+  assert.equal(sessionContext.__storedSession()?.schemaVersion, 4);
+  storedValue = JSON.stringify({ schemaVersion: 5, plan: { schemaVersion: 1 } });
   assert.equal(sessionContext.__storedSession(), null);
   storedValue = "{broken-json";
   assert.equal(sessionContext.__storedSession(), null);
@@ -902,7 +1121,7 @@ test("stored deck and recovery normalizers execute v1/v2 compatibility and rejec
   const recovery = sourceBlock(client, "function recoverPaidSession", "function start()");
   assert.match(
     recovery,
-    /savedSchemaVersion === SESSION_SCHEMA_VERSION[\s\S]*?\? isAiTextTrainingRosterCount\(saved\.rosterCount\)[\s\S]*?: null[\s\S]*?: AI_TEXT_TRAINING_ROUND_COUNT/,
+    /savedSchemaVersion >= 2[\s\S]*?\? isAiTextTrainingRosterCount\(saved\.rosterCount\)[\s\S]*?: null[\s\S]*?: AI_TEXT_TRAINING_ROUND_COUNT/,
   );
   assert.match(
     recovery,
@@ -910,11 +1129,11 @@ test("stored deck and recovery normalizers execute v1/v2 compatibility and rejec
   );
   assert.match(
     recovery,
-    /savedSchemaVersion === SESSION_SCHEMA_VERSION[\s\S]*?savedRosterCount === null \|\| savedDrawIndices === null[\s\S]*?throw new Error\("保存されたDRAWを確認できません。"\)/,
+    /savedSchemaVersion >= 2[\s\S]*?savedRosterCount === null \|\| savedDrawIndices === null[\s\S]*?throw new Error\("保存されたDRAWを確認できません。"\)/,
   );
   assert.match(
     recovery,
-    /savedSchemaVersion === SESSION_SCHEMA_VERSION[\s\S]*?savedDrawIndices && entries\.length === savedRosterCount/,
+    /savedSchemaVersion >= 2[\s\S]*?savedDrawIndices && entries\.length === savedRosterCount/,
   );
   assert.match(
     recovery,
@@ -927,6 +1146,366 @@ test("stored deck and recovery normalizers execute v1/v2 compatibility and rejec
   assert.match(
     client,
     /if \(!recovered && state\.recoveryError\) \{[\s\S]*?確定済み利用の内容を変更せず停止しています。/,
+  );
+});
+
+test("defeat ZONE completes the workout at five rounds but consumes its paid use only at a terminal presentation", async () => {
+  const setup = sourceBlock(client, "function playStyleCard", "function beatCharacterCard");
+  const finishRound = sourceBlock(client, "function finishRound", "function chooseReaction");
+  const chooseReaction = sourceBlock(client, "function chooseReaction", "function advanceRound");
+  const commit = sourceBlock(
+    client,
+    "function commitTrainingCompletion",
+    "function scheduleDefeatZoneMessage",
+  );
+  const paidFinish = sourceBlock(client, "async function finishPaidUse", "async function retryFinishPaidUse");
+  const finishPresentation = sourceBlock(
+    client,
+    "function finishDefeatPresentation",
+    "function queueAchievementFinish",
+  );
+  const requestHome = sourceBlock(client, "function requestHome", "function cleanup");
+
+  assert.match(setup, /name="aiTextTrainingPlayStyle"/);
+  assert.match(setup, /playStyle\.id === "defeat_zone"/);
+  assert.match(finishRound, /state\.completedRounds = Math\.max/);
+  assert.match(
+    finishRound,
+    /state\.roundIndex >= AI_TEXT_TRAINING_ROUND_COUNT - 1[\s\S]*?state\.sessionPlayStyle === "defeat_zone"[\s\S]*?commitTrainingCompletion\(\)/,
+  );
+  assert.match(
+    chooseReaction,
+    /state\.sessionPlayStyle === "defeat_zone"[\s\S]*?startDefeatZoneReady\(\)[\s\S]*?completeSession\("completed"\)/,
+  );
+  assert.match(commit, /if \(state\.workoutFinalized\) return false/);
+  assert.match(commit, /state\.resultOutcome = "completed"/);
+  assert.match(commit, /queueAchievementFinish\("completed"\)/);
+  assert.match(
+    commit,
+    /state\.sessionPlayStyle !== "defeat_zone"[\s\S]*?finishPaidUse\("completed"\)/,
+  );
+  assert.match(
+    finishPresentation,
+    /state\.screen = "result"[\s\S]*?persistSession\(\)[\s\S]*?finishPaidUse\("completed"\)/,
+  );
+  assert.ok(
+    requestHome.indexOf('completeSession("exited")')
+      < requestHome.indexOf("if (!state.finishPending"),
+    "the terminal finish marks a paid use pending before home can clear its recovery record",
+  );
+  assert.match(
+    paidFinish,
+    /keepDefeatPresentation[\s\S]*?targetState\.sessionPlayStyle === "defeat_zone"[\s\S]*?persistSession\(\)/,
+  );
+  assert.doesNotMatch(commit, /DEFEAT_ZONE_(?:RUSH|COOLDOWN)_MS/);
+
+  const outcomes = [];
+  const runtimeState = {
+    sessionPlayStyle: "defeat_zone",
+    workoutFinalized: false,
+    resultOutcome: "",
+    ambienceController: {
+      disable() {},
+      setVolume() {},
+    },
+    metronomeVolume: 0.36,
+    defeatSettled: false,
+    defeatResolution: "surrendered",
+    defeatCertificateMessage: "",
+    screen: "play",
+    phase: "reaction",
+    defeatResumePhase: "",
+  };
+  const runtime = vm.createContext({
+    active: true,
+    state: runtimeState,
+    writeLocalValue() {},
+    jstDateKey: () => "2026-07-31",
+    DAILY_COMPLETE_PREFIX: "daily:",
+    queueAchievementFinish() {},
+    persistSession() {},
+    flushAchievementRetryQueue: () => Promise.resolve(true),
+    finishPaidUse(outcome) {
+      outcomes.push(outcome);
+      return Promise.resolve(true);
+    },
+    render() {},
+    stopRuntimeTimers() {},
+    releaseWakeLock() {},
+    defeatZoneMessage: () => "購入時の敗北証明",
+    announce() {},
+  });
+  vm.runInContext(`
+    ${commit}
+    ${finishPresentation}
+    globalThis.__commit = commitTrainingCompletion;
+    globalThis.__finishPresentation = finishDefeatPresentation;
+  `, runtime);
+
+  assert.equal(runtime.__commit(), true);
+  assert.equal(runtimeState.workoutFinalized, true);
+  assert.deepEqual(outcomes, []);
+  runtime.__finishPresentation({ settled: true });
+  await Promise.resolve();
+  assert.deepEqual(outcomes, ["completed"]);
+  assert.equal(runtimeState.screen, "result");
+  assert.equal(runtimeState.defeatCertificateMessage, "購入時の敗北証明");
+});
+
+test("defeat ZONE has one clear rush, defeat, cooldown, and certificate path", () => {
+  const ready = sourceBlock(
+    client,
+    "function startDefeatZoneReady",
+    "function beginDefeatZoneRush",
+  );
+  const rush = sourceBlock(
+    client,
+    "function beginDefeatZoneRush",
+    "function confirmPlayerDefeat",
+  );
+  const defeat = sourceBlock(
+    client,
+    "function confirmPlayerDefeat",
+    "function beginDefeatZoneCooldown",
+  );
+  const cooldown = sourceBlock(
+    client,
+    "function beginDefeatZoneCooldown",
+    "function updateDefeatZoneDom",
+  );
+  const update = sourceBlock(
+    client,
+    "function updateDefeatZoneDom",
+    "function pauseDefeatZone",
+  );
+  const result = sourceBlock(client, "function renderResult()", "function render()");
+
+  assert.match(ready, /AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS/);
+  assert.match(ready, /state\.phase = "zone_ready"/);
+  assert.match(rush, /state\.phase = "zone_rush"/);
+  assert.match(rush, /AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS/);
+  assert.match(defeat, /state\.defeatResolution = reason === "overpowered" \? "overpowered" : "surrendered"/);
+  assert.match(defeat, /state\.phase = "zone_deceleration"/);
+  assert.match(defeat, /AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS/);
+  assert.match(cooldown, /state\.phase = "zone_cooldown"/);
+  assert.match(cooldown, /AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS/);
+  assert.match(update, /state\.phase === "zone_rush"[\s\S]*?confirmPlayerDefeat\("overpowered"\)/);
+  assert.match(update, /state\.phase === "zone_deceleration"[\s\S]*?beginDefeatZoneCooldown\(\)/);
+  assert.match(update, /state\.phase === "zone_cooldown"[\s\S]*?finishDefeatPresentation\(\)/);
+  assert.match(result, /AI WIN · DEFEAT CERTIFICATE/);
+  assert.match(result, /<strong>DEFEAT<\/strong>/);
+  assert.match(result, /<strong>COMPLETE<\/strong>/);
+  assert.match(result, /5ラウンド達成/);
+  assert.match(result, /敗北ZONEの継続時間や「ととのった」の選択による報酬差はありません/);
+  assert.equal(html.match(/defeat-zone-v1/gu)?.length, 2);
+  assert.match(
+    readme,
+    /敗北ZONE[\s\S]*?200 BPM演出・最大20秒[\s\S]*?30 BPM演出・最大60秒[\s\S]*?DEFEAT \/ AI WIN/,
+  );
+  assert.match(
+    design,
+    /5ラウンド完走を確定[\s\S]*?5枚の最終攻勢（200 BPM演出、最大20秒）[\s\S]*?敗北証明/,
+  );
+});
+
+test("defeat ZONE recovery validates every official defeat boundary", () => {
+  const validation = sourceBlock(
+    client,
+    "function validateRecoveredDefeatPresentation",
+    "function recoverPaidSession",
+  );
+  const context = vm.createContext({ AI_TEXT_TRAINING_ROUND_COUNT: 5 });
+  vm.runInContext(`
+    ${validation}
+    globalThis.__validate = validateRecoveredDefeatPresentation;
+  `, context);
+  const base = {
+    resultOutcome: "completed",
+    workoutFinalized: true,
+    completedRounds: 5,
+    roundIndex: 4,
+    resumePhase: "zone_rush",
+    finalReaction: "just_right",
+    defeatResolution: "",
+    postWorkoutSafetyStopped: false,
+    postWorkoutExited: false,
+  };
+
+  assert.equal(context.__validate({
+    ...base,
+    phase: "reaction",
+    finalReaction: null,
+  }), true);
+  assert.equal(context.__validate({
+    ...base,
+    phase: "zone_paused",
+  }), true);
+  assert.equal(context.__validate({
+    ...base,
+    phase: "zone_paused",
+    resumePhase: "zone_deceleration",
+    defeatResolution: "surrendered",
+  }), true);
+  assert.equal(context.__validate({
+    ...base,
+    phase: "result",
+    defeatResolution: "overpowered",
+  }), true);
+  assert.equal(context.__validate({
+    ...base,
+    phase: "result",
+    finalReaction: null,
+    postWorkoutSafetyStopped: true,
+  }), true);
+  assert.equal(context.__validate({
+    ...base,
+    phase: "result",
+    finalReaction: null,
+    postWorkoutExited: true,
+  }), true);
+
+  for (const invalid of [
+    { ...base, phase: "reaction" },
+    { ...base, phase: "zone_paused", defeatResolution: "surrendered" },
+    { ...base, phase: "zone_paused", resumePhase: "zone_cooldown" },
+    { ...base, phase: "result" },
+    { ...base, phase: "result", roundIndex: 3, defeatResolution: "surrendered" },
+  ]) {
+    assert.throws(() => context.__validate(invalid), /保存された敗北ZONE/);
+  }
+
+  assert.match(client, /!\[1, 2, 3, SESSION_SCHEMA_VERSION\]\.includes\(Number\(parsed\.schemaVersion\)\)/);
+  assert.match(
+    client,
+    /Number\.isFinite\(savedRemainingMs\) \? savedRemainingMs : remainingLimit/,
+  );
+  assert.match(
+    sourceBlock(client, "function recoverPaidSession", "function recoverPendingDefeatPresentation"),
+    /recordedWorkoutFinalized !== completedOutcome[\s\S]*?Number\(saved\.completedRounds\) !== AI_TEXT_TRAINING_ROUND_COUNT[\s\S]*?savedRoundSeconds \* AI_TEXT_TRAINING_ROUND_COUNT/,
+  );
+  assert.match(
+    sourceBlock(client, "function recoverPaidSession", "function recoverPendingDefeatPresentation"),
+    /savedSchemaVersion >= 4[\s\S]*?!savedSessionOwnerMatches\(saved\)[\s\S]*?presentationPending[\s\S]*?state\.finishPending = !presentationPending[\s\S]*?if \(!presentationPending\)[\s\S]*?finishPaidUse\(savedResultOutcome\)/,
+  );
+  assert.match(
+    sourceBlock(client, "function recoverPendingDefeatPresentation", "function start()"),
+    /savedSchemaVersion < 4[\s\S]*?!savedSessionOwnerMatches\(saved\)[\s\S]*?return false/,
+  );
+  assert.doesNotMatch(
+    sourceBlock(
+      client,
+      "function recoverPendingDefeatPresentation",
+      "function start()",
+    ),
+    /savedRemainingMs\s*\|\|/,
+  );
+});
+
+test("local session recovery binds schema 4 to one Firebase UID and trusts legacy paid state only with the active use id", () => {
+  const ownership = sourceBlock(
+    client,
+    "function normalizeAchievementOwnerUid",
+    "function currentAchievementOwner",
+  );
+  const ownerState = { uid: "firebase-owner-a" };
+  const auth = { currentUser: { uid: "firebase-owner-a" } };
+  const context = vm.createContext({ state: ownerState, auth });
+  vm.runInContext(`
+    ${ownership}
+    globalThis.__currentOwner = currentSessionOwnerUid;
+    globalThis.__matches = savedSessionOwnerMatches;
+  `, context);
+
+  assert.equal(context.__currentOwner(), "firebase-owner-a");
+  assert.equal(context.__matches({ ownerUid: "firebase-owner-a" }), true);
+  assert.equal(context.__matches({ ownerUid: "firebase-owner-b" }), false);
+  ownerState.uid = "";
+  auth.currentUser.uid = "firebase-owner-b";
+  assert.equal(context.__currentOwner(), "firebase-owner-b");
+  assert.equal(context.__matches({ ownerUid: "firebase-owner-b" }), true);
+  auth.currentUser = null;
+  assert.equal(context.__matches({ ownerUid: "firebase-owner-b" }), false);
+
+  const paidRecovery = sourceBlock(
+    client,
+    "function recoverPaidSession",
+    "function recoverPendingDefeatPresentation",
+  );
+  const ownerRecovery = sourceBlock(
+    client,
+    "function recoverPendingDefeatPresentation",
+    "function start()",
+  );
+  assert.match(
+    paidRecovery,
+    /saved\.paidUseId !== state\.activeUse\.id[\s\S]*?savedSchemaVersion >= 4[\s\S]*?!savedSessionOwnerMatches\(saved\)/,
+  );
+  assert.match(
+    ownerRecovery,
+    /savedSchemaVersion < 4[\s\S]*?!savedSessionOwnerMatches\(saved\)/,
+  );
+  assert.match(
+    design,
+    /保存schema 4[\s\S]*?現在のUIDと一致[\s\S]*?schema 1 \/ 2 \/ 3の有料セッション[\s\S]*?開始済み`useId`と一致/,
+  );
+});
+
+test("defeat ZONE never re-asks for surrender after defeat and never auto-resumes after hiding", () => {
+  const renderer = sourceBlock(
+    client,
+    "function renderDefeatZonePlay",
+    "function renderPlay",
+  );
+  const confirm = sourceBlock(
+    client,
+    "function confirmPlayerDefeat",
+    "function beginDefeatZoneCooldown",
+  );
+  const visibility = sourceBlock(
+    client,
+    'document.addEventListener("visibilitychange"',
+    "window.HariaiAiTextTraining",
+  );
+  const emergency = sourceBlock(client, "function emergencyStop", "function exitSession");
+
+  assert.match(renderer, /continueAfterDefeat = state\.defeatResumePhase === "zone_deceleration"/);
+  assert.match(renderer, /敗北後の減速を停止中/);
+  assert.match(renderer, /クールダウンへ進む/);
+  assert.match(
+    renderer,
+    /\$\{resumeCooldown \|\| continueAfterDefeat \? "" : '<button[\s\S]*?再開せずギブアップする/,
+  );
+  assert.match(
+    confirm,
+    /state\.phase === "zone_paused"[\s\S]*?state\.defeatResumePhase === "zone_rush"[\s\S]*?!state\.defeatResolution/,
+  );
+  assert.match(visibility, /pauseDefeatZone\(\{ fromVisibility: true \}\)/);
+  assert.match(visibility, /if \(event\.persisted\) return/);
+  assert.match(visibility, /window\.addEventListener\("pageshow"/);
+  assert.match(visibility, /音とタイマーは停止中です。自分で再開してください/);
+  assert.match(emergency, /if \(state\.workoutFinalized\)[\s\S]*?state\.postWorkoutSafetyStopped = true/);
+  assert.match(
+    sourceBlock(client, "function exitSession", "function resetForAnotherSession"),
+    /if \(state\.workoutFinalized\)[\s\S]*?state\.postWorkoutExited = true[\s\S]*?finishDefeatPresentation\(\)/,
+  );
+  assert.match(
+    sourceBlock(client, "function renderResult()", "function render()"),
+    /const replayAllowed = state\.resultOutcome !== "safety_stopped"[\s\S]*?&& !state\.postWorkoutSafetyStopped/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-safety-controls\.ai-text-training-zone-safety-controls\s*\{[\s\S]*?position:\s*relative;[\s\S]*?grid-row:\s*2;[\s\S]*?bottom:\s*auto;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(orientation: landscape\) and \(max-height: 650px\)[\s\S]*?\.ai-text-training-zone-arena\s*\{[\s\S]*?grid-template-rows:\s*minmax\(250px,\s*calc\(100svh - 96px\)\) auto auto;/,
+  );
+  assert.match(client, /<fieldset class="ai-text-training-play-style-fieldset">[\s\S]*?<legend>プレイスタイル<\/legend>/);
+  assert.match(client, /class="ai-text-training-zone-lineup" role="group"/);
+  assert.match(client, /ととのった／敗北証明を見る/);
+  assert.match(
+    trainingStyles,
+    /@media \(forced-colors: active\)[\s\S]*?\.ai-text-training-play-style-card\.is-selected > span,[\s\S]*?outline:\s*2px solid Highlight;/,
   );
 });
 
@@ -958,7 +1537,7 @@ test("paid consumption starts only after DRAW confirmation and a replay requires
   assert.match(actionHandlers, /"confirm-draw": continuePreparedSession/);
   assert.match(
     continueSession,
-    /currentPendingDrawIndices\(\)[\s\S]*?state\.pendingPaidPreset = state\.selectedPreset;[\s\S]*?state\.purchaseActionId = "";[\s\S]*?state\.screen = "purchase_review"/,
+    /currentPendingDrawIndices\(\)[\s\S]*?const script = selectedPresetForMode\(\);[\s\S]*?state\.pendingPaidPreset = script;[\s\S]*?state\.purchaseActionId = "";[\s\S]*?state\.screen = "purchase_review"/,
   );
   assert.match(confirmPurchase, /if \(!consent\?\.checked\)[\s\S]*?return;/);
   assert.ok(
@@ -1214,6 +1793,10 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
     client,
     /aiTextTrainingBeatGaugeState[\s\S]*?ai-text-training-core-v1-beat-edge-hud-v3/,
   );
+  assert.match(
+    client,
+    /ai-text-training-core-v1-beat-edge-hud-v3-defeat-zone-v1-defeat-zone-scripts-v1/,
+  );
   const gaugeStateSource = sourceBlock(
     client,
     "function currentBeatGaugeState",
@@ -1231,7 +1814,7 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
   );
   assert.match(
     edgeHudSource,
-    /class="ai-text-training-timer" role="timer" aria-live="off" aria-label="残り時間 \$\{remainingSeconds\}秒"/,
+    /class="ai-text-training-timer" role="timer" aria-live="off" aria-label="\$\{escapeHtml\(label\)\} \$\{remainingSeconds\}秒"/,
   );
   assert.match(
     edgeHudSource,
@@ -1334,7 +1917,10 @@ test("DRAW, playback, and motion fallbacks expose the necessary accessibility co
   );
   assert.match(client, /aria-label="対戦候補\$\{index \+ 1\}を外す"/);
   assert.match(client, /alt="DRAWされたラウンド\$\{roundIndex \+ 1\}の画像"/);
-  assert.match(client, /aria-label="今回DRAWされた5枚"/);
+  assert.match(
+    client,
+    /aria-label="\$\{winner \? "本日あなたを倒した5枚" : "今回DRAWされた5枚"\}"/,
+  );
   assert.match(client, /class="ai-text-training-progress" aria-hidden="true"/);
   assert.match(client, /class="ai-text-training-vignette" aria-hidden="true"/);
   assert.match(
@@ -1356,7 +1942,7 @@ test("authentication must settle before start, and both authentication outcomes 
   assert.match(setup, /const authChecking = !state\.preview && !state\.authSettled/);
   assert.match(
     setup,
-    /const startReady = imagesReady && !state\.cosmeticDraft && !authChecking/,
+    /const startReady = imagesReady[\s\S]*?&& !state\.cosmeticDraft[\s\S]*?&& !authChecking[\s\S]*?&& !paidRecoveryBlocked/,
   );
   assert.match(
     setup,
@@ -1392,8 +1978,13 @@ test("authentication must settle before start, and both authentication outcomes 
     "async function initializeAuthenticatedState",
     "function normalizeRecoveredPlan",
   );
-  async function runAuthentication({ failure = null } = {}) {
-    const calls = { recover: 0, render: 0 };
+  async function runAuthentication({
+    failure = null,
+    savedSession = null,
+    browseFailure = false,
+    activeUse = null,
+  } = {}) {
+    const calls = { browse: 0, recover: 0, render: 0 };
     const targetState = {
       modeId: "mama",
       marketModeFilter: "mama",
@@ -1408,6 +1999,8 @@ test("authentication must settle before start, and both authentication outcomes 
       cosmetics: {},
       activeUse: null,
       paidUseId: "",
+      playStyle: "standard",
+      sessionPlayStyle: "standard",
       unsubscribeWallet: null,
     };
     const context = vm.createContext({
@@ -1428,18 +2021,29 @@ test("authentication must settle before start, and both authentication outcomes 
           ownPresets: [],
           profile: { xPublic: false, xHandle: "" },
           cosmetics: { ownedStyleIds: [] },
-          activeUse: null,
+          activeUse,
         },
       }),
       normalizeServerCosmetics: (value) => value,
       presetSnapshot: (value) => value,
-      storedSession: () => null,
+      activeUsePlayStyle: (value) => value?.playStyle || "standard",
+      normalizeMarketPresetList: (value) => value,
+      browseMarketPresets: async ({ seededPresets }) => {
+        calls.browse += 1;
+        if (browseFailure) throw new Error("browse unavailable");
+        return seededPresets;
+      },
+      storedSession: () => savedSession,
       clearPersistedSession() {},
       doc: () => ({}),
       onSnapshot: () => () => {},
       document: { querySelectorAll: () => [] },
       restoreStoredDeck: async () => true,
       recoverPaidSession() {
+        calls.recover += 1;
+        return false;
+      },
+      recoverPendingDefeatPresentation() {
         calls.recover += 1;
         return false;
       },
@@ -1460,15 +2064,105 @@ test("authentication must settle before start, and both authentication outcomes 
   assert.equal(success.targetState.authReady, true);
   assert.equal(success.targetState.authSettled, true);
   assert.equal(success.targetState.authError, "");
+  assert.equal(success.calls.browse, 1);
   assert.equal(success.calls.recover, 1);
   assert.equal(success.calls.render, 1);
+
+  const activeZoneUse = {
+    id: "paid-zone-use",
+    playStyle: "defeat_zone",
+    preset: {
+      id: "zone-preset",
+      modeId: "mama",
+      productType: "defeat_zone",
+    },
+  };
+  const browseFailure = await runAuthentication({
+    browseFailure: true,
+    activeUse: activeZoneUse,
+    savedSession: { paidUseId: "paid-zone-use" },
+  });
+  assert.equal(browseFailure.targetState.authReady, true);
+  assert.equal(browseFailure.targetState.authSettled, true);
+  assert.equal(browseFailure.targetState.authError, "");
+  assert.equal(browseFailure.targetState.activeUse, activeZoneUse);
+  assert.equal(browseFailure.targetState.paidUseId, "paid-zone-use");
+  assert.equal(browseFailure.targetState.playStyle, "defeat_zone");
+  assert.equal(browseFailure.calls.browse, 1);
+  assert.equal(browseFailure.calls.recover, 1);
+  assert.equal(browseFailure.calls.render, 1);
 
   const failure = await runAuthentication({ failure: "persistence" });
   assert.equal(failure.targetState.authReady, false);
   assert.equal(failure.targetState.authSettled, true);
   assert.equal(failure.targetState.authError, "auth failed");
-  assert.equal(failure.calls.recover, 0);
+  assert.equal(failure.calls.recover, 1);
   assert.equal(failure.calls.render, 1);
+
+  const paidFailure = await runAuthentication({
+    failure: "persistence",
+    savedSession: { paidUseId: "paid-use-under-recovery" },
+  });
+  assert.equal(paidFailure.targetState.authReady, false);
+  assert.equal(paidFailure.targetState.authSettled, true);
+  assert.equal(paidFailure.calls.recover, 0);
+  assert.equal(paidFailure.calls.render, 1);
+
+  assert.match(
+    initializeSource,
+    /const saved = storedSession\(\);[\s\S]*?if \(!saved\?\.paidUseId\) recoverPendingDefeatPresentation\(\)/,
+  );
+  assert.match(
+    sourceBlock(client, "function continuePreparedSession", "function prepareStartSession"),
+    /if \(hasUnverifiedPaidRecovery\(\)\)[\s\S]*?接続が戻ってから同じ利用を再開してください/,
+  );
+
+  const requestHomeSource = sourceBlock(client, "function requestHome", "function cleanup");
+  function runRequestHome({ preservePaidRecovery }) {
+    const calls = { clear: 0, cleanup: 0, home: 0 };
+    const context = vm.createContext({
+      active: true,
+      state: {
+        finishInFlight: false,
+        finishPending: false,
+        screen: "setup",
+        phase: "idle",
+        paidUseId: "",
+      },
+      window: {
+        HariaiApp: {
+          returnHome() {
+            calls.home += 1;
+          },
+        },
+        confirm: () => true,
+      },
+      hasUnverifiedPaidRecovery: () => preservePaidRecovery,
+      clearPersistedSession() {
+        calls.clear += 1;
+      },
+      cleanup() {
+        calls.cleanup += 1;
+      },
+      completeSession() {},
+      showToast() {},
+    });
+    vm.runInContext(`
+      ${requestHomeSource}
+      globalThis.__requestHome = requestHome;
+    `, context);
+    context.__requestHome();
+    return calls;
+  }
+
+  assert.deepEqual(
+    runRequestHome({ preservePaidRecovery: true }),
+    { clear: 0, cleanup: 1, home: 1 },
+  );
+  assert.deepEqual(
+    runRequestHome({ preservePaidRecovery: false }),
+    { clear: 1, cleanup: 1, home: 1 },
+  );
 });
 
 test("an awaited stored-deck restore revalidates every setup identity guard before mutating UI state", async () => {

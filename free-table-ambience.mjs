@@ -97,14 +97,22 @@ function validatedRevision(value) {
   return revision;
 }
 
-function validatedMetronomeBpm(value) {
+function validatedMetronomeBpm(
+  value,
+  minimumBpm = FREE_TABLE_AMBIENCE_BPM_MIN,
+  maximumBpm = FREE_TABLE_AMBIENCE_BPM_MAX,
+) {
   const bpm = Number(value);
   const valid = bpm === 0 || (
     Number.isInteger(bpm)
-    && bpm >= FREE_TABLE_AMBIENCE_BPM_MIN
-    && bpm <= FREE_TABLE_AMBIENCE_BPM_MAX
+    && bpm >= minimumBpm
+    && bpm <= maximumBpm
   );
-  if (!valid) throw new RangeError("自由卓の部屋の呼吸は0または40〜160の整数BPMで指定してください。");
+  if (!valid) {
+    throw new RangeError(
+      `自由卓の部屋の呼吸は0または${minimumBpm}〜${maximumBpm}の整数BPMで指定してください。`,
+    );
+  }
   return bpm;
 }
 
@@ -151,6 +159,8 @@ export function createFreeTableAmbienceController({
   scheduleAheadMs = FREE_TABLE_AMBIENCE_SCHEDULE_AHEAD_MS,
   initialVolume = DEFAULT_VOLUME,
   initialToneProfileId = FREE_TABLE_AMBIENCE_DEFAULT_TONE_PROFILE_ID,
+  minimumBpm = FREE_TABLE_AMBIENCE_BPM_MIN,
+  maximumBpm = FREE_TABLE_AMBIENCE_BPM_MAX,
 } = {}) {
   if (typeof setIntervalFn !== "function" || typeof clearIntervalFn !== "function") {
     throw new TypeError("自由卓の部屋の呼吸に使うtimerがありません。");
@@ -161,6 +171,13 @@ export function createFreeTableAmbienceController({
   }
   if (!Number.isFinite(scheduleAheadMs) || scheduleAheadMs <= 0) {
     throw new RangeError("自由卓の先読み時間が不正です。");
+  }
+  if (!Number.isInteger(minimumBpm)
+      || !Number.isInteger(maximumBpm)
+      || minimumBpm <= 0
+      || maximumBpm < minimumBpm
+      || maximumBpm > 600) {
+    throw new RangeError("自由卓のBPM範囲が不正です。");
   }
 
   let metronomeBpm = 0;
@@ -613,7 +630,11 @@ export function createFreeTableAmbienceController({
       return true;
     }
 
-    const nextMetronomeBpm = validatedMetronomeBpm(snapshot?.metronomeBpm);
+    const nextMetronomeBpm = validatedMetronomeBpm(
+      snapshot?.metronomeBpm,
+      minimumBpm,
+      maximumBpm,
+    );
     const nextEffectiveAt = validatedEffectiveAt(snapshot?.effectiveAt);
     const normalizedServerTimeOffset = validatedServerTimeOffset(nextServerTimeOffset);
     const hadCanonicalAmbience = revision !== null;

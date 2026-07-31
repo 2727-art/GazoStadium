@@ -1,11 +1,14 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const test = require("node:test");
 
 const {
+  AI_TEXT_TRAINING_PRODUCT_TYPES,
   AI_TEXT_TRAINING_SCRIPT_SLOT_IDS,
   AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
+  AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS,
   aiTextTrainingJstDateKey,
   aiTextTrainingJstMonthKey,
   aiTextTrainingPayloadHash,
@@ -27,6 +30,13 @@ function validLines() {
   ]));
 }
 
+function validZoneLines() {
+  return Object.fromEntries(AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS.map((slotId) => [
+    slotId,
+    [`${slotId} 演出その1`, `${slotId} 演出その2`],
+  ]));
+}
+
 function validPreset(overrides = {}) {
   return {
     modeId: "mama",
@@ -43,6 +53,8 @@ function validPreset(overrides = {}) {
 test("AI text training preset validates every required phase and fixed price", () => {
   const normalized = normalizeAiTextTrainingPresetInput(validPreset());
   assert.equal(normalized.modeId, "mama");
+  assert.equal(normalized.productType, "standard");
+  assert.deepEqual(normalized.zoneLines, {});
   assert.equal(normalized.price, 10);
   assert.deepEqual(Object.keys(normalized.lines), AI_TEXT_TRAINING_SCRIPT_SLOT_IDS);
   assert.throws(
@@ -55,6 +67,62 @@ test("AI text training preset validates every required phase and fixed price", (
     () => normalizeAiTextTrainingPresetInput(validPreset({ lines: missing })),
     /各場面/,
   );
+});
+
+test("defeat-zone products require all five dedicated slots while standard products stay separate", () => {
+  const zone = normalizeAiTextTrainingPresetInput(validPreset({
+    productType: "defeat_zone",
+    zoneLines: validZoneLines(),
+  }));
+  assert.equal(zone.productType, "defeat_zone");
+  assert.deepEqual(Object.keys(zone.zoneLines), AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS);
+  assert.deepEqual(AI_TEXT_TRAINING_PRODUCT_TYPES, ["standard", "defeat_zone"]);
+
+  const missing = validZoneLines();
+  delete missing.zone_cooldown;
+  assert.throws(
+    () => normalizeAiTextTrainingPresetInput(validPreset({
+      productType: "defeat_zone",
+      zoneLines: missing,
+    })),
+    /2〜4行/,
+  );
+  assert.throws(
+    () => normalizeAiTextTrainingPresetInput(validPreset({
+      productType: "standard",
+      zoneLines: validZoneLines(),
+    })),
+    /通常台本/,
+  );
+});
+
+test("user scripts cannot obstruct surrender, defeat, stop, or rest controls", () => {
+  for (const unsafe of [
+    "ギブアップするな、まだ続けろ",
+    "ギブアップしないでね、まだ続けて",
+    "ギブアップしちゃだめ、最後まで続けて",
+    "敗北を認めるな、立ち上がれ",
+    "負けを認めないでよ、まだ続けて",
+    "緊急停止を押すな、進め",
+    "休憩するな、最後まで動け",
+    "休まないでね、最後まで続けて",
+    "運動をやめないで、最後まで続けて",
+    "やめないでね、最後まで続けて",
+    "止まるな、最後まで続けて",
+    "止まらないでね、最後まで続けて",
+    "諦めないでね、まだ続けて",
+    "ギブアップはダメ、そのまま続けて",
+  ]) {
+    const zoneLines = validZoneLines();
+    zoneLines.zone_rush[0] = unsafe;
+    assert.throws(
+      () => normalizeAiTextTrainingPresetInput(validPreset({
+        productType: "defeat_zone",
+        zoneLines,
+      })),
+      /妨げる台詞/,
+    );
+  }
 });
 
 test("support scripts reject unknown placeholders, HTML, dangerous commands, and sexualized family roles", () => {
@@ -75,10 +143,12 @@ test("support scripts reject unknown placeholders, HTML, dangerous commands, and
 
 test("safe BPM-aware placeholders are retained", () => {
   const lines = validLines();
-  lines.active_mid[0] = "{bpm} BPM、ラウンド{round}を進もう";
+  lines.active_mid[0] = "{bpm} BPM、呼吸を止めないで";
+  lines.active_mid[1] = "{bpm} BPM、ラウンド{round}を進もう";
   lines.final_mid[0] = "あと{remaining}秒、呼吸も大切に";
   const normalized = normalizeAiTextTrainingPresetInput(validPreset({ lines }));
-  assert.equal(normalized.lines.active_mid[0], "{bpm} BPM、ラウンド{round}を進もう");
+  assert.equal(normalized.lines.active_mid[0], "{bpm} BPM、呼吸を止めないで");
+  assert.equal(normalized.lines.active_mid[1], "{bpm} BPM、ラウンド{round}を進もう");
 });
 
 test("training cosmetics keep the two slots independent and reject unknown products", () => {
@@ -132,6 +202,17 @@ test("public, preset, and use IDs are deterministic and namespace-separated", ()
   assert.match(first, /^[a-f0-9]{40}$/);
   assert.equal(first, aiTextTrainingPublicSellerId("seller-uid"));
   assert.notEqual(first, aiTextTrainingPresetId("seller-uid", "mama"));
+  assert.equal(
+    aiTextTrainingPresetId("seller-uid", "mama"),
+    crypto.createHash("sha256")
+      .update("ai-text-training-preset:seller-uid:mama")
+      .digest("hex")
+      .slice(0, 40),
+  );
+  assert.notEqual(
+    aiTextTrainingPresetId("seller-uid", "mama"),
+    aiTextTrainingPresetId("seller-uid", "mama", "defeat_zone"),
+  );
   assert.notEqual(
     aiTextTrainingUseId("buyer-uid", "action_1234567890"),
     aiTextTrainingUseId("seller-uid", "action_1234567890"),

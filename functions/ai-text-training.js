@@ -5,8 +5,10 @@ const {
   assertSafeFleaListingText,
 } = require("./anju-pay-flea");
 
-const AI_TEXT_TRAINING_SCHEMA_VERSION = 1;
+const AI_TEXT_TRAINING_SCHEMA_VERSION = 2;
 const AI_TEXT_TRAINING_MODES = Object.freeze(["mama", "imouto", "oneechan"]);
+const AI_TEXT_TRAINING_PRODUCT_TYPES = Object.freeze(["standard", "defeat_zone"]);
+const AI_TEXT_TRAINING_PLAY_STYLES = Object.freeze(["standard", "defeat_zone"]);
 const AI_TEXT_TRAINING_STYLE_PRODUCT_IDS = Object.freeze([
   "ai_training_style_soft_glow",
   "ai_training_style_neon_beat",
@@ -40,6 +42,13 @@ const AI_TEXT_TRAINING_SCRIPT_SLOT_IDS = Object.freeze([
   "rest",
   "clear",
 ]);
+const AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS = Object.freeze([
+  "zone_rush",
+  "zone_surrendered",
+  "zone_overpowered",
+  "zone_cooldown",
+  "zone_certificate",
+]);
 const AI_TEXT_TRAINING_REPORT_REASONS = Object.freeze([
   "dangerous",
   "harassment",
@@ -59,7 +68,7 @@ const ALLOWED_PLACEHOLDERS = Object.freeze(new Set(["bpm", "round", "remaining"]
 const DANGEROUS_TRAINING_PATTERNS = Object.freeze([
   /(?:痛み|めまい|息苦し(?:い|さ)?|吐き気|体調不良|気分が悪)[^、。\n]{0,16}(?:無視|我慢|続け|耐え|止まるな|休むな)/u,
   /(?:無視|我慢|続け|耐え)[^、。\n]{0,16}(?:痛み|めまい|息苦し(?:い|さ)?|吐き気|体調不良|気分が悪)/u,
-  /(?:休むな|止まるな|中止するな|一時停止するな|逃げるな|倒れるまで|限界を超え|死ぬまで)/u,
+  /(?:休むな|中止するな|一時停止するな|逃げるな|倒れるまで|限界を超え|死ぬまで)/u,
   /(?:水分|水)[^、。\n]{0,10}(?:飲むな|取るな|禁止)/u,
   /(?:呼吸|息)[^、。\n]{0,10}(?:止めろ|止めて|するな)/u,
 ]);
@@ -68,6 +77,17 @@ const HARASSMENT_PATTERNS = Object.freeze([
   /(?:殴る|蹴る|罰を与える)[^、。\n]{0,12}(?:ぞ|から|よ)/u,
 ]);
 const SEXUALIZED_FAMILY_PATTERN = /(?:エロ|えろ|性的|セックス|性行為|裸|下着|ランジェリー|フェチ|調教|ご主人様)/iu;
+const SAFETY_EXIT_OBSTRUCTION_PATTERNS = Object.freeze([
+  /(?:ギブアップ|即時?停止|緊急停止|安全停止)(?:を|は|なんて)?(?:するな|しないで(?:ね|よ)?|しちゃだめ|してはだめ|押すな|押さないで|選ぶな|選ばないで|禁止|許さない)/u,
+  /(?:敗北|負け)(?:を)?認め(?:るな|ないで(?:ね|よ)?)/u,
+  /(?:停止|中止|休憩)(?:を|は|なんて)?(?:するな|しないで(?:ね|よ)?|しちゃだめ|してはだめ|選ぶな|選ばないで|禁止|許さない)/u,
+  /(?:ギブアップ|即時?停止|緊急停止|安全停止|中止|休憩|敗北)[^、。\n]{0,8}(?:だめ|ダメ|許さない|禁止)/u,
+  /(?:運動|筋トレ|トレーニング|エクササイズ|動作|動き|対戦|プレイ|ゲーム)(?:を|は|なんて)?止め(?:るな|ないで(?:ね|よ)?|ちゃだめ|てはだめ)/u,
+  /(?:やめ|辞め)(?:るな|ないで(?:ね|よ)?|ちゃだめ|てはだめ)/u,
+  /(?:止まるな|止まらないで(?:ね|よ)?|止まっちゃだめ|止まってはだめ)/u,
+  /休(?:むな|まないで(?:ね|よ)?)/u,
+  /(?:諦め|あきらめ)(?:るな|ないで(?:ね|よ)?)/u,
+]);
 
 function aiTextTrainingError(code, message) {
   const error = new RangeError(message);
@@ -130,6 +150,14 @@ function assertSafeSupportText(value) {
       "家族役を性的に扱う台詞は公開できません。",
     );
   }
+  for (const pattern of SAFETY_EXIT_OBSTRUCTION_PATTERNS) {
+    if (pattern.test(text)) {
+      throw aiTextTrainingError(
+        "safety_exit_obstruction",
+        "ギブアップ・即時停止・休憩・敗北の選択を妨げる台詞は公開できません。",
+      );
+    }
+  }
   for (const match of text.matchAll(PLACEHOLDER_PATTERN)) {
     if (!ALLOWED_PLACEHOLDERS.has(match[1])) {
       throw aiTextTrainingError(
@@ -160,6 +188,40 @@ function normalizeAiTextTrainingMode(value) {
     );
   }
   return modeId;
+}
+
+function normalizeAiTextTrainingProductType(value) {
+  const productType = value == null || value === ""
+    ? "standard"
+    : normalizedString(
+      value,
+      "invalid_ai_text_training_product_type",
+      "台本の種類を選び直してください。",
+    );
+  if (!AI_TEXT_TRAINING_PRODUCT_TYPES.includes(productType)) {
+    throw aiTextTrainingError(
+      "invalid_ai_text_training_product_type",
+      "台本の種類を選び直してください。",
+    );
+  }
+  return productType;
+}
+
+function normalizeAiTextTrainingPlayStyle(value) {
+  const playStyle = value == null || value === ""
+    ? "standard"
+    : normalizedString(
+      value,
+      "invalid_ai_text_training_play_style",
+      "プレイスタイルを選び直してください。",
+    );
+  if (!AI_TEXT_TRAINING_PLAY_STYLES.includes(playStyle)) {
+    throw aiTextTrainingError(
+      "invalid_ai_text_training_play_style",
+      "プレイスタイルを選び直してください。",
+    );
+  }
+  return playStyle;
 }
 
 function normalizeAiTextTrainingStyleId(value, label) {
@@ -208,27 +270,31 @@ function normalizeAiTextTrainingSellerName(value) {
   return name;
 }
 
-function normalizeAiTextTrainingScript(value) {
+function normalizeAiTextTrainingScriptSlots(value, slotIds, {
+  label,
+  unknownCode,
+  invalidCode,
+}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw aiTextTrainingError("invalid_ai_text_training_script", "応援台本を確認してください。");
+    throw aiTextTrainingError(invalidCode, `${label}を確認してください。`);
   }
   const unknownSlots = Object.keys(value)
-    .filter((slotId) => !AI_TEXT_TRAINING_SCRIPT_SLOT_IDS.includes(slotId));
+    .filter((slotId) => !slotIds.includes(slotId));
   if (unknownSlots.length) {
     throw aiTextTrainingError(
-      "unknown_ai_text_training_slot",
-      "未対応の応援台本スロットがあります。",
+      unknownCode,
+      `未対応の${label}スロットがあります。`,
     );
   }
   const script = {};
-  for (const slotId of AI_TEXT_TRAINING_SCRIPT_SLOT_IDS) {
+  for (const slotId of slotIds) {
     const lines = value[slotId];
     if (!Array.isArray(lines)
         || lines.length < AI_TEXT_TRAINING_LINES_PER_SLOT_MIN
         || lines.length > AI_TEXT_TRAINING_LINES_PER_SLOT_MAX) {
       throw aiTextTrainingError(
         "invalid_ai_text_training_slot_lines",
-        "各場面へ2〜4行の応援台詞を入力してください。",
+        `各場面へ2〜4行の${label}を入力してください。`,
       );
     }
     script[slotId] = lines.map((candidate) => {
@@ -251,11 +317,32 @@ function normalizeAiTextTrainingScript(value) {
   return script;
 }
 
+function normalizeAiTextTrainingScript(value) {
+  return normalizeAiTextTrainingScriptSlots(value, AI_TEXT_TRAINING_SCRIPT_SLOT_IDS, {
+    label: "応援台詞",
+    unknownCode: "unknown_ai_text_training_slot",
+    invalidCode: "invalid_ai_text_training_script",
+  });
+}
+
+function normalizeAiTextTrainingZoneScript(value) {
+  return normalizeAiTextTrainingScriptSlots(
+    value,
+    AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS,
+    {
+      label: "敗北ZONE台詞",
+      unknownCode: "unknown_ai_text_training_zone_slot",
+      invalidCode: "invalid_ai_text_training_zone_script",
+    },
+  );
+}
+
 function normalizeAiTextTrainingPresetInput(data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw aiTextTrainingError("invalid_ai_text_training_preset", "公開内容を確認してください。");
   }
   const modeId = normalizeAiTextTrainingMode(data.modeId);
+  const productType = normalizeAiTextTrainingProductType(data.productType);
   const sellerName = normalizeAiTextTrainingSellerName(data.sellerName);
   const title = normalizeOneLine(
     data.title,
@@ -285,14 +372,28 @@ function normalizeAiTextTrainingPresetInput(data) {
   if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
     throw aiTextTrainingError("invalid_ai_text_training_revision", "改訂番号を確認してください。");
   }
+  let zoneLines = {};
+  if (productType === "defeat_zone") {
+    zoneLines = normalizeAiTextTrainingZoneScript(data.zoneLines);
+  } else if (data.zoneLines != null
+      && (typeof data.zoneLines !== "object"
+        || Array.isArray(data.zoneLines)
+        || Object.keys(data.zoneLines).length > 0)) {
+    throw aiTextTrainingError(
+      "unexpected_ai_text_training_zone_script",
+      "通常台本には敗北ZONE専用台詞を登録できません。",
+    );
+  }
   return {
     modeId,
+    productType,
     sellerName,
     title,
     description,
     price,
     baseRevision,
     lines: normalizeAiTextTrainingScript(data.lines),
+    zoneLines,
   };
 }
 
@@ -345,8 +446,15 @@ function aiTextTrainingPublicSellerId(uid) {
   return hashId(`ai-text-training-seller:${uid}`);
 }
 
-function aiTextTrainingPresetId(uid, modeId) {
-  return hashId(`ai-text-training-preset:${uid}:${normalizeAiTextTrainingMode(modeId)}`);
+function aiTextTrainingPresetId(uid, modeId, productType = "standard") {
+  const normalizedModeId = normalizeAiTextTrainingMode(modeId);
+  const normalizedProductType = normalizeAiTextTrainingProductType(productType);
+  if (normalizedProductType === "standard") {
+    return hashId(`ai-text-training-preset:${uid}:${normalizedModeId}`);
+  }
+  return hashId(
+    `ai-text-training-preset:${uid}:${normalizedModeId}:${normalizedProductType}`,
+  );
 }
 
 function aiTextTrainingUseId(uid, actionId) {
@@ -460,11 +568,14 @@ module.exports = Object.freeze({
   AI_TEXT_TRAINING_LINES_PER_SLOT_MAX,
   AI_TEXT_TRAINING_LINES_PER_SLOT_MIN,
   AI_TEXT_TRAINING_MODES,
+  AI_TEXT_TRAINING_PLAY_STYLES,
   AI_TEXT_TRAINING_PRICE_OPTIONS,
+  AI_TEXT_TRAINING_PRODUCT_TYPES,
   AI_TEXT_TRAINING_PUBLISH_FEE,
   AI_TEXT_TRAINING_REPORT_REASONS,
   AI_TEXT_TRAINING_SCHEMA_VERSION,
   AI_TEXT_TRAINING_SCRIPT_SLOT_IDS,
+  AI_TEXT_TRAINING_ZONE_SCRIPT_SLOT_IDS,
   AI_TEXT_TRAINING_STYLE_PRODUCT_IDS,
   AI_TEXT_TRAINING_SUCCESS_FEE_BASIS_POINTS,
   AI_TEXT_TRAINING_TITLE_MAX_LENGTH,
@@ -486,8 +597,11 @@ module.exports = Object.freeze({
   normalizeAiTextTrainingCosmetics,
   normalizeAiTextTrainingDocumentId,
   normalizeAiTextTrainingMode,
+  normalizeAiTextTrainingPlayStyle,
   normalizeAiTextTrainingPresetInput,
+  normalizeAiTextTrainingProductType,
   normalizeAiTextTrainingScript,
+  normalizeAiTextTrainingZoneScript,
   normalizeAiTextTrainingSellerName,
   normalizeAiTextTrainingXHandle,
 });
