@@ -1502,7 +1502,43 @@ test("defeat ZONE never re-asks for surrender after defeat and never auto-resume
   );
   assert.match(client, /<fieldset class="ai-text-training-play-style-fieldset">[\s\S]*?<legend>プレイスタイル<\/legend>/);
   assert.match(client, /class="ai-text-training-zone-lineup" role="group"/);
-  assert.match(client, /ととのった／敗北証明を見る/);
+  assert.match(
+    client,
+    /data-ai-text-training-play-style="\$\{escapeHtml\(state\.sessionPlayStyle \|\| state\.playStyle \|\| "standard"\)\}"/,
+  );
+  assert.equal(
+    renderer.match(/class="ai-text-training-zone-phase-meta"/gu)?.length,
+    3,
+  );
+  assert.equal(
+    renderer.match(/class="ai-text-training-zone-support-layer"/gu)?.length,
+    3,
+  );
+  assert.match(
+    renderer,
+    /data-ai-text-training-action="settle-defeat-zone"><strong>ととのった<\/strong><small>敗北証明を見る<\/small>/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-arena\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*min\(94vw,\s*900px\)\);/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-lineup\s*\{[\s\S]*?grid-template-columns:\s*repeat\(6,[\s\S]*?grid-template-rows:\s*repeat\(2,/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-overlay:is\(\.is-rush,\s*\.is-defeated,\s*\.is-cooldown\)\s*\{[\s\S]*?backdrop-filter:\s*none;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-phase-meta h2\s*\{[\s\S]*?font-size:\s*clamp\(0\.82rem,\s*2\.3vw,\s*1\.08rem\);/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(min-width: 651px\) and \(min-height: 651px\)[\s\S]*?\.ai-text-training-zone-lineup\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,/,
+  );
+  assert.equal(html.match(/defeat-zone-image-stage-v3/gu)?.length, 2);
   assert.match(
     trainingStyles,
     /@media \(forced-colors: active\)[\s\S]*?\.ai-text-training-play-style-card\.is-selected > span,[\s\S]*?outline:\s*2px solid Highlight;/,

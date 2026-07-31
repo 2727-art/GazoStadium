@@ -2012,7 +2012,7 @@ function renderFrame(content, {
   backLabel = "トップへ戻る",
   backAction = "home",
 } = {}) {
-  return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" ${cosmeticDataAttributes()}>
+  return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" data-ai-text-training-play-style="${escapeHtml(state.sessionPlayStyle || state.playStyle || "standard")}" ${cosmeticDataAttributes()}>
     <header class="ai-text-training-header">
       <div><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1></div>
       <button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}" ${state.finishInFlight ? "disabled" : ""}>${escapeHtml(backLabel)}</button>
@@ -2947,30 +2947,42 @@ function renderDefeatZonePlay() {
   } else if (state.phase === "zone_rush") {
     center = `<section class="ai-text-training-zone-overlay is-rush">
       ${renderTrainingEdgeHud(remainingSeconds, "最終攻勢 残り")}
-      <span>FINAL ATTACK · ZONE BEAT 200</span>
-      <h2>5枚の最終攻勢</h2>
-       <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_rush")[0])}</blockquote>
-      <p>演出テンポ200 BPM · 動作速度、心拍数、呼吸数の目標ではありません。</p>
-      <button class="button button-primary ai-text-training-surrender" type="button" data-ai-text-training-action="surrender-defeat-zone"><strong>ギブアップする</strong><small>敗北を認めてクールダウンへ</small></button>
+      <div class="ai-text-training-zone-phase-meta">
+        <span>FINAL ATTACK · ZONE BEAT 200</span>
+        <h2>5枚の最終攻勢</h2>
+      </div>
+      <div class="ai-text-training-zone-support-layer">
+        <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_rush")[0])}</blockquote>
+        <p>演出テンポ200 BPM · 動作速度、心拍数、呼吸数の目標ではありません。</p>
+        <button class="button button-primary ai-text-training-surrender" type="button" data-ai-text-training-action="surrender-defeat-zone"><strong>ギブアップする</strong><small>敗北を認めてクールダウンへ</small></button>
+      </div>
     </section>`;
   } else if (state.phase === "zone_deceleration") {
     center = `<section class="ai-text-training-zone-overlay is-defeated">
-      <span>AI WIN · TEMPO DOWN</span>
-      <h2>あなたの敗北</h2>
-      <strong>${escapeHtml(tempoCopy(bpm))}</strong>
-       <blockquote class="ai-text-training-message-surface">${escapeHtml(state.currentMessage || defeatZoneFallbackLines(state.defeatResolution === "overpowered" ? "zone_overpowered" : "zone_surrendered")[0])}</blockquote>
-      <p>運動を続けず、楽な姿勢へ移ってください。音は段階的に減速しています。</p>
+      <div class="ai-text-training-zone-phase-meta">
+        <span>AI WIN · TEMPO DOWN</span>
+        <h2>あなたの敗北</h2>
+      </div>
+      <div class="ai-text-training-zone-support-layer">
+        <strong class="ai-text-training-zone-tempo">${escapeHtml(tempoCopy(bpm))}</strong>
+        <blockquote class="ai-text-training-message-surface">${escapeHtml(state.currentMessage || defeatZoneFallbackLines(state.defeatResolution === "overpowered" ? "zone_overpowered" : "zone_surrendered")[0])}</blockquote>
+        <p>運動を続けず、楽な姿勢へ移ってください。音は段階的に減速しています。</p>
+      </div>
     </section>`;
   } else if (state.phase === "zone_cooldown") {
     center = `<section class="ai-text-training-zone-overlay is-cooldown">
       ${renderTrainingEdgeHud(remainingSeconds, "クールダウン 残り")}
-      <span>AI WIN · COOLDOWN BEAT 30</span>
-      <h2>もう力を抜いて大丈夫</h2>
-       <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_cooldown")[0])}</blockquote>
-      <p>30 BPMは余韻の演出です。心拍数や呼吸数の指示ではありません。</p>
-      <div class="ai-text-training-cooldown-actions">
-        <button class="button button-primary" type="button" data-ai-text-training-action="settle-defeat-zone">ととのった／敗北証明を見る</button>
-        <button class="button button-ghost" type="button" data-ai-text-training-action="finish-defeat-zone">今日はここまで／敗北証明を見る</button>
+      <div class="ai-text-training-zone-phase-meta">
+        <span>AI WIN · COOLDOWN BEAT 30</span>
+        <h2>もう力を抜いて大丈夫</h2>
+      </div>
+      <div class="ai-text-training-zone-support-layer">
+        <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_cooldown")[0])}</blockquote>
+        <p>30 BPMは余韻の演出です。心拍数や呼吸数の指示ではありません。</p>
+        <div class="ai-text-training-cooldown-actions">
+          <button class="button button-primary" type="button" data-ai-text-training-action="settle-defeat-zone"><strong>ととのった</strong><small>敗北証明を見る</small></button>
+          <button class="button button-ghost" type="button" data-ai-text-training-action="finish-defeat-zone"><strong>今日はここまで</strong><small>敗北証明を見る</small></button>
+        </div>
       </div>
     </section>`;
   } else {
@@ -2994,12 +3006,12 @@ function renderDefeatZonePlay() {
       <p class="ai-text-training-system-safety">痛み・めまい・息苦しさ・体調不良がある時は、演出に関係なく即停止してください。</p>
     </section>
   `, {
-    eyebrow: `${aiTextTrainingMode(state.modeId).label} · 敗北ZONE`,
-    title: cooldownCanEnd
-      ? "AI WIN · COOLDOWN"
+    eyebrow: cooldownCanEnd
+      ? `${aiTextTrainingMode(state.modeId).label} · AI WIN · COOLDOWN`
       : decelerating
-        ? "AI WIN · TEMPO DOWN"
-        : "FINAL ATTACK",
+        ? `${aiTextTrainingMode(state.modeId).label} · AI WIN · TEMPO DOWN`
+        : `${aiTextTrainingMode(state.modeId).label} · FINAL ATTACK`,
+    title: "敗北ZONE",
     backLabel,
     backAction,
   });
