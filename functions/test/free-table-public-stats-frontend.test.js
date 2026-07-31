@@ -33,7 +33,10 @@ test("free table public stats poll visibly without creating an anonymous account
   assert.match(onlineSource, /httpsCallable\(functions, "freeTablePublicStats"\)/);
   assert.match(refreshSource, /freeTablePublicStatsCallable\(\{\}\)/);
   assert.doesNotMatch(refreshSource, /ensureAuthenticated|signInAnonymously|setPersistence/);
-  assert.match(onlineSource, /document\.visibilityState === "visible"\s*&& document\.querySelector\("#lobbyFreeTableWelcomingCount"\) !== null/);
+  assert.match(
+    onlineSource,
+    /document\.visibilityState === "visible"\s*&& document\.querySelector\(\s*"#lobbyFreeTableWelcomingCount, \[data-free-table-lamp-refresh\]",\s*\) !== null/,
+  );
   assert.match(refreshSource, /if \(freeTablePublicStatsRequest\) return freeTablePublicStatsRequest;/);
   assert.match(onlineSource, /const FREE_TABLE_PUBLIC_STATS_POLL_MS = 60_000;/);
   assert.match(onlineSource, /window\.setTimeout\(\(\) => \{\s*freeTablePublicStatsTimer = null;\s*refreshFreeTablePublicStats\(\);\s*\}, delay\);/);
@@ -75,7 +78,7 @@ test("free table stats styling, docs, and cache generations stay wired", () => {
     const escapedAsset = asset.replaceAll(".", "\\.");
     assert.match(html, new RegExp(`${escapedAsset}\\?v=[^"]*free-table-stats-v1`));
   }
-  assert.match(readme, /認証不要の公開統計だけを、トップ画面を見ている間に60秒ごとに取得し、閲覧のために匿名アカウントを作りません/);
+  assert.match(readme, /認証不要の公開統計だけを、トップ画面と通常型・戦略型の最終結果を見ている間に60秒ごとに取得し、閲覧のために匿名アカウントを作りません/);
   assert.match(readme, /3分間更新できなければ`--`へ戻します/);
   assert.match(readme, /`freeTablePublicStats`から、お迎え中・同席中の集計値と更新時刻だけを取得します/);
 });

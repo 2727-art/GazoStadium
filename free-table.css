@@ -27,6 +27,85 @@
   transform: translateY(-2px);
 }
 
+#freeTableButton.is-lit,
+.button.hero-free-table-button.is-lit {
+  border-color: rgba(255, 226, 155, 0.88);
+  background:
+    radial-gradient(circle at 18% 28%, rgba(255, 237, 181, 0.34), transparent 32%),
+    linear-gradient(135deg, #87523b 0%, #b76d43 48%, #4d715d 100%);
+  box-shadow:
+    0 16px 38px rgba(86, 53, 38, 0.34),
+    0 0 0 1px rgba(255, 224, 157, 0.12);
+}
+
+.lobby-free-table-lamp-link {
+  width: 100%;
+  min-height: 2.8rem;
+  margin-top: 0.8rem;
+  border-color: rgba(235, 199, 141, 0.42);
+  color: #fff7e8;
+  background: linear-gradient(135deg, rgba(168, 96, 62, 0.72), rgba(73, 105, 86, 0.72));
+}
+
+.lobby-free-table-lamp-link:hover:not(:disabled) {
+  border-color: rgba(255, 228, 174, 0.78);
+  background: linear-gradient(135deg, rgba(184, 105, 66, 0.86), rgba(79, 119, 95, 0.86));
+}
+
+.lobby-free-table-lamp-link[hidden] {
+  display: none;
+}
+
+.free-table-result-lamp-slot:empty {
+  display: none;
+}
+
+.free-table-result-lamp {
+  margin: 18px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(235, 199, 141, 0.36);
+  border-radius: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  color: #f8f0e3;
+  background:
+    radial-gradient(circle at 8% 20%, rgba(238, 186, 107, 0.15), transparent 34%),
+    linear-gradient(135deg, rgba(111, 70, 52, 0.38), rgba(55, 84, 70, 0.32));
+}
+
+.free-table-result-lamp-copy {
+  min-width: 0;
+}
+
+.free-table-result-lamp-count {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: #f0ca8f;
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+}
+
+.free-table-result-lamp strong,
+.free-table-result-lamp p {
+  display: block;
+  margin: 0;
+}
+
+.free-table-result-lamp p {
+  margin-top: 0.35rem;
+  color: #bfc4cf;
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.free-table-result-lamp .button {
+  min-height: 2.8rem;
+  white-space: nowrap;
+}
+
 .free-table {
   min-height: 100vh;
   color: var(--free-ink);
@@ -220,6 +299,66 @@
   color: #fffaf1;
   background: linear-gradient(135deg, #8e553e, #516f5c);
   box-shadow: 0 6px 18px rgba(74, 57, 40, 0.2);
+}
+
+.free-table-lamp-notice,
+.free-table-host-request-notice {
+  width: min(920px, 100%);
+  margin: 0 auto 1rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid rgba(127, 63, 43, 0.24);
+  border-radius: 1.25rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: center;
+  background:
+    radial-gradient(circle at 8% 20%, rgba(238, 183, 119, 0.14), transparent 34%),
+    rgba(255, 250, 240, 0.9);
+  box-shadow: 0 12px 32px rgba(70, 51, 33, 0.09);
+}
+
+.free-table-lamp-notice p,
+.free-table-host-request-notice p {
+  margin: 0.25rem 0 0;
+  color: var(--free-muted);
+  line-height: 1.65;
+}
+
+.free-table-lamp-notice .free-table-eyebrow,
+.free-table-host-request-notice .free-table-eyebrow {
+  margin: 0 0 0.2rem;
+}
+
+.free-table-lamp-loading {
+  min-height: calc(100vh - 8rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.free-table-lamp-loading > .free-table-home {
+  align-self: flex-start;
+}
+
+.free-table-lamp-loading > section {
+  width: min(560px, 100%);
+  margin-block: auto;
+  padding: clamp(2rem, 7vw, 4.5rem);
+  border: 1px solid var(--free-line);
+  border-radius: 1.6rem;
+  text-align: center;
+  background: linear-gradient(145deg, rgba(255, 252, 244, 0.96), rgba(246, 234, 213, 0.92));
+  box-shadow: var(--free-shadow);
+}
+
+.free-table-lamp-loading .free-table-room-mark {
+  margin: 0 auto 1rem;
+}
+
+.free-table-lamp-loading p:last-child {
+  color: var(--free-muted);
+  line-height: 1.8;
 }
 
 .free-table-tab-panel {
@@ -1032,6 +1171,36 @@
   padding: clamp(1.2rem, 4vw, 2.5rem);
 }
 
+.free-table-saved-visitor-card {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1.1rem 0;
+}
+
+.free-table-saved-visitor-card div {
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--free-line);
+}
+
+.free-table-saved-visitor-card dt {
+  color: var(--free-muted);
+  font-family: system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.free-table-saved-visitor-card dd {
+  margin: 0.15rem 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.free-table-saved-visitor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 .free-table-room-detail h1 {
   margin: 0;
   font-size: clamp(2rem, 5vw, 3.5rem);
@@ -1734,6 +1903,14 @@ button.free-table-ambience-chip:hover:not(:disabled) {
 }
 
 @media (max-width: 760px) {
+  .free-table-result-lamp {
+    grid-template-columns: 1fr;
+  }
+
+  .free-table-result-lamp .button {
+    width: 100%;
+  }
+
   .free-table {
     padding: 0.75rem;
   }
@@ -1756,6 +1933,17 @@ button.free-table-ambience-chip:hover:not(:disabled) {
 
   .free-table-tabs {
     border-radius: 1rem;
+  }
+
+  .free-table-lamp-notice,
+  .free-table-host-request-notice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .free-table-lamp-notice .button,
+  .free-table-host-request-notice .button {
+    width: 100%;
+    grid-column: 1 / -1;
   }
 
   .free-table-tab {
@@ -1833,6 +2021,15 @@ button.free-table-ambience-chip:hover:not(:disabled) {
 
   .free-table-card-actions {
     grid-column: 1 / -1;
+  }
+
+  .free-table-saved-visitor-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .free-table-saved-visitor-actions .button {
+    width: 100%;
   }
 
   .free-table-session-header {
@@ -2016,6 +2213,24 @@ button.free-table-ambience-chip:hover:not(:disabled) {
 }
 
 @media (forced-colors: active) {
+  #freeTableButton.is-lit,
+  .button.hero-free-table-button.is-lit,
+  .lobby-free-table-lamp-link,
+  .free-table-result-lamp,
+  .free-table-lamp-notice,
+  .free-table-host-request-notice,
+  .free-table-lamp-loading > section {
+    color: CanvasText;
+    border-color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .free-table-result-lamp-count,
+  .free-table-result-lamp p {
+    color: CanvasText;
+  }
+
   .free-table:is(
     .lighting-natural,
     .lighting-indirect,

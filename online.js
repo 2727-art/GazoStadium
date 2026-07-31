@@ -470,6 +470,8 @@ let freeTablePublicStatsLastSuccessAt = 0;
 let freeTablePublicStatsFailureCount = 0;
 let freeTablePublicStatsRequest = null;
 let freeTablePublicStatsTimer = null;
+let lastFreeTablePublicStatsEventSignature = "";
+let freeTableResultTransitionBusy = false;
 const LOBBY_MODES = [...ACTIVE_BATTLE_MODES, "training"];
 const createLobbyStats = (value = null) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
@@ -2032,7 +2034,9 @@ function normalizeFreeTablePublicStats(value, receivedAt) {
 
 function canRefreshFreeTablePublicStats() {
   return document.visibilityState === "visible"
-    && document.querySelector("#lobbyFreeTableWelcomingCount") !== null;
+    && document.querySelector(
+      "#lobbyFreeTableWelcomingCount, [data-free-table-lamp-refresh]",
+    ) !== null;
 }
 
 function freeTablePublicStatsAreExpired(now = Date.now()) {
@@ -2057,6 +2061,7 @@ function expireFreeTablePublicStats(now = Date.now(), shouldRender = true) {
   };
   freeTablePublicStatsLastSuccessAt = 0;
   lobbyStats.freeTable = { ...freeTablePublicStats };
+  lastFreeTablePublicStatsEventSignature = "";
   if (shouldRender) renderLobbyStats();
   return true;
 }
@@ -2167,6 +2172,74 @@ function renderLobbyStats() {
     const element = document.querySelector(`#${id}`);
     if (element) element.textContent = Number.isInteger(value) ? String(value) : "--";
   });
+  const detail = {
+    welcomingRooms: lobbyStats.freeTable.welcomingRooms,
+    seatedRooms: lobbyStats.freeTable.seatedRooms,
+  };
+  const signature = `${detail.welcomingRooms ?? "unknown"}:${detail.seatedRooms ?? "unknown"}`;
+  if (signature !== lastFreeTablePublicStatsEventSignature) {
+    lastFreeTablePublicStatsEventSignature = signature;
+    window.dispatchEvent(new CustomEvent("hariai-free-table-public-stats-updated", { detail }));
+  }
+}
+
+function getFreeTableLampState() {
+  expireFreeTablePublicStats(Date.now(), false);
+  const welcomingRooms = lobbyStats.freeTable.welcomingRooms;
+  return {
+    available: Number.isInteger(welcomingRooms) && welcomingRooms > 0,
+    welcomingRooms: Number.isInteger(welcomingRooms) && welcomingRooms > 0
+      ? welcomingRooms
+      : 0,
+  };
+}
+
+function renderFreeTableResultLampContent({
+  buttonId = "freeTableResultLampButton",
+} = {}) {
+  const lamp = getFreeTableLampState();
+  if (!lamp.available) return "";
+  const safeButtonId = String(buttonId || "freeTableResultLampButton")
+    .replace(/[^A-Za-z0-9_-]/g, "")
+    .slice(0, 64) || "freeTableResultLampButton";
+  return `<aside class="free-table-result-lamp" aria-label="貼り合い自由卓への休憩案内">
+    <div class="free-table-result-lamp-copy"><small class="free-table-result-lamp-count" aria-live="polite" aria-atomic="true"><span aria-hidden="true">◌</span> <span class="free-table-result-lamp-count-value">いま、${lamp.welcomingRooms}卓に灯りがついています</span></small>
+      <strong>勝ち負けをここに置いて、ひと休みできます。</strong>
+      <p>部屋札を見てから、そのまま戻っても大丈夫です。</p></div>
+    <button class="button free-table-result-lamp-button" id="${safeButtonId}" type="button">灯りのついた一席へ寄る</button>
+  </aside>`;
+}
+
+function syncFreeTableResultLampSlot({
+  slot,
+  buttonId = "freeTableResultLampButton",
+  onClick,
+  focusFallbackSelector = "",
+} = {}) {
+  if (!slot) return;
+  const safeButtonId = String(buttonId || "freeTableResultLampButton")
+    .replace(/[^A-Za-z0-9_-]/g, "")
+    .slice(0, 64) || "freeTableResultLampButton";
+  const lamp = getFreeTableLampState();
+  const existingButton = slot.querySelector(`#${safeButtonId}`);
+  if (!lamp.available) {
+    const restoreFocus = existingButton && document.activeElement === existingButton;
+    slot.innerHTML = "";
+    if (restoreFocus && focusFallbackSelector) {
+      document.querySelector(focusFallbackSelector)?.focus({ preventScroll: true });
+    }
+    return;
+  }
+  const countValue = slot.querySelector(".free-table-result-lamp-count-value");
+  if (existingButton && countValue) {
+    const nextCountText = `いま、${lamp.welcomingRooms}卓に灯りがついています`;
+    if (countValue.textContent !== nextCountText) countValue.textContent = nextCountText;
+    return;
+  }
+  slot.innerHTML = renderFreeTableResultLampContent({ buttonId: safeButtonId });
+  if (typeof onClick === "function") {
+    slot.querySelector(`#${safeButtonId}`)?.addEventListener("click", onClick);
+  }
 }
 
 function watchLobbyStats() {
@@ -3311,6 +3384,9 @@ function render() {
   appRoot.innerHTML = (renderers[state.screen] || renderSetup)();
   lastRenderedScreen = state.screen;
   bindScreenEvents();
+  if (screenChanged && state.screen === "gameover") {
+    refreshFreeTablePublicStatsImmediately().catch(() => {});
+  }
   if (screenChanged) {
     window.scrollTo(0, 0);
     appRoot.focus({ preventScroll: true });
@@ -4322,10 +4398,22 @@ function renderGameOver() {
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
     <div class="result-chat">${renderOnlineChat()}</div>
     ${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
+    <div id="onlineFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${renderFreeTableResultLampContent({ buttonId: "onlineFreeTableLampButton" })}</div>
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
       <button class="button button-ghost" id="onlineGameoverHome">タイトルへ戻る</button></div>
   </div></section>`;
+}
+
+function syncOnlineFreeTableResultLamp() {
+  if (!active || state.screen !== "gameover") return;
+  const slot = document.querySelector("#onlineFreeTableLampSlot");
+  syncFreeTableResultLampSlot({
+    slot,
+    buttonId: "onlineFreeTableLampButton",
+    onClick: leaveToFreeTable,
+    focusFallbackSelector: "#onlineNewMatch",
+  });
 }
 
 function getEngawaMood(id) {
@@ -4576,6 +4664,7 @@ function bindScreenEvents() {
     }));
     document.querySelector("[data-engawa-end]")?.addEventListener("click", () => endEngawa("縁側は開かず、ここで一戦を終えました。"));
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
+    document.querySelector("#onlineFreeTableLampButton")?.addEventListener("click", leaveToFreeTable);
     document.querySelector("#onlineGameoverMissions")?.addEventListener("click", openPostMatchMissions);
     document.querySelector("#onlineGameoverHome")?.addEventListener("click", leaveToLanding);
   }
@@ -10394,6 +10483,35 @@ async function leaveToLanding() {
   window.HariaiApp?.returnHome();
 }
 
+async function leaveToFreeTable() {
+  if (freeTableResultTransitionBusy) return;
+  if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
+  freeTableResultTransitionBusy = true;
+  const trigger = document.querySelector("#onlineFreeTableLampButton");
+  trigger?.setAttribute("disabled", "");
+  trigger?.setAttribute("aria-busy", "true");
+  try {
+    const expectedState = state;
+    expectedState.matchmakingLaunchGeneration += 1;
+    expectedState.matchmakingLaunchBusy = false;
+    pendingSampleMatchmakingLaunch = null;
+    dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
+    const transitionToken = beginOnlineStateTransition(expectedState, "leave-to-free-table");
+    await cleanupOnlineResources(false, expectedState);
+    if (!isOnlineStateTransitionCurrent(expectedState, transitionToken, state)) return;
+    releaseAllImages();
+    active = false;
+    const openFreeTable = window.HariaiApp?.openFreeTable;
+    if (typeof openFreeTable === "function") openFreeTable({ intent: "lamp" });
+    else window.HariaiApp?.returnHome?.();
+  } finally {
+    freeTableResultTransitionBusy = false;
+  }
+}
+
 async function cleanupMatchmaking(keepActive, targetState = state) {
   targetState.matchmakingGeneration = ++matchmakingGenerationCounter;
   window.clearTimeout(targetState.matchTimer);
@@ -10631,6 +10749,11 @@ sampleHandicapDialog?.addEventListener("close", () => {
   else finishCrownMatchmakingLaunch(context);
 });
 
+window.addEventListener(
+  "hariai-free-table-public-stats-updated",
+  syncOnlineFreeTableResultLamp,
+);
+
 finishCutInDialog?.addEventListener("cancel", (event) => {
   event.preventDefault();
   const round = Number(finishCutInContent?.dataset.round);
@@ -10652,6 +10775,10 @@ window.HariaiOnline = {
   requestHome,
   destroyRoom,
   getLobbyStats,
+  getFreeTableLampState,
+  renderFreeTableResultLampContent,
+  syncFreeTableResultLampSlot,
+  refreshFreeTablePublicStats: refreshFreeTablePublicStatsImmediately,
   getLeaderboard,
   getOverallLeaderboard,
   getOverallLeaderboardStatus,

@@ -91,6 +91,9 @@
   let valueMarketReadyListenerPending = false;
   let pendingFleaMarketDestination = "";
   let fleaMarketReadyListenerPending = false;
+  let pendingFreeTableIntent = "";
+  let freeTableReadyListenerPending = false;
+  let freeTableLaunchGeneration = 0;
   const profileAvatarState = { ready: false, blob: null, url: "" };
   const audioStudioState = {
     recorder: null,
@@ -845,6 +848,64 @@
     if (focusSelector) document.querySelector(focusSelector)?.focus();
   }
 
+  function freeTableLampPresentation(value) {
+    const welcomingRooms = Number.isInteger(value?.welcomingRooms)
+      && value.welcomingRooms > 0
+      ? value.welcomingRooms
+      : 0;
+    if (!welcomingRooms) {
+      return {
+        lit: false,
+        welcomingRooms: 0,
+        eyebrow: "勝ち負けを置いて、ひと休み",
+        label: "貼り合い自由卓",
+      };
+    }
+    return {
+      lit: true,
+      welcomingRooms,
+      eyebrow: `◌ いま、${welcomingRooms}卓に灯りがついています`,
+      label: "お迎え中の一席をのぞく",
+    };
+  }
+
+  function updateLandingFreeTableEntrance() {
+    if (currentScreen !== "landing") return;
+    const freeTableStats = window.HariaiOnline?.getLobbyStats?.().freeTable || {};
+    const presentation = freeTableLampPresentation(freeTableStats);
+    const button = document.querySelector("#freeTableButton");
+    const statusButton = document.querySelector("#freeTableStatusButton");
+    if (button) {
+      const eyebrow = button.querySelector("small");
+      const label = button.querySelector("span");
+      if (eyebrow) eyebrow.textContent = presentation.eyebrow;
+      if (label) label.textContent = presentation.label;
+      button.dataset.freeTableIntent = presentation.lit ? "lamp" : "hall";
+      button.classList.toggle("is-lit", presentation.lit);
+      button.setAttribute(
+        "aria-label",
+        presentation.lit
+          ? `貼り合い自由卓。いま${presentation.welcomingRooms}卓がお迎え中です。部屋札をのぞく`
+          : "貼り合い自由卓を開く",
+      );
+    }
+    if (statusButton) {
+      if (!presentation.lit && document.activeElement === statusButton) {
+        button?.focus({ preventScroll: true });
+      }
+      statusButton.hidden = !presentation.lit;
+      statusButton.textContent = presentation.lit
+        ? `◌ お迎え中の${presentation.welcomingRooms}卓を見る`
+        : "";
+      statusButton.setAttribute(
+        "aria-label",
+        presentation.lit
+          ? `貼り合い自由卓のお迎え中${presentation.welcomingRooms}卓を見る`
+          : "貼り合い自由卓を開く",
+      );
+    }
+  }
+
   function renderLanding() {
     const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
@@ -852,6 +913,7 @@
     const strategyStats = modeStats("strategy");
     const trainingStats = modeStats("training");
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
+    const freeTableLamp = freeTableLampPresentation(freeTableStats);
     const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
@@ -872,7 +934,7 @@
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
           <button class="button button-training hero-mode-button" id="trainingButton"><small>刺さったら、相手のリズムと応援で60秒。</small><span>鍛え合い60</span></button>
-          <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
+          <button class="button hero-free-table-button hero-mode-button${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
@@ -901,7 +963,7 @@
           <article class="lobby-mode-card free-table-status"><div class="lobby-mode-head"><span>貼り合い自由卓</span><small>FREE TABLE</small></div><div class="lobby-mode-counts">
             <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
             <div><small>同席中</small><strong><span id="lobbyFreeTableSeatedCount">${statValue(freeTableStats.seatedRooms)}</span><em>卓</em></strong></div>
-          </div></article>
+          </div><button class="button lobby-free-table-lamp-link" id="freeTableStatusButton" type="button" data-free-table-intent="lamp"${freeTableLamp.lit ? "" : " hidden"}>${freeTableLamp.lit ? `◌ お迎え中の${freeTableLamp.welcomingRooms}卓を見る` : ""}</button></article>
           <article class="lobby-mode-card market"><div class="lobby-mode-head"><span>推し値市場</span><small>VALUE MARKET</small></div><div class="lobby-mode-counts market-counts">
             <div><small>売り手待機</small><strong><span id="lobbyMarketSellerWaitingCount">${statValue(marketStats.sellerWaiting)}</span><em>人</em></strong></div>
             <div><small>買い手待機</small><strong><span id="lobbyMarketBuyerWaitingCount">${statValue(marketStats.buyerWaiting)}</span><em>人</em></strong></div>
@@ -915,6 +977,7 @@
   }
 
   function renderLandingScreen() {
+    cancelPendingFreeTableLaunch();
     pendingValueMarketDestination = "";
     pendingFleaMarketDestination = "";
     currentScreen = "landing";
@@ -929,12 +992,18 @@
       if (!control) return;
       if (!control.matches("#valueMarketButton, #valueMarketRankingButton")) pendingValueMarketDestination = "";
       if (!control.matches("#fleaMarketSellersButton, #fleaMarketBrowseButton, #fleaMarketSellButton")) pendingFleaMarketDestination = "";
+      if (!control.matches("#freeTableButton, #freeTableStatusButton")) cancelPendingFreeTableLaunch();
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#trainingButton")?.addEventListener("click", startTraining);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
-    document.querySelector("#freeTableButton")?.addEventListener("click", startFreeTable);
+    document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
+      startFreeTable({ intent: event.currentTarget.dataset.freeTableIntent });
+    });
+    document.querySelector("#freeTableStatusButton")?.addEventListener("click", () => {
+      startFreeTable({ intent: "lamp" });
+    });
     document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
     document.querySelector("#fleaMarketSellersButton")?.addEventListener("click", startFleaMarketSellers);
@@ -1610,13 +1679,34 @@
     );
   }
 
-  function startFreeTable() {
+  function cancelPendingFreeTableLaunch() {
+    freeTableLaunchGeneration += 1;
+    pendingFreeTableIntent = "";
+    freeTableReadyListenerPending = false;
+  }
+
+  function startFreeTable({ intent = "hall" } = {}) {
+    pendingFreeTableIntent = intent === "lamp" ? "lamp" : "hall";
+    setLandingChrome();
     if (window.HariaiFreeTable?.start) {
-      window.HariaiFreeTable.start();
+      freeTableLaunchGeneration += 1;
+      const nextIntent = pendingFreeTableIntent;
+      pendingFreeTableIntent = "";
+      freeTableReadyListenerPending = false;
+      window.HariaiFreeTable.start({ intent: nextIntent });
       return;
     }
     showToast("貼り合い自由卓を読み込んでいます…");
-    window.addEventListener("hariai-free-table-ready", () => window.HariaiFreeTable?.start?.(), { once: true });
+    if (freeTableReadyListenerPending) return;
+    const launchGeneration = ++freeTableLaunchGeneration;
+    freeTableReadyListenerPending = true;
+    window.addEventListener("hariai-free-table-ready", () => {
+      if (launchGeneration !== freeTableLaunchGeneration || !pendingFreeTableIntent) return;
+      freeTableReadyListenerPending = false;
+      const nextIntent = pendingFreeTableIntent || "hall";
+      pendingFreeTableIntent = "";
+      window.HariaiFreeTable?.start?.({ intent: nextIntent });
+    }, { once: true });
   }
 
   function openInitialFreeTableInvite() {
@@ -2116,6 +2206,7 @@
 
   window.HariaiApp = {
     returnHome: renderLandingScreen,
+    openFreeTable: startFreeTable,
     shared: {
       escapeHtml,
       showToast,
@@ -2158,7 +2249,10 @@
   window.addEventListener("hariai-online-ready", () => {
     if (currentScreen === "ranking") refreshRankingSurfaces();
     if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.();
+    updateLandingFreeTableEntrance();
   });
+
+  window.addEventListener("hariai-free-table-public-stats-updated", updateLandingFreeTableEntrance);
 
   window.addEventListener("hariai-top-messages-updated", () => {
     const messages = window.HariaiOnline?.getTopMessages?.() || [];

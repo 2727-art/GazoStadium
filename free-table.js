@@ -86,6 +86,7 @@ const FREE_TABLE_INVITE_SHARE_TEXT_MAX_LENGTH = 120;
 const FREE_TABLE_INVITE_PREVIEW_REFRESH_MS = 30_000;
 const FREE_TABLE_INVITE_PREVIEW_MAX_BACKOFF_MS = 4 * 60_000;
 const FREE_TABLE_AMBIENCE_VOLUME_STORAGE_KEY = "hariaiFreeTableAmbienceVolumeV1";
+const FREE_TABLE_VISITOR_CARD_STORAGE_KEY = "hariaiFreeTableVisitorCardV1";
 const FREE_TABLE_AMBIENCE_NOTICE_MS = 7_000;
 const FREE_TABLE_METRONOME_MIN_BPM = 40;
 const FREE_TABLE_METRONOME_MAX_BPM = 160;
@@ -169,16 +170,22 @@ const signalSlotCounters = new Map();
 let pendingLeaveSettlement = null;
 let roomMutationChain = Promise.resolve();
 let state = createFreeTableState();
+let lastRenderedFreeTableScreen = "";
 
 function createFreeTableState() {
   return {
     generation: 0,
     screen: "hall",
     tab: "open",
+    entryIntent: "hall",
+    directLampEntry: false,
+    lampNotice: "",
     busy: false,
     error: "",
     uid: "",
     authenticatedReady: false,
+    myStateRequestSequence: 0,
+    latestAppliedMyStateRequest: 0,
     serverTimeOffset: 0,
     serverTimeOffsetAuthoritative: false,
     publicMemberId: "",
@@ -186,6 +193,8 @@ function createFreeTableState() {
     space: defaultSpace(),
     hostCard: defaultCard(),
     visitorCard: defaultCard(),
+    visitorCardSaved: false,
+    visitorCardExpanded: false,
     rooms: [],
     bookmarks: new Set(),
     returningRooms: [],
@@ -214,6 +223,8 @@ function createFreeTableState() {
     roomId: "",
     roomOpen: false,
     requests: [],
+    knownRequestIds: new Set(),
+    requestTrackingReady: false,
     pendingRequest: null,
     ignoredRequestIds: new Set(),
     sessionId: "",
@@ -709,6 +720,67 @@ function normalizeCard(value, fallbackValue = defaultCard()) {
   };
 }
 
+function reusableVisitorCard(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const name = boundedText(value.name, 24);
+  const activityTag = boundedText(value.activityTag, 24);
+  const message = boundedText(value.message, 40);
+  if (!name || !activityTag || !message
+      || !Object.hasOwn(FREE_TABLE_ROLEPLAY_LEVELS, value.roleplayLevel)) return null;
+  return normalizeCard({
+    name,
+    activityTag,
+    message,
+    roleplayLevel: value.roleplayLevel,
+    media: value.media,
+  });
+}
+
+function loadStoredVisitorCard(expectedUid) {
+  const normalizedUid = String(expectedUid || "");
+  if (!normalizedUid) return null;
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(FREE_TABLE_VISITOR_CARD_STORAGE_KEY) || "null",
+    );
+    if (stored?.version !== 1 || stored.ownerUid !== normalizedUid) return null;
+    return reusableVisitorCard(stored.card);
+  } catch {
+    return null;
+  }
+}
+
+function persistVisitorCard(card, ownerUid = state.uid) {
+  const reusable = reusableVisitorCard(card);
+  const normalizedUid = String(ownerUid || "");
+  if (!reusable || !normalizedUid) return false;
+  try {
+    window.localStorage.setItem(
+      FREE_TABLE_VISITOR_CARD_STORAGE_KEY,
+      JSON.stringify({ version: 1, ownerUid: normalizedUid, card: reusable }),
+    );
+  } catch {
+    // The card still remains reusable for this page when storage is unavailable.
+  }
+  state.visitorCard = reusable;
+  state.visitorCardSaved = true;
+  return true;
+}
+
+function visitorCardForAllowedMedia(card, allowedMedia = {}) {
+  const reusable = reusableVisitorCard(card);
+  if (!reusable) return null;
+  return normalizeCard({
+    ...reusable,
+    media: {
+      text: true,
+      image: reusable.media.image === true && allowedMedia.image === true,
+      audio: reusable.media.audio === true && allowedMedia.audio === true,
+      video: reusable.media.video === true && allowedMedia.video === true,
+    },
+  }, reusable);
+}
+
 function valueFromSnapshot(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value;
@@ -1115,10 +1187,14 @@ function applyMyState(value, { suppressSessionResume = false } = {}) {
   state.publicMemberId = String(identity.publicMemberId || state.publicMemberId);
   state.space = normalizeSpace(savedSpace.space || state.space);
   state.hostCard = normalizeCard(savedSpace.hostCard, state.hostCard);
-  state.visitorCard = normalizeCard(data.visitorCard, {
-    ...state.hostCard,
-    message: state.visitorCard.message,
-  });
+  const savedVisitorCard = reusableVisitorCard(data.visitorCard);
+  if (savedVisitorCard) persistVisitorCard(savedVisitorCard);
+  else if (!state.visitorCardSaved) {
+    state.visitorCard = normalizeCard(null, {
+      ...state.hostCard,
+      message: state.visitorCard.message,
+    });
+  }
   state.publicRoomId = String(
     openRoom?.id
     || savedSpace.publicRoomId
@@ -1127,9 +1203,18 @@ function applyMyState(value, { suppressSessionResume = false } = {}) {
   );
   state.roomOpen = Boolean(openRoom);
   if (!state.roomOpen && state.hostInvite) clearHostInviteUi();
-  state.requests = (Array.isArray(data.requests) ? data.requests : [])
+  const nextRequests = (Array.isArray(data.requests) ? data.requests : [])
     .map((request) => normalizeRequest(request))
     .filter((request) => request.id);
+  const newRequests = state.requestTrackingReady
+    ? nextRequests.filter((request) => !state.knownRequestIds.has(request.id))
+    : [];
+  state.requests = nextRequests;
+  nextRequests.forEach((request) => state.knownRequestIds.add(request.id));
+  if (state.requestTrackingReady && state.roomOpen && newRequests.length) {
+    showToast("玄関に来訪札が届きました。");
+  }
+  state.requestTrackingReady = true;
   state.blocks = (Array.isArray(data.blocks) ? data.blocks : [])
     .map((block) => ({
       publicMemberId: String(block?.publicMemberId || ""),
@@ -1167,6 +1252,7 @@ function applyMyState(value, { suppressSessionResume = false } = {}) {
   state.pendingRequest = pendingRequest && !state.ignoredRequestIds.has(pendingRequest.id)
     ? pendingRequest
     : null;
+  if (state.pendingRequest?.visitorCard) persistVisitorCard(state.pendingRequest.visitorCard);
   const activeSessionId = String(data.session?.sessionId || "");
   if (activeSessionId && state.ignoredSessionIds.has(activeSessionId)) {
     scheduleIgnoredSessionEnd(activeSessionId);
@@ -1181,12 +1267,15 @@ async function refreshMyState(expectedGeneration = state.generation, {
   expectedSessionGeneration = null,
   requireNoSession = false,
 } = {}) {
+  const requestSequence = ++state.myStateRequestSequence;
   const data = await callFreeTableAction(FREE_TABLE_ACTIONS.GET_MY_STATE);
   if (!active
       || state.generation !== expectedGeneration
+      || requestSequence < state.latestAppliedMyStateRequest
       || (expectedSessionGeneration != null
         && state.sessionGeneration !== expectedSessionGeneration)
       || (requireNoSession && state.sessionId)) return data;
+  state.latestAppliedMyStateRequest = requestSequence;
   applyMyState(data);
   return data;
 }
@@ -1668,6 +1757,26 @@ function renderTabs() {
   </div>`;
 }
 
+function renderLampNotice() {
+  if (!state.lampNotice) return "";
+  return `<aside class="free-table-lamp-notice" aria-label="灯りのすれ違い">
+    <span class="free-table-room-mark" aria-hidden="true">◌</span>
+    <div><p class="free-table-eyebrow">灯りのすれ違い</p><strong>${escapeHtml(state.lampNotice)}</strong>
+      <p>ほかの灯りを見ても、自分の部屋を開いても大丈夫です。</p></div>
+    <button type="button" class="button secondary" data-action="open-own-room">自分の灯りをつける</button>
+  </aside>`;
+}
+
+function renderHostRequestNotice() {
+  if (!state.roomOpen || !state.requests.length || state.tab === "mine") return "";
+  return `<aside class="free-table-host-request-notice" aria-label="玄関の来訪札">
+    <span class="free-table-room-mark" aria-hidden="true">◌</span>
+    <div><p class="free-table-eyebrow">玄関</p><strong>来訪札が${state.requests.length}枚届いています</strong>
+      <p>お迎えするか、今回は見送るかを、部屋主が選べます。</p></div>
+    <button type="button" class="button primary" data-action="show-requests">来訪札を見る</button>
+  </aside>`;
+}
+
 function renderRoomCard(room, { returning = false } = {}) {
   const theme = themeFor(room.space.themeId);
   return `<article class="free-table-room-card theme-${escapeHtml(room.space.themeId)} lighting-${escapeHtml(room.space.ambience.lightingId)}">
@@ -1913,7 +2022,7 @@ function renderSpaceForm() {
     ${state.roomOpen ? `<p class="free-table-open-status" role="status"><span></span> お迎え中です。席を外す時は部屋を閉じてください。</p>` : ""}
     ${renderHostInvitePanel()}
   </section>
-  <section class="free-table-request-shelf">
+  <section class="free-table-request-shelf" id="freeTableRequestShelf">
     <header><p class="free-table-eyebrow">届いた来訪札</p><h2>${state.requests.length ? "お迎えする人を選べます" : "いまは静かです"}</h2></header>
     ${state.requests.length ? state.requests.map(renderRequestCard).join("") : "<p>来訪札が届くまで、部屋の灯りを眺めて待てます。</p>"}
   </section>
@@ -1933,6 +2042,19 @@ function renderRecentReportShortcut() {
   </aside>`;
 }
 
+function renderLampLoading() {
+  return `<section class="free-table free-table-lamp-loading">
+    <button type="button" class="button text free-table-home" data-action="home">← ホーム</button>
+    <section class="free-table-note-card" role="status" aria-live="polite">
+      <span class="free-table-room-mark is-pulsing" aria-hidden="true">◌</span>
+      <p class="free-table-eyebrow">貼り合い自由卓</p>
+      <h1>いま灯っている一席をたしかめています</h1>
+      <p>部屋札を見るまでは、来訪札も入室も始まりません。</p>
+      ${state.error ? `<p class="free-table-error" role="alert">${escapeHtml(state.error)}</p>` : ""}
+    </section>
+  </section>`;
+}
+
 function renderHall() {
   return `<section class="free-table">
     <header class="free-table-hero">
@@ -1941,6 +2063,8 @@ function renderHall() {
         <p>ここではターンも採点もありません。部屋を開いて迎える日も、誰かの部屋で休む日も。ネタを貼り、話し、元気が戻ったら「いってきます」。</p></div>
       <div class="free-table-hero-orbit" aria-hidden="true"><span>ただいま</span><i></i><span>いってきます</span></div>
     </header>
+    ${renderLampNotice()}
+    ${renderHostRequestNotice()}
     ${renderRecentReportShortcut()}
     ${renderTabs()}
     <div class="free-table-tab-panel" role="tabpanel">
@@ -2048,17 +2172,59 @@ function renderInviteEntrance() {
   </section>`;
 }
 
+function renderVisitorCardForRoom(room) {
+  const card = visitorCardForAllowedMedia(state.visitorCard, room.space.media);
+  if (state.visitorCardSaved && !state.visitorCardExpanded && card) {
+    return `<section class="free-table-visitor-form-card">
+      <p class="free-table-eyebrow">この端末に保存した来訪札</p><h2>この札で「ただいま」</h2>
+      <dl class="free-table-saved-visitor-card">
+        <div><dt>表示名</dt><dd>${escapeHtml(card.name)}</dd></div>
+        <div><dt>今日の過ごし方</dt><dd>${escapeHtml(card.activityTag)}</dd></div>
+        <div><dt>ひとこと</dt><dd>${escapeHtml(card.message)}</dd></div>
+        <div><dt>なりきり温度</dt><dd>${escapeHtml(FREE_TABLE_ROLEPLAY_LEVELS[card.roleplayLevel])}</dd></div>
+        <div><dt>使いたいもの</dt><dd>${mediaLabels(card.media).map(escapeHtml).join("・")}</dd></div>
+      </dl>
+      <div class="free-table-saved-visitor-actions">
+        <button type="button" class="button primary" data-action="send-saved-visitor-card">この札で「ただいま」</button>
+        <button type="button" class="button secondary" data-action="edit-visitor-card">ことばを整える</button>
+      </div>
+      <p class="free-table-muted">送信は自動ではありません。このボタンを押した時だけ部屋主へ届きます。</p>
+    </section>`;
+  }
+  const formCard = card || state.visitorCard;
+  return `<section class="free-table-visitor-form-card">
+    <p class="free-table-eyebrow">来訪札</p><h2>「ただいま」を届ける</h2>
+    <form id="freeTableVisitorForm" class="free-table-form">
+      <label>表示名<input name="visitorName" maxlength="24" required value="${escapeHtml(formCard.name)}"></label>
+      <label>今日の過ごし方<input name="visitorActivityTag" maxlength="24" required value="${escapeHtml(formCard.activityTag)}"></label>
+      <label>ひとこと<input name="visitorMessage" maxlength="40" required value="${escapeHtml(formCard.message)}"></label>
+      <label>なりきり温度<select name="visitorRoleplayLevel">${Object.entries(FREE_TABLE_ROLEPLAY_LEVELS).map(([id, label]) => `<option value="${id}"${formCard.roleplayLevel === id ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+      <div class="free-table-checks"><span>使いたいもの</span>
+        <label><input type="checkbox" checked disabled>文字</label>
+        ${room.space.media.image ? `<label><input type="checkbox" name="visitorMediaImage"${formCard.media.image ? " checked" : ""}>画像</label>` : ""}
+        ${room.space.media.audio ? `<label><input type="checkbox" name="visitorMediaAudio"${formCard.media.audio ? " checked" : ""}>10秒音声</label>` : ""}
+        ${room.space.media.video ? `<label><input type="checkbox" name="visitorMediaVideo"${formCard.media.video ? " checked" : ""}>10秒動画</label>` : ""}
+      </div>
+      <button type="submit" class="button primary">この部屋に「ただいま」</button>
+    </form>
+    <p class="free-table-muted">部屋主が今回は見送った場合、理由や履歴は残りません。</p>
+  </section>`;
+}
+
 function renderRoomDetail() {
   const room = roomById(state.selectedRoomId);
   if (!room) {
     state.screen = "hall";
+    if (state.directLampEntry) {
+      state.directLampEntry = false;
+      state.lampNotice = "その灯りは、ちょうど同席になったか静かに閉じられました。";
+    }
     return renderHall();
   }
-  const card = state.visitorCard;
   const theme = themeFor(room.space.themeId);
   const bookmarked = state.bookmarks.has(room.id) || room.bookmarked;
   return `<section class="free-table free-table-detail theme-${escapeHtml(room.space.themeId)} lighting-${escapeHtml(room.space.ambience.lightingId)}">
-    <button type="button" class="button text free-table-home" data-action="back-hall">← 広間へ戻る</button>
+    <button type="button" class="button text free-table-home" data-action="back-hall">← ${state.directLampEntry ? "ほかの灯りを見る" : "広間へ戻る"}</button>
     <section class="free-table-room-detail">
       <header><span class="free-table-room-mark" aria-hidden="true">${theme.icon}</span>
         <div><p class="free-table-eyebrow">${escapeHtml(theme.label)}</p><h1>${escapeHtml(room.space.name)}</h1><p>${escapeHtml(room.space.description)}</p></div>
@@ -2075,23 +2241,7 @@ function renderRoomDetail() {
         <p>${escapeHtml(room.hostCard.message)}</p><span>${escapeHtml(room.hostCard.activityTag)}</span></div>
       <button type="button" class="button text" data-action="bookmark-room" data-room-id="${escapeHtml(room.id)}" data-active="${!bookmarked}">${bookmarked ? "帰る場所から外す" : "帰る場所にしおりを挟む"}</button>
     </section>
-    ${room.open ? `<section class="free-table-visitor-form-card">
-      <p class="free-table-eyebrow">来訪札</p><h2>「ただいま」を届ける</h2>
-      <form id="freeTableVisitorForm" class="free-table-form">
-        <label>表示名<input name="visitorName" maxlength="24" required value="${escapeHtml(card.name)}"></label>
-        <label>今日の過ごし方<input name="visitorActivityTag" maxlength="24" required value="${escapeHtml(card.activityTag)}"></label>
-        <label>ひとこと<input name="visitorMessage" maxlength="40" required value="${escapeHtml(card.message)}"></label>
-        <label>なりきり温度<select name="visitorRoleplayLevel">${Object.entries(FREE_TABLE_ROLEPLAY_LEVELS).map(([id, label]) => `<option value="${id}"${card.roleplayLevel === id ? " selected" : ""}>${label}</option>`).join("")}</select></label>
-        <div class="free-table-checks"><span>使いたいもの</span>
-          <label><input type="checkbox" checked disabled>文字</label>
-          ${room.space.media.image ? `<label><input type="checkbox" name="visitorMediaImage"${card.media.image ? " checked" : ""}>画像</label>` : ""}
-          ${room.space.media.audio ? `<label><input type="checkbox" name="visitorMediaAudio"${card.media.audio ? " checked" : ""}>10秒音声</label>` : ""}
-          ${room.space.media.video ? `<label><input type="checkbox" name="visitorMediaVideo"${card.media.video ? " checked" : ""}>10秒動画</label>` : ""}
-        </div>
-        <button type="submit" class="button primary">この部屋に「ただいま」</button>
-      </form>
-      <p class="free-table-muted">部屋主が今回は見送った場合、理由や履歴は残りません。</p>
-    </section>` : `<section class="free-table-visitor-form-card">
+    ${room.open ? renderVisitorCardForRoom(room) : `<section class="free-table-visitor-form-card">
       <p class="free-table-eyebrow">いまは留守です</p>
       <h2>灯りがともるまで、しおりを挟んで待てます</h2>
       <p>部屋が閉じている間も、帰る場所から消えません。活動を休んでも部屋が枯れることはありません。</p>
@@ -2541,19 +2691,30 @@ function renderFarewell() {
 
 function render() {
   if (!active || !app) return;
+  const screenChanged = lastRenderedFreeTableScreen !== state.screen;
+  const focusedAction = app.contains(document.activeElement)
+    ? String(document.activeElement?.dataset?.action || "")
+    : "";
   const previousTimeline = state.screen === "session" ? document.querySelector("#freeTableTimeline") : null;
   const scrollTop = previousTimeline?.scrollTop ?? null;
   const followTimeline = previousTimeline
     ? previousTimeline.scrollHeight - previousTimeline.scrollTop - previousTimeline.clientHeight < 80
     : true;
   if (state.screen === "invite") app.innerHTML = renderInviteEntrance();
+  else if (state.screen === "lampLoading") app.innerHTML = renderLampLoading();
   else if (state.screen === "room") app.innerHTML = renderRoomDetail();
   else if (state.screen === "connecting") app.innerHTML = renderConnecting();
   else if (state.screen === "session") app.innerHTML = renderSession();
   else if (state.screen === "departure") app.innerHTML = renderDepartureComposer();
   else if (state.screen === "farewell") app.innerHTML = renderFarewell();
   else app.innerHTML = renderHall();
+  lastRenderedFreeTableScreen = state.screen;
   bindRenderedEvents();
+  if (screenChanged) {
+    app.focus({ preventScroll: true });
+  } else if (["open-own-room", "show-requests"].includes(focusedAction)) {
+    document.querySelector(`[data-action="${focusedAction}"]`)?.focus({ preventScroll: true });
+  }
   if (state.screen === "session") {
     const timeline = document.querySelector("#freeTableTimeline");
     if (timeline) timeline.scrollTop = followTimeline ? timeline.scrollHeight : (scrollTop ?? timeline.scrollHeight);
@@ -2960,35 +3121,109 @@ async function copyHostInviteUrl() {
   showToast("今夜だけの入口をコピーしました。");
 }
 
-async function handleRequest(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  await waitForPendingLeaveSettlement();
-  if (!active) return;
+function roomRequestWasUnavailable(error) {
+  const code = String(error?.code || "").toLowerCase();
+  return code.includes("not-found")
+    || /いま一息ついています|いまは留守です/.test(String(error?.message || ""));
+}
+
+async function submitRoomRequest(visitorCardValue) {
   const lifecycle = state.generation;
   const sessionGeneration = state.sessionGeneration;
   const publicRoomId = state.selectedRoomId;
+  const sourceScreen = state.screen;
+  await waitForPendingLeaveSettlement();
+  if (!active
+      || state.generation !== lifecycle
+      || state.sessionGeneration !== sessionGeneration
+      || state.sessionId
+      || state.screen !== sourceScreen
+      || sourceScreen !== "room"
+      || state.selectedRoomId !== publicRoomId) return;
   await runBusy(async () => {
-    const visitorCard = visitorCardFromForm(form);
-    const data = await callFreeTableAction(FREE_TABLE_ACTIONS.REQUEST, {
-      publicRoomId,
-      visitorCard,
-    });
-    if (active && state.generation === lifecycle && state.sessionId) return;
+    const visitorCard = reusableVisitorCard(visitorCardValue);
+    if (!visitorCard) throw new Error("来訪札の内容を確認してください。");
+    state.visitorCard = visitorCard;
+    let data;
+    try {
+      data = await callFreeTableAction(FREE_TABLE_ACTIONS.REQUEST, {
+        publicRoomId,
+        visitorCard,
+      });
+    } catch (error) {
+      if (!roomRequestWasUnavailable(error)
+          || !active
+          || state.generation !== lifecycle
+          || state.sessionGeneration !== sessionGeneration) throw error;
+      state.rooms = state.rooms.filter((room) => room.id !== publicRoomId);
+      await refreshRooms(lifecycle, {
+        expectedSessionGeneration: sessionGeneration,
+        requireNoSession: true,
+      }).catch(() => {});
+      if (!active
+          || state.generation !== lifecycle
+          || state.sessionGeneration !== sessionGeneration
+          || state.sessionId) return;
+      state.formDirty = false;
+      state.selectedRoomId = "";
+      state.directLampEntry = false;
+      state.screen = "hall";
+      state.tab = "open";
+      state.lampNotice = "その灯りは、ちょうど同席になったか静かに閉じられました。";
+      showToast("灯りとのすれ違いでした。来訪札は届いていません。");
+      render();
+      return;
+    }
     if (!active
         || state.generation !== lifecycle
         || state.sessionGeneration !== sessionGeneration) {
       trackPendingLeaveSettlement(settlePendingAfterLeave());
       return;
     }
-    state.visitorCard = visitorCard;
+    persistVisitorCard(visitorCard);
+    if (state.sessionId) return;
+    state.visitorCardExpanded = false;
     state.formDirty = false;
     state.pendingRequest = normalizeRequest(data.request || data, data.requestId);
     state.screen = "hall";
     state.tab = "open";
+    state.directLampEntry = false;
+    state.lampNotice = "";
     showToast("来訪札を届けました。");
     render();
   });
+}
+
+async function handleRequest(event) {
+  event.preventDefault();
+  let visitorCard;
+  try {
+    visitorCard = visitorCardFromForm(event.currentTarget);
+  } catch (error) {
+    handleError(error);
+    return;
+  }
+  state.visitorCard = visitorCard;
+  await submitRoomRequest(visitorCard);
+}
+
+async function submitSavedVisitorCard() {
+  const room = roomById(state.selectedRoomId);
+  if (!room?.open) {
+    state.screen = "hall";
+    state.directLampEntry = false;
+    state.lampNotice = "その灯りは、ちょうど同席になったか静かに閉じられました。";
+    render();
+    return;
+  }
+  const visitorCard = visitorCardForAllowedMedia(state.visitorCard, room.space.media);
+  if (!visitorCard) {
+    state.visitorCardExpanded = true;
+    render();
+    document.querySelector("#freeTableVisitorForm input")?.focus();
+    return;
+  }
+  await submitRoomRequest(visitorCard);
 }
 
 async function handleInviteRequest(event) {
@@ -3008,14 +3243,15 @@ async function handleInviteRequest(event) {
         inviteId,
         visitorCard,
       });
-      if (active && state.generation === lifecycle && state.sessionId) return;
       if (!active
           || state.generation !== lifecycle
           || state.sessionGeneration !== sessionGeneration) {
         trackPendingLeaveSettlement(settlePendingAfterLeave());
         return;
       }
-      state.visitorCard = visitorCard;
+      persistVisitorCard(visitorCard);
+      if (state.sessionId) return;
+      state.visitorCardExpanded = false;
       state.formDirty = false;
       state.pendingRequest = normalizeRequest(data.request || data, data.requestId);
       state.screen = "hall";
@@ -5355,6 +5591,11 @@ async function initializeAuthenticatedFreeTable(generation = state.generation) {
     const user = await ensureAuthenticated();
     if (!active || state.generation !== generation) return "";
     state.uid = user.uid;
+    const storedVisitorCard = loadStoredVisitorCard(user.uid);
+    if (storedVisitorCard) {
+      state.visitorCard = storedVisitorCard;
+      state.visitorCardSaved = true;
+    }
     state.reportContext = loadReportContext(user.uid);
     armReportContextExpiry(state.reportContext);
     addUnsubscriber(state.unsubscribers, onValue(
@@ -5557,8 +5798,60 @@ async function openInvite(inviteIdValue) {
   await refreshInvitePreview(generation, expectedInviteId);
 }
 
-async function start() {
+function normalizeFreeTableIntent(value) {
+  return value === "lamp" ? "lamp" : "hall";
+}
+
+function resolveFreeTableEntryIntent() {
+  if (state.entryIntent !== "lamp" || state.sessionId) return;
+  state.entryIntent = "hall";
+  state.lampNotice = "";
+  state.directLampEntry = false;
+  state.visitorCardExpanded = false;
+  if (state.pendingRequest) {
+    state.screen = "hall";
+    state.tab = "open";
+    return;
+  }
+  if (state.roomOpen) {
+    state.screen = "hall";
+    state.tab = "mine";
+    return;
+  }
+  const room = state.rooms[0] || null;
+  if (room) {
+    state.selectedRoomId = room.id;
+    state.screen = "room";
+    state.directLampEntry = true;
+    return;
+  }
+  state.screen = "hall";
+  state.tab = "open";
+  state.lampNotice = "その灯りは、ちょうど同席になったか静かに閉じられました。";
+}
+
+async function start({ intent = "hall" } = {}) {
+  const entryIntent = normalizeFreeTableIntent(intent);
   if (active) {
+    if (entryIntent === "lamp" && !state.sessionId) {
+      state.entryIntent = "lamp";
+      if (state.authenticatedReady) {
+        const generation = state.generation;
+        state.screen = "lampLoading";
+        render();
+        try {
+          await refreshRooms(generation, { requireNoSession: true });
+          if (!active || state.generation !== generation || state.sessionId) return;
+          resolveFreeTableEntryIntent();
+        } catch (error) {
+          if (!active || state.generation !== generation || state.sessionId) return;
+          state.entryIntent = "hall";
+          state.screen = "hall";
+          handleError(error);
+          return;
+        }
+      }
+    }
     render();
     return;
   }
@@ -5576,6 +5869,9 @@ async function start() {
   }
   active = true;
   state = createFreeTableState();
+  lastRenderedFreeTableScreen = "";
+  state.entryIntent = entryIntent;
+  state.screen = entryIntent === "lamp" ? "lampLoading" : "hall";
   app?.classList.remove("is-busy");
   const generation = ++lifecycleGeneration;
   state.generation = generation;
@@ -5583,9 +5879,13 @@ async function start() {
   try {
     await initializeAuthenticatedFreeTable(generation);
     if (!active || state.generation !== generation) return;
+    resolveFreeTableEntryIntent();
     render();
   } catch (error) {
-    if (active && state.generation === generation) handleError(error);
+    if (active && state.generation === generation) {
+      if (state.screen === "lampLoading") state.screen = "hall";
+      handleError(error);
+    }
   }
 }
 
@@ -5668,6 +5968,9 @@ async function handleDocumentAction(event) {
   else if (action === "copy-invite-url") await copyHostInviteUrl();
   else if (action === "back-hall") {
     state.formDirty = false;
+    state.directLampEntry = false;
+    state.visitorCardExpanded = false;
+    state.lampNotice = "";
     state.screen = "hall";
     render();
   } else if (action === "tab" && FREE_TABLE_TABS.has(button.dataset.tab)) {
@@ -5676,11 +5979,42 @@ async function handleDocumentAction(event) {
       return;
     }
     state.tab = button.dataset.tab;
+    state.lampNotice = "";
     render();
   } else if (action === "select-room") {
     state.selectedRoomId = button.dataset.roomId || "";
     state.screen = "room";
+    state.directLampEntry = false;
+    state.visitorCardExpanded = false;
+    state.lampNotice = "";
     render();
+  } else if (action === "open-own-room") {
+    state.directLampEntry = false;
+    state.lampNotice = "";
+    state.tab = "mine";
+    state.screen = "hall";
+    render();
+    const spaceForm = document.querySelector("#freeTableSpaceForm");
+    spaceForm?.scrollIntoView({
+      behavior: "auto",
+      block: "start",
+    });
+    spaceForm?.querySelector("input, textarea, select, button")?.focus({ preventScroll: true });
+  } else if (action === "show-requests") {
+    state.directLampEntry = false;
+    state.lampNotice = "";
+    state.tab = "mine";
+    state.screen = "hall";
+    render();
+    const requestShelf = document.querySelector("#freeTableRequestShelf");
+    requestShelf?.scrollIntoView({ behavior: "auto", block: "start" });
+    requestShelf?.querySelector("button")?.focus({ preventScroll: true });
+  } else if (action === "send-saved-visitor-card") {
+    await submitSavedVisitorCard();
+  } else if (action === "edit-visitor-card") {
+    state.visitorCardExpanded = true;
+    render();
+    document.querySelector("#freeTableVisitorForm input")?.focus();
   } else if (action === "toggle-room") await toggleRoom(button.dataset.open === "true");
   else if (action === "apply-space-ambience-preset") {
     applySpaceAmbiencePreset(button.dataset.presetId || "");

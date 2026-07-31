@@ -151,6 +151,7 @@ let active = false;
 let state = createState();
 let lastRenderedScreen = "";
 let strategyMatchmakingGenerationCounter = 0;
+let resultNavigationBusy = false;
 
 const shared = () => window.HariaiApp?.shared;
 const escapeHtml = (value) => shared()?.escapeHtml(value) ?? String(value);
@@ -537,6 +538,9 @@ function render() {
   lastRenderedScreen = state.screen;
   if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("beforeend", renderStrategyChat());
   bindScreenEvents();
+  if (screenChanged && state.screen === "gameover") {
+    window.HariaiOnline?.refreshFreeTablePublicStats?.().catch(() => {});
+  }
   if (screenChanged) {
     window.scrollTo(0, 0);
     app.focus({ preventScroll: true });
@@ -898,8 +902,20 @@ function renderGameOver() {
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
     ${renderStrategyReviewInvite()}
     ${renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
+    <div id="strategyFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${window.HariaiOnline?.renderFreeTableResultLampContent?.({ buttonId: "strategyFreeTableLampButton" }) || ""}</div>
     <div class="screen-actions strategy-final-actions">${shareButton}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
+}
+
+function syncStrategyFreeTableResultLamp() {
+  if (!active || state.screen !== "gameover") return;
+  const slot = document.querySelector("#strategyFreeTableLampSlot");
+  window.HariaiOnline?.syncFreeTableResultLampSlot?.({
+    slot,
+    buttonId: "strategyFreeTableLampButton",
+    onClick: leaveToFreeTable,
+    focusFallbackSelector: "#strategyNewMatch",
+  });
 }
 
 function firebaseNow() {
@@ -1310,6 +1326,7 @@ function bindScreenEvents() {
   document.querySelector("#strategyReviewDecline")?.addEventListener("click", () => submitReviewDecision("decline"));
   document.querySelector("#strategyReviewLeave")?.addEventListener("click", leaveStrategyReview);
   document.querySelector("#strategyNewMatch")?.addEventListener("click", resetStrategySetup);
+  document.querySelector("#strategyFreeTableLampButton")?.addEventListener("click", leaveToFreeTable);
   document.querySelector("#strategyWithdrawAgain")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyNoContestAgain")?.addEventListener("click", resetStrategySetup);
   document.querySelector("#strategyRetry")?.addEventListener("click", retryConnection);
@@ -3925,33 +3942,59 @@ async function cancelMatching() {
   render();
 }
 
+function beginResultNavigation(triggerId = "") {
+  if (resultNavigationBusy) return false;
+  resultNavigationBusy = true;
+  document.querySelectorAll([
+    "#strategyNewMatch",
+    "#strategyFreeTableLampButton",
+    "#strategyFinish",
+    "#strategyWithdrawAgain",
+    "#strategyWithdrawHome",
+    "#strategyNoContestAgain",
+    "#strategyNoContestHome",
+    "#strategyErrorHome",
+  ].join(", ")).forEach((button) => {
+    button.setAttribute("disabled", "");
+  });
+  if (triggerId) {
+    document.querySelector(`#${triggerId}`)?.setAttribute("aria-busy", "true");
+  }
+  return true;
+}
+
 async function resetStrategySetup() {
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  const main = prepareDeckForRematch(state.main);
-  const reserve = prepareDeckForRematch(state.reserve);
-  const identity = {
-    uid: state.uid,
-    authReady: state.authReady,
-    name: state.name,
-    clues: [...state.clues],
-    weaknessIndex: state.weaknessIndex,
-    pursuitLine: state.pursuitLine,
-    imagePreference: state.imagePreference,
-    profile: { ...state.profile },
-    economy: state.economy,
-  };
-  await cleanupOnlineResources(false);
-  releaseMatchMedia();
-  state = createState();
-  Object.assign(state, identity);
-  state.main = main;
-  state.reserve = reserve;
-  state.screen = "profile";
-  setStrategyChrome("STRATEGY READY");
-  render();
+  if (!beginResultNavigation("strategyNewMatch")) return;
+  try {
+    const main = prepareDeckForRematch(state.main);
+    const reserve = prepareDeckForRematch(state.reserve);
+    const identity = {
+      uid: state.uid,
+      authReady: state.authReady,
+      name: state.name,
+      clues: [...state.clues],
+      weaknessIndex: state.weaknessIndex,
+      pursuitLine: state.pursuitLine,
+      imagePreference: state.imagePreference,
+      profile: { ...state.profile },
+      economy: state.economy,
+    };
+    await cleanupOnlineResources(false);
+    releaseMatchMedia();
+    state = createState();
+    Object.assign(state, identity);
+    state.main = main;
+    state.reserve = reserve;
+    state.screen = "profile";
+    setStrategyChrome("STRATEGY READY");
+    render();
+  } finally {
+    resultNavigationBusy = false;
+  }
 }
 
 function prepareDeckForRematch(items) {
@@ -3980,12 +4023,37 @@ async function leaveToLanding() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  state.matchmakingLaunchGeneration += 1;
-  state.matchmakingLaunchBusy = false;
-  await cleanupOnlineResources(false);
-  releaseAllImages();
-  active = false;
-  window.HariaiApp?.returnHome?.();
+  if (!beginResultNavigation()) return;
+  try {
+    state.matchmakingLaunchGeneration += 1;
+    state.matchmakingLaunchBusy = false;
+    await cleanupOnlineResources(false);
+    releaseAllImages();
+    active = false;
+    window.HariaiApp?.returnHome?.();
+  } finally {
+    resultNavigationBusy = false;
+  }
+}
+
+async function leaveToFreeTable() {
+  if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
+    showToast("差し入れの送信が終わるまでお待ちください。");
+    return;
+  }
+  if (!beginResultNavigation("strategyFreeTableLampButton")) return;
+  try {
+    state.matchmakingLaunchGeneration += 1;
+    state.matchmakingLaunchBusy = false;
+    await cleanupOnlineResources(false);
+    releaseAllImages();
+    active = false;
+    const openFreeTable = window.HariaiApp?.openFreeTable;
+    if (typeof openFreeTable === "function") openFreeTable({ intent: "lamp" });
+    else window.HariaiApp?.returnHome?.();
+  } finally {
+    resultNavigationBusy = false;
+  }
 }
 
 async function cleanupMatchmaking(keepActive) {
@@ -4091,6 +4159,11 @@ window.addEventListener("beforeunload", () => {
 window.addEventListener("hariai-ranking-dashboard-updated", () => {
   if (active && state.screen === "profile") updateStrategyCrownMatchmakingActions();
 });
+
+window.addEventListener(
+  "hariai-free-table-public-stats-updated",
+  syncStrategyFreeTableResultLamp,
+);
 
 window.HariaiStrategy = { start, isActive, requestHome, destroyRoom };
 window.dispatchEvent(new CustomEvent("hariai-strategy-ready"));

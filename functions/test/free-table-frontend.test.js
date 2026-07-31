@@ -333,12 +333,11 @@ test("visitor request captures its form before awaiting leave settlement", () =>
 
   assert.match(
     requestHandler,
-    /const form = event\.currentTarget;\s+await waitForPendingLeaveSettlement\(\);/,
+    /visitorCard = visitorCardFromForm\(event\.currentTarget\);[\s\S]*await submitRoomRequest\(visitorCard\);/,
   );
-  assert.match(requestHandler, /visitorCardFromForm\(form\)/);
   assert.doesNotMatch(
     requestHandler,
-    /await waitForPendingLeaveSettlement\(\);[\s\S]*visitorCardFromForm\(event\.currentTarget\)/,
+    /await submitRoomRequest\(visitorCard\);[\s\S]*visitorCardFromForm\(event\.currentTarget\)/,
   );
 });
 
