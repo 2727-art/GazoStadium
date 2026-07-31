@@ -332,7 +332,6 @@ test("internal flea design and local artifacts are excluded from every static pu
   const workerIgnore = read(".assetsignore");
   const privatePaths = [
     "ANJU_PAY_FLEA_DESIGN.md",
-    "TRAINING_60_DESIGN.md",
     "AI_TEXT_TRAINING_DESIGN.md",
     ".codex-remote-attachments",
     "database-debug.log",

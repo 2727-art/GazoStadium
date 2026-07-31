@@ -126,10 +126,6 @@ test("the two active image-battle result screens use the shared post-match tip U
     assert.match(source, new RegExp(`bindPostMatchTip\\([\\s\\S]*?mode: "${mode}"`));
     assert.equal((source.match(/renderPostMatchTip\(/g) || []).length, 1);
   }
-  assert.doesNotMatch(
-    read("training.js"),
-    /renderPostMatchTip|bindPostMatchTip|get_match_tip|send_match_tip/,
-  );
 });
 
 test("new economy ledgers are server-only in Firestore Rules", () => {

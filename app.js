@@ -1,6 +1,26 @@
 (function () {
   "use strict";
 
+  const RETIRED_TRAINING_DATABASE_NAME = "hariai-training-v6";
+  const RETIRED_TRAINING_STORAGE_KEYS = Object.freeze([
+    "hariai-training-v6-safety",
+  ]);
+
+  function purgeRetiredTrainingLocalData() {
+    try {
+      RETIRED_TRAINING_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // Storage can be unavailable in privacy modes; retirement must still continue.
+    }
+    try {
+      globalThis.indexedDB?.deleteDatabase?.(RETIRED_TRAINING_DATABASE_NAME);
+    } catch {
+      // A stale tab can temporarily block deletion. A later page load retries it.
+    }
+  }
+
+  purgeRetiredTrainingLocalData();
+
   const MAX_ROUNDS = 5;
   const MAX_FILE_BYTES = 15 * 1024 * 1024;
   const MAX_IMAGE_SIDE = 1600;
@@ -1024,7 +1044,6 @@
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
-    const trainingStats = modeStats("training");
     const aiTextTrainingStats = lobbyStats.aiTextTraining || {};
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const freeTableLamp = freeTableLampPresentation(freeTableStats);
@@ -1037,7 +1056,6 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
-          そして厳選した5枚をDRAWし、画像に刺さった側へ相手が60秒寄り添う「鍛え合い60」。
           最大10枚のロスターからAIが5枚をDRAWする、ソロの「AI文字コラトレーニング」も選べます。
           疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
@@ -1047,7 +1065,6 @@
         <div class="hero-actions">
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
-          <button class="button button-training hero-mode-button" id="trainingButton"><small>刺さったら、相手のリズムと応援で60秒。</small><span>鍛え合い60</span></button>
           <button class="button hero-free-table-button hero-mode-button${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
@@ -1070,10 +1087,6 @@
           <article class="lobby-mode-card strategy"><div class="lobby-mode-head"><span>戦略型1ON1</span><small>STRATEGY</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbyStrategyWaitingCount">${statValue(strategyStats.waiting)}</span><em>人</em></strong></div>
             <div><small>対戦中</small><strong><span id="lobbyStrategyPlayingCount">${statValue(strategyStats.playing)}</span><em>人</em></strong></div>
-          </div></article>
-          <article class="lobby-mode-card training"><div class="lobby-mode-head"><span>鍛え合い60</span><small>TRAINING</small></div><div class="lobby-mode-counts">
-            <div><small>待機中</small><strong><span id="lobbyTrainingWaitingCount">${statValue(trainingStats.waiting)}</span><em>人</em></strong></div>
-            <div><small>実行中</small><strong><span id="lobbyTrainingPlayingCount">${statValue(trainingStats.playing)}</span><em>人</em></strong></div>
           </div></article>
           <article class="lobby-mode-card free-table-status"><div class="lobby-mode-head"><span>貼り合い自由卓</span><small>FREE TABLE</small></div><div class="lobby-mode-counts">
             <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
@@ -1111,7 +1124,6 @@
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
-    document.querySelector("#trainingButton")?.addEventListener("click", startTraining);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#aiTextTrainingLightsStartButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
@@ -1773,15 +1785,6 @@
     window.addEventListener("hariai-strategy-ready", () => window.HariaiStrategy?.start?.(), { once: true });
   }
 
-  function startTraining() {
-    if (window.HariaiTraining?.start) {
-      window.HariaiTraining.start();
-      return;
-    }
-    showToast("鍛え合い60を読み込んでいます…");
-    window.addEventListener("hariai-training-ready", () => window.HariaiTraining?.start?.(), { once: true });
-  }
-
   function startAiTextTraining() {
     if (window.HariaiAiTextTraining?.start) {
       window.HariaiAiTextTraining.start();
@@ -2258,7 +2261,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + TRAINING 60 + SOLO AI TEXT TRAINING + FREE TABLE + MARKETS";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO AI TEXT TRAINING + FREE TABLE + MARKETS";
     if (footerItems[1]) footerItems[1].textContent = "ソロの最大10画像とDRAW結果は端末内。対人モードのメディアはP2Pで一時転送します";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
@@ -2295,10 +2298,6 @@
       window.HariaiStrategy.requestHome();
       return;
     }
-    if (window.HariaiTraining?.isActive?.()) {
-      window.HariaiTraining.requestHome();
-      return;
-    }
     if (window.HariaiOnline?.isActive?.()) {
       window.HariaiOnline.requestHome();
       return;
@@ -2309,10 +2308,6 @@
   document.querySelector("#confirmDestroy")?.addEventListener("click", () => {
     if (window.HariaiStrategy?.isActive?.()) {
       window.setTimeout(() => window.HariaiStrategy.destroyRoom(), 0);
-      return;
-    }
-    if (window.HariaiTraining?.isActive?.()) {
-      window.setTimeout(() => window.HariaiTraining.destroyRoom(), 0);
       return;
     }
     if (window.HariaiOnline?.isActive?.()) {

@@ -17,7 +17,7 @@ const readProject = (relativePath) => (
   fs.readFileSync(path.join(projectRoot, relativePath), "utf8")
 );
 
-test("retired team modes have no callable result derivation or active-session path", () => {
+test("retired team and Training 60 modes have no callable result derivation or active-session path", () => {
   const source = read("index.js");
   const verifiedModes = source.slice(
     source.indexOf("const VERIFIED_MATCH_MODES"),
@@ -30,9 +30,9 @@ test("retired team modes have no callable result derivation or active-session pa
   assert.doesNotMatch(source, /online\/teamDuoScores|verifiedTeamDuoResults/);
   assert.doesNotMatch(verifiedModes, /\bteam\s*:/);
   assert.doesNotMatch(source, /teamActive|teamQueue|teamRooms/);
-  assert.match(source, /trainingActive/);
-  assert.match(source, /trainingQueue/);
-  assert.match(source, /trainingRooms/);
+  assert.doesNotMatch(source, /trainingActive/);
+  assert.doesNotMatch(source, /trainingQueue/);
+  assert.doesNotMatch(source, /trainingRooms/);
 });
 
 test("retired team matches cannot enter rewards, tips, rankings, crowns, or achievements", () => {

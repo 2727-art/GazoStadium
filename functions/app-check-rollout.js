@@ -23,8 +23,6 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   soloFamiliarAction: true,
   // 通常版1on1のV2セッションとマッチ生成はサーバー専用境界のため、常時強制します。
   soloSessionAction: true,
-  trainingSessionAction: true,
-  trainingV6Action: true,
   // TURN認証情報の発行は課金可能な外部リソースのため、常時強制します。
   getP2pIceServers: true,
   // 接続診断は内部保存領域への書き込みとなるため、常時強制します。
@@ -44,8 +42,6 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   freeTableInvitePreview: true,
   // トップ向け統計も生の卓情報を読まず、App Check済みの集計境界だけを公開します。
   freeTablePublicStats: true,
-  // 鍛え合い60は非公開の継続記録とサーバー確定結果を扱う新規境界です。
-  trainingAction: true,
   economyAction: reached("economy_enforced"),
   valueMarketQueue: reached("market_enforced"),
   valueMarketAction: reached("market_enforced"),

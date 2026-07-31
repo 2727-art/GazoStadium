@@ -56,7 +56,7 @@ test("team ranking history remains representable but cannot grow", () => {
   assert.match(overall.lastResultMode[".validate"], /data\.val\(\) === 'team'/);
 });
 
-test("team daily history remains valid while new training progress is allowed", () => {
+test("retired team and Training 60 daily fields remain history-compatible", () => {
   const daily = online.economy.$uid.daily;
   const missions = daily.claimed.$missionId[".validate"];
 

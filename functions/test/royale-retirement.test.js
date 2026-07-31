@@ -23,7 +23,6 @@ test("battle royale has no playable client or realtime room surface", () => {
   for (const moduleName of ["account", "strategy", "online", "flea-market", "market"]) {
     assert.match(index, new RegExp(`${moduleName}\\.js\\?v=[^"]*remove-royale-v1`), moduleName);
   }
-  assert.match(index, /training\.js\?v=training-v6-companion-1/);
   assert.doesNotMatch(app, /royaleBattleButton|HariaiRoyale/);
   assert.doesNotMatch(online, /royaleBattleButton|HariaiRoyale/);
   assert.doesNotMatch(styles, /\.royale[-_a-zA-Z0-9]*/);

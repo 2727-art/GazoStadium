@@ -99,11 +99,13 @@ function presenceHarness({ actionHandler } = {}) {
 
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
-test("the landing presents training lights as anonymous companionship, outside matchmaking stats", () => {
-  const heroActionsEnd = app.indexOf("</div>\n        ${renderAiTextTrainingLights(aiTextTrainingStats)}");
+test("the landing presents AI text training lights as anonymous companionship, outside matchmaking stats", () => {
+  const heroActionsStart = app.indexOf('<div class="hero-actions">');
+  const trainingLightsStart = app.indexOf("${renderAiTextTrainingLights(aiTextTrainingStats)}", heroActionsStart);
   const lobbyStatsStart = app.indexOf('<div class="mode-lobby-stats"');
-  assert.ok(heroActionsEnd >= 0, "training lights follow the hero actions");
-  assert.ok(lobbyStatsStart > heroActionsEnd, "training lights stay outside matchmaking cards");
+  assert.ok(heroActionsStart >= 0, "hero actions are rendered");
+  assert.ok(trainingLightsStart > heroActionsStart, "training lights follow the hero actions");
+  assert.ok(lobbyStatsStart > trainingLightsStart, "training lights stay outside matchmaking cards");
   assert.match(app, /文字コラジムの灯り/);
   assert.match(app, /いま\$\{activeCount\}人が、それぞれの場所でトレーニング中/);
   assert.match(app, /あなたも、自分のペースでこの輪に加われます/);

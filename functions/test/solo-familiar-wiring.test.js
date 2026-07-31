@@ -367,7 +367,7 @@ test("relationship state also prevents treating a transfer target as pristine", 
 });
 
 test("other online modes do not gain familiar or reunion behavior", () => {
-  for (const relativePath of ["strategy.js", "training.js"]) {
+  for (const relativePath of ["strategy.js"]) {
     assert.doesNotMatch(read(relativePath), /\bsoloFamiliar|顔なじみ帳|再会マッチ/i);
   }
 });

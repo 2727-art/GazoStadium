@@ -2451,11 +2451,6 @@ button:disabled {
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
 }
 
-.lobby-mode-card.training {
-  border-color: rgba(123, 238, 172, 0.38);
-  background: linear-gradient(145deg, rgba(44, 176, 113, 0.11), rgba(244, 201, 107, 0.035));
-}
-
 .lobby-mode-card.strategy {
   border-color: rgba(89, 181, 255, 0.42);
   background: linear-gradient(145deg, rgba(31, 126, 213, 0.12), rgba(255, 255, 255, 0.025));

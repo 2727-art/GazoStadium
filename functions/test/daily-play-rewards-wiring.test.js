@@ -52,10 +52,6 @@ test("only the two active image-battle modes feed the shared verified-match rewa
   );
   assert.match(online, /settleDailyPlayRewards\(uid, \{ announce: true, renderAfter: false \}\)/);
   assert.match(online, /economyBalance:\s*periodResult\?\.economyBalance \?\? null/);
-  assert.doesNotMatch(
-    read("training.js"),
-    /recordOverallResult|recordPeriodRewardResult|action:\s*"record_match"/,
-  );
 });
 
 test("missions show one claim-all control, interval progress, and folded tier details", () => {

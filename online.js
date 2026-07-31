@@ -361,7 +361,7 @@ const DAILY_MISSIONS = [
   { id: "play_solo", progressKey: "soloMatches", title: "通常型1on1を1回完走", description: "通常型1on1の正式な決着が対象です。", target: 1, reward: 70 },
   { id: "play_strategy", progressKey: "strategyMatches", title: "戦略型1on1を1回完走", description: "戦略型1on1の正式な決着が対象です。", target: 1, reward: 80 },
   { id: "play_team", progressKey: "teamMatches", title: "ふたりチャレンジを1回完走", description: "終了した推し上手！ふたりチャレンジの記録です。", target: 1, reward: 100, endsAfter: "2026-07-28" },
-  { id: "play_training", progressKey: "trainingMatches", title: "鍛え合いトレーニングを1試合", description: "鍛え合いトレーニングの正式な決着が対象です。", target: 1, reward: 100, startsOn: "2026-07-28" },
+  { id: "play_training", progressKey: "trainingMatches", title: "鍛え合いトレーニングを1試合", description: "終了した鍛え合い60の記録です。", target: 1, reward: 100, startsOn: "2026-07-28", endsAfter: "2026-08-01" },
 ];
 const dailyMissionsForDate = (dateKey) => DAILY_MISSIONS.filter((mission) => (
   (mission.id !== "complete_match" || dateKey < GENERIC_MATCH_MISSION_END_DATE_KEY)
@@ -375,6 +375,7 @@ const DAILY_PROGRESS_LIMITS = Object.freeze({
   soloMatches: 1,
   strategyMatches: 1,
   teamMatches: 1,
+  // Retired Training 60 keys remain readable for pre-cutover daily records only.
   trainingMatches: 1,
   trainingSets: 3,
   trainingSeconds: 86_400,
@@ -489,7 +490,7 @@ let aiTextTrainingPublicStatsRequest = null;
 let aiTextTrainingPublicStatsTimer = null;
 let lastAiTextTrainingPublicStatsEventSignature = "";
 let freeTableResultTransitionBusy = false;
-const LOBBY_MODES = [...ACTIVE_BATTLE_MODES, "training"];
+const LOBBY_MODES = [...ACTIVE_BATTLE_MODES];
 const createLobbyStats = (value = null) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
   freeTable: { ...freeTablePublicStats },
@@ -1677,10 +1678,6 @@ function openOnlineScreen(screen) {
     showToast("推し値市場を終了してからオンライン画面を開いてください。");
     return;
   }
-  if (window.HariaiTraining?.isActive?.()) {
-    showToast("鍛え合い60を終了してからオンライン画面を開いてください。");
-    return;
-  }
   if (window.HariaiAiTextTraining?.isActive?.()) {
     showToast("文字コラトレーニングを終了してからオンライン画面を開いてください。");
     return;
@@ -2338,8 +2335,6 @@ function renderLobbyStats() {
     lobbySoloPlayingCount: lobbyStats.solo.playing,
     lobbyStrategyWaitingCount: lobbyStats.strategy.waiting,
     lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
-    lobbyTrainingWaitingCount: lobbyStats.training.waiting,
-    lobbyTrainingPlayingCount: lobbyStats.training.playing,
     lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
     lobbyFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
     lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
@@ -3913,7 +3908,7 @@ function renderDailyPlayRewardPanel() {
     </div>
     <p class="daily-play-reward-copy">${escapeHtml(statusDetail)}</p>
     <details class="daily-play-reward-details"><summary>全${dailyPlay.tiers.length}段階を見る</summary><ol>${tiers}</ol></details>
-    <p class="daily-play-reward-note">勝敗を問わず、現在遊べる2つの対戦モードのサーバー検証済み完走が対象です（通常型・戦略型1on1）。鍛え合い60は専用ミッションだけに加算されます。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
+    <p class="daily-play-reward-note">勝敗を問わず、現在遊べる2つの対戦モードのサーバー検証済み完走が対象です（通常型・戦略型1on1）。未受取分は達成日の終了後${dailyPlay.graceDays}日間まとめて受け取れます。</p>
   </section>`;
 }
 

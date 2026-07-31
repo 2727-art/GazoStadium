@@ -2243,7 +2243,6 @@ async function start({ initialScreen = "shelf" } = {}) {
   const anotherModeActive = window.HariaiAccount?.isActive?.()
     || window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
-    || window.HariaiTraining?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.();
   if (anotherModeActive) {

@@ -403,7 +403,7 @@ function start() {
     showToast("LOCAL UI PREVIEW中はVALUE MARKET以外のオンライン機能へ接続しません。");
     return;
   }
-  if (window.HariaiOnline?.isActive?.() || window.HariaiTraining?.isActive?.()
+  if (window.HariaiOnline?.isActive?.()
       || window.HariaiAiTextTraining?.isActive?.() || window.HariaiMarket?.isActive?.()) {
     showToast("進行中のオンライン画面を終了してから開いてください。");
     return;

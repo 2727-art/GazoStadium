@@ -728,7 +728,6 @@ function modeIsActiveElsewhere() {
   return Boolean(
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
-    || window.HariaiTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()
     || window.HariaiFreeTable?.isActive?.()

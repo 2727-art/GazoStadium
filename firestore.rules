@@ -405,14 +405,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 鍛え合い60の旧セット履歴・V3 HP対戦／運動記録と
-    // protocol別の冪等確定台帳は、App Check強制のtrainingActionだけが
-    // Admin SDKで読み書きします。
+    // 終了した鍛え合い60の統計・実績再現用プロフィールと確定台帳は
+    // 履歴として保持する。クライアントからの読み書きは再開しない。
     match /trainingProfiles/{uid} {
       allow read, write: if false;
     }
 
-    match /trainingClaims/{uid}/rooms/{roomId} {
+    match /trainingClaims/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /trainingV6Claims/{document=**} {
       allow read, write: if false;
     }
 

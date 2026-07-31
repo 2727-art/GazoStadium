@@ -80,7 +80,7 @@ function availableOn(mission, dateKey) {
     && (!mission.endsAfter || dateKey < mission.endsAfter);
 }
 
-test("client and server daily mission catalogs replace team with training at the JST cutover", () => {
+test("client and server keep retired mode missions as closed historical definitions", () => {
   const { source: browserSource, rows: browserRows } = browserDailyMissions();
   const serverRows = serverDailyMissions();
 
@@ -96,6 +96,7 @@ test("client and server daily mission catalogs replace team with training at the
     assert.equal(rows.some((mission) => mission.progressKey === "royaleMatches"), false);
     assert.equal(byId.get("play_team")?.endsAfter, "2026-07-28");
     assert.equal(byId.get("play_training")?.startsOn, "2026-07-28");
+    assert.equal(byId.get("play_training")?.endsAfter, "2026-08-01");
 
     const activeModeRewards = (dateKey) => Object.fromEntries(rows
       .filter((mission) => mission.id.startsWith("play_") && availableOn(mission, dateKey))
@@ -110,9 +111,17 @@ test("client and server daily mission catalogs replace team with training at the
       play_strategy: 80,
       play_training: 100,
     });
+    assert.deepEqual(activeModeRewards("2026-08-01"), {
+      play_solo: 70,
+      play_strategy: 80,
+    });
     assert.equal(
       Object.values(activeModeRewards("2026-07-27")).reduce((sum, reward) => sum + reward, 0),
       250,
+    );
+    assert.equal(
+      Object.values(activeModeRewards("2026-08-01")).reduce((sum, reward) => sum + reward, 0),
+      150,
     );
     assert.equal(
       Object.values(activeModeRewards("2026-07-28")).reduce((sum, reward) => sum + reward, 0),

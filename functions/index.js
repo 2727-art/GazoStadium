@@ -17,26 +17,6 @@ const {
   createOnlinePublicPresenceCleanup,
 } = require("./online-public-presence-cleanup");
 const {
-  createTrainingRoomCleanup,
-  createTrainingSessionResourceCleanup,
-  trainingActiveRoomIsLive,
-} = require("./training-room-cleanup");
-const {
-  createTrainingSessionV5Cleanup,
-} = require("./training-session-v5-cleanup");
-const {
-  createTrainingSessionV5Service,
-} = require("./training-session-v5-service");
-const {
-  createTrainingSessionV6Service,
-} = require("./training-session-v6-service");
-const {
-  executeTrainingV6Settlement,
-} = require("./training-v6-settlement");
-const {
-  createTrainingSessionService,
-} = require("./training-session-service");
-const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
 } = require("./app-check-rollout");
@@ -73,13 +53,9 @@ const {
   unlockAchievements,
 } = require("./achievements");
 const {
-  TRAINING_ROOM_MAX_AGE_MS,
-  applyTrainingHpSession,
-  applyTrainingSession,
-  assertTrainingRoomFinalizable,
-  normalizeTrainingProfile,
-  trainingDailySettlement,
-} = require("./training");
+  normalizeRetiredTrainingHistory,
+  retiredTrainingHistoryHasActivity,
+} = require("./retired-training-history");
 const {
   CREATOR_CARD_PREMIUM_PRODUCT_ID,
   CREATOR_CARD_TEXT_MAX_LENGTH,
@@ -361,41 +337,8 @@ const realtime = getDatabase();
 const anjuPayFleaAchievementStatsStore = createAnjuPayFleaAchievementStatsStore({
   firestore,
 });
-// Deploy-window safety only: retired V4 clients cannot write new state, but an
-// in-flight V4 claim/room must still block account transfer until it expires.
-// Remove this reader after the retired-resource cleanup has drained the rollout.
-const retiredTrainingSessionService = createTrainingSessionService({
-  realtime,
-  HttpsError,
-  crypto,
-});
-const trainingSessionService = createTrainingSessionV5Service({
-  realtime,
-  HttpsError,
-  crypto,
-});
-const trainingSessionV6Service = createTrainingSessionV6Service({
-  realtime,
-  HttpsError,
-  crypto,
-});
 const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
-});
-const cleanupTrainingSessionV5 = createTrainingSessionV5Cleanup({
-  realtime,
-});
-const cleanupTrainingSessionResources = createTrainingSessionResourceCleanup({
-  realtime,
-});
-const cleanupTrainingRooms = createTrainingRoomCleanup({
-  realtime,
-  finalizeRoom: ({ roomId, participantUid, now }) => (
-    finalizeTraining(participantUid, roomId, {
-      now,
-      maxRoomAgeMs: Number.MAX_SAFE_INTEGER,
-    })
-  ),
 });
 const adminAuth = getAuth();
 const MAX_POINTS = ANJU_PAY_MAX_BALANCE;
@@ -460,7 +403,11 @@ const DAILY_MISSIONS = Object.freeze({
     progressKey: "teamMatches", target: 1, reward: 100, endsAfter: "2026-07-28",
   },
   play_training: {
-    progressKey: "trainingMatches", target: 1, reward: 100, startsOn: "2026-07-28",
+    progressKey: "trainingMatches",
+    target: 1,
+    reward: 100,
+    startsOn: "2026-07-28",
+    endsAfter: "2026-08-01",
   },
 });
 
@@ -1092,14 +1039,6 @@ function economyProgressRef(uid) {
 
 function trainingProfileRef(uid) {
   return firestore.collection("trainingProfiles").doc(uid);
-}
-
-function trainingClaimRef(uid, roomId) {
-  return firestore.collection("trainingClaims").doc(uid).collection("rooms").doc(roomId);
-}
-
-function trainingV6ClaimRef(uid, roomId) {
-  return firestore.collection("trainingV6Claims").doc(uid).collection("rooms").doc(roomId);
 }
 
 function achievementProfileRef(uid) {
@@ -1900,7 +1839,7 @@ async function ensureAchievementState(uid) {
     const progress = normalizeEconomyProgress(progressData);
     const marketStats = normalizeMarketStats(marketSnapshot.data());
     const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
-    const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
+    const trainingProfile = normalizeRetiredTrainingHistory(trainingSnapshot.data());
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
       rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
@@ -3033,7 +2972,7 @@ async function setAchievementShowcase(uid, idsValue) {
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
     const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
-    const trainingProfile = normalizeTrainingProfile(trainingSnapshot.data());
+    const trainingProfile = normalizeRetiredTrainingHistory(trainingSnapshot.data());
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
       rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
@@ -4130,749 +4069,6 @@ async function claimPeriods(uid) {
     mirrorEconomyProgress(uid, progressResult),
   ]);
   return result;
-}
-
-async function initializeTraining(uid) {
-  const profileRef = trainingProfileRef(uid);
-  const progressRef = economyProgressRef(uid);
-  const now = Date.now();
-  let profile = null;
-  let daily = null;
-  await firestore.runTransaction(async (transaction) => {
-    const [profileSnapshot, progressSnapshot] = await Promise.all([
-      transaction.get(profileRef),
-      transaction.get(progressRef),
-    ]);
-    profile = normalizeTrainingProfile(profileSnapshot.data());
-    daily = normalizeEconomyProgress(
-      progressSnapshot.data(),
-      jstDateKey(now),
-    ).daily;
-    if (!profileSnapshot.exists) {
-      profile.updatedAt = now;
-      transaction.create(profileRef, profile);
-    }
-  });
-  return {
-    result: { status: "ready" },
-    profile,
-    daily,
-  };
-}
-
-async function readTrainingV6PrivateState(uid, now) {
-  const [profileSnapshot, progressSnapshot, achievementSnapshot] = await Promise.all([
-    trainingProfileRef(uid).get(),
-    economyProgressRef(uid).get(),
-    achievementProfileRef(uid).get(),
-  ]);
-  const profile = normalizeTrainingProfile(profileSnapshot.data());
-  const progress = normalizeEconomyProgress(
-    progressSnapshot.data(),
-    jstDateKey(now),
-  );
-  const achievementProfile = normalizeAchievementProfile(
-    achievementSnapshot.data(),
-  );
-  return {
-    profile,
-    progress,
-    achievementProfile,
-  };
-}
-
-function publicTrainingV6CallerState(state) {
-  return {
-    profile: state.profile,
-    daily: state.progress.daily,
-    achievements: publicAchievementProfile(
-      state.achievementProfile,
-      state.progress.achievementStats,
-      null,
-      state.profile,
-    ),
-  };
-}
-
-async function readTrainingV6CallerState(uid, now) {
-  return publicTrainingV6CallerState(
-    await readTrainingV6PrivateState(uid, now),
-  );
-}
-
-function publicTrainingV6SettlementResult(settlement, uid) {
-  const decision = settlement.decision;
-  const metrics = decision.metricsByUid?.[uid] || {
-    sessionDelta: 0,
-    completedSets: 0,
-    completedSeconds: 0,
-  };
-  return {
-    status: settlement.status === "ignored" ? "ignored" : "final",
-    finalization: settlement.status,
-    reason: settlement.reason,
-    terminalPhase: decision.terminalPhase,
-    recordable: decision.recordable,
-    sessionDelta: metrics.sessionDelta,
-    completedSets: metrics.completedSets,
-    completedSeconds: metrics.completedSeconds,
-  };
-}
-
-async function settleTrainingV6Room(uid, room, now = Date.now()) {
-  const profileResults = {};
-  const progressResults = {};
-  const achievementResults = {};
-  const settlement = await executeTrainingV6Settlement({
-    room,
-    callerUid: uid,
-    now,
-    dependencies: {
-      runTransaction: (callback) => firestore.runTransaction(
-        async (transaction) => {
-          Object.keys(profileResults).forEach((key) => delete profileResults[key]);
-          Object.keys(progressResults).forEach((key) => delete progressResults[key]);
-          Object.keys(achievementResults).forEach(
-            (key) => delete achievementResults[key],
-          );
-          return callback(transaction);
-        },
-      ),
-      getClaim: ({ transaction, roomId, uid: participantUid }) => (
-        transaction.get(trainingV6ClaimRef(participantUid, roomId))
-      ),
-      applyParticipants: async ({
-        transaction,
-        participantSettlements,
-      }) => {
-        const profileRefs = participantSettlements.map(({ uid: participantUid }) => (
-          trainingProfileRef(participantUid)
-        ));
-        const progressRefs = participantSettlements.map(({ uid: participantUid }) => (
-          economyProgressRef(participantUid)
-        ));
-        const achievementRefs = participantSettlements.map(
-          ({ uid: participantUid }) => achievementProfileRef(participantUid),
-        );
-        // Firestore requires every transaction read to complete before the
-        // first write. Claims were read by executeTrainingV6Settlement; these
-        // are the remaining participant-owned canonical documents.
-        const snapshots = await Promise.all([
-          ...profileRefs.map((ref) => transaction.get(ref)),
-          ...progressRefs.map((ref) => transaction.get(ref)),
-          ...achievementRefs.map((ref) => transaction.get(ref)),
-        ]);
-        const count = participantSettlements.length;
-        const profileSnapshots = snapshots.slice(0, count);
-        const progressSnapshots = snapshots.slice(count, count * 2);
-        const achievementSnapshots = snapshots.slice(count * 2, count * 3);
-
-        participantSettlements.forEach((participantSettlement, index) => {
-          const participantUid = participantSettlement.uid;
-          const metrics = participantSettlement.metrics;
-          const profile = applyTrainingSession(
-            profileSnapshots[index].data(),
-            metrics.completionTimestamps,
-            participantSettlement.terminalAt,
-            now,
-            { completedSeconds: metrics.completedSeconds },
-          );
-          const dailySettlement = trainingDailySettlement(
-            progressSnapshots[index].data(),
-            [
-              participantSettlement.terminalAt,
-              ...metrics.completionTimestamps,
-            ],
-            now,
-            [
-              0,
-              ...metrics.completionTimestamps.map(() => 60),
-            ],
-          );
-          const progress = normalizeEconomyProgress(
-            progressSnapshots[index].data(),
-            dailySettlement.dateKey,
-          );
-          if (dailySettlement.creditTrainingSet) {
-            progress.daily.trainingMatches = Math.min(
-              1,
-              progress.daily.trainingMatches + metrics.sessionDelta,
-            );
-          }
-          progress.daily.trainingSets = Math.min(
-            3,
-            progress.daily.trainingSets
-              + Math.max(0, dailySettlement.creditTrainingSets - 1),
-          );
-          progress.daily.trainingSeconds = Math.min(
-            86_400,
-            progress.daily.trainingSeconds
-              + dailySettlement.creditTrainingSeconds,
-          );
-          progress.updatedAt = now;
-          const unlockResult = unlockAchievements(
-            achievementSnapshots[index].data(),
-            eligibleAchievementIds({
-              trainingStats: profile,
-              scope: "training",
-            }),
-            now,
-          );
-          profileResults[participantUid] = profile;
-          progressResults[participantUid] = progress;
-          achievementResults[participantUid] = unlockResult.profile;
-        });
-
-        participantSettlements.forEach(({ uid: participantUid }, index) => {
-          transaction.set(profileRefs[index], profileResults[participantUid]);
-          transaction.set(progressRefs[index], progressResults[participantUid]);
-          transaction.set(
-            achievementRefs[index],
-            achievementResults[participantUid],
-          );
-        });
-      },
-      createClaim: ({
-        transaction,
-        roomId,
-        uid: participantUid,
-        claim,
-      }) => {
-        transaction.create(
-          trainingV6ClaimRef(participantUid, roomId),
-          claim,
-        );
-      },
-    },
-  });
-
-  const participantStates = {};
-  if (settlement.decision.recordable) {
-    await Promise.all(settlement.decision.participants.map(
-      async (participantUid) => {
-        if (profileResults[participantUid]
-            && progressResults[participantUid]
-            && achievementResults[participantUid]) {
-          participantStates[participantUid] = {
-            profile: profileResults[participantUid],
-            progress: progressResults[participantUid],
-            achievementProfile: achievementResults[participantUid],
-          };
-          return;
-        }
-        participantStates[participantUid] = await readTrainingV6PrivateState(
-          participantUid,
-          now,
-        );
-      },
-    ));
-    // Include duplicate participants so a retry can heal a previously failed
-    // best-effort projection without changing any canonical counters.
-    await bestEffort("settleTrainingV6", settlement.decision.participants.map(
-      (participantUid) => Promise.all([
-        mirrorEconomyProgress(
-          participantUid,
-          participantStates[participantUid].progress,
-        ),
-        syncAchievementPublicSurfaces(
-          participantUid,
-          participantStates[participantUid].achievementProfile,
-        ),
-      ]),
-    ));
-  }
-  const callerState = participantStates[uid]
-    ? publicTrainingV6CallerState(participantStates[uid])
-    : await readTrainingV6CallerState(uid, now);
-  return {
-    result: publicTrainingV6SettlementResult(settlement, uid),
-    ...callerState,
-  };
-}
-
-async function dispatchTrainingV6Action(uid, data) {
-  const actionResult = await trainingSessionV6Service.dispatch(uid, data);
-  if (!["complete", "no_contest"].includes(actionResult?.phase)) {
-    return actionResult;
-  }
-  const room = actionResult.snapshot || actionResult.room;
-  const settlementResult = await settleTrainingV6Room(uid, room);
-  const terminalAt = Number(room?.result?.completedAt || 0);
-  if (typeof room?.roomId === "string"
-      && Number.isSafeInteger(terminalAt)
-      && terminalAt > 0) {
-    try {
-      const acknowledgement = await trainingSessionV6Service
-        .acknowledgeFinalization(room.roomId, terminalAt);
-      if (acknowledgement.acknowledged !== true) {
-        console.error("training V6 finalization acknowledgement rejected", {
-          roomId: eventId(room.roomId),
-          terminalAt,
-        });
-      }
-    } catch (error) {
-      // Settlement is already canonical in Firestore. Keep the durable RTDB
-      // outbox entry so the scheduled reconciler can retry only the ACK.
-      console.error("training V6 finalization acknowledgement failed", {
-        roomId: eventId(room.roomId),
-        terminalAt,
-        code: typeof error?.code === "string" ? error.code : "unknown",
-      });
-    }
-  }
-  return {
-    ...actionResult,
-    ...settlementResult,
-  };
-}
-
-async function reconcilePendingTrainingV6Finalizations(
-  now = Date.now(),
-  limit = 25,
-) {
-  const pending = await trainingSessionV6Service.pendingFinalizations(limit);
-  const summary = {
-    pending: pending.length,
-    settled: 0,
-    acknowledged: 0,
-    failed: 0,
-  };
-  for (const item of pending) {
-    const room = item?.room;
-    const entry = item?.entry;
-    const roomId = typeof room?.roomId === "string" ? room.roomId : "";
-    const participantUid = typeof entry?.participantUid === "string"
-      ? entry.participantUid
-      : "";
-    const terminalAt = Number(entry?.terminalAt || room?.result?.completedAt || 0);
-    try {
-      if (!roomId
-          || entry?.roomId !== roomId
-          || !participantUid
-          || !Number.isSafeInteger(terminalAt)
-          || terminalAt <= 0
-          || room?.members?.[participantUid] !== true) {
-        throw new TypeError("Training V6 pending finalization is invalid");
-      }
-      await settleTrainingV6Room(participantUid, room, now);
-      summary.settled += 1;
-      const acknowledgement = await trainingSessionV6Service
-        .acknowledgeFinalization(roomId, terminalAt);
-      if (acknowledgement.acknowledged !== true) {
-        throw new Error("Training V6 finalization acknowledgement was rejected");
-      }
-      summary.acknowledged += 1;
-    } catch (error) {
-      summary.failed += 1;
-      console.error("training V6 pending finalization failed", {
-        roomId: roomId ? eventId(roomId) : "invalid",
-        terminalAt,
-        code: typeof error?.code === "string"
-          ? error.code
-          : error instanceof TypeError
-            ? "validation"
-            : "unknown",
-      });
-    }
-  }
-  return summary;
-}
-
-function trainingServerFinalizationMatches(value, result) {
-  const finalized = objectValue(value);
-  const baseMatches = Number(finalized.version) === result.protocolVersion
-    && finalized.reason === result.reason
-    && Number(finalized.turnCount) === result.turnCount
-    && sameIds(
-      Object.keys(objectValue(finalized.outcomes)).sort(),
-      result.participants,
-    )
-    && result.participants.every((participantUid) => (
-      finalized.outcomes?.[participantUid] === result.outcomes[participantUid]
-    ));
-  if (!baseMatches) return false;
-  if (result.protocolVersion === 3) {
-    const metricKeys = [
-      "hpByUid",
-      "damageReceivedByUid",
-      "scoreTotalByUid",
-      "score10CountByUid",
-      "score9CountByUid",
-      "hitsReceivedByUid",
-      "completedWorkoutsByUid",
-      "workoutSecondsByUid",
-      "overkillByUid",
-    ];
-    return Number(finalized.roundCount) === result.roundCount
-      && finalized.noContest === result.noContest
-      && metricKeys.every((key) => (
-        sameIds(
-          Object.keys(objectValue(finalized[key])).sort(),
-          result.participants,
-        )
-        && result.participants.every((participantUid) => (
-          Number(finalized[key]?.[participantUid])
-            === result[key][participantUid]
-        ))
-      ))
-      && finalized.finisher?.eligible === result.finisher.eligible
-      && finalized.finisher?.winnerUid === result.finisher.winnerUid
-      && finalized.finisher?.loserUid === result.finisher.loserUid
-      && Number(finalized.finisher?.overkill) === result.finisher.overkill;
-  }
-  return sameIds(
-    Object.keys(objectValue(finalized.completedSetsByUid)).sort(),
-    result.participants,
-  ) && result.participants.every((participantUid) => (
-    Number(finalized.completedSetsByUid?.[participantUid])
-      === result.completedSetsByUid[participantUid]
-    && (result.protocolVersion === 1
-      || (
-        Number(finalized.completedSecondsByUid?.[participantUid])
-          === result.completedSecondsByUid[participantUid]
-        && Number(finalized.boostCompletedSetsByUid?.[participantUid])
-          === result.boostCompletedSetsByUid[participantUid]
-        && Number(finalized.boostSecondsByUid?.[participantUid])
-          === result.boostSecondsByUid[participantUid]
-      ))
-  ));
-}
-
-async function finalizeTraining(uid, roomId, {
-  now = Date.now(),
-  maxRoomAgeMs = TRAINING_ROOM_MAX_AGE_MS,
-} = {}) {
-  const roomRef = realtime.ref(`online/trainingRooms/${roomId}`);
-  const roomSnapshot = await roomRef.get();
-  const room = roomSnapshot.val();
-  let derived;
-  try {
-    derived = assertTrainingRoomFinalizable(
-      room,
-      uid,
-      now,
-      { maxAgeMs: maxRoomAgeMs },
-    );
-  } catch {
-    throw new HttpsError(
-      "failed-precondition",
-      "鍛え合い60の有効な完走ルームを確認できませんでした。",
-    );
-  }
-  if (derived.status !== "final") {
-    return {
-      result: {
-        status: "pending",
-        retryAfterMs: derived.retryAfterMs,
-      },
-      profile: null,
-      daily: null,
-    };
-  }
-  if (room?.serverFinalized
-      && !trainingServerFinalizationMatches(room.serverFinalized, derived)) {
-    throw new HttpsError(
-      "failed-precondition",
-      "鍛え合い60の確定結果が一致しません。",
-    );
-  }
-
-  const participants = derived.participants;
-  const profileRefs = participants.map((participantUid) => trainingProfileRef(participantUid));
-  const claimRefs = participants.map((participantUid) => (
-    trainingClaimRef(participantUid, roomId)
-  ));
-  const progressRefs = participants.map((participantUid) => (
-    economyProgressRef(participantUid)
-  ));
-  const achievementRefs = participants.map((participantUid) => (
-    achievementProfileRef(participantUid)
-  ));
-  const profileResults = {};
-  const progressResults = {};
-  const achievementResults = {};
-  let callerDuplicate = false;
-  await firestore.runTransaction(async (transaction) => {
-    Object.keys(profileResults).forEach((key) => delete profileResults[key]);
-    Object.keys(progressResults).forEach((key) => delete progressResults[key]);
-    Object.keys(achievementResults).forEach((key) => delete achievementResults[key]);
-    const snapshots = await Promise.all([
-      ...profileRefs.map((ref) => transaction.get(ref)),
-      ...claimRefs.map((ref) => transaction.get(ref)),
-      ...progressRefs.map((ref) => transaction.get(ref)),
-      ...achievementRefs.map((ref) => transaction.get(ref)),
-    ]);
-    const count = participants.length;
-    const profileSnapshots = snapshots.slice(0, count);
-    const claimSnapshots = snapshots.slice(count, count * 2);
-    const progressSnapshots = snapshots.slice(count * 2);
-    const achievementSnapshots = progressSnapshots.splice(count);
-    callerDuplicate = claimSnapshots[participants.indexOf(uid)].exists;
-
-    participants.forEach((participantUid, index) => {
-      const hpMode = derived.protocolVersion === 3;
-      const completedSets = derived.completedSetsByUid[participantUid];
-      const completedSeconds = derived.completedSecondsByUid[participantUid];
-      const boostCompletedSets = derived.boostCompletedSetsByUid[participantUid];
-      const boostSeconds = derived.boostSecondsByUid[participantUid];
-      const claimSnapshot = claimSnapshots[index];
-      const completionTimestamps = derived.completedAtByUid[participantUid];
-      const dailySettlement = trainingDailySettlement(
-        progressSnapshots[index].data(),
-        completionTimestamps,
-        now,
-        derived.completedSetSecondsByUid[participantUid],
-      );
-      const progress = normalizeEconomyProgress(
-        progressSnapshots[index].data(),
-        hpMode ? jstDateKey(now) : dailySettlement.dateKey,
-      );
-      const trainingSetDelta = !hpMode && dailySettlement.creditTrainingSet
-        ? derived.protocolVersion === 2
-          ? dailySettlement.creditTrainingSets
-          : 1
-        : 0;
-      const trainingSetsBefore = progress.daily.trainingSets;
-      const trainingSetsAfter = Math.min(
-        3,
-        trainingSetsBefore + trainingSetDelta,
-      );
-      const trainingMatchEligible = hpMode
-        ? !derived.noContest
-          && ["hp_zero", "round_limit", "surrender"].includes(derived.reason)
-        : ["mutual_complete", "mutual_base_complete", "surrender"].includes(
-          derived.reason,
-        );
-      if (claimSnapshot.exists) {
-        if (claimSnapshot.get("uid") !== participantUid
-            || claimSnapshot.get("roomId") !== roomId
-            || claimSnapshot.get("outcome") !== derived.outcomes[participantUid]
-            || Number(claimSnapshot.get("completedSets")) !== completedSets
-            || (derived.protocolVersion === 2
-              && (
-                Number(claimSnapshot.get("completedSeconds")) !== completedSeconds
-                || Number(claimSnapshot.get("boostCompletedSets")) !== boostCompletedSets
-                || Number(claimSnapshot.get("boostSeconds")) !== boostSeconds
-              ))
-            || (hpMode
-              && (
-                Number(claimSnapshot.get("roundCount")) !== derived.roundCount
-                || Number(claimSnapshot.get("hp")) !== derived.hpByUid[participantUid]
-                || Number(claimSnapshot.get("damageReceived"))
-                  !== derived.damageReceivedByUid[participantUid]
-                || Number(claimSnapshot.get("scoreReceived"))
-                  !== derived.scoreTotalByUid[participantUid]
-                || Number(claimSnapshot.get("score10Count"))
-                  !== derived.score10CountByUid[participantUid]
-                || Number(claimSnapshot.get("score9Count"))
-                  !== derived.score9CountByUid[participantUid]
-                || Number(claimSnapshot.get("hitsReceived"))
-                  !== derived.hitsReceivedByUid[participantUid]
-                || Number(claimSnapshot.get("completedWorkouts"))
-                  !== derived.completedWorkoutsByUid[participantUid]
-                || Number(claimSnapshot.get("workoutSeconds"))
-                  !== derived.workoutSecondsByUid[participantUid]
-                || Number(claimSnapshot.get("overkill"))
-                  !== derived.overkillByUid[participantUid]
-                || claimSnapshot.get("noContest") !== derived.noContest
-              ))) {
-          throw new HttpsError(
-            "failed-precondition",
-            "鍛え合い60の保存済み確定記録が一致しません。",
-          );
-        }
-        profileResults[participantUid] = normalizeTrainingProfile(
-          profileSnapshots[index].data(),
-        );
-        progressResults[participantUid] = progress;
-        const unlockResult = unlockAchievements(
-          achievementSnapshots[index].data(),
-          eligibleAchievementIds({
-            trainingStats: profileResults[participantUid],
-            scope: "training",
-          }),
-          now,
-        );
-        achievementResults[participantUid] = unlockResult.profile;
-        if (!achievementSnapshots[index].exists || unlockResult.newlyUnlocked.length) {
-          transaction.set(achievementRefs[index], unlockResult.profile);
-        }
-        return;
-      }
-
-      const profile = hpMode
-        ? applyTrainingHpSession(
-          profileSnapshots[index].data(),
-          derived.outcomes[participantUid],
-          {
-            noContest: derived.noContest,
-            rounds: derived.roundCount,
-            damageTaken: derived.damageReceivedByUid[participantUid],
-            scoreReceived: derived.scoreTotalByUid[participantUid],
-            hitsTaken: derived.hitsReceivedByUid[participantUid],
-            perfect10sReceived: derived.score10CountByUid[participantUid],
-            critical9sReceived: derived.score9CountByUid[participantUid],
-            completedWorkouts: derived.completedWorkoutsByUid[participantUid],
-            completedSeconds: derived.workoutSecondsByUid[participantUid],
-            overkillDealt:
-              derived.finisher.eligible
-              && derived.finisher.winnerUid === participantUid
-                ? derived.finisher.overkill
-                : 0,
-          },
-          now,
-        )
-        : applyTrainingSession(
-          profileSnapshots[index].data(),
-          completionTimestamps,
-          now,
-          now,
-          {
-            completedSeconds,
-            boostCompletedSets,
-            boostSeconds,
-            threeSetSessionComplete:
-              derived.protocolVersion === 2 && completedSets === 3,
-            threeSetDayComplete:
-              trainingSetsBefore < 3 && trainingSetsAfter === 3,
-          },
-        );
-      if (trainingSetDelta > 0) {
-        progress.daily.trainingSets = trainingSetsAfter;
-        if (derived.protocolVersion === 2) {
-          progress.daily.trainingSeconds = Math.min(
-            86_400,
-            progress.daily.trainingSeconds + dailySettlement.creditTrainingSeconds,
-          );
-        }
-      }
-      if (trainingMatchEligible) progress.daily.trainingMatches = 1;
-      progress.updatedAt = now;
-      profileResults[participantUid] = profile;
-      progressResults[participantUid] = progress;
-      const unlockResult = unlockAchievements(
-        achievementSnapshots[index].data(),
-        eligibleAchievementIds({ trainingStats: profile, scope: "training" }),
-        now,
-      );
-      achievementResults[participantUid] = unlockResult.profile;
-      transaction.set(profileRefs[index], profile);
-      transaction.set(progressRefs[index], progress);
-      if (!achievementSnapshots[index].exists || unlockResult.newlyUnlocked.length) {
-        transaction.set(achievementRefs[index], unlockResult.profile);
-      }
-      transaction.create(claimRefs[index], {
-        version: derived.protocolVersion,
-        protocolVersion: derived.protocolVersion,
-        uid: participantUid,
-        roomId,
-        participants,
-        outcome: derived.outcomes[participantUid],
-        reason: derived.reason,
-        completedSets,
-        completedSeconds,
-        boostCompletedSets,
-        boostSeconds,
-        turnCount: derived.turnCount,
-        ...(hpMode ? {
-          roundCount: derived.roundCount,
-          hp: derived.hpByUid[participantUid],
-          damageReceived: derived.damageReceivedByUid[participantUid],
-          scoreReceived: derived.scoreTotalByUid[participantUid],
-          score10Count: derived.score10CountByUid[participantUid],
-          score9Count: derived.score9CountByUid[participantUid],
-          hitsReceived: derived.hitsReceivedByUid[participantUid],
-          completedWorkouts: derived.completedWorkoutsByUid[participantUid],
-          workoutSeconds: derived.workoutSecondsByUid[participantUid],
-          overkill: derived.overkillByUid[participantUid],
-          noContest: derived.noContest,
-        } : {}),
-        finalizedBy: uid,
-        createdAt: now,
-      });
-    });
-  });
-
-  const serverFinalized = {
-    version: derived.protocolVersion,
-    reason: derived.reason,
-    turnCount: derived.turnCount,
-    outcomes: derived.outcomes,
-    completedSetsByUid: derived.completedSetsByUid,
-    completedSecondsByUid: derived.completedSecondsByUid,
-    boostCompletedSetsByUid: derived.boostCompletedSetsByUid,
-    boostSecondsByUid: derived.boostSecondsByUid,
-    ...(derived.protocolVersion === 3 ? {
-      roundCount: derived.roundCount,
-      hpByUid: derived.hpByUid,
-      damageReceivedByUid: derived.damageReceivedByUid,
-      scoreTotalByUid: derived.scoreTotalByUid,
-      score10CountByUid: derived.score10CountByUid,
-      score9CountByUid: derived.score9CountByUid,
-      hitsReceivedByUid: derived.hitsReceivedByUid,
-      completedWorkoutsByUid: derived.completedWorkoutsByUid,
-      workoutSecondsByUid: derived.workoutSecondsByUid,
-      overkillByUid: derived.overkillByUid,
-      noContest: derived.noContest,
-      finisher: derived.finisher,
-    } : {}),
-    finalizedAt: Number(room?.serverFinalized?.finalizedAt) || now,
-  };
-  const serverFinalizedTransaction = await roomRef.child("serverFinalized")
-    .transaction((current) => {
-      if (current == null) return serverFinalized;
-      if (!trainingServerFinalizationMatches(current, derived)) {
-        throw new TypeError("Training server finalization conflict");
-      }
-      return current;
-    });
-  if (!trainingServerFinalizationMatches(serverFinalizedTransaction.snapshot.val(), derived)) {
-    throw new HttpsError(
-      "aborted",
-      "鍛え合い60の確定結果を保存できませんでした。もう一度お試しください。",
-    );
-  }
-  await bestEffort("finalizeTraining", participants.map((participantUid) => (
-    Promise.all([
-      mirrorEconomyProgress(participantUid, progressResults[participantUid]),
-      syncAchievementPublicSurfaces(participantUid, achievementResults[participantUid]),
-    ])
-  )));
-  return {
-    result: {
-      status: "final",
-      finalization: callerDuplicate ? "duplicate" : "recorded",
-      outcome: derived.outcomes[uid],
-      reason: derived.reason,
-      completedSets: derived.completedSetsByUid[uid],
-      completedSeconds: derived.completedSecondsByUid[uid],
-      boostCompletedSets: derived.boostCompletedSetsByUid[uid],
-      boostSeconds: derived.boostSecondsByUid[uid],
-      turnCount: derived.turnCount,
-      ...(derived.protocolVersion === 3 ? {
-        roundCount: derived.roundCount,
-        hp: derived.hpByUid[uid],
-        damageReceived: derived.damageReceivedByUid[uid],
-        scoreReceived: derived.scoreTotalByUid[uid],
-        score10Count: derived.score10CountByUid[uid],
-        score9Count: derived.score9CountByUid[uid],
-        hitsReceived: derived.hitsReceivedByUid[uid],
-        completedWorkouts: derived.completedWorkoutsByUid[uid],
-        workoutSeconds: derived.workoutSecondsByUid[uid],
-        overkill: derived.overkillByUid[uid],
-        noContest: derived.noContest,
-        finisher: derived.finisher,
-      } : {}),
-    },
-    profile: profileResults[uid],
-    daily: progressResults[uid].daily,
-    achievements: publicAchievementProfile(
-      achievementResults[uid],
-      progressResults[uid].achievementStats,
-      null,
-      profileResults[uid],
-    ),
-  };
 }
 
 const VERIFIED_MATCH_MODES = Object.freeze({
@@ -10745,105 +9941,6 @@ exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (
   }
 });
 
-function trainingSessionV5DiagnosticId(uid, data) {
-  return crypto.createHash("sha256")
-    .update("training-session-v5:")
-    .update(String(uid || ""))
-    .update(":")
-    .update(String(data?.runId || ""))
-    .update(":")
-    .update(String(data?.endpointId || ""))
-    .digest("hex")
-    .slice(0, 16);
-}
-
-exports.trainingSessionAction = onCall(
-  callableOptions("trainingSessionAction"),
-  async (request) => {
-    const uid = requireUid(request);
-    const action = cleanText(request.data?.action, 24);
-    try {
-      const result = await trainingSessionService.dispatch(uid, request.data);
-      const reason = cleanText(result?.reason || result?.outcome, 32);
-      if (["reclaimed", "owner-replaced", "replaced-stale", "recovering"]
-        .includes(reason)) {
-        console.info("trainingSessionAction ownership transition", {
-          action,
-          reason,
-          diagnosticId: trainingSessionV5DiagnosticId(uid, request.data),
-          attemptState: cleanText(result?.state, 16),
-        });
-      }
-      return result;
-    } catch (error) {
-      if (error instanceof HttpsError) throw error;
-      console.error("trainingSessionAction failed", {
-        action,
-        category: error instanceof TypeError ? "validation" : "internal",
-      });
-      throw new HttpsError(
-        "internal",
-        "鍛え合い60のセッション処理を完了できませんでした。",
-      );
-    }
-  },
-);
-
-exports.trainingV6Action = onCall(
-  callableOptions("trainingV6Action"),
-  async (request) => {
-    const uid = requireUid(request);
-    const action = cleanText(request.data?.action, 40);
-    try {
-      return await dispatchTrainingV6Action(uid, request.data);
-    } catch (error) {
-      if (error instanceof HttpsError) throw error;
-      console.error("trainingV6Action failed", {
-        action,
-        category: error instanceof TypeError ? "validation" : "internal",
-      });
-      throw new HttpsError(
-        error instanceof TypeError ? "failed-precondition" : "internal",
-        error instanceof TypeError
-          ? "鍛え合い60 V6の確定状態を確認できませんでした。"
-          : "鍛え合い60 V6の処理を完了できませんでした。",
-      );
-    }
-  },
-);
-
-exports.trainingAction = onCall(callableOptions("trainingAction"), async (request) => {
-  const uid = requireUid(request);
-  const data = request.data;
-  const action = cleanText(data?.action, 16);
-  try {
-    if (!isPlainCallableObject(data)) {
-      throw new HttpsError("invalid-argument", "鍛え合い60の操作形式が正しくありません。");
-    }
-    if (action === "initialize") {
-      if (Reflect.ownKeys(data).some((key) => key !== "action")) {
-        throw new HttpsError("invalid-argument", "鍛え合い60の初期化情報が正しくありません。");
-      }
-      return await initializeTraining(uid);
-    }
-    if (action === "finalize") {
-      if (Reflect.ownKeys(data).some((key) => !["action", "roomId"].includes(key))
-          || !/^[-0-9A-Z_a-z]{20}$/.test(String(data.roomId || ""))) {
-        throw new HttpsError("invalid-argument", "鍛え合い60のルーム情報が正しくありません。");
-      }
-      return await finalizeTraining(uid, data.roomId);
-    }
-    throw new HttpsError("invalid-argument", "未対応の鍛え合い60操作です。");
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    console.error("trainingAction failed", {
-      action,
-      category: error instanceof TypeError ? "validation" : "internal",
-    });
-    throw new HttpsError("internal", "鍛え合い60の記録を処理できませんでした。");
-  }
-});
-
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -10962,65 +10059,12 @@ async function realtimeActiveSessionIsLive(uid, roomPath, activeSnapshot) {
   return presenceSnapshot.child("online").val() === true;
 }
 
-async function trainingActiveSessionIsLive(uid, activeSnapshot, now) {
-  if (!activeSnapshot.exists()) return false;
-  const activeValue = objectValue(activeSnapshot.val());
-  const roomId = cleanText(activeValue.roomId, 80);
-  if (!/^[A-Za-z0-9_-]{1,80}$/.test(roomId)) return false;
-  const reservedRoomIds = Object.entries(objectValue(activeValue.rooms))
-    .filter(([, reserved]) => reserved === true)
-    .map(([reservedRoomId]) => reservedRoomId);
-  if (reservedRoomIds.length !== 1 || reservedRoomIds[0] !== roomId) return false;
-  const roomSnapshot = await realtime.ref(`online/trainingRooms/${roomId}`).get();
-  return roomSnapshot.exists()
-    && trainingActiveRoomIsLive(roomSnapshot.val(), uid, now);
-}
-
-function trainingAttemptV5Ref(uid) {
-  return realtime.ref(`online/trainingAttemptsV5/${uid}`);
-}
-
-function retiredTrainingSessionClaimRef(uid) {
-  return realtime.ref(`online/trainingSessionClaims/${uid}`);
-}
-
-async function trainingV6SessionBlocksAccountTransfer(uid, now) {
-  const paths = trainingSessionV6Service.PATHS;
-  const membershipSnapshot = await realtime.ref(
-    `${paths.memberships}/${uid}`,
-  ).get();
-  if (!membershipSnapshot.exists()) return false;
-  const membership = objectValue(membershipSnapshot.val());
-  if (membership.protocolVersion !== 6 || membership.uid !== uid) return false;
-  if (membership.state === "waiting") {
-    const queueSnapshot = await realtime.ref(`${paths.queue}/${uid}`).get();
-    const queue = objectValue(queueSnapshot.val());
-    return queueSnapshot.exists()
-      && queue.protocolVersion === 6
-      && queue.uid === uid
-      && Number(queue.expiresAt || 0) > now;
-  }
-  if (membership.state !== "room") return false;
-  const roomId = cleanText(membership.roomId, 128);
-  if (!/^[-_0-9A-Za-z]{8,128}$/.test(roomId)) return false;
-  const roomSnapshot = await realtime.ref(`${paths.rooms}/${roomId}`).get();
-  const room = objectValue(roomSnapshot.val());
-  return roomSnapshot.exists()
-    && room.protocolVersion === 6
-    && room.variant === "companion_v6"
-    && room.roomId === roomId
-    && room.members?.[uid] === true
-    && !["complete", "no_contest"].includes(room.phase);
-}
-
 async function accountHasActiveSession(uid) {
   const realtimePaths = [
     { path: "active", roomPath: "rooms" },
     { path: "queue", queue: true },
     { path: "strategyActive", roomPath: "strategyRooms" },
     { path: "strategyQueue", queue: true },
-    { path: "trainingActive", roomPath: "trainingRooms" },
-    { path: "trainingQueue", queue: true },
   ];
   const now = Date.now();
   const snapshots = await Promise.all([
@@ -11029,13 +10073,8 @@ async function accountHasActiveSession(uid) {
     marketQueueRef(uid).get(),
     soloSessionClaimRef(uid).get(),
     liveSoloSessionV2Room(uid, now),
-    retiredTrainingSessionClaimRef(uid).get(),
-    retiredTrainingSessionService.liveRoom(uid, now),
-    trainingAttemptV5Ref(uid).get(),
-    trainingSessionService.liveRoom(uid, now),
     firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
     aiTextTrainingActiveAchievementSessionRef(uid).get(),
-    trainingV6SessionBlocksAccountTransfer(uid, now),
   ]);
   const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
   if (realtimeSnapshots.some((snapshot, index) => {
@@ -11044,9 +10083,7 @@ async function accountHasActiveSession(uid) {
   })) return true;
   const activeChecks = await Promise.all(realtimePaths.map((entry, index) => (
     entry.roomPath
-      ? entry.path === "trainingActive"
-        ? trainingActiveSessionIsLive(uid, realtimeSnapshots[index], now)
-        : realtimeActiveSessionIsLive(uid, entry.roomPath, realtimeSnapshots[index])
+      ? realtimeActiveSessionIsLive(uid, entry.roomPath, realtimeSnapshots[index])
       : false
   )));
   if (activeChecks.some(Boolean)) return true;
@@ -11054,37 +10091,12 @@ async function accountHasActiveSession(uid) {
   const marketQueueSnapshot = snapshots[realtimePaths.length + 1];
   const soloSessionClaimSnapshot = snapshots[realtimePaths.length + 2];
   const soloSessionRoom = snapshots[realtimePaths.length + 3];
-  const retiredTrainingSessionClaimSnapshot =
-    snapshots[realtimePaths.length + 4];
-  const retiredTrainingSessionRoom = snapshots[realtimePaths.length + 5];
-  const trainingAttemptSnapshot = snapshots[realtimePaths.length + 6];
-  const trainingSessionRoom = snapshots[realtimePaths.length + 7];
-  const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 8];
+  const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 4];
   const aiTextTrainingActiveAchievementSessionSnapshot =
-    snapshots[realtimePaths.length + 9];
-  const trainingV6SessionBlocksTransfer = snapshots[realtimePaths.length + 10];
+    snapshots[realtimePaths.length + 5];
   const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
-  const retiredTrainingSessionClaim = normalizeClaim(
-    retiredTrainingSessionClaimSnapshot.val(),
-  );
-  const trainingAttempt = objectValue(trainingAttemptSnapshot.val());
-  const trainingAttemptState = cleanText(trainingAttempt.state, 16);
-  const trainingAttemptBlocksTransfer = (
-    trainingAttempt.protocolVersion === 5
-    && (
-      ((trainingAttemptState === "waiting" || trainingAttemptState === "reserved")
-        && Number(trainingAttempt.queueExpiresAt || 0) > now)
-      || trainingAttemptState === "active"
-    )
-  );
   if ((soloSessionClaim && soloSessionClaim.expiresAt > now)
       || soloSessionRoom
-      || (retiredTrainingSessionClaim
-        && retiredTrainingSessionClaim.expiresAt > now)
-      || retiredTrainingSessionRoom
-      || trainingAttemptBlocksTransfer
-      || trainingSessionRoom
-      || trainingV6SessionBlocksTransfer
       || aiTextTrainingActiveUseSnapshot.exists
       || (
         aiTextTrainingActiveAchievementSessionSnapshot.exists
@@ -11163,7 +10175,8 @@ async function transferTargetIsPristine(uid, request) {
     aiTextTrainingActiveUseSnapshot,
     patronSnapshot,
     trainingProfileSnapshot,
-    trainingClaimSnapshot,
+    legacyTrainingClaimSnapshot,
+    trainingV6ClaimSnapshot,
     purchaseSnapshot,
     dailyClaimSnapshot,
     periodClaimSnapshot,
@@ -11199,6 +10212,7 @@ async function transferTargetIsPristine(uid, request) {
     patronageRef(uid).get(),
     trainingProfileRef(uid).get(),
     firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
+    firestore.collection("trainingV6Claims").doc(uid).collection("rooms").limit(1).get(),
     firestore.collection("economyPurchases").doc(uid).collection("items").limit(1).get(),
     firestore.collection("economyClaims").doc(uid).collection("daily").limit(1).get(),
     firestore.collection("economyClaims").doc(uid).collection("periods").limit(1).get(),
@@ -11220,30 +10234,9 @@ async function transferTargetIsPristine(uid, request) {
     return false;
   }
   if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
-  const trainingProfile = normalizeTrainingProfile(trainingProfileSnapshot.data());
-  if (trainingProfile.sessions > 0
-      || trainingProfile.completedSets > 0
-      || trainingProfile.completedSeconds > 0
-      || trainingProfile.boostCompletedSets > 0
-      || trainingProfile.boostSeconds > 0
-      || trainingProfile.threeSetCompletions > 0
-      || trainingProfile.threeSetDays > 0
-      || trainingProfile.completeDays > 0
-      || trainingProfile.hpSessions > 0
-      || trainingProfile.hpWins > 0
-      || trainingProfile.hpLosses > 0
-      || trainingProfile.hpDraws > 0
-      || trainingProfile.hpNoContests > 0
-      || trainingProfile.hpRounds > 0
-      || trainingProfile.hpDamageTaken > 0
-      || trainingProfile.hpScoreReceived > 0
-      || trainingProfile.hpHitsTaken > 0
-      || trainingProfile.hpPerfect10sReceived > 0
-      || trainingProfile.hpCritical9sReceived > 0
-      || trainingProfile.hpCompletedWorkouts > 0
-      || trainingProfile.hpCompletedSeconds > 0
-      || trainingProfile.hpOverkillDealt > 0
-      || !trainingClaimSnapshot.empty) return false;
+  if (retiredTrainingHistoryHasActivity(trainingProfileSnapshot.data())
+      || !legacyTrainingClaimSnapshot.empty
+      || !trainingV6ClaimSnapshot.empty) return false;
   if (marketSnapshot.exists
       || fleaAchievementStatsHaveActivity(fleaAchievementStatsSnapshot.data())
       || fleaSellerCardSnapshot.exists || patronSnapshot.exists
@@ -11479,9 +10472,6 @@ async function redeemAccountTransferCode(request, rawCode) {
       failure = "target-not-empty";
       return;
     }
-    const targetTrainingProfile = normalizeTrainingProfile(
-      targetTrainingProfileSnapshot.data(),
-    );
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
         || targetMarketSnapshot.exists
         || fleaAchievementStatsHaveActivity(targetFleaAchievementStatsSnapshot.data())
@@ -11496,28 +10486,7 @@ async function redeemAccountTransferCode(request, rawCode) {
         || !targetAiTextTrainingAchievementSessionSnapshot.empty
         || targetAiTextTrainingActiveAchievementSessionSnapshot.exists
         || targetAiTextTrainingActiveUseSnapshot.exists
-        || targetTrainingProfile.sessions > 0
-        || targetTrainingProfile.completedSets > 0
-        || targetTrainingProfile.completedSeconds > 0
-        || targetTrainingProfile.boostCompletedSets > 0
-        || targetTrainingProfile.boostSeconds > 0
-        || targetTrainingProfile.threeSetCompletions > 0
-        || targetTrainingProfile.threeSetDays > 0
-        || targetTrainingProfile.completeDays > 0
-        || targetTrainingProfile.hpSessions > 0
-        || targetTrainingProfile.hpWins > 0
-        || targetTrainingProfile.hpLosses > 0
-        || targetTrainingProfile.hpDraws > 0
-        || targetTrainingProfile.hpNoContests > 0
-        || targetTrainingProfile.hpRounds > 0
-        || targetTrainingProfile.hpDamageTaken > 0
-        || targetTrainingProfile.hpScoreReceived > 0
-        || targetTrainingProfile.hpHitsTaken > 0
-        || targetTrainingProfile.hpPerfect10sReceived > 0
-        || targetTrainingProfile.hpCritical9sReceived > 0
-        || targetTrainingProfile.hpCompletedWorkouts > 0
-        || targetTrainingProfile.hpCompletedSeconds > 0
-        || targetTrainingProfile.hpOverkillDealt > 0
+        || retiredTrainingHistoryHasActivity(targetTrainingProfileSnapshot.data())
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {
       failure = "target-not-empty";
@@ -16003,44 +14972,6 @@ exports.cleanupOnlinePublicPresence = onSchedule({
     return result;
   } catch (error) {
     console.error("cleanupOnlinePublicPresence failed", {
-      code: typeof error?.code === "string" ? error.code : "unknown",
-    });
-    throw error;
-  }
-});
-
-exports.cleanupTrainingRooms = onSchedule({
-  schedule: "every 5 minutes",
-  timeZone: "Asia/Tokyo",
-  timeoutSeconds: 120,
-  memory: "256MiB",
-  maxInstances: 1,
-}, async () => {
-  try {
-    const now = Date.now();
-    // Drain the durable V6 outbox before cleanup. A failed item remains in the
-    // outbox, and the V6 cleanup refuses to delete that room.
-    const trainingV6Finalizations =
-      await reconcilePendingTrainingV6Finalizations(now);
-    const [rooms, attempts, retiredResources, trainingV6Cleanup] = await Promise.all([
-      cleanupTrainingRooms(now),
-      cleanupTrainingSessionV5(now),
-      cleanupTrainingSessionResources(now),
-      trainingSessionV6Service.cleanup(now),
-    ]);
-    const result = {
-      rooms,
-      attempts,
-      retiredResources,
-      trainingV6: {
-        finalizations: trainingV6Finalizations,
-        cleanup: trainingV6Cleanup,
-      },
-    };
-    console.info("cleanupTrainingRooms completed", result);
-    return result;
-  } catch (error) {
-    console.error("cleanupTrainingRooms failed", {
       code: typeof error?.code === "string" ? error.code : "unknown",
     });
     throw error;

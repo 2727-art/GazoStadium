@@ -1397,7 +1397,6 @@ async function start({ initialScreen = "setup" } = {}) {
     return;
   }
   if (window.HariaiOnline?.isActive?.() || window.HariaiStrategy?.isActive?.()
-      || window.HariaiTraining?.isActive?.()
       || window.HariaiAiTextTraining?.isActive?.()) {
     showToast("ほかのモードを終了してからVALUE MARKETを開始してください。");
     return;

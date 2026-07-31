@@ -9,7 +9,7 @@ const onlineSource = read("online.js");
 const styles = read("styles.css");
 const indexHtml = read("index.html");
 const readme = read("README.md");
-const otherModeSources = ["strategy.js", "training.js"].map(read);
+const otherModeSources = ["strategy.js"].map(read);
 const engawaProtocolSource = onlineSource.match(
   /function sendEngawaMessage\(message, channel = state\.channel\) \{[\s\S]*?\nfunction hasSelectionStarted\(\) \{/,
 )?.[0] || "";

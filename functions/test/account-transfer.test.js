@@ -193,98 +193,18 @@ test("only nonzero flea achievement activity makes an account-transfer target no
   );
 });
 
-test("redeem transaction rechecks private training activity against finalization races", () => {
+test("redeem transaction keeps retired Training 60 profile history non-pristine", () => {
   const server = read("functions/index.js");
   const start = server.indexOf("async function redeemAccountTransferCode");
   const end = server.indexOf("async function cancelAccountTransferCode", start);
   assert.ok(start >= 0 && end > start);
   const redeem = server.slice(start, end);
   assert.match(redeem, /transaction\.get\(trainingProfileRef\(targetUid\)\)/);
-  assert.match(redeem, /normalizeTrainingProfile\(\s*targetTrainingProfileSnapshot\.data\(\)/);
-  assert.match(redeem, /targetTrainingProfile\.sessions > 0/);
-  assert.match(redeem, /targetTrainingProfile\.completedSets > 0/);
-  assert.match(redeem, /targetTrainingProfile\.completeDays > 0/);
-  assert.match(redeem, /targetTrainingProfile\.hpSessions > 0/);
-  assert.match(redeem, /targetTrainingProfile\.hpCompletedSeconds > 0/);
-  assert.match(redeem, /targetTrainingProfile\.hpOverkillDealt > 0/);
-});
-
-test("account transfer preserves the retired V4 deploy guard and canonical V5 guard", () => {
-  const server = read("functions/index.js");
-  const start = server.indexOf("async function accountHasActiveSession");
-  const end = server.indexOf("function economyProgressHasActivity", start);
-  assert.ok(start >= 0 && end > start);
-  const activeSessionCheck = server.slice(start, end);
-  assert.match(activeSessionCheck, /soloSessionClaimRef\(uid\)\.get\(\)/);
-  assert.match(activeSessionCheck, /liveSoloSessionV2Room\(uid, now\)/);
-  assert.match(activeSessionCheck, /trainingAttemptV5Ref\(uid\)\.get\(\)/);
   assert.match(
-    activeSessionCheck,
-    /trainingSessionService\.liveRoom\(uid, now\)/,
+    redeem,
+    /retiredTrainingHistoryHasActivity\(targetTrainingProfileSnapshot\.data\(\)\)/,
   );
-  assert.match(
-    activeSessionCheck,
-    /soloSessionClaim && soloSessionClaim\.expiresAt > now/,
-  );
-  assert.match(activeSessionCheck, /\|\| soloSessionRoom/);
-  assert.match(
-    activeSessionCheck,
-    /retiredTrainingSessionClaimRef\(uid\)\.get\(\)/,
-  );
-  assert.match(
-    activeSessionCheck,
-    /retiredTrainingSessionService\.liveRoom\(uid, now\)/,
-  );
-  assert.doesNotMatch(server, /retiredTrainingSessionService\.dispatch/);
-  assert.match(
-    activeSessionCheck,
-    /retiredTrainingSessionClaim[\s\S]*retiredTrainingSessionClaim\.expiresAt > now/,
-  );
-  assert.match(activeSessionCheck, /\|\| retiredTrainingSessionRoom/);
-  assert.match(
-    activeSessionCheck,
-    /\(trainingAttemptState === "waiting" \|\| trainingAttemptState === "reserved"\)[\s\S]*trainingAttempt\.queueExpiresAt \|\| 0\) > now/,
-  );
-  assert.match(activeSessionCheck, /trainingAttemptState === "active"/);
-  assert.match(activeSessionCheck, /\|\| trainingSessionRoom/);
-});
-
-test("account transfer is blocked by a waiting or active Training V6 session", () => {
-  const server = read("functions/index.js");
-  const helperStart = server.indexOf(
-    "async function trainingV6SessionBlocksAccountTransfer",
-  );
-  const helperEnd = server.indexOf(
-    "async function accountHasActiveSession",
-    helperStart,
-  );
-  assert.ok(helperStart >= 0 && helperEnd > helperStart);
-  const helper = server.slice(helperStart, helperEnd);
-  assert.match(helper, /trainingSessionV6Service\.PATHS/);
-  assert.match(helper, /`\$\{paths\.memberships\}\/\$\{uid\}`/);
-  assert.match(helper, /membership\.state === "waiting"/);
-  assert.match(helper, /`\$\{paths\.queue\}\/\$\{uid\}`/);
-  assert.match(helper, /Number\(queue\.expiresAt \|\| 0\) > now/);
-  assert.match(helper, /membership\.state !== "room"/);
-  assert.match(helper, /`\$\{paths\.rooms\}\/\$\{roomId\}`/);
-  assert.match(helper, /room\.members\?\.\[uid\] === true/);
-  assert.match(
-    helper,
-    /!\["complete", "no_contest"\]\.includes\(room\.phase\)/,
-  );
-
-  const activeStart = helperEnd;
-  const activeEnd = server.indexOf("function economyProgressHasActivity", activeStart);
-  assert.ok(activeEnd > activeStart);
-  const activeSessionCheck = server.slice(activeStart, activeEnd);
-  assert.match(
-    activeSessionCheck,
-    /trainingV6SessionBlocksAccountTransfer\(uid, now\)/,
-  );
-  assert.match(
-    activeSessionCheck,
-    /\|\| trainingV6SessionBlocksTransfer/,
-  );
+  assert.doesNotMatch(redeem, /normalizeTrainingProfile|targetTrainingProfile\./);
 });
 
 test("AI text training achievement history and active uses block account transfer", () => {

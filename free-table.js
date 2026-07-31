@@ -5855,10 +5855,6 @@ async function start({ intent = "hall" } = {}) {
     render();
     return;
   }
-  if (window.HariaiTraining?.isActive?.()) {
-    showToast("鍛え合い60を終了してから自由卓を開いてください。");
-    return;
-  }
   if (window.HariaiAiTextTraining?.isActive?.()) {
     showToast("文字コラトレーニングを終了してから自由卓を開いてください。");
     return;

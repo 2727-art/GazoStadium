@@ -780,7 +780,6 @@ function modesAreActive() {
   return Boolean(
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
-    || window.HariaiTraining?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.(),

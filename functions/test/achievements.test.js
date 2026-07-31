@@ -84,7 +84,7 @@ test("only active 1on1 matches advance play days and loss streaks", () => {
   assert.equal(stats.losses, 2);
 });
 
-test("training achievements combine legacy sets with current HP workouts without rewarding wins", () => {
+test("retired Training 60 aggregates remain readable but cannot unlock new achievements", () => {
   const trainingStats = normalizeTrainingStats({
     sessions: 4,
     completedSets: 9,
@@ -100,11 +100,14 @@ test("training achievements combine legacy sets with current HP workouts without
     seconds: 600,
   });
   const ids = eligibleAchievementIds({ trainingStats, scope: "training" });
-  for (const expected of [
-    "training_sessions_5",
-    "training_workouts_10",
-    "training_minutes_10",
-  ]) assert.equal(ids.includes(expected), true, expected);
+  assert.deepEqual(ids, []);
+  assert.equal(
+    ACHIEVEMENT_DEFINITIONS.every((definition) => (
+      definition.scope !== "training"
+      || (definition.legacy === true && definition.hint === "終了したモードの記録")
+    )),
+    true,
+  );
   assert.equal(
     ACHIEVEMENT_DEFINITIONS.some((definition) => (
       definition.scope === "training"
@@ -286,14 +289,19 @@ test("already unlocked retired achievements remain normalized and visible", () =
     unlocked: {
       battle_team_1: 10,
       team_duo_breakthrough: 20,
+      training_sessions_1: 30,
     },
-    customShowcase: ["team_duo_breakthrough"],
+    customShowcase: ["team_duo_breakthrough", "training_sessions_1"],
   });
   assert.deepEqual(Object.keys(profile.unlocked).sort(), [
     "battle_team_1",
     "team_duo_breakthrough",
+    "training_sessions_1",
   ]);
-  assert.deepEqual(effectiveShowcase(profile), ["team_duo_breakthrough"]);
+  assert.deepEqual(effectiveShowcase(profile), [
+    "team_duo_breakthrough",
+    "training_sessions_1",
+  ]);
 });
 
 test("unlocking is idempotent and loss badges are not automatically public", () => {
@@ -411,6 +419,11 @@ test("all active progression families extend in place to level ten while retired
     market_days: [2, 7, 30, 100, 180, 300, 365, 500, 730, 1000],
     market_partners: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
   };
+  const retiredTrainingFamilies = new Set([
+    "training_sessions",
+    "training_workouts",
+    "training_minutes",
+  ]);
   for (const [family, thresholds] of Object.entries(expectedThresholds)) {
     const definitions = ACHIEVEMENT_DEFINITIONS
       .filter((definition) => definition.family === family)
@@ -418,7 +431,11 @@ test("all active progression families extend in place to level ten while retired
     assert.deepEqual(definitions.map((definition) => definition.target), thresholds, family);
     assert.deepEqual(definitions.map((definition) => definition.level), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], family);
     assert.equal(definitions.at(-1).level, 10, family);
-    assert.equal(definitions.slice(0, 6).every((definition) => definition.legacy !== true), true);
+    assert.equal(
+      definitions.every((definition) => definition.legacy === true),
+      retiredTrainingFamilies.has(family),
+      family,
+    );
   }
   assert.equal(
     ACHIEVEMENT_DEFINITIONS
