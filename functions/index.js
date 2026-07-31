@@ -28,6 +28,12 @@ const {
   createTrainingSessionV5Service,
 } = require("./training-session-v5-service");
 const {
+  createTrainingSessionV6Service,
+} = require("./training-session-v6-service");
+const {
+  executeTrainingV6Settlement,
+} = require("./training-v6-settlement");
+const {
   createTrainingSessionService,
 } = require("./training-session-service");
 const {
@@ -364,6 +370,11 @@ const retiredTrainingSessionService = createTrainingSessionService({
   crypto,
 });
 const trainingSessionService = createTrainingSessionV5Service({
+  realtime,
+  HttpsError,
+  crypto,
+});
+const trainingSessionV6Service = createTrainingSessionV6Service({
   realtime,
   HttpsError,
   crypto,
@@ -1085,6 +1096,10 @@ function trainingProfileRef(uid) {
 
 function trainingClaimRef(uid, roomId) {
   return firestore.collection("trainingClaims").doc(uid).collection("rooms").doc(roomId);
+}
+
+function trainingV6ClaimRef(uid, roomId) {
+  return firestore.collection("trainingV6Claims").doc(uid).collection("rooms").doc(roomId);
 }
 
 function achievementProfileRef(uid) {
@@ -4143,6 +4158,324 @@ async function initializeTraining(uid) {
     profile,
     daily,
   };
+}
+
+async function readTrainingV6PrivateState(uid, now) {
+  const [profileSnapshot, progressSnapshot, achievementSnapshot] = await Promise.all([
+    trainingProfileRef(uid).get(),
+    economyProgressRef(uid).get(),
+    achievementProfileRef(uid).get(),
+  ]);
+  const profile = normalizeTrainingProfile(profileSnapshot.data());
+  const progress = normalizeEconomyProgress(
+    progressSnapshot.data(),
+    jstDateKey(now),
+  );
+  const achievementProfile = normalizeAchievementProfile(
+    achievementSnapshot.data(),
+  );
+  return {
+    profile,
+    progress,
+    achievementProfile,
+  };
+}
+
+function publicTrainingV6CallerState(state) {
+  return {
+    profile: state.profile,
+    daily: state.progress.daily,
+    achievements: publicAchievementProfile(
+      state.achievementProfile,
+      state.progress.achievementStats,
+      null,
+      state.profile,
+    ),
+  };
+}
+
+async function readTrainingV6CallerState(uid, now) {
+  return publicTrainingV6CallerState(
+    await readTrainingV6PrivateState(uid, now),
+  );
+}
+
+function publicTrainingV6SettlementResult(settlement, uid) {
+  const decision = settlement.decision;
+  const metrics = decision.metricsByUid?.[uid] || {
+    sessionDelta: 0,
+    completedSets: 0,
+    completedSeconds: 0,
+  };
+  return {
+    status: settlement.status === "ignored" ? "ignored" : "final",
+    finalization: settlement.status,
+    reason: settlement.reason,
+    terminalPhase: decision.terminalPhase,
+    recordable: decision.recordable,
+    sessionDelta: metrics.sessionDelta,
+    completedSets: metrics.completedSets,
+    completedSeconds: metrics.completedSeconds,
+  };
+}
+
+async function settleTrainingV6Room(uid, room, now = Date.now()) {
+  const profileResults = {};
+  const progressResults = {};
+  const achievementResults = {};
+  const settlement = await executeTrainingV6Settlement({
+    room,
+    callerUid: uid,
+    now,
+    dependencies: {
+      runTransaction: (callback) => firestore.runTransaction(
+        async (transaction) => {
+          Object.keys(profileResults).forEach((key) => delete profileResults[key]);
+          Object.keys(progressResults).forEach((key) => delete progressResults[key]);
+          Object.keys(achievementResults).forEach(
+            (key) => delete achievementResults[key],
+          );
+          return callback(transaction);
+        },
+      ),
+      getClaim: ({ transaction, roomId, uid: participantUid }) => (
+        transaction.get(trainingV6ClaimRef(participantUid, roomId))
+      ),
+      applyParticipants: async ({
+        transaction,
+        participantSettlements,
+      }) => {
+        const profileRefs = participantSettlements.map(({ uid: participantUid }) => (
+          trainingProfileRef(participantUid)
+        ));
+        const progressRefs = participantSettlements.map(({ uid: participantUid }) => (
+          economyProgressRef(participantUid)
+        ));
+        const achievementRefs = participantSettlements.map(
+          ({ uid: participantUid }) => achievementProfileRef(participantUid),
+        );
+        // Firestore requires every transaction read to complete before the
+        // first write. Claims were read by executeTrainingV6Settlement; these
+        // are the remaining participant-owned canonical documents.
+        const snapshots = await Promise.all([
+          ...profileRefs.map((ref) => transaction.get(ref)),
+          ...progressRefs.map((ref) => transaction.get(ref)),
+          ...achievementRefs.map((ref) => transaction.get(ref)),
+        ]);
+        const count = participantSettlements.length;
+        const profileSnapshots = snapshots.slice(0, count);
+        const progressSnapshots = snapshots.slice(count, count * 2);
+        const achievementSnapshots = snapshots.slice(count * 2, count * 3);
+
+        participantSettlements.forEach((participantSettlement, index) => {
+          const participantUid = participantSettlement.uid;
+          const metrics = participantSettlement.metrics;
+          const profile = applyTrainingSession(
+            profileSnapshots[index].data(),
+            metrics.completionTimestamps,
+            participantSettlement.terminalAt,
+            now,
+            { completedSeconds: metrics.completedSeconds },
+          );
+          const dailySettlement = trainingDailySettlement(
+            progressSnapshots[index].data(),
+            [
+              participantSettlement.terminalAt,
+              ...metrics.completionTimestamps,
+            ],
+            now,
+            [
+              0,
+              ...metrics.completionTimestamps.map(() => 60),
+            ],
+          );
+          const progress = normalizeEconomyProgress(
+            progressSnapshots[index].data(),
+            dailySettlement.dateKey,
+          );
+          if (dailySettlement.creditTrainingSet) {
+            progress.daily.trainingMatches = Math.min(
+              1,
+              progress.daily.trainingMatches + metrics.sessionDelta,
+            );
+          }
+          progress.daily.trainingSets = Math.min(
+            3,
+            progress.daily.trainingSets
+              + Math.max(0, dailySettlement.creditTrainingSets - 1),
+          );
+          progress.daily.trainingSeconds = Math.min(
+            86_400,
+            progress.daily.trainingSeconds
+              + dailySettlement.creditTrainingSeconds,
+          );
+          progress.updatedAt = now;
+          const unlockResult = unlockAchievements(
+            achievementSnapshots[index].data(),
+            eligibleAchievementIds({
+              trainingStats: profile,
+              scope: "training",
+            }),
+            now,
+          );
+          profileResults[participantUid] = profile;
+          progressResults[participantUid] = progress;
+          achievementResults[participantUid] = unlockResult.profile;
+        });
+
+        participantSettlements.forEach(({ uid: participantUid }, index) => {
+          transaction.set(profileRefs[index], profileResults[participantUid]);
+          transaction.set(progressRefs[index], progressResults[participantUid]);
+          transaction.set(
+            achievementRefs[index],
+            achievementResults[participantUid],
+          );
+        });
+      },
+      createClaim: ({
+        transaction,
+        roomId,
+        uid: participantUid,
+        claim,
+      }) => {
+        transaction.create(
+          trainingV6ClaimRef(participantUid, roomId),
+          claim,
+        );
+      },
+    },
+  });
+
+  const participantStates = {};
+  if (settlement.decision.recordable) {
+    await Promise.all(settlement.decision.participants.map(
+      async (participantUid) => {
+        if (profileResults[participantUid]
+            && progressResults[participantUid]
+            && achievementResults[participantUid]) {
+          participantStates[participantUid] = {
+            profile: profileResults[participantUid],
+            progress: progressResults[participantUid],
+            achievementProfile: achievementResults[participantUid],
+          };
+          return;
+        }
+        participantStates[participantUid] = await readTrainingV6PrivateState(
+          participantUid,
+          now,
+        );
+      },
+    ));
+    // Include duplicate participants so a retry can heal a previously failed
+    // best-effort projection without changing any canonical counters.
+    await bestEffort("settleTrainingV6", settlement.decision.participants.map(
+      (participantUid) => Promise.all([
+        mirrorEconomyProgress(
+          participantUid,
+          participantStates[participantUid].progress,
+        ),
+        syncAchievementPublicSurfaces(
+          participantUid,
+          participantStates[participantUid].achievementProfile,
+        ),
+      ]),
+    ));
+  }
+  const callerState = participantStates[uid]
+    ? publicTrainingV6CallerState(participantStates[uid])
+    : await readTrainingV6CallerState(uid, now);
+  return {
+    result: publicTrainingV6SettlementResult(settlement, uid),
+    ...callerState,
+  };
+}
+
+async function dispatchTrainingV6Action(uid, data) {
+  const actionResult = await trainingSessionV6Service.dispatch(uid, data);
+  if (!["complete", "no_contest"].includes(actionResult?.phase)) {
+    return actionResult;
+  }
+  const room = actionResult.snapshot || actionResult.room;
+  const settlementResult = await settleTrainingV6Room(uid, room);
+  const terminalAt = Number(room?.result?.completedAt || 0);
+  if (typeof room?.roomId === "string"
+      && Number.isSafeInteger(terminalAt)
+      && terminalAt > 0) {
+    try {
+      const acknowledgement = await trainingSessionV6Service
+        .acknowledgeFinalization(room.roomId, terminalAt);
+      if (acknowledgement.acknowledged !== true) {
+        console.error("training V6 finalization acknowledgement rejected", {
+          roomId: eventId(room.roomId),
+          terminalAt,
+        });
+      }
+    } catch (error) {
+      // Settlement is already canonical in Firestore. Keep the durable RTDB
+      // outbox entry so the scheduled reconciler can retry only the ACK.
+      console.error("training V6 finalization acknowledgement failed", {
+        roomId: eventId(room.roomId),
+        terminalAt,
+        code: typeof error?.code === "string" ? error.code : "unknown",
+      });
+    }
+  }
+  return {
+    ...actionResult,
+    ...settlementResult,
+  };
+}
+
+async function reconcilePendingTrainingV6Finalizations(
+  now = Date.now(),
+  limit = 25,
+) {
+  const pending = await trainingSessionV6Service.pendingFinalizations(limit);
+  const summary = {
+    pending: pending.length,
+    settled: 0,
+    acknowledged: 0,
+    failed: 0,
+  };
+  for (const item of pending) {
+    const room = item?.room;
+    const entry = item?.entry;
+    const roomId = typeof room?.roomId === "string" ? room.roomId : "";
+    const participantUid = typeof entry?.participantUid === "string"
+      ? entry.participantUid
+      : "";
+    const terminalAt = Number(entry?.terminalAt || room?.result?.completedAt || 0);
+    try {
+      if (!roomId
+          || entry?.roomId !== roomId
+          || !participantUid
+          || !Number.isSafeInteger(terminalAt)
+          || terminalAt <= 0
+          || room?.members?.[participantUid] !== true) {
+        throw new TypeError("Training V6 pending finalization is invalid");
+      }
+      await settleTrainingV6Room(participantUid, room, now);
+      summary.settled += 1;
+      const acknowledgement = await trainingSessionV6Service
+        .acknowledgeFinalization(roomId, terminalAt);
+      if (acknowledgement.acknowledged !== true) {
+        throw new Error("Training V6 finalization acknowledgement was rejected");
+      }
+      summary.acknowledged += 1;
+    } catch (error) {
+      summary.failed += 1;
+      console.error("training V6 pending finalization failed", {
+        roomId: roomId ? eventId(roomId) : "invalid",
+        terminalAt,
+        code: typeof error?.code === "string"
+          ? error.code
+          : error instanceof TypeError
+            ? "validation"
+            : "unknown",
+      });
+    }
+  }
+  return summary;
 }
 
 function trainingServerFinalizationMatches(value, result) {
@@ -10456,6 +10789,29 @@ exports.trainingSessionAction = onCall(
   },
 );
 
+exports.trainingV6Action = onCall(
+  callableOptions("trainingV6Action"),
+  async (request) => {
+    const uid = requireUid(request);
+    const action = cleanText(request.data?.action, 40);
+    try {
+      return await dispatchTrainingV6Action(uid, request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("trainingV6Action failed", {
+        action,
+        category: error instanceof TypeError ? "validation" : "internal",
+      });
+      throw new HttpsError(
+        error instanceof TypeError ? "failed-precondition" : "internal",
+        error instanceof TypeError
+          ? "鍛え合い60 V6の確定状態を確認できませんでした。"
+          : "鍛え合い60 V6の処理を完了できませんでした。",
+      );
+    }
+  },
+);
+
 exports.trainingAction = onCall(callableOptions("trainingAction"), async (request) => {
   const uid = requireUid(request);
   const data = request.data;
@@ -10628,6 +10984,35 @@ function retiredTrainingSessionClaimRef(uid) {
   return realtime.ref(`online/trainingSessionClaims/${uid}`);
 }
 
+async function trainingV6SessionBlocksAccountTransfer(uid, now) {
+  const paths = trainingSessionV6Service.PATHS;
+  const membershipSnapshot = await realtime.ref(
+    `${paths.memberships}/${uid}`,
+  ).get();
+  if (!membershipSnapshot.exists()) return false;
+  const membership = objectValue(membershipSnapshot.val());
+  if (membership.protocolVersion !== 6 || membership.uid !== uid) return false;
+  if (membership.state === "waiting") {
+    const queueSnapshot = await realtime.ref(`${paths.queue}/${uid}`).get();
+    const queue = objectValue(queueSnapshot.val());
+    return queueSnapshot.exists()
+      && queue.protocolVersion === 6
+      && queue.uid === uid
+      && Number(queue.expiresAt || 0) > now;
+  }
+  if (membership.state !== "room") return false;
+  const roomId = cleanText(membership.roomId, 128);
+  if (!/^[-_0-9A-Za-z]{8,128}$/.test(roomId)) return false;
+  const roomSnapshot = await realtime.ref(`${paths.rooms}/${roomId}`).get();
+  const room = objectValue(roomSnapshot.val());
+  return roomSnapshot.exists()
+    && room.protocolVersion === 6
+    && room.variant === "companion_v6"
+    && room.roomId === roomId
+    && room.members?.[uid] === true
+    && !["complete", "no_contest"].includes(room.phase);
+}
+
 async function accountHasActiveSession(uid) {
   const realtimePaths = [
     { path: "active", roomPath: "rooms" },
@@ -10650,6 +11035,7 @@ async function accountHasActiveSession(uid) {
     trainingSessionService.liveRoom(uid, now),
     firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
     aiTextTrainingActiveAchievementSessionRef(uid).get(),
+    trainingV6SessionBlocksAccountTransfer(uid, now),
   ]);
   const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
   if (realtimeSnapshots.some((snapshot, index) => {
@@ -10676,6 +11062,7 @@ async function accountHasActiveSession(uid) {
   const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 8];
   const aiTextTrainingActiveAchievementSessionSnapshot =
     snapshots[realtimePaths.length + 9];
+  const trainingV6SessionBlocksTransfer = snapshots[realtimePaths.length + 10];
   const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
   const retiredTrainingSessionClaim = normalizeClaim(
     retiredTrainingSessionClaimSnapshot.val(),
@@ -10697,6 +11084,7 @@ async function accountHasActiveSession(uid) {
       || retiredTrainingSessionRoom
       || trainingAttemptBlocksTransfer
       || trainingSessionRoom
+      || trainingV6SessionBlocksTransfer
       || aiTextTrainingActiveUseSnapshot.exists
       || (
         aiTextTrainingActiveAchievementSessionSnapshot.exists
@@ -15595,12 +15983,25 @@ exports.cleanupTrainingRooms = onSchedule({
 }, async () => {
   try {
     const now = Date.now();
-    const [rooms, attempts, retiredResources] = await Promise.all([
+    // Drain the durable V6 outbox before cleanup. A failed item remains in the
+    // outbox, and the V6 cleanup refuses to delete that room.
+    const trainingV6Finalizations =
+      await reconcilePendingTrainingV6Finalizations(now);
+    const [rooms, attempts, retiredResources, trainingV6Cleanup] = await Promise.all([
       cleanupTrainingRooms(now),
       cleanupTrainingSessionV5(now),
       cleanupTrainingSessionResources(now),
+      trainingSessionV6Service.cleanup(now),
     ]);
-    const result = { rooms, attempts, retiredResources };
+    const result = {
+      rooms,
+      attempts,
+      retiredResources,
+      trainingV6: {
+        finalizations: trainingV6Finalizations,
+        cleanup: trainingV6Cleanup,
+      },
+    };
     console.info("cleanupTrainingRooms completed", result);
     return result;
   } catch (error) {

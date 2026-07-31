@@ -861,7 +861,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
-          そして厳選した5枚をDRAWし、画像に刺さった側が相手の指示で鍛えるHP制の「鍛え合い60」。
+          そして厳選した5枚をDRAWし、画像に刺さった側へ相手が60秒寄り添う「鍛え合い60」。
           最大10枚のロスターからAIが5枚をDRAWする、ソロの「AI文字コラトレーニング」も選べます。
           疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
@@ -871,7 +871,7 @@
         <div class="hero-actions">
           <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
           <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
-          <button class="button button-training hero-mode-button" id="trainingButton"><small>5枚を厳選。刺さったら、相手の指示で鍛える。</small><span>鍛え合い60</span></button>
+          <button class="button button-training hero-mode-button" id="trainingButton"><small>刺さったら、相手のリズムと応援で60秒。</small><span>鍛え合い60</span></button>
           <button class="button hero-free-table-button hero-mode-button" id="freeTableButton"><small>勝ち負けを置いて、ひと休み</small><span>貼り合い自由卓</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>

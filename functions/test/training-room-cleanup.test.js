@@ -1486,7 +1486,15 @@ test("scheduled cleanup and training-only active-session check are wired", () =>
   );
   assert.match(
     source,
-    /const \[rooms, attempts, retiredResources\] = await Promise\.all\(\[[\s\S]*cleanupTrainingSessionV5\(now\),[\s\S]*cleanupTrainingSessionResources\(now\),[\s\S]*const result = \{ rooms, attempts, retiredResources \}/,
+    /await reconcilePendingTrainingV6Finalizations\(now\)/,
+  );
+  assert.match(
+    source,
+    /const \[rooms, attempts, retiredResources, trainingV6Cleanup\] = await Promise\.all\(\[[\s\S]*cleanupTrainingSessionV5\(now\),[\s\S]*cleanupTrainingSessionResources\(now\),[\s\S]*trainingSessionV6Service\.cleanup\(now\)/,
+  );
+  assert.match(
+    source,
+    /trainingV6:\s*\{\s*finalizations:\s*trainingV6Finalizations,\s*cleanup:\s*trainingV6Cleanup/,
   );
   assert.match(source, /online\/trainingAttemptsV5/);
   assert.match(source, /entry\.path === "trainingActive"/);

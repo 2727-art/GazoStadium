@@ -1,134 +1,213 @@
-# 鍛え合い60
+# 鍛え合い60 V6
 
-## 目的
+## 体験の中心
 
-画像厳選と筋トレを一つの1対1ゲームにする。プレイヤーは相手へ刺す画像を選び、相手画像へ自分が高得点を付けた場合は、自分のHPが減って相手の筋トレ指示を受ける。
+鍛え合い60は勝敗を競うモードではない。画像に「刺さった」ことをきっかけに、
+その画像を選んだ相手が60秒だけ指示役となり、運動する本人へ寄り添う1対1の伴走体験である。
 
 - モードID: `training`
-- バリアント: `kitaeai_hp_v3`
-- プロトコル: `3`
-- 開始HP: 30
+- バリアント: `companion_v6`
+- プロトコル: `6`
 - 最大5 DRAW
-- 競技RATE、公開ランキング、王座、期間戦績報酬、共通実績の対象外
-- カメラ、マイク、動作センサーは使わず、ロールプレイと本人の完遂を信頼する
+- 最初のHITでDRAWを終了
+- 1ワークアウトは常に60秒
+- RATE、ランキング、王座、勝敗記録の対象外
+- カメラ、マイク、動作センサーは使わない
+- 画像と会話本文はFirebaseへ保存しない
+- 痛み、めまい、体調変化による中止は常に無罰の`NO CONTEST`
 
-固定セットや交互ターンは設けない。画像と採点結果によって筋トレの回数、種目、時間、リズムが変わる。
+残す価値は次の5点である。
 
-## 事前準備
+1. 自分が高得点を付けた画像の持ち主が指示役になる。
+2. 指示役が、受け側の事前設定の範囲内で種目とBPMを決める。
+3. 受け側が内容を確認し、自分の操作で60秒を開始する。
+4. 指示役は文字で応援し、受け側は文字で反応できる。
+5. 通信が一時的に切れても運動と部屋は維持される。
 
-### IMAGE DECK
+## V5から廃止するもの
 
-相手へ刺す画像を5枚厳選する。各画像へ`0`または`40–160 BPM`を設定する。
+V6はV5のセッション、ルーム、ゲーム進行と互換性を持たない。
 
-- 毎DRAW、未使用の5枚から1枚を端末側でランダム選択する
-- 同じ画像は1試合で再使用しない
-- 画像本体はP2Pで送り、画像番号とBPMはRTDBへ確定してP2Pメタデータと照合する
-- 同じ画像でも、相手の採点と選ばれるCOMMANDによって毎回異なる筋トレになり得る
+- HP、勝敗、OVERKILL
+- 採点に応じた60・75・90秒の時間差
+- 1試合で複数回のDRAWと運動を交互に繰り返す構造
+- DOUBLE HIT時の同時運動
+- 待機ticketやP2P接続状態をルーム参加権限の根拠にする設計
+- 多数のRTDB子パスからクライアントが現在フェーズを推測する設計
+- P2P切断やlistener失敗を試合終了へ変換する設計
 
-### COMMAND DECK
+V5の履歴、購入品、実績は過去記録として保持する。V6へセッション変換はしない。
 
-相手を鍛える筋トレ指示を3枚登録する。各カードは1試合1回だけ使用できる。
+## プレイヤーフロー
 
-- 運動名: 40文字以内
-- 完了条件: 60文字以内
-- 指示本文: 120文字以内
-- 1回あたりの拍: 2、4、8
+```text
+安全設定と画像5枚を準備
+  → マッチング
+  → 1枚ずつP2P交換
+  → 相手画像を1〜10点で秘密採点
+  → 両者とも1〜7点なら次のDRAW
+  → 5DRAWすべてMISSなら交流完了
+  → どちらかが8点以上ならHIT
+  → 指示役と受け側をサーバーが確定
+  → 指示役が種目・BPM・完了条件・最初の応援を送る
+  → 受け側が内容を確認して準備OK
+  → 受け側の操作で60秒開始
+  → P2Pの応援とリアクション
+  → 完遂確認
+  → DOUBLE HITなら役割を交代してもう1本
+  → 伴走完了
+```
 
-BPMはCOMMANDではなく、その筋トレを発動させた画像が持つ。種目とテンポを分離することで、同じCOMMANDでもDRAWした画像ごとにリズムが変わる。
+8点以上を付けた本人が「刺さった側」であり、運動を受ける。画像の持ち主が指示役となる。
+DOUBLE HITでは`memberOrder`順に2本を実行し、必ず一人が指示役、一人が受け側となる。
 
-## HP対戦
+## 安全設定
 
-1. 両者が未使用画像から1枚ずつランダムDRAWする。
-2. P2P転送と検証が両者で完了してから同時公開する。
-3. 相手画像を1～10点で秘密採点する。
-4. 1～7点は`MISS`。筋トレは発動しない。
-5. 8点以上を付けた本人が被弾し、画像所有者のCOMMANDを受ける。
-6. 必要な筋トレを完遂後、次のDRAWへ進む。
-7. HP0、GIVE UP、または5枚消化で決着する。
+受け側はマッチング前に次を設定する。
 
-| 採点 | 自分の被ダメージ | 筋トレ時間 |
-| --- | ---: | ---: |
-| `HIT 8` | 10 | 60秒 |
-| `CRITICAL 9` | 15 | 75秒 |
-| `PERFECT 10` | 20 | 90秒 |
+- 実行可能なプリセット種目: 腕立て伏せ、スクワット、腹筋
+- 自由種目を受け入れるか
+- 最大BPM: 40〜160
+- 相手だけへ見せる配慮事項: 80文字以内
 
-双方が8点以上なら`DOUBLE HIT`となる。各プレイヤーは相手へ未使用COMMANDを選び、自分に届いた指示をそれぞれ完遂する。どちらか一方を強制的な交互順へ固定しない。
+指示役は受け側が許可した種目と最大BPMを超える指示を送れない。
+開始前には受け側の明示的な準備確認を必須とする。
 
-HPが同じ場合は、画像が受けた合計点、10点を受けた枚数、9点を受けた枚数の順で勝者を決め、それでも同じなら引き分けとする。
+## サーバー正本
 
-## 筋トレHUD
+Callableは`trainingV6Action`、Realtime Database名前空間は
+`online/trainingV6`とする。サーバー正本は`online/trainingV6/state`、
+クライアントが直接変更できるP2Pシグナリングと本人presenceはその兄弟へ分離する。
+これにより、ICE candidateやpresenceの頻繁な書き込みが正本トランザクションを
+再実行させない。試合正本はすべてサーバー専用書き込みとする。
 
-被弾した本人が開始すると、刺さった相手画像の上に60・75・90秒のプログレスバーを表示する。画像BPMとCOMMANDの拍数を自由卓由来のメトロノームへ渡す。
+### ルーム
 
-- タイマー正本はRealtime Databaseへ保存した開始時刻
-- 完了時刻は`開始時刻 + 採点別時間`
-- 音は本人の操作後にだけ再生する
-- 筋トレ側と応援側の双方がP2Pの定型メッセージと自由メッセージを何度でも送れる
-- 連打事故を防ぐ800ミリ秒の送信間隔だけを設け、各DRAWの回数上限は設けない
-- 直近20件を対戦画面内だけで表示し、自分の送信には相手画面への表示確認を返す。開始直後の同期差で未確認の場合だけ最大2回再送する
-- メッセージ枠はAnjuPayストアの全モード共通装備から選び、マッチ成立時にサーバーが所有・装備状態を確認してルームへ固定する
-- 続行できる状態で完遂をやめる`GIVE UP`は敗北
-- 痛み、めまい、体調変化による中止は勝敗なしの`NO CONTEST`
+`online/trainingV6/state/rooms/{roomId}`は次を持つ。
 
-## OVERKILL
+- `protocolVersion: 6`
+- `variant: "companion_v6"`
+- `members/{uid}: true`
+- `memberOrder/0`, `memberOrder/1`
+- `players/{uid}`: 表示名、安全設定
+- `phase`
+- `revision`
+- `roundNumber`
+- `rounds`
+- `workoutQueue`
+- `activeWorkoutIndex`
+- `instruction`
+- `workout`
+- `result`
+- `connections/{uid}`
+- `transportRevision`
+- `createdAt`, `updatedAt`, `expiresAt`
 
-HPを超えるダメージで決着した場合、勝者は30秒の追い込みトレーニングをP2Pで提案できる。
+参加者はルーム作成時に固定する。ルームの読取権限は`members`だけを根拠にし、
+待機ticketのリース、presence、P2P接続状態には依存させない。
 
-- 敗者は自由に承諾または拒否できる
-- 拒否による追加の不利益はない
-- 勝敗、RATE、記録、サーバー確定を待たせない
-- 提案は15秒で失効し、承諾した場合だけ30秒の追い込みを開始する
-- 提案、返答、短時間タイマーはP2Pのみで、Firebaseへ保存しない
+### フェーズ
 
-## 同期とプライバシー
+```text
+media_exchange
+  → scoring
+  → media_exchange   （両者MISS、次DRAW）
+  → instruction      （HIT）
+  → ready
+  → workout
+  → instruction      （DOUBLE HITの2本目）
+  → complete
 
-Realtime Databaseへ保存する対戦メタデータは次のとおり。
+任意の進行中phase
+  → no_contest
+```
 
-- 待機セッション、表示名、運動強度、COMMAND DECK、画像別BPM
-- 参加者限定ルームの配慮条件
-- 各DRAWの画像番号、BPM、受信完了
-- 各プレイヤー本人の秘密採点
-- 使用COMMAND番号、筋トレ開始・完了時刻
-- ラウンド完了、GIVE UP、NO CONTEST、サーバー確定結果
+クライアント画面はサーバーから受け取った一つの`phase/revision`だけを描画する。
+ローカルのP2P状態は`recovering`オーバーレイとして重ね、正本phaseを変更しない。
 
-画像本体は最大1280pxのWebPへ端末内変換し、WebRTC DataChannelで相手へ直接送る。Firebase Realtime Database、Cloud Firestore、Storage、Cloud Functionsへ画像を送らない。
+### アクション
 
-秘密採点は本人の領域だけへ一度書く。クライアントは自分の採点を確定するまで相手の採点を取得せず、双方確定後にだけ相手側を読み込む。筋トレ中の双方向メッセージとOVERKILL提案はP2Pでその場だけ表示し、Firebaseへ会話履歴を保存しない。チャット枠はマッチ成立時にサーバーが確定したIDだけを参加者へ公開する。
+各変更操作は`protocolVersion`、`actionId`、`expectedRevision`を持つ。
+サーバーは`actionId`で重複を除外し、`expectedRevision`で順序違いを拒否する。
 
-## Session V5正本
+- `join`
+- `inspect`
+- `leave`
+- `claim_transport`
+- `image_ready`
+- `score`
+- `instruction`
+- `ready`
+- `workout_started`
+- `workout_completed`
+- `no_contest`
+- `finish`
 
-マッチング、単一所有権、復帰、シグナリングを鍛え合い60専用のSession V5として管理する。HP、採点、COMMAND、筋トレ、OVERKILLはゲームプロトコルV3のまま分離する。
+クライアントは未知のアクションを送らず、Functionのプロトコル応答が6でない場合は
+「最新版を読み込む」画面を表示する。生のFunctionエラーや`permission_denied`は表示しない。
 
-- `trainingAttemptsV5/{uid}`を参加状態の唯一の正本とし、クライアントは本人分を読むだけで直接書かない
-- クライアント操作は`start`、`heartbeat`、`match`、`inspect`、`reconnect`、`cancel`のCallableだけを使用する
-- 待機者2人の予約は一つのサーバートランザクションで同時に確定し、OFFERやクライアント作成ルームを挟まない
-- ルーム生成・ACTIVE化の直前にも両者の待機期限を同じroot transactionで再確認し、期限切れ予約はルームを開始せず両者を待機へ戻す
-- `runId`、`endpointId`、`ownerEpoch`、`roomAttemptId`、`transportEpoch`を別々の識別子として扱い、一つのgenerationへ意味を重ねない
-- 待機期限はマッチング候補の鮮度だけに使う。ACTIVE参加権は待機期限から分離し、期限切れだけで進行中ルームを破棄しない
-- ACTIVEは最後のactivityから10分以内、または本人の正確な`presenceV5`がfresh onlineなら維持する。10分を越えてactivityがなく本人presenceもfresh onlineでない参加者がいれば、放置ルームとして両attemptを同時に終端し、新しいendpointから開始し直せるようにする
-- 同じ所有者が180秒を越えて復帰した場合は同じattemptを再取得する。通信結果が不明なだけでは終了せず`recovering`から`inspect`する
-- 別所有者への移動はサーバーが`owner-replaced`を確定した場合だけ受け入れ、古い画面はローカル接続だけを停止してルームを書き換えない
-- 同一ブラウザの多重起動はWeb Locksで排他し、BroadcastChannelは通知だけに使う
-- `presenceV5`と`signalsV5`は両参加者のrun、endpoint、room attempt、transport epochが一致する場合だけ読み書きできる
-- PeerConnectionを作り直すたび、サーバーが両者共通の新しい`transportEpoch`を発行する。旧epochの遅延信号は新接続へ渡さず破棄する
-- 再接続中にattemptとroomの`transportEpoch`が一時的に異なる状態は破損とみなさず、確認済みのcanonical attempt側へroomをCASで収束させる
-- キャンセルや破損ルームの後処理はfence付きの再試行可能な清掃情報を残し、Callable応答喪失や一時的なRTDB失敗後も収束させる
-- Workout実行中は対応ブラウザでScreen Wake Lockを保持し、完了・中止・画面非表示で解放する
-- 配慮条件は公開待機列へ保存せず、参加者限定ルームだけへ保存する
-- 確立後の再接続では受信途中データを破棄し、相手のRTDB受信確認がないDRAWだけを新しいDataChannelで再送する
+## P2P境界
 
-この名前空間は通常1on1と独立しており、通常1on1の待機者やルームと交差しない。
+P2Pは次だけを運ぶ。
 
-## サーバー確定と記録
+- WebPへ端末内変換した画像本体
+- 画像転送ACK
+- その場だけの定型応援、自由応援、受け側リアクション
+- メッセージ表示ACK
 
-Cloud Functionsの`trainingAction`が、5枚の未使用DRAW、採点、HP、未使用COMMAND、筋トレ時間、GIVE UP、HP同点時の判定を再導出する。同じルームの二重計上はclaimで防ぐ。
+P2Pは`phase`、参加権限、運動開始時刻、完遂結果、ルーム終了を変更できない。
+切断時は同じルームとphaseを維持し、画像未完了なら再接続後に再送する。
+運動中なら60秒タイマーをサーバー時刻で継続し、応援欄だけを「再接続中」とする。
 
-専用プロフィールにはHP対戦数、完遂ワークアウト数、被弾数、画像が受けた得点、運動秒数などを非公開で保存する。専用デイリーミッションはGIVE UPを含む正式決着1回で達成し、NO CONTESTと通信中断は除外する。旧V1・V2のセット数、連続日数、活動履歴は過去記録として保持し、V3から新規加算しない。
+画像は最大1280pxのWebPへ変換し、チャンク分割してDataChannelで送る。
+画像、応援、リアクション本文をRealtime Database、Cloud Firestore、
+Storage、Cloud Functions、診断ログへ送らない。
 
-## 旧セッション経路の廃止
+## クライアント境界
 
-新規セッションはゲームプロトコル3、Session/Signaling 5の組み合わせだけを受け入れる。旧queue、invite、active、claim、presence、signalsへのクライアントアクセスは許可せず、キャッシュ済み旧クライアントとのセッション互換は持たせない。
+```text
+training.js
+  └─ training-v6-app.js          入口と画面イベント
+       ├─ training-v6-machine.mjs 純粋な状態遷移
+       ├─ training-v6-domain.mjs 採点・役割・入力検証
+       ├─ training-v6-session.mjs Callable契約
+       ├─ training-v6-p2p.mjs    画像と一時メッセージ
+       ├─ training-v6-store.mjs  端末内デッキ復元
+       ├─ training-v6-view.mjs   DOM文字列描画
+       └─ training-v6-workout.mjs BPM・タイマー・Wake Lock
+```
 
-旧Realtime Database資源はサーバー清掃だけで排出する。過去の非公開トレーニング記録は履歴として保持するが、旧セッションを再開したりV5へ変換したりしない。
+DOM、Firebase、WebRTCを状態機械へ入れない。Firebase購読は本人ticket、
+現在roomの正本snapshot、signal、presenceに限定する。
 
-本番切替は旧クライアントとの同時稼働を前提にしない。既存V4セッションを停止・排出するメンテナンス境界を設け、Functions、Database Rules、Hostingを一つの切替として扱う。移行中のアカウント移行事故だけを防ぐため、V4 claim／live roomの読取専用guardは退役資源が空になるまでサーバー側に残す。
+## 復帰と終了
+
+- 再読み込み後は`inspect`で本人のV6 roomを確認する。
+- active roomなら新しい`connectionId`を`claim_transport`し、同じphaseへ戻る。
+- 別接続がP2P transportを取得しても、旧接続はルームを書き換えない。
+- 一時切断、ブラウザのバックグラウンド化、TURN失敗では終了しない。
+- プレイヤーが明示的に選んだ`NO CONTEST`だけが安全中止を確定する。
+- 24時間操作されず期限切れになったactive roomだけは、サーバーが
+  `session_expired / system`の`NO CONTEST`へ一度だけ確定する。
+- terminalまたは期限切れ後は新しいsignal/presenceを書けないが、
+  受信済みsignalと本人presenceの削除は常に許可する。
+- 完了結果を保存した時点でサーバー専用`finalizationOutbox`へ登録し、
+  実績・ミッション反映の成功確認後にACKしてからルームを削除可能にする。
+- 完了処理待ちのroomは削除せず、ACK済みroom、一時signal/presence、
+  古い操作receiptとterminal ticketだけを期限付きcleanupで削除する。
+
+## 検証基準
+
+- Google認証済み × ゲスト
+- ゲスト × ゲスト
+- Windows Chrome × Windows Edge
+- Windows Chrome × Android/iOS Chrome
+- 各phaseでの片側再読み込み
+- 画像転送中の通信断と再送
+- 指示送信の重複、遅延、逆順
+- 運動中のバックグラウンド化と復帰
+- DOUBLE HITの順次2本
+- NO CONTEST
+- FunctionとHostingの新旧キャッシュ混在
+
+上記を単体テスト、Rulesテスト、2クライアント相当テストで通してから本番へ切り替える。

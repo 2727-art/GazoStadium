@@ -5,10 +5,13 @@ const test = require("node:test");
 
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
+const firebaseEntrySource = (relativePath) => read(
+  relativePath === "training.js" ? "training-v6-app.js" : relativePath,
+);
 
 test("all Firebase entry modules use the shared App Check bootstrap", () => {
   for (const relativePath of ["account.js", "online.js", "strategy.js", "training.js", "ai-text-training.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
-    const source = read(relativePath);
+    const source = firebaseEntrySource(relativePath);
     assert.match(source, /firebase-services\.js\?v=app-check-v3/);
     assert.doesNotMatch(source, /\binitializeApp\s*\(/);
     assert.doesNotMatch(source, /\bgetApp(?:s)?\s*\(/);
@@ -34,18 +37,20 @@ test("Realtime Database browser traffic stays on the Firebase SDK", () => {
 
 test("cache busters load one App Check module generation", () => {
   const html = read("index.html");
-  for (const moduleName of ["account", "strategy", "online", "training", "ai-text-training", "market", "flea-market", "free-table"]) {
+  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "market", "flea-market", "free-table"]) {
     assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v3`));
   }
-  for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "training.js", "market.js", "flea-market.js", "free-table.js"]) {
+  assert.match(html, /training\.js\?v=training-v6-companion-1/);
+  for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "market.js", "flea-market.js", "free-table.js"]) {
     assert.match(html, new RegExp(`${assetName.replace(".", "\\.")}\\?v=[^"]*ai-text-training-v1`));
   }
+  assert.match(read("training.js"), /training-v6-app\.js\?v=training-v6-companion-1/);
 
   const serviceImporters = [
     "account.js",
     "online.js",
     "strategy.js",
-    "training.js",
+    "training-v6-app.js",
     "ai-text-training.js",
     "market.js",
     "flea-market.js",
@@ -84,6 +89,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "soloFamiliarAction",
     "soloSessionAction",
     "trainingSessionAction",
+    "trainingV6Action",
     "trainingAction",
     "getP2pIceServers",
     "reportP2pConnectivity",
@@ -108,6 +114,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.trainingSessionAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.trainingV6Action, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.trainingAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportP2pConnectivity, true);
@@ -175,7 +182,7 @@ test("local integration mode redirects Authentication as well as data services",
   );
   assert.match(appCheckSource, /isTokenAutoRefreshEnabled: false/);
   for (const relativePath of ["online.js", "strategy.js", "training.js", "ai-text-training.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
-    assert.match(read(relativePath), /firebase-services\.js\?v=app-check-v3/);
+    assert.match(firebaseEntrySource(relativePath), /firebase-services\.js\?v=app-check-v3/);
   }
   assert.match(read("README.md"), /--project demo-gazostadium/);
 });
@@ -190,7 +197,7 @@ test("offline market preview does not initialize App Check or background Firebas
   assert.match(onlineSource, /if \(!useOfflineMarketPreview\) watchLobbyStats\(\);/);
   assert.match(onlineSource, /if \(useOfflineMarketPreview\) return null;/);
   for (const relativePath of ["online.js", "strategy.js", "training.js"]) {
-    assert.match(read(relativePath), /useOfflineMarketPreview/);
+    assert.match(firebaseEntrySource(relativePath), /useOfflineMarketPreview/);
   }
   assert.match(read("market.js"), /const useMarketPreview = useOfflineMarketPreview;/);
 });

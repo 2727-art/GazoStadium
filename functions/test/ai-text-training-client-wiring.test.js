@@ -579,7 +579,10 @@ test("other modes reciprocally exclude the new solo lifecycle", () => {
     "flea-market.js",
     "free-table.js",
   ]) {
-    assert.match(read(relativePath), /HariaiAiTextTraining\?\.isActive\?\.\(\)/);
+    const source = relativePath === "training.js"
+      ? read("training-v6-app.js")
+      : read(relativePath);
+    assert.match(source, /HariaiAiTextTraining\?\.isActive\?\.\(\)/);
   }
   assert.match(app, /HariaiAiTextTraining\?\.isActive\?\.\(\)/);
   assert.match(app, /HariaiAiTextTraining\.requestHome\(\)/);

@@ -1433,6 +1433,568 @@
           ".write": false
         }
       },
+      "trainingV6": {
+        ".read": false,
+        ".write": false,
+        "state": {
+          ".read": false,
+          ".write": false,
+        "queue": {
+          ".read": false,
+          ".write": false
+        },
+        "memberships": {
+          ".read": false,
+          ".write": false
+        },
+        "operations": {
+          ".read": false,
+          ".write": false
+        },
+        "receipts": {
+          ".read": false,
+          ".write": false
+        },
+        "transportReceipts": {
+          ".read": false,
+          ".write": false
+        },
+        "privateScores": {
+          ".read": false,
+          ".write": false
+        },
+        "finalizationOutbox": {
+          ".read": false,
+          ".write": false
+        },
+        "tickets": {
+          ".read": false,
+          ".write": false,
+          ".indexOn": ["state", "updatedAt"],
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": false,
+            ".validate": "newData.hasChildren(['protocolVersion', 'ticketId', 'state', 'updatedAt']) && newData.child('protocolVersion').val() === 6 && newData.child('ticketId').isString() && newData.child('ticketId').val().matches(/^[-_0-9A-Za-z]{16,128}$/) && (newData.child('state').val() === 'waiting' || newData.child('state').val() === 'matched' || newData.child('state').val() === 'terminal') && newData.child('updatedAt').isNumber() && (newData.child('state').val() !== 'matched' || (newData.child('roomId').isString() && newData.child('roomId').val().matches(/^[-_0-9A-Za-z]{8,128}$/)))",
+            "protocolVersion": {
+              ".validate": "newData.val() === 6"
+            },
+            "ticketId": {
+              ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+            },
+            "state": {
+              ".validate": "newData.val() === 'waiting' || newData.val() === 'matched' || newData.val() === 'terminal'"
+            },
+            "roomId": {
+              ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+            },
+            "updatedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "rooms": {
+          ".read": false,
+          ".write": false,
+          "$roomId": {
+            ".read": "auth != null && data.child('members/' + auth.uid).val() === true",
+            ".write": false,
+            ".validate": "newData.hasChildren(['protocolVersion', 'variant', 'roomId', 'phase', 'revision', 'transportRevision', 'createdAt', 'updatedAt', 'expiresAt', 'members', 'memberOrder', 'participantUids', 'players', 'roundNumber', 'rounds', 'activeWorkoutIndex']) && newData.child('protocolVersion').val() === 6 && newData.child('variant').val() === 'companion_v6' && newData.child('roomId').val() === $roomId && newData.child('memberOrder/0').isString() && newData.child('memberOrder/1').isString() && newData.child('memberOrder/0').val() !== newData.child('memberOrder/1').val() && newData.child('participantUids/0').val() === newData.child('memberOrder/0').val() && newData.child('participantUids/1').val() === newData.child('memberOrder/1').val() && newData.child('members/' + newData.child('memberOrder/0').val()).val() === true && newData.child('members/' + newData.child('memberOrder/1').val()).val() === true && newData.child('players/' + newData.child('memberOrder/0').val() + '/uid').val() === newData.child('memberOrder/0').val() && newData.child('players/' + newData.child('memberOrder/1').val() + '/uid').val() === newData.child('memberOrder/1').val() && (newData.child('phase').val() === 'media_exchange' || newData.child('phase').val() === 'scoring' || newData.child('phase').val() === 'instruction' || newData.child('phase').val() === 'ready' || newData.child('phase').val() === 'workout' || newData.child('phase').val() === 'complete' || newData.child('phase').val() === 'no_contest') && newData.child('revision').isNumber() && newData.child('revision').val() % 1 === 0 && newData.child('revision').val() >= 1 && newData.child('transportRevision').isNumber() && newData.child('transportRevision').val() % 1 === 0 && newData.child('transportRevision').val() >= 0 && newData.child('createdAt').isNumber() && newData.child('updatedAt').isNumber() && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() > newData.child('createdAt').val() && newData.child('roundNumber').isNumber() && newData.child('roundNumber').val() % 1 === 0 && newData.child('roundNumber').val() >= 1 && newData.child('roundNumber').val() <= 5 && newData.child('activeWorkoutIndex').isNumber() && newData.child('activeWorkoutIndex').val() % 1 === 0 && newData.child('activeWorkoutIndex').val() >= -1 && newData.child('activeWorkoutIndex').val() <= 1",
+            "protocolVersion": {
+              ".write": false,
+              ".validate": "newData.val() === 6"
+            },
+            "variant": {
+              ".write": false,
+              ".validate": "newData.val() === 'companion_v6'"
+            },
+            "roomId": {
+              ".write": false,
+              ".validate": "newData.isString() && newData.val() === $roomId && newData.val().matches(/^[-_0-9A-Za-z]{8,128}$/)"
+            },
+            "transportRevision": {
+              ".write": false,
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0"
+            },
+            "members": {
+              ".write": false,
+              "$uid": {
+                ".validate": "($uid === newData.parent().parent().child('memberOrder/0').val() || $uid === newData.parent().parent().child('memberOrder/1').val()) && newData.val() === true"
+              }
+            },
+            "memberOrder": {
+              ".write": false,
+              ".validate": "newData.hasChildren(['0', '1'])",
+              "0": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128"
+              },
+              "1": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128 && newData.val() !== newData.parent().child('0').val()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "participantUids": {
+              ".write": false,
+              ".validate": "newData.hasChildren(['0', '1']) && newData.child('0').val() === newData.parent().child('memberOrder/0').val() && newData.child('1').val() === newData.parent().child('memberOrder/1').val()",
+              "0": {
+                ".validate": "newData.isString() && newData.val() === newData.parent().parent().child('memberOrder/0').val()"
+              },
+              "1": {
+                ".validate": "newData.isString() && newData.val() === newData.parent().parent().child('memberOrder/1').val()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "players": {
+              ".write": false,
+              "$uid": {
+                ".write": false,
+                ".validate": "($uid === newData.parent().parent().child('memberOrder/0').val() || $uid === newData.parent().parent().child('memberOrder/1').val()) && newData.hasChildren(['uid', 'joinedAt', 'profile']) && newData.child('uid').val() === $uid",
+                "uid": {
+                  ".validate": "newData.isString() && newData.val() === $uid"
+                },
+                "joinedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "leftAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('joinedAt').val()"
+                },
+                "profile": {
+                  ".validate": "newData.hasChildren(['displayName', 'maxBpm', 'allowedExercises', 'conditionText'])",
+                  "displayName": {
+                    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 24 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "maxBpm": {
+                    ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 40 && newData.val() <= 160"
+                  },
+                  "allowedExercises": {
+                    "$index": {
+                      ".validate": "($index === '0' || $index === '1' || $index === '2' || $index === '3') && newData.isString() && (newData.val() === 'push_up' || newData.val() === 'squat' || newData.val() === 'sit_up' || newData.val() === 'custom')"
+                    }
+                  },
+                  "conditionText": {
+                    ".validate": "newData.isString() && newData.val().length <= 80 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "phase": {
+              ".write": false,
+              ".validate": "newData.val() === 'media_exchange' || newData.val() === 'scoring' || newData.val() === 'instruction' || newData.val() === 'ready' || newData.val() === 'workout' || newData.val() === 'complete' || newData.val() === 'no_contest'"
+            },
+            "revision": {
+              ".write": false,
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1"
+            },
+            "roundNumber": {
+              ".write": false,
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 5"
+            },
+            "rounds": {
+              ".write": false,
+              "$round": {
+                ".write": false,
+                ".validate": "newData.hasChildren(['roundNumber']) && (($round === '1' && newData.child('roundNumber').val() === 1) || ($round === '2' && newData.child('roundNumber').val() === 2) || ($round === '3' && newData.child('roundNumber').val() === 3) || ($round === '4' && newData.child('roundNumber').val() === 4) || ($round === '5' && newData.child('roundNumber').val() === 5))",
+                "roundNumber": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 5"
+                },
+                "images": {
+                  "$uid": {
+                    ".validate": "($uid === newData.parent().parent().parent().parent().child('memberOrder/0').val() || $uid === newData.parent().parent().parent().parent().child('memberOrder/1').val()) && newData.hasChildren(['imageNumber', 'readyAt'])",
+                    "imageNumber": {
+                      ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 5"
+                    },
+                    "readyAt": {
+                      ".validate": "newData.isNumber()"
+                    },
+                    "$other": {
+                      ".validate": false
+                    }
+                  }
+                },
+                "scores": {
+                  "$uid": {
+                    ".validate": "($uid === newData.parent().parent().parent().parent().child('memberOrder/0').val() || $uid === newData.parent().parent().parent().parent().child('memberOrder/1').val()) && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 10"
+                  }
+                },
+                "mediaReadyAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "resolvedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "outcome": {
+                  ".validate": "newData.val() === 'miss' || newData.val() === 'hit' || newData.val() === 'double_hit'"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "workoutQueue": {
+              ".write": false,
+              "$index": {
+                ".write": false,
+                ".validate": "(($index === '0' && newData.child('index').val() === 0 && newData.child('sequence').val() === 0) || ($index === '1' && newData.child('index').val() === 1 && newData.child('sequence').val() === 1)) && newData.hasChildren(['index', 'sequence', 'workoutId', 'roundNumber', 'trainerUid', 'victimUid', 'score', 'sourceImageNumber', 'durationSeconds', 'durationMs']) && newData.child('trainerUid').val() !== newData.child('victimUid').val() && newData.parent().parent().child('members/' + newData.child('trainerUid').val()).val() === true && newData.parent().parent().child('members/' + newData.child('victimUid').val()).val() === true",
+                "index": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 1"
+                },
+                "sequence": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 1"
+                },
+                "workoutId": {
+                  ".validate": "newData.isString() && newData.val().matches(/^workout-[1-5]-[12]$/)"
+                },
+                "roundNumber": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 5"
+                },
+                "trainerUid": {
+                  ".validate": "newData.isString() && newData.parent().parent().parent().child('members/' + newData.val()).val() === true"
+                },
+                "victimUid": {
+                  ".validate": "newData.isString() && newData.parent().parent().parent().child('members/' + newData.val()).val() === true && newData.val() !== newData.parent().child('trainerUid').val()"
+                },
+                "score": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 8 && newData.val() <= 10"
+                },
+                "sourceImageNumber": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 5"
+                },
+                "durationSeconds": {
+                  ".validate": "newData.val() === 60"
+                },
+                "durationMs": {
+                  ".validate": "newData.val() === 60000"
+                },
+                "instruction": {
+                  ".validate": "newData.hasChildren(['workoutIndex', 'trainerUid', 'victimUid', 'exerciseId', 'exercise', 'completion', 'command', 'bpm', 'beatsPerRep', 'issuedAt'])",
+                  "workoutIndex": {
+                    ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 1"
+                  },
+                  "trainerUid": {
+                    ".validate": "newData.isString() && newData.val() === newData.parent().parent().child('trainerUid').val()"
+                  },
+                  "victimUid": {
+                    ".validate": "newData.isString() && newData.val() === newData.parent().parent().child('victimUid').val()"
+                  },
+                  "exerciseId": {
+                    ".validate": "newData.val() === 'push_up' || newData.val() === 'squat' || newData.val() === 'sit_up' || newData.val() === 'custom'"
+                  },
+                  "exercise": {
+                    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "completion": {
+                    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "command": {
+                    ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "bpm": {
+                    ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 40 && newData.val() <= 160"
+                  },
+                  "beatsPerRep": {
+                    ".validate": "newData.val() === 2 || newData.val() === 4 || newData.val() === 8"
+                  },
+                  "issuedAt": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "readyAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "startedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "endsAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('startedAt').val()"
+                },
+                "completedAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('endsAt').val()"
+                },
+                "workout": {
+                  ".validate": "newData.hasChildren(['workoutIndex', 'trainerUid', 'victimUid', 'durationSeconds', 'readyAt', 'startedAt', 'endsAt', 'completedAt'])",
+                  "workoutIndex": {
+                    ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 1"
+                  },
+                  "trainerUid": {
+                    ".validate": "newData.isString() && newData.val() === newData.parent().parent().child('trainerUid').val()"
+                  },
+                  "victimUid": {
+                    ".validate": "newData.isString() && newData.val() === newData.parent().parent().child('victimUid').val()"
+                  },
+                  "durationSeconds": {
+                    ".validate": "newData.val() === 60"
+                  },
+                  "readyAt": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "startedAt": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "endsAt": {
+                    ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('startedAt').val()"
+                  },
+                  "completedAt": {
+                    ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('endsAt').val()"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "activeWorkoutIndex": {
+              ".write": false,
+              ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= -1 && newData.val() <= 1"
+            },
+            "instruction": {
+              ".write": false,
+              ".validate": "newData.hasChildren(['workoutIndex', 'trainerUid', 'victimUid', 'exerciseId', 'exercise', 'completion', 'command', 'bpm', 'beatsPerRep', 'issuedAt']) && newData.parent().child('members/' + newData.child('trainerUid').val()).val() === true && newData.parent().child('members/' + newData.child('victimUid').val()).val() === true && newData.child('trainerUid').val() !== newData.child('victimUid').val()",
+              "workoutIndex": {
+                ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 1"
+              },
+              "trainerUid": {
+                ".validate": "newData.isString() && newData.parent().parent().child('members/' + newData.val()).val() === true"
+              },
+              "victimUid": {
+                ".validate": "newData.isString() && newData.parent().parent().child('members/' + newData.val()).val() === true && newData.val() !== newData.parent().child('trainerUid').val()"
+              },
+              "exerciseId": {
+                ".validate": "newData.val() === 'push_up' || newData.val() === 'squat' || newData.val() === 'sit_up' || newData.val() === 'custom'"
+              },
+              "exercise": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+              },
+              "completion": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+              },
+              "command": {
+                ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+              },
+              "bpm": {
+                ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 40 && newData.val() <= 160"
+              },
+              "beatsPerRep": {
+                ".validate": "newData.val() === 2 || newData.val() === 4 || newData.val() === 8"
+              },
+              "issuedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "workout": {
+              ".write": false,
+              ".validate": "newData.hasChildren(['workoutIndex', 'trainerUid', 'victimUid', 'durationSeconds', 'readyAt']) && newData.parent().child('members/' + newData.child('trainerUid').val()).val() === true && newData.parent().child('members/' + newData.child('victimUid').val()).val() === true && newData.child('trainerUid').val() !== newData.child('victimUid').val()",
+              "workoutIndex": {
+                ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 1"
+              },
+              "trainerUid": {
+                ".validate": "newData.isString() && newData.parent().parent().child('members/' + newData.val()).val() === true"
+              },
+              "victimUid": {
+                ".validate": "newData.isString() && newData.parent().parent().child('members/' + newData.val()).val() === true && newData.val() !== newData.parent().child('trainerUid').val()"
+              },
+              "durationSeconds": {
+                ".validate": "newData.val() === 60"
+              },
+              "readyAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "startedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "endsAt": {
+                ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('startedAt').val()"
+              },
+              "completedAt": {
+                ".validate": "newData.isNumber() && newData.val() >= newData.parent().child('endsAt').val()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "result": {
+              ".write": false,
+              ".validate": "((newData.child('type').val() === 'no_contest' && newData.hasChildren(['type', 'reason', 'note', 'requestedBy', 'completedAt']) && (newData.parent().child('members/' + newData.child('requestedBy').val()).val() === true || (newData.child('reason').val() === 'session_expired' && newData.child('requestedBy').val() === 'system')) && !newData.child('drawCount').exists() && !newData.child('workoutCount').exists()) || ((newData.child('type').val() === 'completed' || newData.child('type').val() === 'all_miss') && newData.hasChildren(['type', 'reason', 'drawCount', 'workoutCount', 'completedAt']) && !newData.child('note').exists() && !newData.child('requestedBy').exists()))",
+              "type": {
+                ".validate": "newData.val() === 'no_contest' || newData.val() === 'completed' || newData.val() === 'all_miss'"
+              },
+              "reason": {
+                ".validate": "newData.val() === 'health' || newData.val() === 'pain' || newData.val() === 'dizziness' || newData.val() === 'connection' || newData.val() === 'member_left' || newData.val() === 'session_expired' || newData.val() === 'other' || newData.val() === 'accompaniment_completed' || newData.val() === 'five_draws_without_hit'"
+              },
+              "note": {
+                ".validate": "newData.isString() && newData.val().length <= 120 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+              },
+              "requestedBy": {
+                ".validate": "newData.isString() && (newData.parent().parent().child('members/' + newData.val()).val() === true || (newData.parent().child('reason').val() === 'session_expired' && newData.val() === 'system'))"
+              },
+              "drawCount": {
+                ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1 && newData.val() <= 5"
+              },
+              "workoutCount": {
+                ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 2"
+              },
+              "completedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "createdAt": {
+              ".write": false,
+              ".validate": "newData.isNumber()"
+            },
+            "updatedAt": {
+              ".write": false,
+              ".validate": "newData.isNumber()"
+            },
+            "expiresAt": {
+              ".write": false,
+              ".validate": "newData.isNumber() && newData.val() > newData.parent().child('createdAt').val()"
+            },
+            "transportUpdatedAt": {
+              ".write": false,
+              ".validate": "newData.isNumber()"
+            },
+            "connections": {
+              ".write": false,
+              "$uid": {
+                ".write": false,
+                ".validate": "($uid === newData.parent().parent().child('memberOrder/0').val() || $uid === newData.parent().parent().child('memberOrder/1').val()) && newData.hasChildren(['connectionId', 'generation', 'claimedAt'])",
+                "connectionId": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+                },
+                "generation": {
+                  ".validate": "newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 1"
+                },
+                "claimedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "finishedBy": {
+              ".write": false,
+              "$uid": {
+                ".validate": "($uid === newData.parent().parent().child('memberOrder/0').val() || $uid === newData.parent().parent().child('memberOrder/1').val()) && newData.isNumber()"
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+        },
+        "signals": {
+          ".read": false,
+          ".write": false,
+          "$roomId": {
+            ".read": false,
+            ".write": false,
+            "$recipientUid": {
+              ".read": "auth != null && auth.uid === $recipientUid && root.child('online/trainingV6/state/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
+              ".write": false,
+              "$senderUid": {
+                ".read": false,
+                ".write": false,
+                "$signalId": {
+                  ".write": "auth != null && $signalId.matches(/^[-_0-9A-Za-z]{8,128}$/) && ((auth.uid === $senderUid && $senderUid !== $recipientUid && !data.exists() && newData.exists() && root.child('online/trainingV6/state/rooms/' + $roomId + '/members/' + $senderUid).val() === true && root.child('online/trainingV6/state/rooms/' + $roomId + '/members/' + $recipientUid).val() === true && root.child('online/trainingV6/state/rooms/' + $roomId + '/phase').val() !== 'complete' && root.child('online/trainingV6/state/rooms/' + $roomId + '/phase').val() !== 'no_contest' && root.child('online/trainingV6/state/rooms/' + $roomId + '/expiresAt').val() > now) || (auth.uid === $recipientUid && data.exists() && !newData.exists()))",
+                  ".validate": "newData.hasChildren(['protocolVersion', 'fromConnectionId', 'toConnectionId', 'fromUid', 'toUid', 'type', 'createdAt']) && newData.child('protocolVersion').val() === 6 && newData.child('fromConnectionId').isString() && newData.child('fromConnectionId').val().matches(/^[-_0-9A-Za-z]{16,128}$/) && newData.child('toConnectionId').isString() && newData.child('toConnectionId').val().matches(/^[-_0-9A-Za-z]{16,128}$/) && newData.child('fromConnectionId').val() === root.child('online/trainingV6/state/rooms/' + $roomId + '/connections/' + $senderUid + '/connectionId').val() && newData.child('toConnectionId').val() === root.child('online/trainingV6/state/rooms/' + $roomId + '/connections/' + $recipientUid + '/connectionId').val() && newData.child('fromUid').val() === $senderUid && newData.child('toUid').val() === $recipientUid && newData.child('createdAt').isNumber() && newData.child('createdAt').val() >= now - 60000 && newData.child('createdAt').val() <= now + 15000 && (((newData.child('type').val() === 'offer' || newData.child('type').val() === 'answer') && newData.hasChildren(['sdp']) && !newData.child('candidate').exists() && !newData.child('sdpMid').exists() && !newData.child('sdpMLineIndex').exists()) || (newData.child('type').val() === 'candidate' && newData.hasChildren(['candidate', 'sdpMid', 'sdpMLineIndex']) && !newData.child('sdp').exists()))",
+                  "protocolVersion": {
+                    ".validate": "newData.val() === 6"
+                  },
+                  "fromConnectionId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+                  },
+                  "toConnectionId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+                  },
+                  "fromUid": {
+                    ".validate": "newData.isString() && newData.val() === $senderUid"
+                  },
+                  "toUid": {
+                    ".validate": "newData.isString() && newData.val() === $recipientUid"
+                  },
+                  "type": {
+                    ".validate": "newData.val() === 'offer' || newData.val() === 'answer' || newData.val() === 'candidate'"
+                  },
+                  "sdp": {
+                    ".validate": "(newData.parent().child('type').val() === 'offer' || newData.parent().child('type').val() === 'answer') && newData.isString() && newData.val().length > 0 && newData.val().length <= 120000"
+                  },
+                  "candidate": {
+                    ".validate": "newData.parent().child('type').val() === 'candidate' && newData.isString() && newData.val().length > 0 && newData.val().length <= 4096 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "sdpMid": {
+                    ".validate": "newData.parent().child('type').val() === 'candidate' && newData.isString() && newData.val().length <= 64 && !newData.val().contains('\\r') && !newData.val().contains('\\n')"
+                  },
+                  "sdpMLineIndex": {
+                    ".validate": "newData.parent().child('type').val() === 'candidate' && newData.isNumber() && newData.val() % 1 === 0 && newData.val() >= 0 && newData.val() <= 255"
+                  },
+                  "createdAt": {
+                    ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "presence": {
+          ".read": false,
+          ".write": false,
+          "$roomId": {
+            ".read": "auth != null && root.child('online/trainingV6/state/rooms/' + $roomId + '/members/' + auth.uid).val() === true",
+            ".write": false,
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && (!newData.exists() || (root.child('online/trainingV6/state/rooms/' + $roomId + '/members/' + auth.uid).val() === true && root.child('online/trainingV6/state/rooms/' + $roomId + '/phase').val() !== 'complete' && root.child('online/trainingV6/state/rooms/' + $roomId + '/phase').val() !== 'no_contest' && root.child('online/trainingV6/state/rooms/' + $roomId + '/expiresAt').val() > now))",
+              ".validate": "newData.hasChildren(['protocolVersion', 'connectionId', 'online', 'updatedAt']) && newData.child('protocolVersion').val() === 6 && newData.child('connectionId').isString() && newData.child('connectionId').val().matches(/^[-_0-9A-Za-z]{16,128}$/) && newData.child('online').isBoolean() && newData.child('updatedAt').isNumber() && newData.child('updatedAt').val() >= now - 60000 && newData.child('updatedAt').val() <= now + 15000",
+              "protocolVersion": {
+                ".validate": "newData.val() === 6"
+              },
+              "connectionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[-_0-9A-Za-z]{16,128}$/)"
+              },
+              "online": {
+                ".validate": "newData.isBoolean()"
+              },
+              "updatedAt": {
+                ".validate": "newData.isNumber() && newData.val() >= now - 60000 && newData.val() <= now + 15000"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        },
+        "$other": {
+          ".read": false,
+          ".write": false
+        }
+      },
       "trainingSessionActionRates": {
         ".read": false,
         ".write": false,

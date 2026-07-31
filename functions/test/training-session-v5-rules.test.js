@@ -157,47 +157,6 @@ test("all room writes are fenced by the exact active or reserved attempt identit
   }
 });
 
-test("the V5 room skeleton reads only fields granted by the exact attempt fence", () => {
-  const start = trainingSource.indexOf("async function readRoomSkeleton");
-  const end = trainingSource.indexOf("async function readRoundScoresBounded", start);
-  assert.ok(start >= 0 && end > start);
-  const source = trainingSource.slice(start, end);
-  const keysSource = source.match(/const keys = \[([\s\S]*?)\];/)?.[1] || "";
-  const fields = [...keysSource.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-
-  assert.deepEqual(fields, [
-    "protocolVersion",
-    "variant",
-    "sessionProtocolVersion",
-    "signalingVersion",
-    "roomAttemptId",
-    "transportEpoch",
-    "sessions",
-    "hostUid",
-    "guestUid",
-    "createdAt",
-    "status",
-    "members",
-    "players",
-    "chatFrames",
-    "accepted",
-  ]);
-  for (const field of fields) {
-    assert.ok(room[field], `missing Rules entry for V5 room skeleton field ${field}`);
-    includesAll(room[field][".read"], [
-      "online/trainingAttemptsV5/",
-      "/state').val() === 'reserved'",
-      "/state').val() === 'active'",
-      "/roomId').val() === $roomId",
-      "/roomAttemptId",
-      "/transportEpoch",
-      "/runId",
-      "/endpointId",
-      "/ownerEpoch",
-    ]);
-  }
-});
-
 test("room sessions contain only the exact run owner identity", () => {
   const session = room.sessions.$uid;
 

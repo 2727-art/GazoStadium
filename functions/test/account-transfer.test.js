@@ -249,6 +249,44 @@ test("account transfer preserves the retired V4 deploy guard and canonical V5 gu
   assert.match(activeSessionCheck, /\|\| trainingSessionRoom/);
 });
 
+test("account transfer is blocked by a waiting or active Training V6 session", () => {
+  const server = read("functions/index.js");
+  const helperStart = server.indexOf(
+    "async function trainingV6SessionBlocksAccountTransfer",
+  );
+  const helperEnd = server.indexOf(
+    "async function accountHasActiveSession",
+    helperStart,
+  );
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  const helper = server.slice(helperStart, helperEnd);
+  assert.match(helper, /trainingSessionV6Service\.PATHS/);
+  assert.match(helper, /`\$\{paths\.memberships\}\/\$\{uid\}`/);
+  assert.match(helper, /membership\.state === "waiting"/);
+  assert.match(helper, /`\$\{paths\.queue\}\/\$\{uid\}`/);
+  assert.match(helper, /Number\(queue\.expiresAt \|\| 0\) > now/);
+  assert.match(helper, /membership\.state !== "room"/);
+  assert.match(helper, /`\$\{paths\.rooms\}\/\$\{roomId\}`/);
+  assert.match(helper, /room\.members\?\.\[uid\] === true/);
+  assert.match(
+    helper,
+    /!\["complete", "no_contest"\]\.includes\(room\.phase\)/,
+  );
+
+  const activeStart = helperEnd;
+  const activeEnd = server.indexOf("function economyProgressHasActivity", activeStart);
+  assert.ok(activeEnd > activeStart);
+  const activeSessionCheck = server.slice(activeStart, activeEnd);
+  assert.match(
+    activeSessionCheck,
+    /trainingV6SessionBlocksAccountTransfer\(uid, now\)/,
+  );
+  assert.match(
+    activeSessionCheck,
+    /\|\| trainingV6SessionBlocksTransfer/,
+  );
+});
+
 test("AI text training achievement history and active uses block account transfer", () => {
   const server = read("functions/index.js");
 

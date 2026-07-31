@@ -8,6 +8,889 @@
   --training-line: rgba(217, 255, 82, 0.22);
 }
 
+/* Training 60 V6 keeps its layout isolated from the retired HP client. */
+.training-v6-screen {
+  --v6-lime: #d9ff52;
+  --v6-orange: #ff9a4a;
+  --v6-panel: rgba(11, 17, 20, 0.94);
+  --v6-line: rgba(217, 255, 82, 0.24);
+  min-height: min(760px, calc(100vh - 160px));
+}
+
+.training-v6-heading {
+  position: relative;
+}
+
+.training-v6-heading::after {
+  content: "V6";
+  position: absolute;
+  top: 4px;
+  right: 0;
+  padding: 6px 11px;
+  border: 1px solid var(--v6-line);
+  border-radius: 999px;
+  color: var(--v6-lime);
+  font-size: 0.65rem;
+  font-weight: 1000;
+  letter-spacing: 0.18em;
+}
+
+.training-v6-center {
+  display: grid;
+  min-height: min(720px, calc(100vh - 170px));
+  place-content: center;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.training-v6-center h1 {
+  max-width: 900px;
+  margin: 0;
+  font-size: clamp(2.3rem, 8vw, 5rem);
+  font-weight: 1000;
+  line-height: 1.03;
+  letter-spacing: -0.055em;
+}
+
+.training-v6-center h1 span {
+  color: var(--v6-lime);
+}
+
+.training-v6-center > p {
+  max-width: 650px;
+  margin: 0;
+  color: #a7b1ac;
+  font-weight: 700;
+  line-height: 1.75;
+}
+
+.training-v6-loader {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(217, 255, 82, 0.14);
+  border-top-color: var(--v6-lime);
+  border-radius: 50%;
+  animation: training-v6-spin 0.8s linear infinite;
+}
+
+@keyframes training-v6-spin {
+  to { transform: rotate(360deg); }
+}
+
+.training-v6-notice {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 1px solid rgba(217, 255, 82, 0.35);
+  border-radius: 16px;
+  color: #efffbd;
+  background: rgba(217, 255, 82, 0.07);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.training-v6-setup-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.training-v6-deck-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.training-v6-deck-card {
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 15px;
+  background: #080d0f;
+}
+
+.training-v6-deck-card.is-ready {
+  border-color: rgba(217, 255, 82, 0.4);
+}
+
+.training-v6-deck-card img,
+.training-v6-deck-card .training-image-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  min-height: 0;
+  object-fit: cover;
+}
+
+.training-v6-deck-card .training-image-placeholder {
+  padding: 8px;
+}
+
+.training-v6-deck-card .training-image-placeholder span {
+  font-size: 0.48rem;
+}
+
+.training-v6-deck-card .training-image-placeholder strong {
+  font-size: 0.62rem;
+}
+
+.training-v6-deck-card figcaption {
+  padding: 6px;
+  color: #8e9994;
+  font-size: 0.56rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+
+.training-v6-file-button {
+  display: inline-flex;
+  width: 100%;
+  justify-content: center;
+}
+
+.training-v6-exercise-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.training-v6-exercise-list legend {
+  width: 100%;
+  margin-bottom: 9px;
+  color: #c9d1cd;
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.training-v6-exercise-list label {
+  position: relative;
+}
+
+.training-v6-exercise-list input {
+  position: absolute;
+  opacity: 0;
+}
+
+.training-v6-exercise-list span {
+  display: block;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 14px;
+  color: #acb5b0;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: center;
+  cursor: pointer;
+}
+
+.training-v6-exercise-list input:checked + span {
+  border-color: rgba(217, 255, 82, 0.6);
+  color: #efffb3;
+  background: rgba(217, 255, 82, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(217, 255, 82, 0.13);
+}
+
+.training-v6-safety-note {
+  padding: 13px 15px;
+  border-left: 3px solid var(--v6-orange);
+  border-radius: 0 12px 12px 0;
+  color: #c8cfcc;
+  background: rgba(255, 154, 74, 0.08);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.65;
+}
+
+.training-v6-start {
+  min-height: 66px;
+  font-size: 1rem;
+}
+
+.training-v6-match-orbit {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  margin: 10px 0;
+  border: 1px solid rgba(217, 255, 82, 0.18);
+  border-radius: 50%;
+  animation: training-v6-spin 9s linear infinite;
+}
+
+.training-v6-match-orbit::before,
+.training-v6-match-orbit::after,
+.training-v6-match-orbit i {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.training-v6-match-orbit::before {
+  inset: 25px;
+  border: 1px dashed rgba(217, 255, 82, 0.32);
+}
+
+.training-v6-match-orbit::after {
+  inset: 58px;
+  background: var(--v6-lime);
+  box-shadow: 0 0 32px rgba(217, 255, 82, 0.65);
+}
+
+.training-v6-match-orbit i:nth-child(1) {
+  top: -5px;
+  left: 67px;
+  width: 14px;
+  height: 14px;
+  background: var(--v6-orange);
+}
+
+.training-v6-match-orbit i:nth-child(2) {
+  right: 15px;
+  bottom: 22px;
+  width: 8px;
+  height: 8px;
+  background: var(--v6-lime);
+}
+
+.training-v6-match-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  color: #96a09b;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.training-v6-match-meta strong {
+  color: var(--v6-lime);
+  font-size: 1.1rem;
+}
+
+.training-v6-room {
+  display: grid;
+  gap: 16px;
+}
+
+.training-v6-room-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  background: rgba(7, 12, 14, 0.9);
+}
+
+.training-v6-room-head h1 {
+  margin: 7px 0 0;
+  font-size: clamp(1.05rem, 4vw, 1.55rem);
+  line-height: 1.15;
+}
+
+.training-v6-room-head h1 span {
+  color: var(--v6-lime);
+}
+
+.training-v6-room-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.training-v6-room-badges span {
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  color: #aeb7b2;
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.training-v6-room-badges .is-online {
+  border-color: rgba(217, 255, 82, 0.35);
+  color: var(--v6-lime);
+}
+
+.training-v6-room-badges .is-recovering {
+  border-color: rgba(255, 154, 74, 0.42);
+  color: #ffc18f;
+}
+
+.training-v6-recovery {
+  display: grid;
+  gap: 4px;
+  padding: 13px 16px;
+  border: 1px solid rgba(255, 154, 74, 0.44);
+  border-radius: 15px;
+  color: #ffd2ad;
+  background: rgba(255, 154, 74, 0.08);
+}
+
+.training-v6-recovery strong {
+  font-size: 0.78rem;
+}
+
+.training-v6-recovery span {
+  color: #b7afa7;
+  font-size: 0.68rem;
+}
+
+.training-v6-phase {
+  min-height: 520px;
+  padding: clamp(20px, 5vw, 44px);
+  border: 1px solid var(--v6-line);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 88% 10%, rgba(217, 255, 82, 0.08), transparent 30%),
+    linear-gradient(rgba(217, 255, 82, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(217, 255, 82, 0.025) 1px, transparent 1px),
+    var(--v6-panel);
+  background-size: auto, 36px 36px, 36px 36px, auto;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.32);
+}
+
+.training-v6-phase-kicker,
+.training-v6-role-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--v6-lime);
+  font-size: 0.7rem;
+  font-weight: 1000;
+  letter-spacing: 0.18em;
+}
+
+.training-v6-phase-kicker::before,
+.training-v6-role-mark::before {
+  content: "";
+  width: 28px;
+  height: 2px;
+  background: var(--v6-lime);
+}
+
+.training-v6-phase h2 {
+  max-width: 880px;
+  margin: 18px 0 12px;
+  font-size: clamp(1.8rem, 7vw, 3.8rem);
+  font-weight: 1000;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.training-v6-phase > p {
+  max-width: 780px;
+  color: #a4aea9;
+  font-weight: 700;
+  line-height: 1.75;
+}
+
+.training-v6-transfer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.training-v6-transfer-grid article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.training-v6-transfer-grid article i {
+  grid-row: span 2;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+  border: 2px solid #6c7772;
+  border-radius: 50%;
+}
+
+.training-v6-transfer-grid article.is-complete {
+  border-color: rgba(217, 255, 82, 0.35);
+}
+
+.training-v6-transfer-grid article.is-complete i {
+  border-color: var(--v6-lime);
+  background: var(--v6-lime);
+  box-shadow: 0 0 18px rgba(217, 255, 82, 0.7);
+}
+
+.training-v6-transfer-grid strong {
+  color: #eef2ec;
+  font-size: 0.84rem;
+}
+
+.training-v6-transfer-grid span {
+  color: #84908a;
+  font-size: 0.68rem;
+}
+
+.training-v6-main-image {
+  overflow: hidden;
+  width: min(100%, 670px);
+  margin: 26px auto 20px;
+  border: 1px solid rgba(217, 255, 82, 0.28);
+  border-radius: 22px;
+  background: #050808;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.training-v6-main-image img {
+  display: block;
+  width: 100%;
+  max-height: 52vh;
+  object-fit: contain;
+}
+
+.training-v6-score-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 20px;
+}
+
+.training-v6-score-grid button {
+  display: grid;
+  gap: 2px;
+  padding: 12px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 14px;
+  color: #c3cbc7;
+  background: rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+}
+
+.training-v6-score-grid button:hover:not(:disabled),
+.training-v6-score-grid button:focus-visible {
+  border-color: var(--v6-lime);
+  color: #fff;
+  background: rgba(217, 255, 82, 0.1);
+}
+
+.training-v6-score-grid button:nth-child(n + 8) {
+  border-color: rgba(255, 154, 74, 0.38);
+  color: #ffd0ad;
+}
+
+.training-v6-score-grid strong {
+  font-size: 1.3rem;
+}
+
+.training-v6-score-grid span {
+  font-size: 0.48rem;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+}
+
+.training-v6-score-wait {
+  display: grid;
+  gap: 5px;
+  max-width: 670px;
+  margin: 20px auto 0;
+  padding: 16px;
+  border: 1px solid rgba(217, 255, 82, 0.35);
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(217, 255, 82, 0.07);
+}
+
+.training-v6-score-wait strong {
+  color: var(--v6-lime);
+}
+
+.training-v6-score-wait span,
+.training-v6-score-rule {
+  color: #8d9892;
+  font-size: 0.68rem;
+}
+
+.training-v6-command-form {
+  display: grid;
+  max-width: 760px;
+  margin-top: 26px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.training-v6-custom-exercise[hidden] {
+  display: none;
+}
+
+.training-v6-command-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.training-v6-condition {
+  max-width: 760px;
+  padding: 12px 15px;
+  border-left: 3px solid var(--v6-orange);
+  color: #e3ddd7;
+  background: rgba(255, 154, 74, 0.08);
+  font-size: 0.76rem;
+}
+
+.training-v6-condition strong {
+  margin-right: 12px;
+  color: #ffbd88;
+}
+
+.training-v6-instruction-card {
+  display: grid;
+  max-width: 780px;
+  gap: 10px;
+  margin: 24px 0;
+  padding: 22px;
+  border: 1px solid rgba(217, 255, 82, 0.35);
+  border-radius: 22px;
+  background: rgba(217, 255, 82, 0.055);
+}
+
+.training-v6-instruction-card > span {
+  color: var(--v6-lime);
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+}
+
+.training-v6-instruction-card h3 {
+  margin: 0;
+  font-size: clamp(1.4rem, 5vw, 2.4rem);
+}
+
+.training-v6-instruction-card > p {
+  margin: 0;
+  color: #d5dcd8;
+  line-height: 1.7;
+}
+
+.training-v6-rhythm {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: #fff;
+}
+
+.training-v6-rhythm strong {
+  color: var(--v6-orange);
+  font-size: 1.2rem;
+}
+
+.training-v6-rhythm small {
+  color: #8f9a94;
+}
+
+.training-v6-instruction-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 0;
+}
+
+.training-v6-instruction-card dl div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 10px;
+}
+
+.training-v6-instruction-card dt {
+  color: #7d8882;
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.training-v6-instruction-card dd {
+  margin: 0;
+  color: #c9d0cc;
+  font-size: 0.76rem;
+}
+
+.training-v6-timer {
+  display: grid;
+  max-width: 780px;
+  gap: 12px;
+  margin: 24px 0;
+}
+
+.training-v6-timer > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.training-v6-timer strong {
+  color: #fff;
+  font-size: clamp(4rem, 16vw, 8rem);
+  font-weight: 1000;
+  line-height: 0.8;
+  letter-spacing: -0.08em;
+}
+
+.training-v6-timer span {
+  color: var(--v6-lime);
+  font-size: 0.75rem;
+  font-weight: 1000;
+  letter-spacing: 0.12em;
+}
+
+.training-v6-progress {
+  overflow: hidden;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.training-v6-progress i {
+  display: block;
+  width: var(--training-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--v6-lime), var(--v6-orange));
+  box-shadow: 0 0 24px rgba(217, 255, 82, 0.45);
+  transition: width 0.2s linear;
+}
+
+.training-v6-companion-panel {
+  display: grid;
+  max-width: 780px;
+  gap: 11px;
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.training-v6-messages {
+  display: grid;
+  align-content: end;
+  gap: 7px;
+  min-height: 110px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.training-v6-message-empty {
+  color: #75807a;
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.training-v6-message {
+  width: fit-content;
+  max-width: 86%;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px 14px 14px 4px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.training-v6-message.is-own {
+  justify-self: end;
+  border-color: rgba(217, 255, 82, 0.28);
+  border-radius: 14px 14px 4px 14px;
+  background: rgba(217, 255, 82, 0.08);
+}
+
+.training-v6-message span,
+.training-v6-message small {
+  color: #7f8b85;
+  font-size: 0.52rem;
+  font-weight: 900;
+}
+
+.training-v6-message p {
+  margin: 3px 0 0;
+  color: #eef2ed;
+  font-size: 0.78rem;
+}
+
+.training-v6-quick-messages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.training-v6-quick-messages button {
+  padding: 7px 10px;
+  border: 1px solid rgba(217, 255, 82, 0.22);
+  border-radius: 999px;
+  color: #dbe5d6;
+  background: rgba(217, 255, 82, 0.05);
+  font-size: 0.65rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.training-v6-message-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.training-v6-message-form input {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.training-v6-message-form button {
+  padding: 0 16px;
+  border: 1px solid var(--v6-line);
+  border-radius: 12px;
+  color: #141907;
+  background: var(--v6-lime);
+  font-weight: 950;
+}
+
+.training-v6-complete-workout {
+  width: min(100%, 780px);
+  margin-top: 14px;
+}
+
+.training-v6-result {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.training-v6-result > p {
+  text-align: center;
+}
+
+.training-v6-result-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
+  width: min(100%, 620px);
+  gap: 10px;
+  margin: 22px 0;
+}
+
+.training-v6-result-stats div {
+  padding: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.training-v6-result-stats dt {
+  color: #7f8984;
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+}
+
+.training-v6-result-stats dd {
+  margin: 5px 0 0;
+  color: var(--v6-lime);
+  font-size: 1.4rem;
+  font-weight: 1000;
+}
+
+.training-v6-health-stop {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid rgba(255, 154, 74, 0.2);
+  border-radius: 14px;
+  color: #a89f98;
+  background: rgba(255, 154, 74, 0.03);
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+
+.training-v6-health-stop:hover,
+.training-v6-health-stop:focus-visible {
+  border-color: rgba(255, 154, 74, 0.52);
+  color: #ffd1ad;
+}
+
+@media (min-width: 760px) {
+  .training-v6-setup-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  }
+
+  .training-v6-setup-grid > :first-child,
+  .training-v6-safety-card,
+  .training-v6-start {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .training-v6-deck-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .training-v6-room-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .training-v6-room-badges {
+    justify-content: flex-start;
+  }
+
+  .training-v6-transfer-grid,
+  .training-v6-command-row {
+    grid-template-columns: 1fr;
+  }
+
+  .training-v6-score-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .training-v6-phase {
+    min-height: 480px;
+    border-radius: 22px;
+  }
+}
+
+@media (max-width: 480px) {
+  .training-v6-exercise-list {
+    grid-template-columns: 1fr;
+  }
+
+  .training-v6-result-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .training-v6-instruction-card dl div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .training-v6-loader,
+  .training-v6-match-orbit {
+    animation: none;
+  }
+
+  .training-v6-progress i {
+    transition: none;
+  }
+}
+
 .button.button-training,
 .button-training {
   border-color: rgba(217, 255, 82, 0.72);
