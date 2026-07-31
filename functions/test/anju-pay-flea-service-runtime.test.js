@@ -1072,6 +1072,25 @@ test("the same reporter can escalate other to privacy and quarantine X without h
   assert.equal(harness.firestore.read(reportPath).reason, "privacy");
 });
 
+test("listing X post may use an account different from the public creator card", async () => {
+  const harness = createHarness({
+    balances: { seller: 100 },
+    creatorCards: {
+      seller: { name: "SELLER", xHandle: "public_card_account" },
+    },
+  });
+
+  const created = await harness.service.performAction("seller", listingInput({
+    xPostUrl: "https://x.com/another_account/status/123456789",
+    xConsent: true,
+  }));
+
+  assert.equal(
+    created.createdListing.xPostUrl,
+    "https://x.com/another_account/status/123456789",
+  );
+});
+
 test("favorite snapshots omit UID and X handle, support removal, and enforce the 100-seller cap", async () => {
   const harness = createHarness({
     balances: { seller: 100, buyer: 100, cappedBuyer: 100 },

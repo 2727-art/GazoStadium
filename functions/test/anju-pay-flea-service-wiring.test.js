@@ -387,15 +387,12 @@ test("seller cards accept only owner-selected unlocked market achievements", () 
   );
 });
 
-test("creator-card identity is owner-verified and X posts must use its public handle", () => {
+test("creator-card identity is owner-verified without restricting X posts to its public handle", () => {
   assert.match(source, /online\/topMessageEntriesByUser\/\$\{uid\}/);
   assert.match(source, /online\/topMessageOwners\/\$\{entryId\}/);
   assert.match(source, /online\/topMessages\/\$\{entryId\}/);
   assert.match(source, /String\(ownerSnapshot\.val\(\) \|\| ""\) !== uid/);
-  assert.match(
-    source,
-    /normalized\.xPostUrl[\s\S]*?creatorIdentity\.card\?\.xHandle[\s\S]*?toLowerCase\(\) !== postHandle\.toLowerCase\(\)/,
-  );
+  assert.doesNotMatch(source, /postHandle|publicHandle|同じXアカウント/);
   assert.doesNotMatch(source, /\bfetch\s*\(|axios|request\s*\(/);
 });
 

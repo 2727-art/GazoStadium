@@ -368,7 +368,8 @@ test("the flea experience stays text-only and never embeds or fetches X content"
   assert.match(source, /referrerpolicy="no-referrer"/);
   assert.match(source, /ポスト本文や画像はゲーム内に表示しません/);
   assert.match(source, /自分の投稿/);
-  assert.match(source, /推しカード[^\n]{0,120}同じXユーザー名/);
+  assert.match(source, /自分のポストの個別URLを指定できます/);
+  assert.doesNotMatch(source, /推しカード[^\n]{0,120}同じXユーザー名/);
   assert.match(source, /FLEA_X_EXTERNAL_CONFIRM_MESSAGE[^\n]*店主が自己申告/);
   assert.match(source, /運営は店主とXアカウントの本人確認も、リンク先の内容確認も行っていません/);
   assert.match(source, /店主が公開設定した自己申告の情報/);

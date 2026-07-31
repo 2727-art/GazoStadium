@@ -404,17 +404,6 @@ function createAnjuPayFleaService(deps) {
     return card ? { entryId, card } : { entryId: "", card: null };
   }
 
-  function xPostHandle(value) {
-    if (!value) return "";
-    try {
-      const parsed = new URL(value);
-      const segments = parsed.pathname.split("/");
-      return CREATOR_CARD_X_HANDLE_PATTERN.test(segments[1] || "") ? segments[1] : "";
-    } catch {
-      return "";
-    }
-  }
-
   function assertNoPrivateFleaFields(value, seen = new Set()) {
     if (!value || typeof value !== "object" || seen.has(value)) return value;
     seen.add(value);
@@ -747,16 +736,6 @@ function createAnjuPayFleaService(deps) {
     const sellerName = normalizeFleaSellerName(creatorIdentity.card?.name || data?.name);
     if (creatorIdentity.card?.text) {
       assertSafeFleaListingText(sellerName, creatorIdentity.card.text);
-    }
-    if (normalized.xPostUrl) {
-      const postHandle = xPostHandle(normalized.xPostUrl);
-      const publicHandle = creatorIdentity.card?.xHandle || "";
-      if (!publicHandle || publicHandle.toLowerCase() !== postHandle.toLowerCase()) {
-        throw httpsError(
-          "failed-precondition",
-          "Xポストは公開中の推しカードと同じXアカウントから選んでください。",
-        );
-      }
     }
     const payloadHash = anjuPayEntryId(`flea-payload:${JSON.stringify(normalized)}`);
     const browseOrder = anjuPayEntryId(`flea-browse:${dateKey}:${listingId}`);
