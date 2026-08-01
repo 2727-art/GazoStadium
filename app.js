@@ -1603,7 +1603,7 @@
     expandedRankingEntryId = "";
     rankingComments = [];
     rankingCommentsStatus = "idle";
-    window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod, { force });
+    return window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod, { force });
   }
 
   function refreshRankingSurfaces() {
@@ -1615,7 +1615,7 @@
   function selectRankingPeriod(period) {
     if (!["daily", "weekly", "monthly"].includes(period) || period === rankingPeriod) return;
     rankingPeriod = period;
-    refreshSelectedRankingPeriod();
+    return refreshSelectedRankingPeriod();
   }
 
   function navigateRankingSection(target) {
@@ -1625,10 +1625,15 @@
       return;
     }
     if (!["daily", "weekly", "monthly"].includes(selected)) return;
-    selectRankingPeriod(selected);
-    window.requestAnimationFrame(() => {
+    const refreshRequest = selectRankingPeriod(selected);
+    const scrollToCircuit = () => window.requestAnimationFrame(() => {
       document.querySelector("#rankingCircuitBoard")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+    if (refreshRequest && typeof refreshRequest.finally === "function") {
+      refreshRequest.finally(scrollToCircuit);
+    } else {
+      scrollToCircuit();
+    }
   }
 
   function refreshRankingAtPeriodBoundary() {

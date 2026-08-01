@@ -183,6 +183,11 @@ test("an empty monthly read is successful and failures retry monthly only after 
 test("top navigation reaches all four boards while Rival Zone and personal run remain visible", () => {
   const app = read("app.js");
   const styles = read("styles.css");
+  const navigation = sourceBetween(
+    app,
+    "function navigateRankingSection",
+    "function refreshRankingAtPeriodBoundary",
+  );
   const rankingScreen = sourceBetween(app, "function renderRankingScreen", "function startOnlineBattle");
   const jumpIndex = rankingScreen.indexOf('class="ranking-jump-nav"');
   const dashboardIndex = rankingScreen.indexOf("${renderRankingDashboardPanel()}");
@@ -192,13 +197,15 @@ test("top navigation reaches all four boards while Rival Zone and personal run r
   }
   assert.match(app, /YOUR RIVAL ZONE/);
   assert.match(app, /renderCrownRunPanel\(dashboard\)/);
+  assert.match(navigation, /const refreshRequest = selectRankingPeriod\(selected\)/);
+  assert.match(navigation, /refreshRequest\.finally\(scrollToCircuit\)/);
   assert.match(styles, /\.ranking-jump-nav/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.ranking-jump-nav/);
 });
 
 test("all changed browser assets share the ranking TOP 10 cache marker", () => {
   const html = read("index.html");
-  assert.match(html, /styles\.css\?v=[^"]*ranking-top10-v1/);
-  assert.match(html, /app\.js\?v=[^"]*ranking-top10-v1/);
-  assert.match(html, /online\.js\?v=[^"]*ranking-top10-v1/);
+  assert.match(html, /styles\.css\?v=[^"]*ranking-top10-v2/);
+  assert.match(html, /app\.js\?v=[^"]*ranking-top10-v2/);
+  assert.match(html, /online\.js\?v=[^"]*ranking-top10-v2/);
 });
