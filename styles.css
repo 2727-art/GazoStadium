@@ -1663,7 +1663,7 @@ button:disabled {
 .hero-mode-button {
   position: relative;
   min-height: 76px;
-  grid-column: span 3;
+  grid-column: span 4;
   flex-direction: column;
   gap: 3px;
   overflow: hidden;
@@ -2436,7 +2436,7 @@ button:disabled {
 .mode-lobby-stats {
   max-width: 980px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 24px;
 }
