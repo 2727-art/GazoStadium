@@ -166,15 +166,25 @@ test("the client is Firebase-callable solo play with no P2P or RTDB transport", 
   assert.match(client, /URL\.revokeObjectURL/);
 });
 
-test("all three personalities, exact BPM boundary, and separate emergency stop are visible", () => {
+test("all three personalities, exact BPM boundary, and one immediate stop are visible", () => {
+  const standardPlay = sourceBlock(client, "function renderPlay()", "function resultTitle");
+  const immediateStop = sourceBlock(
+    client,
+    "function stopSessionImmediately",
+    "function resetForAnotherSession",
+  );
   assert.match(client, /AI_TEXT_TRAINING_MODES/);
   assert.match(client, /normalizeAiTextTrainingBpm/);
   assert.match(client, /0または40〜160/);
   assert.match(client, /お姉ちゃんモードでは「きつい」で次のBPMが速くなります/);
   assert.match(client, /無理・痛い・めまい／即停止/);
   assert.match(client, /data-ai-text-training-reaction/);
-  assert.match(client, /data-ai-text-training-action="emergency-stop"/);
-  assert.match(client, /completeSession\("safety_stopped"\)/);
+  assert.equal(standardPlay.match(/data-ai-text-training-action="stop-session"/gu)?.length, 1);
+  assert.doesNotMatch(standardPlay, /data-ai-text-training-action="(?:pause|toggle-mute|exit-session)"/);
+  assert.match(immediateStop, /completeSession\("exited"\)/);
+  assert.doesNotMatch(immediateStop, /window\.confirm|safety_stopped/);
+  assert.match(client, /"stop-session": stopSessionImmediately/);
+  assert.match(client, /\["completed", "safety_stopped", "exited"\]/);
 });
 
 test("round duration extends safely to 60 seconds while keeping the 20-second default", () => {
@@ -200,6 +210,26 @@ test("round duration extends safely to 60 seconds while keeping the 20-second de
   );
 });
 
+test("exercise choice is removed from presentation while legacy recovery stays compatible", () => {
+  const setup = sourceBlock(client, "function renderSetup", "function drawReviewCard");
+  const play = sourceBlock(client, "function renderPlay()", "function resultTitle");
+  const recovery = sourceBlock(
+    client,
+    "function recoverPaidSession",
+    "function recoverPendingDefeatPresentation",
+  );
+
+  assert.match(setup, /<span>STEP 3<\/span><h2>1ラウンドの長さ<\/h2>/);
+  assert.doesNotMatch(setup, /aiTextTrainingExercise|AI_TEXT_TRAINING_EXERCISES|>運動</);
+  assert.doesNotMatch(play, /aiTextTrainingExercise|ai-text-training-exercise/);
+  assert.match(client, /exerciseId: "free"/);
+  assert.match(recovery, /state\.exerciseId = saved\.exerciseId/);
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-config-grid\.is-duration-only > fieldset\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1;/,
+  );
+});
+
 test("partial elapsed time is counted once when a playing, paused, or countdown session ends", () => {
   const elapsedStart = client.indexOf("function currentRoundElapsedSeconds");
   const elapsedEnd = client.indexOf("function chooseReaction", elapsedStart);
@@ -210,7 +240,7 @@ test("partial elapsed time is counted once when a playing, paused, or countdown 
   assert.match(elapsed, /function finishRound\(\)[\s\S]*?recordCurrentRoundElapsed\(\)/);
 
   const completeStart = client.indexOf("function completeSession");
-  const completeEnd = client.indexOf("function emergencyStop", completeStart);
+  const completeEnd = client.indexOf("function stopSessionImmediately", completeStart);
   const complete = client.slice(completeStart, completeEnd);
   assert.match(
     complete,
@@ -275,7 +305,7 @@ test("paid one-use review shows balance, price, post-payment balance, and volunt
   assert.match(review, /商品種別/);
   assert.match(review, /利用範囲/);
   assert.match(review, /5ラウンド・最終攻勢・敗北・クールダウン・敗北証明/);
-  assert.match(review, /自主終了・「無理／痛い／めまい」即停止でも使い切り/);
+  assert.match(review, /赤い「無理／痛い／めまい」即停止で終了した場合も使い切り/);
   assert.match(review, /追加支払いなしで再開/);
   assert.match(review, /購入は完全に任意/);
   assert.match(review, /aiTextTrainingPurchaseConsent/);
@@ -392,7 +422,7 @@ test("authors sell six separate personality-product combinations and can clone o
   assert.match(editor, /性格ごとに通常版と敗北ZONE版を別々に販売できます/);
   assert.match(editor, /data-ai-text-training-action="copy-standard-to-zone"/);
   assert.match(editor, /敗北ZONE専用台詞 · 5場面/);
-  assert.match(editor, /ギブアップ・一時停止・即停止・安全文言・BPM・時間はシステム固定/);
+  assert.match(editor, /ギブアップ・即停止・自動一時停止・安全文言・BPM・時間はシステム固定/);
   assert.match(editor, /停止を妨げる台詞は禁止/);
   assert.match(editorUpdate, /const productType = normalizeAiTextTrainingProductType/);
   assert.match(editorUpdate, /for \(const slot of AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS\)/);
@@ -472,7 +502,8 @@ test("defeat ZONE products play their five random phases while safety controls r
     assert.match(zoneLifecycle, new RegExp(`"${slotId}"`));
   }
   assert.match(renderer, /data-ai-text-training-action="surrender-defeat-zone"/);
-  assert.match(safetyControls, /data-ai-text-training-action="emergency-stop"/);
+  assert.match(safetyControls, /data-ai-text-training-action="stop-session"/);
+  assert.doesNotMatch(safetyControls, /pause-defeat-zone|toggle-mute/);
   assert.match(renderer, /200 BPMは音と画面の演出です/);
   assert.doesNotMatch(
     sourceBlock(client, "function defaultDefeatZoneLines", "function createEditorDraft"),
@@ -850,7 +881,7 @@ test("every started outcome queues an independent achievement finish without blo
   assert.match(flush, /activeSeconds: record\.activeSeconds/);
 
   const completeStart = client.indexOf("function completeSession");
-  const completeEnd = client.indexOf("function emergencyStop", completeStart);
+  const completeEnd = client.indexOf("function stopSessionImmediately", completeStart);
   const complete = client.slice(completeStart, completeEnd);
   assert.match(complete, /queueAchievementFinish\(outcome\)/);
   assert.match(complete, /flushAchievementRetryQueue\(\)\.catch/);
@@ -878,8 +909,8 @@ test("achievement unlocks use the shared event and best-effort acknowledgement",
 test("setup and result explain verified completion, safe non-progress, and manual retry", () => {
   assert.match(client, /カメラや動作判定は使いません/);
   assert.match(client, /5ラウンド完走だけが実績へ加算/);
-  assert.match(client, /安全停止・途中終了で今までの進捗は減りません/);
-  assert.match(client, /解除済み実績や既存の進捗も減りません/);
+  assert.match(client, /途中終了で今までの進捗は減りません/);
+  assert.match(client, /途中終了で解除済み実績や既存の進捗も減りません/);
   assert.match(client, /画像・BPM・台詞を含まない最小限の記録/);
   assert.match(client, /data-ai-text-training-action="retry-achievement-finish"/);
   assert.match(client, /"retry-achievement-finish": retryAchievementFinish/);
@@ -1466,7 +1497,11 @@ test("defeat ZONE never re-asks for surrender after defeat and never auto-resume
     'document.addEventListener("visibilitychange"',
     "window.HariaiAiTextTraining",
   );
-  const emergency = sourceBlock(client, "function emergencyStop", "function exitSession");
+  const immediateStop = sourceBlock(
+    client,
+    "function stopSessionImmediately",
+    "function resetForAnotherSession",
+  );
 
   assert.match(renderer, /continueAfterDefeat = state\.defeatResumePhase === "zone_deceleration"/);
   assert.match(renderer, /敗北後の減速を停止中/);
@@ -1483,14 +1518,13 @@ test("defeat ZONE never re-asks for surrender after defeat and never auto-resume
   assert.match(visibility, /if \(event\.persisted\) return/);
   assert.match(visibility, /window\.addEventListener\("pageshow"/);
   assert.match(visibility, /音とタイマーは停止中です。自分で再開してください/);
-  assert.match(emergency, /if \(state\.workoutFinalized\)[\s\S]*?state\.postWorkoutSafetyStopped = true/);
   assert.match(
-    sourceBlock(client, "function exitSession", "function resetForAnotherSession"),
+    immediateStop,
     /if \(state\.workoutFinalized\)[\s\S]*?state\.postWorkoutExited = true[\s\S]*?finishDefeatPresentation\(\)/,
   );
   assert.match(
     sourceBlock(client, "function renderResult()", "function render()"),
-    /const replayAllowed = state\.resultOutcome !== "safety_stopped"[\s\S]*?&& !state\.postWorkoutSafetyStopped/,
+    /const replayAllowed = state\.resultOutcome === "completed"[\s\S]*?&& !state\.postWorkoutSafetyStopped/,
   );
   assert.match(
     trainingStyles,
@@ -1586,11 +1620,11 @@ test("paid consumption starts only after DRAW confirmation and a replay requires
   );
 });
 
-test("a safety stop offers no replay CTA while preserving a home exit", () => {
+test("an interrupted session offers no replay CTA while preserving a home exit", () => {
   const result = sourceBlock(client, "function renderResult()", "function render()");
   assert.match(
     result,
-    /const replayAllowed = state\.resultOutcome !== "safety_stopped"/,
+    /const replayAllowed = state\.resultOutcome === "completed"/,
   );
   assert.match(
     result,
@@ -1604,6 +1638,7 @@ test("a safety stop offers no replay CTA while preserving a home exit", () => {
     result,
     /\$\{alternateDrawAllowed \? `<button[\s\S]*?data-ai-text-training-action="alternate-draw-after-result"[\s\S]*?` : ""\}/,
   );
+  assert.match(result, /state\.resultOutcome === "exited"[\s\S]*?今日はここまで。止める判断にペナルティはありません/);
   assert.match(result, /data-ai-text-training-action="home"/);
 });
 
@@ -1811,10 +1846,9 @@ test("the AI metronome starts louder, stays locally adjustable, and preserves ex
     eventBinding,
     /\[data-ai-text-training-metronome-volume\][\s\S]*?addEventListener\("input", \(\) => updateMetronomeVolume\(input\)\)/,
   );
-  assert.match(
-    client,
-    /data-ai-text-training-action="toggle-mute" aria-pressed="\$\{!state\.muted\}"/,
-  );
+  const playControls = sourceBlock(client, "function renderPlay()", "function resultTitle");
+  assert.doesNotMatch(playControls, /data-ai-text-training-action="toggle-mute"/);
+  assert.match(readme, /準備画面の0〜100%スライダー[\s\S]*?0%を無音設定/);
   assert.equal(html.match(/metronome-volume-v2/gu)?.length, 2);
   assert.match(
     trainingStyles,
@@ -1930,14 +1964,50 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
   );
   assert.match(
     trainingStyles,
-    /\.ai-text-training-safety-controls \.ai-text-training-emergency\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1;[\s\S]*?min-height:\s*64px;/,
+    /\.ai-text-training-safety-controls \.ai-text-training-emergency\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?min-height:\s*56px;/,
+  );
+  assert.match(
+    client,
+    /<div class="ai-text-training-round-top"><span><b>ROUND \$\{state\.roundIndex \+ 1\} \/ 5<\/b><i aria-hidden="true">·<\/i><strong>/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-round-top\s*\{[\s\S]*?flex-direction:\s*row;[\s\S]*?flex-wrap:\s*nowrap;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-cheer > span\s*\{[\s\S]*?-webkit-line-clamp:\s*2;/,
+  );
+  assert.match(
+    sourceBlock(client, "function supportMessage", "function updatePlayingDom"),
+    /document\.querySelector\("#aiTextTrainingCheer > span"\)/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-companion > span\s*\{[\s\S]*?display:\s*none;[\s\S]*?\.ai-text-training-companion > p\s*\{[\s\S]*?white-space:\s*nowrap;/,
+  );
+  const standardPlay = sourceBlock(client, "function renderPlay()", "function resultTitle");
+  assert.match(standardPlay, /renderFrame\([\s\S]*?\{ showHeader: false \}\);/);
+  assert.doesNotMatch(standardPlay, /title: "SOLO TRAINING"|backAction: "exit-session"/);
+  assert.match(
+    sourceBlock(client, "function renderFrame", "function authStatusHtml"),
+    /aria-label="\$\{escapeHtml\(title\)\}"/,
   );
   assert.match(
     trainingStyles,
     /@media \(orientation: landscape\) and \(max-height: 650px\)[\s\S]*?\.ai-text-training-round-top > span\s*\{[\s\S]*?margin-left:\s*58px;[\s\S]*?\.ai-text-training-round-overlay \.ai-text-training-progress\s*\{[\s\S]*?width:\s*calc\(100% - 58px\);/,
   );
+  assert.match(
+    trainingStyles,
+    /@media \(orientation: portrait\) and \(max-height: 720px\)[\s\S]*?data-ai-text-training-play-style="standard"[\s\S]*?grid-template-columns:\s*minmax\(0, min\(430px, calc\(64\.2857svh - 128\.571px\)\)\);/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(orientation: landscape\) and \(max-height: 650px\) and \(min-width: 540px\) and \(min-aspect-ratio: 5 \/ 3\)[\s\S]*?data-ai-text-training-play-style="standard"[\s\S]*?\.ai-text-training-safety-controls\s*\{[\s\S]*?grid-column:\s*2;/,
+  );
 
   assert.equal(html.match(/beat-edge-hud-v3/gu)?.length, 2);
+  assert.equal(html.match(/ai-training-focus-hud-v2/gu)?.length, 2);
   assert.match(readme, /残り秒数を画像左端[\s\S]*?ビートゲージを右端[\s\S]*?残り10秒/);
   assert.match(design, /残り時間が厳密に10秒以下[\s\S]*?全面フラッシュを使わない/);
 });

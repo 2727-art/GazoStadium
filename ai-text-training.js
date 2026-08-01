@@ -38,7 +38,6 @@ import {
   AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS,
   aiTextTrainingBeatGaugeState,
   aiTextTrainingDefeatZoneBeatGaugeState,
-  aiTextTrainingExercise,
   aiTextTrainingMessageCadenceMs,
   aiTextTrainingMode,
   aiTextTrainingPlayStyle,
@@ -643,7 +642,7 @@ function createState() {
     playStyle: "standard",
     sessionPlayStyle: "standard",
     modeId: "mama",
-    exerciseId: "march",
+    exerciseId: "free",
     roundSeconds: 20,
     rosterImages: Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null),
     rosterBpms: [...DEFAULT_ROSTER_BPMS],
@@ -2195,12 +2194,13 @@ function renderFrame(content, {
   title = "AIと対戦しよう 文字コラトレーニング",
   backLabel = "トップへ戻る",
   backAction = "home",
+  showHeader = true,
 } = {}) {
-  return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" data-ai-text-training-play-style="${escapeHtml(state.sessionPlayStyle || state.playStyle || "standard")}" ${cosmeticDataAttributes()}>
-    <header class="ai-text-training-header">
+  return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" data-ai-text-training-play-style="${escapeHtml(state.sessionPlayStyle || state.playStyle || "standard")}" aria-label="${escapeHtml(title)}" ${cosmeticDataAttributes()}>
+    ${showHeader ? `<header class="ai-text-training-header">
       <div><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1></div>
       <button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}" ${state.finishInFlight ? "disabled" : ""}>${escapeHtml(backLabel)}</button>
-    </header>
+    </header>` : ""}
     ${content}
     <div class="ai-text-training-sr-status" id="aiTextTrainingAnnouncer" role="status" aria-live="polite" aria-atomic="true"></div>
   </section>`;
@@ -2470,7 +2470,7 @@ function renderSetup() {
     <section class="ai-text-training-daily ${todayComplete ? "is-complete" : ""}" aria-label="今日のチャレンジ">
       <span>${todayComplete ? "TODAY COMPLETE" : "TODAY'S QUICK CHALLENGE"}</span>
       <strong>${todayComplete ? "今日の5ラウンドを完走しました" : "好きな性格で5ラウンド完走しよう"}</strong>
-      <small>カメラや動作判定は使いません。5ラウンド完走だけが実績へ加算され、安全停止・途中終了で今までの進捗は減りません。有料応援は任意で、完走によるPay還元はありません。</small>
+      <small>カメラや動作判定は使いません。5ラウンド完走だけが実績へ加算され、途中終了で今までの進捗は減りません。有料応援は任意で、完走によるPay還元はありません。</small>
     </section>
     <section class="ai-text-training-panel ai-text-training-play-style-panel">
       <div class="ai-text-training-section-heading"><span>PLAY STYLE</span><h2>今日の終わり方を選ぶ</h2><em>${defeatZone ? "敗北して完了" : "5ラウンドで完了"}</em></div>
@@ -2497,12 +2497,11 @@ function renderSetup() {
       <p class="ai-text-training-mode-note">3つは難易度ではなく、次のBPMを決める性格です。BPMの変更はラウンド間だけに行います。</p>
     </section>
     <section class="ai-text-training-panel">
-      <div class="ai-text-training-section-heading"><span>STEP 3</span><h2>運動と長さ</h2></div>
-      <div class="ai-text-training-config-grid">
-        <label>運動<select id="aiTextTrainingExercise" ${recoverySettingsLocked ? "disabled" : ""}>${AI_TEXT_TRAINING_EXERCISES.map((exercise) => `<option value="${exercise.id}" ${state.exerciseId === exercise.id ? "selected" : ""}>${escapeHtml(exercise.label)}</option>`).join("")}</select><small>${escapeHtml(aiTextTrainingExercise(state.exerciseId).cue)}</small></label>
+      <div class="ai-text-training-section-heading"><span>STEP 3</span><h2>1ラウンドの長さ</h2></div>
+      <div class="ai-text-training-config-grid is-duration-only">
         <fieldset><legend>1ラウンド</legend><div>${ROUND_SECONDS_OPTIONS.map((seconds) => `<label><input type="radio" name="aiTextTrainingRoundSeconds" value="${seconds}" ${state.roundSeconds === seconds ? "checked" : ""} ${recoverySettingsLocked ? "disabled" : ""} /><span>${seconds}秒</span></label>`).join("")}</div></fieldset>
       </div>
-      <p class="ai-text-training-mode-note">${recoverySettingsLocked ? "開始済み利用の運動と時間は、支払い時の設定に固定されています。" : "1ラウンドは最大60秒。5ラウンドの運動時間は最大5分です（3秒カウントと、自分で次へ進むまでの休憩は含みません）。"}</p>
+      <p class="ai-text-training-mode-note">${recoverySettingsLocked ? "開始済み利用の時間は、支払い時の設定に固定されています。" : "1ラウンドは最大60秒。5ラウンドの運動時間は最大5分です（3秒カウントと、自分で次へ進むまでの休憩は含みません）。"}</p>
     </section>
     ${renderBeatCharacterPanel()}
     ${renderCosmeticsPanel()}
@@ -2515,7 +2514,7 @@ function renderSetup() {
         <button class="button button-ghost" type="button" data-ai-text-training-action="editor">応援台本を売る</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="rankings">売上ランキング</button>
       </div>
-      <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用します。敗北ZONEの最終攻勢とクールダウンを含めても追加消費はありません。開始後に自主終了・即停止した場合も使い切りです。</p>
+      <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用します。敗北ZONEの最終攻勢とクールダウンを含めても追加消費はありません。開始後に赤い即停止ボタンで終了した場合も使い切りです。</p>
     </section>
     <section class="ai-text-training-start-panel">
       <div><strong>${state.cosmeticDraft ? "演出を試着中" : imagesReady ? registeredCount > 5 ? `${registeredCount}枚からAI DRAW` : "5枚の準備OK" : `あと${AI_TEXT_TRAINING_ROUND_COUNT - registeredCount}枚`}</strong><small>痛み・めまい・息苦しさ・体調不良がある時は開始せず、運動中は即停止してください。</small></div>
@@ -2693,7 +2692,7 @@ function renderPresetDetail() {
       <dl class="ai-text-training-detail-meta"><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(script))}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(script.modeId).label)}</dd></div><div><dt>作者</dt><dd>${escapeHtml(script.authorName)}</dd></div><div><dt>改訂</dt><dd>REV.${script.revision}</dd></div></dl>
       <div class="ai-text-training-script-group"><h3>5ラウンドの台詞 · 14場面</h3><div class="ai-text-training-script-preview">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => scriptSlotPreview(script, slot)).join("")}</div></div>
       ${zoneProduct ? `<div class="ai-text-training-script-group is-defeat-zone"><h3>敗北ZONE専用台詞 · 5場面</h3><div class="ai-text-training-script-preview">${zoneSlots}</div></div>` : state.playStyle === "defeat_zone" ? '<aside class="ai-text-training-standard-zone-note"><strong>ZONE部分はシステム標準台詞です</strong><p>この商品が担当するのは5ラウンドまでです。最終攻勢・敗北・クールダウン・敗北証明は安全なシステム台詞で進み、追加消費はありません。</p></aside>' : ""}
-      <aside><strong>台本が変更できるのは文字だけです</strong><p>BPM・運動時間・安全停止・休憩操作はシステムが管理し、この台本から変更できません。</p></aside>
+      <aside><strong>台本が変更できるのは文字だけです</strong><p>BPM・運動時間・即停止・自動一時停止からの復帰はシステムが管理し、この台本から変更できません。</p></aside>
       <div class="ai-text-training-detail-actions">
         <button class="button button-primary" type="button" data-ai-text-training-action="${own ? "select-own-preset" : "select-market-preset"}" ${compatible ? "" : "disabled"}>${compatible ? own ? "無料で作者プレビュー" : "この応援を選んで準備へ" : "通常トレーニングでは選べません"}</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="market">一覧へ戻る</button>
@@ -2827,7 +2826,7 @@ function renderEditor() {
       </fieldset>
       ${zoneProduct ? `<fieldset class="ai-text-training-zone-script-editor" ${state.busyAction ? "disabled" : ""}>
         <legend>敗北ZONE専用台詞 · 5場面</legend>
-        <p>最終攻勢・敗北確定・クールダウン・敗北証明へ各2〜4行を入力します。行は場面ごとにランダム表示されます。ギブアップ・一時停止・即停止・安全文言・BPM・時間はシステム固定です。停止を妨げる台詞は禁止です。</p>
+        <p>最終攻勢・敗北確定・クールダウン・敗北証明へ各2〜4行を入力します。行は場面ごとにランダム表示されます。ギブアップ・即停止・自動一時停止・安全文言・BPM・時間はシステム固定です。停止を妨げる台詞は禁止です。</p>
         <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => editorSlotField(slot, { lines: draft.zoneLines })).join("")}</div>
       </fieldset>` : ""}
       <section class="ai-text-training-simulator">
@@ -2839,7 +2838,7 @@ function renderEditor() {
           <label>変化<select id="aiTextTrainingEditorPreviewDirection"><option value="down" ${state.editorPreview.direction === "down" ? "selected" : ""}>遅くなる</option><option value="same" ${state.editorPreview.direction === "same" ? "selected" : ""}>同じ・FREE</option><option value="up" ${state.editorPreview.direction === "up" ? "selected" : ""}>速くなる</option></select></label>
         </div>
         <blockquote id="aiTextTrainingEditorPreviewMessage">${escapeHtml(editorSimulatorMessage(draft))}</blockquote>
-        <small>公開台本はBPM・時間・ギブアップ・一時停止・即停止・安全UIを変更できません。視覚表示だけを確認するシミュレーターです。</small>
+        <small>公開台本はBPM・時間・ギブアップ・即停止・自動一時停止・安全UIを変更できません。視覚表示だけを確認するシミュレーターです。</small>
       </section>
       <div class="ai-text-training-editor-actions">
         <button class="button button-primary" type="submit">${current ? "改訂内容を確認" : "公開内容を確認"}</button>
@@ -2862,7 +2861,7 @@ function renderEditorReview() {
       <dl><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(draft, draft.productType === "defeat_zone" ? "defeat_zone" : "standard"))}</dd></div><div><dt>現在残高</dt><dd>${formatAnjuPay(state.balance)}</dd></div><div><dt>公開・改訂料</dt><dd>− ${formatAnjuPay(state.policy.publishFee)}</dd></div><div><dt>公開後残高</dt><dd>${formatAnjuPay(after)}</dd></div><div><dt>販売価格</dt><dd>${formatAnjuPay(draft.price)} / 1回</dd></div></dl>
       <div class="ai-text-training-script-group"><h3>5ラウンド · 14場面</h3><div class="ai-text-training-review-script">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => scriptSlotPreview(draft, slot)).join("")}</div></div>
       ${zoneProduct ? `<div class="ai-text-training-script-group is-defeat-zone"><h3>敗北ZONE · 5場面</h3><div class="ai-text-training-review-script">${AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => scriptSlotPreview({ lines: draft.zoneLines }, slot)).join("")}</div></div>` : ""}
-      <aside><strong>公開前の最終確認</strong><p>危険な運動指示、停止を妨げる言葉、性的な家族表現、個人情報、外部連絡先は禁止です。${zoneProduct ? "ギブアップ・一時停止・即停止・安全文言はシステム固定で、作者台詞から変更できません。" : ""}自動検査と通報の対象になります。</p></aside>
+      <aside><strong>公開前の最終確認</strong><p>危険な運動指示、停止を妨げる言葉、性的な家族表現、個人情報、外部連絡先は禁止です。${zoneProduct ? "ギブアップ・即停止・自動一時停止・安全文言はシステム固定で、作者台詞から変更できません。" : ""}自動検査と通報の対象になります。</p></aside>
       <div class="ai-text-training-review-actions"><button class="button button-primary" type="button" data-ai-text-training-action="confirm-publish" ${after < 0 || state.busyAction ? "disabled" : ""}>${state.busyAction ? "公開中…" : `${formatAnjuPay(state.policy.publishFee)}で公開する`}</button><button class="button button-ghost" type="button" data-ai-text-training-action="editor" ${state.busyAction ? "disabled" : ""}>入力へ戻る</button></div>
     </section>
   `, { eyebrow: "AUTHOR CONFIRMATION", title: "全文と残高を確認", backLabel: "入力へ戻る", backAction: "editor" });
@@ -2880,7 +2879,7 @@ function renderPurchaseReview() {
       <span>ONE SESSION CONFIRMATION</span><h2>「${escapeHtml(script.title)}」を今回だけ使いますか？</h2>
       <p>${escapeHtml(script.description)}</p>
       <dl><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>現在残高</dt><dd>${formatAnjuPay(state.balance)}</dd></div><div><dt>今回の価格</dt><dd>− ${formatAnjuPay(script.price)}</dd></div><div><dt>支払後残高</dt><dd>${formatAnjuPay(after)}</dd></div><div><dt>プレイスタイル</dt><dd>${escapeHtml(aiTextTrainingPlayStyle(state.playStyle).label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(script))} · 1セッション</dd></div></dl>
-      <ul><li>買い切り・在庫ではなく、今回の開始と同時に使う応援です。</li><li>全文は安全確認のため公開されています。支払い対象は、表示中の利用範囲を自動演出する1回利用です。</li>${defeatZone && zoneProduct ? "<li>5ラウンド・最終攻勢・敗北・クールダウン・敗北証明まで専用台詞を使い、追加消費はありません。</li>" : defeatZone ? "<li>5ラウンドはこの通常台本、最終攻勢・敗北・クールダウン・敗北証明は安全なシステム標準台詞を使い、追加消費はありません。</li>" : ""}<li>開始後の自主終了・「無理／痛い／めまい」即停止でも使い切りです。</li><li>通信切断や再読込では同じ利用を追加支払いなしで再開できます。</li><li>無料の標準応援へ戻ることもでき、購入は完全に任意です。</li></ul>
+      <ul><li>買い切り・在庫ではなく、今回の開始と同時に使う応援です。</li><li>全文は安全確認のため公開されています。支払い対象は、表示中の利用範囲を自動演出する1回利用です。</li>${defeatZone && zoneProduct ? "<li>5ラウンド・最終攻勢・敗北・クールダウン・敗北証明まで専用台詞を使い、追加消費はありません。</li>" : defeatZone ? "<li>5ラウンドはこの通常台本、最終攻勢・敗北・クールダウン・敗北証明は安全なシステム標準台詞を使い、追加消費はありません。</li>" : ""}<li>開始後に赤い「無理／痛い／めまい」即停止で終了した場合も使い切りです。</li><li>通信切断や再読込では同じ利用を追加支払いなしで再開できます。</li><li>無料の標準応援へ戻ることもでき、購入は完全に任意です。</li></ul>
       <label class="ai-text-training-voluntary-check"><input type="checkbox" id="aiTextTrainingPurchaseConsent" /> 使い切り条件と支払後残高を確認し、自分の判断で使います</label>
       <div class="ai-text-training-review-actions"><button class="button button-primary" id="aiTextTrainingConfirmPurchase" type="button" data-ai-text-training-action="confirm-purchase" disabled>${state.busyAction ? "決済を確認中…" : `${formatAnjuPay(script.price)}で今回の応援を開始`}</button><button class="button button-ghost" type="button" data-ai-text-training-action="setup" ${state.busyAction ? "disabled" : ""}>支払わず準備へ戻る</button></div>
       ${after < 0 ? `<p class="ai-text-training-error">残高が不足しています。無料の標準応援はそのまま利用できます。</p>` : ""}
@@ -3102,11 +3101,8 @@ function defeatZoneMessage(slotId) {
 }
 
 function renderDefeatZoneSafetyControls() {
-  const pauseAvailable = ["zone_rush", "zone_deceleration", "zone_cooldown"].includes(state.phase);
   return `<div class="ai-text-training-safety-controls ai-text-training-zone-safety-controls">
-    ${pauseAvailable ? '<button class="button button-ghost" type="button" data-ai-text-training-action="pause-defeat-zone">一時停止</button>' : ""}
-    <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${!state.muted}">${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)} ${state.muted ? "OFF" : "ON"}</button>
-    <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="emergency-stop">無理・痛い・めまい／即停止</button>
+    <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="stop-session" aria-label="無理、痛い、めまいを感じた時、またはトレーニングを終える時に即停止">無理・痛い・めまい／即停止</button>
   </div>`;
 }
 
@@ -3216,7 +3212,6 @@ function renderPlay() {
   }
   const bpm = currentBpm();
   const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
-  const exercise = aiTextTrainingExercise(state.exerciseId);
   let center = "";
   if (state.phase === "reaction") {
     center = `<section class="ai-text-training-reaction">
@@ -3239,10 +3234,9 @@ function renderPlay() {
     center = `<div class="ai-text-training-round-overlay">
       ${state.phase === "countdown" ? `<strong class="ai-text-training-countdown">${state.countdownValue}</strong>` : ""}
       ${state.phase === "playing" ? renderTrainingEdgeHud(remainingSeconds) : ""}
-      <div class="ai-text-training-round-top"><span>ROUND ${state.roundIndex + 1} / 5</span><strong>${escapeHtml(tempoCopy(bpm))}</strong></div>
+      <div class="ai-text-training-round-top"><span><b>ROUND ${state.roundIndex + 1} / 5</b><i aria-hidden="true">·</i><strong>${escapeHtml(tempoCopy(bpm))}</strong></span></div>
       <div class="ai-text-training-progress" aria-hidden="true"><i id="aiTextTrainingProgress" style="width:${Math.max(0, Math.min(100, (state.remainingMs / (state.roundSeconds * 1_000)) * 100))}%"></i></div>
-      <div class="ai-text-training-cheer ai-text-training-message-surface" id="aiTextTrainingCheer">${escapeHtml(state.currentMessage || "準備できたら、自分のペースで")}</div>
-      <div class="ai-text-training-exercise"><strong>${escapeHtml(exercise.label)}</strong><small>${escapeHtml(exercise.cue)}</small></div>
+      <div class="ai-text-training-cheer ai-text-training-message-surface" id="aiTextTrainingCheer"><span>${escapeHtml(state.currentMessage || "準備できたら、自分のペースで")}</span></div>
     </div>`;
   }
   return renderFrame(`
@@ -3251,14 +3245,11 @@ function renderPlay() {
       ${center}
       ${renderAiTextTrainingLightsCompanion()}
       <div class="ai-text-training-safety-controls">
-        ${["playing", "countdown"].includes(state.phase) ? `<button class="button button-ghost" type="button" data-ai-text-training-action="pause">一時停止</button>` : ""}
-        <button class="button button-ghost" type="button" data-ai-text-training-action="toggle-mute" aria-pressed="${!state.muted}">${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)} ${state.muted ? "OFF" : "ON"}</button>
-        <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="emergency-stop">無理・痛い・めまい／即停止</button>
-        <button class="button button-ghost" type="button" data-ai-text-training-action="exit-session">運動を終了</button>
+        <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="stop-session" aria-label="無理、痛い、めまいを感じた時、またはトレーニングを終える時に即停止">無理・痛い・めまい／即停止</button>
       </div>
       <p class="ai-text-training-system-safety">痛み・めまい・息苦しさ・体調不良がある時は、台本に関係なく即停止してください。</p>
     </section>
-  `, { eyebrow: `${aiTextTrainingMode(state.modeId).label} · ${escapeHtml(state.selectedPreset.title)}`, title: "SOLO TRAINING", backLabel: "終了", backAction: "exit-session" });
+  `, { showHeader: false });
 }
 
 function resultTitle() {
@@ -3275,7 +3266,7 @@ function resultTitle() {
   }
   if (state.resultOutcome === "completed") return "5ラウンド完走";
   if (state.resultOutcome === "safety_stopped") return "安全のため停止しました";
-  return "ここでトレーニング終了";
+  return "トレーニングを終了しました";
 }
 
 function formatActiveDuration(value) {
@@ -3307,7 +3298,7 @@ function renderResult() {
     : Math.min(AI_TEXT_TRAINING_ROUND_COUNT, state.completedRounds);
   const achievementPending = Boolean(currentAchievementRetryRecord()?.outcome);
   const rosterCount = rosterEntries().length;
-  const replayAllowed = state.resultOutcome !== "safety_stopped"
+  const replayAllowed = state.resultOutcome === "completed"
     && !state.postWorkoutSafetyStopped
     && !state.postWorkoutExited;
   const alternateDrawAllowed = state.resultOutcome === "completed"
@@ -3324,12 +3315,12 @@ function renderResult() {
       <h2>${escapeHtml(resultTitle())}</h2>
       ${renderAiTextTrainingLightResult()}
       <p>${state.resultOutcome === "safety_stopped" || state.postWorkoutSafetyStopped ? `${state.workoutFinalized ? "5ラウンドの完了記録は保持しました。" : ""}止まる判断は失敗ではありません。体調が戻らない場合は運動を再開しないでください。` : state.postWorkoutExited && !state.defeatResolution ? "5ラウンドの完了記録は保持しました。敗北は確定せず、今回の対戦演出だけを終了しました。" : defeatCertificate ? "厳選した5枚が最終攻勢を制しました。対戦には敗北、トレーニングは5ラウンド完了です。" : "動作の回数やフォームは判定していません。実際に到達した範囲だけを記録します。"}</p>
-      ${defeatCertificate ? `<section class="ai-text-training-outcome-grid" aria-label="今回の結果"><article><small>対戦結果</small><strong>DEFEAT</strong><span>あなたの敗北</span></article><article><small>トレーニング結果</small><strong>COMPLETE</strong><span>5ラウンド達成</span></article></section><blockquote class="ai-text-training-message-surface">${escapeHtml(state.defeatCertificateMessage || defeatZoneFallbackLines("zone_certificate")[0])}</blockquote>` : state.postWorkoutExited ? '<blockquote class="ai-text-training-message-surface">対戦結果は未確定です。今日はここまでにしました。</blockquote>' : state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
+      ${defeatCertificate ? `<section class="ai-text-training-outcome-grid" aria-label="今回の結果"><article><small>対戦結果</small><strong>DEFEAT</strong><span>あなたの敗北</span></article><article><small>トレーニング結果</small><strong>COMPLETE</strong><span>5ラウンド達成</span></article></section><blockquote class="ai-text-training-message-surface">${escapeHtml(state.defeatCertificateMessage || defeatZoneFallbackLines("zone_certificate")[0])}</blockquote>` : state.postWorkoutExited ? '<blockquote class="ai-text-training-message-surface">対戦結果は未確定です。今日はここまでにしました。</blockquote>' : state.resultOutcome === "exited" ? '<blockquote class="ai-text-training-message-surface">今日はここまで。止める判断にペナルティはありません。</blockquote>' : state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
       ${renderResultLineup({ winner: defeatCertificate })}
       <dl><div><dt>プレイスタイル</dt><dd>${escapeHtml(aiTextTrainingPlayStyle(state.sessionPlayStyle).label)}</dd></div><div><dt>台本種別</dt><dd>${escapeHtml(aiTextTrainingProductType(presetProductType(state.selectedPreset)).label)}</dd></div><div><dt>到達</dt><dd>${completedRounds} / 5 ROUND</dd></div><div><dt>運動時間</dt><dd>${formatActiveDuration(state.completedActiveSeconds)}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(state.modeId).label)}</dd></div><div><dt>ビート</dt><dd>${escapeHtml(beatCharacter(state.sessionBeatCharacterId).label)}</dd></div><div><dt>応援</dt><dd>${escapeHtml(state.selectedPreset.title)}</dd></div></dl>
       ${state.finishPending ? `<p class="ai-text-training-pending">${state.finishInFlight ? "有料利用の終了記録を送信中です。" : "有料利用の終了記録を確認できませんでした。再送してください。"}追加請求はありません。</p>` : ""}
       ${achievementPending ? `<p class="ai-text-training-pending">${state.achievementRetryInFlight ? "実績記録を送信中です。" : "実績記録を送信できませんでした。"}運動結果を妨げず、画像・BPM・台詞を含まない最小限の記録だけをこの端末に残して再送します。</p>` : ""}
-      <p>実績はカメラや動作判定を使わず、5ラウンド完走時だけ1回加算します。敗北ZONEの継続時間や「ととのった」の選択による報酬差はありません。安全停止・途中終了で解除済み実績や既存の進捗も減りません。</p>
+      <p>実績はカメラや動作判定を使わず、5ラウンド完走時だけ1回加算します。敗北ZONEの継続時間や「ととのった」の選択による報酬差はありません。途中終了で解除済み実績や既存の進捗も減りません。</p>
       <div>${replayAllowed ? `<button class="button button-primary" type="button" data-ai-text-training-action="setup-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${state.finishPending || state.activeUse ? "終了記録の確認後にもう一度" : "同じ5枚で再戦準備"}</button>` : ""}${alternateDrawAllowed ? `<button class="button button-ghost" type="button" data-ai-text-training-action="alternate-draw-after-result" ${state.finishPending || state.activeUse ? "disabled" : ""}>${rosterCount === AI_TEXT_TRAINING_ROSTER_MAX_COUNT ? "未登場の残り5枚で再戦" : "別の5枚をDRAWして再戦"}</button>` : ""}${state.finishPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-finish" ${state.finishInFlight ? "disabled" : ""}>終了記録を再送</button>` : ""}${achievementPending ? `<button class="button button-ghost" type="button" data-ai-text-training-action="retry-achievement-finish" ${state.achievementRetryInFlight ? "disabled" : ""}>実績記録を再送</button>` : ""}<button class="button button-ghost" type="button" data-ai-text-training-action="home">トップへ戻る</button></div>
       <small>水分を取り、必要なら十分に休んでください。実績送信の失敗を理由に運動を続ける必要はありません。</small>
     </section>
@@ -3349,6 +3340,7 @@ function render() {
   if (state.screen === "rankings") html = renderRankings();
   if (state.screen === "play") html = renderPlay();
   if (state.screen === "result") html = renderResult();
+  appRoot.dataset.aiTextTrainingScreen = state.screen;
   appRoot.innerHTML = html || renderSetup();
   bindEvents();
   const renderedKey = `${state.screen}:${state.phase}`;
@@ -4131,7 +4123,7 @@ function supportMessage({ initial = false } = {}) {
     round: state.roundIndex + 1,
     remaining: remainingSeconds,
   });
-  const element = document.querySelector("#aiTextTrainingCheer");
+  const element = document.querySelector("#aiTextTrainingCheer > span");
   if (element) element.textContent = state.currentMessage;
   window.clearTimeout(state.messageTimer);
   state.messageTimer = window.setTimeout(
@@ -4776,21 +4768,8 @@ function completeSession(outcome) {
   render();
 }
 
-function emergencyStop() {
+function stopSessionImmediately() {
   if (["result", "idle"].includes(state.phase)) return;
-  if (state.workoutFinalized) {
-    state.postWorkoutSafetyStopped = true;
-    finishDefeatPresentation();
-    return;
-  }
-  completeSession("safety_stopped");
-}
-
-function exitSession() {
-  const paidWarning = state.paidUseId
-    ? "開始済みの有料応援は使い切りになります。追加請求はありません。"
-    : "ここまでの運動を終了します。";
-  if (!window.confirm(`${paidWarning}\n\nトレーニングを終了しますか？`)) return;
   if (state.workoutFinalized) {
     state.postWorkoutExited = true;
     finishDefeatPresentation();
@@ -4918,6 +4897,7 @@ function cleanup({ releaseDeck = false } = {}) {
   state.unsubscribeWallet?.();
   state.unsubscribeWallet = null;
   if (releaseDeck) releaseRosterImages();
+  delete appRoot.dataset.aiTextTrainingScreen;
   active = false;
   document.title = "貼り合いスタジアム | Online Image Battle";
 }
@@ -5007,10 +4987,6 @@ function bindEvents() {
       state.selectedPresetSource = "builtin";
       render();
     });
-  });
-  document.querySelector("#aiTextTrainingExercise")?.addEventListener("change", (event) => {
-    state.exerciseId = event.currentTarget.value;
-    render();
   });
   document.querySelectorAll('input[name="aiTextTrainingRoundSeconds"]').forEach((input) => {
     input.addEventListener("change", () => {
@@ -5266,8 +5242,6 @@ function bindEvents() {
     unpublish: unpublishCurrentPreset,
     "resume-round": startRoundCountdown,
     "next-round": advanceRound,
-    pause: () => pauseSession(),
-    "pause-defeat-zone": () => pauseDefeatZone(),
     "resume-defeat-zone": resumeDefeatZone,
     "surrender-defeat-zone": () => confirmPlayerDefeat("surrendered"),
     "skip-to-cooldown": () => beginDefeatZoneCooldown(),
@@ -5284,13 +5258,7 @@ function bindEvents() {
       }
       confirmPlayerDefeat("surrendered");
     },
-    "toggle-mute": () => {
-      state.muted = !state.muted;
-      state.ambienceController.setMuted(state.muted);
-      render();
-    },
-    "emergency-stop": emergencyStop,
-    "exit-session": exitSession,
+    "stop-session": stopSessionImmediately,
     "setup-after-result": () => resetForAnotherSession({ drawMode: "same" }),
     "alternate-draw-after-result": () => resetForAnotherSession({ drawMode: "alternate" }),
     "retry-finish": retryFinishPaidUse,
