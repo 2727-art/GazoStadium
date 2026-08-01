@@ -22,29 +22,27 @@ test("landing shows free table room counts with gentle non-competitive copy", ()
   assert.match(appSource, /自由卓は人数ではなく、お迎え中・同席中の卓数です。/);
 });
 
-test("free table public stats poll visibly without creating an anonymous account", () => {
+test("free table public stats load only on initial/manual refresh and result entry", () => {
   const appSource = read("app.js");
   const onlineSource = read("online.js");
+  const loaderStart = onlineSource.indexOf("async function loadFreeTablePublicStatsSnapshot()");
   const refreshStart = onlineSource.indexOf("function refreshFreeTablePublicStats()");
-  const refreshEnd = onlineSource.indexOf("function refreshFreeTablePublicStatsImmediately()", refreshStart);
-  const refreshSource = onlineSource.slice(refreshStart, refreshEnd);
+  const refreshEnd = onlineSource.indexOf("function normalizeAiTextTrainingPublicStats", refreshStart);
+  const refreshSource = onlineSource.slice(loaderStart, refreshEnd);
 
-  assert.ok(refreshStart >= 0);
+  assert.ok(loaderStart >= 0);
   assert.match(onlineSource, /httpsCallable\(functions, "freeTablePublicStats"\)/);
   assert.match(refreshSource, /freeTablePublicStatsCallable\(\{\}\)/);
   assert.doesNotMatch(refreshSource, /ensureAuthenticated|signInAnonymously|setPersistence/);
   assert.match(
     onlineSource,
-    /document\.visibilityState === "visible"\s*&& document\.querySelector\(\s*"#lobbyFreeTableWelcomingCount, \[data-free-table-lamp-refresh\]",\s*\) !== null/,
+    /document\.visibilityState === "visible"\s*&& document\.querySelector\("\[data-free-table-lamp-refresh\]"\) !== null/,
   );
   assert.match(refreshSource, /if \(freeTablePublicStatsRequest\) return freeTablePublicStatsRequest;/);
-  assert.match(onlineSource, /const FREE_TABLE_PUBLIC_STATS_POLL_MS = 60_000;/);
-  assert.match(onlineSource, /window\.setTimeout\(\(\) => \{\s*freeTablePublicStatsTimer = null;\s*refreshFreeTablePublicStats\(\);\s*\}, delay\);/);
-  assert.doesNotMatch(onlineSource, /setInterval\(refreshFreeTablePublicStats/);
-  assert.match(onlineSource, /FREE_TABLE_PUBLIC_STATS_POLL_MS \* \(2 \*\* Math\.min\(freeTablePublicStatsFailureCount, 2\)\)/);
+  assert.doesNotMatch(onlineSource, /FREE_TABLE_PUBLIC_STATS_POLL_MS|scheduleFreeTablePublicStatsRefresh/);
   assert.match(appSource, /window\.dispatchEvent\(new Event\("hariai-landing-rendered"\)\);/);
-  assert.match(onlineSource, /window\.addEventListener\("hariai-landing-rendered", refreshFreeTablePublicStatsImmediately\);/);
-  assert.match(onlineSource, /if \(document\.visibilityState === "visible"\) \{\s*refreshFreeTablePublicStatsImmediately\(\);/);
+  assert.doesNotMatch(onlineSource, /visibilitychange[\s\S]{0,240}refreshFreeTablePublicStats/);
+  assert.match(onlineSource, /screenChanged && state\.screen === "gameover"[\s\S]{0,160}refreshFreeTablePublicStatsImmediately/);
   assert.match(onlineSource, /welcomingRooms: null,\s*seatedRooms: null,\s*updatedAt: null,/);
   assert.match(onlineSource, /lobbyFreeTableWelcomingCount: lobbyStats\.freeTable\.welcomingRooms/);
   assert.match(onlineSource, /lobbyFreeTableSeatedCount: lobbyStats\.freeTable\.seatedRooms/);
@@ -63,7 +61,6 @@ test("free table counts retain transient success but expire safely after three m
   assert.match(safetySource, /freeTablePublicStatsLastSuccessAt = receivedAt;/);
   assert.match(safetySource, /freeTablePublicStatsLastSuccessAt \+ FREE_TABLE_PUBLIC_STATS_STALE_MS/);
   assert.match(safetySource, /serverUpdatedAtInLocalTime \+ FREE_TABLE_PUBLIC_STATS_STALE_MS/);
-  assert.match(safetySource, /\.catch\(\(\) => \{\s*freeTablePublicStatsFailureCount =/);
   assert.match(safetySource, /expireFreeTablePublicStats\(\);\s*return \{ \.\.\.freeTablePublicStats \};/);
   assert.match(onlineSource, /expireFreeTablePublicStats\(Date\.now\(\), false\);/);
 });
@@ -78,7 +75,7 @@ test("free table stats styling, docs, and cache generations stay wired", () => {
     const escapedAsset = asset.replaceAll(".", "\\.");
     assert.match(html, new RegExp(`${escapedAsset}\\?v=[^"]*free-table-stats-v1`));
   }
-  assert.match(readme, /認証不要の公開統計だけを、トップ画面と通常型・戦略型の最終結果を見ている間に60秒ごとに取得し、閲覧のために匿名アカウントを作りません/);
-  assert.match(readme, /3分間更新できなければ`--`へ戻します/);
+  assert.match(readme, /ページ初回表示時とプレイヤーが「最新の状況を読み込む」を押した時に取得し、閲覧のために匿名アカウントを作りません/);
+  assert.match(readme, /通常型・戦略型の最終結果では、その画面へ到達した時に灯りを一度だけ確認します/);
   assert.match(readme, /`freeTablePublicStats`から、お迎え中・同席中の集計値と更新時刻だけを取得します/);
 });

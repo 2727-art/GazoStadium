@@ -129,17 +129,15 @@ test("the landing presents AI text training lights as anonymous companionship, o
   assert.match(html, /ai-text-training\.js\?v=[^"]*ai-training-lights-v1/);
 });
 
-test("public training stats are callable-polled, validated, expired by TTL, and exposed to the landing", () => {
+test("public training stats are validated and loaded only by the shared lobby refresh", () => {
   assert.match(online, /httpsCallable\(functions, "aiTextTrainingPublicStats"\)/);
-  assert.match(online, /aiTextTraining:\s*\{ \.\.\.aiTextTrainingPublicStats \}/);
+  assert.match(online, /aiTextTraining:\s*\{ \.\.\.aiTrainingStats \}/);
   assert.match(online, /aiTextTraining:\s*\{ \.\.\.lobbyStats\.aiTextTraining \}/);
   assert.match(online, /typeof hasRecentActivity !== "boolean"/);
   assert.match(online, /recentWindowMs < freshnessMs/);
-  assert.match(online, /function aiTextTrainingPublicStatsExpiresAt/);
-  assert.match(
-    online,
-    /return Math\.min\(refreshDelay, Math\.max\(0, expiresAt - Date\.now\(\)\)\)/,
-  );
+  assert.match(online, /async function loadAiTextTrainingPublicStatsSnapshot\(\)/);
+  assert.match(online, /Promise\.allSettled\(\[[\s\S]*loadAiTextTrainingPublicStatsSnapshot\(\)/);
+  assert.doesNotMatch(online, /AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS|scheduleAiTextTrainingPublicStatsRefresh/);
   assert.match(online, /hariai-ai-text-training-public-stats-updated/);
 });
 

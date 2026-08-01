@@ -431,13 +431,10 @@ const ENGAWA_RESPONSES = Object.freeze([
 ]);
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
-const FREE_TABLE_PUBLIC_STATS_POLL_MS = 60_000;
+const LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS = 30_000;
+const LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS = 20_000;
 const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;
-const FREE_TABLE_PUBLIC_STATS_MAX_BACKOFF_MS = 240_000;
 const FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
-const AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS = 30_000;
-const AI_TEXT_TRAINING_PUBLIC_STATS_STALE_FALLBACK_MS = 90_000;
-const AI_TEXT_TRAINING_PUBLIC_STATS_MAX_BACKOFF_MS = 120_000;
 const AI_TEXT_TRAINING_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
 const SOLO_REMATCH_SOFT_WIDEN_MS = 20_000;
 const FALLBACK_ICE_SERVERS = Object.freeze([
@@ -470,15 +467,20 @@ let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
 let lobbyPresenceEntries = null;
 let marketPresenceEntries = null;
+let lobbyPublicStatsRefreshRequest = null;
+let lobbyPublicStatsLastAttemptAt = 0;
+let lobbyPublicStatsLastSuccessAt = 0;
+let lobbyPublicStatsRefreshError = "";
+let lobbyPublicStatsInitialRefreshStarted = false;
+let lobbyPublicStatsUiTimer = null;
+let lobbyPublicStatsRefreshGeneration = 0;
 let freeTablePublicStats = {
   welcomingRooms: null,
   seatedRooms: null,
   updatedAt: null,
 };
 let freeTablePublicStatsLastSuccessAt = 0;
-let freeTablePublicStatsFailureCount = 0;
 let freeTablePublicStatsRequest = null;
-let freeTablePublicStatsTimer = null;
 let lastFreeTablePublicStatsEventSignature = "";
 let aiTextTrainingPublicStats = {
   activeCount: null,
@@ -487,17 +489,17 @@ let aiTextTrainingPublicStats = {
   freshnessMs: null,
   recentWindowMs: null,
 };
-let aiTextTrainingPublicStatsLastSuccessAt = 0;
-let aiTextTrainingPublicStatsFailureCount = 0;
-let aiTextTrainingPublicStatsRequest = null;
-let aiTextTrainingPublicStatsTimer = null;
 let lastAiTextTrainingPublicStatsEventSignature = "";
 let freeTableResultTransitionBusy = false;
 const LOBBY_MODES = [...ACTIVE_BATTLE_MODES];
-const createLobbyStats = (value = null) => ({
+const createLobbyStats = (
+  value = null,
+  freeTableStats = freeTablePublicStats,
+  aiTrainingStats = aiTextTrainingPublicStats,
+) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
-  freeTable: { ...freeTablePublicStats },
-  aiTextTraining: { ...aiTextTrainingPublicStats },
+  freeTable: { ...freeTableStats },
+  aiTextTraining: { ...aiTrainingStats },
   market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
 });
 let lobbyStats = createLobbyStats();
@@ -1781,13 +1783,25 @@ function isActive() {
 }
 
 function getLobbyStats() {
-  expireFreeTablePublicStats(Date.now(), false);
-  expireAiTextTrainingPublicStats(Date.now(), false);
   return {
     ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
     freeTable: { ...lobbyStats.freeTable },
     aiTextTraining: { ...lobbyStats.aiTextTraining },
     market: { ...lobbyStats.market },
+  };
+}
+
+function getLobbyStatsRefreshStatus(now = Date.now()) {
+  const cooldownRemainingMs = Math.max(
+    0,
+    lobbyPublicStatsLastAttemptAt + LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS - now,
+  );
+  return {
+    available: !useOfflineMarketPreview,
+    loading: lobbyPublicStatsRefreshRequest !== null,
+    lastUpdatedAt: lobbyPublicStatsLastSuccessAt || null,
+    cooldownRemainingMs,
+    error: lobbyPublicStatsRefreshError,
   };
 }
 
@@ -1997,7 +2011,10 @@ async function readPublicDatabasePath(path, { orderByChildKey = "", limit = 0 } 
     get(ref(database, ".info/serverTimeOffset")).catch(() => null),
   ]);
   const offset = Number(offsetSnapshot?.val());
-  if (Number.isFinite(offset)) publicServerTimeOffset = offset;
+  if (Number.isFinite(offset)) {
+    publicServerTimeOffset = offset;
+    publicServerTimeOffsetReady = true;
+  }
   return snapshot.val();
 }
 
@@ -2114,9 +2131,7 @@ function normalizeFreeTablePublicStats(value, receivedAt) {
 
 function canRefreshFreeTablePublicStats() {
   return document.visibilityState === "visible"
-    && document.querySelector(
-      "#lobbyFreeTableWelcomingCount, [data-free-table-lamp-refresh]",
-    ) !== null;
+    && document.querySelector("[data-free-table-lamp-refresh]") !== null;
 }
 
 function freeTablePublicStatsAreExpired(now = Date.now()) {
@@ -2140,32 +2155,17 @@ function expireFreeTablePublicStats(now = Date.now(), shouldRender = true) {
     updatedAt: null,
   };
   freeTablePublicStatsLastSuccessAt = 0;
-  lobbyStats.freeTable = { ...freeTablePublicStats };
   lastFreeTablePublicStatsEventSignature = "";
   if (shouldRender) renderLobbyStats();
   return true;
 }
 
-function clearFreeTablePublicStatsTimer() {
-  window.clearTimeout(freeTablePublicStatsTimer);
-  freeTablePublicStatsTimer = null;
-}
-
-function scheduleFreeTablePublicStatsRefresh(delay) {
-  clearFreeTablePublicStatsTimer();
-  if (!canRefreshFreeTablePublicStats()) return;
-  freeTablePublicStatsTimer = window.setTimeout(() => {
-    freeTablePublicStatsTimer = null;
-    refreshFreeTablePublicStats();
-  }, delay);
-}
-
-function nextFreeTablePublicStatsDelay(succeeded) {
-  if (succeeded) return FREE_TABLE_PUBLIC_STATS_POLL_MS;
-  return Math.min(
-    FREE_TABLE_PUBLIC_STATS_POLL_MS * (2 ** Math.min(freeTablePublicStatsFailureCount, 2)),
-    FREE_TABLE_PUBLIC_STATS_MAX_BACKOFF_MS,
-  );
+async function loadFreeTablePublicStatsSnapshot() {
+  const response = await freeTablePublicStatsCallable({});
+  const receivedAt = Date.now();
+  const nextStats = normalizeFreeTablePublicStats(response?.data, receivedAt);
+  if (!nextStats) throw new Error("Invalid free table public stats response.");
+  return { stats: nextStats, receivedAt };
 }
 
 function refreshFreeTablePublicStats() {
@@ -2174,49 +2174,27 @@ function refreshFreeTablePublicStats() {
     return Promise.resolve({ ...freeTablePublicStats });
   }
   if (freeTablePublicStatsRequest) return freeTablePublicStatsRequest;
-  let succeeded = false;
   const request = Promise.resolve()
-    .then(() => freeTablePublicStatsCallable({}))
-    .then((response) => {
-      const receivedAt = Date.now();
-      const nextStats = normalizeFreeTablePublicStats(response?.data, receivedAt);
-      if (!nextStats) throw new Error("Invalid free table public stats response.");
+    .then(() => loadFreeTablePublicStatsSnapshot())
+    .then(({ stats: nextStats, receivedAt }) => {
       freeTablePublicStats = nextStats;
       freeTablePublicStatsLastSuccessAt = receivedAt;
-      freeTablePublicStatsFailureCount = 0;
-      lobbyStats.freeTable = { ...nextStats };
       renderLobbyStats();
-      succeeded = true;
       return { ...nextStats };
     })
     .catch(() => {
-      freeTablePublicStatsFailureCount = Math.min(freeTablePublicStatsFailureCount + 1, 8);
       expireFreeTablePublicStats();
       return { ...freeTablePublicStats };
     })
     .finally(() => {
       if (freeTablePublicStatsRequest === request) freeTablePublicStatsRequest = null;
-      if (canRefreshFreeTablePublicStats()) {
-        scheduleFreeTablePublicStatsRefresh(nextFreeTablePublicStatsDelay(succeeded));
-      }
     });
   freeTablePublicStatsRequest = request;
   return request;
 }
 
 function refreshFreeTablePublicStatsImmediately() {
-  clearFreeTablePublicStatsTimer();
   return refreshFreeTablePublicStats();
-}
-
-function emptyAiTextTrainingPublicStats() {
-  return {
-    activeCount: null,
-    hasRecentActivity: null,
-    updatedAt: null,
-    freshnessMs: null,
-    recentWindowMs: null,
-  };
 }
 
 function normalizeAiTextTrainingPublicStats(value, receivedAt) {
@@ -2252,123 +2230,20 @@ function normalizeAiTextTrainingPublicStats(value, receivedAt) {
   };
 }
 
-function canRefreshAiTextTrainingPublicStats() {
-  return document.visibilityState === "visible"
-    && document.querySelector("#aiTextTrainingLights") !== null;
+async function loadAiTextTrainingPublicStatsSnapshot() {
+  const response = await aiTextTrainingPublicStatsCallable({});
+  const receivedAt = Date.now();
+  const nextStats = normalizeAiTextTrainingPublicStats(response?.data, receivedAt);
+  if (!nextStats) throw new Error("Invalid AI text training public stats response.");
+  return { stats: nextStats, receivedAt };
 }
 
-function aiTextTrainingPublicStatsExpiresAt() {
-  if (!aiTextTrainingPublicStatsLastSuccessAt) return 0;
-  const freshnessMs = Number.isSafeInteger(aiTextTrainingPublicStats.freshnessMs)
-    ? aiTextTrainingPublicStats.freshnessMs
-    : AI_TEXT_TRAINING_PUBLIC_STATS_STALE_FALLBACK_MS;
-  let expiresAt = aiTextTrainingPublicStatsLastSuccessAt + freshnessMs;
-  if (publicServerTimeOffsetReady && Number.isSafeInteger(aiTextTrainingPublicStats.updatedAt)) {
-    const serverUpdatedAtInLocalTime = aiTextTrainingPublicStats.updatedAt - publicServerTimeOffset;
-    expiresAt = Math.min(expiresAt, serverUpdatedAtInLocalTime + freshnessMs);
-  }
-  return expiresAt;
-}
-
-function aiTextTrainingPublicStatsAreExpired(now = Date.now()) {
-  const expiresAt = aiTextTrainingPublicStatsExpiresAt();
-  return expiresAt > 0 && now >= expiresAt;
-}
-
-function expireAiTextTrainingPublicStats(now = Date.now(), shouldRender = true) {
-  if (!aiTextTrainingPublicStatsAreExpired(now)) return false;
-  aiTextTrainingPublicStats = emptyAiTextTrainingPublicStats();
-  aiTextTrainingPublicStatsLastSuccessAt = 0;
-  lobbyStats.aiTextTraining = { ...aiTextTrainingPublicStats };
-  lastAiTextTrainingPublicStatsEventSignature = "";
-  if (shouldRender) renderLobbyStats();
-  return true;
-}
-
-function clearAiTextTrainingPublicStatsTimer() {
-  window.clearTimeout(aiTextTrainingPublicStatsTimer);
-  aiTextTrainingPublicStatsTimer = null;
-}
-
-function scheduleAiTextTrainingPublicStatsRefresh(delay) {
-  clearAiTextTrainingPublicStatsTimer();
-  if (!canRefreshAiTextTrainingPublicStats()) return;
-  aiTextTrainingPublicStatsTimer = window.setTimeout(() => {
-    aiTextTrainingPublicStatsTimer = null;
-    refreshAiTextTrainingPublicStats();
-  }, delay);
-}
-
-function nextAiTextTrainingPublicStatsDelay(succeeded) {
-  const refreshDelay = succeeded
-    ? AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS
-    : Math.min(
-      AI_TEXT_TRAINING_PUBLIC_STATS_POLL_MS
-        * (2 ** Math.min(aiTextTrainingPublicStatsFailureCount, 2)),
-      AI_TEXT_TRAINING_PUBLIC_STATS_MAX_BACKOFF_MS,
-    );
-  const expiresAt = aiTextTrainingPublicStatsExpiresAt();
-  if (!expiresAt) return refreshDelay;
-  return Math.min(refreshDelay, Math.max(0, expiresAt - Date.now()));
-}
-
-function refreshAiTextTrainingPublicStats({ force = false } = {}) {
-  expireAiTextTrainingPublicStats();
-  if (!force && !canRefreshAiTextTrainingPublicStats()) {
-    return Promise.resolve({ ...aiTextTrainingPublicStats });
-  }
-  if (aiTextTrainingPublicStatsRequest) {
-    return force
-      ? aiTextTrainingPublicStatsRequest.then(
-        () => refreshAiTextTrainingPublicStats({ force: true }),
-      )
-      : aiTextTrainingPublicStatsRequest;
-  }
-  let succeeded = false;
-  const request = Promise.resolve()
-    .then(() => aiTextTrainingPublicStatsCallable({}))
-    .then((response) => {
-      const receivedAt = Date.now();
-      const nextStats = normalizeAiTextTrainingPublicStats(response?.data, receivedAt);
-      if (!nextStats) throw new Error("Invalid AI text training public stats response.");
-      aiTextTrainingPublicStats = nextStats;
-      aiTextTrainingPublicStatsLastSuccessAt = receivedAt;
-      aiTextTrainingPublicStatsFailureCount = 0;
-      lobbyStats.aiTextTraining = { ...nextStats };
-      renderLobbyStats();
-      succeeded = true;
-      return { ...nextStats };
-    })
-    .catch(() => {
-      aiTextTrainingPublicStatsFailureCount = Math.min(
-        aiTextTrainingPublicStatsFailureCount + 1,
-        8,
-      );
-      expireAiTextTrainingPublicStats();
-      return { ...aiTextTrainingPublicStats };
-    })
-    .finally(() => {
-      if (aiTextTrainingPublicStatsRequest === request) {
-        aiTextTrainingPublicStatsRequest = null;
-      }
-      if (canRefreshAiTextTrainingPublicStats()) {
-        scheduleAiTextTrainingPublicStatsRefresh(
-          nextAiTextTrainingPublicStatsDelay(succeeded),
-        );
-      }
-    });
-  aiTextTrainingPublicStatsRequest = request;
-  return request;
-}
-
-function refreshAiTextTrainingPublicStatsImmediately() {
-  clearAiTextTrainingPublicStatsTimer();
-  return refreshAiTextTrainingPublicStats({ force: true });
-}
-
-function refreshLobbyStats() {
-  expireFreeTablePublicStats(Date.now(), false);
-  expireAiTextTrainingPublicStats(Date.now(), false);
+function refreshLobbyStats({
+  freeTableStats = freeTablePublicStats,
+  aiTrainingStats = aiTextTrainingPublicStats,
+  refreshPresence = true,
+  refreshMarket = true,
+} = {}) {
   const now = Date.now() + Number(publicServerTimeOffset || 0);
   const freshAfter = now - PUBLIC_PRESENCE_FRESH_MS;
   const entries = Object.values(lobbyPresenceEntries || {}).filter((entry) => (
@@ -2376,19 +2251,25 @@ function refreshLobbyStats() {
     && LOBBY_MODES.includes(entry?.mode)
     && (entry?.state === "waiting" || entry?.state === "playing")
   ));
-  lobbyStats = createLobbyStats();
+  const previousStats = lobbyStats;
+  const nextStats = createLobbyStats(null, freeTableStats, aiTrainingStats);
   LOBBY_MODES.forEach((mode) => {
-    lobbyStats[mode] = {
+    nextStats[mode] = refreshPresence ? {
       waiting: lobbyPresenceEntries === null ? null : 0,
       playing: lobbyPresenceEntries === null ? null : 0,
-    };
+    } : { ...previousStats[mode] };
   });
-  entries.forEach((entry) => {
-    lobbyStats[entry.mode][entry.state] += 1;
-  });
-  if (marketPresenceEntries !== null) {
-    lobbyStats.market = summarizeMarketPresence(marketPresenceEntries, now);
+  if (refreshPresence) {
+    entries.forEach((entry) => {
+      nextStats[entry.mode][entry.state] += 1;
+    });
   }
+  if (!refreshMarket) {
+    nextStats.market = { ...previousStats.market };
+  } else if (marketPresenceEntries !== null) {
+    nextStats.market = summarizeMarketPresence(marketPresenceEntries, now);
+  }
+  lobbyStats = nextStats;
   renderLobbyStats();
 }
 
@@ -2409,15 +2290,15 @@ function renderLobbyStats() {
     if (element) element.textContent = Number.isInteger(value) ? String(value) : "--";
   });
   const detail = {
-    welcomingRooms: lobbyStats.freeTable.welcomingRooms,
-    seatedRooms: lobbyStats.freeTable.seatedRooms,
+    welcomingRooms: freeTablePublicStats.welcomingRooms,
+    seatedRooms: freeTablePublicStats.seatedRooms,
   };
   const signature = `${detail.welcomingRooms ?? "unknown"}:${detail.seatedRooms ?? "unknown"}`;
   if (signature !== lastFreeTablePublicStatsEventSignature) {
     lastFreeTablePublicStatsEventSignature = signature;
     window.dispatchEvent(new CustomEvent("hariai-free-table-public-stats-updated", { detail }));
   }
-  const aiTextTrainingDetail = { ...lobbyStats.aiTextTraining };
+  const aiTextTrainingDetail = { ...aiTextTrainingPublicStats };
   const aiTextTrainingSignature = [
     aiTextTrainingDetail.activeCount ?? "unknown",
     aiTextTrainingDetail.hasRecentActivity ?? "unknown",
@@ -2432,9 +2313,166 @@ function renderLobbyStats() {
   }
 }
 
+function formatLobbyStatsUpdatedAt(timestamp) {
+  if (!Number.isFinite(Number(timestamp)) || Number(timestamp) <= 0) return "";
+  return new Intl.DateTimeFormat("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(Number(timestamp)));
+}
+
+function renderLobbyStatsRefreshStatus(now = Date.now()) {
+  const panel = document.querySelector("#lobbyStatsRefreshPanel");
+  const button = document.querySelector("#lobbyStatsRefreshButton");
+  const message = document.querySelector("#lobbyStatsRefreshStatus");
+  if (!panel || !button || !message) return;
+  const status = getLobbyStatsRefreshStatus(now);
+  const coolingDown = status.cooldownRemainingMs > 0;
+  const disabled = !status.available || status.loading || coolingDown;
+  button.disabled = disabled;
+  button.textContent = status.loading ? "最新の状況を読み込み中…" : "最新の状況を読み込む";
+  panel.setAttribute("aria-busy", status.loading ? "true" : "false");
+  if (!status.available) {
+    message.textContent = "プレビュー中はFirebaseへ接続しません。";
+  } else if (status.loading) {
+    message.textContent = "待機・対戦・開室状況を確認しています…";
+  } else if (status.error) {
+    const previous = formatLobbyStatsUpdatedAt(status.lastUpdatedAt);
+    message.textContent = previous
+      ? `${status.error} 表示の確認時刻 ${previous}`
+      : status.error;
+  } else if (status.lastUpdatedAt) {
+    message.textContent = `最終更新 ${formatLobbyStatsUpdatedAt(status.lastUpdatedAt)}（取得時点の参考値）`;
+  } else {
+    message.textContent = "最初の状況を読み込んでいます…";
+  }
+  window.clearTimeout(lobbyPublicStatsUiTimer);
+  lobbyPublicStatsUiTimer = null;
+  if (!status.loading && coolingDown) {
+    lobbyPublicStatsUiTimer = window.setTimeout(
+      () => renderLobbyStatsRefreshStatus(),
+      status.cooldownRemainingMs + 50,
+    );
+  }
+}
+
+function withLobbyPublicStatsTimeout(promise, timeoutMs = LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error("Lobby public stats request timed out.")),
+      timeoutMs,
+    );
+    Promise.resolve(promise).then((value) => {
+      window.clearTimeout(timer);
+      resolve(value);
+    }, (error) => {
+      window.clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+async function refreshLobbyPublicStats({ initial = false } = {}) {
+  if (useOfflineMarketPreview) return getLobbyStatsRefreshStatus();
+  if (lobbyPublicStatsRefreshRequest) return lobbyPublicStatsRefreshRequest;
+  if (initial && lobbyPublicStatsInitialRefreshStarted) return getLobbyStatsRefreshStatus();
+  const startedAt = Date.now();
+  const cooldownRemainingMs = (
+    lobbyPublicStatsLastAttemptAt
+    + LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS
+    - startedAt
+  );
+  if (!initial && cooldownRemainingMs > 0) return getLobbyStatsRefreshStatus(startedAt);
+  if (initial) lobbyPublicStatsInitialRefreshStarted = true;
+  lobbyPublicStatsLastAttemptAt = startedAt;
+  lobbyPublicStatsRefreshError = "";
+  const generation = ++lobbyPublicStatsRefreshGeneration;
+  let request;
+  request = (async () => {
+    try {
+      const offsetSnapshot = await withLobbyPublicStatsTimeout(
+        get(ref(database, ".info/serverTimeOffset")),
+        3_000,
+      );
+      const offset = Number(offsetSnapshot.val());
+      if (Number.isFinite(offset)) {
+        publicServerTimeOffset = offset;
+        publicServerTimeOffsetReady = true;
+      }
+    } catch {
+      // The device clock remains the fallback when server time is unavailable.
+    }
+    const results = await Promise.allSettled([
+      withLobbyPublicStatsTimeout(get(ref(database, "online/publicPresence"))),
+      withLobbyPublicStatsTimeout(get(ref(database, "online/publicMarketPresence"))),
+      withLobbyPublicStatsTimeout(loadFreeTablePublicStatsSnapshot()),
+      withLobbyPublicStatsTimeout(loadAiTextTrainingPublicStatsSnapshot()),
+    ]);
+    if (generation !== lobbyPublicStatsRefreshGeneration) {
+      return getLobbyStatsRefreshStatus();
+    }
+    const [presenceResult, marketResult, freeTableResult, aiTrainingResult] = results;
+    let nextLobbyPresenceEntries = lobbyPresenceEntries;
+    let nextMarketPresenceEntries = marketPresenceEntries;
+    let nextFreeTableStats = { ...lobbyStats.freeTable };
+    let nextAiTrainingStats = { ...lobbyStats.aiTextTraining };
+    let successCount = 0;
+
+    if (presenceResult.status === "fulfilled") {
+      nextLobbyPresenceEntries = presenceResult.value.val() || {};
+      successCount += 1;
+    }
+    if (marketResult.status === "fulfilled") {
+      nextMarketPresenceEntries = marketResult.value.val() || {};
+      successCount += 1;
+    }
+    if (freeTableResult.status === "fulfilled") {
+      const { stats, receivedAt } = freeTableResult.value;
+      nextFreeTableStats = { ...stats };
+      freeTablePublicStats = { ...stats };
+      freeTablePublicStatsLastSuccessAt = receivedAt;
+      successCount += 1;
+    }
+    if (aiTrainingResult.status === "fulfilled") {
+      const { stats } = aiTrainingResult.value;
+      nextAiTrainingStats = { ...stats };
+      aiTextTrainingPublicStats = { ...stats };
+      successCount += 1;
+    }
+
+    lobbyPresenceEntries = nextLobbyPresenceEntries;
+    marketPresenceEntries = nextMarketPresenceEntries;
+    refreshLobbyStats({
+      freeTableStats: nextFreeTableStats,
+      aiTrainingStats: nextAiTrainingStats,
+      refreshPresence: presenceResult.status === "fulfilled",
+      refreshMarket: marketResult.status === "fulfilled",
+    });
+    if (successCount > 0) lobbyPublicStatsLastSuccessAt = Date.now();
+    if (successCount === 0) {
+      lobbyPublicStatsRefreshError = "最新の状況を読み込めませんでした。通信を確認して、もう一度お試しください。";
+    } else if (successCount < results.length) {
+      lobbyPublicStatsRefreshError = "一部の状況を更新できませんでした。";
+    }
+    return getLobbyStatsRefreshStatus();
+  })().catch(() => {
+    lobbyPublicStatsRefreshError = "最新の状況を読み込めませんでした。通信を確認して、もう一度お試しください。";
+    return getLobbyStatsRefreshStatus();
+  }).finally(() => {
+    if (lobbyPublicStatsRefreshRequest === request) {
+      lobbyPublicStatsRefreshRequest = null;
+      renderLobbyStatsRefreshStatus();
+    }
+  });
+  lobbyPublicStatsRefreshRequest = request;
+  renderLobbyStatsRefreshStatus(startedAt);
+  return request;
+}
+
 function getFreeTableLampState() {
   expireFreeTablePublicStats(Date.now(), false);
-  const welcomingRooms = lobbyStats.freeTable.welcomingRooms;
+  const welcomingRooms = freeTablePublicStats.welcomingRooms;
   return {
     available: Number.isInteger(welcomingRooms) && welcomingRooms > 0,
     welcomingRooms: Number.isInteger(welcomingRooms) && welcomingRooms > 0
@@ -2492,48 +2530,11 @@ function syncFreeTableResultLampSlot({
 }
 
 function watchLobbyStats() {
-  refreshFreeTablePublicStatsImmediately();
-  refreshAiTextTrainingPublicStatsImmediately();
-  onValue(ref(database, "online/publicPresence"), (snapshot) => {
-    lobbyPresenceEntries = snapshot.val() || {};
-    refreshLobbyStats();
-  }, () => {
-    lobbyPresenceEntries = null;
-    refreshLobbyStats();
+  refreshLobbyPublicStats({ initial: true }).catch(() => {});
+  window.addEventListener("hariai-landing-rendered", () => {
+    renderLobbyStats();
+    renderLobbyStatsRefreshStatus();
   });
-  onValue(ref(database, "online/publicMarketPresence"), (snapshot) => {
-    marketPresenceEntries = snapshot.val() || {};
-    refreshLobbyStats();
-  }, () => {
-    marketPresenceEntries = null;
-    refreshLobbyStats();
-  });
-  onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
-    const offset = Number(snapshot.val());
-    if (Number.isFinite(offset)) {
-      publicServerTimeOffset = offset;
-      publicServerTimeOffsetReady = true;
-    }
-    refreshLobbyStats();
-  }, () => {
-    // A local clock fallback is sufficient when the offset cannot be read.
-    refreshLobbyStats();
-  });
-  window.setInterval(refreshLobbyStats, 10_000);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      refreshFreeTablePublicStatsImmediately();
-      refreshAiTextTrainingPublicStats({ force: false });
-    } else {
-      clearFreeTablePublicStatsTimer();
-      clearAiTextTrainingPublicStatsTimer();
-    }
-  });
-  window.addEventListener("hariai-landing-rendered", refreshFreeTablePublicStatsImmediately);
-  window.addEventListener(
-    "hariai-landing-rendered",
-    () => refreshAiTextTrainingPublicStats({ force: false }),
-  );
 }
 
 function watchDailyDateRollover() {
@@ -11225,6 +11226,8 @@ window.HariaiOnline = {
   requestHome,
   destroyRoom,
   getLobbyStats,
+  getLobbyStatsRefreshStatus,
+  refreshLobbyPublicStats,
   getFreeTableLampState,
   renderFreeTableResultLampContent,
   syncFreeTableResultLampSlot,

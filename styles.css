@@ -2551,6 +2551,32 @@ button:disabled {
   font-weight: 900;
 }
 
+.lobby-stats-refresh {
+  max-width: 980px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+
+.lobby-stats-refresh .button {
+  min-height: 42px;
+  padding: 9px 16px;
+  font-size: 0.76rem;
+}
+
+.lobby-stats-refresh .button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.lobby-stats-refresh span {
+  color: #8d96aa;
+  font-size: 0.68rem;
+  line-height: 1.55;
+}
+
 .lobby-privacy {
   max-width: 650px;
   margin: 9px 0 0;

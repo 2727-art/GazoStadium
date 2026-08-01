@@ -1039,6 +1039,31 @@
     if (detail) detail.textContent = presentation.detail;
   }
 
+  function lobbyStatsRefreshPresentation(value = {}) {
+    const available = value.available !== false;
+    const cooldownRemainingMs = Math.max(0, Number(value.cooldownRemainingMs || 0));
+    const lastUpdatedAt = Number(value.lastUpdatedAt || 0);
+    const error = String(value.error || "");
+    const formattedTime = lastUpdatedAt > 0
+      ? new Intl.DateTimeFormat("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }).format(new Date(lastUpdatedAt))
+      : "";
+    let message = "最初の状況を読み込んでいます…";
+    if (!available) message = "プレビュー中はFirebaseへ接続しません。";
+    else if (value.loading) message = "待機・対戦・開室状況を確認しています…";
+    else if (error) message = formattedTime ? `${error} 表示の確認時刻 ${formattedTime}` : error;
+    else if (formattedTime) message = `最終更新 ${formattedTime}（取得時点の参考値）`;
+    return {
+      busy: Boolean(value.loading),
+      disabled: !available || Boolean(value.loading) || cooldownRemainingMs > 0,
+      label: value.loading ? "最新の状況を読み込み中…" : "最新の状況を読み込む",
+      message,
+    };
+  }
+
   function renderLanding() {
     const lobbyStats = window.HariaiOnline?.getLobbyStats?.() || {};
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
@@ -1048,6 +1073,9 @@
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const freeTableLamp = freeTableLampPresentation(freeTableStats);
     const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
+    const lobbyRefresh = lobbyStatsRefreshPresentation(
+      window.HariaiOnline?.getLobbyStatsRefreshStatus?.() || { available: true, loading: true },
+    );
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     return `<section class="screen hero">
       <div>
@@ -1098,6 +1126,10 @@
             <div><small>商談中</small><strong><span id="lobbyMarketNegotiatingCount">${statValue(marketStats.negotiating)}</span><em>件</em></strong></div>
           </div></article>
         </div>
+        <div class="lobby-stats-refresh" id="lobbyStatsRefreshPanel" aria-live="polite" aria-busy="${lobbyRefresh.busy ? "true" : "false"}">
+          <button class="button button-ghost" id="lobbyStatsRefreshButton" type="button"${lobbyRefresh.disabled ? " disabled" : ""}>${escapeHtml(lobbyRefresh.label)}</button>
+          <span id="lobbyStatsRefreshStatus">${escapeHtml(lobbyRefresh.message)}</span>
+        </div>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
         <p class="mode-note">文字コラトレーニングの候補画像（最大10枚）とDRAW結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
@@ -1143,6 +1175,9 @@
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
     document.querySelector("#accountButton")?.addEventListener("click", startAccount);
     document.querySelector("#audioStudioButton")?.addEventListener("click", openAudioStudio);
+    document.querySelector("#lobbyStatsRefreshButton")?.addEventListener("click", () => {
+      window.HariaiOnline?.refreshLobbyPublicStats?.().catch(() => {});
+    });
     bindLandingTopMessageEvents();
     window.HariaiOnline?.refreshTopMessages?.();
     app.focus({ preventScroll: true });
