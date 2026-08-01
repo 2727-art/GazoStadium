@@ -185,7 +185,7 @@ test("top navigation reaches all four boards while Rival Zone and personal run r
   const styles = read("styles.css");
   const navigation = sourceBetween(
     app,
-    "function navigateRankingSection",
+    "function rankingJumpSurfacesSettled",
     "function refreshRankingAtPeriodBoundary",
   );
   const rankingScreen = sourceBetween(app, "function renderRankingScreen", "function startOnlineBattle");
@@ -197,15 +197,34 @@ test("top navigation reaches all four boards while Rival Zone and personal run r
   }
   assert.match(app, /YOUR RIVAL ZONE/);
   assert.match(app, /renderCrownRunPanel\(dashboard\)/);
-  assert.match(navigation, /const refreshRequest = selectRankingPeriod\(selected\)/);
-  assert.match(navigation, /refreshRequest\.finally\(scrollToCircuit\)/);
+  assert.match(navigation, /getLeaderboardStatus/);
+  assert.match(navigation, /getOverallLeaderboardStatus/);
+  assert.match(navigation, /getRankingDashboardStatus/);
+  assert.match(navigation, /pendingRankingJump = "circuit"/);
+  assert.match(navigation, /applyPendingRankingJump\(\)/);
+  assert.match(navigation, /scrollIntoView\(\{ behavior: "auto", block: "start" \}\)/);
+  assert.match(rankingScreen, /if \(currentScreen !== "ranking"\) pendingRankingJump = ""/);
+  assert.match(rankingScreen, /applyPendingRankingJump\(\)/);
   assert.match(styles, /\.ranking-jump-nav/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.ranking-jump-nav/);
 });
 
 test("all changed browser assets share the ranking TOP 10 cache marker", () => {
   const html = read("index.html");
-  assert.match(html, /styles\.css\?v=[^"]*ranking-top10-v2/);
-  assert.match(html, /app\.js\?v=[^"]*ranking-top10-v2/);
-  assert.match(html, /online\.js\?v=[^"]*ranking-top10-v2/);
+  assert.match(html, /styles\.css\?v=[^"]*ranking-top10-v3/);
+  assert.match(html, /app\.js\?v=[^"]*ranking-top10-v3/);
+  assert.match(html, /online\.js\?v=[^"]*ranking-top10-v3/);
+});
+
+test("battle launch releases ranking ownership only after the target feature is active", () => {
+  const app = read("app.js");
+  const launchers = sourceBetween(app, "function releaseRankingScreenOwnership", "function startAiTextTraining");
+  const onlineLauncher = sourceBetween(app, "function openOnlineFeature", "async function processImageFile");
+  assert.match(launchers, /if \(currentScreen !== "ranking" \|\| featureActive !== true\) return/);
+  assert.match(launchers, /pendingRankingJump = ""/);
+  assert.match(launchers, /currentScreen = nextScreen/);
+  assert.match(launchers, /releaseRankingScreenOwnership\("online", window\.HariaiOnline\?\.isActive\?\.\(\) === true\)/);
+  assert.match(launchers, /releaseRankingScreenOwnership\("strategy", window\.HariaiStrategy\?\.isActive\?\.\(\) === true\)/);
+  assert.match(onlineLauncher, /window\.HariaiOnline\[method\]\(\);\s+onStarted\?\.\(\)/);
+  assert.match(onlineLauncher, /addEventListener\("hariai-online-ready", launch, \{ once: true \}\)/);
 });

@@ -104,6 +104,7 @@
   let rankingCommentIdentityStatus = "idle";
   let rankingPeriod = "weekly";
   let rankingDisplayedPeriodKey = "";
+  let pendingRankingJump = "";
   let landingTopMessageIndex = 0;
   let landingTopMessagePaused = false;
   let profileAvatarReadyPromise = null;
@@ -1618,22 +1619,37 @@
     return refreshSelectedRankingPeriod();
   }
 
+  function rankingJumpSurfacesSettled() {
+    const selectedStatus = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
+    const overallStatus = window.HariaiOnline?.getOverallLeaderboardStatus?.() || "idle";
+    const dashboardStatus = window.HariaiOnline?.getRankingDashboardStatus?.()?.status || "idle";
+    return !["idle", "loading"].includes(selectedStatus)
+      && !["idle", "loading"].includes(overallStatus)
+      && !["idle", "loading"].includes(dashboardStatus);
+  }
+
+  function applyPendingRankingJump() {
+    const targetName = pendingRankingJump;
+    if (!targetName || currentScreen !== "ranking") return;
+    const selector = targetName === "overall" ? "#rankingOverallBoard" : "#rankingCircuitBoard";
+    window.requestAnimationFrame(() => {
+      if (pendingRankingJump !== targetName || currentScreen !== "ranking") return;
+      document.querySelector(selector)?.scrollIntoView({ behavior: "auto", block: "start" });
+      if (rankingJumpSurfacesSettled()) pendingRankingJump = "";
+    });
+  }
+
   function navigateRankingSection(target) {
     const selected = String(target || "");
     if (selected === "overall") {
-      document.querySelector("#rankingOverallBoard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      pendingRankingJump = "overall";
+      applyPendingRankingJump();
       return;
     }
     if (!["daily", "weekly", "monthly"].includes(selected)) return;
-    const refreshRequest = selectRankingPeriod(selected);
-    const scrollToCircuit = () => window.requestAnimationFrame(() => {
-      document.querySelector("#rankingCircuitBoard")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    if (refreshRequest && typeof refreshRequest.finally === "function") {
-      refreshRequest.finally(scrollToCircuit);
-    } else {
-      scrollToCircuit();
-    }
+    pendingRankingJump = "circuit";
+    selectRankingPeriod(selected);
+    applyPendingRankingJump();
   }
 
   function refreshRankingAtPeriodBoundary() {
@@ -1691,6 +1707,7 @@
   }
 
   function renderRankingScreen({ refresh = false, preserveScroll = false } = {}) {
+    if (currentScreen !== "ranking") pendingRankingJump = "";
     currentScreen = "ranking";
     setLandingChrome();
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
@@ -1852,19 +1869,32 @@
     app.focus({ preventScroll: true });
     if (!preserveScroll) window.scrollTo({ top: 0, behavior: "smooth" });
     if (refresh) refreshRankingSurfaces();
+    applyPendingRankingJump();
+  }
+
+  function releaseRankingScreenOwnership(nextScreen, featureActive) {
+    if (currentScreen !== "ranking" || featureActive !== true) return;
+    pendingRankingJump = "";
+    currentScreen = nextScreen;
   }
 
   function startOnlineBattle() {
-    openOnlineFeature("start");
+    openOnlineFeature("start", () => {
+      releaseRankingScreenOwnership("online", window.HariaiOnline?.isActive?.() === true);
+    });
   }
 
   function startStrategyLab() {
+    const launch = () => {
+      window.HariaiStrategy?.start?.();
+      releaseRankingScreenOwnership("strategy", window.HariaiStrategy?.isActive?.() === true);
+    };
     if (window.HariaiStrategy?.start) {
-      window.HariaiStrategy.start();
+      launch();
       return;
     }
     showToast("戦略型1on1対戦を読み込んでいます…");
-    window.addEventListener("hariai-strategy-ready", () => window.HariaiStrategy?.start?.(), { once: true });
+    window.addEventListener("hariai-strategy-ready", launch, { once: true });
   }
 
   function startAiTextTraining() {
@@ -2011,13 +2041,18 @@
     window.addEventListener("hariai-account-ready", () => window.HariaiAccount?.start?.(), { once: true });
   }
 
-  function openOnlineFeature(method) {
-    if (window.HariaiOnline?.[method]) {
+  function openOnlineFeature(method, onStarted) {
+    const launch = () => {
+      if (typeof window.HariaiOnline?.[method] !== "function") return;
       window.HariaiOnline[method]();
+      onStarted?.();
+    };
+    if (typeof window.HariaiOnline?.[method] === "function") {
+      launch();
       return;
     }
     showToast("オンライン機能を読み込んでいます…");
-    window.addEventListener("hariai-online-ready", () => window.HariaiOnline?.[method]?.(), { once: true });
+    window.addEventListener("hariai-online-ready", launch, { once: true });
   }
 
   async function processImageFile(file, position, options = {}) {
