@@ -408,6 +408,15 @@ Start-Sleep -Seconds 90
 npx --yes firebase-tools deploy --only hosting --non-interactive
 ```
 
+`match-traffic-v1` の待機インデックスを既存本番へ追加するときは、先にDatabase Rulesを配備して非公開の `online/queueV2Index` と `expiresAt` indexを有効にします。次に `soloSessionAction` と `cleanupSoloSessionV2QueueIndex` を配備し、旧Functions revisionのドレインとして90秒以上待ってからHostingを配備します。待機インデックスは候補発見専用で、claim・queueV2・activeV2・roomの正本や既存の世代フェンスを置き換えません。
+
+```powershell
+npx --yes firebase-tools deploy --only database --non-interactive
+npx --yes firebase-tools deploy --only functions:soloSessionAction,functions:cleanupSoloSessionV2QueueIndex --non-interactive
+Start-Sleep -Seconds 90
+npx --yes firebase-tools deploy --only hosting --non-interactive
+```
+
 切り戻す場合はHostingを先に旧版へ戻し、V2クライアントが止まってから90秒以上待ちます。V2のFunctionsとRulesは旧クライアントと互換なので、障害調査中は残して構いません。Rulesを先に旧版へ戻すと、配信済みV2クライアントの待機・シグナル・cleanupが拒否されるため避けます。
 
 通常型1on1の決着返礼・サーバー勝敗確定を既存本番へ追加するときは、最初にFirestore Indexesを配備し、`soloProfileProjectionQueues`の`pending ASC / lastStartedAt ASC`複合indexがREADYになるまで待ちます。次に、`round`を持たない旧結果申告と`round`付き新版申告の両方を受け入れ、任意の`profileProjectionVersion`と変更不能なサーバー投影receipt・sequenceを許可するDatabase Rules、および投影queueを非公開にするFirestore Rulesを配備します。その後で`soloSessionAction`、`economyAction`、`reconcileSoloProfileProjections`を配備し、旧revisionのドレインとして90秒以上待ちます。旧画面同士で片方の確定操作が相手の`resultClaims` / `finished`を占有しないこと、まだサーバー投影を一度も受けていないアカウントの旧画面は待機できること、投影済みアカウントの旧画面は対戦成立前に更新案内で止まること、新版同士では両者のnormal / overall戦績とreceipt・sequenceが1回だけ更新されることを2アカウントで確認してから、`finish-reply-v3`のHostingを配備します。順序は `Firestore Indexes → index READY → Database Rules・Firestore Rules → Functions → 90秒以上のドレイン → Hosting` とし、Hostingを先行させません。サーバー投影が始まった後は、投影を知らない旧Hostingだけへ戻すと保護済み戦績を書き戻せないため行いません。障害時は互換Rules・Functions・version gateを維持したまま前方修正し、必要なら新Hostingの直前版へだけ切り戻します。

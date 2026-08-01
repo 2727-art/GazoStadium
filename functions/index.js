@@ -17,6 +17,9 @@ const {
   createOnlinePublicPresenceCleanup,
 } = require("./online-public-presence-cleanup");
 const {
+  createSoloSessionV2QueueIndex,
+} = require("./solo-session-v2-queue-index");
+const {
   createTrainingRoomCleanup,
   createTrainingSessionResourceCleanup,
   trainingActiveRoomIsLive,
@@ -301,7 +304,6 @@ const {
   SOLO_SESSION_PROTOCOL_VERSION,
   SOLO_SIGNALING_VERSION,
   activeV2EntryIsFresh,
-  activeV2UidSet,
   buildSoloSessionV2Resources,
   claimDecision,
   claimMatches,
@@ -313,6 +315,7 @@ const {
   normalizeClaim,
   publicClaimLease,
   queueEntryMatchesClaim,
+  reselectSoloSessionV2Match,
   replacedClaimResourceFence,
   resourceFenceMatches,
   roomAttemptMatches,
@@ -385,6 +388,7 @@ const trainingSessionV6Service = createTrainingSessionV6Service({
 const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
 });
+const soloSessionV2QueueIndex = createSoloSessionV2QueueIndex({ realtime });
 const cleanupTrainingSessionV5 = createTrainingSessionV5Cleanup({
   realtime,
 });
@@ -8665,6 +8669,7 @@ async function cleanupReplacedSoloSessionV2ClaimResources(
       fence,
     ),
   ]);
+  await soloSessionV2QueueIndex.remove(uid, fence).catch(() => false);
   return cleaned.every(Boolean);
 }
 
@@ -8940,7 +8945,7 @@ async function heartbeatSoloSessionV2(uid, data) {
     generation: claim.generation,
   };
   const refreshedAt = Date.now();
-  await Promise.allSettled([
+  const [queueRefresh] = await Promise.allSettled([
     soloSessionQueueRef(uid, data.sessionId).transaction((currentValue) => {
       if (currentValue == null) return null;
       return resourceFenceMatches(currentValue, fence)
@@ -8962,6 +8967,20 @@ async function heartbeatSoloSessionV2(uid, data) {
         : undefined;
     }),
   ]);
+  if (queueRefresh.status === "fulfilled") {
+    const queueEntry = queueRefresh.value.snapshot.val();
+    if (queueEntryMatchesClaim(uid, data.sessionId, queueEntry, claim, refreshedAt)) {
+      await soloSessionV2QueueIndex.publish(
+        uid,
+        data.sessionId,
+        queueEntry,
+        claim,
+        refreshedAt,
+      ).catch(() => null);
+    } else {
+      await soloSessionV2QueueIndex.remove(uid, fence).catch(() => false);
+    }
+  }
   return soloSessionClaimResponse(claim, "refreshed");
 }
 
@@ -9013,6 +9032,7 @@ async function releaseSoloSessionV2(uid, data) {
     if (!queueRemoved || !activeRemoved) {
       return { released: false, reason: "resource-changed" };
     }
+    await soloSessionV2QueueIndex.remove(uid, fence).catch(() => false);
     let claimReleased = false;
     const result = await claimRef.transaction((currentValue) => {
       const current = normalizeClaim(currentValue);
@@ -9053,26 +9073,6 @@ function boundedSoloSessionV2Queue(uid, queue, limit = 500) {
     ))
     .slice(0, Math.max(0, limit - 1));
   return Object.fromEntries([[uid, requester], ...candidates]);
-}
-
-function liveSoloSessionV2LockUids(locks, now) {
-  return Object.entries(objectValue(locks))
-    .filter(([, lock]) => Number(lock?.expiresAt || 0) > now)
-    .map(([uid]) => uid);
-}
-
-async function liveLegacySoloUidsForQueue(queue, legacyActive, now) {
-  const candidateUids = Object.keys(queue)
-    .filter((uid) => Object.hasOwn(legacyActive, uid));
-  const liveUids = [];
-  for (let offset = 0; offset < candidateUids.length; offset += 50) {
-    const batch = candidateUids.slice(offset, offset + 50);
-    const results = await Promise.all(batch.map((uid) => liveLegacySoloRoom(uid, now)));
-    results.forEach((room, index) => {
-      if (room) liveUids.push(batch[index]);
-    });
-  }
-  return liveUids;
 }
 
 function soloSessionV2Candidate(player, session) {
@@ -9210,7 +9210,11 @@ async function reserveSoloSessionV2Queue(entry, resources, role) {
         expiresAt: resources.permit.expiresAt,
       };
     });
-  return result.committed ? result.snapshot.val() : null;
+  const reserved = result.committed ? result.snapshot.val() : null;
+  if (reserved) {
+    await soloSessionV2QueueIndex.remove(entry.uid, entry).catch(() => false);
+  }
+  return reserved;
 }
 
 async function restoreSoloSessionV2Queue(entry, resources) {
@@ -9261,7 +9265,7 @@ async function restoreSoloSessionV2Queue(entry, resources) {
       return next;
     });
   const finalValue = result.snapshot.val();
-  return safe && (
+  const restored = safe && (
     finalValue == null
     || (
       resourceFenceMatches(finalValue, entry)
@@ -9270,6 +9274,16 @@ async function restoreSoloSessionV2Queue(entry, resources) {
       && !finalValue.attemptId
     )
   );
+  if (restored && finalValue != null) {
+    await soloSessionV2QueueIndex.publish(
+      entry.uid,
+      entry.sessionId,
+      finalValue,
+      claimSnapshot.val(),
+      now,
+    ).catch(() => null);
+  }
+  return restored;
 }
 
 function recordAttemptMatches(value, resources) {
@@ -9577,6 +9591,59 @@ async function readSoloSessionV2MaterializationFence(resources, hostEntry, guest
   ]);
 }
 
+function nestedSoloSessionV2IndexedQueue(indexedQueue, claims) {
+  const nested = {};
+  for (const [candidateUid, entry] of Object.entries(objectValue(indexedQueue))) {
+    const sessionId = normalizeClaim(claims?.[candidateUid])?.sessionId;
+    if (!sessionId) continue;
+    nested[candidateUid] = { [sessionId]: entry };
+  }
+  return nested;
+}
+
+function canonicalSoloSessionV2FamiliarPairs(
+  familiarPairs,
+  hostUid,
+  guestUid,
+  pairSnapshot,
+) {
+  const pairId = soloFamiliarPairId(hostUid, guestUid);
+  const canonicalPairs = (Array.isArray(familiarPairs) ? familiarPairs : [])
+    .filter((record) => record?.id !== pairId);
+  if (pairSnapshot?.exists) {
+    canonicalPairs.push({
+      id: pairId,
+      data: {
+        participants: pairSnapshot.get("participants"),
+        active: pairSnapshot.get("active") === true,
+        lastReunionPriorityAt: Number(pairSnapshot.get("lastReunionPriorityAt") || 0),
+      },
+    });
+  }
+  return canonicalPairs;
+}
+
+function rebuildSoloSessionV2Resources(selection, lockedResources) {
+  return buildSoloSessionV2Resources({
+    roomId: lockedResources.hostLock.roomId,
+    attemptId: lockedResources.hostLock.attemptId,
+    connectionGeneration: lockedResources.permit.connectionGeneration,
+    host: selection.host,
+    guest: selection.candidate,
+    now: lockedResources.hostLock.acquiredAt,
+    expiresAt: lockedResources.hostLock.expiresAt,
+    reunion: selection.reunion,
+    pairId: selection.pairId,
+  });
+}
+
+function waitingSoloSessionV2ReservationEntry(value) {
+  const waiting = { ...objectValue(value), state: "waiting" };
+  delete waiting.roomId;
+  delete waiting.attemptId;
+  return waiting;
+}
+
 async function trySoloSessionV2Match(uid, data) {
   const now = Date.now();
   const [claimSnapshot, rollout] = await Promise.all([
@@ -9594,32 +9661,40 @@ async function trySoloSessionV2Match(uid, data) {
   const existing = await loadExistingSoloSessionV2Match(uid, claim, Date.now());
   if (existing) return existing;
 
-  const selectionNow = Date.now();
-  const [queueSnapshot, claimsSnapshot, activeSnapshot, locksSnapshot, legacyActiveSnapshot] =
-    await Promise.all([
-      realtime.ref("online/queueV2").get(),
-      realtime.ref("online/soloSessionClaims")
-        .orderByChild("expiresAt")
-        .startAt(selectionNow + 1)
-        .limitToFirst(2_000)
-        .get(),
-      realtime.ref("online/activeV2").get(),
-      realtime.ref("online/soloMatchLocksV2").get(),
-      realtime.ref("online/active").get(),
-    ]);
-  if (queueSnapshot.numChildren() > 2_000
-      || activeSnapshot.numChildren() > 2_000) {
-    throw new HttpsError("resource-exhausted", "対戦待機情報が混み合っています。");
+  const ownQueueSnapshot = await soloSessionQueueRef(uid, claim.sessionId).get();
+  const ownQueue = ownQueueSnapshot.val();
+  const ownQueueNow = Date.now();
+  if (!queueEntryMatchesClaim(uid, claim.sessionId, ownQueue, claim, ownQueueNow)) {
+    await soloSessionV2QueueIndex.remove(uid, claim).catch(() => false);
+    return { outcome: "waiting" };
   }
+  const indexedOwnQueue = await soloSessionV2QueueIndex.publish(
+    uid,
+    claim.sessionId,
+    ownQueue,
+    claim,
+    ownQueueNow,
+  );
+  if (!indexedOwnQueue) return { outcome: "waiting" };
+
+  const selectionNow = Date.now();
+  const [indexedQueue, claimsSnapshot] = await Promise.all([
+    soloSessionV2QueueIndex.loadFresh(selectionNow),
+    realtime.ref("online/soloSessionClaims")
+      .orderByChild("expiresAt")
+      .startAt(selectionNow + 1)
+      .limitToFirst(2_000)
+      .get(),
+  ]);
   const claims = {
     ...objectValue(claimsSnapshot.val()),
     [uid]: claim,
   };
-  const freshQueue = flattenFreshQueueV2(
-    objectValue(queueSnapshot.val()),
-    claims,
-    selectionNow,
-  );
+  const nestedQueue = nestedSoloSessionV2IndexedQueue({
+    ...indexedQueue,
+    [uid]: indexedOwnQueue,
+  }, claims);
+  const freshQueue = flattenFreshQueueV2(nestedQueue, claims, selectionNow);
   const boundedQueue = boundedSoloSessionV2Queue(uid, freshQueue);
   if (!boundedQueue[uid] || Object.keys(boundedQueue).length < 2) {
     return { outcome: "waiting" };
@@ -9630,47 +9705,75 @@ async function trySoloSessionV2Match(uid, data) {
       : Promise.resolve([]),
     blockedSoloPairIdsForQueue(uid, boundedQueue, selectionNow),
   ]);
-  const legacyActiveUids = await liveLegacySoloUidsForQueue(
-    boundedQueue,
-    objectValue(legacyActiveSnapshot.val()),
-    selectionNow,
-  );
-  const selection = selectSoloSessionV2Match({
-    requesterUid: uid,
-    queue: boundedQueue,
-    activeUids: [
-      ...activeV2UidSet(objectValue(activeSnapshot.val()), claims, selectionNow),
-      ...legacyActiveUids,
-    ],
-    lockedUids: liveSoloSessionV2LockUids(locksSnapshot.val(), selectionNow),
-    familiarPairs,
-    blockedPairIds,
-    avoidUid: data.avoidUid,
-    now: selectionNow,
-  });
-  if (!selection) return { outcome: "waiting" };
+  const unavailableUids = new Set();
+  let selection = null;
+  let resources = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidateSelection = selectSoloSessionV2Match({
+      requesterUid: uid,
+      queue: boundedQueue,
+      lockedUids: [...unavailableUids],
+      familiarPairs,
+      blockedPairIds,
+      avoidUid: data.avoidUid,
+      now: selectionNow,
+    });
+    if (!candidateSelection) break;
+    const candidateClaim = claims[candidateSelection.candidate.uid];
+    const [candidateActiveSnapshot, candidateLegacyRoom] = await Promise.all([
+      soloSessionActiveRef(
+        candidateSelection.candidate.uid,
+        candidateSelection.candidate.sessionId,
+      ).get(),
+      liveLegacySoloRoom(candidateSelection.candidate.uid, Date.now()),
+    ]);
+    if (activeV2EntryIsFresh(
+      candidateSelection.candidate.uid,
+      candidateActiveSnapshot.val(),
+      candidateClaim,
+      Date.now(),
+    ) || candidateLegacyRoom) {
+      unavailableUids.add(candidateSelection.candidate.uid);
+      continue;
+    }
 
-  const roomId = realtime.ref("online/rooms").push().key;
-  if (!roomId) throw new HttpsError("unavailable", "対戦ルームを準備できませんでした。");
-  const materializedAt = Date.now();
-  const resources = buildSoloSessionV2Resources({
-    roomId,
-    attemptId: soloSessionGeneration(),
-    connectionGeneration: soloSessionGeneration(),
-    host: selection.host,
-    guest: selection.candidate,
-    now: materializedAt,
-    expiresAt: materializedAt + SOLO_SESSION_MATCH_TTL_MS,
-    reunion: selection.reunion,
-    pairId: selection.pairId,
-  });
-  if (!await acquireSoloSessionV2Locks(resources)) return { outcome: "waiting" };
+    const roomId = realtime.ref("online/rooms").push().key;
+    if (!roomId) {
+      throw new HttpsError("unavailable", "対戦ルームを準備できませんでした。");
+    }
+    const materializedAt = Date.now();
+    const candidateResources = buildSoloSessionV2Resources({
+      roomId,
+      attemptId: soloSessionGeneration(),
+      connectionGeneration: soloSessionGeneration(),
+      host: candidateSelection.host,
+      guest: candidateSelection.candidate,
+      now: materializedAt,
+      expiresAt: materializedAt + SOLO_SESSION_MATCH_TTL_MS,
+      reunion: candidateSelection.reunion,
+      pairId: candidateSelection.pairId,
+    });
+    if (await acquireSoloSessionV2Locks(candidateResources)) {
+      selection = candidateSelection;
+      resources = candidateResources;
+      break;
+    }
+    const ownLockSnapshot = await realtime.ref(`online/soloMatchLocksV2/${uid}`).get();
+    if (Number(ownLockSnapshot.val()?.expiresAt || 0) > Date.now()) {
+      return { outcome: "waiting" };
+    }
+    unavailableUids.add(candidateSelection.candidate.uid);
+  }
+  if (!selection || !resources) return { outcome: "waiting" };
+  const roomId = resources.hostLock.roomId;
 
   const [
     hostClaimSnapshot,
     guestClaimSnapshot,
     hostQueueSnapshot,
     guestQueueSnapshot,
+    hostActiveSnapshot,
+    guestActiveSnapshot,
     hostLegacyRoom,
     guestLegacyRoom,
     finalBlockSnapshot,
@@ -9680,51 +9783,126 @@ async function trySoloSessionV2Match(uid, data) {
     soloSessionClaimRef(selection.candidate.uid).get(),
     soloSessionQueueRef(selection.host.uid, selection.host.sessionId).get(),
     soloSessionQueueRef(selection.candidate.uid, selection.candidate.sessionId).get(),
+    soloSessionActiveRef(selection.host.uid, selection.host.sessionId).get(),
+    soloSessionActiveRef(selection.candidate.uid, selection.candidate.sessionId).get(),
     liveLegacySoloRoom(selection.host.uid),
     liveLegacySoloRoom(selection.candidate.uid),
     soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
-    selection.reunion
+    rollout.reunionEnabled
       ? soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get()
       : Promise.resolve(null),
   ]);
   const validationNow = Date.now();
-  const claimsAndQueuesStillFresh = queueEntryMatchesClaim(
+  const hostClaim = hostClaimSnapshot.val();
+  const guestClaim = guestClaimSnapshot.val();
+  const hostQueue = hostQueueSnapshot.val();
+  const guestQueue = guestQueueSnapshot.val();
+  const canonicalQueuesMatchLocks = resourceFenceMatches(hostQueue, selection.host)
+    && resourceFenceMatches(guestQueue, selection.candidate);
+  const claimsAndQueuesStillFresh = canonicalQueuesMatchLocks && queueEntryMatchesClaim(
     selection.host.uid,
     selection.host.sessionId,
-    hostQueueSnapshot.val(),
-    hostClaimSnapshot.val(),
+    hostQueue,
+    hostClaim,
     validationNow,
   ) && queueEntryMatchesClaim(
     selection.candidate.uid,
     selection.candidate.sessionId,
-    guestQueueSnapshot.val(),
-    guestClaimSnapshot.val(),
+    guestQueue,
+    guestClaim,
     validationNow,
   );
-  if (!claimsAndQueuesStillFresh
+  const participantAlreadyActive = activeV2EntryIsFresh(
+    selection.host.uid,
+    hostActiveSnapshot.val(),
+    hostClaim,
+    validationNow,
+  ) || activeV2EntryIsFresh(
+    selection.candidate.uid,
+    guestActiveSnapshot.val(),
+    guestClaim,
+    validationNow,
+  );
+  const pairId = soloFamiliarPairId(selection.host.uid, selection.candidate.uid);
+  const canonicalBlockedPairIds = blockedPairIds.filter((id) => id !== pairId);
+  if (finalBlockSnapshot.exists) canonicalBlockedPairIds.push(pairId);
+  const canonicalFamiliarPairs = rollout.reunionEnabled
+    ? canonicalSoloSessionV2FamiliarPairs(
+      familiarPairs,
+      selection.host.uid,
+      selection.candidate.uid,
+      finalFamiliarSnapshot,
+    )
+    : [];
+  const canonicalSelection = claimsAndQueuesStillFresh
+    ? reselectSoloSessionV2Match({
+      requesterUid: uid,
+      queue: boundedQueue,
+      host: hostQueue,
+      candidate: guestQueue,
+      familiarPairs: canonicalFamiliarPairs,
+      blockedPairIds: canonicalBlockedPairIds,
+      lockedUids: [...unavailableUids],
+      avoidUid: data.avoidUid,
+      now: validationNow,
+    })
+    : null;
+  if (!canonicalSelection
+      || participantAlreadyActive
       || hostLegacyRoom
-      || guestLegacyRoom
-      || finalBlockSnapshot.exists
-      || (selection.reunion && (
-        !finalFamiliarSnapshot?.exists
-        || finalFamiliarSnapshot.get("active") !== true
-        || Number(finalFamiliarSnapshot.get("lastReunionPriorityAt") || 0)
-          > validationNow - SOLO_FAMILIAR_REUNION_COOLDOWN_MS
-      ))) {
+      || guestLegacyRoom) {
     await cleanupSoloSessionV2Match(resources);
     return { outcome: "waiting" };
   }
+  selection = canonicalSelection;
+  resources = rebuildSoloSessionV2Resources(selection, resources);
 
   const [reservedHost, reservedGuest] = await Promise.all([
     reserveSoloSessionV2Queue(selection.host, resources, "host"),
     reserveSoloSessionV2Queue(selection.candidate, resources, "guest"),
   ]);
-  if (!reservedHost || !reservedGuest
-      || !await readSoloSessionV2MaterializationFence(
-        resources,
-        selection.host,
-        selection.candidate,
-      )) {
+  const reservationNow = Date.now();
+  const reservationsStillFresh = reservedHost && reservedGuest
+    && queueEntryMatchesClaim(
+      selection.host.uid,
+      selection.host.sessionId,
+      reservedHost,
+      hostClaim,
+      reservationNow,
+      { allowedStates: ["offering"] },
+    )
+    && queueEntryMatchesClaim(
+      selection.candidate.uid,
+      selection.candidate.sessionId,
+      reservedGuest,
+      guestClaim,
+      reservationNow,
+      { allowedStates: ["reserved"] },
+    );
+  const reservedSelection = reservationsStillFresh
+    ? reselectSoloSessionV2Match({
+      requesterUid: uid,
+      queue: boundedQueue,
+      host: waitingSoloSessionV2ReservationEntry(reservedHost),
+      candidate: waitingSoloSessionV2ReservationEntry(reservedGuest),
+      familiarPairs: canonicalFamiliarPairs,
+      blockedPairIds: canonicalBlockedPairIds,
+      lockedUids: [...unavailableUids],
+      avoidUid: data.avoidUid,
+      now: reservationNow,
+    })
+    : null;
+  if (!reservedSelection) {
+    await cleanupSoloSessionV2Match(resources);
+    return { outcome: "waiting" };
+  }
+  selection = reservedSelection;
+  resources = rebuildSoloSessionV2Resources(selection, resources);
+  if (!await readSoloSessionV2MaterializationFence(
+    resources,
+    selection.host,
+    selection.candidate,
+  )) {
     await cleanupSoloSessionV2Match(resources);
     return { outcome: "waiting" };
   }
@@ -16119,6 +16297,25 @@ exports.cleanupOnlinePublicPresence = onSchedule({
     return result;
   } catch (error) {
     console.error("cleanupOnlinePublicPresence failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
+});
+
+exports.cleanupSoloSessionV2QueueIndex = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 60,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const result = await soloSessionV2QueueIndex.cleanupExpired(Date.now());
+    console.info("cleanupSoloSessionV2QueueIndex completed", result);
+    return result;
+  } catch (error) {
+    console.error("cleanupSoloSessionV2QueueIndex failed", {
       code: typeof error?.code === "string" ? error.code : "unknown",
     });
     throw error;

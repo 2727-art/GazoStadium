@@ -114,6 +114,9 @@ test("queue reservation retries a cold null without weakening its fence", async 
     const context = {
       Date: { now: () => now },
       resourceFenceMatches,
+      soloSessionV2QueueIndex: {
+        remove: async () => true,
+      },
       soloSessionQueueRef: () => reference,
     };
     vm.createContext(context);

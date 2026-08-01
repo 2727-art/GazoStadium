@@ -12,6 +12,7 @@ const {
   heartbeatDecision,
   materializationFenceMatches,
   publicClaimLease,
+  reselectSoloSessionV2Match,
   replacedClaimResourceFence,
   resourceFenceMatches,
   roomMatchesSessionV2,
@@ -388,6 +389,99 @@ test("soft avoid skips the previous opponent only when another compatible player
     now: NOW,
   });
   assert.equal(fallback.candidate.uid, "bob");
+});
+
+test("canonical reselection replaces a stale same-fence index projection before resources", () => {
+  const indexedHost = queue("alice", SESSION_A, TOKEN_A, GENERATION_A, {
+    name: "OLD ALICE",
+    rating: 900,
+  });
+  const indexedGuest = queue("bob", SESSION_B, TOKEN_B, GENERATION_B, {
+    name: "OLD BOB",
+    rating: 950,
+  });
+  const canonicalHost = {
+    ...indexedHost,
+    name: "NEW ALICE",
+    pursuitLine: "更新した一言",
+    rating: 1400,
+  };
+  const canonicalGuest = {
+    ...indexedGuest,
+    name: "NEW BOB",
+    rating: 1500,
+    sampleCount: 2,
+    startingHp: 20,
+  };
+  const selection = reselectSoloSessionV2Match({
+    requesterUid: "alice",
+    queue: { alice: indexedHost, bob: indexedGuest },
+    host: canonicalHost,
+    candidate: canonicalGuest,
+    now: NOW,
+  });
+  assert.ok(selection);
+  const resources = buildSoloSessionV2Resources({
+    roomId: ROOM_ID,
+    attemptId: ATTEMPT,
+    connectionGeneration: CONNECTION,
+    host: selection.host,
+    guest: selection.candidate,
+    now: NOW,
+  });
+  assert.equal(resources.permit.players.alice.name, "NEW ALICE");
+  assert.equal(resources.permit.players.alice.rating, 1400);
+  assert.equal(resources.permit.players.bob.name, "NEW BOB");
+  assert.equal(resources.permit.players.bob.startingHp, 20);
+  assert.equal(resources.offer.fromName, "NEW ALICE");
+});
+
+test("canonical reselection withdraws when same-fence preferences change the locked choice", () => {
+  const alice = queue("alice", SESSION_A, TOKEN_A, GENERATION_A, {
+    ratingPreference: "illustration",
+  });
+  const bob = queue("bob", SESSION_B, TOKEN_B, GENERATION_B, {
+    joinedAt: NOW - 20_000,
+    ratingPreference: "illustration",
+  });
+  const carol = queue("carol", SESSION_C, TOKEN_C, GENERATION_C, {
+    joinedAt: NOW - 5_000,
+    ratingPreference: "illustration",
+  });
+  const selection = reselectSoloSessionV2Match({
+    requesterUid: "alice",
+    queue: { alice, bob, carol },
+    host: alice,
+    candidate: {
+      ...bob,
+      ratingPreference: "live_action",
+      allowPreferenceMismatch: false,
+    },
+    avoidUid: "carol",
+    now: NOW,
+  });
+  assert.equal(selection, null);
+});
+
+test("canonical reselection keeps earlier unavailable candidates excluded", () => {
+  const alice = queue("alice", SESSION_A, TOKEN_A, GENERATION_A);
+  const bob = queue("bob", SESSION_B, TOKEN_B, GENERATION_B, {
+    joinedAt: NOW - 20_000,
+  });
+  const carol = queue("carol", SESSION_C, TOKEN_C, GENERATION_C, {
+    joinedAt: NOW - 5_000,
+  });
+  const selection = reselectSoloSessionV2Match({
+    requesterUid: "alice",
+    queue: { alice, bob, carol },
+    host: { ...alice, name: "CANONICAL ALICE" },
+    candidate: { ...carol, name: "CANONICAL CAROL" },
+    lockedUids: ["bob"],
+    now: NOW,
+  });
+  assert.ok(selection);
+  assert.equal(selection.candidate.uid, "carol");
+  assert.equal(selection.candidate.name, "CANONICAL CAROL");
 });
 
 test("V2 room, permit, offer, lock and active records carry immutable session fences", () => {
