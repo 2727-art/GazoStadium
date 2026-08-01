@@ -1413,9 +1413,9 @@
       : status === "ready"
         ? `<div class="ranking-empty">総合RATEを公開しているプレイヤーはまだいません。</div>`
         : `<div class="ranking-empty">総合RATEランキングを取得しています…</div>`;
-    return `<section class="ranking-overall-section" aria-labelledby="overallRateRankingTitle">
-      <div class="ranking-board-head"><div><span class="eyebrow">PERMANENT STRENGTH / TOP 50</span><h2 id="overallRateRankingTitle">総合RATEランキング</h2></div><p>期間でリセットされない、通常型・戦略型1on1の強さです。</p></div>
-      <div class="ranking-list" aria-label="総合RATEランキング">${rows}</div>
+    return `<section class="ranking-overall-section" id="rankingOverallBoard" aria-labelledby="overallRateRankingTitle">
+      <div class="ranking-board-head"><div><span class="eyebrow">PERMANENT STRENGTH / TOP 10</span><h2 id="overallRateRankingTitle">総合RATEランキング</h2></div><p>期間でリセットされない、通常型・戦略型1on1の上位10席です。</p></div>
+      <div class="ranking-list" aria-label="総合RATEランキング TOP10">${rows}</div>
     </section>`;
   }
 
@@ -1597,13 +1597,13 @@
     </section>`;
   }
 
-  function refreshSelectedRankingPeriod() {
+  function refreshSelectedRankingPeriod({ force = false } = {}) {
     const info = rankingPeriodInfo();
     rankingDisplayedPeriodKey = info.key;
     expandedRankingEntryId = "";
     rankingComments = [];
     rankingCommentsStatus = "idle";
-    window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod);
+    window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod, { force });
   }
 
   function refreshRankingSurfaces() {
@@ -1618,15 +1618,32 @@
     refreshSelectedRankingPeriod();
   }
 
+  function navigateRankingSection(target) {
+    const selected = String(target || "");
+    if (selected === "overall") {
+      document.querySelector("#rankingOverallBoard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (!["daily", "weekly", "monthly"].includes(selected)) return;
+    selectRankingPeriod(selected);
+    window.requestAnimationFrame(() => {
+      document.querySelector("#rankingCircuitBoard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   function refreshRankingAtPeriodBoundary() {
     if (currentScreen !== "ranking") return;
     const info = rankingPeriodInfo();
-    const monthlyInfo = window.HariaiOnline?.getLeaderboardPeriodInfo?.("monthly");
-    const loadedMonthlyKey = window.HariaiOnline?.getMonthlyBeyondPeriodKey?.() || "";
-    if (
-      (info.key && info.key !== rankingDisplayedPeriodKey)
-      || (monthlyInfo?.key && monthlyInfo.key !== loadedMonthlyKey)
-    ) refreshRankingSurfaces();
+    if (info.key && info.key !== rankingDisplayedPeriodKey) {
+      refreshRankingSurfaces();
+      return;
+    }
+    const monthlyLoad = window.HariaiOnline?.getMonthlyBeyondLoadState?.();
+    if (monthlyLoad?.currentPeriodKey
+        && !monthlyLoad.ready
+        && Date.now() >= Number(monthlyLoad.retryAt || 0)) {
+      window.HariaiOnline?.refreshMonthlyBeyondRanking?.().catch((error) => console.error(error));
+    }
   }
 
   async function beginDailyCrownRun() {
@@ -1777,13 +1794,22 @@
           <p>期間で消えない総合RATEを主役に、通常型・戦略型1on1で今日の王座を証明します。</p></div>
         <button class="button button-ghost button-small" id="rankingBackButton">タイトルへ</button>
       </div>
+      <nav class="ranking-jump-nav" aria-label="ランキング内の移動">
+        <span><strong>公開TOP10</strong><small>見たいランキングへすぐ移動</small></span>
+        <div>
+          <button type="button" data-ranking-jump="overall">総合RATE</button>
+          <button type="button" data-ranking-jump="daily">デイリー</button>
+          <button type="button" data-ranking-jump="weekly">ウィークリー</button>
+          <button type="button" data-ranking-jump="monthly">マンスリー</button>
+        </div>
+      </nav>
       ${participationMenu}
       ${renderRankingDashboardPanel()}
       ${renderRankingSpotlight()}
       ${renderOverallLeaderboardSection()}
       ${renderOverallRatingClassGuide()}
-      <section class="ranking-circuit-section" aria-labelledby="crownCircuitRankingTitle">
-        <div class="ranking-circuit-head"><div><span class="eyebrow">CROWN CIRCUIT / DAILY · WEEKLY · MONTHLY</span><h2 id="crownCircuitRankingTitle">期間王座サーキット</h2></div><p>義務的な周回ではなく、挑むと決めた日の短期決戦。デイリーの好成績が週間・月間へ昇格します。</p></div>
+      <section class="ranking-circuit-section" id="rankingCircuitBoard" aria-labelledby="crownCircuitRankingTitle">
+        <div class="ranking-circuit-head"><div><span class="eyebrow">CROWN CIRCUIT / TOP 10</span><h2 id="crownCircuitRankingTitle">期間王座サーキット</h2></div><p>公開は上位10席。挑むと決めた日の短期決戦で、デイリーの好成績が週間・月間へ昇格します。</p></div>
         <div class="ranking-period-tabs" role="tablist" aria-label="ランキング期間">
           <button type="button" role="tab" data-ranking-period="daily" aria-selected="${rankingPeriod === "daily"}" class="${rankingPeriod === "daily" ? "is-active" : ""}">デイリー</button>
           <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
@@ -1802,7 +1828,10 @@
       ${renderRankingAwardsPanel()}
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
-    document.querySelector("#rankingRetryButton")?.addEventListener("click", refreshSelectedRankingPeriod);
+    document.querySelector("#rankingRetryButton")?.addEventListener("click", () => refreshSelectedRankingPeriod({ force: true }));
+    document.querySelectorAll("[data-ranking-jump]").forEach((button) => {
+      button.addEventListener("click", () => navigateRankingSection(button.dataset.rankingJump));
+    });
     document.querySelectorAll("[data-ranking-period]").forEach((button) => {
       button.addEventListener("click", () => selectRankingPeriod(button.dataset.rankingPeriod));
     });

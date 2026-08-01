@@ -4,7 +4,9 @@ import {
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
+  equalTo,
   get,
+  limitToFirst,
   limitToLast,
   onChildAdded,
   onDisconnect,
@@ -317,6 +319,14 @@ const ACTIVE_BATTLE_MODES = ["solo", "strategy"];
 // `royale` remains in persisted ranking records so already-earned history is not rewritten.
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
+const PUBLIC_RANKING_LIMIT = 10;
+const LEGACY_PERIOD_QUERY_LIMIT = 100;
+const PERIOD_RANKING_CACHE_TTL_MS = 60 * 1000;
+const MONTHLY_BEYOND_CACHE_TTL_MS = 5 * 60 * 1000;
+const MONTHLY_BEYOND_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
+const MONTHLY_HALL_OF_FAME_CACHE_TTL_MS = 30 * 60 * 1000;
+const MONTHLY_HALL_OF_FAME_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
+const MONTHLY_HALL_OF_FAME_SESSION_KEY = "hariai-monthly-ranking-hall-v1";
 const PERIOD_REWARD_CONFIG = Object.freeze({
   daily: Object.freeze({ label: "デイリー", minimumMatches: 1, tiers: Object.freeze([{ points: 6, reward: 30 }, { points: 3, reward: 20 }, { points: 0, reward: 10 }]) }),
   weekly: Object.freeze({ label: "ウィークリー", minimumMatches: 3, tiers: Object.freeze([{ points: 12, reward: 180 }, { points: 6, reward: 100 }, { points: 0, reward: 50 }]) }),
@@ -508,9 +518,20 @@ let leaderboardStatus = "idle";
 let leaderboardPeriod = DEFAULT_LEADERBOARD_PERIOD;
 let leaderboardPeriodKey = "";
 let leaderboardRequestId = 0;
+const periodLeaderboardCache = new Map();
+const periodLeaderboardRequests = new Map();
 let monthlyBeyondRanks = new Map();
 let monthlyBeyondPeriodKey = "";
+let monthlyBeyondEntries = [];
+let monthlyBeyondLoadedAt = 0;
+let monthlyBeyondRequest = null;
+let monthlyBeyondAttemptedPeriodKey = "";
+let monthlyBeyondLastAttemptAt = 0;
 let monthlyHallOfFameRecords = [];
+let monthlyHallOfFameLoadedAt = 0;
+let monthlyHallOfFameLastAttemptAt = 0;
+let monthlyHallOfFameRequest = null;
+let monthlyHallOfFameSessionRestored = false;
 let overallLeaderboardEntries = [];
 let overallLeaderboardStatus = "idle";
 let overallLeaderboardRequestId = 0;
@@ -1870,6 +1891,17 @@ function getMonthlyBeyondPeriodKey() {
   return monthlyBeyondPeriodKey;
 }
 
+function getMonthlyBeyondLoadState() {
+  const currentPeriodKey = leaderboardPeriodKeyFor("monthly", Date.now() + publicServerTimeOffset);
+  return {
+    currentPeriodKey,
+    loadedPeriodKey: monthlyBeyondPeriodKey,
+    attemptedPeriodKey: monthlyBeyondAttemptedPeriodKey,
+    retryAt: monthlyBeyondLastAttemptAt + MONTHLY_BEYOND_RETRY_COOLDOWN_MS,
+    ready: monthlyBeyondPeriodKey === currentPeriodKey,
+  };
+}
+
 function readMutedTopMessageIds() {
   try {
     const value = JSON.parse(localStorage.getItem(TOP_MESSAGE_MUTED_KEY) || "[]");
@@ -1993,22 +2025,33 @@ function clearMutedTopMessages() {
   notifyTopMessagesUpdated();
 }
 
-async function readPublicDatabasePath(path, { orderByChildKey = "", limit = 0 } = {}) {
+async function readPublicDatabasePath(path, {
+  orderByChildKey = "",
+  equalToValue,
+  limit = 0,
+  limitDirection = "last",
+  readServerTimeOffset = true,
+} = {}) {
   if (useOfflineMarketPreview) return null;
   const constraints = [];
   if (orderByChildKey) constraints.push(orderByChild(String(orderByChildKey)));
+  if (equalToValue !== undefined) constraints.push(equalTo(equalToValue));
   if (limit) {
     const normalizedLimit = Number(limit);
     if (!Number.isSafeInteger(normalizedLimit) || normalizedLimit <= 0) {
       throw new Error("公開データの取得件数が不正です。");
     }
-    constraints.push(limitToLast(normalizedLimit));
+    constraints.push(limitDirection === "first"
+      ? limitToFirst(normalizedLimit)
+      : limitToLast(normalizedLimit));
   }
   const targetRef = ref(database, path);
   const targetQuery = constraints.length ? query(targetRef, ...constraints) : targetRef;
   const [snapshot, offsetSnapshot] = await Promise.all([
     get(targetQuery),
-    get(ref(database, ".info/serverTimeOffset")).catch(() => null),
+    readServerTimeOffset
+      ? get(ref(database, ".info/serverTimeOffset")).catch(() => null)
+      : Promise.resolve(null),
   ]);
   const offset = Number(offsetSnapshot?.val());
   if (Number.isFinite(offset)) {
@@ -2572,7 +2615,7 @@ function normalizeLeaderboardRecords(entries) {
       || Number(first.updatedAt || 0) - Number(second.updatedAt || 0)
       || String(first.entryId || "").localeCompare(String(second.entryId || ""))
     ))
-    .slice(0, 50);
+    .slice(0, PUBLIC_RANKING_LIMIT);
 }
 
 function normalizeCrownTheme(value) {
@@ -2591,6 +2634,12 @@ function normalizeCrownSignatureIds(value) {
     .filter((id) => CROWN_SIGNATURE_IDS.includes(id)))];
 }
 
+function compareFirebaseKeys(first, second) {
+  const left = String(first || "");
+  const right = String(second || "");
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function normalizeOverallLeaderboardRecords(entries) {
   return Object.entries(entries || {})
     .map(([entryId, entry]) => ({
@@ -2606,9 +2655,9 @@ function normalizeOverallLeaderboardRecords(entries) {
     .filter((entry) => entry.name && Number.isFinite(entry.rating))
     .sort((first, second) => (
       second.rating - first.rating
-      || String(first.entryId || "").localeCompare(String(second.entryId || ""))
+      || compareFirebaseKeys(first.entryId, second.entryId)
     ))
-    .slice(0, 50)
+    .slice(0, PUBLIC_RANKING_LIMIT)
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
@@ -2654,7 +2703,7 @@ function normalizeCrownCircuitRecords(entries, period) {
     };
     record.qualified = crownCircuitEntryIsQualified(record, normalizedPeriod);
     return record;
-  }).filter((entry) => entry.name && Number.isFinite(entry.rating));
+  }).filter((entry) => entry.name && Number.isFinite(entry.rating) && entry.qualified);
   records.sort((first, second) => (
     Number(second.qualified) - Number(first.qualified)
     || second.rankScore - first.rankScore
@@ -2667,8 +2716,7 @@ function normalizeCrownCircuitRecords(entries, period) {
     || String(first.entryId || "").localeCompare(String(second.entryId || ""))
   ));
   let liveRank = 0;
-  return records.slice(0, 50).map((entry) => {
-    if (!entry.qualified) return { ...entry, displayRank: 0 };
+  return records.slice(0, PUBLIC_RANKING_LIMIT).map((entry) => {
     liveRank += 1;
     const finalizedRank = Math.max(0, Math.floor(Number(entry.rank || 0)));
     return { ...entry, displayRank: finalizedRank || liveRank };
@@ -3092,6 +3140,266 @@ function focusCrownRankingParticipation(controlId) {
   return Boolean(button);
 }
 
+function publicRankingRecordMap(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function publicPeriodLeaderboardPath(periodInfo, period) {
+  const root = periodInfo.crownCircuit
+    ? "crownCircuitPeriods"
+    : periodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
+  return `online/${root}/${period}/${periodInfo.key}`;
+}
+
+async function readOverallPublicTop10() {
+  const path = "online/serverOverallLeaderboard";
+  const seed = publicRankingRecordMap(await readPublicDatabasePath(path, {
+    orderByChildKey: "rating",
+    limit: PUBLIC_RANKING_LIMIT,
+  }));
+  const seedEntries = Object.entries(seed).filter(([, entry]) => Number.isFinite(Number(entry?.rating)));
+  if (seedEntries.length < PUBLIC_RANKING_LIMIT) return normalizeOverallLeaderboardRecords(seed);
+
+  const boundaryRating = Math.min(...seedEntries.map(([, entry]) => Number(entry.rating)));
+  const higherEntries = seedEntries.filter(([, entry]) => Number(entry.rating) > boundaryRating);
+  const boundarySeats = Math.max(0, PUBLIC_RANKING_LIMIT - higherEntries.length);
+  if (!Number.isFinite(boundaryRating) || boundarySeats <= 0) {
+    return normalizeOverallLeaderboardRecords(Object.fromEntries(higherEntries));
+  }
+  // RTDB resolves equal child values by key. Fetching the first missing keys makes
+  // the client comparator (rating desc, entryId asc) exact at the tenth-seat tie.
+  const boundaryEntries = publicRankingRecordMap(await readPublicDatabasePath(path, {
+    orderByChildKey: "rating",
+    equalToValue: boundaryRating,
+    limit: boundarySeats,
+    limitDirection: "first",
+    readServerTimeOffset: false,
+  }));
+  return normalizeOverallLeaderboardRecords({
+    ...Object.fromEntries(higherEntries),
+    ...boundaryEntries,
+  });
+}
+
+async function readCrownCircuitPublicTop10(path, period) {
+  const seed = publicRankingRecordMap(await readPublicDatabasePath(path, {
+    orderByChildKey: "rankScore",
+    limit: PUBLIC_RANKING_LIMIT,
+  }));
+  const positiveEntries = Object.entries(seed)
+    .filter(([, entry]) => Number(entry?.rankScore || 0) > 0);
+  if (positiveEntries.length < PUBLIC_RANKING_LIMIT) {
+    return normalizeCrownCircuitRecords(Object.fromEntries(positiveEntries), period);
+  }
+
+  const boundaryRankScore = Math.min(...positiveEntries.map(([, entry]) => Number(entry.rankScore)));
+  const higherEntries = positiveEntries.filter(([, entry]) => Number(entry.rankScore) > boundaryRankScore);
+  if (!(boundaryRankScore > 0)) {
+    return normalizeCrownCircuitRecords(Object.fromEntries(higherEntries), period);
+  }
+  // A positive score is required before expanding a tie. This keeps the potentially
+  // large provisional rankScore=0 group out while preserving the full comparator.
+  const boundaryEntries = publicRankingRecordMap(await readPublicDatabasePath(path, {
+    orderByChildKey: "rankScore",
+    equalToValue: boundaryRankScore,
+    readServerTimeOffset: false,
+  }));
+  return normalizeCrownCircuitRecords({
+    ...Object.fromEntries(higherEntries),
+    ...boundaryEntries,
+  }, period);
+}
+
+async function readPeriodPublicTop10(periodInfo, period) {
+  const path = publicPeriodLeaderboardPath(periodInfo, period);
+  if (periodInfo.crownCircuit) return readCrownCircuitPublicTop10(path, period);
+  // Legacy/server points boards have multi-field ties that RTDB cannot express.
+  // Keep the established bounded query during the transition, then display TOP 10.
+  const records = await readPublicDatabasePath(path, {
+    orderByChildKey: "points",
+    limit: LEGACY_PERIOD_QUERY_LIMIT,
+  });
+  return normalizeLeaderboardRecords(records);
+}
+
+async function readCachedPeriodPublicTop10(periodInfo, period, { force = false } = {}) {
+  const cacheKey = `${period}:${periodInfo.key}`;
+  const cached = periodLeaderboardCache.get(cacheKey);
+  if (!force
+      && cached
+      && Date.now() - cached.loadedAt < PERIOD_RANKING_CACHE_TTL_MS) {
+    return cached.entries.map((entry) => ({ ...entry }));
+  }
+  if (periodLeaderboardRequests.has(cacheKey)) return periodLeaderboardRequests.get(cacheKey);
+  const request = readPeriodPublicTop10(periodInfo, period).then((entries) => {
+    periodLeaderboardCache.set(cacheKey, { entries, loadedAt: Date.now() });
+    return entries.map((entry) => ({ ...entry }));
+  }).finally(() => {
+    if (periodLeaderboardRequests.get(cacheKey) === request) periodLeaderboardRequests.delete(cacheKey);
+  });
+  periodLeaderboardRequests.set(cacheKey, request);
+  return request;
+}
+
+function normalizeMonthlyHallOfFameRecords(legacyHallOfFame, crownHallOfFame) {
+  const legacyRecords = Object.entries(legacyHallOfFame || {})
+    .map(([key, value]) => ({
+      key,
+      entryId: String(value?.entryId || ""),
+      name: String(value?.name || "PLAYER").slice(0, 16) || "PLAYER",
+      points: Math.max(0, Math.floor(Number(value?.points || 0))),
+      wins: Math.max(0, Math.floor(Number(value?.wins || 0))),
+      losses: Math.max(0, Math.floor(Number(value?.losses || 0))),
+      draws: Math.max(0, Math.floor(Number(value?.draws || 0))),
+      rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
+      participants: Math.max(1, Math.floor(Number(value?.participants || 1))),
+      finalizedAt: Number(value?.finalizedAt || 0),
+      crownCircuit: false,
+    }))
+    .filter((record) => isServerRankingPeriod("monthly", record.key));
+  const crownRecords = Object.entries(crownHallOfFame || {})
+    .map(([key, value]) => ({
+      key,
+      entryId: String(value?.entryId || ""),
+      name: String(value?.name || "PLAYER").slice(0, 16) || "PLAYER",
+      rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
+      circuitScore: Math.max(0, Math.floor(Number(value?.circuitScore || 0))),
+      bestCrownPower: Math.min(3000, Math.max(100, Math.floor(Number(
+        value?.bestCrownPower || value?.crownPower || value?.rating || INITIAL_RATING,
+      )))),
+      participants: Math.max(1, Math.floor(Number(value?.participantCount || value?.participants || 1))),
+      crownTheme: normalizeCrownTheme(value?.crownTheme),
+      crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(value?.crownSignatureId || ""))
+        ? String(value.crownSignatureId)
+        : "",
+      finalizedAt: Number(value?.finalizedAt || 0),
+      crownCircuit: true,
+    }))
+    .filter((record) => isCrownCircuitPeriod("monthly", record.key));
+  const recordsByKey = new Map(legacyRecords.map((record) => [record.key, record]));
+  crownRecords.forEach((record) => recordsByKey.set(record.key, record));
+  return [...recordsByKey.values()]
+    .sort((first, second) => second.key.localeCompare(first.key))
+    .slice(0, 12);
+}
+
+function restoreMonthlyHallOfFameSessionCache() {
+  if (monthlyHallOfFameSessionRestored) return;
+  monthlyHallOfFameSessionRestored = true;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(MONTHLY_HALL_OF_FAME_SESSION_KEY) || "null");
+    const cachedAt = Number(cached?.cachedAt || 0);
+    if (!(cachedAt > 0) || Date.now() - cachedAt >= MONTHLY_HALL_OF_FAME_CACHE_TTL_MS) return;
+    const legacyRecords = {};
+    const crownRecords = {};
+    (Array.isArray(cached?.records) ? cached.records : []).forEach((record) => {
+      const key = String(record?.key || "");
+      if (!key) return;
+      if (record?.crownCircuit) crownRecords[key] = record;
+      else legacyRecords[key] = record;
+    });
+    monthlyHallOfFameRecords = normalizeMonthlyHallOfFameRecords(legacyRecords, crownRecords);
+    monthlyHallOfFameLoadedAt = cachedAt;
+  } catch {
+    // A malformed or unavailable session cache is equivalent to a cache miss.
+  }
+}
+
+async function refreshMonthlyHallOfFame({ force = false } = {}) {
+  restoreMonthlyHallOfFameSessionCache();
+  const now = Date.now();
+  if (!force
+      && monthlyHallOfFameLoadedAt > 0
+      && now - monthlyHallOfFameLoadedAt < MONTHLY_HALL_OF_FAME_CACHE_TTL_MS) {
+    return getMonthlyRankingHallOfFame();
+  }
+  if (monthlyHallOfFameRequest) return monthlyHallOfFameRequest;
+  if (!force
+      && monthlyHallOfFameLastAttemptAt > monthlyHallOfFameLoadedAt
+      && now - monthlyHallOfFameLastAttemptAt < MONTHLY_HALL_OF_FAME_RETRY_COOLDOWN_MS) {
+    throw new Error("歴代月間王者の再取得待機中です。");
+  }
+  monthlyHallOfFameLastAttemptAt = now;
+  monthlyHallOfFameRequest = (async () => {
+    const cachedLegacyRecords = Object.fromEntries(monthlyHallOfFameRecords
+      .filter((record) => !record.crownCircuit)
+      .map((record) => [record.key, record]));
+    const cachedCrownRecords = Object.fromEntries(monthlyHallOfFameRecords
+      .filter((record) => record.crownCircuit)
+      .map((record) => [record.key, record]));
+    const [legacyResult, crownResult] = await Promise.allSettled([
+      readPublicDatabasePath("online/serverRankingHallOfFame/monthly"),
+      readPublicDatabasePath("online/crownCircuitHallOfFame/monthly", { readServerTimeOffset: false }),
+    ]);
+    if (legacyResult.status === "rejected" && crownResult.status === "rejected") {
+      throw legacyResult.reason || crownResult.reason;
+    }
+    monthlyHallOfFameRecords = normalizeMonthlyHallOfFameRecords(
+      legacyResult.status === "fulfilled" ? legacyResult.value : cachedLegacyRecords,
+      crownResult.status === "fulfilled" ? crownResult.value : cachedCrownRecords,
+    );
+    monthlyHallOfFameLoadedAt = Date.now();
+    try {
+      sessionStorage.setItem(MONTHLY_HALL_OF_FAME_SESSION_KEY, JSON.stringify({
+        cachedAt: monthlyHallOfFameLoadedAt,
+        records: monthlyHallOfFameRecords,
+      }));
+    } catch {
+      // In-memory TTL caching still applies when sessionStorage is unavailable.
+    }
+    return getMonthlyRankingHallOfFame();
+  })().finally(() => {
+    monthlyHallOfFameRequest = null;
+  });
+  return monthlyHallOfFameRequest;
+}
+
+async function refreshMonthlyBeyondCache({ force = false } = {}) {
+  const monthlyPeriodInfo = leaderboardPeriodInfoFor("monthly");
+  const now = Date.now();
+  const cacheFresh = monthlyBeyondPeriodKey === monthlyPeriodInfo.key
+    && monthlyBeyondLoadedAt > 0
+    && now - monthlyBeyondLoadedAt < MONTHLY_BEYOND_CACHE_TTL_MS;
+  if (!force && cacheFresh) return monthlyBeyondEntries.map((entry) => ({ ...entry }));
+  if (monthlyBeyondRequest?.key === monthlyPeriodInfo.key) return monthlyBeyondRequest.promise;
+  if (!force
+      && monthlyBeyondPeriodKey !== monthlyPeriodInfo.key
+      && monthlyBeyondAttemptedPeriodKey === monthlyPeriodInfo.key
+      && now - monthlyBeyondLastAttemptAt < MONTHLY_BEYOND_RETRY_COOLDOWN_MS) {
+    throw new Error("月間ランキングの再取得待機中です。");
+  }
+  monthlyBeyondAttemptedPeriodKey = monthlyPeriodInfo.key;
+  monthlyBeyondLastAttemptAt = now;
+  const promise = readCachedPeriodPublicTop10(monthlyPeriodInfo, "monthly", { force }).then((entries) => {
+    if (leaderboardPeriodInfoFor("monthly").key !== monthlyPeriodInfo.key) return entries;
+    monthlyBeyondEntries = entries;
+    monthlyBeyondRanks = new Map(entries.slice(0, PUBLIC_RANKING_LIMIT)
+      .map((entry, index) => [entry.entryId, index + 1]));
+    // The period key is the success sentinel, including a successful empty month.
+    monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
+    monthlyBeyondLoadedAt = Date.now();
+    return entries.map((entry) => ({ ...entry }));
+  }).finally(() => {
+    if (monthlyBeyondRequest?.promise === promise) monthlyBeyondRequest = null;
+  });
+  monthlyBeyondRequest = { key: monthlyPeriodInfo.key, promise };
+  return promise;
+}
+
+async function refreshMonthlyBeyondRanking({ force = false } = {}) {
+  try {
+    const entries = await refreshMonthlyBeyondCache({ force });
+    const currentMonthlyInfo = leaderboardPeriodInfoFor("monthly");
+    if (leaderboardPeriod === "monthly" && leaderboardPeriodKey === currentMonthlyInfo.key) {
+      leaderboardEntries = entries;
+      leaderboardStatus = "ready";
+    }
+    return entries;
+  } finally {
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  }
+}
+
 async function refreshOverallLeaderboard() {
   if (useOfflineMarketPreview) {
     overallLeaderboardEntries = [];
@@ -3103,12 +3411,9 @@ async function refreshOverallLeaderboard() {
   overallLeaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const records = await readPublicDatabasePath("online/serverOverallLeaderboard", {
-      orderByChildKey: "rating",
-      limit: 100,
-    });
+    const records = await readOverallPublicTop10();
     if (requestId !== overallLeaderboardRequestId) return overallLeaderboardEntries;
-    overallLeaderboardEntries = normalizeOverallLeaderboardRecords(records);
+    overallLeaderboardEntries = records;
     overallLeaderboardStatus = "ready";
   } catch {
     if (requestId !== overallLeaderboardRequestId) return overallLeaderboardEntries;
@@ -3164,7 +3469,7 @@ async function startCrownRun() {
       if (rankingDashboard) applyCrownRunToRankingDashboard(result.run || result.crownRun);
       else await refreshRankingDashboard();
     } else await refreshRankingDashboard();
-    await refreshLeaderboard("daily");
+    await refreshLeaderboard("daily", { force: true });
     return getRankingDashboard();
   } finally {
     rankingDashboardBusy = false;
@@ -3192,7 +3497,7 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
     else await refreshRankingDashboard();
     await Promise.all([
       refreshOverallLeaderboard(),
-      refreshLeaderboard(leaderboardPeriod),
+      refreshLeaderboard(leaderboardPeriod, { force: true }),
     ]);
     return getRankingDashboard();
   } finally {
@@ -3201,7 +3506,7 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
   }
 }
 
-async function refreshLeaderboard(period = leaderboardPeriod) {
+async function refreshLeaderboard(period = leaderboardPeriod, { force = false } = {}) {
   const selectedPeriod = normalizeLeaderboardPeriod(period);
   const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
   const monthlyPeriodInfo = leaderboardPeriodInfoFor("monthly");
@@ -3209,8 +3514,10 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
     leaderboardPeriod = selectedPeriod;
     leaderboardPeriodKey = periodInfo.key;
     leaderboardEntries = [];
+    monthlyBeyondEntries = [];
     monthlyBeyondRanks = new Map();
     monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
+    monthlyBeyondLoadedAt = Date.now();
     leaderboardStatus = "ready";
     window.dispatchEvent(new Event("hariai-leaderboard-updated"));
     return;
@@ -3219,92 +3526,23 @@ async function refreshLeaderboard(period = leaderboardPeriod) {
   leaderboardPeriod = selectedPeriod;
   leaderboardPeriodKey = periodInfo.key;
   leaderboardEntries = [];
-  monthlyBeyondRanks = new Map();
-  monthlyBeyondPeriodKey = "";
   leaderboardStatus = "loading";
   window.dispatchEvent(new Event("hariai-leaderboard-updated"));
   try {
-    const selectedRoot = periodInfo.crownCircuit
-      ? "crownCircuitPeriods"
-      : periodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
-    const monthlyRoot = monthlyPeriodInfo.crownCircuit
-      ? "crownCircuitPeriods"
-      : monthlyPeriodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
-    const selectedEntriesPromise = readPublicDatabasePath(`online/${selectedRoot}/${selectedPeriod}/${periodInfo.key}`, {
-      orderByChildKey: periodInfo.crownCircuit ? "rankScore" : "points",
-      limit: 100,
-    });
-    const monthlyEntriesPromise = selectedPeriod === "monthly"
+    const selectedEntriesPromise = selectedPeriod === "monthly"
+      ? refreshMonthlyBeyondCache({ force })
+      : readCachedPeriodPublicTop10(periodInfo, selectedPeriod, { force });
+    const supportingMonthlyPromise = selectedPeriod === "monthly"
       ? selectedEntriesPromise
-      : readPublicDatabasePath(`online/${monthlyRoot}/monthly/${monthlyPeriodInfo.key}`, {
-        orderByChildKey: monthlyPeriodInfo.crownCircuit ? "rankScore" : "points",
-        limit: 100,
-      }).catch(() => null);
-    const legacyHallOfFamePromise = readPublicDatabasePath("online/serverRankingHallOfFame/monthly").catch(() => null);
-    const crownHallOfFamePromise = readPublicDatabasePath("online/crownCircuitHallOfFame/monthly").catch(() => null);
-    const [entries, monthlyEntries, legacyHallOfFame, crownHallOfFame] = await Promise.all([
+      : refreshMonthlyBeyondCache().catch(() => null);
+    const hallOfFamePromise = refreshMonthlyHallOfFame().catch(() => null);
+    const [entries] = await Promise.all([
       selectedEntriesPromise,
-      monthlyEntriesPromise,
-      legacyHallOfFamePromise,
-      crownHallOfFamePromise,
+      supportingMonthlyPromise,
+      hallOfFamePromise,
     ]);
     if (requestId !== leaderboardRequestId) return;
-    leaderboardEntries = periodInfo.crownCircuit
-      ? normalizeCrownCircuitRecords(entries, selectedPeriod)
-      : normalizeLeaderboardRecords(entries);
-    if (legacyHallOfFame !== null || crownHallOfFame !== null) {
-      const legacyRecords = Object.entries(legacyHallOfFame || {})
-        .map(([key, value]) => ({
-          key,
-          entryId: String(value?.entryId || ""),
-          name: String(value?.name || "PLAYER").slice(0, 16) || "PLAYER",
-          points: Math.max(0, Math.floor(Number(value?.points || 0))),
-          wins: Math.max(0, Math.floor(Number(value?.wins || 0))),
-          losses: Math.max(0, Math.floor(Number(value?.losses || 0))),
-          draws: Math.max(0, Math.floor(Number(value?.draws || 0))),
-          rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
-          participants: Math.max(1, Math.floor(Number(value?.participants || 1))),
-          finalizedAt: Number(value?.finalizedAt || 0),
-          crownCircuit: false,
-        }))
-        .filter((record) => isServerRankingPeriod("monthly", record.key));
-      const crownRecords = Object.entries(crownHallOfFame || {})
-        .map(([key, value]) => ({
-          key,
-          entryId: String(value?.entryId || ""),
-          name: String(value?.name || "PLAYER").slice(0, 16) || "PLAYER",
-          rating: Math.min(3000, Math.max(100, Math.floor(Number(value?.rating || INITIAL_RATING)))),
-          circuitScore: Math.max(0, Math.floor(Number(value?.circuitScore || 0))),
-          bestCrownPower: Math.min(3000, Math.max(100, Math.floor(Number(
-            value?.bestCrownPower || value?.crownPower || value?.rating || INITIAL_RATING,
-          )))),
-          participants: Math.max(1, Math.floor(Number(value?.participantCount || 1))),
-          crownTheme: normalizeCrownTheme(value?.crownTheme),
-          crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(value?.crownSignatureId || ""))
-            ? String(value.crownSignatureId)
-            : "",
-          finalizedAt: Number(value?.finalizedAt || 0),
-          crownCircuit: true,
-        }))
-        .filter((record) => isCrownCircuitPeriod("monthly", record.key));
-      const recordsByKey = new Map(legacyRecords.map((record) => [record.key, record]));
-      crownRecords.forEach((record) => recordsByKey.set(record.key, record));
-      monthlyHallOfFameRecords = [...recordsByKey.values()]
-        .sort((first, second) => second.key.localeCompare(first.key))
-        .slice(0, 12);
-    }
-    if (monthlyEntries !== null) {
-      const monthlyRecords = selectedPeriod === "monthly"
-        ? leaderboardEntries
-        : monthlyPeriodInfo.crownCircuit
-          ? normalizeCrownCircuitRecords(monthlyEntries, "monthly")
-          : normalizeLeaderboardRecords(monthlyEntries);
-      const monthlyRankedRecords = monthlyPeriodInfo.crownCircuit
-        ? monthlyRecords.filter((entry) => entry.qualified)
-        : monthlyRecords;
-      monthlyBeyondRanks = new Map(monthlyRankedRecords.slice(0, 10).map((entry, index) => [entry.entryId, index + 1]));
-      monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
-    }
+    leaderboardEntries = entries;
     leaderboardStatus = "ready";
   } catch {
     if (requestId !== leaderboardRequestId) return;
@@ -6754,7 +6992,7 @@ async function saveOverallRankingPublicSettings({ xHandle = "", xPublic = false,
     Promise.all([
       refreshOverallLeaderboard(),
       refreshRankingDashboard(),
-      refreshLeaderboard(leaderboardPeriod),
+      refreshLeaderboard(leaderboardPeriod, { force: true }),
     ]).catch((refreshError) => console.error(refreshError));
     return saved;
   } catch (error) {
@@ -11248,10 +11486,12 @@ window.HariaiOnline = {
   getMonthlyRankingHallOfFame,
   getMonthlyBeyondRank,
   getMonthlyBeyondPeriodKey,
+  getMonthlyBeyondLoadState,
   getP2pIceConfiguration: loadP2pIceServers,
   isServerRankingPeriod,
   isCrownCircuitPeriod,
   refreshLeaderboard,
+  refreshMonthlyBeyondRanking,
   refreshOverallLeaderboard,
   refreshRankingDashboard,
   startCrownRun,

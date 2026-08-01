@@ -1,6 +1,38 @@
 {
   "indexes": [
     {
+      "collectionGroup": "serverRankingProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "enabled",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "entryId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "awards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "rank",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "participantCount",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "valueMarketQueues",
       "queryScope": "COLLECTION",
       "fields": [

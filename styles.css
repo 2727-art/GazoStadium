@@ -2590,11 +2590,78 @@ button:disabled {
   margin-inline: auto;
 }
 
+.ranking-jump-nav {
+  position: sticky;
+  z-index: 12;
+  top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border: 1px solid rgba(100, 232, 213, 0.2);
+  border-radius: 15px;
+  background: rgba(7, 10, 17, 0.93);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(12px);
+}
+
+.ranking-jump-nav > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: max-content;
+}
+
+.ranking-jump-nav > span strong {
+  color: var(--cyan);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+.ranking-jump-nav > span small {
+  color: var(--muted);
+  font-size: 0.58rem;
+}
+
+.ranking-jump-nav > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  width: min(620px, 100%);
+}
+
+.ranking-jump-nav button {
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ranking-jump-nav button:hover,
+.ranking-jump-nav button:focus-visible {
+  border-color: rgba(100, 232, 213, 0.4);
+  background: rgba(100, 232, 213, 0.1);
+  color: var(--cyan);
+}
+
 .ranking-dashboard,
 .ranking-overall-section,
 .ranking-circuit-section,
 .crown-spotlight {
   margin-bottom: 18px;
+}
+
+.ranking-overall-section,
+.ranking-circuit-section {
+  scroll-margin-top: 78px;
 }
 
 .ranking-board-head,
@@ -8652,6 +8719,28 @@ button:disabled {
 
   .lobby-mode-card {
     min-height: 0;
+  }
+
+  .ranking-jump-nav {
+    top: 4px;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 9px;
+  }
+
+  .ranking-jump-nav > span {
+    display: none;
+  }
+
+  .ranking-jump-nav > div {
+    width: 100%;
+  }
+
+  .ranking-jump-nav button {
+    min-height: 40px;
+    padding-inline: 5px;
+    font-size: 0.64rem;
   }
 
   .ranking-board-head,

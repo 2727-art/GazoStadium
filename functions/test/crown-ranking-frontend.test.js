@@ -127,7 +127,7 @@ test("frontend reads V2 public boards while private spotlight data stays behind 
   assert.match(online, /Object\.freeze\(\["solo", "strategy"\]\)/);
   assert.match(online, /CROWN_DAILY_MATCH_LIMIT\s*=\s*3/);
   assert.match(online, /online\/serverOverallLeaderboard/);
-  assert.match(online, /online\/\$\{selectedRoot\}\/\$\{selectedPeriod\}\/\$\{periodInfo\.key\}/);
+  assert.match(online, /online\/\$\{root\}\/\$\{period\}\/\$\{periodInfo\.key\}/);
   assert.match(online, /"crownCircuitPeriods"/);
   assert.match(online, /online\/crownCircuitHallOfFame\/monthly/);
   assert.doesNotMatch(online, /readPublicDatabasePath\("online\/rankingSpotlights\/current"/);

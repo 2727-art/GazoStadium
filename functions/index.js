@@ -213,6 +213,12 @@ const {
   normalizeSignatureIds,
   startCrownRun,
 } = require("./crown-circuit");
+const {
+  aggregateCount,
+  crownCustomizationOptions,
+  sameServerOverallRankingKey,
+  serverOverallRankingKey,
+} = require("./ranking-dashboard");
 const PRODUCT_CATALOG = require("./product-catalog");
 const RETIRED_TEAM_PRODUCT_IDS = new Set([
   "title_team_link_active",
@@ -2490,58 +2496,139 @@ async function getServerRankingAwards(uid) {
   };
 }
 
-function crownSignatureIdsFromAward(value) {
-  const tier = cleanText(value?.tier, 40);
-  if (tier === "daily_champion") return ["daily_champion"];
-  if (tier === "weekly_champion") return ["weekly_champion"];
-  if (tier === "monthly_champion") return ["monthly_champion"];
-  return [];
-}
-
 async function loadCrownCustomizationOptions(uid) {
-  const [runsSnapshot, awardsSnapshot] = await Promise.all([
-    serverRankingProfileRef(uid)
-      .collection("crownRuns")
-      .orderBy("updatedAt", "desc")
-      .limit(90)
+  const profileRef = serverRankingProfileRef(uid);
+  const runs = profileRef.collection("crownRuns");
+  const awards = profileRef.collection("awards");
+  const championTiers = ["daily_champion", "weekly_champion", "monthly_champion"];
+  const [completedRunSnapshot, runSignatureSnapshots, topThreeSnapshot, championSnapshots] = await Promise.all([
+    runs.where("matchCount", ">=", CROWN_DAILY_MATCH_LIMIT).limit(1).get(),
+    Promise.all(CROWN_SIGNATURE_IDS.map((signatureId) => (
+      runs.where("signatureIds", "array-contains", signatureId).limit(1).get()
+    ))),
+    awards
+      .where("rank", "in", [1, 2, 3])
+      .where("participantCount", ">=", 2)
+      .limit(1)
       .get(),
-    serverRankingProfileRef(uid)
-      .collection("awards")
-      .orderBy("awardedAt", "desc")
-      .limit(90)
-      .get(),
+    Promise.all(championTiers.map((tier) => (
+      awards.where("tier", "==", tier).limit(1).get()
+    ))),
   ]);
   const signatures = new Set();
-  let completedRun = false;
-  let topThreeAward = false;
-  let championAward = false;
-  runsSnapshot.docs.forEach((snapshot) => {
-    if (Number(snapshot.get("matchCount") || 0) >= CROWN_DAILY_MATCH_LIMIT) {
-      completedRun = true;
-    }
-    normalizeSignatureIds(snapshot.get("signatureIds")).forEach((id) => signatures.add(id));
+  runSignatureSnapshots.forEach((snapshot, index) => {
+    if (!snapshot.empty) signatures.add(CROWN_SIGNATURE_IDS[index]);
   });
-  awardsSnapshot.docs.forEach((snapshot) => {
-    const award = snapshot.data();
-    const rank = Number(award?.rank || 0);
-    const participants = Number(award?.participantCount || 0);
-    if (participants >= 2 && rank > 0 && rank <= 3) topThreeAward = true;
-    if (crownSignatureIdsFromAward(award).length) championAward = true;
-    crownSignatureIdsFromAward(award).forEach((id) => signatures.add(id));
+  championSnapshots.forEach((snapshot, index) => {
+    if (!snapshot.empty) signatures.add(championTiers[index]);
   });
-  const availableThemes = ["rose"];
-  if (completedRun) availableThemes.push("aqua");
-  if (topThreeAward) availableThemes.push("violet");
-  if (championAward) availableThemes.push("gold");
+  return crownCustomizationOptions({
+    completedRun: !completedRunSnapshot.empty,
+    topThreeAward: !topThreeSnapshot.empty,
+    signatureIds: normalizeSignatureIds([...signatures]),
+  });
+}
+
+function serverOverallProfilesQuery() {
+  return firestore.collection("serverRankingProfiles")
+    .where("enabled", "==", true)
+    .orderBy("rating", "desc")
+    .orderBy("entryId", "asc");
+}
+
+function publicServerOverallSnapshot(snapshot) {
+  const publicProfile = publicServerOverallProfile(snapshot?.data?.());
+  const entryId = cleanText(snapshot?.get?.("entryId"), 40);
+  if (!publicProfile || !entryId) return null;
   return {
-    availableThemes,
-    availableSignatureIds: [...signatures],
+    ...publicProfile,
+    entryId,
+    ownerUid: snapshot.id,
   };
 }
 
-function compareServerOverallProfiles(first, second) {
-  return Number(second.rating || 0) - Number(first.rating || 0)
-    || String(first.entryId || "").localeCompare(String(second.entryId || ""));
+function publicServerOverallRow(entry, rank) {
+  if (!entry) return null;
+  const { ownerUid, ...publicEntry } = entry;
+  return { ...publicEntry, rank };
+}
+
+async function loadServerOverallStanding(uid, initialProfileSnapshot) {
+  const profileRef = serverRankingProfileRef(uid);
+  const rankedQuery = serverOverallProfilesQuery();
+  let profileSnapshot = initialProfileSnapshot;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const key = serverOverallRankingKey(profileSnapshot?.data?.());
+    if (!key) {
+      const [participantCountSnapshot, leadingSnapshot] = await Promise.all([
+        rankedQuery.count().get(),
+        rankedQuery.limit(7).get(),
+      ]);
+      return {
+        rank: 0,
+        participantCount: aggregateCount(participantCountSnapshot),
+        rating: Number(profileSnapshot?.get?.("rating") || 1000),
+        nextSeatGap: 0,
+        neighbors: leadingSnapshot.docs
+          .map(publicServerOverallSnapshot)
+          .filter(Boolean)
+          .map((entry, index) => publicServerOverallRow(entry, index + 1)),
+      };
+    }
+
+    const beforeQuery = rankedQuery.endBefore(key.rating, key.entryId);
+    const afterQuery = rankedQuery.startAfter(key.rating, key.entryId);
+    const [participantCountSnapshot, betterCountSnapshot, beforeSnapshot, afterSnapshot] = await Promise.all([
+      rankedQuery.count().get(),
+      beforeQuery.count().get(),
+      beforeQuery.limitToLast(3).get(),
+      afterQuery.limit(3).get(),
+    ]);
+    const verifiedProfileSnapshot = await profileRef.get();
+    const verifiedKey = serverOverallRankingKey(verifiedProfileSnapshot.data());
+    if (!sameServerOverallRankingKey(key, verifiedKey)) {
+      profileSnapshot = verifiedProfileSnapshot;
+      continue;
+    }
+
+    const ownEntry = publicServerOverallSnapshot(profileSnapshot);
+    const participantCount = aggregateCount(participantCountSnapshot);
+    const rank = aggregateCount(betterCountSnapshot) + 1;
+    if (!ownEntry || participantCount < rank) {
+      return {
+        rank: 0,
+        participantCount,
+        rating: key.rating,
+        nextSeatGap: 0,
+        neighbors: [],
+      };
+    }
+    const beforeEntries = beforeSnapshot.docs.map(publicServerOverallSnapshot).filter(Boolean);
+    const afterEntries = afterSnapshot.docs.map(publicServerOverallSnapshot).filter(Boolean);
+    const neighborEntries = [...beforeEntries, ownEntry, ...afterEntries];
+    const neighborStartRank = rank - beforeEntries.length;
+    const nextSeat = beforeEntries.at(-1);
+    return {
+      rank,
+      participantCount,
+      rating: key.rating,
+      nextSeatGap: nextSeat
+        ? Math.max(1, Number(nextSeat.rating || 0) - key.rating + 1)
+        : 0,
+      neighbors: neighborEntries.map((entry, index) => (
+        publicServerOverallRow(entry, neighborStartRank + index)
+      )),
+    };
+  }
+
+  const participantCountSnapshot = await rankedQuery.count().get();
+  return {
+    rank: 0,
+    participantCount: aggregateCount(participantCountSnapshot),
+    rating: Number(profileSnapshot?.get?.("rating") || 1000),
+    nextSeatGap: 0,
+    neighbors: [],
+  };
 }
 
 async function getRankingDashboard(uid) {
@@ -2550,13 +2637,9 @@ async function getRankingDashboard(uid) {
   const runRef = isCrownCircuitPeriod("daily", dailyKey)
     ? crownCircuitRunRef(uid, dailyKey)
     : null;
-  const [profileSnapshot, runSnapshot, publicProfilesSnapshot, customization, spotlightSnapshot] = await Promise.all([
+  const [profileSnapshot, runSnapshot, customization, spotlightSnapshot] = await Promise.all([
     serverRankingProfileRef(uid).get(),
     runRef ? runRef.get() : Promise.resolve(null),
-    firestore.collection("serverRankingProfiles")
-      .where("enabled", "==", true)
-      .limit(2_000)
-      .get(),
     loadCrownCustomizationOptions(uid),
     realtime.ref("online/rankingSpotlights/current").get(),
   ]);
@@ -2564,21 +2647,8 @@ async function getRankingDashboard(uid) {
     rating: 1000,
     updatedAt: now,
   });
-  const rankedProfiles = publicProfilesSnapshot.docs
-    .map((snapshot) => {
-      const publicProfile = publicServerOverallProfile(snapshot.data());
-      if (!publicProfile) return null;
-      return {
-        ...publicProfile,
-        entryId: cleanText(snapshot.get("entryId"), 40),
-        ownerUid: snapshot.id,
-      };
-    })
-    .filter((entry) => entry?.entryId)
-    .sort(compareServerOverallProfiles);
-  const ownIndex = rankedProfiles.findIndex((entry) => entry.ownerUid === uid);
-  const rank = ownIndex >= 0 ? ownIndex + 1 : 0;
-  const participantCount = rankedProfiles.length;
+  const standing = await loadServerOverallStanding(uid, profileSnapshot);
+  const { rank, participantCount } = standing;
   const bestRank = rank
     ? (profile.bestOverallRank ? Math.min(profile.bestOverallRank, rank) : rank)
     : profile.bestOverallRank;
@@ -2587,19 +2657,6 @@ async function getRankingDashboard(uid) {
       bestOverallRank: bestRank,
     }, { merge: true });
   }
-  const ownRating = ownIndex >= 0 ? rankedProfiles[ownIndex].rating : profile.rating;
-  const nextSeatGap = ownIndex > 0
-    ? Math.max(1, rankedProfiles[ownIndex - 1].rating - ownRating + 1)
-    : 0;
-  const publicRow = (entry, index) => {
-    if (!entry) return null;
-    const { ownerUid, ...publicEntry } = entry;
-    return { ...publicEntry, rank: index + 1 };
-  };
-  const neighborStart = ownIndex >= 0 ? Math.max(0, ownIndex - 3) : 0;
-  const neighborEnd = ownIndex >= 0
-    ? Math.min(participantCount, ownIndex + 4)
-    : Math.min(participantCount, 7);
   const crownRun = runSnapshot?.exists
     ? publicCrownCircuitEntry(runSnapshot.data())
     : null;
@@ -2621,11 +2678,9 @@ async function getRankingDashboard(uid) {
         ? Math.max(1, Math.ceil((100 * rank) / participantCount))
         : 0,
       bestRank,
-      rating: ownRating,
-      nextSeatGap,
-      top: rankedProfiles.slice(0, 50).map(publicRow),
-      neighbors: rankedProfiles.slice(neighborStart, neighborEnd)
-        .map((entry, offset) => publicRow(entry, neighborStart + offset)),
+      rating: standing.rating,
+      nextSeatGap: standing.nextSeatGap,
+      neighbors: standing.neighbors,
     },
     crownRun,
     customization: {
