@@ -640,6 +640,33 @@ test("the V2 queue index has only bounded indexed cleanup", () => {
   assert.match(indexSource, /Number\(currentValue\.expiresAt \|\| 0\) <= now/);
 });
 
+test("expired V2 claims and active pointers use a separate bounded CAS cleanup", () => {
+  const source = read("functions/index.js");
+  const cleanupSource = read("functions/solo-session-v2-resource-cleanup.js");
+  const start = source.indexOf("exports.cleanupSoloSessionV2Leases = onSchedule");
+  const end = source.indexOf("exports.cleanupSoloSessionV2QueueIndex = onSchedule", start);
+  const scheduled = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(scheduled, /schedule: "every 5 minutes"/);
+  assert.match(scheduled, /timeZone: "Asia\/Tokyo"/);
+  assert.match(scheduled, /timeoutSeconds: 60/);
+  assert.match(scheduled, /memory: "256MiB"/);
+  assert.match(scheduled, /maxInstances: 1/);
+  assert.match(scheduled, /cleanupSoloSessionV2Resources\(Date\.now\(\)\)/);
+  assert.doesNotMatch(scheduled, /online\/rooms|destroyed|serverFinalized/);
+
+  assert.match(cleanupSource, /orderByChild\("expiresAt"\)/);
+  assert.match(cleanupSource, /\.startAt\(1\)/);
+  assert.match(cleanupSource, /\.endAt\(cutoff\)/);
+  assert.match(cleanupSource, /\.limitToFirst\(batchSize\)/);
+  assert.match(cleanupSource, /staleCleanupV1/);
+  assert.match(cleanupSource, /isDeepStrictEqual\(currentValue, candidate\.value\)/);
+  assert.match(cleanupSource, /isDeepStrictEqual\(currentValue, expected\)/);
+  assert.match(cleanupSource, /Number\(currentValue\.expiresAt\) > cutoff/);
+  assert.doesNotMatch(cleanupSource, /realtime\.ref\(`online\/rooms\/\$\{[^}]+\}`\)\.transaction/);
+  assert.doesNotMatch(cleanupSource, /realtime\.ref\("online\/activeV2"\)/);
+});
+
 test("cleanup never restores queues or releases locks after a fenced cleanup failure", () => {
   const source = read("functions/index.js");
   const start = source.indexOf("async function cleanupSoloSessionV2Match");

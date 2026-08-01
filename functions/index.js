@@ -20,6 +20,9 @@ const {
   createSoloSessionV2QueueIndex,
 } = require("./solo-session-v2-queue-index");
 const {
+  createSoloSessionV2ResourceCleanup,
+} = require("./solo-session-v2-resource-cleanup");
+const {
   APP_CHECK_ENFORCEMENT,
   MARKET_APP_CHECK_MIGRATION,
 } = require("./app-check-rollout");
@@ -347,6 +350,10 @@ const cleanupOnlinePublicPresence = createOnlinePublicPresenceCleanup({
   realtime,
 });
 const soloSessionV2QueueIndex = createSoloSessionV2QueueIndex({ realtime });
+const cleanupSoloSessionV2Resources = createSoloSessionV2ResourceCleanup({
+  realtime,
+  queueIndex: soloSessionV2QueueIndex,
+});
 const adminAuth = getAuth();
 const MAX_POINTS = ANJU_PAY_MAX_BALANCE;
 const MARKET_ENTRY_FEE = 5;
@@ -15301,6 +15308,25 @@ exports.cleanupOnlinePublicPresence = onSchedule({
     return result;
   } catch (error) {
     console.error("cleanupOnlinePublicPresence failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
+});
+
+exports.cleanupSoloSessionV2Leases = onSchedule({
+  schedule: "every 5 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 60,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const result = await cleanupSoloSessionV2Resources(Date.now());
+    console.info("cleanupSoloSessionV2Leases completed", result);
+    return result;
+  } catch (error) {
+    console.error("cleanupSoloSessionV2Leases failed", {
       code: typeof error?.code === "string" ? error.code : "unknown",
     });
     throw error;
