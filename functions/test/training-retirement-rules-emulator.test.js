@@ -108,9 +108,15 @@ test("public presence rejects mode=training while current modes remain writable"
     state: "waiting",
     lastSeen: now,
   });
+  await set(ref(database, `online/strategyQueue/${uid}`), {
+    uid,
+    joinedAt: now,
+    lastSeen: now,
+    state: "waiting",
+  });
   await set(ref(database, "online/publicPresence/strategy-presence"), {
     mode: "strategy",
-    state: "playing",
+    state: "waiting",
     lastSeen: now,
   });
 });

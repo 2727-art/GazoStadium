@@ -2457,7 +2457,7 @@ async function enterRoom(roomId) {
   state.playerIndex = room.hostUid === state.uid ? 0 : 1;
   state.players = [runtimePlayer(room.players[room.hostUid]), runtimePlayer(room.players[room.guestUid])];
   await cleanupMatchmaking(true);
-  await updatePublicPresence("playing");
+  updatePublicPresence("playing").catch(() => {});
   state.screen = "connecting";
   state.peerStatus = "P2P接続を準備中…";
   setStrategyChrome("STRATEGY ONLINE BATTLE");
@@ -2468,9 +2468,14 @@ async function enterRoom(roomId) {
 
 async function setupRoomListeners() {
   const base = `online/strategyRooms/${state.roomId}`;
+  const ownedRoomId = state.roomId;
   const activeDisconnect = onDisconnect(ref(database, `online/strategyActive/${state.uid}`));
   await activeDisconnect.remove();
   state.disconnectHandles.push(activeDisconnect);
+  state.roomUnsubscribers.push(onValue(ref(database, `online/strategyActive/${state.uid}`), (snapshot) => {
+    if (state.roomId !== ownedRoomId || snapshot.val() === ownedRoomId) return;
+    cleanupPublicPresence().catch(() => {});
+  }, () => {}));
   const presenceRef = ref(database, `${base}/presence/${state.uid}`);
   await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
   const presenceDisconnect = onDisconnect(presenceRef);
@@ -3566,6 +3571,7 @@ async function reactToRoomData() {
     if (state.roomData.destroyed && state.roomData.destroyed.by !== state.uid) return handleOpponentDestroyed();
     const decisions = state.roomData.decisions || {};
     if (Object.values(decisions).includes("withdraw")) {
+      cleanupPublicPresence().catch(() => {});
       if (state.screen !== "withdrawn") { state.screen = "withdrawn"; render(); }
       return;
     }
@@ -3755,6 +3761,7 @@ async function finishMatch() {
     },
     [`finished/${state.uid}`]: true,
   });
+  cleanupPublicPresence().catch(() => {});
   await commitStrategyStats();
   state.screen = "gameover";
   setStrategyChrome("STRATEGY COMPLETE");
@@ -3874,21 +3881,35 @@ async function writePublicPresence(presenceRef, presenceState) {
 }
 
 async function updatePublicPresence(nextState) {
-  if (!state.publicPresenceId) return;
+  const id = state.publicPresenceId;
+  if (!id) return false;
   state.publicPresenceState = nextState;
-  await writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), nextState);
+  try {
+    await writePublicPresence(ref(database, `online/publicPresence/${id}`), nextState);
+    return true;
+  } catch {
+    if (state.publicPresenceId === id) await cleanupPublicPresence();
+    return false;
+  }
 }
 
 async function cleanupPublicPresence() {
   window.clearInterval(state.publicPresenceHeartbeat);
   state.publicPresenceHeartbeat = null;
-  await state.publicPresenceDisconnect?.cancel?.().catch(() => {});
-  state.publicPresenceDisconnect = null;
+  const disconnect = state.publicPresenceDisconnect;
   const id = state.publicPresenceId;
+  const ownerUid = state.uid;
+  state.publicPresenceDisconnect = null;
   state.publicPresenceId = "";
   state.publicPresenceState = "";
-  if (!id || !state.uid) return;
-  await Promise.allSettled([remove(ref(database, `online/publicPresence/${id}`)), remove(ref(database, `online/publicPresenceOwners/${id}`))]);
+  await disconnect?.cancel?.().catch(() => {});
+  if (!id || !ownerUid) return;
+  try {
+    await remove(ref(database, `online/publicPresence/${id}`));
+  } catch {
+    return;
+  }
+  await remove(ref(database, `online/publicPresenceOwners/${id}`)).catch(() => {});
 }
 
 function requestHome() {
