@@ -471,6 +471,43 @@ function selectSoloSessionV2Match({
   return candidates[0] || null;
 }
 
+function reselectSoloSessionV2Match({
+  requesterUid,
+  queue,
+  host,
+  candidate,
+  familiarPairs = [],
+  blockedPairIds = [],
+  lockedUids = [],
+  avoidUid = "",
+  now,
+} = {}) {
+  if (!isSafeUid(requesterUid)
+      || !isRecord(host)
+      || host.uid !== requesterUid
+      || !isRecord(candidate)
+      || !isSafeUid(candidate.uid)
+      || candidate.uid === requesterUid) return null;
+  const canonicalQueue = {
+    ...(isRecord(queue) ? queue : {}),
+    [requesterUid]: host,
+    [candidate.uid]: candidate,
+  };
+  const selection = selectSoloSessionV2Match({
+    requesterUid,
+    queue: canonicalQueue,
+    familiarPairs,
+    blockedPairIds,
+    lockedUids,
+    avoidUid,
+    now,
+  });
+  return selection?.host?.uid === requesterUid
+    && selection?.candidate?.uid === candidate.uid
+    ? selection
+    : null;
+}
+
 function playerFromQueue(entry) {
   return {
     uid: entry.uid,
@@ -672,6 +709,7 @@ module.exports = Object.freeze({
   normalizeClaim,
   publicClaimLease,
   queueEntryMatchesClaim,
+  reselectSoloSessionV2Match,
   replacedClaimResourceFence,
   resourceFenceMatches,
   roomAttemptMatches,

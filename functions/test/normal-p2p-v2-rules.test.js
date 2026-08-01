@@ -134,6 +134,7 @@ test("retired royale counters are history-only in client-writable profiles", () 
 
 test("V2 server-owned matchmaking and diagnostic paths are private", () => {
   for (const path of [
+    "queueV2Index",
     "soloMatchPermitsV2",
     "soloMatchLocksV2",
     "soloSessionActionRates",
@@ -146,6 +147,7 @@ test("V2 server-owned matchmaking and diagnostic paths are private", () => {
     assert.equal(rules[path][".read"], false, `${path} must not be client-readable`);
     assert.equal(rules[path][".write"], false, `${path} must not be client-writable`);
   }
+  assert.deepEqual(rules.queueV2Index[".indexOn"], ["expiresAt"]);
   assert.deepEqual(rules.soloMatchPermitsV2[".indexOn"], ["expiresAt"]);
   assert.deepEqual(rules.soloMatchLocksV2[".indexOn"], ["expiresAt"]);
 });

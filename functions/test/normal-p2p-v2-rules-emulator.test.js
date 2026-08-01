@@ -232,6 +232,11 @@ if (!RUN_REQUESTED) {
         hostLeaseToken,
         hostGeneration,
       ),
+      [`online/queueV2Index/${hostUid}`]: {
+        uid: hostUid,
+        sessionId: hostSessionId,
+        expiresAt: now + 60_000,
+      },
       "online/p2pDiagnostics/2026-07-25/event": { event: "connection-failed" },
     });
     const ownerDb = environment.authenticatedContext(hostUid).database();
@@ -243,6 +248,12 @@ if (!RUN_REQUESTED) {
       ref(ownerDb, `online/soloSessionClaims/${hostUid}`),
       claim(hostSessionId, hostLeaseToken, hostGeneration),
     ));
+    await assertFails(get(ref(ownerDb, `online/queueV2Index/${hostUid}`)));
+    await assertFails(set(ref(ownerDb, `online/queueV2Index/${hostUid}`), {
+      uid: hostUid,
+      sessionId: hostSessionId,
+      expiresAt: now + 60_000,
+    }));
     await assertFails(set(
       ref(ownerDb, `online/soloSessionPresence/${hostUid}/${hostSessionId}`),
       {

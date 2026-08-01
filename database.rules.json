@@ -39,6 +39,11 @@
           ".write": false
         }
       },
+      "queueV2Index": {
+        ".read": false,
+        ".write": false,
+        ".indexOn": ["expiresAt"]
+      },
       "soloSessionActionRates": {
         ".read": false,
         ".write": false

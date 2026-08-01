@@ -30,25 +30,37 @@ test("soloSessionAction is a dedicated App-Check-enforced callable", () => {
   }
 });
 
-test("V2 matching uses only V2 queues and server-owned active/offer records", () => {
+test("V2 matching uses the bounded server index and point-validates canonical V2 records", () => {
   const source = read("functions/index.js");
   const start = source.indexOf("async function trySoloSessionV2Match");
   const end = source.indexOf("function soloSessionV2ResourcesFromStored", start);
   const matcher = source.slice(start, end);
   assert.ok(start >= 0 && end > start);
-  assert.match(matcher, /online\/queueV2/);
+  assert.match(matcher, /soloSessionV2QueueIndex\.publish/);
+  assert.match(matcher, /soloSessionV2QueueIndex\.loadFresh/);
+  assert.match(matcher, /soloSessionQueueRef\(uid, claim\.sessionId\)\.get/);
   assert.match(matcher, /online\/soloSessionClaims/);
-  assert.match(matcher, /online\/activeV2/);
+  assert.match(matcher, /soloSessionActiveRef\(\s*candidateSelection\.candidate\.uid/);
   assert.match(matcher, /offersV2\//);
   assert.match(matcher, /soloMatchPermitsV2\//);
   assert.match(matcher, /online\/soloMatchLocksV2/);
+  assert.doesNotMatch(matcher, /realtime\.ref\("online\/queueV2"\)\.get/);
+  assert.doesNotMatch(matcher, /realtime\.ref\("online\/activeV2"\)\.get/);
+  assert.doesNotMatch(matcher, /realtime\.ref\("online\/soloMatchLocksV2"\)\.get/);
+  assert.doesNotMatch(matcher, /realtime\.ref\("online\/active"\)\.get/);
   assert.doesNotMatch(matcher, /boundedSoloServerQueue\(uid/);
   assert.doesNotMatch(matcher, /realtime\.ref\("online\/queue"\)\.get/);
-  assert.match(matcher, /liveLegacySoloUidsForQueue/);
-  assert.doesNotMatch(
+  assert.match(matcher, /for \(let attempt = 0; attempt < 8; attempt \+= 1\)/);
+  assert.match(
     matcher,
-    /const legacyActiveUids = Object\.keys\(objectValue\(legacyActiveSnapshot\.val\(\)\)\)/,
+    /liveLegacySoloRoom\(candidateSelection\.candidate\.uid, Date\.now\(\)\)/,
   );
+  assert.match(matcher, /reselectSoloSessionV2Match/);
+  assert.match(matcher, /host: hostQueue/);
+  assert.match(matcher, /candidate: guestQueue/);
+  assert.match(matcher, /lockedUids: \[\.\.\.unavailableUids\]/);
+  assert.match(matcher, /rebuildSoloSessionV2Resources\(selection, resources\)/);
+  assert.match(matcher, /waitingSoloSessionV2ReservationEntry\(reservedHost\)/);
   assert.match(matcher, /readSoloSessionV2MaterializationFence/);
   assert.match(matcher, /cleanupSoloSessionV2Match/);
 });
@@ -306,6 +318,11 @@ test("heartbeat retries cold-cache null before refreshing the exact claim and re
     heartbeatDecision,
     normalizeClaim,
     resourceFenceMatches,
+    queueEntryMatchesClaim: () => false,
+    soloSessionV2QueueIndex: {
+      publish: async () => null,
+      remove: async () => true,
+    },
     soloSessionClaimRef: () => coldReference("claim", ownClaim),
     soloSessionQueueRef: () => coldReference("queue", exactResource),
     soloSessionActiveRef: () => coldReference("active", exactResource),
@@ -605,6 +622,22 @@ test("expired claims do not count toward the V2 matching read cap", () => {
   assert.match(matcher, /\.startAt\(selectionNow \+ 1\)/);
   assert.match(matcher, /\.limitToFirst\(2_000\)/);
   assert.doesNotMatch(matcher, /claimsSnapshot\.numChildren\(\)/);
+});
+
+test("the V2 queue index has only bounded indexed cleanup", () => {
+  const source = read("functions/index.js");
+  const indexSource = read("functions/solo-session-v2-queue-index.js");
+  const start = source.indexOf("exports.cleanupSoloSessionV2QueueIndex = onSchedule");
+  const end = source.indexOf("async function saveMarketPublicProfile", start);
+  const scheduled = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(scheduled, /soloSessionV2QueueIndex\.cleanupExpired\(Date\.now\(\)\)/);
+  assert.doesNotMatch(scheduled, /queueV2|activeV2|soloSessionClaims|soloMatchLocksV2/);
+  assert.match(indexSource, /orderByChild\("expiresAt"\)/);
+  assert.match(indexSource, /\.endAt\(now\)/);
+  assert.match(indexSource, /\.limitToFirst\(cleanupBatchSize\)/);
+  assert.match(indexSource, /queueIndexEntryMatchesFence\(currentValue, expected\)/);
+  assert.match(indexSource, /Number\(currentValue\.expiresAt \|\| 0\) <= now/);
 });
 
 test("cleanup never restores queues or releases locks after a fenced cleanup failure", () => {

@@ -414,7 +414,8 @@ const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
 const PROFILE_AVATAR_READY_WAIT_MS = 3_000;
 const ENGAWA_MESSAGE_MAX_CHARS = 2048;
 const ENGAWA_BUFFER_WAIT_MS = 5000;
-const SOLO_SERVER_MATCH_POLL_MS = 3000;
+const SOLO_MATCH_RECOVERY_BASE_MS = 3_000;
+const SOLO_MATCH_RECOVERY_MAX_MS = 20_000;
 const SOLO_FAMILIAR_STAGES = Object.freeze(["engawa_only", "familiar_book", "reunion"]);
 const ENGAWA_MOODS = Object.freeze([
   Object.freeze({ id: "just_look", label: "ただ見てほしい", description: "言葉にしなくても大丈夫" }),
@@ -625,6 +626,7 @@ function createOnlineState() {
     matchmakingLaunchBusy: false,
     matchmakingLaunchGeneration: 0,
     acceptingOffer: false,
+    acceptingOfferRoomId: "",
     pendingIncomingOffer: null,
     activeUsers: {},
     latestQueue: {},
@@ -672,7 +674,9 @@ function createOnlineState() {
     creatorCardDependenciesSettled: false,
     creatorCardDependenciesBusy: false,
     creatorCardDraft: null,
-    offerPollTimer: null,
+    offerRecoveryTimer: null,
+    offerRecoveryAttempt: 0,
+    ownOfferUnsubscribe: null,
     hostStatusPollTimer: null,
     matchUnsubscribers: [],
     roomUnsubscribers: [],
@@ -733,7 +737,8 @@ function createOnlineState() {
     soloFamiliarDecisionBusy: false,
     soloFamiliarDecisionSaved: false,
     soloFamiliarDecisionError: "",
-    soloServerMatchTimer: null,
+    soloServerMatchRetryTimer: null,
+    soloServerMatchRetryAttempt: 0,
     soloServerMatchBusy: false,
     soloServerMatchErrorNotified: false,
     reunionMatch: false,
@@ -791,9 +796,10 @@ function applySoloFamiliarPayload(payload) {
   const stage = normalizeSoloFamiliarStage(payload?.rollout?.stage);
   state.soloFamiliarStage = stage;
   state.soloFamiliarReady = true;
-  if (stage !== "reunion" && state.soloServerMatchTimer) {
-    window.clearInterval(state.soloServerMatchTimer);
-    state.soloServerMatchTimer = null;
+  if (stage !== "reunion" && state.soloServerMatchRetryTimer) {
+    window.clearTimeout(state.soloServerMatchRetryTimer);
+    state.soloServerMatchRetryTimer = null;
+    state.soloServerMatchRetryAttempt = 0;
   }
   state.soloFamiliars = stage === "engawa_only"
     ? []
@@ -813,8 +819,9 @@ function applySoloFamiliarPayload(payload) {
 function failClosedSoloFamiliarState() {
   state.soloFamiliarStage = "engawa_only";
   state.soloFamiliarReady = true;
-  window.clearInterval(state.soloServerMatchTimer);
-  state.soloServerMatchTimer = null;
+  window.clearTimeout(state.soloServerMatchRetryTimer);
+  state.soloServerMatchRetryTimer = null;
+  state.soloServerMatchRetryAttempt = 0;
   state.soloFamiliars = [];
   state.soloBlockedFamiliars = [];
   state.soloBlockedCursor = "";
@@ -7211,6 +7218,164 @@ function isCurrentMatchmakingGeneration(generation) {
       || (document.visibilityState === "visible" && navigator.onLine));
 }
 
+function soloMatchRecoveryDelayMs(
+  attempt,
+  randomValue = Math.random(),
+) {
+  const normalizedAttempt = Math.max(0, Math.min(8, Math.floor(Number(attempt) || 0)));
+  const exponentialDelay = Math.min(
+    SOLO_MATCH_RECOVERY_MAX_MS,
+    SOLO_MATCH_RECOVERY_BASE_MS * (2 ** normalizedAttempt),
+  );
+  const normalizedRandom = Math.max(0, Math.min(1, Number(randomValue) || 0));
+  return Math.max(1, Math.min(
+    SOLO_MATCH_RECOVERY_MAX_MS,
+    Math.round(exponentialDelay * (0.85 + (normalizedRandom * 0.3))),
+  ));
+}
+
+function notifySoloMatchRecovery(error, expectedState = state) {
+  console.error(error);
+  if (state !== expectedState
+      || !isCurrentMatchmakingGeneration(expectedState.matchmakingGeneration)
+      || expectedState.soloServerMatchErrorNotified) return;
+  expectedState.soloServerMatchErrorNotified = true;
+  showToast("対戦相手の確認に時間がかかっています。自動で再試行します。");
+}
+
+function soloOfferAcceptReasonIsRecoverable(reason) {
+  return reason === "transition-busy";
+}
+
+function clearOwnOfferRecovery(expectedState = state, { resetAttempt = true } = {}) {
+  window.clearTimeout(expectedState.offerRecoveryTimer);
+  expectedState.offerRecoveryTimer = null;
+  if (resetAttempt) expectedState.offerRecoveryAttempt = 0;
+}
+
+function clearSoloServerMatchRetry(expectedState = state, { resetAttempt = true } = {}) {
+  window.clearTimeout(expectedState.soloServerMatchRetryTimer);
+  expectedState.soloServerMatchRetryTimer = null;
+  if (resetAttempt) expectedState.soloServerMatchRetryAttempt = 0;
+}
+
+function scheduleSoloServerMatchRetry(
+  expectedState = state,
+  generation = expectedState.matchmakingGeneration,
+  { resetBackoff = false } = {},
+) {
+  if (resetBackoff) clearSoloServerMatchRetry(expectedState);
+  if (state !== expectedState
+      || !isCurrentMatchmakingGeneration(generation)
+      || expectedState.soloServerMatchRetryTimer) return false;
+  const retryAttempt = expectedState.soloServerMatchRetryAttempt;
+  expectedState.soloServerMatchRetryAttempt = Math.min(8, retryAttempt + 1);
+  const delayMs = soloMatchRecoveryDelayMs(retryAttempt);
+  const timer = window.setTimeout(() => {
+    if (expectedState.soloServerMatchRetryTimer !== timer) return;
+    expectedState.soloServerMatchRetryTimer = null;
+    if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+    attemptSoloServerMatch(generation).catch(handleRecoverableError);
+  }, delayMs);
+  expectedState.soloServerMatchRetryTimer = timer;
+  return true;
+}
+
+function scheduleOwnOfferRecovery(
+  ownOffersRef,
+  expectedState = state,
+  generation = expectedState.matchmakingGeneration,
+  {
+    resetBackoff = false,
+    preserveBackoff = false,
+  } = {},
+) {
+  if (resetBackoff) clearOwnOfferRecovery(expectedState);
+  if (state !== expectedState
+      || !isCurrentMatchmakingGeneration(generation)
+      || expectedState.offerRecoveryTimer) return false;
+  const retryAttempt = expectedState.offerRecoveryAttempt;
+  expectedState.offerRecoveryAttempt = Math.min(8, retryAttempt + 1);
+  const delayMs = soloMatchRecoveryDelayMs(retryAttempt);
+  const timer = window.setTimeout(async () => {
+    if (expectedState.offerRecoveryTimer !== timer) return;
+    expectedState.offerRecoveryTimer = null;
+    if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+    try {
+      const snapshot = await get(ownOffersRef);
+      if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+      expectedState.soloServerMatchErrorNotified = false;
+      processIncomingOffers(snapshot);
+      if (expectedState.ownOfferUnsubscribe) {
+        if (!preserveBackoff) expectedState.offerRecoveryAttempt = 0;
+      } else {
+        subscribeToOwnOffers(ownOffersRef, expectedState, generation);
+      }
+    } catch (error) {
+      if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+      notifySoloMatchRecovery(error, expectedState);
+      scheduleOwnOfferRecovery(ownOffersRef, expectedState, generation, { preserveBackoff });
+    }
+  }, delayMs);
+  expectedState.offerRecoveryTimer = timer;
+  return true;
+}
+
+function subscribeToOwnOffers(
+  ownOffersRef,
+  expectedState = state,
+  generation = expectedState.matchmakingGeneration,
+) {
+  if (state !== expectedState
+      || !isCurrentMatchmakingGeneration(generation)
+      || expectedState.ownOfferUnsubscribe) return false;
+  let unsubscribe = null;
+  const contextIsCurrent = () => (
+    state === expectedState
+    && isCurrentMatchmakingGeneration(generation)
+    && expectedState.ownOfferUnsubscribe === unsubscribe
+  );
+  unsubscribe = onValue(ownOffersRef, (snapshot) => {
+    if (!contextIsCurrent()) return;
+    clearOwnOfferRecovery(expectedState);
+    expectedState.soloServerMatchErrorNotified = false;
+    processIncomingOffers(snapshot);
+  }, (error) => {
+    if (!contextIsCurrent()) return;
+    expectedState.ownOfferUnsubscribe = null;
+    unsubscribe?.();
+    notifySoloMatchRecovery(error, expectedState);
+    scheduleOwnOfferRecovery(ownOffersRef, expectedState, generation);
+    scheduleSoloServerMatchRetry(expectedState, generation);
+  });
+  expectedState.ownOfferUnsubscribe = unsubscribe;
+  return true;
+}
+
+function watchSoloMatchConnectivity(
+  ownOffersRef,
+  expectedState = state,
+  generation = expectedState.matchmakingGeneration,
+) {
+  let previousConnected = null;
+  const unsubscribe = onValue(ref(database, ".info/connected"), (snapshot) => {
+    if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+    const connected = snapshot.val() === true;
+    const reconnected = previousConnected === false && connected;
+    previousConnected = connected;
+    if (!reconnected) return;
+    scheduleOwnOfferRecovery(ownOffersRef, expectedState, generation, { resetBackoff: true });
+    clearSoloServerMatchRetry(expectedState);
+    attemptSoloServerMatch(generation).catch(handleRecoverableError);
+  }, (error) => {
+    if (state !== expectedState || !isCurrentMatchmakingGeneration(generation)) return;
+    notifySoloMatchRecovery(error, expectedState);
+    scheduleOwnOfferRecovery(ownOffersRef, expectedState, generation);
+    scheduleSoloServerMatchRetry(expectedState, generation);
+  });
+  expectedState.matchUnsubscribers.push(unsubscribe);
+}
+
 async function cancelSoloSessionRoomOnce(roomId, expectedState = state) {
   const normalizedRoomId = String(roomId || "");
   if (!normalizedRoomId || !expectedState.uid || !expectedState.clientSessionId) return null;
@@ -7380,18 +7545,11 @@ async function beginMatchmaking({ automatic = false } = {}) {
     }
     expectedState.queueHeartbeat = window.setInterval(() => {
       update(queueEntryRef, { lastSeen: serverNow() })
-        .then(() => attemptCurrentSoloMatchmaking(generation))
         .catch(() => {});
     }, 20_000);
-    startSoloServerMatchPolling(generation);
-
-    expectedState.matchUnsubscribers.push(
-      onValue(ownOffersRef, processIncomingOffers, handleRecoverableError),
-    );
-    expectedState.offerPollTimer = window.setInterval(() => {
-      if (!isCurrentMatchmakingGeneration(generation)) return;
-      get(ownOffersRef).then(processIncomingOffers).catch(handleRecoverableError);
-    }, 1_500);
+    subscribeToOwnOffers(ownOffersRef, expectedState, generation);
+    watchSoloMatchConnectivity(ownOffersRef, expectedState, generation);
+    attemptCurrentSoloMatchmaking(generation).catch(handleRecoverableError);
   } catch (error) {
     if (state !== expectedState
         || expectedState.matchmakingGeneration !== generation
@@ -7484,6 +7642,10 @@ async function cleanupPublicPresence(targetState = state) {
 function processIncomingOffers(snapshot) {
   const offers = snapshot.val() || {};
   const newest = Object.entries(offers).sort(([, first], [, second]) => Number(second.createdAt) - Number(first.createdAt))[0];
+  if (newest && state.acceptingOffer && state.acceptingOfferRoomId === newest[0]) {
+    state.pendingIncomingOffer = null;
+    return;
+  }
   state.pendingIncomingOffer = newest ? { roomId: newest[0], offer: newest[1] } : null;
   drainIncomingOffers().catch(handleRecoverableError);
 }
@@ -7504,7 +7666,7 @@ async function expandMatchmakingScope() {
       allowPreferenceMismatch: true,
       lastSeen,
     });
-    await attemptCurrentSoloMatchmaking(state.matchmakingGeneration);
+    await attemptCurrentSoloMatchmaking(state.matchmakingGeneration, { resetBackoff: true });
   } catch (error) {
     state.matchScopeExpanded = false;
     state.matchScopeAvailable = true;
@@ -7536,25 +7698,24 @@ function normalizeSoloPermitCandidate(value) {
   };
 }
 
-function startSoloServerMatchPolling(generation = state.matchmakingGeneration) {
-  if (!isCurrentMatchmakingGeneration(generation)
-      || state.soloServerMatchTimer) return;
-  state.soloServerMatchTimer = window.setInterval(() => {
-    attemptSoloServerMatch(generation);
-  }, SOLO_SERVER_MATCH_POLL_MS);
-}
-
-function attemptCurrentSoloMatchmaking(generation = state.matchmakingGeneration) {
+function attemptCurrentSoloMatchmaking(
+  generation = state.matchmakingGeneration,
+  { resetBackoff = false } = {},
+) {
+  if (resetBackoff) clearSoloServerMatchRetry(state);
   return attemptSoloServerMatch(generation);
 }
 
 async function attemptSoloServerMatch(generation = state.matchmakingGeneration) {
-  if (!isCurrentMatchmakingGeneration(generation)
-      || state.soloServerMatchBusy
+  if (!isCurrentMatchmakingGeneration(generation)) return;
+  if (state.soloServerMatchBusy
       || state.matchingBusy
       || state.acceptingOffer
       || state.pendingIncomingOffer
-      || state.pendingOffer) return;
+      || state.pendingOffer) {
+    scheduleSoloServerMatchRetry(state, generation);
+    return;
+  }
   const expectedState = state;
   state.soloServerMatchBusy = true;
   try {
@@ -7573,6 +7734,7 @@ async function attemptSoloServerMatch(generation = state.matchmakingGeneration) 
     const result = response.data || {};
     state.soloServerMatchErrorNotified = false;
     if (result.outcome === "join") {
+      clearSoloServerMatchRetry(expectedState);
       const roomId = String(result.roomId || "");
       if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
         throw new Error("サーバーの通常型1on1ルーム情報が不正です。");
@@ -7580,24 +7742,31 @@ async function attemptSoloServerMatch(generation = state.matchmakingGeneration) 
       await enterRoom(roomId);
       return;
     }
-    if (result.outcome !== "hosted") return;
+    if (result.outcome !== "hosted") {
+      clearSoloServerMatchRetry(expectedState, { resetAttempt: false });
+      scheduleSoloServerMatchRetry(expectedState, generation);
+      return;
+    }
+    clearSoloServerMatchRetry(expectedState);
     const roomId = String(result.roomId || "");
     const candidate = normalizeSoloPermitCandidate(result.candidate);
     if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId) || !candidate) {
       throw new Error("サーバーの通常型1on1許可情報が不正です。");
     }
-    if (state.matchingBusy || state.acceptingOffer || state.pendingIncomingOffer || state.pendingOffer) return;
+    if (state.matchingBusy || state.acceptingOffer || state.pendingIncomingOffer || state.pendingOffer) {
+      scheduleSoloServerMatchRetry(expectedState, generation);
+      return;
+    }
     await adoptSoloServerHostedMatch(candidate, {
       roomId,
       reunion: result.reunion === true,
     });
   } catch (error) {
-    console.error(error);
-    if (isCurrentMatchmakingGeneration(generation)
-        && state === expectedState
-        && !state.soloServerMatchErrorNotified) {
-      state.soloServerMatchErrorNotified = true;
-      showToast("対戦相手の確認に時間がかかっています。自動で再試行します。");
+    if (isCurrentMatchmakingGeneration(generation) && state === expectedState) {
+      notifySoloMatchRecovery(error, expectedState);
+      scheduleSoloServerMatchRetry(expectedState, generation);
+    } else {
+      console.error(error);
     }
   } finally {
     if (state === expectedState && state.matchmakingGeneration === generation) {
@@ -7646,7 +7815,7 @@ async function finishHostedOfferAsTerminal(
   state.matchTimer = null;
   state.hostStatusPollTimer = null;
   state.pendingOffer = null;
-  attemptCurrentSoloMatchmaking(generation).catch(handleRecoverableError);
+  attemptCurrentSoloMatchmaking(generation, { resetBackoff: true }).catch(handleRecoverableError);
   return true;
 }
 
@@ -7773,16 +7942,22 @@ async function expireOffer(roomId, targetUid) {
 }
 
 async function acceptOffer(roomId, offer) {
-  if (!active || state.screen !== "matching" || state.roomId) return;
+  if (!active || state.screen !== "matching" || state.roomId || state.acceptingOffer) return false;
   if (!offer
       || offer.protocolVersion !== ONLINE_SESSION_PROTOCOL_VERSION
       || offer.toUid !== state.uid
       || offer.toSessionId !== state.clientSessionId
-      || offer.sessions?.[state.uid]?.generation !== state.soloSessionGeneration) return;
+      || offer.sessions?.[state.uid]?.generation !== state.soloSessionGeneration) return false;
   const expectedState = state;
   const generation = state.matchmakingGeneration;
   const contextIsCurrent = () => state === expectedState && isCurrentMatchmakingGeneration(generation);
+  const ownOffersRef = ref(database, soloOfferPath(
+    expectedState.uid,
+    expectedState.clientSessionId,
+  ));
+  let rearmOfferRecovery = false;
   state.acceptingOffer = true;
+  state.acceptingOfferRoomId = roomId;
   try {
     const response = await soloSessionActionCallable({
       action: "accept",
@@ -7790,15 +7965,34 @@ async function acceptOffer(roomId, offer) {
       leaseToken: state.clientLeaseToken,
       roomId,
     });
-    if (response.data?.accepted !== true) return;
+    if (response.data?.accepted !== true) {
+      rearmOfferRecovery = soloOfferAcceptReasonIsRecoverable(response.data?.reason);
+      return false;
+    }
     if (!contextIsCurrent()) {
       await releaseActiveReservation(roomId, expectedState).catch(() => {});
-      return;
+      return false;
     }
     await enterRoom(roomId);
+    return true;
+  } catch (error) {
+    rearmOfferRecovery = true;
+    throw error;
   } finally {
     if (state === expectedState && state.matchmakingGeneration === generation) {
       state.acceptingOffer = false;
+      state.acceptingOfferRoomId = "";
+      if (contextIsCurrent()) {
+        if (rearmOfferRecovery) {
+          scheduleOwnOfferRecovery(ownOffersRef, expectedState, generation, {
+            preserveBackoff: true,
+          });
+        }
+        scheduleSoloServerMatchRetry(expectedState, generation, { resetBackoff: true });
+        if (state.pendingIncomingOffer) {
+          drainIncomingOffers().catch(handleRecoverableError);
+        }
+      }
     }
   }
 }
@@ -10766,21 +10960,26 @@ async function cleanupMatchmaking(keepActive, targetState = state) {
   window.clearTimeout(targetState.matchTimer);
   window.clearTimeout(targetState.matchScopeTimer);
   window.clearInterval(targetState.queueHeartbeat);
-  window.clearInterval(targetState.offerPollTimer);
+  window.clearTimeout(targetState.offerRecoveryTimer);
   window.clearInterval(targetState.hostStatusPollTimer);
-  window.clearInterval(targetState.soloServerMatchTimer);
+  window.clearTimeout(targetState.soloServerMatchRetryTimer);
   targetState.matchTimer = null;
   targetState.matchScopeTimer = null;
   targetState.matchScopeAvailable = false;
   targetState.matchScopeExpanded = false;
   targetState.queueHeartbeat = null;
-  targetState.offerPollTimer = null;
+  targetState.offerRecoveryTimer = null;
+  targetState.offerRecoveryAttempt = 0;
   targetState.hostStatusPollTimer = null;
-  targetState.soloServerMatchTimer = null;
+  targetState.soloServerMatchRetryTimer = null;
+  targetState.soloServerMatchRetryAttempt = 0;
   targetState.matchingBusy = false;
   targetState.acceptingOffer = false;
+  targetState.acceptingOfferRoomId = "";
   targetState.soloServerMatchBusy = false;
   targetState.soloServerMatchErrorNotified = false;
+  targetState.ownOfferUnsubscribe?.();
+  targetState.ownOfferUnsubscribe = null;
   targetState.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   const disconnectHandles = targetState.disconnectHandles.splice(0);
   await Promise.allSettled(disconnectHandles.map((handle) => handle.cancel?.()));
@@ -10981,7 +11180,9 @@ window.addEventListener("offline", () => {
 });
 
 window.addEventListener("beforeunload", () => {
-  window.clearInterval(state.soloServerMatchTimer);
+  window.clearTimeout(state.offerRecoveryTimer);
+  window.clearTimeout(state.soloServerMatchRetryTimer);
+  state.ownOfferUnsubscribe?.();
   window.clearTimeout(state.soloSessionHeartbeat);
   clearP2pRecoveryTimer(state);
   releaseAllImages();
