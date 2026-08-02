@@ -3352,9 +3352,33 @@ function renderDefeatZoneSafetyControls() {
   </div>`;
 }
 
+function defeatZoneRushCheerPresentation() {
+  return normalizeCheerPresentation(state.sessionCheerPresentation, "classic");
+}
+
+function renderDefeatZoneRushDoodle(message) {
+  const normalizedMessage = normalizeDoodleMessage(message);
+  const layout = doodleLayoutForRound(AI_TEXT_TRAINING_ROUND_COUNT - 1);
+  const parts = doodleMessageParts(normalizedMessage);
+  return `<div class="ai-text-training-cheer ai-text-training-doodle-cheer ai-text-training-zone-doodle is-doodle is-collage is-writing" data-ai-text-training-zone-cheer="doodle" data-att-doodle-context="zone-rush" data-att-doodle-layout="${escapeHtml(layout)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(normalizedMessage))}" data-att-doodle-part-count="${parts.length}" role="img" aria-label="${escapeHtml(normalizedMessage)}">
+    ${renderDoodleCompositionContents(normalizedMessage, {
+      parts,
+      bpm: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_BPM,
+      roundIndex: AI_TEXT_TRAINING_ROUND_COUNT - 1,
+      metaLabel: "FINAL · 200 BPM",
+    })}
+  </div>`;
+}
+
+function renderDefeatZoneRushClassic(message) {
+  return `<blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(message)}</blockquote>`;
+}
+
 function renderDefeatZonePlay() {
   const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
   const bpm = currentBpm();
+  const rushMessage = state.currentMessage || defeatZoneFallbackLines("zone_rush")[0];
+  const rushCheerPresentation = defeatZoneRushCheerPresentation();
   const cooldownCanEnd = state.phase === "zone_cooldown"
     || (state.phase === "zone_paused" && state.defeatResumePhase === "zone_cooldown");
   const decelerating = state.phase === "zone_deceleration"
@@ -3379,14 +3403,15 @@ function renderDefeatZonePlay() {
       <button class="button button-ghost" type="button" data-ai-text-training-action="surrender-defeat-zone">今すぐギブアップする</button>
     </section>`;
   } else if (state.phase === "zone_rush") {
-    center = `<section class="ai-text-training-zone-overlay is-rush">
+    center = `<section class="ai-text-training-zone-overlay is-rush" data-att-cheer-presentation="${escapeHtml(rushCheerPresentation)}">
       ${renderTrainingEdgeHud(remainingSeconds, "最終攻勢 残り")}
+      ${rushCheerPresentation === "doodle" ? renderDefeatZoneRushDoodle(rushMessage) : ""}
       <div class="ai-text-training-zone-phase-meta">
         <span>FINAL ATTACK · ZONE BEAT 200</span>
         <h2>5枚の最終攻勢</h2>
       </div>
       <div class="ai-text-training-zone-support-layer">
-        <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_rush")[0])}</blockquote>
+        ${rushCheerPresentation === "classic" ? renderDefeatZoneRushClassic(rushMessage) : ""}
         <p>演出テンポ200 BPM · 動作速度、心拍数、呼吸数の目標ではありません。</p>
         <button class="button button-primary ai-text-training-surrender" type="button" data-ai-text-training-action="surrender-defeat-zone"><strong>ギブアップする</strong><small>敗北を認めてクールダウンへ</small></button>
       </div>
@@ -3456,6 +3481,7 @@ function renderDoodleCompositionContents(message, {
   parts = doodleMessageParts(message),
   bpm = currentBpm(),
   roundIndex = state.roundIndex,
+  metaLabel = "",
 } = {}) {
   const normalizedMessage = normalizeDoodleMessage(message);
   const normalizedParts = normalizeDoodleParts(parts, normalizedMessage);
@@ -3464,13 +3490,14 @@ function renderDoodleCompositionContents(message, {
     const text = normalizedParts[index] || "";
     return `<span class="att-doodle-copy is-part-${index + 1}" data-ai-text-training-doodle-part="${index}" data-text="${escapeHtml(text)}" aria-hidden="true" ${text ? "" : "hidden"}>${escapeHtml(text)}</span>`;
   }).join("");
+  const resolvedMetaLabel = metaLabel || `R${Number(roundIndex) + 1} · ${bpmLabel}`;
   return `${copies}
     <i class="att-doodle-ornament is-heart" aria-hidden="true">♡</i>
     <i class="att-doodle-ornament is-spark-a" aria-hidden="true">✦</i>
     <i class="att-doodle-ornament is-spark-b" aria-hidden="true">✧</i>
     <i class="att-doodle-ornament is-loop" aria-hidden="true">〰</i>
     <i class="att-doodle-ornament is-ribbon" aria-hidden="true">୨୧</i>
-    <i class="att-doodle-meta" aria-hidden="true">R${Number(roundIndex) + 1} · ${escapeHtml(bpmLabel)}</i>`;
+    <i class="att-doodle-meta" aria-hidden="true">${escapeHtml(resolvedMetaLabel)}</i>`;
 }
 
 function renderDoodleCheer(message) {
@@ -4429,26 +4456,31 @@ function announce(message) {
   }, 20);
 }
 
+function updateDoodleSurfaceDom(doodleSurface, message, {
+  layout = doodleLayoutForRound(),
+} = {}) {
+  if (!doodleSurface) return;
+  const normalizedMessage = normalizeDoodleMessage(message);
+  const parts = doodleMessageParts(normalizedMessage);
+  doodleSurface.dataset.attDoodleLayout = layout;
+  doodleSurface.dataset.attDoodleDensity = doodleMessageDensity(normalizedMessage);
+  doodleSurface.dataset.attDoodlePartCount = String(parts.length);
+  doodleSurface.setAttribute("aria-label", normalizedMessage);
+  doodleSurface.querySelectorAll("[data-ai-text-training-doodle-part]").forEach((textNode, index) => {
+    const text = parts[index] || "";
+    textNode.textContent = text;
+    textNode.dataset.text = text;
+    textNode.hidden = !text;
+  });
+}
+
 function updateCheerPresentationDom(message) {
   const displayMode = cheerDisplayMode(message);
   document.querySelectorAll('[data-ai-text-training-cheer="classic"] [data-ai-text-training-cheer-text]').forEach((textNode) => {
     textNode.textContent = message;
   });
   const doodleSurface = document.querySelector('[data-ai-text-training-cheer="doodle"]');
-  if (doodleSurface) {
-    const normalizedMessage = normalizeDoodleMessage(message);
-    const parts = doodleMessageParts(normalizedMessage);
-    doodleSurface.dataset.attDoodleLayout = doodleLayoutForRound();
-    doodleSurface.dataset.attDoodleDensity = doodleMessageDensity(normalizedMessage);
-    doodleSurface.dataset.attDoodlePartCount = String(parts.length);
-    doodleSurface.setAttribute("aria-label", normalizedMessage);
-    doodleSurface.querySelectorAll("[data-ai-text-training-doodle-part]").forEach((textNode, index) => {
-      const text = parts[index] || "";
-      textNode.textContent = text;
-      textNode.dataset.text = text;
-      textNode.hidden = !text;
-    });
-  }
+  updateDoodleSurfaceDom(doodleSurface, message);
   document.querySelectorAll("[data-ai-text-training-cheer]").forEach((surface) => {
     const visible = surface.dataset.aiTextTrainingCheer === displayMode;
     surface.hidden = !visible;
@@ -4723,6 +4755,15 @@ function scheduleDefeatZoneMessage(slotId, cadenceMs) {
   state.currentMessage = defeatZoneMessage(slotId);
   const element = document.querySelector("#aiTextTrainingZoneMessage");
   if (element) element.textContent = state.currentMessage;
+  const doodleSurface = document.querySelector('[data-ai-text-training-zone-cheer="doodle"]');
+  if (doodleSurface) {
+    updateDoodleSurfaceDom(doodleSurface, state.currentMessage, {
+      layout: doodleLayoutForRound(AI_TEXT_TRAINING_ROUND_COUNT - 1),
+    });
+    doodleSurface.classList.remove("is-writing");
+    void doodleSurface.offsetWidth;
+    doodleSurface.classList.add("is-writing");
+  }
   window.clearTimeout(state.messageTimer);
   state.messageTimer = window.setTimeout(
     () => scheduleDefeatZoneMessage(slotId, cadenceMs),

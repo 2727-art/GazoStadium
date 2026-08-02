@@ -496,10 +496,13 @@ test("doodle cheer composes every line as a stable full-image collage and record
   assert.equal(support.match(/pickAiTextTrainingLine\(/gu)?.length, 1);
   assert.doesNotMatch(support, /document\.querySelector\("#aiTextTrainingCheer > span"\)/);
   assert.match(support, /updateCheerPresentationDom\(state\.currentMessage\)/);
+  const doodleUpdate = sourceBlock(client, "function updateDoodleSurfaceDom", "function updateCheerPresentationDom");
+  assert.match(doodleUpdate, /textNode\.textContent = text/);
+  assert.match(doodleUpdate, /textNode\.dataset\.text = text/);
+  assert.match(doodleUpdate, /doodleSurface\.dataset\.attDoodleLayout = layout/);
+  assert.doesNotMatch(doodleUpdate, /innerHTML|outerHTML/);
   const presentationUpdate = sourceBlock(client, "function updateCheerPresentationDom", "function captureRoundArtwork");
-  assert.match(presentationUpdate, /textNode\.textContent = text/);
-  assert.match(presentationUpdate, /textNode\.dataset\.text = text/);
-  assert.match(presentationUpdate, /doodleSurface\.dataset\.attDoodleLayout = doodleLayoutForRound\(\)/);
+  assert.match(presentationUpdate, /updateDoodleSurfaceDom\(doodleSurface, message\)/);
   assert.doesNotMatch(presentationUpdate, /innerHTML|outerHTML/);
   const resultOverlay = sourceBlock(client, "function renderResultArtworkOverlay", "function renderResultLineup");
   assert.match(resultOverlay, /Number\(artwork\.version\) >= 2/);
@@ -526,6 +529,90 @@ test("doodle cheer composes every line as a stable full-image collage and record
   );
   const replayReset = sourceBlock(client, "function resetForAnotherSession", "function requestHome");
   assert.match(replayReset, /state\.roundArtworks = Array\(AI_TEXT_TRAINING_ROUND_COUNT\)\.fill\(null\)/);
+});
+
+test("doodle collage separates central copy and defeat ZONE rush keeps the frozen presentation", () => {
+  assert.match(
+    trainingStyles,
+    /data-att-doodle-layout="center-vertical"[\s\S]*?\.att-doodle-copy\.is-part-1\s*\{[\s\S]*?max-height:\s*40%;[\s\S]*?data-att-doodle-layout="center-vertical"[\s\S]*?\.att-doodle-copy\.is-part-2\s*\{[\s\S]*?bottom:\s*10%;[\s\S]*?data-att-doodle-layout="center-vertical"[\s\S]*?\.att-doodle-copy\.is-part-3\s*\{[\s\S]*?left:\s*3%;[\s\S]*?width:\s*22%;/,
+  );
+  assert.match(
+    trainingStyles,
+    /data-att-doodle-layout="diagonal-banner"[\s\S]*?\.att-doodle-copy\.is-part-1\s*\{[\s\S]*?top:\s*23%;[\s\S]*?\.att-doodle-copy\.is-part-2\s*\{[\s\S]*?top:\s*52%;/,
+  );
+  assert.match(
+    trainingStyles,
+    /data-att-doodle-part-count="2"\]\[data-att-doodle-layout="diagonal-banner"\][\s\S]*?\.att-doodle-copy\.is-part-2\s*\{[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*21%;/,
+  );
+  assert.match(
+    trainingStyles,
+    /data-att-doodle-layout="cross-diagonal"[\s\S]*?\.att-doodle-copy\.is-part-1\s*\{[\s\S]*?top:\s*24%;[\s\S]*?\.att-doodle-copy\.is-part-2\s*\{[\s\S]*?top:\s*54%;/,
+  );
+  assert.match(
+    trainingStyles,
+    /data-att-doodle-part-count="2"\]\[data-att-doodle-layout="cross-diagonal"\][\s\S]*?\.att-doodle-copy\.is-part-2\s*\{[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*20%;/,
+  );
+
+  const presentation = sourceBlock(
+    client,
+    "function defeatZoneRushCheerPresentation",
+    "function renderDefeatZoneRushDoodle",
+  );
+  assert.match(
+    presentation,
+    /normalizeCheerPresentation\(state\.sessionCheerPresentation, "classic"\)/,
+  );
+  const zoneDoodle = sourceBlock(
+    client,
+    "function renderDefeatZoneRushDoodle",
+    "function renderDefeatZoneRushClassic",
+  );
+  assert.match(zoneDoodle, /ai-text-training-zone-doodle is-doodle is-collage is-writing/);
+  assert.match(zoneDoodle, /data-ai-text-training-zone-cheer="doodle"/);
+  assert.match(zoneDoodle, /data-att-doodle-context="zone-rush"/);
+  assert.match(zoneDoodle, /role="img" aria-label=/);
+  assert.match(zoneDoodle, /metaLabel: "FINAL · 200 BPM"/);
+
+  const zoneRenderer = sourceBlock(
+    client,
+    "function renderDefeatZonePlay",
+    "function renderDoodleCompositionContents",
+  );
+  assert.match(zoneRenderer, /rushCheerPresentation === "doodle" \? renderDefeatZoneRushDoodle\(rushMessage\) : ""/);
+  assert.match(zoneRenderer, /rushCheerPresentation === "classic" \? renderDefeatZoneRushClassic\(rushMessage\) : ""/);
+  assert.equal(zoneRenderer.match(/renderDefeatZoneRushClassic\(rushMessage\)/gu)?.length, 1);
+  assert.match(zoneRenderer, /zone_cooldown[\s\S]*?id="aiTextTrainingZoneMessage"/);
+
+  const scheduler = sourceBlock(
+    client,
+    "function scheduleDefeatZoneMessage",
+    "function queueAchievementFinish",
+  );
+  assert.equal(scheduler.match(/state\.currentMessage = defeatZoneMessage\(slotId\)/gu)?.length, 1);
+  assert.match(scheduler, /data-ai-text-training-zone-cheer="doodle"/);
+  assert.match(scheduler, /updateDoodleSurfaceDom\(doodleSurface, state\.currentMessage/);
+  assert.match(scheduler, /AI_TEXT_TRAINING_ROUND_COUNT - 1/);
+  assert.doesNotMatch(scheduler, /innerHTML|outerHTML|roundArtworks|captureRoundArtwork/);
+
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-overlay\.is-rush > \.ai-text-training-zone-doodle\.is-collage\s*\{[\s\S]*?z-index:\s*1;[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-doodle\.is-collage \.att-doodle-copy\s*\{[\s\S]*?max-width:\s*none;[\s\S]*?writing-mode:\s*horizontal-tb;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-overlay\.is-rush > \.ai-text-training-edge-hud\s*\{[\s\S]*?z-index:\s*4;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(orientation: landscape\) and \(max-height: 650px\)[\s\S]*?\.ai-text-training-zone-overlay \.ai-text-training-zone-doodle\.is-collage[\s\S]*?\.att-doodle-copy\.is-part-1\s*\{[\s\S]*?left:\s*7% !important;[\s\S]*?\.att-doodle-copy\.is-part-2\s*\{[\s\S]*?right:\s*7% !important;[\s\S]*?\.att-doodle-copy\.is-part-3\s*\{[\s\S]*?left:\s*36% !important;/,
+  );
+  assert.match(readme, /敗北ZONEの最終攻勢も開始時に固定した表示方式を引き継ぎ/);
+  assert.match(design, /最終攻勢はセッション開始時に固定した`doodle` \/ `classic`を引き継ぐ/);
+  assert.equal(html.match(/ai-training-doodle-spacing-zone-rush-v1/gu)?.length, 2);
 });
 
 test("paid one-use review shows balance, price, post-payment balance, and voluntariness", () => {
