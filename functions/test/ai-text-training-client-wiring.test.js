@@ -265,7 +265,7 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
   assert.match(cosmetics, /panelThemeId/);
   assert.match(cosmetics, /messageDecorationId/);
   assert.match(client, /name="aiTextTrainingCosmetic_\$\{slot\}"/);
-  assert.match(client, /未購入品もここで試着できますが、保存はされません/);
+  assert.match(client, /未購入の装飾もここで試着できますが、装着は保存されません/);
   assert.match(client, /aiTextTrainingCosmeticsAreOwned/);
   assert.match(client, /action: "save_cosmetics"/);
   assert.match(client, /state\.sessionCosmetics = equippedCosmetics\(\)/);
@@ -273,8 +273,11 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
   assert.match(client, /data-att-panel-theme=/);
   assert.match(client, /data-att-message-decoration=/);
   assert.match(client, /ai-text-training-message-surface/);
-  assert.match(client, /ai-text-training-cosmetics-v2/);
-  assert.match(online, /ai-text-training-cosmetics-v2/);
+  assert.match(client, /name="aiTextTrainingCheerPresentation"/);
+  assert.match(client, /デコ台詞 · 推奨/);
+  assert.match(client, /長い台詞は画像を隠さないよう自動でクラシック枠へ退避/);
+  assert.match(client, /ai-text-training-cosmetics-v3/);
+  assert.match(online, /ai-text-training-cosmetics-v3/);
   assert.match(html, /ai-text-training-customization-v2/);
   assert.match(
     trainingStyles,
@@ -285,6 +288,19 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
     /\[data-att-message-decoration="ai_training_style_crimson_azure"\][\s\S]*?rgba\(5, 8, 16, 0\.96\)/,
   );
   assert.match(trainingStyles, /forced-colors:\s*active/);
+  assert.match(trainingStyles, /\.ai-text-training-doodle-cheer[\s\S]*?pointer-events:\s*none/);
+  assert.match(trainingStyles, /ai_training_style_crimson_azure[\s\S]*?--att-doodle-accent-a:\s*#ff2b3d[\s\S]*?--att-doodle-accent-b:\s*#1688ff/);
+  for (const styleId of [
+    "ai_training_style_soft_glow",
+    "ai_training_style_neon_beat",
+    "ai_training_style_crimson_azure",
+    "ai_training_style_stardust_stage",
+  ]) {
+    assert.match(
+      trainingStyles,
+      new RegExp(`data-att-message-decoration="${styleId}"\\]\\s*\\.ai-text-training-result-doodle\\.is-classic`, "u"),
+    );
+  }
   assert.match(
     trainingStyles,
     /\.ai-text-training-cosmetic-actions \.button\s*\{\s*flex:\s*0 0 auto;\s*min-height:\s*48px;/,
@@ -293,6 +309,118 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
     trainingStyles,
     /\[data-att-(?:panel-theme|message-decoration)[^\{]*\{[^}]*\.ai-text-training-(?:emergency|safety-controls)/,
   );
+});
+
+test("doodle cheer stays fixed per round, falls back for long lines, and records only completed works", () => {
+  const doodleContext = vm.createContext({
+    AI_TEXT_TRAINING_ROUND_COUNT: 5,
+    CHEER_PRESENTATION_PREFERENCE_KEY: "cheer-mode",
+    CHEER_PRESENTATIONS: new Set(["doodle", "classic"]),
+    DEFAULT_CHEER_PRESENTATION: "doodle",
+    DOODLE_LONG_MESSAGE_LENGTH: 22,
+    DOODLE_ANCHORS: Object.freeze([
+      "upper-left",
+      "upper-right",
+      "middle-left",
+      "middle-right",
+      "lower-left",
+      "lower-right",
+    ]),
+    state: {
+      roundIndex: 0,
+      sessionStartedAt: 1_754_108_400_000,
+      sessionCheerPresentation: "doodle",
+    },
+    readLocalValue(_key, fallback) {
+      return fallback;
+    },
+    normalizeAiTextTrainingBpm(value) {
+      const bpm = Number(value);
+      return Number.isInteger(bpm) && (bpm === 0 || (bpm >= 40 && bpm <= 200))
+        ? bpm
+        : null;
+    },
+  });
+  vm.runInContext(`
+    ${sourceBlock(client, "function normalizeCheerPresentation", "function storedSession")}
+    globalThis.__doodleApi = {
+      normalizeCheerPresentation,
+      cheerDisplayMode,
+      doodleAnchorForRound,
+      normalizeRoundArtwork,
+      normalizeRoundArtworks,
+    };
+  `, doodleContext);
+  const api = doodleContext.__doodleApi;
+
+  assert.equal(api.cheerDisplayMode("あ".repeat(22), "doodle"), "doodle");
+  assert.equal(api.cheerDisplayMode("あ".repeat(23), "doodle"), "classic");
+  assert.equal(api.cheerDisplayMode("短い台詞", "classic"), "classic");
+  assert.equal(api.cheerDisplayMode("短い台詞", undefined), "doodle");
+  assert.equal(api.normalizeCheerPresentation(undefined, "classic"), "classic");
+  const anchors = Array.from({ length: 5 }, (_, index) => api.doodleAnchorForRound(index));
+  assert.equal(new Set(anchors).size, 5);
+  assert.deepEqual(
+    anchors,
+    Array.from({ length: 5 }, (_, index) => api.doodleAnchorForRound(index)),
+  );
+
+  const emojiArtwork = api.normalizeRoundArtwork({
+    message: "😀".repeat(90),
+    anchor: "unsafe-center",
+    presentation: "unknown",
+    bpm: 100,
+  }, 0);
+  assert.equal(Array.from(emojiArtwork.message).length, 84);
+  assert.ok(doodleContext.DOODLE_ANCHORS.includes(emojiArtwork.anchor));
+  assert.equal(emojiArtwork.presentation, "classic");
+
+  const recovered = api.normalizeRoundArtworks([
+    { message: "完成1", anchor: "upper-left", presentation: "doodle", bpm: 80 },
+    { message: "完成2", anchor: "upper-right", presentation: "doodle", bpm: 90 },
+    { message: "未完了", anchor: "lower-left", presentation: "doodle", bpm: 100 },
+  ], { completedRounds: 2 });
+  assert.equal(recovered.length, 5);
+  assert.equal(recovered[0].message, "完成1");
+  assert.equal(recovered[1].message, "完成2");
+  assert.deepEqual(Array.from(recovered.slice(2)), [null, null, null]);
+  assert.deepEqual(
+    Array.from(api.normalizeRoundArtworks(undefined, { completedRounds: 5 })),
+    [null, null, null, null, null],
+  );
+
+  const persist = sourceBlock(client, "function persistSession", "function clearPersistedSession");
+  assert.match(persist, /cheerPresentation: state\.sessionCheerPresentation/);
+  assert.match(persist, /roundArtworks: normalizeRoundArtworks\(state\.roundArtworks,[\s\S]*?completedRounds: state\.completedRounds/);
+  const recovery = sourceBlock(client, "function recoverPaidSession", "function recoverPendingDefeatPresentation");
+  assert.match(recovery, /normalizeCheerPresentation\([\s\S]*?saved\.cheerPresentation,[\s\S]*?"classic"/);
+  assert.match(recovery, /normalizeRoundArtworks\(saved\.roundArtworks/);
+  const newPlan = sourceBlock(client, "function newSessionPlan", "function continuePreparedSession");
+  assert.match(newPlan, /state\.sessionCheerPresentation = normalizeCheerPresentation\(state\.cheerPresentation\)/);
+  assert.match(newPlan, /state\.roundArtworks = Array\(AI_TEXT_TRAINING_ROUND_COUNT\)\.fill\(null\)/);
+  const preview = sourceBlock(client, "function installPreview", "async function initializeAuthenticatedState");
+  assert.match(preview, /presentation: cheerDisplayMode\([\s\S]*?state\.sessionCheerPresentation/);
+  const finishRound = sourceBlock(client, "function finishRound", "function chooseReaction");
+  assert.ok(finishRound.indexOf("captureRoundArtwork()") < finishRound.indexOf("state.completedRounds"));
+  assert.ok(finishRound.indexOf("captureRoundArtwork()") < finishRound.indexOf("commitTrainingCompletion()"));
+  const support = sourceBlock(client, "function supportMessage", "function updatePlayingDom");
+  assert.equal(support.match(/pickAiTextTrainingLine\(/gu)?.length, 1);
+  assert.match(support, /document\.querySelector\("#aiTextTrainingCheer > span"\)/);
+  assert.match(support, /updateCheerPresentationDom\(state\.currentMessage\)/);
+  const resultLineup = sourceBlock(client, "function renderResultLineup", "function renderAiTextTrainingLightResult");
+  assert.match(resultLineup, /今回の5作品/);
+  assert.match(resultLineup, /const completedSession = state\.completedRounds >= AI_TEXT_TRAINING_ROUND_COUNT/);
+  assert.match(resultLineup, /completedSession[\s\S]*?Array\.from\(\{ length: AI_TEXT_TRAINING_ROUND_COUNT \}/);
+  assert.match(resultLineup, /artworkIndexes\.length === AI_TEXT_TRAINING_ROUND_COUNT/);
+  assert.match(resultLineup, /artwork\.message/);
+  assert.match(resultLineup, /artwork\?\.bpm \?\? state\.bpms\[index\]/);
+  assert.match(resultLineup, /画像と台詞はサーバーへ送信しません/);
+  assert.doesNotMatch(
+    sourceBlock(client, "function scheduleDefeatZoneMessage", "function queueAchievementFinish"),
+    /roundArtworks|captureRoundArtwork/,
+  );
+  const replayReset = sourceBlock(client, "function resetForAnotherSession", "function requestHome");
+  assert.match(replayReset, /state\.roundArtworks = Array\(AI_TEXT_TRAINING_ROUND_COUNT\)\.fill\(null\)/);
 });
 
 test("paid one-use review shows balance, price, post-payment balance, and voluntariness", () => {
@@ -679,6 +807,7 @@ test("achievement retry storage is an allowlisted metadata-only queue", () => {
     sanitize,
     /\b(?:images?|bpms?|preset|script|lines?|dialogue|message|cosmetics?)\b/iu,
   );
+  assert.doesNotMatch(sanitize, /roundArtworks|currentMessage|artwork/iu);
   assert.match(client, /writeLocalValue\(ACHIEVEMENT_RETRY_QUEUE_KEY, JSON\.stringify\(sanitized\)\)/);
   assert.match(client, /\.slice\(-12\)/);
 });
@@ -1976,7 +2105,7 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
   );
   assert.match(
     trainingStyles,
-    /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-cheer > span\s*\{[\s\S]*?-webkit-line-clamp:\s*2;/,
+    /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-cheer\.is-classic > span\s*\{[\s\S]*?-webkit-line-clamp:\s*2;/,
   );
   assert.match(
     sourceBlock(client, "function supportMessage", "function updatePlayingDom"),
@@ -2008,6 +2137,7 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
 
   assert.equal(html.match(/beat-edge-hud-v3/gu)?.length, 2);
   assert.equal(html.match(/ai-training-focus-hud-v2/gu)?.length, 2);
+  assert.equal(html.match(/ai-training-doodle-cheer-v1/gu)?.length, 3);
   assert.match(readme, /残り秒数を画像左端[\s\S]*?ビートゲージを右端[\s\S]*?残り10秒/);
   assert.match(design, /残り時間が厳密に10秒以下[\s\S]*?全面フラッシュを使わない/);
 });

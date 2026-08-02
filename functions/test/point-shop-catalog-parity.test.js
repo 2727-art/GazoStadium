@@ -135,7 +135,7 @@ test("AI text training styles are permanent store unlocks with a guarded private
   const online = read("online.js");
   assert.match(online, /文字コラトレーニング演出セット/);
   assert.match(online, /買い切りで、画像ウィンドウとセリフ装飾を1種ずつ解放/);
-  assert.match(online, /窓とセリフを別々に組み合わせ可能/);
+  assert.match(online, /窓とデコ台詞を別々に組み合わせ可能/);
   assert.match(online, /現在残高:[\s\S]*商品価格:[\s\S]*購入後残高:/);
   assert.match(online, /応援台本の1回利用料とは別の商品/);
   assert.match(online, /購入済み・文字コラ準備で選択/);

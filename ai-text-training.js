@@ -65,7 +65,7 @@ import {
   aiTextTrainingCosmeticsAreOwned,
   getAiTextTrainingStyleProduct,
   normalizeAiTextTrainingCosmetics,
-} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v2";
+} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v3";
 import {
   createFreeTableAmbienceController,
   normalizeFreeTableAmbienceToneProfileId,
@@ -81,6 +81,7 @@ const DAILY_COMPLETE_PREFIX = "hariai-ai-text-training-daily-v1:";
 const DECK_PERSISTENCE_KEY = "hariai-ai-text-training-deck-persistence-v1";
 const BEAT_CHARACTER_PREFERENCE_KEY = "hariai-ai-text-training-beat-character-v1";
 const METRONOME_VOLUME_PREFERENCE_KEY = "hariai-ai-text-training-metronome-volume-v1";
+const CHEER_PRESENTATION_PREFERENCE_KEY = "hariai-ai-text-training-cheer-presentation-v1";
 const DECK_DATABASE_NAME = "hariai-ai-text-training-deck-v1";
 const DECK_STORE_NAME = "decks";
 const DECK_RECORD_KEY = "latest";
@@ -162,6 +163,17 @@ const DEFAULT_BEAT_CHARACTER_ID = "clear_tap";
 const DEFAULT_METRONOME_VOLUME = 0.36;
 const SESSION_SCHEMA_VERSION = 4;
 const DECK_SCHEMA_VERSION = 2;
+const DEFAULT_CHEER_PRESENTATION = "doodle";
+const CHEER_PRESENTATIONS = new Set(["doodle", "classic"]);
+const DOODLE_LONG_MESSAGE_LENGTH = 22;
+const DOODLE_ANCHORS = Object.freeze([
+  "upper-left",
+  "upper-right",
+  "middle-left",
+  "middle-right",
+  "lower-left",
+  "lower-right",
+]);
 const DEFEAT_ZONE_PHASES = new Set([
   "zone_ready",
   "zone_rush",
@@ -302,6 +314,73 @@ function storedMetronomeVolume() {
   return Number.isFinite(value)
     ? Math.min(1, Math.max(0, value))
     : DEFAULT_METRONOME_VOLUME;
+}
+
+function normalizeCheerPresentation(value, fallback = DEFAULT_CHEER_PRESENTATION) {
+  const normalized = String(value || "");
+  if (CHEER_PRESENTATIONS.has(normalized)) return normalized;
+  return CHEER_PRESENTATIONS.has(fallback) ? fallback : DEFAULT_CHEER_PRESENTATION;
+}
+
+function storedCheerPresentation() {
+  return normalizeCheerPresentation(
+    readLocalValue(CHEER_PRESENTATION_PREFERENCE_KEY, DEFAULT_CHEER_PRESENTATION),
+  );
+}
+
+function doodleAnchorForRound(roundIndex = state.roundIndex) {
+  const normalizedIndex = Math.max(
+    0,
+    Math.min(AI_TEXT_TRAINING_ROUND_COUNT - 1, Number(roundIndex) || 0),
+  );
+  const sessionSeed = Math.trunc(Math.abs(Number(state.sessionStartedAt) || 0))
+    % DOODLE_ANCHORS.length;
+  return DOODLE_ANCHORS[(sessionSeed + normalizedIndex * 5) % DOODLE_ANCHORS.length];
+}
+
+function cheerMessageLength(value) {
+  return Array.from(String(value || "").trim()).length;
+}
+
+function cheerDisplayMode(message, preferred = state.sessionCheerPresentation) {
+  if (normalizeCheerPresentation(preferred) === "classic") return "classic";
+  return cheerMessageLength(message) > DOODLE_LONG_MESSAGE_LENGTH ? "classic" : "doodle";
+}
+
+function normalizeRoundArtwork(value, roundIndex) {
+  const source = value && typeof value === "object" ? value : {};
+  const normalizedMessage = String(source.message || "")
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .trim();
+  const message = Array.from(normalizedMessage).slice(0, 84).join("");
+  if (!message) return null;
+  const anchor = DOODLE_ANCHORS.includes(source.anchor)
+    ? source.anchor
+    : doodleAnchorForRound(roundIndex);
+  const bpm = normalizeAiTextTrainingBpm(source.bpm);
+  return Object.freeze({
+    version: 1,
+    message,
+    anchor,
+    presentation: normalizeCheerPresentation(source.presentation, "classic"),
+    bpm: bpm === null ? 0 : bpm,
+  });
+}
+
+function normalizeRoundArtworks(value, {
+  completedRounds = AI_TEXT_TRAINING_ROUND_COUNT,
+} = {}) {
+  const source = Array.isArray(value) ? value : [];
+  const completedCount = Math.max(
+    0,
+    Math.min(AI_TEXT_TRAINING_ROUND_COUNT, Number(completedRounds) || 0),
+  );
+  return Array.from(
+    { length: AI_TEXT_TRAINING_ROUND_COUNT },
+    (_, index) => (index < completedCount
+      ? normalizeRoundArtwork(source[index], index)
+      : null),
+  );
 }
 
 function storedSession() {
@@ -600,6 +679,7 @@ function createState() {
     readLocalValue(BEAT_CHARACTER_PREFERENCE_KEY, DEFAULT_BEAT_CHARACTER_ID),
   );
   const metronomeVolume = storedMetronomeVolume();
+  const cheerPresentation = storedCheerPresentation();
   const ambienceController = createFreeTableAmbienceController({
     initialVolume: metronomeVolume,
     minimumBpm: AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_BPM,
@@ -628,6 +708,9 @@ function createState() {
     cosmeticDraft: null,
     cosmeticBusy: false,
     sessionCosmetics: null,
+    cheerPresentation,
+    sessionCheerPresentation: cheerPresentation,
+    roundArtworks: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null),
     activeUse: null,
     selectedPreset: normalizeAiTextTrainingScriptSnapshot(
       AI_TEXT_TRAINING_BUILTIN_SCRIPTS.mama,
@@ -989,6 +1072,10 @@ function persistSession() {
     selectedPreset: state.selectedPreset,
     selectedPresetSource: state.selectedPresetSource,
     cosmetics: state.sessionCosmetics,
+    cheerPresentation: state.sessionCheerPresentation,
+    roundArtworks: normalizeRoundArtworks(state.roundArtworks, {
+      completedRounds: state.completedRounds,
+    }),
     resultOutcome: state.resultOutcome,
     defeatResolution: state.defeatResolution,
     defeatSettled: state.defeatSettled,
@@ -1331,6 +1418,14 @@ function activeCosmetics() {
   return equippedCosmetics();
 }
 
+function cheerPresentationOptionHtml(value, label, description) {
+  const selected = normalizeCheerPresentation(state.cheerPresentation) === value;
+  return `<label class="ai-text-training-presentation-option ${selected ? "is-selected" : ""}">
+    <input type="radio" name="aiTextTrainingCheerPresentation" value="${escapeHtml(value)}" ${selected ? "checked" : ""} />
+    <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(description)}</small></span>
+  </label>`;
+}
+
 function cosmeticDataAttributes(value = activeCosmetics()) {
   const cosmetics = normalizeAiTextTrainingCosmetics(value, { allowUnowned: true });
   return `data-att-panel-theme="${escapeHtml(cosmetics.panelThemeId || "default")}" data-att-message-decoration="${escapeHtml(cosmetics.messageDecorationId || "default")}"`;
@@ -1459,7 +1554,10 @@ function installPreview(requestedScreen) {
     state.bpms = state.sessionDrawIndices.map((index) => state.rosterBpms[index]);
     state.sessionBeatCharacterId = state.beatCharacterId;
     state.sessionCosmetics = equippedCosmetics();
+    state.sessionCheerPresentation = normalizeCheerPresentation(state.cheerPresentation);
+    state.sessionStartedAt = Date.UTC(2026, 7, 2, 5, 0, 0);
     state.plan = createAiTextTrainingPlan({ modeId: "mama", bpms: state.bpms });
+    state.currentMessage = "あと12秒、今のリズムを楽しもう";
     state.screen = ["result", "defeat_result", "safety"].includes(requestedScreen) ? "result" : "play";
     state.phase = requestedScreen === "reaction" ? "reaction" : "paused";
     state.roundIndex = requestedScreen === "reaction" ? 1 : 0;
@@ -1503,6 +1601,29 @@ function installPreview(requestedScreen) {
         ? sampleZonePreset.zoneLines.zone_rush[0]
         : sampleZonePreset.zoneLines.zone_cooldown[0];
       state.plan.reactions = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill("just_right");
+    }
+    if (state.completedRounds > 0) {
+      const sampleArtworkMessages = [
+        "いいスタート、その調子♡",
+        "リズムがきれいだよ",
+        "今日の自分、強い！",
+        "あと少し、一緒にいこう",
+        "5ラウンド完走、おつかれさま☆",
+      ];
+      state.roundArtworks = Array.from(
+        { length: AI_TEXT_TRAINING_ROUND_COUNT },
+        (_, index) => (index < state.completedRounds
+          ? normalizeRoundArtwork({
+            message: sampleArtworkMessages[index],
+            anchor: doodleAnchorForRound(index),
+            presentation: cheerDisplayMode(
+              sampleArtworkMessages[index],
+              state.sessionCheerPresentation,
+            ),
+            bpm: state.plan.effectiveBpms[index],
+          }, index)
+          : null),
+      );
     }
     if (["play", "reaction", "zone", "cooldown"].includes(requestedScreen)) {
       const previewLightIsActive = requestedScreen !== "play";
@@ -1959,6 +2080,13 @@ function recoverPaidSession() {
       ownedStyleIds: state.cosmetics?.ownedStyleIds,
       },
     );
+    state.sessionCheerPresentation = normalizeCheerPresentation(
+      saved.cheerPresentation,
+      "classic",
+    );
+    state.roundArtworks = normalizeRoundArtworks(saved.roundArtworks, {
+      completedRounds: state.completedRounds,
+    });
     if (state.achievementBeginRequested) {
       const pending = upsertAchievementRetryRecord({
         ...currentAchievementOwner(),
@@ -1998,6 +2126,7 @@ function recoverPaidSession() {
     state.plan = null;
     state.sessionDrawIndices = [];
     state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+    state.roundArtworks = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
     state.recoveryRosterCount = 0;
     state.recoveryError = "端末に残った開始済み利用の計画またはDRAWを確認できません。";
     return false;
@@ -2089,10 +2218,18 @@ function recoverPendingDefeatPresentation() {
     state.drawLeg = Number(saved.drawLeg) === 2 ? 2 : 1;
     state.sessionBeatCharacterId = normalizeBeatCharacterId(saved.beatCharacterId);
     state.beatCharacterId = state.sessionBeatCharacterId;
+    state.sessionStartedAt = Number(saved.sessionStartedAt) || Date.now();
     state.sessionCosmetics = normalizeAiTextTrainingCosmetics(
       saved.cosmetics || equippedCosmetics(),
       { ownedStyleIds: state.cosmetics?.ownedStyleIds },
     );
+    state.sessionCheerPresentation = normalizeCheerPresentation(
+      saved.cheerPresentation,
+      "classic",
+    );
+    state.roundArtworks = normalizeRoundArtworks(saved.roundArtworks, {
+      completedRounds: AI_TEXT_TRAINING_ROUND_COUNT,
+    });
     state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
       saved.selectedPreset,
       state.modeId,
@@ -2151,6 +2288,7 @@ function recoverPendingDefeatPresentation() {
     state.plan = null;
     state.sessionDrawIndices = [];
     state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+    state.roundArtworks = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
     return false;
   }
 }
@@ -2385,6 +2523,11 @@ function renderCosmeticsPanel() {
   );
   const selectedPanel = getAiTextTrainingStyleProduct(selection.panelThemeId);
   const selectedMessage = getAiTextTrainingStyleProduct(selection.messageDecorationId);
+  const previewMessage = "今日の気分で、一緒に始めよう";
+  const previewPresentation = cheerDisplayMode(
+    previewMessage,
+    state.cheerPresentation,
+  );
   const saveDisabled = !state.authReady
     || state.cosmeticBusy
     || !draftChanged
@@ -2405,7 +2548,15 @@ function renderCosmeticsPanel() {
           <div class="ai-text-training-cosmetic-options">${[null, ...AI_TEXT_TRAINING_STYLE_PRODUCTS].map((product) => cosmeticOptionHtml("panelThemeId", product)).join("")}</div>
         </fieldset>
         <fieldset class="ai-text-training-cosmetic-slot">
-          <legend>応援メッセージ</legend>
+          <legend>台詞表示 <em>FREE</em></legend>
+          <small>セッション開始時に固定します。台本の抽選順や内容、消費回数は変わりません。</small>
+          <div class="ai-text-training-presentation-options">
+            ${cheerPresentationOptionHtml("doodle", "デコ台詞 · 推奨", "画像へ直接描くプリクラ風。各ラウンド内では位置を固定")}
+            ${cheerPresentationOptionHtml("classic", "クラシック枠", "従来の読みやすい枠表示。長い台詞は自動でこちらへ退避")}
+          </div>
+        </fieldset>
+        <fieldset class="ai-text-training-cosmetic-slot">
+          <legend>台詞の装飾</legend>
           <div class="ai-text-training-cosmetic-options">${[null, ...AI_TEXT_TRAINING_STYLE_PRODUCTS].map((product) => cosmeticOptionHtml("messageDecorationId", product)).join("")}</div>
         </fieldset>
       </div>
@@ -2414,16 +2565,16 @@ function renderCosmeticsPanel() {
         <div class="ai-text-training-cosmetic-preview-window">
           <div><span>ROUND 1 / 5</span><strong>80 BPM</strong></div>
           <em>20</em>
-          <p class="ai-text-training-cosmetic-preview-message ai-text-training-message-surface">今日の気分で、一緒に始めよう</p>
+          <p class="ai-text-training-cosmetic-preview-message ${previewPresentation === "classic" ? "ai-text-training-message-surface" : ""} is-${previewPresentation}" data-att-doodle-anchor="lower-right">${escapeHtml(previewMessage)}</p>
         </div>
-        <dl><div><dt>窓</dt><dd>${escapeHtml(selectedPanel?.panelLabel || "標準ウィンドウ")}</dd></div><div><dt>セリフ</dt><dd>${escapeHtml(selectedMessage?.messageLabel || "標準メッセージ")}</dd></div></dl>
+        <dl><div><dt>窓</dt><dd>${escapeHtml(selectedPanel?.panelLabel || "標準ウィンドウ")}</dd></div><div><dt>表示</dt><dd>${previewPresentation === "doodle" ? "デコ台詞" : "クラシック枠"}</dd></div><div><dt>装飾</dt><dd>${escapeHtml(selectedMessage?.messageLabel || "標準メッセージ")}</dd></div></dl>
       </div>
     </div>
     <div class="ai-text-training-cosmetic-actions">
       <button class="button button-primary" type="button" data-ai-text-training-action="save-cosmetics" ${saveDisabled ? "disabled" : ""}>${escapeHtml(saveLabel)}</button>
       ${state.cosmeticDraft ? '<button class="button button-ghost" type="button" data-ai-text-training-action="cancel-cosmetics">試着を取り消す</button>' : ""}
     </div>
-    <p class="ai-text-training-cosmetic-note">未購入品もここで試着できますが、保存はされません。購入はトップのAnjuPayストアから。購入済みの窓とセリフは別々に組み合わせ、標準を含め最大25通りから何度でも変更できます。</p>
+    <p class="ai-text-training-cosmetic-note">台詞表示は無料でこの端末に保存します。未購入の装飾もここで試着できますが、装着は保存されません。購入はトップのAnjuPayストアから。長い台詞は画像を隠さないよう自動でクラシック枠へ退避します。</p>
     <p class="ai-text-training-mode-note">演出は見た目だけです。BPM・運動時間・結果・即停止などの安全操作は変わりません。</p>
   </section>`;
 }
@@ -3206,6 +3357,20 @@ function renderDefeatZonePlay() {
   });
 }
 
+function renderDoodleCheer(message) {
+  const displayMode = cheerDisplayMode(message);
+  return `<div class="ai-text-training-cheer ai-text-training-doodle-cheer is-doodle is-writing" id="aiTextTrainingCheer" data-ai-text-training-cheer="doodle" data-att-doodle-anchor="${escapeHtml(doodleAnchorForRound())}" ${displayMode === "doodle" ? "" : "hidden"}>
+    <span data-ai-text-training-cheer-text>${escapeHtml(message)}</span>
+  </div>`;
+}
+
+function renderClassicCheer(message) {
+  const displayMode = cheerDisplayMode(message);
+  return `<div class="ai-text-training-cheer ai-text-training-message-surface is-classic" data-ai-text-training-cheer="classic" ${displayMode === "classic" ? "" : "hidden"}>
+    <span data-ai-text-training-cheer-text>${escapeHtml(message)}</span>
+  </div>`;
+}
+
 function renderPlay() {
   if (state.sessionPlayStyle === "defeat_zone" && DEFEAT_ZONE_PHASES.has(state.phase)) {
     return renderDefeatZonePlay();
@@ -3236,12 +3401,14 @@ function renderPlay() {
       ${state.phase === "playing" ? renderTrainingEdgeHud(remainingSeconds) : ""}
       <div class="ai-text-training-round-top"><span><b>ROUND ${state.roundIndex + 1} / 5</b><i aria-hidden="true">·</i><strong>${escapeHtml(tempoCopy(bpm))}</strong></span></div>
       <div class="ai-text-training-progress" aria-hidden="true"><i id="aiTextTrainingProgress" style="width:${Math.max(0, Math.min(100, (state.remainingMs / (state.roundSeconds * 1_000)) * 100))}%"></i></div>
-      <div class="ai-text-training-cheer ai-text-training-message-surface" id="aiTextTrainingCheer"><span>${escapeHtml(state.currentMessage || "準備できたら、自分のペースで")}</span></div>
+      ${renderClassicCheer(state.currentMessage || "準備できたら、自分のペースで")}
     </div>`;
   }
+  const cheerMessage = state.currentMessage || "準備できたら、自分のペースで";
+  const showRoundCheer = ["countdown", "playing"].includes(state.phase);
   return renderFrame(`
     <section class="ai-text-training-arena ${state.phase === "countdown" ? "is-countdown" : ""}" data-att-mood="${escapeHtml(trainingMood())}" data-att-tempo="${escapeHtml(aiTextTrainingTempoBand(bpm))}">
-      <div class="ai-text-training-opponent">${renderPlayingImage()}<div class="ai-text-training-vignette" aria-hidden="true"></div></div>
+      <div class="ai-text-training-opponent">${renderPlayingImage()}<div class="ai-text-training-vignette" aria-hidden="true"></div>${showRoundCheer ? renderDoodleCheer(cheerMessage) : ""}</div>
       ${center}
       ${renderAiTextTrainingLightsCompanion()}
       <div class="ai-text-training-safety-controls">
@@ -3278,12 +3445,30 @@ function formatActiveDuration(value) {
 }
 
 function renderResultLineup({ winner = false } = {}) {
-  return `<section class="ai-text-training-result-lineup" aria-label="${winner ? "本日あなたを倒した5枚" : "今回DRAWされた5枚"}">
-    ${state.images.map((image, index) => `<figure>
-      ${image ? `<img src="${escapeHtml(image.url)}" alt="今回のラウンド${index + 1}の画像" />` : `<span>${index + 1}</span>`}
+  const artworks = normalizeRoundArtworks(state.roundArtworks, {
+    completedRounds: state.completedRounds,
+  });
+  const artworkIndexes = artworks.flatMap((artwork, index) => (artwork ? [index] : []));
+  const completedSession = state.completedRounds >= AI_TEXT_TRAINING_ROUND_COUNT;
+  const showArtworkGallery = artworkIndexes.length > 0;
+  const indexes = showArtworkGallery
+    ? completedSession
+      ? Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => index)
+      : artworkIndexes
+    : Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => index);
+  return `<section class="ai-text-training-result-lineup ${showArtworkGallery ? "is-artwork-gallery" : ""}" aria-label="${winner ? "本日あなたを倒した5枚" : "今回DRAWされた5枚"}">
+    ${showArtworkGallery ? `<header><span>DECO WORKS · DEVICE ONLY</span><h3>${artworkIndexes.length === AI_TEXT_TRAINING_ROUND_COUNT ? "今回の5作品" : completedSession ? "今回の作品" : "ここまでの作品"}</h3><p>各ラウンドの最後に表示された台詞を、画像と一緒に振り返れます。画像と台詞はサーバーへ送信しません。</p></header>` : ""}
+    ${indexes.map((index) => {
+      const image = state.images[index];
+      const artwork = artworks[index];
+      const bpm = artwork?.bpm ?? state.bpms[index];
+      return `<figure class="${artwork ? "is-artwork" : ""}">
+      ${image ? `<img src="${escapeHtml(image.url)}" alt="今回のラウンド${index + 1}の${artwork ? "作品" : "画像"}" />` : `<span class="ai-text-training-result-placeholder">${index + 1}</span>`}
+      ${artwork ? `<span class="ai-text-training-result-doodle is-${escapeHtml(artwork.presentation)}" data-att-doodle-anchor="${escapeHtml(artwork.anchor)}">${escapeHtml(artwork.message)}</span>` : ""}
       ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
-      <figcaption>R${index + 1} · ${state.bpms[index] === 0 ? "FREE" : `${state.bpms[index]} BPM`}</figcaption>
-    </figure>`).join("")}
+      <figcaption>R${index + 1} · ${bpm === 0 ? "FREE" : `${bpm} BPM`}</figcaption>
+    </figure>`;
+    }).join("")}
   </section>`;
 }
 
@@ -3724,6 +3909,8 @@ function newSessionPlan() {
   state.sessionPlayStyle = normalizeAiTextTrainingPlayStyle(state.playStyle);
   state.sessionBeatCharacterId = normalizeBeatCharacterId(state.beatCharacterId);
   state.sessionCosmetics = equippedCosmetics();
+  state.sessionCheerPresentation = normalizeCheerPresentation(state.cheerPresentation);
+  state.roundArtworks = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
   state.plan = createAiTextTrainingPlan({
     modeId: state.modeId,
     bpms: state.bpms,
@@ -3736,6 +3923,8 @@ function newSessionPlan() {
   state.completedRounds = 0;
   state.workoutFinalized = false;
   state.sessionStartedAt = Date.now();
+  state.currentMessage = "";
+  state.lastMessage = "";
   state.resultOutcome = "";
   state.defeatResolution = "";
   state.defeatSettled = false;
@@ -4105,6 +4294,38 @@ function announce(message) {
   }, 20);
 }
 
+function updateCheerPresentationDom(message) {
+  const displayMode = cheerDisplayMode(message);
+  const element = document.querySelector("#aiTextTrainingCheer > span");
+  if (element) element.textContent = message;
+  document.querySelectorAll("[data-ai-text-training-cheer-text]").forEach((textNode) => {
+    textNode.textContent = message;
+  });
+  document.querySelectorAll("[data-ai-text-training-cheer]").forEach((surface) => {
+    const visible = surface.dataset.aiTextTrainingCheer === displayMode;
+    surface.hidden = !visible;
+    surface.setAttribute("aria-hidden", visible ? "false" : "true");
+    if (visible && displayMode === "doodle") {
+      surface.classList.remove("is-writing");
+      void surface.offsetWidth;
+      surface.classList.add("is-writing");
+    }
+  });
+}
+
+function captureRoundArtwork() {
+  const index = Math.max(
+    0,
+    Math.min(AI_TEXT_TRAINING_ROUND_COUNT - 1, Number(state.roundIndex) || 0),
+  );
+  state.roundArtworks[index] = normalizeRoundArtwork({
+    message: state.currentMessage,
+    anchor: doodleAnchorForRound(index),
+    presentation: cheerDisplayMode(state.currentMessage),
+    bpm: currentBpm(),
+  }, index);
+}
+
 function supportMessage({ initial = false } = {}) {
   if (!active || state.screen !== "play" || state.phase !== "playing") return;
   const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
@@ -4125,6 +4346,7 @@ function supportMessage({ initial = false } = {}) {
   });
   const element = document.querySelector("#aiTextTrainingCheer > span");
   if (element) element.textContent = state.currentMessage;
+  updateCheerPresentationDom(state.currentMessage);
   window.clearTimeout(state.messageTimer);
   state.messageTimer = window.setTimeout(
     () => supportMessage(),
@@ -4284,6 +4506,7 @@ function recordCurrentRoundElapsed() {
 function finishRound() {
   if (state.phase !== "playing") return;
   recordCurrentRoundElapsed();
+  captureRoundArtwork();
   state.completedRounds = Math.max(state.completedRounds, state.roundIndex + 1);
   state.remainingMs = 0;
   stopRuntimeTimers();
@@ -4800,6 +5023,8 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   state.phase = "idle";
   state.plan = null;
   state.sessionCosmetics = null;
+  state.sessionCheerPresentation = normalizeCheerPresentation(state.cheerPresentation);
+  state.roundArtworks = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
   state.sessionPlayStyle = state.playStyle;
   state.sessionBeatCharacterId = state.beatCharacterId;
   state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
@@ -5013,6 +5238,18 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-ai-text-training-metronome-volume]").forEach((input) => {
     input.addEventListener("input", () => updateMetronomeVolume(input));
+  });
+  document.querySelectorAll('input[name="aiTextTrainingCheerPresentation"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.cheerPresentation = normalizeCheerPresentation(input.value);
+      if (!writeLocalValue(
+        CHEER_PRESENTATION_PREFERENCE_KEY,
+        state.cheerPresentation,
+      )) {
+        showToast("台詞表示は反映しましたが、この端末へ保存できませんでした。");
+      }
+      render();
+    });
   });
   document.querySelectorAll('input[name^="aiTextTrainingCosmetic_"]').forEach((input) => {
     input.addEventListener("change", () => {

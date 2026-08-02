@@ -48,7 +48,7 @@ import {
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
 import {
   AI_TEXT_TRAINING_STYLE_PRODUCTS,
-} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v2";
+} from "./ai-text-training-cosmetics.js?v=ai-text-training-cosmetics-v3";
 import {
   PLAYER_TITLE_CATEGORIES,
   PLAYER_TITLE_PRODUCTS,
@@ -4532,7 +4532,7 @@ function renderPointShop() {
         : product.type === "chatFrame" || product.type === "chatBackground"
           ? `<div class="shop-chat-cosmetic-preview"><span>YOU / R1</span><p class="${previewClasses}">次の一枚も楽しみ！</p></div>`
           : product.type === "aiTextTrainingStyle"
-            ? `<div class="shop-ai-training-style-preview" data-att-panel-theme="${escapeHtml(product.id)}" data-att-message-decoration="${escapeHtml(product.id)}"><div class="shop-ai-training-style-window"><span>ROUND 1</span><strong>20</strong><p>今日のペースでいこう</p></div><small>窓とセリフを別々に組み合わせ可能</small></div>`
+            ? `<div class="shop-ai-training-style-preview" data-att-panel-theme="${escapeHtml(product.id)}" data-att-message-decoration="${escapeHtml(product.id)}"><div class="shop-ai-training-style-window"><span>ROUND 1</span><strong>20</strong><p class="shop-ai-training-style-message is-doodle" data-att-doodle-anchor="lower-right">今日のペースでいこう</p></div><small>窓とデコ台詞を別々に組み合わせ可能</small></div>`
           : `<div class="shop-message-preview"><span>✦ FAVORITE CARD FINISH</span><strong>推しカードを特別な一枚へ</strong></div>`;
     let action = `<button class="button button-wide button-primary" data-buy-product="${product.id}" ${useOfflineMarketPreview || !state.economyReady || state.economyBusy || !affordable ? "disabled" : ""}>${affordable ? `${formatAnjuPay(product.price)}で購入` : `あと${formatAnjuPay(product.price - state.economy.points)}`}</button>`;
     if (owned && product.type === "feature") {
