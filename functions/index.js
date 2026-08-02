@@ -27,6 +27,13 @@ const {
   MARKET_APP_CHECK_MIGRATION,
 } = require("./app-check-rollout");
 const {
+  DOLLMASTER_ACHIEVEMENT_ID,
+  applyDollmasterRedemptionTransaction,
+  achievementCodeMatches,
+  isValidAchievementCodeFormat,
+  normalizeAchievementCode,
+} = require("./achievement-code");
+const {
   isIncomingMarketRoomStateOlder,
   nextPublicMarketRoomHeartbeat,
   nextPublicMarketRoomState,
@@ -398,6 +405,7 @@ const CREATOR_CARD_PUBLISH_COOLDOWN_MS = 15_000;
 const CLOUDFLARE_TURN_KEY_ID = defineSecret("CLOUDFLARE_TURN_KEY_ID");
 const CLOUDFLARE_TURN_API_TOKEN = defineSecret("CLOUDFLARE_TURN_API_TOKEN");
 const P2P_DIAGNOSTIC_HMAC_SECRET = defineSecret("P2P_DIAGNOSTIC_HMAC_SECRET");
+const DOLLMASTER_ACHIEVEMENT_CODE = defineSecret("DOLLMASTER_ACHIEVEMENT_CODE");
 const P2P_TURN_RESPONSE_MAX_BYTES = 64 * 1024;
 const P2P_DIAGNOSTIC_RETENTION_MS = P2P_DIAGNOSTIC_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 let lastSoloMatchPermitSweepAt = 0;
@@ -1065,6 +1073,14 @@ function trainingProfileRef(uid) {
 
 function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
+}
+
+function achievementCodeRedemptionRef(uid) {
+  return firestore.collection("achievementCodeRedemptions").doc(uid);
+}
+
+function dollmasterCodeReceiptRef(uid) {
+  return achievementCodeRedemptionRef(uid).collection("codes").doc("dollmaster");
 }
 
 function crownMonthlyAchievementStatsRef(uid) {
@@ -2883,6 +2899,51 @@ async function getAchievements(uid, { syncPublic = false } = {}) {
     state.aiTextTrainingStats,
     state.fleaStats,
   );
+}
+
+async function redeemDollmasterAchievement(uid, codeValue, configuredCodeValue) {
+  const code = normalizeAchievementCode(codeValue);
+  if (!isValidAchievementCodeFormat(code)) {
+    throw new HttpsError("invalid-argument", "4文字の英数字コードを確認してください。");
+  }
+  const configuredCode = normalizeAchievementCode(configuredCodeValue);
+  if (!isValidAchievementCodeFormat(configuredCode)) {
+    throw new HttpsError("internal", "実績コードを確認できませんでした。");
+  }
+
+  const now = Date.now();
+  const matches = achievementCodeMatches(code, configuredCode);
+  const redemptionRef = achievementCodeRedemptionRef(uid);
+  const receiptRef = dollmasterCodeReceiptRef(uid);
+  const profileRef = achievementProfileRef(uid);
+  const outcome = await firestore.runTransaction((transaction) => (
+    applyDollmasterRedemptionTransaction({
+      transaction,
+      redemptionRef,
+      receiptRef,
+      profileRef,
+      matches,
+      now,
+      normalizeProfile: normalizeAchievementProfile,
+      unlock: unlockAchievements,
+    })
+  ));
+
+  if (outcome?.status === "locked") {
+    throw new HttpsError(
+      "resource-exhausted",
+      "入力回数が多いため、1分ほど待ってからもう一度お試しください。",
+      { retryAfterMs: outcome.retryAfterMs },
+    );
+  }
+  if (outcome?.status !== "redeemed") {
+    throw new HttpsError("not-found", "コードを確認してください。");
+  }
+  return {
+    redeemed: true,
+    alreadyUnlocked: outcome.alreadyUnlocked,
+    achievements: await getAchievements(uid, { syncPublic: true }),
+  };
 }
 
 function isCreatorCardEntryId(value) {
@@ -10356,6 +10417,28 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
   }
 });
 
+exports.redeemAchievementCode = onCall(
+  callableOptions("redeemAchievementCode", [DOLLMASTER_ACHIEVEMENT_CODE]),
+  async (request) => {
+    const uid = requireUid(request);
+    try {
+      if (!isPlainCallableObject(request.data)
+          || Reflect.ownKeys(request.data).some((key) => key !== "code")) {
+        throw new HttpsError("invalid-argument", "実績コードの入力内容を確認してください。");
+      }
+      return await redeemDollmasterAchievement(
+        uid,
+        request.data.code,
+        DOLLMASTER_ACHIEVEMENT_CODE.value(),
+      );
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("redeemAchievementCode failed", { uid, error });
+      throw new HttpsError("internal", "実績コードを確認できませんでした。");
+    }
+  },
+);
+
 exports.soloFamiliarAction = onCall(callableOptions("soloFamiliarAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -10486,6 +10569,10 @@ function fleaAchievementStatsHaveActivity(value) {
   return stats.listings > 0 || stats.sales > 0 || stats.purchases > 0;
 }
 
+function achievementProfileHasActivity(value) {
+  return Object.keys(objectValue(value?.unlocked)).length > 0;
+}
+
 function hasMeaningfulEquippedValue(value) {
   if (value === true) return true;
   if (typeof value === "string") return value.length > 0;
@@ -10513,6 +10600,8 @@ async function transferTargetIsPristine(uid, request) {
     userRecord,
     walletSnapshot,
     progressSnapshot,
+    achievementSnapshot,
+    achievementCodeReceiptSnapshot,
     marketSnapshot,
     fleaAchievementStatsSnapshot,
     fleaSellerCardSnapshot,
@@ -10546,6 +10635,8 @@ async function transferTargetIsPristine(uid, request) {
     adminAuth.getUser(uid),
     walletRef(uid).get(),
     economyProgressRef(uid).get(),
+    achievementProfileRef(uid).get(),
+    dollmasterCodeReceiptRef(uid).get(),
     marketStatsRef(uid).get(),
     anjuPayFleaAchievementStatsStore.statsRef(uid).get(),
     firestore.collection("anjuPayFleaSellerCards").doc(uid).get(),
@@ -10586,6 +10677,8 @@ async function transferTargetIsPristine(uid, request) {
     return false;
   }
   if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
+  if (achievementProfileHasActivity(achievementSnapshot.data())
+      || achievementCodeReceiptSnapshot.exists) return false;
   if (retiredTrainingHistoryHasActivity(trainingProfileSnapshot.data())
       || !legacyTrainingClaimSnapshot.empty
       || !trainingV6ClaimSnapshot.empty) return false;
@@ -10741,6 +10834,8 @@ async function redeemAccountTransferCode(request, rawCode) {
       codeSnapshot,
       targetWalletSnapshot,
       targetProgressSnapshot,
+      targetAchievementSnapshot,
+      targetAchievementCodeReceiptSnapshot,
       targetMarketSnapshot,
       targetFleaAchievementStatsSnapshot,
       targetFleaSellerCardSnapshot,
@@ -10762,6 +10857,8 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(codeRef),
       transaction.get(walletRef(targetUid)),
       transaction.get(economyProgressRef(targetUid)),
+      transaction.get(achievementProfileRef(targetUid)),
+      transaction.get(dollmasterCodeReceiptRef(targetUid)),
       transaction.get(marketStatsRef(targetUid)),
       transaction.get(anjuPayFleaAchievementStatsStore.statsRef(targetUid)),
       transaction.get(firestore.collection("anjuPayFleaSellerCards").doc(targetUid)),
@@ -10825,6 +10922,8 @@ async function redeemAccountTransferCode(request, rawCode) {
       return;
     }
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
+        || achievementProfileHasActivity(targetAchievementSnapshot.data())
+        || targetAchievementCodeReceiptSnapshot.exists
         || targetMarketSnapshot.exists
         || fleaAchievementStatsHaveActivity(targetFleaAchievementStatsSnapshot.data())
         || targetFleaSellerCardSnapshot.exists

@@ -83,6 +83,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /achievementCodeRedemptions/{uid} {
+      allow read, write: if false;
+
+      match /codes/{codeId} {
+        allow read, write: if false;
+      }
+    }
+
     match /crownMonthlyAchievementStats/{uid} {
       allow read, write: if false;
     }

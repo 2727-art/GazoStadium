@@ -2,6 +2,7 @@
   "use strict";
 
   const MAX_SHOWCASE = 3;
+  const DOLLMASTER_ACHIEVEMENT_ID = "special_dollmaster";
   const definitions = [];
   const addSeries = ({
     scope,
@@ -403,9 +404,26 @@
     autoPublic: false,
   });
 
+  definitions.unshift(Object.freeze({
+    id: "special_dollmaster",
+    scope: "special",
+    category: "special_collection",
+    family: "special_dollmaster",
+    familyLabel: "シークレットコレクション",
+    icon: "＠",
+    level: 1,
+    target: 1,
+    name: "DOLLM＠STER",
+    description: "別のゲームで手にした実績コードが結んだ、特別なコレクション",
+    hint: "別のゲームで獲得した実績コードを入力すると解除",
+    autoPublic: false,
+    legacy: false,
+  }));
+
   const catalog = Object.freeze(definitions);
   const byId = new Map(catalog.map((definition) => [definition.id, definition]));
   const categoryInfo = Object.freeze([
+    { id: "special_collection", label: "SPECIAL COLLECTION", copy: "別のゲームで受け取った証を、このスタジアムだけの特別な実績として残します" },
     { id: "battle_record", label: "通算対戦", copy: "勝敗に関係なく、正式な対戦を完走した記録" },
     { id: "battle_modes", label: "モード別", copy: "現在遊べる2種類のオンライン対戦と、解除済みの旧モード記録" },
     { id: "battle_variety", label: "モード回遊", copy: "複数の入口を訪れたオールラウンダーの記録" },
@@ -476,14 +494,17 @@
 
   function achievementPresentationClass(definition) {
     const level = Math.min(10, Math.max(1, Math.floor(Number(definition?.level) || 1)));
-    return `achievement-level-${level}${level === 10 ? " is-final" : ""}`;
+    const dollmasterClass = definition?.id === DOLLMASTER_ACHIEVEMENT_ID ? " is-dollmaster" : "";
+    return `achievement-level-${level}${level === 10 ? " is-final" : ""}${dollmasterClass}`;
   }
 
   function orderUnlockIds(value) {
     return normalizeIds(value).sort((firstId, secondId) => {
       const first = byId.get(firstId);
       const second = byId.get(secondId);
-      return Number(second?.level === 10) - Number(first?.level === 10)
+      return Number(second?.id === DOLLMASTER_ACHIEVEMENT_ID)
+        - Number(first?.id === DOLLMASTER_ACHIEVEMENT_ID)
+        || Number(second?.level === 10) - Number(first?.level === 10)
         || Number(second?.level || 0) - Number(first?.level || 0)
         || catalog.indexOf(first) - catalog.indexOf(second);
     });
@@ -494,7 +515,9 @@
     if (!ids.length) return empty;
     return `<span class="achievement-badges ${compact ? "is-compact" : ""}" aria-label="実績ショーケース">${ids.map((id) => {
       const achievement = byId.get(id);
-      const levelLabel = achievement.level === 10 ? "FINAL Lv.10" : `Lv.${achievement.level}`;
+      const levelLabel = achievement.id === DOLLMASTER_ACHIEVEMENT_ID
+        ? "SPECIAL"
+        : achievement.level === 10 ? "FINAL Lv.10" : `Lv.${achievement.level}`;
       return `<span class="achievement-badge achievement-scope-${achievement.scope} ${achievementPresentationClass(achievement)}" title="${escapeHtml(`${achievement.name} / ${achievement.description}`)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>${levelLabel}</small></span>`;
     }).join("")}</span>`;
   }
@@ -530,12 +553,18 @@
         const selected = current && showcased.has(current.id);
         const unlockedClass = current ? "is-unlocked" : "is-locked";
         const finalAchievement = current?.level === 10;
+        const dollmasterAchievement = (current || next)?.id === DOLLMASTER_ACHIEVEMENT_ID;
         const progressLabel = legacyFamily
           ? "終了モードの記録"
+          : dollmasterAchievement && current
+            ? "特典コード実績・取得済み"
           : finalAchievement
             ? "Lv.10 / 10・最終実績"
             : `${current ? `Lv.${current.level} / ${familyDefinitions.at(-1).level}` : `未解除 / 最大Lv.${familyDefinitions.at(-1).level}`}${next && current ? "・次の条件は非公開" : ""}`;
-        return `<article class="achievement-family-card ${unlockedClass} ${selected ? "is-showcased" : ""} ${current ? achievementPresentationClass(current) : ""}">
+        const presentationClass = current
+          ? achievementPresentationClass(current)
+          : dollmasterAchievement ? achievementPresentationClass(next) : "";
+        return `<article class="achievement-family-card ${unlockedClass} ${selected ? "is-showcased" : ""} ${presentationClass}">
           <div class="achievement-family-icon" aria-hidden="true">${current ? escapeHtml(current.icon) : "?"}</div>
           <div class="achievement-family-copy">
             <span>${escapeHtml(current?.familyLabel || next?.familyLabel || "隠し実績")}</span>
@@ -543,6 +572,7 @@
             <p>${current ? escapeHtml(current.description) : escapeHtml(next?.hint || "遊び続けると解除")}</p>
             <small>${progressLabel}</small>
             ${finalAchievement ? '<b class="achievement-final-mark"><span aria-hidden="true">✦</span> FINAL ACHIEVEMENT <span aria-hidden="true">✦</span></b>' : ""}
+            ${dollmasterAchievement && current ? '<b class="achievement-dollmaster-mark"><span aria-hidden="true">✦</span> LIMITED LEGENDARY <span aria-hidden="true">✦</span></b>' : ""}
           </div>
           ${current ? `<button class="achievement-showcase-toggle ${selected ? "is-selected" : ""}" type="button" data-achievement-showcase="${escapeHtml(current.id)}" aria-pressed="${selected}">${selected ? "展示中" : "展示する"}</button>` : ""}
         </article>`;
@@ -572,6 +602,7 @@
     const first = byId.get(ids[0]);
     if (!first) return;
     const finalAchievement = first.level === 10;
+    const dollmasterAchievement = first.id === DOLLMASTER_ACHIEVEMENT_ID;
     let layer = document.querySelector("#achievementUnlockLayer");
     if (!layer) {
       layer = document.createElement("div");
@@ -581,13 +612,14 @@
       document.body.append(layer);
     }
     layer.innerHTML = `<article class="achievement-unlock-card ${achievementPresentationClass(first)}">
-      <span class="achievement-unlock-kicker">${finalAchievement ? "FINAL ACHIEVEMENT UNLOCKED" : "ACHIEVEMENT UNLOCKED"}</span>
+      <span class="achievement-unlock-kicker">${dollmasterAchievement ? "CROSSOVER COLLECTION UNLOCKED" : finalAchievement ? "FINAL ACHIEVEMENT UNLOCKED" : "ACHIEVEMENT UNLOCKED"}</span>
       <div><i aria-hidden="true">${escapeHtml(first.icon)}</i><span><strong>${escapeHtml(first.name)}</strong><small>${escapeHtml(first.description)}</small></span></div>
       ${finalAchievement ? '<b class="achievement-unlock-final"><span aria-hidden="true">✦</span> Lv.10・最終実績 <span aria-hidden="true">✦</span></b>' : ""}
+      ${dollmasterAchievement ? '<b class="achievement-unlock-dollmaster"><span aria-hidden="true">✦</span> LIMITED LEGENDARY COLLECTION <span aria-hidden="true">✦</span></b>' : ""}
       ${ids.length > 1 ? `<p>ほか${ids.length - 1}件の実績も解除しました</p>` : ""}
     </article>`;
     layer.classList.add("is-visible");
-    window.setTimeout(() => layer.classList.remove("is-visible"), 4200);
+    window.setTimeout(() => layer.classList.remove("is-visible"), dollmasterAchievement ? 5600 : 4200);
   }
 
   function notify(value) {

@@ -6,3 +6,4 @@ database-debug.log
 firestore-debug.log
 functions/node_modules/
 functions/.env*
+functions/.secret.local

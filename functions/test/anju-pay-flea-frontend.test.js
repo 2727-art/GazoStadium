@@ -195,7 +195,7 @@ test("Lv10 is final across achievement surfaces with luxurious motion-safe styli
   assert.match(css, /@keyframes achievement-final-sheen/);
   assert.match(
     css,
-    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.achievement-family-card\.is-final::after,[\s\S]*?\.achievement-unlock-card\.is-final::after \{[\s\S]*?animation: none;/,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.achievement-family-card\.is-final::after,[\s\S]*?\.achievement-unlock-card\.is-final::after[\s\S]*?animation: none;/,
   );
 });
 

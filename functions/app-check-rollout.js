@@ -31,6 +31,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   reportFreeTableP2pConnectivity: true,
   // 新規公開の非同期フリマは旧クライアント移行を待つ必要がないため、初日から強制します。
   anjuPayFleaAction: true,
+  // 別ゲーム特典コードは総当たりを避けるため、専用境界で初日から強制します。
+  redeemAchievementCode: true,
   // ソロ台本市場は残高・UGC・公開プロフィールを扱う新規境界のため、初日から強制します。
   aiTextTrainingAction: true,
   // トップ向けの仲間人数も、生の実績セッションを読ませず集計境界だけを公開します。

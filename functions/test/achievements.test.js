@@ -50,6 +50,36 @@ test("generic progression avoids wins, rating, raw rank, and AnjuPay totals whil
   }
 });
 
+test("DOLLM＠STER is a manual-only special collection achievement", () => {
+  const definition = ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === "special_dollmaster");
+  assert.deepEqual({
+    scope: definition.scope,
+    category: definition.category,
+    family: definition.family,
+    name: definition.name,
+    autoPublic: definition.autoPublic,
+    conditionType: definition.condition.type,
+  }, {
+    scope: "special",
+    category: "special_collection",
+    family: "special_dollmaster",
+    name: "DOLLM＠STER",
+    autoPublic: false,
+    conditionType: "manual_code",
+  });
+  assert.equal(eligibleAchievementIds({}).includes(definition.id), false);
+  assert.equal(eligibleAchievementIds({ scope: "special" }).includes(definition.id), false);
+
+  const first = unlockAchievements(null, [definition.id], 1234);
+  assert.deepEqual(first.newlyUnlocked, [definition.id]);
+  assert.equal(first.profile.unlocked[definition.id], 1234);
+  assert.equal(first.profile.pendingUnlocks[definition.id], 1234);
+  assert.deepEqual(effectiveShowcase(first.profile), []);
+  const replay = unlockAchievements(first.profile, [definition.id], 5678);
+  assert.deepEqual(replay.newlyUnlocked, []);
+  assert.equal(replay.profile.unlocked[definition.id], 1234);
+});
+
 test("monthly Crown achievements start in August and participation receipts are idempotent", () => {
   assert.equal(CROWN_MONTHLY_ACHIEVEMENT_START_KEY, "2026-08");
   assert.equal(CROWN_MONTHLY_ACHIEVEMENT_START_KEY, CROWN_CIRCUIT_CUTOVER_KEYS.monthly);
@@ -753,6 +783,7 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     legacy: definition.legacy === true,
   });
   const synchronizedFamilies = new Set([
+    "special_dollmaster",
     "battle_total",
     "battle_solo",
     "battle_strategy",
@@ -818,6 +849,8 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "2026年8月以降の検証済み月間王座で刻む、参加・入賞・戴冠の記録",
     "連続日数ではなく、自分のペースで一品を言葉にした日々の記録",
     "売上額や順位ではなく、一品が届いた回数と出会いの記録",
+    "SPECIAL COLLECTION",
+    "別のゲームで獲得した実績コードを入力すると解除",
   ]) {
     assert.match(collectionHtml, new RegExp(copy));
   }
@@ -835,6 +868,18 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
   const finalBadgeHtml = window.HariaiAchievements.renderBadges(["market_seller_10000"]);
   assert.match(finalBadgeHtml, /achievement-level-10 is-final/);
   assert.match(finalBadgeHtml, /FINAL Lv\.10/);
+  const dollmasterCollectionHtml = window.HariaiAchievements.renderCollection({
+    unlocked: { special_dollmaster: 101 },
+    showcase: ["special_dollmaster"],
+  });
+  assert.match(dollmasterCollectionHtml, /DOLLM＠STER/);
+  assert.match(dollmasterCollectionHtml, /achievement-level-1 is-dollmaster/);
+  assert.match(dollmasterCollectionHtml, /特典コード実績・取得済み/);
+  assert.match(dollmasterCollectionHtml, /LIMITED LEGENDARY/);
+  const dollmasterBadgeHtml = window.HariaiAchievements.renderBadges(["special_dollmaster"]);
+  assert.match(dollmasterBadgeHtml, /is-dollmaster/);
+  assert.match(dollmasterBadgeHtml, /SPECIAL/);
+  assert.doesNotMatch(dollmasterBadgeHtml, /Lv\.1/);
   assert.deepEqual(
     [...window.HariaiAchievements.orderUnlockIds([
       "market_seller_500",

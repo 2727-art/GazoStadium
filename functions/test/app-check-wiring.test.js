@@ -86,6 +86,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "reportP2pConnectivity",
     "reportMarketP2pConnectivity",
     "reportFreeTableP2pConnectivity",
+    "redeemAchievementCode",
     "economyAction",
     "anjuPayFleaAction",
     "aiTextTrainingAction",
@@ -110,6 +111,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportMarketP2pConnectivity, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportFreeTableP2pConnectivity, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.anjuPayFleaAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.redeemAchievementCode, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.aiTextTrainingAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.aiTextTrainingPublicStats, true);
   assert.equal(

@@ -1,12 +1,14 @@
 "use strict";
 
+const { DOLLMASTER_ACHIEVEMENT_ID } = require("./achievement-code");
+
 const BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo", "royale"]);
 const ACTIVE_BATTLE_MODES = Object.freeze(["solo", "strategy"]);
 const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["battle", "training", "ai_training", "market", "flea"]);
+const VALID_SCOPES = new Set(["special", "battle", "training", "ai_training", "market", "flea"]);
 const MAX_SHOWCASE = 3;
 const CROWN_MONTHLY_ACHIEVEMENT_START_KEY = "2026-08";
 
@@ -467,7 +469,25 @@ const fleaDefinitions = [
   }),
 ];
 
+const specialDefinitions = [Object.freeze({
+  id: DOLLMASTER_ACHIEVEMENT_ID,
+  scope: "special",
+  category: "special_collection",
+  family: "special_dollmaster",
+  familyLabel: "シークレットコレクション",
+  icon: "＠",
+  level: 1,
+  target: 1,
+  name: "DOLLM＠STER",
+  description: "別のゲームで手にした実績コードが結んだ、特別なコレクション",
+  hint: "別のゲームで獲得した実績コードを入力すると解除",
+  autoPublic: false,
+  legacy: false,
+  condition: { type: "manual_code" },
+})];
+
 const ACHIEVEMENT_DEFINITIONS = Object.freeze([
+  ...specialDefinitions,
   ...battleDefinitions,
   ...aiTrainingDefinitions,
   ...marketDefinitions,

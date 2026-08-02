@@ -451,8 +451,10 @@ const FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
   Object.freeze({ urls: "stun:stun1.l.google.com:19302" }),
 ]);
+const DOLLMASTER_ACHIEVEMENT_ID = "special_dollmaster";
 
 const economyActionCallable = httpsCallable(functions, "economyAction");
+const redeemAchievementCodeCallable = httpsCallable(functions, "redeemAchievementCode");
 const soloFamiliarActionCallable = httpsCallable(functions, "soloFamiliarAction");
 const soloSessionActionCallable = httpsCallable(functions, "soloSessionAction");
 const getP2pIceServersCallable = httpsCallable(functions, "getP2pIceServers");
@@ -684,6 +686,9 @@ function createOnlineState() {
     },
     achievementsReady: false,
     achievementsBusy: false,
+    achievementCodeBusy: false,
+    achievementCodeDraft: "",
+    achievementCodeError: "",
     notifiedAchievementIds: new Set(),
     rankingAwards: [],
     rankingAwardsReady: false,
@@ -1703,9 +1708,11 @@ function openOnlineScreen(screen) {
       state.authReady = true;
       state.economyReady = true;
       state.achievementsReady = true;
-      const finalAchievementPreview = new URLSearchParams(location.search)
-        .get("achievementPreview") === "final";
+      const achievementPreview = new URLSearchParams(location.search).get("achievementPreview");
+      const finalAchievementPreview = achievementPreview === "final";
+      const dollmasterAchievementPreview = achievementPreview === "dollmaster";
       const previewUnlocked = Object.fromEntries([
+        ...(dollmasterAchievementPreview ? [DOLLMASTER_ACHIEVEMENT_ID] : []),
         finalAchievementPreview ? "battle_total_30000" : "battle_total_100",
         finalAchievementPreview ? "battle_solo_10000" : "battle_solo_100",
         finalAchievementPreview ? "battle_strategy_10000" : "battle_strategy_5",
@@ -1743,6 +1750,8 @@ function openOnlineScreen(screen) {
           "battle_total_10000",
           "battle_total_30000",
         ]);
+      } else if (dollmasterAchievementPreview) {
+        window.HariaiAchievements?.notify?.([DOLLMASTER_ACHIEVEMENT_ID]);
       }
       return;
     }
@@ -3695,6 +3704,65 @@ function applyAchievementPayload(value, { notifyPending = false } = {}) {
   if (notifyPending) notifyAchievementUnlocks(profile.pendingUnlocks);
 }
 
+function achievementCodeErrorMessage(error) {
+  const code = String(error?.code || "");
+  if (code.endsWith("resource-exhausted")) {
+    return "入力回数が多いため、1分ほど待ってからもう一度お試しください。";
+  }
+  if (code.endsWith("not-found") || code.endsWith("invalid-argument")) {
+    return "コードを確認してください。";
+  }
+  return "実績コードを確認できませんでした。通信状態を確認して、もう一度お試しください。";
+}
+
+async function redeemDollmasterAchievementCode() {
+  if (!state.uid || state.achievementCodeBusy) return;
+  const input = document.querySelector("#achievementRewardCodeInput");
+  const code = String(input?.value || "")
+    .normalize("NFKC")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 4);
+  state.achievementCodeDraft = code;
+  state.achievementCodeError = "";
+  if (!/^[A-Z0-9]{4}$/.test(code)) {
+    state.achievementCodeError = "4文字の英数字コードを入力してください。";
+    render();
+    window.requestAnimationFrame(() => document.querySelector("#achievementRewardCodeInput")?.focus());
+    return;
+  }
+  if (useOfflineMarketPreview) {
+    showToast("LOCAL UI PREVIEWではコード照合を行いません。");
+    return;
+  }
+
+  state.achievementCodeBusy = true;
+  render();
+  try {
+    const response = await redeemAchievementCodeCallable({ code });
+    if (response.data?.redeemed !== true || !response.data?.achievements) {
+      throw new Error("実績コードの受領を確認できませんでした。");
+    }
+    applyAchievementPayload(response.data.achievements, { notifyPending: true });
+    state.achievementCodeDraft = "";
+    showToast(response.data.alreadyUnlocked
+      ? "DOLLM＠STERは取得済みです。"
+      : "DOLLM＠STERを実績コレクションに追加しました。");
+  } catch (error) {
+    state.achievementCodeError = achievementCodeErrorMessage(error);
+  } finally {
+    state.achievementCodeBusy = false;
+    render();
+    if (state.achievementCodeError) {
+      window.requestAnimationFrame(() => {
+        const nextInput = document.querySelector("#achievementRewardCodeInput");
+        nextInput?.focus();
+        nextInput?.select();
+      });
+    }
+  }
+}
+
 async function loadAchievements({ syncPublic = true, renderAfter = true } = {}) {
   if (!state.uid || state.achievementsBusy) return state.achievements;
   state.achievementsBusy = true;
@@ -4293,6 +4361,32 @@ function renderDailyMissions() {
   </section>`;
 }
 
+function renderAchievementCodeVault() {
+  const unlocked = Boolean(state.achievements?.unlocked?.[DOLLMASTER_ACHIEVEMENT_ID]);
+  if (unlocked) {
+    return `<section class="achievement-reward-code is-unlocked" aria-labelledby="achievementRewardCodeTitle">
+      <div class="achievement-reward-code-emblem" aria-hidden="true"><span>＠</span></div>
+      <div class="achievement-reward-code-copy"><span class="achievement-reward-code-kicker">CROSSOVER COLLECTION ACQUIRED</span>
+        <h2 id="achievementRewardCodeTitle">DOLLM＠STER</h2>
+        <p>別のゲームで受け取った証が、特別な実績コレクションとして保存されています。</p>
+        <b><span aria-hidden="true">✦</span> LIMITED LEGENDARY <span aria-hidden="true">✦</span></b></div>
+    </section>`;
+  }
+  const disabled = state.achievementCodeBusy || useOfflineMarketPreview;
+  return `<section class="achievement-reward-code" aria-labelledby="achievementRewardCodeTitle">
+    <div class="achievement-reward-code-emblem" aria-hidden="true"><span>?</span></div>
+    <div class="achievement-reward-code-copy"><span class="achievement-reward-code-kicker">CROSSOVER REWARD</span>
+      <h2 id="achievementRewardCodeTitle">別ゲーム特典コード</h2>
+      <p>別のゲームで実績報酬として受け取った4文字のコードを入力すると、限定実績がコレクションへ加わります。</p></div>
+    <form class="achievement-reward-code-form" id="achievementRewardCodeForm">
+      <label for="achievementRewardCodeInput">実績報酬コード</label>
+      <div><input id="achievementRewardCodeInput" name="code" type="text" minlength="4" maxlength="4" pattern="[A-Za-z0-9]{4}" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="4文字のコード" value="${escapeHtml(state.achievementCodeDraft)}" ${disabled ? "disabled" : ""} required />
+        <button class="button button-primary" id="achievementRewardCodeSubmit" type="submit" ${disabled ? "disabled" : ""}>${state.achievementCodeBusy ? "照合中…" : "特別実績を受け取る"}</button></div>
+      ${state.achievementCodeError ? `<p class="achievement-reward-code-error" id="achievementRewardCodeStatus" role="alert">${escapeHtml(state.achievementCodeError)}</p>` : `<p id="achievementRewardCodeStatus" role="status">${useOfflineMarketPreview ? "LOCAL UI PREVIEWではコード照合を行いません。" : "コードはサーバーで照合し、同じアカウントへ重複付与しません。"}</p>`}
+    </form>
+  </section>`;
+}
+
 function renderAchievements() {
   const content = state.achievementsReady
     ? window.HariaiAchievements?.renderCollection?.(state.achievements)
@@ -4304,6 +4398,7 @@ function renderAchievements() {
     <div class="achievement-policy">
       <span>条件は解除まで非公開</span><span>AnjuPay報酬なし</span><span>強度・価格・順位は条件外</span><span>ランキング展示は最大3件</span>
     </div>
+    ${renderAchievementCodeVault()}
     ${state.achievementsBusy ? `<div class="achievement-loading">実績情報を更新しています…</div>` : ""}
     ${content || `<div class="economy-unavailable"><strong>実績表示を準備できませんでした</strong><p>ページを読み直してお試しください。</p></div>`}
     <div class="economy-actions"><button class="button button-ghost" id="achievementRefreshButton" ${state.achievementsBusy ? "disabled" : ""}>実績を再読み込み</button>
@@ -5743,6 +5838,20 @@ function bindAchievementEvents() {
   });
   document.querySelector("#achievementRefreshButton")?.addEventListener("click", () => {
     loadAchievements({ syncPublic: true }).catch(() => showToast("実績情報を再読み込みできませんでした。"));
+  });
+  document.querySelector("#achievementRewardCodeForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    redeemDollmasterAchievementCode();
+  });
+  document.querySelector("#achievementRewardCodeInput")?.addEventListener("input", (event) => {
+    const input = event.currentTarget;
+    input.value = input.value
+      .normalize("NFKC")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 4);
+    state.achievementCodeDraft = input.value;
+    state.achievementCodeError = "";
   });
   document.querySelector("[data-achievement-showcase-auto]")?.addEventListener("click", () => {
     saveAchievementShowcase([]);

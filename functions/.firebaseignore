@@ -1,0 +1,8 @@
+.git/
+node_modules/
+test/
+.env
+.env.*
+.secret.local
+firebase-debug.log
+firebase-debug.*.log
