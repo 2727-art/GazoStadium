@@ -274,8 +274,9 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
   assert.match(client, /data-att-message-decoration=/);
   assert.match(client, /ai-text-training-message-surface/);
   assert.match(client, /name="aiTextTrainingCheerPresentation"/);
-  assert.match(client, /デコ台詞 · 推奨/);
-  assert.match(client, /長い台詞は画像を隠さないよう自動でクラシック枠へ退避/);
+  assert.match(client, /class="ai-text-training-cosmetic-preview-hud"/);
+  assert.match(client, /デコ台詞 · 作品モード/);
+  assert.match(client, /文字数によるクラシック枠への自動切替は行いません/);
   assert.match(client, /ai-text-training-cosmetics-v3/);
   assert.match(online, /ai-text-training-cosmetics-v3/);
   assert.match(html, /ai-text-training-customization-v2/);
@@ -290,6 +291,28 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
   assert.match(trainingStyles, /forced-colors:\s*active/);
   assert.match(trainingStyles, /\.ai-text-training-doodle-cheer[\s\S]*?pointer-events:\s*none/);
   assert.match(trainingStyles, /ai_training_style_crimson_azure[\s\S]*?--att-doodle-accent-a:\s*#ff2b3d[\s\S]*?--att-doodle-accent-b:\s*#1688ff/);
+  assert.match(trainingStyles, /\.is-doodle\.is-collage\s*\{[\s\S]*?inset:\s*0;[\s\S]*?background:\s*transparent !important;/);
+  assert.match(trainingStyles, /\.ai-text-training-opponent\s*\{[\s\S]*?isolation:\s*isolate;/);
+  assert.match(trainingStyles, /\.is-doodle\.is-collage\s*\{[\s\S]*?z-index:\s*4;/);
+  assert.match(trainingStyles, /\.is-doodle\.is-collage::before,[\s\S]*?\.is-doodle\.is-collage::after\s*\{[\s\S]*?content:\s*none !important;/);
+  assert.match(trainingStyles, /\.ai-text-training-cosmetic-preview-window\s*\{[\s\S]*?aspect-ratio:\s*9 \/ 14;/);
+  assert.match(trainingStyles, /\.ai-text-training-cosmetic-preview-hud\s*\{[\s\S]*?z-index:\s*5;/);
+  assert.doesNotMatch(trainingStyles, /\.ai-text-training-cosmetic-preview-window > div > span/);
+  assert.match(trainingStyles, /\.att-doodle-copy::before,[\s\S]*?content:\s*attr\(data-text\)/);
+  assert.match(trainingStyles, /data-att-doodle-layout="center-vertical"/);
+  assert.match(trainingStyles, /data-att-doodle-layout="diagonal-banner"/);
+  assert.match(trainingStyles, /data-att-doodle-layout="twin-arch"/);
+  assert.match(trainingStyles, /data-att-doodle-layout="edge-frame"/);
+  assert.match(trainingStyles, /data-att-doodle-layout="cross-diagonal"/);
+  assert.match(
+    trainingStyles,
+    /@media \(forced-colors: active\)[\s\S]*?\.is-doodle\.is-collage\s*\{[\s\S]*?background:\s*transparent !important;[\s\S]*?\.is-collage \.att-doodle-copy\s*\{[\s\S]*?background:\s*Canvas;/,
+  );
+  assert.match(
+    trainingStyles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.ai-text-training-doodle-cheer\.is-collage \.att-doodle-copy\s*\{[\s\S]*?animation:\s*none !important;/,
+  );
+  assert.match(online, /shop-ai-training-style-message is-doodle is-collage/);
   for (const styleId of [
     "ai_training_style_soft_glow",
     "ai_training_style_neon_beat",
@@ -311,13 +334,13 @@ test("training cosmetics are trial-only until server-verified equip and freeze p
   );
 });
 
-test("doodle cheer stays fixed per round, falls back for long lines, and records only completed works", () => {
+test("doodle cheer composes every line as a stable full-image collage and records only completed works", () => {
   const doodleContext = vm.createContext({
     AI_TEXT_TRAINING_ROUND_COUNT: 5,
     CHEER_PRESENTATION_PREFERENCE_KEY: "cheer-mode",
     CHEER_PRESENTATIONS: new Set(["doodle", "classic"]),
     DEFAULT_CHEER_PRESENTATION: "doodle",
-    DOODLE_LONG_MESSAGE_LENGTH: 22,
+    DOODLE_MAX_GRAPHEMES: 84,
     DOODLE_ANCHORS: Object.freeze([
       "upper-left",
       "upper-right",
@@ -325,6 +348,13 @@ test("doodle cheer stays fixed per round, falls back for long lines, and records
       "middle-right",
       "lower-left",
       "lower-right",
+    ]),
+    DOODLE_LAYOUTS: Object.freeze([
+      "center-vertical",
+      "diagonal-banner",
+      "twin-arch",
+      "edge-frame",
+      "cross-diagonal",
     ]),
     state: {
       roundIndex: 0,
@@ -347,33 +377,89 @@ test("doodle cheer stays fixed per round, falls back for long lines, and records
       normalizeCheerPresentation,
       cheerDisplayMode,
       doodleAnchorForRound,
+      doodleLayoutForRound,
+      doodleGraphemes,
+      normalizeDoodleMessage,
+      doodleMessageParts,
       normalizeRoundArtwork,
       normalizeRoundArtworks,
     };
   `, doodleContext);
   const api = doodleContext.__doodleApi;
 
-  assert.equal(api.cheerDisplayMode("あ".repeat(22), "doodle"), "doodle");
-  assert.equal(api.cheerDisplayMode("あ".repeat(23), "doodle"), "classic");
+  assert.equal(api.cheerDisplayMode("あ".repeat(84), "doodle"), "doodle");
   assert.equal(api.cheerDisplayMode("短い台詞", "classic"), "classic");
   assert.equal(api.cheerDisplayMode("短い台詞", undefined), "doodle");
   assert.equal(api.normalizeCheerPresentation(undefined, "classic"), "classic");
-  const anchors = Array.from({ length: 5 }, (_, index) => api.doodleAnchorForRound(index));
-  assert.equal(new Set(anchors).size, 5);
+  const layouts = Array.from({ length: 5 }, (_, index) => api.doodleLayoutForRound(index));
+  assert.equal(new Set(layouts).size, 5);
   assert.deepEqual(
-    anchors,
-    Array.from({ length: 5 }, (_, index) => api.doodleAnchorForRound(index)),
+    layouts,
+    Array.from({ length: 5 }, (_, index) => api.doodleLayoutForRound(index)),
   );
 
-  const emojiArtwork = api.normalizeRoundArtwork({
+  const familyEmoji = "👩‍👩‍👧‍👦";
+  const combiningKana = "か\u3099";
+  assert.equal(api.doodleGraphemes(`${familyEmoji}${combiningKana}`).length, 2);
+  const normalizedLongMessage = api.normalizeDoodleMessage(`${familyEmoji.repeat(84)}Z`);
+  assert.equal(api.doodleGraphemes(normalizedLongMessage).length, 84);
+  assert.equal(normalizedLongMessage.endsWith("Z"), false);
+  const splitMessage = `${familyEmoji}準備できた？今日は一緒に最後まで駆け抜けよう！`;
+  const splitParts = Array.from(api.doodleMessageParts(splitMessage));
+  assert.ok(splitParts.length >= 2 && splitParts.length <= 3);
+  assert.equal(splitParts.join(""), splitMessage);
+
+  const collageArtwork = api.normalizeRoundArtwork({
+    version: 2,
+    message: "準備できた？今日は一緒にやろう",
+    parts: ["準備できた？", "今日は一緒にやろう"],
+    layout: "cross-diagonal",
+    presentation: "doodle",
+    bpm: 100,
+  }, 0);
+  assert.equal(collageArtwork.version, 2);
+  assert.equal(collageArtwork.layout, "cross-diagonal");
+  assert.deepEqual(Array.from(collageArtwork.parts), ["準備できた？", "今日は一緒にやろう"]);
+  assert.equal(collageArtwork.presentation, "doodle");
+
+  const repairedCollage = api.normalizeRoundArtwork({
+    version: 2,
+    message: "不正な分割も安全に再構成する",
+    parts: ["一致しない"],
+    layout: "unsafe-center",
+    presentation: "doodle",
+    bpm: 80,
+  }, 1);
+  assert.ok(doodleContext.DOODLE_LAYOUTS.includes(repairedCollage.layout));
+  assert.equal(Array.from(repairedCollage.parts).join(""), repairedCollage.message);
+
+  const repairedGraphemeBoundary = api.normalizeRoundArtwork({
+    version: 2,
+    message: familyEmoji,
+    parts: [familyEmoji.slice(0, 2), familyEmoji.slice(2)],
+    layout: "center-vertical",
+    presentation: "doodle",
+    bpm: 80,
+  }, 0);
+  assert.deepEqual(Array.from(repairedGraphemeBoundary.parts), [familyEmoji]);
+
+  const roundTrippedCollage = api.normalizeRoundArtwork(
+    JSON.parse(JSON.stringify(collageArtwork)),
+    0,
+  );
+  assert.equal(roundTrippedCollage.layout, collageArtwork.layout);
+  assert.deepEqual(Array.from(roundTrippedCollage.parts), Array.from(collageArtwork.parts));
+
+  const legacyArtwork = api.normalizeRoundArtwork({
     message: "😀".repeat(90),
     anchor: "unsafe-center",
     presentation: "unknown",
     bpm: 100,
   }, 0);
-  assert.equal(Array.from(emojiArtwork.message).length, 84);
-  assert.ok(doodleContext.DOODLE_ANCHORS.includes(emojiArtwork.anchor));
-  assert.equal(emojiArtwork.presentation, "classic");
+  assert.equal(legacyArtwork.version, 1);
+  assert.equal(Array.from(legacyArtwork.message).length, 84);
+  assert.ok(doodleContext.DOODLE_ANCHORS.includes(legacyArtwork.anchor));
+  assert.equal(legacyArtwork.presentation, "classic");
 
   const recovered = api.normalizeRoundArtworks([
     { message: "完成1", anchor: "upper-left", presentation: "doodle", bpm: 80 },
@@ -399,20 +485,39 @@ test("doodle cheer stays fixed per round, falls back for long lines, and records
   assert.match(newPlan, /state\.sessionCheerPresentation = normalizeCheerPresentation\(state\.cheerPresentation\)/);
   assert.match(newPlan, /state\.roundArtworks = Array\(AI_TEXT_TRAINING_ROUND_COUNT\)\.fill\(null\)/);
   const preview = sourceBlock(client, "function installPreview", "async function initializeAuthenticatedState");
+  assert.match(preview, /version: 2/);
+  assert.match(preview, /parts: doodleMessageParts\(sampleArtworkMessages\[index\]\)/);
+  assert.match(preview, /layout: doodleLayoutForRound\(index\)/);
   assert.match(preview, /presentation: cheerDisplayMode\([\s\S]*?state\.sessionCheerPresentation/);
   const finishRound = sourceBlock(client, "function finishRound", "function chooseReaction");
   assert.ok(finishRound.indexOf("captureRoundArtwork()") < finishRound.indexOf("state.completedRounds"));
   assert.ok(finishRound.indexOf("captureRoundArtwork()") < finishRound.indexOf("commitTrainingCompletion()"));
   const support = sourceBlock(client, "function supportMessage", "function updatePlayingDom");
   assert.equal(support.match(/pickAiTextTrainingLine\(/gu)?.length, 1);
-  assert.match(support, /document\.querySelector\("#aiTextTrainingCheer > span"\)/);
+  assert.doesNotMatch(support, /document\.querySelector\("#aiTextTrainingCheer > span"\)/);
   assert.match(support, /updateCheerPresentationDom\(state\.currentMessage\)/);
+  const presentationUpdate = sourceBlock(client, "function updateCheerPresentationDom", "function captureRoundArtwork");
+  assert.match(presentationUpdate, /textNode\.textContent = text/);
+  assert.match(presentationUpdate, /textNode\.dataset\.text = text/);
+  assert.match(presentationUpdate, /doodleSurface\.dataset\.attDoodleLayout = doodleLayoutForRound\(\)/);
+  assert.doesNotMatch(presentationUpdate, /innerHTML|outerHTML/);
+  const resultOverlay = sourceBlock(client, "function renderResultArtworkOverlay", "function renderResultLineup");
+  assert.match(resultOverlay, /Number\(artwork\.version\) >= 2/);
+  assert.match(resultOverlay, /data-att-doodle-layout="\$\{escapeHtml\(artwork\.layout\)\}"/);
+  assert.match(resultOverlay, /parts: artwork\.parts/);
+  assert.match(resultOverlay, /is-legacy-doodle/);
+  assert.match(resultOverlay, /role="img" aria-label=/);
+  const liveDoodle = sourceBlock(client, "function renderDoodleCheer", "function renderClassicCheer");
+  assert.match(liveDoodle, /role="img" aria-label=/);
+  const cosmeticsPanel = sourceBlock(client, "function renderCosmeticsPanel", "function renderSetup");
+  assert.match(cosmeticsPanel, /is-doodle is-collage[\s\S]*?role="img" aria-label=/);
+  assert.match(online, /shop-ai-training-style-message is-doodle is-collage[\s\S]*?role="img" aria-label=/);
   const resultLineup = sourceBlock(client, "function renderResultLineup", "function renderAiTextTrainingLightResult");
   assert.match(resultLineup, /今回の5作品/);
   assert.match(resultLineup, /const completedSession = state\.completedRounds >= AI_TEXT_TRAINING_ROUND_COUNT/);
   assert.match(resultLineup, /completedSession[\s\S]*?Array\.from\(\{ length: AI_TEXT_TRAINING_ROUND_COUNT \}/);
   assert.match(resultLineup, /artworkIndexes\.length === AI_TEXT_TRAINING_ROUND_COUNT/);
-  assert.match(resultLineup, /artwork\.message/);
+  assert.match(resultLineup, /renderResultArtworkOverlay\(artwork, index\)/);
   assert.match(resultLineup, /artwork\?\.bpm \?\? state\.bpms\[index\]/);
   assert.match(resultLineup, /画像と台詞はサーバーへ送信しません/);
   assert.doesNotMatch(
@@ -2107,7 +2212,7 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
     trainingStyles,
     /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-cheer\.is-classic > span\s*\{[\s\S]*?-webkit-line-clamp:\s*2;/,
   );
-  assert.match(
+  assert.doesNotMatch(
     sourceBlock(client, "function supportMessage", "function updatePlayingDom"),
     /document\.querySelector\("#aiTextTrainingCheer > span"\)/,
   );
@@ -2134,10 +2239,15 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
     trainingStyles,
     /@media \(orientation: landscape\) and \(max-height: 650px\) and \(min-width: 540px\) and \(min-aspect-ratio: 5 \/ 3\)[\s\S]*?data-ai-text-training-play-style="standard"[\s\S]*?\.ai-text-training-safety-controls\s*\{[\s\S]*?grid-column:\s*2;/,
   );
+  assert.match(
+    trainingStyles,
+    /@media \(orientation: landscape\) and \(max-height: 650px\)[\s\S]*?\.ai-text-training-doodle-cheer\.is-collage \.att-doodle-copy\s*\{[\s\S]*?writing-mode:\s*horizontal-tb !important;[\s\S]*?\.att-doodle-copy\.is-part-1\s*\{[\s\S]*?left:\s*28% !important;/,
+  );
 
   assert.equal(html.match(/beat-edge-hud-v3/gu)?.length, 2);
   assert.equal(html.match(/ai-training-focus-hud-v2/gu)?.length, 2);
   assert.equal(html.match(/ai-training-doodle-cheer-v1/gu)?.length, 3);
+  assert.equal(html.match(/ai-training-purikura-collage-v1/gu)?.length, 3);
   assert.match(readme, /残り秒数を画像左端[\s\S]*?ビートゲージを右端[\s\S]*?残り10秒/);
   assert.match(design, /残り時間が厳密に10秒以下[\s\S]*?全面フラッシュを使わない/);
 });

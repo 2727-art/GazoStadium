@@ -165,7 +165,7 @@ const SESSION_SCHEMA_VERSION = 4;
 const DECK_SCHEMA_VERSION = 2;
 const DEFAULT_CHEER_PRESENTATION = "doodle";
 const CHEER_PRESENTATIONS = new Set(["doodle", "classic"]);
-const DOODLE_LONG_MESSAGE_LENGTH = 22;
+const DOODLE_MAX_GRAPHEMES = 84;
 const DOODLE_ANCHORS = Object.freeze([
   "upper-left",
   "upper-right",
@@ -173,6 +173,13 @@ const DOODLE_ANCHORS = Object.freeze([
   "middle-right",
   "lower-left",
   "lower-right",
+]);
+const DOODLE_LAYOUTS = Object.freeze([
+  "center-vertical",
+  "diagonal-banner",
+  "twin-arch",
+  "edge-frame",
+  "cross-diagonal",
 ]);
 const DEFEAT_ZONE_PHASES = new Set([
   "zone_ready",
@@ -338,31 +345,114 @@ function doodleAnchorForRound(roundIndex = state.roundIndex) {
   return DOODLE_ANCHORS[(sessionSeed + normalizedIndex * 5) % DOODLE_ANCHORS.length];
 }
 
-function cheerMessageLength(value) {
-  return Array.from(String(value || "").trim()).length;
+function doodleLayoutForRound(roundIndex = state.roundIndex) {
+  const normalizedIndex = Math.max(
+    0,
+    Math.min(AI_TEXT_TRAINING_ROUND_COUNT - 1, Number(roundIndex) || 0),
+  );
+  const sessionSeed = Math.trunc(Math.abs(Number(state.sessionStartedAt) || 0))
+    % DOODLE_LAYOUTS.length;
+  return DOODLE_LAYOUTS[(sessionSeed + normalizedIndex * 2) % DOODLE_LAYOUTS.length];
 }
 
-function cheerDisplayMode(message, preferred = state.sessionCheerPresentation) {
-  if (normalizeCheerPresentation(preferred) === "classic") return "classic";
-  return cheerMessageLength(message) > DOODLE_LONG_MESSAGE_LENGTH ? "classic" : "doodle";
+function doodleGraphemes(value) {
+  const normalized = String(value || "")
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .trim();
+  if (!normalized) return [];
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    const segmenter = new Intl.Segmenter("ja", { granularity: "grapheme" });
+    return Array.from(segmenter.segment(normalized), (entry) => entry.segment);
+  }
+  return Array.from(normalized);
+}
+
+function normalizeDoodleMessage(value) {
+  return doodleGraphemes(value).slice(0, DOODLE_MAX_GRAPHEMES).join("");
+}
+
+function doodleMessageParts(value) {
+  const graphemes = doodleGraphemes(value).slice(0, DOODLE_MAX_GRAPHEMES);
+  if (!graphemes.length) return [];
+  const partCount = graphemes.length <= 8 ? 1 : graphemes.length <= 28 ? 2 : 3;
+  if (partCount === 1) return [graphemes.join("")];
+  const parts = [];
+  let cursor = 0;
+  for (let index = 0; index < partCount; index += 1) {
+    const remainingParts = partCount - index;
+    const remainingLength = graphemes.length - cursor;
+    const length = remainingParts === 1
+      ? remainingLength
+      : Math.max(1, Math.round(remainingLength / remainingParts));
+    parts.push(graphemes.slice(cursor, cursor + length).join(""));
+    cursor += length;
+  }
+  return parts.filter(Boolean);
+}
+
+function normalizeDoodleParts(value, message) {
+  const source = Array.isArray(value) ? value : [];
+  const parts = source.map((part) => String(part || ""));
+  const graphemeBoundaries = new Set();
+  let boundaryOffset = 0;
+  doodleGraphemes(message).forEach((grapheme) => {
+    boundaryOffset += grapheme.length;
+    graphemeBoundaries.add(boundaryOffset);
+  });
+  let partOffset = 0;
+  const preservesGraphemeBoundaries = parts.every((part) => {
+    partOffset += part.length;
+    return graphemeBoundaries.has(partOffset);
+  });
+  if (parts.length >= 1
+      && parts.length <= 3
+      && parts.every(Boolean)
+      && parts.join("") === message
+      && preservesGraphemeBoundaries) {
+    return parts;
+  }
+  return doodleMessageParts(message);
+}
+
+function doodleMessageDensity(message) {
+  const length = doodleGraphemes(message).length;
+  if (length <= 14) return "short";
+  if (length <= 28) return "medium";
+  return "long";
+}
+
+function cheerDisplayMode(_message, preferred = state.sessionCheerPresentation) {
+  return normalizeCheerPresentation(preferred);
 }
 
 function normalizeRoundArtwork(value, roundIndex) {
   const source = value && typeof value === "object" ? value : {};
-  const normalizedMessage = String(source.message || "")
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
-    .trim();
-  const message = Array.from(normalizedMessage).slice(0, 84).join("");
+  const message = normalizeDoodleMessage(source.message);
   if (!message) return null;
-  const anchor = DOODLE_ANCHORS.includes(source.anchor)
-    ? source.anchor
-    : doodleAnchorForRound(roundIndex);
   const bpm = normalizeAiTextTrainingBpm(source.bpm);
+  const presentation = normalizeCheerPresentation(source.presentation, "classic");
+  const isCollageArtwork = Number(source.version) >= 2
+    || DOODLE_LAYOUTS.includes(source.layout)
+    || Array.isArray(source.parts);
+  if (isCollageArtwork) {
+    return Object.freeze({
+      version: 2,
+      message,
+      parts: Object.freeze(normalizeDoodleParts(source.parts, message)),
+      layout: DOODLE_LAYOUTS.includes(source.layout)
+        ? source.layout
+        : doodleLayoutForRound(roundIndex),
+      presentation,
+      bpm: bpm === null ? 0 : bpm,
+    });
+  }
   return Object.freeze({
     version: 1,
     message,
-    anchor,
-    presentation: normalizeCheerPresentation(source.presentation, "classic"),
+    anchor: DOODLE_ANCHORS.includes(source.anchor)
+      ? source.anchor
+      : doodleAnchorForRound(roundIndex),
+    presentation,
     bpm: bpm === null ? 0 : bpm,
   });
 }
@@ -1614,8 +1704,10 @@ function installPreview(requestedScreen) {
         { length: AI_TEXT_TRAINING_ROUND_COUNT },
         (_, index) => (index < state.completedRounds
           ? normalizeRoundArtwork({
+            version: 2,
             message: sampleArtworkMessages[index],
-            anchor: doodleAnchorForRound(index),
+            parts: doodleMessageParts(sampleArtworkMessages[index]),
+            layout: doodleLayoutForRound(index),
             presentation: cheerDisplayMode(
               sampleArtworkMessages[index],
               state.sessionCheerPresentation,
@@ -2528,6 +2620,7 @@ function renderCosmeticsPanel() {
     previewMessage,
     state.cheerPresentation,
   );
+  const previewLayout = doodleLayoutForRound(0);
   const saveDisabled = !state.authReady
     || state.cosmeticBusy
     || !draftChanged
@@ -2551,8 +2644,8 @@ function renderCosmeticsPanel() {
           <legend>台詞表示 <em>FREE</em></legend>
           <small>セッション開始時に固定します。台本の抽選順や内容、消費回数は変わりません。</small>
           <div class="ai-text-training-presentation-options">
-            ${cheerPresentationOptionHtml("doodle", "デコ台詞 · 推奨", "画像へ直接描くプリクラ風。各ラウンド内では位置を固定")}
-            ${cheerPresentationOptionHtml("classic", "クラシック枠", "従来の読みやすい枠表示。長い台詞は自動でこちらへ退避")}
+            ${cheerPresentationOptionHtml("doodle", "デコ台詞 · 作品モード", "文字数に関係なく、画像全体へ組み上げるプリクラ風コラージュ")}
+            ${cheerPresentationOptionHtml("classic", "クラシック枠 · 画像重視", "画像を主役に、台詞を下部の枠内へ読みやすく表示")}
           </div>
         </fieldset>
         <fieldset class="ai-text-training-cosmetic-slot">
@@ -2563,9 +2656,11 @@ function renderCosmeticsPanel() {
       <div class="ai-text-training-cosmetic-preview" ${cosmeticDataAttributes(selection)}>
         <span>PRIVATE TRAINING PREVIEW</span>
         <div class="ai-text-training-cosmetic-preview-window">
-          <div><span>ROUND 1 / 5</span><strong>80 BPM</strong></div>
+          <div class="ai-text-training-cosmetic-preview-hud"><span>ROUND 1 / 5</span><strong>80 BPM</strong></div>
           <em>20</em>
-          <p class="ai-text-training-cosmetic-preview-message ${previewPresentation === "classic" ? "ai-text-training-message-surface" : ""} is-${previewPresentation}" data-att-doodle-anchor="lower-right">${escapeHtml(previewMessage)}</p>
+          ${previewPresentation === "doodle"
+            ? `<div class="ai-text-training-cosmetic-preview-message is-doodle is-collage" data-att-doodle-layout="${escapeHtml(previewLayout)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(previewMessage))}" data-att-doodle-part-count="${doodleMessageParts(previewMessage).length}" role="img" aria-label="${escapeHtml(previewMessage)}">${renderDoodleCompositionContents(previewMessage, { layout: previewLayout, bpm: 80, roundIndex: 0 })}</div>`
+            : `<p class="ai-text-training-cosmetic-preview-message ai-text-training-message-surface is-classic">${escapeHtml(previewMessage)}</p>`}
         </div>
         <dl><div><dt>窓</dt><dd>${escapeHtml(selectedPanel?.panelLabel || "標準ウィンドウ")}</dd></div><div><dt>表示</dt><dd>${previewPresentation === "doodle" ? "デコ台詞" : "クラシック枠"}</dd></div><div><dt>装飾</dt><dd>${escapeHtml(selectedMessage?.messageLabel || "標準メッセージ")}</dd></div></dl>
       </div>
@@ -2574,7 +2669,7 @@ function renderCosmeticsPanel() {
       <button class="button button-primary" type="button" data-ai-text-training-action="save-cosmetics" ${saveDisabled ? "disabled" : ""}>${escapeHtml(saveLabel)}</button>
       ${state.cosmeticDraft ? '<button class="button button-ghost" type="button" data-ai-text-training-action="cancel-cosmetics">試着を取り消す</button>' : ""}
     </div>
-    <p class="ai-text-training-cosmetic-note">台詞表示は無料でこの端末に保存します。未購入の装飾もここで試着できますが、装着は保存されません。購入はトップのAnjuPayストアから。長い台詞は画像を隠さないよう自動でクラシック枠へ退避します。</p>
+    <p class="ai-text-training-cosmetic-note">台詞表示は無料でこの端末に保存します。未購入の装飾もここで試着できますが、装着は保存されません。購入はトップのAnjuPayストアから。デコ台詞は長文も画像内で組版し、文字数によるクラシック枠への自動切替は行いません。</p>
     <p class="ai-text-training-mode-note">演出は見た目だけです。BPM・運動時間・結果・即停止などの安全操作は変わりません。</p>
   </section>`;
 }
@@ -3357,10 +3452,33 @@ function renderDefeatZonePlay() {
   });
 }
 
+function renderDoodleCompositionContents(message, {
+  parts = doodleMessageParts(message),
+  bpm = currentBpm(),
+  roundIndex = state.roundIndex,
+} = {}) {
+  const normalizedMessage = normalizeDoodleMessage(message);
+  const normalizedParts = normalizeDoodleParts(parts, normalizedMessage);
+  const bpmLabel = Number(bpm) === 0 ? "FREE" : `${Number(bpm) || 0} BPM`;
+  const copies = Array.from({ length: 3 }, (_, index) => {
+    const text = normalizedParts[index] || "";
+    return `<span class="att-doodle-copy is-part-${index + 1}" data-ai-text-training-doodle-part="${index}" data-text="${escapeHtml(text)}" aria-hidden="true" ${text ? "" : "hidden"}>${escapeHtml(text)}</span>`;
+  }).join("");
+  return `${copies}
+    <i class="att-doodle-ornament is-heart" aria-hidden="true">♡</i>
+    <i class="att-doodle-ornament is-spark-a" aria-hidden="true">✦</i>
+    <i class="att-doodle-ornament is-spark-b" aria-hidden="true">✧</i>
+    <i class="att-doodle-ornament is-loop" aria-hidden="true">〰</i>
+    <i class="att-doodle-ornament is-ribbon" aria-hidden="true">୨୧</i>
+    <i class="att-doodle-meta" aria-hidden="true">R${Number(roundIndex) + 1} · ${escapeHtml(bpmLabel)}</i>`;
+}
+
 function renderDoodleCheer(message) {
   const displayMode = cheerDisplayMode(message);
-  return `<div class="ai-text-training-cheer ai-text-training-doodle-cheer is-doodle is-writing" id="aiTextTrainingCheer" data-ai-text-training-cheer="doodle" data-att-doodle-anchor="${escapeHtml(doodleAnchorForRound())}" ${displayMode === "doodle" ? "" : "hidden"}>
-    <span data-ai-text-training-cheer-text>${escapeHtml(message)}</span>
+  const layout = doodleLayoutForRound();
+  const parts = doodleMessageParts(message);
+  return `<div class="ai-text-training-cheer ai-text-training-doodle-cheer is-doodle is-collage is-writing" id="aiTextTrainingCheer" data-ai-text-training-cheer="doodle" data-att-doodle-layout="${escapeHtml(layout)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(message))}" data-att-doodle-part-count="${parts.length}" role="img" aria-label="${escapeHtml(message)}" ${displayMode === "doodle" ? "" : "hidden"}>
+    ${renderDoodleCompositionContents(message, { parts, layout, bpm: currentBpm(), roundIndex: state.roundIndex })}
   </div>`;
 }
 
@@ -3408,7 +3526,7 @@ function renderPlay() {
   const showRoundCheer = ["countdown", "playing"].includes(state.phase);
   return renderFrame(`
     <section class="ai-text-training-arena ${state.phase === "countdown" ? "is-countdown" : ""}" data-att-mood="${escapeHtml(trainingMood())}" data-att-tempo="${escapeHtml(aiTextTrainingTempoBand(bpm))}">
-      <div class="ai-text-training-opponent">${renderPlayingImage()}<div class="ai-text-training-vignette" aria-hidden="true"></div>${showRoundCheer ? renderDoodleCheer(cheerMessage) : ""}</div>
+      <div class="ai-text-training-opponent" data-att-cheer-presentation="${escapeHtml(cheerDisplayMode(cheerMessage))}">${renderPlayingImage()}<div class="ai-text-training-vignette" aria-hidden="true"></div>${showRoundCheer ? renderDoodleCheer(cheerMessage) : ""}</div>
       ${center}
       ${renderAiTextTrainingLightsCompanion()}
       <div class="ai-text-training-safety-controls">
@@ -3444,6 +3562,23 @@ function formatActiveDuration(value) {
   return `${minutes}分${seconds}秒`;
 }
 
+function renderResultArtworkOverlay(artwork, index) {
+  if (!artwork) return "";
+  if (artwork.presentation === "classic") {
+    return `<span class="ai-text-training-result-doodle is-classic">${escapeHtml(artwork.message)}</span>`;
+  }
+  if (Number(artwork.version) >= 2 && DOODLE_LAYOUTS.includes(artwork.layout)) {
+    return `<span class="ai-text-training-result-doodle is-doodle is-collage" data-att-doodle-layout="${escapeHtml(artwork.layout)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(artwork.message))}" data-att-doodle-part-count="${artwork.parts.length}" role="img" aria-label="${escapeHtml(artwork.message)}">
+      ${renderDoodleCompositionContents(artwork.message, {
+        parts: artwork.parts,
+        bpm: artwork.bpm,
+        roundIndex: index,
+      })}
+    </span>`;
+  }
+  return `<span class="ai-text-training-result-doodle is-doodle is-legacy-doodle" data-att-doodle-anchor="${escapeHtml(artwork.anchor)}">${escapeHtml(artwork.message)}</span>`;
+}
+
 function renderResultLineup({ winner = false } = {}) {
   const artworks = normalizeRoundArtworks(state.roundArtworks, {
     completedRounds: state.completedRounds,
@@ -3464,7 +3599,7 @@ function renderResultLineup({ winner = false } = {}) {
       const bpm = artwork?.bpm ?? state.bpms[index];
       return `<figure class="${artwork ? "is-artwork" : ""}">
       ${image ? `<img src="${escapeHtml(image.url)}" alt="今回のラウンド${index + 1}の${artwork ? "作品" : "画像"}" />` : `<span class="ai-text-training-result-placeholder">${index + 1}</span>`}
-      ${artwork ? `<span class="ai-text-training-result-doodle is-${escapeHtml(artwork.presentation)}" data-att-doodle-anchor="${escapeHtml(artwork.anchor)}">${escapeHtml(artwork.message)}</span>` : ""}
+      ${renderResultArtworkOverlay(artwork, index)}
       ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
       <figcaption>R${index + 1} · ${bpm === 0 ? "FREE" : `${bpm} BPM`}</figcaption>
     </figure>`;
@@ -4296,11 +4431,24 @@ function announce(message) {
 
 function updateCheerPresentationDom(message) {
   const displayMode = cheerDisplayMode(message);
-  const element = document.querySelector("#aiTextTrainingCheer > span");
-  if (element) element.textContent = message;
-  document.querySelectorAll("[data-ai-text-training-cheer-text]").forEach((textNode) => {
+  document.querySelectorAll('[data-ai-text-training-cheer="classic"] [data-ai-text-training-cheer-text]').forEach((textNode) => {
     textNode.textContent = message;
   });
+  const doodleSurface = document.querySelector('[data-ai-text-training-cheer="doodle"]');
+  if (doodleSurface) {
+    const normalizedMessage = normalizeDoodleMessage(message);
+    const parts = doodleMessageParts(normalizedMessage);
+    doodleSurface.dataset.attDoodleLayout = doodleLayoutForRound();
+    doodleSurface.dataset.attDoodleDensity = doodleMessageDensity(normalizedMessage);
+    doodleSurface.dataset.attDoodlePartCount = String(parts.length);
+    doodleSurface.setAttribute("aria-label", normalizedMessage);
+    doodleSurface.querySelectorAll("[data-ai-text-training-doodle-part]").forEach((textNode, index) => {
+      const text = parts[index] || "";
+      textNode.textContent = text;
+      textNode.dataset.text = text;
+      textNode.hidden = !text;
+    });
+  }
   document.querySelectorAll("[data-ai-text-training-cheer]").forEach((surface) => {
     const visible = surface.dataset.aiTextTrainingCheer === displayMode;
     surface.hidden = !visible;
@@ -4319,8 +4467,10 @@ function captureRoundArtwork() {
     Math.min(AI_TEXT_TRAINING_ROUND_COUNT - 1, Number(state.roundIndex) || 0),
   );
   state.roundArtworks[index] = normalizeRoundArtwork({
+    version: 2,
     message: state.currentMessage,
-    anchor: doodleAnchorForRound(index),
+    parts: doodleMessageParts(state.currentMessage),
+    layout: doodleLayoutForRound(index),
     presentation: cheerDisplayMode(state.currentMessage),
     bpm: currentBpm(),
   }, index);
@@ -4344,8 +4494,6 @@ function supportMessage({ initial = false } = {}) {
     round: state.roundIndex + 1,
     remaining: remainingSeconds,
   });
-  const element = document.querySelector("#aiTextTrainingCheer > span");
-  if (element) element.textContent = state.currentMessage;
   updateCheerPresentationDom(state.currentMessage);
   window.clearTimeout(state.messageTimer);
   state.messageTimer = window.setTimeout(
