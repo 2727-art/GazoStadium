@@ -9,6 +9,8 @@ const {
   aggregateCount,
   compareServerOverallRankingKeys,
   crownCustomizationOptions,
+  fallbackCrownCustomization,
+  fallbackServerOverallStanding,
   sameServerOverallRankingKey,
   serverOverallRankingKey,
 } = require("../ranking-dashboard");
@@ -61,6 +63,23 @@ test("aggregate counts fail closed on malformed values", () => {
   assert.equal(aggregateCount({ data: () => ({ count: "invalid" }) }), 0);
 });
 
+test("optional ranking context falls back without disabling Crown proof", () => {
+  assert.deepEqual(fallbackServerOverallStanding(1234), {
+    rank: 0,
+    participantCount: 0,
+    rating: 1234,
+    nextSeatGap: 0,
+    neighbors: [],
+  });
+  assert.deepEqual(fallbackCrownCustomization({
+    crownTheme: "gold",
+    crownSignatureId: "daily_champion",
+  }), {
+    availableThemes: ["rose", "gold"],
+    availableSignatureIds: ["daily_champion"],
+  });
+});
+
 test("crown options preserve earned themes and de-duplicate signatures", () => {
   assert.deepEqual(crownCustomizationOptions(), {
     availableThemes: ["rose"],
@@ -92,7 +111,16 @@ test("dashboard uses aggregate rank counts and bounded neighbor queries", () => 
   assert.match(functionsSource, /beforeQuery\.limitToLast\(3\)\.get\(\)/);
   assert.match(functionsSource, /afterQuery\.limit\(3\)\.get\(\)/);
   assert.match(functionsSource, /sameServerOverallRankingKey\(key, verifiedKey\)/);
+  assert.match(functionsSource, /Promise\.allSettled\(\[\s*loadServerOverallStanding/);
+  assert.match(functionsSource, /fallbackServerOverallStanding\(profile\.rating\)/);
+  assert.match(functionsSource, /contextAvailable:\s*standingAvailable/);
   assert.doesNotMatch(functionsSource, /top:\s*rankedProfiles\.slice/);
+});
+
+test("ranking failures no longer surface as AnjuPay failures", () => {
+  assert.match(functionsSource, /RANKING_ECONOMY_ACTIONS/);
+  assert.match(functionsSource, /ランキング情報を処理できませんでした/);
+  assert.match(functionsSource, /economyActionInternalMessage\(action\)/);
 });
 
 test("crown customization uses fixed existence queries instead of 90 plus 90 scans", () => {
@@ -111,6 +139,9 @@ test("required Firestore indexes are declared", () => {
   const declared = indexes.indexes.map((index) => `${index.collectionGroup}|${signature(index)}`);
   assert.ok(declared.includes(
     "serverRankingProfiles|enabled:ASCENDING,rating:DESCENDING,entryId:ASCENDING",
+  ));
+  assert.ok(declared.includes(
+    "serverRankingProfiles|enabled:ASCENDING,rating:ASCENDING,entryId:DESCENDING",
   ));
   assert.ok(declared.includes("awards|rank:ASCENDING,participantCount:ASCENDING"));
 });

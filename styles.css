@@ -2786,6 +2786,17 @@ button:disabled {
   color: var(--cyan);
 }
 
+.ranking-dashboard-context-notice {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(100, 232, 213, 0.2);
+  border-radius: 10px;
+  background: rgba(100, 232, 213, 0.065);
+  color: #b9ddd8;
+  font-size: 0.67rem;
+  line-height: 1.55;
+}
+
 .ranking-neighbor-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));

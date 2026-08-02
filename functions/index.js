@@ -216,6 +216,8 @@ const {
 const {
   aggregateCount,
   crownCustomizationOptions,
+  fallbackCrownCustomization,
+  fallbackServerOverallStanding,
   sameServerOverallRankingKey,
   serverOverallRankingKey,
 } = require("./ranking-dashboard");
@@ -2631,23 +2633,49 @@ async function loadServerOverallStanding(uid, initialProfileSnapshot) {
   };
 }
 
+function rankingDependencyErrorCode(error) {
+  return cleanText(error?.code || error?.details || error?.message || "unknown", 80) || "unknown";
+}
+
 async function getRankingDashboard(uid) {
   const now = Date.now();
   const dailyKey = periodKey("daily", now);
   const runRef = isCrownCircuitPeriod("daily", dailyKey)
     ? crownCircuitRunRef(uid, dailyKey)
     : null;
-  const [profileSnapshot, runSnapshot, customization, spotlightSnapshot] = await Promise.all([
-    serverRankingProfileRef(uid).get(),
-    runRef ? runRef.get() : Promise.resolve(null),
-    loadCrownCustomizationOptions(uid),
-    realtime.ref("online/rankingSpotlights/current").get(),
-  ]);
+  const profilePromise = serverRankingProfileRef(uid).get();
+  const runPromise = runRef ? runRef.get() : Promise.resolve(null);
+  const [profileSnapshot, runSnapshot] = await Promise.all([profilePromise, runPromise]);
   const profile = normalizeServerRankingProfile(profileSnapshot.data(), {
     rating: 1000,
     updatedAt: now,
   });
-  const standing = await loadServerOverallStanding(uid, profileSnapshot);
+  const [standingResult, customizationResult, spotlightResult] = await Promise.allSettled([
+    loadServerOverallStanding(uid, profileSnapshot),
+    loadCrownCustomizationOptions(uid),
+    realtime.ref("online/rankingSpotlights/current").get(),
+  ]);
+  const standingAvailable = standingResult.status === "fulfilled";
+  const standing = standingAvailable
+    ? standingResult.value
+    : fallbackServerOverallStanding(profile.rating);
+  const customization = customizationResult.status === "fulfilled"
+    ? customizationResult.value
+    : fallbackCrownCustomization(profile);
+  const spotlightSnapshot = spotlightResult.status === "fulfilled" ? spotlightResult.value : null;
+  if (!standingAvailable
+      || customizationResult.status === "rejected"
+      || spotlightResult.status === "rejected") {
+    console.warn("ranking dashboard optional context unavailable", {
+      standing: standingAvailable ? "ok" : rankingDependencyErrorCode(standingResult.reason),
+      customization: customizationResult.status === "fulfilled"
+        ? "ok"
+        : rankingDependencyErrorCode(customizationResult.reason),
+      spotlight: spotlightResult.status === "fulfilled"
+        ? "ok"
+        : rankingDependencyErrorCode(spotlightResult.reason),
+    });
+  }
   const { rank, participantCount } = standing;
   const bestRank = rank
     ? (profile.bestOverallRank ? Math.min(profile.bestOverallRank, rank) : rank)
@@ -2655,7 +2683,11 @@ async function getRankingDashboard(uid) {
   if (rank && bestRank !== profile.bestOverallRank) {
     await serverRankingProfileRef(uid).set({
       bestOverallRank: bestRank,
-    }, { merge: true });
+    }, { merge: true }).catch((error) => {
+      console.warn("ranking dashboard best-rank update deferred", {
+        code: rankingDependencyErrorCode(error),
+      });
+    });
   }
   const crownRun = runSnapshot?.exists
     ? publicCrownCircuitEntry(runSnapshot.data())
@@ -2681,6 +2713,7 @@ async function getRankingDashboard(uid) {
       rating: standing.rating,
       nextSeatGap: standing.nextSeatGap,
       neighbors: standing.neighbors,
+      contextAvailable: standingAvailable,
     },
     crownRun,
     customization: {
@@ -2700,7 +2733,7 @@ async function getRankingDashboard(uid) {
       dailyKey,
       dailyEndsAt: periodEndsAt("daily", dailyKey),
     },
-    spotlight: spotlightSnapshot.exists
+    spotlight: spotlightSnapshot?.exists
       && Number(spotlightSnapshot.child("endsAt").val() || 0) > now
       ? objectValue(spotlightSnapshot.val())
       : null,
@@ -10246,6 +10279,20 @@ exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (
   }
 });
 
+const RANKING_ECONOMY_ACTIONS = new Set([
+  "set_server_ranking_participation",
+  "get_server_ranking_awards",
+  "get_ranking_dashboard",
+  "start_crown_run",
+  "set_crown_customization",
+]);
+
+function economyActionInternalMessage(action) {
+  return RANKING_ECONOMY_ACTIONS.has(action)
+    ? "ランキング情報を処理できませんでした。少し待ってから、もう一度お試しください。"
+    : "AnjuPay処理を完了できませんでした。";
+}
+
 exports.economyAction = onCall(callableOptions("economyAction"), async (request) => {
   const uid = requireUid(request);
   const action = cleanText(request.data?.action, 32);
@@ -10305,7 +10352,7 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     console.error("economyAction failed", { uid, action, error });
-    throw new HttpsError("internal", "AnjuPay処理を完了できませんでした。");
+    throw new HttpsError("internal", economyActionInternalMessage(action));
   }
 });
 

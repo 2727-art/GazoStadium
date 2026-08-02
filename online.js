@@ -2812,6 +2812,7 @@ function normalizeRankingDashboard(value) {
     overall: {
       rank,
       participantCount,
+      contextAvailable: overallSource.contextAvailable !== false,
       percentile: Math.min(100, Math.max(0, Number(
         overallSource.percentile
           ?? (
@@ -2905,7 +2906,34 @@ function applyRankingDashboard(value) {
 }
 
 function applyCrownRunToRankingDashboard(value) {
-  if (!value || typeof value !== "object" || !rankingDashboard) return;
+  if (!value || typeof value !== "object") return;
+  if (!rankingDashboard) {
+    const selectedTheme = normalizeCrownTheme(value.crownTheme);
+    const selectedSignatureId = CROWN_SIGNATURE_IDS.includes(String(value.crownSignatureId || ""))
+      ? String(value.crownSignatureId)
+      : "";
+    applyRankingDashboard({
+      enabled: true,
+      entryId: value.entryId,
+      overall: {
+        rating: value.ratingAtStart || value.rating || INITIAL_RATING,
+        contextAvailable: false,
+      },
+      crownRun: value,
+      customization: {
+        crownTheme: selectedTheme,
+        crownSignatureId: selectedSignatureId,
+        availableThemes: [...new Set(["rose", selectedTheme])],
+        availableSignatureIds: selectedSignatureId ? [selectedSignatureId] : [],
+      },
+      rules: {
+        modes: CROWN_CIRCUIT_MODES,
+        dailyKey: value.key,
+        dailyEndsAt: value.endsAt,
+      },
+    });
+    return;
+  }
   applyRankingDashboard({
     ...rankingDashboard,
     run: value,
@@ -3466,10 +3494,9 @@ async function startCrownRun() {
     const result = response.data || {};
     if (result.dashboard) applyRankingDashboard(result.dashboard);
     else if (result.run || result.crownRun) {
-      if (rankingDashboard) applyCrownRunToRankingDashboard(result.run || result.crownRun);
-      else await refreshRankingDashboard();
+      applyCrownRunToRankingDashboard(result.run || result.crownRun);
     } else await refreshRankingDashboard();
-    await refreshLeaderboard("daily", { force: true });
+    refreshLeaderboard("daily", { force: true }).catch((error) => console.error(error));
     return getRankingDashboard();
   } finally {
     rankingDashboardBusy = false;

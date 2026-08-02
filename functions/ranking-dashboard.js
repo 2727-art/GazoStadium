@@ -34,6 +34,28 @@ function aggregateCount(snapshot) {
   return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
 }
 
+function fallbackServerOverallStanding(rating = 1000) {
+  const normalizedRating = Number.isFinite(Number(rating))
+    ? Math.min(3000, Math.max(100, Math.floor(Number(rating))))
+    : 1000;
+  return {
+    rank: 0,
+    participantCount: 0,
+    rating: normalizedRating,
+    nextSeatGap: 0,
+    neighbors: [],
+  };
+}
+
+function fallbackCrownCustomization({ crownTheme = "rose", crownSignatureId = "" } = {}) {
+  const selectedTheme = typeof crownTheme === "string" && crownTheme ? crownTheme : "rose";
+  const selectedSignatureId = typeof crownSignatureId === "string" ? crownSignatureId : "";
+  return {
+    availableThemes: [...new Set(["rose", selectedTheme])],
+    availableSignatureIds: selectedSignatureId ? [selectedSignatureId] : [],
+  };
+}
+
 function crownCustomizationOptions({
   completedRun = false,
   topThreeAward = false,
@@ -59,6 +81,8 @@ module.exports = {
   aggregateCount,
   compareServerOverallRankingKeys,
   crownCustomizationOptions,
+  fallbackCrownCustomization,
+  fallbackServerOverallStanding,
   sameServerOverallRankingKey,
   serverOverallRankingKey,
 };

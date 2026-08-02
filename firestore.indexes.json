@@ -19,6 +19,24 @@
       ]
     },
     {
+      "collectionGroup": "serverRankingProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "enabled",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "entryId",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "awards",
       "queryScope": "COLLECTION",
       "fields": [

@@ -1540,9 +1540,13 @@
     const nextSeatCopy = rank > 1
       ? `ひとつ上の席まで <strong>+${Math.max(1, Number(overall.nextSeatGap || 1))} RATE</strong>`
       : rank === 1 ? "<strong>現在、第1席です</strong>" : "正式順位を測定中です";
+    const contextNotice = overall.contextAvailable === false
+      ? `<p class="ranking-dashboard-context-notice" role="status">順位の周辺情報だけを更新中です。三戦証明と対戦はそのまま利用できます。</p>`
+      : "";
     return `<section class="ranking-dashboard" aria-labelledby="rankingDashboardTitle">
       <div class="ranking-dashboard-head"><div><span class="eyebrow">YOUR RIVAL ZONE</span><h2 id="rankingDashboardTitle">あなたの現在地</h2></div><div class="ranking-dashboard-rank"><strong>${rank ? `#${rank}` : "—"}</strong><span>${topPercent ? `上位${topPercent}%` : "測定中"}</span></div></div>
       <div class="ranking-dashboard-summary"><span><small>総合RATE</small><strong>${Number(overall.rating || 1000)}</strong></span><span><small>自己最高</small><strong>${Number(overall.bestRank || 0) ? `#${Number(overall.bestRank)}` : "—"}</strong></span><p>${nextSeatCopy}</p></div>
+      ${contextNotice}
       <ol class="ranking-neighbor-list" aria-label="自分の前後3人">${neighborRows}</ol>
       ${renderCrownRunPanel(dashboard)}
       ${renderCrownCustomization(dashboard)}

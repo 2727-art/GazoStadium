@@ -6,7 +6,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "..", "..");
-const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
+const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8")
+  .replace(/\r\n/g, "\n");
 
 function sourceBetween(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -214,6 +215,34 @@ test("all changed browser assets share the ranking TOP 10 cache marker", () => {
   assert.match(html, /styles\.css\?v=[^"]*ranking-top10-v3/);
   assert.match(html, /app\.js\?v=[^"]*ranking-top10-v3/);
   assert.match(html, /online\.js\?v=[^"]*ranking-top10-v3/);
+});
+
+test("Crown proof remains usable when optional personal ranking context is unavailable", () => {
+  const online = read("online.js");
+  const app = read("app.js");
+  const html = read("index.html");
+  const applyRun = sourceBetween(
+    online,
+    "function applyCrownRunToRankingDashboard",
+    "function getOverallLeaderboard",
+  );
+  const startRun = sourceBetween(
+    online,
+    "async function startCrownRun",
+    "async function setCrownCustomization",
+  );
+
+  assert.match(online, /contextAvailable: overallSource\.contextAvailable !== false/);
+  assert.match(app, /順位の周辺情報だけを更新中です。三戦証明と対戦はそのまま利用できます。/);
+  assert.match(applyRun, /if \(!rankingDashboard\)/);
+  assert.match(applyRun, /enabled: true/);
+  assert.match(applyRun, /contextAvailable: false/);
+  assert.match(startRun, /applyCrownRunToRankingDashboard\(result\.run \|\| result\.crownRun\)/);
+  assert.match(startRun, /refreshLeaderboard\("daily", \{ force: true \}\)\.catch/);
+  assert.doesNotMatch(startRun, /await refreshLeaderboard/);
+  assert.match(html, /styles\.css\?v=[^"]*crown-dashboard-recovery-v1/);
+  assert.match(html, /app\.js\?v=[^"]*crown-dashboard-recovery-v1/);
+  assert.match(html, /online\.js\?v=[^"]*crown-dashboard-recovery-v1/);
 });
 
 test("battle launch releases ranking ownership only after the target feature is active", () => {
