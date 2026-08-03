@@ -324,3 +324,116 @@ test("ZONE audio source is exclusive, defaults to metronome, and requires a sele
     assert.equal(normalizeAiTextTrainingZoneAudioSource(value, count), "metronome");
   }
 });
+
+test("session video maps five rounds one-to-one and cycles smaller local clip sets", async () => {
+  const { aiTextTrainingZoneVideoClipIndex } = await videoModule;
+
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, roundIndex) => (
+      aiTextTrainingZoneVideoClipIndex(roundIndex, 5)
+    )),
+    [0, 1, 2, 3, 4],
+  );
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, roundIndex) => (
+      aiTextTrainingZoneVideoClipIndex(roundIndex, 4)
+    )),
+    [0, 1, 2, 3, 0],
+  );
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, roundIndex) => (
+      aiTextTrainingZoneVideoClipIndex(roundIndex, 3)
+    )),
+    [0, 1, 2, 0, 1],
+  );
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, roundIndex) => (
+      aiTextTrainingZoneVideoClipIndex(roundIndex, 2)
+    )),
+    [0, 1, 0, 1, 0],
+  );
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, roundIndex) => (
+      aiTextTrainingZoneVideoClipIndex(roundIndex, 1)
+    )),
+    [0, 0, 0, 0, 0],
+  );
+  for (const [logicalSlotIndex, clipCount] of [
+    [-1, 5],
+    [Number.NaN, 5],
+    [0, 0],
+    [0, -1],
+    [0, 6],
+    [0, Number.POSITIVE_INFINITY],
+  ]) {
+    assert.equal(aiTextTrainingZoneVideoClipIndex(logicalSlotIndex, clipCount), null);
+  }
+});
+
+test("round video playback keeps one mapped clip and loops it by active round time", async () => {
+  const { aiTextTrainingRoundVideoPlaybackFrame } = await videoModule;
+  const durations = [2, 3, 4, 5, 6];
+
+  const cases = [
+    { roundIndex: 0, remainingMs: 20_000, index: 0, currentTime: 0 },
+    { roundIndex: 0, remainingMs: 15_000, index: 0, currentTime: 1 },
+    { roundIndex: 1, remainingMs: 15_000, index: 1, currentTime: 2 },
+    { roundIndex: 2, remainingMs: 15_000, index: 2, currentTime: 1 },
+    { roundIndex: 3, remainingMs: 15_000, index: 3, currentTime: 0 },
+    { roundIndex: 4, remainingMs: 15_000, index: 4, currentTime: 5 },
+  ];
+  for (const expected of cases) {
+    const frame = aiTextTrainingRoundVideoPlaybackFrame({
+      durations,
+      roundIndex: expected.roundIndex,
+      totalMs: 20_000,
+      remainingMs: expected.remainingMs,
+    });
+    assert.equal(frame?.index, expected.index);
+    assert.equal(frame?.currentTime, expected.currentTime);
+  }
+
+  assert.deepEqual(
+    Array.from({ length: 5 }, (_, roundIndex) => (
+      aiTextTrainingRoundVideoPlaybackFrame({
+        durations: [7, 11],
+        roundIndex,
+        totalMs: 60_000,
+        remainingMs: 60_000,
+      })?.index
+    )),
+    [0, 1, 0, 1, 0],
+  );
+});
+
+test("round video playback clamps elapsed time and rejects unusable timelines", async () => {
+  const { aiTextTrainingRoundVideoPlaybackFrame } = await videoModule;
+
+  assert.equal(
+    aiTextTrainingRoundVideoPlaybackFrame({
+      durations: [7],
+      roundIndex: 0,
+      totalMs: 60_000,
+      remainingMs: 99_000,
+    })?.currentTime,
+    0,
+  );
+  assert.equal(
+    aiTextTrainingRoundVideoPlaybackFrame({
+      durations: [7],
+      roundIndex: 0,
+      totalMs: 60_000,
+      remainingMs: -1,
+    })?.currentTime,
+    4,
+  );
+  for (const input of [
+    {},
+    { durations: [], roundIndex: 0, totalMs: 20_000, remainingMs: 20_000 },
+    { durations: [2], roundIndex: 0, totalMs: 0, remainingMs: 0 },
+    { durations: [2], roundIndex: -1, totalMs: 20_000, remainingMs: 20_000 },
+    { durations: [2], roundIndex: Number.NaN, totalMs: 20_000, remainingMs: 20_000 },
+  ]) {
+    assert.equal(aiTextTrainingRoundVideoPlaybackFrame(input), null);
+  }
+});

@@ -2763,6 +2763,15 @@
   pointer-events: none;
 }
 
+.ai-text-training-round-video-figure {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
 .ai-text-training-zone-video-media,
 .ai-text-training-zone-video-media > img,
 .ai-text-training-zone-video-mount,
@@ -2811,7 +2820,7 @@
   opacity: 1;
 }
 
-.ai-text-training-zone-video-figure.is-active {
+.ai-text-training-zone-lineup .ai-text-training-zone-video-figure.is-active {
   border-color: rgba(255, 119, 151, 0.72);
   box-shadow: inset 0 0 0 1px rgba(255, 112, 147, 0.34);
 }

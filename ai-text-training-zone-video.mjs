@@ -30,6 +30,24 @@ function finiteNumber(value) {
   return Number.isFinite(normalized) ? normalized : null;
 }
 
+function normalizedVideoDurations(durations) {
+  return Array.isArray(durations)
+    ? durations
+      .slice(0, AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT)
+      .map((value) => finiteNumber(value))
+      .filter((value) => value !== null && value > 0)
+    : [];
+}
+
+export function aiTextTrainingZoneVideoClipIndex(logicalSlotIndex, clipCount) {
+  const normalizedSlotIndex = Math.floor(finiteNumber(logicalSlotIndex) ?? -1);
+  const normalizedCount = Math.max(0, Math.floor(finiteNumber(clipCount) || 0));
+  if (normalizedSlotIndex < 0
+      || normalizedCount <= 0
+      || normalizedCount > AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT) return null;
+  return normalizedSlotIndex % normalizedCount;
+}
+
 export function aiTextTrainingZoneVideoAspect(width, height) {
   const normalizedWidth = finiteNumber(width);
   const normalizedHeight = finiteNumber(height);
@@ -100,12 +118,7 @@ export function aiTextTrainingZoneVideoPlaybackFrame({
   totalMs,
   remainingMs,
 } = {}) {
-  const normalizedDurations = Array.isArray(durations)
-    ? durations
-      .slice(0, AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT)
-      .map((value) => finiteNumber(value))
-      .filter((value) => value !== null && value > 0)
-    : [];
+  const normalizedDurations = normalizedVideoDurations(durations);
   const normalizedTotalMs = Math.max(0, finiteNumber(totalMs) || 0);
   if (!normalizedDurations.length || normalizedTotalMs <= 0) return null;
   const normalizedRemainingMs = Math.max(
@@ -124,6 +137,28 @@ export function aiTextTrainingZoneVideoPlaybackFrame({
     index,
     currentTime: (segmentElapsedMs / 1000) % duration,
     segmentMs,
+  });
+}
+
+export function aiTextTrainingRoundVideoPlaybackFrame({
+  durations = [],
+  roundIndex,
+  totalMs,
+  remainingMs,
+} = {}) {
+  const normalizedDurations = normalizedVideoDurations(durations);
+  const index = aiTextTrainingZoneVideoClipIndex(roundIndex, normalizedDurations.length);
+  const normalizedTotalMs = Math.max(0, finiteNumber(totalMs) || 0);
+  if (index === null || normalizedTotalMs <= 0) return null;
+  const normalizedRemainingMs = Math.max(
+    0,
+    Math.min(normalizedTotalMs, finiteNumber(remainingMs) ?? normalizedTotalMs),
+  );
+  const elapsedMs = normalizedTotalMs - normalizedRemainingMs;
+  return Object.freeze({
+    index,
+    currentTime: (elapsedMs / 1000) % normalizedDurations[index],
+    segmentMs: normalizedTotalMs,
   });
 }
 

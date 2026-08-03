@@ -74,11 +74,12 @@ import {
   AI_TEXT_TRAINING_ZONE_VIDEO_MAX_BYTES,
   AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT,
   AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS,
+  aiTextTrainingRoundVideoPlaybackFrame,
   aiTextTrainingZoneVideoIsEligible,
   aiTextTrainingZoneVideoPlaybackFrame,
   normalizeAiTextTrainingZoneAudioSource,
   validateAiTextTrainingZoneVideoMetadata,
-} from "./ai-text-training-zone-video.mjs?v=ai-training-zone-video-deco-v1";
+} from "./ai-text-training-zone-video.mjs?v=ai-training-session-video-deco-v2";
 import {
   verifiedStrategyVideoMime,
 } from "./strategy-video-transfer.mjs?v=strategy-video-review-v1";
@@ -250,6 +251,8 @@ let zoneVideoElementClipId = "";
 let zoneVideoPlaybackRequest = 0;
 let zoneVideoClipSequence = 0;
 let zoneVideoPreparation = null;
+let zoneVideoPlayPendingClipId = "";
+const zoneVideoAutoplayBlockedClipIds = new Set();
 
 function shared() {
   return window.HariaiApp?.shared;
@@ -985,6 +988,7 @@ function cancelZoneVideoPreparation() {
 
 function resetZoneVideoPlayer() {
   zoneVideoPlaybackRequest += 1;
+  zoneVideoPlayPendingClipId = "";
   if (zoneVideoElement) {
     resetZoneVideoElement(zoneVideoElement);
   }
@@ -1001,6 +1005,7 @@ function releaseZoneVideoClips(targetState = state) {
     cancelZoneVideoPreparation();
     resetZoneVideoPlayer();
     zoneVideoElement = null;
+    zoneVideoAutoplayBlockedClipIds.clear();
   }
   const clips = Array.isArray(targetState?.zoneVideoClips)
     ? targetState.zoneVideoClips
@@ -2733,8 +2738,8 @@ function renderZoneVideoPanel() {
       ? `端末動画を選ぶ（あと${remaining}本）`
       : "動画は5本選択済み";
   return `<section class="ai-text-training-zone-video-panel" aria-labelledby="aiTextTrainingZoneVideoTitle">
-    <header><span>DEFEAT ZONE · DEVICE ONLY</span><h3 id="aiTextTrainingZoneVideoTitle">最終攻勢の背景を動画デコにする <em>任意</em></h3><p>敗北ZONEの20秒間だけ、デコ台詞を端末動画へ重ねます。動画がなくても従来どおり画像で遊べます。</p></header>
-    ${count ? `<div class="ai-text-training-zone-video-grid">${state.zoneVideoClips.map(zoneVideoClipCard).join("")}</div>` : '<p class="ai-text-training-zone-video-empty">動画はまだ選ばれていません。最終攻勢ではDRAWされた5枚の画像を表示します。</p>'}
+    <header><span>DEFEAT ZONE · DEVICE ONLY</span><h3 id="aiTextTrainingZoneVideoTitle">第1ラウンドから最終攻勢まで動画デコにする <em>任意</em></h3><p>動画1〜5をラウンド1〜5へ順に表示し、最終攻勢でも切り替えます。動画がなくても従来どおり画像で遊べます。</p></header>
+    ${count ? `<div class="ai-text-training-zone-video-grid">${state.zoneVideoClips.map(zoneVideoClipCard).join("")}</div>` : '<p class="ai-text-training-zone-video-empty">動画はまだ選ばれていません。5ラウンドと最終攻勢ではDRAWされた5枚の画像を表示します。</p>'}
     <div class="ai-text-training-zone-video-actions">
       <label class="button button-primary ai-text-training-zone-video-file ${addDisabled ? "is-disabled" : ""}">${escapeHtml(addLabel)}<input type="file" accept="video/mp4,video/webm" multiple data-ai-text-training-zone-video ${addDisabled ? "disabled" : ""} /></label>
       <strong>${count} / ${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT}</strong>
@@ -2747,7 +2752,7 @@ function renderZoneVideoPanel() {
       </div>
       <p>どちらか一方だけを開始時に固定します。動画音声がない区間は無音です。端末が音声再生を拒否した時は、動画を無音にしてメトロノームへ安全に戻します。</p>
     </fieldset>
-    <ul><li>1本20MiB・${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS}秒以内、縦向き9:16または4:5、最大1080px幅です。</li><li>常に1本だけ再生し、ほかは静止プレビューにします。5本なら約4秒ごとに交代します。</li><li>動画・静止プレビュー・ファイル名・音の選択はFirebase、IndexedDB、localStorageへ保存せず、再読込・終了時に破棄します。</li></ul>
+    <ul><li>1本20MiB・${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS}秒以内、縦向き9:16または4:5、最大1080px幅です。</li><li>5本ならラウンド1〜5に1本ずつ対応します。1〜4本なら順番に繰り返し、休憩・一時停止では静止プレビューにします。</li><li>再生する動画は常に1本だけです。最終攻勢では選んだ本数を20秒へ均等に割り当て、5本なら約4秒ごとに交代します。</li><li>動画・静止プレビュー・ファイル名・音の選択はFirebase、IndexedDB、localStorageへ保存せず、再読込・終了時に破棄します。</li></ul>
   </section>`;
 }
 
@@ -3411,6 +3416,19 @@ function renderAiTextTrainingLightsCompanion() {
 }
 
 function renderPlayingImage() {
+  if (zoneVideoEligibleForSession()) {
+    const clipIndex = state.roundIndex % state.zoneVideoClips.length;
+    const clip = state.zoneVideoClips[clipIndex];
+    if (clip) {
+      return `<figure class="ai-text-training-zone-video-figure ai-text-training-round-video-figure" data-ai-text-training-zone-video-slot="${clipIndex}" aria-label="ラウンド${state.roundIndex + 1}の端末動画${clipIndex + 1}">
+        <div class="ai-text-training-zone-video-media" data-att-zone-video-aspect="${escapeHtml(clip.aspectId)}">
+          <img class="is-backdrop" src="${escapeHtml(clip.posterUrl)}" alt="" aria-hidden="true" />
+          <img class="is-foreground" src="${escapeHtml(clip.posterUrl)}" alt="端末動画${clipIndex + 1}の静止プレビュー" />
+          <span class="ai-text-training-zone-video-mount" data-ai-text-training-zone-video-mount="${clipIndex}" aria-hidden="true"></span>
+        </div>
+      </figure>`;
+    }
+  }
   const image = state.images[state.roundIndex];
   return image
     ? `<img src="${escapeHtml(image.url)}" alt="ラウンド${state.roundIndex + 1}の選択画像" />`
@@ -3453,7 +3471,9 @@ function clearMessage() {
 
 function renderDefeatZoneLineup({ winner = false } = {}) {
   const useZoneVideos = !winner
-    && state.phase === "zone_rush"
+    && (state.phase === "zone_ready"
+      || state.phase === "zone_rush"
+      || (state.phase === "zone_paused" && state.defeatResumePhase === "zone_rush"))
     && zoneVideoEligibleForSession();
   return `<div class="ai-text-training-zone-lineup" role="group" aria-label="${winner ? "本日あなたを倒した5枚" : "最終攻勢を行う5枚"}">
     ${state.images.map((image, index) => {
@@ -3479,12 +3499,31 @@ function renderDefeatZoneLineup({ winner = false } = {}) {
 }
 
 function currentZoneVideoPlaybackFrame() {
-  if (!zoneVideoEligibleForSession() || state.phase !== "zone_rush") return null;
-  return aiTextTrainingZoneVideoPlaybackFrame({
-    durations: state.zoneVideoClips.map((clip) => clip.duration),
-    totalMs: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
-    remainingMs: state.remainingMs,
-  });
+  if (!zoneVideoEligibleForSession()) return null;
+  const durations = state.zoneVideoClips.map((clip) => clip.duration);
+  if (["countdown", "playing"].includes(state.phase)) {
+    return aiTextTrainingRoundVideoPlaybackFrame({
+      durations,
+      roundIndex: state.roundIndex,
+      totalMs: state.roundSeconds * 1_000,
+      remainingMs: state.remainingMs,
+    });
+  }
+  if (state.phase === "zone_ready") {
+    return aiTextTrainingZoneVideoPlaybackFrame({
+      durations,
+      totalMs: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+      remainingMs: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+    });
+  }
+  if (state.phase === "zone_rush") {
+    return aiTextTrainingZoneVideoPlaybackFrame({
+      durations,
+      totalMs: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+      remainingMs: state.remainingMs,
+    });
+  }
+  return null;
 }
 
 function ensureZoneVideoElement() {
@@ -3516,6 +3555,14 @@ function sessionUsesZoneVideoAudio() {
   return sessionPrefersZoneVideoAudio() && state.phase === "zone_rush";
 }
 
+function applyZoneVideoAudioState(video) {
+  const useVideoAudio = sessionUsesZoneVideoAudio();
+  video.muted = !useVideoAudio;
+  video.defaultMuted = !useVideoAudio;
+  if (useVideoAudio) video.removeAttribute("muted");
+  else video.setAttribute("muted", "");
+}
+
 function fallbackZoneVideoAudioToMetronome({ notify = true } = {}) {
   if (!sessionUsesZoneVideoAudio()) return false;
   state.sessionZoneAudioSource = "metronome";
@@ -3536,6 +3583,18 @@ function fallbackZoneVideoAudioToMetronome({ notify = true } = {}) {
 
 function handleZoneVideoPlayRejection(video, clip, requestId) {
   if (requestId !== zoneVideoPlaybackRequest || zoneVideoElementClipId !== clip?.id) return;
+  if (!sessionUsesZoneVideoAudio()) {
+    zoneVideoAutoplayBlockedClipIds.add(clip.id);
+    document.querySelectorAll(".ai-text-training-zone-video-figure.is-playing").forEach((figure) => {
+      figure.classList.remove("is-playing");
+    });
+    resetZoneVideoPlayer();
+    if (!state.zoneVideoPlaybackErrorShown) {
+      state.zoneVideoPlaybackErrorShown = true;
+      showToast("動画を自動再生できないため、この区間は静止プレビューで続けます。タイマーと安全操作はそのまま利用できます。");
+    }
+    return;
+  }
   if (!fallbackZoneVideoAudioToMetronome()) {
     markZoneVideoPlaybackFailed(clip, requestId);
     return;
@@ -3566,7 +3625,29 @@ function markZoneVideoPlaybackFailed(clip, requestId) {
     if (audioFallback) state.zoneVideoAudioFallbackShown = true;
     showToast(audioFallback
       ? "動画を再生できないため静止プレビューへ戻し、メトロノームへの切替を試みます。音も再生できない場合は無音で続けます。"
-      : "動画を自動再生できないため、静止プレビューのまま敗北ZONEを続けます。");
+      : "動画を再生できないため、静止プレビューのままトレーニングを続けます。");
+  }
+}
+
+function requestZoneVideoPlayback(video, clip, requestId) {
+  if (zoneVideoPlayPendingClipId === clip?.id) return;
+  zoneVideoPlayPendingClipId = clip?.id || "";
+  const clearPending = () => {
+    if (zoneVideoPlayPendingClipId === clip?.id) zoneVideoPlayPendingClipId = "";
+  };
+  try {
+    const playRequest = video.play();
+    if (playRequest && typeof playRequest.then === "function") {
+      playRequest.then(clearPending, () => {
+        clearPending();
+        handleZoneVideoPlayRejection(video, clip, requestId);
+      });
+    } else {
+      clearPending();
+    }
+  } catch {
+    clearPending();
+    handleZoneVideoPlayRejection(video, clip, requestId);
   }
 }
 
@@ -3586,27 +3667,39 @@ function syncZoneVideoPlaybackDom() {
   const mount = document.querySelector(
     `[data-ai-text-training-zone-video-mount="${frame.index}"]`,
   );
-  if (!clip || !mount || state.zoneVideoFailedClipIds.has(clip.id)) {
+  const hardFailed = Boolean(clip && state.zoneVideoFailedClipIds.has(clip.id));
+  const autoplayBlocked = Boolean(clip && zoneVideoAutoplayBlockedClipIds.has(clip.id));
+  if (!clip || !mount || hardFailed || autoplayBlocked) {
+    if (hardFailed && sessionUsesZoneVideoAudio()) {
+      fallbackZoneVideoAudioToMetronome();
+    }
     if (zoneVideoElementClipId || zoneVideoElement?.isConnected) resetZoneVideoPlayer();
     return;
   }
   const video = ensureZoneVideoElement();
-  if (zoneVideoElementClipId === clip.id && video.parentElement === mount) return;
+  if (zoneVideoElementClipId === clip.id) {
+    applyZoneVideoAudioState(video);
+    if (video.parentElement !== mount) {
+      mount.append(video);
+      if (!video.paused) {
+        video.closest(".ai-text-training-zone-video-figure")?.classList.add("is-playing");
+      }
+    }
+    if (state.phase === "zone_rush" && video.paused) {
+      requestZoneVideoPlayback(video, clip, zoneVideoPlaybackRequest);
+    }
+    return;
+  }
   resetZoneVideoPlayer();
   const requestId = zoneVideoPlaybackRequest;
   zoneVideoElementClipId = clip.id;
-  const useVideoAudio = sessionUsesZoneVideoAudio();
-  video.muted = !useVideoAudio;
-  video.defaultMuted = !useVideoAudio;
-  if (useVideoAudio) video.removeAttribute("muted");
-  else video.setAttribute("muted", "");
+  applyZoneVideoAudioState(video);
   video.poster = clip.posterUrl;
   video.src = clip.url;
   mount.append(video);
   const alignPlayback = () => {
     video.onloadedmetadata = null;
     if (requestId !== zoneVideoPlaybackRequest
-        || state.phase !== "zone_rush"
         || zoneVideoElementClipId !== clip.id) return;
     const liveFrame = currentZoneVideoPlaybackFrame();
     const liveClip = liveFrame ? state.zoneVideoClips[liveFrame.index] : null;
@@ -3623,7 +3716,8 @@ function syncZoneVideoPlaybackDom() {
   };
   video.onplaying = () => {
     if (requestId !== zoneVideoPlaybackRequest || zoneVideoElementClipId !== clip.id) return;
-    mount.closest(".ai-text-training-zone-video-figure")?.classList.add("is-playing");
+    if (zoneVideoPlayPendingClipId === clip.id) zoneVideoPlayPendingClipId = "";
+    video.closest(".ai-text-training-zone-video-figure")?.classList.add("is-playing");
   };
   video.onerror = () => markZoneVideoPlaybackFailed(clip, requestId);
   video.onloadedmetadata = alignPlayback;
@@ -3634,14 +3728,7 @@ function syncZoneVideoPlaybackDom() {
     markZoneVideoPlaybackFailed(clip, requestId);
     return;
   }
-  try {
-    const playRequest = video.play();
-    if (playRequest && typeof playRequest.catch === "function") {
-      playRequest.catch(() => handleZoneVideoPlayRejection(video, clip, requestId));
-    }
-  } catch {
-    handleZoneVideoPlayRejection(video, clip, requestId);
-  }
+  requestZoneVideoPlayback(video, clip, requestId);
 }
 
 function defeatZoneFallbackLines(slotId) {
@@ -4386,6 +4473,8 @@ function removeZoneVideoClip(index) {
     state.zoneAudioSource,
     state.zoneVideoClips.length,
   );
+  state.zoneVideoFailedClipIds.delete(clip?.id);
+  zoneVideoAutoplayBlockedClipIds.delete(clip?.id);
   resetZoneVideoPlayer();
   releaseZoneVideoClip(clip);
   render();
@@ -4661,6 +4750,7 @@ function newSessionPlan() {
     state.zoneVideoPlaybackErrorShown = false;
     state.zoneVideoAudioFallbackShown = false;
     state.zoneVideoFailedClipIds.clear();
+    zoneVideoAutoplayBlockedClipIds.clear();
   } else {
     releaseZoneVideoClips();
   }
@@ -5230,6 +5320,10 @@ function startRoundCountdown() {
     syncAiTextTrainingLightsPresence();
   }
   state.countdownValue = 3;
+  if (zoneVideoEligibleForSession()) {
+    const clip = state.zoneVideoClips[state.roundIndex % state.zoneVideoClips.length];
+    if (clip) zoneVideoAutoplayBlockedClipIds.delete(clip.id);
+  }
   configureRoundAmbience(Date.now() + 3_000);
   state.ambienceController.enable().catch(() => {
     showToast("メトロノームを再生できませんでした。無音でも進行できます。");
@@ -5387,6 +5481,7 @@ function startDefeatZoneReady({
     ),
   );
   state.currentMessage = DEFEAT_ZONE_MESSAGES.ready;
+  zoneVideoAutoplayBlockedClipIds.clear();
   if (sessionPrefersZoneVideoAudio()) {
     state.ambienceController.disable();
   } else {
@@ -5434,6 +5529,7 @@ function beginDefeatZoneRush({ remainingMs = state.remainingMs } = {}) {
   state.lastAnnouncedSecond = null;
   state.currentMessage = defeatZoneMessage("zone_rush");
   state.roundEndsAt = performance.now() + state.remainingMs;
+  zoneVideoAutoplayBlockedClipIds.clear();
   if (sessionUsesZoneVideoAudio()) {
     state.ambienceController.disable();
   } else {
