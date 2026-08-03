@@ -615,6 +615,278 @@ test("doodle collage separates central copy and defeat ZONE rush keeps the froze
   assert.equal(html.match(/ai-training-doodle-spacing-zone-rush-v1/gu)?.length, 2);
 });
 
+test("defeat ZONE video deco is an optional device-only setup and is never persisted or uploaded", () => {
+  assert.match(
+    client,
+    /ai-text-training-zone-video\.mjs\?v=ai-training-zone-video-deco-v1/,
+  );
+  assert.match(
+    client,
+    /strategy-video-transfer\.mjs\?v=strategy-video-review-v1/,
+  );
+
+  const panel = sourceBlock(
+    client,
+    "function renderZoneVideoPanel",
+    "function renderCosmeticsPanel",
+  );
+  assert.match(
+    panel,
+    /state\.playStyle !== "defeat_zone"[\s\S]*?normalizeCheerPresentation\(state\.cheerPresentation\) !== "doodle"[\s\S]*?return ""/,
+  );
+  assert.match(panel, /最終攻勢の背景を動画デコにする <em>任意<\/em>/);
+  assert.match(panel, /動画がなくても従来どおり画像で遊べます/);
+  assert.match(
+    panel,
+    /type="file" accept="video\/mp4,video\/webm" multiple data-ai-text-training-zone-video/,
+  );
+  assert.match(panel, /1本20MiB/);
+  assert.match(panel, /縦向き9:16または4:5/);
+  assert.match(panel, /常に1本だけ再生/);
+  assert.match(panel, /name="aiTextTrainingZoneAudioSource" value="metronome"/);
+  assert.match(panel, /name="aiTextTrainingZoneAudioSource" value="video"/);
+  assert.match(panel, /どちらか一方だけを開始時に固定します/);
+  assert.match(panel, /端末が音声再生を拒否した時は、動画を無音にしてメトロノームへ安全に戻します/);
+  assert.match(
+    panel,
+    /動画・静止プレビュー・ファイル名・音の選択はFirebase、IndexedDB、localStorageへ保存せず/,
+  );
+
+  const selection = sourceBlock(
+    client,
+    "function canvasToZoneVideoPoster",
+    "async function removeRosterImage",
+  );
+  assert.match(selection, /file\.slice\(0, 32\)\.arrayBuffer\(\)/);
+  assert.match(selection, /verifiedStrategyVideoMime\(prefix, file\.type\)/);
+  assert.match(selection, /for \(const file of selectedFiles\)/);
+  assert.doesNotMatch(selection, /Promise\.all\(selectedFiles/);
+  assert.match(selection, /URL\.createObjectURL\(file\)/);
+  assert.match(selection, /URL\.createObjectURL\(poster\)/);
+  assert.match(
+    selection,
+    /catch \(error\) \{[\s\S]*?releaseZoneVideoClip\(\{ url, posterUrl \}\)[\s\S]*?operation\.urls\.delete\(url\)[\s\S]*?throw error/,
+  );
+  assert.match(
+    selection,
+    /controller: new AbortController\(\)[\s\S]*?zoneVideoPreparation = operation/,
+  );
+  assert.match(
+    selection,
+    /targetState\.playStyle !== "defeat_zone"[\s\S]*?normalizeCheerPresentation\(targetState\.cheerPresentation\) !== "doodle"[\s\S]*?releaseZoneVideoClip\(clip\)/,
+  );
+  assert.doesNotMatch(
+    selection,
+    /writeLocalValue|persistSession|persistRosterIfConsented|indexedDB|localStorage|sessionStorage|CacheStorage|caches\.|aiTextTrainingAction|economyActionCallable|httpsCallable|uploadBytes|uploadString|getStorage/,
+  );
+
+  const persist = sourceBlock(client, "function persistSession", "function clearPersistedSession");
+  const storedDeck = sourceBlock(client, "async function writeStoredDeck", "async function readStoredDeck");
+  const paidRecovery = sourceBlock(
+    client,
+    "function recoverPaidSession",
+    "function recoverPendingDefeatPresentation",
+  );
+  assert.doesNotMatch(persist, /zoneVideo|zoneAudioSource|sessionZoneAudioSource|posterUrl|videoClips|fileName/);
+  assert.doesNotMatch(storedDeck, /zoneVideo|zoneAudioSource|sessionZoneAudioSource|posterUrl|videoClips|fileName/);
+  assert.doesNotMatch(paidRecovery, /saved\.(?:zoneVideo|zoneAudioSource|sessionZoneAudioSource|videoClips)|posterUrl|fileName/);
+  assert.doesNotMatch(client, /firebase-storage|getStorage\(|uploadBytes\(|uploadString\(/);
+
+  const setup = sourceBlock(client, "function renderSetup", "function drawReviewCard");
+  assert.match(setup, /const startReady = imagesReady[\s\S]*?&& !state\.zoneVideoBusy/);
+  const bindings = sourceBlock(
+    client,
+    "function bindEvents",
+    'document.addEventListener("visibilitychange"',
+  );
+  assert.match(bindings, /\[data-ai-text-training-zone-video\][\s\S]*?handleZoneVideoSelection\(input\)/);
+  assert.match(bindings, /\[data-ai-text-training-remove-zone-video\][\s\S]*?removeZoneVideoClip/);
+  assert.match(
+    bindings,
+    /input\[name="aiTextTrainingZoneAudioSource"\][\s\S]*?normalizeAiTextTrainingZoneAudioSource/,
+  );
+  assert.match(readme, /端末動画デコ[\s\S]*?Firebaseにも端末ストレージにも保存せず/);
+  assert.match(design, /端末動画デコは第3のプレイスタイルではなく/);
+});
+
+test("defeat ZONE video deco mounts one player only during zone rush and safely keeps poster fallbacks", () => {
+  const lineup = sourceBlock(
+    client,
+    "function renderDefeatZoneLineup",
+    "function currentZoneVideoPlaybackFrame",
+  );
+  assert.match(
+    lineup,
+    /const useZoneVideos = !winner[\s\S]*?state\.phase === "zone_rush"[\s\S]*?zoneVideoEligibleForSession\(\)/,
+  );
+  assert.match(lineup, /const clip = useZoneVideos \? state\.zoneVideoClips\[index\] : null/);
+  assert.match(lineup, /clip\.posterUrl[\s\S]*?data-ai-text-training-zone-video-mount/);
+  assert.match(lineup, /return `<figure>[\s\S]*?image\.url/);
+  assert.doesNotMatch(lineup, /<video\b/);
+
+  const playback = sourceBlock(
+    client,
+    "function currentZoneVideoPlaybackFrame",
+    "function defeatZoneFallbackLines",
+  );
+  assert.match(
+    playback,
+    /if \(!zoneVideoEligibleForSession\(\) \|\| state\.phase !== "zone_rush"\) return null/,
+  );
+  assert.equal(playback.match(/document\.createElement\("video"\)/gu)?.length, 1);
+  assert.match(playback, /if \(zoneVideoElement\) return zoneVideoElement/);
+  assert.match(playback, /zoneVideoElement\.preload = "metadata"/);
+  assert.match(playback, /zoneVideoElement\.loop = true/);
+  assert.match(playback, /zoneVideoElement\.muted = true/);
+  assert.match(playback, /zoneVideoElement\.defaultMuted = true/);
+  assert.match(playback, /zoneVideoElement\.playsInline = true/);
+  assert.match(playback, /zoneVideoElement\.controls = false/);
+  assert.match(playback, /mount\.append\(video\)/);
+  assert.match(
+    playback,
+    /requestId !== zoneVideoPlaybackRequest[\s\S]*?state\.phase !== "zone_rush"[\s\S]*?zoneVideoElementClipId !== clip\.id/,
+  );
+  assert.match(
+    playback,
+    /const useVideoAudio = sessionUsesZoneVideoAudio\(\)[\s\S]*?video\.muted = !useVideoAudio[\s\S]*?useVideoAudio\) video\.removeAttribute\("muted"\)/,
+  );
+  assert.match(
+    playback,
+    /playRequest\.catch\(\(\) => handleZoneVideoPlayRejection\(video, clip, requestId\)\)/,
+  );
+  assert.ok(
+    playback.indexOf("video.load()") < playback.indexOf("const playRequest = video.play()"),
+  );
+  assert.ok(
+    playback.indexOf("const playRequest = video.play()") > playback.indexOf("video.onloadedmetadata = alignPlayback"),
+  );
+  assert.match(
+    playback,
+    /fallbackZoneVideoAudioToMetronome\(\)[\s\S]*?video\.muted = true[\s\S]*?retry\.catch\(\(\) => markZoneVideoPlaybackFailed/,
+  );
+  assert.match(
+    playback,
+    /state\.zoneVideoFailedClipIds\.add\(clip\.id\)[\s\S]*?resetZoneVideoPlayer\(\)[\s\S]*?静止プレビューのまま敗北ZONEを続けます/,
+  );
+  assert.match(
+    playback,
+    /state\.zoneVideoFailedClipIds\.has\(clip\.id\)[\s\S]*?resetZoneVideoPlayer\(\)[\s\S]*?return/,
+  );
+
+  const renderSource = sourceBlock(client, "function render()", "function updateEditorDraftFromForm");
+  assert.ok(renderSource.indexOf("appRoot.innerHTML") < renderSource.indexOf("syncZoneVideoPlaybackDom()"));
+  const zoneTicker = sourceBlock(client, "function updateDefeatZoneDom", "function pauseDefeatZone");
+  assert.match(zoneTicker, /if \(state\.phase === "zone_rush"\) \{[\s\S]*?syncZoneVideoPlaybackDom\(\)/);
+  const beginRush = sourceBlock(
+    client,
+    "function beginDefeatZoneRush",
+    "function confirmPlayerDefeat",
+  );
+  assert.match(
+    beginRush,
+    /if \(sessionUsesZoneVideoAudio\(\)\) \{[\s\S]*?ambienceController\.disable\(\)[\s\S]*?\} else \{[\s\S]*?ambienceController\.enable\(\)/,
+  );
+  const ready = sourceBlock(
+    client,
+    "function startDefeatZoneReady",
+    "function beginDefeatZoneRush",
+  );
+  assert.match(
+    ready,
+    /sessionPrefersZoneVideoAudio\(\)[\s\S]*?state\.countdownValue = 0[\s\S]*?render\(\)[\s\S]*?動画音声で最終攻勢を開始してください/,
+  );
+  const defeatRenderer = sourceBlock(
+    client,
+    "function renderDefeatZonePlay",
+    "function renderPlay",
+  );
+  assert.match(
+    defeatRenderer,
+    /data-ai-text-training-action="start-zone-video-audio">動画音声で最終攻勢を開始/,
+  );
+  const actions = sourceBlock(
+    client,
+    "const actionHandlers =",
+    'document.querySelectorAll("[data-ai-text-training-action]")',
+  );
+  assert.match(actions, /"start-zone-video-audio": \(\) => beginDefeatZoneRush\(\)/);
+
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-video-figure\s*\{[\s\S]*?pointer-events:\s*none;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-video-media > img\.is-foreground\s*\{[\s\S]*?object-fit:\s*contain;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-video-player\s*\{[\s\S]*?opacity:\s*0;[\s\S]*?object-fit:\s*contain;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-video-figure\.is-playing \.ai-text-training-zone-video-player\s*\{[\s\S]*?opacity:\s*1;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-overlay\.is-rush > \.ai-text-training-zone-doodle\.is-collage\s*\{[\s\S]*?pointer-events:\s*none;/,
+  );
+});
+
+test("defeat ZONE video deco releases both object URLs on every terminal path and versions both hosting assets", () => {
+  const release = sourceBlock(
+    client,
+    "function revokeZoneVideoUrl",
+    "function zoneVideoEligibleForSession",
+  );
+  assert.match(
+    release,
+    /function resetZoneVideoElement\(video\)[\s\S]*?video\.pause\(\)[\s\S]*?removeAttribute\("src"\)[\s\S]*?removeAttribute\("poster"\)[\s\S]*?video\.load\(\)[\s\S]*?video\.remove\(\)/,
+  );
+  assert.match(release, /try \{[\s\S]*?URL\.revokeObjectURL\(url\)[\s\S]*?\} catch \{/);
+  assert.match(release, /revokeZoneVideoUrl\(clip\?\.url\)[\s\S]*?revokeZoneVideoUrl\(clip\?\.posterUrl\)/);
+  assert.match(
+    release,
+    /function cancelZoneVideoPreparation\(\)[\s\S]*?operation\.controller\.abort\(\)[\s\S]*?operation\.urls\.forEach\(revokeZoneVideoUrl\)/,
+  );
+  assert.match(release, /clips\.forEach\(releaseZoneVideoClip\)/);
+  assert.match(release, /resetZoneVideoPlayer\(\);[\s\S]*?zoneVideoElement = null/);
+  assert.match(release, /targetState\.zoneVideoClips = \[\]/);
+  assert.match(release, /targetState\.zoneVideoFailedClipIds\?\.clear\?\.\(\)/);
+
+  const finishDefeat = sourceBlock(
+    client,
+    "function finishDefeatPresentation",
+    "function queueAchievementFinish",
+  );
+  const complete = sourceBlock(client, "function completeSession", "function stopSessionImmediately");
+  const replayReset = sourceBlock(client, "function resetForAnotherSession", "function requestHome");
+  const cleanup = sourceBlock(client, "function cleanup", "function bindXConfirmations");
+  const pagehide = sourceBlock(
+    client,
+    'window.addEventListener("pagehide"',
+    'window.addEventListener("pageshow"',
+  );
+  assert.match(finishDefeat, /state\.phase = "result";[\s\S]*?releaseZoneVideoClips\(\)/);
+  assert.match(complete, /state\.phase = "result";[\s\S]*?releaseZoneVideoClips\(\)/);
+  assert.match(replayReset, /stopRuntimeTimers\(\);[\s\S]*?releaseZoneVideoClips\(\)/);
+  assert.match(cleanup, /releaseZoneVideoClips\(\)[\s\S]*?active = false/);
+  assert.match(
+    pagehide,
+    /cancelZoneVideoPreparation\(\);[\s\S]*?resetZoneVideoPlayer\(\);[\s\S]*?if \(event\.persisted\) return;[\s\S]*?releaseZoneVideoClips\(\)/,
+  );
+
+  assert.equal(html.match(/ai-training-zone-video-deco-v1/gu)?.length, 2);
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-video-panel\s*\{[\s\S]*?display:\s*grid;/,
+  );
+  assert.match(
+    trainingStyles,
+    /\.ai-text-training-zone-video-preview > img\.is-backdrop\s*\{[\s\S]*?filter:\s*blur\(/,
+  );
+});
+
 test("paid one-use review shows balance, price, post-payment balance, and voluntariness", () => {
   const reviewStart = client.indexOf("function renderPurchaseReview");
   const reviewEnd = client.indexOf("function xLink", reviewStart);
@@ -1583,6 +1855,7 @@ test("defeat ZONE completes the workout at five rounds but consumes its paid use
     },
     render() {},
     stopRuntimeTimers() {},
+    releaseZoneVideoClips() {},
     releaseWakeLock() {},
     defeatZoneMessage: () => "購入時の敗北証明",
     announce() {},

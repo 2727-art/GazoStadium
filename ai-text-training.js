@@ -70,6 +70,18 @@ import {
   createFreeTableAmbienceController,
   normalizeFreeTableAmbienceToneProfileId,
 } from "./free-table-ambience.mjs?v=free-table-ambience-v2-defeat-zone-range-v1";
+import {
+  AI_TEXT_TRAINING_ZONE_VIDEO_MAX_BYTES,
+  AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT,
+  AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS,
+  aiTextTrainingZoneVideoIsEligible,
+  aiTextTrainingZoneVideoPlaybackFrame,
+  normalizeAiTextTrainingZoneAudioSource,
+  validateAiTextTrainingZoneVideoMetadata,
+} from "./ai-text-training-zone-video.mjs?v=ai-training-zone-video-deco-v1";
+import {
+  verifiedStrategyVideoMime,
+} from "./strategy-video-transfer.mjs?v=strategy-video-review-v1";
 
 const appRoot = document.querySelector("#app");
 const aiTextTrainingAction = httpsCallable(functions, "aiTextTrainingAction");
@@ -233,6 +245,11 @@ const DEFAULT_POLICY = Object.freeze({
 let active = false;
 let state = createState();
 let achievementRetryFlushPromise = null;
+let zoneVideoElement = null;
+let zoneVideoElementClipId = "";
+let zoneVideoPlaybackRequest = 0;
+let zoneVideoClipSequence = 0;
+let zoneVideoPreparation = null;
 
 function shared() {
   return window.HariaiApp?.shared;
@@ -801,6 +818,13 @@ function createState() {
     cheerPresentation,
     sessionCheerPresentation: cheerPresentation,
     roundArtworks: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null),
+    zoneVideoClips: [],
+    zoneVideoBusy: false,
+    zoneVideoPlaybackErrorShown: false,
+    zoneVideoAudioFallbackShown: false,
+    zoneVideoFailedClipIds: new Set(),
+    zoneAudioSource: "metronome",
+    sessionZoneAudioSource: "metronome",
     activeUse: null,
     selectedPreset: normalizeAiTextTrainingScriptSnapshot(
       AI_TEXT_TRAINING_BUILTIN_SCRIPTS.mama,
@@ -911,7 +935,7 @@ function setModeChrome() {
   const status = document.querySelector(".status-dot");
   if (status) status.innerHTML = "<i></i> SOLO TRAINING";
   const privacy = document.querySelector(".privacy-badge");
-  if (privacy) privacy.textContent = "最大10画像は端末内";
+  if (privacy) privacy.textContent = "画像・ZONE動画は端末内";
   document.title = "AIと対戦しよう 文字コラトレーニング | 貼り合いスタジアム";
 }
 
@@ -923,6 +947,80 @@ function releaseRosterImages() {
   state.rosterImages.forEach(releaseImage);
   state.rosterImages = Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null);
   state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+}
+
+function revokeZoneVideoUrl(url) {
+  if (!String(url || "").startsWith("blob:")) return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // Media cleanup must never interrupt safety, payment, or achievement flows.
+  }
+}
+
+function resetZoneVideoElement(video) {
+  if (!video) return;
+  try { video.pause(); } catch {}
+  video.onloadedmetadata = null;
+  video.onloadeddata = null;
+  video.onseeked = null;
+  video.onplaying = null;
+  video.onerror = null;
+  try { video.removeAttribute("src"); } catch {}
+  try { video.removeAttribute("poster"); } catch {}
+  try { video.load(); } catch {}
+  try { video.remove(); } catch {}
+}
+
+function cancelZoneVideoPreparation() {
+  const operation = zoneVideoPreparation;
+  if (!operation) return;
+  zoneVideoPreparation = null;
+  try { operation.controller.abort(); } catch {}
+  resetZoneVideoElement(operation.video);
+  operation.video = null;
+  operation.urls.forEach(revokeZoneVideoUrl);
+  operation.urls.clear();
+}
+
+function resetZoneVideoPlayer() {
+  zoneVideoPlaybackRequest += 1;
+  if (zoneVideoElement) {
+    resetZoneVideoElement(zoneVideoElement);
+  }
+  zoneVideoElementClipId = "";
+}
+
+function releaseZoneVideoClip(clip) {
+  revokeZoneVideoUrl(clip?.url);
+  revokeZoneVideoUrl(clip?.posterUrl);
+}
+
+function releaseZoneVideoClips(targetState = state) {
+  if (state === targetState) {
+    cancelZoneVideoPreparation();
+    resetZoneVideoPlayer();
+    zoneVideoElement = null;
+  }
+  const clips = Array.isArray(targetState?.zoneVideoClips)
+    ? targetState.zoneVideoClips
+    : [];
+  clips.forEach(releaseZoneVideoClip);
+  targetState.zoneVideoClips = [];
+  targetState.zoneVideoBusy = false;
+  targetState.zoneVideoPlaybackErrorShown = false;
+  targetState.zoneVideoAudioFallbackShown = false;
+  targetState.zoneVideoFailedClipIds?.clear?.();
+  targetState.zoneAudioSource = "metronome";
+  targetState.sessionZoneAudioSource = "metronome";
+}
+
+function zoneVideoEligibleForSession(targetState = state) {
+  return aiTextTrainingZoneVideoIsEligible({
+    playStyle: targetState.sessionPlayStyle,
+    cheerPresentation: targetState.sessionCheerPresentation,
+    clipCount: targetState.zoneVideoClips.length,
+  });
 }
 
 function stopRuntimeTimers() {
@@ -2605,6 +2703,54 @@ function cosmeticOptionHtml(slot, product = null) {
   </label>`;
 }
 
+function zoneVideoClipCard(clip, index) {
+  const sizeMiB = (clip.size / (1024 * 1024)).toFixed(1);
+  const duration = Math.round(clip.duration * 10) / 10;
+  return `<article class="ai-text-training-zone-video-card" data-att-zone-video-aspect="${escapeHtml(clip.aspectId)}">
+    <div class="ai-text-training-zone-video-preview">
+      <img class="is-backdrop" src="${escapeHtml(clip.posterUrl)}" alt="" aria-hidden="true" />
+      <img class="is-foreground" src="${escapeHtml(clip.posterUrl)}" alt="端末動画${index + 1}の静止プレビュー" />
+      <em>VIDEO ${String(index + 1).padStart(2, "0")}</em>
+    </div>
+    <div><strong>${escapeHtml(clip.aspectId)} · ${duration}秒</strong><small>${sizeMiB} MiB · ${clip.width}×${clip.height}</small></div>
+    <button class="button button-ghost" type="button" data-ai-text-training-remove-zone-video="${index}" ${state.zoneVideoBusy ? "disabled" : ""}>この動画を外す</button>
+  </article>`;
+}
+
+function renderZoneVideoPanel() {
+  if (state.playStyle !== "defeat_zone"
+      || normalizeCheerPresentation(state.cheerPresentation) !== "doodle") return "";
+  const count = state.zoneVideoClips.length;
+  const remaining = AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT - count;
+  const audioSource = normalizeAiTextTrainingZoneAudioSource(
+    state.zoneAudioSource,
+    count,
+  );
+  const addDisabled = state.zoneVideoBusy || remaining <= 0;
+  const addLabel = state.zoneVideoBusy
+    ? "動画を端末内で確認中…"
+    : remaining > 0
+      ? `端末動画を選ぶ（あと${remaining}本）`
+      : "動画は5本選択済み";
+  return `<section class="ai-text-training-zone-video-panel" aria-labelledby="aiTextTrainingZoneVideoTitle">
+    <header><span>DEFEAT ZONE · DEVICE ONLY</span><h3 id="aiTextTrainingZoneVideoTitle">最終攻勢の背景を動画デコにする <em>任意</em></h3><p>敗北ZONEの20秒間だけ、デコ台詞を端末動画へ重ねます。動画がなくても従来どおり画像で遊べます。</p></header>
+    ${count ? `<div class="ai-text-training-zone-video-grid">${state.zoneVideoClips.map(zoneVideoClipCard).join("")}</div>` : '<p class="ai-text-training-zone-video-empty">動画はまだ選ばれていません。最終攻勢ではDRAWされた5枚の画像を表示します。</p>'}
+    <div class="ai-text-training-zone-video-actions">
+      <label class="button button-primary ai-text-training-zone-video-file ${addDisabled ? "is-disabled" : ""}">${escapeHtml(addLabel)}<input type="file" accept="video/mp4,video/webm" multiple data-ai-text-training-zone-video ${addDisabled ? "disabled" : ""} /></label>
+      <strong>${count} / ${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT}</strong>
+    </div>
+    <fieldset class="ai-text-training-zone-audio-source">
+      <legend>最終攻勢20秒の音</legend>
+      <div>
+        <label><input type="radio" name="aiTextTrainingZoneAudioSource" value="metronome" ${audioSource === "metronome" ? "checked" : ""} ${state.zoneVideoBusy ? "disabled" : ""} /><span><strong>メトロノーム</strong><small>選択中のビート音色で200 BPM演出</small></span></label>
+        <label class="${count ? "" : "is-disabled"}"><input type="radio" name="aiTextTrainingZoneAudioSource" value="video" ${audioSource === "video" ? "checked" : ""} ${count && !state.zoneVideoBusy ? "" : "disabled"} /><span><strong>動画の音声</strong><small>動画ごとの音を再生し、最終攻勢中はメトロノームOFF</small></span></label>
+      </div>
+      <p>どちらか一方だけを開始時に固定します。動画音声がない区間は無音です。端末が音声再生を拒否した時は、動画を無音にしてメトロノームへ安全に戻します。</p>
+    </fieldset>
+    <ul><li>1本20MiB・${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS}秒以内、縦向き9:16または4:5、最大1080px幅です。</li><li>常に1本だけ再生し、ほかは静止プレビューにします。5本なら約4秒ごとに交代します。</li><li>動画・静止プレビュー・ファイル名・音の選択はFirebase、IndexedDB、localStorageへ保存せず、再読込・終了時に破棄します。</li></ul>
+  </section>`;
+}
+
 function renderCosmeticsPanel() {
   const selection = previewCosmetics();
   const equipped = equippedCosmetics();
@@ -2665,6 +2811,7 @@ function renderCosmeticsPanel() {
         <dl><div><dt>窓</dt><dd>${escapeHtml(selectedPanel?.panelLabel || "標準ウィンドウ")}</dd></div><div><dt>表示</dt><dd>${previewPresentation === "doodle" ? "デコ台詞" : "クラシック枠"}</dd></div><div><dt>装飾</dt><dd>${escapeHtml(selectedMessage?.messageLabel || "標準メッセージ")}</dd></div></dl>
       </div>
     </div>
+    ${renderZoneVideoPanel()}
     <div class="ai-text-training-cosmetic-actions">
       <button class="button button-primary" type="button" data-ai-text-training-action="save-cosmetics" ${saveDisabled ? "disabled" : ""}>${escapeHtml(saveLabel)}</button>
       ${state.cosmeticDraft ? '<button class="button button-ghost" type="button" data-ai-text-training-action="cancel-cosmetics">試着を取り消す</button>' : ""}
@@ -2697,10 +2844,13 @@ function renderSetup() {
         : `無料で${sessionLabel}開始`;
   const startReady = imagesReady
     && !state.cosmeticDraft
+    && !state.zoneVideoBusy
     && !authChecking
     && !paidRecoveryBlocked;
   const displayedStartCopy = authChecking
     ? "開始済み利用を確認中…"
+    : state.zoneVideoBusy
+      ? "動画を端末内で確認中…"
     : paidRecoveryBlocked
       ? "接続後に開始済み利用を確認"
       : state.cosmeticDraft
@@ -3302,14 +3452,196 @@ function clearMessage() {
 }
 
 function renderDefeatZoneLineup({ winner = false } = {}) {
+  const useZoneVideos = !winner
+    && state.phase === "zone_rush"
+    && zoneVideoEligibleForSession();
   return `<div class="ai-text-training-zone-lineup" role="group" aria-label="${winner ? "本日あなたを倒した5枚" : "最終攻勢を行う5枚"}">
-    ${state.images.map((image, index) => `<figure>
-      ${image
+    ${state.images.map((image, index) => {
+    const clip = useZoneVideos ? state.zoneVideoClips[index] : null;
+    if (clip) {
+      return `<figure class="ai-text-training-zone-video-figure" data-ai-text-training-zone-video-slot="${index}" aria-label="最終攻勢の端末動画${index + 1}">
+        <div class="ai-text-training-zone-video-media" data-att-zone-video-aspect="${escapeHtml(clip.aspectId)}">
+          <img class="is-backdrop" src="${escapeHtml(clip.posterUrl)}" alt="" aria-hidden="true" />
+          <img class="is-foreground" src="${escapeHtml(clip.posterUrl)}" alt="端末動画${index + 1}の静止プレビュー" />
+          <span class="ai-text-training-zone-video-mount" data-ai-text-training-zone-video-mount="${index}" aria-hidden="true"></span>
+        </div>
+        <em class="ai-text-training-zone-video-badge">VIDEO ${index + 1}</em>
+      </figure>`;
+    }
+    return `<figure>
+        ${image
         ? `<img src="${escapeHtml(image.url)}" alt="${winner ? "勝者" : "対戦相手"}${index + 1}" />`
         : `<span>${index + 1}</span>`}
-      ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
-    </figure>`).join("")}
+        ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
+      </figure>`;
+  }).join("")}
   </div>`;
+}
+
+function currentZoneVideoPlaybackFrame() {
+  if (!zoneVideoEligibleForSession() || state.phase !== "zone_rush") return null;
+  return aiTextTrainingZoneVideoPlaybackFrame({
+    durations: state.zoneVideoClips.map((clip) => clip.duration),
+    totalMs: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+    remainingMs: state.remainingMs,
+  });
+}
+
+function ensureZoneVideoElement() {
+  if (zoneVideoElement) return zoneVideoElement;
+  zoneVideoElement = document.createElement("video");
+  zoneVideoElement.className = "ai-text-training-zone-video-player";
+  zoneVideoElement.preload = "metadata";
+  zoneVideoElement.loop = true;
+  zoneVideoElement.muted = true;
+  zoneVideoElement.defaultMuted = true;
+  zoneVideoElement.playsInline = true;
+  zoneVideoElement.controls = false;
+  zoneVideoElement.tabIndex = -1;
+  zoneVideoElement.setAttribute("playsinline", "");
+  zoneVideoElement.setAttribute("muted", "");
+  zoneVideoElement.setAttribute("aria-hidden", "true");
+  if ("disablePictureInPicture" in zoneVideoElement) {
+    zoneVideoElement.disablePictureInPicture = true;
+  }
+  return zoneVideoElement;
+}
+
+function sessionPrefersZoneVideoAudio() {
+  return state.sessionZoneAudioSource === "video"
+    && zoneVideoEligibleForSession();
+}
+
+function sessionUsesZoneVideoAudio() {
+  return sessionPrefersZoneVideoAudio() && state.phase === "zone_rush";
+}
+
+function fallbackZoneVideoAudioToMetronome({ notify = true } = {}) {
+  if (!sessionUsesZoneVideoAudio()) return false;
+  state.sessionZoneAudioSource = "metronome";
+  try {
+    state.ambienceController.setVolume(state.metronomeVolume);
+    configureRoundAmbience(Date.now());
+    const enabled = state.ambienceController.enable();
+    if (enabled && typeof enabled.catch === "function") enabled.catch(() => {});
+  } catch {
+    // Audio fallback is best-effort and must never interrupt the ZONE timer.
+  }
+  if (notify && !state.zoneVideoAudioFallbackShown) {
+    state.zoneVideoAudioFallbackShown = true;
+    showToast("動画の音声を再生できないため、動画を無音にし、メトロノームへの切替を試みます。音も再生できない場合は無音で続けます。");
+  }
+  return true;
+}
+
+function handleZoneVideoPlayRejection(video, clip, requestId) {
+  if (requestId !== zoneVideoPlaybackRequest || zoneVideoElementClipId !== clip?.id) return;
+  if (!fallbackZoneVideoAudioToMetronome()) {
+    markZoneVideoPlaybackFailed(clip, requestId);
+    return;
+  }
+  video.muted = true;
+  video.defaultMuted = true;
+  video.setAttribute("muted", "");
+  try {
+    const retry = video.play();
+    if (retry && typeof retry.catch === "function") {
+      retry.catch(() => markZoneVideoPlaybackFailed(clip, requestId));
+    }
+  } catch {
+    markZoneVideoPlaybackFailed(clip, requestId);
+  }
+}
+
+function markZoneVideoPlaybackFailed(clip, requestId) {
+  if (requestId !== zoneVideoPlaybackRequest || !clip) return;
+  const audioFallback = fallbackZoneVideoAudioToMetronome({ notify: false });
+  state.zoneVideoFailedClipIds.add(clip.id);
+  document.querySelectorAll(".ai-text-training-zone-video-figure.is-playing").forEach((figure) => {
+    figure.classList.remove("is-playing");
+  });
+  resetZoneVideoPlayer();
+  if (!state.zoneVideoPlaybackErrorShown) {
+    state.zoneVideoPlaybackErrorShown = true;
+    if (audioFallback) state.zoneVideoAudioFallbackShown = true;
+    showToast(audioFallback
+      ? "動画を再生できないため静止プレビューへ戻し、メトロノームへの切替を試みます。音も再生できない場合は無音で続けます。"
+      : "動画を自動再生できないため、静止プレビューのまま敗北ZONEを続けます。");
+  }
+}
+
+function syncZoneVideoPlaybackDom() {
+  const frame = currentZoneVideoPlaybackFrame();
+  document.querySelectorAll("[data-ai-text-training-zone-video-slot]").forEach((figure) => {
+    figure.classList.toggle(
+      "is-active",
+      Boolean(frame) && Number(figure.dataset.aiTextTrainingZoneVideoSlot) === frame.index,
+    );
+  });
+  if (!frame) {
+    resetZoneVideoPlayer();
+    return;
+  }
+  const clip = state.zoneVideoClips[frame.index];
+  const mount = document.querySelector(
+    `[data-ai-text-training-zone-video-mount="${frame.index}"]`,
+  );
+  if (!clip || !mount || state.zoneVideoFailedClipIds.has(clip.id)) {
+    if (zoneVideoElementClipId || zoneVideoElement?.isConnected) resetZoneVideoPlayer();
+    return;
+  }
+  const video = ensureZoneVideoElement();
+  if (zoneVideoElementClipId === clip.id && video.parentElement === mount) return;
+  resetZoneVideoPlayer();
+  const requestId = zoneVideoPlaybackRequest;
+  zoneVideoElementClipId = clip.id;
+  const useVideoAudio = sessionUsesZoneVideoAudio();
+  video.muted = !useVideoAudio;
+  video.defaultMuted = !useVideoAudio;
+  if (useVideoAudio) video.removeAttribute("muted");
+  else video.setAttribute("muted", "");
+  video.poster = clip.posterUrl;
+  video.src = clip.url;
+  mount.append(video);
+  const alignPlayback = () => {
+    video.onloadedmetadata = null;
+    if (requestId !== zoneVideoPlaybackRequest
+        || state.phase !== "zone_rush"
+        || zoneVideoElementClipId !== clip.id) return;
+    const liveFrame = currentZoneVideoPlaybackFrame();
+    const liveClip = liveFrame ? state.zoneVideoClips[liveFrame.index] : null;
+    if (!liveFrame || liveClip?.id !== clip.id) {
+      syncZoneVideoPlaybackDom();
+      return;
+    }
+    try {
+      const maximumTime = Math.max(0, clip.duration - 0.02);
+      video.currentTime = Math.min(maximumTime, Math.max(0, liveFrame.currentTime));
+    } catch {
+      // Metadata may settle one task later; playback still has a poster fallback.
+    }
+  };
+  video.onplaying = () => {
+    if (requestId !== zoneVideoPlaybackRequest || zoneVideoElementClipId !== clip.id) return;
+    mount.closest(".ai-text-training-zone-video-figure")?.classList.add("is-playing");
+  };
+  video.onerror = () => markZoneVideoPlaybackFailed(clip, requestId);
+  video.onloadedmetadata = alignPlayback;
+  try {
+    video.load();
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) alignPlayback();
+  } catch {
+    markZoneVideoPlaybackFailed(clip, requestId);
+    return;
+  }
+  try {
+    const playRequest = video.play();
+    if (playRequest && typeof playRequest.catch === "function") {
+      playRequest.catch(() => handleZoneVideoPlayRejection(video, clip, requestId));
+    }
+  } catch {
+    handleZoneVideoPlayRejection(video, clip, requestId);
+  }
 }
 
 function defeatZoneFallbackLines(slotId) {
@@ -3393,13 +3725,17 @@ function renderDefeatZonePlay() {
     : decelerating
       ? "skip-to-cooldown"
       : "surrender-defeat-zone";
+  const awaitingVideoAudioStart = state.phase === "zone_ready"
+    && state.countdownValue <= 0
+    && sessionPrefersZoneVideoAudio();
   let center = "";
   if (state.phase === "zone_ready") {
     center = `<section class="ai-text-training-zone-overlay is-ready">
       <span>FINAL ATTACK READY</span>
       <h2>5枚の最終攻勢</h2>
-      <strong class="ai-text-training-zone-countdown">${state.countdownValue}</strong>
-      <p>200 BPMは音と画面の演出です。動作は自分のペースで。ギブアップは開始直後から選べます。</p>
+      <strong class="ai-text-training-zone-countdown">${awaitingVideoAudioStart ? "READY" : state.countdownValue}</strong>
+      <p>${awaitingVideoAudioStart ? "動画音声は端末の自動再生制限を避けるため、本人が下の開始ボタンを押した時だけ再生します。" : "200 BPMは音と画面の演出です。動作は自分のペースで。ギブアップは開始直後から選べます。"}</p>
+      ${awaitingVideoAudioStart ? '<button class="button button-primary" type="button" data-ai-text-training-action="start-zone-video-audio">動画音声で最終攻勢を開始</button>' : ""}
       <button class="button button-ghost" type="button" data-ai-text-training-action="surrender-defeat-zone">今すぐギブアップする</button>
     </section>`;
   } else if (state.phase === "zone_rush") {
@@ -3690,6 +4026,7 @@ function render() {
   appRoot.dataset.aiTextTrainingScreen = state.screen;
   appRoot.innerHTML = html || renderSetup();
   bindEvents();
+  syncZoneVideoPlaybackDom();
   const renderedKey = `${state.screen}:${state.phase}`;
   if (renderedKey !== state.previousRenderedScreen) {
     appRoot.focus({ preventScroll: true });
@@ -3809,6 +4146,249 @@ async function handleImageSelection(input) {
     showToast(error?.message || "画像を準備できませんでした。");
     input.disabled = false;
   }
+}
+
+function canvasToZoneVideoPoster(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("動画の静止プレビューを作成できませんでした。"));
+    }, "image/webp", 0.8);
+  });
+}
+
+function zoneVideoAbortError() {
+  const error = new Error("動画の確認を中止しました。");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfZoneVideoPreparationAborted(signal) {
+  if (signal?.aborted) throw zoneVideoAbortError();
+}
+
+function waitForZoneVideoMetadata(video, file, verifiedMime, signal) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId = 0;
+    const onAbort = () => finish(zoneVideoAbortError());
+    const finish = (error, metadata = null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      if (error) reject(error);
+      else resolve(metadata);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      finish(zoneVideoAbortError());
+      return;
+    }
+    timeoutId = window.setTimeout(
+      () => finish(new Error("動画の情報を確認できませんでした。別の動画を選んでください。")),
+      10_000,
+    );
+    video.onloadedmetadata = () => {
+      try {
+        finish(null, validateAiTextTrainingZoneVideoMetadata({
+          size: file.size,
+          type: verifiedMime,
+          duration: video.duration,
+          width: video.videoWidth,
+          height: video.videoHeight,
+        }));
+      } catch (error) {
+        finish(error);
+      }
+    };
+    video.onerror = () => finish(new Error("この端末では動画を再生できません。MP4またはWebMを選んでください。"));
+  });
+}
+
+function waitForZoneVideoFrame(video, seekTime, signal) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId = 0;
+    const onAbort = () => finish(zoneVideoAbortError());
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      video.onloadeddata = null;
+      video.onseeked = null;
+      video.onerror = null;
+      if (error) reject(error);
+      else resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      finish(zoneVideoAbortError());
+      return;
+    }
+    timeoutId = window.setTimeout(
+      () => finish(new Error("動画の映像を確認できませんでした。別の動画を選んでください。")),
+      10_000,
+    );
+    video.onerror = () => finish(new Error("この端末では動画の映像を再生できません。"));
+    video.onloadeddata = () => {
+      if (seekTime <= 0 || Math.abs(video.currentTime - seekTime) < 0.05) finish();
+      else video.currentTime = seekTime;
+    };
+    video.onseeked = () => {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) finish();
+    };
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      if (seekTime > 0 && Math.abs(video.currentTime - seekTime) >= 0.05) {
+        video.currentTime = seekTime;
+      } else {
+        finish();
+      }
+    } else {
+      video.load();
+    }
+  });
+}
+
+async function prepareZoneVideoClip(file, operation) {
+  if (!file) throw new Error("動画を選び直してください。");
+  if (file.size > AI_TEXT_TRAINING_ZONE_VIDEO_MAX_BYTES) {
+    throw new Error("動画は1本20MiB以内にしてください。");
+  }
+  const signal = operation?.controller?.signal;
+  throwIfZoneVideoPreparationAborted(signal);
+  const prefix = await file.slice(0, 32).arrayBuffer();
+  throwIfZoneVideoPreparationAborted(signal);
+  const verifiedMime = verifiedStrategyVideoMime(prefix, file.type);
+  const url = URL.createObjectURL(file);
+  operation.urls.add(url);
+  let posterUrl = "";
+  const video = document.createElement("video");
+  operation.video = video;
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+  try {
+    const metadata = await waitForZoneVideoMetadata(video, file, verifiedMime, signal);
+    const seekTime = Math.min(0.25, Math.max(0, metadata.duration / 2));
+    await waitForZoneVideoFrame(video, seekTime, signal);
+    const maximumPosterSide = 480;
+    const scale = Math.min(1, maximumPosterSide / Math.max(metadata.width, metadata.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(metadata.width * scale));
+    canvas.height = Math.max(1, Math.round(metadata.height * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("動画の静止プレビューを作成できませんでした。");
+    context.fillStyle = "#05070c";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const poster = await canvasToZoneVideoPoster(canvas);
+    throwIfZoneVideoPreparationAborted(signal);
+    posterUrl = URL.createObjectURL(poster);
+    operation.urls.add(posterUrl);
+    return {
+      id: `zone-video-${Date.now()}-${zoneVideoClipSequence += 1}`,
+      url,
+      posterUrl,
+      ...metadata,
+    };
+  } catch (error) {
+    releaseZoneVideoClip({ url, posterUrl });
+    operation.urls.delete(url);
+    operation.urls.delete(posterUrl);
+    throw error;
+  } finally {
+    resetZoneVideoElement(video);
+    if (operation.video === video) operation.video = null;
+  }
+}
+
+async function handleZoneVideoSelection(input) {
+  const files = Array.from(input.files || []);
+  input.value = "";
+  if (!files.length || state.zoneVideoBusy || state.screen !== "setup") return;
+  const targetState = state;
+  const availableCount = Math.max(
+    0,
+    AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT - targetState.zoneVideoClips.length,
+  );
+  const selectedFiles = files.slice(0, availableCount);
+  const errors = files.length > selectedFiles.length
+    ? [`動画は最大${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT}本です。`]
+    : [];
+  if (!selectedFiles.length) {
+    showToast(errors[0] || "動画は最大5本です。");
+    return;
+  }
+  targetState.zoneVideoBusy = true;
+  const operation = {
+    controller: new AbortController(),
+    urls: new Set(),
+    video: null,
+  };
+  zoneVideoPreparation = operation;
+  render();
+  let addedCount = 0;
+  try {
+    for (const file of selectedFiles) {
+      try {
+        const clip = await prepareZoneVideoClip(file, operation);
+        if (!active
+            || state !== targetState
+            || targetState.screen !== "setup"
+            || targetState.playStyle !== "defeat_zone"
+            || normalizeCheerPresentation(targetState.cheerPresentation) !== "doodle") {
+          releaseZoneVideoClip(clip);
+          operation.urls.delete(clip.url);
+          operation.urls.delete(clip.posterUrl);
+          return;
+        }
+        targetState.zoneVideoClips.push(clip);
+        operation.urls.delete(clip.url);
+        operation.urls.delete(clip.posterUrl);
+        addedCount += 1;
+      } catch (error) {
+        if (operation.controller.signal.aborted) return;
+        errors.push(error?.message || "動画を準備できませんでした。");
+      }
+    }
+  } finally {
+    if (zoneVideoPreparation === operation) zoneVideoPreparation = null;
+    resetZoneVideoElement(operation.video);
+    operation.video = null;
+    operation.urls.forEach(revokeZoneVideoUrl);
+    operation.urls.clear();
+    targetState.zoneVideoBusy = false;
+    if (active && state === targetState && targetState.screen === "setup") {
+      render();
+      if (addedCount && errors.length) {
+        showToast(`${addedCount}本を追加しました。${errors.length}本は追加できませんでした。${errors[0]}`);
+      } else if (addedCount) {
+        showToast(`${addedCount}本の端末動画を追加しました。再読込すると破棄されます。`);
+      } else if (errors.length) {
+        showToast(errors[0]);
+      }
+    }
+  }
+}
+
+function removeZoneVideoClip(index) {
+  if (!Number.isInteger(index)
+      || index < 0
+      || index >= state.zoneVideoClips.length
+      || state.zoneVideoBusy) return;
+  const [clip] = state.zoneVideoClips.splice(index, 1);
+  state.zoneAudioSource = normalizeAiTextTrainingZoneAudioSource(
+    state.zoneAudioSource,
+    state.zoneVideoClips.length,
+  );
+  resetZoneVideoPlayer();
+  releaseZoneVideoClip(clip);
+  render();
 }
 
 async function removeRosterImage(index) {
@@ -4072,6 +4652,18 @@ function newSessionPlan() {
   state.sessionBeatCharacterId = normalizeBeatCharacterId(state.beatCharacterId);
   state.sessionCosmetics = equippedCosmetics();
   state.sessionCheerPresentation = normalizeCheerPresentation(state.cheerPresentation);
+  if (zoneVideoEligibleForSession()) {
+    state.sessionZoneAudioSource = normalizeAiTextTrainingZoneAudioSource(
+      state.zoneAudioSource,
+      state.zoneVideoClips.length,
+    );
+    resetZoneVideoPlayer();
+    state.zoneVideoPlaybackErrorShown = false;
+    state.zoneVideoAudioFallbackShown = false;
+    state.zoneVideoFailedClipIds.clear();
+  } else {
+    releaseZoneVideoClips();
+  }
   state.roundArtworks = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
   state.plan = createAiTextTrainingPlan({
     modeId: state.modeId,
@@ -4795,10 +5387,14 @@ function startDefeatZoneReady({
     ),
   );
   state.currentMessage = DEFEAT_ZONE_MESSAGES.ready;
-  configureRoundAmbience(Date.now() + (AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS * 1_000));
-  state.ambienceController.enable().catch(() => {
-    showToast("ZONE BEATを再生できませんでした。無音でも進行できます。");
-  });
+  if (sessionPrefersZoneVideoAudio()) {
+    state.ambienceController.disable();
+  } else {
+    configureRoundAmbience(Date.now() + (AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS * 1_000));
+    state.ambienceController.enable().catch(() => {
+      showToast("ZONE BEATを再生できませんでした。無音でも進行できます。");
+    });
+  }
   persistSession();
   render();
   announce(`${AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS}秒後に5枚の最終攻勢を開始します。200 BPMは演出テンポです。`);
@@ -4806,11 +5402,23 @@ function startDefeatZoneReady({
     state.countdownValue -= 1;
     const element = document.querySelector(".ai-text-training-zone-countdown");
     if (element) element.textContent = String(Math.max(0, state.countdownValue));
-    if (state.countdownValue <= 0) beginDefeatZoneRush();
+    if (state.countdownValue <= 0) {
+      if (sessionPrefersZoneVideoAudio()) {
+        window.clearInterval(state.countdownTimer);
+        state.countdownTimer = null;
+        state.countdownValue = 0;
+        persistSession();
+        render();
+        announce("準備できたら、動画音声で最終攻勢を開始してください。ギブアップも選べます。");
+      } else {
+        beginDefeatZoneRush();
+      }
+    }
   }, 1_000);
 }
 
 function beginDefeatZoneRush({ remainingMs = state.remainingMs } = {}) {
+  if (state.phase !== "zone_ready" || state.countdownValue > 0) return;
   window.clearInterval(state.countdownTimer);
   state.countdownTimer = null;
   state.phase = "zone_rush";
@@ -4826,11 +5434,15 @@ function beginDefeatZoneRush({ remainingMs = state.remainingMs } = {}) {
   state.lastAnnouncedSecond = null;
   state.currentMessage = defeatZoneMessage("zone_rush");
   state.roundEndsAt = performance.now() + state.remainingMs;
-  state.ambienceController.setVolume(state.metronomeVolume);
-  configureRoundAmbience(Date.now());
-  state.ambienceController.enable().catch(() => {
-    showToast("ZONE BEATを再生できませんでした。無音でも進行できます。");
-  });
+  if (sessionUsesZoneVideoAudio()) {
+    state.ambienceController.disable();
+  } else {
+    state.ambienceController.setVolume(state.metronomeVolume);
+    configureRoundAmbience(Date.now());
+    state.ambienceController.enable().catch(() => {
+      showToast("ZONE BEATを再生できませんでした。無音でも進行できます。");
+    });
+  }
   render();
   scheduleDefeatZoneMessage("zone_rush", 2_800);
   state.ticker = window.setInterval(updateDefeatZoneDom, 100);
@@ -4847,6 +5459,7 @@ function confirmPlayerDefeat(reason = "surrendered") {
       && !state.defeatResolution);
   if (!waitingForDefeat) return;
   stopRuntimeTimers();
+  resetZoneVideoPlayer();
   releaseWakeLock();
   state.defeatResolution = reason === "overpowered" ? "overpowered" : "surrendered";
   state.defeatResumePhase = "zone_deceleration";
@@ -4916,7 +5529,26 @@ function updateDefeatZoneDom() {
     edgeHud.classList.toggle("is-final-ten", visualState.finalTen);
     edgeHud.style.setProperty("--att-gauge-urgency", visualState.urgency.toFixed(3));
   }
+  // The workout clock owns the transition. Media failures must never delay it.
+  if (state.remainingMs <= 0) {
+    if (state.phase === "zone_rush") {
+      confirmPlayerDefeat("overpowered");
+    } else if (state.phase === "zone_deceleration") {
+      beginDefeatZoneCooldown();
+    } else if (state.phase === "zone_cooldown") {
+      finishDefeatPresentation();
+    }
+    return;
+  }
   if (state.phase === "zone_rush") {
+    try {
+      syncZoneVideoPlaybackDom();
+    } catch {
+      const frame = currentZoneVideoPlaybackFrame();
+      const failedClip = frame ? state.zoneVideoClips[frame.index] : null;
+      if (failedClip) markZoneVideoPlaybackFailed(failedClip, zoneVideoPlaybackRequest);
+      else resetZoneVideoPlayer();
+    }
     if (remainingSeconds === 10 && state.lastAnnouncedSecond !== 10) {
       state.lastAnnouncedSecond = 10;
       announce("最終攻勢、残り10秒です。ギブアップはいつでも選べます。");
@@ -4937,14 +5569,6 @@ function updateDefeatZoneDom() {
       && state.lastAnnouncedSecond !== 10) {
     state.lastAnnouncedSecond = 10;
     announce("クールダウンは残り10秒です。いつでも終了できます。");
-  }
-  if (state.remainingMs > 0) return;
-  if (state.phase === "zone_rush") {
-    confirmPlayerDefeat("overpowered");
-  } else if (state.phase === "zone_deceleration") {
-    beginDefeatZoneCooldown();
-  } else if (state.phase === "zone_cooldown") {
-    finishDefeatPresentation();
   }
 }
 
@@ -4993,6 +5617,7 @@ function finishDefeatPresentation({ settled = false } = {}) {
   }
   state.screen = "result";
   state.phase = "result";
+  releaseZoneVideoClips();
   if (typeof syncAiTextTrainingLightsPresence === "function") {
     syncAiTextTrainingLightsPresence({ forceInactive: true, close: true });
   }
@@ -5165,6 +5790,7 @@ function completeSession(outcome) {
   }
   state.screen = "result";
   state.phase = "result";
+  releaseZoneVideoClips();
   if (typeof syncAiTextTrainingLightsPresence === "function") {
     syncAiTextTrainingLightsPresence({ forceInactive: true, close: true });
   }
@@ -5206,6 +5832,7 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
     && Number(state.selectedPreset?.price || 0) > 0;
   const previousPreset = state.selectedPreset;
   stopRuntimeTimers();
+  releaseZoneVideoClips();
   state.ambienceController.disable();
   releaseWakeLock();
   state.screen = "setup";
@@ -5310,6 +5937,7 @@ function cleanup({ releaseDeck = false } = {}) {
   state.ambienceController.destroy();
   state.unsubscribeWallet?.();
   state.unsubscribeWallet = null;
+  releaseZoneVideoClips();
   if (releaseDeck) releaseRosterImages();
   delete appRoot.dataset.aiTextTrainingScreen;
   active = false;
@@ -5329,6 +5957,23 @@ function bindXConfirmations() {
 function bindEvents() {
   document.querySelectorAll("[data-ai-text-training-image]").forEach((input) => {
     input.addEventListener("change", () => handleImageSelection(input));
+  });
+  document.querySelectorAll("[data-ai-text-training-zone-video]").forEach((input) => {
+    input.addEventListener("change", () => handleZoneVideoSelection(input));
+  });
+  document.querySelectorAll("[data-ai-text-training-remove-zone-video]").forEach((button) => {
+    button.addEventListener("click", () => {
+      removeZoneVideoClip(Number(button.dataset.aiTextTrainingRemoveZoneVideo));
+    });
+  });
+  document.querySelectorAll('input[name="aiTextTrainingZoneAudioSource"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      state.zoneAudioSource = normalizeAiTextTrainingZoneAudioSource(
+        input.value,
+        state.zoneVideoClips.length,
+      );
+      render();
+    });
   });
   document.querySelectorAll("[data-ai-text-training-bpm]").forEach((input) => {
     input.addEventListener("change", () => {
@@ -5372,6 +6017,7 @@ function bindEvents() {
       }
       state.playStyle = normalizeAiTextTrainingPlayStyle(input.value);
       state.sessionPlayStyle = state.playStyle;
+      if (state.playStyle !== "defeat_zone") cancelZoneVideoPreparation();
       state.editorProductType = state.playStyle === "defeat_zone"
         ? "defeat_zone"
         : "standard";
@@ -5431,6 +6077,7 @@ function bindEvents() {
   document.querySelectorAll('input[name="aiTextTrainingCheerPresentation"]').forEach((input) => {
     input.addEventListener("change", () => {
       state.cheerPresentation = normalizeCheerPresentation(input.value);
+      if (state.cheerPresentation !== "doodle") cancelZoneVideoPreparation();
       if (!writeLocalValue(
         CHEER_PRESENTATION_PREFERENCE_KEY,
         state.cheerPresentation,
@@ -5669,6 +6316,7 @@ function bindEvents() {
     "resume-round": startRoundCountdown,
     "next-round": advanceRound,
     "resume-defeat-zone": resumeDefeatZone,
+    "start-zone-video-audio": () => beginDefeatZoneRush(),
     "surrender-defeat-zone": () => confirmPlayerDefeat("surrendered"),
     "skip-to-cooldown": () => beginDefeatZoneCooldown(),
     "settle-defeat-zone": () => finishDefeatPresentation({ settled: true }),
@@ -5803,9 +6451,12 @@ window.addEventListener("pagehide", (event) => {
   stopRuntimeTimers();
   releaseWakeLock();
   state.ambienceController.disable();
+  cancelZoneVideoPreparation();
+  resetZoneVideoPlayer();
   if (event.persisted) return;
   state.ambienceController.destroy();
   state.unsubscribeWallet?.();
+  releaseZoneVideoClips();
   releaseRosterImages();
 });
 

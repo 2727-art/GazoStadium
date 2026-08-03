@@ -1412,6 +1412,275 @@
   line-height: 1.6;
 }
 
+.ai-text-training-zone-video-panel {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: clamp(14px, 3vw, 20px);
+  border: 1px solid rgba(255, 72, 111, 0.34);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(120, 103, 255, 0.16), transparent 38%),
+    linear-gradient(145deg, rgba(255, 72, 111, 0.07), rgba(5, 7, 13, 0.82));
+}
+
+.ai-text-training-zone-video-panel > header {
+  display: grid;
+  gap: 5px;
+}
+
+.ai-text-training-zone-video-panel > header > span {
+  color: #ffb4c4;
+  font-size: 0.58rem;
+  font-weight: 1000;
+  letter-spacing: 0.13em;
+}
+
+.ai-text-training-zone-video-panel > header > h3 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1rem, 3.5vw, 1.35rem);
+  line-height: 1.35;
+}
+
+.ai-text-training-zone-video-panel > header > h3 > em {
+  display: inline-flex;
+  margin-left: 5px;
+  padding: 3px 7px;
+  border: 1px solid rgba(117, 236, 173, 0.32);
+  border-radius: 999px;
+  color: #c8ffdf;
+  font-size: 0.52rem;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+}
+
+.ai-text-training-zone-video-panel > header > p,
+.ai-text-training-zone-video-empty {
+  margin: 0;
+  color: #aeb6c7;
+  font-size: 0.69rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.ai-text-training-zone-video-empty {
+  padding: 13px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 13px;
+  text-align: center;
+}
+
+.ai-text-training-zone-video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 10px;
+}
+
+.ai-text-training-zone-video-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(5, 7, 13, 0.72);
+}
+
+.ai-text-training-zone-video-preview {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #05070c;
+}
+
+.ai-text-training-zone-video-preview > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.ai-text-training-zone-video-preview > img.is-backdrop {
+  z-index: -1;
+  object-fit: cover;
+  filter: blur(12px) brightness(0.58) saturate(1.15);
+  transform: scale(1.12);
+}
+
+.ai-text-training-zone-video-preview > img.is-foreground {
+  object-fit: contain;
+}
+
+.ai-text-training-zone-video-preview > em,
+.ai-text-training-zone-video-badge {
+  position: absolute;
+  z-index: 3;
+  top: 7px;
+  left: 7px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(5, 7, 12, 0.72);
+  font-size: 0.51rem;
+  font-style: normal;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+}
+
+.ai-text-training-zone-video-card > div:not(.ai-text-training-zone-video-preview) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-text-training-zone-video-card > div > strong {
+  color: #f5f7fc;
+  font-size: 0.69rem;
+  font-weight: 950;
+}
+
+.ai-text-training-zone-video-card > div > small {
+  color: #939daf;
+  font-size: 0.58rem;
+  font-weight: 750;
+}
+
+.ai-text-training-zone-video-card > .button {
+  min-height: 38px;
+  padding: 7px 9px;
+  font-size: 0.62rem;
+}
+
+.ai-text-training-zone-video-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-text-training-zone-video-file {
+  position: relative;
+  flex: 1 1 240px;
+  overflow: hidden;
+}
+
+.ai-text-training-zone-video-file.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.ai-text-training-zone-video-file > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.ai-text-training-zone-video-actions > strong {
+  flex: 0 0 auto;
+  color: #ffc2d0;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 1000;
+}
+
+.ai-text-training-zone-audio-source {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: rgba(3, 5, 10, 0.48);
+}
+
+.ai-text-training-zone-audio-source > legend {
+  padding: 0 6px;
+  color: #f8f9fd;
+  font-size: 0.7rem;
+  font-weight: 1000;
+}
+
+.ai-text-training-zone-audio-source > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ai-text-training-zone-audio-source label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 11px;
+  color: #eef1f8;
+  background: rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+}
+
+.ai-text-training-zone-audio-source label:has(input:checked) {
+  border-color: rgba(117, 236, 173, 0.58);
+  background: rgba(78, 221, 151, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(117, 236, 173, 0.12);
+}
+
+.ai-text-training-zone-audio-source label.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ai-text-training-zone-audio-source input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: #75ecad;
+}
+
+.ai-text-training-zone-audio-source label > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-text-training-zone-audio-source label strong {
+  font-size: 0.7rem;
+  font-weight: 1000;
+}
+
+.ai-text-training-zone-audio-source label small,
+.ai-text-training-zone-audio-source > p {
+  color: #9fa8ba;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.ai-text-training-zone-audio-source > p {
+  margin: 0;
+}
+
+.ai-text-training-zone-video-panel > ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: #9fa8ba;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
 .ai-text-training-selected-support {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(230px, 0.65fr);
@@ -2487,6 +2756,81 @@
 
 .ai-text-training-zone-lineup img {
   filter: saturate(1.08) contrast(1.04);
+}
+
+.ai-text-training-zone-video-figure {
+  isolation: isolate;
+  pointer-events: none;
+}
+
+.ai-text-training-zone-video-media,
+.ai-text-training-zone-video-media > img,
+.ai-text-training-zone-video-mount,
+.ai-text-training-zone-video-player {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.ai-text-training-zone-video-media {
+  z-index: 0;
+  overflow: hidden;
+  background: #05070c;
+}
+
+.ai-text-training-zone-video-media > img.is-backdrop {
+  z-index: 0;
+  object-fit: cover;
+  filter: blur(12px) brightness(0.56) saturate(1.16);
+  transform: scale(1.12);
+}
+
+.ai-text-training-zone-video-media > img.is-foreground {
+  z-index: 1;
+  object-fit: contain;
+  filter: saturate(1.08) contrast(1.04);
+}
+
+.ai-text-training-zone-video-mount {
+  z-index: 2;
+  display: block;
+}
+
+.ai-text-training-zone-video-player {
+  display: block;
+  border: 0;
+  opacity: 0;
+  object-fit: contain;
+  background: transparent;
+  transition: opacity 140ms ease-out;
+}
+
+.ai-text-training-zone-video-figure.is-playing .ai-text-training-zone-video-player {
+  opacity: 1;
+}
+
+.ai-text-training-zone-video-figure.is-active {
+  border-color: rgba(255, 119, 151, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(255, 112, 147, 0.34);
+}
+
+.ai-text-training-zone-video-badge {
+  position: absolute;
+  z-index: 3;
+  top: 6px;
+  left: 6px;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(5, 7, 12, 0.68);
+  font-size: clamp(0.42rem, 1.6vw, 0.55rem);
+  font-style: normal;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
 }
 
 .ai-text-training-zone-overlay {
@@ -5005,9 +5349,14 @@
   .ai-text-training-review-actions,
   .ai-text-training-result > div,
   .ai-text-training-cosmetic-actions,
+  .ai-text-training-zone-video-actions,
   .ai-text-training-draw-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .ai-text-training-zone-audio-source > div {
+    grid-template-columns: 1fr;
   }
 
   .ai-text-training-local-save .button,
