@@ -19,6 +19,7 @@ import {
   runTransaction,
   serverTimestamp,
   set,
+  startAt,
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 import {
@@ -38,6 +39,9 @@ import {
 import {
   summarizeMarketPresence,
 } from "./market-presence.mjs?v=market-presence-v1";
+import {
+  summarizeBattlePresence,
+} from "./battle-presence-stats.mjs?v=presence-check-v1";
 import {
   CHAT_BACKGROUND_PRODUCTS,
   CHAT_COSMETIC_PRODUCTS,
@@ -441,6 +445,8 @@ const ENGAWA_RESPONSES = Object.freeze([
 ]);
 const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
+const BATTLE_PRESENCE_CHECK_COOLDOWN_MS = 30_000;
+const BATTLE_PRESENCE_CHECK_REQUEST_TIMEOUT_MS = 10_000;
 const LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS = 30_000;
 const LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS = 20_000;
 const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;
@@ -515,6 +521,22 @@ const createLobbyStats = (
   market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
 });
 let lobbyStats = createLobbyStats();
+const createBattlePresenceCheckState = () => ({
+  waiting: null,
+  otherWaiting: null,
+  playing: null,
+  checkedAt: 0,
+  lastAttemptAt: 0,
+  loading: false,
+  error: "",
+  request: null,
+  cooldownTimer: null,
+  generation: 0,
+});
+const battlePresenceChecks = Object.fromEntries(
+  LOBBY_MODES.map((mode) => [mode, createBattlePresenceCheckState()]),
+);
+const battlePresenceOwnIdGetters = new Map();
 let leaderboardEntries = [];
 let leaderboardStatus = "idle";
 let leaderboardPeriod = DEFAULT_LEADERBOARD_PERIOD;
@@ -663,6 +685,7 @@ function createOnlineState() {
     matchScopeExpanded: false,
     queueHeartbeat: null,
     publicPresenceId: "",
+    publicPresencePendingId: "",
     publicPresenceState: "",
     publicPresenceHeartbeat: null,
     publicPresenceDisconnect: null,
@@ -1788,6 +1811,7 @@ function openOnlineScreen(screen) {
 }
 
 function start() {
+  if (!active) resetBattlePresenceCheck("solo");
   openOnlineScreen("setup");
 }
 
@@ -1833,6 +1857,222 @@ function getLobbyStatsRefreshStatus(now = Date.now()) {
     cooldownRemainingMs,
     error: lobbyPublicStatsRefreshError,
   };
+}
+
+function getBattlePresenceCheckState(mode) {
+  if (!LOBBY_MODES.includes(mode)) throw new Error("参加人数を確認できないモードです。");
+  return battlePresenceChecks[mode];
+}
+
+function getBattlePresenceOwnId(mode) {
+  const getter = battlePresenceOwnIdGetters.get(mode);
+  if (typeof getter !== "function") return "";
+  try {
+    return String(getter() || "");
+  } catch {
+    return "";
+  }
+}
+
+function resetBattlePresenceCheck(mode) {
+  const check = getBattlePresenceCheckState(mode);
+  const generation = check.generation + 1;
+  window.clearTimeout(check.cooldownTimer);
+  Object.assign(check, createBattlePresenceCheckState(), { generation });
+  battlePresenceOwnIdGetters.delete(mode);
+}
+
+function getBattlePresenceCheckPresentation(mode, phase = "setup", now = Date.now()) {
+  const check = getBattlePresenceCheckState(mode);
+  const matching = phase === "matching";
+  const awaitingOwnPresence = matching && !getBattlePresenceOwnId(mode);
+  const waiting = matching ? check.otherWaiting : check.waiting;
+  const hasValues = Number.isInteger(waiting) && Number.isInteger(check.playing);
+  const cooldownRemainingMs = Math.max(
+    0,
+    check.lastAttemptAt + BATTLE_PRESENCE_CHECK_COOLDOWN_MS - now,
+  );
+  const coolingDown = cooldownRemainingMs > 0;
+  const available = !useOfflineMarketPreview;
+  const checkedAtLabel = formatLobbyStatsUpdatedAt(check.checkedAt);
+  let status = "押したときだけ最新の人数を確認します。";
+  if (!available) {
+    status = "プレビュー中はFirebaseへ接続しません。";
+  } else if (check.loading) {
+    status = "現在の待機・対戦人数を確認しています…";
+  } else if (awaitingOwnPresence) {
+    status = "参加状況を登録しています。登録が終わると人数を確認できます。";
+  } else if (check.error) {
+    status = checkedAtLabel
+      ? `${check.error} 表示は${checkedAtLabel}取得の参考値です。`
+      : check.error;
+  } else if (checkedAtLabel) {
+    status = `${checkedAtLabel}取得・参考値${coolingDown ? `（再確認は約${Math.ceil(cooldownRemainingMs / 1000)}秒後）` : ""}`;
+  }
+  return {
+    modeLabel: mode === "strategy" ? "戦略型1ON1" : "通常型1ON1",
+    waitingLabel: matching ? "ほかに待機中" : "待機中",
+    waitingValue: hasValues ? waiting : null,
+    playingValue: hasValues ? check.playing : null,
+    buttonLabel: check.loading
+      ? "人数を確認中…"
+      : awaitingOwnPresence
+        ? "参加状況を登録中…"
+        : checkedAtLabel
+          ? "人数を更新"
+          : "現在の人数を確認",
+    disabled: !available || check.loading || awaitingOwnPresence || coolingDown,
+    loading: check.loading,
+    awaitingOwnPresence,
+    status,
+  };
+}
+
+function renderBattlePresenceCheck({ mode = "solo", phase = "setup" } = {}) {
+  const normalizedPhase = phase === "matching" ? "matching" : "setup";
+  const presentation = getBattlePresenceCheckPresentation(mode, normalizedPhase);
+  const countText = (value) => Number.isInteger(value) ? String(value) : "—";
+  return `<aside class="battle-presence-check ${normalizedPhase === "matching" ? "is-matching" : ""}" data-battle-presence-panel="${mode}" data-battle-presence-phase="${normalizedPhase}" aria-busy="${presentation.loading ? "true" : "false"}">
+    <div class="battle-presence-check-head"><div><small>${presentation.modeLabel} / ON-DEMAND</small><strong>現在の参加状況</strong></div>
+      <button class="button button-ghost" type="button" data-battle-presence-refresh="${mode}" ${presentation.disabled ? "disabled" : ""}>${presentation.buttonLabel}</button></div>
+    <div class="battle-presence-counts" aria-label="${presentation.modeLabel}の参加人数">
+      <div><small data-battle-presence-waiting-label>${presentation.waitingLabel}</small><strong><span data-battle-presence-waiting>${countText(presentation.waitingValue)}</span><em>人</em></strong></div>
+      <div><small>対戦中</small><strong><span data-battle-presence-playing>${countText(presentation.playingValue)}</span><em>人</em></strong></div>
+    </div>
+    <span class="battle-presence-status" data-battle-presence-status role="status" aria-live="polite" aria-atomic="true">${presentation.status}</span>
+    <small class="battle-presence-note">取得時点の参考値です。好み条件や直前の成立・退出により、マッチングを保証するものではありません。</small>
+  </aside>`;
+}
+
+function syncBattlePresenceCheckPanels(mode) {
+  document.querySelectorAll(`[data-battle-presence-panel="${mode}"]`).forEach((panel) => {
+    const phase = panel.dataset.battlePresencePhase === "matching" ? "matching" : "setup";
+    const presentation = getBattlePresenceCheckPresentation(mode, phase);
+    const button = panel.querySelector(`[data-battle-presence-refresh="${mode}"]`);
+    const waitingLabel = panel.querySelector("[data-battle-presence-waiting-label]");
+    const waitingValue = panel.querySelector("[data-battle-presence-waiting]");
+    const playingValue = panel.querySelector("[data-battle-presence-playing]");
+    const status = panel.querySelector("[data-battle-presence-status]");
+    panel.setAttribute("aria-busy", presentation.loading ? "true" : "false");
+    if (button) {
+      button.disabled = presentation.disabled;
+      button.textContent = presentation.buttonLabel;
+    }
+    if (waitingLabel) waitingLabel.textContent = presentation.waitingLabel;
+    if (waitingValue) waitingValue.textContent = Number.isInteger(presentation.waitingValue) ? String(presentation.waitingValue) : "—";
+    if (playingValue) playingValue.textContent = Number.isInteger(presentation.playingValue) ? String(presentation.playingValue) : "—";
+    if (status) status.textContent = presentation.status;
+  });
+}
+
+function scheduleBattlePresenceCheckCooldown(mode, generation) {
+  const check = getBattlePresenceCheckState(mode);
+  window.clearTimeout(check.cooldownTimer);
+  const remaining = check.lastAttemptAt + BATTLE_PRESENCE_CHECK_COOLDOWN_MS - Date.now();
+  if (remaining <= 0) return;
+  check.cooldownTimer = window.setTimeout(() => {
+    if (check.generation !== generation) return;
+    check.cooldownTimer = null;
+    syncBattlePresenceCheckPanels(mode);
+  }, remaining + 50);
+}
+
+function bindBattlePresenceCheck({ mode = "solo", getOwnPresenceId = () => "" } = {}) {
+  getBattlePresenceCheckState(mode);
+  battlePresenceOwnIdGetters.set(mode, getOwnPresenceId);
+  document.querySelectorAll(`[data-battle-presence-refresh="${mode}"]`).forEach((button) => {
+    if (button.dataset.battlePresenceBound === "true") return;
+    button.dataset.battlePresenceBound = "true";
+    button.addEventListener("click", () => {
+      const phase = button.closest("[data-battle-presence-panel]")?.dataset.battlePresencePhase === "matching"
+        ? "matching"
+        : "setup";
+      refreshBattlePresenceCheck(mode, { phase }).catch(() => {});
+    });
+  });
+  syncBattlePresenceCheckPanels(mode);
+}
+
+async function loadBattlePresenceServerNow() {
+  if (!publicServerTimeOffsetReady) {
+    try {
+      const snapshot = await withLobbyPublicStatsTimeout(
+        get(ref(database, ".info/serverTimeOffset")),
+        3_000,
+      );
+      const offset = Number(snapshot.val());
+      if (Number.isFinite(offset)) {
+        publicServerTimeOffset = offset;
+        publicServerTimeOffsetReady = true;
+      }
+    } catch {
+      // The device clock remains the fallback when server time is unavailable.
+    }
+  }
+  return Date.now() + Number(publicServerTimeOffset || 0);
+}
+
+async function refreshBattlePresenceCheck(mode, { phase = "setup" } = {}) {
+  const check = getBattlePresenceCheckState(mode);
+  if (useOfflineMarketPreview) return check;
+  if (phase === "matching" && !getBattlePresenceOwnId(mode)) {
+    syncBattlePresenceCheckPanels(mode);
+    return check;
+  }
+  if (check.request) return check.request;
+  if (check.lastAttemptAt + BATTLE_PRESENCE_CHECK_COOLDOWN_MS > Date.now()) {
+    syncBattlePresenceCheckPanels(mode);
+    return check;
+  }
+
+  const generation = check.generation;
+  check.lastAttemptAt = Date.now();
+  check.loading = true;
+  check.error = "";
+  syncBattlePresenceCheckPanels(mode);
+  let request;
+  request = (async () => {
+    try {
+      const serverNow = await loadBattlePresenceServerNow();
+      const freshAfter = serverNow - PUBLIC_PRESENCE_FRESH_MS;
+      const snapshot = await withLobbyPublicStatsTimeout(
+        get(query(
+          ref(database, "online/publicPresence"),
+          orderByChild("lastSeen"),
+          startAt(freshAfter),
+        )),
+        BATTLE_PRESENCE_CHECK_REQUEST_TIMEOUT_MS,
+      );
+      if (check.generation !== generation) return check;
+      const receivedServerNow = Date.now() + Number(publicServerTimeOffset || 0);
+      const summary = summarizeBattlePresence(snapshot.val() || {}, {
+        mode,
+        now: receivedServerNow,
+        freshMs: PUBLIC_PRESENCE_FRESH_MS,
+        ownPresenceId: getBattlePresenceOwnId(mode),
+      });
+      check.waiting = summary.waiting;
+      check.otherWaiting = summary.otherWaiting;
+      check.playing = summary.playing;
+      check.checkedAt = Date.now();
+      check.error = "";
+      return check;
+    } catch {
+      if (check.generation === generation) {
+        check.error = "最新の人数を確認できませんでした。通信を確認して、もう一度お試しください。";
+      }
+      return check;
+    } finally {
+      if (check.generation === generation && check.request === request) {
+        check.request = null;
+        check.loading = false;
+        scheduleBattlePresenceCheckCooldown(mode, generation);
+        syncBattlePresenceCheckPanels(mode);
+      }
+    }
+  })();
+  check.request = request;
+  return request;
 }
 
 function getLeaderboard() {
@@ -4219,6 +4459,7 @@ function renderSetup() {
             <p>任意で3枚まで追加できます。対戦中は控えも同じ候補として選べ、使わずに終了してもかまいません。</p></div>
           <div class="deck-grid deck-grid-reserve">${reserveSlots}</div>
         </section>
+        ${renderBattlePresenceCheck({ mode: "solo", phase: "setup" })}
         <div class="screen-actions setup-actions crown-matchmaking-actions" id="soloCrownMatchmakingActions">
           ${renderCrownMatchmakingActions({
             mode: "solo",
@@ -4746,7 +4987,7 @@ function renderMatching() {
     eyebrow: "PREFERENCE MATCHING",
     title: "対戦相手を探しています",
     body: scopeBody,
-    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${reunionDetail}${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}${scopeHint}`,
+    details: `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${reunionDetail}${sampleCount ? `<span class="connection-pill warning">SAMPLE ${sampleCount}枚 / 開始HP ${startingHp}</span>` : `<span class="connection-pill">実画像デッキ / 開始HP ${MAX_HP}</span>`}${scopeHint}${renderBattlePresenceCheck({ mode: "solo", phase: "matching" })}`,
     actions: `${expandAction}<button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>`,
   });
 }
@@ -5244,6 +5485,10 @@ function bindScreenEvents() {
     else state.expandedTitleCategories.delete(categoryId);
   }));
   bindChatEvents();
+  bindBattlePresenceCheck({
+    mode: "solo",
+    getOwnPresenceId: () => state.publicPresenceId || state.publicPresencePendingId,
+  });
 
   if (state.screen === "setup") bindSetupEvents();
   if (state.screen === "familiarBook") bindSoloFamiliarBookEvents();
@@ -7953,32 +8198,42 @@ async function startPublicPresence(generation) {
   if (!isCurrentMatchmakingGeneration(generation)) return false;
   const presenceId = push(ref(database, "online/publicPresence")).key;
   if (!presenceId) throw new Error("参加状況を登録できませんでした。");
+  state.publicPresencePendingId = presenceId;
+  syncBattlePresenceCheckPanels("solo");
   const ownerRef = ref(database, `online/publicPresenceOwners/${presenceId}`);
   const presenceRef = ref(database, `online/publicPresence/${presenceId}`);
   await set(ownerRef, state.uid);
   if (!isCurrentMatchmakingGeneration(generation)) {
+    if (state.publicPresencePendingId === presenceId) state.publicPresencePendingId = "";
+    syncBattlePresenceCheckPanels("solo");
     await remove(ownerRef).catch(() => {});
     return false;
   }
   await writePublicPresence(presenceRef, "solo", "waiting");
   if (!isCurrentMatchmakingGeneration(generation)) {
+    if (state.publicPresencePendingId === presenceId) state.publicPresencePendingId = "";
+    syncBattlePresenceCheckPanels("solo");
     await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
     return false;
   }
   const presenceDisconnect = onDisconnect(presenceRef);
   await presenceDisconnect.remove();
   if (!isCurrentMatchmakingGeneration(generation)) {
+    if (state.publicPresencePendingId === presenceId) state.publicPresencePendingId = "";
+    syncBattlePresenceCheckPanels("solo");
     await presenceDisconnect.cancel().catch(() => {});
     await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
     return false;
   }
   state.publicPresenceId = presenceId;
+  state.publicPresencePendingId = "";
   state.publicPresenceState = "waiting";
   state.publicPresenceDisconnect = presenceDisconnect;
   state.publicPresenceHeartbeat = window.setInterval(() => {
     if (!state.publicPresenceId) return;
     writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), "solo", state.publicPresenceState).catch(() => {});
   }, PUBLIC_PRESENCE_HEARTBEAT_MS);
+  syncBattlePresenceCheckPanels("solo");
   return true;
 }
 
@@ -8003,11 +8258,13 @@ async function cleanupPublicPresence(targetState = state) {
   window.clearInterval(targetState.publicPresenceHeartbeat);
   targetState.publicPresenceHeartbeat = null;
   const presenceDisconnect = targetState.publicPresenceDisconnect;
-  const presenceId = targetState.publicPresenceId;
+  const presenceId = targetState.publicPresenceId || targetState.publicPresencePendingId;
   const ownUid = targetState.uid;
   targetState.publicPresenceDisconnect = null;
   targetState.publicPresenceId = "";
+  targetState.publicPresencePendingId = "";
   targetState.publicPresenceState = "";
+  if (targetState === state) syncBattlePresenceCheckPanels("solo");
   await presenceDisconnect?.cancel?.().catch(() => {});
   if (!presenceId || !ownUid) return;
   await remove(ref(database, `online/publicPresence/${presenceId}`)).catch(() => {});
@@ -11602,6 +11859,10 @@ window.HariaiOnline = {
   getLobbyStats,
   getLobbyStatsRefreshStatus,
   refreshLobbyPublicStats,
+  renderBattlePresenceCheck,
+  bindBattlePresenceCheck,
+  syncBattlePresenceCheckPanels,
+  resetBattlePresenceCheck,
   getFreeTableLampState,
   renderFreeTableResultLampContent,
   syncFreeTableResultLampSlot,

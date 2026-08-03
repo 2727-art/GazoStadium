@@ -8338,6 +8338,146 @@ button:disabled {
   text-align: center;
 }
 
+.battle-presence-check {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid rgba(100, 232, 213, 0.24);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(100, 232, 213, 0.075), rgba(255, 255, 255, 0.025)),
+    rgba(8, 12, 20, 0.72);
+  text-align: left;
+}
+
+.battle-presence-check[data-battle-presence-panel="strategy"] {
+  border-color: rgba(170, 131, 255, 0.3);
+  background:
+    linear-gradient(135deg, rgba(170, 131, 255, 0.09), rgba(100, 232, 213, 0.025)),
+    rgba(8, 12, 20, 0.72);
+}
+
+.strategy-form .battle-presence-check {
+  margin-top: 0;
+}
+
+.battle-presence-check + .setup-actions {
+  margin-top: 12px;
+}
+
+.online-status-details .battle-presence-check {
+  max-width: 540px;
+  flex: 1 0 100%;
+  margin: 4px auto 0;
+}
+
+.battle-presence-check-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.battle-presence-check-head > div {
+  min-width: 0;
+}
+
+.battle-presence-check-head small,
+.battle-presence-check-head strong {
+  display: block;
+}
+
+.battle-presence-check-head small {
+  color: #72d9d1;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+[data-battle-presence-panel="strategy"] .battle-presence-check-head small {
+  color: #cbb3ff;
+}
+
+.battle-presence-check-head strong {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.battle-presence-check .battle-presence-check-head .button {
+  width: auto;
+  min-width: 170px;
+  min-height: 44px;
+  flex: 0 0 auto;
+  padding: 9px 15px;
+  font-size: 0.74rem;
+}
+
+.battle-presence-check .button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.battle-presence-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.battle-presence-counts > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.battle-presence-counts small,
+.battle-presence-counts strong {
+  display: block;
+}
+
+.battle-presence-counts small {
+  color: var(--muted);
+  font-size: 0.67rem;
+  font-weight: 800;
+}
+
+.battle-presence-counts strong {
+  margin-top: 4px;
+  color: #eefcfb;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.battle-presence-counts em {
+  margin-left: 3px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-style: normal;
+}
+
+.battle-presence-status,
+.battle-presence-note {
+  display: block;
+  line-height: 1.55;
+}
+
+.battle-presence-status {
+  min-height: 1.55em;
+  margin-top: 11px;
+  color: #aeb9c8;
+  font-size: 0.69rem;
+}
+
+.battle-presence-note {
+  margin-top: 4px;
+  color: #7f899a;
+  font-size: 0.62rem;
+}
+
 @keyframes matchingBounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
   30% { transform: translateY(-8px); opacity: 1; }
@@ -9168,6 +9308,28 @@ button:disabled {
   .crown-matchmaking-status {
     width: 100%;
     flex-basis: 100%;
+  }
+
+  .battle-presence-check {
+    padding: 14px;
+  }
+
+  .battle-presence-check-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .battle-presence-check .battle-presence-check-head .button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .battle-presence-counts {
+    gap: 8px;
+  }
+
+  .battle-presence-counts > div {
+    padding: 10px;
   }
 
   .crown-matchmaking-hint {

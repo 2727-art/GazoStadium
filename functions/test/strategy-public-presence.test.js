@@ -147,13 +147,14 @@ test("finish and withdrawal stop lobby presence without ending the room or revie
 
 test("public cleanup detaches locally and removes presence before its owner", () => {
   const cleanup = section("async function cleanupPublicPresence()", "function requestHome()");
-  const captureId = cleanup.indexOf("const id = state.publicPresenceId;");
+  const captureId = cleanup.indexOf("const id = state.publicPresenceId || state.publicPresencePendingId;");
   const clearId = cleanup.indexOf('state.publicPresenceId = "";');
+  const clearPendingId = cleanup.indexOf('state.publicPresencePendingId = "";');
   const cancel = cleanup.indexOf("await disconnect?.cancel?.()");
   const removePresence = cleanup.indexOf("online/publicPresence/${id}");
   const removeOwner = cleanup.indexOf("online/publicPresenceOwners/${id}");
 
-  assert.ok(captureId >= 0 && captureId < clearId && clearId < cancel);
+  assert.ok(captureId >= 0 && captureId < clearId && clearId < clearPendingId && clearPendingId < cancel);
   assert.ok(cancel < removePresence && removePresence < removeOwner);
   assert.doesNotMatch(cleanup, /Promise\.allSettled/);
 });

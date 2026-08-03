@@ -280,6 +280,7 @@ function createState() {
     roomUnsubscribers: [],
     disconnectHandles: [],
     publicPresenceId: "",
+    publicPresencePendingId: "",
     publicPresenceState: "",
     publicPresenceHeartbeat: null,
     publicPresenceDisconnect: null,
@@ -412,6 +413,7 @@ function start() {
     showToast("戦略型1on1はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
+  window.HariaiOnline?.resetBattlePresenceCheck?.("strategy");
   active = true;
   state = createState();
   lastRenderedScreen = "";
@@ -590,6 +592,7 @@ function renderProfile() {
           <input class="text-input" id="strategyCustomPursuitLine" maxlength="${MAX_PURSUIT_LINE_LENGTH}" autocomplete="off" value="${usesCustom ? escapeHtml(state.pursuitLine) : ""}" /></label>
           <span class="pursuit-character-count"><b id="strategyPursuitCharacterCount">${usesCustom ? state.pursuitLine.length : 0}</b> / ${MAX_PURSUIT_LINE_LENGTH}</span></div>
       </div>
+      ${window.HariaiOnline?.renderBattlePresenceCheck?.({ mode: "strategy", phase: "setup" }) || ""}
       <div class="screen-actions setup-actions crown-matchmaking-actions" id="strategyCrownMatchmakingActions">${crownMatchmakingActions}</div>
     </form></div></section>`;
 }
@@ -648,7 +651,7 @@ function renderMatching() {
     "PREFERENCE MATCHING",
     "戦略型1on1の対戦相手を探しています",
     scopeBody,
-    `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${scopeHint}`,
+    `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${scopeHint}${window.HariaiOnline?.renderBattlePresenceCheck?.({ mode: "strategy", phase: "matching" }) || ""}`,
     `${expandAction}<button class="button button-ghost" id="strategyCancelMatching">マッチングをやめる</button>`,
   );
 }
@@ -1257,6 +1260,10 @@ function renderScoreButtons() {
 
 function bindScreenEvents() {
   document.querySelector("#strategyBackHome")?.addEventListener("click", leaveToLanding);
+  window.HariaiOnline?.bindBattlePresenceCheck?.({
+    mode: "strategy",
+    getOwnPresenceId: () => state.publicPresenceId || state.publicPresencePendingId,
+  });
   if (state.screen === "profile") {
     window.HariaiOnline?.bindOverallRankingParticipation?.({
       controlId: "strategyOverallRanking",
@@ -3848,31 +3855,41 @@ async function startPublicPresence(generation) {
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return false;
   const presenceId = push(ref(database, "online/publicPresence")).key;
   if (!presenceId) throw new Error("参加状況を登録できませんでした。");
+  state.publicPresencePendingId = presenceId;
+  window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
   const ownerRef = ref(database, `online/publicPresenceOwners/${presenceId}`);
   const presenceRef = ref(database, `online/publicPresence/${presenceId}`);
   await set(ownerRef, state.uid);
   if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    if (state.publicPresencePendingId === presenceId) state.publicPresencePendingId = "";
+    window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
     await remove(ownerRef).catch(() => {});
     return false;
   }
   await writePublicPresence(presenceRef, "waiting");
   if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    if (state.publicPresencePendingId === presenceId) state.publicPresencePendingId = "";
+    window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
     await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
     return false;
   }
   const disconnect = onDisconnect(presenceRef);
   await disconnect.remove();
   if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+    if (state.publicPresencePendingId === presenceId) state.publicPresencePendingId = "";
+    window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
     await disconnect.cancel().catch(() => {});
     await Promise.allSettled([remove(presenceRef), remove(ownerRef)]);
     return false;
   }
   state.publicPresenceId = presenceId;
+  state.publicPresencePendingId = "";
   state.publicPresenceState = "waiting";
   state.publicPresenceDisconnect = disconnect;
   state.publicPresenceHeartbeat = window.setInterval(() => {
     if (state.publicPresenceId) writePublicPresence(ref(database, `online/publicPresence/${state.publicPresenceId}`), state.publicPresenceState).catch(() => {});
   }, HEARTBEAT_MS);
+  window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
   return true;
 }
 
@@ -3897,11 +3914,13 @@ async function cleanupPublicPresence() {
   window.clearInterval(state.publicPresenceHeartbeat);
   state.publicPresenceHeartbeat = null;
   const disconnect = state.publicPresenceDisconnect;
-  const id = state.publicPresenceId;
+  const id = state.publicPresenceId || state.publicPresencePendingId;
   const ownerUid = state.uid;
   state.publicPresenceDisconnect = null;
   state.publicPresenceId = "";
+  state.publicPresencePendingId = "";
   state.publicPresenceState = "";
+  window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
   await disconnect?.cancel?.().catch(() => {});
   if (!id || !ownerUid) return;
   try {
