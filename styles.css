@@ -13316,3 +13316,182 @@ button:disabled {
     animation: none !important;
   }
 }
+
+/* Per-match achievement showcase: one trusted snapshot is reused through the match. */
+.match-achievement-showcase {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.match-achievement-showcase-label,
+.match-achievement-showcase > small {
+  display: block;
+  color: #9ca7ba;
+  font-size: 0.62rem;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+  line-height: 1.4;
+}
+
+.match-achievement-showcase .achievement-badges {
+  min-width: 0;
+}
+
+.match-achievement-showcase.is-match-found,
+.online-status-details > .match-achievement-showcase {
+  box-sizing: border-box;
+  width: 100%;
+  flex: 1 0 100%;
+  padding: 13px 15px;
+  border: 1px solid rgba(255, 215, 126, 0.2);
+  border-radius: 14px;
+  background:
+    linear-gradient(120deg, rgba(255, 215, 126, 0.07), rgba(100, 232, 213, 0.045)),
+    rgba(6, 9, 16, 0.72);
+  text-align: left;
+}
+
+.match-achievement-showcase.is-match-found .achievement-badges,
+.online-status-details > .match-achievement-showcase .achievement-badges {
+  justify-content: center;
+}
+
+.match-achievement-showcase.is-hud {
+  max-width: 100%;
+  margin: 0 0 7px;
+  gap: 0;
+  overflow: hidden;
+}
+
+.match-achievement-showcase.is-hud .match-achievement-showcase-label,
+.match-achievement-showcase.is-hud > small {
+  display: none;
+}
+
+.match-achievement-showcase.is-hud .achievement-badges {
+  flex-wrap: nowrap;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.match-achievement-showcase.is-hud .achievement-badge {
+  flex: 0 1 auto;
+  padding: 3px 5px;
+  font-size: 0.57rem;
+}
+
+.match-achievement-showcase.is-hud .achievement-badge > span {
+  max-width: 72px;
+}
+
+.match-achievement-showcase.is-hud .achievement-badge small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.hud-player:last-child .match-achievement-showcase.is-hud .achievement-badges {
+  justify-content: flex-end;
+}
+
+.match-achievement-showcase.is-result {
+  width: 100%;
+  margin: 0 0 16px;
+  justify-items: center;
+  text-align: center;
+}
+
+.match-achievement-showcase.is-result .achievement-badges {
+  justify-content: center;
+}
+
+@media (max-width: 760px) {
+  .match-achievement-showcase.is-match-found,
+  .online-status-details > .match-achievement-showcase {
+    padding: 12px;
+  }
+
+  .match-achievement-showcase.is-match-found .achievement-badges,
+  .online-status-details > .match-achievement-showcase .achievement-badges,
+  .match-achievement-showcase.is-result .achievement-badges {
+    justify-content: flex-start;
+  }
+
+  .match-achievement-showcase.is-result {
+    justify-items: stretch;
+    text-align: left;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge {
+    width: 23px;
+    height: 23px;
+    flex: 0 0 23px;
+    justify-content: center;
+    padding: 1px;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge::before {
+    display: none;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge i {
+    width: 17px;
+    height: 17px;
+    font-size: 0.64rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .match-achievement-showcase.is-hud .achievement-badges {
+    gap: 2px;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge {
+    width: 18px;
+    height: 18px;
+    flex-basis: 18px;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge i {
+    width: 13px;
+    height: 13px;
+    font-size: 0.54rem;
+  }
+}
+
+@media (max-width: 340px) {
+  .match-achievement-showcase.is-hud .achievement-badges {
+    gap: 1px;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge {
+    width: 15px;
+    height: 15px;
+    flex-basis: 15px;
+  }
+
+  .match-achievement-showcase.is-hud .achievement-badge i {
+    width: 11px;
+    height: 11px;
+    font-size: 0.48rem;
+  }
+}

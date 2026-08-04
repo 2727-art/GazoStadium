@@ -19,8 +19,12 @@ import {
   update,
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 import {
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-functions.js";
+import {
   auth,
   database,
+  functions,
   useOfflineMarketPreview,
 } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
 import {
@@ -102,6 +106,8 @@ const STRATEGY_REVIEW_ASSET_CHANNEL_LABEL = "hariai-strategy-review-assets-v1";
 const STRATEGY_REVIEW_IMAGE_LIMIT = 3;
 const STRATEGY_REVIEW_AUDIO_LIMIT = 1;
 const PROFILE_AVATAR_MAX_BYTES = 256 * 1024;
+const MATCH_ACHIEVEMENT_SHOWCASE_VERSION = 1;
+const MATCH_ACHIEVEMENT_SHOWCASE_LIMIT = 3;
 const PROFILE_NAME_KEY = "hariai-stadium-strategy-name-v2";
 const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
 const PROFILE_WEAKNESS_KEY = "hariai-stadium-strategy-weakness-v3";
@@ -153,6 +159,8 @@ let lastRenderedScreen = "";
 let strategyMatchmakingGenerationCounter = 0;
 let resultNavigationBusy = false;
 
+const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
+
 const shared = () => window.HariaiApp?.shared;
 const escapeHtml = (value) => shared()?.escapeHtml(value) ?? String(value);
 const showToast = (message) => shared()?.showToast(message);
@@ -189,6 +197,8 @@ function createState() {
     roomId: "",
     roomData: {},
     opponentUid: "",
+    matchAchievementShowcases: null,
+    matchAchievementShowcaseRequested: false,
     playerIndex: 0,
     players: [],
     round: 1,
@@ -396,6 +406,89 @@ function runtimePlayer(source) {
     totalPower: 0,
     receivedScores: [],
   };
+}
+
+function normalizeMatchAchievementShowcases(value) {
+  if (Number(value?.version) !== MATCH_ACHIEVEMENT_SHOWCASE_VERSION) return null;
+  const capturedAt = Number(value?.capturedAt);
+  if (!Number.isFinite(capturedAt) || capturedAt <= 0) return null;
+  const normalizeIds = window.HariaiAchievements?.normalizeIds;
+  if (typeof normalizeIds !== "function") return null;
+  const playerUids = state.players.map((player) => String(player?.uid || "")).filter(Boolean);
+  if (playerUids.length !== 2 || !value.players || typeof value.players !== "object") return null;
+  const players = {};
+  for (const uid of playerUids) {
+    const source = value.players[uid];
+    if (!source || typeof source !== "object" || typeof source.ids !== "string") return null;
+    const ids = normalizeIds(source.ids, MATCH_ACHIEVEMENT_SHOWCASE_LIMIT);
+    players[uid] = Object.freeze({ ids: ids.join(",") });
+  }
+  return Object.freeze({
+    version: MATCH_ACHIEVEMENT_SHOWCASE_VERSION,
+    capturedAt,
+    players: Object.freeze(players),
+  });
+}
+
+function captureMatchAchievementShowcases(value) {
+  if (state.matchAchievementShowcases) return false;
+  const normalized = normalizeMatchAchievementShowcases(value);
+  if (!normalized) return false;
+  state.matchAchievementShowcases = normalized;
+  return true;
+}
+
+function opponentAchievementShowcaseIds() {
+  if (!state.opponentUid || !state.matchAchievementShowcases) return [];
+  return window.HariaiAchievements?.normalizeIds?.(
+    state.matchAchievementShowcases.players?.[state.opponentUid]?.ids || "",
+    MATCH_ACHIEVEMENT_SHOWCASE_LIMIT,
+  ) || [];
+}
+
+function renderOpponentAchievementShowcase({ compact = false, context = "", label = "公開中の実績" } = {}) {
+  const ids = opponentAchievementShowcaseIds();
+  if (!ids.length) return "";
+  const badges = window.HariaiAchievements?.renderBadges?.(ids, { compact, empty: "" }) || "";
+  if (!badges) return "";
+  const modifier = ["is-identity", "is-hud", "is-result"].includes(context) ? ` ${context}` : "";
+  return `<section class="match-achievement-showcase is-opponent${modifier}" aria-label="${escapeHtml(label)}"><small>${escapeHtml(label)}</small>${badges}</section>`;
+}
+
+function refreshMatchAchievementShowcaseIfVisible() {
+  if (!active || !state.matchAchievementShowcases) return;
+  if (["identity", "waitingBattle", "gameover"].includes(state.screen)) {
+    render();
+  }
+}
+
+function matchAchievementShowcaseRevealReady(room) {
+  const participantUids = [room?.hostUid, room?.guestUid]
+    .map((uid) => String(uid || ""))
+    .filter(Boolean);
+  return participantUids.length === 2 && participantUids.every(
+    (uid) => room?.deckReady?.[uid]?.ready === true,
+  );
+}
+
+function materializeMatchAchievementShowcases(room) {
+  if (!state.roomId
+      || room?.status !== "active"
+      || room?.hostUid !== state.uid
+      || !matchAchievementShowcaseRevealReady(room)
+      || state.matchAchievementShowcaseRequested) return;
+  const requestedRoomId = state.roomId;
+  state.matchAchievementShowcaseRequested = true;
+  try {
+    matchAchievementShowcaseCallable({ mode: "strategy", roomId: requestedRoomId })
+      .then((response) => {
+        if (!active || state.roomId !== requestedRoomId) return;
+        if (captureMatchAchievementShowcases(response.data)) refreshMatchAchievementShowcaseIfVisible();
+      })
+      .catch(() => {});
+  } catch {
+    // 実績表示の取得失敗で対戦進行を止めない。
+  }
 }
 
 function start() {
@@ -714,13 +807,13 @@ function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
     <p>本当の弱点は、どちらかが看破を宣言して両者の回答が確定するまで秘密です。</p></div><div class="strategy-identity-grid">
     ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
-      <div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
+      ${localPlayer ? "" : renderOpponentAchievementShowcase({ context: "is-identity", label: "実績コレクション" })}<div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
     <button class="avatar-visibility-toggle strategy-avatar-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
     <button class="button button-primary strategy-center-button" id="strategyBattleStart">画像貼り合い開始</button></section>`;
 }
 
 function renderWaitingBattle() {
-  return renderStatusCard("VS", "BATTLE READY", "相手の開始準備を待っています", "両者が準備するとROUND 1の秘密選択を開始します。", `<span class="connection-pill connected">● デッキ・通信準備完了</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+  return renderStatusCard("VS", "BATTLE READY", "相手の開始準備を待っています", "両者が準備するとROUND 1の秘密選択を開始します。", `<span class="connection-pill connected">● デッキ・通信準備完了</span>${renderOpponentAchievementShowcase({ context: "is-identity", label: "相手の実績" })}`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
 }
 
 function renderBaseSelect() {
@@ -897,7 +990,7 @@ function renderGameOver() {
   return `<section class="screen strategy-screen"><div class="gameover-card strategy-gameover"><span class="eyebrow">ONLINE STRATEGY 1ON1 COMPLETE</span>
     <h1>${winner < 0 ? "DRAW" : `${escapeHtml(state.players[winner].name)} WIN`}</h1><p>匿名紹介の読み、メイン5枚、リザーブの使いどころを振り返りましょう。</p>
     <div class="strategy-final-grid">${state.players.map((player, index) => `<article class="${winner === index ? "winner" : ""}"><small>${index === state.playerIndex ? "YOU" : "OPPONENT"}</small><h2>${escapeHtml(player.name)}</h2>
-      <div><span>残りHP</span><strong>${player.hp}</strong></div><div><span>累計パワー</span><strong>${player.totalPower}</strong></div><div><span>平均評価</span><strong>${average(player.receivedScores)}</strong></div>${player.overkill > 0 ? `<em>OVERKILL +${player.overkill}</em>` : ""}</article>`).join("")}</div>
+      ${index === state.playerIndex ? "" : renderOpponentAchievementShowcase({ context: "is-result", label: "公開中の実績" })}<div><span>残りHP</span><strong>${player.hp}</strong></div><div><span>累計パワー</span><strong>${player.totalPower}</strong></div><div><span>平均評価</span><strong>${average(player.receivedScores)}</strong></div>${player.overkill > 0 ? `<em>OVERKILL +${player.overkill}</em>` : ""}</article>`).join("")}</div>
     ${weaknessReview}
     <section class="strategy-bluff-reveal"><span class="eyebrow">弱点公開</span><h2>弱点候補の答え合わせ</h2>${state.players.map((player) => `<article><h3>${escapeHtml(player.name)}</h3>
       ${player.clues.map((clue, index) => `<p class="${index === player.weaknessIndex ? "is-weakness" : "is-bluff"}"><b>${index === player.weaknessIndex ? "本当の弱点" : "ブラフ"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
@@ -1242,7 +1335,7 @@ function renderHudPlayer(index) {
   const localPlayer = index === state.playerIndex;
   const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
   const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
-  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span></div>
+  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span></div>${localPlayer ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
     <div class="hp-bar"><div class="hp-fill" style="--hp:${hpPercent}%"></div></div><span class="hp-value">HP ${player.hp} / ${MAX_HP} ・ ASK ${player.extraRequests} ・ PERMIT ${player.pursuitPermits}</span></div></div></div>`;
 }
 
@@ -2463,6 +2556,7 @@ async function enterRoom(roomId) {
   state.opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
   state.playerIndex = room.hostUid === state.uid ? 0 : 1;
   state.players = [runtimePlayer(room.players[room.hostUid]), runtimePlayer(room.players[room.guestUid])];
+  captureMatchAchievementShowcases(room.achievementShowcases);
   await cleanupMatchmaking(true);
   updatePublicPresence("playing").catch(() => {});
   state.screen = "connecting";
@@ -2490,7 +2584,10 @@ async function setupRoomListeners() {
   state.disconnectHandles.push(presenceDisconnect);
   state.roomUnsubscribers.push(onValue(ref(database, base), (snapshot) => {
     state.roomData = snapshot.val() || {};
+    const showcaseCaptured = captureMatchAchievementShowcases(state.roomData.achievementShowcases);
     state.roundData = currentRoundData();
+    materializeMatchAchievementShowcases(state.roomData);
+    if (showcaseCaptured) refreshMatchAchievementShowcaseIfVisible();
     reactToRoomData().catch(handleRecoverableError);
   }, handleRecoverableError));
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {

@@ -1097,7 +1097,7 @@
       },
       "strategyRooms": {
         "$roomId": {
-          ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
+          ".read": "auth != null && (data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid)",
           "hostUid": {
             ".write": "auth != null && !data.exists() && newData.val() === auth.uid",
             ".validate": "newData.isString()"
@@ -1156,6 +1156,9 @@
                 ".validate": false
               }
             }
+          },
+          "achievementShowcases": {
+            ".write": false
           },
           "status": {
             ".write": "auth != null && ((root.child('online/strategyRooms/' + $roomId + '/hostUid').val() === auth.uid && (!data.exists() || data.val() === 'offered')) || (root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true && data.val() === 'offered'))",
@@ -1499,7 +1502,7 @@
       },
       "rooms": {
         "$roomId": {
-          ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
+          ".read": "auth != null && (data.child('hostUid').val() === auth.uid || data.child('guestUid').val() === auth.uid)",
           "protocolVersion": {
             ".write": false,
             ".validate": "newData.val() === 2"
@@ -1569,6 +1572,9 @@
                 ".validate": "newData.val() === 2"
               }
             }
+          },
+          "achievementShowcases": {
+            ".write": false
           },
           "status": {
             ".write": "auth != null && root.child('online/rooms/' + $roomId + '/protocolVersion').val() !== 2 && ((root.child('online/config/soloServerMatchmaking').val() !== true && ((!data.exists() && newData.val() === 'offered' && root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid) || (data.exists() && data.val() === 'offered' && (root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true) && (newData.val() === 'active' || newData.val() === 'expired')))) || (root.child('online/config/soloServerMatchmaking').val() === true && data.exists() && data.val() === 'offered' && ((newData.val() === 'expired' && (root.child('online/rooms/' + $roomId + '/hostUid').val() === auth.uid || root.child('online/rooms/' + $roomId + '/members/' + auth.uid).val() === true)) || (newData.val() === 'active' && auth.uid === root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/hostUid').val() === root.child('online/rooms/' + $roomId + '/hostUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/guestUid').val() === root.child('online/rooms/' + $roomId + '/guestUid').val() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').isNumber() && root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/hostUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/hostUid').val() + '/expiresAt').val() > now && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/guestUid').val() + '/roomId').val() === $roomId && root.child('online/soloMatchPermitLocks/' + root.child('online/rooms/' + $roomId + '/guestUid').val() + '/expiresAt').val() > now && ((root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() === true && root.child('online/rooms/' + $roomId + '/reunion').val() === true) || (root.child('online/soloMatchPermits/' + $roomId + '/reunion').val() !== true && !root.child('online/rooms/' + $roomId + '/reunion').exists())) && root.child('online/rooms/' + $roomId + '/createdAt').isNumber() && root.child('online/rooms/' + $roomId + '/createdAt').val() >= root.child('online/soloMatchPermits/' + $roomId + '/createdAt').val() && root.child('online/rooms/' + $roomId + '/createdAt').val() <= root.child('online/soloMatchPermits/' + $roomId + '/expiresAt').val() && root.child('online/rooms/' + $roomId + '/members/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/members/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).val() === true && root.child('online/rooms/' + $roomId + '/players/' + root.child('online/rooms/' + $roomId + '/hostUid').val()).exists() && root.child('online/rooms/' + $roomId + '/players/' + root.child('online/rooms/' + $roomId + '/guestUid').val()).exists() && root.child('online/offers/' + auth.uid + '/' + $roomId + '/roomId').val() === $roomId && root.child('online/offers/' + auth.uid + '/' + $roomId + '/fromUid').val() === root.child('online/rooms/' + $roomId + '/hostUid').val() && root.child('online/offers/' + auth.uid + '/' + $roomId + '/toUid').val() === auth.uid))))",

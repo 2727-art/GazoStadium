@@ -730,6 +730,61 @@ if (!RUN_REQUESTED) {
     ));
   });
 
+  test("match achievement snapshots are participant-only and reject every client write", async () => {
+    const soloRoomId = "-ShowcaseSoloRoom01";
+    const strategyRoomId = "-ShowcaseStrategy1";
+    const achievementShowcases = {
+      version: 1,
+      capturedAt: now,
+      players: {
+        [hostUid]: { ids: "battle_total_1" },
+        [guestUid]: { ids: "" },
+      },
+    };
+    const players = {
+      [hostUid]: playerRecord(hostUid, "ホスト"),
+      [guestUid]: playerRecord(guestUid, "ゲスト"),
+    };
+    await seed({
+      [`online/rooms/${soloRoomId}`]: {
+        hostUid,
+        guestUid,
+        createdAt: now,
+        status: "active",
+        members: { [hostUid]: true, [guestUid]: true, [otherUid]: true },
+        players,
+        achievementShowcases,
+      },
+      [`online/strategyRooms/${strategyRoomId}`]: {
+        hostUid,
+        guestUid,
+        createdAt: now,
+        status: "active",
+        members: { [hostUid]: true, [guestUid]: true, [otherUid]: true },
+        players,
+        achievementShowcases,
+      },
+    });
+    const hostDb = environment.authenticatedContext(hostUid).database();
+    const guestDb = environment.authenticatedContext(guestUid).database();
+    const otherDb = environment.authenticatedContext(otherUid).database();
+    for (const roomPath of [
+      `online/rooms/${soloRoomId}`,
+      `online/strategyRooms/${strategyRoomId}`,
+    ]) {
+      const showcaseRef = ref(hostDb, `${roomPath}/achievementShowcases`);
+      await assertSucceeds(get(showcaseRef));
+      await assertSucceeds(get(ref(guestDb, `${roomPath}/achievementShowcases`)));
+      await assertFails(get(ref(otherDb, `${roomPath}/achievementShowcases`)));
+      await assertFails(set(showcaseRef, achievementShowcases));
+      await assertFails(set(
+        ref(hostDb, `${roomPath}/achievementShowcases/players/${hostUid}/ids`),
+        "battle_solo_1",
+      ));
+      await assertFails(remove(showcaseRef));
+    }
+  });
+
   test("activeV2 is backend-created and client deletion is forbidden", async () => {
     await seed({
       [`online/soloSessionClaims/${hostUid}`]: claim(

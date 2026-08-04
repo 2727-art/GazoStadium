@@ -69,6 +69,13 @@ const {
   unlockAchievements,
 } = require("./achievements");
 const {
+  buildMatchAchievementShowcases,
+  matchAchievementParticipantUids,
+  normalizeMatchAchievementShowcases,
+  settleMatchAchievementShowcaseRead,
+  strategyAchievementShowcaseRevealReady,
+} = require("./match-achievement-showcase");
+const {
   normalizeRetiredTrainingHistory,
   retiredTrainingHistoryHasActivity,
 } = require("./retired-training-history");
@@ -1081,6 +1088,24 @@ function trainingProfileRef(uid) {
 
 function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
+}
+
+async function readMatchAchievementShowcases(participantUids, capturedAt = Date.now()) {
+  const profileSnapshots = await Promise.all(
+    participantUids.map((participantUid) => achievementProfileRef(participantUid).get()),
+  );
+  return buildMatchAchievementShowcases(
+    participantUids,
+    profileSnapshots.map((snapshot) => snapshot.data()),
+    capturedAt,
+  );
+}
+
+async function readMatchAchievementShowcasesBestEffort(participantUids) {
+  const outcome = await settleMatchAchievementShowcaseRead(
+    () => readMatchAchievementShowcases(participantUids),
+  );
+  return outcome.status === "fulfilled" ? outcome.value : null;
 }
 
 function achievementCodeRedemptionRef(uid) {
@@ -6966,13 +6991,14 @@ function soloRoomMatchesPermit(room, permit) {
     && (room.reunion === true) === permit.reunion;
 }
 
-function soloHostedRoomPayload(permit) {
+function soloHostedRoomPayload(permit, achievementShowcases = null) {
   return {
     hostUid: permit.hostUid,
     guestUid: permit.guestUid,
     createdAt: permit.createdAt,
     status: "offered",
     ...(permit.reunion ? { reunion: true } : {}),
+    ...(achievementShowcases ? { achievementShowcases } : {}),
     members: {
       [permit.hostUid]: true,
       [permit.guestUid]: true,
@@ -7346,8 +7372,13 @@ async function materializeSoloHostedMatch(roomId, permit) {
   }
 
   const roomRef = realtime.ref(`online/rooms/${roomId}`);
+  const achievementShowcases = await readMatchAchievementShowcasesBestEffort([
+    permit.hostUid,
+    permit.guestUid,
+  ]);
+  const initialRoomPayload = soloHostedRoomPayload(permit, achievementShowcases);
   const roomResult = await roomRef.transaction((currentValue) => {
-    if (currentValue === null) return soloHostedRoomPayload(permit);
+    if (currentValue === null) return initialRoomPayload;
     if (soloRoomMatchesPermit(currentValue, permit)
         && (currentValue.status === "offered" || currentValue.status === "active")) return currentValue;
     return;
@@ -9369,6 +9400,16 @@ async function trySoloSessionV2Match(uid, data) {
   }
   selection = reservedSelection;
   resources = rebuildSoloSessionV2Resources(selection, resources);
+  const achievementShowcases = await readMatchAchievementShowcasesBestEffort([
+    selection.host.uid,
+    selection.candidate.uid,
+  ]);
+  if (achievementShowcases) {
+    resources.room = {
+      ...resources.room,
+      achievementShowcases,
+    };
+  }
   if (!await readSoloSessionV2MaterializationFence(
     resources,
     selection.host,
@@ -9534,6 +9575,226 @@ function soloSessionV2ResourcesFromStored(roomId, room, permit, {
   resources.hostQueue = queueValues[hostUid];
   resources.guestQueue = queueValues[guestUid];
   return resources;
+}
+
+function requireMatchAchievementShowcaseData(value) {
+  const allowedKeys = new Set(["mode", "roomId"]);
+  if (!isPlainCallableObject(value)
+      || Reflect.ownKeys(value).length !== allowedKeys.size
+      || Reflect.ownKeys(value).some((key) => (
+        typeof key !== "string" || !allowedKeys.has(key)
+      ))) {
+    throw new HttpsError("invalid-argument", "対戦実績の取得情報が正しくありません。");
+  }
+  const mode = cleanText(value.mode, 16);
+  const roomId = cleanText(value.roomId, 80);
+  if (!["solo", "strategy"].includes(mode)
+      || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+    throw new HttpsError("invalid-argument", "対戦実績の取得情報が正しくありません。");
+  }
+  return { mode, roomId };
+}
+
+function requireMatchAchievementCaller(room, uid) {
+  const participantUids = matchAchievementParticipantUids(room);
+  if (!participantUids || !participantUids.includes(uid)) {
+    throw new HttpsError("permission-denied", "この対戦の実績は取得できません。");
+  }
+  return participantUids;
+}
+
+function soloSessionV2PermitMatchesAchievementRoom(roomId, room, permit, now = Date.now()) {
+  if (room?.destroyed
+      || !["offered", "active"].includes(room?.status)
+      || permit?.protocolVersion !== SOLO_SESSION_PROTOCOL_VERSION
+      || permit?.signalingVersion !== SOLO_SIGNALING_VERSION
+      || room.hostUid !== permit.hostUid
+      || room.guestUid !== permit.guestUid
+      || !recordSessionsMatch(room, {
+        permit,
+        hostLock: { attemptId: permit.attemptId },
+      })) return false;
+  const normalizedPermit = normalizeSoloMatchPermit(roomId, permit);
+  if (!normalizedPermit || !soloRoomMatchesPermit(room, normalizedPermit)) return false;
+  return room.status === "active" || normalizedPermit.expiresAt > now;
+}
+
+async function requireSoloMatchAchievementContext(uid, roomId) {
+  const roomRef = realtime.ref(`online/rooms/${roomId}`);
+  const roomSnapshot = await roomRef.get();
+  const room = roomSnapshot.val();
+  const participantUids = requireMatchAchievementCaller(room, uid);
+  if (room.destroyed) {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+
+  if (room.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION) {
+    const permitSnapshot = await realtime.ref(`online/soloMatchPermitsV2/${roomId}`).get();
+    const permit = permitSnapshot.val();
+    if (soloSessionV2PermitMatchesAchievementRoom(roomId, room, permit)) {
+      return {
+        callerUid: uid,
+        mode: "solo",
+        roomId,
+        roomRef,
+        room,
+        participantUids,
+        v2: true,
+        allowedStatuses: ["offered", "active"],
+      };
+    }
+    if (room.status !== "active") {
+      throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+    }
+    const hostSessionId = cleanText(room.sessions?.[room.hostUid]?.sessionId, 80);
+    const guestSessionId = cleanText(room.sessions?.[room.guestUid]?.sessionId, 80);
+    if (!hostSessionId || !guestSessionId) {
+      throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+    }
+    const [hostActiveSnapshot, guestActiveSnapshot] = await Promise.all([
+      soloSessionActiveRef(room.hostUid, hostSessionId).get(),
+      soloSessionActiveRef(room.guestUid, guestSessionId).get(),
+    ]);
+    const activeResources = soloSessionV2ResourcesFromStored(roomId, room, null, {
+      hostActive: hostActiveSnapshot.val(),
+      guestActive: guestActiveSnapshot.val(),
+      requireBothActive: true,
+    });
+    if (!activeResources) {
+      throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+    }
+    return {
+      callerUid: uid,
+      mode: "solo",
+      roomId,
+      roomRef,
+      room,
+      participantUids,
+      v2: true,
+      allowedStatuses: ["active"],
+    };
+  }
+
+  if (room.status !== "active") {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  const [hostActiveSnapshot, guestActiveSnapshot] = await Promise.all([
+    realtime.ref(`online/active/${room.hostUid}`).get(),
+    realtime.ref(`online/active/${room.guestUid}`).get(),
+  ]);
+  if (hostActiveSnapshot.val() !== roomId || guestActiveSnapshot.val() !== roomId) {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  return {
+    callerUid: uid,
+    mode: "solo",
+    roomId,
+    roomRef,
+    room,
+    participantUids,
+    v2: false,
+    allowedStatuses: ["active"],
+  };
+}
+
+async function requireStrategyMatchAchievementContext(uid, roomId) {
+  const roomRef = realtime.ref(`online/strategyRooms/${roomId}`);
+  const roomSnapshot = await roomRef.get();
+  const room = roomSnapshot.val();
+  const participantUids = requireMatchAchievementCaller(room, uid);
+  if (room.status !== "active"
+      || room.destroyed
+      || !strategyAchievementShowcaseRevealReady(room, participantUids)) {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  const [hostActiveSnapshot, guestActiveSnapshot] = await Promise.all([
+    realtime.ref(`online/strategyActive/${room.hostUid}`).get(),
+    realtime.ref(`online/strategyActive/${room.guestUid}`).get(),
+  ]);
+  if (hostActiveSnapshot.val() !== roomId || guestActiveSnapshot.val() !== roomId) {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  return {
+    callerUid: uid,
+    mode: "strategy",
+    roomId,
+    roomRef,
+    room,
+    participantUids,
+    allowedStatuses: ["active"],
+  };
+}
+
+function matchAchievementRoomStillEligible(room, context) {
+  const participantUids = matchAchievementParticipantUids(room);
+  return Boolean(participantUids
+    && participantUids.every((uid, index) => uid === context.participantUids[index])
+    && !room.destroyed
+    && context.allowedStatuses.includes(room.status)
+    && (context.mode !== "solo"
+      || (room.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION) === context.v2)
+    && (context.mode !== "strategy"
+      || strategyAchievementShowcaseRevealReady(room, participantUids)));
+}
+
+async function revalidateMatchAchievementContext(context) {
+  const refreshed = context.mode === "strategy"
+    ? await requireStrategyMatchAchievementContext(context.callerUid, context.roomId)
+    : await requireSoloMatchAchievementContext(context.callerUid, context.roomId);
+  if (!refreshed.participantUids.every(
+    (uid, index) => uid === context.participantUids[index],
+  )) {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  return refreshed;
+}
+
+async function ensureMatchAchievementShowcases(context) {
+  const existing = normalizeMatchAchievementShowcases(
+    context.room.achievementShowcases,
+    context.participantUids,
+  );
+  if (existing) return existing;
+  if (context.room.achievementShowcases != null) {
+    throw new HttpsError("internal", "対戦実績を取得できませんでした。");
+  }
+
+  const proposed = await readMatchAchievementShowcases(context.participantUids);
+  const refreshedContext = await revalidateMatchAchievementContext(context);
+  let transactionState = "pending";
+  const transaction = await refreshedContext.roomRef.transaction((currentRoom) => {
+    transactionState = "pending";
+    if (!matchAchievementRoomStillEligible(currentRoom, refreshedContext)) {
+      transactionState = "room-changed";
+      return;
+    }
+    const current = normalizeMatchAchievementShowcases(
+      currentRoom.achievementShowcases,
+      refreshedContext.participantUids,
+    );
+    if (current) {
+      transactionState = "reused";
+      return;
+    }
+    if (currentRoom.achievementShowcases != null) {
+      transactionState = "malformed";
+      return;
+    }
+    transactionState = "written";
+    return {
+      ...currentRoom,
+      achievementShowcases: proposed,
+    };
+  });
+  const finalValue = normalizeMatchAchievementShowcases(
+    transaction.snapshot.val()?.achievementShowcases,
+    refreshedContext.participantUids,
+  );
+  if (finalValue) return finalValue;
+  if (transactionState === "room-changed") {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  throw new HttpsError("internal", "対戦実績を取得できませんでした。");
 }
 
 function soloSessionV2ReunionPermitMatchesRoom(roomId, room, permit) {
@@ -10458,6 +10719,27 @@ exports.soloSessionAction = onCall(callableOptions("soloSessionAction"), async (
     );
   }
 });
+
+exports.matchAchievementShowcase = onCall(
+  callableOptions("matchAchievementShowcase"),
+  async (request) => {
+    const uid = requireUid(request);
+    const data = requireMatchAchievementShowcaseData(request.data);
+    try {
+      const context = data.mode === "strategy"
+        ? await requireStrategyMatchAchievementContext(uid, data.roomId)
+        : await requireSoloMatchAchievementContext(uid, data.roomId);
+      return await ensureMatchAchievementShowcases(context);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("matchAchievementShowcase failed", {
+        mode: data.mode,
+        category: error instanceof TypeError ? "validation" : "internal",
+      });
+      throw new HttpsError("internal", "対戦実績を取得できませんでした。");
+    }
+  },
+);
 
 const RANKING_ECONOMY_ACTIONS = new Set([
   "set_server_ranking_participation",

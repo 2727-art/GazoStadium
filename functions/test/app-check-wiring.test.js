@@ -82,6 +82,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "freeTablePublicStats",
     "soloFamiliarAction",
     "soloSessionAction",
+    "matchAchievementShowcase",
     "getP2pIceServers",
     "reportP2pConnectivity",
     "reportMarketP2pConnectivity",
@@ -106,6 +107,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTablePublicStats, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.matchAchievementShowcase, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportP2pConnectivity, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportMarketP2pConnectivity, true);

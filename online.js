@@ -637,6 +637,7 @@ function createOnlineState() {
     roomId: "",
     room: null,
     opponentUid: "",
+    achievementShowcases: emptyOnlineAchievementShowcases(),
     clientSessionId: clientSoloSessionId,
     clientLeaseToken: clientSoloLeaseToken,
     opponentSessionId: "",
@@ -2232,6 +2233,59 @@ function getCreatorCardTheme(value, { legacyPremium = false } = {}) {
 
 function normalizeCreatorCardAchievementIds(value) {
   return window.HariaiAchievements?.normalizeIds?.(value, 3) || [];
+}
+
+function emptyOnlineAchievementShowcases() {
+  return Object.freeze({
+    version: 0,
+    capturedAt: 0,
+    players: Object.freeze({}),
+  });
+}
+
+function normalizeRoomAchievementShowcases(value, participantUids = []) {
+  const capturedAt = Number(value?.capturedAt);
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Number(value.version) !== 1
+      || !Number.isFinite(capturedAt)
+      || capturedAt < 0
+      || !value.players
+      || typeof value.players !== "object"
+      || Array.isArray(value.players)) {
+    return emptyOnlineAchievementShowcases();
+  }
+  const players = {};
+  [...new Set(participantUids.map((uid) => String(uid || "")).filter(Boolean))].forEach((uid) => {
+    const ids = normalizeCreatorCardAchievementIds(value.players?.[uid]?.ids);
+    if (!ids.length) return;
+    players[uid] = Object.freeze({ ids: ids.join(",") });
+  });
+  return Object.freeze({
+    version: 1,
+    capturedAt: Math.floor(capturedAt),
+    players: Object.freeze(players),
+  });
+}
+
+function onlineMatchAchievementIds(uid, targetState = state) {
+  if (targetState?.achievementShowcases?.version !== 1) return [];
+  return normalizeCreatorCardAchievementIds(
+    targetState.achievementShowcases.players?.[String(uid || "")]?.ids,
+  );
+}
+
+function renderOnlineMatchAchievementShowcase(uid, {
+  className = "",
+  label = "",
+  compact = true,
+  targetState = state,
+} = {}) {
+  const ids = onlineMatchAchievementIds(uid, targetState);
+  if (!ids.length) return "";
+  const badges = window.HariaiAchievements?.renderBadges?.(ids, { compact }) || "";
+  if (!badges) return "";
+  const classes = ["match-achievement-showcase", className].filter(Boolean).join(" ");
+  return `<div class="${escapeHtml(classes)}">${label ? `<span class="match-achievement-showcase-label">${escapeHtml(label)}</span>` : ""}${badges}</div>`;
 }
 
 function creatorCardDailyOrder(entryId) {
@@ -5197,6 +5251,11 @@ function renderMatching() {
 function renderConnecting() {
   const opponent = getOpponent();
   const ownPlayer = state.players[state.playerIndex];
+  const opponentAchievements = renderOnlineMatchAchievementShowcase(opponent?.uid, {
+    className: "is-match-found is-opponent",
+    label: `${opponent?.name || "対戦相手"}の展示実績`,
+    compact: false,
+  });
   const handicapDetails = [ownPlayer, opponent].map((player, index) => {
     const sampleCount = normalizeSampleCount(player?.sampleCount);
     const startingHp = getStartingHp(sampleCount);
@@ -5209,7 +5268,7 @@ function renderConnecting() {
     body: state.reunionMatch
       ? "縁側で知り合った顔なじみとの再会です。いつもの通常型1on1を始めます。"
       : "画像を一時転送するためのP2P接続を準備しています。Firebaseには画像をアップロードしません。",
-    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${state.reunionMatch ? '<span class="connection-pill connected">縁側の顔なじみ</span>' : ""}${handicapDetails}`,
+    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${state.reunionMatch ? '<span class="connection-pill connected">縁側の顔なじみ</span>' : ""}${handicapDetails}${opponentAchievements}`,
     actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
   });
   return `<section class="screen">${status.replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
@@ -5232,9 +5291,13 @@ function renderOnlineHud() {
     const localPlayer = index === state.playerIndex;
     const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
     const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
+    const opponentAchievements = localPlayer ? "" : renderOnlineMatchAchievementShowcase(player.uid, {
+      className: "is-hud is-opponent",
+    });
     return `<div class="hud-player ${index === state.playerIndex ? "local-player" : ""}">
     <div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span>
       ${sampleCount ? `<span class="sample-hud-badge">SAMPLE ${sampleCount}</span>` : ""}${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</div>
+    ${opponentAchievements}
     <div class="hp-bar" aria-label="${escapeHtml(player.name)} HP ${player.hp}/${maxHp}"><div class="hp-fill" style="--hp:${Math.max(0, (player.hp / maxHp) * 100)}%"></div></div>
     <span class="hp-value">HP ${Math.max(0, player.hp)} / ${maxHp}${sampleCount ? ` ・ サンプル${sampleCount}枚` : ""}</span></div></div>
   </div>`;
@@ -5449,6 +5512,10 @@ function renderGameOver() {
     ${state.reunionMatch ? '<div class="solo-reunion-result-note"><strong>また会えました</strong><span>顔なじみとの通常型1on1でした。</span></div>' : ""}
     <div class="final-stats">${state.players.map((player, index) => `<div class="final-player ${outcome.winnerIndex === index ? "winner" : ""}">
       <h2>${escapeHtml(player.name)} ${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</h2>
+      ${renderOnlineMatchAchievementShowcase(player.uid, {
+        className: `is-result ${index === state.playerIndex ? "is-local" : "is-opponent"}`,
+        compact: false,
+      })}
       <div class="stats-row"><div class="stat-box"><strong>${player.hp}</strong><span>残りHP</span></div>
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
@@ -8898,6 +8965,10 @@ async function enterRoom(roomId) {
   state.room = room;
   state.reunionMatch = room.reunion === true;
   state.opponentUid = opponentUid;
+  state.achievementShowcases = normalizeRoomAchievementShowcases(
+    room.achievementShowcases,
+    [room.hostUid, room.guestUid],
+  );
   state.opponentSessionId = room.sessions[opponentUid].sessionId;
   state.roomConnectionGeneration = room.connectionGeneration;
   state.signalingAttemptId = room.attemptId;

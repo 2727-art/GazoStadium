@@ -2019,3 +2019,54 @@
     animation: none;
   }
 }
+
+.strategy-identity-card .match-achievement-showcase {
+  display: grid;
+  width: 100%;
+  gap: 7px;
+  margin: -8px 0 20px;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+
+.strategy-identity-card.player-2 .match-achievement-showcase {
+  justify-items: end;
+  margin-right: 0;
+  text-align: right;
+}
+
+.strategy-identity-card .match-achievement-showcase > small {
+  color: #9ca7ba;
+  font-size: 0.62rem;
+  letter-spacing: 0.09em;
+}
+
+.strategy-identity-card .match-achievement-showcase .achievement-badges {
+  display: flex;
+  margin: 0;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.strategy-identity-card.player-2 .match-achievement-showcase .achievement-badges {
+  justify-content: flex-end;
+}
+
+.strategy-final-grid article .match-achievement-showcase {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 18px;
+}
+
+@media (max-width: 640px) {
+  .strategy-identity-card.player-2 .match-achievement-showcase {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .strategy-identity-card.player-2 .match-achievement-showcase .achievement-badges {
+    justify-content: flex-start;
+  }
+}

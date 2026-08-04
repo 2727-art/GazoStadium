@@ -142,6 +142,111 @@ test("stored UUID sessions remain valid when normalizing an opponent and enterin
   assert.doesNotMatch(source, /\/\^\[0-9a-f\]\{32\}\$\//);
 });
 
+test("normal 1on1 copies and freezes the room achievement showcase snapshot", () => {
+  const helperSource = sourceBetween(
+    "function normalizeCreatorCardAchievementIds",
+    "function creatorCardDailyOrder",
+  );
+  const knownIds = new Set(["first", "second", "third", "fourth"]);
+  const renderCalls = [];
+  const sandbox = {
+    state: null,
+    escapeHtml: (value) => String(value),
+    window: {
+      HariaiAchievements: {
+        normalizeIds(value, maximum) {
+          const candidates = typeof value === "string" ? value.split(",") : [];
+          return [...new Set(candidates)].filter((id) => knownIds.has(id)).slice(0, maximum);
+        },
+        renderBadges(ids, options) {
+          renderCalls.push({ ids: [...ids], options: { ...options } });
+          return ids.length ? `<badges>${ids.join("|")}</badges>` : "";
+        },
+      },
+    },
+  };
+  vm.runInNewContext(`
+    ${helperSource}
+    this.normalizeRoomAchievementShowcases = normalizeRoomAchievementShowcases;
+    this.renderOnlineMatchAchievementShowcase = renderOnlineMatchAchievementShowcase;
+  `, sandbox);
+
+  const roomValue = {
+    version: 1,
+    capturedAt: 1234.9,
+    players: {
+      host: { ids: "first,second,first,third,fourth" },
+      guest: { ids: "fourth" },
+      outsider: { ids: "second" },
+    },
+  };
+  const snapshot = sandbox.normalizeRoomAchievementShowcases(roomValue, ["host", "guest"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot)), {
+    version: 1,
+    capturedAt: 1234,
+    players: {
+      host: { ids: "first,second,third" },
+      guest: { ids: "fourth" },
+    },
+  });
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot.players), true);
+  assert.equal(Object.isFrozen(snapshot.players.host), true);
+
+  roomValue.players.host.ids = "fourth";
+  roomValue.players.guest.ids = "";
+  assert.equal(snapshot.players.host.ids, "first,second,third");
+  assert.equal(snapshot.players.guest.ids, "fourth");
+
+  const targetState = { achievementShowcases: snapshot };
+  const rendered = sandbox.renderOnlineMatchAchievementShowcase("host", {
+    className: "is-hud is-opponent",
+    targetState,
+  });
+  assert.match(rendered, /match-achievement-showcase is-hud is-opponent/);
+  assert.match(rendered, /<badges>first\|second\|third<\/badges>/);
+  assert.deepEqual(renderCalls, [{
+    ids: ["first", "second", "third"],
+    options: { compact: true },
+  }]);
+  assert.equal(
+    sandbox.renderOnlineMatchAchievementShowcase("missing", { targetState }),
+    "",
+  );
+  assert.equal(renderCalls.length, 1, "empty showcases never call the badge renderer");
+});
+
+test("normal 1on1 renders only the entry-time achievement snapshot in match phases", () => {
+  const stateFactory = sourceBetween(
+    "function createOnlineState",
+    "function normalizeImagePreference",
+  );
+  const helpers = sourceBetween(
+    "function normalizeCreatorCardAchievementIds",
+    "function creatorCardDailyOrder",
+  );
+  const connecting = sourceBetween("function renderConnecting", "function renderStatusCard");
+  const hud = sourceBetween("function renderOnlineHud", "function renderRoundSelect");
+  const result = sourceBetween("function renderGameOver", "function syncOnlineFreeTableResultLamp");
+  const roomEntry = sourceBetween("async function enterRoom", "function isCurrentRoomSetupContext");
+
+  assert.match(stateFactory, /achievementShowcases: emptyOnlineAchievementShowcases\(\)/);
+  assert.match(helpers, /if \(!ids\.length\) return "";/);
+  assert.match(helpers, /window\.HariaiAchievements\?\.renderBadges\?\.\(ids, \{ compact \}\)/);
+  assert.match(roomEntry, /state\.achievementShowcases = normalizeRoomAchievementShowcases\([\s\S]*?room\.achievementShowcases,[\s\S]*?\[room\.hostUid, room\.guestUid\]/);
+  assert.equal(
+    (source.match(/normalizeRoomAchievementShowcases\(\s*room\.achievementShowcases/g) || []).length,
+    1,
+    "later room updates must not replace the entry-time showcase snapshot",
+  );
+  assert.match(connecting, /className: "is-match-found is-opponent"/);
+  assert.match(connecting, /label: `\$\{opponent\?\.name \|\| "対戦相手"\}の展示実績`/);
+  assert.match(hud, /localPlayer \? "" : renderOnlineMatchAchievementShowcase\(player\.uid/);
+  assert.match(hud, /className: "is-hud is-opponent"/);
+  assert.match(result, /renderOnlineMatchAchievementShowcase\(player\.uid/);
+  assert.match(result, /className: `is-result \$\{index === state\.playerIndex \? "is-local" : "is-opponent"\}`/);
+});
+
 test("a delayed claim cannot start heartbeat after its matchmaking generation ended", () => {
   const claim = sourceBetween(
     "async function releaseSoloSessionClaimExact",
