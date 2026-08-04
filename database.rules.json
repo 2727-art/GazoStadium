@@ -355,6 +355,11 @@
         ".write": false,
         ".indexOn": ["rating"]
       },
+      "serverRateFloorLeaderboard": {
+        ".read": true,
+        ".write": false,
+        ".indexOn": ["rating"]
+      },
       "serverOverallLeaderboardEntriesByUser": {
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",

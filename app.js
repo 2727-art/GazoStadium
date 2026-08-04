@@ -1420,6 +1420,25 @@
     </section>`;
   }
 
+  function renderRateFloorLeaderboardSection() {
+    const entries = window.HariaiOnline?.getRateFloorLeaderboard?.() || [];
+    const status = window.HariaiOnline?.getRateFloorLeaderboardStatus?.() || "idle";
+    const rows = entries.length ? entries.map((entry) => `<article class="rate-floor-entry">
+      <strong class="rate-floor-position">FLOOR #${Math.max(1, Number(entry.rank || 1))}</strong>
+      <div class="rate-floor-player"><b>${escapeHtml(entry.name)}</b><small>${Math.max(0, Number(entry.serverMatches || 0))}戦の検証済みRATE</small></div>
+      <div class="rate-floor-rating"><strong>${normalizeOverallRating(entry.rating)}</strong><small>RATE</small></div>
+    </article>`).join("") : status === "error"
+      ? `<div class="ranking-empty">下限チャレンジを取得できませんでした。<br /><button class="button button-ghost button-small" id="rateFloorRankingRetryButton">もう一度取得</button></div>`
+      : status === "ready"
+        ? `<div class="ranking-empty">下限チャレンジの公開参加者はまだいません。</div>`
+        : `<div class="ranking-empty">下限チャレンジを取得しています…</div>`;
+    return `<section class="rate-floor-section" id="rankingRateFloorBoard" aria-labelledby="rateFloorRankingTitle">
+      <div class="ranking-board-head"><div><span class="eyebrow">RATE FLOOR / LOWEST 10</span><h2 id="rateFloorRankingTitle">下限チャレンジ</h2></div><p>本人が参加を選んだプレイヤーだけを、現在の総合RATEが低い順に最大10席表示します。参加者1名から公開します。</p></div>
+      <div class="rate-floor-list" aria-label="下限チャレンジ RATEが低い順の最大10席">${rows}</div>
+      <p class="rate-floor-note">検証済みRATE戦10戦以上が対象です。同RATEは同順位。下限チャレンジ専用の報酬・実績・履歴・王座・SPOTLIGHTはありません。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</p>
+    </section>`;
+  }
+
   function renderRankingSpotlight() {
     const dashboard = window.HariaiOnline?.getRankingDashboard?.();
     const spotlight = dashboard?.spotlight;
@@ -1614,6 +1633,7 @@
   function refreshRankingSurfaces() {
     refreshSelectedRankingPeriod();
     window.HariaiOnline?.refreshOverallLeaderboard?.();
+    window.HariaiOnline?.refreshRateFloorLeaderboard?.();
     window.HariaiOnline?.refreshRankingDashboard?.();
   }
 
@@ -1626,16 +1646,20 @@
   function rankingJumpSurfacesSettled() {
     const selectedStatus = window.HariaiOnline?.getLeaderboardStatus?.() || "idle";
     const overallStatus = window.HariaiOnline?.getOverallLeaderboardStatus?.() || "idle";
+    const rateFloorStatus = window.HariaiOnline?.getRateFloorLeaderboardStatus?.() || "idle";
     const dashboardStatus = window.HariaiOnline?.getRankingDashboardStatus?.()?.status || "idle";
     return !["idle", "loading"].includes(selectedStatus)
       && !["idle", "loading"].includes(overallStatus)
+      && !["idle", "loading"].includes(rateFloorStatus)
       && !["idle", "loading"].includes(dashboardStatus);
   }
 
   function applyPendingRankingJump() {
     const targetName = pendingRankingJump;
     if (!targetName || currentScreen !== "ranking") return;
-    const selector = targetName === "overall" ? "#rankingOverallBoard" : "#rankingCircuitBoard";
+    const selector = targetName === "overall"
+      ? "#rankingOverallBoard"
+      : targetName === "floor" ? "#rankingRateFloorBoard" : "#rankingCircuitBoard";
     window.requestAnimationFrame(() => {
       if (pendingRankingJump !== targetName || currentScreen !== "ranking") return;
       document.querySelector(selector)?.scrollIntoView({ behavior: "auto", block: "start" });
@@ -1647,6 +1671,11 @@
     const selected = String(target || "");
     if (selected === "overall") {
       pendingRankingJump = "overall";
+      applyPendingRankingJump();
+      return;
+    }
+    if (selected === "floor") {
+      pendingRankingJump = "floor";
       applyPendingRankingJump();
       return;
     }
@@ -1703,6 +1732,9 @@
     });
     document.querySelector("#overallRankingRetryButton")?.addEventListener("click", () => {
       window.HariaiOnline?.refreshOverallLeaderboard?.();
+    });
+    document.querySelector("#rateFloorRankingRetryButton")?.addEventListener("click", () => {
+      window.HariaiOnline?.refreshRateFloorLeaderboard?.();
     });
     document.querySelector("#crownRunStartButton")?.addEventListener("click", beginDailyCrownRun);
     document.querySelector("#crownRunSoloButton")?.addEventListener("click", startOnlineBattle);
@@ -1824,6 +1856,7 @@
         <span><strong>公開TOP10</strong><small>見たいランキングへすぐ移動</small></span>
         <div>
           <button type="button" data-ranking-jump="overall">総合RATE</button>
+          <button type="button" data-ranking-jump="floor">下限</button>
           <button type="button" data-ranking-jump="daily">デイリー</button>
           <button type="button" data-ranking-jump="weekly">ウィークリー</button>
           <button type="button" data-ranking-jump="monthly">マンスリー</button>
@@ -1833,6 +1866,7 @@
       ${renderRankingDashboardPanel()}
       ${renderRankingSpotlight()}
       ${renderOverallLeaderboardSection()}
+      ${renderRateFloorLeaderboardSection()}
       ${renderOverallRatingClassGuide()}
       <section class="ranking-circuit-section" id="rankingCircuitBoard" aria-labelledby="crownCircuitRankingTitle">
         <div class="ranking-circuit-head"><div><span class="eyebrow">CROWN CIRCUIT / TOP 10</span><h2 id="crownCircuitRankingTitle">期間王座サーキット</h2></div><p>公開は上位10席。挑むと決めた日の短期決戦で、デイリーの好成績が週間・月間へ昇格します。</p></div>

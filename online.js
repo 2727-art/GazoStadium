@@ -324,6 +324,7 @@ const ACTIVE_BATTLE_MODES = ["solo", "strategy"];
 const LEADERBOARD_MODES = ["solo", "strategy", "team", "royale"];
 const DEFAULT_LEADERBOARD_PERIOD = "weekly";
 const PUBLIC_RANKING_LIMIT = 10;
+const RATE_FLOOR_MINIMUM_MATCHES = 10;
 const LEGACY_PERIOD_QUERY_LIMIT = 100;
 const PERIOD_RANKING_CACHE_TTL_MS = 60 * 1000;
 const MONTHLY_BEYOND_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -559,6 +560,9 @@ let monthlyHallOfFameSessionRestored = false;
 let overallLeaderboardEntries = [];
 let overallLeaderboardStatus = "idle";
 let overallLeaderboardRequestId = 0;
+let rateFloorLeaderboardEntries = [];
+let rateFloorLeaderboardStatus = "idle";
+let rateFloorLeaderboardRequestId = 0;
 let rankingDashboard = null;
 let rankingDashboardStatus = "idle";
 let rankingDashboardError = "";
@@ -1486,6 +1490,33 @@ function normalizeRankingControlId(controlId) {
   return /^[A-Za-z][A-Za-z0-9_.-]*$/.test(String(controlId)) ? String(controlId) : "overallRankingParticipation";
 }
 
+function renderRateFloorParticipation(safeControlId) {
+  const dashboard = getRankingDashboard();
+  const dashboardState = getRankingDashboardStatus();
+  const floor = dashboard?.rateFloor || {};
+  const ready = dashboardState.status === "ready" && dashboard?.rateFloor;
+  const overallEnabled = ready && dashboard?.enabled === true;
+  const enabled = ready && floor.enabled === true;
+  const minimumMatches = Math.max(1, Number(floor.minimumMatches || RATE_FLOOR_MINIMUM_MATCHES));
+  const serverMatches = Math.max(0, Number(floor.serverMatches || 0));
+  const eligible = enabled && floor.eligible === true;
+  const statusCopy = ready && !overallEnabled
+    ? "総合ランキング参加後に設定できます"
+    : dashboardState.status === "error"
+      ? "公開設定を取得できませんでした"
+      : !ready
+        ? "公開設定を確認中"
+        : enabled
+          ? eligible ? "● 公開中" : `○ 公開待ち ${serverMatches} / ${minimumMatches}戦`
+          : "○ 非公開";
+  const disabled = !ready || !overallEnabled || dashboardState.busy;
+  return `<section class="rate-floor-participation ${enabled ? "is-enabled" : "is-disabled"}">
+    <div class="rate-floor-participation-copy"><span class="eyebrow">RATE FLOOR</span><div><strong>下限チャレンジ</strong><p>総合RATEの別枠として、低いRATEへ挑む意思を本人が公開する表示です。</p></div></div>
+    <div class="rate-floor-participation-control"><span>${escapeHtml(statusCopy)}</span><button class="button ${enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}RateFloor" aria-pressed="${enabled}"${disabled ? " disabled" : ""}>${enabled ? "公開をやめる" : "下限チャレンジを公開する"}</button></div>
+    <small>検証済みRATE戦10戦以上で掲載され、条件を満たす公開参加者が1名でも表示されます。同RATEは同順位です。下限チャレンジ専用のAnjuPay・実績・履歴・王座・SPOTLIGHTはありません。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</small>
+  </section>`;
+}
+
 function renderOverallRankingParticipation({ controlId = "overallRankingParticipation" } = {}) {
   const settings = getOverallRankingPreference();
   const safeControlId = normalizeRankingControlId(controlId);
@@ -1510,6 +1541,7 @@ function renderOverallRankingParticipation({ controlId = "overallRankingParticip
       <button class="button ${settings.enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}" aria-pressed="${settings.enabled}">${settings.enabled ? "参加をやめる" : "参加する"}</button></div>
     <small>強さの順位と三戦証明は通常型1on1・戦略型1on1だけが対象です。匿名UIDとルーム履歴は公開しません。確定済みの番号王座と歴代記録は、参加終了後も名誉記録として残ります。</small>
     ${publicSettings}
+    ${renderRateFloorParticipation(safeControlId)}
   </section>`;
 }
 
@@ -1545,6 +1577,24 @@ function bindOverallRankingParticipation({ controlId = "overallRankingParticipat
     } catch (error) {
       saveButton.disabled = false;
       showToast(error?.message || "ランキングの公開設定を更新できませんでした。");
+    }
+  });
+  const rateFloorButton = document.getElementById(`${safeControlId}RateFloor`);
+  rateFloorButton?.addEventListener("click", async () => {
+    const nextEnabled = getRankingDashboard()?.rateFloor?.enabled !== true;
+    rateFloorButton.disabled = true;
+    try {
+      const dashboard = await setRateFloorParticipation(nextEnabled);
+      const floor = dashboard?.rateFloor || {};
+      showToast(nextEnabled
+        ? floor.eligible
+          ? "下限チャレンジを公開しました。"
+          : `下限チャレンジを公開待ちにしました。検証済み${Number(floor.minimumMatches || RATE_FLOOR_MINIMUM_MATCHES)}戦で掲載されます。`
+        : "下限チャレンジを非公開にしました。");
+    } catch (error) {
+      showToast(error?.message || "下限チャレンジの公開設定を更新できませんでした。");
+    } finally {
+      onUpdate?.();
     }
   });
 }
@@ -2910,6 +2960,35 @@ function normalizeOverallLeaderboardRecords(entries) {
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
+function normalizeRateFloorLeaderboardRecords(entries) {
+  let previousRating = null;
+  let previousRank = 0;
+  return Object.entries(entries || {})
+    .filter(([, entry]) => entry?.rateFloorHidden !== true)
+    .map(([entryId, entry]) => ({
+      entryId,
+      name: String(entry?.name || "").trim().slice(0, 16),
+      rating: Math.min(3000, Math.max(100, Math.floor(Number(entry?.rating || INITIAL_RATING)))),
+      serverMatches: Math.max(0, Math.floor(Number(entry?.serverMatches || 0))),
+    }))
+    .filter((entry) => (
+      entry.name
+      && Number.isFinite(entry.rating)
+      && entry.serverMatches >= RATE_FLOOR_MINIMUM_MATCHES
+    ))
+    .sort((first, second) => (
+      first.rating - second.rating
+      || compareFirebaseKeys(first.entryId, second.entryId)
+    ))
+    .slice(0, PUBLIC_RANKING_LIMIT)
+    .map((entry, index) => {
+      const rank = previousRating === entry.rating ? previousRank : index + 1;
+      previousRating = entry.rating;
+      previousRank = rank;
+      return { ...entry, rank };
+    });
+}
+
 function crownCircuitEntryIsQualified(entry, period) {
   if (period === "daily") {
     return ["complete", "finalized"].includes(String(entry?.status || ""))
@@ -3017,7 +3096,9 @@ function normalizeRankingSpotlight(value) {
 
 function normalizeRankingDashboard(value) {
   const source = value?.dashboard && typeof value.dashboard === "object" ? value.dashboard : value || {};
+  const profileSource = source.profile && typeof source.profile === "object" ? source.profile : {};
   const overallSource = source.overall || source.context || {};
+  const rateFloorSource = source.rateFloor && typeof source.rateFloor === "object" ? source.rateFloor : {};
   const runSource = source.run || source.crownRun || source.proof || null;
   const customizationSource = source.customization || {};
   const rulesSource = source.rules && typeof source.rules === "object" ? source.rules : {};
@@ -3054,6 +3135,18 @@ function normalizeRankingDashboard(value) {
   const nextSeatSource = overallSource.nextSeat && typeof overallSource.nextSeat === "object"
     ? overallSource.nextSeat
     : {};
+  const rateFloorMinimumMatches = Math.max(1, Math.floor(Number(
+    rateFloorSource.minimumMatches
+      ?? profileSource.minimumMatches
+      ?? RATE_FLOOR_MINIMUM_MATCHES,
+  )));
+  const rateFloorServerMatches = Math.max(0, Math.floor(Number(
+    rateFloorSource.serverMatches
+      ?? profileSource.serverMatches
+      ?? 0,
+  )));
+  const rateFloorEnabled = rateFloorSource.enabled === true
+    || profileSource.rateFloorEnabled === true;
   return {
     enabled: source.enabled === true,
     entryId: String(source.entryId || overallSource.entryId || ""),
@@ -3084,6 +3177,14 @@ function normalizeRankingDashboard(value) {
       ))),
       nextSeat: Object.keys(nextSeatSource).length ? normalizeDashboardPerson(nextSeatSource) : null,
       neighbors: neighborsSource.map((entry, index) => normalizeDashboardPerson(entry, index + 1)),
+    },
+    rateFloor: {
+      enabled: rateFloorEnabled,
+      eligible: rateFloorSource.eligible === true
+        || profileSource.rateFloorEligible === true
+        || (rateFloorEnabled && rateFloorServerMatches >= rateFloorMinimumMatches),
+      serverMatches: rateFloorServerMatches,
+      minimumMatches: rateFloorMinimumMatches,
     },
     run: runSource ? {
       key: String(runSource.key || ""),
@@ -3204,6 +3305,14 @@ function getOverallLeaderboardStatus() {
   return overallLeaderboardStatus;
 }
 
+function getRateFloorLeaderboard() {
+  return rateFloorLeaderboardEntries.map((entry) => ({ ...entry }));
+}
+
+function getRateFloorLeaderboardStatus() {
+  return rateFloorLeaderboardStatus;
+}
+
 function getRankingDashboard() {
   if (!rankingDashboard) return null;
   return {
@@ -3215,6 +3324,7 @@ function getRankingDashboard() {
         : null,
       neighbors: rankingDashboard.overall.neighbors.map((entry) => ({ ...entry })),
     },
+    rateFloor: { ...rankingDashboard.rateFloor },
     run: rankingDashboard.run
       ? {
         ...rankingDashboard.run,
@@ -3456,6 +3566,20 @@ async function readOverallPublicTop10() {
     ...Object.fromEntries(higherEntries),
     ...boundaryEntries,
   });
+}
+
+async function readRateFloorPublicTop10() {
+  const records = publicRankingRecordMap(await readPublicDatabasePath(
+    "online/serverRateFloorLeaderboard",
+    {
+      orderByChildKey: "rating",
+      limit: PUBLIC_RANKING_LIMIT,
+      limitDirection: "first",
+    },
+  ));
+  // Firebase orders equal RATE values by key, matching the local deterministic
+  // tie order while keeping the public board to at most ten rows.
+  return normalizeRateFloorLeaderboardRecords(records);
 }
 
 async function readCrownCircuitPublicTop10(path, period) {
@@ -3704,6 +3828,33 @@ async function refreshOverallLeaderboard() {
   return getOverallLeaderboard();
 }
 
+async function refreshRateFloorLeaderboard() {
+  if (useOfflineMarketPreview) {
+    rateFloorLeaderboardEntries = [];
+    rateFloorLeaderboardStatus = "ready";
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+    return [];
+  }
+  const requestId = ++rateFloorLeaderboardRequestId;
+  rateFloorLeaderboardStatus = "loading";
+  window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  try {
+    const records = await readRateFloorPublicTop10();
+    if (requestId !== rateFloorLeaderboardRequestId) return rateFloorLeaderboardEntries;
+    rateFloorLeaderboardEntries = records;
+    rateFloorLeaderboardStatus = "ready";
+  } catch {
+    if (requestId !== rateFloorLeaderboardRequestId) return rateFloorLeaderboardEntries;
+    rateFloorLeaderboardEntries = [];
+    rateFloorLeaderboardStatus = "error";
+  } finally {
+    if (requestId === rateFloorLeaderboardRequestId) {
+      window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+    }
+  }
+  return getRateFloorLeaderboard();
+}
+
 async function refreshRankingDashboard() {
   if (useOfflineMarketPreview) {
     rankingDashboard = normalizeRankingDashboard({ enabled: false });
@@ -3727,6 +3878,47 @@ async function refreshRankingDashboard() {
     rankingDashboardError = error?.message || "自分の順位情報を取得できませんでした。";
     dispatchRankingDashboardUpdated();
     return null;
+  }
+}
+
+async function setRateFloorParticipation(enabled) {
+  if (!getOverallRankingPreference().enabled && getRankingDashboard()?.enabled !== true) {
+    throw new Error("先にオンライン総合ランキングへの参加を有効にしてください。");
+  }
+  if (rankingDashboardBusy) return getRankingDashboard();
+  rankingDashboardBusy = true;
+  dispatchRankingDashboardUpdated();
+  try {
+    await ensureRankingCommentUser();
+    const response = await economyActionCallable({
+      action: "set_rate_floor_participation",
+      enabled: Boolean(enabled),
+    });
+    const result = response.data || {};
+    if (typeof result.rateFloorEnabled !== "boolean") {
+      throw new Error("下限チャレンジの公開設定を確認できませんでした。");
+    }
+    const current = rankingDashboard || {};
+    applyRankingDashboard({
+      ...current,
+      enabled: true,
+      overall: {
+        ...(current.overall || {}),
+        rating: result.rating ?? current.overall?.rating,
+      },
+      rateFloor: {
+        enabled: result.rateFloorEnabled,
+        eligible: result.rateFloorEligible === true,
+        rating: result.rating,
+        serverMatches: result.serverMatches,
+        minimumMatches: result.minimumMatches,
+      },
+    });
+    await refreshRateFloorLeaderboard();
+    return getRankingDashboard();
+  } finally {
+    rankingDashboardBusy = false;
+    dispatchRankingDashboardUpdated();
   }
 }
 
@@ -11870,6 +12062,8 @@ window.HariaiOnline = {
   getLeaderboard,
   getOverallLeaderboard,
   getOverallLeaderboardStatus,
+  getRateFloorLeaderboard,
+  getRateFloorLeaderboardStatus,
   getRankingDashboard,
   getRankingDashboardStatus,
   getCrownMatchmakingState,
@@ -11890,6 +12084,7 @@ window.HariaiOnline = {
   refreshLeaderboard,
   refreshMonthlyBeyondRanking,
   refreshOverallLeaderboard,
+  refreshRateFloorLeaderboard,
   refreshRankingDashboard,
   startCrownRun,
   setCrownCustomization,
@@ -11908,6 +12103,7 @@ window.HariaiOnline = {
   renderOverallRankingParticipation,
   bindOverallRankingParticipation,
   setOverallRankingParticipation,
+  setRateFloorParticipation,
   saveOverallRankingPublicSettings,
 };
 window.dispatchEvent(new Event("hariai-online-ready"));

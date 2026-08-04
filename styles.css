@@ -2627,9 +2627,9 @@ button:disabled {
 
 .ranking-jump-nav > div {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
-  width: min(620px, 100%);
+  width: min(740px, 100%);
 }
 
 .ranking-jump-nav button {
@@ -2654,12 +2654,14 @@ button:disabled {
 
 .ranking-dashboard,
 .ranking-overall-section,
+.rate-floor-section,
 .ranking-circuit-section,
 .crown-spotlight {
   margin-bottom: 18px;
 }
 
 .ranking-overall-section,
+.rate-floor-section,
 .ranking-circuit-section {
   scroll-margin-top: 78px;
 }
@@ -8220,6 +8222,77 @@ button:disabled {
   color: #e0b57a;
 }
 
+.rate-floor-participation {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 18px;
+  padding: 13px;
+  border: 1px solid rgba(140, 132, 255, 0.25);
+  border-radius: 12px;
+  background: linear-gradient(110deg, rgba(101, 88, 200, 0.12), rgba(33, 128, 217, 0.045));
+}
+
+.rate-floor-participation.is-disabled {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.rate-floor-participation-copy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rate-floor-participation-copy .eyebrow {
+  flex: 0 0 auto;
+  color: #aaa5ff;
+}
+
+.rate-floor-participation-copy > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rate-floor-participation-copy strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.rate-floor-participation-copy p,
+.rate-floor-participation > small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.55;
+}
+
+.rate-floor-participation-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.rate-floor-participation-control > span {
+  color: #bdb8ff;
+  font-size: 0.7rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.rate-floor-participation.is-disabled .rate-floor-participation-control > span {
+  color: var(--muted);
+}
+
+.rate-floor-participation > small {
+  grid-column: 1 / -1;
+  color: #818a9d;
+}
+
 .ranking-x-handle {
   display: flex;
   align-items: center;
@@ -8336,6 +8409,72 @@ button:disabled {
   font-size: 0.7rem;
   line-height: 1.6;
   text-align: center;
+}
+
+.rate-floor-list {
+  overflow: hidden;
+  border: 1px solid rgba(140, 132, 255, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(13, 15, 29, 0.92), rgba(8, 11, 20, 0.9));
+}
+
+.rate-floor-entry {
+  display: grid;
+  grid-template-columns: 82px minmax(150px, 1fr) 110px;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.rate-floor-entry:last-child {
+  border-bottom: 0;
+}
+
+.rate-floor-position {
+  color: #aaa5ff;
+  font-size: 1.2rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.rate-floor-player,
+.rate-floor-rating {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rate-floor-player b {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rate-floor-player small,
+.rate-floor-rating small {
+  color: var(--muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.07em;
+}
+
+.rate-floor-rating {
+  align-items: flex-end;
+}
+
+.rate-floor-rating strong {
+  color: #d5d1ff;
+  font-size: 1.45rem;
+}
+
+.rate-floor-note {
+  margin: 9px 2px 0;
+  color: #858da0;
+  font-size: 0.68rem;
+  line-height: 1.65;
 }
 
 .battle-presence-check {
@@ -8886,12 +9025,19 @@ button:disabled {
 
   .ranking-jump-nav > div {
     width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .ranking-jump-nav button {
     min-height: 40px;
     padding-inline: 5px;
     font-size: 0.64rem;
+  }
+
+  .ranking-overall-section,
+  .rate-floor-section,
+  .ranking-circuit-section {
+    scroll-margin-top: 126px;
   }
 
   .ranking-board-head,
@@ -8973,6 +9119,21 @@ button:disabled {
     padding: 11px 12px;
   }
 
+  .rate-floor-entry {
+    grid-template-columns: 72px minmax(0, 1fr) 76px;
+    gap: 9px;
+    min-height: 68px;
+    padding: 11px 12px;
+  }
+
+  .rate-floor-position {
+    font-size: 0.72rem;
+  }
+
+  .rate-floor-rating strong {
+    font-size: 1.2rem;
+  }
+
   .ranking-period-tabs {
     gap: 4px;
   }
@@ -9013,6 +9174,25 @@ button:disabled {
 
   .overall-ranking-panel {
     grid-template-columns: 1fr;
+  }
+
+  .rate-floor-participation {
+    grid-template-columns: 1fr;
+  }
+
+  .rate-floor-participation-copy {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .rate-floor-participation-control {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .rate-floor-participation-control .button {
+    flex: 1 1 190px;
   }
 
   .overall-ranking-copy {

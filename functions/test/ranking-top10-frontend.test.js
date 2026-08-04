@@ -88,6 +88,111 @@ test("overall tenth-seat ties use Firebase key order and only fetch the missing 
   assert.doesNotMatch(overallNormalize, /localeCompare/);
 });
 
+test("RATE FLOOR reads the lowest ten deterministically and uses competition ranks for ties", () => {
+  const online = read("online.js");
+  const compareSource = sourceBetween(
+    online,
+    "function compareFirebaseKeys",
+    "function normalizeOverallLeaderboardRecords",
+  );
+  const normalizeSource = sourceBetween(
+    online,
+    "function normalizeRateFloorLeaderboardRecords",
+    "function crownCircuitEntryIsQualified",
+  );
+  const normalizeRateFloorLeaderboardRecords = Function(`
+    const INITIAL_RATING = 1000;
+    const RATE_FLOOR_MINIMUM_MATCHES = 10;
+    const PUBLIC_RANKING_LIMIT = 10;
+    ${compareSource}
+    ${normalizeSource}
+    return normalizeRateFloorLeaderboardRecords;
+  `)();
+  const input = {
+    stale_hidden: {
+      rateFloorHidden: true,
+      rating: 100,
+      serverMatches: 10,
+      name: "MUST NOT RENDER",
+    },
+    z_floor: { name: "Z", rating: 604, serverMatches: 9 },
+    b_tie: { name: "B", rating: 675, serverMatches: 20, xHandle: "hidden" },
+    a_tie: { name: "A", rating: 675, serverMatches: 10, commentsEnabled: true },
+    p01: { name: "P1", rating: 604, serverMatches: 10 },
+    p04: { name: "P4", rating: 680, serverMatches: 10 },
+    p05: { name: "P5", rating: 681, serverMatches: 10 },
+    p06: { name: "P6", rating: 682, serverMatches: 10 },
+    p07: { name: "P7", rating: 683, serverMatches: 10 },
+    p08: { name: "P8", rating: 684, serverMatches: 10 },
+    p09: { name: "P9", rating: 685, serverMatches: 10 },
+    p10: { name: "P10", rating: 686, serverMatches: 10 },
+    p11: { name: "P11", rating: 687, serverMatches: 10 },
+    p12: { name: "P12", rating: 688, serverMatches: 10 },
+  };
+  const entries = normalizeRateFloorLeaderboardRecords(input);
+  assert.equal(entries.length, 10);
+  assert.deepEqual(entries.slice(0, 4).map(({ entryId, rating, rank }) => ({ entryId, rating, rank })), [
+    { entryId: "p01", rating: 604, rank: 1 },
+    { entryId: "a_tie", rating: 675, rank: 2 },
+    { entryId: "b_tie", rating: 675, rank: 2 },
+    { entryId: "p04", rating: 680, rank: 4 },
+  ]);
+  assert.equal(entries.some(({ entryId }) => entryId === "z_floor"), false);
+  assert.equal(entries.some(({ entryId }) => entryId === "stale_hidden"), false);
+  assert.deepEqual(Object.keys(entries[1]).sort(), ["entryId", "name", "rank", "rating", "serverMatches"]);
+
+  const publicRead = sourceBetween(
+    online,
+    "async function readRateFloorPublicTop10",
+    "async function readCrownCircuitPublicTop10",
+  );
+  assert.match(publicRead, /online\/serverRateFloorLeaderboard/);
+  assert.match(publicRead, /orderByChildKey: "rating"/);
+  assert.match(publicRead, /limit: PUBLIC_RANKING_LIMIT/);
+  assert.match(publicRead, /limitDirection: "first"/);
+});
+
+test("RATE FLOOR is a server-backed opt-in with a ten-match wait and a plain one-player board", () => {
+  const online = read("online.js");
+  const app = read("app.js");
+  const setting = sourceBetween(
+    online,
+    "function renderRateFloorParticipation",
+    "function renderOverallRankingParticipation",
+  );
+  const action = sourceBetween(
+    online,
+    "async function setRateFloorParticipation",
+    "async function startCrownRun",
+  );
+  const board = sourceBetween(
+    app,
+    "function renderRateFloorLeaderboardSection",
+    "function renderRankingSpotlight",
+  );
+
+  assert.match(setting, /下限チャレンジを公開する/);
+  assert.match(setting, /検証済みRATE戦10戦以上/);
+  assert.match(setting, /公開参加者が1名でも表示/);
+  assert.match(setting, /下限チャレンジ専用のAnjuPay・実績・履歴・王座・SPOTLIGHTはありません/);
+  assert.match(setting, /対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映/);
+  assert.match(action, /action: "set_rate_floor_participation"/);
+  assert.match(action, /enabled: Boolean\(enabled\)/);
+  assert.doesNotMatch(online, /RATE_FLOOR_PUBLIC_KEY/);
+
+  assert.match(board, /RATE FLOOR \/ LOWEST 10/);
+  assert.match(board, /FLOOR #/);
+  assert.match(board, /entry\.rank/);
+  assert.match(board, /entry\.name/);
+  assert.match(board, /entry\.rating/);
+  assert.match(board, /entry\.serverMatches/);
+  assert.match(board, /下限チャレンジ専用の報酬・実績・履歴・王座・SPOTLIGHTはありません/);
+  assert.match(board, /対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映/);
+  assert.doesNotMatch(board, /renderRankingXLink|renderBadges|renderCrownSignature|ranking-comment/i);
+  assert.match(app, /data-ranking-jump="floor"/);
+  assert.match(app, /refreshRateFloorLeaderboard/);
+});
+
 test("Crown TOP 10 excludes provisional zero scores and expands only a positive boundary tie", () => {
   const online = read("online.js");
   const crown = read("functions/crown-circuit.js");
@@ -215,6 +320,13 @@ test("all changed browser assets share the ranking TOP 10 cache marker", () => {
   assert.match(html, /styles\.css\?v=[^"]*ranking-top10-v3/);
   assert.match(html, /app\.js\?v=[^"]*ranking-top10-v3/);
   assert.match(html, /online\.js\?v=[^"]*ranking-top10-v3/);
+});
+
+test("all RATE FLOOR browser assets share a cache marker", () => {
+  const html = read("index.html");
+  assert.match(html, /styles\.css\?v=[^"]*rate-floor-v1/);
+  assert.match(html, /app\.js\?v=[^"]*rate-floor-v1/);
+  assert.match(html, /online\.js\?v=[^"]*rate-floor-v1/);
 });
 
 test("Crown proof remains usable when optional personal ranking context is unavailable", () => {
