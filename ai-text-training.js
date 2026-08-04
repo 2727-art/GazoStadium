@@ -75,11 +75,12 @@ import {
   AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT,
   AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS,
   aiTextTrainingRoundVideoPlaybackFrame,
+  aiTextTrainingZoneRushCycleRemainingMs,
   aiTextTrainingZoneVideoIsEligible,
   aiTextTrainingZoneVideoPlaybackFrame,
   normalizeAiTextTrainingZoneAudioSource,
   validateAiTextTrainingZoneVideoMetadata,
-} from "./ai-text-training-zone-video.mjs?v=ai-training-session-video-deco-v2";
+} from "./ai-text-training-zone-video.mjs?v=ai-training-video-audio-loop-v3";
 import {
   verifiedStrategyVideoMime,
 } from "./strategy-video-transfer.mjs?v=strategy-video-review-v1";
@@ -130,10 +131,12 @@ const AI_TEXT_TRAINING_LIGHT_ENGAGED_PHASES = new Set([
   "playing",
   "reaction",
   "next_preview",
+]);
+const AI_TEXT_TRAINING_VIDEO_AUDIO_PHASES = new Set([
+  "countdown",
+  "playing",
   "zone_ready",
   "zone_rush",
-  "zone_deceleration",
-  "zone_cooldown",
 ]);
 const DEFAULT_BPMS = Object.freeze([80, 90, 100, 110, 120]);
 const DEFAULT_ROSTER_BPMS = Object.freeze([
@@ -963,6 +966,9 @@ function revokeZoneVideoUrl(url) {
 
 function resetZoneVideoElement(video) {
   if (!video) return;
+  video.muted = true;
+  video.defaultMuted = true;
+  try { video.setAttribute("muted", ""); } catch {}
   try { video.pause(); } catch {}
   video.onloadedmetadata = null;
   video.onloadeddata = null;
@@ -1044,6 +1050,7 @@ function aiTextTrainingLightsCanBeActive(targetState = state) {
   return active
     && state === targetState
     && !targetState.preview
+    && !targetState.workoutFinalized
     && !targetState.trainingLightsCloseRequested
     && document.visibilityState === "visible"
     && targetState.screen === "play"
@@ -1057,6 +1064,9 @@ function clearAiTextTrainingLightsHeartbeat(targetState = state) {
 }
 
 function aiTextTrainingLightsCompanionCopy(targetState = state) {
+  if (targetState.workoutFinalized) {
+    return "5ラウンド完了。あなたの灯りは消灯しました。";
+  }
   if (["paused", "zone_paused"].includes(targetState.phase)) {
     return "あなたの灯りも一時停止中です。再開すると、また仲間の輪へ戻ります。";
   }
@@ -1225,9 +1235,17 @@ async function acquireWakeLock() {
 function persistSession() {
   if (!state.plan || !["play", "result"].includes(state.screen)) return;
   const timedPhase = state.phase === "playing" || DEFEAT_ZONE_TIMED_PHASES.has(state.phase);
-  const remainingMs = timedPhase && state.roundEndsAt
-    ? Math.max(0, state.roundEndsAt - performance.now())
+  const rawRemainingMs = timedPhase && state.roundEndsAt
+    ? state.roundEndsAt - performance.now()
     : state.remainingMs;
+  const remainingMs = state.phase === "zone_rush"
+    ? aiTextTrainingZoneRushCycleRemainingMs(
+      rawRemainingMs,
+      AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+    )
+    : timedPhase
+      ? Math.max(0, rawRemainingMs)
+      : state.remainingMs;
   const persistedPhase = state.phase === "playing" || state.phase === "countdown"
     ? "paused"
     : state.phase === "zone_ready" || DEFEAT_ZONE_TIMED_PHASES.has(state.phase)
@@ -2194,10 +2212,17 @@ function recoverPaidSession() {
           : AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS
       : state.roundSeconds * 1_000;
     const savedRemainingMs = Number(saved.remainingMs);
-    state.remainingMs = Math.max(
-      0,
-      Math.min(remainingLimit, Number.isFinite(savedRemainingMs) ? savedRemainingMs : remainingLimit),
-    );
+    state.remainingMs = state.sessionPlayStyle === "defeat_zone"
+      && savedPhase === "zone_paused"
+      && savedResumePhase === "zone_rush"
+      ? aiTextTrainingZoneRushCycleRemainingMs(
+        savedRemainingMs,
+        AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+      )
+      : Math.max(
+        0,
+        Math.min(remainingLimit, Number.isFinite(savedRemainingMs) ? savedRemainingMs : remainingLimit),
+      );
     state.phase = state.sessionPlayStyle === "defeat_zone"
       && savedPhase === "zone_paused"
       ? "zone_paused"
@@ -2454,10 +2479,15 @@ function recoverPendingDefeatPresentation() {
     const savedRemainingMs = Number(saved.remainingMs);
     state.remainingMs = savedPhase === "reaction"
       ? 0
-      : Math.max(
-        0,
-        Math.min(remainingLimit, Number.isFinite(savedRemainingMs) ? savedRemainingMs : remainingLimit),
-      );
+      : savedPhase === "zone_paused" && resumePhase === "zone_rush"
+        ? aiTextTrainingZoneRushCycleRemainingMs(
+          savedRemainingMs,
+          AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+        )
+        : Math.max(
+          0,
+          Math.min(remainingLimit, Number.isFinite(savedRemainingMs) ? savedRemainingMs : remainingLimit),
+        );
     state.achievementActionId = /^[A-Za-z0-9_-]{16,80}$/u.test(
       String(saved.achievementActionId || ""),
     )
@@ -2528,11 +2558,12 @@ function renderFrame(content, {
   backLabel = "トップへ戻る",
   backAction = "home",
   showHeader = true,
+  showBack = true,
 } = {}) {
   return `<section class="screen ai-text-training-screen" data-ai-text-training-screen="${escapeHtml(state.screen)}" data-ai-text-training-play-style="${escapeHtml(state.sessionPlayStyle || state.playStyle || "standard")}" aria-label="${escapeHtml(title)}" ${cosmeticDataAttributes()}>
     ${showHeader ? `<header class="ai-text-training-header">
       <div><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1></div>
-      <button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}" ${state.finishInFlight ? "disabled" : ""}>${escapeHtml(backLabel)}</button>
+      ${showBack ? `<button class="button button-ghost ai-text-training-back" type="button" data-ai-text-training-action="${escapeHtml(backAction)}" ${state.finishInFlight ? "disabled" : ""}>${escapeHtml(backLabel)}</button>` : ""}
     </header>` : ""}
     ${content}
     <div class="ai-text-training-sr-status" id="aiTextTrainingAnnouncer" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -2745,14 +2776,14 @@ function renderZoneVideoPanel() {
       <strong>${count} / ${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_COUNT}</strong>
     </div>
     <fieldset class="ai-text-training-zone-audio-source">
-      <legend>最終攻勢20秒の音</legend>
+      <legend>動画再生中の音</legend>
       <div>
-        <label><input type="radio" name="aiTextTrainingZoneAudioSource" value="metronome" ${audioSource === "metronome" ? "checked" : ""} ${state.zoneVideoBusy ? "disabled" : ""} /><span><strong>メトロノーム</strong><small>選択中のビート音色で200 BPM演出</small></span></label>
-        <label class="${count ? "" : "is-disabled"}"><input type="radio" name="aiTextTrainingZoneAudioSource" value="video" ${audioSource === "video" ? "checked" : ""} ${count && !state.zoneVideoBusy ? "" : "disabled"} /><span><strong>動画の音声</strong><small>動画ごとの音を再生し、最終攻勢中はメトロノームOFF</small></span></label>
+        <label><input type="radio" name="aiTextTrainingZoneAudioSource" value="metronome" ${audioSource === "metronome" ? "checked" : ""} ${state.zoneVideoBusy ? "disabled" : ""} /><span><strong>メトロノーム優先</strong><small>5ラウンドから最終攻勢まで動画は無音</small></span></label>
+        <label class="${count ? "" : "is-disabled"}"><input type="radio" name="aiTextTrainingZoneAudioSource" value="video" ${audioSource === "video" ? "checked" : ""} ${count && !state.zoneVideoBusy ? "" : "disabled"} /><span><strong>動画音声優先</strong><small>動画再生中は常に動画の音、メトロノームOFF</small></span></label>
       </div>
-      <p>どちらか一方だけを開始時に固定します。動画音声がない区間は無音です。端末が音声再生を拒否した時は、動画を無音にしてメトロノームへ安全に戻します。</p>
+      <p>どちらか一方だけを開始時に固定します。動画音声優先でも、反応選択・次ラウンド確認・一時停止中は動画を止めて無音にします。端末が音声再生を拒否した時は、動画を無音にしてメトロノームへ安全に戻します。以後もセッション終了までその設定で進めます。</p>
     </fieldset>
-    <ul><li>1本20MiB・${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS}秒以内、縦向き9:16または4:5、最大1080px幅です。</li><li>5本ならラウンド1〜5に1本ずつ対応します。1〜4本なら順番に繰り返し、休憩・一時停止では静止プレビューにします。</li><li>再生する動画は常に1本だけです。最終攻勢では選んだ本数を20秒へ均等に割り当て、5本なら約4秒ごとに交代します。</li><li>動画・静止プレビュー・ファイル名・音の選択はFirebase、IndexedDB、localStorageへ保存せず、再読込・終了時に破棄します。</li></ul>
+    <ul><li>1本20MiB・${AI_TEXT_TRAINING_ZONE_VIDEO_MAX_SECONDS}秒以内、縦向き9:16または4:5、最大1080px幅です。</li><li>5本ならラウンド1〜5に1本ずつ対応します。1〜4本なら順番に繰り返し、反応選択・休憩・一時停止では静止プレビューにします。</li><li>再生する動画は常に1本だけです。最終攻勢では選んだ本数を20秒へ均等に割り当て、赤い即停止ボタンを押すまで20秒単位で繰り返します。</li><li>動画・静止プレビュー・ファイル名・音の選択はFirebase、IndexedDB、localStorageへ保存せず、再読込・終了時に破棄します。</li></ul>
   </section>`;
 }
 
@@ -3520,7 +3551,10 @@ function currentZoneVideoPlaybackFrame() {
     return aiTextTrainingZoneVideoPlaybackFrame({
       durations,
       totalMs: AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
-      remainingMs: state.remainingMs,
+      remainingMs: aiTextTrainingZoneRushCycleRemainingMs(
+        state.remainingMs,
+        AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+      ),
     });
   }
   return null;
@@ -3552,7 +3586,8 @@ function sessionPrefersZoneVideoAudio() {
 }
 
 function sessionUsesZoneVideoAudio() {
-  return sessionPrefersZoneVideoAudio() && state.phase === "zone_rush";
+  return sessionPrefersZoneVideoAudio()
+    && AI_TEXT_TRAINING_VIDEO_AUDIO_PHASES.has(state.phase);
 }
 
 function applyZoneVideoAudioState(video) {
@@ -3595,13 +3630,13 @@ function handleZoneVideoPlayRejection(video, clip, requestId) {
     }
     return;
   }
+  video.muted = true;
+  video.defaultMuted = true;
+  video.setAttribute("muted", "");
   if (!fallbackZoneVideoAudioToMetronome()) {
     markZoneVideoPlaybackFailed(clip, requestId);
     return;
   }
-  video.muted = true;
-  video.defaultMuted = true;
-  video.setAttribute("muted", "");
   try {
     const retry = video.play();
     if (retry && typeof retry.catch === "function") {
@@ -3614,6 +3649,11 @@ function handleZoneVideoPlayRejection(video, clip, requestId) {
 
 function markZoneVideoPlaybackFailed(clip, requestId) {
   if (requestId !== zoneVideoPlaybackRequest || !clip) return;
+  if (zoneVideoElement) {
+    zoneVideoElement.muted = true;
+    zoneVideoElement.defaultMuted = true;
+    zoneVideoElement.setAttribute("muted", "");
+  }
   const audioFallback = fallbackZoneVideoAudioToMetronome({ notify: false });
   state.zoneVideoFailedClipIds.add(clip.id);
   document.querySelectorAll(".ai-text-training-zone-video-figure.is-playing").forEach((figure) => {
@@ -3670,10 +3710,9 @@ function syncZoneVideoPlaybackDom() {
   const hardFailed = Boolean(clip && state.zoneVideoFailedClipIds.has(clip.id));
   const autoplayBlocked = Boolean(clip && zoneVideoAutoplayBlockedClipIds.has(clip.id));
   if (!clip || !mount || hardFailed || autoplayBlocked) {
-    if (hardFailed && sessionUsesZoneVideoAudio()) {
-      fallbackZoneVideoAudioToMetronome();
-    }
+    const shouldFallbackAudio = hardFailed && sessionUsesZoneVideoAudio();
     if (zoneVideoElementClipId || zoneVideoElement?.isConnected) resetZoneVideoPlayer();
+    if (shouldFallbackAudio) fallbackZoneVideoAudioToMetronome();
     return;
   }
   const video = ensureZoneVideoElement();
@@ -3685,7 +3724,7 @@ function syncZoneVideoPlaybackDom() {
         video.closest(".ai-text-training-zone-video-figure")?.classList.add("is-playing");
       }
     }
-    if (state.phase === "zone_rush" && video.paused) {
+    if (video.paused) {
       requestZoneVideoPlayback(video, clip, zoneVideoPlaybackRequest);
     }
     return;
@@ -3765,9 +3804,22 @@ function defeatZoneMessage(slotId) {
   });
 }
 
+function defeatZoneAwaitingSurrender(targetState = state) {
+  return targetState.sessionPlayStyle === "defeat_zone"
+    && targetState.workoutFinalized
+    && !targetState.defeatResolution
+    && (["zone_ready", "zone_rush"].includes(targetState.phase)
+      || (targetState.phase === "zone_paused"
+        && targetState.defeatResumePhase === "zone_rush"));
+}
+
 function renderDefeatZoneSafetyControls() {
+  const awaitingSurrender = defeatZoneAwaitingSurrender();
+  const label = awaitingSurrender
+    ? "ギブアップして最終攻勢を即停止し、敗北後のととのいタイムへ進む"
+    : "無理、痛い、めまいを感じた時、またはトレーニングを終える時に即停止";
   return `<div class="ai-text-training-safety-controls ai-text-training-zone-safety-controls">
-    <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="stop-session" aria-label="無理、痛い、めまいを感じた時、またはトレーニングを終える時に即停止">無理・痛い・めまい／即停止</button>
+    <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="stop-session" aria-label="${escapeHtml(label)}"><strong>${awaitingSurrender ? "ギブアップ／即停止" : "無理・痛い・めまい／即停止"}</strong>${awaitingSurrender ? "<small>敗北を認めて、ととのいタイムへ</small>" : ""}</button>
   </div>`;
 }
 
@@ -3806,28 +3858,23 @@ function renderDefeatZonePlay() {
     ? "敗北証明を見る"
     : decelerating
       ? "クールダウンへ"
-      : "ギブアップ";
+      : "";
   const backAction = cooldownCanEnd
     ? "finish-defeat-zone"
     : decelerating
       ? "skip-to-cooldown"
-      : "surrender-defeat-zone";
-  const awaitingVideoAudioStart = state.phase === "zone_ready"
-    && state.countdownValue <= 0
-    && sessionPrefersZoneVideoAudio();
+      : "";
   let center = "";
   if (state.phase === "zone_ready") {
     center = `<section class="ai-text-training-zone-overlay is-ready">
       <span>FINAL ATTACK READY</span>
       <h2>5枚の最終攻勢</h2>
-      <strong class="ai-text-training-zone-countdown">${awaitingVideoAudioStart ? "READY" : state.countdownValue}</strong>
-      <p>${awaitingVideoAudioStart ? "動画音声は端末の自動再生制限を避けるため、本人が下の開始ボタンを押した時だけ再生します。" : "200 BPMは音と画面の演出です。動作は自分のペースで。ギブアップは開始直後から選べます。"}</p>
-      ${awaitingVideoAudioStart ? '<button class="button button-primary" type="button" data-ai-text-training-action="start-zone-video-audio">動画音声で最終攻勢を開始</button>' : ""}
-      <button class="button button-ghost" type="button" data-ai-text-training-action="surrender-defeat-zone">今すぐギブアップする</button>
+      <strong class="ai-text-training-zone-countdown">${state.countdownValue}</strong>
+      <p>200 BPMは音と画面の演出です。動作は自分のペースで。赤い即停止ボタンがギブアップです。</p>
     </section>`;
   } else if (state.phase === "zone_rush") {
     center = `<section class="ai-text-training-zone-overlay is-rush" data-att-cheer-presentation="${escapeHtml(rushCheerPresentation)}">
-      ${renderTrainingEdgeHud(remainingSeconds, "最終攻勢 残り")}
+      ${renderTrainingEdgeHud(remainingSeconds, "動画サイクル切替まで")}
       ${rushCheerPresentation === "doodle" ? renderDefeatZoneRushDoodle(rushMessage) : ""}
       <div class="ai-text-training-zone-phase-meta">
         <span>FINAL ATTACK · ZONE BEAT 200</span>
@@ -3835,8 +3882,7 @@ function renderDefeatZonePlay() {
       </div>
       <div class="ai-text-training-zone-support-layer">
         ${rushCheerPresentation === "classic" ? renderDefeatZoneRushClassic(rushMessage) : ""}
-        <p>演出テンポ200 BPM · 動作速度、心拍数、呼吸数の目標ではありません。</p>
-        <button class="button button-primary ai-text-training-surrender" type="button" data-ai-text-training-action="surrender-defeat-zone"><strong>ギブアップする</strong><small>敗北を認めてクールダウンへ</small></button>
+        <p>20秒ごとに動画が一巡し、赤い即停止ボタンを押すまで続きます。200 BPMは動作速度、心拍数、呼吸数の目標ではありません。</p>
       </div>
     </section>`;
   } else if (state.phase === "zone_deceleration") {
@@ -3856,7 +3902,7 @@ function renderDefeatZonePlay() {
       ${renderTrainingEdgeHud(remainingSeconds, "クールダウン 残り")}
       <div class="ai-text-training-zone-phase-meta">
         <span>AI WIN · COOLDOWN BEAT 30</span>
-        <h2>もう力を抜いて大丈夫</h2>
+        <h2>ととのいタイム</h2>
       </div>
       <div class="ai-text-training-zone-support-layer">
         <blockquote class="ai-text-training-message-surface" id="aiTextTrainingZoneMessage">${escapeHtml(state.currentMessage || defeatZoneFallbackLines("zone_cooldown")[0])}</blockquote>
@@ -3876,7 +3922,6 @@ function renderDefeatZonePlay() {
       <p>${continueAfterDefeat ? "あなたの敗北は確定済みです。音を止めたまま、操作してクールダウンへ進めます。" : `画面が非表示になったため音とタイマーを止めました。自動では${resumeCooldown ? "30" : "200"} BPMを再開しません。`}</p>
       <div class="ai-text-training-cooldown-actions">
         <button class="button button-primary" type="button" data-ai-text-training-action="resume-defeat-zone">${resumeCooldown ? "クールダウンを再開" : continueAfterDefeat ? "クールダウンへ進む" : "3秒後に最終攻勢を再開"}</button>
-        ${resumeCooldown || continueAfterDefeat ? "" : '<button class="button button-ghost" type="button" data-ai-text-training-action="surrender-defeat-zone">再開せずギブアップする</button>'}
       </div>
     </section>`;
   }
@@ -3884,7 +3929,6 @@ function renderDefeatZonePlay() {
     <section class="ai-text-training-arena ai-text-training-zone-arena" data-att-mood="${escapeHtml(trainingMood())}" data-att-tempo="${escapeHtml(bpm >= 120 ? "high" : "low")}">
       <div class="ai-text-training-opponent ai-text-training-zone-opponents">${renderDefeatZoneLineup({ winner: Boolean(state.defeatResolution) })}<div class="ai-text-training-vignette" aria-hidden="true"></div></div>
       ${center}
-      ${renderAiTextTrainingLightsCompanion()}
       ${renderDefeatZoneSafetyControls()}
       <p class="ai-text-training-system-safety">痛み・めまい・息苦しさ・体調不良がある時は、演出に関係なく即停止してください。</p>
     </section>
@@ -3897,6 +3941,7 @@ function renderDefeatZonePlay() {
     title: "敗北ZONE",
     backLabel,
     backAction,
+    showBack: cooldownCanEnd || decelerating,
   });
 }
 
@@ -5325,9 +5370,13 @@ function startRoundCountdown() {
     if (clip) zoneVideoAutoplayBlockedClipIds.delete(clip.id);
   }
   configureRoundAmbience(Date.now() + 3_000);
-  state.ambienceController.enable().catch(() => {
-    showToast("メトロノームを再生できませんでした。無音でも進行できます。");
-  });
+  if (sessionUsesZoneVideoAudio()) {
+    state.ambienceController.disable();
+  } else {
+    state.ambienceController.enable().catch(() => {
+      showToast("メトロノームを再生できませんでした。無音でも進行できます。");
+    });
+  }
   render();
   announce("3秒後にトレーニングを開始します。");
   state.countdownTimer = window.setInterval(() => {
@@ -5421,6 +5470,9 @@ function commitTrainingCompletion() {
   if (state.workoutFinalized) return false;
   state.workoutFinalized = true;
   state.resultOutcome = "completed";
+  if (typeof syncAiTextTrainingLightsPresence === "function") {
+    syncAiTextTrainingLightsPresence({ forceInactive: true });
+  }
   writeLocalValue(`${DAILY_COMPLETE_PREFIX}${jstDateKey()}`, "true");
   queueAchievementFinish("completed");
   persistSession();
@@ -5465,24 +5517,15 @@ function startDefeatZoneReady({
   releaseWakeLock();
   state.ambienceController.setVolume(state.metronomeVolume);
   state.phase = "zone_ready";
-  if (typeof syncAiTextTrainingLightsPresence === "function") {
-    syncAiTextTrainingLightsPresence();
-  }
   state.defeatResumePhase = "zone_rush";
   state.countdownValue = AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS;
-  const requestedRemainingMs = Number(remainingMs);
-  state.remainingMs = Math.max(
-    0,
-    Math.min(
-      AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
-      Number.isFinite(requestedRemainingMs)
-        ? requestedRemainingMs
-        : AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
-    ),
+  state.remainingMs = aiTextTrainingZoneRushCycleRemainingMs(
+    remainingMs,
+    AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
   );
   state.currentMessage = DEFEAT_ZONE_MESSAGES.ready;
   zoneVideoAutoplayBlockedClipIds.clear();
-  if (sessionPrefersZoneVideoAudio()) {
+  if (sessionUsesZoneVideoAudio()) {
     state.ambienceController.disable();
   } else {
     configureRoundAmbience(Date.now() + (AI_TEXT_TRAINING_DEFEAT_ZONE_READY_SECONDS * 1_000));
@@ -5498,16 +5541,7 @@ function startDefeatZoneReady({
     const element = document.querySelector(".ai-text-training-zone-countdown");
     if (element) element.textContent = String(Math.max(0, state.countdownValue));
     if (state.countdownValue <= 0) {
-      if (sessionPrefersZoneVideoAudio()) {
-        window.clearInterval(state.countdownTimer);
-        state.countdownTimer = null;
-        state.countdownValue = 0;
-        persistSession();
-        render();
-        announce("準備できたら、動画音声で最終攻勢を開始してください。ギブアップも選べます。");
-      } else {
-        beginDefeatZoneRush();
-      }
+      beginDefeatZoneRush();
     }
   }, 1_000);
 }
@@ -5518,14 +5552,10 @@ function beginDefeatZoneRush({ remainingMs = state.remainingMs } = {}) {
   state.countdownTimer = null;
   state.phase = "zone_rush";
   state.defeatResumePhase = "zone_rush";
-  state.remainingMs = Math.max(
-    0,
-    Math.min(AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS, Number(remainingMs) || 0),
+  state.remainingMs = aiTextTrainingZoneRushCycleRemainingMs(
+    remainingMs,
+    AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
   );
-  if (state.remainingMs <= 0) {
-    confirmPlayerDefeat("overpowered");
-    return;
-  }
   state.lastAnnouncedSecond = null;
   state.currentMessage = defeatZoneMessage("zone_rush");
   state.roundEndsAt = performance.now() + state.remainingMs;
@@ -5544,16 +5574,11 @@ function beginDefeatZoneRush({ remainingMs = state.remainingMs } = {}) {
   state.ticker = window.setInterval(updateDefeatZoneDom, 100);
   acquireWakeLock();
   persistSession();
-  announce("5枚の最終攻勢を開始します。ギブアップはいつでも選べます。");
+  announce("5枚の最終攻勢を開始します。動画は20秒ごとに一巡し、赤い即停止ボタンを押すまで続きます。");
 }
 
 function confirmPlayerDefeat(reason = "surrendered") {
-  if (state.sessionPlayStyle !== "defeat_zone" || !state.workoutFinalized) return;
-  const waitingForDefeat = ["zone_ready", "zone_rush"].includes(state.phase)
-    || (state.phase === "zone_paused"
-      && state.defeatResumePhase === "zone_rush"
-      && !state.defeatResolution);
-  if (!waitingForDefeat) return;
+  if (!defeatZoneAwaitingSurrender()) return;
   stopRuntimeTimers();
   resetZoneVideoPlayer();
   releaseWakeLock();
@@ -5581,9 +5606,6 @@ function beginDefeatZoneCooldown({ remainingMs = AI_TEXT_TRAINING_DEFEAT_ZONE_CO
   stopRuntimeTimers();
   releaseWakeLock();
   state.phase = "zone_cooldown";
-  if (typeof syncAiTextTrainingLightsPresence === "function") {
-    syncAiTextTrainingLightsPresence();
-  }
   state.defeatResumePhase = "zone_cooldown";
   state.remainingMs = Math.max(
     0,
@@ -5610,13 +5632,35 @@ function beginDefeatZoneCooldown({ remainingMs = AI_TEXT_TRAINING_DEFEAT_ZONE_CO
 
 function updateDefeatZoneDom() {
   if (!DEFEAT_ZONE_TIMED_PHASES.has(state.phase)) return;
-  state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+  const now = performance.now();
+  const rawRemainingMs = state.roundEndsAt - now;
+  if (state.phase === "zone_rush") {
+    const cycleRemainingMs = aiTextTrainingZoneRushCycleRemainingMs(
+      rawRemainingMs,
+      AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+    );
+    const crossedCycleBoundary = !Number.isFinite(rawRemainingMs)
+      || rawRemainingMs <= 0
+      || rawRemainingMs > AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS;
+    state.remainingMs = crossedCycleBoundary ? cycleRemainingMs : rawRemainingMs;
+    if (crossedCycleBoundary) {
+      state.roundEndsAt = now + cycleRemainingMs;
+      state.lastAnnouncedSecond = null;
+      persistSession();
+    }
+  } else {
+    state.remainingMs = Math.max(0, rawRemainingMs);
+  }
   const remainingSeconds = Math.max(0, Math.ceil(state.remainingMs / 1_000));
   const timer = document.querySelector("#aiTextTrainingRemaining");
   if (timer) timer.textContent = String(remainingSeconds);
   const timerContainer = timer?.closest('[role="timer"]');
   if (timerContainer) {
-    const label = state.phase === "zone_cooldown" ? "クールダウン 残り" : "最終攻勢 残り";
+    const label = state.phase === "zone_rush"
+      ? "動画サイクル切替まで"
+      : state.phase === "zone_cooldown"
+        ? "ととのいタイム 残り"
+        : "敗北演出 残り";
     timerContainer.setAttribute("aria-label", `${label} ${remainingSeconds}秒`);
   }
   const visualState = currentBeatGaugeState();
@@ -5625,11 +5669,9 @@ function updateDefeatZoneDom() {
     edgeHud.classList.toggle("is-final-ten", visualState.finalTen);
     edgeHud.style.setProperty("--att-gauge-urgency", visualState.urgency.toFixed(3));
   }
-  // The workout clock owns the transition. Media failures must never delay it.
+  // Only the post-surrender clocks end automatically. Final attack cycles until the red stop button.
   if (state.remainingMs <= 0) {
-    if (state.phase === "zone_rush") {
-      confirmPlayerDefeat("overpowered");
-    } else if (state.phase === "zone_deceleration") {
+    if (state.phase === "zone_deceleration") {
       beginDefeatZoneCooldown();
     } else if (state.phase === "zone_cooldown") {
       finishDefeatPresentation();
@@ -5644,15 +5686,6 @@ function updateDefeatZoneDom() {
       const failedClip = frame ? state.zoneVideoClips[frame.index] : null;
       if (failedClip) markZoneVideoPlaybackFailed(failedClip, zoneVideoPlaybackRequest);
       else resetZoneVideoPlayer();
-    }
-    if (remainingSeconds === 10 && state.lastAnnouncedSecond !== 10) {
-      state.lastAnnouncedSecond = 10;
-      announce("最終攻勢、残り10秒です。ギブアップはいつでも選べます。");
-    }
-    if (remainingSeconds === 5 && state.lastAnnouncedSecond !== 5) {
-      state.lastAnnouncedSecond = 5;
-      announce("最終攻勢、残り5秒です。");
-      scheduleDefeatZoneMessage("zone_rush", 2_800);
     }
   } else if (state.phase === "zone_deceleration"
       && state.remainingMs <= AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS / 2
@@ -5672,7 +5705,13 @@ function pauseDefeatZone({ fromVisibility = false } = {}) {
   if (!["zone_ready", ...DEFEAT_ZONE_TIMED_PHASES].includes(state.phase)) return;
   const previousPhase = state.phase === "zone_ready" ? "zone_rush" : state.phase;
   if (DEFEAT_ZONE_TIMED_PHASES.has(state.phase) && state.roundEndsAt) {
-    state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+    const rawRemainingMs = state.roundEndsAt - performance.now();
+    state.remainingMs = state.phase === "zone_rush"
+      ? aiTextTrainingZoneRushCycleRemainingMs(
+        rawRemainingMs,
+        AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+      )
+      : Math.max(0, rawRemainingMs);
   }
   stopRuntimeTimers();
   state.ambienceController.disable();
@@ -5904,6 +5943,10 @@ function completeSession(outcome) {
 
 function stopSessionImmediately() {
   if (["result", "idle"].includes(state.phase)) return;
+  if (defeatZoneAwaitingSurrender()) {
+    confirmPlayerDefeat("surrendered");
+    return;
+  }
   if (state.workoutFinalized) {
     state.postWorkoutExited = true;
     finishDefeatPresentation();
@@ -6412,8 +6455,6 @@ function bindEvents() {
     "resume-round": startRoundCountdown,
     "next-round": advanceRound,
     "resume-defeat-zone": resumeDefeatZone,
-    "start-zone-video-audio": () => beginDefeatZoneRush(),
-    "surrender-defeat-zone": () => confirmPlayerDefeat("surrendered"),
     "skip-to-cooldown": () => beginDefeatZoneCooldown(),
     "settle-defeat-zone": () => finishDefeatPresentation({ settled: true }),
     "finish-defeat-zone": () => {
@@ -6424,9 +6465,7 @@ function bindEvents() {
       }
       if (state.phase === "zone_deceleration") {
         beginDefeatZoneCooldown();
-        return;
       }
-      confirmPlayerDefeat("surrendered");
     },
     "stop-session": stopSessionImmediately,
     "setup-after-result": () => resetForAnotherSession({ drawMode: "same" }),
@@ -6537,7 +6576,13 @@ window.addEventListener("pagehide", (event) => {
   } else if (["zone_ready", ...DEFEAT_ZONE_TIMED_PHASES].includes(state.phase)) {
     const previousPhase = state.phase === "zone_ready" ? "zone_rush" : state.phase;
     if (DEFEAT_ZONE_TIMED_PHASES.has(state.phase) && state.roundEndsAt) {
-      state.remainingMs = Math.max(0, state.roundEndsAt - performance.now());
+      const rawRemainingMs = state.roundEndsAt - performance.now();
+      state.remainingMs = state.phase === "zone_rush"
+        ? aiTextTrainingZoneRushCycleRemainingMs(
+          rawRemainingMs,
+          AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS,
+        )
+        : Math.max(0, rawRemainingMs);
     }
     state.defeatResumePhase = previousPhase;
     state.phase = "zone_paused";

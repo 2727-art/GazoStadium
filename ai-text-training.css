@@ -3005,33 +3005,6 @@
   line-height: 0.9;
 }
 
-.ai-text-training-surrender {
-  width: min(100%, 320px);
-  min-height: 58px;
-  display: grid;
-  gap: 2px;
-  padding: 7px 14px;
-  border-color: rgba(255, 218, 228, 0.9);
-  background: linear-gradient(135deg, #eb315f, #723fd1);
-  box-shadow:
-    0 16px 36px rgba(226, 40, 86, 0.34),
-    inset 0 1px rgba(255, 255, 255, 0.25);
-}
-
-.ai-text-training-surrender strong,
-.ai-text-training-surrender small {
-  display: block;
-}
-
-.ai-text-training-surrender strong {
-  font-size: clamp(1.05rem, 4vw, 1.28rem);
-}
-
-.ai-text-training-surrender small {
-  color: #ffeaf0;
-  font-size: 0.65rem;
-}
-
 .ai-text-training-zone-overlay.is-defeated {
   background:
     radial-gradient(circle at 50% 96%, rgba(255, 211, 115, 0.15), transparent 42%),
@@ -3569,6 +3542,9 @@
   grid-column: 1;
   grid-row: 1;
   min-height: 56px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
   border: 2px solid #ffb0bf;
   color: white;
   background: linear-gradient(135deg, #e92f59, #b90f34);
@@ -3577,6 +3553,23 @@
     inset 0 1px rgba(255, 255, 255, 0.2);
   font-size: clamp(0.9rem, 3.6vw, 1.04rem);
   font-weight: 1000;
+}
+
+.ai-text-training-safety-controls .ai-text-training-emergency strong,
+.ai-text-training-safety-controls .ai-text-training-emergency small {
+  display: block;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.ai-text-training-safety-controls .ai-text-training-emergency strong {
+  font-size: clamp(0.94rem, 3.8vw, 1.08rem);
+}
+
+.ai-text-training-safety-controls .ai-text-training-emergency small {
+  color: #ffe8ed;
+  font-size: clamp(0.58rem, 2.5vw, 0.68rem);
+  font-weight: 800;
 }
 
 .ai-text-training-safety-controls .ai-text-training-emergency:hover:not(:disabled) {
@@ -5677,10 +5670,6 @@
 
   .ai-text-training-zone-countdown {
     font-size: clamp(3rem, 17vh, 5rem);
-  }
-
-  .ai-text-training-surrender {
-    min-height: 50px;
   }
 
   .ai-text-training-timer strong {

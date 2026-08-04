@@ -206,31 +206,70 @@ test("ZONE video metadata enforces the resolution ceiling for the detected aspec
   );
 });
 
-test("ZONE video playback gives five clips equal four-second turns across the 20-second rush", async () => {
-  const { aiTextTrainingZoneVideoPlaybackFrame } = await videoModule;
+test("ZONE video playback gives five clips equal turns and restarts at every 20-second boundary", async () => {
+  const {
+    aiTextTrainingZoneRushCycleRemainingMs,
+    aiTextTrainingZoneVideoPlaybackFrame,
+  } = await videoModule;
   const input = { durations: [30, 30, 30, 30, 30], totalMs: 20_000 };
   const expectations = [
+    [0, 0, 0],
+    [3_999, 0, 3.999],
+    [4_000, 1, 0],
+    [8_000, 2, 0],
+    [12_000, 3, 0],
+    [16_000, 4, 0],
+    [19_999, 4, 3.999],
     [20_000, 0, 0],
-    [16_001, 0, 3.999],
-    [16_000, 1, 0],
-    [12_000, 2, 0],
-    [8_000, 3, 0],
-    [4_000, 4, 0],
-    [1, 4, 3.999],
-    [0, 4, 4],
+    [24_000, 1, 0],
+    [40_000, 0, 0],
+    [60_000, 0, 0],
   ];
 
-  for (const [remainingMs, index, currentTime] of expectations) {
+  for (const [elapsedMs, index, currentTime] of expectations) {
+    const remainingMs = aiTextTrainingZoneRushCycleRemainingMs(20_000 - elapsedMs);
     const frame = aiTextTrainingZoneVideoPlaybackFrame({ ...input, remainingMs });
-    assert.equal(frame.index, index, `remaining ${remainingMs}`);
+    assert.equal(frame.index, index, `elapsed ${elapsedMs}`);
     assert.equal(frame.segmentMs, 4_000);
     assert.ok(Math.abs(frame.currentTime - currentTime) < 1e-9);
     assert.equal(Object.isFrozen(frame), true);
   }
 });
 
-test("ZONE video playback loops a short clip inside its turn and clamps invalid remaining time", async () => {
-  const { aiTextTrainingZoneVideoPlaybackFrame } = await videoModule;
+test("ZONE rush remaining time preserves tick overshoot and never exposes a terminal zero", async () => {
+  const { aiTextTrainingZoneRushCycleRemainingMs } = await videoModule;
+
+  for (const [rawRemainingMs, expected] of [
+    [20_000, 20_000],
+    [1, 1],
+    [0, 20_000],
+    [-1, 19_999],
+    [-250, 19_750],
+    [-20_000, 20_000],
+    [-20_250, 19_750],
+    [-45_000, 15_000],
+    [25_000, 5_000],
+  ]) {
+    assert.equal(
+      aiTextTrainingZoneRushCycleRemainingMs(rawRemainingMs),
+      expected,
+      `raw remaining ${rawRemainingMs}`,
+    );
+  }
+  for (const invalid of [undefined, null, "", Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(aiTextTrainingZoneRushCycleRemainingMs(invalid), 20_000);
+  }
+  assert.equal(aiTextTrainingZoneRushCycleRemainingMs(-250, 10_000), 9_750);
+  for (const invalidCycleMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(aiTextTrainingZoneRushCycleRemainingMs(-250, invalidCycleMs), 19_750);
+  }
+});
+
+test("ZONE video playback loops a short clip inside its turn and consumes normalized cycle time", async () => {
+  const {
+    aiTextTrainingZoneRushCycleRemainingMs,
+    aiTextTrainingZoneVideoPlaybackFrame,
+  } = await videoModule;
 
   const looped = aiTextTrainingZoneVideoPlaybackFrame({
     durations: [2, 30],
@@ -246,13 +285,20 @@ test("ZONE video playback loops a short clip inside its turn and clamps invalid 
     { index: 0, currentTime: 0, segmentMs: 20_000 },
   );
   assert.deepEqual(
-    aiTextTrainingZoneVideoPlaybackFrame({ durations: [10], totalMs: 20_000, remainingMs: -1 }),
+    aiTextTrainingZoneVideoPlaybackFrame({
+      durations: [10],
+      totalMs: 20_000,
+      remainingMs: aiTextTrainingZoneRushCycleRemainingMs(-20_000),
+    }),
     { index: 0, currentTime: 0, segmentMs: 20_000 },
   );
 });
 
 test("ZONE video playback ignores unusable durations, caps the sequence at five slots, and returns null without a timeline", async () => {
-  const { aiTextTrainingZoneVideoPlaybackFrame } = await videoModule;
+  const {
+    aiTextTrainingZoneRushCycleRemainingMs,
+    aiTextTrainingZoneVideoPlaybackFrame,
+  } = await videoModule;
 
   for (const input of [
     {},
@@ -277,9 +323,9 @@ test("ZONE video playback ignores unusable durations, caps the sequence at five 
   const capped = aiTextTrainingZoneVideoPlaybackFrame({
     durations: [10, 10, 10, 10, 10, 10],
     totalMs: 20_000,
-    remainingMs: 0,
+    remainingMs: aiTextTrainingZoneRushCycleRemainingMs(0),
   });
-  assert.equal(capped.index, 4);
+  assert.equal(capped.index, 0);
   assert.equal(capped.segmentMs, 4_000);
 });
 

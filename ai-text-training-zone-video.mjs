@@ -140,6 +140,20 @@ export function aiTextTrainingZoneVideoPlaybackFrame({
   });
 }
 
+export function aiTextTrainingZoneRushCycleRemainingMs(
+  remainingMs,
+  cycleMs = 20_000,
+) {
+  const normalizedCycleMs = finiteNumber(cycleMs);
+  const cycle = normalizedCycleMs !== null && normalizedCycleMs > 0
+    ? normalizedCycleMs
+    : 20_000;
+  const remaining = finiteNumber(remainingMs);
+  if (remaining === null) return cycle;
+  const modulo = ((remaining % cycle) + cycle) % cycle;
+  return modulo === 0 ? cycle : modulo;
+}
+
 export function aiTextTrainingRoundVideoPlaybackFrame({
   durations = [],
   roundIndex,

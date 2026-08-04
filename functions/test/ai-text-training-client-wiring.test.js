@@ -625,7 +625,7 @@ test("doodle collage separates central copy and defeat ZONE rush keeps the froze
 test("defeat ZONE video deco is an optional device-only setup and is never persisted or uploaded", () => {
   assert.match(
     client,
-    /ai-text-training-zone-video\.mjs\?v=ai-training-session-video-deco-v2/,
+    /ai-text-training-zone-video\.mjs\?v=ai-training-video-audio-loop-v3/,
   );
   assert.match(
     client,
@@ -653,9 +653,13 @@ test("defeat ZONE video deco is an optional device-only setup and is never persi
   assert.match(panel, /1〜4本なら順番に繰り返し/);
   assert.match(panel, /休憩・一時停止では静止プレビュー/);
   assert.match(panel, /再生する動画は常に1本だけ/);
-  assert.match(panel, /最終攻勢では選んだ本数を20秒へ均等に割り当て/);
+  assert.match(
+    panel,
+    /最終攻勢では選んだ本数を20秒へ均等に割り当て[\s\S]*?赤い即停止ボタンを押すまで20秒単位で繰り返/,
+  );
   assert.match(panel, /name="aiTextTrainingZoneAudioSource" value="metronome"/);
   assert.match(panel, /name="aiTextTrainingZoneAudioSource" value="video"/);
+  assert.match(panel, /5ラウンドから最終攻勢まで[\s\S]*?動画音声優先/);
   assert.match(panel, /どちらか一方だけを開始時に固定します/);
   assert.match(panel, /端末が音声再生を拒否した時は、動画を無音にしてメトロノームへ安全に戻します/);
   assert.match(
@@ -720,7 +724,7 @@ test("defeat ZONE video deco is an optional device-only setup and is never persi
   assert.match(design, /端末動画デコは第3のプレイスタイルではなく/);
 });
 
-test("session video deco maps round posters and reuses one player through ZONE ready and rush", () => {
+test("session video deco reuses one player with exclusive audio from countdown through repeating ZONE", () => {
   const roundMedia = sourceBlock(
     client,
     "function renderPlayingImage",
@@ -768,8 +772,9 @@ test("session video deco maps round posters and reuses one player through ZONE r
   );
   assert.match(
     playback,
-    /state\.phase === "zone_rush"[\s\S]*?aiTextTrainingZoneVideoPlaybackFrame\([\s\S]*?remainingMs: state\.remainingMs/,
+    /state\.phase === "zone_rush"[\s\S]*?aiTextTrainingZoneVideoPlaybackFrame\([\s\S]*?remainingMs: aiTextTrainingZoneRushCycleRemainingMs\([\s\S]*?state\.remainingMs/,
   );
+  assert.match(playback, /aiTextTrainingZoneRushCycleRemainingMs/);
   assert.doesNotMatch(playback, /state\.phase === "zone_deceleration"|state\.phase === "zone_cooldown"/);
   assert.equal(playback.match(/document\.createElement\("video"\)/gu)?.length, 1);
   assert.match(playback, /if \(zoneVideoElement\) return zoneVideoElement/);
@@ -785,6 +790,19 @@ test("session video deco maps round posters and reuses one player through ZONE r
     playback,
     "function applyZoneVideoAudioState",
     "function fallbackZoneVideoAudioToMetronome",
+  );
+  const audioPolicy = sourceBlock(
+    playback,
+    "function sessionUsesZoneVideoAudio",
+    "function applyZoneVideoAudioState",
+  );
+  assert.match(
+    audioPolicy,
+    /AI_TEXT_TRAINING_VIDEO_AUDIO_PHASES\.has\(state\.phase\)/,
+  );
+  assert.match(
+    client,
+    /const AI_TEXT_TRAINING_VIDEO_AUDIO_PHASES = new Set\(\[[\s\S]*?"countdown"[\s\S]*?"playing"[\s\S]*?"zone_ready"[\s\S]*?"zone_rush"[\s\S]*?\]\)/,
   );
   assert.match(
     audioState,
@@ -804,8 +822,9 @@ test("session video deco maps round posters and reuses one player through ZONE r
   assert.match(sameClip, /video\.parentElement !== mount[\s\S]*?mount\.append\(video\)/);
   assert.match(
     sameClip,
-    /state\.phase === "zone_rush" && video\.paused[\s\S]*?requestZoneVideoPlayback\(video, clip, zoneVideoPlaybackRequest\)/,
+    /video\.paused[\s\S]*?requestZoneVideoPlayback\(video, clip, zoneVideoPlaybackRequest\)/,
   );
+  assert.doesNotMatch(sameClip, /state\.phase === "zone_rush"/);
   assert.match(sameClip, /return;/);
   assert.doesNotMatch(sameClip, /video\.load\(|video\.play\(|video\.src\s*=|resetZoneVideoPlayer/);
 
@@ -836,7 +855,7 @@ test("session video deco maps round posters and reuses one player through ZONE r
   );
   assert.match(
     playback,
-    /fallbackZoneVideoAudioToMetronome\(\)[\s\S]*?video\.muted = true[\s\S]*?retry\.catch\(\(\) => markZoneVideoPlaybackFailed/,
+    /video\.muted = true[\s\S]*?fallbackZoneVideoAudioToMetronome\(\)[\s\S]*?retry\.catch\(\(\) => markZoneVideoPlaybackFailed/,
   );
 
   const rejection = sourceBlock(
@@ -882,24 +901,31 @@ test("session video deco maps round posters and reuses one player through ZONE r
   );
   assert.match(
     ready,
-    /zoneVideoAutoplayBlockedClipIds\.clear\(\)[\s\S]*?sessionPrefersZoneVideoAudio\(\)[\s\S]*?state\.countdownValue = 0[\s\S]*?render\(\)[\s\S]*?動画音声で最終攻勢を開始してください/,
+    /zoneVideoAutoplayBlockedClipIds\.clear\(\)[\s\S]*?sessionUsesZoneVideoAudio\(\)[\s\S]*?ambienceController\.disable\(\)[\s\S]*?beginDefeatZoneRush\(\)/,
   );
   assert.match(beginRush, /zoneVideoAutoplayBlockedClipIds\.clear\(\)/);
+  const roundCountdown = sourceBlock(
+    client,
+    "function startRoundCountdown",
+    "function pauseSession",
+  );
+  assert.match(
+    roundCountdown,
+    /sessionUsesZoneVideoAudio\(\)[\s\S]*?ambienceController\.disable\(\)[\s\S]*?ambienceController\.enable\(\)/,
+  );
   const defeatRenderer = sourceBlock(
     client,
     "function renderDefeatZonePlay",
     "function renderPlay",
-  );
-  assert.match(
-    defeatRenderer,
-    /data-ai-text-training-action="start-zone-video-audio">動画音声で最終攻勢を開始/,
   );
   const actions = sourceBlock(
     client,
     "const actionHandlers =",
     'document.querySelectorAll("[data-ai-text-training-action]")',
   );
-  assert.match(actions, /"start-zone-video-audio": \(\) => beginDefeatZoneRush\(\)/);
+  assert.doesNotMatch(defeatRenderer, /start-zone-video-audio|surrender-defeat-zone/);
+  assert.doesNotMatch(actions, /start-zone-video-audio|surrender-defeat-zone/);
+  assert.doesNotMatch(client, /data-ai-text-training-action="(?:start-zone-video-audio|surrender-defeat-zone)"/);
 
   assert.match(
     trainingStyles,
@@ -923,9 +949,10 @@ test("session video deco maps round posters and reuses one player through ZONE r
   );
 });
 
-test("session video runtime reuses one element and a muted rejection stays retryable for ZONE audio", async () => {
+test("session video runtime keeps video audio active and falls back from a normal round without double audio", async () => {
   const {
     aiTextTrainingRoundVideoPlaybackFrame,
+    aiTextTrainingZoneRushCycleRemainingMs,
     aiTextTrainingZoneVideoPlaybackFrame,
   } = await zoneVideoModule;
   const playback = sourceBlock(
@@ -1059,8 +1086,15 @@ test("session video runtime reuses one element and a muted rejection stays retry
   };
   const context = vm.createContext({
     AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS: 20_000,
+    AI_TEXT_TRAINING_VIDEO_AUDIO_PHASES: new Set([
+      "countdown",
+      "playing",
+      "zone_ready",
+      "zone_rush",
+    ]),
     HTMLMediaElement: { HAVE_METADATA: 1 },
     aiTextTrainingRoundVideoPlaybackFrame,
+    aiTextTrainingZoneRushCycleRemainingMs,
     aiTextTrainingZoneVideoPlaybackFrame,
     configureRoundAmbience() {},
     document,
@@ -1104,7 +1138,8 @@ test("session video runtime reuses one element and a muted rejection stays retry
   assert.equal(calls.load, 1);
   assert.equal(calls.play, 1);
   assert.equal(runtime.clipId, "clip-1");
-  assert.equal(createdVideo.muted, true);
+  assert.equal(createdVideo.muted, false);
+  await Promise.resolve();
 
   const replacementMount = createMount(0);
   mounts.set(0, replacementMount);
@@ -1116,39 +1151,29 @@ test("session video runtime reuses one element and a muted rejection stays retry
   createdVideo.onplaying();
   assert.equal(replacementMount.figure.classes.has("is-playing"), true);
 
-  const mutedRequestId = runtime.requestId;
-  runtime.handleRejection(createdVideo, clips[0], mutedRequestId);
-  assert.equal(runtime.blocked.has("clip-1"), true);
-  assert.equal(state.zoneVideoFailedClipIds.has("clip-1"), false);
+  state.phase = "playing";
+  runtime.sync();
+  assert.equal(createdVideo.muted, false);
+  assert.equal(calls.load, 1);
+  assert.equal(calls.play, 1);
 
-  runtime.blocked.clear();
   state.phase = "zone_ready";
   mounts.set(0, createMount(0));
   runtime.sync();
   assert.equal(runtime.currentFrame()?.index, 0);
   assert.equal(calls.create, 1);
-  assert.equal(calls.load, 2);
-  assert.equal(calls.play, 2);
-  assert.equal(createdVideo.muted, true);
+  assert.equal(calls.load, 1);
+  assert.equal(calls.play, 1);
+  assert.equal(createdVideo.muted, false);
 
-  await Promise.resolve();
-  createdVideo.paused = true;
   state.phase = "zone_rush";
   state.remainingMs = 20_000;
   mounts.set(0, createMount(0));
   runtime.sync();
   assert.equal(calls.create, 1);
-  assert.equal(calls.load, 2);
-  assert.equal(calls.play, 3);
+  assert.equal(calls.load, 1);
+  assert.equal(calls.play, 1);
   assert.equal(createdVideo.muted, false);
-
-  runtime.handleRejection(createdVideo, clips[0], runtime.requestId);
-  await Promise.resolve();
-  assert.equal(state.sessionZoneAudioSource, "metronome");
-  assert.equal(createdVideo.muted, true);
-  assert.equal(state.zoneVideoFailedClipIds.has("clip-1"), false);
-  assert.equal(calls.ambienceEnable, 1);
-  assert.equal(calls.play, 4);
 
   for (const phase of [
     "reaction",
@@ -1162,16 +1187,31 @@ test("session video runtime reuses one element and a muted rejection stays retry
     assert.equal(runtime.currentFrame(), null, `${phase} keeps only its poster or legacy images`);
   }
   runtime.sync();
+
   state.phase = "countdown";
   state.roundIndex = 1;
   state.remainingMs = 20_000;
   runtime.sync();
+  await Promise.resolve();
   assert.equal(calls.create, 1);
   assert.equal(runtime.clipId, "clip-2");
-  assert.deepEqual(
-    calls.sources,
-    ["blob:clip-1", "blob:clip-1", "blob:clip-2"],
-  );
+  assert.equal(createdVideo.muted, false);
+
+  const normalRoundRequestId = runtime.requestId;
+  runtime.handleRejection(createdVideo, clips[1], normalRoundRequestId);
+  await Promise.resolve();
+  assert.equal(runtime.blocked.has("clip-2"), false);
+  assert.equal(state.sessionZoneAudioSource, "metronome");
+  assert.equal(createdVideo.muted, true);
+  assert.equal(state.zoneVideoFailedClipIds.has("clip-2"), false);
+  assert.equal(calls.ambienceEnable, 1);
+
+  state.phase = "zone_ready";
+  mounts.set(0, createMount(0));
+  runtime.sync();
+  assert.equal(createdVideo.muted, true);
+  assert.equal(calls.create, 1);
+  assert.deepEqual(calls.sources, ["blob:clip-1", "blob:clip-2", "blob:clip-1"]);
 });
 
 test("defeat ZONE video deco releases both object URLs on every terminal path and versions both hosting assets", () => {
@@ -1217,7 +1257,7 @@ test("defeat ZONE video deco releases both object URLs on every terminal path an
     /cancelZoneVideoPreparation\(\);[\s\S]*?resetZoneVideoPlayer\(\);[\s\S]*?if \(event\.persisted\) return;[\s\S]*?releaseZoneVideoClips\(\)/,
   );
 
-  assert.equal(html.match(/ai-training-session-video-deco-v2/gu)?.length, 2);
+  assert.equal(html.match(/ai-training-video-audio-loop-v3/gu)?.length, 2);
   assert.match(
     trainingStyles,
     /\.ai-text-training-zone-video-panel\s*\{[\s\S]*?display:\s*grid;/,
@@ -1380,7 +1420,7 @@ test("authors sell six separate personality-product combinations and can clone o
   );
 });
 
-test("defeat ZONE products play their five random phases while safety controls remain system-owned", () => {
+test("defeat ZONE keeps legacy overpowered copy readable while the red system control owns surrender", () => {
   const zoneRuntime = sourceBlock(
     client,
     "function defeatZoneFallbackLines",
@@ -1434,7 +1474,8 @@ test("defeat ZONE products play their five random phases while safety controls r
   ]) {
     assert.match(zoneLifecycle, new RegExp(`"${slotId}"`));
   }
-  assert.match(renderer, /data-ai-text-training-action="surrender-defeat-zone"/);
+  assert.doesNotMatch(renderer, /data-ai-text-training-action="surrender-defeat-zone"/);
+  assert.equal(client.match(/data-ai-text-training-action="surrender-defeat-zone"/gu)?.length || 0, 0);
   assert.match(safetyControls, /data-ai-text-training-action="stop-session"/);
   assert.doesNotMatch(safetyControls, /pause-defeat-zone|toggle-mute/);
   assert.match(renderer, /200 BPMは音と画面の演出です/);
@@ -2129,6 +2170,11 @@ test("defeat ZONE completes the workout at five rounds but consumes its paid use
     "function finishDefeatPresentation",
     "function queueAchievementFinish",
   );
+  const companionCopy = sourceBlock(
+    client,
+    "function aiTextTrainingLightsCompanionCopy",
+    "function updateAiTextTrainingLightsCompanionDom",
+  );
   const requestHome = sourceBlock(client, "function requestHome", "function cleanup");
 
   assert.match(setup, /name="aiTextTrainingPlayStyle"/);
@@ -2163,6 +2209,10 @@ test("defeat ZONE completes the workout at five rounds but consumes its paid use
     /keepDefeatPresentation[\s\S]*?targetState\.sessionPlayStyle === "defeat_zone"[\s\S]*?persistSession\(\)/,
   );
   assert.doesNotMatch(commit, /DEFEAT_ZONE_(?:RUSH|COOLDOWN)_MS/);
+  assert.match(
+    companionCopy,
+    /targetState\.workoutFinalized[\s\S]*?5ラウンド完了。あなたの灯りは消灯しました。/,
+  );
 
   const outcomes = [];
   const runtimeState = {
@@ -2218,7 +2268,8 @@ test("defeat ZONE completes the workout at five rounds but consumes its paid use
   assert.equal(runtimeState.defeatCertificateMessage, "購入時の敗北証明");
 });
 
-test("defeat ZONE has one clear rush, defeat, cooldown, and certificate path", () => {
+test("defeat ZONE repeats its 20-second rush until the red stop confirms surrender", async () => {
+  const { aiTextTrainingZoneRushCycleRemainingMs } = await zoneVideoModule;
   const ready = sourceBlock(
     client,
     "function startDefeatZoneReady",
@@ -2255,9 +2306,86 @@ test("defeat ZONE has one clear rush, defeat, cooldown, and certificate path", (
   assert.match(defeat, /AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS/);
   assert.match(cooldown, /state\.phase = "zone_cooldown"/);
   assert.match(cooldown, /AI_TEXT_TRAINING_DEFEAT_ZONE_COOLDOWN_MS/);
-  assert.match(update, /state\.phase === "zone_rush"[\s\S]*?confirmPlayerDefeat\("overpowered"\)/);
+  assert.match(update, /aiTextTrainingZoneRushCycleRemainingMs/);
+  assert.doesNotMatch(update, /confirmPlayerDefeat\("overpowered"\)/);
   assert.match(update, /state\.phase === "zone_deceleration"[\s\S]*?beginDefeatZoneCooldown\(\)/);
   assert.match(update, /state\.phase === "zone_cooldown"[\s\S]*?finishDefeatPresentation\(\)/);
+  let now = 0;
+  const timer = {
+    textContent: "",
+    closest() {
+      return { setAttribute() {} };
+    },
+  };
+  const edgeHud = {
+    classList: { toggle() {} },
+    style: { setProperty() {} },
+  };
+  const runtimeState = {
+    currentMessage: "",
+    defeatDecelerationStage: 0,
+    defeatResolution: "",
+    lastAnnouncedSecond: null,
+    phase: "zone_rush",
+    remainingMs: 20_000,
+    roundEndsAt: 20_000,
+    zoneVideoClips: [],
+  };
+  const transitionCalls = [];
+  const context = vm.createContext({
+    AI_TEXT_TRAINING_DEFEAT_ZONE_DECEL_MS: 6_000,
+    AI_TEXT_TRAINING_DEFEAT_ZONE_RUSH_MS: 20_000,
+    DEFEAT_ZONE_TIMED_PHASES: new Set(["zone_rush", "zone_deceleration", "zone_cooldown"]),
+    aiTextTrainingZoneRushCycleRemainingMs,
+    announce() {},
+    beginDefeatZoneCooldown() { transitionCalls.push("cooldown"); },
+    configureRoundAmbience() {},
+    currentBeatGaugeState() {
+      return { finalTen: false, urgency: 0 };
+    },
+    currentZoneVideoPlaybackFrame() { return null; },
+    document: {
+      querySelector(selector) {
+        if (selector === "#aiTextTrainingRemaining") return timer;
+        if (selector === "#aiTextTrainingEdgeHud") return edgeHud;
+        return null;
+      },
+    },
+    finishDefeatPresentation() { transitionCalls.push("finish"); },
+    markZoneVideoPlaybackFailed() {},
+    performance: { now: () => now },
+    persistSession() {},
+    resetZoneVideoPlayer() {},
+    scheduleDefeatZoneMessage() {},
+    state: runtimeState,
+    syncZoneVideoPlaybackDom() {},
+  });
+  vm.runInContext(`
+    ${update}
+    globalThis.__updateZone = updateDefeatZoneDom;
+  `, context);
+  now = 10_000;
+  context.__updateZone();
+  assert.equal(runtimeState.remainingMs, 10_000);
+  assert.equal(timer.textContent, "10");
+  now = 20_000;
+  context.__updateZone();
+  assert.equal(runtimeState.phase, "zone_rush");
+  assert.equal(runtimeState.defeatResolution, "");
+  assert.equal(runtimeState.remainingMs, 20_000);
+  assert.equal(runtimeState.roundEndsAt, 40_000);
+  assert.equal(timer.textContent, "20");
+  assert.equal(runtimeState.lastAnnouncedSecond, null);
+  now = 30_000;
+  context.__updateZone();
+  assert.equal(runtimeState.remainingMs, 10_000);
+  now = 65_000;
+  context.__updateZone();
+  assert.equal(runtimeState.phase, "zone_rush");
+  assert.equal(runtimeState.defeatResolution, "");
+  assert.equal(runtimeState.remainingMs, 15_000);
+  assert.equal(runtimeState.roundEndsAt, 80_000, "45-second tick overshoot keeps the original cycle anchor");
+  assert.deepEqual(transitionCalls, []);
   assert.match(result, /AI WIN · DEFEAT CERTIFICATE/);
   assert.match(result, /<strong>DEFEAT<\/strong>/);
   assert.match(result, /<strong>COMPLETE<\/strong>/);
@@ -2266,11 +2394,11 @@ test("defeat ZONE has one clear rush, defeat, cooldown, and certificate path", (
   assert.equal(html.match(/defeat-zone-v1/gu)?.length, 2);
   assert.match(
     readme,
-    /敗北ZONE[\s\S]*?200 BPM演出・最大20秒[\s\S]*?30 BPM演出・最大60秒[\s\S]*?DEFEAT \/ AI WIN/,
+    /敗北ZONE[\s\S]*?クールダウン（30 BPM演出・最大60秒）[\s\S]*?20秒[\s\S]*?自動時間切れにはせず[\s\S]*?赤い即停止[\s\S]*?DEFEAT \/ AI WIN/,
   );
   assert.match(
     design,
-    /5ラウンド完走を確定[\s\S]*?5枚の最終攻勢（200 BPM演出、最大20秒）[\s\S]*?敗北証明/,
+    /5ラウンド完走を確定[\s\S]*?5枚の最終攻勢（20秒の動画サイクルを繰り返す200 BPM画面演出）[\s\S]*?赤い即停止ボタン[\s\S]*?敗北証明/,
   );
 });
 
@@ -2345,6 +2473,24 @@ test("defeat ZONE recovery validates every official defeat boundary", () => {
     client,
     /Number\.isFinite\(savedRemainingMs\) \? savedRemainingMs : remainingLimit/,
   );
+  const paidRecovery = sourceBlock(
+    client,
+    "function recoverPaidSession",
+    "function recoverPendingDefeatPresentation",
+  );
+  const pendingRecovery = sourceBlock(
+    client,
+    "function recoverPendingDefeatPresentation",
+    "function start()",
+  );
+  assert.match(
+    paidRecovery,
+    /savedPhase === "zone_paused"[\s\S]*?savedResumePhase === "zone_rush"[\s\S]*?aiTextTrainingZoneRushCycleRemainingMs\([\s\S]*?savedRemainingMs/,
+  );
+  assert.match(
+    pendingRecovery,
+    /savedPhase === "zone_paused" && resumePhase === "zone_rush"[\s\S]*?aiTextTrainingZoneRushCycleRemainingMs\([\s\S]*?savedRemainingMs/,
+  );
   assert.match(
     sourceBlock(client, "function recoverPaidSession", "function recoverPendingDefeatPresentation"),
     /recordedWorkoutFinalized !== completedOutcome[\s\S]*?Number\(saved\.completedRounds\) !== AI_TEXT_TRAINING_ROUND_COUNT[\s\S]*?savedRoundSeconds \* AI_TEXT_TRAINING_ROUND_COUNT/,
@@ -2416,7 +2562,7 @@ test("local session recovery binds schema 4 to one Firebase UID and trusts legac
   );
 });
 
-test("defeat ZONE never re-asks for surrender after defeat and never auto-resumes after hiding", () => {
+test("the red stop owns surrender only across the undefeated final-attack boundary and visibility never auto-resumes", () => {
   const renderer = sourceBlock(
     client,
     "function renderDefeatZonePlay",
@@ -2437,26 +2583,86 @@ test("defeat ZONE never re-asks for surrender after defeat and never auto-resume
     "function stopSessionImmediately",
     "function resetForAnotherSession",
   );
+  const awaitingSurrender = sourceBlock(
+    client,
+    "function defeatZoneAwaitingSurrender",
+    "function renderDefeatZoneSafetyControls",
+  );
 
   assert.match(renderer, /continueAfterDefeat = state\.defeatResumePhase === "zone_deceleration"/);
   assert.match(renderer, /敗北後の減速を停止中/);
   assert.match(renderer, /クールダウンへ進む/);
+  assert.doesNotMatch(renderer, /surrender-defeat-zone|再開せずギブアップする/);
+  assert.match(confirm, /defeatZoneAwaitingSurrender\(\)/);
   assert.match(
-    renderer,
-    /\$\{resumeCooldown \|\| continueAfterDefeat \? "" : '<button[\s\S]*?再開せずギブアップする/,
-  );
-  assert.match(
-    confirm,
-    /state\.phase === "zone_paused"[\s\S]*?state\.defeatResumePhase === "zone_rush"[\s\S]*?!state\.defeatResolution/,
+    awaitingSurrender,
+    /\["zone_ready", "zone_rush"\]\.includes\(targetState\.phase\)[\s\S]*?targetState\.phase === "zone_paused"[\s\S]*?targetState\.defeatResumePhase === "zone_rush"/,
   );
   assert.match(visibility, /pauseDefeatZone\(\{ fromVisibility: true \}\)/);
+  assert.match(
+    visibility,
+    /state\.phase === "zone_rush"[\s\S]*?aiTextTrainingZoneRushCycleRemainingMs\([\s\S]*?rawRemainingMs/,
+  );
   assert.match(visibility, /if \(event\.persisted\) return/);
   assert.match(visibility, /window\.addEventListener\("pageshow"/);
   assert.match(visibility, /音とタイマーは停止中です。自分で再開してください/);
   assert.match(
     immediateStop,
-    /if \(state\.workoutFinalized\)[\s\S]*?state\.postWorkoutExited = true[\s\S]*?finishDefeatPresentation\(\)/,
+    /defeatZoneAwaitingSurrender\(\)[\s\S]*?confirmPlayerDefeat\("surrendered"\)[\s\S]*?if \(state\.workoutFinalized\)[\s\S]*?state\.postWorkoutExited = true[\s\S]*?finishDefeatPresentation\(\)/,
   );
+  const stopCalls = [];
+  const stopState = {};
+  const stopContext = vm.createContext({
+    completeSession(outcome) { stopCalls.push(["complete", outcome]); },
+    confirmPlayerDefeat(reason) { stopCalls.push(["confirm", reason]); },
+    finishDefeatPresentation() { stopCalls.push(["finish"]); },
+    state: stopState,
+  });
+  vm.runInContext(`
+    ${awaitingSurrender}
+    ${immediateStop}
+    globalThis.__stopNow = stopSessionImmediately;
+  `, stopContext);
+  const runStop = (overrides) => {
+    stopCalls.length = 0;
+    Object.keys(stopState).forEach((key) => delete stopState[key]);
+    Object.assign(stopState, {
+      defeatResolution: "",
+      defeatResumePhase: "",
+      phase: "playing",
+      postWorkoutExited: false,
+      sessionPlayStyle: "defeat_zone",
+      workoutFinalized: false,
+    }, overrides);
+    stopContext.__stopNow();
+    return stopCalls.map((call) => [...call]);
+  };
+  assert.deepEqual(runStop({ phase: "playing" }), [["complete", "exited"]]);
+  assert.deepEqual(runStop({ phase: "reaction", workoutFinalized: true }), [["finish"]]);
+  assert.equal(stopState.postWorkoutExited, true);
+  for (const phase of ["zone_ready", "zone_rush"]) {
+    assert.deepEqual(runStop({ phase, workoutFinalized: true }), [["confirm", "surrendered"]]);
+    assert.equal(stopState.postWorkoutExited, false);
+  }
+  assert.deepEqual(runStop({
+    defeatResumePhase: "zone_rush",
+    phase: "zone_paused",
+    workoutFinalized: true,
+  }), [["confirm", "surrendered"]]);
+  for (const [phase, defeatResumePhase] of [
+    ["zone_deceleration", "zone_deceleration"],
+    ["zone_cooldown", "zone_cooldown"],
+    ["zone_paused", "zone_deceleration"],
+    ["zone_paused", "zone_cooldown"],
+  ]) {
+    assert.deepEqual(runStop({
+      defeatResolution: "surrendered",
+      defeatResumePhase,
+      phase,
+      workoutFinalized: true,
+    }), [["finish"]]);
+    assert.equal(stopState.defeatResolution, "surrendered");
+  }
   assert.match(
     sourceBlock(client, "function renderResult()", "function render()"),
     /const replayAllowed = state\.resultOutcome === "completed"[\s\S]*?&& !state\.postWorkoutSafetyStopped/,
