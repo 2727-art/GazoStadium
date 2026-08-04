@@ -159,6 +159,25 @@
     description: (target) => `${target}連敗しても対戦を続けた`,
     autoPublic: false,
   });
+  [
+    ["battle_loss_streak_secret_100", 100, "百敗の主演", "検証済みオンライン対戦で100連敗し、負け役の物語を百幕つないだ"],
+    ["battle_loss_streak_secret_200", 200, "敗北劇の名優", "検証済みオンライン対戦で200連敗し、負け役の物語を二百幕つないだ"],
+  ].forEach(([id, target, name, description]) => definitions.push(Object.freeze({
+    id,
+    scope: "battle",
+    category: "battle_loss",
+    family: id,
+    familyLabel: "負け役ロールプレイ",
+    icon: "幕",
+    level: 1,
+    target,
+    name,
+    description,
+    hint: "遊びの中で見つかるシークレット実績",
+    autoPublic: false,
+    legacy: false,
+    secret: true,
+  })));
   addSeries({
     scope: "battle",
     category: "battle_days",
@@ -427,7 +446,7 @@
     { id: "battle_record", label: "通算対戦", copy: "勝敗に関係なく、正式な対戦を完走した記録" },
     { id: "battle_modes", label: "モード別", copy: "現在遊べる2種類のオンライン対戦と、解除済みの旧モード記録" },
     { id: "battle_variety", label: "モード回遊", copy: "複数の入口を訪れたオールラウンダーの記録" },
-    { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も貼り続けた記録" },
+    { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も、負け役のロールプレイも、貼り続けた記録" },
     { id: "battle_days", label: "継続", copy: "異なる日にスタジアムへ戻ってきた記録" },
     { id: "battle_crown", label: "月間王座", copy: "2026年8月以降の検証済み月間王座で刻む、参加・入賞・戴冠の記録" },
     { id: "battle_honor", label: "つよ推しの証（終了）", copy: "終了したふたりチャレンジで刻んだ武勲" },
@@ -495,7 +514,8 @@
   function achievementPresentationClass(definition) {
     const level = Math.min(10, Math.max(1, Math.floor(Number(definition?.level) || 1)));
     const dollmasterClass = definition?.id === DOLLMASTER_ACHIEVEMENT_ID ? " is-dollmaster" : "";
-    return `achievement-level-${level}${level === 10 ? " is-final" : ""}${dollmasterClass}`;
+    const secretClass = definition?.secret === true ? " is-secret" : "";
+    return `achievement-level-${level}${level === 10 ? " is-final" : ""}${dollmasterClass}${secretClass}`;
   }
 
   function orderUnlockIds(value) {
@@ -505,6 +525,10 @@
       return Number(second?.id === DOLLMASTER_ACHIEVEMENT_ID)
         - Number(first?.id === DOLLMASTER_ACHIEVEMENT_ID)
         || Number(second?.level === 10) - Number(first?.level === 10)
+        || Number(second?.secret === true) - Number(first?.secret === true)
+        || (first?.secret === true && second?.secret === true
+          ? Number(second?.target || 0) - Number(first?.target || 0)
+          : 0)
         || Number(second?.level || 0) - Number(first?.level || 0)
         || catalog.indexOf(first) - catalog.indexOf(second);
     });
@@ -517,6 +541,7 @@
       const achievement = byId.get(id);
       const levelLabel = achievement.id === DOLLMASTER_ACHIEVEMENT_ID
         ? "SPECIAL"
+        : achievement.secret === true ? "SECRET"
         : achievement.level === 10 ? "FINAL Lv.10" : `Lv.${achievement.level}`;
       return `<span class="achievement-badge achievement-scope-${achievement.scope} ${achievementPresentationClass(achievement)}" title="${escapeHtml(`${achievement.name} / ${achievement.description}`)}"><i aria-hidden="true">${escapeHtml(achievement.icon)}</i><span>${escapeHtml(achievement.name)}</span><small>${levelLabel}</small></span>`;
     }).join("")}</span>`;
@@ -545,6 +570,7 @@
         const familyDefinitions = catalog.filter((definition) => definition.family === family).sort((a, b) => a.level - b.level);
         const current = highest.get(family);
         const legacyFamily = familyDefinitions.every((definition) => definition.legacy);
+        const secretFamily = familyDefinitions.every((definition) => definition.secret === true);
         const next = legacyFamily
           ? null
           : current
@@ -553,9 +579,12 @@
         const selected = current && showcased.has(current.id);
         const unlockedClass = current ? "is-unlocked" : "is-locked";
         const finalAchievement = current?.level === 10;
+        const secretAchievement = current?.secret === true;
         const dollmasterAchievement = (current || next)?.id === DOLLMASTER_ACHIEVEMENT_ID;
         const progressLabel = legacyFamily
           ? "終了モードの記録"
+          : secretFamily
+            ? current ? "シークレット実績・取得済み" : "未解除・シークレット"
           : dollmasterAchievement && current
             ? "特典コード実績・取得済み"
           : finalAchievement
@@ -563,15 +592,16 @@
             : `${current ? `Lv.${current.level} / ${familyDefinitions.at(-1).level}` : `未解除 / 最大Lv.${familyDefinitions.at(-1).level}`}${next && current ? "・次の条件は非公開" : ""}`;
         const presentationClass = current
           ? achievementPresentationClass(current)
-          : dollmasterAchievement ? achievementPresentationClass(next) : "";
+          : dollmasterAchievement || secretFamily ? achievementPresentationClass(next) : "";
         return `<article class="achievement-family-card ${unlockedClass} ${selected ? "is-showcased" : ""} ${presentationClass}">
           <div class="achievement-family-icon" aria-hidden="true">${current ? escapeHtml(current.icon) : "?"}</div>
           <div class="achievement-family-copy">
-            <span>${escapeHtml(current?.familyLabel || next?.familyLabel || "隠し実績")}</span>
+            <span>${escapeHtml(current?.familyLabel || (secretFamily ? "SECRET RECORD" : next?.familyLabel) || "隠し実績")}</span>
             <h3>${current ? escapeHtml(current.name) : "？？？"}</h3>
-            <p>${current ? escapeHtml(current.description) : escapeHtml(next?.hint || "遊び続けると解除")}</p>
+            <p>${current ? escapeHtml(current.description) : secretFamily ? "条件は解除まで非公開です" : escapeHtml(next?.hint || "遊び続けると解除")}</p>
             <small>${progressLabel}</small>
             ${finalAchievement ? '<b class="achievement-final-mark"><span aria-hidden="true">✦</span> FINAL ACHIEVEMENT <span aria-hidden="true">✦</span></b>' : ""}
+            ${secretAchievement ? '<b class="achievement-secret-mark"><span aria-hidden="true">✦</span> SECRET ACHIEVEMENT <span aria-hidden="true">✦</span></b>' : ""}
             ${dollmasterAchievement && current ? '<b class="achievement-dollmaster-mark"><span aria-hidden="true">✦</span> LIMITED LEGENDARY <span aria-hidden="true">✦</span></b>' : ""}
           </div>
           ${current ? `<button class="achievement-showcase-toggle ${selected ? "is-selected" : ""}" type="button" data-achievement-showcase="${escapeHtml(current.id)}" aria-pressed="${selected}">${selected ? "展示中" : "展示する"}</button>` : ""}
@@ -602,6 +632,7 @@
     const first = byId.get(ids[0]);
     if (!first) return;
     const finalAchievement = first.level === 10;
+    const secretAchievement = first.secret === true;
     const dollmasterAchievement = first.id === DOLLMASTER_ACHIEVEMENT_ID;
     let layer = document.querySelector("#achievementUnlockLayer");
     if (!layer) {
@@ -612,14 +643,15 @@
       document.body.append(layer);
     }
     layer.innerHTML = `<article class="achievement-unlock-card ${achievementPresentationClass(first)}">
-      <span class="achievement-unlock-kicker">${dollmasterAchievement ? "CROSSOVER COLLECTION UNLOCKED" : finalAchievement ? "FINAL ACHIEVEMENT UNLOCKED" : "ACHIEVEMENT UNLOCKED"}</span>
+      <span class="achievement-unlock-kicker">${dollmasterAchievement ? "CROSSOVER COLLECTION UNLOCKED" : secretAchievement ? "SECRET ACHIEVEMENT UNLOCKED" : finalAchievement ? "FINAL ACHIEVEMENT UNLOCKED" : "ACHIEVEMENT UNLOCKED"}</span>
       <div><i aria-hidden="true">${escapeHtml(first.icon)}</i><span><strong>${escapeHtml(first.name)}</strong><small>${escapeHtml(first.description)}</small></span></div>
       ${finalAchievement ? '<b class="achievement-unlock-final"><span aria-hidden="true">✦</span> Lv.10・最終実績 <span aria-hidden="true">✦</span></b>' : ""}
+      ${secretAchievement ? '<b class="achievement-unlock-secret"><span aria-hidden="true">✦</span> 負け役ロールプレイの秘密記録 <span aria-hidden="true">✦</span></b>' : ""}
       ${dollmasterAchievement ? '<b class="achievement-unlock-dollmaster"><span aria-hidden="true">✦</span> LIMITED LEGENDARY COLLECTION <span aria-hidden="true">✦</span></b>' : ""}
       ${ids.length > 1 ? `<p>ほか${ids.length - 1}件の実績も解除しました</p>` : ""}
     </article>`;
     layer.classList.add("is-visible");
-    window.setTimeout(() => layer.classList.remove("is-visible"), dollmasterAchievement ? 5600 : 4200);
+    window.setTimeout(() => layer.classList.remove("is-visible"), dollmasterAchievement ? 5600 : secretAchievement ? 5200 : 4200);
   }
 
   function notify(value) {

@@ -28,6 +28,10 @@ const {
 const { CROWN_CIRCUIT_CUTOVER_KEYS } = require("../crown-circuit");
 
 const root = path.resolve(__dirname, "..", "..");
+const SECRET_LOSS_STREAK_IDS = Object.freeze([
+  "battle_loss_streak_secret_100",
+  "battle_loss_streak_secret_200",
+]);
 
 test("battle thresholds keep early levels stable while opening a level-ten ceiling", () => {
   const totalThresholds = ACHIEVEMENT_DEFINITIONS
@@ -230,6 +234,64 @@ test("only active 1on1 matches advance play days and loss streaks", () => {
   assert.equal(stats.currentLossStreak, 0);
   assert.equal(stats.bestLossStreak, 2);
   assert.equal(stats.losses, 2);
+});
+
+test("secret loss streak achievements use exact best-streak boundaries without inferring from total losses", () => {
+  const secretIdsAt = (bestLossStreak) => eligibleAchievementIds({
+    battleStats: {
+      totalMatches: 1_000,
+      losses: 500,
+      currentLossStreak: 0,
+      bestLossStreak,
+    },
+    scope: "battle",
+  }).filter((id) => SECRET_LOSS_STREAK_IDS.includes(id));
+
+  assert.deepEqual(secretIdsAt(99), []);
+  assert.deepEqual(secretIdsAt(100), ["battle_loss_streak_secret_100"]);
+  assert.deepEqual(secretIdsAt(199), ["battle_loss_streak_secret_100"]);
+  assert.deepEqual(secretIdsAt(200), SECRET_LOSS_STREAK_IDS);
+  assert.deepEqual(
+    eligibleAchievementIds({
+      battleStats: {
+        totalMatches: 500,
+        losses: 500,
+        currentLossStreak: 0,
+        bestLossStreak: 0,
+      },
+      scope: "battle",
+    }).filter((id) => SECRET_LOSS_STREAK_IDS.includes(id)),
+    [],
+  );
+
+  const existingLossStreak = ACHIEVEMENT_DEFINITIONS
+    .filter((definition) => definition.family === "battle_loss_streak")
+    .sort((first, second) => first.level - second.level);
+  assert.deepEqual(
+    existingLossStreak.map((definition) => definition.target),
+    [3, 5, 8, 12, 16, 20, 25, 30, 40, 50],
+  );
+  assert.equal(existingLossStreak.at(-1).id, "battle_loss_streak_50");
+  assert.equal(existingLossStreak.at(-1).level, 10);
+
+  const historicalStats = normalizeBattleStats({
+    totalMatches: 500,
+    losses: 300,
+    currentLossStreak: 0,
+    bestLossStreak: 200,
+  });
+  const retroactive = unlockAchievements(
+    { unlocked: { battle_loss_streak_50: 1 } },
+    eligibleAchievementIds({ battleStats: historicalStats, scope: "battle" }),
+    2_000,
+  );
+  assert.deepEqual(
+    retroactive.newlyUnlocked.filter((id) => SECRET_LOSS_STREAK_IDS.includes(id)),
+    SECRET_LOSS_STREAK_IDS,
+  );
+  assert.equal(retroactive.profile.unlocked.battle_loss_streak_50, 1);
+  assert.equal(retroactive.profile.unlocked.battle_loss_streak_secret_100, 2_000);
+  assert.equal(retroactive.profile.unlocked.battle_loss_streak_secret_200, 2_000);
 });
 
 test("retired Training 60 aggregates remain readable but cannot unlock new achievements", () => {
@@ -479,6 +541,46 @@ test("custom showcases accept three unlocked achievements and keep negative badg
   assert.equal(payload.unlockedCount, 4);
 });
 
+test("secret loss streak achievements stay private, normalize safely, and can be showcased independently", () => {
+  const definitions = SECRET_LOSS_STREAK_IDS.map((id) => (
+    ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === id)
+  ));
+  assert.deepEqual(definitions.map((definition) => definition.target), [100, 200]);
+  assert.deepEqual(definitions.map((definition) => definition.condition), [
+    { type: "battle_stat", key: "bestLossStreak", target: 100 },
+    { type: "battle_stat", key: "bestLossStreak", target: 200 },
+  ]);
+  assert.equal(definitions.every((definition) => definition.secret === true), true);
+  assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
+  assert.equal(new Set(definitions.map((definition) => definition.family)).size, 2);
+
+  const profile = unlockAchievements(null, SECRET_LOSS_STREAK_IDS, 100).profile;
+  assert.deepEqual(effectiveShowcase(profile), []);
+  profile.customShowcase = ["battle_loss_streak_secret_100"];
+  assert.deepEqual(effectiveShowcase(profile), ["battle_loss_streak_secret_100"]);
+  profile.customShowcase = ["battle_loss_streak_secret_200"];
+  assert.deepEqual(effectiveShowcase(profile), ["battle_loss_streak_secret_200"]);
+  profile.customShowcase = [...SECRET_LOSS_STREAK_IDS];
+  assert.deepEqual(effectiveShowcase(profile), SECRET_LOSS_STREAK_IDS);
+
+  const normalized = normalizeAchievementProfile({
+    unlocked: {
+      battle_loss_streak_secret_100: 100,
+      battle_loss_streak_secret_200: 200,
+      unknown_secret_loss_streak: 300,
+    },
+    pendingUnlocks: {
+      battle_loss_streak_secret_100: 100,
+      battle_loss_streak_secret_200: 200,
+      unknown_secret_loss_streak: 300,
+    },
+    customShowcase: [...SECRET_LOSS_STREAK_IDS, "unknown_secret_loss_streak"],
+  });
+  assert.deepEqual(Object.keys(normalized.unlocked), SECRET_LOSS_STREAK_IDS);
+  assert.deepEqual(Object.keys(normalized.pendingUnlocks), SECRET_LOSS_STREAK_IDS);
+  assert.deepEqual(normalized.customShowcase, SECRET_LOSS_STREAK_IDS);
+});
+
 test("custom showcases advance to the highest unlocked level in the same family", () => {
   const profile = unlockAchievements(null, ["battle_total_1", "battle_total_10"], 100).profile;
   profile.customShowcase = ["battle_total_1"];
@@ -675,10 +777,15 @@ test("the final achievement preview and cache marker cover the newly opened fami
   const online = fs.readFileSync(path.join(root, "online.js"), "utf8");
   const marker = "all-active-achievements-lv10-v1";
   const crownMarker = "crown-monthly-achievements-v1";
+  const secretLossMarker = "loss-streak-secrets-v1";
   assert.equal((html.match(new RegExp(marker, "g")) || []).length, 2);
   assert.equal((html.match(new RegExp(crownMarker, "g")) || []).length, 4);
+  assert.equal((html.match(new RegExp(secretLossMarker, "g")) || []).length, 3);
   assert.match(html, new RegExp(`achievements\\.js\\?v=[^"]*${marker}`));
   assert.match(html, new RegExp(`online\\.js\\?v=[^"]*${marker}`));
+  for (const asset of ["styles.css", "achievements.js", "online.js"]) {
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*${secretLossMarker}`), asset);
+  }
   for (const asset of ["styles.css", "app.js", "flea-market.js"]) {
     const reference = html.match(new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]+`))?.[0] || "";
     assert.equal(reference.includes(marker), false, asset);
@@ -694,6 +801,8 @@ test("the final achievement preview and cache marker cover the newly opened fami
     "market_partners_3000",
     "crown_monthly_champion_10",
   ]) assert.match(online, new RegExp(id), id);
+  assert.match(online, /achievementPreview === "loss-secret"/);
+  for (const id of SECRET_LOSS_STREAK_IDS) assert.match(online, new RegExp(id), id);
 });
 
 test("AnjuPay flea achievements use only dedicated authoritative counts", () => {
@@ -781,6 +890,7 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     hint: definition.hint,
     autoPublic: definition.autoPublic,
     legacy: definition.legacy === true,
+    secret: definition.secret === true,
   });
   const synchronizedFamilies = new Set([
     "special_dollmaster",
@@ -789,6 +899,8 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "battle_strategy",
     "battle_losses",
     "battle_loss_streak",
+    "battle_loss_streak_secret_100",
+    "battle_loss_streak_secret_200",
     "battle_days",
     "crown_monthly",
     "training_sessions",
@@ -854,6 +966,47 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
   ]) {
     assert.match(collectionHtml, new RegExp(copy));
   }
+  assert.equal((collectionHtml.match(/SECRET RECORD/g) || []).length, 2);
+  assert.match(collectionHtml, /achievement-level-1 is-secret/);
+  assert.match(collectionHtml, /条件は解除まで非公開です/);
+  assert.doesNotMatch(collectionHtml, /百敗の主演|敗北劇の名優|100連敗|200連敗/);
+
+  const firstSecretCollectionHtml = window.HariaiAchievements.renderCollection({
+    unlocked: { battle_loss_streak_secret_100: 102 },
+    showcase: ["battle_loss_streak_secret_100"],
+  });
+  assert.match(firstSecretCollectionHtml, /百敗の主演/);
+  assert.match(firstSecretCollectionHtml, /SECRET ACHIEVEMENT/);
+  assert.match(firstSecretCollectionHtml, /シークレット実績・取得済み/);
+  assert.doesNotMatch(firstSecretCollectionHtml, /敗北劇の名優|200連敗/);
+
+  const allSecretCollectionHtml = window.HariaiAchievements.renderCollection({
+    unlocked: {
+      battle_loss_streak_secret_100: 102,
+      battle_loss_streak_secret_200: 103,
+    },
+    showcase: ["battle_loss_streak_secret_100"],
+  });
+  assert.match(allSecretCollectionHtml, /百敗の主演/);
+  assert.match(allSecretCollectionHtml, /敗北劇の名優/);
+  assert.equal((allSecretCollectionHtml.match(/achievement-secret-mark/g) || []).length, 2);
+  assert.equal((allSecretCollectionHtml.match(/is-showcased/g) || []).length, 1);
+  const secretBadgeHtml = window.HariaiAchievements.renderBadges(SECRET_LOSS_STREAK_IDS);
+  assert.equal((secretBadgeHtml.match(/is-secret/g) || []).length, 2);
+  assert.equal((secretBadgeHtml.match(/SECRET/g) || []).length, 2);
+  assert.doesNotMatch(secretBadgeHtml, /Lv\.1/);
+  assert.deepEqual(
+    [...window.HariaiAchievements.orderUnlockIds([
+      "battle_loss_streak_secret_100",
+      "battle_total_30000",
+      "battle_loss_streak_secret_200",
+    ])],
+    [
+      "battle_total_30000",
+      "battle_loss_streak_secret_200",
+      "battle_loss_streak_secret_100",
+    ],
+  );
   const finalCollectionHtml = window.HariaiAchievements.renderCollection({
     unlocked: {
       battle_total_30000: 100,

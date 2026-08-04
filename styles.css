@@ -9988,6 +9988,24 @@ button:disabled {
     rgba(255, 255, 255, 0.035);
 }
 
+.achievement-family-card.is-secret {
+  border-color: rgba(155, 133, 219, 0.2);
+  background:
+    radial-gradient(circle at 92% 4%, rgba(119, 91, 190, 0.1), transparent 38%),
+    linear-gradient(128deg, rgba(22, 20, 34, 0.92), rgba(12, 15, 23, 0.96));
+}
+
+.achievement-family-card.is-secret.is-unlocked {
+  border-color: rgba(187, 157, 255, 0.62);
+  background:
+    radial-gradient(circle at 91% -12%, rgba(132, 237, 227, 0.2), transparent 40%),
+    radial-gradient(circle at -7% 115%, rgba(194, 124, 255, 0.24), transparent 43%),
+    linear-gradient(128deg, rgba(48, 30, 70, 0.97), rgba(19, 19, 34, 0.98) 56%, rgba(35, 31, 52, 0.98));
+  box-shadow:
+    0 12px 32px rgba(3, 5, 15, 0.34),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
 .achievement-family-card.achievement-level-7,
 .achievement-family-card.achievement-level-8,
 .achievement-family-card.achievement-level-9 {
@@ -10159,6 +10177,16 @@ button:disabled {
   text-shadow: 0 3px 8px rgba(22, 10, 34, 0.74);
 }
 
+.achievement-family-card.is-secret.is-unlocked .achievement-family-icon {
+  border-color: rgba(211, 183, 255, 0.82);
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.44), transparent 19%),
+    conic-gradient(from 220deg, rgba(104, 234, 225, 0.62), rgba(140, 97, 214, 0.78), rgba(239, 183, 119, 0.64), rgba(104, 234, 225, 0.62));
+  color: #fff3d5;
+  box-shadow: 0 0 18px rgba(169, 126, 237, 0.28);
+  text-shadow: 0 2px 7px rgba(18, 9, 28, 0.72);
+}
+
 .achievement-family-copy {
   min-width: 0;
 }
@@ -10231,6 +10259,25 @@ button:disabled {
 
 .achievement-dollmaster-mark span {
   color: #71f3ef;
+}
+
+.achievement-secret-mark {
+  display: block;
+  width: fit-content;
+  margin-top: 8px;
+  border: 1px solid rgba(205, 175, 255, 0.52);
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(151, 103, 222, 0.15), rgba(87, 221, 213, 0.1));
+  color: #e7d4ff;
+  padding: 4px 9px;
+  font-size: 0.58rem;
+  font-weight: 1000;
+  letter-spacing: 0.13em;
+  line-height: 1;
+}
+
+.achievement-secret-mark span {
+  color: #7cf1e8;
 }
 
 .achievement-showcase-toggle {
@@ -10343,6 +10390,28 @@ button:disabled {
 }
 
 .achievement-badge.is-dollmaster small {
+  font-weight: 1000;
+  letter-spacing: 0.06em;
+  opacity: 1;
+}
+
+.achievement-badge.is-secret {
+  border-color: rgba(206, 175, 255, 0.66);
+  background:
+    radial-gradient(circle at 10% 12%, rgba(104, 235, 226, 0.2), transparent 45%),
+    linear-gradient(110deg, rgba(67, 43, 91, 0.94), rgba(36, 30, 58, 0.94));
+  color: #ead9ff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.achievement-badge.is-secret::before {
+  content: "✦";
+  color: #76eee5;
+  font-size: 0.58rem;
+}
+
+.achievement-badge.is-secret small {
+  color: #bffaf4;
   font-weight: 1000;
   letter-spacing: 0.06em;
   opacity: 1;
@@ -10468,6 +10537,35 @@ button:disabled {
   z-index: 1;
 }
 
+.achievement-unlock-card.is-secret {
+  isolation: isolate;
+  border: 2px solid rgba(207, 177, 255, 0.86);
+  background:
+    radial-gradient(circle at 91% -18%, rgba(99, 235, 225, 0.28), transparent 43%),
+    radial-gradient(circle at -5% 120%, rgba(186, 110, 255, 0.32), transparent 46%),
+    linear-gradient(128deg, rgba(62, 34, 86, 0.99), rgba(18, 19, 34, 0.99) 57%, rgba(42, 33, 57, 0.99));
+  box-shadow:
+    0 26px 78px rgba(0, 0, 0, 0.58),
+    0 0 34px rgba(160, 112, 229, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  padding: 18px 20px;
+}
+
+.achievement-unlock-card.is-secret::before {
+  position: absolute;
+  z-index: 0;
+  content: "";
+  inset: 5px;
+  border: 1px solid rgba(225, 207, 255, 0.25);
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.achievement-unlock-card.is-secret > * {
+  position: relative;
+  z-index: 1;
+}
+
 .achievement-unlock-card.is-dollmaster {
   isolation: isolate;
   border: 2px solid rgba(255, 239, 179, 0.96);
@@ -10558,6 +10656,18 @@ button:disabled {
   text-shadow: 0 0 12px rgba(255, 208, 91, 0.3);
 }
 
+.achievement-unlock-card.is-secret .achievement-unlock-kicker {
+  color: #c9fff9;
+  text-shadow: 0 0 12px rgba(102, 233, 223, 0.3);
+}
+
+.achievement-unlock-card.is-secret > div > i {
+  border-color: rgba(218, 193, 255, 0.88);
+  background: linear-gradient(145deg, rgba(126, 87, 190, 0.78), rgba(78, 217, 207, 0.34));
+  color: #fff2d2;
+  box-shadow: 0 0 20px rgba(167, 120, 235, 0.28);
+}
+
 .achievement-unlock-card > div {
   display: flex;
   align-items: center;
@@ -10618,6 +10728,24 @@ button:disabled {
 
 .achievement-unlock-final span {
   color: #78f1e6;
+}
+
+.achievement-unlock-secret {
+  display: block;
+  width: fit-content;
+  margin: 11px 0 0 66px;
+  border: 1px solid rgba(211, 185, 255, 0.56);
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(150, 101, 222, 0.17), rgba(78, 222, 212, 0.11));
+  color: #ead8ff;
+  padding: 5px 10px;
+  font-size: 0.65rem;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+}
+
+.achievement-unlock-secret span {
+  color: #7af1e7;
 }
 
 .achievement-unlock-dollmaster {
@@ -10758,6 +10886,7 @@ button:disabled {
   }
 
   .achievement-unlock-final,
+  .achievement-unlock-secret,
   .achievement-unlock-dollmaster,
   .achievement-unlock-card p {
     margin-left: 0;

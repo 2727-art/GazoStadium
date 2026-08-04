@@ -1784,8 +1784,12 @@ function openOnlineScreen(screen) {
       const achievementPreview = new URLSearchParams(location.search).get("achievementPreview");
       const finalAchievementPreview = achievementPreview === "final";
       const dollmasterAchievementPreview = achievementPreview === "dollmaster";
+      const lossSecretAchievementPreview = achievementPreview === "loss-secret";
       const previewUnlocked = Object.fromEntries([
         ...(dollmasterAchievementPreview ? [DOLLMASTER_ACHIEVEMENT_ID] : []),
+        ...(lossSecretAchievementPreview
+          ? ["battle_loss_streak_secret_100", "battle_loss_streak_secret_200"]
+          : []),
         finalAchievementPreview ? "battle_total_30000" : "battle_total_100",
         finalAchievementPreview ? "battle_solo_10000" : "battle_solo_100",
         finalAchievementPreview ? "battle_strategy_10000" : "battle_strategy_5",
@@ -1811,14 +1815,20 @@ function openOnlineScreen(screen) {
       ].map((id, index) => [id, Date.now() - (index * 60_000)]));
       state.achievements = window.HariaiAchievements?.normalizeProfile?.({
         unlocked: previewUnlocked,
-        customShowcase: [],
-        showcase: finalAchievementPreview
-          ? ["battle_total_30000", "ai_training_unique_buyers_3000", "market_both_3000"]
-          : ["market_first_turn", "market_both_1", "battle_days_3"],
+        customShowcase: lossSecretAchievementPreview
+          ? ["battle_loss_streak_secret_100"]
+          : [],
+        showcase: lossSecretAchievementPreview
+          ? ["battle_loss_streak_secret_100"]
+          : finalAchievementPreview
+            ? ["battle_total_30000", "ai_training_unique_buyers_3000", "market_both_3000"]
+            : ["market_first_turn", "market_both_1", "battle_days_3"],
       }) || state.achievements;
       setOnlineChrome("ACHIEVEMENTS PREVIEW");
       render();
-      if (finalAchievementPreview) {
+      if (lossSecretAchievementPreview) {
+        window.HariaiAchievements?.notify?.(["battle_loss_streak_secret_200"]);
+      } else if (finalAchievementPreview) {
         window.HariaiAchievements?.notify?.([
           "battle_total_10000",
           "battle_total_30000",
