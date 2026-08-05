@@ -1687,6 +1687,27 @@ button:disabled {
   box-shadow: 0 18px 46px rgba(77, 213, 202, 0.3);
 }
 
+.hero-danwaku-note-button {
+  grid-column: 1 / -1;
+  min-height: 88px;
+  color: #fff8ff;
+  border-color: rgba(237, 190, 255, 0.72);
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.22), transparent 31%),
+    linear-gradient(135deg, #39275d 0%, #734978 48%, #9f5f8a 100%);
+  box-shadow: 0 15px 38px rgba(93, 48, 117, 0.26);
+}
+
+.hero-danwaku-note-button:hover {
+  border-color: #fff;
+  box-shadow: 0 18px 44px rgba(122, 70, 137, 0.36);
+}
+
+.hero-danwaku-note-button span i {
+  margin-right: 0.25em;
+  font-style: normal;
+}
+
 .hero-mode-button::after {
   position: absolute;
   top: -48px;
@@ -13338,6 +13359,31 @@ button:disabled {
   min-width: 0;
 }
 
+.match-danwaku-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid rgba(237, 190, 255, 0.42);
+  border-radius: 999px;
+  color: #fff4ff;
+  background: linear-gradient(135deg, rgba(103, 69, 135, 0.88), rgba(139, 75, 119, 0.88));
+  box-shadow: 0 6px 17px rgba(60, 29, 83, 0.22);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.match-achievement-showcase.is-match-found .match-danwaku-badge,
+.online-status-details > .match-achievement-showcase .match-danwaku-badge,
+.match-achievement-showcase.is-result .match-danwaku-badge {
+  justify-self: center;
+}
+
 .match-achievement-showcase.is-match-found,
 .online-status-details > .match-achievement-showcase {
   box-sizing: border-box;
@@ -13373,6 +13419,16 @@ button:disabled {
   flex-wrap: nowrap;
   gap: 3px;
   overflow: hidden;
+}
+
+.match-achievement-showcase.is-hud .match-danwaku-badge {
+  margin-top: 3px;
+  padding: 3px 7px;
+  font-size: 0.58rem;
+}
+
+.hud-player:last-child .match-achievement-showcase.is-hud .match-danwaku-badge {
+  justify-self: end;
 }
 
 .match-achievement-showcase.is-hud .achievement-badge {
@@ -13427,6 +13483,12 @@ button:disabled {
   .match-achievement-showcase.is-result {
     justify-items: stretch;
     text-align: left;
+  }
+
+  .match-achievement-showcase.is-match-found .match-danwaku-badge,
+  .online-status-details > .match-achievement-showcase .match-danwaku-badge,
+  .match-achievement-showcase.is-result .match-danwaku-badge {
+    justify-self: start;
   }
 
   .match-achievement-showcase.is-hud .achievement-badge {

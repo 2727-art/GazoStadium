@@ -8,7 +8,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 const firebaseEntrySource = read;
 
 test("all Firebase entry modules use the shared App Check bootstrap", () => {
-  for (const relativePath of ["account.js", "online.js", "strategy.js", "ai-text-training.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
+  for (const relativePath of ["account.js", "online.js", "strategy.js", "ai-text-training.js", "danwaku-note.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
     const source = firebaseEntrySource(relativePath);
     assert.match(source, /firebase-services\.js\?v=app-check-v3/);
     assert.doesNotMatch(source, /\binitializeApp\s*\(/);
@@ -35,7 +35,7 @@ test("Realtime Database browser traffic stays on the Firebase SDK", () => {
 
 test("cache busters load one App Check module generation", () => {
   const html = read("index.html");
-  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "market", "flea-market", "free-table"]) {
+  for (const moduleName of ["account", "strategy", "online", "ai-text-training", "danwaku-note", "market", "flea-market", "free-table"]) {
     assert.match(html, new RegExp(`${moduleName}\\.js\\?v=[^"]*app-check-v3`));
   }
   for (const assetName of ["styles.css", "app.js", "account.js", "strategy.js", "online.js", "market.js", "flea-market.js", "free-table.js"]) {
@@ -46,6 +46,7 @@ test("cache busters load one App Check module generation", () => {
     "online.js",
     "strategy.js",
     "ai-text-training.js",
+    "danwaku-note.js",
     "market.js",
     "flea-market.js",
     "free-table.js",
@@ -83,6 +84,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "soloFamiliarAction",
     "soloSessionAction",
     "matchAchievementShowcase",
+    "danwakuNoteAction",
     "getP2pIceServers",
     "reportP2pConnectivity",
     "reportMarketP2pConnectivity",
@@ -108,6 +110,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloSessionAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.matchAchievementShowcase, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.danwakuNoteAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.getP2pIceServers, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportP2pConnectivity, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.reportMarketP2pConnectivity, true);
@@ -175,7 +178,7 @@ test("local integration mode redirects Authentication as well as data services",
     /isLocalhost && searchParams\.has\("firebaseEmulators"\)/,
   );
   assert.match(appCheckSource, /isTokenAutoRefreshEnabled: false/);
-  for (const relativePath of ["online.js", "strategy.js", "ai-text-training.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
+  for (const relativePath of ["online.js", "strategy.js", "ai-text-training.js", "danwaku-note.js", "market.js", "flea-market.js", "free-table.js", "post-match-tip.js"]) {
     assert.match(firebaseEntrySource(relativePath), /firebase-services\.js\?v=app-check-v3/);
   }
   assert.match(read("README.md"), /--project demo-gazostadium/);

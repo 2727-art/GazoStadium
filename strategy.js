@@ -421,7 +421,11 @@ function normalizeMatchAchievementShowcases(value) {
     const source = value.players[uid];
     if (!source || typeof source !== "object" || typeof source.ids !== "string") return null;
     const ids = normalizeIds(source.ids, MATCH_ACHIEVEMENT_SHOWCASE_LIMIT);
-    players[uid] = Object.freeze({ ids: ids.join(",") });
+    const danwakuDays = Math.floor(Number(source.danwakuDays));
+    players[uid] = Object.freeze({
+      ids: ids.join(","),
+      ...(danwakuDays >= 1 && danwakuDays <= 1_000_000 ? { danwakuDays } : {}),
+    });
   }
   return Object.freeze({
     version: MATCH_ACHIEVEMENT_SHOWCASE_VERSION,
@@ -448,11 +452,18 @@ function opponentAchievementShowcaseIds() {
 
 function renderOpponentAchievementShowcase({ compact = false, context = "", label = "公開中の実績" } = {}) {
   const ids = opponentAchievementShowcaseIds();
-  if (!ids.length) return "";
+  const danwakuDays = Math.floor(Number(
+    state.matchAchievementShowcases?.players?.[state.opponentUid]?.danwakuDays,
+  ));
+  const showDanwaku = danwakuDays >= 1 && danwakuDays <= 1_000_000;
+  if (!ids.length && !showDanwaku) return "";
   const badges = window.HariaiAchievements?.renderBadges?.(ids, { compact, empty: "" }) || "";
-  if (!badges) return "";
+  const danwakuBadge = showDanwaku
+    ? `<span class="match-danwaku-badge" title="断惑NOTEで「断惑継続」を記録した日数です">🪷 断惑 ${danwakuDays}日目</span>`
+    : "";
+  if (!badges && !danwakuBadge) return "";
   const modifier = ["is-identity", "is-hud", "is-result"].includes(context) ? ` ${context}` : "";
-  return `<section class="match-achievement-showcase is-opponent${modifier}" aria-label="${escapeHtml(label)}"><small>${escapeHtml(label)}</small>${badges}</section>`;
+  return `<section class="match-achievement-showcase is-opponent${modifier}" aria-label="${escapeHtml(label)}">${badges ? `<small>${escapeHtml(label)}</small>` : ""}${badges}${danwakuBadge}</section>`;
 }
 
 function refreshMatchAchievementShowcaseIfVisible() {
@@ -471,6 +482,20 @@ function matchAchievementShowcaseRevealReady(room) {
   );
 }
 
+async function freezeMatchAchievementShowcases(roomId) {
+  try {
+    await matchAchievementShowcaseCallable({
+      mode: "strategy",
+      roomId,
+      phase: "freeze",
+    });
+    return true;
+  } catch {
+    // 任意表示のfreeze失敗で、成立済みの対戦を止めない。
+    return false;
+  }
+}
+
 function materializeMatchAchievementShowcases(room) {
   if (!state.roomId
       || room?.status !== "active"
@@ -480,7 +505,11 @@ function materializeMatchAchievementShowcases(room) {
   const requestedRoomId = state.roomId;
   state.matchAchievementShowcaseRequested = true;
   try {
-    matchAchievementShowcaseCallable({ mode: "strategy", roomId: requestedRoomId })
+    matchAchievementShowcaseCallable({
+      mode: "strategy",
+      roomId: requestedRoomId,
+      phase: "materialize",
+    })
       .then((response) => {
         if (!active || state.roomId !== requestedRoomId) return;
         if (captureMatchAchievementShowcases(response.data)) refreshMatchAchievementShowcaseIfVisible();
@@ -2538,6 +2567,7 @@ async function acceptOffer(roomId, offer) {
       return;
     }
     await set(statusRef, "active");
+    await freezeMatchAchievementShowcases(roomId);
     await Promise.allSettled([remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`)), remove(ref(database, `online/strategyQueue/${state.uid}`))]);
     await enterRoom(roomId);
   } finally {

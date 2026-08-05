@@ -18,6 +18,7 @@ const {
   normalizeAiTextTrainingStats,
   normalizeBattleStats,
   normalizeCrownMonthlyStats,
+  normalizeDanwakuStats,
   normalizeFleaStats,
   normalizeMarketStats,
   normalizeTrainingStats,
@@ -325,6 +326,64 @@ test("retired Training 60 aggregates remain readable but cannot unlock new achie
     )),
     false,
   );
+});
+
+test("Danwaku NOTE achievements use the canonical highest-ever boundary and stay opt-in", () => {
+  const definitions = ACHIEVEMENT_DEFINITIONS
+    .filter((definition) => definition.family === "danwaku_streak")
+    .sort((first, second) => first.level - second.level);
+  assert.deepEqual(
+    definitions.map((definition) => definition.target),
+    [1, 3, 7, 14, 30, 60, 100, 180, 270, 365],
+  );
+  assert.deepEqual(
+    definitions.map((definition) => definition.name),
+    ["発心の一歩", "一念の灯", "精進の芽", "日々の歩み", "不放逸のしるし", "心調う", "蓮のつぼみ", "蓮華ひらく", "光の道標", "無尽の歩み"],
+  );
+  assert.deepEqual(definitions.map((definition) => definition.level), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(definitions.every((definition) => definition.scope === "danwaku"), true);
+  assert.equal(definitions.every((definition) => definition.category === "danwaku_note"), true);
+  assert.equal(definitions.every((definition) => definition.icon === "蓮"), true);
+  assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
+  assert.equal(definitions.every((definition) => definition.legacy === false), true);
+  assert.deepEqual(
+    definitions.map((definition) => definition.condition),
+    definitions.map((definition) => ({
+      type: "danwaku_stat",
+      key: "highestEverDays",
+      target: definition.target,
+    })),
+  );
+
+  assert.deepEqual(normalizeDanwakuStats(null), { highestEverDays: 0 });
+  assert.deepEqual(
+    normalizeDanwakuStats({ highestEverDays: 7.9, bestDays: 30, bestStreakDays: 60 }),
+    { highestEverDays: 7 },
+  );
+  assert.deepEqual(normalizeDanwakuStats({ bestDays: 14.9 }), { highestEverDays: 14 });
+  assert.deepEqual(normalizeDanwakuStats({ bestStreakDays: 30.9 }), { highestEverDays: 30 });
+
+  const idsAt = (highestEverDays) => eligibleAchievementIds({
+    danwakuStats: { highestEverDays },
+    scope: "danwaku",
+  });
+  assert.deepEqual(idsAt(0), []);
+  assert.deepEqual(idsAt(6), ["danwaku_streak_1", "danwaku_streak_3"]);
+  assert.deepEqual(idsAt(7), ["danwaku_streak_1", "danwaku_streak_3", "danwaku_streak_7"]);
+  assert.equal(idsAt(13).includes("danwaku_streak_14"), false);
+  assert.equal(idsAt(14).includes("danwaku_streak_14"), true);
+  assert.equal(idsAt(364).includes("danwaku_streak_365"), false);
+  assert.equal(idsAt(365).includes("danwaku_streak_365"), true);
+  assert.equal(
+    eligibleAchievementIds({ danwakuStats: { highestEverDays: 365 }, scope: "battle" })
+      .some((id) => id.startsWith("danwaku_streak_")),
+    false,
+  );
+
+  const profile = unlockAchievements(null, ["danwaku_streak_1"], 100).profile;
+  assert.deepEqual(effectiveShowcase(profile), []);
+  profile.customShowcase = ["danwaku_streak_1"];
+  assert.deepEqual(effectiveShowcase(profile), ["danwaku_streak_1"]);
 });
 
 test("AI text training achievements reward safe completion and script reach, not intensity or price", () => {
@@ -660,6 +719,7 @@ test("all active progression families extend in place to level ten while retired
     training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
     training_workouts: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
     training_minutes: [1, 10, 30, 60, 300, 1000, 3000, 10000, 30000, 60000],
+    danwaku_streak: [1, 3, 7, 14, 30, 60, 100, 180, 270, 365],
     ai_training_sessions: [1, 5, 20, 50, 100, 300, 500, 1000, 3000, 10000],
     ai_training_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
     ai_training_script_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
@@ -906,6 +966,7 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "training_sessions",
     "training_workouts",
     "training_minutes",
+    "danwaku_streak",
     "ai_training_sessions",
     "ai_training_days",
     "ai_training_script_uses",
@@ -957,6 +1018,9 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "いろいろな人へ応援が届くと解除",
     "AnjuPayフリマ・一日棚",
     "AnjuPayフリマ・ご縁",
+    "断惑NOTE",
+    "断ちたい習慣と向き合い、自分で継続を記した日々の歩み",
+    "断惑継続を自分のペースで記録すると解除",
     "月間王座",
     "2026年8月以降の検証済み月間王座で刻む、参加・入賞・戴冠の記録",
     "連続日数ではなく、自分のペースで一品を言葉にした日々の記録",

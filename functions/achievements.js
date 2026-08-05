@@ -8,7 +8,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["special", "battle", "training", "ai_training", "market", "flea"]);
+const VALID_SCOPES = new Set(["special", "battle", "training", "danwaku", "ai_training", "market", "flea"]);
 const MAX_SHOWCASE = 3;
 const CROWN_MONTHLY_ACHIEVEMENT_START_KEY = "2026-08";
 
@@ -317,6 +317,20 @@ const battleDefinitions = [
   })),
 ];
 
+const danwakuDefinitions = series({
+  scope: "danwaku",
+  category: "danwaku_note",
+  family: "danwaku_streak",
+  familyLabel: "断惑継続",
+  icon: "蓮",
+  thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 270, 365],
+  names: ["発心の一歩", "一念の灯", "精進の芽", "日々の歩み", "不放逸のしるし", "心調う", "蓮のつぼみ", "蓮華ひらく", "光の道標", "無尽の歩み"],
+  description: (target) => `断惑継続の最高記録が${target}日になった`,
+  hint: "断惑継続を自分のペースで記録すると解除",
+  autoPublic: false,
+  condition: (target) => ({ type: "danwaku_stat", key: "highestEverDays", target }),
+});
+
 const aiTrainingDefinitions = [
   ...series({
     scope: "ai_training",
@@ -509,6 +523,7 @@ const specialDefinitions = [Object.freeze({
 const ACHIEVEMENT_DEFINITIONS = Object.freeze([
   ...specialDefinitions,
   ...battleDefinitions,
+  ...danwakuDefinitions,
   ...aiTrainingDefinitions,
   ...marketDefinitions,
   ...fleaDefinitions,
@@ -618,6 +633,12 @@ function normalizeTrainingStats(value) {
     sessions: count(value?.sessions) + count(value?.hpSessions),
     workouts: count(value?.completedSets) + count(value?.hpCompletedWorkouts),
     seconds: count(value?.completedSeconds) + count(value?.hpCompletedSeconds),
+  };
+}
+
+function normalizeDanwakuStats(value) {
+  return {
+    highestEverDays: count(value?.highestEverDays ?? value?.bestDays ?? value?.bestStreakDays),
   };
 }
 
@@ -745,6 +766,7 @@ function achievementConditionMet(
   definition,
   battleStats,
   trainingStats,
+  danwakuStats,
   aiTextTrainingStats,
   marketStats,
   fleaStats,
@@ -766,6 +788,7 @@ function achievementConditionMet(
   }
   if (condition.type === "battle_signal") return signals?.[condition.signal] === true;
   if (condition.type === "training_stat") return count(trainingStats?.[condition.key]) >= condition.target;
+  if (condition.type === "danwaku_stat") return count(danwakuStats?.[condition.key]) >= condition.target;
   if (condition.type === "ai_training_stat") {
     return count(aiTextTrainingStats?.[condition.key]) >= condition.target;
   }
@@ -786,6 +809,7 @@ function achievementConditionMet(
 function eligibleAchievementIds({
   battleStats,
   trainingStats,
+  danwakuStats,
   aiTextTrainingStats,
   marketStats,
   fleaStats,
@@ -800,6 +824,7 @@ function eligibleAchievementIds({
         definition,
         battleStats,
         trainingStats,
+        danwakuStats,
         aiTextTrainingStats,
         marketStats,
         fleaStats,
@@ -956,6 +981,7 @@ module.exports = Object.freeze({
   normalizeAchievementProfile,
   normalizeBattleStats,
   normalizeCrownMonthlyStats,
+  normalizeDanwakuStats,
   normalizeFleaStats,
   normalizeMarketStats,
   normalizeTrainingStats,

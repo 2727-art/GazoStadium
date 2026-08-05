@@ -1086,6 +1086,7 @@
         <p class="hero-copy">
           好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
           最大10枚のロスターからAIが5枚をDRAWする、ソロの「AI文字コラトレーニング」も選べます。
+          習慣と向き合う日は「断惑NOTE」に、自分で決めた一日を記録できます。
           疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
         <ul class="hero-assurances" aria-label="安心して遊べる理由">
@@ -1097,6 +1098,7 @@
           <button class="button hero-free-table-button hero-mode-button${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
+          <button class="button hero-danwaku-note-button hero-mode-button" id="danwakuNoteButton"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span><i aria-hidden="true">🪷</i> 断惑NOTE</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
           <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
@@ -1158,6 +1160,7 @@
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
+    document.querySelector("#danwakuNoteButton")?.addEventListener("click", startDanwakuNote);
     document.querySelector("#aiTextTrainingLightsStartButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
       startFreeTable({ intent: event.currentTarget.dataset.freeTableIntent });
@@ -1948,6 +1951,19 @@
     );
   }
 
+  function startDanwakuNote() {
+    if (window.HariaiDanwakuNote?.start) {
+      window.HariaiDanwakuNote.start();
+      return;
+    }
+    showToast("断惑NOTEを読み込んでいます…");
+    window.addEventListener(
+      "hariai-danwaku-note-ready",
+      () => window.HariaiDanwakuNote?.start?.(),
+      { once: true },
+    );
+  }
+
   function cancelPendingFreeTableLaunch() {
     freeTableLaunchGeneration += 1;
     pendingFreeTableIntent = "";
@@ -2416,7 +2432,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO AI TEXT TRAINING + FREE TABLE + MARKETS";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO AI TEXT TRAINING + 断惑NOTE + FREE TABLE + MARKETS";
     if (footerItems[1]) footerItems[1].textContent = "ソロの最大10画像とDRAW結果は端末内。対人モードのメディアはP2Pで一時転送します";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
@@ -2428,6 +2444,10 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiDanwakuNote?.isActive?.()) {
+      window.HariaiDanwakuNote.requestHome();
+      return;
+    }
     if (window.HariaiAiTextTraining?.isActive?.()) {
       window.HariaiAiTextTraining.requestHome();
       return;

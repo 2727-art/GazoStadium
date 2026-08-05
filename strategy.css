@@ -2053,6 +2053,10 @@
   justify-content: flex-end;
 }
 
+.strategy-identity-card.player-2 .match-achievement-showcase .match-danwaku-badge {
+  justify-self: end;
+}
+
 .strategy-final-grid article .match-achievement-showcase {
   display: grid;
   width: 100%;
@@ -2068,5 +2072,10 @@
 
   .strategy-identity-card.player-2 .match-achievement-showcase .achievement-badges {
     justify-content: flex-start;
+  }
+
+
+  .strategy-identity-card.player-2 .match-achievement-showcase .match-danwaku-badge {
+    justify-self: start;
   }
 }

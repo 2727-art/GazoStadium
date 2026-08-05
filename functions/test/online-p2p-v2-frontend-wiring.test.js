@@ -142,7 +142,7 @@ test("stored UUID sessions remain valid when normalizing an opponent and enterin
   assert.doesNotMatch(source, /\/\^\[0-9a-f\]\{32\}\$\//);
 });
 
-test("normal 1on1 copies and freezes the room achievement showcase snapshot", () => {
+test("normal 1on1 freezes achievements and the public Danwaku day without private NOTE data", () => {
   const helperSource = sourceBetween(
     "function normalizeCreatorCardAchievementIds",
     "function creatorCardDailyOrder",
@@ -175,8 +175,17 @@ test("normal 1on1 copies and freezes the room achievement showcase snapshot", ()
     version: 1,
     capturedAt: 1234.9,
     players: {
-      host: { ids: "first,second,first,third,fourth" },
-      guest: { ids: "fourth" },
+      host: {
+        ids: "first,second,first,third,fourth",
+        danwakuDays: 7,
+        noteTitle: "PRIVATE TITLE",
+      },
+      guest: {
+        ids: "",
+        danwakuDays: 365,
+        noteBody: "PRIVATE BODY",
+        uid: "PRIVATE UID",
+      },
       outsider: { ids: "second" },
     },
   };
@@ -185,8 +194,8 @@ test("normal 1on1 copies and freezes the room achievement showcase snapshot", ()
     version: 1,
     capturedAt: 1234,
     players: {
-      host: { ids: "first,second,third" },
-      guest: { ids: "fourth" },
+      host: { ids: "first,second,third", danwakuDays: 7 },
+      guest: { ids: "", danwakuDays: 365 },
     },
   });
   assert.equal(Object.isFrozen(snapshot), true);
@@ -195,8 +204,12 @@ test("normal 1on1 copies and freezes the room achievement showcase snapshot", ()
 
   roomValue.players.host.ids = "fourth";
   roomValue.players.guest.ids = "";
+  roomValue.players.host.danwakuDays = 1;
+  roomValue.players.guest.danwakuDays = 1_000_000;
   assert.equal(snapshot.players.host.ids, "first,second,third");
-  assert.equal(snapshot.players.guest.ids, "fourth");
+  assert.equal(snapshot.players.guest.ids, "");
+  assert.equal(snapshot.players.host.danwakuDays, 7);
+  assert.equal(snapshot.players.guest.danwakuDays, 365);
 
   const targetState = { achievementShowcases: snapshot };
   const rendered = sandbox.renderOnlineMatchAchievementShowcase("host", {
@@ -205,18 +218,47 @@ test("normal 1on1 copies and freezes the room achievement showcase snapshot", ()
   });
   assert.match(rendered, /match-achievement-showcase is-hud is-opponent/);
   assert.match(rendered, /<badges>first\|second\|third<\/badges>/);
+  assert.match(rendered, /<span class="match-danwaku-badge"[^>]*>🪷 断惑 7日目<\/span>/);
+  assert.doesNotMatch(rendered, /PRIVATE TITLE|PRIVATE BODY|PRIVATE UID/);
   assert.deepEqual(renderCalls, [{
     ids: ["first", "second", "third"],
     options: { compact: true },
   }]);
+
+  const badgeOnly = sandbox.renderOnlineMatchAchievementShowcase("guest", { targetState });
+  assert.match(badgeOnly, /🪷 断惑 365日目/);
+  assert.doesNotMatch(badgeOnly, /PRIVATE TITLE|PRIVATE BODY|PRIVATE UID/);
+  assert.deepEqual(renderCalls.at(-1), {
+    ids: [],
+    options: { compact: true },
+  });
   assert.equal(
     sandbox.renderOnlineMatchAchievementShowcase("missing", { targetState }),
     "",
   );
-  assert.equal(renderCalls.length, 1, "empty showcases never call the badge renderer");
+  assert.equal(renderCalls.length, 2, "missing showcases never call the badge renderer");
+
+  const boundarySnapshot = sandbox.normalizeRoomAchievementShowcases({
+    version: 1,
+    capturedAt: 2,
+    players: {
+      host: { ids: "", danwakuDays: 1 },
+      guest: { ids: "", danwakuDays: 1_000_000 },
+    },
+  }, ["host", "guest"]);
+  assert.equal(boundarySnapshot.players.host.danwakuDays, 1);
+  assert.equal(boundarySnapshot.players.guest.danwakuDays, 1_000_000);
+  for (const invalidDays of [0, -1, 1_000_001, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const invalidSnapshot = sandbox.normalizeRoomAchievementShowcases({
+      version: 1,
+      capturedAt: 2,
+      players: { host: { ids: "", danwakuDays: invalidDays } },
+    }, ["host"]);
+    assert.equal("host" in invalidSnapshot.players, false, String(invalidDays));
+  }
 });
 
-test("normal 1on1 renders only the entry-time achievement snapshot in match phases", () => {
+test("normal 1on1 renders only the entry-time achievement and Danwaku snapshot in match phases", () => {
   const stateFactory = sourceBetween(
     "function createOnlineState",
     "function normalizeImagePreference",
@@ -231,8 +273,10 @@ test("normal 1on1 renders only the entry-time achievement snapshot in match phas
   const roomEntry = sourceBetween("async function enterRoom", "function isCurrentRoomSetupContext");
 
   assert.match(stateFactory, /achievementShowcases: emptyOnlineAchievementShowcases\(\)/);
-  assert.match(helpers, /if \(!ids\.length\) return "";/);
+  assert.match(helpers, /function onlineMatchDanwakuDays\(uid, targetState = state\)/);
+  assert.match(helpers, /if \(!ids\.length && !danwakuDays\) return "";/);
   assert.match(helpers, /window\.HariaiAchievements\?\.renderBadges\?\.\(ids, \{ compact \}\)/);
+  assert.match(helpers, /🪷 断惑 \$\{danwakuDays\}日目/);
   assert.match(roomEntry, /state\.achievementShowcases = normalizeRoomAchievementShowcases\([\s\S]*?room\.achievementShowcases,[\s\S]*?\[room\.hostUid, room\.guestUid\]/);
   assert.equal(
     (source.match(/normalizeRoomAchievementShowcases\(\s*room\.achievementShowcases/g) || []).length,
@@ -241,8 +285,8 @@ test("normal 1on1 renders only the entry-time achievement snapshot in match phas
   );
   assert.match(connecting, /className: "is-match-found is-opponent"/);
   assert.match(connecting, /label: `\$\{opponent\?\.name \|\| "対戦相手"\}の展示実績`/);
-  assert.match(hud, /localPlayer \? "" : renderOnlineMatchAchievementShowcase\(player\.uid/);
-  assert.match(hud, /className: "is-hud is-opponent"/);
+  assert.match(hud, /renderOnlineMatchAchievementShowcase\(player\.uid/);
+  assert.match(hud, /className: `is-hud \$\{localPlayer \? "is-local" : "is-opponent"\}`/);
   assert.match(result, /renderOnlineMatchAchievementShowcase\(player\.uid/);
   assert.match(result, /className: `is-result \$\{index === state\.playerIndex \? "is-local" : "is-opponent"\}`/);
 });

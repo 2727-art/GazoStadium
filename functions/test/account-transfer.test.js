@@ -139,6 +139,23 @@ test("a saved flea seller card makes an account-transfer target non-pristine", (
   );
 });
 
+test("a 断惑NOTE profile makes an account-transfer target non-pristine before and during redemption", () => {
+  const server = read("functions/index.js");
+  const pristineStart = server.indexOf("async function transferTargetIsPristine");
+  const pristineEnd = server.indexOf("async function registerTransferFailure", pristineStart);
+  const pristine = server.slice(pristineStart, pristineEnd);
+  assert.match(pristine, /\bdanwakuProfileSnapshot\b/);
+  assert.match(pristine, /danwakuProfileRef\(uid\)\.get\(\)/);
+  assert.match(pristine, /danwakuProfileSnapshot\.exists/);
+
+  const redeemStart = server.indexOf("async function redeemAccountTransferCode");
+  const redeemEnd = server.indexOf("async function cancelAccountTransferCode", redeemStart);
+  const redeem = server.slice(redeemStart, redeemEnd);
+  assert.match(redeem, /\btargetDanwakuProfileSnapshot\b/);
+  assert.match(redeem, /transaction\.get\(danwakuProfileRef\(targetUid\)\)/);
+  assert.match(redeem, /targetDanwakuProfileSnapshot\.exists/);
+});
+
 test("only nonzero flea achievement activity makes an account-transfer target non-pristine", () => {
   const server = read("functions/index.js");
   const activityStart = server.indexOf("function fleaAchievementStatsHaveActivity");

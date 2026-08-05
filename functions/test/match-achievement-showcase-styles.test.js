@@ -8,7 +8,7 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 
-test("match achievement badges have dedicated desktop and mobile presentation", () => {
+test("match achievement and Danwaku badges have dedicated desktop and mobile presentation", () => {
   const styles = read("styles.css");
   const strategyStyles = read("strategy.css");
 
@@ -22,9 +22,15 @@ test("match achievement badges have dedicated desktop and mobile presentation", 
   assert.match(styles, /\.match-achievement-showcase\.is-hud \.achievement-badge small\s*\{[\s\S]*?clip-path:\s*inset\(50%\)/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.match-achievement-showcase\.is-hud \.achievement-badge > span\s*\{[\s\S]*?clip-path:\s*inset\(50%\)/);
   assert.match(styles, /\.match-achievement-showcase\.is-result \.achievement-badges/);
+  assert.match(styles, /\.match-danwaku-badge\s*\{[\s\S]*?white-space:\s*nowrap/);
+  assert.match(styles, /\.match-achievement-showcase\.is-hud \.match-danwaku-badge\s*\{[\s\S]*?font-size:\s*0\.58rem/);
+  assert.match(styles, /\.hud-player:last-child \.match-achievement-showcase\.is-hud \.match-danwaku-badge\s*\{[\s\S]*?justify-self:\s*end/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.match-achievement-showcase\.is-result \.match-danwaku-badge\s*\{[\s\S]*?justify-self:\s*start/);
 
   assert.match(strategyStyles, /\.strategy-identity-card \.match-achievement-showcase\s*\{/);
   assert.match(strategyStyles, /\.strategy-identity-card\.player-2 \.match-achievement-showcase \.achievement-badges/);
+  assert.match(strategyStyles, /\.strategy-identity-card\.player-2 \.match-achievement-showcase \.match-danwaku-badge\s*\{[\s\S]*?justify-self:\s*end/);
+  assert.match(strategyStyles, /@media \(max-width: 640px\)[\s\S]*?\.strategy-identity-card\.player-2 \.match-achievement-showcase \.match-danwaku-badge\s*\{[\s\S]*?justify-self:\s*start/);
   assert.match(strategyStyles, /\.strategy-final-grid article \.match-achievement-showcase/);
 });
 

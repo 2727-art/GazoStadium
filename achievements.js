@@ -251,6 +251,18 @@
     legacy: true,
   });
   addSeries({
+    scope: "danwaku",
+    category: "danwaku_note",
+    family: "danwaku_streak",
+    familyLabel: "断惑継続",
+    icon: "蓮",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 270, 365],
+    names: ["発心の一歩", "一念の灯", "精進の芽", "日々の歩み", "不放逸のしるし", "心調う", "蓮のつぼみ", "蓮華ひらく", "光の道標", "無尽の歩み"],
+    description: (target) => `断惑継続の最高記録が${target}日になった`,
+    hint: "断惑継続を自分のペースで記録すると解除",
+    autoPublic: false,
+  });
+  addSeries({
     scope: "ai_training",
     category: "ai_training_record",
     family: "ai_training_sessions",
@@ -452,6 +464,7 @@
     { id: "battle_honor", label: "つよ推しの証（終了）", copy: "終了したふたりチャレンジで刻んだ武勲" },
     { id: "training_record", label: "鍛え合い60（終了）", copy: "終了したモードへ参加した歩み" },
     { id: "training_workout", label: "鍛錬の積み重ね（終了）", copy: "終了前に完了した運動の本数と時間" },
+    { id: "danwaku_note", label: "断惑NOTE", copy: "断ちたい習慣と向き合い、自分で継続を記した日々の歩み" },
     { id: "ai_training_record", label: "文字コラトレーニング", copy: "BPMや運動強度ではなく、自分のペースで5ラウンドを終えた歩み" },
     { id: "ai_training_script_sales", label: "応援台本の販売", copy: "価格や売上額ではなく、応援が利用された回数と広がりの記録" },
     { id: "flea_listing", label: "AnjuPayフリマ・一日棚", copy: "連続日数ではなく、自分のペースで一品を言葉にした日々の記録" },

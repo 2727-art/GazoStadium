@@ -61,6 +61,7 @@ const {
   normalizeAchievementProfile,
   normalizeBattleStats,
   normalizeCrownMonthlyStats,
+  normalizeDanwakuStats,
   normalizeFleaStats,
   normalizeMarketStats,
   publicAchievementProfile,
@@ -136,6 +137,9 @@ const {
 const {
   createAiTextTrainingService,
 } = require("./ai-text-training-service");
+const {
+  createDanwakuNoteService,
+} = require("./danwaku-note-service");
 const {
   createFreeTableService,
 } = require("./free-table");
@@ -408,6 +412,8 @@ const SOLO_SESSION_CLAIM_GUARD_TTL_MS = 60_000;
 const SOLO_PROFILE_PROJECTION_VERSION = 2;
 const SOLO_PROFILE_PROJECTION_LEASE_MS = 60_000;
 const SOLO_PROFILE_PROJECTION_BATCH_SIZE = 5;
+const STRATEGY_MATCH_ACHIEVEMENT_FREEZE_TTL_MS = 24 * 60 * 60 * 1000;
+const STRATEGY_MATCH_ACHIEVEMENT_FREEZE_CLEANUP_LIMIT = 200;
 const CALLABLE_BASE_OPTIONS = Object.freeze({
   timeoutSeconds: 30,
   memory: "256MiB",
@@ -1090,14 +1096,46 @@ function achievementProfileRef(uid) {
   return firestore.collection("achievementProfiles").doc(uid);
 }
 
-async function readMatchAchievementShowcases(participantUids, capturedAt = Date.now()) {
-  const profileSnapshots = await Promise.all(
-    participantUids.map((participantUid) => achievementProfileRef(participantUid).get()),
+function danwakuProfileRef(uid) {
+  return firestore.collection("danwakuProfiles").doc(uid);
+}
+
+function danwakuMatchBadgeRef(uid) {
+  return firestore.collection("danwakuMatchBadges").doc(uid);
+}
+
+function strategyMatchAchievementFreezeRef(roomId) {
+  return firestore.collection("strategyMatchAchievementFreezes").doc(roomId);
+}
+
+async function resolveDanwakuDisplayName(uid) {
+  const [serverProfile, soloProfile, strategyProfile] = await Promise.all([
+    serverRankingProfileRef(uid).get(),
+    realtime.ref(`online/profiles/${uid}/name`).get(),
+    realtime.ref(`online/strategyProfiles/${uid}/name`).get(),
+  ]);
+  return cleanName(
+    serverProfile.get("name")
+      || soloProfile.val()
+      || strategyProfile.val()
+      || "PLAYER",
   );
+}
+
+async function readMatchAchievementShowcases(participantUids, capturedAt = Date.now()) {
+  const [profileSnapshots, danwakuBadgeSnapshots] = await Promise.all([
+    Promise.all(
+      participantUids.map((participantUid) => achievementProfileRef(participantUid).get()),
+    ),
+    Promise.all(
+      participantUids.map((participantUid) => danwakuMatchBadgeRef(participantUid).get()),
+    ),
+  ]);
   return buildMatchAchievementShowcases(
     participantUids,
     profileSnapshots.map((snapshot) => snapshot.data()),
     capturedAt,
+    danwakuBadgeSnapshots.map((snapshot) => snapshot.data()),
   );
 }
 
@@ -1939,6 +1977,7 @@ async function ensureAchievementState(uid) {
   const statsRef = marketStatsRef(uid);
   const fleaStatsRef = anjuPayFleaAchievementStatsStore.statsRef(uid);
   const trainingRef = trainingProfileRef(uid);
+  const danwakuRef = danwakuProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   let result = null;
@@ -1950,6 +1989,7 @@ async function ensureAchievementState(uid) {
       marketSnapshot,
       fleaStatsSnapshot,
       trainingSnapshot,
+      danwakuSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
     ] = await Promise.all([
@@ -1959,6 +1999,7 @@ async function ensureAchievementState(uid) {
       transaction.get(statsRef),
       transaction.get(fleaStatsRef),
       transaction.get(trainingRef),
+      transaction.get(danwakuRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
     ]);
@@ -1968,6 +2009,7 @@ async function ensureAchievementState(uid) {
     const marketStats = normalizeMarketStats(marketSnapshot.data());
     const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
     const trainingProfile = normalizeRetiredTrainingHistory(trainingSnapshot.data());
+    const danwakuStats = normalizeDanwakuStats(danwakuSnapshot.data());
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
       rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
@@ -1976,6 +2018,7 @@ async function ensureAchievementState(uid) {
     const eligibleIds = eligibleAchievementIds({
       battleStats: progress.achievementStats,
       trainingStats: trainingProfile,
+      danwakuStats,
       marketStats,
       fleaStats,
       aiTextTrainingStats,
@@ -1996,6 +2039,7 @@ async function ensureAchievementState(uid) {
       marketStats,
       fleaStats,
       trainingProfile,
+      danwakuStats,
       aiTextTrainingStats,
       crownMonthlyStats,
       profile: unlockResult.profile,
@@ -9578,21 +9622,25 @@ function soloSessionV2ResourcesFromStored(roomId, room, permit, {
 }
 
 function requireMatchAchievementShowcaseData(value) {
-  const allowedKeys = new Set(["mode", "roomId"]);
+  const allowedKeys = new Set(["mode", "roomId", "phase"]);
+  const keys = isPlainCallableObject(value) ? Reflect.ownKeys(value) : [];
   if (!isPlainCallableObject(value)
-      || Reflect.ownKeys(value).length !== allowedKeys.size
-      || Reflect.ownKeys(value).some((key) => (
+      || ![2, 3].includes(keys.length)
+      || keys.some((key) => (
         typeof key !== "string" || !allowedKeys.has(key)
       ))) {
     throw new HttpsError("invalid-argument", "対戦実績の取得情報が正しくありません。");
   }
   const mode = cleanText(value.mode, 16);
   const roomId = cleanText(value.roomId, 80);
+  const phase = cleanText(value.phase || "materialize", 16);
   if (!["solo", "strategy"].includes(mode)
-      || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
+      || !/^[-0-9A-Z_a-z]{20}$/.test(roomId)
+      || !["freeze", "materialize"].includes(phase)
+      || (mode !== "strategy" && phase !== "materialize")) {
     throw new HttpsError("invalid-argument", "対戦実績の取得情報が正しくありません。");
   }
-  return { mode, roomId };
+  return { mode, roomId, phase };
 }
 
 function requireMatchAchievementCaller(room, uid) {
@@ -9697,14 +9745,21 @@ async function requireSoloMatchAchievementContext(uid, roomId) {
   };
 }
 
-async function requireStrategyMatchAchievementContext(uid, roomId) {
+async function requireStrategyMatchAchievementContext(
+  uid,
+  roomId,
+  { requireRevealReady = true } = {},
+) {
   const roomRef = realtime.ref(`online/strategyRooms/${roomId}`);
   const roomSnapshot = await roomRef.get();
   const room = roomSnapshot.val();
   const participantUids = requireMatchAchievementCaller(room, uid);
   if (room.status !== "active"
       || room.destroyed
-      || !strategyAchievementShowcaseRevealReady(room, participantUids)) {
+      || (requireRevealReady
+        && !strategyAchievementShowcaseRevealReady(room, participantUids))
+      || (!requireRevealReady
+        && strategyAchievementShowcaseRevealReady(room, participantUids))) {
     throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
   }
   const [hostActiveSnapshot, guestActiveSnapshot] = await Promise.all([
@@ -9722,6 +9777,7 @@ async function requireStrategyMatchAchievementContext(uid, roomId) {
     room,
     participantUids,
     allowedStatuses: ["active"],
+    requireRevealReady,
   };
 }
 
@@ -9734,12 +9790,17 @@ function matchAchievementRoomStillEligible(room, context) {
     && (context.mode !== "solo"
       || (room.protocolVersion === SOLO_SESSION_PROTOCOL_VERSION) === context.v2)
     && (context.mode !== "strategy"
+      || context.requireRevealReady === false
       || strategyAchievementShowcaseRevealReady(room, participantUids)));
 }
 
 async function revalidateMatchAchievementContext(context) {
   const refreshed = context.mode === "strategy"
-    ? await requireStrategyMatchAchievementContext(context.callerUid, context.roomId)
+    ? await requireStrategyMatchAchievementContext(
+      context.callerUid,
+      context.roomId,
+      { requireRevealReady: context.requireRevealReady !== false },
+    )
     : await requireSoloMatchAchievementContext(context.callerUid, context.roomId);
   if (!refreshed.participantUids.every(
     (uid, index) => uid === context.participantUids[index],
@@ -9749,17 +9810,135 @@ async function revalidateMatchAchievementContext(context) {
   return refreshed;
 }
 
+function normalizeStrategyMatchAchievementFreeze(value, context, now = Date.now()) {
+  if (!isPlainCallableObject(value)
+      || value.schemaVersion !== 1
+      || !Array.isArray(value.participantUids)
+      || value.participantUids.length !== context.participantUids.length
+      || !value.participantUids.every(
+        (uid, index) => uid === context.participantUids[index],
+      )
+      || Number(value.roomCreatedAt) !== Number(context.room.createdAt)
+      || !Number.isSafeInteger(value.expiresAt)
+      || value.expiresAt <= now) return null;
+  return normalizeMatchAchievementShowcases(
+    value.achievementShowcases,
+    context.participantUids,
+  );
+}
+
+function strategyMatchAchievementFreezeExpired(value, now = Date.now()) {
+  return Number.isSafeInteger(value?.expiresAt) && value.expiresAt <= now;
+}
+
+async function deleteStrategyMatchAchievementFreezeBestEffort(roomId) {
+  try {
+    await strategyMatchAchievementFreezeRef(roomId).delete();
+  } catch (error) {
+    console.warn("strategy match achievement freeze cleanup failed", {
+      category: error instanceof TypeError ? "validation" : "internal",
+    });
+  }
+}
+
+async function cleanupExpiredStrategyMatchAchievementFreezes(now = Date.now()) {
+  const snapshot = await firestore.collection("strategyMatchAchievementFreezes")
+    .where("expiresAt", "<=", now)
+    .limit(STRATEGY_MATCH_ACHIEVEMENT_FREEZE_CLEANUP_LIMIT)
+    .get();
+  if (snapshot.empty) return { deleted: 0, hasMore: false };
+  const batch = firestore.batch();
+  snapshot.docs.forEach((documentSnapshot) => batch.delete(documentSnapshot.ref));
+  await batch.commit();
+  return {
+    deleted: snapshot.size,
+    hasMore: snapshot.size === STRATEGY_MATCH_ACHIEVEMENT_FREEZE_CLEANUP_LIMIT,
+  };
+}
+
+async function freezeStrategyMatchAchievementShowcases(context) {
+  const freezeRef = strategyMatchAchievementFreezeRef(context.roomId);
+  const existingSnapshot = await freezeRef.get();
+  if (existingSnapshot.exists) {
+    if (normalizeStrategyMatchAchievementFreeze(existingSnapshot.data(), context)) {
+      return { outcome: "already-frozen" };
+    }
+    if (strategyMatchAchievementFreezeExpired(existingSnapshot.data())) {
+      await deleteStrategyMatchAchievementFreezeBestEffort(context.roomId);
+      throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+    }
+    throw new HttpsError("internal", "対戦実績を取得できませんでした。");
+  }
+
+  const capturedAt = Date.now();
+  const achievementShowcases = await readMatchAchievementShowcases(
+    context.participantUids,
+    capturedAt,
+  );
+  const refreshedContext = await revalidateMatchAchievementContext(context);
+  const expiresAt = capturedAt + STRATEGY_MATCH_ACHIEVEMENT_FREEZE_TTL_MS;
+  let transactionState = "pending";
+  await firestore.runTransaction(async (transaction) => {
+    const currentSnapshot = await transaction.get(freezeRef);
+    if (currentSnapshot.exists) {
+      transactionState = normalizeStrategyMatchAchievementFreeze(
+        currentSnapshot.data(),
+        refreshedContext,
+      ) ? "reused" : "conflict";
+      return;
+    }
+    transactionState = "created";
+    transaction.create(freezeRef, {
+      schemaVersion: 1,
+      roomCreatedAt: Number(refreshedContext.room.createdAt),
+      participantUids: [...refreshedContext.participantUids],
+      achievementShowcases,
+      capturedAt,
+      expiresAt,
+      deleteAt: Timestamp.fromMillis(expiresAt),
+    });
+  });
+  if (transactionState === "conflict") {
+    throw new HttpsError("internal", "対戦実績を取得できませんでした。");
+  }
+  return { outcome: transactionState === "created" ? "frozen" : "already-frozen" };
+}
+
+async function readFrozenStrategyMatchAchievementShowcases(context) {
+  const freezeSnapshot = await strategyMatchAchievementFreezeRef(context.roomId).get();
+  if (!freezeSnapshot.exists) {
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  const stored = freezeSnapshot.data();
+  if (strategyMatchAchievementFreezeExpired(stored)) {
+    await deleteStrategyMatchAchievementFreezeBestEffort(context.roomId);
+    throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
+  }
+  const achievementShowcases = normalizeStrategyMatchAchievementFreeze(stored, context);
+  if (!achievementShowcases) {
+    throw new HttpsError("internal", "対戦実績を取得できませんでした。");
+  }
+  return achievementShowcases;
+}
+
 async function ensureMatchAchievementShowcases(context) {
   const existing = normalizeMatchAchievementShowcases(
     context.room.achievementShowcases,
     context.participantUids,
   );
-  if (existing) return existing;
+  if (existing) {
+    if (context.mode === "strategy") {
+      await deleteStrategyMatchAchievementFreezeBestEffort(context.roomId);
+    }
+    return existing;
+  }
   if (context.room.achievementShowcases != null) {
     throw new HttpsError("internal", "対戦実績を取得できませんでした。");
   }
 
-  const proposed = await readMatchAchievementShowcases(context.participantUids);
+  const proposed = context.mode === "strategy"
+    ? await readFrozenStrategyMatchAchievementShowcases(context)
+    : await readMatchAchievementShowcases(context.participantUids);
   const refreshedContext = await revalidateMatchAchievementContext(context);
   let transactionState = "pending";
   const transaction = await refreshedContext.roomRef.transaction((currentRoom) => {
@@ -9790,7 +9969,12 @@ async function ensureMatchAchievementShowcases(context) {
     transaction.snapshot.val()?.achievementShowcases,
     refreshedContext.participantUids,
   );
-  if (finalValue) return finalValue;
+  if (finalValue) {
+    if (context.mode === "strategy") {
+      await deleteStrategyMatchAchievementFreezeBestEffort(context.roomId);
+    }
+    return finalValue;
+  }
   if (transactionState === "room-changed") {
     throw new HttpsError("failed-precondition", "この対戦の実績は取得できません。");
   }
@@ -10726,6 +10910,14 @@ exports.matchAchievementShowcase = onCall(
     const uid = requireUid(request);
     const data = requireMatchAchievementShowcaseData(request.data);
     try {
+      if (data.mode === "strategy" && data.phase === "freeze") {
+        const context = await requireStrategyMatchAchievementContext(
+          uid,
+          data.roomId,
+          { requireRevealReady: false },
+        );
+        return await freezeStrategyMatchAchievementShowcases(context);
+      }
       const context = data.mode === "strategy"
         ? await requireStrategyMatchAchievementContext(uid, data.roomId)
         : await requireSoloMatchAchievementContext(uid, data.roomId);
@@ -11004,6 +11196,7 @@ async function transferTargetIsPristine(uid, request) {
     walletSnapshot,
     progressSnapshot,
     achievementSnapshot,
+    danwakuProfileSnapshot,
     achievementCodeReceiptSnapshot,
     marketSnapshot,
     fleaAchievementStatsSnapshot,
@@ -11039,6 +11232,7 @@ async function transferTargetIsPristine(uid, request) {
     walletRef(uid).get(),
     economyProgressRef(uid).get(),
     achievementProfileRef(uid).get(),
+    danwakuProfileRef(uid).get(),
     dollmasterCodeReceiptRef(uid).get(),
     marketStatsRef(uid).get(),
     anjuPayFleaAchievementStatsStore.statsRef(uid).get(),
@@ -11080,7 +11274,8 @@ async function transferTargetIsPristine(uid, request) {
     return false;
   }
   if (progressSnapshot.exists && economyProgressHasActivity(progressSnapshot.data())) return false;
-  if (achievementProfileHasActivity(achievementSnapshot.data())
+  if (danwakuProfileSnapshot.exists
+      || achievementProfileHasActivity(achievementSnapshot.data())
       || achievementCodeReceiptSnapshot.exists) return false;
   if (retiredTrainingHistoryHasActivity(trainingProfileSnapshot.data())
       || !legacyTrainingClaimSnapshot.empty
@@ -11238,6 +11433,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetWalletSnapshot,
       targetProgressSnapshot,
       targetAchievementSnapshot,
+      targetDanwakuProfileSnapshot,
       targetAchievementCodeReceiptSnapshot,
       targetMarketSnapshot,
       targetFleaAchievementStatsSnapshot,
@@ -11261,6 +11457,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       transaction.get(walletRef(targetUid)),
       transaction.get(economyProgressRef(targetUid)),
       transaction.get(achievementProfileRef(targetUid)),
+      transaction.get(danwakuProfileRef(targetUid)),
       transaction.get(dollmasterCodeReceiptRef(targetUid)),
       transaction.get(marketStatsRef(targetUid)),
       transaction.get(anjuPayFleaAchievementStatsStore.statsRef(targetUid)),
@@ -11325,6 +11522,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       return;
     }
     if ((targetProgressSnapshot.exists && economyProgressHasActivity(targetProgressSnapshot.data()))
+        || targetDanwakuProfileSnapshot.exists
         || achievementProfileHasActivity(targetAchievementSnapshot.data())
         || targetAchievementCodeReceiptSnapshot.exists
         || targetMarketSnapshot.exists
@@ -15238,6 +15436,32 @@ exports.anjuPayFleaAction = onCall(callableOptions("anjuPayFleaAction"), async (
   }
 });
 
+const danwakuNoteService = createDanwakuNoteService({
+  firestore,
+  HttpsError,
+  achievementProfileRef,
+  eligibleAchievementIds,
+  unlockAchievements,
+  normalizeAchievementProfile,
+  syncAchievementPublicSurfaces,
+  resolveDisplayName: resolveDanwakuDisplayName,
+});
+
+exports.danwakuNoteAction = onCall(callableOptions("danwakuNoteAction"), async (request) => {
+  const uid = requireUid(request);
+  try {
+    return await danwakuNoteService.dispatch(uid, request.data);
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("danwakuNoteAction failed", {
+      uid,
+      action: request.data?.action,
+      error,
+    });
+    throw new HttpsError("internal", "断惑NOTEの処理を完了できませんでした。");
+  }
+});
+
 exports.expireAnjuPayFleaListings = onSchedule({
   schedule: "every day 00:00",
   timeZone: "Asia/Tokyo",
@@ -15912,6 +16136,25 @@ exports.cleanupOnlinePublicPresence = onSchedule({
     return result;
   } catch (error) {
     console.error("cleanupOnlinePublicPresence failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
+});
+
+exports.cleanupStrategyMatchAchievementFreezes = onSchedule({
+  schedule: "every 6 hours",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 60,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const result = await cleanupExpiredStrategyMatchAchievementFreezes(Date.now());
+    console.info("cleanupStrategyMatchAchievementFreezes completed", result);
+    return result;
+  } catch (error) {
+    console.error("cleanupStrategyMatchAchievementFreezes failed", {
       code: typeof error?.code === "string" ? error.code : "unknown",
     });
     throw error;

@@ -9,6 +9,7 @@ const {
 
 const MATCH_ACHIEVEMENT_SHOWCASE_VERSION = 1;
 const MATCH_ACHIEVEMENT_SHOWCASE_READ_TIMEOUT_MS = 250;
+const MAX_DANWAKU_DAYS = 1_000_000;
 const SAFE_UID_PATTERN = /^[^\u0000-\u001f\u007f.#$\[\]\/]{1,128}$/;
 
 function isRecord(value) {
@@ -72,11 +73,24 @@ async function settleMatchAchievementShowcaseRead(
   return outcome;
 }
 
-function buildMatchAchievementShowcases(participantUidValues, profileValues, capturedAt) {
+function normalizeDanwakuBadgeDays(value) {
+  const days = Math.floor(Number(value?.days));
+  return Number.isSafeInteger(days) && days >= 1 && days <= MAX_DANWAKU_DAYS ? days : 0;
+}
+
+function buildMatchAchievementShowcases(
+  participantUidValues,
+  profileValues,
+  capturedAt,
+  danwakuBadgeValues = [],
+) {
   const participantUids = normalizeParticipantUids(participantUidValues);
   if (!participantUids
       || !Array.isArray(profileValues)
       || profileValues.length !== participantUids.length
+      || !Array.isArray(danwakuBadgeValues)
+      || (danwakuBadgeValues.length !== 0
+        && danwakuBadgeValues.length !== participantUids.length)
       || !Number.isSafeInteger(capturedAt)
       || capturedAt <= 0) {
     throw new TypeError("Invalid match achievement showcase source");
@@ -84,7 +98,11 @@ function buildMatchAchievementShowcases(participantUidValues, profileValues, cap
   const players = Object.fromEntries(participantUids.map((uid, index) => {
     const profile = normalizeAchievementProfile(profileValues[index]);
     const ids = effectiveShowcase(profile).slice(0, MAX_SHOWCASE);
-    return [uid, { ids: ids.join(",") }];
+    const danwakuDays = normalizeDanwakuBadgeDays(danwakuBadgeValues[index]);
+    return [uid, {
+      ids: ids.join(","),
+      ...(danwakuDays ? { danwakuDays } : {}),
+    }];
   }));
   return {
     version: MATCH_ACHIEVEMENT_SHOWCASE_VERSION,
@@ -105,11 +123,23 @@ function normalizeMatchAchievementShowcases(value, participantUidValues) {
   const playerEntries = [];
   for (const uid of participantUids) {
     const player = value.players[uid];
-    if (!hasOnlyKeys(player, ["ids"]) || typeof player.ids !== "string") return null;
+    const playerKeys = Object.keys(player || {});
+    const hasDanwakuDays = playerKeys.includes("danwakuDays");
+    if ((!hasOnlyKeys(player, ["ids"])
+        && !hasOnlyKeys(player, ["ids", "danwakuDays"]))
+        || typeof player.ids !== "string") return null;
     const ids = player.ids ? player.ids.split(",") : [];
     const canonicalIds = sanitizeAchievementIds(ids, { maximum: MAX_SHOWCASE });
     if (canonicalIds.join(",") !== player.ids) return null;
-    playerEntries.push([uid, { ids: player.ids }]);
+    const danwakuDays = normalizeDanwakuBadgeDays({ days: player.danwakuDays });
+    if (hasDanwakuDays
+        && (!danwakuDays
+          || !Number.isSafeInteger(player.danwakuDays)
+          || danwakuDays !== player.danwakuDays)) return null;
+    playerEntries.push([uid, {
+      ids: player.ids,
+      ...(danwakuDays ? { danwakuDays } : {}),
+    }]);
   }
   return {
     version: MATCH_ACHIEVEMENT_SHOWCASE_VERSION,

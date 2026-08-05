@@ -2257,8 +2257,12 @@ function normalizeRoomAchievementShowcases(value, participantUids = []) {
   const players = {};
   [...new Set(participantUids.map((uid) => String(uid || "")).filter(Boolean))].forEach((uid) => {
     const ids = normalizeCreatorCardAchievementIds(value.players?.[uid]?.ids);
-    if (!ids.length) return;
-    players[uid] = Object.freeze({ ids: ids.join(",") });
+    const danwakuDays = Math.floor(Number(value.players?.[uid]?.danwakuDays));
+    if (!ids.length && !(danwakuDays >= 1 && danwakuDays <= 1_000_000)) return;
+    players[uid] = Object.freeze({
+      ids: ids.join(","),
+      ...(danwakuDays >= 1 && danwakuDays <= 1_000_000 ? { danwakuDays } : {}),
+    });
   });
   return Object.freeze({
     version: 1,
@@ -2274,6 +2278,14 @@ function onlineMatchAchievementIds(uid, targetState = state) {
   );
 }
 
+function onlineMatchDanwakuDays(uid, targetState = state) {
+  if (targetState?.achievementShowcases?.version !== 1) return 0;
+  const days = Math.floor(Number(
+    targetState.achievementShowcases.players?.[String(uid || "")]?.danwakuDays,
+  ));
+  return days >= 1 && days <= 1_000_000 ? days : 0;
+}
+
 function renderOnlineMatchAchievementShowcase(uid, {
   className = "",
   label = "",
@@ -2281,11 +2293,15 @@ function renderOnlineMatchAchievementShowcase(uid, {
   targetState = state,
 } = {}) {
   const ids = onlineMatchAchievementIds(uid, targetState);
-  if (!ids.length) return "";
+  const danwakuDays = onlineMatchDanwakuDays(uid, targetState);
+  if (!ids.length && !danwakuDays) return "";
   const badges = window.HariaiAchievements?.renderBadges?.(ids, { compact }) || "";
-  if (!badges) return "";
+  const danwakuBadge = danwakuDays
+    ? `<span class="match-danwaku-badge" title="断惑NOTEで「断惑継続」を記録した日数です">🪷 断惑 ${danwakuDays}日目</span>`
+    : "";
+  if (!badges && !danwakuBadge) return "";
   const classes = ["match-achievement-showcase", className].filter(Boolean).join(" ");
-  return `<div class="${escapeHtml(classes)}">${label ? `<span class="match-achievement-showcase-label">${escapeHtml(label)}</span>` : ""}${badges}</div>`;
+  return `<div class="${escapeHtml(classes)}">${label && badges ? `<span class="match-achievement-showcase-label">${escapeHtml(label)}</span>` : ""}${badges}${danwakuBadge}</div>`;
 }
 
 function creatorCardDailyOrder(entryId) {
@@ -5291,8 +5307,8 @@ function renderOnlineHud() {
     const localPlayer = index === state.playerIndex;
     const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
     const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
-    const opponentAchievements = localPlayer ? "" : renderOnlineMatchAchievementShowcase(player.uid, {
-      className: "is-hud is-opponent",
+    const opponentAchievements = renderOnlineMatchAchievementShowcase(player.uid, {
+      className: `is-hud ${localPlayer ? "is-local" : "is-opponent"}`,
     });
     return `<div class="hud-player ${index === state.playerIndex ? "local-player" : ""}">
     <div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span>
