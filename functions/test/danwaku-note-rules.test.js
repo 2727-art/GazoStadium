@@ -30,6 +30,21 @@ test("Danwaku private, public-projection, and match-badge documents are explicit
   );
   assert.match(
     firestoreRules,
+    /match \/danwakuDeletionJobs\/\{jobId\} \{\s*allow read, write: if false;/,
+  );
+  assert.match(
+    firestoreRules,
     /match \/strategyMatchAchievementFreezes\/\{roomId\} \{\s*allow read, write: if false;/,
+  );
+});
+
+test("Danwaku deletion cleanup is bounded and scheduled behind the server service", () => {
+  const functionsIndex = fs.readFileSync(
+    path.join(root, "functions", "index.js"),
+    "utf8",
+  );
+  assert.match(
+    functionsIndex,
+    /exports\.cleanupDanwakuDeletionJobs = onSchedule\(\{[\s\S]*?schedule: "every 15 minutes"[\s\S]*?maxInstances: 1,[\s\S]*?danwakuNoteService\.cleanupDeletionJobs\(\)/,
   );
 });

@@ -40,6 +40,10 @@ const REQUIRED_DEPENDENCIES = Object.freeze([
 const SAFE_UID_PATTERN = /^[^\u0000-\u001f\u007f.#$\[\]\/]{1,128}$/;
 const DANWAKU_OPERATION_OUTCOME_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 const DANWAKU_EVENT_PRUNE_BATCH_LIMIT = 100;
+const DANWAKU_DELETION_JOB_SCHEMA_VERSION = 1;
+const DANWAKU_DELETION_CLEANUP_LIMIT = 50;
+const DANWAKU_DELETION_RETRY_BASE_MS = 5 * 60 * 1000;
+const DANWAKU_DELETION_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
 
 function stableOperationPayload(value) {
   if (Array.isArray(value)) return value.map(stableOperationPayload);
@@ -101,6 +105,16 @@ function createDanwakuNoteService(deps) {
 
   function publicEntriesRef() {
     return firestore.collection("danwakuPublicEntries");
+  }
+
+  function deletionJobsRef() {
+    return firestore.collection("danwakuDeletionJobs");
+  }
+
+  function deletionJobRef(uid, noteId) {
+    return deletionJobsRef().doc(
+      deterministicDanwakuId("deletion-job", uid, noteId),
+    );
   }
 
   function publicEntryRef(entryId) {
@@ -201,6 +215,42 @@ function createDanwakuNoteService(deps) {
       outcome,
       createdAt: timestamp,
     });
+  }
+
+  function deletionJobRecord(uid, noteId, timestamp) {
+    return {
+      schemaVersion: DANWAKU_DELETION_JOB_SCHEMA_VERSION,
+      uid,
+      noteId,
+      attempts: 0,
+      nextAttemptAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+  }
+
+  function deletionRetryDelay(attemptsValue) {
+    const attempts = Math.max(0, Math.min(20, Math.floor(Number(attemptsValue) || 0)));
+    return Math.min(
+      DANWAKU_DELETION_RETRY_MAX_MS,
+      DANWAKU_DELETION_RETRY_BASE_MS * (2 ** Math.min(8, attempts)),
+    );
+  }
+
+  function deletionFailureCode(error) {
+    const code = typeof error?.code === "string" ? error.code : "internal";
+    return /^[a-z0-9_-]{1,40}$/i.test(code) ? code : "internal";
+  }
+
+  function validDeletionJob(snapshot) {
+    const value = snapshot.data() || {};
+    const uid = String(value.uid || "");
+    const noteId = String(value.noteId || "");
+    if (Number(value.schemaVersion) !== DANWAKU_DELETION_JOB_SCHEMA_VERSION
+        || !SAFE_UID_PATTERN.test(uid)
+        || !DANWAKU_ID_PATTERN.test(noteId)
+        || snapshot.id !== deletionJobRef(uid, noteId).id) return null;
+    return { uid, noteId, value };
   }
 
   async function serverDisplayName(uid) {
@@ -307,6 +357,103 @@ function createDanwakuNoteService(deps) {
         category: typeof error?.code === "string" ? error.code : "internal",
       });
     }
+  }
+
+  async function attemptDeletionJob(jobReference, uid, noteId, timestamp) {
+    try {
+      if (typeof firestore.recursiveDelete !== "function") {
+        throw new TypeError("Danwaku delete requires Firestore recursiveDelete");
+      }
+      await firestore.recursiveDelete(noteRef(uid, noteId));
+      await jobReference.delete();
+      return true;
+    } catch (error) {
+      try {
+        await firestore.runTransaction(async (transaction) => {
+          const snapshot = await transaction.get(jobReference);
+          if (!snapshot.exists) return;
+          const current = snapshot.data() || {};
+          const attempts = Math.max(0, Math.floor(Number(current.attempts) || 0)) + 1;
+          transaction.set(jobReference, {
+            ...current,
+            attempts,
+            lastAttemptAt: timestamp,
+            lastErrorCode: deletionFailureCode(error),
+            nextAttemptAt: timestamp + deletionRetryDelay(attempts - 1),
+            updatedAt: timestamp,
+          });
+        });
+      } catch (jobError) {
+        logger.warn?.("Danwaku deletion retry persistence failed", {
+          category: deletionFailureCode(jobError),
+        });
+      }
+      logger.warn?.("Danwaku recursive deletion deferred", {
+        category: deletionFailureCode(error),
+      });
+      return false;
+    }
+  }
+
+  async function deferInvalidDeletionJob(snapshot, timestamp) {
+    try {
+      await firestore.runTransaction(async (transaction) => {
+        const currentSnapshot = await transaction.get(snapshot.ref);
+        if (!currentSnapshot.exists) return;
+        transaction.set(snapshot.ref, {
+          ...(currentSnapshot.data() || {}),
+          lastErrorCode: "invalid-job",
+          nextAttemptAt: timestamp + DANWAKU_DELETION_RETRY_MAX_MS,
+          updatedAt: timestamp,
+        });
+      });
+    } catch (error) {
+      logger.warn?.("Danwaku invalid deletion job deferral failed", {
+        category: deletionFailureCode(error),
+      });
+    }
+  }
+
+  async function cleanupDeletionJobs(options = {}) {
+    const timestamp = options.timestamp == null
+      ? serverNow()
+      : Math.floor(Number(options.timestamp));
+    if (!Number.isSafeInteger(timestamp) || timestamp <= 0) {
+      throw new TypeError("Invalid Danwaku cleanup clock");
+    }
+    const requestedLimit = Math.floor(Number(options.limit));
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit >= 1
+      ? Math.min(DANWAKU_DELETION_CLEANUP_LIMIT, requestedLimit)
+      : DANWAKU_DELETION_CLEANUP_LIMIT;
+    const snapshot = await deletionJobsRef()
+      .where("nextAttemptAt", "<=", timestamp)
+      .orderBy("nextAttemptAt", "asc")
+      .limit(limit)
+      .get();
+    const result = {
+      scanned: snapshot.docs.length,
+      deleted: 0,
+      deferred: 0,
+      invalid: 0,
+      limit,
+      completedAt: timestamp,
+    };
+    for (const jobSnapshot of snapshot.docs) {
+      const job = validDeletionJob(jobSnapshot);
+      if (!job) {
+        result.invalid += 1;
+        await deferInvalidDeletionJob(jobSnapshot, timestamp);
+        continue;
+      }
+      if (await attemptDeletionJob(
+        jobSnapshot.ref,
+        job.uid,
+        job.noteId,
+        timestamp,
+      )) result.deleted += 1;
+      else result.deferred += 1;
+    }
+    return result;
   }
 
   function writeProjectionChanges(transaction, uid, previousProfileValue, profileValue, noteValue, timestamp) {
@@ -973,16 +1120,25 @@ function createDanwakuNoteService(deps) {
     const archivedCountFallback = await prepareArchivedCount(uid);
     const targetNoteRef = noteRef(uid, data.noteId);
     const targetOperationRef = operationRef(uid, data.operationId);
+    const targetDeletionJobRef = deletionJobRef(uid, data.noteId);
     let outcome = "deleted";
     await firestore.runTransaction(async (transaction) => {
-      const [profileSnapshot, noteSnapshot, operationSnapshot] = await Promise.all([
+      const [profileSnapshot, noteSnapshot, operationSnapshot, deletionJobSnapshot] = await Promise.all([
         transaction.get(profileRef(uid)),
         transaction.get(targetNoteRef),
         transaction.get(targetOperationRef),
+        transaction.get(targetDeletionJobRef),
       ]);
       const receipt = inspectOperationReceipt(operationSnapshot, data, data.noteId);
       if (receipt.replayed) {
         outcome = receipt.outcome;
+        const replayedNote = normalizeDanwakuNote(noteSnapshot.data(), data.noteId);
+        if (replayedNote?.status === "deleted" && !deletionJobSnapshot.exists) {
+          transaction.create(
+            targetDeletionJobRef,
+            deletionJobRecord(uid, data.noteId, timestamp),
+          );
+        }
         return;
       }
       const note = normalizeDanwakuNote(noteSnapshot.data(), data.noteId);
@@ -1024,6 +1180,10 @@ function createDanwakuNoteService(deps) {
       };
       transaction.set(targetNoteRef, redactedNote);
       transaction.set(profileRef(uid), nextProfile);
+      transaction.set(
+        targetDeletionJobRef,
+        deletionJobRecord(uid, data.noteId, timestamp),
+      );
       createOperationReceipt(
         transaction,
         targetOperationRef,
@@ -1042,10 +1202,12 @@ function createDanwakuNoteService(deps) {
         timestamp,
       );
     });
-    if (typeof firestore.recursiveDelete !== "function") {
-      throw new TypeError("Danwaku delete requires Firestore recursiveDelete");
-    }
-    await firestore.recursiveDelete(targetNoteRef);
+    await attemptDeletionJob(
+      targetDeletionJobRef,
+      uid,
+      data.noteId,
+      timestamp,
+    );
     await reconcileArchivedOverflow(uid);
     return { outcome, noteId: data.noteId, newlyUnlocked: [], state: await getState(uid) };
   }
@@ -1231,6 +1393,7 @@ function createDanwakuNoteService(deps) {
   }
 
   return Object.freeze({
+    cleanupDeletionJobs,
     dispatch,
     getState,
   });

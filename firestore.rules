@@ -108,6 +108,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /danwakuDeletionJobs/{jobId} {
+      allow read, write: if false;
+    }
+
     // 戦略型1on1の成立時スナップショットは、公開フェーズまでAdmin SDKだけが保持します。
     match /strategyMatchAchievementFreezes/{roomId} {
       allow read, write: if false;

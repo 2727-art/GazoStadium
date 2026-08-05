@@ -31,6 +31,7 @@ const SERVER_ONLY_DOCUMENTS = Object.freeze([
   ["danwakuProfiles", "client-owner", "operations", "operation-a"],
   ["danwakuPublicEntries", "public-entry-a"],
   ["danwakuMatchBadges", "client-owner"],
+  ["danwakuDeletionJobs", "deletion-job-a"],
   ["strategyMatchAchievementFreezes", "room-client-owner"],
 ]);
 
@@ -41,6 +42,7 @@ const SERVER_ONLY_COLLECTIONS = Object.freeze([
   ["danwakuProfiles", "client-owner", "operations"],
   ["danwakuPublicEntries"],
   ["danwakuMatchBadges"],
+  ["danwakuDeletionJobs"],
   ["strategyMatchAchievementFreezes"],
 ]);
 
@@ -51,6 +53,7 @@ const CLIENT_CREATE_DOCUMENTS = Object.freeze([
   ["danwakuProfiles", "client-owner", "operations", "new-operation"],
   ["danwakuPublicEntries", "new-public-entry"],
   ["danwakuMatchBadges", "new-badge-owner"],
+  ["danwakuDeletionJobs", "new-deletion-job"],
   ["strategyMatchAchievementFreezes", "new-room-owner"],
 ]);
 

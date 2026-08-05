@@ -15462,6 +15462,25 @@ exports.danwakuNoteAction = onCall(callableOptions("danwakuNoteAction"), async (
   }
 });
 
+exports.cleanupDanwakuDeletionJobs = onSchedule({
+  schedule: "every 15 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const result = await danwakuNoteService.cleanupDeletionJobs();
+    console.info("cleanupDanwakuDeletionJobs completed", result);
+    return result;
+  } catch (error) {
+    console.error("cleanupDanwakuDeletionJobs failed", {
+      code: typeof error?.code === "string" ? error.code : "unknown",
+    });
+    throw error;
+  }
+});
+
 exports.expireAnjuPayFleaListings = onSchedule({
   schedule: "every day 00:00",
   timeZone: "Asia/Tokyo",

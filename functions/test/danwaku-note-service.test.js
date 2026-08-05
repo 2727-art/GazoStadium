@@ -147,6 +147,7 @@ class FakeFirestore {
     this.documents = new Map();
     this._transactionChain = Promise.resolve();
     this.recursiveDeletes = [];
+    this.failRecursiveDeletes = 0;
     this.failDocumentDeletes = false;
   }
 
@@ -167,6 +168,7 @@ class FakeFirestore {
       rows = rows.filter(({ value }) => {
         if (filter.operator === "==") return value?.[filter.field] === filter.value;
         if (filter.operator === ">") return value?.[filter.field] > filter.value;
+        if (filter.operator === "<=") return value?.[filter.field] <= filter.value;
         throw new Error(`unsupported fake operator: ${filter.operator}`);
       });
     }
@@ -198,6 +200,12 @@ class FakeFirestore {
 
   async recursiveDelete(ref) {
     this.recursiveDeletes.push(ref.path);
+    if (this.failRecursiveDeletes > 0) {
+      this.failRecursiveDeletes -= 1;
+      const error = new Error("injected recursive delete failure");
+      error.code = "unavailable";
+      throw error;
+    }
     for (const path of Array.from(this.documents.keys())) {
       if (path === ref.path || path.startsWith(`${ref.path}/`)) this.documents.delete(path);
     }
@@ -268,6 +276,14 @@ function operationPath(operationId) {
     "operation",
     uid,
     operationId,
+  )}`;
+}
+
+function deletionJobPath(noteId) {
+  return `danwakuDeletionJobs/${deterministicDanwakuId(
+    "deletion-job",
+    uid,
+    noteId,
   )}`;
 }
 
@@ -403,6 +419,64 @@ test("service lifecycle is idempotent, projects public data, and physically dele
   const createAfterDelete = await service.dispatch(uid, createRequest);
   assert.equal(createAfterDelete.outcome, "created");
   assert.equal(createAfterDelete.state.notes.length, 0);
+});
+
+test("a failed recursive delete stays queued and scheduled cleanup removes every private note document", async () => {
+  const fixture = createFixture();
+  const { service, firestore } = fixture;
+  const created = await service.dispatch(uid, {
+    action: "create",
+    operationId: "queued-delete-create-0001",
+    title: "消したい自由文",
+    commitment: "履歴も完全に消す",
+  });
+  await service.dispatch(uid, {
+    action: "continue",
+    operationId: "queued-delete-continue-0001",
+    noteId: created.noteId,
+  });
+
+  firestore.failRecursiveDeletes = 1;
+  const deleted = await service.dispatch(uid, {
+    action: "delete",
+    operationId: "queued-delete-operation-0001",
+    noteId: created.noteId,
+  });
+  assert.equal(deleted.outcome, "deleted");
+  assert.equal(deleted.state.notes.length, 0);
+
+  const notePrefix = `danwakuProfiles/${uid}/notes/${created.noteId}`;
+  const redacted = firestore.get(notePrefix);
+  assert.equal(redacted.status, "deleted");
+  assert.equal(redacted.title, "");
+  assert.equal(redacted.commitment, "");
+  assert.equal(
+    Array.from(firestore.documents.keys()).some((path) => path.startsWith(`${notePrefix}/events/`)),
+    true,
+  );
+
+  const jobPath = deletionJobPath(created.noteId);
+  const queued = firestore.get(jobPath);
+  assert.equal(queued.attempts, 1);
+  assert.equal(queued.lastErrorCode, "unavailable");
+  assert.ok(queued.nextAttemptAt > queued.updatedAt);
+
+  const cleanup = await service.cleanupDeletionJobs({
+    timestamp: queued.nextAttemptAt,
+    limit: 50,
+  });
+  assert.deepEqual(
+    { scanned: cleanup.scanned, deleted: cleanup.deleted, deferred: cleanup.deferred, invalid: cleanup.invalid },
+    { scanned: 1, deleted: 1, deferred: 0, invalid: 0 },
+  );
+  assert.equal(firestore.get(jobPath), undefined);
+  assert.equal(
+    Array.from(firestore.documents.keys()).some(
+      (path) => path === notePrefix || path.startsWith(`${notePrefix}/`),
+    ),
+    false,
+  );
+  assert.ok(firestore.get(operationPath("queued-delete-operation-0001")));
 });
 
 test("permanent receipts bind an operation id to one payload and preserve every original no-op outcome", async () => {
