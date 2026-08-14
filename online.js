@@ -12,6 +12,7 @@ import {
   onDisconnect,
   onValue,
   orderByChild,
+  orderByKey,
   push,
   query,
   ref,
@@ -328,6 +329,7 @@ const RATE_FLOOR_MINIMUM_MATCHES = 10;
 const LEGACY_PERIOD_QUERY_LIMIT = 100;
 const PERIOD_RANKING_CACHE_TTL_MS = 60 * 1000;
 const MONTHLY_BEYOND_CACHE_TTL_MS = 5 * 60 * 1000;
+const MONTHLY_OPENING_PROGRESS_CACHE_TTL_MS = 5 * 60 * 1000;
 const MONTHLY_BEYOND_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 const MONTHLY_HALL_OF_FAME_CACHE_TTL_MS = 30 * 60 * 1000;
 const MONTHLY_HALL_OF_FAME_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
@@ -353,6 +355,7 @@ const CROWN_WEEKLY_BEST_DAYS = 3;
 const CROWN_WEEKLY_MIN_DAYS = 2;
 const CROWN_MONTHLY_BEST_WEEKS = 3;
 const CROWN_MONTHLY_MIN_WEEKS = 2;
+const CROWN_WEEKLY_HISTORY_LIMIT = 5;
 const CROWN_THEMES = Object.freeze(["rose", "aqua", "violet", "gold"]);
 const CROWN_SIGNATURE_IDS = Object.freeze([
   "upset",
@@ -552,6 +555,11 @@ let monthlyBeyondLoadedAt = 0;
 let monthlyBeyondRequest = null;
 let monthlyBeyondAttemptedPeriodKey = "";
 let monthlyBeyondLastAttemptAt = 0;
+let monthlyOpeningProgressPeriodKey = "";
+let monthlyOpeningProgressStatus = "idle";
+let monthlyOpeningProgressHighestQualifyingWeeks = 0;
+let monthlyOpeningProgressLoadedAt = 0;
+let monthlyOpeningProgressRequest = null;
 let monthlyHallOfFameRecords = [];
 let monthlyHallOfFameLoadedAt = 0;
 let monthlyHallOfFameLastAttemptAt = 0;
@@ -1091,9 +1099,54 @@ function leaderboardPeriodStartAt(period, key) {
   return Date.parse(`${startKey}T00:00:00+09:00`);
 }
 
-function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.now() + publicServerTimeOffset) {
+function validWeeklyLeaderboardPeriodKey(value) {
+  const key = String(value || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
+  const startAt = leaderboardPeriodStartAt("weekly", key);
+  if (!Number.isFinite(startAt) || jstDateKey(startAt) !== key) return false;
+  const shifted = new Date(startAt + (9 * 60 * 60 * 1000));
+  return shifted.getUTCDay() === 1;
+}
+
+function weeklyLeaderboardPeriodKeys(
+  timestamp = Date.now() + publicServerTimeOffset,
+  historyLimit = CROWN_WEEKLY_HISTORY_LIMIT,
+) {
+  const currentKey = leaderboardPeriodKeyFor("weekly", timestamp);
+  const currentStartAt = leaderboardPeriodStartAt("weekly", currentKey);
+  const normalizedLimit = Math.min(
+    CROWN_WEEKLY_HISTORY_LIMIT,
+    Math.max(0, Math.floor(Number(historyLimit || 0))),
+  );
+  const keys = [currentKey];
+  for (let index = 1; index <= normalizedLimit; index += 1) {
+    const key = leaderboardPeriodKeyFor(
+      "weekly",
+      currentStartAt - (index * 7 * 24 * 60 * 60 * 1000),
+    );
+    if (key < CROWN_CIRCUIT_CUTOVER_KEYS.weekly) break;
+    keys.push(key);
+  }
+  return keys;
+}
+
+function leaderboardPeriodInfoFor(
+  period = leaderboardPeriod,
+  timestamp = Date.now() + publicServerTimeOffset,
+  requestedKey = "",
+) {
   const normalizedPeriod = normalizeLeaderboardPeriod(period);
-  const key = leaderboardPeriodKeyFor(normalizedPeriod, timestamp);
+  const currentKey = leaderboardPeriodKeyFor(normalizedPeriod, timestamp);
+  let key = currentKey;
+  if (normalizedPeriod === "weekly" && requestedKey) {
+    const requestedWeeklyKey = String(requestedKey);
+    const selectableKeys = weeklyLeaderboardPeriodKeys(timestamp);
+    if (!validWeeklyLeaderboardPeriodKey(requestedWeeklyKey)
+        || !selectableKeys.includes(requestedWeeklyKey)) {
+      throw new Error("表示できないウィークリー期間です。");
+    }
+    key = requestedWeeklyKey;
+  }
   const startAt = leaderboardPeriodStartAt(normalizedPeriod, key);
   let nextResetAt = startAt + (24 * 60 * 60 * 1000);
   if (normalizedPeriod === "weekly") nextResetAt = startAt + (7 * 24 * 60 * 60 * 1000);
@@ -1111,6 +1164,10 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
   return {
     period: normalizedPeriod,
     key,
+    currentKey,
+    current: key === currentKey,
+    historical: normalizedPeriod === "weekly" && key !== currentKey,
+    finalized: normalizedPeriod === "weekly" && key !== currentKey,
     label,
     startAt,
     nextResetAt,
@@ -1127,6 +1184,22 @@ function leaderboardPeriodInfoFor(period = leaderboardPeriod, timestamp = Date.n
           : CROWN_DAILY_MATCH_LIMIT
       : 0,
   };
+}
+
+function weeklyLeaderboardPeriodOptions(
+  timestamp = Date.now() + publicServerTimeOffset,
+  historyLimit = CROWN_WEEKLY_HISTORY_LIMIT,
+) {
+  return weeklyLeaderboardPeriodKeys(timestamp, historyLimit).map((key) => {
+    const info = leaderboardPeriodInfoFor("weekly", timestamp, key);
+    return {
+      key: info.key,
+      label: info.label,
+      current: info.current,
+      historical: info.historical,
+      finalized: info.finalized,
+    };
+  });
 }
 
 function crownMonthlyEarliestOpeningAt(key) {
@@ -1156,33 +1229,46 @@ function crownMonthlyEarliestOpeningAt(key) {
 
 function crownMonthlyOpeningProgress(entries) {
   const records = Array.isArray(entries) ? entries : [];
+  const highestQualifyingWeeks = Math.min(
+    CROWN_MONTHLY_MIN_WEEKS,
+    Math.max(0, ...records.map((entry) => Math.floor(Number(entry?.qualifyingCount || 0)))),
+  );
   return {
-    opened: records.some((entry) => entry?.qualified === true),
-    highestQualifyingWeeks: Math.min(
-      CROWN_MONTHLY_MIN_WEEKS,
-      Math.max(0, ...records.map((entry) => Math.floor(Number(entry?.qualifyingCount || 0)))),
-    ),
+    opened: highestQualifyingWeeks >= CROWN_MONTHLY_MIN_WEEKS
+      || records.some((entry) => entry?.qualified === true),
+    highestQualifyingWeeks,
   };
 }
 
 function getCrownMonthlyOpeningStatus(timestamp = Date.now() + publicServerTimeOffset) {
   const periodInfo = leaderboardPeriodInfoFor("monthly", timestamp);
-  const entries = leaderboardPeriod === "monthly" && leaderboardPeriodKey === periodInfo.key
-    ? leaderboardEntries
-    : [];
-  const { opened, highestQualifyingWeeks } = crownMonthlyOpeningProgress(entries);
+  const rankedProgress = monthlyBeyondPeriodKey === periodInfo.key
+    ? crownMonthlyOpeningProgress(monthlyBeyondEntries)
+    : { opened: false, highestQualifyingWeeks: 0 };
+  const progressMatchesPeriod = monthlyOpeningProgressPeriodKey === periodInfo.key;
+  const progressStatus = progressMatchesPeriod ? monthlyOpeningProgressStatus : "idle";
+  const highestQualifyingWeeks = Math.max(
+    rankedProgress.highestQualifyingWeeks,
+    progressMatchesPeriod ? monthlyOpeningProgressHighestQualifyingWeeks : 0,
+  );
+  const opened = rankedProgress.opened || highestQualifyingWeeks >= CROWN_MONTHLY_MIN_WEEKS;
   const earliestOpeningAt = crownMonthlyEarliestOpeningAt(periodInfo.key);
   return {
     pending: periodInfo.crownCircuit && !opened,
     opened,
     highestQualifyingWeeks,
+    progressStatus: opened ? "ready" : progressStatus,
     requiredQualifyingWeeks: CROWN_MONTHLY_MIN_WEEKS,
     earliestOpeningAt: earliestOpeningAt > timestamp ? earliestOpeningAt : 0,
   };
 }
 
-function getLeaderboardPeriodInfo(period = leaderboardPeriod) {
-  return leaderboardPeriodInfoFor(period);
+function getLeaderboardPeriodInfo(period = leaderboardPeriod, key = "") {
+  return leaderboardPeriodInfoFor(period, Date.now() + publicServerTimeOffset, key);
+}
+
+function getWeeklyLeaderboardPeriodOptions(historyLimit = CROWN_WEEKLY_HISTORY_LIMIT) {
+  return weeklyLeaderboardPeriodOptions(Date.now() + publicServerTimeOffset, historyLimit);
 }
 
 function periodRewardKeyIsValid(period, key) {
@@ -2406,14 +2492,19 @@ function clearMutedTopMessages() {
 
 async function readPublicDatabasePath(path, {
   orderByChildKey = "",
+  orderByKeyOnly = false,
   equalToValue,
   limit = 0,
   limitDirection = "last",
   readServerTimeOffset = true,
 } = {}) {
   if (useOfflineMarketPreview) return null;
+  if (orderByChildKey && orderByKeyOnly) {
+    throw new Error("公開データの並び順が重複しています。");
+  }
   const constraints = [];
-  if (orderByChildKey) constraints.push(orderByChild(String(orderByChildKey)));
+  if (orderByKeyOnly) constraints.push(orderByKey());
+  else if (orderByChildKey) constraints.push(orderByChild(String(orderByChildKey)));
   if (equalToValue !== undefined) constraints.push(equalTo(equalToValue));
   if (limit) {
     const normalizedLimit = Number(limit);
@@ -3612,10 +3703,45 @@ function publicRankingRecordMap(value) {
 }
 
 function publicPeriodLeaderboardPath(periodInfo, period) {
+  if (period === "weekly" && periodInfo.crownCircuit && periodInfo.historical) {
+    return `online/crownCircuitSeatHistory/weekly/${periodInfo.key}`;
+  }
   const root = periodInfo.crownCircuit
     ? "crownCircuitPeriods"
     : periodInfo.serverAuthoritative ? "serverLeaderboardPeriods" : "leaderboardPeriods";
   return `online/${root}/${period}/${periodInfo.key}`;
+}
+
+function normalizeCrownWeeklySeatHistoryRecords(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const mapped = {};
+  const seenEntryIds = new Set();
+  Object.entries(source).forEach(([seatKey, entry]) => {
+    const seat = Math.floor(Number(seatKey));
+    if (!entry || typeof entry !== "object" || seat < 1 || seat > PUBLIC_RANKING_LIMIT) return;
+    const storedRank = Math.floor(Number(entry.rank || entry.displayRank || seat));
+    const entryId = validLeaderboardEntryId(entry.entryId);
+    if (!entryId || storedRank !== seat || seenEntryIds.has(entryId)) return;
+    seenEntryIds.add(entryId);
+    mapped[entryId] = {
+      ...entry,
+      rank: seat,
+      displayRank: seat,
+      status: "finalized",
+      rankScore: Math.max(
+        1,
+        Math.floor(Number(entry.rankScore || entry.starScore || entry.circuitScore || 0)),
+      ),
+    };
+  });
+  return normalizeCrownCircuitRecords(mapped, "weekly")
+    .map((entry) => ({
+      ...entry,
+      qualified: true,
+      displayRank: Math.max(1, Math.floor(Number(entry.rank || entry.displayRank || 1))),
+    }))
+    .sort((first, second) => first.displayRank - second.displayRank)
+    .slice(0, PUBLIC_RANKING_LIMIT);
 }
 
 async function readOverallPublicTop10() {
@@ -3693,6 +3819,15 @@ async function readCrownCircuitPublicTop10(path, period) {
 
 async function readPeriodPublicTop10(periodInfo, period) {
   const path = publicPeriodLeaderboardPath(periodInfo, period);
+  if (period === "weekly" && periodInfo.crownCircuit && periodInfo.historical) {
+    const records = await readPublicDatabasePath(path, {
+      orderByKeyOnly: true,
+      limit: PUBLIC_RANKING_LIMIT,
+      limitDirection: "first",
+      readServerTimeOffset: false,
+    });
+    return normalizeCrownWeeklySeatHistoryRecords(records);
+  }
   if (periodInfo.crownCircuit) return readCrownCircuitPublicTop10(path, period);
   // Legacy/server points boards have multi-field ties that RTDB cannot express.
   // Keep the established bounded query during the transition, then display TOP 10.
@@ -3703,8 +3838,23 @@ async function readPeriodPublicTop10(periodInfo, period) {
   return normalizeLeaderboardRecords(records);
 }
 
+async function readCrownMonthlyOpeningProgress(periodInfo) {
+  if (periodInfo?.period !== "monthly" || !periodInfo.crownCircuit) {
+    return { opened: false, highestQualifyingWeeks: 0 };
+  }
+  const path = publicPeriodLeaderboardPath(periodInfo, "monthly");
+  const records = publicRankingRecordMap(await readPublicDatabasePath(path, {
+    orderByChildKey: "qualifyingCount",
+    limit: 1,
+    limitDirection: "last",
+    readServerTimeOffset: false,
+  }));
+  return crownMonthlyOpeningProgress(Object.values(records));
+}
+
 async function readCachedPeriodPublicTop10(periodInfo, period, { force = false } = {}) {
-  const cacheKey = `${period}:${periodInfo.key}`;
+  const source = period === "weekly" && periodInfo.historical ? "history" : "live";
+  const cacheKey = `${source}:${period}:${periodInfo.key}`;
   const cached = periodLeaderboardCache.get(cacheKey);
   if (!force
       && cached
@@ -3835,8 +3985,59 @@ async function refreshMonthlyHallOfFame({ force = false } = {}) {
   return monthlyHallOfFameRequest;
 }
 
+async function refreshCrownMonthlyOpeningProgress(periodInfo, { force = false } = {}) {
+  const now = Date.now();
+  const cacheFresh = monthlyOpeningProgressPeriodKey === periodInfo.key
+    && monthlyOpeningProgressStatus === "ready"
+    && monthlyOpeningProgressLoadedAt > 0
+    && now - monthlyOpeningProgressLoadedAt < MONTHLY_OPENING_PROGRESS_CACHE_TTL_MS;
+  if (!force && cacheFresh) {
+    return {
+      opened: monthlyOpeningProgressHighestQualifyingWeeks >= CROWN_MONTHLY_MIN_WEEKS,
+      highestQualifyingWeeks: monthlyOpeningProgressHighestQualifyingWeeks,
+    };
+  }
+  if (monthlyOpeningProgressRequest?.key === periodInfo.key) {
+    return monthlyOpeningProgressRequest.promise;
+  }
+
+  const hasSamePeriodCache = monthlyOpeningProgressPeriodKey === periodInfo.key
+    && monthlyOpeningProgressLoadedAt > 0;
+  if (!hasSamePeriodCache) {
+    monthlyOpeningProgressPeriodKey = periodInfo.key;
+    monthlyOpeningProgressStatus = "loading";
+    monthlyOpeningProgressHighestQualifyingWeeks = 0;
+    monthlyOpeningProgressLoadedAt = 0;
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  }
+
+  const promise = readCrownMonthlyOpeningProgress(periodInfo).then((progress) => {
+    if (leaderboardPeriodInfoFor("monthly").key !== periodInfo.key) return progress;
+    monthlyOpeningProgressPeriodKey = periodInfo.key;
+    monthlyOpeningProgressStatus = "ready";
+    monthlyOpeningProgressHighestQualifyingWeeks = progress.highestQualifyingWeeks;
+    monthlyOpeningProgressLoadedAt = Date.now();
+    return progress;
+  }).catch((error) => {
+    if (leaderboardPeriodInfoFor("monthly").key === periodInfo.key
+        && monthlyOpeningProgressPeriodKey === periodInfo.key) {
+      monthlyOpeningProgressStatus = monthlyOpeningProgressLoadedAt > 0 ? "ready" : "error";
+    }
+    throw error;
+  }).finally(() => {
+    if (monthlyOpeningProgressRequest?.promise === promise) monthlyOpeningProgressRequest = null;
+    window.dispatchEvent(new Event("hariai-leaderboard-updated"));
+  });
+  monthlyOpeningProgressRequest = { key: periodInfo.key, promise };
+  return promise;
+}
+
 async function refreshMonthlyBeyondCache({ force = false } = {}) {
   const monthlyPeriodInfo = leaderboardPeriodInfoFor("monthly");
+  // Opening progress is deliberately independent from the formal TOP 10. A first
+  // qualifying week has rankScore=0 and must stay hidden from the board while its
+  // 1/2 progress remains visible.
+  refreshCrownMonthlyOpeningProgress(monthlyPeriodInfo, { force }).catch(() => null);
   const now = Date.now();
   const cacheFresh = monthlyBeyondPeriodKey === monthlyPeriodInfo.key
     && monthlyBeyondLoadedAt > 0
@@ -4045,7 +4246,10 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
     else await refreshRankingDashboard();
     await Promise.all([
       refreshOverallLeaderboard(),
-      refreshLeaderboard(leaderboardPeriod, { force: true }),
+      refreshLeaderboard(leaderboardPeriod, {
+        force: true,
+        key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
+      }),
     ]);
     return getRankingDashboard();
   } finally {
@@ -4054,9 +4258,13 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
   }
 }
 
-async function refreshLeaderboard(period = leaderboardPeriod, { force = false } = {}) {
+async function refreshLeaderboard(period = leaderboardPeriod, { force = false, key = "" } = {}) {
   const selectedPeriod = normalizeLeaderboardPeriod(period);
-  const periodInfo = leaderboardPeriodInfoFor(selectedPeriod);
+  const periodInfo = leaderboardPeriodInfoFor(
+    selectedPeriod,
+    Date.now() + publicServerTimeOffset,
+    selectedPeriod === "weekly" ? key : "",
+  );
   const monthlyPeriodInfo = leaderboardPeriodInfoFor("monthly");
   if (useOfflineMarketPreview) {
     leaderboardPeriod = selectedPeriod;
@@ -4066,6 +4274,10 @@ async function refreshLeaderboard(period = leaderboardPeriod, { force = false } 
     monthlyBeyondRanks = new Map();
     monthlyBeyondPeriodKey = monthlyPeriodInfo.key;
     monthlyBeyondLoadedAt = Date.now();
+    monthlyOpeningProgressPeriodKey = monthlyPeriodInfo.key;
+    monthlyOpeningProgressStatus = "ready";
+    monthlyOpeningProgressHighestQualifyingWeeks = 0;
+    monthlyOpeningProgressLoadedAt = Date.now();
     leaderboardStatus = "ready";
     window.dispatchEvent(new Event("hariai-leaderboard-updated"));
     return;
@@ -7658,7 +7870,10 @@ async function saveOverallRankingPublicSettings({ xHandle = "", xPublic = false,
     Promise.all([
       refreshOverallLeaderboard(),
       refreshRankingDashboard(),
-      refreshLeaderboard(leaderboardPeriod, { force: true }),
+      refreshLeaderboard(leaderboardPeriod, {
+        force: true,
+        key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
+      }),
     ]).catch((refreshError) => console.error(refreshError));
     return saved;
   } catch (error) {
@@ -12168,6 +12383,7 @@ window.HariaiOnline = {
   focusCrownRankingParticipation,
   getLeaderboardStatus,
   getLeaderboardPeriodInfo,
+  getWeeklyLeaderboardPeriodOptions,
   getCrownMonthlyOpeningStatus,
   getLeaderboardLoadedPeriod,
   getServerRankingAwards,

@@ -371,7 +371,7 @@
           "$periodKey": {
             ".read": "($period === 'daily' || $period === 'weekly' || $period === 'monthly') && (($period === 'daily' && $periodKey >= '2026-07-28' && $periodKey.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)) || ($period === 'weekly' && $periodKey >= '2026-08-03' && $periodKey.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)) || ($period === 'monthly' && $periodKey >= '2026-08' && $periodKey.matches(/^[0-9]{4}-[0-9]{2}$/)))",
             ".write": false,
-            ".indexOn": ["rankScore"]
+            ".indexOn": ["rankScore", "qualifyingCount"]
           }
         }
       },

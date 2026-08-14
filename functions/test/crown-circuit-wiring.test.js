@@ -88,7 +88,7 @@ test("public crown mirrors are read-only while UID indexes are owner-only", () =
 
   const crownPeriod = rules.crownCircuitPeriods.$period.$periodKey;
   assert.equal(crownPeriod[".write"], false);
-  assert.deepEqual(crownPeriod[".indexOn"], ["rankScore"]);
+  assert.deepEqual(crownPeriod[".indexOn"], ["rankScore", "qualifyingCount"]);
   assert.match(crownPeriod[".read"], /\$periodKey >= '2026-07-28'/);
   assert.match(crownPeriod[".read"], /\$periodKey >= '2026-08-03'/);
   assert.match(crownPeriod[".read"], /\$periodKey >= '2026-08'/);

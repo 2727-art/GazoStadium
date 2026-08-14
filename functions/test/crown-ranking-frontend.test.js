@@ -64,8 +64,11 @@ function monthlyOpeningHarness(online) {
     ${openingProgress}
     const publicServerTimeOffset = 0;
     let leaderboardPeriod = "monthly";
-    let leaderboardPeriodKey = "2026-08";
-    let leaderboardEntries = [];
+    let monthlyBeyondPeriodKey = "2026-08";
+    let monthlyBeyondEntries = [];
+    let monthlyOpeningProgressPeriodKey = "";
+    let monthlyOpeningProgressStatus = "idle";
+    let monthlyOpeningProgressHighestQualifyingWeeks = 0;
     const leaderboardPeriodInfoFor = (_period, timestamp) => {
       const key = leaderboardPeriodKeyFor("monthly", timestamp);
       return { key, crownCircuit: isCrownCircuitPeriod("monthly", key) };
@@ -73,8 +76,8 @@ function monthlyOpeningHarness(online) {
     ${openingStatus}
     const openingStatusAt = (timestamp, entries = []) => {
       leaderboardPeriod = "monthly";
-      leaderboardPeriodKey = leaderboardPeriodKeyFor("monthly", timestamp);
-      leaderboardEntries = entries;
+      monthlyBeyondPeriodKey = leaderboardPeriodKeyFor("monthly", timestamp);
+      monthlyBeyondEntries = entries;
       return getCrownMonthlyOpeningStatus(timestamp);
     };
     return { crownMonthlyEarliestOpeningAt, crownMonthlyOpeningProgress, openingStatusAt };

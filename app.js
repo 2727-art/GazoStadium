@@ -66,6 +66,7 @@
     gold: "ゴールド",
   });
   const CROWN_CIRCUIT_START_LABEL = "2026年7月28日";
+  const CROWN_WEEKLY_CUTOVER_KEY = "2026-08-03";
   const CREATOR_CARD_TYPES = Object.freeze({
     illustration: Object.freeze({ label: "イラスト", icon: "✦" }),
     photo: Object.freeze({ label: "写真", icon: "▣" }),
@@ -103,6 +104,7 @@
   let rankingCommentIdentity = null;
   let rankingCommentIdentityStatus = "idle";
   let rankingPeriod = "weekly";
+  let rankingWeeklyHistoryKey = "";
   let rankingDisplayedPeriodKey = "";
   let pendingRankingJump = "";
   let landingTopMessageIndex = 0;
@@ -1342,15 +1344,90 @@
   }
 
   function rankingPeriodInfo() {
-    return window.HariaiOnline?.getLeaderboardPeriodInfo?.(rankingPeriod) || {
+    const requestedKey = rankingPeriod === "weekly" ? normalizeRankingWeeklyHistoryKey() : "";
+    return window.HariaiOnline?.getLeaderboardPeriodInfo?.(rankingPeriod, requestedKey) || {
       period: rankingPeriod,
-      key: "",
+      key: requestedKey,
       label: "期間を確認中",
       nextResetAt: 0,
       minimumMatches: rankingPeriod === "daily" ? 1 : rankingPeriod === "weekly" ? 3 : 5,
       awardMinimumMatches: rankingPeriod === "monthly" ? 10 : rankingPeriod === "weekly" ? 3 : 1,
       serverAuthoritative: false,
+      historical: Boolean(requestedKey),
     };
+  }
+
+  function weeklyLeaderboardPeriodOptions() {
+    const currentInfo = window.HariaiOnline?.getLeaderboardPeriodInfo?.("weekly") || {};
+    const currentKey = String(currentInfo.key || "");
+    const source = window.HariaiOnline?.getWeeklyLeaderboardPeriodOptions?.();
+    const normalized = (Array.isArray(source) ? source : []).map((option) => {
+      const key = String(option?.key || "");
+      const isCurrent = option?.isCurrent === true
+        || option?.current === true
+        || Boolean(currentKey && key === currentKey);
+      return {
+        key,
+        label: String(option?.label || (isCurrent ? currentInfo.label : key) || key),
+        isCurrent,
+        isFinalized: option?.isFinalized === true || option?.finalized === true || !isCurrent,
+      };
+    }).filter((option) => (
+      /^\d{4}-\d{2}-\d{2}$/.test(option.key)
+      && (
+        option.isCurrent
+        || (
+          option.isFinalized
+          && option.key >= CROWN_WEEKLY_CUTOVER_KEY
+          && (!currentKey || option.key < currentKey)
+        )
+      )
+    ));
+    const current = normalized.find((option) => option.isCurrent)
+      || (currentKey ? {
+        key: currentKey,
+        label: String(currentInfo.label || currentKey),
+        isCurrent: true,
+        isFinalized: false,
+      } : null);
+    const histories = normalized
+      .filter((option) => !option.isCurrent && option.key !== current?.key)
+      .sort((first, second) => second.key.localeCompare(first.key))
+      .slice(0, 5);
+    return current ? [current, ...histories] : histories;
+  }
+
+  function normalizeRankingWeeklyHistoryKey() {
+    if (!rankingWeeklyHistoryKey) return "";
+    const valid = weeklyLeaderboardPeriodOptions().some((option) => (
+      !option.isCurrent && option.key === rankingWeeklyHistoryKey
+    ));
+    if (!valid) rankingWeeklyHistoryKey = "";
+    return rankingWeeklyHistoryKey;
+  }
+
+  function viewingFinalizedWeekly(periodInfo = rankingPeriodInfo()) {
+    return rankingPeriod === "weekly"
+      && Boolean(rankingWeeklyHistoryKey)
+      && String(periodInfo?.key || "") === rankingWeeklyHistoryKey;
+  }
+
+  function renderWeeklyLeaderboardPeriodPicker(periodInfo) {
+    if (rankingPeriod !== "weekly" || periodInfo?.crownCircuit !== true) return "";
+    const options = weeklyLeaderboardPeriodOptions();
+    const selectedHistoryKey = normalizeRankingWeeklyHistoryKey();
+    const optionMarkup = options.map((option) => {
+      const value = option.isCurrent ? "" : option.key;
+      const selected = value === selectedHistoryKey;
+      const suffix = option.isCurrent ? "進行中" : "確定";
+      return `<option value="${escapeHtml(value)}" ${selected ? "selected" : ""}>${escapeHtml(option.label)}（${suffix}）</option>`;
+    }).join("");
+    const historyCount = options.filter((option) => !option.isCurrent).length;
+    return `<div class="ranking-week-history-picker">
+      <label for="rankingWeeklyHistorySelect">表示する週</label>
+      <select id="rankingWeeklyHistorySelect" ${historyCount ? "" : "disabled"}>${optionMarkup}</select>
+      <small>${historyCount ? "確定済みの直近5週を、選んだ時だけ取得します。" : "確定済みのウィークリーはまだありません。"}</small>
+    </div>`;
   }
 
   function rankingResetLabel(timestamp) {
@@ -1625,12 +1702,13 @@
   }
 
   function refreshSelectedRankingPeriod({ force = false } = {}) {
+    const selectedKey = rankingPeriod === "weekly" ? normalizeRankingWeeklyHistoryKey() : "";
     const info = rankingPeriodInfo();
     rankingDisplayedPeriodKey = info.key;
     expandedRankingEntryId = "";
     rankingComments = [];
     rankingCommentsStatus = "idle";
-    return window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod, { force });
+    return window.HariaiOnline?.refreshLeaderboard?.(rankingPeriod, { force, key: selectedKey });
   }
 
   function refreshRankingSurfaces() {
@@ -1643,6 +1721,17 @@
   function selectRankingPeriod(period) {
     if (!["daily", "weekly", "monthly"].includes(period) || period === rankingPeriod) return;
     rankingPeriod = period;
+    rankingWeeklyHistoryKey = "";
+    return refreshSelectedRankingPeriod();
+  }
+
+  function selectRankingWeeklyPeriod(key) {
+    const selectedKey = String(key || "");
+    const valid = selectedKey === "" || weeklyLeaderboardPeriodOptions().some((option) => (
+      !option.isCurrent && option.key === selectedKey
+    ));
+    if (!valid || selectedKey === rankingWeeklyHistoryKey) return;
+    rankingWeeklyHistoryKey = selectedKey;
     return refreshSelectedRankingPeriod();
   }
 
@@ -1691,7 +1780,9 @@
   function refreshRankingAtPeriodBoundary() {
     if (currentScreen !== "ranking") return;
     const info = rankingPeriodInfo();
-    if (info.key && info.key !== rankingDisplayedPeriodKey) {
+    if (!viewingFinalizedWeekly(info)
+        && info.key
+        && info.key !== rankingDisplayedPeriodKey) {
       refreshRankingSurfaces();
       return;
     }
@@ -1746,7 +1837,9 @@
   }
 
   function renderRankingScreen({ refresh = false, preserveScroll = false } = {}) {
+    const enteringRanking = currentScreen !== "ranking";
     if (currentScreen !== "ranking") pendingRankingJump = "";
+    if (enteringRanking) rankingWeeklyHistoryKey = "";
     currentScreen = "ranking";
     setLandingChrome();
     const entries = window.HariaiOnline?.getLeaderboard?.() || [];
@@ -1755,17 +1848,31 @@
       controlId: "rankingOverallParticipation",
     }) || "";
     const periodInfo = rankingPeriodInfo();
-    const resetLabel = rankingResetLabel(periodInfo.nextResetAt);
+    const finalizedWeekly = viewingFinalizedWeekly(periodInfo);
+    const resetLabel = finalizedWeekly ? "" : rankingResetLabel(periodInfo.nextResetAt);
     const monthlyOpening = window.HariaiOnline?.getCrownMonthlyOpeningStatus?.() || null;
+    const monthlyOpeningProgressStatus = String(monthlyOpening?.progressStatus || "idle");
+    const monthlyOpeningProgressReady = monthlyOpeningProgressStatus === "ready";
+    const monthlyOpeningProgressError = monthlyOpeningProgressStatus === "error";
+    const monthlyOpeningHighestWeeks = Number(monthlyOpening?.highestQualifyingWeeks || 0);
+    const monthlyOpeningRequiredWeeks = Number(monthlyOpening?.requiredQualifyingWeeks || 2);
     const monthlyOpeningPending = status === "ready"
       && periodInfo.period === "monthly"
       && periodInfo.crownCircuit
       && monthlyOpening?.pending === true;
     const monthlyOpeningNotice = monthlyOpeningPending
       ? `<aside class="crown-monthly-opening" aria-label="月間王座の開幕状況">
-          <div><span>MONTHLY CROWN</span><strong>月間王座 開幕準備中</strong><p>月間王座は、同じプレイヤーが成立ウィークリーを${Number(monthlyOpening.requiredQualifyingWeeks || 2)}週そろえると開幕します。</p></div>
-          <div class="crown-monthly-opening-progress"><span>最高進捗</span><strong>${Number(monthlyOpening.highestQualifyingWeeks || 0)}<small> / ${Number(monthlyOpening.requiredQualifyingWeeks || 2)}週</small></strong></div>
-          <p class="crown-monthly-opening-note">${monthlyOpening.earliestOpeningAt ? `最短開幕目安 ${escapeHtml(rankingResetLabel(monthlyOpening.earliestOpeningAt))}以降。` : "同じプレイヤーの成立ウィークリーが2週そろった時点で開幕します。"} 各ウィークリーは成立デイリー2日以上で確定し、参加状況や集計処理により開幕は後ろへ延びる場合があります。</p>
+          <div><span>MONTHLY CROWN</span><strong>月間王座 開幕準備中</strong><p>月間王座は、同じプレイヤーが成立ウィークリーを${monthlyOpeningRequiredWeeks}週そろえると開幕します。</p></div>
+          <div class="crown-monthly-opening-progress" aria-live="polite"><span>最高進捗</span>${monthlyOpeningProgressReady
+            ? `<strong>${monthlyOpeningHighestWeeks}<small> / ${monthlyOpeningRequiredWeeks}週</small></strong>`
+            : monthlyOpeningProgressError
+              ? `<strong class="is-error">進捗を確認できませんでした</strong><button class="button button-ghost button-small" id="rankingMonthlyProgressRetryButton" type="button">再確認</button>`
+              : `<strong class="is-checking">集計確認中</strong>`}</div>
+          <p class="crown-monthly-opening-note">${monthlyOpeningProgressReady
+            ? `${monthlyOpening.earliestOpeningAt ? `最短開幕目安 ${escapeHtml(rankingResetLabel(monthlyOpening.earliestOpeningAt))}以降。` : `同じプレイヤーの成立ウィークリーが${monthlyOpeningRequiredWeeks}週そろった時点で開幕します。`} 各ウィークリーは成立デイリー2日以上で確定し、参加状況や集計処理により開幕は後ろへ延びる場合があります。`
+            : monthlyOpeningProgressError
+              ? "確定済みウィークリーの進捗を取得できませんでした。通信状態を確認して、再確認してください。"
+              : "確定済みウィークリーの進捗を確認しています。確認が終わると週数を表示します。"}</p>
         </aside>`
       : "";
     const rows = entries.length ? entries.map((entry, index) => {
@@ -1832,7 +1939,19 @@
     }).join("") : status === "error"
       ? `<div class="ranking-empty">ランキングを取得できませんでした。<br /><button class="button button-ghost button-small" id="rankingRetryButton">もう一度取得</button></div>`
       : status === "ready"
-        ? `<div class="ranking-empty">${monthlyOpeningPending ? "まだ月間へ昇格したウィークリーはありません。デイリーの証明から最初の進捗が生まれます。" : periodInfo.crownCircuit ? "この期間には、まだ成立した王座証明がありません。通常型・戦略型1on1の証明から最初の席が生まれます。" : "この期間にはまだ対戦記録がありません。"}</div>`
+        ? `<div class="ranking-empty">${monthlyOpeningPending
+          ? monthlyOpeningProgressReady
+            ? monthlyOpeningHighestWeeks > 0
+              ? `成立ウィークリーを${monthlyOpeningHighestWeeks}週確認済みです。同じプレイヤーが${monthlyOpeningRequiredWeeks}週そろうと月間王座が開幕します。`
+              : "まだ月間へ昇格したウィークリーはありません。デイリーの証明から最初の進捗が生まれます。"
+            : monthlyOpeningProgressError
+              ? "確定済みウィークリーの月間進捗を確認できませんでした。再確認してください。"
+              : "確定済みウィークリーの月間進捗を確認しています。"
+          : finalizedWeekly
+            ? "この週は成立条件を満たした王座証明がありませんでした。"
+            : periodInfo.crownCircuit
+              ? "この期間には、まだ成立した王座証明がありません。通常型・戦略型1on1の証明から最初の席が生まれます。"
+              : "この期間にはまだ対戦記録がありません。"}</div>`
         : `<div class="ranking-empty">ランキングを取得しています…</div>`;
     const periodScoreCopy = periodInfo.crownCircuit
       ? periodInfo.period === "daily"
@@ -1841,14 +1960,21 @@
           ? `成立デイリーのBEST ${Number(periodInfo.bestCount || 3)} ／ 2日で正式参加`
           : `成立ウィークリーのBEST ${Number(periodInfo.bestCount || 3)} ／ 2週で正式参加`
       : "勝利3点 ／ 引き分け1点";
-    const trustTitle = periodInfo.crownCircuit
+    const trustTitle = finalizedWeekly
+      ? "CROWN CIRCUIT V2 / FINAL"
+      : periodInfo.crownCircuit
       ? "CROWN CIRCUIT V2"
       : periodInfo.serverAuthoritative ? "SERVER VERIFIED" : "LEGACY PERIOD";
-    const trustCopy = periodInfo.crownCircuit
+    const trustCopy = finalizedWeekly
+      ? "通常型・戦略型1on1の検証済み対戦から確定した最終順位です。"
+      : periodInfo.crownCircuit
       ? "通常型・戦略型1on1の検証済み対戦だけを集計。デイリーは開始を宣言してからの3戦で成立し、終了後に王座を確定します。"
       : periodInfo.serverAuthoritative
         ? "この期間は通常型・戦略型1on1の検証済み正式対戦だけをサーバーで集計し、終了後にランキング実績を確定します。"
         : "移行前に始まった期間です。既存の期間記録を維持し、新しいランキングは通常型・戦略型1on1へ統一します。";
+    const periodTimingCopy = finalizedWeekly
+      ? " ／ 確定結果"
+      : resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : "";
     app.innerHTML = `<section class="screen ranking-screen">
       <div class="section-head">
         <div><span class="eyebrow">STRENGTH / PROOF / PERSONAL CROWN</span><h1>オンライン総合ランキング</h1>
@@ -1878,7 +2004,8 @@
           <button type="button" role="tab" data-ranking-period="weekly" aria-selected="${rankingPeriod === "weekly"}" class="${rankingPeriod === "weekly" ? "is-active" : ""}">ウィークリー</button>
           <button type="button" role="tab" data-ranking-period="monthly" aria-selected="${rankingPeriod === "monthly"}" class="${rankingPeriod === "monthly" ? "is-active" : ""}">マンスリー</button>
         </div>
-        <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>${escapeHtml(periodScoreCopy)}${resetLabel ? ` ／ 次回切替 ${escapeHtml(resetLabel)}` : ""}</span></div>
+        ${renderWeeklyLeaderboardPeriodPicker(periodInfo)}
+        <div class="ranking-period-summary"><strong>${escapeHtml(periodInfo.label)}</strong><span>${escapeHtml(periodScoreCopy)}${periodTimingCopy}</span></div>
         <div class="ranking-trust-notice ${periodInfo.crownCircuit || periodInfo.serverAuthoritative ? "is-verified" : "is-transition"}">
           <strong>${escapeHtml(trustTitle)}</strong>
           <span>${escapeHtml(trustCopy)}</span>
@@ -1892,11 +2019,17 @@
     </section>`;
     document.querySelector("#rankingBackButton")?.addEventListener("click", renderLandingScreen);
     document.querySelector("#rankingRetryButton")?.addEventListener("click", () => refreshSelectedRankingPeriod({ force: true }));
+    document.querySelector("#rankingMonthlyProgressRetryButton")?.addEventListener("click", () => {
+      refreshSelectedRankingPeriod({ force: true });
+    });
     document.querySelectorAll("[data-ranking-jump]").forEach((button) => {
       button.addEventListener("click", () => navigateRankingSection(button.dataset.rankingJump));
     });
     document.querySelectorAll("[data-ranking-period]").forEach((button) => {
       button.addEventListener("click", () => selectRankingPeriod(button.dataset.rankingPeriod));
+    });
+    document.querySelector("#rankingWeeklyHistorySelect")?.addEventListener("change", (event) => {
+      selectRankingWeeklyPeriod(event.currentTarget.value);
     });
     window.HariaiOnline?.bindOverallRankingParticipation?.({
       controlId: "rankingOverallParticipation",
