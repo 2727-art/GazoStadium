@@ -4,6 +4,7 @@ const test = require("node:test");
 const {
   SOLO_FAMILIAR_REUNION_COOLDOWN_MS,
   canReactivateSoloFamiliarPair,
+  loadSoloFamiliarReunionEnabled,
   publicSoloFamiliarBlockEntry,
   publicSoloFamiliarBookEntry,
   selectSoloServerMatch,
@@ -44,6 +45,53 @@ test("rollout fails closed and reunion also requires server authority", () => {
     reunionEnabled: false,
   });
   assert.equal(soloFamiliarRolloutFlags("reunion", true).reunionEnabled, true);
+});
+
+test("reunion rollout skips Firestore unless server authority is strictly enabled", async () => {
+  for (const authority of [null, false, "true", 1]) {
+    let stageLoads = 0;
+    assert.equal(await loadSoloFamiliarReunionEnabled({
+      loadServerAuthority: async () => authority,
+      loadRolloutStage: async () => {
+        stageLoads += 1;
+        return "reunion";
+      },
+    }), false);
+    assert.equal(stageLoads, 0);
+  }
+
+  let stageLoads = 0;
+  assert.equal(await loadSoloFamiliarReunionEnabled({
+    loadServerAuthority: async () => true,
+    loadRolloutStage: async () => {
+      stageLoads += 1;
+      return "reunion";
+    },
+  }), true);
+  assert.equal(stageLoads, 1);
+
+  for (const stage of [undefined, "unknown", "engawa_only", "familiar_book"]) {
+    assert.equal(await loadSoloFamiliarReunionEnabled({
+      loadServerAuthority: async () => true,
+      loadRolloutStage: async () => stage,
+    }), false);
+  }
+});
+
+test("reunion rollout does not hide loader failures or accept missing dependencies", async () => {
+  await assert.rejects(loadSoloFamiliarReunionEnabled({
+    loadServerAuthority: async () => {
+      throw new Error("authority unavailable");
+    },
+    loadRolloutStage: async () => "reunion",
+  }), /authority unavailable/);
+  await assert.rejects(loadSoloFamiliarReunionEnabled({
+    loadServerAuthority: async () => true,
+    loadRolloutStage: async () => {
+      throw new Error("stage unavailable");
+    },
+  }), /stage unavailable/);
+  await assert.rejects(loadSoloFamiliarReunionEnabled(), /requires both loaders/);
 });
 
 test("pair ids are stable, order independent, and opaque", () => {

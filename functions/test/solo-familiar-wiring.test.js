@@ -283,7 +283,7 @@ test("rollout, matching index, and TTLs fail closed before reunion activation", 
   const source = read("functions/index.js");
   assert.match(source, /systemConfig"\)\.doc\("soloFamiliarRollout"\)/);
   assert.match(source, /online\/config\/soloServerMatchmaking/);
-  assert.match(source, /if \(!rollout\.reunionEnabled\) return \{ outcome: "disabled" \};/);
+  assert.match(source, /if \(!await readSoloFamiliarReunionEnabled\(\)\) return \{ outcome: "disabled" \};/);
   assert.match(source, /online\/soloMatchPermitLocks/);
   assert.match(source, /online\/soloMatchPermits\/\$\{roomId\}/);
 
@@ -310,6 +310,28 @@ test("rollout, matching index, and TTLs fail closed before reunion activation", 
       && entry.ttl === true
     )));
   }
+});
+
+test("matchmaking checks RTDB authority before reading the Firestore reunion stage", () => {
+  const source = read("functions/index.js");
+  const readerStart = source.indexOf("async function readSoloFamiliarReunionEnabled");
+  const readerEnd = source.indexOf("async function loadSoloFamiliarBook", readerStart);
+  const reader = source.slice(readerStart, readerEnd);
+  assert.ok(readerStart >= 0 && readerEnd > readerStart);
+  assert.match(reader, /loadServerAuthority/);
+  assert.match(reader, /loadRolloutStage/);
+  assert.match(reader, /online\/config\/soloServerMatchmaking/);
+  assert.match(reader, /soloFamiliarRolloutConfigRef\(\)\.get\(\)/);
+
+  const legacyStart = source.indexOf("async function trySoloServerMatch");
+  const legacyEnd = source.indexOf("async function loadSoloMatchPermit", legacyStart);
+  const legacyMatcher = source.slice(legacyStart, legacyEnd);
+  assert.match(legacyMatcher, /if \(!await readSoloFamiliarReunionEnabled\(\)\)/);
+
+  const confirmStart = source.indexOf("async function confirmSoloFamiliarReunion(uid");
+  const confirmEnd = source.indexOf("const SOLO_SESSION_ACTION_RATE_POLICIES", confirmStart);
+  const confirmation = source.slice(confirmStart, confirmEnd);
+  assert.match(confirmation, /if \(!await readSoloFamiliarReunionEnabled\(\)\)/);
 });
 
 test("Realtime Database keeps permits private and scopes the new queue field to a boolean", () => {

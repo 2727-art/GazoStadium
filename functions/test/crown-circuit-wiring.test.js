@@ -283,6 +283,26 @@ test("achievement showcase refreshes propagate to active Crown Circuit entries",
   assert.match(initialize, /syncAchievementPublicSurfaces\(uid, profile\)/);
 });
 
+test("legacy ranking maintenance never reads or rewrites active Crown Circuit periods", () => {
+  const server = read("functions/index.js");
+  const activePeriods = sourceBetween(
+    server,
+    "function activeServerRankingPeriodInfos",
+    "function calculateServerRankingRating",
+  );
+  assert.match(activePeriods, /isServerRankingPeriod\(period, key\)/);
+  assert.match(activePeriods, /!isCrownCircuitPeriod\(period, key\)/);
+
+  for (const [start, end] of [
+    ["async function syncAchievementPublicSurfaces", "async function syncCurrentServerRankingMetadata"],
+    ["async function syncCurrentServerRankingMetadata", "async function syncCurrentCrownCircuitMetadata"],
+    ["async function removeServerRankingPublicEntries", "async function setServerRankingParticipation"],
+    ["async function recordVerifiedMatch", "function validatePostMatchTipRequest"],
+  ]) {
+    assert.match(sourceBetween(server, start, end), /activeServerRankingPeriodInfos\(/);
+  }
+});
+
 test("live Crown metadata and X consent stay synchronized without private history links", () => {
   const server = read("functions/index.js");
   const sync = sourceBetween(

@@ -54,6 +54,17 @@ function soloFamiliarRolloutFlags(stageValue, serverAuthority = false) {
   });
 }
 
+async function loadSoloFamiliarReunionEnabled({
+  loadServerAuthority,
+  loadRolloutStage,
+} = {}) {
+  if (typeof loadServerAuthority !== "function" || typeof loadRolloutStage !== "function") {
+    throw new TypeError("Solo familiar reunion rollout requires both loaders.");
+  }
+  if (await loadServerAuthority() !== true) return false;
+  return soloFamiliarRolloutFlags(await loadRolloutStage(), true).reunionEnabled;
+}
+
 function normalizeImagePreference(value) {
   return ["illustration", "live_action", "both"].includes(value) ? value : "legacy";
 }
@@ -223,6 +234,7 @@ module.exports = Object.freeze({
   SOLO_MATCH_PERMIT_TTL_MS,
   canReactivateSoloFamiliarPair,
   isValidSoloServerQueueEntry,
+  loadSoloFamiliarReunionEnabled,
   normalizeSoloFamiliarRolloutStage,
   publicSoloFamiliarBlockEntry,
   publicSoloFamiliarBookEntry,

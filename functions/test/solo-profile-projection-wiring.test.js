@@ -90,6 +90,59 @@ test("server profile projection remains participant-scoped to marked V2 rooms", 
   );
 });
 
+test("verified match retries return from the caller claim before full achievement fan-out", () => {
+  const server = read("functions/index.js");
+  const duplicate = sourceBetween(
+    server,
+    "async function duplicateVerifiedMatchResult",
+    "async function recordVerifiedMatch",
+  );
+  assert.match(duplicate, /claimSnapshot\.get\("uid"\) !== uid/);
+  assert.match(duplicate, /claimSnapshot\.get\("outcome"\) !== requestedOutcome/);
+  assert.match(
+    duplicate,
+    /firestore\.getAll\(\s*economyProgressRef\(uid\),\s*achievementProfileRef\(uid\),\s*marketStatsRef\(uid\)/,
+  );
+  assert.doesNotMatch(duplicate, /ensureAchievementState\(/);
+  assert.match(duplicate, /reconcileSoloProfileProjection\(uid, \{ maximumJobs: 5 \}\)/);
+  assert.match(
+    duplicate,
+    /const currentClaim = await claimSnapshot\.ref\.get\(\)[\s\S]*?projectionActivated = currentClaim\.exists[\s\S]*?currentProjectionStatus === "pending" \|\| currentProjectionStatus === "complete"/,
+  );
+  assert.ok(
+    duplicate.indexOf("const currentClaim = await claimSnapshot.ref.get()")
+      > duplicate.indexOf("reconcileSoloProfileProjection(uid, { maximumJobs: 5 })"),
+  );
+  for (const responseField of [
+    "acceptedFinalizationVersion",
+    "profileProjectionPending",
+    "resultToken",
+    "periodRewards",
+    "dailyPlay",
+    "newlyUnlocked",
+    "achievements",
+  ]) {
+    assert.match(duplicate, new RegExp(`\\b${responseField}\\b`));
+  }
+
+  const recording = sourceBetween(
+    server,
+    "async function recordVerifiedMatch",
+    "function validatePostMatchTipRequest",
+  );
+  const claimRead = recording.indexOf("existingClaimSnapshot");
+  const roomFinalization = recording.indexOf("finalizeSoloRoomResult");
+  const outcomeValidation = recording.indexOf("outcome !== requestedOutcome");
+  const scoreValidation = recording.indexOf("activities[participantUid].scores < 1");
+  const achievementFanOut = recording.indexOf("ensureAchievementState(participantUid)");
+  assert.ok(claimRead >= 0);
+  assert.ok(claimRead > roomFinalization);
+  assert.ok(claimRead > outcomeValidation);
+  assert.ok(claimRead > scoreValidation);
+  assert.ok(achievementFanOut > claimRead);
+  assert.match(recording, /return duplicateVerifiedMatchResult\(uid/);
+});
+
 test("projection retries fence stale workers and schedule pending queues fairly", () => {
   const server = read("functions/index.js");
   const reconciliation = sourceBetween(

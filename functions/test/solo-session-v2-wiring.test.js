@@ -63,6 +63,19 @@ test("V2 matching uses the bounded server index and point-validates canonical V2
   assert.match(matcher, /waitingSoloSessionV2ReservationEntry\(reservedHost\)/);
   assert.match(matcher, /readSoloSessionV2MaterializationFence/);
   assert.match(matcher, /cleanupSoloSessionV2Match/);
+  const insufficientQueueReturn = matcher.indexOf(
+    "if (!boundedQueue[uid] || Object.keys(boundedQueue).length < 2)",
+  );
+  const reunionRolloutRead = matcher.indexOf("readSoloFamiliarReunionEnabled()");
+  assert.ok(insufficientQueueReturn >= 0);
+  assert.ok(reunionRolloutRead > insufficientQueueReturn);
+  assert.match(
+    matcher,
+    /reunionEnabled\s*\? soloFamiliarPairRef\(selection\.host\.uid, selection\.candidate\.uid\)\.get\(\)/,
+  );
+  assert.match(matcher, /const canonicalFamiliarPairs = reunionEnabled/);
+  assert.doesNotMatch(matcher, /rollout\.reunionEnabled/);
+  assert.doesNotMatch(matcher, /loadSoloFamiliarRollout\(\)/);
 });
 
 test("stale legacy active pointers require a grace observation and exact-value cleanup", () => {

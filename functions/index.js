@@ -283,6 +283,7 @@ const {
   SOLO_MATCH_PERMIT_TTL_MS,
   canReactivateSoloFamiliarPair,
   isValidSoloServerQueueEntry,
+  loadSoloFamiliarReunionEnabled,
   publicSoloFamiliarBlockEntry,
   publicSoloFamiliarBookEntry,
   selectSoloServerMatch,
@@ -1455,7 +1456,9 @@ function activeServerRankingPeriodInfos(timestamp = Date.now()) {
       key,
       endsAt: periodEndsAt(period, key),
     };
-  }).filter(({ period, key }) => isServerRankingPeriod(period, key));
+  }).filter(({ period, key }) => (
+    isServerRankingPeriod(period, key) && !isCrownCircuitPeriod(period, key)
+  ));
 }
 
 function calculateServerRankingRating(currentRating, opponentRating, outcome) {
@@ -5491,6 +5494,95 @@ function requestedSoloFinalizationVersion(data) {
   return 2;
 }
 
+async function duplicateVerifiedMatchResult(uid, {
+  mode,
+  roomId,
+  requestedOutcome,
+  finalizationVersion,
+  claimSnapshot,
+  now = Date.now(),
+}) {
+  if (!claimSnapshot.exists
+      || claimSnapshot.get("uid") !== uid
+      || claimSnapshot.get("mode") !== mode
+      || claimSnapshot.get("roomId") !== roomId
+      || claimSnapshot.get("outcome") !== requestedOutcome) {
+    throw new HttpsError("failed-precondition", "保存済みの対戦記録と再確認内容が一致しません。");
+  }
+  const [progressSnapshot, profileSnapshot, marketSnapshot] = await firestore.getAll(
+    economyProgressRef(uid),
+    achievementProfileRef(uid),
+    marketStatsRef(uid),
+  );
+  const progress = normalizeEconomyProgress(progressSnapshot.data());
+  const profile = normalizeAchievementProfile(profileSnapshot.data());
+  const marketStats = normalizeMarketStats(marketSnapshot.data());
+  await bestEffort("recordVerifiedMatch duplicate", [
+    mirrorEconomyProgress(uid, progress),
+    syncCreatorCardGrowth(uid, { progress, profile, marketStats }),
+  ]);
+
+  const projectionStatus = claimSnapshot.get("profileProjectionStatus");
+  let projectionActivated = mode === "solo"
+    && claimSnapshot.get("profileProjectionVersion") === SOLO_PROFILE_PROJECTION_VERSION
+    && (projectionStatus === "pending" || projectionStatus === "complete");
+  let projectionResult = null;
+  if (projectionActivated) {
+    try {
+      projectionResult = await reconcileSoloProfileProjection(uid, { maximumJobs: 5 });
+    } catch (error) {
+      console.warn("recordVerifiedMatch duplicate profile projection deferred", {
+        category: error instanceof TypeError ? "validation" : "internal",
+      });
+      projectionResult = {
+        ...await readSoloProjectionProfiles(uid).catch(() => ({
+          soloProfile: null,
+          overallProfile: null,
+        })),
+        pending: true,
+        processed: 0,
+      };
+    }
+  }
+  if (mode === "solo" && projectionActivated) {
+    const currentClaim = await claimSnapshot.ref.get();
+    const currentProjectionStatus = currentClaim.get("profileProjectionStatus");
+    projectionActivated = currentClaim.exists
+      && currentClaim.get("uid") === uid
+      && currentClaim.get("mode") === mode
+      && currentClaim.get("roomId") === roomId
+      && currentClaim.get("outcome") === requestedOutcome
+      && currentClaim.get("profileProjectionVersion") === SOLO_PROFILE_PROJECTION_VERSION
+      && (currentProjectionStatus === "pending" || currentProjectionStatus === "complete");
+  }
+  const newlyUnlocked = sanitizeAchievementIds(
+    claimSnapshot.get("achievementIds"),
+    { maximum: 100 },
+  );
+  return {
+    outcome: "duplicate",
+    ...(mode === "solo" ? { acceptedFinalizationVersion: finalizationVersion } : {}),
+    ...(projectionActivated ? {
+      profileProjectionMode: "server-v2",
+      profileProjectionPending: projectionResult?.pending !== false,
+      soloProfile: projectionResult?.soloProfile || null,
+      overallProfile: projectionResult?.overallProfile || null,
+    } : {}),
+    resultToken: eventId(`${uid}:${mode}:${roomId}`),
+    daily: progress.daily,
+    periodRewards: progress.periodRewards,
+    dailyPlay: dailyPlayRewardSummary(progress.periodRewards, progress.dailyPlayClaims, now),
+    serverRanking: null,
+    crownRun: null,
+    newlyUnlocked,
+    achievements: publicAchievementProfile(
+      profile,
+      progress.achievementStats,
+      marketSnapshot.data(),
+    ),
+  };
+}
+
 async function recordVerifiedMatch(uid, data) {
   const mode = cleanText(data?.mode, 16);
   const requestedOutcome = cleanText(data?.outcome, 16);
@@ -5550,6 +5642,17 @@ async function recordVerifiedMatch(uid, data) {
     throw new HttpsError("failed-precondition", "全参加者が採点を完了した対戦であることを確認できませんでした。");
   }
 
+  const existingClaimSnapshot = await verifiedMatchClaimRef(uid, mode, roomId).get();
+  if (existingClaimSnapshot.exists) {
+    return duplicateVerifiedMatchResult(uid, {
+      mode,
+      roomId,
+      requestedOutcome,
+      finalizationVersion,
+      claimSnapshot: existingClaimSnapshot,
+      now,
+    });
+  }
   await Promise.all(participants.map((participantUid) => ensureAchievementState(participantUid)));
   const progressRefs = participants.map((participantUid) => economyProgressRef(participantUid));
   const profileRefs = participants.map((participantUid) => achievementProfileRef(participantUid));
@@ -5579,9 +5682,7 @@ async function recordVerifiedMatch(uid, data) {
   }));
   const rankingEligibleMode = ACTIVE_SERVER_RANKING_MODES.includes(mode);
   const serverPeriodInfos = rankingEligibleMode
-    ? activeServerRankingPeriodInfos(now).filter(({ period, key }) => (
-      !isCrownCircuitPeriod(period, key)
-    ))
+    ? activeServerRankingPeriodInfos(now)
     : [];
   const crownDailyKey = periodKey("daily", now);
   const crownRunEligible = rankingEligibleMode
@@ -6384,6 +6485,17 @@ async function loadSoloFamiliarRollout() {
     cleanText(configSnapshot.get("stage"), 32),
     serverAuthoritySnapshot.val() === true,
   );
+}
+
+async function readSoloFamiliarReunionEnabled() {
+  return loadSoloFamiliarReunionEnabled({
+    loadServerAuthority: async () => (
+      await realtime.ref("online/config/soloServerMatchmaking").get()
+    ).val(),
+    loadRolloutStage: async () => (
+      await soloFamiliarRolloutConfigRef().get()
+    ).get("stage"),
+  });
 }
 
 async function loadSoloFamiliarBook(uid, rollout = null) {
@@ -7449,8 +7561,7 @@ async function materializeSoloHostedMatch(roomId, permit) {
 }
 
 async function trySoloServerMatch(uid) {
-  const rollout = await loadSoloFamiliarRollout();
-  if (!rollout.reunionEnabled) return { outcome: "disabled" };
+  if (!await readSoloFamiliarReunionEnabled()) return { outcome: "disabled" };
   const requestStartedAt = Date.now();
   const [ownV2ClaimSnapshot, ownV2Room] = await Promise.all([
     soloSessionClaimRef(uid).get(),
@@ -7705,8 +7816,7 @@ async function confirmSoloFamiliarReunionFromRoom(
 }
 
 async function confirmSoloFamiliarReunion(uid, data) {
-  const rollout = await loadSoloFamiliarRollout();
-  if (!rollout.reunionEnabled) return { confirmed: false };
+  if (!await readSoloFamiliarReunionEnabled()) return { confirmed: false };
   const roomId = cleanText(data?.roomId, 80);
   if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) {
     throw new HttpsError("invalid-argument", "再会ルームを確認してください。");
@@ -9192,10 +9302,7 @@ function waitingSoloSessionV2ReservationEntry(value) {
 
 async function trySoloSessionV2Match(uid, data) {
   const now = Date.now();
-  const [claimSnapshot, rollout] = await Promise.all([
-    soloSessionClaimRef(uid).get(),
-    loadSoloFamiliarRollout(),
-  ]);
+  const claimSnapshot = await soloSessionClaimRef(uid).get();
   const claim = normalizeClaim(claimSnapshot.val());
   if (!claim
       || claim.sessionId !== data.sessionId
@@ -9245,8 +9352,9 @@ async function trySoloSessionV2Match(uid, data) {
   if (!boundedQueue[uid] || Object.keys(boundedQueue).length < 2) {
     return { outcome: "waiting" };
   }
+  const reunionEnabled = await readSoloFamiliarReunionEnabled();
   const [familiarPairs, blockedPairIds] = await Promise.all([
-    rollout.reunionEnabled
+    reunionEnabled
       ? querySoloPairDocuments("soloFamiliarPairs", uid, true)
       : Promise.resolve([]),
     blockedSoloPairIdsForQueue(uid, boundedQueue, selectionNow),
@@ -9334,7 +9442,7 @@ async function trySoloSessionV2Match(uid, data) {
     liveLegacySoloRoom(selection.host.uid),
     liveLegacySoloRoom(selection.candidate.uid),
     soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
-    rollout.reunionEnabled
+    reunionEnabled
       ? soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get()
       : Promise.resolve(null),
   ]);
@@ -9372,7 +9480,7 @@ async function trySoloSessionV2Match(uid, data) {
   const pairId = soloFamiliarPairId(selection.host.uid, selection.candidate.uid);
   const canonicalBlockedPairIds = blockedPairIds.filter((id) => id !== pairId);
   if (finalBlockSnapshot.exists) canonicalBlockedPairIds.push(pairId);
-  const canonicalFamiliarPairs = rollout.reunionEnabled
+  const canonicalFamiliarPairs = reunionEnabled
     ? canonicalSoloSessionV2FamiliarPairs(
       familiarPairs,
       selection.host.uid,

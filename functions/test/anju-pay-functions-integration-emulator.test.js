@@ -191,7 +191,7 @@ if (!RUN_REQUESTED) {
     before(async () => {
       adminApp = initializeAdminApp({
         projectId: target.projectId,
-        databaseURL: "https://gazostadium-default-rtdb.asia-southeast1.firebasedatabase.app",
+        databaseURL: `https://${target.projectId}-default-rtdb.firebaseio.com`,
       }, `anju-pay-admin-${suiteId}`);
       firestore = getFirestore(adminApp);
       realtime = getDatabase(adminApp);
@@ -610,7 +610,7 @@ if (!RUN_REQUESTED) {
       assert.equal(failedProjectionRetry.profileProjectionMode, undefined);
     });
 
-    test("a projection quarantined during the same request never suppresses client recovery", async () => {
+    test("a projection quarantined during recording or duplicate retry never suppresses client recovery", async () => {
       const host = await createCaller("solo-projection-quarantine-host");
       const guest = await createCaller("solo-projection-quarantine-guest");
       const roomId = eventId(`${suiteId}:solo-projection-quarantine`).slice(0, 20);
@@ -682,6 +682,40 @@ if (!RUN_REQUESTED) {
       assert.equal(claim.get("profileProjectionStatus"), "failed");
       assert.equal(queue.get("pending"), false);
       assert.equal(jobs.empty, true);
+
+      await Promise.all([
+        claim.ref.update({ profileProjectionStatus: "pending" }),
+        queue.ref.set({ pending: true, updatedAt: Date.now() }, { merge: true }),
+        queue.ref.collection("jobs").doc(hostToken).set({
+          profileProjectionVersion: 2,
+          uid: host.uid,
+          roomId,
+          resultToken: hostToken,
+          outcome: "win",
+          name: "HOST",
+          pursuitLine: "HOST LINE",
+          opponentRating: 1_000,
+          projectionSequence: claim.get("projectionSequence"),
+          createdAt: claim.get("createdAt"),
+        }),
+      ]);
+      const duplicate = await invoke(host.economyAction, {
+        action: "record_match",
+        mode: "solo",
+        outcome: "win",
+        roomId,
+        finalizationVersion: 2,
+      });
+      const [claimAfterRetry, queueAfterRetry, jobsAfterRetry] = await Promise.all([
+        claim.ref.get(),
+        queue.ref.get(),
+        queue.ref.collection("jobs").get(),
+      ]);
+      assert.equal(duplicate.outcome, "duplicate");
+      assert.equal(duplicate.profileProjectionMode, undefined);
+      assert.equal(claimAfterRetry.get("profileProjectionStatus"), "failed");
+      assert.equal(queueAfterRetry.get("pending"), false);
+      assert.equal(jobsAfterRetry.empty, true);
     });
 
     test("normal 1on1 profile projection only updates the marked participant in a mixed V2 room", async () => {
