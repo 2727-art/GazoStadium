@@ -10,6 +10,7 @@ const vm = require("node:vm");
 const root = path.resolve(__dirname, "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
 const strategySource = read("strategy.js");
+const strategyCss = read("strategy.css");
 const indexHtml = read("index.html");
 
 function namedFunction(source, name) {
@@ -123,6 +124,56 @@ test("ROUND 3 offers an independent secret choice while ROUND 1/2 keep voluntary
   assert.match(earlyGuess, /相手が看破を宣言しました/u);
   assert.match(bindings, /input\[name="weaknessChoice"\]/u);
   assert.match(bindings, /#strategyWeaknessChoiceForm[^\n]*lockWeaknessChoice/u);
+});
+
+test("ROUND 3 secret choice shows the local reserve and the actual available chain cap", () => {
+  const sandbox = {
+    WEAKNESS_SCOUT_ROUND: 3,
+    WEAKNESS_MISS_DAMAGE: 5,
+    MAX_WEAKNESS_CHAIN: 3,
+    state: {
+      playerIndex: 0,
+      selectedWeaknessChoice: "",
+      selectedWeaknessGuess: null,
+      players: [
+        { name: "自分", reserveCount: 5, reserveUsed: 0 },
+        { name: "相手", reserveCount: 99, reserveUsed: 0, clues: ["候補A", "候補B", "候補C"] },
+      ],
+    },
+    renderBattleHud: () => "",
+    escapeHtml: (value) => String(value),
+  };
+  vm.runInNewContext(
+    [
+      namedFunction(strategySource, "renderWeaknessChoice"),
+      namedFunction(strategySource, "getLocalPlayer"),
+      namedFunction(strategySource, "getOpponent"),
+      namedFunction(strategySource, "remainingReserve"),
+      "this.renderForTest = renderWeaknessChoice;",
+    ].join("\n"),
+    sandbox,
+  );
+
+  const withFiveCards = sandbox.renderForTest();
+  assert.match(withFiveCards, /YOUR RESERVE[\s\S]*?>5<span>枚<\/span>/u);
+  assert.match(withFiveCards, /SUCCESS CHAIN[\s\S]*?>3<span>CHAIN<\/span>/u);
+  assert.match(withFiveCards, /あなたの残弾（残りリザーブ）/u);
+  assert.match(withFiveCards, /看破成功時の最大CHAIN数/u);
+  assert.match(withFiveCards, /成功すれば最大3枚の連続追撃/u);
+  assert.doesNotMatch(withFiveCards, />99<span>枚<\/span>/u, "the opponent reserve is not disclosed");
+
+  sandbox.state.players[0].reserveUsed = 3;
+  const withTwoCards = sandbox.renderForTest();
+  assert.match(withTwoCards, /YOUR RESERVE[\s\S]*?>2<span>枚<\/span>/u);
+  assert.match(withTwoCards, /SUCCESS CHAIN[\s\S]*?>2<span>CHAIN<\/span>/u);
+  assert.match(withTwoCards, /成功すれば最大2枚の連続追撃/u);
+
+  sandbox.state.players[0].reserveUsed = 5;
+  const exhausted = sandbox.renderForTest();
+  assert.match(exhausted, /SUCCESS CHAIN[\s\S]*?>0<span>CHAIN<\/span>/u);
+  assert.match(exhausted, /看破に成功しても連続追撃はできません/u);
+  assert.match(exhausted, /成功してもリザーブ追撃なし/u);
+  assert.match(strategyCss, /\.strategy-choice-readiness\s*\{/u);
 });
 
 test("protocol version 2 fences new secret-choice clients from legacy matchmaking", () => {
@@ -648,9 +699,13 @@ test("both pass advances through zero-card chains without publishing either true
   assert.match(result, /回答なし \/ ペナルティなし/u);
 });
 
-test("Strategy browser asset uses the ROUND 3 secret-choice cache marker", () => {
+test("Strategy browser assets use the ROUND 3 chain-readiness cache marker", () => {
   assert.match(
     indexHtml,
-    /strategy\.js\?v=[^"]*strategy-round3-secret-choice-v1[^"]*"/u,
+    /strategy\.js\?v=[^"]*strategy-round3-chain-readiness-v1[^"]*"/u,
+  );
+  assert.match(
+    indexHtml,
+    /strategy\.css\?v=[^"]*strategy-round3-chain-readiness-v1[^"]*"/u,
   );
 });

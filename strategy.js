@@ -1384,15 +1384,24 @@ function renderWeaknessGuess() {
 
 function renderWeaknessChoice() {
   const opponent = getOpponent();
+  const reserveRemaining = remainingReserve(getLocalPlayer());
+  const availableChain = Math.min(MAX_WEAKNESS_CHAIN, reserveRemaining);
   const guessing = state.selectedWeaknessChoice === "guess";
   const canLock = state.selectedWeaknessChoice === "pass"
     || (guessing && Number.isInteger(state.selectedWeaknessGuess));
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">ROUND ${WEAKNESS_SCOUT_ROUND} / SECRET DECISION</span>
     <h1>看破するか、見送るか</h1><p>双方が秘密に選び、両方の封印が揃ってから公開・照合します。相手の選択を見ても変更することはできません。</p></div>
     <form class="strategy-weakness-choice" id="strategyWeaknessChoiceForm">
+      <aside class="strategy-choice-readiness" aria-label="あなたの連続追撃準備状況">
+        <div><small>YOUR RESERVE</small><strong>${reserveRemaining}<span>枚</span></strong><em>あなたの残弾（残りリザーブ）</em></div>
+        <div><small>SUCCESS CHAIN</small><strong>${availableChain}<span>CHAIN</span></strong><em>看破成功時の最大CHAIN数</em></div>
+        <p>${availableChain > 0
+          ? `看破成功時は、未使用のリザーブから最大${availableChain}枚を選んで一気に追撃できます。`
+          : "残りリザーブがないため、看破に成功しても連続追撃はできません。"}</p>
+      </aside>
       <fieldset class="strategy-choice-options"><legend>今回の行動</legend>
         <label class="strategy-choice-card is-guess"><input type="radio" name="weaknessChoice" value="guess" ${guessing ? "checked" : ""} />
-          <span><small>RISK / REWARD</small><strong>看破する</strong><em>成功すれば最大3連続追撃。誤答すると自分に${WEAKNESS_MISS_DAMAGE}ダメージ</em></span></label>
+          <span><small>RISK / REWARD</small><strong>看破する</strong><em>${availableChain > 0 ? `成功すれば最大${availableChain}枚の連続追撃。` : "成功してもリザーブ追撃なし。"}誤答すると自分に${WEAKNESS_MISS_DAMAGE}ダメージ</em></span></label>
         <label class="strategy-choice-card is-pass"><input type="radio" name="weaknessChoice" value="pass" ${state.selectedWeaknessChoice === "pass" ? "checked" : ""} />
           <span><small>NO PENALTY</small><strong>見送る</strong><em>回答せず、失敗ダメージも受けない。今回の看破機会を終了</em></span></label>
       </fieldset>
