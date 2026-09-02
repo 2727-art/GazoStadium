@@ -127,7 +127,7 @@ test("an active ownership mismatch stops only the lobby presence", () => {
 
 test("finish and withdrawal stop lobby presence without ending the room or review", () => {
   const finishMatch = section("async function finishMatch()", "function calculateRating(");
-  const resultWrite = finishMatch.indexOf("await update(ref(database");
+  const resultWrite = finishMatch.indexOf("await ensureStrategyResultClaim(targetState, outcome);");
   const publicCleanup = finishMatch.indexOf("cleanupPublicPresence().catch(() => {});");
   const stats = finishMatch.indexOf("await commitStrategyStats();");
 

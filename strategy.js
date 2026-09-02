@@ -85,6 +85,9 @@ import {
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
+const STRATEGY_PROTOCOL_VERSION = 2;
+const STRATEGY_QUEUE_WAITING_STATE = "waiting-v2";
+const STRATEGY_QUEUE_OFFERING_STATE = "offering-v2";
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
 const EXTRA_REQUESTS = 2;
@@ -153,7 +156,8 @@ const ANONYMOUS_CHAT_SCREENS = new Set(["intro", "waitingDecision", "deck", "wai
 const IDENTIFIED_CHAT_SCREENS = new Set([
   "identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating",
   "actionSelect", "waitingActionPick", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "roundResult", "waitingContinue",
-  "weaknessGuess", "waitingWeaknessGuess", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue",
+  "weaknessGuess", "waitingWeaknessGuess", "weaknessChoice", "waitingWeaknessChoice", "waitingWeaknessChoiceReveal", "waitingFinalWeaknessReveal",
+  "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue",
   "review",
 ]);
 
@@ -245,11 +249,20 @@ function createState() {
     selectedReaction: "normal",
     selectedWeaknessGuess: null,
     weaknessTriggerRound: 0,
+    selectedWeaknessChoice: "",
+    weaknessChoiceSalt: "",
+    weaknessChoiceDigest: "",
+    weaknessChoiceLocked: false,
+    weaknessChoiceCommitSending: false,
+    weaknessChoiceCommitUncertain: false,
+    weaknessChoiceRevealSending: false,
+    weaknessChoicesVerified: false,
     selectedWeaknessChainIds: [],
     localWeaknessChainCards: [],
     localDeckReadyCommitted: false,
     weaknessChainLocked: false,
     weaknessRevealsVerified: false,
+    finalWeaknessRevealsVerified: false,
     weaknessIntegrityFailed: false,
     weaknessChainApplied: false,
     weaknessPhaseComplete: false,
@@ -321,7 +334,9 @@ function createState() {
     publicPresenceDisconnect: null,
     opponentOnline: true,
     destroyedByOpponent: false,
+    resultClaimCommitted: false,
     statsCommitted: false,
+    finalizationBusy: false,
     reacting: false,
     reactAgain: false,
     errorMessage: "",
@@ -360,6 +375,51 @@ function randomHex(bytes = 16) {
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function normalizeWeaknessChoice(value) {
+  const choice = value?.choice === "guess" || value?.choice === "pass" ? value.choice : "";
+  const guessIndex = Number(value?.guessIndex);
+  const round = Number(value?.round);
+  const salt = String(value?.salt || "");
+  if (!choice || round !== WEAKNESS_SCOUT_ROUND || !/^[a-f0-9]{32}$/.test(salt)) return null;
+  if (choice === "pass" && guessIndex !== -1) return null;
+  if (choice === "guess" && (!Number.isInteger(guessIndex) || guessIndex < 0 || guessIndex > 2)) return null;
+  return { choice, guessIndex, round, salt };
+}
+
+function weaknessChoiceCommitMaterial(roomId, uid, choice) {
+  return `${String(roomId)}:${String(uid)}:${choice.round}:${choice.choice}:${choice.guessIndex}:${choice.salt}`;
+}
+
+async function prepareWeaknessChoiceCommit(choice, guessIndex, targetState = state) {
+  const normalizedChoice = choice === "guess" ? "guess" : choice === "pass" ? "pass" : "";
+  const normalizedGuess = normalizedChoice === "pass" ? -1 : Number(guessIndex);
+  if (!normalizedChoice || (normalizedChoice === "guess" && (!Number.isInteger(normalizedGuess) || normalizedGuess < 0 || normalizedGuess > 2))) {
+    throw new Error("看破するか見送るかを選んでください。");
+  }
+  if (targetState.selectedWeaknessChoice === normalizedChoice
+      && (normalizedChoice === "pass" || targetState.selectedWeaknessGuess === normalizedGuess)
+      && /^[a-f0-9]{32}$/.test(targetState.weaknessChoiceSalt)
+      && /^[a-f0-9]{64}$/.test(targetState.weaknessChoiceDigest)) {
+    return {
+      reveal: {
+        choice: normalizedChoice,
+        guessIndex: normalizedGuess,
+        round: WEAKNESS_SCOUT_ROUND,
+        salt: targetState.weaknessChoiceSalt,
+      },
+      digest: targetState.weaknessChoiceDigest,
+    };
+  }
+  const reveal = {
+    choice: normalizedChoice,
+    guessIndex: normalizedGuess,
+    round: WEAKNESS_SCOUT_ROUND,
+    salt: randomHex(),
+  };
+  const digest = await sha256Hex(weaknessChoiceCommitMaterial(targetState.roomId, targetState.uid, reveal));
+  return { reveal, digest };
 }
 
 async function processStrategyAudioFile(file) {
@@ -681,6 +741,7 @@ function runtimePlayer(source) {
     weaknessCommit: /^[a-f0-9]{64}$/.test(String(source?.weaknessCommit || "")) ? String(source.weaknessCommit) : "",
     weaknessIndex: null,
     weaknessGuess: null,
+    weaknessChoice: "",
     weaknessCorrect: false,
     weaknessChainCount: 0,
     overkill: 0,
@@ -983,6 +1044,17 @@ function render() {
     waitingContinue: () => renderWaiting("ROUND READY", "相手の準備を待っています", "両者が進むと次のラウンドを開始します。"),
     weaknessGuess: renderWeaknessGuess,
     waitingWeaknessGuess: () => renderWaiting("WEAKNESS GUESS LOCKED", "相手の弱点回答を待っています", "両者の回答が確定するまで答えは公開されません。"),
+    weaknessChoice: renderWeaknessChoice,
+    waitingWeaknessChoice: () => state.weaknessChoiceCommitUncertain
+      ? renderWaiting(
+        "SECRET CHOICE SEALED",
+        "封印の送信結果を確認できません",
+        "選択内容は変更せず保護しています。同じ封印だけを再送すると、二重登録せずに確認できます。",
+        `<button class="button button-primary button-small" id="strategyRetryWeaknessChoiceCommit" type="button" ${state.weaknessChoiceCommitSending ? "disabled" : ""}>同じ封印を再送</button>`,
+      )
+      : renderWaiting("SECRET CHOICE LOCKED", "相手の秘密選択を待っています", "看破か見送りか、弱点候補のどれを選んだかは、両者が封印するまで公開されません。"),
+    waitingWeaknessChoiceReveal: () => renderWaiting("SEALED CHOICES REVEAL", "秘密選択を照合しています", "両者の封印が揃いました。選択が改変されていないことを確認しています。"),
+    waitingFinalWeaknessReveal: () => renderWaiting("FINAL WEAKNESS CHECK", "最後の答え合わせを待っています", "対戦中に伏せられていた弱点を、事前の封印と照合しています。"),
     weaknessChainSelect: renderWeaknessChainSelect,
     waitingWeaknessChain: () => renderWaiting("WEAKNESS CHECK", "連続追撃の準備を待っています", "看破に成功したプレイヤーは残りリザーブから最大3枚を選びます。"),
     waitingWeaknessChainImage: () => renderWaiting("PURSUIT CHAIN TRANSFER", "連続追撃画像を転送しています", `転送状況 ${state.transferProgress}%`),
@@ -1028,7 +1100,7 @@ function renderProfile() {
     <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
       <li><b>1</b><span>マッチング前にメイン5枚＋リザーブ5枚の実画像を準備します。サンプル補充はありません。</span></li>
       <li><b>2</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
-      <li><b>3</b><span>各ラウンド後に一度だけ看破を宣言でき、成功すると最大3連続追撃、失敗すると自分に5ダメージです。</span></li>
+      <li><b>3</b><span>ROUND 1・2は任意に早期看破。ROUND 3は双方が「看破／見送る」を秘密に選び、成功すると最大3連続追撃、誤答した本人だけ5ダメージです。</span></li>
       <li><b>4</b><span>双方同意後の品評会では対戦画像を見返し、追加画像・10秒音声・10秒短尺映像をP2Pで一時共有できます。</span></li>
     </ol><p class="privacy-note">対戦メディアはFirebaseへ保存しません。完成デッキは明示的にONにした時だけ、この端末のIndexedDBへ保存します。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
@@ -1179,7 +1251,7 @@ function renderWaitingDeck() {
 
 function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
-    <p>本当の弱点は、どちらかが看破を宣言して両者の回答が確定するまで秘密です。</p></div><div class="strategy-identity-grid">
+    <p>本当の弱点は秘密です。ROUND 1・2の早期看破、またはROUND 3の「看破／見送る」秘密選択で読み合います。</p></div><div class="strategy-identity-grid">
     ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
       ${localPlayer ? "" : renderOpponentAchievementShowcase({ context: "is-identity", label: "実績コレクション" })}<div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
     <button class="avatar-visibility-toggle strategy-avatar-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
@@ -1284,7 +1356,7 @@ function renderRoundResult() {
   if (!result) return renderWaiting("ROUND RESULT", "結果を集計しています", "両者の採点を同期しています。");
   const winner = result.powers[0] === result.powers[1] ? -1 : result.powers[0] > result.powers[1] ? 0 : 1;
   const nextLabel = state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete
-    ? "弱点看破フェイズへ"
+    ? "看破／見送るの秘密選択へ"
     : isGameOver() ? "最終結果を見る" : `ROUND ${state.round + 1}へ`;
   const canDeclare = !state.weaknessPhaseComplete && state.round < WEAKNESS_SCOUT_ROUND && !state.roomData?.weaknessGuesses?.[state.uid];
   return `<section class="screen strategy-screen">${renderBattleHud()}<div class="result-card strategy-round-result"><span class="eyebrow">ROUND ${state.round} RESULT</span>
@@ -1310,6 +1382,29 @@ function renderWeaknessGuess() {
     </fieldset><button class="button button-primary" type="submit" ${Number.isInteger(state.selectedWeaknessGuess) ? "" : "disabled"} id="strategyLockWeaknessGuess">この弱点で回答を封印</button></form></section>`;
 }
 
+function renderWeaknessChoice() {
+  const opponent = getOpponent();
+  const guessing = state.selectedWeaknessChoice === "guess";
+  const canLock = state.selectedWeaknessChoice === "pass"
+    || (guessing && Number.isInteger(state.selectedWeaknessGuess));
+  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">ROUND ${WEAKNESS_SCOUT_ROUND} / SECRET DECISION</span>
+    <h1>看破するか、見送るか</h1><p>双方が秘密に選び、両方の封印が揃ってから公開・照合します。相手の選択を見ても変更することはできません。</p></div>
+    <form class="strategy-weakness-choice" id="strategyWeaknessChoiceForm">
+      <fieldset class="strategy-choice-options"><legend>今回の行動</legend>
+        <label class="strategy-choice-card is-guess"><input type="radio" name="weaknessChoice" value="guess" ${guessing ? "checked" : ""} />
+          <span><small>RISK / REWARD</small><strong>看破する</strong><em>成功すれば最大3連続追撃。誤答すると自分に${WEAKNESS_MISS_DAMAGE}ダメージ</em></span></label>
+        <label class="strategy-choice-card is-pass"><input type="radio" name="weaknessChoice" value="pass" ${state.selectedWeaknessChoice === "pass" ? "checked" : ""} />
+          <span><small>NO PENALTY</small><strong>見送る</strong><em>回答せず、失敗ダメージも受けない。今回の看破機会を終了</em></span></label>
+      </fieldset>
+      ${guessing ? `<fieldset class="strategy-choice-candidates"><legend>${escapeHtml(opponent.name)}の弱点候補を1つ封印</legend>
+        ${opponent.clues.map((clue, index) => `<label class="strategy-guess-card"><input type="radio" name="weaknessGuess" value="${index}" ${state.selectedWeaknessGuess === index ? "checked" : ""} />
+          <span><small>CANDIDATE ${String(index + 1).padStart(2, "0")}</small><strong>${escapeHtml(clue)}</strong></span></label>`).join("")}
+      </fieldset>` : ""}
+      <p class="strategy-choice-security">確定時は選択内容を直接送らず、まず暗号学的ハッシュだけを共有します。</p>
+      <button class="button button-primary" type="submit" ${canLock ? "" : "disabled"} id="strategyLockWeaknessChoice">秘密選択を封印</button>
+    </form></section>`;
+}
+
 function renderWeaknessChainSelect() {
   const opponent = getOpponent();
   const available = state.reserve.filter((item) => !item.used);
@@ -1327,6 +1422,8 @@ function renderWeaknessChainResult() {
   if (!result) return renderWaiting("WEAKNESS BREAK", "連続追撃を集計しています", "弱点コミットと転送画像を照合しています。");
   const guessSummary = state.players.map((player, index) => {
     const opponent = state.players[1 - index];
+    if (player.weaknessChoice === "pass") return `<article class="passed"><small>${escapeHtml(player.name)}の秘密選択</small>
+      <strong>見送る</strong><span>回答なし / ペナルティなし</span></article>`;
     const guess = player.weaknessGuess;
     return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small>
       <strong>${escapeHtml(opponent.clues[guess] || "未回答")}</strong><span>${player.weaknessCorrect ? "看破成功" : `看破失敗 / 自分に${WEAKNESS_MISS_DAMAGE} DAMAGE`}</span></article>`;
@@ -1334,7 +1431,7 @@ function renderWeaknessChainResult() {
   const chains = state.players.map((player, owner) => {
     const count = result.chainCounts[owner];
     const defender = state.players[1 - owner];
-    if (!count) return `<article class="strategy-chain-lane is-empty"><h2>${escapeHtml(player.name)}</h2><p>${player.weaknessCorrect ? "リザーブ不足のため連続追撃なし" : "看破失敗のため連続追撃なし"}</p></article>`;
+    if (!count) return `<article class="strategy-chain-lane is-empty"><h2>${escapeHtml(player.name)}</h2><p>${player.weaknessChoice === "pass" ? "見送りのため連続追撃なし" : player.weaknessCorrect ? "リザーブ不足のため連続追撃なし" : "看破失敗のため連続追撃なし"}</p></article>`;
     const cards = Array.from({ length: count }, (_, index) => {
       const item = owner === state.playerIndex ? state.localWeaknessChainCards[index] : state.remoteImages.get(imageKey("weaknessChain", index));
       return `<div class="strategy-chain-card" data-chain-owner="${owner}" data-chain-slot="${index}" style="--chain-index:${index}">${renderBattleImage(item, player.name, `PURSUIT CHAIN ×${index + 1}`)}
@@ -1345,11 +1442,12 @@ function renderWeaknessChainResult() {
   }).join("");
   const matchEnds = state.players.some((player) => player.hp <= 0);
   const surrendered = (result.surrenders || []).some(Boolean);
-  const headline = surrendered ? "SURRENDER KO" : result.overkill.some((value) => value > 0) ? "OVERKILL" : state.players.some((player) => player.weaknessCorrect) ? "WEAKNESS BREAK" : "READ FAILED";
+  const bothPassed = state.players.every((player) => player.weaknessChoice === "pass");
+  const headline = surrendered ? "SURRENDER KO" : result.overkill.some((value) => value > 0) ? "OVERKILL" : state.players.some((player) => player.weaknessCorrect) ? "WEAKNESS BREAK" : bothPassed ? "BOTH PASSED" : "READ FAILED";
   const localCanSurrender = getOpponent().weaknessCorrect && getLocalPlayer().hp > 0 && !state.roomData?.weaknessSurrenders?.[state.uid];
   const nextRound = Number(state.weaknessTriggerRound || state.round) + 1;
   return `<section class="screen strategy-screen strategy-chain-result">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">WEAKNESS REVEAL</span><h1>${headline}</h1>
-    <p>事前登録したハッシュとの照合に成功しました。追撃音声は各カードで指定した3秒を順番に再生します。</p></div><div class="strategy-guess-summary">${guessSummary}</div>
+    <p>${bothPassed ? "両者の秘密選択を照合しました。本当の弱点は伏せたまま、次のラウンドへ進みます。" : "看破対象の弱点を事前登録したハッシュと照合しました。追撃音声は各カードで指定した3秒を順番に再生します。"}</p></div><div class="strategy-guess-summary">${guessSummary}</div>
     <div class="strategy-chain-result-grid">${chains}</div>
     ${state.players.some((player) => player.weaknessChainCount > 0) ? '<button class="button button-danger strategy-center-button strategy-chain-play" id="strategyPlayWeaknessChain">怒涛の連続追撃を再生</button>' : ""}
     ${localCanSurrender ? '<button class="button button-ghost strategy-center-button strategy-surrender" id="strategyWeaknessSurrender">参りました（敗北を認める）</button>' : ""}
@@ -1361,9 +1459,11 @@ function renderGameOver() {
   const winner = outcome.winnerIndex;
   const localPlayer = getLocalPlayer();
   const localResult = winner < 0 ? "DRAW" : winner === state.playerIndex ? "WIN" : "LOSE";
-  const weaknessDetail = localPlayer.weaknessCorrect
+  const weaknessDetail = localPlayer.weaknessChoice === "pass"
+    ? "弱点看破：見送り"
+    : localPlayer.weaknessCorrect
     ? `弱点看破成功 / ${Number(localPlayer.weaknessChainCount || 0)} CHAIN`
-    : "弱点看破：未達";
+    : "弱点看破：失敗";
   const finishDetail = Number(localPlayer.overkill || 0) > 0
     ? `OVERKILL +${Number(localPlayer.overkill || 0)}`
     : `残りHP ${Number(localPlayer.hp || 0)}`;
@@ -1374,6 +1474,7 @@ function renderGameOver() {
   }) || "";
   const weaknessReview = state.weaknessResult ? `<div class="strategy-guess-summary strategy-final-guess-summary">${state.players.map((player, index) => {
     const opponent = state.players[1 - index];
+    if (player.weaknessChoice === "pass") return `<article class="passed"><small>${escapeHtml(player.name)}の秘密選択</small><strong>見送る</strong><span>回答なし / ペナルティなし</span></article>`;
     return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small><strong>${escapeHtml(opponent.clues[player.weaknessGuess] || "未回答")}</strong><span>${player.weaknessCorrect ? `看破成功 / ${player.weaknessChainCount} CHAIN` : "看破失敗"}</span></article>`;
   }).join("")}</div>` : "";
   return `<section class="screen strategy-screen"><div class="gameover-card strategy-gameover"><span class="eyebrow">ONLINE STRATEGY 1ON1 COMPLETE</span>
@@ -1481,8 +1582,8 @@ function renderError() {
   return renderStatusCard("!", "CONNECTION ERROR", "戦略型1on1へ接続できません", state.errorMessage || "通信状態を確認してください。", "", `<button class="button button-primary" id="strategyRetry">もう一度試す</button><button class="button button-ghost" id="strategyErrorHome">タイトルへ戻る</button>`);
 }
 
-function renderWaiting(eyebrow, title, body) {
-  return `<section class="screen strategy-screen">${renderBattleHud()}${renderStatusCard("…", eyebrow, title, body, `<div class="matching-pulse"><i></i><i></i><i></i></div>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}</section>`;
+function renderWaiting(eyebrow, title, body, extraActions = "") {
+  return `<section class="screen strategy-screen">${renderBattleHud()}${renderStatusCard("…", eyebrow, title, body, `<div class="matching-pulse"><i></i><i></i><i></i></div>`, `${extraActions}<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}</section>`;
 }
 
 function renderStatusCard(icon, eyebrow, title, body, details = "", actions = "") {
@@ -1798,11 +1899,19 @@ function bindScreenEvents() {
   document.querySelector("#strategyLockActionRating")?.addEventListener("click", lockActionRating);
   document.querySelector("#strategyNextRound")?.addEventListener("click", continueRound);
   document.querySelector("#strategyDeclareWeakness")?.addEventListener("click", declareWeaknessGuess);
+  document.querySelectorAll('input[name="weaknessChoice"]').forEach((input) => input.addEventListener("change", () => {
+    state.selectedWeaknessChoice = input.value === "guess" ? "guess" : "pass";
+    if (state.selectedWeaknessChoice === "pass") state.selectedWeaknessGuess = null;
+    render();
+  }));
   document.querySelectorAll('input[name="weaknessGuess"]').forEach((input) => input.addEventListener("change", () => {
     state.selectedWeaknessGuess = Number(input.value);
     document.querySelector("#strategyLockWeaknessGuess")?.removeAttribute("disabled");
+    document.querySelector("#strategyLockWeaknessChoice")?.removeAttribute("disabled");
   }));
   document.querySelector("#strategyWeaknessGuessForm")?.addEventListener("submit", lockWeaknessGuess);
+  document.querySelector("#strategyWeaknessChoiceForm")?.addEventListener("submit", lockWeaknessChoice);
+  document.querySelector("#strategyRetryWeaknessChoiceCommit")?.addEventListener("click", retryWeaknessChoiceCommit);
   document.querySelectorAll("[data-weakness-chain-card]").forEach((button) => button.addEventListener("click", () => toggleWeaknessChainCard(button.dataset.weaknessChainCard)));
   document.querySelector("#strategyLockWeaknessChain")?.addEventListener("click", lockWeaknessChain);
   document.querySelector("#strategyWeaknessContinue")?.addEventListener("click", continueAfterWeaknessChain);
@@ -2763,12 +2872,13 @@ async function beginMatchmaking() {
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
   const queueEntryRef = ref(database, `online/strategyQueue/${state.uid}`);
   await set(queueEntryRef, {
+    protocolVersion: STRATEGY_PROTOCOL_VERSION,
     uid: state.uid,
     ratingPreference: state.imagePreference,
     allowPreferenceMismatch: false,
     joinedAt,
     lastSeen: joinedAt,
-    state: "waiting",
+    state: STRATEGY_QUEUE_WAITING_STATE,
   });
   if (!isCurrentStrategyMatchmakingGeneration(generation)) {
     await removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt);
@@ -2816,7 +2926,9 @@ async function beginMatchmaking() {
 
 function processIncomingOffers(snapshot) {
   const offers = snapshot.val() || {};
-  const newest = Object.entries(offers).sort(([, a], [, b]) => Number(b.createdAt) - Number(a.createdAt))[0];
+  const newest = Object.entries(offers)
+    .filter(([, offer]) => Number(offer?.protocolVersion) === STRATEGY_PROTOCOL_VERSION)
+    .sort(([, a], [, b]) => Number(b.createdAt) - Number(a.createdAt))[0];
   state.pendingIncomingOffer = newest ? { roomId: newest[0], offer: newest[1] } : null;
   drainIncomingOffers().catch(handleRecoverableError);
 }
@@ -2885,7 +2997,8 @@ async function attemptToHost(queue) {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
   const waiting = Object.values(queue).filter((entry) => (
     entry?.uid
-    && entry.state === "waiting"
+    && Number(entry.protocolVersion) === STRATEGY_PROTOCOL_VERSION
+    && entry.state === STRATEGY_QUEUE_WAITING_STATE
     && Number(entry.lastSeen) >= Date.now() - QUEUE_FRESH_MS
     && !state.activeUsers[entry.uid]
   ));
@@ -2907,6 +3020,7 @@ async function createOffer(candidate) {
     const localPlayerRecord = await playerRoomRecord(roomId);
     await set(ref(database, `online/strategyRooms/${roomId}/hostUid`), state.uid);
     await update(roomRef, {
+      protocolVersion: STRATEGY_PROTOCOL_VERSION,
       guestUid: candidate.uid,
       createdAt: serverTimestamp(),
       status: "offered",
@@ -2914,8 +3028,8 @@ async function createOffer(candidate) {
       [`members/${candidate.uid}`]: true,
       [`players/${state.uid}`]: localPlayerRecord,
     });
-    await set(ref(database, `online/strategyOffers/${candidate.uid}/${roomId}`), { roomId, fromUid: state.uid, toUid: candidate.uid, createdAt: Date.now() });
-    await update(ref(database, `online/strategyQueue/${state.uid}`), { state: "offering", roomId });
+    await set(ref(database, `online/strategyOffers/${candidate.uid}/${roomId}`), { protocolVersion: STRATEGY_PROTOCOL_VERSION, roomId, fromUid: state.uid, toUid: candidate.uid, createdAt: Date.now() });
+    await update(ref(database, `online/strategyQueue/${state.uid}`), { state: STRATEGY_QUEUE_OFFERING_STATE, roomId });
     state.pendingOffer = { roomId, targetUid: candidate.uid };
     const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
     const handleStatus = async (snapshot) => {
@@ -2941,7 +3055,7 @@ async function expireOffer(roomId, targetUid) {
   await Promise.allSettled([
     remove(ref(database, `online/strategyOffers/${targetUid}/${roomId}`)),
     remove(ref(database, `online/strategyActive/${state.uid}`)),
-    update(ref(database, `online/strategyQueue/${state.uid}`), { state: "waiting", roomId: null }),
+    update(ref(database, `online/strategyQueue/${state.uid}`), { state: STRATEGY_QUEUE_WAITING_STATE, roomId: null }),
   ]);
   state.pendingOffer = null;
 }
@@ -2956,14 +3070,15 @@ async function drainIncomingOffers() {
 }
 
 async function acceptOffer(roomId, offer) {
-  if (!active || state.screen !== "matching" || state.roomId || offer?.toUid !== state.uid) return;
+  if (!active || state.screen !== "matching" || state.roomId || offer?.toUid !== state.uid
+      || Number(offer?.protocolVersion) !== STRATEGY_PROTOCOL_VERSION) return;
   const generation = state.matchmakingGeneration;
   state.acceptingOffer = true;
   try {
     const roomRef = ref(database, `online/strategyRooms/${roomId}`);
     const snapshot = await get(roomRef);
     const room = snapshot.val();
-    if (!room || room.status !== "offered" || !room.members?.[state.uid] || room.hostUid !== offer.fromUid) {
+    if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || room.status !== "offered" || !room.members?.[state.uid] || room.hostUid !== offer.fromUid) {
       await remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`));
       return;
     }
@@ -2974,6 +3089,8 @@ async function acceptOffer(roomId, offer) {
     if (
       !ownQueueSnapshot.exists()
       || !hostQueueSnapshot.exists()
+      || Number(ownQueueSnapshot.val()?.protocolVersion) !== STRATEGY_PROTOCOL_VERSION
+      || Number(hostQueueSnapshot.val()?.protocolVersion) !== STRATEGY_PROTOCOL_VERSION
       || !Number.isFinite(getPreferenceMatchTier(ownQueueSnapshot.val(), hostQueueSnapshot.val()))
     ) {
       await remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`));
@@ -3012,7 +3129,7 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   window.clearTimeout(state.matchTimer);
   const snapshot = await get(ref(database, `online/strategyRooms/${roomId}`));
   const room = snapshot.val();
-  if (!room || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
+  if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
   state.roomId = roomId;
   state.roomData = room;
@@ -3034,6 +3151,7 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
 async function setupRoomListeners() {
   const base = `online/strategyRooms/${state.roomId}`;
   const ownedRoomId = state.roomId;
+  let databaseWasConnected = null;
   const activeDisconnect = onDisconnect(ref(database, `online/strategyActive/${state.uid}`));
   await activeDisconnect.remove();
   state.disconnectHandles.push(activeDisconnect);
@@ -3066,6 +3184,13 @@ async function setupRoomListeners() {
     state.serverTimeOffset = Number(snapshot.val() || 0);
     if (state.screen === "review") startReviewClock();
   }));
+  state.roomUnsubscribers.push(onValue(ref(database, ".info/connected"), (snapshot) => {
+    const connected = snapshot.val() === true;
+    const reconnected = databaseWasConnected === false && connected;
+    databaseWasConnected = connected;
+    if (!reconnected || !active || state.roomId !== ownedRoomId) return;
+    reactToRoomData().catch(handleRecoverableError);
+  }, handleRecoverableError));
   const chatQuery = query(ref(database, `online/strategyChats/${state.roomId}`), limitToLast(60));
   state.roomUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
     if (state.seenChatIds.has(snapshot.key)) return;
@@ -3407,7 +3532,7 @@ function finishIncomingProfileAvatar() {
   const blob = new Blob(transfer.chunks, { type: transfer.mime });
   state.remoteAvatar = { blob, url: URL.createObjectURL(blob) };
   state.incomingAvatarTransfer = null;
-  if (["identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating", "actionSelect", "waitingAction", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "result", "waitingContinue", "weaknessGuess", "waitingWeaknessGuess", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue"].includes(state.screen)) render();
+  if (["identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating", "actionSelect", "waitingAction", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "result", "waitingContinue", "weaknessGuess", "waitingWeaknessGuess", "weaknessChoice", "waitingWeaknessChoice", "waitingWeaknessChoiceReveal", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue", "waitingFinalWeaknessReveal"].includes(state.screen)) render();
 }
 
 function releaseRemoteAvatar() {
@@ -3962,20 +4087,76 @@ async function playWeaknessChainSequence() {
   }
 }
 
+async function verifyWeaknessCommitReveals(reveals, targetUids = state.players.map((player) => player.uid)) {
+  const targets = new Set(targetUids);
+  for (const player of state.players) {
+    if (!targets.has(player.uid)) continue;
+    const reveal = reveals[player.uid];
+    const weaknessIndex = Number(reveal?.weaknessIndex);
+    const salt = String(reveal?.salt || "");
+    if (!Number.isInteger(weaknessIndex) || weaknessIndex < 0 || weaknessIndex > 2 || !/^[a-f0-9]{32}$/.test(salt)) return false;
+    const expected = await sha256Hex(`${state.roomId}:${player.uid}:${weaknessIndex}:${salt}`);
+    if (!player.weaknessCommit || expected !== player.weaknessCommit) return false;
+    player.weaknessIndex = weaknessIndex;
+  }
+  return true;
+}
+
+async function verifyWeaknessChoiceReveals(commits, choices) {
+  const normalized = new Map();
+  for (const player of state.players) {
+    const choice = normalizeWeaknessChoice(choices[player.uid]);
+    const commit = commits[player.uid];
+    if (!choice
+        || Number(commit?.round) !== WEAKNESS_SCOUT_ROUND
+        || !/^[a-f0-9]{64}$/.test(String(commit?.digest || ""))) return false;
+    const expected = await sha256Hex(weaknessChoiceCommitMaterial(state.roomId, player.uid, choice));
+    if (expected !== commit.digest) return false;
+    normalized.set(player.uid, choice);
+  }
+  state.players.forEach((player) => {
+    const choice = normalized.get(player.uid);
+    player.weaknessChoice = choice.choice;
+    player.weaknessGuess = choice.choice === "guess" ? choice.guessIndex : null;
+    player.weaknessCorrect = false;
+  });
+  state.weaknessTriggerRound = WEAKNESS_SCOUT_ROUND;
+  return true;
+}
+
+function weaknessRevealTargetsForChoices(choices) {
+  return state.players.filter((player, targetIndex) => (
+    normalizeWeaknessChoice(choices[state.players[1 - targetIndex].uid])?.choice === "guess"
+  )).map((player) => player.uid);
+}
+
+async function verifySelectedWeaknessReveals(choices, reveals) {
+  const targets = weaknessRevealTargetsForChoices(choices);
+  if (!(await verifyWeaknessCommitReveals(reveals, targets))) return false;
+  state.players.forEach((player, attackerIndex) => {
+    const choice = normalizeWeaknessChoice(choices[player.uid]);
+    if (choice?.choice !== "guess") {
+      player.weaknessGuess = null;
+      player.weaknessCorrect = false;
+      return;
+    }
+    const opponent = state.players[1 - attackerIndex];
+    player.weaknessGuess = choice.guessIndex;
+    player.weaknessCorrect = choice.guessIndex === opponent.weaknessIndex;
+  });
+  return true;
+}
+
 async function verifyWeaknessReveals(guesses, reveals) {
   const guessRounds = state.players.map((player) => Number(guesses[player.uid]?.round));
   if (!guessRounds.every((round) => Number.isInteger(round) && round >= 1 && round <= WEAKNESS_SCOUT_ROUND && round === guessRounds[0])) return false;
   state.weaknessTriggerRound = guessRounds[0];
-  for (const player of state.players) {
-    const reveal = reveals[player.uid];
-    const expected = await sha256Hex(`${state.roomId}:${player.uid}:${Number(reveal?.weaknessIndex)}:${String(reveal?.salt || "")}`);
-    if (!player.weaknessCommit || expected !== player.weaknessCommit) return false;
-  }
+  if (!(await verifyWeaknessCommitReveals(reveals))) return false;
   state.players.forEach((player, index) => {
     const opponent = state.players[1 - index];
-    player.weaknessIndex = Number(reveals[player.uid].weaknessIndex);
+    player.weaknessChoice = "guess";
     player.weaknessGuess = Number(guesses[player.uid].guessIndex);
-    player.weaknessCorrect = player.weaknessGuess === Number(reveals[opponent.uid].weaknessIndex);
+    player.weaknessCorrect = player.weaknessGuess === opponent.weaknessIndex;
   });
   return true;
 }
@@ -4011,7 +4192,7 @@ function weaknessChainsValid(chains) {
     return Number.isInteger(count)
       && count >= 0
       && count <= Math.min(MAX_WEAKNESS_CHAIN, remainingReserve(player))
-      && (count === 0 || player.weaknessCorrect);
+      && (count === 0 || (player.weaknessChoice !== "pass" && player.weaknessCorrect));
   });
 }
 
@@ -4021,7 +4202,9 @@ function resolveWeaknessChain(guesses, chains) {
   const chainCounts = state.players.map((player) => Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[player.uid]?.count || 0))));
   const chainDamage = chainCounts.map((count) => WEAKNESS_CHAIN_DAMAGE.slice(0, count).reduce((sum, damage) => sum + damage, 0));
   const hpBefore = state.players.map((player) => player.hp);
-  const missDamage = state.players.map((player) => player.weaknessCorrect ? 0 : WEAKNESS_MISS_DAMAGE);
+  const missDamage = state.players.map((player) => (
+    player.weaknessChoice === "pass" || player.weaknessCorrect ? 0 : WEAKNESS_MISS_DAMAGE
+  ));
   const hpAfterMiss = hpBefore.map((hp, index) => Math.max(0, hp - missDamage[index]));
   const overkill = [0, 0];
   state.players.forEach((player, owner) => {
@@ -4037,7 +4220,8 @@ function resolveWeaknessChain(guesses, chains) {
   state.screen = "weaknessChainResult";
   const overkillTotal = overkill.reduce((sum, value) => sum + value, 0);
   const weaknessBroken = state.players.some((player) => player.weaknessCorrect);
-  setStrategyChrome(overkillTotal > 0 ? "OVERKILL" : weaknessBroken ? "WEAKNESS BREAK" : "WEAKNESS REVEAL");
+  const bothPassed = state.players.every((player) => player.weaknessChoice === "pass");
+  setStrategyChrome(overkillTotal > 0 ? "OVERKILL" : weaknessBroken ? "WEAKNESS BREAK" : bothPassed ? "BOTH PASSED" : "WEAKNESS REVEAL");
   if (weaknessBroken) triggerCriticalFx(overkillTotal > 0 ? `OVERKILL +${overkillTotal}` : "WEAKNESS BREAK");
   render();
 }
@@ -4060,9 +4244,49 @@ async function advanceAfterWeaknessPhase() {
   await reactToRoomData();
 }
 
-async function reactToWeaknessPhase() {
-  if (state.weaknessIntegrityFailed || state.weaknessPhaseComplete) return;
-  const guesses = state.roomData?.weaknessGuesses || {};
+async function publishLocalWeaknessReveal() {
+  await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`), {
+    weaknessIndex: state.weaknessIndex,
+    salt: state.weaknessSalt,
+    revealedAt: serverTimestamp(),
+  });
+}
+
+async function ensureLocalWeaknessReveal() {
+  const existing = state.roomData?.weaknessReveals?.[state.uid];
+  if (Number(existing?.weaknessIndex) === state.weaknessIndex && existing?.salt === state.weaknessSalt) return;
+  try {
+    await publishLocalWeaknessReveal();
+  } catch (error) {
+    const stored = await get(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`)).catch(() => null);
+    if (Number(stored?.val()?.weaknessIndex) === state.weaknessIndex && stored?.val()?.salt === state.weaknessSalt) return;
+    throw error;
+  }
+}
+
+function localWeaknessChoiceReveal() {
+  return normalizeWeaknessChoice({
+    choice: state.selectedWeaknessChoice,
+    guessIndex: state.selectedWeaknessChoice === "guess" ? state.selectedWeaknessGuess : -1,
+    round: WEAKNESS_SCOUT_ROUND,
+    salt: state.weaknessChoiceSalt,
+  });
+}
+
+function sameWeaknessChoice(first, second) {
+  const left = normalizeWeaknessChoice(first);
+  const right = normalizeWeaknessChoice(second);
+  return Boolean(left && right
+    && left.choice === right.choice
+    && left.guessIndex === right.guessIndex
+    && left.round === right.round
+    && left.salt === right.salt);
+}
+
+async function reactToLegacyWeaknessPhase(guesses) {
+  const targetState = state;
+  const roomId = state.roomId;
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
   const firstGuess = Object.values(guesses).find((guess) => Number.isInteger(Number(guess?.round)));
   if (firstGuess) state.weaknessTriggerRound = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(firstGuess.round)));
   if (!both(guesses)) {
@@ -4076,22 +4300,135 @@ async function reactToWeaknessPhase() {
   }
   const reveals = state.roomData?.weaknessReveals || {};
   if (!reveals[state.uid]) {
-    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`), {
-      weaknessIndex: state.weaknessIndex,
-      salt: state.weaknessSalt,
-      revealedAt: serverTimestamp(),
-    });
+    await ensureLocalWeaknessReveal();
     return;
   }
   if (!both(reveals)) return;
   if (!state.weaknessRevealsVerified) {
     const verified = await verifyWeaknessReveals(guesses, reveals);
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
     if (!verified) {
       await failWeaknessIntegrityCheck();
       return;
     }
-    state.weaknessRevealsVerified = true;
+    targetState.weaknessRevealsVerified = true;
   }
+
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  await reactToWeaknessChainResolution(guesses);
+}
+
+async function reactToRoundThreeWeaknessChoice() {
+  const targetState = state;
+  const roomId = state.roomId;
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  const commits = state.roomData?.weaknessChoiceCommits || {};
+  if (!commits[state.uid]) {
+    if (state.screen !== "weaknessChoice" && !state.weaknessChoiceLocked) {
+      state.selectedWeaknessChoice = "";
+      state.selectedWeaknessGuess = null;
+      state.screen = "weaknessChoice";
+      setStrategyChrome("ROUND 3 SECRET DECISION");
+      render();
+    }
+    return;
+  }
+  if (state.weaknessChoiceDigest && commits[state.uid]?.digest !== state.weaknessChoiceDigest) {
+    await failWeaknessIntegrityCheck("保存済みの秘密選択と端末の封印が一致しません。この対戦はノーコンテストです。");
+    return;
+  }
+  const commitWasUncertain = state.weaknessChoiceCommitUncertain;
+  state.weaknessChoiceCommitSending = false;
+  state.weaknessChoiceCommitUncertain = false;
+  state.weaknessChoiceLocked = true;
+  if (!both(commits)) {
+    if (state.screen !== "waitingWeaknessChoice" || commitWasUncertain) {
+      state.screen = "waitingWeaknessChoice";
+      setStrategyChrome("SECRET CHOICE LOCKED");
+      render();
+    }
+    return;
+  }
+
+  const choices = state.roomData?.weaknessChoices || {};
+  if (!choices[state.uid]) {
+    if (state.weaknessChoiceRevealSending) return;
+    const localChoice = localWeaknessChoiceReveal();
+    if (!localChoice || commits[state.uid]?.digest !== state.weaknessChoiceDigest) {
+      await failWeaknessIntegrityCheck("秘密選択の封印を復元できませんでした。この対戦はノーコンテストです。");
+      return;
+    }
+    state.weaknessChoiceRevealSending = true;
+    state.screen = "waitingWeaknessChoiceReveal";
+    setStrategyChrome("SEALED CHOICES REVEAL");
+    render();
+    const choiceRef = ref(database, `online/strategyRooms/${state.roomId}/weaknessChoices/${state.uid}`);
+    const payload = { ...localChoice, revealedAt: serverTimestamp() };
+    try {
+      await set(choiceRef, payload);
+    } catch (error) {
+      const stored = await get(choiceRef).catch(() => null);
+      if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+      if (!sameWeaknessChoice(stored?.val(), localChoice)) {
+        console.error(error);
+        targetState.weaknessChoiceRevealSending = false;
+        showToast("秘密選択を公開できませんでした。通信状態を確認しています。");
+        return;
+      }
+    }
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+    targetState.weaknessChoiceRevealSending = false;
+    return;
+  }
+  if (!both(choices)) {
+    if (state.screen !== "waitingWeaknessChoiceReveal") {
+      state.screen = "waitingWeaknessChoiceReveal";
+      setStrategyChrome("SEALED CHOICES REVEAL");
+      render();
+    }
+    return;
+  }
+  if (!state.weaknessChoicesVerified) {
+    const verified = await verifyWeaknessChoiceReveals(commits, choices);
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+    if (!verified) {
+      await failWeaknessIntegrityCheck("秘密選択のハッシュ照合に失敗しました。この対戦はノーコンテストです。");
+      return;
+    }
+    targetState.weaknessChoicesVerified = true;
+  }
+
+  const revealTargets = weaknessRevealTargetsForChoices(choices);
+  const reveals = state.roomData?.weaknessReveals || {};
+  if (revealTargets.includes(state.uid) && !reveals[state.uid]) {
+    await ensureLocalWeaknessReveal();
+    return;
+  }
+  if (revealTargets.some((uid) => !reveals[uid])) {
+    if (state.screen !== "waitingWeaknessChoiceReveal") {
+      state.screen = "waitingWeaknessChoiceReveal";
+      render();
+    }
+    return;
+  }
+  if (!state.weaknessRevealsVerified) {
+    const verified = await verifySelectedWeaknessReveals(choices, reveals);
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+    if (!verified) {
+      await failWeaknessIntegrityCheck();
+      return;
+    }
+    targetState.weaknessRevealsVerified = true;
+  }
+
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  await reactToWeaknessChainResolution(choices);
+}
+
+async function reactToWeaknessChainResolution(guesses) {
+  const targetState = state;
+  const roomId = state.roomId;
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
 
   if (state.weaknessChainApplied) {
     applyWeaknessSurrenders(state.roomData?.weaknessSurrenders || {});
@@ -4139,6 +4476,7 @@ async function reactToWeaknessPhase() {
 
   const localCount = Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[state.uid]?.count || 0)));
   if (localCount) await sendWeaknessChainImages(localCount);
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
   const receipts = state.roomData?.weaknessChainImagesReceived || {};
   if (!weaknessChainImagesReady(chains, receipts)) {
     if (state.screen !== "waitingWeaknessChainImage") { state.screen = "waitingWeaknessChainImage"; render(); }
@@ -4150,12 +4488,41 @@ async function reactToWeaknessPhase() {
   if (both(continued)) await advanceAfterWeaknessPhase();
 }
 
+function roundThreeSecretChoiceReady() {
+  if (state.round !== WEAKNESS_SCOUT_ROUND) return false;
+  if (state.advancedRounds?.has?.(WEAKNESS_SCOUT_ROUND)) return true;
+  const roundThreeContinued = state.roomData?.rounds?.[WEAKNESS_SCOUT_ROUND]?.continue || {};
+  const secretChoiceStarted = Object.keys(state.roomData?.weaknessChoiceCommits || {}).length
+    || Object.keys(state.roomData?.weaknessChoices || {}).length;
+  return Boolean(secretChoiceStarted && both(roundThreeContinued));
+}
+
+async function reactToWeaknessPhase() {
+  if (state.weaknessIntegrityFailed || state.weaknessPhaseComplete) return;
+  const guesses = state.roomData?.weaknessGuesses || {};
+  if (Object.keys(guesses).length) {
+    await reactToLegacyWeaknessPhase(guesses);
+    return;
+  }
+  if (roundThreeSecretChoiceReady()) await reactToRoundThreeWeaknessChoice();
+}
+
 function currentRoundData() {
   return state.roomData?.rounds?.[state.round] || {};
 }
 
 function both(object) {
   return Boolean(object?.[state.uid] && object?.[state.opponentUid]);
+}
+
+function strategyRoomOperationIsCurrent(targetState, roomId) {
+  return Boolean(active
+    && state === targetState
+    && state.roomId === roomId
+    && !targetState.destroyedByOpponent
+    && !targetState.weaknessIntegrityFailed
+    && !targetState.roomData?.destroyed
+    && !Object.values(targetState.roomData?.decisions || {}).includes("withdraw"));
 }
 
 async function reactToRoomData() {
@@ -4171,6 +4538,10 @@ async function reactToRoomData() {
       return;
     }
     const finished = state.roomData?.finished || {};
+    if (state.screen === "waitingFinalWeaknessReveal") {
+      await finishMatch();
+      return;
+    }
     if (["gameover", "review"].includes(state.screen) || (finished[state.uid] === true && finished[state.opponentUid] === true)) {
       await reactToReviewData();
       return;
@@ -4200,6 +4571,7 @@ async function reactToRoomData() {
     }
     if (both(state.roomData.battleReady)) {
       if (Object.keys(state.roomData?.weaknessGuesses || {}).length && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
+      else if (roundThreeSecretChoiceReady() && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
       else if (state.round === WEAKNESS_SCOUT_ROUND && state.advancedRounds.has(WEAKNESS_SCOUT_ROUND) && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
       else await reactToRoundData();
     }
@@ -4316,8 +4688,10 @@ async function advanceRoundOrFinish() {
   state.advancedRounds.add(state.round);
   if (state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete) {
     state.weaknessTriggerRound = WEAKNESS_SCOUT_ROUND;
-    state.screen = "weaknessGuess";
-    setStrategyChrome("WEAKNESS GUESS");
+    state.selectedWeaknessChoice = "";
+    state.selectedWeaknessGuess = null;
+    state.screen = "weaknessChoice";
+    setStrategyChrome("ROUND 3 SECRET DECISION");
     render();
     await reactToWeaknessPhase();
     return;
@@ -4348,24 +4722,90 @@ function determineOutcome() {
   return { winnerIndex: -1 };
 }
 
+async function ensureStrategyResultClaim(targetState, outcome) {
+  if (targetState.resultClaimCommitted) return true;
+  const roomId = targetState.roomId;
+  const uid = targetState.uid;
+  const claimOutcome = outcome.winnerIndex < 0
+    ? "draw"
+    : outcome.winnerIndex === targetState.playerIndex ? "win" : "loss";
+  const roomPath = `online/strategyRooms/${roomId}`;
+  const matchesStoredClaim = (room) => (
+    room?.resultClaims?.[uid]?.outcome === claimOutcome
+    && room?.finished?.[uid] === true
+  );
+  if (matchesStoredClaim(targetState.roomData)) {
+    targetState.resultClaimCommitted = true;
+    return true;
+  }
+  let writeError = null;
+  try {
+    await update(ref(database, roomPath), {
+      [`resultClaims/${uid}`]: {
+        outcome: claimOutcome,
+        createdAt: serverTimestamp(),
+      },
+      [`finished/${uid}`]: true,
+    });
+  } catch (error) {
+    writeError = error;
+  }
+  if (writeError) {
+    const snapshot = await get(ref(database, roomPath)).catch(() => null);
+    if (!matchesStoredClaim(snapshot?.val())) throw writeError;
+  }
+  targetState.resultClaimCommitted = true;
+  return true;
+}
+
 async function finishMatch() {
-  stopStrategyVideoRecording({ discard: true });
-  closeStrategyVideoDialog();
-  const outcome = determineOutcome();
-  const draw = outcome.winnerIndex < 0;
-  const won = outcome.winnerIndex === state.playerIndex;
-  await update(ref(database, `online/strategyRooms/${state.roomId}`), {
-    [`resultClaims/${state.uid}`]: {
-      outcome: draw ? "draw" : won ? "win" : "loss",
-      createdAt: serverTimestamp(),
-    },
-    [`finished/${state.uid}`]: true,
-  });
-  cleanupPublicPresence().catch(() => {});
-  await commitStrategyStats();
-  state.screen = "gameover";
-  setStrategyChrome("STRATEGY COMPLETE");
-  render();
+  if (state.finalizationBusy || state.screen === "gameover") return;
+  const targetState = state;
+  const roomId = state.roomId;
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  state.finalizationBusy = true;
+  try {
+    stopStrategyVideoRecording({ discard: true });
+    closeStrategyVideoDialog();
+    if (state.screen !== "waitingFinalWeaknessReveal") {
+      state.screen = "waitingFinalWeaknessReveal";
+      setStrategyChrome("FINAL WEAKNESS CHECK");
+      render();
+    }
+    const reveals = state.roomData?.weaknessReveals || {};
+    if (!reveals[state.uid]) {
+      await ensureLocalWeaknessReveal();
+      return;
+    }
+    if (!both(reveals)) {
+      return;
+    }
+    if (!state.finalWeaknessRevealsVerified) {
+      const verified = await verifyWeaknessCommitReveals(reveals);
+      if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+      if (!verified) {
+        await failWeaknessIntegrityCheck("最終弱点のハッシュ照合に失敗しました。この対戦はノーコンテストです。");
+        return;
+      }
+      targetState.finalWeaknessRevealsVerified = true;
+    }
+    const outcome = determineOutcome();
+    await ensureStrategyResultClaim(targetState, outcome);
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+    cleanupPublicPresence().catch(() => {});
+    try {
+      await commitStrategyStats();
+    } catch (error) {
+      console.error(error);
+      showToast("対戦結果は確定しました。戦績の同期だけ完了しませんでした。");
+    }
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+    state.screen = "gameover";
+    setStrategyChrome("STRATEGY COMPLETE");
+    render();
+  } finally {
+    if (state === targetState) state.finalizationBusy = false;
+  }
 }
 
 function calculateRating(currentRating, opponentRating, actualScore) {
@@ -4526,6 +4966,10 @@ async function cleanupPublicPresence() {
 
 function requestHome() {
   if (!active || state.normalRouteBusy) return;
+  if ((state.finalizationBusy || state.resultClaimCommitted) && !["gameover", "review"].includes(state.screen)) {
+    showToast("対戦結果を確定中です。完了するまでお待ちください。");
+    return;
+  }
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -4549,7 +4993,37 @@ function requestHome() {
 
 async function destroyRoom() {
   if (!active) return;
-  if (state.roomId) await runTransaction(ref(database, `online/strategyRooms/${state.roomId}/destroyed`), (current) => current || { by: state.uid, at: Date.now() }).catch(() => {});
+  if (state.finalizationBusy || state.resultClaimCommitted) {
+    showToast("対戦結果を確定中です。完了するまでお待ちください。");
+    return;
+  }
+  if (state.roomId) {
+    const targetState = state;
+    const roomId = state.roomId;
+    const uid = state.uid;
+    const destroyedRef = ref(database, `online/strategyRooms/${roomId}/destroyed`);
+    let destroyed = null;
+    let committed = false;
+    try {
+      const result = await runTransaction(destroyedRef, (current) => current || { by: uid, at: Date.now() });
+      committed = result.committed === true;
+      destroyed = result.snapshot?.val?.() || null;
+    } catch (error) {
+      console.error(error);
+      const snapshot = await get(destroyedRef).catch(() => null);
+      if (!active || state !== targetState || state.roomId !== roomId) return;
+      destroyed = snapshot?.val?.() || null;
+      committed = destroyed?.by === uid;
+    }
+    if (destroyed?.by && destroyed.by !== uid) {
+      await handleOpponentDestroyed();
+      return;
+    }
+    if (!committed || destroyed?.by !== uid) {
+      showToast("ルーム破棄を確定できませんでした。通信状態または対戦結果を確認してください。");
+      return;
+    }
+  }
   await cleanupOnlineResources(false);
   releaseAllImages();
   active = false;
@@ -4697,6 +5171,111 @@ async function leaveToNormal1on1() {
     }
     handleRecoverableError(error);
   }
+}
+
+async function submitWeaknessChoiceCommit(targetState, roomId, uid, digest) {
+  if (!strategyRoomOperationIsCurrent(targetState, roomId) || targetState.weaknessChoiceCommitSending) return false;
+  const refreshWaitingUi = targetState.weaknessChoiceCommitUncertain;
+  targetState.weaknessChoiceCommitSending = true;
+  targetState.weaknessChoiceCommitUncertain = false;
+  const commitRef = ref(database, `online/strategyRooms/${roomId}/weaknessChoiceCommits/${uid}`);
+  try {
+    const known = targetState.roomData?.weaknessChoiceCommits?.[uid];
+    if (known) {
+      if (known.digest !== digest) {
+        await failWeaknessIntegrityCheck("保存済みの秘密選択と端末の封印が一致しません。この対戦はノーコンテストです。");
+        return false;
+      }
+      return true;
+    }
+    await set(commitRef, { digest, round: WEAKNESS_SCOUT_ROUND, lockedAt: serverTimestamp() });
+    return strategyRoomOperationIsCurrent(targetState, roomId);
+  } catch (error) {
+    let stored = null;
+    let readSucceeded = false;
+    try {
+      stored = (await get(commitRef)).val();
+      readSucceeded = true;
+    } catch (readError) {
+      console.error(readError);
+    }
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return false;
+    const observed = targetState.roomData?.weaknessChoiceCommits?.[uid];
+    if (stored?.digest === digest || observed?.digest === digest) return true;
+    if (stored?.digest || observed?.digest) {
+      console.error(error);
+      await failWeaknessIntegrityCheck("保存済みの秘密選択と端末の封印が一致しません。この対戦はノーコンテストです。");
+      return false;
+    }
+    console.error(error);
+    targetState.weaknessChoiceCommitUncertain = true;
+    targetState.screen = "waitingWeaknessChoice";
+    setStrategyChrome("SECRET CHOICE SEALED");
+    showToast(readSucceeded
+      ? "秘密選択の封印を確認できませんでした。同じ封印を再送してください。"
+      : "通信が途切れたため封印の送信結果を確認できません。同じ封印だけを再送できます。");
+    return false;
+  } finally {
+    if (state === targetState && state.roomId === roomId) {
+      targetState.weaknessChoiceCommitSending = false;
+      if ((refreshWaitingUi || targetState.weaknessChoiceCommitUncertain) && targetState.screen === "waitingWeaknessChoice") render();
+    }
+  }
+}
+
+async function retryWeaknessChoiceCommit() {
+  const targetState = state;
+  const roomId = state.roomId;
+  const uid = state.uid;
+  const digest = state.weaknessChoiceDigest;
+  if (!strategyRoomOperationIsCurrent(targetState, roomId) || targetState.weaknessChoiceCommitSending) return;
+  if (!targetState.weaknessChoiceLocked || !/^[a-f0-9]{64}$/.test(digest)) {
+    await failWeaknessIntegrityCheck("秘密選択の封印を復元できませんでした。この対戦はノーコンテストです。");
+    return;
+  }
+  targetState.screen = "waitingWeaknessChoice";
+  setStrategyChrome("SECRET CHOICE SEALED");
+  render();
+  await submitWeaknessChoiceCommit(targetState, roomId, uid, digest);
+}
+
+async function lockWeaknessChoice(event) {
+  event.preventDefault();
+  if (state.weaknessChoiceLocked || state.round !== WEAKNESS_SCOUT_ROUND || state.weaknessPhaseComplete) return;
+  const choice = document.querySelector('input[name="weaknessChoice"]:checked')?.value || state.selectedWeaknessChoice;
+  const selected = Number(document.querySelector('input[name="weaknessGuess"]:checked')?.value);
+  if (choice !== "guess" && choice !== "pass") return showToast("看破するか見送るかを選んでください。");
+  if (choice === "guess" && (!Number.isInteger(selected) || selected < 0 || selected > 2)) {
+    return showToast("看破する弱点候補を1つ選んでください。");
+  }
+  const targetState = state;
+  const roomId = state.roomId;
+  const uid = state.uid;
+  targetState.weaknessChoiceLocked = true;
+  targetState.weaknessChoiceCommitUncertain = false;
+  targetState.screen = "waitingWeaknessChoice";
+  setStrategyChrome("SECRET CHOICE LOCKED");
+  render();
+  let reveal = null;
+  let digest = "";
+  try {
+    ({ reveal, digest } = await prepareWeaknessChoiceCommit(choice, choice === "guess" ? selected : -1, targetState));
+  } catch (error) {
+    console.error(error);
+    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+    targetState.weaknessChoiceLocked = false;
+    targetState.screen = "weaknessChoice";
+    setStrategyChrome("ROUND 3 SECRET DECISION");
+    render();
+    showToast(error?.message || "秘密選択を封印できませんでした。もう一度お試しください。");
+    return;
+  }
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  targetState.selectedWeaknessChoice = reveal.choice;
+  targetState.selectedWeaknessGuess = reveal.guessIndex >= 0 ? reveal.guessIndex : null;
+  targetState.weaknessChoiceSalt = reveal.salt;
+  targetState.weaknessChoiceDigest = digest;
+  await submitWeaknessChoiceCommit(targetState, roomId, uid, digest);
 }
 
 async function leaveToFreeTable() {

@@ -164,11 +164,12 @@ test("Strategy emits the match-ready cue once per validated room before P2P setu
   const createOffer = namedFunction(strategySource, "createOffer");
   const acceptOffer = namedFunction(strategySource, "acceptOffer");
   const enterRoom = namedFunction(strategySource, "enterRoom");
-  const validation = enterRoom.indexOf("if (!room || !room.players?.[room.hostUid] || !room.players?.[room.guestUid])");
+  const validation = enterRoom.indexOf("if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION");
   const notification = enterRoom.indexOf("playStrategyMatchReadySound(roomId)");
   const peerSetup = enterRoom.indexOf("await setupPeerConnection()");
 
   assert.ok(validation >= 0, "enterRoom validates both player records");
+  assert.match(enterRoom, /!room\.players\?\.\[room\.hostUid\] \|\| !room\.players\?\.\[room\.guestUid\]/u);
   assert.ok(validation < notification, "invalid or incomplete rooms cannot emit the cue");
   assert.ok(notification < peerSetup, "P2P delay or failure cannot gate the match notification");
   assert.match(enterRoom, /generation\s*=\s*state\.matchmakingGeneration/u);

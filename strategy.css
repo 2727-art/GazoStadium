@@ -1027,8 +1027,129 @@
   transform: translateY(-2px);
 }
 
+.strategy-guess-card input:focus-visible + span {
+  outline: 3px solid rgba(94, 219, 255, 0.82);
+  outline-offset: 3px;
+}
+
 .strategy-weakness-guess > .button {
   justify-self: center;
+}
+
+.strategy-weakness-choice {
+  display: grid;
+  gap: 22px;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: clamp(22px, 4vw, 38px);
+  border: 1px solid rgba(94, 219, 255, 0.3);
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 0%, rgba(94, 219, 255, 0.11), transparent 48%), rgba(10, 13, 22, 0.9);
+}
+
+.strategy-weakness-choice fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.strategy-weakness-choice legend {
+  width: 100%;
+  margin-bottom: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.strategy-choice-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.strategy-choice-card {
+  position: relative;
+  cursor: pointer;
+}
+
+.strategy-choice-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.strategy-choice-card span {
+  display: grid;
+  gap: 8px;
+  min-height: 164px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+  transition: 160ms ease;
+}
+
+.strategy-choice-card small {
+  color: #8d97aa;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.strategy-choice-card strong {
+  color: var(--text);
+  font-size: 1.45rem;
+}
+
+.strategy-choice-card em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  line-height: 1.65;
+}
+
+.strategy-choice-card.is-guess input:checked + span {
+  border-color: rgba(255, 79, 109, 0.75);
+  background: rgba(255, 79, 109, 0.1);
+  box-shadow: 0 0 0 3px rgba(255, 79, 109, 0.07), 0 18px 46px rgba(0, 0, 0, 0.22);
+  transform: translateY(-2px);
+}
+
+.strategy-choice-card.is-pass input:checked + span {
+  border-color: rgba(94, 219, 255, 0.72);
+  background: rgba(94, 219, 255, 0.09);
+  box-shadow: 0 0 0 3px rgba(94, 219, 255, 0.06), 0 18px 46px rgba(0, 0, 0, 0.22);
+  transform: translateY(-2px);
+}
+
+.strategy-choice-card input:focus-visible + span {
+  outline: 3px solid rgba(94, 219, 255, 0.82);
+  outline-offset: 3px;
+}
+
+.strategy-choice-candidates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 4px !important;
+}
+
+.strategy-choice-candidates legend {
+  grid-column: 1 / -1;
+}
+
+.strategy-choice-security {
+  margin: 0;
+  color: #91a9ba;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.strategy-weakness-choice > .button {
+  justify-self: center;
+  min-width: min(320px, 100%);
 }
 
 .strategy-chain-screen,
@@ -1111,6 +1232,11 @@
   background: rgba(255, 79, 109, 0.07);
 }
 
+.strategy-guess-summary article.passed {
+  border-color: rgba(94, 219, 255, 0.38);
+  background: rgba(94, 219, 255, 0.065);
+}
+
 .strategy-guess-summary small,
 .strategy-guess-summary span {
   color: var(--muted);
@@ -1120,6 +1246,10 @@
 
 .strategy-guess-summary article.success span {
   color: #ff8195;
+}
+
+.strategy-guess-summary article.passed span {
+  color: #85dff7;
 }
 
 .strategy-chain-lane {
@@ -2043,6 +2173,8 @@
   .strategy-reveal-grid,
   .strategy-final-grid,
   .strategy-weakness-guess fieldset,
+  .strategy-choice-options,
+  .strategy-choice-candidates,
   .strategy-guess-summary,
   .strategy-chain-result-grid {
     grid-template-columns: 1fr;

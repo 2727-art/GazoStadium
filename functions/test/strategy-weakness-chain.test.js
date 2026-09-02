@@ -38,6 +38,7 @@ function createSandbox({
   remoteChainCount = 0,
   localReserveCount = 5,
   remoteReserveCount = 5,
+  sendGate = null,
 } = {}) {
   const local = {
     uid: "local",
@@ -69,6 +70,7 @@ function createSandbox({
     Array.from({ length: count }, (_, index) => [index, true]),
   );
   const sandbox = {
+    active: true,
     MAX_WEAKNESS_CHAIN: 3,
     WEAKNESS_CHAIN_DAMAGE: [4, 3, 2],
     WEAKNESS_MISS_DAMAGE: 5,
@@ -146,6 +148,7 @@ function createSandbox({
       if (sandbox.weaknessImagesSent) return;
       sandbox.weaknessImagesSent = true;
       counters.send += 1;
+      if (sendGate) await sendGate;
     },
     async verifyWeaknessReveals() {
       return true;
@@ -164,6 +167,9 @@ function createSandbox({
     extractFunction("weaknessChainsValid"),
     extractFunction("resolveWeaknessChain"),
     extractFunction("applyWeaknessSurrenders"),
+    extractFunction("strategyRoomOperationIsCurrent"),
+    extractFunction("reactToWeaknessChainResolution"),
+    extractFunction("reactToLegacyWeaknessPhase"),
     extractFunction("reactToWeaknessPhase"),
     "this.reactToWeaknessPhase = reactToWeaknessPhase;",
     "this.weaknessChainsValid = weaknessChainsValid;",
@@ -320,6 +326,24 @@ test("unresolved weakness chains still reject invalid first-time declarations", 
     assert.equal(sandbox.counters.send, 0, scenario.label);
     assert.equal(sandbox.state.weaknessChainApplied, false, scenario.label);
   }
+});
+
+test("a room destroyed during chain image transfer cannot overwrite no-contest state", async () => {
+  let releaseSend;
+  const sendGate = new Promise((resolve) => { releaseSend = resolve; });
+  const sandbox = createSandbox({ sendGate });
+  const pending = sandbox.reactToWeaknessPhase();
+  await Promise.resolve();
+  assert.equal(sandbox.counters.send, 1);
+
+  sandbox.state.destroyedByOpponent = true;
+  sandbox.state.screen = "noContest";
+  releaseSend();
+  await pending;
+
+  assert.equal(sandbox.state.screen, "noContest");
+  assert.equal(sandbox.state.weaknessChainApplied, false);
+  assert.equal(sandbox.counters.advance, 0);
 });
 
 test("strategy weakness-chain fix uses a fresh browser cache key", () => {
