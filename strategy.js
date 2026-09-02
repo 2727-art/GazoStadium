@@ -218,6 +218,7 @@ function createState() {
     normalRouteBusy: false,
     initialDeckRestorePromise: null,
     roomId: "",
+    matchReadySoundRoomId: "",
     roomData: {},
     opponentUid: "",
     matchAchievementShowcases: null,
@@ -1109,12 +1110,13 @@ function renderMatching() {
   const scopeHint = !acceptsBoth && !state.matchScopeAvailable && !state.matchScopeExpanded
     ? `<small class="matching-scope-hint">${MATCH_SCOPE_EXPAND_DELAY_MS / 1000}秒後、必要なら異なる好みまで検索範囲を広げられます。</small>`
     : "";
+  const soundHint = '<small class="matching-scope-hint">SE ONなら、マッチ成立時に短い準備完了音が1度鳴ります。</small>';
   return renderStatusCard(
     "◎",
     "PREFERENCE MATCHING",
     "戦略型1on1の対戦相手を探しています",
     scopeBody,
-    `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${scopeHint}${window.HariaiOnline?.renderBattlePresenceCheck?.({ mode: "strategy", phase: "matching" }) || ""}`,
+    `<div class="matching-pulse"><i></i><i></i><i></i></div><span class="connection-pill connected">● 匿名ログイン済み</span><span class="connection-pill connected">好み: ${escapeHtml(preference.shortLabel)}</span>${scopeHint}${soundHint}${window.HariaiOnline?.renderBattlePresenceCheck?.({ mode: "strategy", phase: "matching" }) || ""}`,
     `${expandAction}<button class="button button-ghost" id="strategyCancelMatching">マッチングをやめる</button>`,
   );
 }
@@ -2895,6 +2897,7 @@ async function attemptToHost(queue) {
 }
 
 async function createOffer(candidate) {
+  const generation = state.matchmakingGeneration;
   state.matchingBusy = true;
   const roomId = push(ref(database, "online/strategyRooms")).key;
   try {
@@ -2916,9 +2919,9 @@ async function createOffer(candidate) {
     state.pendingOffer = { roomId, targetUid: candidate.uid };
     const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
     const handleStatus = async (snapshot) => {
-      if (snapshot.val() !== "active" || state.roomId) return;
+      if (snapshot.val() !== "active" || !isCurrentStrategyMatchmakingGeneration(generation)) return;
       await remove(ref(database, `online/strategyOffers/${candidate.uid}/${roomId}`)).catch(() => {});
-      await enterRoom(roomId);
+      await enterRoom(roomId, generation);
     };
     state.matchUnsubscribers.push(onValue(statusRef, (snapshot) => handleStatus(snapshot).catch(handleRecoverableError), handleRecoverableError));
     state.hostStatusPollTimer = window.setInterval(() => {
@@ -2954,6 +2957,7 @@ async function drainIncomingOffers() {
 
 async function acceptOffer(roomId, offer) {
   if (!active || state.screen !== "matching" || state.roomId || offer?.toUid !== state.uid) return;
+  const generation = state.matchmakingGeneration;
   state.acceptingOffer = true;
   try {
     const roomRef = ref(database, `online/strategyRooms/${roomId}`);
@@ -2986,24 +2990,37 @@ async function acceptOffer(roomId, offer) {
     await set(statusRef, "active");
     await freezeMatchAchievementShowcases(roomId);
     await Promise.allSettled([remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`)), remove(ref(database, `online/strategyQueue/${state.uid}`))]);
-    await enterRoom(roomId);
+    await enterRoom(roomId, generation);
   } finally {
     state.acceptingOffer = false;
   }
 }
 
-async function enterRoom(roomId) {
-  if (state.roomId) return;
+function playStrategyMatchReadySound(roomId) {
+  const normalizedRoomId = String(roomId || "");
+  if (!normalizedRoomId || state.matchReadySoundRoomId === normalizedRoomId) return;
+  state.matchReadySoundRoomId = normalizedRoomId;
+  try {
+    window.HariaiAudio?.playMatchReady?.();
+  } catch {
+    // 通知音の失敗や非対応環境で、成立済みの対戦を止めない。
+  }
+}
+
+async function enterRoom(roomId, generation = state.matchmakingGeneration) {
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
   window.clearTimeout(state.matchTimer);
   const snapshot = await get(ref(database, `online/strategyRooms/${roomId}`));
   const room = snapshot.val();
   if (!room || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
   state.roomId = roomId;
   state.roomData = room;
   state.opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
   state.playerIndex = room.hostUid === state.uid ? 0 : 1;
   state.players = [runtimePlayer(room.players[room.hostUid]), runtimePlayer(room.players[room.guestUid])];
   captureMatchAchievementShowcases(room.achievementShowcases);
+  playStrategyMatchReadySound(roomId);
   await cleanupMatchmaking(true);
   updatePublicPresence("playing").catch(() => {});
   state.screen = "connecting";

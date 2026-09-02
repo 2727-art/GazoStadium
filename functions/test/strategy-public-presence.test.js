@@ -49,7 +49,7 @@ test("strategy public presence is derived from an owned queue or active room", (
 });
 
 test("entering a room never waits for lobby presence before starting P2P", () => {
-  const enterRoom = section("async function enterRoom(roomId)", "async function setupRoomListeners()");
+  const enterRoom = section("async function enterRoom(roomId,", "async function setupRoomListeners()");
   const publicUpdate = enterRoom.indexOf('updatePublicPresence("playing").catch(() => {});');
   const connecting = enterRoom.indexOf('state.screen = "connecting";');
   const roomListeners = enterRoom.indexOf("await setupRoomListeners();");

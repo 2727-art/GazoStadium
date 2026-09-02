@@ -43,14 +43,14 @@ test("strategy freezes at activation, then materializes one immutable snapshot a
   assert.match(freeze, /return false/);
   assert.doesNotMatch(freeze, /captureMatchAchievementShowcases/);
 
-  const acceptOffer = section("async function acceptOffer(roomId, offer)", "async function enterRoom(roomId)");
+  const acceptOffer = section("async function acceptOffer(roomId, offer)", "async function enterRoom(roomId,");
   const activateRoom = acceptOffer.indexOf('await set(statusRef, "active");');
   const freezeRoom = acceptOffer.indexOf("await freezeMatchAchievementShowcases(roomId);");
-  const enterAcceptedRoom = acceptOffer.indexOf("await enterRoom(roomId);");
+  const enterAcceptedRoom = acceptOffer.indexOf("await enterRoom(roomId, generation);");
   assert.ok(activateRoom >= 0 && activateRoom < freezeRoom);
   assert.ok(freezeRoom < enterAcceptedRoom);
 
-  const enterRoom = section("async function enterRoom(roomId)", "async function setupRoomListeners()");
+  const enterRoom = section("async function enterRoom(roomId,", "async function setupRoomListeners()");
   const playerHydration = enterRoom.indexOf("state.players =");
   const existingCapture = enterRoom.indexOf("captureMatchAchievementShowcases(room.achievementShowcases);");
   const initialRender = enterRoom.indexOf("render();");

@@ -107,6 +107,11 @@
     tone(frequency, 0, 0.075, { type: "square", endFrequency: frequency * 0.92, volume: 0.07 });
   }
 
+  function playMatchReady() {
+    tone(659.25, 0, 0.18, { type: "sine", endFrequency: 698.46, volume: 0.055 });
+    tone(987.77, 0.14, 0.28, { type: "sine", endFrequency: 1046.5, volume: 0.06 });
+  }
+
   function classifyButton(button) {
     if (button.classList.contains("button-danger")) return "danger";
     if (button.matches(".score-button, [data-card], [data-online-card]")) return "select";
@@ -151,6 +156,7 @@
     playCritical,
     playPerfect,
     playCountdown,
+    playMatchReady,
     playResult(score) {
       if (score === 10) playPerfect();
       else if (score >= 8) playCritical();
