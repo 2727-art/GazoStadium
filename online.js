@@ -1939,6 +1939,10 @@ function openOnlineScreen(screen) {
     showToast("オンライン対戦はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
+  if (window.HariaiStrategy?.isActive?.()) {
+    showToast("戦略型1on1を終了してから通常1on1を開いてください。");
+    return;
+  }
   if (window.HariaiMarket?.isActive?.()) {
     showToast("推し値市場を終了してからオンライン画面を開いてください。");
     return;

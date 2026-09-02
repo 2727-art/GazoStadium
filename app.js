@@ -2625,6 +2625,7 @@
 
   window.HariaiApp = {
     returnHome: renderLandingScreen,
+    openNormal1on1: startOnlineBattle,
     openFreeTable: startFreeTable,
     shared: {
       escapeHtml,

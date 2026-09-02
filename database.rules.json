@@ -1173,7 +1173,7 @@
           "deckReady": {
             "$uid": {
               ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('online/strategyRooms/' + $roomId + '/members/' + auth.uid).val() === true",
-              ".validate": "newData.hasChildren(['ready', 'mainCount', 'reserveCount', 'lockedAt']) && newData.child('ready').val() === true && newData.child('mainCount').val() === 5 && newData.child('reserveCount').isNumber() && newData.child('reserveCount').val() >= 0 && newData.child('reserveCount').val() <= 5 && newData.child('lockedAt').isNumber()",
+              ".validate": "newData.hasChildren(['ready', 'mainCount', 'reserveCount', 'lockedAt']) && newData.child('ready').val() === true && newData.child('mainCount').val() === 5 && newData.child('reserveCount').val() === 5 && newData.child('lockedAt').isNumber()",
               "ready": {
                 ".validate": "newData.val() === true"
               },
@@ -1181,7 +1181,7 @@
                 ".validate": "newData.val() === 5"
               },
               "reserveCount": {
-                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
+                ".validate": "newData.val() === 5"
               },
               "lockedAt": {
                 ".validate": "newData.isNumber()"

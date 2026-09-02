@@ -193,8 +193,8 @@ test("room participant extraction requires both canonical members and player ide
 test("strategy snapshots stay unavailable until both canonical players finish deck setup", () => {
   const room = {
     deckReady: {
-      [hostUid]: { ready: true },
-      [guestUid]: { ready: true },
+      [hostUid]: { ready: true, mainCount: 5, reserveCount: 5 },
+      [guestUid]: { ready: true, mainCount: 5, reserveCount: 5 },
     },
   };
   assert.equal(
@@ -204,7 +204,16 @@ test("strategy snapshots stay unavailable until both canonical players finish de
   assert.equal(
     strategyAchievementShowcaseRevealReady({
       ...room,
-      deckReady: { [hostUid]: { ready: true } },
+      deckReady: { [hostUid]: { ready: true, mainCount: 5, reserveCount: 5 } },
+    }, [hostUid, guestUid]),
+    false,
+  );
+  assert.equal(
+    strategyAchievementShowcaseRevealReady({
+      deckReady: {
+        [hostUid]: { ready: true, mainCount: 5, reserveCount: 5 },
+        [guestUid]: { ready: true, mainCount: 5, reserveCount: 4 },
+      },
     }, [hostUid, guestUid]),
     false,
   );

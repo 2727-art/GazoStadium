@@ -173,6 +173,8 @@ test("strategy room synchronization adopts the first server snapshot and rerende
   );
   assert.match(revealBoundary, /\[room\?\.hostUid, room\?\.guestUid\]/);
   assert.match(revealBoundary, /room\?\.deckReady\?\.\[uid\]\?\.ready === true/);
+  assert.match(revealBoundary, /room\?\.deckReady\?\.\[uid\]\?\.mainCount === MAIN_COUNT/);
+  assert.match(revealBoundary, /room\?\.deckReady\?\.\[uid\]\?\.reserveCount === RESERVE_COUNT/);
 });
 
 test("strategy hides achievements and Danwaku before identity, then shows only the opponent", () => {

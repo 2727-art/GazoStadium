@@ -76,6 +76,12 @@ import {
   releaseStrategyReviewAssetResources,
   sendStrategyReviewAsset,
 } from "./strategy-review-asset-transfer.mjs?v=strategy-review-assets-v1";
+import {
+  deleteStrategyDeck,
+  hasCompleteStrategyDeck,
+  loadStrategyDeck,
+  saveStrategyDeck,
+} from "./strategy-deck-storage.mjs?v=strategy-prepared-deck-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -99,6 +105,7 @@ const MATCH_TIMEOUT_MS = 20_000;
 const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
+const DECK_STORAGE_TIMEOUT_MS = 6_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
 const STRATEGY_VIDEO_CHANNEL_LABEL = "hariai-strategy-videos-v1";
@@ -114,6 +121,7 @@ const PROFILE_WEAKNESS_KEY = "hariai-stadium-strategy-weakness-v3";
 const LEGACY_PROFILE_BLUFF_KEY = "hariai-stadium-strategy-bluff-v2";
 const PURSUIT_LINE_KEY = "hariai-stadium-strategy-pursuit-line-v2";
 const PROFILE_IMAGE_PREFERENCE_KEY = "hariai-stadium-strategy-image-preference-v1";
+const DECK_PERSISTENCE_KEY_PREFIX = "hariai-stadium-strategy-deck-persistence-v1:";
 const PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
   "好みは読めた。ここからが本命だ！",
@@ -175,6 +183,10 @@ function savedClues() {
   }
 }
 
+function strategyDeckPersistenceKey(uid) {
+  return `${DECK_PERSISTENCE_KEY_PREFIX}${String(uid || "")}`;
+}
+
 function createState() {
   const storedWeaknessValue = localStorage.getItem(PROFILE_WEAKNESS_KEY) ?? localStorage.getItem(LEGACY_PROFILE_BLUFF_KEY);
   const storedWeakness = Number(storedWeaknessValue);
@@ -194,6 +206,17 @@ function createState() {
     economy: { points: 0, inventory: {}, equipped: { stamps: {}, title: "", chatFrame: "", chatBackground: "" } },
     main: [],
     reserve: [],
+    persistDeck: false,
+    storedDeckAvailable: false,
+    deckRestoreStatus: "idle",
+    deckRestoreMessage: "",
+    deckSavedAt: 0,
+    deckMutationVersion: 0,
+    deckSaveBusy: false,
+    deckSavePromise: null,
+    deckDeleteBusy: false,
+    normalRouteBusy: false,
+    initialDeckRestorePromise: null,
     roomId: "",
     roomData: {},
     opponentUid: "",
@@ -223,6 +246,7 @@ function createState() {
     weaknessTriggerRound: 0,
     selectedWeaknessChainIds: [],
     localWeaknessChainCards: [],
+    localDeckReadyCommitted: false,
     weaknessChainLocked: false,
     weaknessRevealsVerified: false,
     weaknessIntegrityFailed: false,
@@ -357,6 +381,271 @@ function releaseCardAudio(item) {
   item.audioName = "";
 }
 
+function strategyDeckIsComplete() {
+  return hasCompleteStrategyDeck(state.main, state.reserve);
+}
+
+function strategyDeckStorageBusy() {
+  return state.deckRestoreStatus === "loading" || state.deckSaveBusy || state.deckDeleteBusy;
+}
+
+function strategyDeckCardId() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `strategy-${Date.now()}-${randomHex(8)}`;
+}
+
+function releaseLocalStrategyCard(item) {
+  if (!item) return;
+  if (item.url) URL.revokeObjectURL(item.url);
+  releaseCardAudio(item);
+  item.url = "";
+  item.blob = null;
+}
+
+function createRuntimeStrategyCard(card, position) {
+  const audioBlob = card.audioBlob instanceof Blob ? card.audioBlob : null;
+  return {
+    id: strategyDeckCardId(),
+    blob: card.blob,
+    url: URL.createObjectURL(card.blob),
+    position,
+    used: false,
+    isSample: false,
+    audioBlob,
+    audioUrl: audioBlob ? URL.createObjectURL(audioBlob) : "",
+    audioDuration: audioBlob ? Number(card.audioDuration || 0) : 0,
+    audioCueStart: audioBlob ? Number(card.audioCueStart || 0) : 0,
+    audioName: audioBlob ? String(card.audioName || "添付音声") : "",
+  };
+}
+
+function releaseRuntimeStrategyDeck(main, reserve) {
+  [...main, ...reserve].forEach(releaseLocalStrategyCard);
+}
+
+function renderStrategyDeckIfVisible() {
+  if (active && ["profile", "preDeck", "deck"].includes(state.screen)) render();
+}
+
+function markStrategyDeckEdited() {
+  state.deckMutationVersion += 1;
+  if (state.deckRestoreStatus !== "loading") {
+    state.deckRestoreStatus = "edited";
+    state.deckRestoreMessage = state.persistDeck
+      ? "デッキを編集中です。準備完了または封印時に、この完成版で端末保存を更新します。"
+      : "デッキを編集中です。端末保存をONにしない限り、このプレイの終了時に破棄されます。";
+  }
+}
+
+function withStrategyDeckStorageTimeout(promise, actionLabel) {
+  let timer = 0;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error(`${actionLabel}に時間がかかっています。端末保存を使わず続行します。`)), DECK_STORAGE_TIMEOUT_MS);
+    }),
+  ]).finally(() => window.clearTimeout(timer));
+}
+
+async function restoreStoredStrategyDeck({ force = false, quiet = false } = {}) {
+  const targetState = state;
+  const targetUid = targetState.uid;
+  const mutationVersion = targetState.deckMutationVersion;
+  if (!targetUid || strategyDeckStorageBusy()) return false;
+  targetState.deckRestoreStatus = "loading";
+  targetState.deckRestoreMessage = "この端末の前回デッキを確認しています…";
+  renderStrategyDeckIfVisible();
+  try {
+    const record = await withStrategyDeckStorageTimeout(loadStrategyDeck(targetUid), "前回デッキの読み込み");
+    if (!active || state !== targetState || targetState.uid !== targetUid) return false;
+    targetState.storedDeckAvailable = Boolean(record);
+    targetState.deckSavedAt = Number(record?.updatedAt || 0);
+    if (!record) {
+      targetState.deckRestoreStatus = "missing";
+      targetState.deckRestoreMessage = "このアカウントで端末保存した完成デッキはありません。";
+      renderStrategyDeckIfVisible();
+      return false;
+    }
+    if (!force && !["profile", "preDeck"].includes(targetState.screen)) {
+      targetState.deckRestoreStatus = "available";
+      targetState.deckRestoreMessage = "保存デッキを確認しました。進行中の画面は変更していません。";
+      renderStrategyDeckIfVisible();
+      return false;
+    }
+    if (!force && !targetState.persistDeck) {
+      targetState.deckRestoreStatus = "available";
+      targetState.deckRestoreMessage = "この端末に保存デッキがあります。端末保存をONにすると次回から自動復元します。";
+      renderStrategyDeckIfVisible();
+      return false;
+    }
+    if (!force && (targetState.deckMutationVersion !== mutationVersion
+        || targetState.main.length > 0 || targetState.reserve.length > 0)) {
+      targetState.deckRestoreStatus = "available";
+      targetState.deckRestoreMessage = "編集中のデッキを優先しました。必要なら保存デッキを手動で読み込めます。";
+      renderStrategyDeckIfVisible();
+      return false;
+    }
+    const nextMain = [];
+    const nextReserve = [];
+    try {
+      record.main.forEach((card, index) => nextMain.push(createRuntimeStrategyCard(card, index)));
+      record.reserve.forEach((card, index) => nextReserve.push(createRuntimeStrategyCard(card, MAIN_COUNT + index)));
+    } catch (error) {
+      releaseRuntimeStrategyDeck(nextMain, nextReserve);
+      throw error;
+    }
+    const deckChangedWhileLoading = targetState.deckMutationVersion !== mutationVersion;
+    const leftEditableScreen = !["profile", "preDeck"].includes(targetState.screen);
+    const currentDeckTakesPriority = !force && (targetState.main.length > 0 || targetState.reserve.length > 0);
+    if (!active || state !== targetState || targetState.uid !== targetUid
+        || leftEditableScreen || deckChangedWhileLoading || currentDeckTakesPriority) {
+      releaseRuntimeStrategyDeck(nextMain, nextReserve);
+      if (active && state === targetState && targetState.uid === targetUid) {
+        targetState.deckRestoreStatus = "available";
+        targetState.deckRestoreMessage = deckChangedWhileLoading
+          ? "読み込み中に編集されたため、画面上のデッキを優先しました。必要ならもう一度読み込めます。"
+          : "保存デッキを確認しました。進行中の画面は変更していません。";
+        renderStrategyDeckIfVisible();
+      }
+      return false;
+    }
+    releaseRuntimeStrategyDeck(targetState.main, targetState.reserve);
+    targetState.main = nextMain;
+    targetState.reserve = nextReserve;
+    targetState.deckMutationVersion += 1;
+    targetState.deckRestoreStatus = "restored";
+    targetState.deckRestoreMessage = "前回の完成デッキ10枚をこの端末から復元しました。対戦前に差し替えできます。";
+    if (!quiet) showToast("前回の戦略デッキ10枚を読み込みました。");
+    renderStrategyDeckIfVisible();
+    return true;
+  } catch (error) {
+    if (!active || state !== targetState || targetState.uid !== targetUid) return false;
+    console.error(error);
+    targetState.deckRestoreStatus = "error";
+    targetState.deckRestoreMessage = "端末保存を読み込めませんでした。現在の10枚がそろえば対戦は続けられます。";
+    if (!quiet) showToast(error?.message || "保存した戦略デッキを読み込めませんでした。");
+    renderStrategyDeckIfVisible();
+    return false;
+  }
+}
+
+async function persistCompleteStrategyDeck({ announceSuccess = false } = {}) {
+  const targetState = state;
+  if (!targetState.persistDeck || !targetState.uid || !strategyDeckIsComplete()
+      || targetState.deckDeleteBusy || targetState.deckRestoreStatus === "loading") return false;
+  if (targetState.deckSavePromise) {
+    await targetState.deckSavePromise;
+    if (state !== targetState || !targetState.persistDeck || !strategyDeckIsComplete()
+        || targetState.deckDeleteBusy || targetState.deckRestoreStatus === "loading") return false;
+  }
+  const savedMutationVersion = targetState.deckMutationVersion;
+  targetState.deckSaveBusy = true;
+  renderStrategyDeckIfVisible();
+  let operation;
+  operation = Promise.resolve().then(async () => {
+    try {
+      const record = await saveStrategyDeck({
+        uid: targetState.uid,
+        main: targetState.main,
+        reserve: targetState.reserve,
+      });
+      if (state !== targetState) return true;
+      targetState.storedDeckAvailable = true;
+      targetState.deckSavedAt = Number(record.updatedAt || Date.now());
+      const savedCurrentVersion = targetState.deckMutationVersion === savedMutationVersion;
+      targetState.deckRestoreStatus = savedCurrentVersion ? "saved" : "edited";
+      targetState.deckRestoreMessage = savedCurrentVersion
+        ? "完成デッキ10枚をこの端末に保存しました。次回は自動で復元します。"
+        : "直前の完成版は保存済みです。現在の編集内容は次の準備完了または封印時に保存します。";
+      if (announceSuccess) showToast(savedCurrentVersion
+        ? "戦略デッキ10枚をこの端末に保存しました。"
+        : "直前の完成版を保存しました。現在の編集内容は次回の準備完了時に保存します。");
+      return true;
+    } catch (error) {
+      if (state === targetState) {
+        console.error(error);
+        targetState.deckRestoreStatus = "error";
+        targetState.deckRestoreMessage = "端末保存を更新できませんでした。現在の対戦はそのまま続けられます。";
+        showToast(error?.message || "戦略デッキを端末保存できませんでした。現在の対戦は続けられます。");
+      }
+      return false;
+    } finally {
+      if (state === targetState && targetState.deckSavePromise === operation) {
+        targetState.deckSaveBusy = false;
+        targetState.deckSavePromise = null;
+        renderStrategyDeckIfVisible();
+      }
+    }
+  });
+  targetState.deckSavePromise = operation;
+  return operation;
+}
+
+async function deleteStoredStrategyDeck() {
+  const targetState = state;
+  if (!targetState.uid || strategyDeckStorageBusy()) return false;
+  const targetUid = targetState.uid;
+  targetState.persistDeck = false;
+  localStorage.setItem(strategyDeckPersistenceKey(targetUid), "false");
+  targetState.deckDeleteBusy = true;
+  targetState.deckRestoreStatus = "deleting";
+  targetState.deckRestoreMessage = "この端末の保存デッキを削除しています…";
+  renderStrategyDeckIfVisible();
+  try {
+    await deleteStrategyDeck(targetUid);
+    if (state !== targetState || targetState.uid !== targetUid) return true;
+    targetState.storedDeckAvailable = false;
+    targetState.deckSavedAt = 0;
+    targetState.deckRestoreStatus = "missing";
+    targetState.deckRestoreMessage = "この端末の保存デッキを削除しました。画面上の10枚は現在のプレイ中だけ残ります。";
+    showToast("この端末に保存した戦略デッキを削除しました。");
+    return true;
+  } catch (error) {
+    if (state === targetState && targetState.uid === targetUid) {
+      console.error(error);
+      targetState.deckRestoreStatus = "error";
+      targetState.deckRestoreMessage = "端末保存を削除できませんでした。自動保存・自動復元はOFFのままです。再試行できます。";
+      showToast(error?.message || "端末保存した戦略デッキを削除できませんでした。");
+    }
+    return false;
+  } finally {
+    if (state === targetState && targetState.uid === targetUid) {
+      targetState.deckDeleteBusy = false;
+      renderStrategyDeckIfVisible();
+    }
+  }
+}
+
+function requestDeleteStoredStrategyDeck() {
+  if (!state.uid || strategyDeckStorageBusy()) return;
+  if (!window.confirm("このアカウントの戦略デッキ端末保存を削除しますか？ 画面上の10枚は現在のプレイ中だけ残ります。")) return;
+  deleteStoredStrategyDeck().catch(handleRecoverableError);
+}
+
+async function updateStrategyDeckPersistence(enabled) {
+  if (!state.uid || strategyDeckStorageBusy()) return;
+  if (!enabled) {
+    state.persistDeck = false;
+    localStorage.setItem(strategyDeckPersistenceKey(state.uid), "false");
+    state.deckRestoreStatus = state.storedDeckAvailable ? "available" : "missing";
+    state.deckRestoreMessage = state.storedDeckAvailable
+      ? "自動保存・自動復元をOFFにしました。保存済みの前回デッキは、削除するまでこの端末に残ります。"
+      : "自動保存・自動復元をOFFにしました。現在のデッキはこのプレイ中だけ使用できます。";
+    showToast("戦略デッキの自動保存・自動復元をOFFにしました。");
+    renderStrategyDeckIfVisible();
+    return;
+  }
+  state.persistDeck = true;
+  localStorage.setItem(strategyDeckPersistenceKey(state.uid), "true");
+  if (strategyDeckIsComplete()) {
+    await persistCompleteStrategyDeck({ announceSuccess: true });
+  } else {
+    showToast("端末保存をONにしました。実画像10枚がそろい、準備完了または封印した時に保存します。");
+  }
+  renderStrategyDeckIfVisible();
+}
+
 async function prepareWeaknessCommit(roomId) {
   if (!Number.isInteger(state.weaknessIndex)) throw new Error("本当の弱点を確認できませんでした。");
   state.weaknessSalt = randomHex();
@@ -398,7 +687,7 @@ function runtimePlayer(source) {
     rating: Number(source?.rating || INITIAL_RATING),
     streak: Math.max(0, Number(source?.streak || 0)),
     mainCount: MAIN_COUNT,
-    reserveCount: 0,
+    reserveCount: RESERVE_COUNT,
     reserveUsed: 0,
     hp: MAX_HP,
     extraRequests: EXTRA_REQUESTS,
@@ -478,7 +767,9 @@ function matchAchievementShowcaseRevealReady(room) {
     .map((uid) => String(uid || ""))
     .filter(Boolean);
   return participantUids.length === 2 && participantUids.every(
-    (uid) => room?.deckReady?.[uid]?.ready === true,
+    (uid) => room?.deckReady?.[uid]?.ready === true
+      && room?.deckReady?.[uid]?.mainCount === MAIN_COUNT
+      && room?.deckReady?.[uid]?.reserveCount === RESERVE_COUNT,
   );
 }
 
@@ -500,6 +791,7 @@ function materializeMatchAchievementShowcases(room) {
   if (!state.roomId
       || room?.status !== "active"
       || room?.hostUid !== state.uid
+      || !state.localDeckReadyCommitted
       || !matchAchievementShowcaseRevealReady(room)
       || state.matchAchievementShowcaseRequested) return;
   const requestedRoomId = state.roomId;
@@ -554,20 +846,26 @@ function isActive() {
 }
 
 async function ensureAuthenticated() {
+  const targetState = state;
   await setPersistence(auth, browserLocalPersistence);
   const credential = auth.currentUser ? { user: auth.currentUser } : await signInAnonymously(auth);
-  if (!active) return;
-  state.uid = credential.user.uid;
+  if (!active || state !== targetState) return;
+  targetState.uid = credential.user.uid;
+  targetState.persistDeck = localStorage.getItem(strategyDeckPersistenceKey(targetState.uid)) === "true";
   const [profileSnapshot, economySnapshot] = await Promise.all([
-    get(ref(database, `online/strategyProfiles/${state.uid}`)),
-    get(ref(database, `online/economy/${state.uid}`)),
+    get(ref(database, `online/strategyProfiles/${targetState.uid}`)),
+    get(ref(database, `online/economy/${targetState.uid}`)),
   ]);
-  if (profileSnapshot.exists()) state.profile = normalizeProfile(profileSnapshot.val());
-  if (economySnapshot.exists()) state.economy = normalizeChatCosmeticEconomy(economySnapshot.val());
-  if (state.screen === "profile") syncStrategyProfileDraft();
-  state.authReady = true;
+  if (!active || state !== targetState) return;
+  if (profileSnapshot.exists()) targetState.profile = normalizeProfile(profileSnapshot.val());
+  if (economySnapshot.exists()) targetState.economy = normalizeChatCosmeticEconomy(economySnapshot.val());
+  if (targetState.screen === "profile") syncStrategyProfileDraft();
+  targetState.authReady = true;
   setStrategyChrome("STRATEGY READY");
   render();
+  targetState.initialDeckRestorePromise = restoreStoredStrategyDeck({ quiet: true });
+  await targetState.initialDeckRestorePromise;
+  if (!active || state !== targetState) return;
   if (window.HariaiOnline?.getOverallRankingPreference?.().enabled) {
     window.HariaiOnline.refreshRankingDashboard?.().catch((error) => console.error(error));
   }
@@ -608,6 +906,42 @@ function renderStrategyTitleBadge(titleId) {
     : "";
 }
 
+function strategyDeckStatusCopy() {
+  if (state.deckRestoreMessage) return state.deckRestoreMessage;
+  if (!state.authReady) return "Firebase接続後、このアカウントの端末保存を確認します。";
+  return "実画像10枚を準備すると、戦略型のマッチングを開始できます。";
+}
+
+function renderPreparedDeckSummary() {
+  const complete = strategyDeckIsComplete();
+  const restoring = state.deckRestoreStatus === "loading";
+  const routeBusy = state.normalRouteBusy || state.matchmakingLaunchBusy;
+  const statusClass = complete ? "is-ready" : "is-incomplete";
+  return `<section class="strategy-prepared-summary ${statusClass}" aria-label="戦略デッキ準備状況">
+    <div class="strategy-prepared-summary-head"><div><span class="eyebrow">PREPARED DECK / 10 CARDS</span><h2>${complete ? "10枚の準備ができています" : "対戦前に実画像10枚を準備"}</h2></div>
+      <span class="strategy-prepared-badge">${complete ? "READY" : `${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}`}</span></div>
+    <div class="strategy-prepared-counts"><span>MAIN <b>${state.main.length} / ${MAIN_COUNT}</b></span><span>RESERVE <b>${state.reserve.length} / ${RESERVE_COUNT}</b></span></div>
+    <p>${escapeHtml(strategyDeckStatusCopy())}</p>
+    <div class="strategy-prepared-actions"><button class="button ${complete ? "button-ghost" : "button-primary"}" id="strategyOpenPreDeck" type="button" ${restoring || state.normalRouteBusy ? "disabled" : ""}>${restoring ? "保存デッキを確認中…" : complete ? "10枚を確認・差し替え" : "戦略デッキ10枚を準備"}</button>
+      <button class="button button-ghost" id="strategyOpenNormal1on1" type="button" ${routeBusy ? "disabled" : ""}>${state.normalRouteBusy ? "通常1on1へ切替中…" : "手軽に遊ぶなら通常1on1へ"}</button></div>
+  </section>`;
+}
+
+function renderStrategyDeckPersistencePanel() {
+  const busy = strategyDeckStorageBusy();
+  const canRetryLoad = state.storedDeckAvailable || state.deckRestoreStatus === "error";
+  const savedAt = state.deckSavedAt > 0
+    ? new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(state.deckSavedAt))
+    : "";
+  return `<section class="strategy-deck-persistence">
+    <label><input type="checkbox" id="strategyPersistDeck" ${state.persistDeck ? "checked" : ""} ${state.authReady && !busy ? "" : "disabled"} /> この端末に完成デッキを保存し、次回自動で読み込む</label>
+    <p>明示的にONにした時だけ、準備完了または封印した実画像10枚と任意の添付音声をIndexedDBへ保存します。Firebaseや相手には保存されません。${savedAt ? ` 最終保存: ${escapeHtml(savedAt)}` : ""}</p>
+    <p class="strategy-deck-storage-status" role="status">${escapeHtml(strategyDeckStatusCopy())}</p>
+    <div><button class="button button-ghost button-small" id="strategyLoadStoredDeck" type="button" ${state.authReady && canRetryLoad && !busy ? "" : "disabled"}>${state.deckRestoreStatus === "error" ? "端末保存を再確認" : "保存デッキを読み込む"}</button>
+      <button class="button button-ghost button-small" id="strategyForgetStoredDeck" type="button" ${state.authReady && !busy ? "" : "disabled"}>端末保存を削除</button></div>
+  </section>`;
+}
+
 function setStrategyChrome(label) {
   const status = document.querySelector(".status-dot");
   const privacy = document.querySelector(".privacy-badge");
@@ -623,6 +957,7 @@ function render() {
   const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
     profile: renderProfile,
+    preDeck: renderPreparedDeck,
     matching: renderMatching,
     connecting: renderConnecting,
     intro: renderAnonymousIntro,
@@ -690,10 +1025,11 @@ function renderProfile() {
       <span>STRATEGY RATE ${Number(state.profile.rating || INITIAL_RATING)}</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span></div>
     ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "strategyOverallRanking" }) || ""}
     <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
-      <li><b>1</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
-      <li><b>2</b><span>各ラウンド後に一度だけ看破を宣言でき、成功すると最大3連続追撃、失敗すると自分に5ダメージです。</span></li>
-      <li><b>3</b><span>双方同意後の品評会では対戦画像を見返し、追加画像・10秒音声・10秒短尺映像をP2Pで一時共有できます。</span></li>
-    </ol><p class="privacy-note">画像・音声・短尺映像はFirebaseへ保存しません。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
+      <li><b>1</b><span>マッチング前にメイン5枚＋リザーブ5枚の実画像を準備します。サンプル補充はありません。</span></li>
+      <li><b>2</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
+      <li><b>3</b><span>各ラウンド後に一度だけ看破を宣言でき、成功すると最大3連続追撃、失敗すると自分に5ダメージです。</span></li>
+      <li><b>4</b><span>双方同意後の品評会では対戦画像を見返し、追加画像・10秒音声・10秒短尺映像をP2Pで一時共有できます。</span></li>
+    </ol><p class="privacy-note">対戦メディアはFirebaseへ保存しません。完成デッキは明示的にONにした時だけ、この端末のIndexedDBへ保存します。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
       <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
       ${shared()?.profileAvatar?.renderSetting?.({ controlId: "strategyProfileAvatar", name: state.name }) || ""}
@@ -714,22 +1050,27 @@ function renderProfile() {
           <input class="text-input" id="strategyCustomPursuitLine" maxlength="${MAX_PURSUIT_LINE_LENGTH}" autocomplete="off" value="${usesCustom ? escapeHtml(state.pursuitLine) : ""}" /></label>
           <span class="pursuit-character-count"><b id="strategyPursuitCharacterCount">${usesCustom ? state.pursuitLine.length : 0}</b> / ${MAX_PURSUIT_LINE_LENGTH}</span></div>
       </div>
+      ${renderPreparedDeckSummary()}
       ${window.HariaiOnline?.renderBattlePresenceCheck?.({ mode: "strategy", phase: "setup" }) || ""}
       <div class="screen-actions setup-actions crown-matchmaking-actions" id="strategyCrownMatchmakingActions">${crownMatchmakingActions}</div>
     </form></div></section>`;
 }
 
 function renderStrategyCrownMatchmakingActions() {
-  const matchmakingReady = state.authReady && Boolean(normalizeImagePreference(state.imagePreference, ""));
+  const matchmakingReady = state.authReady
+    && Boolean(normalizeImagePreference(state.imagePreference, ""))
+    && state.deckRestoreStatus !== "loading"
+    && !state.normalRouteBusy
+    && strategyDeckIsComplete();
   return window.HariaiOnline?.renderCrownMatchmakingActions?.({
     mode: "strategy",
     regularButtonId: "strategyFindOpponent",
-    regularLabel: "プロフィールを封印して対戦相手を探す",
+    regularLabel: "準備済み10枚で対戦相手を探す",
     crownButtonId: "strategyCrownMatchmaking",
     regularType: "submit",
     ready: matchmakingReady,
-    busy: state.matchmakingLaunchBusy,
-  }) || `<button class="button button-primary" id="strategyFindOpponent" type="submit" ${matchmakingReady ? "" : "disabled"}>プロフィールを封印して対戦相手を探す</button>`;
+    busy: state.matchmakingLaunchBusy || state.normalRouteBusy,
+  }) || `<button class="button button-primary" id="strategyFindOpponent" type="submit" ${matchmakingReady ? "" : "disabled"}>準備済み10枚で対戦相手を探す</button>`;
 }
 
 function bindStrategyCrownMatchmakingActions() {
@@ -797,12 +1138,14 @@ function renderWaitingDecision() {
 
 function renderDeckBuilder() {
   const opponent = getOpponent();
+  const complete = strategyDeckIsComplete();
   return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">COUNTER DECK BUILD</span><h1>相手に刺さる10枚を選ぶ</h1>
-    <p>メインは必ず5枚。各画像には10秒までの音声を任意で添付でき、弱点看破後の追撃では指定した3秒を連続再生します。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
+    <p>準備してきたメイン5枚＋リザーブ5枚を、相手の弱点候補に合わせて封印前に差し替えられます。各画像には10秒までの音声を任意で添付できます。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
     <div class="strategy-build-layout"><aside class="strategy-scout-note"><span>SCOUTING MEMO</span><h2>匿名の対戦相手</h2>
       ${opponent.clues.map((clue, index) => `<p><b>${index + 1}</b>${escapeHtml(clue)}</p>`).join("")}<small>本当の弱点は1つ。残り2つはブラフです。</small></aside>
       <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}
-        <div class="screen-actions setup-actions"><button class="button button-primary" id="strategyLockDeck" ${state.main.length === MAIN_COUNT ? "" : "disabled"}>デッキを封印する</button></div>
+        <p class="strategy-deck-lock-note">戦略型は実画像10枚が必須です。リザーブ不足やサンプル画像を含むデッキは封印できません。</p>
+        <div class="screen-actions setup-actions"><button class="button button-primary" id="strategyLockDeck" ${complete ? "" : "disabled"}>実画像10枚でデッキを封印する</button></div>
       </div></div></section>`;
 }
 
@@ -810,26 +1153,26 @@ function renderDeckZone(zone) {
   const isMain = zone === "main";
   const items = state[zone];
   const limit = isMain ? MAIN_COUNT : RESERVE_COUNT;
-  return `<section class="strategy-deck-zone ${zone}"><div class="deck-toolbar"><div><span class="eyebrow">${isMain ? "MAIN DECK / 必須" : "RESERVE / 任意"}</span>
+  const editingLocked = state.deckRestoreStatus === "loading" || state.normalRouteBusy;
+  return `<section class="strategy-deck-zone ${zone}"><div class="deck-toolbar"><div><span class="eyebrow">${isMain ? "MAIN DECK / 5枚必須" : "RESERVE / 5枚必須"}</span>
     <p>${isMain ? "各ラウンドで1枚ずつ使用" : "再提示または追撃で消費"}</p></div><div class="deck-counter"><strong>${items.length}</strong> / ${limit}</div>
-    <div class="upload-actions"><label class="button button-ghost button-small file-button">画像を追加<input type="file" accept="image/*" multiple data-strategy-upload="${zone}" /></label>
-      <button class="button button-ghost button-small" data-strategy-sample="${zone}" ${items.length >= limit ? "disabled" : ""}>サンプルで補充</button></div></div>
+    <div class="upload-actions"><label class="button button-ghost button-small file-button ${editingLocked ? "is-disabled" : ""}">実画像を追加<input type="file" accept="image/*" multiple data-strategy-upload="${zone}" ${editingLocked ? "disabled" : ""} /></label></div></div>
     <div class="strategy-deck-grid">${Array.from({ length: limit }, (_, index) => {
       const item = items[index];
       const cueMax = Math.max(0, Number(item?.audioDuration || 0) - AUDIO_HIGHLIGHT_SECONDS);
       return item ? `<article class="deck-slot"><img src="${item.url}" alt="${isMain ? "メイン" : "リザーブ"}画像 ${index + 1}" />
-        <div class="deck-label"><span>${isMain ? "MAIN" : "RESERVE"} ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" type="button" data-strategy-remove="${zone}:${item.id}" aria-label="画像を外す">×</button></div>
+        <div class="deck-label"><span>${isMain ? "MAIN" : "RESERVE"} ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" type="button" data-strategy-remove="${zone}:${item.id}" aria-label="画像を外す" ${editingLocked ? "disabled" : ""}>×</button></div>
         <div class="deck-audio ${item.audioBlob ? "has-audio" : ""}">${item.audioBlob
-          ? `<div class="deck-audio-head"><span>♪ ${escapeHtml(item.audioName || "添付音声")} / ${Number(item.audioDuration).toFixed(1)}秒</span><button type="button" data-strategy-audio-remove="${zone}:${item.id}">音声を外す</button></div>
+          ? `<div class="deck-audio-head"><span>♪ ${escapeHtml(item.audioName || "添付音声")} / ${Number(item.audioDuration).toFixed(1)}秒</span><button type="button" data-strategy-audio-remove="${zone}:${item.id}" ${editingLocked ? "disabled" : ""}>音声を外す</button></div>
             <audio controls preload="metadata" src="${item.audioUrl}"></audio>
-            <label>追撃で使う3秒 <input type="range" min="0" max="${cueMax.toFixed(1)}" step="0.1" value="${Math.min(Number(item.audioCueStart || 0), cueMax).toFixed(1)}" data-strategy-audio-cue="${zone}:${item.id}" /><output>${Number(item.audioCueStart || 0).toFixed(1)}秒〜</output></label>`
-          : `<label class="deck-audio-add">＋ 10秒音声を添付<input type="file" accept="audio/*" data-strategy-audio="${zone}:${item.id}" /></label>`}</div></article>`
+            <label>追撃で使う3秒 <input type="range" min="0" max="${cueMax.toFixed(1)}" step="0.1" value="${Math.min(Number(item.audioCueStart || 0), cueMax).toFixed(1)}" data-strategy-audio-cue="${zone}:${item.id}" ${editingLocked ? "disabled" : ""} /><output>${Number(item.audioCueStart || 0).toFixed(1)}秒〜</output></label>`
+          : `<label class="deck-audio-add ${editingLocked ? "is-disabled" : ""}">＋ 10秒音声を添付<input type="file" accept="audio/*" data-strategy-audio="${zone}:${item.id}" ${editingLocked ? "disabled" : ""} /></label>`}</div></article>`
         : '<div class="deck-slot empty"><span>+</span></div>';
     }).join("")}</div></section>`;
 }
 
 function renderWaitingDeck() {
-  return renderStatusCard("▦", "DECK SEALED", "相手のデッキ確定を待っています", "メイン5枚とリザーブ枚数だけを同期し、画像本体はまだ送信しません。", `<span class="connection-pill connected">● MAIN ${state.main.length} / RESERVE ${state.reserve.length}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+  return renderStatusCard("▦", "DECK SEALED", "相手のデッキ確定を待っています", "メイン5枚・リザーブ5枚の準備完了だけを同期し、画像本体はまだ送信しません。", `<span class="connection-pill connected">● MAIN ${state.main.length} / RESERVE ${state.reserve.length}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
 }
 
 function renderIdentityReveal() {
@@ -843,6 +1186,21 @@ function renderIdentityReveal() {
 
 function renderWaitingBattle() {
   return renderStatusCard("VS", "BATTLE READY", "相手の開始準備を待っています", "両者が準備するとROUND 1の秘密選択を開始します。", `<span class="connection-pill connected">● デッキ・通信準備完了</span>${renderOpponentAchievementShowcase({ context: "is-identity", label: "相手の実績" })}`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+}
+
+function renderPreparedDeck() {
+  const complete = strategyDeckIsComplete();
+  const storageBusy = strategyDeckStorageBusy();
+  const routeBusy = state.normalRouteBusy || state.matchmakingLaunchBusy;
+  return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">PRE-MATCH PREPARED DECK</span><h1>10枚で戦う準備型モード</h1>
+    <p>マッチング前にメイン5枚＋リザーブ5枚を実画像でそろえます。相手の弱点候補を見た後も、封印前ならこの10枚を差し替えられます。</p></div><span class="strategy-step">${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}</span></div>
+    <div class="strategy-build-layout"><aside class="strategy-scout-note strategy-prepared-guide"><span>PREPARED MODE</span><h2>待たせないための事前準備</h2>
+      <p><b>1</b>メインは5ラウンドで使う5枚です。</p><p><b>2</b>リザーブも5枚必須です。再提示・追撃・弱点看破の選択肢になります。</p><p><b>3</b>サンプル補充はありません。10枚準備が重い時は通常1on1を選べます。</p>
+      <small>端末保存はアカウントのUIDごとです。同じ端末・ブラウザでだけ再利用でき、別端末には同期されません。</small></aside>
+      <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}${renderStrategyDeckPersistencePanel()}
+        <div class="screen-actions setup-actions strategy-prepared-footer"><button class="button button-ghost" id="strategyPreDeckBack" type="button" ${state.normalRouteBusy ? "disabled" : ""}>プロフィールに戻る</button><button class="button button-primary" id="strategyPreparedDeckDone" type="button" ${complete && !storageBusy && !state.normalRouteBusy ? "" : "disabled"}>10枚の準備を完了</button></div>
+        <button class="button button-ghost strategy-normal-route" id="strategyOpenNormal1on1" type="button" ${routeBusy ? "disabled" : ""}>${state.normalRouteBusy ? "通常1on1へ切替中…" : "10枚を組まず、通常1on1で遊ぶ"}</button>
+      </div></div></section>`;
 }
 
 function renderBaseSelect() {
@@ -1382,6 +1740,15 @@ function renderScoreButtons() {
 
 function bindScreenEvents() {
   document.querySelector("#strategyBackHome")?.addEventListener("click", leaveToLanding);
+  document.querySelector("#strategyOpenPreDeck")?.addEventListener("click", openPreparedDeck);
+  document.querySelector("#strategyPreDeckBack")?.addEventListener("click", returnToStrategyProfile);
+  document.querySelector("#strategyPreparedDeckDone")?.addEventListener("click", completePreparedDeck);
+  document.querySelector("#strategyOpenNormal1on1")?.addEventListener("click", leaveToNormal1on1);
+  document.querySelector("#strategyLoadStoredDeck")?.addEventListener("click", loadSavedPreparedDeck);
+  document.querySelector("#strategyForgetStoredDeck")?.addEventListener("click", requestDeleteStoredStrategyDeck);
+  document.querySelector("#strategyPersistDeck")?.addEventListener("change", (event) => {
+    updateStrategyDeckPersistence(event.currentTarget.checked).catch(handleRecoverableError);
+  });
   window.HariaiOnline?.bindBattlePresenceCheck?.({
     mode: "strategy",
     getOwnPresenceId: () => state.publicPresenceId || state.publicPresencePendingId,
@@ -1409,7 +1776,6 @@ function bindScreenEvents() {
   document.querySelector("#strategyWithdraw")?.addEventListener("click", () => submitDecision("withdraw"));
   document.querySelector("#strategyAccept")?.addEventListener("click", () => submitDecision("accept"));
   document.querySelectorAll("[data-strategy-upload]").forEach((input) => input.addEventListener("change", (event) => addDeckFiles(input.dataset.strategyUpload, [...event.target.files])));
-  document.querySelectorAll("[data-strategy-sample]").forEach((button) => button.addEventListener("click", () => fillDeckSamples(button.dataset.strategySample)));
   document.querySelectorAll("[data-strategy-remove]").forEach((button) => button.addEventListener("click", () => removeDeckItem(button.dataset.strategyRemove)));
   document.querySelectorAll("[data-strategy-audio]").forEach((input) => input.addEventListener("change", (event) => addCardAudio(input.dataset.strategyAudio, event.target.files?.[0])));
   document.querySelectorAll("[data-strategy-audio-remove]").forEach((button) => button.addEventListener("click", () => removeCardAudio(button.dataset.strategyAudioRemove)));
@@ -2186,6 +2552,44 @@ function releaseStrategyReviewAssetData() {
   state.reviewAssetReceivedCounts = { image: 0, audio: 0 };
 }
 
+function openPreparedDeck() {
+  if (state.normalRouteBusy) return;
+  if (state.deckRestoreStatus === "loading") {
+    showToast("前回デッキの確認が終わるまでお待ちください。");
+    return;
+  }
+  if (state.screen === "profile") syncStrategyProfileDraft();
+  state.screen = "preDeck";
+  setStrategyChrome("STRATEGY DECK PREP");
+  render();
+}
+
+function returnToStrategyProfile() {
+  if (state.normalRouteBusy) return;
+  state.screen = "profile";
+  setStrategyChrome("STRATEGY READY");
+  render();
+}
+
+function completePreparedDeck() {
+  if (strategyDeckStorageBusy() || state.normalRouteBusy) return;
+  if (!strategyDeckIsComplete()) {
+    showToast("戦略型はメイン5枚とリザーブ5枚の実画像が必要です。");
+    return;
+  }
+  persistCompleteStrategyDeck({ announceSuccess: state.persistDeck }).catch(handleRecoverableError);
+  state.screen = "profile";
+  setStrategyChrome("STRATEGY READY");
+  render();
+}
+
+async function loadSavedPreparedDeck() {
+  if ((!state.storedDeckAvailable && state.deckRestoreStatus !== "error") || strategyDeckStorageBusy()) return;
+  if ((state.main.length || state.reserve.length)
+      && !window.confirm("編集中の戦略デッキを、端末保存した前回の10枚で置き換えますか？")) return;
+  await restoreStoredStrategyDeck({ force: true });
+}
+
 function syncStrategyProfileDraft() {
   const nameInput = document.querySelector("#strategyName");
   if (nameInput) state.name = nameInput.value.slice(0, 16);
@@ -2225,7 +2629,12 @@ function strategyMatchmakingLaunchIsCurrent(context, { requireProfile = true } =
     && active
     && state === context.expectedState
     && context.expectedState.matchmakingLaunchGeneration === context.generation
-    && (!requireProfile || context.expectedState.screen === "profile"),
+    && !context.expectedState.normalRouteBusy
+    && (!requireProfile || (
+      context.expectedState.screen === "profile"
+      && context.expectedState.deckRestoreStatus !== "loading"
+      && strategyDeckIsComplete()
+    )),
   );
 }
 
@@ -2240,6 +2649,7 @@ function finishStrategyMatchmakingLaunch(context) {
 async function saveProfile(event) {
   event.preventDefault();
   if (state.matchmakingLaunchBusy) return;
+  if (state.normalRouteBusy) return;
   const crownIntent = event.submitter?.dataset.crownMatchmakingAction === "start";
   const name = document.querySelector("#strategyName")?.value.trim().slice(0, 16) || "";
   const clues = [...document.querySelectorAll(".strategy-clue-input")].map((input) => input.value.trim());
@@ -2247,6 +2657,8 @@ async function saveProfile(event) {
   const imagePreference = normalizeImagePreference(document.querySelector('input[name="strategyImagePreference"]:checked')?.value, "");
   if (!state.authReady || !state.uid) return showToast("Firebaseへの接続完了を待ってください。");
   if (!name || clues.some((clue) => !clue) || !weakness || !imagePreference) return showToast("名前、採点傾向、3つの弱点候補、本当の弱点1つをすべて入力してください。");
+  if (state.deckRestoreStatus === "loading") return showToast("前回デッキの確認が終わるまでお待ちください。");
+  if (!strategyDeckIsComplete()) return showToast("戦略型はマッチング前にメイン5枚とリザーブ5枚の実画像が必要です。");
   state.name = name;
   state.clues = normalizeClues(clues);
   state.weaknessIndex = Number(weakness.value);
@@ -2269,6 +2681,7 @@ async function saveProfile(event) {
   expectedState.matchmakingLaunchGeneration = context.generation;
   expectedState.matchmakingLaunchBusy = true;
   updateStrategyCrownMatchmakingActions();
+  persistCompleteStrategyDeck().catch(handleRecoverableError);
   let crownReady = !crownIntent;
   try {
     if (crownIntent) {
@@ -2317,7 +2730,11 @@ async function removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt) {
 }
 
 async function beginMatchmaking() {
+  if (state.normalRouteBusy) throw new Error("通常1on1へ切り替えています。");
   state.imagePreference = normalizeImagePreference(state.imagePreference, "");
+  if (state.deckRestoreStatus === "loading" || !strategyDeckIsComplete()) {
+    throw new Error("戦略型はメイン5枚とリザーブ5枚の実画像を準備してから開始してください。");
+  }
   if (!state.uid || !state.imagePreference) return;
   const joinedAt = Date.now();
   const generation = ++strategyMatchmakingGenerationCounter;
@@ -3191,21 +3608,30 @@ async function reactToReviewData() {
 }
 
 async function addDeckFiles(zone, files) {
+  const targetState = state;
+  if (!["main", "reserve"].includes(zone) || !["preDeck", "deck"].includes(targetState.screen)) return;
   const limit = zone === "main" ? MAIN_COUNT : RESERVE_COUNT;
-  const room = Math.max(0, limit - state[zone].length);
+  const room = Math.max(0, limit - targetState[zone].length);
   if (!room) return;
+  const initialCount = targetState[zone].length;
   setBusy(true, "デッキ画像を準備しています…");
   try {
     for (const file of files.slice(0, room)) {
-      const position = zone === "main" ? state.main.length : MAIN_COUNT + state.reserve.length;
-      state[zone].push(await shared().processImageFile(file, position, { maxSide: 1280, quality: 0.84 }));
+      const position = zone === "main" ? targetState.main.length : MAIN_COUNT + targetState.reserve.length;
+      const item = await shared().processImageFile(file, position, { maxSide: 1280, quality: 0.84 });
+      if (!active || state !== targetState || !["preDeck", "deck"].includes(targetState.screen)) {
+        releaseLocalStrategyCard(item);
+        return;
+      }
+      targetState[zone].push(item);
     }
     if (files.length > room) showToast(`${limit}枚を超えた画像は追加していません。`);
   } catch (error) {
-    showToast(error.message || "画像を追加できませんでした。");
+    if (active && state === targetState) showToast(error.message || "画像を追加できませんでした。");
   } finally {
+    if (active && state === targetState && targetState[zone].length !== initialCount) markStrategyDeckEdited();
     setBusy(false);
-    render();
+    if (active && state === targetState) render();
   }
 }
 
@@ -3216,26 +3642,34 @@ function findDeckCard(token) {
 }
 
 async function addCardAudio(token, file) {
-  const { item } = findDeckCard(token);
+  const targetState = state;
+  const { zone, item } = findDeckCard(token);
   if (!item || !file) return;
   setBusy(true, "音声を10秒以下・モノラルWAVへ変換しています…");
   try {
     const audio = await processStrategyAudioFile(file);
+    if (!active || state !== targetState || !["preDeck", "deck"].includes(targetState.screen)
+        || !targetState[zone]?.includes(item)) {
+      if (audio.audioUrl) URL.revokeObjectURL(audio.audioUrl);
+      return;
+    }
     releaseCardAudio(item);
     Object.assign(item, audio);
+    markStrategyDeckEdited();
     showToast(file.size > audio.audioBlob.size ? "音声を軽量化して画像に添付しました。" : "音声を画像に添付しました。");
   } catch (error) {
-    showToast(error.message || "音声を添付できませんでした。");
+    if (active && state === targetState) showToast(error.message || "音声を添付できませんでした。");
   } finally {
     setBusy(false);
-    render();
+    if (active && state === targetState) render();
   }
 }
 
 function removeCardAudio(token) {
   const { item } = findDeckCard(token);
-  if (!item) return;
+  if (!item?.audioBlob) return;
   releaseCardAudio(item);
+  markStrategyDeckEdited();
   render();
 }
 
@@ -3243,7 +3677,9 @@ function updateCardAudioCue(token, value, input) {
   const { item } = findDeckCard(token);
   if (!item?.audioBlob) return;
   const max = Math.max(0, Number(item.audioDuration || 0) - AUDIO_HIGHLIGHT_SECONDS);
-  item.audioCueStart = Math.max(0, Math.min(max, Number(value) || 0));
+  const nextCueStart = Math.max(0, Math.min(max, Number(value) || 0));
+  if (nextCueStart !== item.audioCueStart) markStrategyDeckEdited();
+  item.audioCueStart = nextCueStart;
   const output = input?.parentElement?.querySelector("output");
   if (output) output.textContent = `${item.audioCueStart.toFixed(1)}秒〜`;
 }
@@ -3294,22 +3730,6 @@ function declareWeaknessGuess() {
   render();
 }
 
-async function fillDeckSamples(zone) {
-  const limit = zone === "main" ? MAIN_COUNT : RESERVE_COUNT;
-  const missing = limit - state[zone].length;
-  if (missing <= 0) return;
-  setBusy(true, "サンプル画像を生成しています…");
-  try {
-    const offset = zone === "main" ? state.main.length : MAIN_COUNT + state.reserve.length;
-    state[zone].push(...await shared().createSampleItems(state.playerIndex, missing, offset));
-  } catch (error) {
-    showToast(error.message || "サンプル画像を生成できませんでした。");
-  } finally {
-    setBusy(false);
-    render();
-  }
-}
-
 function removeDeckItem(token) {
   const [zone, id] = token.split(":");
   const index = state[zone].findIndex((item) => item.id === id);
@@ -3317,14 +3737,38 @@ function removeDeckItem(token) {
   const [removed] = state[zone].splice(index, 1);
   releaseCardAudio(removed);
   URL.revokeObjectURL(removed.url);
+  removed.url = "";
+  removed.blob = null;
+  markStrategyDeckEdited();
   render();
 }
 
 async function lockDeck() {
-  if (state.main.length !== MAIN_COUNT) return showToast("メインデッキを5枚そろえてください。");
-  state.screen = "waitingDeck";
+  if (!strategyDeckIsComplete()) return showToast("戦略型はメイン5枚とリザーブ5枚の実画像をそろえてください。");
+  const targetState = state;
+  const roomId = targetState.roomId;
+  const uid = targetState.uid;
+  if (!roomId || !uid || targetState.screen !== "deck") return;
+  persistCompleteStrategyDeck().catch(handleRecoverableError);
+  targetState.localDeckReadyCommitted = false;
+  targetState.screen = "waitingDeck";
   render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/deckReady/${state.uid}`), { ready: true, mainCount: state.main.length, reserveCount: state.reserve.length, lockedAt: serverTimestamp() });
+  try {
+    await set(ref(database, `online/strategyRooms/${roomId}/deckReady/${uid}`), { ready: true, mainCount: MAIN_COUNT, reserveCount: RESERVE_COUNT, lockedAt: serverTimestamp() });
+  } catch (error) {
+    if (!active || state !== targetState || targetState.roomId !== roomId) return;
+    targetState.localDeckReadyCommitted = false;
+    if (targetState.screen === "waitingDeck") {
+      targetState.screen = "deck";
+      render();
+    }
+    showToast(error?.message || "デッキを封印できませんでした。通信状態を確認してもう一度お試しください。");
+    return;
+  }
+  if (!active || state !== targetState || targetState.roomId !== roomId) return;
+  targetState.localDeckReadyCommitted = true;
+  materializeMatchAchievementShowcases(targetState.roomData);
+  reactToRoomData().catch(handleRecoverableError);
 }
 
 async function startBattle() {
@@ -3719,11 +4163,16 @@ async function reactToRoomData() {
       render();
     }
     const deckReady = state.roomData.deckReady || {};
-    if (both(deckReady) && ["deck", "waitingDeck"].includes(state.screen)) {
+    const bothDecksComplete = both(deckReady) && [state.uid, state.opponentUid].every(
+      (uid) => deckReady[uid]?.ready === true
+        && deckReady[uid]?.mainCount === MAIN_COUNT
+        && deckReady[uid]?.reserveCount === RESERVE_COUNT,
+    );
+    if (state.localDeckReadyCommitted && bothDecksComplete && ["deck", "waitingDeck"].includes(state.screen)) {
       state.players.forEach((player) => {
         const data = deckReady[player.uid] || {};
         player.mainCount = Number(data.mainCount || MAIN_COUNT);
-        player.reserveCount = Number(data.reserveCount || 0);
+        player.reserveCount = Number(data.reserveCount || RESERVE_COUNT);
       });
       state.screen = "identity";
       render();
@@ -4059,7 +4508,7 @@ async function cleanupPublicPresence() {
 }
 
 function requestHome() {
-  if (!active) return;
+  if (!active || state.normalRouteBusy) return;
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -4068,7 +4517,7 @@ function requestHome() {
     leaveStrategyReview(true).catch(handleRecoverableError);
     return;
   }
-  if (["profile", "matching", "gameover", "withdrawn", "noContest", "error"].includes(state.screen)) {
+  if (["profile", "preDeck", "matching", "gameover", "withdrawn", "noContest", "error"].includes(state.screen)) {
     leaveToLanding();
     return;
   }
@@ -4149,6 +4598,12 @@ async function resetStrategySetup() {
       imagePreference: state.imagePreference,
       profile: { ...state.profile },
       economy: state.economy,
+      persistDeck: state.persistDeck,
+      storedDeckAvailable: state.storedDeckAvailable,
+      deckRestoreStatus: state.deckRestoreStatus,
+      deckRestoreMessage: state.deckRestoreMessage,
+      deckSavedAt: state.deckSavedAt,
+      deckMutationVersion: state.deckMutationVersion,
     };
     await cleanupOnlineResources(false);
     releaseMatchMedia();
@@ -4186,6 +4641,7 @@ async function retryConnection() {
 }
 
 async function leaveToLanding() {
+  if (state.normalRouteBusy) return;
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -4200,6 +4656,29 @@ async function leaveToLanding() {
     window.HariaiApp?.returnHome?.();
   } finally {
     resultNavigationBusy = false;
+  }
+}
+
+async function leaveToNormal1on1() {
+  if (!active || state.normalRouteBusy) return;
+  const targetState = state;
+  targetState.normalRouteBusy = true;
+  targetState.matchmakingLaunchGeneration += 1;
+  targetState.matchmakingLaunchBusy = false;
+  renderStrategyDeckIfVisible();
+  try {
+    await cleanupOnlineResources(false);
+    releaseAllImages();
+    active = false;
+    const openNormal1on1 = window.HariaiApp?.openNormal1on1;
+    if (typeof openNormal1on1 === "function") openNormal1on1();
+    else window.HariaiApp?.returnHome?.();
+  } catch (error) {
+    if (active && state === targetState) {
+      targetState.normalRouteBusy = false;
+      renderStrategyDeckIfVisible();
+    }
+    handleRecoverableError(error);
   }
 }
 

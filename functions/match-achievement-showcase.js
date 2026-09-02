@@ -10,6 +10,8 @@ const {
 const MATCH_ACHIEVEMENT_SHOWCASE_VERSION = 1;
 const MATCH_ACHIEVEMENT_SHOWCASE_READ_TIMEOUT_MS = 250;
 const MAX_DANWAKU_DAYS = 1_000_000;
+const STRATEGY_MAIN_COUNT = 5;
+const STRATEGY_RESERVE_COUNT = 5;
 const SAFE_UID_PATTERN = /^[^\u0000-\u001f\u007f.#$\[\]\/]{1,128}$/;
 
 function isRecord(value) {
@@ -44,7 +46,9 @@ function matchAchievementParticipantUids(room) {
 function strategyAchievementShowcaseRevealReady(room, participantUidValues) {
   const participantUids = normalizeParticipantUids(participantUidValues);
   return Boolean(participantUids && participantUids.every(
-    (uid) => room?.deckReady?.[uid]?.ready === true,
+    (uid) => room?.deckReady?.[uid]?.ready === true
+      && room?.deckReady?.[uid]?.mainCount === STRATEGY_MAIN_COUNT
+      && room?.deckReady?.[uid]?.reserveCount === STRATEGY_RESERVE_COUNT,
   ));
 }
 
