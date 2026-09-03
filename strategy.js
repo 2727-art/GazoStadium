@@ -77,11 +77,20 @@ import {
   sendStrategyReviewAsset,
 } from "./strategy-review-asset-transfer.mjs?v=strategy-review-assets-v1";
 import {
+  STRATEGY_DECK_IMAGE_MAX_BYTES,
+  STRATEGY_DECK_IMAGE_MIME_TYPES,
+  STRATEGY_DECK_IMAGE_TOTAL_MAX_BYTES,
   deleteStrategyDeck,
-  hasCompleteStrategyDeck,
+  hasPersistableStrategyDeck,
+  hasPlayableStrategyDeck,
   loadStrategyDeck,
   saveStrategyDeck,
-} from "./strategy-deck-storage.mjs?v=strategy-prepared-deck-v1";
+} from "./strategy-deck-storage.mjs?v=strategy-prepared-deck-v2-strategy-ios-image-fallback-v1";
+import {
+  normalizeOnlineImageMime,
+  verifiedOnlineImageMime,
+  verifiedOnlineImageMimeFromChunks,
+} from "./online-image-transfer.mjs?v=online-image-transfer-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
@@ -109,8 +118,11 @@ const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const QUEUE_FRESH_MS = 45_000;
 const HEARTBEAT_MS = 20_000;
 const DECK_STORAGE_TIMEOUT_MS = 6_000;
+const DECK_SAVE_TIMEOUT_MS = 12_000;
+const DECK_STORAGE_WATCHDOG_GRACE_MS = 1_000;
 const DATA_CHUNK_BYTES = 16 * 1024;
 const DATA_BUFFER_LIMIT = 512 * 1024;
+const DATA_BUFFER_WAIT_MS = 10_000;
 const STRATEGY_VIDEO_CHANNEL_LABEL = "hariai-strategy-videos-v1";
 const STRATEGY_REVIEW_ASSET_CHANNEL_LABEL = "hariai-strategy-review-assets-v1";
 const STRATEGY_REVIEW_IMAGE_LIMIT = 3;
@@ -218,6 +230,7 @@ function createState() {
     deckMutationVersion: 0,
     deckSaveBusy: false,
     deckSavePromise: null,
+    deckSaveMutationVersion: -1,
     deckDeleteBusy: false,
     normalRouteBusy: false,
     initialDeckRestorePromise: null,
@@ -442,8 +455,48 @@ function releaseCardAudio(item) {
   item.audioName = "";
 }
 
-function strategyDeckIsComplete() {
-  return hasCompleteStrategyDeck(state.main, state.reserve);
+function getTransferableStrategyAudio(item) {
+  const blob = item?.audioBlob;
+  const duration = Number(item?.audioDuration);
+  const cueValue = item?.audioCueStart === undefined || item?.audioCueStart === null || item?.audioCueStart === ""
+    ? 0
+    : Number(item.audioCueStart);
+  if (!(blob instanceof Blob)
+      || normalizeOnlineImageMime(blob.type) !== "audio/wav"
+      || !Number.isSafeInteger(blob.size)
+      || blob.size <= 0
+      || blob.size > MAX_AUDIO_TRANSFER_BYTES
+      || !Number.isFinite(duration)
+      || duration <= 0
+      || duration > MAX_AUDIO_SECONDS
+      || !Number.isFinite(cueValue)) return null;
+  return {
+    blob,
+    duration,
+    cueStart: Math.max(0, Math.min(Math.max(0, duration - AUDIO_HIGHLIGHT_SECONDS), cueValue)),
+  };
+}
+
+function strategyDeckIsComplete(targetState = state) {
+  return hasPlayableStrategyDeck(targetState.main, targetState.reserve);
+}
+
+function strategyDeckIsPersistable(targetState = state) {
+  return hasPersistableStrategyDeck(targetState.main, targetState.reserve);
+}
+
+function validateStrategyDeckImageForAddition(blob, targetState = state) {
+  const mime = normalizeOnlineImageMime(blob?.type);
+  if (!(blob instanceof Blob) || !Number.isSafeInteger(blob.size) || blob.size <= 0
+      || blob.size > STRATEGY_DECK_IMAGE_MAX_BYTES
+      || !STRATEGY_DECK_IMAGE_MIME_TYPES.includes(mime)) {
+    throw new Error("画像はWebP・PNG・JPEG形式かつ1枚15MB以下にしてください。");
+  }
+  const currentTotal = [...targetState.main, ...targetState.reserve]
+    .reduce((sum, card) => sum + Number(card?.blob?.size || 0), 0);
+  if (!Number.isSafeInteger(currentTotal) || currentTotal + blob.size > STRATEGY_DECK_IMAGE_TOTAL_MAX_BYTES) {
+    throw new Error("戦略デッキ画像10枚の合計は64MB以下にしてください。追加した画像を外しました。");
+  }
 }
 
 function strategyDeckStorageBusy() {
@@ -499,12 +552,16 @@ function markStrategyDeckEdited() {
   }
 }
 
-function withStrategyDeckStorageTimeout(promise, actionLabel) {
+function withStrategyDeckStorageTimeout(promise, actionLabel, timeoutMs = DECK_STORAGE_TIMEOUT_MS) {
   let timer = 0;
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = window.setTimeout(() => reject(new Error(`${actionLabel}に時間がかかっています。端末保存を使わず続行します。`)), DECK_STORAGE_TIMEOUT_MS);
+      timer = window.setTimeout(() => {
+        const error = new Error(`${actionLabel}に時間がかかっています。完了を確認できないため、端末保存を待たずに続行します。`);
+        error.code = "storage-timeout";
+        reject(error);
+      }, timeoutMs);
     }),
   ]).finally(() => window.clearTimeout(timer));
 }
@@ -518,7 +575,11 @@ async function restoreStoredStrategyDeck({ force = false, quiet = false } = {}) 
   targetState.deckRestoreMessage = "この端末の前回デッキを確認しています…";
   renderStrategyDeckIfVisible();
   try {
-    const record = await withStrategyDeckStorageTimeout(loadStrategyDeck(targetUid), "前回デッキの読み込み");
+    const record = await withStrategyDeckStorageTimeout(
+      loadStrategyDeck(targetUid, { timeoutMs: DECK_STORAGE_TIMEOUT_MS }),
+      "前回デッキの読み込み",
+      DECK_STORAGE_TIMEOUT_MS + DECK_STORAGE_WATCHDOG_GRACE_MS,
+    );
     if (!active || state !== targetState || targetState.uid !== targetUid) return false;
     targetState.storedDeckAvailable = Boolean(record);
     targetState.deckSavedAt = Number(record?.updatedAt || 0);
@@ -583,7 +644,7 @@ async function restoreStoredStrategyDeck({ force = false, quiet = false } = {}) 
   } catch (error) {
     if (!active || state !== targetState || targetState.uid !== targetUid) return false;
     console.error(error);
-    targetState.deckRestoreStatus = "error";
+    targetState.deckRestoreStatus = "load-error";
     targetState.deckRestoreMessage = "端末保存を読み込めませんでした。現在の10枚がそろえば対戦は続けられます。";
     if (!quiet) showToast(error?.message || "保存した戦略デッキを読み込めませんでした。");
     renderStrategyDeckIfVisible();
@@ -593,24 +654,52 @@ async function restoreStoredStrategyDeck({ force = false, quiet = false } = {}) 
 
 async function persistCompleteStrategyDeck({ announceSuccess = false } = {}) {
   const targetState = state;
-  if (!targetState.persistDeck || !targetState.uid || !strategyDeckIsComplete()
+  if (!targetState.persistDeck || !targetState.uid || !strategyDeckIsComplete(targetState)
       || targetState.deckDeleteBusy || targetState.deckRestoreStatus === "loading") return false;
+  if (!strategyDeckIsPersistable(targetState)) {
+    targetState.deckRestoreStatus = "unpersistable";
+    targetState.deckRestoreMessage = "画像10枚は対戦に使えますが、添付音声などの端末保存データを確認できません。対戦はそのまま続けられます。";
+    if (announceSuccess) showToast("画像10枚は対戦に使えますが、現在の内容は端末保存できませんでした。");
+    renderStrategyDeckIfVisible();
+    return false;
+  }
   if (targetState.deckSavePromise) {
-    await targetState.deckSavePromise;
-    if (state !== targetState || !targetState.persistDeck || !strategyDeckIsComplete()
+    const pendingSave = targetState.deckSavePromise;
+    const pendingMutationVersion = targetState.deckSaveMutationVersion;
+    const requestedMutationVersion = targetState.deckMutationVersion;
+    const pendingResult = await pendingSave;
+    if (state !== targetState || !targetState.persistDeck || !strategyDeckIsComplete(targetState)
         || targetState.deckDeleteBusy || targetState.deckRestoreStatus === "loading") return false;
+    if (!strategyDeckIsPersistable(targetState)) {
+      targetState.deckRestoreStatus = "unpersistable";
+      targetState.deckRestoreMessage = "画像10枚は対戦に使えますが、添付音声などの端末保存データを確認できません。対戦はそのまま続けられます。";
+      renderStrategyDeckIfVisible();
+      return false;
+    }
+    if (pendingMutationVersion === requestedMutationVersion) return pendingResult;
+    if (targetState.deckSavePromise && targetState.deckSavePromise !== pendingSave) {
+      return targetState.deckSavePromise;
+    }
+    return persistCompleteStrategyDeck({ announceSuccess });
   }
   const savedMutationVersion = targetState.deckMutationVersion;
   targetState.deckSaveBusy = true;
+  targetState.deckSaveMutationVersion = savedMutationVersion;
+  targetState.deckRestoreStatus = "saving";
+  targetState.deckRestoreMessage = "完成デッキ10枚をこの端末に保存しています。対戦準備はそのまま進められます。";
   renderStrategyDeckIfVisible();
   let operation;
   operation = Promise.resolve().then(async () => {
     try {
-      const record = await saveStrategyDeck({
-        uid: targetState.uid,
-        main: targetState.main,
-        reserve: targetState.reserve,
-      });
+      const record = await withStrategyDeckStorageTimeout(
+        saveStrategyDeck({
+          uid: targetState.uid,
+          main: targetState.main,
+          reserve: targetState.reserve,
+        }, { timeoutMs: DECK_SAVE_TIMEOUT_MS }),
+        "完成デッキの保存",
+        DECK_SAVE_TIMEOUT_MS + DECK_STORAGE_WATCHDOG_GRACE_MS,
+      );
       if (state !== targetState) return true;
       targetState.storedDeckAvailable = true;
       targetState.deckSavedAt = Number(record.updatedAt || Date.now());
@@ -626,8 +715,11 @@ async function persistCompleteStrategyDeck({ announceSuccess = false } = {}) {
     } catch (error) {
       if (state === targetState) {
         console.error(error);
-        targetState.deckRestoreStatus = "error";
-        targetState.deckRestoreMessage = "端末保存を更新できませんでした。現在の対戦はそのまま続けられます。";
+        targetState.deckRestoreStatus = "save-error";
+        const timedOut = error?.code === "storage-timeout";
+        targetState.deckRestoreMessage = timedOut
+          ? "端末保存の完了を確認できませんでした。保存を待たず、現在の10枚で対戦を続けられます。"
+          : "端末保存を更新できませんでした。現在の対戦はそのまま続けられます。";
         showToast(error?.message || "戦略デッキを端末保存できませんでした。現在の対戦は続けられます。");
       }
       return false;
@@ -635,6 +727,7 @@ async function persistCompleteStrategyDeck({ announceSuccess = false } = {}) {
       if (state === targetState && targetState.deckSavePromise === operation) {
         targetState.deckSaveBusy = false;
         targetState.deckSavePromise = null;
+        targetState.deckSaveMutationVersion = -1;
         renderStrategyDeckIfVisible();
       }
     }
@@ -654,7 +747,7 @@ async function deleteStoredStrategyDeck() {
   targetState.deckRestoreMessage = "この端末の保存デッキを削除しています…";
   renderStrategyDeckIfVisible();
   try {
-    await deleteStrategyDeck(targetUid);
+    await deleteStrategyDeck(targetUid, { timeoutMs: DECK_STORAGE_TIMEOUT_MS });
     if (state !== targetState || targetState.uid !== targetUid) return true;
     targetState.storedDeckAvailable = false;
     targetState.deckSavedAt = 0;
@@ -665,7 +758,7 @@ async function deleteStoredStrategyDeck() {
   } catch (error) {
     if (state === targetState && targetState.uid === targetUid) {
       console.error(error);
-      targetState.deckRestoreStatus = "error";
+      targetState.deckRestoreStatus = "delete-error";
       targetState.deckRestoreMessage = "端末保存を削除できませんでした。自動保存・自動復元はOFFのままです。再試行できます。";
       showToast(error?.message || "端末保存した戦略デッキを削除できませんでした。");
     }
@@ -702,6 +795,8 @@ async function updateStrategyDeckPersistence(enabled) {
   if (strategyDeckIsComplete()) {
     await persistCompleteStrategyDeck({ announceSuccess: true });
   } else {
+    state.deckRestoreStatus = state.storedDeckAvailable ? "available" : "edited";
+    state.deckRestoreMessage = "自動保存・自動復元をONにしました。実画像10枚がそろい、準備完了または封印した時に保存します。";
     showToast("端末保存をONにしました。実画像10枚がそろい、準備完了または封印した時に保存します。");
   }
   renderStrategyDeckIfVisible();
@@ -991,7 +1086,7 @@ function renderPreparedDeckSummary() {
 
 function renderStrategyDeckPersistencePanel() {
   const busy = strategyDeckStorageBusy();
-  const canRetryLoad = state.storedDeckAvailable || state.deckRestoreStatus === "error";
+  const canRetryLoad = state.storedDeckAvailable || state.deckRestoreStatus === "load-error";
   const savedAt = state.deckSavedAt > 0
     ? new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(state.deckSavedAt))
     : "";
@@ -999,7 +1094,7 @@ function renderStrategyDeckPersistencePanel() {
     <label><input type="checkbox" id="strategyPersistDeck" ${state.persistDeck ? "checked" : ""} ${state.authReady && !busy ? "" : "disabled"} /> この端末に完成デッキを保存し、次回自動で読み込む</label>
     <p>明示的にONにした時だけ、準備完了または封印した実画像10枚と任意の添付音声をIndexedDBへ保存します。Firebaseや相手には保存されません。${savedAt ? ` 最終保存: ${escapeHtml(savedAt)}` : ""}</p>
     <p class="strategy-deck-storage-status" role="status">${escapeHtml(strategyDeckStatusCopy())}</p>
-    <div><button class="button button-ghost button-small" id="strategyLoadStoredDeck" type="button" ${state.authReady && canRetryLoad && !busy ? "" : "disabled"}>${state.deckRestoreStatus === "error" ? "端末保存を再確認" : "保存デッキを読み込む"}</button>
+    <div><button class="button button-ghost button-small" id="strategyLoadStoredDeck" type="button" ${state.authReady && canRetryLoad && !busy ? "" : "disabled"}>${state.deckRestoreStatus === "load-error" ? "端末保存を再確認" : "保存デッキを読み込む"}</button>
       <button class="button button-ghost button-small" id="strategyForgetStoredDeck" type="button" ${state.authReady && !busy ? "" : "disabled"}>端末保存を削除</button></div>
   </section>`;
 }
@@ -1264,7 +1359,7 @@ function renderWaitingBattle() {
 
 function renderPreparedDeck() {
   const complete = strategyDeckIsComplete();
-  const storageBusy = strategyDeckStorageBusy();
+  const restoringDeck = state.deckRestoreStatus === "loading";
   const routeBusy = state.normalRouteBusy || state.matchmakingLaunchBusy;
   return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">PRE-MATCH PREPARED DECK</span><h1>10枚で戦う準備型モード</h1>
     <p>マッチング前にメイン5枚＋リザーブ5枚を実画像でそろえます。相手の弱点候補を見た後も、封印前ならこの10枚を差し替えられます。</p></div><span class="strategy-step">${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}</span></div>
@@ -1272,7 +1367,7 @@ function renderPreparedDeck() {
       <p><b>1</b>メインは5ラウンドで使う5枚です。</p><p><b>2</b>リザーブも5枚必須です。再提示・追撃・弱点看破の選択肢になります。</p><p><b>3</b>サンプル補充はありません。10枚準備が重い時は通常1on1を選べます。</p>
       <small>端末保存はアカウントのUIDごとです。同じ端末・ブラウザでだけ再利用でき、別端末には同期されません。</small></aside>
       <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}${renderStrategyDeckPersistencePanel()}
-        <div class="screen-actions setup-actions strategy-prepared-footer"><button class="button button-ghost" id="strategyPreDeckBack" type="button" ${state.normalRouteBusy ? "disabled" : ""}>プロフィールに戻る</button><button class="button button-primary" id="strategyPreparedDeckDone" type="button" ${complete && !storageBusy && !state.normalRouteBusy ? "" : "disabled"}>10枚の準備を完了</button></div>
+        <div class="screen-actions setup-actions strategy-prepared-footer"><button class="button button-ghost" id="strategyPreDeckBack" type="button" ${state.normalRouteBusy ? "disabled" : ""}>プロフィールに戻る</button><button class="button button-primary" id="strategyPreparedDeckDone" type="button" ${complete && !restoringDeck && !state.normalRouteBusy ? "" : "disabled"}>10枚の準備を完了</button></div>
         <button class="button button-ghost strategy-normal-route" id="strategyOpenNormal1on1" type="button" ${routeBusy ? "disabled" : ""}>${state.normalRouteBusy ? "通常1on1へ切替中…" : "10枚を組まず、通常1on1で遊ぶ"}</button>
       </div></div></section>`;
 }
@@ -2692,7 +2787,7 @@ function returnToStrategyProfile() {
 }
 
 function completePreparedDeck() {
-  if (strategyDeckStorageBusy() || state.normalRouteBusy) return;
+  if (state.deckRestoreStatus === "loading" || state.normalRouteBusy) return;
   if (!strategyDeckIsComplete()) {
     showToast("戦略型はメイン5枚とリザーブ5枚の実画像が必要です。");
     return;
@@ -2704,7 +2799,7 @@ function completePreparedDeck() {
 }
 
 async function loadSavedPreparedDeck() {
-  if ((!state.storedDeckAvailable && state.deckRestoreStatus !== "error") || strategyDeckStorageBusy()) return;
+  if ((!state.storedDeckAvailable && state.deckRestoreStatus !== "load-error") || strategyDeckStorageBusy()) return;
   if ((state.main.length || state.reserve.length)
       && !window.confirm("編集中の戦略デッキを、端末保存した前回の10枚で置き換えますか？")) return;
   await restoreStoredStrategyDeck({ force: true });
@@ -3461,6 +3556,65 @@ function imageKey(kind, round) {
   return `${kind}:${round}`;
 }
 
+function normalizeIncomingStrategyImageStart(message, targetState = state) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    throw new Error("受信画像の開始情報が不正です。");
+  }
+  const kind = String(message.kind || "");
+  const round = Number(message.round);
+  const ownerUid = String(message.ownerUid || "");
+  const size = Number(message.size);
+  const mime = normalizeOnlineImageMime(message.mime);
+  if (ownerUid !== targetState.opponentUid) throw new Error("受信画像の送信者が対戦相手と一致しません。");
+  if (!Number.isSafeInteger(size) || size <= 0 || size > STRATEGY_DECK_IMAGE_MAX_BYTES) {
+    throw new Error("受信画像のサイズが不正です。");
+  }
+  if (!STRATEGY_DECK_IMAGE_MIME_TYPES.includes(mime)) throw new Error("受信画像の形式が不正です。");
+
+  let actionType = "";
+  if (kind === "base" || kind === "action") {
+    if (!Number.isSafeInteger(round) || round < 1 || round > MAX_ROUNDS || round !== targetState.round) {
+      throw new Error("受信画像のラウンド情報が不正です。");
+    }
+    if (kind === "action") {
+      actionType = String(message.actionType || "");
+      if (!["request", "pursuit"].includes(actionType)) throw new Error("受信画像の追加行動が不正です。");
+      const pick = targetState.roomData?.rounds?.[round]?.actionPicks?.[ownerUid];
+      if (pick?.skipped === true || (["request", "pursuit"].includes(pick?.type) && pick.type !== actionType)) {
+        throw new Error("受信画像の追加行動が確定内容と一致しません。");
+      }
+    }
+  } else if (kind === "weaknessChain") {
+    if (!Number.isSafeInteger(round) || round < 0 || round >= MAX_WEAKNESS_CHAIN) {
+      throw new Error("受信した連続追撃画像の位置が不正です。");
+    }
+    actionType = String(message.actionType || "");
+    if (actionType !== "pursuit") throw new Error("受信した連続追撃画像の行動種別が不正です。");
+    const declaredCount = Number(targetState.roomData?.weaknessChains?.[ownerUid]?.count);
+    if (Number.isSafeInteger(declaredCount) && declaredCount >= 0 && round >= declaredCount) {
+      throw new Error("受信した連続追撃画像が宣言枚数を超えています。");
+    }
+  } else {
+    throw new Error("受信画像の用途が不正です。");
+  }
+
+  const current = targetState.incomingTransfer;
+  if (current && (current.kind !== kind || current.round !== round || current.ownerUid !== ownerUid)) {
+    throw new Error("別の画像を受信中です。");
+  }
+  return {
+    kind,
+    round,
+    ownerUid,
+    actionType,
+    mime,
+    size,
+    hasAudio: message.hasAudio === true,
+    chunks: [],
+    received: 0,
+  };
+}
+
 async function handleChannelMessage(data) {
   if (typeof data === "string") {
     const message = JSON.parse(data);
@@ -3474,7 +3628,7 @@ async function handleChannelMessage(data) {
     } else if (message.type === "profile-avatar-empty") {
       releaseRemoteAvatar();
     } else if (message.type === "strategy-image-start") {
-      state.incomingTransfer = { kind: message.kind, round: message.round, ownerUid: message.ownerUid, actionType: message.actionType || "", mime: message.mime, size: message.size, hasAudio: message.hasAudio === true, chunks: [], received: 0 };
+      state.incomingTransfer = normalizeIncomingStrategyImageStart(message, state);
     } else if (message.type === "strategy-image-end") {
       await finishIncomingImage(message.kind, message.round, message.ownerUid);
     } else if (message.type === "strategy-audio-start") {
@@ -3511,6 +3665,11 @@ async function handleChannelMessage(data) {
   }
   if (!state.incomingTransfer) return;
   const chunk = data instanceof Blob ? await data.arrayBuffer() : data;
+  if (!chunk || !Number.isSafeInteger(chunk.byteLength) || chunk.byteLength <= 0
+      || state.incomingTransfer.received + chunk.byteLength > state.incomingTransfer.size) {
+    state.incomingTransfer = null;
+    throw new Error("受信画像のサイズが宣言値を超えました。");
+  }
   state.incomingTransfer.chunks.push(chunk);
   state.incomingTransfer.received += chunk.byteLength;
   state.transferProgress = Math.min(99, Math.round((state.incomingTransfer.received / state.incomingTransfer.size) * 100));
@@ -3552,16 +3711,33 @@ function releaseRemoteAvatar() {
 
 async function finishIncomingImage(kind, round, ownerUid) {
   const transfer = state.incomingTransfer;
-  if (!transfer || transfer.kind !== kind || transfer.round !== round || transfer.ownerUid !== ownerUid || transfer.received !== transfer.size) throw new Error("受信画像のサイズが一致しませんでした。");
-  const key = imageKey(kind, round);
+  if (!transfer) return false;
+  const normalizedRound = Number(round);
+  if (transfer.kind !== String(kind || "") || transfer.round !== normalizedRound || transfer.ownerUid !== String(ownerUid || "")) {
+    throw new Error("受信中の画像と完了情報が一致しませんでした。");
+  }
+  if (transfer.received !== transfer.size) {
+    state.incomingTransfer = null;
+    throw new Error("受信画像のサイズが一致しませんでした。");
+  }
+  let mime;
+  try {
+    mime = verifiedOnlineImageMimeFromChunks(transfer.chunks);
+    if (mime !== transfer.mime) throw new Error("受信画像の形式と実データが一致しません。");
+  } catch (error) {
+    state.incomingTransfer = null;
+    throw error;
+  }
+  const key = imageKey(transfer.kind, transfer.round);
   const previous = state.remoteImages.get(key);
   if (previous?.url) URL.revokeObjectURL(previous.url);
   releaseCardAudio(previous);
-  const blob = new Blob(transfer.chunks, { type: transfer.mime || "image/webp" });
+  const blob = new Blob(transfer.chunks, { type: mime });
   state.remoteImages.set(key, { blob, url: URL.createObjectURL(blob), actionType: transfer.actionType, awaitingAudio: transfer.hasAudio });
   state.incomingTransfer = null;
   state.transferProgress = 100;
-  if (!transfer.hasAudio) await acknowledgeStrategyMedia(kind, round, ownerUid);
+  if (!transfer.hasAudio) await acknowledgeStrategyMedia(transfer.kind, transfer.round, transfer.ownerUid);
+  return true;
 }
 
 async function finishIncomingAudio(kind, round, ownerUid) {
@@ -3587,43 +3763,91 @@ async function acknowledgeStrategyMedia(kind, round, ownerUid) {
 }
 
 async function sendImage(item, kind, actionType = "", slot = state.round) {
+  const targetState = state;
+  const channel = targetState.channel;
+  const senderUid = targetState.uid;
   const key = imageKey(kind, slot);
-  if (state.sentImageKeys.has(key) || !item?.blob || !state.channel || state.channel.readyState !== "open") return;
-  state.sentImageKeys.add(key);
-  state.screen = kind === "base" ? "waitingBaseImage" : kind === "weaknessChain" ? "waitingWeaknessChainImage" : "waitingActionImage";
-  state.transferProgress = 0;
+  const contextIsCurrent = () => state === targetState
+    && targetState.channel === channel
+    && channel?.readyState === "open";
+  if (targetState.sentImageKeys.has(key) || !item?.blob || !contextIsCurrent()) return;
+  targetState.sentImageKeys.add(key);
+  targetState.screen = kind === "base" ? "waitingBaseImage" : kind === "weaknessChain" ? "waitingWeaknessChainImage" : "waitingActionImage";
+  targetState.transferProgress = 0;
   render();
-  const buffer = await item.blob.arrayBuffer();
-  const audioBuffer = item.audioBlob ? await item.audioBlob.arrayBuffer() : null;
   try {
-    state.channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: slot, ownerUid: state.uid, actionType, size: buffer.byteLength, mime: item.blob.type || "image/webp", hasAudio: Boolean(audioBuffer) }));
-    for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
-      await waitForDataBuffer();
-      state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
-      state.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
+    const buffer = await item.blob.arrayBuffer();
+    if (!contextIsCurrent()) throw new Error("画像送信前にP2P接続または対戦が切り替わりました。");
+    if (!Number.isSafeInteger(buffer.byteLength) || buffer.byteLength <= 0 || buffer.byteLength > STRATEGY_DECK_IMAGE_MAX_BYTES) {
+      throw new Error("送信画像のサイズが不正です。");
     }
-    state.channel.send(JSON.stringify({ type: "strategy-image-end", kind, round: slot, ownerUid: state.uid }));
-    if (audioBuffer) {
-      state.transferProgress = 0;
-      state.channel.send(JSON.stringify({ type: "strategy-audio-start", kind, round: slot, ownerUid: state.uid, size: audioBuffer.byteLength, mime: "audio/wav", duration: Number(item.audioDuration || 0), cueStart: Number(item.audioCueStart || 0) }));
-      for (let offset = 0; offset < audioBuffer.byteLength; offset += DATA_CHUNK_BYTES) {
-        await waitForDataBuffer();
-        state.channel.send(audioBuffer.slice(offset, Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES)));
-        state.transferProgress = Math.round((Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES) / audioBuffer.byteLength) * 100);
+    const mime = verifiedOnlineImageMime(buffer);
+    if (mime !== normalizeOnlineImageMime(item.blob.type)) {
+      throw new Error("送信画像の形式と実データが一致しません。");
+    }
+    let audio = getTransferableStrategyAudio(item);
+    let audioBuffer = null;
+    if (audio) {
+      try {
+        audioBuffer = await audio.blob.arrayBuffer();
+        if (audioBuffer.byteLength !== audio.blob.size) {
+          audio = null;
+          audioBuffer = null;
+        }
+      } catch {
+        audio = null;
+        audioBuffer = null;
       }
-      state.channel.send(JSON.stringify({ type: "strategy-audio-end", kind, round: slot, ownerUid: state.uid }));
+    }
+    if (!contextIsCurrent()) throw new Error("画像送信前にP2P接続または対戦が切り替わりました。");
+    channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: slot, ownerUid: senderUid, actionType, size: buffer.byteLength, mime, hasAudio: Boolean(audioBuffer) }));
+    for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+      await waitForDataBuffer(channel);
+      if (!contextIsCurrent()) throw new Error("画像転送中にP2P接続または対戦が切り替わりました。");
+      channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+      targetState.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
+    }
+    channel.send(JSON.stringify({ type: "strategy-image-end", kind, round: slot, ownerUid: senderUid }));
+    if (audioBuffer) {
+      targetState.transferProgress = 0;
+      channel.send(JSON.stringify({ type: "strategy-audio-start", kind, round: slot, ownerUid: senderUid, size: audioBuffer.byteLength, mime: "audio/wav", duration: audio.duration, cueStart: audio.cueStart }));
+      for (let offset = 0; offset < audioBuffer.byteLength; offset += DATA_CHUNK_BYTES) {
+        await waitForDataBuffer(channel);
+        if (!contextIsCurrent()) throw new Error("音声転送中にP2P接続または対戦が切り替わりました。");
+        channel.send(audioBuffer.slice(offset, Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES)));
+        targetState.transferProgress = Math.round((Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES) / audioBuffer.byteLength) * 100);
+      }
+      channel.send(JSON.stringify({ type: "strategy-audio-end", kind, round: slot, ownerUid: senderUid }));
     }
   } catch (error) {
-    state.sentImageKeys.delete(key);
+    targetState.sentImageKeys.delete(key);
     throw error;
   }
 }
 
-function waitForDataBuffer() {
-  if (!state.channel || state.channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => { state.channel?.removeEventListener("bufferedamountlow", done); resolve(); };
-    state.channel.addEventListener("bufferedamountlow", done, { once: true });
+function waitForDataBuffer(channel = state.channel) {
+  if (!channel || channel.readyState !== "open") return Promise.reject(new Error("画像転送中にP2P接続が切れました。"));
+  if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      channel.removeEventListener("bufferedamountlow", handleLow);
+      channel.removeEventListener("close", handleClose);
+      channel.removeEventListener("error", handleClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const handleLow = () => finish();
+    const handleClose = () => finish(new Error("画像転送中にP2P接続が切れました。"));
+    const timer = window.setTimeout(() => finish(new Error("画像転送が混み合っています。もう一度お試しください。")), DATA_BUFFER_WAIT_MS);
+    channel.addEventListener("bufferedamountlow", handleLow, { once: true });
+    channel.addEventListener("close", handleClose, { once: true });
+    channel.addEventListener("error", handleClose, { once: true });
+    if (channel.readyState !== "open") finish(new Error("画像転送中にP2P接続が切れました。"));
+    else if (channel.bufferedAmount <= DATA_BUFFER_LIMIT) finish();
   });
 }
 
@@ -3773,6 +3997,12 @@ async function addDeckFiles(zone, files) {
       if (!active || state !== targetState || !["preDeck", "deck"].includes(targetState.screen)) {
         releaseLocalStrategyCard(item);
         return;
+      }
+      try {
+        validateStrategyDeckImageForAddition(item.blob, targetState);
+      } catch (error) {
+        releaseLocalStrategyCard(item);
+        throw error;
       }
       targetState[zone].push(item);
     }

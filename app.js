@@ -2259,6 +2259,10 @@
     context.drawImage(bitmap.source, 0, 0, width, height);
     bitmap.close?.();
     const blob = await canvasToBlob(canvas, "image/webp", Math.max(0.65, Math.min(0.9, Number(options.quality || 0.86))));
+    const outputMime = String(blob.type || "").trim().toLowerCase();
+    if (!["image/webp", "image/png", "image/jpeg"].includes(outputMime)) {
+      throw new Error("このブラウザーで安全な画像形式へ変換できませんでした。");
+    }
     return makeDeckItem(blob, position);
   }
 

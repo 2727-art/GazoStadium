@@ -10,10 +10,21 @@ const root = path.resolve(__dirname, "..", "..");
 const modulePath = path.join(root, "strategy-deck-storage.mjs");
 const moduleUrl = pathToFileURL(modulePath).href;
 
-function makeCard(index, { audio = false } = {}) {
+const IMAGE_SIGNATURES = Object.freeze({
+  "image/webp": Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]),
+  "image/png": Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  "image/jpeg": Uint8Array.from([0xff, 0xd8, 0xff]),
+});
+
+function makeImageBlob(payload, type = "image/webp", { signatureType = type } = {}) {
+  const signature = IMAGE_SIGNATURES[signatureType] || Uint8Array.from([0x47, 0x49, 0x46]);
+  return new Blob([signature, payload], { type });
+}
+
+function makeCard(index, { audio = false, mime = "image/webp" } = {}) {
   return {
     id: `runtime-card-${index}`,
-    blob: new Blob([`webp-${index}`], { type: "image/webp" }),
+    blob: makeImageBlob(`${mime}-${index}`, mime),
     url: `blob:runtime-card-${index}`,
     position: index,
     used: index % 2 === 0,
@@ -46,12 +57,14 @@ function nextEventLoopTurn() {
 }
 
 async function blobText(blob) {
-  return Buffer.from(await blob.arrayBuffer()).toString("utf8");
+  const signatureLength = IMAGE_SIGNATURES[blob.type]?.byteLength || 0;
+  return Buffer.from(await blob.arrayBuffer()).subarray(signatureLength).toString("utf8");
 }
 
 function createMemoryIndexedDB() {
   const stores = new Map();
   const operationGates = {
+    open: [],
     put: [],
     get: [],
     delete: [],
@@ -61,6 +74,9 @@ function createMemoryIndexedDB() {
     putCalls: 0,
     getCalls: 0,
     deleteCalls: 0,
+    abortCalls: 0,
+    closeCalls: 0,
+    createStoreCalls: 0,
     operationLog: [],
   };
 
@@ -70,11 +86,18 @@ function createMemoryIndexedDB() {
 
   function transactionFor(storeName) {
     if (!stores.has(storeName)) throw new Error(`Missing object store: ${storeName}`);
+    let aborted = false;
     const transaction = {
       error: null,
       oncomplete: null,
       onerror: null,
       onabort: null,
+      abort() {
+        if (aborted) return;
+        aborted = true;
+        state.abortCalls += 1;
+        queueMicrotask(() => transaction.onabort?.({ target: transaction }));
+      },
       objectStore(requestedName) {
         if (requestedName !== storeName) throw new Error(`Unexpected object store: ${requestedName}`);
         const records = stores.get(storeName);
@@ -85,6 +108,7 @@ function createMemoryIndexedDB() {
             const request = { error: null, result: undefined, onsuccess: null, onerror: null };
             queueMicrotask(async () => {
               await waitForOperationGate("put");
+              if (aborted) return;
               if (state.failNextPut) {
                 state.failNextPut = false;
                 const error = new Error("Simulated quota failure");
@@ -110,6 +134,7 @@ function createMemoryIndexedDB() {
             const request = { error: null, result: undefined, onsuccess: null, onerror: null };
             queueMicrotask(async () => {
               await waitForOperationGate("get");
+              if (aborted) return;
               request.result = cloneForStorage(records.get(key));
               request.onsuccess?.({ target: request });
               queueMicrotask(() => transaction.oncomplete?.({ target: transaction }));
@@ -122,6 +147,7 @@ function createMemoryIndexedDB() {
             const request = { error: null, result: undefined, onsuccess: null, onerror: null };
             queueMicrotask(async () => {
               await waitForOperationGate("delete");
+              if (aborted) return;
               request.onsuccess?.({ target: request });
               queueMicrotask(() => {
                 records.delete(key);
@@ -148,21 +174,24 @@ function createMemoryIndexedDB() {
         onblocked: null,
       };
       queueMicrotask(() => {
-        const needsUpgrade = stores.size === 0;
-        request.result = {
-          objectStoreNames: {
-            contains: (name) => stores.has(name),
-          },
-          createObjectStore(name) {
-            if (stores.has(name)) throw new Error(`Duplicate object store: ${name}`);
-            stores.set(name, new Map());
-            return {};
-          },
-          transaction: transactionFor,
-          close() {},
-        };
-        if (needsUpgrade) request.onupgradeneeded?.({ target: request });
-        queueMicrotask(() => request.onsuccess?.({ target: request }));
+        waitForOperationGate("open").then(() => {
+          const needsUpgrade = stores.size === 0;
+          request.result = {
+            objectStoreNames: {
+              contains: (name) => stores.has(name),
+            },
+            createObjectStore(name) {
+              if (stores.has(name)) throw new Error(`Duplicate object store: ${name}`);
+              state.createStoreCalls += 1;
+              stores.set(name, new Map());
+              return {};
+            },
+            transaction: transactionFor,
+            close() { state.closeCalls += 1; },
+          };
+          if (needsUpgrade) request.onupgradeneeded?.({ target: request });
+          queueMicrotask(() => request.onsuccess?.({ target: request }));
+        });
       });
       return request;
     },
@@ -187,16 +216,54 @@ function createMemoryIndexedDB() {
   };
 }
 
-test("a strategy deck is exactly five main and five reserve cards", async () => {
+test("a playable strategy deck is exactly five main and five reserve safe images", async () => {
   const storage = await import(moduleUrl);
   const deck = makeDeck();
 
   assert.equal(storage.STRATEGY_DECK_MAIN_COUNT, 5);
   assert.equal(storage.STRATEGY_DECK_RESERVE_COUNT, 5);
+  assert.deepEqual(storage.STRATEGY_DECK_IMAGE_MIME_TYPES, ["image/webp", "image/png", "image/jpeg"]);
+  assert.equal(storage.hasPlayableStrategyDeck(deck.main, deck.reserve), true);
+  assert.equal(storage.hasPersistableStrategyDeck(deck.main, deck.reserve), true);
   assert.equal(storage.hasCompleteStrategyDeck(deck.main, deck.reserve), true);
-  assert.equal(storage.hasCompleteStrategyDeck(deck.main.slice(0, 4), deck.reserve), false);
-  assert.equal(storage.hasCompleteStrategyDeck(deck.main, deck.reserve.slice(0, 4)), false);
-  assert.equal(storage.hasCompleteStrategyDeck([...deck.main, makeCard(20)], deck.reserve), false);
+  assert.equal(storage.hasPlayableStrategyDeck(deck.main.slice(0, 4), deck.reserve), false);
+  assert.equal(storage.hasPlayableStrategyDeck(deck.main, deck.reserve.slice(0, 4)), false);
+  assert.equal(storage.hasPlayableStrategyDeck([...deck.main, makeCard(20)], deck.reserve), false);
+});
+
+test("WebP, PNG, and JPEG decks are playable and persistable without a schema change", async () => {
+  const storage = await import(moduleUrl);
+  for (const mime of storage.STRATEGY_DECK_IMAGE_MIME_TYPES) {
+    const deck = {
+      main: Array.from({ length: 5 }, (_, index) => makeCard(index, { mime })),
+      reserve: Array.from({ length: 5 }, (_, index) => makeCard(index + 5, { mime })),
+    };
+    assert.equal(storage.hasPlayableStrategyDeck(deck.main, deck.reserve), true, `${mime} is playable`);
+    assert.equal(storage.hasPersistableStrategyDeck(deck.main, deck.reserve), true, `${mime} is persistable`);
+    assert.equal(storage.serializeStrategyDeck({ uid: "player", ...deck, updatedAt: 100 }).schemaVersion, 1);
+  }
+});
+
+test("play readiness stays independent from optional audio persistence metadata", async () => {
+  const storage = await import(moduleUrl);
+  const deck = makeDeck();
+  deck.main[0].audioDuration = 99;
+
+  assert.equal(storage.hasPlayableStrategyDeck(deck.main, deck.reserve), true);
+  assert.equal(storage.hasPersistableStrategyDeck(deck.main, deck.reserve), false);
+});
+
+test("play readiness enforces the per-image and 64MB aggregate hard ceilings", async () => {
+  const storage = await import(moduleUrl);
+  const deck = makeDeck();
+  const sevenMegabyteImage = makeImageBlob(
+    new Uint8Array((7 * 1024 * 1024) - IMAGE_SIGNATURES["image/webp"].byteLength),
+  );
+  for (const card of [...deck.main, ...deck.reserve]) card.blob = sevenMegabyteImage;
+
+  assert.ok(sevenMegabyteImage.size < storage.STRATEGY_DECK_IMAGE_MAX_BYTES);
+  assert.equal(storage.hasPlayableStrategyDeck(deck.main, deck.reserve), false);
+  assert.equal(storage.hasPersistableStrategyDeck(deck.main, deck.reserve), false);
 });
 
 test("serialization whitelists reusable media and drops match-local state", async () => {
@@ -237,29 +304,47 @@ test("serialization whitelists reusable media and drops match-local state", asyn
   }
 });
 
-test("sample cards and invalid image or audio payloads cannot be saved", async () => {
+test("sample cards and unsupported image or audio payloads cannot be saved", async () => {
   const storage = await import(moduleUrl);
 
   const sampleDeck = makeDeck();
   sampleDeck.reserve[3].isSample = true;
-  assert.equal(storage.hasCompleteStrategyDeck(sampleDeck.main, sampleDeck.reserve), false);
+  assert.equal(storage.hasPlayableStrategyDeck(sampleDeck.main, sampleDeck.reserve), false);
   assert.throws(
     () => storage.serializeStrategyDeck({ uid: "player", ...sampleDeck, updatedAt: 100 }),
     (error) => error?.code === "invalid-deck" && /サンプル/u.test(error.message),
   );
 
-  const pngDeck = makeDeck();
-  pngDeck.main[2].blob = new Blob(["png"], { type: "image/png" });
+  const gifDeck = makeDeck();
+  gifDeck.main[2].blob = makeImageBlob("gif", "image/gif");
   assert.throws(
-    () => storage.serializeStrategyDeck({ uid: "player", ...pngDeck, updatedAt: 100 }),
-    (error) => error?.code === "invalid-deck" && /WebP/u.test(error.message),
+    () => storage.serializeStrategyDeck({ uid: "player", ...gifDeck, updatedAt: 100 }),
+    (error) => error?.code === "invalid-deck" && /WebP・PNG・JPEG/u.test(error.message),
   );
+
+  const emptyDeck = makeDeck();
+  emptyDeck.reserve[1].blob = new Blob([], { type: "image/png" });
+  assert.equal(storage.hasPlayableStrategyDeck(emptyDeck.main, emptyDeck.reserve), false);
+
+  const fakeDeck = makeDeck();
+  fakeDeck.reserve[1].blob = { type: "image/png", size: 100 };
+  assert.equal(storage.hasPlayableStrategyDeck(fakeDeck.main, fakeDeck.reserve), false);
 
   const longAudioDeck = makeDeck();
   longAudioDeck.main[0].audioDuration = 10.01;
   assert.throws(
     () => storage.serializeStrategyDeck({ uid: "player", ...longAudioDeck, updatedAt: 100 }),
     (error) => error?.code === "invalid-deck" && /10秒以内/u.test(error.message),
+  );
+
+  const largeAudioDeck = makeDeck();
+  largeAudioDeck.main[0].audioBlob = new Blob(
+    [new Uint8Array(storage.STRATEGY_DECK_AUDIO_MAX_BYTES + 1)],
+    { type: "audio/wav" },
+  );
+  assert.throws(
+    () => storage.serializeStrategyDeck({ uid: "player", ...largeAudioDeck, updatedAt: 100 }),
+    (error) => error?.code === "invalid-deck" && /480KB以下/u.test(error.message),
   );
 
   const badCueDeck = makeDeck();
@@ -333,12 +418,80 @@ test("save and load use one atomic put per UID, and delete is UID-scoped", async
   assert.equal((await storage.loadStrategyDeck("player-two", { indexedDB: memory.indexedDB })).uid, "player-two");
 });
 
+test("PNG and JPEG canvas fallbacks round-trip through schema v1 storage", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  const deck = {
+    main: Array.from({ length: 5 }, (_, index) => makeCard(index, { mime: "image/png" })),
+    reserve: Array.from({ length: 5 }, (_, index) => makeCard(index + 5, { mime: "image/jpeg" })),
+  };
+
+  await storage.saveStrategyDeck(
+    { uid: "ios-player", ...deck },
+    { indexedDB: memory.indexedDB, now: 1_000 },
+  );
+  const loaded = await storage.loadStrategyDeck("ios-player", { indexedDB: memory.indexedDB });
+
+  assert.equal(loaded.schemaVersion, 1);
+  assert.deepEqual(loaded.main.map((card) => card.blob.type), Array(5).fill("image/png"));
+  assert.deepEqual(loaded.reserve.map((card) => card.blob.type), Array(5).fill("image/jpeg"));
+});
+
+test("a legacy raw schema-v1 WebP record still loads unchanged", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  const legacyCard = (index) => ({
+    blob: makeImageBlob(`legacy-${index}`, "image/webp"),
+    audioBlob: null,
+    audioDuration: 0,
+    audioCueStart: 0,
+    audioName: "",
+  });
+  memory.rawSet(storage.STRATEGY_DECK_STORE_NAME, "legacy-player", {
+    schemaVersion: 1,
+    uid: "legacy-player",
+    main: Array.from({ length: 5 }, (_, index) => legacyCard(index)),
+    reserve: Array.from({ length: 5 }, (_, index) => legacyCard(index + 5)),
+    updatedAt: 777,
+  });
+
+  const loaded = await storage.loadStrategyDeck("legacy-player", { indexedDB: memory.indexedDB });
+  assert.equal(loaded.schemaVersion, 1);
+  assert.equal(loaded.updatedAt, 777);
+  assert.deepEqual(loaded.main.map((card) => card.blob.type), Array(5).fill("image/webp"));
+});
+
+test("save and load reject a safe declared MIME whose bytes use another format", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  const mismatchedDeck = makeDeck();
+  mismatchedDeck.main[0].blob = makeImageBlob("mismatch", "image/png", { signatureType: "image/webp" });
+
+  assert.equal(storage.hasPlayableStrategyDeck(mismatchedDeck.main, mismatchedDeck.reserve), true);
+  await assert.rejects(
+    storage.saveStrategyDeck(
+      { uid: "mismatch-player", ...mismatchedDeck },
+      { indexedDB: memory.indexedDB, now: 100 },
+    ),
+    (error) => error?.code === "invalid-deck" && /一致/u.test(error.message),
+  );
+
+  const corruptRecord = storage.serializeStrategyDeck({
+    uid: "mismatch-player",
+    ...makeDeck(),
+    updatedAt: 200,
+  });
+  corruptRecord.reserve[0].blob = makeImageBlob("mismatch", "image/jpeg", { signatureType: "image/png" });
+  memory.rawSet(storage.STRATEGY_DECK_STORE_NAME, "mismatch-player", corruptRecord);
+  assert.equal(await storage.loadStrategyDeck("mismatch-player", { indexedDB: memory.indexedDB }), null);
+});
+
 test("a failed replacement leaves the previously completed deck intact", async () => {
   const storage = await import(moduleUrl);
   const memory = createMemoryIndexedDB();
   const originalDeck = makeDeck();
   const replacementDeck = makeDeck();
-  replacementDeck.main[0].blob = new Blob(["replacement"], { type: "image/webp" });
+  replacementDeck.main[0].blob = makeImageBlob("replacement");
 
   await storage.saveStrategyDeck(
     { uid: "player-one", ...originalDeck },
@@ -369,7 +522,7 @@ test("a queued save snapshots the deck before waiting for an older mutation", as
   const releaseFirstPut = memory.blockNext("put");
   const firstDeck = makeDeck();
   const queuedDeck = makeDeck();
-  queuedDeck.main[0].blob = new Blob(["queued-snapshot"], { type: "image/webp" });
+  queuedDeck.main[0].blob = makeImageBlob("queued-snapshot");
 
   const firstSave = storage.saveStrategyDeck(
     { uid: "snapshot-player", ...firstDeck },
@@ -380,7 +533,7 @@ test("a queued save snapshots the deck before waiting for an older mutation", as
     { indexedDB: memory.indexedDB, now: 200 },
   );
 
-  queuedDeck.main[0].blob = new Blob(["edited-after-call"], { type: "image/webp" });
+  queuedDeck.main[0].blob = makeImageBlob("edited-after-call");
   queuedDeck.main.length = 0;
   releaseFirstPut();
   await Promise.all([firstSave, queuedSave]);
@@ -428,7 +581,7 @@ test("delete followed by save is serialized so the newer completed deck wins", a
   const releaseDelete = memory.blockNext("delete");
   const deleting = storage.deleteStrategyDeck("delete-save-player", { indexedDB: memory.indexedDB });
   const replacement = makeDeck();
-  replacement.reserve[0].blob = new Blob(["latest-deck"], { type: "image/webp" });
+  replacement.reserve[0].blob = makeImageBlob("latest-deck");
   const saving = storage.saveStrategyDeck(
     { uid: "delete-save-player", ...replacement },
     { indexedDB: memory.indexedDB, now: 200 },
@@ -454,7 +607,7 @@ test("load waits for an already invoked save and reads its completed value", asy
   const memory = createMemoryIndexedDB();
   const releaseSave = memory.blockNext("put");
   const deck = makeDeck();
-  deck.main[2].blob = new Blob(["committed-before-load"], { type: "image/webp" });
+  deck.main[2].blob = makeImageBlob("committed-before-load");
 
   const saving = storage.saveStrategyDeck(
     { uid: "load-barrier-player", ...deck },
@@ -488,7 +641,7 @@ test("a failed mutation does not poison later operations for the same UID", asyn
   memory.state.failNextPut = true;
   const failedDeck = makeDeck();
   const latestDeck = makeDeck();
-  latestDeck.main[4].blob = new Blob(["saved-after-failure"], { type: "image/webp" });
+  latestDeck.main[4].blob = makeImageBlob("saved-after-failure");
 
   const failedSave = storage.saveStrategyDeck(
     { uid: "failure-queue-player", ...failedDeck },
@@ -543,4 +696,98 @@ test("storage availability and UID errors are explicit", async () => {
     storage.loadStrategyDeck("", { indexedDB: createMemoryIndexedDB().indexedDB }),
     (error) => error?.code === "invalid-uid",
   );
+});
+
+test("a blocked database open times out and closes a late connection", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  const releaseOpen = memory.blockNext("open");
+
+  await assert.rejects(
+    storage.saveStrategyDeck(
+      { uid: "open-timeout-player", ...makeDeck() },
+      { indexedDB: memory.indexedDB, now: 100, timeoutMs: 20 },
+    ),
+    (error) => error?.code === "storage-timeout",
+  );
+  releaseOpen();
+  await nextEventLoopTurn();
+  await nextEventLoopTurn();
+  assert.equal(memory.state.createStoreCalls, 0, "a timed-out open cannot perform a late schema upgrade");
+  assert.equal(memory.state.closeCalls, 1);
+});
+
+test("a stalled Blob header read times out and releases the UID queue", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  class HangingHeaderBlob extends Blob {
+    slice() {
+      return { arrayBuffer: () => new Promise(() => {}) };
+    }
+  }
+  const deck = makeDeck();
+  deck.main[0].blob = new HangingHeaderBlob([IMAGE_SIGNATURES["image/webp"], "hang"], { type: "image/webp" });
+
+  await assert.rejects(
+    storage.saveStrategyDeck(
+      { uid: "header-timeout-player", ...deck },
+      { indexedDB: memory.indexedDB, now: 100, timeoutMs: 20 },
+    ),
+    (error) => error?.code === "storage-timeout",
+  );
+  await storage.deleteStrategyDeck(
+    "header-timeout-player",
+    { indexedDB: memory.indexedDB, timeoutMs: 100 },
+  );
+  assert.deepEqual(memory.state.operationLog, ["delete:header-timeout-player"]);
+});
+
+test("a queued operation whose single deadline expires never starts later", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  const releasePut = memory.blockNext("put");
+  const first = storage.saveStrategyDeck(
+    { uid: "queue-deadline-player", ...makeDeck() },
+    { indexedDB: memory.indexedDB, now: 100, timeoutMs: 35 },
+  );
+  const expiredFollower = storage.saveStrategyDeck(
+    { uid: "queue-deadline-player", ...makeDeck() },
+    { indexedDB: memory.indexedDB, now: 200, timeoutMs: 10 },
+  );
+
+  await assert.rejects(first, (error) => error?.code === "storage-timeout");
+  await assert.rejects(expiredFollower, (error) => error?.code === "storage-timeout");
+  assert.equal(memory.state.putCalls, 1, "the expired queued save never opens a transaction");
+  releasePut();
+  await nextEventLoopTurn();
+});
+
+test("a blocked transaction aborts on timeout and does not poison the UID queue", async () => {
+  const storage = await import(moduleUrl);
+  const memory = createMemoryIndexedDB();
+  const releasePut = memory.blockNext("put");
+
+  await assert.rejects(
+    storage.saveStrategyDeck(
+      { uid: "transaction-timeout-player", ...makeDeck() },
+      { indexedDB: memory.indexedDB, now: 100, timeoutMs: 20 },
+    ),
+    (error) => error?.code === "storage-timeout",
+  );
+  assert.equal(memory.state.abortCalls, 1);
+  releasePut();
+  await nextEventLoopTurn();
+
+  const replacement = makeDeck();
+  replacement.main[0].blob = makeImageBlob("saved-after-timeout");
+  await storage.saveStrategyDeck(
+    { uid: "transaction-timeout-player", ...replacement },
+    { indexedDB: memory.indexedDB, now: 200, timeoutMs: 100 },
+  );
+  const loaded = await storage.loadStrategyDeck(
+    "transaction-timeout-player",
+    { indexedDB: memory.indexedDB, timeoutMs: 100 },
+  );
+  assert.equal(loaded.updatedAt, 200);
+  assert.equal(await blobText(loaded.main[0].blob), "saved-after-timeout");
 });
