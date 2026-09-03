@@ -486,7 +486,6 @@
       ...safeDetails,
       "",
       "#貼り合いスタジアム",
-      OFFICIAL_GAME_URL,
     ].join("\n");
   }
 

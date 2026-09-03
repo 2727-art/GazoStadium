@@ -7,7 +7,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..", "..");
-const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
+const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8").replace(/\r\n/g, "\n");
 const client = read("roulette-training.js");
 const core = read("roulette-training-core.mjs");
 const styles = read("roulette-training.css");
