@@ -1087,7 +1087,7 @@
         <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
         <p class="hero-copy">
           好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
-          最大10枚のロスターからAIが5枚をDRAWする、ソロの「AI文字コラトレーニング」も選べます。
+          最大10枚のロスターからAIが5枚をDRAWする「AI文字コラ」と、縦ドラムでテンポやメニューが変わる「ルーレット」の2つのソロトレーニングも選べます。
           習慣と向き合う日は「断惑NOTE」に、自分で決めた一日を記録できます。
           疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
         </p>
@@ -1100,6 +1100,7 @@
           <button class="button hero-free-table-button hero-mode-button${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
           <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
           <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
+          <button class="button hero-roulette-training-button hero-mode-button" id="rouletteTrainingButton"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
           <button class="button hero-danwaku-note-button hero-mode-button" id="danwakuNoteButton"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span><i aria-hidden="true">🪷</i> 断惑NOTE</span></button>
           <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
           <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
@@ -1136,7 +1137,7 @@
           <span id="lobbyStatsRefreshStatus">${escapeHtml(lobbyRefresh.message)}</span>
         </div>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
-        <p class="mode-note">文字コラトレーニングの候補画像（最大10枚）とDRAW結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
+        <p class="mode-note">ソロトレーニングの候補画像（最大10枚）・抽選結果・自己申告結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </div>
     </section>`;
   }
@@ -1162,6 +1163,7 @@
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
+    document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
     document.querySelector("#danwakuNoteButton")?.addEventListener("click", startDanwakuNote);
     document.querySelector("#aiTextTrainingLightsStartButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
@@ -2084,6 +2086,19 @@
     );
   }
 
+  function startRouletteTraining() {
+    if (window.HariaiRouletteTraining?.start) {
+      window.HariaiRouletteTraining.start();
+      return;
+    }
+    showToast("ルーレットトレーニングを読み込んでいます…");
+    window.addEventListener(
+      "hariai-roulette-training-ready",
+      () => window.HariaiRouletteTraining?.start?.(),
+      { once: true },
+    );
+  }
+
   function startDanwakuNote() {
     if (window.HariaiDanwakuNote?.start) {
       window.HariaiDanwakuNote.start();
@@ -2569,8 +2584,8 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO AI TEXT TRAINING + 断惑NOTE + FREE TABLE + MARKETS";
-    if (footerItems[1]) footerItems[1].textContent = "ソロの最大10画像とDRAW結果は端末内。対人モードのメディアはP2Pで一時転送します";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO TRAINING + 断惑NOTE + FREE TABLE + MARKETS";
+    if (footerItems[1]) footerItems[1].textContent = "ソロ画像・抽選・自己申告は端末内。対人モードのメディアはP2Pで一時転送します";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");
     const confirm = destroyDialog?.querySelector("#confirmDestroy");
@@ -2581,6 +2596,10 @@
 
   document.querySelector("#homeLink")?.addEventListener("click", (event) => {
     event.preventDefault();
+    if (window.HariaiRouletteTraining?.isActive?.()) {
+      window.HariaiRouletteTraining.requestHome();
+      return;
+    }
     if (window.HariaiDanwakuNote?.isActive?.()) {
       window.HariaiDanwakuNote.requestHome();
       return;
@@ -2631,6 +2650,7 @@
     returnHome: renderLandingScreen,
     openNormal1on1: startOnlineBattle,
     openFreeTable: startFreeTable,
+    openRouletteTraining: startRouletteTraining,
     shared: {
       escapeHtml,
       showToast,

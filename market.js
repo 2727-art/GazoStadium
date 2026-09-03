@@ -27,7 +27,7 @@ import {
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -1397,7 +1397,8 @@ async function start({ initialScreen = "setup" } = {}) {
     return;
   }
   if (window.HariaiOnline?.isActive?.() || window.HariaiStrategy?.isActive?.()
-      || window.HariaiAiTextTraining?.isActive?.()) {
+      || window.HariaiAiTextTraining?.isActive?.()
+      || window.HariaiRouletteTraining?.isActive?.()) {
     showToast("ほかのモードを終了してからVALUE MARKETを開始してください。");
     return;
   }

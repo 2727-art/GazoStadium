@@ -31,7 +31,7 @@ import {
   database,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   ANJU_PAY_UNIT,
   formatAnjuPay,
@@ -78,7 +78,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   appendIncomingOnlineImageChunk,
   completeIncomingOnlineImageTransfer,
@@ -1949,6 +1949,10 @@ function openOnlineScreen(screen) {
   }
   if (window.HariaiAiTextTraining?.isActive?.()) {
     showToast("文字コラトレーニングを終了してからオンライン画面を開いてください。");
+    return;
+  }
+  if (window.HariaiRouletteTraining?.isActive?.()) {
+    showToast("ルーレットトレーニングを終了してからオンライン画面を開いてください。");
     return;
   }
   active = true;

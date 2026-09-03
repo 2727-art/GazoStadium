@@ -301,6 +301,56 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "rouletteTrainingPacks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "moderationStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "paidUseCount",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "rouletteTrainingPacks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sellerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "rouletteTrainingPackRevisionBuyers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "buyerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastUsedAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -345,6 +395,31 @@
       "indexes": []
     },
     {
+      "collectionGroup": "rouletteTrainingPacks",
+      "fieldPath": "items",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rouletteTrainingUses",
+      "fieldPath": "packSnapshot.items",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rouletteTrainingPackRevisionBuyers",
+      "fieldPath": "packSnapshot.items",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rouletteTrainingReports",
+      "fieldPath": "packSnapshot.items",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rouletteTrainingPublishActions",
+      "fieldPath": "pack.items",
+      "indexes": []
+    },
+    {
       "collectionGroup": "revisions",
       "fieldPath": "lines",
       "indexes": []
@@ -352,6 +427,11 @@
     {
       "collectionGroup": "revisions",
       "fieldPath": "zoneLines",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "items",
       "indexes": []
     },
     {

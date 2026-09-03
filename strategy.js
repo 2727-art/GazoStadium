@@ -26,7 +26,7 @@ import {
   database,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
@@ -53,7 +53,7 @@ import {
   bindPostMatchTip,
   isPostMatchTipBusy,
   renderPostMatchTip,
-} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./post-match-tip.js?v=post-match-tip-v4-app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   STRATEGY_VIDEO_MAX_BYTES,
   appendStrategyVideoChunk,
@@ -976,7 +976,9 @@ function start() {
     return;
   }
   if (window.HariaiOnline?.isActive?.()
-      || window.HariaiAiTextTraining?.isActive?.() || window.HariaiMarket?.isActive?.()) {
+      || window.HariaiAiTextTraining?.isActive?.()
+      || window.HariaiRouletteTraining?.isActive?.()
+      || window.HariaiMarket?.isActive?.()) {
     showToast("進行中のオンライン画面を終了してから開いてください。");
     return;
   }

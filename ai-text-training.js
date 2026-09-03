@@ -15,7 +15,7 @@ import {
   firestore,
   functions,
   useOfflineMarketPreview,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   formatAnjuPay,
   formatAnjuPayNumber,
@@ -931,6 +931,7 @@ function modeIsActiveElsewhere() {
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiMarket?.isActive?.()
+    || window.HariaiRouletteTraining?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()
     || window.HariaiFreeTable?.isActive?.()
     || window.HariaiAccount?.isActive?.()

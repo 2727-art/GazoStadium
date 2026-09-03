@@ -39,6 +39,8 @@ const APP_CHECK_ENFORCEMENT = Object.freeze({
   redeemAchievementCode: true,
   // ソロ台本市場は残高・UGC・公開プロフィールを扱う新規境界のため、初日から強制します。
   aiTextTrainingAction: true,
+  // ルーレットトレーニング市場も残高と自由入力UGCを扱うため、初日から強制します。
+  rouletteTrainingAction: true,
   // トップ向けの仲間人数も、生の実績セッションを読ませず集計境界だけを公開します。
   aiTextTrainingPublicStats: true,
   // 貼り合い自由卓は公開ID・承認・ブロック・通報を扱う新規サーバー境界のため、初日から強制します。

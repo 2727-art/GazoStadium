@@ -93,6 +93,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "economyAction",
     "anjuPayFleaAction",
     "aiTextTrainingAction",
+    "rouletteTrainingAction",
     "aiTextTrainingPublicStats",
     "valueMarketQueue",
     "valueMarketAction",
@@ -118,6 +119,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.anjuPayFleaAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.redeemAchievementCode, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.aiTextTrainingAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.rouletteTrainingAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.aiTextTrainingPublicStats, true);
   assert.equal(
     rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue,

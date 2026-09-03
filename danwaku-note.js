@@ -9,7 +9,7 @@ import {
 import {
   auth,
   functions,
-} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1";
+} from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 
 const appRoot = document.querySelector("#app");
 const danwakuNoteActionCallable = httpsCallable(functions, "danwakuNoteAction");
@@ -1135,6 +1135,7 @@ function modeIsActiveElsewhere() {
     window.HariaiOnline?.isActive?.()
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
+    || window.HariaiRouletteTraining?.isActive?.()
     || window.HariaiFreeTable?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()

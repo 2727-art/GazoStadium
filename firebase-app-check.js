@@ -56,7 +56,9 @@ export function initializeHariaiAppCheck(firebaseApp) {
   }
   // 読み取り専用previewは本番App Checkへ接続しません。
   if (isLocalhost
-      && (searchParams.has("marketPreview") || searchParams.has("aiTextTrainingPreview"))) {
+      && (searchParams.has("marketPreview")
+        || searchParams.has("aiTextTrainingPreview")
+        || searchParams.has("rouletteTrainingPreview"))) {
     return null;
   }
   const siteKey = String(appCheckRecaptchaEnterpriseSiteKey || "").trim();

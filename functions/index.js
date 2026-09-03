@@ -138,6 +138,9 @@ const {
   createAiTextTrainingService,
 } = require("./ai-text-training-service");
 const {
+  createRouletteTrainingService,
+} = require("./roulette-training-service");
+const {
   createDanwakuNoteService,
 } = require("./danwaku-note-service");
 const {
@@ -11213,6 +11216,7 @@ async function accountHasActiveSession(uid) {
     liveSoloSessionV2Room(uid, now),
     firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
     aiTextTrainingActiveAchievementSessionRef(uid).get(),
+    firestore.collection("rouletteTrainingActiveUses").doc(uid).get(),
   ]);
   const realtimeSnapshots = snapshots.slice(0, realtimePaths.length);
   if (realtimeSnapshots.some((snapshot, index) => {
@@ -11232,10 +11236,12 @@ async function accountHasActiveSession(uid) {
   const aiTextTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 4];
   const aiTextTrainingActiveAchievementSessionSnapshot =
     snapshots[realtimePaths.length + 5];
+  const rouletteTrainingActiveUseSnapshot = snapshots[realtimePaths.length + 6];
   const soloSessionClaim = normalizeClaim(soloSessionClaimSnapshot.val());
   if ((soloSessionClaim && soloSessionClaim.expiresAt > now)
       || soloSessionRoom
       || aiTextTrainingActiveUseSnapshot.exists
+      || rouletteTrainingActiveUseSnapshot.exists
       || (
         aiTextTrainingActiveAchievementSessionSnapshot.exists
         && Number(aiTextTrainingActiveAchievementSessionSnapshot.get("expiresAt") || 0) > now
@@ -11318,6 +11324,11 @@ async function transferTargetIsPristine(uid, request) {
     aiTextTrainingAchievementSessionSnapshot,
     aiTextTrainingActiveAchievementSessionSnapshot,
     aiTextTrainingActiveUseSnapshot,
+    rouletteTrainingPackSnapshot,
+    rouletteTrainingUseSnapshot,
+    rouletteTrainingReportSnapshot,
+    rouletteTrainingActiveUseSnapshot,
+    rouletteTrainingSellerStatsSnapshot,
     patronSnapshot,
     trainingProfileSnapshot,
     legacyTrainingClaimSnapshot,
@@ -11357,6 +11368,11 @@ async function transferTargetIsPristine(uid, request) {
       .get(),
     aiTextTrainingActiveAchievementSessionRef(uid).get(),
     firestore.collection("aiTextTrainingActiveUses").doc(uid).get(),
+    firestore.collection("rouletteTrainingPacks").where("sellerUid", "==", uid).limit(1).get(),
+    firestore.collection("rouletteTrainingUses").where("buyerUid", "==", uid).limit(1).get(),
+    firestore.collection("rouletteTrainingReports").where("reporterUid", "==", uid).limit(1).get(),
+    firestore.collection("rouletteTrainingActiveUses").doc(uid).get(),
+    firestore.collection("rouletteTrainingSellerStats").doc(uid).get(),
     patronageRef(uid).get(),
     trainingProfileRef(uid).get(),
     firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
@@ -11399,6 +11415,11 @@ async function transferTargetIsPristine(uid, request) {
       || !aiTextTrainingAchievementSessionSnapshot.empty
       || aiTextTrainingActiveAchievementSessionSnapshot.exists
       || aiTextTrainingActiveUseSnapshot.exists
+      || !rouletteTrainingPackSnapshot.empty
+      || !rouletteTrainingUseSnapshot.empty
+      || !rouletteTrainingReportSnapshot.empty
+      || rouletteTrainingActiveUseSnapshot.exists
+      || rouletteTrainingSellerStatsSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
   return !soloProfileSnapshot.exists()
@@ -11555,6 +11576,11 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetAiTextTrainingAchievementSessionSnapshot,
       targetAiTextTrainingActiveAchievementSessionSnapshot,
       targetAiTextTrainingActiveUseSnapshot,
+      targetRouletteTrainingPackSnapshot,
+      targetRouletteTrainingUseSnapshot,
+      targetRouletteTrainingReportSnapshot,
+      targetRouletteTrainingActiveUseSnapshot,
+      targetRouletteTrainingSellerStatsSnapshot,
       targetPatronSnapshot,
       targetTrainingProfileSnapshot,
       targetFamiliarBookSnapshot,
@@ -11595,6 +11621,23 @@ async function redeemAccountTransferCode(request, rawCode) {
       ),
       transaction.get(aiTextTrainingActiveAchievementSessionRef(targetUid)),
       transaction.get(firestore.collection("aiTextTrainingActiveUses").doc(targetUid)),
+      transaction.get(
+        firestore.collection("rouletteTrainingPacks")
+          .where("sellerUid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(
+        firestore.collection("rouletteTrainingUses")
+          .where("buyerUid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(
+        firestore.collection("rouletteTrainingReports")
+          .where("reporterUid", "==", targetUid)
+          .limit(1),
+      ),
+      transaction.get(firestore.collection("rouletteTrainingActiveUses").doc(targetUid)),
+      transaction.get(firestore.collection("rouletteTrainingSellerStats").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
       transaction.get(trainingProfileRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
@@ -11646,6 +11689,11 @@ async function redeemAccountTransferCode(request, rawCode) {
         || !targetAiTextTrainingAchievementSessionSnapshot.empty
         || targetAiTextTrainingActiveAchievementSessionSnapshot.exists
         || targetAiTextTrainingActiveUseSnapshot.exists
+        || !targetRouletteTrainingPackSnapshot.empty
+        || !targetRouletteTrainingUseSnapshot.empty
+        || !targetRouletteTrainingReportSnapshot.empty
+        || targetRouletteTrainingActiveUseSnapshot.exists
+        || targetRouletteTrainingSellerStatsSnapshot.exists
         || retiredTrainingHistoryHasActivity(targetTrainingProfileSnapshot.data())
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {
@@ -15646,6 +15694,23 @@ const aiTextTrainingService = createAiTextTrainingService({
   ownedProductIds: ownedMarketProductIds,
 });
 
+const rouletteTrainingService = createRouletteTrainingService({
+  firestore,
+  HttpsError,
+  ensureWallet,
+  walletRef,
+  anjuPayLedgerConfigRef,
+  walletData,
+  debitPoints,
+  creditPoints,
+  stageAnjuPayOpening,
+  appendAnjuPayEntry,
+  anjuPayWalletMetadataPatch,
+  anjuPayEntryId,
+  mirrorWallet,
+  bestEffort,
+});
+
 exports.aiTextTrainingAction = onCall(
   callableOptions("aiTextTrainingAction"),
   async (request) => {
@@ -15662,6 +15727,27 @@ exports.aiTextTrainingAction = onCall(
       throw new HttpsError(
         "internal",
         "文字コラトレーニングの処理を完了できませんでした。",
+      );
+    }
+  },
+);
+
+exports.rouletteTrainingAction = onCall(
+  callableOptions("rouletteTrainingAction"),
+  async (request) => {
+    const uid = requireUid(request);
+    try {
+      return await rouletteTrainingService.performAction(uid, request.data);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      console.error("rouletteTrainingAction failed", {
+        uid,
+        action: request.data?.action,
+        error,
+      });
+      throw new HttpsError(
+        "internal",
+        "ルーレットトレーニングの処理を完了できませんでした。",
       );
     }
   },

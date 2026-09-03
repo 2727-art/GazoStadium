@@ -315,6 +315,59 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ルーレットトレーニングの販売パック・決済・利用・通報はすべてCallableで検証します。
+    match /rouletteTrainingPacks/{packId} {
+      allow read, write: if false;
+
+      match /revisions/{revisionId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /rouletteTrainingUses/{useId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingActiveUses/{uid} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingPublishActions/{actionId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingPackRevisionBuyers/{revisionBuyerId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingReports/{reportId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingSellerStats/{uid} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingMonthlyPeriods/{periodKey} {
+      allow read, write: if false;
+
+      match /entries/{uid} {
+        allow read, write: if false;
+      }
+    }
+
+    match /rouletteTrainingRankingPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingSellerBuyerPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingMonthlyBuyerPairs/{pairId} {
+      allow read, write: if false;
+    }
+
     match /accountTransferCodes/{codeHash} {
       allow read, write: if false;
     }
