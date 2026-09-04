@@ -13,13 +13,19 @@ const {
   normalizeRouletteTrainingActionId,
   normalizeRouletteTrainingDocumentId,
   normalizeRouletteTrainingPackInput,
+  normalizeRouletteTrainingXHandle,
   rouletteTrainingJstDateKey,
   rouletteTrainingJstMonthKey,
   rouletteTrainingMonthlyBuyerPairId,
+  rouletteTrainingPackBuyerPairId,
   rouletteTrainingPackId,
+  rouletteTrainingPackMonthlyBuyerPairId,
+  rouletteTrainingPackRankingId,
+  rouletteTrainingPackRankingPairId,
   rouletteTrainingPayloadHash,
   rouletteTrainingPublishActionId,
   rouletteTrainingPublicSellerId,
+  rouletteTrainingRankingContentHash,
   rouletteTrainingRankingPairId,
   rouletteTrainingReportId,
   rouletteTrainingRevisionBuyerId,
@@ -27,6 +33,12 @@ const {
   rouletteTrainingSellerBuyerPairId,
   rouletteTrainingUseId,
 } = require("./roulette-training");
+const {
+  eligibleAchievementIds,
+  normalizeRouletteTrainingStats,
+  publicAchievementProfile,
+  unlockAchievements,
+} = require("./achievements");
 
 const ROULETTE_TRAINING_ACTIONS = Object.freeze([
   "state",
@@ -36,6 +48,9 @@ const ROULETTE_TRAINING_ACTIONS = Object.freeze([
   "start_paid_use",
   "resume_use",
   "finish_use",
+  "pack_rankings",
+  "creator_stats",
+  "save_profile",
   "report",
 ]);
 const REQUIRED_DEPENDENCIES = Object.freeze([
@@ -53,6 +68,8 @@ const REQUIRED_DEPENDENCIES = Object.freeze([
   "anjuPayEntryId",
   "mirrorWallet",
   "bestEffort",
+  "ensureAchievementState",
+  "syncAchievementPublicSurfaces",
 ]);
 const PRIVATE_RESPONSE_FIELDS = Object.freeze(new Set([
   "uid",
@@ -68,6 +85,9 @@ const PURCHASED_REVISION_LIMIT = 20;
 const ACTIVE_USE_STATUS = "active";
 const FINISHED_USE_STATUS = "finished";
 const VERIFIED_BUYER_QUARANTINE_THRESHOLD = 3;
+const PACK_RANKING_LIMIT = 20;
+const PACK_RANKING_CANDIDATE_LIMIT = 60;
+const PACK_RANKING_MINIMUM_UNIQUE_BUYERS = 3;
 const HIGH_RISK_REPORT_REASONS = Object.freeze(new Set([
   "dangerous_exercise",
   "stop_obstruction",
@@ -101,6 +121,8 @@ function createRouletteTrainingService(deps) {
     anjuPayEntryId,
     mirrorWallet,
     bestEffort,
+    ensureAchievementState,
+    syncAchievementPublicSurfaces,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -142,6 +164,29 @@ function createRouletteTrainingService(deps) {
   const monthlyBuyerPairRef = (periodKey, sellerUid, buyerUid) => firestore
     .collection("rouletteTrainingMonthlyBuyerPairs")
     .doc(rouletteTrainingMonthlyBuyerPairId(periodKey, sellerUid, buyerUid));
+  const packStatsRef = (packRankingId) => firestore
+    .collection("rouletteTrainingPackStats")
+    .doc(packRankingId);
+  const packMonthlyEntryRef = (periodKey, packRankingId) => firestore
+    .collection("rouletteTrainingPackMonthlyPeriods")
+    .doc(periodKey)
+    .collection("entries")
+    .doc(packRankingId);
+  const packRankingPairRef = (dateKey, rankingId, buyerUid) => firestore
+    .collection("rouletteTrainingPackRankingPairs")
+    .doc(rouletteTrainingPackRankingPairId(dateKey, rankingId, buyerUid));
+  const packBuyerPairRef = (rankingId, buyerUid) => firestore
+    .collection("rouletteTrainingPackBuyerPairs")
+    .doc(rouletteTrainingPackBuyerPairId(rankingId, buyerUid));
+  const packMonthlyBuyerPairRef = (periodKey, rankingId, buyerUid) => firestore
+    .collection("rouletteTrainingPackMonthlyBuyerPairs")
+    .doc(rouletteTrainingPackMonthlyBuyerPairId(periodKey, rankingId, buyerUid));
+  const profileRef = (sellerUid) => firestore
+    .collection("rouletteTrainingSellerProfiles")
+    .doc(sellerUid);
+  const achievementProfileRef = (sellerUid) => firestore
+    .collection("achievementProfiles")
+    .doc(sellerUid);
 
   function httpsError(code, message) {
     return new HttpsError(code, message);
@@ -304,7 +349,84 @@ function createRouletteTrainingService(deps) {
       sessionChargeUnit: "one_start_to_finish",
       rankingPairDailyLimit: 1,
       verifiedBuyerQuarantineThreshold: VERIFIED_BUYER_QUARANTINE_THRESHOLD,
+      packRankingLimit: PACK_RANKING_LIMIT,
+      packRankingMinimumUniqueBuyers: PACK_RANKING_MINIMUM_UNIQUE_BUYERS,
     };
+  }
+
+  function publicProfile(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const xPublic = source.xPublic === true;
+    const xHandle = safeOneLine(source.xHandle, 15);
+    const validHandle = /^[A-Za-z0-9_]{1,15}$/u.test(xHandle);
+    return {
+      xPublic: xPublic && validHandle,
+      xHandle: xPublic && validHandle ? xHandle : "",
+      updatedAt: safeInteger(source.updatedAt),
+    };
+  }
+
+  function normalizedPackStats(value, packId, pack, rankingContentHash, rankingId, periodKey = "") {
+    const source = value && typeof value === "object" ? value : {};
+    const sameContent = source.packId === packId
+      && source.sellerUid === pack.sellerUid
+      && source.rankingContentHash === rankingContentHash
+      && source.packRankingId === rankingId;
+    const normalized = {
+      schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
+      packId,
+      sellerUid: pack.sellerUid,
+      publicSellerId: rouletteTrainingPublicSellerId(pack.sellerUid),
+      rankingContentHash,
+      packRankingId: rankingId,
+      isCurrentPublic: sameContent && source.isCurrentPublic === true,
+      actualGross: sameContent ? safeInteger(source.actualGross) : 0,
+      rankingGross: sameContent ? safeInteger(source.rankingGross) : 0,
+      netSales: sameContent ? safeInteger(source.netSales) : 0,
+      feesPaid: sameContent ? safeInteger(source.feesPaid) : 0,
+      useCount: sameContent ? safeInteger(source.useCount) : 0,
+      rankingUseCount: sameContent ? safeInteger(source.rankingUseCount) : 0,
+      uniqueBuyers: sameContent ? safeInteger(source.uniqueBuyers) : 0,
+      scoreReachedAt: sameContent ? safeInteger(source.scoreReachedAt) : 0,
+      lastPaidUseAt: sameContent ? safeInteger(source.lastPaidUseAt) : 0,
+      updatedAt: sameContent ? safeInteger(source.updatedAt) : 0,
+    };
+    if (periodKey) normalized.periodKey = periodKey;
+    return normalized;
+  }
+
+  function addSaleToPackStats(current, settlement, rankingCounted, uniqueBuyer, now) {
+    const scoreChanged = rankingCounted || uniqueBuyer;
+    return {
+      ...current,
+      isCurrentPublic: true,
+      actualGross: current.actualGross + settlement.price,
+      rankingGross: current.rankingGross + (rankingCounted ? settlement.price : 0),
+      netSales: current.netSales + settlement.sellerProceeds,
+      feesPaid: current.feesPaid + settlement.fee,
+      useCount: current.useCount + 1,
+      rankingUseCount: current.rankingUseCount + (rankingCounted ? 1 : 0),
+      uniqueBuyers: current.uniqueBuyers + (uniqueBuyer ? 1 : 0),
+      scoreReachedAt: scoreChanged ? now : current.scoreReachedAt,
+      lastPaidUseAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function publicCreatorStats(value, { includePackCount = false } = {}) {
+    const source = value && typeof value === "object" ? value : {};
+    const result = {
+      actualGross: safeInteger(source.actualGross),
+      rankingGross: safeInteger(source.rankingGross),
+      netSales: safeInteger(source.netSales),
+      feesPaid: safeInteger(source.feesPaid),
+      useCount: safeInteger(source.useCount),
+      rankingUseCount: safeInteger(source.rankingUseCount),
+      uniqueBuyers: safeInteger(source.uniqueBuyers),
+      updatedAt: safeInteger(source.updatedAt),
+    };
+    if (includePackCount) result.packCount = safeInteger(source.packCount);
+    return result;
   }
 
   function assertNoPrivateFields(value, path = "response") {
@@ -373,6 +495,7 @@ function createRouletteTrainingService(deps) {
   }
 
   function packSnapshot(packId, pack) {
+    const rankingContentHash = rouletteTrainingRankingContentHash(storedItems(pack.items));
     return {
       id: packId,
       schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
@@ -384,6 +507,8 @@ function createRouletteTrainingService(deps) {
       revision: pack.revision,
       itemCount: pack.itemCount,
       items: storedItems(pack.items),
+      rankingContentHash,
+      packRankingId: rouletteTrainingPackRankingId(packId, rankingContentHash),
       status: pack.status,
       moderationStatus: pack.moderationStatus,
       paidUseCount: safeInteger(pack.paidUseCount),
@@ -478,6 +603,267 @@ function createRouletteTrainingService(deps) {
     };
   }
 
+  async function saveProfile(uid, data) {
+    requireUid(uid);
+    assertAllowedKeys(
+      data,
+      ["action", "xPublic", "xHandle"],
+      "Xプロフィールの公開設定を確認してください。",
+    );
+    const xPublic = data.xPublic === true;
+    let xHandle = "";
+    if (xPublic) {
+      try {
+        xHandle = normalizeRouletteTrainingXHandle(data.xHandle);
+      } catch (error) {
+        throw mapHelperError(error);
+      }
+      if (!xHandle) {
+        throw httpsError("invalid-argument", "公開するXユーザー名を入力してください。");
+      }
+    }
+    const now = currentTime();
+    const reference = profileRef(uid);
+    const quarantinedPacksQuery = packsCollection()
+      .where("sellerUid", "==", uid)
+      .where("moderationStatus", "==", "quarantined")
+      .limit(1);
+    const stored = {
+      schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
+      sellerUid: uid,
+      publicSellerId: rouletteTrainingPublicSellerId(uid),
+      xPublic,
+      xHandle: xPublic ? xHandle : "",
+      updatedAt: now,
+    };
+    await firestore.runTransaction(async (transaction) => {
+      const [profileSnapshot, quarantinedSnapshot] = await Promise.all([
+        transaction.get(reference),
+        transaction.get(quarantinedPacksQuery),
+      ]);
+      if (xPublic && !quarantinedSnapshot.empty) {
+        throw httpsError(
+          "failed-precondition",
+          "安全確認中のパックがあります。内容を改訂して再公開するまでXリンクは公開できません。",
+        );
+      }
+      transaction.set(reference, {
+        ...stored,
+        createdAt: safeInteger(profileSnapshot.get("createdAt"), 1, Number.MAX_SAFE_INTEGER, now),
+      });
+    });
+    return { profile: publicProfile(stored) };
+  }
+
+  function validPackRankingCandidate(stats, pack) {
+    if (!stats || !pack) return false;
+    if (stats.isCurrentPublic !== true) return false;
+    if (pack.status !== "active" || pack.moderationStatus !== "clear") return false;
+    if (safeInteger(stats.uniqueBuyers) < PACK_RANKING_MINIMUM_UNIQUE_BUYERS
+        || safeInteger(stats.rankingUseCount) < 1) return false;
+    let rankingContentHash;
+    let rankingId;
+    try {
+      rankingContentHash = rouletteTrainingRankingContentHash(storedItems(pack.items));
+      rankingId = rouletteTrainingPackRankingId(stats.packId, rankingContentHash);
+    } catch {
+      return false;
+    }
+    return stats.packId
+      && stats.packId === pack.id
+      && stats.sellerUid === pack.sellerUid
+      && stats.rankingContentHash === rankingContentHash
+      && stats.packRankingId === rankingId;
+  }
+
+  function comparePackRankingRows(left, right) {
+    const reachedAt = (value) => (
+      typeof value === "number" && Number.isSafeInteger(value) && value > 0
+        ? value
+        : Number.MAX_SAFE_INTEGER
+    );
+    return safeInteger(right.stats.uniqueBuyers) - safeInteger(left.stats.uniqueBuyers)
+      || safeInteger(right.stats.rankingUseCount) - safeInteger(left.stats.rankingUseCount)
+      || reachedAt(left.stats.scoreReachedAt) - reachedAt(right.stats.scoreReachedAt)
+      || String(left.stats.packId).localeCompare(String(right.stats.packId));
+  }
+
+  function publicPackRankingRow(entry, profile, rank, viewerUid = "") {
+    const pack = publicPack(entry.pack, viewerUid);
+    return {
+      rank,
+      packId: pack.id,
+      title: pack.title,
+      sellerName: pack.sellerName,
+      publicSellerId: pack.publicSellerId,
+      price: pack.price,
+      revision: pack.revision,
+      uniqueBuyers: safeInteger(entry.stats.uniqueBuyers),
+      rankingUseCount: safeInteger(entry.stats.rankingUseCount),
+      xPublic: profile.xPublic,
+      xHandle: profile.xHandle,
+      updatedAt: safeInteger(entry.stats.updatedAt),
+      // The ranking order differs from the marketplace browse order, so a ranked
+      // pack must carry its own server-validated current public snapshot. The
+      // paid-use transaction still revalidates revision, price and ownership.
+      pack,
+    };
+  }
+
+  async function packRankings(uid, data) {
+    requireUid(uid);
+    assertAllowedKeys(data, ["action", "period"], "ランキング期間を選び直してください。");
+    const period = String(data.period || "monthly");
+    if (!["monthly", "lifetime"].includes(period)) {
+      throw httpsError("invalid-argument", "ランキング期間を選び直してください。");
+    }
+    const now = currentTime();
+    const periodKey = period === "monthly" ? rouletteTrainingJstMonthKey(now) : "lifetime";
+    const collection = period === "monthly"
+      ? firestore.collection("rouletteTrainingPackMonthlyPeriods").doc(periodKey).collection("entries")
+      : firestore.collection("rouletteTrainingPackStats");
+    const snapshot = await collection
+      .where("isCurrentPublic", "==", true)
+      .where("uniqueBuyers", ">=", PACK_RANKING_MINIMUM_UNIQUE_BUYERS)
+      .orderBy("uniqueBuyers", "desc")
+      .orderBy("rankingUseCount", "desc")
+      .orderBy("scoreReachedAt", "asc")
+      .orderBy("packId", "asc")
+      .limit(PACK_RANKING_CANDIDATE_LIMIT)
+      .get();
+    const candidates = snapshot.docs
+      .map((document) => ({ ...document.data(), documentId: document.id }))
+      .filter((stats) => safeInteger(stats?.uniqueBuyers) >= PACK_RANKING_MINIMUM_UNIQUE_BUYERS
+        && safeInteger(stats?.rankingUseCount) >= 1
+        && stats.documentId === stats.packRankingId
+        && /^[a-f0-9]{40}$/u.test(String(stats?.packId || "")));
+    const packSnapshots = await Promise.all(candidates.map((stats) => packRef(stats.packId).get()));
+    const entries = candidates
+      .map((stats, index) => ({
+        stats,
+        pack: packSnapshots[index].exists
+          ? { id: packSnapshots[index].id, ...packSnapshots[index].data() }
+          : null,
+      }))
+      .filter((entry) => validPackRankingCandidate(entry.stats, entry.pack))
+      .sort(comparePackRankingRows)
+      .slice(0, PACK_RANKING_LIMIT);
+    const sellerUids = [...new Set(entries.map((entry) => entry.stats.sellerUid))];
+    const profileSnapshots = await Promise.all(sellerUids.map((sellerUid) => profileRef(sellerUid).get()));
+    const profiles = new Map(sellerUids.map((sellerUid, index) => [
+      sellerUid,
+      publicProfile(profileSnapshots[index].data()),
+    ]));
+    let rank = 0;
+    let previousScore = "";
+    return {
+      period,
+      periodKey,
+      minimumUniqueBuyers: PACK_RANKING_MINIMUM_UNIQUE_BUYERS,
+      rows: entries.map((entry, index) => {
+        const score = `${safeInteger(entry.stats.uniqueBuyers)}:${safeInteger(entry.stats.rankingUseCount)}`;
+        if (score !== previousScore) rank = index + 1;
+        previousScore = score;
+        return publicPackRankingRow(
+          entry,
+          profiles.get(entry.stats.sellerUid) || publicProfile(),
+          rank,
+          uid,
+        );
+      }),
+      updatedAt: now,
+    };
+  }
+
+  async function creatorStats(uid, data) {
+    requireUid(uid);
+    assertAllowedKeys(data, ["action"], "作者の販売実績取得にはトレーニング情報を送信しないでください。");
+    const achievementState = await ensureAchievementState(uid);
+    if (achievementState?.newlyUnlocked?.length) {
+      await bestEffort("rouletteTraining creator achievement", [
+        syncAchievementPublicSurfaces(uid, achievementState.profile),
+      ]);
+    }
+    const now = currentTime();
+    const periodKey = rouletteTrainingJstMonthKey(now);
+    const [statsSnapshot, monthlySnapshot, packsSnapshot, profileSnapshot] = await Promise.all([
+      sellerStatsRef(uid).get(),
+      monthlyEntryRef(periodKey, uid).get(),
+      packsCollection()
+        .where("sellerUid", "==", uid)
+        .orderBy("updatedAt", "desc")
+        .limit(ROULETTE_TRAINING_SELLER_PACK_MAX)
+        .get(),
+      profileRef(uid).get(),
+    ]);
+    const packs = packsSnapshot.docs.map((document) => ({ id: document.id, ...document.data() }));
+    const rankingDetails = packs.map((pack) => {
+      try {
+        const rankingContentHash = rouletteTrainingRankingContentHash(storedItems(pack.items));
+        return {
+          rankingContentHash,
+          rankingId: rouletteTrainingPackRankingId(pack.id, rankingContentHash),
+        };
+      } catch {
+        return { rankingContentHash: "", rankingId: "" };
+      }
+    });
+    const rankingSnapshots = await Promise.all(rankingDetails.map(({ rankingId }) => (
+      rankingId ? packStatsRef(rankingId).get() : Promise.resolve(null)
+    )));
+    return {
+      profile: publicProfile(profileSnapshot.data()),
+      achievements: publicAchievementProfile(
+        achievementState?.profile,
+        null,
+        null,
+        null,
+        null,
+        null,
+        statsSnapshot.data(),
+      ),
+      periodKey,
+      lifetime: publicCreatorStats(statsSnapshot.data(), { includePackCount: true }),
+      monthly: publicCreatorStats(monthlySnapshot.data()),
+      packs: packs.map((pack, index) => {
+        const { rankingContentHash, rankingId } = rankingDetails[index];
+        const normalized = normalizedPackStats(
+          rankingSnapshots[index]?.data(),
+          pack.id,
+          pack,
+          rankingContentHash,
+          rankingId,
+        );
+        const uniqueBuyers = safeInteger(normalized.uniqueBuyers);
+        const rankingUseCount = safeInteger(normalized.rankingUseCount);
+        return {
+          id: pack.id,
+          title: safeOneLine(pack.title, 30, "トレーニングパック"),
+          status: pack.status === "active" ? "active" : "hidden",
+          moderationStatus: pack.moderationStatus === "clear"
+            ? "clear"
+            : (pack.moderationStatus === "quarantined" ? "quarantined" : "pending"),
+          price: ROULETTE_TRAINING_PRICE_OPTIONS.includes(pack.price) ? pack.price : 5,
+          revision: safeInteger(pack.revision, 1, 1_000_000, 1),
+          uniqueBuyers,
+          rankingUseCount,
+          remainingUniqueBuyers: Math.max(
+            0,
+            PACK_RANKING_MINIMUM_UNIQUE_BUYERS - uniqueBuyers,
+          ),
+          eligible: pack.status === "active"
+            && pack.moderationStatus === "clear"
+            && Boolean(rankingContentHash)
+            && normalized.isCurrentPublic === true
+            && uniqueBuyers >= PACK_RANKING_MINIMUM_UNIQUE_BUYERS
+            && rankingUseCount >= 1,
+          updatedAt: safeInteger(normalized.updatedAt),
+        };
+      }),
+      updatedAt: now,
+    };
+  }
+
   async function publish(uid, data) {
     requireUid(uid);
     const expectedBalance = Number(data?.expectedBalance);
@@ -496,10 +882,16 @@ function createRouletteTrainingService(deps) {
     const normalizedPayload = { ...input, packId: id };
     const payloadHash = rouletteTrainingPayloadHash(normalizedPayload);
     const moderationPayloadHash = rouletteTrainingPayloadHash(moderationPayload(input));
+    const rankingContentHash = rouletteTrainingRankingContentHash(input.items);
+    const packRankingId = rouletteTrainingPackRankingId(id, rankingContentHash);
+    const publishedAt = currentTime();
+    const periodKey = rouletteTrainingJstMonthKey(publishedAt);
     const actionReference = publishActionRef(uid, actionId);
     const reference = packRef(id);
     const walletReference = walletRef(uid);
     const statsReference = sellerStatsRef(uid);
+    const packStatsReference = packStatsRef(packRankingId);
+    const packMonthlyReference = packMonthlyEntryRef(periodKey, packRankingId);
     await ensureWallet(uid);
 
     let result;
@@ -510,6 +902,8 @@ function createRouletteTrainingService(deps) {
         walletSnapshot,
         ledgerConfigSnapshot,
         statsSnapshot,
+        packStatsSnapshot,
+        packMonthlySnapshot,
       ] =
         await Promise.all([
           transaction.get(actionReference),
@@ -517,6 +911,8 @@ function createRouletteTrainingService(deps) {
           transaction.get(walletReference),
           transaction.get(anjuPayLedgerConfigRef()),
           transaction.get(statsReference),
+          transaction.get(packStatsReference),
+          transaction.get(packMonthlyReference),
         ]);
 
       if (actionSnapshot.exists) {
@@ -565,6 +961,26 @@ function createRouletteTrainingService(deps) {
         );
       }
 
+      let previousPackRankingId = "";
+      let previousPackStatsSnapshot = null;
+      let previousPackMonthlySnapshot = null;
+      let previousPackStatsReference = null;
+      let previousPackMonthlyReference = null;
+      if (currentSnapshot.exists) {
+        const previousRankingContentHash = rouletteTrainingRankingContentHash(
+          storedItems(currentSnapshot.get("items")),
+        );
+        previousPackRankingId = rouletteTrainingPackRankingId(id, previousRankingContentHash);
+        if (previousPackRankingId !== packRankingId) {
+          previousPackStatsReference = packStatsRef(previousPackRankingId);
+          previousPackMonthlyReference = packMonthlyEntryRef(periodKey, previousPackRankingId);
+          [previousPackStatsSnapshot, previousPackMonthlySnapshot] = await Promise.all([
+            transaction.get(previousPackStatsReference),
+            transaction.get(previousPackMonthlyReference),
+          ]);
+        }
+      }
+
       const wallet = walletData(walletSnapshot);
       if (wallet.balance !== expectedBalance) {
         throw httpsError(
@@ -572,7 +988,7 @@ function createRouletteTrainingService(deps) {
           "AnjuPay残高が公開確認画面から変わりました。公開後残高をもう一度確認してください。",
         );
       }
-      const now = currentTime();
+      const now = publishedAt;
       stageAnjuPayOpening(
         transaction,
         walletReference,
@@ -622,11 +1038,15 @@ function createRouletteTrainingService(deps) {
         revision: nextRevision,
         itemCount: items.length,
         items,
+        rankingContentHash,
+        packRankingId,
         nextItemSequence,
         moderationPayloadHash,
         status: "active",
         moderationStatus: "clear",
         paidUseCount: safeInteger(currentSnapshot.get("paidUseCount")),
+        rankingUseCount: safeInteger(currentSnapshot.get("rankingUseCount")),
+        lastPaidUseAt: safeInteger(currentSnapshot.get("lastPaidUseAt")),
         reportCount: safeInteger(currentSnapshot.get("reportCount")),
         revisionReportCount: 0,
         revisionHighRiskBuyerReportCount: 0,
@@ -669,6 +1089,41 @@ function createRouletteTrainingService(deps) {
       if (currentSnapshot.exists) transaction.set(reference, storedPack);
       else transaction.create(reference, storedPack);
       transaction.create(revisionRef(id, nextRevision), storedPack);
+      if (previousPackStatsSnapshot?.exists && previousPackStatsReference) {
+        transaction.set(previousPackStatsReference, {
+          isCurrentPublic: false,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      if (previousPackMonthlySnapshot?.exists && previousPackMonthlyReference) {
+        transaction.set(previousPackMonthlyReference, {
+          isCurrentPublic: false,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      transaction.set(packStatsReference, {
+        ...normalizedPackStats(
+          packStatsSnapshot.data(),
+          id,
+          storedPack,
+          rankingContentHash,
+          packRankingId,
+        ),
+        isCurrentPublic: true,
+        updatedAt: now,
+      });
+      transaction.set(packMonthlyReference, {
+        ...normalizedPackStats(
+          packMonthlySnapshot.data(),
+          id,
+          storedPack,
+          rankingContentHash,
+          packRankingId,
+          periodKey,
+        ),
+        isCurrentPublic: true,
+        updatedAt: now,
+      });
       if (!currentSnapshot.exists) {
         transaction.set(statsReference, {
           ...normalizedSellerStats(statsSnapshot.data(), uid, storedPack),
@@ -706,6 +1161,8 @@ function createRouletteTrainingService(deps) {
       throw mapHelperError(error);
     }
     const reference = packRef(id);
+    const unpublishedAt = currentTime();
+    const periodKey = rouletteTrainingJstMonthKey(unpublishedAt);
     let result;
     await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(reference);
@@ -713,14 +1170,44 @@ function createRouletteTrainingService(deps) {
         throw httpsError("not-found", "自分のトレーニングパックを確認できませんでした。");
       }
       const current = snapshot.data();
-      if (current.status === "hidden") {
-        result = { pack: publicPack({ id, ...current }, uid), idempotent: true };
-        return;
+      let rankingId = "";
+      try {
+        const rankingContentHash = rouletteTrainingRankingContentHash(storedItems(current.items));
+        rankingId = rouletteTrainingPackRankingId(id, rankingContentHash);
+      } catch {
+        // Invalid legacy content can still be hidden; it simply has no ranking document to disable.
       }
-      const now = currentTime();
+      const currentPackStatsReference = rankingId ? packStatsRef(rankingId) : null;
+      const currentPackMonthlyReference = rankingId
+        ? packMonthlyEntryRef(periodKey, rankingId)
+        : null;
+      const [packStatsSnapshot, packMonthlySnapshot] = rankingId
+        ? await Promise.all([
+          transaction.get(currentPackStatsReference),
+          transaction.get(currentPackMonthlyReference),
+        ])
+        : [null, null];
+      const now = unpublishedAt;
       const next = { ...current, status: "hidden", updatedAt: now };
-      transaction.update(reference, { status: "hidden", updatedAt: now });
-      result = { pack: publicPack({ id, ...next }, uid), idempotent: false };
+      if (current.status !== "hidden") {
+        transaction.update(reference, { status: "hidden", updatedAt: now });
+      }
+      if (packStatsSnapshot?.exists) {
+        transaction.set(currentPackStatsReference, {
+          isCurrentPublic: false,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      if (packMonthlySnapshot?.exists) {
+        transaction.set(currentPackMonthlyReference, {
+          isCurrentPublic: false,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      result = {
+        pack: publicPack({ id, ...(current.status === "hidden" ? current : next) }, uid),
+        idempotent: current.status === "hidden",
+      };
     });
     return result;
   }
@@ -763,6 +1250,19 @@ function createRouletteTrainingService(deps) {
     }
     const preliminarySellerUid = preliminarySnapshot.get("sellerUid");
     requireUid(preliminarySellerUid);
+    let preliminaryRankingContentHash;
+    let preliminaryPackRankingId;
+    try {
+      preliminaryRankingContentHash = rouletteTrainingRankingContentHash(
+        storedItems(preliminarySnapshot.get("items")),
+      );
+      preliminaryPackRankingId = rouletteTrainingPackRankingId(
+        id,
+        preliminaryRankingContentHash,
+      );
+    } catch (error) {
+      throw mapHelperError(error);
+    }
     const selfPreview = preliminarySellerUid === uid;
     await Promise.all(selfPreview
       ? [ensureWallet(uid)]
@@ -785,6 +1285,23 @@ function createRouletteTrainingService(deps) {
       preliminarySellerUid,
       uid,
     );
+    const packStatsReference = packStatsRef(preliminaryPackRankingId);
+    const packMonthlyReference = packMonthlyEntryRef(periodKey, preliminaryPackRankingId);
+    const packDailyPairReference = packRankingPairRef(
+      dateKey,
+      preliminaryPackRankingId,
+      uid,
+    );
+    const packLifetimeBuyerPairReference = packBuyerPairRef(
+      preliminaryPackRankingId,
+      uid,
+    );
+    const packMonthBuyerPairReference = packMonthlyBuyerPairRef(
+      periodKey,
+      preliminaryPackRankingId,
+      uid,
+    );
+    const sellerAchievementReference = achievementProfileRef(preliminarySellerUid);
     let result;
     await firestore.runTransaction(async (transaction) => {
       const reads = [
@@ -800,6 +1317,12 @@ function createRouletteTrainingService(deps) {
         transaction.get(dailyPairReference),
         transaction.get(lifetimeBuyerPairReference),
         transaction.get(monthBuyerPairReference),
+        transaction.get(packStatsReference),
+        transaction.get(packMonthlyReference),
+        transaction.get(packDailyPairReference),
+        transaction.get(packLifetimeBuyerPairReference),
+        transaction.get(packMonthBuyerPairReference),
+        transaction.get(sellerAchievementReference),
       ];
       const snapshots = await Promise.all(reads);
       const [
@@ -816,6 +1339,12 @@ function createRouletteTrainingService(deps) {
       const dailyPairSnapshot = snapshots[9];
       const lifetimeBuyerPairSnapshot = snapshots[10];
       const monthBuyerPairSnapshot = snapshots[11];
+      const packStatsSnapshot = snapshots[12];
+      const packMonthlySnapshot = snapshots[13];
+      const packDailyPairSnapshot = snapshots[14];
+      const packLifetimeBuyerPairSnapshot = snapshots[15];
+      const packMonthBuyerPairSnapshot = snapshots[16];
+      const sellerAchievementSnapshot = snapshots[17];
 
       if (useSnapshot.exists) {
         const saved = useSnapshot.data();
@@ -855,6 +1384,21 @@ function createRouletteTrainingService(deps) {
           "価格またはパックが更新されています。決済前に全文をもう一度確認してください。",
         );
       }
+      let rankingContentHash;
+      let packRankingId;
+      try {
+        rankingContentHash = rouletteTrainingRankingContentHash(storedItems(pack.items));
+        packRankingId = rouletteTrainingPackRankingId(id, rankingContentHash);
+      } catch (error) {
+        throw mapHelperError(error);
+      }
+      if (rankingContentHash !== preliminaryRankingContentHash
+          || packRankingId !== preliminaryPackRankingId) {
+        throw httpsError(
+          "failed-precondition",
+          "パック内容が更新されています。決済前に全文をもう一度確認してください。",
+        );
+      }
       const buyerWallet = walletData(buyerWalletSnapshot);
       if (buyerWallet.balance !== expectedBalance) {
         throw httpsError(
@@ -869,9 +1413,13 @@ function createRouletteTrainingService(deps) {
       let sellerWallet = null;
       let buyerBefore = buyerWallet.balance;
       let sellerBefore = 0;
+      let sellerAchievementResult = null;
       const rankingCounted = !selfPreview && !dailyPairSnapshot.exists;
       const uniqueLifetimeBuyer = !selfPreview && !lifetimeBuyerPairSnapshot.exists;
       const uniqueMonthlyBuyer = !selfPreview && !monthBuyerPairSnapshot.exists;
+      const packRankingCounted = !selfPreview && !packDailyPairSnapshot.exists;
+      const uniquePackBuyer = !selfPreview && !packLifetimeBuyerPairSnapshot.exists;
+      const uniqueMonthlyPackBuyer = !selfPreview && !packMonthBuyerPairSnapshot.exists;
       if (!selfPreview) {
         settlement = rouletteTrainingSaleSettlement(expectedPrice);
         sellerWallet = walletData(sellerWalletSnapshot);
@@ -910,6 +1458,11 @@ function createRouletteTrainingService(deps) {
         sellerProceeds: settlement.sellerProceeds,
         buyerBalanceAfter: buyerWallet.balance,
         rankingCounted,
+        packRankingCounted,
+        uniquePackBuyer,
+        uniqueMonthlyPackBuyer,
+        rankingContentHash,
+        packRankingId,
         dateKey,
         periodKey,
         startedAt: now,
@@ -1023,8 +1576,49 @@ function createRouletteTrainingService(deps) {
           uniqueMonthlyBuyer,
           now,
         );
+        sellerAchievementResult = unlockAchievements(
+          sellerAchievementSnapshot.data(),
+          eligibleAchievementIds({
+            rouletteTrainingStats: normalizeRouletteTrainingStats(nextStats),
+            scope: "roulette_training",
+          }),
+          now,
+        );
+        const nextPackStats = addSaleToPackStats(
+          normalizedPackStats(
+            packStatsSnapshot.data(),
+            id,
+            pack,
+            rankingContentHash,
+            packRankingId,
+          ),
+          settlement,
+          packRankingCounted,
+          uniquePackBuyer,
+          now,
+        );
+        const nextPackMonthly = addSaleToPackStats(
+          normalizedPackStats(
+            packMonthlySnapshot.data(),
+            id,
+            pack,
+            rankingContentHash,
+            packRankingId,
+            periodKey,
+          ),
+          settlement,
+          packRankingCounted,
+          uniqueMonthlyPackBuyer,
+          now,
+        );
         transaction.set(statsReference, nextStats);
         transaction.set(monthlyReference, nextMonthly);
+        if (!sellerAchievementSnapshot.exists
+            || sellerAchievementResult.newlyUnlocked.length) {
+          transaction.set(sellerAchievementReference, sellerAchievementResult.profile);
+        }
+        transaction.set(packStatsReference, nextPackStats);
+        transaction.set(packMonthlyReference, nextPackMonthly);
         if (!dailyPairSnapshot.exists) {
           transaction.create(dailyPairReference, {
             schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
@@ -1056,9 +1650,51 @@ function createRouletteTrainingService(deps) {
             createdAt: now,
           });
         }
+        if (!packDailyPairSnapshot.exists) {
+          transaction.create(packDailyPairReference, {
+            schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
+            sellerUid: preliminarySellerUid,
+            buyerUid: uid,
+            packId: id,
+            rankingContentHash,
+            packRankingId,
+            dateKey,
+            periodKey,
+            firstUseId: useId,
+            rankingGross: settlement.price,
+            createdAt: now,
+          });
+        }
+        if (!packLifetimeBuyerPairSnapshot.exists) {
+          transaction.create(packLifetimeBuyerPairReference, {
+            schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
+            sellerUid: preliminarySellerUid,
+            buyerUid: uid,
+            packId: id,
+            rankingContentHash,
+            packRankingId,
+            firstUseId: useId,
+            createdAt: now,
+          });
+        }
+        if (!packMonthBuyerPairSnapshot.exists) {
+          transaction.create(packMonthBuyerPairReference, {
+            schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
+            sellerUid: preliminarySellerUid,
+            buyerUid: uid,
+            packId: id,
+            rankingContentHash,
+            packRankingId,
+            periodKey,
+            firstUseId: useId,
+            createdAt: now,
+          });
+        }
         transaction.update(reference, {
           paidUseCount: safeInteger(pack.paidUseCount) + 1,
           rankingUseCount: safeInteger(pack.rankingUseCount) + (rankingCounted ? 1 : 0),
+          rankingContentHash,
+          packRankingId,
           lastPaidUseAt: now,
         });
       }
@@ -1077,10 +1713,20 @@ function createRouletteTrainingService(deps) {
           [uid]: buyerWallet.balance,
           [preliminarySellerUid]: sellerWallet.balance,
         },
+        _achievementProfile: !selfPreview
+            && sellerAchievementResult?.newlyUnlocked?.length
+          ? sellerAchievementResult.profile
+          : null,
       };
     });
     await mirrorBalances(result._balances || {});
+    if (result._achievementProfile) {
+      await bestEffort("rouletteTraining seller achievement", [
+        syncAchievementPublicSurfaces(preliminarySellerUid, result._achievementProfile),
+      ]);
+    }
     delete result._balances;
+    delete result._achievementProfile;
     return result;
   }
 
@@ -1245,6 +1891,31 @@ function createRouletteTrainingService(deps) {
       const quarantined = currentIsReportedRevision
         && highRisk
         && nextHighRiskCount >= VERIFIED_BUYER_QUARANTINE_THRESHOLD;
+      const sellerProfileReference = quarantined ? profileRef(historical.sellerUid) : null;
+      let quarantinedPackStatsReference = null;
+      let quarantinedPackMonthlyReference = null;
+      if (quarantined) {
+        const currentRankingContentHash = rouletteTrainingRankingContentHash(
+          storedItems(currentSnapshot.get("items")),
+        );
+        const currentPackRankingId = rouletteTrainingPackRankingId(
+          id,
+          currentRankingContentHash,
+        );
+        quarantinedPackStatsReference = packStatsRef(currentPackRankingId);
+        quarantinedPackMonthlyReference = packMonthlyEntryRef(
+          rouletteTrainingJstMonthKey(now),
+          currentPackRankingId,
+        );
+      }
+      const [sellerProfileSnapshot, quarantinedPackStatsSnapshot, quarantinedPackMonthlySnapshot] =
+        quarantined
+          ? await Promise.all([
+            transaction.get(sellerProfileReference),
+            transaction.get(quarantinedPackStatsReference),
+            transaction.get(quarantinedPackMonthlyReference),
+          ])
+          : [null, null, null];
       transaction.create(reportReference, {
         schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
         reporterUid: uid,
@@ -1272,6 +1943,35 @@ function createRouletteTrainingService(deps) {
         }
         transaction.update(reference, patch);
       }
+      if (sellerProfileReference) {
+        transaction.set(sellerProfileReference, {
+          schemaVersion: ROULETTE_TRAINING_SCHEMA_VERSION,
+          sellerUid: historical.sellerUid,
+          publicSellerId: rouletteTrainingPublicSellerId(historical.sellerUid),
+          xPublic: false,
+          xHandle: "",
+          createdAt: safeInteger(
+            sellerProfileSnapshot.get("createdAt"),
+            1,
+            Number.MAX_SAFE_INTEGER,
+            now,
+          ),
+          updatedAt: now,
+          quarantinedAt: now,
+        }, { merge: true });
+      }
+      if (quarantinedPackStatsSnapshot?.exists) {
+        transaction.set(quarantinedPackStatsReference, {
+          isCurrentPublic: false,
+          updatedAt: now,
+        }, { merge: true });
+      }
+      if (quarantinedPackMonthlySnapshot?.exists) {
+        transaction.set(quarantinedPackMonthlyReference, {
+          isCurrentPublic: false,
+          updatedAt: now,
+        }, { merge: true });
+      }
       result = { accepted: true, quarantined, idempotent: false };
     });
     return result;
@@ -1292,6 +1992,9 @@ function createRouletteTrainingService(deps) {
       else if (action === "start_paid_use") result = await startPaidUse(uid, data);
       else if (action === "resume_use") result = await resumeUse(uid, data);
       else if (action === "finish_use") result = await finishUse(uid, data);
+      else if (action === "pack_rankings") result = await packRankings(uid, data);
+      else if (action === "creator_stats") result = await creatorStats(uid, data);
+      else if (action === "save_profile") result = await saveProfile(uid, data);
       else result = await report(uid, data);
       assertNoPrivateFields(result);
       return result;
@@ -1302,12 +2005,15 @@ function createRouletteTrainingService(deps) {
 
   return Object.freeze({
     browse,
+    creatorStats,
     finishUse,
     getState,
+    packRankings,
     performAction,
     publish,
     report,
     resumeUse,
+    saveProfile,
     startPaidUse,
     unpublish,
   });

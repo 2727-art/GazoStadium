@@ -306,6 +306,28 @@
     description: (target) => `異なる${target}人が応援台本を有料利用した`,
     hint: "いろいろな人へ応援が届くと解除",
   });
+  addSeries({
+    scope: "roulette_training",
+    category: "roulette_training_pack_sales",
+    family: "roulette_training_pack_uses",
+    familyLabel: "パック利用成立",
+    icon: "札",
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["パック販売第一号", "駆け出しパック作者", "十回届いたメニュー", "頼られるトレーニング帳", "百回届いたおうちトレ", "おうちトレを支える人", "五百回の応援メニュー", "千回届いたトレーニング帳", "三千回の伴走", "万回のメニューを届けた人"],
+    description: (target) => `ルーレットトレーニングパックのランキング対象利用が${target}回成立した`,
+    hint: "同じ利用者からはJSTの1日1回だけ数える",
+  });
+  addSeries({
+    scope: "roulette_training",
+    category: "roulette_training_pack_sales",
+    family: "roulette_training_unique_buyers",
+    familyLabel: "パックの利用者",
+    icon: "輪",
+    thresholds: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
+    names: ["三人に届いたパック", "十人のトレーニング仲間", "広がるおうちトレ", "百人に届くメニュー", "二百人のトレーニー", "三百人に届いたパック", "五百人のエールの輪", "千人のトレーニング仲間", "二千人へ届くメニュー", "三千人を支えた作者"],
+    description: (target) => `異なる${target}人がルーレットトレーニングパックを有料利用した`,
+    hint: "いろいろな人へトレーニングメニューが届くと解除",
+  });
   [
     ["team_oshi_jouzu_defense", "team_oshi_jouzu_defense", 1, "つよ推しの証", "推し上手さんとして、ふたりの挑戦を退けた"],
     ["team_oshi_jouzu_clean_defense", "team_oshi_jouzu_defense", 2, "ひとりで魅せきった", "推し上手さんとして、2点以上の差で防衛した"],
@@ -467,6 +489,7 @@
     { id: "danwaku_note", label: "断惑NOTE", copy: "断ちたい習慣と向き合い、自分で継続を記した日々の歩み" },
     { id: "ai_training_record", label: "文字コラトレーニング", copy: "BPMや運動強度ではなく、自分のペースで5ラウンドを終えた歩み" },
     { id: "ai_training_script_sales", label: "応援台本の販売", copy: "価格や売上額ではなく、応援が利用された回数と広がりの記録" },
+    { id: "roulette_training_pack_sales", label: "ルーレットトレーニング・パック販売", copy: "価格や売上額、ランキング順位ではなく、トレーニングパックが利用された回数と広がりの記録" },
     { id: "flea_listing", label: "AnjuPayフリマ・一日棚", copy: "連続日数ではなく、自分のペースで一品を言葉にした日々の記録" },
     { id: "flea_connections", label: "AnjuPayフリマ・ご縁", copy: "売上額や順位ではなく、一品が届いた回数と出会いの記録" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },

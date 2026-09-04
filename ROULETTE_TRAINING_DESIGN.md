@@ -4,7 +4,7 @@ Status: implementation contract
 Scope: solo roulette training, 1〜10 local images, six BPM effects plus all-out count override, self-reported clear / give up, creator menu-pack marketplace, paid-use sales aggregation
 Out of scope: P2P, camera or motion judging, medical or fitness claims, server-side workout records, RATE, competitive workout ranking
 
-この文書は、2026年9月3日時点のワーキングツリーにある `roulette-training.js`、`roulette-training-core.mjs`、`functions/roulette-training.js`、`functions/roulette-training-service.js`、Firestore Rules／Indexesを正本としてまとめた実装契約である。本番デプロイ済みであることを示す文書ではない。
+この文書は、2026年9月4日時点のワーキングツリーにある `roulette-training.js`、`roulette-training-core.mjs`、`functions/roulette-training.js`、`functions/roulette-training-service.js`、Firestore Rules／Indexesを正本としてまとめた実装契約である。本番デプロイ済みであることを示す文書ではない。
 
 ## 1. Product promise
 
@@ -34,7 +34,7 @@ Out of scope: P2P, camera or motion judging, medical or fitness claims, server-s
 9. 本人が「クリア」または「ギブアップ」を選ぶ。
 10. クリア後、設定した休憩を終えると再びメインルーレットを回せる。
 11. 目標クリア数に達すると結果へ進む。ギブアップした場合も直ちに結果へ進む。
-12. 結果を確認し、「トレーニング終了」で端末内セッションを破棄して入口へ戻る。
+12. 結果を確認し、「記録を閉じてお部屋に戻る」で端末内セッションを破棄して入口へ戻る。
 
 無料公式パックはFirebase市場へ接続できない場合も利用できる。有料パックの販売・利用開始・再開・終了・通報だけは、認証済みCallableを通す。
 
@@ -56,7 +56,7 @@ Out of scope: P2P, camera or motion judging, medical or fitness claims, server-s
 - 本人がONへ切り替えた場合だけ、現在の画像BlobをIndexedDB `hariai-roulette-training-images-v1 / session-images / active`へ保存する。
 - ONからOFFへ戻した時は、保存済み画像をIndexedDBから削除する。
 - ONでも画像はサーバーへ送られない。
-- 「トレーニング終了」では、ON/OFFにかかわらず今回のIndexedDB画像レコードとBlob URLを破棄する。これは長期ロスター保存ではなく、進行中セッションの再読込復旧用である。
+- 「記録を閉じてお部屋に戻る」では、ON/OFFにかかわらず今回のIndexedDB画像レコードとBlob URLを破棄する。これは長期ロスター保存ではなく、進行中セッションの再読込復旧用である。
 - 保存セッションとIndexedDB画像には、認証中は `ownerUid`、完全ローカル利用では端末内ランダム識別子 `localOwnerId`を付ける。別の所有者として開いた復旧データは表示せず、端末から破棄する。
 
 ### 3.3 画像抽選
@@ -241,7 +241,7 @@ result
 
 ### 7.4 終了
 
-- 結果画面の「トレーニング終了」を唯一の通常終了操作とする。
+- 結果画面の「記録を閉じてお部屋に戻る」を唯一の通常終了操作とする。
 - 端末内セッション、結果、画像Blob URL、IndexedDBの今回画像を破棄して入口へ戻る。
 - 有料利用のサーバー終了が未確定なら、同じ `useId`だけを再送する。
 - `finish_use`は結果を受け取らず、サーバー側の利用状態を `finished`にして `finishedAt`を記録するだけである。
@@ -470,7 +470,48 @@ AI文字コラトレーニング台本市場と同じ固定価格・手数料を
 - ランキング対象かどうかは購入完了やクリアではなく、サーバー時刻による利用開始時点で決める。
 - ランキングを理由にPay報酬や購入者還元を行わない。
 
-現行実装は、累計・月間・日次ペア上限の保存境界までである。ランキング一覧を取得するCallableアクションとランキング画面はまだ実装していない。
+### 11.3 人気パックランキング
+
+市場には月間／累計の「人気パックランキング」を各TOP20まで表示する。これは作者売上ランキングではなく、現在販売中の個別パックを見つけるための一覧である。
+
+- 主順位は、現在の内容を有料利用した異なる購入者数 `uniqueBuyers`の降順とする。
+- 副順位は、同一buyer→同一パック内容についてJST同日1件だけ数える `rankingUseCount`の降順とする。
+- 両方が同じ場合は同順位とし、表示順位は `1, 2, 2, 4`形式にする。内部の安定順はそのスコアへ到達した時刻が早い順、最後に `packId`順とする。
+- 掲載には `uniqueBuyers >= 3`かつ `rankingUseCount >= 1`が必要である。作者ダッシュボードでは未達のパックに「あとN人」を表示する。
+- `active / clear / isCurrentPublic`をすべて満たす現在内容だけを候補にし、受付停止、安全確認中、改訂前の内容は公開一覧へ出さない。
+- 価格、売上額、手数料、作者本人の試遊、購入後のクリア、ギブアップ、BPM、回数、画像は順位へ使わない。
+- ランキング閲覧時だけCallableから取得し、常時購読や自動ポーリングを行わない。
+
+### 11.4 パック改訂と集計単位
+
+人気集計は `packId`だけでなく、次の現在内容から作る決定的な `rankingContentHash`と `packRankingId`を単位にする。
+
+- メニュー名 `menuText`
+- 補足 `detailText`
+- 回数単位 `countUnit`
+- 応援台詞 `cheerLines`
+
+上記内容を改訂した場合は、新しい `packRankingId`を0件から集計し、改訂前の統計documentは履歴として保持したうえで `isCurrentPublic: false`にする。タイトル、商品説明、価格、作者表示名だけの変更ではランキング集計をリセットしない。受付停止または安全隔離では現在内容を非公開扱いにし、同じ安全な内容を再公開した場合だけ再び現在候補へ戻す。
+
+### 11.5 販売実績コレクション
+
+作者別の累計 `rouletteTrainingSellerStats`を正本とし、次の2系列を `scope: roulette_training`、`category: roulette_training_pack_sales`で解除する。
+
+- パック利用成立: `rankingUseCount`が `1 / 3 / 10 / 30 / 100 / 300 / 500 / 1000 / 3000 / 10000`
+- パックの利用者: `uniqueBuyers`が `3 / 10 / 30 / 100 / 200 / 300 / 500 / 1000 / 2000 / 3000`
+
+販売成立と同じFirestoreトランザクションで作者の実績プロフィールを評価し、新規解除がある場合だけ更新する。既存集計は作者ダッシュボードや共通実績画面を次に開いた時にも再評価できる。自己試遊、冪等リプレイ、価格、売上額、ランキング順位、運動結果は解除条件へ使わず、実績によるPay報酬も発生させない。
+
+### 11.6 ランキング用Xプロフィール
+
+作者は `rouletteTrainingSellerProfiles/{sellerUid}`へルーレットランキング専用のX公開設定を任意保存できる。
+
+- 初期値は非公開で、他市場や総合ランキングのX設定を継承しない。
+- 自由入力URLを受け付けず、NFKC正規化後の英数字とアンダースコア1〜15文字のhandleだけを保存する。
+- 公開応答は本人が `xPublic: true`にした有効なhandleだけを返し、クライアントが固定の `https://x.com/{handle}`を組み立てる。
+- 外部移動前に、作者の自己申告であり運営が本人確認・リンク先確認をしていないことを表示する。X API、埋め込み、プロフィール画像、フォロワー数、クリック追跡は使わない。
+- X公開の有無は順位、実績、販売、Payへ影響しない。OFFにしても集計は残り、ランキング行からリンクだけを外す。
+- 安全確認中のパックが1件でもある作者はXを新規公開できず、高リスク通報でパックが隔離された時はルーレット専用Xを非公開にする。
 
 ## 12. Firebaseとサーバー境界
 
@@ -488,6 +529,9 @@ AI文字コラトレーニング台本市場と同じ固定価格・手数料を
 | `resume_use` | useId | buyer所有権とactive状態を確認し、固定snapshotを返す |
 | `finish_use` | useId | statusを`finished`にし、finishedAtを記録する |
 | `report` | packId、確認revision、理由 | 有料購入者証跡を確認し、通報と必要な隔離を記録する |
+| `pack_rankings` | period（`monthly` / `lifetime`） | 現在公開中の内容を異なる購入者数優先で並べ、内部UIDを除いたTOP20を返す |
+| `creator_stats` | actionのみ | 本人の月間／累計販売集計、各パックの掲載進捗、販売実績、X設定を返す |
+| `save_profile` | xPublic、xHandle | ルーレット専用の任意X公開設定を検証して保存する |
 
 各actionは許可キーを厳密に検査する。画像、画像ID、BPM、乱数、抽選結果、回数、休憩、目標、クリア、ギブアップ、運動結果、フォーム判定を追加で送ると拒否する。
 
@@ -506,6 +550,12 @@ rouletteTrainingMonthlyPeriods/{YYYY-MM}/entries/{sellerUid}
 rouletteTrainingRankingPairs/{JST-date-pairHash}
 rouletteTrainingSellerBuyerPairs/{pairHash}
 rouletteTrainingMonthlyBuyerPairs/{monthPairHash}
+rouletteTrainingPackStats/{packRankingId}
+rouletteTrainingPackMonthlyPeriods/{YYYY-MM}/entries/{packRankingId}
+rouletteTrainingPackRankingPairs/{JST-date-pack-pairHash}
+rouletteTrainingPackBuyerPairs/{packBuyerPairHash}
+rouletteTrainingPackMonthlyBuyerPairs/{monthPackBuyerPairHash}
+rouletteTrainingSellerProfiles/{sellerUid}
 ```
 
 このモード専用のRealtime Databaseパスは作らない。
@@ -515,6 +565,7 @@ rouletteTrainingMonthlyBuyerPairs/{monthPairHash}
 - Firestore Rulesは、上記すべてのdocument／collection queryについて、認証済み・未認証を問わずクライアントの直接read/writeを拒否する。
 - Functions Admin SDKだけが読み書きし、必要な情報だけをCallable応答として返す。
 - 公開パックは作者の内部UIDを返さず、ルーレット専用saltを含む決定的ハッシュ `publicSellerId`と作者表示名を返す。
+- 人気ランキングも `sellerUid`を返さず、`packId`、現在のタイトル・価格・revision、匿名化した `publicSellerId`、作者表示名、集計値、本人が任意公開したX handleだけを返す。
 - `sellerUid`、`buyerUid`、`reporterUid`、`actionId`、payload hashは公開応答へ出さない。
 - 市場へ出すパック本文は公開情報である。購入前全文表示を成立させるため、秘密商品として扱わない。
 - UGC配列を持つpack／use／revision-buyer証跡／report／publish-actionの大きなフィールドは単一フィールドIndexから除外する。
@@ -529,7 +580,7 @@ rouletteTrainingMonthlyBuyerPairs/{monthPairHash}
 - schema versionは、ブラウザセッション、純粋ロジック、Firestoreパック／利用／集計とも現行 `1`である。
 - 公開メニューは `itemId`を正本とし、現行ブラウザとの移行期間は同じ値の `id` aliasも返す。
 - クライアントのpack正規化は `items`／`menus`、`menuText`／`training`／`exercise`／`title`、`cheerLines`／`dialogue`／`line`の既知aliasを読み取れるが、新規公開のFunctions入力は正規キーだけを許可する。
-- アカウント移行では、開始済みルーレット利用をactive sessionとして扱う。また移行先UIDにルーレットのパック、利用、通報、active use、seller statsがあれば「空の移行先」とみなさない。
+- アカウント移行では、開始済みルーレット利用をactive sessionとして扱う。また移行先UIDにルーレットのパック、利用、通報、active use、seller stats、または `rouletteTrainingSellerProfiles` の任意X公開設定があれば「空の移行先」とみなさない。
 - AnjuPay台帳は公開料、利用料、作者売上へルーレット専用kind／labelを使い、AI文字コラや別市場の履歴と混同しない。
 
 ## 14. Accessibility and device behavior
@@ -548,13 +599,13 @@ rouletteTrainingMonthlyBuyerPairs/{monthPairHash}
 - 画面非表示とpagehideでは進行中の運動を自動一時停止し、本人操作なしに音やタイマーを再開しない。
 - ギブアップと結果への遷移は、localStorageやネットワーク障害があってもローカルの音・タイマー停止を先に行う。
 
-## 15. 現行実装で未接続・要確認の境界
+## 15. 現行実装で確認する境界
 
 この節は将来仕様の推測ではなく、上記コードを突き合わせて確認できる現在の制約である。
 
 ### 15.1 ランキング表示
 
-売上の累計・月間・JST日次上限は保存するが、`rouletteTrainingAction`に `rankings` actionはなく、利用者向けランキング画面もない。したがって「ランキング」は現時点でサーバー集計境界までであり、公開表示済みとは扱わない。
+市場の「人気ランキング」タブから、必要な期間だけ `pack_rankings`で月間／累計TOP20を取得する。作者ダッシュボードは `creator_stats`で本人の正確な販売記録、現在パックごとの掲載進捗、販売実績コレクション、ルーレット専用X設定を取得する。いずれも常時購読せず、表示開始または本人の更新操作時だけ読む。
 
 ### 15.2 ローカル復旧のアカウント境界
 
@@ -580,6 +631,10 @@ rouletteTrainingMonthlyBuyerPairs/{monthPairHash}
 - 作者自己試遊を無料にし、売上、購入者証跡、利用数、ランキングへ加えない。
 - 購入済み改訂をbuyer×pack×revisionの1証跡にまとめ、最新終了日時順の20改訂を固定全文付き・内部UIDなしで再表示できる。
 - 実売上は全件、ランキング売上は同一buyer→sellerのJST同日1件だけを累計・月間へ加える。
+- 人気パックランキングは現在内容単位の異なる有料購入者数を主順位、同一buyer→同一内容のJST同日対象利用を副順位とし、同スコアを同順位で月間／累計TOP20へ表示する。
+- メニュー名・補足・単位・応援台詞の改訂では新しい内容として集計し、旧内容を候補から外す。タイトル・説明・価格・作者名だけの変更では集計を維持する。
+- 作者ダッシュボードで掲載までの残り人数、月間／累計集計、2系列20件の販売実績、任意X公開を確認・更新できる。
+- ランキングと実績は価格、売上額、順位報酬、画像、BPM、回数、クリア、ギブアップへ依存せず、Pay報酬を発生させない。
 - `finish_use`が `useId`以外の運動結果payloadを受け取らない。
 - 異なる有料購入者3人による同一revisionの高危険度通報（人格否定・脅迫・差別を含む `harassment`を含む）で、現在revisionを隔離できる。
 - ルーレット専用Firestore namespaceへのクライアント直接read/writeをすべて拒否し、CallableへApp Checkを強制する。

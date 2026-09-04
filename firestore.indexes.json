@@ -351,6 +351,72 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "rouletteTrainingPacks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sellerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "moderationStatus",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "rouletteTrainingPackStats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isCurrentPublic",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uniqueBuyers",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "rankingUseCount",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "scoreReachedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "packId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isCurrentPublic",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uniqueBuyers",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "rankingUseCount",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "scoreReachedAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "packId",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

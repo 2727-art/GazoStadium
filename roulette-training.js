@@ -32,6 +32,7 @@ import {
 
 const appRoot = document.querySelector("#app");
 const rouletteTrainingAction = httpsCallable(functions, "rouletteTrainingAction");
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const DRAFT_STORAGE_KEY = "hariai-roulette-training-draft-v1";
 const CONFIG_STORAGE_KEY = "hariai-roulette-training-config-v1";
 const SESSION_STORAGE_KEY = "hariai-roulette-training-session-v1";
@@ -39,6 +40,7 @@ const FINISH_RETRY_STORAGE_KEY = "hariai-roulette-training-finish-retry-v1";
 const PUBLISH_ATTEMPT_STORAGE_KEY = "hariai-roulette-training-publish-attempt-v1";
 const USE_ATTEMPT_STORAGE_KEY = "hariai-roulette-training-use-attempt-v1";
 const LOCAL_OWNER_STORAGE_KEY = "hariai-roulette-training-local-owner-v1";
+const X_EXTERNAL_CONFIRM_MESSAGE = "このXリンクはパック作者が自己申告したものです。運営は作者とXアカウントの本人確認も、リンク先の内容確認も行っていません。外部サイトのx.comへ移動しますか？";
 const IMAGE_DATABASE_NAME = "hariai-roulette-training-images-v1";
 const IMAGE_STORE_NAME = "session-images";
 const IMAGE_RECORD_KEY = "active";
@@ -48,6 +50,8 @@ const PREVIEW_SCREENS = new Set([
   "setup",
   "editor",
   "market",
+  "ranking",
+  "creator-dashboard",
   "play",
   "fever",
   "all-out",
@@ -58,6 +62,7 @@ const PREVIEW_SCREENS = new Set([
 const TARGET_OPTIONS = Object.freeze([3, 5, 10]);
 const REST_OPTIONS = Object.freeze([0, 15, 30]);
 const PRICE_OPTIONS = Object.freeze([5, 10, 25]);
+const RANKING_PERIODS = Object.freeze(["monthly", "lifetime"]);
 const REEL_VISUAL_ROW_COUNT = Object.freeze({ main: 36, count: 30 });
 const REEL_SPIN_DURATION_MS = Object.freeze({ main: 2_000, count: 1_600 });
 const REEL_REDUCED_MOTION_DURATION_MS = 140;
@@ -349,8 +354,20 @@ function createState() {
     marketLoaded: false,
     marketError: "",
     marketPacks: [],
+    marketView: "packs",
+    rankingPeriod: "monthly",
+    rankings: { monthly: null, lifetime: null },
+    rankingLoading: { monthly: false, lifetime: false },
+    rankingLoaded: { monthly: false, lifetime: false },
+    rankingErrors: { monthly: "", lifetime: "" },
     ownPacks: [],
     purchasedRevisions: [],
+    creatorStats: null,
+    creatorStatsLoading: false,
+    creatorStatsLoaded: false,
+    creatorStatsError: "",
+    profileBusy: false,
+    notifiedCreatorAchievementIds: new Set(),
     activeUse: null,
     balance: null,
     policy: null,
@@ -427,6 +444,12 @@ function announce(message) {
   }, 20);
 }
 
+function restoreFocusAfterRender(selector) {
+  if (!selector) return;
+  const control = document.querySelector(selector);
+  if (control && !control.disabled) control.focus({ preventScroll: true });
+}
+
 function packItems(pack = state.selectedPack) {
   return Array.isArray(pack?.items) ? pack.items : [];
 }
@@ -476,6 +499,222 @@ function purchasedRevisionFromServer(value) {
     purchasedUseId: String(use.id || use.useId || ""),
     purchasedFinishedAt: Number(use.finishedAt || 0),
   };
+}
+
+function nonnegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
+}
+
+function normalizedXHandle(value) {
+  const handle = String(value || "").normalize("NFKC").trim().replace(/^@/u, "");
+  return /^[A-Za-z0-9_]{1,15}$/u.test(handle) ? handle : "";
+}
+
+function publicXProfile(value) {
+  const profile = value && typeof value === "object" ? value : {};
+  const xHandle = normalizedXHandle(profile.xHandle);
+  return {
+    xPublic: profile.xPublic === true && Boolean(xHandle),
+    xHandle: profile.xPublic === true ? xHandle : "",
+    updatedAt: nonnegativeInteger(profile.updatedAt),
+  };
+}
+
+function rankingPayloadFromServer(value, requestedPeriod = "monthly") {
+  const source = value && typeof value === "object" ? value : {};
+  const period = RANKING_PERIODS.includes(source.period) ? source.period : requestedPeriod;
+  const minimumUniqueBuyers = Math.max(1, nonnegativeInteger(source.minimumUniqueBuyers || 3));
+  let previousPrimary = -1;
+  let previousSecondary = -1;
+  let competitionRank = 0;
+  const eligibleRows = (Array.isArray(source.rows) ? source.rows : [])
+    .filter((row) => nonnegativeInteger(row?.uniqueBuyers) >= minimumUniqueBuyers)
+    .slice(0, 20);
+  const rows = eligibleRows.map((row, index) => {
+    const uniqueBuyers = nonnegativeInteger(row?.uniqueBuyers);
+    const rankingUseCount = nonnegativeInteger(row?.rankingUseCount);
+    if (uniqueBuyers !== previousPrimary || rankingUseCount !== previousSecondary) {
+      competitionRank = index + 1;
+      previousPrimary = uniqueBuyers;
+      previousSecondary = rankingUseCount;
+    }
+    const profile = publicXProfile(row);
+    const packId = String(row?.packId || row?.id || "").slice(0, 128);
+    let pack = null;
+    if (row?.pack && typeof row.pack === "object") {
+      try {
+        const candidate = packFromServer(row.pack);
+        if (packIdentity(candidate) === packId && candidate.status === "active") pack = candidate;
+      } catch {
+        pack = null;
+      }
+    }
+    return {
+      rank: competitionRank,
+      packId,
+      title: String(row?.title || "名称未設定のパック").slice(0, 80),
+      sellerName: String(row?.sellerName || "匿名作者").slice(0, 32),
+      publicSellerId: String(row?.publicSellerId || "").slice(0, 64),
+      price: nonnegativeInteger(row?.price),
+      revision: nonnegativeInteger(row?.revision || row?.currentRevision),
+      uniqueBuyers,
+      rankingUseCount,
+      xPublic: profile.xPublic,
+      xHandle: profile.xHandle,
+      updatedAt: nonnegativeInteger(row?.updatedAt),
+      pack,
+    };
+  }).filter((row) => row.packId);
+  return {
+    period,
+    periodKey: String(source.periodKey || (period === "lifetime" ? "lifetime" : "")),
+    updatedAt: nonnegativeInteger(source.updatedAt),
+    minimumUniqueBuyers,
+    rows,
+  };
+}
+
+function salesStatsFromServer(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    actualGross: nonnegativeInteger(source.actualGross),
+    rankingGross: nonnegativeInteger(source.rankingGross),
+    netSales: nonnegativeInteger(source.netSales),
+    feesPaid: nonnegativeInteger(source.feesPaid),
+    useCount: nonnegativeInteger(source.useCount),
+    rankingUseCount: nonnegativeInteger(source.rankingUseCount),
+    uniqueBuyers: nonnegativeInteger(source.uniqueBuyers),
+    packCount: nonnegativeInteger(source.packCount),
+    updatedAt: nonnegativeInteger(source.updatedAt),
+  };
+}
+
+function creatorStatsFromServer(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    profile: publicXProfile(source.profile),
+    periodKey: String(source.periodKey || ""),
+    lifetime: salesStatsFromServer(source.lifetime || source.stats?.lifetime),
+    monthly: salesStatsFromServer(source.monthly || source.stats?.monthly),
+    packs: (Array.isArray(source.packs) ? source.packs : []).map((pack) => ({
+      id: String(pack?.id || pack?.packId || "").slice(0, 128),
+      title: String(pack?.title || "名称未設定のパック").slice(0, 80),
+      status: String(pack?.status || "hidden"),
+      moderationStatus: String(pack?.moderationStatus || "clear"),
+      price: nonnegativeInteger(pack?.price),
+      revision: nonnegativeInteger(pack?.revision || pack?.currentRevision),
+      uniqueBuyers: nonnegativeInteger(pack?.uniqueBuyers),
+      rankingUseCount: nonnegativeInteger(pack?.rankingUseCount),
+      remainingUniqueBuyers: nonnegativeInteger(pack?.remainingUniqueBuyers),
+      eligible: pack?.eligible === true,
+      updatedAt: nonnegativeInteger(pack?.updatedAt),
+    })).filter((pack) => pack.id),
+    achievements: source.achievements && typeof source.achievements === "object"
+      ? source.achievements
+      : null,
+    updatedAt: nonnegativeInteger(source.updatedAt),
+  };
+}
+
+function rankingPeriodLabel(payload, period) {
+  if (period === "lifetime") return "累計";
+  const match = /^(\d{4})-(\d{2})$/u.exec(String(payload?.periodKey || ""));
+  return match ? `${Number(match[1])}年${Number(match[2])}月` : "今月";
+}
+
+function formattedUpdateTime(value) {
+  const timestamp = nonnegativeInteger(value);
+  if (!timestamp) return "";
+  try {
+    return new Intl.DateTimeFormat("ja-JP", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(timestamp));
+  } catch {
+    return "";
+  }
+}
+
+function seedMarketInsightsPreview(preview) {
+  if (!["ranking", "creator-dashboard"].includes(preview)) return;
+  const now = Date.now();
+  const rowFacts = [
+    { packId: "preview-ranking-1", title: "夜ふかし前のやさしい全身メニュー", sellerName: "あんじゅ", publicSellerId: "RT-ANJU", price: 10, revision: 3, uniqueBuyers: 18, rankingUseCount: 31, xPublic: true, xHandle: "anju_example", updatedAt: now },
+    { packId: "preview-ranking-2", title: "椅子でゆっくり10分トレ", sellerName: "ホームトレーナー", publicSellerId: "RT-HOME", price: 5, revision: 1, uniqueBuyers: 12, rankingUseCount: 20, updatedAt: now - 30_000 },
+    { packId: "preview-ranking-3", title: "推しに応援されるスクワット帳", sellerName: "応援係", publicSellerId: "RT-CHEER", price: 25, revision: 2, uniqueBuyers: 12, rankingUseCount: 20, updatedAt: now - 60_000 },
+    { packId: "preview-ranking-4", title: "寝る前ストレッチ＆体幹", sellerName: "夜の部屋", publicSellerId: "RT-NIGHT", price: 10, revision: 4, uniqueBuyers: 8, rankingUseCount: 15, updatedAt: now - 90_000 },
+  ];
+  const rows = rowFacts.map((row, index) => ({
+    ...row,
+    pack: {
+      id: row.packId,
+      sellerName: row.sellerName,
+      publicSellerId: row.publicSellerId,
+      title: row.title,
+      description: "自分のペースで取り組める、プレビュー用の公開トレーニングメニューです。",
+      price: row.price,
+      revision: row.revision,
+      status: "active",
+      moderationStatus: "clear",
+      isOwn: index === 0,
+      items: FREE_PACK.items.map((item, itemIndex) => ({
+        id: `preview-${index + 1}-${itemIndex + 1}`,
+        itemId: `preview-${index + 1}-${itemIndex + 1}`,
+        menuText: itemIndex === 0 ? row.title : item.menuText,
+        detailText: item.detailText || "無理のない範囲で行います。",
+        countUnit: item.countUnit,
+        cheerLines: [...(item.cheerLines || ["自分のペースで進めよう。"])],
+      })),
+    },
+  }));
+  state.rankings.monthly = rankingPayloadFromServer({
+    period: "monthly",
+    periodKey: "2026-09",
+    minimumUniqueBuyers: 3,
+    rows,
+    updatedAt: now,
+  });
+  state.rankings.lifetime = rankingPayloadFromServer({
+    period: "lifetime",
+    periodKey: "lifetime",
+    minimumUniqueBuyers: 3,
+    rows: rows.map((row) => ({
+      ...row,
+      uniqueBuyers: row.uniqueBuyers * 4,
+      rankingUseCount: row.rankingUseCount * 4,
+    })),
+    updatedAt: now,
+  });
+  state.rankingLoaded = { monthly: true, lifetime: true };
+  state.marketPacks = rows.map((row) => packFromServer(row.pack));
+  state.marketLoaded = true;
+  state.balance = 120;
+  if (preview === "ranking") {
+    state.screen = "market";
+    state.marketView = "ranking";
+    return;
+  }
+  const unlocked = {};
+  rouletteAchievementDefinitions()
+    .filter((definition) => Number(definition.target) <= (definition.family === "roulette_training_pack_uses" ? 10 : 3))
+    .forEach((definition) => { unlocked[definition.id] = now - 86_400_000; });
+  state.creatorStats = creatorStatsFromServer({
+    profile: { xPublic: true, xHandle: "anju_example", updatedAt: now },
+    periodKey: "2026-09",
+    monthly: { actualGross: 70, netSales: 56, feesPaid: 14, useCount: 7, rankingUseCount: 5, uniqueBuyers: 4, updatedAt: now },
+    lifetime: { actualGross: 180, netSales: 144, feesPaid: 36, useCount: 18, rankingUseCount: 12, uniqueBuyers: 7, packCount: 2, updatedAt: now },
+    packs: [
+      { id: "preview-own-1", title: "夜ふかし前のやさしい全身メニュー", status: "active", moderationStatus: "clear", price: 10, revision: 3, uniqueBuyers: 5, rankingUseCount: 8, remainingUniqueBuyers: 0, eligible: true, updatedAt: now },
+      { id: "preview-own-2", title: "椅子でできる朝のミニメニュー", status: "active", moderationStatus: "clear", price: 5, revision: 1, uniqueBuyers: 1, rankingUseCount: 1, remainingUniqueBuyers: 2, eligible: false, updatedAt: now },
+    ],
+    achievements: { unlocked, pendingUnlocks: [], stats: { rouletteTraining: { rankingUseCount: 12, uniqueBuyers: 7 } } },
+    updatedAt: now,
+  });
+  state.creatorStatsLoaded = true;
+  state.screen = "creator_dashboard";
 }
 
 function friendlyError(error, fallback = "操作を完了できませんでした。") {
@@ -745,6 +984,190 @@ function renderEditorReview() {
   </div>`, { backLabel: "編集へ戻る", backAction: "back-editor" });
 }
 
+function xProfileLink(value) {
+  const profile = publicXProfile(value);
+  if (!profile.xPublic || !profile.xHandle) return "";
+  const label = `Xの自己申告プロフィール @${profile.xHandle} を新しいタブで開く（外部サイト）`;
+  return `<span class="roulette-training-ranking-x"><button type="button" data-roulette-x-profile="${escapeHtml(profile.xHandle)}" aria-label="${escapeHtml(label)}"><b aria-hidden="true">X</b><span>（外部）@${escapeHtml(profile.xHandle)}</span><i aria-hidden="true">↗</i></button><small>作者の自己申告・本人未確認</small></span>`;
+}
+
+function openConfirmedXProfile(handleValue) {
+  const handle = normalizedXHandle(handleValue);
+  if (!handle || !window.confirm(X_EXTERNAL_CONFIRM_MESSAGE)) return;
+  const externalWindow = window.open(
+    `https://x.com/${encodeURIComponent(handle)}`,
+    "_blank",
+    "noopener,noreferrer",
+  );
+  if (externalWindow) externalWindow.opener = null;
+}
+
+function rankingRow(row, index) {
+  const headingId = `rouletteTrainingRankingRow-${state.rankingPeriod}-${index}`;
+  const sellerId = row.publicSellerId
+    ? `<code title="ゲーム内の作者ID">作者ID ${escapeHtml(row.publicSellerId)}</code>`
+    : "";
+  return `<article class="roulette-training-ranking-row${row.rank <= 3 ? ` is-rank-${row.rank}` : ""}" role="listitem" aria-labelledby="${headingId}">
+    <div class="roulette-training-ranking-place" aria-label="${row.rank}位"><strong>${row.rank}</strong><small>位</small></div>
+    <div class="roulette-training-ranking-copy">
+      <span class="roulette-training-ranking-revision">販売中・改訂${row.revision || 1}</span>
+      <h3 id="${headingId}">${escapeHtml(row.title)}</h3>
+      <p><span>作者 ${escapeHtml(row.sellerName)}</span>${sellerId}</p>
+      ${xProfileLink(row)}
+    </div>
+    <dl class="roulette-training-ranking-numbers">
+      <div class="is-primary"><dt>異なる購入者</dt><dd>${row.uniqueBuyers}<small>人</small></dd></div>
+      <div><dt>対象利用</dt><dd>${row.rankingUseCount}<small>回</small></dd></div>
+      <div><dt>現在価格</dt><dd>${row.price ? `${row.price}<small> Pay</small>` : "無料"}</dd></div>
+    </dl>
+    <button class="button button-ghost roulette-training-ranking-detail" type="button" data-roulette-ranked-pack="${escapeHtml(row.packId)}">内容を見る</button>
+  </article>`;
+}
+
+function renderRankingPanel() {
+  const period = state.rankingPeriod;
+  const payload = state.rankings[period];
+  const loading = state.rankingLoading[period];
+  const error = state.rankingErrors[period];
+  const rows = payload?.rows || [];
+  const updated = formattedUpdateTime(payload?.updatedAt);
+  const minimum = nonnegativeInteger(payload?.minimumUniqueBuyers || 3) || 3;
+  let body = "";
+  if (loading && !payload) {
+    body = `<div class="roulette-training-ranking-empty" role="status"><strong>ランキングを読み込んでいます…</strong><span>販売パックだけを集計しています。</span></div>`;
+  } else if (error && !payload) {
+    body = `<div class="roulette-training-ranking-empty is-error" role="status"><strong>ランキングを読み込めませんでした</strong><span>${escapeHtml(error)}</span><button class="button button-ghost" type="button" data-roulette-action="reload-rankings">再読み込み</button></div>`;
+  } else if (!rows.length) {
+    body = `<div class="roulette-training-ranking-empty"><strong>${escapeHtml(rankingPeriodLabel(payload, period))}は、掲載条件を満たすパックがまだありません</strong><span>現在の内容を利用した異なる購入者が${minimum}人になると掲載対象です。</span></div>`;
+  } else {
+    body = `<div class="roulette-training-ranking-list" role="list">${rows.map(rankingRow).join("")}</div>`;
+  }
+  return `<section class="roulette-training-ranking-board" aria-labelledby="rouletteTrainingRankingTitle" aria-busy="${loading}">
+    <header class="roulette-training-ranking-head">
+      <div><span class="roulette-training-panel-label">POPULAR MENU PACKS</span><h2 id="rouletteTrainingRankingTitle">人気パックランキング</h2><p>販売の記録を見つけるための一覧です。トレーニングの上手さや運動結果を競うものではありません。</p></div>
+      <span class="roulette-training-ranking-limit">TOP 20</span>
+    </header>
+    <div class="roulette-training-ranking-periods" role="group" aria-label="ランキング期間">
+      <button type="button" data-roulette-ranking-period="monthly" aria-pressed="${period === "monthly"}">月間</button>
+      <button type="button" data-roulette-ranking-period="lifetime" aria-pressed="${period === "lifetime"}">累計</button>
+    </div>
+    <p class="roulette-training-ranking-rule"><strong>${escapeHtml(rankingPeriodLabel(payload, period))}</strong> ／ 現在の内容を利用した「異なる購入者数」を優先し、同数ならランキング対象利用数で比較します。両方同じパックは同順位です。内容を改訂した場合は、新しい内容単位で集計します。順位によるPay報酬やトレーニング上の特典はありません。</p>
+    ${body}
+    <footer class="roulette-training-ranking-footer"><span>${updated ? `${escapeHtml(updated)} 更新` : "必要な時だけ最新情報を取得します"}</span><button class="button button-ghost button-small" type="button" data-roulette-action="reload-rankings" ${loading ? "disabled" : ""}>${loading ? "更新中…" : "ランキングを更新"}</button></footer>
+  </section>`;
+}
+
+function creatorPeriodCard(title, subtitle, stats) {
+  return `<section class="roulette-training-creator-period">
+    <header><span>${escapeHtml(subtitle)}</span><h3>${escapeHtml(title)}</h3></header>
+    <dl>
+      <div><dt>販売成立</dt><dd>${stats.useCount}<small>回</small></dd></div>
+      <div><dt>異なる購入者</dt><dd>${stats.uniqueBuyers}<small>人</small></dd></div>
+      <div><dt>ランキング対象利用</dt><dd>${stats.rankingUseCount}<small>回</small></dd></div>
+      <div><dt>作者受取</dt><dd>${stats.netSales}<small> Pay</small></dd></div>
+    </dl>
+    <details><summary>精算内訳を見る</summary><p>売上総額 ${stats.actualGross} Pay ／ 成功手数料 ${stats.feesPaid} Pay ／ 作者受取 ${stats.netSales} Pay</p></details>
+  </section>`;
+}
+
+function creatorPackCard(pack) {
+  const visible = pack.status === "active" && pack.moderationStatus !== "quarantined";
+  const status = pack.moderationStatus === "quarantined"
+    ? "安全確認中"
+    : pack.status === "active" ? "販売中" : "受付停止中";
+  const progress = Math.min(3, pack.uniqueBuyers);
+  const eligibility = !visible
+    ? "ランキングには表示されません"
+    : pack.eligible
+      ? "ランキング掲載条件を達成"
+      : `掲載まで、あと${Math.max(0, pack.remainingUniqueBuyers)}人`;
+  return `<article class="roulette-training-creator-pack${pack.eligible && visible ? " is-eligible" : ""}">
+    <header><span>${escapeHtml(status)}・改訂${pack.revision || 1}</span><strong>${escapeHtml(pack.title)}</strong><small>${pack.price} Pay</small></header>
+    <div class="roulette-training-creator-pack-progress" role="progressbar" aria-label="ランキング掲載条件の異なる購入者3人中${progress}人" aria-valuemin="0" aria-valuemax="3" aria-valuenow="${progress}"><i style="--qualification-progress:${(progress / 3) * 100}%" aria-hidden="true"></i></div>
+    <p><strong>${escapeHtml(eligibility)}</strong><span>異なる購入者 ${pack.uniqueBuyers}人 ／ 対象利用 ${pack.rankingUseCount}回</span></p>
+  </article>`;
+}
+
+function rouletteAchievementDefinitions() {
+  return (Array.isArray(window.HariaiAchievements?.catalog)
+    ? window.HariaiAchievements.catalog
+    : [])
+    .filter((definition) => definition?.scope === "roulette_training"
+      || definition?.category === "roulette_training_pack_sales")
+    .sort((first, second) => String(first.family).localeCompare(String(second.family))
+      || Number(first.level || 0) - Number(second.level || 0));
+}
+
+function renderCreatorAchievements(data) {
+  const definitions = rouletteAchievementDefinitions();
+  if (!definitions.length) {
+    return `<section class="roulette-training-creator-achievements" aria-labelledby="rouletteTrainingCreatorAchievements"><header><span class="roulette-training-panel-label">SALES COLLECTION</span><h2 id="rouletteTrainingCreatorAchievements">販売実績コレクション</h2></header><p class="roulette-training-creator-placeholder">販売記録は保存されています。実績カタログを準備中です。</p></section>`;
+  }
+  const profile = window.HariaiAchievements?.normalizeProfile?.(data.achievements) || {
+    unlocked: data.achievements?.unlocked || {},
+    pendingUnlocks: Array.isArray(data.achievements?.pendingUnlocks) ? data.achievements.pendingUnlocks : [],
+  };
+  const unlockedIds = new Set([
+    ...Object.keys(profile.unlocked || {}),
+    ...(Array.isArray(profile.pendingUnlocks) ? profile.pendingUnlocks : []),
+  ]);
+  const families = [...new Set(definitions.map((definition) => definition.family))];
+  const cards = families.map((family) => {
+    const levels = definitions.filter((definition) => definition.family === family);
+    const usesFamily = family === "roulette_training_pack_uses";
+    const current = usesFamily ? data.lifetime.rankingUseCount : data.lifetime.uniqueBuyers;
+    const next = levels.find((definition) => Number(definition.target) > current) || null;
+    const currentUnlocked = [...levels].reverse().find((definition) => unlockedIds.has(definition.id)) || null;
+    const unit = usesFamily ? "回" : "人";
+    const progressMaximum = Number(next?.target || levels.at(-1)?.target || 1);
+    const progress = Math.min(100, Math.round((current / Math.max(1, progressMaximum)) * 100));
+    return `<article class="roulette-training-achievement-family">
+      <header><i aria-hidden="true">${escapeHtml(currentUnlocked?.icon || levels[0]?.icon || "☆")}</i><div><span>${escapeHtml(levels[0]?.familyLabel || "販売実績")}</span><h3>${escapeHtml(currentUnlocked?.name || "最初の実績へ")}</h3></div><strong>${current}<small>${unit}</small></strong></header>
+      <div class="roulette-training-achievement-progress" role="progressbar" aria-label="${escapeHtml(levels[0]?.familyLabel || "販売実績")} ${current}${unit}${next ? `、次の実績まで${Math.max(0, Number(next.target) - current)}${unit}` : "、すべて達成"}" aria-valuemin="0" aria-valuemax="${progressMaximum}" aria-valuenow="${Math.min(current, progressMaximum)}"><i style="--achievement-progress:${progress}%" aria-hidden="true"></i></div>
+      <p>${next ? `次は「${escapeHtml(next.name)}」まで、あと${Math.max(0, Number(next.target) - current)}${unit}` : "このシリーズの実績をすべて集めました。"}</p>
+      <ol aria-label="${escapeHtml(levels[0]?.familyLabel || "販売実績")}の実績一覧">${levels.map((definition) => `<li class="${unlockedIds.has(definition.id) ? "is-unlocked" : "is-locked"}"><i aria-hidden="true">${escapeHtml(definition.icon || "☆")}</i><span>${escapeHtml(definition.name)}</span><small>${Number(definition.target)}${unit}${unlockedIds.has(definition.id) ? "・取得済み" : ""}</small></li>`).join("")}</ol>
+    </article>`;
+  }).join("");
+  return `<section class="roulette-training-creator-achievements" aria-labelledby="rouletteTrainingCreatorAchievements"><header><span class="roulette-training-panel-label">SALES COLLECTION</span><h2 id="rouletteTrainingCreatorAchievements">販売実績コレクション</h2><p>ランキング対象利用と異なる購入者数による、販売者向けの記録です。購入額や順位そのものは解除条件に使いません。</p></header><div class="roulette-training-achievement-families">${cards}</div></section>`;
+}
+
+function renderCreatorProfileForm(data) {
+  const profile = data.profile || publicXProfile(null);
+  return `<section class="roulette-training-creator-profile" aria-labelledby="rouletteTrainingCreatorProfileTitle">
+    <div><span class="roulette-training-panel-label">OPTIONAL X PROFILE</span><h2 id="rouletteTrainingCreatorProfileTitle">ランキングにXプロフィールを添える</h2><p>ルーレットトレーニング専用の任意設定です。他の市場やモードからは引き継ぎません。</p></div>
+    <form id="rouletteTrainingXProfileForm" novalidate>
+      <label><span>Xユーザー名</span><span class="roulette-training-x-input"><b aria-hidden="true">@</b><input name="xHandle" type="text" maxlength="16" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="anju_example" value="${escapeHtml(profile.xHandle || "")}" aria-describedby="rouletteTrainingXProfileHelp" /></span></label>
+      <label class="roulette-training-x-consent"><input name="xPublic" type="checkbox" ${profile.xPublic ? "checked" : ""} /><span><strong>販売中パックのランキング行に任意公開する</strong><small>現在と今後の掲載対象パックへ、同じXユーザー名を表示します。</small></span></label>
+      <button class="button button-primary" type="submit" ${state.profileBusy ? "disabled" : ""}>${state.profileBusy ? "公開設定を保存中…" : "X公開設定を保存"}</button>
+    </form>
+    <p id="rouletteTrainingXProfileHelp">作者の自己申告として表示し、本人確認、X API取得、投稿の埋め込み、閲覧追跡は行いません。OFFにして保存すると、販売実績と順位を残したままXリンクだけが非公開になります。</p>
+  </section>`;
+}
+
+function renderCreatorDashboard() {
+  let content = "";
+  if (state.creatorStatsLoading && !state.creatorStats) {
+    content = `<div class="roulette-training-creator-status" role="status"><strong>販売記録を読み込んでいます…</strong></div>`;
+  } else if (state.creatorStatsError && !state.creatorStats) {
+    content = `<div class="roulette-training-creator-status is-error" role="status"><strong>販売記録を読み込めませんでした</strong><p>${escapeHtml(state.creatorStatsError)}</p><button class="button button-ghost" type="button" data-roulette-action="reload-creator-stats">再読み込み</button></div>`;
+  } else if (state.creatorStats) {
+    const data = state.creatorStats;
+    const packCards = data.packs.length
+      ? data.packs.map(creatorPackCard).join("")
+      : `<p class="roulette-training-creator-placeholder">販売パックはまだありません。パックを公開すると、ここで掲載条件と販売記録を確認できます。</p>`;
+    content = `<div class="roulette-training-creator-periods">${creatorPeriodCard("今月", rankingPeriodLabel({ periodKey: data.periodKey }, "monthly"), data.monthly)}${creatorPeriodCard("累計", "LIFETIME", data.lifetime)}</div>
+      <section class="roulette-training-creator-packs" aria-labelledby="rouletteTrainingCreatorPacks"><header><span class="roulette-training-panel-label">PACK STATUS</span><h2 id="rouletteTrainingCreatorPacks">パックごとの掲載状況</h2><p>現在の内容を利用した異なる購入者が3人になるとランキング掲載対象です。改訂後は新しい内容として数えます。</p></header><div>${packCards}</div></section>
+      ${renderCreatorAchievements(data)}
+      ${renderCreatorProfileForm(data)}`;
+  }
+  const updated = formattedUpdateTime(state.creatorStats?.updatedAt);
+  return renderFrame(`<div class="roulette-training-creator-dashboard">
+    <header class="roulette-training-creator-hero"><span class="roulette-training-panel-label">MY CREATOR NOTE</span><h2>作者ダッシュボード</h2><p>販売の記録、ランキング掲載までの進み具合、販売実績コレクションを確認できます。プレイヤーの運動結果や画像は作者へ送信されません。</p></header>
+    ${content}
+    <footer class="roulette-training-creator-footer"><span>${updated ? `${escapeHtml(updated)} 更新` : "必要な時だけ販売記録を取得します"}</span><button class="button button-ghost button-small" type="button" data-roulette-action="reload-creator-stats" ${state.creatorStatsLoading ? "disabled" : ""}>${state.creatorStatsLoading ? "更新中…" : "販売記録を更新"}</button></footer>
+  </div>`, { eyebrow: "CREATOR SALES NOTE", title: "販売記録を見る", backLabel: "市場へ戻る", backAction: "back-market" });
+}
+
 function marketCard(pack) {
   const finishBlocksPack = Boolean(terminalFinishUseId() && !pack.builtin);
   return `<button class="roulette-training-market-card" type="button" data-roulette-pack-id="${escapeHtml(packIdentity(pack))}" ${finishBlocksPack || state.bootstrapLoading || state.marketLoading ? "disabled" : ""}>
@@ -802,14 +1225,19 @@ function renderMarket() {
       : !onlineCards
         ? `<p class="roulette-training-market-status">現在、公開中のユーザーパックはありません。</p>`
         : "";
-  return renderFrame(`<div class="roulette-training-market">
-    <section class="roulette-training-market-head"><div><span class="roulette-training-panel-label">MENU MARKET</span><h2>全文を見てから選べます</h2><p>購入はパック1セッション単位です。抽選・クリア・ギブアップで追加料金は発生しません。</p></div><div class="roulette-training-balance"><small>ANJUPAY BALANCE</small><strong>${Number.isFinite(state.balance) ? `${state.balance} Pay` : "--"}</strong></div></section>
-    ${terminalUseId ? `<div class="roulette-training-market-error" role="status"><p>前回の有料利用の終了確認が完了していません。新しい利用は開始できません。</p><button class="button button-ghost" type="button" data-roulette-action="retry-finish" ${state.finishRetryBusy ? "disabled" : ""}>${state.finishRetryBusy ? "終了を確認中…" : "終了処理を再試行"}</button></div>` : state.activeUse ? `<button class="roulette-training-active-use" type="button" data-roulette-action="resume-paid"><strong>開始済みの有料パックがあります</strong><span>追加課金なしで準備画面へ戻る</span></button>` : ""}
+  const packView = `${terminalUseId ? `<div class="roulette-training-market-error" role="status"><p>前回の有料利用の終了確認が完了していません。新しい利用は開始できません。</p><button class="button button-ghost" type="button" data-roulette-action="retry-finish" ${state.finishRetryBusy ? "disabled" : ""}>${state.finishRetryBusy ? "終了を確認中…" : "終了処理を再試行"}</button></div>` : state.activeUse ? `<button class="roulette-training-active-use" type="button" data-roulette-action="resume-paid"><strong>開始済みの有料パックがあります</strong><span>追加課金なしで準備画面へ戻る</span></button>` : ""}
     ${ownCards ? `<section class="roulette-training-own-packs"><header><span class="roulette-training-panel-label">MY MENU PACKS</span><h3>自分の販売パック</h3></header>${ownCards}</section>` : ""}
     ${purchasedRevisionCards ? `<section class="roulette-training-purchased-revisions"><header><span class="roulette-training-panel-label">PURCHASED REVISIONS</span><h3>購入済みの改訂（通報用）</h3><p>作者が改訂・受付停止した後も、実際に有料利用した版の全文を確認して通報できます。同じ改訂は1件にまとめて表示します。</p></header><div class="roulette-training-market-grid">${purchasedRevisionCards}</div></section>` : ""}
     <div class="roulette-training-market-grid">${freeCard}${onlineCards}</div>
     ${status}
-    <aside class="roulette-training-safety-note"><strong>販売パックはプレイヤーによる自由入力です。</strong><p>内容を確認し、自分に合わない運動は購入・開始しないでください。実施中はいつでもギブアップできます。</p></aside>
+    <aside class="roulette-training-safety-note"><strong>販売パックはプレイヤーによる自由入力です。</strong><p>内容を確認し、自分に合わない運動は購入・開始しないでください。実施中はいつでもギブアップできます。</p></aside>`;
+  return renderFrame(`<div class="roulette-training-market">
+    <section class="roulette-training-market-head"><div><span class="roulette-training-panel-label">MENU MARKET</span><h2>全文を見てから選べます</h2><p>購入はパック1セッション単位です。抽選・クリア・ギブアップで追加料金は発生しません。</p></div><div class="roulette-training-market-head-actions"><div class="roulette-training-balance"><small>ANJUPAY BALANCE</small><strong>${Number.isFinite(state.balance) ? `${state.balance} Pay` : "--"}</strong></div><button class="button button-ghost button-small" type="button" data-roulette-action="open-creator-dashboard">作者ダッシュボード</button></div></section>
+    <div class="roulette-training-market-switcher" role="group" aria-label="市場の表示">
+      <button type="button" data-roulette-action="show-market-packs" aria-pressed="${state.marketView === "packs"}"><span aria-hidden="true">▤</span>パックを選ぶ</button>
+      <button type="button" data-roulette-action="show-market-ranking" aria-pressed="${state.marketView === "ranking"}"><span aria-hidden="true">☆</span>人気ランキング</button>
+    </div>
+    ${state.marketView === "ranking" ? renderRankingPanel() : packView}
   </div>`, { backLabel: "入口へ戻る", backAction: "hub" });
 }
 
@@ -1508,6 +1936,7 @@ function render() {
     editor: renderEditor,
     editor_review: renderEditorReview,
     market: renderMarket,
+    creator_dashboard: renderCreatorDashboard,
     pack_detail: renderPackDetail,
     play: renderPlay,
     result: renderResult,
@@ -3196,6 +3625,7 @@ async function publishEditorPack() {
     if (!generationIsCurrent(generation)) return;
     removeStored(PUBLISH_ATTEMPT_STORAGE_KEY);
     if (Number.isFinite(Number(response.balance))) state.balance = Number(response.balance);
+    invalidateMarketInsights();
     showToast("トレーニングメニューパックを公開しました。");
     state.editorReviewPack = null;
     state.screen = "market";
@@ -3226,6 +3656,15 @@ async function publishEditorPack() {
 function applyServerMarketState(payload = {}) {
   if (Number.isFinite(Number(payload.balance))) state.balance = Number(payload.balance);
   if (payload.policy && typeof payload.policy === "object") state.policy = payload.policy;
+  if (Object.prototype.hasOwnProperty.call(payload, "packs") && Array.isArray(payload.packs)) {
+    state.marketPacks = payload.packs
+      .map((pack) => {
+        try { return packFromServer(pack); } catch { return null; }
+      })
+      .filter(Boolean);
+    state.marketLoaded = true;
+    state.marketError = "";
+  }
   const own = Array.isArray(payload.ownPacks) ? payload.ownPacks : [];
   state.ownPacks = own.map((pack) => {
     try { return packFromServer(pack); } catch { return null; }
@@ -3251,6 +3690,11 @@ function applyServerMarketState(payload = {}) {
   }
 }
 
+function invalidateMarketInsights() {
+  state.rankingLoaded = { monthly: false, lifetime: false };
+  state.creatorStatsLoaded = false;
+}
+
 async function loadMarket({ force = false } = {}) {
   const generation = operationGeneration();
   if (state.marketLoading || (state.marketLoaded && !force)) return;
@@ -3265,17 +3709,18 @@ async function loadMarket({ force = false } = {}) {
       state.marketError = "前回の有料利用の終了を確認できていません。入口へ戻り、終了処理を再試行してください。";
       return;
     }
-    const [serverState, browse] = await Promise.all([
-      callRouletteTrainingAction("state"),
-      callRouletteTrainingAction("browse"),
-    ]);
+    const serverState = await callRouletteTrainingAction("state");
     if (!generationIsCurrent(generation)) return;
     applyServerMarketState(serverState);
-    state.marketPacks = (Array.isArray(browse.packs) ? browse.packs : [])
-      .map((pack) => {
-        try { return packFromServer(pack); } catch { return null; }
-      })
-      .filter(Boolean);
+    if (!Array.isArray(serverState.packs)) {
+      const browse = await callRouletteTrainingAction("browse");
+      if (!generationIsCurrent(generation)) return;
+      state.marketPacks = (Array.isArray(browse.packs) ? browse.packs : [])
+        .map((pack) => {
+          try { return packFromServer(pack); } catch { return null; }
+        })
+        .filter(Boolean);
+    }
     state.marketLoaded = true;
   } catch (error) {
     if (!generationIsCurrent(generation)) return;
@@ -3286,6 +3731,163 @@ async function loadMarket({ force = false } = {}) {
       if (["hub", "market"].includes(state.screen)) render();
     }
   }
+}
+
+async function loadPackRankings(periodValue = state.rankingPeriod, {
+  force = false,
+  focusSelector = "",
+  announcement = "",
+} = {}) {
+  const period = RANKING_PERIODS.includes(periodValue) ? periodValue : "monthly";
+  const generation = operationGeneration();
+  const renderRankingView = (notify = false) => {
+    if (state.screen !== "market" || state.marketView !== "ranking" || state.rankingPeriod !== period) return;
+    render();
+    restoreFocusAfterRender(focusSelector);
+    if (notify && announcement) announce(announcement);
+  };
+  state.rankingPeriod = period;
+  if (state.rankingLoading[period]) {
+    renderRankingView();
+    return;
+  }
+  if (state.rankingLoaded[period] && !force) {
+    renderRankingView(true);
+    return;
+  }
+  state.rankingLoading[period] = true;
+  state.rankingErrors[period] = "";
+  renderRankingView();
+  try {
+    const response = await callRouletteTrainingAction("pack_rankings", { period });
+    if (!generationIsCurrent(generation)) return;
+    state.rankings[period] = rankingPayloadFromServer(response, period);
+    state.rankingLoaded[period] = true;
+  } catch (error) {
+    if (!generationIsCurrent(generation)) return;
+    state.rankingErrors[period] = friendlyError(error, "人気パックランキングを読み込めませんでした。");
+  } finally {
+    if (generationIsCurrent(generation)) {
+      state.rankingLoading[period] = false;
+      renderRankingView(true);
+    }
+  }
+}
+
+function notifyCreatorAchievementUnlocks(idsValue) {
+  const normalized = window.HariaiAchievements?.normalizeIds?.(idsValue)
+    || (Array.isArray(idsValue) ? idsValue.map((id) => String(id || "")) : []);
+  const ids = [...new Set(normalized)]
+    .filter((id) => /^[a-z0-9_]{1,80}$/u.test(id))
+    .filter((id) => !state.notifiedCreatorAchievementIds.has(id));
+  if (!ids.length) return;
+  ids.forEach((id) => state.notifiedCreatorAchievementIds.add(id));
+  window.dispatchEvent(new CustomEvent(
+    "hariai-achievements-unlocked",
+    { detail: { ids } },
+  ));
+  economyActionCallable({
+    action: "ack_achievements",
+    achievementIds: ids,
+  }).catch(() => {
+    ids.forEach((id) => state.notifiedCreatorAchievementIds.delete(id));
+  });
+}
+
+async function loadCreatorStats({ force = false } = {}) {
+  const generation = operationGeneration();
+  if (state.creatorStatsLoading || (state.creatorStatsLoaded && !force)) {
+    if (state.screen === "creator_dashboard") render();
+    return;
+  }
+  state.creatorStatsLoading = true;
+  state.creatorStatsError = "";
+  if (state.screen === "creator_dashboard") render();
+  try {
+    const response = await callRouletteTrainingAction("creator_stats");
+    if (!generationIsCurrent(generation)) return;
+    state.creatorStats = creatorStatsFromServer(response);
+    state.creatorStatsLoaded = true;
+    notifyCreatorAchievementUnlocks(state.creatorStats.achievements?.pendingUnlocks);
+  } catch (error) {
+    if (!generationIsCurrent(generation)) return;
+    state.creatorStatsError = friendlyError(error, "作者の販売記録を読み込めませんでした。");
+  } finally {
+    if (generationIsCurrent(generation)) {
+      state.creatorStatsLoading = false;
+      if (state.screen === "creator_dashboard") render();
+    }
+  }
+}
+
+async function saveCreatorXProfile(form) {
+  const generation = operationGeneration();
+  let successAnnouncement = "";
+  if (!form || state.profileBusy) return;
+  const data = new FormData(form);
+  const xPublic = data.get("xPublic") === "on";
+  const xHandle = normalizedXHandle(data.get("xHandle"));
+  if (xPublic && !xHandle) {
+    showToast("Xユーザー名は英数字とアンダースコアの1〜15文字で入力してください。");
+    form.querySelector('input[name="xHandle"]')?.focus();
+    return;
+  }
+  state.profileBusy = true;
+  render();
+  try {
+    const response = await callRouletteTrainingAction("save_profile", { xPublic, xHandle });
+    if (!generationIsCurrent(generation)) return;
+    const profile = publicXProfile(response.profile || { xPublic, xHandle });
+    if (state.creatorStats) state.creatorStats.profile = profile;
+    invalidateMarketInsights();
+    showToast(profile.xPublic
+      ? "ランキングのXリンクを公開しました。"
+      : "Xリンクを非公開にしました。販売実績と順位は変わりません。");
+    successAnnouncement = profile.xPublic
+      ? `Xプロフィール @${profile.xHandle} をランキングへ公開しました。`
+      : "ランキングのXプロフィールを非公開にしました。販売実績と順位は変わりません。";
+  } catch (error) {
+    if (generationIsCurrent(generation)) {
+      showToast(friendlyError(error, "X公開設定を保存できませんでした。"));
+    }
+  } finally {
+    if (generationIsCurrent(generation)) {
+      state.profileBusy = false;
+      if (state.screen === "creator_dashboard") {
+        render();
+        restoreFocusAfterRender('#rouletteTrainingXProfileForm button[type="submit"]');
+        if (successAnnouncement) announce(successAnnouncement);
+      }
+    }
+  }
+}
+
+async function selectRankedPack(packId) {
+  const normalizedPackId = String(packId || "");
+  if (!normalizedPackId) return;
+  const rankedPack = state.rankings[state.rankingPeriod]?.rows
+    ?.find((row) => row.packId === normalizedPackId)?.pack;
+  if (rankedPack && packIdentity(rankedPack) === normalizedPackId) {
+    state.marketPacks = [
+      rankedPack,
+      ...state.marketPacks.filter((candidate) => packIdentity(candidate) !== normalizedPackId),
+    ];
+    selectMarketPack(normalizedPackId);
+    return;
+  }
+  let pack = state.marketPacks.find((candidate) => packIdentity(candidate) === normalizedPackId);
+  if (!pack) {
+    state.marketView = "packs";
+    render();
+    await loadMarket({ force: true });
+    pack = state.marketPacks.find((candidate) => packIdentity(candidate) === normalizedPackId);
+  }
+  if (!pack) {
+    showToast("このパックは現在の販売一覧にありません。受付停止または改訂された可能性があります。");
+    announce("選んだパックは現在の販売一覧にありません。販売一覧を更新しました。");
+    return;
+  }
+  selectMarketPack(normalizedPackId);
 }
 
 async function loadCreatorState() {
@@ -3399,6 +4001,7 @@ async function unpublishOwnPack(packId) {
   try {
     await callRouletteTrainingAction("unpublish", { packId });
     if (!generationIsCurrent(generation)) return;
+    invalidateMarketInsights();
     showToast("販売受付を停止しました。");
     await loadMarket({ force: true });
   } catch (error) {
@@ -3472,6 +4075,7 @@ async function activateSelectedPack() {
     state.selectedPackSource = "active_use";
     const balanceAfterStart = Number(response.balance ?? use?.buyerBalanceAfter);
     if (Number.isFinite(balanceAfterStart)) state.balance = balanceAfterStart;
+    invalidateMarketInsights();
     removeStored(USE_ATTEMPT_STORAGE_KEY);
     showToast(response.charged === false ? "追加課金なしでセッションを再開します。" : `${pack.price} Payでセッションを開始しました。`);
     navigate("setup");
@@ -3544,6 +4148,7 @@ async function submitReport(form) {
       reason: state.reportReason,
     });
     if (!generationIsCurrent(generation)) return;
+    invalidateMarketInsights();
     showToast("通報を受け付けました。");
   } catch (error) {
     if (generationIsCurrent(generation)) showToast(friendlyError(error, "通報を送信できませんでした。"));
@@ -3708,6 +4313,19 @@ function chooseFreePack() {
   navigate("setup");
 }
 
+function updateXProfileFormValidity(form) {
+  if (!form) return;
+  const input = form.querySelector('input[name="xHandle"]');
+  const consent = form.querySelector('input[name="xPublic"]');
+  const submit = form.querySelector('button[type="submit"]');
+  if (!input || !consent || !submit) return;
+  const valid = !consent.checked || Boolean(normalizedXHandle(input.value));
+  input.required = consent.checked;
+  input.setCustomValidity(valid ? "" : "英数字とアンダースコアの1〜15文字で入力してください。先頭の@は省略できます。");
+  input.setAttribute("aria-invalid", String(!valid));
+  submit.disabled = state.profileBusy || !valid;
+}
+
 function bindEvents() {
   const actions = {
     home: requestHome,
@@ -3721,7 +4339,29 @@ function bindEvents() {
       navigate("market");
       loadMarket();
     },
+    "show-market-packs": () => {
+      state.marketView = "packs";
+      render();
+      restoreFocusAfterRender('[data-roulette-action="show-market-packs"]');
+      announce("販売パック一覧を表示しました。");
+    },
+    "show-market-ranking": () => {
+      state.marketView = "ranking";
+      return loadPackRankings(state.rankingPeriod, {
+        focusSelector: '[data-roulette-action="show-market-ranking"]',
+        announcement: "人気パックランキングを表示しました。",
+      });
+    },
+    "open-creator-dashboard": () => {
+      navigate("creator_dashboard");
+      return loadCreatorStats();
+    },
     "reload-market": () => loadMarket({ force: true }),
+    "reload-rankings": () => loadPackRankings(state.rankingPeriod, {
+      force: true,
+      focusSelector: '[data-roulette-action="reload-rankings"]',
+    }),
+    "reload-creator-stats": () => loadCreatorStats({ force: true }),
     "back-market": () => navigate("market"),
     "back-editor": () => navigate("editor"),
     "add-menu": addEditorMenu,
@@ -3888,6 +4528,24 @@ function bindEvents() {
   document.querySelectorAll("[data-roulette-pack-id]").forEach((button) => {
     button.addEventListener("click", () => selectMarketPack(button.dataset.roulettePackId));
   });
+  document.querySelectorAll("[data-roulette-ranked-pack]").forEach((button) => {
+    button.addEventListener("click", () => {
+      Promise.resolve(selectRankedPack(button.dataset.rouletteRankedPack))
+        .catch((error) => showToast(friendlyError(error, "パックの内容を開けませんでした。")));
+    });
+  });
+  document.querySelectorAll("[data-roulette-ranking-period]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const period = RANKING_PERIODS.includes(button.dataset.rouletteRankingPeriod)
+        ? button.dataset.rouletteRankingPeriod
+        : "monthly";
+      Promise.resolve(loadPackRankings(period, {
+        focusSelector: `[data-roulette-ranking-period="${period}"]`,
+        announcement: `${period === "monthly" ? "月間" : "累計"}ランキングを表示しました。`,
+      }))
+        .catch((error) => showToast(friendlyError(error, "ランキング期間を切り替えられませんでした。")));
+    });
+  });
   document.querySelectorAll("[data-roulette-purchased-index]").forEach((button) => {
     button.addEventListener("click", () => selectPurchasedRevision(button.dataset.roulettePurchasedIndex));
   });
@@ -3906,6 +4564,19 @@ function bindEvents() {
     const price = Number(state.selectedMarketPack?.price || 0);
     const balanceAllows = Number.isFinite(state.balance) && state.balance >= price;
     if (button) button.disabled = !event.currentTarget.checked || !balanceAllows || state.purchaseBusy;
+  });
+  const xProfileForm = document.querySelector("#rouletteTrainingXProfileForm");
+  xProfileForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveCreatorXProfile(event.currentTarget);
+  });
+  xProfileForm?.querySelectorAll('input[name="xHandle"], input[name="xPublic"]').forEach((input) => {
+    input.addEventListener("input", () => updateXProfileFormValidity(xProfileForm));
+    input.addEventListener("change", () => updateXProfileFormValidity(xProfileForm));
+  });
+  updateXProfileFormValidity(xProfileForm);
+  document.querySelectorAll("button[data-roulette-x-profile]").forEach((button) => {
+    button.addEventListener("click", () => openConfirmedXProfile(button.dataset.rouletteXProfile));
   });
 }
 
@@ -3955,6 +4626,7 @@ async function start({ initialScreen = "hub" } = {}) {
       if (state.screen === "hub" && saved.result) recoverLocalSession(saved);
     }
   }
+  seedMarketInsightsPreview(preview);
   render();
   window.scrollTo({ top: 0, behavior: "auto" });
   if (["play", "fever", "all-out"].includes(preview)) {
@@ -4032,7 +4704,7 @@ async function start({ initialScreen = "hub" } = {}) {
     }
   }
   if (!generationIsCurrent(generation)) return;
-  if (state.screen === "market") loadMarket();
+  if (!preview && state.screen === "market") loadMarket();
 }
 
 function isActive() {
@@ -4045,7 +4717,7 @@ async function requestHome() {
     return;
   }
   if (state.screen === "result") {
-    showToast("結果画面の「トレーニング終了」で終了してください。");
+    showToast("結果画面の「記録を閉じてお部屋に戻る」で終了してください。");
     return;
   }
   if (state.screen === "setup" && state.activeUse && !state.session) {

@@ -38,6 +38,13 @@ const SERVER_ONLY_DOCUMENTS = Object.freeze([
   ["rouletteTrainingRankingPairs", "pair-a"],
   ["rouletteTrainingSellerBuyerPairs", "pair-a"],
   ["rouletteTrainingMonthlyBuyerPairs", "pair-a"],
+  ["rouletteTrainingPackStats", "ranking-a"],
+  ["rouletteTrainingPackMonthlyPeriods", "2026-09"],
+  ["rouletteTrainingPackMonthlyPeriods", "2026-09", "entries", "ranking-a"],
+  ["rouletteTrainingPackRankingPairs", "pair-a"],
+  ["rouletteTrainingPackBuyerPairs", "pair-a"],
+  ["rouletteTrainingPackMonthlyBuyerPairs", "pair-a"],
+  ["rouletteTrainingSellerProfiles", "seller-a"],
 ]);
 
 const SERVER_ONLY_COLLECTIONS = Object.freeze([
@@ -54,6 +61,13 @@ const SERVER_ONLY_COLLECTIONS = Object.freeze([
   ["rouletteTrainingRankingPairs"],
   ["rouletteTrainingSellerBuyerPairs"],
   ["rouletteTrainingMonthlyBuyerPairs"],
+  ["rouletteTrainingPackStats"],
+  ["rouletteTrainingPackMonthlyPeriods"],
+  ["rouletteTrainingPackMonthlyPeriods", "2026-09", "entries"],
+  ["rouletteTrainingPackRankingPairs"],
+  ["rouletteTrainingPackBuyerPairs"],
+  ["rouletteTrainingPackMonthlyBuyerPairs"],
+  ["rouletteTrainingSellerProfiles"],
 ]);
 
 test("roulette training Firestore data rejects authenticated and anonymous client access", {

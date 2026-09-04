@@ -47,6 +47,7 @@ const MULTILINE_CONTROL_CHARACTER_PATTERN = /[\u0000-\u0009\u000b\u000c\u000e-\u
 const LINE_BREAK_PATTERN = /[\r\n\u2028\u2029]/u;
 const ACTION_ID_PATTERN = /^[A-Za-z0-9_-]{16,80}$/;
 const DOCUMENT_ID_PATTERN = /^[a-f0-9]{40}$/;
+const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const DANGEROUS_TRAINING_PATTERNS = Object.freeze([
   /(?:痛み|めまい|息苦し(?:い|さ)?|吐き気|体調不良|気分が悪)[^、。\n]{0,16}(?:無視|我慢|続け|耐え|止まるな|休むな)/u,
   /(?:無視|我慢|続け|耐え)[^、。\n]{0,16}(?:痛み|めまい|息苦し(?:い|さ)?|吐き気|体調不良|気分が悪)/u,
@@ -381,6 +382,75 @@ function rouletteTrainingMonthlyBuyerPairId(periodKey, sellerUid, buyerUid) {
   return hashId(`roulette-training-monthly-buyer:${periodKey}:${sellerUid}:${buyerUid}`);
 }
 
+function normalizeRouletteTrainingXHandle(value) {
+  if (value == null || value === "") return "";
+  if (typeof value !== "string") {
+    throw rouletteTrainingError(
+      "invalid_roulette_training_x",
+      "Xユーザー名を確認してください。",
+    );
+  }
+  const handle = value.normalize("NFKC").trim().replace(/^@/u, "");
+  if (!X_HANDLE_PATTERN.test(handle)) {
+    throw rouletteTrainingError(
+      "invalid_roulette_training_x",
+      "Xユーザー名は英数字と_の15文字以内で入力してください。",
+    );
+  }
+  return handle;
+}
+
+function rouletteTrainingRankingContentHash(items) {
+  if (!Array.isArray(items)
+      || items.length < ROULETTE_TRAINING_PACK_ITEM_MIN
+      || items.length > ROULETTE_TRAINING_PACK_ITEM_MAX) {
+    throw rouletteTrainingError(
+      "invalid_roulette_training_ranking_content",
+      "ランキング対象のトレーニング内容を確認できませんでした。",
+    );
+  }
+  const normalizedItems = items.map((item) => normalizeRouletteTrainingItem({
+    menuText: item?.menuText,
+    detailText: item?.detailText,
+    countUnit: item?.countUnit,
+    cheerLines: item?.cheerLines,
+  }));
+  return rouletteTrainingPayloadHash({
+    version: 1,
+    items: normalizedItems,
+  });
+}
+
+function rouletteTrainingPackRankingId(packId, rankingContentHash) {
+  const id = normalizeRouletteTrainingDocumentId(packId);
+  const contentHash = normalizeRouletteTrainingDocumentId(
+    rankingContentHash,
+    "ランキング内容",
+  );
+  return hashId(`roulette-training-pack-ranking:${id}:${contentHash}`);
+}
+
+function rouletteTrainingPackRankingPairId(dateKey, packRankingId, buyerUid) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(String(dateKey || ""))) {
+    throw rouletteTrainingError("invalid_roulette_training_date", "集計日を確認できませんでした。");
+  }
+  const rankingId = normalizeRouletteTrainingDocumentId(packRankingId, "ランキング");
+  return hashId(`roulette-training-pack-ranking-pair:${dateKey}:${rankingId}:${buyerUid}`);
+}
+
+function rouletteTrainingPackBuyerPairId(packRankingId, buyerUid) {
+  const rankingId = normalizeRouletteTrainingDocumentId(packRankingId, "ランキング");
+  return hashId(`roulette-training-pack-buyer:${rankingId}:${buyerUid}`);
+}
+
+function rouletteTrainingPackMonthlyBuyerPairId(periodKey, packRankingId, buyerUid) {
+  if (!/^\d{4}-\d{2}$/u.test(String(periodKey || ""))) {
+    throw rouletteTrainingError("invalid_roulette_training_period", "集計月を確認できませんでした。");
+  }
+  const rankingId = normalizeRouletteTrainingDocumentId(packRankingId, "ランキング");
+  return hashId(`roulette-training-pack-monthly-buyer:${periodKey}:${rankingId}:${buyerUid}`);
+}
+
 function stableJsonValue(value) {
   if (Array.isArray(value)) return value.map(stableJsonValue);
   if (value && typeof value === "object") {
@@ -455,7 +525,13 @@ module.exports = Object.freeze({
   normalizeRouletteTrainingItem,
   normalizeRouletteTrainingPackInput,
   normalizeRouletteTrainingSellerName,
+  normalizeRouletteTrainingXHandle,
+  rouletteTrainingPackBuyerPairId,
   rouletteTrainingPackId,
+  rouletteTrainingPackMonthlyBuyerPairId,
+  rouletteTrainingPackRankingId,
+  rouletteTrainingPackRankingPairId,
+  rouletteTrainingRankingContentHash,
   rouletteTrainingJstDateKey,
   rouletteTrainingJstMonthKey,
   rouletteTrainingPayloadHash,

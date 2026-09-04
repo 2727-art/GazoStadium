@@ -8,7 +8,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["special", "battle", "training", "danwaku", "ai_training", "market", "flea"]);
+const VALID_SCOPES = new Set(["special", "battle", "training", "danwaku", "ai_training", "roulette_training", "market", "flea"]);
 const MAX_SHOWCASE = 3;
 const CROWN_MONTHLY_ACHIEVEMENT_START_KEY = "2026-08";
 
@@ -382,6 +382,33 @@ const aiTrainingDefinitions = [
   }),
 ];
 
+const rouletteTrainingDefinitions = [
+  ...series({
+    scope: "roulette_training",
+    category: "roulette_training_pack_sales",
+    family: "roulette_training_pack_uses",
+    familyLabel: "パック利用成立",
+    icon: "札",
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["パック販売第一号", "駆け出しパック作者", "十回届いたメニュー", "頼られるトレーニング帳", "百回届いたおうちトレ", "おうちトレを支える人", "五百回の応援メニュー", "千回届いたトレーニング帳", "三千回の伴走", "万回のメニューを届けた人"],
+    description: (target) => `ルーレットトレーニングパックのランキング対象利用が${target}回成立した`,
+    hint: "同じ利用者からはJSTの1日1回だけ数える",
+    condition: (target) => ({ type: "roulette_training_stat", key: "rankingUseCount", target }),
+  }),
+  ...series({
+    scope: "roulette_training",
+    category: "roulette_training_pack_sales",
+    family: "roulette_training_unique_buyers",
+    familyLabel: "パックの利用者",
+    icon: "輪",
+    thresholds: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
+    names: ["三人に届いたパック", "十人のトレーニング仲間", "広がるおうちトレ", "百人に届くメニュー", "二百人のトレーニー", "三百人に届いたパック", "五百人のエールの輪", "千人のトレーニング仲間", "二千人へ届くメニュー", "三千人を支えた作者"],
+    description: (target) => `異なる${target}人がルーレットトレーニングパックを有料利用した`,
+    hint: "いろいろな人へトレーニングメニューが届くと解除",
+    condition: (target) => ({ type: "roulette_training_stat", key: "uniqueBuyers", target }),
+  }),
+];
+
 const marketDefinitions = [
   ...series({
     scope: "market",
@@ -525,6 +552,7 @@ const ACHIEVEMENT_DEFINITIONS = Object.freeze([
   ...battleDefinitions,
   ...danwakuDefinitions,
   ...aiTrainingDefinitions,
+  ...rouletteTrainingDefinitions,
   ...marketDefinitions,
   ...fleaDefinitions,
 ]);
@@ -651,6 +679,13 @@ function normalizeAiTextTrainingStats(value) {
   };
 }
 
+function normalizeRouletteTrainingStats(value) {
+  return {
+    rankingUseCount: count(value?.rankingUseCount),
+    uniqueBuyers: count(value?.uniqueBuyers),
+  };
+}
+
 function normalizeFleaStats(value) {
   return {
     listings: count(value?.listings),
@@ -768,6 +803,7 @@ function achievementConditionMet(
   trainingStats,
   danwakuStats,
   aiTextTrainingStats,
+  rouletteTrainingStats,
   marketStats,
   fleaStats,
   crownMonthlyStats,
@@ -792,6 +828,9 @@ function achievementConditionMet(
   if (condition.type === "ai_training_stat") {
     return count(aiTextTrainingStats?.[condition.key]) >= condition.target;
   }
+  if (condition.type === "roulette_training_stat") {
+    return count(rouletteTrainingStats?.[condition.key]) >= condition.target;
+  }
   if (condition.type === "market_stat") return count(marketStats?.[condition.key]) >= condition.target;
   if (condition.type === "market_both") {
     return count(marketStats?.salesCount) >= condition.target && count(marketStats?.purchases) >= condition.target;
@@ -811,6 +850,7 @@ function eligibleAchievementIds({
   trainingStats,
   danwakuStats,
   aiTextTrainingStats,
+  rouletteTrainingStats,
   marketStats,
   fleaStats,
   crownMonthlyStats,
@@ -826,6 +866,7 @@ function eligibleAchievementIds({
         trainingStats,
         danwakuStats,
         aiTextTrainingStats,
+        rouletteTrainingStats,
         marketStats,
         fleaStats,
         crownMonthlyStats,
@@ -929,6 +970,7 @@ function publicAchievementProfile(
   trainingStatsValue,
   aiTextTrainingStatsValue,
   fleaStatsValue,
+  rouletteTrainingStatsValue,
 ) {
   const profile = normalizeAchievementProfile(profileValue);
   const battleStats = normalizeBattleStats(battleStatsValue);
@@ -936,6 +978,7 @@ function publicAchievementProfile(
   const trainingStats = normalizeTrainingStats(trainingStatsValue);
   const aiTextTrainingStats = normalizeAiTextTrainingStats(aiTextTrainingStatsValue);
   const fleaStats = normalizeFleaStats(fleaStatsValue);
+  const rouletteTrainingStats = normalizeRouletteTrainingStats(rouletteTrainingStatsValue);
   const unlockedLegacyCount = Object.keys(profile.unlocked)
     .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.legacy === true)
     .length;
@@ -951,6 +994,7 @@ function publicAchievementProfile(
       battle: battleStats,
       training: trainingStats,
       aiTraining: aiTextTrainingStats,
+      rouletteTraining: rouletteTrainingStats,
       market: {
         salesCount: marketStats.salesCount,
         purchases: marketStats.purchases,
@@ -984,6 +1028,7 @@ module.exports = Object.freeze({
   normalizeDanwakuStats,
   normalizeFleaStats,
   normalizeMarketStats,
+  normalizeRouletteTrainingStats,
   normalizeTrainingStats,
   publicAchievementProfile,
   publicShowcaseMap,

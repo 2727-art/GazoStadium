@@ -25,6 +25,8 @@ function sourceBlock(source, startMarker, endMarker) {
 test("landing and module wiring expose a separate solo roulette mode", () => {
   assert.match(html, /roulette-training\.css\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.js\?v=[^"]*-room-scrapbook-v1[^"]*"/);
+  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1"/);
   assert.match(app, /id="rouletteTrainingButton"/);
   assert.match(app, /function startRouletteTraining\(\)/);
   assert.match(app, /hariai-roulette-training-ready/);
@@ -813,7 +815,7 @@ test("a terminal finish waits before server reads but still permits the official
   assert.match(begin, /terminalFinishUseId\(\) && !\(state\.selectedPack\?\.builtin && state\.selectedPackSource === "builtin"\)/);
   const market = sourceBlock(client, "async function loadMarket", "async function loadCreatorState");
   assert.ok(market.indexOf("await flushFinishRetry()") < market.indexOf('callRouletteTrainingAction("state")'));
-  assert.ok(market.indexOf("if (!finishConfirmed || terminalFinishUseId())") < market.indexOf("Promise.all"));
+  assert.ok(market.indexOf("if (!finishConfirmed || terminalFinishUseId())") < market.indexOf('callRouletteTrainingAction("state")'));
   const creator = sourceBlock(client, "async function loadCreatorState", "function selectMarketPack");
   assert.ok(creator.indexOf("await flushFinishRetry()") < creator.indexOf('callRouletteTrainingAction("state")'));
   const start = sourceBlock(client, "async function start", "function isActive");
@@ -867,7 +869,7 @@ test("async market mutations reject stale lifecycle responses and refresh failed
   assert.doesNotMatch(render, /renderGeneration \+= 1/);
   const start = sourceBlock(client, "async function start", "function isActive");
   assert.match(start, /renderGeneration \+= 1/);
-  assert.ok(start.indexOf("await flushFinishRetry()") < start.indexOf('if (state.screen === "market") loadMarket()'));
+  assert.ok(start.indexOf("await flushFinishRetry()") < start.indexOf('if (!preview && state.screen === "market") loadMarket()'));
   for (const [startMarker, endMarker] of [
     ["async function publishEditorPack", "function applyServerMarketState"],
     ["async function loadMarket", "async function loadCreatorState"],
@@ -887,7 +889,7 @@ test("async market mutations reject stale lifecycle responses and refresh failed
   assert.match(client, /確認画面から変わ\|価格またはパックが更新[\s\S]*?残高が不足/);
   const market = sourceBlock(client, "async function loadMarket", "async function loadCreatorState");
   const creator = sourceBlock(client, "async function loadCreatorState", "function selectMarketPack");
-  assert.match(market, /finishConfirmed = await flushFinishRetry\(\)[\s\S]*?!finishConfirmed \|\| terminalFinishUseId\(\)[\s\S]*?return;[\s\S]*?Promise\.all/);
+  assert.match(market, /finishConfirmed = await flushFinishRetry\(\)[\s\S]*?!finishConfirmed \|\| terminalFinishUseId\(\)[\s\S]*?return;[\s\S]*?callRouletteTrainingAction\("state"\)/);
   assert.match(creator, /finishConfirmed = await flushFinishRetry\(\)[\s\S]*?!finishConfirmed \|\| terminalFinishUseId\(\)[\s\S]*?return;[\s\S]*?callRouletteTrainingAction\("state"\)/);
 });
 
@@ -898,6 +900,186 @@ test("own packs can be revised and unpublished without changing historical revis
   assert.match(client, /function editOwnPack\(packId\)/);
   assert.match(client, /baseRevision: packRevision\(pack\)/);
   assert.match(client, /callRouletteTrainingAction\("unpublish", \{ packId \}\)/);
+});
+
+test("market reuses packs from state and only falls back to browse for an older response", () => {
+  const applyState = sourceBlock(client, "function applyServerMarketState", "function invalidateMarketInsights");
+  const market = sourceBlock(client, "async function loadMarket", "async function loadPackRankings");
+  assert.match(applyState, /hasOwnProperty\.call\(payload, "packs"\) && Array\.isArray\(payload\.packs\)/);
+  assert.match(applyState, /state\.marketPacks = payload\.packs[\s\S]*?state\.marketLoaded = true/);
+  assert.match(market, /const serverState = await callRouletteTrainingAction\("state"\)/);
+  assert.match(market, /if \(!Array\.isArray\(serverState\.packs\)\) \{[\s\S]*?callRouletteTrainingAction\("browse"\)/);
+  assert.doesNotMatch(market, /Promise\.all\([\s\S]*?callRouletteTrainingAction\("state"\)[\s\S]*?callRouletteTrainingAction\("browse"\)/);
+  assert.equal((market.match(/callRouletteTrainingAction\("state"\)/g) || []).length, 1);
+  assert.equal((market.match(/callRouletteTrainingAction\("browse"\)/g) || []).length, 1);
+});
+
+test("popular pack ranking is lazy, period cached, Top 20, and uses competition ranks", () => {
+  const marketRender = sourceBlock(client, "function renderMarket()", "function renderPackDetail");
+  const rankingRender = sourceBlock(client, "function renderRankingPanel", "function creatorPeriodCard");
+  const rankingLoad = sourceBlock(client, "async function loadPackRankings", "async function loadCreatorStats");
+  const marketLoad = sourceBlock(client, "async function loadMarket", "async function loadPackRankings");
+  assert.match(marketRender, /パックを選ぶ[\s\S]*?人気ランキング/);
+  assert.match(marketRender, /aria-pressed="\$\{state\.marketView === "packs"\}"/);
+  assert.match(rankingRender, /data-roulette-ranking-period="monthly"[\s\S]*?data-roulette-ranking-period="lifetime"/);
+  assert.match(rankingRender, /現在の内容を利用した「異なる購入者数」を優先/);
+  assert.match(rankingRender, /両方同じパックは同順位/);
+  assert.match(rankingRender, /順位によるPay報酬やトレーニング上の特典はありません/);
+  assert.match(rankingLoad, /state\.rankingLoaded\[period\] && !force/);
+  assert.match(rankingLoad, /state\.rankingPeriod !== period/);
+  assert.match(rankingLoad, /if \(state\.rankingLoading\[period\]\) \{[\s\S]*?renderRankingView\(\);[\s\S]*?return;/);
+  assert.match(rankingLoad, /callRouletteTrainingAction\("pack_rankings", \{ period \}\)/);
+  assert.doesNotMatch(marketLoad, /pack_rankings/);
+
+  const helper = sourceBlock(client, "function nonnegativeInteger", "function salesStatsFromServer");
+  const sandbox = {};
+  vm.runInNewContext(`const RANKING_PERIODS = ["monthly", "lifetime"];\n${helper}\nthis.result = rankingPayloadFromServer({ minimumUniqueBuyers: 3, rows: [\n    { id: "a", uniqueBuyers: 8, rankingUseCount: 12 },\n    { id: "b", uniqueBuyers: 7, rankingUseCount: 10 },\n    { id: "c", uniqueBuyers: 7, rankingUseCount: 10 },\n    { id: "d", uniqueBuyers: 6, rankingUseCount: 20 },\n    { id: "below", uniqueBuyers: 2, rankingUseCount: 50 }\n  ] }, "monthly");`, sandbox);
+  assert.deepEqual(Array.from(sandbox.result.rows, (row) => row.rank), [1, 2, 2, 4]);
+  assert.equal(sandbox.result.rows.length, 4);
+});
+
+test("ranking rows disclose current pack facts without exposing seller settlement totals", () => {
+  const row = sourceBlock(client, "function rankingRow", "function renderRankingPanel");
+  const payload = sourceBlock(client, "function rankingPayloadFromServer", "function salesStatsFromServer");
+  const selection = sourceBlock(client, "async function selectRankedPack", "async function loadCreatorState");
+  assert.match(row, /row\.title/);
+  assert.match(row, /row\.sellerName/);
+  assert.match(row, /row\.publicSellerId/);
+  assert.match(row, /row\.price/);
+  assert.match(row, /row\.revision/);
+  assert.match(row, /row\.uniqueBuyers/);
+  assert.match(row, /row\.rankingUseCount/);
+  assert.match(row, /data-roulette-ranked-pack/);
+  assert.doesNotMatch(row, /actualGross|rankingGross|netSales|feesPaid|sellerUid/);
+  assert.match(row, /role="listitem"/);
+  assert.match(row, /aria-label="\$\{row\.rank\}位"/);
+  assert.match(payload, /row\?\.pack && typeof row\.pack === "object"/);
+  assert.match(payload, /const candidate = packFromServer\(row\.pack\)/);
+  assert.match(payload, /packIdentity\(candidate\) === packId && candidate\.status === "active"/);
+  assert.match(selection, /state\.rankings\[state\.rankingPeriod\]\?\.rows[\s\S]*?\.find\(\(row\) => row\.packId === normalizedPackId\)\?\.pack/);
+  assert.match(selection, /selectMarketPack\(normalizedPackId\);[\s\S]*?return;/);
+});
+
+test("creator dashboard keeps sales records separate from private workouts and shows eligibility gaps", () => {
+  const dashboard = sourceBlock(client, "function renderCreatorDashboard", "function marketCard");
+  const load = sourceBlock(client, "async function loadCreatorStats", "async function saveCreatorXProfile");
+  const pack = sourceBlock(client, "function creatorPackCard", "function rouletteAchievementDefinitions");
+  assert.match(dashboard, /作者ダッシュボード/);
+  assert.match(dashboard, /販売の記録、ランキング掲載までの進み具合、販売実績コレクション/);
+  assert.match(dashboard, /プレイヤーの運動結果や画像は作者へ送信されません/);
+  assert.match(load, /callRouletteTrainingAction\("creator_stats"\)/);
+  assert.doesNotMatch(load, /image|bpm|clear|give_up|result/iu);
+  assert.match(pack, /remainingUniqueBuyers/);
+  assert.match(pack, /掲載まで、あと\$\{Math\.max\(0, pack\.remainingUniqueBuyers\)\}人/);
+  assert.match(pack, /role="progressbar"/);
+  assert.match(client, /roulette_training_pack_sales/);
+  assert.match(client, /window\.HariaiAchievements\?\.catalog/);
+  assert.match(load, /notifyCreatorAchievementUnlocks\(state\.creatorStats\.achievements\?\.pendingUnlocks\)/);
+  const notify = sourceBlock(client, "function notifyCreatorAchievementUnlocks", "async function loadCreatorStats");
+  assert.match(notify, /hariai-achievements-unlocked/);
+  assert.match(notify, /action: "ack_achievements"/);
+  assert.match(notify, /achievementIds: ids/);
+});
+
+test("optional X profile is scoped, validated, non-embedded, and confirmed before leaving", () => {
+  const link = sourceBlock(client, "function xProfileLink", "function rankingRow");
+  const open = sourceBlock(client, "function openConfirmedXProfile", "function rankingRow");
+  const profile = sourceBlock(client, "function renderCreatorProfileForm", "function renderCreatorDashboard");
+  const save = sourceBlock(client, "async function saveCreatorXProfile", "async function selectRankedPack");
+  const binding = sourceBlock(client, "function bindEvents", "async function start");
+  const normalization = sourceBlock(client, "function normalizedXHandle", "function publicXProfile");
+  const validity = sourceBlock(client, "function updateXProfileFormValidity", "function bindEvents");
+  assert.match(client, /X_EXTERNAL_CONFIRM_MESSAGE = "このXリンクはパック作者が自己申告したものです/);
+  assert.match(link, /<button type="button" data-roulette-x-profile=/);
+  assert.doesNotMatch(link, /href=|target=/);
+  assert.match(link, /作者の自己申告・本人未確認/);
+  assert.match(open, /window\.confirm\(X_EXTERNAL_CONFIRM_MESSAGE\)/);
+  assert.match(open, /window\.open\([\s\S]*?`https:\/\/x\.com\/\$\{encodeURIComponent\(handle\)\}`[\s\S]*?"_blank"[\s\S]*?"noopener,noreferrer"/);
+  assert.match(open, /externalWindow\.opener = null/);
+  assert.match(profile, /ルーレットトレーニング専用の任意設定です。他の市場やモードからは引き継ぎません/);
+  assert.match(profile, /現在と今後の掲載対象パック/);
+  assert.match(profile, /本人確認、X API取得、投稿の埋め込み、閲覧追跡は行いません/);
+  assert.match(profile, /OFFにして保存すると、販売実績と順位を残したままXリンクだけが非公開/);
+  assert.match(save, /callRouletteTrainingAction\("save_profile", \{ xPublic, xHandle \}\)/);
+  assert.match(save, /normalizedXHandle/);
+  assert.match(save, /invalidateMarketInsights\(\)/);
+  assert.match(profile, /<form id="rouletteTrainingXProfileForm" novalidate>/);
+  assert.doesNotMatch(profile, /pattern=/);
+  assert.match(normalization, /\.normalize\("NFKC"\)/);
+  assert.match(validity, /const valid = !consent\.checked \|\| Boolean\(normalizedXHandle\(input\.value\)\)/);
+  assert.match(validity, /input\.setCustomValidity/);
+  assert.match(binding, /querySelectorAll\("button\[data-roulette-x-profile\]"\)/);
+  assert.match(binding, /openConfirmedXProfile\(button\.dataset\.rouletteXProfile\)/);
+  assert.doesNotMatch(binding, /addEventListener\("auxclick"/);
+  assert.doesNotMatch(client, /platform\.twitter|widgets\.js|api\.x\.com/);
+
+  const normalizeSandbox = {};
+  vm.runInNewContext(`${normalization}\nthis.normalizeX = normalizedXHandle;`, normalizeSandbox);
+  assert.equal(normalizeSandbox.normalizeX("  ＠Ｃｒｅａｔｏｒ＿１  "), "Creator_1");
+  assert.equal(normalizeSandbox.normalizeX("https://x.com/Creator_1"), "");
+
+  const input = {
+    value: "invalid handle",
+    required: false,
+    setCustomValidity(value) { this.validationMessage = value; },
+    setAttribute(name, value) { this[name] = value; },
+  };
+  const consent = { checked: false };
+  const submit = { disabled: true };
+  const form = {
+    querySelector(selector) {
+      if (selector.includes("xHandle")) return input;
+      if (selector.includes("xPublic")) return consent;
+      return submit;
+    },
+  };
+  const validitySandbox = { state: { profileBusy: false }, form, input, consent, submit };
+  vm.runInNewContext(`${normalization}\n${validity}\nupdateXProfileFormValidity(form);`, validitySandbox);
+  assert.equal(input.required, false);
+  assert.equal(input.validationMessage, "");
+  assert.equal(submit.disabled, false, "OFF remains savable even if the dormant handle is invalid");
+  consent.checked = true;
+  vm.runInNewContext(`${normalization}\n${validity}\nupdateXProfileFormValidity(form);`, validitySandbox);
+  assert.equal(input.required, true);
+  assert.notEqual(input.validationMessage, "");
+  assert.equal(submit.disabled, true);
+});
+
+test("ranking preview seeds both periods and opens details without a browse dependency", () => {
+  const preview = sourceBlock(client, "function seedMarketInsightsPreview", "function friendlyError");
+  const selection = sourceBlock(client, "async function selectRankedPack", "async function loadCreatorState");
+  assert.match(preview, /state\.rankings\.monthly = rankingPayloadFromServer/);
+  assert.match(preview, /state\.rankings\.lifetime = rankingPayloadFromServer/);
+  assert.match(preview, /state\.rankingLoaded = \{ monthly: true, lifetime: true \}/);
+  assert.match(preview, /state\.marketPacks = rows\.map\(\(row\) => packFromServer\(row\.pack\)\)/);
+  assert.match(preview, /pack:\s*\{[\s\S]*?items: FREE_PACK\.items\.map/);
+  assert.match(selection, /const rankedPack = state\.rankings\[state\.rankingPeriod\]/);
+  assert.match(selection, /if \(rankedPack && packIdentity\(rankedPack\) === normalizedPackId\)/);
+});
+
+test("ranking switches and X profile save restore focus before their final live announcement", () => {
+  const rankingLoad = sourceBlock(client, "async function loadPackRankings", "function notifyCreatorAchievementUnlocks");
+  const save = sourceBlock(client, "async function saveCreatorXProfile", "async function selectRankedPack");
+  assert.match(rankingLoad, /render\(\);[\s\S]*?restoreFocusAfterRender\(focusSelector\);[\s\S]*?if \(notify && announcement\) announce\(announcement\)/);
+  assert.match(save, /render\(\);[\s\S]*?restoreFocusAfterRender\('#rouletteTrainingXProfileForm button\[type="submit"\]'\);[\s\S]*?announce\(successAnnouncement\)/);
+});
+
+test("ranking and creator UI stays keyboard-readable and collapses without horizontal card overflow", () => {
+  assert.match(client, /role="group" aria-label="市場の表示"/);
+  assert.match(client, /role="group" aria-label="ランキング期間"/);
+  assert.match(client, /aria-busy="\$\{loading\}"/);
+  assert.match(client, /role="list"/);
+  assert.match(client, /aria-valuemin="0" aria-valuemax="3"/);
+  assert.match(styles, /\.roulette-training-market-switcher button,[\s\S]*?min-height:\s*46px/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*?\.roulette-training-ranking-row\s*\{[\s\S]*?grid-template-columns:\s*58px minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.roulette-training-creator-pack\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
+  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.roulette-training-achievement-family > ol\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.roulette-training-achievement-family li > span\s*\{[\s\S]*?white-space:\s*normal/);
+  assert.match(styles, /\.roulette-training-market-switcher button,[\s\S]*?white-space:\s*nowrap/);
+  assert.match(styles, /\.roulette-training-screen \.roulette-training-x-input input\[type="text"\]\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?box-shadow:\s*none/);
+  assert.match(styles, /\.roulette-training-x-input:focus-within\s*\{[\s\S]*?border-color:\s*var\(--rt-rose-deep\)/);
+  assert.match(styles, /\.roulette-training-ranking-copy h3\s*\{[\s\S]*?overflow-wrap:\s*anywhere/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("play exposes only clear or give up as self-report outcomes", () => {
@@ -919,7 +1101,7 @@ test("give up always enters the result screen and only the end button closes it"
   assert.match(result, /記録を閉じてお部屋に戻る/);
   assert.match(result, /TODAY'S TRAINING NOTE/);
   assert.doesNotMatch(result, /もう一度遊ぶ|モード選択へ戻る/);
-  assert.match(client, /結果画面の「トレーニング終了」で終了してください/);
+  assert.match(client, /結果画面の「記録を閉じてお部屋に戻る」で終了してください/);
 });
 
 test("an active paid use can be given up before image setup", () => {

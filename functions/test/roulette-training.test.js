@@ -10,8 +10,14 @@ const {
   ROULETTE_TRAINING_SELLER_PACK_MAX,
   isRouletteTrainingReportReason,
   normalizeRouletteTrainingPackInput,
+  normalizeRouletteTrainingXHandle,
+  rouletteTrainingPackBuyerPairId,
   rouletteTrainingPackId,
+  rouletteTrainingPackMonthlyBuyerPairId,
+  rouletteTrainingPackRankingId,
+  rouletteTrainingPackRankingPairId,
   rouletteTrainingPayloadHash,
+  rouletteTrainingRankingContentHash,
   rouletteTrainingReportId,
   rouletteTrainingSaleSettlement,
   rouletteTrainingUseId,
@@ -195,5 +201,78 @@ test("IDs and payload hashes are deterministic and namespace separated", () => {
   assert.equal(
     rouletteTrainingPayloadHash({ title: "A", items: [{ b: 2, a: 1 }] }),
     rouletteTrainingPayloadHash({ items: [{ a: 1, b: 2 }], title: "A" }),
+  );
+});
+
+test("roulette seller X handles are normalized without accepting URLs or display names", () => {
+  assert.equal(normalizeRouletteTrainingXHandle(" @Creator_15 "), "Creator_15");
+  assert.equal(normalizeRouletteTrainingXHandle("＠ＡＮＪＵ＿１５"), "ANJU_15");
+  assert.equal(normalizeRouletteTrainingXHandle(""), "");
+  assert.throws(() => normalizeRouletteTrainingXHandle("https://x.com/creator"), /英数字と_/u);
+  assert.throws(() => normalizeRouletteTrainingXHandle("abcdefghijklmnop"), /15文字以内/u);
+  assert.throws(() => normalizeRouletteTrainingXHandle("表示 名"), /英数字と_/u);
+});
+
+test("current-content ranking hashes only ordered menu content and supports stored snapshots", () => {
+  const first = validPack().items[0];
+  const second = {
+    menuText: "その場ウォーク",
+    detailText: "周囲を確認してゆっくり歩きます。",
+    countUnit: "seconds",
+    cheerLines: ["自分のペースで進めよう。", "休みながらで大丈夫。"],
+  };
+  const baseHash = rouletteTrainingRankingContentHash([first, second]);
+  assert.match(baseHash, /^[a-f0-9]{40}$/u);
+  assert.equal(
+    rouletteTrainingRankingContentHash([
+      { id: "item-01", itemId: "item-01", ...first },
+      { id: "item-02", itemId: "item-02", ...second },
+    ]),
+    baseHash,
+    "server snapshots with positional IDs must backfill to the same content hash",
+  );
+  assert.equal(
+    rouletteTrainingRankingContentHash([{
+      ...first,
+      menuText: ` ${first.menuText} `,
+      cheerLines: [" いい調子、そのペースです。 "],
+    }, second]),
+    baseHash,
+    "content normalization must be identical for publish and snapshot backfill",
+  );
+  for (const changedItems of [
+    [{ ...first, menuText: "スクワット12回" }, second],
+    [{ ...first, detailText: `${first.detailText} 途中で休めます。` }, second],
+    [{ ...first, countUnit: "sets" }, second],
+    [{ ...first, cheerLines: ["落ち着いて進めよう。"] }, second],
+    [second, first],
+  ]) {
+    assert.notEqual(rouletteTrainingRankingContentHash(changedItems), baseHash);
+  }
+});
+
+test("pack ranking and buyer-pair IDs isolate content, day, month, and buyer", () => {
+  const packId = rouletteTrainingPackId("seller", "ranking_action_0001");
+  const hash = rouletteTrainingRankingContentHash(validPack().items);
+  const changedHash = rouletteTrainingRankingContentHash([{
+    ...validPack().items[0],
+    cheerLines: ["内容を変えた応援です。"],
+  }]);
+  const rankingId = rouletteTrainingPackRankingId(packId, hash);
+  const changedRankingId = rouletteTrainingPackRankingId(packId, changedHash);
+  assert.match(rankingId, /^[a-f0-9]{40}$/u);
+  assert.notEqual(rankingId, changedRankingId);
+  assert.equal(rankingId, rouletteTrainingPackRankingId(packId, hash));
+  assert.notEqual(
+    rouletteTrainingPackRankingPairId("2026-09-04", rankingId, "buyer-a"),
+    rouletteTrainingPackRankingPairId("2026-09-05", rankingId, "buyer-a"),
+  );
+  assert.notEqual(
+    rouletteTrainingPackBuyerPairId(rankingId, "buyer-a"),
+    rouletteTrainingPackBuyerPairId(rankingId, "buyer-b"),
+  );
+  assert.notEqual(
+    rouletteTrainingPackMonthlyBuyerPairId("2026-09", rankingId, "buyer-a"),
+    rouletteTrainingPackMonthlyBuyerPairId("2026-10", rankingId, "buyer-a"),
   );
 });

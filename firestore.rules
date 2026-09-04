@@ -368,6 +368,34 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /rouletteTrainingPackStats/{packRankingId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingPackMonthlyPeriods/{periodKey} {
+      allow read, write: if false;
+
+      match /entries/{packRankingId} {
+        allow read, write: if false;
+      }
+    }
+
+    match /rouletteTrainingPackRankingPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingPackBuyerPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingPackMonthlyBuyerPairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /rouletteTrainingSellerProfiles/{uid} {
+      allow read, write: if false;
+    }
+
     match /accountTransferCodes/{codeHash} {
       allow read, write: if false;
     }

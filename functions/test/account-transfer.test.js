@@ -156,6 +156,31 @@ test("a 断惑NOTE profile makes an account-transfer target non-pristine before 
   assert.match(redeem, /targetDanwakuProfileSnapshot\.exists/);
 });
 
+test("a roulette training seller profile makes an account-transfer target non-pristine", () => {
+  const server = read("functions/index.js");
+  const pristineStart = server.indexOf("async function transferTargetIsPristine");
+  const pristineEnd = server.indexOf("async function registerTransferFailure", pristineStart);
+  assert.ok(pristineStart >= 0 && pristineEnd > pristineStart);
+  const pristine = server.slice(pristineStart, pristineEnd);
+  assert.match(pristine, /\brouletteTrainingSellerProfileSnapshot\b/);
+  assert.match(
+    pristine,
+    /firestore\.collection\("rouletteTrainingSellerProfiles"\)\.doc\(uid\)\.get\(\)/,
+  );
+  assert.match(pristine, /rouletteTrainingSellerProfileSnapshot\.exists/);
+
+  const redeemStart = server.indexOf("async function redeemAccountTransferCode");
+  const redeemEnd = server.indexOf("async function cancelAccountTransferCode", redeemStart);
+  assert.ok(redeemStart >= 0 && redeemEnd > redeemStart);
+  const redeem = server.slice(redeemStart, redeemEnd);
+  assert.match(redeem, /\btargetRouletteTrainingSellerProfileSnapshot\b/);
+  assert.match(
+    redeem,
+    /transaction\.get\(firestore\.collection\("rouletteTrainingSellerProfiles"\)\.doc\(targetUid\)\)/,
+  );
+  assert.match(redeem, /targetRouletteTrainingSellerProfileSnapshot\.exists/);
+});
+
 test("only nonzero flea achievement activity makes an account-transfer target non-pristine", () => {
   const server = read("functions/index.js");
   const activityStart = server.indexOf("function fleaAchievementStatsHaveActivity");

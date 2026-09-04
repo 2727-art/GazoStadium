@@ -10438,6 +10438,13 @@ button:disabled {
   color: #ffd2e2;
 }
 
+.achievement-badge.achievement-scope-roulette_training {
+  border-color: rgba(201, 184, 232, 0.46);
+  background:
+    linear-gradient(120deg, rgba(255, 127, 158, 0.12), rgba(201, 184, 232, 0.12));
+  color: #ffe0e9;
+}
+
 .achievement-badge.achievement-level-7,
 .achievement-badge.achievement-level-8,
 .achievement-badge.achievement-level-9 {

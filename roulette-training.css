@@ -905,6 +905,842 @@
   background: rgba(255, 255, 255, 0.045);
 }
 
+.roulette-training-market-head-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 9px;
+}
+
+.roulette-training-market-head-actions > .button {
+  min-height: 0;
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+.roulette-training-market-switcher {
+  width: min(560px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 6px;
+  border: 1px solid rgba(201, 184, 232, 0.28);
+  border-radius: 17px;
+  background: rgba(42, 34, 51, 0.86);
+  box-shadow: 0 12px 30px rgba(8, 6, 13, 0.2);
+}
+
+.roulette-training-market-switcher button,
+.roulette-training-ranking-periods button {
+  min-width: 0;
+  min-height: 46px;
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: rgba(255, 247, 239, 0.72);
+  background: transparent;
+  font-size: 0.84rem;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.roulette-training-market-switcher button[aria-pressed="true"] {
+  border-color: rgba(255, 217, 119, 0.52);
+  color: #4c3e4d;
+  background: linear-gradient(145deg, #fff7ef, #f2dfdc);
+  box-shadow: 0 5px 14px rgba(8, 6, 13, 0.22);
+}
+
+.roulette-training-market-switcher button > span {
+  margin-right: 7px;
+  color: #b84f72;
+}
+
+.roulette-training-ranking-board,
+.roulette-training-creator-dashboard {
+  --rt-room-night: #17141f;
+  --rt-room-wall: #2a2233;
+  --rt-paper: #fff7ef;
+  --rt-paper-shadow: #e8d8d2;
+  --rt-ink: #4c3e4d;
+  --rt-blush: #ff7f9e;
+  --rt-rose-deep: #b84f72;
+  --rt-lavender: #c9b8e8;
+  --rt-butter: #ffd977;
+  --rt-mint: #77ddd0;
+  --rt-wood: #8a5f55;
+}
+
+.roulette-training-ranking-board {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+  padding: clamp(20px, 4vw, 36px);
+  border: 1px solid rgba(255, 247, 239, 0.74);
+  border-radius: 26px 20px 29px 18px;
+  color: var(--rt-ink);
+  background:
+    linear-gradient(rgba(184, 79, 114, 0.055) 1px, transparent 1px) 0 30px / 100% 29px,
+    var(--rt-paper);
+  box-shadow: 0 22px 58px rgba(8, 6, 13, 0.34), inset 0 0 0 5px rgba(232, 216, 210, 0.34);
+}
+
+.roulette-training-ranking-board::before {
+  position: absolute;
+  width: 132px;
+  height: 25px;
+  top: 7px;
+  left: 50%;
+  background: rgba(201, 184, 232, 0.72);
+  box-shadow: 0 2px 5px rgba(76, 62, 77, 0.12);
+  content: "";
+  pointer-events: none;
+  transform: translateX(-50%) rotate(-1.3deg);
+}
+
+.roulette-training-ranking-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 9px;
+}
+
+.roulette-training-ranking-head h2,
+.roulette-training-ranking-head p,
+.roulette-training-creator-hero h2,
+.roulette-training-creator-hero p,
+.roulette-training-creator-packs header h2,
+.roulette-training-creator-packs header p,
+.roulette-training-creator-achievements > header h2,
+.roulette-training-creator-achievements > header p,
+.roulette-training-creator-profile > div h2,
+.roulette-training-creator-profile > div p {
+  margin: 6px 0 0;
+}
+
+.roulette-training-ranking-head h2 {
+  color: var(--rt-ink);
+  font-size: clamp(1.35rem, 4vw, 2.15rem);
+}
+
+.roulette-training-ranking-head p {
+  max-width: 700px;
+  color: rgba(76, 62, 77, 0.76);
+  font-size: 0.76rem;
+  line-height: 1.75;
+}
+
+.roulette-training-ranking-board .roulette-training-panel-label,
+.roulette-training-creator-dashboard .roulette-training-panel-label {
+  color: var(--rt-rose-deep);
+}
+
+.roulette-training-ranking-limit {
+  flex: 0 0 auto;
+  padding: 10px 13px;
+  border: 2px solid rgba(184, 79, 114, 0.48);
+  border-radius: 50%;
+  color: var(--rt-rose-deep);
+  font-size: 0.72rem;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  transform: rotate(4deg);
+}
+
+.roulette-training-ranking-periods {
+  width: min(360px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  border: 1px dashed rgba(76, 62, 77, 0.32);
+  background: rgba(232, 216, 210, 0.46);
+}
+
+.roulette-training-ranking-periods button {
+  min-height: 44px;
+  color: rgba(76, 62, 77, 0.7);
+}
+
+.roulette-training-ranking-periods button[aria-pressed="true"] {
+  border-color: rgba(184, 79, 114, 0.3);
+  color: #fff;
+  background: var(--rt-rose-deep);
+}
+
+.roulette-training-ranking-rule {
+  margin: 0;
+  padding: 13px 15px;
+  border-left: 5px solid var(--rt-butter);
+  color: rgba(76, 62, 77, 0.79);
+  background: rgba(255, 217, 119, 0.22);
+  font-size: 0.72rem;
+  line-height: 1.7;
+}
+
+.roulette-training-ranking-rule strong {
+  color: var(--rt-rose-deep);
+}
+
+.roulette-training-ranking-list {
+  display: grid;
+  gap: 10px;
+}
+
+.roulette-training-ranking-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(180px, 1fr) minmax(300px, 0.95fr) auto;
+  align-items: center;
+  gap: 15px;
+  padding: 15px;
+  border: 1px solid rgba(76, 62, 77, 0.2);
+  border-left: 6px solid var(--rt-lavender);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 7px 16px rgba(76, 62, 77, 0.09);
+}
+
+.roulette-training-ranking-row.is-rank-1 {
+  border-left-color: var(--rt-butter);
+  background: linear-gradient(90deg, rgba(255, 217, 119, 0.22), rgba(255, 255, 255, 0.72) 28%);
+}
+
+.roulette-training-ranking-row.is-rank-2 {
+  border-left-color: var(--rt-mint);
+}
+
+.roulette-training-ranking-row.is-rank-3 {
+  border-left-color: var(--rt-blush);
+}
+
+.roulette-training-ranking-place {
+  width: 54px;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px;
+  padding-top: 8px;
+  border-radius: 50% 45% 48% 43%;
+  color: var(--rt-ink);
+  background: var(--rt-lavender);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.5);
+  transform: rotate(-2deg);
+}
+
+.is-rank-1 .roulette-training-ranking-place { background: var(--rt-butter); }
+.is-rank-2 .roulette-training-ranking-place { background: var(--rt-mint); }
+.is-rank-3 .roulette-training-ranking-place { background: #ffb0c3; }
+
+.roulette-training-ranking-place strong {
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.roulette-training-ranking-place small {
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+
+.roulette-training-ranking-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.roulette-training-ranking-revision {
+  color: var(--rt-rose-deep);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
+.roulette-training-ranking-copy h3 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--rt-ink);
+  font-size: 1rem;
+}
+
+.roulette-training-ranking-copy > p {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  margin: 0;
+  color: rgba(76, 62, 77, 0.72);
+  font-size: 0.68rem;
+}
+
+.roulette-training-ranking-copy code {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 5px;
+  color: rgba(76, 62, 77, 0.74);
+  background: rgba(201, 184, 232, 0.28);
+  font-family: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roulette-training-ranking-x {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+}
+
+.roulette-training-ranking-x button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 1px solid rgba(76, 62, 77, 0.28);
+  border-radius: 9px;
+  color: var(--rt-ink);
+  background: rgba(255, 255, 255, 0.66);
+  font: inherit;
+  font-size: 0.67rem;
+  font-weight: 900;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.roulette-training-ranking-x button b {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--rt-ink);
+  font-size: 0.61rem;
+}
+
+.roulette-training-ranking-x > small {
+  color: rgba(76, 62, 77, 0.62);
+  font-size: 0.58rem;
+}
+
+.roulette-training-ranking-numbers {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(78px, 1fr));
+  gap: 7px;
+  margin: 0;
+}
+
+.roulette-training-ranking-numbers div {
+  min-width: 0;
+  padding: 8px;
+  border-bottom: 2px solid rgba(201, 184, 232, 0.7);
+  text-align: center;
+  background: rgba(255, 247, 239, 0.72);
+}
+
+.roulette-training-ranking-numbers div.is-primary {
+  border-color: var(--rt-mint);
+  background: rgba(119, 221, 208, 0.14);
+}
+
+.roulette-training-ranking-numbers dt {
+  color: rgba(76, 62, 77, 0.67);
+  font-size: 0.56rem;
+  font-weight: 800;
+}
+
+.roulette-training-ranking-numbers dd {
+  margin: 4px 0 0;
+  color: var(--rt-ink);
+  font-size: 1.02rem;
+  font-weight: 1000;
+}
+
+.roulette-training-ranking-numbers dd small {
+  font-size: 0.57rem;
+}
+
+.roulette-training-ranking-board .roulette-training-ranking-detail,
+.roulette-training-ranking-board .roulette-training-ranking-footer .button {
+  min-height: 42px;
+  border-color: rgba(76, 62, 77, 0.34);
+  color: var(--rt-ink);
+  background: rgba(255, 255, 255, 0.62);
+  white-space: nowrap;
+}
+
+.roulette-training-ranking-empty,
+.roulette-training-creator-status,
+.roulette-training-creator-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 150px;
+  margin: 0;
+  padding: 24px;
+  border: 1px dashed rgba(76, 62, 77, 0.34);
+  color: rgba(76, 62, 77, 0.75);
+  text-align: center;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.roulette-training-ranking-empty.is-error,
+.roulette-training-creator-status.is-error {
+  border-color: rgba(184, 79, 114, 0.5);
+}
+
+.roulette-training-ranking-footer,
+.roulette-training-creator-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(76, 62, 77, 0.62);
+  font-size: 0.64rem;
+}
+
+.roulette-training-creator-dashboard {
+  display: grid;
+  gap: 16px;
+  padding: clamp(16px, 3vw, 28px);
+  border-radius: 28px;
+  color: var(--rt-ink);
+  background:
+    radial-gradient(circle at 90% 6%, rgba(255, 217, 119, 0.16), transparent 28%),
+    linear-gradient(145deg, #3a2d40, var(--rt-room-wall));
+  box-shadow: 0 24px 66px rgba(8, 6, 13, 0.34);
+}
+
+.roulette-training-creator-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 22px clamp(18px, 4vw, 34px);
+  border: 2px dashed rgba(255, 247, 239, 0.58);
+  border-radius: 19px 25px 18px 22px;
+  color: var(--rt-ink);
+  background: linear-gradient(140deg, #e4d8f3, var(--rt-lavender) 58%, #d8c1dd);
+  box-shadow: 0 12px 28px rgba(8, 6, 13, 0.2);
+}
+
+.roulette-training-creator-hero::after {
+  position: absolute;
+  width: 110px;
+  height: 22px;
+  top: 7px;
+  right: -25px;
+  background: rgba(255, 217, 119, 0.68);
+  content: "";
+  transform: rotate(24deg);
+}
+
+.roulette-training-creator-hero p {
+  max-width: 760px;
+  color: rgba(76, 62, 77, 0.76);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.roulette-training-creator-periods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.roulette-training-creator-period,
+.roulette-training-creator-packs,
+.roulette-training-creator-achievements,
+.roulette-training-creator-profile {
+  min-width: 0;
+  padding: clamp(17px, 3vw, 25px);
+  color: var(--rt-ink);
+  background: var(--rt-paper);
+  box-shadow: 0 13px 32px rgba(8, 6, 13, 0.22);
+}
+
+.roulette-training-creator-period:first-child { transform: rotate(-0.18deg); }
+.roulette-training-creator-period:last-child { transform: rotate(0.2deg); }
+
+.roulette-training-creator-period header span {
+  color: var(--rt-rose-deep);
+  font-size: 0.6rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.roulette-training-creator-period header h3 {
+  margin: 3px 0 0;
+  font-size: 1.15rem;
+}
+
+.roulette-training-creator-period > dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 15px 0 10px;
+}
+
+.roulette-training-creator-period > dl div {
+  min-width: 0;
+  padding: 10px;
+  border-bottom: 3px solid var(--rt-lavender);
+  background: rgba(232, 216, 210, 0.34);
+}
+
+.roulette-training-creator-period > dl div:nth-child(2) { border-bottom-color: var(--rt-mint); }
+.roulette-training-creator-period > dl div:nth-child(4) { border-bottom-color: var(--rt-butter); }
+
+.roulette-training-creator-period dt {
+  color: rgba(76, 62, 77, 0.68);
+  font-size: 0.62rem;
+}
+
+.roulette-training-creator-period dd {
+  margin: 4px 0 0;
+  font-size: 1.16rem;
+  font-weight: 1000;
+}
+
+.roulette-training-creator-period dd small {
+  font-size: 0.58rem;
+}
+
+.roulette-training-creator-period details {
+  padding-top: 7px;
+  border-top: 1px dashed rgba(76, 62, 77, 0.28);
+  color: rgba(76, 62, 77, 0.72);
+  font-size: 0.67rem;
+}
+
+.roulette-training-creator-period summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.roulette-training-creator-period details p {
+  margin: 5px 0 0;
+  line-height: 1.65;
+}
+
+.roulette-training-creator-packs > header p,
+.roulette-training-creator-achievements > header p,
+.roulette-training-creator-profile > div p {
+  color: rgba(76, 62, 77, 0.72);
+  font-size: 0.72rem;
+  line-height: 1.7;
+}
+
+.roulette-training-creator-packs > div {
+  display: grid;
+  gap: 9px;
+  margin-top: 15px;
+}
+
+.roulette-training-creator-pack {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(120px, 0.55fr) minmax(180px, 0.75fr);
+  align-items: center;
+  gap: 14px;
+  padding: 13px;
+  border: 1px solid rgba(76, 62, 77, 0.18);
+  border-left: 5px solid var(--rt-lavender);
+  background: rgba(232, 216, 210, 0.24);
+}
+
+.roulette-training-creator-pack.is-eligible {
+  border-left-color: var(--rt-mint);
+  background: rgba(119, 221, 208, 0.1);
+}
+
+.roulette-training-creator-pack header {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.roulette-training-creator-pack header span,
+.roulette-training-creator-pack header small {
+  color: rgba(76, 62, 77, 0.63);
+  font-size: 0.61rem;
+}
+
+.roulette-training-creator-pack header strong {
+  overflow-wrap: anywhere;
+}
+
+.roulette-training-creator-pack-progress,
+.roulette-training-achievement-progress {
+  height: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(76, 62, 77, 0.24);
+  border-radius: 999px;
+  background: rgba(201, 184, 232, 0.34);
+}
+
+.roulette-training-creator-pack-progress i,
+.roulette-training-achievement-progress i {
+  width: var(--qualification-progress, var(--achievement-progress, 0%));
+  height: 100%;
+  display: block;
+  background: linear-gradient(90deg, var(--rt-mint), var(--rt-butter));
+}
+
+.roulette-training-creator-pack > p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.roulette-training-creator-pack > p strong {
+  color: var(--rt-rose-deep);
+  font-size: 0.72rem;
+}
+
+.roulette-training-creator-pack > p span {
+  color: rgba(76, 62, 77, 0.67);
+  font-size: 0.63rem;
+}
+
+.roulette-training-achievement-families {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.roulette-training-achievement-family {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid rgba(76, 62, 77, 0.2);
+  background: linear-gradient(145deg, rgba(201, 184, 232, 0.18), rgba(255, 217, 119, 0.09));
+}
+
+.roulette-training-achievement-family > header {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.roulette-training-achievement-family > header > i {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--rt-ink);
+  background: var(--rt-butter);
+  font-size: 1.1rem;
+  font-style: normal;
+}
+
+.roulette-training-achievement-family > header span {
+  color: rgba(76, 62, 77, 0.67);
+  font-size: 0.59rem;
+  font-weight: 900;
+}
+
+.roulette-training-achievement-family > header h3 {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.87rem;
+}
+
+.roulette-training-achievement-family > header > strong {
+  color: var(--rt-rose-deep);
+  font-size: 1.2rem;
+}
+
+.roulette-training-achievement-family > header > strong small {
+  font-size: 0.58rem;
+}
+
+.roulette-training-achievement-family .roulette-training-achievement-progress {
+  margin-top: 12px;
+}
+
+.roulette-training-achievement-family > p {
+  margin: 8px 0;
+  color: rgba(76, 62, 77, 0.7);
+  font-size: 0.65rem;
+}
+
+.roulette-training-achievement-family > ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.roulette-training-achievement-family li {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 7px 4px;
+  border: 1px dashed rgba(76, 62, 77, 0.22);
+  color: rgba(76, 62, 77, 0.56);
+  text-align: center;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.roulette-training-achievement-family li.is-unlocked {
+  border-style: solid;
+  border-color: rgba(119, 221, 208, 0.72);
+  color: var(--rt-ink);
+  background: rgba(119, 221, 208, 0.16);
+}
+
+.roulette-training-achievement-family li > i {
+  font-style: normal;
+}
+
+.roulette-training-achievement-family li > span {
+  width: 100%;
+  overflow: hidden;
+  font-size: 0.53rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roulette-training-achievement-family li > small {
+  font-size: 0.48rem;
+}
+
+.roulette-training-creator-profile {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 18px;
+  border-top: 12px solid rgba(255, 127, 158, 0.32);
+}
+
+.roulette-training-creator-profile > form {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.2fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.roulette-training-creator-profile > form > label:first-child {
+  display: grid;
+  gap: 6px;
+  color: var(--rt-ink);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.roulette-training-x-input {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(76, 62, 77, 0.3);
+  background: #fff;
+}
+
+.roulette-training-x-input > b {
+  padding-left: 10px;
+  color: rgba(76, 62, 77, 0.6);
+}
+
+.roulette-training-screen .roulette-training-x-input input[type="text"] {
+  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+  color: var(--rt-ink);
+  background: transparent;
+  box-shadow: none;
+}
+
+.roulette-training-x-input:focus-within {
+  border-color: var(--rt-rose-deep);
+  box-shadow: 0 0 0 3px rgba(255, 217, 119, 0.36);
+}
+
+.roulette-training-screen .roulette-training-x-input input[type="text"]:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.roulette-training-x-consent {
+  min-height: 46px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px dashed rgba(76, 62, 77, 0.28);
+  cursor: pointer;
+}
+
+.roulette-training-x-consent input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.roulette-training-x-consent span {
+  display: grid;
+  gap: 2px;
+}
+
+.roulette-training-x-consent strong {
+  font-size: 0.67rem;
+}
+
+.roulette-training-x-consent small {
+  color: rgba(76, 62, 77, 0.65);
+  font-size: 0.57rem;
+  line-height: 1.45;
+}
+
+.roulette-training-creator-profile > form > .button {
+  min-height: 46px;
+  white-space: nowrap;
+}
+
+.roulette-training-creator-profile > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 11px;
+  border-top: 1px dashed rgba(76, 62, 77, 0.26);
+  color: rgba(76, 62, 77, 0.66);
+  font-size: 0.65rem;
+  line-height: 1.7;
+}
+
+.roulette-training-creator-status {
+  color: rgba(255, 247, 239, 0.82);
+  border-color: rgba(255, 247, 239, 0.35);
+  background: rgba(255, 247, 239, 0.08);
+}
+
+.roulette-training-creator-status.is-error {
+  border-color: rgba(255, 127, 158, 0.55);
+}
+
+.roulette-training-creator-footer {
+  color: rgba(255, 247, 239, 0.65);
+}
+
+.roulette-training-ranking-board :is(button, a):focus-visible,
+.roulette-training-creator-dashboard :is(button, a, input, summary):focus-visible {
+  outline-color: var(--rt-butter);
+}
+
 .roulette-training-odds {
   padding: 18px 20px;
   border: 1px solid rgba(109, 244, 221, 0.23);
@@ -4123,6 +4959,28 @@
     grid-template-columns: 1fr;
   }
 
+  .roulette-training-ranking-row {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .roulette-training-ranking-numbers,
+  .roulette-training-ranking-detail {
+    grid-column: 2;
+  }
+
+  .roulette-training-achievement-families,
+  .roulette-training-creator-profile {
+    grid-template-columns: 1fr;
+  }
+
+  .roulette-training-creator-profile > form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .roulette-training-creator-profile > form > .button {
+    grid-column: 1 / -1;
+  }
+
   .roulette-training-pack-summary {
     position: static;
   }
@@ -4170,8 +5028,119 @@
     flex-direction: column;
   }
 
+  .roulette-training-market-head-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .roulette-training-balance {
     text-align: left;
+  }
+
+  .roulette-training-market-switcher {
+    width: 100%;
+  }
+
+  .roulette-training-market-switcher button {
+    padding-inline: 7px;
+    font-size: 0.72rem;
+  }
+
+  .roulette-training-market-switcher button > span {
+    margin-right: 4px;
+  }
+
+  .roulette-training-ranking-board {
+    gap: 13px;
+    padding: 19px 13px;
+    border-radius: 20px 16px 22px 14px;
+  }
+
+  .roulette-training-ranking-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px;
+  }
+
+  .roulette-training-ranking-head p {
+    grid-column: 1 / -1;
+  }
+
+  .roulette-training-ranking-row {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px 10px;
+  }
+
+  .roulette-training-ranking-place {
+    width: 44px;
+    padding-top: 7px;
+  }
+
+  .roulette-training-ranking-place strong {
+    font-size: 1.2rem;
+  }
+
+  .roulette-training-ranking-numbers {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .roulette-training-ranking-numbers div {
+    padding: 7px 3px;
+  }
+
+  .roulette-training-ranking-detail {
+    width: 100%;
+  }
+
+  .roulette-training-ranking-footer,
+  .roulette-training-creator-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .roulette-training-ranking-footer .button,
+  .roulette-training-creator-footer .button {
+    width: 100%;
+  }
+
+  .roulette-training-creator-dashboard {
+    padding: 12px;
+    border-radius: 20px;
+  }
+
+  .roulette-training-creator-periods {
+    grid-template-columns: 1fr;
+  }
+
+  .roulette-training-creator-period:first-child,
+  .roulette-training-creator-period:last-child {
+    transform: none;
+  }
+
+  .roulette-training-creator-pack {
+    grid-template-columns: 1fr;
+  }
+
+  .roulette-training-creator-profile > form {
+    grid-template-columns: 1fr;
+  }
+
+  .roulette-training-creator-profile > form > .button {
+    grid-column: auto;
+    width: 100%;
+  }
+
+  .roulette-training-achievement-family > ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .roulette-training-achievement-family li > span {
+    overflow: visible;
+    line-height: 1.35;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .roulette-training-screen[data-roulette-training-screen="play"] {

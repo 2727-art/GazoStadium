@@ -21,6 +21,7 @@ const {
   normalizeDanwakuStats,
   normalizeFleaStats,
   normalizeMarketStats,
+  normalizeRouletteTrainingStats,
   normalizeTrainingStats,
   publicAchievementProfile,
   finalizeCrownMonthlyAchievement,
@@ -481,6 +482,130 @@ test("AI text training stats normalize independently and unlock only their own s
   );
 });
 
+test("roulette training pack sales achievements reward use and reach, not Pay, rank, or exercise results", () => {
+  const thresholdsByFamily = Object.fromEntries([
+    "roulette_training_pack_uses",
+    "roulette_training_unique_buyers",
+  ].map((family) => [
+    family,
+    ACHIEVEMENT_DEFINITIONS
+      .filter((definition) => definition.family === family)
+      .map((definition) => definition.target),
+  ]));
+  assert.deepEqual(thresholdsByFamily, {
+    roulette_training_pack_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    roulette_training_unique_buyers: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
+  });
+
+  const definitions = ACHIEVEMENT_DEFINITIONS
+    .filter((definition) => definition.scope === "roulette_training");
+  assert.equal(definitions.length, 20);
+  assert.equal(
+    definitions.every((definition) => definition.category === "roulette_training_pack_sales"),
+    true,
+  );
+  assert.equal(definitions.every((definition) => definition.autoPublic === true), true);
+  assert.equal(definitions.every((definition) => definition.legacy === false), true);
+  assert.deepEqual(
+    [...new Set(definitions.map((definition) => definition.condition.type))],
+    ["roulette_training_stat"],
+  );
+  assert.deepEqual(
+    [...new Set(definitions.map((definition) => definition.condition.key))],
+    ["rankingUseCount", "uniqueBuyers"],
+  );
+  for (const forbidden of [
+    "price",
+    "actualGross",
+    "rankingGross",
+    "netSales",
+    "feesPaid",
+    "rank",
+    "completedCount",
+    "targetCount",
+    "bpm",
+    "maximumReachedBpm",
+  ]) {
+    assert.equal(
+      definitions.some((definition) => definition.condition.key === forbidden),
+      false,
+      forbidden,
+    );
+  }
+});
+
+test("roulette training seller stats normalize independently and unlock only their own scope", () => {
+  const stats = normalizeRouletteTrainingStats({
+    rankingUseCount: 30.9,
+    uniqueBuyers: "10",
+    actualGross: 999_999,
+    rankingGross: 999_999,
+    netSales: 999_999,
+    rank: 1,
+    completedCount: 10_000,
+    bpm: 300,
+  });
+  assert.deepEqual(stats, {
+    rankingUseCount: 30,
+    uniqueBuyers: 10,
+  });
+  assert.deepEqual(normalizeRouletteTrainingStats({
+    rankingUseCount: Number.POSITIVE_INFINITY,
+    uniqueBuyers: -1,
+  }), {
+    rankingUseCount: 0,
+    uniqueBuyers: 0,
+  });
+
+  const ids = eligibleAchievementIds({
+    rouletteTrainingStats: stats,
+    scope: "roulette_training",
+  });
+  for (const expected of [
+    "roulette_training_pack_uses_1",
+    "roulette_training_pack_uses_3",
+    "roulette_training_pack_uses_10",
+    "roulette_training_pack_uses_30",
+    "roulette_training_unique_buyers_3",
+    "roulette_training_unique_buyers_10",
+  ]) assert.equal(ids.includes(expected), true, expected);
+  assert.equal(ids.includes("roulette_training_pack_uses_100"), false);
+  assert.equal(ids.includes("roulette_training_unique_buyers_30"), false);
+  assert.equal(ids.some((id) => id.startsWith("ai_training_")), false);
+  assert.equal(
+    eligibleAchievementIds({
+      rouletteTrainingStats: { rankingUseCount: 10_000, uniqueBuyers: 3_000 },
+      scope: "market",
+    }).some((id) => id.startsWith("roulette_training_")),
+    false,
+  );
+
+  const profile = unlockAchievements(null, ids, 100).profile;
+  assert.deepEqual(effectiveShowcase(profile), [
+    "roulette_training_pack_uses_30",
+    "roulette_training_unique_buyers_10",
+  ]);
+  const payload = publicAchievementProfile(
+    profile,
+    null,
+    null,
+    null,
+    null,
+    null,
+    stats,
+  );
+  assert.deepEqual(payload.stats.rouletteTraining, stats);
+});
+
+test("achievement state lazily backfills roulette training sales from server-authoritative seller stats", () => {
+  const source = fs.readFileSync(path.join(root, "functions", "index.js"), "utf8");
+  assert.match(source, /function rouletteTrainingSellerStatsRef\(uid\)/);
+  assert.match(source, /transaction\.get\(rouletteSellerStatsRef\)/);
+  assert.match(source, /normalizeRouletteTrainingStats\(\s*rouletteSellerStatsSnapshot\.data\(\)/);
+  assert.match(source, /eligibleAchievementIds\(\{[\s\S]*?rouletteTrainingStats,[\s\S]*?\}\)/);
+  assert.match(source, /state\.rouletteTrainingStats/);
+});
+
 test("retired team variants cannot advance any current battle stats", () => {
   let stats = normalizeBattleStats({
     totalMatches: 4,
@@ -724,6 +849,8 @@ test("all active progression families extend in place to level ten while retired
     ai_training_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
     ai_training_script_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
     ai_training_unique_buyers: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
+    roulette_training_pack_uses: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    roulette_training_unique_buyers: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
     market_seller: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
     market_buyer: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
     market_both: [1, 3, 10, 30, 100, 200, 300, 500, 1000, 3000],
@@ -815,6 +942,13 @@ test("new level-ten progression achievements unlock from their existing neutral 
     scope: "ai_training",
   });
   assert.equal(aiIds.includes("ai_training_unique_buyers_3000"), true);
+
+  const rouletteIds = eligibleAchievementIds({
+    rouletteTrainingStats: { rankingUseCount: 10_000, uniqueBuyers: 3000 },
+    scope: "roulette_training",
+  });
+  assert.equal(rouletteIds.includes("roulette_training_pack_uses_10000"), true);
+  assert.equal(rouletteIds.includes("roulette_training_unique_buyers_3000"), true);
 
   const marketIds = eligibleAchievementIds({
     marketStats: {
@@ -971,6 +1105,8 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "ai_training_days",
     "ai_training_script_uses",
     "ai_training_unique_buyers",
+    "roulette_training_pack_uses",
+    "roulette_training_unique_buyers",
     "market_seller",
     "market_buyer",
     "market_both",
@@ -1016,6 +1152,10 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "日にちを分けて文字コラを続けると解除",
     "同じ利用者からはJSTの1日1回だけ数える",
     "いろいろな人へ応援が届くと解除",
+    "ルーレットトレーニング・パック販売",
+    "価格や売上額、ランキング順位ではなく、トレーニングパックが利用された回数と広がりの記録",
+    "同じ利用者からはJSTの1日1回だけ数える",
+    "いろいろな人へトレーニングメニューが届くと解除",
     "AnjuPayフリマ・一日棚",
     "AnjuPayフリマ・ご縁",
     "断惑NOTE",

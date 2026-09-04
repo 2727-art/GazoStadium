@@ -64,6 +64,7 @@ const {
   normalizeDanwakuStats,
   normalizeFleaStats,
   normalizeMarketStats,
+  normalizeRouletteTrainingStats,
   publicAchievementProfile,
   sanitizeAchievementIds,
   finalizeCrownMonthlyAchievement,
@@ -1170,6 +1171,10 @@ function aiTextTrainingSellerStatsRef(uid) {
   return firestore.collection("aiTextTrainingSellerStats").doc(uid);
 }
 
+function rouletteTrainingSellerStatsRef(uid) {
+  return firestore.collection("rouletteTrainingSellerStats").doc(uid);
+}
+
 function aiTextTrainingActiveAchievementSessionRef(uid) {
   return firestore.collection("aiTextTrainingActiveAchievementSessions").doc(uid);
 }
@@ -1986,6 +1991,7 @@ async function ensureAchievementState(uid) {
   const danwakuRef = danwakuProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
+  const rouletteSellerStatsRef = rouletteTrainingSellerStatsRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
     const [
@@ -1998,6 +2004,7 @@ async function ensureAchievementState(uid) {
       danwakuSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
+      rouletteSellerStatsSnapshot,
     ] = await Promise.all([
       transaction.get(progressRef),
       transaction.get(profileRef),
@@ -2008,6 +2015,7 @@ async function ensureAchievementState(uid) {
       transaction.get(danwakuRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
+      transaction.get(rouletteSellerStatsRef),
     ]);
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
@@ -2021,6 +2029,9 @@ async function ensureAchievementState(uid) {
       rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
       uniqueBuyers: aiSellerStatsSnapshot.get("uniqueBuyers"),
     });
+    const rouletteTrainingStats = normalizeRouletteTrainingStats(
+      rouletteSellerStatsSnapshot.data(),
+    );
     const eligibleIds = eligibleAchievementIds({
       battleStats: progress.achievementStats,
       trainingStats: trainingProfile,
@@ -2028,6 +2039,7 @@ async function ensureAchievementState(uid) {
       marketStats,
       fleaStats,
       aiTextTrainingStats,
+      rouletteTrainingStats,
       crownMonthlyStats,
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
@@ -2047,6 +2059,7 @@ async function ensureAchievementState(uid) {
       trainingProfile,
       danwakuStats,
       aiTextTrainingStats,
+      rouletteTrainingStats,
       crownMonthlyStats,
       profile: unlockResult.profile,
       newlyUnlocked: unlockResult.newlyUnlocked,
@@ -3091,6 +3104,7 @@ async function getAchievements(uid, { syncPublic = false } = {}) {
     state.trainingProfile,
     state.aiTextTrainingStats,
     state.fleaStats,
+    state.rouletteTrainingStats,
   );
 }
 
@@ -3367,6 +3381,7 @@ async function setAchievementShowcase(uid, idsValue) {
   const trainingRef = trainingProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
+  const rouletteSellerStatsRef = rouletteTrainingSellerStatsRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
     const [
@@ -3377,6 +3392,7 @@ async function setAchievementShowcase(uid, idsValue) {
       trainingSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
+      rouletteSellerStatsSnapshot,
     ] = await Promise.all([
       transaction.get(profileRef),
       transaction.get(progressRef),
@@ -3385,6 +3401,7 @@ async function setAchievementShowcase(uid, idsValue) {
       transaction.get(trainingRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
+      transaction.get(rouletteSellerStatsRef),
     ]);
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
@@ -3395,6 +3412,9 @@ async function setAchievementShowcase(uid, idsValue) {
       rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
       uniqueBuyers: aiSellerStatsSnapshot.get("uniqueBuyers"),
     });
+    const rouletteTrainingStats = normalizeRouletteTrainingStats(
+      rouletteSellerStatsSnapshot.data(),
+    );
     const profile = normalizeAchievementProfile(profileSnapshot.data());
     const customShowcase = sanitizeAchievementIds(requestedIds, { unlocked: profile.unlocked });
     if (customShowcase.length !== requestedIds.length) {
@@ -3410,6 +3430,7 @@ async function setAchievementShowcase(uid, idsValue) {
       fleaStats,
       trainingProfile,
       aiTextTrainingStats,
+      rouletteTrainingStats,
     };
   });
   await syncAchievementPublicSurfaces(uid, result.profile);
@@ -3422,6 +3443,7 @@ async function setAchievementShowcase(uid, idsValue) {
       result.trainingProfile,
       result.aiTextTrainingStats,
       result.fleaStats,
+      result.rouletteTrainingStats,
     ),
   };
 }
@@ -3934,6 +3956,7 @@ async function initializeEconomy(uid) {
     fleaStats,
     trainingProfile,
     aiTextTrainingStats,
+    rouletteTrainingStats,
   } = achievementState;
   const patronProgram = await ensurePatronFundRecognition(uid, patron);
   await Promise.all([
@@ -3958,6 +3981,7 @@ async function initializeEconomy(uid) {
       trainingProfile,
       aiTextTrainingStats,
       fleaStats,
+      rouletteTrainingStats,
     ),
     patron: {
       ...publicPatronage(patron, periodKey("monthly")),
@@ -11329,6 +11353,7 @@ async function transferTargetIsPristine(uid, request) {
     rouletteTrainingReportSnapshot,
     rouletteTrainingActiveUseSnapshot,
     rouletteTrainingSellerStatsSnapshot,
+    rouletteTrainingSellerProfileSnapshot,
     patronSnapshot,
     trainingProfileSnapshot,
     legacyTrainingClaimSnapshot,
@@ -11373,6 +11398,7 @@ async function transferTargetIsPristine(uid, request) {
     firestore.collection("rouletteTrainingReports").where("reporterUid", "==", uid).limit(1).get(),
     firestore.collection("rouletteTrainingActiveUses").doc(uid).get(),
     firestore.collection("rouletteTrainingSellerStats").doc(uid).get(),
+    firestore.collection("rouletteTrainingSellerProfiles").doc(uid).get(),
     patronageRef(uid).get(),
     trainingProfileRef(uid).get(),
     firestore.collection("trainingClaims").doc(uid).collection("rooms").limit(1).get(),
@@ -11420,6 +11446,7 @@ async function transferTargetIsPristine(uid, request) {
       || !rouletteTrainingReportSnapshot.empty
       || rouletteTrainingActiveUseSnapshot.exists
       || rouletteTrainingSellerStatsSnapshot.exists
+      || rouletteTrainingSellerProfileSnapshot.exists
       || !purchaseSnapshot.empty || !dailyClaimSnapshot.empty || !periodClaimSnapshot.empty) return false;
   if (realtimeEconomyHasActivity(economySnapshot.val())) return false;
   return !soloProfileSnapshot.exists()
@@ -11581,6 +11608,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       targetRouletteTrainingReportSnapshot,
       targetRouletteTrainingActiveUseSnapshot,
       targetRouletteTrainingSellerStatsSnapshot,
+      targetRouletteTrainingSellerProfileSnapshot,
       targetPatronSnapshot,
       targetTrainingProfileSnapshot,
       targetFamiliarBookSnapshot,
@@ -11638,6 +11666,7 @@ async function redeemAccountTransferCode(request, rawCode) {
       ),
       transaction.get(firestore.collection("rouletteTrainingActiveUses").doc(targetUid)),
       transaction.get(firestore.collection("rouletteTrainingSellerStats").doc(targetUid)),
+      transaction.get(firestore.collection("rouletteTrainingSellerProfiles").doc(targetUid)),
       transaction.get(patronageRef(targetUid)),
       transaction.get(trainingProfileRef(targetUid)),
       transaction.get(soloFamiliarBookRef(targetUid)),
@@ -11694,6 +11723,7 @@ async function redeemAccountTransferCode(request, rawCode) {
         || !targetRouletteTrainingReportSnapshot.empty
         || targetRouletteTrainingActiveUseSnapshot.exists
         || targetRouletteTrainingSellerStatsSnapshot.exists
+        || targetRouletteTrainingSellerProfileSnapshot.exists
         || retiredTrainingHistoryHasActivity(targetTrainingProfileSnapshot.data())
         || targetFamiliarBookSnapshot.exists
         || targetFamiliarBlockSnapshot.exists) {
@@ -15709,6 +15739,8 @@ const rouletteTrainingService = createRouletteTrainingService({
   anjuPayEntryId,
   mirrorWallet,
   bestEffort,
+  ensureAchievementState,
+  syncAchievementPublicSurfaces,
 });
 
 exports.aiTextTrainingAction = onCall(

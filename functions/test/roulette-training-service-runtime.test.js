@@ -62,11 +62,11 @@ class FakeQuery {
   }
 
   where(field, operator, value) {
-    assert.equal(operator, "==");
+    assert.ok(["==", ">="].includes(operator));
     return new FakeQuery(
       this.firestore,
       this.path,
-      [...this.filters, { field, value }],
+      [...this.filters, { field, operator, value }],
       this.orderings,
       this.maximum,
     );
@@ -93,16 +93,20 @@ class FakeQuery {
     );
   }
 
-  async get() {
+  snapshot(documents = this.firestore.documents) {
     const prefix = `${this.path}/`;
-    let rows = [...this.firestore.documents.entries()]
+    let rows = [...documents.entries()]
       .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes("/"))
       .map(([path, value]) => ({
         reference: new FakeDocumentReference(this.firestore, path),
         value,
-      }));
+    }));
     for (const filter of this.filters) {
-      rows = rows.filter((row) => row.value?.[filter.field] === filter.value);
+      rows = rows.filter((row) => {
+        const candidate = row.value?.[filter.field];
+        if (filter.operator === ">=") return candidate >= filter.value;
+        return candidate === filter.value;
+      });
     }
     for (const ordering of [...this.orderings].reverse()) {
       rows.sort((left, right) => {
@@ -119,6 +123,10 @@ class FakeQuery {
       )),
     };
   }
+
+  async get() {
+    return this.snapshot();
+  }
 }
 
 class FakeCollectionReference extends FakeQuery {
@@ -134,6 +142,7 @@ class FakeTransaction {
   }
 
   async get(reference) {
+    if (reference instanceof FakeQuery) return reference.snapshot(this.documents);
     return new FakeDocumentSnapshot(reference, this.documents.get(reference.path));
   }
 
@@ -228,6 +237,7 @@ function publishInput(actionId, expectedBalance, overrides = {}) {
 function createHarness({ balances = {}, now = 1_800_000_000_000 } = {}) {
   const firestore = new FakeFirestore();
   const mirrors = [];
+  const achievementSyncs = [];
   let clock = now;
   for (const [uid, balance] of Object.entries(balances)) {
     firestore.write(`wallets/${uid}`, { balance, maxBalance: 1_000 });
@@ -274,9 +284,18 @@ function createHarness({ balances = {}, now = 1_800_000_000_000 } = {}) {
     bestEffort: async (_label, operations) => {
       await Promise.allSettled(operations);
     },
+    ensureAchievementState: async (uid) => ({
+      profile: firestore.read(`achievementProfiles/${uid}`) || {},
+      newlyUnlocked: [],
+      rouletteTrainingStats: firestore.read(`rouletteTrainingSellerStats/${uid}`) || {},
+    }),
+    syncAchievementPublicSurfaces: async (uid, profile) => {
+      achievementSyncs.push({ uid, profile: clone(profile) });
+    },
     now: () => clock,
   });
   return {
+    achievementSyncs,
     firestore,
     mirrors,
     service,
@@ -298,6 +317,14 @@ async function publishPack(harness, overrides = {}) {
   return result;
 }
 
+async function publishPackAs(harness, uid, overrides = {}) {
+  return harness.service.performAction(uid, publishInput(
+    overrides.actionId || `publish_${uid}_0001`,
+    harness.wallet(uid).balance,
+    overrides,
+  ));
+}
+
 async function startUse(harness, uid, pack, suffix) {
   return harness.service.performAction(uid, {
     action: "start_paid_use",
@@ -307,6 +334,22 @@ async function startUse(harness, uid, pack, suffix) {
     expectedPrice: pack.price,
     expectedBalance: harness.wallet(uid).balance,
   });
+}
+
+async function finishUse(harness, uid, use) {
+  return harness.service.performAction(uid, {
+    action: "finish_use",
+    useId: use.id,
+  });
+}
+
+function storedPack(harness, packId) {
+  return harness.firestore.read(`rouletteTrainingPacks/${packId}`);
+}
+
+function packStats(harness, packId) {
+  const pack = storedPack(harness, packId);
+  return harness.firestore.read(`rouletteTrainingPackStats/${pack.packRankingId}`);
 }
 
 test("publish charges once, exposes full preview, and preserves positional item IDs on revision", async () => {
@@ -516,6 +559,12 @@ test("one paid session is atomic, reload-resumable, idempotent, and stores no wo
   assert.equal(stats.uniqueBuyers, 1);
   assert.equal(stats.netSales, 16);
   assert.equal(stats.feesPaid, 4);
+  const rankedPack = packStats(harness, pack.id);
+  assert.equal(rankedPack.useCount, 2);
+  assert.equal(rankedPack.actualGross, 20);
+  assert.equal(rankedPack.rankingUseCount, 1);
+  assert.equal(rankedPack.uniqueBuyers, 1);
+  assert.equal(rankedPack.isCurrentPublic, true);
   const month = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
@@ -530,6 +579,18 @@ test("one paid session is atomic, reload-resumable, idempotent, and stores no wo
   assert.equal(harness.firestore.keys("rouletteTrainingRankingPairs/").length, 1);
   assert.equal(harness.firestore.keys("rouletteTrainingSellerBuyerPairs/").length, 1);
   assert.equal(harness.firestore.keys("rouletteTrainingMonthlyBuyerPairs/").length, 1);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackRankingPairs/").length, 1);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackBuyerPairs/").length, 1);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackMonthlyBuyerPairs/").length, 1);
+  const creator = await harness.service.performAction("seller", { action: "creator_stats" });
+  assert.equal(creator.packs[0].remainingUniqueBuyers, 2);
+  assert.equal(creator.packs[0].eligible, false);
+  assert.ok(creator.achievements.pendingUnlocks.includes("roulette_training_pack_uses_1"));
+  const ranking = await harness.service.performAction("buyer", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.deepEqual(ranking.rows, []);
 });
 
 test("finished paid revision history stays reportable after author revision and unpublish", async () => {
@@ -622,6 +683,11 @@ test("author self preview creates a resumable session without payment or buyer p
     harness.firestore.keys("rouletteTrainingPackRevisionBuyers/").length,
     0,
   );
+  assert.equal(harness.firestore.keys("rouletteTrainingPackRankingPairs/").length, 0);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackBuyerPairs/").length, 0);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackMonthlyBuyerPairs/").length, 0);
+  assert.equal(packStats(harness, pack.id).useCount, 0);
+  assert.equal(harness.firestore.read("achievementProfiles/seller"), undefined);
   const resumed = await harness.service.performAction("seller", {
     action: "resume_use",
     useId: preview.use.id,
@@ -634,6 +700,12 @@ test("three distinct verified high-risk buyer reports quarantine the exact curre
     balances: { seller: 10, buyer1: 20, buyer2: 20, buyer3: 20 },
   });
   const { pack } = await publishPack(harness);
+  const profile = await harness.service.performAction("seller", {
+    action: "save_profile",
+    xPublic: true,
+    xHandle: "@safe_creator",
+  });
+  assert.deepEqual(profile.profile.xPublic, true);
   for (const uid of ["buyer1", "buyer2", "buyer3"]) {
     const started = await startUse(harness, uid, pack, `${uid}_0001`);
     await harness.service.performAction(uid, {
@@ -651,6 +723,32 @@ test("three distinct verified high-risk buyer reports quarantine the exact curre
   const stored = harness.firestore.read(`rouletteTrainingPacks/${pack.id}`);
   assert.equal(stored.status, "hidden");
   assert.equal(stored.moderationStatus, "quarantined");
+  assert.equal(packStats(harness, pack.id).isCurrentPublic, false);
+  assert.equal(harness.firestore.read("rouletteTrainingSellerProfiles/seller").xPublic, false);
+  assert.equal(harness.firestore.read("rouletteTrainingSellerProfiles/seller").xHandle, "");
+  assert.deepEqual(
+    await harness.service.performAction("seller", { action: "save_profile", xPublic: false }),
+    {
+      profile: {
+        xPublic: false,
+        xHandle: "",
+        updatedAt: 1_800_000_000_000,
+      },
+    },
+  );
+  await assert.rejects(
+    harness.service.performAction("seller", {
+      action: "save_profile",
+      xPublic: true,
+      xHandle: "safe_creator",
+    }),
+    (error) => error.code === "failed-precondition",
+  );
+  const ranking = await harness.service.performAction("buyer1", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.deepEqual(ranking.rows, []);
   const browse = await harness.service.performAction("buyer1", { action: "browse" });
   assert.equal(browse.packs.length, 0);
 });
@@ -753,4 +851,286 @@ test("paid use strictly rejects device-local fields and a second active session"
     startUse(harness, "buyer", second.pack, "buyer_0002"),
     (error) => error.code === "failed-precondition",
   );
+});
+
+test("pack daily counts are independent per pack while seller daily counts stay buyer-to-seller", async () => {
+  const harness = createHarness({ balances: { seller: 20, buyer: 50 } });
+  const first = await publishPack(harness, { actionId: "publish_pack_daily_first" });
+  const second = await publishPack(harness, {
+    actionId: "publish_pack_daily_second",
+    title: "夜のトレーニング",
+  });
+
+  const firstUse = await startUse(harness, "buyer", first.pack, "pack_daily_first");
+  await finishUse(harness, "buyer", firstUse.use);
+  const secondUse = await startUse(harness, "buyer", second.pack, "pack_daily_second");
+
+  assert.equal(firstUse.use.rankingCounted, true);
+  assert.equal(secondUse.use.rankingCounted, false);
+  const sellerStats = harness.firestore.read("rouletteTrainingSellerStats/seller");
+  assert.equal(sellerStats.useCount, 2);
+  assert.equal(sellerStats.rankingUseCount, 1);
+  assert.equal(sellerStats.uniqueBuyers, 1);
+  for (const pack of [first.pack, second.pack]) {
+    const stats = packStats(harness, pack.id);
+    assert.equal(stats.useCount, 1);
+    assert.equal(stats.rankingUseCount, 1);
+    assert.equal(stats.uniqueBuyers, 1);
+  }
+  assert.equal(harness.firestore.keys("rouletteTrainingRankingPairs/").length, 1);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackRankingPairs/").length, 2);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackBuyerPairs/").length, 2);
+});
+
+test("current-content ranking preserves metadata revisions and retains old content audit rows", async () => {
+  const harness = createHarness({
+    balances: { seller: 30, buyer1: 40, buyer2: 40, buyer3: 40 },
+  });
+  const first = await publishPack(harness, { actionId: "publish_current_content_v1" });
+  for (const uid of ["buyer1", "buyer2", "buyer3"]) {
+    const started = await startUse(harness, uid, first.pack, `current_content_${uid}`);
+    await finishUse(harness, uid, started.use);
+  }
+  const firstStored = storedPack(harness, first.pack.id);
+  const firstRankingId = firstStored.packRankingId;
+  assert.notEqual(firstRankingId, first.pack.id);
+  assert.equal(
+    harness.firestore.read(`rouletteTrainingPackStats/${first.pack.id}`),
+    undefined,
+    "pack stats documents must be keyed by packRankingId, not packId",
+  );
+  const firstStats = packStats(harness, first.pack.id);
+  assert.equal(firstStats.uniqueBuyers, 3);
+  assert.equal(firstStats.rankingUseCount, 3);
+  assert.equal(firstStats.isCurrentPublic, true);
+  const beforeRevision = await harness.service.performAction("buyer1", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.deepEqual(beforeRevision.rows.map((row) => row.packId), [first.pack.id]);
+
+  const metadataRevision = await publishPack(harness, {
+    actionId: "publish_current_content_v2",
+    packId: first.pack.id,
+    baseRevision: first.pack.revision,
+    title: "名前だけ変えたトレーニング",
+    description: "説明と価格だけを変更しました。",
+    sellerName: "作者B",
+    price: 25,
+  });
+  const metadataStored = storedPack(harness, first.pack.id);
+  assert.equal(metadataStored.packRankingId, firstRankingId);
+  assert.equal(packStats(harness, first.pack.id).uniqueBuyers, 3);
+  const afterMetadata = await harness.service.performAction("buyer1", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.equal(afterMetadata.rows[0].title, "名前だけ変えたトレーニング");
+  assert.equal(afterMetadata.rows[0].price, 25);
+  assert.equal(afterMetadata.rows[0].uniqueBuyers, 3);
+
+  const contentRevision = await publishPack(harness, {
+    actionId: "publish_current_content_v3",
+    packId: first.pack.id,
+    baseRevision: metadataRevision.pack.revision,
+    title: metadataRevision.pack.title,
+    description: metadataRevision.pack.description,
+    sellerName: metadataRevision.pack.sellerName,
+    price: metadataRevision.pack.price,
+    items: [{
+      ...publishInput("unused_content_input", 0).items[0],
+      cheerLines: ["新しい内容の応援メッセージです。"],
+    }],
+  });
+  const contentStored = storedPack(harness, contentRevision.pack.id);
+  assert.notEqual(contentStored.packRankingId, firstRankingId);
+  const historicalStats = harness.firestore.read(`rouletteTrainingPackStats/${firstRankingId}`);
+  const currentStats = packStats(harness, contentRevision.pack.id);
+  assert.equal(historicalStats.uniqueBuyers, 3);
+  assert.equal(historicalStats.rankingUseCount, 3);
+  assert.equal(historicalStats.isCurrentPublic, false);
+  assert.equal(currentStats.uniqueBuyers, 0);
+  assert.equal(currentStats.rankingUseCount, 0);
+  assert.equal(currentStats.isCurrentPublic, true);
+  assert.equal(harness.firestore.keys("rouletteTrainingPackStats/").length, 2);
+  const afterContent = await harness.service.performAction("buyer1", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.deepEqual(afterContent.rows, []);
+  const creator = await harness.service.performAction("seller", { action: "creator_stats" });
+  assert.equal(creator.lifetime.uniqueBuyers, 3, "seller lifetime achievements span revisions");
+  assert.equal(creator.packs[0].uniqueBuyers, 0);
+  assert.equal(creator.packs[0].remainingUniqueBuyers, 3);
+  assert.equal(creator.packs[0].eligible, false);
+  for (const id of [
+    "roulette_training_pack_uses_1",
+    "roulette_training_pack_uses_3",
+    "roulette_training_unique_buyers_3",
+  ]) {
+    assert.ok(creator.achievements.pendingUnlocks.includes(id));
+  }
+  assert.ok(harness.achievementSyncs.length >= 2);
+});
+
+test("rankings use unique buyers first, share competition ranks, and join current opt-in X profile", async () => {
+  const sellerIds = ["sellerA", "sellerB", "sellerC", "sellerD"];
+  const harness = createHarness({ balances: Object.fromEntries(sellerIds.map((uid) => [uid, 10])) });
+  const packs = [];
+  for (const [index, uid] of sellerIds.entries()) {
+    const published = await publishPackAs(harness, uid, {
+      actionId: `publish_ranking_${uid}_01`,
+      sellerName: `作者${index + 1}`,
+      title: `ランキングパック${index + 1}`,
+    });
+    packs.push(published.pack);
+  }
+  await harness.service.performAction("sellerB", {
+    action: "save_profile",
+    xPublic: true,
+    xHandle: "@Creator_B",
+  });
+  const scores = [
+    { uniqueBuyers: 8, rankingUseCount: 10, scoreReachedAt: 400 },
+    { uniqueBuyers: 5, rankingUseCount: 7, scoreReachedAt: 100 },
+    { uniqueBuyers: 5, rankingUseCount: 7, scoreReachedAt: 0 },
+    { uniqueBuyers: 4, rankingUseCount: 20, scoreReachedAt: 50 },
+  ];
+  const periodKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+  }).format(new Date(1_800_000_000_000));
+  for (const [index, pack] of packs.entries()) {
+    const current = storedPack(harness, pack.id);
+    const lifetimePath = `rouletteTrainingPackStats/${current.packRankingId}`;
+    harness.firestore.write(lifetimePath, {
+      ...harness.firestore.read(lifetimePath),
+      ...scores[index],
+      updatedAt: 1_000 + index,
+    });
+    const monthlyPath = `rouletteTrainingPackMonthlyPeriods/${periodKey}/entries/${current.packRankingId}`;
+    harness.firestore.write(monthlyPath, {
+      ...harness.firestore.read(monthlyPath),
+      ...scores[index],
+      periodKey,
+      updatedAt: 2_000 + index,
+    });
+  }
+  const staleRankingId = stableId("stale-ranking-content");
+  harness.firestore.write(`rouletteTrainingPackStats/${staleRankingId}`, {
+    ...harness.firestore.read(
+      `rouletteTrainingPackStats/${storedPack(harness, packs[0].id).packRankingId}`,
+    ),
+    packRankingId: staleRankingId,
+    rankingContentHash: stableId("stale-content"),
+    uniqueBuyers: 999,
+    rankingUseCount: 999,
+    isCurrentPublic: true,
+  });
+
+  const lifetime = await harness.service.performAction("viewer", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.deepEqual(lifetime.rows.map((row) => row.rank), [1, 2, 2, 4]);
+  assert.deepEqual(lifetime.rows.map((row) => row.packId), packs.map((pack) => pack.id));
+  assert.equal(
+    lifetime.rows[2].packId,
+    packs[2].id,
+    "an invalid zero reached-at timestamp must sort after a valid timestamp at the same score",
+  );
+  assert.deepEqual(
+    lifetime.rows.map((row) => [row.uniqueBuyers, row.rankingUseCount]),
+    [[8, 10], [5, 7], [5, 7], [4, 20]],
+  );
+  assert.deepEqual(
+    lifetime.rows.map((row) => row.pack.id),
+    packs.map((pack) => pack.id),
+    "each ranking row carries the current public pack independently of browse pagination",
+  );
+  assert.deepEqual(lifetime.rows[0].pack.items, packs[0].items);
+  assert.equal(lifetime.rows[0].pack.status, "active");
+  assert.equal(lifetime.rows[0].pack.moderationStatus, "clear");
+  assert.equal(lifetime.rows[0].pack.isOwn, false);
+  const xRow = lifetime.rows.find((row) => row.packId === packs[1].id);
+  assert.equal(xRow.xPublic, true);
+  assert.equal(xRow.xHandle, "Creator_B");
+  assert.doesNotMatch(JSON.stringify(lifetime), /sellerUid|buyerUid/u);
+
+  const sellerView = await harness.service.performAction("sellerB", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.equal(
+    sellerView.rows.find((row) => row.packId === packs[1].id).pack.isOwn,
+    true,
+    "the embedded snapshot preserves self-preview semantics for its seller",
+  );
+
+  await harness.service.performAction("sellerD", {
+    action: "unpublish",
+    packId: packs[3].id,
+  });
+  assert.equal(packStats(harness, packs[3].id).isCurrentPublic, false);
+  const withoutHidden = await harness.service.performAction("viewer", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  assert.deepEqual(withoutHidden.rows.map((row) => row.packId), packs.slice(0, 3).map((pack) => pack.id));
+
+  await harness.service.performAction("sellerB", {
+    action: "save_profile",
+    xPublic: false,
+  });
+  const afterOptOut = await harness.service.performAction("viewer", {
+    action: "pack_rankings",
+    period: "lifetime",
+  });
+  const optedOut = afterOptOut.rows.find((row) => row.packId === packs[1].id);
+  assert.equal(optedOut.xPublic, false);
+  assert.equal(optedOut.xHandle, "");
+  await assert.rejects(
+    harness.service.performAction("sellerB", {
+      action: "save_profile",
+      xPublic: true,
+      xHandle: "https://x.com/Creator_B",
+    }),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("monthly pack rankings reset by period while lifetime unique buyers remain revision-scoped", async () => {
+  const september = Date.parse("2026-09-04T03:00:00.000Z");
+  const harness = createHarness({ balances: { seller: 20, buyer: 80 }, now: september });
+  const { pack } = await publishPack(harness, { actionId: "publish_month_rollover_1" });
+  const septemberFirst = await startUse(harness, "buyer", pack, "month_rollover_sep_1");
+  await finishUse(harness, "buyer", septemberFirst.use);
+  harness.setNow(Date.parse("2026-09-05T03:00:00.000Z"));
+  const septemberSecond = await startUse(harness, "buyer", pack, "month_rollover_sep_2");
+  await finishUse(harness, "buyer", septemberSecond.use);
+  harness.setNow(Date.parse("2026-10-01T03:00:00.000Z"));
+  const october = await startUse(harness, "buyer", pack, "month_rollover_oct_1");
+
+  const lifetime = packStats(harness, pack.id);
+  assert.equal(lifetime.useCount, 3);
+  assert.equal(lifetime.rankingUseCount, 3);
+  assert.equal(lifetime.uniqueBuyers, 1);
+  const rankingId = storedPack(harness, pack.id).packRankingId;
+  const septemberStats = harness.firestore.read(
+    `rouletteTrainingPackMonthlyPeriods/2026-09/entries/${rankingId}`,
+  );
+  const octoberStats = harness.firestore.read(
+    `rouletteTrainingPackMonthlyPeriods/2026-10/entries/${rankingId}`,
+  );
+  assert.equal(septemberStats.rankingUseCount, 2);
+  assert.equal(septemberStats.uniqueBuyers, 1);
+  assert.equal(octoberStats.rankingUseCount, 1);
+  assert.equal(octoberStats.uniqueBuyers, 1);
+  const monthly = await harness.service.performAction("buyer", {
+    action: "pack_rankings",
+    period: "monthly",
+  });
+  assert.equal(monthly.periodKey, "2026-10");
+  assert.deepEqual(monthly.rows, [], "privacy threshold still applies to the current month");
 });

@@ -46,6 +46,12 @@ test("all roulette marketplace documents are callable-only", () => {
     "rouletteTrainingRankingPairs",
     "rouletteTrainingSellerBuyerPairs",
     "rouletteTrainingMonthlyBuyerPairs",
+    "rouletteTrainingPackStats",
+    "rouletteTrainingPackMonthlyPeriods",
+    "rouletteTrainingPackRankingPairs",
+    "rouletteTrainingPackBuyerPairs",
+    "rouletteTrainingPackMonthlyBuyerPairs",
+    "rouletteTrainingSellerProfiles",
   ]) {
     assert.match(service, new RegExp(`collection\\("${collection}"\\)`));
     assert.match(rules, new RegExp(`match /${collection}/`));
@@ -114,6 +120,43 @@ test("market lists are server ordered and seller ownership is capped transaction
   assert.ok(ownIndex, "seller pack-management composite index is declared");
 });
 
+test("current-content pack rankings use callable-only aggregates and exact composite indexes", () => {
+  assert.match(core, /function rouletteTrainingRankingContentHash/);
+  assert.match(core, /menuText:[\s\S]*?detailText:[\s\S]*?countUnit:[\s\S]*?cheerLines:/);
+  assert.match(service, /async function packRankings/);
+  assert.match(service, /where\("isCurrentPublic", "==", true\)/);
+  assert.match(
+    service,
+    /where\("uniqueBuyers", ">=", PACK_RANKING_MINIMUM_UNIQUE_BUYERS\)/,
+  );
+  assert.match(service, /PACK_RANKING_MINIMUM_UNIQUE_BUYERS = 3/);
+  assert.match(service, /PACK_RANKING_LIMIT = 20/);
+  assert.match(service, /PACK_RANKING_CANDIDATE_LIMIT = 60/);
+  const requiredRankingFields = [
+    ["isCurrentPublic", "ASCENDING"],
+    ["uniqueBuyers", "DESCENDING"],
+    ["rankingUseCount", "DESCENDING"],
+    ["scoreReachedAt", "ASCENDING"],
+    ["packId", "ASCENDING"],
+  ];
+  for (const collectionGroup of ["rouletteTrainingPackStats", "entries"]) {
+    const rankingIndex = indexes.indexes.find((entry) => entry.collectionGroup === collectionGroup
+      && entry.queryScope === "COLLECTION"
+      && entry.fields.length === requiredRankingFields.length
+      && entry.fields.every((field, index) => (
+        field.fieldPath === requiredRankingFields[index][0]
+        && field.order === requiredRankingFields[index][1]
+      )));
+    assert.ok(rankingIndex, `${collectionGroup} current-content ranking index is declared`);
+  }
+  const quarantineProfileIndex = indexes.indexes.find((entry) => (
+    entry.collectionGroup === "rouletteTrainingPacks"
+    && entry.fields.some((field) => field.fieldPath === "sellerUid")
+    && entry.fields.some((field) => field.fieldPath === "moderationStatus")
+  ));
+  assert.ok(quarantineProfileIndex, "seller quarantine profile query index is declared");
+});
+
 test("paid start validates the viewed price and revision and commits economy atomically", () => {
   const start = between("async function startPaidUse", "async function resumeUse");
   for (const token of [
@@ -169,5 +212,7 @@ test("account transfer refuses active or historical roulette marketplace state",
   assert.match(index, /accountHasActiveSession[\s\S]*?collection\("rouletteTrainingActiveUses"\)\.doc\(uid\)\.get\(\)/);
   assert.match(index, /transferTargetIsPristine[\s\S]*?collection\("rouletteTrainingPacks"\)\.where\("sellerUid", "==", uid\)/);
   assert.match(index, /transferTargetIsPristine[\s\S]*?collection\("rouletteTrainingUses"\)\.where\("buyerUid", "==", uid\)/);
+  assert.match(index, /transferTargetIsPristine[\s\S]*?collection\("rouletteTrainingSellerProfiles"\)\.doc\(uid\)\.get\(\)/);
   assert.match(index, /targetRouletteTrainingSellerStatsSnapshot\.exists/);
+  assert.match(index, /targetRouletteTrainingSellerProfileSnapshot\.exists/);
 });
