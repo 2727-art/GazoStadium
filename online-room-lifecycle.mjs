@@ -8,6 +8,14 @@ export function captureOnlineRoomContext(expectedState, overrides = {}) {
   });
 }
 
+export function resolveOnlineOpponentPresence(previousOnline, presenceValue) {
+  const online = presenceValue?.online !== false;
+  return {
+    online,
+    changed: online !== (previousOnline !== false),
+  };
+}
+
 export function captureOnlineRoundContext(roomContext, expectedRound = roomContext?.expectedState?.round) {
   return Object.freeze({
     roomContext,

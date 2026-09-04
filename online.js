@@ -103,8 +103,9 @@ import {
   isOnlineRoundContextCurrent,
   isOnlineSameRoomIdentity,
   isOnlineStateTransitionCurrent,
+  resolveOnlineOpponentPresence,
   runOnlineOpponentDestroyedTransition,
-} from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v1";
+} from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v2";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,
@@ -681,6 +682,9 @@ function createOnlineState() {
     sentImageRounds: new Set(),
     roundData: {},
     chatMessages: [],
+    chatDraft: "",
+    chatDraftRevision: 0,
+    chatSendInFlight: false,
     seenChatIds: new Set(),
     matchingBusy: false,
     matchmakingLaunchBusy: false,
@@ -4680,6 +4684,7 @@ function setOnlineChrome(label) {
 
 function render() {
   if (!active) return;
+  if (state.screen === "gameover") captureOnlineChatDraft();
   const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
     setup: renderSetup,
@@ -5543,7 +5548,7 @@ function renderOnlineHud() {
     ${playerHtml(state.players[1], 1)}</div>
     <div class="online-room-strip"><span>ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span>
       <span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ 再接続待ち"}</span>
-      <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
+      <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}" data-online-opponent-presence>${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
       ${state.reunionMatch ? '<span class="connection-pill connected">顔なじみと再会</span>' : ""}
       <button class="avatar-visibility-toggle" type="button" data-online-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button></div>`;
 }
@@ -5810,13 +5815,40 @@ function renderEngawaInvitation() {
       <button class="button button-ghost" type="button" data-engawa-decision="decline">今日はここまで</button>`;
   }
 
-  return `<section class="engawa-invite" aria-labelledby="engawaInviteTitle">
+  return `<section class="engawa-invite" data-engawa-invitation aria-labelledby="engawaInviteTitle">
     <div class="engawa-invite-head"><div><span>AFTER MATCH / P2P ONLY</span><h2 id="engawaInviteTitle">縁側で一息</h2></div><i aria-hidden="true">♨</i></div>
     <p>勝負はここまで。お互いが望んだ時だけ、手元の一枚と今の気分をそっと見せ合えます。</p>
     <div class="engawa-promises" aria-label="縁側の約束"><span>採点なし</span><span>報酬なし</span><span>保存なし</span></div>
     <p class="engawa-invite-status" aria-live="polite">${escapeHtml(status)}</p>
     ${actions ? `<div class="engawa-invite-actions">${actions}</div>` : ""}
   </section>`;
+}
+
+function bindEngawaInvitationEvents(root = document) {
+  root.querySelectorAll("[data-engawa-decision]").forEach((button) => button.addEventListener("click", () => {
+    submitEngawaDecision(button.dataset.engawaDecision);
+  }));
+  root.querySelector("[data-engawa-end]")?.addEventListener("click", () => endEngawa("縁側は開かず、ここで一戦を終えました。"));
+}
+
+function refreshEngawaInvitation() {
+  if (state.screen !== "gameover") return;
+  const current = appRoot.querySelector("[data-engawa-invitation]");
+  if (!current) return;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderEngawaInvitation();
+  const next = wrapper.querySelector("[data-engawa-invitation]");
+  if (!next) return;
+  current.replaceWith(next);
+  bindEngawaInvitationEvents(next);
+}
+
+function refreshOpponentConnectionPill() {
+  const pill = document.querySelector("[data-online-opponent-presence]");
+  if (!pill) return;
+  pill.classList.toggle("connected", state.opponentOnline);
+  pill.classList.toggle("warning", !state.opponentOnline);
+  pill.textContent = state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ";
 }
 
 function soloFamiliarDecisionAvailable() {
@@ -5965,8 +5997,8 @@ function renderOnlineChat() {
   return `<aside class="chat-panel"><div class="chat-head"><strong>ONLINE CHAT</strong><span>ルーム終了後に非表示</span></div>
     <div class="chat-messages" id="onlineChatMessages">${messages}</div>
     ${renderChatTools({ id: "online", textReactions: reactions, stamps: getAvailableStamps(state.economy), textAttribute: "data-online-reaction", stampAttribute: "data-online-stamp" })}
-    <form class="chat-form" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
-      <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
+    <form class="chat-form" id="onlineChatForm"><input class="chat-input" id="onlineChatInput" maxlength="80" value="${escapeHtml(state.chatDraft)}" placeholder="ひとこと送る…" autocomplete="off" aria-label="チャットメッセージ" />
+      <button class="button button-cyan button-small" type="submit"${state.chatSendInFlight ? " disabled" : ""}>送信</button></form></aside>`;
 }
 
 function bindScreenEvents() {
@@ -6026,10 +6058,7 @@ function bindScreenEvents() {
       balance: state.economy.points,
       onBalanceChange: (balance) => { state.economy.points = balance; },
     });
-    document.querySelectorAll("[data-engawa-decision]").forEach((button) => button.addEventListener("click", () => {
-      submitEngawaDecision(button.dataset.engawaDecision);
-    }));
-    document.querySelector("[data-engawa-end]")?.addEventListener("click", () => endEngawa("縁側は開かず、ここで一戦を終えました。"));
+    bindEngawaInvitationEvents(appRoot);
     document.querySelector("#onlineNewMatch")?.addEventListener("click", resetOnlineSetup);
     document.querySelector("#onlineFreeTableLampButton")?.addEventListener("click", leaveToFreeTable);
     document.querySelector("#onlineGameoverMissions")?.addEventListener("click", openPostMatchMissions);
@@ -6964,14 +6993,61 @@ function bindScoreEvents() {
 function bindChatEvents() {
   document.querySelectorAll("[data-online-reaction]").forEach((button) => button.addEventListener("click", () => sendChat(button.dataset.onlineReaction)));
   document.querySelectorAll("[data-online-stamp]").forEach((button) => button.addEventListener("click", () => sendChat("", button.dataset.onlineStamp)));
-  document.querySelector("#onlineChatForm")?.addEventListener("submit", (event) => {
+  const input = document.querySelector("#onlineChatInput");
+  input?.addEventListener("input", () => captureOnlineChatDraft(input));
+  input?.addEventListener("compositionend", () => captureOnlineChatDraft(input));
+  document.querySelector("#onlineChatForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const input = document.querySelector("#onlineChatInput");
-    sendChat(input.value);
-    input.value = "";
-    input.focus();
+    const form = event.currentTarget;
+    const currentInput = form.querySelector("#onlineChatInput");
+    if (!currentInput || state.chatSendInFlight) return;
+    captureOnlineChatDraft(currentInput);
+    const selectionStart = currentInput.selectionStart;
+    const selectionEnd = currentInput.selectionEnd;
+    const selectionDirection = currentInput.selectionDirection;
+    currentInput.focus({ preventScroll: true });
+    if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+      currentInput.setSelectionRange(selectionStart, selectionEnd, selectionDirection || "none");
+    }
+    const draft = state.chatDraft;
+    if (!draft.trim()) return;
+    const targetState = state;
+    const targetRoomId = targetState.roomId;
+    const submittedRevision = targetState.chatDraftRevision;
+    const submitButton = form.querySelector('button[type="submit"]');
+    targetState.chatSendInFlight = true;
+    if (submitButton) submitButton.disabled = true;
+    let sent = false;
+    try {
+      sent = await sendChat(draft);
+    } catch (error) {
+      handleRecoverableError(error);
+    } finally {
+      targetState.chatSendInFlight = false;
+    }
+    if (state !== targetState || targetState.roomId !== targetRoomId) return;
+    const activeButton = document.querySelector('#onlineChatForm button[type="submit"]');
+    if (activeButton) activeButton.disabled = false;
+    if (!sent || targetState.chatDraftRevision !== submittedRevision) return;
+    targetState.chatDraft = "";
+    const activeInput = document.querySelector("#onlineChatInput");
+    if (activeInput) {
+      activeInput.value = "";
+    }
   });
   scrollChat();
+}
+
+function normalizeOnlineChatDraft(value) {
+  return String(value ?? "").slice(0, 80);
+}
+
+function captureOnlineChatDraft(input = document.querySelector("#onlineChatInput")) {
+  if (!input) return;
+  const draft = normalizeOnlineChatDraft(input.value);
+  if (draft === state.chatDraft) return;
+  state.chatDraft = draft;
+  state.chatDraftRevision += 1;
 }
 
 async function handleImageInput(event) {
@@ -9357,18 +9433,7 @@ async function setupRoomListeners(context) {
     context.opponentUid,
     context.expectedState.opponentSessionId,
   )), (snapshot) => {
-    if (!isCurrentRoomSetupContext(context)) return;
-    state.opponentOnline = snapshot.val()?.online !== false;
-    document.querySelectorAll(".online-room-strip .connection-pill")[1]?.classList.toggle("warning", !state.opponentOnline);
-    if (!state.opponentOnline && state.screen === "engawa") {
-      closeEngawaLocally("相手の接続が切れたため、縁側を閉じました。");
-    } else if (state.screen === "gameover") {
-      if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
-        scheduleEngawaAfterPostMatchTip();
-      } else {
-        render();
-      }
-    }
+    handleOpponentPresenceValue(context, snapshot.val());
   }));
   const chatQuery = query(ref(database, `${base}/chat`), limitToLast(50));
   state.roomUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
@@ -10331,11 +10396,11 @@ function submitEngawaDecision(decision) {
   if (decision === "decline") {
     state.engawaClosed = true;
     state.engawaEndReason = "今日はここまで。縁側は開かず、一戦を終えました。";
-    render();
+    refreshEngawaInvitation();
     return;
   }
   maybeEnterEngawa();
-  if (state.screen === "gameover") render();
+  if (state.screen === "gameover") refreshEngawaInvitation();
 }
 
 function handleRemoteEngawaDecision(decision) {
@@ -10381,7 +10446,7 @@ function scheduleEngawaAfterPostMatchTip() {
     if (engawaIsMutuallyAccepted()) {
       maybeEnterEngawa();
     } else {
-      render();
+      refreshEngawaInvitation();
     }
   }, 250);
 }
@@ -10411,14 +10476,30 @@ function closeEngawaLocally(reason) {
     state.engawaEndReason = reason;
   }
   releaseEngawaMedia();
-  if (state.screen === "engawa") {
+  const wasEngawa = state.screen === "engawa";
+  if (wasEngawa) {
     state.screen = "gameover";
     setOnlineChrome("MATCH COMPLETE");
   }
-  if (state.screen === "gameover" && isPostMatchTipBusy("solo", state.roomId, state.uid)) {
+  if (wasEngawa) {
+    render();
+  } else if (state.screen === "gameover" && isPostMatchTipBusy("solo", state.roomId, state.uid)) {
     scheduleEngawaAfterPostMatchTip();
   } else if (state.screen === "gameover") {
-    render();
+    refreshEngawaInvitation();
+  }
+}
+
+function handleOpponentPresenceValue(context, presenceValue) {
+  if (!isCurrentRoomSetupContext(context)) return;
+  const presence = resolveOnlineOpponentPresence(state.opponentOnline, presenceValue);
+  state.opponentOnline = presence.online;
+  if (!presence.changed) return;
+  refreshOpponentConnectionPill();
+  if (!state.opponentOnline && state.screen === "engawa") {
+    closeEngawaLocally("相手の接続が切れたため、縁側を閉じました。");
+  } else if (state.screen === "gameover") {
+    refreshEngawaInvitation();
   }
 }
 
@@ -11211,29 +11292,35 @@ async function sendChat(value, stampId = "") {
   const stamp = getStamp(stampId);
   if (stampId && (!stamp || !canUseStamp(stampId, state.economy))) {
     showToast("このスタンプは現在の装備に含まれていません。");
-    return;
+    return false;
   }
   if (stamp && !acquireStampCooldown("online")) {
     showToast("スタンプは2秒に1回送信できます。");
-    return;
+    return false;
   }
   const text = stamp ? stamp.label : String(value || "").trim().slice(0, 80);
-  if (!text || !state.roomId) return;
-  const message = {
-    authorUid: state.uid,
-    name: state.name,
-    text,
-    round: state.round,
-    createdAt: serverTimestamp(),
-  };
-  if (stamp) {
-    message.stampId = stamp.id;
-    startStampButtonCooldown("[data-online-stamp]");
+  if (!text || !state.roomId) return false;
+  try {
+    const message = {
+      authorUid: state.uid,
+      name: state.name,
+      text,
+      round: state.round,
+      createdAt: serverTimestamp(),
+    };
+    if (stamp) {
+      message.stampId = stamp.id;
+      startStampButtonCooldown("[data-online-stamp]");
+    }
+    const equippedTitle = getTitleProduct();
+    if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
+    attachEquippedChatCosmetics(message);
+    await set(push(ref(database, `online/rooms/${state.roomId}/chat`)), message);
+    return true;
+  } catch {
+    showToast("チャットを送信できませんでした。");
+    return false;
   }
-  const equippedTitle = getTitleProduct();
-  if (equippedTitle && state.economy.inventory?.[equippedTitle.id]) message.titleId = equippedTitle.id;
-  attachEquippedChatCosmetics(message);
-  await set(push(ref(database, `online/rooms/${state.roomId}/chat`)), message).catch(() => showToast("チャットを送信できませんでした。"));
 }
 
 function refreshChat() {
@@ -12252,6 +12339,9 @@ function releaseMatchMedia() {
   releaseEngawaMedia();
   releaseRemoteAvatar();
   state.chatMessages = [];
+  state.chatDraft = "";
+  state.chatDraftRevision += 1;
+  state.chatSendInFlight = false;
 }
 
 function releaseAllImages() {

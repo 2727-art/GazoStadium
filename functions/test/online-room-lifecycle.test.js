@@ -67,6 +67,22 @@ test("room and round guards reject callbacks from an older room or round", async
   }), false);
 });
 
+test("opponent presence changes only when the online meaning changes", async () => {
+  const { resolveOnlineOpponentPresence } = await lifecycleModule;
+  const cases = [
+    [true, { online: true, updatedAt: 1 }, { online: true, changed: false }],
+    [true, { online: true, updatedAt: 2 }, { online: true, changed: false }],
+    [true, { online: false, updatedAt: 3 }, { online: false, changed: true }],
+    [false, { online: false, updatedAt: 4 }, { online: false, changed: false }],
+    [false, { online: true, updatedAt: 5 }, { online: true, changed: true }],
+    [true, null, { online: true, changed: false }],
+  ];
+
+  for (const [previousOnline, presenceValue, expected] of cases) {
+    assert.deepEqual(resolveOnlineOpponentPresence(previousOnline, presenceValue), expected);
+  }
+});
+
 test("an old room destroyed marker cannot clean up or replace the current room", async () => {
   const {
     captureOnlineRoomContext,
@@ -205,7 +221,7 @@ test("only the latest state transition can complete after shared cleanup", async
 
 test("normal 1on1 wires room and round contexts through cleanup and transition paths", () => {
   const source = read("online.js");
-  assert.match(source, /from "\.\/online-room-lifecycle\.mjs\?v=online-room-lifecycle-v1"/);
+  assert.match(source, /from "\.\/online-room-lifecycle\.mjs\?v=online-room-lifecycle-v2"/);
   assert.match(source, /const roomSetupContext = captureOnlineRoomContext\(expectedState/);
   assert.match(source, /handleOpponentDestroyed\(context, snapshot\.val\(\)\)\.catch\(handleRecoverableError\)/);
   assert.match(source, /function listenToRound\(roomContext\)/);
