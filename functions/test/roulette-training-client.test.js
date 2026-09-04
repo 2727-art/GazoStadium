@@ -25,8 +25,8 @@ function sourceBlock(source, startMarker, endMarker) {
 test("landing and module wiring expose a separate solo roulette mode", () => {
   assert.match(html, /roulette-training\.css\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.js\?v=[^"]*-room-scrapbook-v1[^"]*"/);
-  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1"/);
-  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1"/);
+  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1"/);
   assert.match(app, /id="rouletteTrainingButton"/);
   assert.match(app, /function startRouletteTraining\(\)/);
   assert.match(app, /hariai-roulette-training-ready/);
@@ -1080,6 +1080,197 @@ test("ranking and creator UI stays keyboard-readable and collapses without horiz
   assert.match(styles, /\.roulette-training-x-input:focus-within\s*\{[\s\S]*?border-color:\s*var\(--rt-rose-deep\)/);
   assert.match(styles, /\.roulette-training-ranking-copy h3\s*\{[\s\S]*?overflow-wrap:\s*anywhere/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test("multiple cheer lines rotate every eight active seconds without changing gameplay state", () => {
+  const stage = sourceBlock(client, "function renderStage", "function mainReelItems");
+  const helpers = sourceBlock(client, "function menuCheerLines", "function updateCheerBubble");
+  const rotation = sourceBlock(client, "function updateCheerBubble", "function settleMainSpin");
+  const clearTimers = sourceBlock(client, "function clearRuntimeTimers", "function ensureAudioContext");
+  const begin = sourceBlock(client, "function beginChallenge", "function scheduleTemporaryEffectExpiry");
+  const workout = sourceBlock(client, "function updateWorkout", "function pauseChallengeForVisibility");
+  const reduced = styles.slice(styles.indexOf("@media (prefers-reduced-motion: reduce)"));
+
+  assert.match(client, /CHEER_ROTATION_INTERVAL_MS = 8_000/);
+  assert.match(client, /CHEER_EXIT_DURATION_MS = 160/);
+  assert.match(client, /CHEER_ENTRY_DURATION_MS = 240/);
+  assert.match(stage, /<p data-roulette-cheer-text>/);
+  assert.doesNotMatch(stage, /aria-live=/);
+  assert.match(rotation, /prefersReducedMotion\(\)[\s\S]*?text\.textContent = cheer/);
+  assert.match(rotation, /text\.classList\.add\("is-leaving"\)[\s\S]*?CHEER_EXIT_DURATION_MS/);
+  assert.match(rotation, /text\.classList\.add\("is-entering"\)[\s\S]*?CHEER_ENTRY_DURATION_MS/);
+  assert.match(rotation, /document\.visibilityState === "hidden"/);
+  assert.match(rotation, /session\?\.phase !== "active"/);
+  assert.match(rotation, /session\.challengeTimedOut/);
+  assert.match(rotation, /menuCheerLines\(session\.currentMenu\)\.length < 2/);
+  assert.match(rotation, /state\.screen !== "play"/);
+  assert.match(rotation, /\(\) => rotateCheer\(session, menuId\),\s*CHEER_ROTATION_INTERVAL_MS/);
+  assert.match(rotation, /session !== expectedSession/);
+  assert.match(rotation, /String\(session\.currentMenu\?\.id \|\| ""\) !== expectedMenuId/);
+  assert.match(rotation, /session\.currentCheer = nextCheer;[\s\S]*?persistSession\(\);[\s\S]*?updateCheerBubble\(nextCheer\)/);
+  assert.doesNotMatch(rotation, /\brender\(\)|\bannounce\(/);
+  assert.doesNotMatch(rotation, /Math\.random|cheerForMenu\(/);
+  assert.match(begin, /scheduleMetronome\(\);[\s\S]*?scheduleCheerRotation\(\);[\s\S]*?scheduleTemporaryEffectExpiry\(\)/);
+  assert.match(clearTimers, /clearTimeout\(cheerRotationTimer\)/);
+  assert.match(clearTimers, /clearTimeout\(cheerTransitionTimer\)/);
+  assert.match(workout, /clearTimeout\(cheerRotationTimer\)[\s\S]*?clearTimeout\(cheerTransitionTimer\)/);
+
+  assert.match(styles, /\.roulette-training-speech-bubble p\.is-leaving\s*\{[\s\S]*?roulette-training-cheer-out 160ms/);
+  assert.match(styles, /\.roulette-training-speech-bubble p\.is-entering\s*\{[\s\S]*?roulette-training-cheer-in 240ms/);
+  assert.match(reduced, /\.roulette-training-speech-bubble p:is\(\.is-leaving, \.is-entering\)/);
+
+  const sandbox = {};
+  vm.runInNewContext(`${helpers}
+    Math.random = () => 0;
+    this.rotation = {
+      lines: menuCheerLines({ cheerLines: ["はじめ", "つぎ", "さいご", "つぎ", ""] }),
+      firstWithoutRepeat: cheerForMenu({ cheerLines: ["はじめ", "つぎ", "さいご"] }, "はじめ"),
+      next: nextCheerForMenu({ cheerLines: ["はじめ", "つぎ", "さいご"] }, "つぎ"),
+      wrapped: nextCheerForMenu({ cheerLines: ["はじめ", "つぎ", "さいご"] }, "さいご"),
+      single: nextCheerForMenu({ cheerLines: ["固定"] }, "固定"),
+    };
+    Math.random = () => 0.6;
+    this.rotation.weightedDuplicate = cheerForMenu({ cheerLines: ["A", "A", "B"] });`, sandbox);
+  assert.deepEqual(Array.from(sandbox.rotation.lines), ["はじめ", "つぎ", "さいご"]);
+  assert.equal(sandbox.rotation.firstWithoutRepeat, "つぎ");
+  assert.equal(sandbox.rotation.next, "さいご");
+  assert.equal(sandbox.rotation.wrapped, "はじめ");
+  assert.equal(sandbox.rotation.single, "固定");
+  assert.equal(sandbox.rotation.weightedDuplicate, "A");
+
+  const runtimeSandbox = {};
+  vm.runInNewContext(`
+    const CHEER_ROTATION_INTERVAL_MS = 8_000;
+    const CHEER_EXIT_DURATION_MS = 160;
+    const CHEER_ENTRY_DURATION_MS = 240;
+    let cheerRotationTimer = null;
+    let cheerTransitionTimer = null;
+    let active = true;
+    let randomCalls = 0;
+    Math.random = () => { randomCalls += 1; return 0; };
+    const callbacks = [];
+    const window = {
+      clearTimeout() {},
+      setTimeout(callback, delay) {
+        callbacks.push({ callback, delay });
+        return callbacks.length;
+      },
+    };
+    const document = { visibilityState: "visible" };
+    const classes = new Set();
+    const text = {
+      isConnected: true,
+      classList: {
+        add(...names) { names.forEach((name) => classes.add(name)); },
+        remove(...names) { names.forEach((name) => classes.delete(name)); },
+      },
+      value: "最初",
+      set textContent(value) { this.value = value; },
+      get textContent() { return this.value; },
+    };
+    const bubble = {
+      querySelector(selector) { return selector === "[data-roulette-cheer-text]" ? text : null; },
+    };
+    const appRoot = {
+      querySelector(selector) { return selector === ".roulette-training-speech-bubble" ? bubble : null; },
+    };
+    let persisted = 0;
+    function persistSession() { persisted += 1; }
+    let reducedMotion = true;
+    function prefersReducedMotion() { return reducedMotion; }
+    const state = {
+      screen: "play",
+      session: {
+        phase: "active",
+        challengeTimedOut: false,
+        currentMenu: { id: "menu-1", cheerLines: ["最初", "次", "最後"] },
+        currentCheer: "最初",
+      },
+    };
+    ${helpers}
+    ${rotation}
+    scheduleCheerRotation();
+    const firstDelay = callbacks[0].delay;
+    callbacks.shift().callback();
+    const afterFirst = {
+      cheer: state.session.currentCheer,
+      visible: text.textContent,
+      persisted,
+      pending: callbacks.length,
+      randomCalls,
+    };
+    state.session.phase = "paused";
+    callbacks.shift().callback();
+    const afterPausedCallback = { cheer: state.session.currentCheer, pending: callbacks.length };
+    state.session.phase = "active";
+    scheduleCheerRotation();
+    state.session.currentMenu = { id: "menu-2", cheerLines: ["別1", "別2"] };
+    state.session.currentCheer = "別1";
+    callbacks.shift().callback();
+    const afterStaleCallback = { cheer: state.session.currentCheer, pending: callbacks.length };
+    state.session.currentMenu = { id: "menu-3", cheerLines: ["固定"] };
+    callbacks.length = 0;
+    scheduleCheerRotation();
+    const singleLinePending = callbacks.length;
+    state.session.currentMenu = { id: "menu-4", cheerLines: ["甲", "乙"] };
+    state.session.currentCheer = "甲";
+    state.session.phase = "active";
+    text.textContent = "甲";
+    callbacks.length = 0;
+    reducedMotion = false;
+    scheduleCheerRotation();
+    callbacks.shift().callback();
+    const afterExitQueued = {
+      visible: text.textContent,
+      classes: Array.from(classes),
+      delays: callbacks.map((entry) => entry.delay),
+    };
+    const exitIndex = callbacks.findIndex((entry) => entry.delay === CHEER_EXIT_DURATION_MS);
+    callbacks.splice(exitIndex, 1)[0].callback();
+    const afterSwap = {
+      visible: text.textContent,
+      classes: Array.from(classes),
+      delays: callbacks.map((entry) => entry.delay),
+    };
+    const entryIndex = callbacks.findIndex((entry) => entry.delay === CHEER_ENTRY_DURATION_MS);
+    callbacks.splice(entryIndex, 1)[0].callback();
+    const afterEntry = { visible: text.textContent, classes: Array.from(classes) };
+    this.runtime = {
+      firstDelay,
+      afterFirst,
+      afterPausedCallback,
+      afterStaleCallback,
+      singleLinePending,
+      afterExitQueued,
+      afterSwap,
+      afterEntry,
+    };
+  `, runtimeSandbox);
+  assert.equal(runtimeSandbox.runtime.firstDelay, 8_000);
+  assert.deepEqual({ ...runtimeSandbox.runtime.afterFirst }, {
+    cheer: "次",
+    visible: "次",
+    persisted: 1,
+    pending: 1,
+    randomCalls: 0,
+  });
+  assert.deepEqual({ ...runtimeSandbox.runtime.afterPausedCallback }, { cheer: "次", pending: 0 });
+  assert.deepEqual({ ...runtimeSandbox.runtime.afterStaleCallback }, { cheer: "別1", pending: 0 });
+  assert.equal(runtimeSandbox.runtime.singleLinePending, 0);
+  assert.deepEqual({
+    visible: runtimeSandbox.runtime.afterExitQueued.visible,
+    classes: Array.from(runtimeSandbox.runtime.afterExitQueued.classes),
+    delays: Array.from(runtimeSandbox.runtime.afterExitQueued.delays),
+  }, { visible: "甲", classes: ["is-leaving"], delays: [160, 8_000] });
+  assert.deepEqual({
+    visible: runtimeSandbox.runtime.afterSwap.visible,
+    classes: Array.from(runtimeSandbox.runtime.afterSwap.classes),
+    delays: Array.from(runtimeSandbox.runtime.afterSwap.delays),
+  }, { visible: "乙", classes: ["is-entering"], delays: [8_000, 240] });
+  assert.deepEqual({
+    visible: runtimeSandbox.runtime.afterEntry.visible,
+    classes: Array.from(runtimeSandbox.runtime.afterEntry.classes),
+  }, { visible: "乙", classes: [] });
 });
 
 test("play exposes only clear or give up as self-report outcomes", () => {

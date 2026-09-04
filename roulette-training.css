@@ -1899,6 +1899,14 @@
   animation: roulette-training-cheer-pop 420ms cubic-bezier(0.2, 1.2, 0.35, 1) both;
 }
 
+.roulette-training-speech-bubble p.is-leaving {
+  animation: roulette-training-cheer-out 160ms ease-in both;
+}
+
+.roulette-training-speech-bubble p.is-entering {
+  animation: roulette-training-cheer-in 240ms cubic-bezier(0.2, 0.9, 0.35, 1) both;
+}
+
 .roulette-training-speech-bubble p {
   display: -webkit-box;
   margin: 0;
@@ -2352,6 +2360,16 @@
   0% { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.9) rotate(-1deg); }
   72% { opacity: 1; transform: translate3d(0, -2px, 0) scale(1.025) rotate(-1deg); }
   100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1) rotate(-1deg); }
+}
+
+@keyframes roulette-training-cheer-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0); }
+  to { opacity: 0; transform: translate3d(0, -3px, 0); }
+}
+
+@keyframes roulette-training-cheer-in {
+  from { opacity: 0; transform: translate3d(0, 3px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
 @keyframes roulette-training-special-frame {
@@ -5745,6 +5763,7 @@
 
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play.is-phase-effect-result .roulette-training-room-lamp-light,
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble.is-pop-in,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble p:is(.is-leaving, .is-entering),
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-selection-drawer.is-open,
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-odometer-strip,
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-progress-lights i,
@@ -5773,6 +5792,7 @@
   }
 
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble.is-pop-in,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble p:is(.is-leaving, .is-entering),
   .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-progress-lights i,
   .roulette-training-goal-lights i {
     opacity: 1;

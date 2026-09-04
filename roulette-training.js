@@ -67,6 +67,9 @@ const REEL_VISUAL_ROW_COUNT = Object.freeze({ main: 36, count: 30 });
 const REEL_SPIN_DURATION_MS = Object.freeze({ main: 2_000, count: 1_600 });
 const REEL_REDUCED_MOTION_DURATION_MS = 140;
 const REEL_FALLBACK_BUFFER_MS = 420;
+const CHEER_ROTATION_INTERVAL_MS = 8_000;
+const CHEER_EXIT_DURATION_MS = 160;
+const CHEER_ENTRY_DURATION_MS = 240;
 const DEFAULT_CONFIG = Object.freeze({
   baseBpm: BASE_BPM,
   maximumBpm: MAX_BPM,
@@ -108,6 +111,8 @@ let decorationCleanupTimer = null;
 let countdownTimer = null;
 let workoutTicker = null;
 let metronomeTimer = null;
+let cheerRotationTimer = null;
+let cheerTransitionTimer = null;
 let temporaryEffectTimer = null;
 let rarePresentationSkipTimer = null;
 let rarePresentationStartedAt = 0;
@@ -923,7 +928,7 @@ function editorMenuCard(item, index) {
     <label><span>トレーニングメニュー</span><input name="menuText-${index}" type="text" maxlength="80" value="${escapeHtml(item.menuText)}" placeholder="例：ゆっくりスクワット" required /></label>
     <label><span>やり方・補足（任意）</span><textarea name="detailText-${index}" maxlength="120" rows="3" placeholder="動き方や必要な道具など">${escapeHtml(item.detailText || "")}</textarea></label>
     <label><span>回数ルーレットの単位</span><select name="countUnit-${index}">${UNITS.map((unit) => configOption(unit.id, unit.label, item.countUnit)).join("")}</select></label>
-    <label><span>応援台詞</span><textarea name="cheerLines-${index}" rows="4" placeholder="1行につき1台詞、最大4行" required>${escapeHtml(cheerText)}</textarea><small>1〜4行・各行60文字以内。画像の吹き出しに表示します。文章中の数字は回数やBPMに反映されません。</small></label>
+    <label><span>応援台詞</span><textarea name="cheerLines-${index}" rows="4" placeholder="1行につき1台詞、最大4行" required>${escapeHtml(cheerText)}</textarea><small>1〜4行・各行60文字以内。画像の吹き出しへ表示し、トレーニング中は8秒ごとに入力順で切り替わります（1行なら固定）。文章中の数字は回数やBPMに反映されません。</small></label>
     ${state.editorDraft.items.length > 1 ? `<button class="button button-ghost" type="button" data-roulette-remove-menu="${index}">この項目を削除</button>` : ""}
   </fieldset>`;
 }
@@ -1451,7 +1456,7 @@ function renderStage() {
     ${image ? `<img src="${escapeHtml(image.url)}" alt="トレーニング用に選択した画像" />` : `<div class="roulette-training-image-missing"><strong>画像を復元できませんでした</strong><span>トレーニング終了後に選び直せます</span></div>`}
     <span class="roulette-training-photo-tape is-top" aria-hidden="true"></span>
     <span class="roulette-training-photo-tape is-bottom" aria-hidden="true"></span>
-    ${cheerVisible ? `<div class="roulette-training-speech-bubble ${session.phase === "menu_result" ? "is-pop-in" : ""}"><span class="roulette-training-note-tape" aria-hidden="true"></span><p>${escapeHtml(cheer)}</p></div>` : ""}
+    ${cheerVisible ? `<div class="roulette-training-speech-bubble ${session.phase === "menu_result" ? "is-pop-in" : ""}"><span class="roulette-training-note-tape" aria-hidden="true"></span><p data-roulette-cheer-text>${escapeHtml(cheer)}</p></div>` : ""}
     ${renderProgressGems(session)}
   </div>`;
 }
@@ -2437,12 +2442,90 @@ function nextImageIndex(session) {
   return imageIndex;
 }
 
+function menuCheerLines(menu) {
+  return [...new Set(
+    (Array.isArray(menu?.cheerLines) ? menu.cheerLines : [])
+      .map((line) => String(line || "").trim())
+      .filter(Boolean),
+  )];
+}
+
 function cheerForMenu(menu, previous = "") {
   const lines = Array.isArray(menu?.cheerLines) ? menu.cheerLines.filter(Boolean) : [];
   if (!lines.length) return "その調子！ 自分のペースでいこう！";
   const alternatives = lines.filter((line) => line !== previous);
   const candidates = alternatives.length ? alternatives : lines;
   return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function nextCheerForMenu(menu, current = "") {
+  const lines = menuCheerLines(menu);
+  if (!lines.length) return "その調子！ 自分のペースでいこう！";
+  if (lines.length === 1) return lines[0];
+  const currentIndex = lines.indexOf(String(current || ""));
+  return lines[(currentIndex + 1 + lines.length) % lines.length];
+}
+
+function updateCheerBubble(cheer) {
+  const bubble = appRoot.querySelector(".roulette-training-speech-bubble");
+  const text = bubble?.querySelector("[data-roulette-cheer-text]");
+  if (!bubble || !text) return;
+  window.clearTimeout(cheerTransitionTimer);
+  cheerTransitionTimer = null;
+  text.classList.remove("is-leaving", "is-entering");
+  if (prefersReducedMotion()) {
+    text.textContent = cheer;
+    return;
+  }
+  text.classList.add("is-leaving");
+  cheerTransitionTimer = window.setTimeout(() => {
+    cheerTransitionTimer = null;
+    if (!text.isConnected) return;
+    text.textContent = cheer;
+    text.classList.remove("is-leaving");
+    text.classList.add("is-entering");
+    cheerTransitionTimer = window.setTimeout(() => {
+      cheerTransitionTimer = null;
+      if (text.isConnected) text.classList.remove("is-entering");
+    }, CHEER_ENTRY_DURATION_MS);
+  }, CHEER_EXIT_DURATION_MS);
+}
+
+function scheduleCheerRotation() {
+  window.clearTimeout(cheerRotationTimer);
+  cheerRotationTimer = null;
+  const session = state.session;
+  if (!active
+      || state.screen !== "play"
+      || document.visibilityState === "hidden"
+      || session?.phase !== "active"
+      || session.challengeTimedOut
+      || menuCheerLines(session.currentMenu).length < 2) return;
+  const menuId = String(session.currentMenu?.id || "");
+  if (!menuId) return;
+  cheerRotationTimer = window.setTimeout(
+    () => rotateCheer(session, menuId),
+    CHEER_ROTATION_INTERVAL_MS,
+  );
+}
+
+function rotateCheer(expectedSession = null, expectedMenuId = "") {
+  cheerRotationTimer = null;
+  const session = state.session;
+  if (!active
+      || state.screen !== "play"
+      || document.visibilityState === "hidden"
+      || session?.phase !== "active"
+      || session.challengeTimedOut
+      || session !== expectedSession
+      || String(session.currentMenu?.id || "") !== expectedMenuId) return;
+  const nextCheer = nextCheerForMenu(session.currentMenu, session.currentCheer);
+  if (nextCheer !== session.currentCheer) {
+    session.currentCheer = nextCheer;
+    persistSession();
+    updateCheerBubble(nextCheer);
+  }
+  scheduleCheerRotation();
 }
 
 function settleMainSpin() {
@@ -2539,6 +2622,8 @@ function clearRuntimeTimers() {
   window.clearInterval(countdownTimer);
   window.clearInterval(workoutTicker);
   window.clearTimeout(metronomeTimer);
+  window.clearTimeout(cheerRotationTimer);
+  window.clearTimeout(cheerTransitionTimer);
   window.clearTimeout(temporaryEffectTimer);
   spinTimer = null;
   decorationCleanupTimer = null;
@@ -2547,6 +2632,8 @@ function clearRuntimeTimers() {
   countdownTimer = null;
   workoutTicker = null;
   metronomeTimer = null;
+  cheerRotationTimer = null;
+  cheerTransitionTimer = null;
   temporaryEffectTimer = null;
   if (resultCountAnimationFrame != null) {
     window.cancelAnimationFrame(resultCountAnimationFrame);
@@ -2659,6 +2746,7 @@ function beginChallenge({ resume = false } = {}) {
   persistSession();
   render();
   scheduleMetronome();
+  scheduleCheerRotation();
   scheduleTemporaryEffectExpiry();
   workoutTicker = window.setInterval(updateWorkout, 250);
   announce(`${challengeLabel(session)}を開始しました。できたら「できた！」、つらいときは「今日はここまで」を選んでください。`);
@@ -2717,6 +2805,10 @@ function updateWorkout() {
   workoutTicker = null;
   window.clearTimeout(metronomeTimer);
   metronomeTimer = null;
+  window.clearTimeout(cheerRotationTimer);
+  cheerRotationTimer = null;
+  window.clearTimeout(cheerTransitionTimer);
+  cheerTransitionTimer = null;
   persistSession();
   render();
   announce("時間になりました。できたら「できた！」、つらいときは「今日はここまで」を選んでください。");
