@@ -2224,6 +2224,16 @@
   line-height: 1.65 !important;
 }
 
+.roulette-training-detail-disclosure {
+  display: none;
+}
+
+.roulette-training-active-summary,
+.roulette-training-active-copy,
+.roulette-training-active-metrics {
+  display: contents;
+}
+
 .roulette-training-selection-drawer.is-effect {
   border-color: rgba(255, 102, 133, 0.36);
   background: linear-gradient(180deg, rgba(68, 27, 49, 0.96), rgba(19, 19, 33, 0.98));
@@ -5744,6 +5754,345 @@
 
   .roulette-training-screen[data-roulette-training-screen="result"] .roulette-training-end-button {
     min-height: 48px;
+  }
+}
+
+/* Portrait phones give the selected image a stable hero area. The page remains
+   naturally scrollable so long creator text and both self-report actions stay reachable. */
+@media (max-width: 620px) and (max-aspect-ratio: 3 / 4) {
+  .roulette-training-screen[data-roulette-training-screen="play"] {
+    width: min(100% - 8px, 1180px);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play {
+    --roulette-mobile-stage-height: clamp(300px, 46vh, 430px);
+    --roulette-mobile-stage-height: clamp(300px, 46svh, 430px);
+    min-height: calc(100dvh - 116px);
+    align-content: start;
+    scroll-padding-block-end: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play:is(
+    .is-phase-menu-result,
+    .is-phase-count-ready,
+    .is-phase-count-spinning,
+    .is-phase-count-result
+  ) {
+    --roulette-mobile-stage-height: clamp(320px, 52vh, 480px);
+    --roulette-mobile-stage-height: clamp(320px, 52svh, 480px);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play:is(
+    .is-phase-countdown,
+    .is-phase-active,
+    .is-phase-paused
+  ) {
+    --roulette-mobile-stage-height: clamp(320px, 56vh, 520px);
+    --roulette-mobile-stage-height: clamp(320px, 56svh, 520px);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play.is-phase-rest {
+    --roulette-mobile-stage-height: clamp(300px, 48vh, 440px);
+    --roulette-mobile-stage-height: clamp(300px, 48svh, 440px);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play > .roulette-training-image-stage {
+    height: var(--roulette-mobile-stage-height);
+    max-height: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-rows: minmax(0, 1fr) minmax(48px, auto);
+    gap: 6px 8px;
+    aspect-ratio: auto;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-missing {
+    min-width: 0;
+    min-height: 0;
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img {
+    max-height: 100%;
+    object-fit: contain;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-photo-tape.is-bottom {
+    bottom: clamp(50px, 8svh, 62px);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    min-height: 44px;
+    align-self: center;
+    grid-column: 1;
+    grid-row: 2;
+    padding: 8px 10px;
+    pointer-events: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble p {
+    font-size: clamp(0.68rem, 3vw, 0.82rem);
+    line-height: 1.42;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-note-tape {
+    width: 38px;
+    height: 9px;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-stage-progress {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: max-content;
+    max-width: 100%;
+    min-width: 0;
+    align-self: center;
+    justify-self: end;
+    grid-column: 2;
+    grid-row: 2;
+    gap: 2px;
+    padding: 3px 4px 2px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+    pointer-events: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-stage-progress strong {
+    font-size: 0.55rem;
+    line-height: 1;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play:is(
+    .is-phase-countdown,
+    .is-phase-active,
+    .is-phase-paused,
+    .is-phase-rest
+  ) > .roulette-training-challenge {
+    margin-right: 0;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play:is(
+    .is-phase-countdown,
+    .is-phase-active,
+    .is-phase-paused,
+    .is-phase-rest
+  ) > .roulette-training-mascot.is-play {
+    position: static;
+    right: auto;
+    bottom: auto;
+    width: clamp(42px, 13vw, 58px);
+    justify-self: end;
+    margin: -4px 8px 0 0;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play.is-phase-active > .roulette-training-challenge.is-active {
+    justify-items: stretch;
+    gap: 7px;
+    padding: 12px 12px 14px 27px;
+    text-align: left;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-summary {
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(112px, 0.68fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-copy,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics {
+    min-width: 0;
+    display: grid;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-copy {
+    align-content: center;
+    gap: 5px;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics {
+    justify-items: center;
+    gap: 6px;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-copy,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-copy h2,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure > p,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-challenge-safety {
+    overflow-wrap: anywhere;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-copy h2 {
+    font-size: clamp(1.08rem, 4.8vw, 1.5rem);
+    line-height: 1.25;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-copy .roulette-training-challenge-kicker small {
+    display: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-full {
+    display: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure {
+    display: block;
+    color: rgba(76, 62, 77, 0.82);
+    font-size: 0.66rem;
+    line-height: 1.5;
+    text-align: left;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure summary {
+    position: relative;
+    min-height: 44px;
+    display: grid;
+    align-content: center;
+    gap: 2px;
+    padding: 6px 27px 6px 8px;
+    color: var(--ink);
+    border: 1px solid rgba(184, 79, 114, 0.24);
+    border-radius: 3px;
+    background: rgba(201, 184, 232, 0.16);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure summary::after {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    color: var(--rose-deep);
+    content: "+";
+    font-size: 1rem;
+    font-weight: 900;
+    line-height: 1;
+    transform: translate3d(0, -50%, 0);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure[open] summary::after {
+    content: "−";
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure summary:focus-visible {
+    outline: 3px solid var(--rose-deep);
+    outline-offset: 2px;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure summary strong {
+    color: var(--rose-deep);
+    font-size: 0.6rem;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure .is-open-label,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure[open] .is-closed-label,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure[open] .roulette-training-detail-preview {
+    display: none;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure[open] .is-open-label {
+    display: inline;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-preview {
+    display: -webkit-box;
+    overflow: hidden;
+    color: rgba(76, 62, 77, 0.72);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-detail-disclosure > p {
+    margin: 6px 0 0;
+    padding: 7px 8px;
+    color: rgba(76, 62, 77, 0.82);
+    border-left: 3px solid var(--lavender);
+    background: rgba(255, 247, 239, 0.72);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics :is(
+    .roulette-training-workout-timer,
+    .roulette-training-workout-count
+  ) {
+    min-width: 0;
+    justify-content: center;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics :is(
+    .roulette-training-workout-timer,
+    .roulette-training-workout-count
+  ) strong {
+    font-size: clamp(2.55rem, 13vw, 4rem);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics .roulette-training-workout-timer.is-done strong {
+    font-size: 1.2rem;
+    line-height: 1.2;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics .roulette-training-bpm {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: 9px minmax(0, auto);
+    padding: 6px 8px;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics .roulette-training-bpm strong {
+    white-space: nowrap;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-challenge-safety,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-self-report,
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-temp-effect {
+    min-width: 0;
+    text-align: center;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-judgement {
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+    gap: 8px;
+    scroll-margin-block-end: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-judgement .button {
+    min-width: 0;
+    min-height: 54px;
+    padding-inline: 8px;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 350px) and (max-aspect-ratio: 3 / 4) {
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-active-metrics {
+    grid-template-columns: minmax(0, 1fr) minmax(112px, 0.72fr);
+    align-items: center;
+  }
+
+  .roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-judgement {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

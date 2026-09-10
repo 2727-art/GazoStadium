@@ -25,8 +25,8 @@ function sourceBlock(source, startMarker, endMarker) {
 test("landing and module wiring expose a separate solo roulette mode", () => {
   assert.match(html, /roulette-training\.css\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.js\?v=[^"]*-room-scrapbook-v1[^"]*"/);
-  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1"/);
-  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1"/);
+  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1"/);
   assert.match(app, /id="rouletteTrainingButton"/);
   assert.match(app, /function startRouletteTraining\(\)/);
   assert.match(app, /hariai-roulette-training-ready/);
@@ -213,12 +213,22 @@ test("play uses the exact nighttime scrapbook room tokens and Japanese primary l
 });
 
 test("active home training keeps exact voluntary actions and accessible give up semantics", () => {
+  const detail = sourceBlock(client, "function renderActiveDetail", "function renderActiveChallenge");
   const active = sourceBlock(client, "function renderActiveChallenge", "function renderPausedChallenge");
   const frame = sourceBlock(client, "function renderFrame", "function announce");
   const exactGiveUp = /data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで<\/button>/g;
 
   assert.match(active, /roulette-training-challenge is-active/);
+  assert.match(active, /roulette-training-active-summary/);
+  assert.match(active, /roulette-training-active-copy/);
+  assert.match(active, /roulette-training-active-metrics/);
   assert.match(active, /<b>いま挑戦中<\/b><small aria-hidden="true">HOME TRAINING<\/small>/);
+  assert.match(detail, /<details class="roulette-training-detail-disclosure">/);
+  assert.match(detail, /<summary><strong><span class="is-closed-label">やり方・補足を見る<\/span><span class="is-open-label">やり方・補足を閉じる<\/span><\/strong><span class="roulette-training-detail-preview" aria-hidden="true">\$\{safeDetail\}<\/span><\/summary>/);
+  assert.match(detail, /<p>\$\{safeDetail\}<\/p>\s*<\/details>/);
+  assert.doesNotMatch(detail, /roulette-training-challenge-safety|roulette-training-self-report|roulette-training-judgement|data-roulette-action/);
+  assert.ok(active.indexOf("renderActiveDetail(session.currentMenu.detailText)") < active.indexOf("roulette-training-challenge-safety"));
+  assert.ok(active.indexOf("roulette-training-challenge-safety") < active.indexOf("roulette-training-judgement"));
   assert.match(active, /<p class="roulette-training-challenge-safety">できたら「できた！」。つらいときは無理せず休もう。<\/p>/);
   assert.match(active, /<small class="roulette-training-self-report">結果は自己申告です。<\/small>/);
   assert.equal(active.match(/data-roulette-action="clear"/g)?.length, 1);
@@ -227,6 +237,84 @@ test("active home training keeps exact voluntary actions and accessible give up 
   assert.match(active, exactGiveUp);
   assert.equal(client.match(exactGiveUp)?.length, 4);
   assert.match(frame, /id="rouletteTrainingAnnouncer" role="status" aria-live="polite"/);
+});
+
+test("portrait phones keep the image dominant without trapping training controls", () => {
+  const shortHeightStart = styles.indexOf("@media (max-width: 620px) and (max-height: 850px)");
+  const portraitStart = styles.indexOf("@media (max-width: 620px) and (max-aspect-ratio: 3 / 4)");
+  const narrowStart = styles.indexOf("@media (max-width: 350px) and (max-aspect-ratio: 3 / 4)");
+  const reducedStart = styles.indexOf("@media (prefers-reduced-motion: reduce)");
+
+  assert.ok(shortHeightStart >= 0, "short-height phone rules are available");
+  assert.ok(shortHeightStart < portraitStart, "portrait image-focus rules override short-height stage sizing");
+  assert.ok(portraitStart < narrowStart, "narrow-phone fallback follows the portrait layout");
+  assert.ok(narrowStart < reducedStart, "mobile layout rules remain before reduced-motion overrides");
+
+  const portrait = styles.slice(portraitStart, narrowStart);
+  const narrow = styles.slice(narrowStart, reducedStart);
+  const playViewport = sourceBlock(
+    portrait,
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play {',
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play:is('
+  );
+  const imageStage = sourceBlock(
+    portrait,
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play > .roulette-training-image-stage {',
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img,'
+  );
+  const portraitImage = sourceBlock(
+    portrait,
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img {',
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-photo-tape.is-bottom {'
+  );
+  const cheerRail = sourceBlock(
+    portrait,
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble {',
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble p {'
+  );
+  const progressRail = sourceBlock(
+    portrait,
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-stage-progress {',
+    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-stage-progress strong {'
+  );
+
+  assert.match(playViewport, /--roulette-mobile-stage-height:\s*clamp\(300px, 46svh, 430px\)/);
+  assert.match(playViewport, /min-height:\s*calc\(100dvh - 116px\)/);
+  assert.doesNotMatch(playViewport, /\n\s*height:/);
+  assert.doesNotMatch(playViewport, /overflow:\s*hidden/);
+  assert.doesNotMatch(portrait, /position:\s*(?:fixed|sticky)/);
+
+  assert.match(portrait, /\.is-phase-menu-result,[\s\S]*?\.is-phase-count-result[\s\S]*?--roulette-mobile-stage-height:\s*clamp\(320px, 52svh, 480px\)/);
+  assert.match(portrait, /\.is-phase-countdown,[\s\S]*?\.is-phase-active,[\s\S]*?\.is-phase-paused[\s\S]*?--roulette-mobile-stage-height:\s*clamp\(320px, 56svh, 520px\)/);
+  assert.match(portrait, /\.is-phase-rest[\s\S]*?--roulette-mobile-stage-height:\s*clamp\(300px, 48svh, 440px\)/);
+
+  assert.match(imageStage, /height:\s*var\(--roulette-mobile-stage-height\)/);
+  assert.match(imageStage, /display:\s*grid/);
+  assert.match(imageStage, /grid-template-columns:\s*minmax\(0, 1fr\) max-content/);
+  assert.match(imageStage, /grid-template-rows:\s*minmax\(0, 1fr\) minmax\(48px, auto\)/);
+  assert.match(portrait, /\.roulette-training-image-stage > img,[\s\S]*?grid-column:\s*1 \/ -1;[\s\S]*?grid-row:\s*1/);
+  assert.match(portraitImage, /object-fit:\s*contain/);
+  assert.doesNotMatch(portrait, /object-fit:\s*cover|filter:\s*blur/);
+
+  assert.match(cheerRail, /position:\s*relative/);
+  assert.match(cheerRail, /grid-column:\s*1/);
+  assert.match(cheerRail, /grid-row:\s*2/);
+  assert.match(progressRail, /position:\s*relative/);
+  assert.match(progressRail, /grid-column:\s*2/);
+  assert.match(progressRail, /grid-row:\s*2/);
+  assert.match(progressRail, /background:\s*transparent/);
+
+  assert.match(portrait, /\.roulette-training-detail-disclosure\s*\{[\s\S]*?display:\s*block/);
+  assert.match(portrait, /\.roulette-training-detail-disclosure summary\s*\{[\s\S]*?min-height:\s*44px/);
+  assert.match(portrait, /\.roulette-training-detail-preview\s*\{[\s\S]*?-webkit-line-clamp:\s*2/);
+  assert.match(portrait, /\.roulette-training-detail-disclosure summary:focus-visible\s*\{[\s\S]*?outline:\s*3px solid var\(--rose-deep\)/);
+
+  const actionButtonRule = portrait.match(/\.roulette-training-judgement \.button\s*\{([^}]+)\}/)?.[1] || "";
+  const actionButtonHeight = Number(actionButtonRule.match(/min-height:\s*(\d+)px/)?.[1]);
+  assert.ok(actionButtonHeight >= 48, "self-report actions retain a 48px or larger touch target");
+  assert.match(actionButtonRule, /white-space:\s*normal/);
+  assert.match(narrow, /\.roulette-training-active-summary\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(narrow, /\.roulette-training-judgement\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
 });
 
 test("scrapbook success effects are bounded and reduced motion removes ornamental movement", () => {

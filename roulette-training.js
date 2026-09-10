@@ -1725,6 +1725,17 @@ function remainingSeconds() {
   return Math.max(0, Math.ceil((session.challengeEndsAt - Date.now()) / 1000));
 }
 
+function renderActiveDetail(detailText) {
+  const detail = String(detailText || "").trim();
+  if (!detail) return "";
+  const safeDetail = escapeHtml(detail);
+  return `<p class="roulette-training-detail roulette-training-detail-full">${safeDetail}</p>
+    <details class="roulette-training-detail-disclosure">
+      <summary><strong><span class="is-closed-label">やり方・補足を見る</span><span class="is-open-label">やり方・補足を閉じる</span></strong><span class="roulette-training-detail-preview" aria-hidden="true">${safeDetail}</span></summary>
+      <p>${safeDetail}</p>
+    </details>`;
+}
+
 function renderActiveChallenge() {
   const session = state.session;
   const seconds = remainingSeconds();
@@ -1734,11 +1745,17 @@ function renderActiveChallenge() {
       : `<div class="roulette-training-workout-timer is-done"><strong>時間</strong><span>自己申告してください</span></div>`
     : `<div class="roulette-training-workout-count"><strong>${session.currentCount}</strong><span>${escapeHtml(unitInfo(session.currentMenu.countUnit).label)}</span></div>`;
   return `<section class="roulette-training-challenge is-active">
-    <span class="roulette-training-challenge-kicker"><b>いま挑戦中</b><small aria-hidden="true">HOME TRAINING</small></span>
-    <h2>${escapeHtml(session.currentMenu.menuText)}</h2>
-    ${session.currentMenu.detailText ? `<p class="roulette-training-detail">${escapeHtml(session.currentMenu.detailText)}</p>` : ""}
-    ${timerCopy}
-    <div class="roulette-training-bpm"><i aria-hidden="true"></i><span>テンポ目安</span><strong data-roulette-current-bpm>BPM ${session.currentWorkoutBpm}</strong></div>
+    <div class="roulette-training-active-summary">
+      <div class="roulette-training-active-copy">
+        <span class="roulette-training-challenge-kicker"><b>いま挑戦中</b><small aria-hidden="true">HOME TRAINING</small></span>
+        <h2>${escapeHtml(session.currentMenu.menuText)}</h2>
+        ${renderActiveDetail(session.currentMenu.detailText)}
+      </div>
+      <div class="roulette-training-active-metrics">
+        ${timerCopy}
+        <div class="roulette-training-bpm"><i aria-hidden="true"></i><span>テンポ目安</span><strong data-roulette-current-bpm>BPM ${session.currentWorkoutBpm}</strong></div>
+      </div>
+    </div>
     ${session.activeTemporaryEffect ? `<p class="roulette-training-temp-effect" data-roulette-temp-effect>${escapeHtml(session.activeTemporaryEffect.effect?.label || "一時効果")}を適用中</p>` : ""}
     <p class="roulette-training-challenge-safety">できたら「できた！」。つらいときは無理せず休もう。</p>
     <small class="roulette-training-self-report">結果は自己申告です。</small>
