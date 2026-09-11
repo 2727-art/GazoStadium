@@ -309,6 +309,7 @@ test("overall profile also uses a verified result token across a retry", async (
     localStorage: { getItem: () => "" },
     PROFILE_NAME_KEY: "name",
     publicServerTimeOffset: 0,
+    jstDateKey: () => "2026-09-11",
     ACTIVE_BATTLE_MODES: ["solo", "strategy", "team"],
     LEADERBOARD_MODES: ["solo", "strategy", "team", "royale"],
     INITIAL_RATING: 1_000,
@@ -350,7 +351,15 @@ test("overall profile also uses a verified result token across a retry", async (
     "function persistOverallRankingPreference",
     "overall result commit",
   );
-  vm.runInNewContext(`${source}\nthis.record = recordOverallResult;`, sandbox);
+  const initializationSource = sliceBetween(
+    "async function requestEconomyInitialization",
+    "async function initializeEconomy",
+    "same-day result initialization",
+  );
+  vm.runInNewContext(
+    `let economyInitialization = null;\n${initializationSource}\n${source}\nthis.record = recordOverallResult;`,
+    sandbox,
+  );
   const request = {
     mode: "solo",
     outcome: "win",

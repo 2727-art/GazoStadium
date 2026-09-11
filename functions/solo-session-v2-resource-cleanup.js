@@ -19,6 +19,10 @@ const SOLO_SESSION_V2_RESOURCE_CLEANUP_MARKER = "staleCleanupV1";
 const SOLO_SESSION_V2_RESOURCE_CLEANUP_GRACE_MS = 10 * 60 * 1000;
 const SOLO_SESSION_V2_RESOURCE_CLEANUP_BATCH_SIZE = 25;
 const SOLO_SESSION_V2_RESOURCE_CLEANUP_DEADLINE_MS = 45 * 1000;
+const SOLO_SESSION_V2_RESOURCE_CLEANUP_MAX_PAGES = 8;
+const SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH = "online/soloSessionResourceCleanupCursor";
+const SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS = 30 * 60 * 1000;
+const SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS = 6 * 60 * 60 * 1000;
 const SOLO_SESSION_V2_ROOM_TRANSITION_GRACE_MS = 15 * 60 * 1000;
 
 function finiteTimestamp(value) {
@@ -41,6 +45,37 @@ function cleanupCandidate(uid, value, cutoff) {
       || !finiteTimestamp(claim.expiresAt)
       || claim.expiresAt > cutoff) return null;
   return Object.freeze({ uid, value, claim });
+}
+
+function retryDelayMs(deferCount) {
+  return Math.min(
+    SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS * (2 ** (deferCount - 1)),
+    SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS,
+  );
+}
+
+function deferredRetryMarker(value, now) {
+  const marker = cleanupMarker(value);
+  return marker
+    && Number.isSafeInteger(marker.deferCount)
+    && marker.deferCount >= 1 && marker.deferCount <= 5
+    && finiteTimestamp(marker.deferredAt)
+    && marker.deferredAt >= marker.startedAt && marker.deferredAt <= now
+    && finiteTimestamp(marker.nextAttemptAt)
+    && marker.nextAttemptAt === marker.deferredAt + retryDelayMs(marker.deferCount)
+    ? marker
+    : null;
+}
+
+function cleanupCursor(value, now, cutoff) {
+  return value?.version === 1
+    && isSafeUid(value.uid)
+    && finiteTimestamp(value.expiresAt) && value.expiresAt >= 1
+    && value.expiresAt <= cutoff
+    && finiteTimestamp(value.updatedAt) && value.updatedAt <= now
+    && now - value.updatedAt <= SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS
+    ? { uid: value.uid, expiresAt: value.expiresAt }
+    : null;
 }
 
 function exactClaimFence(value, expected) {
@@ -117,6 +152,7 @@ function createSoloSessionV2ResourceCleanup({
   batchSize = SOLO_SESSION_V2_RESOURCE_CLEANUP_BATCH_SIZE,
   graceMs = SOLO_SESSION_V2_RESOURCE_CLEANUP_GRACE_MS,
   deadlineMs = SOLO_SESSION_V2_RESOURCE_CLEANUP_DEADLINE_MS,
+  maxPages = SOLO_SESSION_V2_RESOURCE_CLEANUP_MAX_PAGES,
   clock = Date.now,
   tokenFactory = () => crypto.randomBytes(18).toString("base64url"),
 } = {}) {
@@ -132,6 +168,9 @@ function createSoloSessionV2ResourceCleanup({
   }
   if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1_000) {
     throw new TypeError("deadlineMs must be at least one second");
+  }
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 100) {
+    throw new TypeError("maxPages must be between 1 and 100");
   }
   if (typeof clock !== "function" || typeof tokenFactory !== "function") {
     throw new TypeError("clock and tokenFactory must be functions");
@@ -234,23 +273,33 @@ function createSoloSessionV2ResourceCleanup({
     };
   }
 
-  async function deferClaim(uid, marker, now, cutoff) {
+  async function deferClaim(uid, marker, now, longDeferred) {
     let deferred = null;
     const result = await claimRef(uid).transaction((currentValue) => {
       if (currentValue == null) return null;
       if (!isDeepStrictEqual(currentValue, marker)) return;
       const currentMarker = cleanupMarker(currentValue);
       if (!currentMarker) return;
+      const retry = deferredRetryMarker(currentValue, now);
+      const deferCount = Math.min((retry?.deferCount || 0) + 1, 5);
+      const nextCleanupMarker = {
+        ...currentMarker,
+        originalExpiresAt: finiteTimestamp(currentMarker.originalExpiresAt)
+          ? currentMarker.originalExpiresAt
+          : Number(currentValue.expiresAt),
+        deferredAt: now,
+      };
+      // Retry timing is cleanup metadata, never a renewed player lease. Errors
+      // retain the ordinary scheduler retry; only known live/unknown rooms back off.
+      delete nextCleanupMarker.deferCount;
+      delete nextCleanupMarker.nextAttemptAt;
+      if (longDeferred) {
+        nextCleanupMarker.deferCount = deferCount;
+        nextCleanupMarker.nextAttemptAt = now + retryDelayMs(deferCount);
+      }
       deferred = {
         ...currentValue,
-        expiresAt: cutoff + 1,
-        [SOLO_SESSION_V2_RESOURCE_CLEANUP_MARKER]: {
-          ...currentMarker,
-          originalExpiresAt: finiteTimestamp(currentMarker.originalExpiresAt)
-            ? currentMarker.originalExpiresAt
-            : Number(currentValue.expiresAt),
-          deferredAt: now,
-        },
+        [SOLO_SESSION_V2_RESOURCE_CLEANUP_MARKER]: nextCleanupMarker,
       };
       return deferred;
     });
@@ -284,19 +333,19 @@ function createSoloSessionV2ResourceCleanup({
     if (typeof dryRun !== "boolean") throw new TypeError("dryRun must be boolean");
     const cutoff = Number(now) - graceMs;
     const startedAt = clock();
-    const snapshot = await realtime.ref(SOLO_SESSION_V2_RESOURCE_CLEANUP_PATH)
-      .orderByChild("expiresAt")
-      .startAt(1)
-      .endAt(cutoff)
-      .limitToFirst(batchSize)
-      .get();
-    const candidates = [];
-    snapshot.forEach((entry) => {
-      candidates.push({ uid: entry.key, value: entry.val() });
-    });
+    // This separate admin-only cursor prevents deferred claims at the head of
+    // the expiresAt index from starving newly expired claims. It has no lease authority.
+    const cursorRef = realtime.ref(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH);
+    const storedCursor = (await cursorRef.get()).val();
+    let cursor = cleanupCursor(storedCursor, Number(now), cutoff);
+    let lastExamined = cursor;
+    let finishedPass = false;
     const result = {
       dryRun,
-      examined: candidates.length,
+      examined: 0,
+      pages: 0,
+      deferredSkipped: 0,
+      scanLimited: false,
       eligible: 0,
       marked: 0,
       resumed: 0,
@@ -311,39 +360,107 @@ function createSoloSessionV2ResourceCleanup({
       skipped: 0,
       errors: 0,
       stoppedEarly: false,
-      hasMore: candidates.length >= batchSize,
+      hasMore: false,
       oldestAgeMs: 0,
     };
 
-    for (const rawCandidate of candidates) {
+    scan: while (result.pages < maxPages) {
       if (clock() - startedAt >= deadlineMs) {
         result.stoppedEarly = true;
         result.hasMore = true;
         break;
       }
-      const candidate = cleanupCandidate(
-        rawCandidate.uid,
-        rawCandidate.value,
-        cutoff,
-      );
-      if (!candidate) {
-        result.skipped += 1;
-        continue;
-      }
-      result.eligible += 1;
-      const originalExpiresAt = Number(
-        cleanupMarker(candidate.value)?.originalExpiresAt,
-      );
-      const ageExpiresAt = finiteTimestamp(originalExpiresAt)
-          && originalExpiresAt <= candidate.claim.expiresAt
-        ? originalExpiresAt
-        : candidate.claim.expiresAt;
-      result.oldestAgeMs = Math.max(
-        result.oldestAgeMs,
-        Number(now) - ageExpiresAt,
-      );
+      let query = realtime.ref(SOLO_SESSION_V2_RESOURCE_CLEANUP_PATH)
+        .orderByChild("expiresAt");
+      query = cursor
+        ? query.startAfter(cursor.expiresAt, cursor.uid)
+        : query.startAt(1);
+      const snapshot = await query.endAt(cutoff).limitToFirst(batchSize).get();
+      result.pages += 1;
+      const candidates = [];
+      snapshot.forEach((entry) => {
+        candidates.push({ uid: entry.key, value: entry.val() });
+      });
 
-      if (dryRun) {
+      for (const rawCandidate of candidates) {
+        if (clock() - startedAt >= deadlineMs) {
+          result.stoppedEarly = true;
+          result.hasMore = true;
+          break scan;
+        }
+        if (result.eligible >= batchSize) {
+          result.hasMore = true;
+          break scan;
+        }
+        result.examined += 1;
+        lastExamined = {
+          uid: rawCandidate.uid,
+          expiresAt: rawCandidate.value.expiresAt,
+        };
+        const candidate = cleanupCandidate(
+          rawCandidate.uid,
+          rawCandidate.value,
+          cutoff,
+        );
+        if (!candidate) {
+          result.skipped += 1;
+          continue;
+        }
+        const originalExpiresAt = Number(
+          cleanupMarker(candidate.value)?.originalExpiresAt,
+        );
+        const ageExpiresAt = finiteTimestamp(originalExpiresAt)
+            && originalExpiresAt <= candidate.claim.expiresAt
+          ? originalExpiresAt
+          : candidate.claim.expiresAt;
+        result.oldestAgeMs = Math.max(
+          result.oldestAgeMs,
+          Number(now) - ageExpiresAt,
+        );
+        if (Number(deferredRetryMarker(candidate.value, Number(now))?.nextAttemptAt) > now) {
+          result.deferredSkipped += 1;
+          continue;
+        }
+        result.eligible += 1;
+
+        if (dryRun) {
+          try {
+            const active = await inspectActive(
+              candidate.uid,
+              candidate.claim,
+              cutoff,
+              Number(now),
+            );
+            if (active.kind === "candidate") {
+              result.activeExamined += 1;
+              if (active.decision === "defer-room") result.activeDeferred += 1;
+              else result.activeRemoved += 1;
+            } else if (active.kind === "fresh") {
+              result.activeExamined += 1;
+              result.activeDeferred += 1;
+            }
+          } catch {
+            result.errors += 1;
+          }
+          continue;
+        }
+
+        let frozen;
+        try {
+          frozen = await freezeClaim(candidate, Number(now), cutoff);
+        } catch {
+          result.errors += 1;
+          continue;
+        }
+        if (!frozen) {
+          result.conflicts += 1;
+          continue;
+        }
+        result.marked += 1;
+        if (frozen.resumed) result.resumed += 1;
+
+        let canFinalize = true;
+        let longDeferred = false;
         try {
           const active = await inspectActive(
             candidate.uid,
@@ -353,111 +470,104 @@ function createSoloSessionV2ResourceCleanup({
           );
           if (active.kind === "candidate") {
             result.activeExamined += 1;
-            if (active.decision === "defer-room") result.activeDeferred += 1;
-            else result.activeRemoved += 1;
+            if (active.decision === "defer-room") {
+              result.activeDeferred += 1;
+              canFinalize = false;
+              longDeferred = true;
+            } else {
+              const activeRemoval = await removeExactActive(
+                candidate.uid,
+                candidate.claim.sessionId,
+                active.value,
+                cutoff,
+              );
+              if (activeRemoval.removed) result.activeRemoved += 1;
+              if (!activeRemoval.safe) canFinalize = false;
+            }
           } else if (active.kind === "fresh") {
             result.activeExamined += 1;
             result.activeDeferred += 1;
+            canFinalize = false;
+            longDeferred = true;
+          }
+
+          if (canFinalize) {
+            const fence = {
+              sessionId: candidate.claim.sessionId,
+              leaseToken: candidate.claim.leaseToken,
+              generation: candidate.claim.generation,
+            };
+            const queueRemoval = await removeFencedQueue(
+              candidate.uid,
+              candidate.claim.sessionId,
+              fence,
+            );
+            if (queueRemoval.removed) result.queueRemoved += 1;
+            if (!queueRemoval.safe) canFinalize = false;
+            const indexSafe = canFinalize
+              ? await queueIndex.remove(candidate.uid, fence)
+              : false;
+            if (indexSafe) result.indexReleased += 1;
+            else canFinalize = false;
           }
         } catch {
           result.errors += 1;
-        }
-        continue;
-      }
-
-      let frozen;
-      try {
-        frozen = await freezeClaim(candidate, Number(now), cutoff);
-      } catch {
-        result.errors += 1;
-        continue;
-      }
-      if (!frozen) {
-        result.conflicts += 1;
-        continue;
-      }
-      result.marked += 1;
-      if (frozen.resumed) result.resumed += 1;
-
-      let canFinalize = true;
-      try {
-        const active = await inspectActive(
-          candidate.uid,
-          candidate.claim,
-          cutoff,
-          Number(now),
-        );
-        if (active.kind === "candidate") {
-          result.activeExamined += 1;
-          if (active.decision === "defer-room") {
-            result.activeDeferred += 1;
-            canFinalize = false;
-          } else {
-            const activeRemoval = await removeExactActive(
-              candidate.uid,
-              candidate.claim.sessionId,
-              active.value,
-              cutoff,
-            );
-            if (activeRemoval.removed) result.activeRemoved += 1;
-            if (!activeRemoval.safe) canFinalize = false;
-          }
-        } else if (active.kind === "fresh") {
-          result.activeExamined += 1;
-          result.activeDeferred += 1;
           canFinalize = false;
         }
 
-        if (canFinalize) {
-          const fence = {
-            sessionId: candidate.claim.sessionId,
-            leaseToken: candidate.claim.leaseToken,
-            generation: candidate.claim.generation,
-          };
-          const queueRemoval = await removeFencedQueue(
-            candidate.uid,
-            candidate.claim.sessionId,
-            fence,
-          );
-          if (queueRemoval.removed) result.queueRemoved += 1;
-          if (!queueRemoval.safe) canFinalize = false;
-          const indexSafe = canFinalize
-            ? await queueIndex.remove(candidate.uid, fence)
-            : false;
-          if (indexSafe) result.indexReleased += 1;
-          else canFinalize = false;
+        if (!canFinalize) {
+          result.markerRetained += 1;
+          try {
+            if (!await deferClaim(
+              candidate.uid,
+              frozen.marker,
+              Number(now),
+              longDeferred,
+            )) {
+              result.conflicts += 1;
+            }
+          } catch {
+            result.errors += 1;
+          }
+          continue;
         }
-      } catch {
-        result.errors += 1;
-        canFinalize = false;
-      }
-
-      if (!canFinalize) {
-        result.markerRetained += 1;
         try {
-          if (!await deferClaim(
-            candidate.uid,
-            frozen.marker,
-            Number(now),
-            cutoff,
-          )) {
+          const finalization = await finalizeClaim(candidate.uid, frozen.marker);
+          if (finalization.removed) result.claimsRemoved += 1;
+          if (!finalization.safe) {
+            result.markerRetained += 1;
             result.conflicts += 1;
           }
         } catch {
           result.errors += 1;
-        }
-        continue;
-      }
-      try {
-        const finalization = await finalizeClaim(candidate.uid, frozen.marker);
-        if (finalization.removed) result.claimsRemoved += 1;
-        if (!finalization.safe) {
           result.markerRetained += 1;
-          result.conflicts += 1;
         }
+      }
+
+      if (candidates.length < batchSize) {
+        finishedPass = true;
+        result.hasMore = false;
+        break;
+      }
+      result.hasMore = true;
+      if (result.eligible >= batchSize) break;
+      cursor = lastExamined;
+    }
+    result.scanLimited = !finishedPass && result.pages >= maxPages;
+    const nextCursor = finishedPass || !lastExamined
+      ? null
+      : { version: 1, ...lastExamined, updatedAt: Number(now) };
+    if (!dryRun && !isDeepStrictEqual(storedCursor, nextCursor)) {
+      try {
+        await cursorRef.transaction((current) => {
+          // Cursor races can only repeat inspection, never authorize deletion.
+          // Returning null for a cold cache requests a server retry, as for claims.
+          if (current == null && storedCursor != null) return null;
+          if (!isDeepStrictEqual(current, storedCursor)) return;
+          return nextCursor;
+        });
       } catch {
         result.errors += 1;
-        result.markerRetained += 1;
       }
     }
 
@@ -468,6 +578,10 @@ function createSoloSessionV2ResourceCleanup({
 module.exports = Object.freeze({
   SOLO_SESSION_V2_RESOURCE_CLEANUP_BATCH_SIZE,
   SOLO_SESSION_V2_RESOURCE_CLEANUP_DEADLINE_MS,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_MAX_PAGES,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS,
   SOLO_SESSION_V2_RESOURCE_CLEANUP_GRACE_MS,
   SOLO_SESSION_V2_RESOURCE_CLEANUP_MARKER,
   SOLO_SESSION_V2_RESOURCE_CLEANUP_PATH,

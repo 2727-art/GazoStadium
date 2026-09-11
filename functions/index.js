@@ -3325,7 +3325,10 @@ async function syncCreatorCardGrowth(uid, achievementStateValue = null) {
   let changed = false;
   const result = await realtime.ref(`online/topMessages/${entryId}`).transaction((current) => {
     changed = false;
-    if (!current || Number(current.schemaVersion || 0) !== CREATOR_CARD_VERSION) {
+    // A cold local cache starts at null; return null to let the server retry
+    // with its existing card. Returning undefined would abort before that read.
+    if (current == null) return null;
+    if (Number(current.schemaVersion || 0) !== CREATOR_CARD_VERSION) {
       return undefined;
     }
     const nextGrowthLevel = Math.max(Number(current.growthLevel || 1), growthLevel);
@@ -5680,7 +5683,12 @@ async function recordVerifiedMatch(uid, data) {
       now,
     });
   }
-  await Promise.all(participants.map((participantUid) => ensureAchievementState(participantUid)));
+  const achievementStates = Object.fromEntries(await Promise.all(
+    participants.map(async (participantUid) => [
+      participantUid,
+      await ensureAchievementState(participantUid),
+    ]),
+  ));
   const progressRefs = participants.map((participantUid) => economyProgressRef(participantUid));
   const profileRefs = participants.map((participantUid) => achievementProfileRef(participantUid));
   const claimRefs = participants.map((participantUid) => (
@@ -5979,7 +5987,13 @@ async function recordVerifiedMatch(uid, data) {
   });
   const postMatchOperations = participants.flatMap((participantUid) => [
     mirrorEconomyProgress(participantUid, progressResults[participantUid]),
-    syncCreatorCardGrowth(participantUid),
+    // The match transaction supplies the newest battle state. Market growth is
+    // monotonic, so its already-loaded stats cannot lower an existing card.
+    syncCreatorCardGrowth(participantUid, {
+      ...achievementStates[participantUid],
+      progress: progressResults[participantUid],
+      profile: profileResults[participantUid],
+    }),
     ...(newlyUnlockedResults[participantUid]?.length
       ? [syncAchievementPublicSurfaces(participantUid, profileResults[participantUid])]
       : []),

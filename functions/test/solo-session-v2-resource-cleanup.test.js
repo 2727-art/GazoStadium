@@ -5,8 +5,11 @@ const test = require("node:test");
 
 const {
   SOLO_SESSION_V2_RESOURCE_CLEANUP_BATCH_SIZE,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH,
   SOLO_SESSION_V2_RESOURCE_CLEANUP_GRACE_MS,
   SOLO_SESSION_V2_RESOURCE_CLEANUP_PATH,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS,
+  SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS,
   createSoloSessionV2ResourceCleanup,
 } = require("../solo-session-v2-resource-cleanup");
 
@@ -126,6 +129,7 @@ function createRealtimeHarness(initial = {}) {
   const values = new Map(Object.entries(initial));
   const queryCalls = [];
   const writeCalls = [];
+  const readCalls = [];
   const beforeTransaction = new Map();
   const failTransactionOnce = new Map();
   const coldCacheOnce = new Set();
@@ -175,6 +179,12 @@ function createRealtimeHarness(initial = {}) {
         queryCalls.push(["startAt", value]);
         return query;
       },
+      startAfter(value, key) {
+        filters.startAfter = value;
+        filters.startAfterKey = key;
+        queryCalls.push(["startAfter", value, key]);
+        return query;
+      },
       endAt(value) {
         filters.endAt = value;
         queryCalls.push(["endAt", value]);
@@ -196,11 +206,15 @@ function createRealtimeHarness(initial = {}) {
               || Number(value?.[filters.orderByChild]) >= filters.startAt)
             && (filters.endAt == null
               || Number(value?.[filters.orderByChild]) <= filters.endAt)
+            && (filters.startAfter == null
+              || Number(value?.[filters.orderByChild]) > filters.startAfter
+              || (Number(value?.[filters.orderByChild]) === filters.startAfter
+                && uid > filters.startAfterKey))
           ))
           .sort((first, second) => (
             Number(first[1]?.[filters.orderByChild] || 0)
               - Number(second[1]?.[filters.orderByChild] || 0)
-            || first[0].localeCompare(second[0])
+            || (first[0] < second[0] ? -1 : first[0] > second[0] ? 1 : 0)
           ))
           .slice(0, filters.limitToFirst);
         return snapshot(Object.fromEntries(entries));
@@ -214,6 +228,7 @@ function createRealtimeHarness(initial = {}) {
       if (path === SOLO_SESSION_V2_RESOURCE_CLEANUP_PATH) return claimsQuery();
       return {
         async get() {
+          readCalls.push(path);
           return snapshot(readValue(path), path.split("/").pop());
         },
         async transaction(update) {
@@ -269,6 +284,7 @@ function createRealtimeHarness(initial = {}) {
     failTransactionOnce,
     queryCalls,
     realtime,
+    readCalls,
     values,
     writeCalls,
   };
@@ -305,6 +321,21 @@ function roomPath(roomId) {
 
 function roomWrites(harness) {
   return harness.writeCalls.filter(([, path]) => path.startsWith("online/rooms/"));
+}
+
+function deferredClaim(overrides = {}) {
+  return expiredClaim({
+    staleCleanupV1: {
+      version: 1,
+      token: CLEANUP_TOKEN,
+      startedAt: NOW - 60_000,
+      originalExpiresAt: CUTOFF - 1,
+      deferredAt: NOW,
+      deferCount: 1,
+      nextAttemptAt: NOW + SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS,
+      ...overrides,
+    },
+  });
 }
 
 test("cleanup uses the indexed grace cutoff and a strict batch bound", async () => {
@@ -456,7 +487,7 @@ test("a marked claim resumes after failure and cold-cache retries remain exact",
   assert.equal(failed.errors, 1);
   assert.equal(failed.markerRetained, 1);
   const deferredMarker = h.values.get(claimPath(uid));
-  assert.equal(deferredMarker.expiresAt, CUTOFF + 1);
+  assert.equal(deferredMarker.expiresAt, markedClaim.expiresAt);
   assert.equal(deferredMarker.staleCleanupV1.originalExpiresAt, markedClaim.expiresAt);
   assert.equal(deferredMarker.staleCleanupV1.deferredAt, NOW);
 
@@ -576,7 +607,7 @@ test("active cleanup is exact and limited to terminal, missing, or stale-offered
     );
   }
   const deferredClaim = h.values.get(claimPath("live-active-room"));
-  assert.equal(deferredClaim.expiresAt, CUTOFF + 1);
+  assert.equal(deferredClaim.expiresAt, CUTOFF - 1);
   assert.equal(deferredClaim.staleCleanupV1.originalExpiresAt, CUTOFF - 1);
   assert.equal(deferredClaim.staleCleanupV1.deferredAt, NOW);
   for (const [roomId, original] of originalRooms) {
@@ -662,4 +693,282 @@ test("a new generation that replaces a cleanup marker survives final claim clean
   assert.equal(q.calls.length, 1);
   assert.equal(q.calls[0].expected.generation, GENERATION_A);
   assert.deepEqual(roomWrites(h), []);
+});
+
+test("known deferred rooms back off to six hours without renewing expired leases", async () => {
+  const uid = "backoff-owner";
+  const roomId = ROOM_IDS[0];
+  const original = expiredClaim();
+  const h = createRealtimeHarness({
+    [claimPath(uid)]: original,
+    [activePath(uid)]: active(uid, roomId),
+    [roomPath(roomId)]: room(uid, roomId),
+  });
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+  const delays = [30, 60, 120, 240, 360, 360].map((minutes) => minutes * 60_000);
+  let at = NOW;
+  for (let index = 0; index < delays.length; index += 1) {
+    const result = await cleanup(at);
+    const stored = h.values.get(claimPath(uid));
+    assert.equal(result.activeDeferred, 1);
+    assert.equal(stored.expiresAt, original.expiresAt);
+    assert.equal(stored.staleCleanupV1.deferCount, Math.min(index + 1, 5));
+    assert.equal(stored.staleCleanupV1.nextAttemptAt, at + delays[index]);
+    assert.ok(stored.staleCleanupV1.nextAttemptAt - at <= SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS);
+    const writesBefore = h.writeCalls.length;
+    const readsBefore = h.readCalls.length;
+    const skipped = await cleanup(at + delays[index] - 1);
+    assert.equal(skipped.deferredSkipped, 1);
+    assert.equal(skipped.eligible, 0);
+    assert.equal(skipped.activeExamined, 0);
+    assert.equal(h.writeCalls.length, writesBefore);
+    assert.deepEqual(h.readCalls.slice(readsBefore), [SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH]);
+    at += delays[index];
+  }
+  h.values.set(roomPath(roomId), room(uid, roomId, { destroyed: { at, by: "peer" } }));
+  const finalized = await cleanup(at);
+  assert.equal(finalized.claimsRemoved, 1);
+  assert.equal(finalized.activeRemoved, 1);
+  assert.deepEqual(roomWrites(h), []);
+});
+
+test("a transient failure after a deferred retry returns to the five-minute retry cadence", async () => {
+  const uid = "deferred-transient-owner";
+  const roomId = ROOM_IDS[0];
+  const h = createRealtimeHarness({
+    [claimPath(uid)]: deferredClaim(),
+    [activePath(uid)]: active(uid, roomId),
+  });
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+  h.failTransactionOnce.set(activePath(uid), 1);
+  const at = NOW + SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS;
+  const failed = await cleanup(at);
+  assert.equal(failed.errors, 1);
+  assert.equal(h.values.get(claimPath(uid)).expiresAt, CUTOFF - 1);
+  assert.equal(h.values.get(claimPath(uid)).staleCleanupV1.nextAttemptAt, undefined);
+  assert.equal(h.values.get(claimPath(uid)).staleCleanupV1.deferCount, undefined);
+  const retried = await cleanup(at + 5 * 60_000);
+  assert.equal(retried.claimsRemoved, 1);
+  assert.equal(retried.activeRemoved, 1);
+});
+
+test("legacy and corrupt retry fields cannot hide an expired claim indefinitely", async (t) => {
+  const corruptions = [
+    { deferCount: undefined, nextAttemptAt: undefined },
+    { deferCount: 999, nextAttemptAt: Number.MAX_SAFE_INTEGER },
+    { deferCount: "1" },
+    { deferredAt: NOW + 1 },
+    { nextAttemptAt: NOW + SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS + 1 },
+    { nextAttemptAt: "later" },
+    { token: "bad" },
+  ];
+  for (let index = 0; index < corruptions.length; index += 1) {
+    await t.test(`invalid retry ${index}`, async () => {
+      const uid = `corrupt-retry-${index}`;
+      const h = createRealtimeHarness({ [claimPath(uid)]: deferredClaim(corruptions[index]) });
+      const q = createQueueIndexHarness();
+      const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+      const result = await cleanup(NOW);
+      assert.equal(result.deferredSkipped, 0);
+      assert.equal(result.claimsRemoved, 1);
+    });
+  }
+});
+
+test("deferred first-page claims do not starve a newly expired claim with the same expiry", async () => {
+  const initial = {};
+  for (let index = 0; index < 25; index += 1) {
+    initial[claimPath(`deferred-${String(index).padStart(2, "0")}`)] = deferredClaim();
+  }
+  initial[claimPath("fresh-expiry")] = expiredClaim();
+  const h = createRealtimeHarness(initial);
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+  const result = await cleanup(NOW + 5 * 60_000);
+  assert.equal(result.examined, 26);
+  assert.equal(result.pages, 2);
+  assert.equal(result.deferredSkipped, 25);
+  assert.equal(result.claimsRemoved, 1);
+  assert.equal(result.hasMore, false);
+  assert.ok(h.queryCalls.some((call) => call[0] === "startAfter"
+    && call[1] === CUTOFF - 1 && call[2] === "deferred-24"));
+  assert.equal(h.values.has(claimPath("fresh-expiry")), false);
+  assert.equal(h.values.has(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH), false);
+});
+
+test("a bounded persistent cursor advances past skipped pages and resets after a full pass", async () => {
+  const initial = {};
+  for (let index = 0; index < 5; index += 1) {
+    initial[claimPath(`deferred-${index}`)] = deferredClaim();
+  }
+  initial[claimPath("fresh-expiry")] = expiredClaim();
+  const h = createRealtimeHarness(initial);
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({
+    realtime: h.realtime, queueIndex: q.queueIndex, batchSize: 2, maxPages: 2,
+  });
+  const first = await cleanup(NOW);
+  assert.equal(first.examined, 4);
+  assert.equal(first.scanLimited, true);
+  assert.equal(first.claimsRemoved, 0);
+  assert.equal(h.values.get(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH).uid, "deferred-3");
+  const second = await cleanup(NOW + 5 * 60_000);
+  assert.equal(second.deferredSkipped, 1);
+  assert.equal(second.claimsRemoved, 1);
+  assert.equal(second.hasMore, false);
+  assert.equal(h.values.has(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH), false);
+  assert.equal(h.values.has(claimPath("fresh-expiry")), false);
+  const third = await cleanup(NOW + 10 * 60_000);
+  assert.equal(third.deferredSkipped, 4);
+  assert.equal(h.values.get(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH).uid, "deferred-3");
+});
+
+test("deadline cursor records only examined entries, never the last unread page entry", async () => {
+  const h = createRealtimeHarness({
+    [claimPath("a-first")]: expiredClaim(),
+    [claimPath("b-next")]: expiredClaim(),
+    [claimPath("c-last")]: expiredClaim(),
+  });
+  const q = createQueueIndexHarness();
+  let ticks = 0;
+  const cleanup = createSoloSessionV2ResourceCleanup({
+    realtime: h.realtime,
+    queueIndex: q.queueIndex,
+    clock: () => [0, 0, 0, 1_000][Math.min(ticks++, 3)],
+    deadlineMs: 1_000,
+  });
+  const first = await cleanup(NOW);
+  assert.equal(first.stoppedEarly, true);
+  assert.equal(first.examined, 1);
+  assert.equal(h.values.get(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH).uid, "a-first");
+  const resumed = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+  const second = await resumed(NOW + 5 * 60_000);
+  assert.equal(second.claimsRemoved, 2);
+  assert.equal(second.hasMore, false);
+  assert.equal(h.values.has(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH), false);
+});
+
+test("stale or corrupt cursors restart the indexed scan", async (t) => {
+  const cursor = { version: 1, uid: "z-after", expiresAt: CUTOFF - 1, updatedAt: NOW };
+  const corruptions = [
+    { updatedAt: NOW - SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_MAX_MS - 1 },
+    { updatedAt: NOW + 1 },
+    { expiresAt: NOW },
+    { expiresAt: "yesterday" },
+    { uid: "bad/path" },
+    { version: 2 },
+  ];
+  for (let index = 0; index < corruptions.length; index += 1) {
+    await t.test(`invalid cursor ${index}`, async () => {
+      const h = createRealtimeHarness({
+        [SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH]: { ...cursor, ...corruptions[index] },
+        [claimPath("a-expired")]: expiredClaim(),
+      });
+      const q = createQueueIndexHarness();
+      const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+      const result = await cleanup(NOW);
+      assert.equal(result.claimsRemoved, 1);
+      assert.equal(h.queryCalls.some((call) => call[0] === "startAfter"), false);
+      assert.equal(h.values.has(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH), false);
+    });
+  }
+});
+
+test("a concurrent replacement generation survives the deferred marker CAS", async () => {
+  const uid = "defer-race-owner";
+  const roomId = ROOM_IDS[0];
+  const replacement = expiredClaim({
+    generation: GENERATION_B, heartbeatAt: NOW, expiresAt: NOW + 60_000,
+  });
+  const h = createRealtimeHarness({
+    [claimPath(uid)]: expiredClaim(),
+    [activePath(uid)]: active(uid, roomId),
+    [roomPath(roomId)]: room(uid, roomId),
+  });
+  // Install the race only after the freeze transaction has finished.
+  const realRef = h.realtime.ref.bind(h.realtime);
+  h.realtime.ref = (path) => {
+    const ref = realRef(path);
+    if (path === roomPath(roomId)) {
+      return { ...ref, async get() {
+        h.beforeTransaction.set(claimPath(uid), (values) => values.set(claimPath(uid), replacement));
+        return ref.get();
+      } };
+    }
+    return ref;
+  };
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+  const result = await cleanup(NOW);
+  assert.equal(result.conflicts, 1);
+  assert.deepEqual(h.values.get(claimPath(uid)), replacement);
+  assert.deepEqual(h.values.get(activePath(uid)), active(uid, roomId));
+  assert.deepEqual(roomWrites(h), []);
+});
+
+test("cursor CAS preserves another scan's progress and survives a cold-cache retry", async (t) => {
+  for (const concurrent of [false, true]) {
+    await t.test(concurrent ? "concurrent cursor" : "cold-cache cursor", async () => {
+      const storedCursor = { version: 1, uid: "a-before", expiresAt: CUTOFF - 1, updatedAt: NOW };
+      const otherCursor = { version: 1, uid: "z-after", expiresAt: CUTOFF - 1, updatedAt: NOW + 1 };
+      const h = createRealtimeHarness({
+        [SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH]: storedCursor,
+        [claimPath("b-expired")]: expiredClaim(),
+      });
+      if (concurrent) {
+        h.beforeTransaction.set(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH,
+          (values) => values.set(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH, otherCursor));
+      } else {
+        h.coldCacheOnce.add(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH);
+      }
+      const q = createQueueIndexHarness();
+      const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+      const result = await cleanup(NOW);
+      assert.equal(result.claimsRemoved, 1);
+      assert.deepEqual(h.values.get(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH), concurrent ? otherCursor : undefined);
+      if (!concurrent) {
+        const cold = h.callbackInputs.get(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH)
+          .find(({ input }) => input === null);
+        assert.equal(cold.output, null);
+      }
+    });
+  }
+});
+
+test("dry-run respects deferred retry metadata without advancing a bounded cursor", async () => {
+  const h = createRealtimeHarness({
+    [claimPath("a-deferred")]: deferredClaim(),
+    [claimPath("b-expired")]: expiredClaim(),
+  });
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({
+    realtime: h.realtime, queueIndex: q.queueIndex, batchSize: 1, maxPages: 1,
+  });
+  const result = await cleanup(NOW, { dryRun: true });
+  assert.equal(result.deferredSkipped, 1);
+  assert.equal(result.activeExamined, 0);
+  assert.equal(result.scanLimited, true);
+  assert.deepEqual(h.writeCalls, []);
+  assert.deepEqual(q.calls, []);
+  assert.equal(h.values.has(SOLO_SESSION_V2_RESOURCE_CLEANUP_CURSOR_PATH), false);
+});
+
+test("a fresh active pointer is preserved without a room read while deferred", async () => {
+  const uid = "fresh-active-owner";
+  const pointer = active(uid, ROOM_IDS[0], { expiresAt: NOW + 60_000 });
+  const h = createRealtimeHarness({
+    [claimPath(uid)]: expiredClaim(),
+    [activePath(uid)]: pointer,
+  });
+  const q = createQueueIndexHarness();
+  const cleanup = createSoloSessionV2ResourceCleanup({ realtime: h.realtime, queueIndex: q.queueIndex });
+  const result = await cleanup(NOW);
+  assert.equal(result.activeDeferred, 1);
+  assert.equal(result.activeRemoved, 0);
+  assert.deepEqual(h.values.get(activePath(uid)), pointer);
+  assert.equal(h.values.get(claimPath(uid)).expiresAt, CUTOFF - 1);
+  assert.equal(h.values.get(claimPath(uid)).staleCleanupV1.nextAttemptAt, NOW + SOLO_SESSION_V2_RESOURCE_CLEANUP_RETRY_BASE_MS);
+  assert.equal(h.readCalls.some((path) => path.startsWith("online/rooms/")), false);
 });

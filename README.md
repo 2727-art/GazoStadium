@@ -31,6 +31,19 @@ python -m http.server 4173 --bind 127.0.0.1
 
 その後、`http://127.0.0.1:4173/`を開きます。オンライン機能の動作確認は、保存領域の異なる2つのブラウザまたはブラウザプロファイルで行ってください。
 
+## Firebase費用削減（2026-09-11 / firebase-cost-v1）
+
+今回の変更対象は、長期保留セッションの後処理と、対戦前後に重なる初期化・実績読取りだけです。
+
+- `cleanupSoloSessionV2Leases`の5分スケジュールと削除判定・世代フェンスは維持します。終了を確認できないルームや新しいactiveを見つけた場合だけ、後処理の再確認を30分 → 1時間 → 2時間 → 4時間 → 最大6時間へ延ばします。プレイヤーの`expiresAt`や60秒のセッションTTLは延長しません。一時的な通信失敗は従来どおり次の5分周期で再試行します。
+- 再確認待ちは個別transaction・active・room読取りより前にスキップします。期限順の走査は最大8ページ・実処理候補25件・45秒までとし、途中の位置を非公開の`online/soloSessionResourceCleanupCursor`に保存します。先頭の保留が後続の期限切れ処理を妨げないためのカーソルで、所有権や削除許可には使いません。既存のRulesと`expiresAt`インデックスを使います。
+- 同じページ内・同じ認証UID・同じ日本日付で初期化済みなら、対戦結果や結果再送のための`economyAction.initialize`を省きます。初回・日付変更・UID変更・初期化失敗後は実行し、準備画面の明示的な再取得は維持します。結果確定・報酬のサーバー検証と再試行は省きません。
+- `record_match`後の推しカード成長には、既に取得した実績と、対戦transactionで確定した最新の戦績を渡し、同じ参加者の実績をもう一度全取得しません。成長値は従来どおり単調増加で、残高・報酬・台帳・ランキングのルールは変更しません。
+
+Node.js 22とJava 21以上を使い、`functions`で`npm ci`後、リポジトリ直下で`node functions/test/run-firebase-cost-emulator.js`を実行すると、専用の`demo-gazostadium-cost`で移行・報酬重複・カード成長、実際のRTDBページ送り・世代競合・カーソル権限を検証します。起動用スクリプトはこのdemo専用の非秘密dotenvだけを一時作成し、自分で作ったファイルだけを終了時に除去します。既存の設定は上書きしません。
+
+リリースは`functions:economyAction,functions:cleanupSoloSessionV2Leases`だけを先に配備し、`ANJU_PAY_LEDGER_REQUIRED=true`を確認してからHostingを配備します。Rules、Firestore indexes、App Check、reCAPTCHA設定は変更しません。本番ログでは`deferredSkipped`、`marked`、`activeExamined`、`errors`と実行時間を比較します。`eligible`は今回から再確認待ちを除いた実処理候補数で、削減率を請求総額の削減率と同一視しません。
+
 ## 貼り合い自由卓
 
 「貼り合い自由卓」は、勝ち負けや順番を置き、部屋主が用意した題材を文字やメディアでゆっくり貼り合う1対1の休憩場所です。来訪者は来訪札を送り、部屋主が`この人を迎える`または`今回は見送る`を選んだ時だけ同席します。観戦者、複数人卓、ライブ通話、カメラ通話はありません。

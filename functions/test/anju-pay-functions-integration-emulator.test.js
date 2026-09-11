@@ -343,6 +343,61 @@ if (!RUN_REQUESTED) {
       assert.equal(guestProgress.get("achievementStats.totalMatches"), 1);
     });
 
+    test("one initial migration supports match rewards and monotonic card growth without result reinitialization", async () => {
+      const host = await createCaller("match-cost-host");
+      const guest = await createCaller("match-cost-guest");
+      const roomId = eventId(`${suiteId}:match-cost`).slice(0, 20);
+      const hostCardId = eventId(`${suiteId}:host-card`).slice(0, 20);
+      const guestCardId = eventId(`${suiteId}:guest-card`).slice(0, 20);
+      await Promise.all([
+        realtime.ref(`online/economy/${host.uid}`).set({ points: 77 }),
+        firestore.doc(`valueMarketStats/${host.uid}`).set({ salesCount: 9, purchases: 0 }),
+        realtime.ref("online").update({
+          [`topMessageEntriesByUser/${host.uid}`]: hostCardId,
+          [`topMessageOwners/${hostCardId}`]: host.uid,
+          [`topMessages/${hostCardId}`]: { schemaVersion: 2, growthLevel: 1 },
+          [`topMessageEntriesByUser/${guest.uid}`]: guestCardId,
+          [`topMessageOwners/${guestCardId}`]: guest.uid,
+          [`topMessages/${guestCardId}`]: { schemaVersion: 2, growthLevel: 5 },
+        }),
+      ]);
+      const initialized = await invoke(host.economyAction, { action: "initialize" });
+      assert.equal(initialized.balance, 77, "first-use initialization migrates the legacy wallet");
+      assertContinuousLedger(await readLedger(host.uid), 77);
+      assert.equal((await realtime.ref(`online/economy/${host.uid}/patron`).get()).exists(), true);
+      assert.equal((await realtime.ref(`online/topMessages/${hostCardId}/growthLevel`).get()).val(), 2);
+      await realtime.ref(`online/rooms/${roomId}`).set({
+        status: "active",
+        createdAt: Date.now() - 60_000,
+        hostUid: host.uid,
+        guestUid: guest.uid,
+        members: { [host.uid]: true, [guest.uid]: true },
+        players: {
+          [host.uid]: { uid: host.uid, name: "HOST", rating: 1000, startingHp: 30 },
+          [guest.uid]: { uid: guest.uid, name: "GUEST", rating: 1000, startingHp: 5 },
+        },
+        rounds: { 1: { scores: { [host.uid]: 1, [guest.uid]: 10 } } },
+      });
+      const request = { action: "record_match", mode: "solo", outcome: "win", roomId, finalizationVersion: 2 };
+      const first = await invoke(host.economyAction, request);
+      assert.equal(first.outcome, "recorded");
+      assert.equal((await realtime.ref(`online/topMessages/${hostCardId}/growthLevel`).get()).val(), 3,
+        "committed match plus the captured 9 market activities raises card growth");
+      assert.equal((await realtime.ref(`online/topMessages/${guestCardId}/growthLevel`).get()).val(), 5,
+        "an existing higher card level cannot regress");
+      assert.equal((await firestore.doc(`economyProgress/${guest.uid}`).get()).get("achievementStats.totalMatches"), 1,
+        "the participant without a prior initialize still receives the result");
+      const claimed = await invoke(host.economyAction, { action: "claim_daily_play" });
+      assert.equal(claimed.balance, 97);
+      const retry = await invoke(host.economyAction, request);
+      assert.equal(retry.outcome, "duplicate");
+      assert.equal(retry.resultToken, first.resultToken);
+      const claimedAgain = await invoke(host.economyAction, { action: "claim_daily_play" });
+      assert.equal(claimedAgain.balance, 97, "result and reward retries never pay twice");
+      assertContinuousLedger(await readLedger(host.uid), 97);
+      assert.equal((await firestore.doc(`economyProgress/${host.uid}`).get()).get("achievementStats.totalMatches"), 1);
+    });
+
     test("normal 1on1 profile projection updates both marked V2 participants exactly once", async () => {
       const host = await createCaller("solo-projection-both-host");
       const guest = await createCaller("solo-projection-both-guest");

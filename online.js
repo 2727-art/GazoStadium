@@ -483,6 +483,7 @@ const finishCutInContent = document.querySelector("#finishCutInContent");
 
 let active = false;
 let state;
+let economyInitialization = null;
 let lastRenderedScreen = "";
 let finishCutInGeneration = 0;
 let matchmakingGenerationCounter = 0;
@@ -4402,9 +4403,35 @@ async function ensureAuthenticated() {
   }
 }
 
+async function requestEconomyInitialization(uid, dateKey, { reuseSuccessful = false } = {}) {
+  if (!uid || auth.currentUser?.uid !== uid) {
+    throw new Error("認証情報が変わりました。もう一度お試しください。");
+  }
+  const existing = economyInitialization;
+  if (existing?.uid === uid && existing.dateKey === dateKey
+      && (!existing.complete || reuseSuccessful)) {
+    return existing.promise;
+  }
+  const request = { uid, dateKey, complete: false, promise: null };
+  economyInitialization = request;
+  request.promise = Promise.resolve().then(() => (
+    economyActionCallable({ action: "initialize" })
+  )).then((response) => {
+    if (auth.currentUser?.uid !== uid) {
+      throw new Error("認証情報が変わりました。もう一度お試しください。");
+    }
+    request.complete = true;
+    return response;
+  }).catch((error) => {
+    if (economyInitialization === request) economyInitialization = null;
+    throw error;
+  });
+  return request.promise;
+}
+
 async function initializeEconomy() {
   const dateKey = currentDailyDateKey();
-  const response = await economyActionCallable({ action: "initialize" });
+  const response = await requestEconomyInitialization(state.uid, dateKey);
   const snapshot = await get(ref(database, `online/economy/${state.uid}`));
   state.economy = normalizeEconomyRecord(snapshot.val(), dateKey);
   state.economy.points = Math.min(MAX_POINTS, Math.max(0, Number(response.data?.balance || 0)));
@@ -7755,9 +7782,11 @@ async function recordOverallResult({
   if (!ACTIVE_BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return null;
   await setPersistence(auth, browserLocalPersistence);
   const user = auth.currentUser || (await signInAnonymously(auth)).user;
-  await economyActionCallable({ action: "initialize" });
   const displayName = String(name || localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER").trim().slice(0, 16) || "PLAYER";
   const resultTimestamp = Date.now() + Number(sourceState.uid === user.uid ? sourceState.serverTimeOffset : publicServerTimeOffset || 0);
+  // Keep first-use wallet/patron migration and day rollover, but do not repeat
+  // the full initialization already completed on mode entry or a result retry.
+  await requestEconomyInitialization(user.uid, jstDateKey(resultTimestamp), { reuseSuccessful: true });
   const periodResult = await recordPeriodRewardResult(user.uid, mode, outcome, roomId, resultTimestamp);
   const resultToken = String(periodResult?.resultToken || "");
   if (!/^[a-f0-9]{40}$/.test(resultToken)) {
