@@ -1027,7 +1027,7 @@ function rankingRow(row, index) {
       <div><dt>対象利用</dt><dd>${row.rankingUseCount}<small>回</small></dd></div>
       <div><dt>現在価格</dt><dd>${row.hidden ? "—" : row.price ? `${row.price}<small> Pay</small>` : "無料"}</dd></div>
     </dl>
-    ${!row.hidden && row.packId ? `<div><button class="button button-ghost roulette-training-ranking-detail" type="button" data-roulette-ranked-pack="${escapeHtml(row.packId)}">内容を見る</button>${renderBlockButton({ mode: "public", kind: "roulette_pack", packId: row.packId }, "作者をブロック")}</div>` : ""}
+    ${!row.hidden && row.packId ? `<div><button class="button button-ghost roulette-training-ranking-detail" type="button" data-roulette-ranked-pack="${escapeHtml(row.packId)}">内容を見る</button></div>` : ""}
   </article>`;
 }
 

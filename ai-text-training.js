@@ -3332,7 +3332,7 @@ function xLink(row) {
 function rankingRow(row) {
   return `<article class="ai-text-training-ranking-row">
     <strong class="ai-text-training-rank">${Number(row.rank)}</strong>
-    <div><h3>${escapeHtml(row.sellerName)}</h3>${xLink(row)}${row.hidden ? "" : `<small>作者の自己申告・本人未確認</small>`}${row.publicSellerId && !row.hidden && row.sellerName !== "非表示のプレイヤー" ? renderBlockButton({ mode: "public", kind: "ai_seller", publicEntryId: row.publicSellerId }, "作者をブロック") : ""}</div>
+    <div><h3>${escapeHtml(row.sellerName)}</h3>${xLink(row)}${row.hidden ? "" : `<small>作者の自己申告・本人未確認</small>`}</div>
     <dl><div><dt>ランキング売上</dt><dd>${formatAnjuPay(row.rankingGross)}</dd></div><div><dt>実売上</dt><dd>${formatAnjuPay(row.actualGross)}</dd></div><div><dt>利用</dt><dd>${Number(row.useCount || 0)}回</dd></div><div><dt>購入者</dt><dd>${Number(row.uniqueBuyers || 0)}人</dd></div></dl>
   </article>`;
 }

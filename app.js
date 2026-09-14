@@ -1205,11 +1205,6 @@
     }).format(new Date(Number(timestamp)));
   }
 
-  function renderRankingSafetyAction(entry) {
-    if (!entry?.entryId || entry.safetyHidden || entry.name === "非表示のプレイヤー" || entry.isViewer) return "";
-    return window.HariaiPlayerSafety?.renderBlockButton?.({ mode: "public", kind: "ranking", publicEntryId: entry.entryId }) || "";
-  }
-
   window.addEventListener("hariai-player-safety-auth-changed", () => {
     rankingCommentsRequestVersion += 1;
     rankingCommentDrafts.clear();
@@ -1244,7 +1239,6 @@
         <div class="ranking-comment-meta"><strong>${escapeHtml(comment.authorName)}</strong><time>${escapeHtml(rankingCommentDate(comment.updatedAt))}</time></div>
         <p>${escapeHtml(comment.text)}</p>
         ${canDelete ? `<button class="ranking-comment-delete" type="button" data-ranking-comment-delete="${escapeHtml(comment.authorEntryId)}" data-ranking-comment-target="${escapeHtml(entryId)}">削除</button>` : ""}
-        ${identityEntryId === comment.authorEntryId ? "" : window.HariaiPlayerSafety?.renderBlockButton?.({ mode: "public", kind: "ranking", publicEntryId: comment.authorEntryId }) || ""}
       </li>`;
     }).join("") : `<li class="ranking-comment-empty">まだコメントはありません。</li>`;
 
@@ -1529,7 +1523,7 @@
           <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${Math.max(0, Number(entry.serverMatches || 0))}戦の検証済みRATE</small>${activeAward}${renderCrownSignature(entry)}${achievementBadges}</div>
           <div class="ranking-rating"><strong>${overallRating}</strong><small>OVERALL RATE</small></div>
           <div class="ranking-record"><span>${entryId === ownEntryId ? "あなたの現在席" : `上位 ${index + 1}席`}</span><div class="ranking-overall-rate">${ratingClassBadge}</div></div>
-          ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}${renderRankingSafetyAction(entry)}
+          ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}
         </div>
         ${expanded ? renderRankingCommentPanel(entry) : ""}
       </article>`;
@@ -1960,7 +1954,7 @@
             <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${provisional ? `${proofCount}${periodInfo.period === "daily" ? "戦" : periodInfo.period === "weekly" ? "日" : "週"} / 成立条件まで挑戦中` : "王座スコア成立"}</small>${renderCrownSignature(entry)}${achievementBadges}</div>
             <div class="ranking-rating"><strong>${score}</strong><small>${scoreLabel}</small></div>
             <div class="ranking-record"><span>${recordCopy}</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
-            ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}${renderRankingSafetyAction(entry)}
+            ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}
           </div>
           ${expanded ? renderRankingCommentPanel(entry) : ""}
         </article>`;
@@ -1980,7 +1974,7 @@
           <div class="ranking-player"><b>${escapeHtml(entry.name)}</b>${renderRankingXLink(entry)}<small>${provisional ? `仮順位 / ${matches}戦` : `${matches}戦`}</small>${activeAward}${awardPreview}${achievementBadges}</div>
           <div class="ranking-rating"><strong>${Number(entry.points || 0)}</strong><small>PERIOD SCORE</small></div>
           <div class="ranking-record"><span>総合 ${Number(entry.wins || 0)}勝 ${Number(entry.losses || 0)}敗 ${Number(entry.draws || 0)}分</span><div class="ranking-overall-rate"><small>総合RATE ${overallRating}</small>${ratingClassBadge}</div>${modeBreakdown}</div>
-          ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}${renderRankingSafetyAction(entry)}
+          ${entry.safetyHidden || entry.name === "非表示のプレイヤー" ? "" : `<button class="ranking-comment-toggle" type="button" data-ranking-comments-toggle="${escapeHtml(entryId)}" aria-expanded="${expanded}" aria-controls="rankingComments-${escapeHtml(entryId)}" ${commentsEnabled ? "" : "disabled"}>${commentsEnabled ? (expanded ? "閉じる" : "コメント") : "受付停止"}</button>`}
         </div>
         ${expanded ? renderRankingCommentPanel(entry) : ""}
       </article>`;
