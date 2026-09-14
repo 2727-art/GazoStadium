@@ -1,3 +1,4 @@
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   onAuthStateChanged,
@@ -558,7 +559,8 @@ function rankingPayloadFromServer(value, requestedPeriod = "monthly") {
     return {
       rank: competitionRank,
       packId,
-      title: String(row?.title || "名称未設定のパック").slice(0, 80),
+      hidden: row?.hidden === true,
+      title: String(row?.hidden ? "非表示のプレイヤー" : row?.title || "名称未設定のパック").slice(0, 80),
       sellerName: String(row?.sellerName || "匿名作者").slice(0, 32),
       publicSellerId: String(row?.publicSellerId || "").slice(0, 64),
       price: nonnegativeInteger(row?.price),
@@ -570,7 +572,7 @@ function rankingPayloadFromServer(value, requestedPeriod = "monthly") {
       updatedAt: nonnegativeInteger(row?.updatedAt),
       pack,
     };
-  }).filter((row) => row.packId);
+  }).filter((row) => row.packId || row.hidden);
   return {
     period,
     periodKey: String(source.periodKey || (period === "lifetime" ? "lifetime" : "")),
@@ -1015,7 +1017,7 @@ function rankingRow(row, index) {
   return `<article class="roulette-training-ranking-row${row.rank <= 3 ? ` is-rank-${row.rank}` : ""}" role="listitem" aria-labelledby="${headingId}">
     <div class="roulette-training-ranking-place" aria-label="${row.rank}位"><strong>${row.rank}</strong><small>位</small></div>
     <div class="roulette-training-ranking-copy">
-      <span class="roulette-training-ranking-revision">販売中・改訂${row.revision || 1}</span>
+      ${row.hidden ? "" : `<span class="roulette-training-ranking-revision">販売中・改訂${row.revision || 1}</span>`}
       <h3 id="${headingId}">${escapeHtml(row.title)}</h3>
       <p><span>作者 ${escapeHtml(row.sellerName)}</span>${sellerId}</p>
       ${xProfileLink(row)}
@@ -1023,9 +1025,9 @@ function rankingRow(row, index) {
     <dl class="roulette-training-ranking-numbers">
       <div class="is-primary"><dt>異なる購入者</dt><dd>${row.uniqueBuyers}<small>人</small></dd></div>
       <div><dt>対象利用</dt><dd>${row.rankingUseCount}<small>回</small></dd></div>
-      <div><dt>現在価格</dt><dd>${row.price ? `${row.price}<small> Pay</small>` : "無料"}</dd></div>
+      <div><dt>現在価格</dt><dd>${row.hidden ? "—" : row.price ? `${row.price}<small> Pay</small>` : "無料"}</dd></div>
     </dl>
-    <button class="button button-ghost roulette-training-ranking-detail" type="button" data-roulette-ranked-pack="${escapeHtml(row.packId)}">内容を見る</button>
+    ${!row.hidden && row.packId ? `<div><button class="button button-ghost roulette-training-ranking-detail" type="button" data-roulette-ranked-pack="${escapeHtml(row.packId)}">内容を見る</button>${renderBlockButton({ mode: "public", kind: "roulette_pack", packId: row.packId }, "作者をブロック")}</div>` : ""}
   </article>`;
 }
 
@@ -1285,6 +1287,7 @@ function renderPackDetail() {
     <aside class="roulette-training-purchase-warning"><strong>${selfPreview ? "作者本人の試遊は無料です。" : price ? `${price} Payで1セッションを開始します。` : "このパックは無料です。"}</strong><p>利用権は譲渡できません。支払いは下のボタンを押し、サーバーで開始が確定した時だけ発生します。回数、抽選、クリア、ギブアップによる追加支払いはありません。</p></aside>
     ${paidConsentRequired ? `<label class="roulette-training-purchase-consent"><input id="rouletteTrainingPurchaseConsent" type="checkbox" /><span><strong>この内容を任意で1セッション利用します</strong><small>${price} Payの支払いは開始時の1回だけで、ルーレット・回数・クリア・ギブアップによる追加料金はありません。</small></span></label>` : ""}
     <div class="roulette-training-review-actions"><button class="button button-ghost" type="button" data-roulette-action="back-market">一覧へ戻る</button><button class="button button-primary" id="rouletteTrainingActivatePack" type="button" data-roulette-action="activate-pack" ${state.purchaseBusy || (price > 0 && !selfPreview && (!hasBalance || postBalance < 0)) || paidConsentRequired ? "disabled" : ""}>${state.purchaseBusy ? "開始を確認中…" : selfPreview ? "無料で作者テストを開始" : price ? `${price} Payで準備へ進む` : "無料で準備へ進む"}</button></div>
+    ${selfPreview ? "" : renderBlockButton({ mode: "public", kind: "roulette_pack", packId: pack.id })}
     ${reportDisclosure(pack)}
   </div>`, { backLabel: "一覧へ戻る", backAction: "back-market" });
 }
@@ -4946,3 +4949,12 @@ window.HariaiRouletteTraining = Object.freeze({
   callAction: callRouletteTrainingAction,
 });
 window.dispatchEvent(new Event("hariai-roulette-training-ready"));
+
+window.addEventListener("hariai-player-safety-updated", () => {
+  if (!active) return;
+  if (["market", "pack_detail"].includes(state.screen)) {
+    if (state.screen === "pack_detail" && !state.selectedMarketPack?.reportOnly) state.screen = "market";
+    loadMarket({ force: true }).catch(() => {});
+    if (state.screen === "market" && state.marketView === "ranking") loadPackRankings(state.rankingPeriod, { force: true }).catch(() => {});
+  }
+});

@@ -1,3 +1,4 @@
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -2026,11 +2027,7 @@ function renderSpaceForm() {
     <header><p class="free-table-eyebrow">届いた来訪札</p><h2>${state.requests.length ? "お迎えする人を選べます" : "いまは静かです"}</h2></header>
     ${state.requests.length ? state.requests.map(renderRequestCard).join("") : "<p>来訪札が届くまで、部屋の灯りを眺めて待てます。</p>"}
   </section>
-  ${state.blocks.length ? `<details class="free-table-blocked-list">
-    <summary>ブロックした相手を確認する</summary>
-    <p>この一覧は自分にだけ表示されます。</p>
-    ${state.blocks.map((block) => `<div><span>${escapeHtml(block.name)}</span><button type="button" class="button text" data-action="unblock-member" data-member-id="${escapeHtml(block.publicMemberId)}">ブロックを解除</button></div>`).join("")}
-  </details>` : ""}`;
+  <button type="button" class="button secondary" data-player-safety-open>安心設定・ブロック管理</button>`;
 }
 
 function renderRecentReportShortcut() {
@@ -2240,6 +2237,7 @@ function renderRoomDetail() {
       <div class="free-table-host-card"><p class="free-table-eyebrow">部屋主</p><h2>${escapeHtml(room.hostCard.name || "部屋主")}</h2>
         <p>${escapeHtml(room.hostCard.message)}</p><span>${escapeHtml(room.hostCard.activityTag)}</span></div>
       <button type="button" class="button text" data-action="bookmark-room" data-room-id="${escapeHtml(room.id)}" data-active="${!bookmarked}">${bookmarked ? "帰る場所から外す" : "帰る場所にしおりを挟む"}</button>
+      ${renderBlockButton({ mode: "free_table", publicRoomId: room.id }, "部屋主をブロック")}
     </section>
     ${room.open ? renderVisitorCardForRoom(room) : `<section class="free-table-visitor-form-card">
       <p class="free-table-eyebrow">いまは留守です</p>
@@ -2691,6 +2689,18 @@ function renderFarewell() {
 
 function render() {
   if (!active || !app) return;
+  if (state.sessionId && state.opponentUid) {
+    const sessionId = state.sessionId;
+    setActiveContact("free_table", {
+      roomId: sessionId,
+      name: participantName(otherRole()),
+      stopContact: () => {
+        if (state.sessionId !== sessionId) return;
+        leave({ reason: "safe_exit", returnHome: true }).catch(() => {});
+      },
+      leave: requestHome,
+    });
+  } else clearActiveContact("free_table");
   const screenChanged = lastRenderedFreeTableScreen !== state.screen;
   const focusedAction = app.contains(document.activeElement)
     ? String(document.activeElement?.dataset?.action || "")
@@ -2708,6 +2718,7 @@ function render() {
   else if (state.screen === "departure") app.innerHTML = renderDepartureComposer();
   else if (state.screen === "farewell") app.innerHTML = renderFarewell();
   else app.innerHTML = renderHall();
+  app.insertAdjacentHTML("afterbegin", renderContactControls("free_table"));
   lastRenderedFreeTableScreen = state.screen;
   bindRenderedEvents();
   if (screenChanged) {
@@ -3408,51 +3419,15 @@ async function toggleBookmark(roomId, enabled) {
 
 async function blockMember(publicMemberId) {
   if (!publicMemberId) return;
-  if (state.sessionId && publicMemberId === state.opponentPublicMemberId) {
-    scheduleIgnoredSessionEnd(state.sessionId);
-    finishSessionLocally("相手との接続を閉じました。", { deferHallMs: 500 });
-    const lifecycle = state.generation;
-    const sessionGeneration = state.sessionGeneration;
-    callFreeTableAction(FREE_TABLE_ACTIONS.BLOCK, { publicMemberId })
-      .then(() => refreshMyState(lifecycle, {
-        expectedSessionGeneration: sessionGeneration,
-        requireNoSession: true,
-      }))
-      .catch((error) => {
-        if (active
-            && state.generation === lifecycle
-            && state.sessionGeneration === sessionGeneration
-            && !state.sessionId) handleError(error);
-      });
-    return;
-  }
-  const lifecycle = state.generation;
-  const sessionGeneration = state.sessionGeneration;
-  await runBusy(async () => {
-    await callFreeTableAction(FREE_TABLE_ACTIONS.BLOCK, { publicMemberId });
-    if (!active
-        || state.generation !== lifecycle
-        || state.sessionGeneration !== sessionGeneration) return;
-    state.requests = state.requests.filter((request) => request.publicMemberId !== publicMemberId);
-    state.rooms = state.rooms.filter((room) => room.publicMemberId !== publicMemberId);
-    showToast("この相手をブロックしました。");
-    render();
+  const sessionId = state.sessionId;
+  const current = sessionId && publicMemberId === state.opponentPublicMemberId;
+  await openBlock(current ? { mode: "free_table", roomId: sessionId } : { mode: "free_table", publicMemberId }, {
+    stopContact: current ? () => leave({ reason: "safe_exit", returnHome: true }) : null,
   });
 }
 
 async function unblockMember(publicMemberId) {
-  if (!publicMemberId) return;
-  const lifecycle = state.generation;
-  const sessionGeneration = state.sessionGeneration;
-  await runBusy(async () => {
-    await callFreeTableAction(FREE_TABLE_ACTIONS.UNBLOCK, { publicMemberId });
-    if (!active
-        || state.generation !== lifecycle
-        || state.sessionGeneration !== sessionGeneration) return;
-    state.blocks = state.blocks.filter((block) => block.publicMemberId !== publicMemberId);
-    showToast("ブロックを解除しました。");
-    render();
-  });
+  await openSettings();
 }
 
 function resolveRole(session) {
@@ -5421,6 +5396,7 @@ function pruneRetainedMedia() {
 }
 
 function cleanupSession({ keepIdentity = false, preserveOnDisconnect = false } = {}) {
+  clearActiveContact("free_table");
   state.sessionGeneration += 1;
   const closingSessionId = state.sessionId;
   const closingUid = state.uid;

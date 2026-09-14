@@ -76,6 +76,7 @@ function createDanwakuNoteService(deps) {
     eligibleAchievementIds,
     unlockAchievements,
     normalizeAchievementProfile,
+    playerSafety,
   } = deps;
   const now = typeof deps.now === "function" ? deps.now : Date.now;
   const randomBytes = typeof deps.randomBytes === "function" ? deps.randomBytes : undefined;
@@ -119,6 +120,40 @@ function createDanwakuNoteService(deps) {
 
   function publicEntryRef(entryId) {
     return publicEntriesRef().doc(entryId);
+  }
+
+  function publicEntryOwnerRef(entryId) {
+    return firestore.collection("danwakuPublicEntryOwners").doc(entryId);
+  }
+
+  // Legacy public entries deliberately contain no UID. Only the exact private
+  // profile pointer can supply ownership; names are never an identity source.
+  async function resolvePublicEntryOwner(entryId) {
+    if (!DANWAKU_ID_PATTERN.test(String(entryId || ""))) return "";
+    const reference = publicEntryOwnerRef(entryId);
+    const existing = await reference.get();
+    const storedUid = existing.data()?.ownerUid;
+    if (typeof storedUid === "string" && SAFE_UID_PATTERN.test(storedUid)) return storedUid;
+    return firestore.runTransaction(async (transaction) => {
+      const [ownerSnapshot, entrySnapshot, profilesSnapshot] = await Promise.all([
+        transaction.get(reference),
+        transaction.get(publicEntryRef(entryId)),
+        transaction.get(firestore.collection("danwakuProfiles")
+          .where("publicEntryId", "==", entryId).limit(2)),
+      ]);
+      const currentUid = ownerSnapshot.data()?.ownerUid;
+      if (typeof currentUid === "string" && SAFE_UID_PATTERN.test(currentUid)) return currentUid;
+      if (!entrySnapshot.exists || profilesSnapshot.docs.length !== 1) return "";
+      const profileSnapshot = profilesSnapshot.docs[0];
+      const profile = profileSnapshot.data();
+      if (profile?.publicEntryId !== entryId || profile.rankingVisible !== true
+          || !SAFE_UID_PATTERN.test(profileSnapshot.id)) return "";
+      transaction.set(reference, {
+        schemaVersion: 1,
+        ownerUid: profileSnapshot.id,
+      });
+      return profileSnapshot.id;
+    });
   }
 
   function matchBadgeRef(uid) {
@@ -466,10 +501,19 @@ function createDanwakuNoteService(deps) {
     if (previousProfile.publicEntryId
         && (!publicEntry || previousProfile.publicEntryId !== profile.publicEntryId)) {
       transaction.delete(publicEntryRef(previousProfile.publicEntryId));
+      transaction.delete(publicEntryOwnerRef(previousProfile.publicEntryId));
     }
     if (profile.publicEntryId) {
-      if (publicEntry) transaction.set(publicEntryRef(profile.publicEntryId), publicEntry);
-      else transaction.delete(publicEntryRef(profile.publicEntryId));
+      if (publicEntry) {
+        transaction.set(publicEntryRef(profile.publicEntryId), publicEntry);
+        transaction.set(publicEntryOwnerRef(profile.publicEntryId), {
+          schemaVersion: 1,
+          ownerUid: uid,
+        });
+      } else {
+        transaction.delete(publicEntryRef(profile.publicEntryId));
+        transaction.delete(publicEntryOwnerRef(profile.publicEntryId));
+      }
     }
     if (matchBadge) transaction.set(matchBadgeRef(uid), matchBadge);
     else transaction.delete(matchBadgeRef(uid));
@@ -546,14 +590,40 @@ function createDanwakuNoteService(deps) {
       );
     }
     const profile = normalizeDanwakuProfile(profileSnapshot.data(), timestamp);
+    let ranking = rankDanwakuPublicEntries(
+      entriesSnapshot.docs.map((snapshot) => ({
+        ...(snapshot.data() || {}),
+        entryId: snapshot.id,
+      })),
+      { viewerEntryId: profile.publicEntryId, timestamp, includeEntryIds: Boolean(playerSafety) },
+    );
+    if (playerSafety) {
+      // Resolve at most the displayed top/nearby entries, not all 2,000 ranks.
+      const entryIds = [...new Set([...ranking.top, ...ranking.nearby]
+        .map((entry) => entry.publicEntryId))];
+      const owners = await Promise.all(entryIds.map(resolvePublicEntryOwner));
+      const ownerUids = [...new Set(owners.filter(Boolean))];
+      const blockedOwnerUids = new Set((await Promise.all(ownerUids.map(async (ownerUid) => (
+        await playerSafety.isBlocked(uid, ownerUid) ? ownerUid : ""
+      )))).filter(Boolean));
+      const hiddenEntryIds = new Set(entryIds.filter((_entryId, index) => (
+        !owners[index] || blockedOwnerUids.has(owners[index])
+      )));
+      const maskRow = (entry) => {
+        if (!hiddenEntryIds.has(entry.publicEntryId)) return entry;
+        return {
+          rank: entry.rank,
+          days: entry.days,
+          displayName: "非表示のプレイヤー",
+          isViewer: entry.isViewer,
+          publicEntryId: "",
+          hidden: true,
+        };
+      };
+      ranking = { ...ranking, top: ranking.top.map(maskRow), nearby: ranking.nearby.map(maskRow) };
+    }
     return {
-      ranking: rankDanwakuPublicEntries(
-        entriesSnapshot.docs.map((snapshot) => ({
-          ...(snapshot.data() || {}),
-          entryId: snapshot.id,
-        })),
-        { viewerEntryId: profile.publicEntryId, timestamp },
-      ),
+      ranking,
       dayKey: danwakuDayKey(timestamp),
       nextBoundaryAt: nextDanwakuBoundaryAt(timestamp),
       serverNow: timestamp,
@@ -1396,6 +1466,7 @@ function createDanwakuNoteService(deps) {
     cleanupDeletionJobs,
     dispatch,
     getState,
+    resolvePublicEntryOwner,
   });
 }
 

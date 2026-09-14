@@ -1,0 +1,19 @@
+.player-safety-dialog{width:min(94vw,620px);max-height:88dvh;padding:0;border:1px solid #6271a3;border-radius:20px;background:#111727;color:#f2f5ff;box-shadow:0 24px 90px #000a;overflow:auto}
+.player-safety-dialog::backdrop{background:#050813bc}
+.player-safety-card{padding:clamp(18px,4vw,30px);line-height:1.75}
+.player-safety-card header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.player-safety-card h2{margin:0;font-size:1.4rem}.player-safety-card h3{margin:20px 0 8px;font-size:1.05rem}
+.player-safety-close{flex:0 0 44px;width:44px;height:44px;border:1px solid #7480a1;border-radius:50%;background:transparent;color:inherit;font-size:1.6rem;cursor:pointer}
+.player-safety-contact{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:12px 16px;margin:12px 0;border:1px solid #67769a66;border-radius:14px;background:#141b2ded;color:#f5f6ff}
+.player-safety-contact>span{flex:1 1 180px;font-size:.85rem;overflow-wrap:anywhere}
+.player-safety-list{padding:0;list-style:none}.player-safety-list li{display:flex;gap:12px;align-items:center;justify-content:space-between;border-bottom:1px solid #ffffff24;padding:12px 0}
+.player-safety-list li>div{min-width:0;overflow-wrap:anywhere}.player-safety-list small{display:block;color:#bec8e0;font-size:.75rem}
+.player-safety-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}.player-safety-note{font-size:.8rem;color:#c3cbe0}
+.player-safety-recent{padding:0 14px 16px;border:1px solid #5d708b;border-radius:12px}.player-safety-operation{font-weight:700}
+.player-safety-context-button{margin-top:8px}.player-safety-card button{min-height:44px;white-space:normal}
+#playerSafetyButton{min-height:44px;border:1px solid #63749c;border-radius:10px;background:#161e31;color:#f4f6ff;padding:6px 10px;cursor:pointer;font:inherit;font-size:.78rem}
+.player-safety-dialog :focus-visible,#playerSafetyButton:focus-visible,.player-safety-contact :focus-visible{outline:3px solid #97edec;outline-offset:3px}
+@media(max-width:600px){.header-badges{flex-wrap:wrap;justify-content:flex-end}.player-safety-contact{padding:10px}.player-safety-list li{align-items:flex-start}.player-safety-actions .button{flex:1 1 140px}}
+@media(forced-colors:active){.player-safety-dialog,.player-safety-contact,#playerSafetyButton{background:Canvas;color:CanvasText;border:1px solid CanvasText}.player-safety-note,.player-safety-list small{color:CanvasText}}
+
+.player-safety-contact .button{min-height:44px}

@@ -1,3 +1,4 @@
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -218,6 +219,8 @@ function normalizeRankingEntry(value) {
     days,
     title: normalizeText(value.title ?? value.noteTitle, NOTE_TITLE_MAX_LENGTH),
     isViewer: value.isViewer === true || value.viewer === true,
+    ...(value.publicEntryId ? { publicEntryId: normalizeText(value.publicEntryId, 128) } : {}),
+    ...(value.hidden === true ? { safetyHidden: true } : {}),
   });
 }
 
@@ -796,7 +799,7 @@ function renderArchive() {
 
 function renderRankingRow(entry) {
   return `<li class="danwaku-ranking-row ${entry.isViewer ? "is-viewer" : ""}"><strong class="danwaku-rank">${entry.rank}<small>位</small></strong>
-    <div><span>${entry.isViewer ? "YOU / " : ""}${escapeHtml(entry.name)}</span>${entry.title ? `<small>${escapeHtml(entry.title)}</small>` : '<small>NOTE名は非公開</small>'}</div>
+    <div><span>${entry.isViewer ? "YOU / " : ""}${escapeHtml(entry.name)}</span>${entry.title ? `<small>${escapeHtml(entry.title)}</small>` : '<small>NOTE名は非公開</small>'}${entry.isViewer || entry.safetyHidden || entry.name === "非表示のプレイヤー" || !(entry.publicEntryId || entry.entryId) ? "" : renderBlockButton({ mode: "public", kind: "danwaku", publicEntryId: entry.publicEntryId || entry.entryId })}</div>
     <p><i aria-hidden="true">🪷</i><strong>断惑 ${formatNumber(entry.days)}日目</strong></p></li>`;
 }
 
@@ -1217,3 +1220,7 @@ window.HariaiDanwakuNote = Object.freeze({
   requestHome,
 });
 window.dispatchEvent(new Event("hariai-danwaku-note-ready"));
+
+window.addEventListener("hariai-player-safety-updated", () => {
+  if (active && state.screen === "ranking") loadRanking({ force: true }).catch(() => {});
+});

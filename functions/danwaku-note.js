@@ -553,6 +553,7 @@ function rankDanwakuPublicEntries(
     timestamp = Date.now(),
     topLimit = DANWAKU_RANKING_TOP_LIMIT,
     nearbyRadius = DANWAKU_RANKING_NEARBY_RADIUS,
+    includeEntryIds = false,
   } = {},
 ) {
   const todayKey = danwakuDayKey(timestamp);
@@ -599,6 +600,7 @@ function rankDanwakuPublicEntries(
     days: entry.days,
     displayName: entry.displayName,
     isViewer: entry.entryId === viewerEntryId,
+    ...(includeEntryIds ? { publicEntryId: entry.entryId } : {}),
     ...(entry.title ? { title: entry.title } : {}),
   });
   const safeTopLimit = integer(topLimit, 1, DANWAKU_RANKING_TOP_LIMIT, DANWAKU_RANKING_TOP_LIMIT);

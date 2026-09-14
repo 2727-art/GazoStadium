@@ -81,7 +81,8 @@ test("shop recommendations are non-Pay, relationship-gated, capped, and UID-priv
   assert.match(source, /if \(patron\.tier < 1\)/);
   assert.match(source, /favoriteMatches/);
   assert.match(source, /relationshipSaleCount < 1/);
-  assert.match(source, /if \(blockSnapshot\.exists\)/);
+  assert.match(source, /marketPlayerSafety\(\)\.assertAllowed\(uid, sellerUid, transaction\)/);
+  assert.match(source, /if \(!marketPlayerSafety\(\) && blockSnapshot\.exists\)/);
   assert.match(source, /profile\.recommendations\.length >= patronRecommendationLimit\(patron\.tier\)/);
   assert.match(source, /recommendationCount: remove/);
   assert.match(source, /remove\s*\?\s*Promise\.resolve\(null\)/);
@@ -99,7 +100,7 @@ test("market shop initialization returns fund impact and both recommendation sur
   const source = sourceBetween("async function getMarketShop", "function marketShopValidationMessage");
   assert.match(source, /ensurePatronFundRecognition\(uid, patron\)/);
   assert.match(source, /listPatronRecommendations\(uid, seasonKey\)/);
-  assert.match(source, /listRecommendedShopShelf\(seasonKey\)/);
+  assert.match(source, /listRecommendedShopShelf\(seasonKey, uid\)/);
   assert.match(source, /recommendations,/);
   assert.match(source, /recommendedShelf,/);
   assert.match(source, /\.\.\.patronProgram/);

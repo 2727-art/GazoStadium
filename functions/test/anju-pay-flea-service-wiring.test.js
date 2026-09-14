@@ -281,7 +281,7 @@ test("browse_more validates a same-day 40-hex cursor and preserves collision tie
   assert.match(more, /implicit document-ID tie-break/);
   assert.match(more, /fleaJstDateKey\(serverNow\) !== dateKey/);
   assert.match(more, /appendListings: true/);
-  assert.match(more, /serverNow,[\s\S]*?dateKey,[\s\S]*?expiresAt,[\s\S]*?\.\.\.publicBrowsePage/);
+  assert.match(more, /serverNow,[\s\S]*?dateKey,[\s\S]*?expiresAt,[\s\S]*?\.\.\.await publicBrowsePage/);
   assert.match(source, /action === "browse_more"[\s\S]*?getMoreBrowseListings\(uid, data\.cursor\)/);
 });
 
@@ -531,7 +531,8 @@ test("cancel, favorite, and report remain non-rewarding and idempotent", () => {
   assert.match(favorite, /transaction\.get\(listingReference\)/);
   assert.match(favorite, /listing\.sellerUid === uid/);
   assert.match(favorite, /publicSellerId,[\s\S]*?name,[\s\S]*?creatorCard:[\s\S]*?updatedAt,/);
-  assert.match(favorite, /transaction\.set\(reference, favoriteSeller\)/);
+  assert.match(favorite, /transaction\.set\(reference, \{[\s\S]*?\.\.\.favoriteSeller,[\s\S]*?sellerUid: listing\.sellerUid,[\s\S]*?sourceListingId: listingId/);
+  assert.match(favorite, /playerSafety\.assertAllowed\(uid, listing\.sellerUid, transaction\)/);
   assert.match(favorite, /transaction\.delete\(reference\)/);
   assert.doesNotMatch(favorite, /favoriteCount|counter|increment/i);
   assert.match(favorite, /privateFavoriteCreatorCard\(listing\.sellerCard\)/);

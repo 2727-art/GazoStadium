@@ -1377,6 +1377,7 @@ function createFreeTableService(deps) {
     realtime,
     HttpsError,
     Timestamp,
+    playerSafety = null,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
   const randomBytes = typeof deps.randomBytes === "function" ? deps.randomBytes : crypto.randomBytes;
@@ -1635,6 +1636,7 @@ function createFreeTableService(deps) {
   }
 
   async function pairIsBlocked(firstUid, firstPublicMemberId, secondUid, secondPublicMemberId) {
+    if (playerSafety) return playerSafety.isBlocked(firstUid, secondUid);
     const snapshot = await blockPairRef(firstUid, secondUid).get();
     if (!snapshot.exists) return false;
     const value = snapshot.data();
@@ -1649,6 +1651,17 @@ function createFreeTableService(deps) {
       || value?.blockedBy?.[secondUid] === true;
   }
 
+  async function sessionContactIsCurrent(session) {
+    if (!playerSafety) return true;
+    if (!session) return false;
+    return playerSafety.checkContact({
+      firstUid: session.hostUid, secondUid: session.visitorUid,
+      mode: "free_table", roomId: session.sessionId, attemptId: session.sessionId,
+      safetyPairId: session.safetyPairId, safetyVersion: session.safetyVersion,
+      safetyGrantId: session.safetyGrantId,
+    });
+  }
+
   function blockPairSnapshotIsSafe(snapshot, uid, peerUid) {
     if (!snapshot.exists) return true;
     const value = snapshot.data();
@@ -1661,6 +1674,10 @@ function createFreeTableService(deps) {
   }
 
   async function filterUnblockedCandidates(uid, candidates, limit) {
+    if (playerSafety) {
+      return (await playerSafety.filterVisible(uid, candidates, (candidate) => candidate.hostUid))
+        .slice(0, limit);
+    }
     const output = [];
     const chunkSize = FREE_TABLE_LIST_LIMIT;
     for (let offset = 0; offset < candidates.length && output.length < limit; offset += chunkSize) {
@@ -2774,6 +2791,9 @@ function createFreeTableService(deps) {
     )) {
       throw httpsError("permission-denied", "この部屋へ来訪札は送れません。");
     }
+    const requestSafety = playerSafety
+      ? await playerSafety.assertAllowed(uid, hostIdentity.uid)
+      : null;
     const rawRoomId = String(roomSnapshot.val()?.roomId || "");
     if (!CHILD_ID_PATTERN.test(rawRoomId)) {
       throw httpsError("not-found", "この部屋は、いま一息ついています。");
@@ -2862,6 +2882,7 @@ function createFreeTableService(deps) {
     }
     const requestId = pending.requestId;
     const internalRequest = {
+      ...(requestSafety ? { safetyVersion: requestSafety.revision } : {}),
       requestId,
       roomId,
       publicRoomId,
@@ -3213,6 +3234,19 @@ function createFreeTableService(deps) {
   }
 
   async function completeAcceptedAdmission(uid, room, session) {
+    if (!await sessionContactIsCurrent(session)) {
+      await endSessionInternal(session.hostUid, session.sessionId, "safe_exit");
+      throw httpsError("permission-denied", "この一席は終了しました。");
+    }
+    if (playerSafety && !await playerSafety.activateContact({
+      firstUid: session.hostUid, secondUid: session.visitorUid,
+      mode: "free_table", roomId: session.sessionId, attemptId: session.sessionId,
+      safetyPairId: session.safetyPairId, safetyVersion: session.safetyVersion,
+      safetyGrantId: session.safetyGrantId,
+    })) {
+      await endSessionInternal(session.hostUid, session.sessionId, "safe_exit");
+      throw httpsError("permission-denied", "この一席は終了しました。");
+    }
     const closedRequests = Object.values(objectValue(room.requests));
     await Promise.all(closedRequests
       .filter((entry) => entry?.visitorUid && entry?.requestId)
@@ -3296,15 +3330,36 @@ function createFreeTableService(deps) {
       throw httpsError("permission-denied", "この来訪札は受け付けられません。");
     }
     const proposedSessionId = randomPublicId(randomBytes);
-    const roomResult = await roomStateRef(roomId).transaction((current) => (
-      nextAdmissionState(current, {
+    const safetyMetadata = accept && playerSafety
+      ? await playerSafety.ensureContact({
+        firstUid: uid, secondUid: requested.visitorUid, mode: "free_table",
+        roomId: proposedSessionId, attemptId: proposedSessionId,
+        startedAt: Number(requested.requestedAt || 0),
+        active: false,
+      })
+      : {};
+    let roomResult;
+    try {
+      roomResult = await roomStateRef(roomId).transaction((current) => {
+      const next = nextAdmissionState(current, {
         hostUid: uid,
         requestId,
         accept,
         sessionId: proposedSessionId,
         now,
-      }) ?? current
-    ));
+      }) ?? current;
+      if (next?.session?.sessionId === proposedSessionId) {
+        return { ...next, session: { ...next.session, ...safetyMetadata } };
+      }
+      return next;
+      });
+    } catch (error) {
+      const persisted = (await roomStateRef(roomId).get()).val();
+      if (playerSafety && accept && persisted?.session?.sessionId !== proposedSessionId) {
+        await playerSafety.revokeContact({ roomId: proposedSessionId, ...safetyMetadata });
+      }
+      throw error;
+    }
     const room = committedTransactionValue(
       roomResult,
       (value) => (
@@ -3326,6 +3381,7 @@ function createFreeTableService(deps) {
       ),
     );
     if (!room) {
+      if (playerSafety && accept) await playerSafety.revokeContact({ roomId: proposedSessionId, ...safetyMetadata });
       throw httpsError("aborted", "お迎え状態が変わりました。もう一度お試しください。");
     }
     if (!accept) {
@@ -3337,6 +3393,9 @@ function createFreeTableService(deps) {
       return { ok: true, accepted: false, requestId };
     }
     const session = room.session;
+    if (playerSafety && session?.sessionId !== proposedSessionId) {
+      await playerSafety.revokeContact({ roomId: proposedSessionId, ...safetyMetadata });
+    }
     if (!session
         || !CHILD_ID_PATTERN.test(String(session.sessionId || ""))
         || session.hostUid !== uid
@@ -3675,6 +3734,9 @@ function createFreeTableService(deps) {
     const payload = exactPayload(data, ["sessionId"]);
     if (!payload) throw httpsError("invalid-argument", "入室確認を確認してください。");
     const sessionId = requireChildId(payload.sessionId, "自由卓");
+    if (playerSafety && !await sessionContactIsCurrent((await sessionRef(sessionId).get()).val())) {
+      throw httpsError("permission-denied", "この一席は終了しました。");
+    }
     const now = currentTime();
     const activeSnapshot = await activeRef(uid).get();
     const active = activeSnapshot.val();
@@ -3703,6 +3765,10 @@ function createFreeTableService(deps) {
     );
     if (!session) {
       throw httpsError("failed-precondition", "入室確認の期限が切れています。");
+    }
+    if (!await sessionContactIsCurrent(session)) {
+      await endSessionInternal(uid, sessionId, "safe_exit");
+      throw httpsError("permission-denied", "この一席は終了しました。");
     }
     await refreshActiveHeartbeatIfMatches(uid, sessionId, now);
     const established = session.admissionAccepted === true
@@ -3905,6 +3971,9 @@ function createFreeTableService(deps) {
       throw httpsError("invalid-argument", "部屋の音と灯りの設定を確認してください。");
     }
     const sessionId = requireChildId(payload.sessionId, "自由卓");
+    if (playerSafety && !await sessionContactIsCurrent((await sessionRef(sessionId).get()).val())) {
+      throw httpsError("permission-denied", "この一席は終了しました。");
+    }
     const generation = payload.generation;
     const proposedAmbience = normalizeAmbience(payload.ambience);
     const now = currentTime();
@@ -4190,6 +4259,12 @@ function createFreeTableService(deps) {
       signalsRef(session.sessionId).remove(),
     ]);
     await recordSeatEnded(session, session.endedAt);
+    if (typeof playerSafety?.revokeContact === "function") {
+      await playerSafety.revokeContact({
+        roomId: session.sessionId, safetyPairId: session.safetyPairId,
+        safetyVersion: session.safetyVersion, safetyGrantId: session.safetyGrantId,
+      });
+    }
     const finalizedAt = currentTime();
     await sessionRef(session.sessionId).transaction(
       (current) => {
@@ -4415,7 +4490,8 @@ function createFreeTableService(deps) {
         transaction.get(reference),
         transaction.get(blockPairRef(uid, target.uid)),
       ]);
-      if (!blockPairSnapshotIsSafe(blockPairSnapshot, uid, target.uid)) {
+      if (playerSafety) await playerSafety.assertAllowed(uid, target.uid, transaction);
+      if (!playerSafety && !blockPairSnapshotIsSafe(blockPairSnapshot, uid, target.uid)) {
         throw httpsError("permission-denied", "この部屋は帰る場所へ追加できません。");
       }
       transaction.set(reference, {
@@ -4450,6 +4526,9 @@ function createFreeTableService(deps) {
     }
     const peerUid = session.hostUid === uid ? session.visitorUid : session.hostUid;
     const ownPublicMemberId = String(session.publicMembers?.[uid] || "");
+    if (wants && !await sessionContactIsCurrent(session)) {
+      throw httpsError("failed-precondition", "この一席は終了しました。新しい一席で選び直してください。");
+    }
     const peerPublicMemberId = String(session.publicMembers?.[peerUid] || "");
     if (!PUBLIC_ID_PATTERN.test(ownPublicMemberId)
         || !PUBLIC_ID_PATTERN.test(peerPublicMemberId)) {
@@ -4462,7 +4541,9 @@ function createFreeTableService(deps) {
         transaction.get(reference),
         transaction.get(blockPairRef(uid, peerUid)),
       ]);
-      if (!blockPairSnapshotIsSafe(blockPairSnapshot, uid, peerUid)) {
+      const safetyPolicy = wants && playerSafety
+        ? await playerSafety.assertAllowed(uid, peerUid, transaction) : null;
+      if (!playerSafety && !blockPairSnapshotIsSafe(blockPairSnapshot, uid, peerUid)) {
         throw httpsError("permission-denied", "この縁は結べません。");
       }
       const previous = snapshot.exists ? snapshot.data() : {};
@@ -4472,7 +4553,15 @@ function createFreeTableService(deps) {
             !== JSON.stringify(participants)) {
         throw httpsError("failed-precondition", "縁の組み合わせを確認できません。");
       }
-      const previousWants = objectValue(previous.wants);
+      const previousWants = { ...objectValue(previous.wants) };
+      const wantsUpdatedAt = { ...objectValue(previous.wantsUpdatedAt) };
+      for (const participant of participants) {
+        if (safetyPolicy?.lastBlockedAt > 0
+            && Number(wantsUpdatedAt[participant] || previous.updatedAt || 0) <= safetyPolicy.lastBlockedAt) {
+          previousWants[participant] = false;
+        }
+      }
+      wantsUpdatedAt[uid] = now;
       const nextWants = {
         ...previousWants,
         [uid]: wants,
@@ -4487,6 +4576,7 @@ function createFreeTableService(deps) {
           [session.visitorUid]: session.publicMembers?.[session.visitorUid] || "",
         },
         wants: nextWants,
+        wantsUpdatedAt,
         active: mutual,
         sourceSessionId: sessionId,
         createdAt: Math.max(0, Number(previous.createdAt || now)),
@@ -4924,15 +5014,23 @@ function createFreeTableService(deps) {
         && Number(host.expiresAt || 0) > now
         && PUBLIC_ID_PATTERN.test(String(host.publicRoomId || ""))
         && CHILD_ID_PATTERN.test(String(host.roomId || ""))) {
-      const [publicSnapshot, incomingSnapshot] = await Promise.all([
+      const [publicSnapshot, incomingSnapshot, privateRoomSnapshot] = await Promise.all([
         publicRoomRef(host.publicRoomId).get(),
         requestsRef(host.roomId).get(),
+        playerSafety ? roomStateRef(host.roomId).get() : Promise.resolve(null),
       ]);
       const publicOpen = publicRoomProjection(publicSnapshot.val(), now);
       open = publicOpen
         ? { ...publicOpen, requestInboxId: host.roomId }
         : null;
-      requests = Object.values(objectValue(incomingSnapshot.val()))
+      const incoming = Object.values(objectValue(incomingSnapshot.val()));
+      const privateRequests = objectValue(privateRoomSnapshot?.val()?.requests);
+      const visibleIncoming = playerSafety
+        ? await playerSafety.filterVisible(uid, incoming, (request) => (
+          privateRequests[request?.requestId || request?.id]?.visitorUid
+        ))
+        : incoming;
+      requests = visibleIncoming
         .filter((request) => Number(request?.expiresAt || 0) > now)
         .map(publicRequestProjection)
         .filter(Boolean)
@@ -4950,7 +5048,8 @@ function createFreeTableService(deps) {
       ]);
       const request = publicRequestProjection(requestSnapshot.val());
       const room = publicRoomProjection(roomSnapshot.val(), now);
-      if (request && room) pending = { request, room };
+      if (request && room && (!playerSafety
+          || !await playerSafety.isBlocked(uid, roomSnapshot.val()?.hostUid))) pending = { request, room };
     }
     let session = null;
     let storedSession = null;
@@ -5002,19 +5101,34 @@ function createFreeTableService(deps) {
       ...relationshipCandidates.map((candidate) => candidate.peerUid),
       ...(sessionPeerUid ? [sessionPeerUid] : []),
     ])];
-    const pairSnapshots = peerUids.length
+    let visiblePeerUids = playerSafety && !playerSafety.getPolicy
+      ? new Set(await playerSafety.filterVisible(uid, peerUids, (peerUid) => peerUid))
+      : null;
+    const relationPolicies = playerSafety?.getPolicy
+      ? new Map(await Promise.all(peerUids.map(async (peerUid) => [peerUid, await playerSafety.getPolicy(uid, peerUid)])))
+      : new Map();
+    if (playerSafety?.getPolicy) visiblePeerUids = new Set(peerUids.filter((peerUid) => (
+      !Object.values(relationPolicies.get(peerUid)?.blockedBy || {}).some((blocked) => blocked === true)
+    )));
+    const relationSurvivesBlock = (peerUid, timestamp) => {
+      const blockedAt = Number(relationPolicies.get(peerUid)?.lastBlockedAt || 0);
+      return !blockedAt || Number(timestamp || 0) > blockedAt;
+    };
+    const pairSnapshots = !playerSafety && peerUids.length
       ? await firestore.getAll(...peerUids.map((peerUid) => blockPairRef(uid, peerUid)))
       : [];
     const pairSnapshotsByPeer = new Map(
       peerUids.map((peerUid, index) => [peerUid, pairSnapshots[index]]),
     );
     const peerIsSafe = (peerUid) => {
+      if (visiblePeerUids) return visiblePeerUids.has(peerUid);
       const pairSnapshot = pairSnapshotsByPeer.get(peerUid);
       return pairSnapshot
         ? blockPairSnapshotIsSafe(pairSnapshot, uid, peerUid)
         : false;
     };
-    if (storedSession && sessionPeerUid && peerIsSafe(sessionPeerUid)) {
+    if (storedSession && sessionPeerUid && peerIsSafe(sessionPeerUid)
+        && await sessionContactIsCurrent(storedSession)) {
       session = publicSessionProjection(uid, storedSession);
       if (session && ["connecting", "active"].includes(storedSession.status)) {
         await refreshActiveHeartbeatIfMatches(uid, active.sessionId, now);
@@ -5027,7 +5141,8 @@ function createFreeTableService(deps) {
       }
     }
     const bookmarks = bookmarkCandidates
-      .filter((candidate) => peerIsSafe(candidate.hostUid))
+      .filter((candidate) => peerIsSafe(candidate.hostUid)
+        && relationSurvivesBlock(candidate.hostUid, candidate.bookmark.updatedAt))
       .map((candidate) => candidate.bookmark);
     bookmarks.sort((first, second) => second.updatedAt - first.updatedAt);
     const blocks = blockSnapshot.docs
@@ -5042,7 +5157,11 @@ function createFreeTableService(deps) {
       })
       .filter(Boolean);
     const relationships = relationshipCandidates
-      .filter((candidate) => peerIsSafe(candidate.peerUid))
+      .filter((candidate) => peerIsSafe(candidate.peerUid)
+        && candidate.relationship.participants.every((participant) => relationSurvivesBlock(
+          candidate.peerUid,
+          candidate.relationship.wantsUpdatedAt?.[participant] || candidate.relationship.updatedAt,
+        )))
       .map((candidate) => {
         return {
           publicMemberId: candidate.publicMemberId,
@@ -5060,7 +5179,7 @@ function createFreeTableService(deps) {
       session,
       bookmarks,
       relationships,
-      blocks,
+      blocks: playerSafety ? [] : blocks,
       updatedAt: now,
     };
   }
@@ -5583,9 +5702,91 @@ function createFreeTableService(deps) {
     };
   }
 
+  async function closeBlockedPair({ firstUid, secondUid, actorUid, revision, blockedAt = 0, grants = {} }) {
+    if (![firstUid, secondUid].includes(actorUid) || firstUid === secondUid) {
+      throw httpsError("invalid-argument", "接触終了の対象を確認できません。");
+    }
+    let closed = 0;
+    let requestsRemoved = 0;
+    const knownSessionIds = new Set(Object.values(grants).filter((grant) => grant?.mode === "free_table")
+      .map((grant) => grant.roomId).filter(Boolean));
+    for (const uid of [firstUid, secondUid]) {
+      const peerUid = uid === firstUid ? secondUid : firstUid;
+      const active = (await activeRef(uid).get()).val();
+      if (active?.sessionId) knownSessionIds.add(active.sessionId);
+      for (const sessionId of knownSessionIds) {
+        const session = (await sessionRef(sessionId).get()).val();
+        if (session?.participants?.[firstUid] === true && session.participants?.[secondUid] === true
+            && Number(session.safetyVersion || 0) < Number(revision)
+            && ["connecting", "active"].includes(session.status)) {
+          await endFixedPairSessionIfActive(actorUid, actorUid === firstUid ? secondUid : firstUid, sessionId);
+          closed += 1;
+        }
+      }
+      const pending = (await visitorPendingRef(uid).get()).val();
+      if (!pending?.requestId || !pending.roomId) continue;
+      const room = (await roomStateRef(pending.roomId).get()).val();
+      const request = room?.requests?.[pending.requestId];
+      if (room?.hostUid !== peerUid || request?.visitorUid !== uid
+          || Number(request.safetyVersion || 0) >= Number(revision)) continue;
+      await Promise.all([
+        clearPendingIfMatches(uid, pending.requestId),
+        clearEngagementIfMatches(uid, "requestId", pending.requestId),
+        requestRef(pending.roomId, pending.requestId).remove(),
+        roomStateRef(pending.roomId).transaction((current) => {
+          const currentRequest = current?.requests?.[pending.requestId];
+          if (current?.hostUid !== peerUid || currentRequest?.visitorUid !== uid
+              || Number(currentRequest.safetyVersion || 0) >= Number(revision)) return current;
+          const requests = { ...objectValue(current.requests) };
+          delete requests[pending.requestId];
+          return { ...current, requests };
+        }),
+      ]);
+      requestsRemoved += 1;
+    }
+    let relationshipsRemoved = 0;
+    if (Number(blockedAt) > 0) {
+      for (const uid of [firstUid, secondUid]) {
+        const peerUid = uid === firstUid ? secondUid : firstUid;
+        const bookmarks = await bookmarkCollection(uid).where("hostUid", "==", peerUid).get();
+        for (const document of bookmarks.docs) {
+          const reference = bookmarkRef(uid, document.id);
+          await firestore.runTransaction(async (transaction) => {
+            const value = (await transaction.get(reference)).data();
+            if (value?.hostUid === peerUid && Number(value.updatedAt || value.createdAt || 0) <= blockedAt) {
+              transaction.delete(reference);
+              relationshipsRemoved += 1;
+            }
+          });
+        }
+      }
+      const reference = relationshipRef(internalPairId(firstUid, secondUid));
+      await firestore.runTransaction(async (transaction) => {
+        const value = (await transaction.get(reference)).data();
+        if (!value || !value.participants?.includes(firstUid) || !value.participants.includes(secondUid)) return;
+        const wants = { ...objectValue(value.wants) };
+        let changed = false;
+        for (const uid of [firstUid, secondUid]) {
+          if (wants[uid] === true && Number(value.wantsUpdatedAt?.[uid] || value.updatedAt || 0) <= blockedAt) {
+            wants[uid] = false;
+            changed = true;
+          }
+        }
+        if (changed) {
+          transaction.set(reference, { wants, active: false, mutualAt: 0 }, { merge: true });
+          relationshipsRemoved += 1;
+        }
+      });
+    }
+    return { closed, requestsRemoved, relationshipsRemoved };
+  }
+
   async function performAction(uidValue, data) {
     const uid = requireUid(uidValue);
     const action = typeof data?.action === "string" ? data.action.trim() : "";
+    if (playerSafety && ["block", "unblock"].includes(action)) {
+      throw httpsError("failed-precondition", "ブロックは全モード共通の安心設定へ移りました。ページを更新してください。");
+    }
     if (!FREE_TABLE_ACTIONS.includes(action)) {
       throw httpsError("invalid-argument", "未対応の自由卓操作です。");
     }
@@ -5610,6 +5811,7 @@ function createFreeTableService(deps) {
 
   return Object.freeze({
     cleanupExpired,
+    closeBlockedPair,
     getInvitePreview,
     getPublicStats,
     performAction,

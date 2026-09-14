@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const test = require("node:test");
+const { createUgcPlayerSafetyStub } = require("./helpers/ugc-player-safety-stub");
 
 const {
   createRouletteTrainingService,
@@ -234,7 +235,7 @@ function publishInput(actionId, expectedBalance, overrides = {}) {
   };
 }
 
-function createHarness({ balances = {}, now = 1_800_000_000_000 } = {}) {
+function createHarness({ balances = {}, now = 1_800_000_000_000, playerSafety } = {}) {
   const firestore = new FakeFirestore();
   const mirrors = [];
   const achievementSyncs = [];
@@ -246,6 +247,7 @@ function createHarness({ balances = {}, now = 1_800_000_000_000 } = {}) {
   const walletReference = (uid) => firestore.collection("wallets").doc(uid);
   const service = createRouletteTrainingService({
     firestore,
+    playerSafety,
     HttpsError: FakeHttpsError,
     async ensureWallet(uid) {
       if (!firestore.read(`wallets/${uid}`)) {
@@ -351,6 +353,70 @@ function packStats(harness, packId) {
   const pack = storedPack(harness, packId);
   return harness.firestore.read(`rouletteTrainingPackStats/${pack.packRankingId}`);
 }
+
+test("shared blocks stop new pack payments while preserving replay and purchased revision rights", async () => {
+  const playerSafety = createUgcPlayerSafetyStub();
+  const harness = createHarness({ balances: { seller: 20, buyer: 100 }, playerSafety });
+  playerSafety.attach(harness.firestore);
+  const { pack } = await publishPack(harness);
+  playerSafety.setBlocked("seller", "buyer");
+  await assert.rejects(startUse(harness, "buyer", pack, "shared_0001"), { code: "failed-precondition" });
+  assert.equal(harness.wallet("buyer").balance, 100);
+  assert.equal(harness.wallet("seller").balance, 19);
+  assert.equal(harness.firestore.keys("rouletteTrainingUses/").length, 0);
+  playerSafety.setBlocked("seller", "buyer", false);
+  const paid = await startUse(harness, "buyer", pack, "shared_0001");
+  playerSafety.setBlocked("buyer", "seller");
+  const retry = await startUse(harness, "buyer", pack, "shared_0001");
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.use.id, paid.use.id);
+  assert.equal(playerSafety.checks.length, 2, "successful replay never becomes another purchase");
+  const state = await harness.service.performAction("buyer", { action: "state" });
+  assert.deepEqual(state.packs, []);
+  assert.deepEqual(state.activeUse.pack.items, pack.items);
+  const resumed = await harness.service.performAction("buyer", { action: "resume_use", useId: paid.use.id });
+  assert.deepEqual(resumed.use.pack.items, pack.items);
+  await finishUse(harness, "buyer", paid.use);
+  const finishedState = await harness.service.performAction("buyer", { action: "state" });
+  assert.deepEqual(finishedState.purchasedRevisions[0].pack.items, pack.items);
+  const reported = await harness.service.performAction("buyer", {
+    action: "report", packId: pack.id, expectedRevision: pack.revision, reason: "other",
+  });
+  assert.equal(reported.accepted, true);
+  const terminalRetry = await startUse(harness, "buyer", pack, "shared_0001");
+  assert.equal(terminalRetry.terminalAction, true);
+  await assert.rejects(startUse(harness, "buyer", pack, "shared_0002"), { code: "failed-precondition" });
+  assert.equal(harness.wallet("buyer").balance, 90);
+  assert.equal(harness.firestore.keys("rouletteTrainingUses/").length, 1);
+  const preview = await startUse(harness, "seller", pack, "self_preview_0001");
+  assert.equal(preview.charged, false);
+});
+
+test("shared pack ranking masks keep competition ranks and numeric records but remove embedded previews", async () => {
+  const playerSafety = createUgcPlayerSafetyStub();
+  const harness = createHarness({ balances: { seller: 20, second: 20 }, playerSafety });
+  playerSafety.attach(harness.firestore);
+  const { pack } = await publishPack(harness);
+  const other = await publishPackAs(harness, "second", { sellerName: "別の作者", title: "別のパック" });
+  for (const entry of [pack, other.pack]) {
+    const stored = storedPack(harness, entry.id);
+    const path = `rouletteTrainingPackStats/${stored.packRankingId}`;
+    harness.firestore.write(path, { ...harness.firestore.read(path), uniqueBuyers: 4, rankingUseCount: 7, scoreReachedAt: 1 });
+  }
+  playerSafety.setBlocked("viewer", "seller");
+  const browse = await harness.service.performAction("viewer", { action: "browse" });
+  assert.deepEqual(browse.packs.map((row) => row.id), [other.pack.id]);
+  const ranking = await harness.service.performAction("viewer", { action: "pack_rankings", period: "lifetime" });
+  assert.deepEqual(ranking.rows.map((row) => row.rank), [1, 1]);
+  const hidden = ranking.rows.find((row) => row.hidden);
+  assert.equal(hidden.pack, null);
+  assert.equal(hidden.packId, "");
+  assert.equal(hidden.publicSellerId, "");
+  assert.equal(hidden.uniqueBuyers, 4);
+  assert.equal(hidden.rankingUseCount, 7);
+  assert.equal(ranking.rows.find((row) => !row.hidden).pack.id, other.pack.id);
+  assert.doesNotMatch(JSON.stringify(ranking), /sellerUid|buyerUid/u);
+});
 
 test("publish charges once, exposes full preview, and preserves positional item IDs on revision", async () => {
   const harness = createHarness({ balances: { seller: 30 } });

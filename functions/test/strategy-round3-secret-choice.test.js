@@ -186,15 +186,19 @@ test("protocol version 2 fences new secret-choice clients from legacy matchmakin
 
   assert.match(begin, /protocolVersion:\s*STRATEGY_PROTOCOL_VERSION/u);
   assert.match(begin, /state:\s*STRATEGY_QUEUE_WAITING_STATE/u);
-  assert.match(hosting, /Number\(entry\.protocolVersion\)\s*===\s*STRATEGY_PROTOCOL_VERSION/u);
-  assert.match(hosting, /entry\.state\s*===\s*STRATEGY_QUEUE_WAITING_STATE/u);
+  assert.match(hosting, /await createOffer\(\)/u);
+  const serverMatchmaking = fs.readFileSync(path.resolve(__dirname, "../player-safety-strategy.js"), "utf8");
+  assert.match(serverMatchmaking, /row\.protocolVersion === 2/u);
+  assert.match(serverMatchmaking, /states = \["waiting-v2"\]/u);
+  assert.match(serverMatchmaking, /protocolVersion: 2, status: "offered"/u);
+  assert.match(serverMatchmaking, /strategyOffers[\s\S]*?set\(\{ protocolVersion: 2/u);
   assert.match(incoming, /Number\(offer\?\.protocolVersion\)\s*===\s*STRATEGY_PROTOCOL_VERSION/u);
   assert.ok(
     (createOffer.match(/protocolVersion:\s*STRATEGY_PROTOCOL_VERSION/gu) || []).length >= 2,
     "the room and offer both advertise protocol version 2",
   );
   assert.match(acceptOffer, /Number\(offer\?\.protocolVersion\)\s*!==\s*STRATEGY_PROTOCOL_VERSION/u);
-  assert.match(acceptOffer, /Number\(room\.protocolVersion\)\s*!==\s*STRATEGY_PROTOCOL_VERSION/u);
+  assert.match(acceptOffer, /requestSafety\("strategy_accept"[\s\S]*?protocolVersion: STRATEGY_PROTOCOL_VERSION/u);
   assert.match(enterRoom, /Number\(room\.protocolVersion\)\s*!==\s*STRATEGY_PROTOCOL_VERSION/u);
 });
 

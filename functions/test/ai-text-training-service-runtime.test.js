@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const test = require("node:test");
+const { createUgcPlayerSafetyStub } = require("./helpers/ugc-player-safety-stub");
 
 const {
   AI_TEXT_TRAINING_SCRIPT_SLOT_IDS,
@@ -313,6 +314,7 @@ function createHarness({
   maximumBalance = 1_000,
   now = Date.parse("2026-07-29T03:00:00.000Z"),
   achievementSyncError = null,
+  playerSafety,
 } = {}) {
   const firestore = new FakeFirestore();
   const mirrors = [];
@@ -335,6 +337,7 @@ function createHarness({
   };
   const service = createAiTextTrainingService({
     firestore,
+    playerSafety,
     HttpsError: FakeHttpsError,
     ensureWallet,
     walletRef: walletReference,
@@ -453,6 +456,81 @@ async function closeAchievementPresence(harness, uid, sessionId) {
     sessionId,
   });
 }
+
+test("shared blocks stop new paid scripts atomically but preserve paid replay, resume, finish and reporting", async () => {
+  const playerSafety = createUgcPlayerSafetyStub();
+  const harness = createHarness({ balances: { seller: 20, buyer: 100 }, playerSafety });
+  playerSafety.attach(harness.firestore);
+  const preset = await publishPreset(harness);
+  const request = {
+    action: "start_paid_use",
+    actionId: "use_shared_safety_0001",
+    presetId: preset.id,
+    expectedRevision: preset.revision,
+    expectedPrice: preset.price,
+    expectedBalance: 100,
+  };
+  playerSafety.setBlocked("seller", "buyer");
+  await assert.rejects(harness.service.performAction("buyer", request), { code: "failed-precondition" });
+  assert.equal(harness.wallet("buyer").balance, 100);
+  assert.equal(harness.wallet("seller").balance, 19);
+  assert.equal(harness.firestore.count("aiTextTrainingUses/"), 0);
+  assert.equal(playerSafety.checks.length, 1);
+  playerSafety.setBlocked("seller", "buyer", false);
+  const paid = await harness.service.performAction("buyer", request);
+  playerSafety.setBlocked("buyer", "seller");
+  const retry = await harness.service.performAction("buyer", request);
+  assert.equal(retry.idempotent, true);
+  assert.equal(retry.use.id, paid.use.id);
+  assert.equal(playerSafety.checks.length, 2, "completed retry bypasses new-contact checks");
+  const resumed = await harness.service.performAction("buyer", { action: "resume_use", useId: paid.use.id });
+  assert.deepEqual(resumed.use.preset, paid.use.preset);
+  const state = await harness.service.performAction("buyer", { action: "state" });
+  assert.deepEqual(state.presets, []);
+  assert.equal(state.activeUse.id, paid.use.id);
+  await harness.service.performAction("buyer", { action: "finish_use", useId: paid.use.id, outcome: "safety_stopped" });
+  const reported = await harness.service.performAction("buyer", {
+    action: "report", presetId: preset.id, expectedRevision: preset.revision, reason: "dangerous",
+  });
+  assert.equal(reported.idempotent, false);
+  const terminalRetry = await harness.service.performAction("buyer", request);
+  assert.equal(terminalRetry.terminalAction, true);
+  await assert.rejects(harness.service.performAction("buyer", {
+    ...request, actionId: "use_shared_safety_0002", expectedBalance: 90,
+  }), { code: "failed-precondition" });
+  assert.equal(harness.wallet("buyer").balance, 90);
+  assert.equal(harness.firestore.count("aiTextTrainingUses/"), 1);
+});
+
+test("shared blocks remove script previews and mask creator identity without renumbering ranks", async () => {
+  const playerSafety = createUgcPlayerSafetyStub();
+  const harness = createHarness({ balances: { seller: 20, buyer: 100 }, playerSafety });
+  playerSafety.attach(harness.firestore);
+  const preset = await publishPreset(harness);
+  const stored = harness.firestore.read(`aiTextTrainingPresets/${preset.id}`);
+  const otherId = stableId("other-visible-script");
+  harness.firestore.write(`aiTextTrainingPresets/${otherId}`, {
+    ...stored, sellerUid: "other-author", sellerName: "他の作者", title: "別の台本",
+  });
+  harness.firestore.write("aiTextTrainingSellerStats/seller", {
+    sellerUid: "seller", sellerName: "避ける作者", publicSellerId: "public-seller", rankingGross: 30,
+  });
+  harness.firestore.write("aiTextTrainingSellerStats/other-author", {
+    sellerUid: "other-author", sellerName: "他の作者", publicSellerId: "public-other", rankingGross: 20,
+  });
+  harness.firestore.write("aiTextTrainingSellerProfiles/seller", { xPublic: true, xHandle: "blocked_link" });
+  playerSafety.setBlocked("seller", "buyer");
+  const browse = await harness.service.performAction("buyer", { action: "browse" });
+  assert.deepEqual(browse.presets.map((row) => row.id), [otherId]);
+  const ranking = await harness.service.performAction("buyer", { action: "rankings", period: "lifetime" });
+  assert.deepEqual(ranking.rows.map((row) => row.rank), [1, 2]);
+  assert.deepEqual(ranking.rows.map((row) => row.rankingGross), [30, 20]);
+  assert.equal(ranking.rows[0].hidden, true);
+  assert.equal(ranking.rows[0].publicSellerId, "");
+  assert.equal(ranking.rows[0].xHandle, "");
+  assert.equal(ranking.rows[1].sellerName, "他の作者");
+  assert.doesNotMatch(JSON.stringify(ranking), /避ける作者|blocked_link|sellerUid|buyerUid/u);
+});
 
 test("private cosmetics can mix owned styles and reject an unowned trial", async () => {
   const [softGlow, neonBeat, crimsonAzure, stardustStage] = AI_TEXT_TRAINING_STYLE_PRODUCT_IDS;

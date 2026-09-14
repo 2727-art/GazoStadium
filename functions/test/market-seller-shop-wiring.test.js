@@ -124,9 +124,13 @@ test("regular-shop targeting and result-screen unblock stay explicit", () => {
     browser.includes('data-market-block-counterparty="${feedback.blocked ? "false" : "true"}"'),
   );
   assert.match(browser, /ブロックを解除/);
+  const block = browser.slice(browser.indexOf("async function setMarketCounterpartyBlocked"), browser.indexOf("async function handleImageInput"));
+  assert.match(block, /openBlock\(\{ mode: "market", roomId \}/);
+  assert.match(block, /openSettings\(\)/);
+  assert.doesNotMatch(block, /sellerShop\s*=|relationshipFeedback\.[a-zA-Z]+\s*=/);
   assert.ok(
-    [...browser.matchAll(/state\.room\.sellerShop = \{ \.\.\.returnedShop, relationship \};/g)].length >= 2,
-    "relationship and block responses should preserve the room's prior-purchase context",
+    [...browser.matchAll(/state\.room\.sellerShop = \{ \.\.\.returnedShop, relationship \};/g)].length >= 1,
+    "relationship responses preserve prior purchases; shared safety does not mutate the historical room",
   );
 
   assert.match(css, /\.market-favorite-card\.is-selected/);

@@ -165,11 +165,9 @@ test("relationship feedback drafts survive unrelated renders", () => {
     /#marketRelationshipFavorite[\s\S]*?state\.relationshipFeedback\.favorite = event\.currentTarget\.checked === true/,
   );
   assert.match(browser, /favoritePersisted:\s*favorite === true/);
-  assert.match(
-    browser,
-    /favoriteBeforeBlock = state\.relationshipFeedback\.favoritePersisted/,
-    "blocking must restore only a previously persisted favorite, not an unsaved checkbox draft",
-  );
+  const blocking = browser.slice(browser.indexOf("async function setMarketCounterpartyBlocked"), browser.indexOf("async function handleImageInput"));
+  assert.doesNotMatch(blocking, /favoritePersisted\s*=|upsertMarketFavorite|removeMarketFavorite/,
+    "shared blocking preserves existing favorites and never persists an unsaved checkbox draft");
 });
 
 test("new sales invalidate the certificate collection cache", () => {

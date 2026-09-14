@@ -57,7 +57,7 @@ test("familiar and block records remain behind a callable-only boundary", () => 
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.soloFamiliarAction, true);
   const source = read("functions/index.js");
   assert.match(source, /exports\.soloFamiliarAction = onCall\(callableOptions\("soloFamiliarAction"\)/);
-  assert.match(source, /if \(action === "try_match"\) return await trySoloServerMatch\(uid\);/);
+  assert.match(source, /if \(action === "try_match"\)[\s\S]*?playerSafetyEnabled[\s\S]*?return await trySoloServerMatch\(uid\);/);
   assert.doesNotMatch(source, /trySoloServerMatch\(uid,\s*request\.data/);
   assert.match(source, /if \(action === "get_blocks"\)/);
   assert.match(source, /requesterUid: uid/);
@@ -65,7 +65,8 @@ test("familiar and block records remain behind a callable-only boundary", () => 
   assert.doesNotMatch(source, /querySoloPairDocuments[\s\S]{0,1200}array-contains-any/);
   assert.match(source, /const boundedQueue = boundedSoloServerQueue\(uid, queue, selectionNow\)/);
   assert.match(source, /blockedSoloPairIdsForQueue\(uid, boundedQueue, selectionNow\)/);
-  assert.match(source, /soloFamiliarBlockPairRef\(uid, candidateUid\)/);
+  assert.match(source, /readSoloPlayerBlock\(uid, candidateUid\)/);
+  assert.match(source, /canonical tombstone[\s\S]*?if \(policy.exists\)/);
 });
 
 test("V2 server matchmaking materializes fenced room and offer records", () => {

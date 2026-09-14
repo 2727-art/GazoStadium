@@ -14,6 +14,28 @@ service cloud.firestore {
       return signedIn() && resource.data.participants[request.auth.uid] == true;
     }
 
+    // Common safety policies, target contexts, owner maps and comment bodies
+    // are served only by authenticated viewer-specific Callable responses.
+    match /playerContactPolicies/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /playerSafetyUsers/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /playerSafetyOutbox/{operationId} {
+      allow read, write: if false;
+    }
+
+    match /playerSafetyComments/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /danwakuPublicEntryOwners/{entryId} {
+      allow read, write: if false;
+    }
+
     match /wallets/{uid} {
       allow read: if isOwner(uid);
       allow write: if false;

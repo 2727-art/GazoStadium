@@ -263,6 +263,7 @@ function stableId(value) {
 function createHarness({
   balances = {},
   creatorCards = {},
+  playerSafety = null,
   initialNow = Date.parse("2026-07-25T03:00:00.000Z"),
 } = {}) {
   const firestore = new FakeFirestore();
@@ -320,6 +321,7 @@ function createHarness({
     };
   };
   const service = createAnjuPayFleaService({
+    playerSafety,
     firestore,
     realtime,
     HttpsError: FakeHttpsError,
@@ -409,6 +411,120 @@ function containsPrivateIdentity(value) {
     || containsPrivateIdentity(nested)
   ));
 }
+
+function mutablePlayerSafety() {
+  const denied = new Set();
+  const key = (first, second) => [first, second].sort().join(":");
+  return {
+    deny(first, second) { denied.add(key(first, second)); },
+    async assertAllowed(first, second, transaction) {
+      assert.ok(transaction, "new economic relations must read policy inside their transaction");
+      if (denied.has(key(first, second))) throw new FakeHttpsError("failed-precondition", "unavailable");
+      return { revision: 0, blocked: false };
+    },
+    async filterVisible(uid, entries, ownerSelector) {
+      return entries.filter((entry) => {
+        const owner = ownerSelector(entry);
+        return owner && !denied.has(key(uid, owner));
+      });
+    },
+  };
+}
+
+test("common block prevents direct purchase and favorites while preserving balances and other sellers", async () => {
+  const playerSafety = mutablePlayerSafety();
+  const harness = createHarness({ balances: { seller: 100, other: 100, buyer: 100 }, playerSafety });
+  const created = await harness.service.performAction("seller", listingInput());
+  const other = await harness.service.performAction("other", listingInput({ name: "OTHER" }));
+  await harness.service.performAction("buyer", { action: "set_favorite", listingId: created.createdListing.id, favorite: true });
+  playerSafety.deny("seller", "buyer");
+  const state = await harness.service.performAction("buyer", { action: "state" });
+  assert.deepEqual(state.listings.map((entry) => entry.id), [other.createdListing.id]);
+  assert.equal(state.favorites.length, 0);
+  const before = harness.wallet("buyer").balance;
+  await assert.rejects(harness.service.performAction("buyer", { action: "buy", listingId: created.createdListing.id }), hasCode("failed-precondition"));
+  await assert.rejects(harness.service.performAction("buyer", { action: "set_favorite", listingId: created.createdListing.id, favorite: true }), hasCode("failed-precondition"));
+  assert.equal(harness.wallet("buyer").balance, before);
+  assert.equal(harness.firestore.count("anjuPayFleaSales/"), 0);
+  const removed = await harness.service.performAction("buyer", { action: "set_favorite", publicSellerId: fleaPublicSellerId("seller"), favorite: false });
+  assert.equal(removed.favorite.favorite, false);
+});
+
+test("a successful purchase replays after a block without a second debit and keeps both receipts", async () => {
+  const playerSafety = mutablePlayerSafety();
+  const harness = createHarness({ balances: { seller: 100, buyer: 100 }, playerSafety });
+  const created = await harness.service.performAction("seller", listingInput());
+  const request = { action: "buy", listingId: created.createdListing.id, buyerName: "BUYER" };
+  await harness.service.performAction("buyer", request);
+  const settledBalance = harness.wallet("buyer").balance;
+  playerSafety.deny("buyer", "seller");
+  const replay = await harness.service.performAction("buyer", request);
+  assert.equal(harness.wallet("buyer").balance, settledBalance);
+  assert.equal(harness.firestore.count("anjuPayFleaSales/"), 1);
+  assert.equal(replay.receipts.length, 1);
+  assert.equal(replay.listings.length, 0);
+  assert.equal((await harness.service.performAction("seller", { action: "state" })).receipts.length, 1);
+  assert.equal(containsPrivateIdentity(replay), false);
+});
+
+test("flea block cleanup preserves post-unblock favorites and adjusts only removed owner counts", async () => {
+  const harness = createHarness({ balances: { A: 100, B: 100 } });
+  const oldPath = `anjuPayFleaFavorites/A/sellers/${fleaPublicSellerId("B")}`;
+  const newPath = `anjuPayFleaFavorites/B/sellers/${fleaPublicSellerId("A")}`;
+  harness.firestore._documents.set(oldPath, { publicSellerId: fleaPublicSellerId("B"), sellerUid: "B", updatedAt: 100 });
+  harness.firestore._documents.set(newPath, { publicSellerId: fleaPublicSellerId("A"), sellerUid: "A", updatedAt: 200 });
+  harness.firestore._documents.set("anjuPayFleaFavorites/A", { count: 3 });
+  harness.firestore._documents.set("anjuPayFleaFavorites/B", { count: 2 });
+  const result = await harness.service.closeBlockedPair({ firstUid: "A", secondUid: "B", blockedAt: 150 });
+  assert.equal(result.removed, 1);
+  assert.equal(harness.firestore.read(oldPath), undefined);
+  assert.equal(harness.firestore.read(newPath).updatedAt, 200);
+  assert.equal(harness.firestore.read("anjuPayFleaFavorites/A").count, 2);
+  assert.equal(harness.firestore.read("anjuPayFleaFavorites/B").count, 2);
+  assert.equal((await harness.service.closeBlockedPair({ firstUid: "A", secondUid: "B", blockedAt: 150 })).removed, 0);
+  assert.equal(harness.firestore.read("anjuPayFleaFavorites/A").count, 2);
+});
+
+test("unblock does not expose an old favorite before delayed cleanup; explicit re-add survives it", async () => {
+  const initialNow = Date.parse("2026-07-25T03:00:00.000Z");
+  let lastBlockedAt = 0;
+  const safety = { async filterVisible(_uid, entries) { return entries; },
+    async assertAllowed(_uid, _peer, transaction) { assert.ok(transaction); return { revision: 2, lastBlockedAt }; },
+    async getPolicy() { return { revision: 2, blockedBy: { buyer: false }, lastBlockedAt }; } };
+  const harness = createHarness({ balances: { seller: 100, buyer: 100 }, playerSafety: safety, initialNow });
+  const created = await harness.service.performAction("seller", listingInput());
+  const favorite = { action: "set_favorite", listingId: created.createdListing.id, favorite: true };
+  await harness.service.performAction("buyer", favorite);
+  lastBlockedAt = initialNow + 100;
+  harness.setNow(initialNow + 200);
+  assert.equal((await harness.service.getState("buyer")).favorites.length, 0);
+  await harness.service.performAction("buyer", favorite);
+  assert.equal((await harness.service.getState("buyer")).favorites.length, 1);
+  await harness.service.closeBlockedPair({ firstUid: "buyer", secondUid: "seller", blockedAt: lastBlockedAt });
+  assert.equal((await harness.service.getState("buyer")).favorites.length, 1);
+});
+
+test("a fully hidden flea page still advances its cursor to an unrelated visible listing", async () => {
+  const playerSafety = mutablePlayerSafety();
+  const harness = createHarness({ balances: { viewer: 100 }, playerSafety });
+  playerSafety.deny("viewer", "hiddenSeller");
+  for (let index = 0; index < 51; index += 1) {
+    const id = index.toString(16).padStart(40, "0");
+    harness.firestore.write(`anjuPayFleaListings/${id}`, {
+      sellerUid: index < 50 ? "hiddenSeller" : "visibleSeller",
+      publicSellerId: stableId(String(index)), sellerName: "SELLER",
+      dateKey: "2026-07-25", status: "active", category: "illustration",
+      title: "title", description: "description", price: 25, browseOrder: id,
+      createdAt: Date.parse("2026-07-25T03:00:00Z"), expiresAt: Date.parse("2026-07-25T15:00:00Z"),
+    });
+  }
+  const first = await harness.service.performAction("viewer", { action: "state" });
+  assert.equal(first.listings.length, 0);
+  assert.equal(first.hasMore, true);
+  const next = await harness.service.performAction("viewer", { action: "browse_more", cursor: first.nextBrowseCursor });
+  assert.equal(next.listings.length, 1);
+  assert.equal(next.hasMore, false);
+});
 
 test("create charges one Pay once, replays identical payload, and rejects a changed payload", async () => {
   const harness = createHarness({ balances: { seller: 100 } });
@@ -1091,7 +1207,7 @@ test("listing X post may use an account different from the public creator card",
   );
 });
 
-test("favorite snapshots omit UID and X handle, support removal, and enforce the 100-seller cap", async () => {
+test("favorite responses omit UID and X handle while private records retain canonical ownership", async () => {
   const harness = createHarness({
     balances: { seller: 100, buyer: 100, cappedBuyer: 100 },
     creatorCards: {
@@ -1116,7 +1232,8 @@ test("favorite snapshots omit UID and X handle, support removal, and enforce the
   assert.equal(storedFavorite.publicSellerId, publicSellerId);
   assert.equal(storedFavorite.creatorCard.name, "SELLER");
   assert.equal(storedFavorite.creatorCard.xHandle, undefined);
-  assert.equal(containsPrivateIdentity(storedFavorite), false);
+  assert.equal(storedFavorite.sellerUid, "seller");
+  assert.equal(storedFavorite.sourceListingId, listingId);
   assert.equal(containsPrivateIdentity(added.favorite), false);
   assert.equal(harness.firestore.read("anjuPayFleaFavorites/buyer").count, 1);
 

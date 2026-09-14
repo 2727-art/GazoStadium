@@ -176,6 +176,7 @@ function createAiTextTrainingService(deps) {
     bestEffort,
     syncAchievementPublicSurfaces,
     ownedProductIds,
+    playerSafety,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -606,8 +607,12 @@ function createAiTextTrainingService(deps) {
       const snapshot = await query.limit(ACTIVE_PRESET_LIMIT).get();
       documents = snapshot.docs;
     }
-    return documents
-      .map((document) => publicPreset({ id: document.id, ...document.data() }, uid))
+    const entries = documents.map((document) => ({ id: document.id, ...document.data() }));
+    const visibleEntries = playerSafety
+      ? await playerSafety.filterVisible(uid, entries, (entry) => entry.sellerUid)
+      : entries;
+    return visibleEntries
+      .map((entry) => publicPreset(entry, uid))
       .filter((preset) => !requestedMode || preset.modeId === requestedMode)
       .filter((preset) => (
         !requestedProductType || preset.productType === requestedProductType
@@ -1573,6 +1578,8 @@ function createAiTextTrainingService(deps) {
       if (sellerUid !== preliminarySellerUid || sellerUid === uid) {
         throw httpsError("failed-precondition", "作者情報が更新されました。台本を読み直してください。");
       }
+      // Read the shared policy in the payment transaction, after completed replay.
+      if (playerSafety) await playerSafety.assertAllowed(uid, sellerUid, transaction);
       if (safeInteger(preset.price) !== expectedPrice
           || safeInteger(preset.revision) !== expectedRevision) {
         throw httpsError(
@@ -1998,14 +2005,23 @@ function createAiTextTrainingService(deps) {
       .map((document) => document.data())
       .filter((value) => safeInteger(value?.rankingGross) > 0);
     const profileSnapshots = await Promise.all(rows.map((row) => profileRef(row.sellerUid).get()));
+    const hidden = playerSafety
+      ? await Promise.all(rows.map((row) => playerSafety.isBlocked(uid, row.sellerUid)))
+      : [];
     return {
       period,
       periodKey,
-      rows: rows.map((row, index) => publicRankingRow(
-        row,
-        profileSnapshots[index].data(),
-        index + 1,
-      )),
+      rows: rows.map((row, index) => {
+        const result = publicRankingRow(row, profileSnapshots[index].data(), index + 1);
+        return hidden[index] ? {
+          ...result,
+          publicSellerId: "",
+          sellerName: "非表示のプレイヤー",
+          xPublic: false,
+          xHandle: "",
+          hidden: true,
+        } : result;
+      }),
       rankingPairDailyLimit: 1,
       updatedAt: now,
     };

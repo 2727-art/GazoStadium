@@ -1,0 +1,18 @@
+{
+  "viewportChecks": [
+    "1440x1000",
+    "390x844"
+  ],
+  "checks": [
+    "header entry",
+    "modal layout",
+    "Escape focus restore",
+    "active controls precede existing room surface",
+    "no mobile horizontal overflow",
+    "confirmation",
+    "immediate local contact teardown",
+    "last contact from title settings"
+  ],
+  "pageErrors": [],
+  "network": "Only localhost static files and Firebase SDK scripts allowed; safety API replaced by deterministic local fixture; all other requests aborted."
+}

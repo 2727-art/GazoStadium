@@ -1,3 +1,4 @@
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -1591,6 +1592,20 @@ function subscribeToWallet(generation = lifecycleGeneration) {
 
 function render() {
   if (!active) return;
+  if (state.roomId && state.room && !state.playerSafetyStopped) {
+    const roomId = state.roomId;
+    setActiveContact("market", {
+      roomId,
+      name: roomRole() === "seller" ? state.room.buyerName : state.room.sellerName,
+      stopContact: () => {
+        if (state.roomId !== roomId || state.playerSafetyStopped) return;
+        state.playerSafetyStopped = true;
+        cleanupRoom();
+        render();
+      },
+      leave: requestHome,
+    });
+  } else clearActiveContact("market");
   const draft = document.querySelector("#marketChatInput")?.value ?? null;
   const closingDraft = document.querySelector("#marketOshijoClosingText")?.value ?? null;
   const claimDraft = document.querySelector("#marketOshijoClaimAmount")?.value ?? null;
@@ -1673,6 +1688,7 @@ function render() {
   else if (state.screen === "certificates") appRoot.innerHTML = renderCertificates();
   else if (state.screen === "room") appRoot.innerHTML = renderRoom();
   else appRoot.innerHTML = renderError();
+  appRoot.insertAdjacentHTML("afterbegin", renderContactControls("market"));
   lastRenderedScreen = state.screen;
   bindEvents();
   const restoredDraft = document.querySelector("#marketChatInput");
@@ -1836,6 +1852,7 @@ function renderSellerShopCard(shopValue, {
     ${salesMode ? `<div class="market-shop-styles market-shop-sales-mode" aria-label="販売モード">${salesMode}</div>` : ""}
     ${serviceStyles ? `<div class="market-shop-styles" aria-label="接客スタイル">${serviceStyles}</div>` : ""}
     ${showVerified ? renderSellerVerified(shop.verified) : ""}
+    ${shop.publicSellerId && shop.publicSellerId !== state.shop?.publicSellerId ? renderBlockButton({ mode: "public", kind: "market_seller", publicEntryId: shop.publicSellerId }) : ""}
   </article>`;
 }
 
@@ -2618,7 +2635,7 @@ function renderMarketRelationshipPanel(room, role, status) {
   }
   const counterpart = role === "seller" ? room.buyerName : room.sellerName;
   const blockPanel = `<div class="market-block-panel ${feedback.blocked ? "is-blocked" : ""}">
-    <div><strong>${feedback.blocked ? "この相手をブロックしました" : "今後この相手とマッチしない"}</strong><p>${feedback.blocked ? "誤操作の場合は、この結果画面にいる間にすぐ解除できます。" : `${escapeHtml(normalizeMarketName(counterpart))}との今後の市場マッチングを除外します。`}</p></div>
+    <div><strong>${feedback.blocked ? "この相手をブロックしました" : "すべてのモードでこの相手をブロック"}</strong><p>${feedback.blocked ? "安心設定から解除できます。" : `${escapeHtml(normalizeMarketName(counterpart))}との新しい対戦・交流・購入をすべてのモードで停止します。`}</p></div>
     <button class="button button-ghost button-small" type="button" data-market-block-counterparty="${feedback.blocked ? "false" : "true"}" ${feedback.busy ? "disabled" : ""}>${feedback.blocked ? "ブロックを解除" : "この相手をブロック"}</button>
   </div>`;
   return `<section class="market-relationship-panel">${buyerFeedback}${blockPanel}</section>`;
@@ -2971,6 +2988,7 @@ function renderRoomControls(room, role) {
 }
 
 function renderRoom() {
+  if (state.playerSafetyStopped) return `<section class="screen market-screen"><h1>交流を終了しました</h1><p>画像・音声・チャットを閉じました。確定済みの売買は残り、預かり金は現在の終了条件に従って精算されます。</p><button class="button button-primary" type="button" id="marketReturnHome">タイトルへ戻る</button></section>`;
   if (!state.room) return `<section class="screen market-screen market-waiting"><div class="market-waiting-card"><div class="loader"></div><h1>市場ルームを準備しています</h1></div></section>`;
   const room = state.room;
   const role = roomRole();
@@ -3597,81 +3615,18 @@ async function saveMarketRelationship(event) {
 }
 
 async function setMarketCounterpartyBlocked(blockValue = true) {
-  ensureRelationshipFeedback();
-  const blockRequested = blockValue !== false;
-  if (
-    !state.roomId
-    || state.relationshipFeedback.busy
-    || state.relationshipFeedback.blocked === blockRequested
-  ) return;
-  const generation = lifecycleGeneration;
+  if (!state.roomId) return;
+  if (blockValue !== true) { await openSettings(); return; }
   const roomId = state.roomId;
-  const buyerRole = roomRole() === "buyer";
-  const roomSellerId = normalizeMarketShop(state.room?.sellerShop).publicSellerId;
-  if (blockRequested && buyerRole) {
-    state.relationshipFeedback.favoriteBeforeBlock = state.relationshipFeedback.favoritePersisted
-      || Boolean(favoriteForSeller(roomSellerId));
-  }
-  const restoreFavorite = !blockRequested
-    && buyerRole
-    && state.relationshipFeedback.favoriteBeforeBlock;
-  state.relationshipFeedback.busy = true;
-  render();
-  try {
-    let responseData = {
-      blocked: blockRequested,
-      favorite: restoreFavorite,
-      sellerShop: state.room?.sellerShop,
-    };
-    if (!useMarketPreview) {
-      const relationshipRequest = { action: "relationship", roomId, block: blockRequested };
-      if (restoreFavorite) relationshipRequest.favorite = true;
-      const response = await marketShopCallable(relationshipRequest);
-      if (!isCurrentLifecycle(generation) || state.roomId !== roomId) return;
-      responseData = response.data || responseData;
-    }
-    const blocked = responseData.blocked === true;
-    const returnedShop = responseData.sellerShop || responseData.shop;
-    if (returnedShop && state.room) {
-      const relationship = normalizeMarketShop(state.room.sellerShop).relationship;
-      state.room.sellerShop = { ...returnedShop, relationship };
-    }
-    state.relationshipFeedback.blocked = blocked;
-    if (blocked && buyerRole) {
-      removeRoomSellerFromFavorites();
-      state.relationshipFeedback.favorite = false;
-      state.relationshipFeedback.favoritePersisted = false;
-    } else if (!blocked && restoreFavorite) {
-      const favoriteResult = responseData.favorite;
-      const favoriteRestored = favoriteResult !== false;
-      if (favoriteRestored) {
-        upsertMarketFavorite(
-          favoriteResult && typeof favoriteResult === "object" ? favoriteResult : null,
-          returnedShop || state.room?.sellerShop,
-        );
-      }
-      state.relationshipFeedback.favorite = favoriteRestored;
-      state.relationshipFeedback.favoritePersisted = favoriteRestored;
-      if (favoriteRestored) state.relationshipFeedback.favoriteBeforeBlock = false;
-    } else if (!blocked) {
-      state.relationshipFeedback.favoriteBeforeBlock = false;
-    }
-    showToast(blocked
-      ? "この相手をブロックしました。今後の市場マッチングから除外されます。"
-      : "ブロックを解除しました。");
-  } catch (error) {
-    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
-      showToast(callableMessage(
-        error,
-        blockRequested ? "この相手をブロックできませんでした。" : "ブロックを解除できませんでした。",
-      ));
-    }
-  } finally {
-    if (isCurrentLifecycle(generation) && state.roomId === roomId) {
-      state.relationshipFeedback.busy = false;
+  await openBlock({ mode: "market", roomId }, {
+    name: roomRole() === "seller" ? state.room?.buyerName : state.room?.sellerName,
+    stopContact: () => {
+      if (state.roomId !== roomId) return;
+      state.playerSafetyStopped = true;
+      cleanupRoom();
       render();
-    }
-  }
+    },
+  });
 }
 
 async function handleImageInput(event) {
@@ -4033,6 +3988,7 @@ async function enterRoom(roomId, generation = lifecycleGeneration) {
   beginQueueAttempt();
   state.enteringRoomId = roomId;
   stopRoomHeartbeat();
+  state.playerSafetyStopped = false;
   state.roomId = roomId;
   state.oshijoDecisionRequested = false;
   state.screen = "room";
@@ -6605,6 +6561,7 @@ function returnHome() {
 }
 
 function cleanupRoom({ preserveLocalImage = false, preserveOnDisconnect = false } = {}) {
+  clearActiveContact("market");
   window.clearInterval(state.queueHeartbeat);
   state.queueHeartbeat = null;
   state.queueHeartbeatPending = false;
@@ -6813,3 +6770,10 @@ window.HariaiMarket = {
 };
 if (useMarketPreview) window.HariaiMarket.previewRoom = previewRoom;
 window.dispatchEvent(new Event("hariai-market-ready"));
+
+window.addEventListener("hariai-player-safety-updated", () => {
+  if (!active || state.playerSafetyStopped) return;
+  state.rankingPeriodsLoaded.clear();
+  if (state.screen === "rankings") selectMarketRankingPeriod(state.rankingPeriod).catch(() => {});
+  else if (["setup", "shop", "landing"].includes(state.screen)) loadMarketShop().catch(() => {});
+});

@@ -135,6 +135,7 @@ function createAnjuPayFleaService(deps) {
     bestEffort,
     ensureFleaAchievementStats,
     fleaAchievementStatsRef,
+    playerSafety = null,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -539,10 +540,13 @@ function createAnjuPayFleaService(deps) {
       .orderBy("browseOrder", "asc");
   }
 
-  function publicBrowsePage(snapshot, uid, serverNow) {
+  async function publicBrowsePage(snapshot, uid, serverNow) {
     const documents = Array.isArray(snapshot?.docs) ? snapshot.docs : [];
     const pageDocuments = documents.slice(0, STATE_LISTING_LIMIT);
-    const listings = pageDocuments
+    const visibleDocuments = playerSafety
+      ? await playerSafety.filterVisible(uid, pageDocuments, (document) => document.data()?.sellerUid)
+      : pageDocuments;
+    const listings = visibleDocuments
       .map((document) => publicFleaListing(document.id, document.data(), uid, serverNow))
       .filter((listing) => (
         listing.id && PUBLIC_FLEA_LISTING_STATUSES.includes(listing.status)
@@ -600,10 +604,23 @@ function createAnjuPayFleaService(deps) {
         "日付が変わったため、AnjuPayフリマをもう一度更新してください。",
       );
     }
-    const favorites = (favoritesSnapshot.docs || [])
+    const favoriteDocuments = favoritesSnapshot.docs || [];
+    let visibleFavorites = playerSafety && !playerSafety.getPolicy
+      ? await playerSafety.filterVisible(uid, favoriteDocuments, (document) => document.data()?.sellerUid)
+      : favoriteDocuments;
+    if (playerSafety?.getPolicy) {
+      visibleFavorites = (await Promise.all(visibleFavorites.map(async (document) => {
+        const value = document.data();
+        if (!value.sellerUid) return null;
+        const policy = await playerSafety.getPolicy(uid, value.sellerUid);
+        return !Object.values(policy.blockedBy || {}).some((blocked) => blocked === true)
+          && (!policy.lastBlockedAt || Number(value.updatedAt || 0) > policy.lastBlockedAt) ? document : null;
+      }))).filter(Boolean);
+    }
+    const favorites = visibleFavorites
       .map((snapshot) => publicFleaFavorite(snapshot.id, snapshot.data()))
       .filter((favorite) => Boolean(favorite.publicSellerId));
-    const browsePage = publicBrowsePage(listingsSnapshot, uid, serverNow);
+    const browsePage = await publicBrowsePage(listingsSnapshot, uid, serverNow);
     const ownListing = ownListingSnapshot.exists
       ? publicFleaListing(
         ownListingSnapshot.id,
@@ -668,7 +685,7 @@ function createAnjuPayFleaService(deps) {
       dateKey,
       expiresAt,
       appendListings: true,
-      ...publicBrowsePage(listingsSnapshot, uid, serverNow),
+      ...await publicBrowsePage(listingsSnapshot, uid, serverNow),
     });
   }
 
@@ -705,7 +722,7 @@ function createAnjuPayFleaService(deps) {
         "日付が変わったため、売りっ子一覧を最初から更新してください。",
       );
     }
-    const page = publicBrowsePage(listingsSnapshot, uid, serverNow);
+    const page = await publicBrowsePage(listingsSnapshot, uid, serverNow);
     return assertNoPrivateFleaFields({
       serverNow,
       dateKey,
@@ -975,6 +992,9 @@ function createAnjuPayFleaService(deps) {
         saleRecord = saved;
         return;
       }
+      // A committed sale remains replayable after contact is blocked. New money
+      // movement reads the same policy in the transaction that commits the sale.
+      if (playerSafety) await playerSafety.assertAllowed(uid, sellerUid, transaction);
       const attemptNow = currentTime();
       if (!listingSnapshot.exists) {
         throw httpsError("not-found", "出品が見つかりません。");
@@ -1362,6 +1382,9 @@ function createAnjuPayFleaService(deps) {
         transaction.get(reference),
         transaction.get(ownerReference),
       ]);
+      if (data.favorite && playerSafety) {
+        await playerSafety.assertAllowed(uid, listing.sellerUid, transaction);
+      }
       const currentCount = Math.max(0, Math.floor(Number(ownerSnapshot.get("count")) || 0));
       const updatedAt = attemptNow;
       favoriteSeller = {
@@ -1378,7 +1401,11 @@ function createAnjuPayFleaService(deps) {
             `推し帳へ残せる店主は${STATE_FAVORITE_LIMIT}人までです。`,
           );
         }
-        transaction.set(reference, favoriteSeller);
+        transaction.set(reference, {
+          ...favoriteSeller,
+          sellerUid: listing.sellerUid,
+          sourceListingId: listingId,
+        });
         transaction.set(ownerReference, {
           count: favoriteSnapshot.exists ? Math.max(1, currentCount) : currentCount + 1,
           updatedAt,
@@ -1624,7 +1651,32 @@ function createAnjuPayFleaService(deps) {
     return assertNoPrivateFleaFields({ serverNow, expired });
   }
 
+  async function closeBlockedPair({ firstUid, secondUid, blockedAt = 0 }) {
+    let removed = 0;
+    if (!(Number(blockedAt) > 0)) return { removed };
+    for (const uid of [firstUid, secondUid]) {
+      const peerUid = uid === firstUid ? secondUid : firstUid;
+      const reference = favoriteRef(uid, fleaPublicSellerId(peerUid));
+      const ownerReference = favoriteOwnerRef(uid);
+      const changed = await firestore.runTransaction(async (transaction) => {
+        const [snapshot, owner] = await Promise.all([transaction.get(reference), transaction.get(ownerReference)]);
+        const value = snapshot.data();
+        if (!value || (value.sellerUid && value.sellerUid !== peerUid)
+            || Number(value.updatedAt || 0) > Number(blockedAt)) return false;
+        transaction.delete(reference);
+        transaction.set(ownerReference, {
+          count: Math.max(0, Math.floor(Number(owner.get("count")) || 0) - 1),
+          updatedAt: currentTime(),
+        }, { merge: true });
+        return true;
+      });
+      if (changed) removed += 1;
+    }
+    return { removed };
+  }
+
   return Object.freeze({
+    closeBlockedPair,
     async getState(uid) {
       try {
         return await getStateInternal(uid);

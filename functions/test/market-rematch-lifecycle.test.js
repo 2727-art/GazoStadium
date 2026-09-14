@@ -532,7 +532,7 @@ test("a pending room-A sync cannot block or mutate an active room-B transition",
       TERMINAL_STATES, refreshMarketAchievementNotifications, roomRole,
       handleFatalError, marketQueueCallable, startRoomHeartbeat, showToast,
       callableMessage, scheduleRoomSyncRetry, markPresenceOffline,
-      createRelationshipFeedbackState, normalizeMarketRestartGuide,
+      createRelationshipFeedbackState, normalizeMarketRestartGuide, clearActiveContact,
     } = deps;
     const OSHIJO_CLOSING_IMAGE_PREFIX = "oshijo-closing-image:";
     const OSHIJO_CLOSING_AUDIO_PREFIX = "oshijo-closing-audio:";
@@ -583,6 +583,7 @@ test("a pending room-A sync cannot block or mutate an active room-B transition",
     doc: (_firestore, collection, roomId) => `${collection}/${roomId}`,
     firestore: {},
     beginQueueAttempt: () => {},
+    clearActiveContact: () => {},
     stopRoomHeartbeat: () => {},
     setMarketChrome: () => {},
     render: () => {},

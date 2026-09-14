@@ -1,3 +1,4 @@
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -1325,7 +1326,7 @@ function renderListingDetailBody(listing) {
         <button class="button button-ghost" type="button" data-flea-nav="${returnDestination.screen}">${returnDestination.label}</button>
       </div>
     </section>
-    ${own ? "" : renderReportPanel(listing)}
+    ${own ? "" : renderBlockButton({ mode: "public", kind: "flea", listingId: listing.id }) + renderReportPanel(listing)}
   </article>`;
 }
 
@@ -2323,3 +2324,10 @@ window.HariaiFleaMarket = Object.freeze({
   requestHome,
 });
 window.dispatchEvent(new Event("hariai-flea-market-ready"));
+
+window.addEventListener("hariai-player-safety-updated", () => {
+  if (active && ["shelf", "sellers", "favorites", "detail", "purchase-review"].includes(state.screen)) {
+    state.sellerListings = [];
+    refreshState({ silent: true }).then(() => render()).catch(() => {});
+  }
+});

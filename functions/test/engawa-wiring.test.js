@@ -22,7 +22,7 @@ const sendEngawaImageSource = onlineSource.match(
 
 test("engawa is a normal 1on1-only post-match screen", () => {
   assert.match(onlineSource, /gameover: renderGameOver,[\s\S]*?engawa: renderEngawa,/);
-  assert.match(onlineSource, /function renderGameOver\(\)[\s\S]*?\$\{renderEngawaInvitation\(\)\}/);
+  assert.match(onlineSource, /function renderGameOver\(\)[\s\S]*?\$\{state\.playerSafetyStopped \? "" : renderEngawaInvitation\(\)\}/);
   assert.match(onlineSource, /function renderEngawa\(\)/);
   assert.match(onlineSource, /if \(state\.screen === "engawa"\) bindEngawaEvents\(\);/);
   assert.doesNotMatch(onlineSource.match(/function renderEngawa\(\) \{[\s\S]*?\n\}/)?.[0] || "", /renderOnlineChat/);

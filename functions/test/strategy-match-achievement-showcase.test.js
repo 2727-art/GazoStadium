@@ -44,7 +44,7 @@ test("strategy freezes at activation, then materializes one immutable snapshot a
   assert.doesNotMatch(freeze, /captureMatchAchievementShowcases/);
 
   const acceptOffer = section("async function acceptOffer(roomId, offer)", "async function enterRoom(roomId,");
-  const activateRoom = acceptOffer.indexOf('await set(statusRef, "active");');
+  const activateRoom = acceptOffer.indexOf('await requestSafety("strategy_accept"');
   const freezeRoom = acceptOffer.indexOf("await freezeMatchAchievementShowcases(roomId);");
   const enterAcceptedRoom = acceptOffer.indexOf("await enterRoom(roomId, generation);");
   assert.ok(activateRoom >= 0 && activateRoom < freezeRoom);

@@ -123,6 +123,7 @@ function createRouletteTrainingService(deps) {
     bestEffort,
     ensureAchievementState,
     syncAchievementPublicSurfaces,
+    playerSafety,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -548,8 +549,11 @@ function createRouletteTrainingService(deps) {
       .orderBy("updatedAt", "desc")
       .limit(ACTIVE_PACK_LIMIT)
       .get();
-    return snapshot.docs
-      .map((document) => publicPack({ id: document.id, ...document.data() }, uid));
+    const entries = snapshot.docs.map((document) => ({ id: document.id, ...document.data() }));
+    const visibleEntries = playerSafety
+      ? await playerSafety.filterVisible(uid, entries, (entry) => entry.sellerUid)
+      : entries;
+    return visibleEntries.map((entry) => publicPack(entry, uid));
   }
 
   async function readPurchasedRevisions(uid) {
@@ -754,6 +758,11 @@ function createRouletteTrainingService(deps) {
       sellerUid,
       publicProfile(profileSnapshots[index].data()),
     ]));
+    const hiddenSellerUids = new Set(playerSafety
+      ? (await Promise.all(sellerUids.map(async (sellerUid) => (
+        await playerSafety.isBlocked(uid, sellerUid) ? sellerUid : ""
+      )))).filter(Boolean)
+      : []);
     let rank = 0;
     let previousScore = "";
     return {
@@ -764,6 +773,21 @@ function createRouletteTrainingService(deps) {
         const score = `${safeInteger(entry.stats.uniqueBuyers)}:${safeInteger(entry.stats.rankingUseCount)}`;
         if (score !== previousScore) rank = index + 1;
         previousScore = score;
+        if (hiddenSellerUids.has(entry.stats.sellerUid)) {
+          return {
+            rank,
+            packId: "",
+            title: "",
+            sellerName: "非表示のプレイヤー",
+            publicSellerId: "",
+            uniqueBuyers: safeInteger(entry.stats.uniqueBuyers),
+            rankingUseCount: safeInteger(entry.stats.rankingUseCount),
+            xPublic: false,
+            xHandle: "",
+            pack: null,
+            hidden: true,
+          };
+        }
         return publicPackRankingRow(
           entry,
           profiles.get(entry.stats.sellerUid) || publicProfile(),
@@ -1376,6 +1400,10 @@ function createRouletteTrainingService(deps) {
       const pack = packDocument.data();
       if (pack.sellerUid !== preliminarySellerUid) {
         throw httpsError("failed-precondition", "作者情報が更新されています。パックを読み直してください。");
+      }
+      // Existing paid snapshots and successful retries remain usable after a block.
+      if (playerSafety && !selfPreview) {
+        await playerSafety.assertAllowed(uid, pack.sellerUid, transaction);
       }
       if (safeInteger(pack.price) !== expectedPrice
           || safeInteger(pack.revision) !== expectedRevision) {

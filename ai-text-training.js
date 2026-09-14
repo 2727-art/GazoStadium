@@ -1,3 +1,4 @@
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -3129,6 +3130,7 @@ function renderPresetDetail() {
       <div class="ai-text-training-detail-actions">
         <button class="button button-primary" type="button" data-ai-text-training-action="${own ? "select-own-preset" : "select-market-preset"}" ${compatible ? "" : "disabled"}>${compatible ? own ? "無料で作者プレビュー" : "この応援を選んで準備へ" : "通常トレーニングでは選べません"}</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="market">一覧へ戻る</button>
+        ${own ? "" : renderBlockButton({ mode: "public", kind: "ai_preset", presetId: script.id })}
       </div>
       ${own ? "" : `<form class="ai-text-training-report-form" id="aiTextTrainingReportForm"><label>問題を通報<select name="reason">${REPORT_REASONS.map((reason) => `<option value="${reason.id}">${escapeHtml(reason.label)}</option>`).join("")}</select></label><button class="button button-ghost" type="submit">この台本を通報</button><small>通報時の改訂全文を証跡として保存します。危険・性的・個人情報の問題は、利用実績のある${Number(state.policy.verifiedBuyerQuarantineThreshold || 3)}人の通報で台本とXリンクを確認のため非公開にします。</small></form>`}
     </article>
@@ -3330,7 +3332,7 @@ function xLink(row) {
 function rankingRow(row) {
   return `<article class="ai-text-training-ranking-row">
     <strong class="ai-text-training-rank">${Number(row.rank)}</strong>
-    <div><h3>${escapeHtml(row.sellerName)}</h3>${xLink(row)}<small>作者の自己申告・本人未確認</small></div>
+    <div><h3>${escapeHtml(row.sellerName)}</h3>${xLink(row)}${row.hidden ? "" : `<small>作者の自己申告・本人未確認</small>`}${row.publicSellerId && !row.hidden && row.sellerName !== "非表示のプレイヤー" ? renderBlockButton({ mode: "public", kind: "ai_seller", publicEntryId: row.publicSellerId }, "作者をブロック") : ""}</div>
     <dl><div><dt>ランキング売上</dt><dd>${formatAnjuPay(row.rankingGross)}</dd></div><div><dt>実売上</dt><dd>${formatAnjuPay(row.actualGross)}</dd></div><div><dt>利用</dt><dd>${Number(row.useCount || 0)}回</dd></div><div><dt>購入者</dt><dd>${Number(row.uniqueBuyers || 0)}人</dd></div></dl>
   </article>`;
 }
@@ -6618,3 +6620,9 @@ window.HariaiAiTextTraining = Object.freeze({
 window.dispatchEvent(new CustomEvent("hariai-ai-text-training-ready"));
 
 if (previewRequest()) queueMicrotask(start);
+
+window.addEventListener("hariai-player-safety-updated", () => {
+  if (!active) return;
+  if (state.screen === "rankings") loadRankings().catch(() => {});
+  else if (["market", "preset_detail"].includes(state.screen)) refreshMarketState().then(() => render()).catch(() => {});
+});

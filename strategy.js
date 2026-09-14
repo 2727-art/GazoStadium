@@ -1,3 +1,4 @@
+import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -1111,8 +1112,32 @@ function setStrategyChrome(label) {
   if (footerItems[1]) footerItems[1].textContent = "進行とチャットはルーム内同期、画像・添付音声・短尺映像は対戦相手へ直接転送します";
 }
 
+function syncStrategySafetyContact() {
+  if (!state.roomId || !state.opponentUid || state.playerSafetyStopped) {
+    clearActiveContact("strategy");
+    return;
+  }
+  const targetState = state;
+  const roomId = state.roomId;
+  setActiveContact("strategy", {
+    roomId,
+    name: ANONYMOUS_CHAT_SCREENS.has(state.screen) || ["connecting", "intro", "waitingDecision", "deck", "waitingDeck"].includes(state.screen) ? "匿名の相手" : getOpponent()?.name || "対戦相手",
+    stopContact() {
+      if (state !== targetState || state.roomId !== roomId || state.playerSafetyStopped) return;
+      state.playerSafetyStopped = true;
+      state.reviewLocallyEnded = true;
+      cleanupOnlineResources(false).catch(() => {});
+      releaseMatchMedia();
+      state.screen = state.resultClaimCommitted ? "gameover" : "noContest";
+      render();
+    },
+    leave: leaveToLanding,
+  });
+}
+
 function render() {
   if (!active) return;
+  syncStrategySafetyContact();
   const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
     profile: renderProfile,
@@ -1163,7 +1188,7 @@ function render() {
     noContest: renderNoContest,
     error: renderError,
   };
-  app.innerHTML = (renderers[state.screen] || renderProfile)();
+  app.innerHTML = renderContactControls("strategy") + (renderers[state.screen] || renderProfile)();
   lastRenderedScreen = state.screen;
   if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("beforeend", renderStrategyChat());
   bindScreenEvents();
@@ -1593,7 +1618,7 @@ function renderGameOver() {
     <section class="strategy-history"><span class="eyebrow">BATTLE LOG</span>${state.history.map((round) => `<p><b>R${round.round}</b><span>${escapeHtml(state.players[0].name)} ${round.powers[0]} - ${round.powers[1]} ${escapeHtml(state.players[1].name)}</span></p>`).join("")}</section>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
     ${renderStrategyReviewInvite()}
-    ${renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
+    ${state.playerSafetyStopped ? "" : renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
     <div id="strategyFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${window.HariaiOnline?.renderFreeTableResultLampContent?.({ buttonId: "strategyFreeTableLampButton" }) || ""}</div>
     <div class="screen-actions strategy-final-actions">${shareButton}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
@@ -1627,6 +1652,7 @@ function formatReviewRemaining(milliseconds = reviewRemainingMs()) {
 }
 
 function renderStrategyReviewInvite() {
+  if (state.playerSafetyStopped) return `<p class="strategy-review-notice">交流を終了しました。確定済みの対戦結果は残ります。</p>`;
   const finished = state.roomData?.finished || {};
   const decisions = state.roomData?.reviewDecisions || {};
   const ended = state.roomData?.reviewEnded || {};
@@ -1681,6 +1707,7 @@ function renderWithdrawn() {
 }
 
 function renderNoContest() {
+  if (state.playerSafetyStopped) return renderStatusCard("×", "CONTACT CLOSED", "交流を終了しました", "画像・音声・チャットを閉じました。確定済みの結果は残ります。", "", `<button class="button button-primary" id="strategyNoContestAgain">別の相手を探す</button><button class="button button-ghost" id="strategyNoContestHome">タイトルへ戻る</button>`);
   return renderStatusCard("×", "NO CONTEST", "戦略型1on1対戦を終了しました", "ルームが破棄されました。画像と進行情報への参照を解放しました。", "", `<button class="button button-primary" id="strategyNoContestAgain">別の相手を探す</button><button class="button button-ghost" id="strategyNoContestHome">タイトルへ戻る</button>`);
 }
 
@@ -1698,7 +1725,7 @@ function renderStatusCard(icon, eyebrow, title, body, details = "", actions = ""
 }
 
 function isStrategyChatVisible() {
-  return ANONYMOUS_CHAT_SCREENS.has(state.screen) || IDENTIFIED_CHAT_SCREENS.has(state.screen);
+  return !state.playerSafetyStopped && (ANONYMOUS_CHAT_SCREENS.has(state.screen) || IDENTIFIED_CHAT_SCREENS.has(state.screen));
 }
 
 function isStrategyChatAnonymous() {
@@ -3020,13 +3047,9 @@ async function beginMatchmaking() {
     if (!active || state.screen !== "matching" || state.roomId) return;
     get(offersRef).then(processIncomingOffers).catch(handleRecoverableError);
   }, 1500);
-  state.matchUnsubscribers.push(onValue(ref(database, "online/strategyActive"), (snapshot) => {
-    state.activeUsers = snapshot.val() || {};
-    attemptToHost(state.latestQueue).catch(handleRecoverableError);
-  }));
-  state.matchUnsubscribers.push(onValue(ref(database, "online/strategyQueue"), (snapshot) => {
-    state.latestQueue = snapshot.val() || {};
-    attemptToHost(state.latestQueue).catch(handleRecoverableError);
+  state.matchUnsubscribers.push(onValue(queueEntryRef, (snapshot) => {
+    state.latestQueue = snapshot.exists() ? { [state.uid]: snapshot.val() } : {};
+    attemptToHost().catch(handleRecoverableError);
   }));
 }
 
@@ -3099,75 +3122,90 @@ function findPreferredMatchPair(waiting) {
   return null;
 }
 
-async function attemptToHost(queue) {
+async function attemptToHost() {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
-  const waiting = Object.values(queue).filter((entry) => (
-    entry?.uid
-    && Number(entry.protocolVersion) === STRATEGY_PROTOCOL_VERSION
-    && entry.state === STRATEGY_QUEUE_WAITING_STATE
-    && Number(entry.lastSeen) >= Date.now() - QUEUE_FRESH_MS
-    && !state.activeUsers[entry.uid]
-  ));
-  if (waiting.length < 2) return;
-  waiting.sort((a, b) => Number(a.joinedAt) - Number(b.joinedAt) || String(a.uid).localeCompare(String(b.uid)));
-  const pair = findPreferredMatchPair(waiting);
-  if (!pair || pair.host.uid !== state.uid) return;
-  await createOffer(pair.candidate);
+  await createOffer();
 }
 
-async function createOffer(candidate) {
+async function safetyPlayerRoomRecord(roomId) {
+  state.safetyPlayerRecords ||= new Map();
+  const cached = state.safetyPlayerRecords.get(roomId);
+  if (cached) {
+    state.weaknessSalt = cached.salt;
+    state.weaknessCommit = cached.player.weaknessCommit;
+    return cached.player;
+  }
+  const player = await playerRoomRecord(roomId);
+  state.safetyPlayerRecords.set(roomId, { player, salt: state.weaknessSalt });
+  return player;
+}
+
+async function createOffer() {
   const generation = state.matchmakingGeneration;
+  const targetState = state;
   state.matchingBusy = true;
-  const roomId = push(ref(database, "online/strategyRooms")).key;
+  if (state.safetyProposal?.generation !== generation) {
+    state.safetyProposal = { generation, roomId: push(ref(database, "online/strategyRooms")).key };
+  }
+  const proposedRoomId = state.safetyProposal.roomId;
   try {
-    const reservation = await runTransaction(ref(database, `online/strategyActive/${state.uid}`), (current) => current === null ? roomId : undefined);
-    if (!reservation.committed) return;
-    const roomRef = ref(database, `online/strategyRooms/${roomId}`);
-    const localPlayerRecord = await playerRoomRecord(roomId);
-    await set(ref(database, `online/strategyRooms/${roomId}/hostUid`), state.uid);
-    await update(roomRef, {
-      protocolVersion: STRATEGY_PROTOCOL_VERSION,
-      guestUid: candidate.uid,
-      createdAt: serverTimestamp(),
-      status: "offered",
-      [`members/${state.uid}`]: true,
-      [`members/${candidate.uid}`]: true,
-      [`players/${state.uid}`]: localPlayerRecord,
-    });
-    await set(ref(database, `online/strategyOffers/${candidate.uid}/${roomId}`), { protocolVersion: STRATEGY_PROTOCOL_VERSION, roomId, fromUid: state.uid, toUid: candidate.uid, createdAt: Date.now() });
-    await update(ref(database, `online/strategyQueue/${state.uid}`), { state: STRATEGY_QUEUE_OFFERING_STATE, roomId });
-    state.pendingOffer = { roomId, targetUid: candidate.uid };
+    const player = await safetyPlayerRoomRecord(proposedRoomId);
+    if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+    const response = await requestSafety("strategy_match", { roomId: proposedRoomId, player, protocolVersion: STRATEGY_PROTOCOL_VERSION });
+    const roomId = response.roomId;
+    if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+      if (roomId) requestSafety("strategy_expire", { roomId }).catch(() => {});
+      return;
+    }
+    if (!roomId || response.status === "waiting") return;
+    if (response.status === "active") {
+      await safetyPlayerRoomRecord(roomId);
+      await enterRoom(roomId, generation);
+      return;
+    }
+    if (response.status === "joined") {
+      state.pendingIncomingOffer = { roomId, offer: { toUid: state.uid, fromUid: response.opponentUid, protocolVersion: STRATEGY_PROTOCOL_VERSION } };
+      return;
+    }
+    if (response.status !== "hosted") return;
+    state.pendingOffer = { roomId, targetUid: response.opponentUid };
     const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
     const handleStatus = async (snapshot) => {
-      if (snapshot.val() !== "active" || !isCurrentStrategyMatchmakingGeneration(generation)) return;
-      await remove(ref(database, `online/strategyOffers/${candidate.uid}/${roomId}`)).catch(() => {});
-      await enterRoom(roomId, generation);
+      if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+      if (snapshot.val() === "active") {
+        await safetyPlayerRoomRecord(roomId);
+        await enterRoom(roomId, generation);
+      } else if (["expired", "closed", "blocked"].includes(snapshot.val())) {
+        state.pendingOffer = null;
+        state.safetyProposal = null;
+      }
     };
     state.matchUnsubscribers.push(onValue(statusRef, (snapshot) => handleStatus(snapshot).catch(handleRecoverableError), handleRecoverableError));
     state.hostStatusPollTimer = window.setInterval(() => {
       if (!active || state.screen !== "matching" || state.roomId || state.pendingOffer?.roomId !== roomId) return;
       get(statusRef).then(handleStatus).catch(handleRecoverableError);
     }, 1500);
-    state.matchTimer = window.setTimeout(() => expireOffer(roomId, candidate.uid), MATCH_TIMEOUT_MS);
+    state.matchTimer = window.setTimeout(() => expireOffer(roomId).catch(handleRecoverableError), MATCH_TIMEOUT_MS);
   } finally {
-    state.matchingBusy = false;
+    if (state === targetState) {
+      state.matchingBusy = false;
+      drainIncomingOffers().catch(handleRecoverableError);
+    }
   }
 }
 
-async function expireOffer(roomId, targetUid) {
+async function expireOffer(roomId) {
   if (state.roomId || state.pendingOffer?.roomId !== roomId) return;
-  const result = await runTransaction(ref(database, `online/strategyRooms/${roomId}/status`), (current) => current === "offered" ? "expired" : undefined);
-  if (!result.committed) return;
-  await Promise.allSettled([
-    remove(ref(database, `online/strategyOffers/${targetUid}/${roomId}`)),
-    remove(ref(database, `online/strategyActive/${state.uid}`)),
-    update(ref(database, `online/strategyQueue/${state.uid}`), { state: STRATEGY_QUEUE_WAITING_STATE, roomId: null }),
-  ]);
+  const generation = state.matchmakingGeneration;
+  const response = await requestSafety("strategy_expire", { roomId });
+  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  if (response.status === "active") { await enterRoom(roomId, generation); return; }
   state.pendingOffer = null;
+  state.safetyProposal = null;
 }
 
 async function drainIncomingOffers() {
-  if (state.acceptingOffer) return;
+  if (state.acceptingOffer || state.matchingBusy) return;
   while (active && state.screen === "matching" && !state.roomId && state.pendingIncomingOffer) {
     const incoming = state.pendingIncomingOffer;
     state.pendingIncomingOffer = null;
@@ -3179,43 +3217,21 @@ async function acceptOffer(roomId, offer) {
   if (!active || state.screen !== "matching" || state.roomId || offer?.toUid !== state.uid
       || Number(offer?.protocolVersion) !== STRATEGY_PROTOCOL_VERSION) return;
   const generation = state.matchmakingGeneration;
+  const targetState = state;
   state.acceptingOffer = true;
   try {
-    const roomRef = ref(database, `online/strategyRooms/${roomId}`);
-    const snapshot = await get(roomRef);
-    const room = snapshot.val();
-    if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || room.status !== "offered" || !room.members?.[state.uid] || room.hostUid !== offer.fromUid) {
-      await remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`));
+    const player = await safetyPlayerRoomRecord(roomId);
+    if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+    const response = await requestSafety("strategy_accept", { roomId, player, protocolVersion: STRATEGY_PROTOCOL_VERSION });
+    if (!isCurrentStrategyMatchmakingGeneration(generation)) {
+      requestSafety("strategy_expire", { roomId }).catch(() => {});
       return;
     }
-    const [ownQueueSnapshot, hostQueueSnapshot] = await Promise.all([
-      get(ref(database, `online/strategyQueue/${state.uid}`)),
-      get(ref(database, `online/strategyQueue/${room.hostUid}`)),
-    ]);
-    if (
-      !ownQueueSnapshot.exists()
-      || !hostQueueSnapshot.exists()
-      || Number(ownQueueSnapshot.val()?.protocolVersion) !== STRATEGY_PROTOCOL_VERSION
-      || Number(hostQueueSnapshot.val()?.protocolVersion) !== STRATEGY_PROTOCOL_VERSION
-      || !Number.isFinite(getPreferenceMatchTier(ownQueueSnapshot.val(), hostQueueSnapshot.val()))
-    ) {
-      await remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`));
-      return;
-    }
-    const reservation = await runTransaction(ref(database, `online/strategyActive/${state.uid}`), (current) => current === null ? roomId : undefined);
-    if (!reservation.committed) return;
-    await set(ref(database, `online/strategyRooms/${roomId}/players/${state.uid}`), await playerRoomRecord(roomId));
-    const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
-    if ((await get(statusRef)).val() !== "offered") {
-      await remove(ref(database, `online/strategyActive/${state.uid}`));
-      return;
-    }
-    await set(statusRef, "active");
+    if (!["active", "joined"].includes(response.status)) return;
     await freezeMatchAchievementShowcases(roomId);
-    await Promise.allSettled([remove(ref(database, `online/strategyOffers/${state.uid}/${roomId}`)), remove(ref(database, `online/strategyQueue/${state.uid}`))]);
     await enterRoom(roomId, generation);
   } finally {
-    state.acceptingOffer = false;
+    if (state === targetState) state.acceptingOffer = false;
   }
 }
 
@@ -3238,6 +3254,7 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
   state.roomId = roomId;
+  state.playerSafetyStopped = false;
   state.roomData = room;
   state.opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
   state.playerIndex = room.hostUid === state.uid ? 0 : 1;
@@ -3251,6 +3268,7 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   setStrategyChrome("STRATEGY ONLINE BATTLE");
   render();
   await setupRoomListeners();
+  if (state.playerSafetyStopped || state.roomId !== roomId) return;
   await setupPeerConnection();
 }
 
@@ -4757,6 +4775,7 @@ function both(object) {
 }
 
 function strategyRoomOperationIsCurrent(targetState, roomId) {
+  if (targetState.playerSafetyStopped) return false;
   return Boolean(active
     && state === targetState
     && state.roomId === roomId
@@ -5558,17 +5577,19 @@ async function cleanupMatchmaking(keepActive) {
   if (!state.uid) return;
   const removals = [remove(ref(database, `online/strategyQueue/${state.uid}`))];
   if (!keepActive) removals.push(remove(ref(database, `online/strategyActive/${state.uid}`)));
-  if (state.pendingOffer) removals.push(remove(ref(database, `online/strategyOffers/${state.pendingOffer.targetUid}/${state.pendingOffer.roomId}`)));
+  if (state.pendingOffer && !keepActive) removals.push(requestSafety("strategy_expire", { roomId: state.pendingOffer.roomId }));
   await Promise.allSettled(removals);
   state.pendingOffer = null;
   state.pendingIncomingOffer = null;
+  state.safetyProposal = null;
 }
 
 async function cleanupOnlineResources(keepActive) {
+  clearActiveContact("strategy");
+  const roomId = state.roomId;
+  const uid = state.uid;
   stopReviewClock();
   stopStrategyVideoRecording({ discard: true });
-  await cleanupMatchmaking(keepActive);
-  await cleanupPublicPresence();
   state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
   if (state.peer) {
@@ -5588,10 +5609,12 @@ async function cleanupOnlineResources(keepActive) {
   state.reviewAssetChannelReady = false;
   state.opponentReviewMediaReceiving = false;
   state.incomingReviewAssetTransfer = null;
-  if (state.roomId) {
+  await cleanupMatchmaking(keepActive);
+  await cleanupPublicPresence();
+  if (roomId) {
     await Promise.allSettled([
-      set(ref(database, `online/strategyRooms/${state.roomId}/presence/${state.uid}`), { online: false, updatedAt: serverTimestamp() }),
-      keepActive ? Promise.resolve() : remove(ref(database, `online/strategyActive/${state.uid}`)),
+      set(ref(database, `online/strategyRooms/${roomId}/presence/${uid}`), { online: false, updatedAt: serverTimestamp() }),
+      keepActive ? Promise.resolve() : remove(ref(database, `online/strategyActive/${uid}`)),
     ]);
   }
 }

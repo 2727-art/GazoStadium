@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { createUgcPlayerSafetyStub } = require("./helpers/ugc-player-safety-stub");
 const { createDanwakuNoteService } = require("../danwaku-note-service");
 const { deterministicDanwakuId } = require("../danwaku-note");
 
@@ -236,6 +237,7 @@ function createFixture(
   let timestamp = initialNow;
   const service = createDanwakuNoteService({
     firestore,
+    playerSafety: options.playerSafety,
     HttpsError: FakeHttpsError,
     now: () => timestamp,
     randomBytes: options.randomBytes || ((size) => Buffer.alloc(size, 11)),
@@ -341,6 +343,10 @@ test("service lifecycle is idempotent, projects public data, and physically dele
   const publicDocs = Array.from(firestore.documents.entries())
     .filter(([path]) => /^danwakuPublicEntries\/[^/]+$/.test(path));
   assert.equal(publicDocs.length, 1);
+  const projectedEntryId = publicDocs[0][0].split("/").at(-1);
+  assert.deepEqual(firestore.get(`danwakuPublicEntryOwners/${projectedEntryId}`), {
+    schemaVersion: 1, ownerUid: uid,
+  });
   assert.deepEqual(Object.keys(publicDocs[0][1]).sort(), [
     "days",
     "displayName",
@@ -1027,6 +1033,80 @@ test("two parallel archives at 99 leave exactly one winner and a final count of 
       .filter((value) => value?.status === "archived").length,
     100,
   );
+});
+
+test("shared NOTE masks use private ownership and retain ranks and counts for blocked or unresolved entries", async () => {
+  const timestamp = Date.parse("2026-08-05T12:00:00+09:00");
+  const playerSafety = createUgcPlayerSafetyStub();
+  const { service, firestore } = createFixture(timestamp, { playerSafety });
+  playerSafety.attach(firestore);
+  const entries = ["blocked", "visible", "missing", "ambiguous", "viewer"]
+    .map((label) => ({ label, entryId: deterministicDanwakuId("safety-entry", label) }));
+  for (const [index, entry] of entries.entries()) {
+    firestore.put(`danwakuPublicEntries/${entry.entryId}`, {
+      days: 5 - index,
+      displayName: "同じ表示名",
+      title: `自由記述-${entry.label}`,
+      expiresAt: timestamp + 1000,
+      lastContinuedDayKey: "2026-08-05",
+    });
+  }
+  firestore.put(`danwakuPublicEntryOwners/${entries[0].entryId}`, {
+    schemaVersion: 1, ownerUid: "blocked-owner",
+  });
+  firestore.put("danwakuProfiles/visible-owner", {
+    publicEntryId: entries[1].entryId, rankingVisible: true,
+  });
+  for (const ownerUid of ["ambiguous-one", "ambiguous-two"]) {
+    firestore.put(`danwakuProfiles/${ownerUid}`, {
+      publicEntryId: entries[3].entryId, rankingVisible: true,
+    });
+  }
+  firestore.put(`danwakuProfiles/${uid}`, {
+    publicEntryId: entries[4].entryId,
+    publicNoteId: deterministicDanwakuId("private-note", "viewer"),
+    rankingVisible: true,
+  });
+  playerSafety.setBlocked(uid, "blocked-owner");
+  const result = await service.dispatch(uid, { action: "ranking" });
+  assert.deepEqual(result.ranking.top.map((row) => row.rank), [1, 2, 3, 4, 5]);
+  assert.deepEqual(result.ranking.top.map((row) => row.days), [5, 4, 3, 2, 1]);
+  assert.equal(result.ranking.participantCount, 5);
+  assert.equal(result.ranking.todayCount, 5);
+  assert.equal(result.ranking.viewerRank, 5);
+  assert.deepEqual(result.ranking.top.map((row) => row.hidden === true), [true, false, true, true, false]);
+  assert.equal(result.ranking.top[1].displayName, "同じ表示名", "a matching display name is not evidence of shared identity");
+  assert.equal(result.ranking.top[1].title, "自由記述-visible");
+  assert.equal(result.ranking.top[1].publicEntryId, entries[1].entryId);
+  assert.equal(result.ranking.top[0].publicEntryId, "");
+  assert.equal(result.ranking.top[0].title, undefined);
+  assert.deepEqual(firestore.get(`danwakuPublicEntryOwners/${entries[1].entryId}`), {
+    schemaVersion: 1, ownerUid: "visible-owner",
+  });
+  assert.equal(firestore.get(`danwakuPublicEntryOwners/${entries[2].entryId}`), undefined);
+  assert.equal(firestore.get(`danwakuPublicEntryOwners/${entries[3].entryId}`), undefined);
+  assert.doesNotMatch(JSON.stringify(result), /ownerUid|blocked-owner|visible-owner|自由記述-blocked|自由記述-missing|自由記述-ambiguous/u);
+  assert.equal(await service.resolvePublicEntryOwner("not-an-entry"), "");
+});
+
+test("unpublishing a NOTE removes its private public-owner projection", async () => {
+  const { service, firestore } = createFixture();
+  const created = await service.dispatch(uid, {
+    action: "create", operationId: "safety-note-create-0001", title: "個人の記録", commitment: "毎日続ける",
+  });
+  await service.dispatch(uid, { action: "continue", operationId: "safety-note-continue-0001", noteId: created.noteId });
+  await service.dispatch(uid, {
+    action: "set_public", operationId: "safety-note-public-0001", noteId: created.noteId,
+    rankingVisible: true, matchVisible: false, shareTitle: true,
+  });
+  const entryId = firestore.get(`danwakuProfiles/${uid}`).publicEntryId;
+  assert.equal(firestore.get(`danwakuPublicEntryOwners/${entryId}`).ownerUid, uid);
+  await service.dispatch(uid, {
+    action: "set_public", operationId: "safety-note-private-0001", noteId: "",
+    rankingVisible: false, matchVisible: false, shareTitle: false,
+  });
+  assert.equal(firestore.get(`danwakuPublicEntries/${entryId}`), undefined);
+  assert.equal(firestore.get(`danwakuPublicEntryOwners/${entryId}`), undefined);
 });
 
 test("ranking refuses to return partial participant counts beyond its 2000-entry read bound", async () => {

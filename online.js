@@ -1,3 +1,4 @@
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, requestSafety, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -2541,7 +2542,33 @@ async function readPublicDatabasePath(path, {
     publicServerTimeOffset = offset;
     publicServerTimeOffsetReady = true;
   }
-  return snapshot.val();
+  const value = snapshot.val();
+  if (path === "online/topMessages" && value && auth.currentUser) {
+    const rows = await filterPublicEntries("card", Object.entries(value).map(([entryId, entry]) => ({ ...entry, entryId })));
+    return Object.fromEntries(rows.map(({ entryId, ...entry }) => [entryId, entry]));
+  }
+  if (/^online\/(?:leaderboard(?:\/|$)|leaderboardPeriods\/|serverOverallLeaderboard(?:\/|$)|serverRateFloorLeaderboard(?:\/|$)|serverLeaderboardPeriods\/|crownCircuitPeriods\/|rankingSpotlights(?:\/|$)|crownCircuitHallOfFame\/|serverRankingHallOfFame\/)/.test(path) && value && auth.currentUser) {
+    return maskPublicRankingTree(value, path.split("/").at(-1));
+  }
+  return value;
+}
+
+async function maskPublicRankingTree(value, rootId) {
+  const rows = [];
+  const visit = (node, key) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.name === "string" && validLeaderboardEntryId(node.entryId || key)) {
+      rows.push({ ...node, entryId: node.entryId || key, _source: node });
+    } else Object.entries(node).forEach(([childKey, child]) => visit(child, childKey));
+  };
+  visit(value, rootId);
+  const masked = await filterPublicEntries("ranking", rows, "entryId", { mask: true });
+  masked.forEach((row) => {
+    if (!row.safetyHidden) return;
+    const { _source, ...safe } = row;
+    Object.assign(_source, safe);
+  });
+  return value;
 }
 
 function validLeaderboardEntryId(value) {
@@ -2582,13 +2609,10 @@ async function authenticatedDatabaseRequest(path, { method = "GET", body } = {})
 async function getLeaderboardComments(targetEntryId) {
   const targetId = validLeaderboardEntryId(targetEntryId);
   if (!targetId) throw new Error("ランキング情報を確認できませんでした。");
-  const records = await readPublicDatabasePath(`online/leaderboardComments/${targetId}`, {
-    orderByChildKey: "updatedAt",
-    limit: 20,
-  });
-  return Object.entries(records || {})
-    .map(([authorEntryId, record]) => ({
-      authorEntryId: validLeaderboardEntryId(authorEntryId),
+  const response = await requestSafety("comments_list", { targetEntryId: targetId });
+  return (response.comments || [])
+    .map((record) => ({
+      authorEntryId: validLeaderboardEntryId(record.authorEntryId),
       authorName: String(record?.authorName || "").slice(0, 16),
       text: String(record?.text || "").slice(0, RANKING_COMMENT_MAX_LENGTH),
       updatedAt: Number(record?.updatedAt || 0),
@@ -2622,17 +2646,14 @@ async function saveLeaderboardComment(targetEntryId, value) {
   const identity = await getLeaderboardCommentIdentity();
   if (!identity.canPost) throw new Error("コメントするにはランキングへの参加が必要です。");
   if (identity.entryId === targetId) throw new Error("自分のランキング欄にはコメントできません。");
-  await authenticatedDatabaseRequest(`online/leaderboardComments/${targetId}/${identity.entryId}`, {
-    method: "PUT",
-    body: { text, authorName: identity.name, updatedAt: { ".sv": "timestamp" } },
-  });
+  await requestSafety("comments_save", { targetEntryId: targetId, text });
 }
 
 async function deleteLeaderboardComment(targetEntryId, authorEntryId) {
   const targetId = validLeaderboardEntryId(targetEntryId);
   const authorId = validLeaderboardEntryId(authorEntryId);
   if (!targetId || !authorId) throw new Error("コメント情報を確認できませんでした。");
-  await authenticatedDatabaseRequest(`online/leaderboardComments/${targetId}/${authorId}`, { method: "DELETE" });
+  await requestSafety("comments_delete", { targetEntryId: targetId, authorEntryId: authorId });
 }
 
 function normalizeFreeTablePublicStats(value, receivedAt) {
@@ -3245,6 +3266,7 @@ function normalizeDashboardPerson(value, fallbackRank = 0) {
     xHandle: X_HANDLE_PATTERN.test(String(source.xHandle || "")) ? String(source.xHandle) : "",
     achievementShowcase: source.achievementShowcase || "",
     commentsEnabled: source.commentsEnabled !== false,
+    ...(source.safetyHidden === true ? { safetyHidden: true } : {}),
     crownTheme: normalizeCrownTheme(source.crownTheme),
     crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(source.crownSignatureId || ""))
       ? String(source.crownSignatureId)
@@ -4711,6 +4733,7 @@ function setOnlineChrome(label) {
 
 function render() {
   if (!active) return;
+  syncSoloSafetyContact();
   if (state.screen === "gameover") captureOnlineChatDraft();
   const screenChanged = lastRenderedScreen !== state.screen;
   const renderers = {
@@ -4735,7 +4758,7 @@ function render() {
     noContest: renderNoContest,
     error: renderError,
   };
-  appRoot.innerHTML = (renderers[state.screen] || renderSetup)();
+  appRoot.innerHTML = renderContactControls("solo") + (renderers[state.screen] || renderSetup)();
   lastRenderedScreen = state.screen;
   bindScreenEvents();
   if (screenChanged && state.screen === "gameover") {
@@ -4745,6 +4768,28 @@ function render() {
     window.scrollTo(0, 0);
     appRoot.focus({ preventScroll: true });
   }
+}
+
+function syncSoloSafetyContact() {
+  if (!state.roomId || !getOpponent()?.uid || state.playerSafetyStopped) {
+    clearActiveContact("solo");
+    return;
+  }
+  const expectedState = state;
+  setActiveContact("solo", {
+    roomId: state.roomId,
+    name: getOpponent().name,
+    stopContact: () => {
+      if (state !== expectedState || expectedState.playerSafetyStopped) return;
+      expectedState.playerSafetyStopped = true;
+      dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
+      cleanupOnlineResources(false, expectedState).catch(() => {});
+      releaseMatchMedia();
+      state.screen = state.outcome ? "gameover" : "noContest";
+      render();
+    },
+    leave: leaveToLanding,
+  });
 }
 
 function renderSoloFamiliarSetupPanel() {
@@ -4788,7 +4833,7 @@ function renderSoloFamiliarBook() {
     <div class="solo-familiar-list">${familiarItems}</div>
     <details class="solo-familiar-blocked" ${state.soloBlockedDetailsOpen ? "open" : ""}>
       <summary>ブロック管理</summary>
-      <p>ブロックした相手は顔なじみ帳と再会優先から外れます。通常検索での偶然の再会まで防ぐことを保証するものではありません。</p>
+      <p>ブロックはすべてのモードで共通です。安心設定から確認・解除できます。</p>
       <div>${blockedItems}</div>
       ${state.soloBlockedCursor ? `<button class="button button-ghost button-small solo-familiar-load-more" id="soloFamiliarLoadMoreBlocked" type="button" ${state.soloFamiliarBookBusy ? "disabled" : ""}>さらに読み込む</button>` : ""}
     </details>
@@ -5788,11 +5833,10 @@ function renderGameOver() {
       <div class="stat-box"><strong>${player.totalReceived}</strong><span>合計獲得点</span></div><div class="stat-box"><strong>${player.criticals}</strong><span>CRITICAL</span></div></div>
     </div>`).join("")}</div>
     ${renderFinishReplySlot(state.history.at(-1), { terminal: true })}
-    ${renderEngawaInvitation()}
+    ${state.playerSafetyStopped ? "" : renderEngawaInvitation()}
     ${state.economyReady ? `<div class="gameover-missions"><div class="gameover-missions-head"><div><span class="eyebrow">DAILY PROGRESS</span><h2>デイリーミッション</h2></div><strong>AnjuPay ◆ ${formatAnjuPay(state.economy.points)}</strong></div>
       <div class="mission-grid compact">${dailyMissionsForDate(currentDailyDateKey()).map((mission) => renderMissionCard(mission, true)).join("")}</div></div>` : ""}
-    <div class="result-chat">${renderOnlineChat()}</div>
-    ${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
+    ${state.playerSafetyStopped ? '<p role="status">この相手との交流を終了しました。確定済みの結果は残ります。</p>' : `<div class="result-chat">${renderOnlineChat()}</div>${renderPostMatchTip({ mode: "solo", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}`}
     <div id="onlineFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${renderFreeTableResultLampContent({ buttonId: "onlineFreeTableLampButton" })}</div>
     <div class="gameover-actions">${shareButton}<button class="button button-primary" id="onlineNewMatch">別の相手を探す</button>
       <button class="button button-ghost" id="onlineGameoverMissions">ミッション・ショップ</button>
@@ -5995,8 +6039,8 @@ function renderEngawa() {
 
 function renderNoContest() {
   return renderStatusCard({
-    icon: "×", eyebrow: "NO CONTEST", title: "ルームが破棄されました",
-    body: "この対戦は勝敗・勝率・連勝数に影響しません。画像とチャットへの参照を破棄しました。",
+    icon: "×", eyebrow: "NO CONTEST", title: state.playerSafetyStopped ? "交流を終了しました" : "ルームが破棄されました",
+    body: state.playerSafetyStopped ? "画像・音声・チャットを閉じました。対戦結果はサーバーで確認済みの内容に従って扱われます。" : "この対戦は勝敗・勝率・連勝数に影響しません。画像とチャットへの参照を破棄しました。",
     actions: `<button class="button button-primary" id="onlineNoContestAgain">別の相手を探す</button><button class="button button-ghost" id="onlineNoContestHome">タイトルへ</button>`,
   });
 }
@@ -6293,13 +6337,12 @@ function bindSoloFamiliarBookEvents() {
   });
   document.querySelectorAll("[data-solo-familiar-block]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (!window.confirm("この相手をブロックしますか？ 顔なじみ帳と再会優先から外れますが、通常検索での偶然の再会まで防ぐ保証はありません。")) return;
-      mutateSoloFamiliarBook("block", button.dataset.soloFamiliarBlock);
+      openBlock({ mode: "solo_familiar", familiarId: button.dataset.soloFamiliarBlock });
     });
   });
   document.querySelectorAll("[data-solo-familiar-unblock]").forEach((button) => {
     button.addEventListener("click", () => {
-      mutateSoloFamiliarBook("unblock", button.dataset.soloFamiliarUnblock);
+      openSettings();
     });
   });
   document.querySelector("#soloFamiliarLoadMoreBlocked")?.addEventListener("click", () => {
@@ -9305,6 +9348,7 @@ async function enterRoom(roomId) {
     throw new Error("ルーム情報を取得できませんでした。");
   }
   window.clearTimeout(state.matchTimer);
+  state.playerSafetyStopped = false;
   state.roomId = roomId;
   state.room = room;
   state.reunionMatch = room.reunion === true;
@@ -12257,6 +12301,7 @@ async function cleanupOnlineResources(
   targetState = state,
   { preserveP2pRecovery = false } = {},
 ) {
+  clearActiveContact("solo");
   if (targetState.cleanupPromise) {
     await targetState.cleanupPromise;
     return;
@@ -12427,6 +12472,20 @@ document.addEventListener("visibilitychange", () => {
       && currentDashboard?.rules.dailyKey !== getLeaderboardPeriodInfo("daily").key) {
     refreshRankingDashboard().catch((error) => console.error(error));
   }
+});
+
+window.addEventListener("hariai-player-safety-updated", () => {
+  topMessageRecords = [];
+  leaderboardEntries = [];
+  refreshTopMessages({ silent: true }).catch(() => {});
+  if (document.querySelector(".ranking-screen")) refreshLeaderboard(leaderboardPeriod, { force: true, key: leaderboardPeriodKey }).catch(() => {});
+});
+window.addEventListener("hariai-player-safety-auth-changed", () => {
+  topMessageRecords = [];
+  leaderboardEntries = [];
+  topMessagesRequestId += 1;
+  leaderboardRequestId += 1;
+  refreshTopMessages({ silent: true }).catch(() => {});
 });
 
 window.addEventListener("hariai-ranking-dashboard-updated", () => {

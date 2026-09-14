@@ -1,6 +1,10 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const { createPlayerSafetyService } = require("./player-safety");
+const { createPlayerSafetyContextResolver } = require("./player-safety-context");
+const { createPlayerSafetyComments } = require("./player-safety-comments");
+const { createPlayerSafetyStrategy } = require("./player-safety-strategy");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -382,6 +386,19 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 
 const firestore = getFirestore();
 const realtime = getDatabase();
+const playerSafetyResolver = createPlayerSafetyContextResolver({ firestore, realtime, HttpsError,
+  resolveNoteOwner: (id) => danwakuNoteService.resolvePublicEntryOwner(id) });
+const playerSafetyService = createPlayerSafetyService({ firestore, realtime, HttpsError,
+  ...playerSafetyResolver, closeContacts: closeBlockedPlayerContacts,
+  resolveLegacyBlocked: resolveLegacyPlayerBlock,
+  validateLiveContact: validatePlayerSafetyLiveContact });
+let playerSafetyMigrationComplete = false;
+let playerSafetyMigrationCheckAt = 0;
+let playerSafetyMigrationCheck = null;
+const playerSafetyComments = createPlayerSafetyComments({ firestore, realtime, HttpsError,
+  playerSafety: playerSafetyService });
+const playerSafetyStrategy = createPlayerSafetyStrategy({ realtime, HttpsError,
+  playerSafety: playerSafetyService });
 const anjuPayFleaAchievementStatsStore = createAnjuPayFleaAchievementStatsStore({
   firestore,
 });
@@ -2857,6 +2874,17 @@ function rankingDependencyErrorCode(error) {
   return cleanText(error?.code || error?.details || error?.message || "unknown", 80) || "unknown";
 }
 
+async function maskPlayerRankingEntries(uid, rows) {
+  return Promise.all((rows || []).map(async (row) => {
+    const owner = await playerSafetyResolver.resolvePublicOwner("ranking", row.entryId);
+    if (owner && !await playerSafetyService.isBlocked(uid, owner.uid)) return row;
+    // Preserve all numeric rank and result fields; remove identity and actions.
+    const numeric = Object.fromEntries(Object.entries(row).filter(([, value]) => typeof value === "number"));
+    return { ...numeric, entryId: "", name: "非表示のプレイヤー", hidden: true,
+      commentsEnabled: false, xHandle: "", achievementShowcase: [] };
+  }));
+}
+
 async function getRankingDashboard(uid) {
   const now = Date.now();
   const dailyKey = periodKey("daily", now);
@@ -2934,7 +2962,7 @@ async function getRankingDashboard(uid) {
       bestRank,
       rating: standing.rating,
       nextSeatGap: standing.nextSeatGap,
-      neighbors: standing.neighbors,
+      neighbors: await maskPlayerRankingEntries(uid, standing.neighbors),
       contextAvailable: standingAvailable,
     },
     crownRun,
@@ -2957,7 +2985,7 @@ async function getRankingDashboard(uid) {
     },
     spotlight: spotlightSnapshot?.exists
       && Number(spotlightSnapshot.child("endsAt").val() || 0) > now
-      ? objectValue(spotlightSnapshot.val())
+      ? (await maskPlayerRankingEntries(uid, [objectValue(spotlightSnapshot.val())]))[0]
       : null,
   };
 }
@@ -6131,13 +6159,17 @@ async function getPostMatchTip(uid, data) {
     postMatchTipRef(uid, mode, roomId).get(),
     verifiedMatchClaimRef(uid, mode, roomId).get(),
   ]);
-  const eligible = claimSnapshot.exists
+  let eligible = claimSnapshot.exists
     && claimSnapshot.get("uid") === uid
     && claimSnapshot.get("mode") === mode
     && claimSnapshot.get("roomId") === roomId
     && Array.isArray(claimSnapshot.get("participants"))
     && claimSnapshot.get("participants").includes(uid)
     && claimSnapshot.get("participants").length >= 2;
+  if (eligible) {
+    const counterpartUid = claimSnapshot.get("participants").find((participant) => participant !== uid);
+    if (!counterpartUid || await playerSafetyService.isBlocked(uid, counterpartUid)) eligible = false;
+  }
   if (!snapshot.exists || snapshot.get("senderUid") !== uid) return { sent: false, eligible };
   return {
     sent: true,
@@ -6180,6 +6212,7 @@ async function sendPostMatchTip(uid, data) {
       transaction.get(tipRef),
       transaction.get(anjuPayLedgerConfigRef()),
     ]);
+    if (!tipSnapshot.exists) await playerSafetyService.assertAllowed(uid, verified.targetUid, transaction);
     const senderWallet = walletData(senderWalletSnapshot);
     const recipientWallet = walletData(recipientWalletSnapshot);
     const senderBalanceBefore = senderWallet.balance;
@@ -6556,9 +6589,15 @@ async function loadSoloFamiliarBook(uid, rollout = null) {
       .get(),
     loadSoloFamiliarBlockPage(uid),
   ]);
+  const visibleEntries = await playerSafetyService.filterVisible(uid, bookSnapshot.docs,
+    (snapshot) => snapshot.get("counterpartUid"));
+  const currentEntries = (await Promise.all(visibleEntries.map(async (snapshot) => {
+    const policy = await playerSafetyService.getPolicy(uid, snapshot.get("counterpartUid"));
+    return Number(snapshot.get("createdAt") || 0) > Number(policy.lastBlockedAt || 0) ? snapshot : null;
+  }))).filter(Boolean);
   return {
     rollout: flags,
-    familiars: bookSnapshot.docs
+    familiars: currentEntries
       .map((snapshot) => publicSoloFamiliarBookEntry(snapshot.id, snapshot.data(), uid))
       .filter(Boolean),
     ...blockPage,
@@ -6689,6 +6728,7 @@ async function acceptSoloFamiliar(uid, data) {
       transaction.get(secondEntryRef),
       transaction.get(blockPairRef),
     ]);
+    const contactPolicy = await playerSafetyService.assertAllowed(uid, counterpartUid, transaction);
     const ownExisting = ownIntentSnapshot.data();
     if (ownIntentSnapshot.exists && (
       ownExisting?.uid !== uid
@@ -6721,7 +6761,8 @@ async function acceptSoloFamiliar(uid, data) {
       && Number(counterpartIntent?.expiresAt || 0) >= now;
     const pair = pairSnapshot.data() || {};
     if (pair.active === true) return;
-    if (!counterpartAccepted || blockPairSnapshot.exists
+    if (!counterpartAccepted || (contactPolicy.revision === 0 && blockPairSnapshot.exists)
+        || Math.min(ownAcceptedAt, counterpartAcceptedAt) <= Number(contactPolicy.lastBlockedAt || 0)
         || !canReactivateSoloFamiliarPair(pair, ownAcceptedAt, counterpartAcceptedAt)) return;
 
     const firstCount = integer(firstBookSnapshot.get("count"), 0, SOLO_FAMILIAR_BOOK_LIMIT, 0);
@@ -7041,14 +7082,37 @@ async function blockedSoloPairIdsForQueue(uid, queue, now) {
     .map(([candidateUid]) => candidateUid);
   const blockedPairIds = [];
   for (let offset = 0; offset < candidateUids.length; offset += 100) {
-    const refs = candidateUids.slice(offset, offset + 100)
-      .map((candidateUid) => soloFamiliarBlockPairRef(uid, candidateUid));
-    const snapshots = refs.length ? await firestore.getAll(...refs) : [];
-    snapshots.forEach((snapshot) => {
-      if (snapshot.exists) blockedPairIds.push(snapshot.id);
+    const batch = candidateUids.slice(offset, offset + 100);
+    const snapshots = await Promise.all(batch.map((candidateUid) => readSoloPlayerBlock(uid, candidateUid)));
+    snapshots.forEach((snapshot, index) => {
+      if (snapshot.exists) blockedPairIds.push(soloFamiliarPairId(uid, batch[index]));
     });
   }
   return blockedPairIds;
+}
+
+async function readSoloPlayerBlock(firstUid, secondUid) {
+  const policy = await playerSafetyService.policyRef(firstUid, secondUid).get();
+  // A canonical tombstone intentionally supersedes every legacy block source.
+  if (policy.exists) {
+    const current = await playerSafetyService.getPolicy(firstUid, secondUid);
+    return { exists: current.participants.some((uid) => current.blockedBy?.[uid] === true), policy: current };
+  }
+  return soloFamiliarBlockPairRef(firstUid, secondUid).get();
+}
+
+function soloSafetyContact(roomId, room) {
+  return { ...room, mode: "solo", roomId, firstUid: room.hostUid, secondUid: room.guestUid };
+}
+
+async function soloSafetyContactCurrent(roomId, room, { activate = false } = {}) {
+  if (!room?.hostUid || !room.guestUid) return false;
+  if (!room.safetyGrantId) {
+    return (await realtime.ref("online/config/playerSafetyEnabled").get()).val() !== true
+      && !(await readSoloPlayerBlock(room.hostUid, room.guestUid)).exists;
+  }
+  return activate ? playerSafetyService.activateContact(soloSafetyContact(roomId, room))
+    : playerSafetyService.checkContact(soloSafetyContact(roomId, room));
 }
 
 function sanitizeSoloQueueCandidate(value) {
@@ -7695,7 +7759,7 @@ async function trySoloServerMatch(uid) {
     realtime.ref(`online/queue/${selection.candidate.uid}`).get(),
     realtime.ref(`online/active/${selection.host.uid}`).get(),
     realtime.ref(`online/active/${selection.candidate.uid}`).get(),
-    soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
+    readSoloPlayerBlock(selection.host.uid, selection.candidate.uid),
     soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get(),
     soloSessionClaimRef(selection.host.uid).get(),
     soloSessionClaimRef(selection.candidate.uid).get(),
@@ -7790,7 +7854,7 @@ async function trySoloServerMatch(uid) {
     return { outcome: "waiting" };
   }
   const [finalBlockSnapshot, finalLocksOwned] = await Promise.all([
-    soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
+    readSoloPlayerBlock(selection.host.uid, selection.candidate.uid),
     soloPermitLocksStillOwned(roomId, normalizedPermit),
   ]);
   if (finalBlockSnapshot.exists || !finalLocksOwned) {
@@ -8798,6 +8862,7 @@ async function loadExistingSoloSessionV2Match(uid, claim, now) {
     roomId,
     attemptId: activeEntry.attemptId,
   }) || room.destroyed || !["offered", "active"].includes(room.status)) return null;
+  if (!await soloSafetyContactCurrent(roomId, room)) return null;
   const opponentUid = uid === room.hostUid ? room.guestUid : room.hostUid;
   const candidate = soloSessionV2Candidate(
     room.players?.[opponentUid],
@@ -9193,6 +9258,8 @@ async function cleanupSoloSessionV2Match(resources, {
     });
   if (!roomSafe || (!roomResult.committed && roomResult.snapshot.val() != null)) return false;
 
+  await playerSafetyService.revokeContact(soloSafetyContact(roomId, resources.room));
+
   const cleanupChecks = [
     await removeSoloSessionV2Record(
       realtime.ref(`online/soloMatchPermitsV2/${roomId}`),
@@ -9303,6 +9370,7 @@ function canonicalSoloSessionV2FamiliarPairs(
   hostUid,
   guestUid,
   pairSnapshot,
+  lastBlockedAt = 0,
 ) {
   const pairId = soloFamiliarPairId(hostUid, guestUid);
   const canonicalPairs = (Array.isArray(familiarPairs) ? familiarPairs : [])
@@ -9312,7 +9380,8 @@ function canonicalSoloSessionV2FamiliarPairs(
       id: pairId,
       data: {
         participants: pairSnapshot.get("participants"),
-        active: pairSnapshot.get("active") === true,
+        active: pairSnapshot.get("active") === true
+          && Number(pairSnapshot.get("currentStartedAt") || pairSnapshot.get("createdAt") || 0) > lastBlockedAt,
         lastReunionPriorityAt: Number(pairSnapshot.get("lastReunionPriorityAt") || 0),
       },
     });
@@ -9482,7 +9551,7 @@ async function trySoloSessionV2Match(uid, data) {
     soloSessionActiveRef(selection.candidate.uid, selection.candidate.sessionId).get(),
     liveLegacySoloRoom(selection.host.uid),
     liveLegacySoloRoom(selection.candidate.uid),
-    soloFamiliarBlockPairRef(selection.host.uid, selection.candidate.uid).get(),
+    readSoloPlayerBlock(selection.host.uid, selection.candidate.uid),
     reunionEnabled
       ? soloFamiliarPairRef(selection.host.uid, selection.candidate.uid).get()
       : Promise.resolve(null),
@@ -9527,6 +9596,7 @@ async function trySoloSessionV2Match(uid, data) {
       selection.host.uid,
       selection.candidate.uid,
       finalFamiliarSnapshot,
+      Number(finalBlockSnapshot.policy?.lastBlockedAt || 0),
     )
     : [];
   const canonicalSelection = claimsAndQueuesStillFresh
@@ -9612,6 +9682,18 @@ async function trySoloSessionV2Match(uid, data) {
     return { outcome: "waiting" };
   }
 
+  try {
+    await playerSafetyService.pruneContacts({ firstUid: selection.host.uid, secondUid: selection.candidate.uid });
+    const contact = await playerSafetyService.ensureContact({ firstUid: selection.host.uid,
+      secondUid: selection.candidate.uid, mode: "solo", roomId, attemptId: resources.room.attemptId,
+      startedAt: Math.min(Number(resources.hostLock.acquiredAt), Number(selection.host.joinedAt),
+        Number(selection.candidate.joinedAt)), active: false });
+    resources.room = { ...resources.room, ...contact };
+  } catch (error) {
+    await cleanupSoloSessionV2Match(resources);
+    if (error.code === "failed-precondition") return { outcome: "waiting" };
+    throw error;
+  }
   await realtime.ref("online").update({
     [`soloMatchPermitsV2/${roomId}`]: resources.permit,
     [`rooms/${roomId}`]: resources.room,
@@ -10540,6 +10622,9 @@ async function acceptSoloSessionV2Match(uid, data) {
   const offer = offerSnapshot.val();
   const room = roomSnapshot.val();
   const permit = permitSnapshot.val();
+  if (room && !await soloSafetyContactCurrent(data.roomId, room)) {
+    return { accepted: false, reason: "offer-stale" };
+  }
   if (room?.status === "offered"
       && await soloProfileProjectionParticipantsUpgradeRequired([
         room.players?.[room.hostUid],
@@ -10848,7 +10933,8 @@ async function acceptSoloSessionV2Match(uid, data) {
     }
     return { accepted: false, reason: "offer-stale" };
   }
-  if (!await activateSoloSessionV2Room(data.roomId, resources, transition.token)) {
+  if (!await soloSafetyContactCurrent(data.roomId, resources.room, { activate: true })
+      || !await activateSoloSessionV2Room(data.roomId, resources, transition.token)) {
     const currentRoom = (await realtime.ref(`online/rooms/${data.roomId}`).get()).val();
     if (currentRoom?.status !== "active") {
       await removeSoloSessionV2Record(
@@ -11197,9 +11283,15 @@ exports.soloFamiliarAction = onCall(callableOptions("soloFamiliarAction"), async
     }
     if (action === "accept_familiar") return await acceptSoloFamiliar(uid, request.data);
     if (action === "remove") return await removeOrBlockSoloFamiliar(uid, request.data, false);
-    if (action === "block") return await removeOrBlockSoloFamiliar(uid, request.data, true);
-    if (action === "unblock") return await unblockSoloFamiliar(uid, request.data);
-    if (action === "try_match") return await trySoloServerMatch(uid);
+    if (action === "block" || action === "unblock") {
+      throw new HttpsError("failed-precondition", "ページを更新して、共通の安心設定から操作してください。");
+    }
+    if (action === "try_match") {
+      if ((await realtime.ref("online/config/playerSafetyEnabled").get()).val() === true) {
+        throw new HttpsError("failed-precondition", "ページを更新して対戦を開始してください。");
+      }
+      return await trySoloServerMatch(uid);
+    }
     if (action === "confirm_reunion") return await confirmSoloFamiliarReunion(uid, request.data);
     throw new HttpsError("invalid-argument", "未対応の顔なじみ操作です。");
   } catch (error) {
@@ -11207,6 +11299,177 @@ exports.soloFamiliarAction = onCall(callableOptions("soloFamiliarAction"), async
     console.error("soloFamiliarAction failed", { uid, action, error });
     throw new HttpsError("internal", "顔なじみ帳を処理できませんでした。");
   }
+});
+
+async function resolveLegacyPlayerBlock(firstUid, secondUid, transaction) {
+  // During backend rollout the old controls are disabled one function at a
+  // time. Preserve their existing exclusions until canonical import completes.
+  if (playerSafetyMigrationComplete) return false;
+  if (Date.now() - playerSafetyMigrationCheckAt > 10000) {
+    playerSafetyMigrationCheck ||= realtime.ref("online/config/playerSafetyEnabled").get()
+      .then((snapshot) => { playerSafetyMigrationComplete = snapshot.val() === true;
+        playerSafetyMigrationCheckAt = Date.now(); }).finally(() => { playerSafetyMigrationCheck = null; });
+    await playerSafetyMigrationCheck;
+  }
+  if (playerSafetyMigrationComplete) return false;
+  const freePairId = crypto.createHash("sha256")
+    .update(["free-table-pair", ...[firstUid, secondUid].sort()].join(":"))
+    .digest("hex").slice(0, 40);
+  const references = [soloFamiliarBlockPairRef(firstUid, secondUid),
+    firestore.collection("freeTableBlockPairs").doc(freePairId),
+    marketShopBlockRef(firstUid, secondUid), marketShopBlockRef(secondUid, firstUid)];
+  const snapshots = await Promise.all(references.map((reference) => transaction ? transaction.get(reference) : reference.get()));
+  return snapshots.some((snapshot, index) => index >= 2 ? snapshot.exists
+    : snapshot.exists && [firstUid, secondUid].some((uid) => snapshot.get("blockedBy")?.[uid] === true));
+}
+
+async function validatePlayerSafetyLiveContact(grant) {
+  if (grant.active !== true && Number(grant.expiresAt || 0) > Date.now()) return true;
+  let room;
+  if (grant.mode === "market") room = (await marketRoomRef(grant.roomId).get()).data();
+  else room = (await realtime.ref(grant.mode === "free_table"
+    ? `freeTables/sessions/${grant.roomId}`
+    : `online/${grant.mode === "strategy" ? "strategyRooms" : "rooms"}/${grant.roomId}`).get()).val();
+  if (!room) return false;
+  if (room.safetyGrantId !== grant.safetyGrantId || room.safetyVersion !== grant.safetyVersion) return false;
+  if (room.destroyed || room.closed || ["expired", "ended", "sold", "canceled", "closed"].includes(room.status)) return false;
+  if (["solo", "strategy"].includes(grant.mode)
+      && room.finished?.[grant.firstUid] === true && room.finished?.[grant.secondUid] === true) {
+    const current = await Promise.all([grant.firstUid, grant.secondUid].map(async (uid) => {
+      if (grant.mode === "strategy") return (await realtime.ref(`online/strategyActive/${uid}`).get()).val() === grant.roomId;
+      const sessionId = room.sessions?.[uid]?.sessionId;
+      return sessionId ? (await realtime.ref(`online/activeV2/${uid}/${sessionId}`).get()).val()?.roomId === grant.roomId
+        : (await realtime.ref(`online/active/${uid}`).get()).val() === grant.roomId;
+    }));
+    return current.every(Boolean);
+  }
+  return true;
+}
+
+async function closeBlockedSoloFamiliarPair({ firstUid, secondUid, blockedAt }) {
+  await firestore.runTransaction(async (transaction) => {
+    const reference = soloFamiliarPairRef(firstUid, secondUid);
+    const snapshot = await transaction.get(reference);
+    const pair = snapshot.data();
+    if (!pair || !pair.active || Number(pair.currentStartedAt || pair.createdAt || 0) > blockedAt) return;
+    const participants = [firstUid, secondUid];
+    const rows = await Promise.all(participants.map(async (uid) => {
+      const entryId = pair.entryIds?.[uid];
+      if (!/^[a-f0-9]{40}$/.test(entryId || "")) return null;
+      const book = soloFamiliarBookRef(uid); const entry = soloFamiliarBookEntryRef(uid, entryId);
+      const [bookSnapshot, entrySnapshot] = await Promise.all([transaction.get(book), transaction.get(entry)]);
+      return { uid, book, entry, bookSnapshot, entrySnapshot };
+    }));
+    for (const row of rows.filter(Boolean)) {
+      if (row.entrySnapshot.get("active") !== true) continue;
+      transaction.set(row.entry, { active: false, endedAt: blockedAt }, { merge: true });
+      transaction.set(row.book, { ownerUid: row.uid,
+        count: Math.max(0, Number(row.bookSnapshot.get("count") || 0) - 1), updatedAt: Date.now() }, { merge: true });
+    }
+    transaction.set(reference, { active: false, endedAt: blockedAt, updatedAt: Date.now() }, { merge: true });
+  });
+}
+
+async function closeBlockedPlayerContacts(context) {
+  const { firstUid, secondUid, revision, grants = {} } = context;
+  let settlementError = null;
+  const captured = Object.values(grants);
+  for (const uid of [firstUid, secondUid]) {
+    const [normal, legacy, strategy] = await Promise.all([
+      realtime.ref(`online/activeV2/${uid}`).get(), realtime.ref(`online/active/${uid}`).get(),
+      realtime.ref(`online/strategyActive/${uid}`).get(),
+    ]);
+    const ids = Object.values(normal.val() || {}).map((row) => ["solo", row.roomId]);
+    if (typeof legacy.val() === "string") ids.push(["solo", legacy.val()]);
+    if (typeof strategy.val() === "string") ids.push(["strategy", strategy.val()]);
+    for (const [mode, roomId] of ids) {
+      if (!roomId || captured.some((grant) => grant.mode === mode && grant.roomId === roomId)) continue;
+      const room = (await realtime.ref(`online/${mode === "solo" ? "rooms" : "strategyRooms"}/${roomId}`).get()).val();
+      if (!room || ![room.hostUid, room.guestUid].includes(firstUid)
+          || ![room.hostUid, room.guestUid].includes(secondUid)) continue;
+      captured.push({ mode, roomId, firstUid: room.hostUid, secondUid: room.guestUid });
+    }
+  }
+  // Grant references were captured durably before revocation. Cleanup therefore
+  // remains possible after another tab clears its current-room pointer.
+  for (const grant of captured) {
+    if (!["solo", "strategy"].includes(grant.mode)) continue;
+    const roomId = grant.roomId;
+    const path = `online/${grant.mode === "solo" ? "rooms" : "strategyRooms"}/${roomId}`;
+    let finalResult = null;
+    const result = await realtime.ref(path).transaction((room) => {
+      if (room == null) return null;
+      if (room.hostUid !== grant.firstUid || room.guestUid !== grant.secondUid
+          || Number(room.safetyVersion || 0) >= revision) return;
+      try {
+        const derived = grant.mode === "solo" ? deriveSoloMatchResult(room)
+          : validatedOutcomes("strategy", room, [room.hostUid, room.guestUid]);
+        finalResult = derived.status === "final" || derived.pending === false ? derived : null;
+      } catch { finalResult = null; }
+      if (finalResult || room.serverFinalized) return room;
+      return { ...room, ...(room.status === "offered" ? { status: "expired" } : {}),
+        destroyed: { by: room.hostUid, at: Date.now(), reason: "contact-ended" } };
+    });
+    const room = result.snapshot.val();
+    if (!room || Number(room.safetyVersion || 0) >= revision) continue;
+    if (finalResult && room.status === "active") {
+      try {
+        const claims = await firestore.getAll(...[room.hostUid, room.guestUid]
+          .map((uid) => verifiedMatchClaimRef(uid, grant.mode, roomId)));
+        // Preserve historical evidence and existing claims. The existing reward
+        // eligibility window is twelve hours; a block does not extend it.
+        if (!claims.every((claim) => claim.exists) && Number(room.createdAt) >= Date.now() - 12 * 60 * 60 * 1000) {
+          const reward = await recordVerifiedMatch(room.hostUid, { mode: grant.mode, roomId,
+            outcome: finalResult.outcomes[room.hostUid], ...(grant.mode === "solo" ? { finalizationVersion: 2 } : {}) });
+          if (reward.outcome === "pending") throw new Error("Completed match finalization remains pending");
+        }
+      } catch (error) { settlementError = error; }
+    }
+    await Promise.all([firstUid, secondUid].map(async (uid) => {
+      if (grant.mode === "strategy") {
+        await realtime.ref(`online/strategyActive/${uid}`).transaction((value) => value == null || value === roomId ? null : undefined);
+        await realtime.ref(`online/strategyOffers/${uid}/${roomId}`).remove();
+      } else {
+        await realtime.ref(`online/active/${uid}`).transaction((value) => value == null || value === roomId ? null : undefined);
+        const sessionId = room.sessions?.[uid]?.sessionId;
+        if (sessionId) {
+          await realtime.ref(`online/activeV2/${uid}/${sessionId}`).transaction((value) => value == null || value.roomId === roomId ? null : undefined);
+          await realtime.ref(`online/offersV2/${uid}/${sessionId}/${roomId}`).remove();
+          await realtime.ref(`online/queueV2/${uid}/${sessionId}`).transaction((value) => value == null || value.roomId === roomId ? null : undefined);
+        }
+        await realtime.ref(`online/soloMatchLocksV2/${uid}`).transaction((value) => value == null || value.roomId === roomId ? null : undefined);
+      }
+    }));
+  }
+  await Promise.all([
+    closeBlockedSoloFamiliarPair(context),
+    anjuPayFleaService.closeBlockedPair(context),
+    freeTableService.closeBlockedPair(context),
+    closeBlockedMarketPair(context),
+  ]);
+  if (settlementError) throw settlementError;
+}
+
+exports.playerSafetyAction = onCall(callableOptions("playerSafetyAction"), async (request) => {
+  const uid = requireUid(request); const data = request.data || {};
+  try {
+    if (data.action === "comments_list") return await playerSafetyComments.list(uid, data);
+    if (data.action === "comments_save") return await playerSafetyComments.save(uid, data);
+    if (data.action === "comments_delete") return await playerSafetyComments.remove(uid, data);
+    if (data.action === "strategy_match") return await playerSafetyStrategy.match(uid, data);
+    if (data.action === "strategy_accept") return await playerSafetyStrategy.accept(uid, data);
+    if (data.action === "strategy_expire") return await playerSafetyStrategy.expire(uid, data);
+    return await playerSafetyService.performAction(uid, data);
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("playerSafetyAction failed", { action: data.action, code: String(error?.code || "unknown") });
+    throw new HttpsError("internal", "安心設定を処理できませんでした。時間をおいて再試行してください。");
+  }
+});
+
+exports.cleanupPlayerSafety = onSchedule({ schedule: "every 1 minutes", timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300, memory: "256MiB", maxInstances: 1 }, async () => {
+  return { operations: await playerSafetyService.cleanup(), strategy: await playerSafetyStrategy.cleanup() };
 });
 
 async function marketSessionIsFresh(uid, activeSnapshot, now = Date.now()) {
@@ -11876,6 +12139,34 @@ function marketShopBlockRef(uid, targetUid) {
   return marketShopBlocksRef(uid).doc(targetUid);
 }
 
+function marketPlayerSafety() {
+  return typeof playerSafetyService === "undefined" ? null : playerSafetyService;
+}
+
+async function marketContactIsCurrent(room, transaction = undefined) {
+  const safety = marketPlayerSafety();
+  if (!safety) return true;
+  return safety.checkContact({
+    firstUid: room.sellerUid,
+    secondUid: room.buyerUid,
+    mode: "market",
+    roomId: room.roomId,
+    attemptId: room.roomId,
+    safetyPairId: room.safetyPairId,
+    safetyVersion: room.safetyVersion,
+    safetyGrantId: room.safetyGrantId,
+  }, transaction);
+}
+
+async function marketRelationshipIsCurrent(uid, peerUid, updatedAt) {
+  const safety = marketPlayerSafety();
+  if (!safety) return true;
+  if (!safety.getPolicy) return !await safety.isBlocked(uid, peerUid);
+  const policy = await safety.getPolicy(uid, peerUid);
+  return !Object.values(policy.blockedBy || {}).some((value) => value === true)
+    && (!policy.lastBlockedAt || Number(updatedAt || 0) > policy.lastBlockedAt);
+}
+
 function marketShopRelationshipRef(sellerUid, buyerUid) {
   return firestore.collection("valueMarketShopRelationships")
     .doc(eventId(`${sellerUid}:${buyerUid}`));
@@ -12118,6 +12409,11 @@ async function marketQueueShopContext(uid, role, fallbackName, data = {}) {
     preferredPublicSellerId: preferredRecommendedSeller?.publicSellerId || "",
     sellerShop: null,
   };
+  if (marketPlayerSafety()) {
+    context.blockedUids = [];
+    const targetUid = context.selectedFavoriteSellerUid || context.preferredSellerUid;
+    if (targetUid) await marketPlayerSafety().assertAllowed(uid, targetUid);
+  }
   if (role === "seller") {
     const shop = await ensureMarketShop(uid, fallbackName);
     const statsSnapshot = await marketStatsRef(uid).get();
@@ -12310,6 +12606,9 @@ async function touchMarketRoomPublicPresence(room, role) {
 }
 
 async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
+  if (!isTerminalMarketState(room.status) && !await marketContactIsCurrent(room)) {
+    throw new HttpsError("permission-denied", "この商談は終了しました。");
+  }
   const now = Date.now();
   const incomingVersion = Number(room.stateVersion || 0);
   const incomingUpdatedAt = Number(room.updatedAt || now);
@@ -12321,6 +12620,13 @@ async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
       return {
         ...(current || {}),
         members: { [room.sellerUid]: true, [room.buyerUid]: true },
+        sellerUid: room.sellerUid,
+        buyerUid: room.buyerUid,
+        ...(room.safetyGrantId ? {
+          safetyPairId: room.safetyPairId,
+          safetyVersion: room.safetyVersion,
+          safetyGrantId: room.safetyGrantId,
+        } : {}),
         roles: { [room.sellerUid]: "seller", [room.buyerUid]: "buyer" },
         names: { [room.sellerUid]: cleanName(room.sellerName), [room.buyerUid]: cleanName(room.buyerName) },
         status: room.status,
@@ -12352,6 +12658,11 @@ async function mirrorMarketRoom(room, { seenRoles = [] } = {}) {
     await Promise.all(seenRoles
       .filter((role) => role === "seller" || role === "buyer")
       .map((role) => touchMarketRoomPublicPresence(room, role)));
+  } else if (marketPlayerSafety()) {
+    await marketPlayerSafety().revokeContact({
+      roomId: room.roomId, safetyPairId: room.safetyPairId,
+      safetyVersion: room.safetyVersion, safetyGrantId: room.safetyGrantId,
+    });
   }
 }
 
@@ -12615,6 +12926,8 @@ async function validateTargetedMarketQueueSession(uid, ownEntry) {
       return;
     }
     const liveSellerShop = publicSellerShop(publicSnapshot.get("sellerShop"));
+    const safetyPolicy = marketPlayerSafety()?.getPolicy
+      ? await marketPlayerSafety().getPolicy(uid, sellerUid, transaction) : null;
     const valid = publicSnapshot.exists
       && cleanText(publicSnapshot.get("sellerUid"), 128) === sellerUid
       && liveSellerShop?.publicSellerId === publicSellerId
@@ -12622,7 +12935,10 @@ async function validateTargetedMarketQueueSession(uid, ownEntry) {
       && favoriteSnapshot.exists
       && favoriteSnapshot.get("buyerUid") === uid
       && favoriteSnapshot.get("sellerUid") === sellerUid
-      && favoriteSnapshot.get("publicSellerId") === publicSellerId;
+      && favoriteSnapshot.get("publicSellerId") === publicSellerId
+      && (!safetyPolicy || (!Object.values(safetyPolicy.blockedBy || {}).some(Boolean)
+        && (!safetyPolicy.lastBlockedAt || Number(favoriteSnapshot.get("safetyRelationshipAt")
+          || favoriteSnapshot.get("updatedAt") || 0) > safetyPolicy.lastBlockedAt)));
     if (!valid) {
       transaction.delete(queueRef);
       outcome = {
@@ -12651,9 +12967,12 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       minimumLastSeen,
       requireAppCheck: MARKET_APP_CHECK_MIGRATION,
     }),
-  ).slice(0, 8);
+  );
+  const visibleCandidates = marketPlayerSafety()
+    ? await marketPlayerSafety().filterVisible(uid, candidates, (candidate) => candidate.uid)
+    : candidates;
 
-  for (const candidate of candidates) {
+  for (const candidate of visibleCandidates.slice(0, 8)) {
     const sellerUid = ownEntry.role === "seller" ? uid : candidate.uid;
     const buyerUid = ownEntry.role === "buyer" ? uid : candidate.uid;
     const ownQueueRef = marketQueueRef(uid);
@@ -12668,9 +12987,26 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
     const buyerBlockRef = marketShopBlockRef(buyerUid, sellerUid);
     const favoriteRef = marketShopFavoriteRef(buyerUid, sellerUid);
     const roomRef = marketRoomRef(firestore.collection("valueMarketRooms").doc().id);
+    const safety = marketPlayerSafety();
+    let safetyMetadata = {};
+    if (safety) {
+      if (await safety.isBlocked(sellerUid, buyerUid)) continue;
+      try {
+        safetyMetadata = await safety.ensureContact({
+          firstUid: sellerUid, secondUid: buyerUid, mode: "market",
+          roomId: roomRef.id, attemptId: roomRef.id,
+          startedAt: Math.min(Number(ownEntry.queueRequestedAt || 0), Number(candidate.queueRequestedAt || 0)),
+          active: false,
+        });
+      } catch (error) {
+        if (["permission-denied", "failed-precondition"].includes(error?.code)) continue;
+        throw error;
+      }
+    }
     let attempt = { status: "retry", roomId: "" };
 
-    await firestore.runTransaction(async (transaction) => {
+    try {
+      await firestore.runTransaction(async (transaction) => {
       const [
         ownQueueSnapshot,
         ownActiveSnapshot,
@@ -12698,6 +13034,17 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       ]);
       const currentOwn = ownQueueSnapshot.data();
       const currentCandidate = candidateQueueSnapshot.data();
+      const currentPolicy = safety?.getPolicy
+        ? await safety.getPolicy(sellerUid, buyerUid, transaction) : null;
+      const commonBlocked = safety
+        ? currentPolicy
+          ? Object.values(currentPolicy.blockedBy || {}).some((blocked) => blocked === true)
+          : await safety.isBlocked(sellerUid, buyerUid, transaction)
+        : false;
+      const currentGrant = !safety || await safety.checkContact({
+        firstUid: sellerUid, secondUid: buyerUid, mode: "market",
+        roomId: roomRef.id, attemptId: roomRef.id, ...safetyMetadata,
+      }, transaction);
       const rejectCandidate = (candidateEntry = currentCandidate || candidate) => {
         transaction.set(ownQueueRef, {
           skippedCandidateSessions: nextSkippedMarketQueueSessions(currentOwn, candidateEntry),
@@ -12735,8 +13082,9 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       }
       if (
         candidateActiveSnapshot.exists
-        || sellerBlockSnapshot.exists
-        || buyerBlockSnapshot.exists
+        || commonBlocked
+        || !currentGrant
+        || (!safety && (sellerBlockSnapshot.exists || buyerBlockSnapshot.exists))
         || !currentCandidate
         || currentCandidate.status !== "waiting"
         || Number(currentCandidate.lastSeen || 0) < Date.now() - QUEUE_FRESH_MS
@@ -12760,7 +13108,9 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       const validFavorite = favoriteSnapshot.exists
         && favoriteSnapshot.get("buyerUid") === buyer.uid
         && favoriteSnapshot.get("sellerUid") === seller.uid
-        && favoriteSnapshot.get("publicSellerId") === liveSellerShop?.publicSellerId;
+        && favoriteSnapshot.get("publicSellerId") === liveSellerShop?.publicSellerId
+        && (!currentPolicy?.lastBlockedAt || Number(favoriteSnapshot.get("safetyRelationshipAt")
+          || favoriteSnapshot.get("updatedAt") || 0) > currentPolicy.lastBlockedAt);
       if (
         !liveSellerShop
         || !queuesCompatible({ ...seller, sellerShop: liveSellerShop }, buyer)
@@ -12805,6 +13155,7 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       );
       const room = {
         roomId,
+        ...safetyMetadata,
         participants: { [seller.uid]: true, [buyer.uid]: true },
         sellerUid: seller.uid,
         buyerUid: buyer.uid,
@@ -12850,7 +13201,21 @@ async function tryMatchMarketQueueSession(uid, ownEntry) {
       };
     });
 
+    } catch (error) {
+      // If the transaction response was lost after commit, retain the grant for
+      // that persisted room; otherwise discard the speculative reservation.
+      const committed = (await roomRef.get()).exists;
+      if (safety && !committed) await safety.revokeContact({ roomId: roomRef.id, ...safetyMetadata });
+      throw error;
+    }
+    if (safety && attempt.roomId !== roomRef.id) {
+      await safety.revokeContact({ roomId: roomRef.id, ...safetyMetadata });
+    }
     if (attempt.room) {
+      if (safety && !await safety.activateContact({
+        firstUid: sellerUid, secondUid: buyerUid, mode: "market",
+        roomId: roomRef.id, attemptId: roomRef.id, ...safetyMetadata,
+      })) throw new HttpsError("failed-precondition", "この商談は終了しました。改めて相手を探してください。");
       await bestEffort("matchMarketQueue", [
         mirrorMarketRoom(attempt.room),
         ...attempt.queuePresenceIds.map(removeMarketQueuePublicPresence),
@@ -13059,6 +13424,9 @@ async function heartbeatMarketQueue(uid) {
 async function syncMarketRoom(uid, roomId, { recoverPrivate = false } = {}) {
   const room = await loadMarketRoomWithPublicPresenceId(roomId);
   if (room?.participants?.[uid] !== true) throw new HttpsError("permission-denied", "この市場ルームには参加していません。");
+  if (!isTerminalMarketState(room.status) && !await marketContactIsCurrent(room)) {
+    throw new HttpsError("permission-denied", "この商談は終了しました。");
+  }
   const role = uid === room.sellerUid ? "seller" : uid === room.buyerUid ? "buyer" : "";
   if (recoverPrivate || isTerminalMarketState(room.status)) {
     await mirrorMarketRoom(room, { seenRoles: isTerminalMarketState(room.status) ? [] : [role] });
@@ -13093,6 +13461,8 @@ async function listPatronRecommendations(uid, seasonKey = periodKey("monthly")) 
   const profile = normalizePatronRecommendationProfile(profileSnapshot.data(), uid, seasonKey);
   const recommendations = await Promise.all(profile.recommendations.map(async (entry) => {
     const publicSnapshot = await marketShopPublicRef(entry.publicSellerId).get();
+    if (marketPlayerSafety() && (!publicSnapshot.exists
+        || !await marketRelationshipIsCurrent(uid, publicSnapshot.get("sellerUid"), entry.recommendedAt))) return null;
     if (!publicSnapshot.exists) {
       return {
         publicSellerId: entry.publicSellerId,
@@ -13117,10 +13487,10 @@ async function listPatronRecommendations(uid, seasonKey = periodKey("monthly")) 
       unavailable: false,
     };
   }));
-  return recommendations;
+  return recommendations.filter(Boolean);
 }
 
-async function listRecommendedShopShelf(seasonKey = periodKey("monthly")) {
+async function listRecommendedShopShelf(seasonKey = periodKey("monthly"), viewerUid = "") {
   const aggregateSnapshot = await patronRecommendationSeasonRef(seasonKey)
     .collection("shops")
     .where("recommendationCount", ">=", PATRON_RECOMMENDED_SHELF_MINIMUM)
@@ -13145,6 +13515,8 @@ async function listRecommendedShopShelf(seasonKey = periodKey("monthly")) {
   const shops = await Promise.all(candidates.map(async (candidate) => {
     const publicSnapshot = await marketShopPublicRef(candidate.publicSellerId).get();
     if (!publicSnapshot.exists) return null;
+    if (viewerUid && marketPlayerSafety()
+        && await marketPlayerSafety().isBlocked(viewerUid, publicSnapshot.get("sellerUid"))) return null;
     const shop = publicSellerShop(publicSnapshot.get("sellerShop"));
     if (!shop || shop.publicSellerId !== candidate.publicSellerId) return null;
     return shop;
@@ -13225,7 +13597,9 @@ async function updatePatronRecommendation(uid, data, remove = false, appCheckVer
       if (patron.tier < 1) {
         throw new HttpsError("failed-precondition", "今月の市場パトロンだけが商店を推薦できます。");
       }
-      if (blockSnapshot.exists) {
+      const safetyPolicy = marketPlayerSafety()
+        ? await marketPlayerSafety().assertAllowed(uid, sellerUid, transaction) : null;
+      if (!marketPlayerSafety() && blockSnapshot.exists) {
         throw new HttpsError("failed-precondition", "ブロック中の商店は推薦できません。");
       }
       const favoriteMatches = favoriteSnapshot.exists
@@ -13241,6 +13615,13 @@ async function updatePatronRecommendation(uid, data, remove = false, appCheckVer
         );
       }
       if (currentlyRecommended) {
+        if (safetyPolicy?.lastBlockedAt > 0
+            && Number(profile.recommendations[recommendationIndex].recommendedAt || 0) <= safetyPolicy.lastBlockedAt) {
+          profile.recommendations[recommendationIndex].recommendedAt = Date.now();
+          transaction.set(profileRef, { ...profile, updatedAt: Date.now() }, { merge: true });
+          outcome = "recommended";
+          return;
+        }
         outcome = "unchanged";
         return;
       }
@@ -13287,7 +13668,7 @@ async function updatePatronRecommendation(uid, data, remove = false, appCheckVer
   const [patronProgram, recommendations, recommendedShelf] = await Promise.all([
     ensurePatronFundRecognition(uid, patron),
     listPatronRecommendations(uid, seasonKey),
-    listRecommendedShopShelf(seasonKey),
+    listRecommendedShopShelf(seasonKey, uid),
   ]);
   return {
     outcome,
@@ -13315,10 +13696,12 @@ async function getMarketShop(uid) {
     ownedMarketCustomizationIds(uid),
     ensurePatronFundRecognition(uid, patron),
     listPatronRecommendations(uid, seasonKey),
-    listRecommendedShopShelf(seasonKey),
+    listRecommendedShopShelf(seasonKey, uid),
   ]);
   const favorites = (await Promise.all(favoritesSnapshot.docs.map(async (favoriteSnapshot) => {
     const sellerUid = favoriteSnapshot.id;
+    if (!await marketRelationshipIsCurrent(uid, sellerUid, favoriteSnapshot.get("safetyRelationshipAt")
+      || favoriteSnapshot.get("updatedAt"))) return null;
     const publicSellerId = cleanText(favoriteSnapshot.get("publicSellerId"), 96);
     if (!isValidPublicSellerId(publicSellerId)) return null;
     const publicSnapshot = await marketShopPublicRef(publicSellerId).get();
@@ -13482,6 +13865,9 @@ async function updateMarketShopRelationship(uid, data) {
       ? data.blocked
       : null;
   const blockRequested = typeof blockValue === "boolean";
+  if (blockRequested && marketPlayerSafety()) {
+    throw new HttpsError("failed-precondition", "ブロックは全モード共通の安心設定へ移りました。ページを更新してください。", { reason: "update-required" });
+  }
   if (!impressionRequested && !favoriteRequested && !blockRequested) {
     throw new HttpsError("invalid-argument", "更新する関係設定を指定してください。");
   }
@@ -13535,10 +13921,13 @@ async function updateMarketShopRelationship(uid, data) {
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
     const room = roomSnapshot.data();
     const currentRole = requireRoomActor(room, uid);
+    if ((impressionRequested || data?.favorite === true) && marketPlayerSafety()) {
+      await marketPlayerSafety().assertAllowed(uid, targetUid, transaction);
+    }
     if (room.sellerUid !== sellerUid || room.buyerUid !== buyerUid || currentRole !== actorRole) {
       throw new HttpsError("failed-precondition", "市場ルームの参加者が変わりました。");
     }
-    if (data?.favorite === true && blockSnapshot.exists && blockValue !== false) {
+    if (!marketPlayerSafety() && data?.favorite === true && blockSnapshot.exists && blockValue !== false) {
       throw new HttpsError(
         "failed-precondition",
         "ブロック中の相手は常連帳へ追加できません。先にブロックを解除してください。",
@@ -13641,6 +14030,7 @@ async function updateMarketShopRelationship(uid, data) {
           saleCount: integer(relationship.saleCount, 0, 1_000_000, 0),
           createdAt: now,
           updatedAt: now,
+          safetyRelationshipAt: now,
         });
       } else if (!nextFavorite && favoriteSnapshot.exists) {
         shop.favoriteCount = Math.max(0, shop.favoriteCount - 1);
@@ -13650,6 +14040,7 @@ async function updateMarketShopRelationship(uid, data) {
       } else if (nextFavorite) {
         transaction.set(favoriteRef, {
           publicSellerId: ensuredShop.publicSellerId,
+          safetyRelationshipAt: now,
           lastPurchasePrice: integer(
             room.salePrice ?? favoriteSnapshot.get("lastPurchasePrice"),
             0,
@@ -14006,6 +14397,95 @@ function isTerminalMarketState(status) {
   return ["sold", "ended", "canceled"].includes(status);
 }
 
+async function clearBlockedMarketRelationships(firstUid, secondUid, blockedAt) {
+  let removed = 0;
+  if (!(Number(blockedAt) > 0)) return { removed };
+  for (const buyerUid of [firstUid, secondUid]) {
+    const sellerUid = buyerUid === firstUid ? secondUid : firstUid;
+    const favoriteRef = marketShopFavoriteRef(buyerUid, sellerUid);
+    const shopReference = marketShopRef(sellerUid);
+    await firestore.runTransaction(async (transaction) => {
+      const [favorite, shopSnapshot, statsSnapshot] = await Promise.all([
+        transaction.get(favoriteRef), transaction.get(shopReference), transaction.get(marketStatsRef(sellerUid)),
+      ]);
+      if (!favorite.exists || Number(favorite.get("safetyRelationshipAt") || favorite.get("updatedAt") || 0) > blockedAt) return;
+      const shop = normalizeStoredMarketShop(shopSnapshot.data());
+      const publicReference = shop.publicSellerId ? marketShopPublicRef(shop.publicSellerId) : null;
+      const publicSnapshot = publicReference ? await transaction.get(publicReference) : null;
+      transaction.delete(favoriteRef);
+      if (shopSnapshot.exists) {
+        shop.favoriteCount = Math.max(0, Number(shop.favoriteCount || 0) - 1);
+        shop.updatedAt = Date.now();
+        transaction.set(shopReference, shop);
+        if (publicSnapshot?.exists && publicSnapshot.get("sellerUid") === sellerUid) {
+          transaction.set(publicReference, marketShopPublicRecord(sellerUid, shop, statsSnapshot.data(), shop.updatedAt));
+        }
+      }
+      removed += 1;
+    });
+    const profiles = await firestore.collection("valueMarketPatronRecommendationProfiles").where("uid", "==", buyerUid).get();
+    const shopSnapshot = await shopReference.get();
+    const publicSellerId = shopSnapshot.get("publicSellerId");
+    if (!publicSellerId) continue;
+    for (const profileDocument of profiles.docs) {
+      await firestore.runTransaction(async (transaction) => {
+        const profileSnapshot = await transaction.get(profileDocument.ref);
+        const profile = profileSnapshot.data();
+        if (profile?.uid !== buyerUid || !Array.isArray(profile.recommendations) || !profile.seasonKey) return;
+        const removedEntries = profile.recommendations.filter((entry) => entry.publicSellerId === publicSellerId
+          && Number(entry.recommendedAt || 0) <= blockedAt);
+        if (!removedEntries.length) return;
+        const aggregateReference = patronRecommendedShopRef(profile.seasonKey, publicSellerId);
+        const aggregate = await transaction.get(aggregateReference);
+        transaction.update(profileDocument.ref, {
+          recommendations: profile.recommendations.filter((entry) => !removedEntries.includes(entry)),
+          updatedAt: Date.now(),
+        });
+        if (aggregate.exists) transaction.update(aggregateReference, {
+          recommendationCount: Math.max(0, Number(aggregate.get("recommendationCount") || 0) - removedEntries.length),
+          updatedAt: Date.now(),
+        });
+        removed += removedEntries.length;
+      });
+    }
+  }
+  return { removed };
+}
+
+async function closeBlockedMarketPair({ firstUid, secondUid, actorUid, operationId, revision, blockedAt = 0, grants = {} }) {
+  if (![firstUid, secondUid].includes(actorUid) || firstUid === secondUid) {
+    throw new HttpsError("invalid-argument", "接触終了の対象を確認できません。");
+  }
+  const snapshots = await Promise.all([marketActiveRef(firstUid).get(), marketActiveRef(secondUid).get()]);
+  const roomIds = [...new Set([
+    ...snapshots.map((snapshot) => cleanText(snapshot.get("roomId"), 80)),
+    ...Object.values(grants).filter((grant) => grant?.mode === "market").map((grant) => cleanText(grant.roomId, 80)),
+  ].filter(Boolean))];
+  let closed = 0;
+  for (const roomId of roomIds) {
+    const reference = marketRoomRef(roomId);
+    const closure = await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (!snapshot.exists) return null;
+      const room = snapshot.data();
+      if (room.participants?.[firstUid] !== true || room.participants?.[secondUid] !== true
+          || isTerminalMarketState(room.status) || Number(room.safetyVersion || 0) >= Number(revision)) return null;
+      if (room.safetyClosure) return room.safetyClosure;
+      const fixed = { actorUid, operationId, revision };
+      transaction.update(reference, { safetyClosure: fixed });
+      return fixed;
+    });
+    if (!closure) continue;
+    await performMarketAction(closure.actorUid, {
+      action: "cancel", roomId,
+      actionId: eventId(`player-safety:${roomId}:${closure.operationId}`),
+    }, true);
+    closed += 1;
+  }
+  const relationships = blockedAt > 0 ? await clearBlockedMarketRelationships(firstUid, secondUid, blockedAt) : { removed: 0 };
+  return { closed, relationshipsRemoved: relationships.removed };
+}
+
 async function performMarketAction(uid, data, appCheckVerified) {
   const roomId = cleanText(data?.roomId, 80);
   const action = cleanText(data?.action, 32);
@@ -14109,6 +14589,8 @@ async function performMarketAction(uid, data, appCheckVerified) {
       ledgerConfigSnapshot,
       patronSubsidySnapshots,
       monthlyMarketSnapshots,
+      sellerActiveSnapshot,
+      buyerActiveSnapshot,
     ] = await Promise.all([
       transaction.get(roomRef),
       transaction.get(sellerWalletRef),
@@ -14142,6 +14624,8 @@ async function performMarketAction(uid, data, appCheckVerified) {
           transaction.get(monthlyOshijoPairRef),
         ])
         : Promise.resolve([null, null, null, null]),
+      transaction.get(marketActiveRef(initialRoom.sellerUid)),
+      transaction.get(marketActiveRef(initialRoom.buyerUid)),
     ]);
     const [
       marketPatronFundSnapshot,
@@ -14158,6 +14642,10 @@ async function performMarketAction(uid, data, appCheckVerified) {
     if (!roomSnapshot.exists) throw new HttpsError("not-found", "市場ルームが見つかりません。");
     const room = { ...roomSnapshot.data() };
     const role = requireRoomActor(room, uid);
+    const contactAction = !["cancel", "leave", "decline_preview", "decline_extension", "oshijo_closing_turn_release"].includes(action);
+    if (!ledgerSnapshot.exists && contactAction && !await marketContactIsCurrent(room, transaction)) {
+      throw new HttpsError("permission-denied", "この商談は終了しました。");
+    }
     const sellerWallet = walletData(sellerWalletSnapshot);
     const buyerWallet = walletData(buyerWalletSnapshot);
     const sellerBalanceBefore = sellerWallet.balance;
@@ -15400,8 +15888,8 @@ async function performMarketAction(uid, data, appCheckVerified) {
     if (achievementResults[room.sellerUid]) transaction.set(sellerAchievementRef, achievementResults[room.sellerUid]);
     if (achievementResults[room.buyerUid]) transaction.set(buyerAchievementRef, achievementResults[room.buyerUid]);
     if (isTerminalMarketState(room.status)) {
-      transaction.delete(marketActiveRef(room.sellerUid));
-      transaction.delete(marketActiveRef(room.buyerUid));
+      if (sellerActiveSnapshot.get("roomId") === roomId) transaction.delete(marketActiveRef(room.sellerUid));
+      if (buyerActiveSnapshot.get("roomId") === roomId) transaction.delete(marketActiveRef(room.buyerUid));
     }
     result = {
       status: room.status,
@@ -15601,6 +16089,7 @@ exports.valueMarketAction = onCall(callableOptions("valueMarketAction"), async (
 });
 
 const anjuPayFleaService = createAnjuPayFleaService({
+  playerSafety: playerSafetyService,
   firestore,
   realtime,
   HttpsError,
@@ -15637,6 +16126,7 @@ exports.anjuPayFleaAction = onCall(callableOptions("anjuPayFleaAction"), async (
 });
 
 const danwakuNoteService = createDanwakuNoteService({
+  playerSafety: playerSafetyService,
   firestore,
   HttpsError,
   achievementProfileRef,
@@ -15697,6 +16187,7 @@ exports.expireAnjuPayFleaListings = onSchedule({
 });
 
 const freeTableService = createFreeTableService({
+  playerSafety: playerSafetyService,
   firestore,
   realtime,
   HttpsError,
@@ -15719,6 +16210,7 @@ exports.freeTableAction = onCall(callableOptions("freeTableAction"), async (requ
 });
 
 const aiTextTrainingService = createAiTextTrainingService({
+  playerSafety: playerSafetyService,
   firestore,
   HttpsError,
   ensureWallet,
@@ -15739,6 +16231,7 @@ const aiTextTrainingService = createAiTextTrainingService({
 });
 
 const rouletteTrainingService = createRouletteTrainingService({
+  playerSafety: playerSafetyService,
   firestore,
   HttpsError,
   ensureWallet,
@@ -16737,6 +17230,14 @@ exports.valueMarketRankings = onCall(callableOptions("valueMarketRankings"), asy
   ]);
   const viewerStats = viewerSnapshot.exists ? viewerSnapshot.data() : null;
   const viewerHonors = publicMarketRankingHonors(viewerHonorSnapshot.data(), uid);
+  const maskMarketRows = async (docs, role) => Promise.all(docs.map(async (snapshot) => {
+    const row = rankingRow(snapshot, role, uid);
+    if (!await playerSafetyService.isBlocked(uid, snapshot.id)) return row;
+    return { ...row, hidden: true, name: "非表示のプレイヤー", publicProfile: {}, achievementShowcase: [] };
+  }));
+  const [sellers, buyers] = await Promise.all([
+    maskMarketRows(sellerSnapshot.docs, "seller"), maskMarketRows(buyerSnapshot.docs, "buyer"),
+  ]);
   return {
     period: rankingPeriod,
     periodKey: rankingPeriod === "monthly" ? currentSeasonKey : "lifetime",
@@ -16745,8 +17246,8 @@ exports.valueMarketRankings = onCall(callableOptions("valueMarketRankings"), asy
     finalizedSeasonKey: finalization.latestClosedSeasonKey,
     finalizedSeasonKeys: finalization.finalizedSeasonKeys,
     rankingContributionCap: MARKET_RANKING_CONTRIBUTION_CAP,
-    sellers: sellerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "seller", uid)).filter((entry) => entry.primary > 0),
-    buyers: buyerSnapshot.docs.map((snapshot) => rankingRow(snapshot, "buyer", uid)).filter((entry) => entry.primary > 0),
+    sellers: sellers.filter((entry) => entry.primary > 0),
+    buyers: buyers.filter((entry) => entry.primary > 0),
     viewerProfile: sanitizeStoredMarketPublicProfile(viewerStats?.publicProfile),
     viewerEligible: hasRankedMarketStats(viewerStats),
     viewerName: viewerStats ? cleanName(viewerStats.name) : "",

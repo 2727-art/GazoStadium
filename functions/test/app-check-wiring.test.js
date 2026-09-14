@@ -77,6 +77,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   const rollout = require("../app-check-rollout");
   const callableNames = [
     "accountTransfer",
+    "playerSafetyAction",
     "freeTableAction",
     "freeTableInviteAction",
     "freeTableInvitePreview",
@@ -104,6 +105,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.ok(rollout.APP_CHECK_ROLLOUT_STAGES.includes(rollout.APP_CHECK_ROLLOUT_STAGE));
   assert.deepEqual(Object.keys(rollout.APP_CHECK_ENFORCEMENT).sort(), callableNames.toSorted());
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.accountTransfer, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.playerSafetyAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableInviteAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.freeTableInvitePreview, true);
