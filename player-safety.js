@@ -225,7 +225,7 @@ export async function openSettings() {
       : typeof result.migrationNotice === "string" ? result.migrationNotice : "";
     const recent = currentRecent();
     const contact = [...contacts.values()].find((entry) => entry.uid === ownerUid);
-    showPanel(`<p>一度の設定で、すべてのモードの新しい対戦・交流・購入を停止します。</p>${contact ? renderContactControls(contact.mode) : recent ? `<section class="player-safety-recent"><h3>直前に交流した相手</h3><p>${escape(recent.name)}</p>${renderBlockButton({ mode: recent.mode, roomId: recent.roomId }, "この相手をブロック")}</section>` : ""}<h3>ブロックしたプレイヤー</h3><div data-player-safety-list>${renderList(result.entries || [])}</div>${result.cursor ? `<button class="button button-ghost" type="button" data-player-safety-more="${escape(result.cursor)}">さらに読み込む</button>` : ""}${migrationNotice ? `<p role="status">${escape(migrationNotice)}</p>` : ""}<p class="player-safety-note">解除しても相手側の設定は変わりません。顔なじみ・常連・しおりや終了した交流は自動では戻りません。公開済み情報や別アカウントまで見えなくする機能ではありません。</p>`);
+    showPanel(`<p>ブロックした相手との新しい対戦・交流・購入を、すべてのモードで停止します。</p>${contact ? renderContactControls(contact.mode) : recent ? `<section class="player-safety-recent"><h3>直前に交流した相手</h3><p>${escape(recent.name)}</p>${renderBlockButton({ mode: recent.mode, roomId: recent.roomId }, "この相手をブロック")}</section>` : ""}<h3>ブロックしたプレイヤー</h3><div data-player-safety-list>${renderList(result.entries || [])}</div>${result.cursor ? `<button class="button button-ghost" type="button" data-player-safety-more="${escape(result.cursor)}">さらに読み込む</button>` : ""}${migrationNotice ? `<p role="status">${escape(migrationNotice)}</p>` : ""}<p class="player-safety-note">解除しても相手側の設定は変わりません。顔なじみ・常連・しおりや終了した交流は自動では戻りません。公開済み情報や別アカウントまで見えなくする機能ではありません。</p>`);
   } catch (error) { showError(error); }
 }
 
