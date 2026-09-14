@@ -1,4 +1,4 @@
-import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1";
+import { setActiveContact, clearActiveContact, renderContactControls, renderBlockButton, openBlock, openSettings, filterPublicEntries } from "./player-safety.js?v=global-player-block-v1-copy-v2";
 import {
   browserLocalPersistence,
   setPersistence,

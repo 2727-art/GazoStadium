@@ -1,4 +1,4 @@
-import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1";
+import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1-copy-v2";
 import {
   browserLocalPersistence,
   setPersistence,

@@ -4,6 +4,29 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+test("all browser entry points share one safety module URL and refresh its importers together", () => {
+  const root = path.resolve(__dirname, "../..");
+  const origin = "https://release.example/";
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map((match) => new URL(match[1], origin));
+  const safetyEntries = scripts.filter((url) => url.pathname === "/player-safety.js");
+  assert.equal(safetyEntries.length, 1, "the page must have one safety entry point");
+  const canonical = safetyEntries[0];
+  const generation = canonical.searchParams.get("v");
+  let importers = 0;
+  for (const script of scripts.filter((url) => url.origin === new URL(origin).origin)) {
+    const source = fs.readFileSync(path.join(root, script.pathname.slice(1)), "utf8");
+    for (const match of source.matchAll(/from\s+["'](\.\/player-safety\.js[^"']*)["']/g)) {
+      importers++;
+      assert.equal(new URL(match[1], script).href, canonical.href,
+        `${script.pathname} would instantiate another safety module with separate state and listeners`);
+      assert.ok(script.searchParams.get("v")?.startsWith(generation),
+        `${script.pathname} must refresh when its shared safety import changes`);
+    }
+  }
+  assert.ok(importers > 0, "mode entry points must be covered by this release graph check");
+});
+
 function harness(handler = async () => ({})) {
   const calls = [];
   const storage = new Map();

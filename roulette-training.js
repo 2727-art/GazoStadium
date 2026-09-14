@@ -1,4 +1,4 @@
-import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1";
+import { renderBlockButton } from "./player-safety.js?v=global-player-block-v1-copy-v2";
 import {
   browserLocalPersistence,
   onAuthStateChanged,
