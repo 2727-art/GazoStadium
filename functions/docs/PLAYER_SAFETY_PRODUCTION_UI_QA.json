@@ -1,0 +1,59 @@
+{
+  "checkedAt": "2026-09-14T08:09:23.744Z",
+  "url": "https://gazostadium.web.app/",
+  "deployedCommit": "29135bb",
+  "explicitReload": true,
+  "cachedPreviousGenerationExercised": true,
+  "readOnlyActions": [
+    "open landing",
+    "explicit reload",
+    "open 安心設定",
+    "read list",
+    "close modal",
+    "reopen list at mobile width"
+  ],
+  "listSuccess": true,
+  "singletonDialogVerified": true,
+  "correctedCopyVerified": true,
+  "authAndAppCheckEvidence": "The real enabled list view succeeded through playerSafetyAction, whose deployed handler requires an authenticated UID and enforced App Check. Authentication/token headers were not inspected or recorded.",
+  "disabledMessageObserved": false,
+  "browserErrorCount": 0,
+  "desktop": {
+    "correctedCopy": true,
+    "dialogCount": 1,
+    "dialogFits": true,
+    "dialogOpen": true,
+    "disabledMessage": false,
+    "entryCount": 0,
+    "listVisible": true,
+    "safetyScript": "player-safety.js?v=global-player-block-v1-copy-v2",
+    "viewport": {
+      "height": 1270,
+      "width": 1779
+    }
+  },
+  "mobile": {
+    "requestedViewport": {
+      "width": 390,
+      "height": 844
+    },
+    "correctedCopy": true,
+    "dialogCount": 1,
+    "dialogFits": true,
+    "dialogOpen": true,
+    "disabledMessage": false,
+    "entryCount": 0,
+    "listVisible": true,
+    "safetyScript": "player-safety.js?v=global-player-block-v1-copy-v2",
+    "viewport": {
+      "height": 844,
+      "width": 375
+    }
+  },
+  "relationshipMutations": 0,
+  "purchases": 0,
+  "screenshots": [
+    "player-safety-production-desktop.png",
+    "player-safety-production-mobile.png"
+  ]
+}

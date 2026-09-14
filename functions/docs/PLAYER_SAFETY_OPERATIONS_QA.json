@@ -1,0 +1,533 @@
+{
+  "implementationCommit": "71dca1cf058706b14f9f547ce7b4899043d50874",
+  "activation": {
+    "checkedAt": "2026-09-14T08:00:18.88Z",
+    "rtdbRulesMatch": true,
+    "firestoreRulesMatch": true,
+    "indexes": [
+      {
+        "collection": "playerSafetyOutbox",
+        "ready": true,
+        "states": [
+          "READY"
+        ]
+      },
+      {
+        "collection": "blocks",
+        "ready": true,
+        "states": [
+          "READY"
+        ]
+      }
+    ],
+    "pendingOutbox": 0,
+    "pendingAttempts": {},
+    "totalOperations": 101,
+    "functions": [
+      {
+        "name": "playerSafetyAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "cleanupPlayerSafety",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "soloSessionAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "soloFamiliarAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "economyAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "freeTableAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "freeTableInviteAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "cleanupExpiredFreeTables",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketQueue",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketShop",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketRankings",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "aiTextTrainingAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "danwakuNoteAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "cleanupDanwakuDeletionJobs",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      }
+    ],
+    "publicReady": true,
+    "enabled": true,
+    "ok": true
+  },
+  "callableBoundary": {
+    "checkedAt": "2026-09-14T07:52:09.65Z",
+    "readOnly": true,
+    "results": [
+      {
+        "name": "playerSafetyAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "soloSessionAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "soloFamiliarAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "economyAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "freeTableAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "freeTableInviteAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "valueMarketQueue",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "valueMarketAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "valueMarketShop",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "valueMarketRankings",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "aiTextTrainingAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "danwakuNoteAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "functionHealth": {
+    "checkedAt": "2026-09-14T08:04:41.169Z",
+    "since": "2026-09-14T07:50:00Z",
+    "entries": 832,
+    "truncated": false,
+    "byService": {
+      "freetableaction": {
+        "entries": 678,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "200": 268,
+          "204": 135,
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "cleanupplayersafety": {
+        "entries": 17,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "200": 11
+        },
+        "errorEntries": 0
+      },
+      "playersafetyaction": {
+        "entries": 21,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "200": 5,
+          "204": 4,
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "cleanupexpiredfreetables": {
+        "entries": 9,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "200": 3
+        },
+        "errorEntries": 0
+      },
+      "economyaction": {
+        "entries": 11,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "200": 1,
+          "204": 1,
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "roulettetrainingaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "danwakunoteaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "valuemarketshop": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "aitexttrainingaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "valuemarketrankings": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "anjupayfleaaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "valuemarketqueue": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "valuemarketaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "freetableinviteaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "solosessionaction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "solofamiliaraction": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "401": 1
+        },
+        "errorEntries": 0
+      },
+      "cleanupdanwakudeletionjobs": {
+        "entries": 8,
+        "startupSuccess": 1,
+        "httpStatuses": {
+          "200": 1
+        },
+        "errorEntries": 0
+      }
+    },
+    "errorEntries": 0
+  },
+  "migration": {
+    "applied": true,
+    "migrationId": "global-player-block-v1",
+    "legacy": {
+      "scanned": 112,
+      "directions": 101,
+      "imported": 101,
+      "namesResolved": 95,
+      "namesUnavailable": 0
+    },
+    "favorites": {
+      "scanned": 94,
+      "backfilled": 94,
+      "unresolved": 0
+    },
+    "live": {
+      "scanned": 34,
+      "planned": 0,
+      "bound": 0,
+      "existing": 0,
+      "repaired": 0,
+      "denied": 0,
+      "invalid": 17,
+      "raced": 17
+    }
+  },
+  "finalVerification": {
+    "checkedAt": "2026-09-14T08:05:44.595Z",
+    "rtdbRulesMatch": true,
+    "firestoreRulesMatch": true,
+    "indexes": [
+      {
+        "collection": "playerSafetyOutbox",
+        "ready": true,
+        "states": [
+          "READY"
+        ]
+      },
+      {
+        "collection": "blocks",
+        "ready": true,
+        "states": [
+          "READY"
+        ]
+      }
+    ],
+    "pendingOutbox": 0,
+    "pendingAttempts": {},
+    "totalOperations": 101,
+    "functions": [
+      {
+        "name": "playerSafetyAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "cleanupPlayerSafety",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "soloSessionAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "soloFamiliarAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "economyAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "freeTableAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "freeTableInviteAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "cleanupExpiredFreeTables",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketQueue",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketShop",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "valueMarketRankings",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "aiTextTrainingAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "danwakuNoteAction",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      },
+      {
+        "name": "cleanupDanwakuDeletionJobs",
+        "active": true,
+        "runtime": "nodejs22",
+        "updated": true
+      }
+    ],
+    "publicReady": true,
+    "enabled": true,
+    "ok": true
+  }
+}
