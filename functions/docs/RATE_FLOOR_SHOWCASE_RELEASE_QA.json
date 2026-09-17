@@ -1,0 +1,210 @@
+{
+  "checkedAt": "2026-09-17T10:06:47.157Z",
+  "marker": "rate-floor-showcase-v1",
+  "readOnly": true,
+  "commit": "5b76663a8f417aaf97da5fada2434e999f48a721",
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "index": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "sha256LF": "04780f4fd98bb8458a5d5fbaa1df6a3d89fb7800e8f0753dde8c4a820a10ec4d",
+        "cacheBust": {
+          "status": 200,
+          "sha256LF": "04780f4fd98bb8458a5d5fbaa1df6a3d89fb7800e8f0753dde8c4a820a10ec4d"
+        },
+        "ok": true
+      },
+      "assets": [
+        {
+          "name": "app.js",
+          "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/javascript; charset=utf-8",
+          "sha256LF": "f1936c14fcc3e6282f1160dd7d989afadaccc2d85d9417abcc860b3b3bd7c371",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/javascript; charset=utf-8",
+            "sha256LF": "f1936c14fcc3e6282f1160dd7d989afadaccc2d85d9417abcc860b3b3bd7c371"
+          },
+          "ok": true
+        },
+        {
+          "name": "online.js",
+          "url": "https://gazostadium.web.app/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/javascript; charset=utf-8",
+          "sha256LF": "e7b9d8411860bed345a911a6afabfcacc6e54889c9565ab276410b8f27de8367",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/javascript; charset=utf-8",
+            "sha256LF": "e7b9d8411860bed345a911a6afabfcacc6e54889c9565ab276410b8f27de8367"
+          },
+          "ok": true
+        },
+        {
+          "name": "styles.css",
+          "url": "https://gazostadium.web.app/styles.css?v=server-ranking-v1-account-protection-v1-achievements-v1-economy-systems-v2-daily-play-v1-oshi-market-collection-v1-anju-pay-wallet-v1-signature-finish-v1-finish-reply-v2-patron-circulation-v1-engawa-v1-solo-familiar-v1-favorite-card-v2-mobile-grid-v1-flea-market-v1-urikko-card-v1-oshijo-patron-v2-wallet-cap-v2-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-banner-fullwidth-v1-flea-achievements-lv10-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-desktop-layout-balance-v1-ranking-top10-v3-crown-dashboard-recovery-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-roulette-training-sales-achievements-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/css; charset=utf-8",
+          "sha256LF": "995775adefac407fc0205322da5008510cdcc437e404f511881c9a550455d6dc",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/css; charset=utf-8",
+            "sha256LF": "995775adefac407fc0205322da5008510cdcc437e404f511881c9a550455d6dc"
+          },
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "path": "/functions/scripts/sync-rate-floor-showcase.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "path": "/functions/docs/RATE_FLOOR_SHOWCASE_RELEASE.md",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "index": {
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "sha256LF": "04780f4fd98bb8458a5d5fbaa1df6a3d89fb7800e8f0753dde8c4a820a10ec4d",
+        "cacheBust": {
+          "status": 200,
+          "sha256LF": "04780f4fd98bb8458a5d5fbaa1df6a3d89fb7800e8f0753dde8c4a820a10ec4d"
+        },
+        "ok": true
+      },
+      "assets": [
+        {
+          "name": "app.js",
+          "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/javascript; charset=utf-8",
+          "sha256LF": "f1936c14fcc3e6282f1160dd7d989afadaccc2d85d9417abcc860b3b3bd7c371",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/javascript; charset=utf-8",
+            "sha256LF": "f1936c14fcc3e6282f1160dd7d989afadaccc2d85d9417abcc860b3b3bd7c371"
+          },
+          "ok": true
+        },
+        {
+          "name": "online.js",
+          "url": "https://gazostadium.firebaseapp.com/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/javascript; charset=utf-8",
+          "sha256LF": "e7b9d8411860bed345a911a6afabfcacc6e54889c9565ab276410b8f27de8367",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/javascript; charset=utf-8",
+            "sha256LF": "e7b9d8411860bed345a911a6afabfcacc6e54889c9565ab276410b8f27de8367"
+          },
+          "ok": true
+        },
+        {
+          "name": "styles.css",
+          "url": "https://gazostadium.firebaseapp.com/styles.css?v=server-ranking-v1-account-protection-v1-achievements-v1-economy-systems-v2-daily-play-v1-oshi-market-collection-v1-anju-pay-wallet-v1-signature-finish-v1-finish-reply-v2-patron-circulation-v1-engawa-v1-solo-familiar-v1-favorite-card-v2-mobile-grid-v1-flea-market-v1-urikko-card-v1-oshijo-patron-v2-wallet-cap-v2-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-banner-fullwidth-v1-flea-achievements-lv10-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-desktop-layout-balance-v1-ranking-top10-v3-crown-dashboard-recovery-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-roulette-training-sales-achievements-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/css; charset=utf-8",
+          "sha256LF": "995775adefac407fc0205322da5008510cdcc437e404f511881c9a550455d6dc",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/css; charset=utf-8",
+            "sha256LF": "995775adefac407fc0205322da5008510cdcc437e404f511881c9a550455d6dc"
+          },
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "path": "/functions/scripts/sync-rate-floor-showcase.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "path": "/functions/docs/RATE_FLOOR_SHOWCASE_RELEASE.md",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "index": {
+        "status": 200,
+        "contentType": "text/html",
+        "sha256LF": "04780f4fd98bb8458a5d5fbaa1df6a3d89fb7800e8f0753dde8c4a820a10ec4d",
+        "cacheBust": {
+          "status": 200,
+          "sha256LF": "04780f4fd98bb8458a5d5fbaa1df6a3d89fb7800e8f0753dde8c4a820a10ec4d"
+        },
+        "ok": true
+      },
+      "assets": [
+        {
+          "name": "app.js",
+          "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/javascript",
+          "sha256LF": "f1936c14fcc3e6282f1160dd7d989afadaccc2d85d9417abcc860b3b3bd7c371",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/javascript",
+            "sha256LF": "f1936c14fcc3e6282f1160dd7d989afadaccc2d85d9417abcc860b3b3bd7c371"
+          },
+          "ok": true
+        },
+        {
+          "name": "online.js",
+          "url": "https://gazostadium.anjugames.workers.dev/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/javascript",
+          "sha256LF": "e7b9d8411860bed345a911a6afabfcacc6e54889c9565ab276410b8f27de8367",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/javascript",
+            "sha256LF": "e7b9d8411860bed345a911a6afabfcacc6e54889c9565ab276410b8f27de8367"
+          },
+          "ok": true
+        },
+        {
+          "name": "styles.css",
+          "url": "https://gazostadium.anjugames.workers.dev/styles.css?v=server-ranking-v1-account-protection-v1-achievements-v1-economy-systems-v2-daily-play-v1-oshi-market-collection-v1-anju-pay-wallet-v1-signature-finish-v1-finish-reply-v2-patron-circulation-v1-engawa-v1-solo-familiar-v1-favorite-card-v2-mobile-grid-v1-flea-market-v1-urikko-card-v1-oshijo-patron-v2-wallet-cap-v2-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-banner-fullwidth-v1-flea-achievements-lv10-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-desktop-layout-balance-v1-ranking-top10-v3-crown-dashboard-recovery-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-roulette-training-sales-achievements-v1-rate-floor-showcase-v1",
+          "status": 200,
+          "contentType": "text/css",
+          "sha256LF": "995775adefac407fc0205322da5008510cdcc437e404f511881c9a550455d6dc",
+          "cacheBust": {
+            "status": 200,
+            "contentType": "text/css",
+            "sha256LF": "995775adefac407fc0205322da5008510cdcc437e404f511881c9a550455d6dc"
+          },
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "path": "/functions/scripts/sync-rate-floor-showcase.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "path": "/functions/docs/RATE_FLOOR_SHOWCASE_RELEASE.md",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "ok": true
+}

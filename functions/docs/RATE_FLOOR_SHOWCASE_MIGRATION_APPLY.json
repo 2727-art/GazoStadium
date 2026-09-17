@@ -1,0 +1,13 @@
+{
+  "project": "gazostadium",
+  "migrationId": "rate-floor-showcase-v1",
+  "apply": true,
+  "scanned": 259,
+  "eligible": 119,
+  "planned": 119,
+  "revised": 119,
+  "updated": 119,
+  "unchanged": 0,
+  "skipped": 140,
+  "raced": 0
+}

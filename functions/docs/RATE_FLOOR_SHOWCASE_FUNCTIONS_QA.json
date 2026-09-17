@@ -1,0 +1,136 @@
+{
+  "checkedAt": "2026-09-17T10:03:29.365Z",
+  "deployedAfter": "2026-09-17T10:00:50.6759175Z",
+  "project": "gazostadium",
+  "functions": [
+    {
+      "name": "economyAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:23.481437028Z",
+      "revision": "economyaction-00045-sel",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "redeemAchievementCode",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:24.438195932Z",
+      "revision": "redeemachievementcode-00006-ruw",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "playerSafetyAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.412477450Z",
+      "revision": "playersafetyaction-00002-vub",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "cleanupPlayerSafety",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:27.169098031Z",
+      "revision": "cleanupplayersafety-00002-xuj",
+      "boundary": null,
+      "ok": true
+    },
+    {
+      "name": "valueMarketAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:27.063028969Z",
+      "revision": "valuemarketaction-00032-ric",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "danwakuNoteAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.640290550Z",
+      "revision": "danwakunoteaction-00005-wif",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "aiTextTrainingAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:26.419955505Z",
+      "revision": "aitexttrainingaction-00018-xay",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "rouletteTrainingAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.862189994Z",
+      "revision": "roulettetrainingaction-00004-fid",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "valueMarketRankings",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.620238637Z",
+      "revision": "valuemarketrankings-00029-yav",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    }
+  ],
+  "logs": {
+    "errorCountInWindow": 0,
+    "errorsTruncated": false,
+    "startupServices": [
+      "aitexttrainingaction",
+      "cleanupplayersafety",
+      "danwakunoteaction",
+      "economyaction",
+      "playersafetyaction",
+      "redeemachievementcode",
+      "roulettetrainingaction",
+      "valuemarketaction",
+      "valuemarketrankings"
+    ]
+  },
+  "ok": true
+}
