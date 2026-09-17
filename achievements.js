@@ -59,6 +59,22 @@
     description: (target) => `${label}を${target}試合完走した`,
   }));
 
+  [
+    ["illustration", "アニメ・イラスト", "🎨"],
+    ["live_action", "実写", "📷"],
+  ].forEach(([preference, label, icon]) => addSeries({
+    scope: "battle",
+    category: "battle_preference",
+    family: `battle_preference_${preference}`,
+    familyLabel: `${label}派の歩み`,
+    icon,
+    thresholds: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
+    names: [...Array(9).fill(`${label}探究`), `${label}の境地`],
+    description: (target) => `対戦開始時に「${label}が刺さりやすい」を選び、通常型・戦略型で通算${target}試合完走した（導入以降）`,
+    hint: `「${label}が刺さりやすい」を選んで正式な対戦を完走すると解除（導入以降）`,
+    autoPublic: false,
+  }));
+
   addSeries({
     scope: "battle",
     category: "battle_modes",
@@ -479,6 +495,7 @@
     { id: "special_collection", label: "SPECIAL COLLECTION", copy: "別のゲームで受け取った証を、このスタジアムだけの特別な実績として残します" },
     { id: "battle_record", label: "通算対戦", copy: "勝敗に関係なく、正式な対戦を完走した記録" },
     { id: "battle_modes", label: "モード別", copy: "現在遊べる2種類のオンライン対戦と、解除済みの旧モード記録" },
+    { id: "battle_preference", label: "画像の好み", copy: "導入以降、対戦開始時に選んだ好みで積み重ねる通常型・戦略型の合計記録。「どちらも歓迎」は対象外。展示した実績だけ公開されます" },
     { id: "battle_variety", label: "モード回遊", copy: "複数の入口を訪れたオールラウンダーの記録" },
     { id: "battle_loss", label: "敗北も記録", copy: "勝てない日も、負け役のロールプレイも、貼り続けた記録" },
     { id: "battle_days", label: "継続", copy: "異なる日にスタジアムへ戻ってきた記録" },
@@ -551,7 +568,10 @@
     const level = Math.min(10, Math.max(1, Math.floor(Number(definition?.level) || 1)));
     const dollmasterClass = definition?.id === DOLLMASTER_ACHIEVEMENT_ID ? " is-dollmaster" : "";
     const secretClass = definition?.secret === true ? " is-secret" : "";
-    return `achievement-level-${level}${level === 10 ? " is-final" : ""}${dollmasterClass}${secretClass}`;
+    const preferenceClass = definition?.family === "battle_preference_illustration"
+      ? " achievement-preference-illustration"
+      : definition?.family === "battle_preference_live_action" ? " achievement-preference-live-action" : "";
+    return `achievement-level-${level}${level === 10 ? " is-final" : ""}${dollmasterClass}${secretClass}${preferenceClass}`;
   }
 
   function orderUnlockIds(value) {
@@ -652,7 +672,7 @@
         <div><span>UNLOCKED</span><strong>${profile.unlockedCount}<small> / ${profile.totalCount}</small></strong></div>
         <div><span>SHOWCASE</span>${renderBadges(profile.showcase, { compact: false, empty: "<em>自動選択される実績はまだありません</em>" })}</div>
       </div>
-      <div class="achievement-showcase-guide"><p>ランキングへ表示する実績は最大${MAX_SHOWCASE}件です。敗北実績とAnjuPayフリマ実績は自動公開されず、展示するかは本人が選べます。</p>
+      <div class="achievement-showcase-guide"><p>ランキングへ表示する実績は最大${MAX_SHOWCASE}件です。画像の好み・敗北・AnjuPayフリマ実績は自動公開されず、展示するかは本人が選べます。</p>
         <button class="button button-ghost button-small" type="button" data-achievement-showcase-auto ${profile.customShowcase.length ? "" : "disabled"}>自動選択に戻す</button></div>
       ${sections}`;
   }

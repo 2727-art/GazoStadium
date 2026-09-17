@@ -71,6 +71,25 @@ function queue(uid, sessionId, leaseToken, generation, overrides = {}) {
   };
 }
 
+test("V2 and reunion resources isolate frozen choices from every opponent-visible payload", () => {
+  for (const reunion of [false, true]) {
+    const host = queue("host", SESSION_A, TOKEN_A, GENERATION_A, { ratingPreference: "illustration" });
+    const guest = queue("guest", SESSION_B, TOKEN_B, GENERATION_B, { ratingPreference: "live_action" });
+    const resources = buildSoloSessionV2Resources({
+      roomId: ROOM_ID, attemptId: ATTEMPT, connectionGeneration: CONNECTION,
+      host, guest, now: NOW, reunion, pairId: reunion ? "a".repeat(40) : "",
+    });
+    assert.deepEqual(resources.imagePreferenceSnapshot.preferences, { host: "illustration", guest: "live_action" });
+    for (const value of [resources.room, resources.offer, resources.permit.players,
+      resources.hostActive, resources.guestActive]) {
+      assert.doesNotMatch(JSON.stringify(value), /ratingPreference|illustration|live_action|preferences/);
+    }
+    host.ratingPreference = "both";
+    guest.ratingPreference = "both";
+    assert.deepEqual(resources.imagePreferenceSnapshot.preferences, { host: "illustration", guest: "live_action" });
+  }
+});
+
 test("claim is fenced by page token and returns generation outside the public lease", () => {
   const first = claimDecision({
     currentClaim: null,

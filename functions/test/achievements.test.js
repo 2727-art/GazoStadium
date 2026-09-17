@@ -219,6 +219,7 @@ test("legacy verified monthly records backfill totals without inventing a loss s
     currentLossStreak: 0,
     bestLossStreak: 0,
     modeMatches: { solo: 88, strategy: 5, team: 4, team_duo: 0, royale: 3 },
+    preferenceMatches: { illustration: 0, live_action: 0 },
     playDays: 2,
     lastPlayDateKey: "2026-07-23",
   });
@@ -236,6 +237,70 @@ test("only active 1on1 matches advance play days and loss streaks", () => {
   assert.equal(stats.currentLossStreak, 0);
   assert.equal(stats.bestLossStreak, 2);
   assert.equal(stats.losses, 2);
+});
+
+test("image preference counters combine active modes and outcomes without retroactive assignment", () => {
+  let stats = normalizeBattleStats({ totalMatches: 100, modeMatches: { solo: 100 } });
+  assert.deepEqual(stats.preferenceMatches, { illustration: 0, live_action: 0 });
+  for (const mode of ["solo", "strategy"]) {
+    for (const outcome of ["win", "loss", "draw"]) {
+      stats = addBattleMatch(stats, mode, outcome, "2026-09-17", "illustration");
+    }
+  }
+  stats = addBattleMatch(stats, "strategy", "draw", "2026-09-17", "live_action");
+  assert.deepEqual(stats.preferenceMatches, { illustration: 6, live_action: 1 });
+  assert.equal(stats.totalMatches, 107);
+  for (const preference of ["both", undefined, null, "unknown", "illustration ", "__proto__"]) {
+    stats = addBattleMatch(stats, "solo", "win", "2026-09-17", preference);
+  }
+  assert.equal(stats.totalMatches, 113);
+  assert.deepEqual(stats.preferenceMatches, { illustration: 6, live_action: 1 });
+  for (const mode of ["team", "team_duo", "royale", "invalid"]) {
+    assert.deepEqual(addBattleMatch(stats, mode, "win", "2026-09-17", "illustration"), stats);
+  }
+  assert.deepEqual(addBattleMatch(stats, "solo", "invalid", "2026-09-17", "live_action"), stats);
+  assert.deepEqual(deriveBattleStatsFromPeriods({
+    monthly: { "2026-09": { matches: 500, preferenceMatches: { illustration: 500 } } },
+  }).preferenceMatches, { illustration: 0, live_action: 0 });
+  assert.deepEqual(normalizeBattleStats({
+    totalMatches: 5,
+    preferenceMatches: { illustration: 999, live_action: -3, both: 5 },
+  }).preferenceMatches, { illustration: 5, live_action: 0 });
+});
+
+test("both image preference series unlock at every exact threshold and never auto-publish", () => {
+  const targets = [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000];
+  for (const preference of ["illustration", "live_action"]) {
+    const family = `battle_preference_${preference}`;
+    const definitions = ACHIEVEMENT_DEFINITIONS.filter((definition) => definition.family === family);
+    assert.deepEqual(definitions.map((definition) => definition.target), targets);
+    assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
+    for (const target of targets) {
+      const at = eligibleAchievementIds({
+        battleStats: { totalMatches: target, preferenceMatches: { [preference]: target } }, scope: "battle",
+      });
+      const before = eligibleAchievementIds({
+        battleStats: { totalMatches: target, preferenceMatches: { [preference]: target - 1 } }, scope: "battle",
+      });
+      assert.equal(at.includes(`${family}_${target}`), true);
+      assert.equal(before.includes(`${family}_${target}`), false);
+      assert.equal(at.some((id) => id.startsWith("battle_preference_") && !id.startsWith(`${family}_`)), false);
+    }
+  }
+  const ids = eligibleAchievementIds({
+    battleStats: { totalMatches: 20000, preferenceMatches: { illustration: 10000, live_action: 10000 } },
+    scope: "battle",
+  }).filter((id) => id.startsWith("battle_preference_"));
+  assert.equal(ids.length, 20);
+  const first = unlockAchievements(null, ids, 100);
+  assert.deepEqual(effectiveShowcase(first.profile), []);
+  assert.deepEqual(unlockAchievements(first.profile, ids, 200).newlyUnlocked, []);
+  first.profile.customShowcase = ["battle_preference_illustration_1", "battle_preference_live_action_1"];
+  assert.deepEqual(effectiveShowcase(first.profile), [
+    "battle_preference_illustration_10000", "battle_preference_live_action_10000",
+  ]);
+  first.profile.customShowcase = [];
+  assert.deepEqual(effectiveShowcase(first.profile), []);
 });
 
 test("secret loss streak achievements use exact best-streak boundaries without inferring from total losses", () => {
@@ -837,6 +902,8 @@ test("all active progression families extend in place to level ten while retired
     battle_total: [1, 10, 30, 100, 300, 1000, 3000, 5000, 10000, 30000],
     battle_solo: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
     battle_strategy: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
+    battle_preference_illustration: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
+    battle_preference_live_action: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
     battle_losses: [1, 10, 30, 100, 300, 1000, 2000, 3000, 5000, 10000],
     battle_loss_streak: [3, 5, 8, 12, 16, 20, 25, 30, 40, 50],
     battle_days: [3, 7, 14, 30, 60, 100, 180, 365, 730, 1000],
@@ -1063,6 +1130,39 @@ test("AnjuPay flea achievements use only dedicated authoritative counts", () => 
   assert.deepEqual(payload.stats.flea, stats);
 });
 
+test("image preference collection and badges retain names, levels, opt-in explanation and FINAL styling", () => {
+  const source = fs.readFileSync(path.join(root, "achievements.js"), "utf8");
+  const window = { addEventListener() {} };
+  vm.runInNewContext(source, { window, document: {}, console });
+  const api = window.HariaiAchievements;
+  for (const [preference, label, icon] of [["illustration", "アニメ・イラスト", "🎨"], ["live_action", "実写", "📷"]]) {
+    for (const definition of api.catalog.filter((entry) => entry.family === `battle_preference_${preference}`)) {
+      assert.equal(definition.name, `${label}${definition.level === 10 ? "の境地" : "探究"}`);
+      assert.equal(definition.icon, icon);
+    }
+  }
+  const ids = ["battle_preference_illustration_10000", "battle_preference_live_action_100"];
+  const unlocked = Object.fromEntries(ids.map((id) => [id, 100]));
+  const html = api.renderCollection({ unlocked, showcase: ids, customShowcase: ids });
+  assert.match(html, /画像の好み/);
+  assert.match(html, /「どちらも歓迎」は対象外/);
+  assert.match(html, /展示した実績だけ公開/);
+  assert.match(html, /アニメ・イラストの境地/);
+  assert.match(html, /実写探究/);
+  assert.match(html, /achievement-level-10 is-final achievement-preference-illustration/);
+  assert.match(html, /achievement-level-5 achievement-preference-live-action/);
+  const badges = api.renderBadges(ids);
+  assert.match(badges, /アニメ・イラストの境地/);
+  assert.match(badges, /FINAL Lv\.10/);
+  assert.match(badges, /実写探究/);
+  assert.match(badges, /Lv\.5/);
+  const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  for (const asset of ["achievements.js", "online.js", "strategy.js", "styles.css"]) {
+    assert.match(index, new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*image-preference-achievements-v1`));
+  }
+  assert.match(fs.readFileSync(path.join(root, "online.js"), "utf8"), /achievementPreview === "image-preference"/);
+});
+
 test("browser and Functions catalogs expose the same achievement IDs", () => {
   const source = fs.readFileSync(path.join(root, "achievements.js"), "utf8");
   const window = { addEventListener() {} };
@@ -1091,6 +1191,8 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "battle_total",
     "battle_solo",
     "battle_strategy",
+    "battle_preference_illustration",
+    "battle_preference_live_action",
     "battle_losses",
     "battle_loss_streak",
     "battle_loss_streak_secret_100",

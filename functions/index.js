@@ -5,6 +5,13 @@ const { createPlayerSafetyService } = require("./player-safety");
 const { createPlayerSafetyContextResolver } = require("./player-safety-context");
 const { createPlayerSafetyComments } = require("./player-safety-comments");
 const { createPlayerSafetyStrategy } = require("./player-safety-strategy");
+const {
+  cleanupExpiredMatchImagePreferenceSnapshots,
+  freezeMatchImagePreferences,
+  matchImagePreferenceSnapshotPath,
+  normalizeMatchImagePreferenceSnapshot,
+  normalizeMatchImagePreferences,
+} = require("./match-image-preferences");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { HttpsError, onCall } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -4993,7 +5000,7 @@ function dailyActivityForRoom(mode, room, uid) {
   return { scores: Math.min(3, scores), criticals: Math.min(1, criticals) };
 }
 
-function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
+function addVerifiedMatch(progressValue, mode, outcome, activity, now, ratingPreference = "") {
   const progress = normalizeEconomyProgress(progressValue, jstDateKey(now));
   progress.daily.matches = 1;
   progress.daily[`${mode}Matches`] = 1;
@@ -5033,6 +5040,7 @@ function addVerifiedMatch(progressValue, mode, outcome, activity, now) {
     mode,
     outcome,
     jstDateKey(now),
+    ratingPreference,
   );
   progress.updatedAt = now;
   return progress;
@@ -5741,6 +5749,14 @@ async function recordVerifiedMatch(uid, data) {
       now,
     });
   }
+  // Only the private, match-start snapshot can select an achievement family.
+  // Legacy rooms have no snapshot; read failures must retry before claiming.
+  const imagePreferenceSnapshot = await realtime.ref(
+    matchImagePreferenceSnapshotPath(mode, roomId),
+  ).get();
+  const matchImagePreferences = normalizeMatchImagePreferenceSnapshot(
+    imagePreferenceSnapshot.val(), { mode, roomId, room }, now,
+  );
   const achievementStates = Object.fromEntries(await Promise.all(
     participants.map(async (participantUid) => [
       participantUid,
@@ -5891,6 +5907,7 @@ async function recordVerifiedMatch(uid, data) {
         participantOutcome,
         participantActivity,
         now,
+        matchImagePreferences[participantUid],
       );
       const unlockResult = unlockAchievements(
         profileSnapshots[index].data(),
@@ -5915,6 +5932,9 @@ async function recordVerifiedMatch(uid, data) {
         achievementIds: unlockResult.newlyUnlocked,
         finalizedBy: uid,
         createdAt: now,
+        ...(matchImagePreferences[participantUid]
+          ? { ratingPreference: matchImagePreferences[participantUid] }
+          : {}),
         ...(projectionEligibleUidSet.has(participantUid)
           ? {
             profileProjectionVersion: SOLO_PROFILE_PROJECTION_VERSION,
@@ -7230,6 +7250,7 @@ function normalizeSoloMatchPermit(roomIdValue, value) {
     createdAt,
     expiresAt,
     reunion,
+    imagePreferences: normalizeMatchImagePreferences(value?.imagePreferences, [hostUid, guestUid]),
     ...(reunion ? { pairId } : {}),
     players: {
       [hostUid]: hostPlayer,
@@ -7668,6 +7689,12 @@ async function materializeSoloHostedMatch(roomId, permit) {
     permit.guestUid,
   ]);
   const initialRoomPayload = soloHostedRoomPayload(permit, achievementShowcases);
+  await freezeMatchImagePreferences(realtime, {
+    mode: "solo",
+    roomId,
+    room: initialRoomPayload,
+    preferences: permit.imagePreferences,
+  });
   const roomResult = await roomRef.transaction((currentValue) => {
     if (currentValue === null) return initialRoomPayload;
     if (soloRoomMatchesPermit(currentValue, permit)
@@ -7863,6 +7890,10 @@ async function trySoloServerMatch(uid) {
     createdAt: permitIssuedAt,
     expiresAt: lockExpiresAt,
     reunion: selection.reunion === true,
+    imagePreferences: normalizeMatchImagePreferences({
+      [hostQueue.uid]: hostQueue.ratingPreference,
+      [candidateQueue.uid]: candidateQueue.ratingPreference,
+    }, [hostQueue.uid, candidateQueue.uid]),
     players: {
       [hostQueue.uid]: soloPermitPlayer(hostQueue),
       [candidateQueue.uid]: soloPermitPlayer(candidateQueue),
@@ -9726,6 +9757,7 @@ async function trySoloSessionV2Match(uid, data) {
   }
   await realtime.ref("online").update({
     [`soloMatchPermitsV2/${roomId}`]: resources.permit,
+    [`matchImagePreferenceSnapshots/solo/${roomId}`]: resources.imagePreferenceSnapshot,
     [`rooms/${roomId}`]: resources.room,
     [`activeV2/${selection.host.uid}/${selection.host.sessionId}`]: resources.hostActive,
     [`offersV2/${selection.candidate.uid}/${selection.candidate.sessionId}/${roomId}`]:
@@ -16932,7 +16964,12 @@ exports.cleanupStrategyMatchAchievementFreezes = onSchedule({
   maxInstances: 1,
 }, async () => {
   try {
-    const result = await cleanupExpiredStrategyMatchAchievementFreezes(Date.now());
+    const now = Date.now();
+    const [showcaseFreezes, imagePreferences] = await Promise.all([
+      cleanupExpiredStrategyMatchAchievementFreezes(now),
+      cleanupExpiredMatchImagePreferenceSnapshots(realtime, now),
+    ]);
+    const result = { ...showcaseFreezes, imagePreferences };
     console.info("cleanupStrategyMatchAchievementFreezes completed", result);
     return result;
   } catch (error) {

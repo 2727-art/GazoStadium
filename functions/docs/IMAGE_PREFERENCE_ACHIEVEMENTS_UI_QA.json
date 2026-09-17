@@ -1,0 +1,126 @@
+{
+  "checkedAt": "2026-09-17T11:54:09.355Z",
+  "ok": true,
+  "scope": "Actual local app with synthetic achievement/public-row fixtures; all backend requests and WebSockets blocked",
+  "checks": [
+    "Two preference families and adopted names",
+    "Lv.5 and Lv.10 FINAL progress/conditions",
+    "Opt-in and post-release copy",
+    "Selected showcase state",
+    "SECRET/SPECIAL preview regression",
+    "Overall and rate-floor ranking badges",
+    "No page or badge overflow"
+  ],
+  "viewportChecks": [
+    {
+      "surface": "collection",
+      "width": 1440,
+      "height": 1000,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-collection-1440.png"
+    },
+    {
+      "surface": "collection",
+      "width": 390,
+      "height": 844,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-collection-390.png"
+    },
+    {
+      "surface": "collection",
+      "width": 320,
+      "height": 568,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-collection-320.png"
+    },
+    {
+      "surface": "showcase",
+      "width": 1440,
+      "height": 1000,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-showcase-1440.png"
+    },
+    {
+      "surface": "showcase",
+      "width": 390,
+      "height": 844,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-showcase-390.png"
+    },
+    {
+      "surface": "showcase",
+      "width": 320,
+      "height": 568,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-showcase-320.png"
+    },
+    {
+      "surface": "overall",
+      "width": 1440,
+      "height": 1000,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-overall-1440.png"
+    },
+    {
+      "surface": "overall",
+      "width": 390,
+      "height": 844,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-overall-390.png"
+    },
+    {
+      "surface": "overall",
+      "width": 320,
+      "height": 568,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-overall-320.png"
+    },
+    {
+      "surface": "floor",
+      "width": 1440,
+      "height": 1000,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-floor-1440.png"
+    },
+    {
+      "surface": "floor",
+      "width": 390,
+      "height": 844,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-floor-390.png"
+    },
+    {
+      "surface": "floor",
+      "width": 320,
+      "height": 568,
+      "pageOverflow": false,
+      "offenders": [],
+      "hiddenPreferenceText": 0,
+      "screenshot": "image-preference-floor-320.png"
+    }
+  ],
+  "blockedHosts": [],
+  "pageErrors": []
+}

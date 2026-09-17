@@ -67,6 +67,37 @@ test("strategy preference tiers preserve illustration/live-action consent", () =
   assert.equal(preferenceTier({ ratingPreference: "both" }, { ratingPreference: "live_action" }), 1);
 });
 
+test("strategy freezes private choices at acceptance and keeps them through queue changes and retries", async () => {
+  const f = fixture();
+  f.queue("A", { ratingPreference: "illustration" });
+  f.queue("B", { ratingPreference: "both" });
+  const offer = await f.service.match("A", { roomId: roomId("P"), player: player("A") });
+  const privatePath = `online/matchImagePreferenceSnapshots/strategy/${offer.roomId}`;
+  assert.equal(f.rtRead(privatePath), null, "offer alone must not freeze the host choice");
+  const queueA = f.rtRead("online/strategyQueue/A");
+  f.rtWrite("online/strategyQueue/A", { ...queueA, ratingPreference: "live_action" });
+  await f.service.accept("B", { roomId: offer.roomId, player: { ...player("B"), ratingPreference: "illustration" } });
+  const frozen = f.rtRead(privatePath);
+  assert.deepEqual(frozen.preferences, { A: "live_action", B: "both" });
+  assert.doesNotMatch(JSON.stringify(f.rtRead(`online/strategyRooms/${offer.roomId}`)), /ratingPreference|live_action|illustration|preferences/);
+  f.queue("A", { ratingPreference: "illustration" });
+  f.queue("B", { ratingPreference: "illustration" });
+  await f.service.accept("B", { roomId: offer.roomId, player: player("B") });
+  assert.deepEqual(f.rtRead(privatePath), frozen);
+});
+
+test("strategy does not activate a room if private choice persistence fails", async () => {
+  const f = fixture(); f.queue("A"); f.queue("B");
+  const offer = await f.service.match("A", { roomId: roomId("F"), player: player("A") });
+  f.hooks.beforeRealtimeCommit = async ({ path }) => {
+    if (path.startsWith("online/matchImagePreferenceSnapshots/")) throw new Error("private proof unavailable");
+  };
+  await assert.rejects(f.service.accept("B", { roomId: offer.roomId, player: player("B") }), /private proof unavailable/);
+  assert.equal(f.rtRead(`online/strategyRooms/${offer.roomId}/status`), "offered");
+  f.hooks.beforeRealtimeCommit = null;
+  assert.equal((await f.service.accept("B", { roomId: offer.roomId, player: player("B") })).status, "active");
+});
+
 test("blocked and old-protocol candidates cannot monopolize strategy matching; accepted records are server-authoritative", async () => {
   const f = fixture();
   f.queue("A"); f.queue("B", { joinedAt: f.now() - 3000 }); f.queue("C"); f.queue("legacy", { protocolVersion: 1 });

@@ -308,7 +308,7 @@ test("abandoned strategy freezes have a bounded scheduled cleanup", () => {
   );
   assert.match(
     backend,
-    /exports\.cleanupStrategyMatchAchievementFreezes = onSchedule\(\{[\s\S]*?schedule: "every 6 hours"[\s\S]*?cleanupExpiredStrategyMatchAchievementFreezes\(Date\.now\(\)\)/,
+    /exports\.cleanupStrategyMatchAchievementFreezes = onSchedule\(\{[\s\S]*?schedule: "every 6 hours"[\s\S]*?const now = Date\.now\(\)[\s\S]*?cleanupExpiredStrategyMatchAchievementFreezes\(now\)/,
   );
 });
 

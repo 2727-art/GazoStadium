@@ -4,6 +4,7 @@ const { DOLLMASTER_ACHIEVEMENT_ID } = require("./achievement-code");
 
 const BATTLE_MODES = Object.freeze(["solo", "strategy", "team", "team_duo", "royale"]);
 const ACTIVE_BATTLE_MODES = Object.freeze(["solo", "strategy"]);
+const BATTLE_IMAGE_PREFERENCES = Object.freeze(["illustration", "live_action"]);
 const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
@@ -97,6 +98,22 @@ const battleDefinitions = [
     names,
     description: (target) => `${label}を${target}試合完走した`,
     condition: (target) => ({ type: "battle_mode", mode, target }),
+  })),
+  ...[
+    ["illustration", "アニメ・イラスト", "🎨"],
+    ["live_action", "実写", "📷"],
+  ].flatMap(([preference, label, icon]) => series({
+    scope: "battle",
+    category: "battle_preference",
+    family: `battle_preference_${preference}`,
+    familyLabel: `${label}派の歩み`,
+    icon,
+    thresholds: [1, 5, 20, 50, 100, 300, 1000, 3000, 5000, 10000],
+    names: [...Array(9).fill(`${label}探究`), `${label}の境地`],
+    description: (target) => `対戦開始時に「${label}が刺さりやすい」を選び、通常型・戦略型で通算${target}試合完走した（導入以降）`,
+    condition: (target) => ({ type: "battle_preference", preference, target }),
+    hint: `「${label}が刺さりやすい」を選んで正式な対戦を完走すると解除（導入以降）`,
+    autoPublic: false,
   })),
   ...series({
     scope: "battle",
@@ -574,6 +591,7 @@ function emptyBattleStats() {
     currentLossStreak: 0,
     bestLossStreak: 0,
     modeMatches: Object.fromEntries(BATTLE_MODES.map((mode) => [mode, 0])),
+    preferenceMatches: Object.fromEntries(BATTLE_IMAGE_PREFERENCES.map((preference) => [preference, 0])),
     playDays: 0,
     lastPlayDateKey: "",
   };
@@ -586,6 +604,9 @@ function normalizeBattleStats(value) {
   stats.currentLossStreak = count(value?.currentLossStreak, stats.totalMatches);
   stats.bestLossStreak = Math.max(stats.currentLossStreak, count(value?.bestLossStreak, stats.totalMatches));
   stats.modeMatches = Object.fromEntries(BATTLE_MODES.map((mode) => [mode, count(value?.modeMatches?.[mode], stats.totalMatches)]));
+  stats.preferenceMatches = Object.fromEntries(BATTLE_IMAGE_PREFERENCES.map((preference) => [
+    preference, count(value?.preferenceMatches?.[preference], stats.totalMatches),
+  ]));
   stats.playDays = count(value?.playDays, stats.totalMatches);
   stats.lastPlayDateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(value?.lastPlayDateKey || ""))
     ? String(value.lastPlayDateKey)
@@ -616,11 +637,12 @@ function deriveBattleStatsFromPeriods(periodRewards) {
   return normalizeBattleStats(stats);
 }
 
-function addBattleMatch(value, mode, outcome, dateKey) {
+function addBattleMatch(value, mode, outcome, dateKey, ratingPreference = "") {
   const stats = normalizeBattleStats(value);
   if (!ACTIVE_BATTLE_MODES.includes(mode) || !["win", "loss", "draw"].includes(outcome)) return stats;
   stats.totalMatches += 1;
   stats.modeMatches[mode] += 1;
+  if (BATTLE_IMAGE_PREFERENCES.includes(ratingPreference)) stats.preferenceMatches[ratingPreference] += 1;
   if (outcome === "loss") {
     stats.losses += 1;
     stats.currentLossStreak += 1;
@@ -812,6 +834,7 @@ function achievementConditionMet(
   const condition = definition.condition;
   if (condition.type === "battle_stat") return count(battleStats?.[condition.key]) >= condition.target;
   if (condition.type === "battle_mode") return count(battleStats?.modeMatches?.[condition.mode]) >= condition.target;
+  if (condition.type === "battle_preference") return count(battleStats?.preferenceMatches?.[condition.preference]) >= condition.target;
   if (condition.type === "distinct_battle_modes") {
     return BATTLE_VARIETY_MODE_GROUPS
       .filter((modes) => modes.some((mode) => count(battleStats?.modeMatches?.[mode]) > 0))

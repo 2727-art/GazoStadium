@@ -1,0 +1,12 @@
+Command: npm.cmd run check (Node.js 22.23.2)
+Full output archived locally: C:\tmp\gazo-image-preference-unit-check-full-20260917.log
+Summary excerpt:
+1..1453
+# tests 1482
+# suites 0
+# pass 1458
+# fail 0
+# cancelled 0
+# skipped 24
+# todo 0
+# duration_ms 2085.5116

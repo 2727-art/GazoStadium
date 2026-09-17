@@ -1878,7 +1878,11 @@ function openOnlineScreen(screen) {
       const finalAchievementPreview = achievementPreview === "final";
       const dollmasterAchievementPreview = achievementPreview === "dollmaster";
       const lossSecretAchievementPreview = achievementPreview === "loss-secret";
+      const imagePreferenceAchievementPreview = achievementPreview === "image-preference";
       const previewUnlocked = Object.fromEntries([
+        ...(imagePreferenceAchievementPreview
+          ? ["battle_preference_illustration_100", "battle_preference_illustration_10000", "battle_preference_live_action_100"]
+          : []),
         ...(dollmasterAchievementPreview ? [DOLLMASTER_ACHIEVEMENT_ID] : []),
         ...(lossSecretAchievementPreview
           ? ["battle_loss_streak_secret_100", "battle_loss_streak_secret_200"]
@@ -1908,10 +1912,14 @@ function openOnlineScreen(screen) {
       ].map((id, index) => [id, Date.now() - (index * 60_000)]));
       state.achievements = window.HariaiAchievements?.normalizeProfile?.({
         unlocked: previewUnlocked,
-        customShowcase: lossSecretAchievementPreview
+        customShowcase: imagePreferenceAchievementPreview
+          ? ["battle_preference_illustration_10000", "battle_preference_live_action_100"]
+          : lossSecretAchievementPreview
           ? ["battle_loss_streak_secret_100"]
           : [],
-        showcase: lossSecretAchievementPreview
+        showcase: imagePreferenceAchievementPreview
+          ? ["battle_preference_illustration_10000", "battle_preference_live_action_100"]
+          : lossSecretAchievementPreview
           ? ["battle_loss_streak_secret_100"]
           : finalAchievementPreview
             ? ["battle_total_30000", "ai_training_unique_buyers_3000", "market_both_3000"]
@@ -1919,7 +1927,9 @@ function openOnlineScreen(screen) {
       }) || state.achievements;
       setOnlineChrome("ACHIEVEMENTS PREVIEW");
       render();
-      if (lossSecretAchievementPreview) {
+      if (imagePreferenceAchievementPreview) {
+        window.HariaiAchievements?.notify?.(["battle_preference_illustration_10000"]);
+      } else if (lossSecretAchievementPreview) {
         window.HariaiAchievements?.notify?.(["battle_loss_streak_secret_200"]);
       } else if (finalAchievementPreview) {
         window.HariaiAchievements?.notify?.([
@@ -5008,7 +5018,7 @@ function renderSetup() {
           <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
           <p>今回の通常型1on1で、相手から見せてもらいたい画像の傾向を選んでください。</p>
           <div class="image-preference-grid">${preferenceOptions}</div>
-          <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。</small>
+          <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。選択別実績は導入以降の対戦から累計し、本人が展示した場合のみ公開されます。</small>
         </fieldset>
         <div class="deck-toolbar">
           <div class="deck-counter" aria-label="登録画像 ${state.deck.length}枚">

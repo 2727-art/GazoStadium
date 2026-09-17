@@ -1,0 +1,146 @@
+{
+  "checkedAt": "2026-09-17T11:56:27.074Z",
+  "project": "gazostadium",
+  "remoteReadOnly": true,
+  "expectedFunctionCount": 14,
+  "functions": [
+    {
+      "name": "economyAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:23.481437028Z",
+      "revision": "economyaction-00045-sel",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "redeemAchievementCode",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:24.438195932Z",
+      "revision": "redeemachievementcode-00006-ruw",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "valueMarketAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:27.063028969Z",
+      "revision": "valuemarketaction-00032-ric",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "anjuPayFleaAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-14T07:50:28.697233037Z",
+      "revision": "anjupayfleaaction-00017-duv",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "danwakuNoteAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.640290550Z",
+      "revision": "danwakunoteaction-00005-wif",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "aiTextTrainingAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:26.419955505Z",
+      "revision": "aitexttrainingaction-00018-xay",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "rouletteTrainingAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.862189994Z",
+      "revision": "roulettetrainingaction-00004-fid",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "valueMarketRankings",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.620238637Z",
+      "revision": "valuemarketrankings-00029-yav",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "playerSafetyAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:25.412477450Z",
+      "revision": "playersafetyaction-00002-vub",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "cleanupPlayerSafety",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T10:02:27.169098031Z",
+      "revision": "cleanupplayersafety-00002-xuj",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "soloSessionAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-14T07:50:24.906328534Z",
+      "revision": "solosessionaction-00016-ruk",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "soloFamiliarAction",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-14T07:50:26.492377196Z",
+      "revision": "solofamiliaraction-00008-nom",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "matchAchievementShowcase",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-04T11:55:24.210361016Z",
+      "revision": "matchachievementshowcase-00004-zed",
+      "ledgerRequired": true,
+      "ok": true
+    },
+    {
+      "name": "cleanupStrategyMatchAchievementFreezes",
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-08-05T06:24:32.629924489Z",
+      "revision": "cleanupstrategymatchachievementfreezes-00001-loc",
+      "ledgerRequired": true,
+      "ok": true
+    }
+  ],
+  "ledger": {
+    "key": "ANJU_PAY_LEDGER_REQUIRED",
+    "allPresentAndBoolean": true,
+    "sameBoolean": true,
+    "value": true
+  },
+  "localEnv": {
+    "requested": true,
+    "created": true,
+    "matches": true
+  },
+  "ok": true
+}

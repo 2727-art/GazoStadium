@@ -1,5 +1,7 @@
 "use strict";
 
+const { freezeMatchImagePreferences } = require("./match-image-preferences");
+
 const ROOM_ID = /^[-A-Za-z0-9_]{20}$/;
 const FRESH_MS = 45000;
 const OFFER_MS = 20000;
@@ -140,6 +142,15 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
         || !Number.isFinite(preferenceTier(hostQueue, guestQueue))) { await expire(uid, { roomId }); fail(); }
     const player = await playerRecord(uid, data.player);
     if (!await playerSafety.activateContact(args(roomId, room))) fail();
+    // Capture both choices at acceptance, after the queue/session checks. A
+    // retry keeps the first private record and never reads the queue at finish.
+    await freezeMatchImagePreferences(realtime, {
+      mode: "strategy", roomId, room,
+      preferences: {
+        [room.hostUid]: hostQueue.ratingPreference,
+        [uid]: guestQueue.ratingPreference,
+      },
+    }, now());
     const activated = await realtime.ref(`online/strategyRooms/${roomId}`).transaction((value) => {
       if (value == null) return null;
       if (value?.status !== "offered" || value.destroyed || value.safetyGrantId !== room.safetyGrantId) return;

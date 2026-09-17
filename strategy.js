@@ -1232,7 +1232,7 @@ function renderProfile() {
         <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
         <p>弱点候補とは別に、今回の戦略型1on1で相手から見せてもらいたい画像の傾向を選んでください。</p>
         <div class="image-preference-grid">${preferenceOptions}</div>
-        <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。</small>
+        <small>同じ傾向、または「どちらも歓迎」の相手を優先します。この選択は対戦画面には表示されません。選択別実績は導入以降の対戦から累計し、本人が展示した場合のみ公開されます。</small>
       </fieldset>
       <fieldset class="strategy-clue-fieldset"><legend>弱点候補（1つだけ本当の弱点を選択）</legend>
         ${state.clues.map((clue, index) => `<label class="strategy-clue-row"><input type="radio" name="weakness" value="${index}" ${state.weaknessIndex === index ? "checked" : ""} required />

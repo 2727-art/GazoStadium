@@ -3,6 +3,13 @@
     ".read": false,
     ".write": false,
     "online": {
+      "matchImagePreferenceSnapshots": {
+        ".read": false,
+        ".write": false,
+        "$mode": {
+          ".indexOn": ["expiresAt"]
+        }
+      },
       "contactGates": {
         ".read": false,
         ".write": false

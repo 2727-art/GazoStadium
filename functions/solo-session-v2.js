@@ -1,5 +1,7 @@
 "use strict";
 
+const { buildMatchImagePreferenceSnapshot } = require("./match-image-preferences");
+
 const {
   SOLO_FAMILIAR_REUNION_COOLDOWN_MS,
   isValidSoloServerQueueEntry,
@@ -629,6 +631,12 @@ function buildSoloSessionV2Resources({
   return {
     permit,
     room,
+    imagePreferenceSnapshot: buildMatchImagePreferenceSnapshot({
+      mode: "solo",
+      roomId,
+      room,
+      preferences: { [host.uid]: host.ratingPreference, [guest.uid]: guest.ratingPreference },
+    }, now),
     hostActive,
     guestActive,
     hostLock: lock(host, "host"),
