@@ -43,4 +43,16 @@ Firebase Realtime Database Rules、Hosting、以下14 Functions。
 - 実ブラウザーのコレクション・ショーケース・総合・下限ランキング、1440/390/320px: `IMAGE_PREFERENCE_ACHIEVEMENTS_UI_QA.json`と同フォルダーのスクリーンショット。合成fixtureを使用し、本番リクエスト/WebSocketを遮断。
 - 本番確認: `verify-image-preference-functions.cjs`、`verify-image-preference-release.cjs`で更新revision/起動/認証境界と公開3経路のHTML/変更asset一致・非公開ファイル除外を確認する。
 
-本番デプロイと確認の結果は、完了後に本ファイルへ追記する。
+## 本番リリース結果（2026年9月17日）
+
+実装コミット`661113dd8d6f3b6eb041d73c62fe5cb40fe4354c`を`origin/main`へpushし、gazostadiumへ反映した。2026-09-17 20:57 JSTから、RTDB Rules → 関連writer/reader/cleanup 11件 → playerSafetyAction → soloSessionAction/soloFamiliarAction → Hostingの順でデプロイし、21:04 JSTに独立確認を完了した。
+
+- Node.js 22.23.2のFunctions全体チェック: 1,482件中1,458成功、失敗0、条件付きEmulator試験24件は通常実行ではスキップ。
+- 実Firebase Emulatorで追加実行: 非公開snapshotのRulesと既存戦略マッチングの5件成功、失敗・スキップ0。
+- UI: コレクション・ショーケース・総合・下限の4面×1440/390/320pxの12条件が成功。新系列名やLvの非表示、横はみ出し、JavaScript例外なし。SECRET/SPECIALの既存表示も確認。
+- `IMAGE_PREFERENCE_ACHIEVEMENTS_RULES_QA.json`: 本番Rulesの正規化SHA-256がローカルと一致。新private pathのread/write拒否とindexが一致し、未認証読取りは401。
+- `IMAGE_PREFERENCE_ACHIEVEMENTS_FUNCTIONS_QA.json`: 14件すべてACTIVE、Node.js 22、新revision。12 Callableの未認証応答は401 UNAUTHENTICATED。14件すべての起動成功ログを確認し、デプロイ開始以降の対象サービスERRORは0。
+- `IMAGE_PREFERENCE_ACHIEVEMENTS_RELEASE_QA.json`: `gazostadium.web.app`、`gazostadium.firebaseapp.com`、`gazostadium.anjugames.workers.dev`すべてでHTMLと変更4assetがローカルに一致。通常URLとcache bust URLの双方でHTTP・Content-Type・LF正規化hashを確認し、非公開のFunctions/記録ファイルは404。
+- `ANJU_PAY_LEDGER_REQUIRED`は14件の本番設定が同一であることを事前確認し、その値を維持した。実ユーザーの統計のbackfillは実行していない。
+
+対戦・解除・再送・同時確定の挙動はローカル自動テストと専用demo Emulator、UIは合成fixtureで確認した。本番で合成の対戦や実績付与を発生させる試験は行っていない。

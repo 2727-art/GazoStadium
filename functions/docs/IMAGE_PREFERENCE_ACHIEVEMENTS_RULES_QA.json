@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-09-17T11:59:37.178Z",
+  "rules": {
+    "expectedSha256": "854104ee5781f0b8d2db73a252de7298be324eeb5e6fbca51e537e4063dfd281",
+    "liveSha256": "854104ee5781f0b8d2db73a252de7298be324eeb5e6fbca51e537e4063dfd281",
+    "ok": true
+  },
+  "privatePath": {
+    "ok": true
+  },
+  "unauthenticatedRead": {
+    "ok": true
+  },
+  "ok": true
+}

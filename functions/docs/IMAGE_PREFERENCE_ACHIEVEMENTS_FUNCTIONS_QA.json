@@ -1,0 +1,219 @@
+{
+  "checkedAt": "2026-09-17T12:04:32.019Z",
+  "deployedAfter": "2026-09-17T11:57:32.4586364Z",
+  "project": "gazostadium",
+  "readOnly": true,
+  "expectedFunctionCount": 14,
+  "functions": [
+    {
+      "name": "economyAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:19.318517484Z",
+      "revision": "economyaction-00046-mob",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "redeemAchievementCode",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:16.469765436Z",
+      "revision": "redeemachievementcode-00007-rub",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "valueMarketAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:17.870772571Z",
+      "revision": "valuemarketaction-00033-bij",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "anjuPayFleaAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:19.208872984Z",
+      "revision": "anjupayfleaaction-00018-lot",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "danwakuNoteAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:18.982790962Z",
+      "revision": "danwakunoteaction-00006-wev",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "aiTextTrainingAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:19.556787721Z",
+      "revision": "aitexttrainingaction-00019-huq",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "rouletteTrainingAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:18.902078419Z",
+      "revision": "roulettetrainingaction-00005-jor",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "valueMarketRankings",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:18.921354069Z",
+      "revision": "valuemarketrankings-00030-yen",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "playerSafetyAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T12:01:36.889167696Z",
+      "revision": "playersafetyaction-00003-lat",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "cleanupPlayerSafety",
+      "scheduled": true,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:18.217451216Z",
+      "revision": "cleanupplayersafety-00003-bum",
+      "boundary": null,
+      "ok": true
+    },
+    {
+      "name": "soloSessionAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T12:03:49.778026790Z",
+      "revision": "solosessionaction-00017-fat",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "soloFamiliarAction",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T12:03:50.717355147Z",
+      "revision": "solofamiliaraction-00009-hec",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "matchAchievementShowcase",
+      "scheduled": false,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:14.007010638Z",
+      "revision": "matchachievementshowcase-00005-sum",
+      "boundary": {
+        "httpStatus": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "name": "cleanupStrategyMatchAchievementFreezes",
+      "scheduled": true,
+      "state": "ACTIVE",
+      "runtime": "nodejs22",
+      "updatedAt": "2026-09-17T11:59:17.025779719Z",
+      "revision": "cleanupstrategymatchachievementfreezes-00002-dox",
+      "boundary": null,
+      "ok": true
+    }
+  ],
+  "logs": {
+    "errorCountInWindow": 0,
+    "errorsTruncated": false,
+    "startupServices": [
+      "aitexttrainingaction",
+      "anjupayfleaaction",
+      "cleanupplayersafety",
+      "cleanupstrategymatchachievementfreezes",
+      "danwakunoteaction",
+      "economyaction",
+      "matchachievementshowcase",
+      "playersafetyaction",
+      "redeemachievementcode",
+      "roulettetrainingaction",
+      "solofamiliaraction",
+      "solosessionaction",
+      "valuemarketaction",
+      "valuemarketrankings"
+    ],
+    "startupsTruncated": false
+  },
+  "ok": true
+}
