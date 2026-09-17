@@ -254,6 +254,7 @@ const {
   nextServerRateFloorRevision,
   normalizeServerRateFloorRevision,
   serverRateFloorMirrorDecision,
+  serverRateFloorPublicEntry,
 } = require("./rate-floor");
 const PRODUCT_CATALOG = require("./product-catalog");
 const RETIRED_TEAM_PRODUCT_IDS = new Set([
@@ -1564,21 +1565,11 @@ function publicServerOverallProfile(value) {
 }
 
 function publicServerRateFloorProfile(value) {
+  if (!value || typeof value !== "object") return null;
   const profile = normalizeServerRankingProfile(value, value);
-  if (!profile.enabled
-      || !profile.rateFloorEnabled
-      || !profile.entryId
-      || !profile.rateFloorEntryId
-      || profile.serverMatches < SERVER_RATE_FLOOR_MINIMUM_MATCHES) {
-    return null;
-  }
-  return {
-    serverVerified: true,
+  return serverRateFloorPublicEntry(profile, {
     rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
-    name: cleanName(profile.name),
-    rating: profile.rating,
-    serverMatches: profile.serverMatches,
-  };
+  });
 }
 
 function publicCrownCircuitEntry(value) {
@@ -2116,6 +2107,36 @@ async function retryRealtimeWrite(operation, attempts = 3) {
   throw lastError;
 }
 
+async function syncCurrentServerRankingShowcase(uid) {
+  const profileRef = serverRankingProfileRef(uid);
+  return firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(profileRef);
+    if (!snapshot.exists) return null;
+    // A delayed unlock/selection sync must not restore an older selection.
+    // Read the source and ranking profile in the same transaction so a match,
+    // opt-out, or customization update retries against the latest revision.
+    const achievementSnapshot = await transaction.get(achievementProfileRef(uid));
+    const achievementShowcase = effectiveShowcase(
+      normalizeAchievementProfile(achievementSnapshot.data()),
+    ).join(",");
+    const profile = normalizeServerRankingProfile(snapshot.data());
+    if ((profile.achievementShowcase || "") === achievementShowcase) return profile;
+    const next = {
+      ...profile,
+      achievementShowcase,
+      rateFloorRevision: nextServerRateFloorRevision(profile.rateFloorRevision),
+      updatedAt: Date.now(),
+    };
+    transaction.set(profileRef, {
+      achievementShowcase: achievementShowcase || FieldValue.delete(),
+      rateFloorRevision: next.rateFloorRevision,
+      updatedAt: next.updatedAt,
+    }, { merge: true });
+    if (!achievementShowcase) delete next.achievementShowcase;
+    return next;
+  });
+}
+
 async function syncAchievementPublicSurfaces(uid, profileValue) {
   const profile = normalizeAchievementProfile(profileValue);
   const showcase = effectiveShowcase(profile);
@@ -2130,11 +2151,11 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
     }, { merge: true }));
   }
 
-  const [entrySnapshot, periodIndexSnapshot, serverPeriodIndexSnapshot, serverProfileSnapshot] = await Promise.all([
+  const [entrySnapshot, periodIndexSnapshot, serverPeriodIndexSnapshot, serverProfile] = await Promise.all([
     realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
     realtime.ref(`online/leaderboardPeriodEntriesByUser/${uid}`).get(),
     realtime.ref(`online/serverLeaderboardPeriodEntriesByUser/${uid}`).get(),
-    serverRankingProfileRef(uid).get(),
+    syncCurrentServerRankingShowcase(uid),
   ]);
   const entryId = entrySnapshot.exists() ? cleanText(entrySnapshot.val(), 40) : "";
   if (entryId) {
@@ -2156,8 +2177,8 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
     }
     if (Object.keys(realtimeUpdates).length) updates.push(realtime.ref().update(realtimeUpdates));
   }
-  if (serverProfileSnapshot.exists) {
-    const achievementShowcase = showcase.length ? showcase.join(",") : null;
+  if (serverProfile) {
+    const achievementShowcase = serverProfile.achievementShowcase || null;
     syncCrownShowcase = true;
     crownAchievementShowcase = achievementShowcase;
     const activeRefs = activeServerRankingPeriodInfos().map(({ period, key }) => (
@@ -2165,10 +2186,6 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
     ));
     const activeSnapshots = activeRefs.length ? await firestore.getAll(...activeRefs) : [];
     const batch = firestore.batch();
-    batch.set(serverRankingProfileRef(uid), {
-      achievementShowcase,
-      updatedAt: Date.now(),
-    }, { merge: true });
     activeSnapshots.forEach((snapshot) => {
       if (!snapshot.exists) return;
       batch.set(snapshot.ref, {
@@ -2177,6 +2194,7 @@ async function syncAchievementPublicSurfaces(uid, profileValue) {
       }, { merge: true });
     });
     updates.push(batch.commit());
+    updates.push(mirrorServerRateFloorProfiles({ [uid]: serverProfile }));
   }
   await Promise.all(updates);
   if (syncCrownShowcase) {
@@ -2602,11 +2620,10 @@ async function setServerRankingParticipation(uid, data) {
   if (!/^[-0-9A-Z_a-z]{16,40}$/.test(entryId)) {
     throw new HttpsError("invalid-argument", "ランキングIDを確認できませんでした。");
   }
-  const [entryIndexSnapshot, ownerSnapshot, publicSnapshot, achievementSnapshot] = await Promise.all([
+  const [entryIndexSnapshot, ownerSnapshot, publicSnapshot] = await Promise.all([
     realtime.ref(`online/leaderboardEntriesByUser/${uid}`).get(),
     realtime.ref(`online/leaderboardOwners/${entryId}`).get(),
     realtime.ref(`online/leaderboard/${entryId}`).get(),
-    achievementProfileRef(uid).get(),
   ]);
   if (String(entryIndexSnapshot.val() || "") !== entryId
     || String(ownerSnapshot.val() || "") !== uid
@@ -2614,10 +2631,13 @@ async function setServerRankingParticipation(uid, data) {
     throw new HttpsError("failed-precondition", "公開ランキング情報を確認できませんでした。");
   }
   const publicValue = objectValue(publicSnapshot.val());
-  const showcase = effectiveShowcase(normalizeAchievementProfile(achievementSnapshot.data()));
   let savedProfile = null;
   await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(profileRef);
+    const [snapshot, achievementSnapshot] = await Promise.all([
+      transaction.get(profileRef),
+      transaction.get(achievementProfileRef(uid)),
+    ]);
+    const showcase = effectiveShowcase(normalizeAchievementProfile(achievementSnapshot.data()));
     const previous = normalizeServerRankingProfile(snapshot.data(), {
       entryId,
       name: publicValue.name,
@@ -2630,9 +2650,10 @@ async function setServerRankingParticipation(uid, data) {
       entryId,
       name: cleanName(publicValue.name),
       commentsEnabled: publicValue.commentsEnabled !== false,
+      rateFloorRevision: nextServerRateFloorRevision(previous.rateFloorRevision),
       enabledAt: previous.enabled ? previous.enabledAt : now,
       updatedAt: now,
-      ...(showcase.length ? { achievementShowcase: showcase.join(",") } : {}),
+      achievementShowcase: showcase.join(","),
     };
     if (!snapshot.exists) {
       savedProfile.rating = 1000;
@@ -2647,7 +2668,7 @@ async function setServerRankingParticipation(uid, data) {
     transaction.set(profileRef, savedProfile);
   });
   const awards = await finalizeServerRankingAwards(uid, now);
-  const finalizedProfile = normalizeServerRankingProfile((await profileRef.get()).data(), savedProfile);
+  const finalizedProfile = normalizeServerRankingProfile((await profileRef.get()).data());
   await Promise.all([
     syncCurrentServerRankingMetadata(uid, finalizedProfile),
     syncCurrentCrownCircuitMetadata(uid, finalizedProfile),
@@ -2703,7 +2724,7 @@ async function setServerRateFloorParticipation(uid, data) {
     }, { merge: true });
   });
   await mirrorServerRateFloorProfiles({ [uid]: savedProfile });
-  const profile = normalizeServerRankingProfile((await profileRef.get()).data(), savedProfile);
+  const profile = normalizeServerRankingProfile((await profileRef.get()).data());
   if (profile.rateFloorRevision !== savedProfile.rateFloorRevision
       || profile.rateFloorEnabled !== savedProfile.rateFloorEnabled
       || profile.enabled !== savedProfile.enabled) {
@@ -3062,18 +3083,27 @@ async function setCrownCustomization(uid, data) {
   }
   const now = Date.now();
   const profileRef = serverRankingProfileRef(uid);
-  const profileSnapshot = await profileRef.get();
-  if (!profileSnapshot.exists) {
-    throw new HttpsError("failed-precondition", "ランキングプロフィールがありません。");
-  }
-  await profileRef.set({
-    crownTheme,
-    crownSignatureId: crownSignatureId || FieldValue.delete(),
-    updatedAt: now,
-  }, { merge: true });
-  const profile = normalizeServerRankingProfile((await profileRef.get()).data(), {
-    crownTheme,
-    crownSignatureId,
+  const profile = await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(profileRef);
+    if (!snapshot.exists) {
+      throw new HttpsError("failed-precondition", "ランキングプロフィールがありません。");
+    }
+    const previous = normalizeServerRankingProfile(snapshot.data());
+    const next = {
+      ...previous,
+      crownTheme,
+      rateFloorRevision: nextServerRateFloorRevision(previous.rateFloorRevision),
+      updatedAt: now,
+    };
+    if (crownSignatureId) next.crownSignatureId = crownSignatureId;
+    else delete next.crownSignatureId;
+    transaction.set(profileRef, {
+      crownTheme,
+      crownSignatureId: crownSignatureId || FieldValue.delete(),
+      rateFloorRevision: next.rateFloorRevision,
+      updatedAt: now,
+    }, { merge: true });
+    return next;
   });
   const periodInfos = SERVER_RANKING_PERIODS
     .map((period) => ({ period, key: periodKey(period, now) }))

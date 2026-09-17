@@ -28,6 +28,28 @@ function nextServerRateFloorRevision(value) {
   );
 }
 
+// Accept only a normalized, server-owned ranking profile. Keep the floor row
+// independent from the overall entry id and other public profile features.
+function serverRateFloorPublicEntry(profile, { rulesetVersion = 0 } = {}) {
+  if (!profile?.enabled
+      || !profile.rateFloorEnabled
+      || !profile.entryId
+      || !profile.rateFloorEntryId
+      || profile.serverMatches < SERVER_RATE_FLOOR_MINIMUM_MATCHES) {
+    return null;
+  }
+  return {
+    serverVerified: true,
+    rulesetVersion,
+    name: profile.name,
+    rating: profile.rating,
+    serverMatches: profile.serverMatches,
+    crownTheme: profile.crownTheme,
+    ...(profile.crownSignatureId ? { crownSignatureId: profile.crownSignatureId } : {}),
+    ...(profile.achievementShowcase ? { achievementShowcase: profile.achievementShowcase } : {}),
+  };
+}
+
 function serverRateFloorMirrorDecision(currentValue, {
   publicEntry = null,
   revision = 0,
@@ -87,4 +109,5 @@ module.exports = {
   nextServerRateFloorRevision,
   normalizeServerRateFloorRevision,
   serverRateFloorMirrorDecision,
+  serverRateFloorPublicEntry,
 };

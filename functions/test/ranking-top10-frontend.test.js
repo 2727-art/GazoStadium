@@ -17,6 +17,88 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
+function loadAchievements() {
+  const window = { addEventListener() {} };
+  return Function("window", `${read("achievements.js")}; return window.HariaiAchievements;`)(window);
+}
+
+function loadRateFloorNormalizer(achievements = loadAchievements()) {
+  const online = read("online.js");
+  return Function("window", `
+    const INITIAL_RATING = 1000;
+    const RATE_FLOOR_MINIMUM_MATCHES = 10;
+    const PUBLIC_RANKING_LIMIT = 10;
+    ${sourceBetween(online, "const CROWN_THEMES", "const SERVER_RANKING_AWARD_MINIMUM_MATCHES")}
+    ${sourceBetween(online, "function normalizeCrownTheme", "function normalizeOverallLeaderboardRecords")}
+    ${sourceBetween(online, "function normalizeRateFloorLeaderboardRecords", "function crownCircuitEntryIsQualified")}
+    return normalizeRateFloorLeaderboardRecords;
+  `)({ HariaiAchievements: achievements });
+}
+
+function renderRateFloor(entries, { achievements = loadAchievements(), status = "ready" } = {}) {
+  const app = read("app.js");
+  return Function("window", `
+    const INITIAL_RATING = 1000;
+    ${sourceBetween(app, "const CROWN_SIGNATURES", "const CROWN_CIRCUIT_START_LABEL")}
+    ${sourceBetween(app, "function escapeHtml", "\n  }\n")}\n}
+    ${sourceBetween(app, "function normalizeOverallRating", "\n  }\n")}\n}
+    ${sourceBetween(app, "function crownSignaturePresentation", "function renderOverallLeaderboardSection")}
+    ${sourceBetween(app, "function renderRateFloorLeaderboardSection", "function renderRankingSpotlight")}
+    return renderRateFloorLeaderboardSection();
+  `)({
+    HariaiAchievements: achievements,
+    HariaiOnline: {
+      getRateFloorLeaderboard: () => entries,
+      getRateFloorLeaderboardStatus: () => status,
+    },
+  });
+}
+
+function loadShowcaseActions({ failSave = false, failRefresh = false } = {}) {
+  const online = read("online.js");
+  const calls = [];
+  const toasts = [];
+  const harness = {
+    async economyActionCallable(payload) {
+      calls.push(payload);
+      if (failSave) throw new Error("保存エラー");
+      return { data: { saved: true, dashboard: { updated: true }, achievements: { showcase: [] } } };
+    },
+    async ensureRankingCommentUser() {},
+    dispatchRankingDashboardUpdated() {},
+    applyRankingDashboard(value) { calls.push({ appliedDashboard: value }); },
+    getRankingDashboard() { return { updated: true }; },
+    async refreshRankingDashboard() {},
+    async refreshOverallLeaderboard() { calls.push("overall"); },
+    async refreshRateFloorLeaderboard() {
+      calls.push("floor");
+      if (failRefresh) throw new Error("再取得エラー");
+    },
+    async refreshLeaderboard(period, options) { calls.push({ period, options }); },
+    applyAchievementPayload(value) { calls.push({ appliedAchievements: value }); },
+    showToast(value) { toasts.push(value); },
+    render() {},
+  };
+  const actions = Function("harness", `
+    const {
+      economyActionCallable, ensureRankingCommentUser, dispatchRankingDashboardUpdated,
+      applyRankingDashboard, getRankingDashboard, refreshRankingDashboard,
+      refreshOverallLeaderboard, refreshRateFloorLeaderboard, refreshLeaderboard,
+      applyAchievementPayload, showToast, render,
+    } = harness;
+    let rankingDashboardBusy = false;
+    const state = { uid: "test-player", achievementsBusy: false };
+    const leaderboardPeriod = "weekly";
+    const leaderboardPeriodKey = "2026-09-14";
+    ${sourceBetween(online, "const CROWN_THEMES", "const SERVER_RANKING_AWARD_MINIMUM_MATCHES")}
+    ${sourceBetween(online, "function normalizeCrownTheme", "function normalizeCrownSignatureIds")}
+    ${sourceBetween(online, "async function setCrownCustomization", "async function refreshLeaderboard")}
+    ${sourceBetween(online, "async function saveAchievementShowcase", "function normalizeOwnTopMessage")}
+    return { setCrownCustomization, saveAchievementShowcase, state, isBusy: () => rankingDashboardBusy };
+  `)(harness);
+  return { ...actions, calls, toasts };
+}
+
 test("public boards display TOP 10 while complex legacy points ordering keeps its safe query window", () => {
   const online = read("online.js");
   const app = read("app.js");
@@ -90,24 +172,7 @@ test("overall tenth-seat ties use Firebase key order and only fetch the missing 
 
 test("RATE FLOOR reads the lowest ten deterministically and uses competition ranks for ties", () => {
   const online = read("online.js");
-  const compareSource = sourceBetween(
-    online,
-    "function compareFirebaseKeys",
-    "function normalizeOverallLeaderboardRecords",
-  );
-  const normalizeSource = sourceBetween(
-    online,
-    "function normalizeRateFloorLeaderboardRecords",
-    "function crownCircuitEntryIsQualified",
-  );
-  const normalizeRateFloorLeaderboardRecords = Function(`
-    const INITIAL_RATING = 1000;
-    const RATE_FLOOR_MINIMUM_MATCHES = 10;
-    const PUBLIC_RANKING_LIMIT = 10;
-    ${compareSource}
-    ${normalizeSource}
-    return normalizeRateFloorLeaderboardRecords;
-  `)();
+  const normalizeRateFloorLeaderboardRecords = loadRateFloorNormalizer();
   const input = {
     stale_hidden: {
       rateFloorHidden: true,
@@ -139,7 +204,9 @@ test("RATE FLOOR reads the lowest ten deterministically and uses competition ran
   ]);
   assert.equal(entries.some(({ entryId }) => entryId === "z_floor"), false);
   assert.equal(entries.some(({ entryId }) => entryId === "stale_hidden"), false);
-  assert.deepEqual(Object.keys(entries[1]).sort(), ["entryId", "name", "rank", "rating", "serverMatches"]);
+  assert.deepEqual(Object.keys(entries[1]).sort(), [
+    "achievementShowcase", "crownSignatureId", "crownTheme", "entryId", "name", "rank", "rating", "serverMatches",
+  ]);
 
   const publicRead = sourceBetween(
     online,
@@ -152,7 +219,7 @@ test("RATE FLOOR reads the lowest ten deterministically and uses competition ran
   assert.match(publicRead, /limitDirection: "first"/);
 });
 
-test("RATE FLOOR is a server-backed opt-in with a ten-match wait and a plain one-player board", () => {
+test("RATE FLOOR keeps its server-backed opt-in and ten-match wait while showing existing public decorations", () => {
   const online = read("online.js");
   const app = read("app.js");
   const setting = sourceBetween(
@@ -174,7 +241,7 @@ test("RATE FLOOR is a server-backed opt-in with a ten-match wait and a plain one
   assert.match(setting, /下限チャレンジを公開する/);
   assert.match(setting, /検証済みRATE戦10戦以上/);
   assert.match(setting, /公開参加者が1名でも表示/);
-  assert.match(setting, /下限チャレンジ専用のAnjuPay・実績・履歴・王座・SPOTLIGHTはありません/);
+  assert.match(setting, /下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます/);
   assert.match(setting, /対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映/);
   assert.match(action, /action: "set_rate_floor_participation"/);
   assert.match(action, /enabled: Boolean\(enabled\)/);
@@ -186,11 +253,102 @@ test("RATE FLOOR is a server-backed opt-in with a ten-match wait and a plain one
   assert.match(board, /entry\.name/);
   assert.match(board, /entry\.rating/);
   assert.match(board, /entry\.serverMatches/);
-  assert.match(board, /下限チャレンジ専用の報酬・実績・履歴・王座・SPOTLIGHTはありません/);
+  assert.match(board, /下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます/);
   assert.match(board, /対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映/);
-  assert.doesNotMatch(board, /renderRankingXLink|renderBadges|renderCrownSignature|ranking-comment/i);
+  assert.match(board, /renderCrownSignature\(entry\)/);
+  assert.match(board, /renderBadges\?\.\(entry\.achievementShowcase\)/);
+  assert.doesNotMatch(board, /renderRankingXLink|ranking-comment/i);
   assert.match(app, /data-ranking-jump="floor"/);
   assert.match(app, /refreshRateFloorLeaderboard/);
+});
+
+test("RATE FLOOR only preserves validated public decorations and caps the showcase at three", () => {
+  const achievements = loadAchievements();
+  const normalize = loadRateFloorNormalizer(achievements);
+  const ids = achievements.catalog.slice(0, 4).map(({ id }) => id);
+  const [entry] = normalize({
+    player: {
+      name: "Player", rating: 800, serverMatches: 11,
+      crownTheme: "aqua", crownSignatureId: "daily_champion",
+      achievementShowcase: [ids[0], "unknown-achievement", ids[1], ids[0], ids[2], ids[3]],
+      xHandle: "private", commentsEnabled: true, unlocked: { [ids[3]]: 1 },
+    },
+  });
+  assert.equal(entry.crownTheme, "aqua");
+  assert.equal(entry.crownSignatureId, "daily_champion");
+  assert.deepEqual(entry.achievementShowcase, ids.slice(0, 3));
+  assert.equal("unlocked" in entry, false);
+  assert.equal("xHandle" in entry, false);
+  assert.equal("commentsEnabled" in entry, false);
+  assert.deepEqual(normalize({ player: { ...entry, achievementShowcase: ids.join(",") } })[0].achievementShowcase, ids.slice(0, 3));
+});
+
+test("RATE FLOOR safely handles missing, invalid and hidden public decorations", () => {
+  const normalize = loadRateFloorNormalizer();
+  const base = { name: "Player", rating: 800, serverMatches: 10 };
+  for (const decorations of [{}, {
+    crownTheme: "<script>", crownSignatureId: "__proto__",
+    achievementShowcase: { "<img src=x onerror=alert(1)>": true },
+  }, { achievementShowcase: null }, { achievementShowcase: 42 }]) {
+    const [entry] = normalize({ player: { ...base, ...decorations } });
+    assert.equal(entry.crownTheme, "rose");
+    assert.equal(entry.crownSignatureId, "");
+    assert.deepEqual(entry.achievementShowcase, []);
+    assert.doesNotMatch(renderRateFloor([entry]), /class="rate-floor-showcase"|class="ranking-signature|class="achievement-badge/);
+  }
+  assert.deepEqual(normalize({ hidden: { ...base, rateFloorHidden: true, crownSignatureId: "upset" }, invalid: null }), []);
+  assert.deepEqual(normalize(null), []);
+  const [unavailable] = loadRateFloorNormalizer(null)({ player: { ...base, achievementShowcase: "battle_total_10" } });
+  assert.deepEqual(unavailable.achievementShowcase, []);
+  assert.doesNotMatch(renderRateFloor([unavailable], { achievements: null }), /class="rate-floor-showcase"/);
+  assert.match(renderRateFloor([]), /公開参加者はまだいません/);
+  assert.match(renderRateFloor([], { status: "error" }), /id="rateFloorRankingRetryButton"/);
+});
+
+test("RATE FLOOR renders the shared SIGNATURE, FINAL and SECRET badges with escaped player names", () => {
+  const achievements = loadAchievements();
+  const final = achievements.catalog.find((entry) => entry.level === 10 && !entry.secret);
+  const secret = achievements.catalog.find((entry) => entry.secret);
+  const entries = loadRateFloorNormalizer(achievements)({ player: {
+    name: "<b>Player</b>", rating: 700, serverMatches: 12,
+    crownTheme: "gold", crownSignatureId: "daily_champion",
+    achievementShowcase: [final.id, secret.id],
+  } });
+  const html = renderRateFloor(entries, { achievements });
+  assert.match(html, /class="ranking-signature crown-theme-gold/);
+  assert.match(html, /デイリー王者/);
+  assert.match(html, /FINAL Lv\.10/);
+  assert.match(html, /SECRET/);
+  assert.match(html, /&lt;b&gt;Player&lt;\/b&gt;/);
+  assert.ok(html.includes(achievements.renderBadges(entries[0].achievementShowcase)));
+  assert.doesNotMatch(html, /ranking-x-link|ranking-comment/);
+});
+
+test("saved crown customization refreshes RATE FLOOR and keeps successful saves successful when a read fails", async () => {
+  const actions = loadShowcaseActions({ failRefresh: true });
+  assert.deepEqual(await actions.setCrownCustomization({ crownTheme: "gold", crownSignatureId: "upset" }), { updated: true });
+  assert.deepEqual(actions.calls[0], { action: "set_crown_customization", crownTheme: "gold", crownSignatureId: "upset" });
+  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), ["overall", "floor"]);
+  assert.deepEqual(actions.calls.at(-1), { period: "weekly", options: { force: true, key: "2026-09-14" } });
+  assert.equal(actions.isBusy(), false);
+  const rejected = loadShowcaseActions({ failSave: true });
+  await assert.rejects(rejected.setCrownCustomization(), /保存エラー/);
+  assert.equal(rejected.calls.includes("floor"), false);
+  assert.equal(rejected.isBusy(), false);
+});
+
+test("saved achievement selections refresh RATE FLOOR but rejected saves do not publish or report success", async () => {
+  const actions = loadShowcaseActions({ failRefresh: true });
+  await actions.saveAchievementShowcase([]);
+  assert.deepEqual(actions.calls[0], { action: "set_achievement_showcase", achievementIds: [] });
+  assert.deepEqual(actions.calls.filter((call) => typeof call === "string"), ["overall", "floor"]);
+  assert.deepEqual(actions.toasts, ["ランキングの実績ショーケースを更新しました。"]);
+  assert.equal(actions.state.achievementsBusy, false);
+  const rejected = loadShowcaseActions({ failSave: true });
+  await rejected.saveAchievementShowcase([]);
+  assert.equal(rejected.calls.includes("floor"), false);
+  assert.deepEqual(rejected.toasts, ["保存エラー"]);
+  assert.equal(rejected.state.achievementsBusy, false);
 });
 
 test("Crown TOP 10 excludes provisional zero scores and expands only a positive boundary tie", () => {
@@ -327,6 +485,9 @@ test("all RATE FLOOR browser assets share a cache marker", () => {
   assert.match(html, /styles\.css\?v=[^"]*rate-floor-v1/);
   assert.match(html, /app\.js\?v=[^"]*rate-floor-v1/);
   assert.match(html, /online\.js\?v=[^"]*rate-floor-v1/);
+  assert.match(html, /styles\.css\?v=[^"]*rate-floor-showcase-v1/);
+  assert.match(html, /app\.js\?v=[^"]*rate-floor-showcase-v1/);
+  assert.match(html, /online\.js\?v=[^"]*rate-floor-showcase-v1/);
 });
 
 test("Crown proof remains usable when optional personal ranking context is unavailable", () => {

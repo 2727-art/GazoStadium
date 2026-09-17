@@ -11,8 +11,13 @@ const {
   createServerRateFloorEntryId,
   isServerRateFloorEntryId,
   nextServerRateFloorRevision,
+  normalizeServerRateFloorRevision,
   serverRateFloorMirrorDecision,
+  serverRateFloorPublicEntry,
 } = require("../rate-floor");
+const { CROWN_THEMES, CROWN_SIGNATURE_IDS, CROWN_CIRCUIT_RULESET_VERSION } = require("../crown-circuit");
+const { SERVER_RANKING_VERSION } = require("../server-ranking");
+const { effectiveShowcase, normalizeAchievementProfile } = require("../achievements");
 
 const root = path.resolve(__dirname, "..", "..");
 const functionsSource = fs.readFileSync(path.join(root, "functions", "index.js"), "utf8");
@@ -29,31 +34,325 @@ function sourceBetween(start, end) {
   return functionsSource.slice(startIndex, endIndex);
 }
 
+function backendFunction(start, end, name, dependencies = {}) {
+  const values = {
+    CROWN_THEMES,
+    CROWN_SIGNATURE_IDS,
+    CROWN_CIRCUIT_RULESET_VERSION,
+    SERVER_RANKING_VERSION,
+    isServerRateFloorEntryId,
+    normalizeServerRateFloorRevision,
+    nextServerRateFloorRevision,
+    serverRateFloorPublicEntry,
+    effectiveShowcase,
+    normalizeAchievementProfile,
+    ...dependencies,
+  };
+  return new Function(...Object.keys(values), `${
+    sourceBetween("function cleanText", "function safeBalance")
+  }\n${
+    sourceBetween("function normalizeServerRankingProfile", "function activeServerRankingPeriodInfos")
+  }\n${sourceBetween(start, end)}\nreturn ${name};`)(...Object.values(values));
+}
+
+const publicProfile = backendFunction(
+  "function publicServerRateFloorProfile",
+  "function publicCrownCircuitEntry",
+  "publicServerRateFloorProfile",
+);
+
+function eligibleProfile(overrides = {}) {
+  return {
+    enabled: true,
+    rateFloorEnabled: true,
+    entryId: "overall-entry-123456789",
+    rateFloorEntryId: "floorEntry123456789012345",
+    name: "PLAYER",
+    rating: 750,
+    serverMatches: 20,
+    crownTheme: "gold",
+    crownSignatureId: "daily_champion",
+    achievementShowcase: "battle_total_1",
+    rateFloorRevision: 4,
+    ...overrides,
+  };
+}
+
+function transactionHarness(ranking, achievements, onFirstAttempt = null) {
+  const deletion = Symbol("delete");
+  const state = { ranking, achievements, commits: [], attempts: 0 };
+  const firestore = {
+    async runTransaction(callback) {
+      for (;;) {
+        state.attempts += 1;
+        const writes = [];
+        const result = await callback({
+          async get(ref) {
+            const value = state[ref];
+            return { exists: value != null, data: () => structuredClone(value) };
+          },
+          set(ref, patch, options) {
+            assert.deepEqual(options, { merge: true });
+            writes.push({ ref, patch });
+          },
+        });
+        if (onFirstAttempt) {
+          const beforeCommit = onFirstAttempt;
+          onFirstAttempt = null;
+          beforeCommit(state);
+          continue;
+        }
+        writes.forEach(({ ref, patch }) => {
+          state[ref] = { ...state[ref] };
+          Object.entries(patch).forEach(([key, value]) => {
+            if (value === deletion) delete state[ref][key];
+            else state[ref][key] = value;
+          });
+          state.commits.push({ ref, patch });
+        });
+        return result;
+      }
+    },
+    batch: () => ({ commit: async () => {}, set: () => {} }),
+  };
+  const dependencies = {
+    firestore,
+    FieldValue: { delete: () => deletion },
+    serverRankingProfileRef: () => "ranking",
+    achievementProfileRef: () => "achievements",
+  };
+  return {
+    state,
+    dependencies,
+    sync: backendFunction(
+      "async function syncCurrentServerRankingShowcase",
+      "async function syncAchievementPublicSurfaces",
+      "syncCurrentServerRankingShowcase",
+      dependencies,
+    ),
+  };
+}
+
 test("RATE FLOOR is a server-owned opt-in with a ten-match publication gate", () => {
   assert.equal(SERVER_RATE_FLOOR_MINIMUM_MATCHES, 10);
   assert.match(functionsSource, /rateFloorEnabled: source\.rateFloorEnabled === true/);
   assert.match(functionsSource, /rateFloorRevision: normalizeServerRateFloorRevision/);
 
-  const publicProfile = sourceBetween(
+  const source = sourceBetween(
     "function publicServerRateFloorProfile",
     "function publicCrownCircuitEntry",
   );
-  assert.match(publicProfile, /!profile\.enabled/);
-  assert.match(publicProfile, /!profile\.rateFloorEnabled/);
-  assert.match(publicProfile, /!profile\.entryId/);
-  assert.match(publicProfile, /!profile\.rateFloorEntryId/);
-  assert.match(
-    publicProfile,
-    /profile\.serverMatches < SERVER_RATE_FLOOR_MINIMUM_MATCHES/,
+  assert.match(source, /normalizeServerRankingProfile\(value, value\)/);
+  assert.match(source, /serverRateFloorPublicEntry\(profile/);
+  assert.equal(publicProfile(null), null);
+  for (const excluded of [
+    { enabled: false }, { rateFloorEnabled: false }, { entryId: "" },
+    { rateFloorEntryId: "" }, { serverMatches: 9 },
+  ]) {
+    assert.equal(publicProfile(eligibleProfile(excluded)), null);
+  }
+  const entry = publicProfile(eligibleProfile({ serverMatches: 10 }));
+  assert.equal(entry.serverMatches, 10);
+  assert.equal(entry.serverVerified, true);
+  assert.equal(entry.name, "PLAYER");
+  assert.equal(entry.rating, 750);
+});
+
+test("RATE FLOOR publishes only the existing selected cosmetics with no owner or reward links", () => {
+  assert.deepEqual(publicProfile(eligibleProfile({
+    xHandle: "publichandle",
+    commentsEnabled: true,
+    uid: "private-user",
+    rankingAwardTier: "daily_champion",
+    rankingAwardUntil: Date.now() + 60_000,
+  })), {
+    serverVerified: true,
+    rulesetVersion: CROWN_CIRCUIT_RULESET_VERSION,
+    name: "PLAYER",
+    rating: 750,
+    serverMatches: 20,
+    crownTheme: "gold",
+    crownSignatureId: "daily_champion",
+    achievementShowcase: "battle_total_1",
+  });
+  const empty = publicProfile(eligibleProfile({
+    crownTheme: "unknown", crownSignatureId: "unknown", achievementShowcase: "",
+  }));
+  assert.equal(empty.crownTheme, "rose");
+  assert.equal(Object.hasOwn(empty, "crownSignatureId"), false);
+  assert.equal(Object.hasOwn(empty, "achievementShowcase"), false);
+});
+
+test("live showcase sync keeps secret achievements manual and removes a prior manual selection", async () => {
+  const secret = "battle_loss_streak_secret_100";
+  const harness = transactionHarness(eligibleProfile({ achievementShowcase: "" }), {
+    unlocked: { battle_total_1: 100, [secret]: 200 },
+    customShowcase: [],
+  });
+  const automatic = await harness.sync("player");
+  assert.equal(automatic.achievementShowcase, "battle_total_1");
+  assert.equal(automatic.rateFloorRevision, 5);
+
+  harness.state.achievements.customShowcase = [secret];
+  const selected = await harness.sync("player");
+  assert.equal(selected.achievementShowcase, secret);
+  assert.equal(selected.rateFloorRevision, 6);
+  const selectedRow = serverRateFloorMirrorDecision(null, {
+    publicEntry: publicProfile(selected), revision: selected.rateFloorRevision,
+  }).value;
+
+  harness.state.achievements.customShowcase = [];
+  const removed = await harness.sync("player");
+  const publicRemoved = serverRateFloorMirrorDecision(selectedRow, {
+    publicEntry: publicProfile(removed), revision: removed.rateFloorRevision,
+  }).value;
+  assert.equal(publicRemoved.achievementShowcase, "battle_total_1");
+  assert.equal(removed.rateFloorRevision, 7);
+  const delayed = serverRateFloorMirrorDecision(publicRemoved, {
+    publicEntry: publicProfile(selected), revision: selected.rateFloorRevision,
+  });
+  assert.equal(delayed.committed, false);
+  assert.equal(delayed.value.achievementShowcase, "battle_total_1");
+});
+
+test("showcase transaction retries after a concurrent selection and rated match", async () => {
+  const secret = "battle_loss_streak_secret_100";
+  const harness = transactionHarness(eligibleProfile(), {
+    unlocked: { battle_total_1: 100, battle_total_10: 150, [secret]: 200 },
+    customShowcase: [secret],
+  }, (state) => {
+    state.achievements.customShowcase = ["battle_total_10"];
+    state.ranking = { ...state.ranking, rating: 735, serverMatches: 21, rateFloorRevision: 5 };
+  });
+  const synced = await harness.sync("player");
+  assert.equal(harness.state.attempts, 2);
+  assert.equal(harness.state.commits.length, 1);
+  assert.equal(synced.rating, 735);
+  assert.equal(synced.serverMatches, 21);
+  assert.equal(synced.rateFloorRevision, 6);
+  assert.equal(synced.achievementShowcase, "battle_total_10");
+  assert.equal(harness.state.ranking.achievementShowcase, "battle_total_10");
+  assert.deepEqual(Object.keys(harness.state.commits[0].patch).sort(), [
+    "achievementShowcase", "rateFloorRevision", "updatedAt",
+  ]);
+});
+
+test("showcase changes preserve concurrent opt-out and clear unavailable badges", async () => {
+  const harness = transactionHarness(eligibleProfile(), { unlocked: {}, customShowcase: [] }, (state) => {
+    state.ranking = { ...state.ranking, enabled: false, rateFloorEnabled: false, rateFloorRevision: 5 };
+  });
+  const synced = await harness.sync("player");
+  assert.equal(synced.enabled, false);
+  assert.equal(synced.rateFloorEnabled, false);
+  assert.equal(synced.rateFloorRevision, 6);
+  assert.equal(Object.hasOwn(synced, "achievementShowcase"), false);
+  assert.equal(Object.hasOwn(harness.state.ranking, "achievementShowcase"), false);
+  assert.equal(publicProfile(synced), null);
+});
+
+test("unchanged showcases avoid profile writes and missing profiles remain absent", async () => {
+  const harness = transactionHarness(eligibleProfile(), {
+    unlocked: { battle_total_1: 100 }, customShowcase: ["battle_total_1"],
+  });
+  const synced = await harness.sync("player");
+  assert.equal(synced.rateFloorRevision, 4);
+  assert.equal(harness.state.commits.length, 0);
+  const missing = transactionHarness(null, { unlocked: { battle_total_1: 100 } });
+  assert.equal(await missing.sync("player"), null);
+  assert.equal(missing.state.commits.length, 0);
+});
+
+test("customization validates earned options and serializes signature removal with floor revisions", async () => {
+  const harness = transactionHarness(eligibleProfile(), {});
+  let mirrored = null;
+  class HttpsError extends Error {
+    constructor(code, message) { super(message); this.code = code; }
+  }
+  const customize = backendFunction(
+    "async function setCrownCustomization",
+    "async function getAchievements",
+    "setCrownCustomization",
+    {
+      ...harness.dependencies,
+      HttpsError,
+      loadCrownCustomizationOptions: async () => ({
+        availableThemes: ["rose", "gold"], availableSignatureIds: ["daily_champion"],
+      }),
+      SERVER_RANKING_PERIODS: [],
+      periodKey: () => "2026-09-17",
+      isCrownCircuitPeriod: () => false,
+      mirrorServerOverallProfiles: async (profiles) => { mirrored = profiles.player; },
+      mirrorCrownCircuitEntries: async () => {},
+      syncRankingSpotlightConsent: async () => {},
+    },
   );
-  assert.match(publicProfile, /serverVerified: true/);
-  assert.match(publicProfile, /name: cleanName\(profile\.name\)/);
-  assert.match(publicProfile, /rating: profile\.rating/);
-  assert.match(publicProfile, /serverMatches: profile\.serverMatches/);
-  assert.doesNotMatch(
-    publicProfile,
-    /xHandle|commentsEnabled|achievementShowcase|crownTheme|crownSignatureId|rankingAward/,
+  await assert.rejects(customize("player", { crownTheme: "aqua", crownSignatureId: "" }),
+    { code: "failed-precondition" });
+  await assert.rejects(customize("player", { crownTheme: "gold", crownSignatureId: "upset" }),
+    { code: "failed-precondition" });
+  assert.equal(harness.state.commits.length, 0);
+  const old = publicProfile(harness.state.ranking);
+  await customize("player", { crownTheme: "rose", crownSignatureId: "" });
+  assert.equal(mirrored.rateFloorRevision, 5);
+  assert.equal(Object.hasOwn(mirrored, "crownSignatureId"), false);
+  assert.equal(Object.hasOwn(harness.state.ranking, "crownSignatureId"), false);
+  const removed = serverRateFloorMirrorDecision(null, {
+    publicEntry: publicProfile(mirrored), revision: mirrored.rateFloorRevision,
+  }).value;
+  assert.equal(removed.crownTheme, "rose");
+  assert.equal(serverRateFloorMirrorDecision(removed, { publicEntry: old, revision: 4 }).committed, false);
+});
+
+test("achievement updates use the fresh profile through the floor CAS without rewriting overall RATE", () => {
+  const sync = sourceBetween("async function syncAchievementPublicSurfaces", "async function syncCurrentServerRankingMetadata");
+  assert.match(sync, /syncCurrentServerRankingShowcase\(uid\)/);
+  assert.match(sync, /mirrorServerRateFloorProfiles\(\{ \[uid\]: serverProfile \}\)/);
+  assert.doesNotMatch(sync, /mirrorServerOverallProfiles|batch\.set\(serverRankingProfileRef/);
+});
+
+test("participation re-read cannot restore a concurrently removed signature or showcase", async () => {
+  let current = eligibleProfile();
+  const mirrored = [];
+  const profileRef = {
+    get: async () => ({ data: () => structuredClone(current) }),
+  };
+  const participate = backendFunction(
+    "async function setServerRateFloorParticipation",
+    "async function getServerRankingAwards",
+    "setServerRateFloorParticipation",
+    {
+      isPlainCallableObject: (value) => value && typeof value === "object",
+      SERVER_RATE_FLOOR_MINIMUM_MATCHES,
+      createServerRateFloorEntryId,
+      serverRankingProfileRef: () => profileRef,
+      publicServerRateFloorProfile: publicProfile,
+      firestore: {
+        runTransaction: async (callback) => callback({
+          get: async () => ({ exists: true, data: () => structuredClone(current) }),
+          set: (_ref, patch) => { current = { ...current, ...patch }; },
+        }),
+      },
+      mirrorServerRateFloorProfiles: async (profiles) => {
+        mirrored.push(profiles.player);
+        if (mirrored.length === 1) {
+          current.rateFloorRevision += 1;
+          delete current.crownSignatureId;
+          delete current.achievementShowcase;
+        }
+      },
+    },
   );
+  const result = await participate("player", { action: "set_rate_floor_participation", enabled: true });
+  assert.equal(result.rateFloorEligible, true);
+  assert.equal(mirrored.length, 2);
+  assert.equal(mirrored[0].crownSignatureId, "daily_champion");
+  assert.equal(mirrored[1].rateFloorRevision, 6);
+  assert.equal(Object.hasOwn(mirrored[1], "crownSignatureId"), false);
+  assert.equal(Object.hasOwn(mirrored[1], "achievementShowcase"), false);
+  const overallParticipation = sourceBetween(
+    "async function setServerRankingParticipation", "async function setServerRateFloorParticipation",
+  );
+  assert.doesNotMatch(overallParticipation, /normalizeServerRankingProfile\(\(await profileRef\.get\(\)\)\.data\(\), savedProfile\)/);
 });
 
 test("RATE FLOOR uses an uncorrelated private random public-row id", () => {

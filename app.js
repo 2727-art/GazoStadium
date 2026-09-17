@@ -1541,11 +1541,19 @@
   function renderRateFloorLeaderboardSection() {
     const entries = window.HariaiOnline?.getRateFloorLeaderboard?.() || [];
     const status = window.HariaiOnline?.getRateFloorLeaderboardStatus?.() || "idle";
-    const rows = entries.length ? entries.map((entry) => `<article class="rate-floor-entry">
+    const rows = entries.length ? entries.map((entry) => {
+      const signature = renderCrownSignature(entry);
+      const achievementBadges = window.HariaiAchievements?.renderBadges?.(entry.achievementShowcase) || "";
+      const showcase = signature || achievementBadges
+        ? `<div class="rate-floor-showcase">${signature}${achievementBadges}</div>`
+        : "";
+      return `<article class="rate-floor-entry">
       <strong class="rate-floor-position">FLOOR #${Math.max(1, Number(entry.rank || 1))}</strong>
       <div class="rate-floor-player"><b>${escapeHtml(entry.name)}</b><small>${Math.max(0, Number(entry.serverMatches || 0))}戦の検証済みRATE</small></div>
       <div class="rate-floor-rating"><strong>${normalizeOverallRating(entry.rating)}</strong><small>RATE</small></div>
-    </article>`).join("") : status === "error"
+      ${showcase}
+    </article>`;
+    }).join("") : status === "error"
       ? `<div class="ranking-empty">下限チャレンジを取得できませんでした。<br /><button class="button button-ghost button-small" id="rateFloorRankingRetryButton">もう一度取得</button></div>`
       : status === "ready"
         ? `<div class="ranking-empty">下限チャレンジの公開参加者はまだいません。</div>`
@@ -1553,7 +1561,7 @@
     return `<section class="rate-floor-section" id="rankingRateFloorBoard" aria-labelledby="rateFloorRankingTitle">
       <div class="ranking-board-head"><div><span class="eyebrow">RATE FLOOR / LOWEST 10</span><h2 id="rateFloorRankingTitle">下限チャレンジ</h2></div><p>本人が参加を選んだプレイヤーだけを、現在の総合RATEが低い順に最大10席表示します。参加者1名から公開します。</p></div>
       <div class="rate-floor-list" aria-label="下限チャレンジ RATEが低い順の最大10席">${rows}</div>
-      <p class="rate-floor-note">検証済みRATE戦10戦以上が対象です。同RATEは同順位。下限チャレンジ専用の報酬・実績・履歴・王座・SPOTLIGHTはありません。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</p>
+      <p class="rate-floor-note">検証済みRATE戦10戦以上が対象です。同RATEは同順位。下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</p>
     </section>`;
   }
 

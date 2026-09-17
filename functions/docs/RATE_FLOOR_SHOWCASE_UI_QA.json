@@ -1,0 +1,36 @@
+{
+  "checkedAt": "2026-09-17T09:52:59.161Z",
+  "scope": "Local actual app with synthetic public-row fixtures; all backend requests blocked",
+  "checks": [
+    "SIGNATURE themes",
+    "FINAL/SECRET/SPECIAL badges",
+    "unset decorations",
+    "tied ranks",
+    "empty and retry states"
+  ],
+  "viewportChecks": [
+    {
+      "width": 1440,
+      "height": 1000,
+      "pageOverflow": false,
+      "offenders": [],
+      "screenshot": "rate-floor-showcase-1440.png"
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "pageOverflow": false,
+      "offenders": [],
+      "screenshot": "rate-floor-showcase-390.png"
+    },
+    {
+      "width": 320,
+      "height": 568,
+      "pageOverflow": false,
+      "offenders": [],
+      "screenshot": "rate-floor-showcase-320.png"
+    }
+  ],
+  "pageErrors": [],
+  "ok": true
+}

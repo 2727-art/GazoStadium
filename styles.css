@@ -3061,22 +3061,26 @@ button:disabled {
   font-size: 0.68rem;
 }
 
-.crown-theme-rose {
+.crown-theme-rose,
+.rate-floor-showcase .crown-theme-rose {
   --crown-color: #ff8aaa;
   --crown-glow: rgba(255, 105, 148, 0.13);
 }
 
-.crown-theme-aqua {
+.crown-theme-aqua,
+.rate-floor-showcase .crown-theme-aqua {
   --crown-color: #64e8d5;
   --crown-glow: rgba(100, 232, 213, 0.13);
 }
 
-.crown-theme-violet {
+.crown-theme-violet,
+.rate-floor-showcase .crown-theme-violet {
   --crown-color: #bd91ff;
   --crown-glow: rgba(164, 111, 255, 0.15);
 }
 
-.crown-theme-gold {
+.crown-theme-gold,
+.rate-floor-showcase .crown-theme-gold {
   --crown-color: #ffd06b;
   --crown-glow: rgba(255, 201, 107, 0.16);
 }
@@ -8558,6 +8562,46 @@ button:disabled {
   font-size: 1.45rem;
 }
 
+.rate-floor-showcase {
+  grid-column: 2 / -1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.rate-floor-showcase .ranking-signature,
+.rate-floor-showcase .achievement-badge {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rate-floor-showcase .ranking-signature > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rate-floor-showcase .achievement-badges {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rate-floor-showcase .achievement-badge > span {
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.rate-floor-showcase .achievement-badge small {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .rate-floor-note {
   margin: 9px 2px 0;
   color: #858da0;
@@ -9216,6 +9260,10 @@ button:disabled {
 
   .rate-floor-position {
     font-size: 0.72rem;
+  }
+
+  .rate-floor-showcase {
+    grid-column: 1 / -1;
   }
 
   .rate-floor-rating strong {

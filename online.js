@@ -1606,7 +1606,7 @@ function renderRateFloorParticipation(safeControlId) {
   return `<section class="rate-floor-participation ${enabled ? "is-enabled" : "is-disabled"}">
     <div class="rate-floor-participation-copy"><span class="eyebrow">RATE FLOOR</span><div><strong>下限チャレンジ</strong><p>総合RATEの別枠として、低いRATEへ挑む意思を本人が公開する表示です。</p></div></div>
     <div class="rate-floor-participation-control"><span>${escapeHtml(statusCopy)}</span><button class="button ${enabled ? "button-ghost" : "button-primary"} button-small" type="button" id="${safeControlId}RateFloor" aria-pressed="${enabled}"${disabled ? " disabled" : ""}>${enabled ? "公開をやめる" : "下限チャレンジを公開する"}</button></div>
-    <small>検証済みRATE戦10戦以上で掲載され、条件を満たす公開参加者が1名でも表示されます。同RATEは同順位です。下限チャレンジ専用のAnjuPay・実績・履歴・王座・SPOTLIGHTはありません。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</small>
+    <small>検証済みRATE戦10戦以上で掲載され、条件を満たす公開参加者が1名でも表示されます。同RATEは同順位です。下限順位による追加報酬・専用実績の付与はありません。獲得済みのSIGNATURE・公開実績は表示されます。対戦結果は従来どおり総合RATEと、宣言中の王座証明へ反映されます。</small>
   </section>`;
 }
 
@@ -3175,6 +3175,11 @@ function normalizeRateFloorLeaderboardRecords(entries) {
       name: String(entry?.name || "").trim().slice(0, 16),
       rating: Math.min(3000, Math.max(100, Math.floor(Number(entry?.rating || INITIAL_RATING)))),
       serverMatches: Math.max(0, Math.floor(Number(entry?.serverMatches || 0))),
+      crownTheme: normalizeCrownTheme(entry?.crownTheme),
+      crownSignatureId: CROWN_SIGNATURE_IDS.includes(String(entry?.crownSignatureId || ""))
+        ? String(entry.crownSignatureId)
+        : "",
+      achievementShowcase: window.HariaiAchievements?.normalizeIds?.(entry?.achievementShowcase, 3) || [],
     }))
     .filter((entry) => (
       entry.name
@@ -4279,8 +4284,9 @@ async function setCrownCustomization({ crownTheme = "rose", crownSignatureId = "
     const result = response.data || {};
     if (result.dashboard) applyRankingDashboard(result.dashboard);
     else await refreshRankingDashboard();
-    await Promise.all([
+    await Promise.allSettled([
       refreshOverallLeaderboard(),
+      refreshRateFloorLeaderboard(),
       refreshLeaderboard(leaderboardPeriod, {
         force: true,
         key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
@@ -4576,6 +4582,14 @@ async function saveAchievementShowcase(idsValue) {
     });
     if (response.data?.saved !== true) throw new Error("実績ショーケースの保存を確認できませんでした。");
     applyAchievementPayload(response.data?.achievements);
+    await Promise.allSettled([
+      refreshOverallLeaderboard(),
+      refreshRateFloorLeaderboard(),
+      refreshLeaderboard(leaderboardPeriod, {
+        force: true,
+        key: leaderboardPeriod === "weekly" ? leaderboardPeriodKey : "",
+      }),
+    ]);
     showToast("ランキングの実績ショーケースを更新しました。");
   } catch (error) {
     showToast(error?.message || "実績ショーケースを更新できませんでした。");
