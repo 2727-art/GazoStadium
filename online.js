@@ -8432,7 +8432,7 @@ async function handleSoloSessionLeaseLost(expectedState = state) {
   if (!active || state !== expectedState) return;
   if (!expectedState.roomId) {
     if (["matching", "connecting"].includes(expectedState.screen)) {
-      showToast("別のタブまたは端末に通常版1on1の接続が移ったため、この画面の検索を終了します。");
+      showToast("通常版1on1の接続を維持できなかったため、検索を終了しました。通信状態を確認し、もう一度お試しください。");
       await cancelMatching();
     }
     return;
@@ -8461,7 +8461,7 @@ async function handleSoloSessionLeaseLost(expectedState = state) {
   expectedState.screen = "noContest";
   setOnlineChrome("NO CONTEST");
   render();
-  showToast("別のタブまたは端末に通常版1on1の接続が移ったため、この対戦を終了しました。");
+  showToast("通常版1on1の接続を維持できなかったため、この対戦を終了しました。通信状態を確認し、もう一度お試しください。");
 }
 
 async function releaseSoloSessionLease(expectedState = state) {
