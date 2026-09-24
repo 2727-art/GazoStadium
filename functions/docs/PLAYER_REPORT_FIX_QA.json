@@ -82,7 +82,215 @@
     "free-table-media.mjs": "185d5f754d6c13401c00f5e2669683b98e63652552d12a27f11ae46cf5688e74"
   },
   "production": {
-    "status": "not-yet-deployed"
+    "status": "verified",
+    "hostingDeployment": "succeeded",
+    "verifiedAt": "2026-09-24T13:25:33.952Z",
+    "releaseCommit": "89b40abf0bb5d4a0f57203e2db125c51f51411af",
+    "origins": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "checks": [
+          {
+            "file": "index.html",
+            "status": 200,
+            "sha256": "464dfd36826d41b8b2d229dc1425f3da45cb96fe9161a78d38731bcc892933fd",
+            "matchesLocal": true
+          },
+          {
+            "file": "strategy.js",
+            "url": "https://gazostadium.web.app/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "784a4c0ed427fd1a48ea55bc1e83181c78766a8caf4aed9d1b43999deb664c65",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "online.js",
+            "url": "https://gazostadium.web.app/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "796381f4cf2eabbf3c9234fe977730070f1745dfd996a644ce4a3bbbfc2a7c98",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "free-table.js",
+            "url": "https://gazostadium.web.app/free-table.js?v=global-player-block-v1-copy-v2-free-table-ambience-v2-app-check-v3-p2p-recovery-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-roulette-training-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "2d38a46e336bf1e8c4a4e2b72d037cbcebb4cfc34aeb3bf94d53085e4470f0a2",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "free-table-media.mjs",
+            "url": "https://gazostadium.web.app/free-table-media.mjs?v=free-table-image-fallback-v2&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "185d5f754d6c13401c00f5e2669683b98e63652552d12a27f11ae46cf5688e74",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "online-image-transfer.mjs",
+            "status": 200,
+            "sha256": "9ba00e6423af2e8c2023a36717a88514460520ce4b20adfae56fe6cd9f1bd02a",
+            "matchesLocal": true
+          },
+          {
+            "file": "database.rules.json",
+            "status": 404,
+            "expectedStatus": 404
+          },
+          {
+            "file": "functions/test/fixtures/free-table-media-browser.html",
+            "status": 404,
+            "expectedStatus": 404
+          },
+          {
+            "file": "functions/docs/PLAYER_REPORT_FIX_RELEASE.md",
+            "status": 404,
+            "expectedStatus": 404
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "checks": [
+          {
+            "file": "index.html",
+            "status": 200,
+            "sha256": "464dfd36826d41b8b2d229dc1425f3da45cb96fe9161a78d38731bcc892933fd",
+            "matchesLocal": true
+          },
+          {
+            "file": "strategy.js",
+            "url": "https://gazostadium.firebaseapp.com/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "784a4c0ed427fd1a48ea55bc1e83181c78766a8caf4aed9d1b43999deb664c65",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "online.js",
+            "url": "https://gazostadium.firebaseapp.com/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "796381f4cf2eabbf3c9234fe977730070f1745dfd996a644ce4a3bbbfc2a7c98",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "free-table.js",
+            "url": "https://gazostadium.firebaseapp.com/free-table.js?v=global-player-block-v1-copy-v2-free-table-ambience-v2-app-check-v3-p2p-recovery-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-roulette-training-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "2d38a46e336bf1e8c4a4e2b72d037cbcebb4cfc34aeb3bf94d53085e4470f0a2",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "free-table-media.mjs",
+            "url": "https://gazostadium.firebaseapp.com/free-table-media.mjs?v=free-table-image-fallback-v2&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "185d5f754d6c13401c00f5e2669683b98e63652552d12a27f11ae46cf5688e74",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "online-image-transfer.mjs",
+            "status": 200,
+            "sha256": "9ba00e6423af2e8c2023a36717a88514460520ce4b20adfae56fe6cd9f1bd02a",
+            "matchesLocal": true
+          },
+          {
+            "file": "database.rules.json",
+            "status": 404,
+            "expectedStatus": 404
+          },
+          {
+            "file": "functions/test/fixtures/free-table-media-browser.html",
+            "status": 404,
+            "expectedStatus": 404
+          },
+          {
+            "file": "functions/docs/PLAYER_REPORT_FIX_RELEASE.md",
+            "status": 404,
+            "expectedStatus": 404
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "checks": [
+          {
+            "file": "index.html",
+            "status": 200,
+            "sha256": "464dfd36826d41b8b2d229dc1425f3da45cb96fe9161a78d38731bcc892933fd",
+            "matchesLocal": true
+          },
+          {
+            "file": "strategy.js",
+            "url": "https://gazostadium.anjugames.workers.dev/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "784a4c0ed427fd1a48ea55bc1e83181c78766a8caf4aed9d1b43999deb664c65",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "online.js",
+            "url": "https://gazostadium.anjugames.workers.dev/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "796381f4cf2eabbf3c9234fe977730070f1745dfd996a644ce4a3bbbfc2a7c98",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "free-table.js",
+            "url": "https://gazostadium.anjugames.workers.dev/free-table.js?v=global-player-block-v1-copy-v2-free-table-ambience-v2-app-check-v3-p2p-recovery-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-roulette-training-v1-player-recovery-20260924-v1&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "2d38a46e336bf1e8c4a4e2b72d037cbcebb4cfc34aeb3bf94d53085e4470f0a2",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "free-table-media.mjs",
+            "url": "https://gazostadium.anjugames.workers.dev/free-table-media.mjs?v=free-table-image-fallback-v2&qa=player-recovery-1790256332620",
+            "status": 200,
+            "sha256": "185d5f754d6c13401c00f5e2669683b98e63652552d12a27f11ae46cf5688e74",
+            "matchesLocal": true,
+            "cacheMarker": true
+          },
+          {
+            "file": "online-image-transfer.mjs",
+            "status": 200,
+            "sha256": "9ba00e6423af2e8c2023a36717a88514460520ce4b20adfae56fe6cd9f1bd02a",
+            "matchesLocal": true
+          },
+          {
+            "file": "database.rules.json",
+            "status": 404,
+            "expectedStatus": 404
+          },
+          {
+            "file": "functions/test/fixtures/free-table-media-browser.html",
+            "status": 404,
+            "expectedStatus": 404
+          },
+          {
+            "file": "functions/docs/PLAYER_REPORT_FIX_RELEASE.md",
+            "status": 404,
+            "expectedStatus": 404
+          }
+        ],
+        "ok": true
+      }
+    ],
+    "ok": true,
+    "browserSmoke": {
+      "url": "https://gazostadium.web.app/",
+      "homeRendered": true,
+      "changedScriptCacheMarkers": 3,
+      "consoleErrors": 0,
+      "performedMatchmaking": false
+    }
   },
   "limitations": [
     "Physical iPhone/Brave not tested",
