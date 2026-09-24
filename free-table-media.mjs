@@ -11,6 +11,7 @@ import {
   STRATEGY_VIDEO_MAX_SECONDS,
   verifiedStrategyVideoMime,
 } from "./strategy-video-transfer.mjs";
+import { onlineImageMimeFromBytes } from "./online-image-transfer.mjs";
 
 export const FREE_TABLE_MEDIA_CHANNEL_LABEL = "hariai-free-table-media-v1";
 export const FREE_TABLE_MEDIA_PROTOCOL_VERSION = 1;
@@ -24,12 +25,13 @@ export const FREE_TABLE_AUDIO_MAX_BYTES = STRATEGY_REVIEW_AUDIO_MAX_BYTES;
 export const FREE_TABLE_AUDIO_MAX_SECONDS = STRATEGY_REVIEW_AUDIO_MAX_SECONDS;
 export const FREE_TABLE_VIDEO_MAX_BYTES = STRATEGY_VIDEO_MAX_BYTES;
 export const FREE_TABLE_VIDEO_MAX_SECONDS = STRATEGY_VIDEO_MAX_SECONDS;
+export const FREE_TABLE_IMAGE_MIME_TYPES = Object.freeze(["image/webp", "image/png", "image/jpeg"]);
 
 const TRANSFER_ID_PATTERN = /^ft_[a-f0-9]{24}$/;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const MEDIA_KINDS = new Set(["image", "audio", "video"]);
 const MEDIA_MIMES = Object.freeze({
-  image: new Set(["image/webp"]),
+  image: new Set(FREE_TABLE_IMAGE_MIME_TYPES),
   audio: new Set(["audio/wav"]),
   video: new Set(["video/webm", "video/mp4"]),
 });
@@ -82,6 +84,127 @@ function declaredDurationForKind(kind, value) {
   return duration;
 }
 
+function checkedImageDimensions(width, height) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error("画像の寸法を確認できませんでした。");
+  }
+  if (width > FREE_TABLE_IMAGE_MAX_SIDE || height > FREE_TABLE_IMAGE_MAX_SIDE) {
+    throw new Error(`画像は長辺${FREE_TABLE_IMAGE_MAX_SIDE}px以内にしてください。`);
+  }
+  return { width, height };
+}
+
+function pngCrc32(bytes, start, end) {
+  let crc = 0xffffffff;
+  for (let index = start; index < end; index += 1) {
+    crc ^= bytes[index];
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngDimensions(bytes) {
+  const invalid = () => { throw new Error("PNG画像のデータが不正です。"); };
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let dimensions = null;
+  let hasImageData = false;
+  let offset = 8;
+  while (offset + 12 <= bytes.byteLength) {
+    const length = view.getUint32(offset);
+    if (length > bytes.byteLength - offset - 12) invalid();
+    const kind = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+    if (!/^[A-Za-z]{4}$/.test(kind)
+        || pngCrc32(bytes, offset + 4, offset + 8 + length) !== view.getUint32(offset + 8 + length)) invalid();
+    if (offset === 8 && kind !== "IHDR") invalid();
+    if (kind === "IHDR") {
+      if (offset !== 8 || length !== 13) invalid();
+      dimensions = checkedImageDimensions(view.getUint32(offset + 8), view.getUint32(offset + 12));
+      const bitDepth = bytes[offset + 16];
+      const colorType = bytes[offset + 17];
+      const depths = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+      if (!depths[colorType]?.includes(bitDepth)
+          || bytes[offset + 18] !== 0 || bytes[offset + 19] !== 0 || bytes[offset + 20] > 1) invalid();
+    } else if (kind === "IDAT") {
+      if (length > 0) hasImageData = true;
+    } else if (kind === "IEND") {
+      if (length !== 0 || offset + 12 !== bytes.byteLength || !dimensions || !hasImageData) invalid();
+      return dimensions;
+    }
+    offset += length + 12;
+  }
+  invalid();
+}
+
+function jpegDimensions(bytes) {
+  const invalid = () => { throw new Error("JPEG画像のデータが不正です。"); };
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const frameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  let dimensions = null;
+  let hasScan = false;
+  let inScan = false;
+  let offset = 2;
+  while (offset < bytes.byteLength) {
+    if (bytes[offset] !== 0xff) {
+      if (!inScan) invalid();
+      offset += 1;
+      continue;
+    }
+    while (bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.byteLength) invalid();
+    const marker = bytes[offset++];
+    if (marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)) {
+      if (!inScan) invalid();
+      continue;
+    }
+    if (marker === 0xd9) {
+      if (!dimensions || !hasScan || offset !== bytes.byteLength) invalid();
+      return dimensions;
+    }
+    if (marker === 0xd8 || marker === 0x01 || offset + 2 > bytes.byteLength) invalid();
+    const length = view.getUint16(offset);
+    if (length < 2 || length > bytes.byteLength - offset) invalid();
+    inScan = false;
+    if (frameMarkers.has(marker)) {
+      if (dimensions || length < 11) invalid();
+      const components = bytes[offset + 7];
+      if (components < 1 || components > 4 || length !== 8 + components * 3) invalid();
+      dimensions = checkedImageDimensions(view.getUint16(offset + 5), view.getUint16(offset + 3));
+    } else if (marker === 0xda) {
+      if (!dimensions || length < 8) invalid();
+      const components = bytes[offset + 2];
+      if (components < 1 || components > 4 || length !== 6 + components * 2) invalid();
+      hasScan = true;
+      inScan = true;
+    }
+    offset += length;
+  }
+  invalid();
+}
+
+export function freeTableMediaCapabilitiesMessage({ ownerUid, sessionId }, { requestReply = true } = {}) {
+  return {
+    type: "free-table-media-capabilities",
+    protocolVersion: FREE_TABLE_MEDIA_PROTOCOL_VERSION,
+    ownerUid: assertSafeIdentifier(ownerUid, "送信者"),
+    sessionId: assertSafeIdentifier(sessionId, "自由卓"),
+    imageMimes: [...FREE_TABLE_IMAGE_MIME_TYPES],
+    requestReply: requestReply === true,
+  };
+}
+
+export function readFreeTableMediaCapabilities(message, { expectedOwnerUid, expectedSessionId } = {}) {
+  if (!expectedOwnerUid || !expectedSessionId
+      || message?.type !== "free-table-media-capabilities"
+      || message.protocolVersion !== FREE_TABLE_MEDIA_PROTOCOL_VERSION
+      || message.ownerUid !== expectedOwnerUid || message.sessionId !== expectedSessionId
+      || !Array.isArray(message.imageMimes) || message.imageMimes.length > FREE_TABLE_IMAGE_MIME_TYPES.length
+      || message.imageMimes.some((mime) => !MEDIA_MIMES.image.has(mime))
+      || typeof message.requestReply !== "boolean") {
+    throw new Error("自由卓の画像受信形式を確認できませんでした。");
+  }
+  return [...new Set(message.imageMimes)];
+}
+
 export function verifyFreeTableMediaBytes(value, {
   kind,
   mime,
@@ -101,8 +224,14 @@ export function verifyFreeTableMediaBytes(value, {
   const declaredDuration = declaredDurationForKind(normalizedKind, duration);
 
   if (normalizedKind === "image") {
-    strategyReviewWebpDimensions(bytes);
-    return { mime: "image/webp", duration: 0 };
+    const actualMime = onlineImageMimeFromBytes(bytes);
+    if (!actualMime || actualMime !== declaredMime) {
+      throw new Error("画像の申告形式と実データが一致しません（WebP / PNG / JPEG）。");
+    }
+    if (actualMime === "image/webp") strategyReviewWebpDimensions(bytes);
+    else if (actualMime === "image/png") pngDimensions(bytes);
+    else jpegDimensions(bytes);
+    return { mime: actualMime, duration: 0 };
   }
   if (normalizedKind === "audio") {
     const actualDuration = strategyReviewWavDuration(bytes);
@@ -410,6 +539,7 @@ export async function sendFreeTableMedia(channel, asset, metadata, {
   waitForBuffer = waitForFreeTableMediaBuffer,
   isActive = () => true,
   onProgress = () => {},
+  peerImageMimes = ["image/webp"],
 } = {}) {
   if (!channel || channel.readyState !== "open") throw new Error("自由卓のP2P接続が完了していません。");
   const normalizedChunkBytes = Math.floor(Number(chunkBytes));
@@ -419,6 +549,10 @@ export async function sendFreeTableMedia(channel, asset, metadata, {
     throw new Error("自由卓メディアのチャンクサイズが不正です。");
   }
   const { transfer, buffer } = await createOutgoingFreeTableMediaTransfer(asset, metadata);
+  if (transfer.kind === "image" && transfer.mime !== "image/webp"
+      && (!Array.isArray(peerImageMimes) || !peerImageMimes.includes(transfer.mime))) {
+    throw new Error("相手がこの画像形式を受け取れるか確認できませんでした。少し待って再度お試しください。解消しない場合は、二人ともページを再読み込みして自由卓に入り直してください。");
+  }
   let started = false;
   let ended = false;
   try {

@@ -1,0 +1,92 @@
+{
+  "date": "2026-09-24",
+  "baselineCommit": "f9c8c239e8e67533abece9cd0caecc105a07da64",
+  "deploymentScope": "hosting",
+  "cacheMarker": "player-recovery-20260924-v1",
+  "mediaImportMarker": "free-table-image-fallback-v2",
+  "validation": {
+    "nodeVersion": "22.23.2",
+    "fullCheck": {
+      "command": "npm run check",
+      "tests": 1545,
+      "passed": 1520,
+      "failed": 0,
+      "skipped": 25,
+      "skipReason": "Emulator or explicitly opt-in integration suites"
+    },
+    "realtimeEmulator": {
+      "host": "127.0.0.1:9411",
+      "project": "demo-strategy-recovery-regression",
+      "tests": 6,
+      "passed": 6,
+      "failed": 0,
+      "files": [
+        "strategy-matchmaking-recovery-rules-emulator.test.js",
+        "strategy-public-presence-rules-emulator.test.js"
+      ]
+    },
+    "syntax": "passed for all four changed JavaScript modules",
+    "gitDiffCheck": "passed",
+    "browserMedia": {
+      "testedAt": "2026-09-24T13:14:00.943Z",
+      "browser": "Chrome 153 / Codex in-app browser / Windows",
+      "fixture": "functions/test/fixtures/free-table-media-browser.html",
+      "transport": "Two real RTCPeerConnection instances on the same browser; no STUN/TURN or Firebase",
+      "sender": "sendFreeTableMedia with received peer capability control",
+      "cases": [
+        {
+          "requestedMime": "image/png",
+          "actualMime": "image/png",
+          "sentBytes": 392,
+          "receivedBytes": 392,
+          "sha256": "1f2c58ed295a68faaba01c963dd08444e78866bf2e12c76576248fbde803f457",
+          "decodedWidth": 96,
+          "decodedHeight": 64,
+          "pass": true
+        },
+        {
+          "requestedMime": "image/jpeg",
+          "actualMime": "image/jpeg",
+          "sentBytes": 809,
+          "receivedBytes": 809,
+          "sha256": "0a87fc4d2e67dc03ec513a4dfc182f3ce2e35a2cc3f9b63b1aa84a233eb7a40e",
+          "decodedWidth": 96,
+          "decodedHeight": 64,
+          "pass": true
+        },
+        {
+          "requestedMime": "image/webp",
+          "actualMime": "image/webp",
+          "sentBytes": 608,
+          "receivedBytes": 608,
+          "sha256": "f3be4b9c02a6da5625c8eb75aefd7c44af8c5f1b77aed3611d3c4fa9af05a9b4",
+          "decodedWidth": 96,
+          "decodedHeight": 64,
+          "pass": true
+        }
+      ],
+      "pass": true,
+      "physicalIPhoneBraveVerified": false
+    },
+    "independentReview": {
+      "normalSession": "implemented and reviewed",
+      "strategy": "no remaining P1/P2 findings",
+      "freeTable": "no remaining P1/P2 findings"
+    }
+  },
+  "sourceHashes": {
+    "index.html": "464dfd36826d41b8b2d229dc1425f3da45cb96fe9161a78d38731bcc892933fd",
+    "strategy.js": "784a4c0ed427fd1a48ea55bc1e83181c78766a8caf4aed9d1b43999deb664c65",
+    "online.js": "796381f4cf2eabbf3c9234fe977730070f1745dfd996a644ce4a3bbbfc2a7c98",
+    "free-table.js": "2d38a46e336bf1e8c4a4e2b72d037cbcebb4cfc34aeb3bf94d53085e4470f0a2",
+    "free-table-media.mjs": "185d5f754d6c13401c00f5e2669683b98e63652552d12a27f11ae46cf5688e74"
+  },
+  "production": {
+    "status": "not-yet-deployed"
+  },
+  "limitations": [
+    "Physical iPhone/Brave not tested",
+    "Internet NAT/TURN connectivity is not reproduced by the local browser fixture",
+    "Older peers must reload to receive PNG/JPEG"
+  ]
+}

@@ -182,6 +182,7 @@ let active = false;
 let state = createState();
 let lastRenderedScreen = "";
 let strategyMatchmakingGenerationCounter = 0;
+let strategyQueueDisconnectOperations = Promise.resolve();
 let resultNavigationBusy = false;
 
 const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
@@ -326,18 +327,24 @@ function createState() {
     matchmakingLaunchBusy: false,
     matchmakingLaunchGeneration: 0,
     acceptingOffer: false,
+    acceptingOfferRoomId: "",
     pendingIncomingOffer: null,
     pendingOffer: null,
     latestQueue: {},
     activeUsers: {},
     matchmakingGeneration: 0,
-    matchTimer: null,
+    queueJoinedAt: 0,
+    matchmakingConnected: false,
+    queueConnectionEpoch: 0,
+    queueRecoveryPromise: null,
+    queueRecoveryEpoch: 0,
+    queueDisconnect: null,
+    hostOfferWatch: null,
     matchScopeTimer: null,
     matchScopeAvailable: false,
     matchScopeExpanded: false,
     queueHeartbeat: null,
     offerPollTimer: null,
-    hostStatusPollTimer: null,
     matchUnsubscribers: [],
     roomUnsubscribers: [],
     disconnectHandles: [],
@@ -2968,9 +2975,123 @@ function isCurrentStrategyMatchmakingGeneration(generation) {
 }
 
 async function removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt) {
-  await runTransaction(queueEntryRef, (current) => (
-    current && Number(current.joinedAt) === Number(joinedAt) ? null : undefined
-  )).catch(() => {});
+  await runTransaction(queueEntryRef, (current) => {
+    // An unsubscribed path can have a cold SDK cache even when the server row
+    // exists. A null no-op reconciles that cache; undefined would abort locally.
+    if (current === null) return null;
+    return Number(current.joinedAt) === Number(joinedAt) ? null : undefined;
+  }).catch(() => {});
+}
+
+function strategyQueueContextIsCurrent(targetState, generation, connectionEpoch) {
+  return state === targetState && isCurrentStrategyMatchmakingGeneration(generation)
+    && (connectionEpoch === undefined || (targetState.matchmakingConnected
+      && targetState.queueConnectionEpoch === connectionEpoch));
+}
+
+function queueStrategyDisconnectOperation(operation) {
+  const pending = strategyQueueDisconnectOperations.catch(() => {}).then(operation);
+  strategyQueueDisconnectOperations = pending;
+  return pending;
+}
+
+function armStrategyQueueDisconnect(queueRef, targetState, generation, connectionEpoch) {
+  return queueStrategyDisconnectOperation(async () => {
+    if (!strategyQueueContextIsCurrent(targetState, generation, connectionEpoch)) return false;
+    const disconnect = onDisconnect(queueRef);
+    await disconnect.remove();
+    if (!strategyQueueContextIsCurrent(targetState, generation, connectionEpoch)) {
+      await disconnect.cancel().catch(() => {});
+      return false;
+    }
+    targetState.queueDisconnect = disconnect;
+    return true;
+  });
+}
+
+async function refreshStrategyMatchmakingQueue(targetState, generation) {
+  if (!strategyQueueContextIsCurrent(targetState, generation) || !targetState.matchmakingConnected) return false;
+  if (targetState.queueRecoveryPromise) {
+    const pendingEpoch = targetState.queueRecoveryEpoch;
+    const result = await targetState.queueRecoveryPromise;
+    if (strategyQueueContextIsCurrent(targetState, generation) && targetState.matchmakingConnected
+        && pendingEpoch !== targetState.queueConnectionEpoch) return refreshStrategyMatchmakingQueue(targetState, generation);
+    return result;
+  }
+  const connectionEpoch = targetState.queueConnectionEpoch;
+  const joinedAt = targetState.queueJoinedAt;
+  const current = () => strategyQueueContextIsCurrent(targetState, generation, connectionEpoch);
+  const queueRef = ref(database, `online/strategyQueue/${targetState.uid}`);
+  const activeRef = ref(database, `online/strategyActive/${targetState.uid}`);
+  const recovery = (async () => {
+    const [queueSnapshot, activeSnapshot] = await Promise.all([get(queueRef), get(activeRef)]);
+    if (!current()) return false;
+    const queue = queueSnapshot.val();
+    // A different attempt may own this UID now. Never replace its queue entry.
+    if (queue && Number(queue.joinedAt) !== joinedAt) return false;
+    // Acceptance removes the queue before the client enters the room. Recreating
+    // it here would race that transition; the offer/room listener owns recovery.
+    if (activeSnapshot.exists()) return false;
+    if (!queue && (targetState.pendingOffer || targetState.acceptingOffer || targetState.matchingBusy)) return false;
+    if (!targetState.queueDisconnect) {
+      if (!await armStrategyQueueDisconnect(queueRef, targetState, generation, connectionEpoch)) return false;
+    }
+    const result = await runTransaction(queueRef, (value) => {
+      if (!current()) return;
+      if (value) {
+        if (Number(value.joinedAt) !== joinedAt || value.uid !== targetState.uid) return;
+        // Preserve offering-v2 and roomId when the server reserves this queue.
+        return { ...value, lastSeen: Date.now() };
+      }
+      if (activeSnapshot.exists() || targetState.pendingOffer || targetState.acceptingOffer || targetState.matchingBusy) return;
+      return {
+        protocolVersion: STRATEGY_PROTOCOL_VERSION,
+        uid: targetState.uid,
+        ratingPreference: targetState.imagePreference,
+        allowPreferenceMismatch: targetState.matchScopeExpanded,
+        joinedAt,
+        lastSeen: Date.now(),
+        state: STRATEGY_QUEUE_WAITING_STATE,
+      };
+    }, { applyLocally: false });
+    if (!current()) {
+      if (!strategyQueueContextIsCurrent(targetState, generation)) {
+        await removeStrategyQueueEntryIfCurrent(queueRef, joinedAt);
+      }
+      return false;
+    }
+    if (!result.committed) return false;
+    // A remote acceptance can still win after the preflight read. Matching on
+    // the server checks strategyActive before considering this queue, and the
+    // existing offer/room path removes our entry when it enters the active room.
+    targetState.latestQueue = { [targetState.uid]: result.snapshot.val() };
+    return true;
+  })();
+  targetState.queueRecoveryPromise = recovery;
+  targetState.queueRecoveryEpoch = connectionEpoch;
+  try {
+    return await recovery;
+  } finally {
+    if (targetState.queueRecoveryPromise === recovery) targetState.queueRecoveryPromise = null;
+  }
+}
+
+function watchStrategyMatchmakingConnection(targetState, generation) {
+  targetState.matchUnsubscribers.push(onValue(ref(database, ".info/connected"), (snapshot) => {
+    if (!strategyQueueContextIsCurrent(targetState, generation)) return;
+    const connected = snapshot.val() === true;
+    if (targetState.matchmakingConnected === connected) return;
+    targetState.matchmakingConnected = connected;
+    targetState.queueConnectionEpoch += 1;
+    if (!connected) {
+      // onDisconnect registrations run once; the next connection needs its own.
+      targetState.queueDisconnect = null;
+      return;
+    }
+    refreshStrategyMatchmakingQueue(targetState, generation)
+      .then(() => { if (strategyQueueContextIsCurrent(targetState, generation)) return attemptToHost(); })
+      .catch((error) => { if (strategyQueueContextIsCurrent(targetState, generation)) handleRecoverableError(error); });
+  }, (error) => { if (strategyQueueContextIsCurrent(targetState, generation)) handleRecoverableError(error); }));
 }
 
 async function beginMatchmaking() {
@@ -2982,7 +3103,9 @@ async function beginMatchmaking() {
   if (!state.uid || !state.imagePreference) return;
   const joinedAt = Date.now();
   const generation = ++strategyMatchmakingGenerationCounter;
+  const targetState = state;
   state.matchmakingGeneration = generation;
+  state.queueJoinedAt = joinedAt;
   state.matchScopeAvailable = false;
   state.matchScopeExpanded = false;
   state.screen = "matching";
@@ -3022,14 +3145,10 @@ async function beginMatchmaking() {
     await removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt);
     return;
   }
-  const disconnect = onDisconnect(queueEntryRef);
-  await disconnect.remove();
-  if (!isCurrentStrategyMatchmakingGeneration(generation)) {
-    await disconnect.cancel().catch(() => {});
+  if (!await armStrategyQueueDisconnect(queueEntryRef, targetState, generation)) {
     await removeStrategyQueueEntryIfCurrent(queueEntryRef, joinedAt);
     return;
   }
-  state.disconnectHandles.push(disconnect);
   if (state.imagePreference !== "both") {
     state.matchScopeTimer = window.setTimeout(() => {
       if (!isCurrentStrategyMatchmakingGeneration(generation) || state.matchScopeExpanded) return;
@@ -3038,19 +3157,25 @@ async function beginMatchmaking() {
     }, MATCH_SCOPE_EXPAND_DELAY_MS);
   }
   state.queueHeartbeat = window.setInterval(() => {
-    update(queueEntryRef, { lastSeen: Date.now() })
-      .then(() => attemptToHost(state.latestQueue))
-      .catch(() => {});
+    refreshStrategyMatchmakingQueue(targetState, generation)
+      .then(() => { if (strategyQueueContextIsCurrent(targetState, generation)) return attemptToHost(); })
+      .catch((error) => { if (strategyQueueContextIsCurrent(targetState, generation)) handleRecoverableError(error); });
   }, HEARTBEAT_MS);
-  state.matchUnsubscribers.push(onValue(offersRef, processIncomingOffers, handleRecoverableError));
+  state.matchUnsubscribers.push(onValue(offersRef, (snapshot) => {
+    if (strategyQueueContextIsCurrent(targetState, generation)) processIncomingOffers(snapshot);
+  }, handleRecoverableError));
   state.offerPollTimer = window.setInterval(() => {
-    if (!active || state.screen !== "matching" || state.roomId) return;
-    get(offersRef).then(processIncomingOffers).catch(handleRecoverableError);
+    if (!strategyQueueContextIsCurrent(targetState, generation)) return;
+    get(offersRef).then((snapshot) => {
+      if (strategyQueueContextIsCurrent(targetState, generation)) processIncomingOffers(snapshot);
+    }).catch(handleRecoverableError);
   }, 1500);
   state.matchUnsubscribers.push(onValue(queueEntryRef, (snapshot) => {
+    if (!strategyQueueContextIsCurrent(targetState, generation)) return;
     state.latestQueue = snapshot.exists() ? { [state.uid]: snapshot.val() } : {};
     attemptToHost().catch(handleRecoverableError);
   }));
+  watchStrategyMatchmakingConnection(targetState, generation);
 }
 
 function processIncomingOffers(snapshot) {
@@ -3123,7 +3248,7 @@ function findPreferredMatchPair(waiting) {
 }
 
 async function attemptToHost() {
-  if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer) return;
+  if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer || state.queueRecoveryPromise) return;
   await createOffer();
 }
 
@@ -3138,6 +3263,78 @@ async function safetyPlayerRoomRecord(roomId) {
   const player = await playerRoomRecord(roomId);
   state.safetyPlayerRecords.set(roomId, { player, salt: state.weaknessSalt });
   return player;
+}
+
+function stopStrategyOfferWatch(watch) {
+  if (!watch) return;
+  watch.stopped = true;
+  watch.unsubscribe?.();
+  watch.unsubscribe = null;
+  window.clearInterval(watch.pollTimer);
+  window.clearTimeout(watch.expireTimer);
+  watch.pollTimer = null;
+  watch.expireTimer = null;
+}
+
+function strategyOfferWatchIsCurrent(watch) {
+  return watch && strategyQueueContextIsCurrent(watch.targetState, watch.generation)
+    && watch.targetState.hostOfferWatch === watch
+    && watch.targetState.pendingOffer?.roomId === watch.roomId;
+}
+
+function finishStrategyOffer(watch) {
+  if (!strategyOfferWatchIsCurrent(watch)) return;
+  stopStrategyOfferWatch(watch);
+  watch.targetState.hostOfferWatch = null;
+  watch.targetState.pendingOffer = null;
+  watch.targetState.safetyProposal = null;
+}
+
+function watchStrategyOffer(roomId, targetState, generation) {
+  stopStrategyOfferWatch(targetState.hostOfferWatch);
+  const watch = { roomId, targetState, generation, stopped: false, entering: false,
+    unsubscribe: null, pollTimer: null, expireTimer: null, reconciliation: null };
+  targetState.hostOfferWatch = watch;
+  const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
+  const current = () => strategyOfferWatchIsCurrent(watch) && !watch.stopped;
+  const handleStatus = async (snapshot) => {
+    if (!current()) return;
+    if (["expired", "closed", "blocked"].includes(snapshot.val())) {
+      finishStrategyOffer(watch);
+    } else if (snapshot.val() === "active" && !watch.entering) {
+      watch.entering = true;
+      try {
+        await safetyPlayerRoomRecord(roomId);
+        if (current()) await enterRoom(roomId, generation);
+      } finally {
+        watch.entering = false;
+      }
+    }
+  };
+  const handleError = (error) => {
+    if (!current()) return;
+    const permissionDenied = /permission[_ -]denied/i.test(`${error?.code || ""} ${error?.message || ""}`);
+    if (permissionDenied) {
+      // A revoked offer grant intentionally makes status unreadable. Confirm the
+      // terminal state through the server; an active room/read failure must surface.
+      expireOffer(roomId).catch((failure) => {
+        if (strategyQueueContextIsCurrent(targetState, generation)) handleRecoverableError(failure);
+      });
+    } else {
+      handleRecoverableError(error);
+    }
+  };
+  watch.pollTimer = window.setInterval(() => {
+    if (current()) get(statusRef).then(handleStatus).catch(handleError);
+  }, 1500);
+  watch.expireTimer = window.setTimeout(() => {
+    if (current()) expireOffer(roomId).catch((error) => {
+      if (strategyQueueContextIsCurrent(targetState, generation)) handleRecoverableError(error);
+    });
+  }, MATCH_TIMEOUT_MS);
+  const unsubscribe = onValue(statusRef, (snapshot) => handleStatus(snapshot).catch(handleError), handleError);
+  if (watch.stopped) unsubscribe();
+  else watch.unsubscribe = unsubscribe;
 }
 
 async function createOffer() {
@@ -3169,23 +3366,7 @@ async function createOffer() {
     }
     if (response.status !== "hosted") return;
     state.pendingOffer = { roomId, targetUid: response.opponentUid };
-    const statusRef = ref(database, `online/strategyRooms/${roomId}/status`);
-    const handleStatus = async (snapshot) => {
-      if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
-      if (snapshot.val() === "active") {
-        await safetyPlayerRoomRecord(roomId);
-        await enterRoom(roomId, generation);
-      } else if (["expired", "closed", "blocked"].includes(snapshot.val())) {
-        state.pendingOffer = null;
-        state.safetyProposal = null;
-      }
-    };
-    state.matchUnsubscribers.push(onValue(statusRef, (snapshot) => handleStatus(snapshot).catch(handleRecoverableError), handleRecoverableError));
-    state.hostStatusPollTimer = window.setInterval(() => {
-      if (!active || state.screen !== "matching" || state.roomId || state.pendingOffer?.roomId !== roomId) return;
-      get(statusRef).then(handleStatus).catch(handleRecoverableError);
-    }, 1500);
-    state.matchTimer = window.setTimeout(() => expireOffer(roomId).catch(handleRecoverableError), MATCH_TIMEOUT_MS);
+    watchStrategyOffer(roomId, targetState, generation);
   } finally {
     if (state === targetState) {
       state.matchingBusy = false;
@@ -3196,12 +3377,39 @@ async function createOffer() {
 
 async function expireOffer(roomId) {
   if (state.roomId || state.pendingOffer?.roomId !== roomId) return;
-  const generation = state.matchmakingGeneration;
-  const response = await requestSafety("strategy_expire", { roomId });
-  if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
-  if (response.status === "active") { await enterRoom(roomId, generation); return; }
-  state.pendingOffer = null;
-  state.safetyProposal = null;
+  const watch = state.hostOfferWatch;
+  if (!strategyOfferWatchIsCurrent(watch) || watch.roomId !== roomId) return;
+  if (watch.reconciliation) return watch.reconciliation;
+  stopStrategyOfferWatch(watch);
+  const reconciliation = (async () => {
+    try {
+      const response = await requestSafety("strategy_expire", { roomId });
+      if (!strategyOfferWatchIsCurrent(watch)) return;
+      if (response.roomId !== roomId) throw new Error("対戦の終了状態を確認できませんでした。");
+      if (response.status === "active") {
+        await safetyPlayerRoomRecord(roomId);
+        if (strategyOfferWatchIsCurrent(watch)) await enterRoom(roomId, watch.generation);
+        return;
+      }
+      if (!["expired", "closed", "blocked"].includes(response.status)) throw new Error("対戦の終了状態を確認できませんでした。");
+      finishStrategyOffer(watch);
+    } catch (error) {
+      if (strategyOfferWatchIsCurrent(watch)) {
+        // Do not resubscribe immediately to a genuinely forbidden active room:
+        // its immediate error callback would cause an unbounded callable loop.
+        watch.expireTimer = window.setTimeout(() => {
+          if (strategyOfferWatchIsCurrent(watch)) expireOffer(roomId).catch((failure) => {
+            if (strategyOfferWatchIsCurrent(watch)) handleRecoverableError(failure);
+          });
+        }, MATCH_TIMEOUT_MS);
+      }
+      throw error;
+    } finally {
+      watch.reconciliation = null;
+    }
+  })();
+  watch.reconciliation = reconciliation;
+  return reconciliation;
 }
 
 async function drainIncomingOffers() {
@@ -3219,6 +3427,7 @@ async function acceptOffer(roomId, offer) {
   const generation = state.matchmakingGeneration;
   const targetState = state;
   state.acceptingOffer = true;
+  state.acceptingOfferRoomId = roomId;
   try {
     const player = await safetyPlayerRoomRecord(roomId);
     if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
@@ -3231,7 +3440,10 @@ async function acceptOffer(roomId, offer) {
     await freezeMatchAchievementShowcases(roomId);
     await enterRoom(roomId, generation);
   } finally {
-    if (state === targetState) state.acceptingOffer = false;
+    if (state === targetState && state.acceptingOfferRoomId === roomId) {
+      state.acceptingOffer = false;
+      state.acceptingOfferRoomId = "";
+    }
   }
 }
 
@@ -3248,7 +3460,6 @@ function playStrategyMatchReadySound(roomId) {
 
 async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
-  window.clearTimeout(state.matchTimer);
   const snapshot = await get(ref(database, `online/strategyRooms/${roomId}`));
   const room = snapshot.val();
   if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
@@ -5559,29 +5770,44 @@ async function leaveToFreeTable() {
 }
 
 async function cleanupMatchmaking(keepActive) {
+  const targetState = state;
+  const uid = targetState.uid;
+  const joinedAt = targetState.queueJoinedAt;
+  const queueRecovery = targetState.queueRecoveryPromise;
+  const pendingOffer = targetState.pendingOffer;
+  const ownedOfferRoomId = pendingOffer?.roomId || targetState.acceptingOfferRoomId
+    || targetState.pendingIncomingOffer?.roomId || targetState.safetyProposal?.roomId;
+  const ownedActiveRoomId = targetState.roomId || ownedOfferRoomId;
   state.matchmakingGeneration = ++strategyMatchmakingGenerationCounter;
-  window.clearTimeout(state.matchTimer);
+  state.matchmakingConnected = false;
+  state.queueConnectionEpoch += 1;
+  stopStrategyOfferWatch(state.hostOfferWatch);
+  state.hostOfferWatch = null;
   window.clearTimeout(state.matchScopeTimer);
   window.clearInterval(state.queueHeartbeat);
   window.clearInterval(state.offerPollTimer);
-  window.clearInterval(state.hostStatusPollTimer);
-  state.matchTimer = null;
   state.matchScopeTimer = null;
   state.matchScopeAvailable = false;
   state.matchScopeExpanded = false;
   state.queueHeartbeat = null;
   state.offerPollTimer = null;
-  state.hostStatusPollTimer = null;
   state.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
-  if (!state.uid) return;
-  const removals = [remove(ref(database, `online/strategyQueue/${state.uid}`))];
-  if (!keepActive) removals.push(remove(ref(database, `online/strategyActive/${state.uid}`)));
-  if (state.pendingOffer && !keepActive) removals.push(requestSafety("strategy_expire", { roomId: state.pendingOffer.roomId }));
-  await Promise.allSettled(removals);
+  const queueDisconnect = state.queueDisconnect;
+  state.queueDisconnect = null;
+  const cancelQueueDisconnect = queueStrategyDisconnectOperation(() => queueDisconnect?.cancel().catch(() => {}));
   state.pendingOffer = null;
   state.pendingIncomingOffer = null;
   state.safetyProposal = null;
+  if (!uid) return;
+  // Finish any in-flight repair before a subsequent attempt can register its
+  // onDisconnect callback on the same Firebase connection and UID path.
+  await Promise.allSettled([cancelQueueDisconnect, queueRecovery]);
+  const removals = [removeStrategyQueueEntryIfCurrent(ref(database, `online/strategyQueue/${uid}`), joinedAt)];
+  if (!keepActive && ownedActiveRoomId) removals.push(runTransaction(ref(database, `online/strategyActive/${uid}`),
+    (value) => value === null || value === ownedActiveRoomId ? null : undefined));
+  if (ownedOfferRoomId && !keepActive) removals.push(requestSafety("strategy_expire", { roomId: ownedOfferRoomId }));
+  await Promise.allSettled(removals);
 }
 
 async function cleanupOnlineResources(keepActive) {

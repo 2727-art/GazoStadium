@@ -29,6 +29,7 @@ import {
 } from "./firebase-services.js?v=app-check-v3-remove-royale-v1-retire-team-v1-ai-text-training-v1-roulette-training-v1";
 import {
   FREE_TABLE_AUDIO_MAX_SECONDS,
+  FREE_TABLE_IMAGE_MAX_BYTES,
   FREE_TABLE_IMAGE_MAX_SIDE,
   FREE_TABLE_MEDIA_CHANNEL_LABEL,
   FREE_TABLE_VIDEO_MAX_BYTES,
@@ -38,12 +39,14 @@ import {
   createIncomingFreeTableMediaTransfer,
   createLocalFreeTableMediaResource,
   finishIncomingFreeTableMediaTransfer,
+  freeTableMediaCapabilitiesMessage,
   freeTableMediaEndStatus,
   isFreeTableMediaCancelFor,
+  readFreeTableMediaCapabilities,
   releaseFreeTableMediaResource,
   releaseFreeTableMediaResources,
   sendFreeTableMedia,
-} from "./free-table-media.mjs?v=free-table-media-v1";
+} from "./free-table-media.mjs?v=free-table-image-fallback-v2";
 import {
   createFreeTableAmbienceController,
 } from "./free-table-ambience.mjs?v=free-table-ambience-v2";
@@ -273,6 +276,7 @@ function createFreeTableState() {
     deferredSignals: [],
     mediaChannel: null,
     mediaReady: false,
+    peerImageMimes: [],
     incomingMedia: null,
     incomingMediaTimer: null,
     incomingMediaChain: Promise.resolve(),
@@ -3872,6 +3876,7 @@ function resetPeerTransport({
   state.mediaGeneration += 1;
   state.mediaReady = false;
   state.mediaProgress = 0;
+  state.peerImageMimes = [];
   state.incomingMedia = null;
   if (state.incomingMediaTimer) window.clearTimeout(state.incomingMediaTimer);
   state.incomingMediaTimer = null;
@@ -4455,6 +4460,7 @@ function configureMediaDataChannel(channel, {
     state.incomingMediaChain = Promise.resolve();
     state.mediaSendChain = Promise.resolve();
   }
+  if (previousChannel !== channel) state.peerImageMimes = [];
   state.mediaChannel = channel;
   const mediaGeneration = state.mediaGeneration;
   const contextIsCurrent = () => (
@@ -4466,6 +4472,7 @@ function configureMediaDataChannel(channel, {
   const handleContextError = (error) => {
     if (contextIsCurrent()) handleSessionAuxiliaryError(error);
   };
+  let capabilitiesAnnounced = false;
   const markChannelReady = () => {
     if (!contextIsCurrent()) return;
     const wasReady = state.mediaReady;
@@ -4473,6 +4480,16 @@ function configureMediaDataChannel(channel, {
     state.mediaReady = true;
     clearPeerRecoveryTimer();
     state.peerRecoveryAttempts = 0;
+    if (!capabilitiesAnnounced) {
+      // Old peers ignore this optional control. Requests receive one reply so
+      // an initial announcement sent before their handler was ready is recoverable.
+      try {
+        channel.send(JSON.stringify(freeTableMediaCapabilitiesMessage({ ownerUid: state.uid, sessionId })));
+        capabilitiesAnnounced = true;
+      } catch (error) {
+        handleContextError(error);
+      }
+    }
     if (!wasReady) {
       reportFreeTableP2pDiagnostic("channel_open", peer, {
         sessionId,
@@ -4490,6 +4507,7 @@ function configureMediaDataChannel(channel, {
     if (!contextIsCurrent()) return;
     state.mediaGeneration += 1;
     state.mediaReady = false;
+    state.peerImageMimes = [];
     state.incomingMedia = null;
     if (state.incomingMediaTimer) window.clearTimeout(state.incomingMediaTimer);
     state.incomingMediaTimer = null;
@@ -4639,6 +4657,19 @@ async function handleMediaChannelMessage(data, channel, {
   if (data.length > FREE_TABLE_CONTROL_MAX_CHARS) throw new Error("自由卓のP2Pメッセージが長すぎます。");
   const message = JSON.parse(data);
   if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error("自由卓のP2Pメッセージが不正です。");
+  if (message.type === "free-table-media-capabilities") {
+    state.peerImageMimes = readFreeTableMediaCapabilities(message, {
+      expectedOwnerUid: state.opponentUid,
+      expectedSessionId: sessionId,
+    });
+    if (message.requestReply === true && channel.readyState === "open") {
+      channel.send(JSON.stringify(freeTableMediaCapabilitiesMessage(
+        { ownerUid: state.uid, sessionId },
+        { requestReply: false },
+      )));
+    }
+    return;
+  }
   if (message.type === "free-table-media-start") {
     if (!sessionAllowsMediaKind(message.kind)) {
       throw new Error("この部屋では、そのメディアを受け取れません。");
@@ -4854,12 +4885,17 @@ async function prepareMediaAsset(file, kind) {
   if (!file) throw new Error("貼るファイルを選択してください。");
   if (kind === "image") {
     if (typeof shared()?.processImageFile === "function") {
-      const item = await shared().processImageFile(file, 0, {
-        maxSide: FREE_TABLE_IMAGE_MAX_SIDE,
-        quality: 0.82,
-      });
-      if (item?.url) URL.revokeObjectURL(item.url);
-      return { kind: "image", blob: item.blob, mime: item.blob?.type || "image/webp", duration: 0 };
+      // PNG fallbacks can exceed the byte cap at 1280px. Retry from the original
+      // file at bounded sizes; 640px is the shared processor's minimum size.
+      for (const maxSide of [FREE_TABLE_IMAGE_MAX_SIDE, 960, 640]) {
+        const item = await shared().processImageFile(file, 0, { maxSide, quality: 0.82 });
+        if (item?.url) URL.revokeObjectURL(item.url);
+        if (!item?.blob) throw new Error("画像を変換できませんでした。");
+        if (item.blob.size <= FREE_TABLE_IMAGE_MAX_BYTES) {
+          return { kind: "image", blob: item.blob, mime: item.blob.type || "image/webp", duration: 0 };
+        }
+      }
+      throw new Error("画像を縮小しても約1.5MBを超えています。別の画像を選択してください。");
     }
     return { kind: "image", blob: file, mime: file.type, duration: 0 };
   }
@@ -4924,6 +4960,7 @@ async function handleMediaFile(event) {
       const resource = await createLocalFreeTableMediaResource(asset, metadata);
       try {
         await sendFreeTableMedia(channel, asset, metadata, {
+          peerImageMimes: state.peerImageMimes,
           isActive: () => contextIsCurrent()
             && isLiveSession()
             && sessionAllowsMediaKind(kind)
@@ -5450,6 +5487,7 @@ function cleanupSession({ keepIdentity = false, preserveOnDisconnect = false } =
   }
   state.mediaChannel = null;
   state.mediaReady = false;
+  state.peerImageMimes = [];
   state.incomingMediaChain = Promise.resolve();
   state.mediaSendChain = Promise.resolve();
   state.presenceRearmChain = Promise.resolve();

@@ -8135,23 +8135,6 @@ function soloRoomPresencePath(roomId, uid, sessionId) {
   return `online/rooms/${roomId}/presenceV2/${uid}/${sessionId}`;
 }
 
-async function legacySoloActiveRoomIsLive(uid) {
-  const activeSnapshot = await get(ref(database, `online/active/${uid}`));
-  if (!activeSnapshot.exists()) return false;
-  const activeValue = activeSnapshot.val();
-  const roomId = String(
-    typeof activeValue === "string" ? activeValue : activeValue?.roomId || "",
-  );
-  if (!/^[-0-9A-Z_a-z]{20}$/.test(roomId)) return false;
-  const roomSnapshot = await get(ref(database, `online/rooms/${roomId}`));
-  const room = roomSnapshot.val();
-  if (!room || room.members?.[uid] !== true || room.destroyed) return false;
-  if (room.status === "offered") {
-    return Number(room.createdAt || 0) >= serverNow() - 60_000;
-  }
-  return room.status === "active" && room.presence?.[uid]?.online !== false;
-}
-
 async function confirmSameSessionOwnerGone(expectedState) {
   if (!soloSessionChannel) return false;
   const probeId = createOnlineSessionToken(window.crypto);
@@ -8261,48 +8244,53 @@ async function claimSoloSessionLease(
     }
     return true;
   };
-  let response;
-  try {
-    response = await requestWithLegacyQueueWait(false);
-  } catch (error) {
-    if (!contextIsCurrent()) return false;
-    const reason = String(error?.details?.reason || "");
-    if (reason !== "same-session-owned-by-another-page"
-        || !await confirmSameSessionOwnerGone(expectedState)) {
-      if (reason === "occupied" || await legacySoloActiveRoomIsLive(expectedState.uid)) {
-        showToast("別のタブまたは端末で通常版1on1の対戦中です。");
-      } else {
-        showToast("通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
-      }
-      return false;
-    }
-    response = await requestWithLegacyQueueWait(true);
-  }
-  if (await abandonStaleResponse(response)) return false;
-  if (response?.data?.claimed === false) {
-    const reason = String(response.data.reason || "");
-    if (reason === "same-session-owned"
-        && await confirmSameSessionOwnerGone(expectedState)) {
-      response = await requestWithLegacyQueueWait(true);
+  const notifyClaimFailure = (reason, error = null) => {
+    const code = String(error?.code || "").replace(/^functions\//, "")
+      .replace(/_/g, "-").toLowerCase();
+    let message;
+    if (reason === "occupied") {
+      message = "通常版1on1の接続がまだ使用中です。対戦中の画面があればそちらに戻り、終了済みの場合は少し待ってからお試しください。";
+    } else if (["same-session-owned", "same-session-owned-by-another-page"].includes(reason)) {
+      message = "前の通常版1on1の接続が終了したことを確認できませんでした。少し待ってからもう一度お試しください。";
+    } else if (reason === "legacy-waiting") {
+      message = "前の通常版1on1の待機が残っています。待機中の画面があれば終了し、少し待ってからお試しください。";
+    } else if (reason === "client-upgrade-required") {
+      message = "通常型1on1が更新されました。ページを再読み込みしてからお試しください。";
+    } else if (["unavailable", "deadline-exceeded", "network-request-failed"].includes(code)) {
+      message = "通常版1on1に接続できませんでした。通信状態を確認し、少し待ってからもう一度お試しください。";
+    } else if (code === "permission-denied") {
+      message = "通常版1on1への接続が拒否されました。ページを再読み込みしてから、もう一度お試しください。";
+    } else if (code === "unauthenticated") {
+      message = "ログイン状態を確認できませんでした。ページを再読み込みしてから、もう一度お試しください。";
+    } else if (code === "resource-exhausted") {
+      message = "通常版1on1の操作が短時間に集中しています。少し待ってからもう一度お試しください。";
+    } else if (code === "internal") {
+      message = "通常版1on1の接続処理に失敗しました。少し待ってからもう一度お試しください。";
     } else {
-      showToast(reason === "legacy-waiting"
-        ? "前の通常版1on1の待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
-        : reason === "client-upgrade-required"
-          ? "通常型1on1が更新されました。ページを再読み込みしてからお試しください。"
-        : reason === "occupied"
-          ? "別のタブまたは端末で通常版1on1の対戦中です。"
-          : "通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
-      return false;
+      message = "通常版1on1の接続状態を確認できませんでした。通信状態を確認してページを再読み込みし、もう一度お試しください。";
     }
-  }
-  if (await abandonStaleResponse(response)) return false;
-  if (response?.data?.claimed === false) {
-    const reason = String(response.data.reason || "");
-    showToast(reason === "legacy-waiting"
-      ? "前の通常版1on1の待機が残っています。別のタブを閉じ、少し待ってからお試しください。"
-      : reason === "client-upgrade-required"
-        ? "通常型1on1が更新されました。ページを再読み込みしてからお試しください。"
-      : "通常版1on1は別のタブまたは端末で使用中です。そちらを閉じてからお試しください。");
+    showToast(message);
+  };
+  let response;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let requestError = null;
+    response = null;
+    try {
+      response = await requestWithLegacyQueueWait(attempt === 1);
+    } catch (error) {
+      requestError = error;
+    }
+    if (await abandonStaleResponse(response)) return false;
+    if (!requestError && response?.data?.claimed !== false) break;
+    const reason = String(requestError?.details?.reason || response?.data?.reason || "");
+    if (attempt === 0
+        && ["same-session-owned", "same-session-owned-by-another-page"].includes(reason)
+        && await confirmSameSessionOwnerGone(expectedState).catch(() => false)) {
+      if (!contextIsCurrent()) return false;
+      continue;
+    }
+    if (!contextIsCurrent()) return false;
+    notifyClaimFailure(reason, requestError);
     return false;
   }
   const lease = response?.data?.lease;
