@@ -34,6 +34,17 @@ Cloudflareの正常なTURN応答に含まれるUDP443を拒否し、有効なTCP
 
 実ブラウザーの中継専用試験は2026-09-26 14:25:52 UTCに成功。両端でrelay経路、4096バイトの往復とSHA-256一致を確認した。これは実Cloudflare応答を修正後validatorに通すローカルfixtureの検証で、本番認証付きcallableを通した試験ではない。
 
+## 本番反映結果
+
+- 実装コミット: `f1bf93797ec68ae932bd7972d2ec417417396a60`。origin/mainへpush後、Function、Hostingの順で公開した。
+- `getP2pIceServers` は2026-09-26 23:45:56 JSTに更新され、`getp2piceservers-00005-wab` がACTIVE / Node.js22。未認証要求は従来どおり401 / UNAUTHENTICATEDを返す。36関数のハッシュを公開前と比較し、変更は対象1関数のみ、ほか35関数は一致した。
+- 2026-09-26 23:47:12 JST、web.app・firebaseapp.com・anjugames.workers.devの全3経路で、通常のルートURLから参照されるHTML、online.js、P2P復旧module、session guardのローカル一致を確認した。非公開対象4パスの404を含む **24項目すべて成功**。
+- Workers経路の実ブラウザーで、ホーム→通常1on1準備→Firebase接続完了→ホーム復帰を確認した。更新後script参照、console error 0件、実対戦は開始していない。
+- 23:48:06 JST時点の更新後Functionログ15件には、正常なHTTP200応答4件、CORS応答204が4件、検証用未認証401が1件あった。`invalid_response` は0件。短時間・匿名集計であり、報告者本人の再現解消を示す観測ではない。
+- 最初のCLI実行は専用worktreeのdotenv不足でアップロード前に終了。元の公開環境にある `ANJU_PAY_LEDGER_REQUIRED=true` を、Git対象外の専用dotenvへ引き継いで成功した。
+
+詳細なハッシュ・時刻・回帰結果は `NORMAL_CONNECTION_RECOVERY_QA.json` に保存した。今回の変更は上記FunctionとHostingに限定し、Rules、対戦結果、ランキング、報酬、決済データを移行・削除していない。
+
 ## 限界
 
 iPhone／Brave実機での確認は行っていない。実ブラウザーの中継試験は使用したWindowsブラウザーと回線での結果であり、あらゆるモバイル回線を保証しない。接続準備の新しい復旧処理にはページ更新が必要。
