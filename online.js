@@ -114,7 +114,7 @@ import {
   getOnlineP2pRecoveryTimer,
   isOnlineP2pOpponentCoolingDown,
   transitionOnlineP2pRecovery,
-} from "./online-p2p-hardening.mjs?v=online-p2p-hardening-v2";
+} from "./online-p2p-hardening.mjs?v=online-connection-recovery-v3";
 import {
   ONLINE_SESSION_LEASE_DEFAULTS,
   ONLINE_SESSION_PROTOCOL_VERSION,
@@ -178,6 +178,9 @@ const FINISH_REPLY_ACK_TIMEOUT_MS = 5_000;
 const FINISH_REPLY_PROTOCOL_VERSION = 2;
 const FINISH_REPLY_ID_PATTERN = /^[a-f0-9]{32}$/;
 const SOLO_STATS_PROJECTION_VERSION = 2;
+const ONLINE_ROOM_SETUP_TIMEOUT_MS = 30_000;
+const ONLINE_CLEANUP_WAIT_MS = 15_000;
+const ONLINE_CLEANUP_AUXILIARY_WAIT_MS = 3_000;
 const LEGACY_PURSUIT_LINES = [
   "その反応、見逃さない。もう一枚いく！",
   "好みは読めた。ここからが本命だ！",
@@ -665,6 +668,10 @@ function createOnlineState() {
     soloSessionCancelPromise: null,
     soloSessionCancelRoomId: "",
     soloSessionCancelResult: null,
+    soloSessionCleanupPending: false,
+    soloSessionOwnershipLost: false,
+    soloSessionAbortRoomId: "",
+    roomSetupAttempt: null,
     playerIndex: 0,
     players: [],
     round: 1,
@@ -8318,6 +8325,9 @@ async function claimSoloSessionLease(
   expectedState.soloSessionCancelPromise = null;
   expectedState.soloSessionCancelRoomId = "";
   expectedState.soloSessionCancelResult = null;
+  expectedState.soloSessionOwnershipLost = false;
+  expectedState.soloSessionCleanupPending = false;
+  expectedState.soloSessionAbortRoomId = "";
   scheduleSoloSessionLeaseHeartbeat(expectedState);
   return true;
 }
@@ -8468,33 +8478,82 @@ async function releaseSoloSessionLease(expectedState = state) {
   if (expectedState.soloSessionReleasePromise) {
     return expectedState.soloSessionReleasePromise;
   }
-  if (expectedState.soloSessionReleaseStarted) return false;
   const hadLease = Boolean(expectedState.soloSessionLease);
   if (!hadLease || !expectedState.uid || !expectedState.clientSessionId) return false;
+  const sessionId = expectedState.clientSessionId;
+  const leaseToken = expectedState.clientLeaseToken;
+  const generation = expectedState.soloSessionGeneration;
   expectedState.soloSessionReleaseStarted = true;
+  expectedState.soloSessionOwnershipLost = false;
   clearSoloSessionHeartbeat(expectedState);
   expectedState.soloSessionLeaseHeld = false;
-  const releasePromise = (async () => {
+  const releasePromise = Promise.resolve().then(async () => {
     let released = false;
     try {
       const response = await soloSessionActionCallable({
         action: "release",
-        sessionId: expectedState.clientSessionId,
-        leaseToken: expectedState.clientLeaseToken,
-        generation: expectedState.soloSessionGeneration,
+        sessionId,
+        leaseToken,
+        generation,
       });
       released = response?.data?.released === true;
+      // A definitive lease-lost response means this old fence can no longer
+      // release a later room. It does not claim that the old room was deleted.
+      expectedState.soloSessionOwnershipLost = !released && response?.data?.reason === "lease-lost";
     } catch {
       released = false;
     } finally {
-      expectedState.soloSessionLease = null;
-      expectedState.soloSessionGeneration = 0;
-      expectedState.soloSessionFence = null;
+      if ((released || expectedState.soloSessionOwnershipLost)
+          && expectedState.clientSessionId === sessionId
+          && expectedState.clientLeaseToken === leaseToken
+          && expectedState.soloSessionGeneration === generation) {
+        expectedState.soloSessionLease = null;
+        expectedState.soloSessionGeneration = 0;
+        expectedState.soloSessionFence = null;
+      }
     }
     return released;
-  })();
+  });
   expectedState.soloSessionReleasePromise = releasePromise;
-  return releasePromise;
+  try {
+    return await releasePromise;
+  } finally {
+    if (expectedState.soloSessionReleasePromise === releasePromise) {
+      expectedState.soloSessionReleasePromise = null;
+      expectedState.soloSessionReleaseStarted = false;
+    }
+  }
+}
+
+function waitForOnlineOperation(promise, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      const error = new Error("通信処理の完了を確認できませんでした。");
+      error.code = "online-operation-timeout";
+      reject(error);
+    }, timeoutMs);
+    Promise.resolve(promise).then(resolve, reject).finally(() => window.clearTimeout(timer));
+  });
+}
+
+function showSoloCleanupPending(targetState = state) {
+  if (state !== targetState || !active) return;
+  targetState.soloSessionCleanupPending = true;
+  if (targetState.p2pRecovery) dispatchP2pRecoveryEvent("MANUAL_CANCELLED", targetState);
+  targetState.screen = "error";
+  targetState.errorMessage = "前の接続の終了を確認できていません。通信状態を確認して「もう一度試す」を押してください。確認できるまで新しい対戦は開始しません。";
+  setOnlineChrome("CONNECTION ERROR");
+  render();
+}
+
+async function retrySoloCleanupOperation(operation, confirmed) {
+  let result = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try { result = await operation(); } catch { result = null; }
+    if (confirmed(result)) return result;
+    if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  return result;
 }
 
 function isCurrentMatchmakingGeneration(generation) {
@@ -8671,24 +8730,28 @@ async function cancelSoloSessionRoomOnce(roomId, expectedState = state) {
     if (expectedState.soloSessionCancelPromise) {
       return expectedState.soloSessionCancelPromise;
     }
-    return expectedState.soloSessionCancelResult;
+    if (expectedState.soloSessionCancelResult?.cancelled === true) {
+      return expectedState.soloSessionCancelResult;
+    }
   }
   expectedState.soloSessionCancelRoomId = normalizedRoomId;
   expectedState.soloSessionCancelResult = null;
-  const cancelPromise = (async () => {
+  const request = {
+    action: "cancel",
+    sessionId: expectedState.clientSessionId,
+    leaseToken: expectedState.clientLeaseToken,
+    roomId: normalizedRoomId,
+    ...(expectedState.soloSessionAbortRoomId === normalizedRoomId ? { abort: true } : {}),
+  };
+  const cancelPromise = Promise.resolve().then(async () => {
     try {
-      const response = await soloSessionActionCallable({
-        action: "cancel",
-        sessionId: expectedState.clientSessionId,
-        leaseToken: expectedState.clientLeaseToken,
-        roomId: normalizedRoomId,
-      });
+      const response = await soloSessionActionCallable(request);
       expectedState.soloSessionCancelResult = response?.data || null;
     } catch {
       expectedState.soloSessionCancelResult = null;
     }
     return expectedState.soloSessionCancelResult;
-  })();
+  });
   expectedState.soloSessionCancelPromise = cancelPromise;
   try {
     return await cancelPromise;
@@ -8721,6 +8784,11 @@ async function armActiveReservationDisconnect(
 
 async function beginMatchmaking({ automatic = false } = {}) {
   const expectedState = state;
+  if (expectedState.soloSessionCleanupPending || expectedState.cleanupPromise
+      || expectedState.p2pCleanupPromise || expectedState.soloSessionReleasePromise) {
+    showSoloCleanupPending(expectedState);
+    return;
+  }
   expectedState.name = expectedState.name.trim().slice(0, 16);
   expectedState.imagePreference = normalizeImagePreference(expectedState.imagePreference, "");
   if (!expectedState.uid
@@ -9394,53 +9462,91 @@ async function enterRoom(roomId) {
   render();
   const cleanupPromise = cleanupMatchmaking(true);
   const roomGeneration = state.matchmakingGeneration;
-  await cleanupPromise;
+  const setupAttempt = { roomId, generation: roomGeneration, failed: false, cancelled: false, settled: false };
+  expectedState.roomSetupAttempt = setupAttempt;
   const roomContextIsCurrent = () => active
     && state === expectedState
     && state.matchmakingGeneration === roomGeneration
     && state.roomId === roomId
-    && state.screen === "connecting";
-  if (!roomContextIsCurrent()) {
-    if (state === expectedState && state.roomId === roomId) state.roomId = "";
-    await releaseReservation();
-    return;
-  }
-  await updatePublicPresence("playing");
-  if (!roomContextIsCurrent()) {
-    if (state === expectedState && state.roomId === roomId) state.roomId = "";
-    await releaseReservation();
-    return;
-  }
-  if (state.reunionMatch) {
-    soloFamiliarActionCallable({ action: "confirm_reunion", roomId })
-      .catch((error) => console.error("再会確認を保存できませんでした。", error));
-  }
+    && state.roomSetupAttempt === setupAttempt
+    && !setupAttempt.failed && !setupAttempt.cancelled;
   const roomSetupContext = captureOnlineRoomContext(expectedState, {
     generation: roomGeneration,
     roomId,
     ownUid,
     opponentUid: state.opponentUid,
   });
-  let roomListenersReady = false;
   try {
-    roomListenersReady = await setupRoomListeners(roomSetupContext);
+    await waitForOnlineOperation((async () => {
+      await cleanupPromise;
+      if (!roomContextIsCurrent()) return;
+      await updatePublicPresence("playing");
+      if (!roomContextIsCurrent()) return;
+      if (state.reunionMatch) {
+        soloFamiliarActionCallable({ action: "confirm_reunion", roomId })
+          .catch((error) => console.error("再会確認を保存できませんでした。", error));
+      }
+      const listenersReady = await setupRoomListeners(roomSetupContext);
+      if (!roomContextIsCurrent()) return;
+      if (!listenersReady) throw new Error("対戦ルームの接続準備を完了できませんでした。");
+      const peerReady = await setupPeerConnection(roomSetupContext);
+      if (!roomContextIsCurrent()) return;
+      if (!peerReady) throw new Error("P2P接続の準備を完了できませんでした。");
+    })(), ONLINE_ROOM_SETUP_TIMEOUT_MS);
+    setupAttempt.settled = true;
   } catch (error) {
-    await releaseReservation();
-    throw error;
+    if (!roomContextIsCurrent()) return;
+    if (state.channelReady || state.p2pRecovery?.channelWasOpened) {
+      setupAttempt.settled = true;
+      handleRecoverableError(error);
+      return;
+    }
+    setupAttempt.failed = true;
+    stopInitialOnlineTransport(expectedState);
+    if (!expectedState.p2pRecovery) {
+      expectedState.p2pGenerationToken = createOnlineP2pGenerationToken({
+        matchmakingGeneration: roomGeneration, roomId, sessionId: expectedState.clientSessionId,
+      });
+      expectedState.p2pRecovery = createOnlineP2pRecoveryState({
+        generationToken: expectedState.p2pGenerationToken,
+        isHost: expectedState.playerIndex === 0,
+        opponentUid: expectedState.opponentUid,
+        startedAt: Date.now(),
+        autoRequeueCount: expectedState.p2pAutoRequeueCount,
+        visible: document.visibilityState === "visible", online: navigator.onLine,
+      });
+    }
+    dispatchP2pRecoveryEvent("SETUP_FAILED", expectedState);
   }
-  if (!roomListenersReady) {
-    await releaseReservation();
-    return;
-  }
-  if (!roomContextIsCurrent()) {
-    await releaseReservation();
-    return;
-  }
-  await setupPeerConnection(roomSetupContext);
 }
 
 function isCurrentRoomSetupContext(context) {
-  return isOnlineRoomContextCurrent(context, { active, currentState: state });
+  return isOnlineRoomContextCurrent(context, { active, currentState: state })
+    && !context.expectedState.roomSetupAttempt?.failed
+    && !context.expectedState.roomSetupAttempt?.cancelled
+    && !context.expectedState.soloSessionCleanupPending;
+}
+
+function stopInitialOnlineTransport(targetState) {
+  clearP2pRecoveryTimer(targetState);
+  targetState.p2pRestartIce = null;
+  targetState.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+  targetState.roundUnsubscribe?.();
+  targetState.roundUnsubscribe = null;
+  const peer = targetState.peer;
+  const channel = targetState.channel;
+  targetState.peer = null;
+  targetState.channel = null;
+  targetState.channelReady = false;
+  if (channel) {
+    channel.onopen = channel.onclose = channel.onerror = channel.onmessage = null;
+    channel.close();
+  }
+  if (peer) {
+    peer.onicecandidate = peer.onicecandidateerror = peer.onconnectionstatechange = null;
+    peer.oniceconnectionstatechange = peer.ondatachannel = null;
+    peer.close();
+  }
 }
 
 function isSameRoomIdentity(context) {
@@ -9772,13 +9878,36 @@ function dispatchP2pRecoveryEvent(type, targetState = state, detail = {}) {
 }
 
 async function completeP2pFailureCleanup(targetState, effect) {
-  if (await preserveResolvedMatchBeforeP2pCleanup(targetState)) return;
-  if (targetState.p2pCleanupPromise) return targetState.p2pCleanupPromise;
+  if (targetState.p2pCleanupPromise) {
+    try {
+      return await waitForOnlineOperation(targetState.p2pCleanupPromise, ONLINE_CLEANUP_WAIT_MS);
+    } catch (error) {
+      showSoloCleanupPending(targetState);
+      throw error;
+    }
+  }
+  if (preserveResolvedFinishFromP2pRecovery(targetState)) return;
   const roomId = targetState.roomId;
-  targetState.p2pCleanupPromise = (async () => {
-    await reportP2pDiagnostic("cleanup", targetState, targetState.peer);
-    if (await preserveResolvedMatchBeforeP2pCleanup(targetState)) return;
-    if (roomId && targetState.uid) {
+  const initialConnection = targetState.p2pRecovery?.channelWasOpened !== true;
+  if (initialConnection) {
+    if (targetState.roomSetupAttempt) targetState.roomSetupAttempt.failed = true;
+    stopInitialOnlineTransport(targetState);
+  }
+  const cleanupPromise = Promise.resolve().then(async () => {
+    reportP2pDiagnostic("cleanup", targetState, targetState.peer).catch(() => {});
+    const reservationCancelled = targetState.soloSessionCancelRoomId === roomId
+      && targetState.soloSessionCancelResult?.cancelled === true;
+    // A successful cancellation can revoke this room's read grant. Resume the
+    // remaining lease release without trying to read that deleted room again.
+    if (!reservationCancelled
+        && await confirmResolvedMatchBeforeP2pCleanup(targetState, effect)) return;
+    if (state !== targetState || targetState.roomId !== roomId
+        || targetState.p2pRecovery?.generationToken !== effect.generationToken) return;
+    if (!reservationCancelled && initialConnection) {
+      // The server checks the exact session/room and finalized result again,
+      // and atomically destroys the failed active room before releasing it.
+      targetState.soloSessionAbortRoomId = roomId;
+    } else if (!reservationCancelled && roomId && targetState.uid) {
       await runTransaction(
         ref(database, `online/rooms/${roomId}/destroyed`),
         (current) => (
@@ -9788,7 +9917,8 @@ async function completeP2pFailureCleanup(targetState, effect) {
         ),
       ).catch(() => {});
     }
-    if (await preserveResolvedMatchBeforeP2pCleanup(targetState)) return;
+    if (!reservationCancelled && !initialConnection
+        && await confirmResolvedMatchBeforeP2pCleanup(targetState, effect)) return;
     await cleanupOnlineResources(false, targetState, { preserveP2pRecovery: true });
     const currentRecovery = targetState.p2pRecovery;
     if (state !== targetState
@@ -9799,12 +9929,38 @@ async function completeP2pFailureCleanup(targetState, effect) {
       targetState.p2pGenerationToken = null;
       return;
     }
+    if (targetState.soloSessionOwnershipLost) {
+      // Ownership expiry is not a confirmed room deletion; require an explicit
+      // retry through the normal server claim gate instead of automatic requeue.
+      dispatchP2pRecoveryEvent("MANUAL_CANCELLED", targetState);
+    }
     dispatchP2pRecoveryEvent("CLEANUP_COMPLETED", targetState);
-  })();
+  });
+  targetState.p2pCleanupPromise = cleanupPromise;
+  cleanupPromise.then(() => {
+    if (targetState.p2pCleanupPromise === cleanupPromise) targetState.p2pCleanupPromise = null;
+  }, () => {
+    if (targetState.p2pCleanupPromise === cleanupPromise) targetState.p2pCleanupPromise = null;
+  });
   try {
-    await targetState.p2pCleanupPromise;
+    await waitForOnlineOperation(cleanupPromise, ONLINE_CLEANUP_WAIT_MS);
+  } catch (error) {
+    showSoloCleanupPending(targetState);
+    throw error;
+  }
+}
+
+async function confirmResolvedMatchBeforeP2pCleanup(targetState, effect) {
+  let pending = true;
+  try {
+    return await waitForOnlineOperation(preserveResolvedMatchBeforeP2pCleanup(targetState, {
+      isCurrent: () => pending
+        && targetState.p2pRecovery?.generationToken === effect.generationToken,
+      requireConfirmedRead: true,
+    }), ONLINE_CLEANUP_AUXILIARY_WAIT_MS);
   } finally {
-    targetState.p2pCleanupPromise = null;
+    // A timed-out database read must not resolve a round behind the error UI.
+    pending = false;
   }
 }
 
@@ -9848,7 +10004,7 @@ async function handleP2pRecoveryEffect(effect, targetState = state) {
   if (state !== targetState
       || recovery?.generationToken !== effect.generationToken) return;
   if (effect.type === "restart-ice") {
-    await reportP2pDiagnostic("restart_started", targetState, targetState.peer);
+    reportP2pDiagnostic("restart_started", targetState, targetState.peer).catch(() => {});
     const currentRecovery = targetState.p2pRecovery;
     if (state !== targetState
         || currentRecovery?.generationToken !== effect.generationToken
@@ -9871,9 +10027,9 @@ async function handleP2pRecoveryEffect(effect, targetState = state) {
   }
   if (effect.type === "cleanup-failed-room") {
     if (effect.reason === "connection-timeout") {
-      await reportP2pDiagnostic("connection_timeout", targetState, targetState.peer);
+      reportP2pDiagnostic("connection_timeout", targetState, targetState.peer).catch(() => {});
     } else if (effect.reason === "restart-timeout") {
-      await reportP2pDiagnostic("restart_timeout", targetState, targetState.peer);
+      reportP2pDiagnostic("restart_timeout", targetState, targetState.peer).catch(() => {});
     }
     const currentRecovery = targetState.p2pRecovery;
     if (state !== targetState
@@ -10096,6 +10252,11 @@ async function setupPeerConnection(context) {
       }
     }
   } catch (error) {
+    if (peerContextIsCurrent()
+        && (state.channelReady || state.p2pRecovery?.channelWasOpened)) {
+      handleRecoverableError(error);
+      return true;
+    }
     abandonPeerSetup();
     throw error;
   }
@@ -10150,6 +10311,9 @@ function configureDataChannel(channel, expectedState = state) {
     state === expectedState
       && expectedState.channel === channel
       && !expectedState.roomTerminationToken
+      && !expectedState.soloSessionCleanupPending
+      && !expectedState.roomSetupAttempt?.failed
+      && !expectedState.roomSetupAttempt?.cancelled
   );
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
@@ -11506,19 +11670,32 @@ function queueResolvedMatchSettlement(targetState = state) {
   });
 }
 
-async function preserveResolvedMatchBeforeP2pCleanup(targetState = state) {
+async function preserveResolvedMatchBeforeP2pCleanup(targetState = state, {
+  isCurrent = () => true,
+  requireConfirmedRead = false,
+} = {}) {
+  const roomId = targetState.roomId;
+  const round = targetState.round;
+  const generation = targetState.matchmakingGeneration;
+  const contextIsCurrent = () => state === targetState
+    && targetState.roomId === roomId
+    && targetState.round === round
+    && targetState.matchmakingGeneration === generation
+    && isCurrent();
+  if (!contextIsCurrent()) return false;
   if (preserveResolvedFinishFromP2pRecovery(targetState)) return true;
-  if (state !== targetState || !targetState.roomId) return false;
+  if (!roomId) return false;
   let scores = targetState.roundData?.scores || {};
   if (!roundScoresAreComplete(scores, targetState)) {
     try {
       const snapshot = await get(ref(
         database,
-        `online/rooms/${targetState.roomId}/rounds/${targetState.round}/scores`,
+        `online/rooms/${roomId}/rounds/${round}/scores`,
       ));
-      if (state !== targetState) return false;
+      if (!contextIsCurrent()) return false;
       scores = snapshot.val() || {};
-    } catch {
+    } catch (error) {
+      if (requireConfirmedRead && contextIsCurrent()) throw error;
       return false;
     }
   }
@@ -12146,7 +12323,19 @@ async function resetOnlineSetup() {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
   }
-  await resetOnlineState("setup");
+  try {
+    if (state.p2pRecovery?.phase === ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP) {
+      const expectedState = state;
+      dispatchP2pRecoveryEvent("MANUAL_CANCELLED", expectedState);
+      await completeP2pFailureCleanup(expectedState, {
+        generationToken: expectedState.p2pRecovery.generationToken,
+      });
+      if (state !== expectedState) return;
+    }
+    await resetOnlineState("setup");
+  } catch (error) {
+    handleRecoverableError(error);
+  }
 }
 
 function prepareDeckForRematch(items) {
@@ -12298,14 +12487,9 @@ async function cleanupMatchmaking(keepActive, targetState = state) {
   targetState.ownOfferUnsubscribe = null;
   targetState.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
   const disconnectHandles = targetState.disconnectHandles.splice(0);
-  await Promise.allSettled(disconnectHandles.map((handle) => handle.cancel?.()));
-  if (useOfflineMarketPreview) {
-    targetState.pendingOffer = null;
-    targetState.pendingIncomingOffer = null;
-    return;
-  }
   targetState.pendingOffer = null;
   targetState.pendingIncomingOffer = null;
+  await Promise.allSettled(disconnectHandles.map((handle) => handle.cancel?.()));
 }
 
 async function cleanupOnlineResources(
@@ -12314,11 +12498,25 @@ async function cleanupOnlineResources(
   { preserveP2pRecovery = false } = {},
 ) {
   clearActiveContact("solo");
-  if (targetState.cleanupPromise) {
-    await targetState.cleanupPromise;
-    return;
+  if (!preserveP2pRecovery && (targetState.p2pCleanupPromise
+      || targetState.p2pRecovery?.phase === ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP)) {
+    // Leaving or retrying must not discard a still-running release. Its old
+    // session fence could otherwise delete the next match after a late reply.
+    await completeP2pFailureCleanup(targetState, {
+      generationToken: targetState.p2pRecovery?.generationToken,
+    });
   }
-  const cleanupPromise = (async () => {
+  if (targetState.cleanupPromise) {
+    try {
+      return await waitForOnlineOperation(targetState.cleanupPromise, ONLINE_CLEANUP_WAIT_MS);
+    } catch (error) {
+      showSoloCleanupPending(targetState);
+      throw error;
+    }
+  }
+  targetState.soloSessionCleanupPending = true;
+  if (targetState.roomSetupAttempt) targetState.roomSetupAttempt.cancelled = true;
+  const cleanupPromise = Promise.resolve().then(async () => {
     clearP2pRecoveryTimer(targetState);
     targetState.p2pRestartIce = null;
     if (!preserveP2pRecovery) {
@@ -12360,10 +12558,12 @@ async function cleanupOnlineResources(
     const activeRoomId = targetState.roomId;
     const cancelRoomId = activeRoomId || targetState.pendingOffer?.roomId || "";
     const ownUid = targetState.uid;
-    await cleanupMatchmaking(keepActive, targetState);
-    await cleanupPublicPresence(targetState);
+    const auxiliaryCleanup = [
+      waitForOnlineOperation(cleanupMatchmaking(keepActive, targetState), ONLINE_CLEANUP_AUXILIARY_WAIT_MS),
+      waitForOnlineOperation(cleanupPublicPresence(targetState), ONLINE_CLEANUP_AUXILIARY_WAIT_MS),
+    ];
     if (activeRoomId && ownUid) {
-      await set(ref(database, soloRoomPresencePath(
+      auxiliaryCleanup.push(waitForOnlineOperation(set(ref(database, soloRoomPresencePath(
         activeRoomId,
         ownUid,
         targetState.clientSessionId,
@@ -12374,18 +12574,39 @@ async function cleanupOnlineResources(
         generation: targetState.soloSessionGeneration,
         online: false,
         updatedAt: serverTimestamp(),
-      }).catch(() => {});
+      }), ONLINE_CLEANUP_AUXILIARY_WAIT_MS));
     }
+    await Promise.allSettled(auxiliaryCleanup);
     if (!keepActive && cancelRoomId) {
-      await cancelSoloSessionRoomOnce(cancelRoomId, targetState);
+      await retrySoloCleanupOperation(
+        () => cancelSoloSessionRoomOnce(cancelRoomId, targetState),
+        (result) => result?.cancelled === true
+          || ["terminal", "finalized", "not-owner"].includes(result?.reason),
+      );
     }
-    if (!keepActive) await releaseSoloSessionLease(targetState);
-  })();
+    if (!keepActive && targetState.soloSessionLease) {
+      const released = await retrySoloCleanupOperation(
+        () => releaseSoloSessionLease(targetState),
+        (result) => result === true || targetState.soloSessionOwnershipLost === true,
+      );
+      if (released !== true && !targetState.soloSessionOwnershipLost) {
+        throw new Error("前の通常版1on1の接続を終了できませんでした。通信状態を確認して、もう一度お試しください。");
+      }
+    }
+    targetState.soloSessionCleanupPending = false;
+    return true;
+  });
   targetState.cleanupPromise = cleanupPromise;
-  try {
-    await cleanupPromise;
-  } finally {
+  cleanupPromise.then(() => {
     if (targetState.cleanupPromise === cleanupPromise) targetState.cleanupPromise = null;
+  }, () => {
+    if (targetState.cleanupPromise === cleanupPromise) targetState.cleanupPromise = null;
+  });
+  try {
+    return await waitForOnlineOperation(cleanupPromise, ONLINE_CLEANUP_WAIT_MS);
+  } catch (error) {
+    showSoloCleanupPending(targetState);
+    throw error;
   }
 }
 

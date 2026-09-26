@@ -324,7 +324,7 @@ test("normal 1on1 wires room and round contexts through cleanup and transition p
   assert.match(cleanup, /targetState\.roundUnsubscribe\?\.\(\)/);
   assert.ok(
     cleanup.indexOf("targetState.roomUnsubscribers.splice(0)")
-      < cleanup.indexOf("await cleanupMatchmaking"),
+      < cleanup.indexOf("cleanupMatchmaking(keepActive, targetState)"),
   );
   assert.match(cleanup, /cleanupMatchmaking\(keepActive, targetState\)/);
   assert.match(cleanup, /cleanupPublicPresence\(targetState\)/);

@@ -31,7 +31,7 @@ const P2P_DIAGNOSTIC_RATE_LIMIT_POLICY = Object.freeze({
 
 const CLOUDFLARE_TURN_URL_PATTERNS = Object.freeze([
   /^stun:stun\.cloudflare\.com:(?:3478|53)$/,
-  /^turn:turn\.cloudflare\.com:(?:3478|53)\?transport=udp$/,
+  /^turn:turn\.cloudflare\.com:(?:3478|53|443)\?transport=udp$/,
   /^turn:turn\.cloudflare\.com:(?:3478|53|80)\?transport=tcp$/,
   /^turns:turn\.cloudflare\.com:(?:5349|443)\?transport=tcp$/,
 ]);
@@ -227,7 +227,16 @@ function validateCloudflareTurnCredentialResponse({
     throw new TypeError("Cloudflare TURN response iceServers are invalid");
   }
   const seenUrls = new Set();
-  const iceServers = payload.iceServers.map((server) => normalizeCloudflareIceServer(server, seenUrls));
+  const upstreamIceServers = payload.iceServers.map((server) => normalizeCloudflareIceServer(server, seenUrls));
+  // Cloudflare's current response includes UDP/443. Already-open clients reject
+  // that URL and would discard every relay, including working TCP/TLS entries.
+  // Validate the complete upstream response first, then retain the endpoints
+  // understood by deployed clients. TLS/443 remains available for restrictive networks.
+  const iceServers = upstreamIceServers.flatMap((server) => {
+    const compatibleUrls = server.urls.filter((url) => url !== "turn:turn.cloudflare.com:443?transport=udp");
+    if (!compatibleUrls.length) return [];
+    return [Object.freeze({ ...server, urls: Object.freeze(compatibleUrls) })];
+  });
   const urls = iceServers.flatMap((server) => server.urls);
   if (!urls.some((url) => url.startsWith("stun:"))
       || !urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"))) {

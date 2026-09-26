@@ -1,7 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const {
   CLOUDFLARE_TURN_API_ORIGIN,
   P2P_CONNECTIVITY_PUBLIC_ERROR,
@@ -50,6 +53,23 @@ const VALID_CLOUDFLARE_RESPONSE = Object.freeze({
   ],
 });
 
+// URL shape documented by Cloudflare on 2026-09-25 and observed from the
+// upstream service on 2026-09-26. These credentials are synthetic test data.
+const CURRENT_CLOUDFLARE_RESPONSE = Object.freeze({
+  iceServers: [{ urls: ["stun:stun.cloudflare.com:3478"] }, {
+    urls: [
+      "turn:turn.cloudflare.com:3478?transport=udp",
+      "turn:turn.cloudflare.com:443?transport=udp",
+      "turn:turn.cloudflare.com:3478?transport=tcp",
+      "turn:turn.cloudflare.com:80?transport=tcp",
+      "turns:turn.cloudflare.com:5349?transport=tcp",
+      "turns:turn.cloudflare.com:443?transport=tcp",
+    ],
+    username: "synthetic-turn-username",
+    credential: "synthetic-turn-credential",
+  }],
+});
+
 function validateResponse(overrides = {}) {
   return validateCloudflareTurnCredentialResponse({
     status: 201,
@@ -84,6 +104,75 @@ test("Cloudflare TURN response is strictly normalized with server-side expiry", 
   assert.equal(Object.isFrozen(result), true);
   assert.equal(Object.isFrozen(result.iceServers), true);
   assert.equal(Object.isFrozen(result.iceServers[1].urls), true);
+});
+
+test("the current Cloudflare response preserves five relays accepted by already-open clients", () => {
+  const original = JSON.stringify(CURRENT_CLOUDFLARE_RESPONSE);
+  const result = validateResponse({ payload: CURRENT_CLOUDFLARE_RESPONSE });
+  const expectedUrls = CURRENT_CLOUDFLARE_RESPONSE.iceServers[1].urls
+    .filter((url) => url !== "turn:turn.cloudflare.com:443?transport=udp");
+  assert.equal(result.iceServers.length, 2);
+  assert.equal(expectedUrls.length, 5);
+  assert.deepEqual(result.iceServers[1], { ...CURRENT_CLOUDFLARE_RESPONSE.iceServers[1], urls: expectedUrls });
+  assert.ok(result.iceServers[1].urls.includes("turns:turn.cloudflare.com:443?transport=tcp"));
+  assert.equal(JSON.stringify(CURRENT_CLOUDFLARE_RESPONSE), original);
+  assert.equal(result.expiresAt, NOW + (TURN_CREDENTIAL_TTL_SECONDS * 1000));
+  assert.equal(Object.isFrozen(result.iceServers[1]), true);
+  assert.equal(Object.isFrozen(result.iceServers[1].urls), true);
+
+  // Execute the real browser validators: the server fix must work even when a
+  // user has not reloaded online.js or market.js and still rejects UDP/443.
+  for (const [file, allowedName, validatorName] of [
+    ["online.js", "validCloudflareIceUrl", "validateClientIceServers"],
+    ["market.js", "validMarketIceUrl", "validateMarketIceServers"],
+  ]) {
+    const source = fs.readFileSync(path.resolve(__dirname, "../..", file), "utf8");
+    const markers = [...source.matchAll(/^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gmu)];
+    const functionSource = [allowedName, validatorName].map((name) => {
+      const index = markers.findIndex((match) => match[1] === name);
+      assert.ok(index >= 0, `${file}: ${name}`);
+      return source.slice(markers[index].index, markers[index + 1]?.index ?? source.length);
+    }).join("\n");
+    const context = {};
+    vm.createContext(context);
+    vm.runInContext(functionSource, context);
+    assert.equal(context[allowedName]("turn:turn.cloudflare.com:443?transport=udp"), false, `${file} still represents a legacy client`);
+    assert.throws(() => context[validatorName](CURRENT_CLOUDFLARE_RESPONSE.iceServers), /TURN接続先が不正/);
+    assert.deepEqual(JSON.parse(JSON.stringify(context[validatorName](result.iceServers))), result.iceServers, file);
+  }
+});
+
+test("compatibility normalization never returns an empty relay or a STUN-only configuration", () => {
+  const stun = CURRENT_CLOUDFLARE_RESPONSE.iceServers[0];
+  const relay = CURRENT_CLOUDFLARE_RESPONSE.iceServers[1];
+  const udp443Only = { ...relay, urls: ["turn:turn.cloudflare.com:443?transport=udp"] };
+  assert.throws(() => validateResponse({ payload: { iceServers: [stun, udp443Only] } }), /requires STUN and TURN/);
+  const tls443Only = { ...relay, urls: ["turns:turn.cloudflare.com:443?transport=tcp"] };
+  const result = validateResponse({ payload: { iceServers: [stun, udp443Only, tls443Only] } });
+  assert.deepEqual(result.iceServers, [stun, tls443Only]);
+  assert.ok(result.iceServers.every((server) => server.urls.length > 0));
+});
+
+test("compatibility filtering still rejects unknown hosts, altered URLs, duplicates and invalid credentials", () => {
+  const stun = CURRENT_CLOUDFLARE_RESPONSE.iceServers[0];
+  const relay = CURRENT_CLOUDFLARE_RESPONSE.iceServers[1];
+  for (const url of [
+    "turn:attacker.example:443?transport=udp",
+    "turn:turn.cloudflare.com.attacker.example:443?transport=udp",
+    "turn:turn.cloudflare.com:443?transport=udp&ignored=true",
+    "turn:turn.cloudflare.com:444?transport=udp",
+    "turn:turn.cloudflare.com:443?transport=tcp",
+  ]) {
+    assert.throws(() => validateResponse({ payload: { iceServers: [stun, { ...relay, urls: [...relay.urls, url] }] } }), /url is invalid/);
+  }
+  assert.throws(() => validateResponse({ payload: { iceServers: [stun, { ...relay, urls: [...relay.urls, relay.urls[1]] }] } }), /url is invalid/);
+  for (const credential of [undefined, "short", "bad\ncredential"]) {
+    assert.throws(() => validateResponse({ payload: { iceServers: [stun, { ...relay, credential }] } }), /credential is invalid/);
+  }
+  // Even a relay that would be removed must pass credential validation first.
+  assert.throws(() => validateResponse({ payload: { iceServers: [stun, {
+    urls: ["turn:turn.cloudflare.com:443?transport=udp"], username: relay.username,
+  }, relay] } }), /credential is invalid/);
 });
 
 test("Cloudflare TURN response rejects status, content type, extra data, and untrusted urls", () => {

@@ -367,6 +367,13 @@ export function transitionOnlineP2pRecovery(state, event) {
   const now = finiteTimestamp(event.now, "event.now");
 
   switch (event.type) {
+    case "SETUP_FAILED":
+      if (state.channelWasOpened
+          || state.phase === ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP
+          || state.phase === ONLINE_P2P_RECOVERY_PHASES.TERMINAL) {
+        return result(state, [], true);
+      }
+      return beginFailureCleanup(state, now, "setup-failed");
     case "CHANNEL_OPENED":
       return handleConnectionRecovered(state, now, true);
     case "ICE_CONNECTED":

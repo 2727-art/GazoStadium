@@ -528,7 +528,7 @@ test("no P2P failure path can erase an already resolved final result", () => {
       "async function resetAfterP2pFailure",
       "P2P failure cleanup",
     ),
-    /preserveResolvedMatchBeforeP2pCleanup\(targetState\)[\s\S]*?runTransaction[\s\S]*?preserveResolvedMatchBeforeP2pCleanup\(targetState\)/,
+    /confirmResolvedMatchBeforeP2pCleanup\(targetState, effect\)[\s\S]*?runTransaction[\s\S]*?confirmResolvedMatchBeforeP2pCleanup\(targetState, effect\)/,
   );
   assert.match(online, /peerDisconnected \|\| peerFailed\)[\s\S]*?preserveResolvedFinishFromP2pRecovery\(state, \{ notify: true \}\)/);
   assert.match(online, /channel\.onclose = \(\) => \{[\s\S]*?preserveResolvedFinishFromP2pRecovery\([\s\S]*?\{ notify: true \}/);

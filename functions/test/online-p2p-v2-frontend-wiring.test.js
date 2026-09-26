@@ -542,10 +542,10 @@ test("failed-room and manual cleanup await destroyed, one cancel, then release",
   assert.match(cancel, /soloSessionCancelPromise/);
   assert.match(cancel, /action: "cancel"/);
   const cleanupCancel = cleanup.indexOf(
-    "await cancelSoloSessionRoomOnce(cancelRoomId, targetState)",
+    "() => cancelSoloSessionRoomOnce(cancelRoomId, targetState)",
   );
   const cleanupRelease = cleanup.indexOf(
-    "await releaseSoloSessionLease(targetState)",
+    "() => releaseSoloSessionLease(targetState)",
     cleanupCancel,
   );
   assert.ok(cleanupCancel >= 0 && cleanupRelease > cleanupCancel);

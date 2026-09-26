@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>通常1on1 TURN中継検証</title>
+<style>body{font:16px system-ui;max-width:850px;margin:36px auto;padding:0 20px;background:#f4f7fb;color:#152635}button{padding:12px 22px}pre{background:white;padding:20px;white-space:pre-wrap;overflow-wrap:anywhere}</style>
+<h1>通常1on1 TURN中継検証</h1>
+<p>2つのWebRTC接続を中継専用で接続し、合成データ4096バイトの往復と選択された接続方式を検証します。実プレイヤーとの対戦は行いません。</p>
+<button id="run">中継接続を検証</button><p id="status" role="status">準備完了</p><pre id="result">未実行</pre>
+<script type="module">
+const run=document.querySelector('#run'),status=document.querySelector('#status'),output=document.querySelector('#result');
+const check=(ok,message)=>{if(!ok)throw Error(message)};
+const deadline=async(promise,ms)=>{let id;try{return await Promise.race([promise,new Promise((_,reject)=>{id=setTimeout(()=>reject(Error('検証時間を超過しました')),ms)})])}finally{clearTimeout(id)}};
+const sha=async(bytes)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
+async function selected(peer){const stats=await peer.getStats();let pair;for(const item of stats.values()){if(item.type==='transport'&&item.selectedCandidatePairId){pair=stats.get(item.selectedCandidatePairId);break}if(item.type==='candidate-pair'&&item.state==='succeeded'&&(item.selected||item.nominated))pair=item}check(pair,'使用中の接続経路が見つかりません');const local=stats.get(pair.localCandidateId),remote=stats.get(pair.remoteCandidateId);return {localType:local?.candidateType,remoteType:remote?.candidateType,transport:local?.relayProtocol||local?.protocol,pairState:pair.state}}
+run.addEventListener('click',async()=>{
+ run.disabled=true;status.textContent='検証中…';const peers=[];let sender,receiver;const started=performance.now();
+ try{
+  const res=await fetch('/turn-test-config',{cache:'no-store'});check(res.ok,'接続情報を取得できません');const config=await res.json();check(config.iceServers?.length>=2,'接続先がありません');
+  const first=new RTCPeerConnection({iceServers:config.iceServers,iceTransportPolicy:'relay'}),second=new RTCPeerConnection({iceServers:config.iceServers,iceTransportPolicy:'relay'});peers.push(first,second);
+  const pendingFirst=[],pendingSecond=[];const failures=[];
+  first.onicecandidate=({candidate})=>{if(candidate){if(second.remoteDescription)second.addIceCandidate(candidate).catch(e=>failures.push(e.name));else pendingSecond.push(candidate)}};
+  second.onicecandidate=({candidate})=>{if(candidate){if(first.remoteDescription)first.addIceCandidate(candidate).catch(e=>failures.push(e.name));else pendingFirst.push(candidate)}};
+  sender=first.createDataChannel('normal-turn-probe',{ordered:true});sender.binaryType='arraybuffer';
+  const remoteReady=new Promise(resolve=>{second.ondatachannel=({channel})=>{receiver=channel;receiver.binaryType='arraybuffer';receiver.onmessage=event=>receiver.send(event.data);resolve()}});
+  const opened=new Promise(resolve=>sender.addEventListener('open',resolve,{once:true}));
+  await first.setLocalDescription(await first.createOffer());await second.setRemoteDescription(first.localDescription);await Promise.all(pendingSecond.splice(0).map(c=>second.addIceCandidate(c)));
+  await second.setLocalDescription(await second.createAnswer());await first.setRemoteDescription(second.localDescription);await Promise.all(pendingFirst.splice(0).map(c=>first.addIceCandidate(c)));
+  await deadline(Promise.all([remoteReady,opened]),45000);
+  const sent=new Uint8Array(4096);for(let i=0;i<sent.length;i++)sent[i]=(i*37+11)%256;
+  const received=new Promise(resolve=>sender.addEventListener('message',event=>resolve(event.data),{once:true}));sender.send(sent);
+  const returned=await deadline(received,10000);check(returned instanceof ArrayBuffer,'受信形式が不正です');const sentSha=await sha(sent),receivedSha=await sha(returned);check(sentSha===receivedSha,'往復したバイトが一致しません');
+  const routes=await Promise.all(peers.map(selected));check(routes.every(r=>r.localType==='relay'&&r.remoteType==='relay'),'中継以外の経路が使用されています');check(failures.length===0,'候補交換でエラーが発生しました');
+  const result={pass:true,testedAt:new Date().toISOString(),browser:navigator.userAgent,iceTransportPolicy:'relay',sentBytes:sent.byteLength,receivedBytes:returned.byteLength,sha256:sentSha,routes,elapsedMs:Math.round(performance.now()-started),apiStatus:config.upstreamStatus,normalizedTurnUrls:config.normalizedTurnUrls,realPlayers:false,credentialsRecorded:false};
+  output.textContent=JSON.stringify(result,null,2);status.textContent='成功：中継接続と往復データの一致を確認';
+ }catch(error){output.textContent=JSON.stringify({pass:false,errorName:error.name,message:error.message},null,2);status.textContent='検証失敗'}
+ finally{sender?.close();receiver?.close();peers.forEach(p=>p.close());run.disabled=false}
+});
+</script></html>

@@ -172,10 +172,10 @@ test("cancelled or expired V2 offers are restored only by exact server fences", 
     /const cancelRoomId = activeRoomId \|\| targetState\.pendingOffer\?\.roomId \|\| ""/,
   );
   const cancelIndex = onlineCleanup.indexOf(
-    "await cancelSoloSessionRoomOnce(cancelRoomId, targetState)",
+    "() => cancelSoloSessionRoomOnce(cancelRoomId, targetState)",
   );
   const releaseIndex = onlineCleanup.indexOf(
-    "await releaseSoloSessionLease(targetState)",
+    "() => releaseSoloSessionLease(targetState)",
     cancelIndex,
   );
   assert.ok(cancelIndex >= 0 && releaseIndex > cancelIndex);
@@ -224,7 +224,7 @@ test("V2 active reservations stay server-owned and client cleanup is callable-fe
   assert.ok(cancelStart >= 0 && releaseStart > cancelStart && armStart > releaseStart && armEnd > armStart);
   assert.match(cancel, /soloSessionCancelRoomId === normalizedRoomId/);
   assert.match(cancel, /soloSessionCancelPromise/);
-  assert.match(cancel, /soloSessionActionCallable\(\{/);
+  assert.match(cancel, /soloSessionActionCallable\(request\)/);
   assert.match(cancel, /action: "cancel"/);
   assert.match(cancel, /sessionId: expectedState\.clientSessionId/);
   assert.match(cancel, /leaseToken: expectedState\.clientLeaseToken/);
@@ -276,7 +276,7 @@ test("V2 active reservations stay server-owned and client cleanup is callable-fe
   const onlineCleanupStart = cleanupEnd;
   const onlineCleanupEnd = frontend.indexOf("function releaseRemoteImage", onlineCleanupStart);
   const onlineCleanup = frontend.slice(onlineCleanupStart, onlineCleanupEnd);
-  assert.match(onlineCleanup, /if \(!keepActive\) await releaseSoloSessionLease\(targetState\)/);
+  assert.match(onlineCleanup, /if \(!keepActive && targetState\.soloSessionLease\)[\s\S]*?retrySoloCleanupOperation\([\s\S]*?releaseSoloSessionLease\(targetState\)/);
   assert.doesNotMatch(onlineCleanup, /online\/activeV2/);
 });
 
