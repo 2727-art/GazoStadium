@@ -1,0 +1,2250 @@
+/*
+  Velvet Stage：通常型1on1
+  対戦画面（.vb-screen）とFINISHカットインの見た目。戦略型と共有するクラスには手を入れない。
+  演出の長さは --vb-fx-speed（標準1・短め0.5・即時0）を掛けて決める。
+*/
+
+.screen.vl-landing,
+.screen.vb-screen {
+  animation-name: vs-fade-in;
+}
+
+.vb-fx-instant {
+  --vb-fx-speed: 0;
+}
+
+/* 光や閃光が画面の横へはみ出して、スマホでページ幅が広がらないようにする */
+.vb-screen {
+  overflow-x: clip;
+}
+
+.vb-screen .eyebrow::before {
+  display: none;
+}
+
+/* ---------- 全体の配置 ---------- */
+
+.vb-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.vb-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vb-heading {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.vb-heading.is-center {
+  justify-items: center;
+  text-align: center;
+}
+
+.vb-title {
+  margin: 0;
+  font: 800 clamp(1.3rem, 5.4vw, 1.75rem)/1.3 var(--vs-font-display);
+  letter-spacing: 0.02em;
+  text-wrap: balance;
+}
+
+.vb-title.is-accent {
+  font: italic 900 clamp(1.5rem, 6.2vw, 2.1rem)/1.1 var(--vs-font-accent);
+  letter-spacing: 0.01em;
+}
+
+.vb-lead {
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+.vb-hint {
+  margin: 0;
+  color: var(--vs-dim);
+  font-size: 0.74rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.vb-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.vb-actions .button {
+  min-height: 54px;
+  flex: 1;
+  max-width: 440px;
+  border-radius: 16px;
+  font-size: 1rem;
+}
+
+.vb-actions.is-quiet .button {
+  min-height: 40px;
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+}
+
+/* 演出の途中は、後から出るものを隠しておく */
+.vb-after {
+  transition:
+    opacity calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-out),
+    transform calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-out);
+}
+
+.vb-screen[data-fx="pending"] .vb-after,
+.vb-screen[data-fx="play"] .vb-after {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
+
+.vb-flash {
+  position: fixed;
+  z-index: 45;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: #fff;
+}
+
+/* ---------- HUD ---------- */
+
+.vb-hud {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.vb-hud-player {
+  --side: var(--vs-violet);
+  --side-glow: rgba(168, 139, 255, 0.35);
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.vb-hud-player.is-local {
+  --side: var(--vs-rose);
+  --side-glow: rgba(255, 63, 134, 0.35);
+}
+
+.vb-hud-player.is-right {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+.vb-hud .battle-avatar {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  font-size: 0.9rem;
+  box-shadow: 0 0 0 1.5px var(--side), 0 0 14px var(--side-glow);
+}
+
+.vb-hud-info {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.vb-hud-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  font-size: 0.8rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.is-right .vb-hud-name {
+  justify-content: flex-end;
+}
+
+.vb-hud-name b {
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+}
+
+.vb-hud-name em {
+  flex: none;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--vs-rose-soft);
+  background: rgba(255, 63, 134, 0.14);
+  font: 600 0.56rem/1 var(--vs-font-number);
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.vb-hud-name em.is-sample {
+  color: var(--vs-gold);
+  background: rgba(230, 193, 122, 0.14);
+}
+
+.vb-hud-name em.is-streak {
+  color: var(--vs-gold-hi);
+  background: rgba(230, 193, 122, 0.1);
+}
+
+/* 展示実績は名前の下に小さく。右側のプレイヤーは右寄せ。 */
+.vb-hud-info .match-achievement-showcase.is-hud {
+  margin: 4px 0 0;
+}
+
+.vb-hud-player.is-right .match-achievement-showcase.is-hud .achievement-badges {
+  justify-content: flex-end;
+}
+
+.vb-hud-player.is-right .match-achievement-showcase.is-hud .match-danwaku-badge {
+  justify-self: end;
+}
+
+.vb-vs-status .online-status-details > .match-achievement-showcase,
+.vb-vs-status .match-achievement-showcase.is-match-found {
+  width: 100%;
+  justify-items: center;
+}
+
+.vb-hp {
+  position: relative;
+  height: 10px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transform: skewX(-14deg);
+}
+
+.is-right .vb-hp {
+  transform: skewX(14deg);
+}
+
+.vb-hp i {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+}
+
+.is-right .vb-hp i {
+  transform-origin: right center;
+}
+
+.vb-hp-ghost {
+  opacity: 0.9;
+  background: #fff;
+  transform: scaleX(var(--hp-ghost));
+  transition: transform calc(520ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) calc(320ms * var(--vb-fx-speed, 1));
+}
+
+.vb-hp-fill {
+  background: linear-gradient(90deg, var(--vs-gold-lo), var(--vs-gold) 55%, var(--vs-gold-hi));
+  transform: scaleX(var(--hp));
+  transition: transform calc(140ms * var(--vb-fx-speed, 1)) ease-out;
+}
+
+.is-right .vb-hp-fill {
+  background: linear-gradient(270deg, var(--vs-gold-lo), var(--vs-gold) 55%, var(--vs-gold-hi));
+}
+
+.vb-hp.is-low .vb-hp-fill {
+  background: linear-gradient(90deg, #8e1330, var(--vs-danger));
+}
+
+.vb-hp-value {
+  margin-top: 4px;
+  color: var(--vs-mist);
+  font: 500 0.7rem/1 var(--vs-font-number);
+  letter-spacing: 0.04em;
+}
+
+.vb-hp-value b {
+  color: var(--vs-pearl);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.vb-round {
+  line-height: 1;
+  text-align: center;
+}
+
+.vb-round small {
+  display: block;
+  color: var(--vs-gold);
+  font: 700 0.56rem/1 var(--vs-font-accent);
+  letter-spacing: 0.3em;
+}
+
+.vb-round strong {
+  font: 600 1.7rem/1.1 var(--vs-font-number);
+}
+
+.vb-round span {
+  color: var(--vs-dim);
+  font-size: 0.85rem;
+}
+
+.vb-damage-pop {
+  position: absolute;
+  top: -10px;
+  left: 12%;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--vs-danger);
+  font: italic 900 1.9rem/1 var(--vs-font-accent);
+  text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 85, 102, 0.7);
+}
+
+.is-right .vb-damage-pop {
+  right: 12%;
+  left: auto;
+}
+
+.vb-damage-pop.is-shown {
+  animation: vb-damage-pop calc(1000ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
+}
+
+@keyframes vb-damage-pop {
+  0% { opacity: 0; transform: translateY(14px) scale(0.5); }
+  25% { opacity: 1; transform: translateY(-4px) scale(1.25); }
+  70% { opacity: 1; transform: translateY(-8px) scale(1); }
+  100% { opacity: 0; transform: translateY(-18px) scale(1); }
+}
+
+.online-room-strip.vb-room-strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--vs-dim);
+  font: 500 0.64rem/1 var(--vs-font-number);
+  letter-spacing: 0.08em;
+}
+
+.vb-room-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-room-strip .connection-pill {
+  min-height: 22px;
+  padding: 3px 8px;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.vb-menu {
+  position: relative;
+  margin-left: auto;
+}
+
+.vb-menu summary {
+  display: grid;
+  width: 42px;
+  height: 30px;
+  place-items: center;
+  border-radius: 15px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.66rem;
+  letter-spacing: 1px;
+  list-style: none;
+}
+
+.vb-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.vb-menu[open] summary {
+  color: var(--vs-gold-hi);
+  box-shadow: inset 0 0 0 1px var(--vs-line);
+}
+
+.vb-menu-panel {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: 244px;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 16px;
+  background: rgba(31, 20, 35, 0.98);
+  box-shadow: 0 0 0 1px var(--vs-line), 0 20px 40px rgba(0, 0, 0, 0.6);
+  animation: vs-fade-up 200ms var(--vs-ease-out) both;
+}
+
+.vb-menu-panel button,
+.vb-menu-panel .button {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  background: transparent;
+  box-shadow: none;
+  font: 600 0.84rem/1.2 var(--vs-font-body);
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.vb-menu-panel button:hover,
+.vb-menu-panel .button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  transform: none;
+}
+
+.vb-menu-panel button span {
+  color: var(--vs-gold);
+}
+
+.vb-menu-panel .button-danger {
+  color: var(--vs-danger);
+}
+
+/* ---------- ステージカード ---------- */
+
+.vb-card {
+  position: relative;
+  isolation: isolate;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #0b070d;
+  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.42), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
+}
+
+.vb-card-fill {
+  position: absolute;
+  top: -12%;
+  left: -12%;
+  width: 124%;
+  max-width: none;
+  height: 124%;
+  object-fit: cover;
+  filter: blur(18px) saturate(1.3) brightness(0.5);
+}
+
+.vb-card-fill.is-small {
+  filter: blur(7px) saturate(1.3) brightness(0.5);
+}
+
+.vb-card-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.vb-card-frame {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 240, 200, 0.5),
+    inset 0 0 0 4px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 5px rgba(230, 193, 122, 0.3);
+  background:
+    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px top 9px / 14px 1.5px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px top 9px / 1.5px 14px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px top 9px / 14px 1.5px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px top 9px / 1.5px 14px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px bottom 9px / 14px 1.5px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px bottom 9px / 1.5px 14px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px bottom 9px / 14px 1.5px no-repeat,
+    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px bottom 9px / 1.5px 14px no-repeat;
+}
+
+.vb-card-ring,
+.vb-card.is-perfect::after {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  padding: 3px;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  background: var(--vs-holo);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: vs-holo-spin 4s linear infinite;
+}
+
+.vb-card-signature {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  left: 50%;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #2a1606;
+  background: var(--vs-foil);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  font: 700 0.56rem/1.2 var(--vs-font-accent);
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.vb-card.is-empty {
+  background: var(--vs-night-2);
+}
+
+.vb-card.is-critical {
+  box-shadow: 0 0 0 2px var(--vs-rose), 0 0 28px rgba(255, 63, 134, 0.45), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
+}
+
+.vb-card.is-critical::before {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  box-shadow: inset 0 0 26px rgba(255, 63, 134, 0.8);
+  animation: vb-pulse 1.1s ease-in-out infinite alternate;
+}
+
+.vb-card.is-perfect {
+  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 0 34px rgba(255, 220, 150, 0.5), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
+}
+
+@keyframes vb-pulse {
+  from { opacity: 0.3; }
+  to { opacity: 1; }
+}
+
+.vb-seal {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 104px;
+  height: 104px;
+  margin: -52px 0 0 -52px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--vs-gold-hi);
+  background: radial-gradient(circle at 40% 35%, #ff5d95, #a3124a 60%, #5c0f2e);
+  box-shadow: inset 0 0 0 3px rgba(255, 240, 200, 0.35), inset 0 0 0 7px rgba(0, 0, 0, 0.18), 0 10px 24px rgba(0, 0, 0, 0.6);
+  font: italic 900 1rem/1 var(--vs-font-accent);
+  letter-spacing: 0.08em;
+  transform: rotate(-12deg);
+  animation: vb-seal-in calc(380ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
+}
+
+.vb-seal.is-small {
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  font-size: 0.56rem;
+}
+
+@keyframes vb-seal-in {
+  from { opacity: 0; transform: rotate(-30deg) scale(2.2); }
+}
+
+/* めくれるカード */
+.vb-flip {
+  position: relative;
+  perspective: 1100px;
+}
+
+.vb-flip-inner {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  transform-style: preserve-3d;
+  transition: transform calc(560ms * var(--vb-fx-speed, 1)) var(--vs-ease-out);
+}
+
+.vb-flip.is-open .vb-flip-inner,
+.vb-screen:not([data-fx]) .vb-flip-inner {
+  transform: rotateY(180deg);
+}
+
+.vb-flip-face {
+  position: absolute;
+  inset: 0;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.vb-flip-face > * {
+  width: 100%;
+  height: 100%;
+}
+
+.vb-flip-face.is-front {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  cursor: zoom-in;
+  background: none;
+  transform: rotateY(180deg);
+}
+
+.vb-screen[data-fx] .vb-flip:not(.is-open) .vb-flip-face.is-front {
+  pointer-events: none;
+}
+
+.vb-flip.is-tremble {
+  animation: vb-tremble calc(150ms * var(--vb-fx-speed, 1)) linear 2;
+}
+
+@keyframes vb-tremble {
+  0%, 100% { transform: none; }
+  25% { transform: translateX(-3px) rotate(-1deg); }
+  75% { transform: translateX(3px) rotate(1deg); }
+}
+
+.vb-burst {
+  position: absolute;
+  z-index: 5;
+  inset: -30%;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.95), rgba(255, 226, 170, 0.6) 30%, rgba(255, 63, 134, 0.25) 55%, transparent 72%);
+  mix-blend-mode: screen;
+}
+
+.vb-flip.is-burst .vb-burst {
+  animation: vb-burst calc(700ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
+}
+
+@keyframes vb-burst {
+  0% { opacity: 0; transform: scale(0.2); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* ---------- マッチング成立（VS） ---------- */
+
+.vb-vs-stage {
+  position: relative;
+  isolation: isolate;
+  height: 380px;
+  container-type: size;
+  overflow: hidden;
+  border-radius: 24px;
+  background: #000;
+}
+
+.vb-vs-half {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  padding: 0 22px;
+}
+
+.vb-vs-half.is-local {
+  align-items: flex-start;
+  padding-top: 34px;
+  clip-path: polygon(0 0, 100% 0, 100% 42%, 0 58%);
+  background:
+    var(--vs-grain) 0 0 / 160px 160px,
+    radial-gradient(80% 60% at 20% 30%, rgba(255, 63, 134, 0.55), transparent 70%),
+    repeating-linear-gradient(90deg, #2a0819 0, #4a0e2c 12px, #2a0819 26px);
+  animation: vb-slide-left calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
+}
+
+.vb-vs-half.is-remote {
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-bottom: 34px;
+  clip-path: polygon(0 58%, 100% 42%, 100% 100%, 0 100%);
+  background:
+    var(--vs-grain) 0 0 / 160px 160px,
+    radial-gradient(80% 60% at 80% 70%, rgba(168, 139, 255, 0.5), transparent 70%),
+    repeating-linear-gradient(90deg, #140c30 0, #221650 12px, #140c30 26px);
+  animation: vb-slide-right calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) calc(100ms * var(--vb-fx-speed, 1)) both;
+}
+
+@keyframes vb-slide-left {
+  from { transform: translateX(-100%); }
+}
+
+@keyframes vb-slide-right {
+  from { transform: translateX(100%); }
+}
+
+.vb-vs-plate {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.is-remote .vb-vs-plate {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+/* 初期アイコンも、あなた＝ローズ・相手＝バイオレットにそろえる */
+.vb-hud-player.is-local .battle-avatar.is-default,
+.vb-vs-half.is-local .battle-avatar.is-default {
+  background: radial-gradient(circle at 35% 30%, var(--vs-rose-soft), var(--vs-wine) 75%);
+}
+
+.vb-hud-player.is-remote .battle-avatar.is-default,
+.vb-vs-half.is-remote .battle-avatar.is-default {
+  background: radial-gradient(circle at 35% 30%, #cbb8ff, #3a2380 75%);
+}
+
+.vb-vs-plate .battle-avatar {
+  width: 60px;
+  height: 60px;
+  border: 0;
+  font-size: 1.4rem;
+  box-shadow: 0 0 0 2px var(--vs-violet), 0 0 20px rgba(168, 139, 255, 0.45);
+}
+
+.is-local .vb-vs-plate .battle-avatar {
+  box-shadow: 0 0 0 2px var(--vs-rose), 0 0 20px rgba(255, 63, 134, 0.45);
+}
+
+.vb-vs-name {
+  min-width: 0;
+}
+
+.vb-vs-name small {
+  display: block;
+  color: var(--vs-gold);
+  font: 700 0.62rem/1 var(--vs-font-accent);
+  letter-spacing: 0.3em;
+}
+
+.vb-vs-name b {
+  display: block;
+  max-width: 62vw;
+  margin: 6px 0;
+  overflow: hidden;
+  font: 800 clamp(1.7rem, 8vw, 2.4rem)/1.15 var(--vs-font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-vs-name span {
+  color: var(--vs-mist);
+  font: 500 0.76rem/1 var(--vs-font-number);
+  letter-spacing: 0.06em;
+}
+
+.vb-vs-name em {
+  color: var(--vs-pearl);
+  font-size: 0.95rem;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.vb-vs-line {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: -10%;
+  width: 120%;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--vs-foil);
+  box-shadow: 0 0 18px rgba(255, 220, 150, 0.8);
+  /* 左右の名札を分ける斜めの境目（左58%→右42%）に沿わせる */
+  --vs-line-angle: atan2(-16cqh, 100cqw);
+  transform: rotate(var(--vs-line-angle, -8deg));
+  animation: vb-line-in calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) calc(380ms * var(--vb-fx-speed, 1)) both;
+}
+
+@keyframes vb-line-in {
+  from { transform: rotate(var(--vs-line-angle, -8deg)) scaleX(0); }
+}
+
+.vb-vs-word {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  right: 0;
+  left: 0;
+  margin-top: -0.55em;
+  color: transparent;
+  background: var(--vs-foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.65)) drop-shadow(0 0 30px rgba(255, 220, 150, 0.45));
+  font: italic 900 clamp(4.4rem, 22vw, 7rem)/1.1 var(--vs-font-accent);
+  text-align: center;
+  animation: vb-slam calc(460ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) calc(450ms * var(--vb-fx-speed, 1)) both;
+}
+
+@keyframes vb-slam {
+  0% { opacity: 0; transform: scale(3); }
+  60% { opacity: 1; transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+
+.vb-vs-stage .vb-flash {
+  position: absolute;
+  z-index: 4;
+  animation: vb-flash calc(300ms * var(--vb-fx-speed, 1)) ease-out calc(520ms * var(--vb-fx-speed, 1)) both;
+}
+
+@keyframes vb-flash {
+  0% { opacity: 0; }
+  15% { opacity: 0.75; }
+  100% { opacity: 0; }
+}
+
+.vb-vs-status {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  animation: vs-fade-up calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) calc(700ms * var(--vb-fx-speed, 1)) both;
+}
+
+.vb-vs-status .online-status-details {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* ---------- 画像選択 ---------- */
+
+.vb-select-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 12px;
+}
+
+.vb-timer {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--vs-gold-hi);
+}
+
+.vb-timer strong {
+  display: inline-block;
+  min-width: 1.3em;
+  font: 600 2.4rem/1 var(--vs-font-number);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.vb-timer span {
+  color: var(--vs-dim);
+  font: 600 0.62rem/1 var(--vs-font-number);
+  letter-spacing: 0.2em;
+}
+
+.vb-select-head.pending .vb-timer strong {
+  color: var(--vs-dim);
+}
+
+.vb-select-head.warning .vb-timer strong {
+  color: var(--vs-rose);
+  text-shadow: 0 0 16px rgba(255, 63, 134, 0.7);
+}
+
+.vb-timer strong.is-beat {
+  animation: vb-beat 420ms var(--vs-ease-out);
+}
+
+@keyframes vb-beat {
+  from { transform: scale(1.4); }
+}
+
+.vb-timer-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vb-timer-bar i {
+  display: block;
+  width: var(--selection-progress, 100%);
+  height: 100%;
+  background: linear-gradient(90deg, var(--vs-gold), var(--vs-gold-hi));
+  transition: width 120ms linear;
+}
+
+.vb-select-head.warning .vb-timer-bar i {
+  background: var(--vs-rose);
+}
+
+.vb-select-stage {
+  display: flex;
+  justify-content: center;
+}
+
+.vb-select-preview {
+  height: clamp(220px, 42dvh, 520px);
+  max-width: 100%;
+  aspect-ratio: 2 / 3;
+  animation: vb-pop calc(240ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+}
+
+.vb-select-preview > * {
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes vb-pop {
+  from { opacity: 0.6; transform: scale(0.94); }
+}
+
+.vb-hand {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 2px 6px;
+  scrollbar-width: none;
+}
+
+.vb-hand::-webkit-scrollbar {
+  display: none;
+}
+
+.vb-hand > :first-child {
+  margin-left: auto;
+}
+
+.vb-hand > :last-child {
+  margin-right: auto;
+}
+
+.vb-hand-card {
+  position: relative;
+  flex: none;
+  width: 60px;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #000;
+  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.3);
+  transition: transform calc(180ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+}
+
+.vb-hand-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.vb-hand-card span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 10px 0 3px;
+  color: var(--vs-pearl);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+  font: 600 0.54rem/1 var(--vs-font-number);
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+
+.vb-hand-card.is-sample {
+  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.6);
+}
+
+.vb-hand-card.is-sample span {
+  color: var(--vs-gold);
+}
+
+.vb-hand-card.is-selected {
+  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 8px 18px rgba(230, 193, 122, 0.35);
+  transform: translateY(-8px) !important;
+}
+
+.vb-hand-card:disabled {
+  opacity: 0.75;
+}
+
+.vb-hand-card.is-used:disabled {
+  opacity: 1;
+}
+
+.vb-hand-card.is-used img {
+  filter: grayscale(1) brightness(0.35);
+}
+
+.vb-hand-card.is-used span {
+  color: var(--vs-dim);
+}
+
+.vb-hand-signature {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  color: var(--vs-gold-hi);
+  font-size: 0.7rem;
+  font-style: normal;
+  text-shadow: 0 0 6px var(--vs-gold);
+}
+
+/* ---------- 相手待ち・転送 ---------- */
+
+.vb-wait-head {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.vb-wait-stage {
+  position: relative;
+  display: flex;
+  min-height: clamp(260px, 40dvh, 440px);
+  align-items: center;
+  justify-content: center;
+}
+
+.vb-wait-back {
+  position: relative;
+  width: clamp(150px, 42vw, 220px);
+}
+
+.vb-wait-back::before {
+  position: absolute;
+  inset: -18px;
+  border-radius: 28px;
+  content: "";
+  background: radial-gradient(closest-side, rgba(255, 63, 134, 0.5), transparent);
+  animation: vb-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes vb-breathe {
+  50% { opacity: 0.25; transform: scale(0.94); }
+}
+
+.vb-wait-mine {
+  position: absolute;
+  bottom: 2%;
+  left: 4%;
+  width: clamp(72px, 20vw, 110px);
+  transform: rotate(-7deg);
+}
+
+.vb-wait-stage.is-pair {
+  gap: 18px;
+}
+
+.vb-wait-pair-card {
+  position: relative;
+  width: clamp(120px, 36vw, 200px);
+}
+
+.vb-wait-pair-badge {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--vs-gold-hi);
+  background: rgba(15, 9, 19, 0.85);
+  box-shadow: 0 0 0 1px var(--vs-line);
+  font: italic 900 1.8rem/1 var(--vs-font-accent);
+  animation: vb-breathe 2.4s ease-in-out infinite;
+}
+
+.vb-transfer {
+  width: min(320px, 80%);
+  height: 3px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.vb-transfer i {
+  display: block;
+  height: 100%;
+  background: var(--vs-foil);
+  transform: scaleX(var(--transfer, 0));
+  transform-origin: left;
+  transition: transform 160ms linear;
+}
+
+/* ---------- 画像公開 ---------- */
+
+.vb-reveal-stage {
+  position: relative;
+  display: grid;
+  width: min(640px, 100%);
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto;
+}
+
+.vb-reveal-dim {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.6);
+  transition: opacity calc(300ms * var(--vb-fx-speed, 1));
+}
+
+.vb-screen.is-dimmed .vb-reveal-dim {
+  opacity: 1;
+}
+
+.vb-reveal-col {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 10px;
+}
+
+.vb-reveal-col .vb-flip {
+  width: 100%;
+}
+
+.vb-reveal-spot {
+  position: absolute;
+  top: -90px;
+  left: 50%;
+  width: 240px;
+  height: 420px;
+  margin-left: -120px;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 236, 205, 0.22), transparent 80%);
+  clip-path: polygon(40% 0, 60% 0, 100% 100%, 0 100%);
+  transition: opacity calc(400ms * var(--vb-fx-speed, 1));
+}
+
+.vb-reveal-col.is-lit .vb-reveal-spot {
+  opacity: 1;
+}
+
+.vb-reveal-vs {
+  position: relative;
+  z-index: 1;
+  color: var(--vs-gold);
+  font: italic 900 1.4rem/1 var(--vs-font-accent);
+  text-align: center;
+  text-shadow: 0 0 12px rgba(230, 193, 122, 0.5);
+}
+
+.vb-plate {
+  line-height: 1.25;
+  text-align: center;
+}
+
+.vb-plate b {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font: 800 1rem/1.3 var(--vs-font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-plate small {
+  color: var(--vs-mist);
+  font-size: 0.68rem;
+}
+
+.is-local .vb-plate b,
+.vb-result-col.is-local .vb-result-name {
+  color: var(--vs-rose-soft);
+}
+
+.is-remote .vb-plate b,
+.vb-result-col.is-remote .vb-result-name {
+  color: var(--vs-violet);
+}
+
+/* ---------- 採点 ---------- */
+
+.vb-score-stage {
+  display: flex;
+  justify-content: center;
+}
+
+.vb-score-card {
+  position: relative;
+  display: block;
+  height: clamp(230px, 40dvh, 540px);
+  max-width: 100%;
+  aspect-ratio: 2 / 3;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  cursor: zoom-in;
+  background: none;
+}
+
+.vb-score-card .vb-card {
+  height: 100%;
+}
+
+.vb-score-badge {
+  position: absolute;
+  z-index: 6;
+  top: -8px;
+  right: -12px;
+  min-width: 82px;
+  padding: 8px 10px 7px;
+  border-radius: 14px;
+  text-align: center;
+  background: rgba(15, 9, 19, 0.94);
+  box-shadow: 0 0 0 1px var(--vs-line), 0 10px 24px rgba(0, 0, 0, 0.6);
+  animation: vb-pop calc(220ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+}
+
+.vb-score-badge b {
+  display: block;
+  color: var(--vs-pearl);
+  font: 900 2.5rem/1 var(--vs-font-accent);
+}
+
+.vb-score-badge small {
+  display: block;
+  margin-top: 3px;
+  color: var(--vs-mist);
+  font: 700 0.56rem/1 var(--vs-font-accent);
+  letter-spacing: 0.2em;
+}
+
+.vb-score-badge.is-critical b {
+  color: var(--vs-rose);
+  text-shadow: 0 0 16px rgba(255, 63, 134, 0.6);
+}
+
+.vb-score-badge.is-perfect b {
+  color: transparent;
+  background: var(--vs-foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.vb-score-pad {
+  display: grid;
+  width: min(460px, 100%);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 auto;
+}
+
+.vb-score-button {
+  height: 52px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  background: var(--vs-night-3);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  font: 600 1.3rem/1 var(--vs-font-number);
+  transition: transform calc(160ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+}
+
+.vb-score-button.is-heat-4,
+.vb-score-button.is-heat-5 {
+  color: var(--vs-rose-soft);
+  background: linear-gradient(180deg, rgba(255, 63, 134, 0.12), rgba(255, 63, 134, 0.04));
+}
+
+.vb-score-button.is-heat-6,
+.vb-score-button.is-heat-7 {
+  color: #fff;
+  background: linear-gradient(180deg, rgba(255, 63, 134, 0.3), rgba(255, 63, 134, 0.12));
+}
+
+.vb-score-button.is-heat-8,
+.vb-score-button.is-heat-9 {
+  color: #fff;
+  background: linear-gradient(160deg, #ff5d95, #a3124a);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 16px rgba(255, 63, 134, 0.35);
+}
+
+.vb-score-button.is-heat-10 {
+  color: #2a1606;
+  background: var(--vs-foil);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 18px rgba(230, 193, 122, 0.45);
+}
+
+.vb-score-button[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 10px 22px rgba(0, 0, 0, 0.5);
+  transform: translateY(-3px) scale(1.07);
+}
+
+/* ---------- ラウンド結果 ---------- */
+
+.vb-result-stage {
+  position: relative;
+  display: grid;
+  width: min(560px, 100%);
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  margin: 0 auto;
+}
+
+.vb-result-col {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  transition: filter calc(300ms * var(--vb-fx-speed, 1));
+}
+
+.vb-result-col[data-result-col="0"] {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.vb-result-vs {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  margin-top: -40px;
+  color: var(--vs-gold);
+  font: italic 900 1.1rem/1 var(--vs-font-accent);
+  text-align: center;
+}
+
+.vb-result-col[data-result-col="1"] {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.vb-result-card {
+  position: relative;
+  width: 100%;
+}
+
+.vb-result-score {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  justify-items: center;
+  margin-top: -40px;
+}
+
+.vb-result-score b {
+  color: var(--vs-pearl);
+  font: 900 4.4rem/1 var(--vs-font-accent);
+  font-variant-numeric: lining-nums tabular-nums;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.6), 0 0 24px rgba(0, 0, 0, 0.7);
+}
+
+.vb-result-score small {
+  margin-top: 2px;
+  color: var(--vs-mist);
+  font: 700 0.58rem/1 var(--vs-font-accent);
+  letter-spacing: 0.2em;
+}
+
+.vb-screen.is-landed .vb-result-score b {
+  animation: vb-land calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+}
+
+@keyframes vb-land {
+  from { transform: scale(1.5); }
+}
+
+.vb-result-name {
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  font: 800 0.9rem/1.3 var(--vs-font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 勝った側の点数は金、負けた側は暗く。演出中は点数が止まってから。 */
+.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-winner .vb-result-score b,
+.vb-screen.is-landed .vb-result-col.is-winner .vb-result-score b {
+  color: transparent;
+  background: var(--vs-foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: none;
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6));
+}
+
+.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-loser,
+.vb-screen.is-landed .vb-result-col.is-loser {
+  filter: brightness(0.6) saturate(0.7);
+}
+
+.vb-stamp {
+  position: absolute;
+  z-index: 5;
+  top: 40%;
+  left: 50%;
+  padding: 6px 14px;
+  font: italic 900 1.5rem/1 var(--vs-font-accent);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(-8deg);
+}
+
+.vb-screen[data-fx="pending"] .vb-stamp,
+.vb-screen[data-fx="play"]:not(.is-hit):not(.is-critical-hit):not(.is-perfect-hit) .vb-stamp {
+  opacity: 0;
+}
+
+.vb-screen.is-hit .vb-stamp,
+.vb-screen.is-critical-hit .vb-stamp,
+.vb-screen.is-perfect-hit .vb-stamp {
+  animation: vb-stamp calc(360ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
+}
+
+@keyframes vb-stamp {
+  from { opacity: 0; transform: translate(-50%, -50%) rotate(-16deg) scale(2.4); }
+}
+
+.vb-stamp.is-great {
+  color: var(--vs-gold-hi);
+  text-shadow: 0 2px 0 #000, 0 0 18px rgba(230, 193, 122, 0.6);
+}
+
+.vb-stamp.is-critical {
+  color: #fff;
+  background: linear-gradient(90deg, transparent, rgba(255, 63, 134, 0.9) 14%, rgba(255, 63, 134, 0.9) 86%, transparent);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+.vb-stamp.is-perfect {
+  color: transparent;
+  background: var(--vs-foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 2px 0 #000) drop-shadow(0 0 14px rgba(255, 220, 150, 0.85));
+  font-size: 1.85rem;
+}
+
+.vb-result .vb-flash {
+  z-index: 44;
+}
+
+.vb-screen.is-critical-hit .vb-flash {
+  background: var(--vs-rose);
+  animation: vb-flash calc(260ms * var(--vb-fx-speed, 1)) ease-out both;
+}
+
+.vb-screen.is-perfect-hit .vb-flash {
+  animation: vb-flash calc(340ms * var(--vb-fx-speed, 1)) ease-out both;
+}
+
+.vb-screen.is-critical-hit .vb-main {
+  animation: vb-shake calc(300ms * var(--vb-fx-speed, 1)) linear;
+}
+
+@keyframes vb-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translate(-7px, 3px); }
+  40% { transform: translate(6px, -4px); }
+  60% { transform: translate(-5px, 2px); }
+  80% { transform: translate(4px, -2px); }
+}
+
+.vb-rays {
+  position: absolute;
+  z-index: 1;
+  top: 40%;
+  left: 50%;
+  width: 720px;
+  height: 720px;
+  margin: -360px 0 0 -360px;
+  opacity: 0;
+  pointer-events: none;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 236, 190, 0.3) 0 5deg, transparent 5deg 15deg);
+  -webkit-mask: radial-gradient(closest-side, #000 18%, transparent 75%);
+  mask: radial-gradient(closest-side, #000 18%, transparent 75%);
+}
+
+.vb-result-stage:has(.vb-result-col[data-result-col="0"].is-winner) .vb-rays {
+  left: 25%;
+}
+
+.vb-result-stage:has(.vb-result-col[data-result-col="1"].is-winner) .vb-rays {
+  left: 75%;
+}
+
+.vb-screen.is-perfect-hit .vb-rays {
+  animation: vb-rays calc(1500ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
+}
+
+@keyframes vb-rays {
+  0% { opacity: 0; transform: rotate(0) scale(0.6); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(40deg) scale(1.1); }
+}
+
+.vb-sparks {
+  position: absolute;
+  z-index: 6;
+  inset: -40px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.vb-spark {
+  position: absolute;
+  top: var(--y);
+  left: var(--x);
+  width: var(--s);
+  height: var(--s);
+  border-radius: 50%;
+  opacity: 0;
+  background: var(--c);
+  box-shadow: 0 0 8px var(--c);
+  animation: vb-spark 1000ms var(--vs-ease-out) var(--d) both;
+}
+
+@keyframes vb-spark {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.3); }
+}
+
+.vb-damage {
+  margin: 0;
+  border-color: rgba(255, 85, 102, 0.25);
+  background: rgba(255, 85, 102, 0.07);
+  font-family: var(--vs-font-number);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.vb-result .online-pursuit-lines,
+.vb-result .finish-result-badge,
+.vb-result .finish-reply-slot {
+  margin-top: 10px;
+}
+
+.vb-result .online-pursuit-call {
+  border-color: rgba(255, 63, 134, 0.3);
+  border-radius: 16px 16px 16px 4px;
+  background: rgba(255, 63, 134, 0.08);
+}
+
+.vb-result .online-pursuit-call blockquote {
+  font-family: var(--vs-font-display);
+  font-weight: 800;
+}
+
+/* ---------- 試合結果 ---------- */
+
+.vb-gameover-card {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--vs-line);
+  background:
+    var(--vs-grain) 0 0 / 160px 160px,
+    radial-gradient(90% 50% at 50% 0, rgba(138, 26, 69, 0.4), transparent 70%),
+    var(--vs-night-1);
+}
+
+.vb-gameover.is-win .vb-gameover-card {
+  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.4), var(--shadow);
+}
+
+.vb-emblem {
+  position: relative;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border: 0;
+  color: var(--vs-gold-hi);
+  background: none;
+  box-shadow: none;
+}
+
+.vb-emblem i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--vs-holo);
+  -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 87%);
+  mask: radial-gradient(closest-side, transparent 84%, #000 87%);
+  animation: vs-holo-spin 4s linear infinite;
+}
+
+.vb-emblem span {
+  position: relative;
+  font-size: 1.5rem;
+}
+
+.vb-gameover-card > .vb-outcome {
+  margin: 6px 0 0;
+  color: transparent;
+  background: var(--vs-foil);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.6));
+  font: italic 900 clamp(4.6rem, 22vw, 7rem)/0.95 var(--vs-font-accent);
+  animation: vb-win-in calc(600ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both, vs-foil-sweep 5s ease-in-out 1s infinite;
+}
+
+.vb-gameover.is-lose .vb-gameover-card > .vb-outcome {
+  color: var(--vs-violet);
+  background: none;
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.6));
+  animation: vb-win-in calc(600ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
+}
+
+.vb-gameover.is-draw .vb-gameover-card > .vb-outcome {
+  color: var(--vs-pearl);
+  background: none;
+}
+
+@keyframes vb-win-in {
+  from { opacity: 0; transform: scale(1.6); }
+}
+
+.vb-gameover-card > h1 {
+  font-family: var(--vs-font-display);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.vb-gameover .final-player.winner {
+  border-color: rgba(230, 193, 122, 0.45);
+  background: linear-gradient(90deg, rgba(230, 193, 122, 0.12), transparent);
+}
+
+.vb-gameover .stat-box strong {
+  font-family: var(--vs-font-number);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-confetti-layer {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.vb-gameover-card > :not(.vb-confetti-layer) {
+  position: relative;
+  z-index: 1;
+}
+
+.vb-confetti {
+  position: absolute;
+  top: -12px;
+  left: var(--x);
+  width: 5px;
+  height: 10px;
+  border-radius: 1px;
+  opacity: 0;
+  animation: vb-fall 2200ms linear var(--d) both;
+}
+
+@keyframes vb-fall {
+  0% { opacity: 0; transform: translate(0, 0) rotate(0); }
+  10% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), 900px) rotate(540deg); }
+}
+
+/* ---------- チャット ---------- */
+
+.vb-chat-peek {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border: 0;
+  border-radius: 16px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  background: rgba(31, 20, 35, 0.94);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft), 0 10px 26px rgba(0, 0, 0, 0.45);
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.vb-chat-peek-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--vs-mist);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vb-chat-peek-text b {
+  margin-right: 8px;
+  color: var(--vs-violet);
+}
+
+.vb-chat-peek-empty {
+  color: var(--vs-dim);
+}
+
+.vb-chat-peek-label {
+  position: relative;
+  flex: none;
+  padding: 7px 12px;
+  border-radius: 999px;
+  color: var(--vs-gold);
+  box-shadow: inset 0 0 0 1px var(--vs-line);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.vb-chat-peek.has-new .vb-chat-peek-label::after {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  content: "";
+  background: var(--vs-rose);
+  box-shadow: 0 0 0 2px var(--vs-night-2), 0 0 10px var(--vs-rose);
+}
+
+.vb-chat-close {
+  display: block;
+  margin: 0 0 8px auto;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.vb-chat .chat-panel {
+  border-color: var(--vs-line-soft);
+  background: rgba(14, 9, 18, 0.92);
+}
+
+/* PC：チャットは右の列に常に表示 */
+@media (min-width: 1024px) {
+  .vb-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    gap: 28px;
+  }
+
+  .vb-chat {
+    position: sticky;
+    top: 18px;
+  }
+
+  .vb-chat-peek,
+  .vb-chat-close {
+    display: none;
+  }
+
+  .vb-chat .chat-panel {
+    min-height: 0;
+    max-height: calc(100vh - 150px);
+  }
+}
+
+/* スマホ・タブレット：チャットは下の帯から開く */
+@media (max-width: 1023px) {
+  .vb-chat {
+    position: fixed;
+    z-index: 30;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    pointer-events: none;
+  }
+
+  .vb-chat-peek {
+    pointer-events: auto;
+  }
+
+  .vb-chat.is-open {
+    pointer-events: auto;
+  }
+
+  .vb-chat.is-open::before {
+    position: fixed;
+    inset: 0;
+    content: "";
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .vb-chat-sheet {
+    position: fixed;
+    z-index: 2;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    visibility: hidden;
+    max-height: 80dvh;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-radius: 22px 22px 0 0;
+    background: var(--vs-night-2);
+    box-shadow: 0 -1px 0 var(--vs-line), 0 -24px 50px rgba(0, 0, 0, 0.6);
+    transform: translateY(105%);
+    transition: transform 280ms var(--vs-ease-out), visibility 0s linear 280ms;
+  }
+
+  .vb-chat.is-open .vb-chat-sheet {
+    visibility: visible;
+    transform: none;
+    transition: transform 280ms var(--vs-ease-out), visibility 0s;
+  }
+
+  .vb-chat .chat-panel {
+    min-height: 0;
+    max-height: calc(80dvh - 70px);
+    border: 0;
+    border-radius: 16px;
+    box-shadow: none;
+  }
+
+  body:has(.vb-layout) .site-footer {
+    display: none;
+  }
+
+  body:has(.vb-layout) .toast {
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+
+  body:has(.vb-layout) #app {
+    padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 760px) {
+  .vb-layout {
+    gap: 0;
+  }
+
+  .vb-main {
+    gap: 12px;
+  }
+
+  body:has(.vb-layout) #app {
+    padding-top: 14px;
+  }
+
+  .vb-vs-stage {
+    height: 340px;
+    margin: 0 -14px;
+    border-radius: 0;
+  }
+
+  .vb-hud {
+    gap: 6px;
+  }
+
+  .vb-hud .battle-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .vb-hud-name em.is-streak {
+    display: none;
+  }
+
+  .vb-reveal-stage,
+  .vb-result-stage {
+    grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
+  }
+
+  .vb-result-score b {
+    font-size: 3.6rem;
+  }
+
+  .vb-stamp {
+    font-size: 1.2rem;
+  }
+
+  .vb-stamp.is-perfect {
+    font-size: 1.45rem;
+  }
+}
+
+/* ---------- 画像の拡大表示 ---------- */
+
+.vb-lightbox {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: calc(64px + env(safe-area-inset-top, 0px)) 12px calc(40px + env(safe-area-inset-bottom, 0px));
+  cursor: zoom-out;
+  background: rgba(5, 3, 7, 0.95);
+  animation: vs-fade-in 200ms both;
+}
+
+.vb-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  border-radius: 8px;
+  object-fit: contain;
+  -webkit-touch-callout: none;
+}
+
+.vb-lightbox small {
+  color: var(--vs-dim);
+  font-size: 0.72rem;
+}
+
+.vb-lightbox-close {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 700;
+}
+
+/* ---------- FINISH カットイン ---------- */
+
+.finish-cutin-dialog {
+  background: rgba(3, 2, 5, 0.82);
+}
+
+/* 行の高さを画面に固定し、FINISHの文字が増えてもカードが縮んで画面内に収まるようにする */
+.finish-cutin-dialog[open] {
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.finish-cutin {
+  border-color: rgba(230, 193, 122, 0.45);
+  background: #000;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 40px 100px rgba(0, 0, 0, 0.8), 0 0 80px rgba(255, 63, 134, 0.2);
+}
+
+.finish-cutin.is-signature {
+  border-color: rgba(255, 240, 201, 0.8);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 40px 100px rgba(0, 0, 0, 0.8), 0 0 90px rgba(255, 220, 150, 0.3);
+}
+
+.finish-cutin::after,
+.finish-cutin.is-signature::after {
+  display: none;
+}
+
+.finish-cutin-backdrop {
+  opacity: 0.6;
+  filter: blur(24px) saturate(1.3) brightness(0.55);
+}
+
+.finish-cutin-shade,
+.finish-cutin.is-signature .finish-cutin-shade {
+  background:
+    linear-gradient(180deg, rgba(7, 5, 10, 0.1), rgba(7, 5, 10, 0.86) 78%),
+    radial-gradient(90% 70% at 30% 40%, transparent, rgba(0, 0, 0, 0.45));
+}
+
+.finish-cutin-rays {
+  position: absolute;
+  z-index: -1;
+  top: 40%;
+  left: 40%;
+  width: 1100px;
+  height: 1100px;
+  margin: -550px 0 0 -550px;
+  pointer-events: none;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 236, 190, 0.2) 0 4deg, transparent 4deg 12deg);
+  -webkit-mask: radial-gradient(closest-side, #000 12%, transparent 70%);
+  mask: radial-gradient(closest-side, #000 12%, transparent 70%);
+  animation: vb-spin 18s linear infinite, vs-fade-in 600ms 300ms both;
+}
+
+@keyframes vb-spin {
+  to { transform: rotate(360deg); }
+}
+
+.finish-cutin-slash {
+  position: absolute;
+  z-index: 1;
+  top: 44%;
+  left: -15%;
+  width: 130%;
+  height: 4px;
+  pointer-events: none;
+  background: var(--vs-foil);
+  box-shadow: 0 0 24px rgba(255, 220, 150, 0.9);
+  transform: rotate(-12deg);
+  transform-origin: left center;
+  animation: vb-slash 420ms var(--vs-ease-out) 150ms both;
+}
+
+.finish-cutin-slash.is-wide {
+  top: 39%;
+  height: 90px;
+  background: linear-gradient(180deg, transparent, rgba(230, 193, 122, 0.14), transparent);
+  box-shadow: none;
+}
+
+@keyframes vb-slash {
+  from { transform: rotate(-12deg) scaleX(0); }
+}
+
+.finish-cutin-image-frame {
+  border: 0;
+  background: #0b070d;
+  box-shadow: 0 0 0 1.5px var(--vs-gold-hi), 0 30px 60px rgba(0, 0, 0, 0.8), 0 0 60px rgba(255, 63, 134, 0.3);
+  transform: rotate(-3deg);
+  animation: vb-finish-card 480ms var(--vs-ease-out) 300ms both;
+}
+
+.finish-cutin.is-signature .finish-cutin-image-frame {
+  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 30px 60px rgba(0, 0, 0, 0.8), 0 0 70px rgba(255, 220, 150, 0.4);
+}
+
+.finish-cutin.is-signature .finish-cutin-image-frame::after {
+  position: absolute;
+  inset: 0;
+  padding: 3px;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  background: var(--vs-holo);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: vs-holo-spin 4s linear infinite;
+}
+
+@keyframes vb-finish-card {
+  from { opacity: 0; transform: translateX(40%) rotate(6deg); }
+}
+
+.finish-cutin-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.finish-cutin-word {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  font: italic 900 clamp(3.4rem, 9vw, 6rem)/1 var(--vs-font-accent);
+}
+
+.finish-cutin.is-signature .finish-cutin-word::before {
+  width: 100%;
+  margin-bottom: 4px;
+  content: "SIGNATURE";
+  color: var(--vs-gold-hi);
+  font: italic 700 0.8rem/1 var(--vs-font-accent);
+  letter-spacing: 0.42em;
+  animation: vs-fade-in 300ms 500ms both;
+}
+
+.finish-cutin-word span {
+  display: inline-block;
+  color: transparent;
+  background: linear-gradient(180deg, #fff, #ffc2d8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6)) drop-shadow(0 0 16px rgba(255, 63, 134, 0.6));
+  animation: vb-letter 300ms var(--vs-ease-snap) calc(500ms + var(--i) * 45ms) both;
+}
+
+.finish-cutin.is-signature .finish-cutin-word span {
+  background: var(--vs-foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6)) drop-shadow(0 0 18px rgba(255, 220, 150, 0.55));
+}
+
+@keyframes vb-letter {
+  from { opacity: 0; transform: translateY(-40px) scale(1.8); }
+}
+
+.finish-cutin-winner {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 16px;
+  border-top: 1px solid var(--vs-gold);
+  border-bottom: 1px solid var(--vs-gold);
+  font: 800 clamp(1.3rem, 3.4vw, 2rem)/1.3 var(--vs-font-display);
+  letter-spacing: 0.02em;
+  animation: vs-fade-up 300ms 900ms both;
+}
+
+.finish-cutin-line,
+.finish-cutin.is-signature .finish-cutin-line {
+  border-color: rgba(230, 193, 122, 0.35);
+  background: rgba(15, 9, 19, 0.6);
+  font-family: var(--vs-font-display);
+  font-weight: 800;
+  animation: vs-fade-up 360ms 1100ms both;
+}
+
+.finish-reply-panel {
+  border-color: var(--vs-line);
+  background: rgba(15, 9, 19, 0.82);
+}
+
+.finish-reply-action {
+  border-color: rgba(230, 193, 122, 0.55);
+  color: var(--vs-gold-hi);
+  background: rgba(230, 193, 122, 0.1);
+}
+
+.finish-cutin-skip {
+  border-color: var(--vs-line-soft);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 760px) {
+  .finish-cutin-image-frame {
+    transform: rotate(-2deg);
+  }
+
+  .finish-cutin-word {
+    font-size: clamp(3rem, 15vw, 4.2rem);
+  }
+}
+
+/* ---------- 対戦プレビュー（localhost で ?battlePreview の時だけ出る） ---------- */
+
+.vb-preview-bar {
+  position: fixed;
+  z-index: 90;
+  top: 8px;
+  left: 50%;
+  display: flex;
+  max-width: calc(100% - 16px);
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(14, 9, 18, 0.92);
+  box-shadow: 0 0 0 1px var(--vs-line), 0 10px 30px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%);
+  scrollbar-width: none;
+}
+
+.vb-preview-bar strong {
+  flex: none;
+  align-self: center;
+  padding: 0 6px;
+  color: var(--vs-gold);
+  font: italic 700 0.7rem/1 var(--vs-font-accent);
+  letter-spacing: 0.2em;
+}
+
+.vb-preview-bar button {
+  flex: none;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+body:has(.vl-landing) .vb-preview-bar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vb-screen *,
+  .vb-screen *::before,
+  .vb-screen *::after,
+  .finish-cutin *,
+  .finish-cutin *::before,
+  .finish-cutin *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .vb-wait-back::before,
+  .vb-wait-pair-badge,
+  .finish-cutin-rays {
+    animation: none !important;
+  }
+}

@@ -142,19 +142,11 @@ test("landing loads a separate solo mode and never routes it through Training 60
   assert.doesNotMatch(client, /HariaiTraining\.start/);
 });
 
-test("the desktop solo banner spans the complete hero grid", () => {
-  assert.match(
-    styles,
-    /\.hero-ai-text-training-button\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1\s*;/,
-  );
-  assert.doesNotMatch(
-    styles,
-    /\.hero-ai-text-training-button\s*\{[\s\S]*?grid-column:\s*span\s+9\s*;/,
-  );
-  assert.match(
-    html,
-    /styles\.css\?v=[^"]*ai-text-training-banner-fullwidth-v1/,
-  );
+test("the solo entrance is its own mode tile beside the other landing modes", () => {
+  const velvet = read("velvet.css");
+  assert.match(app, /class="vl-tile vl-tile-ai" id="aiTextTrainingButton"/);
+  assert.match(velvet, /\.vl-tile-ai\s*\{[^}]*--tile-icon:\s*var\(--vs-icon-spark\);/s);
+  assert.match(html, /velvet\.css\?v=velvet-stage-v1/);
 });
 
 test("the client is Firebase-callable solo play with no P2P or RTDB transport", () => {

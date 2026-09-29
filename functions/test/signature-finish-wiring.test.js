@@ -127,7 +127,11 @@ test("cut-in fires once only for a positive HP to zero transition", () => {
   assert.match(online, /if \(state\.processedRounds\.has\(state\.round\)\) return;/);
   assert.match(online, /const previousHp = loserIndex === null \? null : state\.players\[loserIndex\]\.hp;/);
   assert.match(online, /const lethal = loserIndex !== null && previousHp > 0 && state\.players\[loserIndex\]\.hp === 0;/);
-  assert.match(online, /if \(lethal\) \{\s*triggerFinishCutIn\(finish\);\s*if \(pendingFinishReply\) \{[\s\S]*?pendingFinishReply\.message \|\| pendingFinishReply,[\s\S]*?pendingFinishReply\.channel \|\| state\.channel,[\s\S]*?\}\s*\} else if \(topScore >= 8\)/);
+  assert.match(online, /if \(lethal\) \{\s*triggerFinishCutIn\(finish\);\s*if \(pendingFinishReply\) \{[\s\S]*?pendingFinishReply\.message \|\| pendingFinishReply,[\s\S]*?pendingFinishReply\.channel \|\| state\.channel,[\s\S]*?\}\s*\}/);
+  // CRITICAL・PERFECTの光と音は、決着しないラウンドの結果演出で点数が止まった時に出す。
+  const resultFx = online.slice(online.indexOf('if (state.screen === "result") {'), online.indexOf('if (state.screen === "gameover") {'));
+  assert.match(resultFx, /if \(!result \|\| result\.lethal\) return;/);
+  assert.match(resultFx, /topScore >= 8 \? audio\(\)\?\.playResult\?\.\(topScore\)/);
   assert.match(online, /function renderOnlinePursuitLines\(result\) \{\s*if \(result\.lethal\) return "";/);
 });
 

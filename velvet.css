@@ -1,0 +1,1221 @@
+/*
+  Velvet Stage
+  夜の舞台の土台。styles.css ほか既存CSSのあとに読み込み、色・文字・共通部品とトップページを上書きする。
+  通常型1on1の対戦画面は velvet-battle.css が受け持つ。
+*/
+
+@property --vs-holo-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+:root {
+  color-scheme: dark;
+
+  --vs-night-0: #07050a;
+  --vs-night-1: #0e0912;
+  --vs-night-2: #160e1a;
+  --vs-night-3: #1f1423;
+  --vs-night-4: #2c1b2f;
+  --vs-wine: #5c0f2e;
+  --vs-wine-bright: #8a1a45;
+  --vs-rose: #ff3f86;
+  --vs-rose-soft: #ff8ab6;
+  --vs-gold: #e6c17a;
+  --vs-gold-hi: #fff0c9;
+  --vs-gold-lo: #93652a;
+  --vs-violet: #a88bff;
+  --vs-mint: #6fe3cf;
+  --vs-danger: #ff5566;
+  --vs-pearl: #f8eef2;
+  --vs-mist: #bfaabb;
+  --vs-dim: #8a7486;
+  --vs-line: rgba(230, 193, 122, 0.24);
+  --vs-line-soft: rgba(248, 238, 242, 0.1);
+
+  --vs-font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --vs-font-accent: "Playfair Display", "Times New Roman", serif;
+  --vs-font-number: "Oswald", "Arial Narrow", sans-serif;
+  --vs-font-body: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+
+  --vs-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --vs-ease-snap: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --vs-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+
+  --vs-foil: linear-gradient(105deg, #8c6122 0%, #e9c47c 18%, #fff3d2 27%, #d4a655 38%, #7c5419 52%, #e7c07a 68%, #fff0c8 80%, #b88939 100%);
+  --vs-holo: conic-gradient(from var(--vs-holo-angle), #ff7ab6, #ffe39a, #8ff3ff, #b58bff, #ff7ab6);
+  --vs-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 .85 0 0 0 0 .9 0 0 0 .07 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+
+  --vs-icon-target: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6'><circle cx='12' cy='12' r='8'/><circle cx='12' cy='12' r='3.5'/><path d='M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4'/></svg>");
+  --vs-icon-gem: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><path d='M6 4h12l4 5-10 11L2 9z'/><path d='M2 9h20M9 4l3 16M15 4l-3 16'/></svg>");
+  --vs-icon-cup: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'><path d='M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z'/><path d='M17 11h1.5a2.5 2.5 0 0 1 0 5H17'/><path d='M8 3c0 2 2 2 2 4M12 3c0 2 2 2 2 4'/></svg>");
+  --vs-icon-spark: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><path d='M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z'/><path d='M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z'/></svg>");
+  --vs-icon-crown: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><path d='M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z'/></svg>");
+  --vs-icon-list: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><rect x='5' y='4' width='14' height='17' rx='2'/><path d='M9 4V3h6v1M8.5 11l2 2 4-4M8.5 17h7'/></svg>");
+  --vs-icon-bag: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><path d='M5 8h14l-1 13H6z'/><path d='M9 8V6a3 3 0 0 1 6 0v2'/></svg>");
+  --vs-icon-wallet: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><rect x='3' y='6' width='18' height='14' rx='3'/><path d='M3 10h18M16 15h2'/></svg>");
+  --vs-icon-medal: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><circle cx='12' cy='9' r='6'/><path d='M8.5 14l-2 7 5.5-3 5.5 3-2-7'/></svg>");
+  --vs-icon-mic: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'><rect x='9' y='3' width='6' height='11' rx='3'/><path d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/></svg>");
+  --vs-icon-drum: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><rect x='6' y='2.5' width='12' height='19' rx='3'/><path d='M6 8.5h12M6 15.5h12M9.5 12h5'/><path d='M20.5 9v6' stroke-linecap='round'/></svg>");
+  --vs-icon-lotus: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><path d='M12 19c-2.6-2.2-3.6-5.4-2.4-9.6.9.9 1.9 2.2 2.4 3.6.5-1.4 1.5-2.7 2.4-3.6 1.2 4.2.2 7.4-2.4 9.6z'/><path d='M12 19c-4.2 0-7.6-2.2-8.6-5.6 2.8-.2 5.4.8 7.2 2.7M12 19c4.2 0 7.6-2.2 8.6-5.6-2.8-.2-5.4.8-7.2 2.7'/></svg>");
+  --vs-icon-bars: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'><path d='M4 20V13h4v7M10 20V8h4v12M16 20v-9h4v9'/></svg>");
+
+  /* 既存の色トークンを夜の舞台へ寄せる。個別に書かれた色はそのまま残る。 */
+  --bg: #07050a;
+  --panel: rgba(22, 14, 26, 0.92);
+  --panel-solid: #160e1a;
+  --panel-soft: #1f1423;
+  --line: rgba(248, 238, 242, 0.1);
+  --line-bright: rgba(230, 193, 122, 0.3);
+  --text: #f8eef2;
+  --muted: #bfaabb;
+  --red: #ff3f86;
+  --red-soft: #ff8ab6;
+  --cyan: #6fe3cf;
+  --cyan-soft: #b9f5ea;
+  --gold: #e6c17a;
+  --shadow: 0 26px 80px rgba(0, 0, 0, 0.58);
+  font-family: var(--vs-font-body);
+}
+
+html {
+  background: var(--vs-night-0);
+}
+
+body {
+  background: var(--vs-grain) 0 0 / 160px 160px, var(--vs-night-0);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+.file-button:focus-within {
+  outline-color: rgba(255, 240, 201, 0.85);
+}
+
+/* 固定の光。ぼかしフィルターは使わず、グラデーションだけで描く。 */
+.ambient {
+  width: 100vw;
+  height: 70vh;
+  border-radius: 0;
+  filter: none;
+  opacity: 1;
+}
+
+.ambient-one {
+  top: -32vh;
+  left: 0;
+  right: auto;
+  background: radial-gradient(60% 55% at 50% 45%, rgba(138, 26, 69, 0.42), transparent 70%);
+}
+
+.ambient-two {
+  right: auto;
+  bottom: -34vh;
+  left: 0;
+  background: radial-gradient(55% 50% at 50% 55%, rgba(92, 15, 46, 0.34), transparent 72%);
+}
+
+/* ---------- ヘッダー・フッター ---------- */
+
+.site-header {
+  border-bottom-color: var(--vs-line);
+}
+
+.site-footer {
+  border-top-color: var(--vs-line-soft);
+  color: var(--vs-dim);
+}
+
+.brand-mark {
+  width: 34px;
+  height: 30px;
+  border: 0;
+  border-radius: 0;
+  transform: none;
+}
+
+.brand-mark i {
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 23px;
+  border: 1.5px solid var(--vs-gold);
+  border-radius: 3px;
+  background: rgba(92, 15, 46, 0.9);
+  transform: rotate(-12deg);
+}
+
+.brand-mark i:last-child {
+  left: 14px;
+  background: linear-gradient(160deg, var(--vs-rose), var(--vs-wine));
+  transform: rotate(10deg);
+}
+
+.brand strong {
+  font-family: var(--vs-font-display);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.brand small {
+  color: var(--vs-gold);
+  font-family: var(--vs-font-accent);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+}
+
+.status-dot,
+.privacy-badge,
+.mini-badge {
+  border-color: var(--vs-line-soft);
+  color: var(--vs-mist);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.status-dot i {
+  background: var(--vs-mint);
+  box-shadow: 0 0 10px var(--vs-mint);
+}
+
+.audio-toggle {
+  color: var(--vs-gold-hi);
+  border-color: var(--vs-line);
+  background: rgba(230, 193, 122, 0.08);
+}
+
+.audio-toggle:hover {
+  border-color: rgba(230, 193, 122, 0.7);
+  background: rgba(230, 193, 122, 0.16);
+}
+
+.audio-toggle:focus-visible {
+  outline-color: var(--vs-gold-hi);
+}
+
+.audio-toggle[aria-pressed="false"] {
+  color: var(--vs-dim);
+  border-color: var(--vs-line-soft);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.streak-badge {
+  border-color: rgba(255, 63, 134, 0.35);
+  color: var(--vs-rose-soft);
+  background: rgba(255, 63, 134, 0.1);
+}
+
+/* ---------- 共通の文字と部品 ---------- */
+
+.eyebrow {
+  color: var(--vs-gold);
+  font-family: var(--vs-font-accent);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.eyebrow::before {
+  background: linear-gradient(90deg, transparent, currentColor);
+}
+
+.button {
+  border-radius: 14px;
+}
+
+.button-primary {
+  border-color: rgba(230, 193, 122, 0.45);
+  color: #fff;
+  background: linear-gradient(135deg, #ff6fa3 0%, #ea2f76 45%, #9c1047 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 12px 30px -8px rgba(255, 63, 134, 0.55);
+}
+
+.button-cyan {
+  border-color: rgba(230, 193, 122, 0.55);
+  color: var(--vs-gold-hi);
+  background: rgba(230, 193, 122, 0.1);
+}
+
+.button-ghost {
+  border-color: var(--vs-line-soft);
+  color: var(--vs-pearl);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.button-danger {
+  border-color: rgba(255, 85, 102, 0.4);
+  color: #ff9aa5;
+  background: rgba(255, 85, 102, 0.09);
+}
+
+/* 押せるものにだけ走る光。必要な部品にだけ付ける。 */
+.vs-satin {
+  position: relative;
+  overflow: hidden;
+}
+
+.vs-satin::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.36) 45%, transparent 60%);
+  transform: translateX(-120%);
+  animation: vs-satin 4.8s var(--vs-ease-out) 1.2s infinite;
+}
+
+.vs-satin:disabled::after {
+  animation: none;
+}
+
+@keyframes vs-satin {
+  0% { transform: translateX(-120%); }
+  35%, 100% { transform: translateX(120%); }
+}
+
+.vs-foil-text {
+  color: transparent;
+  background: var(--vs-foil);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: vs-foil-sweep 6s ease-in-out infinite;
+}
+
+@keyframes vs-foil-sweep {
+  0%, 100% { background-position: 100% 0; }
+  50% { background-position: 0 0; }
+}
+
+@keyframes vs-holo-spin {
+  to { --vs-holo-angle: 360deg; }
+}
+
+@keyframes vs-fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes vs-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+}
+
+/* カードの裏面。トップの扇と対戦の公開前で使う。 */
+.vs-card-back {
+  position: relative;
+  display: grid;
+  aspect-ratio: 2 / 3;
+  max-width: 100%;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 14px;
+  container-type: inline-size;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.45) 100%),
+    repeating-linear-gradient(45deg, rgba(230, 193, 122, 0.11) 0 1px, transparent 1px 10px),
+    repeating-linear-gradient(-45deg, rgba(230, 193, 122, 0.11) 0 1px, transparent 1px 10px),
+    linear-gradient(160deg, #7a1640, #2a0718 72%);
+  box-shadow:
+    inset 0 0 0 1px rgba(230, 193, 122, 0.6),
+    inset 0 0 0 6px #2a0718,
+    inset 0 0 0 7px rgba(230, 193, 122, 0.35),
+    0 16px 34px -10px rgba(0, 0, 0, 0.8);
+}
+
+.vs-card-back::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: var(--vs-holo);
+  mix-blend-mode: overlay;
+  opacity: 0.2;
+  animation: vs-holo-spin 6s linear infinite;
+}
+
+.vs-card-back::after {
+  position: absolute;
+  inset: -40%;
+  content: "";
+  background: linear-gradient(115deg, transparent 42%, rgba(255, 235, 205, 0.22) 50%, transparent 58%);
+  animation: vs-back-sheen 3.6s var(--vs-ease-out) infinite;
+}
+
+@keyframes vs-back-sheen {
+  0% { transform: translateX(-45%); }
+  60%, 100% { transform: translateX(45%); }
+}
+
+.vs-card-emblem {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 46%;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: 50%;
+  color: transparent;
+  background: var(--vs-foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+  font: 800 24cqw/1 var(--vs-font-display);
+  box-shadow:
+    inset 0 0 0 1px rgba(230, 193, 122, 0.8),
+    0 0 0 5px rgba(42, 7, 24, 0.9),
+    0 0 0 6px rgba(230, 193, 122, 0.35),
+    0 0 24px rgba(255, 63, 134, 0.3);
+}
+
+/* ダイアログとトースト */
+.confirm-dialog,
+.audio-studio-card {
+  border-color: var(--vs-line);
+  background: linear-gradient(165deg, #211424, #110a14 70%);
+}
+
+.toast {
+  border-color: var(--vs-line);
+  background: rgba(31, 20, 35, 0.97);
+}
+
+/* ---------- トップページ ---------- */
+
+.hero.vl-landing {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  padding-bottom: 12px;
+}
+
+.hero.vl-landing::before {
+  display: none;
+}
+
+.hero.vl-landing > div,
+.hero.vl-landing > section,
+.hero.vl-landing > nav,
+.hero.vl-landing > details {
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+}
+
+.vl-stage {
+  position: relative;
+  isolation: isolate;
+  height: 420px;
+  overflow: hidden;
+  border-radius: 28px;
+  background:
+    var(--vs-grain) 0 0 / 160px 160px,
+    radial-gradient(80% 50% at 50% 100%, rgba(92, 15, 46, 0.6), transparent 70%),
+    var(--vs-night-0);
+  box-shadow: inset 0 0 0 1px var(--vs-line);
+}
+
+.vl-curtain {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  width: 26%;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(7, 5, 10, 0) 35%, rgba(7, 5, 10, 0.92)),
+    repeating-linear-gradient(90deg, #240616 0, #4a0e2c 10px, #6b1639 15px, #3a0a24 22px, #240616 32px);
+}
+
+.vl-curtain-left {
+  left: 0;
+  -webkit-mask: linear-gradient(90deg, #000 45%, transparent);
+  mask: linear-gradient(90deg, #000 45%, transparent);
+}
+
+.vl-curtain-right {
+  right: 0;
+  -webkit-mask: linear-gradient(270deg, #000 45%, transparent);
+  mask: linear-gradient(270deg, #000 45%, transparent);
+}
+
+.vl-valance {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 40px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 0, #5a1133 17px, transparent 18px) 0 10px / 38px 26px repeat-x,
+    radial-gradient(circle at 50% 0, transparent 16.5px, rgba(230, 193, 122, 0.75) 17.5px, transparent 19px) 0 10px / 38px 26px repeat-x,
+    linear-gradient(#3b0a22, #3b0a22) 0 0 / 100% 11px no-repeat,
+    linear-gradient(rgba(230, 193, 122, 0.6), rgba(230, 193, 122, 0.6)) 0 10px / 100% 1px no-repeat;
+}
+
+.vl-spotlight {
+  position: absolute;
+  z-index: 1;
+  top: 16px;
+  left: 50%;
+  width: 400px;
+  height: 460px;
+  margin-left: -200px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 236, 205, 0.3), rgba(255, 160, 200, 0.08) 65%, transparent 92%);
+  clip-path: polygon(43% 0, 57% 0, 100% 100%, 0 100%);
+  filter: blur(5px);
+  transform-origin: 50% 0;
+  animation: vl-spot-in 900ms var(--vs-ease-out) both;
+}
+
+@keyframes vl-spot-in {
+  from { opacity: 0; transform: scaleY(0.2); }
+}
+
+.vl-floor {
+  position: absolute;
+  z-index: 1;
+  bottom: 40px;
+  left: 50%;
+  width: 360px;
+  height: 80px;
+  margin-left: -180px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(255, 210, 170, 0.28), transparent);
+  animation: vs-fade-in 900ms 200ms both;
+}
+
+.vl-dust {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+
+.vl-dust i {
+  position: absolute;
+  bottom: 30px;
+  left: var(--x);
+  width: var(--s);
+  height: var(--s);
+  border-radius: 50%;
+  opacity: 0;
+  background: var(--vs-gold-hi);
+  box-shadow: 0 0 6px var(--vs-gold);
+  animation: vl-rise var(--t) linear var(--d) infinite;
+}
+
+@keyframes vl-rise {
+  0% { opacity: 0; transform: translateY(0); }
+  15% { opacity: 0.8; }
+  100% { opacity: 0; transform: translateY(-400px); }
+}
+
+.vl-copy {
+  position: relative;
+  z-index: 4;
+  padding: 58px 16px 0;
+  text-align: center;
+}
+
+.vl-eyebrow {
+  margin: 0;
+  color: var(--vs-gold);
+  font: italic 700 0.78rem/1 var(--vs-font-accent);
+  letter-spacing: 0.34em;
+  animation: vs-fade-in 600ms 300ms both;
+}
+
+.hero.vl-landing .vl-title {
+  display: grid;
+  max-width: none;
+  justify-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: normal;
+  line-height: 1;
+}
+
+.vl-title-text {
+  color: transparent;
+  background: var(--vs-foil);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  font: 800 clamp(4.2rem, 17vw, 6.6rem)/1.05 var(--vs-font-display);
+  letter-spacing: 0.05em;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 0 26px rgba(255, 63, 134, 0.3));
+  animation: vs-fade-up 700ms var(--vs-ease-out) 200ms both, vs-foil-sweep 6s ease-in-out 600ms infinite;
+}
+
+.vl-tagline {
+  color: var(--vs-gold-hi);
+  font: italic 700 clamp(1rem, 4.3vw, 1.2rem)/1.3 var(--vs-font-accent);
+  letter-spacing: 0.02em;
+  opacity: 0.9;
+}
+
+.vl-lead {
+  margin: 10px 0 0;
+  color: var(--vs-mist);
+  font-size: 0.84rem;
+}
+
+.vl-fan {
+  position: absolute;
+  z-index: 3;
+  bottom: 70px;
+  left: 50%;
+  width: 0;
+  height: 0;
+}
+
+.vl-fan-card {
+  position: absolute;
+  bottom: 0;
+  left: -50px;
+  width: 100px;
+  transform-origin: 50% 150%;
+  transform: translateY(var(--y)) rotate(var(--r));
+  animation: vl-fan-out 700ms var(--vs-ease-out) calc(200ms + var(--i) * 70ms) both;
+}
+
+@keyframes vl-fan-out {
+  from { opacity: 0; transform: translateY(90px) rotate(0deg); }
+}
+
+/* 通常型1on1の入口とモードタイル */
+.vl-landing .hero-actions {
+  max-width: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: -64px 0 0;
+  position: relative;
+  z-index: 5;
+  padding-inline: 2px;
+}
+
+.vl-main-button {
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-height: 0;
+  padding: 16px 52px 15px 20px;
+  border: 0;
+  border-radius: 22px;
+  cursor: pointer;
+  color: #fff;
+  text-align: left;
+  background: linear-gradient(135deg, #ff6fa3 0%, #ea2f76 45%, #9c1047 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 0 0 1px rgba(255, 220, 232, 0.22),
+    0 0 0 1px rgba(230, 193, 122, 0.5),
+    0 14px 34px -8px rgba(255, 63, 134, 0.65);
+  transition: transform 160ms var(--vs-ease-out);
+}
+
+.vl-main-button:hover {
+  transform: translateY(-2px);
+}
+
+.vl-main-button:active {
+  transform: scale(0.98);
+}
+
+.vl-main-button small {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  opacity: 0.92;
+}
+
+.vl-main-button > span {
+  font: 800 1.6rem/1.25 var(--vs-font-display);
+  letter-spacing: 0.04em;
+}
+
+.vl-main-button::before {
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  content: "›";
+  font: 300 2.5rem/1 var(--vs-font-accent);
+  opacity: 0.9;
+  transform: translateY(-52%);
+}
+
+.vl-live {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  font: 500 0.78rem/1.2 var(--vs-font-number);
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+
+.vl-live b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vl-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  animation: vl-live-pulse 1.8s ease-out infinite;
+}
+
+@keyframes vl-live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+  100% { box-shadow: 0 0 0 9px rgba(255, 255, 255, 0); }
+}
+
+.vl-rule {
+  grid-column: 1 / -1;
+  margin: 0 0 8px;
+  color: var(--vs-mist);
+  font-size: 0.74rem;
+  text-align: center;
+}
+
+.vl-tile,
+.vl-landing #freeTableButton.vl-tile {
+  --tile-accent: 168, 139, 255;
+  --tile-icon: var(--vs-icon-target);
+  position: relative;
+  display: flex;
+  min-height: 124px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 5px;
+  padding: 44px 13px 13px;
+  border: 0;
+  border-radius: 18px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  text-align: left;
+  background: linear-gradient(165deg, rgba(var(--tile-accent), 0.18), rgba(22, 14, 26, 0.94) 62%);
+  box-shadow: inset 0 0 0 1px rgba(var(--tile-accent), 0.32);
+  transition: transform 160ms var(--vs-ease-out), box-shadow 160ms ease;
+}
+
+.vl-tile:hover,
+.vl-landing #freeTableButton.vl-tile:hover {
+  transform: translateY(-2px);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px rgba(var(--tile-accent), 0.6);
+}
+
+.vl-tile::before {
+  position: absolute;
+  top: 13px;
+  left: 13px;
+  width: 24px;
+  height: 24px;
+  content: "";
+  background: rgb(var(--tile-accent));
+  -webkit-mask: var(--tile-icon) center / contain no-repeat;
+  mask: var(--tile-icon) center / contain no-repeat;
+}
+
+.vl-tile small {
+  order: 2;
+  color: var(--vs-mist);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0;
+  opacity: 1;
+}
+
+.vl-tile span {
+  order: 1;
+  font: 800 0.98rem/1.3 var(--vs-font-display);
+  white-space: normal;
+}
+
+.vl-tile-strategy {
+  --tile-accent: 168, 139, 255;
+  --tile-icon: var(--vs-icon-target);
+}
+
+.vl-tile-market {
+  --tile-accent: 230, 193, 122;
+  --tile-icon: var(--vs-icon-gem);
+}
+
+.vl-landing #freeTableButton.vl-tile {
+  --tile-accent: 111, 227, 207;
+  --tile-icon: var(--vs-icon-cup);
+}
+
+.vl-landing #freeTableButton.vl-tile.is-lit {
+  background: linear-gradient(165deg, rgba(111, 227, 207, 0.3), rgba(22, 14, 26, 0.94) 66%);
+  box-shadow: inset 0 0 0 1px rgba(111, 227, 207, 0.7), 0 0 26px rgba(111, 227, 207, 0.18);
+}
+
+.vl-tile-ai {
+  --tile-accent: 255, 138, 182;
+  --tile-icon: var(--vs-icon-spark);
+}
+
+.vl-tile-roulette {
+  --tile-accent: 255, 176, 112;
+  --tile-icon: var(--vs-icon-drum);
+}
+
+.vl-tile-danwaku {
+  --tile-accent: 176, 214, 150;
+  --tile-icon: var(--vs-icon-lotus);
+}
+
+/* ランキングとAnjuPayの入口。スマホでは画面下のタブ、PCでは横並び。 */
+.vl-tabbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vl-tab {
+  --tab-icon: var(--vs-icon-crown);
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.vl-tab::before {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  content: "";
+  background: var(--vs-gold);
+  -webkit-mask: var(--tab-icon) center / contain no-repeat;
+  mask: var(--tab-icon) center / contain no-repeat;
+}
+
+.vl-tab:hover {
+  color: var(--vs-gold-hi);
+  box-shadow: inset 0 0 0 1px var(--vs-line);
+}
+
+.vl-tab-mission { --tab-icon: var(--vs-icon-list); }
+.vl-tab-shop { --tab-icon: var(--vs-icon-bag); }
+.vl-tab-wallet { --tab-icon: var(--vs-icon-wallet); }
+
+/* 見出しつきの区画 */
+.vl-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.vl-section-head > span {
+  color: var(--vs-gold);
+  font: italic 700 0.74rem/1 var(--vs-font-accent);
+  letter-spacing: 0.24em;
+}
+
+.vl-section-head h2 {
+  margin: 0;
+  font: 800 1.15rem/1.3 var(--vs-font-display);
+}
+
+.vl-list {
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--vs-night-2);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+}
+
+.vl-row {
+  --row-icon: var(--vs-icon-bars);
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 60px;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  padding: 11px 40px 11px 50px;
+  border: 0;
+  border-bottom: 1px solid var(--vs-line-soft);
+  cursor: pointer;
+  color: var(--vs-pearl);
+  background: transparent;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.vl-row:last-child {
+  border-bottom: 0;
+}
+
+.vl-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.vl-row small {
+  color: var(--vs-mist);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.vl-row::before {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  width: 20px;
+  height: 20px;
+  content: "";
+  background: var(--vs-gold);
+  -webkit-mask: var(--row-icon) center / contain no-repeat;
+  mask: var(--row-icon) center / contain no-repeat;
+  transform: translateY(-50%);
+}
+
+.vl-row::after {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  content: "›";
+  color: var(--vs-dim);
+  font: 300 1.6rem/1 var(--vs-font-accent);
+  transform: translateY(-54%);
+}
+
+.vl-row-achievement { --row-icon: var(--vs-icon-medal); }
+.vl-row-audio { --row-icon: var(--vs-icon-mic); }
+
+/* 既存の区画を夜の舞台へ */
+.vl-landing .training-lights-card,
+.vl-landing .landing-community,
+.vl-landing .landing-flea,
+.vl-live-board,
+.vl-more {
+  max-width: none;
+  margin: 0;
+}
+
+.vl-landing .training-lights-card {
+  border-color: rgba(255, 138, 182, 0.3);
+  background:
+    radial-gradient(120% 90% at 0 0, rgba(255, 63, 134, 0.14), transparent 60%),
+    var(--vs-night-2);
+}
+
+.vl-landing .landing-community {
+  border-color: var(--vs-line);
+  background:
+    radial-gradient(120% 80% at 100% 0, rgba(255, 63, 134, 0.14), transparent 60%),
+    linear-gradient(160deg, #211424, #120b15);
+}
+
+.vl-landing .landing-flea {
+  border-color: rgba(111, 227, 207, 0.25);
+  background:
+    radial-gradient(120% 80% at 0 0, rgba(111, 227, 207, 0.09), transparent 60%),
+    var(--vs-night-2);
+}
+
+.vl-landing .landing-flea h2 {
+  font-family: var(--vs-font-display);
+}
+
+.vl-live-board {
+  padding: 18px;
+  border-radius: 22px;
+  background: var(--vs-night-1);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+}
+
+.vl-live-board .mode-lobby-stats {
+  margin: 0;
+}
+
+.vl-landing .lobby-mode-card {
+  border-color: var(--vs-line-soft);
+  background: var(--vs-night-2);
+}
+
+.vl-landing .lobby-mode-card strong {
+  font-family: var(--vs-font-number);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.vl-landing .lobby-mode-card.solo .lobby-mode-head span {
+  color: var(--vs-rose-soft);
+}
+
+.vl-landing .lobby-mode-card.strategy .lobby-mode-head span {
+  color: var(--vs-violet);
+}
+
+.vl-landing .lobby-stats-refresh {
+  margin-top: 12px;
+}
+
+.vl-safe {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(111, 227, 207, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(111, 227, 207, 0.2);
+}
+
+.vl-safe summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  font-size: 0.78rem;
+  list-style: none;
+}
+
+.vl-safe summary::-webkit-details-marker {
+  display: none;
+}
+
+.vl-safe summary b {
+  width: 100%;
+  color: var(--vs-pearl);
+  font: 800 0.95rem/1.4 var(--vs-font-display);
+}
+
+.vl-safe summary b::after {
+  margin-left: 8px;
+  content: "くわしく ›";
+  color: var(--vs-gold);
+  font: 700 0.72rem/1 var(--vs-font-body);
+}
+
+.vl-safe[open] summary b::after {
+  content: "閉じる";
+}
+
+.vl-safe summary span::before {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  content: "";
+  vertical-align: middle;
+  background: var(--vs-mint);
+}
+
+.vl-safe .lobby-privacy,
+.vl-safe .mode-note {
+  margin: 12px 0 0;
+  color: var(--vs-mist);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+/* PC：舞台と入口は全幅、残りの区画は2列 */
+@media (min-width: 900px) {
+  .hero.vl-landing {
+    max-width: 1120px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 24px;
+    margin-inline: auto;
+  }
+
+  .vl-stage,
+  .vl-landing .hero-actions,
+  .vl-tabbar {
+    grid-column: 1 / -1;
+  }
+
+  .vl-stage {
+    height: 460px;
+  }
+
+  .vl-copy {
+    padding-top: 74px;
+  }
+
+  .vl-landing .hero-actions {
+    width: min(880px, 100%);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-self: center;
+  }
+
+  .vl-main-button {
+    width: min(620px, 100%);
+    justify-self: center;
+  }
+
+  .vl-tabbar {
+    width: min(880px, 100%);
+    justify-self: center;
+  }
+}
+
+/* スマホ：舞台は画面の端まで。タブは画面下に固定。 */
+@media (max-width: 760px) {
+  .hero.vl-landing {
+    padding-block: 0 8px;
+  }
+
+  .hero.vl-landing > .vl-stage {
+    height: 400px;
+    margin: -26px -14px 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .site-header {
+    gap: 10px;
+  }
+
+  .brand {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .brand strong {
+    overflow: hidden;
+    font-size: 0.92rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-badges {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+
+  .status-dot,
+  .audio-toggle {
+    white-space: nowrap;
+  }
+
+  .vl-copy {
+    padding-top: 50px;
+  }
+
+  .vl-fan {
+    bottom: 62px;
+  }
+
+  .vl-tabbar {
+    position: fixed;
+    z-index: 25;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    gap: 0;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: rgba(14, 9, 18, 0.84);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow: 0 -1px 0 var(--vs-line);
+  }
+
+  .vl-tab {
+    min-height: 54px;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 2px;
+    border-radius: 12px;
+    color: var(--vs-mist);
+    background: transparent;
+    box-shadow: none;
+    font-size: 0.62rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .vl-tab::before {
+    width: 24px;
+    height: 24px;
+    background: var(--vs-mist);
+  }
+
+  .vl-tab:hover,
+  .vl-tab:focus-visible {
+    color: var(--vs-gold-hi);
+    box-shadow: none;
+  }
+
+  .vl-tab:hover::before,
+  .vl-tab:focus-visible::before {
+    background: var(--vs-gold-hi);
+  }
+
+  body:has(.vl-landing) {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .vl-landing .mode-lobby-stats {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 430px) {
+  .header-badges .status-dot {
+    display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .vl-tile,
+  .vl-landing #freeTableButton.vl-tile {
+    min-height: 112px;
+  }
+
+  .vl-main-button > span {
+    font-size: 1.4rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vs-satin::after,
+  .vs-foil-text,
+  .vs-card-back::before,
+  .vs-card-back::after,
+  .vl-spotlight,
+  .vl-floor,
+  .vl-dust i,
+  .vl-eyebrow,
+  .vl-title-text,
+  .vl-fan-card,
+  .vl-live i {
+    animation: none;
+  }
+
+  .vl-dust {
+    display: none;
+  }
+}

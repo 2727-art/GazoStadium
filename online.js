@@ -232,6 +232,8 @@ const RANKING_COMMENT_MAX_LENGTH = 80;
 const RANKING_COMMENT_URL_PATTERN = /(?:https?:\/\/|www\.)/i;
 const TOP_MESSAGE_PRODUCT_ID = "feature_top_message";
 const CREATOR_CARD_PREMIUM_PREVIEW_LOCKED = useOfflineMarketPreview && new URLSearchParams(window.location.search).get("creatorCardPremium") === "locked";
+const useOfflineBattlePreview = ["127.0.0.1", "localhost"].includes(window.location.hostname)
+  && new URLSearchParams(window.location.search).has("battlePreview");
 const TOP_MESSAGE_MAX_LENGTH = 30;
 const CREATOR_CARD_URL_PATTERN = /(?:https?:\/\/|www\.|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?:[/?#]\S*)?)/i;
 const CREATOR_CARD_EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,24}/i;
@@ -481,7 +483,6 @@ const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
 const sampleHandicapMessage = document.querySelector("#sampleHandicapMessage");
 const confirmSampleMatch = document.querySelector("#confirmSampleMatch");
-const fxLayer = document.querySelector("#fxLayer");
 const finishCutInDialog = document.querySelector("#finishCutInDialog");
 const finishCutInContent = document.querySelector("#finishCutInContent");
 
@@ -490,6 +491,8 @@ let state;
 let economyInitialization = null;
 let lastRenderedScreen = "";
 let finishCutInGeneration = 0;
+let battleChatOpen = false;
+let battleChatSeenCount = 0;
 let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
@@ -1989,8 +1992,185 @@ function openOnlineScreen(screen) {
 }
 
 function start() {
+  if (useOfflineBattlePreview) {
+    startBattlePreview().catch(handleFatalError);
+    return;
+  }
   if (!active) resetBattlePresenceCheck("solo");
   openOnlineScreen("setup");
+}
+
+// localhost で ?battlePreview を付けた時だけ、Firebaseにつながずに通常型1on1の画面と演出を確認できる。
+const BATTLE_PREVIEW_STEPS = [
+  ["connecting", "VS"],
+  ["select", "画像選択"],
+  ["waitingPick", "相手待ち"],
+  ["waitingImage", "画像転送"],
+  ["reveal", "画像公開"],
+  ["score", "採点"],
+  ["waitingScore", "採点待ち"],
+  ["result:great", "結果 GREAT"],
+  ["result:critical", "結果 CRITICAL"],
+  ["result:perfect", "結果 PERFECT"],
+  ["result:draw", "結果 引き分け"],
+  ["finish:standard", "FINISH"],
+  ["finish:signature", "SIGNATURE"],
+  ["gameover:win", "勝利"],
+  ["gameover:lose", "敗北"],
+];
+const battlePreview = { remote: [], landscape: false, lastStep: "connecting", run: 0 };
+
+function paintBattlePreviewArt(index, { landscape = false } = {}) {
+  const canvas = document.createElement("canvas");
+  canvas.width = landscape ? 960 : 600;
+  canvas.height = landscape ? 540 : 900;
+  const context = canvas.getContext("2d");
+  const hue = (index * 47 + 320) % 360;
+  const gradient = context.createLinearGradient(0, 0, canvas.width * 0.5, canvas.height);
+  gradient.addColorStop(0, `hsl(${hue}, 80%, 80%)`);
+  gradient.addColorStop(0.55, `hsl(${(hue + 30) % 360}, 55%, 42%)`);
+  gradient.addColorStop(1, `hsl(${(hue + 60) % 360}, 60%, 12%)`);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  for (let bubble = 0; bubble < 18; bubble += 1) {
+    const x = (((bubble * 97) + (index * 31)) % 100) / 100 * canvas.width;
+    const y = (((bubble * 53) + (index * 17)) % 100) / 100 * canvas.height;
+    const radius = canvas.width * (0.02 + ((bubble * 13) % 7) / 100);
+    const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+    glow.addColorStop(0, "rgba(255,245,220,.55)");
+    glow.addColorStop(1, "rgba(255,245,220,0)");
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.fillStyle = "rgba(255,255,255,.85)";
+  context.font = `700 ${Math.round(Math.min(canvas.width, canvas.height) * 0.05)}px system-ui, sans-serif`;
+  context.fillText(`PREVIEW ${index + 1} · ${landscape ? "16:9" : "2:3"}`, canvas.width * 0.06, canvas.height - canvas.width * 0.06);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve({
+    id: `preview-card-${index}`,
+    blob,
+    url: URL.createObjectURL(blob),
+    position: index,
+    used: false,
+    isSample: false,
+  }), "image/jpeg", 0.88));
+}
+
+async function startBattlePreview() {
+  active = true;
+  state = createOnlineState();
+  lastRenderedScreen = "";
+  setOnlineChrome("BATTLE PREVIEW");
+  const deck = await Promise.all(Array.from({ length: 7 }, (_, index) => paintBattlePreviewArt(index, { landscape: index === 4 })));
+  battlePreview.remote = await Promise.all([paintBattlePreviewArt(8), paintBattlePreviewArt(9, { landscape: true })]);
+  Object.assign(state, {
+    uid: "preview-local",
+    opponentUid: "preview-remote",
+    playerIndex: 0,
+    authReady: true,
+    channelReady: true,
+    opponentOnline: true,
+    peerStatus: "P2P接続を準備中…",
+    deck,
+    signatureCardId: deck[0].id,
+    round: 3,
+    chatMessages: [
+      { id: "preview-1", authorUid: "preview-remote", name: "シオン", text: "よろしくお願いします！", round: 1 },
+      { id: "preview-2", authorUid: "preview-local", name: "ルミナ", text: "今夜は本気の5枚で来ました", round: 1 },
+      { id: "preview-3", authorUid: "preview-remote", name: "シオン", text: "その衣装の色づかい、ずるい…", round: 2 },
+    ],
+  });
+  mountBattlePreviewBar();
+  showBattlePreviewStep("connecting");
+}
+
+// プレビューでは、本番のデータベースや決済につながる操作を押しても実行しない。
+const BATTLE_PREVIEW_BLOCKED_CONTROLS = "[data-online-destroy], [data-engawa-decision], [data-engawa-end], [data-post-match-tip-send], [data-post-match-tip-retry], #onlineFreeTableLampButton, #onlineGameoverMissions";
+
+function blockBattlePreviewControl(event) {
+  if (!active || !event.target.closest?.(BATTLE_PREVIEW_BLOCKED_CONTROLS)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  showToast("プレビューでは、本番の処理につながる操作は実行しません。");
+}
+
+function mountBattlePreviewBar() {
+  if (document.querySelector("#battlePreviewBar")) return;
+  appRoot.addEventListener("click", blockBattlePreviewControl, true);
+  const bar = document.createElement("nav");
+  bar.id = "battlePreviewBar";
+  bar.className = "vb-preview-bar";
+  bar.setAttribute("aria-label", "対戦プレビューの画面切り替え");
+  bar.innerHTML = `<strong>PREVIEW</strong>${BATTLE_PREVIEW_STEPS.map(([step, label]) => `<button type="button" data-preview-step="${step}">${label}</button>`).join("")}<button type="button" data-preview-orientation>相手の画像: 縦長</button>`;
+  bar.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    if (button.hasAttribute("data-preview-orientation")) {
+      battlePreview.landscape = !battlePreview.landscape;
+      button.textContent = `相手の画像: ${battlePreview.landscape ? "横長" : "縦長"}`;
+      showBattlePreviewStep(battlePreview.lastStep);
+      return;
+    }
+    showBattlePreviewStep(button.dataset.previewStep);
+  });
+  document.body.append(bar);
+}
+
+function showBattlePreviewStep(step) {
+  if (!active || !useOfflineBattlePreview) return;
+  const [screen, variant = ""] = String(step || "connecting").split(":");
+  battlePreview.lastStep = step;
+  battlePreview.run += 1;
+  clearFinishCutIn({ restoreFocus: false });
+  resetSelectionTimerState();
+  // 毎回別の部屋として扱い、同じ画面でも演出を最初から再生する。
+  state.roomId = `preview-velvet-stage-${battlePreview.run}`;
+  state.remoteImages = new Map([[state.round, { ...battlePreview.remote[battlePreview.landscape ? 1 : 0], signature: false }]]);
+  state.selectedCardId = state.deck[0].id;
+  state.deck.forEach((item, index) => { item.used = index === 2 || index === 3; });
+  state.players[0] = { ...state.players[0], uid: "preview-local", name: "ルミナ", pursuitLine: "まだまだ、魅せてあげる。", sampleCount: 0, startingHp: MAX_HP, maxHp: MAX_HP, hp: 24, streak: 2, totalReceived: 21, criticals: 1, perfects: 0 };
+  state.players[1] = { ...state.players[1], uid: "preview-remote", name: "シオン", pursuitLine: "", sampleCount: 1, startingHp: getStartingHp(1), maxHp: getStartingHp(1), hp: 16, streak: 0, totalReceived: 13, criticals: 0, perfects: 0 };
+  state.history = [];
+  state.selectedScore = null;
+  state.imageTransferError = "";
+  state.transferProgress = 64;
+  if (screen === "select") {
+    state.screen = "select";
+    render();
+    startSelectionTimer(Date.now());
+    return;
+  }
+  if (screen === "result" || screen === "finish") {
+    const scoresByVariant = { great: [7, 5], critical: [9, 6], perfect: [10, 7], draw: [6, 6] };
+    const lethal = screen === "finish";
+    if (lethal && variant !== "signature") state.selectedCardId = state.deck[1].id;
+    if (lethal) state.players[1].hp = 9;
+    const [scorePlayerOne, scorePlayerTwo] = lethal ? [9, 4] : scoresByVariant[variant] || scoresByVariant.great;
+    const winnerIndex = scorePlayerOne === scorePlayerTwo ? null : scorePlayerOne > scorePlayerTwo ? 0 : 1;
+    const loserIndex = winnerIndex === null ? null : 1 - winnerIndex;
+    const damage = winnerIndex === null ? 0 : Math.max(scorePlayerOne, scorePlayerTwo);
+    const previousHp = loserIndex === null ? null : state.players[loserIndex].hp;
+    if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, previousHp - damage);
+    state.history = [{ round: state.round, scorePlayerOne, scorePlayerTwo, winnerIndex, loserIndex, damage, previousHp, lethal, finish: null }];
+    state.screen = "result";
+    if (lethal) state.history[0].finish = createFinishCutInPayload(winnerIndex);
+    render();
+    if (lethal) triggerFinishCutIn(state.history[0].finish);
+    return;
+  }
+  if (screen === "gameover") {
+    const won = variant !== "lose";
+    state.players[0].hp = won ? 24 : 0;
+    state.players[1].hp = won ? 0 : 9;
+    state.outcome = { winnerIndex: won ? 0 : 1, reason: "hp" };
+    state.history = [{ round: state.round, scorePlayerOne: won ? 9 : 4, scorePlayerTwo: won ? 4 : 9, winnerIndex: won ? 0 : 1, loserIndex: won ? 1 : 0, damage: 9, previousHp: 9, lethal: true, finish: null }];
+    state.screen = "gameover";
+    render();
+    return;
+  }
+  state.screen = screen;
+  render();
 }
 
 function openDailyMissions() {
@@ -2841,6 +3021,8 @@ function renderLobbyStats() {
   const values = {
     lobbySoloWaitingCount: lobbyStats.solo.waiting,
     lobbySoloPlayingCount: lobbyStats.solo.playing,
+    heroSoloWaitingCount: lobbyStats.solo.waiting,
+    heroSoloPlayingCount: lobbyStats.solo.playing,
     lobbyStrategyWaitingCount: lobbyStats.strategy.waiting,
     lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
     lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
@@ -4789,6 +4971,11 @@ function render() {
     noContest: renderNoContest,
     error: renderError,
   };
+  if (screenChanged && state.screen === "connecting") {
+    battleChatOpen = false;
+    battleChatSeenCount = 0;
+  }
+  window.HariaiBattleFx?.cancel?.();
   appRoot.innerHTML = renderContactControls("solo") + (renderers[state.screen] || renderSetup)();
   lastRenderedScreen = state.screen;
   bindScreenEvents();
@@ -4798,6 +4985,115 @@ function render() {
   if (screenChanged) {
     window.scrollTo(0, 0);
     appRoot.focus({ preventScroll: true });
+  }
+  playBattleSceneFx();
+}
+
+// 画面ごとの演出。演出はこの端末の表示だけで、状態の遷移や送信は待たない。
+function playBattleSceneFx() {
+  const fx = window.HariaiBattleFx;
+  const root = appRoot.querySelector(".vb-screen");
+  const audio = () => window.HariaiAudio;
+  if (root) audio()?.setBgm?.(state.screen === "gameover" ? "lobby" : "battle");
+  if (!fx || !root) return;
+  if (state.screen === "connecting") {
+    fx.play(root, battleFxKey("vs"), [
+      [450, (ctx) => ctx.sound(() => audio()?.playVersus?.())],
+      [950, () => {}],
+    ]);
+    return;
+  }
+  if (state.screen === "reveal") {
+    const key = battleFxKey("reveal");
+    const start = () => {
+      if (!root.isConnected || state.screen !== "reveal") return;
+      const local = root.querySelector('[data-reveal-side="local"]');
+      const remote = root.querySelector('[data-reveal-side="remote"]');
+      fx.play(root, key, [
+        [0, () => root.classList.add("is-dimmed")],
+        [300, (ctx) => {
+          local?.classList.add("is-lit");
+          local?.querySelector(".vb-flip")?.classList.add("is-open");
+          ctx.sound(() => audio()?.playFlip?.());
+        }],
+        [700, () => remote?.querySelector(".vb-flip")?.classList.add("is-tremble")],
+        [1000, (ctx) => {
+          const flip = remote?.querySelector(".vb-flip");
+          flip?.classList.remove("is-tremble");
+          flip?.classList.add("is-open", "is-burst");
+          remote?.classList.add("is-lit");
+          root.classList.remove("is-dimmed");
+          ctx.sound(() => audio()?.playReveal?.(), { essential: true });
+        }],
+        [1500, () => {}],
+      ]);
+    };
+    if (fx.hasPlayed(key)) {
+      start();
+      return;
+    }
+    const images = Array.from(root.querySelectorAll(".vb-card-image")).map((image) => image.src);
+    Promise.race([fx.decode(images), new Promise((resolve) => window.setTimeout(resolve, 1500))]).then(start);
+    return;
+  }
+  if (state.screen === "result") {
+    const result = state.history.at(-1);
+    if (!result || result.lethal) return;
+    const scores = [result.scorePlayerOne, result.scorePlayerTwo];
+    const topScore = Math.max(...scores);
+    const numbers = Array.from(root.querySelectorAll("[data-result-score]"));
+    let roll = 0;
+    fx.play(root, battleFxKey("result"), [
+      [0, (ctx) => {
+        roll = ctx.every(50, () => {
+          numbers.forEach((number) => { number.textContent = String(1 + Math.floor(Math.random() * 10)); });
+        });
+        ctx.sound(() => audio()?.playRoll?.());
+      }],
+      [600, (ctx) => {
+        ctx.stop(roll);
+        numbers.forEach((number) => { number.textContent = number.dataset.resultScore; });
+        root.classList.add("is-landed");
+      }],
+      [650, (ctx) => {
+        if (result.winnerIndex === null) return;
+        root.classList.add(topScore >= 10 ? "is-perfect-hit" : topScore >= 8 ? "is-critical-hit" : "is-hit");
+        if (topScore >= 10 && !ctx.fast) fx.burst(root.querySelector("[data-result-sparks]"), { count: 26, x: result.winnerIndex === 0 ? "25%" : "75%", y: "40%" });
+        ctx.sound(() => (topScore >= 8 ? audio()?.playResult?.(topScore) : audio()?.playLand?.()), { essential: true });
+      }],
+      [800, (ctx) => {
+        if (result.loserIndex === null) return;
+        const loser = state.players[result.loserIndex];
+        const player = root.querySelector(`[data-hud-player="${result.loserIndex}"]`);
+        const maxHp = Number(loser?.maxHp || loser?.startingHp || MAX_HP);
+        const hp = Math.max(0, Number(loser?.hp) || 0);
+        const bar = player?.querySelector(".vb-hp");
+        bar?.style.setProperty("--hp", String(hp / maxHp));
+        bar?.style.setProperty("--hp-ghost", String(hp / maxHp));
+        bar?.classList.toggle("is-low", hp / maxHp <= 0.3);
+        const value = player?.querySelector("[data-hud-hp]");
+        if (value) value.textContent = String(hp);
+        const pop = player?.querySelector(".vb-damage-pop");
+        if (pop && !ctx.fast) {
+          pop.textContent = `-${result.damage}`;
+          pop.classList.add("is-shown");
+        }
+        ctx.sound(() => audio()?.playDamage?.(result.damage));
+      }],
+      [1300, () => {}],
+    ]);
+    return;
+  }
+  if (state.screen === "gameover") {
+    const won = state.outcome?.winnerIndex === state.playerIndex;
+    const draw = state.outcome?.winnerIndex === null;
+    fx.play(root, battleFxKey("gameover"), [
+      [0, (ctx) => {
+        if (won && !ctx.fast) fx.burst(root.querySelector("[data-battle-confetti]"), { count: 40, fall: true });
+        ctx.sound(() => (won ? audio()?.playWin?.() : draw ? audio()?.playLand?.() : audio()?.playLose?.()), { essential: true });
+      }],
+      [700, () => {}],
+    ]);
   }
 }
 
@@ -5592,6 +5888,75 @@ function renderMatching() {
   });
 }
 
+function scoreLabel(score) {
+  return score === 10 ? "PERFECT!!" : score >= 8 ? "CRITICAL!" : score >= 6 ? "GREAT" : score >= 4 ? "GOOD" : "HIT";
+}
+
+// 演出はラウンドごとに一度だけ。再描画では完成状態で表示する。
+function battleFxKey(scene, round = state.round) {
+  return `${state.roomId || "room"}:${round}:${scene}`;
+}
+
+function battleFxPending(scene, round = state.round) {
+  const fx = window.HariaiBattleFx;
+  return Boolean(fx && !fx.hasPlayed(battleFxKey(scene, round)));
+}
+
+function renderBattleScreen(scene, content, { fxScene = "" } = {}) {
+  const pending = fxScene && battleFxPending(fxScene);
+  return `<section class="screen vb-screen vb-layout vb-${scene}" data-battle-scene="${scene}"${pending ? ' data-fx="pending"' : ""}>
+    <div class="vb-main">${content}</div>
+    ${renderBattleChatDock()}
+  </section>`;
+}
+
+function renderStageCard(item, { signature = false, className = "", alt = "" } = {}) {
+  const url = item?.url || "";
+  if (!url) return `<div class="vb-card is-empty${className ? ` ${className}` : ""}"><i class="vb-card-frame" aria-hidden="true"></i></div>`;
+  window.HariaiBattleFx?.prepareFill?.(url);
+  const small = window.HariaiBattleFx?.fillSource?.(url) || "";
+  return `<div class="vb-card${signature ? " is-signature" : ""}${className ? ` ${className}` : ""}">
+    <img class="vb-card-fill${small ? " is-small" : ""}" src="${small || url}" data-fill-for="${url}" alt="" aria-hidden="true" draggable="false" />
+    <img class="vb-card-image" src="${url}" alt="${escapeHtml(alt)}" draggable="false" />
+    <i class="vb-card-frame" aria-hidden="true"></i>${signature ? '<i class="vb-card-ring" aria-hidden="true"></i><span class="vb-card-signature">✦ SIGNATURE</span>' : ""}
+  </div>`;
+}
+
+function renderCardBack() {
+  return '<div class="vs-card-back"><span class="vs-card-emblem">貼</span></div>';
+}
+
+function renderBattleChatPeek() {
+  const message = state.chatMessages.at(-1);
+  if (!message) return '<span class="vb-chat-peek-empty">画像について話してみましょう</span>';
+  const body = message.stampId ? "スタンプを送りました" : String(message.text || "");
+  return `<b>${escapeHtml(message.name || "PLAYER")}</b>${escapeHtml(body)}`;
+}
+
+function renderBattleChatDock() {
+  const unread = !battleChatOpen && state.chatMessages.length > battleChatSeenCount;
+  return `<div class="vb-chat${battleChatOpen ? " is-open" : ""}" data-battle-chat>
+    <button type="button" class="vb-chat-peek${unread ? " has-new" : ""}" data-battle-chat-toggle aria-expanded="${battleChatOpen}" aria-controls="battleChatSheet">
+      <span class="vb-chat-peek-text" id="battleChatPeek">${renderBattleChatPeek()}</span><span class="vb-chat-peek-label">チャット</span>
+    </button>
+    <div class="vb-chat-sheet" id="battleChatSheet">
+      <button type="button" class="vb-chat-close" data-battle-chat-toggle aria-label="チャットを閉じる">閉じる</button>
+      ${renderOnlineChat()}
+    </div>
+  </div>`;
+}
+
+function setBattleChatOpen(open) {
+  battleChatOpen = Boolean(open);
+  if (battleChatOpen) battleChatSeenCount = state.chatMessages.length;
+  const dock = document.querySelector("[data-battle-chat]");
+  if (!dock) return;
+  dock.classList.toggle("is-open", battleChatOpen);
+  dock.querySelector(".vb-chat-peek")?.classList.remove("has-new");
+  dock.querySelectorAll("[data-battle-chat-toggle]").forEach((button) => button.setAttribute("aria-expanded", String(battleChatOpen)));
+  if (battleChatOpen) scrollChat();
+}
+
 function renderConnecting() {
   const opponent = getOpponent();
   const ownPlayer = state.players[state.playerIndex];
@@ -5600,23 +5965,26 @@ function renderConnecting() {
     label: `${opponent?.name || "対戦相手"}の展示実績`,
     compact: false,
   });
-  const handicapDetails = [ownPlayer, opponent].map((player, index) => {
+  const plate = (player, local) => {
     const sampleCount = normalizeSampleCount(player?.sampleCount);
     const startingHp = getStartingHp(sampleCount);
-    return `<span class="connection-pill ${sampleCount ? "warning" : ""}">${index === 0 ? "あなた" : escapeHtml(player?.name || "対戦相手")}: HP ${startingHp}${sampleCount ? ` / SAMPLE ${sampleCount}` : ""}</span>`;
-  }).join("");
-  const status = renderStatusCard({
-    icon: "VS",
-    eyebrow: state.reunionMatch ? "FAMILIAR REUNION" : "MATCH FOUND",
-    title: state.reunionMatch ? `${escapeHtml(opponent?.name || "顔なじみ")}と、また会えました` : `${escapeHtml(opponent?.name || "対戦相手")}とマッチング`,
-    body: state.reunionMatch
-      ? "縁側で知り合った顔なじみとの再会です。いつもの通常型1on1を始めます。"
-      : "画像を一時転送するためのP2P接続を準備しています。Firebaseには画像をアップロードしません。",
-    details: `<span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${state.reunionMatch ? '<span class="connection-pill connected">縁側の顔なじみ</span>' : ""}${handicapDetails}${opponentAchievements}`,
-    actions: `<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>`,
-  });
-  return `<section class="screen">${status.replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
-    <div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
+    const name = player?.name || (local ? "あなた" : "対戦相手");
+    const avatarUrl = local ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
+    const avatar = shared()?.profileAvatar?.renderBattle?.(name, avatarUrl, { hidden: !local && state.hideOpponentAvatar, className: "vb-vs-avatar" }) || "";
+    return `<div class="vb-vs-half ${local ? "is-local" : "is-remote"}"><div class="vb-vs-plate">${avatar}<div class="vb-vs-name"><small>${local ? "YOU" : "OPPONENT"}</small><b>${escapeHtml(name)}</b><span>開始HP <em>${startingHp}</em>${sampleCount ? ` · SAMPLE ${sampleCount}` : ""}</span></div></div></div>`;
+  };
+  return renderBattleScreen("connecting", `
+    <div class="vb-vs-stage">
+      ${plate(ownPlayer, true)}${plate(opponent, false)}
+      <i class="vb-vs-line" aria-hidden="true"></i><div class="vb-vs-word" aria-hidden="true">VS</div><i class="vb-flash" aria-hidden="true"></i>
+    </div>
+    <div class="vb-vs-status">
+      <span class="eyebrow">${state.reunionMatch ? "FAMILIAR REUNION" : "MATCH FOUND"}</span>
+      <h1 class="vb-title">${state.reunionMatch ? `${escapeHtml(opponent?.name || "顔なじみ")}と、また会えました` : `${escapeHtml(opponent?.name || "対戦相手")}とマッチング`}</h1>
+      <p class="vb-lead">${state.reunionMatch ? "縁側で知り合った顔なじみとの再会です。いつもの通常型1on1を始めます。" : "画像を一時転送するためのP2P接続を準備しています。Firebaseには画像をアップロードしません。"}</p>
+      <div class="online-status-details"><span class="connection-pill ${state.channelReady ? "connected" : ""}">${escapeHtml(state.peerStatus)}</span>${state.reunionMatch ? '<span class="connection-pill connected">縁側の顔なじみ</span>' : ""}</div>${opponentAchievements}
+      <div class="vb-actions is-quiet"><button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
+    </div>`, { fxScene: "vs" });
 }
 
 function renderStatusCard({ icon, eyebrow, title, body, details = "", actions = "" }) {
@@ -5628,32 +5996,48 @@ function renderStatusCard({ icon, eyebrow, title, body, details = "", actions = 
   </div></section>`;
 }
 
-function renderOnlineHud() {
+const BATTLE_MENU_DESTROY = '<button class="button button-danger" type="button" data-online-destroy>ルーム破棄</button>';
+
+function renderOnlineHud({ hpOverride = null, menuItems = BATTLE_MENU_DESTROY } = {}) {
   const playerHtml = (player, index) => {
     const maxHp = Number(player.maxHp || player.startingHp || MAX_HP);
     const sampleCount = normalizeSampleCount(player.sampleCount);
     const localPlayer = index === state.playerIndex;
+    const hp = Math.max(0, Number(hpOverride?.[index] ?? player.hp));
+    const ratio = Math.max(0, Math.min(1, hp / maxHp)).toFixed(3);
     const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
-    const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
-    const opponentAchievements = renderOnlineMatchAchievementShowcase(player.uid, {
+    const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "vb-hud-avatar" }) || "";
+    const achievements = renderOnlineMatchAchievementShowcase(player.uid, {
       className: `is-hud ${localPlayer ? "is-local" : "is-opponent"}`,
     });
-    return `<div class="hud-player ${index === state.playerIndex ? "local-player" : ""}">
-    <div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span>
-      ${sampleCount ? `<span class="sample-hud-badge">SAMPLE ${sampleCount}</span>` : ""}${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</div>
-    ${opponentAchievements}
-    <div class="hp-bar" aria-label="${escapeHtml(player.name)} HP ${player.hp}/${maxHp}"><div class="hp-fill" style="--hp:${Math.max(0, (player.hp / maxHp) * 100)}%"></div></div>
-    <span class="hp-value">HP ${Math.max(0, player.hp)} / ${maxHp}${sampleCount ? ` ・ サンプル${sampleCount}枚` : ""}</span></div></div>
-  </div>`;
+    return `<div class="vb-hud-player ${localPlayer ? "is-local" : "is-remote"} ${index === 0 ? "is-left" : "is-right"}" data-hud-player="${index}">
+      ${avatar}<div class="vb-hud-info">
+        <div class="vb-hud-name"><b>${escapeHtml(player.name)}</b>${localPlayer ? "<em>YOU</em>" : ""}${sampleCount ? `<em class="is-sample">SAMPLE ${sampleCount}</em>` : ""}${player.streak > 0 ? `<em class="is-streak">${player.streak}連勝中</em>` : ""}</div>
+        ${achievements}
+        <div class="vb-hp${hp / maxHp <= 0.3 ? " is-low" : ""}" role="img" aria-label="${escapeHtml(player.name)} HP ${hp}/${maxHp}" style="--hp:${ratio};--hp-ghost:${ratio}"><i class="vb-hp-ghost"></i><i class="vb-hp-fill"></i></div>
+        <div class="vb-hp-value">HP <b data-hud-hp>${hp}</b>/${maxHp}</div>
+        <span class="vb-damage-pop" aria-hidden="true"></span>
+      </div>
+    </div>`;
   };
-  return `<div class="round-topbar">${playerHtml(state.players[0], 0)}
-    <div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>
+  return `<div class="vb-hud">${playerHtml(state.players[0], 0)}
+    <div class="vb-round"><small>ROUND</small><strong>${state.round}<span>/${MAX_ROUNDS}</span></strong></div>
     ${playerHtml(state.players[1], 1)}</div>
-    <div class="online-room-strip"><span>ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span>
+    <div class="online-room-strip vb-room-strip"><span class="vb-room-id">ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span>
       <span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ 再接続待ち"}</span>
       <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}" data-online-opponent-presence>${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
       ${state.reunionMatch ? '<span class="connection-pill connected">顔なじみと再会</span>' : ""}
-      <button class="avatar-visibility-toggle" type="button" data-online-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button></div>`;
+      ${renderBattleMenu(menuItems)}</div>`;
+}
+
+function renderBattleMenu(extraItems = "") {
+  const fxSpeed = window.HariaiBattleFx?.getSpeed?.() === "short" ? "短め" : "標準";
+  return `<details class="vb-menu"><summary aria-label="対戦メニュー"><span aria-hidden="true">•••</span></summary>
+    <div class="vb-menu-panel">
+      <button class="avatar-visibility-toggle" type="button" data-online-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
+      ${window.HariaiBattleFx ? `<button type="button" data-battle-fx-speed>演出の速さ<span>${fxSpeed}</span></button>` : ""}
+      ${extraItems}
+    </div></details>`;
 }
 
 function renderRoundSelect() {
@@ -5661,29 +6045,31 @@ function renderRoundSelect() {
   const remainingSeconds = Math.max(0, Math.ceil(state.selectionRemainingMs / 1000));
   const progress = Math.max(0, Math.min(100, (state.selectionRemainingMs / SELECTION_TIME_LIMIT_MS) * 100));
   const warning = timerStarted && remainingSeconds <= SELECTION_WARNING_SECONDS;
-  const cards = state.deck.map((item, index) => `<button class="select-card ${item.isSample ? "sample-card" : ""} ${item.id === state.signatureCardId ? "signature-card" : ""} ${item.used ? "used" : ""} ${state.selectedCardId === item.id ? "selected" : ""}"
+  const selectedItem = state.deck.find((item) => item.id === state.selectedCardId && !item.used) || null;
+  const cards = state.deck.map((item, index) => `<button type="button" class="vb-hand-card${item.isSample ? " is-sample" : ""}${item.id === state.signatureCardId ? " is-signature" : ""}${item.used ? " is-used" : ""}${state.selectedCardId === item.id ? " is-selected" : ""}"
     data-online-card="${escapeHtml(item.id)}" ${item.used || !timerStarted ? "disabled" : ""} aria-pressed="${state.selectedCardId === item.id}">
     <img src="${item.url}" alt="候補画像 ${index + 1}" draggable="false" />
-    ${item.id === state.signatureCardId ? '<i class="select-signature-badge" aria-label="シグネチャーカード">✦ SIGNATURE</i>' : ""}
-    <span>${item.used ? "USED" : item.isSample ? "SAMPLE / HP−5" : `CARD ${String(index + 1).padStart(2, "0")}`}</span>
+    ${item.id === state.signatureCardId ? '<i class="vb-hand-signature" aria-label="シグネチャーカード">✦</i>' : ""}
+    <span>${item.used ? "USED" : item.isSample ? "SAMPLE" : `CARD ${String(index + 1).padStart(2, "0")}`}</span>
   </button>`).join("");
-  return `<section class="screen">${renderOnlineHud()}
-    <div class="section-head"><div><span class="eyebrow">SECRET PICK</span><h1>あなたの画像選択</h1>
-      <p>未使用の登録画像から1枚を選びます。控え画像も同じように使用でき、選択をロックするまで相手には送信されません。</p></div>
-      <div class="selection-heading-actions"><div class="selection-timer ${timerStarted ? "running" : "pending"} ${warning ? "warning" : ""}"
-        data-selection-timer role="timer" aria-live="polite" aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}"
-        style="--selection-progress:${progress}%"><small>SELECT LIMIT</small><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong>
-        <span data-selection-unit>${timerStarted ? "SEC" : "SYNC"}</span><i></i></div>
-        <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div></div>
-    <div class="select-panel"><div class="select-grid">${cards}</div>
-      <div class="selection-footer"><p>${timerStarted ? "10秒以内に選択してください。時間切れ時は、選択中の画像を自動ロックします。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
-        <button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この画像でロック</button></div></div>
-    <div class="online-chat-standalone">${renderOnlineChat()}</div>
-  </section>`;
+  const preview = selectedItem
+    ? renderStageCard(selectedItem, { signature: selectedItem.id === state.signatureCardId, alt: "選択中の画像" })
+    : renderCardBack();
+  return renderBattleScreen("select", `${renderOnlineHud()}
+    <div class="vb-select-head${timerStarted ? " running" : " pending"}${warning ? " warning" : ""}" data-selection-timer role="timer" aria-live="polite"
+      aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}" style="--selection-progress:${progress}%">
+      <div class="vb-heading"><span class="eyebrow">SECRET PICK</span><h1 class="vb-title">勝負の一枚を選ぶ</h1></div>
+      <div class="vb-timer"><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong><span data-selection-unit>${timerStarted ? "SEC" : "SYNC"}</span></div>
+      <div class="vb-timer-bar" aria-hidden="true"><i></i></div>
+    </div>
+    <div class="vb-select-stage"><div class="vb-select-preview">${preview}</div></div>
+    <div class="vb-hand" role="group" aria-label="登録した画像">${cards}</div>
+    <p class="vb-hint">${timerStarted ? "10秒以内に選択してください。時間切れ時は、選択中の画像を自動ロックします。控え画像も選べます。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
+    <div class="vb-actions"><button class="button button-primary vs-satin" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この一枚でロック</button></div>`);
 }
 
 function renderWaitingPick() {
-  return renderBattleWait("SECRET PICK", "相手の画像選択を待っています", "選んだ画像はまだ相手へ送信していません。");
+  return renderBattleWait("SECRET PICK", "相手の画像選択を待っています", "選んだ画像はまだ相手へ送信していません。", "", "", true, "pick");
 }
 
 function renderWaitingImage() {
@@ -5693,11 +6079,11 @@ function renderWaitingImage() {
   const body = state.imageTransferError
     ? `転送を完了できませんでした：${escapeHtml(state.imageTransferError)}`
     : `転送状況 ${state.transferProgress}%`;
-  return renderBattleWait("P2P IMAGE TRANSFER", state.imageTransferError ? "画像を再送できます" : "画像を安全に転送しています", body, retryAction);
+  return renderBattleWait("P2P IMAGE TRANSFER", state.imageTransferError ? "画像を再送できます" : "画像を安全に転送しています", body, retryAction, "", true, "transfer");
 }
 
 function renderWaitingScore() {
-  return renderBattleWait("PRIVATE SCORE", "相手の採点を待っています", "あなたの点数は相手の確定まで非公開です。");
+  return renderBattleWait("PRIVATE SCORE", "相手の採点を待っています", "あなたの点数は相手の確定まで非公開です。", "", "", true, "score");
 }
 
 function renderWaitingContinue() {
@@ -5718,50 +6104,83 @@ function renderBattleWait(
   extraActions = "",
   extraContent = "",
   allowDestroy = true,
+  visual = "continue",
 ) {
-  return `<section class="screen">${renderOnlineHud()}${renderStatusCard({
-    icon: "…", eyebrow, title, body,
-    details: `<div class="matching-pulse"><i></i><i></i><i></i></div>`,
-    actions: `${extraActions}${allowDestroy ? '<button class="button button-danger button-small" data-online-destroy>ルーム破棄</button>' : ""}`,
-  }).replace('<section class="screen handoff-wrap">', '<div class="handoff-wrap">').replace('</section>', '</div>')}
-    ${extraContent}<div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
+  const localItem = getSelectedItem();
+  const remoteItem = state.remoteImages.get(state.round);
+  let stage = "";
+  if (visual === "pick" || visual === "transfer") {
+    const locked = localItem
+      ? `<div class="vb-wait-mine">${renderStageCard(localItem, { signature: localItem.id === state.signatureCardId, alt: "ロックした画像" })}<span class="vb-seal is-small" aria-hidden="true">LOCKED</span></div>`
+      : "";
+    stage = `<div class="vb-wait-stage"><div class="vb-wait-back">${renderCardBack()}</div>${locked}</div>`;
+  } else if (visual === "score") {
+    const pair = [0, 1].map((index) => {
+      const item = index === state.playerIndex ? localItem : remoteItem;
+      return `<div class="vb-wait-pair-card">${renderStageCard(item, { alt: `${state.players[index]?.name || "PLAYER"}の画像` })}<span class="vb-wait-pair-badge" aria-hidden="true">?</span></div>`;
+    }).join("");
+    stage = `<div class="vb-wait-stage is-pair">${pair}</div>`;
+  }
+  const transferRatio = Math.max(0, Math.min(100, Number(state.transferProgress) || 0)) / 100;
+  const transfer = visual === "transfer" && !state.imageTransferError
+    ? `<div class="vb-transfer" aria-hidden="true"><i data-transfer-bar style="--transfer:${transferRatio.toFixed(3)}"></i></div>`
+    : "";
+  return renderBattleScreen("wait", `${renderOnlineHud({ menuItems: allowDestroy ? BATTLE_MENU_DESTROY : "" })}
+    <div class="vb-wait-head"><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1 class="vb-title">${title}</h1><p class="vb-lead" data-transfer-text>${body}</p></div>
+    ${stage}${transfer}
+    ${extraActions ? `<div class="vb-actions">${extraActions}</div>` : ""}
+    ${extraContent}`);
 }
 
 function renderReveal() {
   const localItem = getSelectedItem();
   const remoteItem = state.remoteImages.get(state.round);
   const itemFor = (index) => index === state.playerIndex ? localItem : remoteItem;
-  return `<section class="screen">${renderOnlineHud()}
-    <div class="section-head"><div><span class="eyebrow">IMAGE REVEAL</span><h1>画像、オープン。</h1>
-      <p>通常型は自由な画像勝負。チャットで感想やリアクションを送りながら楽しめます。</p></div>
-      <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
-    <div class="battle-layout"><div class="arena-panel"><div class="arena-grid">
-      ${renderArenaCard(0, itemFor(0))}<div class="arena-vs">VS</div>${renderArenaCard(1, itemFor(1))}
-    </div><div class="arena-actions"><button class="button button-primary" id="onlineBeginScoring">相手の画像を採点</button></div></div>
-    ${renderOnlineChat()}</div></section>`;
+  const opponent = getOpponent();
+  return renderBattleScreen("reveal", `${renderOnlineHud()}
+    <div class="vb-heading is-center"><span class="eyebrow">IMAGE REVEAL</span><h1 class="vb-title">画像、オープン。</h1></div>
+    <div class="vb-reveal-stage"><i class="vb-reveal-dim" aria-hidden="true"></i>
+      ${renderArenaCard(0, itemFor(0))}<div class="vb-reveal-vs" aria-hidden="true">VS</div>${renderArenaCard(1, itemFor(1))}
+    </div>
+    <p class="vb-hint vb-after">画像をタップすると拡大できます。チャットで感想も送れます。</p>
+    <div class="vb-actions vb-after"><button class="button button-primary vs-satin" id="onlineBeginScoring">${escapeHtml(opponent?.name || "相手")}の画像を採点する</button></div>`, { fxScene: "reveal" });
 }
 
 function renderArenaCard(index, item) {
   const player = state.players[index];
-  return `<article class="arena-card ${index === 0 ? "player-one" : "player-two"}">
-    <div class="arena-image"><img src="${item?.url || ""}" alt="${escapeHtml(player.name)}が出した画像" draggable="false" /></div>
-    <div class="arena-meta"><strong>${escapeHtml(player.name)}${index === state.playerIndex ? "（あなた）" : ""}</strong><span>ROUND ${state.round}</span></div>
+  const local = index === state.playerIndex;
+  const signature = local ? Boolean(item?.id) && item.id === state.signatureCardId : item?.signature === true;
+  const alt = `${player.name}が出した画像`;
+  return `<article class="vb-reveal-col ${local ? "is-local" : "is-remote"}" data-reveal-side="${local ? "local" : "remote"}">
+    <i class="vb-reveal-spot" aria-hidden="true"></i>
+    <div class="vb-flip">
+      <div class="vb-flip-inner">
+        <div class="vb-flip-face is-back">${renderCardBack()}</div>
+        <button type="button" class="vb-flip-face is-front" data-zoom-src="${item?.url || ""}" data-zoom-alt="${escapeHtml(alt)}" aria-label="${escapeHtml(player.name)}の画像を拡大">${renderStageCard(item, { signature, alt })}</button>
+      </div>
+      <i class="vb-burst" aria-hidden="true"></i>
+    </div>
+    <div class="vb-plate vb-after"><b>${escapeHtml(player.name)}</b><small>${local ? "あなた" : "相手"} · ROUND ${state.round}</small></div>
   </article>`;
 }
 
 function renderScore() {
   const opponent = getOpponent();
   const item = state.remoteImages.get(state.round);
-  const buttons = Array.from({ length: 10 }, (_, index) => index + 1).map((score) => `<button
-    class="score-button ${score >= 8 ? "critical-zone" : ""} ${state.selectedScore === score ? "selected" : ""}"
-    data-online-score="${score}" aria-pressed="${state.selectedScore === score}">${score}</button>`).join("");
-  return `<section class="screen">${renderOnlineHud()}<div class="score-layout">
-    <div class="score-image"><img src="${item?.url || ""}" alt="${escapeHtml(opponent?.name || "相手")}の採点対象画像" draggable="false" /></div>
-    <div class="score-panel"><span class="eyebrow">YOUR PRIVATE SCORE</span><h2>${escapeHtml(opponent?.name || "相手")}の画像を採点</h2>
-      <p>1～10点を選択してください。確定後の変更はできません。</p><div class="score-buttons">${buttons}</div>
-      <button class="button button-primary button-wide score-lock" id="onlineLockScore" ${state.selectedScore ? "" : "disabled"}>この点数で確定</button>
-      <button class="button button-danger button-small" data-online-destroy>ルーム破棄</button></div>
-  </div><div class="online-chat-standalone">${renderOnlineChat()}</div></section>`;
+  const selected = state.selectedScore;
+  const tier = selected >= 10 ? "is-perfect" : selected >= 8 ? "is-critical" : "";
+  const buttons = Array.from({ length: 10 }, (_, index) => index + 1).map((score) => `<button type="button"
+    class="vb-score-button is-heat-${score}" data-online-score="${score}" aria-pressed="${selected === score}">${score}</button>`).join("");
+  const alt = `${opponent?.name || "相手"}の採点対象画像`;
+  return renderBattleScreen("score", `${renderOnlineHud()}
+    <div class="vb-heading is-center"><span class="eyebrow">YOUR PRIVATE SCORE</span><h1 class="vb-title">${escapeHtml(opponent?.name || "相手")}の画像を採点</h1></div>
+    <div class="vb-score-stage"><button type="button" class="vb-score-card" data-zoom-src="${item?.url || ""}" data-zoom-alt="${escapeHtml(alt)}" aria-label="採点する画像を拡大">
+      ${renderStageCard(item, { className: tier, alt })}
+      ${selected ? `<span class="vb-score-badge ${tier}"><b>${selected}</b><small>${scoreLabel(selected)}</small></span>` : ""}
+    </button></div>
+    <div class="vb-score-pad" role="group" aria-label="点数を選ぶ">${buttons}</div>
+    <p class="vb-hint">1～10点を選択してください。確定後の変更はできません。相手には結果の発表まで伏せられます。</p>
+    <div class="vb-actions"><button class="button button-primary vs-satin" id="onlineLockScore" ${selected ? "" : "disabled"}>この点数で確定</button></div>`);
 }
 
 function renderFinishReplySummary(result) {
@@ -5807,7 +6226,12 @@ function syncFinishReplySlot(result) {
 
 function renderRoundResult() {
   const result = state.history.at(-1);
-  const labelFor = (score) => score === 10 ? "PERFECT!!" : score >= 8 ? "CRITICAL!" : score >= 6 ? "GREAT" : score >= 4 ? "GOOD" : "HIT";
+  const scores = [result.scorePlayerOne, result.scorePlayerTwo];
+  const topScore = Math.max(...scores);
+  const tier = result.winnerIndex === null ? "draw" : topScore >= 10 ? "perfect" : topScore >= 8 ? "critical" : "great";
+  // 決着ラウンドはFINISHのカットインが見せ場なので、結果画面は完成状態で出す。
+  const animate = !result.lethal && battleFxPending("result");
+  const hpOverride = animate && result.loserIndex !== null ? { [result.loserIndex]: result.previousHp } : null;
   const damageText = result.winnerIndex === null
     ? "同点。両者ノーダメージです。"
     : `${state.players[result.loserIndex].name}に ${result.damage} DAMAGE。${result.lethal ? " HP 0、決着！" : ""}`;
@@ -5815,14 +6239,30 @@ function renderRoundResult() {
   const finishBadge = result.lethal
     ? `<div class="finish-result-badge ${result.finish?.signature ? "is-signature" : ""}"><span>${result.finish?.signature ? "SIGNATURE FINISH" : "FINISH"}</span><strong>${escapeHtml(result.finish?.winnerName || state.players[result.winnerIndex].name)}の決着演出</strong></div>`
     : "";
-  return `<section class="screen result-wrap">${renderOnlineHud()}<div class="result-card">
-    <span class="eyebrow">ROUND ${state.round} RESULT</span><h1>${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1>
-    <div class="result-scores">${resultPlayerHtml(0, result.scorePlayerOne, result.winnerIndex, labelFor(result.scorePlayerOne))}
-      <div class="result-vs">VS</div>${resultPlayerHtml(1, result.scorePlayerTwo, result.winnerIndex, labelFor(result.scorePlayerTwo))}</div>
-    <div class="damage-callout">${escapeHtml(damageText)}</div>${finishBadge}${renderFinishReplySlot(result)}${pursuitLines}<div class="result-chat">${renderOnlineChat()}</div>
-    <div class="button-row" style="justify-content:center">${isMatchOver() ? "" : '<button class="button button-danger" data-online-destroy>ルーム破棄</button>'}
-      <button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
-  </div></section>`;
+  const localItem = getSelectedItem();
+  const remoteItem = state.remoteImages.get(result.round);
+  const column = (index) => {
+    const local = index === state.playerIndex;
+    const outcome = result.winnerIndex === null ? "is-draw" : result.winnerIndex === index ? "is-winner" : "is-loser";
+    const stamp = result.winnerIndex === index
+      ? `<span class="vb-stamp is-${tier}" aria-hidden="true">${escapeHtml(scoreLabel(scores[index]))}</span>`
+      : "";
+    return `<div class="vb-result-col ${local ? "is-local" : "is-remote"} ${outcome}" data-result-col="${index}">
+      <div class="vb-result-card">${renderStageCard(local ? localItem : remoteItem, { alt: `${state.players[index].name}の画像` })}${stamp}</div>
+      <div class="vb-result-score"><b data-result-score="${scores[index]}">${animate ? "–" : scores[index]}</b><small>${escapeHtml(scoreLabel(scores[index]))}</small></div>
+      <div class="vb-result-name">${escapeHtml(state.players[index].name)}</div>
+    </div>`;
+  };
+  const menuItems = `${isMatchOver() ? "" : '<button class="button button-danger" data-online-destroy>ルーム破棄</button>'}`;
+  return renderBattleScreen("result", `${renderOnlineHud({ hpOverride, menuItems })}
+    <div class="vb-heading is-center"><span class="eyebrow">ROUND ${state.round} RESULT</span><h1 class="vb-title is-accent vb-result-title">${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1></div>
+    <div class="vb-result-stage" data-result-tier="${tier}">${column(0)}<div class="vb-result-vs" aria-hidden="true">VS</div>${column(1)}
+      <i class="vb-rays" aria-hidden="true"></i><div class="vb-sparks" data-result-sparks aria-hidden="true"></div></div>
+    <div class="vb-after">
+      <div class="damage-callout vb-damage">${escapeHtml(damageText)}</div>${finishBadge}${renderFinishReplySlot(result)}${pursuitLines}
+    </div>
+    <div class="vb-actions vb-after"><button class="button button-primary vs-satin" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
+    <i class="vb-flash" aria-hidden="true"></i>`, { fxScene: animate ? "result" : "" });
 }
 
 function renderOnlinePursuitLines(result) {
@@ -5833,11 +6273,6 @@ function renderOnlinePursuitLines(result) {
     .map(({ player, score }) => `<article class="online-pursuit-call"><span>追撃セリフ / SCORE ${score}</span><strong>${escapeHtml(player.name)}</strong><blockquote>${escapeHtml(normalizePursuitLine(player.pursuitLine))}</blockquote></article>`)
     .join("");
   return calls ? `<section class="online-pursuit-lines" aria-label="追撃セリフ">${calls}</section>` : "";
-}
-
-function resultPlayerHtml(index, score, winnerIndex, label) {
-  return `<div class="result-player ${winnerIndex === index ? "winner" : ""}"><strong>${escapeHtml(state.players[index].name)}</strong>
-    <span>${score}</span><small>${escapeHtml(label)}</small></div>`;
 }
 
 function renderGameOver() {
@@ -5851,8 +6286,11 @@ function renderGameOver() {
     result: localResult,
     details: [`残りHP ${Number(localPlayer?.hp || 0)}`, `全${state.round}ラウンド / 合計獲得点 ${Number(localPlayer?.totalReceived || 0)}`],
   }) || "";
-  return `<section class="screen gameover-wrap"><div class="gameover-card"><div class="winner-emblem" aria-hidden="true">${outcome.winnerIndex === null ? "=" : "✦"}</div>
-    <span class="eyebrow">ONLINE MATCH COMPLETE</span><h1>${title}</h1><p>${escapeHtml(subtitle)}</p>
+  const outcomeClass = localResult === "WIN" ? "is-win" : localResult === "LOSE" ? "is-lose" : "is-draw";
+  return `<section class="screen gameover-wrap vb-screen vb-gameover ${outcomeClass}" data-battle-scene="gameover"><div class="gameover-card vb-gameover-card">
+    <div class="vb-confetti-layer" data-battle-confetti aria-hidden="true"></div>
+    <div class="winner-emblem vb-emblem" aria-hidden="true"><i></i><span>${outcome.winnerIndex === null ? "=" : "✦"}</span></div>
+    <span class="eyebrow">ONLINE MATCH COMPLETE</span><p class="vb-outcome" aria-hidden="true">${localResult}</p><h1>${title}</h1><p>${escapeHtml(subtitle)}</p>
     ${state.reunionMatch ? '<div class="solo-reunion-result-note"><strong>また会えました</strong><span>顔なじみとの通常型1on1でした。</span></div>' : ""}
     <div class="final-stats">${state.players.map((player, index) => `<div class="final-player ${outcome.winnerIndex === index ? "winner" : ""}">
       <h2>${escapeHtml(player.name)} ${player.streak > 0 ? `<span class="streak-badge">🔥 ${player.streak}連勝中</span>` : ""}</h2>
@@ -6110,6 +6548,18 @@ function bindScreenEvents() {
   });
   document.querySelectorAll("[data-online-destroy]").forEach((button) => button.addEventListener("click", openDestroyDialog));
   document.querySelector("[data-online-avatar-visibility]")?.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); });
+  document.querySelectorAll("[data-battle-chat-toggle]").forEach((button) => button.addEventListener("click", () => setBattleChatOpen(!battleChatOpen)));
+  document.querySelector("[data-battle-chat]")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget && battleChatOpen) setBattleChatOpen(false);
+  });
+  document.querySelector("[data-battle-fx-speed]")?.addEventListener("click", (event) => {
+    const fx = window.HariaiBattleFx;
+    if (!fx) return;
+    const next = fx.setSpeed(fx.getSpeed() === "short" ? "normal" : "short");
+    const label = event.currentTarget.querySelector("span");
+    if (label) label.textContent = next === "short" ? "短め" : "標準";
+    showToast(next === "short" ? "演出を短めにしました。この端末に保存します。" : "演出を標準に戻しました。");
+  });
   document.querySelectorAll("[data-claim-mission]").forEach((button) => button.addEventListener("click", () => claimDailyMission(button.dataset.claimMission)));
   document.querySelector("#claimPeriodRewardsButton")?.addEventListener("click", claimClosedPeriodRewards);
   document.querySelectorAll("[data-buy-product]").forEach((button) => button.addEventListener("click", () => purchaseShopProduct(button.dataset.buyProduct)));
@@ -11024,7 +11474,14 @@ function updateSelectionTimerDisplay(remainingSeconds) {
   timer.setAttribute("aria-label", `画像選択 残り${remainingSeconds}秒`);
   const seconds = timer.querySelector("[data-selection-seconds]");
   const unit = timer.querySelector("[data-selection-unit]");
-  if (seconds) seconds.textContent = String(remainingSeconds);
+  if (seconds && seconds.textContent !== String(remainingSeconds)) {
+    seconds.textContent = String(remainingSeconds);
+    if (remainingSeconds <= SELECTION_WARNING_SECONDS) {
+      seconds.classList.remove("is-beat");
+      void seconds.offsetWidth;
+      seconds.classList.add("is-beat");
+    }
+  }
   if (unit) unit.textContent = "SEC";
 }
 
@@ -11055,6 +11512,11 @@ function resetSelectionTimerState() {
 
 async function lockSelection() {
   if (!state.selectedCardId || !state.channelReady || !hasSelectionStarted() || state.selectionLocking) return;
+  if (useOfflineBattlePreview) {
+    stopSelectionTimer();
+    showBattlePreviewStep("waitingPick");
+    return;
+  }
   const expectedState = state;
   const roomId = expectedState.roomId;
   const round = expectedState.round;
@@ -11234,12 +11696,19 @@ function waitForDataBuffer(channel) {
 }
 
 function updateTransferText() {
-  const card = document.querySelector(".online-status-card p");
-  if (card && state.screen === "waitingImage") card.textContent = `転送状況 ${state.transferProgress}%`;
+  if (state.screen !== "waitingImage") return;
+  const text = document.querySelector("[data-transfer-text]");
+  if (text) text.textContent = `転送状況 ${state.transferProgress}%`;
+  const ratio = Math.max(0, Math.min(100, Number(state.transferProgress) || 0)) / 100;
+  document.querySelector("[data-transfer-bar]")?.style.setProperty("--transfer", ratio.toFixed(3));
 }
 
 async function lockScore() {
   if (!state.selectedScore) return;
+  if (useOfflineBattlePreview) {
+    showBattlePreviewStep("waitingScore");
+    return;
+  }
   const score = state.selectedScore;
   state.selectedScore = null;
   state.screen = "waitingScore";
@@ -11284,9 +11753,8 @@ function resolveRound(scores) {
   const pendingFinishReply = state.pendingFinishReplies.get(state.round) || null;
   state.pendingFinishReplies.delete(state.round);
   state.screen = "result";
+  // CRITICAL・PERFECTの光と音は、結果画面の演出で点数が止まった瞬間に出す。
   render();
-  const topScore = Math.max(scorePlayerOne, scorePlayerTwo);
-  if (topScore >= 8) window.HariaiAudio?.playResult(topScore);
   if (lethal) {
     triggerFinishCutIn(finish);
     if (pendingFinishReply) {
@@ -11296,12 +11764,14 @@ function resolveRound(scores) {
         pendingFinishReply.channel || state.channel,
       );
     }
-  } else if (topScore >= 8) {
-    triggerCriticalFx(topScore === 10 ? "PERFECT!!" : "CRITICAL!");
   }
 }
 
 async function continueRound() {
+  if (useOfflineBattlePreview) {
+    showBattlePreviewStep(isMatchOver() ? "gameover:win" : "select");
+    return;
+  }
   const expectedState = state;
   const roundContext = captureOnlineRoundContext(
     captureOnlineRoomContext(expectedState),
@@ -11549,6 +12019,11 @@ async function sendChat(value, stampId = "") {
   }
   const text = stamp ? stamp.label : String(value || "").trim().slice(0, 80);
   if (!text || !state.roomId) return false;
+  if (useOfflineBattlePreview) {
+    state.chatMessages.push({ id: `preview-${Date.now()}`, authorUid: state.uid, name: state.players[state.playerIndex]?.name || "PLAYER", text, stampId: stamp ? stampId : "", round: state.round });
+    refreshChat();
+    return true;
+  }
   try {
     const message = {
       authorUid: state.uid,
@@ -11580,6 +12055,12 @@ function refreshChat() {
   const next = wrapper.querySelector("#onlineChatMessages");
   if (next) list.innerHTML = next.innerHTML;
   scrollChat();
+  const peek = document.querySelector("#battleChatPeek");
+  if (peek) {
+    peek.innerHTML = renderBattleChatPeek();
+    if (battleChatOpen) battleChatSeenCount = state.chatMessages.length;
+    peek.closest(".vb-chat-peek")?.classList.toggle("has-new", !battleChatOpen && state.chatMessages.length > battleChatSeenCount);
+  }
 }
 
 function scrollChat() {
@@ -12102,6 +12583,15 @@ function triggerFinishCutIn(payload) {
   shade.setAttribute("aria-hidden", "true");
   cutIn.append(shade);
 
+  const decorations = ["finish-cutin-slash is-wide", "finish-cutin-slash is-thin"];
+  if (payload.signature) decorations.unshift("finish-cutin-rays");
+  decorations.forEach((className) => {
+    const decoration = document.createElement("i");
+    decoration.className = className;
+    decoration.setAttribute("aria-hidden", "true");
+    cutIn.append(decoration);
+  });
+
   const stage = document.createElement("div");
   stage.className = "finish-cutin-stage";
   const imageFrame = document.createElement("div");
@@ -12125,10 +12615,19 @@ function triggerFinishCutIn(payload) {
   const label = document.createElement("span");
   label.className = "finish-cutin-label";
   label.textContent = payload.signature ? "SIGNATURE FINISH" : "FINISH";
+  const word = document.createElement("div");
+  word.className = "finish-cutin-word";
+  word.setAttribute("aria-hidden", "true");
+  Array.from("FINISH").forEach((letter, index) => {
+    const letterElement = document.createElement("span");
+    letterElement.style.setProperty("--i", String(index));
+    letterElement.textContent = letter;
+    word.append(letterElement);
+  });
   const winnerName = document.createElement("strong");
   winnerName.className = "finish-cutin-winner";
   winnerName.textContent = payload.winnerName;
-  copy.append(label, winnerName);
+  copy.append(label, word, winnerName);
   if (payload.finishLine) {
     const quote = document.createElement("blockquote");
     quote.className = "finish-cutin-line";
@@ -12183,14 +12682,9 @@ function triggerFinishCutIn(payload) {
   finishCutInContent.replaceChildren(cutIn);
   finishCutInContent.dataset.round = String(payload.round);
   finishCutInDialog.showModal();
+  window.HariaiAudio?.playFinish?.(payload.signature === true);
   (replyAction || skip).focus({ preventScroll: true });
   scheduleFinishCutInClose(generation, FINISH_CUT_IN_DURATION_MS);
-}
-
-function triggerCriticalFx(text) {
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  fxLayer.innerHTML = `<div class="critical-flash"></div><div class="critical-text">${escapeHtml(text)}</div>`;
-  window.setTimeout(() => { fxLayer.innerHTML = ""; }, 1250);
 }
 
 function notifyResolvedMatchDestroyBlocked(targetState = state) {
@@ -12319,6 +12813,10 @@ async function cancelMatching() {
 }
 
 async function resetOnlineSetup() {
+  if (useOfflineBattlePreview && active) {
+    showBattlePreviewStep("connecting");
+    return;
+  }
   if (isPostMatchTipBusy("solo", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -12764,6 +13262,12 @@ finishCutInDialog?.addEventListener("cancel", (event) => {
   const round = Number(finishCutInContent?.dataset.round);
   const result = getLethalResultForRound(round);
   dismissFinishCutIn(result?.finish);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !battleChatOpen || !document.querySelector("[data-battle-chat]")) return;
+  setBattleChatOpen(false);
+  document.querySelector(".vb-chat-peek")?.focus({ preventScroll: true });
 });
 
 if (!useOfflineMarketPreview) watchLobbyStats();

@@ -1082,39 +1082,52 @@
       window.HariaiOnline?.getLobbyStatsRefreshStatus?.() || { available: true, loading: true },
     );
     const statValue = (value) => Number.isInteger(value) ? value : "--";
-    return `<section class="screen hero">
-      <div>
-        <span class="eyebrow hero-eyebrow"><i aria-hidden="true">♥</i><span>好きな画像で、対戦もひと休みも</span><i aria-hidden="true">✦</i></span>
-        <h1 aria-label="貼り合え。YOUR FAVORITE, YOUR POWER."><span class="hero-title-text">貼り合え</span><span class="hero-heart" aria-hidden="true"><svg viewBox="0 0 64 64" focusable="false"><defs><linearGradient id="heroHeartGradient" x1="10" y1="8" x2="54" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#ff6b85"/><stop offset="0.58" stop-color="#ff4f72"/><stop offset="1" stop-color="#66e9df"/></linearGradient></defs><path d="M32 58C28.8 54.8 8.1 42.8 5.1 26.1 2.6 12.1 10.1 4 20.1 4 25.9 4 30 7 32 11c2-4 6.1-7 11.9-7 10 0 17.5 8.1 15 22.1C55.9 42.8 35.2 54.8 32 58Z" fill="url(#heroHeartGradient)"/><path d="M13.5 19.5C15.2 12.4 22.5 9.4 27.4 14" fill="none" stroke="rgba(255,255,255,.72)" stroke-linecap="round" stroke-width="3"/></svg></span><span class="hero-tagline">YOUR FAVORITE, YOUR POWER.</span></h1>
-        <p class="hero-welcome"><span aria-hidden="true">♡</span><strong>はじめてでも大丈夫。</strong>あなたの「好き」が、いちばんのカードです。</p>
-        <p class="hero-copy">
-          好きな画像で良さを伝え合う1on1や、AnjuPayで推し値を競う市場。
-          最大10枚のロスターからAIが5枚をDRAWする「AI文字コラ」と、縦ドラムでテンポやメニューが変わる「ルーレット」の2つのソロトレーニングも選べます。
-          習慣と向き合う日は「断惑NOTE」に、自分で決めた一日を記録できます。
-          疲れたら、勝敗のない「貼り合い自由卓」でひと休みできます。
-        </p>
-        <ul class="hero-assurances" aria-label="安心して遊べる理由">
-          <li>匿名で参加</li><li>画像はサーバー保存なし</li><li>ひとりでも友達とでも</li>
-        </ul>
-        <div class="hero-actions">
-          <button class="button button-primary hero-mode-button" id="onlineButton"><small>気軽にスタート</small><span>通常型1on1対戦</span></button>
-          <button class="button button-strategy hero-mode-button" id="strategyLabButton"><small>弱点を見抜こう</small><span>戦略型1on1対戦</span></button>
-          <button class="button hero-free-table-button hero-mode-button${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
-          <button class="button hero-market-button hero-mode-button" id="valueMarketButton"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
-          <button class="button hero-ai-text-training-button hero-mode-button" id="aiTextTrainingButton"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
-          <button class="button hero-roulette-training-button hero-mode-button" id="rouletteTrainingButton"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
-          <button class="button hero-danwaku-note-button hero-mode-button" id="danwakuNoteButton"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span><i aria-hidden="true">🪷</i> 断惑NOTE</span></button>
-          <button class="button button-ghost hero-utility-button hero-market-ranking-button" id="valueMarketRankingButton"><span aria-hidden="true">♡</span> 推し値市場ランキング</button>
-          <button class="button button-ghost hero-utility-button" id="rankingButton">オンライン総合ランキング</button>
-          <button class="button button-ghost hero-utility-button" id="achievementButton">実績コレクション</button>
-          <button class="button button-ghost hero-utility-button" id="dailyMissionButton">デイリーミッション</button>
-          <button class="button button-ghost hero-utility-button" id="pointShopButton">AnjuPayストア</button>
-          <button class="button hero-account-button hero-utility-button" id="accountButton">AnjuPayウォレット</button>
-          <button class="button hero-audio-tool-button" id="audioStudioButton"><small>端末内だけで録音・変換</small><span>♪ 10秒音声をつくる</span></button>
+    const stageDust = Array.from({ length: 14 }, (_, index) => (
+      `<i style="--x:${(index * 37 + 7) % 100}%;--d:${((index * 0.73) % 6).toFixed(2)}s;--t:${6 + (index % 5)}s;--s:${2 + (index % 3)}px"></i>`
+    )).join("");
+    const stageFan = [-28, -14, 0, 14, 28].map((rotation, index) => (
+      `<div class="vl-fan-card" style="--r:${rotation}deg;--y:${(Math.abs(rotation) / 2.2).toFixed(1)}px;--i:${index};z-index:${10 - Math.abs(index - 2)}"><div class="vs-card-back"><span class="vs-card-emblem">貼</span></div></div>`
+    )).join("");
+    return `<section class="screen hero vl-landing">
+      <div class="vl-stage">
+        <i class="vl-curtain vl-curtain-left" aria-hidden="true"></i><i class="vl-curtain vl-curtain-right" aria-hidden="true"></i><i class="vl-valance" aria-hidden="true"></i>
+        <i class="vl-spotlight" aria-hidden="true"></i><i class="vl-floor" aria-hidden="true"></i><div class="vl-dust" aria-hidden="true">${stageDust}</div>
+        <div class="vl-copy">
+          <p class="vl-eyebrow">Tonight's Stage</p>
+          <h1 class="vl-title" aria-label="貼り合え。YOUR FAVORITE, YOUR POWER."><span class="vl-title-text" aria-hidden="true">貼り合え</span><span class="vl-tagline" aria-hidden="true">Your favorite, your power.</span></h1>
+          <p class="vl-lead">あなたの「好き」が、いちばんのカード。</p>
         </div>
-        ${renderAiTextTrainingLights(aiTextTrainingStats)}
-        ${renderLandingTopMessagePanel()}
-        ${renderLandingFleaPanel()}
+        <div class="vl-fan" aria-hidden="true">${stageFan}</div>
+      </div>
+      <div class="hero-actions">
+        <button class="vl-main-button vs-satin" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live"><i aria-hidden="true"></i>対戦中 <b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人 · 待機中 <b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人</em></button>
+        <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
+        <button class="vl-tile vl-tile-strategy" id="strategyLabButton" type="button"><small>自己紹介から弱点を読んで、デッキを組む</small><span>戦略型1on1対戦</span></button>
+        <button class="vl-tile vl-tile-market" id="valueMarketButton" type="button"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
+        <button class="vl-tile${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
+        <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
+        <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
+        <button class="vl-tile vl-tile-danwaku" id="danwakuNoteButton" type="button"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span>断惑NOTE</span></button>
+      </div>
+      <nav class="vl-tabbar" aria-label="ランキングとAnjuPay">
+        <button class="vl-tab vl-tab-ranking" type="button" id="rankingButton">ランキング</button>
+        <button class="vl-tab vl-tab-mission" type="button" id="dailyMissionButton">ミッション</button>
+        <button class="vl-tab vl-tab-shop" type="button" id="pointShopButton">AnjuPayストア</button>
+        <button class="vl-tab vl-tab-wallet" type="button" id="accountButton">AnjuPayウォレット</button>
+      </nav>
+      ${renderAiTextTrainingLights(aiTextTrainingStats)}
+      ${renderLandingTopMessagePanel()}
+      ${renderLandingFleaPanel()}
+      <section class="vl-more" aria-labelledby="landingMoreTitle">
+        <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">ほかの遊び方</h2></div>
+        <div class="vl-list">
+          <button class="vl-row" type="button" id="valueMarketRankingButton"><small>売り手・買い手の月間／累計</small>推し値市場ランキング</button>
+          <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
+          <button class="vl-row vl-row-audio" type="button" id="audioStudioButton"><small>端末の中だけで録音・変換</small>10秒音声をつくる</button>
+        </div>
+      </section>
+      <section class="vl-live-board" aria-labelledby="landingLiveTitle">
+        <div class="vl-section-head"><span>Live</span><h2 id="landingLiveTitle">いまの参加状況</h2></div>
         <div class="mode-lobby-stats" aria-label="モード別の参加・開室状況">
           <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
             <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
@@ -1138,9 +1151,12 @@
           <button class="button button-ghost" id="lobbyStatsRefreshButton" type="button"${lobbyRefresh.disabled ? " disabled" : ""}>${escapeHtml(lobbyRefresh.label)}</button>
           <span id="lobbyStatsRefreshStatus">${escapeHtml(lobbyRefresh.message)}</span>
         </div>
+      </section>
+      <details class="vl-safe">
+        <summary><b>安心して遊べる理由</b><span>匿名で参加</span><span>画像は相手へP2Pで直接</span><span>サーバーに保存しない</span></summary>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
         <p class="mode-note">ソロトレーニングの候補画像（最大10枚）・抽選結果・自己申告結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
-      </div>
+      </details>
     </section>`;
   }
 
@@ -1154,6 +1170,7 @@
     rankingCommentsStatus = "idle";
     setLandingChrome();
     app.innerHTML = renderLanding();
+    window.HariaiAudio?.setBgm?.("lobby");
     window.dispatchEvent(new Event("hariai-landing-rendered"));
     document.querySelector(".screen.hero")?.addEventListener("click", (event) => {
       const control = event.target.closest?.("button, a");
