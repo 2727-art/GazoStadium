@@ -1,0 +1,86 @@
+{
+  "release": "strategy-hariai-v3",
+  "date": "2026-09-30",
+  "commits": {
+    "implementation": "2734b0e",
+    "workersAssetsIgnore": "2a8a6e4"
+  },
+  "deployOrder": [
+    "functions:playerSafetyAction,economyAction,cleanupPlayerSafety",
+    "database",
+    "hosting"
+  ],
+  "predeployCheck": {
+    "tests": 1585,
+    "pass": 1560,
+    "fail": 0,
+    "skipped": 25
+  },
+  "functions": {
+    "targets": {
+      "playerSafetyAction": {
+        "beforeHash": "55c6292dea2f54a375c7c4d5ac6326a16c7e5dae",
+        "afterHash": "6598cabb8daf6bf7bcd5efd362981c6cb3c0b025",
+        "beforeGeneration": "1789646430265575",
+        "afterGeneration": "1790752667680450",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      },
+      "economyAction": {
+        "beforeHash": "a5596007fa56faa641d3a30b86b5ae491a3e383f",
+        "afterHash": "6598cabb8daf6bf7bcd5efd362981c6cb3c0b025",
+        "beforeGeneration": "1789646348769394",
+        "afterGeneration": "1790752622177404",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      },
+      "cleanupPlayerSafety": {
+        "beforeHash": "a5596007fa56faa641d3a30b86b5ae491a3e383f",
+        "afterHash": "6598cabb8daf6bf7bcd5efd362981c6cb3c0b025",
+        "beforeGeneration": "1789646348784832",
+        "afterGeneration": "1790752667684701",
+        "state": "ACTIVE",
+        "runtime": "nodejs22"
+      }
+    },
+    "unchanged": 33,
+    "total": 36
+  },
+  "databaseRules": {
+    "liveEqualsLocal": true,
+    "strategyProtocolValidate": "newData.val() === 3"
+  },
+  "hosting": {
+    "routes": [
+      "gazostadium.web.app",
+      "gazostadium.firebaseapp.com",
+      "gazostadium.anjugames.workers.dev"
+    ],
+    "filesMatchingLocal": [
+      "index.html",
+      "strategy.js",
+      "strategy.css",
+      "app.js",
+      "strategy-hariai-core.mjs"
+    ],
+    "checks": 24,
+    "passed": 24,
+    "note": "workers.dev served STRATEGY_HARIAI_DESIGN.md until .assetsignore was fixed in 2a8a6e4; re-checked 404"
+  },
+  "browserSmoke": {
+    "url": "https://gazostadium.web.app/",
+    "newModulesLoaded": true,
+    "strategyScreenOpened": false,
+    "reason": "avoid creating a production anonymous account",
+    "unrelatedConsoleErrors": [
+      "App Check reCAPTCHA exchange 403 in the embedded browser",
+      "aiTextTrainingPublicStats 401",
+      "freeTablePublicStats 401"
+    ]
+  },
+  "functionLogs": {
+    "checked": false,
+    "reason": "firebase functions:log failed to retrieve entries from Google Cloud"
+  },
+  "realMatchesInProduction": 0
+}
