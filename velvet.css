@@ -1042,22 +1042,18 @@ a:focus-visible,
   line-height: 1.7;
 }
 
-/* PC：舞台と入口は全幅、残りの区画は2列 */
+/*
+  PC：舞台は全幅。入口（通常1on1・モード・メニュー）は中央の880px列にそろえる。
+  残りの区画は左右の列に分け、それぞれ上から詰めて積む（行の高さをそろえないので隙間ができない）。
+*/
 @media (min-width: 900px) {
   .hero.vl-landing {
+    display: flow-root;
     max-width: 1120px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 22px 24px;
     margin-inline: auto;
   }
 
-  .vl-stage,
-  .vl-landing .hero-actions,
-  .vl-tabbar {
-    grid-column: 1 / -1;
-  }
-
-  .vl-stage {
+  .hero.vl-landing > .vl-stage {
     height: 460px;
   }
 
@@ -1065,21 +1061,58 @@ a:focus-visible,
     padding-top: 74px;
   }
 
-  .vl-landing .hero-actions {
+  .hero.vl-landing > .hero-actions,
+  .hero.vl-landing > .vl-tabbar {
     width: min(880px, 100%);
+    margin-inline: auto;
+  }
+
+  .hero.vl-landing > .hero-actions {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-self: center;
+    margin-top: -44px;
   }
 
-  .vl-main-button {
-    width: min(620px, 100%);
-    justify-self: center;
+  .hero.vl-landing > .vl-tabbar {
+    margin-top: 12px;
   }
 
-  .vl-tabbar {
-    width: min(880px, 100%);
-    justify-self: center;
+  .hero.vl-landing > .training-lights-card,
+  .hero.vl-landing > .landing-flea,
+  .hero.vl-landing > .vl-live-board {
+    float: left;
+    clear: left;
+    width: calc(50% - 12px);
+    margin: 24px 0 0;
   }
+
+  .hero.vl-landing > .landing-community,
+  .hero.vl-landing > .vl-more,
+  .hero.vl-landing > .vl-safe {
+    float: right;
+    clear: right;
+    width: calc(50% - 12px);
+    margin: 24px 0 0;
+  }
+
+  /* 半分の幅でも文字が詰まらないよう、灯りのボタンは本文の下に置く */
+  .vl-landing .training-lights-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .vl-landing .training-lights-start {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
+}
+
+/* 推しカードの見出しは折り返さず、操作ボタンが入らない時は次の行へ送る */
+.vl-landing .community-message-head {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.vl-landing .community-message-head strong {
+  white-space: nowrap;
 }
 
 /* スマホ：舞台は画面の端まで。タブは画面下に固定。 */

@@ -12,19 +12,26 @@ const mediaBlock = (source, query) => {
   return source.slice(start, end);
 };
 
-test("desktop landing keeps the stage and entrances full width over a balanced two-column page", () => {
+test("desktop landing aligns the entrances to one column and stacks two gap-free columns below", () => {
   const velvet = read("velvet.css");
   const styles = read("styles.css");
   const desktop = mediaBlock(velvet, "(min-width: 900px)");
 
-  assert.match(desktop, /\.hero\.vl-landing\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
-  assert.match(desktop, /\.vl-stage,\s*\.vl-landing \.hero-actions,\s*\.vl-tabbar\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
+  assert.match(desktop, /\.hero\.vl-landing\s*\{[^}]*display:\s*flow-root;[^}]*max-width:\s*1120px;/s);
   assert.match(
     desktop,
-    /\.vl-landing \.hero-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
+    /\.hero\.vl-landing > \.hero-actions,\s*\.hero\.vl-landing > \.vl-tabbar\s*\{[^}]*width:\s*min\(880px,\s*100%\);[^}]*margin-inline:\s*auto;/s,
+    "the main button, mode tiles, and menu row share one centered width",
+  );
+  assert.match(
+    desktop,
+    /\.hero\.vl-landing > \.hero-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
     "the six mode tiles fill two equal desktop rows",
   );
   assert.match(velvet, /\.vl-main-button\s*\{[^}]*grid-column:\s*1 \/ -1;/s, "normal 1on1 stays the widest entrance");
+  // 左右の列は独立して上から積むので、隣の区画の高さで隙間ができない
+  assert.match(desktop, /\.hero\.vl-landing > \.training-lights-card,[\s\S]*?\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
+  assert.match(desktop, /\.hero\.vl-landing > \.landing-community,[\s\S]*?\{[^}]*float:\s*right;[^}]*clear:\s*right;/s);
   assert.match(
     styles,
     /\.mode-lobby-stats\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
