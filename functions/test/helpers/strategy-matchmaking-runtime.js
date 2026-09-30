@@ -43,8 +43,8 @@ function createStrategyMatchmakingRuntime(overrides = {}) {
   const hooks = {};
   const context = {
     state, active: true, database: {}, strategyMatchmakingGenerationCounter: 1,
-    strategyQueueDisconnectOperations: Promise.resolve(), STRATEGY_PROTOCOL_VERSION: 2,
-    STRATEGY_QUEUE_WAITING_STATE: "waiting-v2", MATCH_TIMEOUT_MS: 20_000,
+    strategyQueueDisconnectOperations: Promise.resolve(), STRATEGY_PROTOCOL_VERSION: 3,
+    STRATEGY_QUEUE_WAITING_STATE: "waiting-v3", MATCH_TIMEOUT_MS: 20_000,
     Date, Promise, console,
     ref: (_db, key) => key,
     push: () => ({ key: "PROPOSED0000000000001" }),

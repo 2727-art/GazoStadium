@@ -59,8 +59,8 @@ test("strategy reconnection and offer cleanup with deployed-equivalent RTDB rule
         const queue = (await queueRef.get()).val();
         assert.equal(queue.uid, "A");
         assert.equal(queue.joinedAt, f.state.queueJoinedAt);
-        assert.equal(queue.protocolVersion, 2);
-        assert.equal(queue.state, "waiting-v2");
+        assert.equal(queue.protocolVersion, 3);
+        assert.equal(queue.state, "waiting-v3");
         assert.equal(queue.allowPreferenceMismatch, true);
         assert.ok(queue.lastSeen >= f.state.queueJoinedAt);
         assert.ok(f.state.queueDisconnect);
@@ -76,7 +76,7 @@ test("strategy reconnection and offer cleanup with deployed-equivalent RTDB rule
   await t.test("an offering queue and a newer attempt retain their server-owned fields", async () => {
     const f = makeRuntime();
     f.state.queueJoinedAt = Date.now();
-    const queue = { uid: "A", protocolVersion: 2, state: "offering-v2", ratingPreference: "both",
+    const queue = { uid: "A", protocolVersion: 3, state: "offering-v3", ratingPreference: "both",
       joinedAt: f.state.queueJoinedAt, lastSeen: f.state.queueJoinedAt, roomId: "P".repeat(20) };
     await realtime.ref("online/strategyQueue/A").set(queue);
     try {
@@ -100,7 +100,7 @@ test("strategy reconnection and offer cleanup with deployed-equivalent RTDB rule
     const now = Date.now();
     await realtime.ref("online").update({
       [`strategyRooms/${roomId}`]: {
-        hostUid: "A", guestUid: "B", createdAt: now, protocolVersion: 2, status: "offered",
+        hostUid: "A", guestUid: "B", createdAt: now, protocolVersion: 3, status: "offered",
         safetyPairId: "auditPair", safetyGrantId: roomId, safetyVersion: 0,
         members: { A: true, B: true }, players: { A: { uid: "A" } }, queueJoinedAt: { A: now, B: now },
       },

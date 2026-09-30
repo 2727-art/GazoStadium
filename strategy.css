@@ -2428,3 +2428,1042 @@
     justify-self: start;
   }
 }
+
+/* 貼り合い本式（戦略型1on1 v3） */
+.strategy-screen.is-refresh {
+  animation: none;
+}
+
+.strategy-screen {
+  --hariai-pink: #ff8aaa;
+  --hariai-pink-soft: rgba(255, 138, 170, 0.12);
+}
+
+.strategy-persona-fieldset,
+.strategy-penalty-fieldset {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 18px;
+  border: 1px solid rgba(255, 138, 170, 0.28);
+  border-radius: 16px;
+  background: rgba(255, 138, 170, 0.04);
+}
+
+.strategy-persona-fieldset legend,
+.strategy-penalty-fieldset legend {
+  padding: 0 6px;
+  font-weight: 900;
+}
+
+.strategy-persona-fieldset legend span,
+.strategy-penalty-fieldset legend span {
+  margin-left: 6px;
+  color: var(--hariai-pink);
+  font-size: 0.7rem;
+}
+
+.strategy-persona-fieldset p,
+.strategy-penalty-fieldset > small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.strategy-persona-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.strategy-persona-option,
+.strategy-penalty-option,
+.hariai-target-option,
+.hariai-right-option {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.strategy-persona-option input,
+.hariai-target-option input,
+.hariai-right-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.strategy-persona-option span,
+.hariai-target-option span,
+.hariai-right-option span {
+  display: grid;
+  gap: 4px;
+  height: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 11, 18, 0.72);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.strategy-persona-option strong,
+.hariai-target-option strong,
+.hariai-right-option strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.strategy-persona-option small,
+.hariai-target-option small,
+.hariai-right-option small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.strategy-persona-option input:checked + span,
+.hariai-target-option input:checked + span,
+.hariai-right-option input:checked + span {
+  border-color: rgba(255, 138, 170, 0.78);
+  background: var(--hariai-pink-soft);
+  box-shadow: 0 0 0 1px rgba(255, 138, 170, 0.14);
+}
+
+.strategy-persona-option input:focus-visible + span,
+.hariai-target-option input:focus-visible + span,
+.hariai-right-option input:focus-visible + span {
+  outline: 2px solid var(--hariai-pink);
+  outline-offset: 2px;
+}
+
+.hariai-target-option input:disabled + span,
+.hariai-right-option.is-disabled span {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hariai-target-option.is-bluff small {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.hariai-target-option.is-weakness small {
+  color: var(--hariai-pink);
+}
+
+.strategy-persona-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.strategy-penalty-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.strategy-penalty-option input {
+  margin-top: 4px;
+  accent-color: var(--hariai-pink);
+}
+
+.strategy-penalty-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.strategy-penalty-option small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.strategy-penalty-option.is-fixed {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.hariai-intro-persona,
+.hariai-intro-penalty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 138, 170, 0.3);
+  border-radius: 14px;
+  background: var(--hariai-pink-soft);
+}
+
+.hariai-intro-persona span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.hariai-intro-persona strong {
+  color: var(--hariai-pink);
+  font-size: 1.05rem;
+}
+
+.hariai-intro-persona small {
+  color: var(--muted);
+}
+
+.hariai-intro-penalty {
+  margin-top: 16px;
+  font-size: 0.82rem;
+}
+
+.hariai-identity-persona,
+.hariai-result-persona {
+  margin: 0 0 10px;
+  color: var(--hariai-pink);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.hariai-persona-chip {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 138, 170, 0.4);
+  border-radius: 999px;
+  color: var(--hariai-pink);
+  font-size: 0.64rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.hariai-turn-label {
+  display: block;
+  margin-top: 4px;
+  color: var(--hariai-pink);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.hariai-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.hariai-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.hariai-side {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hariai-thread {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hariai-thread-empty {
+  padding: 18px;
+  border: 1px dashed var(--line-bright);
+  border-radius: 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.hariai-slot {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 620px);
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(170, 131, 255, 0.3);
+  border-radius: 18px;
+  background: rgba(14, 17, 26, 0.86);
+}
+
+.hariai-slot.is-local {
+  justify-self: end;
+  border-color: rgba(255, 138, 170, 0.34);
+  background: linear-gradient(160deg, rgba(255, 138, 170, 0.08), rgba(14, 17, 26, 0.9) 45%);
+}
+
+.hariai-slot.is-opponent {
+  justify-self: start;
+}
+
+.hariai-slot header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.hariai-slot header b {
+  overflow-wrap: anywhere;
+}
+
+.hariai-slot header small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.hariai-slot-no {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.hariai-target {
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(244, 201, 107, 0.12);
+  color: var(--strategy-gold);
+  font-size: 0.7rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.hariai-combo {
+  color: var(--hariai-pink);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.hariai-media {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  min-height: 120px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.hariai-media img {
+  display: block;
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+}
+
+.hariai-media.is-concealed img {
+  filter: blur(24px) brightness(0.55);
+}
+
+.hariai-media.is-loading {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.hariai-open {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.hariai-audio {
+  justify-self: start;
+  padding: 6px 12px;
+  border: 1px solid var(--line-bright);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.hariai-caption {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.hariai-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--line);
+}
+
+.hariai-score > strong {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.hariai-score > strong small {
+  margin-left: 2px;
+  font-size: 0.8rem;
+}
+
+.hariai-band {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.band-question .hariai-band,
+.hariai-score-preview.band-question strong {
+  color: var(--cyan);
+}
+
+.band-instruction .hariai-band,
+.hariai-score-preview.band-instruction strong {
+  color: var(--gold);
+}
+
+.band-combo .hariai-band,
+.band-combo > strong,
+.hariai-score-preview.band-combo strong {
+  color: var(--hariai-pink);
+}
+
+.hariai-damage {
+  color: var(--red-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.hariai-reply,
+.hariai-answer {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.hariai-reply b,
+.hariai-answer b {
+  margin-right: 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.hariai-reply.is-surrender {
+  color: var(--hariai-pink);
+  font-weight: 800;
+}
+
+.hariai-answer.is-waiting {
+  color: var(--muted);
+}
+
+.hariai-right {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--strategy-violet);
+  border-radius: 0 12px 12px 0;
+  background: rgba(170, 131, 255, 0.07);
+}
+
+.hariai-right p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hariai-right > p > b {
+  margin-right: 8px;
+  color: var(--strategy-violet);
+  font-size: 0.72rem;
+}
+
+.hariai-right.is-skipped {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.hariai-flavor {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.hariai-break {
+  border-color: rgba(255, 74, 95, 0.4);
+}
+
+.hariai-break-wait {
+  margin: 0;
+  color: var(--muted);
+}
+
+.hariai-break-result {
+  margin: 0;
+  font-weight: 800;
+}
+
+.hariai-break-result.is-hit {
+  color: var(--hariai-pink);
+}
+
+.hariai-break-result.is-miss {
+  color: var(--muted);
+}
+
+.hariai-bluffs {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 138, 170, 0.35);
+  border-radius: 12px;
+  background: var(--hariai-pink-soft);
+  font-size: 0.8rem;
+}
+
+.hariai-bluffs b {
+  color: var(--hariai-pink);
+}
+
+.hariai-finish {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.hariai-finish-card {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.hariai-finish-card img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.hariai-finish-card figcaption {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.hariai-finish-card.is-playing {
+  border-color: var(--hariai-pink);
+  transform: scale(1.03);
+}
+
+.hariai-system {
+  width: 100%;
+  justify-self: center;
+  text-align: center;
+  border-style: dashed;
+}
+
+.hariai-system p {
+  margin: 0;
+}
+
+.hariai-system b {
+  margin-right: 8px;
+}
+
+.hariai-console {
+  padding: 16px;
+  border: 1px solid rgba(255, 138, 170, 0.34);
+  border-radius: 18px;
+  background: rgba(10, 12, 20, 0.94);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+
+.hariai-console:empty {
+  display: none;
+}
+
+.hariai-console-wait {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+
+.hariai-console-wait p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.hariai-console-act,
+.hariai-composer {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hariai-console-act > p,
+.hariai-composer > p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.hariai-console-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+
+.hariai-console-head strong {
+  font-size: 1.05rem;
+}
+
+.hariai-console-head small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.hariai-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hariai-tabs button {
+  padding: 8px 14px;
+  border: 1px solid var(--line-bright);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hariai-tabs button.is-active {
+  border-color: var(--hariai-pink);
+  background: var(--hariai-pink-soft);
+  color: var(--hariai-pink);
+}
+
+.hariai-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.hariai-step b {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--hariai-pink-soft);
+  color: var(--hariai-pink);
+  font-size: 0.72rem;
+}
+
+.hariai-hand {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 8px;
+}
+
+.hariai-hand-card {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.hariai-hand-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+
+.hariai-hand-card.is-selected {
+  border-color: var(--hariai-pink);
+  box-shadow: 0 0 0 2px rgba(255, 138, 170, 0.25);
+}
+
+.hariai-hand-audio,
+.hariai-hand-order {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--text);
+  font-size: 0.66rem;
+  font-weight: 900;
+}
+
+.hariai-hand-order {
+  background: var(--hariai-pink);
+  color: #1a0b12;
+}
+
+.hariai-targets,
+.hariai-right-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.hariai-caption-field {
+  display: grid;
+  gap: 6px;
+}
+
+.hariai-caption-field textarea,
+.hariai-console-act textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font: inherit;
+}
+
+.hariai-caption-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.hariai-count {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.hariai-effect,
+.hariai-note {
+  margin: 0;
+  color: var(--hariai-pink);
+  font-size: 0.76rem;
+}
+
+.hariai-note {
+  color: var(--muted);
+}
+
+.hariai-preview,
+.hariai-prompt {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.hariai-submit {
+  justify-self: stretch;
+}
+
+.hariai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.hariai-score-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 12px;
+}
+
+.hariai-score-input input[type="range"] {
+  width: 100%;
+  accent-color: var(--hariai-pink);
+}
+
+.hariai-score-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hariai-score-quick button {
+  min-width: 48px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-bright);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hariai-score-quick button.is-selected {
+  border-color: var(--hariai-pink);
+  background: var(--hariai-pink-soft);
+}
+
+.hariai-score-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.hariai-score-preview strong {
+  font-size: 1.2rem;
+}
+
+.hariai-ko-warning,
+.hariai-required {
+  color: var(--red-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.hariai-required {
+  margin-left: 8px;
+}
+
+.hariai-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hariai-suggestions button {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 138, 170, 0.35);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.76rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hariai-surrender-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.hariai-surrender-check input {
+  accent-color: var(--hariai-pink);
+}
+
+.hariai-which {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hariai-memo,
+.hariai-self,
+.hariai-rules {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(14, 17, 26, 0.86);
+}
+
+.hariai-memo h2,
+.hariai-self h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.hariai-memo > p,
+.hariai-self p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.hariai-self p b {
+  color: var(--text);
+}
+
+.hariai-self p small {
+  display: block;
+}
+
+.hariai-memo article {
+  display: grid;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.hariai-memo article strong {
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.hariai-memo article span,
+.hariai-memo article small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.hariai-memo article.is-bluff {
+  opacity: 0.55;
+}
+
+.hariai-memo article.is-weakness {
+  border-color: var(--hariai-pink);
+  background: var(--hariai-pink-soft);
+}
+
+.hariai-rules summary {
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hariai-rules ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.hariai-penalty {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0;
+  padding: 18px;
+  border: 1px solid rgba(255, 138, 170, 0.34);
+  border-radius: 18px;
+  background: var(--hariai-pink-soft);
+  text-align: left;
+}
+
+.hariai-penalty h2,
+.hariai-penalty p {
+  margin: 0;
+}
+
+.hariai-penalty small {
+  color: var(--muted);
+}
+
+.hariai-penalty-done {
+  color: var(--hariai-pink);
+  font-weight: 800;
+}
+
+.hariai-penalty-done b {
+  margin-right: 8px;
+  color: var(--muted);
+}
+
+.hariai-log {
+  margin: 18px 0;
+  text-align: left;
+}
+
+.hariai-log summary {
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hariai-log .hariai-thread {
+  margin-top: 12px;
+}
+
+.hariai-review-penalty span {
+  color: var(--hariai-pink);
+}
+
+@media (max-width: 900px) {
+  .hariai-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hariai-side {
+    position: static;
+  }
+
+  .strategy-persona-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .hariai-slot {
+    width: 100%;
+    padding: 12px;
+  }
+
+  .hariai-target {
+    margin-left: 0;
+  }
+
+  .hariai-hand {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .strategy-persona-row,
+  .hariai-which {
+    grid-template-columns: 1fr;
+  }
+
+  .hariai-score-input {
+    grid-template-columns: minmax(0, 1fr) 80px;
+  }
+
+  .hariai-actions .button {
+    flex: 1 1 100%;
+  }
+}

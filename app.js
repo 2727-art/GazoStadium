@@ -1102,7 +1102,7 @@
       <div class="hero-actions">
         <button class="vl-main-button vs-satin" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live"><i aria-hidden="true"></i>対戦中 <b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人 · 待機中 <b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人</em></button>
         <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
-        <button class="vl-tile vl-tile-strategy" id="strategyLabButton" type="button"><small>自己紹介から弱点を読んで、デッキを組む</small><span>戦略型1on1対戦</span></button>
+        <button class="vl-tile vl-tile-strategy" id="strategyLabButton" type="button"><small>なりきって読んで、言葉で刺して点数で落とす</small><span>戦略型1on1対戦</span></button>
         <button class="vl-tile vl-tile-market" id="valueMarketButton" type="button"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
         <button class="vl-tile${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
         <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>

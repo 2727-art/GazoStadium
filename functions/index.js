@@ -4982,6 +4982,17 @@ function validatedOutcomes(mode, room, participants, {
 function dailyActivityForRoom(mode, room, uid) {
   let scores = 0;
   let criticals = 0;
+  if (mode === "strategy" && Number(room?.protocolVersion) === 3) {
+    // 貼り合い本式: 受け手として申告した0〜100点を数え、80点以上をクリティカルとする。
+    for (const slot of Object.values(objectValue(room.moves))) {
+      const score = slot?.score;
+      const value = Number(score?.value);
+      if (score?.by !== uid || !Number.isInteger(value) || value < 0 || value > 100) continue;
+      scores += 1;
+      if (value >= 80) criticals += 1;
+    }
+    return { scores: Math.min(3, scores), criticals: Math.min(1, criticals) };
+  }
   const rounds = Object.values(objectValue(room.rounds));
   for (const round of rounds) {
     let values = [];

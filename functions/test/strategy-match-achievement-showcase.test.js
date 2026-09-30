@@ -191,10 +191,10 @@ test("strategy hides achievements and Danwaku before identity, then shows only t
   const identity = section("function renderIdentityReveal()", "function renderWaitingBattle()");
   assert.match(identity, /localPlayer \? "" : renderOpponentAchievementShowcase\(\{ context: "is-identity"/);
 
-  const waitingBattle = section("function renderWaitingBattle()", "function renderBaseSelect()");
+  const waitingBattle = section("function renderWaitingBattle()", "function renderPreparedDeck()");
   assert.match(waitingBattle, /renderOpponentAchievementShowcase\(\{ context: "is-identity"/);
 
-  const hud = section("function renderHudPlayer(index)", "function renderBattleImage(");
+  const hud = section("function renderHudPlayer(index)", "function bindScreenEvents()");
   assert.match(hud, /localPlayer \? "" : renderOpponentAchievementShowcase\(\{ compact: true, context: "is-hud"/);
 
   const result = section("function renderGameOver()", "function syncStrategyFreeTableResultLamp()");

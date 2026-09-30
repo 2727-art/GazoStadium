@@ -40,7 +40,7 @@ test("strategy review client writes the three lifecycle records and uses review 
   );
   assert.match(
     strategySource,
-    /round: state\.screen === "review" \? 0 : Math\.max\(1, Math\.min\(MAX_ROUNDS,/,
+    /round: state\.screen === "review" \? 0 : Math\.max\(1, Math\.min\(HARIAI_MAX_SLOTS,/,
   );
   assert.match(
     strategySource,

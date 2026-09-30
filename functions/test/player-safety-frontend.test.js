@@ -189,14 +189,14 @@ test("strategy retries restore the original room-bound weakness secret", async (
   const state = {};
   let records = 0;
   const sandbox = { state, Map, async playerRoomRecord(roomId) {
-    records += 1; state.weaknessSalt = `salt-${roomId}`;
-    return { weaknessCommit: `commit-${roomId}` };
+    records += 1; state.weaknessSalts = [0, 1, 2].map((index) => `salt-${roomId}-${index}`);
+    return { weaknessCommits: [0, 1, 2].map((index) => `commit-${roomId}-${index}`) };
   } };
   vm.runInNewContext(`${source}\n globalThis.record = safetyPlayerRoomRecord;`, sandbox);
   await sandbox.record("first"); await sandbox.record("second"); await sandbox.record("first");
   assert.equal(records, 2);
-  assert.equal(state.weaknessSalt, "salt-first");
-  assert.equal(state.weaknessCommit, "commit-first");
+  assert.deepEqual([...state.weaknessSalts], ["salt-first-0", "salt-first-1", "salt-first-2"]);
+  assert.deepEqual([...state.weaknessCommits], ["commit-first-0", "commit-first-1", "commit-first-2"]);
 });
 
 test("hidden roulette ranking slots preserve rank statistics and have no contact or purchase action", () => {

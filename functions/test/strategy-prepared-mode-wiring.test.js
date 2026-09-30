@@ -524,50 +524,54 @@ test("incoming Strategy image starts are bounded to the opponent and valid match
   const normalizeStart = namedFunction(strategy, "normalizeIncomingStrategyImageStart");
   const state = {
     opponentUid: "opponent-one",
-    round: 2,
     incomingTransfer: null,
     roomData: {
-      rounds: { 2: { actionPicks: { "opponent-one": { type: "request", skipped: false } } } },
-      weaknessChains: { "opponent-one": { count: 2 } },
+      moves: {
+        2: { post: { by: "opponent-one", target: 1, caption: "ね♡" } },
+        3: { post: { by: "player-one", target: 0, caption: "x" } },
+        5: { break: { by: "opponent-one", guess: 1 }, finish: { by: "opponent-one", count: 2 } },
+      },
     },
   };
   const context = vm.createContext({
     state,
     STRATEGY_DECK_IMAGE_MAX_BYTES: 15 * 1024 * 1024,
     STRATEGY_DECK_IMAGE_MIME_TYPES: ["image/webp", "image/png", "image/jpeg"],
-    MAX_ROUNDS: 5,
-    MAX_WEAKNESS_CHAIN: 3,
+    HARIAI_MAX_SLOTS: 30,
+    HARIAI_FINISH_MAX: 3,
     normalizeOnlineImageMime: (value) => String(value || "").trim().toLowerCase(),
     Number,
     String,
     Error,
     Array,
   });
-  vm.runInContext(`${normalizeStart}\nglobalThis.normalizeStartForTest = normalizeIncomingStrategyImageStart;`, context);
+  vm.runInContext(`${normalizeStart}
+globalThis.normalizeStartForTest = normalizeIncomingStrategyImageStart;`, context);
   const start = (overrides = {}) => context.normalizeStartForTest({
-    kind: "base",
-    round: 2,
+    kind: "move",
+    slot: 2,
+    index: 0,
     ownerUid: "opponent-one",
     size: 100,
     mime: "image/webp",
     ...overrides,
   }, state);
 
-  assert.equal(start().mime, "image/webp", "the previous WebP sender shape remains valid");
+  assert.equal(start().mime, "image/webp", "a WebP post image is valid");
   assert.equal(start({ mime: "image/png" }).mime, "image/png", "an iPhone PNG fallback is valid");
   assert.equal(start({ mime: "image/jpeg" }).mime, "image/jpeg");
   assert.throws(() => start({ ownerUid: "player-one" }), /対戦相手/u);
-  assert.throws(() => start({ kind: "unknown" }), /用途/u);
-  assert.throws(() => start({ round: 1 }), /ラウンド/u);
-  assert.throws(() => start({ round: 6 }), /ラウンド/u);
+  assert.throws(() => start({ kind: "base" }), /用途/u, "version 2 round kinds are retired");
+  assert.throws(() => start({ slot: 0 }), /手番/u);
+  assert.throws(() => start({ slot: 31 }), /手番/u);
+  assert.throws(() => start({ index: 1 }), /手番/u);
   assert.throws(() => start({ mime: "image/gif" }), /形式/u);
   assert.throws(() => start({ size: (15 * 1024 * 1024) + 1 }), /サイズ/u);
-  assert.equal(start({ kind: "action", actionType: "request" }).actionType, "request");
-  assert.throws(() => start({ kind: "action", actionType: "pursuit" }), /確定内容/u);
-  assert.throws(() => start({ kind: "action", actionType: "normal" }), /追加行動/u);
-  assert.equal(start({ kind: "weaknessChain", round: 1, actionType: "pursuit" }).round, 1);
-  assert.throws(() => start({ kind: "weaknessChain", round: 2, actionType: "pursuit" }), /宣言枚数/u);
-  assert.throws(() => start({ kind: "weaknessChain", round: 3, actionType: "pursuit" }), /位置/u);
+  assert.throws(() => start({ slot: 3 }), /確定した手/u, "a post owned by the local player is not accepted from the opponent");
+  assert.equal(start({ slot: 4 }).slot, 4, "P2P may arrive before the post reaches the database");
+  assert.equal(start({ kind: "finish", slot: 5, index: 1 }).index, 1);
+  assert.throws(() => start({ kind: "finish", slot: 5, index: 2 }), /宣言枚数/u);
+  assert.throws(() => start({ kind: "finish", slot: 5, index: 3 }), /位置/u);
 
   state.incomingTransfer = start({ mime: "image/png" });
   state.incomingTransfer.received = 50;
@@ -575,7 +579,7 @@ test("incoming Strategy image starts are bounded to the opponent and valid match
   const restarted = start({ mime: "image/jpeg" });
   assert.equal(restarted.received, 0);
   assert.equal(restarted.chunks.length, 0);
-  assert.throws(() => start({ kind: "action", actionType: "request" }), /別の画像/u);
+  assert.throws(() => start({ kind: "finish", slot: 5, index: 0 }), /別の画像/u);
 });
 
 test("invalid optional audio is omitted while the Strategy image still completes", async () => {
@@ -602,7 +606,7 @@ test("invalid optional audio is omitted while the Strategy image still completes
       channel,
       sentImageKeys: new Set(),
       transferProgress: 0,
-      screen: "baseSelect",
+      screen: "battle",
     };
     const context = vm.createContext({
       state,
@@ -617,6 +621,7 @@ test("invalid optional audio is omitted while the Strategy image still completes
       normalizeOnlineImageMime: (value) => String(value || "").trim().toLowerCase(),
       verifiedOnlineImageMime: () => "image/webp",
       render() {},
+      refreshHariaiTransferProgress() {},
       window: { setTimeout, clearTimeout },
       Error,
       Number,
@@ -644,7 +649,7 @@ test("invalid optional audio is omitted while the Strategy image still completes
   ];
   for (const [audioBlob, duration] of invalidCases) {
     const harness = makeHarness(audioBlob, duration);
-    await harness.context.sendImageForTest(harness.item, "base", "", 1);
+    await harness.context.sendImageForTest(harness.item, "move", 1);
     const messages = harness.jsonMessages();
     assert.equal(messages.find((message) => message.type === "strategy-image-start")?.hasAudio, false);
     assert.ok(messages.some((message) => message.type === "strategy-image-end"));
@@ -652,7 +657,7 @@ test("invalid optional audio is omitted while the Strategy image still completes
   }
 
   const valid = makeHarness(new Blob(["wav"], { type: "audio/wav" }), 4, 9);
-  await valid.context.sendImageForTest(valid.item, "base", "", 1);
+  await valid.context.sendImageForTest(valid.item, "move", 1);
   const validMessages = valid.jsonMessages();
   assert.equal(validMessages.find((message) => message.type === "strategy-image-start")?.hasAudio, true);
   const audioStart = validMessages.find((message) => message.type === "strategy-audio-start");

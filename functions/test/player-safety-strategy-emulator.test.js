@@ -10,7 +10,9 @@ class HttpsError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 const roomId = (value) => value.repeat(20);
-const player = (uid, commit = "a") => ({ uid, name: uid, clues: ["A", "B", "C"], weaknessCommit: commit.repeat(64), pursuitLine: "追撃" });
+const commits = (letter) => [letter.repeat(63) + "0", letter.repeat(63) + "1", letter.repeat(63) + "2"];
+const player = (uid, commit = "a") => ({ uid, name: uid, clues: ["A", "B", "C"], weaknessCommits: commits(commit),
+  persona: { type: "koakuma", firstPerson: "atashi", callStyle: "chan" }, penalties: { call: true, tribute: false } });
 
 test("strategy safety transitions on real isolated Firebase emulators", {
   skip: requested ? false : "set RUN_PLAYER_SAFETY_EMULATOR_TESTS=1 and both loopback emulator hosts",
@@ -48,7 +50,7 @@ test("strategy safety transitions on real isolated Firebase emulators", {
   });
   const service = createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety: safety, now: () => at });
   const queue = (uid, overrides = {}) => realtime.ref(`online/strategyQueue/${uid}`).set({
-    uid, protocolVersion: 2, state: "waiting-v2", ratingPreference: "live_action", joinedAt: at - 1000, lastSeen: at, ...overrides,
+    uid, protocolVersion: 3, state: "waiting-v3", ratingPreference: "live_action", joinedAt: at - 1000, lastSeen: at, ...overrides,
   });
   const value = async (path) => (await realtime.ref(path).get()).val();
   const block = async (uid, target) => {
@@ -59,35 +61,35 @@ test("strategy safety transitions on real isolated Firebase emulators", {
 
   await t.test("remote queue transition and guest activation succeed on a cold transaction cache", async () => {
     await Promise.all([queue("A"), queue("B")]);
-    const offer = await service.match("A", { roomId: roomId("X"), player: player("A") });
+    const offer = await service.match("A", { protocolVersion: 3, roomId: roomId("X"), player: player("A") });
     assert.equal(offer.status, "hosted");
-    assert.equal(await value("online/strategyQueue/A/state"), "offering-v2");
-    const accepted = await service.accept("B", { roomId: offer.roomId, player: player("B", "b") });
+    assert.equal(await value("online/strategyQueue/A/state"), "offering-v3");
+    const accepted = await service.accept("B", { protocolVersion: 3, roomId: offer.roomId, player: player("B", "b") });
     assert.equal(accepted.status, "active");
-    assert.equal(await value(`online/strategyRooms/${offer.roomId}/players/B/weaknessCommit`), "b".repeat(64));
+    assert.deepEqual(await value(`online/strategyRooms/${offer.roomId}/players/B/weaknessCommits`), commits("b"));
     assert.equal(await value("online/strategyQueue/A"), null);
     assert.equal(await value("online/strategyQueue/B"), null);
-    const retry = await service.match("A", { roomId: roomId("W"), player: player("A", "c") });
+    const retry = await service.match("A", { protocolVersion: 3, roomId: roomId("W"), player: player("A", "c") });
     assert.equal(retry.status, "active");
-    assert.equal(await value(`online/strategyRooms/${offer.roomId}/players/A/weaknessCommit`), "a".repeat(64));
+    assert.deepEqual(await value(`online/strategyRooms/${offer.roomId}/players/A/weaknessCommits`), commits("a"));
   });
 
   await t.test("real block between offered and active denies acceptance", async () => {
     await Promise.all([queue("C"), queue("D")]);
-    const offer = await service.match("C", { roomId: roomId("Y"), player: player("C") });
+    const offer = await service.match("C", { protocolVersion: 3, roomId: roomId("Y"), player: player("C") });
     assert.equal(offer.status, "hosted");
     assert.equal(offer.opponentUid, "D");
     await block("D", "C");
-    await assert.rejects(service.accept("D", { roomId: offer.roomId, player: player("D") }), { code: "failed-precondition" });
+    await assert.rejects(service.accept("D", { protocolVersion: 3, roomId: offer.roomId, player: player("D") }), { code: "failed-precondition" });
     assert.equal(await value(`online/strategyRooms/${offer.roomId}/players/D`), null);
   });
 
   await t.test("remote offered-room expiry preserves a newer active reservation", async () => {
     await Promise.all([queue("E"), queue("F")]);
-    const offer = await service.match("E", { roomId: roomId("Z"), player: player("E") });
+    const offer = await service.match("E", { protocolVersion: 3, roomId: roomId("Z"), player: player("E") });
     assert.equal(offer.status, "hosted");
     at += 30_000;
-    await queue("E", { joinedAt: at, state: "offering-v2", roomId: roomId("Q") });
+    await queue("E", { joinedAt: at, state: "offering-v3", roomId: roomId("Q") });
     await realtime.ref("online/strategyActive/E").set(roomId("Q"));
     const expired = await service.expire("E", { roomId: offer.roomId });
     assert.equal(expired.expired, true);

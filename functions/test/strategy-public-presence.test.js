@@ -134,7 +134,7 @@ test("finish and withdrawal stop lobby presence without ending the room or revie
   assert.ok(resultWrite >= 0 && resultWrite < publicCleanup && publicCleanup < stats);
   assert.doesNotMatch(finishMatch, /cleanupOnlineResources|cleanupMatchmaking|strategyActive|peer\.close/);
 
-  const react = section("async function reactToRoomData()", "async function reactToRoundData()");
+  const react = section("async function reactToRoomData()", "function determineOutcome()");
   const withdrawStart = react.indexOf('Object.values(decisions).includes("withdraw")');
   const withdrawEnd = react.indexOf("return;", withdrawStart);
   const withdraw = react.slice(withdrawStart, withdrawEnd);

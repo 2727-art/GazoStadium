@@ -5,7 +5,7 @@ const test = require("node:test");
 const { createStrategyMatchmakingRuntime, clone, snapshot, turn, deferred } = require("./helpers/strategy-matchmaking-runtime");
 const queuePath = "online/strategyQueue/A";
 const activePath = "online/strategyActive/A";
-const queue = (overrides = {}) => ({ uid: "A", protocolVersion: 2, state: "waiting-v2", ratingPreference: "both",
+const queue = (overrides = {}) => ({ uid: "A", protocolVersion: 3, state: "waiting-v3", ratingPreference: "both",
   joinedAt: 1234, lastSeen: 1234, allowPreferenceMismatch: false, ...overrides });
 const denied = () => Object.assign(new Error("permission_denied at /online/strategyRooms/room/status: Client doesn't have permission to access the desired data."), { code: "PERMISSION_DENIED" });
 function offer(f, roomId = "room") {
@@ -29,25 +29,25 @@ test("reconnected strategy waiting restores a complete owned queue and its disco
 
 test("heartbeat preserves an offering queue and never overwrites a different attempt", async () => {
   const f = createStrategyMatchmakingRuntime();
-  f.rows.set(queuePath, queue({ state: "offering-v2", roomId: "reserved" }));
+  f.rows.set(queuePath, queue({ state: "offering-v3", roomId: "reserved" }));
   await f.context.refreshStrategyMatchmakingQueue(f.state, 1);
-  assert.equal(f.rows.get(queuePath).state, "offering-v2");
+  assert.equal(f.rows.get(queuePath).state, "offering-v3");
   assert.equal(f.rows.get(queuePath).roomId, "reserved");
-  f.rows.set(queuePath, queue({ joinedAt: 9999, state: "offering-v2", roomId: "newer" }));
+  f.rows.set(queuePath, queue({ joinedAt: 9999, state: "offering-v3", roomId: "newer" }));
   assert.equal(await f.context.refreshStrategyMatchmakingQueue(f.state, 1), false);
-  assert.deepEqual(f.rows.get(queuePath), queue({ joinedAt: 9999, state: "offering-v2", roomId: "newer" }));
+  assert.deepEqual(f.rows.get(queuePath), queue({ joinedAt: 9999, state: "offering-v3", roomId: "newer" }));
 });
 
 test("a reservation appearing before the queue CAS retains the server's offering fields", async () => {
   const f = createStrategyMatchmakingRuntime();
   f.rows.set(queuePath, queue());
   f.hooks.beforeTransaction = async () => {
-    f.rows.set(queuePath, queue({ state: "offering-v2", roomId: "new-room" }));
+    f.rows.set(queuePath, queue({ state: "offering-v3", roomId: "new-room" }));
     f.rows.set(activePath, "new-room");
   };
   await f.context.refreshStrategyMatchmakingQueue(f.state, 1);
   assert.equal(f.rows.get(queuePath).roomId, "new-room");
-  assert.equal(f.rows.get(queuePath).state, "offering-v2");
+  assert.equal(f.rows.get(queuePath).state, "offering-v3");
   assert.equal(f.rows.get(activePath), "new-room");
 });
 

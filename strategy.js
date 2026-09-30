@@ -92,28 +92,68 @@ import {
   verifiedOnlineImageMime,
   verifiedOnlineImageMimeFromChunks,
 } from "./online-image-transfer.mjs?v=online-image-transfer-v1";
+import {
+  HARIAI_ANSWER_MAX,
+  HARIAI_BAND_COMBO,
+  HARIAI_BAND_QUESTION,
+  HARIAI_BREAK_HIT_DAMAGE,
+  HARIAI_BREAK_MISS_DAMAGE,
+  HARIAI_CALL_STYLES,
+  HARIAI_CAPTION_MAX,
+  HARIAI_COMBO_CAP,
+  HARIAI_COMBO_STEP,
+  HARIAI_FINISH_DAMAGE,
+  HARIAI_FINISH_MAX,
+  HARIAI_FIRST_PERSONS,
+  HARIAI_FLAVOR_MAX,
+  HARIAI_HONORIFICS,
+  HARIAI_INSTRUCTIONS,
+  HARIAI_MAX_SLOTS,
+  HARIAI_PENALTIES,
+  HARIAI_PERSONA_TYPES,
+  HARIAI_PROTOCOL_VERSION,
+  HARIAI_QUESTIONS,
+  HARIAI_REASON_MAX,
+  HARIAI_REASON_MIN_LENGTH,
+  HARIAI_REPLY_MAX,
+  HARIAI_SCORE_MAX,
+  HARIAI_SCORE_MIN,
+  ensureHariaiHeart,
+  fillHariaiLine,
+  hariaiBand,
+  hariaiBluffFaces,
+  hariaiCallName,
+  hariaiCandidateCommitMaterial,
+  hariaiDenyAvailable,
+  hariaiFirstAttacker,
+  hariaiFirstPersonLabel,
+  hariaiHonorificName,
+  hariaiPartialReveals,
+  hariaiPenaltyOptions,
+  hariaiPersonaIsComplete,
+  hariaiPersonaLine,
+  hariaiPersonaType,
+  hariaiPostDamage,
+  hariaiReadingMemo,
+  hariaiReplySuggestions,
+  normalizeHariaiFinalReveal,
+  normalizeHariaiPenaltyConsent,
+  normalizeHariaiPersona,
+  normalizeHariaiText,
+  replayHariai,
+} from "./strategy-hariai-core.mjs?v=strategy-hariai-v1";
 
 const MAIN_COUNT = 5;
 const RESERVE_COUNT = 5;
-const STRATEGY_PROTOCOL_VERSION = 2;
-const STRATEGY_QUEUE_WAITING_STATE = "waiting-v2";
-const STRATEGY_QUEUE_OFFERING_STATE = "offering-v2";
-const MAX_HP = 30;
-const MAX_ROUNDS = 5;
-const EXTRA_REQUESTS = 2;
-const PURSUIT_PERMITS = 1;
-const WEAKNESS_SCOUT_ROUND = 3;
-const WEAKNESS_CHAIN_DAMAGE = [4, 3, 2];
-const MAX_WEAKNESS_CHAIN = WEAKNESS_CHAIN_DAMAGE.length;
-const WEAKNESS_MISS_DAMAGE = 5;
+const STRATEGY_PROTOCOL_VERSION = HARIAI_PROTOCOL_VERSION;
+const STRATEGY_QUEUE_WAITING_STATE = "waiting-v3";
+const STRATEGY_QUEUE_OFFERING_STATE = "offering-v3";
 const MAX_AUDIO_SECONDS = 10;
 const AUDIO_HIGHLIGHT_SECONDS = 3;
 const MAX_AUDIO_TRANSFER_BYTES = 480 * 1024;
 const REVIEW_DURATION_MS = 10 * 60 * 1000;
 const INITIAL_RATING = 1000;
 const RATING_K_FACTOR = 32;
-const MAX_PURSUIT_LINE_LENGTH = 40;
-const CUSTOM_PURSUIT_VALUE = "__custom__";
 const MATCH_TIMEOUT_MS = 20_000;
 const MATCH_SCOPE_EXPAND_DELAY_MS = 20_000;
 const QUEUE_FRESH_MS = 45_000;
@@ -135,15 +175,10 @@ const PROFILE_NAME_KEY = "hariai-stadium-strategy-name-v2";
 const PROFILE_CLUES_KEY = "hariai-stadium-strategy-clues-v2";
 const PROFILE_WEAKNESS_KEY = "hariai-stadium-strategy-weakness-v3";
 const LEGACY_PROFILE_BLUFF_KEY = "hariai-stadium-strategy-bluff-v2";
-const PURSUIT_LINE_KEY = "hariai-stadium-strategy-pursuit-line-v2";
+const PROFILE_PERSONA_KEY = "hariai-stadium-strategy-persona-v1";
+const PROFILE_PENALTY_KEY = "hariai-stadium-strategy-penalties-v1";
 const PROFILE_IMAGE_PREFERENCE_KEY = "hariai-stadium-strategy-image-preference-v1";
 const DECK_PERSISTENCE_KEY_PREFIX = "hariai-stadium-strategy-deck-persistence-v1:";
-const PURSUIT_LINES = [
-  "その反応、見逃さない。もう一枚いく！",
-  "好みは読めた。ここからが本命だ！",
-  "刺さったね？ 追撃開始！",
-  "まだ終わらない。次の一枚をどうぞ！",
-];
 const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
   Object.freeze({
     id: "illustration",
@@ -164,15 +199,9 @@ const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
     description: "画像表現を絞らず、両方の相手とすぐにマッチング",
   }),
 ]);
-const STRATEGY_CHAT_PROMPTS = ["それ、本命？", "今の反応、怪しい…", "どれが一番好き？", "ノーコメント！"];
+const STRATEGY_CHAT_PROMPTS = ["それ、本命？", "今の反応、怪しい…♡", "何点つけるか楽しみ♡", "ノーコメント！"];
 const ANONYMOUS_CHAT_SCREENS = new Set(["intro", "waitingDecision", "deck", "waitingDeck"]);
-const IDENTIFIED_CHAT_SCREENS = new Set([
-  "identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating",
-  "actionSelect", "waitingActionPick", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "roundResult", "waitingContinue",
-  "weaknessGuess", "waitingWeaknessGuess", "weaknessChoice", "waitingWeaknessChoice", "waitingWeaknessChoiceReveal", "waitingFinalWeaknessReveal",
-  "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue",
-  "review",
-]);
+const IDENTIFIED_CHAT_SCREENS = new Set(["identity", "waitingBattle", "battle", "waitingFinalWeaknessReveal", "review"]);
 
 const app = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
@@ -216,9 +245,10 @@ function createState() {
     name: localStorage.getItem(PROFILE_NAME_KEY) || "PLAYER",
     clues: savedClues(),
     weaknessIndex: storedWeaknessValue !== null && Number.isInteger(storedWeakness) && storedWeakness >= 0 && storedWeakness <= 2 ? storedWeakness : null,
-    weaknessSalt: "",
-    weaknessCommit: "",
-    pursuitLine: normalizePursuitLine(localStorage.getItem(PURSUIT_LINE_KEY) || PURSUIT_LINES[0]),
+    weaknessSalts: [],
+    weaknessCommits: [],
+    persona: savedPersona(),
+    penaltyConsent: savedPenaltyConsent(),
     imagePreference,
     profile: { wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, rating: INITIAL_RATING },
     economy: { points: 0, inventory: {}, equipped: { stamps: {}, title: "", chatFrame: "", chatBackground: "" } },
@@ -244,14 +274,20 @@ function createState() {
     matchAchievementShowcaseRequested: false,
     playerIndex: 0,
     players: [],
-    round: 1,
-    roundData: {},
-    currentResult: null,
-    history: [],
-    processedRounds: new Set(),
-    advancedRounds: new Set(),
-    localBaseCards: new Map(),
-    localActionCards: new Map(),
+    firstUid: "",
+    replay: null,
+    drafts: emptyHariaiDrafts(),
+    battleBusy: false,
+    battleViewKey: "",
+    battleAnnounced: false,
+    announcedSlots: new Set(),
+    localMoveCards: new Map(),
+    localFinishCards: new Map(),
+    verifiedRevealKeys: new Set(),
+    publishedRevealKeys: new Set(),
+    ackedMediaKeys: new Set(),
+    finishPlaybackActive: false,
+    finalRevealPublishing: false,
     remoteImages: new Map(),
     remoteAvatar: null,
     avatarSent: false,
@@ -259,32 +295,10 @@ function createState() {
     hideOpponentAvatar: false,
     chatMessages: [],
     seenChatIds: new Set(),
-    selectedBaseId: "",
-    selectedScore: 0,
-    selectedReaction: "normal",
-    selectedWeaknessGuess: null,
-    weaknessTriggerRound: 0,
-    selectedWeaknessChoice: "",
-    weaknessChoiceSalt: "",
-    weaknessChoiceDigest: "",
-    weaknessChoiceLocked: false,
-    weaknessChoiceCommitSending: false,
-    weaknessChoiceCommitUncertain: false,
-    weaknessChoiceRevealSending: false,
-    weaknessChoicesVerified: false,
-    selectedWeaknessChainIds: [],
-    localWeaknessChainCards: [],
     localDeckReadyCommitted: false,
-    weaknessChainLocked: false,
-    weaknessRevealsVerified: false,
     finalWeaknessRevealsVerified: false,
     weaknessIntegrityFailed: false,
-    weaknessChainApplied: false,
-    weaknessPhaseComplete: false,
-    weaknessResult: null,
-    weaknessSurrenderApplied: false,
     openedMediaKeys: new Set(),
-    chainPlaybackActive: false,
     sentImageKeys: new Set(),
     incomingTransfer: null,
     incomingAudioTransfer: null,
@@ -379,15 +393,6 @@ function normalizeClues(value) {
   return Array.from({ length: 3 }, (_, index) => String(source[index] || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80));
 }
 
-function sanitizePursuitLineDraft(value) {
-  return String(value || "").replace(/[\r\n]+/g, " ").slice(0, MAX_PURSUIT_LINE_LENGTH);
-}
-
-function normalizePursuitLine(value) {
-  const normalized = sanitizePursuitLineDraft(value).replace(/\s+/g, " ").trim();
-  return normalized || PURSUIT_LINES[0];
-}
-
 function randomHex(bytes = 16) {
   const values = crypto.getRandomValues(new Uint8Array(bytes));
   return [...values].map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -396,51 +401,6 @@ function randomHex(bytes = 16) {
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function normalizeWeaknessChoice(value) {
-  const choice = value?.choice === "guess" || value?.choice === "pass" ? value.choice : "";
-  const guessIndex = Number(value?.guessIndex);
-  const round = Number(value?.round);
-  const salt = String(value?.salt || "");
-  if (!choice || round !== WEAKNESS_SCOUT_ROUND || !/^[a-f0-9]{32}$/.test(salt)) return null;
-  if (choice === "pass" && guessIndex !== -1) return null;
-  if (choice === "guess" && (!Number.isInteger(guessIndex) || guessIndex < 0 || guessIndex > 2)) return null;
-  return { choice, guessIndex, round, salt };
-}
-
-function weaknessChoiceCommitMaterial(roomId, uid, choice) {
-  return `${String(roomId)}:${String(uid)}:${choice.round}:${choice.choice}:${choice.guessIndex}:${choice.salt}`;
-}
-
-async function prepareWeaknessChoiceCommit(choice, guessIndex, targetState = state) {
-  const normalizedChoice = choice === "guess" ? "guess" : choice === "pass" ? "pass" : "";
-  const normalizedGuess = normalizedChoice === "pass" ? -1 : Number(guessIndex);
-  if (!normalizedChoice || (normalizedChoice === "guess" && (!Number.isInteger(normalizedGuess) || normalizedGuess < 0 || normalizedGuess > 2))) {
-    throw new Error("看破するか見送るかを選んでください。");
-  }
-  if (targetState.selectedWeaknessChoice === normalizedChoice
-      && (normalizedChoice === "pass" || targetState.selectedWeaknessGuess === normalizedGuess)
-      && /^[a-f0-9]{32}$/.test(targetState.weaknessChoiceSalt)
-      && /^[a-f0-9]{64}$/.test(targetState.weaknessChoiceDigest)) {
-    return {
-      reveal: {
-        choice: normalizedChoice,
-        guessIndex: normalizedGuess,
-        round: WEAKNESS_SCOUT_ROUND,
-        salt: targetState.weaknessChoiceSalt,
-      },
-      digest: targetState.weaknessChoiceDigest,
-    };
-  }
-  const reveal = {
-    choice: normalizedChoice,
-    guessIndex: normalizedGuess,
-    round: WEAKNESS_SCOUT_ROUND,
-    salt: randomHex(),
-  };
-  const digest = await sha256Hex(weaknessChoiceCommitMaterial(targetState.roomId, targetState.uid, reveal));
-  return { reveal, digest };
 }
 
 async function processStrategyAudioFile(file) {
@@ -810,55 +770,34 @@ async function updateStrategyDeckPersistence(enabled) {
   renderStrategyDeckIfVisible();
 }
 
-async function prepareWeaknessCommit(roomId) {
-  if (!Number.isInteger(state.weaknessIndex)) throw new Error("本当の弱点を確認できませんでした。");
-  state.weaknessSalt = randomHex();
-  state.weaknessCommit = await sha256Hex(`${roomId}:${state.uid}:${state.weaknessIndex}:${state.weaknessSalt}`);
-  return state.weaknessCommit;
-}
-
-function normalizeReaction(value, score) {
-  if (value === "request" && score <= 3) return "request";
-  if (value === "pursuit" && score >= 9) return "pursuit";
-  return "normal";
-}
-
 async function playerRoomRecord(roomId) {
-  const weaknessCommit = await prepareWeaknessCommit(roomId);
+  const weaknessCommits = await prepareWeaknessCommits(roomId);
   return {
     uid: state.uid,
     name: state.name,
+    persona: { ...state.persona },
     clues: state.clues,
-    weaknessCommit,
-    pursuitLine: state.pursuitLine,
+    weaknessCommits,
+    penalties: { ...state.penaltyConsent },
     rating: Number(state.profile.rating || INITIAL_RATING),
     streak: Number(state.profile.streak || 0),
   };
 }
 
 function runtimePlayer(source) {
+  const commits = [0, 1, 2].map((index) => String(source?.weaknessCommits?.[index] || ""));
   return {
     uid: String(source?.uid || ""),
     name: String(source?.name || "PLAYER").slice(0, 16),
+    persona: normalizeHariaiPersona(source?.persona),
     clues: normalizeClues(source?.clues),
-    weaknessCommit: /^[a-f0-9]{64}$/.test(String(source?.weaknessCommit || "")) ? String(source.weaknessCommit) : "",
+    weaknessCommits: commits.every((commit) => /^[a-f0-9]{64}$/.test(commit)) ? commits : [],
+    penalties: normalizeHariaiPenaltyConsent(source?.penalties),
     weaknessIndex: null,
-    weaknessGuess: null,
-    weaknessChoice: "",
-    weaknessCorrect: false,
-    weaknessChainCount: 0,
-    overkill: 0,
-    pursuitLine: normalizePursuitLine(source?.pursuitLine),
     rating: Number(source?.rating || INITIAL_RATING),
     streak: Math.max(0, Number(source?.streak || 0)),
     mainCount: MAIN_COUNT,
     reserveCount: RESERVE_COUNT,
-    reserveUsed: 0,
-    hp: MAX_HP,
-    extraRequests: EXTRA_REQUESTS,
-    pursuitPermits: PURSUIT_PERMITS,
-    totalPower: 0,
-    receivedScores: [],
   };
 }
 
@@ -1085,9 +1024,9 @@ function renderPreparedDeckSummary() {
   const routeBusy = state.normalRouteBusy || state.matchmakingLaunchBusy;
   const statusClass = complete ? "is-ready" : "is-incomplete";
   return `<section class="strategy-prepared-summary ${statusClass}" aria-label="戦略デッキ準備状況">
-    <div class="strategy-prepared-summary-head"><div><span class="eyebrow">PREPARED DECK / 10 CARDS</span><h2>${complete ? "10枚の準備ができています" : "対戦前に実画像10枚を準備"}</h2></div>
+    <div class="strategy-prepared-summary-head"><div><span class="eyebrow">PREPARED HAND / 10 CARDS</span><h2>${complete ? "10枚の手札ができています" : "対戦前に実画像10枚を準備"}</h2></div>
       <span class="strategy-prepared-badge">${complete ? "READY" : `${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}`}</span></div>
-    <div class="strategy-prepared-counts"><span>MAIN <b>${state.main.length} / ${MAIN_COUNT}</b></span><span>RESERVE <b>${state.reserve.length} / ${RESERVE_COUNT}</b></span></div>
+    <div class="strategy-prepared-counts"><span>HAND 01-05 <b>${state.main.length} / ${MAIN_COUNT}</b></span><span>HAND 06-10 <b>${state.reserve.length} / ${RESERVE_COUNT}</b></span></div>
     <p>${escapeHtml(strategyDeckStatusCopy())}</p>
     <div class="strategy-prepared-actions"><button class="button ${complete ? "button-ghost" : "button-primary"}" id="strategyOpenPreDeck" type="button" ${restoring || state.normalRouteBusy ? "disabled" : ""}>${restoring ? "保存デッキを確認中…" : complete ? "10枚を確認・差し替え" : "戦略デッキ10枚を準備"}</button>
       <button class="button button-ghost" id="strategyOpenNormal1on1" type="button" ${routeBusy ? "disabled" : ""}>${state.normalRouteBusy ? "通常1on1へ切替中…" : "手軽に遊ぶなら通常1on1へ"}</button></div>
@@ -1146,6 +1085,9 @@ function render() {
   if (!active) return;
   syncStrategySafetyContact();
   const screenChanged = lastRenderedScreen !== state.screen;
+  const focused = document.activeElement;
+  const focusId = !screenChanged && focused && app.contains(focused) && focused.id ? focused.id : "";
+  const selection = focusId && typeof focused.selectionStart === "number" ? [focused.selectionStart, focused.selectionEnd] : null;
   const renderers = {
     profile: renderProfile,
     preDeck: renderPreparedDeck,
@@ -1157,38 +1099,8 @@ function render() {
     waitingDeck: renderWaitingDeck,
     identity: renderIdentityReveal,
     waitingBattle: renderWaitingBattle,
-    baseSelect: renderBaseSelect,
-    waitingBasePick: () => renderWaiting("SECRET PICK", "相手の画像選択を待っています", "両者がロックするまで画像は送信されません。"),
-    waitingBaseImage: () => renderWaiting("P2P IMAGE TRANSFER", "メイン画像を転送しています", `転送状況 ${state.transferProgress}%`),
-    baseReveal: renderBaseReveal,
-    baseRating: renderBaseRating,
-    waitingBaseRating: () => renderWaiting("PRIVATE SCORE", "相手の採点を待っています", "点数とリアクションは両者の確定後に処理されます。"),
-    actionSelect: renderActionSelect,
-    waitingActionPick: () => renderWaiting("RESERVE PICK", "追加画像の選択を待っています", "追加要求・追撃の選択を同期しています。"),
-    waitingActionImage: () => renderWaiting("P2P RESERVE TRANSFER", "リザーブ画像を転送しています", `転送状況 ${state.transferProgress}%`),
-    actionReveal: renderActionReveal,
-    actionRating: renderActionRating,
-    waitingActionRating: () => renderWaiting("RESERVE SCORE", "追加画像の採点を待っています", "追加画像から連鎖効果は発生しません。"),
-    roundResult: renderRoundResult,
-    waitingContinue: () => renderWaiting("ROUND READY", "相手の準備を待っています", "両者が進むと次のラウンドを開始します。"),
-    weaknessGuess: renderWeaknessGuess,
-    waitingWeaknessGuess: () => renderWaiting("WEAKNESS GUESS LOCKED", "相手の弱点回答を待っています", "両者の回答が確定するまで答えは公開されません。"),
-    weaknessChoice: renderWeaknessChoice,
-    waitingWeaknessChoice: () => state.weaknessChoiceCommitUncertain
-      ? renderWaiting(
-        "SECRET CHOICE SEALED",
-        "封印の送信結果を確認できません",
-        "選択内容は変更せず保護しています。同じ封印だけを再送すると、二重登録せずに確認できます。",
-        `<button class="button button-primary button-small" id="strategyRetryWeaknessChoiceCommit" type="button" ${state.weaknessChoiceCommitSending ? "disabled" : ""}>同じ封印を再送</button>`,
-      )
-      : renderWaiting("SECRET CHOICE LOCKED", "相手の秘密選択を待っています", "看破か見送りか、弱点候補のどれを選んだかは、両者が封印するまで公開されません。"),
-    waitingWeaknessChoiceReveal: () => renderWaiting("SEALED CHOICES REVEAL", "秘密選択を照合しています", "両者の封印が揃いました。選択が改変されていないことを確認しています。"),
-    waitingFinalWeaknessReveal: () => renderWaiting("FINAL WEAKNESS CHECK", "最後の答え合わせを待っています", "対戦中に伏せられていた弱点を、事前の封印と照合しています。"),
-    weaknessChainSelect: renderWeaknessChainSelect,
-    waitingWeaknessChain: () => renderWaiting("WEAKNESS CHECK", "連続追撃の準備を待っています", "看破に成功したプレイヤーは残りリザーブから最大3枚を選びます。"),
-    waitingWeaknessChainImage: () => renderWaiting("PURSUIT CHAIN TRANSFER", "連続追撃画像を転送しています", `転送状況 ${state.transferProgress}%`),
-    weaknessChainResult: renderWeaknessChainResult,
-    waitingWeaknessContinue: () => renderWaiting("WEAKNESS BREAK COMPLETE", "相手の準備を待っています", "両者が確認すると対戦を続行、または最終結果へ進みます。"),
+    battle: renderBattle,
+    waitingFinalWeaknessReveal: () => renderWaiting("FINAL WEAKNESS CHECK", "最後の答え合わせをしています", "対戦中に伏せられていた本命とブラフを、事前の封印と照合しています。"),
     gameover: renderGameOver,
     review: renderStrategyReview,
     withdrawn: renderWithdrawn,
@@ -1197,6 +1109,9 @@ function render() {
   };
   app.innerHTML = renderContactControls("strategy") + (renderers[state.screen] || renderProfile)();
   lastRenderedScreen = state.screen;
+  // 同じ画面の描き直しでは登場アニメーションを再生しない（対戦スレッドが点滅しないように）。
+  if (!screenChanged) app.querySelector(".screen")?.classList.add("is-refresh");
+  if (state.screen === "battle") state.battleViewKey = battleViewKey();
   if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("beforeend", renderStrategyChat());
   bindScreenEvents();
   if (screenChanged && state.screen === "gameover") {
@@ -1205,11 +1120,18 @@ function render() {
   if (screenChanged) {
     window.scrollTo(0, 0);
     app.focus({ preventScroll: true });
+  } else if (focusId) {
+    const next = document.getElementById(focusId);
+    if (next) {
+      next.focus({ preventScroll: true });
+      if (selection && typeof next.setSelectionRange === "function") {
+        try { next.setSelectionRange(selection[0], selection[1]); } catch { /* 数値入力などは選択範囲を持たない */ }
+      }
+    }
   }
 }
 
 function renderProfile() {
-  const usesCustom = !PURSUIT_LINES.includes(state.pursuitLine);
   const preferenceOptions = IMAGE_PREFERENCE_OPTIONS.map((option) => `
     <label class="image-preference-option">
       <input type="radio" name="strategyImagePreference" value="${option.id}" ${state.imagePreference === option.id ? "checked" : ""} required />
@@ -1218,23 +1140,33 @@ function renderProfile() {
         <small>${escapeHtml(option.description)}</small>
       </span>
     </label>`).join("");
+  const personaOptions = HARIAI_PERSONA_TYPES.map((type) => `<label class="strategy-persona-option">
+      <input type="radio" name="strategyPersonaType" value="${type.id}" ${state.persona.type === type.id ? "checked" : ""} required />
+      <span><strong>${escapeHtml(type.label)}</strong><small>${escapeHtml(type.note)}</small></span></label>`).join("");
   const crownMatchmakingActions = renderStrategyCrownMatchmakingActions();
   return `<section class="screen strategy-screen">
-    <div class="section-head"><div><span class="eyebrow">ONLINE STRATEGY 1ON1 / PROFILE</span><h1>秘密のプロフィール登録</h1>
-      <p>弱点候補を3つ登録し、本当の弱点を1つ選びます。残り2つは相手を惑わせるブラフです。</p></div>
+    <div class="section-head"><div><span class="eyebrow">STRATEGY 1ON1 / 貼り合い本式</span><h1>貼り合いプロフィール</h1>
+      <p>女の子になりきって、相手の弱点を読み、画像に言葉を乗せて刺し、点数で落とす対戦です。弱点候補を3つ登録し、本当の弱点を1つ選びます。</p></div>
       <button class="button button-ghost button-small" id="strategyBackHome">タイトルへ</button></div>
     <div class="online-profile-strip"><span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
       <span>STRATEGY RATE ${Number(state.profile.rating || INITIAL_RATING)}</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span></div>
     ${window.HariaiOnline?.renderOverallRankingParticipation?.({ controlId: "strategyOverallRanking" }) || ""}
-    <div class="strategy-profile-layout"><aside class="setup-guide"><h2>オンライン読み合い</h2><ol class="guide-list">
-      <li><b>1</b><span>マッチング前にメイン5枚＋リザーブ5枚の実画像を準備します。サンプル補充はありません。</span></li>
-      <li><b>2</b><span>本当の弱点1つとブラフ2つを登録し、相手には候補だけを表示します。</span></li>
-      <li><b>3</b><span>ROUND 1・2は任意に早期看破。ROUND 3は双方が「看破／見送る」を秘密に選び、成功すると最大3連続追撃、誤答した本人だけ5ダメージです。</span></li>
-      <li><b>4</b><span>双方同意後の品評会では対戦画像を見返し、追加画像・10秒音声・10秒短尺映像をP2Pで一時共有できます。</span></li>
-    </ol><p class="privacy-note">対戦メディアはFirebaseへ保存しません。完成デッキは明示的にONにした時だけ、この端末のIndexedDBへ保存します。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
+    <div class="strategy-profile-layout"><aside class="setup-guide"><h2>貼り合いの流れ</h2><ol class="guide-list">
+      <li><b>1</b><span>マッチング前に実画像10枚を準備します。対戦中はこの10枚が手札です。</span></li>
+      <li><b>2</b><span>本当の弱点1つとブラフ2つを登録します。相手には候補だけが見えます。</span></li>
+      <li><b>3</b><span>1手＝画像＋言葉＋狙い。受け手は刺さり具合を0〜100点で返し、80点で質問、85点で指示、90点以上で連投が解禁されます。</span></li>
+      <li><b>4</b><span>看破は1試合1回。当たれば「強がり」の数だけ仕留めが増えます。理性が0になるか、参りましたで決着します。</span></li>
+      <li><b>5</b><span>決着後は、合意した罰で着地します。双方同意なら品評会で見返せます。</span></li>
+    </ol><p class="privacy-note">対戦メディアはFirebaseへ保存しません。第三者の画像や、本人の同意がない実在人物の画像は使わないでください。映像には顔・室内・位置情報につながるものを映さないでください。</p></aside>
     <form class="setup-panel strategy-form" id="strategyProfileForm">
-      <label class="field-label">プレイヤーネーム（デッキ確定まで画面非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
+      <label class="field-label">なりきり名（デッキ封印まで相手に非公開）<input class="text-input" id="strategyName" maxlength="16" autocomplete="nickname" value="${escapeHtml(state.name)}" required /></label>
       ${shared()?.profileAvatar?.renderSetting?.({ controlId: "strategyProfileAvatar", name: state.name }) || ""}
+      <fieldset class="strategy-persona-fieldset"><legend>なりきりペルソナ <span>必須</span></legend>
+        <p>双方が女の子になりきって話すのが貼り合いの基本です。キャラ型は、採点のひとこと候補や降参・敗北宣言の口調になります。</p>
+        <div class="strategy-persona-grid">${personaOptions}</div>
+        <div class="strategy-persona-row"><label class="field-label">一人称<select class="text-input" id="strategyFirstPerson">${HARIAI_FIRST_PERSONS.map((item) => `<option value="${item.id}" ${state.persona.firstPerson === item.id ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label>
+          <label class="field-label">相手の呼び方<select class="text-input" id="strategyCallStyle">${HARIAI_CALL_STYLES.map((item) => `<option value="${item.id}" ${state.persona.callStyle === item.id ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label></div>
+      </fieldset>
       <fieldset class="image-preference-settings">
         <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
         <p>弱点候補とは別に、今回の戦略型1on1で相手から見せてもらいたい画像の傾向を選んでください。</p>
@@ -1243,15 +1175,14 @@ function renderProfile() {
       </fieldset>
       <fieldset class="strategy-clue-fieldset"><legend>弱点候補（1つだけ本当の弱点を選択）</legend>
         ${state.clues.map((clue, index) => `<label class="strategy-clue-row"><input type="radio" name="weakness" value="${index}" ${state.weaknessIndex === index ? "checked" : ""} required />
-          <span class="weakness-selector">本命</span><input class="text-input strategy-clue-input" data-clue-index="${index}" maxlength="80" autocomplete="off" placeholder="例：豚骨ラーメン" value="${escapeHtml(clue)}" required /></label>`).join("")}
+          <span class="weakness-selector">本命</span><input class="text-input strategy-clue-input" data-clue-index="${index}" maxlength="80" autocomplete="off" placeholder="例：${["上目づかい", "制服", "ささやき声"][index]}" value="${escapeHtml(clue)}" required /></label>`).join("")}
       </fieldset>
-      <div class="pursuit-line-settings"><label class="field-label">追撃時のセリフ<select class="text-input" id="strategyPursuitLine">
-        ${PURSUIT_LINES.map((line) => `<option value="${escapeHtml(line)}" ${line === state.pursuitLine ? "selected" : ""}>${escapeHtml(line)}</option>`).join("")}
-        <option value="${CUSTOM_PURSUIT_VALUE}" ${usesCustom ? "selected" : ""}>自由記述</option></select></label>
-        <div class="pursuit-custom-field" id="strategyCustomPursuitField" ${usesCustom ? "" : "hidden"}><label class="field-label">自由記述（1行・最大${MAX_PURSUIT_LINE_LENGTH}文字）
-          <input class="text-input" id="strategyCustomPursuitLine" maxlength="${MAX_PURSUIT_LINE_LENGTH}" autocomplete="off" value="${usesCustom ? escapeHtml(state.pursuitLine) : ""}" /></label>
-          <span class="pursuit-character-count"><b id="strategyPursuitCharacterCount">${usesCustom ? state.pursuitLine.length : 0}</b> / ${MAX_PURSUIT_LINE_LENGTH}</span></div>
-      </div>
+      <fieldset class="strategy-penalty-fieldset"><legend>受けてもいい罰 <span>相手と共通のものだけ有効</span></legend>
+        <label class="strategy-penalty-option is-fixed"><input type="checkbox" checked disabled /><span><strong>敗北宣言</strong><small>負けた側のペルソナで勝ちを認めます（常に有効）</small></span></label>
+        <label class="strategy-penalty-option"><input type="checkbox" id="strategyPenaltyCall" ${state.penaltyConsent.call ? "checked" : ""} /><span><strong>呼び方</strong><small>負けた側から勝った側への呼び方を、結果画面と品評会で固定します</small></span></label>
+        <label class="strategy-penalty-option"><input type="checkbox" id="strategyPenaltyTribute" ${state.penaltyConsent.tribute ? "checked" : ""} /><span><strong>お貢ぎ</strong><small>品評会で、勝った側の本命に向けた画像1枚を送ります</small></span></label>
+        <small>罰は演出だけです。RATE・Pay・実績には影響せず、現実の行動や外部への投稿は求めません。</small>
+      </fieldset>
       ${renderPreparedDeckSummary()}
       ${window.HariaiOnline?.renderBattlePresenceCheck?.({ mode: "strategy", phase: "setup" }) || ""}
       <div class="screen-actions setup-actions crown-matchmaking-actions" id="strategyCrownMatchmakingActions">${crownMatchmakingActions}</div>
@@ -1328,10 +1259,14 @@ function renderConnecting() {
 
 function renderAnonymousIntro() {
   const opponent = getOpponent();
+  const type = hariaiPersonaType(opponent.persona.type);
+  const penalties = hariaiPenaltyOptions(getLocalPlayer().penalties, opponent.penalties);
   return `<section class="screen strategy-screen strategy-intro-screen"><div class="strategy-anonymous-head"><span class="strategy-anonymous-icon" aria-hidden="true">?</span>
     <div><span class="eyebrow">ANONYMOUS OPPONENT</span><h1>対戦相手の弱点候補</h1><p>3つのうち1つだけが本当の弱点、残り2つはブラフです。</p></div></div>
+    <div class="hariai-intro-persona"><span>相手のペルソナ</span><strong>${escapeHtml(type?.label || "なりきり")}</strong><small>${escapeHtml(type?.note || "")}／一人称「${escapeHtml(personaFirst(opponent))}」</small></div>
     <div class="strategy-clue-cards">${opponent.clues.map((clue, index) => `<article><small>弱点候補 ${String(index + 1).padStart(2, "0")}</small><p>${escapeHtml(clue)}</p></article>`).join("")}</div>
-    <div class="strategy-intro-actions"><button class="button button-danger" id="strategyWithdraw">この勝負から撤退</button><button class="button button-primary" id="strategyAccept">推理してデッキを組む</button></div>
+    <p class="hariai-intro-penalty">この試合の罰：${penalties.map((id) => escapeHtml(hariaiPenaltyLabel(id))).join("／")}</p>
+    <div class="strategy-intro-actions"><button class="button button-danger" id="strategyWithdraw">この勝負から撤退</button><button class="button button-primary" id="strategyAccept">読んで、手札を組む</button></div>
     <p class="strategy-rule-note">撤退はノーコンテストとなり、相手の名前・弱点は公開されず、戦績にも影響しません。</p></section>`;
 }
 
@@ -1342,12 +1277,12 @@ function renderWaitingDecision() {
 function renderDeckBuilder() {
   const opponent = getOpponent();
   const complete = strategyDeckIsComplete();
-  return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">COUNTER DECK BUILD</span><h1>相手に刺さる10枚を選ぶ</h1>
-    <p>準備してきたメイン5枚＋リザーブ5枚を、相手の弱点候補に合わせて封印前に差し替えられます。各画像には10秒までの音声を任意で添付できます。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
-    <div class="strategy-build-layout"><aside class="strategy-scout-note"><span>SCOUTING MEMO</span><h2>匿名の対戦相手</h2>
+  return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">COUNTER HAND BUILD</span><h1>相手に刺さる10枚を選ぶ</h1>
+    <p>準備してきた10枚を、相手の弱点候補とペルソナに合わせて封印前に差し替えられます。対戦中は10枚をひとつの手札として、好きな順に貼ります。各画像には10秒までの音声を任意で添付できます。</p></div><span class="strategy-step">YOU / ONLINE</span></div>
+    <div class="strategy-build-layout"><aside class="strategy-scout-note"><span>SCOUTING MEMO</span><h2>匿名の対戦相手（${escapeHtml(personaLabel(opponent))}）</h2>
       ${opponent.clues.map((clue, index) => `<p><b>${index + 1}</b>${escapeHtml(clue)}</p>`).join("")}<small>本当の弱点は1つ。残り2つはブラフです。</small></aside>
       <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}
-        <p class="strategy-deck-lock-note">戦略型は実画像10枚が必須です。リザーブ不足やサンプル画像を含むデッキは封印できません。</p>
+        <p class="strategy-deck-lock-note">戦略型は実画像10枚が必須です。10枚に満たないデッキやサンプル画像を含むデッキは封印できません。</p>
         <div class="screen-actions setup-actions"><button class="button button-primary" id="strategyLockDeck" ${complete ? "" : "disabled"}>実画像10枚でデッキを封印する</button></div>
       </div></div></section>`;
 }
@@ -1356,49 +1291,51 @@ function renderDeckZone(zone) {
   const isMain = zone === "main";
   const items = state[zone];
   const limit = isMain ? MAIN_COUNT : RESERVE_COUNT;
+  const offset = isMain ? 0 : MAIN_COUNT;
   const editingLocked = state.deckRestoreStatus === "loading" || state.normalRouteBusy;
-  return `<section class="strategy-deck-zone ${zone}"><div class="deck-toolbar"><div><span class="eyebrow">${isMain ? "MAIN DECK / 5枚必須" : "RESERVE / 5枚必須"}</span>
-    <p>${isMain ? "各ラウンドで1枚ずつ使用" : "再提示または追撃で消費"}</p></div><div class="deck-counter"><strong>${items.length}</strong> / ${limit}</div>
+  return `<section class="strategy-deck-zone ${zone}"><div class="deck-toolbar"><div><span class="eyebrow">${isMain ? "HAND 01-05 / 5枚必須" : "HAND 06-10 / 5枚必須"}</span>
+    <p>${isMain ? "対戦中はどちらの列も同じ手札です" : "看破に成功すると、残りの手札で仕留めます"}</p></div><div class="deck-counter"><strong>${items.length}</strong> / ${limit}</div>
     <div class="upload-actions"><label class="button button-ghost button-small file-button ${editingLocked ? "is-disabled" : ""}">実画像を追加<input type="file" accept="image/*" multiple data-strategy-upload="${zone}" ${editingLocked ? "disabled" : ""} /></label></div></div>
     <div class="strategy-deck-grid">${Array.from({ length: limit }, (_, index) => {
       const item = items[index];
       const cueMax = Math.max(0, Number(item?.audioDuration || 0) - AUDIO_HIGHLIGHT_SECONDS);
-      return item ? `<article class="deck-slot"><img src="${item.url}" alt="${isMain ? "メイン" : "リザーブ"}画像 ${index + 1}" />
-        <div class="deck-label"><span>${isMain ? "MAIN" : "RESERVE"} ${String(index + 1).padStart(2, "0")}</span><button class="remove-card" type="button" data-strategy-remove="${zone}:${item.id}" aria-label="画像を外す" ${editingLocked ? "disabled" : ""}>×</button></div>
+      return item ? `<article class="deck-slot"><img src="${item.url}" alt="手札の画像 ${offset + index + 1}" />
+        <div class="deck-label"><span>CARD ${String(offset + index + 1).padStart(2, "0")}</span><button class="remove-card" type="button" data-strategy-remove="${zone}:${item.id}" aria-label="画像を外す" ${editingLocked ? "disabled" : ""}>×</button></div>
         <div class="deck-audio ${item.audioBlob ? "has-audio" : ""}">${item.audioBlob
           ? `<div class="deck-audio-head"><span>♪ ${escapeHtml(item.audioName || "添付音声")} / ${Number(item.audioDuration).toFixed(1)}秒</span><button type="button" data-strategy-audio-remove="${zone}:${item.id}" ${editingLocked ? "disabled" : ""}>音声を外す</button></div>
             <audio controls preload="metadata" src="${item.audioUrl}"></audio>
-            <label>追撃で使う3秒 <input type="range" min="0" max="${cueMax.toFixed(1)}" step="0.1" value="${Math.min(Number(item.audioCueStart || 0), cueMax).toFixed(1)}" data-strategy-audio-cue="${zone}:${item.id}" ${editingLocked ? "disabled" : ""} /><output>${Number(item.audioCueStart || 0).toFixed(1)}秒〜</output></label>`
+            <label>仕留めで流す3秒 <input type="range" min="0" max="${cueMax.toFixed(1)}" step="0.1" value="${Math.min(Number(item.audioCueStart || 0), cueMax).toFixed(1)}" data-strategy-audio-cue="${zone}:${item.id}" ${editingLocked ? "disabled" : ""} /><output>${Number(item.audioCueStart || 0).toFixed(1)}秒〜</output></label>`
           : `<label class="deck-audio-add ${editingLocked ? "is-disabled" : ""}">＋ 10秒音声を添付<input type="file" accept="audio/*" data-strategy-audio="${zone}:${item.id}" ${editingLocked ? "disabled" : ""} /></label>`}</div></article>`
         : '<div class="deck-slot empty"><span>+</span></div>';
     }).join("")}</div></section>`;
 }
 
 function renderWaitingDeck() {
-  return renderStatusCard("▦", "DECK SEALED", "相手のデッキ確定を待っています", "メイン5枚・リザーブ5枚の準備完了だけを同期し、画像本体はまだ送信しません。", `<span class="connection-pill connected">● MAIN ${state.main.length} / RESERVE ${state.reserve.length}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+  return renderStatusCard("▦", "DECK SEALED", "相手のデッキ確定を待っています", "手札10枚の準備完了だけを同期し、画像本体はまだ送信しません。", `<span class="connection-pill connected">● 手札 ${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}</span>`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
 }
 
 function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
-    <p>本当の弱点は秘密です。ROUND 1・2の早期看破、またはROUND 3の「看破／見送る」秘密選択で読み合います。</p></div><div class="strategy-identity-grid">
+    <p>本当の弱点は秘密のまま。画像に言葉を乗せて刺し、点数を読み、1回だけの看破で落とします。</p></div><div class="strategy-identity-grid">
     ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
-      ${localPlayer ? "" : renderOpponentAchievementShowcase({ context: "is-identity", label: "実績コレクション" })}<div><span>MAIN</span><strong>${player.mainCount}</strong></div><div><span>RESERVE</span><strong>${player.reserveCount}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
+      <p class="hariai-identity-persona">${escapeHtml(personaLabel(player))}／一人称「${escapeHtml(personaFirst(player))}」</p>
+      ${localPlayer ? "" : renderOpponentAchievementShowcase({ context: "is-identity", label: "実績コレクション" })}<div><span>手札</span><strong>${player.mainCount + player.reserveCount}</strong></div><div><span>理性</span><strong>${HARIAI_REASON_MAX}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
     <button class="avatar-visibility-toggle strategy-avatar-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
-    <button class="button button-primary strategy-center-button" id="strategyBattleStart">画像貼り合い開始</button></section>`;
+    <button class="button button-primary strategy-center-button" id="strategyBattleStart">貼り合い開始</button></section>`;
 }
 
 function renderWaitingBattle() {
-  return renderStatusCard("VS", "BATTLE READY", "相手の開始準備を待っています", "両者が準備するとROUND 1の秘密選択を開始します。", `<span class="connection-pill connected">● デッキ・通信準備完了</span>${renderOpponentAchievementShowcase({ context: "is-identity", label: "相手の実績" })}`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
+  return renderStatusCard("VS", "BATTLE READY", "相手の開始準備を待っています", "両者が準備すると、先攻の1手から貼り合いを始めます。", `<span class="connection-pill connected">● デッキ・通信準備完了</span>${renderOpponentAchievementShowcase({ context: "is-identity", label: "相手の実績" })}`, `<button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button>`);
 }
 
 function renderPreparedDeck() {
   const complete = strategyDeckIsComplete();
   const restoringDeck = state.deckRestoreStatus === "loading";
   const routeBusy = state.normalRouteBusy || state.matchmakingLaunchBusy;
-  return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">PRE-MATCH PREPARED DECK</span><h1>10枚で戦う準備型モード</h1>
-    <p>マッチング前にメイン5枚＋リザーブ5枚を実画像でそろえます。相手の弱点候補を見た後も、封印前ならこの10枚を差し替えられます。</p></div><span class="strategy-step">${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}</span></div>
+  return `<section class="screen strategy-screen"><div class="section-head"><div><span class="eyebrow">PRE-MATCH PREPARED DECK</span><h1>10枚の手札で戦う準備型モード</h1>
+    <p>マッチング前に実画像10枚をそろえます。相手の弱点候補を見た後も、封印前ならこの10枚を差し替えられます。</p></div><span class="strategy-step">${state.main.length + state.reserve.length} / ${MAIN_COUNT + RESERVE_COUNT}</span></div>
     <div class="strategy-build-layout"><aside class="strategy-scout-note strategy-prepared-guide"><span>PREPARED MODE</span><h2>待たせないための事前準備</h2>
-      <p><b>1</b>メインは5ラウンドで使う5枚です。</p><p><b>2</b>リザーブも5枚必須です。再提示・追撃・弱点看破の選択肢になります。</p><p><b>3</b>サンプル補充はありません。10枚準備が重い時は通常1on1を選べます。</p>
+      <p><b>1</b>10枚が対戦中の手札です。1手ごとに1枚ずつ、言葉を添えて貼ります。</p><p><b>2</b>看破に成功すると、残りの手札から最大3枚で仕留めます。</p><p><b>3</b>サンプル補充はありません。10枚準備が重い時は通常1on1を選べます。</p>
       <small>端末保存はアカウントのUIDごとです。同じ端末・ブラウザでだけ再利用でき、別端末には同期されません。</small></aside>
       <div class="strategy-deck-panel">${renderDeckZone("main")}${renderDeckZone("reserve")}${renderStrategyDeckPersistencePanel()}
         <div class="screen-actions setup-actions strategy-prepared-footer"><button class="button button-ghost" id="strategyPreDeckBack" type="button" ${state.normalRouteBusy ? "disabled" : ""}>プロフィールに戻る</button><button class="button button-primary" id="strategyPreparedDeckDone" type="button" ${complete && !restoringDeck && !state.normalRouteBusy ? "" : "disabled"}>10枚の準備を完了</button></div>
@@ -1406,223 +1343,43 @@ function renderPreparedDeck() {
       </div></div></section>`;
 }
 
-function renderBaseSelect() {
-  const items = state.main.filter((item) => !item.used);
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="section-head strategy-compact-head"><div><span class="eyebrow">SECRET MAIN PICK</span><h1>あなたの画像選択</h1>
-    <p>相手の自己紹介を思い出し、今ラウンドに出す1枚を選んでロックします。</p></div><button class="button button-danger button-small" data-strategy-destroy>ルーム破棄</button></div>
-    <div class="strategy-pick-grid">${items.map((item) => `<button class="select-card strategy-pick-card ${state.selectedBaseId === item.id ? "selected" : ""}" type="button" data-base-card="${item.id}">
-      <img src="${item.url}" alt="選択候補" /><span>この画像を選ぶ</span></button>`).join("")}</div></section>`;
-}
-
-function renderBaseReveal() {
-  const local = state.localBaseCards.get(state.round);
-  const remote = state.remoteImages.get(imageKey("base", state.round));
-  const mediaKey = imageKey("base", state.round);
-  const opened = state.openedMediaKeys.has(mediaKey);
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-versus-title"><span class="eyebrow">SIMULTANEOUS REVEAL</span><h1>メイン画像公開</h1>
-    <p>${opened ? "音声も手掛かりにして、本音で秘密採点します。" : "ボタンを押すと相手の画像を公開し、添付音声があれば再生します。"}</p></div><div class="strategy-reveal-grid">
-      ${renderBattleImage(state.playerIndex === 0 ? local : remote, state.players[0].name, "PLAYER 1", state.playerIndex !== 0 && !opened)}
-      ${renderBattleImage(state.playerIndex === 1 ? local : remote, state.players[1].name, "PLAYER 2", state.playerIndex !== 1 && !opened)}</div>
-    ${opened ? '<button class="button button-primary strategy-center-button" id="strategyBeginRating">相手の画像を秘密採点</button>'
-      : '<button class="button button-primary strategy-center-button strategy-open-media" id="strategyOpenBaseMedia">画像＋音声を開く</button>'}</section>`;
-}
-
-function renderBaseRating() {
-  const remote = state.remoteImages.get(imageKey("base", state.round));
-  const localPlayer = getLocalPlayer();
-  const opponent = getOpponent();
-  const canRequest = localPlayer.extraRequests > 0 && remainingReserve(opponent) > 0;
-  const canPursuit = localPlayer.pursuitPermits > 0 && remainingReserve(opponent) > 0;
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-rating-layout">${renderBattleImage(remote, "相手の画像", "OWNER HIDDEN")}
-    <div class="score-panel strategy-score-panel"><span class="eyebrow">HONEST SCORE</span><h2>本音の点数を選ぶ</h2><p>採点とリアクションは相手の確定まで非公開です。</p>
-      <div class="score-buttons">${renderScoreButtons()}</div><fieldset class="strategy-reaction-fieldset"><legend>戦闘リアクション</legend>
-        <label><input type="radio" name="reaction" value="normal" ${state.selectedReaction === "normal" ? "checked" : ""} /><span><b>通常</b><small>追加効果なし</small></span></label>
-        <label class="reaction-low"><input type="radio" name="reaction" value="request" ${state.selectedReaction === "request" ? "checked" : ""} ${canRequest ? "" : "disabled"} /><span><b>もう1枚見せろ</b><small>残り${localPlayer.extraRequests}回 / 1〜3点で有効</small></span></label>
-        <label class="reaction-high"><input type="radio" name="reaction" value="pursuit" ${state.selectedReaction === "pursuit" ? "checked" : ""} ${canPursuit ? "" : "disabled"} /><span><b>追撃を許可</b><small>残り${localPlayer.pursuitPermits}回 / 9〜10点で有効</small></span></label>
-      </fieldset><button class="button button-primary score-lock" id="strategyLockRating" ${state.selectedScore ? "" : "disabled"}>採点を封印</button></div></div></section>`;
-}
-
-function renderActionSelect() {
-  const actionType = localActionType();
-  const items = state.reserve.filter((item) => !item.used);
-  const pursuit = actionType === "pursuit";
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="section-head strategy-compact-head"><div><span class="eyebrow">${pursuit ? "PURSUIT CHANCE" : "ONE MORE IMAGE"}</span>
-    <h1>${pursuit ? "追撃するリザーブを選ぶ" : "追加提示するリザーブを選ぶ"}</h1><p>${pursuit ? "追撃画像の評価は半分をボーナス加算します。" : "追加画像が高評価ならメイン画像の点数を更新できます。"}</p></div></div>
-    <div class="strategy-pick-grid">${items.map((item) => `<button class="select-card strategy-pick-card" type="button" data-action-card="${item.id}"><img src="${item.url}" alt="リザーブ候補" />
-      <span>${pursuit ? "この画像で追撃" : "この画像を追加提示"}</span></button>`).join("")}</div>
-    ${pursuit ? '<button class="button button-ghost strategy-center-button" id="strategySkipPursuit">今回は追撃しない</button>' : ""}</section>`;
-}
-
-function renderActionReveal() {
-  const data = currentRoundData();
-  const picks = data.actionPicks || {};
-  const localPick = picks[state.uid];
-  const opponentPick = picks[state.opponentUid];
-  const localItem = localPick && !localPick.skipped ? state.localActionCards.get(state.round) : null;
-  const remoteItem = opponentPick && !opponentPick.skipped ? state.remoteImages.get(imageKey("action", state.round)) : null;
-  const mediaKey = imageKey("action", state.round);
-  const opened = state.openedMediaKeys.has(mediaKey);
-  const cards = [];
-  if (localItem) cards.push({ item: localItem, player: getLocalPlayer(), type: localPick.type });
-  if (remoteItem) cards.push({ item: remoteItem, player: getOpponent(), type: opponentPick.type });
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-versus-title"><span class="eyebrow">RESERVE OPEN</span><h1>リザーブ画像公開</h1></div>
-    <div class="strategy-reveal-grid ${cards.length === 1 ? "single" : ""}">${cards.map(({ item, player, type }) => `<div class="strategy-action-reveal">
-      ${renderBattleImage(item, player.name, type === "pursuit" ? "PURSUIT" : "ONE MORE", item === remoteItem && !opened)}${type === "pursuit" ? `<blockquote>${escapeHtml(player.pursuitLine)}</blockquote>` : ""}</div>`).join("")}</div>
-    ${remoteItem ? opened ? '<button class="button button-primary strategy-center-button" id="strategyRateAction">相手の追加画像を秘密採点</button>'
-      : '<button class="button button-primary strategy-center-button strategy-open-media" id="strategyOpenActionMedia">画像＋音声を開く</button>'
-      : '<p class="strategy-rule-note">あなたが提示した追加画像を相手が採点しています。</p>'}</section>`;
-}
-
-function renderActionRating() {
-  const item = state.remoteImages.get(imageKey("action", state.round));
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-rating-layout">${renderBattleImage(item, "相手の追加画像", localOpponentActionType() === "pursuit" ? "PURSUIT" : "ONE MORE")}
-    <div class="score-panel strategy-score-panel"><span class="eyebrow">RESERVE SCORE</span><h2>追加画像を採点</h2><p>追加画像から、さらに追加要求や追撃は発生しません。</p>
-      <div class="score-buttons">${renderScoreButtons()}</div><button class="button button-primary score-lock" id="strategyLockActionRating" ${state.selectedScore ? "" : "disabled"}>採点を封印</button></div></div></section>`;
-}
-
-function renderRoundResult() {
-  const result = state.currentResult;
-  if (!result) return renderWaiting("ROUND RESULT", "結果を集計しています", "両者の採点を同期しています。");
-  const winner = result.powers[0] === result.powers[1] ? -1 : result.powers[0] > result.powers[1] ? 0 : 1;
-  const nextLabel = state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete
-    ? "看破／見送るの秘密選択へ"
-    : isGameOver() ? "最終結果を見る" : `ROUND ${state.round + 1}へ`;
-  const canDeclare = !state.weaknessPhaseComplete && state.round < WEAKNESS_SCOUT_ROUND && !state.roomData?.weaknessGuesses?.[state.uid];
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="result-card strategy-round-result"><span class="eyebrow">ROUND ${state.round} RESULT</span>
-    <h1>${winner < 0 ? "DRAW / ノーダメージ" : `${escapeHtml(state.players[winner].name)}の攻撃`}</h1><div class="strategy-power-versus">
-      ${state.players.map((player, index) => `<article class="${winner === index ? "winner" : ""}"><small>${escapeHtml(player.name)}</small><strong>${result.powers[index]}</strong><span>IMAGE POWER</span>
-        ${result.damage[1 - index] ? `<b>${result.damage[1 - index]} DAMAGE</b>` : ""}</article>`).join('<div class="strategy-vs-small">VS</div>')}</div>
-    <div class="strategy-round-breakdown">${state.players.map((player, owner) => {
-      const detail = result.actions[owner]?.cardShown ? `${result.actions[owner].type === "pursuit" ? "追撃" : "再提示"} ${result.actionScores[owner]}点` : "追加効果なし";
-      return `<p><b>${escapeHtml(player.name)}</b><span>メイン ${result.baseScores[owner]}点 / ${detail}</span></p>`;
-    }).join("")}</div><div class="strategy-result-actions"><button class="button button-primary" id="strategyNextRound">${nextLabel}</button>
-      ${canDeclare ? '<button class="button button-danger strategy-declare-weakness" id="strategyDeclareWeakness">今ここで弱点を看破する</button><small>回答は一度だけ。誤答すると自分に5ダメージ</small>' : ""}</div></div></section>`;
-}
-
-function renderWeaknessGuess() {
-  const opponent = getOpponent();
-  const triggerRound = Number(state.weaknessTriggerRound || state.round || WEAKNESS_SCOUT_ROUND);
-  const responding = Boolean(state.roomData?.weaknessGuesses?.[state.opponentUid] && !state.roomData?.weaknessGuesses?.[state.uid]);
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">SCOUT PHASE COMPLETE</span>
-    <h1>${responding ? "相手が看破を宣言しました" : "本当の弱点を看破せよ"}</h1><p>ROUND ${triggerRound}までの画像・音声・会話を読み、相手の本当の弱点を1つ選びます。回答は1回だけ。誤答すると自分に${WEAKNESS_MISS_DAMAGE}ダメージです。</p></div>
-    <form class="strategy-weakness-guess" id="strategyWeaknessGuessForm"><fieldset><legend>${escapeHtml(opponent.name)}の弱点候補</legend>
-      ${opponent.clues.map((clue, index) => `<label class="strategy-guess-card"><input type="radio" name="weaknessGuess" value="${index}" ${state.selectedWeaknessGuess === index ? "checked" : ""} />
-        <span><small>CANDIDATE ${String(index + 1).padStart(2, "0")}</small><strong>${escapeHtml(clue)}</strong></span></label>`).join("")}
-    </fieldset><button class="button button-primary" type="submit" ${Number.isInteger(state.selectedWeaknessGuess) ? "" : "disabled"} id="strategyLockWeaknessGuess">この弱点で回答を封印</button></form></section>`;
-}
-
-function renderWeaknessChoice() {
-  const opponent = getOpponent();
-  const reserveRemaining = remainingReserve(getLocalPlayer());
-  const availableChain = Math.min(MAX_WEAKNESS_CHAIN, reserveRemaining);
-  const guessing = state.selectedWeaknessChoice === "guess";
-  const canLock = state.selectedWeaknessChoice === "pass"
-    || (guessing && Number.isInteger(state.selectedWeaknessGuess));
-  return `<section class="screen strategy-screen">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">ROUND ${WEAKNESS_SCOUT_ROUND} / SECRET DECISION</span>
-    <h1>看破するか、見送るか</h1><p>双方が秘密に選び、両方の封印が揃ってから公開・照合します。相手の選択を見ても変更することはできません。</p></div>
-    <form class="strategy-weakness-choice" id="strategyWeaknessChoiceForm">
-      <aside class="strategy-choice-readiness" aria-label="あなたの連続追撃準備状況">
-        <div><small>YOUR RESERVE</small><strong>${reserveRemaining}<span>枚</span></strong><em>あなたの残弾（残りリザーブ）</em></div>
-        <div><small>SUCCESS CHAIN</small><strong>${availableChain}<span>CHAIN</span></strong><em>看破成功時の最大CHAIN数</em></div>
-        <p>${availableChain > 0
-          ? `看破成功時は、未使用のリザーブから最大${availableChain}枚を選んで一気に追撃できます。`
-          : "残りリザーブがないため、看破に成功しても連続追撃はできません。"}</p>
-      </aside>
-      <fieldset class="strategy-choice-options"><legend>今回の行動</legend>
-        <label class="strategy-choice-card is-guess"><input type="radio" name="weaknessChoice" value="guess" ${guessing ? "checked" : ""} />
-          <span><small>RISK / REWARD</small><strong>看破する</strong><em>${availableChain > 0 ? `成功すれば最大${availableChain}枚の連続追撃。` : "成功してもリザーブ追撃なし。"}誤答すると自分に${WEAKNESS_MISS_DAMAGE}ダメージ</em></span></label>
-        <label class="strategy-choice-card is-pass"><input type="radio" name="weaknessChoice" value="pass" ${state.selectedWeaknessChoice === "pass" ? "checked" : ""} />
-          <span><small>NO PENALTY</small><strong>見送る</strong><em>回答せず、失敗ダメージも受けない。今回の看破機会を終了</em></span></label>
-      </fieldset>
-      ${guessing ? `<fieldset class="strategy-choice-candidates"><legend>${escapeHtml(opponent.name)}の弱点候補を1つ封印</legend>
-        ${opponent.clues.map((clue, index) => `<label class="strategy-guess-card"><input type="radio" name="weaknessGuess" value="${index}" ${state.selectedWeaknessGuess === index ? "checked" : ""} />
-          <span><small>CANDIDATE ${String(index + 1).padStart(2, "0")}</small><strong>${escapeHtml(clue)}</strong></span></label>`).join("")}
-      </fieldset>` : ""}
-      <p class="strategy-choice-security">確定時は選択内容を直接送らず、まず暗号学的ハッシュだけを共有します。</p>
-      <button class="button button-primary" type="submit" ${canLock ? "" : "disabled"} id="strategyLockWeaknessChoice">秘密選択を封印</button>
-    </form></section>`;
-}
-
-function renderWeaknessChainSelect() {
-  const opponent = getOpponent();
-  const available = state.reserve.filter((item) => !item.used);
-  const selected = new Set(state.selectedWeaknessChainIds);
-  return `<section class="screen strategy-screen strategy-chain-screen">${renderBattleHud()}<div class="strategy-weakness-break-banner"><span>WEAKNESS BREAK</span>
-    <h1>${escapeHtml(opponent.clues[opponent.weaknessIndex])}</h1><p>弱点看破成功。残りリザーブから最大${MAX_WEAKNESS_CHAIN}枚を選び、固定ダメージ ${WEAKNESS_CHAIN_DAMAGE.join(" → ")} の連続追撃を放ちます。</p></div>
-    <div class="strategy-chain-counter"><strong>${selected.size}</strong> / ${Math.min(MAX_WEAKNESS_CHAIN, available.length)} CHAIN</div>
-    <div class="strategy-pick-grid strategy-chain-pick-grid">${available.map((item) => `<button class="select-card strategy-pick-card ${selected.has(item.id) ? "selected" : ""}" type="button" data-weakness-chain-card="${item.id}" aria-pressed="${selected.has(item.id)}">
-      <img src="${item.url}" alt="連続追撃候補" /><span>${selected.has(item.id) ? "追撃にセット済み" : "追撃へ追加"}</span></button>`).join("")}</div>
-    <button class="button button-primary strategy-center-button" id="strategyLockWeaknessChain" ${selected.size ? "" : "disabled"}>${selected.size}連続追撃を封印</button></section>`;
-}
-
-function renderWeaknessChainResult() {
-  const result = state.weaknessResult;
-  if (!result) return renderWaiting("WEAKNESS BREAK", "連続追撃を集計しています", "弱点コミットと転送画像を照合しています。");
-  const guessSummary = state.players.map((player, index) => {
-    const opponent = state.players[1 - index];
-    if (player.weaknessChoice === "pass") return `<article class="passed"><small>${escapeHtml(player.name)}の秘密選択</small>
-      <strong>見送る</strong><span>回答なし / ペナルティなし</span></article>`;
-    const guess = player.weaknessGuess;
-    return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small>
-      <strong>${escapeHtml(opponent.clues[guess] || "未回答")}</strong><span>${player.weaknessCorrect ? "看破成功" : `看破失敗 / 自分に${WEAKNESS_MISS_DAMAGE} DAMAGE`}</span></article>`;
-  }).join("");
-  const chains = state.players.map((player, owner) => {
-    const count = result.chainCounts[owner];
-    const defender = state.players[1 - owner];
-    if (!count) return `<article class="strategy-chain-lane is-empty"><h2>${escapeHtml(player.name)}</h2><p>${player.weaknessChoice === "pass" ? "見送りのため連続追撃なし" : player.weaknessCorrect ? "リザーブ不足のため連続追撃なし" : "看破失敗のため連続追撃なし"}</p></article>`;
-    const cards = Array.from({ length: count }, (_, index) => {
-      const item = owner === state.playerIndex ? state.localWeaknessChainCards[index] : state.remoteImages.get(imageKey("weaknessChain", index));
-      return `<div class="strategy-chain-card" data-chain-owner="${owner}" data-chain-slot="${index}" style="--chain-index:${index}">${renderBattleImage(item, player.name, `PURSUIT CHAIN ×${index + 1}`)}
-        <blockquote>${escapeHtml(player.pursuitLine)}</blockquote><b>${WEAKNESS_CHAIN_DAMAGE[index]} DAMAGE</b></div>`;
-    }).join("");
-    return `<article class="strategy-chain-lane"><h2>${escapeHtml(player.name)} → ${escapeHtml(defender.name)}</h2><div class="strategy-chain-cards">${cards}</div>
-      <p class="strategy-chain-total">CHAIN DAMAGE <strong>${result.chainDamage[owner]}</strong>${result.overkill[1 - owner] > 0 ? `<em>OVERKILL +${result.overkill[1 - owner]}</em>` : ""}</p></article>`;
-  }).join("");
-  const matchEnds = state.players.some((player) => player.hp <= 0);
-  const surrendered = (result.surrenders || []).some(Boolean);
-  const bothPassed = state.players.every((player) => player.weaknessChoice === "pass");
-  const headline = surrendered ? "SURRENDER KO" : result.overkill.some((value) => value > 0) ? "OVERKILL" : state.players.some((player) => player.weaknessCorrect) ? "WEAKNESS BREAK" : bothPassed ? "BOTH PASSED" : "READ FAILED";
-  const localCanSurrender = getOpponent().weaknessCorrect && getLocalPlayer().hp > 0 && !state.roomData?.weaknessSurrenders?.[state.uid];
-  const nextRound = Number(state.weaknessTriggerRound || state.round) + 1;
-  return `<section class="screen strategy-screen strategy-chain-result">${renderBattleHud()}<div class="strategy-weakness-head"><span class="eyebrow">WEAKNESS REVEAL</span><h1>${headline}</h1>
-    <p>${bothPassed ? "両者の秘密選択を照合しました。本当の弱点は伏せたまま、次のラウンドへ進みます。" : "看破対象の弱点を事前登録したハッシュと照合しました。追撃音声は各カードで指定した3秒を順番に再生します。"}</p></div><div class="strategy-guess-summary">${guessSummary}</div>
-    <div class="strategy-chain-result-grid">${chains}</div>
-    ${state.players.some((player) => player.weaknessChainCount > 0) ? '<button class="button button-danger strategy-center-button strategy-chain-play" id="strategyPlayWeaknessChain">怒涛の連続追撃を再生</button>' : ""}
-    ${localCanSurrender ? '<button class="button button-ghost strategy-center-button strategy-surrender" id="strategyWeaknessSurrender">参りました（敗北を認める）</button>' : ""}
-    <button class="button button-primary strategy-center-button" id="strategyWeaknessContinue">${matchEnds ? "最終結果を見る" : `ROUND ${nextRound}へ`}</button></section>`;
-}
-
 function renderGameOver() {
   const outcome = determineOutcome();
   const winner = outcome.winnerIndex;
-  const localPlayer = getLocalPlayer();
+  const replay = state.replay;
   const localResult = winner < 0 ? "DRAW" : winner === state.playerIndex ? "WIN" : "LOSE";
-  const weaknessDetail = localPlayer.weaknessChoice === "pass"
-    ? "弱点看破：見送り"
-    : localPlayer.weaknessCorrect
-    ? `弱点看破成功 / ${Number(localPlayer.weaknessChainCount || 0)} CHAIN`
-    : "弱点看破：失敗";
-  const finishDetail = Number(localPlayer.overkill || 0) > 0
-    ? `OVERKILL +${Number(localPlayer.overkill || 0)}`
-    : `残りHP ${Number(localPlayer.hp || 0)}`;
+  const reasonLabel = hariaiOutcomeReasonLabel(replay?.outcome);
+  const localRuntime = replay?.players?.[state.uid];
   const shareButton = shared()?.renderResultShareButton?.({
     mode: "戦略型1on1",
     result: localResult,
-    details: [weaknessDetail, finishDetail],
+    details: [`決着：${reasonLabel}`, `残り理性 ${Number(localRuntime?.reason ?? 0)}`],
   }) || "";
-  const weaknessReview = state.weaknessResult ? `<div class="strategy-guess-summary strategy-final-guess-summary">${state.players.map((player, index) => {
-    const opponent = state.players[1 - index];
-    if (player.weaknessChoice === "pass") return `<article class="passed"><small>${escapeHtml(player.name)}の秘密選択</small><strong>見送る</strong><span>回答なし / ペナルティなし</span></article>`;
-    return `<article class="${player.weaknessCorrect ? "success" : "failed"}"><small>${escapeHtml(player.name)}の回答</small><strong>${escapeHtml(opponent.clues[player.weaknessGuess] || "未回答")}</strong><span>${player.weaknessCorrect ? `看破成功 / ${player.weaknessChainCount} CHAIN` : "看破失敗"}</span></article>`;
-  }).join("")}</div>` : "";
-  return `<section class="screen strategy-screen"><div class="gameover-card strategy-gameover"><span class="eyebrow">ONLINE STRATEGY 1ON1 COMPLETE</span>
-    <h1>${winner < 0 ? "DRAW" : `${escapeHtml(state.players[winner].name)} WIN`}</h1><p>匿名紹介の読み、メイン5枚、リザーブの使いどころを振り返りましょう。</p>
-    <div class="strategy-final-grid">${state.players.map((player, index) => `<article class="${winner === index ? "winner" : ""}"><small>${index === state.playerIndex ? "YOU" : "OPPONENT"}</small><h2>${escapeHtml(player.name)}</h2>
-      ${index === state.playerIndex ? "" : renderOpponentAchievementShowcase({ context: "is-result", label: "公開中の実績" })}<div><span>残りHP</span><strong>${player.hp}</strong></div><div><span>累計パワー</span><strong>${player.totalPower}</strong></div><div><span>平均評価</span><strong>${average(player.receivedScores)}</strong></div>${player.overkill > 0 ? `<em>OVERKILL +${player.overkill}</em>` : ""}</article>`).join("")}</div>
-    ${weaknessReview}
+  const weaknessMap = Object.fromEntries(state.players.map((player) => [player.uid, player.weaknessIndex]));
+  const faces = hariaiBluffFaces(replay, weaknessMap);
+  const stats = state.players.map((player, index) => {
+    const runtime = replay?.players?.[player.uid] || {};
+    const hitScores = (replay?.slots || []).filter((slot) => slot.kind === "post" && slot.by === player.uid && Number.isInteger(slot.score)).map((slot) => slot.score);
+    return `<article class="${winner === index ? "winner" : ""}"><small>${index === state.playerIndex ? "YOU" : "OPPONENT"}</small><h2>${escapeHtml(player.name)}</h2>
+      <p class="hariai-result-persona">${escapeHtml(personaLabel(player))}</p>
+      ${index === state.playerIndex ? "" : renderOpponentAchievementShowcase({ context: "is-result", label: "公開中の実績" })}
+      <div><span>残り理性</span><strong>${Number(runtime.reason ?? 0)}</strong></div><div><span>与えたダメージ</span><strong>${Number(runtime.damageDealt || 0)}</strong></div>
+      <div><span>刺さった平均点</span><strong>${average(hitScores)}</strong></div><div><span>最大連投</span><strong>${Number(runtime.maxCombo || 0)}</strong></div>
+      <div><span>強がり</span><strong>${(faces[player.uid] || []).length}</strong></div></article>`;
+  }).join("");
+  const faceReview = state.players.map((player) => {
+    const slots = (faces[player.uid] || []).map((number) => replay.slots.find((slot) => slot.slot === number)).filter(Boolean);
+    if (!slots.length) return "";
+    return `<article><h3>${escapeHtml(player.name)}の強がり</h3>${slots.map((slot) => `<p>#${slot.slot} 本命を狙われて ${slot.score}点「${escapeHtml(slot.caption)}」</p>`).join("")}</article>`;
+  }).join("");
+  return `<section class="screen strategy-screen"><div class="gameover-card strategy-gameover"><span class="eyebrow">STRATEGY 1ON1 / 貼り合い本式 COMPLETE</span>
+    <h1>${winner < 0 ? "DRAW" : `${escapeHtml(state.players[winner].name)} WIN`}</h1><p>決着：${escapeHtml(reasonLabel)}。${escapeHtml(hariaiOutcomeText(replay?.outcome))}</p>
+    <div class="strategy-final-grid">${stats}</div>
     <section class="strategy-bluff-reveal"><span class="eyebrow">弱点公開</span><h2>弱点候補の答え合わせ</h2>${state.players.map((player) => `<article><h3>${escapeHtml(player.name)}</h3>
       ${player.clues.map((clue, index) => `<p class="${index === player.weaknessIndex ? "is-weakness" : "is-bluff"}"><b>${index === player.weaknessIndex ? "本当の弱点" : "ブラフ"}</b>${escapeHtml(clue)}</p>`).join("")}</article>`).join("")}</section>
-    <section class="strategy-history"><span class="eyebrow">BATTLE LOG</span>${state.history.map((round) => `<p><b>R${round.round}</b><span>${escapeHtml(state.players[0].name)} ${round.powers[0]} - ${round.powers[1]} ${escapeHtml(state.players[1].name)}</span></p>`).join("")}</section>
+    ${faceReview ? `<section class="strategy-bluff-reveal hariai-face-review"><span class="eyebrow">効いてないって言ったよね♡</span><h2>強がりの振り返り</h2>${faceReview}</section>` : ""}
+    ${renderHariaiPenaltySection(outcome)}
+    <details class="hariai-log"><summary>対戦スレッドを見返す（${replay?.slots?.length || 0}手）</summary><ol class="hariai-thread">${renderHariaiThread()}</ol></details>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
     ${renderStrategyReviewInvite()}
     ${state.playerSafetyStopped ? "" : renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
@@ -1705,8 +1462,1153 @@ function renderStrategyReview() {
       <p>${escapeHtml(getLocalPlayer()?.name || "あなた")} と ${escapeHtml(getOpponent()?.name || "対戦相手")}だけの品評会です。対戦画像と追加メディアを見ながら、狙いや刺さったポイントを振り返りましょう。</p></div>
       <div class="strategy-review-clock"><small>残り時間</small><strong id="strategyReviewCountdown">${formatReviewRemaining()}</strong></div></header>
     <div class="strategy-review-notice"><span>● 双方同意済み</span><p>最大10分です。どちらかが終了すると両者とも閉じ、受信・録音・録画した画像・音声・映像を端末メモリから破棄します。</p></div>
+    ${renderHariaiReviewPenaltyBanner()}
     <div class="screen-actions strategy-review-leave"><button class="button button-danger" id="strategyReviewLeave">品評会を終了</button></div>
   </section>`;
+}
+
+function bindPersonaFields() {
+  const persist = () => {
+    syncStrategyProfileDraft();
+    localStorage.setItem(PROFILE_PERSONA_KEY, JSON.stringify(state.persona));
+    localStorage.setItem(PROFILE_PENALTY_KEY, JSON.stringify(state.penaltyConsent));
+  };
+  document.querySelectorAll('input[name="strategyPersonaType"]').forEach((input) => input.addEventListener("change", persist));
+  document.querySelector("#strategyFirstPerson")?.addEventListener("change", persist);
+  document.querySelector("#strategyCallStyle")?.addEventListener("change", persist);
+  document.querySelector("#strategyPenaltyCall")?.addEventListener("change", persist);
+  document.querySelector("#strategyPenaltyTribute")?.addEventListener("change", persist);
+}
+
+function savedPersona() {
+  try {
+    return normalizeHariaiPersona(JSON.parse(localStorage.getItem(PROFILE_PERSONA_KEY) || "{}"));
+  } catch {
+    return normalizeHariaiPersona({});
+  }
+}
+
+function savedPenaltyConsent() {
+  try {
+    return normalizeHariaiPenaltyConsent(JSON.parse(localStorage.getItem(PROFILE_PENALTY_KEY) || "{}"));
+  } catch {
+    return normalizeHariaiPenaltyConsent({});
+  }
+}
+
+function emptyHariaiDrafts() {
+  return {
+    consoleTab: "post",
+    cardId: "",
+    target: null,
+    caption: "",
+    breakGuess: null,
+    score: null,
+    reply: "",
+    surrender: false,
+    rightKind: "",
+    rightId: "",
+    rightA: null,
+    rightB: null,
+    rightParam: "",
+    flavor: "",
+    answerText: "",
+    answerChoice: null,
+    answerValue: null,
+    answerCandidate: null,
+    finishIds: [],
+    finishCaptions: ["", "", ""],
+    penaltyKind: "",
+    penaltyHonorific: HARIAI_HONORIFICS[0].id,
+  };
+}
+
+async function prepareWeaknessCommits(roomId) {
+  if (!Number.isInteger(state.weaknessIndex)) throw new Error("本当の弱点を確認できませんでした。");
+  const salts = Array.from({ length: 3 }, () => randomHex());
+  const commits = await Promise.all(salts.map((salt, index) => sha256Hex(
+    hariaiCandidateCommitMaterial(roomId, state.uid, index, index === state.weaknessIndex, salt),
+  )));
+  state.weaknessSalts = salts;
+  state.weaknessCommits = commits;
+  return commits;
+}
+
+function playerByUid(uid) {
+  return state.players.find((player) => player.uid === uid) || null;
+}
+
+function personaLabel(player) {
+  return hariaiPersonaType(player?.persona?.type)?.label || "なりきり";
+}
+
+function personaFirst(player) {
+  return hariaiFirstPersonLabel(player?.persona?.firstPerson);
+}
+
+function personaCallName(speaker, listener) {
+  const honorific = state.replay?.players?.[speaker?.uid]?.honorific;
+  return (honorific && hariaiHonorificName(honorific, listener?.name))
+    || hariaiCallName(speaker?.persona?.callStyle, listener?.name);
+}
+
+function personaLine(player, key, values = {}) {
+  const listener = state.players.find((item) => item.uid !== player?.uid);
+  return hariaiPersonaLine(player?.persona?.type, key, {
+    first: personaFirst(player),
+    call: personaCallName(player, listener),
+    ...values,
+  });
+}
+
+function candidateText(uid, index) {
+  return playerByUid(uid)?.clues?.[index] || `候補${Number(index) + 1}`;
+}
+
+function handCards() {
+  return [...state.main, ...state.reserve].filter((item) => !item.used && item.url);
+}
+
+function findHandCard(id) {
+  return handCards().find((item) => item.id === id) || null;
+}
+
+function currentHariaiSlot() {
+  const replay = state.replay;
+  return Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(replay?.pending?.slot || replay?.slots?.length || 1)));
+}
+
+function battleViewKey() {
+  const replay = state.replay;
+  const pending = replay?.pending;
+  return JSON.stringify([
+    state.screen,
+    replay?.ok,
+    pending?.slot,
+    pending?.stage,
+    pending?.actor,
+    pending?.receivedCount,
+    replay?.outcome?.reason,
+    state.battleBusy,
+    state.channelReady,
+    state.opponentOnline,
+    state.remoteImages.size,
+    state.openedMediaKeys.size,
+    (replay?.slots || []).map((slot) => [slot.kind, slot.score, slot.right?.kind, Boolean(slot.answer), slot.breakResult, slot.finishCount, slot.finishDamage]),
+  ]);
+}
+
+function renderBattleIfChanged() {
+  if (state.screen !== "battle") return;
+  if (battleViewKey() === state.battleViewKey) return;
+  render();
+}
+
+function refreshHariaiTransferProgress() {
+  const output = document.querySelector("#hariaiTransferProgress");
+  if (output) output.textContent = state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…";
+}
+
+function renderBattle() {
+  const replay = state.replay;
+  if (!replay) return renderWaiting("HARIAI", "貼り合いを準備しています", "先攻と手札を確認しています。");
+  return `<section class="screen strategy-screen hariai-battle">${renderBattleHud()}
+    <div class="hariai-layout"><div class="hariai-main">
+      <ol class="hariai-thread" aria-label="貼り合いのやりとり">${renderHariaiThread()}</ol>
+      <section class="hariai-console" id="hariaiConsole" aria-live="polite">${renderHariaiConsole()}</section>
+    </div><aside class="hariai-side">${renderHariaiReadingMemo()}${renderHariaiSelfCard()}${renderHariaiRuleCard()}</aside></div></section>`;
+}
+
+function renderHariaiThread() {
+  const slots = state.replay?.slots || [];
+  if (!slots.length) {
+    const first = playerByUid(state.firstUid);
+    return `<li class="hariai-thread-empty">${first ? `先攻は${escapeHtml(first.name)}。1手＝画像＋言葉＋狙いで、最初の1枚を貼ります。` : "先攻を決めています…"}</li>`;
+  }
+  return slots.map(renderHariaiSlot).join("");
+}
+
+function hariaiSlotItem(slot, index = null) {
+  if (slot.by === state.uid) {
+    return index === null ? state.localMoveCards.get(slot.slot) : state.localFinishCards.get(`${slot.slot}:${index}`);
+  }
+  return state.remoteImages.get(index === null ? imageKey("move", slot.slot) : imageKey("finish", slot.slot, index));
+}
+
+function renderHariaiSlot(slot) {
+  const attacker = playerByUid(slot.by);
+  const receiver = playerByUid(slot.receiver);
+  const side = slot.by === state.uid ? "is-local" : "is-opponent";
+  if (slot.kind === "surrender") {
+    return `<li class="hariai-slot hariai-system ${side}"><span class="hariai-slot-no">#${slot.slot}</span><p><b>${escapeHtml(attacker?.name || "")}</b>${escapeHtml(personaLine(attacker, "surrender"))}</p></li>`;
+  }
+  if (slot.kind === "pass") {
+    return `<li class="hariai-slot hariai-system ${side}"><span class="hariai-slot-no">#${slot.slot}</span><p>${escapeHtml(attacker?.name || "")}は看破を見送りました。</p></li>`;
+  }
+  if (slot.kind === "break") return renderHariaiBreakSlot(slot, attacker, receiver, side);
+  return renderHariaiPostSlot(slot, attacker, receiver, side);
+}
+
+function renderHariaiPostSlot(slot, attacker, receiver, side) {
+  const item = hariaiSlotItem(slot);
+  const key = imageKey("move", slot.slot);
+  const concealed = slot.by !== state.uid && !state.openedMediaKeys.has(key);
+  const caption = slot.captionHeart ? ensureHariaiHeart(slot.caption) : slot.caption;
+  const media = item?.url
+    ? `<div class="hariai-media ${concealed ? "is-concealed" : ""}"><img src="${item.url}" alt="${escapeHtml(attacker?.name || "")}が貼った画像" loading="lazy" />
+        ${concealed ? `<button type="button" class="hariai-open" data-hariai-open="${escapeHtml(key)}">タップして開く${item.audioBlob ? "（音声あり）" : ""}</button>` : ""}</div>
+        ${!concealed && item.audioUrl ? `<button class="hariai-audio" type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</button>` : ""}`
+    : '<div class="hariai-media is-loading"><span>画像を受信中…</span></div>';
+  return `<li class="hariai-slot hariai-post ${side}">
+    <header><span class="hariai-slot-no">#${slot.slot}</span><b>${escapeHtml(attacker?.name || "")}</b><small>${escapeHtml(personaLabel(attacker))}</small>
+      ${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}<span class="hariai-target">狙い：${escapeHtml(candidateText(slot.receiver, slot.target))}</span></header>
+    ${media}
+    <p class="hariai-caption">${escapeHtml(caption)}</p>
+    ${renderHariaiScoreBlock(slot, receiver)}
+    ${renderHariaiRightBlock(slot, attacker, receiver)}
+  </li>`;
+}
+
+function renderHariaiScoreBlock(slot, receiver) {
+  if (!Number.isInteger(slot.score)) return "";
+  const reply = slot.reply ? (slot.replyHeart ? ensureHariaiHeart(slot.reply) : slot.reply) : "";
+  return `<div class="hariai-score band-${slot.band}"><strong>${slot.score}<small>点</small></strong><span class="hariai-band">${{ none: "手番交代", question: "質問権", instruction: "指示権", combo: "権利＋連投" }[slot.band] || ""}</span>
+    ${slot.damage ? `<span class="hariai-damage">理性 −${slot.damage}</span>` : ""}
+    ${reply ? `<p class="hariai-reply"><b>${escapeHtml(receiver?.name || "")}</b>${escapeHtml(reply)}</p>` : ""}
+    ${slot.scoreSurrender ? `<p class="hariai-reply is-surrender"><b>${escapeHtml(receiver?.name || "")}</b>${escapeHtml(personaLine(receiver, "surrender"))}</p>` : ""}</div>`;
+}
+
+function hariaiRightPrompt(right, receiverUid) {
+  if (right.kind === "question") {
+    const question = HARIAI_QUESTIONS.find((item) => item.id === right.id);
+    return fillHariaiLine(question?.prompt, { a: candidateText(receiverUid, right.a), b: candidateText(receiverUid, right.b) });
+  }
+  const instruction = HARIAI_INSTRUCTIONS.find((item) => item.id === right.id);
+  const attacker = state.players.find((player) => player.uid !== receiverUid);
+  return fillHariaiLine(instruction?.prompt, { honorific: hariaiHonorificName(right.param, attacker?.name) });
+}
+
+function hariaiAckLine(right, receiver, attacker) {
+  if (right.id === "call") return `はい、${hariaiHonorificName(right.param, attacker?.name)}♡`;
+  if (right.id === "confess") return personaLine(receiver, "confess");
+  if (right.id === "heart") return "…わかった♡ 次の3回、語尾に♡を付けます";
+  return "次の点数は、ちゃんと理由も言います♡";
+}
+
+function renderHariaiRightBlock(slot, attacker, receiver) {
+  if (!slot.right) return "";
+  if (slot.right.kind === "none") return '<p class="hariai-right is-skipped">権利は使わずに進めました。</p>';
+  const label = slot.right.kind === "question" ? "質問" : "指示";
+  const flavor = slot.right.flavor ? `<span class="hariai-flavor">${escapeHtml(slot.right.flavor)}</span>` : "";
+  const answer = slot.answer;
+  let text = "";
+  if (answer?.text) text = answer.heart ? ensureHariaiHeart(answer.text) : answer.text;
+  else if (Number.isInteger(answer?.choice)) text = `「${candidateText(slot.receiver, answer.choice)}」のほう…♡`;
+  else if (Number.isInteger(answer?.value)) text = `ほんとは…${answer.value}点♡`;
+  else if (Number.isInteger(answer?.candidate)) text = `「${candidateText(slot.receiver, answer.candidate)}」は弱点じゃない（ブラフ確定）`;
+  else if (answer?.ack) text = hariaiAckLine(slot.right, receiver, attacker);
+  return `<div class="hariai-right"><p><b>${label}</b>${escapeHtml(hariaiRightPrompt(slot.right, slot.receiver))}${flavor}</p>
+    ${answer ? `<p class="hariai-answer"><b>${escapeHtml(receiver?.name || "")}</b>${escapeHtml(text)}</p>` : `<p class="hariai-answer is-waiting">${escapeHtml(receiver?.name || "")}の返事を待っています…</p>`}</div>`;
+}
+
+function renderHariaiBreakSlot(slot, attacker, receiver, side) {
+  const guess = candidateText(slot.receiver, slot.guess);
+  let result = '<p class="hariai-break-wait">答え合わせ中…</p>';
+  if (slot.breakResult === "miss") {
+    result = `<p class="hariai-break-result is-miss">ハズレ。「${escapeHtml(guess)}」はブラフでした。${escapeHtml(attacker?.name || "")}の理性 −${Number(slot.selfDamage || 0)}</p>`;
+  } else if (slot.breakResult === "hit") {
+    const bluffs = (slot.bluffSlots || []).map((number) => state.replay.slots.find((item) => item.slot === number)).filter(Boolean);
+    const faces = bluffs.length
+      ? `<div class="hariai-bluffs"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>#${item.slot} ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
+      : "";
+    const finish = Number.isInteger(slot.finishCount)
+      ? renderHariaiFinish(slot)
+      : `<p class="hariai-break-wait">仕留めの準備中…（最大${Number(slot.finishMax || 0)}枚）</p>`;
+    result = `<p class="hariai-break-result is-hit">看破成功！ 本命は「${escapeHtml(guess)}」。${escapeHtml(receiver?.name || "")}の理性 −${Number(slot.damage || 0)}</p>${faces}${finish}`;
+  }
+  return `<li class="hariai-slot hariai-break ${side}"><header><span class="hariai-slot-no">#${slot.slot}</span><b>${escapeHtml(attacker?.name || "")}</b><small>看破</small></header>
+    <p class="hariai-caption">${escapeHtml(personaLine(attacker, "breakCall", { candidate: guess }))}</p>${result}</li>`;
+}
+
+function renderHariaiFinish(slot) {
+  if (!slot.finishCount) return '<p class="hariai-break-wait">仕留めはせずに続けます。</p>';
+  const cards = Array.from({ length: slot.finishCount }, (_, index) => {
+    const item = hariaiSlotItem(slot, index);
+    const caption = slot.finishCaptions?.[index];
+    const text = caption ? (caption.heart ? ensureHariaiHeart(caption.text) : caption.text) : "";
+    return `<figure class="hariai-finish-card" data-hariai-finish-figure="${slot.slot}:${index}">${item?.url ? `<img src="${item.url}" alt="仕留めの画像${index + 1}" loading="lazy" />` : '<span class="hariai-media is-loading">受信中…</span>'}
+      <figcaption>${escapeHtml(text)}</figcaption></figure>`;
+  }).join("");
+  const resolved = Number.isInteger(slot.finishDamage);
+  return `<div class="hariai-finish">${cards}</div>${resolved ? `<p class="hariai-damage">仕留め 理性 −${slot.finishDamage}</p>
+    <button class="button button-ghost button-small" type="button" data-hariai-play-finish="${slot.slot}">仕留めの音声を再生</button>` : ""}`;
+}
+
+function hariaiOutcomeText(outcome) {
+  if (!outcome) return "";
+  if (outcome.draw) return "引き分けです。";
+  const winner = playerByUid(outcome.winnerUid);
+  const loser = playerByUid(outcome.loserUid);
+  if (outcome.reason === "ko") return `${loser?.name || ""}の理性が0になりました。${winner?.name || ""}の勝ちです。`;
+  if (outcome.reason === "surrender") return `${loser?.name || ""}が参りました。${winner?.name || ""}の勝ちです。`;
+  return `手札が尽きました。理性が多い${winner?.name || ""}の勝ちです。`;
+}
+
+function renderHariaiConsole() {
+  const replay = state.replay;
+  if (replay?.outcome) {
+    return `<div class="hariai-console-wait"><strong>決着</strong><p>${escapeHtml(hariaiOutcomeText(replay.outcome))}</p><p>弱点の最終照合をしています…</p></div>`;
+  }
+  const pending = replay?.pending;
+  if (!pending) return "";
+  const mine = pending.actor === state.uid;
+  const opponent = getOpponent();
+  if (pending.stage === "act") {
+    return mine ? renderHariaiActConsole(pending)
+      : hariaiWaitConsole(`${opponent.name}が次の1手を選んでいます…`, pending.combo ? `${opponent.name}の連投中（${pending.combo}手連続で90点以上）` : "");
+  }
+  if (pending.stage === "receive") return renderHariaiTransferConsole(pending.attacker === state.uid ? "画像を送っています" : "画像を受け取っています");
+  if (pending.stage === "score") return mine ? renderHariaiScoreConsole(pending) : hariaiWaitConsole(`${opponent.name}が点数を考えています…`, "刺さったかどうかは、相手の自己申告です。");
+  if (pending.stage === "right") return mine ? renderHariaiRightConsole(pending) : hariaiWaitConsole(`${opponent.name}が権利を選んでいます…`, "");
+  if (pending.stage === "answer") return mine ? renderHariaiAnswerConsole(pending) : hariaiWaitConsole(`${opponent.name}の返事を待っています…`, "");
+  if (pending.stage === "breakReveal") return hariaiWaitConsole(mine ? "看破の答え合わせを送っています…" : "看破の答え合わせ中…", "封印した弱点と照合しています。");
+  if (pending.stage === "finish") return mine ? renderHariaiFinishConsole(pending) : hariaiWaitConsole(`${opponent.name}が仕留めの準備をしています…`, `最大${pending.finishMax}枚`);
+  if (pending.stage === "finishReceive") return renderHariaiTransferConsole(pending.attacker === state.uid ? "仕留めの画像を送っています" : "仕留めの画像を受け取っています");
+  return "";
+}
+
+function hariaiWaitConsole(title, note) {
+  return `<div class="hariai-console-wait"><strong>${escapeHtml(title)}</strong>${note ? `<p>${escapeHtml(note)}</p>` : ""}</div>`;
+}
+
+function renderHariaiTransferConsole(title) {
+  return `<div class="hariai-console-wait"><strong>${escapeHtml(title)}</strong><p id="hariaiTransferProgress">${state.channelReady ? `転送状況 ${state.transferProgress}%` : "P2P接続を待っています…"}</p></div>`;
+}
+
+function renderHariaiActConsole(pending) {
+  const opponent = getOpponent();
+  const me = state.replay.players[state.uid];
+  const tabs = [
+    pending.canPost ? ["post", "貼る"] : null,
+    pending.canBreak ? ["break", "看破する"] : null,
+    pending.canPass ? ["pass", "看破を見送る"] : null,
+    ["surrender", "参りました"],
+  ].filter(Boolean);
+  const requested = state.drafts.consoleTab;
+  const tab = tabs.some(([id]) => id === requested) ? requested : tabs[0][0];
+  const nav = `<div class="hariai-tabs" role="tablist">${tabs.map(([id, label]) => `<button type="button" role="tab" aria-selected="${tab === id}" class="${tab === id ? "is-active" : ""}" data-hariai-tab="${id}">${label}</button>`).join("")}</div>`;
+  let body = "";
+  if (tab === "post") body = renderHariaiPostComposer(me, opponent);
+  else if (tab === "break") body = renderHariaiBreakComposer(opponent);
+  else if (tab === "pass") {
+    body = `<p>手札がなくなりました。看破を見送ると、あとは相手の手番だけが続きます。</p>
+      <button class="button button-ghost hariai-submit" type="button" data-hariai-pass ${state.battleBusy ? "disabled" : ""}>看破を見送る</button>`;
+  } else {
+    body = `<p class="hariai-preview">「${escapeHtml(personaLine(getLocalPlayer(), "surrender"))}」</p><p>降参するとその場で負けになり、RATEに反映されます。</p>
+      <button class="button button-danger hariai-submit" type="button" data-hariai-surrender ${state.battleBusy ? "disabled" : ""}>参りました（降参する）</button>`;
+  }
+  const comboNote = pending.combo
+    ? `<em class="hariai-combo">連投中：${pending.combo}手連続で命中／次の手は+${Math.min(HARIAI_COMBO_CAP, HARIAI_COMBO_STEP * pending.combo)}</em>`
+    : "";
+  return `<div class="hariai-console-act"><div class="hariai-console-head"><strong>あなたの番</strong>${comboNote}</div>${nav}${body}</div>`;
+}
+
+function renderHariaiPostComposer(me, opponent) {
+  const hand = handCards();
+  const memo = hariaiReadingMemo(state.replay, state.uid);
+  const drafts = state.drafts;
+  const hearts = Number(me?.heartsRemaining || 0);
+  const example = `${personaCallName(getLocalPlayer(), opponent)}、こういうの好きでしょ？♡`;
+  return `<div class="hariai-composer">
+    <p class="hariai-step"><b>1</b>手札から1枚（残り${hand.length}枚）</p>
+    <div class="hariai-hand">${hand.map((item) => `<button type="button" class="hariai-hand-card ${drafts.cardId === item.id ? "is-selected" : ""}" data-hariai-card="${item.id}" aria-pressed="${drafts.cardId === item.id}">
+      <img src="${item.url}" alt="手札の画像" />${item.audioBlob ? '<span class="hariai-hand-audio">♪</span>' : ""}</button>`).join("")}</div>
+    <p class="hariai-step"><b>2</b>狙う弱点候補</p>
+    <div class="hariai-targets">${opponent.clues.map((clue, index) => {
+      const entry = memo[index];
+      const note = entry.weakness ? "本命（看破済み）" : entry.bluff ? "ブラフ確定" : entry.scores.length ? `平均${entry.average}点／${entry.scores.length}回` : "まだ狙っていない";
+      return `<label class="hariai-target-option ${entry.bluff ? "is-bluff" : ""} ${entry.weakness ? "is-weakness" : ""}"><input type="radio" name="hariaiTarget" value="${index}" ${drafts.target === index ? "checked" : ""} />
+        <span><strong>${escapeHtml(clue)}</strong><small>${escapeHtml(note)}</small></span></label>`;
+    }).join("")}</div>
+    <p class="hariai-step"><b>3</b>画像に乗せる言葉（必須・${HARIAI_CAPTION_MAX}文字まで）</p>
+    <div class="hariai-caption-field"><textarea class="text-input" id="hariaiCaption" maxlength="${HARIAI_CAPTION_MAX}" rows="2" placeholder="例：${escapeHtml(example)}">${escapeHtml(drafts.caption)}</textarea>
+      <div class="hariai-caption-tools"><button type="button" class="button button-ghost button-small" data-hariai-heart="hariaiCaption" aria-label="ハートを足す">♡</button><span><b id="hariaiCaptionCount">${drafts.caption.length}</b> / ${HARIAI_CAPTION_MAX}</span></div></div>
+    ${hearts ? `<p class="hariai-effect">♡の指示中：あと${hearts}回、送信時に語尾へ♡が付きます</p>` : ""}
+    <button class="button button-primary hariai-submit" type="button" data-hariai-post ${state.battleBusy || !state.channelReady ? "disabled" : ""}>${state.channelReady ? "この1手を貼る" : "P2P接続を待っています…"}</button>
+  </div>`;
+}
+
+function renderHariaiBreakComposer(opponent) {
+  const runtime = state.replay.players[opponent.uid];
+  const guess = state.drafts.breakGuess;
+  const guessText = Number.isInteger(guess) ? opponent.clues[guess] : "…";
+  return `<div class="hariai-composer"><p>看破は1試合1回。当たれば${escapeHtml(opponent.name)}の理性 −${HARIAI_BREAK_HIT_DAMAGE}、さらに「強がり」の数＋1枚（最大${HARIAI_FINISH_MAX}枚）で仕留められます。外すと自分の理性 −${HARIAI_BREAK_MISS_DAMAGE}です。</p>
+    <div class="hariai-targets">${opponent.clues.map((clue, index) => {
+      const bluff = runtime.revealedBluffs.includes(index);
+      return `<label class="hariai-target-option ${bluff ? "is-bluff" : ""}"><input type="radio" name="hariaiBreakGuess" value="${index}" ${guess === index ? "checked" : ""} ${bluff ? "disabled" : ""} />
+        <span><strong>${escapeHtml(clue)}</strong><small>${bluff ? "ブラフ確定" : ""}</small></span></label>`;
+    }).join("")}</div>
+    <p class="hariai-preview">「${escapeHtml(personaLine(getLocalPlayer(), "breakCall", { candidate: guessText }))}」</p>
+    <button class="button button-danger hariai-submit" type="button" data-hariai-break ${state.battleBusy || !Number.isInteger(guess) ? "disabled" : ""}>この候補で看破する</button></div>`;
+}
+
+function renderHariaiScorePreview(value, slot, me) {
+  const band = hariaiBand(value);
+  const damage = Math.min(Number(me?.reason || 0), hariaiPostDamage(value, slot?.combo || 1));
+  const rest = Number(me?.reason || 0) - damage;
+  const bandText = {
+    none: "80点未満：手番があなたに移ります",
+    question: "80〜84点：相手に質問権",
+    instruction: "85〜89点：相手に指示権",
+    combo: "90点以上：相手は権利＋連投（手番継続）",
+  }[band];
+  return `<p class="hariai-score-preview band-${band}"><strong>${value}点</strong><span>${escapeHtml(bandText)}／あなたの理性 −${damage}</span>
+    ${rest <= 0 ? '<b class="hariai-ko-warning">この点数で陥落します</b>' : `<span>（残り${rest}）</span>`}</p>`;
+}
+
+function renderHariaiScoreConsole(pending) {
+  const slot = state.replay.slots.find((item) => item.slot === pending.slot);
+  const key = imageKey("move", pending.slot);
+  const me = state.replay.players[state.uid];
+  if (!state.openedMediaKeys.has(key)) {
+    return `<div class="hariai-console-act"><div class="hariai-console-head"><strong>${escapeHtml(getOpponent().name)}が貼りました</strong></div>
+      <p>画像と言葉を開いてから、今の自分に刺さった点数を返します。</p>
+      <button class="button button-primary hariai-submit" type="button" data-hariai-open="${escapeHtml(key)}">画像と言葉を開く</button></div>`;
+  }
+  const value = Number.isInteger(state.drafts.score) ? state.drafts.score : null;
+  const local = getLocalPlayer();
+  const suggestions = value === null ? [] : hariaiReplySuggestions(local.persona.type, value, {
+    first: personaFirst(local),
+    call: personaCallName(local, getOpponent()),
+  });
+  return `<div class="hariai-console-act hariai-score-console">
+    <div class="hariai-console-head"><strong>何点刺さった？</strong><small>画像の出来ではなく、今の自分に刺さった度合いを自己申告します</small></div>
+    <div class="hariai-score-input"><input type="range" min="0" max="100" step="1" id="hariaiScoreRange" value="${value ?? 70}" aria-label="点数" />
+      <input class="text-input" type="number" min="0" max="100" step="1" inputmode="numeric" id="hariaiScoreNumber" value="${value ?? ""}" placeholder="0〜100" aria-label="点数（数値）" /></div>
+    <div class="hariai-score-quick">${[60, 75, 80, 85, 90, 95, 100].map((score) => `<button type="button" class="${value === score ? "is-selected" : ""}" data-hariai-score="${score}">${score}</button>`).join("")}</div>
+    <div id="hariaiScorePreview">${value === null ? "" : renderHariaiScorePreview(value, slot, me)}</div>
+    <label class="field-label">ひとこと（任意・${HARIAI_REPLY_MAX}文字まで）${pending.reasonRequired ? `<b class="hariai-required">理由の指示中：${HARIAI_REASON_MIN_LENGTH}文字以上</b>` : ""}
+      <input class="text-input" id="hariaiReply" maxlength="${HARIAI_REPLY_MAX}" value="${escapeHtml(state.drafts.reply)}" autocomplete="off" /></label>
+    ${suggestions.length ? `<div class="hariai-suggestions">${suggestions.map((line) => `<button type="button" data-hariai-suggest="${escapeHtml(line)}">${escapeHtml(line)}</button>`).join("")}</div>` : ""}
+    ${me.heartsRemaining ? `<p class="hariai-effect">♡の指示中：ひとことの語尾に♡が付きます（あと${me.heartsRemaining}回）</p>` : ""}
+    <label class="hariai-surrender-check"><input type="checkbox" id="hariaiScoreSurrender" ${state.drafts.surrender ? "checked" : ""} />この点数を付けて「参りました」する</label>
+    <button class="button button-primary hariai-submit" type="button" data-hariai-score-submit ${state.battleBusy || value === null ? "disabled" : ""}>この点数を返す</button></div>`;
+}
+
+function renderHariaiRightConsole(pending) {
+  const opponent = getOpponent();
+  const opponentRuntime = state.replay.players[opponent.uid];
+  const slot = state.replay.slots.find((item) => item.slot === pending.slot);
+  const options = pending.options;
+  const drafts = state.drafts;
+  const headline = options.combo
+    ? `${slot.score}点！ 質問か指示をひとつ＋連投`
+    : options.instruction ? `${slot.score}点！ 指示をひとつ使えます` : `${slot.score}点！ 質問をひとつ使えます`;
+  const selected = (kind, id) => drafts.rightKind === kind && drafts.rightId === id;
+  const questionList = options.question ? HARIAI_QUESTIONS.map((question) => `<label class="hariai-right-option"><input type="radio" name="hariaiRight" value="question:${question.id}" ${selected("question", question.id) ? "checked" : ""} />
+    <span><strong>${escapeHtml(question.label)}</strong><small>${escapeHtml(fillHariaiLine(question.prompt, { a: "候補A", b: "候補B" }))}</small></span></label>`).join("") : "";
+  const denyAvailable = hariaiDenyAvailable(opponentRuntime);
+  const instructionList = options.instruction ? HARIAI_INSTRUCTIONS.map((instruction) => {
+    const disabled = instruction.id === "deny" && !denyAvailable;
+    const note = disabled ? "候補の否定は1試合1回、公開済みの候補がない時だけ" : fillHariaiLine(instruction.prompt, { honorific: "〇〇" });
+    return `<label class="hariai-right-option ${disabled ? "is-disabled" : ""}"><input type="radio" name="hariaiRight" value="instruction:${instruction.id}" ${selected("instruction", instruction.id) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+      <span><strong>${escapeHtml(instruction.label)}</strong><small>${escapeHtml(note)}</small></span></label>`;
+  }).join("") : "";
+  const candidateOptions = (value) => opponent.clues.map((clue, index) => `<option value="${index}" ${value === index ? "selected" : ""}>${escapeHtml(clue)}</option>`).join("");
+  let extra = "";
+  if (drafts.rightId === "which") {
+    extra = `<div class="hariai-which"><label class="field-label">候補A<select class="text-input" id="hariaiWhichA">${candidateOptions(drafts.rightA)}</select></label>
+      <label class="field-label">候補B<select class="text-input" id="hariaiWhichB">${candidateOptions(drafts.rightB)}</select></label></div>`;
+  } else if (drafts.rightId === "call") {
+    extra = `<label class="field-label">呼ばせ方<select class="text-input" id="hariaiHonorific">${HARIAI_HONORIFICS.map((honorific) => `<option value="${honorific.id}" ${drafts.rightParam === honorific.id ? "selected" : ""}>${escapeHtml(hariaiHonorificName(honorific.id, getLocalPlayer().name))}</option>`).join("")}</select></label>`;
+  }
+  const ready = Boolean(drafts.rightKind && drafts.rightId)
+    && (drafts.rightId !== "which" || (Number.isInteger(drafts.rightA) && Number.isInteger(drafts.rightB) && drafts.rightA !== drafts.rightB))
+    && (drafts.rightId !== "call" || Boolean(drafts.rightParam));
+  return `<div class="hariai-console-act"><div class="hariai-console-head"><strong>${escapeHtml(headline)}</strong><small>質問と指示はメニューからだけ選べます</small></div>
+    ${questionList ? `<p class="hariai-step"><b>Q</b>質問</p><div class="hariai-right-list">${questionList}</div>` : ""}
+    ${instructionList ? `<p class="hariai-step"><b>!</b>指示</p><div class="hariai-right-list">${instructionList}</div>` : ""}
+    ${extra}
+    <label class="field-label">味付けのひとこと（任意・${HARIAI_FLAVOR_MAX}文字まで）<input class="text-input" id="hariaiFlavor" maxlength="${HARIAI_FLAVOR_MAX}" value="${escapeHtml(drafts.flavor)}" autocomplete="off" /></label>
+    <div class="hariai-actions"><button class="button button-ghost" type="button" data-hariai-right-skip ${state.battleBusy ? "disabled" : ""}>今回は使わない</button>
+      <button class="button button-primary" type="button" data-hariai-right-submit ${state.battleBusy || !ready ? "disabled" : ""}>${drafts.rightKind === "instruction" ? "この指示を使う" : "この質問を使う"}</button></div></div>`;
+}
+
+function renderHariaiAnswerConsole(pending) {
+  const right = pending.right;
+  const me = getLocalPlayer();
+  const opponent = getOpponent();
+  const runtime = state.replay.players[state.uid];
+  const drafts = state.drafts;
+  const flavor = right.flavor ? `<span class="hariai-flavor">${escapeHtml(right.flavor)}</span>` : "";
+  let body = "";
+  if (right.kind === "question" && (right.id === "spot" || right.id === "next")) {
+    body = `<textarea class="text-input" id="hariaiAnswerText" maxlength="${HARIAI_ANSWER_MAX}" rows="2">${escapeHtml(drafts.answerText)}</textarea>
+      <span class="hariai-count"><b id="hariaiAnswerCount">${drafts.answerText.length}</b> / ${HARIAI_ANSWER_MAX}</span>
+      ${runtime.heartsRemaining ? `<p class="hariai-effect">♡の指示中：答えの語尾に♡が付きます</p>` : ""}`;
+  } else if (right.id === "which") {
+    body = `<div class="hariai-targets">${[right.a, right.b].map((index) => `<label class="hariai-target-option"><input type="radio" name="hariaiAnswerChoice" value="${index}" ${drafts.answerChoice === index ? "checked" : ""} />
+      <span><strong>${escapeHtml(me.clues[index])}</strong><small>${index === state.weaknessIndex ? "あなたの本命" : "ブラフ"}</small></span></label>`).join("")}</div>
+      <p class="hariai-note">正直に答えても、ブラフで答えてもかまいません。</p>`;
+  } else if (right.id === "honest") {
+    body = `<input class="text-input" type="number" min="0" max="100" step="1" inputmode="numeric" id="hariaiAnswerValue" value="${Number.isInteger(drafts.answerValue) ? drafts.answerValue : ""}" placeholder="0〜100" />
+      <p class="hariai-note">答えの点数は演出だけで、理性や権利には影響しません。</p>`;
+  } else if (right.id === "deny") {
+    body = `<div class="hariai-targets">${me.clues.map((clue, index) => {
+      const weakness = index === state.weaknessIndex;
+      const revealed = runtime.revealedBluffs.includes(index);
+      return `<label class="hariai-target-option ${weakness ? "is-weakness" : ""}"><input type="radio" name="hariaiAnswerCandidate" value="${index}" ${drafts.answerCandidate === index ? "checked" : ""} ${weakness || revealed ? "disabled" : ""} />
+        <span><strong>${escapeHtml(clue)}</strong><small>${weakness ? "本命は否定できません" : revealed ? "公開済み" : "ブラフとして公開する"}</small></span></label>`;
+    }).join("")}</div>`;
+  } else {
+    body = `<p class="hariai-preview">「${escapeHtml(hariaiAckLine(right, me, opponent))}」</p>`;
+  }
+  return `<div class="hariai-console-act"><div class="hariai-console-head"><strong>${right.kind === "question" ? "質問されました" : "指示されました"}</strong></div>
+    <p class="hariai-prompt">${escapeHtml(hariaiRightPrompt(right, state.uid))}${flavor}</p>${body}
+    <button class="button button-primary hariai-submit" type="button" data-hariai-answer ${state.battleBusy ? "disabled" : ""}>${right.kind === "question" ? "答える" : "従う"}</button></div>`;
+}
+
+function renderHariaiFinishConsole(pending) {
+  const opponent = getOpponent();
+  const hand = handCards();
+  const selected = state.drafts.finishIds.filter((id) => hand.some((item) => item.id === id)).slice(0, pending.finishMax);
+  const weakness = state.replay.players[opponent.uid]?.weaknessRevealed;
+  const placeholder = `ほら、${Number.isInteger(weakness) ? opponent.clues[weakness] : "これ"}…ばれてるよ♡`;
+  return `<div class="hariai-console-act"><div class="hariai-console-head"><strong>看破成功！ 仕留めの手札を選ぶ</strong>
+      <small>最大${pending.finishMax}枚。1枚につき理性 −${HARIAI_FINISH_DAMAGE}（点数はありません）</small></div>
+    <div class="hariai-hand">${hand.map((item) => {
+      const order = selected.indexOf(item.id);
+      return `<button type="button" class="hariai-hand-card ${order >= 0 ? "is-selected" : ""}" data-hariai-finish-card="${item.id}" aria-pressed="${order >= 0}"><img src="${item.url}" alt="手札の画像" />${order >= 0 ? `<span class="hariai-hand-order">${order + 1}</span>` : ""}</button>`;
+    }).join("")}</div>
+    ${selected.map((_, index) => `<label class="field-label">${index + 1}枚目の言葉（必須）<input class="text-input" data-hariai-finish-caption="${index}" maxlength="${HARIAI_CAPTION_MAX}" value="${escapeHtml(state.drafts.finishCaptions[index] || "")}" autocomplete="off" placeholder="${escapeHtml(placeholder)}" /></label>`).join("")}
+    <div class="hariai-actions"><button class="button button-ghost" type="button" data-hariai-finish-skip ${state.battleBusy ? "disabled" : ""}>仕留めずに続ける</button>
+      <button class="button button-danger" type="button" data-hariai-finish-submit ${state.battleBusy || !selected.length ? "disabled" : ""}>${selected.length}枚で仕留める</button></div></div>`;
+}
+
+function renderHariaiReadingMemo() {
+  const opponent = getOpponent();
+  const memo = hariaiReadingMemo(state.replay, state.uid);
+  return `<section class="hariai-memo"><h2>読みメモ</h2><p>${escapeHtml(opponent.name)}（${escapeHtml(personaLabel(opponent))}）の弱点候補</p>
+    ${memo.map((entry) => `<article class="${entry.weakness ? "is-weakness" : entry.bluff ? "is-bluff" : ""}"><strong>${escapeHtml(opponent.clues[entry.index])}</strong>
+      <span>${entry.weakness ? "本命（看破済み）" : entry.bluff ? "ブラフ確定" : entry.scores.length ? `狙った${entry.scores.length}回・平均${entry.average}点` : "まだ狙っていない"}</span>
+      ${entry.scores.length ? `<small>${entry.scores.map((score) => `#${score.slot}：${score.score}点`).join("　")}</small>` : ""}
+      ${entry.answers.length ? `<small>「どっち？」で${entry.answers.length}回選ばれた</small>` : ""}</article>`).join("")}</section>`;
+}
+
+function renderHariaiSelfCard() {
+  const me = getLocalPlayer();
+  const opponent = getOpponent();
+  const runtime = state.replay?.players?.[state.uid];
+  const faces = hariaiBluffFaces(state.replay, { [state.uid]: state.weaknessIndex })[state.uid] || [];
+  return `<section class="hariai-self"><h2>あなたの秘密</h2><p>本命：<b>${escapeHtml(me.clues[state.weaknessIndex] || "")}</b></p>
+    <p>強がり：<b>${faces.length}</b>回<small>本命を狙われて80点未満で返した回数。看破されると、この数だけ仕留めが増えます。</small></p>
+    ${runtime?.revealedBluffs?.length ? `<p>公開済みのブラフ：${runtime.revealedBluffs.map((index) => escapeHtml(me.clues[index])).join("、")}</p>` : ""}
+    ${runtime?.honorific ? `<p>呼び方の指示：${escapeHtml(opponent.name)}を「${escapeHtml(hariaiHonorificName(runtime.honorific, opponent.name))}」と呼ぶ</p>` : ""}</section>`;
+}
+
+function renderHariaiRuleCard() {
+  return `<details class="hariai-rules"><summary>ルール早見表</summary><ul>
+    <li>1手＝画像＋言葉＋狙い。言葉のない手は出せません</li>
+    <li>点数は「今の自分に刺さった度合い」の自己申告（0〜100）</li>
+    <li>80未満：手番交代／80〜84：質問／85〜89：指示／90以上：質問か指示＋連投</li>
+    <li>ダメージは点数−70。連投は2手目から+5ずつ（最大+15）</li>
+    <li>看破は1試合1回。当たり：相手 −25＋仕留め（強がり数＋1枚、最大3枚）／外れ：自分 −20</li>
+    <li>理性が0で陥落。両者の手札が尽きたら理性の多い方の勝ち</li></ul></details>`;
+}
+
+function hariaiOutcomeReasonLabel(outcome) {
+  if (!outcome) return "";
+  if (outcome.reason === "ko") return "陥落";
+  if (outcome.reason === "surrender") return "降参";
+  return outcome.draw ? "引き分け" : "手札切れの判定";
+}
+
+function hariaiPenaltyLabel(id) {
+  return HARIAI_PENALTIES.find((penalty) => penalty.id === id)?.label || "罰";
+}
+
+function hariaiPenaltyLine(penalty, winner, loser) {
+  if (penalty.kind === "call") return `これからは「${hariaiHonorificName(penalty.honorific, winner.name)}」って呼びます…♡`;
+  if (penalty.kind === "tribute") return "お貢ぎ、受け取ってください…♡";
+  return personaLine(loser, "declare");
+}
+
+function renderHariaiPenaltySection(outcome) {
+  if (outcome.winnerIndex < 0) {
+    return '<section class="hariai-penalty"><span class="eyebrow">PENALTY</span><h2>罰</h2><p>引き分けのため、罰はありません。</p></section>';
+  }
+  const winner = state.players[outcome.winnerIndex];
+  const loser = state.players[1 - outcome.winnerIndex];
+  const options = hariaiPenaltyOptions(state.players[0].penalties, state.players[1].penalties);
+  const penalty = state.roomData?.penalty;
+  const done = state.roomData?.penaltyDone?.[loser.uid];
+  const iWon = winner.uid === state.uid;
+  let body = "";
+  if (!penalty) {
+    if (iWon) {
+      const kind = options.includes(state.drafts.penaltyKind) ? state.drafts.penaltyKind : "";
+      body = `<p>この試合で合意された罰から、ひとつ選んでください。</p>
+        <div class="hariai-right-list">${options.map((id) => `<label class="hariai-right-option"><input type="radio" name="hariaiPenalty" value="${id}" ${kind === id ? "checked" : ""} />
+          <span><strong>${escapeHtml(hariaiPenaltyLabel(id))}</strong><small>${escapeHtml(HARIAI_PENALTIES.find((item) => item.id === id)?.note || "")}</small></span></label>`).join("")}</div>
+        ${kind === "call" ? `<label class="field-label">呼ばせ方<select class="text-input" id="hariaiPenaltyHonorific">${HARIAI_HONORIFICS.map((honorific) => `<option value="${honorific.id}" ${state.drafts.penaltyHonorific === honorific.id ? "selected" : ""}>${escapeHtml(hariaiHonorificName(honorific.id, winner.name))}</option>`).join("")}</select></label>` : ""}
+        <button class="button button-primary" type="button" data-hariai-penalty-submit ${kind && !state.battleBusy ? "" : "disabled"}>この罰にする</button>`;
+    } else {
+      body = `<p>${escapeHtml(winner.name)}が罰を選んでいます…（合意済み：${options.map((id) => escapeHtml(hariaiPenaltyLabel(id))).join("／")}）</p>`;
+    }
+  } else if (done) {
+    body = `<p class="hariai-penalty-done"><b>${escapeHtml(loser.name)}</b>「${escapeHtml(hariaiPenaltyLine(penalty, winner, loser))}」</p>`;
+  } else if (iWon) {
+    body = `<p>罰「${escapeHtml(hariaiPenaltyLabel(penalty.kind))}」を選びました。${escapeHtml(loser.name)}の実行を待っています…</p>`;
+  } else if (penalty.kind === "tribute") {
+    body = `<p>品評会で、${escapeHtml(winner.name)}の本命「${escapeHtml(winner.clues[winner.weaknessIndex] || "")}」に向けた画像1枚を送るとお貢ぎ完了です。品評会が開かれない場合は見送りになります。</p>`;
+  } else {
+    body = `<p class="hariai-preview">「${escapeHtml(hariaiPenaltyLine(penalty, winner, loser))}」</p>
+      <button class="button button-primary" type="button" data-hariai-penalty-done ${state.battleBusy ? "disabled" : ""}>罰を実行する</button>`;
+  }
+  return `<section class="hariai-penalty"><span class="eyebrow">PENALTY</span><h2>罰（合意済みの着地）</h2>${body}<small>罰は演出だけです。RATE・Pay・実績には影響せず、現実の行動や外部への投稿は求めません。</small></section>`;
+}
+
+function renderHariaiReviewPenaltyBanner() {
+  const penalty = state.roomData?.penalty;
+  const outcome = determineOutcome();
+  if (!penalty || outcome.winnerIndex < 0) return "";
+  const winner = state.players[outcome.winnerIndex];
+  const loser = state.players[1 - outcome.winnerIndex];
+  const done = state.roomData?.penaltyDone?.[loser.uid];
+  const detail = penalty.kind === "tribute"
+    ? (done ? "お貢ぎは届きました。" : `${loser.name}が本命「${winner.clues[winner.weaknessIndex] || ""}」に向けた画像を1枚送るとお貢ぎ完了です。`)
+    : hariaiPenaltyLine(penalty, winner, loser);
+  return `<div class="strategy-review-notice hariai-review-penalty"><span>罰：${escapeHtml(hariaiPenaltyLabel(penalty.kind))}</span><p>${escapeHtml(detail)}</p></div>`;
+}
+
+// 品評会中は画面全体を描き直さないため、罰の選択・実行はバナーだけ差し替える。
+function refreshHariaiReviewPenaltyBanner() {
+  if (state.screen !== "review") return;
+  const html = renderHariaiReviewPenaltyBanner();
+  const current = app.querySelector(".hariai-review-penalty");
+  if (current) {
+    current.outerHTML = html;
+    return;
+  }
+  if (html) app.querySelector(".strategy-review-leave")?.insertAdjacentHTML("beforebegin", html);
+}
+
+function bindHariaiBattleEvents() {
+  const on = (selector, type, handler) => app.querySelectorAll(selector).forEach((element) => element.addEventListener(type, handler));
+  const run = (action) => () => action().catch(handleRecoverableError);
+  on("[data-hariai-tab]", "click", (event) => { state.drafts.consoleTab = event.currentTarget.dataset.hariaiTab; render(); });
+  on("[data-hariai-card]", "click", (event) => { state.drafts.cardId = event.currentTarget.dataset.hariaiCard; render(); });
+  on('input[name="hariaiTarget"]', "change", (event) => { state.drafts.target = Number(event.currentTarget.value); });
+  on("#hariaiCaption", "input", (event) => {
+    state.drafts.caption = event.currentTarget.value;
+    const counter = document.querySelector("#hariaiCaptionCount");
+    if (counter) counter.textContent = String(event.currentTarget.value.length);
+  });
+  on("[data-hariai-heart]", "click", (event) => {
+    const input = document.getElementById(event.currentTarget.dataset.hariaiHeart);
+    if (!input) return;
+    input.value = `${input.value}♡`.slice(0, Number(input.maxLength) > 0 ? Number(input.maxLength) : HARIAI_CAPTION_MAX);
+    input.dispatchEvent(new Event("input"));
+    input.focus();
+  });
+  on("[data-hariai-post]", "click", run(submitHariaiPost));
+  on('input[name="hariaiBreakGuess"]', "change", (event) => { state.drafts.breakGuess = Number(event.currentTarget.value); render(); });
+  on("[data-hariai-break]", "click", run(submitHariaiBreak));
+  on("[data-hariai-pass]", "click", run(submitHariaiPass));
+  on("[data-hariai-surrender]", "click", run(submitHariaiSurrender));
+  on("[data-hariai-open]", "click", (event) => openHariaiMedia(event.currentTarget.dataset.hariaiOpen).catch(handleRecoverableError));
+  on("#hariaiScoreRange", "input", (event) => setHariaiScoreDraft(Number(event.currentTarget.value), false));
+  on("#hariaiScoreRange", "change", (event) => setHariaiScoreDraft(Number(event.currentTarget.value), true));
+  on("#hariaiScoreNumber", "change", (event) => setHariaiScoreDraft(Number(event.currentTarget.value), true));
+  on("[data-hariai-score]", "click", (event) => setHariaiScoreDraft(Number(event.currentTarget.dataset.hariaiScore), true));
+  on("#hariaiReply", "input", (event) => { state.drafts.reply = event.currentTarget.value; });
+  on("[data-hariai-suggest]", "click", (event) => {
+    state.drafts.reply = String(event.currentTarget.dataset.hariaiSuggest || "").slice(0, HARIAI_REPLY_MAX);
+    const input = document.querySelector("#hariaiReply");
+    if (input) input.value = state.drafts.reply;
+  });
+  on("#hariaiScoreSurrender", "change", (event) => { state.drafts.surrender = event.currentTarget.checked; });
+  on("[data-hariai-score-submit]", "click", run(submitHariaiScore));
+  on('input[name="hariaiRight"]', "change", (event) => {
+    const [kind, id] = event.currentTarget.value.split(":");
+    state.drafts.rightKind = kind;
+    state.drafts.rightId = id;
+    if (id === "which" && !Number.isInteger(state.drafts.rightA)) { state.drafts.rightA = 0; state.drafts.rightB = 1; }
+    if (id === "call" && !state.drafts.rightParam) state.drafts.rightParam = HARIAI_HONORIFICS[0].id;
+    render();
+  });
+  on("#hariaiWhichA", "change", (event) => { state.drafts.rightA = Number(event.currentTarget.value); render(); });
+  on("#hariaiWhichB", "change", (event) => { state.drafts.rightB = Number(event.currentTarget.value); render(); });
+  on("#hariaiHonorific", "change", (event) => { state.drafts.rightParam = event.currentTarget.value; });
+  on("#hariaiFlavor", "input", (event) => { state.drafts.flavor = event.currentTarget.value; });
+  on("[data-hariai-right-skip]", "click", run(() => submitHariaiRight(true)));
+  on("[data-hariai-right-submit]", "click", run(() => submitHariaiRight(false)));
+  on("#hariaiAnswerText", "input", (event) => {
+    state.drafts.answerText = event.currentTarget.value;
+    const counter = document.querySelector("#hariaiAnswerCount");
+    if (counter) counter.textContent = String(event.currentTarget.value.length);
+  });
+  on('input[name="hariaiAnswerChoice"]', "change", (event) => { state.drafts.answerChoice = Number(event.currentTarget.value); });
+  on("#hariaiAnswerValue", "input", (event) => {
+    const value = Number(event.currentTarget.value);
+    state.drafts.answerValue = event.currentTarget.value !== "" && Number.isInteger(value) ? value : null;
+  });
+  on('input[name="hariaiAnswerCandidate"]', "change", (event) => { state.drafts.answerCandidate = Number(event.currentTarget.value); });
+  on("[data-hariai-answer]", "click", run(submitHariaiAnswer));
+  on("[data-hariai-finish-card]", "click", (event) => toggleHariaiFinishCard(event.currentTarget.dataset.hariaiFinishCard));
+  on("[data-hariai-finish-caption]", "input", (event) => {
+    state.drafts.finishCaptions[Number(event.currentTarget.dataset.hariaiFinishCaption)] = event.currentTarget.value;
+  });
+  on("[data-hariai-finish-skip]", "click", run(() => submitHariaiFinish(true)));
+  on("[data-hariai-finish-submit]", "click", run(() => submitHariaiFinish(false)));
+  on("[data-hariai-play-finish]", "click", (event) => playHariaiFinish(Number(event.currentTarget.dataset.hariaiPlayFinish)).catch(handleRecoverableError));
+  on('input[name="hariaiPenalty"]', "change", (event) => { state.drafts.penaltyKind = event.currentTarget.value; render(); });
+  on("#hariaiPenaltyHonorific", "change", (event) => { state.drafts.penaltyHonorific = event.currentTarget.value; });
+  on("[data-hariai-penalty-submit]", "click", run(submitHariaiPenalty));
+  on("[data-hariai-penalty-done]", "click", run(submitHariaiPenaltyDone));
+}
+
+function setHariaiScoreDraft(value, rerender) {
+  if (!Number.isFinite(value)) return;
+  const score = Math.max(HARIAI_SCORE_MIN, Math.min(HARIAI_SCORE_MAX, Math.round(value)));
+  state.drafts.score = score;
+  if (rerender) {
+    render();
+    return;
+  }
+  const number = document.querySelector("#hariaiScoreNumber");
+  if (number) number.value = String(score);
+  const pending = state.replay?.pending;
+  const slot = state.replay?.slots?.find((item) => item.slot === pending?.slot);
+  const preview = document.querySelector("#hariaiScorePreview");
+  if (preview) preview.innerHTML = renderHariaiScorePreview(score, slot, state.replay?.players?.[state.uid]);
+  document.querySelector("[data-hariai-score-submit]")?.removeAttribute("disabled");
+}
+
+function toggleHariaiFinishCard(cardId) {
+  const pending = state.replay?.pending;
+  if (pending?.stage !== "finish") return;
+  const selected = state.drafts.finishIds.filter((id) => findHandCard(id));
+  const index = selected.indexOf(cardId);
+  if (index >= 0) selected.splice(index, 1);
+  else if (selected.length < pending.finishMax) selected.push(cardId);
+  else showToast(`仕留めは最大${pending.finishMax}枚です。`);
+  state.drafts.finishIds = selected;
+  render();
+}
+
+async function openHariaiMedia(key) {
+  state.openedMediaKeys.add(key);
+  const item = state.remoteImages.get(key);
+  render();
+  if (item?.audioUrl) await playAudioUrl(item.audioUrl, 0, Number(item.audioDuration || 0));
+}
+
+async function playHariaiFinish(slotNumber) {
+  const slot = state.replay?.slots?.find((item) => item.slot === slotNumber);
+  if (!slot?.finishCount || state.finishPlaybackActive) return;
+  state.finishPlaybackActive = true;
+  try {
+    for (let index = 0; index < slot.finishCount; index += 1) {
+      const figure = document.querySelector(`[data-hariai-finish-figure="${slotNumber}:${index}"]`);
+      figure?.classList.add("is-playing");
+      const item = hariaiSlotItem(slot, index);
+      if (item?.audioUrl) {
+        await playAudioUrl(item.audioUrl, Number(item.audioCueStart || 0), Math.min(AUDIO_HIGHLIGHT_SECONDS, Number(item.audioDuration || AUDIO_HIGHLIGHT_SECONDS)));
+      } else {
+        await new Promise((resolve) => window.setTimeout(resolve, 420));
+      }
+      figure?.classList.remove("is-playing");
+    }
+  } finally {
+    state.finishPlaybackActive = false;
+  }
+}
+
+function hariaiPendingFor(stage) {
+  const pending = state.replay?.pending;
+  return pending?.stage === stage && pending.actor === state.uid && !state.replay?.outcome ? pending : null;
+}
+
+async function writeHariai(path, value) {
+  if (state.battleBusy || !state.roomId) return false;
+  const targetState = state;
+  const roomId = state.roomId;
+  targetState.battleBusy = true;
+  render();
+  try {
+    await set(ref(database, `online/strategyRooms/${roomId}/${path}`), value);
+    if (state === targetState) targetState.drafts = { ...emptyHariaiDrafts(), penaltyKind: targetState.drafts.penaltyKind };
+    return true;
+  } catch (error) {
+    if (state === targetState) showToast(error?.message || "送信できませんでした。通信状態を確認してください。");
+    return false;
+  } finally {
+    if (state === targetState) {
+      targetState.battleBusy = false;
+      render();
+    }
+  }
+}
+
+function hariaiText(value, maxLength, withHeart) {
+  const text = normalizeHariaiText(value, maxLength);
+  if (!text || !withHeart) return text;
+  return ensureHariaiHeart(text.length >= maxLength ? text.slice(0, maxLength - 1) : text);
+}
+
+async function submitHariaiPost() {
+  const pending = hariaiPendingFor("act");
+  if (!pending?.canPost) return;
+  const item = findHandCard(state.drafts.cardId);
+  const target = state.drafts.target;
+  const me = state.replay.players[state.uid];
+  const caption = hariaiText(state.drafts.caption, HARIAI_CAPTION_MAX, me.heartsRemaining > 0);
+  if (!item) return showToast("貼る画像を手札から1枚選んでください。");
+  if (!Number.isInteger(target)) return showToast("狙う弱点候補を選んでください。");
+  if (!caption) return showToast("画像に乗せる言葉を書いてください。言葉のない手は出せません。");
+  if (!state.channelReady) return showToast("P2P接続の準備ができてから貼ってください。");
+  const slot = pending.slot;
+  item.used = true;
+  state.localMoveCards.set(slot, item);
+  const written = await writeHariai(`moves/${slot}/post`, { by: state.uid, target, caption, lockedAt: serverTimestamp() });
+  if (!written) {
+    item.used = false;
+    state.localMoveCards.delete(slot);
+    render();
+    return;
+  }
+  window.HariaiAudio?.playReveal?.();
+  await ensureMoveImageSent(slot);
+}
+
+async function submitHariaiBreak() {
+  const pending = hariaiPendingFor("act");
+  const guess = state.drafts.breakGuess;
+  if (!pending?.canBreak || !Number.isInteger(guess)) return;
+  if (!window.confirm(`「${candidateText(state.opponentUid, guess)}」で看破しますか？ 看破は1試合1回です。`)) return;
+  await writeHariai(`moves/${pending.slot}/break`, { by: state.uid, guess, lockedAt: serverTimestamp() });
+}
+
+async function submitHariaiPass() {
+  const pending = hariaiPendingFor("act");
+  if (!pending?.canPass) return;
+  await writeHariai(`moves/${pending.slot}/pass`, { by: state.uid, lockedAt: serverTimestamp() });
+}
+
+async function submitHariaiSurrender() {
+  const pending = hariaiPendingFor("act");
+  if (!pending) return;
+  if (!window.confirm("参りましたと言って、この対戦を降参しますか？ 降参は負けとして記録されます。")) return;
+  await writeHariai(`moves/${pending.slot}/surrender`, { by: state.uid, lockedAt: serverTimestamp() });
+}
+
+async function submitHariaiScore() {
+  const pending = hariaiPendingFor("score");
+  const value = state.drafts.score;
+  if (!pending || !Number.isInteger(value)) return;
+  if (!state.openedMediaKeys.has(imageKey("move", pending.slot))) return showToast("画像と言葉を開いてから採点してください。");
+  const me = state.replay.players[state.uid];
+  const reply = hariaiText(state.drafts.reply, HARIAI_REPLY_MAX, me.heartsRemaining > 0);
+  if (pending.reasonRequired && normalizeHariaiText(state.drafts.reply, HARIAI_REPLY_MAX).length < HARIAI_REASON_MIN_LENGTH) {
+    return showToast(`「理由を言わせる」指示中です。ひとことを${HARIAI_REASON_MIN_LENGTH}文字以上書いてください。`);
+  }
+  const surrender = state.drafts.surrender === true;
+  if (surrender && !window.confirm(`${value}点を付けて「参りました」と降参しますか？`)) return;
+  const slot = state.replay.slots.find((item) => item.slot === pending.slot);
+  const damage = hariaiPostDamage(value, slot?.combo || 1);
+  if (!surrender && damage >= me.reason && !window.confirm(`${value}点を付けると、あなたの理性が0になり陥落します。よろしいですか？`)) return;
+  const payload = { by: state.uid, value, lockedAt: serverTimestamp() };
+  if (reply) payload.reply = reply;
+  if (surrender) payload.surrender = true;
+  await writeHariai(`moves/${pending.slot}/score`, payload);
+}
+
+async function submitHariaiRight(skip) {
+  const pending = hariaiPendingFor("right");
+  if (!pending) return;
+  const drafts = state.drafts;
+  if (skip) {
+    await writeHariai(`moves/${pending.slot}/right`, { by: state.uid, kind: "none", lockedAt: serverTimestamp() });
+    return;
+  }
+  const kind = drafts.rightKind;
+  const id = drafts.rightId;
+  if ((kind === "question" && !pending.options.question) || (kind === "instruction" && !pending.options.instruction) || !id) {
+    return showToast("使う質問か指示を選んでください。");
+  }
+  const payload = { by: state.uid, kind, id, lockedAt: serverTimestamp() };
+  if (id === "which") {
+    if (!Number.isInteger(drafts.rightA) || !Number.isInteger(drafts.rightB) || drafts.rightA === drafts.rightB) return showToast("違う候補を2つ選んでください。");
+    payload.a = drafts.rightA;
+    payload.b = drafts.rightB;
+  }
+  if (id === "call") payload.param = drafts.rightParam || HARIAI_HONORIFICS[0].id;
+  if (id === "deny" && !hariaiDenyAvailable(state.replay.players[state.opponentUid])) return showToast("候補の否定は、この状況では使えません。");
+  const flavor = normalizeHariaiText(drafts.flavor, HARIAI_FLAVOR_MAX);
+  if (flavor) payload.flavor = flavor;
+  await writeHariai(`moves/${pending.slot}/right`, payload);
+}
+
+async function submitHariaiAnswer() {
+  const pending = hariaiPendingFor("answer");
+  if (!pending) return;
+  const right = pending.right;
+  const drafts = state.drafts;
+  const me = state.replay.players[state.uid];
+  const payload = { by: state.uid, lockedAt: serverTimestamp() };
+  if (right.kind === "question" && (right.id === "spot" || right.id === "next")) {
+    const text = hariaiText(drafts.answerText, HARIAI_ANSWER_MAX, me.heartsRemaining > 0);
+    if (!text) return showToast("答えを書いてください。");
+    payload.text = text;
+  } else if (right.id === "which") {
+    if (drafts.answerChoice !== right.a && drafts.answerChoice !== right.b) return showToast("どちらかを選んでください。");
+    payload.choice = drafts.answerChoice;
+  } else if (right.id === "honest") {
+    if (!Number.isInteger(drafts.answerValue) || drafts.answerValue < 0 || drafts.answerValue > 100) return showToast("0〜100の点数で答えてください。");
+    payload.value = drafts.answerValue;
+  } else if (right.id === "deny") {
+    const candidate = drafts.answerCandidate;
+    if (!Number.isInteger(candidate) || candidate === state.weaknessIndex || me.revealedBluffs.includes(candidate)) {
+      return showToast("否定できるのはブラフの候補だけです。");
+    }
+    payload.candidate = candidate;
+    payload.salt = state.weaknessSalts[candidate];
+  } else {
+    payload.ack = true;
+  }
+  await writeHariai(`moves/${pending.slot}/answer`, payload);
+}
+
+async function submitHariaiFinish(skip) {
+  const pending = hariaiPendingFor("finish");
+  if (!pending) return;
+  if (skip) {
+    await writeHariai(`moves/${pending.slot}/finish`, { by: state.uid, count: 0, lockedAt: serverTimestamp() });
+    return;
+  }
+  const cards = state.drafts.finishIds.map((id) => findHandCard(id)).filter(Boolean).slice(0, pending.finishMax);
+  if (!cards.length) return showToast("仕留めに使う手札を選んでください。");
+  const me = state.replay.players[state.uid];
+  let hearts = Number(me.heartsRemaining || 0);
+  const captions = {};
+  for (let index = 0; index < cards.length; index += 1) {
+    const caption = hariaiText(state.drafts.finishCaptions[index], HARIAI_CAPTION_MAX, hearts > 0);
+    if (!caption) return showToast(`${index + 1}枚目の言葉を書いてください。`);
+    if (hearts > 0) hearts -= 1;
+    captions[index] = caption;
+  }
+  if (!state.channelReady) return showToast("P2P接続の準備ができてから仕留めてください。");
+  cards.forEach((item, index) => {
+    item.used = true;
+    state.localFinishCards.set(`${pending.slot}:${index}`, item);
+  });
+  const written = await writeHariai(`moves/${pending.slot}/finish`, { by: state.uid, count: cards.length, captions, lockedAt: serverTimestamp() });
+  if (!written) {
+    cards.forEach((item, index) => {
+      item.used = false;
+      state.localFinishCards.delete(`${pending.slot}:${index}`);
+    });
+    render();
+    return;
+  }
+  await ensureFinishImagesSent(pending.slot, cards.length);
+}
+
+async function submitHariaiPenalty() {
+  const outcome = determineOutcome();
+  const kind = state.drafts.penaltyKind;
+  if (outcome.winnerIndex !== state.playerIndex || state.roomData?.penalty) return;
+  if (!hariaiPenaltyOptions(state.players[0].penalties, state.players[1].penalties).includes(kind)) return showToast("合意済みの罰から選んでください。");
+  const payload = { by: state.uid, kind, at: serverTimestamp() };
+  if (kind === "call") payload.honorific = state.drafts.penaltyHonorific || HARIAI_HONORIFICS[0].id;
+  await writeHariai("penalty", payload);
+}
+
+async function submitHariaiPenaltyDone() {
+  const outcome = determineOutcome();
+  const penalty = state.roomData?.penalty;
+  if (!penalty || outcome.winnerIndex < 0 || outcome.winnerIndex === state.playerIndex || state.roomData?.penaltyDone?.[state.uid]) return;
+  await writeHariai(`penaltyDone/${state.uid}`, { kind: penalty.kind, at: serverTimestamp() });
+}
+
+async function completeHariaiTribute() {
+  const outcome = determineOutcome();
+  const penalty = state.roomData?.penalty;
+  if (penalty?.kind !== "tribute" || outcome.winnerIndex < 0 || outcome.winnerIndex === state.playerIndex || state.roomData?.penaltyDone?.[state.uid]) return;
+  await set(ref(database, `online/strategyRooms/${state.roomId}/penaltyDone/${state.uid}`), { kind: "tribute", at: serverTimestamp() })
+    .then(() => showToast("お貢ぎが届きました。罰を実行しました。"))
+    .catch(() => showToast("お貢ぎの記録を送信できませんでした。"));
+}
+
+async function ensureFirstAttacker() {
+  if (state.firstUid) return state.firstUid;
+  const roomId = state.roomId;
+  const digest = await sha256Hex(`hariai-first:${roomId}`);
+  if (state.roomId !== roomId) return "";
+  const [host, guest] = state.players;
+  state.firstUid = hariaiFirstAttacker({
+    hostUid: host.uid,
+    guestUid: guest.uid,
+    hostRating: host.rating,
+    guestRating: guest.rating,
+    roomHashFirstByte: Number.parseInt(digest.slice(0, 2), 16),
+  });
+  return state.firstUid;
+}
+
+async function verifyHariaiPartialReveals(replay) {
+  for (const check of hariaiPartialReveals(replay)) {
+    const key = `${check.slot}:${check.uid}:${check.index}`;
+    if (state.verifiedRevealKeys.has(key)) continue;
+    const expected = playerByUid(check.uid)?.weaknessCommits?.[check.index];
+    const digest = await sha256Hex(hariaiCandidateCommitMaterial(state.roomId, check.uid, check.index, check.bit === 1, check.salt));
+    if (!expected || digest !== expected) return false;
+    state.verifiedRevealKeys.add(key);
+  }
+  return true;
+}
+
+function announceHariaiSlots(replay, { silent = false } = {}) {
+  for (const slot of replay.slots) {
+    const resolvedKey = `${slot.slot}:${slot.kind}:${slot.score ?? ""}:${slot.breakResult ?? ""}:${slot.finishDamage ?? ""}`;
+    if (state.announcedSlots.has(resolvedKey)) continue;
+    state.announcedSlots.add(resolvedKey);
+    if (silent) continue;
+    if (slot.kind === "post" && Number.isInteger(slot.score)) {
+      if (slot.score >= HARIAI_BAND_COMBO) {
+        window.HariaiAudio?.playResult?.(slot.score >= 100 ? 10 : 9);
+        triggerCriticalFx(slot.score >= 100 ? "PERFECT!!" : slot.combo > 1 ? `${slot.combo}連投！` : "連投！");
+      } else if (slot.score >= HARIAI_BAND_QUESTION) {
+        window.HariaiAudio?.playResult?.(8);
+      } else {
+        window.HariaiAudio?.playFlip?.();
+      }
+    } else if (slot.kind === "break" && slot.breakResult === "hit" && !Number.isInteger(slot.finishDamage)) {
+      window.HariaiAudio?.playFinish?.();
+      triggerCriticalFx("看破！");
+    } else if (slot.kind === "break" && slot.breakResult === "miss") {
+      window.HariaiAudio?.playDamage?.();
+    } else if (slot.kind === "break" && Number.isInteger(slot.finishDamage) && slot.finishCount) {
+      triggerCriticalFx(`仕留め×${slot.finishCount}`);
+    }
+  }
+}
+
+async function ensureMoveImageSent(slot) {
+  const item = state.localMoveCards.get(slot);
+  if (!item) throw new Error("貼った画像を手札から確認できませんでした。この対戦はノーコンテストになる可能性があります。");
+  await sendImage(item, "move", slot);
+}
+
+async function ensureFinishImagesSent(slot, count) {
+  for (let index = 0; index < count; index += 1) {
+    const item = state.localFinishCards.get(`${slot}:${index}`);
+    if (!item) throw new Error("仕留めの画像を手札から確認できませんでした。");
+    await sendImage(item, "finish", slot, index);
+  }
+}
+
+async function publishBreakReveal(slotNumber) {
+  const slot = state.replay?.slots?.find((item) => item.slot === slotNumber);
+  const key = `break:${slotNumber}`;
+  if (!slot || slot.kind !== "break" || state.publishedRevealKeys.has(key)) return;
+  const guess = slot.guess;
+  const salt = state.weaknessSalts[guess];
+  if (!/^[a-f0-9]{32}$/.test(String(salt || ""))) throw new Error("弱点の封印データを確認できませんでした。");
+  state.publishedRevealKeys.add(key);
+  try {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/moves/${slotNumber}/breakReveal`), {
+      by: state.uid,
+      index: guess,
+      bit: guess === state.weaknessIndex ? 1 : 0,
+      salt,
+      revealedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    state.publishedRevealKeys.delete(key);
+    throw error;
+  }
+}
+
+async function performHariaiAutomaticSteps(replay) {
+  const pending = replay.pending;
+  if (!pending) return;
+  if (pending.stage === "receive") {
+    if (pending.attacker === state.uid) await ensureMoveImageSent(pending.slot);
+    else if (pending.actor === state.uid) {
+      const item = state.remoteImages.get(imageKey("move", pending.slot));
+      if (item && !item.awaitingAudio) await acknowledgeStrategyMedia("move", pending.slot, 0);
+    }
+  } else if (pending.stage === "breakReveal" && pending.actor === state.uid) {
+    await publishBreakReveal(pending.slot);
+  } else if (pending.stage === "finishReceive") {
+    if (pending.attacker === state.uid) await ensureFinishImagesSent(pending.slot, pending.finishCount);
+    else if (pending.actor === state.uid) {
+      for (let index = 0; index < pending.finishCount; index += 1) {
+        const item = state.remoteImages.get(imageKey("finish", pending.slot, index));
+        if (item && !item.awaitingAudio) await acknowledgeStrategyMedia("finish", pending.slot, index);
+      }
+    }
+  }
+}
+
+async function reactToBattle() {
+  if (state.weaknessIntegrityFailed || state.screen !== "battle") return;
+  const targetState = state;
+  const roomId = state.roomId;
+  const firstUid = await ensureFirstAttacker();
+  if (!firstUid || !strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  const [host, guest] = state.players;
+  const replay = replayHariai({ hostUid: host.uid, guestUid: guest.uid, firstUid, moves: state.roomData?.moves || {} });
+  state.replay = replay;
+  if (!replay.ok) {
+    await failWeaknessIntegrityCheck(`対戦データの整合性を確認できませんでした（${replay.error}）。この対戦はノーコンテストです。`);
+    return;
+  }
+  if (!await verifyHariaiPartialReveals(replay)) {
+    await failWeaknessIntegrityCheck("弱点の封印と答え合わせが一致しませんでした。この対戦はノーコンテストです。");
+    return;
+  }
+  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
+  const firstAnnouncement = !state.battleAnnounced;
+  state.battleAnnounced = true;
+  announceHariaiSlots(replay, { silent: firstAnnouncement });
+  if (replay.outcome) {
+    triggerCriticalFx(replay.outcome.draw ? "DRAW" : replay.outcome.reason === "ko" ? "陥落" : replay.outcome.reason === "surrender" ? "参りました" : "手札切れ");
+    await finishMatch();
+    return;
+  }
+  renderBattleIfChanged();
+  await performHariaiAutomaticSteps(replay);
+}
+
+async function publishFinalWeaknessReveal() {
+  if (state.finalRevealPublishing || state.roomData?.weaknessReveals?.[state.uid]) return;
+  if (!Number.isInteger(state.weaknessIndex) || state.weaknessSalts.length !== 3) throw new Error("弱点の封印データを確認できませんでした。");
+  state.finalRevealPublishing = true;
+  try {
+    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`), {
+      weaknessIndex: state.weaknessIndex,
+      salts: { 0: state.weaknessSalts[0], 1: state.weaknessSalts[1], 2: state.weaknessSalts[2] },
+      revealedAt: serverTimestamp(),
+    });
+  } finally {
+    state.finalRevealPublishing = false;
+  }
+}
+
+async function verifyFinalWeaknessReveals(reveals) {
+  for (const player of state.players) {
+    const reveal = normalizeHariaiFinalReveal(reveals?.[player.uid]);
+    if (!reveal || player.weaknessCommits.length !== 3) return false;
+    for (let index = 0; index < 3; index += 1) {
+      const digest = await sha256Hex(hariaiCandidateCommitMaterial(state.roomId, player.uid, index, index === reveal.weaknessIndex, reveal.salts[index]));
+      if (digest !== player.weaknessCommits[index]) return false;
+    }
+    player.weaknessIndex = reveal.weaknessIndex;
+  }
+  return true;
 }
 
 function renderWithdrawn() {
@@ -1755,7 +2657,7 @@ function renderStrategyChatMessage(message, anonymous) {
   const localPlayer = message.authorUid === state.uid;
   const player = state.players.find((candidate) => candidate.uid === message.authorUid);
   const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
-  const phaseLabel = message.phase === "scout" ? "SCOUT" : message.phase === "review" ? "REVIEW" : `R${Math.max(1, Math.min(MAX_ROUNDS, Number(message.round) || 1))}`;
+  const phaseLabel = message.phase === "scout" ? "SCOUT" : message.phase === "review" ? "REVIEW" : `#${Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(message.round) || 1))}`;
   const showIdentityCosmetics = !anonymous && message.phase !== "scout";
   const cosmeticClasses = showIdentityCosmetics ? chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId) : "";
   const titleBadge = showIdentityCosmetics ? renderStrategyTitleBadge(message.titleId) : "";
@@ -1794,7 +2696,7 @@ function currentStrategyVideoPhase() {
 function renderStrategyVideoClip(clip) {
   const local = clip.ownerUid === state.uid;
   const player = local ? getLocalPlayer() : getOpponent();
-  const label = clip.phase === "review" ? "品評会" : `対戦 R${Math.max(1, Math.min(MAX_ROUNDS, Number(clip.round) || 1))}`;
+  const label = clip.phase === "review" ? "品評会" : `対戦 #${Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(clip.round) || 1))}`;
   return `<article class="strategy-video-clip ${local ? "is-local" : "is-opponent"}">
     <div><small>${escapeHtml(label)} / ${local ? "YOU" : "OPPONENT"}</small><strong>${escapeHtml(player?.name || "PLAYER")}</strong></div>
     <video controls controlslist="nodownload noplaybackrate" disablepictureinpicture playsinline preload="metadata" src="${escapeHtml(clip.url || "")}"></video>
@@ -1846,15 +2748,11 @@ function collectStrategyReviewBattleMedia() {
       name: ownerUid === state.uid ? getLocalPlayer()?.name : getOpponent()?.name,
     });
   };
-  for (let round = 1; round <= MAX_ROUNDS; round += 1) {
-    add(state.localBaseCards.get(round), state.uid, `R${round} メイン`);
-    add(state.remoteImages.get(imageKey("base", round)), state.opponentUid, `R${round} メイン`);
-    add(state.localActionCards.get(round), state.uid, `R${round} 追加`);
-    add(state.remoteImages.get(imageKey("action", round)), state.opponentUid, `R${round} 追加`);
-  }
-  state.localWeaknessChainCards.forEach((item, index) => add(item, state.uid, `弱点追撃 ${index + 1}`));
-  for (let index = 0; index < MAX_WEAKNESS_CHAIN; index += 1) {
-    add(state.remoteImages.get(imageKey("weaknessChain", index)), state.opponentUid, `弱点追撃 ${index + 1}`);
+  for (const slot of state.replay?.slots || []) {
+    if (slot.kind === "post") add(hariaiSlotItem(slot), slot.by, `#${slot.slot} ${Number.isInteger(slot.score) ? `${slot.score}点` : ""}`);
+    if (slot.kind === "break") {
+      for (let index = 0; index < Number(slot.finishCount || 0); index += 1) add(hariaiSlotItem(slot, index), slot.by, `#${slot.slot} 仕留め${index + 1}`);
+    }
   }
   return items;
 }
@@ -1953,7 +2851,10 @@ function renderStrategyChat() {
 
 function renderBattleHud() {
   if (state.players.length !== 2) return "";
-  return `<div class="round-topbar strategy-hud">${renderHudPlayer(0)}<div class="round-badge"><small>ROUND</small><strong>${state.round} / ${MAX_ROUNDS}</strong></div>${renderHudPlayer(1)}</div>
+  const replay = state.replay;
+  const pending = replay?.pending;
+  const turnLabel = replay?.outcome ? "決着" : pending ? (pending.actor === state.uid ? "あなたの番" : "相手の番") : "準備中";
+  return `<div class="round-topbar strategy-hud hariai-hud">${renderHudPlayer(0)}<div class="round-badge"><small>SLOT</small><strong>${Number(pending?.slot || replay?.slots?.length || 0)}</strong><span class="hariai-turn-label">${turnLabel}</span></div>${renderHudPlayer(1)}</div>
     <div class="online-room-strip"><span>STRATEGY ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ P2P接続待ち"}</span>
       <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>
       <button class="avatar-visibility-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button></div>`;
@@ -1961,24 +2862,16 @@ function renderBattleHud() {
 
 function renderHudPlayer(index) {
   const player = state.players[index];
-  const hpPercent = Math.max(0, Math.min(100, (player.hp / MAX_HP) * 100));
+  const runtime = state.replay?.players?.[player.uid];
+  const reason = runtime ? runtime.reason : HARIAI_REASON_MAX;
+  const reasonPercent = Math.max(0, Math.min(100, (reason / HARIAI_REASON_MAX) * 100));
+  const hand = runtime ? runtime.hand : MAIN_COUNT + RESERVE_COUNT;
+  const breakLabel = !runtime ? "未使用" : runtime.breakResult === "hit" ? "成功" : runtime.breakResult === "miss" ? "失敗" : runtime.breakPassed ? "見送り" : "未使用";
   const localPlayer = index === state.playerIndex;
   const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
   const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
-  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span></div>${localPlayer ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
-    <div class="hp-bar"><div class="hp-fill" style="--hp:${hpPercent}%"></div></div><span class="hp-value">HP ${player.hp} / ${MAX_HP} ・ ASK ${player.extraRequests} ・ PERMIT ${player.pursuitPermits}</span></div></div></div>`;
-}
-
-function renderBattleImage(item, name, label, concealed = false) {
-  const audio = item?.audioUrl ? `<div class="strategy-card-audio"><span>♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</span><button type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">もう一度聴く</button></div>` : '<div class="strategy-card-audio is-empty"><span>音声なし</span></div>';
-  return `<article class="strategy-battle-image ${concealed ? "is-concealed" : ""}"><div class="strategy-image-head"><span>${escapeHtml(label)}</span><b>${escapeHtml(name)}</b></div><div class="strategy-image-media"><img src="${item?.url || ""}" alt="${escapeHtml(name)}の対戦画像" />${concealed ? '<span class="strategy-media-lock">TAP TO REVEAL<br /><b>画像＋音声を開く</b></span>' : ""}</div>${concealed ? "" : audio}</article>`;
-}
-
-function renderScoreButtons() {
-  return Array.from({ length: 10 }, (_, index) => {
-    const score = index + 1;
-    return `<button class="score-button ${score >= 9 ? "critical-zone" : ""} ${state.selectedScore === score ? "selected" : ""}" type="button" data-strategy-score="${score}">${score}</button>`;
-  }).join("");
+  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span><span class="hariai-persona-chip">${escapeHtml(personaLabel(player))}</span></div>${localPlayer ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
+    <div class="hp-bar hariai-reason-bar"><div class="hp-fill" style="--hp:${reasonPercent}%"></div></div><span class="hp-value">理性 ${reason} / ${HARIAI_REASON_MAX} ・ 手札 ${hand} ・ 看破 ${breakLabel}</span></div></div></div>`;
 }
 
 function bindScreenEvents() {
@@ -2009,11 +2902,11 @@ function bindScreenEvents() {
       if (state.imagePreference) localStorage.setItem(PROFILE_IMAGE_PREFERENCE_KEY, state.imagePreference);
       updateStrategyCrownMatchmakingActions();
     }));
+    bindPersonaFields();
   }
   document.querySelectorAll("[data-strategy-avatar-visibility]").forEach((button) => button.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); }));
   bindStrategyChatEvents();
   document.querySelector("#strategyProfileForm")?.addEventListener("submit", saveProfile);
-  bindPursuitFields();
   document.querySelector("#strategyExpandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
   document.querySelector("#strategyCancelMatching")?.addEventListener("click", cancelMatching);
   document.querySelector("#strategyWithdraw")?.addEventListener("click", () => submitDecision("withdraw"));
@@ -2026,37 +2919,7 @@ function bindScreenEvents() {
   document.querySelectorAll("[data-strategy-play-audio]").forEach((button) => button.addEventListener("click", () => playAudioUrl(button.dataset.strategyPlayAudio, Number(button.dataset.audioStart || 0), Number(button.dataset.audioDuration || 0))));
   document.querySelector("#strategyLockDeck")?.addEventListener("click", lockDeck);
   document.querySelector("#strategyBattleStart")?.addEventListener("click", startBattle);
-  document.querySelectorAll("[data-base-card]").forEach((button) => button.addEventListener("click", () => lockBaseCard(button.dataset.baseCard)));
-  document.querySelector("#strategyOpenBaseMedia")?.addEventListener("click", () => openStrategyMedia("base"));
-  document.querySelector("#strategyBeginRating")?.addEventListener("click", () => { state.screen = "baseRating"; state.selectedScore = 0; state.selectedReaction = "normal"; render(); });
-  bindScoreButtons();
-  document.querySelectorAll('input[name="reaction"]').forEach((input) => input.addEventListener("change", () => { state.selectedReaction = input.value; }));
-  document.querySelector("#strategyLockRating")?.addEventListener("click", lockBaseRating);
-  document.querySelectorAll("[data-action-card]").forEach((button) => button.addEventListener("click", () => lockActionCard(button.dataset.actionCard)));
-  document.querySelector("#strategySkipPursuit")?.addEventListener("click", skipPursuit);
-  document.querySelector("#strategyOpenActionMedia")?.addEventListener("click", () => openStrategyMedia("action"));
-  document.querySelector("#strategyRateAction")?.addEventListener("click", () => { state.screen = "actionRating"; state.selectedScore = 0; render(); });
-  document.querySelector("#strategyLockActionRating")?.addEventListener("click", lockActionRating);
-  document.querySelector("#strategyNextRound")?.addEventListener("click", continueRound);
-  document.querySelector("#strategyDeclareWeakness")?.addEventListener("click", declareWeaknessGuess);
-  document.querySelectorAll('input[name="weaknessChoice"]').forEach((input) => input.addEventListener("change", () => {
-    state.selectedWeaknessChoice = input.value === "guess" ? "guess" : "pass";
-    if (state.selectedWeaknessChoice === "pass") state.selectedWeaknessGuess = null;
-    render();
-  }));
-  document.querySelectorAll('input[name="weaknessGuess"]').forEach((input) => input.addEventListener("change", () => {
-    state.selectedWeaknessGuess = Number(input.value);
-    document.querySelector("#strategyLockWeaknessGuess")?.removeAttribute("disabled");
-    document.querySelector("#strategyLockWeaknessChoice")?.removeAttribute("disabled");
-  }));
-  document.querySelector("#strategyWeaknessGuessForm")?.addEventListener("submit", lockWeaknessGuess);
-  document.querySelector("#strategyWeaknessChoiceForm")?.addEventListener("submit", lockWeaknessChoice);
-  document.querySelector("#strategyRetryWeaknessChoiceCommit")?.addEventListener("click", retryWeaknessChoiceCommit);
-  document.querySelectorAll("[data-weakness-chain-card]").forEach((button) => button.addEventListener("click", () => toggleWeaknessChainCard(button.dataset.weaknessChainCard)));
-  document.querySelector("#strategyLockWeaknessChain")?.addEventListener("click", lockWeaknessChain);
-  document.querySelector("#strategyWeaknessContinue")?.addEventListener("click", continueAfterWeaknessChain);
-  document.querySelector("#strategyPlayWeaknessChain")?.addEventListener("click", playWeaknessChainSequence);
-  document.querySelector("#strategyWeaknessSurrender")?.addEventListener("click", surrenderToWeaknessBreak);
+  if (["battle", "gameover"].includes(state.screen)) bindHariaiBattleEvents();
   document.querySelectorAll("[data-strategy-destroy]").forEach((button) => button.addEventListener("click", requestHome));
   if (state.screen === "gameover") {
     bindPostMatchTip(app, {
@@ -2116,7 +2979,7 @@ async function sendStrategyChat(value, stampId = "") {
     authorUid: state.uid,
     text,
     phase: isStrategyChatAnonymous() ? "scout" : state.screen === "review" ? "review" : "battle",
-    round: state.screen === "review" ? 0 : Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
+    round: state.screen === "review" ? 0 : Math.max(1, Math.min(HARIAI_MAX_SLOTS, currentHariaiSlot())),
     createdAt: serverTimestamp(),
   };
   if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-strategy-chat-stamp]"); }
@@ -2269,7 +3132,7 @@ async function beginStrategyVideoCapture() {
     const capture = {
       session,
       phase,
-      round: phase === "review" ? 0 : Math.max(1, Math.min(MAX_ROUNDS, Number(state.round) || 1)),
+      round: phase === "review" ? 0 : Math.max(1, Math.min(HARIAI_MAX_SLOTS, currentHariaiSlot())),
       clockTimer: null,
     };
     state.videoRecording = capture;
@@ -2771,6 +3634,7 @@ async function sendPendingStrategyReviewAsset() {
     state.pendingReviewAsset = null;
     state.reviewAssets.push(asset);
     state.reviewAssetSentCounts[asset.kind] += 1;
+    if (asset.kind === "image") completeHariaiTribute().catch(handleRecoverableError);
     showToast(asset.kind === "image" ? "追加画像を相手へ一時送信しました。" : "追加音声を相手へ一時送信しました。");
   } catch (error) {
     console.error(error);
@@ -2850,28 +3714,15 @@ function syncStrategyProfileDraft() {
   if (weakness) state.weaknessIndex = Number(weakness.value);
   const imagePreference = document.querySelector('input[name="strategyImagePreference"]:checked');
   if (imagePreference) state.imagePreference = normalizeImagePreference(imagePreference.value, "");
-  const choice = document.querySelector("#strategyPursuitLine")?.value || PURSUIT_LINES[0];
-  const custom = document.querySelector("#strategyCustomPursuitLine")?.value || "";
-  state.pursuitLine = choice === CUSTOM_PURSUIT_VALUE ? sanitizePursuitLineDraft(custom) : normalizePursuitLine(choice);
-}
-
-function bindPursuitFields() {
-  const select = document.querySelector("#strategyPursuitLine");
-  const field = document.querySelector("#strategyCustomPursuitField");
-  const input = document.querySelector("#strategyCustomPursuitLine");
-  const counter = document.querySelector("#strategyPursuitCharacterCount");
-  const sync = () => { if (field) field.hidden = select?.value !== CUSTOM_PURSUIT_VALUE; };
-  select?.addEventListener("change", () => { sync(); if (select.value === CUSTOM_PURSUIT_VALUE) input?.focus(); });
-  input?.addEventListener("input", () => { input.value = sanitizePursuitLineDraft(input.value); if (counter) counter.textContent = String(input.value.length); });
-  sync();
-}
-
-function bindScoreButtons() {
-  document.querySelectorAll("[data-strategy-score]").forEach((button) => button.addEventListener("click", () => {
-    state.selectedScore = Number(button.dataset.strategyScore);
-    document.querySelectorAll("[data-strategy-score]").forEach((item) => item.classList.toggle("selected", item === button));
-    document.querySelector("#strategyLockRating, #strategyLockActionRating")?.removeAttribute("disabled");
-  }));
+  const personaType = document.querySelector('input[name="strategyPersonaType"]:checked')?.value;
+  state.persona = normalizeHariaiPersona({
+    type: personaType || state.persona.type,
+    firstPerson: document.querySelector("#strategyFirstPerson")?.value || state.persona.firstPerson,
+    callStyle: document.querySelector("#strategyCallStyle")?.value || state.persona.callStyle,
+  });
+  const call = document.querySelector("#strategyPenaltyCall");
+  const tribute = document.querySelector("#strategyPenaltyTribute");
+  if (call || tribute) state.penaltyConsent = normalizeHariaiPenaltyConsent({ call: call?.checked, tribute: tribute?.checked });
 }
 
 function strategyMatchmakingLaunchIsCurrent(context, { requireProfile = true } = {}) {
@@ -2906,21 +3757,21 @@ async function saveProfile(event) {
   const clues = [...document.querySelectorAll(".strategy-clue-input")].map((input) => input.value.trim());
   const weakness = document.querySelector('input[name="weakness"]:checked');
   const imagePreference = normalizeImagePreference(document.querySelector('input[name="strategyImagePreference"]:checked')?.value, "");
+  syncStrategyProfileDraft();
   if (!state.authReady || !state.uid) return showToast("Firebaseへの接続完了を待ってください。");
-  if (!name || clues.some((clue) => !clue) || !weakness || !imagePreference) return showToast("名前、採点傾向、3つの弱点候補、本当の弱点1つをすべて入力してください。");
+  if (!name || clues.some((clue) => !clue) || !weakness || !imagePreference) return showToast("なりきり名、採点傾向、3つの弱点候補、本当の弱点1つをすべて入力してください。");
+  if (!hariaiPersonaIsComplete(state.persona)) return showToast("なりきりペルソナのキャラ型を選んでください。");
   if (state.deckRestoreStatus === "loading") return showToast("前回デッキの確認が終わるまでお待ちください。");
-  if (!strategyDeckIsComplete()) return showToast("戦略型はマッチング前にメイン5枚とリザーブ5枚の実画像が必要です。");
+  if (!strategyDeckIsComplete()) return showToast("戦略型はマッチング前に実画像10枚が必要です。");
   state.name = name;
   state.clues = normalizeClues(clues);
   state.weaknessIndex = Number(weakness.value);
   state.imagePreference = imagePreference;
-  const choice = document.querySelector("#strategyPursuitLine")?.value || PURSUIT_LINES[0];
-  const custom = document.querySelector("#strategyCustomPursuitLine")?.value || "";
-  state.pursuitLine = choice === CUSTOM_PURSUIT_VALUE ? normalizePursuitLine(custom) : normalizePursuitLine(choice);
   localStorage.setItem(PROFILE_NAME_KEY, state.name);
   localStorage.setItem(PROFILE_CLUES_KEY, JSON.stringify(state.clues));
   localStorage.setItem(PROFILE_WEAKNESS_KEY, String(state.weaknessIndex));
-  localStorage.setItem(PURSUIT_LINE_KEY, state.pursuitLine);
+  localStorage.setItem(PROFILE_PERSONA_KEY, JSON.stringify(state.persona));
+  localStorage.setItem(PROFILE_PENALTY_KEY, JSON.stringify(state.penaltyConsent));
   localStorage.setItem(PROFILE_IMAGE_PREFERENCE_KEY, state.imagePreference);
   window.HariaiAudio?.playButton?.("confirm");
   const expectedState = state;
@@ -3256,12 +4107,12 @@ async function safetyPlayerRoomRecord(roomId) {
   state.safetyPlayerRecords ||= new Map();
   const cached = state.safetyPlayerRecords.get(roomId);
   if (cached) {
-    state.weaknessSalt = cached.salt;
-    state.weaknessCommit = cached.player.weaknessCommit;
+    state.weaknessSalts = [...cached.salts];
+    state.weaknessCommits = [...cached.player.weaknessCommits];
     return cached.player;
   }
   const player = await playerRoomRecord(roomId);
-  state.safetyPlayerRecords.set(roomId, { player, salt: state.weaknessSalt });
+  state.safetyPlayerRecords.set(roomId, { player, salts: [...state.weaknessSalts] });
   return player;
 }
 
@@ -3464,6 +4315,13 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   const room = snapshot.val();
   if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  const ownRecord = state.safetyPlayerRecords?.get(roomId);
+  const ownCommits = [0, 1, 2].map((index) => String(room.players[state.uid]?.weaknessCommits?.[index] || ""));
+  if (!ownRecord || ownCommits.some((commit, index) => commit !== ownRecord.player.weaknessCommits[index])) {
+    throw new Error("弱点の封印を確認できませんでした。もう一度対戦相手を探してください。");
+  }
+  state.weaknessSalts = [...ownRecord.salts];
+  state.weaknessCommits = [...ownRecord.player.weaknessCommits];
   state.roomId = roomId;
   state.playerSafetyStopped = false;
   state.roomData = room;
@@ -3502,7 +4360,6 @@ async function setupRoomListeners() {
   state.roomUnsubscribers.push(onValue(ref(database, base), (snapshot) => {
     state.roomData = snapshot.val() || {};
     const showcaseCaptured = captureMatchAchievementShowcases(state.roomData.achievementShowcases);
-    state.roundData = currentRoundData();
     materializeMatchAchievementShowcases(state.roomData);
     if (showcaseCaptured) refreshMatchAchievementShowcaseIfVisible();
     reactToRoomData().catch(handleRecoverableError);
@@ -3514,6 +4371,7 @@ async function setupRoomListeners() {
     state.opponentOnline = snapshot.val()?.online !== false;
     if (!state.opponentOnline && state.screen === "review") finishReviewLocally("left");
     else if (state.screen === "gameover") render();
+    else renderBattleIfChanged();
   }));
   state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
     state.serverTimeOffset = Number(snapshot.val() || 0);
@@ -3749,7 +4607,7 @@ async function handleVideoChannelMessage(data) {
         currentTransfer: state.incomingVideoTransfer,
         expectedOwnerUid: state.opponentUid,
         allowedPhases: [phase],
-        maxRounds: MAX_ROUNDS,
+        maxRounds: HARIAI_MAX_SLOTS,
         now: firebaseNow(),
       });
       return;
@@ -3783,8 +4641,8 @@ async function handleVideoChannelMessage(data) {
   }
 }
 
-function imageKey(kind, round) {
-  return `${kind}:${round}`;
+function imageKey(kind, slot, index = 0) {
+  return `${kind}:${slot}:${index}`;
 }
 
 function normalizeIncomingStrategyImageStart(message, targetState = state) {
@@ -3792,7 +4650,8 @@ function normalizeIncomingStrategyImageStart(message, targetState = state) {
     throw new Error("受信画像の開始情報が不正です。");
   }
   const kind = String(message.kind || "");
-  const round = Number(message.round);
+  const slot = Number(message.slot);
+  const index = Number(message.index ?? 0);
   const ownerUid = String(message.ownerUid || "");
   const size = Number(message.size);
   const mime = normalizeOnlineImageMime(message.mime);
@@ -3801,43 +4660,29 @@ function normalizeIncomingStrategyImageStart(message, targetState = state) {
     throw new Error("受信画像のサイズが不正です。");
   }
   if (!STRATEGY_DECK_IMAGE_MIME_TYPES.includes(mime)) throw new Error("受信画像の形式が不正です。");
-
-  let actionType = "";
-  if (kind === "base" || kind === "action") {
-    if (!Number.isSafeInteger(round) || round < 1 || round > MAX_ROUNDS || round !== targetState.round) {
-      throw new Error("受信画像のラウンド情報が不正です。");
-    }
-    if (kind === "action") {
-      actionType = String(message.actionType || "");
-      if (!["request", "pursuit"].includes(actionType)) throw new Error("受信画像の追加行動が不正です。");
-      const pick = targetState.roomData?.rounds?.[round]?.actionPicks?.[ownerUid];
-      if (pick?.skipped === true || (["request", "pursuit"].includes(pick?.type) && pick.type !== actionType)) {
-        throw new Error("受信画像の追加行動が確定内容と一致しません。");
-      }
-    }
-  } else if (kind === "weaknessChain") {
-    if (!Number.isSafeInteger(round) || round < 0 || round >= MAX_WEAKNESS_CHAIN) {
-      throw new Error("受信した連続追撃画像の位置が不正です。");
-    }
-    actionType = String(message.actionType || "");
-    if (actionType !== "pursuit") throw new Error("受信した連続追撃画像の行動種別が不正です。");
-    const declaredCount = Number(targetState.roomData?.weaknessChains?.[ownerUid]?.count);
-    if (Number.isSafeInteger(declaredCount) && declaredCount >= 0 && round >= declaredCount) {
-      throw new Error("受信した連続追撃画像が宣言枚数を超えています。");
-    }
+  if (!Number.isSafeInteger(slot) || slot < 1 || slot > HARIAI_MAX_SLOTS) throw new Error("受信画像の手番情報が不正です。");
+  // P2Pの到着がRealtime Databaseより早い場合があるため、確定済みの手と食い違う時だけ拒否する。
+  const move = targetState.roomData?.moves?.[slot];
+  if (kind === "move") {
+    if (index !== 0) throw new Error("受信画像の手番情報が不正です。");
+    if (move?.post && move.post.by !== ownerUid) throw new Error("受信画像が確定した手と一致しません。");
+  } else if (kind === "finish") {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= HARIAI_FINISH_MAX) throw new Error("受信した仕留め画像の位置が不正です。");
+    if (move?.break && move.break.by !== ownerUid) throw new Error("受信した仕留め画像が確定した看破と一致しません。");
+    const declared = Number(move?.finish?.count);
+    if (move?.finish && (!Number.isSafeInteger(declared) || index >= declared)) throw new Error("受信した仕留め画像が宣言枚数を超えています。");
   } else {
     throw new Error("受信画像の用途が不正です。");
   }
-
   const current = targetState.incomingTransfer;
-  if (current && (current.kind !== kind || current.round !== round || current.ownerUid !== ownerUid)) {
+  if (current && (current.kind !== kind || current.slot !== slot || current.index !== index || current.ownerUid !== ownerUid)) {
     throw new Error("別の画像を受信中です。");
   }
   return {
     kind,
-    round,
+    slot,
+    index,
     ownerUid,
-    actionType,
     mime,
     size,
     hasAudio: message.hasAudio === true,
@@ -3861,15 +4706,15 @@ async function handleChannelMessage(data) {
     } else if (message.type === "strategy-image-start") {
       state.incomingTransfer = normalizeIncomingStrategyImageStart(message, state);
     } else if (message.type === "strategy-image-end") {
-      await finishIncomingImage(message.kind, message.round, message.ownerUid);
+      await finishIncomingImage(message.kind, message.slot, message.index ?? 0, message.ownerUid);
     } else if (message.type === "strategy-audio-start") {
       const size = Number(message.size);
       const duration = Number(message.duration);
       if (!Number.isFinite(size) || size <= 0 || size > MAX_AUDIO_TRANSFER_BYTES) throw new Error("添付音声の受信サイズが不正です。");
       if (message.mime !== "audio/wav" || !Number.isFinite(duration) || duration <= 0 || duration > MAX_AUDIO_SECONDS + 0.1) throw new Error("添付音声の形式が不正です。");
-      state.incomingAudioTransfer = { kind: message.kind, round: message.round, ownerUid: message.ownerUid, mime: "audio/wav", size, duration, cueStart: Number(message.cueStart || 0), chunks: [], received: 0 };
+      state.incomingAudioTransfer = { kind: message.kind, slot: Number(message.slot), index: Number(message.index ?? 0), ownerUid: message.ownerUid, mime: "audio/wav", size, duration, cueStart: Number(message.cueStart || 0), chunks: [], received: 0 };
     } else if (message.type === "strategy-audio-end") {
-      await finishIncomingAudio(message.kind, message.round, message.ownerUid);
+      await finishIncomingAudio(message.kind, Number(message.slot), Number(message.index ?? 0), message.ownerUid);
     }
     return;
   }
@@ -3892,6 +4737,7 @@ async function handleChannelMessage(data) {
       throw new Error("添付音声の受信サイズが一致しませんでした。");
     }
     state.transferProgress = Math.min(99, Math.round((state.incomingAudioTransfer.received / state.incomingAudioTransfer.size) * 100));
+    refreshHariaiTransferProgress();
     return;
   }
   if (!state.incomingTransfer) return;
@@ -3904,6 +4750,7 @@ async function handleChannelMessage(data) {
   state.incomingTransfer.chunks.push(chunk);
   state.incomingTransfer.received += chunk.byteLength;
   state.transferProgress = Math.min(99, Math.round((state.incomingTransfer.received / state.incomingTransfer.size) * 100));
+  refreshHariaiTransferProgress();
 }
 
 async function sendProfileAvatar() {
@@ -3931,7 +4778,8 @@ function finishIncomingProfileAvatar() {
   const blob = new Blob(transfer.chunks, { type: transfer.mime });
   state.remoteAvatar = { blob, url: URL.createObjectURL(blob) };
   state.incomingAvatarTransfer = null;
-  if (["identity", "waitingBattle", "baseSelect", "waitingBasePick", "waitingBaseImage", "baseReveal", "baseRating", "waitingBaseRating", "actionSelect", "waitingAction", "waitingActionImage", "actionReveal", "actionRating", "waitingActionRating", "result", "waitingContinue", "weaknessGuess", "waitingWeaknessGuess", "weaknessChoice", "waitingWeaknessChoice", "waitingWeaknessChoiceReveal", "weaknessChainSelect", "waitingWeaknessChain", "waitingWeaknessChainImage", "weaknessChainResult", "waitingWeaknessContinue", "waitingFinalWeaknessReveal"].includes(state.screen)) render();
+  // 対戦中は入力途中の言葉を消さないよう、アバターだけのために全体を描き直さない。
+  if (["identity", "waitingBattle", "waitingFinalWeaknessReveal"].includes(state.screen)) render();
 }
 
 function releaseRemoteAvatar() {
@@ -3940,11 +4788,12 @@ function releaseRemoteAvatar() {
   state.incomingAvatarTransfer = null;
 }
 
-async function finishIncomingImage(kind, round, ownerUid) {
+async function finishIncomingImage(kind, slot, index, ownerUid) {
   const transfer = state.incomingTransfer;
   if (!transfer) return false;
-  const normalizedRound = Number(round);
-  if (transfer.kind !== String(kind || "") || transfer.round !== normalizedRound || transfer.ownerUid !== String(ownerUid || "")) {
+  const normalizedSlot = Number(slot);
+  const normalizedIndex = Number(index ?? 0);
+  if (transfer.kind !== String(kind || "") || transfer.slot !== normalizedSlot || transfer.index !== normalizedIndex || transfer.ownerUid !== String(ownerUid || "")) {
     throw new Error("受信中の画像と完了情報が一致しませんでした。");
   }
   if (transfer.received !== transfer.size) {
@@ -3959,22 +4808,25 @@ async function finishIncomingImage(kind, round, ownerUid) {
     state.incomingTransfer = null;
     throw error;
   }
-  const key = imageKey(transfer.kind, transfer.round);
+  const key = imageKey(transfer.kind, transfer.slot, transfer.index);
   const previous = state.remoteImages.get(key);
   if (previous?.url) URL.revokeObjectURL(previous.url);
   releaseCardAudio(previous);
   const blob = new Blob(transfer.chunks, { type: mime });
-  state.remoteImages.set(key, { blob, url: URL.createObjectURL(blob), actionType: transfer.actionType, awaitingAudio: transfer.hasAudio });
+  state.remoteImages.set(key, { blob, url: URL.createObjectURL(blob), awaitingAudio: transfer.hasAudio });
   state.incomingTransfer = null;
   state.transferProgress = 100;
-  if (!transfer.hasAudio) await acknowledgeStrategyMedia(transfer.kind, transfer.round, transfer.ownerUid);
+  if (!transfer.hasAudio) await acknowledgeStrategyMedia(transfer.kind, transfer.slot, transfer.index);
+  renderBattleIfChanged();
   return true;
 }
 
-async function finishIncomingAudio(kind, round, ownerUid) {
+async function finishIncomingAudio(kind, slot, index, ownerUid) {
   const transfer = state.incomingAudioTransfer;
-  if (!transfer || transfer.kind !== kind || transfer.round !== round || transfer.ownerUid !== ownerUid || transfer.received !== transfer.size) throw new Error("受信音声のサイズが一致しませんでした。");
-  const item = state.remoteImages.get(imageKey(kind, round));
+  if (!transfer || transfer.kind !== kind || transfer.slot !== slot || transfer.index !== index || transfer.ownerUid !== ownerUid || transfer.received !== transfer.size) {
+    throw new Error("受信音声のサイズが一致しませんでした。");
+  }
+  const item = state.remoteImages.get(imageKey(kind, slot, index));
   if (!item?.awaitingAudio) throw new Error("音声に対応する画像を確認できませんでした。");
   const blob = new Blob(transfer.chunks, { type: "audio/wav" });
   item.audioBlob = blob;
@@ -3984,28 +4836,35 @@ async function finishIncomingAudio(kind, round, ownerUid) {
   item.awaitingAudio = false;
   state.incomingAudioTransfer = null;
   state.transferProgress = 100;
-  await acknowledgeStrategyMedia(kind, round, ownerUid);
+  await acknowledgeStrategyMedia(kind, slot, index);
+  renderBattleIfChanged();
 }
 
-async function acknowledgeStrategyMedia(kind, round, ownerUid) {
-  if (kind === "base") await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/baseImagesReceived/${state.uid}`), true);
-  else if (kind === "action") await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${round}/actionImagesReceived/${ownerUid}/${state.uid}`), true);
-  else if (kind === "weaknessChain") await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChainImagesReceived/${ownerUid}/${state.uid}/${round}`), true);
+async function acknowledgeStrategyMedia(kind, slot, index = 0) {
+  const key = imageKey(kind, slot, index);
+  if (state.ackedMediaKeys.has(key)) return;
+  state.ackedMediaKeys.add(key);
+  try {
+    if (kind === "move") await set(ref(database, `online/strategyRooms/${state.roomId}/moves/${slot}/received/${state.uid}`), true);
+    else if (kind === "finish") await set(ref(database, `online/strategyRooms/${state.roomId}/moves/${slot}/finishReceived/${index}`), true);
+  } catch (error) {
+    state.ackedMediaKeys.delete(key);
+    throw error;
+  }
 }
 
-async function sendImage(item, kind, actionType = "", slot = state.round) {
+async function sendImage(item, kind, slot, index = 0) {
   const targetState = state;
   const channel = targetState.channel;
   const senderUid = targetState.uid;
-  const key = imageKey(kind, slot);
+  const key = imageKey(kind, slot, index);
   const contextIsCurrent = () => state === targetState
     && targetState.channel === channel
     && channel?.readyState === "open";
   if (targetState.sentImageKeys.has(key) || !item?.blob || !contextIsCurrent()) return;
   targetState.sentImageKeys.add(key);
-  targetState.screen = kind === "base" ? "waitingBaseImage" : kind === "weaknessChain" ? "waitingWeaknessChainImage" : "waitingActionImage";
   targetState.transferProgress = 0;
-  render();
+  refreshHariaiTransferProgress();
   try {
     const buffer = await item.blob.arrayBuffer();
     if (!contextIsCurrent()) throw new Error("画像送信前にP2P接続または対戦が切り替わりました。");
@@ -4031,24 +4890,26 @@ async function sendImage(item, kind, actionType = "", slot = state.round) {
       }
     }
     if (!contextIsCurrent()) throw new Error("画像送信前にP2P接続または対戦が切り替わりました。");
-    channel.send(JSON.stringify({ type: "strategy-image-start", kind, round: slot, ownerUid: senderUid, actionType, size: buffer.byteLength, mime, hasAudio: Boolean(audioBuffer) }));
+    channel.send(JSON.stringify({ type: "strategy-image-start", kind, slot, index, ownerUid: senderUid, size: buffer.byteLength, mime, hasAudio: Boolean(audioBuffer) }));
     for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
       await waitForDataBuffer(channel);
       if (!contextIsCurrent()) throw new Error("画像転送中にP2P接続または対戦が切り替わりました。");
       channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
       targetState.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
+      refreshHariaiTransferProgress();
     }
-    channel.send(JSON.stringify({ type: "strategy-image-end", kind, round: slot, ownerUid: senderUid }));
+    channel.send(JSON.stringify({ type: "strategy-image-end", kind, slot, index, ownerUid: senderUid }));
     if (audioBuffer) {
       targetState.transferProgress = 0;
-      channel.send(JSON.stringify({ type: "strategy-audio-start", kind, round: slot, ownerUid: senderUid, size: audioBuffer.byteLength, mime: "audio/wav", duration: audio.duration, cueStart: audio.cueStart }));
+      channel.send(JSON.stringify({ type: "strategy-audio-start", kind, slot, index, ownerUid: senderUid, size: audioBuffer.byteLength, mime: "audio/wav", duration: audio.duration, cueStart: audio.cueStart }));
       for (let offset = 0; offset < audioBuffer.byteLength; offset += DATA_CHUNK_BYTES) {
         await waitForDataBuffer(channel);
         if (!contextIsCurrent()) throw new Error("音声転送中にP2P接続または対戦が切り替わりました。");
         channel.send(audioBuffer.slice(offset, Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES)));
         targetState.transferProgress = Math.round((Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES) / audioBuffer.byteLength) * 100);
+        refreshHariaiTransferProgress();
       }
-      channel.send(JSON.stringify({ type: "strategy-audio-end", kind, round: slot, ownerUid: senderUid }));
+      channel.send(JSON.stringify({ type: "strategy-audio-end", kind, slot, index, ownerUid: senderUid }));
     }
   } catch (error) {
     targetState.sentImageKeys.delete(key);
@@ -4164,6 +5025,7 @@ async function leaveStrategyReview(returnHome = false) {
 }
 
 async function reactToReviewData() {
+  refreshHariaiReviewPenaltyBanner();
   const finished = state.roomData?.finished || {};
   const decisions = state.roomData?.reviewDecisions || {};
   const ended = state.roomData?.reviewEnded || {};
@@ -4325,23 +5187,6 @@ function playAudioUrl(url, start = 0, duration = 0) {
   });
 }
 
-async function openStrategyMedia(kind) {
-  const key = imageKey(kind, state.round);
-  state.openedMediaKeys.add(key);
-  const item = state.remoteImages.get(key);
-  render();
-  if (item?.audioUrl) await playAudioUrl(item.audioUrl, 0, Number(item.audioDuration || 0));
-}
-
-function declareWeaknessGuess() {
-  if (state.weaknessPhaseComplete || state.round > WEAKNESS_SCOUT_ROUND || state.roomData?.weaknessGuesses?.[state.uid]) return;
-  state.weaknessTriggerRound = state.round;
-  state.selectedWeaknessGuess = null;
-  state.screen = "weaknessGuess";
-  setStrategyChrome("WEAKNESS GUESS");
-  render();
-}
-
 function removeDeckItem(token) {
   const [zone, id] = token.split(":");
   const index = state[zone].findIndex((item) => item.id === id);
@@ -4389,596 +5234,11 @@ async function startBattle() {
   await set(ref(database, `online/strategyRooms/${state.roomId}/battleReady/${state.uid}`), true);
 }
 
-async function lockBaseCard(cardId) {
-  const item = state.main.find((card) => card.id === cardId && !card.used);
-  if (!item || !state.channelReady) return;
-  state.selectedBaseId = cardId;
-  item.used = true;
-  state.localBaseCards.set(state.round, item);
-  state.screen = "waitingBasePick";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/basePicks/${state.uid}`), { ready: true, lockedAt: serverTimestamp() });
-}
-
-async function lockBaseRating() {
-  if (!state.selectedScore) return;
-  const score = state.selectedScore;
-  const reaction = normalizeReaction(state.selectedReaction, state.selectedScore);
-  state.selectedScore = 0;
-  state.selectedReaction = "normal";
-  state.screen = "waitingBaseRating";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/ratings/${state.uid}`), { score, reaction, lockedAt: serverTimestamp() });
-}
-
-function localActionType() {
-  const rating = currentRoundData().ratings?.[state.opponentUid];
-  return normalizeReaction(rating?.reaction, Number(rating?.score || 0));
-}
-
-function localOpponentActionType() {
-  return currentRoundData().actionPicks?.[state.opponentUid]?.type || "normal";
-}
-
-async function lockActionCard(cardId) {
-  const item = state.reserve.find((card) => card.id === cardId && !card.used);
-  const type = localActionType();
-  if (!item || !["request", "pursuit"].includes(type)) return;
-  item.used = true;
-  state.localActionCards.set(state.round, item);
-  state.screen = "waitingActionPick";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/actionPicks/${state.uid}`), { ready: true, type, skipped: false, lockedAt: serverTimestamp() });
-}
-
-async function skipPursuit() {
-  if (localActionType() !== "pursuit") return;
-  state.screen = "waitingActionPick";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/actionPicks/${state.uid}`), { ready: true, type: "pursuit", skipped: true, lockedAt: serverTimestamp() });
-}
-
-async function lockActionRating() {
-  if (!state.selectedScore) return;
-  const score = state.selectedScore;
-  state.selectedScore = 0;
-  state.screen = "waitingActionRating";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/actionRatings/${state.uid}`), { score, lockedAt: serverTimestamp() });
-}
-
-async function continueRound() {
-  state.screen = "waitingContinue";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/continue/${state.uid}`), true);
-}
-
-async function lockWeaknessGuess(event) {
-  event.preventDefault();
-  const selected = Number(document.querySelector('input[name="weaknessGuess"]:checked')?.value);
-  if (!Number.isInteger(selected) || selected < 0 || selected > 2) return showToast("相手の弱点候補を1つ選んでください。");
-  state.selectedWeaknessGuess = selected;
-  const existingGuess = Object.values(state.roomData?.weaknessGuesses || {}).find((guess) => Number.isInteger(Number(guess?.round)));
-  const triggerRound = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(existingGuess?.round || state.weaknessTriggerRound || state.round)));
-  state.weaknessTriggerRound = triggerRound;
-  state.screen = "waitingWeaknessGuess";
-  render();
-  try {
-    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessGuesses/${state.uid}`), { guessIndex: selected, round: triggerRound, lockedAt: serverTimestamp() });
-  } catch (error) {
-    console.error(error);
-    state.screen = "weaknessGuess";
-    render();
-    showToast("回答を送信できませんでした。通信状態を確認して、もう一度お試しください。");
-  }
-}
-
-function toggleWeaknessChainCard(cardId) {
-  const available = state.reserve.find((item) => item.id === cardId && !item.used);
-  if (!available) return;
-  const selected = state.selectedWeaknessChainIds;
-  const index = selected.indexOf(cardId);
-  if (index >= 0) selected.splice(index, 1);
-  else if (selected.length < MAX_WEAKNESS_CHAIN) selected.push(cardId);
-  else return showToast(`連続追撃に選べる画像は最大${MAX_WEAKNESS_CHAIN}枚です。`);
-  render();
-}
-
-async function lockWeaknessChain() {
-  const cards = state.selectedWeaknessChainIds.map((cardId) => state.reserve.find((item) => item.id === cardId && !item.used)).filter(Boolean).slice(0, MAX_WEAKNESS_CHAIN);
-  if (!cards.length) return showToast("連続追撃に使うリザーブ画像を選んでください。");
-  cards.forEach((item) => { item.used = true; });
-  state.localWeaknessChainCards = cards;
-  state.weaknessChainLocked = true;
-  state.screen = "waitingWeaknessChain";
-  render();
-  try {
-    await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChains/${state.uid}`), { ready: true, count: cards.length, lockedAt: serverTimestamp() });
-  } catch (error) {
-    console.error(error);
-    cards.forEach((item) => { item.used = false; });
-    state.localWeaknessChainCards = [];
-    state.weaknessChainLocked = false;
-    state.screen = "weaknessChainSelect";
-    render();
-    showToast("追撃画像を確定できませんでした。通信状態を確認して、もう一度お試しください。");
-  }
-}
-
-async function continueAfterWeaknessChain() {
-  state.screen = "waitingWeaknessContinue";
-  render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessContinue/${state.uid}`), true);
-}
-
-async function surrenderToWeaknessBreak() {
-  if (!getOpponent()?.weaknessCorrect || getLocalPlayer()?.hp <= 0 || state.roomData?.weaknessSurrenders?.[state.uid]) return;
-  await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessSurrenders/${state.uid}`), { surrendered: true, at: serverTimestamp() })
-    .catch(() => showToast("降参を送信できませんでした。通信状態を確認してください。"));
-}
-
-function applyWeaknessSurrenders(surrenders) {
-  if (!state.weaknessResult) return;
-  let changed = false;
-  state.players.forEach((player, index) => {
-    if (surrenders[player.uid]?.surrendered === true && state.players[1 - index].weaknessCorrect && !state.weaknessResult.surrenders[index]) {
-      player.hp = 0;
-      state.weaknessResult.surrenders[index] = true;
-      changed = true;
-    }
-  });
-  if (!changed) return;
-  state.weaknessSurrenderApplied = true;
-  setStrategyChrome("SURRENDER KO");
-  triggerCriticalFx("SURRENDER KO");
-  if (state.screen === "weaknessChainResult") render();
-}
-
-async function playWeaknessChainSequence() {
-  if (state.chainPlaybackActive || !state.weaknessResult) return;
-  state.chainPlaybackActive = true;
-  const button = document.querySelector("#strategyPlayWeaknessChain");
-  if (button) { button.disabled = true; button.textContent = "連続追撃 再生中…"; }
-  try {
-    const opponentIndex = 1 - state.playerIndex;
-    const owner = Number(state.weaknessResult.chainCounts[state.playerIndex] || 0) > 0 ? state.playerIndex : opponentIndex;
-    const count = Number(state.weaknessResult.chainCounts[owner] || 0);
-    for (let index = 0; index < count; index += 1) {
-      const card = document.querySelector(`[data-chain-owner="${owner}"][data-chain-slot="${index}"]`);
-      card?.classList.add("is-playing");
-      const item = owner === state.playerIndex ? state.localWeaknessChainCards[index] : state.remoteImages.get(imageKey("weaknessChain", index));
-      if (item?.audioUrl) await playAudioUrl(item.audioUrl, Number(item.audioCueStart || 0), Math.min(AUDIO_HIGHLIGHT_SECONDS, Number(item.audioDuration || AUDIO_HIGHLIGHT_SECONDS)));
-      else await new Promise((resolve) => window.setTimeout(resolve, 420));
-      card?.classList.remove("is-playing");
-    }
-  } finally {
-    state.chainPlaybackActive = false;
-    if (button?.isConnected) { button.disabled = false; button.textContent = "怒涛の連続追撃を再生"; }
-  }
-}
-
-async function verifyWeaknessCommitReveals(reveals, targetUids = state.players.map((player) => player.uid)) {
-  const targets = new Set(targetUids);
-  for (const player of state.players) {
-    if (!targets.has(player.uid)) continue;
-    const reveal = reveals[player.uid];
-    const weaknessIndex = Number(reveal?.weaknessIndex);
-    const salt = String(reveal?.salt || "");
-    if (!Number.isInteger(weaknessIndex) || weaknessIndex < 0 || weaknessIndex > 2 || !/^[a-f0-9]{32}$/.test(salt)) return false;
-    const expected = await sha256Hex(`${state.roomId}:${player.uid}:${weaknessIndex}:${salt}`);
-    if (!player.weaknessCommit || expected !== player.weaknessCommit) return false;
-    player.weaknessIndex = weaknessIndex;
-  }
-  return true;
-}
-
-async function verifyWeaknessChoiceReveals(commits, choices) {
-  const normalized = new Map();
-  for (const player of state.players) {
-    const choice = normalizeWeaknessChoice(choices[player.uid]);
-    const commit = commits[player.uid];
-    if (!choice
-        || Number(commit?.round) !== WEAKNESS_SCOUT_ROUND
-        || !/^[a-f0-9]{64}$/.test(String(commit?.digest || ""))) return false;
-    const expected = await sha256Hex(weaknessChoiceCommitMaterial(state.roomId, player.uid, choice));
-    if (expected !== commit.digest) return false;
-    normalized.set(player.uid, choice);
-  }
-  state.players.forEach((player) => {
-    const choice = normalized.get(player.uid);
-    player.weaknessChoice = choice.choice;
-    player.weaknessGuess = choice.choice === "guess" ? choice.guessIndex : null;
-    player.weaknessCorrect = false;
-  });
-  state.weaknessTriggerRound = WEAKNESS_SCOUT_ROUND;
-  return true;
-}
-
-function weaknessRevealTargetsForChoices(choices) {
-  return state.players.filter((player, targetIndex) => (
-    normalizeWeaknessChoice(choices[state.players[1 - targetIndex].uid])?.choice === "guess"
-  )).map((player) => player.uid);
-}
-
-async function verifySelectedWeaknessReveals(choices, reveals) {
-  const targets = weaknessRevealTargetsForChoices(choices);
-  if (!(await verifyWeaknessCommitReveals(reveals, targets))) return false;
-  state.players.forEach((player, attackerIndex) => {
-    const choice = normalizeWeaknessChoice(choices[player.uid]);
-    if (choice?.choice !== "guess") {
-      player.weaknessGuess = null;
-      player.weaknessCorrect = false;
-      return;
-    }
-    const opponent = state.players[1 - attackerIndex];
-    player.weaknessGuess = choice.guessIndex;
-    player.weaknessCorrect = choice.guessIndex === opponent.weaknessIndex;
-  });
-  return true;
-}
-
-async function verifyWeaknessReveals(guesses, reveals) {
-  const guessRounds = state.players.map((player) => Number(guesses[player.uid]?.round));
-  if (!guessRounds.every((round) => Number.isInteger(round) && round >= 1 && round <= WEAKNESS_SCOUT_ROUND && round === guessRounds[0])) return false;
-  state.weaknessTriggerRound = guessRounds[0];
-  if (!(await verifyWeaknessCommitReveals(reveals))) return false;
-  state.players.forEach((player, index) => {
-    const opponent = state.players[1 - index];
-    player.weaknessChoice = "guess";
-    player.weaknessGuess = Number(guesses[player.uid].guessIndex);
-    player.weaknessCorrect = player.weaknessGuess === opponent.weaknessIndex;
-  });
-  return true;
-}
-
-async function failWeaknessIntegrityCheck(message = "弱点コミットの照合に失敗しました。この対戦はノーコンテストです。") {
+async function failWeaknessIntegrityCheck(message = "弱点の封印の照合に失敗しました。この対戦はノーコンテストです。") {
   if (state.weaknessIntegrityFailed) return;
   state.weaknessIntegrityFailed = true;
   await runTransaction(ref(database, `online/strategyRooms/${state.roomId}/destroyed`), (current) => current || { by: state.uid, at: Date.now() }).catch(() => {});
   handleFatalError(new Error(message));
-}
-
-async function sendWeaknessChainImages(count) {
-  for (let index = 0; index < count; index += 1) {
-    await sendImage(state.localWeaknessChainCards[index], "weaknessChain", "pursuit", index);
-  }
-}
-
-function weaknessChainImagesReady(chains, receipts) {
-  return state.players.every((player, owner) => {
-    const count = Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[player.uid]?.count || 0)));
-    if (!count) return true;
-    const recipientUid = state.players[1 - owner].uid;
-    const acknowledged = Array.from({ length: count }, (_, index) => receipts[player.uid]?.[recipientUid]?.[index] === true).every(Boolean);
-    if (!acknowledged) return false;
-    if (owner === state.playerIndex) return state.localWeaknessChainCards.length >= count;
-    return Array.from({ length: count }, (_, index) => state.remoteImages.has(imageKey("weaknessChain", index))).every(Boolean);
-  });
-}
-
-function weaknessChainsValid(chains) {
-  return state.players.every((player) => {
-    const count = Number(chains[player.uid]?.count);
-    return Number.isInteger(count)
-      && count >= 0
-      && count <= Math.min(MAX_WEAKNESS_CHAIN, remainingReserve(player))
-      && (count === 0 || (player.weaknessChoice !== "pass" && player.weaknessCorrect));
-  });
-}
-
-function resolveWeaknessChain(guesses, chains) {
-  if (state.weaknessChainApplied) return;
-  state.weaknessChainApplied = true;
-  const chainCounts = state.players.map((player) => Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[player.uid]?.count || 0))));
-  const chainDamage = chainCounts.map((count) => WEAKNESS_CHAIN_DAMAGE.slice(0, count).reduce((sum, damage) => sum + damage, 0));
-  const hpBefore = state.players.map((player) => player.hp);
-  const missDamage = state.players.map((player) => (
-    player.weaknessChoice === "pass" || player.weaknessCorrect ? 0 : WEAKNESS_MISS_DAMAGE
-  ));
-  const hpAfterMiss = hpBefore.map((hp, index) => Math.max(0, hp - missDamage[index]));
-  const overkill = [0, 0];
-  state.players.forEach((player, owner) => {
-    player.weaknessChainCount = chainCounts[owner];
-    player.reserveUsed += chainCounts[owner];
-    player.totalPower += chainDamage[owner];
-    const defender = state.players[1 - owner];
-    overkill[1 - owner] = Math.max(0, chainDamage[owner] - hpAfterMiss[1 - owner]);
-    defender.hp = Math.max(0, hpAfterMiss[1 - owner] - chainDamage[owner]);
-  });
-  state.players.forEach((player, index) => { player.overkill = overkill[index]; });
-  state.weaknessResult = { guesses, chainCounts, chainDamage, missDamage, hpBefore, overkill, surrenders: [false, false] };
-  state.screen = "weaknessChainResult";
-  const overkillTotal = overkill.reduce((sum, value) => sum + value, 0);
-  const weaknessBroken = state.players.some((player) => player.weaknessCorrect);
-  const bothPassed = state.players.every((player) => player.weaknessChoice === "pass");
-  setStrategyChrome(overkillTotal > 0 ? "OVERKILL" : weaknessBroken ? "WEAKNESS BREAK" : bothPassed ? "BOTH PASSED" : "WEAKNESS REVEAL");
-  if (weaknessBroken) triggerCriticalFx(overkillTotal > 0 ? `OVERKILL +${overkillTotal}` : "WEAKNESS BREAK");
-  render();
-}
-
-async function advanceAfterWeaknessPhase() {
-  if (state.weaknessPhaseComplete) return;
-  state.weaknessPhaseComplete = true;
-  if (state.players.some((player) => player.hp <= 0)) {
-    await finishMatch();
-    return;
-  }
-  state.round = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(state.weaknessTriggerRound || state.round))) + 1;
-  state.currentResult = null;
-  state.selectedBaseId = "";
-  state.selectedScore = 0;
-  state.selectedReaction = "normal";
-  state.screen = "baseSelect";
-  setStrategyChrome("STRATEGY ONLINE BATTLE");
-  render();
-  await reactToRoomData();
-}
-
-async function publishLocalWeaknessReveal() {
-  await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`), {
-    weaknessIndex: state.weaknessIndex,
-    salt: state.weaknessSalt,
-    revealedAt: serverTimestamp(),
-  });
-}
-
-async function ensureLocalWeaknessReveal() {
-  const existing = state.roomData?.weaknessReveals?.[state.uid];
-  if (Number(existing?.weaknessIndex) === state.weaknessIndex && existing?.salt === state.weaknessSalt) return;
-  try {
-    await publishLocalWeaknessReveal();
-  } catch (error) {
-    const stored = await get(ref(database, `online/strategyRooms/${state.roomId}/weaknessReveals/${state.uid}`)).catch(() => null);
-    if (Number(stored?.val()?.weaknessIndex) === state.weaknessIndex && stored?.val()?.salt === state.weaknessSalt) return;
-    throw error;
-  }
-}
-
-function localWeaknessChoiceReveal() {
-  return normalizeWeaknessChoice({
-    choice: state.selectedWeaknessChoice,
-    guessIndex: state.selectedWeaknessChoice === "guess" ? state.selectedWeaknessGuess : -1,
-    round: WEAKNESS_SCOUT_ROUND,
-    salt: state.weaknessChoiceSalt,
-  });
-}
-
-function sameWeaknessChoice(first, second) {
-  const left = normalizeWeaknessChoice(first);
-  const right = normalizeWeaknessChoice(second);
-  return Boolean(left && right
-    && left.choice === right.choice
-    && left.guessIndex === right.guessIndex
-    && left.round === right.round
-    && left.salt === right.salt);
-}
-
-async function reactToLegacyWeaknessPhase(guesses) {
-  const targetState = state;
-  const roomId = state.roomId;
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-  const firstGuess = Object.values(guesses).find((guess) => Number.isInteger(Number(guess?.round)));
-  if (firstGuess) state.weaknessTriggerRound = Math.max(1, Math.min(WEAKNESS_SCOUT_ROUND, Number(firstGuess.round)));
-  if (!both(guesses)) {
-    if (guesses[state.opponentUid] && !guesses[state.uid] && state.screen !== "weaknessGuess") {
-      state.selectedWeaknessGuess = null;
-      state.screen = "weaknessGuess";
-      setStrategyChrome("WEAKNESS GUESS");
-      render();
-    }
-    return;
-  }
-  const reveals = state.roomData?.weaknessReveals || {};
-  if (!reveals[state.uid]) {
-    await ensureLocalWeaknessReveal();
-    return;
-  }
-  if (!both(reveals)) return;
-  if (!state.weaknessRevealsVerified) {
-    const verified = await verifyWeaknessReveals(guesses, reveals);
-    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-    if (!verified) {
-      await failWeaknessIntegrityCheck();
-      return;
-    }
-    targetState.weaknessRevealsVerified = true;
-  }
-
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-  await reactToWeaknessChainResolution(guesses);
-}
-
-async function reactToRoundThreeWeaknessChoice() {
-  const targetState = state;
-  const roomId = state.roomId;
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-  const commits = state.roomData?.weaknessChoiceCommits || {};
-  if (!commits[state.uid]) {
-    if (state.screen !== "weaknessChoice" && !state.weaknessChoiceLocked) {
-      state.selectedWeaknessChoice = "";
-      state.selectedWeaknessGuess = null;
-      state.screen = "weaknessChoice";
-      setStrategyChrome("ROUND 3 SECRET DECISION");
-      render();
-    }
-    return;
-  }
-  if (state.weaknessChoiceDigest && commits[state.uid]?.digest !== state.weaknessChoiceDigest) {
-    await failWeaknessIntegrityCheck("保存済みの秘密選択と端末の封印が一致しません。この対戦はノーコンテストです。");
-    return;
-  }
-  const commitWasUncertain = state.weaknessChoiceCommitUncertain;
-  state.weaknessChoiceCommitSending = false;
-  state.weaknessChoiceCommitUncertain = false;
-  state.weaknessChoiceLocked = true;
-  if (!both(commits)) {
-    if (state.screen !== "waitingWeaknessChoice" || commitWasUncertain) {
-      state.screen = "waitingWeaknessChoice";
-      setStrategyChrome("SECRET CHOICE LOCKED");
-      render();
-    }
-    return;
-  }
-
-  const choices = state.roomData?.weaknessChoices || {};
-  if (!choices[state.uid]) {
-    if (state.weaknessChoiceRevealSending) return;
-    const localChoice = localWeaknessChoiceReveal();
-    if (!localChoice || commits[state.uid]?.digest !== state.weaknessChoiceDigest) {
-      await failWeaknessIntegrityCheck("秘密選択の封印を復元できませんでした。この対戦はノーコンテストです。");
-      return;
-    }
-    state.weaknessChoiceRevealSending = true;
-    state.screen = "waitingWeaknessChoiceReveal";
-    setStrategyChrome("SEALED CHOICES REVEAL");
-    render();
-    const choiceRef = ref(database, `online/strategyRooms/${state.roomId}/weaknessChoices/${state.uid}`);
-    const payload = { ...localChoice, revealedAt: serverTimestamp() };
-    try {
-      await set(choiceRef, payload);
-    } catch (error) {
-      const stored = await get(choiceRef).catch(() => null);
-      if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-      if (!sameWeaknessChoice(stored?.val(), localChoice)) {
-        console.error(error);
-        targetState.weaknessChoiceRevealSending = false;
-        showToast("秘密選択を公開できませんでした。通信状態を確認しています。");
-        return;
-      }
-    }
-    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-    targetState.weaknessChoiceRevealSending = false;
-    return;
-  }
-  if (!both(choices)) {
-    if (state.screen !== "waitingWeaknessChoiceReveal") {
-      state.screen = "waitingWeaknessChoiceReveal";
-      setStrategyChrome("SEALED CHOICES REVEAL");
-      render();
-    }
-    return;
-  }
-  if (!state.weaknessChoicesVerified) {
-    const verified = await verifyWeaknessChoiceReveals(commits, choices);
-    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-    if (!verified) {
-      await failWeaknessIntegrityCheck("秘密選択のハッシュ照合に失敗しました。この対戦はノーコンテストです。");
-      return;
-    }
-    targetState.weaknessChoicesVerified = true;
-  }
-
-  const revealTargets = weaknessRevealTargetsForChoices(choices);
-  const reveals = state.roomData?.weaknessReveals || {};
-  if (revealTargets.includes(state.uid) && !reveals[state.uid]) {
-    await ensureLocalWeaknessReveal();
-    return;
-  }
-  if (revealTargets.some((uid) => !reveals[uid])) {
-    if (state.screen !== "waitingWeaknessChoiceReveal") {
-      state.screen = "waitingWeaknessChoiceReveal";
-      render();
-    }
-    return;
-  }
-  if (!state.weaknessRevealsVerified) {
-    const verified = await verifySelectedWeaknessReveals(choices, reveals);
-    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-    if (!verified) {
-      await failWeaknessIntegrityCheck();
-      return;
-    }
-    targetState.weaknessRevealsVerified = true;
-  }
-
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-  await reactToWeaknessChainResolution(choices);
-}
-
-async function reactToWeaknessChainResolution(guesses) {
-  const targetState = state;
-  const roomId = state.roomId;
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-
-  if (state.weaknessChainApplied) {
-    applyWeaknessSurrenders(state.roomData?.weaknessSurrenders || {});
-    const continued = state.roomData?.weaknessContinue || {};
-    if (both(continued)) await advanceAfterWeaknessPhase();
-    return;
-  }
-
-  const chains = state.roomData?.weaknessChains || {};
-  const localPlayer = getLocalPlayer();
-  const availableReserve = state.reserve.filter((item) => !item.used);
-  if (!chains[state.uid]) {
-    if (state.weaknessChainLocked) {
-      if (state.screen !== "waitingWeaknessChain") { state.screen = "waitingWeaknessChain"; render(); }
-      return;
-    }
-    if (localPlayer.weaknessCorrect && availableReserve.length) {
-      if (state.screen !== "weaknessChainSelect") {
-        state.selectedWeaknessChainIds = [];
-        state.screen = "weaknessChainSelect";
-        render();
-      }
-      return;
-    }
-    state.weaknessChainLocked = true;
-    state.screen = "waitingWeaknessChain";
-    render();
-    try {
-      await set(ref(database, `online/strategyRooms/${state.roomId}/weaknessChains/${state.uid}`), { ready: true, count: 0, lockedAt: serverTimestamp() });
-    } catch (error) {
-      console.error(error);
-      state.weaknessChainLocked = false;
-      showToast("弱点判定を送信できませんでした。通信状態を確認してください。");
-    }
-    return;
-  }
-  if (!both(chains)) {
-    if (state.screen !== "weaknessChainSelect") { state.screen = "waitingWeaknessChain"; render(); }
-    return;
-  }
-  if (!weaknessChainsValid(chains)) {
-    await failWeaknessIntegrityCheck("連続追撃の枚数または弱点判定を照合できませんでした。この対戦はノーコンテストです。");
-    return;
-  }
-
-  const localCount = Math.max(0, Math.min(MAX_WEAKNESS_CHAIN, Number(chains[state.uid]?.count || 0)));
-  if (localCount) await sendWeaknessChainImages(localCount);
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-  const receipts = state.roomData?.weaknessChainImagesReceived || {};
-  if (!weaknessChainImagesReady(chains, receipts)) {
-    if (state.screen !== "waitingWeaknessChainImage") { state.screen = "waitingWeaknessChainImage"; render(); }
-    return;
-  }
-  resolveWeaknessChain(guesses, chains);
-  applyWeaknessSurrenders(state.roomData?.weaknessSurrenders || {});
-  const continued = state.roomData?.weaknessContinue || {};
-  if (both(continued)) await advanceAfterWeaknessPhase();
-}
-
-function roundThreeSecretChoiceReady() {
-  if (state.round !== WEAKNESS_SCOUT_ROUND) return false;
-  if (state.advancedRounds?.has?.(WEAKNESS_SCOUT_ROUND)) return true;
-  const roundThreeContinued = state.roomData?.rounds?.[WEAKNESS_SCOUT_ROUND]?.continue || {};
-  const secretChoiceStarted = Object.keys(state.roomData?.weaknessChoiceCommits || {}).length
-    || Object.keys(state.roomData?.weaknessChoices || {}).length;
-  return Boolean(secretChoiceStarted && both(roundThreeContinued));
-}
-
-async function reactToWeaknessPhase() {
-  if (state.weaknessIntegrityFailed || state.weaknessPhaseComplete) return;
-  const guesses = state.roomData?.weaknessGuesses || {};
-  if (Object.keys(guesses).length) {
-    await reactToLegacyWeaknessPhase(guesses);
-    return;
-  }
-  if (roundThreeSecretChoiceReady()) await reactToRoundThreeWeaknessChoice();
-}
-
-function currentRoundData() {
-  return state.roomData?.rounds?.[state.round] || {};
 }
 
 function both(object) {
@@ -5037,15 +5297,11 @@ async function reactToRoomData() {
       render();
     }
     if (both(state.roomData.battleReady) && ["identity", "waitingBattle"].includes(state.screen)) {
-      state.screen = "baseSelect";
+      state.screen = "battle";
+      setStrategyChrome("HARIAI BATTLE");
       render();
     }
-    if (both(state.roomData.battleReady)) {
-      if (Object.keys(state.roomData?.weaknessGuesses || {}).length && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
-      else if (roundThreeSecretChoiceReady() && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
-      else if (state.round === WEAKNESS_SCOUT_ROUND && state.advancedRounds.has(WEAKNESS_SCOUT_ROUND) && !state.weaknessPhaseComplete) await reactToWeaknessPhase();
-      else await reactToRoundData();
-    }
+    if (both(state.roomData.battleReady) && state.screen === "battle") await reactToBattle();
   } finally {
     state.reacting = false;
     if (state.reactAgain) {
@@ -5055,142 +5311,10 @@ async function reactToRoomData() {
   }
 }
 
-async function reactToRoundData() {
-  const data = currentRoundData();
-  state.roundData = data;
-  if (state.processedRounds.has(state.round) && both(data.continue)) {
-    await advanceRoundOrFinish();
-    return;
-  }
-  const basePicks = data.basePicks || {};
-  if (both(basePicks) && !state.sentImageKeys.has(imageKey("base", state.round))) {
-    await sendImage(state.localBaseCards.get(state.round), "base");
-  }
-  if (both(data.baseImagesReceived) && state.remoteImages.has(imageKey("base", state.round))
-      && ["baseSelect", "waitingBasePick", "waitingBaseImage"].includes(state.screen)) {
-    state.screen = "baseReveal";
-    render();
-  }
-  const ratings = data.ratings || {};
-  if (!both(ratings)) return;
-  const actionPicks = data.actionPicks || {};
-  if (!actionPicks[state.uid]) {
-    const type = localActionType();
-    if (type === "normal" || !state.reserve.some((item) => !item.used)) {
-      await set(ref(database, `online/strategyRooms/${state.roomId}/rounds/${state.round}/actionPicks/${state.uid}`), { ready: true, type: "normal", skipped: true, lockedAt: serverTimestamp() });
-      if (["baseReveal", "baseRating", "waitingBaseRating"].includes(state.screen)) { state.screen = "waitingActionPick"; render(); }
-    } else if (["baseReveal", "baseRating", "waitingBaseRating"].includes(state.screen)) {
-      state.screen = "actionSelect";
-      render();
-    }
-    return;
-  }
-  if (!both(actionPicks)) return;
-  const localPick = actionPicks[state.uid];
-  const opponentPick = actionPicks[state.opponentUid];
-  if (!localPick.skipped && !state.sentImageKeys.has(imageKey("action", state.round))) {
-    await sendImage(state.localActionCards.get(state.round), "action", localPick.type);
-  }
-  const actionReceipts = data.actionImagesReceived || {};
-  const localSentReady = localPick.skipped || actionReceipts[state.uid]?.[state.opponentUid] === true;
-  const remoteSentReady = opponentPick.skipped || (actionReceipts[state.opponentUid]?.[state.uid] === true && state.remoteImages.has(imageKey("action", state.round)));
-  if (!localSentReady || !remoteSentReady) return;
-  const anyAction = !localPick.skipped || !opponentPick.skipped;
-  if (!anyAction) {
-    resolveRound(data);
-    return;
-  }
-  const actionRatings = data.actionRatings || {};
-  const localRatingRequired = !opponentPick.skipped;
-  const opponentRatingRequired = !localPick.skipped;
-  const allRatingsReady = (!localRatingRequired || Number.isInteger(actionRatings[state.uid]?.score))
-    && (!opponentRatingRequired || Number.isInteger(actionRatings[state.opponentUid]?.score));
-  if (allRatingsReady) {
-    resolveRound(data);
-    return;
-  }
-  if (["waitingActionPick", "waitingActionImage", "actionSelect", "waitingBaseRating"].includes(state.screen)) {
-    state.screen = "actionReveal";
-    render();
-  }
-}
-
-function resolveRound(data) {
-  if (state.processedRounds.has(state.round)) return;
-  const ratings = data.ratings || {};
-  const picks = data.actionPicks || {};
-  const actionRatings = data.actionRatings || {};
-  const baseScores = [0, 1].map((owner) => Number(ratings[state.players[1 - owner].uid]?.score || 0));
-  const actions = [0, 1].map((owner) => {
-    const pick = picks[state.players[owner].uid] || { type: "normal", skipped: true };
-    return { type: pick.type || "normal", cardShown: !pick.skipped };
-  });
-  const actionScores = [0, 1].map((owner) => actions[owner].cardShown ? Number(actionRatings[state.players[1 - owner].uid]?.score || 0) : 0);
-  const powers = baseScores.map((base, owner) => {
-    if (actions[owner].type === "request" && actionScores[owner]) return Math.max(base, actionScores[owner]);
-    if (actions[owner].type === "pursuit" && actionScores[owner]) return base + Math.ceil(actionScores[owner] / 2);
-    return base;
-  });
-  const damage = [0, 0];
-  state.processedRounds.add(state.round);
-  state.players.forEach((player, owner) => {
-    const rater = state.players[1 - owner];
-    const reaction = normalizeReaction(ratings[rater.uid]?.reaction, Number(ratings[rater.uid]?.score || 0));
-    if (reaction === "request") rater.extraRequests = Math.max(0, rater.extraRequests - 1);
-    if (reaction === "pursuit") rater.pursuitPermits = Math.max(0, rater.pursuitPermits - 1);
-    if (actions[owner].cardShown) player.reserveUsed += 1;
-    player.totalPower += powers[owner];
-    player.receivedScores.push(baseScores[owner]);
-    if (actionScores[owner]) player.receivedScores.push(actionScores[owner]);
-  });
-  if (powers[0] > powers[1]) { damage[1] = powers[0]; state.players[1].hp = Math.max(0, state.players[1].hp - powers[0]); }
-  else if (powers[1] > powers[0]) { damage[0] = powers[1]; state.players[0].hp = Math.max(0, state.players[0].hp - powers[1]); }
-  const result = { round: state.round, baseScores, actions, actionScores, powers, damage };
-  state.history.push(result);
-  state.currentResult = result;
-  state.screen = "roundResult";
-  window.HariaiAudio?.playResult?.(Math.max(...powers));
-  if (Math.max(...powers) >= 9) triggerCriticalFx(Math.max(...powers) >= 10 ? "PERFECT!!" : "CRITICAL!");
-  render();
-}
-
-async function advanceRoundOrFinish() {
-  if (state.advancedRounds.has(state.round)) return;
-  state.advancedRounds.add(state.round);
-  if (state.round === WEAKNESS_SCOUT_ROUND && !state.weaknessPhaseComplete) {
-    state.weaknessTriggerRound = WEAKNESS_SCOUT_ROUND;
-    state.selectedWeaknessChoice = "";
-    state.selectedWeaknessGuess = null;
-    state.screen = "weaknessChoice";
-    setStrategyChrome("ROUND 3 SECRET DECISION");
-    render();
-    await reactToWeaknessPhase();
-    return;
-  }
-  if (isGameOver()) {
-    await finishMatch();
-    return;
-  }
-  state.round += 1;
-  state.currentResult = null;
-  state.selectedBaseId = "";
-  state.selectedScore = 0;
-  state.selectedReaction = "normal";
-  state.screen = "baseSelect";
-  render();
-  await reactToRoomData();
-}
-
-function isGameOver() {
-  if (!state.weaknessPhaseComplete && state.round <= WEAKNESS_SCOUT_ROUND) return false;
-  return state.round >= MAX_ROUNDS || state.players.some((player) => player.hp <= 0);
-}
-
 function determineOutcome() {
-  const [first, second] = state.players;
-  if (first.hp !== second.hp) return { winnerIndex: first.hp > second.hp ? 0 : 1 };
-  if (first.totalPower !== second.totalPower) return { winnerIndex: first.totalPower > second.totalPower ? 0 : 1 };
-  return { winnerIndex: -1 };
+  const outcome = state.replay?.outcome;
+  if (!outcome || outcome.draw) return { winnerIndex: -1 };
+  return { winnerIndex: state.players.findIndex((player) => player.uid === outcome.winnerUid) };
 }
 
 async function ensureStrategyResultClaim(targetState, outcome) {
@@ -5245,14 +5369,14 @@ async function finishMatch() {
     }
     const reveals = state.roomData?.weaknessReveals || {};
     if (!reveals[state.uid]) {
-      await ensureLocalWeaknessReveal();
+      await publishFinalWeaknessReveal();
       return;
     }
     if (!both(reveals)) {
       return;
     }
     if (!state.finalWeaknessRevealsVerified) {
-      const verified = await verifyWeaknessCommitReveals(reveals);
+      const verified = await verifyFinalWeaknessReveals(reveals);
       if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
       if (!verified) {
         await failWeaknessIntegrityCheck("最終弱点のハッシュ照合に失敗しました。この対戦はノーコンテストです。");
@@ -5337,10 +5461,6 @@ function getLocalPlayer() {
 
 function getOpponent() {
   return state.players[state.playerIndex === 0 ? 1 : 0];
-}
-
-function remainingReserve(player) {
-  return Math.max(0, Number(player?.reserveCount || 0) - Number(player?.reserveUsed || 0));
 }
 
 function average(values) {
@@ -5556,7 +5676,8 @@ async function resetStrategySetup() {
       name: state.name,
       clues: [...state.clues],
       weaknessIndex: state.weaknessIndex,
-      pursuitLine: state.pursuitLine,
+      persona: { ...state.persona },
+      penaltyConsent: { ...state.penaltyConsent },
       imagePreference: state.imagePreference,
       profile: { ...state.profile },
       economy: state.economy,
@@ -5642,111 +5763,6 @@ async function leaveToNormal1on1() {
     }
     handleRecoverableError(error);
   }
-}
-
-async function submitWeaknessChoiceCommit(targetState, roomId, uid, digest) {
-  if (!strategyRoomOperationIsCurrent(targetState, roomId) || targetState.weaknessChoiceCommitSending) return false;
-  const refreshWaitingUi = targetState.weaknessChoiceCommitUncertain;
-  targetState.weaknessChoiceCommitSending = true;
-  targetState.weaknessChoiceCommitUncertain = false;
-  const commitRef = ref(database, `online/strategyRooms/${roomId}/weaknessChoiceCommits/${uid}`);
-  try {
-    const known = targetState.roomData?.weaknessChoiceCommits?.[uid];
-    if (known) {
-      if (known.digest !== digest) {
-        await failWeaknessIntegrityCheck("保存済みの秘密選択と端末の封印が一致しません。この対戦はノーコンテストです。");
-        return false;
-      }
-      return true;
-    }
-    await set(commitRef, { digest, round: WEAKNESS_SCOUT_ROUND, lockedAt: serverTimestamp() });
-    return strategyRoomOperationIsCurrent(targetState, roomId);
-  } catch (error) {
-    let stored = null;
-    let readSucceeded = false;
-    try {
-      stored = (await get(commitRef)).val();
-      readSucceeded = true;
-    } catch (readError) {
-      console.error(readError);
-    }
-    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return false;
-    const observed = targetState.roomData?.weaknessChoiceCommits?.[uid];
-    if (stored?.digest === digest || observed?.digest === digest) return true;
-    if (stored?.digest || observed?.digest) {
-      console.error(error);
-      await failWeaknessIntegrityCheck("保存済みの秘密選択と端末の封印が一致しません。この対戦はノーコンテストです。");
-      return false;
-    }
-    console.error(error);
-    targetState.weaknessChoiceCommitUncertain = true;
-    targetState.screen = "waitingWeaknessChoice";
-    setStrategyChrome("SECRET CHOICE SEALED");
-    showToast(readSucceeded
-      ? "秘密選択の封印を確認できませんでした。同じ封印を再送してください。"
-      : "通信が途切れたため封印の送信結果を確認できません。同じ封印だけを再送できます。");
-    return false;
-  } finally {
-    if (state === targetState && state.roomId === roomId) {
-      targetState.weaknessChoiceCommitSending = false;
-      if ((refreshWaitingUi || targetState.weaknessChoiceCommitUncertain) && targetState.screen === "waitingWeaknessChoice") render();
-    }
-  }
-}
-
-async function retryWeaknessChoiceCommit() {
-  const targetState = state;
-  const roomId = state.roomId;
-  const uid = state.uid;
-  const digest = state.weaknessChoiceDigest;
-  if (!strategyRoomOperationIsCurrent(targetState, roomId) || targetState.weaknessChoiceCommitSending) return;
-  if (!targetState.weaknessChoiceLocked || !/^[a-f0-9]{64}$/.test(digest)) {
-    await failWeaknessIntegrityCheck("秘密選択の封印を復元できませんでした。この対戦はノーコンテストです。");
-    return;
-  }
-  targetState.screen = "waitingWeaknessChoice";
-  setStrategyChrome("SECRET CHOICE SEALED");
-  render();
-  await submitWeaknessChoiceCommit(targetState, roomId, uid, digest);
-}
-
-async function lockWeaknessChoice(event) {
-  event.preventDefault();
-  if (state.weaknessChoiceLocked || state.round !== WEAKNESS_SCOUT_ROUND || state.weaknessPhaseComplete) return;
-  const choice = document.querySelector('input[name="weaknessChoice"]:checked')?.value || state.selectedWeaknessChoice;
-  const selected = Number(document.querySelector('input[name="weaknessGuess"]:checked')?.value);
-  if (choice !== "guess" && choice !== "pass") return showToast("看破するか見送るかを選んでください。");
-  if (choice === "guess" && (!Number.isInteger(selected) || selected < 0 || selected > 2)) {
-    return showToast("看破する弱点候補を1つ選んでください。");
-  }
-  const targetState = state;
-  const roomId = state.roomId;
-  const uid = state.uid;
-  targetState.weaknessChoiceLocked = true;
-  targetState.weaknessChoiceCommitUncertain = false;
-  targetState.screen = "waitingWeaknessChoice";
-  setStrategyChrome("SECRET CHOICE LOCKED");
-  render();
-  let reveal = null;
-  let digest = "";
-  try {
-    ({ reveal, digest } = await prepareWeaknessChoiceCommit(choice, choice === "guess" ? selected : -1, targetState));
-  } catch (error) {
-    console.error(error);
-    if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-    targetState.weaknessChoiceLocked = false;
-    targetState.screen = "weaknessChoice";
-    setStrategyChrome("ROUND 3 SECRET DECISION");
-    render();
-    showToast(error?.message || "秘密選択を封印できませんでした。もう一度お試しください。");
-    return;
-  }
-  if (!strategyRoomOperationIsCurrent(targetState, roomId)) return;
-  targetState.selectedWeaknessChoice = reveal.choice;
-  targetState.selectedWeaknessGuess = reveal.guessIndex >= 0 ? reveal.guessIndex : null;
-  targetState.weaknessChoiceSalt = reveal.salt;
-  targetState.weaknessChoiceDigest = digest;
-  await submitWeaknessChoiceCommit(targetState, roomId, uid, digest);
 }
 
 async function leaveToFreeTable() {

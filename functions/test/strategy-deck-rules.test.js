@@ -45,12 +45,10 @@ test("strategy deck lock remains owner-only, write-once, and closed to extra fie
   assert.equal(deckReady.$other[".validate"], false);
 });
 
-test("ten-card deck change does not reduce the existing three-card weakness chain cap", () => {
-  const weaknessChain = strategyRoom.weaknessChains.$uid;
+test("ten-card deck keeps the three-image finish cap in version 3 rules", () => {
+  const finish = strategyRoom.moves.$slot.finish;
 
-  includesAll(weaknessChain[".validate"], [
-    "newData.child('count').val() === 3",
-    "deckReady/' + auth.uid + '/reserveCount",
-  ]);
-  assert.match(weaknessChain.count[".validate"], /newData\.val\(\) === 3/);
+  assert.match(finish.count[".validate"], /newData\.val\(\) === 3\)/);
+  assert.doesNotMatch(finish.count[".validate"], /=== 4/);
+  assert.equal(strategyRoom.weaknessChains, undefined, "version 2 chain declarations are retired");
 });

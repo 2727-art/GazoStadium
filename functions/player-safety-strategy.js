@@ -5,6 +5,16 @@ const { freezeMatchImagePreferences } = require("./match-image-preferences");
 const ROOM_ID = /^[-A-Za-z0-9_]{20}$/;
 const FRESH_MS = 45000;
 const OFFER_MS = 20000;
+// 戦略型1on1「貼り合い本式」。ID一覧はクライアントの strategy-hariai-core.mjs と一致させる。
+const PROTOCOL_VERSION = 3;
+const QUEUE_WAITING = "waiting-v3";
+const QUEUE_OFFERING = "offering-v3";
+const PERSONA_TYPES = ["tsuyotsuyo", "yowayowa", "koakuma", "oneesan", "amaenbo", "seiso"];
+const FIRST_PERSONS = ["watashi", "atashi", "uchi", "watakushi"];
+const CALL_STYLES = ["chan", "san", "oneesan", "anata"];
+const COMMIT = /^[a-f0-9]{64}$/;
+const listOfThree = (value) => (Array.isArray(value) ? value : [0, 1, 2].map((index) => value?.[index] ?? value?.[String(index)]))
+  .slice(0, 3);
 function preferenceTier(a, b) {
   const valid = (v) => ["live_action", "illustration", "both"].includes(v) ? v : "legacy";
   const first = valid(a.ratingPreference); const second = valid(b.ratingPreference);
@@ -16,28 +26,40 @@ function preferenceTier(a, b) {
 function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = Date.now }) {
   const get = async (path) => (await realtime.ref(`online/${path}`).get()).val();
   const fail = () => { throw new HttpsError("failed-precondition", "この対戦は終了しました。改めて相手を探してください。"); };
-  const queueFresh = (uid, row, at, states = ["waiting-v2"]) => row?.uid === uid
-    && row.protocolVersion === 2 && states.includes(row.state)
+  const requireCurrentProtocol = (data) => {
+    if (data?.protocolVersion !== PROTOCOL_VERSION) {
+      throw new HttpsError("failed-precondition", "戦略型1on1が新しいルールになりました。ページを再読み込みしてください。");
+    }
+  };
+  const queueFresh = (uid, row, at, states = [QUEUE_WAITING]) => row?.uid === uid
+    && row.protocolVersion === PROTOCOL_VERSION && states.includes(row.state)
     && Number.isSafeInteger(row.joinedAt) && row.joinedAt > 0 && row.joinedAt <= at
     && Number.isSafeInteger(row.lastSeen) && row.lastSeen >= at - FRESH_MS && row.lastSeen <= at + 5000;
   const args = (roomId, room) => ({ ...room, roomId, mode: "strategy", firstUid: room.hostUid, secondUid: room.guestUid });
   async function playerRecord(uid, value) {
+    const clues = listOfThree(value?.clues);
+    const commits = listOfThree(value?.weaknessCommits);
+    const persona = value?.persona;
     if (!value || value.uid !== uid || !Array.isArray(value.clues) || value.clues.length !== 3
-        || value.clues.some((clue) => typeof clue !== "string" || !clue.trim() || clue.length > 80)
-        || !/^[a-f0-9]{64}$/.test(String(value.weaknessCommit || ""))) {
+        || clues.some((clue) => typeof clue !== "string" || !clue.trim() || clue.length > 80 || /[\r\n]/.test(clue))
+        || commits.length !== 3 || commits.some((commit) => !COMMIT.test(String(commit || "")))
+        || new Set(commits).size !== 3
+        || !PERSONA_TYPES.includes(persona?.type) || !FIRST_PERSONS.includes(persona?.firstPerson)
+        || !CALL_STYLES.includes(persona?.callStyle)) {
       throw new HttpsError("invalid-argument", "戦略型のプレイヤー情報を確認できません。");
     }
     const profile = await get(`strategyProfiles/${uid}`) || {};
-    return { uid, name: String(value.name || "プレイヤー").replace(/[\r\n]/g, " ").slice(0, 16),
-      clues: value.clues, weaknessCommit: value.weaknessCommit,
-      pursuitLine: String(value.pursuitLine || "").replace(/[\r\n]/g, " ").slice(0, 40),
+    return { uid, name: String(value.name || "プレイヤー").replace(/[\r\n]/g, " ").trim().slice(0, 16) || "プレイヤー",
+      persona: { type: persona.type, firstPerson: persona.firstPerson, callStyle: persona.callStyle },
+      clues, weaknessCommits: commits,
+      penalties: { call: value.penalties?.call === true, tribute: value.penalties?.tribute === true },
       rating: Number(profile.rating || 1000), streak: Number(profile.streak || 0) };
   }
   async function release(roomId, room) {
     await Promise.all([room.hostUid, room.guestUid].map(async (uid) => {
       await realtime.ref(`online/strategyActive/${uid}`).transaction((value) => value == null || value === roomId ? null : undefined);
       await realtime.ref(`online/strategyQueue/${uid}`).transaction((value) => value?.roomId === roomId
-        && value.joinedAt === room.queueJoinedAt?.[uid] ? { ...value, state: "waiting-v2", roomId: null } : value == null ? null : undefined);
+        && value.joinedAt === room.queueJoinedAt?.[uid] ? { ...value, state: QUEUE_WAITING, roomId: null } : value == null ? null : undefined);
     }));
     await realtime.ref(`online/strategyOffers/${room.guestUid}/${roomId}`).transaction((value) =>
       value == null || value.fromUid === room.hostUid && value.toUid === room.guestUid && value.roomId === roomId ? null : undefined);
@@ -60,6 +82,7 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
       roomId, opponentUid: current?.hostUid === uid ? current?.guestUid : current?.hostUid };
   }
   async function match(uid, data) {
+    requireCurrentProtocol(data);
     const roomId = String(data.roomId || ""); if (!ROOM_ID.test(roomId)) fail();
     const ownPlayer = await playerRecord(uid, data.player);
     const activeId = await get(`strategyActive/${uid}`);
@@ -108,14 +131,14 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
             || !Number.isFinite(preferenceTier(hostQueue, guestQueue))) { await release(roomId, room); continue; }
         const safety = await playerSafety.ensureContact({ firstUid: uid, secondUid: other.uid, mode: "strategy",
           roomId, attemptId: roomId, startedAt: Math.min(hostQueue.joinedAt, guestQueue.joinedAt), active: false });
-        room = { ...base, ...safety, protocolVersion: 2, status: "offered",
+        room = { ...base, ...safety, protocolVersion: PROTOCOL_VERSION, status: "offered",
           members: { [uid]: true, [other.uid]: true }, players: { [uid]: ownPlayer } };
         const stored = await realtime.ref(`online/strategyRooms/${roomId}`).transaction((value) => value == null ? room : undefined);
         if (!stored.committed) { await release(roomId, room); return { status: "waiting" }; }
         const state = await realtime.ref(`online/strategyQueue/${uid}`).transaction((value) => value?.joinedAt === own.joinedAt
-          && value.state === "waiting-v2" ? { ...value, state: "offering-v2", roomId } : value == null ? null : undefined);
+          && value.state === QUEUE_WAITING ? { ...value, state: QUEUE_OFFERING, roomId } : value == null ? null : undefined);
         if (!state.committed) { await expire(uid, { roomId }); return { status: "waiting" }; }
-        await realtime.ref(`online/strategyOffers/${other.uid}/${roomId}`).set({ protocolVersion: 2,
+        await realtime.ref(`online/strategyOffers/${other.uid}/${roomId}`).set({ protocolVersion: PROTOCOL_VERSION,
           roomId, fromUid: uid, toUid: other.uid, createdAt });
         if (!await playerSafety.checkContact(args(roomId, room))) { await expire(uid, { roomId }); return { status: "waiting" }; }
         return { status: "hosted", roomId, opponentUid: other.uid };
@@ -129,13 +152,14 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
     return { status: "waiting" };
   }
   async function accept(uid, data) {
+    requireCurrentProtocol(data);
     const roomId = String(data.roomId || ""); if (!ROOM_ID.test(roomId)) fail();
     const room = await get(`strategyRooms/${roomId}`);
     if (!room || room.guestUid !== uid || room.destroyed || !await playerSafety.checkContact(args(roomId, room))) fail();
     if (room.status === "active") return { status: "active", roomId, opponentUid: room.hostUid };
     const [hostQueue, guestQueue, active] = await Promise.all([get(`strategyQueue/${room.hostUid}`), get(`strategyQueue/${uid}`), get("strategyActive")]);
     if (room.status !== "offered" || room.createdAt < now() - OFFER_MS
-        || !queueFresh(room.hostUid, hostQueue, now(), ["offering-v2"])
+        || !queueFresh(room.hostUid, hostQueue, now(), [QUEUE_OFFERING])
         || !queueFresh(uid, guestQueue, now()) || hostQueue.roomId !== roomId
         || hostQueue.joinedAt !== room.queueJoinedAt[room.hostUid] || guestQueue.joinedAt !== room.queueJoinedAt[uid]
         || active?.[uid] !== roomId || active?.[room.hostUid] !== roomId
@@ -175,4 +199,8 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
   }
   return { match, accept, expire, cleanup };
 }
-module.exports = { createPlayerSafetyStrategy, preferenceTier };
+module.exports = {
+  createPlayerSafetyStrategy,
+  preferenceTier,
+  STRATEGY_HARIAI_IDS: Object.freeze({ PROTOCOL_VERSION, PERSONA_TYPES, FIRST_PERSONS, CALL_STYLES }),
+};
