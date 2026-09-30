@@ -6076,3 +6076,577 @@
     display: none;
   }
 }
+
+/* ---- mojikora brushup v1: text placement, my scripts, editor studio, artwork save ---- */
+
+/* The round/BPM stamp overlapped the copy; the HUD and captions already show it. */
+:is(
+  .ai-text-training-doodle-cheer,
+  .ai-text-training-result-doodle,
+  .ai-text-training-editor-doodle,
+  .ai-text-training-artwork-export-doodle
+).is-collage .att-doodle-meta {
+  display: none;
+}
+
+/* Editor preview and artwork export reuse the collage without the play-screen landscape overrides. */
+:is(
+  .ai-text-training-editor-doodle,
+  .ai-text-training-artwork-export-doodle
+).is-doodle.is-collage {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  isolation: isolate;
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--att-doodle-fill);
+  background: transparent;
+  container-type: inline-size;
+  font-family: "Comic Sans MS", "Hiragino Maru Gothic ProN", "Yu Gothic", cursive;
+  pointer-events: none;
+}
+
+/* Keep the gallery overlay on the image itself, not over the caption and save button. */
+.ai-text-training-result-lineup.is-artwork-gallery figure .ai-text-training-result-doodle.is-collage {
+  bottom: auto;
+  height: auto;
+  aspect-ratio: 9 / 14;
+  border-radius: 15px;
+}
+
+/* Text placement: "top" / "bottom" stack the copy in a band and keep the middle of the image clear. */
+.is-collage:not([hidden]):is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"]) {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.is-collage[data-att-doodle-placement="top"] {
+  justify-content: flex-start;
+  padding: 13% 6% 0 !important;
+}
+
+.is-collage[data-att-doodle-placement="bottom"] {
+  justify-content: flex-end;
+  padding: 0 6% 15% !important;
+}
+
+.is-collage:is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"])
+  .att-doodle-copy[data-ai-text-training-doodle-part] {
+  position: relative !important;
+  inset: auto !important;
+  flex: none;
+  width: auto !important;
+  max-width: 90% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+}
+
+.is-collage:is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"])
+  .att-doodle-copy.is-part-1[data-ai-text-training-doodle-part] {
+  align-self: flex-start;
+  margin-left: 3% !important;
+  transform: rotate(-4deg) !important;
+}
+
+.is-collage:is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"])
+  .att-doodle-copy.is-part-2[data-ai-text-training-doodle-part] {
+  align-self: flex-end;
+  margin-right: 3% !important;
+  transform: rotate(2.5deg) !important;
+}
+
+.is-collage:is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"])
+  .att-doodle-copy.is-part-3[data-ai-text-training-doodle-part] {
+  transform: rotate(-2deg) !important;
+}
+
+.is-collage:is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"])[data-att-doodle-part-count="1"]
+  .att-doodle-copy.is-part-1[data-ai-text-training-doodle-part] {
+  align-self: center;
+  margin-left: 0 !important;
+}
+
+.is-collage:is([data-att-doodle-placement="top"], [data-att-doodle-placement="bottom"])
+  :is(.att-doodle-ornament.is-spark-b, .att-doodle-ornament.is-loop) {
+  display: none;
+}
+
+.is-collage[data-att-doodle-placement="top"] .att-doodle-ornament.is-heart {
+  top: 5% !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: 6% !important;
+}
+
+.is-collage[data-att-doodle-placement="top"] .att-doodle-ornament.is-spark-a {
+  top: 41% !important;
+  right: 7% !important;
+  bottom: auto !important;
+  left: auto !important;
+}
+
+.is-collage[data-att-doodle-placement="top"] .att-doodle-ornament.is-ribbon {
+  top: 5% !important;
+  right: 8% !important;
+  bottom: auto !important;
+  left: auto !important;
+}
+
+.is-collage[data-att-doodle-placement="bottom"] .att-doodle-ornament.is-heart {
+  top: auto !important;
+  right: auto !important;
+  bottom: 43% !important;
+  left: 6% !important;
+}
+
+.is-collage[data-att-doodle-placement="bottom"] .att-doodle-ornament.is-spark-a {
+  top: auto !important;
+  right: 7% !important;
+  bottom: 6% !important;
+  left: auto !important;
+}
+
+.is-collage[data-att-doodle-placement="bottom"] .att-doodle-ornament.is-ribbon {
+  top: auto !important;
+  right: 8% !important;
+  bottom: 41% !important;
+  left: auto !important;
+}
+
+/* Setup: per-image text placement */
+.ai-text-training-placement-control {
+  min-width: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.ai-text-training-placement-control > legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: #aab2c4;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.ai-text-training-placement-control > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ai-text-training-placement-control label {
+  position: relative;
+  min-width: 0;
+}
+
+.ai-text-training-placement-control input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ai-text-training-placement-control span {
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 5px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  color: #d7dbe8;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.ai-text-training-placement-control input:checked + span {
+  border-color: var(--att-cyan);
+  color: #06121a;
+  background: var(--att-cyan);
+}
+
+.ai-text-training-placement-control input:focus-visible + span {
+  outline: 3px solid var(--att-cyan);
+  outline-offset: 2px;
+}
+
+.ai-text-training-placement-control input:disabled {
+  cursor: not-allowed;
+}
+
+.ai-text-training-placement-control input:disabled + span {
+  opacity: 0.5;
+}
+
+/* Setup: my scripts (device only) */
+.ai-text-training-my-scripts {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(99, 238, 229, 0.22);
+  border-radius: 17px;
+  background: rgba(8, 11, 19, 0.7);
+}
+
+.ai-text-training-my-scripts > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+
+.ai-text-training-my-scripts h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 0.95rem;
+}
+
+.ai-text-training-my-scripts > header small,
+.ai-text-training-my-scripts li small {
+  color: #8c96a9;
+  font-size: 0.64rem;
+  font-weight: 850;
+}
+
+.ai-text-training-my-scripts > p {
+  margin: 8px 0 0;
+  color: #9da6b8;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.ai-text-training-my-scripts ul {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-text-training-my-scripts li {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ai-text-training-my-scripts li.is-selected {
+  border-color: rgba(99, 238, 229, 0.45);
+  background: rgba(99, 238, 229, 0.06);
+}
+
+.ai-text-training-my-scripts li > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-text-training-my-scripts li strong {
+  overflow-wrap: anywhere;
+  color: #f4f6fb;
+  font-size: 0.82rem;
+}
+
+.ai-text-training-my-script-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-text-training-my-script-actions .button {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 0.72rem;
+}
+
+.ai-text-training-selected-support.is-my-script span {
+  color: var(--att-cyan);
+}
+
+/* Editor: helpers */
+.ai-text-training-mini-button {
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 1px solid rgba(99, 238, 229, 0.3);
+  border-radius: 999px;
+  color: #c9fffa;
+  background: rgba(99, 238, 229, 0.06);
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 900;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.ai-text-training-mini-button:hover {
+  background: rgba(99, 238, 229, 0.13);
+}
+
+.ai-text-training-mini-button:focus-visible {
+  outline: 3px solid var(--att-cyan);
+  outline-offset: 2px;
+}
+
+.ai-text-training-mini-button[aria-pressed="true"] {
+  border-color: var(--att-cyan);
+  color: #06121a;
+  background: var(--att-cyan);
+}
+
+.ai-text-training-mini-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-text-training-editor-draft-note {
+  color: #9ff5ec !important;
+}
+
+.ai-text-training-editor-progress {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 14px;
+}
+
+.ai-text-training-editor-progress > strong {
+  color: #e7eaf3;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.ai-text-training-editor-progress > i {
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--att-cyan) calc(var(--att-editor-progress, 0) * 100%), rgba(255, 255, 255, 0.1) 0);
+}
+
+.ai-text-training-editor-slot {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ai-text-training-editor-slot.is-ok {
+  border-color: rgba(99, 238, 229, 0.22);
+}
+
+.ai-text-training-editor-slot.is-incomplete {
+  border-color: rgba(255, 212, 109, 0.3);
+}
+
+.ai-text-training-editor-slot > label > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-text-training-editor-slot > label > span em {
+  color: #8c95a8;
+  font-size: 0.62rem;
+  font-style: normal;
+}
+
+.ai-text-training-editor-slot-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-text-training-editor-slot-tools > small {
+  flex: 1 1 100%;
+  min-width: 0;
+  color: #ffe0a0;
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
+.ai-text-training-editor-slot.is-ok .ai-text-training-editor-slot-tools > small {
+  color: #9ff5ec;
+}
+
+/* Editor: preview on an image */
+.ai-text-training-editor-collage {
+  display: grid;
+  gap: 14px;
+  padding: clamp(16px, 3vw, 24px);
+  border: 1px solid rgba(255, 111, 145, 0.26);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 0 0, rgba(255, 111, 145, 0.08), transparent 40%),
+    rgba(12, 16, 25, 0.94);
+}
+
+.ai-text-training-editor-collage-head > span {
+  color: var(--att-cyan);
+  font-size: 0.58rem;
+  font-weight: 1000;
+  letter-spacing: 0.12em;
+}
+
+.ai-text-training-editor-collage-head h3 {
+  margin: 5px 0 0;
+}
+
+.ai-text-training-editor-collage-head p {
+  margin: 6px 0 0;
+  color: #9da6b8;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.ai-text-training-editor-collage-body {
+  display: grid;
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.ai-text-training-editor-collage-stage {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 9 / 14;
+  margin-inline: auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 15px;
+  background:
+    radial-gradient(circle at 50% 36%, rgba(170, 145, 255, 0.26), transparent 46%),
+    linear-gradient(160deg, #241b36, #0b0f19 70%);
+  container-type: inline-size;
+}
+
+.ai-text-training-editor-collage-stage img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ai-text-training-editor-collage-controls {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.ai-text-training-editor-collage-controls [role="group"] {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-text-training-editor-collage-controls [role="group"] > small {
+  color: #aab2c4;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.ai-text-training-editor-collage-controls [role="group"] > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-text-training-editor-parts {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  color: #d7dbe8;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* Result: save an artwork to this device */
+.ai-text-training-artwork-save {
+  width: 100%;
+  min-height: 34px;
+  display: block;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(99, 238, 229, 0.3);
+  border-radius: 999px;
+  color: #c9fffa;
+  background: rgba(99, 238, 229, 0.07);
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ai-text-training-artwork-save:hover {
+  background: rgba(99, 238, 229, 0.14);
+}
+
+.ai-text-training-artwork-save:focus-visible {
+  outline: 3px solid var(--att-cyan);
+  outline-offset: 2px;
+}
+
+.ai-text-training-artwork-save:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.ai-text-training-artwork-export-host {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  z-index: -1;
+  width: 360px;
+  height: 560px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ai-text-training-artwork-export-host .ai-text-training-result-lineup {
+  display: block;
+  margin: 0;
+}
+
+.ai-text-training-artwork-export-stage {
+  position: relative;
+  overflow: hidden;
+  margin: 0;
+  container-type: inline-size;
+}
+
+@media (max-width: 640px) {
+  .ai-text-training-editor-collage-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-text-training-editor-progress {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ai-text-training-editor-progress > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}

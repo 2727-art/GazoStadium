@@ -494,6 +494,9 @@ export function aiTextTrainingScriptSlot({
   return `${Number(remainingSeconds) <= 5 ? "final" : "active"}_${band}`;
 }
 
+// 作者が台詞へ入れた「/」「／」は、画像上で塊を分ける位置の指定。表示では見えない区切り（U+200B）へ置き換える。
+export const AI_TEXT_TRAINING_LINE_BREAK_MARK = "\u200b";
+
 export function renderAiTextTrainingLine(
   line,
   { bpm = 0, round = 1, remaining = 0 } = {},
@@ -508,7 +511,10 @@ export function renderAiTextTrainingLine(
   return String(line ?? "")
     .replaceAll("{bpm}", String(renderedBpm))
     .replaceAll("{round}", String(Math.max(1, Math.min(5, Math.floor(Number(round) || 1)))))
-    .replaceAll("{remaining}", String(Math.max(0, Math.ceil(Number(remaining) || 0))));
+    .replaceAll("{remaining}", String(Math.max(0, Math.ceil(Number(remaining) || 0))))
+    .replace(/\s*[/／]\s*/gu, AI_TEXT_TRAINING_LINE_BREAK_MARK)
+    .replace(new RegExp(`^${AI_TEXT_TRAINING_LINE_BREAK_MARK}+|${AI_TEXT_TRAINING_LINE_BREAK_MARK}+$`, "gu"), "")
+    .replace(new RegExp(`${AI_TEXT_TRAINING_LINE_BREAK_MARK}{2,}`, "gu"), AI_TEXT_TRAINING_LINE_BREAK_MARK);
 }
 
 export function pickAiTextTrainingLine(lines, previousLine = "", randomValue = Math.random()) {

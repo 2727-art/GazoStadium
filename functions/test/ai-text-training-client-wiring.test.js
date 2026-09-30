@@ -1391,7 +1391,11 @@ test("authors sell six separate personality-product combinations and can clone o
   assert.match(editor, /停止を妨げる台詞は禁止/);
   assert.match(editorUpdate, /const productType = normalizeAiTextTrainingProductType/);
   assert.match(editorUpdate, /for \(const slot of AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS\)/);
-  assert.match(editorUpdate, /if \(draft\.productType === "defeat_zone"\)/);
+  assert.match(editorUpdate, /validateScriptLines\(draft\);/);
+  assert.match(
+    sourceBlock(client, "function editorDraftSlots", "function editorProgress"),
+    /draft\?\.productType === "defeat_zone"[\s\S]*?AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS\.map/,
+  );
   assert.match(
     editorUpdate,
     /const zoneLines = \{\};[\s\S]*?if \(productType === "defeat_zone"\)[\s\S]*?zoneLines,/,

@@ -54,7 +54,7 @@ import {
   normalizeAiTextTrainingScriptSnapshot,
   pickAiTextTrainingLine,
   renderAiTextTrainingLine,
-} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1-beat-edge-hud-v3-defeat-zone-v1-defeat-zone-scripts-v1";
+} from "./ai-text-training-core.mjs?v=ai-text-training-core-v1-beat-edge-hud-v3-defeat-zone-v1-defeat-zone-scripts-v1-mojikora-brushup-v1";
 import {
   AI_TEXT_TRAINING_ROSTER_MAX_COUNT,
   drawAiTextTrainingRosterIndices,
@@ -97,6 +97,15 @@ const DECK_PERSISTENCE_KEY = "hariai-ai-text-training-deck-persistence-v1";
 const BEAT_CHARACTER_PREFERENCE_KEY = "hariai-ai-text-training-beat-character-v1";
 const METRONOME_VOLUME_PREFERENCE_KEY = "hariai-ai-text-training-metronome-volume-v1";
 const CHEER_PRESENTATION_PREFERENCE_KEY = "hariai-ai-text-training-cheer-presentation-v1";
+// マイ台本と台本の下書きは、この端末のlocalStorageだけに置く（サーバーへ送らない）。
+const MY_SCRIPTS_STORAGE_KEY = "hariai-ai-text-training-my-scripts-v1";
+const EDITOR_DRAFT_STORAGE_KEY = "hariai-ai-text-training-editor-draft-v1";
+const MY_SCRIPTS_MAX_COUNT = 20;
+const DOODLE_PLACEMENT_LABELS = Object.freeze({ auto: "おまかせ", top: "上", bottom: "下" });
+// 作品を画像として保存する時の大きさ（9:14、縦長）。
+const ARTWORK_EXPORT_WIDTH = 360;
+const ARTWORK_EXPORT_HEIGHT = 560;
+const ARTWORK_EXPORT_SCALE = 3;
 const DECK_DATABASE_NAME = "hariai-ai-text-training-deck-v1";
 const DECK_STORE_NAME = "decks";
 const DECK_RECORD_KEY = "latest";
@@ -379,6 +388,20 @@ function doodleLayoutForRound(roundIndex = state.roundIndex) {
   return DOODLE_LAYOUTS[(sessionSeed + normalizedIndex * 2) % DOODLE_LAYOUTS.length];
 }
 
+// 塊の先頭に置かない文字（句読点・閉じ括弧・小書きの仮名・長音・飾り）と、塊の最後に置かない開き括弧。
+const DOODLE_NO_BREAK_BEFORE = new Set(Array.from("、。，．,.!！?？…‥・:：;；)）」』】〕〉》］]｝}ーｰ〜～♡♥☆★♪ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ"));
+const DOODLE_NO_BREAK_AFTER = new Set(Array.from("(（「『【〔〈《［[｛{"));
+// この文字の直後は、言葉の区切りとして自然に分けられる。
+const DOODLE_SOFT_BREAK_AFTER = new Set(Array.from("、。，．,!！?？…♡♥☆★♪"));
+// 作者が台詞へ「/」で入れた区切り（表示用の文字列では幅のないU+200B）。core の AI_TEXT_TRAINING_LINE_BREAK_MARK と同じ文字。
+const DOODLE_BREAK_MARK = "\u200b";
+// 文字の位置：おまかせ（構図どおり）／上へ寄せる／下へ寄せる。画像ごとに本人が選ぶ。
+const DOODLE_PLACEMENTS = Object.freeze(["auto", "top", "bottom"]);
+
+function normalizeDoodlePlacement(value) {
+  return DOODLE_PLACEMENTS.includes(value) ? value : "auto";
+}
+
 function doodleGraphemes(value) {
   const normalized = String(value || "")
     .replace(/[\u0000-\u001f\u007f]/gu, " ")
@@ -395,23 +418,107 @@ function normalizeDoodleMessage(value) {
   return doodleGraphemes(value).slice(0, DOODLE_MAX_GRAPHEMES).join("");
 }
 
+function doodleScriptClass(grapheme) {
+  if (/\p{Script=Han}/u.test(grapheme)) return "han";
+  if (/\p{Script=Hiragana}/u.test(grapheme)) return "hiragana";
+  if (/\p{Script=Katakana}|ー/u.test(grapheme)) return "katakana";
+  if (/[\p{L}\p{N}]/u.test(grapheme)) return "latin";
+  return "other";
+}
+
+// 切れ目ごとの「切りにくさ」。0＝句読点や空白の直後、4＝単語の境目、100＝禁則（行頭の句読点など）。
+function doodleBreakPenalties(graphemes) {
+  const penalties = new Map();
+  const wordStarts = new Set();
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    try {
+      const segmenter = new Intl.Segmenter("ja", { granularity: "word" });
+      for (const entry of segmenter.segment(graphemes.join(""))) wordStarts.add(entry.index);
+    } catch {
+      // 単語の境目を使えない環境では、文字種の変わり目で代用する。
+    }
+  }
+  let offset = 0;
+  for (let cut = 1; cut < graphemes.length; cut += 1) {
+    offset += graphemes[cut - 1].length;
+    const previous = graphemes[cut - 1];
+    const next = graphemes[cut];
+    let penalty = 10;
+    if (DOODLE_NO_BREAK_BEFORE.has(next)
+        || DOODLE_NO_BREAK_AFTER.has(previous)
+        || /^\s+$/u.test(next)) {
+      penalty = 100;
+    } else if (/^\s+$/u.test(previous) || DOODLE_SOFT_BREAK_AFTER.has(previous)) {
+      penalty = 0;
+    } else if (wordStarts.has(offset)) {
+      penalty = 4;
+    } else if (doodleScriptClass(previous) !== doodleScriptClass(next)) {
+      penalty = 6;
+    }
+    penalties.set(cut, penalty);
+  }
+  return penalties;
+}
+
+function doodlePartsFromCuts(graphemes, cuts) {
+  const parts = [];
+  let start = 0;
+  [...cuts, graphemes.length].forEach((end) => {
+    parts.push(graphemes.slice(start, end).join(""));
+    start = end;
+  });
+  return parts.filter(Boolean);
+}
+
+// 作者が「/」で区切った位置を優先する。区切りがなければ文字数をそろえつつ、句読点・空白・単語の境目で分け、
+// 言葉の途中や句読点の前では切らない。分けた塊をつなげると、元の台詞とまったく同じ文字列に戻る。
 function doodleMessageParts(value) {
   const graphemes = doodleGraphemes(value).slice(0, DOODLE_MAX_GRAPHEMES);
   if (!graphemes.length) return [];
+  let markedCuts = [];
+  graphemes.forEach((grapheme, index) => {
+    if (grapheme === DOODLE_BREAK_MARK && index > 0 && index < graphemes.length - 1) {
+      markedCuts.push(index + 1);
+    }
+  });
+  if (markedCuts.length) {
+    // 塊は3つまで。つなげた時にいちばん短くなる区切りから外す。
+    while (markedCuts.length > 2) {
+      const ends = [...markedCuts, graphemes.length];
+      const sizes = ends.map((end, index) => end - (index ? ends[index - 1] : 0));
+      let drop = 0;
+      let smallest = Infinity;
+      markedCuts.forEach((_, index) => {
+        const merged = sizes[index] + sizes[index + 1];
+        if (merged < smallest) {
+          smallest = merged;
+          drop = index;
+        }
+      });
+      markedCuts = markedCuts.filter((_, index) => index !== drop);
+    }
+    return doodlePartsFromCuts(graphemes, markedCuts);
+  }
   const partCount = graphemes.length <= 8 ? 1 : graphemes.length <= 28 ? 2 : 3;
   if (partCount === 1) return [graphemes.join("")];
-  const parts = [];
-  let cursor = 0;
-  for (let index = 0; index < partCount; index += 1) {
-    const remainingParts = partCount - index;
-    const remainingLength = graphemes.length - cursor;
-    const length = remainingParts === 1
-      ? remainingLength
-      : Math.max(1, Math.round(remainingLength / remainingParts));
-    parts.push(graphemes.slice(cursor, cursor + length).join(""));
-    cursor += length;
+  const penalties = doodleBreakPenalties(graphemes);
+  const cuts = [];
+  let start = 0;
+  for (let part = 1; part < partCount; part += 1) {
+    const partsLeft = partCount - part + 1;
+    const span = (graphemes.length - start) / partsLeft;
+    const ideal = start + span;
+    const lastCut = graphemes.length - 2 * (partsLeft - 1);
+    let best = null;
+    for (let cut = start + 2; cut <= lastCut; cut += 1) {
+      const score = (Math.abs(cut - ideal) / Math.max(1, span)) * 10 + (penalties.get(cut) ?? 10);
+      if (!best || score < best.score) best = { cut, score };
+    }
+    if (!best) break;
+    cuts.push(best.cut);
+    start = best.cut;
   }
-  return parts.filter(Boolean);
+  return doodlePartsFromCuts(graphemes, cuts);
 }
 
 function normalizeDoodleParts(value, message) {
@@ -466,6 +573,7 @@ function normalizeRoundArtwork(value, roundIndex) {
       layout: DOODLE_LAYOUTS.includes(source.layout)
         ? source.layout
         : doodleLayoutForRound(roundIndex),
+      placement: normalizeDoodlePlacement(source.placement),
       presentation,
       bpm: bpm === null ? 0 : bpm,
     });
@@ -850,6 +958,7 @@ function createState() {
     roundSeconds: 20,
     rosterImages: Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null),
     rosterBpms: [...DEFAULT_ROSTER_BPMS],
+    rosterPlacements: Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill("auto"),
     rosterExpanded: false,
     pendingDrawIndices: [],
     sessionDrawIndices: [],
@@ -858,6 +967,7 @@ function createState() {
     recoveryError: "",
     images: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null),
     bpms: [...DEFAULT_BPMS],
+    placements: Array(AI_TEXT_TRAINING_ROUND_COUNT).fill("auto"),
     beatCharacterId,
     sessionBeatCharacterId: beatCharacterId,
     persistDeck,
@@ -910,11 +1020,18 @@ function createState() {
     editorDraft: null,
     editorProductType: "standard",
     editorActionId: "",
+    editorLocalScriptId: "",
+    editorDraftRestored: false,
+    myScripts: readMyScripts(),
+    artworkExportBusy: false,
     editorPreview: {
       phase: "active",
       bpm: 80,
       remaining: 10,
       direction: "same",
+      lineIndex: 0,
+      layout: "center-vertical",
+      placement: "auto",
     },
     busyAction: "",
     unsubscribeWallet: null,
@@ -1267,6 +1384,7 @@ function persistSession() {
     exerciseId: state.exerciseId,
     roundSeconds: state.roundSeconds,
     bpms: [...state.bpms],
+    placements: normalizeSessionPlacements(state.placements),
     rosterCount: rosterEntries().length,
     drawIndices: [...state.sessionDrawIndices],
     drawLeg: state.drawLeg === 2 ? 2 : 1,
@@ -1316,6 +1434,7 @@ function rosterEntries() {
       ? [{
         image,
         bpm: state.rosterBpms[slotIndex],
+        placement: normalizeDoodlePlacement(state.rosterPlacements[slotIndex]),
         slotIndex,
       }]
       : []
@@ -1359,6 +1478,7 @@ async function writeStoredDeck() {
         items: entries.map((entry) => ({
           blob: entry.image.blob,
           bpm: entry.bpm,
+          placement: entry.placement,
         })),
         updatedAt: Date.now(),
       }, DECK_RECORD_KEY);
@@ -1417,6 +1537,7 @@ function normalizeStoredRosterRecord(value) {
   const normalizedItems = items.map((item) => ({
     blob: item?.blob || null,
     bpm: normalizeAiTextTrainingBpm(item?.bpm),
+    placement: ["top", "bottom"].includes(item?.placement) ? item.placement : "auto",
   }));
   if (normalizedItems.some((item) => !item.blob || item.bpm === null)) return null;
   return {
@@ -1449,7 +1570,9 @@ async function restoreStoredDeck({ quiet = false } = {}) {
     if (!targetState.persistDeck || !targetState.storedDeckAvailable) return false;
     const nextImages = Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill(null);
     const nextBpms = [...DEFAULT_ROSTER_BPMS];
+    const nextPlacements = Array(AI_TEXT_TRAINING_ROSTER_MAX_COUNT).fill("auto");
     storedItems.forEach((item, index) => {
+      nextPlacements[index] = normalizeDoodlePlacement(item.placement);
       nextImages[index] = {
         id: `stored-${index}-${Date.now()}`,
         blob: item.blob,
@@ -1463,6 +1586,7 @@ async function restoreStoredDeck({ quiet = false } = {}) {
     releaseRosterImages();
     targetState.rosterImages = nextImages;
     targetState.rosterBpms = nextBpms;
+    targetState.rosterPlacements = nextPlacements;
     targetState.rosterExpanded = storedItems.length > AI_TEXT_TRAINING_ROUND_COUNT;
     invalidatePendingDraw();
     if (!quiet) showToast(`この端末に保存した${storedItems.length}枚のロスターを読み込みました。`);
@@ -1481,6 +1605,231 @@ async function persistRosterIfConsented() {
     return;
   }
   await deleteStoredDeck();
+}
+
+function normalizeSessionPlacements(value) {
+  const source = Array.isArray(value) ? value : [];
+  return Array.from(
+    { length: AI_TEXT_TRAINING_ROUND_COUNT },
+    (_, index) => normalizeDoodlePlacement(source[index]),
+  );
+}
+
+// ---- マイ台本（この端末だけに保存する、自分用の無料台本） ----
+
+function cleanScriptSlotLines(lines, slots) {
+  return Object.fromEntries(slots.map((slot) => [
+    slot.id,
+    Array.isArray(lines?.[slot.id])
+      ? lines[slot.id]
+        .map((line) => String(line || "").replace(/[\u0000-\u001f\u007f]/gu, "").trim().slice(0, 42))
+        .filter(Boolean)
+        .slice(0, 4)
+      : [],
+  ]));
+}
+
+function normalizeMyScript(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!source) return null;
+  const id = String(source.id || "");
+  if (!/^[a-z0-9]{8,40}$/u.test(id)) return null;
+  if (!AI_TEXT_TRAINING_MODES.some((mode) => mode.id === source.modeId)) return null;
+  const productType = normalizeAiTextTrainingProductType(source.productType);
+  const lines = cleanScriptSlotLines(source.lines, AI_TEXT_TRAINING_SCRIPT_SLOTS);
+  const zoneLines = productType === "defeat_zone"
+    ? cleanScriptSlotLines(source.zoneLines, AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS)
+    : {};
+  if (Object.values(lines).some((slotLines) => slotLines.length < 2)) return null;
+  if (Object.values(zoneLines).some((slotLines) => slotLines.length < 2)) return null;
+  return {
+    id,
+    title: String(source.title || "").trim().slice(0, 30) || "マイ台本",
+    description: String(source.description || "").trim().slice(0, 120),
+    modeId: source.modeId,
+    productType,
+    lines,
+    zoneLines,
+    updatedAt: Number(source.updatedAt) || 0,
+  };
+}
+
+function readMyScripts() {
+  try {
+    const parsed = JSON.parse(readLocalValue(MY_SCRIPTS_STORAGE_KEY, "[]"));
+    return Array.isArray(parsed)
+      ? parsed.map(normalizeMyScript).filter(Boolean).slice(0, MY_SCRIPTS_MAX_COUNT)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeMyScripts(scripts) {
+  const normalized = (Array.isArray(scripts) ? scripts : [])
+    .map(normalizeMyScript)
+    .filter(Boolean)
+    .slice(0, MY_SCRIPTS_MAX_COUNT);
+  if (!writeLocalValue(MY_SCRIPTS_STORAGE_KEY, JSON.stringify(normalized))) {
+    throw new Error("この端末へ保存できませんでした。ブラウザーの保存領域を確認してください。");
+  }
+  state.myScripts = normalized;
+  return normalized;
+}
+
+function newMyScriptId() {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.slice(0, 40);
+}
+
+function myScriptSnapshot(script) {
+  return normalizeAiTextTrainingScriptSnapshot({
+    id: `my_${script.id}`,
+    title: script.title,
+    description: script.description || "この端末に保存した、自分用の台本です。",
+    modeId: script.modeId,
+    productType: script.productType,
+    authorName: "あなた",
+    price: 0,
+    revision: 1,
+    lines: script.lines,
+    zoneLines: script.zoneLines,
+  }, script.modeId);
+}
+
+function myScriptById(id) {
+  return state.myScripts.find((script) => script.id === id) || null;
+}
+
+// 1場面の行数と文字数。サーバーの公開検査と同じく、1行は4〜42文字（UTF-16の長さ）で数える。
+function editorSlotStatus(lines) {
+  const list = Array.isArray(lines) ? lines : [];
+  if (list.length < 2) return { ok: false, text: `あと${2 - list.length}行（2〜4行）` };
+  if (list.length > 4) return { ok: false, text: `${list.length}行あります（4行まで）` };
+  const shortIndex = list.findIndex((line) => String(line).length < 4);
+  if (shortIndex >= 0) return { ok: false, text: `${shortIndex + 1}行目が短すぎます（4文字以上）` };
+  const longIndex = list.findIndex((line) => String(line).length > 42);
+  if (longIndex >= 0) {
+    return { ok: false, text: `${longIndex + 1}行目が${String(list[longIndex]).length}文字です（42文字まで）` };
+  }
+  const longest = Math.max(...list.map((line) => String(line).length));
+  return { ok: true, text: `${list.length}行 · 最長${longest}文字` };
+}
+
+function editorDraftSlots(draft) {
+  return [
+    ...AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => ({ slot, lines: draft?.lines?.[slot.id] || [] })),
+    ...(draft?.productType === "defeat_zone"
+      ? AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => ({ slot, lines: draft?.zoneLines?.[slot.id] || [] }))
+      : []),
+  ];
+}
+
+function editorProgress(draft) {
+  const slots = editorDraftSlots(draft);
+  return {
+    ok: slots.filter(({ lines }) => editorSlotStatus(lines).ok).length,
+    total: slots.length,
+  };
+}
+
+function validateScriptLines(draft) {
+  for (const { slot, lines } of editorDraftSlots(draft)) {
+    const status = editorSlotStatus(lines);
+    if (!status.ok) throw new Error(`「${slot.label}」：${status.text}`);
+  }
+}
+
+function validateMyScriptDraft(draft) {
+  if (!AI_TEXT_TRAINING_MODES.some((mode) => mode.id === draft?.modeId)) {
+    throw new Error("AI性格を選び直してください。");
+  }
+  if (!draft.title || draft.title.length > 30) {
+    throw new Error("台本名は1行30文字以内で入力してください。");
+  }
+  validateScriptLines(draft);
+}
+
+// ---- 台本エディタの下書き（この端末へ自動保存） ----
+
+let editorDraftSaveTimer = null;
+
+function readEditorDraft() {
+  try {
+    const parsed = JSON.parse(readLocalValue(EDITOR_DRAFT_STORAGE_KEY, "null"));
+    const draft = parsed?.draft;
+    if (!draft || typeof draft !== "object"
+        || !AI_TEXT_TRAINING_MODES.some((mode) => mode.id === draft.modeId)) {
+      return null;
+    }
+    const productType = normalizeAiTextTrainingProductType(draft.productType);
+    const text = (value, max) => String(value ?? "").slice(0, max);
+    const slotLines = (lines, slots) => Object.fromEntries(slots.map((slot) => [
+      slot.id,
+      Array.isArray(lines?.[slot.id]) ? lines[slot.id].map((line) => text(line, 180)).slice(0, 8) : [],
+    ]));
+    const existing = ownPresetFor(draft.modeId, productType);
+    const localScriptId = String(parsed.localScriptId || "");
+    return {
+      localScriptId: myScriptById(localScriptId) ? localScriptId : "",
+      draft: {
+        presetId: existing?.id || "",
+        baseRevision: Number(existing?.revision || 0),
+        sellerName: text(draft.sellerName, 16),
+        modeId: draft.modeId,
+        productType,
+        title: text(draft.title, 30),
+        description: text(draft.description, 120),
+        price: Number(draft.price) || 10,
+        lines: slotLines(draft.lines, AI_TEXT_TRAINING_SCRIPT_SLOTS),
+        zoneLines: productType === "defeat_zone"
+          ? slotLines(draft.zoneLines, AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS)
+          : {},
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveEditorDraftNow() {
+  window.clearTimeout(editorDraftSaveTimer);
+  editorDraftSaveTimer = null;
+  if (!state.editorDraft) return;
+  writeLocalValue(EDITOR_DRAFT_STORAGE_KEY, JSON.stringify({
+    draft: state.editorDraft,
+    localScriptId: state.editorLocalScriptId,
+    savedAt: Date.now(),
+  }));
+}
+
+function scheduleEditorDraftSave() {
+  window.clearTimeout(editorDraftSaveTimer);
+  editorDraftSaveTimer = window.setTimeout(saveEditorDraftNow, 500);
+}
+
+function clearEditorDraft() {
+  window.clearTimeout(editorDraftSaveTimer);
+  editorDraftSaveTimer = null;
+  removeLocalValue(EDITOR_DRAFT_STORAGE_KEY);
+}
+
+function editorDraftFromMyScript(script) {
+  const standardExisting = ownPresetFor(script.modeId, "standard");
+  return {
+    presetId: ownPresetFor(script.modeId, script.productType)?.id || "",
+    baseRevision: Number(ownPresetFor(script.modeId, script.productType)?.revision || 0),
+    sellerName: standardExisting?.sellerName
+      || standardExisting?.authorName
+      || readLocalValue(PROFILE_NAME_KEY)
+      || "PLAYER",
+    modeId: script.modeId,
+    productType: script.productType,
+    title: script.title,
+    description: script.description || "実際のBPMと残り時間に合わせて、短い言葉で応援します。",
+    price: 10,
+    lines: Object.fromEntries(Object.entries(script.lines).map(([slotId, lines]) => [slotId, [...lines]])),
+    zoneLines: Object.fromEntries(Object.entries(script.zoneLines || {}).map(([slotId, lines]) => [slotId, [...lines]])),
+  };
 }
 
 function presetSnapshot(value) {
@@ -1686,6 +2035,9 @@ function installPreview(requestedScreen) {
     position: index,
   }));
   state.rosterExpanded = true;
+  state.rosterPlacements = state.rosterPlacements.map((_, index) => (
+    index === 1 ? "top" : index === 3 ? "bottom" : "auto"
+  ));
   const samplePreset = presetSnapshot({
     ...AI_TEXT_TRAINING_BUILTIN_SCRIPTS.mama,
     id: "1111111111111111111111111111111111111111",
@@ -1765,6 +2117,7 @@ function installPreview(requestedScreen) {
     state.sessionDrawIndices = [0, 1, 2, 3, 4];
     state.images = state.sessionDrawIndices.map((index) => state.rosterImages[index]);
     state.bpms = state.sessionDrawIndices.map((index) => state.rosterBpms[index]);
+    state.placements = state.sessionDrawIndices.map((index) => normalizeDoodlePlacement(state.rosterPlacements[index]));
     state.sessionBeatCharacterId = state.beatCharacterId;
     state.sessionCosmetics = equippedCosmetics();
     state.sessionCheerPresentation = normalizeCheerPresentation(state.cheerPresentation);
@@ -1831,6 +2184,7 @@ function installPreview(requestedScreen) {
             message: sampleArtworkMessages[index],
             parts: doodleMessageParts(sampleArtworkMessages[index]),
             layout: doodleLayoutForRound(index),
+            placement: state.placements[index],
             presentation: cheerDisplayMode(
               sampleArtworkMessages[index],
               state.sessionCheerPresentation,
@@ -2185,6 +2539,7 @@ function recoverPaidSession() {
         : [];
     state.drawLeg = Number(saved.drawLeg) === 2 ? 2 : 1;
     state.images = state.sessionDrawIndices.map((index) => entries[index]?.image || null);
+    state.placements = normalizeSessionPlacements(saved.placements);
     state.sessionDrawIndices.forEach((entryIndex, roundIndex) => {
       const slotIndex = entries[entryIndex]?.slotIndex;
       if (Number.isInteger(slotIndex)) state.rosterBpms[slotIndex] = state.bpms[roundIndex];
@@ -2437,6 +2792,7 @@ function recoverPendingDefeatPresentation() {
     state.images = state.sessionDrawIndices.length === AI_TEXT_TRAINING_ROUND_COUNT
       ? state.sessionDrawIndices.map((index) => entries[index]?.image || null)
       : Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
+    state.placements = normalizeSessionPlacements(saved.placements);
     state.drawLeg = Number(saved.drawLeg) === 2 ? 2 : 1;
     state.sessionBeatCharacterId = normalizeBeatCharacterId(saved.beatCharacterId);
     state.beatCharacterId = state.sessionBeatCharacterId;
@@ -2621,6 +2977,10 @@ function imageSetupCard(item, index) {
       </div>
       <small id="aiTextTrainingBpmHelp${index}">${escapeHtml(bpmCopy)} · ${bpmLocked ? "開始時設定に固定" : "0または40〜160"}</small>
     </div>
+    ${item ? `<fieldset class="ai-text-training-placement-control">
+      <legend>候補${index + 1}の文字の位置</legend>
+      <div>${DOODLE_PLACEMENTS.map((placement) => `<label><input type="radio" name="aiTextTrainingPlacement${index}" value="${placement}" data-ai-text-training-placement="${index}" ${normalizeDoodlePlacement(state.rosterPlacements[index]) === placement ? "checked" : ""} ${bpmLocked ? "disabled" : ""} /><span>${escapeHtml(DOODLE_PLACEMENT_LABELS[placement])}</span></label>`).join("")}</div>
+    </fieldset>` : ""}
   </article>`;
 }
 
@@ -2684,14 +3044,40 @@ function renderBeatCharacterPanel() {
   </section>`;
 }
 
+function renderMyScriptsList() {
+  const scripts = state.myScripts;
+  const items = scripts.map((script) => {
+    const snapshot = myScriptSnapshot(script);
+    const compatible = presetSupportsPlayStyle(snapshot);
+    const selected = state.selectedPresetSource === "local" && state.selectedPreset?.id === snapshot.id;
+    const product = aiTextTrainingProductType(script.productType);
+    const useLabel = selected ? "選択中" : compatible ? "この台本で遊ぶ" : "敗北ZONEで使えます";
+    return `<li class="${selected ? "is-selected" : ""}">
+      <div><strong>${escapeHtml(script.title)}</strong><small>${escapeHtml(aiTextTrainingMode(script.modeId).label)} · ${escapeHtml(product.shortLabel)}</small></div>
+      <div class="ai-text-training-my-script-actions">
+        <button class="button ${selected ? "button-ghost" : "button-primary"}" type="button" data-ai-text-training-use-my-script="${escapeHtml(script.id)}" ${compatible && !selected && !state.activeUse ? "" : "disabled"} aria-label="マイ台本「${escapeHtml(script.title)}」：${escapeHtml(useLabel)}">${escapeHtml(useLabel)}</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-edit-my-script="${escapeHtml(script.id)}" aria-label="マイ台本「${escapeHtml(script.title)}」を編集">編集</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-delete-my-script="${escapeHtml(script.id)}" aria-label="マイ台本「${escapeHtml(script.title)}」を削除">削除</button>
+      </div>
+    </li>`;
+  }).join("");
+  return `<section class="ai-text-training-my-scripts" aria-labelledby="aiTextTrainingMyScriptsTitle">
+    <header><h3 id="aiTextTrainingMyScriptsTitle">マイ台本</h3><small>この端末だけに保存 · 無料 · ${scripts.length} / ${MY_SCRIPTS_MAX_COUNT}本</small></header>
+    ${scripts.length
+      ? `<ul>${items}</ul>`
+      : "<p>「台本をつくる」で書いた台詞を、公開せずに自分のトレーニングだけで使えます。台詞は画像の上にそのまま重なります。</p>"}
+  </section>`;
+}
+
 function selectedSupportHtml() {
   const script = selectedPresetForMode();
+  const local = state.selectedPresetSource === "local";
   const free = Number(script.price || 0) === 0 || state.selectedPresetSource === "author_preview";
   const product = aiTextTrainingProductType(presetProductType(script));
   const standardZoneFallback = state.playStyle === "defeat_zone"
     && presetProductType(script) === "standard";
-  return `<article class="ai-text-training-selected-support ${free ? "is-free" : "is-paid"}">
-    <div><span>${free ? "FREE SUPPORT" : `${formatAnjuPay(script.price)} · 1 SESSION`} · ${escapeHtml(product.shortLabel)}</span><h3>${escapeHtml(script.title)}</h3><p>${escapeHtml(script.description)}</p>${standardZoneFallback ? "<small>5ラウンドはこの台本、敗北ZONE部分は安全なシステム標準台詞で進行します。</small>" : ""}</div>
+  return `<article class="ai-text-training-selected-support ${free ? "is-free" : "is-paid"} ${local ? "is-my-script" : ""}">
+    <div><span>${local ? "MY SCRIPT · FREE" : free ? "FREE SUPPORT" : `${formatAnjuPay(script.price)} · 1 SESSION`} · ${escapeHtml(product.shortLabel)}</span><h3>${escapeHtml(script.title)}</h3><p>${escapeHtml(script.description)}</p>${standardZoneFallback ? "<small>5ラウンドはこの台本、敗北ZONE部分は安全なシステム標準台詞で進行します。</small>" : ""}</div>
     <dl><div><dt>商品種別</dt><dd>${escapeHtml(product.label)}</dd></div><div><dt>利用範囲</dt><dd>${escapeHtml(productUseScope(script))}</dd></div><div><dt>AI性格</dt><dd>${escapeHtml(aiTextTrainingMode(script.modeId).label)}</dd></div><div><dt>作者</dt><dd>${escapeHtml(script.authorName)}</dd></div><div><dt>改訂</dt><dd>REV.${Number(script.revision || 1)}</dd></div></dl>
   </article>`;
 }
@@ -2919,6 +3305,7 @@ function renderSetup() {
       <div class="ai-text-training-image-grid">${state.rosterImages.slice(0, visibleRosterSlots).map(imageSetupCard).join("")}</div>
       ${visibleRosterSlots < AI_TEXT_TRAINING_ROSTER_MAX_COUNT ? `<button class="button button-ghost ai-text-training-expand-roster" type="button" data-ai-text-training-action="expand-roster">候補を10枚まで追加する</button>` : ""}
       <p class="ai-text-training-mode-note">5枚なら登録順で対戦します。6〜10枚なら開始前に重複なしで5枚をDRAWし、選ばれた順番とBPMを確認してから開始できます。</p>
+      <p class="ai-text-training-mode-note">「文字の位置」は、台詞を画像のどこに重ねるかの指定です。顔や見せたい所が真ん中にある画像は「上」か「下」にすると隠れにくくなります。</p>
       <div class="ai-text-training-local-save">
         <label><input type="checkbox" id="aiTextTrainingPersistDeck" ${state.persistDeck ? "checked" : ""} /> この端末にロスターを保存し、次回すぐ使う</label>
         <p>明示的にONにした時だけIndexedDBへ保存します。Firebaseへは送信しません。</p>
@@ -2942,10 +3329,11 @@ function renderSetup() {
     <section class="ai-text-training-panel">
       <div class="ai-text-training-section-heading"><span>STEP 6</span><h2>応援台本</h2><em>1セッション単位</em></div>
       ${selectedSupportHtml()}
+      ${renderMyScriptsList()}
       <div class="ai-text-training-support-actions">
         <button class="button button-ghost" type="button" data-ai-text-training-action="builtin-support">無料の標準応援</button>
         <button class="button button-primary" type="button" data-ai-text-training-action="market">みんなの応援から選ぶ</button>
-        <button class="button button-ghost" type="button" data-ai-text-training-action="editor">応援台本を売る</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="editor">台本をつくる</button>
         <button class="button button-ghost" type="button" data-ai-text-training-action="rankings">売上ランキング</button>
       </div>
       <p class="ai-text-training-economy-note">有料応援は買い切りではありません。1回の支払いで5ラウンド1セッションに使用します。敗北ZONEの最終攻勢とクールダウンを含めても追加消費はありません。開始後に赤い即停止ボタンで終了した場合も使い切りです。</p>
@@ -2967,7 +3355,7 @@ function drawReviewCard(entry, roundIndex) {
       <em>ROUND ${roundIndex + 1}</em>
     </div>
     <strong>${bpm === 0 ? "FREE RHYTHM" : `${bpm} BPM`}</strong>
-    <small>ROSTER ${String((entry?.slotIndex ?? 0) + 1).padStart(2, "0")}</small>
+    <small>ROSTER ${String((entry?.slotIndex ?? 0) + 1).padStart(2, "0")} · 文字 ${escapeHtml(DOODLE_PLACEMENT_LABELS[normalizeDoodlePlacement(entry?.placement)])}</small>
   </article>`;
 }
 
@@ -3200,15 +3588,45 @@ function createEditorDraft({
   };
 }
 
-function editorSlotField(slot, draft) {
-  return `<label class="ai-text-training-editor-slot"><span>${escapeHtml(slot.label)}<em>2〜4行</em></span><textarea name="slot_${slot.id}" rows="3" maxlength="180" required>${escapeHtml((draft.lines[slot.id] || []).join("\n"))}</textarea></label>`;
+function editorSlotField(slot, draft, { zone = false, previousSlot = null } = {}) {
+  const lines = draft.lines[slot.id] || [];
+  const status = editorSlotStatus(lines);
+  return `<div class="ai-text-training-editor-slot ${status.ok ? "is-ok" : "is-incomplete"}">
+    <label for="aiTextTrainingSlot_${slot.id}"><span>${escapeHtml(slot.label)}<em>2〜4行</em></span></label>
+    <textarea id="aiTextTrainingSlot_${slot.id}" name="slot_${slot.id}" rows="3" maxlength="180" required aria-describedby="aiTextTrainingSlotStatus_${slot.id}">${escapeHtml(lines.join("\n"))}</textarea>
+    <div class="ai-text-training-editor-slot-tools">
+      <small id="aiTextTrainingSlotStatus_${slot.id}" data-ai-text-training-slot-status="${slot.id}">${status.ok ? "✓ " : ""}${escapeHtml(status.text)}</small>
+      <button type="button" class="ai-text-training-mini-button" data-ai-text-training-slot-fill="${slot.id}" data-ai-text-training-slot-zone="${zone ? "true" : "false"}" aria-label="「${escapeHtml(slot.label)}」へ標準の台詞を入れる">標準の台詞を入れる</button>
+      ${previousSlot ? `<button type="button" class="ai-text-training-mini-button" data-ai-text-training-slot-copy="${slot.id}" data-ai-text-training-slot-copy-from="${previousSlot.id}" aria-label="「${escapeHtml(previousSlot.label)}」の台詞を「${escapeHtml(slot.label)}」へコピー">上の場面をコピー</button>` : ""}
+    </div>
+  </div>`;
+}
+
+function editorPreviewLayout() {
+  return DOODLE_LAYOUTS.includes(state.editorPreview.layout)
+    ? state.editorPreview.layout
+    : DOODLE_LAYOUTS[0];
+}
+
+// 画像の上でどう分かれるかを、文字で添える（読み上げと、画像が小さい時の確認用）。
+function editorPartsCopy(message) {
+  const parts = doodleMessageParts(normalizeDoodleMessage(message))
+    .map((part) => part.replaceAll(DOODLE_BREAK_MARK, "").trim())
+    .filter(Boolean);
+  if (!parts.length) return "この場面の行がまだありません。";
+  return `画像の上では${parts.length}つに分かれます：${parts.map((part) => `「${part}」`).join(" / ")}`;
+}
+
+function editorSimulatorLine(lines) {
+  const list = Array.isArray(lines) ? lines : [];
+  return list[Math.min(state.editorPreview.lineIndex, Math.max(0, list.length - 1))] || "";
 }
 
 function editorSimulatorMessage(draft) {
   if (AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.some(
     (slot) => slot.id === state.editorPreview.phase,
   )) {
-    const line = draft.zoneLines?.[state.editorPreview.phase]?.[0] || "";
+    const line = editorSimulatorLine(draft.zoneLines?.[state.editorPreview.phase]);
     return renderAiTextTrainingLine(line, {
       bpm: defeatZoneScriptBpm(state.editorPreview.phase, 120),
       round: 5,
@@ -3221,12 +3639,47 @@ function editorSimulatorMessage(draft) {
     remainingSeconds: state.editorPreview.remaining,
     direction: state.editorPreview.direction,
   });
-  const line = draft.lines?.[slotId]?.[0] || "";
+  const line = editorSimulatorLine(draft.lines?.[slotId]);
   return renderAiTextTrainingLine(line, {
     bpm: state.editorPreview.bpm,
     round: 3,
     remaining: state.editorPreview.remaining,
   });
+}
+
+// 台詞を、実際のトレーニングと同じ文字コラの見た目で画像の上に重ねて見せる。
+// 画像は準備画面で登録済みの1枚目（端末内だけ）。未登録なら見本の背景を使う。
+function renderEditorCollage(draft) {
+  const message = normalizeDoodleMessage(editorSimulatorMessage(draft));
+  const layout = editorPreviewLayout();
+  const placement = normalizeDoodlePlacement(state.editorPreview.placement);
+  const parts = doodleMessageParts(message);
+  const imageUrl = rosterEntries()[0]?.image?.url || "";
+  return `<section class="ai-text-training-editor-collage" aria-labelledby="aiTextTrainingEditorCollageTitle">
+    <div class="ai-text-training-editor-collage-head">
+      <span>ON IMAGE</span><h3 id="aiTextTrainingEditorCollageTitle">画像の上での見え方</h3>
+      <p>トレーニング中と同じ文字コラで表示します。${imageUrl ? "画像は準備画面で登録した1枚目です（端末内だけで表示）。" : "準備画面で画像を登録すると、その画像の上で確認できます。"}</p>
+    </div>
+    <div class="ai-text-training-editor-collage-body">
+      <div class="ai-text-training-editor-collage-stage ${imageUrl ? "has-image" : ""}">
+        ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" aria-hidden="true" />` : ""}
+        <div class="ai-text-training-editor-doodle is-doodle is-collage" data-ai-text-training-editor-collage data-att-doodle-layout="${escapeHtml(layout)}" data-att-doodle-placement="${escapeHtml(placement)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(message))}" data-att-doodle-part-count="${parts.length}" role="img" aria-label="${escapeHtml(message)}">
+          ${renderDoodleCompositionContents(message, { parts, bpm: state.editorPreview.bpm, roundIndex: 2 })}
+        </div>
+      </div>
+      <div class="ai-text-training-editor-collage-controls">
+        <div role="group" aria-label="構図">
+          <small>構図（ラウンドごとに自動で変わります）</small>
+          <div>${DOODLE_LAYOUTS.map((item, index) => `<button type="button" class="ai-text-training-mini-button" data-ai-text-training-editor-layout="${item}" aria-pressed="${item === layout}">構図${index + 1}</button>`).join("")}</div>
+        </div>
+        <div role="group" aria-label="文字の位置">
+          <small>文字の位置（遊ぶ人が画像ごとに選びます）</small>
+          <div>${DOODLE_PLACEMENTS.map((item) => `<button type="button" class="ai-text-training-mini-button" data-ai-text-training-editor-placement="${item}" aria-pressed="${item === placement}">${escapeHtml(DOODLE_PLACEMENT_LABELS[item])}</button>`).join("")}</div>
+        </div>
+        <p class="ai-text-training-editor-parts" data-ai-text-training-editor-parts aria-live="polite">${escapeHtml(editorPartsCopy(message))}</p>
+      </div>
+    </div>
+  </section>`;
 }
 
 function renderEditor() {
@@ -3236,33 +3689,41 @@ function renderEditor() {
   const product = aiTextTrainingProductType(draft.productType);
   const zoneProduct = draft.productType === "defeat_zone";
   const standardSource = ownPresetFor(draft.modeId, "standard");
+  const localScript = myScriptById(state.editorLocalScriptId);
+  const progress = editorProgress(draft);
+  const lineCount = Math.max(1, ...editorDraftSlots(draft).map(({ lines }) => lines.length));
   return renderFrame(`
     <section class="ai-text-training-editor-intro">
-      <span>AUTHOR STUDIO</span><h2>実際のBPMに合う言葉をつくる</h2>
-      <p>1商品は1つのAI性格・1つの商品種別専用です。性格ごとに通常版と敗北ZONE版を別々に販売できます。公開・改訂は1 Pay、利用成立時は20%（最低1 Pay）が市場手数料です。</p>
+      <span>SCRIPT STUDIO</span><h2>画像に重ねる言葉をつくる</h2>
+      <p>書いた台本は、公開せずに<strong>マイ台本</strong>として保存すれば、この端末だけで無料で使えます。応援市場へ公開して販売することもできます（公開・改訂は1 Pay、利用成立時は20%・最低1 Payが市場手数料）。1本の台本は1つのAI性格・1つの種別専用で、性格ごとに通常版と敗北ZONE版を別々に販売できます。</p>
+      <p class="ai-text-training-editor-draft-note">${state.editorDraftRestored ? "前回の書きかけを復元しました。" : ""}${localScript ? `マイ台本「${escapeHtml(localScript.title)}」を編集中です。` : ""}書きかけの内容は、この端末に自動で保存されます。</p>
     </section>
     <form id="aiTextTrainingEditorForm" class="ai-text-training-editor">
       <fieldset ${state.busyAction ? "disabled" : ""}>
-        <legend>商品情報</legend>
+        <legend>台本の情報</legend>
         <div class="ai-text-training-editor-basics">
-          <label>作者名<input name="sellerName" maxlength="16" required value="${escapeHtml(draft.sellerName)}" /></label>
-          <label>AI性格<select name="modeId">${AI_TEXT_TRAINING_MODES.map((mode) => `<option value="${mode.id}" ${draft.modeId === mode.id ? "selected" : ""}>${escapeHtml(mode.label)}</option>`).join("")}</select></label>
-          <label>商品種別<select name="productType">${AI_TEXT_TRAINING_PRODUCT_TYPES.map((entry) => `<option value="${entry.id}" ${draft.productType === entry.id ? "selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}</select><small>${escapeHtml(product.description)}</small></label>
           <label>台本名<input name="title" maxlength="30" required value="${escapeHtml(draft.title)}" /></label>
-          <label>価格<select name="price">${state.policy.prices.map((price) => `<option value="${price}" ${draft.price === price ? "selected" : ""}>${formatAnjuPay(price)} / 1回</option>`).join("")}</select></label>
-          <label class="is-wide">紹介文<textarea name="description" minlength="10" maxlength="120" rows="3" required>${escapeHtml(draft.description)}</textarea></label>
+          <label>AI性格<select name="modeId">${AI_TEXT_TRAINING_MODES.map((mode) => `<option value="${mode.id}" ${draft.modeId === mode.id ? "selected" : ""}>${escapeHtml(mode.label)}</option>`).join("")}</select></label>
+          <label>種別<select name="productType">${AI_TEXT_TRAINING_PRODUCT_TYPES.map((entry) => `<option value="${entry.id}" ${draft.productType === entry.id ? "selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}</select><small>${escapeHtml(product.description)}</small></label>
+          <label>作者名（公開する時）<input name="sellerName" maxlength="16" required value="${escapeHtml(draft.sellerName)}" /></label>
+          <label>価格（公開する時）<select name="price">${state.policy.prices.map((price) => `<option value="${price}" ${draft.price === price ? "selected" : ""}>${formatAnjuPay(price)} / 1回</option>`).join("")}</select></label>
+          <label class="is-wide">紹介文（公開する時・10〜120文字）<textarea name="description" minlength="10" maxlength="120" rows="3" required>${escapeHtml(draft.description)}</textarea></label>
         </div>
       </fieldset>
       <fieldset ${state.busyAction ? "disabled" : ""}>
-        <legend>5ラウンドの応援台詞 · 14場面</legend>
-        <p>各場面へ2〜4行、1行4〜42文字。使える差し込みは <code>{bpm}</code> <code>{round}</code> <code>{remaining}</code> だけです。</p>
+        <legend>5ラウンドの台詞 · 14場面</legend>
+        <p>各場面へ2〜4行、1行4〜42文字。使える差し込みは <code>{bpm}</code> <code>{round}</code> <code>{remaining}</code> だけです。画像の上で分けたい所に <code>/</code> を入れると、そこで文字の塊を分けます（「/」は表示されません。1行に2か所まで）。</p>
+        <div class="ai-text-training-editor-progress" data-ai-text-training-editor-progress style="--att-editor-progress:${progress.total ? progress.ok / progress.total : 0}">
+          <strong>${progress.ok} / ${progress.total}場面OK</strong><i aria-hidden="true"></i>
+          <button class="ai-text-training-mini-button" type="button" data-ai-text-training-action="fill-empty-slots">空いている場面に標準の台詞を入れる</button>
+        </div>
         ${zoneProduct && !current && standardSource ? '<button class="button button-ghost ai-text-training-copy-standard" type="button" data-ai-text-training-action="copy-standard-to-zone">公開中の通常版から14枠を複製</button>' : ""}
-        <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot) => editorSlotField(slot, draft)).join("")}</div>
+        <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_SCRIPT_SLOTS.map((slot, index) => editorSlotField(slot, draft, { previousSlot: AI_TEXT_TRAINING_SCRIPT_SLOTS[index - 1] || null })).join("")}</div>
       </fieldset>
       ${zoneProduct ? `<fieldset class="ai-text-training-zone-script-editor" ${state.busyAction ? "disabled" : ""}>
         <legend>敗北ZONE専用台詞 · 5場面</legend>
         <p>最終攻勢・敗北確定・クールダウン・敗北証明へ各2〜4行を入力します。行は場面ごとにランダム表示されます。ギブアップ・即停止・自動一時停止・安全文言・BPM・時間はシステム固定です。停止を妨げる台詞は禁止です。</p>
-        <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot) => editorSlotField(slot, { lines: draft.zoneLines })).join("")}</div>
+        <div class="ai-text-training-editor-slots">${AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS.map((slot, index) => editorSlotField(slot, { lines: draft.zoneLines }, { zone: true, previousSlot: AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS[index - 1] || null })).join("")}</div>
       </fieldset>` : ""}
       <section class="ai-text-training-simulator">
         <div><span>SIMULATOR</span><h3>テンポ別プレビュー</h3></div>
@@ -3271,17 +3732,21 @@ function renderEditor() {
           <label>BPM<input id="aiTextTrainingEditorPreviewBpm" type="number" min="0" max="200" value="${state.editorPreview.bpm}" /></label>
           <label>残り秒<input id="aiTextTrainingEditorPreviewRemaining" type="number" min="1" max="60" value="${state.editorPreview.remaining}" /></label>
           <label>変化<select id="aiTextTrainingEditorPreviewDirection"><option value="down" ${state.editorPreview.direction === "down" ? "selected" : ""}>遅くなる</option><option value="same" ${state.editorPreview.direction === "same" ? "selected" : ""}>同じ・FREE</option><option value="up" ${state.editorPreview.direction === "up" ? "selected" : ""}>速くなる</option></select></label>
+          <label>行<select id="aiTextTrainingEditorPreviewLine">${Array.from({ length: Math.min(4, lineCount) }, (_, index) => `<option value="${index}" ${state.editorPreview.lineIndex === index ? "selected" : ""}>${index + 1}行目</option>`).join("")}</select></label>
         </div>
         <blockquote id="aiTextTrainingEditorPreviewMessage">${escapeHtml(editorSimulatorMessage(draft))}</blockquote>
         <small>公開台本はBPM・時間・ギブアップ・即停止・自動一時停止・安全UIを変更できません。視覚表示だけを確認するシミュレーターです。</small>
       </section>
+      ${renderEditorCollage(draft)}
       <div class="ai-text-training-editor-actions">
-        <button class="button button-primary" type="submit">${current ? "改訂内容を確認" : "公開内容を確認"}</button>
+        <button class="button button-primary" type="button" data-ai-text-training-action="save-my-script">${localScript ? "マイ台本を更新（無料・この端末）" : "マイ台本に保存（無料・この端末）"}</button>
+        <button class="button button-ghost" type="submit">${current ? "改訂を公開する内容を確認" : "公開して販売する内容を確認"}</button>
         ${current?.status === "active" ? `<button class="button button-ghost" type="button" data-ai-text-training-action="unpublish">公開を停止</button>` : ""}
-        <button class="button button-ghost" type="button" data-ai-text-training-action="setup">保存せず準備へ</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="discard-editor-draft">書きかけを破棄</button>
+        <button class="button button-ghost" type="button" data-ai-text-training-action="setup">準備へ戻る</button>
       </div>
     </form>
-  `, { eyebrow: "SUPPORT SCRIPT AUTHOR", title: "応援台本を売る", backLabel: "準備へ戻る", backAction: "setup" });
+  `, { eyebrow: "SCRIPT STUDIO", title: "台本をつくる", backLabel: "準備へ戻る", backAction: "setup" });
 }
 
 function renderEditorReview() {
@@ -3975,7 +4440,8 @@ function renderDoodleCheer(message) {
   const displayMode = cheerDisplayMode(message);
   const layout = doodleLayoutForRound();
   const parts = doodleMessageParts(message);
-  return `<div class="ai-text-training-cheer ai-text-training-doodle-cheer is-doodle is-collage is-writing" id="aiTextTrainingCheer" data-ai-text-training-cheer="doodle" data-att-doodle-layout="${escapeHtml(layout)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(message))}" data-att-doodle-part-count="${parts.length}" role="img" aria-label="${escapeHtml(message)}" ${displayMode === "doodle" ? "" : "hidden"}>
+  const placement = normalizeDoodlePlacement(state.placements?.[state.roundIndex]);
+  return `<div class="ai-text-training-cheer ai-text-training-doodle-cheer is-doodle is-collage is-writing" id="aiTextTrainingCheer" data-ai-text-training-cheer="doodle" data-att-doodle-layout="${escapeHtml(layout)}" data-att-doodle-placement="${escapeHtml(placement)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(message))}" data-att-doodle-part-count="${parts.length}" role="img" aria-label="${escapeHtml(message)}" ${displayMode === "doodle" ? "" : "hidden"}>
     ${renderDoodleCompositionContents(message, { parts, layout, bpm: currentBpm(), roundIndex: state.roundIndex })}
   </div>`;
 }
@@ -4060,13 +4526,300 @@ function formatActiveDuration(value) {
   return `${minutes}分${seconds}秒`;
 }
 
+// ---- 作品を画像としてこの端末へ保存する（サーバーへは送らない） ----
+// 画面と同じ文字コラを、見えない場所に大きめの寸法で描き、文字の位置・回転・書字方向を測ってCanvasへ描き直す。
+
+// 縦書きで横向きの字形になる記号（長音・波線・括弧など）と、右上へ寄る句読点。
+const DOODLE_VERTICAL_ROTATED = new Set(Array.from("ーｰ－-—―〜～…‥=＝()（）「」『』【】[]〔〕〈〉《》<>＜＞"));
+const DOODLE_VERTICAL_SHIFTED = new Set(Array.from("、。，．"));
+
+function loadArtworkImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("作品の画像を読み込めませんでした。"));
+    image.src = url;
+  });
+}
+
+function drawCoverImage(context, image, width, height) {
+  const sourceWidth = image.naturalWidth || width;
+  const sourceHeight = image.naturalHeight || height;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  context.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+
+function parseCssMatrix(value) {
+  const match = String(value || "").match(/^matrix\(([^)]+)\)$/u);
+  if (!match) return [1, 0, 0, 1, 0, 0];
+  const numbers = match[1].split(",").map(Number);
+  return numbers.length === 6 && numbers.every(Number.isFinite) ? numbers : [1, 0, 0, 1, 0, 0];
+}
+
+function firstTextShadow(value) {
+  const match = String(value || "").match(/(rgba?\([^)]*\)|#[0-9a-f]{3,8}|[a-z]+)\s+(-?[\d.]+)px\s+(-?[\d.]+)px(?:\s+([\d.]+)px)?/iu);
+  if (!match || match[1] === "none") return null;
+  return { color: match[1], x: Number(match[2]), y: Number(match[3]), blur: Number(match[4] || 0) };
+}
+
+function graphemeSegments(text) {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    return Array.from(
+      new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(text),
+      (entry) => ({ text: entry.segment, index: entry.index }),
+    );
+  }
+  const segments = [];
+  let index = 0;
+  for (const character of text) {
+    segments.push({ text: character, index });
+    index += character.length;
+  }
+  return segments;
+}
+
+function measureArtworkElement(element, stageRect, kind) {
+  const style = getComputedStyle(element);
+  if (element.hidden || style.display === "none" || style.visibility === "hidden") return null;
+  const matrix = parseCssMatrix(style.transform);
+  const origin = style.transformOrigin.split(" ").map((value) => Number.parseFloat(value) || 0);
+  const previousTransform = element.style.transform;
+  element.style.transform = "none";
+  const box = element.getBoundingClientRect();
+  const glyphs = [];
+  const range = document.createRange();
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (const segment of graphemeSegments(node.textContent || "")) {
+      if (!segment.text.trim() || segment.text === DOODLE_BREAK_MARK) continue;
+      range.setStart(node, segment.index);
+      range.setEnd(node, segment.index + segment.text.length);
+      const rect = Array.from(range.getClientRects()).find((item) => item.width > 0 && item.height > 0);
+      if (rect) {
+        glyphs.push({
+          text: segment.text,
+          x: rect.left - box.left,
+          y: rect.top - box.top,
+          width: rect.width,
+          height: rect.height,
+        });
+      }
+    }
+  }
+  element.style.transform = previousTransform;
+  if (!glyphs.length) return null;
+  const variable = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
+  const fontSize = Number.parseFloat(style.fontSize) || 16;
+  return {
+    kind,
+    left: box.left - stageRect.left,
+    top: box.top - stageRect.top,
+    matrix,
+    originX: origin[0] || 0,
+    originY: origin[1] || 0,
+    vertical: String(style.writingMode || "").startsWith("vertical"),
+    font: `${style.fontStyle} ${Math.min(900, Number.parseInt(style.fontWeight, 10) || 700)} ${fontSize}px ${style.fontFamily}`,
+    fontSize,
+    color: style.color,
+    fill: variable("--att-doodle-fill", style.color),
+    stroke: variable("--att-doodle-stroke", "rgba(0, 0, 0, 0.9)"),
+    accentA: variable("--att-doodle-accent-a", "#ff82b0"),
+    accentB: variable("--att-doodle-accent-b", "#78f4eb"),
+    strokeWidth: Number.parseFloat(style.webkitTextStrokeWidth) || 0,
+    strokeColor: style.webkitTextStrokeColor || "",
+    background: style.backgroundColor,
+    shadow: firstTextShadow(style.textShadow),
+    glyphs,
+  };
+}
+
+// Canvasの影は拡大縮小の影響を受けないため、出力倍率を掛けておく。
+function applyArtworkShadow(context, shadow) {
+  context.shadowColor = shadow ? shadow.color : "transparent";
+  context.shadowBlur = shadow ? shadow.blur * ARTWORK_EXPORT_SCALE : 0;
+  context.shadowOffsetX = shadow ? shadow.x * ARTWORK_EXPORT_SCALE : 0;
+  context.shadowOffsetY = shadow ? shadow.y * ARTWORK_EXPORT_SCALE : 0;
+}
+
+function drawArtworkGlyphs(context, item, paint) {
+  context.save();
+  context.translate(item.left + item.originX, item.top + item.originY);
+  const [a, b, c, d, e, f] = item.matrix;
+  context.transform(a, b, c, d, e, f);
+  context.translate(-item.originX, -item.originY);
+  context.font = item.font;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+  context.miterLimit = 2;
+  item.glyphs.forEach((glyph) => {
+    const centerX = glyph.x + glyph.width / 2;
+    const centerY = glyph.y + glyph.height / 2;
+    context.save();
+    if (item.vertical && DOODLE_VERTICAL_ROTATED.has(glyph.text)) {
+      context.translate(centerX, centerY);
+      context.rotate(Math.PI / 2);
+      paint(glyph.text, 0, 0);
+    } else if (item.vertical && DOODLE_VERTICAL_SHIFTED.has(glyph.text)) {
+      paint(glyph.text, centerX + glyph.width * 0.28, centerY - glyph.height * 0.28);
+    } else {
+      paint(glyph.text, centerX, centerY);
+    }
+    context.restore();
+  });
+  context.restore();
+}
+
+function drawArtworkItem(context, item) {
+  const em = item.fontSize;
+  if (item.kind === "copy") {
+    // 外側の色フチ（画面の ::before）、内側の濃いフチ（::after）、本体（影・細いフチ・塗り）の順に重ねる。
+    drawArtworkGlyphs(context, item, (text, x, y) => {
+      applyArtworkShadow(context, { color: item.accentB, x: em * 0.07, y: em * 0.09, blur: 0 });
+      context.lineWidth = em * 0.29;
+      context.strokeStyle = item.accentA;
+      context.strokeText(text, x, y);
+    });
+    drawArtworkGlyphs(context, item, (text, x, y) => {
+      applyArtworkShadow(context, null);
+      context.lineWidth = em * 0.15;
+      context.strokeStyle = item.stroke;
+      context.strokeText(text, x, y);
+    });
+    drawArtworkGlyphs(context, item, (text, x, y) => {
+      applyArtworkShadow(context, item.shadow);
+      context.lineWidth = em * 0.045;
+      context.strokeStyle = item.stroke;
+      context.strokeText(text, x, y);
+      applyArtworkShadow(context, null);
+      context.fillStyle = item.fill;
+      context.fillText(text, x, y);
+    });
+    return;
+  }
+  const hasBackground = item.background && !/^(transparent|rgba\([^)]*,\s*0\))$/u.test(item.background);
+  if (hasBackground) {
+    const left = Math.min(...item.glyphs.map((glyph) => glyph.x)) - em * 0.5;
+    const top = Math.min(...item.glyphs.map((glyph) => glyph.y)) - em * 0.35;
+    const right = Math.max(...item.glyphs.map((glyph) => glyph.x + glyph.width)) + em * 0.5;
+    const bottom = Math.max(...item.glyphs.map((glyph) => glyph.y + glyph.height)) + em * 0.35;
+    context.save();
+    context.translate(item.left, item.top);
+    context.fillStyle = item.background;
+    context.beginPath();
+    context.roundRect?.(left, top, right - left, bottom - top, em * 0.6);
+    if (!context.roundRect) context.rect(left, top, right - left, bottom - top);
+    context.fill();
+    context.restore();
+  }
+  drawArtworkGlyphs(context, item, (text, x, y) => {
+    applyArtworkShadow(context, item.shadow);
+    if (item.strokeWidth > 0 && item.strokeColor) {
+      context.lineWidth = item.strokeWidth;
+      context.strokeStyle = item.strokeColor;
+      context.strokeText(text, x, y);
+      applyArtworkShadow(context, null);
+    }
+    context.fillStyle = item.color;
+    context.fillText(text, x, y);
+  });
+}
+
+function artworkExportMarkup(artwork, index) {
+  const size = `width:${ARTWORK_EXPORT_WIDTH}px;height:${ARTWORK_EXPORT_HEIGHT}px`;
+  if (artwork.presentation !== "classic" && Number(artwork.version) >= 2) {
+    return `<div class="ai-text-training-artwork-export-stage" data-ai-text-training-export-stage style="${size}">
+      <div class="ai-text-training-artwork-export-doodle is-doodle is-collage" data-att-doodle-layout="${escapeHtml(artwork.layout)}" data-att-doodle-placement="${escapeHtml(normalizeDoodlePlacement(artwork.placement))}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(artwork.message))}" data-att-doodle-part-count="${artwork.parts.length}">
+        ${renderDoodleCompositionContents(artwork.message, { parts: artwork.parts, bpm: artwork.bpm, roundIndex: index })}
+      </div>
+    </div>`;
+  }
+  return `<section class="ai-text-training-result-lineup is-artwork-export"><figure class="is-artwork ai-text-training-artwork-export-stage" data-ai-text-training-export-stage style="${size}">${renderResultArtworkOverlay(artwork, index)}</figure></section>`;
+}
+
+function saveBlobToDevice(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function saveRoundArtworkToDevice(index) {
+  if (state.artworkExportBusy || !Number.isInteger(index)) return;
+  const artwork = normalizeRoundArtworks(state.roundArtworks, {
+    completedRounds: state.completedRounds,
+  })[index];
+  const image = state.images[index];
+  if (!artwork || !image?.url) throw new Error("この作品は画像にできません。");
+  const screen = appRoot.querySelector(".ai-text-training-screen");
+  if (!screen) return;
+  state.artworkExportBusy = true;
+  const button = appRoot.querySelector(`[data-ai-text-training-save-artwork="${index}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = "画像を作成中…";
+  }
+  const host = document.createElement("div");
+  host.className = "ai-text-training-artwork-export-host";
+  host.setAttribute("aria-hidden", "true");
+  host.innerHTML = artworkExportMarkup(artwork, index);
+  screen.append(host);
+  try {
+    if (document.fonts?.ready) await document.fonts.ready;
+    const loaded = await loadArtworkImage(image.url);
+    const stage = host.querySelector("[data-ai-text-training-export-stage]");
+    const stageRect = stage.getBoundingClientRect();
+    const canvas = document.createElement("canvas");
+    canvas.width = ARTWORK_EXPORT_WIDTH * ARTWORK_EXPORT_SCALE;
+    canvas.height = ARTWORK_EXPORT_HEIGHT * ARTWORK_EXPORT_SCALE;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("この端末では画像を作成できませんでした。");
+    context.scale(ARTWORK_EXPORT_SCALE, ARTWORK_EXPORT_SCALE);
+    drawCoverImage(context, loaded, ARTWORK_EXPORT_WIDTH, ARTWORK_EXPORT_HEIGHT);
+    const items = [
+      ...Array.from(stage.querySelectorAll(".att-doodle-ornament"), (element) => measureArtworkElement(element, stageRect, "plain")),
+      ...Array.from(stage.querySelectorAll(".att-doodle-copy"), (element) => measureArtworkElement(element, stageRect, "copy")),
+      ...Array.from(
+        stage.querySelectorAll(".ai-text-training-result-doodle.is-classic, .ai-text-training-result-doodle.is-legacy-doodle"),
+        (element) => measureArtworkElement(element, stageRect, "plain"),
+      ),
+    ].filter(Boolean);
+    items.forEach((item) => drawArtworkItem(context, item));
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => (result ? resolve(result) : reject(new Error("画像を作成できませんでした。"))),
+        "image/jpeg",
+        0.92,
+      );
+    });
+    saveBlobToDevice(blob, `mojikora-round${index + 1}-${jstDateKey().replaceAll("-", "")}.jpg`);
+    showToast(`ラウンド${index + 1}の作品を画像として保存しました（この端末だけ）。`);
+  } finally {
+    host.remove();
+    state.artworkExportBusy = false;
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = "画像で保存";
+    }
+  }
+}
+
 function renderResultArtworkOverlay(artwork, index) {
   if (!artwork) return "";
   if (artwork.presentation === "classic") {
     return `<span class="ai-text-training-result-doodle is-classic">${escapeHtml(artwork.message)}</span>`;
   }
   if (Number(artwork.version) >= 2 && DOODLE_LAYOUTS.includes(artwork.layout)) {
-    return `<span class="ai-text-training-result-doodle is-doodle is-collage" data-att-doodle-layout="${escapeHtml(artwork.layout)}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(artwork.message))}" data-att-doodle-part-count="${artwork.parts.length}" role="img" aria-label="${escapeHtml(artwork.message)}">
+    return `<span class="ai-text-training-result-doodle is-doodle is-collage" data-att-doodle-layout="${escapeHtml(artwork.layout)}" data-att-doodle-placement="${escapeHtml(normalizeDoodlePlacement(artwork.placement))}" data-att-doodle-density="${escapeHtml(doodleMessageDensity(artwork.message))}" data-att-doodle-part-count="${artwork.parts.length}" role="img" aria-label="${escapeHtml(artwork.message)}">
       ${renderDoodleCompositionContents(artwork.message, {
         parts: artwork.parts,
         bpm: artwork.bpm,
@@ -4090,7 +4843,7 @@ function renderResultLineup({ winner = false } = {}) {
       : artworkIndexes
     : Array.from({ length: AI_TEXT_TRAINING_ROUND_COUNT }, (_, index) => index);
   return `<section class="ai-text-training-result-lineup ${showArtworkGallery ? "is-artwork-gallery" : ""}" aria-label="${winner ? "本日あなたを倒した5枚" : "今回DRAWされた5枚"}">
-    ${showArtworkGallery ? `<header><span>DECO WORKS · DEVICE ONLY</span><h3>${artworkIndexes.length === AI_TEXT_TRAINING_ROUND_COUNT ? "今回の5作品" : completedSession ? "今回の作品" : "ここまでの作品"}</h3><p>各ラウンドの最後に表示された台詞を、画像と一緒に振り返れます。画像と台詞はサーバーへ送信しません。</p></header>` : ""}
+    ${showArtworkGallery ? `<header><span>DECO WORKS · DEVICE ONLY</span><h3>${artworkIndexes.length === AI_TEXT_TRAINING_ROUND_COUNT ? "今回の5作品" : completedSession ? "今回の作品" : "ここまでの作品"}</h3><p>各ラウンドの最後に表示された台詞を、画像と一緒に振り返れます。画像と台詞はサーバーへ送信しません。「画像で保存」を押すと、この端末にだけ保存します（投稿・共有はしません）。</p></header>` : ""}
     ${indexes.map((index) => {
       const image = state.images[index];
       const artwork = artworks[index];
@@ -4100,6 +4853,7 @@ function renderResultLineup({ winner = false } = {}) {
       ${renderResultArtworkOverlay(artwork, index)}
       ${winner ? '<em class="ai-text-training-winner-badge">WIN</em>' : ""}
       <figcaption>R${index + 1} · ${bpm === 0 ? "FREE" : `${bpm} BPM`}</figcaption>
+      ${artwork && image ? `<button class="ai-text-training-artwork-save" type="button" data-ai-text-training-save-artwork="${index}" aria-label="ラウンド${index + 1}の作品を画像としてこの端末に保存" ${state.artworkExportBusy ? "disabled" : ""}>画像で保存</button>` : ""}
     </figure>`;
     }).join("")}
   </section>`;
@@ -4215,6 +4969,34 @@ function updateEditorDraftFromForm(form) {
   };
 }
 
+function refreshEditorLiveDom() {
+  const draft = state.editorDraft;
+  if (!draft) return;
+  editorDraftSlots(draft).forEach(({ slot, lines }) => {
+    const status = editorSlotStatus(lines);
+    const output = document.querySelector(`[data-ai-text-training-slot-status="${slot.id}"]`);
+    if (output) output.textContent = `${status.ok ? "✓ " : ""}${status.text}`;
+    output?.closest(".ai-text-training-editor-slot")?.classList.toggle("is-ok", status.ok);
+    output?.closest(".ai-text-training-editor-slot")?.classList.toggle("is-incomplete", !status.ok);
+  });
+  const progress = editorProgress(draft);
+  const progressNode = document.querySelector("[data-ai-text-training-editor-progress]");
+  if (progressNode) {
+    progressNode.querySelector("strong").textContent = `${progress.ok} / ${progress.total}場面OK`;
+    progressNode.style.setProperty("--att-editor-progress", String(progress.total ? progress.ok / progress.total : 0));
+  }
+  const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
+  const message = editorSimulatorMessage(draft);
+  if (preview) preview.textContent = message;
+  const collage = document.querySelector("[data-ai-text-training-editor-collage]");
+  if (collage) {
+    updateDoodleSurfaceDom(collage, message, { layout: editorPreviewLayout() });
+    collage.dataset.attDoodlePlacement = normalizeDoodlePlacement(state.editorPreview.placement);
+  }
+  const partsNode = document.querySelector("[data-ai-text-training-editor-parts]");
+  if (partsNode) partsNode.textContent = editorPartsCopy(message);
+}
+
 function validateEditorDraft(draft) {
   if (!AI_TEXT_TRAINING_MODES.some((mode) => mode.id === draft.modeId)) {
     throw new Error("AI性格を選び直してください。");
@@ -4233,26 +5015,7 @@ function validateEditorDraft(draft) {
   if (draft.description.length < 10 || draft.description.length > 120) {
     throw new Error("紹介文は10〜120文字で入力してください。");
   }
-  for (const slot of AI_TEXT_TRAINING_SCRIPT_SLOTS) {
-    const lines = draft.lines[slot.id] || [];
-    if (lines.length < 2 || lines.length > 4) {
-      throw new Error(`「${slot.label}」へ2〜4行入力してください。`);
-    }
-    if (lines.some((line) => line.length < 4 || line.length > 42)) {
-      throw new Error(`「${slot.label}」は1行4〜42文字で入力してください。`);
-    }
-  }
-  if (draft.productType === "defeat_zone") {
-    for (const slot of AI_TEXT_TRAINING_ZONE_SCRIPT_SLOTS) {
-      const lines = draft.zoneLines?.[slot.id] || [];
-      if (lines.length < 2 || lines.length > 4) {
-        throw new Error(`「${slot.label}」へ2〜4行入力してください。`);
-      }
-      if (lines.some((line) => line.length < 4 || line.length > 42)) {
-        throw new Error(`「${slot.label}」は1行4〜42文字で入力してください。`);
-      }
-    }
-  }
+  validateScriptLines(draft);
 }
 
 async function handleImageSelection(input) {
@@ -4273,6 +5036,7 @@ async function handleImageSelection(input) {
     if (!item) throw new Error("画像を準備できませんでした。");
     releaseImage(state.rosterImages[index]);
     state.rosterImages[index] = item;
+    state.rosterPlacements[index] = "auto";
     state.rosterExpanded = state.rosterExpanded || index >= AI_TEXT_TRAINING_ROUND_COUNT;
     invalidatePendingDraw();
     await persistRosterIfConsented();
@@ -4537,6 +5301,7 @@ async function removeRosterImage(index) {
   }
   releaseImage(state.rosterImages[index]);
   state.rosterImages[index] = null;
+  state.rosterPlacements[index] = "auto";
   invalidatePendingDraw();
   try {
     await persistRosterIfConsented();
@@ -4628,6 +5393,8 @@ async function publishEditorDraft() {
     state.editorProductType = state.editorDraft.productType;
     state.marketModeFilter = state.modeId;
     state.screen = "editor";
+    clearEditorDraft();
+    state.editorDraftRestored = false;
     state.editorDraft = createEditorDraft();
     showToast("応援台本を公開しました。");
     render();
@@ -4785,6 +5552,7 @@ function newSessionPlan() {
   state.sessionDrawIndices = [...drawIndices];
   state.images = drawIndices.map((index) => entries[index].image);
   state.bpms = drawIndices.map((index) => entries[index].bpm);
+  state.placements = drawIndices.map((index) => normalizeDoodlePlacement(entries[index].placement));
   state.sessionPlayStyle = normalizeAiTextTrainingPlayStyle(state.playStyle);
   state.sessionBeatCharacterId = normalizeBeatCharacterId(state.beatCharacterId);
   state.sessionCosmetics = equippedCosmetics();
@@ -5233,6 +6001,7 @@ function captureRoundArtwork() {
     message: state.currentMessage,
     parts: doodleMessageParts(state.currentMessage),
     layout: doodleLayoutForRound(index),
+    placement: normalizeDoodlePlacement(state.placements?.[index]),
     presentation: cheerDisplayMode(state.currentMessage),
     bpm: currentBpm(),
   }, index);
@@ -5972,6 +6741,9 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   );
   const repeatPaidPreset = state.selectedPresetSource === "active_use"
     && Number(state.selectedPreset?.price || 0) > 0;
+  // マイ台本で遊んだ後は、同じマイ台本を選んだまま準備へ戻る（端末から消されていれば標準へ）。
+  const repeatLocalPreset = state.selectedPresetSource === "local"
+    && Boolean(myScriptById(String(state.selectedPreset?.id || "").replace(/^my_/u, "")));
   const previousPreset = state.selectedPreset;
   stopRuntimeTimers();
   releaseZoneVideoClips();
@@ -5987,6 +6759,7 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   state.sessionBeatCharacterId = state.beatCharacterId;
   state.images = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill(null);
   state.bpms = [...DEFAULT_BPMS];
+  state.placements = Array(AI_TEXT_TRAINING_ROUND_COUNT).fill("auto");
   state.pendingDrawIndices = previousDrawIndices ? [...previousDrawIndices] : [];
   state.drawLeg = 1;
   if (drawMode === "alternate"
@@ -6034,6 +6807,9 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   if (repeatPaidPreset) {
     state.selectedPreset = previousPreset;
     state.selectedPresetSource = "market";
+  } else if (repeatLocalPreset && !state.activeUse) {
+    state.selectedPreset = previousPreset;
+    state.selectedPresetSource = "local";
   } else if (!state.activeUse) {
     state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
       AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.modeId],
@@ -6141,6 +6917,80 @@ function bindEvents() {
         showToast("BPMは変更しましたが、端末保存を更新できませんでした。");
       });
       render();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-placement]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const index = Number(input.dataset.aiTextTrainingPlacement);
+      if (!Number.isInteger(index) || index < 0 || index >= AI_TEXT_TRAINING_ROSTER_MAX_COUNT) return;
+      state.rosterPlacements[index] = normalizeDoodlePlacement(input.value);
+      persistRosterIfConsented().catch(() => {
+        showToast("文字の位置は変更しましたが、端末保存を更新できませんでした。");
+      });
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-use-my-script]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const script = myScriptById(button.dataset.aiTextTrainingUseMyScript);
+      if (!script) return;
+      if (state.activeUse) {
+        showToast("開始済みの有料応援があります。先にその利用を再開するか終了してください。");
+        return;
+      }
+      const snapshot = myScriptSnapshot(script);
+      if (!presetSupportsPlayStyle(snapshot)) {
+        showToast("この敗北ZONE用のマイ台本は、通常トレーニングでは使えません。");
+        return;
+      }
+      state.modeId = script.modeId;
+      state.marketModeFilter = script.modeId;
+      state.selectedPreset = snapshot;
+      state.selectedPresetSource = "local";
+      showToast(`マイ台本「${script.title}」を選びました。AI性格は${aiTextTrainingMode(script.modeId).label}です。`);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-edit-my-script]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const script = myScriptById(button.dataset.aiTextTrainingEditMyScript);
+      if (!script) return;
+      state.editorDraft = editorDraftFromMyScript(script);
+      state.editorProductType = script.productType;
+      state.editorLocalScriptId = script.id;
+      state.editorDraftRestored = false;
+      state.editorActionId = "";
+      saveEditorDraftNow();
+      state.screen = "editor";
+      render();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-delete-my-script]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const script = myScriptById(button.dataset.aiTextTrainingDeleteMyScript);
+      if (!script) return;
+      if (!window.confirm(`マイ台本「${script.title}」をこの端末から削除しますか？元に戻せません。`)) return;
+      try {
+        writeMyScripts(state.myScripts.filter((item) => item.id !== script.id));
+      } catch (error) {
+        showToast(error?.message || "マイ台本を削除できませんでした。");
+        return;
+      }
+      if (state.selectedPresetSource === "local" && state.selectedPreset?.id === `my_${script.id}`) {
+        state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
+          AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.modeId],
+        );
+        state.selectedPresetSource = "builtin";
+      }
+      if (state.editorLocalScriptId === script.id) state.editorLocalScriptId = "";
+      showToast(`マイ台本「${script.title}」を削除しました。`);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-save-artwork]").forEach((button) => {
+    button.addEventListener("click", () => {
+      saveRoundArtworkToDevice(Number(button.dataset.aiTextTrainingSaveArtwork)).catch((error) => {
+        showToast(error?.message || "作品を画像にできませんでした。");
+      });
     });
   });
   document.querySelectorAll("[data-ai-text-training-remove-image]").forEach((button) => {
@@ -6340,13 +7190,88 @@ function bindEvents() {
       const returnToDraft = state.screen === "editor_review" && state.editorDraft;
       state.screen = "editor";
       if (!returnToDraft) {
-        state.editorProductType = state.playStyle === "defeat_zone"
-          ? "defeat_zone"
-          : "standard";
-        state.editorDraft = createEditorDraft();
+        const stored = readEditorDraft();
+        if (stored) {
+          state.editorDraft = stored.draft;
+          state.editorProductType = stored.draft.productType;
+          state.editorLocalScriptId = stored.localScriptId;
+          state.editorDraftRestored = true;
+        } else {
+          state.editorProductType = state.playStyle === "defeat_zone"
+            ? "defeat_zone"
+            : "standard";
+          state.editorDraft = createEditorDraft();
+          state.editorLocalScriptId = "";
+          state.editorDraftRestored = false;
+        }
       }
       state.editorActionId = "";
       render();
+    },
+    "discard-editor-draft": () => {
+      if (!window.confirm("書きかけの台本を破棄して、標準の台詞から書き直しますか？マイ台本や公開済みの台本は消えません。")) return;
+      clearEditorDraft();
+      state.editorLocalScriptId = "";
+      state.editorDraftRestored = false;
+      state.editorDraft = createEditorDraft({
+        modeId: state.editorDraft?.modeId || state.modeId,
+        productType: state.editorDraft?.productType || state.editorProductType,
+      });
+      render();
+    },
+    "save-my-script": () => {
+      const form = document.querySelector("#aiTextTrainingEditorForm");
+      if (form) updateEditorDraftFromForm(form);
+      const draft = state.editorDraft;
+      validateMyScriptDraft(draft);
+      const scripts = [...state.myScripts];
+      const existingIndex = scripts.findIndex((script) => script.id === state.editorLocalScriptId);
+      if (existingIndex < 0 && scripts.length >= MY_SCRIPTS_MAX_COUNT) {
+        throw new Error(`マイ台本は${MY_SCRIPTS_MAX_COUNT}本まで保存できます。使わない台本を準備画面から削除してください。`);
+      }
+      const id = existingIndex >= 0 ? scripts[existingIndex].id : newMyScriptId();
+      const record = {
+        id,
+        title: draft.title,
+        description: draft.description,
+        modeId: draft.modeId,
+        productType: draft.productType,
+        lines: draft.lines,
+        zoneLines: draft.zoneLines,
+        updatedAt: Date.now(),
+      };
+      if (existingIndex >= 0) scripts[existingIndex] = record;
+      else scripts.unshift(record);
+      writeMyScripts(scripts);
+      state.editorLocalScriptId = id;
+      saveEditorDraftNow();
+      if (state.selectedPresetSource === "local" && state.selectedPreset?.id === `my_${id}`) {
+        state.selectedPreset = myScriptSnapshot(myScriptById(id));
+      }
+      showToast(existingIndex >= 0
+        ? "マイ台本を更新しました（この端末だけ）。"
+        : "マイ台本に保存しました。準備画面の「マイ台本」から無料で使えます（この端末だけ）。");
+      render();
+    },
+    "fill-empty-slots": () => {
+      const form = document.querySelector("#aiTextTrainingEditorForm");
+      if (!form || !state.editorDraft) return;
+      const builtin = normalizeAiTextTrainingScriptSnapshot(
+        AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.editorDraft.modeId],
+      );
+      let filled = 0;
+      form.querySelectorAll("textarea[name^=\"slot_\"]").forEach((textarea) => {
+        if (textarea.value.trim()) return;
+        const slotId = textarea.name.replace("slot_", "");
+        const lines = builtin.lines[slotId] || defaultDefeatZoneLines()[slotId] || [];
+        if (!lines.length) return;
+        textarea.value = lines.join("\n");
+        filled += 1;
+      });
+      updateEditorDraftFromForm(form);
+      scheduleEditorDraftSave();
+      refreshEditorLiveDom();
+      showToast(filled ? `空いていた${filled}場面へ標準の台詞を入れました。` : "空いている場面はありません。");
     },
     "builtin-support": () => {
       state.selectedPreset = normalizeAiTextTrainingScriptSnapshot(
@@ -6503,6 +7428,8 @@ function bindEvents() {
       modeId: nextModeId,
       productType: state.editorProductType,
     });
+    state.editorLocalScriptId = "";
+    saveEditorDraftNow();
     render();
   });
   document.querySelector('select[name="productType"]')?.addEventListener("change", (event) => {
@@ -6511,34 +7438,87 @@ function bindEvents() {
       modeId: state.editorDraft.modeId,
       productType: state.editorProductType,
     });
+    state.editorLocalScriptId = "";
+    saveEditorDraftNow();
     render();
   });
   document.querySelectorAll('#aiTextTrainingEditorForm textarea, #aiTextTrainingEditorForm input, #aiTextTrainingEditorForm select:not([name="modeId"]):not([name="productType"])').forEach((control) => {
     control.addEventListener("input", () => {
       updateEditorDraftFromForm(control.form);
-      const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
-      if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
+      scheduleEditorDraftSave();
+      refreshEditorLiveDom();
     });
   });
+  // 場面ごとの補助：標準の台詞を入れる／上の場面をコピー。入力と同じ扱いで下書きへ反映する。
+  const setSlotText = (slotId, text) => {
+    const textarea = document.querySelector(`#aiTextTrainingEditorForm textarea[name="slot_${slotId}"]`);
+    if (!textarea) return;
+    textarea.value = text;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.focus({ preventScroll: true });
+  };
+  document.querySelectorAll("[data-ai-text-training-slot-fill]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const slotId = button.dataset.aiTextTrainingSlotFill;
+      const zone = button.dataset.aiTextTrainingSlotZone === "true";
+      const lines = zone
+        ? defaultDefeatZoneLines()[slotId]
+        : normalizeAiTextTrainingScriptSnapshot(
+          AI_TEXT_TRAINING_BUILTIN_SCRIPTS[state.editorDraft?.modeId || state.modeId],
+        ).lines[slotId];
+      if (!lines?.length) return;
+      setSlotText(slotId, lines.join("\n"));
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-slot-copy]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const source = document.querySelector(`#aiTextTrainingEditorForm textarea[name="slot_${button.dataset.aiTextTrainingSlotCopyFrom}"]`);
+      if (!source) return;
+      setSlotText(button.dataset.aiTextTrainingSlotCopy, source.value);
+    });
+  });
+
   document.querySelector("#aiTextTrainingEditorPreviewBpm")?.addEventListener("input", (event) => {
     state.editorPreview.bpm = normalizeAiTextTrainingBpm(Number(event.currentTarget.value)) ?? 0;
-    const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
-    if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
+    refreshEditorLiveDom();
   });
   document.querySelector("#aiTextTrainingEditorPreviewRemaining")?.addEventListener("input", (event) => {
     state.editorPreview.remaining = Math.max(1, Math.min(60, Number(event.currentTarget.value) || 10));
-    const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
-    if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
+    refreshEditorLiveDom();
   });
   document.querySelector("#aiTextTrainingEditorPreviewPhase")?.addEventListener("change", (event) => {
     state.editorPreview.phase = event.currentTarget.value;
-    const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
-    if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
+    refreshEditorLiveDom();
   });
   document.querySelector("#aiTextTrainingEditorPreviewDirection")?.addEventListener("change", (event) => {
     state.editorPreview.direction = event.currentTarget.value;
     const preview = document.querySelector("#aiTextTrainingEditorPreviewMessage");
     if (preview) preview.textContent = editorSimulatorMessage(state.editorDraft);
+    refreshEditorLiveDom();
+  });
+  document.querySelector("#aiTextTrainingEditorPreviewLine")?.addEventListener("change", (event) => {
+    state.editorPreview.lineIndex = Math.max(0, Math.min(3, Number(event.currentTarget.value) || 0));
+    refreshEditorLiveDom();
+  });
+  document.querySelectorAll("[data-ai-text-training-editor-layout]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorPreview.layout = DOODLE_LAYOUTS.includes(button.dataset.aiTextTrainingEditorLayout)
+        ? button.dataset.aiTextTrainingEditorLayout
+        : DOODLE_LAYOUTS[0];
+      document.querySelectorAll("[data-ai-text-training-editor-layout]").forEach((item) => {
+        item.setAttribute("aria-pressed", String(item === button));
+      });
+      refreshEditorLiveDom();
+    });
+  });
+  document.querySelectorAll("[data-ai-text-training-editor-placement]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editorPreview.placement = normalizeDoodlePlacement(button.dataset.aiTextTrainingEditorPlacement);
+      document.querySelectorAll("[data-ai-text-training-editor-placement]").forEach((item) => {
+        item.setAttribute("aria-pressed", String(item === button));
+      });
+      refreshEditorLiveDom();
+    });
   });
   document.querySelector("#aiTextTrainingXProfileForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
