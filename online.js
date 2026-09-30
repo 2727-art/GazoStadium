@@ -129,21 +129,32 @@ import {
   shouldConsumeOnlineSignal,
 } from "./online-session-guard.mjs?v=online-session-guard-v2";
 import {
+  CARD_CAPTION_TEMPLATES,
   CUSTOM_FINISH_REPLY_VALUE,
   FINISH_REPLY_DISABLED_VALUE,
   FINISH_REPLY_LINES,
+  MAX_CARD_CAPTION_LENGTH,
   MAX_FINISH_REPLY_INPUT_UNITS,
   MAX_FINISH_REPLY_LENGTH,
+  RETIRED_FINISH_LINES,
+  RETIRED_FINISH_REPLY_LINES,
+  RETIRED_PURSUIT_LINES,
   ROLEPLAY_VOICE_SETS,
+  SCORE_REACTION_BANDS,
   countFinishReplyCharacters,
   getRoleplayVoiceSet,
   inferRoleplayVoiceSetId,
+  normalizeCardCaption,
   normalizeFinishReplyLine,
   normalizeReceivedFinishReplyLine,
   normalizeRoleplayVoiceSetId,
+  resolveScoreReaction,
+  resolveVisibleCardCaption,
   resolveVisibleFinishReplyLine,
   sanitizeFinishReplyDraft,
-} from "./finish-roleplay.mjs?v=finish-reply-v2";
+  scoreReactionBand,
+  scoreReactionOptions,
+} from "./finish-roleplay.mjs?v=finish-reply-v2-girl-voice-v1";
 import {
   ONLINE_MAX_IMAGE_COUNT,
   ONLINE_REQUIRED_IMAGE_COUNT,
@@ -181,27 +192,10 @@ const SOLO_STATS_PROJECTION_VERSION = 2;
 const ONLINE_ROOM_SETUP_TIMEOUT_MS = 30_000;
 const ONLINE_CLEANUP_WAIT_MS = 15_000;
 const ONLINE_CLEANUP_AUXILIARY_WAIT_MS = 3_000;
-const LEGACY_PURSUIT_LINES = [
-  "その反応、見逃さない。もう一枚いく！",
-  "好みは読めた。ここからが本命だ！",
-  "刺さったね？ 追撃開始！",
-  "まだ終わらない。次の一枚をどうぞ！",
-];
-const LEGACY_FINISH_LINES = [
-  "これで決着だ！",
-  "この一枚で、勝負を決める。",
-  "最後の一撃、受け取って！",
-  "推しの力、見届けたか！",
-  "いい勝負だった。またやろう。",
-];
-const PURSUIT_LINES = Object.freeze(Array.from(new Set([
-  ...ROLEPLAY_VOICE_SETS.map(({ pursuitLine }) => pursuitLine),
-  ...LEGACY_PURSUIT_LINES,
-])));
-const FINISH_LINES = Object.freeze(Array.from(new Set([
-  ...ROLEPLAY_VOICE_SETS.map(({ finishLine }) => finishLine),
-  ...LEGACY_FINISH_LINES,
-])));
+// 選択肢は女の子なりきりの口調セットだけ。旧定型は受信時の判定と保存済み設定の移行にだけ使う。
+const PURSUIT_LINES = Object.freeze(ROLEPLAY_VOICE_SETS.map(({ pursuitLine }) => pursuitLine));
+const FINISH_LINES = Object.freeze(ROLEPLAY_VOICE_SETS.map(({ finishLine }) => finishLine));
+const FINISH_TEMPLATE_LINES = Object.freeze([...FINISH_LINES, ...RETIRED_FINISH_LINES]);
 const IMAGE_PREFERENCE_OPTIONS = Object.freeze([
   Object.freeze({
     id: "illustration",
@@ -690,6 +684,9 @@ function createOnlineState() {
     processedRounds: new Set(),
     pendingFinishReplies: new Map(),
     pendingFinishReplyAcks: new Map(),
+    selectedScoreReaction: null,
+    localScoreReactions: new Map(),
+    remoteScoreReactions: new Map(),
     continuedRounds: new Set(),
     sentImageRounds: new Set(),
     roundData: {},
@@ -943,7 +940,9 @@ function normalizePursuitLine(value) {
 }
 
 function getSavedPursuitSettings() {
-  const savedValue = localStorage.getItem(PURSUIT_LINE_KEY) || "";
+  const storedValue = localStorage.getItem(PURSUIT_LINE_KEY) || "";
+  // 旧口調セットの定型を選んでいた場合は、新しい既定の口調へ移す。
+  const savedValue = RETIRED_PURSUIT_LINES.includes(normalizePursuitLine(storedValue)) ? "" : storedValue;
   const pursuitLine = normalizePursuitLine(savedValue);
   const usesCustomLine = Boolean(savedValue) && !PURSUIT_LINES.includes(pursuitLine);
   return {
@@ -976,7 +975,8 @@ function normalizeReceivedFinishLine(value) {
 }
 
 function getSavedFinishSettings() {
-  const savedValue = localStorage.getItem(FINISH_LINE_KEY);
+  const storedValue = localStorage.getItem(FINISH_LINE_KEY);
+  const savedValue = storedValue !== null && RETIRED_FINISH_LINES.includes(normalizeFinishLine(storedValue)) ? null : storedValue;
   if (savedValue === FINISH_LINE_DISABLED_VALUE) {
     return {
       finishLine: "",
@@ -1007,7 +1007,8 @@ function applyFinishLineSetting(value) {
 }
 
 function getSavedFinishReplySettings() {
-  const savedValue = localStorage.getItem(FINISH_REPLY_LINE_KEY);
+  const storedValue = localStorage.getItem(FINISH_REPLY_LINE_KEY);
+  const savedValue = storedValue !== null && RETIRED_FINISH_REPLY_LINES.includes(normalizeFinishReplyLine(storedValue)) ? null : storedValue;
   if (savedValue === FINISH_REPLY_DISABLED_VALUE) {
     return {
       finishReplyLine: "",
@@ -2075,12 +2076,16 @@ async function startBattlePreview() {
     deck,
     signatureCardId: deck[0].id,
     round: 3,
+    roleplayVoiceFallbackId: "koakuma",
     chatMessages: [
       { id: "preview-1", authorUid: "preview-remote", name: "シオン", text: "よろしくお願いします！", round: 1 },
       { id: "preview-2", authorUid: "preview-local", name: "ルミナ", text: "今夜は本気の5枚で来ました", round: 1 },
       { id: "preview-3", authorUid: "preview-remote", name: "シオン", text: "その衣装の色づかい、ずるい…", round: 2 },
     ],
   });
+  deck[0].caption = "今日の本命、どうぞ♡";
+  deck[1].caption = "ねぇ、これ好きでしょ？♡";
+  deck[5].caption = "とっておきだよ♡";
   mountBattlePreviewBar();
   showBattlePreviewStep("connecting");
 }
@@ -2126,7 +2131,11 @@ function showBattlePreviewStep(step) {
   resetSelectionTimerState();
   // 毎回別の部屋として扱い、同じ画面でも演出を最初から再生する。
   state.roomId = `preview-velvet-stage-${battlePreview.run}`;
-  state.remoteImages = new Map([[state.round, { ...battlePreview.remote[battlePreview.landscape ? 1 : 0], signature: false }]]);
+  const previewRemote = { ...battlePreview.remote[battlePreview.landscape ? 1 : 0], signature: false, caption: "この衣装の色、ずるいでしょ？", voiceSetId: "oneesan" };
+  state.remoteImages = new Map([[state.round, previewRemote]]);
+  state.localScoreReactions = new Map();
+  state.remoteScoreReactions = new Map();
+  state.selectedScoreReaction = null;
   state.selectedCardId = state.deck[0].id;
   state.deck.forEach((item, index) => { item.used = index === 2 || index === 3; });
   state.players[0] = { ...state.players[0], uid: "preview-local", name: "ルミナ", pursuitLine: "まだまだ、魅せてあげる。", sampleCount: 0, startingHp: MAX_HP, maxHp: MAX_HP, hp: 24, streak: 2, totalReceived: 21, criticals: 1, perfects: 0 };
@@ -2136,6 +2145,10 @@ function showBattlePreviewStep(step) {
   state.imageTransferError = "";
   state.transferProgress = 64;
   if (screen === "select") {
+    state.history = [
+      { round: 1, scorePlayerOne: 8, scorePlayerTwo: 6, winnerIndex: 0, loserIndex: 1, damage: 8, previousHp: 24, lethal: false, finish: null, localCardId: state.deck[2].id },
+      { round: 2, scorePlayerOne: 5, scorePlayerTwo: 9, winnerIndex: 1, loserIndex: 0, damage: 9, previousHp: 30, lethal: false, finish: null, localCardId: state.deck[3].id },
+    ];
     state.screen = "select";
     render();
     startSelectionTimer(Date.now());
@@ -2152,7 +2165,9 @@ function showBattlePreviewStep(step) {
     const damage = winnerIndex === null ? 0 : Math.max(scorePlayerOne, scorePlayerTwo);
     const previousHp = loserIndex === null ? null : state.players[loserIndex].hp;
     if (loserIndex !== null) state.players[loserIndex].hp = Math.max(0, previousHp - damage);
-    state.history = [{ round: state.round, scorePlayerOne, scorePlayerTwo, winnerIndex, loserIndex, damage, previousHp, lethal, finish: null }];
+    state.history = [{ round: state.round, scorePlayerOne, scorePlayerTwo, winnerIndex, loserIndex, damage, previousHp, lethal, finish: null, localCardId: state.selectedCardId }];
+    state.localScoreReactions.set(state.round, { voiceSetId: localRoleplayVoiceSetId(), band: scoreReactionBand(scorePlayerTwo), index: 0 });
+    state.remoteScoreReactions.set(state.round, { voiceSetId: "oneesan", band: scoreReactionBand(scorePlayerOne), index: 1 });
     state.screen = "result";
     if (lethal) state.history[0].finish = createFinishCutInPayload(winnerIndex);
     render();
@@ -5210,6 +5225,8 @@ function renderSetup() {
       <div class="deck-label"><span>${item.isSample ? "SAMPLE / " : ""}${reserve ? "RESERVE" : "ENTRY"} ${String(slotNumber).padStart(2, "0")}</span>
         <button class="remove-card" data-online-remove="${escapeHtml(item.id)}" aria-label="画像${index + 1}を削除">×</button>
       </div>
+      <input class="text-input deck-caption-input" type="text" data-online-card-caption="${escapeHtml(item.id)}" maxlength="${MAX_CARD_CAPTION_LENGTH}"
+        list="onlineCardCaptionTemplates" autocomplete="off" placeholder="ひとこと（任意）" value="${escapeHtml(item.caption || "")}" aria-label="画像${index + 1}のひとこと" />
     </div>`;
   };
   const requiredSlots = Array.from(
@@ -5255,7 +5272,7 @@ function renderSetup() {
         </label>
         ${shared()?.profileAvatar?.renderSetting?.({ controlId: "soloProfileAvatar", name: state.name }) || ""}
         <section class="roleplay-voice-settings" aria-labelledby="onlineRoleplayVoiceTitle">
-          <div class="finish-line-heading"><span>ROLEPLAY VOICE</span><strong id="onlineRoleplayVoiceTitle">キャラクターの口調セット</strong></div>
+          <div class="finish-line-heading"><span>ROLEPLAY VOICE</span><strong id="onlineRoleplayVoiceTitle">なりきり口調セット</strong></div>
           <label class="field-label">初心者向け一括設定
             <select class="text-input" id="onlineRoleplayVoiceSet">
               <option value="" ${state.roleplayVoiceSetId ? "" : "selected"}>個別に設定する</option>
@@ -5263,7 +5280,7 @@ function renderSetup() {
             </select>
           </label>
           <div class="roleplay-voice-summary" id="onlineRoleplayVoiceSummary" role="status" aria-live="polite">${voiceSetSummary}</div>
-          <p class="pursuit-line-note">口調セットは追撃・決着・敗北時の返礼を一括設定します。選んだ後に、好きな項目だけ自由記述へ変更できます。</p>
+          <p class="pursuit-line-note">女の子になりきる口調セットです。追撃・決着・敗北時の返礼と、採点のひとことリアクションの口調をまとめて決めます。選んだ後に、好きな項目だけ自由記述へ変更できます。</p>
         </section>
         <div class="pursuit-line-settings online-pursuit-line-settings">
           <label class="field-label">追撃時のセリフ
@@ -5313,9 +5330,9 @@ function renderSetup() {
           </div>
           <label class="finish-visibility-toggle">
             <input id="onlineShowOpponentCustomFinish" type="checkbox" ${state.showOpponentCustomFinish ? "checked" : ""} />
-            <span>相手が自由記述した決着セリフ・返礼を表示する</span>
+            <span>相手が自由記述したひとこと・決着セリフ・返礼を表示する</span>
           </label>
-          <p class="pursuit-line-note">決着セリフと返礼はP2Pで対戦相手だけへ一時送信します。自由記述を非表示にした場合、相手の定型外セリフだけ安全な定型文へ置き換えます。</p>
+          <p class="pursuit-line-note">カードのひとこと・決着セリフ・返礼はP2Pで対戦相手だけへ一時送信します。自由記述を非表示にした場合、相手の定型外の言葉だけ安全な定型文へ置き換えます。</p>
         </div>
         <fieldset class="image-preference-settings">
           <legend>高く評価しやすい画像 <span>マッチング優先条件</span></legend>
@@ -5345,6 +5362,8 @@ function renderSetup() {
           <p><strong>${state.signatureCardId ? "シグネチャーカード指定済み" : "シグネチャーカードは未指定"}</strong>
             <small>任意の1枚を指定できます。その画像でHPを0にすると、専用の強化演出になります。</small></p>
         </div>
+        <p class="deck-caption-guide">各画像に<strong>ひとこと</strong>（${MAX_CARD_CAPTION_LENGTH}文字まで・任意）を付けると、公開した時に画像と一緒に相手へ届きます。候補から選ぶことも、自由に書くこともできます。</p>
+        <datalist id="onlineCardCaptionTemplates">${CARD_CAPTION_TEMPLATES.map((line) => `<option value="${escapeHtml(line)}"></option>`).join("")}</datalist>
         <section class="deck-group" aria-labelledby="onlineRequiredDeckTitle">
           <div class="deck-group-heading"><div><span>REQUIRED 5</span><h2 id="onlineRequiredDeckTitle">対戦画像</h2></div>
             <p>まず5枚を登録してください。5枚だけでも、これまでどおり対戦できます。</p></div>
@@ -6064,6 +6083,7 @@ function renderRoundSelect() {
     </div>
     <div class="vb-select-stage"><div class="vb-select-preview">${preview}</div></div>
     <div class="vb-hand" role="group" aria-label="登録した画像">${cards}</div>
+    ${renderScoreLog()}
     <p class="vb-hint">${timerStarted ? "10秒以内に選択してください。時間切れ時は、選択中の画像を自動ロックします。控え画像も選べます。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
     <div class="vb-actions"><button class="button button-primary vs-satin" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この一枚でロック</button></div>`);
 }
@@ -6161,6 +6181,7 @@ function renderArenaCard(index, item) {
       <i class="vb-burst" aria-hidden="true"></i>
     </div>
     <div class="vb-plate vb-after"><b>${escapeHtml(player.name)}</b><small>${local ? "あなた" : "相手"} · ROUND ${state.round}</small></div>
+    <div class="vb-after">${renderCardCaption(item, { local })}</div>
   </article>`;
 }
 
@@ -6178,9 +6199,104 @@ function renderScore() {
       ${renderStageCard(item, { className: tier, alt })}
       ${selected ? `<span class="vb-score-badge ${tier}"><b>${selected}</b><small>${scoreLabel(selected)}</small></span>` : ""}
     </button></div>
+    ${renderCardCaption(item)}
     <div class="vb-score-pad" role="group" aria-label="点数を選ぶ">${buttons}</div>
-    <p class="vb-hint">1～10点を選択してください。確定後の変更はできません。相手には結果の発表まで伏せられます。</p>
+    ${renderScoreReactionPicker(selected)}
+    <p class="vb-hint">1～10点を選択してください。確定後の変更はできません。点数とひとことリアクションは、結果の発表まで相手に伏せられます。</p>
     <div class="vb-actions"><button class="button button-primary vs-satin" id="onlineLockScore" ${selected ? "" : "disabled"}>この点数で確定</button></div>`);
+}
+
+function localRoleplayVoiceSetId(targetState = state) {
+  return normalizeRoleplayVoiceSetId(targetState.roleplayVoiceFallbackId || targetState.roleplayVoiceSetId)
+    || ROLEPLAY_VOICE_SETS[0].id;
+}
+
+function renderCardCaption(item, { local = false } = {}) {
+  if (!item) return "";
+  const visible = local
+    ? { caption: normalizeCardCaption(item.caption), replaced: false }
+    : resolveVisibleCardCaption(item.caption, { showCustom: state.showOpponentCustomFinish, voiceSetId: item.voiceSetId });
+  if (!visible.caption) return "";
+  return `<p class="vb-card-caption${local ? " is-local" : ""}">「${escapeHtml(visible.caption)}」${visible.replaced ? "<small>自由記述のひとことは、表示設定により定型文へ置き換えています。</small>" : ""}</p>`;
+}
+
+function renderScoreReactionPicker(score) {
+  const options = score ? scoreReactionOptions(localRoleplayVoiceSetId(), score) : [];
+  if (!options.length) return "";
+  return `<div class="vb-reaction-picker" role="group" aria-label="ひとことリアクション（任意）"><small>ひとことリアクション（任意）</small>
+    <div>${options.map((option) => `<button type="button" class="vb-reaction-chip" data-online-score-reaction="${option.index}" aria-pressed="${state.selectedScoreReaction === option.index}">${escapeHtml(option.text)}</button>`).join("")}</div></div>`;
+}
+
+function scoreReactionText(result, columnIndex, targetState = state) {
+  const scores = [result?.scorePlayerOne, result?.scorePlayerTwo];
+  const raterIndex = columnIndex === 0 ? 1 : 0;
+  const reactions = raterIndex === targetState.playerIndex ? targetState.localScoreReactions : targetState.remoteScoreReactions;
+  const entry = reactions?.get(result?.round);
+  if (!entry) return "";
+  return resolveScoreReaction({ ...entry, score: scores[columnIndex] });
+}
+
+function renderScoreReactionContent(result, columnIndex, targetState = state) {
+  const text = scoreReactionText(result, columnIndex, targetState);
+  const rater = targetState.players[columnIndex === 0 ? 1 : 0];
+  return text ? `<b>${escapeHtml(rater?.name || "")}</b>「${escapeHtml(text)}」` : "";
+}
+
+function renderScoreReactionSlot(result, columnIndex) {
+  const content = renderScoreReactionContent(result, columnIndex);
+  return `<p class="vb-result-reaction" data-score-reaction-slot="${result.round}:${columnIndex}" aria-live="polite" ${content ? "" : "hidden"}>${content}</p>`;
+}
+
+function syncScoreReactionSlots(round, targetState = state) {
+  if (state !== targetState) return;
+  const result = targetState.history.find((entry) => entry.round === round);
+  if (!result) return;
+  document.querySelectorAll(`[data-score-reaction-slot^="${round}:"]`).forEach((slot) => {
+    const columnIndex = Number(slot.dataset.scoreReactionSlot.split(":")[1]);
+    slot.innerHTML = renderScoreReactionContent(result, columnIndex, targetState);
+    slot.hidden = !slot.innerHTML;
+  });
+}
+
+function sendLocalScoreReaction(round, targetState = state) {
+  const reaction = targetState.localScoreReactions.get(round);
+  const channel = targetState.channel;
+  if (!reaction || !channel || channel.readyState !== "open") return;
+  try {
+    channel.send(JSON.stringify({ type: "score-reaction", round, voiceSetId: reaction.voiceSetId, band: reaction.band, index: reaction.index }));
+  } catch {
+    // リアクションは演出だけなので、送れなくても対戦は続ける。
+  }
+}
+
+function handleRemoteScoreReaction(message, targetState = state) {
+  const round = Number(message?.round);
+  const index = Number(message?.index);
+  if (!Number.isInteger(round) || round < 1 || round > MAX_ROUNDS || ![0, 1].includes(index)) return;
+  if (!SCORE_REACTION_BANDS.includes(message?.band)) return;
+  targetState.remoteScoreReactions.set(round, {
+    voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
+    band: message.band,
+    index,
+  });
+  syncScoreReactionSlots(round, targetState);
+}
+
+function renderScoreLog() {
+  if (!state.history.length) return "";
+  const own = state.playerIndex;
+  const rows = state.history.map((result) => {
+    const scores = [result.scorePlayerOne, result.scorePlayerTwo];
+    // 相手の画像はラウンドごとに解放しているので、ログには自分のカードだけを小さく出す。
+    const localItem = state.deck.find((item) => item.id === result.localCardId);
+    const thumb = localItem?.url
+      ? `<img src="${localItem.url}" alt="${escapeHtml(`ROUND ${result.round}に出した画像`)}" loading="lazy" />`
+      : '<span class="vb-log-empty" aria-hidden="true"></span>';
+    return `<li><small>R${result.round}</small>
+      <span class="vb-log-cell is-local">${thumb}<b>${scores[own]}</b><em>相手の採点</em></span>
+      <span class="vb-log-cell is-remote"><span class="vb-log-empty is-opponent" aria-hidden="true">相手</span><b>${scores[own === 0 ? 1 : 0]}</b><em>あなたの採点</em></span></li>`;
+  }).join("");
+  return `<section class="vb-score-log" aria-label="これまでの採点"><h2>これまでの採点</h2><ol>${rows}</ol></section>`;
 }
 
 function renderFinishReplySummary(result) {
@@ -6251,6 +6367,8 @@ function renderRoundResult() {
       <div class="vb-result-card">${renderStageCard(local ? localItem : remoteItem, { alt: `${state.players[index].name}の画像` })}${stamp}</div>
       <div class="vb-result-score"><b data-result-score="${scores[index]}">${animate ? "–" : scores[index]}</b><small>${escapeHtml(scoreLabel(scores[index]))}</small></div>
       <div class="vb-result-name">${escapeHtml(state.players[index].name)}</div>
+      ${renderCardCaption(local ? localItem : remoteItem, { local })}
+      ${renderScoreReactionSlot(result, index)}
     </div>`;
   };
   const menuItems = `${isMatchOver() ? "" : '<button class="button button-danger" data-online-destroy>ルーム破棄</button>'}`;
@@ -7235,6 +7353,10 @@ function bindSetupEvents() {
   document.querySelectorAll("[data-online-signature-card]").forEach((button) => button.addEventListener("click", () => {
     toggleSignatureCard(button.dataset.onlineSignatureCard);
   }));
+  document.querySelectorAll("[data-online-card-caption]").forEach((input) => input.addEventListener("input", () => {
+    const item = state.deck.find((card) => card.id === input.dataset.onlineCardCaption);
+    if (item) item.caption = input.value;
+  }));
   bindSoloCrownMatchmakingActions();
 }
 
@@ -7535,7 +7657,14 @@ function bindSelectEvents() {
 
 function bindScoreEvents() {
   document.querySelectorAll("[data-online-score]").forEach((button) => button.addEventListener("click", () => {
-    state.selectedScore = Number(button.dataset.onlineScore);
+    const score = Number(button.dataset.onlineScore);
+    if (scoreReactionBand(score) !== scoreReactionBand(state.selectedScore)) state.selectedScoreReaction = null;
+    state.selectedScore = score;
+    render();
+  }));
+  document.querySelectorAll("[data-online-score-reaction]").forEach((button) => button.addEventListener("click", () => {
+    const index = Number(button.dataset.onlineScoreReaction);
+    state.selectedScoreReaction = state.selectedScoreReaction === index ? null : index;
     render();
   }));
   document.querySelector("#onlineLockScore")?.addEventListener("click", lockScore);
@@ -10861,6 +10990,8 @@ async function handleChannelMessage(data, expectedState = state, expectedChannel
       handleRemoteFinishReply(message, expectedState, expectedChannel);
     } else if (message.type === "finish-reply-ack") {
       handleRemoteFinishReplyAck(message, expectedState, expectedChannel);
+    } else if (message.type === "score-reaction") {
+      handleRemoteScoreReaction(message, expectedState);
     } else if (message.type === "profile-avatar-start") {
       assertIncomingTransferNamespaceExclusive(state, "profile");
       if (state.incomingAvatarTransfer) {
@@ -10888,6 +11019,8 @@ async function handleChannelMessage(data, expectedState = state, expectedChannel
         }),
         signature: message.signature === true,
         finishLine: normalizeReceivedFinishLine(message.finishLine),
+        caption: typeof message.caption === "string" ? normalizeCardCaption(message.caption) : "",
+        voiceSetId: normalizeRoleplayVoiceSetId(message.voiceSetId),
       };
     } else if (message.type === "image-cancel") {
       const round = Number(message.round);
@@ -11066,6 +11199,8 @@ async function finishIncomingImage(round) {
     url: URL.createObjectURL(blob),
     signature: transfer.signature === true,
     finishLine: normalizeReceivedFinishLine(transfer.finishLine),
+    caption: transfer.caption || "",
+    voiceSetId: transfer.voiceSetId || "",
   });
   state.transferProgress = 100;
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${round}/imagesReceived/${state.uid}`), true);
@@ -11587,6 +11722,8 @@ async function sendSelectedImage() {
   const round = state.round;
   const signature = item.id === state.signatureCardId;
   const finishLine = state.finishLine;
+  const caption = normalizeCardCaption(item.caption);
+  const voiceSetId = normalizeRoleplayVoiceSetId(state.roleplayVoiceFallbackId || state.roleplayVoiceSetId);
   clearImageAckWatchdog(expectedState);
   state.sentImageRounds.add(round);
   state.screen = "waitingImage";
@@ -11612,6 +11749,8 @@ async function sendSelectedImage() {
           mime,
           signature,
           finishLine,
+          caption,
+          voiceSetId,
         }));
         started = true;
         for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
@@ -11710,7 +11849,16 @@ async function lockScore() {
     return;
   }
   const score = state.selectedScore;
+  const reactionIndex = state.selectedScoreReaction;
+  if (Number.isInteger(reactionIndex)) {
+    state.localScoreReactions.set(state.round, {
+      voiceSetId: localRoleplayVoiceSetId(),
+      band: scoreReactionBand(score),
+      index: reactionIndex,
+    });
+  }
   state.selectedScore = null;
+  state.selectedScoreReaction = null;
   state.screen = "waitingScore";
   render();
   await set(ref(database, `online/rooms/${state.roomId}/rounds/${state.round}/scores/${state.uid}`), score);
@@ -11748,6 +11896,7 @@ function resolveRound(scores) {
     previousHp,
     lethal,
     finish,
+    localCardId: selectedItem?.id || "",
   });
   if (isMatchOver()) preserveResolvedFinishFromP2pRecovery(state);
   const pendingFinishReply = state.pendingFinishReplies.get(state.round) || null;
@@ -11755,6 +11904,8 @@ function resolveRound(scores) {
   state.screen = "result";
   // CRITICAL・PERFECTの光と音は、結果画面の演出で点数が止まった瞬間に出す。
   render();
+  // 両者の点数が確定した後にだけ送るので、相手の採点前に点数帯が漏れない。
+  sendLocalScoreReaction(state.round);
   if (lethal) {
     triggerFinishCutIn(finish);
     if (pendingFinishReply) {
@@ -12083,7 +12234,7 @@ function createFinishCutInPayload(winnerIndex) {
   const receivedLine = winnerIsLocal
     ? normalizeReceivedFinishLine(state.finishLine)
     : normalizeReceivedFinishLine(media?.finishLine);
-  const customOpponentLine = !winnerIsLocal && receivedLine && !FINISH_LINES.includes(receivedLine);
+  const customOpponentLine = !winnerIsLocal && receivedLine && !FINISH_TEMPLATE_LINES.includes(receivedLine);
   const finishLineReplaced = Boolean(customOpponentLine && !state.showOpponentCustomFinish);
   return {
     round: state.round,
@@ -12093,7 +12244,7 @@ function createFinishCutInPayload(winnerIndex) {
     loserName: String(state.players[loserIndex]?.name || "PLAYER").slice(0, 16),
     imageUrl: String(media?.url || ""),
     signature: winnerIsLocal ? media?.id === state.signatureCardId : media?.signature === true,
-    finishLine: finishLineReplaced ? FINISH_LINES[0] : receivedLine,
+    finishLine: finishLineReplaced ? (getRoleplayVoiceSet(media?.voiceSetId)?.finishLine || FINISH_LINES[0]) : receivedLine,
     finishLineReplaced,
     replyAcknowledged: false,
     replyLine: "",

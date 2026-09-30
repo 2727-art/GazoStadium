@@ -22,6 +22,7 @@ function createFinishSandbox() {
   const source = [
     extract(/const MAX_FINISH_LINE_LENGTH = 30;/, "finish line limit"),
     'const FINISH_LINES = ["これで決着だ！"];',
+    'const FINISH_TEMPLATE_LINES = [...FINISH_LINES, "旧口調の決着"];',
     extract(/function sanitizeFinishLineDraft\(value\) \{[\s\S]*?\n\}/, "finish sanitizer"),
     extract(/function normalizeFinishLine\(value, fallback = FINISH_LINES\[0\]\) \{[\s\S]*?\n\}/, "finish normalizer"),
     extract(/function normalizeReceivedFinishLine\(value\) \{[\s\S]*?\n\}/, "received finish normalizer"),
@@ -45,6 +46,7 @@ function createFinishSandbox() {
     output: null,
   };
   sandbox.getSelectedItem = () => sandbox.localItem;
+  sandbox.getRoleplayVoiceSet = (id) => (id === "koakuma" ? { finishLine: "はい、落ちた♡ わたしの勝ち" } : null);
   vm.runInNewContext(`${source}\nthis.finishPayload = createFinishCutInPayload; this.normalizeReceived = normalizeReceivedFinishLine; this.presets = FINISH_LINES;`, sandbox);
   return sandbox;
 }
@@ -78,6 +80,11 @@ test("finish payload reuses the lethal card and safely replaces hidden opponent 
   assert.equal(remote.signature, true);
   assert.equal(remote.finishLine, sandbox.presets[0]);
   assert.equal(remote.finishLineReplaced, true);
+
+  sandbox.state.remoteImages.set(1, { url: "blob:remote-finisher", signature: false, finishLine: "LINEで続きしよ", voiceSetId: "koakuma" });
+  assert.equal(sandbox.finishPayload(1).finishLine, "はい、落ちた♡ わたしの勝ち", "hidden custom text falls back to the sender's persona");
+  sandbox.state.remoteImages.set(1, { url: "blob:remote-finisher", signature: false, finishLine: "旧口調の決着" });
+  assert.equal(sandbox.finishPayload(1).finishLineReplaced, false, "retired template lines from older clients are not treated as free text");
 });
 
 test("signature choice is optional, unique, cleared on removal, and retained for a rematch", () => {

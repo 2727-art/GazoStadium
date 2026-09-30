@@ -18,7 +18,7 @@ test("beginner voice sets provide a complete, bounded roleplay trio", async () =
 
   assert.deepEqual(
     ROLEPLAY_VOICE_SETS.map(({ id }) => id),
-    ["standard", "rival", "knight", "villain", "cool", "comic", "oshi"],
+    ["tsuyotsuyo", "yowayowa", "koakuma", "oneesan", "amaenbo", "seiso"],
   );
   for (const voiceSet of ROLEPLAY_VOICE_SETS) {
     assert.ok(voiceSet.pursuitLine.length <= 40, `${voiceSet.id} pursuit line is too long`);
@@ -83,15 +83,71 @@ test("custom reply visibility falls back to the sender's safe voice set", async 
   const custom = "この物語は\nまだ終わらない";
 
   assert.deepEqual(
-    resolveVisibleFinishReplyLine(custom, { showCustom: true, voiceSetId: "knight" }),
+    resolveVisibleFinishReplyLine(custom, { showCustom: true, voiceSetId: "koakuma" }),
     { line: custom, custom: true, replaced: false },
   );
   assert.deepEqual(
-    resolveVisibleFinishReplyLine(custom, { showCustom: false, voiceSetId: "knight" }),
-    { line: getRoleplayVoiceSet("knight").replyLine, custom: true, replaced: true },
+    resolveVisibleFinishReplyLine(custom, { showCustom: false, voiceSetId: "koakuma" }),
+    { line: getRoleplayVoiceSet("koakuma").replyLine, custom: true, replaced: true },
   );
   assert.deepEqual(
-    resolveVisibleFinishReplyLine("", { showCustom: false, voiceSetId: "knight" }),
+    resolveVisibleFinishReplyLine("", { showCustom: false, voiceSetId: "koakuma" }),
     { line: "", custom: false, replaced: false },
   );
+});
+
+test("girl persona voice sets match the strategy persona types and stay within limits", async () => {
+  const {
+    CARD_CAPTION_TEMPLATES,
+    MAX_CARD_CAPTION_LENGTH,
+    RETIRED_FINISH_LINES,
+    RETIRED_FINISH_REPLY_LINES,
+    RETIRED_PURSUIT_LINES,
+    ROLEPLAY_VOICE_SETS,
+  } = await roleplayModule;
+  const core = await import(pathToFileURL(path.join(root, "strategy-hariai-core.mjs")).href);
+  assert.deepEqual(
+    ROLEPLAY_VOICE_SETS.map(({ id, label }) => [id, label]),
+    core.HARIAI_PERSONA_TYPES.map(({ id, label }) => [id, label]),
+  );
+  for (const voiceSet of ROLEPLAY_VOICE_SETS) {
+    assert.ok(Array.from(voiceSet.cardLine).length <= MAX_CARD_CAPTION_LENGTH, `${voiceSet.id} card line`);
+    assert.ok(CARD_CAPTION_TEMPLATES.includes(voiceSet.cardLine));
+    for (const band of ["low", "mid", "high"]) {
+      assert.equal(voiceSet.reactions[band].length, 2, `${voiceSet.id}.${band}`);
+      for (const line of voiceSet.reactions[band]) assert.match(line, /\{score\}/, `${voiceSet.id}.${band} mentions the score`);
+    }
+    assert.equal(RETIRED_PURSUIT_LINES.includes(voiceSet.pursuitLine), false);
+    assert.equal(RETIRED_FINISH_LINES.includes(voiceSet.finishLine), false);
+    assert.equal(RETIRED_FINISH_REPLY_LINES.includes(voiceSet.replyLine), false);
+  }
+});
+
+test("card captions are single-line, bounded, and hidden free text falls back to the persona", async () => {
+  const { MAX_CARD_CAPTION_LENGTH, normalizeCardCaption, resolveVisibleCardCaption, getRoleplayVoiceSet } = await roleplayModule;
+  assert.equal(normalizeCardCaption("  こんにちは\n\nまたね  "), "こんにちは またね");
+  assert.equal(Array.from(normalizeCardCaption("あ".repeat(40))).length, MAX_CARD_CAPTION_LENGTH);
+  assert.equal(normalizeCardCaption(null), "");
+  assert.deepEqual(resolveVisibleCardCaption("", { showCustom: false }), { caption: "", custom: false, replaced: false });
+  assert.deepEqual(resolveVisibleCardCaption("ここ見て", { showCustom: true, voiceSetId: "seiso" }), { caption: "ここ見て", custom: true, replaced: false });
+  assert.deepEqual(
+    resolveVisibleCardCaption("ここ見て", { showCustom: false, voiceSetId: "seiso" }),
+    { caption: getRoleplayVoiceSet("seiso").cardLine, custom: true, replaced: true },
+  );
+  const template = getRoleplayVoiceSet("amaenbo").cardLine;
+  assert.deepEqual(resolveVisibleCardCaption(template, { showCustom: false }), { caption: template, custom: false, replaced: false });
+});
+
+test("score reactions follow the 1-10 bands and are re-checked against the revealed score", async () => {
+  const { resolveScoreReaction, scoreReactionBand, scoreReactionOptions } = await roleplayModule;
+  assert.deepEqual([1, 6, 7, 8, 9, 10].map(scoreReactionBand), ["low", "low", "mid", "mid", "high", "high"]);
+  assert.equal(scoreReactionBand(0), "");
+  assert.equal(scoreReactionBand(11), "");
+  const options = scoreReactionOptions("tsuyotsuyo", 8);
+  assert.deepEqual(options.map(({ band, index }) => [band, index]), [["mid", 0], ["mid", 1]]);
+  assert.match(options[0].text, /8点/);
+  assert.equal(resolveScoreReaction({ voiceSetId: "tsuyotsuyo", band: "mid", index: 0, score: 8 }), options[0].text);
+  assert.equal(resolveScoreReaction({ voiceSetId: "tsuyotsuyo", band: "high", index: 0, score: 8 }), "", "a band that does not match the score is ignored");
+  assert.equal(resolveScoreReaction({ voiceSetId: "unknown", band: "mid", index: 0, score: 8 }), "");
+  assert.equal(resolveScoreReaction({ voiceSetId: "tsuyotsuyo", band: "mid", index: 2, score: 8 }), "");
 });

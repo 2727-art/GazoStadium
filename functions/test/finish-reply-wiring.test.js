@@ -580,7 +580,7 @@ test("finish replies remain absent from Firebase queue, room resources, rules, a
 });
 
 test("the custom-text visibility control and cache token cover both finish lines and replies", () => {
-  assert.match(online, /相手が自由記述した決着セリフ・返礼を表示する/);
+  assert.match(online, /相手が自由記述したひとこと・決着セリフ・返礼を表示する/);
   assert.match(online, /自由記述は表示設定により、送信者の口調セットに対応する定型文へ置き換えています/);
   assert.match(index, /styles\.css\?v=[^"]*finish-reply-v2/);
   assert.match(index, /online\.js\?v=[^"]*finish-reply-v3/);

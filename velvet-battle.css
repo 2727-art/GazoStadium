@@ -2248,3 +2248,164 @@ body:has(.vl-landing) .vb-preview-bar {
     animation: none !important;
   }
 }
+
+/* ---------- 気軽な貼り合い：カードのひとこと・採点リアクション・採点ログ ---------- */
+
+.vb-card-caption {
+  display: grid;
+  gap: 2px;
+  max-width: min(420px, 100%);
+  margin: 6px auto 0;
+  padding: 7px 12px;
+  border: 1px solid var(--vs-line-soft);
+  border-radius: 12px;
+  color: var(--vs-pearl);
+  background: rgba(255, 63, 134, 0.08);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.vb-card-caption.is-local {
+  background: rgba(230, 193, 122, 0.08);
+}
+
+.vb-card-caption small {
+  color: var(--vs-dim);
+  font-size: 0.64rem;
+}
+
+.vb-reaction-picker {
+  display: grid;
+  gap: 6px;
+  width: min(460px, 100%);
+  margin: 0 auto;
+}
+
+.vb-reaction-picker > small {
+  color: var(--vs-mist);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.vb-reaction-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.vb-reaction-chip {
+  padding: 7px 12px;
+  border: 1px solid var(--vs-line-soft);
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  background: var(--vs-night-3);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.vb-reaction-chip[aria-pressed="true"] {
+  border-color: var(--vs-rose);
+  color: var(--vs-rose-soft);
+  background: rgba(255, 63, 134, 0.14);
+}
+
+.vb-reaction-chip:focus-visible {
+  outline: 2px solid var(--vs-rose-soft);
+  outline-offset: 2px;
+}
+
+.vb-result-reaction {
+  max-width: 100%;
+  margin: 4px 0 0;
+  color: var(--vs-rose-soft);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.vb-result-reaction b {
+  margin-right: 4px;
+  color: var(--vs-dim);
+  font-size: 0.66rem;
+}
+
+.vb-score-log {
+  display: grid;
+  gap: 6px;
+}
+
+.vb-score-log h2 {
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.vb-score-log ol {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 4px;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.vb-score-log li {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: auto auto;
+  gap: 4px 8px;
+  padding: 8px;
+  border: 1px solid var(--vs-line-soft);
+  border-radius: 12px;
+  background: var(--vs-night-2);
+}
+
+.vb-score-log li > small {
+  grid-column: 1 / -1;
+  color: var(--vs-dim);
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.vb-log-cell {
+  display: grid;
+  grid-template-columns: 34px auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 6px;
+}
+
+.vb-log-cell img,
+.vb-log-empty {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 46px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--vs-night-3);
+}
+
+.vb-log-empty.is-opponent {
+  display: grid;
+  place-items: center;
+  color: var(--vs-dim);
+  font-size: 0.58rem;
+}
+
+.vb-log-cell b {
+  color: var(--vs-gold);
+  font: 700 1rem/1 var(--vs-font-number);
+}
+
+.vb-log-cell em {
+  color: var(--vs-dim);
+  font-size: 0.6rem;
+  font-style: normal;
+}

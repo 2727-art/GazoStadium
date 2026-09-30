@@ -13748,3 +13748,26 @@ button:disabled {
     font-size: 0.48rem;
   }
 }
+
+/* 通常型1on1：カードのひとこと */
+.deck-slot .deck-caption-input {
+  position: absolute;
+  z-index: 2;
+  right: 8px;
+  bottom: 54px;
+  left: 8px;
+  width: auto;
+  min-height: 30px;
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(5, 7, 12, 0.82);
+  font-size: 0.72rem;
+}
+
+.deck-caption-guide {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
