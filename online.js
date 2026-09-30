@@ -168,6 +168,8 @@ import {
 
 const MAX_HP = 30;
 const MAX_ROUNDS = 5;
+const MAX_SCORE_STEPS = 10;
+const SCORE_BAND_LABELS = Object.freeze({ low: "1〜6 まだ平気", mid: "7〜8 効いた", high: "9〜10 刺さった" });
 const SAMPLE_HP_PENALTY = 5;
 const MIN_STARTING_HP = 5;
 const PROFILE_NAME_KEY = "hariai-stadium-online-name-v1";
@@ -3042,6 +3044,12 @@ function renderLobbyStats() {
     lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
     lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
     lobbyFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
+    boardSoloWaitingCount: lobbyStats.solo.waiting,
+    boardSoloPlayingCount: lobbyStats.solo.playing,
+    boardStrategyWaitingCount: lobbyStats.strategy.waiting,
+    boardStrategyPlayingCount: lobbyStats.strategy.playing,
+    boardFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
+    boardFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
     lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
     lobbyMarketBuyerWaitingCount: lobbyStats.market.buyerWaiting,
     lobbyMarketNegotiatingCount: lobbyStats.market.negotiating,
@@ -6077,7 +6085,7 @@ function renderRoundSelect() {
   return renderBattleScreen("select", `${renderOnlineHud()}
     <div class="vb-select-head${timerStarted ? " running" : " pending"}${warning ? " warning" : ""}" data-selection-timer role="timer" aria-live="polite"
       aria-label="${timerStarted ? `画像選択 残り${remainingSeconds}秒` : "画像選択の開始待ち"}" style="--selection-progress:${progress}%">
-      <div class="vb-heading"><span class="eyebrow">SECRET PICK</span><h1 class="vb-title">勝負の一枚を選ぶ</h1></div>
+      <div class="vb-heading"><span class="eyebrow">ROUND ${state.round} · ひみつの1枚</span><h1 class="vb-title">勝負の一枚を選ぶ</h1></div>
       <div class="vb-timer"><strong data-selection-seconds>${timerStarted ? remainingSeconds : "--"}</strong><span data-selection-unit>${timerStarted ? "SEC" : "SYNC"}</span></div>
       <div class="vb-timer-bar" aria-hidden="true"><i></i></div>
     </div>
@@ -6085,7 +6093,7 @@ function renderRoundSelect() {
     <div class="vb-hand" role="group" aria-label="登録した画像">${cards}</div>
     ${renderScoreLog()}
     <p class="vb-hint">${timerStarted ? "10秒以内に選択してください。時間切れ時は、選択中の画像を自動ロックします。控え画像も選べます。" : "両者の通信準備が整うと、10秒の選択時間が始まります。"}</p>
-    <div class="vb-actions"><button class="button button-primary vs-satin" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この一枚でロック</button></div>`);
+    <div class="vb-actions"><button class="button button-primary" id="onlineLockSelection" ${state.selectedCardId && timerStarted ? "" : "disabled"}>この一枚でロック</button></div>`);
 }
 
 function renderWaitingPick() {
@@ -6155,15 +6163,15 @@ function renderBattleWait(
 function renderReveal() {
   const localItem = getSelectedItem();
   const remoteItem = state.remoteImages.get(state.round);
-  const itemFor = (index) => index === state.playerIndex ? localItem : remoteItem;
   const opponent = getOpponent();
+  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
   return renderBattleScreen("reveal", `${renderOnlineHud()}
-    <div class="vb-heading is-center"><span class="eyebrow">IMAGE REVEAL</span><h1 class="vb-title">画像、オープン。</h1></div>
+    <div class="vb-heading is-center"><span class="eyebrow">ROUND ${state.round} · ふたりとも貼りました</span><h1 class="vb-title">画像、オープン。</h1></div>
     <div class="vb-reveal-stage"><i class="vb-reveal-dim" aria-hidden="true"></i>
-      ${renderArenaCard(0, itemFor(0))}<div class="vb-reveal-vs" aria-hidden="true">VS</div>${renderArenaCard(1, itemFor(1))}
+      ${renderArenaCard(remoteIndex, remoteItem)}${renderArenaCard(state.playerIndex, localItem)}
     </div>
     <p class="vb-hint vb-after">画像をタップすると拡大できます。チャットで感想も送れます。</p>
-    <div class="vb-actions vb-after"><button class="button button-primary vs-satin" id="onlineBeginScoring">${escapeHtml(opponent?.name || "相手")}の画像を採点する</button></div>`, { fxScene: "reveal" });
+    <div class="vb-actions vb-after"><button class="button button-primary" id="onlineBeginScoring">${escapeHtml(opponent?.name || "相手")}の画像を採点する</button></div>`, { fxScene: "reveal" });
 }
 
 function renderArenaCard(index, item) {
@@ -6172,7 +6180,7 @@ function renderArenaCard(index, item) {
   const signature = local ? Boolean(item?.id) && item.id === state.signatureCardId : item?.signature === true;
   const alt = `${player.name}が出した画像`;
   return `<article class="vb-reveal-col ${local ? "is-local" : "is-remote"}" data-reveal-side="${local ? "local" : "remote"}">
-    <i class="vb-reveal-spot" aria-hidden="true"></i>
+    <div class="vb-plate"><b>${escapeHtml(player.name)}</b><small>${local ? "あなた" : "相手"}</small></div>
     <div class="vb-flip">
       <div class="vb-flip-inner">
         <div class="vb-flip-face is-back">${renderCardBack()}</div>
@@ -6180,30 +6188,66 @@ function renderArenaCard(index, item) {
       </div>
       <i class="vb-burst" aria-hidden="true"></i>
     </div>
-    <div class="vb-plate vb-after"><b>${escapeHtml(player.name)}</b><small>${local ? "あなた" : "相手"} · ROUND ${state.round}</small></div>
     <div class="vb-after">${renderCardCaption(item, { local })}</div>
   </article>`;
+}
+
+// 1〜10点のメーター。点数までを、ひとことリアクションと同じ帯（1〜6／7〜8／9〜10）の色で塗る。
+function renderScoreMeter(score) {
+  const value = Number(score) || 0;
+  const steps = Array.from({ length: MAX_SCORE_STEPS }, (_, index) => {
+    const step = index + 1;
+    return `<i class="${step <= value ? `is-on is-${scoreReactionBand(step)}` : ""}"></i>`;
+  }).join("");
+  return `<span class="ha-meter10" aria-hidden="true">${steps}</span>`;
+}
+
+function renderThreadAvatar() {
+  const opponent = getOpponent();
+  return shared()?.profileAvatar?.renderBattle?.(opponent?.name || "相手", state.remoteAvatar?.url, {
+    hidden: state.hideOpponentAvatar,
+    className: "vb-msg-avatar",
+  }) || "";
 }
 
 function renderScore() {
   const opponent = getOpponent();
   const item = state.remoteImages.get(state.round);
+  const localItem = getSelectedItem();
   const selected = state.selectedScore;
-  const tier = selected >= 10 ? "is-perfect" : selected >= 8 ? "is-critical" : "";
-  const buttons = Array.from({ length: 10 }, (_, index) => index + 1).map((score) => `<button type="button"
-    class="vb-score-button is-heat-${score}" data-online-score="${score}" aria-pressed="${selected === score}">${score}</button>`).join("");
+  const band = selected ? scoreReactionBand(selected) : "";
+  const buttons = Array.from({ length: MAX_SCORE_STEPS }, (_, index) => index + 1).map((score) => {
+    const lit = selected && score <= selected;
+    return `<button type="button" class="vb-score-button is-${scoreReactionBand(score)}${lit ? " is-lit" : ""}" data-online-score="${score}" aria-pressed="${selected === score}" aria-label="${score}点">${score}</button>`;
+  }).join("");
   const alt = `${opponent?.name || "相手"}の採点対象画像`;
+  const reaction = selected && Number.isInteger(state.selectedScoreReaction)
+    ? scoreReactionOptions(localRoleplayVoiceSetId(), selected).find((option) => option.index === state.selectedScoreReaction)?.text || ""
+    : "";
+  const draft = selected
+    ? `<div class="ha-msg is-mine vb-score-draft"><div class="ha-msg-body">
+        <p class="ha-bubble ha-score-bubble is-draft"><b class="ha-score-number is-${band}">${selected}<small>点</small></b>${reaction ? `<span>${escapeHtml(reaction)}</span>` : ""}</p>
+        <small class="vb-msg-note">送信前 · 点数は、ふたりとも決めてから同時に開きます</small>
+      </div></div>`
+    : "";
   return renderBattleScreen("score", `${renderOnlineHud()}
-    <div class="vb-heading is-center"><span class="eyebrow">YOUR PRIVATE SCORE</span><h1 class="vb-title">${escapeHtml(opponent?.name || "相手")}の画像を採点</h1></div>
-    <div class="vb-score-stage"><button type="button" class="vb-score-card" data-zoom-src="${item?.url || ""}" data-zoom-alt="${escapeHtml(alt)}" aria-label="採点する画像を拡大">
-      ${renderStageCard(item, { className: tier, alt })}
-      ${selected ? `<span class="vb-score-badge ${tier}"><b>${selected}</b><small>${scoreLabel(selected)}</small></span>` : ""}
-    </button></div>
-    ${renderCardCaption(item)}
-    <div class="vb-score-pad" role="group" aria-label="点数を選ぶ">${buttons}</div>
-    ${renderScoreReactionPicker(selected)}
-    <p class="vb-hint">1～10点を選択してください。確定後の変更はできません。点数とひとことリアクションは、結果の発表まで相手に伏せられます。</p>
-    <div class="vb-actions"><button class="button button-primary vs-satin" id="onlineLockScore" ${selected ? "" : "disabled"}>この点数で確定</button></div>`);
+    <div class="vb-thread" role="group" aria-label="ROUND ${state.round}のやりとり">
+      <p class="ha-divider">ROUND ${state.round} · ふたりとも貼りました</p>
+      <div class="ha-msg is-theirs">${renderThreadAvatar()}<div class="ha-msg-body">
+        <button type="button" class="vb-score-card" data-zoom-src="${item?.url || ""}" data-zoom-alt="${escapeHtml(alt)}" aria-label="採点する画像を拡大">${renderStageCard(item, { alt })}</button>
+        ${renderCardCaption(item)}
+      </div></div>
+      ${localItem ? `<div class="ha-msg is-mine vb-own-post"><div class="ha-msg-body">${renderStageCard(localItem, { alt: "あなたが出した画像" })}${renderCardCaption(localItem, { local: true })}</div></div>` : ""}
+      ${draft}
+    </div>
+    <section class="vb-composer" aria-labelledby="onlineScoreTitle">
+      <div class="vb-composer-head"><h1 class="vb-composer-title" id="onlineScoreTitle">${escapeHtml(opponent?.name || "相手")}の1枚を採点</h1>${band ? `<span class="vb-band-chip is-${band}">${SCORE_BAND_LABELS[band]}</span>` : ""}</div>
+      <div class="vb-score-pad" role="group" aria-label="点数を選ぶ（1〜10点）">${buttons}</div>
+      <div class="vb-score-legend" aria-hidden="true"><span class="is-low">1〜6 まだ平気</span><span class="is-mid">7〜8<br />効いた</span><span class="is-high">9〜10<br />刺さった</span></div>
+      ${renderScoreReactionPicker(selected)}
+      <div class="vb-actions"><button class="button button-primary" id="onlineLockScore" ${selected ? "" : "disabled"}>${selected ? `${selected}点で返す` : "点数を選んでください"}</button></div>
+      <p class="vb-hint">確定後の変更はできません。点数とひとことリアクションは、結果の発表まで相手に伏せられます。</p>
+    </section>`);
 }
 
 function localRoleplayVoiceSetId(targetState = state) {
@@ -6217,13 +6261,13 @@ function renderCardCaption(item, { local = false } = {}) {
     ? { caption: normalizeCardCaption(item.caption), replaced: false }
     : resolveVisibleCardCaption(item.caption, { showCustom: state.showOpponentCustomFinish, voiceSetId: item.voiceSetId });
   if (!visible.caption) return "";
-  return `<p class="vb-card-caption${local ? " is-local" : ""}">「${escapeHtml(visible.caption)}」${visible.replaced ? "<small>自由記述のひとことは、表示設定により定型文へ置き換えています。</small>" : ""}</p>`;
+  return `<p class="vb-card-caption${local ? " is-local" : ""}">${escapeHtml(visible.caption)}${visible.replaced ? "<small>自由記述のひとことは、表示設定により定型文へ置き換えています。</small>" : ""}</p>`;
 }
 
 function renderScoreReactionPicker(score) {
   const options = score ? scoreReactionOptions(localRoleplayVoiceSetId(), score) : [];
   if (!options.length) return "";
-  return `<div class="vb-reaction-picker" role="group" aria-label="ひとことリアクション（任意）"><small>ひとことリアクション（任意）</small>
+  return `<div class="vb-reaction-picker" role="group" aria-label="ひとことリアクション（任意）"><small>ひとことリアクション（任意） · ${escapeHtml(getRoleplayVoiceSet(localRoleplayVoiceSetId()).label)}の口調</small>
     <div>${options.map((option) => `<button type="button" class="vb-reaction-chip" data-online-score-reaction="${option.index}" aria-pressed="${state.selectedScoreReaction === option.index}">${escapeHtml(option.text)}</button>`).join("")}</div></div>`;
 }
 
@@ -6239,7 +6283,7 @@ function scoreReactionText(result, columnIndex, targetState = state) {
 function renderScoreReactionContent(result, columnIndex, targetState = state) {
   const text = scoreReactionText(result, columnIndex, targetState);
   const rater = targetState.players[columnIndex === 0 ? 1 : 0];
-  return text ? `<b>${escapeHtml(rater?.name || "")}</b>「${escapeHtml(text)}」` : "";
+  return text ? `<span class="ha-sr">${escapeHtml(rater?.name || "")}のひとこと：</span>${escapeHtml(text)}` : "";
 }
 
 function renderScoreReactionSlot(result, columnIndex) {
@@ -6292,11 +6336,14 @@ function renderScoreLog() {
     const thumb = localItem?.url
       ? `<img src="${localItem.url}" alt="${escapeHtml(`ROUND ${result.round}に出した画像`)}" loading="lazy" />`
       : '<span class="vb-log-empty" aria-hidden="true"></span>';
-    return `<li><small>R${result.round}</small>
-      <span class="vb-log-cell is-local">${thumb}<b>${scores[own]}</b><em>相手の採点</em></span>
-      <span class="vb-log-cell is-remote"><span class="vb-log-empty is-opponent" aria-hidden="true">相手</span><b>${scores[own === 0 ? 1 : 0]}</b><em>あなたの採点</em></span></li>`;
+    const received = scores[own];
+    const given = scores[own === 0 ? 1 : 0];
+    const outcome = received > given ? "is-win" : received < given ? "is-lose" : "is-draw";
+    return `<li class="${outcome}"><small>R${result.round}</small>${thumb}
+      <span class="vb-log-score"><b class="is-local">${received}</b><i aria-hidden="true">–</i><b>${given}</b></span>
+      <span class="ha-sr">相手の採点${received}点、あなたの採点${given}点</span></li>`;
   }).join("");
-  return `<section class="vb-score-log" aria-label="これまでの採点"><h2>これまでの採点</h2><ol>${rows}</ol></section>`;
+  return `<section class="vb-score-log" aria-label="これまでの採点"><h2>これまで</h2><ol>${rows}</ol></section>`;
 }
 
 function renderFinishReplySummary(result) {
@@ -6357,29 +6404,35 @@ function renderRoundResult() {
     : "";
   const localItem = getSelectedItem();
   const remoteItem = state.remoteImages.get(result.round);
-  const column = (index) => {
+  const remoteIndex = state.playerIndex === 0 ? 1 : 0;
+  // 1組＝その人が貼った画像と、相手から返ってきた点数。点数の吹き出しは採点した側に置く。
+  const exchange = (index) => {
     const local = index === state.playerIndex;
+    const rater = state.players[local ? remoteIndex : state.playerIndex];
     const outcome = result.winnerIndex === null ? "is-draw" : result.winnerIndex === index ? "is-winner" : "is-loser";
     const stamp = result.winnerIndex === index
       ? `<span class="vb-stamp is-${tier}" aria-hidden="true">${escapeHtml(scoreLabel(scores[index]))}</span>`
       : "";
     return `<div class="vb-result-col ${local ? "is-local" : "is-remote"} ${outcome}" data-result-col="${index}">
-      <div class="vb-result-card">${renderStageCard(local ? localItem : remoteItem, { alt: `${state.players[index].name}の画像` })}${stamp}</div>
-      <div class="vb-result-score"><b data-result-score="${scores[index]}">${animate ? "–" : scores[index]}</b><small>${escapeHtml(scoreLabel(scores[index]))}</small></div>
-      <div class="vb-result-name">${escapeHtml(state.players[index].name)}</div>
-      ${renderCardCaption(local ? localItem : remoteItem, { local })}
-      ${renderScoreReactionSlot(result, index)}
+      <div class="ha-msg ${local ? "is-mine" : "is-theirs"}">${local ? "" : renderThreadAvatar()}<div class="ha-msg-body">
+        <div class="vb-result-card">${renderStageCard(local ? localItem : remoteItem, { alt: `${state.players[index].name}の画像` })}${stamp}</div>
+        ${renderCardCaption(local ? localItem : remoteItem, { local })}
+      </div></div>
+      <div class="ha-msg ${local ? "is-theirs" : "is-mine"} vb-result-reply">${local ? renderThreadAvatar() : ""}<div class="ha-msg-body">
+        <div class="ha-bubble vb-result-score is-${scoreReactionBand(scores[index])}"><span class="ha-sr">${escapeHtml(rater?.name || "")}の採点</span><b data-result-score="${scores[index]}">${animate ? "–" : scores[index]}</b><small>点</small>${renderScoreReactionSlot(result, index)}</div>
+        ${renderScoreMeter(scores[index])}
+      </div></div>
     </div>`;
   };
   const menuItems = `${isMatchOver() ? "" : '<button class="button button-danger" data-online-destroy>ルーム破棄</button>'}`;
   return renderBattleScreen("result", `${renderOnlineHud({ hpOverride, menuItems })}
-    <div class="vb-heading is-center"><span class="eyebrow">ROUND ${state.round} RESULT</span><h1 class="vb-title is-accent vb-result-title">${result.winnerIndex === null ? "DRAW ROUND" : `${escapeHtml(state.players[result.winnerIndex].name)} TAKES IT`}</h1></div>
-    <div class="vb-result-stage" data-result-tier="${tier}">${column(0)}<div class="vb-result-vs" aria-hidden="true">VS</div>${column(1)}
+    <div class="vb-heading is-center"><span class="eyebrow">ROUND ${state.round} の結果</span><h1 class="vb-title vb-result-title">${result.winnerIndex === null ? "引き分け" : `${escapeHtml(state.players[result.winnerIndex].name)}の勝ち`}</h1></div>
+    <div class="vb-result-stage" data-result-tier="${tier}">${exchange(remoteIndex)}${exchange(state.playerIndex)}
       <i class="vb-rays" aria-hidden="true"></i><div class="vb-sparks" data-result-sparks aria-hidden="true"></div></div>
     <div class="vb-after">
       <div class="damage-callout vb-damage">${escapeHtml(damageText)}</div>${finishBadge}${renderFinishReplySlot(result)}${pursuitLines}
     </div>
-    <div class="vb-actions vb-after"><button class="button button-primary vs-satin" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
+    <div class="vb-actions vb-after"><button class="button button-primary" id="onlineContinue">${isMatchOver() ? "試合結果を見る" : `ROUND ${state.round + 1}へ`}</button></div>
     <i class="vb-flash" aria-hidden="true"></i>`, { fxScene: animate ? "result" : "" });
 }
 
@@ -7661,11 +7714,13 @@ function bindScoreEvents() {
     if (scoreReactionBand(score) !== scoreReactionBand(state.selectedScore)) state.selectedScoreReaction = null;
     state.selectedScore = score;
     render();
+    document.querySelector(`[data-online-score="${score}"]`)?.focus({ preventScroll: true });
   }));
   document.querySelectorAll("[data-online-score-reaction]").forEach((button) => button.addEventListener("click", () => {
     const index = Number(button.dataset.onlineScoreReaction);
     state.selectedScoreReaction = state.selectedScoreReaction === index ? null : index;
     render();
+    document.querySelector(`[data-online-score-reaction="${index}"]`)?.focus({ preventScroll: true });
   }));
   document.querySelector("#onlineLockScore")?.addEventListener("click", lockScore);
 }

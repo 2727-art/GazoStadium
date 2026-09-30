@@ -1,6 +1,7 @@
 /*
   Velvet Stage：通常型1on1
   対戦画面（.vb-screen）とFINISHカットインの見た目。戦略型と共有するクラスには手を入れない。
+  2026-09 から「DMの密室 × 採点メーター」：画像とひとことは吹き出し、点数は1〜10のメーターで返す。
   演出の長さは --vb-fx-speed（標準1・短め0.5・即時0）を掛けて決める。
 */
 
@@ -20,6 +21,12 @@
 
 .vb-screen .eyebrow::before {
   display: none;
+}
+
+.vb-screen .eyebrow {
+  color: var(--vs-rose-soft);
+  font: 800 0.7rem/1.3 var(--vs-font-body);
+  letter-spacing: 0.12em;
 }
 
 /* ---------- 全体の配置 ---------- */
@@ -51,14 +58,13 @@
 
 .vb-title {
   margin: 0;
-  font: 800 clamp(1.3rem, 5.4vw, 1.75rem)/1.3 var(--vs-font-display);
+  font: 400 clamp(1.3rem, 5.4vw, 1.7rem)/1.35 var(--ha-font-display);
   letter-spacing: 0.02em;
   text-wrap: balance;
 }
 
 .vb-title.is-accent {
-  font: italic 900 clamp(1.5rem, 6.2vw, 2.1rem)/1.1 var(--vs-font-accent);
-  letter-spacing: 0.01em;
+  font: 400 clamp(1.4rem, 6vw, 1.9rem)/1.25 var(--ha-font-display);
 }
 
 .vb-lead {
@@ -70,7 +76,7 @@
 
 .vb-hint {
   margin: 0;
-  color: var(--vs-dim);
+  color: var(--vs-mist);
   font-size: 0.74rem;
   line-height: 1.6;
   text-align: center;
@@ -88,6 +94,18 @@
   max-width: 440px;
   border-radius: 16px;
   font-size: 1rem;
+}
+
+/* 送る・確定する操作は、トップの入口と同じ平らなローズ */
+.vb-screen .button-primary {
+  border-color: transparent;
+  color: var(--ha-ink);
+  background: var(--vs-rose);
+  box-shadow: 0 12px 28px -14px rgba(255, 63, 134, 0.8);
+}
+
+.vb-screen .button-primary:hover:not(:disabled) {
+  background: #ff5a97;
 }
 
 .vb-actions.is-quiet .button {
@@ -126,11 +144,15 @@
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
 }
 
 .vb-hud-player {
   --side: var(--vs-violet);
-  --side-glow: rgba(168, 139, 255, 0.35);
+  --side-hp: var(--vs-rose);
   position: relative;
   display: flex;
   min-width: 0;
@@ -140,7 +162,7 @@
 
 .vb-hud-player.is-local {
   --side: var(--vs-rose);
-  --side-glow: rgba(255, 63, 134, 0.35);
+  --side-hp: var(--vs-mint);
 }
 
 .vb-hud-player.is-right {
@@ -153,7 +175,7 @@
   height: 40px;
   border: 0;
   font-size: 0.9rem;
-  box-shadow: 0 0 0 1.5px var(--side), 0 0 14px var(--side-glow);
+  box-shadow: 0 0 0 1.5px var(--side);
 }
 
 .vb-hud-info {
@@ -224,17 +246,11 @@
 
 .vb-hp {
   position: relative;
-  height: 10px;
+  height: 6px;
   margin-top: 6px;
   overflow: hidden;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.07);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  transform: skewX(-14deg);
-}
-
-.is-right .vb-hp {
-  transform: skewX(14deg);
+  border-radius: 3px;
+  background: var(--ha-bubble-theirs);
 }
 
 .vb-hp i {
@@ -248,24 +264,21 @@
 }
 
 .vb-hp-ghost {
-  opacity: 0.9;
-  background: #fff;
+  opacity: 0.6;
+  background: var(--vs-pearl);
   transform: scaleX(var(--hp-ghost));
   transition: transform calc(520ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) calc(320ms * var(--vb-fx-speed, 1));
 }
 
 .vb-hp-fill {
-  background: linear-gradient(90deg, var(--vs-gold-lo), var(--vs-gold) 55%, var(--vs-gold-hi));
+  border-radius: 3px;
+  background: var(--side-hp);
   transform: scaleX(var(--hp));
   transition: transform calc(140ms * var(--vb-fx-speed, 1)) ease-out;
 }
 
-.is-right .vb-hp-fill {
-  background: linear-gradient(270deg, var(--vs-gold-lo), var(--vs-gold) 55%, var(--vs-gold-hi));
-}
-
 .vb-hp.is-low .vb-hp-fill {
-  background: linear-gradient(90deg, #8e1330, var(--vs-danger));
+  background: var(--vs-danger);
 }
 
 .vb-hp-value {
@@ -288,9 +301,9 @@
 
 .vb-round small {
   display: block;
-  color: var(--vs-gold);
-  font: 700 0.56rem/1 var(--vs-font-accent);
-  letter-spacing: 0.3em;
+  color: var(--vs-mist);
+  font: 700 0.56rem/1 var(--vs-font-body);
+  letter-spacing: 0.14em;
 }
 
 .vb-round strong {
@@ -309,8 +322,8 @@
   opacity: 0;
   pointer-events: none;
   color: var(--vs-danger);
-  font: italic 900 1.9rem/1 var(--vs-font-accent);
-  text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 85, 102, 0.7);
+  font: 600 1.7rem/1 var(--vs-font-number);
+  text-shadow: 0 2px 0 #000;
 }
 
 .is-right .vb-damage-pop {
@@ -444,9 +457,9 @@
   max-width: 100%;
   aspect-ratio: 2 / 3;
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: 16px;
   background: #0b070d;
-  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.42), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 0 0 1px var(--vs-line-soft), 0 14px 30px -12px rgba(0, 0, 0, 0.7);
 }
 
 .vb-card-fill {
@@ -481,19 +494,7 @@
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 240, 200, 0.5),
-    inset 0 0 0 4px rgba(0, 0, 0, 0.28),
-    inset 0 0 0 5px rgba(230, 193, 122, 0.3);
-  background:
-    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px top 9px / 14px 1.5px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px top 9px / 1.5px 14px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px top 9px / 14px 1.5px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px top 9px / 1.5px 14px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px bottom 9px / 14px 1.5px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) left 9px bottom 9px / 1.5px 14px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px bottom 9px / 14px 1.5px no-repeat,
-    linear-gradient(var(--vs-gold), var(--vs-gold)) right 9px bottom 9px / 1.5px 14px no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(248, 238, 242, 0.12);
 }
 
 .vb-card-ring,
@@ -505,11 +506,10 @@
   border-radius: inherit;
   content: "";
   pointer-events: none;
-  background: var(--vs-holo);
+  background: var(--vs-gold);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  animation: vs-holo-spin 4s linear infinite;
 }
 
 .vb-card-signature {
@@ -519,11 +519,11 @@
   left: 50%;
   padding: 3px 8px;
   border-radius: 999px;
-  color: #2a1606;
-  background: var(--vs-foil);
+  color: var(--ha-ink);
+  background: var(--vs-gold);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-  font: 700 0.56rem/1.2 var(--vs-font-accent);
-  letter-spacing: 0.18em;
+  font: 800 0.56rem/1.2 var(--vs-font-body);
+  letter-spacing: 0.12em;
   white-space: nowrap;
   transform: translateX(-50%);
 }
@@ -548,7 +548,7 @@
 }
 
 .vb-card.is-perfect {
-  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 0 34px rgba(255, 220, 150, 0.5), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 0 0 2px var(--vs-gold), 0 18px 36px -10px rgba(0, 0, 0, 0.8);
 }
 
 @keyframes vb-pulse {
@@ -567,11 +567,11 @@
   margin: -52px 0 0 -52px;
   place-items: center;
   border-radius: 50%;
-  color: var(--vs-gold-hi);
-  background: radial-gradient(circle at 40% 35%, #ff5d95, #a3124a 60%, #5c0f2e);
-  box-shadow: inset 0 0 0 3px rgba(255, 240, 200, 0.35), inset 0 0 0 7px rgba(0, 0, 0, 0.18), 0 10px 24px rgba(0, 0, 0, 0.6);
-  font: italic 900 1rem/1 var(--vs-font-accent);
-  letter-spacing: 0.08em;
+  color: var(--ha-ink);
+  background: var(--vs-rose);
+  box-shadow: 0 0 0 3px var(--ha-ground), 0 10px 24px rgba(0, 0, 0, 0.6);
+  font: 400 0.9rem/1 var(--ha-font-display);
+  letter-spacing: 0.04em;
   transform: rotate(-12deg);
   animation: vb-seal-in calc(380ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
 }
@@ -685,10 +685,7 @@
   align-items: flex-start;
   padding-top: 34px;
   clip-path: polygon(0 0, 100% 0, 100% 42%, 0 58%);
-  background:
-    var(--vs-grain) 0 0 / 160px 160px,
-    radial-gradient(80% 60% at 20% 30%, rgba(255, 63, 134, 0.55), transparent 70%),
-    repeating-linear-gradient(90deg, #2a0819 0, #4a0e2c 12px, #2a0819 26px);
+  background: var(--ha-bubble-mine);
   animation: vb-slide-left calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
 }
 
@@ -697,10 +694,7 @@
   justify-content: flex-end;
   padding-bottom: 34px;
   clip-path: polygon(0 58%, 100% 42%, 100% 100%, 0 100%);
-  background:
-    var(--vs-grain) 0 0 / 160px 160px,
-    radial-gradient(80% 60% at 80% 70%, rgba(168, 139, 255, 0.5), transparent 70%),
-    repeating-linear-gradient(90deg, #140c30 0, #221650 12px, #140c30 26px);
+  background: #251a45;
   animation: vb-slide-right calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) calc(100ms * var(--vb-fx-speed, 1)) both;
 }
 
@@ -753,9 +747,10 @@
 
 .vb-vs-name small {
   display: block;
-  color: var(--vs-gold);
-  font: 700 0.62rem/1 var(--vs-font-accent);
-  letter-spacing: 0.3em;
+  color: var(--vs-pearl);
+  font: 800 0.62rem/1 var(--vs-font-body);
+  letter-spacing: 0.14em;
+  opacity: 0.8;
 }
 
 .vb-vs-name b {
@@ -763,7 +758,7 @@
   max-width: 62vw;
   margin: 6px 0;
   overflow: hidden;
-  font: 800 clamp(1.7rem, 8vw, 2.4rem)/1.15 var(--vs-font-display);
+  font: 400 clamp(1.6rem, 7.5vw, 2.2rem)/1.2 var(--ha-font-display);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -789,8 +784,7 @@
   width: 120%;
   height: 2px;
   margin-top: -1px;
-  background: var(--vs-foil);
-  box-shadow: 0 0 18px rgba(255, 220, 150, 0.8);
+  background: var(--vs-pearl);
   /* 左右の名札を分ける斜めの境目（左58%→右42%）に沿わせる */
   --vs-line-angle: atan2(-16cqh, 100cqw);
   transform: rotate(var(--vs-line-angle, -8deg));
@@ -808,12 +802,9 @@
   right: 0;
   left: 0;
   margin-top: -0.55em;
-  color: transparent;
-  background: var(--vs-foil);
-  -webkit-background-clip: text;
-  background-clip: text;
-  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.65)) drop-shadow(0 0 30px rgba(255, 220, 150, 0.45));
-  font: italic 900 clamp(4.4rem, 22vw, 7rem)/1.1 var(--vs-font-accent);
+  color: var(--vs-pearl);
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.6));
+  font: 400 clamp(3.6rem, 18vw, 5.6rem)/1.1 var(--ha-font-display);
   text-align: center;
   animation: vb-slam calc(460ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) calc(450ms * var(--vb-fx-speed, 1)) both;
 }
@@ -864,7 +855,7 @@
   display: flex;
   align-items: baseline;
   gap: 4px;
-  color: var(--vs-gold-hi);
+  color: var(--vs-pearl);
 }
 
 .vb-timer strong {
@@ -876,7 +867,7 @@
 }
 
 .vb-timer span {
-  color: var(--vs-dim);
+  color: var(--vs-mist);
   font: 600 0.62rem/1 var(--vs-font-number);
   letter-spacing: 0.2em;
 }
@@ -910,7 +901,7 @@
   display: block;
   width: var(--selection-progress, 100%);
   height: 100%;
-  background: linear-gradient(90deg, var(--vs-gold), var(--vs-gold-hi));
+  background: var(--vs-rose-soft);
   transition: width 120ms linear;
 }
 
@@ -970,7 +961,7 @@
   border-radius: 10px;
   cursor: pointer;
   background: #000;
-  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.3);
+  box-shadow: 0 0 0 1px var(--vs-line-soft);
   transition: transform calc(180ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
 }
 
@@ -1004,7 +995,7 @@
 }
 
 .vb-hand-card.is-selected {
-  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 8px 18px rgba(230, 193, 122, 0.35);
+  box-shadow: 0 0 0 2px var(--vs-rose), 0 8px 18px rgba(255, 63, 134, 0.3);
   transform: translateY(-8px) !important;
 }
 
@@ -1097,10 +1088,10 @@
   margin: -28px 0 0 -28px;
   place-items: center;
   border-radius: 50%;
-  color: var(--vs-gold-hi);
+  color: var(--vs-pearl);
   background: rgba(15, 9, 19, 0.85);
-  box-shadow: 0 0 0 1px var(--vs-line);
-  font: italic 900 1.8rem/1 var(--vs-font-accent);
+  box-shadow: 0 0 0 1px var(--vs-line-soft);
+  font: 400 1.6rem/1 var(--ha-font-display);
   animation: vb-breathe 2.4s ease-in-out infinite;
 }
 
@@ -1116,7 +1107,7 @@
 .vb-transfer i {
   display: block;
   height: 100%;
-  background: var(--vs-foil);
+  background: var(--vs-rose-soft);
   transform: scaleX(var(--transfer, 0));
   transform-origin: left;
   transition: transform 160ms linear;
@@ -1124,13 +1115,14 @@
 
 /* ---------- 画像公開 ---------- */
 
+/* 相手（左）とあなた（右）の吹き出しを、少し段違いに並べる */
 .vb-reveal-stage {
   position: relative;
   display: grid;
-  width: min(640px, 100%);
-  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
+  width: min(560px, 100%);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
   margin: 0 auto;
 }
 
@@ -1153,193 +1145,238 @@
   z-index: 1;
   display: grid;
   min-width: 0;
-  justify-items: center;
-  gap: 10px;
+  justify-items: start;
+  gap: 6px;
+}
+
+.vb-reveal-col.is-local {
+  justify-items: end;
+  margin-top: 56px;
 }
 
 .vb-reveal-col .vb-flip {
   width: 100%;
 }
 
-.vb-reveal-spot {
-  position: absolute;
-  top: -90px;
-  left: 50%;
-  width: 240px;
-  height: 420px;
-  margin-left: -120px;
-  opacity: 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 236, 205, 0.22), transparent 80%);
-  clip-path: polygon(40% 0, 60% 0, 100% 100%, 0 100%);
-  transition: opacity calc(400ms * var(--vb-fx-speed, 1));
+.vb-reveal-col .vb-flip-inner {
+  aspect-ratio: 4 / 5;
 }
 
-.vb-reveal-col.is-lit .vb-reveal-spot {
-  opacity: 1;
+.vb-reveal-col .vb-card,
+.vb-reveal-col .vs-card-back,
+.vb-reveal-col .vb-flip-face.is-front {
+  border-radius: 18px 18px 18px 4px;
 }
 
-.vb-reveal-vs {
-  position: relative;
-  z-index: 1;
-  color: var(--vs-gold);
-  font: italic 900 1.4rem/1 var(--vs-font-accent);
-  text-align: center;
-  text-shadow: 0 0 12px rgba(230, 193, 122, 0.5);
+.vb-reveal-col.is-local .vb-card,
+.vb-reveal-col.is-local .vs-card-back,
+.vb-reveal-col.is-local .vb-flip-face.is-front {
+  border-radius: 18px 18px 4px 18px;
 }
 
 .vb-plate {
+  display: flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 6px;
   line-height: 1.25;
-  text-align: center;
 }
 
 .vb-plate b {
-  display: block;
-  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
-  font: 800 1rem/1.3 var(--vs-font-display);
+  font-size: 0.84rem;
+  font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .vb-plate small {
+  flex: none;
   color: var(--vs-mist);
   font-size: 0.68rem;
 }
 
-.is-local .vb-plate b,
-.vb-result-col.is-local .vb-result-name {
+.is-local .vb-plate b {
   color: var(--vs-rose-soft);
 }
 
-.is-remote .vb-plate b,
-.vb-result-col.is-remote .vb-result-name {
-  color: var(--vs-violet);
+.is-remote .vb-plate b {
+  color: #c9bcff;
 }
 
 /* ---------- 採点 ---------- */
 
-.vb-score-stage {
-  display: flex;
-  justify-content: center;
+.vb-thread {
+  display: grid;
+  gap: 12px;
+}
+
+.vb-thread .battle-avatar,
+.vb-result-stage .battle-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 0;
+  font-size: 0.7rem;
+  box-shadow: 0 0 0 1.5px var(--vs-violet);
 }
 
 .vb-score-card {
-  position: relative;
   display: block;
-  height: clamp(230px, 40dvh, 540px);
-  max-width: 100%;
-  aspect-ratio: 2 / 3;
+  width: min(64vw, 280px);
   padding: 0;
   border: 0;
-  border-radius: 14px;
+  border-radius: 18px 18px 18px 4px;
   cursor: zoom-in;
   background: none;
 }
 
 .vb-score-card .vb-card {
-  height: 100%;
+  aspect-ratio: 4 / 5;
+  border-radius: inherit;
 }
 
-.vb-score-badge {
-  position: absolute;
-  z-index: 6;
-  top: -8px;
-  right: -12px;
-  min-width: 82px;
-  padding: 8px 10px 7px;
-  border-radius: 14px;
-  text-align: center;
-  background: rgba(15, 9, 19, 0.94);
-  box-shadow: 0 0 0 1px var(--vs-line), 0 10px 24px rgba(0, 0, 0, 0.6);
-  animation: vb-pop calc(220ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+.vb-own-post .vb-card {
+  width: min(34vw, 150px);
+  aspect-ratio: 4 / 5;
+  border-radius: 16px 16px 4px 16px;
 }
 
-.vb-score-badge b {
-  display: block;
-  color: var(--vs-pearl);
-  font: 900 2.5rem/1 var(--vs-font-accent);
+.ha-msg.vb-score-draft .ha-bubble {
+  background: var(--ha-surface);
+  outline: 1.5px dashed var(--vs-rose-soft);
+  outline-offset: -1.5px;
 }
 
-.vb-score-badge small {
-  display: block;
-  margin-top: 3px;
+.ha-score-number.is-low { color: #c7b6cb; }
+.ha-score-number.is-mid { color: var(--vs-gold); }
+.ha-score-number.is-high { color: #ff6fa3; }
+
+.vb-msg-note {
   color: var(--vs-mist);
-  font: 700 0.56rem/1 var(--vs-font-accent);
-  letter-spacing: 0.2em;
+  font-size: 0.68rem;
+  line-height: 1.5;
 }
 
-.vb-score-badge.is-critical b {
-  color: var(--vs-rose);
-  text-shadow: 0 0 16px rgba(255, 63, 134, 0.6);
+.vb-composer {
+  display: grid;
+  gap: 14px;
+  margin-top: 4px;
+  padding: 18px 16px 20px;
+  border-radius: 24px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
 }
 
-.vb-score-badge.is-perfect b {
-  color: transparent;
-  background: var(--vs-foil);
-  -webkit-background-clip: text;
-  background-clip: text;
+.vb-composer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
 }
 
+.vb-composer-title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.vb-band-chip {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 14px;
+  background: var(--ha-raised);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.vb-band-chip.is-low { color: #c7b6cb; }
+.vb-band-chip.is-mid { color: var(--vs-gold); }
+.vb-band-chip.is-high { color: #ff6fa3; }
+
+/* 1〜10点のボタンが、そのままメーターになる */
 .vb-score-pad {
   display: grid;
-  width: min(460px, 100%);
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0 auto;
+  width: 100%;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 3px;
+  margin: 0;
 }
 
 .vb-score-button {
-  height: 52px;
+  min-width: 0;
+  height: 48px;
+  padding: 0;
   border: 0;
-  border-radius: 14px;
+  border-radius: 8px;
   cursor: pointer;
   color: var(--vs-mist);
-  background: var(--vs-night-3);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
-  font: 600 1.3rem/1 var(--vs-font-number);
-  transition: transform calc(160ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
+  background: #211526;
+  font: 600 1rem/1 var(--vs-font-number);
+  transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
-.vb-score-button.is-heat-4,
-.vb-score-button.is-heat-5 {
-  color: var(--vs-rose-soft);
-  background: linear-gradient(180deg, rgba(255, 63, 134, 0.12), rgba(255, 63, 134, 0.04));
+.vb-score-button.is-lit {
+  color: var(--ha-ink);
 }
 
-.vb-score-button.is-heat-6,
-.vb-score-button.is-heat-7 {
-  color: #fff;
-  background: linear-gradient(180deg, rgba(255, 63, 134, 0.3), rgba(255, 63, 134, 0.12));
-}
-
-.vb-score-button.is-heat-8,
-.vb-score-button.is-heat-9 {
-  color: #fff;
-  background: linear-gradient(160deg, #ff5d95, #a3124a);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 16px rgba(255, 63, 134, 0.35);
-}
-
-.vb-score-button.is-heat-10 {
-  color: #2a1606;
-  background: var(--vs-foil);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 18px rgba(230, 193, 122, 0.45);
-}
+.vb-score-button.is-lit.is-low { background: var(--ha-band-low); }
+.vb-score-button.is-lit.is-mid { background: var(--ha-band-mid); }
+.vb-score-button.is-lit.is-high { background: var(--ha-band-high); }
 
 .vb-score-button[aria-pressed="true"] {
-  box-shadow: 0 0 0 2px var(--vs-gold-hi), 0 10px 22px rgba(0, 0, 0, 0.5);
-  transform: translateY(-3px) scale(1.07);
+  box-shadow: 0 0 0 2px var(--vs-pearl);
+}
+
+.vb-score-button:focus-visible {
+  outline: 2px solid var(--vs-gold-hi);
+  outline-offset: 3px;
+}
+
+.vb-score-legend {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 3px;
+  margin-top: -6px;
+  color: var(--vs-mist);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.vb-score-legend span {
+  padding-top: 4px;
+  border-top: 2px solid var(--ha-band-low);
+}
+
+.vb-score-legend .is-low { grid-column: span 6; }
+
+.vb-score-legend .is-mid {
+  grid-column: span 2;
+  border-color: var(--ha-band-mid);
+}
+
+.vb-score-legend .is-high {
+  grid-column: span 2;
+  border-color: var(--ha-band-high);
+}
+
+.vb-composer .vb-actions .button {
+  max-width: none;
 }
 
 /* ---------- ラウンド結果 ---------- */
 
+/* 1組＝貼った画像と、採点した側から返ってきた点数の吹き出し。相手の組、あなたの組の順に並べる。 */
 .vb-result-stage {
   position: relative;
   display: grid;
   width: min(560px, 100%);
-  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
-  align-items: start;
-  gap: 6px;
+  gap: 18px;
   margin: 0 auto;
 }
 
@@ -1348,56 +1385,45 @@
   z-index: 2;
   display: grid;
   min-width: 0;
-  justify-items: center;
-  transition: filter calc(300ms * var(--vb-fx-speed, 1));
-}
-
-.vb-result-col[data-result-col="0"] {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.vb-result-vs {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  margin-top: -40px;
-  color: var(--vs-gold);
-  font: italic 900 1.1rem/1 var(--vs-font-accent);
-  text-align: center;
-}
-
-.vb-result-col[data-result-col="1"] {
-  grid-column: 3;
-  grid-row: 1;
+  gap: 8px;
 }
 
 .vb-result-card {
   position: relative;
-  width: 100%;
+  width: min(44vw, 190px);
+  transition: filter calc(300ms * var(--vb-fx-speed, 1));
+}
+
+.vb-result-card .vb-card {
+  aspect-ratio: 4 / 5;
+  border-radius: 18px 18px 18px 4px;
+}
+
+.vb-result-col.is-local .vb-result-card .vb-card {
+  border-radius: 18px 18px 4px 18px;
 }
 
 .vb-result-score {
-  position: relative;
-  z-index: 4;
-  display: grid;
-  justify-items: center;
-  margin-top: -40px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 4px;
+  min-width: 96px;
 }
 
 .vb-result-score b {
-  color: var(--vs-pearl);
-  font: 900 4.4rem/1 var(--vs-font-accent);
+  font: 600 2.2rem/1 var(--vs-font-number);
   font-variant-numeric: lining-nums tabular-nums;
-  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.6), 0 0 24px rgba(0, 0, 0, 0.7);
 }
 
-.vb-result-score small {
-  margin-top: 2px;
-  color: var(--vs-mist);
-  font: 700 0.58rem/1 var(--vs-font-accent);
-  letter-spacing: 0.2em;
+.vb-result-score > small {
+  margin-right: 6px;
+  font-size: 0.8rem;
 }
+
+.vb-result-score.is-low b { color: #d9cadd; }
+.vb-result-score.is-mid b { color: var(--vs-gold); }
+.vb-result-score.is-high b { color: #ffc2d8; }
 
 .vb-screen.is-landed .vb-result-score b {
   animation: vb-land calc(420ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap);
@@ -1407,41 +1433,32 @@
   from { transform: scale(1.5); }
 }
 
-.vb-result-name {
-  max-width: 100%;
-  margin-top: 4px;
-  overflow: hidden;
-  font: 800 0.9rem/1.3 var(--vs-font-display);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* 勝った組は点数の吹き出しを金で縁取り、負けた組の画像は暗く。演出中は点数が止まってから。 */
+.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-winner .vb-result-score,
+.vb-screen.is-landed .vb-result-col.is-winner .vb-result-score {
+  box-shadow: 0 0 0 1.5px var(--vs-gold);
 }
 
-/* 勝った側の点数は金、負けた側は暗く。演出中は点数が止まってから。 */
-.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-winner .vb-result-score b,
-.vb-screen.is-landed .vb-result-col.is-winner .vb-result-score b {
-  color: transparent;
-  background: var(--vs-foil);
-  -webkit-background-clip: text;
-  background-clip: text;
-  text-shadow: none;
-  filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6));
-}
-
-.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-loser,
-.vb-screen.is-landed .vb-result-col.is-loser {
+.vb-screen:not([data-fx="pending"]):not([data-fx="play"]) .vb-result-col.is-loser .vb-result-card,
+.vb-screen.is-landed .vb-result-col.is-loser .vb-result-card {
   filter: brightness(0.6) saturate(0.7);
 }
 
+/* 勝った組の画像に、チャットのスタンプのように押す */
 .vb-stamp {
   position: absolute;
   z-index: 5;
-  top: 40%;
+  top: 50%;
   left: 50%;
-  padding: 6px 14px;
-  font: italic 900 1.5rem/1 var(--vs-font-accent);
+  padding: 6px 12px;
+  border-radius: 10px;
+  color: var(--ha-ink);
+  background: var(--vs-gold);
+  box-shadow: 0 0 0 3px var(--ha-ground);
+  font: 400 1rem/1 var(--ha-font-display);
   white-space: nowrap;
   pointer-events: none;
-  transform: translate(-50%, -50%) rotate(-8deg);
+  transform: translate(-50%, -50%) rotate(-6deg);
 }
 
 .vb-screen[data-fx="pending"] .vb-stamp,
@@ -1456,27 +1473,18 @@
 }
 
 @keyframes vb-stamp {
-  from { opacity: 0; transform: translate(-50%, -50%) rotate(-16deg) scale(2.4); }
-}
-
-.vb-stamp.is-great {
-  color: var(--vs-gold-hi);
-  text-shadow: 0 2px 0 #000, 0 0 18px rgba(230, 193, 122, 0.6);
+  from { opacity: 0; transform: translate(-50%, -50%) rotate(-14deg) scale(2); }
 }
 
 .vb-stamp.is-critical {
-  color: #fff;
-  background: linear-gradient(90deg, transparent, rgba(255, 63, 134, 0.9) 14%, rgba(255, 63, 134, 0.9) 86%, transparent);
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+  background: var(--vs-rose);
 }
 
 .vb-stamp.is-perfect {
-  color: transparent;
-  background: var(--vs-foil);
-  -webkit-background-clip: text;
-  background-clip: text;
-  filter: drop-shadow(0 2px 0 #000) drop-shadow(0 0 14px rgba(255, 220, 150, 0.85));
-  font-size: 1.85rem;
+  color: var(--vs-rose);
+  background: var(--vs-pearl);
+  box-shadow: 0 0 0 3px var(--ha-ground), 0 0 0 5px var(--vs-rose);
+  font-size: 1.15rem;
 }
 
 .vb-result .vb-flash {
@@ -1507,7 +1515,7 @@
 .vb-rays {
   position: absolute;
   z-index: 1;
-  top: 40%;
+  top: 50%;
   left: 50%;
   width: 720px;
   height: 720px;
@@ -1517,14 +1525,6 @@
   background: repeating-conic-gradient(from 0deg, rgba(255, 236, 190, 0.3) 0 5deg, transparent 5deg 15deg);
   -webkit-mask: radial-gradient(closest-side, #000 18%, transparent 75%);
   mask: radial-gradient(closest-side, #000 18%, transparent 75%);
-}
-
-.vb-result-stage:has(.vb-result-col[data-result-col="0"].is-winner) .vb-rays {
-  left: 25%;
-}
-
-.vb-result-stage:has(.vb-result-col[data-result-col="1"].is-winner) .vb-rays {
-  left: 75%;
 }
 
 .vb-screen.is-perfect-hit .vb-rays {
@@ -1586,7 +1586,7 @@
 }
 
 .vb-result .online-pursuit-call blockquote {
-  font-family: var(--vs-font-display);
+  font-family: var(--vs-font-body);
   font-weight: 800;
 }
 
@@ -1595,15 +1595,12 @@
 .vb-gameover-card {
   position: relative;
   overflow: hidden;
-  border-color: var(--vs-line);
-  background:
-    var(--vs-grain) 0 0 / 160px 160px,
-    radial-gradient(90% 50% at 50% 0, rgba(138, 26, 69, 0.4), transparent 70%),
-    var(--vs-night-1);
+  border-color: var(--vs-line-soft);
+  background: var(--ha-surface);
 }
 
 .vb-gameover.is-win .vb-gameover-card {
-  box-shadow: 0 0 0 1px rgba(230, 193, 122, 0.4), var(--shadow);
+  box-shadow: 0 0 0 1px rgba(255, 63, 134, 0.45), var(--shadow);
 }
 
 .vb-emblem {
@@ -1613,7 +1610,7 @@
   height: 64px;
   place-items: center;
   border: 0;
-  color: var(--vs-gold-hi);
+  color: var(--vs-rose-soft);
   background: none;
   box-shadow: none;
 }
@@ -1622,10 +1619,9 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: var(--vs-holo);
+  background: var(--vs-rose);
   -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 87%);
   mask: radial-gradient(closest-side, transparent 84%, #000 87%);
-  animation: vs-holo-spin 4s linear infinite;
 }
 
 .vb-emblem span {
@@ -1635,26 +1631,19 @@
 
 .vb-gameover-card > .vb-outcome {
   margin: 6px 0 0;
-  color: transparent;
-  background: var(--vs-foil);
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
+  color: var(--vs-rose);
   filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.6));
-  font: italic 900 clamp(4.6rem, 22vw, 7rem)/0.95 var(--vs-font-accent);
-  animation: vb-win-in calc(600ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both, vs-foil-sweep 5s ease-in-out 1s infinite;
+  font: 400 clamp(3.6rem, 18vw, 5.6rem)/1 var(--ha-font-display);
+  animation: vb-win-in calc(600ms * var(--vb-fx-speed, 1)) var(--vs-ease-snap) both;
 }
 
 .vb-gameover.is-lose .vb-gameover-card > .vb-outcome {
   color: var(--vs-violet);
-  background: none;
-  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.6));
   animation: vb-win-in calc(600ms * var(--vb-fx-speed, 1)) var(--vs-ease-out) both;
 }
 
 .vb-gameover.is-draw .vb-gameover-card > .vb-outcome {
   color: var(--vs-pearl);
-  background: none;
 }
 
 @keyframes vb-win-in {
@@ -1662,14 +1651,14 @@
 }
 
 .vb-gameover-card > h1 {
-  font-family: var(--vs-font-display);
-  font-weight: 800;
+  font-family: var(--ha-font-display);
+  font-weight: 400;
   letter-spacing: 0.02em;
 }
 
 .vb-gameover .final-player.winner {
-  border-color: rgba(230, 193, 122, 0.45);
-  background: linear-gradient(90deg, rgba(230, 193, 122, 0.12), transparent);
+  border-color: rgba(255, 63, 134, 0.45);
+  background: rgba(255, 63, 134, 0.08);
 }
 
 .vb-gameover .stat-box strong {
@@ -1911,21 +1900,8 @@
     display: none;
   }
 
-  .vb-reveal-stage,
-  .vb-result-stage {
-    grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
-  }
-
-  .vb-result-score b {
-    font-size: 3.6rem;
-  }
-
-  .vb-stamp {
-    font-size: 1.2rem;
-  }
-
-  .vb-stamp.is-perfect {
-    font-size: 1.45rem;
+  .vb-reveal-col.is-local {
+    margin-top: 40px;
   }
 }
 
@@ -2041,8 +2017,7 @@
   width: 130%;
   height: 4px;
   pointer-events: none;
-  background: var(--vs-foil);
-  box-shadow: 0 0 24px rgba(255, 220, 150, 0.9);
+  background: var(--vs-rose);
   transform: rotate(-12deg);
   transform-origin: left center;
   animation: vb-slash 420ms var(--vs-ease-out) 150ms both;
@@ -2078,11 +2053,10 @@
   border-radius: inherit;
   content: "";
   pointer-events: none;
-  background: var(--vs-holo);
+  background: var(--vs-gold);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  animation: vs-holo-spin 4s linear infinite;
 }
 
 @keyframes vb-finish-card {
@@ -2102,16 +2076,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 1px;
-  font: italic 900 clamp(3.4rem, 9vw, 6rem)/1 var(--vs-font-accent);
+  font: 400 clamp(3rem, 8vw, 5.2rem)/1 var(--ha-font-display);
 }
 
 .finish-cutin.is-signature .finish-cutin-word::before {
   width: 100%;
   margin-bottom: 4px;
   content: "SIGNATURE";
-  color: var(--vs-gold-hi);
-  font: italic 700 0.8rem/1 var(--vs-font-accent);
-  letter-spacing: 0.42em;
+  color: var(--vs-gold);
+  font: 800 0.8rem/1 var(--vs-font-body);
+  letter-spacing: 0.3em;
   animation: vs-fade-in 300ms 500ms both;
 }
 
@@ -2126,7 +2100,7 @@
 }
 
 .finish-cutin.is-signature .finish-cutin-word span {
-  background: var(--vs-foil);
+  background: linear-gradient(180deg, #fff3d2, var(--vs-gold));
   -webkit-background-clip: text;
   background-clip: text;
   filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6)) drop-shadow(0 0 18px rgba(255, 220, 150, 0.55));
@@ -2141,18 +2115,18 @@
   width: fit-content;
   max-width: 100%;
   padding: 4px 16px;
-  border-top: 1px solid var(--vs-gold);
-  border-bottom: 1px solid var(--vs-gold);
-  font: 800 clamp(1.3rem, 3.4vw, 2rem)/1.3 var(--vs-font-display);
+  border-top: 1px solid var(--vs-rose);
+  border-bottom: 1px solid var(--vs-rose);
+  font: 400 clamp(1.3rem, 3.4vw, 2rem)/1.3 var(--ha-font-display);
   letter-spacing: 0.02em;
   animation: vs-fade-up 300ms 900ms both;
 }
 
 .finish-cutin-line,
 .finish-cutin.is-signature .finish-cutin-line {
-  border-color: rgba(230, 193, 122, 0.35);
+  border-color: rgba(255, 63, 134, 0.35);
   background: rgba(15, 9, 19, 0.6);
-  font-family: var(--vs-font-display);
+  font-family: var(--vs-font-body);
   font-weight: 800;
   animation: vs-fade-up 360ms 1100ms both;
 }
@@ -2206,9 +2180,9 @@
   flex: none;
   align-self: center;
   padding: 0 6px;
-  color: var(--vs-gold);
-  font: italic 700 0.7rem/1 var(--vs-font-accent);
-  letter-spacing: 0.2em;
+  color: var(--vs-rose-soft);
+  font: 800 0.7rem/1 var(--vs-font-body);
+  letter-spacing: 0.14em;
 }
 
 .vb-preview-bar button {
@@ -2251,66 +2225,71 @@ body:has(.vl-landing) .vb-preview-bar {
 
 /* ---------- 気軽な貼り合い：カードのひとこと・採点リアクション・採点ログ ---------- */
 
+/* カードのひとことは、画像の下に出る吹き出し */
 .vb-card-caption {
-  display: grid;
-  gap: 2px;
-  max-width: min(420px, 100%);
-  margin: 6px auto 0;
-  padding: 7px 12px;
-  border: 1px solid var(--vs-line-soft);
-  border-radius: 12px;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 16px 16px 16px 4px;
   color: var(--vs-pearl);
-  background: rgba(255, 63, 134, 0.08);
-  font-size: 0.82rem;
-  line-height: 1.5;
-  text-align: center;
+  background: var(--ha-bubble-theirs);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  text-align: left;
   overflow-wrap: anywhere;
 }
 
 .vb-card-caption.is-local {
-  background: rgba(230, 193, 122, 0.08);
+  border-radius: 16px 16px 4px 16px;
+  background: var(--ha-bubble-mine);
 }
 
 .vb-card-caption small {
-  color: var(--vs-dim);
+  display: block;
+  margin-top: 2px;
+  color: var(--vs-mist);
   font-size: 0.64rem;
+}
+
+.vb-card-caption.is-local small {
+  color: #f6d9e5;
 }
 
 .vb-reaction-picker {
   display: grid;
-  gap: 6px;
-  width: min(460px, 100%);
-  margin: 0 auto;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
 }
 
 .vb-reaction-picker > small {
   color: var(--vs-mist);
-  font-size: 0.7rem;
-  text-align: center;
+  font-size: 0.72rem;
 }
 
 .vb-reaction-picker > div {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  display: grid;
   gap: 6px;
 }
 
 .vb-reaction-chip {
-  padding: 7px 12px;
-  border: 1px solid var(--vs-line-soft);
-  border-radius: 999px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--vs-line-soft);
+  border-radius: 14px;
   cursor: pointer;
   color: var(--vs-pearl);
-  background: var(--vs-night-3);
-  font-size: 0.78rem;
-  line-height: 1.4;
+  background: #1a1120;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .vb-reaction-chip[aria-pressed="true"] {
   border-color: var(--vs-rose);
-  color: var(--vs-rose-soft);
-  background: rgba(255, 63, 134, 0.14);
+  background: rgba(255, 63, 134, 0.12);
 }
 
 .vb-reaction-chip:focus-visible {
@@ -2318,94 +2297,87 @@ body:has(.vl-landing) .vb-preview-bar {
   outline-offset: 2px;
 }
 
+/* 結果の点数の吹き出しに添える、採点した側のひとこと */
 .vb-result-reaction {
-  max-width: 100%;
+  width: 100%;
   margin: 4px 0 0;
-  color: var(--vs-rose-soft);
-  font-size: 0.76rem;
-  line-height: 1.45;
-  text-align: center;
+  font-size: 0.84rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.vb-result-reaction b {
-  margin-right: 4px;
-  color: var(--vs-dim);
-  font-size: 0.66rem;
-}
-
+/* これまでの採点は、画像選択の上に小さな札で並べる */
 .vb-score-log {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 .vb-score-log h2 {
+  flex: none;
   margin: 0;
   color: var(--vs-mist);
   font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  font-weight: 700;
 }
 
 .vb-score-log ol {
   display: flex;
+  min-width: 0;
   gap: 8px;
   margin: 0;
-  padding: 0 0 4px;
+  padding: 2px;
   overflow-x: auto;
   list-style: none;
+  scrollbar-width: none;
 }
 
 .vb-score-log li {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: auto auto;
-  gap: 4px 8px;
-  padding: 8px;
-  border: 1px solid var(--vs-line-soft);
+  display: flex;
+  flex: none;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px 3px 4px;
   border-radius: 12px;
-  background: var(--vs-night-2);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  font-size: 0.75rem;
 }
 
 .vb-score-log li > small {
-  grid-column: 1 / -1;
-  color: var(--vs-dim);
-  font-size: 0.64rem;
-  font-weight: 800;
+  order: -1;
+  padding-left: 6px;
+  color: var(--vs-mist);
+  font-weight: 700;
 }
 
-.vb-log-cell {
-  display: grid;
-  grid-template-columns: 34px auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: 6px;
-}
-
-.vb-log-cell img,
+.vb-score-log li img,
 .vb-log-empty {
-  grid-row: 1 / span 2;
-  width: 34px;
-  height: 46px;
-  border-radius: 6px;
+  width: 20px;
+  height: 26px;
+  border-radius: 5px;
   object-fit: cover;
-  background: var(--vs-night-3);
+  background: var(--ha-hatch);
 }
 
-.vb-log-empty.is-opponent {
-  display: grid;
-  place-items: center;
-  color: var(--vs-dim);
-  font-size: 0.58rem;
+.vb-log-score {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  font: 600 0.95rem/1 var(--vs-font-number);
 }
 
-.vb-log-cell b {
-  color: var(--vs-gold);
-  font: 700 1rem/1 var(--vs-font-number);
-}
-
-.vb-log-cell em {
-  color: var(--vs-dim);
-  font-size: 0.6rem;
+.vb-log-score i {
+  color: var(--vs-mist);
   font-style: normal;
+}
+
+.vb-score-log li.is-win .vb-log-score b.is-local {
+  color: var(--vs-mint);
+}
+
+.vb-score-log li.is-lose .vb-log-score b:not(.is-local) {
+  color: var(--vs-rose-soft);
 }

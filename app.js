@@ -1082,33 +1082,67 @@
       window.HariaiOnline?.getLobbyStatsRefreshStatus?.() || { available: true, loading: true },
     );
     const statValue = (value) => Number.isInteger(value) ? value : "--";
-    const stageDust = Array.from({ length: 14 }, (_, index) => (
-      `<i style="--x:${(index * 37 + 7) % 100}%;--d:${((index * 0.73) % 6).toFixed(2)}s;--t:${6 + (index % 5)}s;--s:${2 + (index % 3)}px"></i>`
-    )).join("");
-    const stageFan = [-28, -14, 0, 14, 28].map((rotation, index) => (
-      `<div class="vl-fan-card" style="--r:${rotation}deg;--y:${(Math.abs(rotation) / 2.2).toFixed(1)}px;--i:${index};z-index:${10 - Math.abs(index - 2)}"><div class="vs-card-back"><span class="vs-card-emblem">貼</span></div></div>`
-    )).join("");
+    // トップの見本のやりとり。実際の対戦画面と同じ吹き出しとメーターで描く（人の画像や名前は使わない）。
+    const heroMeter = Array.from({ length: 10 }, (_, index) => {
+      const score = index + 1;
+      const band = score <= 6 ? "low" : score <= 8 ? "mid" : "high";
+      return `<i class="${score <= 9 ? `is-on is-${band}` : ""}"></i>`;
+    }).join("");
+    const liveCount = (id, value, unit) => `<b id="${id}">${statValue(value)}</b>${unit}`;
     return `<section class="screen hero vl-landing">
-      <div class="vl-stage">
-        <i class="vl-curtain vl-curtain-left" aria-hidden="true"></i><i class="vl-curtain vl-curtain-right" aria-hidden="true"></i><i class="vl-valance" aria-hidden="true"></i>
-        <i class="vl-spotlight" aria-hidden="true"></i><i class="vl-floor" aria-hidden="true"></i><div class="vl-dust" aria-hidden="true">${stageDust}</div>
+      <div class="vl-hero">
         <div class="vl-copy">
-          <p class="vl-eyebrow">Tonight's Stage</p>
-          <h1 class="vl-title" aria-label="貼り合え。YOUR FAVORITE, YOUR POWER."><span class="vl-title-text" aria-hidden="true">貼り合え</span><span class="vl-tagline" aria-hidden="true">Your favorite, your power.</span></h1>
-          <p class="vl-lead">あなたの「好き」が、いちばんのカード。</p>
+          <p class="vl-eyebrow">1on1 画像の貼り合い</p>
+          <h1 class="vl-title">貼って、刺して、<br />点で返す。</h1>
+          <p class="vl-lead">推しの画像にひとことを添えて送り合い、刺さり具合を点数で返す。</p>
         </div>
-        <div class="vl-fan" aria-hidden="true">${stageFan}</div>
+        <div class="vl-hero-thread" role="img" aria-label="やりとりの例。相手が画像に「ねぇ、これ好きでしょ？♡」と添えて貼り、こちらが9点で返す。">
+          <div class="ha-msg is-theirs" aria-hidden="true"><span class="ha-avatar">小</span><div class="ha-msg-body">
+            <span class="ha-photo is-placeholder"><i></i>画像</span>
+            <span class="ha-bubble">ねぇ、これ好きでしょ？♡</span>
+          </div></div>
+          <div class="ha-msg is-mine" aria-hidden="true"><div class="ha-msg-body">
+            <span class="ha-bubble ha-score-bubble"><b class="ha-score-number">9<small>点</small></b>っ…9点。ずるい…♡</span>
+            <span class="ha-meter10">${heroMeter}</span>
+          </div></div>
+        </div>
       </div>
       <div class="hero-actions">
-        <button class="vl-main-button vs-satin" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live"><i aria-hidden="true"></i>対戦中 <b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人 · 待機中 <b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人</em></button>
+        <button class="vl-main-button" id="onlineButton" type="button"><small>通常型1on1対戦</small><span>いますぐ貼り合う</span><em class="vl-live"><i aria-hidden="true"></i>対戦中 <b id="heroSoloPlayingCount">${statValue(soloStats.playing)}</b>人 · 待機中 <b id="heroSoloWaitingCount">${statValue(soloStats.waiting)}</b>人</em></button>
         <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
-        <button class="vl-tile vl-tile-strategy" id="strategyLabButton" type="button"><small>なりきって読んで、言葉で刺して点数で落とす</small><span>戦略型1on1対戦</span></button>
-        <button class="vl-tile vl-tile-market" id="valueMarketButton" type="button"><small>AnjuPayで推し値を決める</small><span>推し値市場 / VALUE MARKET</span></button>
-        <button class="vl-tile${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}"><small>${freeTableLamp.eyebrow}</small><span>${freeTableLamp.label}</span></button>
-        <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>最大10枚から5枚をDRAW。ひとりですぐ運動</small><span>AIと対戦しよう 文字コラトレーニング</span></button>
-        <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
-        <button class="vl-tile vl-tile-danwaku" id="danwakuNoteButton" type="button"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span>断惑NOTE</span></button>
       </div>
+      <section class="vl-board" aria-labelledby="landingBoardTitle">
+        <div class="vl-board-head"><h2 id="landingBoardTitle">いま入れる卓</h2><span>人数は実際の待機・対戦数</span></div>
+        <ol class="vl-board-list">
+          <li class="vl-board-item is-solo"><button class="vl-post" id="soloBoardButton" type="button">
+            <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">通常1on1</span><small class="vl-post-sub">サクっと・気軽に</small><em class="vl-post-tag">1〜10点</em>
+            <span class="vl-post-text">同時に1枚貼って、同時に採点。画像にひとこと、点数にリアクションを添えられる。</span>
+            <em class="vl-post-counts">待機 ${liveCount("boardSoloWaitingCount", soloStats.waiting, "人")} · 対戦中 ${liveCount("boardSoloPlayingCount", soloStats.playing, "人")}</em>
+            <strong class="vl-post-go">この卓に入る</strong>
+          </button></li>
+          <li class="vl-board-item is-strategy"><button class="vl-post" id="strategyLabButton" type="button">
+            <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">戦略型1on1</span><small class="vl-post-sub">本式・ランク戦</small><em class="vl-post-tag">100点</em>
+            <span class="vl-post-text">なりきって読んで、言葉で刺して点数で落とす。手番制で、点数が次の権利になる。</span>
+            <em class="ha-zones"><b class="is-floor" aria-hidden="true">〜70</b><b class="is-none" aria-hidden="true">70〜</b><b class="is-question">80 質問</b><b class="is-instruction">85 指示</b><b class="is-combo">90 連投</b></em>
+            <em class="vl-post-counts">待機 ${liveCount("boardStrategyWaitingCount", strategyStats.waiting, "人")} · 対戦中 ${liveCount("boardStrategyPlayingCount", strategyStats.playing, "人")}</em>
+            <strong class="vl-post-go">本式で挑む</strong>
+          </button></li>
+          <li class="vl-board-item is-free"><button class="vl-post${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}">
+            <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">${freeTableLamp.label}</span><small class="vl-post-sub">${freeTableLamp.eyebrow}</small>
+            <em class="vl-post-counts">お迎え中 ${liveCount("boardFreeTableWelcomingCount", freeTableStats.welcomingRooms, "卓")} · 同席中 ${liveCount("boardFreeTableSeatedCount", freeTableStats.seatedRooms, "卓")}</em>
+            <strong class="vl-post-go">部屋札を見る</strong>
+          </button></li>
+        </ol>
+      </section>
+      <section class="vl-others" aria-labelledby="landingOthersTitle">
+        <h2 id="landingOthersTitle">ほかの遊び方</h2>
+        <div class="vl-others-grid">
+          <button class="vl-tile vl-tile-market" id="valueMarketButton" type="button"><small>AnjuPayで推し値を決める</small><span>推し値市場</span></button>
+          <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>AIと対戦しよう</small><span>文字コラトレーニング</span></button>
+          <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
+          <button class="vl-tile vl-tile-danwaku" id="danwakuNoteButton" type="button"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span>断惑NOTE</span></button>
+        </div>
+      </section>
       <nav class="vl-tabbar" aria-label="ランキングとAnjuPay">
         <button class="vl-tab vl-tab-ranking" type="button" id="rankingButton">ランキング</button>
         <button class="vl-tab vl-tab-mission" type="button" id="dailyMissionButton">ミッション</button>
@@ -1119,7 +1153,7 @@
       ${renderLandingTopMessagePanel()}
       ${renderLandingFleaPanel()}
       <section class="vl-more" aria-labelledby="landingMoreTitle">
-        <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">ほかの遊び方</h2></div>
+        <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
         <div class="vl-list">
           <button class="vl-row" type="button" id="valueMarketRankingButton"><small>売り手・買い手の月間／累計</small>推し値市場ランキング</button>
           <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
@@ -1181,6 +1215,7 @@
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
+    document.querySelector("#soloBoardButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
     document.querySelector("#danwakuNoteButton")?.addEventListener("click", startDanwakuNote);

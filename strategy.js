@@ -97,11 +97,13 @@ import {
   HARIAI_BAND_COMBO,
   HARIAI_BAND_QUESTION,
   HARIAI_BREAK_HIT_DAMAGE,
+  HARIAI_BREAK_MIN_POSTS,
   HARIAI_BREAK_MISS_DAMAGE,
   HARIAI_CALL_STYLES,
   HARIAI_CAPTION_MAX,
   HARIAI_COMBO_CAP,
   HARIAI_COMBO_STEP,
+  HARIAI_DAMAGE_FLOOR,
   HARIAI_FINISH_DAMAGE,
   HARIAI_FINISH_MAX,
   HARIAI_FIRST_PERSONS,
@@ -213,6 +215,8 @@ let lastRenderedScreen = "";
 let strategyMatchmakingGenerationCounter = 0;
 let strategyQueueDisconnectOperations = Promise.resolve();
 let resultNavigationBusy = false;
+// 読みメモの開閉。対戦中に描き直しても、閉じたノートを勝手に開かない。
+let hariaiMemoOpen = true;
 
 const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
 
@@ -933,6 +937,10 @@ function start() {
     showToast("戦略型1on1はローカルサーバーまたは公開URLから起動してください。");
     return;
   }
+  if (useOfflineStrategyPreview) {
+    startStrategyPreview().catch(handleFatalError);
+    return;
+  }
   window.HariaiOnline?.resetBattlePresenceCheck?.("strategy");
   active = true;
   state = createState();
@@ -949,6 +957,161 @@ function start() {
 
 function isActive() {
   return active;
+}
+
+// localhost で ?strategyPreview を付けた時だけ、Firebaseにつながずに貼り合い本式の対戦画面を確認できる。
+const useOfflineStrategyPreview = ["127.0.0.1", "localhost"].includes(window.location.hostname)
+  && new URLSearchParams(window.location.search).has("strategyPreview");
+const STRATEGY_PREVIEW_STEPS = [
+  ["right", "権利を使う（91点）"],
+  ["act", "次の1手（連投）"],
+  ["score", "採点する"],
+  ["answer", "質問に答える"],
+  ["wait", "相手の番"],
+  ["finish", "看破成功・仕留め"],
+];
+// プレビューでは、ルームへ書き込む操作とチャットを押しても実行しない。
+const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "[data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input";
+const STRATEGY_PREVIEW_SALT = "0123456789abcdef0123456789abcdef";
+const strategyPreview = { remote: [] };
+
+function paintStrategyPreviewArt(index) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 600;
+  canvas.height = 800;
+  const context = canvas.getContext("2d");
+  const hue = (index * 53 + 300) % 360;
+  const gradient = context.createLinearGradient(0, 0, 300, 800);
+  gradient.addColorStop(0, `hsl(${hue}, 75%, 78%)`);
+  gradient.addColorStop(1, `hsl(${(hue + 50) % 360}, 55%, 18%)`);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "rgba(255,255,255,.85)";
+  context.font = "700 36px system-ui, sans-serif";
+  context.fillText(`PREVIEW ${index + 1}`, 36, 760);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(URL.createObjectURL(blob)), "image/jpeg", 0.86));
+}
+
+// 相手（シオン）が先攻。6手目にあなたが91点をもらい、連投の権利を持つところまでを段階ごとに再現する。
+function strategyPreviewMoves(step) {
+  const me = "preview-me";
+  const rival = "preview-rival";
+  const post = (by, target, caption, extra = {}) => ({ post: { by, target, caption }, received: { [by === me ? rival : me]: true }, ...extra });
+  const score = (by, value, reply) => ({ score: { by, value, reply } });
+  const moves = {
+    1: post(rival, 0, "ねぇ、これ好きでしょ？♡", score(me, 78, "…78点。ちょっとだけね")),
+    2: post(me, 1, "目、そらさないでね♡", score(rival, 64, "64点かな〜♡ もっと本気出して？")),
+  };
+  if (step === "wait") return moves;
+  const question = { by: rival, kind: "question", id: "spot", flavor: "" };
+  if (step === "answer") {
+    moves[3] = post(rival, 1, "この後ろ姿、見て？", { ...score(me, 84, "84点…べ、別に効いてないし♡"), right: question });
+    return moves;
+  }
+  moves[3] = post(rival, 1, "この後ろ姿、見て？", { ...score(me, 84, "84点…べ、別に効いてないし♡"), right: question, answer: { by: me, text: "うなじのところ…ずるい" } });
+  moves[4] = post(me, 0, "この上目づかい、どう？", {
+    ...score(rival, 87, "ふふ、87点♡ ずるい手使うじゃん"),
+    right: { by: me, kind: "instruction", id: "deny", flavor: "" },
+    answer: { by: rival, candidate: 2, salt: STRATEGY_PREVIEW_SALT },
+  });
+  if (step === "score") {
+    moves[5] = post(rival, 2, "ほら、ここ弱いでしょ♡");
+    return moves;
+  }
+  moves[5] = post(rival, 2, "ほら、ここ弱いでしょ♡", score(me, 76, "…76点。ちょっとだけね"));
+  moves[6] = post(me, 0, "この上目づかい、ずるいって言って", score(rival, 91, "91点♡ …もう、覚えてなさいよ"));
+  if (step === "right") return moves;
+  moves[6].right = { by: me, kind: "question", id: "which", a: 0, b: 1, flavor: "" };
+  moves[6].answer = { by: rival, choice: 0 };
+  if (step === "act") return moves;
+  moves[7] = { break: { by: me, guess: 0 }, breakReveal: { by: rival, index: 0, bit: 1, salt: STRATEGY_PREVIEW_SALT } };
+  return moves;
+}
+
+async function startStrategyPreview() {
+  active = true;
+  state = createState();
+  lastRenderedScreen = "";
+  setStrategyChrome("STRATEGY PREVIEW");
+  const urls = await Promise.all(Array.from({ length: 13 }, (_, index) => paintStrategyPreviewArt(index)));
+  if (!active) return;
+  const persona = (type, callStyle) => ({ type, firstPerson: "watashi", callStyle });
+  const me = { uid: "preview-me", name: "ルミナ", persona: persona("tsuyotsuyo", "chan"), clues: ["メガネ", "ポニテ", "うなじ"], penalties: normalizeHariaiPenaltyConsent({}) };
+  const rival = { uid: "preview-rival", name: "シオン", persona: persona("koakuma", "anata"), clues: ["ツインテ", "ジト目", "制服"], penalties: normalizeHariaiPenaltyConsent({}) };
+  Object.assign(state, {
+    uid: me.uid,
+    authReady: true,
+    roomId: "preview-strategy",
+    players: [me, rival],
+    playerIndex: 0,
+    firstUid: rival.uid,
+    weaknessIndex: 1,
+    channelReady: true,
+    opponentOnline: true,
+    main: urls.slice(0, 5).map((url, index) => ({ id: `preview-main-${index}`, url, used: false })),
+    reserve: urls.slice(5, 10).map((url, index) => ({ id: `preview-reserve-${index}`, url, used: false })),
+  });
+  strategyPreview.remote = urls.slice(10);
+  mountStrategyPreviewBar();
+  showStrategyPreviewStep("right");
+}
+
+function showStrategyPreviewStep(step) {
+  if (!active || !useOfflineStrategyPreview) return;
+  const [host, guest] = state.players;
+  const moves = strategyPreviewMoves(step);
+  const cards = [...state.main, ...state.reserve];
+  cards.forEach((card) => { card.used = false; });
+  state.drafts = emptyHariaiDrafts();
+  state.localMoveCards = new Map();
+  state.remoteImages = new Map();
+  state.openedMediaKeys = new Set();
+  let localCount = 0;
+  let remoteCount = 0;
+  Object.entries(moves).forEach(([number, entry]) => {
+    if (!entry.post) return;
+    const slot = Number(number);
+    if (entry.post.by === state.uid) {
+      const card = cards[localCount];
+      localCount += 1;
+      card.used = true;
+      state.localMoveCards.set(slot, card);
+      return;
+    }
+    const key = imageKey("move", slot);
+    state.remoteImages.set(key, { url: strategyPreview.remote[remoteCount % strategyPreview.remote.length] });
+    remoteCount += 1;
+    // 「採点する」では、まだ開いていない相手の手を見せる。
+    if (!(step === "score" && slot === 5)) state.openedMediaKeys.add(key);
+  });
+  state.roomData = { moves };
+  state.replay = replayHariai({ hostUid: host.uid, guestUid: guest.uid, firstUid: state.firstUid, moves });
+  state.screen = "battle";
+  render();
+}
+
+function mountStrategyPreviewBar() {
+  if (document.querySelector("#strategyPreviewBar")) return;
+  app.addEventListener("click", blockStrategyPreviewControl, true);
+  app.addEventListener("submit", blockStrategyPreviewControl, true);
+  const bar = document.createElement("nav");
+  bar.id = "strategyPreviewBar";
+  bar.className = "vb-preview-bar";
+  bar.setAttribute("aria-label", "戦略型プレビューの画面切り替え");
+  bar.innerHTML = `<strong>PREVIEW</strong>${STRATEGY_PREVIEW_STEPS.map(([step, label]) => `<button type="button" data-strategy-preview-step="${step}">${label}</button>`).join("")}`;
+  bar.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-strategy-preview-step]");
+    if (button) showStrategyPreviewStep(button.dataset.strategyPreviewStep);
+  });
+  document.body.append(bar);
+}
+
+function blockStrategyPreviewControl(event) {
+  if (!active || !useOfflineStrategyPreview) return;
+  if (event.type === "click" && !event.target.closest?.(STRATEGY_PREVIEW_BLOCKED_CONTROLS)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  showToast("プレビューでは、ルームへの書き込みやチャットは実行しません。");
 }
 
 async function ensureAuthenticated() {
@@ -1506,6 +1669,7 @@ function emptyHariaiDrafts() {
     score: null,
     reply: "",
     surrender: false,
+    rightTab: "",
     rightKind: "",
     rightId: "",
     rightA: null,
@@ -1613,10 +1777,10 @@ function renderBattle() {
   const replay = state.replay;
   if (!replay) return renderWaiting("HARIAI", "貼り合いを準備しています", "先攻と手札を確認しています。");
   return `<section class="screen strategy-screen hariai-battle">${renderBattleHud()}
-    <div class="hariai-layout"><div class="hariai-main">
+    <div class="hariai-layout">${renderHariaiReadingMemo()}<div class="hariai-main">
       <ol class="hariai-thread" aria-label="貼り合いのやりとり">${renderHariaiThread()}</ol>
       <section class="hariai-console" id="hariaiConsole" aria-live="polite">${renderHariaiConsole()}</section>
-    </div><aside class="hariai-side">${renderHariaiReadingMemo()}${renderHariaiSelfCard()}${renderHariaiRuleCard()}</aside></div></section>`;
+    </div><aside class="hariai-side">${renderHariaiSelfCard()}${renderHariaiRuleCard()}</aside></div></section>`;
 }
 
 function renderHariaiThread() {
@@ -1635,15 +1799,43 @@ function hariaiSlotItem(slot, index = null) {
   return state.remoteImages.get(index === null ? imageKey("move", slot.slot) : imageKey("finish", slot.slot, index));
 }
 
+function renderHariaiAvatar(player) {
+  return shared()?.profileAvatar?.renderBattle?.(player?.name || "相手", state.remoteAvatar?.url, {
+    hidden: state.hideOpponentAvatar,
+    className: "hariai-msg-avatar",
+  }) || "";
+}
+
+// 発言者の側に吹き出しを寄せる。あなたは右、相手は左（アイコン付き）。
+function hariaiMessage(player, body, className = "") {
+  const mine = player?.uid === state.uid;
+  return `<div class="ha-msg ${mine ? "is-mine" : "is-theirs"}${className ? ` ${className}` : ""}">${mine ? "" : renderHariaiAvatar(player)}<div class="ha-msg-body">${body}</div></div>`;
+}
+
+// 70〜100点を広く見せるメーター。70未満は左の短い区間に目印を置く。
+function renderHariaiMeter(score) {
+  const value = Math.max(HARIAI_SCORE_MIN, Math.min(HARIAI_SCORE_MAX, Number(score) || 0));
+  const below = value < HARIAI_DAMAGE_FLOOR;
+  const position = below ? value / HARIAI_DAMAGE_FLOOR : (value - HARIAI_DAMAGE_FLOOR) / (HARIAI_SCORE_MAX - HARIAI_DAMAGE_FLOOR);
+  return `<span class="ha-meter100${below ? " is-below" : ""}" style="--score-pos:${position.toFixed(3)}" aria-hidden="true"><span class="ha-meter100-bar"><i></i><i></i><i></i><i></i><i></i><b></b></span><span class="ha-meter100-scale"><span></span><span>70</span><span>80</span><span>85</span><span>90</span></span></span>`;
+}
+
+const HARIAI_BAND_LABELS = Object.freeze({ none: "手番交代", question: "質問権", instruction: "指示権", combo: "権利＋連投" });
+
+function renderHariaiSlotHead(slot, text) {
+  return `<p class="ha-divider hariai-slot-head"><span class="hariai-slot-no">${slot.slot}手目</span>${text}</p>`;
+}
+
 function renderHariaiSlot(slot) {
   const attacker = playerByUid(slot.by);
   const receiver = playerByUid(slot.receiver);
   const side = slot.by === state.uid ? "is-local" : "is-opponent";
   if (slot.kind === "surrender") {
-    return `<li class="hariai-slot hariai-system ${side}"><span class="hariai-slot-no">#${slot.slot}</span><p><b>${escapeHtml(attacker?.name || "")}</b>${escapeHtml(personaLine(attacker, "surrender"))}</p></li>`;
+    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}が参りました`)}
+      ${hariaiMessage(attacker, `<p class="ha-bubble">${escapeHtml(personaLine(attacker, "surrender"))}</p>`)}</li>`;
   }
   if (slot.kind === "pass") {
-    return `<li class="hariai-slot hariai-system ${side}"><span class="hariai-slot-no">#${slot.slot}</span><p>${escapeHtml(attacker?.name || "")}は看破を見送りました。</p></li>`;
+    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}は看破を見送りました`)}</li>`;
   }
   if (slot.kind === "break") return renderHariaiBreakSlot(slot, attacker, receiver, side);
   return renderHariaiPostSlot(slot, attacker, receiver, side);
@@ -1659,23 +1851,28 @@ function renderHariaiPostSlot(slot, attacker, receiver, side) {
         ${concealed ? `<button type="button" class="hariai-open" data-hariai-open="${escapeHtml(key)}">タップして開く${item.audioBlob ? "（音声あり）" : ""}</button>` : ""}</div>
         ${!concealed && item.audioUrl ? `<button class="hariai-audio" type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</button>` : ""}`
     : '<div class="hariai-media is-loading"><span>画像を受信中…</span></div>';
+  const owner = slot.receiver === state.uid ? "あなたの" : "相手の";
+  const post = `${media}
+    <p class="ha-bubble hariai-caption">${escapeHtml(caption)}</p>
+    <span class="ha-chip hariai-target">狙い：${owner}「${escapeHtml(candidateText(slot.receiver, slot.target))}」</span>`;
   return `<li class="hariai-slot hariai-post ${side}">
-    <header><span class="hariai-slot-no">#${slot.slot}</span><b>${escapeHtml(attacker?.name || "")}</b><small>${escapeHtml(personaLabel(attacker))}</small>
-      ${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}<span class="hariai-target">狙い：${escapeHtml(candidateText(slot.receiver, slot.target))}</span></header>
-    ${media}
-    <p class="hariai-caption">${escapeHtml(caption)}</p>
+    ${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}が貼った${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}`)}
+    ${hariaiMessage(attacker, post)}
     ${renderHariaiScoreBlock(slot, receiver)}
     ${renderHariaiRightBlock(slot, attacker, receiver)}
   </li>`;
 }
 
+// 点数は受け手の吹き出し。数字・ひとこと・メーター・権利と理性の変化をまとめて返す。
 function renderHariaiScoreBlock(slot, receiver) {
   if (!Number.isInteger(slot.score)) return "";
   const reply = slot.reply ? (slot.replyHeart ? ensureHariaiHeart(slot.reply) : slot.reply) : "";
-  return `<div class="hariai-score band-${slot.band}"><strong>${slot.score}<small>点</small></strong><span class="hariai-band">${{ none: "手番交代", question: "質問権", instruction: "指示権", combo: "権利＋連投" }[slot.band] || ""}</span>
-    ${slot.damage ? `<span class="hariai-damage">理性 −${slot.damage}</span>` : ""}
-    ${reply ? `<p class="hariai-reply"><b>${escapeHtml(receiver?.name || "")}</b>${escapeHtml(reply)}</p>` : ""}
-    ${slot.scoreSurrender ? `<p class="hariai-reply is-surrender"><b>${escapeHtml(receiver?.name || "")}</b>${escapeHtml(personaLine(receiver, "surrender"))}</p>` : ""}</div>`;
+  const whose = receiver?.uid === state.uid ? "あなた" : "相手";
+  const body = `<div class="ha-bubble hariai-score band-${slot.band}"><div class="hariai-score-head"><strong>${slot.score}<small>点</small></strong>${reply ? `<span class="hariai-reply">${escapeHtml(reply)}</span>` : ""}</div>
+      ${renderHariaiMeter(slot.score)}
+      ${slot.scoreSurrender ? `<p class="hariai-reply is-surrender">${escapeHtml(personaLine(receiver, "surrender"))}</p>` : ""}</div>
+    <p class="hariai-score-meta band-${slot.band}"><span class="hariai-band">${HARIAI_BAND_LABELS[slot.band] || ""}</span>${slot.damage ? `<span class="hariai-damage">${whose}の理性 −${slot.damage}</span>` : ""}</p>`;
+  return hariaiMessage(receiver, body, "hariai-score-msg");
 }
 
 function hariaiRightPrompt(right, receiverUid) {
@@ -1707,8 +1904,11 @@ function renderHariaiRightBlock(slot, attacker, receiver) {
   else if (Number.isInteger(answer?.value)) text = `ほんとは…${answer.value}点♡`;
   else if (Number.isInteger(answer?.candidate)) text = `「${candidateText(slot.receiver, answer.candidate)}」は弱点じゃない（ブラフ確定）`;
   else if (answer?.ack) text = hariaiAckLine(slot.right, receiver, attacker);
-  return `<div class="hariai-right"><p><b>${label}</b>${escapeHtml(hariaiRightPrompt(slot.right, slot.receiver))}${flavor}</p>
-    ${answer ? `<p class="hariai-answer"><b>${escapeHtml(receiver?.name || "")}</b>${escapeHtml(text)}</p>` : `<p class="hariai-answer is-waiting">${escapeHtml(receiver?.name || "")}の返事を待っています…</p>`}</div>`;
+  const ask = hariaiMessage(attacker, `<p class="ha-bubble hariai-right is-${slot.right.kind}"><b>${label}</b>${escapeHtml(hariaiRightPrompt(slot.right, slot.receiver))}${flavor}</p>`);
+  const reply = answer
+    ? hariaiMessage(receiver, `<p class="ha-bubble hariai-answer">${escapeHtml(text)}</p>`)
+    : `<p class="hariai-answer is-waiting">${escapeHtml(receiver?.name || "")}の返事を待っています…</p>`;
+  return `${ask}${reply}`;
 }
 
 function renderHariaiBreakSlot(slot, attacker, receiver, side) {
@@ -1719,15 +1919,16 @@ function renderHariaiBreakSlot(slot, attacker, receiver, side) {
   } else if (slot.breakResult === "hit") {
     const bluffs = (slot.bluffSlots || []).map((number) => state.replay.slots.find((item) => item.slot === number)).filter(Boolean);
     const faces = bluffs.length
-      ? `<div class="hariai-bluffs"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>#${item.slot} ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
+      ? `<div class="hariai-bluffs"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>${item.slot}手目 ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
       : "";
     const finish = Number.isInteger(slot.finishCount)
       ? renderHariaiFinish(slot)
       : `<p class="hariai-break-wait">仕留めの準備中…（最大${Number(slot.finishMax || 0)}枚）</p>`;
     result = `<p class="hariai-break-result is-hit">看破成功！ 本命は「${escapeHtml(guess)}」。${escapeHtml(receiver?.name || "")}の理性 −${Number(slot.damage || 0)}</p>${faces}${finish}`;
   }
-  return `<li class="hariai-slot hariai-break ${side}"><header><span class="hariai-slot-no">#${slot.slot}</span><b>${escapeHtml(attacker?.name || "")}</b><small>看破</small></header>
-    <p class="hariai-caption">${escapeHtml(personaLine(attacker, "breakCall", { candidate: guess }))}</p>${result}</li>`;
+  return `<li class="hariai-slot hariai-break ${side}">${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}の看破`)}
+    ${hariaiMessage(attacker, `<p class="ha-bubble hariai-caption is-break">${escapeHtml(personaLine(attacker, "breakCall", { candidate: guess }))}</p>`)}
+    <div class="hariai-break-body">${result}</div></li>`;
 }
 
 function renderHariaiFinish(slot) {
@@ -1863,7 +2064,7 @@ function renderHariaiScorePreview(value, slot, me) {
     combo: "90点以上：相手は権利＋連投（手番継続）",
   }[band];
   return `<p class="hariai-score-preview band-${band}"><strong>${value}点</strong><span>${escapeHtml(bandText)}／あなたの理性 −${damage}</span>
-    ${rest <= 0 ? '<b class="hariai-ko-warning">この点数で陥落します</b>' : `<span>（残り${rest}）</span>`}</p>`;
+    ${rest <= 0 ? '<b class="hariai-ko-warning">この点数で陥落します</b>' : `<span>（残り${rest}）</span>`}${renderHariaiMeter(value)}</p>`;
 }
 
 function renderHariaiScoreConsole(pending) {
@@ -1885,7 +2086,7 @@ function renderHariaiScoreConsole(pending) {
     <div class="hariai-console-head"><strong>何点刺さった？</strong><small>画像の出来ではなく、今の自分に刺さった度合いを自己申告します</small></div>
     <div class="hariai-score-input"><input type="range" min="0" max="100" step="1" id="hariaiScoreRange" value="${value ?? 70}" aria-label="点数" />
       <input class="text-input" type="number" min="0" max="100" step="1" inputmode="numeric" id="hariaiScoreNumber" value="${value ?? ""}" placeholder="0〜100" aria-label="点数（数値）" /></div>
-    <div class="hariai-score-quick">${[60, 75, 80, 85, 90, 95, 100].map((score) => `<button type="button" class="${value === score ? "is-selected" : ""}" data-hariai-score="${score}">${score}</button>`).join("")}</div>
+    <div class="hariai-score-quick">${[60, 75, 80, 85, 90, 95, 100].map((score) => `<button type="button" class="is-${hariaiBand(score)}${value === score ? " is-selected" : ""}" data-hariai-score="${score}">${score}</button>`).join("")}</div>
     <div id="hariaiScorePreview">${value === null ? "" : renderHariaiScorePreview(value, slot, me)}</div>
     <label class="field-label">ひとこと（任意・${HARIAI_REPLY_MAX}文字まで）${pending.reasonRequired ? `<b class="hariai-required">理由の指示中：${HARIAI_REASON_MIN_LENGTH}文字以上</b>` : ""}
       <input class="text-input" id="hariaiReply" maxlength="${HARIAI_REPLY_MAX}" value="${escapeHtml(state.drafts.reply)}" autocomplete="off" /></label>
@@ -1914,6 +2115,13 @@ function renderHariaiRightConsole(pending) {
     return `<label class="hariai-right-option ${disabled ? "is-disabled" : ""}"><input type="radio" name="hariaiRight" value="instruction:${instruction.id}" ${selected("instruction", instruction.id) ? "checked" : ""} ${disabled ? "disabled" : ""} />
       <span><strong>${escapeHtml(instruction.label)}</strong><small>${escapeHtml(note)}</small></span></label>`;
   }).join("") : "";
+  const both = Boolean(options.question && options.instruction);
+  const tab = both
+    ? (["question", "instruction"].includes(drafts.rightTab) ? drafts.rightTab : drafts.rightKind === "instruction" ? "instruction" : "question")
+    : options.question ? "question" : "instruction";
+  const tabs = both
+    ? `<div class="hariai-right-tabs" role="tablist" aria-label="権利の種類">${[["question", "質問"], ["instruction", "指示"]].map(([id, label]) => `<button type="button" role="tab" aria-selected="${tab === id}" class="${tab === id ? "is-active" : ""}" data-hariai-right-tab="${id}">${label}</button>`).join("")}</div>`
+    : "";
   const candidateOptions = (value) => opponent.clues.map((clue, index) => `<option value="${index}" ${value === index ? "selected" : ""}>${escapeHtml(clue)}</option>`).join("");
   let extra = "";
   if (drafts.rightId === "which") {
@@ -1926,8 +2134,9 @@ function renderHariaiRightConsole(pending) {
     && (drafts.rightId !== "which" || (Number.isInteger(drafts.rightA) && Number.isInteger(drafts.rightB) && drafts.rightA !== drafts.rightB))
     && (drafts.rightId !== "call" || Boolean(drafts.rightParam));
   return `<div class="hariai-console-act"><div class="hariai-console-head"><strong>${escapeHtml(headline)}</strong><small>質問と指示はメニューからだけ選べます</small></div>
-    ${questionList ? `<p class="hariai-step"><b>Q</b>質問</p><div class="hariai-right-list">${questionList}</div>` : ""}
-    ${instructionList ? `<p class="hariai-step"><b>!</b>指示</p><div class="hariai-right-list">${instructionList}</div>` : ""}
+    ${tabs}
+    ${questionList && tab === "question" ? `${both ? "" : '<p class="hariai-step"><b>Q</b>質問</p>'}<div class="hariai-right-list">${questionList}</div>` : ""}
+    ${instructionList && tab === "instruction" ? `${both ? "" : '<p class="hariai-step"><b>!</b>指示</p>'}<div class="hariai-right-list">${instructionList}</div>` : ""}
     ${extra}
     <label class="field-label">味付けのひとこと（任意・${HARIAI_FLAVOR_MAX}文字まで）<input class="text-input" id="hariaiFlavor" maxlength="${HARIAI_FLAVOR_MAX}" value="${escapeHtml(drafts.flavor)}" autocomplete="off" /></label>
     <div class="hariai-actions"><button class="button button-ghost" type="button" data-hariai-right-skip ${state.battleBusy ? "disabled" : ""}>今回は使わない</button>
@@ -1988,11 +2197,27 @@ function renderHariaiFinishConsole(pending) {
 function renderHariaiReadingMemo() {
   const opponent = getOpponent();
   const memo = hariaiReadingMemo(state.replay, state.uid);
-  return `<section class="hariai-memo"><h2>読みメモ</h2><p>${escapeHtml(opponent.name)}（${escapeHtml(personaLabel(opponent))}）の弱点候補</p>
-    ${memo.map((entry) => `<article class="${entry.weakness ? "is-weakness" : entry.bluff ? "is-bluff" : ""}"><strong>${escapeHtml(opponent.clues[entry.index])}</strong>
-      <span>${entry.weakness ? "本命（看破済み）" : entry.bluff ? "ブラフ確定" : entry.scores.length ? `狙った${entry.scores.length}回・平均${entry.average}点` : "まだ狙っていない"}</span>
-      ${entry.scores.length ? `<small>${entry.scores.map((score) => `#${score.slot}：${score.score}点`).join("　")}</small>` : ""}
-      ${entry.answers.length ? `<small>「どっち？」で${entry.answers.length}回選ばれた</small>` : ""}</article>`).join("")}</section>`;
+  const me = state.replay?.players?.[state.uid];
+  const myPosts = (state.replay?.slots || []).filter((slot) => slot.kind === "post" && slot.by === state.uid).length;
+  let breakNote = `看破は1試合1回。${HARIAI_BREAK_MIN_POSTS}手以上貼ると宣言できます。`;
+  if (me?.breakResult === "hit") breakNote = "看破は成功しました。";
+  else if (me?.breakResult === "miss") breakNote = "看破は外れました（1試合1回）。";
+  else if (me?.breakPassed) breakNote = "看破は見送りました。";
+  else if (myPosts >= HARIAI_BREAK_MIN_POSTS) breakNote = `看破は1試合1回。${HARIAI_BREAK_MIN_POSTS}手以上貼ったので宣言できます。`;
+  const status = (entry) => entry.weakness ? "本命（看破済み）" : entry.bluff ? "ブラフ確定" : entry.scores.length ? `平均 ${entry.average}` : "まだ狙っていない";
+  const digest = memo.map((entry) => `${opponent.clues[entry.index]} ${entry.weakness ? "本命" : entry.bluff ? "ブラフ" : entry.scores.length ? entry.average : "—"}`).join(" · ");
+  const rows = memo.map((entry) => {
+    const hot = !entry.weakness && !entry.bluff && entry.scores.length && entry.average >= HARIAI_BAND_QUESTION;
+    return `<li class="${entry.weakness ? "is-weakness" : entry.bluff ? "is-bluff" : hot ? "is-hot" : ""}">
+      <strong>${escapeHtml(opponent.clues[entry.index])}</strong>
+      <span class="hariai-memo-scores">${entry.scores.length ? `<span class="ha-sr">狙った時の点数：</span>${entry.scores.map((score) => `<b>${score.score}</b>`).join("")}` : ""}</span>
+      <em>${escapeHtml(status(entry))}</em>
+      ${entry.answers.length ? `<small>「どっち？」で${entry.answers.length}回選ばれた</small>` : ""}</li>`;
+  }).join("");
+  return `<details class="hariai-memo" data-hariai-memo${hariaiMemoOpen ? " open" : ""}>
+    <summary><span class="hariai-memo-title">読みメモ</span><small>${escapeHtml(opponent.name)}（${escapeHtml(personaLabel(opponent))}）の弱点候補</small><span class="hariai-memo-digest">${escapeHtml(digest)}</span></summary>
+    <ol class="hariai-memo-page">${rows}</ol>
+    <p class="hariai-memo-note">${escapeHtml(breakNote)}</p></details>`;
 }
 
 function renderHariaiSelfCard() {
@@ -2097,6 +2322,18 @@ function bindHariaiBattleEvents() {
   const on = (selector, type, handler) => app.querySelectorAll(selector).forEach((element) => element.addEventListener(type, handler));
   const run = (action) => () => action().catch(handleRecoverableError);
   on("[data-hariai-tab]", "click", (event) => { state.drafts.consoleTab = event.currentTarget.dataset.hariaiTab; render(); });
+  on("[data-hariai-memo]", "toggle", (event) => { hariaiMemoOpen = event.currentTarget.open; });
+  on("[data-hariai-right-tab]", "click", (event) => {
+    const tab = event.currentTarget.dataset.hariaiRightTab;
+    state.drafts.rightTab = tab;
+    // 別のタブで選んでいた項目は外して、送る内容と見えている一覧をそろえる。
+    if (state.drafts.rightKind && state.drafts.rightKind !== tab) {
+      state.drafts.rightKind = "";
+      state.drafts.rightId = "";
+    }
+    render();
+    document.querySelector(`[data-hariai-right-tab="${tab}"]`)?.focus({ preventScroll: true });
+  });
   on("[data-hariai-card]", "click", (event) => { state.drafts.cardId = event.currentTarget.dataset.hariaiCard; render(); });
   on('input[name="hariaiTarget"]', "change", (event) => { state.drafts.target = Number(event.currentTarget.value); });
   on("#hariaiCaption", "input", (event) => {
@@ -2853,7 +3090,8 @@ function renderBattleHud() {
   if (state.players.length !== 2) return "";
   const replay = state.replay;
   const pending = replay?.pending;
-  const turnLabel = replay?.outcome ? "決着" : pending ? (pending.actor === state.uid ? "あなたの番" : "相手の番") : "準備中";
+  const comboTurn = pending?.stage === "act" && pending.combo ? "・連投中" : "";
+  const turnLabel = replay?.outcome ? "決着" : pending ? `${pending.actor === state.uid ? "あなたの番" : "相手の番"}${comboTurn}` : "準備中";
   return `<div class="round-topbar strategy-hud hariai-hud">${renderHudPlayer(0)}<div class="round-badge"><small>SLOT</small><strong>${Number(pending?.slot || replay?.slots?.length || 0)}</strong><span class="hariai-turn-label">${turnLabel}</span></div>${renderHudPlayer(1)}</div>
     <div class="online-room-strip"><span>STRATEGY ROOM ${escapeHtml(state.roomId.slice(-8).toUpperCase())}</span><span class="connection-pill ${state.channelReady ? "connected" : ""}">${state.channelReady ? "● P2P接続中" : "○ P2P接続待ち"}</span>
       <span class="connection-pill ${state.opponentOnline ? "connected" : "warning"}">${state.opponentOnline ? "● 相手オンライン" : "○ 相手の接続切れ"}</span>

@@ -34,6 +34,32 @@
   --vs-line: rgba(230, 193, 122, 0.24);
   --vs-line-soft: rgba(248, 238, 242, 0.1);
 
+  /* 貼り合い（DMの密室 × 採点メーター）。トップ・通常1on1・戦略型1on1で共通に使う。 */
+  --ha-font-display: "Dela Gothic One", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --ha-font-memo: "Yomogi", "Hiragino Maru Gothic ProN", "Yu Gothic UI", sans-serif;
+  --ha-ground: #0b0710;
+  --ha-surface: #140d18;
+  --ha-raised: #1f1423;
+  --ha-bubble-mine: #8a1a45;
+  --ha-bubble-theirs: #2c1b2f;
+  --ha-line: rgba(248, 238, 242, 0.08);
+  --ha-ink: #1a0710;
+  --ha-hatch: repeating-linear-gradient(135deg, #251829 0 12px, #1d1222 12px 24px);
+  --ha-hatch-mine: repeating-linear-gradient(135deg, #3a1428 0 12px, #2e0f20 12px 24px);
+  /* 通常1on1の1〜10点。リアクションの帯（1〜6／7〜8／9〜10）と同じ区切り。 */
+  --ha-band-low: #8d7a93;
+  --ha-band-mid: #e6c17a;
+  --ha-band-high: #ff3f86;
+  /* 戦略型の100点。80で質問、85で指示、90で連投。 */
+  --ha-zone-floor: #2c1b2f;
+  --ha-zone-none: #45304b;
+  --ha-zone-question: #6d55d6;
+  --ha-zone-instruction: #e6c17a;
+  --ha-zone-combo: #ff3f86;
+  --ha-icon-cards: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><rect x='3' y='7' width='11' height='14' rx='2'/><path d='M8 3h11a2 2 0 0 1 2 2v13'/></svg>");
+  --ha-icon-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'><rect x='3' y='4' width='18' height='16' rx='3'/><circle cx='9' cy='10' r='2'/><path d='M21 16l-5-5-9 9'/></svg>");
+  --ha-icon-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12h14M13 6l6 6-6 6'/></svg>");
+
   --vs-font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
   --vs-font-accent: "Playfair Display", "Times New Roman", serif;
   --vs-font-number: "Oswald", "Arial Narrow", sans-serif;
@@ -302,7 +328,7 @@ a:focus-visible,
   from { opacity: 0; transform: translateY(12px); }
 }
 
-/* カードの裏面。トップの扇と対戦の公開前で使う。 */
+/* カードの裏面。通常1on1の公開前で使う。まだ開いていない画像の吹き出し。 */
 .vs-card-back {
   position: relative;
   display: grid;
@@ -310,61 +336,33 @@ a:focus-visible,
   max-width: 100%;
   overflow: hidden;
   place-items: center;
-  border-radius: 14px;
+  border-radius: 16px;
   container-type: inline-size;
-  background:
-    radial-gradient(circle at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.45) 100%),
-    repeating-linear-gradient(45deg, rgba(230, 193, 122, 0.11) 0 1px, transparent 1px 10px),
-    repeating-linear-gradient(-45deg, rgba(230, 193, 122, 0.11) 0 1px, transparent 1px 10px),
-    linear-gradient(160deg, #7a1640, #2a0718 72%);
-  box-shadow:
-    inset 0 0 0 1px rgba(230, 193, 122, 0.6),
-    inset 0 0 0 6px #2a0718,
-    inset 0 0 0 7px rgba(230, 193, 122, 0.35),
-    0 16px 34px -10px rgba(0, 0, 0, 0.8);
-}
-
-.vs-card-back::before {
-  position: absolute;
-  inset: 0;
-  content: "";
-  background: var(--vs-holo);
-  mix-blend-mode: overlay;
-  opacity: 0.2;
-  animation: vs-holo-spin 6s linear infinite;
-}
-
-.vs-card-back::after {
-  position: absolute;
-  inset: -40%;
-  content: "";
-  background: linear-gradient(115deg, transparent 42%, rgba(255, 235, 205, 0.22) 50%, transparent 58%);
-  animation: vs-back-sheen 3.6s var(--vs-ease-out) infinite;
-}
-
-@keyframes vs-back-sheen {
-  0% { transform: translateX(-45%); }
-  60%, 100% { transform: translateX(45%); }
+  background: var(--ha-hatch);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
 }
 
 .vs-card-emblem {
-  position: relative;
-  z-index: 1;
   display: grid;
-  width: 46%;
+  width: 42%;
   aspect-ratio: 1;
   place-items: center;
-  border-radius: 50%;
-  color: transparent;
-  background: var(--vs-foil);
-  -webkit-background-clip: text;
-  background-clip: text;
-  font: 800 24cqw/1 var(--vs-font-display);
-  box-shadow:
-    inset 0 0 0 1px rgba(230, 193, 122, 0.8),
-    0 0 0 5px rgba(42, 7, 24, 0.9),
-    0 0 0 6px rgba(230, 193, 122, 0.35),
-    0 0 24px rgba(255, 63, 134, 0.3);
+  border-radius: 30%;
+  color: var(--vs-rose);
+  background: rgba(255, 63, 134, 0.12);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 63, 134, 0.5);
+  font: 400 22cqw/1 var(--ha-font-display);
+}
+
+/* 読み上げだけに残す文字 */
+.ha-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* ダイアログとトースト */
@@ -379,13 +377,279 @@ a:focus-visible,
   background: rgba(31, 20, 35, 0.97);
 }
 
+/* ---------- 貼り合いの部品（吹き出し・メーター） ---------- */
+
+/* アイコンは吹き出しのまとまりの先頭にそろえる */
+.ha-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ha-msg.is-mine {
+  justify-content: flex-end;
+}
+
+.ha-msg-body {
+  display: flex;
+  min-width: 0;
+  max-width: min(80%, 340px);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.ha-msg.is-mine .ha-msg-body {
+  align-items: flex-end;
+}
+
+.ha-avatar {
+  display: grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1.5px solid var(--vs-violet);
+  border-radius: 50%;
+  color: #d6c8ff;
+  background: var(--ha-bubble-theirs);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ha-bubble {
+  display: inline-block;
+  max-width: 100%;
+  padding: 9px 13px;
+  border-radius: 16px 16px 16px 4px;
+  color: var(--vs-pearl);
+  background: var(--ha-bubble-theirs);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ha-msg.is-mine .ha-bubble,
+.ha-bubble.is-mine {
+  border-radius: 16px 16px 4px 16px;
+  background: var(--ha-bubble-mine);
+}
+
+.ha-photo {
+  display: flex;
+  width: 168px;
+  aspect-ratio: 4 / 3;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 16px 16px 16px 4px;
+  color: var(--vs-mist);
+  background: var(--ha-hatch);
+  font-size: 0.75rem;
+}
+
+.ha-photo i {
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: var(--ha-icon-image) center / contain no-repeat;
+  mask: var(--ha-icon-image) center / contain no-repeat;
+}
+
+.ha-score-bubble {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ha-score-number {
+  flex: none;
+  font: 600 1.6rem/1 var(--vs-font-number);
+  font-variant-numeric: tabular-nums;
+}
+
+.ha-score-number small {
+  margin-left: 2px;
+  font-size: 0.8rem;
+}
+
+/* 1〜10点のメーター。点数までを帯の色で塗る。 */
+.ha-meter10 {
+  display: grid;
+  width: 190px;
+  max-width: 100%;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.ha-meter10 i {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ha-bubble-theirs);
+}
+
+.ha-meter10 i.is-on.is-low { background: var(--ha-band-low); }
+.ha-meter10 i.is-on.is-mid { background: var(--ha-band-mid); }
+.ha-meter10 i.is-on.is-high { background: var(--ha-band-high); }
+
+/* 100点の帯の早見。〜70は短く、70〜100を広く見せる。 */
+.ha-zones {
+  display: flex;
+  gap: 3px;
+  font-style: normal;
+}
+
+.ha-zones b {
+  --zone: var(--ha-zone-none);
+  display: grid;
+  min-width: 0;
+  flex: 10 1 0;
+  gap: 5px;
+  color: var(--vs-mist);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.ha-zones b::before {
+  height: 10px;
+  border-radius: 3px;
+  content: "";
+  background: var(--zone);
+}
+
+.ha-zones .is-floor {
+  --zone: var(--ha-zone-floor);
+  flex: 0 0 26px;
+}
+
+.ha-zones .is-question {
+  --zone: var(--ha-zone-question);
+  flex-grow: 5;
+  color: #c9bcff;
+}
+
+.ha-zones .is-instruction {
+  --zone: var(--ha-zone-instruction);
+  flex-grow: 5;
+  color: var(--vs-gold);
+}
+
+.ha-zones .is-combo {
+  --zone: var(--ha-zone-combo);
+  color: var(--vs-rose-soft);
+}
+
+/* 70〜100点のメーター。--score-pos（0〜1）の位置に目印を立てる。 */
+.ha-meter100 {
+  display: grid;
+  width: 230px;
+  max-width: 100%;
+  gap: 3px;
+}
+
+.ha-meter100-bar {
+  position: relative;
+  display: flex;
+  height: 16px;
+  align-items: center;
+  gap: 2px;
+}
+
+.ha-meter100-bar i {
+  height: 8px;
+  flex: 10 1 0;
+  border-radius: 2px;
+  background: var(--ha-zone-none);
+}
+
+.ha-meter100-bar i:first-child {
+  height: 4px;
+  flex: 0 0 18px;
+  background: var(--ha-zone-floor);
+}
+
+.ha-meter100-bar i:nth-child(3) { flex-grow: 5; background: var(--ha-zone-question); }
+.ha-meter100-bar i:nth-child(4) { flex-grow: 5; background: var(--ha-zone-instruction); }
+.ha-meter100-bar i:nth-child(5) { background: var(--ha-zone-combo); }
+
+.ha-meter100-bar b {
+  position: absolute;
+  top: 0;
+  left: calc(20px + (100% - 20px) * var(--score-pos, 0) - 2px);
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--vs-pearl);
+  box-shadow: 0 0 0 2px var(--meter-ring, var(--ha-bubble-theirs));
+}
+
+/* 70点未満は、左の短い区間（0〜70）の中に目印を置く */
+.ha-meter100.is-below .ha-meter100-bar b {
+  left: calc(18px * var(--score-pos, 0) - 2px);
+}
+
+.ha-meter100-scale {
+  display: flex;
+  gap: 2px;
+  color: var(--vs-mist);
+  font: 500 0.62rem/1 var(--vs-font-number);
+}
+
+.ha-meter100-scale span {
+  flex: 10 1 0;
+}
+
+.ha-meter100-scale span:first-child {
+  flex: 0 0 18px;
+}
+
+.ha-meter100-scale span:nth-child(3),
+.ha-meter100-scale span:nth-child(4) {
+  flex-grow: 5;
+}
+
+.ha-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--vs-mist);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ha-divider::before,
+.ha-divider::after {
+  height: 1px;
+  flex: 1 1 0;
+  content: "";
+  background: var(--vs-line-soft);
+}
+
+.ha-chip {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 13px;
+  color: var(--vs-mist);
+  background: var(--ha-raised);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
 /* ---------- トップページ ---------- */
 
 .hero.vl-landing {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 18px;
+  gap: 22px;
   align-items: start;
   padding-bottom: 12px;
 }
@@ -404,202 +668,61 @@ a:focus-visible,
   margin: 0;
 }
 
-.vl-stage {
-  position: relative;
-  isolation: isolate;
-  height: 420px;
-  overflow: hidden;
-  border-radius: 28px;
-  background:
-    var(--vs-grain) 0 0 / 160px 160px,
-    radial-gradient(80% 50% at 50% 100%, rgba(92, 15, 46, 0.6), transparent 70%),
-    var(--vs-night-0);
-  box-shadow: inset 0 0 0 1px var(--vs-line);
-}
-
-.vl-curtain {
-  position: absolute;
-  z-index: 0;
-  top: 0;
-  bottom: 0;
-  width: 26%;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(7, 5, 10, 0) 35%, rgba(7, 5, 10, 0.92)),
-    repeating-linear-gradient(90deg, #240616 0, #4a0e2c 10px, #6b1639 15px, #3a0a24 22px, #240616 32px);
-}
-
-.vl-curtain-left {
-  left: 0;
-  -webkit-mask: linear-gradient(90deg, #000 45%, transparent);
-  mask: linear-gradient(90deg, #000 45%, transparent);
-}
-
-.vl-curtain-right {
-  right: 0;
-  -webkit-mask: linear-gradient(270deg, #000 45%, transparent);
-  mask: linear-gradient(270deg, #000 45%, transparent);
-}
-
-.vl-valance {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 40px;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 50% 0, #5a1133 17px, transparent 18px) 0 10px / 38px 26px repeat-x,
-    radial-gradient(circle at 50% 0, transparent 16.5px, rgba(230, 193, 122, 0.75) 17.5px, transparent 19px) 0 10px / 38px 26px repeat-x,
-    linear-gradient(#3b0a22, #3b0a22) 0 0 / 100% 11px no-repeat,
-    linear-gradient(rgba(230, 193, 122, 0.6), rgba(230, 193, 122, 0.6)) 0 10px / 100% 1px no-repeat;
-}
-
-.vl-spotlight {
-  position: absolute;
-  z-index: 1;
-  top: 16px;
-  left: 50%;
-  width: 400px;
-  height: 460px;
-  margin-left: -200px;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 236, 205, 0.3), rgba(255, 160, 200, 0.08) 65%, transparent 92%);
-  clip-path: polygon(43% 0, 57% 0, 100% 100%, 0 100%);
-  filter: blur(5px);
-  transform-origin: 50% 0;
-  animation: vl-spot-in 900ms var(--vs-ease-out) both;
-}
-
-@keyframes vl-spot-in {
-  from { opacity: 0; transform: scaleY(0.2); }
-}
-
-.vl-floor {
-  position: absolute;
-  z-index: 1;
-  bottom: 40px;
-  left: 50%;
-  width: 360px;
-  height: 80px;
-  margin-left: -180px;
-  border-radius: 50%;
-  pointer-events: none;
-  background: radial-gradient(closest-side, rgba(255, 210, 170, 0.28), transparent);
-  animation: vs-fade-in 900ms 200ms both;
-}
-
-.vl-dust {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  pointer-events: none;
-}
-
-.vl-dust i {
-  position: absolute;
-  bottom: 30px;
-  left: var(--x);
-  width: var(--s);
-  height: var(--s);
-  border-radius: 50%;
-  opacity: 0;
-  background: var(--vs-gold-hi);
-  box-shadow: 0 0 6px var(--vs-gold);
-  animation: vl-rise var(--t) linear var(--d) infinite;
-}
-
-@keyframes vl-rise {
-  0% { opacity: 0; transform: translateY(0); }
-  15% { opacity: 0.8; }
-  100% { opacity: 0; transform: translateY(-400px); }
+.vl-hero {
+  display: grid;
+  gap: 20px;
+  padding: 8px 2px 0;
 }
 
 .vl-copy {
-  position: relative;
-  z-index: 4;
-  padding: 58px 16px 0;
-  text-align: center;
+  display: grid;
+  gap: 14px;
+  animation: vs-fade-up 500ms var(--vs-ease-out) both;
 }
 
 .vl-eyebrow {
   margin: 0;
-  color: var(--vs-gold);
-  font: italic 700 0.78rem/1 var(--vs-font-accent);
-  letter-spacing: 0.34em;
-  animation: vs-fade-in 600ms 300ms both;
+  color: var(--vs-rose-soft);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
 }
 
 .hero.vl-landing .vl-title {
-  display: grid;
   max-width: none;
-  justify-items: center;
-  gap: 6px;
-  margin: 12px 0 0;
-  font-size: inherit;
-  font-weight: inherit;
-  letter-spacing: normal;
-  line-height: 1;
-}
-
-.vl-title-text {
-  color: transparent;
-  background: var(--vs-foil);
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  font: 800 clamp(4.2rem, 17vw, 6.6rem)/1.05 var(--vs-font-display);
-  letter-spacing: 0.05em;
-  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 0 26px rgba(255, 63, 134, 0.3));
-  animation: vs-fade-up 700ms var(--vs-ease-out) 200ms both, vs-foil-sweep 6s ease-in-out 600ms infinite;
-}
-
-.vl-tagline {
-  color: var(--vs-gold-hi);
-  font: italic 700 clamp(1rem, 4.3vw, 1.2rem)/1.3 var(--vs-font-accent);
-  letter-spacing: 0.02em;
-  opacity: 0.9;
+  margin: 0;
+  color: var(--vs-pearl);
+  font: 400 clamp(2.05rem, 9vw, 2.9rem)/1.28 var(--ha-font-display);
+  letter-spacing: 0.01em;
 }
 
 .vl-lead {
-  margin: 10px 0 0;
+  margin: 0;
   color: var(--vs-mist);
-  font-size: 0.84rem;
+  font-size: 0.9rem;
+  line-height: 1.75;
 }
 
-.vl-fan {
-  position: absolute;
-  z-index: 3;
-  bottom: 70px;
-  left: 50%;
-  width: 0;
-  height: 0;
+.vl-hero-thread {
+  display: grid;
+  gap: 12px;
+  padding: 16px 14px;
+  border-radius: 22px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--ha-line);
 }
 
-.vl-fan-card {
-  position: absolute;
-  bottom: 0;
-  left: -50px;
-  width: 100px;
-  transform-origin: 50% 150%;
-  transform: translateY(var(--y)) rotate(var(--r));
-  animation: vl-fan-out 700ms var(--vs-ease-out) calc(200ms + var(--i) * 70ms) both;
+.vl-hero-thread .ha-msg.is-mine {
+  animation: vs-fade-up 500ms var(--vs-ease-out) 350ms both;
 }
 
-@keyframes vl-fan-out {
-  from { opacity: 0; transform: translateY(90px) rotate(0deg); }
-}
-
-/* 通常型1on1の入口とモードタイル */
+/* 通常型1on1の入口 */
 .vl-landing .hero-actions {
   max-width: none;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
-  margin: -64px 0 0;
-  position: relative;
-  z-index: 5;
+  margin: 0;
   padding-inline: 2px;
 }
 
@@ -608,25 +731,22 @@ a:focus-visible,
   grid-column: 1 / -1;
   display: grid;
   justify-items: start;
-  gap: 4px;
+  gap: 3px;
   min-height: 0;
-  padding: 16px 52px 15px 20px;
+  padding: 14px 56px 14px 20px;
   border: 0;
-  border-radius: 22px;
+  border-radius: 18px;
   cursor: pointer;
-  color: #fff;
+  color: var(--ha-ink);
   text-align: left;
-  background: linear-gradient(135deg, #ff6fa3 0%, #ea2f76 45%, #9c1047 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 0 0 1px rgba(255, 220, 232, 0.22),
-    0 0 0 1px rgba(230, 193, 122, 0.5),
-    0 14px 34px -8px rgba(255, 63, 134, 0.65);
-  transition: transform 160ms var(--vs-ease-out);
+  background: var(--vs-rose);
+  box-shadow: 0 12px 28px -12px rgba(255, 63, 134, 0.75);
+  transition: transform 160ms var(--vs-ease-out), background-color 160ms ease;
 }
 
 .vl-main-button:hover {
-  transform: translateY(-2px);
+  background: #ff5a97;
+  transform: translateY(-1px);
 }
 
 .vl-main-button:active {
@@ -634,25 +754,28 @@ a:focus-visible,
 }
 
 .vl-main-button small {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 800;
-  letter-spacing: 0.14em;
-  opacity: 0.92;
+  letter-spacing: 0.04em;
+  opacity: 0.82;
 }
 
 .vl-main-button > span {
-  font: 800 1.6rem/1.25 var(--vs-font-display);
-  letter-spacing: 0.04em;
+  font: 400 1.35rem/1.3 var(--ha-font-display);
+  letter-spacing: 0.02em;
 }
 
 .vl-main-button::before {
   position: absolute;
   top: 50%;
   right: 20px;
-  content: "›";
-  font: 300 2.5rem/1 var(--vs-font-accent);
-  opacity: 0.9;
-  transform: translateY(-52%);
+  width: 24px;
+  height: 24px;
+  content: "";
+  background: currentColor;
+  -webkit-mask: var(--ha-icon-arrow) center / contain no-repeat;
+  mask: var(--ha-icon-arrow) center / contain no-repeat;
+  transform: translateY(-50%);
 }
 
 .vl-live {
@@ -660,7 +783,7 @@ a:focus-visible,
   align-items: center;
   gap: 7px;
   margin-top: 2px;
-  font: 500 0.78rem/1.2 var(--vs-font-number);
+  font: 500 0.8rem/1.2 var(--vs-font-number);
   font-style: normal;
   letter-spacing: 0.04em;
 }
@@ -674,58 +797,294 @@ a:focus-visible,
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--ha-ink);
   animation: vl-live-pulse 1.8s ease-out infinite;
 }
 
 @keyframes vl-live-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
-  100% { box-shadow: 0 0 0 9px rgba(255, 255, 255, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(26, 7, 16, 0.6); }
+  100% { box-shadow: 0 0 0 9px rgba(26, 7, 16, 0); }
 }
 
 .vl-rule {
   grid-column: 1 / -1;
-  margin: 0 0 8px;
+  margin: 0;
   color: var(--vs-mist);
-  font-size: 0.74rem;
+  font-size: 0.76rem;
   text-align: center;
 }
 
-.vl-tile,
-.vl-landing #freeTableButton.vl-tile {
+/* いま入れる卓。募集の札をタイムラインのように縦に並べる。 */
+.vl-board {
+  display: grid;
+  gap: 14px;
+}
+
+.vl-board-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.vl-board-head h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.vl-board-head span {
+  color: var(--vs-mist);
+  font-size: 0.75rem;
+}
+
+.vl-board-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vl-board-item {
+  --post-accent: 255, 63, 134;
+  --post-icon: var(--ha-icon-cards);
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.vl-board-item.is-strategy {
+  --post-accent: 230, 193, 122;
+  --post-icon: var(--vs-icon-target);
+}
+
+.vl-board-item.is-free {
+  --post-accent: 111, 227, 207;
+  --post-icon: var(--vs-icon-cup);
+}
+
+.vl-board-item::before {
+  width: 10px;
+  height: 10px;
+  margin-top: 22px;
+  justify-self: center;
+  border-radius: 50%;
+  content: "";
+  background: rgb(var(--post-accent));
+  box-shadow: 0 0 0 4px rgba(var(--post-accent), 0.18);
+}
+
+.vl-board-item::after {
+  position: absolute;
+  top: 40px;
+  bottom: -12px;
+  left: 6px;
+  width: 2px;
+  content: "";
+  background: var(--vs-line-soft);
+}
+
+.vl-board-item:last-child::after {
+  display: none;
+}
+
+.vl-post {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon title tag"
+    "icon sub tag"
+    "text text text"
+    "zones zones zones"
+    "counts counts go";
+  align-items: center;
+  column-gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 16px;
+  border: 0;
+  border-radius: 20px;
+  cursor: pointer;
+  color: var(--vs-pearl);
+  text-align: left;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px rgba(var(--post-accent), 0.22);
+  transition: box-shadow 160ms ease, transform 160ms var(--vs-ease-out);
+}
+
+.vl-post:hover {
+  box-shadow: inset 0 0 0 1px rgba(var(--post-accent), 0.6);
+  transform: translateY(-1px);
+}
+
+/* free-table.css の入口ボタン（IDで指定）の色を、札の見た目へ戻す */
+.vl-landing #freeTableButton.vl-post {
+  border: 0;
+  color: var(--vs-pearl);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px rgba(var(--post-accent), 0.22);
+}
+
+.vl-landing #freeTableButton.vl-post:hover {
+  box-shadow: inset 0 0 0 1px rgba(var(--post-accent), 0.6);
+  transform: translateY(-1px);
+}
+
+.vl-landing #freeTableButton.vl-post.is-lit {
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px rgba(111, 227, 207, 0.7), 0 0 26px rgba(111, 227, 207, 0.16);
+}
+
+.vl-post-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  grid-area: icon;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(var(--post-accent), 0.14);
+}
+
+.vl-post-icon::before {
+  width: 22px;
+  height: 22px;
+  content: "";
+  background: rgb(var(--post-accent));
+  -webkit-mask: var(--post-icon) center / contain no-repeat;
+  mask: var(--post-icon) center / contain no-repeat;
+}
+
+.vl-post-title {
+  grid-area: title;
+  align-self: end;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.vl-post-sub {
+  grid-area: sub;
+  align-self: start;
+  margin-top: 2px;
+  color: var(--vs-mist);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.vl-post-tag {
+  grid-area: tag;
+  padding: 4px 9px;
+  border-radius: 8px;
+  color: rgb(var(--post-accent));
+  background: var(--ha-raised);
+  font: 500 0.8rem/1.2 var(--vs-font-number);
+  font-style: normal;
+}
+
+.vl-board-item.is-solo .vl-post-tag {
+  color: var(--vs-pearl);
+}
+
+.vl-post-text {
+  grid-area: text;
+  margin-top: 12px;
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+
+.vl-post .ha-zones {
+  grid-area: zones;
+  margin-top: 12px;
+}
+
+.vl-post-counts {
+  grid-area: counts;
+  margin-top: 14px;
+  color: var(--vs-mist);
+  font-size: 0.8rem;
+  font-style: normal;
+}
+
+.vl-post-counts b {
+  color: var(--vs-pearl);
+  font: 600 0.95rem/1 var(--vs-font-number);
+  font-variant-numeric: tabular-nums;
+}
+
+.vl-post-go {
+  display: inline-flex;
+  min-height: 40px;
+  grid-area: go;
+  align-items: center;
+  margin-top: 14px;
+  padding: 0 14px;
+  border-radius: 12px;
+  color: rgb(var(--post-accent));
+  box-shadow: inset 0 0 0 1.5px rgb(var(--post-accent));
+  font-size: 0.85rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.vl-board-item.is-solo .vl-post-go {
+  color: var(--vs-rose-soft);
+}
+
+.vl-post:hover .vl-post-go {
+  background: rgba(var(--post-accent), 0.12);
+}
+
+/* ほかの遊び方 */
+.vl-others {
+  display: grid;
+  gap: 12px;
+}
+
+.vl-others h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.vl-others-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.vl-tile {
   --tile-accent: 168, 139, 255;
   --tile-icon: var(--vs-icon-target);
   position: relative;
   display: flex;
-  min-height: 124px;
+  min-height: 96px;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-end;
-  gap: 5px;
-  padding: 44px 13px 13px;
+  gap: 4px;
+  padding: 42px 14px 12px;
   border: 0;
-  border-radius: 18px;
+  border-radius: 16px;
   cursor: pointer;
   color: var(--vs-pearl);
   text-align: left;
-  background: linear-gradient(165deg, rgba(var(--tile-accent), 0.18), rgba(22, 14, 26, 0.94) 62%);
-  box-shadow: inset 0 0 0 1px rgba(var(--tile-accent), 0.32);
-  transition: transform 160ms var(--vs-ease-out), box-shadow 160ms ease;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--ha-line);
+  transition: box-shadow 160ms ease;
 }
 
-.vl-tile:hover,
-.vl-landing #freeTableButton.vl-tile:hover {
-  transform: translateY(-2px);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px rgba(var(--tile-accent), 0.6);
+.vl-tile:hover {
+  box-shadow: inset 0 0 0 1px rgba(var(--tile-accent), 0.5);
 }
 
 .vl-tile::before {
   position: absolute;
-  top: 13px;
-  left: 13px;
-  width: 24px;
-  height: 24px;
+  top: 14px;
+  left: 14px;
+  width: 20px;
+  height: 20px;
   content: "";
   background: rgb(var(--tile-accent));
   -webkit-mask: var(--tile-icon) center / contain no-repeat;
@@ -735,37 +1094,21 @@ a:focus-visible,
 .vl-tile small {
   order: 2;
   color: var(--vs-mist);
-  font-size: 0.68rem;
-  font-weight: 600;
-  line-height: 1.45;
-  letter-spacing: 0;
-  opacity: 1;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.5;
 }
 
 .vl-tile span {
   order: 1;
-  font: 800 0.98rem/1.3 var(--vs-font-display);
-  white-space: normal;
-}
-
-.vl-tile-strategy {
-  --tile-accent: 168, 139, 255;
-  --tile-icon: var(--vs-icon-target);
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .vl-tile-market {
   --tile-accent: 230, 193, 122;
   --tile-icon: var(--vs-icon-gem);
-}
-
-.vl-landing #freeTableButton.vl-tile {
-  --tile-accent: 111, 227, 207;
-  --tile-icon: var(--vs-icon-cup);
-}
-
-.vl-landing #freeTableButton.vl-tile.is-lit {
-  background: linear-gradient(165deg, rgba(111, 227, 207, 0.3), rgba(22, 14, 26, 0.94) 66%);
-  box-shadow: inset 0 0 0 1px rgba(111, 227, 207, 0.7), 0 0 26px rgba(111, 227, 207, 0.18);
 }
 
 .vl-tile-ai {
@@ -802,8 +1145,8 @@ a:focus-visible,
   border-radius: 14px;
   cursor: pointer;
   color: var(--vs-pearl);
-  background: rgba(255, 255, 255, 0.045);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--ha-line);
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.25;
@@ -814,14 +1157,18 @@ a:focus-visible,
   width: 22px;
   height: 22px;
   content: "";
-  background: var(--vs-gold);
+  background: var(--vs-mist);
   -webkit-mask: var(--tab-icon) center / contain no-repeat;
   mask: var(--tab-icon) center / contain no-repeat;
 }
 
 .vl-tab:hover {
-  color: var(--vs-gold-hi);
-  box-shadow: inset 0 0 0 1px var(--vs-line);
+  color: var(--vs-rose-soft);
+  box-shadow: inset 0 0 0 1px rgba(255, 63, 134, 0.4);
+}
+
+.vl-tab:hover::before {
+  background: var(--vs-rose-soft);
 }
 
 .vl-tab-mission { --tab-icon: var(--vs-icon-list); }
@@ -832,26 +1179,30 @@ a:focus-visible,
 .vl-section-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .vl-section-head > span {
-  color: var(--vs-gold);
-  font: italic 700 0.74rem/1 var(--vs-font-accent);
-  letter-spacing: 0.24em;
+  color: var(--vs-rose-soft);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .vl-section-head h2 {
   margin: 0;
-  font: 800 1.15rem/1.3 var(--vs-font-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.3;
 }
 
 .vl-list {
   overflow: hidden;
   border-radius: 18px;
-  background: var(--vs-night-2);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--ha-line);
 }
 
 .vl-row {
@@ -864,9 +1215,9 @@ a:focus-visible,
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
-  padding: 11px 40px 11px 50px;
+  padding: 11px 44px 11px 50px;
   border: 0;
-  border-bottom: 1px solid var(--vs-line-soft);
+  border-bottom: 1px solid var(--ha-line);
   cursor: pointer;
   color: var(--vs-pearl);
   background: transparent;
@@ -896,7 +1247,7 @@ a:focus-visible,
   width: 20px;
   height: 20px;
   content: "";
-  background: var(--vs-gold);
+  background: var(--vs-mist);
   -webkit-mask: var(--row-icon) center / contain no-repeat;
   mask: var(--row-icon) center / contain no-repeat;
   transform: translateY(-50%);
@@ -906,16 +1257,19 @@ a:focus-visible,
   position: absolute;
   top: 50%;
   right: 16px;
-  content: "›";
-  color: var(--vs-dim);
-  font: 300 1.6rem/1 var(--vs-font-accent);
-  transform: translateY(-54%);
+  width: 18px;
+  height: 18px;
+  content: "";
+  background: var(--vs-mist);
+  -webkit-mask: var(--ha-icon-arrow) center / contain no-repeat;
+  mask: var(--ha-icon-arrow) center / contain no-repeat;
+  transform: translateY(-50%);
 }
 
 .vl-row-achievement { --row-icon: var(--vs-icon-medal); }
 .vl-row-audio { --row-icon: var(--vs-icon-mic); }
 
-/* 既存の区画を夜の舞台へ */
+/* 既存の区画も、飾りのない夜の面へそろえる */
 .vl-landing .training-lights-card,
 .vl-landing .landing-community,
 .vl-landing .landing-flea,
@@ -926,35 +1280,25 @@ a:focus-visible,
 }
 
 .vl-landing .training-lights-card {
-  border-color: rgba(255, 138, 182, 0.3);
-  background:
-    radial-gradient(120% 90% at 0 0, rgba(255, 63, 134, 0.14), transparent 60%),
-    var(--vs-night-2);
+  border-color: rgba(255, 138, 182, 0.24);
+  background: var(--ha-surface);
 }
 
 .vl-landing .landing-community {
-  border-color: var(--vs-line);
-  background:
-    radial-gradient(120% 80% at 100% 0, rgba(255, 63, 134, 0.14), transparent 60%),
-    linear-gradient(160deg, #211424, #120b15);
+  border-color: var(--ha-line);
+  background: var(--ha-surface);
 }
 
 .vl-landing .landing-flea {
-  border-color: rgba(111, 227, 207, 0.25);
-  background:
-    radial-gradient(120% 80% at 0 0, rgba(111, 227, 207, 0.09), transparent 60%),
-    var(--vs-night-2);
-}
-
-.vl-landing .landing-flea h2 {
-  font-family: var(--vs-font-display);
+  border-color: rgba(111, 227, 207, 0.22);
+  background: var(--ha-surface);
 }
 
 .vl-live-board {
   padding: 18px;
   border-radius: 22px;
-  background: var(--vs-night-1);
-  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--ha-line);
 }
 
 .vl-live-board .mode-lobby-stats {
@@ -962,8 +1306,8 @@ a:focus-visible,
 }
 
 .vl-landing .lobby-mode-card {
-  border-color: var(--vs-line-soft);
-  background: var(--vs-night-2);
+  border-color: var(--ha-line);
+  background: var(--ha-raised);
 }
 
 .vl-landing .lobby-mode-card strong {
@@ -977,7 +1321,7 @@ a:focus-visible,
 }
 
 .vl-landing .lobby-mode-card.strategy .lobby-mode-head span {
-  color: var(--vs-violet);
+  color: var(--vs-gold);
 }
 
 .vl-landing .lobby-stats-refresh {
@@ -987,7 +1331,7 @@ a:focus-visible,
 .vl-safe {
   padding: 14px 16px;
   border-radius: 18px;
-  background: rgba(111, 227, 207, 0.05);
+  background: var(--ha-surface);
   box-shadow: inset 0 0 0 1px rgba(111, 227, 207, 0.2);
 }
 
@@ -1009,13 +1353,15 @@ a:focus-visible,
 .vl-safe summary b {
   width: 100%;
   color: var(--vs-pearl);
-  font: 800 0.95rem/1.4 var(--vs-font-display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1.4;
 }
 
 .vl-safe summary b::after {
   margin-left: 8px;
   content: "くわしく ›";
-  color: var(--vs-gold);
+  color: var(--vs-mint);
   font: 700 0.72rem/1 var(--vs-font-body);
 }
 
@@ -1043,7 +1389,7 @@ a:focus-visible,
 }
 
 /*
-  PC：舞台は全幅。入口（通常1on1・モード・メニュー）は中央の880px列にそろえる。
+  PC：入口（見出しと例・通常1on1・いま入れる卓・ほかの遊び方・メニュー）は中央の880px列にそろえる。
   残りの区画は左右の列に分け、それぞれ上から詰めて積む（行の高さをそろえないので隙間ができない）。
 */
 @media (min-width: 900px) {
@@ -1053,27 +1399,56 @@ a:focus-visible,
     margin-inline: auto;
   }
 
-  .hero.vl-landing > .vl-stage {
-    height: 460px;
-  }
-
-  .vl-copy {
-    padding-top: 74px;
-  }
-
+  .hero.vl-landing > .vl-hero,
   .hero.vl-landing > .hero-actions,
+  .hero.vl-landing > .vl-board,
+  .hero.vl-landing > .vl-others,
   .hero.vl-landing > .vl-tabbar {
     width: min(880px, 100%);
     margin-inline: auto;
   }
 
+  .hero.vl-landing > .vl-hero {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 36px;
+    padding-top: 24px;
+  }
+
   .hero.vl-landing > .hero-actions {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-top: -44px;
+    margin-top: 28px;
+  }
+
+  .hero.vl-landing > .vl-board {
+    margin-top: 36px;
+  }
+
+  /* いま入れる卓はPCでも1本のタイムライン。札の中で説明と帯を左右に並べる。 */
+  .vl-post {
+    grid-template-columns: 40px minmax(0, 1fr) minmax(0, 300px) auto;
+    grid-template-areas:
+      "icon title zones tag"
+      "icon sub zones tag"
+      "text text text text"
+      "counts counts counts go";
+    padding: 18px 20px;
+  }
+
+  .vl-post .ha-zones {
+    align-self: center;
+    margin-top: 0;
+  }
+
+  .hero.vl-landing > .vl-others {
+    margin-top: 32px;
+  }
+
+  .vl-others-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .hero.vl-landing > .vl-tabbar {
-    margin-top: 12px;
+    margin-top: 16px;
   }
 
   .hero.vl-landing > .training-lights-card,
@@ -1115,17 +1490,10 @@ a:focus-visible,
   white-space: nowrap;
 }
 
-/* スマホ：舞台は画面の端まで。タブは画面下に固定。 */
+/* スマホ：タブは画面下に固定。 */
 @media (max-width: 760px) {
   .hero.vl-landing {
     padding-block: 0 8px;
-  }
-
-  .hero.vl-landing > .vl-stage {
-    height: 400px;
-    margin: -26px -14px 0;
-    border-radius: 0;
-    box-shadow: none;
   }
 
   .site-header {
@@ -1154,14 +1522,6 @@ a:focus-visible,
     white-space: nowrap;
   }
 
-  .vl-copy {
-    padding-top: 50px;
-  }
-
-  .vl-fan {
-    bottom: 62px;
-  }
-
   .vl-tabbar {
     position: fixed;
     z-index: 25;
@@ -1170,10 +1530,10 @@ a:focus-visible,
     left: 0;
     gap: 0;
     padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
-    background: rgba(14, 9, 18, 0.84);
+    background: rgba(14, 9, 18, 0.9);
     -webkit-backdrop-filter: blur(20px) saturate(1.4);
     backdrop-filter: blur(20px) saturate(1.4);
-    box-shadow: 0 -1px 0 var(--vs-line);
+    box-shadow: 0 -1px 0 var(--ha-line);
   }
 
   .vl-tab {
@@ -1198,13 +1558,13 @@ a:focus-visible,
 
   .vl-tab:hover,
   .vl-tab:focus-visible {
-    color: var(--vs-gold-hi);
+    color: var(--vs-rose-soft);
     box-shadow: none;
   }
 
   .vl-tab:hover::before,
   .vl-tab:focus-visible::before {
-    background: var(--vs-gold-hi);
+    background: var(--vs-rose-soft);
   }
 
   body:has(.vl-landing) {
@@ -1223,32 +1583,25 @@ a:focus-visible,
 }
 
 @media (max-width: 360px) {
-  .vl-tile,
-  .vl-landing #freeTableButton.vl-tile {
-    min-height: 112px;
+  .vl-post {
+    padding: 14px;
+  }
+
+  .vl-post-counts {
+    font-size: 0.74rem;
   }
 
   .vl-main-button > span {
-    font-size: 1.4rem;
+    font-size: 1.2rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .vs-satin::after,
   .vs-foil-text,
-  .vs-card-back::before,
-  .vs-card-back::after,
-  .vl-spotlight,
-  .vl-floor,
-  .vl-dust i,
-  .vl-eyebrow,
-  .vl-title-text,
-  .vl-fan-card,
+  .vl-copy,
+  .vl-hero-thread .ha-msg.is-mine,
   .vl-live i {
     animation: none;
-  }
-
-  .vl-dust {
-    display: none;
   }
 }

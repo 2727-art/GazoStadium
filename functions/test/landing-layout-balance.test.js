@@ -20,13 +20,14 @@ test("desktop landing aligns the entrances to one column and stacks two gap-free
   assert.match(desktop, /\.hero\.vl-landing\s*\{[^}]*display:\s*flow-root;[^}]*max-width:\s*1120px;/s);
   assert.match(
     desktop,
-    /\.hero\.vl-landing > \.hero-actions,\s*\.hero\.vl-landing > \.vl-tabbar\s*\{[^}]*width:\s*min\(880px,\s*100%\);[^}]*margin-inline:\s*auto;/s,
-    "the main button, mode tiles, and menu row share one centered width",
+    /\.hero\.vl-landing > \.vl-hero,\s*\.hero\.vl-landing > \.hero-actions,\s*\.hero\.vl-landing > \.vl-board,\s*\.hero\.vl-landing > \.vl-others,\s*\.hero\.vl-landing > \.vl-tabbar\s*\{[^}]*width:\s*min\(880px,\s*100%\);[^}]*margin-inline:\s*auto;/s,
+    "the hero, main button, open tables, other modes, and menu row share one centered width",
   );
+  assert.doesNotMatch(desktop, /\.vl-board-list\s*\{/, "the open tables stay one timeline on desktop");
   assert.match(
     desktop,
-    /\.hero\.vl-landing > \.hero-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
-    "the six mode tiles fill two equal desktop rows",
+    /\.vl-others-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/s,
+    "the four other modes fill one desktop row",
   );
   assert.match(velvet, /\.vl-main-button\s*\{[^}]*grid-column:\s*1 \/ -1;/s, "normal 1on1 stays the widest entrance");
   // 左右の列は独立して上から積むので、隣の区画の高さで隙間ができない
@@ -45,7 +46,7 @@ test("mobile landing uses two-up mode tiles and a thumb-reach tab bar clear of t
   const velvet = read("velvet.css");
   const mobile = mediaBlock(velvet, "(max-width: 760px)");
 
-  assert.match(velvet, /\.vl-landing \.hero-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
+  assert.match(velvet, /\.vl-others-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
   assert.match(mobile, /\.vl-tabbar\s*\{[^}]*position:\s*fixed;[^}]*bottom:\s*0;[^}]*env\(safe-area-inset-bottom/s);
   assert.match(mobile, /body:has\(\.vl-landing\)\s*\{[^}]*padding-bottom:/s);
 });

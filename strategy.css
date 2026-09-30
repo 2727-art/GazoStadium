@@ -2643,29 +2643,81 @@
 .hariai-turn-label {
   display: block;
   margin-top: 4px;
-  color: var(--hariai-pink);
+  color: var(--vs-rose-soft);
   font-size: 0.66rem;
   font-weight: 900;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
 }
 
+/* ---------- 対戦画面：DMの密室 × 採点メーター ---------- */
+
+/* 見出し。理性は、あなた＝ミント・相手＝ローズの細い線 */
+.hariai-hud {
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+}
+
+.hariai-hud .hariai-reason-bar {
+  height: 8px;
+  border: 0;
+  background: var(--ha-bubble-theirs);
+}
+
+.hariai-hud .hp-fill,
+.hariai-hud .hud-player:last-child .hp-fill {
+  background: var(--vs-rose);
+  box-shadow: none;
+}
+
+.hariai-hud .hud-player.local-player .hp-fill {
+  background: var(--vs-mint);
+}
+
+/* 接続状態は小さな札を横に並べる（スマホでも縦に積まない） */
+.hariai-battle .online-room-strip {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--vs-mist);
+  font-size: 0.64rem;
+}
+
+.hariai-battle .online-room-strip .connection-pill,
+.hariai-battle .online-room-strip .avatar-visibility-toggle {
+  min-height: 26px;
+  padding: 3px 9px;
+  font-size: 0.64rem;
+}
+
+/* スマホは読みメモ → スレッド → 自分の秘密。PCはスレッドの右にメモと秘密を並べる。 */
 .hariai-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "memo" "main" "side";
+  gap: 14px;
   align-items: start;
 }
 
 .hariai-main {
   display: grid;
+  grid-area: main;
   gap: 16px;
   min-width: 0;
 }
 
 .hariai-side {
-  position: sticky;
-  top: 16px;
   display: grid;
+  grid-area: side;
   gap: 12px;
   min-width: 0;
 }
@@ -2680,88 +2732,60 @@
 
 .hariai-thread-empty {
   padding: 18px;
-  border: 1px dashed var(--line-bright);
-  border-radius: 14px;
-  color: var(--muted);
+  border-radius: 16px;
+  color: var(--vs-mist);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
   text-align: center;
 }
 
 .hariai-slot {
   display: grid;
   gap: 10px;
-  width: min(100%, 620px);
   min-width: 0;
-  padding: 14px;
-  border: 1px solid rgba(170, 131, 255, 0.3);
-  border-radius: 18px;
-  background: rgba(14, 17, 26, 0.86);
-}
-
-.hariai-slot.is-local {
-  justify-self: end;
-  border-color: rgba(255, 138, 170, 0.34);
-  background: linear-gradient(160deg, rgba(255, 138, 170, 0.08), rgba(14, 17, 26, 0.9) 45%);
-}
-
-.hariai-slot.is-opponent {
-  justify-self: start;
-}
-
-.hariai-slot header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  min-width: 0;
-}
-
-.hariai-slot header b {
-  overflow-wrap: anywhere;
-}
-
-.hariai-slot header small {
-  color: var(--muted);
-  font-size: 0.7rem;
 }
 
 .hariai-slot-no {
-  color: var(--muted);
-  font-size: 0.72rem;
+  margin-right: 6px;
+  color: var(--vs-pearl);
   font-weight: 900;
 }
 
-.hariai-target {
-  margin-left: auto;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: rgba(244, 201, 107, 0.12);
-  color: var(--strategy-gold);
-  font-size: 0.7rem;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.hariai-combo {
-  color: var(--hariai-pink);
-  font-size: 0.72rem;
+.hariai-slot-head .hariai-combo {
+  margin-left: 6px;
+  color: var(--vs-rose-soft);
   font-style: normal;
   font-weight: 900;
+}
+
+.hariai-thread .battle-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 0;
+  font-size: 0.7rem;
+  box-shadow: 0 0 0 1.5px var(--vs-violet);
 }
 
 .hariai-media {
   position: relative;
   display: grid;
+  width: min(62vw, 260px);
+  min-height: 120px;
   place-items: center;
   overflow: hidden;
-  min-height: 120px;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.35);
+  border-radius: 18px 18px 18px 4px;
+  background: var(--ha-hatch);
+}
+
+.ha-msg.is-mine .hariai-media {
+  border-radius: 18px 18px 4px 18px;
 }
 
 .hariai-media img {
   display: block;
   width: 100%;
-  max-height: 380px;
+  max-height: 340px;
   object-fit: contain;
 }
 
@@ -2770,7 +2794,8 @@
 }
 
 .hariai-media.is-loading {
-  color: var(--muted);
+  min-height: 160px;
+  color: var(--vs-mist);
   font-size: 0.8rem;
 }
 
@@ -2778,147 +2803,185 @@
   position: absolute;
   inset: 0;
   border: 0;
-  background: transparent;
-  color: var(--text);
-  font-weight: 900;
   cursor: pointer;
+  color: var(--vs-pearl);
+  background: transparent;
+  font-weight: 900;
 }
 
 .hariai-audio {
-  justify-self: start;
   padding: 6px 12px;
-  border: 1px solid var(--line-bright);
+  border: 1px solid var(--vs-line-soft);
   border-radius: 999px;
-  background: transparent;
-  color: var(--text);
-  font-size: 0.74rem;
   cursor: pointer;
+  color: var(--vs-pearl);
+  background: var(--ha-surface);
+  font-size: 0.74rem;
 }
 
 .hariai-caption {
   margin: 0;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-  font-size: 0.95rem;
-  line-height: 1.6;
+}
+
+.hariai-caption.is-break {
+  box-shadow: inset 0 0 0 1.5px var(--vs-gold);
+}
+
+.hariai-target {
+  max-width: 100%;
   overflow-wrap: anywhere;
 }
 
+.hariai-target::before {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  content: "";
+  background: currentColor;
+  -webkit-mask: var(--vs-icon-target) center / contain no-repeat;
+  mask: var(--vs-icon-target) center / contain no-repeat;
+}
+
+/* 点数は受け手の吹き出し。数字・ひとこと・70〜100のメーター */
 .hariai-score {
+  --meter-ring: var(--ha-bubble-theirs);
+  display: grid;
+  min-width: min(236px, 100%);
+  gap: 10px;
+}
+
+.ha-msg.is-mine .hariai-score {
+  --meter-ring: var(--ha-bubble-mine);
+}
+
+.hariai-score-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--line);
+  align-items: baseline;
+  gap: 4px 10px;
 }
 
-.hariai-score > strong {
-  font-size: 1.8rem;
-  line-height: 1;
+.hariai-score-head strong {
+  font: 600 1.9rem/1 var(--vs-font-number);
+  font-variant-numeric: tabular-nums;
 }
 
-.hariai-score > strong small {
+.hariai-score-head strong small {
   margin-left: 2px;
   font-size: 0.8rem;
 }
 
-.hariai-band {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 800;
+.hariai-score.band-question strong { color: #c9bcff; }
+.hariai-score.band-instruction strong { color: var(--vs-gold); }
+.hariai-score.band-combo strong { color: #ff8ab6; }
+
+.hariai-score .ha-meter100 {
+  width: 100%;
 }
 
-.band-question .hariai-band,
-.hariai-score-preview.band-question strong {
-  color: var(--cyan);
+.ha-msg.is-mine .ha-meter100-scale {
+  color: #f6d9e5;
 }
 
-.band-instruction .hariai-band,
-.hariai-score-preview.band-instruction strong {
-  color: var(--gold);
-}
-
-.band-combo .hariai-band,
-.band-combo > strong,
-.hariai-score-preview.band-combo strong {
-  color: var(--hariai-pink);
-}
-
-.hariai-damage {
-  color: var(--red-soft);
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.hariai-reply,
-.hariai-answer {
-  flex: 1 1 100%;
-  margin: 0;
+.hariai-reply {
   font-size: 0.88rem;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
-.hariai-reply b,
-.hariai-answer b {
-  margin-right: 8px;
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
 .hariai-reply.is-surrender {
-  color: var(--hariai-pink);
+  margin: 0;
+  color: var(--vs-rose-soft);
   font-weight: 800;
 }
 
-.hariai-answer.is-waiting {
-  color: var(--muted);
-}
-
-.hariai-right {
-  display: grid;
+.hariai-score-meta {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--strategy-violet);
-  border-radius: 0 12px 12px 0;
-  background: rgba(170, 131, 255, 0.07);
-}
-
-.hariai-right p {
   margin: 0;
-  overflow-wrap: anywhere;
 }
 
-.hariai-right > p > b {
-  margin-right: 8px;
-  color: var(--strategy-violet);
+.ha-msg.is-mine .hariai-score-meta {
+  justify-content: flex-end;
+}
+
+.hariai-band,
+.hariai-damage {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 24px;
+  align-items: center;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 12px;
+  color: var(--vs-mist);
+  background: var(--ha-raised);
   font-size: 0.72rem;
+  font-weight: 800;
 }
 
-.hariai-right.is-skipped {
+.band-question .hariai-band { color: #c9bcff; }
+.band-instruction .hariai-band { color: var(--vs-gold); }
+.band-combo .hariai-band { color: #ff8ab6; }
+
+.hariai-damage {
+  color: var(--vs-rose-soft);
+  background: rgba(255, 63, 134, 0.14);
+}
+
+/* 権利：攻め手の質問・指示と、受け手の答え */
+.hariai-right > b {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  color: #d6ccff;
+  background: rgba(109, 85, 214, 0.4);
+  font-size: 0.7rem;
+}
+
+.hariai-right.is-instruction > b {
+  color: var(--vs-gold);
+  background: rgba(230, 193, 122, 0.18);
+}
+
+.hariai-right.is-skipped,
+.hariai-answer.is-waiting {
+  justify-self: center;
   margin: 0;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.78rem;
 }
 
 .hariai-flavor {
   display: block;
-  color: var(--muted);
+  margin-top: 2px;
+  color: var(--vs-mist);
   font-size: 0.78rem;
 }
 
-.hariai-break {
-  border-color: rgba(255, 74, 95, 0.4);
+.ha-msg.is-mine .hariai-flavor {
+  color: #f6d9e5;
+}
+
+.hariai-answer {
+  margin: 0;
+}
+
+/* 看破と仕留め */
+.hariai-break-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px rgba(230, 193, 122, 0.3);
 }
 
 .hariai-break-wait {
   margin: 0;
-  color: var(--muted);
+  color: var(--vs-mist);
 }
 
 .hariai-break-result {
@@ -2927,30 +2990,29 @@
 }
 
 .hariai-break-result.is-hit {
-  color: var(--hariai-pink);
+  color: var(--vs-gold);
 }
 
 .hariai-break-result.is-miss {
-  color: var(--muted);
+  color: var(--vs-mist);
 }
 
 .hariai-bluffs {
   display: grid;
   gap: 4px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 138, 170, 0.35);
   border-radius: 12px;
-  background: var(--hariai-pink-soft);
+  background: rgba(255, 63, 134, 0.1);
   font-size: 0.8rem;
 }
 
 .hariai-bluffs b {
-  color: var(--hariai-pink);
+  color: var(--vs-rose-soft);
 }
 
 .hariai-finish {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
 }
 
@@ -2959,17 +3021,17 @@
   gap: 6px;
   margin: 0;
   padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.25);
-  transition: transform 180ms ease, border-color 180ms ease;
+  border-radius: 14px;
+  background: var(--ha-raised);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
+  transition: transform 180ms ease, box-shadow 180ms ease;
 }
 
 .hariai-finish-card img {
   width: 100%;
   aspect-ratio: 3 / 4;
+  border-radius: 10px;
   object-fit: cover;
-  border-radius: 8px;
 }
 
 .hariai-finish-card figcaption {
@@ -2978,31 +3040,17 @@
 }
 
 .hariai-finish-card.is-playing {
-  border-color: var(--hariai-pink);
+  box-shadow: inset 0 0 0 1.5px var(--vs-rose);
   transform: scale(1.03);
 }
 
-.hariai-system {
-  width: 100%;
-  justify-self: center;
-  text-align: center;
-  border-style: dashed;
-}
-
-.hariai-system p {
-  margin: 0;
-}
-
-.hariai-system b {
-  margin-right: 8px;
-}
-
+/* 操作欄。スレッドの下に置く入力欄 */
 .hariai-console {
-  padding: 16px;
-  border: 1px solid rgba(255, 138, 170, 0.34);
-  border-radius: 18px;
-  background: rgba(10, 12, 20, 0.94);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+  padding: 18px 16px 20px;
+  border: 0;
+  border-radius: 24px;
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
 }
 
 .hariai-console:empty {
@@ -3017,7 +3065,7 @@
 
 .hariai-console-wait p {
   margin: 0;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.84rem;
 }
 
@@ -3042,53 +3090,70 @@
 }
 
 .hariai-console-head strong {
-  font-size: 1.05rem;
+  font-size: 1rem;
+  font-weight: 800;
 }
 
 .hariai-console-head small {
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.74rem;
 }
 
-.hariai-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.hariai-tabs button {
-  padding: 8px 14px;
-  border: 1px solid var(--line-bright);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text);
+.hariai-console-head .hariai-combo {
+  color: var(--vs-rose-soft);
+  font-size: 0.74rem;
+  font-style: normal;
   font-weight: 800;
-  cursor: pointer;
 }
 
-.hariai-tabs button.is-active {
-  border-color: var(--hariai-pink);
-  background: var(--hariai-pink-soft);
-  color: var(--hariai-pink);
+/* 「貼る／看破する…」と「質問／指示」は、押した方が白く浮く切り替え */
+.hariai-tabs,
+.hariai-right-tabs {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--ha-ground);
+}
+
+.hariai-tabs button,
+.hariai-right-tabs button {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--vs-mist);
+  background: transparent;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.hariai-tabs button.is-active,
+.hariai-right-tabs button.is-active {
+  color: var(--ha-ink);
+  background: var(--vs-pearl);
 }
 
 .hariai-step {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.78rem;
   font-weight: 800;
 }
 
 .hariai-step b {
   display: inline-grid;
-  place-items: center;
   width: 22px;
   height: 22px;
+  place-items: center;
   border-radius: 50%;
-  background: var(--hariai-pink-soft);
-  color: var(--hariai-pink);
+  color: var(--vs-rose-soft);
+  background: rgba(255, 63, 134, 0.14);
   font-size: 0.72rem;
 }
 
@@ -3104,8 +3169,8 @@
   overflow: hidden;
   border: 2px solid transparent;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.3);
   cursor: pointer;
+  background: var(--ha-hatch-mine);
 }
 
 .hariai-hand-card img {
@@ -3116,8 +3181,8 @@
 }
 
 .hariai-hand-card.is-selected {
-  border-color: var(--hariai-pink);
-  box-shadow: 0 0 0 2px rgba(255, 138, 170, 0.25);
+  border-color: var(--vs-rose);
+  box-shadow: 0 0 0 2px rgba(255, 63, 134, 0.25);
 }
 
 .hariai-hand-audio,
@@ -3126,20 +3191,20 @@
   top: 4px;
   right: 4px;
   display: grid;
-  place-items: center;
   min-width: 20px;
   height: 20px;
+  place-items: center;
   padding: 0 5px;
   border-radius: 999px;
+  color: var(--vs-pearl);
   background: rgba(0, 0, 0, 0.7);
-  color: var(--text);
   font-size: 0.66rem;
   font-weight: 900;
 }
 
 .hariai-hand-order {
-  background: var(--hariai-pink);
-  color: #1a0b12;
+  color: var(--ha-ink);
+  background: var(--vs-rose);
 }
 
 .hariai-targets,
@@ -3147,6 +3212,34 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 8px;
+}
+
+.hariai-right-list {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hariai-target-option span,
+.hariai-right-option span {
+  border: 1.5px solid var(--vs-line-soft);
+  border-radius: 14px;
+  background: #1a1120;
+}
+
+.hariai-target-option input:checked + span {
+  border-color: var(--vs-rose);
+  background: rgba(255, 63, 134, 0.12);
+  box-shadow: none;
+}
+
+.hariai-right-option input:checked + span {
+  border-color: var(--vs-gold);
+  background: rgba(230, 193, 122, 0.1);
+  box-shadow: none;
+}
+
+.hariai-target-option input:focus-visible + span,
+.hariai-right-option input:focus-visible + span {
+  outline-color: var(--vs-gold-hi);
 }
 
 .hariai-caption-field {
@@ -3166,35 +3259,41 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.74rem;
 }
 
 .hariai-count {
   justify-self: end;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.74rem;
 }
 
 .hariai-effect,
 .hariai-note {
   margin: 0;
-  color: var(--hariai-pink);
+  color: var(--vs-rose-soft);
   font-size: 0.76rem;
 }
 
 .hariai-note {
-  color: var(--muted);
+  color: var(--vs-mist);
 }
 
 .hariai-preview,
 .hariai-prompt {
   margin: 0;
   padding: 10px 14px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: 16px 16px 16px 4px;
+  background: var(--ha-bubble-theirs);
   line-height: 1.6;
   overflow-wrap: anywhere;
+}
+
+.hariai-preview {
+  justify-self: end;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--ha-bubble-mine);
 }
 
 .hariai-submit {
@@ -3208,6 +3307,17 @@
   gap: 8px;
 }
 
+.hariai-battle .button-primary {
+  border-color: transparent;
+  color: var(--ha-ink);
+  background: var(--vs-rose);
+  box-shadow: 0 12px 28px -14px rgba(255, 63, 134, 0.8);
+}
+
+.hariai-battle .button-primary:hover:not(:disabled) {
+  background: #ff5a97;
+}
+
 .hariai-score-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 96px;
@@ -3217,7 +3327,7 @@
 
 .hariai-score-input input[type="range"] {
   width: 100%;
-  accent-color: var(--hariai-pink);
+  accent-color: var(--vs-rose);
 }
 
 .hariai-score-quick {
@@ -3227,19 +3337,30 @@
 }
 
 .hariai-score-quick button {
+  --zone: var(--ha-zone-none);
   min-width: 48px;
-  padding: 7px 10px;
-  border: 1px solid var(--line-bright);
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
   border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font-weight: 800;
   cursor: pointer;
+  color: var(--vs-pearl);
+  background: #1a1120;
+  box-shadow: inset 0 0 0 1.5px var(--zone);
+  font: 600 0.95rem/1 var(--vs-font-number);
 }
 
+.hariai-score-quick button.is-question { --zone: var(--ha-zone-question); }
+.hariai-score-quick button.is-instruction { --zone: var(--ha-zone-instruction); }
+.hariai-score-quick button.is-combo { --zone: var(--ha-zone-combo); }
+
 .hariai-score-quick button.is-selected {
-  border-color: var(--hariai-pink);
-  background: var(--hariai-pink-soft);
+  color: var(--ha-ink);
+  background: var(--zone);
+}
+
+.hariai-score-quick button.is-none.is-selected {
+  color: var(--vs-pearl);
 }
 
 .hariai-score-preview {
@@ -3252,12 +3373,23 @@
 }
 
 .hariai-score-preview strong {
-  font-size: 1.2rem;
+  font: 600 1.3rem/1 var(--vs-font-number);
+}
+
+.hariai-score-preview.band-question strong { color: #c9bcff; }
+.hariai-score-preview.band-instruction strong { color: var(--vs-gold); }
+.hariai-score-preview.band-combo strong { color: #ff8ab6; }
+
+.hariai-score-preview .ha-meter100 {
+  --meter-ring: var(--ha-surface);
+  flex: 1 1 100%;
+  width: 100%;
+  margin-top: 4px;
 }
 
 .hariai-ko-warning,
 .hariai-required {
-  color: var(--red-soft);
+  color: var(--vs-rose-soft);
   font-size: 0.76rem;
   font-weight: 900;
 }
@@ -3267,32 +3399,36 @@
 }
 
 .hariai-suggestions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
 }
 
 .hariai-suggestions button {
-  padding: 6px 12px;
-  border: 1px solid rgba(255, 138, 170, 0.35);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text);
-  font-size: 0.76rem;
-  text-align: left;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--vs-line-soft);
+  border-radius: 14px;
   cursor: pointer;
+  color: var(--vs-pearl);
+  background: #1a1120;
+  font-size: 0.84rem;
+  text-align: left;
+}
+
+.hariai-suggestions button:hover {
+  border-color: rgba(255, 63, 134, 0.6);
 }
 
 .hariai-surrender-check {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.8rem;
 }
 
 .hariai-surrender-check input {
-  accent-color: var(--hariai-pink);
+  accent-color: var(--vs-rose);
 }
 
 .hariai-which {
@@ -3301,70 +3437,187 @@
   gap: 10px;
 }
 
-.hariai-memo,
+/* 読みメモ：罫線と赤い余白線のあるノート。閉じると1行の要約になる */
+.hariai-memo {
+  grid-area: memo;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #17101b;
+  box-shadow: inset 0 0 0 1px rgba(230, 193, 122, 0.24);
+}
+
+.hariai-memo summary {
+  position: relative;
+  display: flex;
+  min-height: 44px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 12px 64px 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.hariai-memo summary::-webkit-details-marker {
+  display: none;
+}
+
+.hariai-memo summary::after {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  content: "たたむ";
+  color: var(--vs-gold);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.hariai-memo:not([open]) summary::after {
+  content: "ひらく";
+}
+
+.hariai-memo-title {
+  color: var(--vs-gold);
+  font: 400 1.15rem/1.2 var(--ha-font-memo);
+}
+
+.hariai-memo summary small {
+  color: var(--vs-mist);
+  font-size: 0.72rem;
+}
+
+.hariai-memo-digest {
+  display: none;
+  flex-basis: 100%;
+  color: var(--vs-mist);
+  font-size: 0.74rem;
+}
+
+.hariai-memo:not([open]) .hariai-memo-digest {
+  display: block;
+}
+
+.hariai-memo-page {
+  position: relative;
+  display: grid;
+  margin: 0;
+  padding: 0 14px 0 40px;
+  list-style: none;
+  background: repeating-linear-gradient(to bottom, transparent 0 39px, rgba(248, 238, 242, 0.07) 39px 40px);
+}
+
+.hariai-memo-page::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 28px;
+  width: 1px;
+  content: "";
+  background: rgba(255, 63, 134, 0.35);
+}
+
+.hariai-memo-page li {
+  display: flex;
+  min-height: 40px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.hariai-memo-page strong {
+  min-width: 4.5em;
+  font: 400 1.1rem/1.2 var(--ha-font-memo);
+  overflow-wrap: anywhere;
+}
+
+.hariai-memo-scores {
+  display: flex;
+  gap: 4px;
+}
+
+.hariai-memo-scores b {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #2a1c30;
+  font: 500 0.8rem/1.3 var(--vs-font-number);
+}
+
+.hariai-memo-page em {
+  margin-left: auto;
+  padding: 0 4px;
+  color: var(--vs-mist);
+  font: 400 0.95rem/1.2 var(--ha-font-memo);
+}
+
+.hariai-memo-page li.is-hot em {
+  color: var(--vs-pearl);
+  background: linear-gradient(to top, rgba(230, 193, 122, 0.35) 45%, transparent 45%);
+}
+
+.hariai-memo-page li.is-bluff strong {
+  color: var(--vs-mist);
+  text-decoration: line-through;
+}
+
+.hariai-memo-page li.is-bluff em {
+  color: #c9bcff;
+}
+
+.hariai-memo-page li.is-weakness strong,
+.hariai-memo-page li.is-weakness em {
+  color: var(--vs-rose-soft);
+}
+
+.hariai-memo-page small {
+  flex-basis: 100%;
+  margin: -6px 0 6px;
+  color: var(--vs-mist);
+  font-size: 0.7rem;
+}
+
+.hariai-memo-note {
+  margin: 0;
+  padding: 8px 14px 12px 40px;
+  color: var(--vs-mist);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
 .hariai-self,
 .hariai-rules {
   display: grid;
   gap: 8px;
   padding: 14px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 16px;
-  background: rgba(14, 17, 26, 0.86);
+  background: var(--ha-surface);
+  box-shadow: inset 0 0 0 1px var(--vs-line-soft);
 }
 
-.hariai-memo h2,
 .hariai-self h2 {
   margin: 0;
   font-size: 0.95rem;
 }
 
-.hariai-memo > p,
 .hariai-self p {
   margin: 0;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.76rem;
   line-height: 1.55;
 }
 
 .hariai-self p b {
-  color: var(--text);
+  color: var(--vs-pearl);
 }
 
 .hariai-self p small {
   display: block;
 }
 
-.hariai-memo article {
-  display: grid;
-  gap: 2px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-}
-
-.hariai-memo article strong {
-  font-size: 0.82rem;
-  overflow-wrap: anywhere;
-}
-
-.hariai-memo article span,
-.hariai-memo article small {
-  color: var(--muted);
-  font-size: 0.7rem;
-}
-
-.hariai-memo article.is-bluff {
-  opacity: 0.55;
-}
-
-.hariai-memo article.is-weakness {
-  border-color: var(--hariai-pink);
-  background: var(--hariai-pink-soft);
-}
-
 .hariai-rules summary {
-  font-weight: 800;
   cursor: pointer;
+  font-weight: 800;
 }
 
 .hariai-rules ul {
@@ -3372,7 +3625,7 @@
   gap: 6px;
   margin: 0;
   padding-left: 18px;
-  color: var(--muted);
+  color: var(--vs-mist);
   font-size: 0.74rem;
   line-height: 1.55;
 }
@@ -3425,30 +3678,32 @@
   color: var(--hariai-pink);
 }
 
-@media (max-width: 900px) {
+/* PC：読みメモは右上でスレッドについてくる。自分の秘密とルールは操作欄の横 */
+@media (min-width: 901px) {
   .hariai-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "main memo" "main side";
+    gap: 14px 18px;
+  }
+
+  .hariai-memo {
+    position: sticky;
+    top: 16px;
   }
 
   .hariai-side {
-    position: static;
+    align-self: end;
   }
+}
 
+@media (max-width: 900px) {
   .strategy-persona-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
-  .hariai-slot {
-    width: 100%;
-    padding: 12px;
-  }
-
-  .hariai-target {
-    margin-left: 0;
-  }
-
   .hariai-hand {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
