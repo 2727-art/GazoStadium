@@ -1984,6 +1984,10 @@ function openOnlineScreen(screen) {
     showToast("ルーレットトレーニングを終了してからオンライン画面を開いてください。");
     return;
   }
+  if (window.HariaiTribute?.isActive?.()) {
+    showToast("お貢ぎ界隈を終了してからオンライン画面を開いてください。");
+    return;
+  }
   active = true;
   state = createOnlineState();
   lastRenderedScreen = "";

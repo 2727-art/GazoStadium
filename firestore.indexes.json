@@ -445,6 +445,148 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "tributeContracts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "participants",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "updatedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributeContracts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "expiresAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributeProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "accepting",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastActiveAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributeProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "recommendedMonthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "recommendedCount",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rankOptIn",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "monthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "monthTotal",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rankOptIn",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "total",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "payerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributePairs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "managerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tributeManagerMonths",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "monthKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "payers",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "rankScore",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

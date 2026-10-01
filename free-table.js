@@ -5877,6 +5877,10 @@ async function start({ intent = "hall" } = {}) {
     showToast("ルーレットトレーニングを終了してから自由卓を開いてください。");
     return;
   }
+  if (window.HariaiTribute?.isActive?.()) {
+    showToast("お貢ぎ界隈を終了してから自由卓を開いてください。");
+    return;
+  }
   if (location.protocol === "file:") {
     showToast("自由卓はローカルサーバーまたは公開URLから開いてください。");
     return;

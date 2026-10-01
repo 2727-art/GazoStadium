@@ -1391,6 +1391,9 @@ function isActive() {
   return active;
 }
 
+const VALUE_MARKET_CLOSED = true;
+const VALUE_MARKET_CLOSED_MESSAGE = "推し値市場は終了しました。新しい待機はできません。お貢ぎ界隈をご利用ください。";
+
 async function start({ initialScreen = "setup" } = {}) {
   if (active) return;
   if (location.protocol === "file:") {
@@ -1399,7 +1402,8 @@ async function start({ initialScreen = "setup" } = {}) {
   }
   if (window.HariaiOnline?.isActive?.() || window.HariaiStrategy?.isActive?.()
       || window.HariaiAiTextTraining?.isActive?.()
-      || window.HariaiRouletteTraining?.isActive?.()) {
+      || window.HariaiRouletteTraining?.isActive?.()
+      || window.HariaiTribute?.isActive?.()) {
     showToast("ほかのモードを終了してからVALUE MARKETを開始してください。");
     return;
   }
@@ -2239,6 +2243,11 @@ function renderSetup() {
       <p>ゲーム内通貨AnjuPayで推し値をつけ、画像の魅力を営業するTRPGエンドコンテンツです。</p></div>
       ${renderWallet()}
     </div>
+    <div class="market-closed-banner" role="status">
+      <strong>推し値市場は2026年10月で終了しました</strong>
+      <p>新しい待機はできません。進行中の商談は、これまでどおり完了・返還まで進みます。ランキング・永久実績・推し値証書は「旧推し値市場の記録」として閲覧できます。</p>
+      <button type="button" class="button button-primary button-small" data-market-open-tribute>お貢ぎ界隈へ</button>
+    </div>
     <div class="market-role-tabs" role="tablist" aria-label="市場でのロール">
       <button type="button" class="${seller ? "is-active" : ""}" data-market-role="seller" role="tab" aria-selected="${seller}" ${locked ? "disabled" : ""}><span>SELLER</span><strong>売り手</strong><small>画像の魅力を言葉や10秒音声で営業</small></button>
       <button type="button" class="${!seller ? "is-active" : ""}" data-market-role="buyer" role="tab" aria-selected="${!seller}" ${locked ? "disabled" : ""}><span>BUYER</span><strong>買い手</strong><small>自分のAnjuPayで推し値を評価</small></button>
@@ -3049,6 +3058,10 @@ function bindEvents() {
     render();
   }));
   document.querySelector("#marketEntryForm")?.addEventListener("submit", joinQueue);
+  document.querySelector("[data-market-open-tribute]")?.addEventListener("click", () => {
+    requestHome();
+    window.setTimeout(() => window.HariaiApp?.openTribute?.(), 0);
+  });
   document.querySelectorAll('input[name="marketSellerSalesMode"]').forEach((input) => {
     input.addEventListener("change", () => {
       if (state.busy || state.shopBusy || state.queueJoinPending) return;
@@ -3658,6 +3671,11 @@ async function handleImageInput(event) {
 
 async function joinQueue(event) {
   event.preventDefault();
+  // 推し値市場は2026年10月に終了した。新しい待機はサーバーでも拒否する。
+  if (VALUE_MARKET_CLOSED) {
+    showToast(VALUE_MARKET_CLOSED_MESSAGE);
+    return;
+  }
   if (!state.authReady || state.busy || state.shopBusy || state.queueJoinPending) return;
   const joinedRole = state.role;
   if (joinedRole === "seller" && state.shopStatus !== "ready") {

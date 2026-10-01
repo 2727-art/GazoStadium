@@ -929,6 +929,7 @@ function start() {
   if (window.HariaiOnline?.isActive?.()
       || window.HariaiAiTextTraining?.isActive?.()
       || window.HariaiRouletteTraining?.isActive?.()
+      || window.HariaiTribute?.isActive?.()
       || window.HariaiMarket?.isActive?.()) {
     showToast("進行中のオンライン画面を終了してから開いてください。");
     return;

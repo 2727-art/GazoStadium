@@ -69,7 +69,8 @@ test("monthly policy votes require a protected current patron identity", () => {
   assert.match(source, /transaction\.get\(actionRef\)/);
   assert.match(source, /if \(actionSnapshot\.exists\)/);
   assert.match(source, /transaction\.create\(actionRef/);
-  assert.match(server, /action === "patron_policy_vote"/);
+  // 推し値市場の終了後は、旧政策投票を受け付けず終了メッセージを返す。
+  assert.match(server, /\["patron_upgrade", "oshijo_patron_upgrade", "patron_policy_vote"\]\.includes\(action\)/);
 });
 
 test("shop recommendations are non-Pay, relationship-gated, capped, and UID-private", () => {

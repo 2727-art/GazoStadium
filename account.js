@@ -32,7 +32,7 @@ googleProvider.setCustomParameters({ prompt: "select_account" });
 const TRANSFER_SESSION_KEY = "hariaiActiveTransferCodeV1";
 const ANJU_PAY_HISTORY_PAGE_SIZE = 20;
 const ANJU_PAY_MAX_BALANCE = 999_999_999;
-const ANJU_PAY_CATEGORIES = new Set(["opening", "earn", "spend", "market", "flea", "tip"]);
+const ANJU_PAY_CATEGORIES = new Set(["opening", "earn", "spend", "market", "flea", "tip", "tribute"]);
 const ANJU_PAY_STATUSES = new Set(["posted", "held", "settled", "refunded", "partial", "capped"]);
 const ANJU_PAY_LABELS = Object.freeze({
   opening: "AnjuPay開始残高",
@@ -71,6 +71,17 @@ const ANJU_PAY_LABELS = Object.freeze({
   roulette_training_publish_fee: "ルーレットトレーニングメニューの公開・改訂料",
   roulette_training_use: "ルーレットトレーニングメニューを1回利用",
   roulette_training_sale: "ルーレットトレーニングメニューが1回利用された",
+  tribute_sent: "お貢ぎ界隈で献上",
+  anju_pay_tribute_sent: "お貢ぎ界隈で献上",
+  anju_pay_tribute_escrow_take: "お貢ぎ界隈の管理口座から徴収された",
+  tribute_received: "お貢ぎ界隈で献上を受け取った",
+  anju_pay_tribute_received: "お貢ぎ界隈で献上を受け取った",
+  tribute_escrow_hold: "お貢ぎ界隈の管理口座へ預け入れ",
+  anju_pay_tribute_escrow_hold: "お貢ぎ界隈の管理口座へ預け入れ",
+  tribute_escrow_return: "お貢ぎ界隈の管理口座から返還",
+  anju_pay_tribute_escrow_return: "お貢ぎ界隈の管理口座から返還",
+  tribute_offering: "お貢ぎ界隈の界隈基金へ上納",
+  anju_pay_tribute_offering: "お貢ぎ界隈の界隈基金へ上納",
 });
 const ANJU_PAY_STATUS_LABELS = Object.freeze({
   posted: "反映済み",
@@ -273,6 +284,7 @@ function normalizeHistoryEntry(value, index = 0) {
       }
       : {},
     delta,
+    nominalAmount: Math.max(0, Math.min(ANJU_PAY_MAX_BALANCE, finiteInteger(source.nominalAmount, 0))),
     openingBalance,
     balanceAfter: balanceAfterValue === null ? null : Math.max(0, Math.min(ANJU_PAY_MAX_BALANCE, balanceAfterValue)),
     occurredAt: timestampMillis(source.occurredAt || source.createdAt || source.timestamp),
@@ -320,6 +332,11 @@ function historyDetail(entry) {
   if (details.counterpartyName) parts.push(`相手: ${details.counterpartyName}`);
   if (details.role === "seller") parts.push("販売側");
   if (details.role === "buyer") parts.push("購入側");
+  if (entry.labelKey === "anju_pay_tribute_escrow_take" && entry.nominalAmount > 0) {
+    parts.push(`管理口座（預け済み）から ${formatAnjuPay(entry.nominalAmount)}`);
+  }
+  if (details.mode === "tribute" && details.role === "payer") parts.push("預ける側");
+  if (details.mode === "tribute" && details.role === "manager") parts.push("管理する側");
   if (details.dateKey && /^\d{4}-\d{2}-\d{2}$/.test(details.dateKey)) parts.push(details.dateKey);
   if (parts.length) return parts.join(" / ");
   if (entry.category === "opening") return "この残高からAnjuPay利用履歴の記録を開始しました。";
@@ -335,6 +352,12 @@ function historyLabel(entry) {
   if (key.includes("daily") || key.includes("mission")) return ANJU_PAY_LABELS.daily_mission;
   if (key.includes("period")) return ANJU_PAY_LABELS.period_reward;
   if (key.includes("patron")) return ANJU_PAY_LABELS.patron_upgrade;
+  if (key.includes("tribute_escrow_take")) return ANJU_PAY_LABELS.anju_pay_tribute_escrow_take;
+  if (key.includes("tribute_escrow_hold")) return ANJU_PAY_LABELS.tribute_escrow_hold;
+  if (key.includes("tribute_escrow_return")) return ANJU_PAY_LABELS.tribute_escrow_return;
+  if (key.includes("tribute_offering")) return ANJU_PAY_LABELS.tribute_offering;
+  if (key.includes("tribute_received")) return ANJU_PAY_LABELS.tribute_received;
+  if (key.includes("tribute")) return ANJU_PAY_LABELS.tribute_sent;
   if (key.includes("flea_listing_fee")) return ANJU_PAY_LABELS.flea_listing_fee;
   if (key.includes("flea_purchase")) return ANJU_PAY_LABELS.flea_purchase;
   if (key.includes("flea_success_fee")) return ANJU_PAY_LABELS.flea_success_fee;
@@ -789,6 +812,7 @@ function modesAreActive() {
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiRouletteTraining?.isActive?.()
+    || window.HariaiTribute?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.(),
   );
@@ -943,120 +967,17 @@ function renderAccountStatus() {
   </section>`;
 }
 
+// VALUE MARKET パトロンと循環基金は、推し値市場の終了（2026年10月）にあわせて受付を終えた。
+// 上納と界隈基金はお貢ぎ界隈で作り直している。ここでは獲得済みの記録だけを表示する。
 function renderPatronage() {
   const patron = state.patron;
-  const fund = state.patronFund;
-  const impact = state.patronImpact;
-  const oshijoPatron = state.oshijoPatron;
   const currentTier = tierForLevel(patron.tier);
-  const nextTier = PATRON_TIERS.find((tier) => tier.level > currentTier.level) || currentTier;
-  const nextCost = Math.max(0, nextTier.threshold - patron.seasonSpent);
-  const progressMaximum = Math.max(1, nextTier.threshold);
-  const progress = currentTier.level === PATRON_TIERS.at(-1).level
-    ? 100
-    : Math.min(100, (patron.seasonSpent / progressMaximum) * 100);
-  const protectedData = isGoogleLinked();
-  const oshijoProgram = patron.seasonKey >= OSHIJO_PATRON_START_KEY;
-  const seasonLabel = `${patron.seasonKey.replace("-", "年")}月シーズン`;
-  const fundSeasonLabel = `${fund.seasonKey.replace("-", "年")}月`;
-  const activePolicy = PATRON_POLICY_OPTIONS.find((policy) => policy.id === fund.activePolicy)
-    || PATRON_POLICY_OPTIONS[0];
-  const policyVoteBusy = state.busyAction === "patron-policy";
-  const canVote = protectedData && patron.tier > 0;
-  const tierCards = PATRON_TIERS.slice(1).map((tier) => {
-    const owned = patron.tier >= tier.level;
-    const required = Math.max(0, tier.threshold - patron.seasonSpent);
-    const affordable = state.balance >= required;
-    const earnedByOshijo = !oshijoProgram
-      || (oshijoPatron.popular && oshijoPatron.availableProceeds >= required);
-    const upgradeLabel = !affordable
-      ? `あと${formatAnjuPay(required - state.balance)}`
-      : oshijoProgram && !oshijoPatron.popular
-        ? "人気条件の達成後に解放"
-        : oshijoProgram && oshijoPatron.availableProceeds < required
-          ? `還元可能額があと${formatAnjuPay(required - oshijoPatron.availableProceeds)}`
-          : `${formatAnjuPay(required)}を基金へ還元`;
-    return `<article class="patron-tier-card tier-${tier.id} ${owned ? "is-owned" : ""}">
-      <span class="patron-tier-icon" aria-hidden="true">${tier.icon}</span>
-      <div><small>LEVEL ${tier.level}</small><h3>${tier.label}</h3><strong>${formatAnjuPay(tier.threshold)}</strong></div>
-      <button class="button ${owned ? "button-ghost" : "button-primary"} button-small" type="button" data-patron-tier="${tier.level}"
-        ${owned || !protectedData || !affordable || !earnedByOshijo || state.busyAction ? "disabled" : ""}>${owned ? "獲得済み" : upgradeLabel}</button>
-    </article>`;
-  }).join("");
-  const policyButtons = PATRON_POLICY_OPTIONS.map((policy) => {
-    const selected = fund.viewerVote === policy.id;
-    const activePolicyOption = fund.activePolicy === policy.id;
-    const votes = fund.votes[policy.id];
-    return `<button class="patron-policy-option ${selected ? "is-selected" : ""} ${activePolicyOption ? "is-active-policy" : ""}" type="button"
-      data-patron-policy="${policy.id}" aria-pressed="${selected}" aria-label="${escapeHtml(policy.label)}に投票、現在${votes}票"
-      ${!canVote || state.busyAction ? "disabled" : ""}>
-      <span>${escapeHtml(policy.label)}</span>
-      <small>${escapeHtml(policy.description)}</small>
-      <strong>${votes}票${activePolicyOption ? "・今月の方針" : ""}${selected ? "・投票済み" : ""}</strong>
-    </button>`;
-  }).join("");
-  const policyStatus = policyVoteBusy
-    ? "市場政策への投票を送信しています。"
-    : fund.viewerVote
-      ? `あなたは「${PATRON_POLICY_OPTIONS.find((policy) => policy.id === fund.viewerVote)?.label || activePolicy.label}」へ投票しています。`
-      : canVote
-        ? "今月支えたい市場の方針を1つ選べます。投票先は月内でも変更できます。"
-        : "SUPPORTER以上になると、今月の市場政策へ投票できます。";
-  const recommendationText = impact.recommendationLimit > 0
-    ? `${impact.recommendedShopCount} / ${impact.recommendationLimit}店`
-    : "ランク獲得後に利用可能";
-  const oshijoQualification = oshijoProgram
-    ? `<section class="patron-oshijo-qualification ${oshijoPatron.popular ? "is-qualified" : ""}" aria-labelledby="patronOshijoTitle">
-        <div><span class="eyebrow">POPULAR OSHIJO QUALIFICATION</span><h3 id="patronOshijoTitle">${oshijoPatron.popular ? "人気推し嬢の条件を達成" : "人気推し嬢の実績を育てる"}</h3></div>
-        <p>請求額や高額Payではなく、ランキング集計対象の推し嬢成約と異なる買い手とのご縁で判定します。</p>
-        <dl>
-          <div><dt>推し嬢成約</dt><dd>${oshijoPatron.salesCount} / ${oshijoPatron.minimumSales}件</dd></div>
-          <div><dt>異なる買い手</dt><dd>${oshijoPatron.uniqueBuyers} / ${oshijoPatron.minimumUniqueBuyers}人</dd></div>
-          <div><dt>当月の推し嬢営業収益</dt><dd>${formatAnjuPay(oshijoPatron.netProceeds)}</dd></div>
-          <div><dt>基金へ還元できる残額</dt><dd>${formatAnjuPay(oshijoPatron.availableProceeds)}</dd></div>
-        </dl>
-        <small>人気条件を満たした後、当月の推し嬢営業収益から還元した分だけバッジがレベルアップします。</small>
-      </section>`
-    : `<aside class="patron-oshijo-qualification is-legacy"><strong>2026年8月から取得条件が変わります</strong><p>7月中に獲得したバッジと権利、累計支援履歴は維持されます。8月以降の新しいバッジは、人気推し嬢が当月の営業収益を基金へ還元した場合だけ取得できます。</p></aside>`;
-  return `<section class="account-patron-section" id="accountPatronSection" tabindex="-1" aria-labelledby="accountPatronTitle">
-    <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2 id="accountPatronTitle">VALUE MARKET パトロン</h2>
-      <p>人気推し嬢が当月の営業収益を還元して月替わりの名誉バッジを育て、循環基金と市場政策を通じて次の商談を支えます。勝敗や採点には影響しません。</p></div>
-      <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>CURRENT</small><strong>${currentTier.label}</strong></div></div>
-    <div class="patron-progress-card">
-      <div><span>${seasonLabel}</span><strong>${formatAnjuPay(patron.seasonSpent)} 支援</strong></div>
-      <div class="patron-progress" role="progressbar" aria-label="次のパトロンランクまでの進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div>
-      <p>${currentTier.level === PATRON_TIERS.at(-1).level ? "今月の最高ランクを獲得済みです。" : `次の ${nextTier.label} まであと ${formatAnjuPay(nextCost)}`}</p>
-    </div>
-    ${!protectedData ? `<div class="patron-protection-lock"><strong>先にゲームデータを保護してください</strong><p>多額のAnjuPay利用は取り消せないため、Google保護後に昇格できます。</p></div>` : ""}
-    ${oshijoQualification}
-    <div class="patron-tier-grid">${tierCards}</div>
-    <section class="patron-circulation-card" aria-labelledby="patronFundTitle">
-      <div class="patron-circulation-head"><div><span class="eyebrow">MARKET CIRCULATION FUND</span><h3 id="patronFundTitle">${fundSeasonLabel}の循環基金</h3></div>
-        <p><strong>支援額の80%を消却、20%を循環基金へ。</strong>基金は成立した商談の売り手手数料の半分（1商談最大10 Pay）を補填し、未使用分は月末に消却します。</p></div>
-      <dl class="patron-fund-metrics" aria-label="${fundSeasonLabel}の循環基金実績">
-        <div><dt>基金拠出合計</dt><dd>${formatAnjuPay(fund.contributed)}</dd></div>
-        <div><dt>市場から消却</dt><dd>${formatAnjuPay(fund.burned)}</dd></div>
-        <div><dt>基金予算</dt><dd>${formatAnjuPay(fund.budget)}</dd></div>
-        <div><dt>基金残高</dt><dd>${formatAnjuPay(fund.remaining)}</dd></div>
-        <div><dt>手数料補填</dt><dd>${formatAnjuPay(fund.subsidyPaid)}</dd></div>
-        <div><dt>支援した商談</dt><dd>${fund.supportedDeals.toLocaleString("ja-JP")}件</dd></div>
-      </dl>
-      <div class="patron-impact-panel" aria-labelledby="patronImpactTitle">
-        <div><span class="eyebrow">YOUR IMPACT</span><h3 id="patronImpactTitle">あなたの市場Impact</h3></div>
-        <dl><div><dt>あなたの基金拠出</dt><dd>${formatAnjuPay(impact.contributed)}</dd></div>
-          <div><dt>推薦中の商店</dt><dd>${recommendationText}</dd></div></dl>
-        <p>推薦商店はVALUE MARKETの店主カードから選べます。Payが店主へ直接配られる仕組みではありません。</p>
-      </div>
-      <p class="account-fine-print">補填は同じ買い手・売り手の組み合わせにつき月1回、店主1人につき月50 Payまでです。買い手の支払額は変わりません。</p>
-    </section>
-    <section class="patron-policy-card" aria-labelledby="patronPolicyTitle" aria-busy="${policyVoteBusy}">
-      <div class="patron-policy-head"><div><span class="eyebrow">MONTHLY MARKET POLICY</span><h3 id="patronPolicyTitle">今月の市場政策</h3></div>
-        <p><span>現在の方針</span><strong>${escapeHtml(activePolicy.label)}</strong></p></div>
-      <p>${escapeHtml(activePolicy.description)} パトロン投票の最多方針を、循環基金の補填優先度へ反映します。</p>
-      <div class="patron-policy-options" role="group" aria-labelledby="patronPolicyTitle">${policyButtons}</div>
-      <p class="patron-policy-status" role="status" aria-live="polite">${escapeHtml(policyStatus)}</p>
-    </section>
-    <p class="account-fine-print">ランクと投票は日本時間の毎月1日に更新されます。基金へ還元したAnjuPayの払い戻しはなく、市場ウォレットと商談相手に名誉バッジが表示されます。ランキング、採点、マッチング、Pay獲得量は優遇しません。累計支援 ${formatAnjuPay(patron.lifetimeSpent)}。</p>
+  return `<section class="account-patron-section is-closed" id="accountPatronSection" tabindex="-1" aria-labelledby="accountPatronTitle">
+    <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2 id="accountPatronTitle">VALUE MARKET パトロン（終了）</h2>
+      <p>推し値市場の終了にあわせ、パトロン還元と循環基金は2026年10月で受付を終えました。新しい「上納」と界隈基金は、お貢ぎ界隈の管理人が使えます。</p></div>
+      <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>RECORD</small><strong>${currentTier.label}</strong></div></div>
+    <p class="account-fine-print">これまでの累計支援 ${formatAnjuPay(patron.lifetimeSpent)} と獲得したバッジの記録は残ります。基金へ還元したAnjuPayの払い戻しはありません。</p>
+    <button class="button button-ghost button-small" type="button" id="accountOpenTributeFund">お貢ぎ界隈の界隈基金を見る</button>
   </section>`;
 }
 
@@ -1722,6 +1643,10 @@ function bindEvents() {
     state.pendingGoogleCredential = null;
     state.notice = "現在のゲストデータを維持しています。別のGoogleアカウントなら保護に使用できます。";
     render();
+  });
+  document.querySelector("#accountOpenTributeFund")?.addEventListener("click", () => {
+    requestHome();
+    window.setTimeout(() => window.HariaiApp?.openTribute?.({ initialScreen: "fund" }), 0);
   });
   document.querySelectorAll("[data-patron-tier]").forEach((button) => {
     button.addEventListener("click", () => upgradePatron(Number(button.dataset.patronTier)));

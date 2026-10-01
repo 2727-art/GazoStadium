@@ -468,6 +468,7 @@ function modeIsActiveElsewhere() {
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiDanwakuNote?.isActive?.()
+    || window.HariaiTribute?.isActive?.()
     || window.HariaiFreeTable?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()

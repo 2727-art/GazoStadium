@@ -554,6 +554,48 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // お貢ぎ界隈。書き込みはすべて tributeAction（App Check 必須）だけが行う。
+    // スレッドの即時表示のため、契約の参加者だけが契約と出来事を読める。
+    match /tributeContracts/{contractId} {
+      allow read: if request.auth != null
+        && request.auth.uid in resource.data.participants;
+      allow write: if false;
+
+      match /events/{eventId} {
+        allow read: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/tributeContracts/$(contractId)).data.participants;
+        allow write: if false;
+      }
+    }
+
+    match /tributeProfiles/{uid} {
+      allow read, write: if false;
+    }
+
+    match /tributeReceipts/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /tributePairs/{pairId} {
+      allow read, write: if false;
+    }
+
+    match /tributeManagerMonths/{monthManagerId} {
+      allow read, write: if false;
+    }
+
+    match /tributeFund/{monthKey} {
+      allow read, write: if false;
+    }
+
+    match /tributeHonors/{monthUid} {
+      allow read, write: if false;
+    }
+
+    match /tributeReports/{reportId} {
+      allow read, write: if false;
+    }
+
     // 終了した鍛え合い60の統計・実績再現用プロフィールと確定台帳は
     // 履歴として保持する。クライアントからの読み書きは再開しない。
     match /trainingProfiles/{uid} {

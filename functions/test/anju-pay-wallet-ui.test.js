@@ -115,21 +115,32 @@ test("patron fund and impact responses are normalized on initialize and upgrade"
   assert.match(source, /const recommendationLimit = patronMetric\(source\.recommendationLimit/);
 });
 
-test("patron page explains circulation, shows impact, and exposes an accessible policy vote", () => {
+test("the retired VALUE MARKET patron panel keeps only the earned record and points to the new fund", () => {
   const source = read("account.js");
-  assert.match(source, /支援額の80%を消却、20%を循環基金へ/);
-  assert.match(source, /基金は成立した商談の売り手手数料の半分/);
-  assert.match(source, /あなたの市場Impact/);
-  assert.match(source, /基金拠出合計/);
-  assert.match(source, /あなたの基金拠出/);
-  assert.match(source, /推薦中の商店/);
-  assert.match(source, /label:\s*"出会いと常連"/);
-  assert.match(source, /label:\s*"新しい出会い"/);
-  assert.match(source, /label:\s*"常連の信頼"/);
-  assert.match(source, /data-patron-policy="\$\{policy\.id\}" aria-pressed="\$\{selected\}"/);
-  assert.match(source, /aria-busy="\$\{policyVoteBusy\}"/);
-  assert.match(source, /class="patron-policy-status" role="status" aria-live="polite"/);
-  assert.match(source, /SUPPORTER以上になると、今月の市場政策へ投票できます/);
+  const start = source.indexOf("function renderPatronage()");
+  const end = source.indexOf("function transferCountdownText()", start);
+  const panel = source.slice(start, end);
+  assert.match(panel, /VALUE MARKET パトロン（終了）/);
+  assert.match(panel, /パトロン還元と循環基金は2026年10月で受付を終えました/);
+  assert.match(panel, /累計支援 \$\{formatAnjuPay\(patron\.lifetimeSpent\)\}/);
+  assert.match(panel, /id="accountOpenTributeFund"/);
+  assert.doesNotMatch(panel, /data-patron-tier|data-patron-policy/);
+  assert.match(source, /#accountOpenTributeFund"\)\?\.addEventListener\("click"[\s\S]*?openTribute\?\.\(\{ initialScreen: "fund" \}\)/);
+});
+
+test("AnjuPay history names every tribute ledger kind", () => {
+  const source = read("account.js");
+  for (const key of [
+    "anju_pay_tribute_sent",
+    "anju_pay_tribute_escrow_take",
+    "anju_pay_tribute_received",
+    "anju_pay_tribute_escrow_hold",
+    "anju_pay_tribute_escrow_return",
+    "anju_pay_tribute_offering",
+  ]) {
+    assert.match(source, new RegExp(`  ${key}: "お貢ぎ界隈`));
+  }
+  assert.match(source, /ANJU_PAY_CATEGORIES = new Set\(\[[^\]]*"tribute"/);
 });
 
 test("patron policy voting uses an idempotent economy action and restores server state", () => {

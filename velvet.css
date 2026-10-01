@@ -1111,6 +1111,10 @@ a:focus-visible,
   --tile-icon: var(--vs-icon-gem);
 }
 
+.vl-tile-tribute {
+  --tile-accent: 255, 79, 163;
+}
+
 .vl-tile-ai {
   --tile-accent: 255, 138, 182;
   --tile-icon: var(--vs-icon-spark);

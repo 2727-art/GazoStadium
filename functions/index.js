@@ -152,6 +152,7 @@ const {
 const {
   createRouletteTrainingService,
 } = require("./roulette-training-service");
+const { createTributeService } = require("./tribute-service");
 const {
   createDanwakuNoteService,
 } = require("./danwaku-note-service");
@@ -395,7 +396,8 @@ setGlobalOptions({ region: "us-central1", maxInstances: 20 });
 const firestore = getFirestore();
 const realtime = getDatabase();
 const playerSafetyResolver = createPlayerSafetyContextResolver({ firestore, realtime, HttpsError,
-  resolveNoteOwner: (id) => danwakuNoteService.resolvePublicEntryOwner(id) });
+  resolveNoteOwner: (id) => danwakuNoteService.resolvePublicEntryOwner(id),
+  resolveTributeTarget: (uid, data) => tributeService.resolveSafetyTarget(uid, data) });
 const playerSafetyService = createPlayerSafetyService({ firestore, realtime, HttpsError,
   ...playerSafetyResolver, closeContacts: closeBlockedPlayerContacts,
   resolveLegacyBlocked: resolveLegacyPlayerBlock,
@@ -3803,6 +3805,10 @@ async function ensurePatronFundRecognition(uid, patronageValue) {
   });
   return readPatronProgram(uid, patronage);
 }
+
+// 推し値市場は2026年10月にお貢ぎ界隈へ置き換えた。進行中の商談は従来どおり完了・返還まで処理する。
+const VALUE_MARKET_CLOSED_MESSAGE = "推し値市場は終了しました。新しい待機はできません。お貢ぎ界隈をご利用ください。";
+const PATRON_PROGRAM_CLOSED_MESSAGE = "VALUE MARKET パトロンと循環基金は終了しました。お貢ぎ界隈の「上納」と界隈基金へ移行しています。";
 
 function hasGoogleIdentity(request) {
   const identities = request.auth?.token?.firebase?.identities;
@@ -11280,12 +11286,8 @@ exports.economyAction = onCall(callableOptions("economyAction"), async (request)
     }
     if (action === "purchase") return await purchaseProduct(uid, cleanText(request.data?.productId, 80));
     if (action === "claim_periods") return await claimPeriods(uid);
-    if (action === "patron_upgrade") return await upgradePatronage(uid, request, request.data);
-    if (action === "oshijo_patron_upgrade") {
-      return await upgradeOshijoPatronage(uid, request, request.data);
-    }
-    if (action === "patron_policy_vote") {
-      return await votePatronPolicy(uid, request, request.data);
+    if (["patron_upgrade", "oshijo_patron_upgrade", "patron_policy_vote"].includes(action)) {
+      throw new HttpsError("failed-precondition", PATRON_PROGRAM_CLOSED_MESSAGE);
     }
     if (action === "record_match") return await recordVerifiedMatch(uid, request.data);
     if (action === "set_server_ranking_participation") return await setServerRankingParticipation(uid, request.data);
@@ -11519,6 +11521,7 @@ async function closeBlockedPlayerContacts(context) {
     anjuPayFleaService.closeBlockedPair(context),
     freeTableService.closeBlockedPair(context),
     closeBlockedMarketPair(context),
+    tributeService.endContractsBetween(context.firstUid, context.secondUid),
   ]);
   if (settlementError) throw settlementError;
 }
@@ -13516,7 +13519,9 @@ exports.valueMarketQueue = onCall(callableOptions("valueMarketQueue"), async (re
     if (MARKET_APP_CHECK_MIGRATION && ["join", "heartbeat", "heartbeat_room"].includes(action) && !request.app) {
       throw new HttpsError("failed-precondition", "通信保護を確認できませんでした。ページを再読み込みしてください。");
     }
-    if (action === "join") return await joinMarketQueue(uid, request.data, Boolean(request.app));
+    if (action === "join") {
+      throw new HttpsError("failed-precondition", VALUE_MARKET_CLOSED_MESSAGE);
+    }
     if (action === "cancel") return await cancelMarketQueue(uid);
     if (action === "heartbeat") return await heartbeatMarketQueue(uid);
     if (action === "sync_room") return await syncMarketRoom(uid, cleanText(request.data?.roomId, 80), { recoverPrivate: true });
@@ -16195,6 +16200,59 @@ exports.anjuPayFleaAction = onCall(callableOptions("anjuPayFleaAction"), async (
       error,
     });
     throw new HttpsError("internal", "AnjuPayフリマの処理を完了できませんでした。");
+  }
+});
+
+const tributeService = createTributeService({
+  playerSafety: playerSafetyService,
+  firestore,
+  HttpsError,
+  ensureWallet,
+  walletRef,
+  anjuPayLedgerConfigRef,
+  walletData,
+  walletCreditCapacity,
+  debitPoints,
+  creditPoints,
+  stageAnjuPayOpening,
+  appendAnjuPayEntry,
+  anjuPayWalletMetadataPatch,
+  anjuPayEntryId,
+  mirrorWallet,
+  bestEffort,
+});
+
+const TRIBUTE_GOOGLE_ACTIONS = new Set(["fund", "offer"]);
+
+exports.tributeAction = onCall(callableOptions("tributeAction"), async (request) => {
+  const uid = requireUid(request);
+  const action = cleanText(request.data?.action, 32);
+  try {
+    const googleProtected = TRIBUTE_GOOGLE_ACTIONS.has(action)
+      ? hasGoogleIdentity(request) && await hasLiveGoogleIdentity(uid)
+      : false;
+    return await tributeService.performAction(uid, request.data, { googleProtected });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error("tributeAction failed", { uid, action, error });
+    throw new HttpsError("internal", "お貢ぎ界隈の処理を完了できませんでした。");
+  }
+});
+
+exports.expireTributeContracts = onSchedule({
+  schedule: "every 15 minutes",
+  timeZone: "Asia/Tokyo",
+  timeoutSeconds: 300,
+  memory: "256MiB",
+  maxInstances: 1,
+}, async () => {
+  try {
+    const result = await tributeService.expireContracts({ limit: 100 });
+    console.info("expireTributeContracts completed", result);
+    return result;
+  } catch (error) {
+    console.error("expireTributeContracts failed", { error });
+    throw error;
   }
 });
 

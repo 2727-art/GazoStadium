@@ -2246,6 +2246,7 @@ async function start({ initialScreen = "shelf" } = {}) {
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiAiTextTraining?.isActive?.()
     || window.HariaiRouletteTraining?.isActive?.()
+    || window.HariaiTribute?.isActive?.()
     || window.HariaiMarket?.isActive?.();
   if (anotherModeActive) {
     showToast("ほかのモードを終了してからAnjuPayフリマを開いてください。");

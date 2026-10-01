@@ -1137,7 +1137,7 @@
       <section class="vl-others" aria-labelledby="landingOthersTitle">
         <h2 id="landingOthersTitle">ほかの遊び方</h2>
         <div class="vl-others-grid">
-          <button class="vl-tile vl-tile-market" id="valueMarketButton" type="button"><small>AnjuPayで推し値を決める</small><span>推し値市場</span></button>
+          <button class="vl-tile vl-tile-market vl-tile-tribute" id="tributeButton" type="button"><small>会わない前提で、AnjuPayを差し出す</small><span>お貢ぎ界隈</span></button>
           <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>AIと対戦しよう</small><span>文字コラトレーニング</span></button>
           <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
           <button class="vl-tile vl-tile-danwaku" id="danwakuNoteButton" type="button"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span>断惑NOTE</span></button>
@@ -1155,7 +1155,8 @@
       <section class="vl-more" aria-labelledby="landingMoreTitle">
         <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
         <div class="vl-list">
-          <button class="vl-row" type="button" id="valueMarketRankingButton"><small>売り手・買い手の月間／累計</small>推し値市場ランキング</button>
+          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の財布の人数で並ぶ管理人</small>お貢ぎ界隈の番付</button>
+          <button class="vl-row" type="button" id="valueMarketRankingButton"><small>ランキング・永久実績・推し値証書の閲覧</small>旧推し値市場の記録</button>
           <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
           <button class="vl-row vl-row-audio" type="button" id="audioStudioButton"><small>端末の中だけで録音・変換</small>10秒音声をつくる</button>
         </div>
@@ -1175,7 +1176,7 @@
             <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
             <div><small>同席中</small><strong><span id="lobbyFreeTableSeatedCount">${statValue(freeTableStats.seatedRooms)}</span><em>卓</em></strong></div>
           </div><button class="button lobby-free-table-lamp-link" id="freeTableStatusButton" type="button" data-free-table-intent="lamp"${freeTableLamp.lit ? "" : " hidden"}>${freeTableLamp.lit ? `◌ お迎え中の${freeTableLamp.welcomingRooms}卓を見る` : ""}</button></article>
-          <article class="lobby-mode-card market"><div class="lobby-mode-head"><span>推し値市場</span><small>VALUE MARKET</small></div><div class="lobby-mode-counts market-counts">
+          <article class="lobby-mode-card market"><div class="lobby-mode-head"><span>旧推し値市場</span><small>進行中の商談のみ</small></div><div class="lobby-mode-counts market-counts">
             <div><small>売り手待機</small><strong><span id="lobbyMarketSellerWaitingCount">${statValue(marketStats.sellerWaiting)}</span><em>人</em></strong></div>
             <div><small>買い手待機</small><strong><span id="lobbyMarketBuyerWaitingCount">${statValue(marketStats.buyerWaiting)}</span><em>人</em></strong></div>
             <div><small>商談中</small><strong><span id="lobbyMarketNegotiatingCount">${statValue(marketStats.negotiating)}</span><em>件</em></strong></div>
@@ -1226,7 +1227,8 @@
     document.querySelector("#freeTableStatusButton")?.addEventListener("click", () => {
       startFreeTable({ intent: "lamp" });
     });
-    document.querySelector("#valueMarketButton")?.addEventListener("click", startValueMarket);
+    document.querySelector("#tributeButton")?.addEventListener("click", () => startTribute());
+    document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
     document.querySelector("#fleaMarketSellersButton")?.addEventListener("click", startFleaMarketSellers);
     document.querySelector("#fleaMarketBrowseButton")?.addEventListener("click", startFleaMarketBrowse);
@@ -2199,6 +2201,19 @@
     );
   }
 
+  function startTribute(options = {}) {
+    if (window.HariaiTribute?.start) {
+      window.HariaiTribute.start(options);
+      return;
+    }
+    showToast("お貢ぎ界隈を読み込んでいます…");
+    window.addEventListener(
+      "hariai-tribute-ready",
+      () => window.HariaiTribute?.start?.(options),
+      { once: true },
+    );
+  }
+
   function startDanwakuNote() {
     if (window.HariaiDanwakuNote?.start) {
       window.HariaiDanwakuNote.start();
@@ -2704,6 +2719,10 @@
       window.HariaiDanwakuNote.requestHome();
       return;
     }
+    if (window.HariaiTribute?.isActive?.()) {
+      window.HariaiTribute.requestHome();
+      return;
+    }
     if (window.HariaiAiTextTraining?.isActive?.()) {
       window.HariaiAiTextTraining.requestHome();
       return;
@@ -2751,6 +2770,7 @@
     openNormal1on1: startOnlineBattle,
     openFreeTable: startFreeTable,
     openRouletteTraining: startRouletteTraining,
+    openTribute: startTribute,
     shared: {
       escapeHtml,
       showToast,

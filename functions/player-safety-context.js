@@ -4,7 +4,7 @@ const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const safeName = (value) => String(value || "プレイヤー").replace(/[\r\n]/g, " ").slice(0, 40);
 
 function createPlayerSafetyContextResolver({ firestore, realtime, HttpsError,
-  resolveNoteOwner = async () => null }) {
+  resolveNoteOwner = async () => null, resolveTributeTarget = async () => null }) {
   const fs = async (collection, id) => (await firestore.collection(collection).doc(id).get()).data();
   const rt = async (path) => (await realtime.ref(path).get()).val();
   const byField = async (collection, field, id) => {
@@ -75,6 +75,10 @@ function createPlayerSafetyContextResolver({ firestore, realtime, HttpsError,
   }
   async function resolveContext(uid, data) {
     const mode = String(data.mode || "public");
+    if (mode === "tribute") {
+      const target = await resolveTributeTarget(uid, data);
+      return target?.uid ? { uid: target.uid, name: safeName(target.name), source: "tribute" } : null;
+    }
     if (mode === "solo_familiar" && ID.test(String(data.familiarId || ""))) {
       const entry = (await firestore.collection("soloFamiliarBooks").doc(uid)
         .collection("familiarEntries").doc(data.familiarId).get()).data();

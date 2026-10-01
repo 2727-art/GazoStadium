@@ -4166,3 +4166,30 @@
     transition: none;
   }
 }
+
+/* 推し値市場の終了（2026年10月）。進行中の商談と記録の閲覧だけを残す。 */
+.market-closed-banner {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 92, 170, 0.45);
+  border-radius: 14px;
+  background: rgba(40, 10, 32, 0.72);
+  color: #fbe7f2;
+}
+
+.market-closed-banner strong {
+  font-size: 0.95rem;
+}
+
+.market-closed-banner p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: rgba(251, 231, 242, 0.82);
+}
+
+.market-closed-banner .button {
+  justify-self: start;
+}

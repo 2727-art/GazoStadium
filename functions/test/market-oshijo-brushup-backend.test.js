@@ -585,7 +585,8 @@ test("backend exposes monthly/lifetime rankings, honor finalization, and Oshijo 
   assert.match(indexSource, /finalizeClosedMarketRankingMonths/);
   assert.match(indexSource, /if \(awardSnapshot\.exists\) return;[\s\S]*?transaction\.create\(awardRef/);
   assert.match(indexSource, /rankingContributionCap: MARKET_RANKING_CONTRIBUTION_CAP/);
-  assert.match(indexSource, /action === "oshijo_patron_upgrade"/);
+  // 推し値市場の終了（2026年10月）で、推し嬢パトロン還元は受け付けず終了メッセージを返す。
+  assert.match(indexSource, /\["patron_upgrade", "oshijo_patron_upgrade", "patron_policy_vote"\]\.includes\(action\)[\s\S]*?PATRON_PROGRAM_CLOSED_MESSAGE/);
   assert.match(indexSource, /seasonKey >= MARKET_MONTHLY_RANKING_START_KEY[\s\S]*?oshijo_patron_required/);
   assert.match(marketSource, /for \(const period of MARKET_RANKING_PERIODS\)[\s\S]*?state\.rankings\[period\]\[role\]/);
   assert.doesNotMatch(marketSource, /state\.rankings\[role\]/);

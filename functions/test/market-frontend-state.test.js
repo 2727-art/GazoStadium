@@ -31,7 +31,7 @@ test("favorite targeting aligns and validates the buyer budget", () => {
 });
 
 test("landing opens the existing market rankings after authentication", () => {
-  assert.match(app, /id="valueMarketRankingButton"[^>]*>[\s\S]*?推し値市場ランキング<\/button>/);
+  assert.match(app, /id="valueMarketRankingButton"[^>]*>[\s\S]*?旧推し値市場の記録<\/button>/);
   assert.match(
     app,
     /#valueMarketRankingButton"\)\?\.addEventListener\("click", startValueMarketRankings\)/,

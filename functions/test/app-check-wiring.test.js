@@ -95,6 +95,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
     "anjuPayFleaAction",
     "aiTextTrainingAction",
     "rouletteTrainingAction",
+    "tributeAction",
     "aiTextTrainingPublicStats",
     "valueMarketQueue",
     "valueMarketAction",
@@ -122,6 +123,7 @@ test("Callable App Check policies follow a valid rollout stage", () => {
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.redeemAchievementCode, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.aiTextTrainingAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.rouletteTrainingAction, true);
+  assert.equal(rollout.APP_CHECK_ENFORCEMENT.tributeAction, true);
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.aiTextTrainingPublicStats, true);
   assert.equal(
     rollout.APP_CHECK_ENFORCEMENT.valueMarketQueue,
@@ -141,7 +143,8 @@ test("Callable App Check policies follow a valid rollout stage", () => {
       new RegExp(`onCall\\(\\s*callableOptions\\("${functionName}"(?:,|\\))`),
     );
   }
-  assert.equal((source.match(/Boolean\(request\.app\)/g) || []).length, 4);
+  // 推し値市場の新規待機（join）は2026年10月に終了したため、App Check の伝達は残り3か所。
+  assert.equal((source.match(/Boolean\(request\.app\)/g) || []).length, 3);
   assert.match(source, /updatePatronRecommendation\(uid, request\.data, false, Boolean\(request\.app\)\)/);
   assert.match(source, /updatePatronRecommendation\(uid, request\.data, true, Boolean\(request\.app\)\)/);
   assert.match(source, /appCheckVerified:/);

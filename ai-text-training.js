@@ -1050,6 +1050,7 @@ function modeIsActiveElsewhere() {
     || window.HariaiStrategy?.isActive?.()
     || window.HariaiMarket?.isActive?.()
     || window.HariaiRouletteTraining?.isActive?.()
+    || window.HariaiTribute?.isActive?.()
     || window.HariaiFleaMarket?.isActive?.()
     || window.HariaiFreeTable?.isActive?.()
     || window.HariaiAccount?.isActive?.()
