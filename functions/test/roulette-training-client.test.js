@@ -25,8 +25,8 @@ function sourceBlock(source, startMarker, endMarker) {
 test("landing and module wiring expose a separate solo roulette mode", () => {
   assert.match(html, /roulette-training\.css\?v=[^"]*-room-scrapbook-v1[^"]*"/);
   assert.match(html, /roulette-training\.js\?v=[^"]*-room-scrapbook-v1[^"]*"/);
-  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1"/);
-  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1"/);
+  assert.match(html, /roulette-training\.css\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1"/);
+  assert.match(html, /roulette-training\.js\?v=[^"]*-pack-ranking-v1-cheer-rotation-v1-mobile-image-focus-v1-manager-roulette-v1"/);
   assert.match(app, /id="rouletteTrainingButton"/);
   assert.match(app, /function startRouletteTraining\(\)/);
   assert.match(app, /hariai-roulette-training-ready/);
@@ -70,7 +70,7 @@ test("play uses one dedicated five-line machine with deterministic landing anima
   assert.match(mainItems, /reelId: `effect:\$\{effect\.id\}`/);
   assert.match(mainItems, /reelId: `menu:\$\{item\.id\}`/);
   assert.match(animation, /reverseY = type === "count" \? 6 : 8/);
-  assert.match(animation, /overshoot = type === "count" \? 7 : 9/);
+  assert.match(animation, /overshoot = type === "count" \? 10 : 15/);
   assert.match(animation, /rowHeight = firstRow\?\.offsetHeight \|\| 52/);
   assert.doesNotMatch(animation, /getBoundingClientRect\(\)\.height/);
   assert.match(animation, /function reelPassageOffsets\(passages\)/);
@@ -84,20 +84,17 @@ test("play uses one dedicated five-line machine with deterministic landing anima
   assert.match(mainSpin, /persistSession\(\);[\s\S]*?render\(\);[\s\S]*?setTimeout\(settleMainSpin, spinFallbackDuration\("main"\)\)[\s\S]*?runReelAnimation\("main", settleMainSpin\)/);
   assert.match(countSpin, /pendingCount = drawCount[\s\S]*?persistSession\(\);[\s\S]*?render\(\);[\s\S]*?setTimeout\(settleCountSpin, spinFallbackDuration\("count"\)\)[\s\S]*?runReelAnimation\("count", settleCountSpin\)/);
   assert.doesNotMatch(menuResult, /回数単位/);
-  assert.match(stage, /renderProgressGems\(session\)/);
+  assert.match(stage, /roulette-training-speech-bubble/);
   assert.match(result, /finishReason = recordedFinishReason === "give_up" \? "give_up" : "completed"/);
-  assert.match(result, /renderGoalLights\(litCount, targetCount, \{ sequential: goalCleared \}\)/);
-  assert.match(result, /goalCleared \? particleField\(10, "goal"\) : ""/);
+  assert.match(result, /renderResultLog\(result, finishReason\)/);
 
   assert.match(styles, /\.roulette-training-reel-window\s*\{[\s\S]*?height:\s*calc\(var\(--reel-row-height\) \* 5\)/);
   assert.match(styles, /\.roulette-training-reel-fade\s*\{[\s\S]*?-webkit-mask-image:[\s\S]*?mask-image:/);
   const marker = sourceBlock(styles, ".roulette-training-reel-marker {", ".roulette-training-reel-lock {");
   assert.doesNotMatch(marker, /clip-path:\s*polygon\(100% 0,\s*0 50%,\s*100% 100%\)/);
   assert.match(styles, /\.roulette-training-reel-marker::(?:before|after)\s*\{/);
-  assert.match(styles, /\.roulette-training-progress-lights\s*\{/);
   assert.match(styles, /\.roulette-training-selection-drawer\.is-open\s*\{[\s\S]*?roulette-training-drawer-open/);
   assert.match(styles, /\.roulette-training-odometer-strip\s*\{[\s\S]*?translate3d/);
-  assert.match(styles, /100dvh/);
 
   const sandbox = {};
   vm.runInNewContext(`${passageHelpers}\nthis.offsets = reelPassageOffsets(31); this.markerFrames = markerPassageKeyframes(this.offsets);`, sandbox);
@@ -116,105 +113,93 @@ test("play uses one dedicated five-line machine with deterministic landing anima
 test("machine feedback stays accessible, bounded, and optional", () => {
   const frame = sourceBlock(client, "function renderFrame", "function announce");
   const animation = sourceBlock(client, "function spinDuration", "function serializeSession");
-  const particles = sourceBlock(client, "function particleField", "function renderProgressGems");
-  const bubble = sourceBlock(styles, ".roulette-training-speech-bubble {", ".roulette-training-stage-progress {");
+  const bubble = sourceBlock(styles, ".roulette-training-speech-bubble p {", ".roulette-training-speech-bubble p.is-leaving {");
+  const sounds = sourceBlock(client, "function playRouletteNoise", "function reelPassageOffsets");
 
   assert.match(frame, /id="rouletteTrainingAnnouncer" role="status" aria-live="polite"/);
   assert.match(animation, /ensureAudioContext\(\)/);
-  assert.match(animation, /if \(!context\) return/);
-  assert.match(particles, /if \(prefersReducedMotion\(\)\) return ""/);
-  assert.match(particles, /Math\.min\(12/);
-  assert.match(bubble, /max-width:\s*min\(75%, 410px\)/);
-  assert.match(bubble, /-webkit-line-clamp:\s*2/);
-  assert.match(bubble, /roulette-training-cheer-pop/);
+  assert.match(sounds, /const context = ensureAudioContext\(\);\s*if \(!context\) return;/);
+  assert.match(sounds, /catch \{[\s\S]*?never block a draw/);
+  assert.match(bubble, /-webkit-line-clamp:\s*3/);
+  assert.match(styles, /\.roulette-training-speech-bubble\.is-pop-in\s*\{[\s\S]*?roulette-training-bubble-in 260ms/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test("play view removes redundant labels and uses a tail-free paper cheer note", () => {
+test("play view keeps the manager's voice in one bubble on her image", () => {
   const frame = sourceBlock(client, "function renderFrame", "function announce");
   const stage = sourceBlock(client, "function renderStage", "function mainReelItems");
+  const voice = sourceBlock(client, "function stageVoice", "const EYE_ICON");
   const play = sourceBlock(client, "function renderPlay", "function formatDuration");
-  const bubble = sourceBlock(styles, ".roulette-training-speech-bubble {", ".roulette-training-stage-progress {");
+  const bubble = sourceBlock(styles, ".roulette-training-speech-bubble {", ".roulette-training-speech-bubble.is-pop-in {");
+  const bubbleText = sourceBlock(styles, ".roulette-training-speech-bubble p {", ".roulette-training-speech-bubble p.is-leaving {");
 
   assert.match(frame, /showHeader = true/);
   assert.match(frame, /showHeader \? `<header class="roulette-training-header">/);
   assert.match(frame, /<h1 class="sr-only">/);
   assert.match(play, /showHeader: false/);
-  assert.doesNotMatch(play, /SOLO · SELF REPORT/);
-  assert.doesNotMatch(stage, /<span>応援<\/span>/);
-  assert.match(stage, /roulette-training-note-tape" aria-hidden="true"/);
-  assert.match(bubble, /background:[^;]*(?:var\(--paper\)|var\(--blush\))/);
-  assert.doesNotMatch(bubble, /background:\s*rgba\(255, 255, 255, 0\.72\)/);
-  assert.doesNotMatch(bubble, /filter:\s*blur/);
-  assert.match(bubble, /(?:-webkit-)?backdrop-filter:\s*none/);
-  assert.doesNotMatch(bubble, /\.roulette-training-speech-bubble::after/);
+  assert.equal(stage.match(/roulette-training-speech-bubble/g)?.length, 1);
+  assert.match(stage, /managerNameTag\(session\)\}<p data-roulette-cheer-text>\$\{escapeHtml\(stageVoice\(session\)\)\}<\/p>/);
+  assert.doesNotMatch(stage, /note-tape|photo-tape|mascot/);
+  assert.match(voice, /if \(phase === "active" \|\| phase === "paused"\)[\s\S]*?return currentCheer\(\) \|\| managerVoice\("active"\)/);
+  assert.match(voice, /managerVoice\("menu", \{ menu: menu\?\.menuText \|\| "" \}\)/);
+  assert.match(bubble, /position:\s*absolute/);
+  assert.match(bubble, /border:\s*1px solid var\(--rt-accent\)/);
+  assert.doesNotMatch(bubble, /filter:\s*blur|backdrop-filter:\s*blur/);
+  assert.match(bubbleText, /-webkit-line-clamp:\s*3/);
 });
 
-test("play uses the exact nighttime scrapbook room tokens and Japanese primary labels", () => {
-  const stage = sourceBlock(client, "function renderStage", "function mainReelItems");
-  const machine = sourceBlock(client, "function renderMachine", "function resultDrawer");
+test("play uses the manager control-room tokens and Japanese primary labels", () => {
+  const machine = sourceBlock(client, "function renderMachine", "function renderEffectVisual");
   const main = sourceBlock(client, "function renderMainRoulette", "function renderMenuResult");
+  const menu = sourceBlock(client, "function renderMenuResult", "function countReelItems");
   const count = sourceBlock(client, "function renderCountRoulette", "function renderCountdown");
   const play = sourceBlock(client, "function renderPlay", "function formatDuration");
-  const roomDecor = sourceBlock(client, "function roomDecorMarkup", "function showToast");
-  const image = sourceBlock(
-    styles,
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img {',
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-missing {'
-  );
+  const status = sourceBlock(client, "const PLAY_PHASE_LABELS", "function renderPlay()");
+  const image = sourceBlock(styles, ".roulette-training-image-stage > img {", ".roulette-training-image-missing {");
 
   for (const [name, value] of Object.entries({
-    "--room-night": "#17141f",
-    "--room-wall": "#2a2233",
-    "--room-wall-light": "#3a2d40",
-    "--paper": "#fff7ef",
-    "--paper-shadow": "#e8d8d2",
-    "--ink": "#4c3e4d",
-    "--blush": "#ff7f9e",
-    "--rose-deep": "#b84f72",
-    "--lavender": "#c9b8e8",
-    "--butter": "#ffd977",
-    "--mint": "#77ddd0",
-    "--wood": "#8a5f55",
+    "--rt-ground": "#0c090e",
+    "--rt-panel": "#17111b",
+    "--rt-accent": "#ff3d8b",
+    "--rt-accent-ink": "#1a0610",
+    "--rt-safety": "#1f1a22",
   })) {
     assert.match(styles, new RegExp(`${name}:\\s*${value}`));
   }
+  assert.doesNotMatch(styles, /roulette-training-room-|roulette-training-mascot|mascot-|roulette-training-photo-tape|roulette-training-result-notebook/);
+  assert.doesNotMatch(client, /roomDecorMarkup|renderMascot|mascotStateForSession|renderResultPolaroid|particleField|renderProgressGems|renderGoalLights/);
 
-  assert.match(styles, /\.roulette-training-screen\[data-roulette-training-screen="play"\]\s*\{/);
   assert.match(play, /phaseClass = String\(session\.phase \|\| "main_ready"\)\.replaceAll\("_", "-"\)/);
   assert.match(play, /roulette-training-play is-phase-\$\{escapeHtml\(phaseClass\)\}/);
   assert.match(play, /data-training-phase="\$\{escapeHtml\(session\.phase\)\}"/);
-  assert.match(play, /roomDecorMarkup\(\)/);
-  assert.match(roomDecor, /roulette-training-room-decor" aria-hidden="true"/);
-  for (const decoration of ["wallpaper", "lamp-light", "floor", "baseboard", "rug"]) {
-    assert.match(roomDecor, new RegExp(`roulette-training-room-${decoration}`));
+  assert.match(play, /renderPlayStatus\(session\)[\s\S]*?renderStage\(\)[\s\S]*?\$\{machine\}[\s\S]*?renderSafetyStrip\(session\.phase\)/);
+  assert.match(status, /role="group" aria-label="トレーニング状況"/);
+  assert.match(status, /<small>ノルマ<\/small>/);
+  assert.match(status, /<small>基本 · 上限\$\{session\.config\.maximumBpm\}<\/small>/);
+  for (const label of ["命令待ち", "抽選中", "気まぐれ", "宣告", "回数の宣告", "開始合図", "監視中", "一時停止", "休憩中", "ラスト命令"]) {
+    assert.ok(status.includes(label), label);
   }
-  assert.match(play, /role="group" aria-label="トレーニング状況"/);
-  assert.match(play, /<small>基本テンポ<\/small>/);
-  assert.match(play, /<small>上限<\/small>/);
-  assert.match(play, /<small>あと\$\{remainingTarget\}回<\/small>/);
-  assert.doesNotMatch(play, />BASE BPM<|>MAX<|>GOAL</);
 
-  assert.equal(stage.match(/roulette-training-photo-tape/g)?.length, 2);
-  assert.equal(stage.match(/roulette-training-photo-tape[^>]*aria-hidden="true"/g)?.length, 2);
   assert.match(image, /object-fit:\s*contain/);
-  assert.match(image, /filter:\s*none/);
-  assert.match(image, /opacity:\s*1/);
-  assert.match(image, /mix-blend-mode:\s*normal/);
   assert.doesNotMatch(image, /filter:\s*(?:blur|brightness|contrast|grayscale|saturate|sepia)\(/);
 
-  assert.match(machine, /<b>\$\{mainMachine \? "きょうのルーレット" : "回数ルーレット"\}<\/b>/);
-  assert.match(machine, /<small aria-hidden="true">\$\{mainMachine \? "TODAY'S ROULETTE" : "COUNT ROULETTE"\}<\/small>/);
-  assert.match(machine, /roulette-training-machine-pins" aria-hidden="true"/);
-  assert.match(main, /status: effectResult \? \(rare \? "レア効果" : "おまけチャンス"\) : spinning \? "抽選中…" : "準備OK"/);
-  assert.match(count, /status: allOut \? \(settled \? "100回で挑戦" : spinning \? "100を抽選中…" : "100固定"\) : settled \? "この回数で挑戦" : spinning \? "抽選中…" : "回数を決めよう"/);
+  assert.match(machine, /<b>\$\{mainMachine \? "今日の命令" : "回数の宣告"\}<\/b>\$\{mainMachine \? `<em>拒否権なし<\/em>` : ""\}/);
+  assert.match(machine, /roulette-training-order-stamp" aria-hidden="true"/);
+  assert.match(main, /status: effectResult \? \(rare \? "レア効果" : "気まぐれ発動"\) : spinning \? "抽選中…" : "命令待ち"/);
+  assert.match(main, /data-roulette-action="spin-main"[\s\S]*?"回してください"/);
+  assert.match(menu, /stateClass: "is-menu-locked is-order-locked"/);
+  assert.match(menu, /actionLabel: "回数を決めてもらう"/);
+  assert.match(menu, /stamp: "決定"/);
+  assert.match(count, /status: allOut \? \(settled \? "100回で挑戦" : spinning \? "100を抽選中…" : "100固定"\) : settled \? \(revealing \? "宣告中…" : "この回数で"\) : spinning \? "抽選中…" : "回数待ち"/);
+  assert.match(count, /actionLabel: revealing \? "宣告中…" : "…はい。3秒後に始めます"/);
+  assert.match(count, /stamp: settled && !revealing \? "宣告" : ""/);
   assert.doesNotMatch(main, /SPECIAL EFFECT|SPINNING|SPIN READY/);
-  assert.doesNotMatch(count, /COUNT LOCKED|SPINNING|COUNT READY/);
 });
 
 test("active home training keeps exact voluntary actions and accessible give up semantics", () => {
   const detail = sourceBlock(client, "function renderActiveDetail", "function renderActiveChallenge");
   const active = sourceBlock(client, "function renderActiveChallenge", "function renderPausedChallenge");
+  const strip = sourceBlock(client, "function renderSafetyStrip", "const PLAY_PHASE_LABELS");
   const frame = sourceBlock(client, "function renderFrame", "function announce");
   const exactGiveUp = /data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで<\/button>/g;
 
@@ -222,156 +207,74 @@ test("active home training keeps exact voluntary actions and accessible give up 
   assert.match(active, /roulette-training-active-summary/);
   assert.match(active, /roulette-training-active-copy/);
   assert.match(active, /roulette-training-active-metrics/);
-  assert.match(active, /<b>いま挑戦中<\/b><small aria-hidden="true">HOME TRAINING<\/small>/);
+  assert.match(active, /<b>命令を実行中<\/b><small aria-hidden="true">WATCHING<\/small>/);
   assert.match(detail, /<details class="roulette-training-detail-disclosure">/);
   assert.match(detail, /<summary><strong><span class="is-closed-label">やり方・補足を見る<\/span><span class="is-open-label">やり方・補足を閉じる<\/span><\/strong><span class="roulette-training-detail-preview" aria-hidden="true">\$\{safeDetail\}<\/span><\/summary>/);
-  assert.match(detail, /<p>\$\{safeDetail\}<\/p>\s*<\/details>/);
-  assert.doesNotMatch(detail, /roulette-training-challenge-safety|roulette-training-self-report|roulette-training-judgement|data-roulette-action/);
-  assert.ok(active.indexOf("renderActiveDetail(session.currentMenu.detailText)") < active.indexOf("roulette-training-challenge-safety"));
-  assert.ok(active.indexOf("roulette-training-challenge-safety") < active.indexOf("roulette-training-judgement"));
-  assert.match(active, /<p class="roulette-training-challenge-safety">できたら「できた！」。つらいときは無理せず休もう。<\/p>/);
-  assert.match(active, /<small class="roulette-training-self-report">結果は自己申告です。<\/small>/);
+  assert.doesNotMatch(detail, /roulette-training-self-report|roulette-training-judgement|data-roulette-action/);
+  assert.ok(active.indexOf("renderActiveDetail(session.currentMenu.detailText)") < active.indexOf("roulette-training-judgement"));
+  assert.match(active, /<small class="roulette-training-self-report">報告は自己申告です。<\/small>/);
   assert.equal(active.match(/data-roulette-action="clear"/g)?.length, 1);
-  assert.match(active, /data-roulette-action="clear">できた！<\/button>/);
+  assert.match(active, /data-roulette-action="clear">できました（報告する）<\/button>/);
   assert.equal(active.match(/data-roulette-action="give-up"/g)?.length, 1);
-  assert.match(active, exactGiveUp);
+  assert.match(active, /data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで<small aria-hidden="true">いつでも止められます<\/small><\/button>/);
+  assert.match(strip, /sectionHasGiveUp = \["countdown", "active", "paused", "rest"\]\.includes\(phase\)/);
+  assert.match(strip, /痛み・めまい・息苦しさは我慢しない。いつでも止められます。/);
+  assert.match(strip, exactGiveUp);
   assert.equal(client.match(exactGiveUp)?.length, 4);
   assert.match(frame, /id="rouletteTrainingAnnouncer" role="status" aria-live="polite"/);
 });
 
 test("portrait phones keep the image dominant without trapping training controls", () => {
-  const shortHeightStart = styles.indexOf("@media (max-width: 620px) and (max-height: 850px)");
-  const portraitStart = styles.indexOf("@media (max-width: 620px) and (max-aspect-ratio: 3 / 4)");
-  const narrowStart = styles.indexOf("@media (max-width: 350px) and (max-aspect-ratio: 3 / 4)");
-  const reducedStart = styles.indexOf("@media (prefers-reduced-motion: reduce)");
+  const phoneStart = styles.lastIndexOf("@media (max-width: 620px)");
+  const narrowStart = styles.indexOf("@media (max-width: 350px)", phoneStart);
+  assert.ok(phoneStart >= 0 && narrowStart > phoneStart, "phone and narrow rules follow the manager layout");
+  const phone = styles.slice(phoneStart, narrowStart);
+  const stage = sourceBlock(styles, ".roulette-training-image-stage {", ".roulette-training-play.is-phase-active .roulette-training-image-stage,");
+  const judgement = sourceBlock(styles, ".roulette-training-judgement .button {", ".roulette-training-judgement .button small {");
 
-  assert.ok(shortHeightStart >= 0, "short-height phone rules are available");
-  assert.ok(shortHeightStart < portraitStart, "portrait image-focus rules override short-height stage sizing");
-  assert.ok(portraitStart < narrowStart, "narrow-phone fallback follows the portrait layout");
-  assert.ok(narrowStart < reducedStart, "mobile layout rules remain before reduced-motion overrides");
-
-  const portrait = styles.slice(portraitStart, narrowStart);
-  const narrow = styles.slice(narrowStart, reducedStart);
-  const playViewport = sourceBlock(
-    portrait,
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play {',
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play:is('
-  );
-  const imageStage = sourceBlock(
-    portrait,
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-play > .roulette-training-image-stage {',
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img,'
-  );
-  const portraitImage = sourceBlock(
-    portrait,
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-image-stage > img {',
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-photo-tape.is-bottom {'
-  );
-  const cheerRail = sourceBlock(
-    portrait,
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble {',
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-speech-bubble p {'
-  );
-  const progressRail = sourceBlock(
-    portrait,
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-stage-progress {',
-    '.roulette-training-screen[data-roulette-training-screen="play"] .roulette-training-stage-progress strong {'
-  );
-
-  assert.match(playViewport, /--roulette-mobile-stage-height:\s*clamp\(300px, 46svh, 430px\)/);
-  assert.match(playViewport, /min-height:\s*calc\(100dvh - 116px\)/);
-  assert.doesNotMatch(playViewport, /\n\s*height:/);
-  assert.doesNotMatch(playViewport, /overflow:\s*hidden/);
-  assert.doesNotMatch(portrait, /position:\s*(?:fixed|sticky)/);
-
-  assert.match(portrait, /\.is-phase-menu-result,[\s\S]*?\.is-phase-count-result[\s\S]*?--roulette-mobile-stage-height:\s*clamp\(320px, 52svh, 480px\)/);
-  assert.match(portrait, /\.is-phase-countdown,[\s\S]*?\.is-phase-active,[\s\S]*?\.is-phase-paused[\s\S]*?--roulette-mobile-stage-height:\s*clamp\(320px, 56svh, 520px\)/);
-  assert.match(portrait, /\.is-phase-rest[\s\S]*?--roulette-mobile-stage-height:\s*clamp\(300px, 48svh, 440px\)/);
-
-  assert.match(imageStage, /height:\s*var\(--roulette-mobile-stage-height\)/);
-  assert.match(imageStage, /display:\s*grid/);
-  assert.match(imageStage, /grid-template-columns:\s*minmax\(0, 1fr\) max-content/);
-  assert.match(imageStage, /grid-template-rows:\s*minmax\(0, 1fr\) minmax\(48px, auto\)/);
-  assert.match(portrait, /\.roulette-training-image-stage > img,[\s\S]*?grid-column:\s*1 \/ -1;[\s\S]*?grid-row:\s*1/);
-  assert.match(portraitImage, /object-fit:\s*contain/);
-  assert.doesNotMatch(portrait, /object-fit:\s*cover|filter:\s*blur/);
-
-  assert.match(cheerRail, /position:\s*relative/);
-  assert.match(cheerRail, /grid-column:\s*1/);
-  assert.match(cheerRail, /grid-row:\s*2/);
-  assert.match(progressRail, /position:\s*relative/);
-  assert.match(progressRail, /grid-column:\s*2/);
-  assert.match(progressRail, /grid-row:\s*2/);
-  assert.match(progressRail, /background:\s*transparent/);
-
-  assert.match(portrait, /\.roulette-training-detail-disclosure\s*\{[\s\S]*?display:\s*block/);
-  assert.match(portrait, /\.roulette-training-detail-disclosure summary\s*\{[\s\S]*?min-height:\s*44px/);
-  assert.match(portrait, /\.roulette-training-detail-preview\s*\{[\s\S]*?-webkit-line-clamp:\s*2/);
-  assert.match(portrait, /\.roulette-training-detail-disclosure summary:focus-visible\s*\{[\s\S]*?outline:\s*3px solid var\(--rose-deep\)/);
-
-  const actionButtonRule = portrait.match(/\.roulette-training-judgement \.button\s*\{([^}]+)\}/)?.[1] || "";
-  const actionButtonHeight = Number(actionButtonRule.match(/min-height:\s*(\d+)px/)?.[1]);
-  assert.ok(actionButtonHeight >= 48, "self-report actions retain a 48px or larger touch target");
-  assert.match(actionButtonRule, /white-space:\s*normal/);
-  assert.match(narrow, /\.roulette-training-active-summary\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
-  assert.match(narrow, /\.roulette-training-judgement\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(stage, /height:\s*clamp\(280px, 46svh, 560px\)/);
+  assert.match(phone, /\.is-phase-menu-result[\s\S]*?\.is-phase-effect-result \.roulette-training-image-stage\s*\{\s*height:\s*clamp\(240px, 36svh, 420px\)/);
+  assert.match(phone, /\.is-phase-active \.roulette-training-image-stage,[\s\S]*?height:\s*clamp\(260px, 44svh, 460px\)/);
+  assert.doesNotMatch(phone, /position:\s*(?:fixed|sticky)|100dvh|object-fit:\s*cover|filter:\s*blur/);
+  assert.match(styles, /\.roulette-training-detail-preview\s*\{[\s\S]*?-webkit-line-clamp:\s*2/);
+  const actionHeight = Number(judgement.match(/min-height:\s*(\d+)px/)?.[1]);
+  assert.ok(actionHeight >= 64, "self-report actions keep a 64px touch target");
+  assert.match(phone, /\.roulette-training-safety-strip \.button\s*\{\s*width:\s*100%/);
+  assert.match(styles, /@media \(max-width: 350px\)\s*\{[\s\S]*?\.roulette-training-active-metrics,[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(min-width: 860px\)\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1\.1fr\) minmax\(340px, 0\.9fr\)/);
 });
 
-test("scrapbook success effects are bounded and reduced motion removes ornamental movement", () => {
-  const particles = sourceBlock(client, "function particleField", "function renderProgressGems");
-  const progress = sourceBlock(client, "function renderProgressGems", "function renderGoalLights");
-  const goal = sourceBlock(client, "function renderGoalLights", "function sessionImage");
-  const machine = sourceBlock(client, "function renderMachine", "function resultDrawer");
-  const clearEffect = sourceBlock(client, "function launchClearProgressEffect", "function clearChallenge");
+test("manager stamps are bounded and reduced motion removes ornamental movement", () => {
+  const stage = sourceBlock(client, "function renderStage", "function mainReelItems");
   const clearChallenge = sourceBlock(client, "function clearChallenge", "function stopActiveClock");
-  const result = sourceBlock(client, "function renderResult()", "function render()");
-  const reducedStart = styles.indexOf("@media (prefers-reduced-motion: reduce)");
+  const renderLoop = sourceBlock(client, "function render()", "function navigate");
+  const reducedStart = styles.lastIndexOf("@media (prefers-reduced-motion: reduce)");
   assert.ok(reducedStart >= 0, "reduced-motion media query is available");
-  const reduced = styles.slice(reducedStart);
+  const reduced = styles.slice(reducedStart, styles.indexOf("@keyframes", reducedStart));
 
-  assert.match(particles, /if \(prefersReducedMotion\(\)\) return ""/);
-  assert.match(particles, /Math\.min\(12/);
-  assert.match(progress, /roulette-training-progress-lights/);
-  assert.match(progress, /target === 10 \? "is-two-row" : ""/);
-  assert.match(progress, /\$\{completed\} \/ \$\{target\}/);
-  assert.match(goal, /roulette-training-goal-lights/);
-  assert.match(goal, /style="--light-index:\$\{index\}"/);
-  assert.match(result, /renderGoalLights\(litCount, targetCount, \{ sequential: goalCleared \}\)/);
-  assert.match(result, /goalCleared \? particleField\(10, "goal"\) : ""/);
-  assert.match(styles, /\.roulette-training-particles\.is-goal i:nth-child\(n \+ 11\)\s*\{[\s\S]*?display:\s*none/);
-  assert.match(styles, /\.roulette-training-result\.is-result-give-up \.roulette-training-particles\s*\{[\s\S]*?display:\s*none/);
-  assert.doesNotMatch(machine, /roulette-training-special-ripple/);
-
-  assert.match(clearEffect, /if \(!origin \|\| prefersReducedMotion\(\) \|\| !appRoot\) return/);
-  assert.match(clearEffect, /querySelectorAll\("\.roulette-training-progress-lights i\.is-lit"\)/);
-  assert.match(clearEffect, /const target = litLights\[litLights\.length - 1\]/);
-  const clearSpreads = clearEffect.match(/const spreads = \[([^\]]+)\]/)?.[1]
-    .split(",")
-    .map((value) => Number(value.trim()));
-  assert.ok(Array.isArray(clearSpreads) && clearSpreads.length > 0 && clearSpreads.length <= 6);
-  assert.ok(clearSpreads.every(Number.isFinite));
-  assert.match(clearEffect, /particles\.className = "roulette-training-clear-particles"/);
-  assert.match(clearEffect, /target\.classList\.add\("is-just-lit"\)/);
-  assert.match(clearEffect, /window\.setTimeout\(\(\) => particles\.remove\(\), 1_000\)/);
-  assert.match(clearChallenge, /if \(session\.completedCount >= session\.config\.targetCount\) \{\s*finishSession\("completed"\);\s*return;\s*\}[\s\S]*launchClearProgressEffect\(clearOrigin\)/);
-
-  assert.match(styles, /animation:\s*roulette-training-room-glow\s*(?:500ms|0\.5s)/);
-  assert.match(styles, /animation:\s*roulette-training-special-frame\s*(?:500ms|0\.5s)/);
-  assert.match(styles, /@keyframes roulette-training-light-pop/);
-  assert.match(styles, /@keyframes roulette-training-goal-light-on/);
-  assert.match(styles, /\.roulette-training-goal-lights i\s*\{[\s\S]*?animation:\s*roulette-training-goal-light-on[^;]*calc\(var\(--light-index\) \* \d+ms\)/);
-
-  assert.match(reduced, /\.roulette-training-particles[\s\S]*?display:\s*none/);
-  assert.match(reduced, /\.roulette-training-room-lamp-light,[\s\S]*?animation:\s*none\s*!important/);
-  assert.match(reduced, /\.roulette-training-clear-particles[\s\S]*?display:\s*none\s*!important/);
-  assert.match(reduced, /\.roulette-training-progress-lights[\s\S]*?animation:\s*none/);
-  assert.match(reduced, /\.roulette-training-goal-lights[\s\S]*?animation:\s*none/);
+  assert.match(stage, /state\.justCleared \? `<span class="roulette-training-pass-stamp" aria-hidden="true">合格<\/span>` : ""/);
+  assert.match(renderLoop, /appRoot\.innerHTML = renderer\(\);\s*state\.justCleared = false;/);
+  assert.match(clearChallenge, /if \(session\.completedCount >= session\.config\.targetCount\) \{\s*finishSession\("completed"\);\s*return;\s*\}/);
+  assert.match(clearChallenge, /state\.justCleared = true;[\s\S]*?playStampSound\(\)/);
+  assert.match(styles, /\.roulette-training-pass-stamp\s*\{[\s\S]*?pointer-events:\s*none;[\s\S]*?animation:\s*roulette-training-pass-stamp 1\.6s/);
+  assert.match(styles, /@keyframes roulette-training-pass-stamp\s*\{[\s\S]*?100%\s*\{\s*opacity:\s*0/);
+  for (const selector of [
+    ".roulette-training-image-stage",
+    ".roulette-training-effect-veil",
+    ".roulette-training-pass-stamp",
+    ".roulette-training-order-stamp",
+    ".roulette-training-goal-stamp",
+    ".roulette-training-all-out-tiles i",
+    ".roulette-training-reel-lock",
+  ]) assert.ok(reduced.includes(selector), selector);
+  assert.match(reduced, /animation:\s*none\s*!important;\s*transition:\s*none\s*!important/);
+  assert.match(styles, /\.is-roulette-document-hidden \.roulette-training-effect-veil,[\s\S]*?animation-play-state:\s*paused\s*!important/);
 });
 
 test("effect presentation is keyed only by the seven real core effect ids", () => {
   const coreEffects = sourceBlock(core, "export const EFFECTS", "const UNIT_IDS");
   const presentationConstants = sourceBlock(client, "const EFFECT_PRESENTATIONS", "const PUBLIC_REPORT_REASONS");
-  const presentationHelpers = sourceBlock(client, "function effectIdOf", "function roomDecorMarkup");
+  const presentationHelpers = sourceBlock(client, "function effectIdOf", "function managerConfig");
   const expectedIds = [
     "tempo_up",
     "tempo_down",
@@ -435,15 +338,14 @@ test("roulette draw and effect application contracts stay independent from prese
 
 test("rare presentation remains deterministic, skippable, and recoverable", () => {
   const presentationConstants = sourceBlock(client, "const EFFECT_PRESENTATIONS", "const PUBLIC_REPORT_REASONS");
-  const presentationHelpers = sourceBlock(client, "function effectIdOf", "function roomDecorMarkup");
+  const presentationHelpers = sourceBlock(client, "function effectIdOf", "function managerConfig");
   const reels = sourceBlock(client, "function reelItemKey", "function sessionImage");
-  const machine = sourceBlock(client, "function renderMachine", "function renderRareEffectCard");
-  const rareCard = sourceBlock(client, "function renderRareEffectCard", "function temporaryEffectRemainingSeconds");
+  const machine = sourceBlock(client, "function renderMachine", "function renderEffectVisual");
+  const effectVisual = sourceBlock(client, "function renderEffectVisual", "function temporaryEffectRemainingSeconds");
   const main = sourceBlock(client, "function renderMainRoulette", "function renderMenuResult");
   const armSkip = sourceBlock(client, "function armRarePresentationSkip", "function renderResult()");
   const skip = sourceBlock(client, "function skipRarePresentation", "function nextImageIndex");
   const settleMain = sourceBlock(client, "function settleMainSpin", "function openCountRoulette");
-  const audio = sourceBlock(client, "function playRareFeverChime", "function reelPassageOffsets");
   const stopAudio = sourceBlock(client, "function playRouletteStopSound", "function reelPassageOffsets");
   const serialized = sourceBlock(client, "function serializeSession", "function persistSession");
   const recovery = sourceBlock(client, "function recoverLocalSession", "function effectAppliedMessage");
@@ -460,6 +362,7 @@ test("rare presentation remains deterministic, skippable, and recoverable", () =
   assert.equal(sandbox.presentationOf({ currentEffect: { id: "fever" } }), "fever");
   assert.equal(sandbox.presentationOf({ pendingTemporaryEffect: { effect: { id: "fever" } } }), "fever");
   assert.equal(sandbox.presentationOf({ activeTemporaryEffect: { effectId: "fever" } }), "fever");
+  assert.equal(sandbox.presentationOf({ activeTemporaryEffect: { effectId: "slow" } }), "slow");
   assert.equal(sandbox.presentationOf({ currentEffect: { id: "all_out_time" } }), "all-out");
   assert.equal(sandbox.presentationOf({ pendingAllOutCount: true }), "all-out");
   assert.equal(sandbox.presentationOf({ currentAllOutCount: true }), "all-out");
@@ -470,25 +373,23 @@ test("rare presentation remains deterministic, skippable, and recoverable", () =
   assert.match(reels, /class="roulette-training-row-rare">★ RARE<\/small>/);
   assert.match(main, /spinning && session\.pendingMain\?\.type === "effect"[\s\S]*?session\.pendingMain\.item/);
   assert.match(main, /rare && spinning \? "is-rare-spinning" : ""/);
-  assert.match(styles, /\.roulette-training-screen\[data-roulette-training-screen="play"\] \.roulette-training-machine\.is-rare-spinning::after\s*\{[\s\S]*?animation:\s*roulette-training-rare-premonition/);
-  const premonitionDelay = Number(styles.match(/animation:\s*roulette-training-rare-premonition\s+\d+ms\s+\S+\s+(\d+)ms\s+1\s+both/)?.[1]);
-  assert.ok(Number.isFinite(premonitionDelay) && premonitionDelay >= 600, "rare premonition is CSS-delayed");
+  assert.match(styles, /\.roulette-training-machine\.is-rare-spinning \.roulette-training-reel-shell\s*\{[\s\S]*?animation:\s*roulette-training-tease-pulse/);
 
-  assert.match(rareCard, /★ RARE EFFECT[\s\S]*?FEVER TIME/);
-  assert.match(rareCard, /★ レア効果[\s\S]*?100 × 7[\s\S]*?次の回数は100固定です/);
+  assert.match(effectVisual, /meta\.presentation === "tempo"[\s\S]*?roulette-training-tempo-dial/);
+  assert.match(effectVisual, /meta\.presentation === "fever" \|\| meta\.presentation === "slow"/);
+  assert.match(effectVisual, /全部100回♡[\s\S]*?Array\.from\(\{ length: 7 \}[\s\S]*?いつでも「今日はここまで」で止められます/);
   assert.match(machine, /data-roulette-action="skip-rare-presentation" aria-hidden="true" disabled>レア演出をスキップ/);
   assert.match(presentationConstants, /RARE_PRESENTATION_SKIP_DELAY_MS = 600/);
   assert.match(armSkip, /rarePresentationStartedAt \+ RARE_PRESENTATION_SKIP_DELAY_MS - Date\.now\(\)/);
   assert.match(armSkip, /window\.setTimeout\([\s\S]*?button\.disabled = false[\s\S]*?button\.removeAttribute\("aria-hidden"\)[\s\S]*?レア演出をスキップして結果を表示[\s\S]*?, remaining\)/);
-  assert.match(styles, /\.roulette-training-rare-skip\s*\{[\s\S]*?animation:\s*roulette-training-rare-skip-in\s*180ms\s*ease-out\s*600ms\s*both/);
   assert.match(skip, /Date\.now\(\) - rarePresentationStartedAt < RARE_PRESENTATION_SKIP_DELAY_MS/);
   assert.match(skip, /clearSpinPresentation\(\{ playStop: true \}\)[\s\S]*?window\.clearTimeout\(spinTimer\)[\s\S]*?settleMainSpin\(\)/);
   assert.equal(skip.match(/settleMainSpin\(\)/g)?.length, 1);
   assert.doesNotMatch(skip, /drawMain|drawCount|applyEffect|Math\.random/);
   assert.equal(settleMain.match(/\bapplyEffect\(/g)?.length, 1);
 
-  assert.match(audio, /meta\.presentation === "fever"[\s\S]*?playRareFeverChime\(\)[\s\S]*?return/);
-  assert.match(audio, /meta\.presentation === "all-out"[\s\S]*?playAllOutToyDrum\(\)[\s\S]*?return/);
+  assert.match(stopAudio, /meta\.presentation === "fever"[\s\S]*?playHeartbeatSound\(0\.18\)[\s\S]*?return/);
+  assert.match(stopAudio, /meta\.presentation === "all-out"[\s\S]*?playTileFlipSounds\(\)[\s\S]*?return/);
   assert.doesNotMatch(stopAudio, /\.label|フィーバータイム|おーるあうとたいむ/);
 
   for (const field of [
@@ -500,13 +401,16 @@ test("rare presentation remains deterministic, skippable, and recoverable", () =
     "currentAllOutCount",
     "pendingTemporaryEffect",
     "activeTemporaryEffect",
+    "history",
+    "effectBpmFrom",
   ]) assert.match(serialized, new RegExp(`${field}:`));
   assert.match(recovery, /activeTemporaryEffect: recoveredTemporaryRemainingMs > 0 \? saved\.activeTemporaryEffect : null/);
   assert.match(recovery, /pendingAllOutCount: saved\.pendingAllOutCount === true/);
   assert.match(recovery, /currentAllOutCount: saved\.currentAllOutCount === true/);
+  assert.match(recovery, /state\.autoSpinHeld = true;/);
 
-  assert.match(start, /\["play", "fever", "all-out"\]\.includes\(preview\)/);
-  for (const preview of ["fever", "all-out", "result", "result-completed", "result-empty"]) {
+  assert.match(start, /\["play", "fever", "all-out", \.\.\.PLAY_PREVIEW_STEPS\]\.includes\(preview\)/);
+  for (const preview of ["fever", "all-out", "result", "result-completed", "result-empty", "verdict", "count", "active", "rest", "last-order", "tempo", "slow"]) {
     assert.match(client, new RegExp(`PREVIEW_SCREENS = new Set\\(\\[[\\s\\S]*?"${preview}"`));
   }
   assert.match(start, /effectId = preview === "fever" \? "fever" : "all_out_time"/);
@@ -514,11 +418,12 @@ test("rare presentation remains deterministic, skippable, and recoverable", () =
   assert.doesNotMatch(start, /EFFECTS\.find\([^\n]*label/);
 });
 
-test("result state, target compatibility, and notebook copy remain exact", () => {
+test("result state, target compatibility, and control log copy remain exact", () => {
   const targetResolver = sourceBlock(client, "function resultTargetCount", "function resultImage");
   const durationFormatter = sourceBlock(client, "function formatDuration", "function resultTargetCount");
   const finish = sourceBlock(client, "function finishSession", "function giveUpBeforeStart");
   const result = sourceBlock(client, "function renderResult()", "function render()");
+  const log = sourceBlock(client, "function renderResultLog", "function animateResultNumbers");
   const sandbox = {};
   vm.runInNewContext(`
     const TARGET_OPTIONS = Object.freeze([3, 5, 10]);
@@ -543,98 +448,57 @@ test("result state, target compatibility, and notebook copy remain exact", () =>
   assert.equal(sandbox.resolveTarget({}), 5, "a result without the legacy field stays backward compatible");
   assert.match(client, /TARGET_OPTIONS = Object\.freeze\(\[3, 5, 10\]\)/);
   assert.match(targetResolver, /\[result\?\.targetCount, state\.session\?\.config\?\.targetCount, DEFAULT_CONFIG\.targetCount\]/);
-  assert.match(targetResolver, /TARGET_OPTIONS\.includes\(value\)/);
 
   const resultSummaryIndex = finish.indexOf("...resultSummary({");
   const targetCountIndex = finish.indexOf("targetCount:");
   assert.ok(resultSummaryIndex >= 0 && targetCountIndex > resultSummaryIndex, "targetCount is appended after resultSummary");
-  assert.match(finish, /targetCount: TARGET_OPTIONS\.includes\(Number\(session\.config\?\.targetCount\)\)[\s\S]*?DEFAULT_CONFIG\.targetCount/);
+  assert.match(finish, /const phaseAtFinish = String\(session\.phase \|\| ""\)/);
+  assert.match(finish, /history: Array\.isArray\(session\.history\) \? session\.history\.slice\(-HISTORY_MAX\) : \[\]/);
+  assert.match(finish, /unfinished: session\.finishReason === "give_up"\s*&& \["active", "paused"\]\.includes\(phaseAtFinish\)/);
   assert.match(result, /recordedFinishReason = result\.finishReason \|\| state\.session\?\.finishReason/);
   assert.match(result, /finishReason = recordedFinishReason === "give_up" \? "give_up" : "completed"/);
   assert.match(result, /resultState = goalCleared \? "completed" : "give-up"/);
   assert.match(result, /roulette-training-result is-result-\$\{resultState\}\$\{goalCleared \? " is-goal-clear" : ""\}/);
-  assert.match(result, /<h2>\$\{goalCleared \? "きょうのゴール、達成！" : "きょうはここまで。"\}<\/h2>/);
-  assert.match(result, /const summary = goalCleared\s*\? "自分のペースで、きょうの目標まで進めました。"\s*:\s*emptyResult\s*\? "今回は準備したところまで記録しました。<br>また動けそうな日に始めよう。"\s*:\s*"進んだぶんを記録しました。"/);
-
+  assert.match(result, /<span class="roulette-training-result-subtitle">TODAY'S CONTROL LOG<\/span><h2>本日の管理記録<\/h2>/);
+  assert.match(result, /goalCleared \? "result_completed" : "result_give_up"/);
+  assert.match(result, /roulette-training-goal-stamp" role="img" aria-label="ノルマ達成">ノルマ<br>達成/);
   for (const copy of [
-    "きょうのゴール、達成！",
-    "きょうはここまで。",
-    "自分のペースで、きょうの目標まで進めました。",
-    "今回は準備したところまで記録しました。<br>また動けそうな日に始めよう。",
-    "進んだぶんを記録しました。",
+    "すべて合格です。",
+    "進んだぶんを、きちんと記録しました。",
+    "今回は準備したところまで記録しました。また動けそうな日に始めよう。",
   ]) assert.ok(result.includes(copy), copy);
-  assert.equal(result.match(/class="roulette-training-result-stat /g)?.length, 2);
-  assert.match(result, /<dt>できたメニュー<\/dt>/);
-  assert.match(result, /<dt>動いていた時間<\/dt>/);
+  assert.equal(result.match(/class="roulette-training-result-stat /g)?.length, 4);
+  assert.match(result, /<dt>できた命令<\/dt>/);
+  assert.match(result, /<dt>動いた時間<\/dt>/);
+  assert.match(result, /role="progressbar" aria-label="目標\$\{targetCount\}回中\$\{litCount\}回達成"/);
   assert.equal(sandbox.format(0), "00:00");
   assert.equal(sandbox.format(272_000), "04:32");
   assert.equal(sandbox.format(3_661_000), "61:01");
-  assert.match(durationFormatter, /padStart\(2, "0"\)/);
 
-  assert.equal(result.match(/roulette-training-tempo-point is-start/g)?.length, 1);
-  assert.equal(result.match(/roulette-training-tempo-point is-end/g)?.length, 1);
-  assert.equal(result.match(/roulette-training-tempo-line/g)?.length, 1);
-  assert.equal(result.match(/roulette-training-tempo-max-badge/g)?.length, 1);
-  assert.match(result, /<small>START<\/small>[\s\S]*?<small>END<\/small>[\s\S]*?<small>★ MAX<\/small>/);
-  assert.doesNotMatch(result, /tempo-(?:history|chart|sparkline)|<canvas|BPM履歴/);
-
-  assert.match(result, /<h3>さいごのチャレンジ<\/h3>/);
-  assert.match(result, /\$\{last \? `<strong>\$\{escapeHtml\(last\.menuText\)\}<\/strong><p>\$\{Number\(last\.count\)\}\$\{escapeHtml\(unitInfo\(last\.countUnit\)\.label\)\} ／ BPM \$\{Number\(last\.bpm\)\}<\/p>`/);
-  assert.match(result, /まだチャレンジは始まっていません<\/strong><p>準備したところまで、きちんと記録しました。/);
+  assert.match(log, /stamp: "合格", stampClass: "is-pass"/);
+  assert.match(log, /stamp: "ここまで", stampClass: "is-stop", stampLabel: "今日はここまで"/);
+  assert.match(log, /if \(result\?\.unfinished\) rows\.push\(resultLogRow\(result\.unfinished, rows\.length, stop\)\)/);
+  assert.match(log, /まだ命令は始まっていません。準備したところまで記録しました。/);
   assert.match(result, /結果は自己申告による端末内の記録です。作者、ランキング、RATE、Payには反映されません。/);
-  assert.match(result, /終了すると、このセッションの進行データと端末保存画像を削除します。/);
-  assert.match(result, /data-roulette-action="end-training" \$\{state\.ending \? "disabled" : ""\}>\$\{state\.ending \? "端末データを削除中…" : "記録を閉じてお部屋に戻る"\}/);
+  assert.match(result, /閉じると、このセッションの進行データと端末保存画像を削除します。/);
+  assert.match(result, /data-roulette-action="end-training" \$\{state\.ending \? "disabled" : ""\}>\$\{state\.ending \? "端末データを削除中…" : "記録を閉じる"\}/);
   assert.equal(result.match(/data-roulette-action="end-training"/g)?.length, 1);
 });
 
-test("result imagery, mascot, bounded celebration, and motion preferences stay accessible", () => {
-  const polaroid = sourceBlock(client, "function renderResultPolaroid", "function animateResultNumbers");
+test("result imagery, manager comment, and motion preferences stay accessible", () => {
+  const portrait = sourceBlock(client, "function renderResultPortrait", "function resultDateLabel");
   const countUp = sourceBlock(client, "function animateResultNumbers", "function armRarePresentationSkip");
   const result = sourceBlock(client, "function renderResult()", "function render()");
   const renderLoop = sourceBlock(client, "function render()", "function navigate");
   const clearTimers = sourceBlock(client, "function clearRuntimeTimers", "function ensureAudioContext");
-  const mascotState = sourceBlock(client, "function mascotStateForSession", "function renderMascot");
-  const mascotMarkup = sourceBlock(client, "function renderMascot", "function reelRows");
-  const particles = sourceBlock(client, "function particleField", "function renderProgressGems");
-  const reducedStart = styles.indexOf("@media (prefers-reduced-motion: reduce)");
-  assert.ok(reducedStart >= 0, "reduced-motion media query is available");
-  const reduced = styles.slice(reducedStart);
 
-  assert.match(polaroid, /<img src="\$\{escapeHtml\(image\.url\)\}" alt="最後に使用したトレーニング画像">/);
-  assert.match(polaroid, /<figcaption>LAST SNAP<\/figcaption>/);
-  assert.match(polaroid, /roulette-training-result-polaroid is-sticker/);
-  assert.match(polaroid, /renderMascot\("idle", "sticker"\)/);
-  assert.match(polaroid, /<figcaption>ROOM BUDDY<\/figcaption>/);
-
-  for (const mascotClass of [
-    "idle",
-    "spinning",
-    "normal-hit",
-    "effect-hit",
-    "fever-hit",
-    "all-out-hit",
-    "training",
-    "result-completed",
-    "result-give-up",
-  ]) assert.match(mascotMarkup, new RegExp(`"${mascotClass}"`));
-  assert.match(mascotMarkup, /\["play", "result", "sticker"\]\.includes\(placement\)/);
-  assert.match(mascotMarkup, /roulette-training-mascot is-\$\{safePlacement\} is-\$\{safeState\}" aria-hidden="true"/);
-  assert.match(mascotMarkup, /<svg viewBox="0 0 120 154" focusable="false">/);
-  assert.match(mascotState, /\["main_spinning", "count_spinning"\][\s\S]*?"spinning"/);
-  assert.match(mascotState, /presentation === "fever"[\s\S]*?"fever-hit"/);
-  assert.match(mascotState, /presentation === "all-out"[\s\S]*?"all-out-hit"/);
-  assert.match(mascotState, /\["countdown", "active", "paused"\][\s\S]*?"training"/);
-  assert.match(result, /renderMascot\(goalCleared \? "result-completed" : "result-give-up", "result"\)/);
-  const mascotCss = sourceBlock(styles, ".roulette-training-mascot {", ".roulette-training-mascot.is-play {");
-  assert.match(mascotCss, /pointer-events:\s*none/);
-  assert.match(styles, /\.roulette-training-play\.has-presentation-fever \.roulette-training-mascot\.is-play \.mascot-penlight,[\s\S]*?\.roulette-training-play\.has-presentation-all-out \.roulette-training-mascot\.is-play :is\(\.mascot-headband, \.mascot-flag\)[\s\S]*?opacity:\s*1/);
-  assert.match(styles, /\.roulette-training-play\.has-presentation-fever \.roulette-training-progress-lights i\s*\{[\s\S]*?var\(--fever-beat, 1000ms\)[\s\S]*?calc\(var\(--light-index\) \* 45ms\)/);
-
-  const goalParticleMatch = result.match(/goalCleared \? particleField\((\d+), "goal"\) : ""/);
-  assert.ok(goalParticleMatch, "completed results alone request goal particles");
-  assert.ok(Number(goalParticleMatch[1]) <= 10);
-  assert.match(styles, /\.roulette-training-particles\.is-goal i:nth-child\(n \+ 11\)\s*\{[\s\S]*?display:\s*none/);
-  assert.match(styles, /\.roulette-training-result\.is-result-give-up \.roulette-training-particles\s*\{[\s\S]*?display:\s*none/);
+  assert.match(portrait, /<img src="\$\{escapeHtml\(image\.url\)\}" alt="最後に使用したトレーニング画像">/);
+  assert.match(portrait, /roulette-training-result-portrait is-empty" aria-hidden="true"/);
+  assert.match(result, /<p class="roulette-training-result-handwriting">\$\{escapeHtml\(comment\)\}<\/p>/);
+  assert.match(result, /roulette-training-result-signature">— \$\{escapeHtml\(managerDisplayName\(\)\)\}/);
+  assert.match(styles, /\.roulette-training-result-handwriting\s*\{[\s\S]*?font-family:\s*var\(--rt-hand\)/);
+  assert.match(styles, /--rt-hand:\s*"Yomogi"/);
+  assert.match(styles, /\.roulette-training-result-portrait img\s*\{[\s\S]*?object-fit:\s*contain/);
 
   const duration = Number(countUp.match(/const duration = (\d+)/)?.[1]);
   assert.ok(Number.isFinite(duration) && duration <= 650);
@@ -643,13 +507,7 @@ test("result imagery, mascot, bounded celebration, and motion preferences stay a
   assert.doesNotMatch(countUp, /\.disabled|setAttribute\("disabled"|end-training|roulette-training-end-button/);
   assert.match(renderLoop, /cancelAnimationFrame\(resultCountAnimationFrame\)/);
   assert.match(clearTimers, /cancelAnimationFrame\(resultCountAnimationFrame\)/);
-  assert.match(particles, /if \(prefersReducedMotion\(\)\) return ""/);
-
-  assert.match(reduced, /\.roulette-training-screen \*,\s*\.roulette-training-screen \*::before,\s*\.roulette-training-screen \*::after\s*\{[\s\S]*?animation-duration:\s*0\.01ms\s*!important[\s\S]*?animation-iteration-count:\s*1\s*!important/);
-  assert.match(reduced, /\.roulette-training-mascot,[\s\S]*?\.roulette-training-machine\.is-rare-spinning::after,[\s\S]*?\.roulette-training-rare-effect-card,[\s\S]*?\[data-roulette-result-countup\]\s*\{[\s\S]*?animation:\s*none\s*!important[\s\S]*?transition:\s*none\s*!important/);
-  assert.match(reduced, /\.roulette-training-machine\.is-rare-spinning::after\s*\{[\s\S]*?display:\s*none/);
-  assert.match(reduced, /\.roulette-training-particles,\s*\.roulette-training-clear-particles\s*\{[\s\S]*?display:\s*none\s*!important/);
-  assert.match(styles, /\.is-roulette-document-hidden \.roulette-training-mascot \*[\s\S]*?\.is-roulette-document-hidden \.roulette-training-rare-effect-card,[\s\S]*?\.is-roulette-document-hidden \.roulette-training-progress-lights i,[\s\S]*?\.is-roulette-document-hidden \.roulette-training-particles i,[\s\S]*?animation-play-state:\s*paused\s*!important/);
+  assert.match(styles, /\[data-roulette-result-countup\]\s*\{[\s\S]*?animation:\s*none\s*!important/);
 });
 
 test("count roulette uses seven fixed values and all-out replaces all seven slots with 100", () => {
@@ -731,7 +589,7 @@ test("local recovery and persisted images are bound to the current account owner
   assert.match(validation, /savedOwnerUid[\s\S]*?await ensureUser\(\)[\s\S]*?user\.uid === savedOwnerUid/);
   assert.match(validation, /paidUseId \|\| auth\.currentUser[\s\S]*?purgeStoredRecovery/);
   assert.match(validation, /saved\.localOwnerId[\s\S]*?localOwnerId\(\)/);
-  const resumeLocal = sourceBlock(client, '"resume-local": async () => {', '"spin-main": spinMainRoulette');
+  const resumeLocal = sourceBlock(client, '"resume-local": async () => {', '"spin-main": requestMainSpin');
   assert.ok(resumeLocal.indexOf("validateStoredRecoveryOwner(saved)") < resumeLocal.indexOf('callRouletteTrainingAction("resume_use"'));
   assert.ok(resumeLocal.indexOf('callRouletteTrainingAction("resume_use"') < resumeLocal.indexOf("restoreSessionImages(verifiedSaved)"));
   assert.ok(resumeLocal.indexOf("restoreSessionImages(verifiedSaved)") < resumeLocal.indexOf("recoverLocalSession(verifiedSaved)"));
@@ -761,7 +619,7 @@ test("paid local recovery purges only definitive terminal errors and retains ret
   assert.equal(classify(new TypeError("Failed to fetch")), false);
   assert.equal(classify(new Error("利用記録の所有者を確認できませんでした。")), false);
 
-  const resumeLocal = sourceBlock(client, '"resume-local": async () => {', '"spin-main": spinMainRoulette');
+  const resumeLocal = sourceBlock(client, '"resume-local": async () => {', '"spin-main": requestMainSpin');
   const recoveryCatch = sourceBlock(
     resumeLocal,
     "} catch (error) {",
@@ -1208,7 +1066,8 @@ test("multiple cheer lines rotate every eight active seconds without changing ga
   assert.match(reduced, /\.roulette-training-speech-bubble p:is\(\.is-leaving, \.is-entering\)/);
 
   const sandbox = {};
-  vm.runInNewContext(`${helpers}
+  vm.runInNewContext(`function builtinManagerLines() { return null; }
+    ${helpers}
     Math.random = () => 0;
     this.rotation = {
       lines: menuCheerLines({ cheerLines: ["はじめ", "つぎ", "さいご", "つぎ", ""] }),
@@ -1228,6 +1087,7 @@ test("multiple cheer lines rotate every eight active seconds without changing ga
 
   const runtimeSandbox = {};
   vm.runInNewContext(`
+    function builtinManagerLines() { return null; }
     const CHEER_ROTATION_INTERVAL_MS = 8_000;
     const CHEER_EXIT_DURATION_MS = 160;
     const CHEER_ENTRY_DURATION_MS = 240;
@@ -1375,12 +1235,12 @@ test("give up always enters the result screen and only the end button closes it"
   const result = sourceBlock(client, "function renderResult()", "function render()");
   assert.match(finish, /state\.screen = "result"/);
   assert.match(finish, /persistSession\(\)/);
-  assert.match(result, /きょうはここまで。/);
+  assert.match(result, /goalCleared \? "result_completed" : "result_give_up"/);
   assert.equal(result.match(/data-roulette-action="end-training"/g)?.length, 1);
-  assert.match(result, /記録を閉じてお部屋に戻る/);
-  assert.match(result, /TODAY'S TRAINING NOTE/);
+  assert.match(result, /記録を閉じる/);
+  assert.match(result, /TODAY'S CONTROL LOG/);
   assert.doesNotMatch(result, /もう一度遊ぶ|モード選択へ戻る/);
-  assert.match(client, /結果画面の「記録を閉じてお部屋に戻る」で終了してください/);
+  assert.match(client, /結果画面の「記録を閉じる」で終了してください/);
 });
 
 test("an active paid use can be given up before image setup", () => {

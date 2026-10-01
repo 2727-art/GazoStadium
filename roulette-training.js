@@ -30,6 +30,19 @@ import {
   applyEffect,
   resultSummary,
 } from "./roulette-training-core.mjs?v=roulette-training-v1-count-all-out-v1";
+import {
+  DEFAULT_PERSONA_ID,
+  NICKNAME_MAX_LENGTH,
+  PERSONAS,
+  effectDisplayLabel,
+  effectSituation,
+  managerName,
+  normalizeNickname,
+  normalizePersonaId,
+  personaInfo,
+  personaLine,
+  personaLines,
+} from "./roulette-training-persona.mjs?v=roulette-manager-v1";
 
 const appRoot = document.querySelector("#app");
 const rouletteTrainingAction = httpsCallable(functions, "rouletteTrainingAction");
@@ -59,6 +72,13 @@ const PREVIEW_SCREENS = new Set([
   "result",
   "result-completed",
   "result-empty",
+  "verdict",
+  "count",
+  "active",
+  "rest",
+  "last-order",
+  "tempo",
+  "slow",
 ]);
 const TARGET_OPTIONS = Object.freeze([3, 5, 10]);
 const REST_OPTIONS = Object.freeze([0, 15, 30]);
@@ -78,6 +98,8 @@ const DEFAULT_CONFIG = Object.freeze({
   restSeconds: 15,
   targetCount: 5,
   keepImages: false,
+  persona: DEFAULT_PERSONA_ID,
+  nickname: "",
 });
 const EFFECT_PRESENTATIONS = Object.freeze({
   tempo_up: Object.freeze({ presentation: "tempo", rarity: "standard" }),
@@ -90,6 +112,14 @@ const EFFECT_PRESENTATIONS = Object.freeze({
 });
 const DEFAULT_EFFECT_PRESENTATION = Object.freeze({ presentation: "standard", rarity: "standard" });
 const RARE_PRESENTATION_SKIP_DELAY_MS = 600;
+// 管理ルーレットの演出。どれも決まった結果を見せるだけで、抽選・回数・BPMの決まり方は変えない。
+const PULL_DELAY_MS = 480;
+const AUTO_SPIN_SECONDS = 3;
+const IDLE_NUDGE_MS = 15_000;
+const COUNT_RAISE_CHANCE = 0.35;
+const COUNT_RAISE_REVEAL_MS = 750;
+const TEASE_AT = 0.42;
+const HISTORY_MAX = 10;
 const PUBLIC_REPORT_REASONS = Object.freeze([
   Object.freeze({ id: "dangerous_exercise", label: "危険な運動指示" }),
   Object.freeze({ id: "stop_obstruction", label: "中止・休憩を妨げる表現" }),
@@ -117,6 +147,10 @@ let cheerTransitionTimer = null;
 let temporaryEffectTimer = null;
 let rarePresentationSkipTimer = null;
 let rarePresentationStartedAt = 0;
+let pullTimer = null;
+let autoSpinTimer = null;
+let idleTimer = null;
+let countRevealTimer = null;
 let resultCountAnimationFrame = null;
 let animatedResultKey = "";
 let audioContext = null;
@@ -165,11 +199,29 @@ function sessionPresentation(session = state.session) {
     return "all-out";
   }
   if (candidates.some((effect) => effectIdOf(effect) === "fever")) return "fever";
+  if (candidates.some((effect) => effectIdOf(effect) === "slow")) return "slow";
   return "";
 }
 
-function roomDecorMarkup() {
-  return `<div class="roulette-training-room-decor" aria-hidden="true"><i class="roulette-training-room-wallpaper"></i><i class="roulette-training-room-lamp-light"></i><i class="roulette-training-room-floor"></i><i class="roulette-training-room-baseboard"></i><i class="roulette-training-room-rug"></i></div>`;
+function managerConfig(session = state.session) {
+  return session?.config || state.config;
+}
+
+function managerDisplayName(session = state.session) {
+  return managerName(managerConfig(session)?.nickname);
+}
+
+// 管理人の既定セリフ。同じ場面の再描画では同じ行を出す。
+function managerVoice(situation, values = {}, session = state.session) {
+  const config = managerConfig(session);
+  const seed = `${Number(session?.startedAt) || 0}:${situation}:${Number(session?.completedCount) || 0}`;
+  return personaLine(config?.persona, situation, values, seed);
+}
+
+function isLastOrder(session = state.session) {
+  if (!session) return false;
+  const target = Number(session.config?.targetCount) || DEFAULT_CONFIG.targetCount;
+  return target > 1 && Number(session.completedCount) === target - 1;
 }
 
 function showToast(message) {
@@ -253,6 +305,8 @@ function normalizeConfig(value = {}) {
     restSeconds: REST_OPTIONS.includes(Number(value.restSeconds)) ? Number(value.restSeconds) : 15,
     targetCount: TARGET_OPTIONS.includes(Number(value.targetCount)) ? Number(value.targetCount) : 5,
     keepImages: value.keepImages === true || value.keepImages === "true" || value.keepImages === "on",
+    persona: normalizePersonaId(value.persona),
+    nickname: normalizeNickname(value.nickname),
   };
 }
 
@@ -390,6 +444,15 @@ function createState() {
     recoveryDiscardBusy: false,
     ending: false,
     finishRetryBusy: false,
+    pullPending: false,
+    autoSpinHeld: false,
+    autoSpinHeldByUser: false,
+    autoSpinRemaining: AUTO_SPIN_SECONDS,
+    idleLevel: 0,
+    idleKey: "",
+    justCleared: false,
+    countRevealPending: false,
+    countRaised: false,
   };
 }
 
@@ -838,11 +901,11 @@ function renderHub() {
   return renderFrame(`<div class="roulette-training-hub">
     <section class="roulette-training-intro">
       <div class="roulette-training-intro-copy">
-        <span class="roulette-training-kicker">SPIN · MOVE · CLEAR</span>
-        <h2>回すたび、テンポとメニューが変わる。</h2>
-        <p>好きな画像の下で縦ドラムを回し、出たメニューをメトロノームに合わせて行う、ひとり用のトレーニングです。</p>
+        <span class="roulette-training-kicker">UNDER CONTROL</span>
+        <h2>今日のメニューは、あの子が決める。</h2>
+        <p>選んだ画像の子が「管理人」になって、縦ドラムでメニュー・回数・テンポを決めていく、ひとり用のトレーニングです。</p>
       </div>
-      <div class="roulette-training-intro-reel" aria-hidden="true"><span>テンポUP</span><strong>トレーニング</strong><span>フィーバー</span></div>
+      <div class="roulette-training-intro-reel" aria-hidden="true"><span>ペースアップ命令</span><strong>今日の命令</strong><span>本気タイム</span></div>
     </section>
     ${continuation}
     ${showHubActions ? `<div class="roulette-training-hub-actions">
@@ -858,7 +921,7 @@ function renderHub() {
     </div>` : ""}
     <aside class="roulette-training-safety-note">
       <strong>テンポは運動強度そのものではなく、動く速さの目安です。</strong>
-      <p>体調と動ける範囲を優先し、痛み・めまい・強い息苦しさなどを感じたら「ギブアップ」で止めてください。ギブアップによるペナルティはありません。</p>
+      <p>体調と動ける範囲を優先し、痛み・めまい・強い息苦しさなどを感じたら、管理人に関係なく「今日はここまで」で止めてください。止めてもペナルティはありません。</p>
     </aside>
     <p class="roulette-training-privacy">選んだ画像、BPM、抽選結果、クリア／ギブアップは端末内だけで扱います。販売パックの公開・利用開始・通報だけFirebaseへ送信します。</p>
   </div>`, { showBack: true });
@@ -889,35 +952,52 @@ function priceOptionLabel(price) {
   return `${price} Pay（作者受取 ${settlement.proceeds}／手数料 ${settlement.fee}）`;
 }
 
+function personaOption(persona, selectedId) {
+  const checked = persona.id === selectedId;
+  return `<label class="roulette-training-persona-option${checked ? " is-selected" : ""}"><input type="radio" name="persona" value="${escapeHtml(persona.id)}" ${checked ? "checked" : ""} /><span>${escapeHtml(persona.label)}</span></label>`;
+}
+
 function renderSetup() {
   const pack = state.selectedPack || FREE_PACK;
   const images = state.images.map(imageTile).join("");
-  return renderFrame(`<div class="roulette-training-setup-grid">
-    <section class="roulette-training-panel roulette-training-pack-summary">
-      <span class="roulette-training-panel-label">SELECTED MENU PACK</span>
-      <h2>${escapeHtml(pack.title)}</h2>
-      <p>${escapeHtml(pack.description || "")}</p>
-      <dl><div><dt>作者</dt><dd>${escapeHtml(pack.sellerName || "匿名作者")}</dd></div><div><dt>メニュー</dt><dd>${packItems(pack).length}個</dd></div><div><dt>利用</dt><dd>${Number(pack.price || 0) > 0 ? `${Number(pack.price)} Pay / 1セッション` : "無料"}</dd></div></dl>
-      ${state.activeUse ? `<p class="roulette-training-active-pack-note">開始済みの利用です。このパックを続けるか、準備画面下部の「ギブアップ」で終了してください。</p>` : `<button class="button button-ghost" type="button" data-roulette-action="hub">別のパックを選ぶ</button>`}
-    </section>
+  const persona = personaInfo(state.config.persona);
+  return renderFrame(`<div class="roulette-training-setup-grid is-contract">
+    <div class="roulette-training-setup-side">
+      <section class="roulette-training-contract-intro">
+        <span class="roulette-training-panel-label">MANAGEMENT CONTRACT</span>
+        <h2>管理契約</h2>
+        <p>ルーレットの結果は、あなたの管理人が決めたこと。メニュー・回数・テンポは、選んだ画像の子が決めていきます。</p>
+      </section>
+      <section class="roulette-training-panel roulette-training-pack-summary">
+        <span class="roulette-training-panel-label">MENU PACK · メニュー表</span>
+        <h2>${escapeHtml(pack.title)}</h2>
+        <p>${escapeHtml(pack.description || "")}</p>
+        <dl><div><dt>作者</dt><dd>${escapeHtml(pack.sellerName || "匿名作者")}</dd></div><div><dt>メニュー</dt><dd>${packItems(pack).length}個</dd></div><div><dt>利用</dt><dd>${Number(pack.price || 0) > 0 ? `${Number(pack.price)} Pay / 1セッション` : "無料"}</dd></div></dl>
+        ${state.activeUse ? `<p class="roulette-training-active-pack-note">開始済みの利用です。このパックを続けるか、準備画面下部の「ギブアップ」で終了してください。</p>` : `<button class="button button-ghost" type="button" data-roulette-action="hub">別のパックを選ぶ</button>`}
+      </section>
+    </div>
     <form class="roulette-training-panel roulette-training-setup-form" id="rouletteTrainingSetupForm">
-      <div class="roulette-training-section-heading"><span>01</span><div><h2>画像を選ぶ</h2><p>1〜${IMAGE_MAX_COUNT}枚。画像はサーバーへ送信しません。</p></div></div>
+      <div class="roulette-training-section-heading"><span>01</span><div><h2>管理人の画像と呼び名</h2><p>1〜${IMAGE_MAX_COUNT}枚。画像はサーバーへ送信しません。</p></div></div>
       <label class="roulette-training-file-button ${state.loadingImages ? "is-busy" : ""}">
-        <strong>${state.images.length ? "画像を選び直す" : "画像を選ぶ"}</strong>
+        <strong>${state.images.length ? "画像を選び直す" : "管理人の画像を選ぶ"}</strong>
         <span>複数選択できます（最大${IMAGE_MAX_COUNT}枚）</span>
         <input id="rouletteTrainingImages" type="file" accept="image/*" multiple ${state.loadingImages ? "disabled" : ""} />
       </label>
       <div class="roulette-training-image-grid" aria-label="選択中の画像">${images || `<p class="roulette-training-empty">まだ画像を選択していません。</p>`}</div>
-      <div class="roulette-training-section-heading"><span>02</span><div><h2>テンポとゴール</h2><p>開始前に自分の体調へ合わせてください。</p></div></div>
+      <label class="roulette-training-nickname"><span>呼び名（この端末だけ）</span><input name="nickname" type="text" maxlength="24" autocomplete="off" value="${escapeHtml(state.config.nickname)}" placeholder="例：りお" /><small>吹き出しと記録に表示します。${NICKNAME_MAX_LENGTH}文字まで。空欄なら「管理人」と表示します。</small></label>
+      <div class="roulette-training-section-heading"><span>02</span><div><h2>管理のしかた</h2><p>セリフの口調だけが変わります。抽選・回数・テンポは変わりません。</p></div></div>
+      <fieldset class="roulette-training-persona-picker"><legend class="sr-only">管理人の性格</legend>${PERSONAS.map((item) => personaOption(item, persona.id)).join("")}</fieldset>
+      <p class="roulette-training-persona-sample" data-roulette-persona-sample>「${escapeHtml(persona.sample)}」</p>
+      <div class="roulette-training-section-heading"><span>03</span><div><h2>ノルマとペース</h2><p>開始前に、自分の体調に合わせてください。</p></div></div>
       <div class="roulette-training-config-grid">
         <label><span>開始BPM</span><input name="baseBpm" type="range" min="${MIN_BPM}" max="${state.config.maximumBpm}" step="5" value="${state.config.baseBpm}" /><output data-roulette-output="baseBpm">${state.config.baseBpm}</output></label>
         <label><span>BPM上限</span><input name="maximumBpm" type="range" min="${MIN_BPM}" max="${MAX_BPM}" step="5" value="${state.config.maximumBpm}" /><output data-roulette-output="maximumBpm">${state.config.maximumBpm}</output></label>
         <label><span>休憩</span><select name="restSeconds">${REST_OPTIONS.map((value) => configOption(value, value ? `${value}秒` : "なし", state.config.restSeconds)).join("")}</select></label>
-        <label><span>目標クリア数</span><select name="targetCount">${TARGET_OPTIONS.map((value) => configOption(value, `${value}回`, state.config.targetCount)).join("")}</select></label>
+        <label><span>ノルマ（目標クリア数）</span><select name="targetCount">${TARGET_OPTIONS.map((value) => configOption(value, `${value}回`, state.config.targetCount)).join("")}</select></label>
       </div>
       <label class="roulette-training-image-consent"><input name="keepImages" type="checkbox" ${state.config.keepImages ? "checked" : ""} /><span><strong>再読み込みに備えて画像をこの端末へ保存する</strong><small>既定はOFFです。ONにした画像もFirebaseや作者には送信されません。</small></span></label>
-      <aside class="roulette-training-setup-check"><strong>開始後の判定は自己申告です。</strong><span>できたら「クリア」、続けられない時は「ギブアップ」を押します。</span></aside>
-      <button class="button button-primary roulette-training-start-button" type="submit" ${state.images.length < 1 || state.loadingImages ? "disabled" : ""}>ルーレットトレーニング開始</button>
+      <label class="roulette-training-safety-pledge"><input name="safetyPledge" type="checkbox" required /><span><strong>痛み・めまい・息苦しさが出たら、管理人に関係なく「今日はここまで」を押します</strong><small>報告は自己申告です。止めてもペナルティはありません。</small></span></label>
+      <button class="button button-primary roulette-training-start-button" type="submit" ${state.images.length < 1 || state.loadingImages ? "disabled" : ""}>管理を始めてもらう</button>
       ${state.activeUse ? `<aside class="roulette-training-setup-abandon"><div><strong>画像を用意できない時も、この利用を終了できます。</strong><span>返金はありませんが、追加料金や結果送信もありません。0クリアの結果画面へ進みます。</span></div><button class="button button-danger" type="button" data-roulette-action="give-up-before-start">ギブアップ</button></aside>` : ""}
     </form>
   </div>`, { backLabel: "入口へ戻る", backAction: "hub" });
@@ -1311,63 +1391,6 @@ function visualSpinRows(items, selectedIndex, type) {
   };
 }
 
-function mascotStateForSession(session = state.session) {
-  const phase = String(session?.phase || "");
-  const presentation = sessionPresentation(session);
-  if (["main_spinning", "count_spinning"].includes(phase)) return "spinning";
-  if (phase === "effect_result") {
-    if (presentation === "fever") return "fever-hit";
-    if (presentation === "all-out") return "all-out-hit";
-    return "effect-hit";
-  }
-  if (["menu_result", "count_result"].includes(phase)) {
-    return presentation === "all-out" ? "all-out-hit" : "normal-hit";
-  }
-  if (["countdown", "active", "paused"].includes(phase)) return "training";
-  return "idle";
-}
-
-function renderMascot(mascotState = "idle", placement = "play") {
-  const safeState = [
-    "idle",
-    "spinning",
-    "normal-hit",
-    "effect-hit",
-    "fever-hit",
-    "all-out-hit",
-    "training",
-    "result-completed",
-    "result-give-up",
-  ].includes(mascotState) ? mascotState : "idle";
-  const safePlacement = ["play", "result", "sticker"].includes(placement) ? placement : "play";
-  return `<div class="roulette-training-mascot is-${safePlacement} is-${safeState}" aria-hidden="true">
-    <svg viewBox="0 0 120 154" focusable="false">
-      <ellipse class="mascot-shadow" cx="61" cy="145" rx="34" ry="6"></ellipse>
-      <g class="mascot-ear mascot-ear-left"><path d="M38 55C26 40 23 9 36 5c13-4 18 29 16 48z"></path><path class="mascot-ear-inner" d="M36 43c-5-11-7-27-2-31 6 1 10 19 10 34z"></path></g>
-      <g class="mascot-ear mascot-ear-right"><path d="M71 51C70 29 81 2 94 7c12 6 1 34-10 48z"></path><path class="mascot-ear-inner" d="M81 45c1-14 7-29 12-30 4 6-2 22-9 32z"></path></g>
-      <ellipse class="mascot-body" cx="61" cy="108" rx="34" ry="36"></ellipse>
-      <circle class="mascot-tail" cx="91" cy="119" r="13"></circle>
-      <circle class="mascot-head" cx="61" cy="65" r="36"></circle>
-      <g class="mascot-face">
-        <ellipse class="mascot-eye mascot-eye-left" cx="48" cy="62" rx="3.8" ry="5.6"></ellipse>
-        <ellipse class="mascot-eye mascot-eye-right" cx="75" cy="62" rx="3.8" ry="5.6"></ellipse>
-        <circle class="mascot-cheek" cx="40" cy="75" r="5"></circle><circle class="mascot-cheek" cx="82" cy="75" r="5"></circle>
-        <path class="mascot-mouth" d="M56 72q5 7 10 0"></path>
-      </g>
-      <path class="mascot-neck-ribbon" d="M47 91q14 8 28 0l-4 15-10-8-11 8z"></path>
-      <g class="mascot-arm mascot-arm-left"><ellipse cx="34" cy="106" rx="10" ry="20"></ellipse></g>
-      <g class="mascot-arm mascot-arm-right"><ellipse cx="88" cy="106" rx="10" ry="20"></ellipse></g>
-      <g class="mascot-ribbon-pull"><path d="M88 94c13-8 21-22 26-34"></path><path d="M108 56l8-5-1 10z"></path></g>
-      <g class="mascot-effect-star"><path d="M96 78l4 8 9 1-7 6 2 9-8-4-8 4 2-9-7-6 9-1z"></path></g>
-      <g class="mascot-penlight"><rect x="94" y="62" width="8" height="34" rx="4"></rect><circle cx="98" cy="60" r="6"></circle></g>
-      <g class="mascot-headband"><path d="M31 53q30-15 61 0l-2 10q-28-13-57 0z"></path><path d="M88 53l22-10-8 18 10 10-23-7z"></path></g>
-      <g class="mascot-flag"><path d="M94 105V37"></path><path d="M95 39h24v27H95z"></path><text x="107" y="57" text-anchor="middle">100</text></g>
-      <g class="mascot-trophy"><path d="M37 96h34l-6 25H43z"></path><path d="M54 82l5 9 10 1-7 7 2 10-10-5-9 5 2-10-7-7 10-1z"></path><path d="M49 121h11v10H49zM42 131h25v7H42z"></path></g>
-      <g class="mascot-towel"><path d="M30 91q30 13 61 0l4 28q-34 13-69 0z"></path><path d="M37 103h48M40 111h42"></path></g>
-    </svg>
-  </div>`;
-}
-
 function reelRows(items, selectedId, type, spinning) {
   const normalized = items.length ? items : [{ id: "empty", label: "準備中" }];
   const matchedIndex = normalized.findIndex((item) => reelItemKey(item) === String(selectedId));
@@ -1392,6 +1415,7 @@ function reelRows(items, selectedId, type, spinning) {
     const rowClasses = [
       "roulette-training-reel-row",
       selected ? "is-selected" : "",
+      isEffect ? "is-effect-row" : "",
       rare ? "is-rare-effect-row" : "",
       rare ? `is-${presentation.presentation}-row` : "",
       allOutCount ? "is-all-out-count-row" : "",
@@ -1403,40 +1427,10 @@ function reelRows(items, selectedId, type, spinning) {
       <div class="roulette-training-reel-track">${rows}</div>
       <div class="roulette-training-reel-fade" aria-hidden="true"></div>
     </div>
-    <i class="roulette-training-reel-lock is-left" aria-hidden="true"></i>
-    <i class="roulette-training-reel-lock is-right" aria-hidden="true"></i>
+    <i class="roulette-training-reel-lock is-left" aria-hidden="true"><b>LOCK</b></i>
+    <i class="roulette-training-reel-lock is-right" aria-hidden="true"><b>LOCK</b></i>
     <i class="roulette-training-reel-marker" aria-hidden="true"></i>
   </div>`;
-}
-
-function particleField(count = 12, kind = "menu") {
-  if (prefersReducedMotion()) return "";
-  const positions = [
-    [9, 34], [17, 13], [29, 25], [40, 9], [53, 19], [65, 8], [77, 26], [90, 14],
-    [13, 72], [26, 88], [41, 77], [56, 92], [70, 79], [84, 90], [93, 65], [5, 91],
-  ];
-  const amount = Math.min(12, Math.max(0, Number(count) || 0));
-  return `<div class="roulette-training-particles is-${escapeHtml(kind)}" aria-hidden="true">${positions.slice(0, amount).map(([x, y], index) => `<i style="--particle-x:${x}%;--particle-y:${y}%;--particle-delay:${(index % 4) * 55}ms"></i>`).join("")}</div>`;
-}
-
-function renderProgressGems(session = state.session) {
-  const target = Math.max(1, Math.min(10, Number(session?.config?.targetCount) || 5));
-  const completed = Math.max(0, Math.min(target, Number(session?.completedCount) || 0));
-  const columns = Math.min(5, target);
-  const gems = Array.from({ length: target }, (_, index) => `<i class="${index < completed ? "is-lit" : ""}" style="--light-index:${index}"></i>`).join("");
-  return `<div class="roulette-training-stage-progress" role="progressbar" aria-label="目標${target}回中${completed}回達成" aria-valuemin="0" aria-valuemax="${target}" aria-valuenow="${completed}">
-    <span class="sr-only">目標${target}回中${completed}回クリア</span>
-    <div class="roulette-training-progress-lights ${target === 10 ? "is-two-row" : ""}" style="--light-columns:${columns}" aria-hidden="true">${gems}</div>
-    <strong aria-hidden="true">${completed} / ${target}</strong>
-  </div>`;
-}
-
-function renderGoalLights(completedCount, targetCount = completedCount, { sequential = false } = {}) {
-  const target = TARGET_OPTIONS.includes(Number(targetCount)) ? Number(targetCount) : DEFAULT_CONFIG.targetCount;
-  const completed = Math.max(0, Math.min(target, Number(completedCount) || 0));
-  const columns = Math.min(5, target);
-  const lights = Array.from({ length: target }, (_, index) => `<i class="${index < completed ? "is-lit" : ""}" style="--light-index:${index}"></i>`).join("");
-  return `<div class="roulette-training-goal-lights ${target === 10 ? "is-two-row" : ""}${sequential ? " is-sequential" : ""}" style="--light-columns:${columns}" aria-hidden="true">${lights}</div>`;
 }
 
 function sessionImage() {
@@ -1450,17 +1444,77 @@ function currentCheer() {
   return String(state.session?.currentCheer || "");
 }
 
+function managerNameTag(session = state.session) {
+  const nickname = normalizeNickname(managerConfig(session)?.nickname);
+  return `<span class="roulette-training-manager-name"><small>管理人</small>${nickname ? `<b>${escapeHtml(nickname)}</b>` : ""}</span>`;
+}
+
+function effectBpmValue(session = state.session) {
+  const temporary = session?.pendingTemporaryEffect || session?.activeTemporaryEffect;
+  return Number(temporary?.workoutBpm) || Number(session?.baseBpm) || BASE_BPM;
+}
+
+// 画像の吹き出しに出す、その場面の管理人のひとこと。挑戦中だけは台本の応援台詞を使う。
+function stageVoice(session = state.session) {
+  if (!session) return "";
+  const phase = String(session.phase || "");
+  const menu = session.currentMenu;
+  const unit = menu ? unitInfo(menu.countUnit).label : "";
+  if (phase === "main_ready") {
+    if (state.idleLevel >= 2) return managerVoice("idle2");
+    if (state.idleLevel === 1) return managerVoice("idle1");
+    if (isLastOrder(session)) return managerVoice("last_order");
+    if (state.justCleared) return managerVoice("clear_next");
+    return managerVoice("ready");
+  }
+  if (phase === "main_spinning") return managerVoice("spinning");
+  if (phase === "effect_result") {
+    if (state.autoSpinHeldByUser) return managerVoice("hold");
+    return managerVoice(effectSituation(session.currentEffect), { bpm: effectBpmValue(session) });
+  }
+  if (phase === "menu_result") return managerVoice("menu", { menu: menu?.menuText || "" });
+  if (phase === "count_ready") return managerVoice(state.idleLevel >= 1 ? "idle1" : "count_ready");
+  if (phase === "count_spinning") return managerVoice("count_spinning");
+  if (phase === "count_result") {
+    if (state.countRevealPending) {
+      return managerVoice("count_raise_low", { low: Number(session.pendingCount?.raiseFrom) || 0, unit });
+    }
+    return managerVoice(state.countRaised ? "count_raise" : "count_result", { count: session.currentCount, unit });
+  }
+  if (phase === "countdown") return managerVoice("countdown");
+  if (phase === "active" || phase === "paused") {
+    if (session.challengeTimedOut) return managerVoice("timed_out");
+    return currentCheer() || managerVoice("active");
+  }
+  if (phase === "rest") return managerVoice("clear_rest", { seconds: Number(session.config?.restSeconds) || 0 });
+  return "";
+}
+
+const EYE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+const SHIELD_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"></path></svg>`;
+
 function renderStage() {
   const image = sessionImage();
   const session = state.session;
-  const cheer = currentCheer();
-  const cheerVisible = cheer && ["menu_result", "count_ready", "count_spinning", "count_result", "countdown", "active", "paused", "rest"].includes(session?.phase);
-  return `<div class="roulette-training-image-stage">
+  const phase = String(session?.phase || "");
+  const lastOrder = isLastOrder(session) && ["main_ready", "main_spinning"].includes(phase);
+  const bpm = Number(session?.currentWorkoutBpm || session?.workoutBpm || session?.baseBpm) || BASE_BPM;
+  const stageClasses = [
+    "roulette-training-image-stage",
+    ["active", "paused"].includes(phase) ? "is-watching" : "",
+    lastOrder ? "is-last-order" : "",
+  ].filter(Boolean).join(" ");
+  const bubbleClasses = [
+    "roulette-training-speech-bubble",
+    ["menu_result", "count_result", "effect_result"].includes(phase) ? "is-pop-in" : "",
+  ].filter(Boolean).join(" ");
+  return `<div class="${stageClasses}">
     ${image ? `<img src="${escapeHtml(image.url)}" alt="トレーニング用に選択した画像" />` : `<div class="roulette-training-image-missing"><strong>画像を復元できませんでした</strong><span>トレーニング終了後に選び直せます</span></div>`}
-    <span class="roulette-training-photo-tape is-top" aria-hidden="true"></span>
-    <span class="roulette-training-photo-tape is-bottom" aria-hidden="true"></span>
-    ${cheerVisible ? `<div class="roulette-training-speech-bubble ${session.phase === "menu_result" ? "is-pop-in" : ""}"><span class="roulette-training-note-tape" aria-hidden="true"></span><p data-roulette-cheer-text>${escapeHtml(cheer)}</p></div>` : ""}
-    ${renderProgressGems(session)}
+    <i class="roulette-training-effect-veil" aria-hidden="true"></i>
+    ${phase === "active" ? `<span class="roulette-training-watch-badge" aria-hidden="true">${EYE_ICON}見てるよ</span><span class="roulette-training-bpm-ring" aria-hidden="true"><strong data-roulette-ring-bpm>${bpm}</strong><small>BPM</small></span>` : ""}
+    ${lastOrder ? `<span class="roulette-training-last-order" aria-hidden="true"><small>LAST ORDER</small><b>ラスト命令</b></span>` : ""}
+    <div class="${bubbleClasses}" data-roulette-voice="${escapeHtml(phase)}">${managerNameTag(session)}<p data-roulette-cheer-text>${escapeHtml(stageVoice(session))}</p></div>
+    ${state.justCleared ? `<span class="roulette-training-pass-stamp" aria-hidden="true">合格</span>` : ""}
   </div>`;
 }
 
@@ -1470,7 +1524,7 @@ function mainReelItems() {
       ...effect,
       ...effectPresentation(effect),
       reelId: `effect:${effect.id}`,
-      label: effect.label,
+      label: effectDisplayLabel(effect),
     })),
     ...packItems(state.session?.pack).map((item) => ({ ...item, reelId: `menu:${item.id}`, label: item.menuText })),
   ];
@@ -1492,8 +1546,15 @@ function challengeLabel(session = state.session) {
 function temporaryEffectCopy(session = state.session) {
   if (!session?.pendingTemporaryEffect && !session?.activeTemporaryEffect) return "";
   const effect = session.activeTemporaryEffect || session.pendingTemporaryEffect;
-  return `${effect.effect?.label || effect.label || "一時効果"}：開始から${Math.round((effect.durationMs || TEMP_EFFECT_MS) / 1000)}秒`;
+  return `${effectDisplayLabel(effect.effect || effect)}：開始から${Math.round((effect.durationMs || TEMP_EFFECT_MS) / 1000)}秒`;
 }
+
+const EFFECT_STAMPS = Object.freeze({
+  tempo: "変更",
+  fever: "本気",
+  slow: "じっくり",
+  "all-out": "全部100",
+});
 
 function renderMachine({
   ariaLabel,
@@ -1506,34 +1567,44 @@ function renderMachine({
   drawer = "",
   controls = "",
   note = "",
-  particles = "",
   banner = "",
   presentation = "",
   skipRare = false,
+  stamp = "",
 }) {
   const mainMachine = type !== "count";
   return `<section class="roulette-training-machine is-${escapeHtml(type)} ${escapeHtml(stateClass)}" aria-label="${escapeHtml(ariaLabel)}" data-machine-phase="${escapeHtml(state.session?.phase || "")}"${presentation ? ` data-effect-presentation="${escapeHtml(presentation)}"` : ""}>
-    <span class="roulette-training-machine-pins" aria-hidden="true"><i class="is-pearl-one"></i><i class="is-star-one"></i><i class="is-pearl-two"></i><i class="is-star-two"></i></span>
-    <header class="roulette-training-machine-heading"><span><b>${mainMachine ? "きょうのルーレット" : "回数ルーレット"}</b><small aria-hidden="true">${mainMachine ? "TODAY'S ROULETTE" : "COUNT ROULETTE"}</small></span><strong>${escapeHtml(status)}</strong></header>
+    <header class="roulette-training-machine-heading"><span><b>${mainMachine ? "今日の命令" : "回数の宣告"}</b>${mainMachine ? `<em>拒否権なし</em>` : ""}</span><strong>${escapeHtml(status)}</strong></header>
     ${banner}
     <div class="roulette-training-machine-display">
       ${reelRows(items, selectedId, type, spinning)}
+      ${stamp ? `<span class="roulette-training-order-stamp" aria-hidden="true">${escapeHtml(stamp)}</span>` : ""}
       ${drawer}
     </div>
     ${skipRare ? `<button class="roulette-training-rare-skip" type="button" data-roulette-action="skip-rare-presentation" aria-hidden="true" disabled>レア演出をスキップ</button>` : ""}
     ${controls ? `<div class="roulette-training-machine-controls">${controls}</div>` : ""}
     ${note ? `<p class="roulette-training-machine-note">${escapeHtml(note)}</p>` : ""}
-    ${particles}
   </section>`;
 }
 
-function renderRareEffectCard(effect) {
+function renderEffectVisual(effect, session = state.session) {
   const meta = effectPresentation(effect);
-  if (meta.rarity !== "rare") return "";
-  if (meta.presentation === "fever") {
-    return `<div class="roulette-training-rare-effect-card is-fever"><span class="roulette-training-rare-effect-sticker">★ RARE EFFECT</span><strong>FEVER TIME</strong><p>フェアリーライトと一緒に、次のトレーニングを応援します。</p></div>`;
+  if (meta.presentation === "tempo") {
+    const to = Number(session?.baseBpm) || BASE_BPM;
+    const from = Number(session?.effectBpmFrom) || to;
+    const direction = to > from ? "is-up" : to < from ? "is-down" : "is-flat";
+    return `<div class="roulette-training-tempo-dial ${direction}"><span aria-hidden="true">${from}</span><i aria-hidden="true">→</i><strong>${to}</strong><small>BPM</small></div>`;
   }
-  return `<div class="roulette-training-rare-effect-card is-all-out"><span class="roulette-training-rare-effect-sticker">★ レア効果</span><strong>100 × 7</strong><p>次の回数は100固定です</p><small class="roulette-training-rare-safety">無理のない範囲で。続けられないときは、いつでも今日はここまでで大丈夫です。</small></div>`;
+  if (meta.presentation === "fever" || meta.presentation === "slow") {
+    const applied = session?.pendingTemporaryEffect || session?.activeTemporaryEffect;
+    const bpm = Number(applied?.workoutBpm) || Number(session?.baseBpm) || BASE_BPM;
+    const seconds = Math.round((applied?.durationMs || TEMP_EFFECT_MS) / 1000);
+    return `<div class="roulette-training-effect-card is-${escapeHtml(meta.presentation)}"><strong>${escapeHtml(effectDisplayLabel(effect))}</strong><span>${seconds}秒だけ BPM ${bpm}</span><small>次のトレーニングを始めた時から数えます</small></div>`;
+  }
+  if (meta.presentation === "all-out") {
+    return `<div class="roulette-training-effect-card is-all-out"><strong>全部100回♡</strong><div class="roulette-training-all-out-tiles" aria-hidden="true">${Array.from({ length: 7 }, (_, index) => `<i style="--tile-index:${index}">100</i>`).join("")}</div><small class="roulette-training-rare-safety">無理のない範囲で。続けられないときは、いつでも「今日はここまで」で止められます。</small></div>`;
+  }
+  return "";
 }
 
 function temporaryEffectRemainingSeconds(session = state.session) {
@@ -1546,17 +1617,17 @@ function temporaryEffectRemainingSeconds(session = state.session) {
 
 function renderStatusEffect(session = state.session) {
   const presentation = sessionPresentation(session);
-  if (presentation === "fever") {
+  if (presentation === "fever" || presentation === "slow") {
     const seconds = temporaryEffectRemainingSeconds(session);
-    return `<mark class="roulette-training-status-effect is-fever">FEVER${seconds ? `<small data-roulette-effect-seconds>残り${seconds}秒</small>` : ""}</mark>`;
+    return `<mark class="roulette-training-status-effect is-${presentation}">${presentation === "fever" ? "本気タイム" : "じっくり"}${seconds ? `<small data-roulette-effect-seconds>残り${seconds}秒</small>` : ""}</mark>`;
   }
   if (presentation === "all-out") {
-    return `<mark class="roulette-training-status-effect is-all-out">ALL OUT<small>次は100固定</small></mark>`;
+    return `<mark class="roulette-training-status-effect is-all-out">全部100<small>次の回数</small></mark>`;
   }
   return "";
 }
 
-function resultDrawer({ kind, title, detail = "", meta = "", action, actionLabel, content = "" }) {
+function resultDrawer({ kind, title, detail = "", meta = "", action = "", actionLabel = "", content = "", actionHtml = "", actionDisabled = false }) {
   return `<div class="roulette-training-selection-drawer is-${escapeHtml(kind)} is-open">
     <div class="roulette-training-drawer-copy">
       ${title ? `<strong class="roulette-training-drawer-title">${escapeHtml(title)}</strong>` : ""}
@@ -1564,7 +1635,19 @@ function resultDrawer({ kind, title, detail = "", meta = "", action, actionLabel
       ${meta ? `<em>${escapeHtml(meta)}</em>` : ""}
       ${content}
     </div>
-    <button class="button button-primary roulette-training-spin" type="button" data-roulette-action="${escapeHtml(action)}">${escapeHtml(actionLabel)}</button>
+    ${actionHtml || `<button class="button button-primary roulette-training-spin" type="button" data-roulette-action="${escapeHtml(action)}" ${actionDisabled ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>`}
+  </div>`;
+}
+
+// 効果の後は、管理人が数秒後に自分でメニューを回す。「ちょっと待って」で止めると手動に戻る。
+function renderAutoSpinControl() {
+  // 画面が隠れている間は秒読みを進めないので、最初から手動のボタンにしておく。
+  if (state.autoSpinHeld || document.visibilityState === "hidden") {
+    return `<button class="button button-primary roulette-training-spin" type="button" data-roulette-action="spin-main">回してください</button>`;
+  }
+  return `<div class="roulette-training-auto-spin" role="group" aria-label="自動でメニューを回します">
+    <p><span>${escapeHtml(managerVoice("auto_spin"))}</span><b data-roulette-auto-spin-seconds>${Math.max(1, Number(state.autoSpinRemaining) || AUTO_SPIN_SECONDS)}</b></p>
+    <button class="button button-ghost" type="button" data-roulette-action="hold-auto-spin">ちょっと待って</button>
   </div>`;
 }
 
@@ -1582,26 +1665,25 @@ function renderMainRoulette() {
   const drawer = effectResult
     ? resultDrawer({
       kind: "effect",
-      title: session.currentEffect.label,
+      title: effectDisplayLabel(session.currentEffect),
       detail: session.effectMessage,
-      content: renderRareEffectCard(session.currentEffect),
-      action: "spin-main",
-      actionLabel: "続けてメニューを回す",
+      content: renderEffectVisual(session.currentEffect, session),
+      actionHtml: renderAutoSpinControl(),
     })
     : "";
   const controls = effectResult
     ? ""
-    : `<button class="button button-primary roulette-training-spin" type="button" data-roulette-action="spin-main" ${spinning ? "disabled" : ""}>${spinning ? "回転中…" : "ルーレットを回す"}</button>`;
+    : `<button class="button button-primary roulette-training-spin" type="button" data-roulette-action="spin-main" ${spinning || state.pullPending ? "disabled" : ""}>${spinning ? "抽選中…" : state.pullPending ? "回してもらっています…" : "回してください"}</button>`;
   return renderMachine({
     ariaLabel: "メインルーレット",
     type: "main",
     stateClass: [
-      effectResult ? "is-special-result" : spinning ? "is-spinning" : "is-ready",
+      effectResult ? "is-special-result is-order-locked" : spinning ? "is-spinning" : "is-ready",
       rare ? "is-rare-effect" : "",
       rare ? `is-presentation-${shownPresentation.presentation}` : "",
       rare && spinning ? "is-rare-spinning" : "",
     ].filter(Boolean).join(" "),
-    status: effectResult ? (rare ? "レア効果" : "おまけチャンス") : spinning ? "抽選中…" : "準備OK",
+    status: effectResult ? (rare ? "レア効果" : "気まぐれ発動") : spinning ? "抽選中…" : "命令待ち",
     items: mainReelItems(),
     selectedId: selectedMainId(),
     spinning,
@@ -1609,8 +1691,8 @@ function renderMainRoulette() {
     controls,
     presentation: rare ? shownPresentation.presentation : "",
     skipRare: rare && spinning,
-    particles: effectResult && rare ? particleField(8, shownPresentation.presentation) : "",
-    note: effectResult ? "" : "特殊効果の後は必ずトレーニングメニューが決まります。",
+    stamp: effectResult ? EFFECT_STAMPS[effectPresentation(session.currentEffect).presentation] || "変更" : "",
+    note: effectResult ? "" : "メニュー65%・効果35%。効果の後は必ずメニューが決まります。",
   });
 }
 
@@ -1619,8 +1701,8 @@ function renderMenuResult() {
   return renderMachine({
     ariaLabel: "決定したトレーニングメニュー",
     type: "main",
-    stateClass: "is-menu-locked",
-    status: "きょうのメニュー",
+    stateClass: "is-menu-locked is-order-locked",
+    status: isLastOrder(session) ? "ラスト命令" : "決定",
     items: mainReelItems(),
     selectedId: `menu:${session.currentMenu.id}`,
     drawer: resultDrawer({
@@ -1629,9 +1711,9 @@ function renderMenuResult() {
       detail: session.currentMenu.detailText,
       meta: temporaryEffectCopy(session),
       action: "open-count",
-      actionLabel: "回数ルーレットへ",
+      actionLabel: "回数を決めてもらう",
     }),
-    particles: particleField(12, "menu"),
+    stamp: "決定",
   });
 }
 
@@ -1677,6 +1759,7 @@ function renderCountRoulette() {
   const session = state.session;
   const spinning = session.phase === "count_spinning";
   const settled = session.phase === "count_result";
+  const revealing = settled && state.countRevealPending;
   const allOut = session.currentAllOutCount === true;
   const items = countReelItems();
   const selectedValue = Number(session.pendingCount?.value ?? session.currentCount);
@@ -1688,25 +1771,29 @@ function renderCountRoulette() {
     : items.findIndex((item) => item.value === selectedValue);
   const selected = settled || spinning ? (items[selectedIndex]?.id || "") : "";
   const unitLabel = unitInfo(session.currentMenu.countUnit).label;
+  const shownCount = revealing ? Number(session.pendingCount?.raiseFrom) || session.currentCount : session.currentCount;
   const drawer = settled
     ? resultDrawer({
       kind: "count",
       action: "start-challenge",
-      actionLabel: "3秒カウントで開始",
-      content: `<span class="roulette-training-count-caption">今回の回数</span>${renderOdometer(session.currentCount, unitLabel)}<div class="roulette-training-final-check"><span>${escapeHtml(session.currentMenu.menuText)}</span><strong>BPM ${session.workoutBpm}</strong>${temporaryEffectCopy(session) ? `<em>${escapeHtml(temporaryEffectCopy(session))}</em>` : ""}</div>`,
+      actionLabel: revealing ? "宣告中…" : "…はい。3秒後に始めます",
+      actionDisabled: revealing,
+      content: `<span class="roulette-training-count-caption">${revealing ? "回数は…" : "今回の回数"}</span>${renderOdometer(shownCount, unitLabel)}<div class="roulette-training-final-check"><span>${escapeHtml(session.currentMenu.menuText)}</span><strong>BPM ${session.workoutBpm}</strong>${temporaryEffectCopy(session) ? `<em>${escapeHtml(temporaryEffectCopy(session))}</em>` : ""}</div>`,
     })
     : "";
   const controls = settled
     ? ""
-    : `<button class="button button-primary roulette-training-spin" type="button" data-roulette-action="spin-count" ${spinning ? "disabled" : ""}>${spinning ? "回転中…" : "回数を決める"}</button>`;
+    : `<button class="button button-primary roulette-training-spin" type="button" data-roulette-action="spin-count" ${spinning ? "disabled" : ""}>${spinning ? "抽選中…" : "回数を決めてもらう"}</button>`;
   return renderMachine({
     ariaLabel: "回数ルーレット",
     type: "count",
     stateClass: [
       settled ? "is-count-result" : spinning ? "is-spinning" : "is-ready",
+      settled && !revealing ? "is-order-locked" : "",
+      revealing ? "is-count-revealing" : "",
       allOut ? "is-all-out-count" : "",
     ].filter(Boolean).join(" "),
-    status: allOut ? (settled ? "100回で挑戦" : spinning ? "100を抽選中…" : "100固定") : settled ? "この回数で挑戦" : spinning ? "抽選中…" : "回数を決めよう",
+    status: allOut ? (settled ? "100回で挑戦" : spinning ? "100を抽選中…" : "100固定") : settled ? (revealing ? "宣告中…" : "この回数で") : spinning ? "抽選中…" : "回数待ち",
     items,
     selectedId: selected,
     spinning,
@@ -1715,11 +1802,12 @@ function renderCountRoulette() {
     presentation: allOut ? "all-out" : "",
     banner: allOut ? `<div class="roulette-training-all-out-count-card"><strong>100 × 7</strong><span>次の回数は100固定です</span></div>` : "",
     note: allOut ? "無理のない範囲で。続けられないときは、いつでも今日はここまでで大丈夫です。" : "",
+    stamp: settled && !revealing ? "宣告" : "",
   });
 }
 
 function renderCountdown() {
-  return `<section class="roulette-training-challenge is-countdown"><span class="roulette-training-challenge-kicker"><b>もうすぐスタート</b><small aria-hidden="true">READY</small></span><strong class="roulette-training-countdown-number">${state.countdownValue}</strong><p>${escapeHtml(challengeLabel())} ／ BPM ${state.session.workoutBpm}</p><button class="button button-danger roulette-training-give-up" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></section>`;
+  return `<section class="roulette-training-challenge is-countdown"><span class="roulette-training-challenge-kicker"><b>開始合図</b><small aria-hidden="true">READY</small></span><strong class="roulette-training-countdown-number">${state.countdownValue}</strong><p>${escapeHtml(challengeLabel())} ／ BPM ${state.session.workoutBpm}</p><button class="button button-danger roulette-training-give-up" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></section>`;
 }
 
 function remainingSeconds() {
@@ -1744,13 +1832,13 @@ function renderActiveChallenge() {
   const seconds = remainingSeconds();
   const timerCopy = session.currentMenu.countUnit === "seconds"
     ? seconds > 0
-      ? `<div class="roulette-training-workout-timer"><strong data-roulette-workout-seconds>${seconds}</strong><span>秒</span></div>`
-      : `<div class="roulette-training-workout-timer is-done"><strong>時間</strong><span>自己申告してください</span></div>`
-    : `<div class="roulette-training-workout-count"><strong>${session.currentCount}</strong><span>${escapeHtml(unitInfo(session.currentMenu.countUnit).label)}</span></div>`;
+      ? `<div class="roulette-training-workout-timer"><small>残り</small><strong data-roulette-workout-seconds>${seconds}</strong><span>秒</span></div>`
+      : `<div class="roulette-training-workout-timer is-done"><strong>時間</strong><span>報告してください</span></div>`
+    : `<div class="roulette-training-workout-count"><small>回数</small><strong>${session.currentCount}</strong><span>${escapeHtml(unitInfo(session.currentMenu.countUnit).label)}</span></div>`;
   return `<section class="roulette-training-challenge is-active">
     <div class="roulette-training-active-summary">
       <div class="roulette-training-active-copy">
-        <span class="roulette-training-challenge-kicker"><b>いま挑戦中</b><small aria-hidden="true">HOME TRAINING</small></span>
+        <span class="roulette-training-challenge-kicker"><b>命令を実行中</b><small aria-hidden="true">WATCHING</small></span>
         <h2>${escapeHtml(session.currentMenu.menuText)}</h2>
         ${renderActiveDetail(session.currentMenu.detailText)}
       </div>
@@ -1759,20 +1847,52 @@ function renderActiveChallenge() {
         <div class="roulette-training-bpm"><i aria-hidden="true"></i><span>テンポ目安</span><strong data-roulette-current-bpm>BPM ${session.currentWorkoutBpm}</strong></div>
       </div>
     </div>
-    ${session.activeTemporaryEffect ? `<p class="roulette-training-temp-effect" data-roulette-temp-effect>${escapeHtml(session.activeTemporaryEffect.effect?.label || "一時効果")}を適用中</p>` : ""}
-    <p class="roulette-training-challenge-safety">できたら「できた！」。つらいときは無理せず休もう。</p>
-    <small class="roulette-training-self-report">結果は自己申告です。</small>
-    <div class="roulette-training-judgement"><button class="button button-primary" type="button" data-roulette-action="clear">できた！</button><button class="button button-danger" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></div>
+    ${session.activeTemporaryEffect ? `<p class="roulette-training-temp-effect" data-roulette-temp-effect>${escapeHtml(effectDisplayLabel(session.activeTemporaryEffect.effect || session.activeTemporaryEffect))}を適用中</p>` : ""}
+    <small class="roulette-training-self-report">報告は自己申告です。</small>
+    <div class="roulette-training-judgement"><button class="button button-primary" type="button" data-roulette-action="clear">できました（報告する）</button><button class="button button-danger" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで<small aria-hidden="true">いつでも止められます</small></button></div>
   </section>`;
 }
 
 function renderPausedChallenge() {
-  return `<section class="roulette-training-challenge is-paused"><span class="roulette-training-challenge-kicker"><b>ひと休み中</b><small aria-hidden="true">PAUSED</small></span><h2>画面が隠れたため停止しました</h2><p>メトロノームとタイマーは止まっています。準備ができたら再開してください。</p><div class="roulette-training-judgement"><button class="button button-primary" type="button" data-roulette-action="resume-challenge">再開</button><button class="button button-danger" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></div></section>`;
+  return `<section class="roulette-training-challenge is-paused"><span class="roulette-training-challenge-kicker"><b>一時停止中</b><small aria-hidden="true">PAUSED</small></span><h2>画面が隠れたため停止しました</h2><p>メトロノームとタイマーは止まっています。準備ができたら再開してください。</p><div class="roulette-training-judgement"><button class="button button-primary" type="button" data-roulette-action="resume-challenge">再開</button><button class="button button-danger" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></div></section>`;
 }
 
 function renderRest() {
   const seconds = Math.max(0, Math.ceil((state.session.restEndsAt - Date.now()) / 1000));
-  return `<section class="roulette-training-challenge is-rest"><span class="roulette-training-challenge-kicker"><b>休憩タイム</b><small aria-hidden="true">REST</small></span><strong class="roulette-training-rest-number" data-roulette-rest-seconds>${seconds}</strong><p>呼吸を整えたら、次のルーレットへ。</p><button class="button button-primary" type="button" data-roulette-action="finish-rest">休憩を終える</button><button class="button button-danger roulette-training-give-up" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></section>`;
+  return `<section class="roulette-training-challenge is-rest"><span class="roulette-training-challenge-kicker"><b>休憩中</b><small aria-hidden="true">REST</small></span><strong class="roulette-training-rest-number" data-roulette-rest-seconds>${seconds}</strong><p>呼吸を整えたら、次の命令へ。</p><button class="button button-primary" type="button" data-roulette-action="finish-rest">休憩を終える</button><button class="button button-danger roulette-training-give-up" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button></section>`;
+}
+
+// 「今日はここまで」は管理人の吹き出しの外にある、システム側の操作として常に出す。
+function renderSafetyStrip(phase) {
+  const sectionHasGiveUp = ["countdown", "active", "paused", "rest"].includes(phase);
+  return `<aside class="roulette-training-safety-strip">${SHIELD_ICON}<span>痛み・めまい・息苦しさは我慢しない。いつでも止められます。</span>${sectionHasGiveUp ? "" : `<button class="button button-ghost roulette-training-give-up" type="button" data-roulette-action="give-up" aria-label="ギブアップ・トレーニング終了">今日はここまで</button>`}</aside>`;
+}
+
+const PLAY_PHASE_LABELS = Object.freeze({
+  main_ready: Object.freeze(["命令待ち", "WAITING"]),
+  main_spinning: Object.freeze(["抽選中", "DRAWING"]),
+  effect_result: Object.freeze(["気まぐれ", "WHIM"]),
+  menu_result: Object.freeze(["宣告", "ORDER"]),
+  count_ready: Object.freeze(["回数の宣告", "COUNT"]),
+  count_spinning: Object.freeze(["回数の宣告", "COUNT"]),
+  count_result: Object.freeze(["宣告", "ORDER"]),
+  countdown: Object.freeze(["開始合図", "READY"]),
+  active: Object.freeze(["監視中", "WATCHING"]),
+  paused: Object.freeze(["一時停止", "PAUSED"]),
+  rest: Object.freeze(["休憩中", "REST"]),
+});
+
+function renderPlayStatus(session) {
+  const phase = String(session.phase || "main_ready");
+  const [label, english] = isLastOrder(session) && phase === "main_ready"
+    ? ["ラスト命令", "LAST ORDER"]
+    : PLAY_PHASE_LABELS[phase] || PLAY_PHASE_LABELS.main_ready;
+  return `<div class="roulette-training-play-status" role="group" aria-label="トレーニング状況">
+    <span class="roulette-training-control-state"><i aria-hidden="true"></i><b>${escapeHtml(label)}</b><small aria-hidden="true">${escapeHtml(english)}</small></span>
+    <span class="roulette-training-status-chip is-remaining"><small>ノルマ</small><strong>${session.completedCount} / ${session.config.targetCount}</strong></span>
+    <span class="roulette-training-status-chip is-base"><small>基本 · 上限${session.config.maximumBpm}</small><strong>${session.baseBpm}<em>BPM</em></strong></span>
+    ${renderStatusEffect(session)}
+  </div>`;
 }
 
 function renderPlay() {
@@ -1791,17 +1911,15 @@ function renderPlay() {
   else if (session.phase === "rest") machine = renderRest();
   else machine = renderMainRoulette();
   const phaseClass = String(session.phase || "main_ready").replaceAll("_", "-");
-  const remainingTarget = Math.max(0, Number(session.config.targetCount) - Number(session.completedCount || 0));
   const presentation = sessionPresentation(session);
   const presentationClass = presentation ? ` has-presentation-${presentation}` : "";
   const beatBpm = Math.max(MIN_BPM, Number(session.currentWorkoutBpm || session.workoutBpm || session.baseBpm) || BASE_BPM);
   const hiddenClass = document.visibilityState === "hidden" ? " is-roulette-document-hidden" : "";
   return renderFrame(`<div class="roulette-training-play is-phase-${escapeHtml(phaseClass)}${presentationClass}${hiddenClass}" data-training-phase="${escapeHtml(session.phase)}"${presentation ? ` data-roulette-presentation="${escapeHtml(presentation)}"` : ""} style="--fever-beat:${Math.round(60_000 / beatBpm)}ms">
-    ${roomDecorMarkup()}
-    <div class="roulette-training-play-status" role="group" aria-label="トレーニング状況"><i class="roulette-training-status-shelf" aria-hidden="true"></i><span class="is-base"><small>基本テンポ</small><strong>${session.baseBpm}<em>BPM</em></strong>${renderStatusEffect(session)}</span><span class="is-maximum"><small>上限</small><strong>${session.config.maximumBpm}<em>BPM</em></strong></span><span class="is-remaining"><small>あと${remainingTarget}回</small><strong>${session.completedCount} / ${session.config.targetCount}</strong></span></div>
+    ${renderPlayStatus(session)}
     ${renderStage()}
     ${machine}
-    ${renderMascot(mascotStateForSession(session), "play")}
+    ${renderSafetyStrip(session.phase)}
   </div>`, { showBack: false, showHeader: false, title: "ルーレットトレーニング" });
 }
 
@@ -1827,12 +1945,52 @@ function resultImage() {
   return state.images[index] || null;
 }
 
-function renderResultPolaroid() {
+function renderResultPortrait() {
   const image = resultImage();
   if (image?.url) {
-    return `<figure class="roulette-training-result-polaroid"><img src="${escapeHtml(image.url)}" alt="最後に使用したトレーニング画像"><figcaption>LAST SNAP</figcaption></figure>`;
+    return `<figure class="roulette-training-result-portrait"><img src="${escapeHtml(image.url)}" alt="最後に使用したトレーニング画像"></figure>`;
   }
-  return `<figure class="roulette-training-result-polaroid is-sticker"><div>${renderMascot("idle", "sticker")}</div><figcaption>ROOM BUDDY</figcaption></figure>`;
+  return `<figure class="roulette-training-result-portrait is-empty" aria-hidden="true"><span>${escapeHtml(Array.from(managerDisplayName())[0] || "管")}</span></figure>`;
+}
+
+function resultDateLabel(result) {
+  const date = new Date(Number(result?.finishedAt) || Date.now());
+  try {
+    const parts = new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const value = (type) => parts.find((part) => part.type === type)?.value || "";
+    return `${value("year")}.${value("month")}.${value("day")}`;
+  } catch {
+    return "";
+  }
+}
+
+const RESULT_HANKO_TILTS = Object.freeze([-10, 6, -4, 9, -7, 4, -9, 7, -5, 8, -6]);
+
+function resultLogRow(entry, index, { stamp, stampClass, stampLabel }) {
+  const unit = unitInfo(entry?.countUnit).label;
+  const tag = String(entry?.effectTag || "");
+  return `<li class="${escapeHtml(stampClass)}"><span class="roulette-training-result-log-index">${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(entry?.menuText || "")}</strong><small>${Number(entry?.count) || 0}${escapeHtml(unit)} · BPM ${Number(entry?.bpm) || 0}${tag ? ` · ${escapeHtml(tag)}` : ""}</small></div><span class="roulette-training-result-hanko" style="--hanko-tilt:${RESULT_HANKO_TILTS[index % RESULT_HANKO_TILTS.length]}deg" role="img" aria-label="${escapeHtml(stampLabel)}">${escapeHtml(stamp)}</span></li>`;
+}
+
+// 本日の管理記録：合格した命令に判子を押し、今日はここまでにした命令は灰色の判子で残す。
+function renderResultLog(result, finishReason) {
+  const history = Array.isArray(result?.history) ? result.history.slice(0, HISTORY_MAX) : [];
+  const pass = { stamp: "合格", stampClass: "is-pass", stampLabel: "合格" };
+  const stop = { stamp: "ここまで", stampClass: "is-stop", stampLabel: "今日はここまで" };
+  const rows = history.map((entry, index) => resultLogRow(entry, index, pass));
+  if (result?.unfinished) rows.push(resultLogRow(result.unfinished, rows.length, stop));
+  if (!rows.length && result?.lastChallenge) {
+    rows.push(resultLogRow(result.lastChallenge, 0, finishReason === "completed" ? pass : stop));
+  }
+  if (!rows.length) {
+    return `<p class="roulette-training-result-log-empty">まだ命令は始まっていません。準備したところまで記録しました。</p>`;
+  }
+  return `<ol class="roulette-training-result-log" aria-label="命令ごとの記録">${rows.join("")}</ol>`;
 }
 
 function animateResultNumbers() {
@@ -1889,7 +2047,6 @@ function renderResult() {
     state.screen = "hub";
     return renderHub();
   }
-  const last = result.lastChallenge;
   const recordedFinishReason = result.finishReason || state.session?.finishReason;
   const finishReason = recordedFinishReason === "give_up" ? "give_up" : "completed";
   const goalCleared = finishReason === "completed";
@@ -1897,55 +2054,48 @@ function renderResult() {
   const targetCount = resultTargetCount(result);
   const litCount = Math.min(targetCount, completedCount);
   const activeSeconds = Math.max(0, Math.round(Number(result.activeMs || 0) / 1_000));
-  const emptyResult = completedCount === 0 && !last;
   const resultState = goalCleared ? "completed" : "give-up";
   const hiddenClass = document.visibilityState === "hidden" ? " is-roulette-document-hidden" : "";
+  const config = managerConfig();
+  const comment = personaLine(
+    config?.persona,
+    goalCleared ? "result_completed" : "result_give_up",
+    { target: targetCount },
+    `${Number(result.finishedAt) || 0}`,
+  );
   const summary = goalCleared
-    ? "自分のペースで、きょうの目標まで進めました。"
-    : emptyResult
-      ? "今回は準備したところまで記録しました。<br>また動けそうな日に始めよう。"
-      : "進んだぶんを記録しました。";
+    ? `ノルマ${targetCount}回、すべて合格です。`
+    : completedCount
+      ? "進んだぶんを、きちんと記録しました。"
+      : result.unfinished
+        ? "始めた命令を、ここまでとして記録しました。"
+        : "今回は準備したところまで記録しました。また動けそうな日に始めよう。";
   return renderFrame(`<div class="roulette-training-result is-result-${resultState}${goalCleared ? " is-goal-clear" : ""}${hiddenClass}">
-    ${roomDecorMarkup()}
-    <article class="roulette-training-result-notebook">
-      <i class="roulette-training-result-binding" aria-hidden="true"></i>
-      <i class="roulette-training-result-tape" aria-hidden="true"></i>
-      ${renderResultPolaroid()}
+    <article class="roulette-training-result-sheet">
       <header class="roulette-training-result-header">
-        <span class="roulette-training-result-subtitle">TODAY'S TRAINING NOTE</span>
-        <h2>${goalCleared ? "きょうのゴール、達成！" : "きょうはここまで。"}</h2>
-        <p class="roulette-training-result-summary">${summary}</p>
-        ${goalCleared ? `<span class="roulette-training-goal-stamp" aria-label="ゴールクリア">GOAL<br>CLEAR</span>` : ""}
+        <div><span class="roulette-training-result-subtitle">TODAY'S CONTROL LOG</span><h2>本日の管理記録</h2></div>
+        <time datetime="${escapeHtml(new Date(Number(result.finishedAt) || Date.now()).toISOString())}">${escapeHtml(resultDateLabel(result))}</time>
+        ${goalCleared ? `<span class="roulette-training-goal-stamp" role="img" aria-label="ノルマ達成">ノルマ<br>達成</span>` : ""}
       </header>
-      <div class="roulette-training-result-progress" role="progressbar" aria-label="目標${targetCount}回中${litCount}回達成" aria-valuemin="0" aria-valuemax="${targetCount}" aria-valuenow="${litCount}">
-        ${renderGoalLights(litCount, targetCount, { sequential: goalCleared })}
-        <small>${litCount} / ${targetCount}</small>
-      </div>
+      <section class="roulette-training-result-comment" aria-label="管理人のひとこと">
+        ${renderResultPortrait()}
+        <div><p class="roulette-training-result-handwriting">${escapeHtml(comment)}</p><span class="roulette-training-result-signature">— ${escapeHtml(managerDisplayName())}</span></div>
+      </section>
+      <p class="roulette-training-result-summary">${escapeHtml(summary)}</p>
+      ${renderResultLog(result, finishReason)}
+      <div class="roulette-training-result-progress" role="progressbar" aria-label="目標${targetCount}回中${litCount}回達成" aria-valuemin="0" aria-valuemax="${targetCount}" aria-valuenow="${litCount}"><i style="--result-progress:${targetCount ? litCount / targetCount : 0}" aria-hidden="true"></i><small>${litCount} / ${targetCount}</small></div>
       <dl class="roulette-training-result-primary" aria-label="トレーニングの主要な記録">
-        <div class="roulette-training-result-stat is-completed"><dt>できたメニュー</dt><dd><span class="sr-only">${completedCount}回</span><strong aria-hidden="true" data-roulette-result-countup="${completedCount}">${completedCount}</strong><small aria-hidden="true">回</small></dd></div>
-        <div class="roulette-training-result-stat is-duration"><dt>動いていた時間</dt><dd><span class="sr-only">${escapeHtml(formatDuration(result.activeMs))}</span><strong aria-hidden="true" data-roulette-result-countup="${activeSeconds}" data-roulette-result-format="duration">${escapeHtml(formatDuration(result.activeMs))}</strong></dd></div>
+        <div class="roulette-training-result-stat is-completed"><dt>できた命令</dt><dd><span class="sr-only">${completedCount}回</span><strong aria-hidden="true" data-roulette-result-countup="${completedCount}">${completedCount}</strong><small aria-hidden="true">回</small></dd></div>
+        <div class="roulette-training-result-stat is-duration"><dt>動いた時間</dt><dd><span class="sr-only">${escapeHtml(formatDuration(result.activeMs))}</span><strong aria-hidden="true" data-roulette-result-countup="${activeSeconds}" data-roulette-result-format="duration">${escapeHtml(formatDuration(result.activeMs))}</strong></dd></div>
+        <div class="roulette-training-result-stat is-tempo"><dt>テンポ</dt><dd><strong>${Number(result.startBpm)}→${Number(result.finalBpm)}</strong><small>BPM</small></dd></div>
+        <div class="roulette-training-result-stat is-max"><dt>最高</dt><dd><strong>${Number(result.maximumReachedBpm)}</strong><small>BPM</small></dd></div>
       </dl>
-      <section class="roulette-training-tempo-record" aria-labelledby="rouletteTrainingTempoTitle">
-        <h3 id="rouletteTrainingTempoTitle">テンポのきろく</h3>
-        <div class="roulette-training-tempo-axis">
-          <span class="roulette-training-tempo-point is-start"><small>START</small><strong>${Number(result.startBpm)}</strong><em>BPM</em></span>
-          <i class="roulette-training-tempo-line" aria-hidden="true"></i>
-          <span class="roulette-training-tempo-point is-end"><small>END</small><strong>${Number(result.finalBpm)}</strong><em>BPM</em></span>
-          <span class="roulette-training-tempo-max-badge"><small>★ MAX</small><strong>${Number(result.maximumReachedBpm)}</strong><em>BPM</em></span>
-        </div>
-      </section>
-      <section class="roulette-training-last-challenge${last ? "" : " is-empty"}">
-        <h3>さいごのチャレンジ</h3>
-        ${last ? `<strong>${escapeHtml(last.menuText)}</strong><p>${Number(last.count)}${escapeHtml(unitInfo(last.countUnit).label)} ／ BPM ${Number(last.bpm)}</p>` : `<strong>まだチャレンジは始まっていません</strong><p>準備したところまで、きちんと記録しました。</p>`}
-      </section>
       <footer class="roulette-training-result-footer">
         <p class="roulette-training-result-note">結果は自己申告による端末内の記録です。作者、ランキング、RATE、Payには反映されません。</p>
-        <button class="button button-primary roulette-training-end-button" type="button" data-roulette-action="end-training" ${state.ending ? "disabled" : ""}>${state.ending ? "端末データを削除中…" : "記録を閉じてお部屋に戻る"}</button>
-        <p class="roulette-training-result-delete-note">終了すると、このセッションの進行データと端末保存画像を削除します。</p>
+        <button class="button button-primary roulette-training-end-button" type="button" data-roulette-action="end-training" ${state.ending ? "disabled" : ""}>${state.ending ? "端末データを削除中…" : "記録を閉じる"}</button>
+        <p class="roulette-training-result-delete-note">閉じると、このセッションの進行データと端末保存画像を削除します。</p>
       </footer>
     </article>
-    ${renderMascot(goalCleared ? "result-completed" : "result-give-up", "result")}
-    ${goalCleared ? particleField(10, "goal") : ""}
   </div>`, { showBack: false, showHeader: false, title: "ルーレットトレーニング結果" });
 }
 
@@ -1968,15 +2118,13 @@ function render() {
   };
   const renderer = screenRenderers[state.screen] || renderHub;
   appRoot.innerHTML = renderer();
+  state.justCleared = false;
   bindEvents();
   armRarePresentationSkip();
   animateResultNumbers();
   appRoot.focus({ preventScroll: true });
-  window.clearTimeout(decorationCleanupTimer);
-  const transientDecorations = [...appRoot.querySelectorAll(".roulette-training-particles")];
-  decorationCleanupTimer = transientDecorations.length
-    ? window.setTimeout(() => transientDecorations.forEach((element) => element.remove()), 1_500)
-    : null;
+  armAutoSpin();
+  armIdleNudge();
 }
 
 function navigate(screen) {
@@ -2042,30 +2190,29 @@ function playRouletteTone({ frequency, endFrequency = frequency, duration, volum
   }
 }
 
-function playRoulettePaperFeed(type) {
+function playRouletteNoise({ duration, frequency, volume, delay = 0, type = "bandpass", q = 0.9, seed = 1423 }) {
   const context = ensureAudioContext();
   if (!context) return;
   try {
-    const duration = type === "count" ? 0.1 : 0.14;
     const frameCount = Math.max(1, Math.ceil(context.sampleRate * duration));
     const buffer = context.createBuffer(1, frameCount, context.sampleRate);
     const channel = buffer.getChannelData(0);
-    let seed = type === "count" ? 1709 : 1423;
+    let noiseSeed = seed;
     for (let index = 0; index < frameCount; index += 1) {
-      seed = (seed * 16_807) % 2_147_483_647;
-      const noise = (seed / 2_147_483_647) * 2 - 1;
+      noiseSeed = (noiseSeed * 16_807) % 2_147_483_647;
+      const noise = (noiseSeed / 2_147_483_647) * 2 - 1;
       channel[index] = noise * (1 - index / frameCount);
     }
     const source = context.createBufferSource();
     const filter = context.createBiquadFilter();
     const gain = context.createGain();
-    const start = context.currentTime;
+    const start = context.currentTime + Math.max(0, Number(delay) || 0);
     source.buffer = buffer;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(type === "count" ? 1_250 : 980, start);
-    filter.Q.setValueAtTime(0.7, start);
+    filter.type = type;
+    filter.frequency.setValueAtTime(frequency, start);
+    filter.Q.setValueAtTime(q, start);
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.018, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.006);
     gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     source.connect(filter);
     filter.connect(gain);
@@ -2073,82 +2220,75 @@ function playRoulettePaperFeed(type) {
     source.start(start);
     source.stop(start + duration + 0.01);
   } catch {
-    // Paper-feed feedback is decorative; unsupported audio nodes never block a draw.
+    // Mechanical noise is decorative; unsupported audio nodes never block a draw.
   }
+}
+
+// 管理人がレバーを引く音（A：回してもらう導入）。
+function playLeverSound() {
+  playRouletteNoise({ duration: 0.09, frequency: 620, volume: 0.024, type: "lowpass", q: 0.7, seed: 1931 });
+  playRouletteTone({ frequency: 150, endFrequency: 78, duration: 0.12, volume: 0.03, wave: "triangle", delay: 0.02 });
 }
 
 function playRouletteStartSound(type) {
-  playRoulettePaperFeed(type);
+  playRouletteNoise({ duration: type === "count" ? 0.12 : 0.16, frequency: type === "count" ? 1_400 : 1_050, volume: 0.016, q: 0.8, seed: type === "count" ? 1709 : 1423 });
   playRouletteTone({
-    frequency: type === "count" ? 230 : 190,
-    endFrequency: type === "count" ? 155 : 130,
-    duration: 0.07,
-    volume: 0.018,
+    frequency: type === "count" ? 210 : 170,
+    endFrequency: type === "count" ? 120 : 96,
+    duration: 0.09,
+    volume: 0.02,
     wave: "triangle",
   });
 }
 
+// 機械式のリールが1コマ進む音。
 function playRouletteClickSound(step = 0) {
   playRouletteTone({
-    frequency: 330 + step * 7,
-    endFrequency: 145 + step * 4,
-    duration: 0.045,
-    volume: 0.022,
-    wave: "triangle",
+    frequency: 1_500 - step * 40,
+    endFrequency: 900 - step * 30,
+    duration: 0.026,
+    volume: 0.014,
+    wave: "square",
   });
 }
 
-function playRareFeverChime() {
-  [659, 784, 988].forEach((frequency, index) => {
-    playRouletteTone({
-      frequency,
-      endFrequency: frequency * 1.04,
-      duration: 0.18,
-      volume: 0.026,
-      wave: "sine",
-      delay: index * 0.075,
-    });
+// 命令を押さえる判子の「ドン」。
+function playStampSound() {
+  playRouletteTone({ frequency: 96, endFrequency: 52, duration: 0.18, volume: 0.05, wave: "sine" });
+  playRouletteNoise({ duration: 0.06, frequency: 380, volume: 0.02, type: "lowpass", q: 0.6, seed: 2207 });
+}
+
+// 本気タイムの低い鼓動。
+function playHeartbeatSound(delay = 0) {
+  playRouletteTone({ frequency: 72, endFrequency: 46, duration: 0.12, volume: 0.04, wave: "sine", delay });
+  playRouletteTone({ frequency: 64, endFrequency: 42, duration: 0.14, volume: 0.032, wave: "sine", delay: delay + 0.16 });
+}
+
+// 「全部100」に書き換わる7枠のめくれる音。
+function playTileFlipSounds() {
+  Array.from({ length: 7 }, (_, index) => index).forEach((index) => {
+    playRouletteTone({ frequency: 700 + index * 60, endFrequency: 520 + index * 50, duration: 0.03, volume: 0.012, wave: "square", delay: 0.12 + index * 0.09 });
   });
 }
 
-function playAllOutToyDrum() {
-  playRouletteTone({ frequency: 170, endFrequency: 92, duration: 0.12, volume: 0.032, wave: "triangle" });
-  playRouletteTone({ frequency: 205, endFrequency: 110, duration: 0.1, volume: 0.024, wave: "triangle", delay: 0.13 });
-}
-
-function playPaperStampSound() {
-  playRouletteTone({ frequency: 138, endFrequency: 82, duration: 0.11, volume: 0.028, wave: "triangle" });
-  playRouletteTone({ frequency: 420, endFrequency: 310, duration: 0.07, volume: 0.012, wave: "sine", delay: 0.035 });
-}
-
+// リールが止まった時のロックの「ガチャン」と、その直後の判子。
 function playRouletteStopSound(type) {
+  playRouletteTone({ frequency: 132, endFrequency: 88, duration: 0.07, volume: 0.034, wave: "triangle" });
+  playRouletteTone({ frequency: 118, endFrequency: 80, duration: 0.08, volume: 0.03, wave: "triangle", delay: 0.06 });
+  playRouletteNoise({ duration: 0.05, frequency: 2_200, volume: 0.012, q: 1.2, seed: 1777 });
   if (type === "main") {
     const pendingEffect = state.session?.pendingMain?.type === "effect" ? state.session.pendingMain.item : null;
     const meta = effectPresentation(pendingEffect);
-    if (meta.presentation === "fever" && meta.rarity === "rare") {
-      playRareFeverChime();
+    if (meta.presentation === "fever") {
+      playHeartbeatSound(0.18);
       return;
     }
-    if (meta.presentation === "all-out" && meta.rarity === "rare") {
-      playAllOutToyDrum();
+    if (meta.presentation === "all-out") {
+      playTileFlipSounds();
       return;
     }
   }
-  playRouletteTone({
-    frequency: type === "count" ? 587 : 523,
-    endFrequency: type === "count" ? 659 : 587,
-    duration: 0.22,
-    volume: 0.036,
-    wave: "sine",
-  });
-  playRouletteTone({
-    frequency: type === "count" ? 880 : 784,
-    endFrequency: type === "count" ? 988 : 880,
-    duration: 0.25,
-    volume: 0.025,
-    wave: "sine",
-    delay: 0.045,
-  });
+  window.setTimeout(playStampSound, 140);
 }
 
 function reelPassageOffsets(passages) {
@@ -2188,6 +2328,15 @@ function scheduleSpinFeedback(type, duration, passageOffsets) {
     }, Math.round(duration * offset));
     spinFeedbackTimers.push(timer);
   });
+  // D：レア効果に決まっている時だけ、回転の途中で管理人が予告する（外れる予告はしない）。
+  const pending = type === "main" ? state.session?.pendingMain : null;
+  if (pending?.type === "effect" && effectPresentation(pending.item).rarity === "rare") {
+    const teaseTimer = window.setTimeout(() => {
+      appRoot.querySelector(".roulette-training-image-stage")?.classList.add("is-teasing");
+      updateCheerBubble(managerVoice("tease"));
+    }, Math.round(duration * TEASE_AT));
+    spinFeedbackTimers.push(teaseTimer);
+  }
 }
 
 function runReelAnimation(type, settle) {
@@ -2219,7 +2368,7 @@ function runReelAnimation(type, settle) {
   const landingIndex = Math.max(2, Number(reel.dataset.reelLandingIndex) || 2);
   const landingY = -((landingIndex - 2) * rowHeight);
   const reverseY = type === "count" ? 6 : 8;
-  const overshoot = type === "count" ? 7 : 9;
+  const overshoot = type === "count" ? 10 : 15;
   const passages = Math.max(1, landingIndex - 2);
   const passageOffsets = reelPassageOffsets(passages);
   scheduleSpinFeedback(type, duration, passageOffsets);
@@ -2299,6 +2448,8 @@ function serializeSession(session = state.session) {
     completedActiveMs: session.completedActiveMs || 0,
     activeSegmentStartedAt: session.activeSegmentStartedAt || 0,
     lastImageIndex: Number.isInteger(session.lastImageIndex) ? session.lastImageIndex : -1,
+    history: Array.isArray(session.history) ? session.history.slice(-HISTORY_MAX) : [],
+    effectBpmFrom: Number(session.effectBpmFrom) || 0,
   };
 }
 
@@ -2379,7 +2530,10 @@ function recoverLocalSession(saved) {
           && saved.currentMenu?.countUnit === "seconds"
           && recoveredChallengeRemainingMs <= 0),
       restEndsAt: 0,
+      history: Array.isArray(saved.history) ? saved.history.slice(-HISTORY_MAX) : [],
     };
+    state.autoSpinHeld = true;
+    state.autoSpinHeldByUser = false;
     state.screen = "play";
     if (phase === "main_settle_recovery") window.setTimeout(settleMainSpin, 0);
     if (phase === "count_settle_recovery") window.setTimeout(settleCountSpin, 0);
@@ -2391,16 +2545,143 @@ function recoverLocalSession(saved) {
 }
 
 function effectAppliedMessage(applied) {
-  const effect = applied.effect;
+  const effect = { ...applied.effect, label: effectDisplayLabel(applied.effect) };
   if (applied.allOutCount) return "次の回数ルーレットは7枠すべて100になります。";
   if (applied.temporary) return `${effect.label}を予約しました。次のトレーニング開始から${Math.round(applied.durationMs / 1000)}秒だけ、BPM ${applied.workoutBpm}になります。`;
   if (applied.baseBpm === state.session.baseBpm) return `${effect.label}。設定したBPM上限・下限に達しているため、BPM ${applied.baseBpm}のままです。`;
   return `${effect.label}。基本テンポがBPM ${state.session.baseBpm}から${applied.baseBpm}に変わります。`;
 }
 
+// A：プレイヤーは「回してください」とお願いする側。管理人が応じてから、少し間を置いて回り始める。
+function requestMainSpin() {
+  const session = state.session;
+  if (!session || !["main_ready", "effect_result"].includes(session.phase) || state.pullPending) return;
+  window.clearInterval(autoSpinTimer);
+  autoSpinTimer = null;
+  window.clearTimeout(idleTimer);
+  idleTimer = null;
+  if (prefersReducedMotion()) {
+    spinMainRoulette();
+    return;
+  }
+  state.pullPending = true;
+  const stage = appRoot.querySelector(".roulette-training-image-stage");
+  stage?.classList.add("is-pulling");
+  const button = appRoot.querySelector('[data-roulette-action="spin-main"]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = "回してもらっています…";
+  }
+  updateCheerBubble(managerVoice("pull"));
+  playLeverSound();
+  pullTimer = window.setTimeout(() => {
+    pullTimer = null;
+    state.pullPending = false;
+    if (state.session !== session) return;
+    spinMainRoulette();
+  }, PULL_DELAY_MS);
+}
+
+// F：効果の後、管理人が自分でメニューを回すまでの秒読み。「ちょっと待って」か画面非表示で手動に戻す。
+function armAutoSpin() {
+  window.clearInterval(autoSpinTimer);
+  autoSpinTimer = null;
+  const session = state.session;
+  if (!active
+      || state.screen !== "play"
+      || session?.phase !== "effect_result"
+      || state.autoSpinHeld
+      || state.pullPending
+      || document.visibilityState === "hidden") return;
+  autoSpinTimer = window.setInterval(() => {
+    if (state.session !== session || session.phase !== "effect_result" || state.autoSpinHeld) {
+      window.clearInterval(autoSpinTimer);
+      autoSpinTimer = null;
+      return;
+    }
+    state.autoSpinRemaining = Math.max(0, (Number(state.autoSpinRemaining) || AUTO_SPIN_SECONDS) - 1);
+    if (state.autoSpinRemaining <= 0) {
+      window.clearInterval(autoSpinTimer);
+      autoSpinTimer = null;
+      spinMainRoulette();
+      return;
+    }
+    const display = appRoot.querySelector("[data-roulette-auto-spin-seconds]");
+    if (display) display.textContent = String(state.autoSpinRemaining);
+  }, 1_000);
+}
+
+function holdAutoSpin({ byUser = true } = {}) {
+  if (state.session?.phase !== "effect_result" || state.autoSpinHeld) return;
+  window.clearInterval(autoSpinTimer);
+  autoSpinTimer = null;
+  state.autoSpinHeld = true;
+  state.autoSpinHeldByUser = byUser === true;
+  render();
+  if (byUser) {
+    restoreFocusAfterRender('[data-roulette-action="spin-main"]');
+    announce("自動で回すのを止めました。準備ができたら「回してください」を押してください。");
+  }
+}
+
+// H：回す前に操作がないと、管理人が催促する。休憩中・挑戦中は催促しない。
+function armIdleNudge() {
+  window.clearTimeout(idleTimer);
+  idleTimer = null;
+  const session = state.session;
+  const key = session && state.screen === "play" ? `${session.phase}:${session.completedCount}` : "";
+  if (key !== state.idleKey) {
+    state.idleKey = key;
+    state.idleLevel = 0;
+  }
+  if (!active
+      || state.screen !== "play"
+      || !["main_ready", "count_ready"].includes(session?.phase)
+      || state.pullPending
+      || document.visibilityState === "hidden") return;
+  const maximumLevel = session.phase === "count_ready" ? 1 : 2;
+  if (state.idleLevel >= maximumLevel) return;
+  idleTimer = window.setTimeout(() => {
+    idleTimer = null;
+    if (!active || state.session !== session || `${session.phase}:${session.completedCount}` !== state.idleKey) return;
+    state.idleLevel += 1;
+    updateCheerBubble(stageVoice(session));
+    armIdleNudge();
+  }, IDLE_NUDGE_MS);
+}
+
+// G：回数の宣告。抽選済みの回数より低い候補をいったん見せてから、確定した回数へ上げる（表示だけ）。
+function countRaiseFrom(pendingCount, allOut) {
+  if (allOut || !pendingCount) return 0;
+  const value = Number(pendingCount.value);
+  const lower = [...new Set((Array.isArray(pendingCount.candidates) ? pendingCount.candidates : []).map(Number))]
+    .filter((candidate) => Number.isFinite(candidate) && candidate > 0 && candidate < value)
+    .sort((left, right) => right - left)[0];
+  if (!lower) return 0;
+  return Math.random() < COUNT_RAISE_CHANCE ? lower : 0;
+}
+
+function finishCountReveal(expectedSession) {
+  countRevealTimer = null;
+  if (!state.countRevealPending) return;
+  state.countRevealPending = false;
+  state.countRaised = true;
+  if (state.session !== expectedSession || expectedSession?.phase !== "count_result") return;
+  render();
+  playStampSound();
+  announce(`${challengeLabel(expectedSession)}、テンポ目安BPM ${expectedSession.workoutBpm}です。`);
+}
+
 function spinMainRoulette() {
   const session = state.session;
   if (!session || !["main_ready", "effect_result"].includes(session.phase)) return;
+  window.clearInterval(autoSpinTimer);
+  autoSpinTimer = null;
+  window.clearTimeout(pullTimer);
+  pullTimer = null;
+  state.pullPending = false;
+  state.autoSpinHeld = false;
+  state.autoSpinHeldByUser = false;
   const draw = drawMain({
     menus: packItems(session.pack),
     menuBag: session.menuBag,
@@ -2462,16 +2743,23 @@ function nextImageIndex(session) {
   return imageIndex;
 }
 
+// 公式の無料パックは、作者の台詞の代わりに管理人の性格ごとの応援を使う。
+function builtinManagerLines() {
+  return state.session?.pack?.builtin === true
+    ? personaLines(managerConfig()?.persona, "active")
+    : null;
+}
+
 function menuCheerLines(menu) {
   return [...new Set(
-    (Array.isArray(menu?.cheerLines) ? menu.cheerLines : [])
+    (builtinManagerLines() || (Array.isArray(menu?.cheerLines) ? menu.cheerLines : []))
       .map((line) => String(line || "").trim())
       .filter(Boolean),
   )];
 }
 
 function cheerForMenu(menu, previous = "") {
-  const lines = Array.isArray(menu?.cheerLines) ? menu.cheerLines.filter(Boolean) : [];
+  const lines = builtinManagerLines() || (Array.isArray(menu?.cheerLines) ? menu.cheerLines.filter(Boolean) : []);
   if (!lines.length) return "その調子！ 自分のペースでいこう！";
   const alternatives = lines.filter((line) => line !== previous);
   const candidates = alternatives.length ? alternatives : lines;
@@ -2567,6 +2855,7 @@ function settleMainSpin() {
     });
     session.currentEffect = draw.item;
     session.lastEffectId = draw.item.id;
+    session.effectBpmFrom = before;
     session.effectMessage = effectAppliedMessage({ ...applied, previousBaseBpm: before });
     session.pendingAllOutCount = applied.allOutCount === true;
     if (applied.temporary) session.pendingTemporaryEffect = applied;
@@ -2576,9 +2865,12 @@ function settleMainSpin() {
     }
     session.pendingMain = null;
     session.phase = "effect_result";
+    state.autoSpinHeld = false;
+    state.autoSpinHeldByUser = false;
+    state.autoSpinRemaining = AUTO_SPIN_SECONDS;
     persistSession();
     render();
-    announce(`${draw.item.label}。${session.effectMessage}`);
+    announce(`${effectDisplayLabel(draw.item)}。${session.effectMessage} ${AUTO_SPIN_SECONDS}秒後に、管理人が続けてメニューを回します。待つ時は「ちょっと待って」を押してください。`);
     return;
   }
   session.currentMenu = draw.item;
@@ -2612,6 +2904,10 @@ function spinCountRoulette() {
     Math.random,
     { allOut: session.currentAllOutCount === true },
   );
+  session.pendingCount = {
+    ...session.pendingCount,
+    raiseFrom: countRaiseFrom(session.pendingCount, session.currentAllOutCount === true),
+  };
   session.phase = "count_spinning";
   persistSession();
   render();
@@ -2630,7 +2926,15 @@ function settleCountSpin() {
   session.currentWorkoutBpm = session.workoutBpm;
   session.phase = "count_result";
   persistSession();
+  const raiseFrom = Number(session.pendingCount.raiseFrom) || 0;
+  state.countRaised = false;
+  state.countRevealPending = raiseFrom > 0 && raiseFrom < session.currentCount && !prefersReducedMotion();
   render();
+  if (state.countRevealPending) {
+    window.clearTimeout(countRevealTimer);
+    countRevealTimer = window.setTimeout(() => finishCountReveal(session), COUNT_RAISE_REVEAL_MS);
+    return;
+  }
   announce(`${challengeLabel(session)}、テンポ目安BPM ${session.workoutBpm}です。`);
 }
 
@@ -2645,6 +2949,16 @@ function clearRuntimeTimers() {
   window.clearTimeout(cheerRotationTimer);
   window.clearTimeout(cheerTransitionTimer);
   window.clearTimeout(temporaryEffectTimer);
+  window.clearTimeout(pullTimer);
+  window.clearInterval(autoSpinTimer);
+  window.clearTimeout(idleTimer);
+  window.clearTimeout(countRevealTimer);
+  pullTimer = null;
+  autoSpinTimer = null;
+  idleTimer = null;
+  countRevealTimer = null;
+  state.pullPending = false;
+  state.countRevealPending = false;
   spinTimer = null;
   decorationCleanupTimer = null;
   rarePresentationSkipTimer = null;
@@ -2693,6 +3007,7 @@ function playMetronomeBeat() {
   gain.connect(context.destination);
   oscillator.start(start);
   oscillator.stop(start + 0.075);
+  if (effectIdOf(state.session?.activeTemporaryEffect) === "fever") playHeartbeatSound(0.02);
 }
 
 function scheduleMetronome() {
@@ -2756,6 +3071,11 @@ function beginChallenge({ resume = false } = {}) {
       count: session.currentCount,
       countUnit: session.currentMenu.countUnit,
       bpm: session.workoutBpm,
+      effectTag: session.currentAllOutCount === true
+        ? "全部100回"
+        : session.activeTemporaryEffect
+          ? effectDisplayLabel(session.activeTemporaryEffect.effect || session.activeTemporaryEffect)
+          : "",
     };
     session.challengeTimedOut = false;
   }
@@ -2769,7 +3089,7 @@ function beginChallenge({ resume = false } = {}) {
   scheduleCheerRotation();
   scheduleTemporaryEffectExpiry();
   workoutTicker = window.setInterval(updateWorkout, 250);
-  announce(`${challengeLabel(session)}を開始しました。できたら「できた！」、つらいときは「今日はここまで」を選んでください。`);
+  announce(`${challengeLabel(session)}を開始しました。できたら「できました」で報告、つらいときは「今日はここまで」を選んでください。`);
 }
 
 function scheduleTemporaryEffectExpiry() {
@@ -2794,10 +3114,12 @@ function expireTemporaryEffect() {
   const effect = document.querySelector("[data-roulette-temp-effect]");
   const play = document.querySelector(".roulette-training-play");
   if (bpm) bpm.textContent = `BPM ${session.baseBpm}`;
+  const ring = document.querySelector("[data-roulette-ring-bpm]");
+  if (ring) ring.textContent = String(session.baseBpm);
   effect?.remove();
-  play?.classList.remove("has-presentation-fever");
+  play?.classList.remove("has-presentation-fever", "has-presentation-slow");
   play?.removeAttribute("data-roulette-presentation");
-  play?.querySelector(".roulette-training-status-effect.is-fever")?.remove();
+  play?.querySelector(".roulette-training-status-effect.is-fever, .roulette-training-status-effect.is-slow")?.remove();
   announce(`${label}が終了し、BPM ${session.baseBpm}に戻りました。`);
 }
 
@@ -2831,7 +3153,7 @@ function updateWorkout() {
   cheerTransitionTimer = null;
   persistSession();
   render();
-  announce("時間になりました。できたら「できた！」、つらいときは「今日はここまで」を選んでください。");
+  announce("時間になりました。できたら「できました」で報告、つらいときは「今日はここまで」を選んでください。");
 }
 
 function pauseChallengeForVisibility() {
@@ -2851,48 +3173,16 @@ function pauseChallengeForVisibility() {
   persistSession();
 }
 
-function clearActionOrigin() {
-  if (prefersReducedMotion()) return null;
-  const button = document.querySelector('[data-roulette-action="clear"]');
-  if (!button) return null;
-  const rect = button.getBoundingClientRect();
-  return {
-    x: rect.left + rect.width / 2,
-    y: rect.top + rect.height / 2,
-  };
-}
-
-function launchClearProgressEffect(origin) {
-  if (!origin || prefersReducedMotion() || !appRoot) return;
-  const litLights = appRoot.querySelectorAll(".roulette-training-progress-lights i.is-lit");
-  const target = litLights[litLights.length - 1];
-  if (!target) return;
-  const targetRect = target.getBoundingClientRect();
-  const targetX = targetRect.left + targetRect.width / 2;
-  const targetY = targetRect.top + targetRect.height / 2;
-  const spreads = [-34, -20, -8, 9, 23, 36];
-  const particles = document.createElement("div");
-  particles.className = "roulette-training-clear-particles";
-  particles.setAttribute("aria-hidden", "true");
-  particles.innerHTML = spreads.map((spread, index) => {
-    const middleX = (origin.x + targetX) / 2 + spread;
-    const middleY = Math.min(origin.y, targetY) - 44 - (index % 3) * 8;
-    const finishX = targetX + ((index % 3) - 1) * 5;
-    const finishY = targetY + (index % 2 ? 2 : -2);
-    return `<i style="--start-x:${origin.x}px;--start-y:${origin.y}px;--middle-x:${middleX}px;--middle-y:${middleY}px;--finish-x:${finishX}px;--finish-y:${finishY}px;--clear-delay:${index * 34}ms"></i>`;
-  }).join("");
-  target.classList.add("is-just-lit");
-  appRoot.append(particles);
-  window.setTimeout(() => particles.remove(), 1_000);
-}
-
 function clearChallenge() {
   const session = state.session;
   if (!session || session.phase !== "active") return;
-  const clearOrigin = clearActionOrigin();
   stopActiveClock();
   clearRuntimeTimers();
   session.completedCount += 1;
+  if (session.lastChallenge) {
+    session.history = [...(Array.isArray(session.history) ? session.history : []), { ...session.lastChallenge }]
+      .slice(-HISTORY_MAX);
+  }
   session.activeTemporaryEffect = null;
   session.pendingTemporaryEffect = null;
   session.pendingAllOutCount = false;
@@ -2908,15 +3198,17 @@ function clearChallenge() {
   if (session.config.restSeconds > 0) {
     session.phase = "rest";
     session.restEndsAt = Date.now() + session.config.restSeconds * 1_000;
+    state.justCleared = true;
     persistSession();
     render();
-    launchClearProgressEffect(clearOrigin);
+    playStampSound();
     workoutTicker = window.setInterval(updateRest, 250);
-    announce(`できた！ ${session.config.restSeconds}秒休憩です。`);
+    announce(`合格。${session.config.restSeconds}秒休憩です。`);
     return;
   }
+  state.justCleared = true;
   prepareNextMain();
-  launchClearProgressEffect(clearOrigin);
+  playStampSound();
 }
 
 function stopActiveClock(now = Date.now()) {
@@ -3014,6 +3306,7 @@ function removeFinishRetryRecord(useId) {
 function finishSession(reason) {
   const session = state.session;
   if (!session || session.result) return;
+  const phaseAtFinish = String(session.phase || "");
   stopActiveClock();
   clearRuntimeTimers();
   session.finishedAt = Date.now();
@@ -3035,16 +3328,22 @@ function finishSession(reason) {
     targetCount: TARGET_OPTIONS.includes(Number(session.config?.targetCount))
       ? Number(session.config.targetCount)
       : DEFAULT_CONFIG.targetCount,
+    history: Array.isArray(session.history) ? session.history.slice(-HISTORY_MAX) : [],
+    unfinished: session.finishReason === "give_up"
+      && ["active", "paused"].includes(phaseAtFinish)
+      && session.lastChallenge
+      ? { ...session.lastChallenge }
+      : null,
   };
   session.phase = "result";
   state.result = session.result;
   state.screen = "result";
   persistSession();
   render();
-  if (session.finishReason === "completed") playPaperStampSound();
+  if (session.finishReason === "completed") playStampSound();
   announce(session.finishReason === "completed"
-    ? `きょうのゴール、達成！ ${session.completedCount}メニューできました。`
-    : `きょうはここまで。${session.completedCount}メニュー分を端末内に記録しました。`);
+    ? `ノルマ達成。${session.completedCount}つの命令に合格しました。本日の管理記録を表示しています。`
+    : `今日はここまで。${session.completedCount}つ分を端末内の管理記録に残しました。`);
   if (session.paidUseId) finishPaidUseBestEffort(session.paidUseId, session.ownerUid);
 }
 
@@ -3488,6 +3787,8 @@ function updateSetupConfig(form, { preserveImageConsent = false } = {}) {
     keepImages: preserveImageConsent
       ? state.config.keepImages
       : data.get("keepImages") === "on",
+    persona: data.get("persona") ?? state.config.persona,
+    nickname: data.get("nickname") ?? state.config.nickname,
   });
   writeJson(CONFIG_STORAGE_KEY, state.config);
 }
@@ -3557,6 +3858,10 @@ function beginSession(form) {
     showToast("トレーニングに使う画像を1枚以上選んでください。");
     return;
   }
+  if (form && form.querySelector('input[name="safetyPledge"]')?.checked !== true) {
+    showToast("「痛み・めまい・息苦しさが出たら止める」にチェックしてから始めてください。");
+    return;
+  }
   if (form) updateSetupConfig(form);
   const pack = normalizePack(state.selectedPack);
   const paidUseId = String(state.activeUse?.id || state.activeUse?.useId || "");
@@ -3606,13 +3911,18 @@ function beginSession(form) {
     completedActiveMs: 0,
     activeSegmentStartedAt: 0,
     restEndsAt: 0,
+    history: [],
+    effectBpmFrom: 0,
   };
   state.result = null;
+  state.autoSpinHeld = false;
+  state.autoSpinHeldByUser = false;
+  state.idleLevel = 0;
   state.screen = "play";
   persistSession();
   render();
   window.scrollTo({ top: 0, behavior: "auto" });
-  announce("ルーレットトレーニングを開始しました。最初のルーレットを回してください。");
+  announce("管理が始まりました。最初のルーレットを回してもらいましょう。");
 }
 
 function updateEditorDraftFromForm(form, { validateCheerLines = false } = {}) {
@@ -4550,7 +4860,8 @@ function bindEvents() {
       }
       render();
     },
-    "spin-main": spinMainRoulette,
+    "spin-main": requestMainSpin,
+    "hold-auto-spin": () => holdAutoSpin({ byUser: true }),
     "skip-rare-presentation": skipRarePresentation,
     "open-count": openCountRoulette,
     "spin-count": spinCountRoulette,
@@ -4616,6 +4927,21 @@ function bindEvents() {
       if (output) output.textContent = input.value;
       if (form) updateSetupConfig(form);
     });
+  });
+  document.querySelectorAll('#rouletteTrainingSetupForm input[name="persona"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      const form = document.querySelector("#rouletteTrainingSetupForm");
+      if (form) updateSetupConfig(form);
+      const sample = document.querySelector("[data-roulette-persona-sample]");
+      if (sample) sample.textContent = `「${personaInfo(state.config.persona).sample}」`;
+      document.querySelectorAll(".roulette-training-persona-option").forEach((option) => {
+        option.classList.toggle("is-selected", option.querySelector("input")?.checked === true);
+      });
+    });
+  });
+  document.querySelector('#rouletteTrainingSetupForm input[name="nickname"]')?.addEventListener("input", () => {
+    const form = document.querySelector("#rouletteTrainingSetupForm");
+    if (form) updateSetupConfig(form);
   });
   document.querySelectorAll("#rouletteTrainingSetupForm select").forEach((select) => {
     select.addEventListener("change", () => {
@@ -4741,7 +5067,7 @@ async function start({ initialScreen = "hub" } = {}) {
   seedMarketInsightsPreview(preview);
   render();
   window.scrollTo({ top: 0, behavior: "auto" });
-  if (["play", "fever", "all-out"].includes(preview)) {
+  if (["play", "fever", "all-out", ...PLAY_PREVIEW_STEPS].includes(preview)) {
     state.selectedPack = FREE_PACK;
     if (!state.images.length) {
       state.images = [{
@@ -4764,6 +5090,7 @@ async function start({ initialScreen = "hub" } = {}) {
         settleMainSpin();
       }
     }
+    applyPlayPreview(preview);
   } else if (["result", "result-completed", "result-empty"].includes(preview)) {
     const now = Date.now();
     const completed = preview === "result-completed";
@@ -4780,6 +5107,18 @@ async function start({ initialScreen = "hub" } = {}) {
         lastChallenge: empty ? null : { menuText: "イスからゆっくり立つ・座る", count: 20, countUnit: "reps", bpm: completed ? 75 : 70 },
       }),
       targetCount: 5,
+      history: empty ? [] : [
+        { menuText: "壁プッシュ", count: 20, countUnit: "reps", bpm: 60, effectTag: "" },
+        { menuText: "その場足踏み", count: 40, countUnit: "reps", bpm: 65, effectTag: "本気タイム" },
+        { menuText: "浅めのスクワット", count: 30, countUnit: "reps", bpm: 70, effectTag: "" },
+        ...(completed ? [
+          { menuText: "その場足踏み", count: 100, countUnit: "reps", bpm: 75, effectTag: "全部100回" },
+          { menuText: "イスからゆっくり立つ・座る", count: 20, countUnit: "reps", bpm: 75, effectTag: "" },
+        ] : []),
+      ],
+      unfinished: !completed && !empty
+        ? { menuText: "イスからゆっくり立つ・座る", count: 20, countUnit: "reps", bpm: 70, effectTag: "" }
+        : null,
     };
     if (completed) {
       state.images = [{
@@ -4819,6 +5158,46 @@ async function start({ initialScreen = "hub" } = {}) {
   if (!preview && state.screen === "market") loadMarket();
 }
 
+const PLAY_PREVIEW_STEPS = Object.freeze(["verdict", "count", "active", "rest", "last-order", "tempo", "slow"]);
+
+// localhost の見本だけで使う。実際の抽選関数と同じ順に状態を進め、各場面をすぐ確認できるようにする。
+function applyPlayPreview(preview) {
+  const session = state.session;
+  if (!session || !PLAY_PREVIEW_STEPS.includes(preview)) return;
+  if (preview === "last-order") {
+    session.completedCount = Math.max(0, Number(session.config.targetCount) - 1);
+    persistSession();
+    render();
+    return;
+  }
+  if (preview === "tempo" || preview === "slow") {
+    const effect = EFFECTS.find((item) => item.id === (preview === "tempo" ? "tempo_up" : "slow"));
+    if (!effect) return;
+    session.forceMenu = true;
+    session.pendingMain = { type: "effect", item: effect };
+    session.phase = "main_spinning";
+    settleMainSpin();
+    holdAutoSpin({ byUser: false });
+    return;
+  }
+  const items = packItems(session.pack);
+  const menu = items[1] || items[0];
+  if (!menu) return;
+  session.pendingMain = { type: "menu", item: menu, imageIndex: 0, cheerLine: cheerForMenu(menu) };
+  session.phase = "main_spinning";
+  settleMainSpin();
+  if (preview === "verdict") return;
+  openCountRoulette();
+  session.pendingCount = { ...drawCount(menu.countUnit, session.config.intensity, () => 0.5), raiseFrom: 0 };
+  session.phase = "count_spinning";
+  settleCountSpin();
+  if (preview === "count") return;
+  session.phase = "countdown";
+  beginChallenge();
+  if (preview === "active") return;
+  clearChallenge();
+}
+
 function isActive() {
   return active;
 }
@@ -4829,7 +5208,7 @@ async function requestHome() {
     return;
   }
   if (state.screen === "result") {
-    showToast("結果画面の「記録を閉じてお部屋に戻る」で終了してください。");
+    showToast("結果画面の「記録を閉じる」で終了してください。");
     return;
   }
   if (state.screen === "setup" && state.activeUse && !state.session) {
@@ -4879,8 +5258,22 @@ window.addEventListener("visibilitychange", () => {
   const hidden = document.visibilityState === "hidden";
   document.querySelector(".roulette-training-play, .roulette-training-result")
     ?.classList.toggle("is-roulette-document-hidden", hidden);
-  if (!active || !hidden) return;
-  if (state.session?.phase === "active") {
+  if (!active) return;
+  if (!hidden) {
+    armIdleNudge();
+    return;
+  }
+  window.clearTimeout(idleTimer);
+  idleTimer = null;
+  if (state.pullPending) {
+    window.clearTimeout(pullTimer);
+    pullTimer = null;
+    state.pullPending = false;
+    render();
+  }
+  if (state.session?.phase === "effect_result") {
+    holdAutoSpin({ byUser: false });
+  } else if (state.session?.phase === "active") {
     pauseChallengeForVisibility();
     render();
   } else if (state.session?.phase === "countdown") {
