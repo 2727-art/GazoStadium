@@ -5878,7 +5878,7 @@ async function start({ intent = "hall" } = {}) {
     return;
   }
   if (window.HariaiTribute?.isActive?.()) {
-    showToast("お貢ぎ界隈を終了してから自由卓を開いてください。");
+    showToast("お貢ぎ牧場を終了してから自由卓を開いてください。");
     return;
   }
   if (location.protocol === "file:") {

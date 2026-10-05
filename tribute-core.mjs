@@ -1,4 +1,4 @@
-// お貢ぎ界隈のクライアント側の規則。サーバーの tribute-rules.js と同じ判定を画面の前で行い、
+// お貢ぎ牧場のクライアント側の規則。サーバーの tribute-rules.js と同じ判定を画面の前で行い、
 // 送れない文や上限を超える金額を、送信前に知らせるために使う。最終判定は常にサーバー。
 
 export const TRIBUTE_AGE_VERSION = "tribute-age-v1";
@@ -90,7 +90,7 @@ export const FORBIDDEN_MESSAGES = Object.freeze({
   handle: "SNSのIDのような文字は送れません。",
   external_payment: "外部の決済・現金・ギフト券に関わる言葉は送れません。",
   real_money: "現実のお金の金額は送れません。使えるのはAnjuPayだけです。",
-  meeting: "会う約束に関わる言葉は送れません。この界隈は会わない前提です。",
+  meeting: "会う約束に関わる言葉は送れません。この牧場は会わない前提です。",
   personal_info: "住所・本名などの個人情報に関わる言葉は送れません。",
   exposure_threat: "晒し・特定の脅しは送れません。",
   ng_word: "相手が登録した「言われたくない言葉」を含むため送れません。",
@@ -393,6 +393,52 @@ export function templatesFor(role, tone, { disclosure = "undisclosed", ngWords =
 
 export function formatPay(value) {
   return `${Math.max(0, Math.floor(Number(value) || 0)).toLocaleString("ja-JP")} Pay`;
+}
+
+// 管理人カードの任意のXプロフィール。サーバーの normalizeXProfile と同じ判定で、ユーザー名だけを残す。
+export const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/u;
+const X_PROFILE_HOSTS = Object.freeze(new Set([
+  "x.com",
+  "www.x.com",
+  "mobile.x.com",
+  "twitter.com",
+  "www.twitter.com",
+  "mobile.twitter.com",
+]));
+const X_RESERVED_PATHS = Object.freeze(new Set([
+  "home", "explore", "search", "notifications", "messages", "i", "intent", "settings", "compose",
+  "login", "logout", "signup", "tos", "privacy", "hashtag", "share", "account", "jobs", "about",
+  "help", "download", "communities", "lists", "bookmarks", "premium", "following", "followers",
+]));
+export const X_PROFILE_ERROR = "Xのプロフィールは https://x.com/ユーザー名 か @ユーザー名 の形で入力してください（英数字と_の15文字以内）。";
+export const X_EXTERNAL_CONFIRM_MESSAGE = "このXリンクは管理人の自己申告です。運営は管理人とXアカウントの本人確認も、リンク先の内容確認も行っていません。X上でのやり取りや、現金・外部決済での送金は、お貢ぎ牧場の上限・解約・通報の保護の外です。外部サイトのx.comへ移動しますか？";
+
+export function normalizeXProfile(value) {
+  const raw = String(value ?? "").normalize("NFKC").trim();
+  if (!raw) return { xHandle: "" };
+  let handle = "";
+  if (/^@?[A-Za-z0-9_]{1,15}$/u.test(raw)) {
+    handle = raw.replace(/^@/u, "");
+  } else {
+    let url;
+    try {
+      url = new URL(/^https?:\/\//iu.test(raw) ? raw : `https://${raw}`);
+    } catch {
+      return { error: X_PROFILE_ERROR };
+    }
+    if (!["https:", "http:"].includes(url.protocol)
+      || !X_PROFILE_HOSTS.has(url.hostname.toLowerCase())
+      || url.username
+      || url.password
+      || url.port) {
+      return { error: X_PROFILE_ERROR };
+    }
+    const segments = url.pathname.split("/").filter(Boolean);
+    if (segments.length !== 1) return { error: X_PROFILE_ERROR };
+    handle = segments[0].replace(/^@/u, "");
+  }
+  if (!X_HANDLE_PATTERN.test(handle) || X_RESERVED_PATHS.has(handle.toLowerCase())) return { error: X_PROFILE_ERROR };
+  return { xHandle: handle };
 }
 
 export function remainingLabel(expiresAt, now = Date.now()) {

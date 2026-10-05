@@ -9,7 +9,7 @@ const BATTLE_VARIETY_MODE_GROUPS = Object.freeze([
   Object.freeze(["solo"]),
   Object.freeze(["strategy"]),
 ]);
-const VALID_SCOPES = new Set(["special", "battle", "training", "danwaku", "ai_training", "roulette_training", "market", "flea"]);
+const VALID_SCOPES = new Set(["special", "battle", "training", "danwaku", "ai_training", "roulette_training", "market", "flea", "tribute"]);
 const MAX_SHOWCASE = 3;
 const CROWN_MONTHLY_ACHIEVEMENT_START_KEY = "2026-08";
 
@@ -547,6 +547,37 @@ const fleaDefinitions = [
   }),
 ];
 
+// お貢ぎ牧場。金額や順位ではなく、管理が続いた記録を数える。同じ相手とは日本時間の1日1回だけ数え、
+// 財布として遊んでいることは本人が選んだ時だけ公開されるよう、自動公開しない。
+const tributeDefinitions = [
+  ...series({
+    scope: "tribute",
+    category: "tribute_ranch",
+    family: "tribute_manager",
+    familyLabel: "牧場の管理",
+    icon: "柵",
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["牧場の開業", "見習い牧場主", "十の献上を受けた柵", "財布の群れを囲う", "百の献上を数える牧場主", "三百の財布が鳴る", "五百の献上台帳", "千の献上を束ねる", "三千の財布を飼う牧場", "万の献上を統べる大牧場主"],
+    description: (target) => `管理する側として、財布からの献上を${target}回受け取った（同じ財布は1日1回まで）`,
+    hint: "同じ財布からは日本時間の1日1回だけ数える",
+    condition: (target) => ({ type: "tribute_stat", key: "managerPairDays", target }),
+    autoPublic: false,
+  }),
+  ...series({
+    scope: "tribute",
+    category: "tribute_ranch",
+    family: "tribute_wallet",
+    familyLabel: "財布の献上",
+    icon: "財",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
+    names: ["はじめての献上", "柵に入った財布", "七回差し出した財布", "飼い慣らされた財布", "三十回の献上", "六十回差し出した財布", "百回の献上を重ねた財布", "百八十回の献上", "三百六十五回の献上", "千回差し出した伝説の財布"],
+    description: (target) => `財布として、管理人への献上を${target}回差し出した（同じ管理人へは1日1回まで）`,
+    hint: "同じ管理人へは日本時間の1日1回だけ数える",
+    condition: (target) => ({ type: "tribute_stat", key: "walletPairDays", target }),
+    autoPublic: false,
+  }),
+];
+
 const specialDefinitions = [Object.freeze({
   id: DOLLMASTER_ACHIEVEMENT_ID,
   scope: "special",
@@ -572,6 +603,7 @@ const ACHIEVEMENT_DEFINITIONS = Object.freeze([
   ...rouletteTrainingDefinitions,
   ...marketDefinitions,
   ...fleaDefinitions,
+  ...tributeDefinitions,
 ]);
 const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENT_DEFINITIONS.map((definition) => [definition.id, definition]));
 
@@ -716,6 +748,13 @@ function normalizeFleaStats(value) {
   };
 }
 
+function normalizeTributeStats(value) {
+  return {
+    managerPairDays: count(value?.managerPairDays),
+    walletPairDays: count(value?.walletPairDays),
+  };
+}
+
 function normalizeCrownMonthlyStats(value) {
   const periods = {};
   for (const [key, recordValue] of Object.entries(objectValue(value?.periods))) {
@@ -829,6 +868,7 @@ function achievementConditionMet(
   marketStats,
   fleaStats,
   crownMonthlyStats,
+  tributeStats,
   signals = {},
 ) {
   const condition = definition.condition;
@@ -860,6 +900,7 @@ function achievementConditionMet(
   }
   if (condition.type === "market_signal") return signals?.[condition.signal] === true;
   if (condition.type === "flea_stat") return count(fleaStats?.[condition.key]) >= condition.target;
+  if (condition.type === "tribute_stat") return count(tributeStats?.[condition.key]) >= condition.target;
   if (condition.type === "crown_monthly_requirements") {
     const stats = normalizeCrownMonthlyStats(crownMonthlyStats);
     return Object.entries(objectValue(condition.requirements))
@@ -877,6 +918,7 @@ function eligibleAchievementIds({
   marketStats,
   fleaStats,
   crownMonthlyStats,
+  tributeStats,
   signals = {},
   scope = "",
 } = {}) {
@@ -893,6 +935,7 @@ function eligibleAchievementIds({
         marketStats,
         fleaStats,
         crownMonthlyStats,
+        tributeStats,
         signals,
       ))
     .map((definition) => definition.id);
@@ -994,6 +1037,7 @@ function publicAchievementProfile(
   aiTextTrainingStatsValue,
   fleaStatsValue,
   rouletteTrainingStatsValue,
+  tributeStatsValue,
 ) {
   const profile = normalizeAchievementProfile(profileValue);
   const battleStats = normalizeBattleStats(battleStatsValue);
@@ -1002,6 +1046,7 @@ function publicAchievementProfile(
   const aiTextTrainingStats = normalizeAiTextTrainingStats(aiTextTrainingStatsValue);
   const fleaStats = normalizeFleaStats(fleaStatsValue);
   const rouletteTrainingStats = normalizeRouletteTrainingStats(rouletteTrainingStatsValue);
+  const tributeStats = normalizeTributeStats(tributeStatsValue);
   const unlockedLegacyCount = Object.keys(profile.unlocked)
     .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.legacy === true)
     .length;
@@ -1025,6 +1070,7 @@ function publicAchievementProfile(
         uniqueCounterparties: marketStats.uniqueCounterparties,
       },
       flea: fleaStats,
+      tribute: tributeStats,
     },
   };
 }
@@ -1053,6 +1099,7 @@ module.exports = Object.freeze({
   normalizeMarketStats,
   normalizeRouletteTrainingStats,
   normalizeTrainingStats,
+  normalizeTributeStats,
   publicAchievementProfile,
   publicShowcaseMap,
   sanitizeAchievementIds,

@@ -40,15 +40,18 @@ import {
   TOTAL_OPTIONS,
   TRIBUTE_AGE_VERSION,
   capViolation,
+  X_EXTERNAL_CONFIRM_MESSAGE,
+  X_HANDLE_PATTERN,
   formatPay,
   messageProblem,
   normalizeCaps,
+  normalizeXProfile,
   remainingLabel,
   templatesFor,
   textLength,
   tributeFee,
   viewContract,
-} from "./tribute-core.mjs?v=tribute-v1";
+} from "./tribute-core.mjs?v=tribute-ranch-v1";
 
 const appRoot = document.querySelector("#app");
 // 確認シートとレシートは画面の外側に置く。画面要素の入場アニメーションが transform を使うため、
@@ -57,6 +60,7 @@ const layer = document.createElement("div");
 layer.className = "tribute-layer";
 document.body.appendChild(layer);
 const tributeActionCallable = httpsCallable(functions, "tributeAction");
+const economyActionCallable = httpsCallable(functions, "economyAction");
 const HOLD_MS = 1_200;
 const EVENTS_LIMIT = 100;
 const PREVIEW_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -66,7 +70,7 @@ const NAV_ITEMS = Object.freeze([
   Object.freeze({ screen: "board", label: "掲示板" }),
   Object.freeze({ screen: "ledger", label: "貢ぎ帳" }),
   Object.freeze({ screen: "ranking", label: "番付" }),
-  Object.freeze({ screen: "fund", label: "界隈基金" }),
+  Object.freeze({ screen: "fund", label: "牧場基金" }),
 ]);
 
 const previewScreen = (() => {
@@ -97,6 +101,7 @@ function createState() {
     ageConfirmed: false,
     profile: null,
     contracts: [],
+    achievements: null,
     walletBalance: null,
     board: { status: "idle", managers: [], recommended: [], nekamaOnly: false },
     manager: { status: "idle", publicManagerId: "", data: null },
@@ -135,7 +140,7 @@ function showToast(message) {
   else window.alert(message);
 }
 
-function friendlyError(error, fallback = "お貢ぎ界隈の処理を完了できませんでした。") {
+function friendlyError(error, fallback = "お貢ぎ牧場の処理を完了できませんでした。") {
   const code = String(error?.code || "").toLowerCase();
   if (code.includes("unauthenticated")) return "アカウントを確認できませんでした。ページを読み直してください。";
   if (code.includes("app-check") || code.includes("permission-denied") && /App Check/i.test(String(error?.message))) {
@@ -197,32 +202,45 @@ function honorTag(honor) {
   return honor?.label ? `<span class="tribute-tag is-honor">${escapeHtml(honor.label)}</span>` : "";
 }
 
+function cardXHandle(card) {
+  const handle = String(card?.xHandle || "");
+  return X_HANDLE_PATTERN.test(handle) ? handle : "";
+}
+
+// Xのリンクは本人確認のない外部サイトなので、ボタンにして確認を挟んでから開く。
+function xProfileButton(card) {
+  const handle = cardXHandle(card);
+  if (!handle) return "";
+  const label = `管理人が自己申告したXプロフィール @${handle} を新しいタブで開く（外部サイト）`;
+  return `<span class="tribute-x-link"><button type="button" data-t="open-x" data-handle="${escapeHtml(handle)}" aria-label="${escapeHtml(label)}"><b aria-hidden="true">X</b><span>@${escapeHtml(handle)}</span><i aria-hidden="true">↗</i></button><small>管理人の自己申告・本人未確認</small></span>`;
+}
+
 function optionList(options, selected, format = (value) => formatPay(value)) {
   return options.map((value) => `<option value="${value}" ${Number(selected) === value ? "selected" : ""}>${escapeHtml(format(value))}</option>`).join("");
 }
 
-function setChrome(statusLabel = "OMITSUGI") {
+function setChrome(statusLabel = "OMITSUGI RANCH") {
   const status = document.querySelector(".status-dot");
   const privacy = document.querySelector(".privacy-badge");
   const footerItems = document.querySelectorAll(".site-footer span");
   if (status) status.innerHTML = `<i></i> ${escapeHtml(statusLabel)}`;
   if (privacy) privacy.textContent = "会わない・換金できない・上限と解約は預ける側";
-  if (footerItems[0]) footerItems[0].textContent = "OMITSUGI / ANJUPAY ONLY";
+  if (footerItems[0]) footerItems[0].textContent = "OMITSUGI RANCH / ANJUPAY ONLY";
   if (footerItems[1]) footerItems[1].textContent = "現金・外部決済・換金・連絡先の交換はありません";
 }
 
 // ───────────── 画面 ─────────────
 
-function frame(content, { title = "お貢ぎ界隈", screenClass = "" } = {}) {
+function frame(content, { title = "お貢ぎ牧場", screenClass = "" } = {}) {
   const nav = state.ageConfirmed
-    ? `<nav class="tribute-nav" aria-label="お貢ぎ界隈の移動">
+    ? `<nav class="tribute-nav" aria-label="お貢ぎ牧場の移動">
         ${NAV_ITEMS.map((item) => `<button type="button" data-t="nav" data-screen="${item.screen}" aria-current="${state.screen === item.screen ? "page" : "false"}">${escapeHtml(item.label)}${item.screen === "hub" && unreadTotal() ? `<b class="tribute-badge">${unreadTotal()}</b>` : ""}</button>`).join("")}
         <button type="button" data-t="home">トップへ</button>
       </nav>`
     : `<nav class="tribute-nav"><button type="button" data-t="home">トップへ</button></nav>`;
   return `<section class="screen tribute-screen ${screenClass}" aria-busy="${state.busy ? "true" : "false"}">
     <header class="tribute-header">
-      <div class="tribute-brand"><span class="tribute-brand-mark" aria-hidden="true">貢</span><div><small>OMITSUGI${previewScreen ? " / PREVIEW" : ""}</small><strong>${escapeHtml(title)}</strong></div></div>
+      <div class="tribute-brand"><span class="tribute-brand-mark" aria-hidden="true">貢</span><div><small>OMITSUGI RANCH${previewScreen ? " / PREVIEW" : ""}</small><strong>${escapeHtml(title)}</strong></div></div>
       ${state.walletBalance !== null && state.ageConfirmed ? `<span class="tribute-wallet-chip">財布 <b data-tribute-wallet>${escapeHtml(formatPay(state.walletBalance))}</b></span>` : ""}
       ${nav}
     </header>
@@ -235,7 +253,7 @@ function unreadTotal() {
 }
 
 function renderLoading() {
-  return `<section class="screen tribute-screen tribute-loading" aria-busy="true"><span class="tribute-brand-mark is-large" aria-hidden="true">貢</span><p>お貢ぎ界隈を開いています…</p></section>`;
+  return `<section class="screen tribute-screen tribute-loading" aria-busy="true"><span class="tribute-brand-mark is-large" aria-hidden="true">貢</span><p>お貢ぎ牧場を開いています…</p></section>`;
 }
 
 function renderError() {
@@ -246,7 +264,7 @@ function renderError() {
 function renderAge() {
   return frame(`<div class="tribute-age">
     <p class="tribute-eyebrow">入場前の確認</p>
-    <h1>お貢ぎ界隈</h1>
+    <h1>お貢ぎ牧場</h1>
     <blockquote class="tribute-definition">${escapeHtml(DEFINITION)}</blockquote>
     <ul class="tribute-premises">${PREMISES.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>
     <form class="tribute-panel tribute-age-form" data-form="age">
@@ -305,7 +323,7 @@ function renderHub() {
       </div>
       <div class="tribute-me-manager">
         <span class="tribute-eyebrow">管理人として</span>
-        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${honorTag(profile.honor)}<small>${profile.hidden ? "通報が重なったため、今月は掲示板に出ていません。" : profile.accepting ? "受付中（掲示板に出ています）" : "受付停止中"}</small></div></div>
+        ${card ? `<div class="tribute-me-card">${sigil(card)}<div><strong>${escapeHtml(card.personaName)}</strong>${disclosureTag(card.disclosure)}${honorTag(profile.honor)}${cardXHandle(card) ? `<span class="tribute-tag is-x">X @${escapeHtml(cardXHandle(card))}</span>` : ""}<small>${profile.hidden ? "通報が重なったため、今月は掲示板に出ていません。" : profile.accepting ? "受付中（掲示板に出ています）" : "受付停止中"}</small></div></div>
           <div class="tribute-row">
             <button class="button button-ghost button-small" type="button" data-t="toggle-accepting">${profile.accepting ? "受付を止める" : "受付を始める"}</button>
             <button class="button button-ghost button-small" type="button" data-t="nav" data-screen="card">カードを編集</button>
@@ -323,9 +341,10 @@ function renderHub() {
       ${openManager.length ? openManager.map(renderContractRow).join("") : `<p class="tribute-empty">${card ? "まだ申し込みはありません。" : "管理人カードを作ると、申し込みを受けられます。"}</p>`}
     </section>
     ${ended.length ? `<details class="tribute-panel tribute-ended"><summary>終わった契約（${ended.length}）</summary>${ended.map(renderContractRow).join("")}</details>` : ""}
+    ${renderAchievementPanel()}
     <section class="tribute-panel tribute-legacy">
       <h2>旧推し値市場</h2>
-      <p>推し値市場は2026年10月に終了し、お貢ぎ界隈へ置き換わりました。進行中の商談は完了・返還まで進み、ランキング・永久実績・推し値証書は閲覧できます。</p>
+      <p>推し値市場は2026年10月に終了し、お貢ぎ牧場へ置き換わりました。進行中の商談は完了・返還まで進み、ランキング・永久実績・推し値証書は閲覧できます。</p>
       <div class="tribute-row">
         <button class="button button-ghost button-small" type="button" data-t="legacy-market" data-dest="rankings">旧推し値市場の記録</button>
         <button class="button button-ghost button-small" type="button" data-t="legacy-market" data-dest="setup">進行中の商談に戻る</button>
@@ -334,11 +353,43 @@ function renderHub() {
   </div>`, { title: "契約" });
 }
 
+const ACHIEVEMENT_SIDES = Object.freeze([
+  Object.freeze({ family: "tribute_manager", side: "管理する側", statKey: "managerPairDays", unit: "受け取った献上" }),
+  Object.freeze({ family: "tribute_wallet", side: "財布の側", statKey: "walletPairDays", unit: "差し出した献上" }),
+]);
+
+function renderAchievementPanel() {
+  const catalog = window.HariaiAchievements?.catalog;
+  if (!state.achievements || !Array.isArray(catalog)) return "";
+  const unlocked = new Set(state.achievements.unlocked);
+  const rows = ACHIEVEMENT_SIDES.map((entry) => {
+    const levels = catalog.filter((definition) => definition.family === entry.family).sort((a, b) => a.level - b.level);
+    if (!levels.length) return "";
+    const current = levels.filter((definition) => unlocked.has(definition.id)).at(-1) || null;
+    const counted = Math.max(0, Math.floor(Number(state.achievements.stats?.[entry.statKey]) || 0));
+    const maximum = levels.at(-1).level;
+    return `<div class="tribute-achievement ${current ? "is-unlocked" : "is-locked"}${current?.level === maximum ? " is-final" : ""}">
+      <span class="tribute-achievement-icon" aria-hidden="true">${escapeHtml(current ? current.icon : "?")}</span>
+      <span class="tribute-achievement-copy">
+        <small>${escapeHtml(entry.side)}・${escapeHtml(levels[0].familyLabel)}</small>
+        <strong>${escapeHtml(current ? current.name : "未解除")}</strong>
+        <em>${current ? `Lv.${current.level} / ${maximum}` : `最大Lv.${maximum}`} ・ ${escapeHtml(entry.unit)} ${counted.toLocaleString("ja-JP")}回</em>
+      </span>
+    </div>`;
+  }).join("");
+  return `<section class="tribute-panel tribute-achievements">
+    <h2>牧場の実績 <small>同じ相手とは日本時間の1日1回だけ数えます</small></h2>
+    <div class="tribute-achievement-grid">${rows}</div>
+    <p class="tribute-note">金額や順位ではなく、管理が続いた記録です。実績は自動では公開されず、展示するかは実績コレクションで選べます。</p>
+    <div class="tribute-row"><button class="button button-ghost button-small" type="button" data-t="open-achievements">実績コレクションを見る</button></div>
+  </section>`;
+}
+
 function renderManagerCard(card, { compact = false } = {}) {
   const color = SIGIL_COLORS[Number(card.sigil) || 0] || SIGIL_COLORS[0];
   return `<article class="tribute-card${compact ? " is-compact" : ""}" style="--sigil:${color}">
     <button type="button" data-t="open-manager" data-id="${escapeHtml(card.publicManagerId)}">
-      <span class="tribute-card-head">${sigil(card)}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
+      <span class="tribute-card-head">${sigil(card)}<span><strong>${escapeHtml(card.personaName)}</strong><span class="tribute-card-tags">${disclosureTag(card.disclosure)}<span class="tribute-tag">${escapeHtml(STYLE_LABELS[card.style] || "")}</span>${honorTag(card.honor)}${cardXHandle(card) ? '<span class="tribute-tag is-x" title="Xのプロフィールあり（自己申告）">X</span>' : ""}${card.mine ? '<span class="tribute-tag is-mine">あなた</span>' : ""}</span></span></span>
       ${compact ? "" : `<span class="tribute-card-intro">${escapeHtml(card.intro || "（紹介文なし）")}</span>`}
       <span class="tribute-card-meta"><span>入場料 <b>${escapeHtml(formatPay(card.entryFee))}</b></span><span>管理中 <b>${Number(card.activeContracts || 0)}</b></span>${card.recommendedCount ? `<span>推薦 <b>${Number(card.recommendedCount)}</b></span>` : ""}</span>
     </button>
@@ -396,6 +447,7 @@ function renderManagerDetail() {
         <div><dt>管理中</dt><dd>${Number(card.activeContracts || 0)}件</dd></div>
         ${myTotal ? `<div><dt>あなたの献上</dt><dd>${escapeHtml(formatPay(myTotal))}</dd></div>` : ""}
       </dl>
+      ${xProfileButton(card)}
       <div class="tribute-row">${action}
         ${canRecommend ? `<button class="button button-ghost button-small" type="button" data-t="${recommended ? "unrecommend" : "recommend"}" data-id="${escapeHtml(card.publicManagerId)}">${recommended ? "推薦を外す" : "推薦する"}</button>` : ""}
         ${card.mine || previewScreen ? "" : renderBlockButton({ mode: "tribute", publicManagerId: card.publicManagerId }, "この管理人をブロック")}
@@ -453,6 +505,8 @@ function renderCardEditor() {
     <h1>${profile.card ? "カードを編集" : "管理人カードを作る"}</h1>
     <label class="tribute-field"><span>ペルソナ名（1〜${LIMITS.personaName}文字）</span><input name="personaName" maxlength="${LIMITS.personaName}" required value="${escapeHtml(card.personaName || "")}" /></label>
     <label class="tribute-field"><span>紹介（${LIMITS.intro}文字まで）</span><input name="intro" maxlength="${LIMITS.intro}" value="${escapeHtml(card.intro || "")}" /></label>
+    <label class="tribute-field"><span>Xのプロフィール（任意）</span><input name="xProfile" maxlength="80" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://x.com/ユーザー名 または @ユーザー名" value="${cardXHandle(card) ? escapeHtml(`https://x.com/${cardXHandle(card)}`) : ""}" />
+      <small>管理人カードと掲示板に「自己申告・本人未確認」として表示され、開く前に外部サイトである確認が出ます。空にすると外します。スレッドでのSNSのID交換は、これまでどおりできません。</small></label>
     <fieldset><legend>中の人の札</legend><div class="tribute-radio-col">${Object.entries(DISCLOSURE_LABELS).map(([key, label]) => `<label><input type="radio" name="disclosure" value="${key}" ${card.disclosure === key ? "checked" : ""} required /><span>${escapeHtml(label)}</span></label>`).join("")}</div>
       <small>ネカマ貢がせは、男性であることを隠さず行うジャンルです。受け手の性別を女性に限る仕組みはありません。</small></fieldset>
     <fieldset><legend>管理の型</legend><div class="tribute-radio-row">${Object.entries(STYLE_LABELS).map(([key, label]) => `<label><input type="radio" name="style" value="${key}" ${(card.style || "harsh") === key ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div></fieldset>
@@ -823,13 +877,13 @@ function renderRanking() {
 
 function renderFund() {
   const data = state.fund.data;
-  if (!data) return frame(`<p class="tribute-empty">${state.fund.status === "error" ? "界隈基金を開けませんでした。" : "界隈基金を読み込んでいます…"}</p>`, { title: "界隈基金" });
+  if (!data) return frame(`<p class="tribute-empty">${state.fund.status === "error" ? "牧場基金を開けませんでした。" : "牧場基金を読み込んでいます…"}</p>`, { title: "牧場基金" });
   const { fund, me, tiers, monthKey } = data;
   const honor = me.honor;
   const canOffer = me.googleProtected && me.eligible && me.offerable >= 10;
   return frame(`<div class="tribute-fund">
     <section class="tribute-panel">
-      <span class="tribute-eyebrow">${escapeHtml(monthKey.replace("-", "年"))}月</span><h2>界隈基金</h2>
+      <span class="tribute-eyebrow">${escapeHtml(monthKey.replace("-", "年"))}月</span><h2>牧場基金</h2>
       <p>管理人が受け取った献上の一部を「上納」すると、80%は消却、20%がその月の基金に積まれます。基金は献上手数料の補填（手数料の半分・最大10 Pay・手数料は最低1 Pay残す）だけに使い、管理人へ直接配りません。</p>
       <dl class="tribute-facts">
         <div><dt>基金残高</dt><dd>${escapeHtml(formatPay(fund.balance))}</dd></div>
@@ -860,7 +914,7 @@ function renderFund() {
         <p>推薦（${honor.recommendations.length} / ${honor.tier.recommendationSlots}）：${honor.recommendations.length ? honor.recommendations.map((row) => `<button type="button" class="tribute-link" data-t="open-manager" data-id="${escapeHtml(row.publicManagerId)}">${escapeHtml(row.personaName)}</button>`).join("・") : "管理人カードから推薦できます。"}</p>
       </div>` : ""}
     </section>
-  </div>`, { title: "界隈基金" });
+  </div>`, { title: "牧場基金" });
 }
 
 function render() {
@@ -907,6 +961,30 @@ function applyState(payload) {
   state.ageConfirmed = payload.ageConfirmed === true;
   if (payload.profile) state.profile = payload.profile;
   if (Array.isArray(payload.contracts)) state.contracts = payload.contracts;
+  if (payload.achievements && typeof payload.achievements === "object") {
+    state.achievements = {
+      stats: payload.achievements.stats || {},
+      unlocked: Array.isArray(payload.achievements.unlocked) ? payload.achievements.unlocked : [],
+    };
+    notifyAchievementUnlocks(payload.achievements.newlyUnlocked);
+  }
+}
+
+// 解除した実績は共通の演出で知らせ、表示済みとしてサーバーへ伝える（失敗しても次の読み込みで再通知される）。
+function notifyAchievementUnlocks(value) {
+  const catalog = window.HariaiAchievements;
+  if (!catalog || !Array.isArray(value) || !value.length) return;
+  const ids = (catalog.normalizeIds?.(value, catalog.catalog?.length || 400) || [])
+    .filter((id) => catalog.byId?.get?.(id)?.scope === "tribute");
+  if (!ids.length) return;
+  if (state.achievements) {
+    state.achievements.unlocked = [...new Set([...state.achievements.unlocked, ...ids])];
+  }
+  window.dispatchEvent(new CustomEvent("hariai-achievements-unlocked", { detail: { ids } }));
+  if (previewScreen) return;
+  economyActionCallable({ action: "ack_achievements", achievementIds: ids }).catch(() => {
+    // 次に開いた時、未表示のまま残った実績をもう一度知らせる。
+  });
 }
 
 async function refreshState() {
@@ -1112,6 +1190,7 @@ async function completeGive() {
   rerenderSheet();
   rerenderReceipt();
   window.HariaiAudio?.playReveal?.();
+  notifyAchievementUnlocks(result.newlyUnlocked);
 }
 
 function beginHold(button) {
@@ -1183,10 +1262,13 @@ async function handleSubmit(form) {
       if (!personaName) return setFormError(form, "ペルソナ名を入力してください。");
       const problem = messageProblem(`${personaName} ${data.get("intro") || ""}`);
       if (problem) return setFormError(form, problem);
+      const x = normalizeXProfile(data.get("xProfile"));
+      if (x.error) return setFormError(form, x.error);
       await mutate("save_profile", {
         card: {
           personaName,
           intro: String(data.get("intro") || ""),
+          xProfile: x.xHandle,
           disclosure: String(data.get("disclosure") || ""),
           style: String(data.get("style") || ""),
           entryFee: Number(data.get("entryFee")),
@@ -1266,7 +1348,10 @@ async function handleSubmit(form) {
       const amount = readAmount(form, Math.min(view.escrowBalance, view.allowance));
       if (amount.error) return setFormError(form, amount.error);
       const result = await mutate("escrow_take", contractPayload({ amount: amount.value, clientRequestId: state.sheet.clientRequestId }), { form, success: "管理口座から徴収しました。" });
-      if (result) closeSheet();
+      if (result) {
+        closeSheet();
+        notifyAchievementUnlocks(result.newlyUnlocked);
+      }
       return;
     }
     case "escrow-deposit": {
@@ -1381,6 +1466,7 @@ async function handleClick(target) {
         success: "受理しました。管理を始めます。",
         after: (result) => {
           if (result.entryFeeCharged) showToast(`入場料 ${formatPay(result.entryFeeCharged)} を受け取りました。`);
+          notifyAchievementUnlocks(result.newlyUnlocked);
           if (previewScreen) updateThreadParts();
         },
       });
@@ -1476,6 +1562,17 @@ async function handleClick(target) {
           openManager(target.dataset.id);
         },
       });
+      return;
+    case "open-x": {
+      const handle = String(target.dataset.handle || "");
+      if (!X_HANDLE_PATTERN.test(handle) || !window.confirm(X_EXTERNAL_CONFIRM_MESSAGE)) return;
+      const external = window.open(`https://x.com/${encodeURIComponent(handle)}`, "_blank", "noopener,noreferrer");
+      if (external) external.opener = null;
+      return;
+    }
+    case "open-achievements":
+      requestHome();
+      window.setTimeout(() => window.HariaiOnline?.openAchievements?.(), 0);
       return;
     case "legacy-market": {
       const destination = target.dataset.dest;
@@ -1604,17 +1701,17 @@ async function start({ initialScreen = "" } = {}) {
     return;
   }
   if (location.protocol === "file:") {
-    showToast("お貢ぎ界隈はローカルサーバーまたは公開URLから開いてください。");
+    showToast("お貢ぎ牧場はローカルサーバーまたは公開URLから開いてください。");
     return;
   }
   if (modeIsActiveElsewhere()) {
-    showToast("ほかのモードを終了してからお貢ぎ界隈を開いてください。");
+    showToast("ほかのモードを終了してからお貢ぎ牧場を開いてください。");
     return;
   }
   active = true;
   const generation = ++lifecycleGeneration;
   state = createState();
-  setChrome("OMITSUGI / CONNECTING");
+  setChrome("OMITSUGI RANCH / CONNECTING");
   render();
   try {
     if (previewScreen) {
@@ -1649,8 +1746,8 @@ async function start({ initialScreen = "" } = {}) {
   } catch (error) {
     if (!isCurrent(generation)) return;
     state.screen = "error";
-    state.fatalError = friendlyError(error, "お貢ぎ界隈へ接続できませんでした。");
-    setChrome("OMITSUGI / ERROR");
+    state.fatalError = friendlyError(error, "お貢ぎ牧場へ接続できませんでした。");
+    setChrome("OMITSUGI RANCH / ERROR");
     render();
   }
 }
@@ -1709,6 +1806,7 @@ const PREVIEW_MANAGER_CARD = Object.freeze({
   style: "harsh",
   entryFee: 10,
   sigil: 0,
+  xHandle: "mio_sama_ranch",
   accepting: true,
   honor: { tierId: "offerer", label: "上納者" },
   recommendedCount: 2,
@@ -1799,6 +1897,11 @@ function previewCall(action, payload) {
           counts: { payerOpen: 1, managerActive: 1, managerPending: 1 },
           receiptCount: 3,
         },
+        achievements: {
+          stats: { managerPairDays: 12, walletPairDays: 4 },
+          unlocked: ["tribute_manager_1", "tribute_manager_3", "tribute_manager_10", "tribute_wallet_1", "tribute_wallet_3"],
+          newlyUnlocked: [],
+        },
         contracts: [
           viewContract(previewRaw("payer"), "preview-me", now),
           viewContract(previewRaw("manager"), "preview-me", now),
@@ -1871,7 +1974,7 @@ function previewCall(action, payload) {
         tiers: [
           { id: "offerer", label: "上納者", threshold: 300, recommendationSlots: 1 },
           { id: "grand_offerer", label: "大上納者", threshold: 1_500, recommendationSlots: 2 },
-          { id: "master", label: "界隈の主", threshold: 5_000, recommendationSlots: 3 },
+          { id: "master", label: "牧場の主", threshold: 5_000, recommendationSlots: 3 },
         ],
       });
     case "tribute":

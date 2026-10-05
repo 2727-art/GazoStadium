@@ -1,4 +1,4 @@
-/* お貢ぎ界隈。夜のDMのような暗い面に、管理人の印の色とレシートの紙色だけを置く。 */
+/* お貢ぎ牧場。夜のDMのような暗い面に、管理人の印の色とレシートの紙色だけを置く。 */
 .tribute-screen,
 .tribute-layer {
   --tr-bg: #0d0a10;
@@ -642,4 +642,44 @@
   .tribute-wallet-anim i { animation: none; }
   .tribute-wallet-anim i { display: none; }
   .tribute-hold.is-holding .tribute-hold-fill { transition-duration: 1ms; }
+}
+
+/* 管理人カードの任意のXプロフィール（自己申告・外部サイト） */
+.tribute-tag.is-x { border-color: rgba(255, 255, 255, 0.35); color: var(--tr-text); }
+.tribute-x-link { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.tribute-x-link button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: #000;
+  color: #fff;
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+.tribute-x-link button span { overflow-wrap: anywhere; }
+.tribute-x-link button:hover { border-color: rgba(255, 255, 255, 0.6); }
+.tribute-x-link small { font-size: 0.7rem; }
+
+/* 牧場の実績（契約画面） */
+.tribute-achievement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; }
+.tribute-achievement { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--tr-line); border-radius: 14px; background: var(--tr-panel-2); min-width: 0; }
+.tribute-achievement.is-unlocked { border-color: rgba(232, 194, 122, 0.4); }
+.tribute-achievement.is-final { border-color: var(--tr-gold); box-shadow: inset 0 0 18px rgba(232, 194, 122, 0.12); }
+.tribute-achievement-icon { display: grid; flex: 0 0 auto; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(232, 194, 122, 0.14); color: var(--tr-gold); font-size: 1.2rem; font-weight: 900; }
+.tribute-achievement.is-locked .tribute-achievement-icon { background: rgba(255, 255, 255, 0.05); color: var(--tr-mist); }
+.tribute-achievement-copy { display: grid; gap: 2px; min-width: 0; }
+.tribute-achievement-copy strong { overflow-wrap: anywhere; }
+.tribute-achievement-copy em { font-style: normal; font-size: 0.74rem; color: var(--tr-mist); }
+
+/* お貢ぎ牧場の実績バッジ（ランキングや推しカードにも出るので、画面の外でも効くよう全体に置く）。 */
+.achievement-badge.achievement-scope-tribute {
+  border-color: rgba(232, 194, 122, 0.45);
+  background:
+    linear-gradient(120deg, rgba(255, 79, 163, 0.12), rgba(232, 194, 122, 0.1));
+  color: #ffe6c2;
 }

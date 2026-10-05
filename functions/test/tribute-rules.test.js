@@ -97,7 +97,7 @@ test("fees, subsidies, offering splits and honor tiers", () => {
   assert.equal(rules.honorTierFor(299), null);
   assert.equal(rules.honorTierFor(300).label, "上納者");
   assert.equal(rules.honorTierFor(1_600).label, "大上納者");
-  assert.equal(rules.honorTierFor(5_000).label, "界隈の主");
+  assert.equal(rules.honorTierFor(5_000).label, "牧場の主");
 });
 
 test("raised caps apply from the next JST day and allowances combine all three caps", () => {
@@ -118,4 +118,40 @@ test("raised caps apply from the next JST day and allowances combine all three c
   assert.equal(rules.tributeAllowance(contract, rules.effectiveCaps(contract, later).caps, later), 100, "today resets but the total cap remains");
   assert.match(rules.capViolation(101, contract, rules.effectiveCaps(contract, later).caps, later), /合計上限/);
   assert.equal(rules.capViolation(100, contract, rules.effectiveCaps(contract, later).caps, later), "");
+});
+
+test("the optional X profile accepts only an x.com profile and stores just the username", () => {
+  const accepted = {
+    "": "",
+    "@mio_sama": "mio_sama",
+    "mio_sama": "mio_sama",
+    "https://x.com/mio_sama": "mio_sama",
+    "x.com/mio_sama/": "mio_sama",
+    "https://www.x.com/mio_sama#top": "mio_sama",
+    "https://twitter.com/mio_sama?s=21": "mio_sama",
+    "ｍｉｏ＿ｓａｍａ": "mio_sama",
+  };
+  for (const [input, handle] of Object.entries(accepted)) {
+    assert.deepEqual(rules.normalizeXProfile(input), { xHandle: handle }, input);
+  }
+  for (const input of [
+    "https://x.com/mio_sama/status/1234567890",
+    "https://x.com/home",
+    "https://x.com/i/flow/login",
+    "https://x.com/",
+    "https://x.com.evil.example/mio_sama",
+    "https://evil.example/mio_sama",
+    "https://x.com:8443/mio_sama",
+    "https://user:pass@x.com/mio_sama",
+    "javascript:alert(1)",
+    "https://x.com/toolong_username_",
+    "@mio sama",
+  ]) {
+    assert.match(rules.normalizeXProfile(input).error, /https:\/\/x\.com\/ユーザー名/, input);
+  }
+  const card = rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio_sama" });
+  assert.equal(card.card.xHandle, "mio_sama");
+  assert.equal(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0 }).card.xHandle, "");
+  assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio/status/1" }).error, /x\.com/);
+  assert.match(rules.normalizeManagerCard({ personaName: "ミオ様", intro: "@mio_sama で探して", disclosure: "nekama", style: "harsh", entryFee: 0 }).error, /SNSのID/, "the intro still cannot carry an SNS ID");
 });

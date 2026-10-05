@@ -23,6 +23,7 @@ const {
   normalizeMarketStats,
   normalizeRouletteTrainingStats,
   normalizeTrainingStats,
+  normalizeTributeStats,
   publicAchievementProfile,
   finalizeCrownMonthlyAchievement,
   unlockAchievements,
@@ -923,6 +924,8 @@ test("all active progression families extend in place to level ten while retired
     market_both: [1, 3, 10, 30, 100, 200, 300, 500, 1000, 3000],
     market_days: [2, 7, 30, 100, 180, 300, 365, 500, 730, 1000],
     market_partners: [3, 10, 30, 100, 200, 300, 500, 1000, 2000, 3000],
+    tribute_manager: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    tribute_wallet: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
   };
   const retiredTrainingFamilies = new Set([
     "training_sessions",
@@ -1217,6 +1220,8 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "flea_listings",
     "flea_sales",
     "flea_purchases",
+    "tribute_manager",
+    "tribute_wallet",
   ]);
   assert.deepEqual(
     JSON.parse(JSON.stringify([...window.HariaiAchievements.catalog]
@@ -1348,4 +1353,45 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     ])],
     ["market_seller_10000", "market_seller_3000", "market_seller_1000", "market_seller_500"],
   );
+});
+
+test("お貢ぎ牧場 achievements count only the ranch stats, stay opt-in, and report their own counters", () => {
+  assert.deepEqual(normalizeTributeStats({ managerPairDays: "12", walletPairDays: -3, extra: 9 }), { managerPairDays: 12, walletPairDays: 0 });
+  const definitions = ACHIEVEMENT_DEFINITIONS.filter((definition) => definition.scope === "tribute");
+  assert.equal(definitions.length, 20);
+  assert.equal(definitions.every((definition) => definition.autoPublic === false && definition.category === "tribute_ranch"), true);
+  assert.deepEqual(
+    eligibleAchievementIds({ tributeStats: { managerPairDays: 30, walletPairDays: 14 }, scope: "tribute" }).sort(),
+    ["tribute_manager_1", "tribute_manager_3", "tribute_manager_10", "tribute_manager_30", "tribute_wallet_1", "tribute_wallet_3", "tribute_wallet_7", "tribute_wallet_14"].sort(),
+  );
+  assert.deepEqual(eligibleAchievementIds({ tributeStats: { managerPairDays: 0, walletPairDays: 0 }, scope: "tribute" }), []);
+  assert.equal(
+    eligibleAchievementIds({ fleaStats: { listings: 1000, sales: 1000, purchases: 10000 }, marketStats: { salesCount: 10000, purchases: 10000 } })
+      .some((id) => id.startsWith("tribute_")),
+    false,
+    "other modes never unlock ranch records",
+  );
+  assert.equal(
+    eligibleAchievementIds({ tributeStats: { managerPairDays: 10000, walletPairDays: 1000 } })
+      .filter((id) => !id.startsWith("tribute_")).length,
+    0,
+    "ranch stats unlock nothing outside the ranch",
+  );
+  const unlocked = unlockAchievements({}, ["tribute_manager_1", "tribute_wallet_1"], 1_000).profile;
+  assert.deepEqual(effectiveShowcase(unlocked), [], "ranch records are never shown automatically");
+  const custom = { ...unlocked, customShowcase: ["tribute_wallet_1"] };
+  const upgraded = unlockAchievements(custom, ["tribute_wallet_3"], 2_000).profile;
+  assert.deepEqual(upgraded.customShowcase, ["tribute_wallet_3"], "a chosen ranch badge advances within its family");
+  const publicProfile = publicAchievementProfile(unlocked, {}, {}, {}, {}, {}, {}, { managerPairDays: 4, walletPairDays: 2 });
+  assert.deepEqual(publicProfile.stats.tribute, { managerPairDays: 4, walletPairDays: 2 });
+  const final = ACHIEVEMENT_DEFINITIONS.filter((definition) => definition.level === 10 && definition.scope === "tribute").map((definition) => definition.name);
+  assert.deepEqual(final.sort(), ["万の献上を統べる大牧場主", "千回差し出した伝説の財布"].sort());
+
+  const source = fs.readFileSync(path.join(root, "achievements.js"), "utf8");
+  const window = { addEventListener() {} };
+  vm.runInNewContext(source, { window, document: {}, console });
+  const html = window.HariaiAchievements.renderCollection({ unlocked: { tribute_manager_3: 1 } });
+  for (const copy of ["お貢ぎ牧場", "管理する側と財布の側で管理が続いた記録", "見習い牧場主", "同じ管理人へは日本時間の1日1回だけ数える"]) {
+    assert.match(html, new RegExp(copy), copy);
+  }
 });

@@ -1,6 +1,6 @@
 "use strict";
 
-// お貢ぎ界隈のサーバー処理。すべての移動はトランザクションで、預ける側の上限・残高・ブロックを確かめてから行う。
+// お貢ぎ牧場のサーバー処理。すべての移動はトランザクションで、預ける側の上限・残高・ブロックを確かめてから行う。
 // 上限・期間・言葉の設定・解約は預ける側だけが触れる。管理する側の操作は、その範囲の中でだけ動く。
 
 const crypto = require("node:crypto");
@@ -19,6 +19,7 @@ const {
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
+  X_HANDLE_PATTERN,
   normalizeWalletName,
   normalizeApplication,
   normalizeMessage,
@@ -35,6 +36,12 @@ const {
   capViolation,
   pairId,
 } = require("./tribute-rules");
+const {
+  ACHIEVEMENT_BY_ID,
+  eligibleAchievementIds,
+  normalizeTributeStats,
+  unlockAchievements,
+} = require("./achievements");
 
 const TRIBUTE_ACTIONS = Object.freeze([
   "state",
@@ -99,8 +106,10 @@ const OPEN_STATUSES = Object.freeze(["pending", "active"]);
 const RECENT_OPS_LIMIT = 30;
 const PROFILE_SAVE_INTERVAL_MS = 2_000;
 const APPLY_INTERVAL_MS = 30_000;
+const ACHIEVEMENT_STATS_SCHEMA_VERSION = 1;
+const ACHIEVEMENT_BACKFILL_PAIR_LIMIT = 1_000;
 const MINIMUM_OFFER = 10;
-const AGE_REQUIRED_MESSAGE = "お貢ぎ界隈は、18歳以上であることと遊びの前提を確認してから使えます。";
+const AGE_REQUIRED_MESSAGE = "お貢ぎ牧場は、18歳以上であることと遊びの前提を確認してから使えます。";
 const END_REASON_LABELS = Object.freeze({
   withdrawn: "申し込みを取り下げました",
   declined: "申し込みは受理されませんでした",
@@ -185,6 +194,7 @@ function publicCard(profile, monthKey) {
     style: String(card.style || "cold"),
     entryFee: integer(card.entryFee, 0, 1_000, 0),
     sigil: integer(card.sigil, 0, 5, 0),
+    xHandle: X_HANDLE_PATTERN.test(String(card.xHandle || "")) ? card.xHandle : "",
     accepting: profile.accepting,
     honor: honorFor(profile, monthKey),
     recommendedCount: profile.recommendedMonthKey === monthKey ? profile.recommendedCount : 0,
@@ -309,6 +319,7 @@ function createTributeService(deps) {
     mirrorWallet,
     bestEffort,
     playerSafety = null,
+    syncAchievementPublicSurfaces = null,
   } = deps;
   const currentTime = typeof deps.now === "function" ? deps.now : Date.now;
 
@@ -325,6 +336,8 @@ function createTributeService(deps) {
   const fundRef = (monthKey) => firestore.collection("tributeFund").doc(monthKey);
   const honorRef = (monthKey, uid) => firestore.collection("tributeHonors").doc(`${monthKey}__${uid}`);
   const reportRef = (reportId) => firestore.collection("tributeReports").doc(reportId);
+  const achievementStatsRef = (uid) => firestore.collection("tributeAchievementStats").doc(uid);
+  const achievementProfileRef = (uid) => firestore.collection("achievementProfiles").doc(uid);
 
   function requireContractId(value) {
     const contractId = String(value || "");
@@ -437,6 +450,8 @@ function createTributeService(deps) {
         patch: null,
       },
       extraWrites: [],
+      unlocks: { manager: [], payer: [] },
+      unlockedProfiles: { manager: null, payer: null },
     };
   }
 
@@ -648,14 +663,21 @@ function createTributeService(deps) {
         .map((who) => (who === "manager" ? contract.managerUid : contract.payerUid))
         .filter((value) => typeof value === "string" && value);
       await Promise.all([...new Set(uids)].map((value) => ensureWallet(value)));
+      if (spec.achievements) {
+        await Promise.all([contract.managerUid, contract.payerUid]
+          .filter((value) => typeof value === "string" && value)
+          .map((value) => ensureAchievementStats(value)));
+      }
     }
     let result = null;
     let deferredError = "";
     let wallets = [];
+    let unlocks = [];
     await firestore.runTransaction(async (transaction) => {
       result = null;
       deferredError = "";
       wallets = [];
+      unlocks = [];
       const ctx = await loadContext(transaction, contractId, uid);
       if (uid) {
         if (!spec.roles.includes(ctx.role)) fail("permission-denied", "この操作はできません。");
@@ -674,26 +696,89 @@ function createTributeService(deps) {
       }
       flush(ctx);
       wallets = touchedWallets(ctx);
+      unlocks = ["manager", "payer"]
+        .filter((who) => ctx.unlocks[who].length)
+        .map((who) => ({
+          uid: who === "manager" ? ctx.managerUid : ctx.payerUid,
+          ids: ctx.unlocks[who],
+          profile: ctx.unlockedProfiles[who],
+          mine: who === ctx.role,
+        }));
     });
     await mirrorTouched(wallets);
+    if (unlocks.length && typeof syncAchievementPublicSurfaces === "function") {
+      await bestEffort("tribute achievements", unlocks.map((entry) => syncAchievementPublicSurfaces(entry.uid, entry.profile)));
+    }
     if (deferredError) fail("failed-precondition", deferredError);
+    const mine = unlocks.find((entry) => entry.mine);
+    if (result && mine) return { ...result, newlyUnlocked: mine.ids };
     return result || { ok: true };
   }
 
   // ───────────── 献上 ─────────────
 
   async function readTributeExtras(transaction, ctx, receiptId) {
-    const [monthSnapshot, fundSnapshot, receiptSnapshot] = await Promise.all([
+    const [
+      monthSnapshot,
+      fundSnapshot,
+      receiptSnapshot,
+      managerStatsSnapshot,
+      payerStatsSnapshot,
+      managerAchievementSnapshot,
+      payerAchievementSnapshot,
+    ] = await Promise.all([
       transaction.get(managerMonthRef(ctx.monthKey, ctx.managerUid)),
       transaction.get(fundRef(ctx.monthKey)),
       receiptId ? transaction.get(receiptRef(ctx.payerUid, receiptId)) : Promise.resolve(null),
+      transaction.get(achievementStatsRef(ctx.managerUid)),
+      transaction.get(achievementStatsRef(ctx.payerUid)),
+      transaction.get(achievementProfileRef(ctx.managerUid)),
+      transaction.get(achievementProfileRef(ctx.payerUid)),
     ]);
     return {
       month: { exists: monthSnapshot.exists, value: object(monthSnapshot.data()) },
       fund: { exists: fundSnapshot.exists, value: object(fundSnapshot.data()) },
       receipt: receiptSnapshot?.exists ? object(receiptSnapshot.data()) : null,
       receiptId,
+      achievements: {
+        manager: { stats: normalizeTributeStats(managerStatsSnapshot.data()), profile: managerAchievementSnapshot.data() },
+        payer: { stats: normalizeTributeStats(payerStatsSnapshot.data()), profile: payerAchievementSnapshot.data() },
+      },
     };
+  }
+
+  // 実績は金額ではなく、管理が続いた記録として数える。同じ組は日本時間の1日1回だけ。
+  function stageTributeAchievements(ctx, extra, countsToday) {
+    if (!extra?.achievements) return;
+    const sides = [
+      ["manager", ctx.managerUid, "managerPairDays"],
+      ["payer", ctx.payerUid, "walletPairDays"],
+    ];
+    for (const [who, uid, key] of sides) {
+      const slot = extra.achievements[who];
+      const stats = { ...slot.stats };
+      if (countsToday) {
+        stats[key] += 1;
+        ctx.extraWrites.push((transaction) => transaction.set(achievementStatsRef(uid), {
+          schemaVersion: ACHIEVEMENT_STATS_SCHEMA_VERSION,
+          ...stats,
+          historyBackfilled: true,
+          updatedAt: ctx.now,
+        }, { merge: true }));
+      }
+      slot.stats = stats;
+      const unlockResult = unlockAchievements(
+        slot.profile,
+        eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }),
+        ctx.now,
+      );
+      slot.profile = unlockResult.profile;
+      if (unlockResult.newlyUnlocked.length) {
+        ctx.extraWrites.push((transaction) => transaction.set(achievementProfileRef(uid), unlockResult.profile));
+        ctx.unlocks[who].push(...unlockResult.newlyUnlocked);
+        ctx.unlockedProfiles[who] = unlockResult.profile;
+      }
+    }
   }
 
   function subsidyForTribute(ctx, extra, fee) {
@@ -810,6 +895,7 @@ function createTributeService(deps) {
     const pairMonthIsCurrent = pair.monthKey === ctx.monthKey;
     const rankAddedToday = pair.rankDayKey === ctx.dateKey ? integer(pair.rankDayAdded, 0, Number.MAX_SAFE_INTEGER, 0) : 0;
     const rankAdd = Math.max(0, Math.min(amount, LIMITS.rankDailyPairCap - rankAddedToday));
+    const firstForPairToday = pair.rankDayKey !== ctx.dateKey;
     const card = cardSnapshot(contract.managerCard);
     const receipt = {
       schemaVersion: TRIBUTE_SCHEMA_VERSION,
@@ -879,10 +965,78 @@ function createTributeService(deps) {
       ...(requestId ? { requestId } : {}),
       ...(note ? { note } : {}),
     });
+    stageTributeAchievements(ctx, extra, firstForPairToday);
     return { receipt: { receiptId, ...receipt }, fee, subsidy, net };
   }
 
   // ───────────── 操作 ─────────────
+
+  // 実績の記録を初めて使う時、これまでの貢ぎ帳から確実に言える分（組ごとに1日、最初と最後が別の日なら2日）だけを入れる。
+  function historicalPairDays(pairValue) {
+    const pair = object(pairValue);
+    const count = integer(pair.count, 0, Number.MAX_SAFE_INTEGER, 0);
+    if (count < 1) return 0;
+    const firstAt = integer(pair.firstAt, 0, Number.MAX_SAFE_INTEGER, 0);
+    const lastAt = integer(pair.lastAt, 0, Number.MAX_SAFE_INTEGER, 0);
+    if (count >= 2 && firstAt && lastAt && jstDateKey(firstAt) !== jstDateKey(lastAt)) return 2;
+    return 1;
+  }
+
+  async function ensureAchievementStats(uid) {
+    const reference = achievementStatsRef(uid);
+    const existing = await reference.get();
+    if (existing.exists && existing.get("historyBackfilled") === true) return normalizeTributeStats(existing.data());
+    const [asManager, asPayer] = await Promise.all([
+      firestore.collection("tributePairs").where("managerUid", "==", uid).limit(ACHIEVEMENT_BACKFILL_PAIR_LIMIT).get(),
+      firestore.collection("tributePairs").where("payerUid", "==", uid).limit(ACHIEVEMENT_BACKFILL_PAIR_LIMIT).get(),
+    ]);
+    const seed = {
+      managerPairDays: asManager.docs.reduce((sum, document) => sum + historicalPairDays(document.data()), 0),
+      walletPairDays: asPayer.docs.reduce((sum, document) => sum + historicalPairDays(document.data()), 0),
+    };
+    let stats = seed;
+    await firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(reference);
+      if (snapshot.exists && snapshot.get("historyBackfilled") === true) {
+        stats = normalizeTributeStats(snapshot.data());
+        return;
+      }
+      const current = normalizeTributeStats(snapshot.data());
+      stats = {
+        managerPairDays: Math.max(current.managerPairDays, seed.managerPairDays),
+        walletPairDays: Math.max(current.walletPairDays, seed.walletPairDays),
+      };
+      const now = currentTime();
+      transaction.set(reference, {
+        schemaVersion: ACHIEVEMENT_STATS_SCHEMA_VERSION,
+        ...stats,
+        historyBackfilled: true,
+        backfilledAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    });
+    return stats;
+  }
+
+  async function ensureAchievementState(uid) {
+    await ensureAchievementStats(uid);
+    let result = null;
+    await firestore.runTransaction(async (transaction) => {
+      const [statsSnapshot, profileSnapshot] = await Promise.all([
+        transaction.get(achievementStatsRef(uid)),
+        transaction.get(achievementProfileRef(uid)),
+      ]);
+      const stats = normalizeTributeStats(statsSnapshot.data());
+      const unlockResult = unlockAchievements(
+        profileSnapshot.data(),
+        eligibleAchievementIds({ tributeStats: stats, scope: "tribute" }),
+        currentTime(),
+      );
+      if (unlockResult.newlyUnlocked.length) transaction.set(achievementProfileRef(uid), unlockResult.profile);
+      result = { stats, profile: unlockResult.profile, newlyUnlocked: unlockResult.newlyUnlocked };
+    });
+    return result;
+  }
 
   async function stateAction(uid) {
     const now = currentTime();
@@ -920,8 +1074,22 @@ function createTributeService(deps) {
         .get();
     }
     const contracts = snapshot.docs.map((document) => viewContract(object(document.data()), uid, now));
+    let achievements = null;
+    try {
+      const achievementState = await ensureAchievementState(uid);
+      achievements = {
+        stats: achievementState.stats,
+        unlocked: Object.keys(achievementState.profile.unlocked)
+          .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.scope === "tribute"),
+        newlyUnlocked: Object.keys(achievementState.profile.pendingUnlocks)
+          .filter((id) => ACHIEVEMENT_BY_ID.get(id)?.scope === "tribute"),
+      };
+    } catch (error) {
+      console.error("tribute achievement state failed", error);
+    }
     return {
       ...base,
+      achievements,
       profile: {
         walletName: profile.walletName,
         card: profile.card ? publicCard(profile, monthKey) : null,
@@ -1287,6 +1455,7 @@ function createTributeService(deps) {
       roles: ["manager"],
       statuses: ["pending"],
       ensureWallets: ["manager", "payer"],
+      achievements: true,
       read: (transaction, ctx) => readTributeExtras(transaction, ctx, hashId("receipt", ctx.contractId, "entry")),
       write(ctx, extra) {
         const manager = ctx.profiles.manager.value;
@@ -1389,6 +1558,7 @@ function createTributeService(deps) {
       roles: ["payer"],
       statuses: ["active"],
       ensureWallets: ["manager", "payer"],
+      achievements: true,
       read: (transaction, ctx, data) => readTributeExtras(
         transaction,
         ctx,
@@ -1584,6 +1754,7 @@ function createTributeService(deps) {
       roles: ["manager"],
       statuses: ["active"],
       ensureWallets: ["manager", "payer"],
+      achievements: true,
       read: (transaction, ctx, data) => readTributeExtras(
         transaction,
         ctx,
@@ -2150,6 +2321,8 @@ function createTributeService(deps) {
     expireContracts,
     endContractsBetween,
     resolveSafetyTarget,
+    ensureAchievementStats,
+    achievementStatsRef,
   });
 }
 

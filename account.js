@@ -71,17 +71,17 @@ const ANJU_PAY_LABELS = Object.freeze({
   roulette_training_publish_fee: "ルーレットトレーニングメニューの公開・改訂料",
   roulette_training_use: "ルーレットトレーニングメニューを1回利用",
   roulette_training_sale: "ルーレットトレーニングメニューが1回利用された",
-  tribute_sent: "お貢ぎ界隈で献上",
-  anju_pay_tribute_sent: "お貢ぎ界隈で献上",
-  anju_pay_tribute_escrow_take: "お貢ぎ界隈の管理口座から徴収された",
-  tribute_received: "お貢ぎ界隈で献上を受け取った",
-  anju_pay_tribute_received: "お貢ぎ界隈で献上を受け取った",
-  tribute_escrow_hold: "お貢ぎ界隈の管理口座へ預け入れ",
-  anju_pay_tribute_escrow_hold: "お貢ぎ界隈の管理口座へ預け入れ",
-  tribute_escrow_return: "お貢ぎ界隈の管理口座から返還",
-  anju_pay_tribute_escrow_return: "お貢ぎ界隈の管理口座から返還",
-  tribute_offering: "お貢ぎ界隈の界隈基金へ上納",
-  anju_pay_tribute_offering: "お貢ぎ界隈の界隈基金へ上納",
+  tribute_sent: "お貢ぎ牧場で献上",
+  anju_pay_tribute_sent: "お貢ぎ牧場で献上",
+  anju_pay_tribute_escrow_take: "お貢ぎ牧場の管理口座から徴収された",
+  tribute_received: "お貢ぎ牧場で献上を受け取った",
+  anju_pay_tribute_received: "お貢ぎ牧場で献上を受け取った",
+  tribute_escrow_hold: "お貢ぎ牧場の管理口座へ預け入れ",
+  anju_pay_tribute_escrow_hold: "お貢ぎ牧場の管理口座へ預け入れ",
+  tribute_escrow_return: "お貢ぎ牧場の管理口座から返還",
+  anju_pay_tribute_escrow_return: "お貢ぎ牧場の管理口座から返還",
+  tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
+  anju_pay_tribute_offering: "お貢ぎ牧場で牧場基金へ上納",
 });
 const ANJU_PAY_STATUS_LABELS = Object.freeze({
   posted: "反映済み",
@@ -968,16 +968,16 @@ function renderAccountStatus() {
 }
 
 // VALUE MARKET パトロンと循環基金は、推し値市場の終了（2026年10月）にあわせて受付を終えた。
-// 上納と界隈基金はお貢ぎ界隈で作り直している。ここでは獲得済みの記録だけを表示する。
+// 上納と牧場基金はお貢ぎ牧場で作り直している。ここでは獲得済みの記録だけを表示する。
 function renderPatronage() {
   const patron = state.patron;
   const currentTier = tierForLevel(patron.tier);
   return `<section class="account-patron-section is-closed" id="accountPatronSection" tabindex="-1" aria-labelledby="accountPatronTitle">
     <div class="account-section-head"><div><span class="eyebrow">ANJUPAY PATRONAGE</span><h2 id="accountPatronTitle">VALUE MARKET パトロン（終了）</h2>
-      <p>推し値市場の終了にあわせ、パトロン還元と循環基金は2026年10月で受付を終えました。新しい「上納」と界隈基金は、お貢ぎ界隈の管理人が使えます。</p></div>
+      <p>推し値市場の終了にあわせ、パトロン還元と循環基金は2026年10月で受付を終えました。新しい「上納」と牧場基金は、お貢ぎ牧場の管理人が使えます。</p></div>
       <div class="patron-current-badge tier-${currentTier.id}"><span>${currentTier.icon}</span><small>RECORD</small><strong>${currentTier.label}</strong></div></div>
     <p class="account-fine-print">これまでの累計支援 ${formatAnjuPay(patron.lifetimeSpent)} と獲得したバッジの記録は残ります。基金へ還元したAnjuPayの払い戻しはありません。</p>
-    <button class="button button-ghost button-small" type="button" id="accountOpenTributeFund">お貢ぎ界隈の界隈基金を見る</button>
+    <button class="button button-ghost button-small" type="button" id="accountOpenTributeFund">お貢ぎ牧場の牧場基金を見る</button>
   </section>`;
 }
 

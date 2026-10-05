@@ -596,6 +596,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /tributeAchievementStats/{uid} {
+      allow read, write: if false;
+    }
+
     // 終了した鍛え合い60の統計・実績再現用プロフィールと確定台帳は
     // 履歴として保持する。クライアントからの読み書きは再開しない。
     match /trainingProfiles/{uid} {

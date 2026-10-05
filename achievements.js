@@ -472,6 +472,31 @@
     hint: "価格の高さではなく、ことばから一品を選ぶと解除",
     autoPublic: false,
   });
+  // お貢ぎ牧場。金額や順位ではなく、管理が続いた記録。同じ相手とは日本時間の1日1回だけ数え、自動公開しない。
+  addSeries({
+    scope: "tribute",
+    category: "tribute_ranch",
+    family: "tribute_manager",
+    familyLabel: "牧場の管理",
+    icon: "柵",
+    thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
+    names: ["牧場の開業", "見習い牧場主", "十の献上を受けた柵", "財布の群れを囲う", "百の献上を数える牧場主", "三百の財布が鳴る", "五百の献上台帳", "千の献上を束ねる", "三千の財布を飼う牧場", "万の献上を統べる大牧場主"],
+    description: (target) => `管理する側として、財布からの献上を${target}回受け取った（同じ財布は1日1回まで）`,
+    hint: "同じ財布からは日本時間の1日1回だけ数える",
+    autoPublic: false,
+  });
+  addSeries({
+    scope: "tribute",
+    category: "tribute_ranch",
+    family: "tribute_wallet",
+    familyLabel: "財布の献上",
+    icon: "財",
+    thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
+    names: ["はじめての献上", "柵に入った財布", "七回差し出した財布", "飼い慣らされた財布", "三十回の献上", "六十回差し出した財布", "百回の献上を重ねた財布", "百八十回の献上", "三百六十五回の献上", "千回差し出した伝説の財布"],
+    description: (target) => `財布として、管理人への献上を${target}回差し出した（同じ管理人へは1日1回まで）`,
+    hint: "同じ管理人へは日本時間の1日1回だけ数える",
+    autoPublic: false,
+  });
 
   definitions.unshift(Object.freeze({
     id: "special_dollmaster",
@@ -509,6 +534,7 @@
     { id: "roulette_training_pack_sales", label: "ルーレットトレーニング・パック販売", copy: "価格や売上額、ランキング順位ではなく、トレーニングパックが利用された回数と広がりの記録" },
     { id: "flea_listing", label: "AnjuPayフリマ・一日棚", copy: "連続日数ではなく、自分のペースで一品を言葉にした日々の記録" },
     { id: "flea_connections", label: "AnjuPayフリマ・ご縁", copy: "売上額や順位ではなく、一品が届いた回数と出会いの記録" },
+    { id: "tribute_ranch", label: "お貢ぎ牧場", copy: "金額や順位ではなく、管理する側と財布の側で管理が続いた記録。同じ相手とは日本時間の1日1回だけ数え、展示するかは本人が選べます" },
     { id: "market_roles", label: "市場の役割", copy: "売り手・買い手として成立させた取引の記録" },
     { id: "market_balance", label: "市場を回す", copy: "両方の役割を体験した記録" },
     { id: "market_community", label: "市場の交流", copy: "日数と異なる取引相手の記録" },
@@ -672,7 +698,7 @@
         <div><span>UNLOCKED</span><strong>${profile.unlockedCount}<small> / ${profile.totalCount}</small></strong></div>
         <div><span>SHOWCASE</span>${renderBadges(profile.showcase, { compact: false, empty: "<em>自動選択される実績はまだありません</em>" })}</div>
       </div>
-      <div class="achievement-showcase-guide"><p>ランキングへ表示する実績は最大${MAX_SHOWCASE}件です。画像の好み・敗北・AnjuPayフリマ実績は自動公開されず、展示するかは本人が選べます。</p>
+      <div class="achievement-showcase-guide"><p>ランキングへ表示する実績は最大${MAX_SHOWCASE}件です。画像の好み・敗北・AnjuPayフリマ・お貢ぎ牧場の実績は自動公開されず、展示するかは本人が選べます。</p>
         <button class="button button-ghost button-small" type="button" data-achievement-showcase-auto ${profile.customShowcase.length ? "" : "disabled"}>自動選択に戻す</button></div>
       ${sections}`;
   }

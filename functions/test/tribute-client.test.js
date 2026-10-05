@@ -29,10 +29,12 @@ function sourceBlock(source, startText, endText) {
   return source.slice(start, end);
 }
 
-test("the landing replaces the market tile with お貢ぎ界隈 and keeps old market records read-only", () => {
-  assert.match(html, /tribute\.css\?v=tribute-v1"/);
-  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1"/);
-  assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ界隈<\/span>/);
+test("the landing replaces the market tile with お貢ぎ牧場 and keeps old market records read-only", () => {
+  assert.match(html, /tribute\.css\?v=tribute-v1-tribute-ranch-v1"/);
+  assert.match(html, /tribute\.js\?v=global-player-block-v1-copy-v2-tribute-v1-tribute-ranch-v1"/);
+  assert.match(client, /from "\.\/tribute-core\.mjs\?v=tribute-ranch-v1"/);
+  assert.doesNotMatch(`${html}${app}${client}${read("account.js")}${market}`, /お貢ぎ界隈|界隈基金|界隈の主/);
+  assert.match(app, /id="tributeButton"[^>]*><small>会わない前提で、AnjuPayを差し出す<\/small><span>お貢ぎ牧場<\/span>/);
   assert.doesNotMatch(app, /id="valueMarketButton"/);
   assert.match(app, /id="tributeRankingButton"/);
   assert.match(app, /function startTribute\(options = \{\}\)[\s\S]*?hariai-tribute-ready/);
@@ -43,7 +45,7 @@ test("the landing replaces the market tile with お貢ぎ界隈 and keeps old ma
   assert.match(market, /推し値市場は2026年10月で終了しました/);
 });
 
-test("every mode refuses to open over お貢ぎ界隈 and お貢ぎ界隈 refuses to open over them", () => {
+test("every mode refuses to open over お貢ぎ牧場 and お貢ぎ牧場 refuses to open over them", () => {
   for (const file of ["account.js", "ai-text-training.js", "danwaku-note.js", "flea-market.js", "free-table.js", "market.js", "online.js", "roulette-training.js", "strategy.js"]) {
     assert.match(read(file), /window\.HariaiTribute\?\.isActive\?\.\(\)/, file);
   }
@@ -207,4 +209,55 @@ test("the design note keeps the definition and is not published", () => {
   assert.match(design, /この機能は、上限と離脱を払う側（預ける側）が保持しているか/);
   assert.match(read("firebase.json"), /"TRIBUTE_DESIGN\.md"/);
   assert.match(read(".assetsignore"), /^TRIBUTE_DESIGN\.md$/m);
+});
+
+test("the contract screen shows both ranch achievement lines and forwards unlocks to the shared collection", () => {
+  const panel = sourceBlock(client, "function renderAchievementPanel", "function renderManagerCard");
+  assert.match(client, /family: "tribute_manager", side: "管理する側", statKey: "managerPairDays"/);
+  assert.match(client, /family: "tribute_wallet", side: "財布の側", statKey: "walletPairDays"/);
+  assert.match(panel, /牧場の実績 <small>同じ相手とは日本時間の1日1回だけ数えます<\/small>/);
+  assert.match(panel, /実績は自動では公開されず、展示するかは実績コレクションで選べます。/);
+  assert.match(panel, /data-t="open-achievements"/);
+  const notify = sourceBlock(client, "function notifyAchievementUnlocks", "async function refreshState");
+  assert.match(notify, /byId\?\.get\?\.\(id\)\?\.scope === "tribute"/);
+  assert.match(notify, /new CustomEvent\("hariai-achievements-unlocked"/);
+  assert.match(notify, /action: "ack_achievements", achievementIds: ids/);
+  assert.match(notify, /if \(previewScreen\) return;/);
+  for (const marker of [
+    /window\.HariaiAudio\?\.playReveal\?\.\(\);\s*notifyAchievementUnlocks\(result\.newlyUnlocked\);/,
+    /closeSheet\(\);\s*notifyAchievementUnlocks\(result\.newlyUnlocked\);/,
+    /notifyAchievementUnlocks\(result\.newlyUnlocked\);\s*if \(previewScreen\) updateThreadParts\(\);/,
+    /notifyAchievementUnlocks\(payload\.achievements\.newlyUnlocked\);/,
+  ]) assert.match(client, marker);
+  assert.match(client, /case "open-achievements":\s*requestHome\(\);\s*window\.setTimeout\(\(\) => window\.HariaiOnline\?\.openAchievements\?\.\(\), 0\);/);
+  assert.match(styles, /\.achievement-badge\.achievement-scope-tribute \{/);
+  assert.match(read("achievements.js"), /\{ id: "tribute_ranch", label: "お貢ぎ牧場"/);
+  assert.match(read("achievements.js"), /画像の好み・敗北・AnjuPayフリマ・お貢ぎ牧場の実績は自動公開されず/);
+  assert.match(html, /achievements\.js\?v=[^"]*-tribute-ranch-v1"/);
+  assert.match(firestoreRules, /match \/tributeAchievementStats\/\{uid\} \{\s*allow read, write: if false;/);
+});
+
+test("the X profile link is optional, mirrors the server rule, and always asks before leaving the site", async () => {
+  const core = await loadCore();
+  for (const input of ["", "@mio_sama", "https://x.com/mio_sama", "x.com/mio_sama/", "https://twitter.com/mio_sama?s=21", "https://x.com/mio_sama/status/1", "https://x.com/home", "https://x.com.evil.example/a", "javascript:alert(1)", "ｍｉｏ＿ｓａｍａ"]) {
+    assert.deepEqual(core.normalizeXProfile(input), rules.normalizeXProfile(input), input);
+  }
+  assert.match(core.X_EXTERNAL_CONFIRM_MESSAGE, /自己申告/);
+  assert.match(core.X_EXTERNAL_CONFIRM_MESSAGE, /お貢ぎ牧場の上限・解約・通報の保護の外です/);
+  assert.match(client, /<input name="xProfile" maxlength="80"[^>]*placeholder="https:\/\/x\.com\/ユーザー名 または @ユーザー名"/);
+  assert.match(client, /スレッドでのSNSのID交換は、これまでどおりできません。/);
+  assert.match(client, /const x = normalizeXProfile\(data\.get\("xProfile"\)\);\s*if \(x\.error\) return setFormError\(form, x\.error\);/);
+  const open = sourceBlock(client, 'case "open-x": {', 'case "open-achievements":');
+  assert.match(open, /!window\.confirm\(X_EXTERNAL_CONFIRM_MESSAGE\)/);
+  assert.match(open, /window\.open\(`https:\/\/x\.com\/\$\{encodeURIComponent\(handle\)\}`, "_blank", "noopener,noreferrer"\)/);
+  assert.match(open, /external\.opener = null/);
+  assert.doesNotMatch(client, /<a [^>]*href="https:\/\/x\.com/, "no direct external anchor bypasses the confirmation");
+  assert.match(client, /管理人の自己申告・本人未確認/);
+  assert.match(styles, /\.tribute-x-link button \{/);
+});
+
+test("Firebase Hosting never uploads the local .claude folder or worktrees inside it", () => {
+  const ignore = JSON.parse(read("firebase.json")).hosting.ignore;
+  assert.ok(ignore.includes(".claude"), ".claude itself");
+  assert.ok(ignore.includes(".claude/**"), "everything under .claude, including git worktrees");
 });

@@ -138,7 +138,7 @@ test("AnjuPay history names every tribute ledger kind", () => {
     "anju_pay_tribute_escrow_return",
     "anju_pay_tribute_offering",
   ]) {
-    assert.match(source, new RegExp(`  ${key}: "お貢ぎ界隈`));
+    assert.match(source, new RegExp(`  ${key}: "お貢ぎ牧場`));
   }
   assert.match(source, /ANJU_PAY_CATEGORIES = new Set\(\[[^\]]*"tribute"/);
 });

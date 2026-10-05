@@ -1137,7 +1137,7 @@
       <section class="vl-others" aria-labelledby="landingOthersTitle">
         <h2 id="landingOthersTitle">ほかの遊び方</h2>
         <div class="vl-others-grid">
-          <button class="vl-tile vl-tile-market vl-tile-tribute" id="tributeButton" type="button"><small>会わない前提で、AnjuPayを差し出す</small><span>お貢ぎ界隈</span></button>
+          <button class="vl-tile vl-tile-market vl-tile-tribute" id="tributeButton" type="button"><small>会わない前提で、AnjuPayを差し出す</small><span>お貢ぎ牧場</span></button>
           <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>AIと対戦しよう</small><span>文字コラトレーニング</span></button>
           <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
           <button class="vl-tile vl-tile-danwaku" id="danwakuNoteButton" type="button"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span>断惑NOTE</span></button>
@@ -1155,7 +1155,7 @@
       <section class="vl-more" aria-labelledby="landingMoreTitle">
         <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
         <div class="vl-list">
-          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の財布の人数で並ぶ管理人</small>お貢ぎ界隈の番付</button>
+          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の財布の人数で並ぶ管理人</small>お貢ぎ牧場の番付</button>
           <button class="vl-row" type="button" id="valueMarketRankingButton"><small>ランキング・永久実績・推し値証書の閲覧</small>旧推し値市場の記録</button>
           <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
           <button class="vl-row vl-row-audio" type="button" id="audioStudioButton"><small>端末の中だけで録音・変換</small>10秒音声をつくる</button>
@@ -2206,7 +2206,7 @@
       window.HariaiTribute.start(options);
       return;
     }
-    showToast("お貢ぎ界隈を読み込んでいます…");
+    showToast("お貢ぎ牧場を読み込んでいます…");
     window.addEventListener(
       "hariai-tribute-ready",
       () => window.HariaiTribute?.start?.(options),

@@ -1,6 +1,6 @@
 "use strict";
 
-// お貢ぎ界隈の純粋な規則。上限・入力・禁止表現・手数料・称号をここに集め、サービスとテストで共有する。
+// お貢ぎ牧場の純粋な規則。上限・入力・禁止表現・手数料・称号をここに集め、サービスとテストで共有する。
 // 上限と離脱は預ける側が持つ。ここにある関数は、預ける側の上限を超える移動を通さないためにある。
 
 const TRIBUTE_SCHEMA_VERSION = 1;
@@ -60,7 +60,7 @@ const LIMITS = Object.freeze({
 const HONOR_TIERS = Object.freeze([
   Object.freeze({ id: "offerer", label: "上納者", threshold: 300, recommendationSlots: 1 }),
   Object.freeze({ id: "grand_offerer", label: "大上納者", threshold: 1_500, recommendationSlots: 2 }),
-  Object.freeze({ id: "master", label: "界隈の主", threshold: 5_000, recommendationSlots: 3 }),
+  Object.freeze({ id: "master", label: "牧場の主", threshold: 5_000, recommendationSlots: 3 }),
 ]);
 
 function cleanLine(value, maximumLength) {
@@ -127,7 +127,7 @@ const FORBIDDEN_MESSAGES = Object.freeze({
   handle: "SNSのIDのような文字は送れません。",
   external_payment: "外部の決済・現金・ギフト券に関わる言葉は送れません。",
   real_money: "現実のお金の金額は送れません。使えるのはAnjuPayだけです。",
-  meeting: "会う約束に関わる言葉は送れません。この界隈は会わない前提です。",
+  meeting: "会う約束に関わる言葉は送れません。この牧場は会わない前提です。",
   personal_info: "住所・本名などの個人情報に関わる言葉は送れません。",
   exposure_threat: "晒し・特定の脅しは送れません。",
   ng_word: "相手が登録した「言われたくない言葉」を含むため送れません。",
@@ -161,6 +161,52 @@ function capsAreLowerOrEqual(next, current) {
     && next.total <= current.total;
 }
 
+// 管理人カードの任意のXプロフィール。https://x.com/ユーザー名 か @ユーザー名 を受け取り、ユーザー名だけを保存する。
+// リンクは表示の時に組み立てる。個別ポストや検索など、プロフィール以外のURLは受け付けない。
+const X_HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/u;
+const X_PROFILE_HOSTS = Object.freeze(new Set([
+  "x.com",
+  "www.x.com",
+  "mobile.x.com",
+  "twitter.com",
+  "www.twitter.com",
+  "mobile.twitter.com",
+]));
+const X_RESERVED_PATHS = Object.freeze(new Set([
+  "home", "explore", "search", "notifications", "messages", "i", "intent", "settings", "compose",
+  "login", "logout", "signup", "tos", "privacy", "hashtag", "share", "account", "jobs", "about",
+  "help", "download", "communities", "lists", "bookmarks", "premium", "following", "followers",
+]));
+const X_PROFILE_ERROR = "Xのプロフィールは https://x.com/ユーザー名 か @ユーザー名 の形で入力してください（英数字と_の15文字以内）。";
+
+function normalizeXProfile(value) {
+  const raw = String(value ?? "").normalize("NFKC").trim();
+  if (!raw) return { xHandle: "" };
+  let handle = "";
+  if (/^@?[A-Za-z0-9_]{1,15}$/u.test(raw)) {
+    handle = raw.replace(/^@/u, "");
+  } else {
+    let url;
+    try {
+      url = new URL(/^https?:\/\//iu.test(raw) ? raw : `https://${raw}`);
+    } catch {
+      return { error: X_PROFILE_ERROR };
+    }
+    if (!["https:", "http:"].includes(url.protocol)
+      || !X_PROFILE_HOSTS.has(url.hostname.toLowerCase())
+      || url.username
+      || url.password
+      || url.port) {
+      return { error: X_PROFILE_ERROR };
+    }
+    const segments = url.pathname.split("/").filter(Boolean);
+    if (segments.length !== 1) return { error: X_PROFILE_ERROR };
+    handle = segments[0].replace(/^@/u, "");
+  }
+  if (!X_HANDLE_PATTERN.test(handle) || X_RESERVED_PATHS.has(handle.toLowerCase())) return { error: X_PROFILE_ERROR };
+  return { xHandle: handle };
+}
+
 function normalizeManagerCard(value) {
   const personaName = cleanLine(value?.personaName, LIMITS.personaName);
   const intro = cleanLine(value?.intro, LIMITS.intro);
@@ -176,6 +222,8 @@ function normalizeManagerCard(value) {
     const reason = forbiddenReason(text);
     if (reason) return { error: FORBIDDEN_MESSAGES[reason] };
   }
+  const x = normalizeXProfile(value?.xProfile ?? value?.xHandle);
+  if (x.error) return { error: x.error };
   return {
     card: {
       personaName,
@@ -184,6 +232,7 @@ function normalizeManagerCard(value) {
       style,
       entryFee,
       sigil,
+      xHandle: x.xHandle,
       accepting: value?.accepting === true,
     },
   };
@@ -335,6 +384,8 @@ module.exports = {
   normalizeCaps,
   capsAreLowerOrEqual,
   normalizeManagerCard,
+  normalizeXProfile,
+  X_HANDLE_PATTERN,
   normalizeWalletName,
   normalizeApplication,
   normalizeMessage,

@@ -189,6 +189,7 @@ function createHarness({ balances = {}, playerSafety } = {}) {
   const firestore = new FakeFirestore();
   playerSafety?.attach(firestore);
   const mirrors = [];
+  const achievementSyncs = [];
   let clock = START;
   for (const [uid, balance] of Object.entries(balances)) {
     firestore.write(`wallets/${uid}`, { balance, maxBalance: 1_000_000 });
@@ -234,12 +235,16 @@ function createHarness({ balances = {}, playerSafety } = {}) {
     bestEffort: async (_label, operations) => {
       await Promise.allSettled(operations);
     },
+    syncAchievementPublicSurfaces: async (uid, profile) => {
+      achievementSyncs.push({ uid, unlocked: Object.keys(profile?.unlocked || {}) });
+    },
     now: () => clock,
   });
   const act = (uid, action, data = {}, context = {}) => service.performAction(uid, { action, ...data }, context);
   return {
     firestore,
     mirrors,
+    achievementSyncs,
     service,
     act,
     advance(ms) {
@@ -730,4 +735,135 @@ test("unread counts follow events and reading does not reorder the contract list
   assert.equal(after.updatedAt, before.updatedAt);
   const reread = (await harness.act("payer", "state")).contracts.find((entry) => entry.contractId === contractId);
   assert.equal(reread.unread, 0);
+});
+
+function achievementProfile(harness, uid) {
+  return harness.firestore.read(`achievementProfiles/${uid}`) || { unlocked: {}, pendingUnlocks: {} };
+}
+
+function tributeStats(harness, uid) {
+  return harness.firestore.read(`tributeAchievementStats/${uid}`) || {};
+}
+
+test("ranch achievements count each pair once per JST day on both sides and unlock inside the tribute", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager");
+  await confirmAge(harness, "payer");
+  const applied = await harness.act("payer", "apply", { publicManagerId, expectedEntryFee: 10, application: BASE_APPLICATION });
+  const contractId = applied.contract.contractId;
+  const accepted = await harness.act("manager", "accept", { contractId });
+  assert.deepEqual(accepted.newlyUnlocked, ["tribute_manager_1"], "the entry fee is the manager's first counted tribute");
+  assert.equal(tributeStats(harness, "manager").managerPairDays, 1);
+  assert.equal(tributeStats(harness, "payer").walletPairDays, 1);
+  assert.ok(achievementProfile(harness, "payer").unlocked.tribute_wallet_1, "the payer unlocks in the same transaction");
+
+  const sameDay = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 50, clientRequestId: nextRequestId() });
+  assert.equal(sameDay.newlyUnlocked, undefined);
+  assert.equal(tributeStats(harness, "payer").walletPairDays, 1, "a second tribute to the same manager on the same day is not counted");
+  assert.equal(tributeStats(harness, "manager").managerPairDays, 1);
+
+  harness.advance(DAY);
+  await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  harness.advance(DAY - 60_000);
+  const third = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  assert.deepEqual(third.newlyUnlocked, ["tribute_wallet_3"]);
+  assert.equal(tributeStats(harness, "payer").walletPairDays, 3);
+  const managerProfile = achievementProfile(harness, "manager");
+  assert.ok(managerProfile.unlocked.tribute_manager_3);
+  assert.ok(managerProfile.pendingUnlocks.tribute_manager_3, "the manager sees the unlock on the next visit");
+  assert.deepEqual(
+    harness.achievementSyncs.map((entry) => entry.uid),
+    ["manager", "payer", "manager", "payer"],
+    "public showcases are refreshed for each side that unlocked (accept, then the third day)",
+  );
+  assert.ok(harness.achievementSyncs.some((entry) => entry.uid === "manager" && entry.unlocked.includes("tribute_manager_3")));
+
+  const managerState = await harness.act("manager", "state");
+  assert.deepEqual(managerState.achievements.stats, { managerPairDays: 3, walletPairDays: 0 });
+  assert.deepEqual(managerState.achievements.newlyUnlocked.sort(), ["tribute_manager_1", "tribute_manager_3"].sort());
+  assert.deepEqual(managerState.achievements.unlocked.sort(), ["tribute_manager_1", "tribute_manager_3"].sort());
+});
+
+test("an escrow take counts for both sides as that day's tribute and reports the unlock to the manager", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  await harness.act("payer", "escrow_deposit", { contractId, amount: 300, clientRequestId: nextRequestId() });
+  assert.equal(tributeStats(harness, "payer").walletPairDays || 0, 0, "deposits are not tributes");
+  const taken = await harness.act("manager", "escrow_take", { contractId, amount: 30, clientRequestId: nextRequestId() });
+  assert.deepEqual(taken.newlyUnlocked, ["tribute_manager_1"]);
+  assert.equal(tributeStats(harness, "payer").walletPairDays, 1);
+  assert.ok(achievementProfile(harness, "payer").pendingUnlocks.tribute_wallet_1);
+});
+
+test("first use backfills only what the ledger proves, without double counting later tributes", async () => {
+  const harness = createHarness({ balances: { manager: 0, veteran: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  await confirmAge(harness, "veteran");
+  harness.firestore.write("tributePairs/old1__veteran", {
+    managerUid: "old1", payerUid: "veteran", count: 5, total: 50, firstAt: START - 3 * DAY, lastAt: START - DAY, rankDayKey: jstDateKey(START - DAY),
+  });
+  harness.firestore.write("tributePairs/old2__veteran", {
+    managerUid: "old2", payerUid: "veteran", count: 4, total: 40, firstAt: START - 2 * DAY, lastAt: START - 2 * DAY + 1_000, rankDayKey: jstDateKey(START - 2 * DAY),
+  });
+  harness.firestore.write("tributePairs/veteran__stranger", {
+    managerUid: "veteran", payerUid: "stranger", count: 0, total: 0, firstAt: 0, lastAt: 0,
+  });
+  const first = await harness.act("veteran", "state");
+  assert.deepEqual(first.achievements.stats, { managerPairDays: 0, walletPairDays: 3 }, "2 proven days for old1, 1 for old2, none for an unpaid pair");
+  assert.deepEqual(first.achievements.newlyUnlocked.sort(), ["tribute_wallet_1", "tribute_wallet_3"].sort());
+  assert.equal(tributeStats(harness, "veteran").historyBackfilled, true);
+
+  const contractId = await startContract(harness, "manager", "veteran", publicManagerId, {}, 0);
+  await harness.act("veteran", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  const again = await harness.act("veteran", "state");
+  assert.equal(again.achievements.stats.walletPairDays, 4, "the new pair counts once and the backfill does not run again");
+});
+
+test("level ten is reachable on both sides at the exact final thresholds", async () => {
+  const harness = createHarness({ balances: { manager: 0, payer: 5_000 } });
+  const publicManagerId = await openManager(harness, "manager", { entryFee: 0 });
+  const contractId = await startContract(harness, "manager", "payer", publicManagerId, {}, 0);
+  harness.firestore.write("tributeAchievementStats/manager", { schemaVersion: 1, managerPairDays: 9_999, walletPairDays: 0, historyBackfilled: true });
+  harness.firestore.write("tributeAchievementStats/payer", { schemaVersion: 1, managerPairDays: 0, walletPairDays: 999, historyBackfilled: true });
+  const result = await harness.act("payer", "tribute", { contractId, kind: "silent", amount: 10, clientRequestId: nextRequestId() });
+  assert.ok(result.newlyUnlocked.includes("tribute_wallet_1000"));
+  assert.ok(result.newlyUnlocked.includes("tribute_wallet_365"));
+  assert.ok(achievementProfile(harness, "manager").unlocked.tribute_manager_10000);
+  assert.equal(tributeStats(harness, "payer").walletPairDays, 1_000);
+  assert.equal(tributeStats(harness, "manager").managerPairDays, 10_000);
+});
+
+test("a manager can add, show and remove an optional X profile; payers see it on the board and the card", async () => {
+  const harness = createHarness();
+  await confirmAge(harness, "manager");
+  const saved = await harness.act("manager", "save_profile", {
+    card: { personaName: "ミオ様", intro: "", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio_sama" },
+    accepting: true,
+  });
+  assert.equal(saved.profile.card.xHandle, "mio_sama");
+  assert.equal(harness.firestore.read("tributeProfiles/manager").card.xHandle, "mio_sama", "only the username is stored");
+  await confirmAge(harness, "viewer");
+  const board = await harness.act("viewer", "board");
+  assert.equal(board.managers[0].xHandle, "mio_sama");
+  const detail = await harness.act("viewer", "manager", { publicManagerId: saved.profile.publicManagerId });
+  assert.equal(detail.card.xHandle, "mio_sama");
+
+  harness.advance(2_100);
+  await rejects(harness.act("manager", "save_profile", {
+    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "https://x.com/mio_sama/status/1" },
+    accepting: true,
+  }), /https:\/\/x\.com\/ユーザー名/);
+  harness.advance(2_100);
+  const cleared = await harness.act("manager", "save_profile", {
+    card: { personaName: "ミオ様", disclosure: "nekama", style: "harsh", entryFee: 0, xProfile: "" },
+    accepting: true,
+  });
+  assert.equal(cleared.profile.card.xHandle, "");
+
+  harness.firestore.write("tributeProfiles/manager", {
+    ...harness.firestore.read("tributeProfiles/manager"),
+    card: { ...harness.firestore.read("tributeProfiles/manager").card, xHandle: "bad handle/../" },
+  });
+  assert.equal((await harness.act("viewer", "board")).managers[0].xHandle, "", "a malformed stored value is never returned");
 });

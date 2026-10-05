@@ -76,6 +76,7 @@ const {
   normalizeFleaStats,
   normalizeMarketStats,
   normalizeRouletteTrainingStats,
+  normalizeTributeStats,
   publicAchievementProfile,
   sanitizeAchievementIds,
   finalizeCrownMonthlyAchievement,
@@ -1998,7 +1999,10 @@ async function ensureEconomyProgress(uid) {
 }
 
 async function ensureAchievementState(uid) {
-  await anjuPayFleaAchievementStatsStore.ensure(uid);
+  await Promise.all([
+    anjuPayFleaAchievementStatsStore.ensure(uid),
+    tributeService.ensureAchievementStats(uid),
+  ]);
   const progressRef = economyProgressRef(uid);
   const profileRef = achievementProfileRef(uid);
   const crownMonthlyStatsRef = crownMonthlyAchievementStatsRef(uid);
@@ -2009,6 +2013,7 @@ async function ensureAchievementState(uid) {
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   const rouletteSellerStatsRef = rouletteTrainingSellerStatsRef(uid);
+  const tributeStatsRef = tributeService.achievementStatsRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
     const [
@@ -2022,6 +2027,7 @@ async function ensureAchievementState(uid) {
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
       rouletteSellerStatsSnapshot,
+      tributeStatsSnapshot,
     ] = await Promise.all([
       transaction.get(progressRef),
       transaction.get(profileRef),
@@ -2033,6 +2039,7 @@ async function ensureAchievementState(uid) {
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
       transaction.get(rouletteSellerStatsRef),
+      transaction.get(tributeStatsRef),
     ]);
     const progressData = progressSnapshot.exists ? progressSnapshot.data() : {};
     const progress = normalizeEconomyProgress(progressData);
@@ -2049,6 +2056,7 @@ async function ensureAchievementState(uid) {
     const rouletteTrainingStats = normalizeRouletteTrainingStats(
       rouletteSellerStatsSnapshot.data(),
     );
+    const tributeStats = normalizeTributeStats(tributeStatsSnapshot.data());
     const eligibleIds = eligibleAchievementIds({
       battleStats: progress.achievementStats,
       trainingStats: trainingProfile,
@@ -2058,6 +2066,7 @@ async function ensureAchievementState(uid) {
       aiTextTrainingStats,
       rouletteTrainingStats,
       crownMonthlyStats,
+      tributeStats,
     });
     const unlockResult = unlockAchievements(profileSnapshot.data(), eligibleIds);
     if (!progressSnapshot.exists
@@ -2078,6 +2087,7 @@ async function ensureAchievementState(uid) {
       aiTextTrainingStats,
       rouletteTrainingStats,
       crownMonthlyStats,
+      tributeStats,
       profile: unlockResult.profile,
       newlyUnlocked: unlockResult.newlyUnlocked,
     };
@@ -3172,6 +3182,7 @@ async function getAchievements(uid, { syncPublic = false } = {}) {
     state.aiTextTrainingStats,
     state.fleaStats,
     state.rouletteTrainingStats,
+    state.tributeStats,
   );
 }
 
@@ -3452,6 +3463,7 @@ async function setAchievementShowcase(uid, idsValue) {
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   const rouletteSellerStatsRef = rouletteTrainingSellerStatsRef(uid);
+  const tributeStatsRef = tributeService.achievementStatsRef(uid);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
     const [
@@ -3463,6 +3475,7 @@ async function setAchievementShowcase(uid, idsValue) {
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
       rouletteSellerStatsSnapshot,
+      tributeStatsSnapshot,
     ] = await Promise.all([
       transaction.get(profileRef),
       transaction.get(progressRef),
@@ -3472,6 +3485,7 @@ async function setAchievementShowcase(uid, idsValue) {
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
       transaction.get(rouletteSellerStatsRef),
+      transaction.get(tributeStatsRef),
     ]);
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
@@ -3501,6 +3515,7 @@ async function setAchievementShowcase(uid, idsValue) {
       trainingProfile,
       aiTextTrainingStats,
       rouletteTrainingStats,
+      tributeStats: normalizeTributeStats(tributeStatsSnapshot.data()),
     };
   });
   await syncAchievementPublicSurfaces(uid, result.profile);
@@ -3514,6 +3529,7 @@ async function setAchievementShowcase(uid, idsValue) {
       result.aiTextTrainingStats,
       result.fleaStats,
       result.rouletteTrainingStats,
+      result.tributeStats,
     ),
   };
 }
@@ -3806,9 +3822,9 @@ async function ensurePatronFundRecognition(uid, patronageValue) {
   return readPatronProgram(uid, patronage);
 }
 
-// 推し値市場は2026年10月にお貢ぎ界隈へ置き換えた。進行中の商談は従来どおり完了・返還まで処理する。
-const VALUE_MARKET_CLOSED_MESSAGE = "推し値市場は終了しました。新しい待機はできません。お貢ぎ界隈をご利用ください。";
-const PATRON_PROGRAM_CLOSED_MESSAGE = "VALUE MARKET パトロンと循環基金は終了しました。お貢ぎ界隈の「上納」と界隈基金へ移行しています。";
+// 推し値市場は2026年10月にお貢ぎ牧場へ置き換えた。進行中の商談は従来どおり完了・返還まで処理する。
+const VALUE_MARKET_CLOSED_MESSAGE = "推し値市場は終了しました。新しい待機はできません。お貢ぎ牧場をご利用ください。";
+const PATRON_PROGRAM_CLOSED_MESSAGE = "VALUE MARKET パトロンと循環基金は終了しました。お貢ぎ牧場の「上納」と牧場基金へ移行しています。";
 
 function hasGoogleIdentity(request) {
   const identities = request.auth?.token?.firebase?.identities;
@@ -16220,6 +16236,7 @@ const tributeService = createTributeService({
   anjuPayEntryId,
   mirrorWallet,
   bestEffort,
+  syncAchievementPublicSurfaces,
 });
 
 const TRIBUTE_GOOGLE_ACTIONS = new Set(["fund", "offer"]);
@@ -16235,7 +16252,7 @@ exports.tributeAction = onCall(callableOptions("tributeAction"), async (request)
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     console.error("tributeAction failed", { uid, action, error });
-    throw new HttpsError("internal", "お貢ぎ界隈の処理を完了できませんでした。");
+    throw new HttpsError("internal", "お貢ぎ牧場の処理を完了できませんでした。");
   }
 });
 

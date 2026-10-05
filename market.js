@@ -1392,7 +1392,7 @@ function isActive() {
 }
 
 const VALUE_MARKET_CLOSED = true;
-const VALUE_MARKET_CLOSED_MESSAGE = "推し値市場は終了しました。新しい待機はできません。お貢ぎ界隈をご利用ください。";
+const VALUE_MARKET_CLOSED_MESSAGE = "推し値市場は終了しました。新しい待機はできません。お貢ぎ牧場をご利用ください。";
 
 async function start({ initialScreen = "setup" } = {}) {
   if (active) return;
@@ -2246,7 +2246,7 @@ function renderSetup() {
     <div class="market-closed-banner" role="status">
       <strong>推し値市場は2026年10月で終了しました</strong>
       <p>新しい待機はできません。進行中の商談は、これまでどおり完了・返還まで進みます。ランキング・永久実績・推し値証書は「旧推し値市場の記録」として閲覧できます。</p>
-      <button type="button" class="button button-primary button-small" data-market-open-tribute>お貢ぎ界隈へ</button>
+      <button type="button" class="button button-primary button-small" data-market-open-tribute>お貢ぎ牧場へ</button>
     </div>
     <div class="market-role-tabs" role="tablist" aria-label="市場でのロール">
       <button type="button" class="${seller ? "is-active" : ""}" data-market-role="seller" role="tab" aria-selected="${seller}" ${locked ? "disabled" : ""}><span>SELLER</span><strong>売り手</strong><small>画像の魅力を言葉や10秒音声で営業</small></button>

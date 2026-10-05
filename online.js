@@ -1985,7 +1985,7 @@ function openOnlineScreen(screen) {
     return;
   }
   if (window.HariaiTribute?.isActive?.()) {
-    showToast("お貢ぎ界隈を終了してからオンライン画面を開いてください。");
+    showToast("お貢ぎ牧場を終了してからオンライン画面を開いてください。");
     return;
   }
   active = true;
