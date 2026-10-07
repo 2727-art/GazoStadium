@@ -48,6 +48,14 @@ python -m http.server 4173 --bind 127.0.0.1
 - 画像は2:3の枠に切らずに収め、空いた部分は同じ画像を縮小してぼかしたもので埋めます
 - 効果音は合成音です。商用利用できる素材を用意した場合は、`audio.js`の`SOUND_FILES`に場面名とパスを書くと素材を再生し、読み込めない時は合成音に戻ります。`BGM_FILES`にパスを書くと、ヘッダーにBGMのオン・オフが出て、トップと対戦で曲を切り替えます
 
+### X / SNSの共有プレビュー
+
+`index.html` の初期 `<head>` にOpen GraphとTwitter Cardのタグを静的に定義しています。正規URLは `https://gazostadium.anjugames.workers.dev/`、共有画像は同じ公開先の `/ogp.png`（1200×630 PNG）です。JavaScriptの実行・ログイン・App Checkは画像取得に不要です。通常ページでは共有画像を表示・プリロードせず、Firestore・Realtime Database・Functionsの呼出しも追加しません。
+
+共有画像は既存のトップ画像とサイト名・配色をコードで配置した静的成果物です。再作成する場合のみ、開発環境の `@napi-rs/canvas` と日本語太字フォントを用意し、`node functions/scripts/render-ogp.cjs` を実行してください。既定フォントはWindowsのMeiryo Bold、別環境は `OGP_FONT_PATH` で指定します。レンダラーはサイト・Functionsから呼び出さず、配信からも除外します。差し替え可能な `/ogp.png` に長期 `immutable` は付けず、既存の指紋付きトップ画像のキャッシュ設定は維持します。
+
+検証は `node --test functions/test/landing-ogp.test.js`、公開後は `node functions/scripts/verify-ogp-release.cjs`。後者はTwitterbotのUser-Agentで初期HTMLと画像を読み取り、3公開先を独立確認します。これはX内部の取得・カード表示を保証するものではありません。反映後のX側確認は、例えば `https://gazostadium.anjugames.workers.dev/?v=2` を投稿せず下書きへ貼って行います。
+
 ## Firebase費用削減（2026-09-11 / firebase-cost-v1）
 
 今回の変更対象は、長期保留セッションの後処理と、対戦前後に重なる初期化・実績読取りだけです。
