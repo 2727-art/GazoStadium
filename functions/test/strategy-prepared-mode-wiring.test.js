@@ -517,7 +517,8 @@ test("Strategy P2P sends and receives only size-bounded, byte-verified safe imag
   assert.match(finish, /verifiedOnlineImageMimeFromChunks\(transfer\.chunks\)/u);
   assert.match(finish, /mime\s*!==\s*transfer\.mime/u);
   assert.match(send, /verifiedOnlineImageMime\(buffer\)/u);
-  assert.match(send, /mime\s*!==\s*normalizeOnlineImageMime\(item\.blob\.type\)/u);
+  assert.match(send, /const blob = item\?\.blob/u);
+  assert.match(send, /mime\s*!==\s*normalizeOnlineImageMime\(blob\.type\)/u);
 });
 
 test("incoming Strategy image starts are bounded to the opponent and valid match keys", () => {
@@ -587,6 +588,10 @@ test("invalid optional audio is omitted while the Strategy image still completes
   const audio = namedFunction(strategy, "getTransferableStrategyAudio");
   const send = namedFunction(strategy, "sendImage");
   const wait = namedFunction(strategy, "waitForDataBuffer");
+  const sendCoordinator = [
+    "strategyImageSendContextIsCurrent", "getStrategyImageSendCoordinator",
+    "assertStrategyImageSendContext", "queueStrategyImageSend",
+  ].map((name) => namedFunction(strategy, name)).join("\n");
   const webp = new Blob([
     Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]),
     "image",
@@ -603,7 +608,9 @@ test("invalid optional audio is omitted while the Strategy image still completes
     };
     const state = {
       uid: "player-one",
+      roomId: "room-one",
       channel,
+      imageSendCoordinator: null,
       sentImageKeys: new Set(),
       transferProgress: 0,
       screen: "battle",
@@ -631,6 +638,7 @@ test("invalid optional audio is omitted while the Strategy image still completes
       ${imageKey}
       ${audio}
       ${wait}
+      ${sendCoordinator}
       ${send}
       globalThis.sendImageForTest = sendImage;
     `, context);

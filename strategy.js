@@ -305,6 +305,7 @@ function createState() {
     weaknessIntegrityFailed: false,
     openedMediaKeys: new Set(),
     sentImageKeys: new Set(),
+    imageSendCoordinator: null,
     incomingTransfer: null,
     incomingAudioTransfer: null,
     transferProgress: 0,
@@ -2518,16 +2519,18 @@ async function submitHariaiPost() {
   if (!Number.isInteger(target)) return showToast("狙う弱点候補を選んでください。");
   if (!caption) return showToast("画像に乗せる言葉を書いてください。言葉のない手は出せません。");
   if (!state.channelReady) return showToast("P2P接続の準備ができてから貼ってください。");
+  const targetState = state, channel = state.channel, roomId = state.roomId;
   const slot = pending.slot;
   item.used = true;
   state.localMoveCards.set(slot, item);
   const written = await writeHariai(`moves/${slot}/post`, { by: state.uid, target, caption, lockedAt: serverTimestamp() });
   if (!written) {
     item.used = false;
-    state.localMoveCards.delete(slot);
-    render();
+    targetState.localMoveCards.delete(slot);
+    if (state === targetState) render();
     return;
   }
+  if (!strategyImageSendContextIsCurrent(targetState, channel, roomId)) return;
   window.HariaiAudio?.playReveal?.();
   await ensureMoveImageSent(slot);
 }
@@ -2649,6 +2652,7 @@ async function submitHariaiFinish(skip) {
     captions[index] = caption;
   }
   if (!state.channelReady) return showToast("P2P接続の準備ができてから仕留めてください。");
+  const targetState = state, channel = state.channel, roomId = state.roomId;
   cards.forEach((item, index) => {
     item.used = true;
     state.localFinishCards.set(`${pending.slot}:${index}`, item);
@@ -2657,11 +2661,12 @@ async function submitHariaiFinish(skip) {
   if (!written) {
     cards.forEach((item, index) => {
       item.used = false;
-      state.localFinishCards.delete(`${pending.slot}:${index}`);
+      targetState.localFinishCards.delete(`${pending.slot}:${index}`);
     });
-    render();
+    if (state === targetState) render();
     return;
   }
+  if (!strategyImageSendContextIsCurrent(targetState, channel, roomId)) return;
   await ensureFinishImagesSent(pending.slot, cards.length);
 }
 
@@ -2752,8 +2757,12 @@ async function ensureMoveImageSent(slot) {
 }
 
 async function ensureFinishImagesSent(slot, count) {
+  const targetState = state, channel = state.channel, roomId = state.roomId;
   for (let index = 0; index < count; index += 1) {
-    const item = state.localFinishCards.get(`${slot}:${index}`);
+    if (!strategyImageSendContextIsCurrent(targetState, channel, roomId)) {
+      throw new Error("画像送信中にP2P接続または対戦が切り替わりました。");
+    }
+    const item = targetState.localFinishCards.get(`${slot}:${index}`);
     if (!item) throw new Error("仕留めの画像を手札から確認できませんでした。");
     await sendImage(item, "finish", slot, index);
   }
@@ -5282,22 +5291,94 @@ async function handleChannelMessage(data) {
   refreshHariaiTransferProgress();
 }
 
+function strategyImageSendContextIsCurrent(targetState, channel, roomId) {
+  return state === targetState && targetState.roomId === roomId
+    && targetState.channel === channel && channel?.readyState === "open";
+}
+
+function getStrategyImageSendCoordinator(targetState, channel) {
+  let coordinator = targetState.imageSendCoordinator;
+  if (!coordinator || coordinator.channel !== channel || coordinator.roomId !== targetState.roomId) {
+    coordinator = {
+      channel, roomId: targetState.roomId, tail: Promise.resolve(),
+      pendingImages: new Map(), avatarPromise: null, failure: null,
+    };
+    targetState.imageSendCoordinator = coordinator;
+  }
+  return coordinator;
+}
+
+function assertStrategyImageSendContext(targetState, coordinator) {
+  if (!strategyImageSendContextIsCurrent(targetState, coordinator.channel, coordinator.roomId)) {
+    throw new Error("画像送信中にP2P接続または対戦が切り替わりました。");
+  }
+  if (coordinator.failure) throw coordinator.failure;
+}
+
+function queueStrategyImageSend(targetState, coordinator, transfer) {
+  // Binary chunks carry no image ID. Keep start/body/end and attached audio
+  // together on this channel; preparation happens before entering this queue.
+  const operation = coordinator.tail.then(async () => {
+    assertStrategyImageSendContext(targetState, coordinator);
+    let started = false;
+    const send = (data) => {
+      assertStrategyImageSendContext(targetState, coordinator);
+      started = true;
+      coordinator.channel.send(data);
+    };
+    try {
+      await transfer(send);
+    } catch (error) {
+      if (started) {
+        // There is no abort frame in this protocol. Do not append another
+        // image to a partially transmitted one, or implicitly retry it.
+        coordinator.failure = error;
+        if (strategyImageSendContextIsCurrent(targetState, coordinator.channel, coordinator.roomId)) {
+          targetState.channelReady = false;
+          targetState.peerStatus = "画像・音声の送信に失敗しました";
+          try { coordinator.channel.close(); } catch {}
+        }
+      }
+      throw error;
+    }
+  });
+  coordinator.tail = operation.catch(() => {});
+  return operation;
+}
+
 async function sendProfileAvatar() {
-  if (state.avatarSent || !state.channel || state.channel.readyState !== "open") return;
-  state.avatarSent = true;
-  await shared()?.profileAvatar?.ready?.();
-  const avatar = shared()?.profileAvatar?.get?.();
-  if (!avatar?.blob || avatar.blob.size > PROFILE_AVATAR_MAX_BYTES) {
-    state.channel.send(JSON.stringify({ type: "profile-avatar-empty" }));
-    return;
-  }
-  const buffer = await avatar.blob.arrayBuffer();
-  state.channel.send(JSON.stringify({ type: "profile-avatar-start", size: buffer.byteLength, mime: avatar.blob.type || "image/webp" }));
-  for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
-    await waitForDataBuffer();
-    state.channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
-  }
-  state.channel.send(JSON.stringify({ type: "profile-avatar-end" }));
+  const targetState = state, channel = state.channel;
+  if (targetState.avatarSent || !channel || channel.readyState !== "open") return;
+  const coordinator = getStrategyImageSendCoordinator(targetState, channel);
+  if (coordinator.avatarPromise) return coordinator.avatarPromise;
+  const pending = (async () => {
+    // Optional avatar loading must not hold up battle image transfers.
+    await shared()?.profileAvatar?.ready?.();
+    assertStrategyImageSendContext(targetState, coordinator);
+    const avatar = shared()?.profileAvatar?.get?.();
+    const blob = avatar?.blob;
+    const buffer = blob && blob.size > 0 && blob.size <= PROFILE_AVATAR_MAX_BYTES
+      ? await blob.arrayBuffer() : null;
+    assertStrategyImageSendContext(targetState, coordinator);
+    await queueStrategyImageSend(targetState, coordinator, async (send) => {
+      if (!buffer || buffer.byteLength !== blob.size) {
+        send(JSON.stringify({ type: "profile-avatar-empty" }));
+        return;
+      }
+      send(JSON.stringify({ type: "profile-avatar-start", size: buffer.byteLength, mime: blob.type || "image/webp" }));
+      for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
+        await waitForDataBuffer(channel);
+        send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+      }
+      send(JSON.stringify({ type: "profile-avatar-end" }));
+    });
+    assertStrategyImageSendContext(targetState, coordinator);
+    targetState.avatarSent = true;
+  })().finally(() => {
+    if (coordinator.avatarPromise === pending) coordinator.avatarPromise = null;
+  });
+  coordinator.avatarPromise = pending;
+  return pending;
 }
 
 function finishIncomingProfileAvatar() {
@@ -5387,21 +5468,22 @@ async function sendImage(item, kind, slot, index = 0) {
   const channel = targetState.channel;
   const senderUid = targetState.uid;
   const key = imageKey(kind, slot, index);
-  const contextIsCurrent = () => state === targetState
-    && targetState.channel === channel
-    && channel?.readyState === "open";
-  if (targetState.sentImageKeys.has(key) || !item?.blob || !contextIsCurrent()) return;
-  targetState.sentImageKeys.add(key);
-  targetState.transferProgress = 0;
-  refreshHariaiTransferProgress();
-  try {
-    const buffer = await item.blob.arrayBuffer();
-    if (!contextIsCurrent()) throw new Error("画像送信前にP2P接続または対戦が切り替わりました。");
+  const coordinator = getStrategyImageSendCoordinator(targetState, channel);
+  assertStrategyImageSendContext(targetState, coordinator);
+  // A second finish loop must wait for the first image, not skip ahead to
+  // the next one just because transmission of this key has started.
+  if (coordinator.pendingImages.has(key)) return coordinator.pendingImages.get(key);
+  if (targetState.sentImageKeys.has(key)) return;
+  const blob = item?.blob;
+  if (!blob) throw new Error("送信する画像を確認できませんでした。");
+  const pending = (async () => {
+    const buffer = await blob.arrayBuffer();
+    assertStrategyImageSendContext(targetState, coordinator);
     if (!Number.isSafeInteger(buffer.byteLength) || buffer.byteLength <= 0 || buffer.byteLength > STRATEGY_DECK_IMAGE_MAX_BYTES) {
       throw new Error("送信画像のサイズが不正です。");
     }
     const mime = verifiedOnlineImageMime(buffer);
-    if (mime !== normalizeOnlineImageMime(item.blob.type)) {
+    if (mime !== normalizeOnlineImageMime(blob.type)) {
       throw new Error("送信画像の形式と実データが一致しません。");
     }
     let audio = getTransferableStrategyAudio(item);
@@ -5418,32 +5500,37 @@ async function sendImage(item, kind, slot, index = 0) {
         audioBuffer = null;
       }
     }
-    if (!contextIsCurrent()) throw new Error("画像送信前にP2P接続または対戦が切り替わりました。");
-    channel.send(JSON.stringify({ type: "strategy-image-start", kind, slot, index, ownerUid: senderUid, size: buffer.byteLength, mime, hasAudio: Boolean(audioBuffer) }));
-    for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
-      await waitForDataBuffer(channel);
-      if (!contextIsCurrent()) throw new Error("画像転送中にP2P接続または対戦が切り替わりました。");
-      channel.send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
-      targetState.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
-      refreshHariaiTransferProgress();
-    }
-    channel.send(JSON.stringify({ type: "strategy-image-end", kind, slot, index, ownerUid: senderUid }));
-    if (audioBuffer) {
+    assertStrategyImageSendContext(targetState, coordinator);
+    await queueStrategyImageSend(targetState, coordinator, async (send) => {
       targetState.transferProgress = 0;
-      channel.send(JSON.stringify({ type: "strategy-audio-start", kind, slot, index, ownerUid: senderUid, size: audioBuffer.byteLength, mime: "audio/wav", duration: audio.duration, cueStart: audio.cueStart }));
-      for (let offset = 0; offset < audioBuffer.byteLength; offset += DATA_CHUNK_BYTES) {
+      refreshHariaiTransferProgress();
+      send(JSON.stringify({ type: "strategy-image-start", kind, slot, index, ownerUid: senderUid, size: buffer.byteLength, mime, hasAudio: Boolean(audioBuffer) }));
+      for (let offset = 0; offset < buffer.byteLength; offset += DATA_CHUNK_BYTES) {
         await waitForDataBuffer(channel);
-        if (!contextIsCurrent()) throw new Error("音声転送中にP2P接続または対戦が切り替わりました。");
-        channel.send(audioBuffer.slice(offset, Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES)));
-        targetState.transferProgress = Math.round((Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES) / audioBuffer.byteLength) * 100);
+        send(buffer.slice(offset, Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES)));
+        targetState.transferProgress = Math.round((Math.min(buffer.byteLength, offset + DATA_CHUNK_BYTES) / buffer.byteLength) * 100);
         refreshHariaiTransferProgress();
       }
-      channel.send(JSON.stringify({ type: "strategy-audio-end", kind, slot, index, ownerUid: senderUid }));
-    }
-  } catch (error) {
-    targetState.sentImageKeys.delete(key);
-    throw error;
-  }
+      send(JSON.stringify({ type: "strategy-image-end", kind, slot, index, ownerUid: senderUid }));
+      if (audioBuffer) {
+        targetState.transferProgress = 0;
+        send(JSON.stringify({ type: "strategy-audio-start", kind, slot, index, ownerUid: senderUid, size: audioBuffer.byteLength, mime: "audio/wav", duration: audio.duration, cueStart: audio.cueStart }));
+        for (let offset = 0; offset < audioBuffer.byteLength; offset += DATA_CHUNK_BYTES) {
+          await waitForDataBuffer(channel);
+          send(audioBuffer.slice(offset, Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES)));
+          targetState.transferProgress = Math.round((Math.min(audioBuffer.byteLength, offset + DATA_CHUNK_BYTES) / audioBuffer.byteLength) * 100);
+          refreshHariaiTransferProgress();
+        }
+        send(JSON.stringify({ type: "strategy-audio-end", kind, slot, index, ownerUid: senderUid }));
+      }
+    });
+    assertStrategyImageSendContext(targetState, coordinator);
+    targetState.sentImageKeys.add(key);
+  })().finally(() => {
+    if (coordinator.pendingImages.get(key) === pending) coordinator.pendingImages.delete(key);
+  });
+  coordinator.pendingImages.set(key, pending);
+  return pending;
 }
 
 function waitForDataBuffer(channel = state.channel) {
