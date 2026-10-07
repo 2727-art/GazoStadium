@@ -11594,6 +11594,8 @@ exports.playerSafetyAction = onCall(callableOptions("playerSafetyAction"), async
     if (data.action === "strategy_match") return await playerSafetyStrategy.match(uid, data);
     if (data.action === "strategy_accept") return await playerSafetyStrategy.accept(uid, data);
     if (data.action === "strategy_expire") return await playerSafetyStrategy.expire(uid, data);
+    if (data.action === "strategy_stop_waiting") return await playerSafetyStrategy.stopWaiting(uid, data);
+    if (data.action === "strategy_expire_prestart") return await playerSafetyStrategy.expirePrestart(uid, data);
     return await playerSafetyService.performAction(uid, data);
   } catch (error) {
     if (error instanceof HttpsError) throw error;

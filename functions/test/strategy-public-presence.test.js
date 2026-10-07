@@ -61,7 +61,7 @@ test("entering a room never waits for lobby presence before starting P2P", () =>
 });
 
 test("a delayed old presence failure cannot clean a newer presence id", async () => {
-  const updatePresence = section("async function updatePublicPresence(nextState)", "async function cleanupPublicPresence()");
+  const updatePresence = section("async function updatePublicPresence(nextState)", "async function cleanupPublicPresence(");
   const capture = updatePresence.indexOf("const id = state.publicPresenceId;");
   const write = updatePresence.indexOf("online/publicPresence/${id}");
   const fence = updatePresence.indexOf("if (state.publicPresenceId === id) await cleanupPublicPresence();");
@@ -118,9 +118,9 @@ test("an active ownership mismatch stops only the lobby presence", () => {
   const activeWatch = listeners.slice(activeWatchStart, activeWatchEnd);
 
   includesAll(activeWatch, [
-    "state.roomId !== ownedRoomId",
+    "!current()",
     "snapshot.val() === ownedRoomId",
-    "cleanupPublicPresence().catch(() => {})",
+    "cleanupPublicPresence(targetState).catch(() => {})",
   ], "strategy active ownership watcher");
   assert.doesNotMatch(activeWatch, /cleanupOnlineResources|cleanupMatchmaking|destroyRoom|peer\.close|strategyRooms/);
 });
@@ -146,10 +146,10 @@ test("finish and withdrawal stop lobby presence without ending the room or revie
 });
 
 test("public cleanup detaches locally and removes presence before its owner", () => {
-  const cleanup = section("async function cleanupPublicPresence()", "function requestHome()");
-  const captureId = cleanup.indexOf("const id = state.publicPresenceId || state.publicPresencePendingId;");
-  const clearId = cleanup.indexOf('state.publicPresenceId = "";');
-  const clearPendingId = cleanup.indexOf('state.publicPresencePendingId = "";');
+  const cleanup = section("async function cleanupPublicPresence(", "function requestHome()");
+  const captureId = cleanup.indexOf("const id = targetState.publicPresenceId || targetState.publicPresencePendingId;");
+  const clearId = cleanup.indexOf('targetState.publicPresenceId = "";');
+  const clearPendingId = cleanup.indexOf('targetState.publicPresencePendingId = "";');
   const cancel = cleanup.indexOf("await disconnect?.cancel?.()");
   const removePresence = cleanup.indexOf("online/publicPresence/${id}");
   const removeOwner = cleanup.indexOf("online/publicPresenceOwners/${id}");

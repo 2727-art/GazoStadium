@@ -1,4 +1,5 @@
 import { requestSafety, setActiveContact, clearActiveContact, renderContactControls } from "./player-safety.js?v=global-player-block-v1-copy-v2";
+import { createStrategyHiddenSearchGuard, createStrategyPrestartGuard, strategyRoomHasStarted } from "./strategy-idle-guard.mjs?v=strategy-idle-guard-v1";
 import {
   browserLocalPersistence,
   setPersistence,
@@ -351,6 +352,15 @@ function createState() {
     latestQueue: {},
     activeUsers: {},
     matchmakingGeneration: 0,
+    searchIdleGuard: null,
+    searchInitializing: false,
+    prestartGuard: null,
+    prestartClockTimer: null,
+    prestartConfirmPromise: null,
+    idleCleanupPromise: null,
+    idleCleanupPending: false,
+    idleStopped: false,
+    idleStopReason: "",
     queueJoinedAt: 0,
     matchmakingConnected: false,
     queueConnectionEpoch: 0,
@@ -1272,6 +1282,8 @@ function render() {
     error: renderError,
   };
   app.innerHTML = renderContactControls("strategy") + (renderers[state.screen] || renderProfile)();
+  app.querySelector(".screen")?.insertAdjacentHTML("afterbegin", renderStrategyIdleNotice());
+  updateStrategyIdleNotice();
   lastRenderedScreen = state.screen;
   // 同じ画面の描き直しでは登場アニメーションを再生しない（対戦スレッドが点滅しないように）。
   if (!screenChanged) app.querySelector(".screen")?.classList.add("is-refresh");
@@ -2854,6 +2866,7 @@ function renderWithdrawn() {
 }
 
 function renderNoContest() {
+  if (state.idleStopReason) return renderStatusCard("×", "NO CONTEST", "開始前の待機を終了しました", state.idleStopReason, "", `<button class="button button-primary" id="strategyNoContestAgain">別の相手を探す</button><button class="button button-ghost" id="strategyNoContestHome">タイトルへ戻る</button>`);
   if (state.playerSafetyStopped) return renderStatusCard("×", "CONTACT CLOSED", "交流を終了しました", "画像・音声・チャットを閉じました。確定済みの結果は残ります。", "", `<button class="button button-primary" id="strategyNoContestAgain">別の相手を探す</button><button class="button button-ghost" id="strategyNoContestHome">タイトルへ戻る</button>`);
   return renderStatusCard("×", "NO CONTEST", "戦略型1on1対戦を終了しました", "ルームが破棄されました。画像と進行情報への参照を解放しました。", "", `<button class="button button-primary" id="strategyNoContestAgain">別の相手を探す</button><button class="button button-ghost" id="strategyNoContestHome">タイトルへ戻る</button>`);
 }
@@ -3989,6 +4002,7 @@ function finishStrategyMatchmakingLaunch(context) {
 
 async function saveProfile(event) {
   event.preventDefault();
+  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("前の通信の終了を確認しています。少し待ってからお試しください。");
   if (state.matchmakingLaunchBusy) return;
   if (state.normalRouteBusy) return;
   const crownIntent = event.submitter?.dataset.crownMatchmakingAction === "start";
@@ -4057,6 +4071,186 @@ async function saveProfile(event) {
   }
 }
 
+function strategySearchProgressBlocked(targetState = state) {
+  return Boolean(targetState.idleCleanupPending || targetState.idleStopped
+    || targetState.searchIdleGuard?.blocksProgress());
+}
+
+function startStrategySearchIdleGuard(targetState, generation) {
+  targetState.searchIdleGuard?.dispose();
+  targetState.searchIdleGuard = createStrategyHiddenSearchGuard({
+    getContext: () => ({
+      current: strategyQueueContextIsCurrent(targetState, generation),
+      visible: document.visibilityState !== "hidden",
+      busy: targetState.searchInitializing || targetState.matchingBusy || targetState.acceptingOffer
+        || Boolean(targetState.queueRecoveryPromise),
+    }),
+    stop: () => stopStrategyIdleSearch(targetState, generation),
+  });
+  targetState.searchIdleGuard.sync();
+}
+
+async function stopStrategyIdleSearch(targetState, generation) {
+  const current = () => strategyQueueContextIsCurrent(targetState, generation);
+  if (!current() || targetState.searchInitializing || targetState.matchingBusy || targetState.acceptingOffer
+      || targetState.queueRecoveryPromise) return 1000;
+  targetState.idleCleanupPending = true;
+  updateStrategyIdleNotice();
+  const result = await requestSafety("strategy_stop_waiting", {
+    protocolVersion: STRATEGY_PROTOCOL_VERSION, joinedAt: targetState.queueJoinedAt,
+  });
+  if (!current()) return;
+  if (result.stopped === true || result.status === "resource-changed") {
+    targetState.idleStopReason = result.stopped === true
+      ? "ページが5分間表示されなかったため、相手検索を終了しました。デッキとプロフィールは保持しています。再開するときは、あらためて相手を探してください。"
+      : "別の検索が開始されたため、この画面の相手検索を終了しました。";
+    await cleanupMatchmaking(true, { targetState, skipServerWrites: true });
+    await cleanupPublicPresence(targetState);
+    if (!active || state !== targetState || targetState.roomId) return;
+    targetState.idleCleanupPending = false;
+    targetState.screen = "profile";
+    setStrategyChrome("STRATEGY READY");
+    render();
+    return;
+  }
+  if (result.status === "match-in-progress" && result.roomId) {
+    // A match which won the server race belongs to the pre-start deadline, not
+    // to search cancellation. Existing offers must still be able to reconcile.
+    targetState.idleCleanupPending = false;
+    if (result.roomStatus === "active") {
+      await safetyPlayerRoomRecord(result.roomId);
+      if (current()) await enterRoom(result.roomId, generation);
+    } else if (result.roomStatus === "offered") {
+      const snapshot = await get(ref(database, `online/strategyRooms/${result.roomId}`));
+      if (!current()) return;
+      const room = snapshot.val();
+      if (Number(room?.queueJoinedAt?.[targetState.uid]) !== targetState.queueJoinedAt) return 20_000;
+      if (room.hostUid === targetState.uid) {
+        targetState.pendingOffer = { roomId: result.roomId, targetUid: room.guestUid };
+        if (targetState.hostOfferWatch?.roomId !== result.roomId) watchStrategyOffer(result.roomId, targetState, generation);
+      } else if (room.guestUid === targetState.uid) {
+        targetState.pendingIncomingOffer = { roomId: result.roomId,
+          offer: { toUid: targetState.uid, fromUid: room.hostUid, protocolVersion: STRATEGY_PROTOCOL_VERSION } };
+        await drainIncomingOffers();
+      }
+    }
+    return 20_000;
+  }
+  // A lock conflict, malformed response or lost response never permits another
+  // search and never falls back to unconditional release/destroy.
+  return 20_000;
+}
+
+function strategyIdleRoomIsCurrent(targetState, roomId) {
+  return active && state === targetState && targetState.roomId === roomId && !targetState.idleStopped;
+}
+
+function stopStrategyPrestartGuard(targetState = state) {
+  targetState.prestartGuard?.dispose();
+  targetState.prestartGuard = null;
+  window.clearInterval(targetState.prestartClockTimer);
+  targetState.prestartClockTimer = null;
+}
+
+function startStrategyPrestartGuard(targetState, roomId) {
+  stopStrategyPrestartGuard(targetState);
+  if (!(Number(targetState.roomData?.prestartDeadlineAt) > 0) || strategyRoomHasStarted(targetState.roomData)) return;
+  targetState.prestartGuard = createStrategyPrestartGuard({
+    now: () => Date.now() + targetState.serverTimeOffset,
+    getContext: () => ({ current: strategyIdleRoomIsCurrent(targetState, roomId),
+      protected: strategyRoomHasStarted(targetState.roomData),
+      deadline: targetState.roomData?.prestartDeadlineAt,
+      busy: Boolean(targetState.prestartConfirmPromise),
+    }),
+    stop: () => confirmStrategyPrestartExpiry(targetState, roomId),
+  });
+  targetState.prestartClockTimer = window.setInterval(() => {
+    if (!strategyIdleRoomIsCurrent(targetState, roomId)) { stopStrategyPrestartGuard(targetState); return; }
+    targetState.prestartGuard?.sync();
+    if (strategyRoomHasStarted(targetState.roomData)) stopStrategyPrestartGuard(targetState);
+    updateStrategyIdleNotice();
+  }, 1000);
+  targetState.prestartGuard.sync();
+}
+
+async function confirmStrategyPrestartExpiry(targetState, roomId) {
+  if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
+  if (targetState.prestartConfirmPromise) return targetState.prestartConfirmPromise;
+  targetState.idleCleanupPending = true;
+  updateStrategyIdleNotice();
+  const operation = (async () => {
+    const result = await requestSafety("strategy_expire_prestart", { protocolVersion: STRATEGY_PROTOCOL_VERSION, roomId });
+    if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
+    if (result.roomId !== roomId) return 20_000;
+    if (result.expired === true || ["ended", "missing"].includes(result.status)) {
+      await finishStrategyPrestartExpiry(targetState, roomId, result.reason === "prestart-timeout" || result.expired === true);
+      return;
+    }
+    if (["protected", "legacy"].includes(result.status)) {
+      targetState.idleCleanupPending = false;
+      stopStrategyPrestartGuard(targetState);
+      updateStrategyIdleNotice();
+      return;
+    }
+    if (result.status === "pending" && Number(result.prestartDeadlineAt) > 0) {
+      targetState.roomData.prestartDeadlineAt = Number(result.prestartDeadlineAt);
+      targetState.idleCleanupPending = false;
+      updateStrategyIdleNotice();
+      return Math.max(1000, Number(result.prestartDeadlineAt) - (Date.now() + targetState.serverTimeOffset));
+    }
+    return 20_000;
+  })();
+  targetState.prestartConfirmPromise = operation;
+  try { return await operation; }
+  finally { if (targetState.prestartConfirmPromise === operation) targetState.prestartConfirmPromise = null; }
+}
+
+async function finishStrategyPrestartExpiry(targetState, roomId, timedOut = true) {
+  if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
+  targetState.idleStopped = true;
+  targetState.idleCleanupPending = true;
+  targetState.idleStopReason = timedOut
+    ? "マッチング成立から5分以内に双方の貼り合い開始が揃わなかったため、この対戦を終了しました。勝敗・RATE・Payには影響しません。デッキとプロフィールを保持したまま、別の相手を探せます。"
+    : "開始前の対戦が終了しました。デッキとプロフィールを保持したまま、別の相手を探せます。";
+  stopStrategyPrestartGuard(targetState);
+  const cleanup = cleanupOnlineResources(true, { targetState, skipServerWrites: true });
+  targetState.idleCleanupPromise = cleanup;
+  try { await cleanup; }
+  finally { if (targetState.idleCleanupPromise === cleanup) targetState.idleCleanupPromise = null; }
+  if (!active || state !== targetState || targetState.roomId !== roomId) return;
+  releaseMatchMedia();
+  targetState.idleCleanupPending = false;
+  targetState.screen = "noContest";
+  setStrategyChrome("NO CONTEST");
+  render();
+}
+
+function strategyPrestartProgressBlocked() {
+  return Boolean(state.idleStopped || state.idleCleanupPending || state.prestartGuard?.blocksProgress());
+}
+
+function renderStrategyIdleNotice() {
+  if (state.screen === "profile" && state.idleStopReason) return `<p class="privacy-note" role="status">${escapeHtml(state.idleStopReason)}</p>`;
+  if (state.screen === "matching") return '<p class="privacy-note" id="strategyIdleNotice" role="status">ページを5分間表示しないと、相手検索を終了します。</p>';
+  if (state.roomId && !state.idleStopped && Number(state.roomData?.prestartDeadlineAt) > 0 && !strategyRoomHasStarted(state.roomData)) {
+    return '<p class="privacy-note" id="strategyIdleNotice" role="status"></p>';
+  }
+  return "";
+}
+
+function updateStrategyIdleNotice() {
+  if (!active) return;
+  const notice = document.getElementById("strategyIdleNotice");
+  if (!notice) return;
+  if (state.idleCleanupPending) notice.textContent = "通信を終了できるか確認しています。完了するまで、新しい検索や対戦開始は行いません。";
+  else if (state.screen === "matching") notice.textContent = "ページを5分間表示しないと、相手検索を終了します。";
+  else if (strategyRoomHasStarted(state.roomData)) notice.textContent = "";
+  else {
+    const seconds = Math.max(0, Math.ceil((Number(state.roomData?.prestartDeadlineAt) - firebaseNow()) / 1000));
+    notice.textContent = `成立から5分以内に、双方の「貼り合い開始」まで進んでください。開始期限まで ${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2, "0")}秒。期限を過ぎると勝敗なしで終了します。`;
+  }
+}
+
 function isCurrentStrategyMatchmakingGeneration(generation) {
   return active
     && state.screen === "matching"
@@ -4101,6 +4295,7 @@ function armStrategyQueueDisconnect(queueRef, targetState, generation, connectio
 
 async function refreshStrategyMatchmakingQueue(targetState, generation) {
   if (!strategyQueueContextIsCurrent(targetState, generation) || !targetState.matchmakingConnected) return false;
+  if (strategySearchProgressBlocked(targetState)) return false;
   if (targetState.queueRecoveryPromise) {
     const pendingEpoch = targetState.queueRecoveryEpoch;
     const result = await targetState.queueRecoveryPromise;
@@ -4110,7 +4305,8 @@ async function refreshStrategyMatchmakingQueue(targetState, generation) {
   }
   const connectionEpoch = targetState.queueConnectionEpoch;
   const joinedAt = targetState.queueJoinedAt;
-  const current = () => strategyQueueContextIsCurrent(targetState, generation, connectionEpoch);
+  const current = () => strategyQueueContextIsCurrent(targetState, generation, connectionEpoch)
+    && !strategySearchProgressBlocked(targetState);
   const queueRef = ref(database, `online/strategyQueue/${targetState.uid}`);
   const activeRef = ref(database, `online/strategyActive/${targetState.uid}`);
   const recovery = (async () => {
@@ -4185,6 +4381,7 @@ function watchStrategyMatchmakingConnection(targetState, generation) {
 }
 
 async function beginMatchmaking() {
+  if (state.idleCleanupPending || state.idleCleanupPromise) throw new Error("前の通信の終了確認が完了するまでお待ちください。");
   if (state.normalRouteBusy) throw new Error("通常1on1へ切り替えています。");
   state.imagePreference = normalizeImagePreference(state.imagePreference, "");
   if (state.deckRestoreStatus === "loading" || !strategyDeckIsComplete()) {
@@ -4195,13 +4392,17 @@ async function beginMatchmaking() {
   const generation = ++strategyMatchmakingGenerationCounter;
   const targetState = state;
   state.matchmakingGeneration = generation;
+  state.idleStopped = false;
+  state.idleStopReason = "";
+  state.searchInitializing = true;
   state.queueJoinedAt = joinedAt;
   state.matchScopeAvailable = false;
   state.matchScopeExpanded = false;
   state.screen = "matching";
   setStrategyChrome("STRATEGY MATCHING");
   render();
-
+  startStrategySearchIdleGuard(targetState, generation);
+  try {
   const activeRef = ref(database, `online/strategyActive/${state.uid}`);
   const staleActive = await get(activeRef);
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
@@ -4256,6 +4457,7 @@ async function beginMatchmaking() {
   }, handleRecoverableError));
   state.offerPollTimer = window.setInterval(() => {
     if (!strategyQueueContextIsCurrent(targetState, generation)) return;
+    if (strategySearchProgressBlocked(targetState)) return;
     get(offersRef).then((snapshot) => {
       if (strategyQueueContextIsCurrent(targetState, generation)) processIncomingOffers(snapshot);
     }).catch(handleRecoverableError);
@@ -4266,6 +4468,10 @@ async function beginMatchmaking() {
     attemptToHost().catch(handleRecoverableError);
   }));
   watchStrategyMatchmakingConnection(targetState, generation);
+  } finally {
+    targetState.searchInitializing = false;
+    targetState.searchIdleGuard?.sync();
+  }
 }
 
 function processIncomingOffers(snapshot) {
@@ -4279,6 +4485,7 @@ function processIncomingOffers(snapshot) {
 
 async function expandMatchmakingScope() {
   if (!active || state.screen !== "matching" || state.roomId || state.imagePreference === "both" || state.matchScopeExpanded) return;
+  if (strategySearchProgressBlocked()) return;
   window.clearTimeout(state.matchScopeTimer);
   state.matchScopeTimer = null;
   state.matchScopeAvailable = false;
@@ -4339,6 +4546,7 @@ function findPreferredMatchPair(waiting) {
 
 async function attemptToHost() {
   if (!active || state.screen !== "matching" || state.matchingBusy || state.acceptingOffer || state.pendingOffer || state.queueRecoveryPromise) return;
+  if (strategySearchProgressBlocked()) return;
   await createOffer();
 }
 
@@ -4428,6 +4636,7 @@ function watchStrategyOffer(roomId, targetState, generation) {
 }
 
 async function createOffer() {
+  if (strategySearchProgressBlocked()) return;
   const generation = state.matchmakingGeneration;
   const targetState = state;
   state.matchingBusy = true;
@@ -4438,6 +4647,7 @@ async function createOffer() {
   try {
     const player = await safetyPlayerRoomRecord(proposedRoomId);
     if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+    if (strategySearchProgressBlocked(targetState)) return;
     const response = await requestSafety("strategy_match", { roomId: proposedRoomId, player, protocolVersion: STRATEGY_PROTOCOL_VERSION });
     const roomId = response.roomId;
     if (!isCurrentStrategyMatchmakingGeneration(generation)) {
@@ -4550,10 +4760,12 @@ function playStrategyMatchReadySound(roomId) {
 
 async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  const targetState = state;
   const snapshot = await get(ref(database, `online/strategyRooms/${roomId}`));
   const room = snapshot.val();
   if (!room || Number(room.protocolVersion) !== STRATEGY_PROTOCOL_VERSION || !room.players?.[room.hostUid] || !room.players?.[room.guestUid]) throw new Error("戦略型ルーム情報を取得できませんでした。");
   if (!isCurrentStrategyMatchmakingGeneration(generation)) return;
+  if (Number(room.queueJoinedAt?.[state.uid]) !== state.queueJoinedAt) throw new Error("別の検索で成立した対戦です。この画面を終了して確認してください。");
   const ownRecord = state.safetyPlayerRecords?.get(roomId);
   const ownCommits = [0, 1, 2].map((index) => String(room.players[state.uid]?.weaknessCommits?.[index] || ""));
   if (!ownRecord || ownCommits.some((commit, index) => commit !== ownRecord.player.weaknessCommits[index])) {
@@ -4562,6 +4774,7 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   state.weaknessSalts = [...ownRecord.salts];
   state.weaknessCommits = [...ownRecord.player.weaknessCommits];
   state.roomId = roomId;
+  state.idleCleanupPending = false;
   state.playerSafetyStopped = false;
   state.roomData = room;
   state.opponentUid = room.hostUid === state.uid ? room.guestUid : room.hostUid;
@@ -4570,80 +4783,127 @@ async function enterRoom(roomId, generation = state.matchmakingGeneration) {
   captureMatchAchievementShowcases(room.achievementShowcases);
   playStrategyMatchReadySound(roomId);
   await cleanupMatchmaking(true);
+  if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
   updatePublicPresence("playing").catch(() => {});
   state.screen = "connecting";
   state.peerStatus = "P2P接続を準備中…";
   setStrategyChrome("STRATEGY ONLINE BATTLE");
   render();
-  await setupRoomListeners();
-  if (state.playerSafetyStopped || state.roomId !== roomId) return;
+  // The deadline must exist before listener/presence registration can await an
+  // offline connection. Otherwise a failed setup can strand an expired room.
+  startStrategyPrestartGuard(targetState, roomId);
+  try {
+    await setupRoomListeners();
+  } catch (error) {
+    if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
+    if (Number(targetState.roomData?.prestartDeadlineAt) > 0 && !strategyRoomHasStarted(targetState.roomData)) {
+      await confirmStrategyPrestartExpiry(targetState, roomId).catch(handleRecoverableError);
+    }
+    if (strategyIdleRoomIsCurrent(targetState, roomId)) handleRecoverableError(error);
+    return;
+  }
+  if (state.playerSafetyStopped || !strategyIdleRoomIsCurrent(targetState, roomId)) return;
   await setupPeerConnection();
 }
 
 async function setupRoomListeners() {
+  const targetState = state;
   const base = `online/strategyRooms/${state.roomId}`;
   const ownedRoomId = state.roomId;
+  const current = () => strategyIdleRoomIsCurrent(targetState, ownedRoomId);
+  const handleRoomError = (error) => {
+    if (!current()) return;
+    if (/permission[_ -]denied/i.test(`${error?.code || ""} ${error?.message || ""}`)
+        && Number(targetState.roomData?.prestartDeadlineAt) > 0 && !strategyRoomHasStarted(targetState.roomData)) {
+      confirmStrategyPrestartExpiry(targetState, ownedRoomId).catch((failure) => {
+        if (current()) handleRecoverableError(failure);
+      });
+    } else handleRecoverableError(error);
+  };
   let databaseWasConnected = null;
   const activeDisconnect = onDisconnect(ref(database, `online/strategyActive/${state.uid}`));
   await activeDisconnect.remove();
+  if (!current()) { await activeDisconnect.cancel().catch(() => {}); return; }
   state.disconnectHandles.push(activeDisconnect);
   state.roomUnsubscribers.push(onValue(ref(database, `online/strategyActive/${state.uid}`), (snapshot) => {
-    if (state.roomId !== ownedRoomId || snapshot.val() === ownedRoomId) return;
-    cleanupPublicPresence().catch(() => {});
+    if (!current() || snapshot.val() === ownedRoomId) return;
+    cleanupPublicPresence(targetState).catch(() => {});
   }, () => {}));
   const presenceRef = ref(database, `${base}/presence/${state.uid}`);
   await set(presenceRef, { online: true, updatedAt: serverTimestamp() });
+  if (!current()) return;
   const presenceDisconnect = onDisconnect(presenceRef);
   await presenceDisconnect.set({ online: false, updatedAt: serverTimestamp() });
+  if (!current()) { await presenceDisconnect.cancel().catch(() => {}); return; }
   state.disconnectHandles.push(presenceDisconnect);
   state.roomUnsubscribers.push(onValue(ref(database, base), (snapshot) => {
+    if (!current()) return;
     state.roomData = snapshot.val() || {};
     const showcaseCaptured = captureMatchAchievementShowcases(state.roomData.achievementShowcases);
     materializeMatchAchievementShowcases(state.roomData);
     if (showcaseCaptured) refreshMatchAchievementShowcaseIfVisible();
     reactToRoomData().catch(handleRecoverableError);
-  }, handleRecoverableError));
+  }, handleRoomError));
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/destroyed`), (snapshot) => {
+    if (!current()) return;
+    if (snapshot.val()?.reason === "prestart-timeout") {
+      finishStrategyPrestartExpiry(targetState, ownedRoomId).catch(handleRoomError);
+      return;
+    }
     if (snapshot.exists() && snapshot.val().by !== state.uid) handleOpponentDestroyed();
-  }));
+  }, handleRoomError));
   state.roomUnsubscribers.push(onValue(ref(database, `${base}/presence/${state.opponentUid}`), (snapshot) => {
+    if (!current()) return;
     state.opponentOnline = snapshot.val()?.online !== false;
     if (!state.opponentOnline && state.screen === "review") finishReviewLocally("left");
     else if (state.screen === "gameover") render();
     else renderBattleIfChanged();
-  }));
+  }, handleRoomError));
   state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    if (!current()) return;
     state.serverTimeOffset = Number(snapshot.val() || 0);
+    state.prestartGuard?.sync();
+    updateStrategyIdleNotice();
     if (state.screen === "review") startReviewClock();
   }));
   state.roomUnsubscribers.push(onValue(ref(database, ".info/connected"), (snapshot) => {
+    if (!current()) return;
     const connected = snapshot.val() === true;
     const reconnected = databaseWasConnected === false && connected;
     databaseWasConnected = connected;
     if (!reconnected || !active || state.roomId !== ownedRoomId) return;
     reactToRoomData().catch(handleRecoverableError);
-  }, handleRecoverableError));
+  }, handleRoomError));
   const chatQuery = query(ref(database, `online/strategyChats/${state.roomId}`), limitToLast(60));
   state.roomUnsubscribers.push(onChildAdded(chatQuery, (snapshot) => {
+    if (!current()) return;
     if (state.seenChatIds.has(snapshot.key)) return;
     state.seenChatIds.add(snapshot.key);
     state.chatMessages.push({ id: snapshot.key, ...snapshot.val() });
     if (state.chatMessages.length > 60) state.chatMessages.shift();
     refreshStrategyChat();
-  }, handleRecoverableError));
+  }, handleRoomError));
 }
 
 async function setupPeerConnection() {
+  const targetState = state;
+  const roomId = state.roomId;
+  // A local deadline can be ahead of server time until the offset listener
+  // arrives. Keep setup resumable; only confirmed termination closes it.
+  if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
   if (!("RTCPeerConnection" in window)) throw new Error("このブラウザはWebRTC画像・音声・短尺映像転送に対応していません。");
   const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] });
   state.peer = peer;
-  peer.onicecandidate = (event) => { if (event.candidate) sendSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError); };
+  const current = () => strategyIdleRoomIsCurrent(targetState, roomId) && targetState.peer === peer;
+  peer.onicecandidate = (event) => { if (current() && event.candidate) sendSignal("candidate", event.candidate.toJSON()).catch(handleRecoverableError); };
   peer.onconnectionstatechange = () => {
+    if (!current()) return;
     state.peerStatus = peer.connectionState === "connected" ? "● P2P接続済み" : `P2P: ${peer.connectionState}`;
     if (["failed", "closed"].includes(peer.connectionState) && active) showToast("P2P接続が切れました。ルーム破棄で退出できます。");
     if (state.screen === "connecting") render();
   };
   peer.ondatachannel = (event) => {
+    if (!current()) { event.channel.close(); return; }
     if (event.channel.label === STRATEGY_VIDEO_CHANNEL_LABEL) configureVideoDataChannel(event.channel);
     else if (event.channel.label === STRATEGY_REVIEW_ASSET_CHANNEL_LABEL) configureStrategyReviewAssetDataChannel(event.channel);
     else if (event.channel.label === "hariai-strategy-images") configureDataChannel(event.channel);
@@ -4651,6 +4911,7 @@ async function setupPeerConnection() {
   };
   const signalsRef = ref(database, `online/strategyRooms/${state.roomId}/signals/${state.uid}`);
   state.roomUnsubscribers.push(onChildAdded(signalsRef, async (snapshot) => {
+    if (!current()) return;
     try { await handleSignal(snapshot.val()); } finally { await remove(snapshot.ref).catch(() => {}); }
   }));
   if (state.playerIndex === 0) {
@@ -4661,7 +4922,9 @@ async function setupPeerConnection() {
     const reviewAssetChannel = peer.createDataChannel(STRATEGY_REVIEW_ASSET_CHANNEL_LABEL, { ordered: true });
     configureStrategyReviewAssetDataChannel(reviewAssetChannel);
     const offer = await peer.createOffer();
+    if (!current()) return;
     await peer.setLocalDescription(offer);
+    if (!current()) return;
     await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
   }
 }
@@ -4672,15 +4935,22 @@ async function sendSignal(type, payload) {
 
 async function handleSignal(signal) {
   if (!signal || signal.fromUid !== state.opponentUid || !state.peer) return;
+  const targetState = state, roomId = state.roomId, peer = state.peer;
+  const current = () => strategyIdleRoomIsCurrent(targetState, roomId) && targetState.peer === peer;
   const payload = JSON.parse(signal.payload);
   if (signal.type === "offer") {
-    await state.peer.setRemoteDescription(payload);
+    await peer.setRemoteDescription(payload);
+    if (!current()) return;
     await flushPendingIce();
-    const answer = await state.peer.createAnswer();
-    await state.peer.setLocalDescription(answer);
+    if (!current()) return;
+    const answer = await peer.createAnswer();
+    if (!current()) return;
+    await peer.setLocalDescription(answer);
+    if (!current()) return;
     await sendSignal("answer", { type: answer.type, sdp: answer.sdp });
   } else if (signal.type === "answer") {
-    await state.peer.setRemoteDescription(payload);
+    await peer.setRemoteDescription(payload);
+    if (!current()) return;
     await flushPendingIce();
   } else if (signal.type === "candidate") {
     if (state.peer.remoteDescription) await state.peer.addIceCandidate(payload);
@@ -4689,14 +4959,20 @@ async function handleSignal(signal) {
 }
 
 async function flushPendingIce() {
-  while (state.pendingIce.length) await state.peer.addIceCandidate(state.pendingIce.shift());
+  const targetState = state, roomId = state.roomId, peer = state.peer;
+  while (strategyIdleRoomIsCurrent(targetState, roomId) && targetState.peer === peer && peer && targetState.pendingIce.length) {
+    await peer.addIceCandidate(targetState.pendingIce.shift());
+  }
 }
 
 function configureDataChannel(channel) {
+  const targetState = state, roomId = state.roomId;
+  const current = () => strategyIdleRoomIsCurrent(targetState, roomId) && targetState.channel === channel;
   state.channel = channel;
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
+    if (!current()) { channel.close(); return; }
     state.channelReady = true;
     state.peerStatus = "● P2P接続済み";
     sendProfileAvatar().catch(handleRecoverableError);
@@ -4704,22 +4980,26 @@ function configureDataChannel(channel) {
     render();
     reactToRoomData().catch(handleRecoverableError);
   };
-  channel.onclose = () => { state.channelReady = false; state.peerStatus = "P2P接続が切れました"; };
-  channel.onerror = () => showToast("画像・音声転送で通信エラーが発生しました。");
-  channel.onmessage = (event) => handleChannelMessage(event.data).catch(handleRecoverableError);
+  channel.onclose = () => { if (current()) { state.channelReady = false; state.peerStatus = "P2P接続が切れました"; } };
+  channel.onerror = () => { if (current()) showToast("画像・音声転送で通信エラーが発生しました。"); };
+  channel.onmessage = (event) => { if (current()) handleChannelMessage(event.data).catch(handleRecoverableError); };
 }
 
 function configureVideoDataChannel(channel) {
+  const targetState = state, roomId = state.roomId;
+  const current = () => strategyIdleRoomIsCurrent(targetState, roomId) && targetState.videoChannel === channel;
   state.videoChannel = channel;
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
+    if (!current()) { channel.close(); return; }
     state.videoChannelReady = true;
     state.opponentReviewMediaReceiving = true;
     sendStrategyReviewMediaPermission();
     refreshStrategyVideoPanel();
   };
   channel.onclose = () => {
+    if (!current()) return;
     state.videoChannelReady = false;
     state.incomingVideoTransfer = null;
     if (state.reviewAssetChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
@@ -4727,30 +5007,36 @@ function configureVideoDataChannel(channel) {
     refreshStrategyVideoPanel();
   };
   channel.onerror = () => {
+    if (!current()) return;
     state.videoChannelReady = false;
     if (state.reviewAssetChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
     showToast("短尺映像のP2P通信に失敗しました。チャットと対戦は続けられます。");
     refreshStrategyReviewAssetPanel();
     refreshStrategyVideoPanel();
   };
-  channel.onmessage = (event) => handleVideoChannelMessage(event.data).catch((error) => {
+  channel.onmessage = (event) => { if (!current()) return; return handleVideoChannelMessage(event.data).catch((error) => {
+    if (!current()) return;
     state.incomingVideoTransfer = null;
     console.error(error);
     showToast(error?.message || "短尺映像を受信できませんでした。チャットと対戦は続けられます。");
-  });
+  }); };
 }
 
 function configureStrategyReviewAssetDataChannel(channel) {
+  const targetState = state, roomId = state.roomId;
+  const current = () => strategyIdleRoomIsCurrent(targetState, roomId) && targetState.reviewAssetChannel === channel;
   state.reviewAssetChannel = channel;
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = DATA_BUFFER_LIMIT / 2;
   channel.onopen = () => {
+    if (!current()) { channel.close(); return; }
     state.reviewAssetChannelReady = true;
     state.opponentReviewMediaReceiving = true;
     sendStrategyReviewMediaPermission();
     refreshStrategyReviewAssetPanel();
   };
   channel.onclose = () => {
+    if (!current()) return;
     state.reviewAssetChannelReady = false;
     if (state.videoChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
     state.incomingReviewAssetTransfer = null;
@@ -4758,6 +5044,7 @@ function configureStrategyReviewAssetDataChannel(channel) {
     refreshStrategyVideoPanel();
   };
   channel.onerror = () => {
+    if (!current()) return;
     state.reviewAssetChannelReady = false;
     if (state.videoChannel?.readyState !== "open") state.opponentReviewMediaReceiving = false;
     state.incomingReviewAssetTransfer = null;
@@ -4765,11 +5052,12 @@ function configureStrategyReviewAssetDataChannel(channel) {
     refreshStrategyReviewAssetPanel();
     refreshStrategyVideoPanel();
   };
-  channel.onmessage = (event) => handleStrategyReviewAssetChannelMessage(event.data).catch((error) => {
+  channel.onmessage = (event) => { if (!current()) return; return handleStrategyReviewAssetChannelMessage(event.data).catch((error) => {
+    if (!current()) return;
     state.incomingReviewAssetTransfer = null;
     console.error(error);
     showToast(error?.message || "品評会メディアを受信できませんでした。チャットは続けられます。");
-  });
+  }); };
 }
 
 async function handleStrategyReviewAssetChannelMessage(data) {
@@ -5183,9 +5471,28 @@ function waitForDataBuffer(channel = state.channel) {
 }
 
 async function submitDecision(decision) {
+  if (strategyPrestartProgressBlocked()) return;
+  const targetState = state, roomId = state.roomId, uid = state.uid;
+  if (!roomId || !["intro", "waitingDecision"].includes(state.screen)) return;
   state.screen = decision === "withdraw" ? "withdrawn" : "waitingDecision";
   render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/decisions/${state.uid}`), decision);
+  try {
+    await set(ref(database, `online/strategyRooms/${roomId}/decisions/${uid}`), decision);
+  } catch (error) {
+    await handleStrategyPrestartWriteFailure(targetState, roomId, error, "intro");
+  }
+}
+
+async function handleStrategyPrestartWriteFailure(targetState, roomId, error, fallbackScreen) {
+  if (!strategyIdleRoomIsCurrent(targetState, roomId)) return;
+  if (Number(targetState.roomData?.prestartDeadlineAt) > 0 && !strategyRoomHasStarted(targetState.roomData)) {
+    try { await confirmStrategyPrestartExpiry(targetState, roomId); }
+    catch { /* The deadline guard retries without permitting another session. */ }
+  }
+  if (!strategyIdleRoomIsCurrent(targetState, roomId) || targetState.idleCleanupPending) return;
+  if (!strategyRoomHasStarted(targetState.roomData)) targetState.screen = fallbackScreen;
+  render();
+  showToast(error?.message || "開始前の通信に失敗しました。通信状態を確認してもう一度お試しください。");
 }
 
 function stopReviewClock() {
@@ -5440,6 +5747,7 @@ function removeDeckItem(token) {
 }
 
 async function lockDeck() {
+  if (strategyPrestartProgressBlocked()) return;
   if (!strategyDeckIsComplete()) return showToast("戦略型はメイン5枚とリザーブ5枚の実画像をそろえてください。");
   const targetState = state;
   const roomId = targetState.roomId;
@@ -5458,7 +5766,7 @@ async function lockDeck() {
       targetState.screen = "deck";
       render();
     }
-    showToast(error?.message || "デッキを封印できませんでした。通信状態を確認してもう一度お試しください。");
+    await handleStrategyPrestartWriteFailure(targetState, roomId, error, "deck");
     return;
   }
   if (!active || state !== targetState || targetState.roomId !== roomId) return;
@@ -5468,9 +5776,16 @@ async function lockDeck() {
 }
 
 async function startBattle() {
+  if (strategyPrestartProgressBlocked() || state.screen !== "identity") return;
+  const targetState = state, roomId = state.roomId, uid = state.uid;
+  if (!roomId || !uid) return;
   state.screen = "waitingBattle";
   render();
-  await set(ref(database, `online/strategyRooms/${state.roomId}/battleReady/${state.uid}`), true);
+  try {
+    await set(ref(database, `online/strategyRooms/${roomId}/battleReady/${uid}`), true);
+  } catch (error) {
+    await handleStrategyPrestartWriteFailure(targetState, roomId, error, "identity");
+  }
 }
 
 async function failWeaknessIntegrityCheck(message = "弱点の封印の照合に失敗しました。この対戦はノーコンテストです。") {
@@ -5485,7 +5800,7 @@ function both(object) {
 }
 
 function strategyRoomOperationIsCurrent(targetState, roomId) {
-  if (targetState.playerSafetyStopped) return false;
+  if (targetState.playerSafetyStopped || targetState.idleStopped) return false;
   return Boolean(active
     && state === targetState
     && state.roomId === roomId
@@ -5496,10 +5811,18 @@ function strategyRoomOperationIsCurrent(targetState, roomId) {
 }
 
 async function reactToRoomData() {
-  if (!active || !state.roomId) return;
+  if (!active || !state.roomId || state.idleStopped) return;
   if (state.reacting) { state.reactAgain = true; return; }
   state.reacting = true;
   try {
+    if (state.roomData.destroyed?.reason === "prestart-timeout") {
+      await finishStrategyPrestartExpiry(state, state.roomId);
+      return;
+    }
+    if (strategyRoomHasStarted(state.roomData)) {
+      state.idleCleanupPending = false;
+      stopStrategyPrestartGuard();
+    }
     if (state.roomData.destroyed && state.roomData.destroyed.by !== state.uid) return handleOpponentDestroyed();
     const decisions = state.roomData.decisions || {};
     if (Object.values(decisions).includes("withdraw")) {
@@ -5773,16 +6096,16 @@ async function updatePublicPresence(nextState) {
   }
 }
 
-async function cleanupPublicPresence() {
-  window.clearInterval(state.publicPresenceHeartbeat);
-  state.publicPresenceHeartbeat = null;
-  const disconnect = state.publicPresenceDisconnect;
-  const id = state.publicPresenceId || state.publicPresencePendingId;
-  const ownerUid = state.uid;
-  state.publicPresenceDisconnect = null;
-  state.publicPresenceId = "";
-  state.publicPresencePendingId = "";
-  state.publicPresenceState = "";
+async function cleanupPublicPresence(targetState = state) {
+  window.clearInterval(targetState.publicPresenceHeartbeat);
+  targetState.publicPresenceHeartbeat = null;
+  const disconnect = targetState.publicPresenceDisconnect;
+  const id = targetState.publicPresenceId || targetState.publicPresencePendingId;
+  const ownerUid = targetState.uid;
+  targetState.publicPresenceDisconnect = null;
+  targetState.publicPresenceId = "";
+  targetState.publicPresencePendingId = "";
+  targetState.publicPresenceState = "";
   window.HariaiOnline?.syncBattlePresenceCheckPanels?.("strategy");
   await disconnect?.cancel?.().catch(() => {});
   if (!id || !ownerUid) return;
@@ -5796,6 +6119,7 @@ async function cleanupPublicPresence() {
 
 function requestHome() {
   if (!active || state.normalRouteBusy) return;
+  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("通信の終了確認が完了するまでお待ちください。");
   if ((state.finalizationBusy || state.resultClaimCommitted) && !["gameover", "review"].includes(state.screen)) {
     showToast("対戦結果を確定中です。完了するまでお待ちください。");
     return;
@@ -5872,6 +6196,10 @@ async function handleOpponentDestroyed() {
 }
 
 async function cancelMatching() {
+  if (state.idleCleanupPending || state.searchIdleGuard?.expired) {
+    state.searchIdleGuard?.retry();
+    return showToast("検索の終了を安全に確認しています。少し待ってからお試しください。");
+  }
   await cleanupMatchmaking(false);
   await cleanupPublicPresence();
   state.screen = "profile";
@@ -5901,6 +6229,7 @@ function beginResultNavigation(triggerId = "") {
 }
 
 async function resetStrategySetup() {
+  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("前の通信の終了確認が完了するまでお待ちください。");
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -5963,6 +6292,7 @@ async function retryConnection() {
 }
 
 async function leaveToLanding() {
+  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("通信の終了確認が完了するまでお待ちください。");
   if (state.normalRouteBusy) return;
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
@@ -5982,6 +6312,7 @@ async function leaveToLanding() {
 }
 
 async function leaveToNormal1on1() {
+  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("通信の終了確認が完了するまでお待ちください。");
   if (!active || state.normalRouteBusy) return;
   const targetState = state;
   targetState.normalRouteBusy = true;
@@ -6005,6 +6336,7 @@ async function leaveToNormal1on1() {
 }
 
 async function leaveToFreeTable() {
+  if (state.idleCleanupPending || state.idleCleanupPromise) return showToast("通信の終了確認が完了するまでお待ちください。");
   if (isPostMatchTipBusy("strategy", state.roomId, state.uid)) {
     showToast("差し入れの送信が終わるまでお待ちください。");
     return;
@@ -6024,8 +6356,7 @@ async function leaveToFreeTable() {
   }
 }
 
-async function cleanupMatchmaking(keepActive) {
-  const targetState = state;
+async function cleanupMatchmaking(keepActive, { targetState = state, skipServerWrites = false } = {}) {
   const uid = targetState.uid;
   const joinedAt = targetState.queueJoinedAt;
   const queueRecovery = targetState.queueRecoveryPromise;
@@ -6033,31 +6364,34 @@ async function cleanupMatchmaking(keepActive) {
   const ownedOfferRoomId = pendingOffer?.roomId || targetState.acceptingOfferRoomId
     || targetState.pendingIncomingOffer?.roomId || targetState.safetyProposal?.roomId;
   const ownedActiveRoomId = targetState.roomId || ownedOfferRoomId;
-  state.matchmakingGeneration = ++strategyMatchmakingGenerationCounter;
-  state.matchmakingConnected = false;
-  state.queueConnectionEpoch += 1;
-  stopStrategyOfferWatch(state.hostOfferWatch);
-  state.hostOfferWatch = null;
-  window.clearTimeout(state.matchScopeTimer);
-  window.clearInterval(state.queueHeartbeat);
-  window.clearInterval(state.offerPollTimer);
-  state.matchScopeTimer = null;
-  state.matchScopeAvailable = false;
-  state.matchScopeExpanded = false;
-  state.queueHeartbeat = null;
-  state.offerPollTimer = null;
-  state.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
-  const queueDisconnect = state.queueDisconnect;
-  state.queueDisconnect = null;
+  targetState.searchIdleGuard?.dispose();
+  targetState.searchIdleGuard = null;
+  targetState.matchmakingGeneration = ++strategyMatchmakingGenerationCounter;
+  targetState.matchmakingConnected = false;
+  targetState.queueConnectionEpoch += 1;
+  stopStrategyOfferWatch(targetState.hostOfferWatch);
+  targetState.hostOfferWatch = null;
+  window.clearTimeout(targetState.matchScopeTimer);
+  window.clearInterval(targetState.queueHeartbeat);
+  window.clearInterval(targetState.offerPollTimer);
+  targetState.matchScopeTimer = null;
+  targetState.matchScopeAvailable = false;
+  targetState.matchScopeExpanded = false;
+  targetState.queueHeartbeat = null;
+  targetState.offerPollTimer = null;
+  targetState.matchUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+  targetState.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
+  const queueDisconnect = targetState.queueDisconnect;
+  targetState.queueDisconnect = null;
   const cancelQueueDisconnect = queueStrategyDisconnectOperation(() => queueDisconnect?.cancel().catch(() => {}));
-  state.pendingOffer = null;
-  state.pendingIncomingOffer = null;
-  state.safetyProposal = null;
+  targetState.pendingOffer = null;
+  targetState.pendingIncomingOffer = null;
+  targetState.safetyProposal = null;
   if (!uid) return;
   // Finish any in-flight repair before a subsequent attempt can register its
   // onDisconnect callback on the same Firebase connection and UID path.
   await Promise.allSettled([cancelQueueDisconnect, queueRecovery]);
+  if (skipServerWrites) return;
   const removals = [removeStrategyQueueEntryIfCurrent(ref(database, `online/strategyQueue/${uid}`), joinedAt)];
   if (!keepActive && ownedActiveRoomId) removals.push(runTransaction(ref(database, `online/strategyActive/${uid}`),
     (value) => value === null || value === ownedActiveRoomId ? null : undefined));
@@ -6065,37 +6399,43 @@ async function cleanupMatchmaking(keepActive) {
   await Promise.allSettled(removals);
 }
 
-async function cleanupOnlineResources(keepActive) {
+async function cleanupOnlineResources(keepActive, { targetState = state, skipServerWrites = false } = {}) {
   clearActiveContact("strategy");
-  const roomId = state.roomId;
-  const uid = state.uid;
+  const roomId = targetState.roomId;
+  const uid = targetState.uid;
+  stopStrategyPrestartGuard(targetState);
   stopReviewClock();
   stopStrategyVideoRecording({ discard: true });
-  state.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
-  state.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
-  if (state.peer) {
-    state.peer.onicecandidate = null;
-    state.peer.ondatachannel = null;
-    state.peer.close();
+  targetState.roomUnsubscribers.splice(0).forEach((unsubscribe) => unsubscribe?.());
+  targetState.disconnectHandles.splice(0).forEach((handle) => handle.cancel?.().catch(() => {}));
+  if (targetState.peer) {
+    targetState.peer.onicecandidate = null;
+    targetState.peer.ondatachannel = null;
+    targetState.peer.onconnectionstatechange = null;
+    targetState.peer.close();
   }
-  state.channel?.close();
-  state.videoChannel?.close();
-  state.reviewAssetChannel?.close();
-  state.peer = null;
-  state.channel = null;
-  state.videoChannel = null;
-  state.videoChannelReady = false;
-  state.incomingVideoTransfer = null;
-  state.reviewAssetChannel = null;
-  state.reviewAssetChannelReady = false;
-  state.opponentReviewMediaReceiving = false;
-  state.incomingReviewAssetTransfer = null;
-  await cleanupMatchmaking(keepActive);
-  await cleanupPublicPresence();
-  if (roomId) {
+  for (const channel of [targetState.channel, targetState.videoChannel, targetState.reviewAssetChannel]) {
+    if (!channel) continue;
+    channel.onopen = null; channel.onclose = null; channel.onerror = null; channel.onmessage = null;
+    channel.close();
+  }
+  targetState.peer = null;
+  targetState.channel = null;
+  targetState.channelReady = false;
+  targetState.videoChannel = null;
+  targetState.videoChannelReady = false;
+  targetState.incomingVideoTransfer = null;
+  targetState.reviewAssetChannel = null;
+  targetState.reviewAssetChannelReady = false;
+  targetState.opponentReviewMediaReceiving = false;
+  targetState.incomingReviewAssetTransfer = null;
+  await cleanupMatchmaking(keepActive, { targetState, skipServerWrites });
+  await cleanupPublicPresence(targetState);
+  if (roomId && !skipServerWrites) {
     await Promise.allSettled([
       set(ref(database, `online/strategyRooms/${roomId}/presence/${uid}`), { online: false, updatedAt: serverTimestamp() }),
-      keepActive ? Promise.resolve() : remove(ref(database, `online/strategyActive/${uid}`)),
+      keepActive ? Promise.resolve() : runTransaction(ref(database, `online/strategyActive/${uid}`),
+        (value) => value === null || value === roomId ? null : undefined),
     ]);
   }
 }
@@ -6138,9 +6478,18 @@ function handleFatalError(error) {
 }
 
 window.addEventListener("beforeunload", () => {
+  state.searchIdleGuard?.dispose();
+  stopStrategyPrestartGuard();
   stopReviewClock();
   releaseAllImages();
   state.peer?.close();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!active) return;
+  state.searchIdleGuard?.sync();
+  state.prestartGuard?.sync();
+  updateStrategyIdleNotice();
 });
 
 window.addEventListener("hariai-ranking-dashboard-updated", () => {

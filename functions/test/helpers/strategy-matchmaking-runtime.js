@@ -7,6 +7,7 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.resolve(__dirname, "../../../strategy.js"), "utf8");
 const functionNames = [
+  "strategySearchProgressBlocked",
   "isCurrentStrategyMatchmakingGeneration", "removeStrategyQueueEntryIfCurrent",
   "strategyQueueContextIsCurrent", "queueStrategyDisconnectOperation", "armStrategyQueueDisconnect",
   "refreshStrategyMatchmakingQueue", "watchStrategyMatchmakingConnection", "attemptToHost",

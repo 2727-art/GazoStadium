@@ -175,6 +175,7 @@ test("strategy cuts live channels synchronously while the departure request is u
   };
   const sandbox = { state,
     clearActiveContact: () => order.push("registry"), stopReviewClock() {}, stopStrategyVideoRecording() {},
+    stopStrategyPrestartGuard() {},
     cleanupMatchmaking: () => { order.push("network"); return new Promise(() => {}); }, cleanupPublicPresence: async () => {},
   };
   vm.runInNewContext(`${source}\n globalThis.cleanup = cleanupOnlineResources;`, sandbox);

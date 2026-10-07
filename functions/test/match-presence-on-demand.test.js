@@ -115,7 +115,7 @@ test("matching waits for an exact current or pending presence id before enabling
   );
   const strategyCleanupPresence = sourceBetween(
     strategy,
-    "async function cleanupPublicPresence()",
+    "async function cleanupPublicPresence(targetState = state)",
     "function requestHome()",
   );
 
@@ -134,8 +134,8 @@ test("matching waits for an exact current or pending presence id before enabling
   assert.match(strategyStartPresence, /state\.publicPresenceId = presenceId;\s*state\.publicPresencePendingId = "";/);
   assert.match(normalCleanupPresence, /targetState\.publicPresenceId \|\| targetState\.publicPresencePendingId/);
   assert.match(normalCleanupPresence, /targetState\.publicPresencePendingId = "";/);
-  assert.match(strategyCleanupPresence, /state\.publicPresenceId \|\| state\.publicPresencePendingId/);
-  assert.match(strategyCleanupPresence, /state\.publicPresencePendingId = "";/);
+  assert.match(strategyCleanupPresence, /targetState\.publicPresenceId \|\| targetState\.publicPresencePendingId/);
+  assert.match(strategyCleanupPresence, /targetState\.publicPresencePendingId = "";/);
 });
 
 test("the on-demand panel keeps its query indexed and ships fresh static assets", () => {

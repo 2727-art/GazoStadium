@@ -1,10 +1,14 @@
 "use strict";
 
 const { freezeMatchImagePreferences } = require("./match-image-preferences");
+const { randomBytes } = require("node:crypto");
 
 const ROOM_ID = /^[-A-Za-z0-9_]{20}$/;
 const FRESH_MS = 45000;
 const OFFER_MS = 20000;
+const PRESTART_MS = 5 * 60 * 1000;
+const SEARCH_STOP_GUARD_MS = 2 * 60 * 1000;
+const SEARCH_STOP_GUARD = /^idle:(\d{13}):[a-f0-9]{12}$/;
 // 戦略型1on1「貼り合い本式」。ID一覧はクライアントの strategy-hariai-core.mjs と一致させる。
 const PROTOCOL_VERSION = 3;
 const QUEUE_WAITING = "waiting-v3";
@@ -36,6 +40,97 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
     && Number.isSafeInteger(row.joinedAt) && row.joinedAt > 0 && row.joinedAt <= at
     && Number.isSafeInteger(row.lastSeen) && row.lastSeen >= at - FRESH_MS && row.lastSeen <= at + 5000;
   const args = (roomId, room) => ({ ...room, roomId, mode: "strategy", firstUid: room.hostUid, secondUid: room.guestUid });
+  const guardUntil = (value) => Number(typeof value === "string" ? SEARCH_STOP_GUARD.exec(value)?.[1] || 0 : 0);
+  const battleHasStarted = (room) => room.battleReady?.[room.hostUid] === true && room.battleReady?.[room.guestUid] === true
+    || Boolean(room.moves || room.resultClaims || room.finished || room.serverFinalized);
+  const prestartIndexRef = (roomId) => realtime.ref(`online/strategyPrestartExpirations/${roomId}`);
+  const prestartIndexMatches = (value, room) => value?.hostUid === room.hostUid && value?.guestUid === room.guestUid
+    && value?.safetyGrantId === room.safetyGrantId;
+  async function removePrestartIndex(roomId, room) {
+    await prestartIndexRef(roomId).transaction((value) => value == null || prestartIndexMatches(value, room) ? null : undefined);
+  }
+  async function releasePrestart(roomId, room) {
+    // A delayed expiry may finish after either participant has started a new
+    // search. Never delete a queue or active pointer without its exact fence.
+    await Promise.all([room.hostUid, room.guestUid].map(async (uid) => {
+      await realtime.ref(`online/strategyActive/${uid}`).transaction((value) => value == null || value === roomId ? null : undefined);
+      await realtime.ref(`online/strategyQueue/${uid}`).transaction((value) => value == null
+        || value.uid === uid && value.joinedAt === room.queueJoinedAt?.[uid]
+          && (!value.roomId || value.roomId === roomId) ? null : undefined);
+      await realtime.ref(`online/strategyOffers/${uid}/${roomId}`).transaction((value) => value == null
+        || value.roomId === roomId && value.fromUid === room.hostUid && value.toUid === room.guestUid ? null : undefined);
+    }));
+    await playerSafety.revokeContact(args(roomId, room));
+    await realtime.ref(`online/strategySafetyReservations/${roomId}`).transaction((value) => value == null
+      || value.hostUid === room.hostUid && value.guestUid === room.guestUid
+        && value.createdAt === room.createdAt ? null : undefined);
+    // Retain this durable retry record until every resource was released.
+    await removePrestartIndex(roomId, room);
+  }
+  async function expirePrestart(uid, data, { force = false } = {}) {
+    if (!force) requireCurrentProtocol(data);
+    const roomId = String(data.roomId || ""); if (!ROOM_ID.test(roomId)) fail();
+    let status = "missing";
+    const result = await realtime.ref(`online/strategyRooms/${roomId}`).transaction((room) => {
+      if (room == null) { status = "missing"; return null; }
+      if (!force && ![room.hostUid, room.guestUid].includes(uid)) {
+        throw new HttpsError("permission-denied", "この対戦を確認できません。");
+      }
+      if (room.destroyed?.reason === "prestart-timeout" && room.status === "expired") {
+        status = "expired"; return room;
+      }
+      if (battleHasStarted(room)) { status = "protected"; return; }
+      if (room.destroyed || !["active", "offered"].includes(room.status)) { status = "ended"; return; }
+      if (!Number.isSafeInteger(room.prestartDeadlineAt) || room.prestartDeadlineAt <= 0) { status = "legacy"; return; }
+      if (room.prestartDeadlineAt > now() || room.status !== "active") { status = "pending"; return; }
+      status = "expired";
+      return { ...room, status: "expired", destroyed: { by: room.hostUid, at: now(), reason: "prestart-timeout" } };
+    });
+    const room = result.snapshot.val();
+    const expired = result.committed && room?.status === "expired" && room.destroyed?.reason === "prestart-timeout";
+    if (expired) await releasePrestart(roomId, room);
+    else if (room && ["protected", "ended"].includes(status)) await removePrestartIndex(roomId, room);
+    return { expired: Boolean(expired), status: expired ? "expired" : status, roomId,
+      ...(room?.prestartDeadlineAt ? { prestartDeadlineAt: room.prestartDeadlineAt } : {}),
+      ...(expired ? { reason: "prestart-timeout" } : {}) };
+  }
+  async function stopWaiting(uid, data) {
+    requireCurrentProtocol(data);
+    if (!Number.isSafeInteger(data.joinedAt) || data.joinedAt <= 0 || data.joinedAt > now() + 5000) {
+      throw new HttpsError("invalid-argument", "検索の開始時刻を確認できません。");
+    }
+    const activeRef = realtime.ref(`online/strategyActive/${uid}`);
+    const guard = `idle:${now() + SEARCH_STOP_GUARD_MS}:${randomBytes(6).toString("hex")}`;
+    const locked = await activeRef.transaction((value) => value == null || guardUntil(value) > 0 && guardUntil(value) <= now() ? guard : undefined);
+    if (!locked.committed) {
+      const activeId = locked.snapshot.val();
+      if (guardUntil(activeId)) return { stopped: false, status: "occupied" };
+      const room = ROOM_ID.test(String(activeId || "")) ? await get(`strategyRooms/${activeId}`) : null;
+      if (room && Number.isSafeInteger(room.queueJoinedAt?.[uid]) && room.queueJoinedAt[uid] !== data.joinedAt) {
+        return { stopped: false, status: "resource-changed" };
+      }
+      return { stopped: false, status: "match-in-progress", ...(activeId ? { roomId: activeId } : {}),
+        ...(room ? { roomStatus: room.status, opponentUid: room.hostUid === uid ? room.guestUid : room.hostUid } : {}) };
+    }
+    try {
+      // Admin transactions may first receive null on a cold cache even though
+      // the previous transaction committed the guard. Probe null harmlessly so
+      // the server supplies the current value instead of aborting locally.
+      const owned = await activeRef.transaction((value) => value == null ? null
+        : value === guard && guardUntil(value) > now() ? value : undefined);
+      if (!owned.committed || owned.snapshot.val() !== guard) return { stopped: false, status: "occupied" };
+      const stopped = await realtime.ref(`online/strategyQueue/${uid}`).transaction((value) => {
+        if (guardUntil(guard) <= now()) return;
+        return value == null ? null
+          : value.uid === uid && value.protocolVersion === PROTOCOL_VERSION && value.joinedAt === data.joinedAt
+            && value.state === QUEUE_WAITING && !value.roomId ? null : undefined;
+      });
+      return { stopped: stopped.committed, status: stopped.committed ? "stopped"
+        : guardUntil(guard) <= now() ? "occupied" : "resource-changed" };
+    } finally {
+      await activeRef.transaction((value) => value == null || value === guard ? null : undefined);
+    }
+  }
   async function playerRecord(uid, value) {
     const clues = listOfThree(value?.clues);
     const commits = listOfThree(value?.weaknessCommits);
@@ -87,6 +182,7 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
     const ownPlayer = await playerRecord(uid, data.player);
     const activeId = await get(`strategyActive/${uid}`);
     if (activeId) {
+      if (guardUntil(activeId) > now()) return { status: "waiting" };
       const previous = await get(`strategyRooms/${activeId}`);
       if (previous && !previous.destroyed && ["offered", "active"].includes(previous.status)) {
         if (await playerSafety.checkContact(args(activeId, previous))) {
@@ -175,10 +271,18 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
         [uid]: guestQueue.ratingPreference,
       },
     }, now());
+    // Persist a server-only deadline/retry index before activation. Concurrent
+    // acceptance and retries reuse the first deadline rather than extending it.
+    const expiry = await prestartIndexRef(roomId).transaction((value) => value == null ? {
+      expiresAt: now() + PRESTART_MS, hostUid: room.hostUid, guestUid: room.guestUid, safetyGrantId: room.safetyGrantId,
+    } : prestartIndexMatches(value, room) ? value : undefined);
+    const deadline = expiry.snapshot.val()?.expiresAt;
+    if (!expiry.committed || !Number.isSafeInteger(deadline) || deadline <= now()) { await expire(uid, { roomId }); fail(); }
     const activated = await realtime.ref(`online/strategyRooms/${roomId}`).transaction((value) => {
       if (value == null) return null;
       if (value?.status !== "offered" || value.destroyed || value.safetyGrantId !== room.safetyGrantId) return;
-      return { ...value, status: "active", players: { ...value.players, [uid]: player } };
+      if (deadline <= now()) return;
+      return { ...value, status: "active", prestartDeadlineAt: deadline, players: { ...value.players, [uid]: player } };
     });
     if (!activated.committed || !await playerSafety.checkContact(args(roomId, room))) fail();
     await realtime.ref(`online/strategyOffers/${uid}/${roomId}`).remove();
@@ -195,9 +299,23 @@ function createPlayerSafetyStrategy({ realtime, HttpsError, playerSafety, now = 
       else if (room.status === "offered") await expire(reservation.hostUid, { roomId }, { force: true });
       else await realtime.ref(`online/strategySafetyReservations/${roomId}`).remove();
     }
-    return { examined: Object.keys(rows).length };
+    const expirations = (await realtime.ref("online/strategyPrestartExpirations").orderByChild("expiresAt")
+      .endAt(now()).limitToFirst(100).get()).val() || {};
+    for (const [roomId, expiration] of Object.entries(expirations)) {
+      const outcome = await expirePrestart(expiration.hostUid, { roomId }, { force: true });
+      if (outcome.status === "missing") await removePrestartIndex(roomId, expiration);
+      if (outcome.status === "legacy") {
+        const room = await get(`strategyRooms/${roomId}`);
+        // An interrupted acceptance can leave only its durable index. Ordinary
+        // legacy active rooms are untouched; a still-offered room is expired.
+        if (room?.status === "offered") await expire(expiration.hostUid, { roomId }, { force: true });
+        const current = await get(`strategyRooms/${roomId}`);
+        if (!current?.prestartDeadlineAt) await removePrestartIndex(roomId, expiration);
+      }
+    }
+    return { examined: Object.keys(rows).length, prestartExamined: Object.keys(expirations).length };
   }
-  return { match, accept, expire, cleanup };
+  return { match, accept, expire, stopWaiting, expirePrestart, cleanup };
 }
 module.exports = {
   createPlayerSafetyStrategy,

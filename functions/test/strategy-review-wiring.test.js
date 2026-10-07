@@ -189,7 +189,7 @@ test("review image and audio attachments use a separate consent-gated P2P channe
     strategySource,
     /function releaseMatchMedia\(\)[\s\S]*?releaseStrategyVideoData\(\);[\s\S]*?releaseStrategyReviewAssetData\(\);/,
   );
-  assert.match(strategySource, /state\.reviewAssetChannel\?\.close\(\)/);
+  assert.match(strategySource, /for \(const channel of \[targetState\.channel, targetState\.videoChannel, targetState\.reviewAssetChannel\]\)[\s\S]*?channel\.close\(\)/);
   assert.match(strategyStyles, /\.strategy-review-gallery-grid\b/);
   assert.match(strategyStyles, /\.strategy-review-asset-panel\b/);
   assert.match(indexHtml, /strategy\.css\?v=[^"]*review-assets-v1/);

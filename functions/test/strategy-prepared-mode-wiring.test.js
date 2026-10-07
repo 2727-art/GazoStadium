@@ -782,6 +782,8 @@ test("deckReady is locally committed only after the server ACK and identity requ
       RESERVE_COUNT: 5,
       database: {},
       strategyDeckIsComplete: () => true,
+      strategyPrestartProgressBlocked: () => false,
+      async handleStrategyPrestartWriteFailure() { effects.toasts += 1; },
       persistCompleteStrategyDeck: async () => false,
       handleRecoverableError() {},
       ref: (_database, location) => location,
