@@ -921,13 +921,13 @@
           <h1 class="vl-title">貼って、刺して、<br />点で返す。</h1>
           <p class="vl-lead">推しの画像にひとことを添えて送り合い、刺さり具合を点数で返す。</p>
         </div>
-        <div class="vl-hero-thread" role="img" aria-label="やりとりの例。相手が画像に「ねぇ、これ好きでしょ？♡」と添えて貼り、こちらが9点で返す。">
+        <div class="vl-hero-thread" role="img" aria-label="やりとりの例。相手が画像に「ねぇ、これ好きでしょ？♡」と添えて貼り、こちらが90点で返す。">
           <div class="ha-msg is-theirs" aria-hidden="true"><span class="ha-avatar">小</span><div class="ha-msg-body">
             <span class="ha-photo is-placeholder"><i></i>画像</span>
             <span class="ha-bubble">ねぇ、これ好きでしょ？♡</span>
           </div></div>
           <div class="ha-msg is-mine" aria-hidden="true"><div class="ha-msg-body">
-            <span class="ha-bubble ha-score-bubble"><b class="ha-score-number">9<small>点</small></b>っ…9点。ずるい…♡</span>
+            <span class="ha-bubble ha-score-bubble"><b class="ha-score-number">90<small>点</small></b>っ…90点。ずるい…♡</span>
             <span class="ha-meter10">${heroMeter}</span>
           </div></div>
         </div>

@@ -57,3 +57,15 @@ test("the landing layout ships with its stylesheet and viewport-fit cache marker
   assert.match(html, /velvet\.css\?v=velvet-stage-v1/);
   assert.match(html, /name="viewport" content="[^"]*viewport-fit=cover/);
 });
+
+test("the homepage illustration consistently shows 90 points in visible and accessible copy", () => {
+  const app = read("app.js");
+  const start = app.indexOf('<div class="vl-hero-thread"');
+  const end = app.indexOf('<section class="vl-board"', start);
+  assert.ok(start >= 0 && end > start, "homepage hero example exists");
+  const hero = app.slice(start, end);
+  assert.ok(hero.includes('こちらが90点で返す。'), "accessible description uses 90");
+  assert.ok(hero.includes('<b class="ha-score-number">90<small>点</small></b>っ…90点。'), "score and reply both use 90");
+  assert.doesNotMatch(hero, /こちらが9点|>9<small>|っ…9点/);
+  assert.match(read("index.html"), /app\.js\?v=[^"]*hero-score-90-v1/);
+});
