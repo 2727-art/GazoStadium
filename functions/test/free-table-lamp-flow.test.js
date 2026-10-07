@@ -214,7 +214,7 @@ test("lamp guidance stays noncompetitive and keeps safe choices explicit", () =>
   const appSource = read("app.js");
   const freeTableSource = read("free-table.js");
   const freeTableCardStart = appSource.indexOf('<article class="lobby-mode-card free-table-status">');
-  const freeTableCardEnd = appSource.indexOf('<article class="lobby-mode-card market">', freeTableCardStart);
+  const freeTableCardEnd = appSource.indexOf("</article>", freeTableCardStart) + "</article>".length;
   assert.ok(freeTableCardStart >= 0 && freeTableCardEnd > freeTableCardStart);
   const featureCopy = [
     sourceBetween(

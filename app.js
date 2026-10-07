@@ -949,7 +949,6 @@
     const strategyStats = modeStats("strategy");
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const freeTableLamp = freeTableLampPresentation(freeTableStats);
-    const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
     const lobbyRefresh = lobbyStatsRefreshPresentation(
       window.HariaiOnline?.getLobbyStatsRefreshStatus?.() || { available: true, loading: true },
     );
@@ -1036,11 +1035,6 @@
             <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
             <div><small>同席中</small><strong><span id="lobbyFreeTableSeatedCount">${statValue(freeTableStats.seatedRooms)}</span><em>卓</em></strong></div>
           </div><button class="button lobby-free-table-lamp-link" id="freeTableStatusButton" type="button" data-free-table-intent="lamp"${freeTableLamp.lit ? "" : " hidden"}>${freeTableLamp.lit ? `◌ お迎え中の${freeTableLamp.welcomingRooms}卓を見る` : ""}</button></article>
-          <article class="lobby-mode-card market"><div class="lobby-mode-head"><span>旧推し値市場</span><small>進行中の商談のみ</small></div><div class="lobby-mode-counts market-counts">
-            <div><small>売り手待機</small><strong><span id="lobbyMarketSellerWaitingCount">${statValue(marketStats.sellerWaiting)}</span><em>人</em></strong></div>
-            <div><small>買い手待機</small><strong><span id="lobbyMarketBuyerWaitingCount">${statValue(marketStats.buyerWaiting)}</span><em>人</em></strong></div>
-            <div><small>商談中</small><strong><span id="lobbyMarketNegotiatingCount">${statValue(marketStats.negotiating)}</span><em>件</em></strong></div>
-          </div></article>
         </div>
         <div class="lobby-stats-refresh" id="lobbyStatsRefreshPanel" aria-live="polite" aria-busy="${lobbyRefresh.busy ? "true" : "false"}">
           <button class="button button-ghost" id="lobbyStatsRefreshButton" type="button"${lobbyRefresh.disabled ? " disabled" : ""}>${escapeHtml(lobbyRefresh.label)}</button>
@@ -1058,7 +1052,7 @@
       </section>
       <details class="vl-safe">
         <summary><b>安心して遊べる理由</b><span>匿名で参加</span><span>画像は相手へP2Pで直接</span><span>サーバーに保存しない</span></summary>
-        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
+        <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
         <p class="mode-note">ソロトレーニングの候補画像（最大10枚）・抽選結果・自己申告結果は端末内だけで使用します。対人モードの画像・音声・短尺動画は、対戦中または自由卓の同席中だけ相手へ直接送信され、Firebaseには保存されません。</p>
       </details>
     </section>`;

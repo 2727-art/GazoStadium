@@ -64,7 +64,7 @@ test("public lobby stats use one initial batch and manual batches without presen
     "server time should be sampled before validating public snapshots",
   );
   assert.match(refreshSource, /get\(ref\(database, "online\/publicPresence"\)\)/);
-  assert.match(refreshSource, /get\(ref\(database, "online\/publicMarketPresence"\)\)/);
+  assert.doesNotMatch(online, /publicMarketPresence|summarizeMarketPresence|marketPresenceEntries/);
   assert.match(refreshSource, /loadFreeTablePublicStatsSnapshot\(\)/);
   assert.doesNotMatch(refreshSource, /loadAiTextTrainingPublicStatsSnapshot|aiTrainingResult|aiTrainingStats/);
   assert.doesNotMatch(refreshSource, /onValue\(/);
@@ -89,13 +89,10 @@ test("refresh batches preserve previous values on partial failure and never age 
   );
 
   assert.match(refreshSource, /let nextLobbyPresenceEntries = lobbyPresenceEntries/);
-  assert.match(refreshSource, /let nextMarketPresenceEntries = marketPresenceEntries/);
   assert.match(refreshSource, /let nextFreeTableStats = \{ \.\.\.lobbyStats\.freeTable \}/);
-  assert.doesNotMatch(refreshSource, /nextAiTrainingStats|lobbyStats\.aiTextTraining/);
+  assert.doesNotMatch(refreshSource, /nextAiTrainingStats|lobbyStats\.aiTextTraining|marketResult|refreshMarket|lobbyStats\.market/);
   assert.match(refreshSource, /refreshPresence: presenceResult\.status === "fulfilled"/);
-  assert.match(refreshSource, /refreshMarket: marketResult\.status === "fulfilled"/);
   assert.match(online, /refreshPresence \? \{[\s\S]*\} : \{ \.\.\.previousStats\[mode\] \}/);
-  assert.match(online, /if \(!refreshMarket\) \{\s*nextStats\.market = \{ \.\.\.previousStats\.market \}/);
   assert.match(refreshSource, /successCount === 0/);
   assert.match(refreshSource, /successCount < results\.length/);
   assert.match(refreshSource, /一部の状況を更新できませんでした。/);
@@ -130,6 +127,7 @@ test("manual refresh assets use a distinct Hosting cache generation", () => {
       html,
       new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*lobby-manual-refresh-v1`),
     );
+    assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*retire-market-lobby-v1`));
   }
   assert.match(readme, /ページ初回表示時に一度だけ自動取得/);
   assert.match(readme, /30秒の連打防止と最終更新時刻/);

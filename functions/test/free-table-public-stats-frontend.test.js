@@ -9,11 +9,11 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 test("landing shows free table room counts with gentle non-competitive copy", () => {
   const appSource = read("app.js");
   const freeTableCardStart = appSource.indexOf('<article class="lobby-mode-card free-table-status">');
-  const marketCardStart = appSource.indexOf('<article class="lobby-mode-card market">');
-  const freeTableCard = appSource.slice(freeTableCardStart, marketCardStart);
+  const freeTableCardEnd = appSource.indexOf("</article>", freeTableCardStart) + "</article>".length;
+  const freeTableCard = appSource.slice(freeTableCardStart, freeTableCardEnd);
 
   assert.ok(freeTableCardStart >= 0);
-  assert.ok(freeTableCardStart < marketCardStart);
+  assert.ok(freeTableCardStart < freeTableCardEnd);
   assert.match(appSource, /aria-label="モード別の参加・開室状況"/);
   assert.match(freeTableCard, /<span>貼り合い自由卓<\/span><small>FREE TABLE<\/small>/);
   assert.match(freeTableCard, /<small>お迎え中<\/small><strong><span id="lobbyFreeTableWelcomingCount">/);

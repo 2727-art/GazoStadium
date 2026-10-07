@@ -100,7 +100,7 @@ test("room heartbeat preserves the other role without changing business state", 
   });
 });
 
-test("landing UI, server mirror, heartbeat, and rules stay wired together", () => {
+test("retired market lobby stats are absent while historical server mirror, heartbeat, and rules stay intact", () => {
   const appSource = read("app.js");
   const onlineSource = read("online.js");
   const marketSource = read("market.js");
@@ -112,11 +112,12 @@ test("landing UI, server mirror, heartbeat, and rules stay wired together", () =
     "lobbyMarketBuyerWaitingCount",
     "lobbyMarketNegotiatingCount",
   ]) {
-    assert.match(appSource, new RegExp(`id="${id}"`));
-    assert.match(onlineSource, new RegExp(`${id}:`));
+    assert.doesNotMatch(appSource, new RegExp(`id="${id}"`));
+    assert.doesNotMatch(onlineSource, new RegExp(`${id}:`));
   }
-  assert.match(onlineSource, /online\/publicMarketPresence/);
-  assert.match(onlineSource, /summarizeMarketPresence/);
+  assert.doesNotMatch(onlineSource, /online\/publicMarketPresence|summarizeMarketPresence|market-presence\.mjs|marketPresenceEntries|lobbyStats\.market/);
+  assert.doesNotMatch(appSource, /lobbyStats\.market|class="lobby-mode-card market"|market-counts/);
+  assert.match(appSource, /id="valueMarketRankingButton"[^>]*>[\s\S]*?旧推し値市場の記録<\/button>/);
   assert.match(functionsSource, /crypto\.randomBytes\(20\)\.toString\("hex"\)/);
   assert.doesNotMatch(functionsSource, /eventId\(`(?:queue|room):\$\{/);
   assert.match(functionsSource, /\.orderByChild\("lastSeen"\)/);

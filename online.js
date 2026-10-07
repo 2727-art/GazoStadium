@@ -39,9 +39,6 @@ import {
   formatAnjuPayNumber,
 } from "./anju-pay-format.mjs?v=anju-pay-format-v1";
 import {
-  summarizeMarketPresence,
-} from "./market-presence.mjs?v=market-presence-v1";
-import {
   summarizeBattlePresence,
 } from "./battle-presence-stats.mjs?v=presence-check-v1";
 import {
@@ -492,7 +489,6 @@ let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
 let lobbyPresenceEntries = null;
-let marketPresenceEntries = null;
 let lobbyPublicStatsRefreshRequest = null;
 let lobbyPublicStatsLastAttemptAt = 0;
 let lobbyPublicStatsLastSuccessAt = 0;
@@ -516,7 +512,6 @@ const createLobbyStats = (
 ) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
   freeTable: { ...freeTableStats },
-  market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
 });
 let lobbyStats = createLobbyStats();
 const createBattlePresenceCheckState = () => ({
@@ -2213,7 +2208,6 @@ function getLobbyStats() {
   return {
     ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
     freeTable: { ...lobbyStats.freeTable },
-    market: { ...lobbyStats.market },
   };
 }
 
@@ -2959,7 +2953,6 @@ function refreshFreeTablePublicStatsImmediately() {
 function refreshLobbyStats({
   freeTableStats = freeTablePublicStats,
   refreshPresence = true,
-  refreshMarket = true,
 } = {}) {
   const now = Date.now() + Number(publicServerTimeOffset || 0);
   const freshAfter = now - PUBLIC_PRESENCE_FRESH_MS;
@@ -2981,11 +2974,6 @@ function refreshLobbyStats({
       nextStats[entry.mode][entry.state] += 1;
     });
   }
-  if (!refreshMarket) {
-    nextStats.market = { ...previousStats.market };
-  } else if (marketPresenceEntries !== null) {
-    nextStats.market = summarizeMarketPresence(marketPresenceEntries, now);
-  }
   lobbyStats = nextStats;
   renderLobbyStats();
 }
@@ -3006,9 +2994,6 @@ function renderLobbyStats() {
     boardStrategyPlayingCount: lobbyStats.strategy.playing,
     boardFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
     boardFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
-    lobbyMarketSellerWaitingCount: lobbyStats.market.sellerWaiting,
-    lobbyMarketBuyerWaitingCount: lobbyStats.market.buyerWaiting,
-    lobbyMarketNegotiatingCount: lobbyStats.market.negotiating,
   };
   Object.entries(values).forEach(([id, value]) => {
     const element = document.querySelector(`#${id}`);
@@ -3117,24 +3102,18 @@ async function refreshLobbyPublicStats({ initial = false } = {}) {
     }
     const results = await Promise.allSettled([
       withLobbyPublicStatsTimeout(get(ref(database, "online/publicPresence"))),
-      withLobbyPublicStatsTimeout(get(ref(database, "online/publicMarketPresence"))),
       withLobbyPublicStatsTimeout(loadFreeTablePublicStatsSnapshot()),
     ]);
     if (generation !== lobbyPublicStatsRefreshGeneration) {
       return getLobbyStatsRefreshStatus();
     }
-    const [presenceResult, marketResult, freeTableResult] = results;
+    const [presenceResult, freeTableResult] = results;
     let nextLobbyPresenceEntries = lobbyPresenceEntries;
-    let nextMarketPresenceEntries = marketPresenceEntries;
     let nextFreeTableStats = { ...lobbyStats.freeTable };
     let successCount = 0;
 
     if (presenceResult.status === "fulfilled") {
       nextLobbyPresenceEntries = presenceResult.value.val() || {};
-      successCount += 1;
-    }
-    if (marketResult.status === "fulfilled") {
-      nextMarketPresenceEntries = marketResult.value.val() || {};
       successCount += 1;
     }
     if (freeTableResult.status === "fulfilled") {
@@ -3146,11 +3125,9 @@ async function refreshLobbyPublicStats({ initial = false } = {}) {
     }
 
     lobbyPresenceEntries = nextLobbyPresenceEntries;
-    marketPresenceEntries = nextMarketPresenceEntries;
     refreshLobbyStats({
       freeTableStats: nextFreeTableStats,
       refreshPresence: presenceResult.status === "fulfilled",
-      refreshMarket: marketResult.status === "fulfilled",
     });
     if (successCount > 0) lobbyPublicStatsLastSuccessAt = Date.now();
     if (successCount === 0) {

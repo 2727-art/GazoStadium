@@ -35,7 +35,6 @@ function lobbyHarness() {
       one: { mode: "solo", state: "waiting", lastSeen: now },
       two: { mode: "strategy", state: "playing", lastSeen: now },
     },
-    market: { sellerWaiting: 2, buyerWaiting: 1, negotiating: 3 },
     free: { welcomingRooms: 4, seatedRooms: 2 },
   };
   const context = vm.createContext({
@@ -51,7 +50,7 @@ function lobbyHarness() {
     LOBBY_MODES: ["solo", "strategy"], PUBLIC_PRESENCE_FRESH_MS: 45000,
     LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS: 30000, LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS: 20000,
     FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS: 30000, FREE_TABLE_PUBLIC_STATS_STALE_MS: 180000,
-    lobbyPresenceEntries: null, marketPresenceEntries: null, lobbyPublicStatsRefreshRequest: null,
+    lobbyPresenceEntries: null, lobbyPublicStatsRefreshRequest: null,
     lobbyPublicStatsLastAttemptAt: 0, lobbyPublicStatsLastSuccessAt: 0,
     lobbyPublicStatsRefreshError: "", lobbyPublicStatsInitialRefreshStarted: false,
     lobbyPublicStatsUiTimer: null, lobbyPublicStatsRefreshGeneration: 0,
@@ -64,7 +63,6 @@ function lobbyHarness() {
       if (fail.has(reference)) throw new Error("network failure");
       if (reference === ".info/serverTimeOffset") return { val: () => 0 };
       if (reference === "online/publicPresence") return { val: () => fixtures.presence };
-      if (reference === "online/publicMarketPresence") return { val: () => fixtures.market };
       throw new Error(`unexpected get ${reference}`);
     },
     async freeTablePublicStatsCallable() {
@@ -73,7 +71,6 @@ function lobbyHarness() {
       return { data: { ...fixtures.free, updatedAt: now } };
     },
     async aiTextTrainingPublicStatsCallable() { calls.push("call:aiTextTrainingPublicStats"); throw new Error("retired callable"); },
-    summarizeMarketPresence: (value) => ({ ...value }),
   });
   const createStart = online.indexOf("const createLobbyStats = (");
   const createEnd = online.indexOf("const createBattlePresenceCheckState", createStart);
@@ -89,11 +86,10 @@ function lobbyHarness() {
 const expectedBatch = [
   "get:.info/serverTimeOffset",
   "get:online/publicPresence",
-  "get:online/publicMarketPresence",
   "call:freeTablePublicStats",
 ];
 
-test("the initial lobby batch fetches the remaining three sources once and no training lights", async () => {
+test("the initial lobby batch fetches the two active sources once and no retired market or training lights", async () => {
   const h = lobbyHarness();
   h.context.watchLobbyStats();
   await flush();
@@ -101,9 +97,9 @@ test("the initial lobby batch fetches the remaining three sources once and no tr
   const stats = h.context.getLobbyStats();
   assert.equal(stats.solo.waiting, 1);
   assert.equal(stats.strategy.playing, 1);
-  assert.equal(stats.market.negotiating, 3);
   assert.equal(stats.freeTable.welcomingRooms, 4);
   assert.equal(Object.hasOwn(stats, "aiTextTraining"), false);
+  assert.equal(Object.hasOwn(stats, "market"), false);
   assert.equal(h.context.getLobbyStatsRefreshStatus().error, "");
   assert.ok(h.events.some((event) => event.type === "hariai-free-table-public-stats-updated"));
   assert.equal(h.events.some((event) => event.type.includes("ai-text-training")), false);
@@ -111,7 +107,7 @@ test("the initial lobby batch fetches the remaining three sources once and no tr
   assert.deepEqual(h.calls, expectedBatch, "the initial batch is not repeated");
 });
 
-test("manual refresh preserves the 30-second cooldown and refreshes only the remaining three sources", async () => {
+test("manual refresh preserves the 30-second cooldown and refreshes only the two active sources", async () => {
   const h = lobbyHarness();
   await h.context.refreshLobbyPublicStats({ initial: true });
   await h.context.refreshLobbyPublicStats();
@@ -136,20 +132,57 @@ test("landing redraw and visibility changes do not fetch any lobby source again"
   assert.equal(h.listeners.has("visibilitychange"), false);
 });
 
-test("partial refresh failure still preserves old battle counts and refreshes free-table and market values", async () => {
+test("battle refresh failure preserves old battle counts and still refreshes free-table values", async () => {
   const h = lobbyHarness();
   await h.context.refreshLobbyPublicStats({ initial: true });
   h.advance(30001);
   h.fail.add("online/publicPresence");
   h.fixtures.free = { welcomingRooms: 6, seatedRooms: 1 };
-  h.fixtures.market = { sellerWaiting: 5, buyerWaiting: 4, negotiating: 1 };
   await h.context.refreshLobbyPublicStats();
   const stats = h.context.getLobbyStats();
   assert.equal(stats.solo.waiting, 1);
   assert.equal(stats.strategy.playing, 1);
   assert.equal(stats.freeTable.welcomingRooms, 6);
-  assert.equal(stats.market.sellerWaiting, 5);
+  assert.equal(Object.hasOwn(stats, "market"), false);
   assert.equal(h.context.getLobbyStatsRefreshStatus().error, "一部の状況を更新できませんでした。");
+  assert.deepEqual(h.calls, [...expectedBatch, ...expectedBatch]);
+});
+
+test("free-table refresh failure preserves previous room counts while battle counts still update", async () => {
+  const h = lobbyHarness();
+  await h.context.refreshLobbyPublicStats({ initial: true });
+  h.advance(30001);
+  h.fail.add("freeTable");
+  h.fixtures.presence = {
+    three: { mode: "solo", state: "playing", lastSeen: h.context.Date.now() },
+    four: { mode: "strategy", state: "waiting", lastSeen: h.context.Date.now() },
+  };
+  await h.context.refreshLobbyPublicStats();
+  const stats = h.context.getLobbyStats();
+  assert.equal(stats.solo.waiting, 0);
+  assert.equal(stats.solo.playing, 1);
+  assert.equal(stats.strategy.waiting, 1);
+  assert.equal(stats.strategy.playing, 0);
+  assert.equal(stats.freeTable.welcomingRooms, 4);
+  assert.equal(stats.freeTable.seatedRooms, 2);
+  assert.equal(Object.hasOwn(stats, "market"), false);
+  assert.equal(h.context.getLobbyStatsRefreshStatus().error, "一部の状況を更新できませんでした。");
+  assert.deepEqual(h.calls, [...expectedBatch, ...expectedBatch]);
+});
+
+test("failure of both active sources preserves the complete previous snapshot and last success time", async () => {
+  const h = lobbyHarness();
+  await h.context.refreshLobbyPublicStats({ initial: true });
+  const previous = JSON.stringify(h.context.getLobbyStats());
+  const lastUpdatedAt = h.context.getLobbyStatsRefreshStatus().lastUpdatedAt;
+  h.advance(60001);
+  h.fail.add("online/publicPresence");
+  h.fail.add("freeTable");
+  await h.context.refreshLobbyPublicStats();
+  assert.equal(JSON.stringify(h.context.getLobbyStats()), previous, "old battle presence must not age into zero on failure");
+  assert.equal(h.context.getLobbyStatsRefreshStatus().lastUpdatedAt, lastUpdatedAt);
+  assert.equal(h.context.getLobbyStatsRefreshStatus().loading, false);
+  assert.equal(h.context.getLobbyStatsRefreshStatus().error, "最新の状況を読み込めませんでした。通信を確認して、もう一度お試しください。");
   assert.deepEqual(h.calls, [...expectedBatch, ...expectedBatch]);
 });
 
@@ -162,13 +195,13 @@ test("offline preview never performs the initial or manual lobby fetch", async (
   assert.equal(h.context.getLobbyStatsRefreshStatus().available, false);
 });
 
-test("rendered landing has no training lights card but retains the training entrance and other mode counts", () => {
+test("rendered landing has no retired lights or market stats but retains active mode counts and market records", () => {
   const stats = {
     solo: { waiting: 2, playing: 4 }, strategy: { waiting: 1, playing: 2 },
     freeTable: { welcomingRooms: 3, seatedRooms: 1 },
-    market: { sellerWaiting: 0, buyerWaiting: 1, negotiating: 0 },
   };
   Object.defineProperty(stats, "aiTextTraining", { get() { throw new Error("retired stats accessed"); } });
+  Object.defineProperty(stats, "market", { get() { throw new Error("retired market stats accessed"); } });
   const context = vm.createContext({
     window: { HariaiOnline: { getLobbyStats: () => stats, getLobbyStatsRefreshStatus: () => ({ available: true }) } },
     escapeHtml: String,
@@ -178,6 +211,8 @@ test("rendered landing has no training lights card but retains the training entr
   vm.runInContext(["freeTableLampPresentation", "lobbyStatsRefreshPresentation", "renderLanding"].map((name) => fn(app, name)).join("\n"), context);
   const html = context.renderLanding();
   assert.doesNotMatch(html, /aiTextTrainingLights|training-lights|文字コラジムの灯り|TRAINING LIGHTS/);
+  assert.doesNotMatch(html, /lobbyMarket|class="lobby-mode-card market"|market-counts|売り手待機|買い手待機|商談中/);
+  assert.match(html, /id="valueMarketRankingButton"[^>]*>[\s\S]*?旧推し値市場の記録<\/button>/);
   assert.match(html, /id="aiTextTrainingButton"[^>]*><small>AIと対戦しよう<\/small><span>文字コラトレーニング<\/span>/);
   assert.match(html, /id="heroSoloWaitingCount">2<\/b>/);
   assert.match(html, /id="lobbyStrategyPlayingCount">2<\/span>/);
@@ -185,6 +220,18 @@ test("rendered landing has no training lights card but retains the training entr
   assert.match(html, /id="lobbyStatsRefreshButton"/);
   assert.match(html, /id="freeTableStatusButton"/);
   assert.match(app, /querySelector\("#aiTextTrainingButton"\)\?\.addEventListener\("click", startAiTextTraining\)/);
+});
+
+test("retired market lobby status has no read, import, private state, DOM wiring or stylesheet selector", () => {
+  assert.doesNotMatch(online, /publicMarketPresence|market-presence\.mjs|summarizeMarketPresence|marketPresenceEntries|refreshMarket|lobbyStats\.market|lobbyMarket/);
+  assert.doesNotMatch(app, /lobbyStats\.market|lobbyMarket|class="lobby-mode-card market"|market-counts/);
+  for (const file of ["styles.css", "velvet.css"]) {
+    assert.doesNotMatch(read(file), /\.lobby-mode-card\.market|\.lobby-mode-counts\.market-counts/, file);
+  }
+  const html = read("index.html");
+  for (const file of ["app.js", "online.js", "styles.css"]) {
+    assert.match(html, new RegExp(`${file.replaceAll(".", "\\.")}\\?v=[^\"]*retire-market-lobby-v1`), file);
+  }
 });
 
 test("retired top-page lights have no callable, private state, event channel or stylesheet selector", () => {

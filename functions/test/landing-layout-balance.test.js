@@ -40,7 +40,7 @@ test("desktop landing aligns the entrances to one column and stacks two gap-free
     "the two desktop battle status cards should divide the row equally",
   );
   assert.match(styles, /\.lobby-mode-card\.free-table-status\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
-  assert.match(styles, /\.lobby-mode-card\.market\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
+  assert.doesNotMatch(styles, /\.lobby-mode-card\.market|\.lobby-mode-counts\.market-counts/);
 });
 
 test("mobile landing uses two-up mode tiles and a thumb-reach tab bar clear of the home indicator", () => {
