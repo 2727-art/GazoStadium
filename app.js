@@ -874,7 +874,7 @@
     return {
       lit: true,
       welcomingRooms,
-      eyebrow: `◌ いま、${welcomingRooms}卓に灯りがついています`,
+      eyebrow: `◌ ページ表示時、${welcomingRooms}卓がお迎え中でした`,
       label: "お迎え中の一席をのぞく",
     };
   }
@@ -884,62 +884,19 @@
     const freeTableStats = window.HariaiOnline?.getLobbyStats?.().freeTable || {};
     const presentation = freeTableLampPresentation(freeTableStats);
     const button = document.querySelector("#freeTableButton");
-    const statusButton = document.querySelector("#freeTableStatusButton");
-    if (button) {
-      const eyebrow = button.querySelector("small");
-      const label = button.querySelector("span");
-      if (eyebrow) eyebrow.textContent = presentation.eyebrow;
-      if (label) label.textContent = presentation.label;
-      button.dataset.freeTableIntent = presentation.lit ? "lamp" : "hall";
-      button.classList.toggle("is-lit", presentation.lit);
-      button.setAttribute(
-        "aria-label",
-        presentation.lit
-          ? `貼り合い自由卓。いま${presentation.welcomingRooms}卓がお迎え中です。部屋札をのぞく`
-          : "貼り合い自由卓を開く",
-      );
-    }
-    if (statusButton) {
-      if (!presentation.lit && document.activeElement === statusButton) {
-        button?.focus({ preventScroll: true });
-      }
-      statusButton.hidden = !presentation.lit;
-      statusButton.textContent = presentation.lit
-        ? `◌ お迎え中の${presentation.welcomingRooms}卓を見る`
-        : "";
-      statusButton.setAttribute(
-        "aria-label",
-        presentation.lit
-          ? `貼り合い自由卓のお迎え中${presentation.welcomingRooms}卓を見る`
-          : "貼り合い自由卓を開く",
-      );
-    }
-  }
-
-
-  function lobbyStatsRefreshPresentation(value = {}) {
-    const available = value.available !== false;
-    const cooldownRemainingMs = Math.max(0, Number(value.cooldownRemainingMs || 0));
-    const lastUpdatedAt = Number(value.lastUpdatedAt || 0);
-    const error = String(value.error || "");
-    const formattedTime = lastUpdatedAt > 0
-      ? new Intl.DateTimeFormat("ja-JP", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      }).format(new Date(lastUpdatedAt))
-      : "";
-    let message = "最初の状況を読み込んでいます…";
-    if (!available) message = "プレビュー中はFirebaseへ接続しません。";
-    else if (value.loading) message = "待機・対戦・開室状況を確認しています…";
-    else if (error) message = formattedTime ? `${error} 表示の確認時刻 ${formattedTime}` : error;
-    else if (formattedTime) message = `最終更新 ${formattedTime}（取得時点の参考値）`;
-    return {
-      busy: Boolean(value.loading),
-      disabled: !available || Boolean(value.loading) || cooldownRemainingMs > 0,
-      label: value.loading ? "最新の状況を読み込み中…" : "最新の状況を読み込む",
-      message,
-    };
+    if (!button) return;
+    const eyebrow = button.querySelector(".vl-post-sub");
+    const label = button.querySelector(".vl-post-title");
+    if (eyebrow) eyebrow.textContent = presentation.eyebrow;
+    if (label) label.textContent = presentation.label;
+    button.dataset.freeTableIntent = presentation.lit ? "lamp" : "hall";
+    button.classList.toggle("is-lit", presentation.lit);
+    button.setAttribute(
+      "aria-label",
+      presentation.lit
+        ? `貼り合い自由卓。ページ表示時点では${presentation.welcomingRooms}卓がお迎え中でした。部屋札をのぞく`
+        : "貼り合い自由卓を開く",
+    );
   }
 
   function renderLanding() {
@@ -949,9 +906,6 @@
     const strategyStats = modeStats("strategy");
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const freeTableLamp = freeTableLampPresentation(freeTableStats);
-    const lobbyRefresh = lobbyStatsRefreshPresentation(
-      window.HariaiOnline?.getLobbyStatsRefreshStatus?.() || { available: true, loading: true },
-    );
     const statValue = (value) => Number.isInteger(value) ? value : "--";
     // トップの見本のやりとり。実際の対戦画面と同じ吹き出しとメーターで描く（人の画像や名前は使わない）。
     const heroMeter = Array.from({ length: 10 }, (_, index) => {
@@ -983,7 +937,7 @@
         <p class="vl-rule">5〜8枚の画像で、HP30を削り合う。最大5ラウンド。</p>
       </div>
       <section class="vl-board" aria-labelledby="landingBoardTitle">
-        <div class="vl-board-head"><h2 id="landingBoardTitle">いま入れる卓</h2><span>人数は実際の待機・対戦数</span></div>
+        <div class="vl-board-head"><h2 id="landingBoardTitle">いま入れる卓</h2><span>人数・卓数はページ表示時点の参考値（未取得は --）</span></div>
         <ol class="vl-board-list">
           <li class="vl-board-item is-solo"><button class="vl-post" id="soloBoardButton" type="button">
             <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">通常1on1</span><small class="vl-post-sub">サクっと・気軽に</small><em class="vl-post-tag">1〜10点</em>
@@ -998,7 +952,7 @@
             <em class="vl-post-counts">待機 ${liveCount("boardStrategyWaitingCount", strategyStats.waiting, "人")} · 対戦中 ${liveCount("boardStrategyPlayingCount", strategyStats.playing, "人")}</em>
             <strong class="vl-post-go">本式で挑む</strong>
           </button></li>
-          <li class="vl-board-item is-free"><button class="vl-post${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。いま${freeTableLamp.welcomingRooms}卓がお迎え中です。部屋札をのぞく` : "貼り合い自由卓を開く"}">
+          <li class="vl-board-item is-free"><button class="vl-post${freeTableLamp.lit ? " is-lit" : ""}" id="freeTableButton" type="button" data-free-table-intent="${freeTableLamp.lit ? "lamp" : "hall"}" aria-label="${freeTableLamp.lit ? `貼り合い自由卓。ページ表示時点では${freeTableLamp.welcomingRooms}卓がお迎え中でした。部屋札をのぞく` : "貼り合い自由卓を開く"}">
             <i class="vl-post-icon" aria-hidden="true"></i><span class="vl-post-title">${freeTableLamp.label}</span><small class="vl-post-sub">${freeTableLamp.eyebrow}</small>
             <em class="vl-post-counts">お迎え中 ${liveCount("boardFreeTableWelcomingCount", freeTableStats.welcomingRooms, "卓")} · 同席中 ${liveCount("boardFreeTableSeatedCount", freeTableStats.seatedRooms, "卓")}</em>
             <strong class="vl-post-go">部屋札を見る</strong>
@@ -1020,27 +974,6 @@
         <button class="vl-tab vl-tab-wallet" type="button" id="accountButton">AnjuPayウォレット</button>
       </nav>
       ${renderLandingTopMessagePanel()}
-      <section class="vl-live-board" aria-labelledby="landingLiveTitle">
-        <div class="vl-section-head"><span>Live</span><h2 id="landingLiveTitle">いまの参加状況</h2></div>
-        <div class="mode-lobby-stats" aria-label="モード別の参加・開室状況">
-          <article class="lobby-mode-card solo"><div class="lobby-mode-head"><span>通常型1ON1</span><small>STANDARD</small></div><div class="lobby-mode-counts">
-            <div><small>待機中</small><strong><span id="lobbySoloWaitingCount">${statValue(soloStats.waiting)}</span><em>人</em></strong></div>
-            <div><small>対戦中</small><strong><span id="lobbySoloPlayingCount">${statValue(soloStats.playing)}</span><em>人</em></strong></div>
-          </div></article>
-          <article class="lobby-mode-card strategy"><div class="lobby-mode-head"><span>戦略型1ON1</span><small>STRATEGY</small></div><div class="lobby-mode-counts">
-            <div><small>待機中</small><strong><span id="lobbyStrategyWaitingCount">${statValue(strategyStats.waiting)}</span><em>人</em></strong></div>
-            <div><small>対戦中</small><strong><span id="lobbyStrategyPlayingCount">${statValue(strategyStats.playing)}</span><em>人</em></strong></div>
-          </div></article>
-          <article class="lobby-mode-card free-table-status"><div class="lobby-mode-head"><span>貼り合い自由卓</span><small>FREE TABLE</small></div><div class="lobby-mode-counts">
-            <div><small>お迎え中</small><strong><span id="lobbyFreeTableWelcomingCount">${statValue(freeTableStats.welcomingRooms)}</span><em>卓</em></strong></div>
-            <div><small>同席中</small><strong><span id="lobbyFreeTableSeatedCount">${statValue(freeTableStats.seatedRooms)}</span><em>卓</em></strong></div>
-          </div><button class="button lobby-free-table-lamp-link" id="freeTableStatusButton" type="button" data-free-table-intent="lamp"${freeTableLamp.lit ? "" : " hidden"}>${freeTableLamp.lit ? `◌ お迎え中の${freeTableLamp.welcomingRooms}卓を見る` : ""}</button></article>
-        </div>
-        <div class="lobby-stats-refresh" id="lobbyStatsRefreshPanel" aria-live="polite" aria-busy="${lobbyRefresh.busy ? "true" : "false"}">
-          <button class="button button-ghost" id="lobbyStatsRefreshButton" type="button"${lobbyRefresh.disabled ? " disabled" : ""}>${escapeHtml(lobbyRefresh.label)}</button>
-          <span id="lobbyStatsRefreshStatus">${escapeHtml(lobbyRefresh.message)}</span>
-        </div>
-      </section>
       <section class="vl-more" aria-labelledby="landingMoreTitle">
         <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
         <div class="vl-list">
@@ -1073,7 +1006,7 @@
       const control = event.target.closest?.("button, a");
       if (!control) return;
       if (!control.matches("#valueMarketButton, #valueMarketRankingButton")) pendingValueMarketDestination = "";
-      if (!control.matches("#freeTableButton, #freeTableStatusButton")) cancelPendingFreeTableLaunch();
+      if (!control.matches("#freeTableButton")) cancelPendingFreeTableLaunch();
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
     document.querySelector("#onlineButton")?.addEventListener("click", startOnlineBattle);
@@ -1082,9 +1015,6 @@
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
     document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
       startFreeTable({ intent: event.currentTarget.dataset.freeTableIntent });
-    });
-    document.querySelector("#freeTableStatusButton")?.addEventListener("click", () => {
-      startFreeTable({ intent: "lamp" });
     });
     document.querySelector("#tributeButton")?.addEventListener("click", () => startTribute());
     document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
@@ -1095,9 +1025,6 @@
     document.querySelector("#pointShopButton")?.addEventListener("click", () => openOnlineFeature("openPointShop"));
     document.querySelector("#accountButton")?.addEventListener("click", startAccount);
     document.querySelector("#audioStudioButton")?.addEventListener("click", openAudioStudio);
-    document.querySelector("#lobbyStatsRefreshButton")?.addEventListener("click", () => {
-      window.HariaiOnline?.refreshLobbyPublicStats?.().catch(() => {});
-    });
     bindLandingTopMessageEvents();
     window.HariaiOnline?.refreshTopMessages?.();
     app.focus({ preventScroll: true });
@@ -2621,7 +2548,7 @@
     updateLandingFreeTableEntrance();
   });
 
-  window.addEventListener("hariai-free-table-public-stats-updated", updateLandingFreeTableEntrance);
+  window.addEventListener("hariai-lobby-stats-updated", updateLandingFreeTableEntrance);
 
   window.addEventListener("hariai-top-messages-updated", () => {
     const messages = window.HariaiOnline?.getTopMessages?.() || [];

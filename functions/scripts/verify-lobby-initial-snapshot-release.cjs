@@ -6,25 +6,32 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { ORIGINS, sha256LF, assetReference } = require("./verify-player-safety-release.cjs");
 const ROOT = path.resolve(__dirname, "../..");
-const MARKER = "retire-market-lobby-v1";
-const ASSETS = ["app.js", "online.js", "styles.css"];
-const PREVIOUS = ["retire-flea-danwaku-v1", "retire-training-lights-v1", "lobby-manual-refresh-v1",
+const MARKER = "lobby-initial-snapshot-v1";
+const ASSETS = ["app.js", "online.js", "styles.css", "velvet.css"];
+const PREVIOUS = ["retire-market-lobby-v1", "retire-flea-danwaku-v1", "retire-training-lights-v1", "lobby-manual-refresh-v1",
   "global-player-block-v1", "solo-match-cost-guard-v1", "strategy-idle-guard-v1",
   "tribute-cost-guard-v1", "tribute-ranch-v1", "desktop-align-v1"];
-const PRIVATE = ["/functions/index.js", "/functions/scripts/verify-market-lobby-retirement-release.cjs",
+const PRIVATE = ["/functions/index.js", "/functions/scripts/verify-lobby-initial-snapshot-release.cjs",
   "/functions/test/training-lights-landing-retirement.test.js", "/README.md"];
 
 function invariant(file, body) {
-  if (file === "app.js") return !/lobbyMarket|lobbyStats\.market|class="lobby-mode-card market"|market-counts|売り手待機|買い手待機/.test(body)
+  if (file === "app.js") return !/lobbyStatsRefresh|vl-live-board|freeTableStatusButton|lobby(?:Solo|Strategy|FreeTable)|lobbyMarket/.test(body)
     && ["boardSoloWaitingCount", "boardStrategyWaitingCount", "boardFreeTableWelcomingCount",
-      "valueMarketRankingButton"].every((id) => body.includes('"' + id + '"'))
+      "heroSoloWaitingCount", "valueMarketRankingButton", "freeTableButton"].every((id) => body.includes('"' + id + '"'))
+    && body.includes("人数・卓数はページ表示時点の参考値")
+    && body.includes('window.addEventListener("hariai-lobby-stats-updated", updateLandingFreeTableEntrance)')
     && body.includes("旧推し値市場の記録");
-  if (file === "online.js") return !/publicMarketPresence|market-presence\.mjs|summarizeMarketPresence|marketPresenceEntries|lobbyStats\.market|lobbyMarket/.test(body)
+  if (file === "online.js") return !/refreshLobbyPublicStats|getLobbyStatsRefreshStatus|lobbyPublicStatsRefresh|publicMarketPresence|aiTextTrainingPublicStats/.test(body)
+    && body.includes("if (lobbyInitialStatsRequest) return lobbyInitialStatsRequest;")
+    && body.includes("lobbyInitialStatsRequest = Promise.resolve().then(async () =>")
     && body.includes('get(ref(database, "online/publicPresence"))')
     && body.includes("loadFreeTablePublicStatsSnapshot()")
-    && body.includes("const [presenceResult, freeTableResult] = await Promise.allSettled([");
-  return !/\.lobby-mode-card\.market|\.lobby-mode-counts\.market-counts/.test(body)
-    && body.includes(".lobby-privacy");
+    && body.includes("refreshFreeTablePublicStats: refreshFreeTablePublicStatsImmediately")
+    && body.includes('new CustomEvent("hariai-lobby-stats-updated"');
+  if (file === "velvet.css") return !/vl-live-board|mode-lobby-stats|lobby-mode-|lobby-stats-refresh/.test(body)
+    && /\.hero\.vl-landing > \.landing-community\s*\{[^}]*float:\s*left;/s.test(body)
+    && body.includes(".vl-board-head");
+  return !/mode-lobby-stats|lobby-mode-|lobby-stats-refresh/.test(body) && body.includes(".lobby-privacy");
 }
 
 async function read(url) {

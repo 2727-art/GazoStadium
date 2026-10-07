@@ -452,7 +452,6 @@ const PUBLIC_PRESENCE_FRESH_MS = 45_000;
 const PUBLIC_PRESENCE_HEARTBEAT_MS = 20_000;
 const BATTLE_PRESENCE_CHECK_COOLDOWN_MS = 30_000;
 const BATTLE_PRESENCE_CHECK_REQUEST_TIMEOUT_MS = 10_000;
-const LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS = 30_000;
 const LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS = 20_000;
 const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;
 const FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
@@ -489,13 +488,7 @@ let matchmakingGenerationCounter = 0;
 let pendingDestroyContext = null;
 let pendingSampleMatchmakingLaunch = null;
 let lobbyPresenceEntries = null;
-let lobbyPublicStatsRefreshRequest = null;
-let lobbyPublicStatsLastAttemptAt = 0;
-let lobbyPublicStatsLastSuccessAt = 0;
-let lobbyPublicStatsRefreshError = "";
-let lobbyPublicStatsInitialRefreshStarted = false;
-let lobbyPublicStatsUiTimer = null;
-let lobbyPublicStatsRefreshGeneration = 0;
+let lobbyInitialStatsRequest = null;
 let freeTablePublicStats = {
   welcomingRooms: null,
   seatedRooms: null,
@@ -2211,19 +2204,6 @@ function getLobbyStats() {
   };
 }
 
-function getLobbyStatsRefreshStatus(now = Date.now()) {
-  const cooldownRemainingMs = Math.max(
-    0,
-    lobbyPublicStatsLastAttemptAt + LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS - now,
-  );
-  return {
-    available: !useOfflineMarketPreview,
-    loading: lobbyPublicStatsRefreshRequest !== null,
-    lastUpdatedAt: lobbyPublicStatsLastSuccessAt || null,
-    cooldownRemainingMs,
-    error: lobbyPublicStatsRefreshError,
-  };
-}
 
 function getBattlePresenceCheckState(mode) {
   if (!LOBBY_MODES.includes(mode)) throw new Error("参加人数を確認できないモードです。");
@@ -2976,18 +2956,13 @@ function refreshLobbyStats({
   }
   lobbyStats = nextStats;
   renderLobbyStats();
+  window.dispatchEvent(new CustomEvent("hariai-lobby-stats-updated", { detail: getLobbyStats() }));
 }
 
 function renderLobbyStats() {
   const values = {
-    lobbySoloWaitingCount: lobbyStats.solo.waiting,
-    lobbySoloPlayingCount: lobbyStats.solo.playing,
     heroSoloWaitingCount: lobbyStats.solo.waiting,
     heroSoloPlayingCount: lobbyStats.solo.playing,
-    lobbyStrategyWaitingCount: lobbyStats.strategy.waiting,
-    lobbyStrategyPlayingCount: lobbyStats.strategy.playing,
-    lobbyFreeTableWelcomingCount: lobbyStats.freeTable.welcomingRooms,
-    lobbyFreeTableSeatedCount: lobbyStats.freeTable.seatedRooms,
     boardSoloWaitingCount: lobbyStats.solo.waiting,
     boardSoloPlayingCount: lobbyStats.solo.playing,
     boardStrategyWaitingCount: lobbyStats.strategy.waiting,
@@ -3019,40 +2994,6 @@ function formatLobbyStatsUpdatedAt(timestamp) {
   }).format(new Date(Number(timestamp)));
 }
 
-function renderLobbyStatsRefreshStatus(now = Date.now()) {
-  const panel = document.querySelector("#lobbyStatsRefreshPanel");
-  const button = document.querySelector("#lobbyStatsRefreshButton");
-  const message = document.querySelector("#lobbyStatsRefreshStatus");
-  if (!panel || !button || !message) return;
-  const status = getLobbyStatsRefreshStatus(now);
-  const coolingDown = status.cooldownRemainingMs > 0;
-  const disabled = !status.available || status.loading || coolingDown;
-  button.disabled = disabled;
-  button.textContent = status.loading ? "最新の状況を読み込み中…" : "最新の状況を読み込む";
-  panel.setAttribute("aria-busy", status.loading ? "true" : "false");
-  if (!status.available) {
-    message.textContent = "プレビュー中はFirebaseへ接続しません。";
-  } else if (status.loading) {
-    message.textContent = "待機・対戦・開室状況を確認しています…";
-  } else if (status.error) {
-    const previous = formatLobbyStatsUpdatedAt(status.lastUpdatedAt);
-    message.textContent = previous
-      ? `${status.error} 表示の確認時刻 ${previous}`
-      : status.error;
-  } else if (status.lastUpdatedAt) {
-    message.textContent = `最終更新 ${formatLobbyStatsUpdatedAt(status.lastUpdatedAt)}（取得時点の参考値）`;
-  } else {
-    message.textContent = "最初の状況を読み込んでいます…";
-  }
-  window.clearTimeout(lobbyPublicStatsUiTimer);
-  lobbyPublicStatsUiTimer = null;
-  if (!status.loading && coolingDown) {
-    lobbyPublicStatsUiTimer = window.setTimeout(
-      () => renderLobbyStatsRefreshStatus(),
-      status.cooldownRemainingMs + 50,
-    );
-  }
-}
 
 function withLobbyPublicStatsTimeout(promise, timeoutMs = LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
@@ -3070,23 +3011,12 @@ function withLobbyPublicStatsTimeout(promise, timeoutMs = LOBBY_PUBLIC_STATS_REQ
   });
 }
 
-async function refreshLobbyPublicStats({ initial = false } = {}) {
-  if (useOfflineMarketPreview) return getLobbyStatsRefreshStatus();
-  if (lobbyPublicStatsRefreshRequest) return lobbyPublicStatsRefreshRequest;
-  if (initial && lobbyPublicStatsInitialRefreshStarted) return getLobbyStatsRefreshStatus();
-  const startedAt = Date.now();
-  const cooldownRemainingMs = (
-    lobbyPublicStatsLastAttemptAt
-    + LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS
-    - startedAt
-  );
-  if (!initial && cooldownRemainingMs > 0) return getLobbyStatsRefreshStatus(startedAt);
-  if (initial) lobbyPublicStatsInitialRefreshStarted = true;
-  lobbyPublicStatsLastAttemptAt = startedAt;
-  lobbyPublicStatsRefreshError = "";
-  const generation = ++lobbyPublicStatsRefreshGeneration;
-  let request;
-  request = (async () => {
+function loadInitialLobbyStats() {
+  if (useOfflineMarketPreview) return Promise.resolve(getLobbyStats());
+  if (lobbyInitialStatsRequest) return lobbyInitialStatsRequest;
+  // Retain the settled promise too: returning home, failures and late replies
+  // must not start another top-page request during this document's lifetime.
+  lobbyInitialStatsRequest = Promise.resolve().then(async () => {
     try {
       const offsetSnapshot = await withLobbyPublicStatsTimeout(
         get(ref(database, ".info/serverTimeOffset")),
@@ -3100,54 +3030,32 @@ async function refreshLobbyPublicStats({ initial = false } = {}) {
     } catch {
       // The device clock remains the fallback when server time is unavailable.
     }
-    const results = await Promise.allSettled([
+    const [presenceResult, freeTableResult] = await Promise.allSettled([
       withLobbyPublicStatsTimeout(get(ref(database, "online/publicPresence"))),
       withLobbyPublicStatsTimeout(loadFreeTablePublicStatsSnapshot()),
     ]);
-    if (generation !== lobbyPublicStatsRefreshGeneration) {
-      return getLobbyStatsRefreshStatus();
-    }
-    const [presenceResult, freeTableResult] = results;
-    let nextLobbyPresenceEntries = lobbyPresenceEntries;
     let nextFreeTableStats = { ...lobbyStats.freeTable };
-    let successCount = 0;
-
     if (presenceResult.status === "fulfilled") {
-      nextLobbyPresenceEntries = presenceResult.value.val() || {};
-      successCount += 1;
+      lobbyPresenceEntries = presenceResult.value.val() || {};
     }
     if (freeTableResult.status === "fulfilled") {
       const { stats, receivedAt } = freeTableResult.value;
       nextFreeTableStats = { ...stats };
-      freeTablePublicStats = { ...stats };
-      freeTablePublicStatsLastSuccessAt = receivedAt;
-      successCount += 1;
+      // A game-result refresh may have completed while the initial presence
+      // request was pending. Keep its newer live lamp cache intact.
+      if (!Number.isSafeInteger(freeTablePublicStats.updatedAt)
+          || stats.updatedAt >= freeTablePublicStats.updatedAt) {
+        freeTablePublicStats = { ...stats };
+        freeTablePublicStatsLastSuccessAt = receivedAt;
+      }
     }
-
-    lobbyPresenceEntries = nextLobbyPresenceEntries;
     refreshLobbyStats({
       freeTableStats: nextFreeTableStats,
       refreshPresence: presenceResult.status === "fulfilled",
     });
-    if (successCount > 0) lobbyPublicStatsLastSuccessAt = Date.now();
-    if (successCount === 0) {
-      lobbyPublicStatsRefreshError = "最新の状況を読み込めませんでした。通信を確認して、もう一度お試しください。";
-    } else if (successCount < results.length) {
-      lobbyPublicStatsRefreshError = "一部の状況を更新できませんでした。";
-    }
-    return getLobbyStatsRefreshStatus();
-  })().catch(() => {
-    lobbyPublicStatsRefreshError = "最新の状況を読み込めませんでした。通信を確認して、もう一度お試しください。";
-    return getLobbyStatsRefreshStatus();
-  }).finally(() => {
-    if (lobbyPublicStatsRefreshRequest === request) {
-      lobbyPublicStatsRefreshRequest = null;
-      renderLobbyStatsRefreshStatus();
-    }
-  });
-  lobbyPublicStatsRefreshRequest = request;
-  renderLobbyStatsRefreshStatus(startedAt);
-  return request;
+    return getLobbyStats();
+  }).catch(() => getLobbyStats());
+  return lobbyInitialStatsRequest;
 }
 
 function getFreeTableLampState() {
@@ -3210,10 +3118,9 @@ function syncFreeTableResultLampSlot({
 }
 
 function watchLobbyStats() {
-  refreshLobbyPublicStats({ initial: true }).catch(() => {});
+  loadInitialLobbyStats().catch(() => {});
   window.addEventListener("hariai-landing-rendered", () => {
     renderLobbyStats();
-    renderLobbyStatsRefreshStatus();
   });
 }
 
@@ -13577,8 +13484,6 @@ window.HariaiOnline = {
   requestHome,
   destroyRoom,
   getLobbyStats,
-  getLobbyStatsRefreshStatus,
-  refreshLobbyPublicStats,
   renderBattlePresenceCheck,
   bindBattlePresenceCheck,
   syncBattlePresenceCheckPanels,

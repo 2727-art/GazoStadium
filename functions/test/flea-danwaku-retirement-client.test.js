@@ -52,7 +52,7 @@ test("landing render and event binding expose neither retired mode while retaini
     startFreeTable() {}, startTribute() {}, startValueMarketRankings() {}, renderRankingScreen() {},
     openOnlineFeature() {}, startAccount() {}, openAudioStudio() {},
   });
-  vm.runInContext(["freeTableLampPresentation", "lobbyStatsRefreshPresentation", "renderLanding", "renderLandingScreen"].map(fn).join("\n"), context);
+  vm.runInContext(["freeTableLampPresentation", "renderLanding", "renderLandingScreen"].map(fn).join("\n"), context);
   context.renderLandingScreen();
   assert.doesNotMatch(app.innerHTML, /fleaMarket|danwakuNote|AnjuPayフリマ|断惑NOTE/);
   assert.equal(queried.some((selector) => /fleaMarket|danwakuNote/.test(selector)), false);
@@ -62,9 +62,9 @@ test("landing render and event binding expose neither retired mode while retaini
   }
   assert.ok(app.innerHTML.includes('id="topMessagePanel"'));
   const communityStart = app.innerHTML.indexOf('id="topMessagePanel"');
-  const liveStart = app.innerHTML.indexOf('class="vl-live-board"');
   const toolsStart = app.innerHTML.indexOf('class="vl-more"');
-  assert.ok(communityStart < liveStart && liveStart < toolsStart, "the left stats column starts before the second right float, without a retired-card gap");
+  assert.ok(communityStart < toolsStart, "shared cards precede the remaining tools without a retired-card gap");
+  assert.doesNotMatch(app.innerHTML, /vl-live-board|いまの参加状況|lobbyStatsRefresh|freeTableStatusButton/);
   assert.deepEqual(calls, ["shared-cards"]);
 });
 

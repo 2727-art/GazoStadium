@@ -13,7 +13,7 @@ const sourceBetween = (source, startMarker, endMarker) => {
   return source.slice(start, end);
 };
 
-test("the landing lamp entrance updates in place and never treats public counts as room authority", () => {
+test("the landing lamp entrance uses its initial snapshot in place and never treats counts as room authority", () => {
   const appSource = read("app.js");
   const onlineSource = read("online.js");
   const updateSource = sourceBetween(
@@ -22,16 +22,18 @@ test("the landing lamp entrance updates in place and never treats public counts 
     "function renderLanding()",
   );
 
-  assert.match(appSource, /◌ いま、\$\{welcomingRooms\}卓に灯りがついています/);
+  assert.match(appSource, /◌ ページ表示時、\$\{welcomingRooms\}卓がお迎え中でした/);
   assert.match(appSource, /お迎え中の一席をのぞく/);
   assert.match(appSource, /data-free-table-intent="\$\{freeTableLamp\.lit \? "lamp" : "hall"\}"/);
-  assert.match(appSource, /id="freeTableStatusButton"[\s\S]*data-free-table-intent="lamp"/);
+  assert.doesNotMatch(appSource, /freeTableStatusButton/);
   assert.match(updateSource, /eyebrow\.textContent = presentation\.eyebrow/);
   assert.match(updateSource, /label\.textContent = presentation\.label/);
-  assert.match(
-    updateSource,
-    /!presentation\.lit && document\.activeElement === statusButton[\s\S]*?button\?\.focus\(\{ preventScroll: true \}\)[\s\S]*?statusButton\.hidden = !presentation\.lit/,
-  );
+  assert.match(updateSource, /getLobbyStats\?\.\(\)\.freeTable/);
+  assert.match(updateSource, /querySelector\("\.vl-post-sub"\)/);
+  assert.match(updateSource, /querySelector\("\.vl-post-title"\)/);
+  assert.match(updateSource, /ページ表示時点では\$\{presentation\.welcomingRooms\}卓がお迎え中でした/);
+  assert.match(appSource, /window\.addEventListener\("hariai-lobby-stats-updated", updateLandingFreeTableEntrance\)/);
+  assert.doesNotMatch(appSource, /hariai-free-table-public-stats-updated/);
   assert.doesNotMatch(updateSource, /innerHTML|renderLandingScreen/);
   assert.match(appSource, /function startFreeTable\([^)]*\) \{[\s\S]*?setLandingChrome\(\)/);
   assert.match(appSource, /function cancelPendingFreeTableLaunch\(\)[\s\S]*?pendingFreeTableIntent = ""/);
@@ -213,8 +215,8 @@ test("lamp guidance stays noncompetitive and keeps safe choices explicit", () =>
   const readme = read("README.md");
   const appSource = read("app.js");
   const freeTableSource = read("free-table.js");
-  const freeTableCardStart = appSource.indexOf('<article class="lobby-mode-card free-table-status">');
-  const freeTableCardEnd = appSource.indexOf("</article>", freeTableCardStart) + "</article>".length;
+  const freeTableCardStart = appSource.indexOf('<li class="vl-board-item is-free">');
+  const freeTableCardEnd = appSource.indexOf("</li>", freeTableCardStart) + "</li>".length;
   assert.ok(freeTableCardStart >= 0 && freeTableCardEnd > freeTableCardStart);
   const featureCopy = [
     sourceBetween(

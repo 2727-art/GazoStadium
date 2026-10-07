@@ -72,7 +72,7 @@ function achievementHistoryCheck(body) {
 
 function retiredFeatureCheck(file, body) {
   if (file === "app.js") return !/function start(?:FleaMarket|DanwakuNote)|renderLandingFleaPanel|pendingFleaMarketDestination|fleaMarketReadyListenerPending|hariai-(?:flea-market|danwaku-note)-ready|id="(?:fleaMarket[^"\s]*|danwakuNote[^"\s]*)"/.test(body)
-    && ["accountButton", "achievementButton", "aiTextTrainingButton", "rouletteTrainingButton", "tributeButton", "freeTableButton", "lobbyStatsRefreshButton"]
+    && ["accountButton", "achievementButton", "aiTextTrainingButton", "rouletteTrainingButton", "tributeButton", "freeTableButton"]
       .every((id) => body.includes(`id="${id}"`))
     && /function renderLandingTopMessagePanel\(/.test(body);
   if (file === "achievements.js") return achievementHistoryCheck(body);

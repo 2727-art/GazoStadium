@@ -31,16 +31,16 @@ test("desktop landing aligns the entrances to one column and stacks two gap-free
   );
   assert.match(velvet, /\.vl-main-button\s*\{[^}]*grid-column:\s*1 \/ -1;/s, "normal 1on1 stays the widest entrance");
   // 左右の列は独立して上から積むので、隣の区画の高さで隙間ができない
-  assert.match(desktop, /\.hero\.vl-landing > \.vl-live-board\s*\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
+  assert.match(desktop, /\.hero\.vl-landing > \.landing-community\s*\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
   assert.doesNotMatch(velvet, /training-lights/);
-  assert.match(desktop, /\.hero\.vl-landing > \.landing-community,[\s\S]*?\{[^}]*float:\s*right;[^}]*clear:\s*right;/s);
+  assert.match(desktop, /\.hero\.vl-landing > \.vl-more,[\s\S]*?\{[^}]*float:\s*right;[^}]*clear:\s*right;/s);
   assert.match(
-    styles,
-    /\.mode-lobby-stats\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
-    "the two desktop battle status cards should divide the row equally",
+    velvet,
+    /\.vl-post-counts\s*\{/,
+    "the counts remain on the playable mode entrance cards",
   );
-  assert.match(styles, /\.lobby-mode-card\.free-table-status\s*\{[^}]*grid-column:\s*1 \/ -1;/s);
-  assert.doesNotMatch(styles, /\.lobby-mode-card\.market|\.lobby-mode-counts\.market-counts/);
+  assert.doesNotMatch(styles, /\.lobby-mode-card\b|\.mode-lobby-stats\b|\.lobby-stats-refresh\b/);
+  assert.doesNotMatch(velvet, /\.vl-live-board\b/);
 });
 
 test("mobile landing uses two-up mode tiles and a thumb-reach tab bar clear of the home indicator", () => {

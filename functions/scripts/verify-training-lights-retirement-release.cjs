@@ -17,7 +17,7 @@ async function read(url) {
 
 function retiredFeatureCheck(file, body) {
   if (file === "app.js") return !/aiTextTrainingLights|renderAiTextTrainingLights|文字コラジムの灯り/.test(body)
-    && /id="aiTextTrainingButton"/.test(body) && /id="lobbyStatsRefreshButton"/.test(body);
+    && /id="aiTextTrainingButton"/.test(body) && /"boardSoloWaitingCount"/.test(body);
   if (file === "online.js") return !/aiTextTrainingPublicStats|loadAiTextTrainingPublicStatsSnapshot|hariai-ai-text-training-public-stats-updated/.test(body)
     && /loadFreeTablePublicStatsSnapshot/.test(body) && /online\/publicPresence/.test(body);
   if (file === "ai-text-training.js") return !/heartbeat_achievement_session|AI_TEXT_TRAINING_LIGHT_HEARTBEAT_MS|TRAINING LIGHTS/.test(body)

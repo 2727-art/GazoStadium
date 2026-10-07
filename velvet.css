@@ -1276,7 +1276,6 @@ a:focus-visible,
 /* 既存の区画も、飾りのない夜の面へそろえる */
 .vl-landing .landing-community,
 .vl-landing .landing-flea,
-.vl-live-board,
 .vl-more {
   max-width: none;
   margin: 0;
@@ -1292,39 +1291,6 @@ a:focus-visible,
   background: var(--ha-surface);
 }
 
-.vl-live-board {
-  padding: 18px;
-  border-radius: 22px;
-  background: var(--ha-surface);
-  box-shadow: inset 0 0 0 1px var(--ha-line);
-}
-
-.vl-live-board .mode-lobby-stats {
-  margin: 0;
-}
-
-.vl-landing .lobby-mode-card {
-  border-color: var(--ha-line);
-  background: var(--ha-raised);
-}
-
-.vl-landing .lobby-mode-card strong {
-  font-family: var(--vs-font-number);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.vl-landing .lobby-mode-card.solo .lobby-mode-head span {
-  color: var(--vs-rose-soft);
-}
-
-.vl-landing .lobby-mode-card.strategy .lobby-mode-head span {
-  color: var(--vs-gold);
-}
-
-.vl-landing .lobby-stats-refresh {
-  margin-top: 12px;
-}
 
 .vl-safe {
   padding: 14px 16px;
@@ -1388,7 +1354,7 @@ a:focus-visible,
 
 /*
   PC：入口（見出しと例・通常1on1・いま入れる卓・ほかの遊び方・メニュー）は中央の880px列にそろえる。
-  残りの区画は左右の列に分け、それぞれ上から詰めて積む（行の高さをそろえないので隙間ができない）。
+  推しカードは左、記録と道具・安心案内は右に分け、それぞれ上から詰めて積む。
 */
 @media (min-width: 900px) {
   .hero.vl-landing {
@@ -1449,14 +1415,13 @@ a:focus-visible,
     margin-top: 16px;
   }
 
-  .hero.vl-landing > .vl-live-board {
+  .hero.vl-landing > .landing-community {
     float: left;
     clear: left;
     width: calc(50% - 12px);
     margin: 24px 0 0;
   }
 
-  .hero.vl-landing > .landing-community,
   .hero.vl-landing > .vl-more,
   .hero.vl-landing > .vl-safe {
     float: right;
@@ -1558,9 +1523,6 @@ a:focus-visible,
     padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   }
 
-  .vl-landing .mode-lobby-stats {
-    gap: 10px;
-  }
 }
 
 @media (max-width: 430px) {

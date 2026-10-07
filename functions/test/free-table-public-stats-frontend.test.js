@@ -8,21 +8,20 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 
 test("landing shows free table room counts with gentle non-competitive copy", () => {
   const appSource = read("app.js");
-  const freeTableCardStart = appSource.indexOf('<article class="lobby-mode-card free-table-status">');
-  const freeTableCardEnd = appSource.indexOf("</article>", freeTableCardStart) + "</article>".length;
+  const freeTableCardStart = appSource.indexOf('<li class="vl-board-item is-free">');
+  const freeTableCardEnd = appSource.indexOf("</li>", freeTableCardStart) + "</li>".length;
   const freeTableCard = appSource.slice(freeTableCardStart, freeTableCardEnd);
 
   assert.ok(freeTableCardStart >= 0);
   assert.ok(freeTableCardStart < freeTableCardEnd);
-  assert.match(appSource, /aria-label="モード別の参加・開室状況"/);
-  assert.match(freeTableCard, /<span>貼り合い自由卓<\/span><small>FREE TABLE<\/small>/);
-  assert.match(freeTableCard, /<small>お迎え中<\/small><strong><span id="lobbyFreeTableWelcomingCount">/);
-  assert.match(freeTableCard, /<small>同席中<\/small><strong><span id="lobbyFreeTableSeatedCount">/);
-  assert.equal((freeTableCard.match(/<em>卓<\/em>/g) || []).length, 2);
+  assert.match(appSource, /人数・卓数はページ表示時点の参考値/);
+  assert.match(freeTableCard, /id="freeTableButton"/);
+  assert.match(freeTableCard, /お迎え中 \$\{liveCount\("boardFreeTableWelcomingCount", freeTableStats\.welcomingRooms, "卓"\)\}/);
+  assert.match(freeTableCard, /同席中 \$\{liveCount\("boardFreeTableSeatedCount", freeTableStats\.seatedRooms, "卓"\)\}/);
   assert.match(appSource, /自由卓は人数ではなく、お迎え中・同席中の卓数です。/);
 });
 
-test("free table public stats load only on initial/manual refresh and result entry", () => {
+test("free table public stats load only on the initial page snapshot and independent result entry", () => {
   const appSource = read("app.js");
   const onlineSource = read("online.js");
   const loaderStart = onlineSource.indexOf("async function loadFreeTablePublicStatsSnapshot()");
@@ -45,8 +44,9 @@ test("free table public stats load only on initial/manual refresh and result ent
   assert.doesNotMatch(onlineSource, /visibilitychange[\s\S]{0,240}refreshFreeTablePublicStats/);
   assert.match(onlineSource, /screenChanged && state\.screen === "gameover"[\s\S]{0,160}refreshFreeTablePublicStatsImmediately/);
   assert.match(onlineSource, /welcomingRooms: null,\s*seatedRooms: null,\s*updatedAt: null,/);
-  assert.match(onlineSource, /lobbyFreeTableWelcomingCount: lobbyStats\.freeTable\.welcomingRooms/);
-  assert.match(onlineSource, /lobbyFreeTableSeatedCount: lobbyStats\.freeTable\.seatedRooms/);
+  assert.match(onlineSource, /boardFreeTableWelcomingCount: lobbyStats\.freeTable\.welcomingRooms/);
+  assert.match(onlineSource, /boardFreeTableSeatedCount: lobbyStats\.freeTable\.seatedRooms/);
+  assert.doesNotMatch(onlineSource, /refreshLobbyPublicStats|getLobbyStatsRefreshStatus/);
 });
 
 test("free table counts retain transient success but expire safely after three minutes", () => {
@@ -71,12 +71,14 @@ test("free table stats styling, docs, and cache generations stay wired", () => {
   const html = read("index.html");
   const readme = read("README.md");
 
-  assert.match(cssSource, /\.lobby-mode-card\.free-table-status\s*\{[^}]*grid-column: 1 \/ -1;/s);
+  assert.doesNotMatch(cssSource, /\.lobby-mode-card\.free-table-status/);
+  assert.match(read("velvet.css"), /\.vl-board-item\.is-free/);
   for (const asset of ["styles.css", "app.js", "online.js"]) {
     const escapedAsset = asset.replaceAll(".", "\\.");
     assert.match(html, new RegExp(`${escapedAsset}\\?v=[^"]*free-table-stats-v1`));
   }
-  assert.match(readme, /ページ初回表示時とプレイヤーが「最新の状況を読み込む」を押した時に取得し、閲覧のために匿名アカウントを作りません/);
-  assert.match(readme, /通常型・戦略型の最終結果では、その画面へ到達した時に灯りを一度だけ確認します/);
+  assert.match(readme, /ページ初回表示時に一度だけ/);
+  assert.match(readme, /閲覧のために匿名アカウントを作りません/);
+  assert.match(readme, /通常型・戦略型の最終結果では別途、結果画面へ到達した時に灯りを一度だけ確認します/);
   assert.match(readme, /`freeTablePublicStats`から、お迎え中・同席中の集計値と更新時刻だけを取得します/);
 });
