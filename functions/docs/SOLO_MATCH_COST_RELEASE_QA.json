@@ -1,0 +1,220 @@
+{
+  "checkedAt": "2026-10-07T07:32:24.371Z",
+  "sourceCommit": "de867f1f11bef5c9ab30c8ce0572b7f13f643ec4",
+  "project": "gazostadium",
+  "status": "verified",
+  "scope": {
+    "functions": [
+      "soloSessionAction",
+      "soloFamiliarAction"
+    ],
+    "hosting": true,
+    "databaseRules": false,
+    "firestoreRules": false,
+    "firestoreIndexes": false,
+    "otherModesChanged": false
+  },
+  "behavior": {
+    "incompatibleCandidates": "Use the existing preference predicate before Firestore block-document reads.",
+    "canonicalBlockSnapshot": "Normalize the already-read snapshot; preserve legacy fallback, fail-closed validation and independent final recheck.",
+    "idleSearch": "Normal 1on1 only; stop new search after 5 continuous minutes hidden while still matching. Visible inactivity is unchanged.",
+    "idleRelease": "Wait for in-flight work; exact session/token/generation and server shared reservation lock protect offered/active matches.",
+    "resume": "Keep deck/profile and show a persistent stopped reason. Manual restart only.",
+    "unconfirmedStop": "Do not use unconditional release; maintain same-fence confirmation with 20-second backoff. Expired local heartbeats cannot bypass the conditional path."
+  },
+  "verification": {
+    "node": "22.23.2",
+    "fullSuite": {
+      "total": 1744,
+      "passed": 1718,
+      "failed": 0,
+      "skipped": 26,
+      "skipReason": "Opt-in environment/emulator suites"
+    },
+    "dedicatedFrontendRuntime": {
+      "passed": 44
+    },
+    "emulatorSuites": [
+      {
+        "project": "demo-solo-cost-guard",
+        "files": [
+          "normal-p2p-v2-rules-emulator.test.js",
+          "player-safety-emulator.test.js"
+        ],
+        "passed": 22,
+        "failed": 0
+      },
+      {
+        "project": "demo-solo-idle-release",
+        "files": [
+          "solo-idle-release-emulator.test.js"
+        ],
+        "passed": 6,
+        "failed": 0
+      }
+    ],
+    "independentReview": "Passed after reproducing and correcting expired-lease fallthrough on frozen-tab return.",
+    "diffAndSyntaxChecks": "Passed",
+    "functions": [
+      {
+        "name": "soloSessionAction",
+        "state": "ACTIVE",
+        "updated": "2026-10-07T07:29:04.223622016Z",
+        "runtime": "nodejs22",
+        "revision": "solosessionaction-00020-zag",
+        "uri": "https://solosessionaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "10d17115c86243ec43a9f856e5f4c53576038e99"
+      },
+      {
+        "name": "soloFamiliarAction",
+        "state": "ACTIVE",
+        "updated": "2026-10-07T07:29:04.418402478Z",
+        "runtime": "nodejs22",
+        "revision": "solofamiliaraction-00012-cil",
+        "uri": "https://solofamiliaraction-we5jrxqzcq-uc.a.run.app",
+        "hash": "10d17115c86243ec43a9f856e5f4c53576038e99"
+      }
+    ],
+    "unaffectedFunctions": 36,
+    "callableUnauthenticatedChecks": [
+      {
+        "name": "soloSessionAction",
+        "status": 401,
+        "error": "UNAUTHENTICATED"
+      },
+      {
+        "name": "soloFamiliarAction",
+        "status": 401,
+        "error": "UNAUTHENTICATED"
+      }
+    ],
+    "startupHealthy": [
+      {
+        "timestamp": "2026-10-07T07:29:02.579294Z",
+        "revision": "solofamiliaraction-00012-cil",
+        "severity": "INFO",
+        "startupHealthy": true,
+        "startup": false
+      },
+      {
+        "timestamp": "2026-10-07T07:29:02.359430Z",
+        "revision": "solosessionaction-00020-zag",
+        "severity": "INFO",
+        "startupHealthy": true,
+        "startup": false
+      }
+    ],
+    "errorLogQuery": {
+      "since": "2026-10-07T07:29:00Z",
+      "checkedAt": "2026-10-07T07:32:24.371Z",
+      "errorEntries": 0,
+      "hasMore": false
+    },
+    "publicAssets": {
+      "checkedAt": "2026-10-07T07:31:19.892Z",
+      "readOnly": true,
+      "marker": "solo-match-cost-guard-v1",
+      "routes": [
+        {
+          "origin": "https://gazostadium.web.app",
+          "indexOk": true,
+          "assets": [
+            {
+              "file": "online.js",
+              "url": "https://gazostadium.web.app/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1",
+              "status": 200,
+              "sha256LF": "52d94a89d35fa2658a86163dc3b948b45734c719cea9dcfb205a783af9fe6d7f",
+              "ok": true
+            },
+            {
+              "file": "online-solo-idle-guard.mjs",
+              "url": "https://gazostadium.web.app/online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1",
+              "status": 200,
+              "sha256LF": "d54c52e00572e54d7541fa129c5387c5579043650f8285aff7d28a373b276fee",
+              "ok": true
+            }
+          ],
+          "excluded": [
+            {
+              "file": "/functions/index.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/test/online-solo-idle-runtime.test.js",
+              "status": 404
+            }
+          ],
+          "ok": true
+        },
+        {
+          "origin": "https://gazostadium.firebaseapp.com",
+          "indexOk": true,
+          "assets": [
+            {
+              "file": "online.js",
+              "url": "https://gazostadium.firebaseapp.com/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1",
+              "status": 200,
+              "sha256LF": "52d94a89d35fa2658a86163dc3b948b45734c719cea9dcfb205a783af9fe6d7f",
+              "ok": true
+            },
+            {
+              "file": "online-solo-idle-guard.mjs",
+              "url": "https://gazostadium.firebaseapp.com/online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1",
+              "status": 200,
+              "sha256LF": "d54c52e00572e54d7541fa129c5387c5579043650f8285aff7d28a373b276fee",
+              "ok": true
+            }
+          ],
+          "excluded": [
+            {
+              "file": "/functions/index.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/test/online-solo-idle-runtime.test.js",
+              "status": 404
+            }
+          ],
+          "ok": true
+        },
+        {
+          "origin": "https://gazostadium.anjugames.workers.dev",
+          "indexOk": true,
+          "assets": [
+            {
+              "file": "online.js",
+              "url": "https://gazostadium.anjugames.workers.dev/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1",
+              "status": 200,
+              "sha256LF": "52d94a89d35fa2658a86163dc3b948b45734c719cea9dcfb205a783af9fe6d7f",
+              "ok": true
+            },
+            {
+              "file": "online-solo-idle-guard.mjs",
+              "url": "https://gazostadium.anjugames.workers.dev/online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1",
+              "status": 200,
+              "sha256LF": "d54c52e00572e54d7541fa129c5387c5579043650f8285aff7d28a373b276fee",
+              "ok": true
+            }
+          ],
+          "excluded": [
+            {
+              "file": "/functions/index.js",
+              "status": 404
+            },
+            {
+              "file": "/functions/test/online-solo-idle-runtime.test.js",
+              "status": 404
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  },
+  "limitations": [
+    "No authenticated production matchmaking or user-data mutations were performed for verification.",
+    "Actual mobile-device OS suspension and long natural play were not tested.",
+    "Billing savings are not yet measured; compare equivalent traffic periods after rollout."
+  ]
+}
