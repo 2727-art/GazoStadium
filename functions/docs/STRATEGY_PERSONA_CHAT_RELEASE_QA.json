@@ -1,0 +1,490 @@
+{
+  "checkedAt": "2026-10-07T15:35:25.782Z",
+  "readOnly": true,
+  "productionDataAccessed": false,
+  "sourceCommit": "82b5c2c78e62551b2ee655f28c84c9b1eb4f5280",
+  "markers": [
+    "strategy.js:strategy-persona-chat-v1",
+    "strategy.css:strategy-persona-chat-v1",
+    "online.js:chat-persona-v2"
+  ],
+  "normalization": "CRLF and CR converted to LF before SHA-256",
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "index": [
+        {
+          "url": "https://gazostadium.web.app/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "expectedSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.web.app/?releaseCheck=1791387324711",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "expectedSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "strategy.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1-strategy-image-send-queue-v1-strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "expectedSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1-strategy-image-send-queue-v1-strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "expectedSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "strategy.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/strategy.css?v=strategy-audio-v1-video-review-v1-review-assets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-hariai-v3-v1-hariai-dm-v1-strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "expectedSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/strategy.css?v=strategy-audio-v1-video-review-v1-review-assets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-hariai-v3-v1-hariai-dm-v1-strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "expectedSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "expectedSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "expectedSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "chat-persona.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/chat-persona.mjs?v=chat-persona-v2",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "expectedSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/chat-persona.mjs?v=chat-persona-v2&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "expectedSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "strategy-chat.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/strategy-chat.mjs?v=strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "expectedSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.web.app/strategy-chat.mjs?v=strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "expectedSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "ok": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/functions/scripts/verify-strategy-persona-chat-release.cjs",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/functions/test/strategy-persona-chat.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/database.rules.json",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "index": [
+        {
+          "url": "https://gazostadium.firebaseapp.com/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "expectedSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.firebaseapp.com/?releaseCheck=1791387324711",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "actualSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "expectedSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "strategy.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1-strategy-image-send-queue-v1-strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "expectedSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1-strategy-image-send-queue-v1-strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "expectedSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "strategy.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/strategy.css?v=strategy-audio-v1-video-review-v1-review-assets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-hariai-v3-v1-hariai-dm-v1-strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "expectedSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/strategy.css?v=strategy-audio-v1-video-review-v1-review-assets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-hariai-v3-v1-hariai-dm-v1-strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "actualSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "expectedSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "expectedSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "expectedSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "chat-persona.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/chat-persona.mjs?v=chat-persona-v2",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "expectedSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/chat-persona.mjs?v=chat-persona-v2&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "expectedSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "strategy-chat.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/strategy-chat.mjs?v=strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "expectedSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/strategy-chat.mjs?v=strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "actualSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "expectedSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "ok": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/functions/scripts/verify-strategy-persona-chat-release.cjs",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/functions/test/strategy-persona-chat.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/database.rules.json",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "index": [
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/",
+          "status": 200,
+          "contentType": "text/html",
+          "actualSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "expectedSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/?releaseCheck=1791387324711",
+          "status": 200,
+          "contentType": "text/html",
+          "actualSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "expectedSha256LF": "b58b124ff4089d947a7be19b047c30a40fafe56238719cf6f448ef03e2c73e7f",
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "strategy.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1-strategy-image-send-queue-v1-strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "expectedSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/strategy.js?v=global-player-block-v1-copy-v2-verified-rewards-v3-post-match-tip-v4-app-check-v3-strategy-preference-matching-v1-daily-play-v1-oshi-market-collection-v1-video-review-v1-review-assets-v1-anju-pay-v1-pay-unit-v1-setup-scroll-preserve-v1-strategy-weakness-chain-reentry-v1-oshi-jouzu-shared-catalog-v1-remove-royale-v1-crown-matchmaking-v1-retire-team-v1-ai-text-training-v1-free-table-lamp-flow-v1-retire-training-v1-strategy-presence-owner-v1-presence-check-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-match-ready-sound-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-ios-image-fallback-v1-roulette-training-v1-image-preference-achievements-v1-player-recovery-20260924-v1-strategy-hariai-v3-v1-hariai-dm-v1-tribute-v1-strategy-idle-guard-v1-strategy-image-send-queue-v1-strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "expectedSha256LF": "b7768c0c23f4e30d292c4eda83366b658d867b6a754c4662538e620aee3fb7ce",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "strategy.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/strategy.css?v=strategy-audio-v1-video-review-v1-review-assets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-hariai-v3-v1-hariai-dm-v1-strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/css",
+              "actualSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "expectedSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/strategy.css?v=strategy-audio-v1-video-review-v1-review-assets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-strategy-prepared-deck-v1-strategy-round3-secret-choice-v1-strategy-round3-chain-readiness-v1-strategy-hariai-v3-v1-hariai-dm-v1-strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/css",
+              "actualSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "expectedSha256LF": "3db678f633e6e4506a70e59ba980ae82acee5f4b457164304aa4712abcc09a07",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "online.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "expectedSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/online.js?v=global-player-block-v1-copy-v2-server-ranking-v1-achievements-v1-post-match-tip-v4-app-check-v3-daily-play-v1-oshi-market-collection-v1-anju-pay-v1-pay-unit-v1-signature-finish-v1-finish-reply-v3-online-image-transfer-v1-engawa-v1-solo-familiar-v1-room-lifecycle-v1-favorite-card-v2-setup-scroll-preserve-v1-p2p-hardening-v2-wallet-cap-v2-oshi-jouzu-shared-catalog-v1-free-table-stats-v1-remove-royale-v1-crown-circuit-v2-crown-matchmaking-v1-retire-team-v1-online-deck-reserve-v1-ai-text-training-v1-ai-text-training-customization-v2-ai-training-achievements-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-match-traffic-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-ai-training-doodle-cheer-v1-ai-training-purikura-collage-v1-dollmaster-achievement-v1-presence-check-v1-rate-floor-v1-loss-streak-secrets-v1-match-achievement-showcase-v1-danwaku-match-badge-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-roulette-training-v1-post-match-chat-draft-v1-firebase-cost-v1-rate-floor-showcase-v1-image-preference-achievements-v1-player-recovery-20260924-v1-lease-feedback-v2-normal-connection-recovery-20260926-v1-velvet-stage-v1-girl-voice-casual-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-solo-match-cost-guard-v1-retire-training-lights-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-chat-persona-v1-chat-persona-v2&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "expectedSha256LF": "5b2569336ad643c7c19a385cd6f1b90500a770594291a8fd0f0c292e0b1c7e9c",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "chat-persona.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/chat-persona.mjs?v=chat-persona-v2",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "expectedSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/chat-persona.mjs?v=chat-persona-v2&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "expectedSha256LF": "e868409bfb35ba4a162245cb9bad3760885d5c5cba576063ceaf0db8b800b102",
+              "ok": true
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "strategy-chat.mjs",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/strategy-chat.mjs?v=strategy-persona-chat-v1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "expectedSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "ok": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/strategy-chat.mjs?v=strategy-persona-chat-v1&releaseCheck=1791387324711",
+              "status": 200,
+              "contentType": "text/javascript",
+              "actualSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "expectedSha256LF": "71fa7e0c821b3516aa405e2bc9e3130ee435c7dbf447feb53beba0441e2bdb19",
+              "ok": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "excluded": [
+        {
+          "file": "/functions/scripts/verify-strategy-persona-chat-release.cjs",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/functions/test/strategy-persona-chat.test.js",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "status": 404,
+          "ok": true
+        },
+        {
+          "file": "/database.rules.json",
+          "status": 404,
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "rules": {
+    "source": "firebase database:get /.settings/rules (read-only, run separately)",
+    "identicalToLocal": true,
+    "deployedSha256": "29f6fefdb7d05ea63bd79014ae8d1e82e113e7213e0cae8fc0b7cb0a518f818a",
+    "strategyChatEffectValidate": "!newData.exists() || (newData.isString() && newData.val().matches(/^(whisper|emphasis|tremble|hearts)$/) && !newData.parent().child('stampId').exists())",
+    "strategyChatOtherValidate": false
+  },
+  "ok": true
+}
