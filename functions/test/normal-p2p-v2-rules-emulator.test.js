@@ -1051,6 +1051,50 @@ if (!RUN_REQUESTED) {
     ));
   });
 
+  test("V2 chat accepts known persona voice sets and line effects only", async () => {
+    await seed({
+      [`online/soloSessionClaims/${hostUid}`]: claim(
+        hostSessionId,
+        hostLeaseToken,
+        hostGeneration,
+      ),
+      [`online/rooms/${roomId}`]: v2Room(),
+    });
+    const hostDb = environment.authenticatedContext(hostUid).database();
+    const message = (extra) => ({
+      authorUid: hostUid,
+      name: "ホスト",
+      text: "なりきりの発言",
+      round: 1,
+      createdAt: now,
+      ...extra,
+    });
+    await assertSucceeds(set(
+      ref(hostDb, `online/rooms/${roomId}/chat/persona-effect`),
+      message({ voiceSetId: "koakuma", effect: "hearts" }),
+    ));
+    await assertSucceeds(set(
+      ref(hostDb, `online/rooms/${roomId}/chat/persona-only`),
+      message({ voiceSetId: "seiso" }),
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${roomId}/chat/unknown-persona`),
+      message({ voiceSetId: "villain" }),
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${roomId}/chat/unknown-effect`),
+      message({ effect: "rainbow" }),
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${roomId}/chat/non-string-effect`),
+      message({ effect: 1 }),
+    ));
+    await assertFails(set(
+      ref(hostDb, `online/rooms/${roomId}/chat/stamp-effect`),
+      message({ text: "いいね！", stampId: "stamp_like", effect: "emphasis" }),
+    ));
+  });
+
   test("V2 gameplay writes stop when the room session loses its current claim", async () => {
     const destroyableRoomId = "-V2RulesRoomDestroy02";
     await seed({
