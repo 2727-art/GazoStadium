@@ -1,0 +1,1787 @@
+{
+  "project": "gazostadium",
+  "sourceCommit": "af813d2829b9bd9507ad0099449c3673b1b539ca",
+  "implementationCommit": "78f57146fee9261307113465daba29ef49a98109",
+  "checkedAt": "2026-10-07T09:55:56.900Z",
+  "scope": {
+    "deployedFunctions": [
+      "anjuPayFleaAction",
+      "danwakuNoteAction",
+      "economyAction",
+      "redeemAchievementCode",
+      "valueMarketAction",
+      "valueMarketRankings",
+      "rouletteTrainingAction",
+      "playerSafetyAction",
+      "cleanupPlayerSafety",
+      "soloSessionAction",
+      "soloFamiliarAction",
+      "matchAchievementShowcase"
+    ],
+    "deletedFunctions": [
+      "cleanupDanwakuDeletionJobs",
+      "expireAnjuPayFleaListings"
+    ],
+    "hosting": true,
+    "rulesChanged": false,
+    "indexesChanged": false,
+    "productionPlayerDataDeleted": false
+  },
+  "tests": {
+    "fullRegression": {
+      "tests": 1874,
+      "passed": 1845,
+      "failed": 0,
+      "skipped": 29
+    },
+    "firebaseEmulator": {
+      "tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0
+    },
+    "realProductionAccountOperationsPerformed": false
+  },
+  "postClosureAudit": {
+    "project": "gazostadium",
+    "checkedAt": "2026-10-07T09:53:46.689Z",
+    "readOnly": true,
+    "aggregateOnly": true,
+    "counts": {
+      "fleaListingsTotal": 21,
+      "fleaListingsStatusActive": 0,
+      "fleaListingsCreatedLast30Days": 2,
+      "fleaSalesTotal": 19,
+      "fleaSellerCardsTotal": 31,
+      "danwakuProfilesTotal": 54,
+      "danwakuPublicEntriesTotal": 1,
+      "danwakuMatchBadgesTotal": 0,
+      "danwakuDeletionJobsTotal": 0
+    },
+    "cleanupEmptyAtCheck": true
+  },
+  "closureTrafficAndOldRequests": {
+    "checkedAt": "2026-10-07T09:50:59.850Z",
+    "results": [
+      {
+        "name": "anjuPayFleaAction",
+        "oldRevision": "anjupayfleaaction-00020-rim",
+        "oldTimeoutSeconds": 30,
+        "latestReadyRevision": "projects/gazostadium/locations/us-central1/services/anjupayfleaaction/revisions/anjupayfleaaction-00021-sel",
+        "terminalCondition": {
+          "type": "Ready",
+          "state": "CONDITION_SUCCEEDED",
+          "lastTransitionTime": "2026-10-07T09:50:21.663616Z"
+        },
+        "traffic": [
+          {
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+            "revision": "anjupayfleaaction-00021-sel",
+            "percent": 100
+          }
+        ],
+        "oldRequests": {
+          "since": "2026-10-06T09:50:56.719Z",
+          "count": 88,
+          "hasMore": false,
+          "latest": {
+            "timestamp": "2026-10-07T09:21:04.756656Z",
+            "latency": "0.166693303s",
+            "status": 200
+          },
+          "errors": 0,
+          "maxLatencySeconds": 5.477050735
+        }
+      },
+      {
+        "name": "danwakuNoteAction",
+        "oldRevision": "danwakunoteaction-00008-yav",
+        "oldTimeoutSeconds": 30,
+        "latestReadyRevision": "projects/gazostadium/locations/us-central1/services/danwakunoteaction/revisions/danwakunoteaction-00009-nab",
+        "terminalCondition": {
+          "type": "Ready",
+          "state": "CONDITION_SUCCEEDED",
+          "lastTransitionTime": "2026-10-07T09:50:22.137046Z"
+        },
+        "traffic": [
+          {
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+            "revision": "danwakunoteaction-00009-nab",
+            "percent": 100
+          }
+        ],
+        "oldRequests": {
+          "since": "2026-10-06T09:50:56.719Z",
+          "count": 49,
+          "hasMore": false,
+          "latest": {
+            "timestamp": "2026-10-07T09:21:25.413373Z",
+            "latency": "0.090093752s",
+            "status": 200
+          },
+          "errors": 0,
+          "maxLatencySeconds": 2.745917443
+        }
+      }
+    ]
+  },
+  "metadataComparison": {
+    "checkedAt": "2026-10-07T09:55:12.795Z",
+    "beforeCount": 38,
+    "afterCount": 36,
+    "changed": [
+      "anjuPayFleaAction",
+      "cleanupPlayerSafety",
+      "danwakuNoteAction",
+      "economyAction",
+      "matchAchievementShowcase",
+      "playerSafetyAction",
+      "redeemAchievementCode",
+      "rouletteTrainingAction",
+      "soloFamiliarAction",
+      "soloSessionAction",
+      "valueMarketAction",
+      "valueMarketRankings"
+    ],
+    "removed": [
+      "cleanupDanwakuDeletionJobs",
+      "expireAnjuPayFleaListings"
+    ],
+    "added": [],
+    "unrelatedUnchanged": 24,
+    "targetActive": true,
+    "jobsBefore": 13,
+    "jobsAfter": 11,
+    "jobsChanged": [],
+    "jobsRemoved": [
+      "firebase-schedule-cleanupDanwakuDeletionJobs-us-central1",
+      "firebase-schedule-expireAnjuPayFleaListings-us-central1"
+    ],
+    "ok": true
+  },
+  "functions": {
+    "before": [
+      {
+        "name": "aiTextTrainingPublicStats",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.667917571Z",
+        "revision": "aitexttrainingpublicstats-00004-xes",
+        "timeoutSeconds": 30,
+        "uri": "https://aitexttrainingpublicstats-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupExpiredFreeTables",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:57.622002813Z",
+        "revision": "cleanupexpiredfreetables-00009-vow",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupexpiredfreetables-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "freeTableInvitePreview",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.524929034Z",
+        "revision": "freetableinvitepreview-00007-des",
+        "timeoutSeconds": 30,
+        "uri": "https://freetableinvitepreview-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "freeTableInviteAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.530481919Z",
+        "revision": "freetableinviteaction-00008-duv",
+        "timeoutSeconds": 30,
+        "uri": "https://freetableinviteaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupAiTextTrainingActivePresence",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.023303773Z",
+        "revision": "cleanupaitexttrainingactivepresence-00004-waj",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupaitexttrainingactivepresence-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "finalizeCrownCircuit",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:07.113241011Z",
+        "revision": "finalizecrowncircuit-00008-kes",
+        "timeoutSeconds": 540,
+        "uri": "https://finalizecrowncircuit-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "tributeAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T08:22:34.596349578Z",
+        "revision": "tributeaction-00003-wum",
+        "timeoutSeconds": 30,
+        "uri": "https://tributeaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "fc6300dcaa8c46ac293a1a7dd7546025a7d7a725",
+        "scheduled": false
+      },
+      {
+        "name": "soloSessionAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T07:29:04.223622016Z",
+        "revision": "solosessionaction-00020-zag",
+        "timeoutSeconds": 30,
+        "uri": "https://solosessionaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "10d17115c86243ec43a9f856e5f4c53576038e99",
+        "scheduled": false
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:17.791290837Z",
+        "revision": "anjupayfleaaction-00020-rim",
+        "timeoutSeconds": 30,
+        "uri": "https://anjupayfleaaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "getP2pIceServers",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.809125147Z",
+        "revision": "getp2piceservers-00007-hih",
+        "timeoutSeconds": 30,
+        "uri": "https://getp2piceservers-we5jrxqzcq-uc.a.run.app",
+        "hash": "48a6f5fd96d1c441b05c3831a839dff082836f09",
+        "scheduled": false
+      },
+      {
+        "name": "reportFreeTableP2pConnectivity",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:17.919399304Z",
+        "revision": "reportfreetablep2pconnectivity-00005-gip",
+        "timeoutSeconds": 30,
+        "uri": "https://reportfreetablep2pconnectivity-we5jrxqzcq-uc.a.run.app",
+        "hash": "1d44d0b20dee269819231bcea37733d37eaf4906",
+        "scheduled": false
+      },
+      {
+        "name": "reportMarketP2pConnectivity",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.779303656Z",
+        "revision": "reportmarketp2pconnectivity-00006-gof",
+        "timeoutSeconds": 30,
+        "uri": "https://reportmarketp2pconnectivity-we5jrxqzcq-uc.a.run.app",
+        "hash": "1d44d0b20dee269819231bcea37733d37eaf4906",
+        "scheduled": false
+      },
+      {
+        "name": "redeemAchievementCode",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:00.587118502Z",
+        "revision": "redeemachievementcode-00009-bof",
+        "timeoutSeconds": 30,
+        "uri": "https://redeemachievementcode-we5jrxqzcq-uc.a.run.app",
+        "hash": "bc6f664f4b7c378c66628b63931a9db88b0df1d7",
+        "scheduled": false
+      },
+      {
+        "name": "valueMarketQueue",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.151086609Z",
+        "revision": "valuemarketqueue-00018-nom",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketqueue-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "reportP2pConnectivity",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.270551623Z",
+        "revision": "reportp2pconnectivity-00006-sum",
+        "timeoutSeconds": 30,
+        "uri": "https://reportp2pconnectivity-we5jrxqzcq-uc.a.run.app",
+        "hash": "1d44d0b20dee269819231bcea37733d37eaf4906",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupSoloSessionV2QueueIndex",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:55.201546127Z",
+        "revision": "cleanupsolosessionv2queueindex-00003-dod",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupsolosessionv2queueindex-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "valueMarketShop",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.192451881Z",
+        "revision": "valuemarketshop-00014-duw",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketshop-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "valueMarketAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.628844426Z",
+        "revision": "valuemarketaction-00035-xoz",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "valueMarketRankings",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.891284799Z",
+        "revision": "valuemarketrankings-00032-jek",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketrankings-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupP2pDiagnostics",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:07.872634426Z",
+        "revision": "cleanupp2pdiagnostics-00006-buh",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupp2pdiagnostics-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "cleanupStrategyMatchAchievementFreezes",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.351705629Z",
+        "revision": "cleanupstrategymatchachievementfreezes-00004-huq",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupstrategymatchachievementfreezes-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "playerSafetyAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T08:01:24.293099293Z",
+        "revision": "playersafetyaction-00007-lah",
+        "timeoutSeconds": 30,
+        "uri": "https://playersafetyaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "d1a3868e47452f09c7992c2a05eca7b0534977cc",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupOnlinePublicPresence",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.218006963Z",
+        "revision": "cleanuponlinepublicpresence-00006-ror",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanuponlinepublicpresence-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "reconcileSoloProfileProjections",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.645120388Z",
+        "revision": "reconcilesoloprofileprojections-00006-zar",
+        "timeoutSeconds": 300,
+        "uri": "https://reconcilesoloprofileprojections-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "cleanupSoloSessionV2Leases",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.100147636Z",
+        "revision": "cleanupsolosessionv2leases-00004-tip",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupsolosessionv2leases-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.067132406Z",
+        "revision": "roulettetrainingaction-00007-hud",
+        "timeoutSeconds": 30,
+        "uri": "https://roulettetrainingaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "economyAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T08:22:33.177994055Z",
+        "revision": "economyaction-00050-dut",
+        "timeoutSeconds": 60,
+        "uri": "https://economyaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "fc6300dcaa8c46ac293a1a7dd7546025a7d7a725",
+        "scheduled": false
+      },
+      {
+        "name": "freeTableAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:17.988685766Z",
+        "revision": "freetableaction-00009-luq",
+        "timeoutSeconds": 30,
+        "uri": "https://freetableaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupPlayerSafety",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T08:01:32.723579907Z",
+        "revision": "cleanupplayersafety-00007-pul",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupplayersafety-we5jrxqzcq-uc.a.run.app",
+        "hash": "d1a3868e47452f09c7992c2a05eca7b0534977cc",
+        "scheduled": true
+      },
+      {
+        "name": "expireTributeContracts",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.295322107Z",
+        "revision": "expiretributecontracts-00002-bij",
+        "timeoutSeconds": 300,
+        "uri": "https://expiretributecontracts-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "aiTextTrainingAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.353209073Z",
+        "revision": "aitexttrainingaction-00021-juq",
+        "timeoutSeconds": 30,
+        "uri": "https://aitexttrainingaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "soloFamiliarAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T07:29:04.418402478Z",
+        "revision": "solofamiliaraction-00012-cil",
+        "timeoutSeconds": 30,
+        "uri": "https://solofamiliaraction-we5jrxqzcq-uc.a.run.app",
+        "hash": "10d17115c86243ec43a9f856e5f4c53576038e99",
+        "scheduled": false
+      },
+      {
+        "name": "danwakuNoteAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.264074978Z",
+        "revision": "danwakunoteaction-00008-yav",
+        "timeoutSeconds": 30,
+        "uri": "https://danwakunoteaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "expireAnjuPayFleaListings",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:25.938839336Z",
+        "revision": "expireanjupayflealistings-00008-goc",
+        "timeoutSeconds": 300,
+        "uri": "https://expireanjupayflealistings-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "matchAchievementShowcase",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:56.508929904Z",
+        "revision": "matchachievementshowcase-00007-naw",
+        "timeoutSeconds": 30,
+        "uri": "https://matchachievementshowcase-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "accountTransfer",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:01.894976410Z",
+        "revision": "accounttransfer-00026-luv",
+        "timeoutSeconds": 30,
+        "uri": "https://accounttransfer-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupDanwakuDeletionJobs",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.671960267Z",
+        "revision": "cleanupdanwakudeletionjobs-00004-lar",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupdanwakudeletionjobs-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "freeTablePublicStats",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:00.509672807Z",
+        "revision": "freetablepublicstats-00008-xas",
+        "timeoutSeconds": 30,
+        "uri": "https://freetablepublicstats-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      }
+    ],
+    "after": [
+      {
+        "name": "aiTextTrainingPublicStats",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.667917571Z",
+        "revision": "aitexttrainingpublicstats-00004-xes",
+        "timeoutSeconds": 30,
+        "uri": "https://aitexttrainingpublicstats-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupExpiredFreeTables",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:57.622002813Z",
+        "revision": "cleanupexpiredfreetables-00009-vow",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupexpiredfreetables-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "freeTableInvitePreview",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.524929034Z",
+        "revision": "freetableinvitepreview-00007-des",
+        "timeoutSeconds": 30,
+        "uri": "https://freetableinvitepreview-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "freeTableInviteAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.530481919Z",
+        "revision": "freetableinviteaction-00008-duv",
+        "timeoutSeconds": 30,
+        "uri": "https://freetableinviteaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupAiTextTrainingActivePresence",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.023303773Z",
+        "revision": "cleanupaitexttrainingactivepresence-00004-waj",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupaitexttrainingactivepresence-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "finalizeCrownCircuit",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:07.113241011Z",
+        "revision": "finalizecrowncircuit-00008-kes",
+        "timeoutSeconds": 540,
+        "uri": "https://finalizecrowncircuit-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "tributeAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T08:22:34.596349578Z",
+        "revision": "tributeaction-00003-wum",
+        "timeoutSeconds": 30,
+        "uri": "https://tributeaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "fc6300dcaa8c46ac293a1a7dd7546025a7d7a725",
+        "scheduled": false
+      },
+      {
+        "name": "soloSessionAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:49:53.850495534Z",
+        "revision": "solosessionaction-00021-col",
+        "timeoutSeconds": 30,
+        "uri": "https://solosessionaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:23.920185612Z",
+        "revision": "anjupayfleaaction-00021-sel",
+        "timeoutSeconds": 30,
+        "uri": "https://anjupayfleaaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "getP2pIceServers",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.809125147Z",
+        "revision": "getp2piceservers-00007-hih",
+        "timeoutSeconds": 30,
+        "uri": "https://getp2piceservers-we5jrxqzcq-uc.a.run.app",
+        "hash": "48a6f5fd96d1c441b05c3831a839dff082836f09",
+        "scheduled": false
+      },
+      {
+        "name": "reportFreeTableP2pConnectivity",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:17.919399304Z",
+        "revision": "reportfreetablep2pconnectivity-00005-gip",
+        "timeoutSeconds": 30,
+        "uri": "https://reportfreetablep2pconnectivity-we5jrxqzcq-uc.a.run.app",
+        "hash": "1d44d0b20dee269819231bcea37733d37eaf4906",
+        "scheduled": false
+      },
+      {
+        "name": "reportMarketP2pConnectivity",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.779303656Z",
+        "revision": "reportmarketp2pconnectivity-00006-gof",
+        "timeoutSeconds": 30,
+        "uri": "https://reportmarketp2pconnectivity-we5jrxqzcq-uc.a.run.app",
+        "hash": "1d44d0b20dee269819231bcea37733d37eaf4906",
+        "scheduled": false
+      },
+      {
+        "name": "redeemAchievementCode",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:22.700687279Z",
+        "revision": "redeemachievementcode-00010-xim",
+        "timeoutSeconds": 30,
+        "uri": "https://redeemachievementcode-we5jrxqzcq-uc.a.run.app",
+        "hash": "f28e21fee6ffc159a419e65f2212ecf63095bff3",
+        "scheduled": false
+      },
+      {
+        "name": "valueMarketQueue",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.151086609Z",
+        "revision": "valuemarketqueue-00018-nom",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketqueue-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "reportP2pConnectivity",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.270551623Z",
+        "revision": "reportp2pconnectivity-00006-sum",
+        "timeoutSeconds": 30,
+        "uri": "https://reportp2pconnectivity-we5jrxqzcq-uc.a.run.app",
+        "hash": "1d44d0b20dee269819231bcea37733d37eaf4906",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupSoloSessionV2QueueIndex",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:55.201546127Z",
+        "revision": "cleanupsolosessionv2queueindex-00003-dod",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupsolosessionv2queueindex-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "valueMarketShop",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:54.192451881Z",
+        "revision": "valuemarketshop-00014-duw",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketshop-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "valueMarketAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:23.360895447Z",
+        "revision": "valuemarketaction-00036-bey",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "valueMarketRankings",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:23.316637118Z",
+        "revision": "valuemarketrankings-00033-jek",
+        "timeoutSeconds": 30,
+        "uri": "https://valuemarketrankings-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupP2pDiagnostics",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:07.872634426Z",
+        "revision": "cleanupp2pdiagnostics-00006-buh",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupp2pdiagnostics-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "cleanupStrategyMatchAchievementFreezes",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.351705629Z",
+        "revision": "cleanupstrategymatchachievementfreezes-00004-huq",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupstrategymatchachievementfreezes-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "playerSafetyAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:22.031264320Z",
+        "revision": "playersafetyaction-00008-teb",
+        "timeoutSeconds": 30,
+        "uri": "https://playersafetyaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupOnlinePublicPresence",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.218006963Z",
+        "revision": "cleanuponlinepublicpresence-00006-ror",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanuponlinepublicpresence-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "reconcileSoloProfileProjections",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.645120388Z",
+        "revision": "reconcilesoloprofileprojections-00006-zar",
+        "timeoutSeconds": 300,
+        "uri": "https://reconcilesoloprofileprojections-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "cleanupSoloSessionV2Leases",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.100147636Z",
+        "revision": "cleanupsolosessionv2leases-00004-tip",
+        "timeoutSeconds": 60,
+        "uri": "https://cleanupsolosessionv2leases-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:22.918285171Z",
+        "revision": "roulettetrainingaction-00008-wol",
+        "timeoutSeconds": 30,
+        "uri": "https://roulettetrainingaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "economyAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:27.524320806Z",
+        "revision": "economyaction-00051-fif",
+        "timeoutSeconds": 60,
+        "uri": "https://economyaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "freeTableAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:17.988685766Z",
+        "revision": "freetableaction-00009-luq",
+        "timeoutSeconds": 30,
+        "uri": "https://freetableaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "cleanupPlayerSafety",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:23.059218994Z",
+        "revision": "cleanupplayersafety-00008-vem",
+        "timeoutSeconds": 300,
+        "uri": "https://cleanupplayersafety-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": true
+      },
+      {
+        "name": "expireTributeContracts",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:51:59.295322107Z",
+        "revision": "expiretributecontracts-00002-bij",
+        "timeoutSeconds": 300,
+        "uri": "https://expiretributecontracts-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": true
+      },
+      {
+        "name": "aiTextTrainingAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:18.353209073Z",
+        "revision": "aitexttrainingaction-00021-juq",
+        "timeoutSeconds": 30,
+        "uri": "https://aitexttrainingaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "soloFamiliarAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:25.080034719Z",
+        "revision": "solofamiliaraction-00013-tid",
+        "timeoutSeconds": 30,
+        "uri": "https://solofamiliaraction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "danwakuNoteAction",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:22.646924054Z",
+        "revision": "danwakunoteaction-00009-nab",
+        "timeoutSeconds": 30,
+        "uri": "https://danwakunoteaction-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "matchAchievementShowcase",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-07T09:50:27.868523461Z",
+        "revision": "matchachievementshowcase-00008-lap",
+        "timeoutSeconds": 30,
+        "uri": "https://matchachievementshowcase-we5jrxqzcq-uc.a.run.app",
+        "hash": "8e4864fc0729f9def69e183cc50e5d9c206b47f0",
+        "scheduled": false
+      },
+      {
+        "name": "accountTransfer",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:01.894976410Z",
+        "revision": "accounttransfer-00026-luv",
+        "timeoutSeconds": 30,
+        "uri": "https://accounttransfer-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      },
+      {
+        "name": "freeTablePublicStats",
+        "state": "ACTIVE",
+        "runtime": "nodejs22",
+        "updateTime": "2026-10-05T12:52:00.509672807Z",
+        "revision": "freetablepublicstats-00008-xas",
+        "timeoutSeconds": 30,
+        "uri": "https://freetablepublicstats-we5jrxqzcq-uc.a.run.app",
+        "hash": "8679a87a1878943527b6602b5c1598602c97d4a5",
+        "scheduled": false
+      }
+    ]
+  },
+  "scheduler": {
+    "before": [
+      {
+        "name": "firebase-schedule-cleanupStrategyMatchAchievementFreezes-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 6 hours",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupAiTextTrainingActivePresence-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupExpiredFreeTables-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-finalizeCrownCircuit-us-central1",
+        "state": "ENABLED",
+        "schedule": "every day 00:05",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupPlayerSafety-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 1 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-reconcileSoloProfileProjections-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupSoloSessionV2QueueIndex-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupSoloSessionV2Leases-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-expireAnjuPayFleaListings-us-central1",
+        "state": "ENABLED",
+        "schedule": "every day 00:00",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupP2pDiagnostics-us-central1",
+        "state": "ENABLED",
+        "schedule": "every day 03:30",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-expireTributeContracts-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 15 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupDanwakuDeletionJobs-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 15 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupOnlinePublicPresence-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      }
+    ],
+    "after": [
+      {
+        "name": "firebase-schedule-cleanupStrategyMatchAchievementFreezes-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 6 hours",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupAiTextTrainingActivePresence-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupExpiredFreeTables-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-finalizeCrownCircuit-us-central1",
+        "state": "ENABLED",
+        "schedule": "every day 00:05",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupPlayerSafety-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 1 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-reconcileSoloProfileProjections-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupSoloSessionV2QueueIndex-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupSoloSessionV2Leases-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupP2pDiagnostics-us-central1",
+        "state": "ENABLED",
+        "schedule": "every day 03:30",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-expireTributeContracts-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 15 minutes",
+        "timeZone": "Asia/Tokyo"
+      },
+      {
+        "name": "firebase-schedule-cleanupOnlinePublicPresence-us-central1",
+        "state": "ENABLED",
+        "schedule": "every 5 minutes",
+        "timeZone": "Asia/Tokyo"
+      }
+    ]
+  },
+  "backend": {
+    "checkedAt": "2026-10-07T09:55:56.900Z",
+    "since": "2026-10-07T09:48:34.498Z",
+    "deletedResources": [
+      {
+        "kind": "function",
+        "name": "cleanupDanwakuDeletionJobs",
+        "path": "/v2/projects/gazostadium/locations/us-central1/functions/cleanupDanwakuDeletionJobs",
+        "status": 404,
+        "ok": true
+      },
+      {
+        "kind": "scheduler",
+        "name": "firebase-schedule-cleanupDanwakuDeletionJobs-us-central1",
+        "path": "/v1/projects/gazostadium/locations/us-central1/jobs/firebase-schedule-cleanupDanwakuDeletionJobs-us-central1",
+        "status": 404,
+        "ok": true
+      },
+      {
+        "kind": "function",
+        "name": "expireAnjuPayFleaListings",
+        "path": "/v2/projects/gazostadium/locations/us-central1/functions/expireAnjuPayFleaListings",
+        "status": 404,
+        "ok": true
+      },
+      {
+        "kind": "scheduler",
+        "name": "firebase-schedule-expireAnjuPayFleaListings-us-central1",
+        "path": "/v1/projects/gazostadium/locations/us-central1/jobs/firebase-schedule-expireAnjuPayFleaListings-us-central1",
+        "status": 404,
+        "ok": true
+      }
+    ],
+    "unauthenticatedProbes": [
+      {
+        "name": "soloSessionAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "redeemAchievementCode",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "valueMarketAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "valueMarketRankings",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "playerSafetyAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "economyAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "soloFamiliarAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "danwakuNoteAction",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      },
+      {
+        "name": "matchAchievementShowcase",
+        "status": 401,
+        "errorStatus": "UNAUTHENTICATED",
+        "ok": true
+      }
+    ],
+    "startup": [
+      {
+        "name": "soloSessionAction",
+        "revision": "solosessionaction-00021-col",
+        "successCount": 2
+      },
+      {
+        "name": "anjuPayFleaAction",
+        "revision": "anjupayfleaaction-00021-sel",
+        "successCount": 1
+      },
+      {
+        "name": "redeemAchievementCode",
+        "revision": "redeemachievementcode-00010-xim",
+        "successCount": 1
+      },
+      {
+        "name": "valueMarketAction",
+        "revision": "valuemarketaction-00036-bey",
+        "successCount": 1
+      },
+      {
+        "name": "valueMarketRankings",
+        "revision": "valuemarketrankings-00033-jek",
+        "successCount": 1
+      },
+      {
+        "name": "playerSafetyAction",
+        "revision": "playersafetyaction-00008-teb",
+        "successCount": 1
+      },
+      {
+        "name": "rouletteTrainingAction",
+        "revision": "roulettetrainingaction-00008-wol",
+        "successCount": 1
+      },
+      {
+        "name": "economyAction",
+        "revision": "economyaction-00051-fif",
+        "successCount": 2
+      },
+      {
+        "name": "cleanupPlayerSafety",
+        "revision": "cleanupplayersafety-00008-vem",
+        "successCount": 1
+      },
+      {
+        "name": "soloFamiliarAction",
+        "revision": "solofamiliaraction-00013-tid",
+        "successCount": 1
+      },
+      {
+        "name": "danwakuNoteAction",
+        "revision": "danwakunoteaction-00009-nab",
+        "successCount": 1
+      },
+      {
+        "name": "matchAchievementShowcase",
+        "revision": "matchachievementshowcase-00008-lap",
+        "successCount": 1
+      }
+    ],
+    "errorSummary": [],
+    "ok": true
+  },
+  "hostingRelease": {
+    "name": "sites/gazostadium/releases/1791366894367000",
+    "type": "DEPLOY",
+    "releaseTime": "2026-10-07T09:54:54.367Z",
+    "version": {
+      "name": "sites/gazostadium/versions/ebaefc127395fdec",
+      "status": "FINALIZED",
+      "fileCount": "89"
+    }
+  },
+  "publicDelivery": {
+    "checkedAt": "2026-10-07T09:55:54.125Z",
+    "readOnly": true,
+    "marker": "retire-flea-danwaku-v1",
+    "productionDataAccessed": false,
+    "routes": [
+      {
+        "origin": "https://gazostadium.web.app",
+        "index": [
+          {
+            "url": "https://gazostadium.web.app/",
+            "status": 200,
+            "contentType": "text/html; charset=utf-8",
+            "sha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "expectedSha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "retiredLoadsAbsent": true,
+            "previousMarkersPreserved": true,
+            "ok": true
+          },
+          {
+            "url": "https://gazostadium.web.app/?releaseCheck=1791366953400",
+            "status": 200,
+            "contentType": "text/html; charset=utf-8",
+            "sha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "expectedSha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "retiredLoadsAbsent": true,
+            "previousMarkersPreserved": true,
+            "ok": true
+          }
+        ],
+        "assets": [
+          {
+            "file": "app.js",
+            "references": [
+              "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "expectedSha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "expectedSha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          },
+          {
+            "file": "achievements.js",
+            "references": [
+              "https://gazostadium.web.app/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.web.app/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.web.app/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "expectedSha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.web.app/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "expectedSha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          },
+          {
+            "file": "velvet.css",
+            "references": [
+              "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/css; charset=utf-8",
+                "sha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "expectedSha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/css; charset=utf-8",
+                "sha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "expectedSha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/functions/index.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/retired-community-modes.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/test/flea-danwaku-retirement-client.test.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/test/retired-community-modes-runtime.test.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/scripts/audit-community-retirement.cjs",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/scripts/verify-community-retirement-release.cjs",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/README.md",
+            "status": 404,
+            "ok": true
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.firebaseapp.com",
+        "index": [
+          {
+            "url": "https://gazostadium.firebaseapp.com/",
+            "status": 200,
+            "contentType": "text/html; charset=utf-8",
+            "sha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "expectedSha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "retiredLoadsAbsent": true,
+            "previousMarkersPreserved": true,
+            "ok": true
+          },
+          {
+            "url": "https://gazostadium.firebaseapp.com/?releaseCheck=1791366953400",
+            "status": 200,
+            "contentType": "text/html; charset=utf-8",
+            "sha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "expectedSha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "retiredLoadsAbsent": true,
+            "previousMarkersPreserved": true,
+            "ok": true
+          }
+        ],
+        "assets": [
+          {
+            "file": "app.js",
+            "references": [
+              "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "expectedSha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "expectedSha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          },
+          {
+            "file": "achievements.js",
+            "references": [
+              "https://gazostadium.firebaseapp.com/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.firebaseapp.com/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.firebaseapp.com/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "expectedSha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.firebaseapp.com/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/javascript; charset=utf-8",
+                "sha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "expectedSha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          },
+          {
+            "file": "velvet.css",
+            "references": [
+              "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/css; charset=utf-8",
+                "sha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "expectedSha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/css; charset=utf-8",
+                "sha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "expectedSha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/functions/index.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/retired-community-modes.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/test/flea-danwaku-retirement-client.test.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/test/retired-community-modes-runtime.test.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/scripts/audit-community-retirement.cjs",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/scripts/verify-community-retirement-release.cjs",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/README.md",
+            "status": 404,
+            "ok": true
+          }
+        ],
+        "ok": true
+      },
+      {
+        "origin": "https://gazostadium.anjugames.workers.dev",
+        "index": [
+          {
+            "url": "https://gazostadium.anjugames.workers.dev/",
+            "status": 200,
+            "contentType": "text/html",
+            "sha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "expectedSha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "retiredLoadsAbsent": true,
+            "previousMarkersPreserved": true,
+            "ok": true
+          },
+          {
+            "url": "https://gazostadium.anjugames.workers.dev/?releaseCheck=1791366953400",
+            "status": 200,
+            "contentType": "text/html",
+            "sha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "expectedSha256LF": "a778d31131e20e637c3bd523c710841dc73b6e2c04eb2390e66b308752ce7ca7",
+            "retiredLoadsAbsent": true,
+            "previousMarkersPreserved": true,
+            "ok": true
+          }
+        ],
+        "assets": [
+          {
+            "file": "app.js",
+            "references": [
+              "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/javascript",
+                "sha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "expectedSha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/javascript",
+                "sha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "expectedSha256LF": "bd6554ed0b31f9ec84dec2c2855a1d46d58b721d944276fa461a060095923e80",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          },
+          {
+            "file": "achievements.js",
+            "references": [
+              "https://gazostadium.anjugames.workers.dev/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.anjugames.workers.dev/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.anjugames.workers.dev/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/javascript",
+                "sha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "expectedSha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.anjugames.workers.dev/achievements.js?v=achievements-v1-remove-royale-v1-retire-team-v1-retire-training-v1-ai-text-training-v1-flea-achievements-lv10-v1-all-active-achievements-lv10-v1-crown-monthly-achievements-v1-dollmaster-achievement-v1-loss-streak-secrets-v1-danwaku-note-v1-roulette-training-sales-achievements-v1-image-preference-achievements-v1-tribute-ranch-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/javascript",
+                "sha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "expectedSha256LF": "bf1c0ebea02be7f112b2bdb58ff5faa1b96141682520330f68ed8a766a527bfd",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          },
+          {
+            "file": "velvet.css",
+            "references": [
+              "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+              "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1"
+            ],
+            "responses": [
+              {
+                "url": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1",
+                "status": 200,
+                "contentType": "text/css",
+                "sha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "expectedSha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              },
+              {
+                "url": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1&releaseCheck=1791366953400",
+                "status": 200,
+                "contentType": "text/css",
+                "sha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "expectedSha256LF": "98ac0088580f770f3dcca02e0dfd9d7d3b700d2885e725f8132367c3e31f9378",
+                "contentOk": true,
+                "behaviorOk": true,
+                "ok": true
+              }
+            ],
+            "ok": true
+          }
+        ],
+        "excluded": [
+          {
+            "file": "/functions/index.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/retired-community-modes.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/test/flea-danwaku-retirement-client.test.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/test/retired-community-modes-runtime.test.js",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/scripts/audit-community-retirement.cjs",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/functions/scripts/verify-community-retirement-release.cjs",
+            "status": 404,
+            "ok": true
+          },
+          {
+            "file": "/README.md",
+            "status": 404,
+            "ok": true
+          }
+        ],
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "limitations": [
+    "Authenticated mode-retired actions and persisted account-data invariants were verified in Firebase Emulator, not with a production user account.",
+    "Log verification covers only the recorded deployment-to-check window; no future error-free or monthly cost guarantee.",
+    "Historical collections, balances, ledger, notes and unlocked achievement definitions are intentionally retained."
+  ]
+}
