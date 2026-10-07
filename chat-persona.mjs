@@ -47,6 +47,8 @@ export const SHARE_CARD_MAX_MESSAGES = 10;
 export const SHARE_CARD_WIDTH = 1080;
 export const SHARE_CARD_HASHTAGS = "#貼り合い #貼り合いスタジアム";
 export const TYPING_SEND_INTERVAL_MS = 2500;
+// 発言の横に出す回の表記。通常型は「R3」、戦略型は「#3」のように差し替えられる。
+export const defaultRoundLabel = (round) => (Number(round) > 0 ? `R${Number(round)}` : "");
 export const TYPING_VISIBLE_MS = 5000;
 
 const PERSONA_IDS = new Set(CHAT_PERSONAS.map((persona) => persona.id));
@@ -165,6 +167,7 @@ export function buildShareCardModel({
   modeLabel = "通常型1on1",
   reactions = new Map(),
   maxMessages = SHARE_CARD_MAX_MESSAGES,
+  formatRound = defaultRoundLabel,
 } = {}) {
   const selected = new Set(selectedIds);
   const playerIndexByUid = new Map(players.map((player, index) => [player?.uid, index]));
@@ -191,6 +194,7 @@ export function buildShareCardModel({
         backgroundId: String(message.chatBackgroundId || ""),
         reactionId: normalizeChatReactionId(reactions.get?.(message.id) || ""),
         round: Number(message.round) || 0,
+        roundLabel: String(formatRound(Number(message.round) || 0) || ""),
       };
     });
   const resultLine = includeResult && result
@@ -448,7 +452,7 @@ export async function drawShareCard(canvas, model, {
     // 名前の行
     const nameX = item.side === "right" ? item.x + item.bubbleWidth : item.x;
     context.font = `700 26px ${bodyFont}`;
-    const label = `${item.name}${item.round ? ` / R${item.round}` : ""}`;
+    const label = `${item.name}${item.roundLabel ? ` / ${item.roundLabel}` : ""}`;
     const labelWidth = context.measureText(label).width;
     const markSize = persona ? 28 : 0;
     const totalWidth = labelWidth + (markSize ? markSize + 8 : 0);
@@ -607,11 +611,16 @@ export function openShareCardDialog(options) {
     return { status, text: "相手の名前と発言は、相手が許可した時だけそのまま載せます。今はぼかして載せます。" };
   };
 
+  const formatRound = options.formatRound || defaultRoundLabel;
+  const roundSuffix = (round) => {
+    const label = String(formatRound(Number(round) || 0) || "");
+    return label ? ` / ${escapeChatHtml(label)}` : "";
+  };
   const renderList = () => messages.map((message) => {
     const local = message.authorUid === options.localUid;
     const checked = view.selected.has(message.id);
     const body = message.stampId ? `スタンプ：${options.getStamp?.(message.stampId)?.label || ""}` : message.text;
-    return `<label class="share-card-pick${local ? " is-local" : " is-remote"}"><input type="checkbox" data-share-pick="${escapeChatHtml(message.id)}"${checked ? " checked" : ""} /><span><b>${escapeChatHtml(local ? message.name : `${message.name}（相手）`)} / R${Number(message.round) || 0}</b>${escapeChatHtml(body)}</span></label>`;
+    return `<label class="share-card-pick${local ? " is-local" : " is-remote"}"><input type="checkbox" data-share-pick="${escapeChatHtml(message.id)}"${checked ? " checked" : ""} /><span><b>${escapeChatHtml(local ? message.name : `${message.name}（相手）`)}${roundSuffix(message.round)}</b>${escapeChatHtml(body)}</span></label>`;
   }).join("");
 
   const shell = () => {
@@ -665,6 +674,7 @@ export function openShareCardDialog(options) {
       result: options.result,
       modeLabel: options.modeLabel,
       reactions: options.reactions,
+      formatRound,
     });
     await drawShareCard(canvas, model, {
       cosmeticClasses: options.cosmeticClasses,

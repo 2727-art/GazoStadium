@@ -3722,3 +3722,564 @@
     flex: 1 1 100%;
   }
 }
+
+/* ---------- なりきりDM（戦略型1on1）：口調の吹き出し・権利のリボン・指示・看破の封蝋・入力中・チャット帯・匿名ヴェール ---------- */
+
+/* 口調の吹き出し。色・線・角は chat-persona.css の口調ごとの変数を使う（:where で既定値の強さを0にする）。 */
+:where(.sp-persona) {
+  --chat-surface: var(--ha-bubble-theirs);
+  --chat-text: var(--vs-pearl);
+  --chat-border: transparent;
+  --chat-border-width: 0px;
+  --chat-border-style: solid;
+  --chat-shadow: none;
+  --chat-radius: 16px;
+}
+
+.hariai-thread .ha-msg .ha-bubble.sp-persona,
+.hariai-console .ha-msg .ha-bubble.sp-persona {
+  --meter-ring: rgba(20, 13, 24, 0.92);
+  position: relative;
+  color: var(--chat-text);
+  border: var(--chat-border-width) var(--chat-border-style) var(--chat-border);
+  border-radius: var(--chat-radius);
+  background: var(--chat-surface);
+  box-shadow: var(--chat-shadow);
+}
+
+.hariai-thread .ha-msg .ha-bubble.sp-persona::after,
+.hariai-console .ha-msg .ha-bubble.sp-persona::after {
+  position: absolute;
+  z-index: 2;
+  top: -11px;
+  right: -7px;
+  color: var(--chat-charm-color, #fff);
+  font-size: 0.82rem;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+/* 点数の色は権利のリボンとメーターで見せ、吹き出しの中は口調の文字色にそろえる */
+.hariai-score.sp-persona .hariai-score-head strong {
+  color: inherit;
+}
+
+.sp-persona .ha-meter100-scale,
+.sp-persona .hariai-flavor {
+  color: inherit;
+  opacity: 0.78;
+}
+
+/* 吹き出しの並び（リアクションの置き場） */
+.ha-msg-body > .sp-react-row {
+  max-width: 100%;
+}
+
+.ha-msg.is-mine .sp-react-row {
+  flex-direction: row-reverse;
+}
+
+.ha-msg .sp-react-row .chat-bubble-anchor {
+  max-width: 100%;
+}
+
+.ha-msg.is-mine .chat-reaction-sticker {
+  right: auto;
+  left: -10px;
+}
+
+.hariai-thread .chat-react-picker,
+.hariai-console .chat-react-picker {
+  margin-top: 2px;
+}
+
+/* 「語尾に♡」の残り回数 */
+.sp-heart-count {
+  position: absolute;
+  z-index: 3;
+  top: -11px;
+  left: -10px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #2a0716;
+  background: var(--vs-rose-soft);
+  box-shadow: 0 0 0 2px var(--vs-night-1);
+  font: 600 0.66rem/1 var(--vs-font-number);
+  letter-spacing: 0.04em;
+}
+
+.hariai-finish-card figcaption .sp-heart-count {
+  position: static;
+  display: inline-block;
+  margin-right: 6px;
+  box-shadow: none;
+}
+
+/* 権利が開いた時のリボン */
+.hariai-band.sp-band-ribbon {
+  color: #1a0710;
+  background: linear-gradient(135deg, #c9bcff, #8f78f0);
+  box-shadow: 0 0 14px rgba(143, 120, 240, 0.5);
+  font-weight: 900;
+}
+
+.band-instruction .hariai-band.sp-band-ribbon {
+  background: linear-gradient(135deg, #fff0c9, #e6c17a);
+  box-shadow: 0 0 14px rgba(230, 193, 122, 0.55);
+}
+
+.band-combo .hariai-band.sp-band-ribbon {
+  background: linear-gradient(135deg, #ff8ab6, #ff3f86);
+  box-shadow: 0 0 18px rgba(255, 63, 134, 0.6);
+}
+
+.hariai-band.sp-band-ribbon.is-fresh {
+  animation: sp-pop 600ms var(--vs-ease-snap) both;
+}
+
+/* 質問は紫、指示は金色の「命令」の吹き出し */
+.hariai-thread .ha-msg .ha-bubble.sp-order.is-question {
+  color: #ece6ff;
+  background: linear-gradient(135deg, #261a4a, #3c2a78);
+  box-shadow: 0 0 0 1.5px #a88bff, 0 0 16px rgba(168, 139, 255, 0.35);
+}
+
+.hariai-thread .ha-msg .ha-bubble.sp-order.is-instruction {
+  color: #fff3d2;
+  background: linear-gradient(135deg, #3b2a0c, #6b4a12);
+  box-shadow: 0 0 0 1.5px #e6c17a, 0 0 18px rgba(230, 193, 122, 0.32);
+}
+
+.hariai-thread .ha-msg .ha-bubble.sp-order.is-instruction > b {
+  color: #2a1a08;
+  background: var(--vs-gold);
+}
+
+.sp-order .hariai-flavor {
+  color: inherit;
+  opacity: 0.78;
+}
+
+/* 看破の宣言と封蝋 */
+.hariai-thread .ha-msg .ha-bubble.sp-break {
+  position: relative;
+  padding-right: 40px;
+  color: #ffe3e8;
+  background: linear-gradient(135deg, #2a0710, #5c0f1f);
+  box-shadow: 0 0 0 2px #ff5566, 0 0 22px rgba(255, 85, 102, 0.42);
+}
+
+.sp-seal {
+  position: absolute;
+  z-index: 3;
+  top: -22px;
+  right: -14px;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ff6b7d, #b3122e 70%);
+  box-shadow: 0 0 0 3px rgba(179, 18, 46, 0.35), 0 6px 14px rgba(0, 0, 0, 0.5);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  transform: rotate(12deg);
+}
+
+.sp-seal.is-fresh {
+  animation: sp-seal-press 700ms var(--vs-ease-snap) both;
+}
+
+.hariai-break-body.is-hit {
+  background: linear-gradient(145deg, rgba(92, 15, 31, 0.55), var(--ha-surface));
+  box-shadow: inset 0 0 0 1px rgba(255, 85, 102, 0.45), 0 0 26px rgba(255, 85, 102, 0.16);
+}
+
+.hariai-break-body.is-miss {
+  box-shadow: inset 0 0 0 1px rgba(191, 170, 187, 0.25);
+}
+
+/* 「効いてないって言ったよね♡」の証拠は、打ち消し線付きで並べる */
+.sp-receipts span {
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--vs-mist);
+  background: rgba(255, 255, 255, 0.04);
+  font-family: var(--ha-font-memo);
+  text-decoration: line-through 2px rgba(255, 85, 102, 0.85);
+}
+
+/* 相手の手番は、DMの「入力中」 */
+.hariai-typing-console {
+  justify-items: center;
+}
+
+.hariai-typing-console .ha-msg {
+  justify-self: start;
+}
+
+.hariai-typing-console strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vs-pearl);
+  font-size: 0.92rem;
+}
+
+.hariai-typing-bubble {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  padding: 10px 16px;
+}
+
+.hariai-typing-bubble .chat-typing-dots i {
+  width: 7px;
+  height: 7px;
+  background: currentColor;
+}
+
+/* 対戦スレッドの上のDMの見出し。スクロールしても上に残る */
+.hariai-dm-head {
+  position: sticky;
+  z-index: 6;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(20, 13, 24, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(255, 127, 166, 0.35), 0 10px 24px rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.hariai-dm-face {
+  position: relative;
+  flex: none;
+}
+
+.hariai-dm-face .hariai-dm-avatar {
+  width: 40px;
+  height: 40px;
+  box-shadow: 0 0 0 2px #ff4fa0, 0 0 14px rgba(255, 79, 160, 0.45);
+}
+
+.hariai-dm-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ha-ground);
+}
+
+.hariai-dm-badge .chat-persona-mark {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  vertical-align: 0;
+}
+
+.hariai-dm-who {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.hariai-dm-who b {
+  overflow: hidden;
+  color: var(--vs-pearl);
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hariai-dm-who small {
+  color: var(--vs-rose-soft);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.hariai-dm-who em {
+  overflow: hidden;
+  color: var(--vs-dim);
+  font-size: 0.68rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hariai-dm-reason {
+  display: grid;
+  flex: none;
+  justify-items: end;
+  gap: 2px;
+  color: var(--vs-mist);
+  font: 600 0.68rem/1 var(--vs-font-number);
+  letter-spacing: 0.06em;
+}
+
+.hariai-dm-reason b {
+  color: var(--vs-pearl);
+  font-size: 1.05rem;
+}
+
+.hariai-dm-reason i {
+  display: block;
+  width: 64px;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--vs-rose) var(--reason, 100%), var(--ha-bubble-theirs) var(--reason, 100%));
+}
+
+.hariai-persona-chip .chat-persona-mark {
+  margin-right: 3px;
+}
+
+/* 匿名の間は、レース越しのような吹き出し */
+.strategy-chat-panel.is-anonymous .chat-message p.sp-veil {
+  position: relative;
+  border: 0;
+  border-radius: 16px 16px 16px 4px;
+  color: var(--vs-pearl);
+  background: radial-gradient(circle at 0 0, rgba(255, 255, 255, 0.07) 0 2px, transparent 3px) 0 0 / 9px 9px, rgba(44, 27, 47, 0.92);
+  box-shadow: 0 0 0 1.5px rgba(248, 238, 242, 0.28);
+}
+
+.strategy-chat-panel.is-anonymous .chat-message.player-two p.sp-veil {
+  border-radius: 16px 4px 16px 16px;
+  background: radial-gradient(circle at 0 0, rgba(255, 255, 255, 0.07) 0 2px, transparent 3px) 0 0 / 9px 9px, rgba(92, 15, 46, 0.72);
+}
+
+.strategy-chat-panel.is-anonymous .chat-message p.sp-veil::before {
+  position: absolute;
+  inset: -5px;
+  border: 1px dashed rgba(248, 238, 242, 0.22);
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+}
+
+/* 正体判明：相手のカードのヴェールが外れる（画面に入った最初の1回だけ） */
+.strategy-identity-card.is-opponent {
+  position: relative;
+  overflow: hidden;
+}
+
+.sp-veil-lift {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0 1.5px, transparent 2.5px) 0 0 / 12px 12px, linear-gradient(180deg, rgba(20, 13, 24, 0.4), rgba(20, 13, 24, 0.94));
+}
+
+.sp-veil-lift span {
+  color: var(--vs-pearl);
+  font: 400 clamp(1.1rem, 3.6vw, 1.5rem)/1.4 var(--ha-font-display);
+  text-shadow: 0 0 20px rgba(255, 63, 134, 0.7);
+}
+
+.strategy-identity-screen:not(.is-refresh) .sp-veil-lift {
+  animation: sp-veil-lift 1700ms ease both;
+}
+
+.strategy-identity-screen:not(.is-refresh) + .sc-dock .strategy-chat-panel .chat-message p.chat-persona-bubble {
+  animation: sp-unveil 1100ms var(--vs-ease-out) 400ms both;
+}
+
+/* スマホ・タブレット：チャットは画面下の帯から開く（品評会は画面に置いたまま） */
+.sc-dock-peek,
+.sc-dock-close {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .sc-dock {
+    position: fixed;
+    z-index: 30;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    pointer-events: none;
+  }
+
+  .sc-dock-peek {
+    display: flex;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px 8px 14px;
+    border: 0;
+    border-radius: 16px;
+    cursor: pointer;
+    color: var(--vs-pearl);
+    background: rgba(31, 20, 35, 0.95);
+    box-shadow: inset 0 0 0 1px rgba(255, 127, 166, 0.28), 0 10px 26px rgba(0, 0, 0, 0.45);
+    font-size: 0.8rem;
+    text-align: left;
+    pointer-events: auto;
+  }
+
+  .sc-dock-text {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    color: var(--vs-mist);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sc-dock-text b {
+    margin-right: 8px;
+    color: var(--vs-violet);
+  }
+
+  .sc-dock-text.is-typing {
+    color: var(--vs-rose-soft);
+  }
+
+  .sc-dock-empty {
+    color: var(--vs-dim);
+  }
+
+  .sc-dock-label {
+    position: relative;
+    flex: none;
+    padding: 7px 12px;
+    border-radius: 999px;
+    color: var(--vs-gold);
+    box-shadow: inset 0 0 0 1px var(--vs-line);
+    font-size: 0.74rem;
+    font-weight: 700;
+  }
+
+  .sc-dock-peek.has-new .sc-dock-label::after {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    content: "";
+    background: var(--vs-rose);
+    box-shadow: 0 0 0 2px var(--vs-night-2), 0 0 10px var(--vs-rose);
+  }
+
+  .sc-dock.is-open {
+    pointer-events: auto;
+  }
+
+  .sc-dock.is-open::before {
+    position: fixed;
+    inset: 0;
+    content: "";
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .sc-dock-sheet {
+    position: fixed;
+    z-index: 2;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    visibility: hidden;
+    max-height: 82dvh;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 22px 22px 0 0;
+    background: var(--vs-night-2);
+    box-shadow: 0 -1px 0 var(--vs-line), 0 -24px 50px rgba(0, 0, 0, 0.6);
+    transform: translateY(105%);
+    transition: transform 280ms var(--vs-ease-out), visibility 0s linear 280ms;
+  }
+
+  .sc-dock.is-open .sc-dock-sheet {
+    visibility: visible;
+    transform: none;
+    transition: transform 280ms var(--vs-ease-out), visibility 0s;
+  }
+
+  .sc-dock-close {
+    display: block;
+    margin: 0 0 8px auto;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+    color: var(--vs-mist);
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .sc-dock .strategy-chat-panel {
+    width: 100%;
+    min-height: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 16px;
+    box-shadow: none;
+  }
+
+  body:has(.sc-dock) #app {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  }
+
+  body:has(.sc-dock) .toast {
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@keyframes sp-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.12); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+
+@keyframes sp-seal-press {
+  0% { opacity: 0; transform: scale(2.2) rotate(-30deg); }
+  60% { opacity: 1; transform: scale(0.92) rotate(16deg); }
+  100% { opacity: 1; transform: rotate(12deg); }
+}
+
+@keyframes sp-veil-lift {
+  0% { opacity: 1; }
+  45% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-36px); }
+}
+
+@keyframes sp-unveil {
+  from { filter: blur(6px); opacity: 0.4; }
+  to { filter: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hariai-band.sp-band-ribbon.is-fresh,
+  .sp-seal.is-fresh,
+  .hariai-typing-bubble .chat-typing-dots i,
+  .strategy-identity-screen:not(.is-refresh) .sp-veil-lift,
+  .strategy-identity-screen:not(.is-refresh) + .sc-dock .strategy-chat-panel .chat-message p.chat-persona-bubble {
+    animation: none;
+  }
+
+  .sc-dock-sheet,
+  .sc-dock.is-open .sc-dock-sheet {
+    transition: none;
+  }
+}

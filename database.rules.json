@@ -1129,6 +1129,9 @@
             "chatBackgroundId": {
               ".validate": "!newData.exists() || ((newData.parent().child('phase').val() === 'battle' || newData.parent().child('phase').val() === 'review') && newData.isString() && newData.val() === root.child('online/economy/' + auth.uid + '/equipped/chatBackground').val())"
             },
+            "effect": {
+              ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^(whisper|emphasis|tremble|hearts)$/) && !newData.parent().child('stampId').exists())"
+            },
             "$other": {
               ".validate": false
             }

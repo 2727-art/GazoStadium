@@ -88,7 +88,7 @@ import {
   renderChatPersonaMark,
   renderChatReactionPicker,
   renderChatReactionSticker,
-} from "./chat-persona.mjs?v=chat-persona-v1";
+} from "./chat-persona.mjs?v=chat-persona-v2";
 import {
   bindPostMatchTip,
   isPostMatchTipBusy,

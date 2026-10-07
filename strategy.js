@@ -32,8 +32,32 @@ import {
 import {
   CHAT_COSMETIC_PRODUCTS,
   chatCosmeticClassNames,
+  getChatCosmeticProduct,
   getEquippedChatCosmetics,
 } from "./chat-cosmetics.js?v=chat-cosmetics-v1";
+import {
+  TYPING_SEND_INTERVAL_MS,
+  TYPING_VISIBLE_MS,
+  chatEffectClass,
+  chatPersonaBubbleClass,
+  normalizeChatEffect,
+  normalizeChatPersonaId,
+  normalizeChatReactionId,
+  openShareCardDialog,
+  personaTypingText,
+  renderChatEffectPicker,
+  renderChatEffectText,
+  renderChatPersonaMark,
+  renderChatReactionPicker,
+  renderChatReactionSticker,
+} from "./chat-persona.mjs?v=chat-persona-v2";
+import {
+  anonymousPersonaName,
+  hariaiHeartBadges,
+  hariaiItemAuthor,
+  isStrategyReactionKey,
+  strategyTypingText,
+} from "./strategy-chat.mjs?v=strategy-persona-chat-v1";
 import {
   PLAYER_TITLE_PRODUCTS,
   getPlayerTitlePresentation,
@@ -218,6 +242,9 @@ let strategyQueueDisconnectOperations = Promise.resolve();
 let resultNavigationBusy = false;
 // 読みメモの開閉。対戦中に描き直しても、閉じたノートを勝手に開かない。
 let hariaiMemoOpen = true;
+// スマホのチャット帯の開閉と既読数。描き直しても保つ。
+let strategyChatOpen = false;
+let strategyChatSeenCount = 0;
 
 const matchAchievementShowcaseCallable = httpsCallable(functions, "matchAchievementShowcase");
 
@@ -300,6 +327,19 @@ function createState() {
     hideOpponentAvatar: false,
     chatMessages: [],
     seenChatIds: new Set(),
+    chatEffect: "",
+    chatReactions: new Map(),
+    chatFreshReactionKeys: new Set(),
+    chatAnimatedIds: new Set(),
+    chatTypingSentAt: 0,
+    remoteTyping: null,
+    remoteTypingTimer: null,
+    freshHariaiKeys: new Set(),
+    shareConsent: "none",
+    shareConsentRequestId: "",
+    incomingShareConsentRequestId: "",
+    shareConsentAnswered: false,
+    shareCardController: null,
     localDeckReadyCommitted: false,
     finalWeaknessRevealsVerified: false,
     weaknessIntegrityFailed: false,
@@ -975,6 +1015,8 @@ function isActive() {
 const useOfflineStrategyPreview = ["127.0.0.1", "localhost"].includes(window.location.hostname)
   && new URLSearchParams(window.location.search).has("strategyPreview");
 const STRATEGY_PREVIEW_STEPS = [
+  ["intro", "匿名の偵察"],
+  ["identity", "正体判明"],
   ["right", "権利を使う（91点）"],
   ["act", "次の1手（連投）"],
   ["score", "採点する"],
@@ -983,9 +1025,9 @@ const STRATEGY_PREVIEW_STEPS = [
   ["finish", "看破成功・仕留め"],
 ];
 // プレビューでは、ルームへ書き込む操作とチャットを押しても実行しない。
-const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "[data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input";
+const STRATEGY_PREVIEW_BLOCKED_CONTROLS = "#strategyAccept, #strategyWithdraw, #strategyBattleStart, [data-hariai-post], [data-hariai-break], [data-hariai-pass], [data-hariai-surrender], [data-hariai-score-submit], [data-hariai-right-skip], [data-hariai-right-submit], [data-hariai-answer], [data-hariai-finish-skip], [data-hariai-finish-submit], [data-hariai-penalty-submit], [data-hariai-penalty-done], .strategy-chat-panel button, .strategy-chat-panel input";
 const STRATEGY_PREVIEW_SALT = "0123456789abcdef0123456789abcdef";
-const strategyPreview = { remote: [] };
+const strategyPreview = { remote: [], scoutChat: [], battleChat: [] };
 
 function paintStrategyPreviewArt(index) {
   const canvas = document.createElement("canvas");
@@ -1048,8 +1090,8 @@ async function startStrategyPreview() {
   const urls = await Promise.all(Array.from({ length: 13 }, (_, index) => paintStrategyPreviewArt(index)));
   if (!active) return;
   const persona = (type, callStyle) => ({ type, firstPerson: "watashi", callStyle });
-  const me = { uid: "preview-me", name: "ルミナ", persona: persona("tsuyotsuyo", "chan"), clues: ["メガネ", "ポニテ", "うなじ"], penalties: normalizeHariaiPenaltyConsent({}) };
-  const rival = { uid: "preview-rival", name: "シオン", persona: persona("koakuma", "anata"), clues: ["ツインテ", "ジト目", "制服"], penalties: normalizeHariaiPenaltyConsent({}) };
+  const me = { uid: "preview-me", name: "ルミナ", persona: persona("tsuyotsuyo", "chan"), clues: ["メガネ", "ポニテ", "うなじ"], penalties: normalizeHariaiPenaltyConsent({}), mainCount: 5, reserveCount: 5 };
+  const rival = { uid: "preview-rival", name: "シオン", persona: persona("koakuma", "anata"), clues: ["ツインテ", "ジト目", "制服"], penalties: normalizeHariaiPenaltyConsent({}), mainCount: 5, reserveCount: 5 };
   Object.assign(state, {
     uid: me.uid,
     authReady: true,
@@ -1062,7 +1104,18 @@ async function startStrategyPreview() {
     opponentOnline: true,
     main: urls.slice(0, 5).map((url, index) => ({ id: `preview-main-${index}`, url, used: false })),
     reserve: urls.slice(5, 10).map((url, index) => ({ id: `preview-reserve-${index}`, url, used: false })),
+    chatReactions: new Map([["c:preview-chat-2", "kiss"], ["t:2:caption", "crown"]]),
   });
+  // なりきりDMの見本：匿名の偵察（ヴェール越し）と、対戦中の口調の吹き出し・言い方・リアクション。
+  strategyPreview.scoutChat = [
+    { id: "preview-scout-1", authorUid: rival.uid, text: "メガネって、正直どう？", phase: "scout", round: 1 },
+    { id: "preview-scout-2", authorUid: me.uid, text: "どうだろうね♡ 当ててみて", phase: "scout", round: 1, effect: "whisper" },
+  ];
+  strategyPreview.battleChat = [
+    { id: "preview-chat-1", authorUid: rival.uid, text: "その目線、ずるくない？", phase: "battle", round: 2, effect: "hearts" },
+    { id: "preview-chat-2", authorUid: me.uid, text: "ふーん、効いてるんだ？", phase: "battle", round: 3, effect: "emphasis" },
+    { id: "preview-chat-3", authorUid: rival.uid, text: "…べつに、効いてないし", phase: "battle", round: 4, effect: "tremble" },
+  ];
   strategyPreview.remote = urls.slice(10);
   mountStrategyPreviewBar();
   showStrategyPreviewStep("right");
@@ -1070,6 +1123,13 @@ async function startStrategyPreview() {
 
 function showStrategyPreviewStep(step) {
   if (!active || !useOfflineStrategyPreview) return;
+  if (step === "intro" || step === "identity") {
+    state.chatMessages = strategyPreview.scoutChat.slice();
+    state.screen = step;
+    render();
+    return;
+  }
+  state.chatMessages = [...strategyPreview.scoutChat, ...strategyPreview.battleChat];
   const [host, guest] = state.players;
   const moves = strategyPreviewMoves(step);
   const cards = [...state.main, ...state.reserve];
@@ -1289,7 +1349,8 @@ function render() {
   // 同じ画面の描き直しでは登場アニメーションを再生しない（対戦スレッドが点滅しないように）。
   if (!screenChanged) app.querySelector(".screen")?.classList.add("is-refresh");
   if (state.screen === "battle") state.battleViewKey = battleViewKey();
-  if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("beforeend", renderStrategyChat());
+  // 画面の登場アニメーションが残す transform の中だと画面下に固定できないので、チャットは画面の直後に置く。
+  if (isStrategyChatVisible()) app.querySelector(".screen")?.insertAdjacentHTML("afterend", renderStrategyChatDock());
   bindScreenEvents();
   if (screenChanged && state.screen === "gameover") {
     window.HariaiOnline?.refreshFreeTablePublicStats?.().catch(() => {});
@@ -1494,8 +1555,8 @@ function renderWaitingDeck() {
 function renderIdentityReveal() {
   return `<section class="screen strategy-screen strategy-identity-screen"><div class="strategy-versus-title"><span class="eyebrow">IDENTITY REVEAL</span><h1>対戦相手、判明</h1>
     <p>本当の弱点は秘密のまま。画像に言葉を乗せて刺し、点数を読み、1回だけの看破で落とします。</p></div><div class="strategy-identity-grid">
-    ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
-      <p class="hariai-identity-persona">${escapeHtml(personaLabel(player))}／一人称「${escapeHtml(personaFirst(player))}」</p>
+    ${state.players.map((player, index) => { const localPlayer = index === state.playerIndex; const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url; return `<article class="strategy-identity-card player-${index + 1}${localPlayer ? "" : " is-opponent"}"><small>${localPlayer ? "YOU" : "OPPONENT"}</small>${localPlayer ? "" : '<span class="sp-veil-lift" aria-hidden="true"><span>ヴェールが外れる…</span></span>'}${shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "identity-avatar" }) || ""}<h2>${escapeHtml(player.name)}</h2>
+      <p class="hariai-identity-persona">${renderChatPersonaMark(player.persona?.type)}${escapeHtml(personaLabel(player))}／一人称「${escapeHtml(personaFirst(player))}」</p>
       ${localPlayer ? "" : renderOpponentAchievementShowcase({ context: "is-identity", label: "実績コレクション" })}<div><span>手札</span><strong>${player.mainCount + player.reserveCount}</strong></div><div><span>理性</span><strong>${HARIAI_REASON_MAX}</strong></div></article>`; }).join("")}<div class="strategy-vs-mark">VS</div></div>
     <button class="avatar-visibility-toggle strategy-avatar-toggle" type="button" data-strategy-avatar-visibility aria-pressed="${state.hideOpponentAvatar}">${state.hideOpponentAvatar ? "相手画像を表示" : "相手画像を隠す"}</button>
     <button class="button button-primary strategy-center-button" id="strategyBattleStart">貼り合い開始</button></section>`;
@@ -1558,10 +1619,11 @@ function renderGameOver() {
     ${renderHariaiPenaltySection(outcome)}
     <details class="hariai-log"><summary>対戦スレッドを見返す（${replay?.slots?.length || 0}手）</summary><ol class="hariai-thread">${renderHariaiThread()}</ol></details>
     <div class="online-profile-strip"><span>あなたの戦略型戦績</span><span>${state.profile.wins}勝 ${state.profile.losses}敗 ${state.profile.draws}分</span><span>RATE ${state.profile.rating}</span></div>
+    ${renderStrategyShareConsentAsk()}
     ${renderStrategyReviewInvite()}
     ${state.playerSafetyStopped ? "" : renderPostMatchTip({ mode: "strategy", roomId: state.roomId, viewerUid: state.uid, recipients: state.players, balance: state.economy.points })}
     <div id="strategyFreeTableLampSlot" class="free-table-result-lamp-slot" data-free-table-lamp-refresh>${window.HariaiOnline?.renderFreeTableResultLampContent?.({ buttonId: "strategyFreeTableLampButton" }) || ""}</div>
-    <div class="screen-actions strategy-final-actions">${shareButton}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
+    <div class="screen-actions strategy-final-actions">${shareButton}${state.playerSafetyStopped ? "" : '<button class="button button-ghost" type="button" id="strategyShareCard">名場面カードを作る</button>'}<button class="button button-ghost" id="strategyNewMatch">別の相手を探す</button><button class="button button-primary" id="strategyFinish">タイトルへ戻る</button></div>
   </div></section>`;
 }
 
@@ -1640,6 +1702,7 @@ function renderStrategyReview() {
       <div class="strategy-review-clock"><small>残り時間</small><strong id="strategyReviewCountdown">${formatReviewRemaining()}</strong></div></header>
     <div class="strategy-review-notice"><span>● 双方同意済み</span><p>最大10分です。どちらかが終了すると両者とも閉じ、受信・録音・録画した画像・音声・映像を端末メモリから破棄します。</p></div>
     ${renderHariaiReviewPenaltyBanner()}
+    ${renderStrategyShareConsentAsk()}
     <div class="screen-actions strategy-review-leave"><button class="button button-danger" id="strategyReviewLeave">品評会を終了</button></div>
   </section>`;
 }
@@ -1791,7 +1854,7 @@ function renderBattle() {
   const replay = state.replay;
   if (!replay) return renderWaiting("HARIAI", "貼り合いを準備しています", "先攻と手札を確認しています。");
   return `<section class="screen strategy-screen hariai-battle">${renderBattleHud()}
-    <div class="hariai-layout">${renderHariaiReadingMemo()}<div class="hariai-main">
+    <div class="hariai-layout">${renderHariaiReadingMemo()}<div class="hariai-main">${renderHariaiDmHead()}
       <ol class="hariai-thread" aria-label="貼り合いのやりとり">${renderHariaiThread()}</ol>
       <section class="hariai-console" id="hariaiConsole" aria-live="polite">${renderHariaiConsole()}</section>
     </div><aside class="hariai-side">${renderHariaiSelfCard()}${renderHariaiRuleCard()}</aside></div></section>`;
@@ -1803,7 +1866,8 @@ function renderHariaiThread() {
     const first = playerByUid(state.firstUid);
     return `<li class="hariai-thread-empty">${first ? `先攻は${escapeHtml(first.name)}。1手＝画像＋言葉＋狙いで、最初の1枚を貼ります。` : "先攻を決めています…"}</li>`;
   }
-  return slots.map(renderHariaiSlot).join("");
+  const hearts = hariaiHeartBadges(slots);
+  return slots.map((slot) => renderHariaiSlot(slot, hearts)).join("");
 }
 
 function hariaiSlotItem(slot, index = null) {
@@ -1840,22 +1904,22 @@ function renderHariaiSlotHead(slot, text) {
   return `<p class="ha-divider hariai-slot-head"><span class="hariai-slot-no">${slot.slot}手目</span>${text}</p>`;
 }
 
-function renderHariaiSlot(slot) {
+function renderHariaiSlot(slot, hearts = new Map()) {
   const attacker = playerByUid(slot.by);
   const receiver = playerByUid(slot.receiver);
   const side = slot.by === state.uid ? "is-local" : "is-opponent";
   if (slot.kind === "surrender") {
-    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}が参りました`)}
-      ${hariaiMessage(attacker, `<p class="ha-bubble">${escapeHtml(personaLine(attacker, "surrender"))}</p>`)}</li>`;
+    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}が参りました`)}
+      ${hariaiMessage(attacker, `<p class="ha-bubble ${hariaiPersonaClass(attacker)}">${escapeHtml(personaLine(attacker, "surrender"))}</p>`)}</li>`;
   }
   if (slot.kind === "pass") {
-    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}は看破を見送りました`)}</li>`;
+    return `<li class="hariai-slot hariai-system ${side}">${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}は看破を見送りました`)}</li>`;
   }
-  if (slot.kind === "break") return renderHariaiBreakSlot(slot, attacker, receiver, side);
-  return renderHariaiPostSlot(slot, attacker, receiver, side);
+  if (slot.kind === "break") return renderHariaiBreakSlot(slot, attacker, receiver, side, hearts);
+  return renderHariaiPostSlot(slot, attacker, receiver, side, hearts);
 }
 
-function renderHariaiPostSlot(slot, attacker, receiver, side) {
+function renderHariaiPostSlot(slot, attacker, receiver, side, hearts = new Map()) {
   const item = hariaiSlotItem(slot);
   const key = imageKey("move", slot.slot);
   const concealed = slot.by !== state.uid && !state.openedMediaKeys.has(key);
@@ -1866,26 +1930,31 @@ function renderHariaiPostSlot(slot, attacker, receiver, side) {
         ${!concealed && item.audioUrl ? `<button class="hariai-audio" type="button" data-strategy-play-audio="${escapeHtml(item.audioUrl)}" data-audio-start="0" data-audio-duration="${Number(item.audioDuration || 0)}">♪ 音声 ${Number(item.audioDuration || 0).toFixed(1)}秒</button>` : ""}`
     : '<div class="hariai-media is-loading"><span>画像を受信中…</span></div>';
   const owner = slot.receiver === state.uid ? "あなたの" : "相手の";
+  const captionBubble = `<p class="ha-bubble hariai-caption ${hariaiPersonaClass(attacker)}">${hariaiHeartBadge(hearts, `${slot.slot}:caption`)}${escapeHtml(caption)}</p>`;
   const post = `${media}
-    <p class="ha-bubble hariai-caption">${escapeHtml(caption)}</p>
+    ${hariaiReactable(`t:${slot.slot}:caption`, attacker, captionBubble)}
     <span class="ha-chip hariai-target">狙い：${owner}「${escapeHtml(candidateText(slot.receiver, slot.target))}」</span>`;
   return `<li class="hariai-slot hariai-post ${side}">
-    ${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}が貼った${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}`)}
+    ${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}が貼った${slot.combo > 1 ? `<em class="hariai-combo">${slot.combo}連投</em>` : ""}`)}
     ${hariaiMessage(attacker, post)}
-    ${renderHariaiScoreBlock(slot, receiver)}
-    ${renderHariaiRightBlock(slot, attacker, receiver)}
+    ${renderHariaiScoreBlock(slot, receiver, hearts)}
+    ${renderHariaiRightBlock(slot, attacker, receiver, hearts)}
   </li>`;
 }
 
 // 点数は受け手の吹き出し。数字・ひとこと・メーター・権利と理性の変化をまとめて返す。
-function renderHariaiScoreBlock(slot, receiver) {
+function renderHariaiScoreBlock(slot, receiver, hearts = new Map()) {
   if (!Number.isInteger(slot.score)) return "";
   const reply = slot.reply ? (slot.replyHeart ? ensureHariaiHeart(slot.reply) : slot.reply) : "";
   const whose = receiver?.uid === state.uid ? "あなた" : "相手";
-  const body = `<div class="ha-bubble hariai-score band-${slot.band}"><div class="hariai-score-head"><strong>${slot.score}<small>点</small></strong>${reply ? `<span class="hariai-reply">${escapeHtml(reply)}</span>` : ""}</div>
+  const scoreBubble = `<div class="ha-bubble hariai-score band-${slot.band} ${hariaiPersonaClass(receiver)}">${hariaiHeartBadge(hearts, `${slot.slot}:reply`)}<div class="hariai-score-head"><strong>${slot.score}<small>点</small></strong>${reply ? `<span class="hariai-reply">${escapeHtml(reply)}</span>` : ""}</div>
       ${renderHariaiMeter(slot.score)}
-      ${slot.scoreSurrender ? `<p class="hariai-reply is-surrender">${escapeHtml(personaLine(receiver, "surrender"))}</p>` : ""}</div>
-    <p class="hariai-score-meta band-${slot.band}"><span class="hariai-band">${HARIAI_BAND_LABELS[slot.band] || ""}</span>${slot.damage ? `<span class="hariai-damage">${whose}の理性 −${slot.damage}</span>` : ""}</p>`;
+      ${slot.scoreSurrender ? `<p class="hariai-reply is-surrender">${escapeHtml(personaLine(receiver, "surrender"))}</p>` : ""}</div>`;
+  // 80・85・90点で開く権利は、光るリボンで見せる（新しく開いた時だけ弾む）。
+  const unlocked = slot.band && slot.band !== "none";
+  const ribbonClass = unlocked ? ` sp-band-ribbon${state.freshHariaiKeys.delete(`band:${slot.slot}`) ? " is-fresh" : ""}` : "";
+  const body = `${hariaiReactable(`t:${slot.slot}:reply`, receiver, scoreBubble)}
+    <p class="hariai-score-meta band-${slot.band}"><span class="hariai-band${ribbonClass}">${HARIAI_BAND_LABELS[slot.band] || ""}${unlocked ? "が解禁" : ""}</span>${slot.damage ? `<span class="hariai-damage">${whose}の理性 −${slot.damage}</span>` : ""}</p>`;
   return hariaiMessage(receiver, body, "hariai-score-msg");
 }
 
@@ -1906,26 +1975,34 @@ function hariaiAckLine(right, receiver, attacker) {
   return "次の点数は、ちゃんと理由も言います♡";
 }
 
-function renderHariaiRightBlock(slot, attacker, receiver) {
+function hariaiAnswerText(slot, attacker, receiver) {
+  const answer = slot.answer;
+  if (answer?.text) return answer.heart ? ensureHariaiHeart(answer.text) : answer.text;
+  if (Number.isInteger(answer?.choice)) return `「${candidateText(slot.receiver, answer.choice)}」のほう…♡`;
+  if (Number.isInteger(answer?.value)) return `ほんとは…${answer.value}点♡`;
+  if (Number.isInteger(answer?.candidate)) return `「${candidateText(slot.receiver, answer.candidate)}」は弱点じゃない（ブラフ確定）`;
+  if (answer?.ack) return hariaiAckLine(slot.right, receiver, attacker);
+  return "";
+}
+
+function renderHariaiRightBlock(slot, attacker, receiver, hearts = new Map()) {
   if (!slot.right) return "";
   if (slot.right.kind === "none") return '<p class="hariai-right is-skipped">権利は使わずに進めました。</p>';
   const label = slot.right.kind === "question" ? "質問" : "指示";
   const flavor = slot.right.flavor ? `<span class="hariai-flavor">${escapeHtml(slot.right.flavor)}</span>` : "";
   const answer = slot.answer;
-  let text = "";
-  if (answer?.text) text = answer.heart ? ensureHariaiHeart(answer.text) : answer.text;
-  else if (Number.isInteger(answer?.choice)) text = `「${candidateText(slot.receiver, answer.choice)}」のほう…♡`;
-  else if (Number.isInteger(answer?.value)) text = `ほんとは…${answer.value}点♡`;
-  else if (Number.isInteger(answer?.candidate)) text = `「${candidateText(slot.receiver, answer.candidate)}」は弱点じゃない（ブラフ確定）`;
-  else if (answer?.ack) text = hariaiAckLine(slot.right, receiver, attacker);
-  const ask = hariaiMessage(attacker, `<p class="ha-bubble hariai-right is-${slot.right.kind}"><b>${label}</b>${escapeHtml(hariaiRightPrompt(slot.right, slot.receiver))}${flavor}</p>`);
+  const text = hariaiAnswerText(slot, attacker, receiver);
+  // 指示は金色の「命令」の吹き出し、質問は紫の吹き出し。
+  const askBubble = `<p class="ha-bubble hariai-right is-${slot.right.kind} sp-order"><b>${label}</b>${escapeHtml(hariaiRightPrompt(slot.right, slot.receiver))}${flavor}</p>`;
+  const ask = hariaiMessage(attacker, hariaiReactable(`t:${slot.slot}:right`, attacker, askBubble));
+  const answerBubble = `<p class="ha-bubble hariai-answer ${hariaiPersonaClass(receiver)}">${hariaiHeartBadge(hearts, `${slot.slot}:answer`)}${escapeHtml(text)}</p>`;
   const reply = answer
-    ? hariaiMessage(receiver, `<p class="ha-bubble hariai-answer">${escapeHtml(text)}</p>`)
+    ? hariaiMessage(receiver, hariaiReactable(`t:${slot.slot}:answer`, receiver, answerBubble))
     : `<p class="hariai-answer is-waiting">${escapeHtml(receiver?.name || "")}の返事を待っています…</p>`;
   return `${ask}${reply}`;
 }
 
-function renderHariaiBreakSlot(slot, attacker, receiver, side) {
+function renderHariaiBreakSlot(slot, attacker, receiver, side, hearts = new Map()) {
   const guess = candidateText(slot.receiver, slot.guess);
   let result = '<p class="hariai-break-wait">答え合わせ中…</p>';
   if (slot.breakResult === "miss") {
@@ -1933,26 +2010,29 @@ function renderHariaiBreakSlot(slot, attacker, receiver, side) {
   } else if (slot.breakResult === "hit") {
     const bluffs = (slot.bluffSlots || []).map((number) => state.replay.slots.find((item) => item.slot === number)).filter(Boolean);
     const faces = bluffs.length
-      ? `<div class="hariai-bluffs"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>${item.slot}手目 ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
+      ? `<div class="hariai-bluffs sp-receipts"><b>効いてないって言ったよね♡</b>${bluffs.map((item) => `<span>${item.slot}手目 ${item.score}点「${escapeHtml(item.caption)}」</span>`).join("")}</div>`
       : "";
     const finish = Number.isInteger(slot.finishCount)
-      ? renderHariaiFinish(slot)
+      ? renderHariaiFinish(slot, hearts)
       : `<p class="hariai-break-wait">仕留めの準備中…（最大${Number(slot.finishMax || 0)}枚）</p>`;
     result = `<p class="hariai-break-result is-hit">看破成功！ 本命は「${escapeHtml(guess)}」。${escapeHtml(receiver?.name || "")}の理性 −${Number(slot.damage || 0)}</p>${faces}${finish}`;
   }
-  return `<li class="hariai-slot hariai-break ${side}">${renderHariaiSlotHead(slot, `${escapeHtml(attacker?.name || "")}の看破`)}
-    ${hariaiMessage(attacker, `<p class="ha-bubble hariai-caption is-break">${escapeHtml(personaLine(attacker, "breakCall", { candidate: guess }))}</p>`)}
-    <div class="hariai-break-body">${result}</div></li>`;
+  // 看破の宣言には封蝋を押す（宣言と成功の時だけ押し当てる動き）。
+  const sealClass = state.freshHariaiKeys.delete(`break:${slot.slot}`) ? " is-fresh" : "";
+  const callBubble = `<p class="ha-bubble hariai-caption is-break sp-break">${escapeHtml(personaLine(attacker, "breakCall", { candidate: guess }))}<span class="sp-seal${sealClass}" aria-hidden="true">看破</span></p>`;
+  return `<li class="hariai-slot hariai-break ${side}">${renderHariaiSlotHead(slot, `${hariaiNameWithMark(attacker)}の看破`)}
+    ${hariaiMessage(attacker, hariaiReactable(`t:${slot.slot}:break`, attacker, callBubble))}
+    <div class="hariai-break-body${slot.breakResult ? ` is-${slot.breakResult}` : ""}">${result}</div></li>`;
 }
 
-function renderHariaiFinish(slot) {
+function renderHariaiFinish(slot, hearts = new Map()) {
   if (!slot.finishCount) return '<p class="hariai-break-wait">仕留めはせずに続けます。</p>';
   const cards = Array.from({ length: slot.finishCount }, (_, index) => {
     const item = hariaiSlotItem(slot, index);
     const caption = slot.finishCaptions?.[index];
     const text = caption ? (caption.heart ? ensureHariaiHeart(caption.text) : caption.text) : "";
     return `<figure class="hariai-finish-card" data-hariai-finish-figure="${slot.slot}:${index}">${item?.url ? `<img src="${item.url}" alt="仕留めの画像${index + 1}" loading="lazy" />` : '<span class="hariai-media is-loading">受信中…</span>'}
-      <figcaption>${escapeHtml(text)}</figcaption></figure>`;
+      <figcaption>${hariaiHeartBadge(hearts, `${slot.slot}:finish:${index}`)}${escapeHtml(text)}</figcaption></figure>`;
   }).join("");
   const resolved = Number.isInteger(slot.finishDamage);
   return `<div class="hariai-finish">${cards}</div>${resolved ? `<p class="hariai-damage">仕留め 理性 −${slot.finishDamage}</p>
@@ -1980,16 +2060,25 @@ function renderHariaiConsole() {
   const opponent = getOpponent();
   if (pending.stage === "act") {
     return mine ? renderHariaiActConsole(pending)
-      : hariaiWaitConsole(`${opponent.name}が次の1手を選んでいます…`, pending.combo ? `${opponent.name}の連投中（${pending.combo}手連続で90点以上）` : "");
+      : hariaiTypingConsole("act", pending.combo ? `${opponent.name}の連投中（${pending.combo}手連続で90点以上）` : "");
   }
   if (pending.stage === "receive") return renderHariaiTransferConsole(pending.attacker === state.uid ? "画像を送っています" : "画像を受け取っています");
-  if (pending.stage === "score") return mine ? renderHariaiScoreConsole(pending) : hariaiWaitConsole(`${opponent.name}が点数を考えています…`, "刺さったかどうかは、相手の自己申告です。");
-  if (pending.stage === "right") return mine ? renderHariaiRightConsole(pending) : hariaiWaitConsole(`${opponent.name}が権利を選んでいます…`, "");
-  if (pending.stage === "answer") return mine ? renderHariaiAnswerConsole(pending) : hariaiWaitConsole(`${opponent.name}の返事を待っています…`, "");
+  if (pending.stage === "score") return mine ? renderHariaiScoreConsole(pending) : hariaiTypingConsole("score", "刺さったかどうかは、相手の自己申告です。");
+  if (pending.stage === "right") return mine ? renderHariaiRightConsole(pending) : hariaiTypingConsole("right");
+  if (pending.stage === "answer") return mine ? renderHariaiAnswerConsole(pending) : hariaiTypingConsole("answer");
   if (pending.stage === "breakReveal") return hariaiWaitConsole(mine ? "看破の答え合わせを送っています…" : "看破の答え合わせ中…", "封印した弱点と照合しています。");
-  if (pending.stage === "finish") return mine ? renderHariaiFinishConsole(pending) : hariaiWaitConsole(`${opponent.name}が仕留めの準備をしています…`, `最大${pending.finishMax}枚`);
+  if (pending.stage === "finish") return mine ? renderHariaiFinishConsole(pending) : hariaiTypingConsole("finish", `最大${pending.finishMax}枚`);
   if (pending.stage === "finishReceive") return renderHariaiTransferConsole(pending.attacker === state.uid ? "仕留めの画像を送っています" : "仕留めの画像を受け取っています");
   return "";
+}
+
+// 相手の手番は、DMの「入力中」のように口調付きで見せる（手番の段階はゲームの進み具合から決まる）。
+function hariaiTypingConsole(stage, note = "") {
+  const opponent = getOpponent();
+  const personaId = normalizeChatPersonaId(opponent?.persona?.type);
+  const bubble = `<p class="ha-bubble hariai-typing-bubble ${hariaiPersonaClass(opponent)}" aria-hidden="true"><span class="chat-typing-dots"><i></i><i></i><i></i></span></p>`;
+  return `<div class="hariai-console-wait hariai-typing-console">${hariaiMessage(opponent, bubble)}
+    <strong>${renderChatPersonaMark(personaId)}${escapeHtml(strategyTypingText(personaId, opponent?.name, stage))}</strong>${note ? `<p>${escapeHtml(note)}</p>` : ""}</div>`;
 }
 
 function hariaiWaitConsole(title, note) {
@@ -2730,6 +2819,8 @@ function announceHariaiSlots(replay, { silent = false } = {}) {
     if (state.announcedSlots.has(resolvedKey)) continue;
     state.announcedSlots.add(resolvedKey);
     if (silent) continue;
+    if (slot.kind === "post" && slot.band && slot.band !== "none") state.freshHariaiKeys.add(`band:${slot.slot}`);
+    if (slot.kind === "break" && (!slot.breakResult || slot.breakResult === "hit") && !Number.isInteger(slot.finishDamage)) state.freshHariaiKeys.add(`break:${slot.slot}`);
     if (slot.kind === "post" && Number.isInteger(slot.score)) {
       if (slot.score >= HARIAI_BAND_COMBO) {
         window.HariaiAudio?.playResult?.(slot.score >= 100 ? 10 : 9);
@@ -2907,25 +2998,41 @@ function renderStrategyChatAvatar(player, localPlayer, anonymous) {
   return shared()?.profileAvatar?.renderBattle?.(player?.name || "PLAYER", avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar, className: "strategy-chat-avatar" }) || "";
 }
 
+function strategyChatDisplayName(player, localPlayer, anonymous) {
+  if (anonymous) return localPlayer ? "あなた" : anonymousPersonaName(personaLabel(player));
+  return player?.name || "PLAYER";
+}
+
 function renderStrategyChatParticipant(player, localPlayer, anonymous) {
-  const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
+  const displayName = strategyChatDisplayName(player, localPlayer, anonymous);
   return `<div class="strategy-chat-participant ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
     <span><small>${localPlayer ? "YOU" : "OPPONENT"}</small><strong>${escapeHtml(displayName)}</strong></span></div>`;
 }
 
+// なりきりの吹き出し：匿名の間はヴェール越し、正体判明の後は口調の吹き出し（購入した枠・背景があればそちら）。
 function renderStrategyChatMessage(message, anonymous) {
   const localPlayer = message.authorUid === state.uid;
   const player = state.players.find((candidate) => candidate.uid === message.authorUid);
-  const displayName = anonymous ? (localPlayer ? "あなた" : "匿名の相手") : (player?.name || "PLAYER");
+  const displayName = strategyChatDisplayName(player, localPlayer, anonymous);
   const phaseLabel = message.phase === "scout" ? "SCOUT" : message.phase === "review" ? "REVIEW" : `#${Math.max(1, Math.min(HARIAI_MAX_SLOTS, Number(message.round) || 1))}`;
   const showIdentityCosmetics = !anonymous && message.phase !== "scout";
   const cosmeticClasses = showIdentityCosmetics ? chatCosmeticClassNames(message.chatFrameId, message.chatBackgroundId) : "";
+  const personaId = normalizeChatPersonaId(player?.persona?.type);
+  const skin = anonymous ? "sp-veil" : (cosmeticClasses || chatPersonaBubbleClass(personaId, cosmeticClasses));
   const titleBadge = showIdentityCosmetics ? renderStrategyTitleBadge(message.titleId) : "";
+  const messageId = String(message.id || "");
+  const effect = message.stampId ? "" : normalizeChatEffect(message.effect);
+  const entering = Boolean(effect && messageId) && !state.chatAnimatedIds.has(messageId);
+  if (messageId) state.chatAnimatedIds.add(messageId);
+  const classes = [skin, chatEffectClass(effect), entering ? "is-entering" : ""].filter(Boolean).join(" ");
   const content = message.stampId
-    ? renderStampBubble(message.stampId, cosmeticClasses)
-    : `<p${cosmeticClasses ? ` class="${cosmeticClasses}"` : ""}>${escapeHtml(message.text)}</p>`;
+    ? renderStampBubble(message.stampId, anonymous ? "" : skin)
+    : `<p${classes ? ` class="${classes}"` : ""}>${renderChatEffectText(message.text, effect)}</p>`;
+  const key = messageId ? `c:${messageId}` : "";
+  const reactable = key ? hariaiReactable(key, player, content) : content;
+  const hasReaction = key && normalizeChatReactionId(state.chatReactions.get(key));
   return `<div class="strategy-chat-message-row ${localPlayer ? "is-local" : "is-opponent"}">${renderStrategyChatAvatar(player, localPlayer, anonymous)}
-    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}"><small>${escapeHtml(displayName)} / ${phaseLabel}${titleBadge}</small>${content}</div></div>`;
+    <div class="chat-message ${localPlayer ? "player-two" : "player-one"}${hasReaction ? " has-reaction" : ""}"><small>${renderChatPersonaMark(personaId)}${escapeHtml(displayName)} / ${phaseLabel}${titleBadge}</small>${reactable}</div></div>`;
 }
 
 function strategyReviewIsActive() {
@@ -3099,14 +3206,115 @@ function renderStrategyChat() {
   const messages = visibleMessages.length
     ? visibleMessages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
     : `<div class="chat-empty">${reviewing ? "まだ品評コメントはありません。<br />画像の狙いや刺さったポイントから話してみましょう。" : "会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。"}</div>`;
-  return `<aside class="chat-panel strategy-chat-panel ${reviewing ? "is-review" : ""}"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : reviewing ? "POST-MATCH REVIEW CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
+  const typing = activeStrategyRemoteTyping();
+  const effect = normalizeChatEffect(state.chatEffect);
+  return `<aside class="chat-panel strategy-chat-panel ${reviewing ? "is-review" : ""}${anonymous ? " is-anonymous" : ""}"><div class="chat-head"><strong>${anonymous ? "ANONYMOUS SCOUT CHAT" : reviewing ? "POST-MATCH REVIEW CHAT" : "WEAKNESS SCOUT CHAT"}</strong>
       <span>${anonymous ? "名前・写真はデッキ封印まで非公開" : reviewing ? "双方同意済み・最大10分" : "会話も推理材料"}</span></div>
     <div class="strategy-chat-participants">${renderStrategyChatParticipant(localPlayer, true, anonymous)}${renderStrategyChatParticipant(opponent, false, anonymous)}</div>
     ${anonymous ? "" : reviewing ? `${renderStrategyReviewBattleGallery()}${renderStrategyReviewAssetPanel()}${renderStrategyVideoPanel()}` : renderStrategyVideoPanel()}
     <div class="chat-messages" id="strategyChatMessages">${messages}</div>
+    <p class="chat-typing" id="strategyChatTyping" aria-live="polite"${typing ? "" : " hidden"}>${typing ? renderStrategyTypingContent(typing) : ""}</p>
     ${renderChatTools({ id: "strategy", textReactions: STRATEGY_CHAT_PROMPTS, stamps: getAvailableStamps(state.economy, { freeOnly: anonymous }), textAttribute: "data-strategy-chat-reaction", stampAttribute: "data-strategy-chat-stamp" })}
-    <form class="chat-form" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="${reviewing ? "この一戦の感想を送る…" : "会話から本当の弱点を探る…"}" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
+    ${renderChatEffectPicker(effect, { disabled: state.playerSafetyStopped })}
+    <form class="chat-form${effect ? " has-effect" : ""}" id="strategyChatForm"><input class="chat-input" id="strategyChatInput" maxlength="80" placeholder="${reviewing ? "この一戦の感想を送る…" : "会話から本当の弱点を探る…"}" autocomplete="off" aria-label="戦略型1on1チャットメッセージ" />
       <button class="button button-cyan button-small" type="submit">送信</button></form></aside>`;
+}
+
+function strategyVisibleChatMessages() {
+  return state.screen === "review"
+    ? state.chatMessages.filter((message) => message.phase === "review")
+    : state.chatMessages.filter((message) => message.phase !== "review");
+}
+
+function renderStrategyChatPeek() {
+  const anonymous = isStrategyChatAnonymous();
+  const typing = activeStrategyRemoteTyping();
+  const opponent = getOpponent();
+  if (typing) return `<b>${escapeHtml(strategyChatDisplayName(opponent, false, anonymous))}</b>入力中…`;
+  const message = strategyVisibleChatMessages().at(-1);
+  if (!message) return '<span class="sc-dock-empty">会話も読み合いの手掛かり</span>';
+  const author = state.players.find((player) => player.uid === message.authorUid);
+  const name = strategyChatDisplayName(author, message.authorUid === state.uid, anonymous);
+  return `<b>${escapeHtml(name)}</b>${escapeHtml(message.stampId ? "スタンプを送りました" : String(message.text || ""))}`;
+}
+
+// スマホは画面下の帯から開く（品評会は会話が主役なので、これまでどおり画面に置く）。
+function renderStrategyChatDock() {
+  const panel = renderStrategyChat();
+  if (state.screen === "review") return panel;
+  const count = strategyVisibleChatMessages().length;
+  if (strategyChatOpen) strategyChatSeenCount = count;
+  const unread = !strategyChatOpen && count > strategyChatSeenCount;
+  return `<div class="sc-dock${strategyChatOpen ? " is-open" : ""}" data-strategy-chat-dock>
+    <button type="button" class="sc-dock-peek${unread ? " has-new" : ""}" data-strategy-chat-toggle aria-expanded="${strategyChatOpen}" aria-controls="strategyChatSheet">
+      <span class="sc-dock-text" id="strategyChatPeek">${renderStrategyChatPeek()}</span><span class="sc-dock-label">チャット</span>
+    </button>
+    <div class="sc-dock-sheet" id="strategyChatSheet">
+      <button type="button" class="sc-dock-close" data-strategy-chat-toggle aria-label="チャットを閉じる">閉じる</button>
+      ${panel}
+    </div>
+  </div>`;
+}
+
+function setStrategyChatOpen(open) {
+  strategyChatOpen = Boolean(open);
+  if (strategyChatOpen) strategyChatSeenCount = strategyVisibleChatMessages().length;
+  const dock = document.querySelector("[data-strategy-chat-dock]");
+  if (!dock) return;
+  dock.classList.toggle("is-open", strategyChatOpen);
+  dock.querySelector(".sc-dock-peek")?.classList.remove("has-new");
+  dock.querySelectorAll("[data-strategy-chat-toggle]").forEach((button) => button.setAttribute("aria-expanded", String(strategyChatOpen)));
+  if (strategyChatOpen) scrollStrategyChat();
+}
+
+function syncStrategyChatPeek() {
+  const peek = document.querySelector("#strategyChatPeek");
+  if (!peek) return;
+  peek.innerHTML = renderStrategyChatPeek();
+  peek.classList.toggle("is-typing", Boolean(activeStrategyRemoteTyping()));
+  const count = strategyVisibleChatMessages().length;
+  if (strategyChatOpen) strategyChatSeenCount = count;
+  peek.closest(".sc-dock-peek")?.classList.toggle("has-new", !strategyChatOpen && count > strategyChatSeenCount);
+}
+
+// 対戦スレッドの上のDMの見出し。相手の口調・一人称・こちらの呼び方・理性をまとめて見せる。
+function renderHariaiDmHead() {
+  const opponent = getOpponent();
+  const me = getLocalPlayer();
+  if (!opponent || !me) return "";
+  const personaId = normalizeChatPersonaId(opponent.persona?.type);
+  const runtime = state.replay?.players?.[opponent.uid];
+  const reason = runtime ? runtime.reason : HARIAI_REASON_MAX;
+  const percent = Math.max(0, Math.min(100, (reason / HARIAI_REASON_MAX) * 100));
+  const avatar = shared()?.profileAvatar?.renderBattle?.(opponent.name, state.remoteAvatar?.url, { hidden: state.hideOpponentAvatar, className: "hariai-dm-avatar" }) || "";
+  return `<header class="hariai-dm-head" aria-label="${escapeHtml(opponent.name)}とのやりとり"><span class="hariai-dm-face">${avatar}<span class="hariai-dm-badge">${renderChatPersonaMark(personaId)}</span></span>
+    <span class="hariai-dm-who"><b>${escapeHtml(opponent.name)}</b><small>${renderChatPersonaMark(personaId)}${escapeHtml(personaLabel(opponent))}・一人称「${escapeHtml(personaFirst(opponent))}」</small><em>あなたを「${escapeHtml(personaCallName(opponent, me))}」と呼ぶ</em></span>
+    <span class="hariai-dm-reason"><small>理性</small><b>${reason}</b><i style="--reason:${percent.toFixed(1)}%"></i></span></header>`;
+}
+
+function hariaiPersonaClass(player) {
+  const personaId = normalizeChatPersonaId(player?.persona?.type);
+  return personaId ? `sp-persona chat-persona-${personaId}` : "";
+}
+
+function hariaiNameWithMark(player) {
+  return `${renderChatPersonaMark(player?.persona?.type)}${escapeHtml(player?.name || "")}`;
+}
+
+function hariaiHeartBadge(hearts, key) {
+  const badge = hearts?.get?.(key);
+  return badge ? `<span class="sp-heart-count" aria-label="語尾に♡ ${escapeHtml(badge.replace("♡", ""))}">${escapeHtml(badge)}</span>` : "";
+}
+
+// リアクションを付けられる吹き出し。相手の吹き出しにだけ、付けるためのボタンを出す。
+function hariaiReactable(key, author, bubble) {
+  const reactionId = normalizeChatReactionId(state.chatReactions.get(key));
+  const sticker = renderChatReactionSticker(reactionId, { fresh: state.chatFreshReactionKeys.delete(key) });
+  const canReact = Boolean(author?.uid) && author.uid !== state.uid && !state.playerSafetyStopped;
+  const toggle = canReact
+    ? `<button type="button" class="chat-react-toggle" data-strategy-react-toggle="${escapeHtml(key)}" aria-expanded="false" aria-label="${escapeHtml(author?.name || "相手")}の吹き出しにリアクション"></button>`
+    : "";
+  return `<div class="chat-bubble-row sp-react-row"><div class="chat-bubble-anchor" data-react-key="${escapeHtml(key)}">${bubble}${sticker}</div>${toggle}</div>`;
 }
 
 function renderBattleHud() {
@@ -3131,7 +3339,7 @@ function renderHudPlayer(index) {
   const localPlayer = index === state.playerIndex;
   const avatarUrl = localPlayer ? shared()?.profileAvatar?.get?.().url : state.remoteAvatar?.url;
   const avatar = shared()?.profileAvatar?.renderBattle?.(player.name, avatarUrl, { hidden: !localPlayer && state.hideOpponentAvatar }) || "";
-  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span><span class="hariai-persona-chip">${escapeHtml(personaLabel(player))}</span></div>${localPlayer ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
+  return `<div class="hud-player ${localPlayer ? "local-player" : ""}"><div class="hud-player-main">${avatar}<div class="hud-player-details"><div class="hud-name-row"><span class="hud-name">${escapeHtml(player.name)}${localPlayer ? "（あなた）" : ""}</span><span class="hariai-persona-chip">${renderChatPersonaMark(player.persona?.type)}${escapeHtml(personaLabel(player))}</span></div>${localPlayer ? "" : renderOpponentAchievementShowcase({ compact: true, context: "is-hud", label: "相手の実績" })}
     <div class="hp-bar hariai-reason-bar"><div class="hp-fill" style="--hp:${reasonPercent}%"></div></div><span class="hp-value">理性 ${reason} / ${HARIAI_REASON_MAX} ・ 手札 ${hand} ・ 看破 ${breakLabel}</span></div></div></div>`;
 }
 
@@ -3167,6 +3375,13 @@ function bindScreenEvents() {
   }
   document.querySelectorAll("[data-strategy-avatar-visibility]").forEach((button) => button.addEventListener("click", () => { state.hideOpponentAvatar = !state.hideOpponentAvatar; render(); }));
   bindStrategyChatEvents();
+  document.querySelectorAll("[data-strategy-chat-toggle]").forEach((button) => button.addEventListener("click", () => setStrategyChatOpen(!strategyChatOpen)));
+  document.querySelector("[data-strategy-chat-dock]")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget && strategyChatOpen) setStrategyChatOpen(false);
+  });
+  document.querySelectorAll(".hariai-thread").forEach((thread) => thread.addEventListener("click", handleStrategyReactionClick));
+  document.querySelector("#strategyShareCard")?.addEventListener("click", openStrategyShareCard);
+  document.querySelectorAll("[data-strategy-share-answer]").forEach((button) => button.addEventListener("click", () => answerStrategyShareConsent(button.dataset.strategyShareAnswer === "grant")));
   document.querySelector("#strategyProfileForm")?.addEventListener("submit", saveProfile);
   document.querySelector("#strategyExpandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
   document.querySelector("#strategyCancelMatching")?.addEventListener("click", cancelMatching);
@@ -3220,6 +3435,21 @@ function bindStrategyChatEvents() {
     sendStrategyChat(text);
     input?.focus();
   });
+  // 入力中の合図はフォームで拾う（P2Pだけで送る）。
+  const chatForm = document.querySelector("#strategyChatForm");
+  chatForm?.addEventListener("input", () => notifyStrategyTyping(Boolean(document.querySelector("#strategyChatInput")?.value.trim())));
+  chatForm?.addEventListener("focusout", () => notifyStrategyTyping(false));
+  const effectPicker = document.querySelector(".strategy-chat-panel .chat-effect-picker");
+  effectPicker?.addEventListener("pointerdown", (event) => {
+    if (document.activeElement?.id === "strategyChatInput" && event.target.closest("[data-chat-effect]")) event.preventDefault();
+  });
+  effectPicker?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-chat-effect]");
+    if (!chip || chip.disabled) return;
+    const next = normalizeChatEffect(chip.dataset.chatEffect);
+    setStrategyChatEffect(next && next === state.chatEffect ? "" : next);
+  });
+  document.querySelector("#strategyChatMessages")?.addEventListener("click", handleStrategyReactionClick);
   scrollStrategyChat();
 }
 
@@ -3236,6 +3466,7 @@ async function sendStrategyChat(value, stampId = "") {
   }
   const text = stamp ? stamp.label : String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80);
   if (!text || !state.roomId || !isStrategyChatVisible()) return;
+  const effect = stamp ? "" : normalizeChatEffect(state.chatEffect);
   const message = {
     authorUid: state.uid,
     text,
@@ -3243,6 +3474,7 @@ async function sendStrategyChat(value, stampId = "") {
     round: state.screen === "review" ? 0 : Math.max(1, Math.min(HARIAI_MAX_SLOTS, currentHariaiSlot())),
     createdAt: serverTimestamp(),
   };
+  if (effect) message.effect = effect;
   if (stamp) { message.stampId = stamp.id; startStampButtonCooldown("[data-strategy-chat-stamp]"); }
   if (!isStrategyChatAnonymous()) {
     const equippedTitle = getPlayerTitleProduct(state.economy.equipped?.title);
@@ -3251,19 +3483,335 @@ async function sendStrategyChat(value, stampId = "") {
     if (cosmetics.chatFrameId) message.chatFrameId = cosmetics.chatFrameId;
     if (cosmetics.chatBackgroundId) message.chatBackgroundId = cosmetics.chatBackgroundId;
   }
-  await set(push(ref(database, `online/strategyChats/${state.roomId}`)), message).catch(() => showToast("チャットを送信できませんでした。"));
+  const sent = await set(push(ref(database, `online/strategyChats/${state.roomId}`)), message).then(() => true, () => {
+    showToast("チャットを送信できませんでした。");
+    return false;
+  });
+  if (!sent) return;
+  if (effect && state.chatEffect === effect) setStrategyChatEffect("");
+  notifyStrategyTyping(false);
 }
 
-function refreshStrategyChat() {
+function refreshStrategyChat({ preserveScroll = false } = {}) {
   const list = document.querySelector("#strategyChatMessages");
   if (!list) return;
+  const scrollTop = list.scrollTop;
   const anonymous = isStrategyChatAnonymous();
   const reviewing = state.screen === "review";
   const messages = reviewing ? state.chatMessages.filter((message) => message.phase === "review") : state.chatMessages.filter((message) => message.phase !== "review");
   list.innerHTML = messages.length
     ? messages.map((message) => renderStrategyChatMessage(message, anonymous)).join("")
     : `<div class="chat-empty">${reviewing ? "まだ品評コメントはありません。<br />画像の狙いや刺さったポイントから話してみましょう。" : "会話も弱点を見抜くための手掛かりです。<br />質問・ブラフ・反応を使って読み合いましょう。"}</div>`;
-  scrollStrategyChat();
+  if (preserveScroll) list.scrollTop = scrollTop;
+  else scrollStrategyChat();
+  syncStrategyChatPeek();
+}
+
+function setStrategyChatEffect(value) {
+  state.chatEffect = normalizeChatEffect(value);
+  document.querySelectorAll(".strategy-chat-panel [data-chat-effect]").forEach((chip) => {
+    chip.setAttribute("aria-pressed", String(normalizeChatEffect(chip.dataset.chatEffect) === state.chatEffect));
+  });
+  document.querySelector("#strategyChatForm")?.classList.toggle("has-effect", Boolean(state.chatEffect));
+}
+
+// 入力中・リアクション・名場面カードの許可は、Firebaseを通さずP2Pだけで送る。
+function sendStrategyPeer(payload) {
+  const channel = state.channel;
+  if (useOfflineStrategyPreview || !channel || channel.readyState !== "open" || state.playerSafetyStopped) return false;
+  try {
+    channel.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function notifyStrategyTyping(activeTyping) {
+  if (useOfflineStrategyPreview) return;
+  const now = Date.now();
+  if (activeTyping) {
+    if (now - state.chatTypingSentAt < TYPING_SEND_INTERVAL_MS) return;
+    state.chatTypingSentAt = now;
+  } else {
+    if (!state.chatTypingSentAt) return;
+    state.chatTypingSentAt = 0;
+  }
+  sendStrategyPeer({ type: "strategy-chat-typing", active: Boolean(activeTyping) });
+}
+
+function activeStrategyRemoteTyping() {
+  const typing = state.remoteTyping;
+  return typing && typing.until > Date.now() ? typing : null;
+}
+
+function renderStrategyTypingContent(typing) {
+  const opponent = getOpponent();
+  const personaId = normalizeChatPersonaId(opponent?.persona?.type);
+  const name = strategyChatDisplayName(opponent, false, isStrategyChatAnonymous());
+  return `${renderChatPersonaMark(personaId)}<span>${escapeHtml(personaTypingText(personaId, name))}</span><span class="chat-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+}
+
+function syncStrategyTyping() {
+  const typing = activeStrategyRemoteTyping();
+  const line = document.querySelector("#strategyChatTyping");
+  if (line) {
+    line.innerHTML = typing ? renderStrategyTypingContent(typing) : "";
+    line.hidden = !typing;
+  }
+  syncStrategyChatPeek();
+}
+
+function clearStrategyRemoteTyping(targetState = state) {
+  window.clearTimeout(targetState.remoteTypingTimer);
+  targetState.remoteTypingTimer = null;
+  targetState.remoteTyping = null;
+  if (state === targetState) syncStrategyTyping();
+}
+
+function handleRemoteStrategyTyping(message) {
+  if (state.playerSafetyStopped || !isStrategyChatVisible()) return;
+  if (message?.active !== true) {
+    clearStrategyRemoteTyping();
+    return;
+  }
+  const targetState = state;
+  window.clearTimeout(targetState.remoteTypingTimer);
+  targetState.remoteTyping = { until: Date.now() + TYPING_VISIBLE_MS };
+  targetState.remoteTypingTimer = window.setTimeout(() => clearStrategyRemoteTyping(targetState), TYPING_VISIBLE_MS);
+  syncStrategyTyping();
+}
+
+// リアクションの宛先が、その吹き出しを書いた本人かを確かめる（スレッドは対戦の記録、チャットは届いたメッセージ）。
+function strategyReactionAuthor(key) {
+  if (!isStrategyReactionKey(key)) return "";
+  if (key.startsWith("c:")) return state.chatMessages.find((message) => message.id === key.slice(2))?.authorUid || "";
+  return hariaiItemAuthor(state.replay?.slots || [], key);
+}
+
+function handleStrategyReactionClick(event) {
+  const toggle = event.target.closest("[data-strategy-react-toggle]");
+  if (toggle) {
+    const key = toggle.dataset.strategyReactToggle;
+    const row = toggle.closest(".sp-react-row");
+    const open = row?.nextElementSibling?.matches?.("[data-chat-react-picker]") ? row.nextElementSibling : null;
+    document.querySelectorAll("[data-chat-react-picker]").forEach((picker) => picker.remove());
+    document.querySelectorAll("[data-strategy-react-toggle]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+    if (open || !row) return;
+    row.insertAdjacentHTML("afterend", renderChatReactionPicker(key, state.chatReactions.get(key) || ""));
+    toggle.setAttribute("aria-expanded", "true");
+    row.nextElementSibling?.querySelector("[data-chat-react-pick]")?.focus({ preventScroll: true });
+    return;
+  }
+  const pick = event.target.closest("[data-chat-react-pick]");
+  if (!pick) return;
+  const picker = pick.closest("[data-chat-react-picker]");
+  setLocalStrategyReaction(picker?.dataset.chatReactPicker, pick.dataset.chatReactPick);
+  picker?.remove();
+  document.querySelectorAll("[data-strategy-react-toggle]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+}
+
+function applyStrategyReactionSticker(key) {
+  const reactionId = normalizeChatReactionId(state.chatReactions.get(key));
+  document.querySelectorAll("[data-react-key]").forEach((anchor) => {
+    if (anchor.dataset.reactKey !== key) return;
+    anchor.querySelector(":scope > .chat-reaction-sticker")?.remove();
+    if (reactionId) anchor.insertAdjacentHTML("beforeend", renderChatReactionSticker(reactionId, { fresh: true }));
+    anchor.closest(".chat-message")?.classList.toggle("has-reaction", Boolean(reactionId));
+  });
+  state.chatFreshReactionKeys.delete(key);
+}
+
+function setLocalStrategyReaction(key, value) {
+  const author = strategyReactionAuthor(key);
+  if (!author || author === state.uid || state.playerSafetyStopped) return;
+  const reactionId = normalizeChatReactionId(value);
+  if (!useOfflineStrategyPreview && !sendStrategyPeer({ type: "strategy-reaction", key, reactionId })) {
+    showToast("相手との接続が切れているため、リアクションを送れませんでした。");
+    return;
+  }
+  if (reactionId) state.chatReactions.set(key, reactionId);
+  else state.chatReactions.delete(key);
+  applyStrategyReactionSticker(key);
+}
+
+function handleRemoteStrategyReaction(message) {
+  if (state.playerSafetyStopped || typeof message?.key !== "string") return;
+  // 相手が付けられるのは、こちらが書いた吹き出しだけ。
+  if (strategyReactionAuthor(message.key) !== state.uid) return;
+  const reactionId = normalizeChatReactionId(message.reactionId);
+  if (reactionId) state.chatReactions.set(message.key, reactionId);
+  else state.chatReactions.delete(message.key);
+  applyStrategyReactionSticker(message.key);
+}
+
+/* ---------- 名場面カード（戦略型） ---------- */
+
+function createStrategyShareRequestId() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function requestStrategyShareConsent() {
+  if (state.shareConsent !== "none") return false;
+  const requestId = createStrategyShareRequestId();
+  if (useOfflineStrategyPreview) {
+    state.shareConsent = "pending";
+    state.shareConsentRequestId = requestId;
+    window.setTimeout(() => handleRemoteStrategyShareConsent({ requestId, granted: true }), 1_600);
+    return true;
+  }
+  if (!sendStrategyPeer({ type: "strategy-share-consent-request", requestId })) {
+    state.shareConsent = "unavailable";
+    return false;
+  }
+  state.shareConsent = "pending";
+  state.shareConsentRequestId = requestId;
+  return true;
+}
+
+function handleRemoteStrategyShareConsent(message) {
+  if (state.shareConsent !== "pending" || message?.requestId !== state.shareConsentRequestId) return;
+  state.shareConsent = message.granted === true ? "granted" : "denied";
+  state.shareCardController?.refresh();
+  showToast(state.shareConsent === "granted" ? "相手が名場面カードへの掲載を許可しました。" : "相手は今回の掲載を見送りました。相手の発言はぼかして載せます。");
+}
+
+function handleRemoteStrategyShareConsentRequest(message) {
+  const requestId = typeof message?.requestId === "string" && /^[0-9a-f]{16}$/.test(message.requestId) ? message.requestId : "";
+  if (!requestId || state.playerSafetyStopped || state.shareConsentAnswered) return;
+  state.incomingShareConsentRequestId = requestId;
+  syncStrategyShareConsentAsk();
+  showToast(`${getOpponent()?.name || "相手"}さんが、名場面カードへの掲載の許可を求めています。`);
+}
+
+function answerStrategyShareConsent(granted) {
+  const requestId = state.incomingShareConsentRequestId;
+  if (!requestId) return;
+  state.incomingShareConsentRequestId = "";
+  state.shareConsentAnswered = true;
+  const sent = sendStrategyPeer({ type: "strategy-share-consent", requestId, granted: Boolean(granted) });
+  syncStrategyShareConsentAsk();
+  showToast(!sent ? "相手との接続が切れているため、返事を届けられませんでした。" : granted ? "掲載を許可しました。" : "今回は見送りました。あなたの発言はぼかして載ります。");
+}
+
+function renderStrategyShareConsentAsk() {
+  const requestId = state.incomingShareConsentRequestId;
+  const content = requestId
+    ? `<p>${escapeHtml(getOpponent()?.name || "相手")}さんが「名場面カード」の画像に、あなたの名前と発言をそのまま載せたいそうです。見送ると、あなたの発言はぼかして載ります。</p><div><button type="button" class="button button-primary button-small" data-strategy-share-answer="grant">許可する</button><button type="button" class="button button-ghost button-small" data-strategy-share-answer="deny">今回は見送る</button></div>`
+    : "";
+  return `<section class="share-consent-ask" id="strategyShareConsentAsk" aria-label="名場面カードへの掲載の確認"${requestId ? "" : " hidden"}>${content}</section>`;
+}
+
+function syncStrategyShareConsentAsk() {
+  const slot = document.querySelector("#strategyShareConsentAsk");
+  if (!slot) return;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderStrategyShareConsentAsk();
+  slot.replaceWith(wrapper.firstElementChild);
+}
+
+// 名場面カードの行。対戦スレッドの言葉・点数の返事・質問と指示・答え・看破と、自由チャットの発言。
+function strategyShareMessages() {
+  const lines = [];
+  const personaOf = (uid) => normalizeChatPersonaId(playerByUid(uid)?.persona?.type);
+  const push = (id, uid, text, round) => {
+    const value = String(text || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80);
+    if (value) lines.push({ id, authorUid: uid, name: playerByUid(uid)?.name || "", text: value, round, voiceSetId: personaOf(uid) });
+  };
+  for (const slot of state.replay?.slots || []) {
+    const attacker = playerByUid(slot.by);
+    const receiver = playerByUid(slot.receiver);
+    if (slot.kind === "post") {
+      push(`t:${slot.slot}:caption`, slot.by, slot.captionHeart ? ensureHariaiHeart(slot.caption) : slot.caption, slot.slot);
+      if (Number.isInteger(slot.score)) {
+        const reply = slot.reply ? (slot.replyHeart ? ensureHariaiHeart(slot.reply) : slot.reply) : "";
+        push(`t:${slot.slot}:reply`, slot.receiver, `${slot.score}点${reply ? `　${reply}` : ""}`, slot.slot);
+      }
+      if (slot.right && slot.right.kind !== "none") {
+        push(`t:${slot.slot}:right`, slot.by, `${slot.right.kind === "question" ? "質問" : "指示"}｜${hariaiRightPrompt(slot.right, slot.receiver)}`, slot.slot);
+      }
+      if (slot.answer) push(`t:${slot.slot}:answer`, slot.receiver, hariaiAnswerText(slot, attacker, receiver), slot.slot);
+    } else if (slot.kind === "break") {
+      push(`t:${slot.slot}:break`, slot.by, `看破｜${personaLine(attacker, "breakCall", { candidate: candidateText(slot.receiver, slot.guess) })}`, slot.slot);
+    } else if (slot.kind === "surrender") {
+      push(`t:${slot.slot}:surrender`, slot.by, personaLine(attacker, "surrender"), slot.slot);
+    }
+  }
+  for (const message of state.chatMessages) {
+    if (!message?.id || !(message.text || message.stampId)) continue;
+    const identified = message.phase !== "scout";
+    lines.push({
+      id: `c:${message.id}`,
+      authorUid: message.authorUid,
+      name: playerByUid(message.authorUid)?.name || "",
+      text: message.text,
+      stampId: message.stampId || "",
+      round: message.phase === "battle" ? Number(message.round) || 0 : 0,
+      voiceSetId: personaOf(message.authorUid),
+      effect: message.effect || "",
+      chatFrameId: identified ? message.chatFrameId || "" : "",
+      chatBackgroundId: identified ? message.chatBackgroundId || "" : "",
+    });
+  }
+  return lines;
+}
+
+function openStrategyShareCard() {
+  if (state.shareCardController?.isOpen()) return;
+  const messages = strategyShareMessages();
+  if (!messages.length || state.playerSafetyStopped) {
+    showToast("カードにできる発言がまだありません。");
+    return;
+  }
+  const outcome = determineOutcome();
+  const winner = outcome.winnerIndex;
+  const localResult = winner < 0 ? "DRAW" : winner === state.playerIndex ? "WIN" : "LOSE";
+  const localRuntime = state.replay?.players?.[state.uid];
+  const frame = getChatCosmeticProduct(getEquippedChatCosmetics(state.economy).chatFrameId, "chatFrame");
+  const targetState = state;
+  targetState.shareCardController = openShareCardDialog({
+    messages,
+    localUid: targetState.uid,
+    players: targetState.players,
+    result: { result: localResult, details: [`決着：${hariaiOutcomeReasonLabel(targetState.replay?.outcome)}`, `残り理性 ${Number(localRuntime?.reason ?? 0)}`] },
+    modeLabel: "戦略型1on1",
+    reactions: targetState.chatReactions,
+    cosmeticClasses: chatCosmeticClassNames,
+    getStamp,
+    localFrameLabel: frame?.name || "",
+    formatRound: (round) => (Number(round) > 0 ? `#${Number(round)}` : ""),
+    getConsent: () => targetState.shareConsent,
+    requestConsent: () => (state === targetState ? requestStrategyShareConsent() : false),
+    onClose: () => {
+      targetState.shareCardController = null;
+      document.querySelector("#strategyShareCard")?.focus({ preventScroll: true });
+    },
+  });
+}
+
+function resetStrategyPersonaChatState(targetState = state) {
+  window.clearTimeout(targetState.remoteTypingTimer);
+  const controller = targetState.shareCardController;
+  Object.assign(targetState, {
+    chatEffect: "",
+    chatReactions: new Map(),
+    chatFreshReactionKeys: new Set(),
+    chatAnimatedIds: new Set(),
+    chatTypingSentAt: 0,
+    remoteTyping: null,
+    remoteTypingTimer: null,
+    freshHariaiKeys: new Set(),
+    shareConsent: "none",
+    shareConsentRequestId: "",
+    incomingShareConsentRequestId: "",
+    shareConsentAnswered: false,
+    shareCardController: null,
+  });
+  strategyChatOpen = false;
+  strategyChatSeenCount = 0;
+  controller?.close();
 }
 
 function scrollStrategyChat() {
@@ -4892,6 +5440,7 @@ async function setupRoomListeners() {
     state.seenChatIds.add(snapshot.key);
     state.chatMessages.push({ id: snapshot.key, ...snapshot.val() });
     if (state.chatMessages.length > 60) state.chatMessages.shift();
+    if (snapshot.val()?.authorUid !== state.uid && state.remoteTyping) clearStrategyRemoteTyping();
     refreshStrategyChat();
   }, handleRoomError));
 }
@@ -5253,6 +5802,14 @@ async function handleChannelMessage(data) {
       state.incomingAudioTransfer = { kind: message.kind, slot: Number(message.slot), index: Number(message.index ?? 0), ownerUid: message.ownerUid, mime: "audio/wav", size, duration, cueStart: Number(message.cueStart || 0), chunks: [], received: 0 };
     } else if (message.type === "strategy-audio-end") {
       await finishIncomingAudio(message.kind, Number(message.slot), Number(message.index ?? 0), message.ownerUid);
+    } else if (message.type === "strategy-chat-typing") {
+      handleRemoteStrategyTyping(message);
+    } else if (message.type === "strategy-reaction") {
+      handleRemoteStrategyReaction(message);
+    } else if (message.type === "strategy-share-consent-request") {
+      handleRemoteStrategyShareConsentRequest(message);
+    } else if (message.type === "strategy-share-consent") {
+      handleRemoteStrategyShareConsent(message);
     }
     return;
   }
@@ -6540,6 +7097,7 @@ function releaseMatchMedia() {
   releaseStrategyReviewAssetData();
   state.chatMessages = [];
   state.seenChatIds.clear();
+  resetStrategyPersonaChatState(state);
 }
 
 function releaseAllImages() {

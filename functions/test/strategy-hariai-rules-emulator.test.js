@@ -74,6 +74,21 @@ test("strategy hariai v3 rules enforce slot ownership, bands, reveals and penalt
     await assertFails(set(at(hostUid, roomId, "moves/1/break"), { by: hostUid, guess: 0, lockedAt: now() }));
   });
 
+  await context.test("battle and scout chat accept known line effects only, never on stamps", async () => {
+    const roomId = "hariai-chat-effect";
+    await seedRoom(roomId);
+    const chat = (uid, id) => ref(db[uid], `online/strategyChats/${roomId}/${id}`);
+    const message = (extra = {}) => ({ authorUid: hostUid, text: "その目線、ずるくない？", phase: "battle", round: 2, createdAt: now(), ...extra });
+    await assertSucceeds(set(chat(hostUid, "effect-hearts"), message({ effect: "hearts" })));
+    await assertSucceeds(set(chat(hostUid, "scout-whisper"), message({ phase: "scout", round: 1, effect: "whisper" })));
+    await assertSucceeds(set(chat(hostUid, "plain"), message()));
+    await assertFails(set(chat(hostUid, "unknown-effect"), message({ effect: "rainbow" })));
+    await assertFails(set(chat(hostUid, "number-effect"), message({ effect: 1 })));
+    await assertFails(set(chat(hostUid, "stamp-effect"), message({ text: "いいね！", stampId: "stamp_like", effect: "emphasis" })));
+    // 口調は部屋のプレイヤー情報から決まるので、チャットに口調の項目は持たせない。
+    await assertFails(set(chat(hostUid, "persona-field"), message({ voiceSetId: "koakuma" })));
+  });
+
   await context.test("the battle must be ready and open", async () => {
     const roomId = "hariai-not-ready";
     await seedRoom(roomId, { battleReady: { [hostUid]: true } });

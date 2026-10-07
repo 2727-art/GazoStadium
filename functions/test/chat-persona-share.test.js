@@ -169,9 +169,9 @@ test("database rules accept only known persona and effect ids on 1on1 chat", asy
 });
 
 test("1on1 chat sends persona metadata and keeps reactions, typing and consent on P2P", () => {
-  assert.match(online, /from "\.\/chat-persona\.mjs\?v=chat-persona-v1";/);
+  assert.match(online, /from "\.\/chat-persona\.mjs\?v=chat-persona-v2";/);
   assert.match(index, /<link rel="stylesheet" href="chat-persona\.css\?v=chat-persona-v1" \/>/);
-  assert.match(index, /online\.js\?v=[^"]*-chat-persona-v1"/);
+  assert.match(index, /online\.js\?v=[^"]*-chat-persona-v1-chat-persona-v2"/);
 
   const sendChat = online.slice(online.indexOf("async function sendChat("), online.indexOf("function refreshChat("));
   assert.match(sendChat, /if \(voiceSetId\) message\.voiceSetId = voiceSetId;/);
