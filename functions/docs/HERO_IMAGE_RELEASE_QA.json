@@ -1,0 +1,687 @@
+{
+  "sourceCommit": "d07676cbf15db687c6886a9bf8b86491c469623f",
+  "checkedAt": "2026-10-07T11:24:32.408Z",
+  "readOnly": true,
+  "productionDataAccessed": false,
+  "marker": "hero-image-v1",
+  "timeoutMs": 20000,
+  "maxBodyBytes": 8388608,
+  "concurrency": 6,
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "index": [
+        {
+          "url": "https://gazostadium.web.app/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": "\"2909cc9b4e059a5a8772bb430179517894f42bad0a39b19497fd0fddc25a6dd4-br\"",
+          "bytes": 16072,
+          "elapsedMs": 123,
+          "actualSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "expectedSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "cachePolicyOk": true,
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.web.app/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": "\"2909cc9b4e059a5a8772bb430179517894f42bad0a39b19497fd0fddc25a6dd4-br\"",
+          "bytes": 16072,
+          "elapsedMs": 86,
+          "actualSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "expectedSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "cachePolicyOk": true,
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "app.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"bbdca4a412ba46c8db110880f8c3c88abfc860e4cd9bd639120193ed8de0708a-br\"",
+              "bytes": 142573,
+              "elapsedMs": 277,
+              "actualSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "expectedSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.web.app/",
+              "referencedUrl": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true,
+              "hero": {
+                "src": "assets/landing/hero-example.d9a004076802.png",
+                "checks": {
+                  "oneImage": true,
+                  "expectedSource": true,
+                  "expectedDimensions": true,
+                  "photoClass": true,
+                  "noPlaceholderOrAvatar": true,
+                  "score90": true,
+                  "meter90": true
+                },
+                "ok": true
+              }
+            },
+            {
+              "url": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1&releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"bbdca4a412ba46c8db110880f8c3c88abfc860e4cd9bd639120193ed8de0708a-br\"",
+              "bytes": 142573,
+              "elapsedMs": 317,
+              "actualSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "expectedSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.web.app/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "referencedUrl": "https://gazostadium.web.app/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true,
+              "hero": {
+                "src": "assets/landing/hero-example.d9a004076802.png",
+                "checks": {
+                  "oneImage": true,
+                  "expectedSource": true,
+                  "expectedDimensions": true,
+                  "photoClass": true,
+                  "noPlaceholderOrAvatar": true,
+                  "score90": true,
+                  "meter90": true
+                },
+                "ok": true
+              }
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"5e66b44bd5b2cf4b44f68869ef7c7b16ef8debae7d367838b9ae5fdf0a85f896-br\"",
+              "bytes": 38556,
+              "elapsedMs": 309,
+              "actualSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "expectedSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.web.app/",
+              "referencedUrl": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true
+            },
+            {
+              "url": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1&releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"5e66b44bd5b2cf4b44f68869ef7c7b16ef8debae7d367838b9ae5fdf0a85f896-br\"",
+              "bytes": 38556,
+              "elapsedMs": 327,
+              "actualSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "expectedSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.web.app/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "referencedUrl": "https://gazostadium.web.app/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "image": {
+        "url": "https://gazostadium.web.app/assets/landing/hero-example.d9a004076802.png",
+        "status": 200,
+        "contentType": "image/png",
+        "cacheControl": "public, max-age=31536000, immutable",
+        "etag": "\"807aa9084c1d4adf46b5cd0f233aab7f7fedcbd807a0c15c58ace4e8a71b2d61-br\"",
+        "bytes": 38093,
+        "elapsedMs": 330,
+        "referencedByAppVariants": 2,
+        "expectedBytes": 38093,
+        "expectedSha256": "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0",
+        "actualSha256": "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0",
+        "cachePolicyOk": true,
+        "ok": true
+      },
+      "excluded": [
+        {
+          "file": "/firebase.json",
+          "url": "https://gazostadium.web.app/firebase.json",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 73,
+          "ok": true
+        },
+        {
+          "file": "/functions/scripts/verify-hero-image-release.cjs",
+          "url": "https://gazostadium.web.app/functions/scripts/verify-hero-image-release.cjs",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 70,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "url": "https://gazostadium.web.app/README.md",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 62,
+          "ok": true
+        },
+        {
+          "file": "/_headers",
+          "url": "https://gazostadium.web.app/_headers",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 68,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "index": [
+        {
+          "url": "https://gazostadium.firebaseapp.com/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": "\"2909cc9b4e059a5a8772bb430179517894f42bad0a39b19497fd0fddc25a6dd4-br\"",
+          "bytes": 16072,
+          "elapsedMs": 222,
+          "actualSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "expectedSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "cachePolicyOk": true,
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.firebaseapp.com/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": "\"2909cc9b4e059a5a8772bb430179517894f42bad0a39b19497fd0fddc25a6dd4-br\"",
+          "bytes": 16072,
+          "elapsedMs": 95,
+          "actualSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "expectedSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "cachePolicyOk": true,
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "app.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"bbdca4a412ba46c8db110880f8c3c88abfc860e4cd9bd639120193ed8de0708a-br\"",
+              "bytes": 142573,
+              "elapsedMs": 435,
+              "actualSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "expectedSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.firebaseapp.com/",
+              "referencedUrl": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true,
+              "hero": {
+                "src": "assets/landing/hero-example.d9a004076802.png",
+                "checks": {
+                  "oneImage": true,
+                  "expectedSource": true,
+                  "expectedDimensions": true,
+                  "photoClass": true,
+                  "noPlaceholderOrAvatar": true,
+                  "score90": true,
+                  "meter90": true
+                },
+                "ok": true
+              }
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1&releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "status": 200,
+              "contentType": "text/javascript; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"bbdca4a412ba46c8db110880f8c3c88abfc860e4cd9bd639120193ed8de0708a-br\"",
+              "bytes": 142573,
+              "elapsedMs": 287,
+              "actualSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "expectedSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.firebaseapp.com/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "referencedUrl": "https://gazostadium.firebaseapp.com/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true,
+              "hero": {
+                "src": "assets/landing/hero-example.d9a004076802.png",
+                "checks": {
+                  "oneImage": true,
+                  "expectedSource": true,
+                  "expectedDimensions": true,
+                  "photoClass": true,
+                  "noPlaceholderOrAvatar": true,
+                  "score90": true,
+                  "meter90": true
+                },
+                "ok": true
+              }
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"5e66b44bd5b2cf4b44f68869ef7c7b16ef8debae7d367838b9ae5fdf0a85f896-br\"",
+              "bytes": 38556,
+              "elapsedMs": 86,
+              "actualSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "expectedSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.firebaseapp.com/",
+              "referencedUrl": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true
+            },
+            {
+              "url": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1&releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "status": 200,
+              "contentType": "text/css; charset=utf-8",
+              "cacheControl": "max-age=3600",
+              "etag": "\"5e66b44bd5b2cf4b44f68869ef7c7b16ef8debae7d367838b9ae5fdf0a85f896-br\"",
+              "bytes": 38556,
+              "elapsedMs": 116,
+              "actualSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "expectedSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.firebaseapp.com/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "referencedUrl": "https://gazostadium.firebaseapp.com/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "image": {
+        "url": "https://gazostadium.firebaseapp.com/assets/landing/hero-example.d9a004076802.png",
+        "status": 200,
+        "contentType": "image/png",
+        "cacheControl": "public, max-age=31536000, immutable",
+        "etag": "\"807aa9084c1d4adf46b5cd0f233aab7f7fedcbd807a0c15c58ace4e8a71b2d61-br\"",
+        "bytes": 38093,
+        "elapsedMs": 87,
+        "referencedByAppVariants": 2,
+        "expectedBytes": 38093,
+        "expectedSha256": "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0",
+        "actualSha256": "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0",
+        "cachePolicyOk": true,
+        "ok": true
+      },
+      "excluded": [
+        {
+          "file": "/firebase.json",
+          "url": "https://gazostadium.firebaseapp.com/firebase.json",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 75,
+          "ok": true
+        },
+        {
+          "file": "/functions/scripts/verify-hero-image-release.cjs",
+          "url": "https://gazostadium.firebaseapp.com/functions/scripts/verify-hero-image-release.cjs",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 75,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "url": "https://gazostadium.firebaseapp.com/README.md",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 81,
+          "ok": true
+        },
+        {
+          "file": "/_headers",
+          "url": "https://gazostadium.firebaseapp.com/_headers",
+          "status": 404,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": null,
+          "bytes": 21376,
+          "elapsedMs": 74,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "index": [
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/",
+          "status": 200,
+          "contentType": "text/html",
+          "cacheControl": "public, max-age=0, must-revalidate",
+          "etag": null,
+          "bytes": 15943,
+          "elapsedMs": 77,
+          "actualSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "expectedSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "cachePolicyOk": true,
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+          "status": 200,
+          "contentType": "text/html",
+          "cacheControl": "public, max-age=0, must-revalidate",
+          "etag": null,
+          "bytes": 15943,
+          "elapsedMs": 73,
+          "actualSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "expectedSha256LF": "b90bbcb1f4df82ad9ce76a7586c9a44281eebc9a4f573e4b7a7add744c950de6",
+          "cachePolicyOk": true,
+          "ok": true
+        }
+      ],
+      "assets": [
+        {
+          "file": "app.js",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "cacheControl": "public, max-age=0, must-revalidate",
+              "etag": "W/\"3da84734b1260b8cb73cae13b92f3ead\"",
+              "bytes": 140033,
+              "elapsedMs": 24,
+              "actualSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "expectedSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.anjugames.workers.dev/",
+              "referencedUrl": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true,
+              "hero": {
+                "src": "assets/landing/hero-example.d9a004076802.png",
+                "checks": {
+                  "oneImage": true,
+                  "expectedSource": true,
+                  "expectedDimensions": true,
+                  "photoClass": true,
+                  "noPlaceholderOrAvatar": true,
+                  "score90": true,
+                  "meter90": true
+                },
+                "ok": true
+              }
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1&releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "status": 200,
+              "contentType": "text/javascript",
+              "cacheControl": "public, max-age=0, must-revalidate",
+              "etag": "W/\"3da84734b1260b8cb73cae13b92f3ead\"",
+              "bytes": 140033,
+              "elapsedMs": 30,
+              "actualSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "expectedSha256LF": "b5f9865c4d8f29a0fe6c0f719d9c45fa86e72c97ec502c1e3c2524768026d70d",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.anjugames.workers.dev/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "referencedUrl": "https://gazostadium.anjugames.workers.dev/app.js?v=global-player-block-v1-copy-v2-ranking-no-block-v1-server-ranking-v1-account-protection-v1-achievements-v1-anju-pay-v1-pay-unit-v1-market-ranking-entry-v1-favorite-card-v2-flea-market-v1-urikko-card-v1-free-table-v1-free-table-stats-v1-free-table-invite-v1-remove-royale-v1-crown-circuit-v2-retire-team-v1-ai-text-training-v1-roster-draw-v1-flea-achievements-lv10-v1-free-table-lamp-flow-v1-ai-training-lights-v1-retire-training-v1-crown-monthly-achievements-v1-lobby-manual-refresh-v1-ranking-top10-v3-crown-dashboard-recovery-v1-rate-floor-v1-danwaku-note-v1-weekly-history-progress-v1-strategy-prepared-deck-v1-strategy-ios-image-fallback-v1-roulette-training-v1-result-share-no-url-v1-rate-floor-showcase-v1-velvet-stage-v1-hariai-dm-v1-tribute-v1-tribute-ranch-v1-retire-training-lights-v1-retire-flea-danwaku-v1-retire-market-lobby-v1-lobby-initial-snapshot-v1-hero-score-90-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true,
+              "hero": {
+                "src": "assets/landing/hero-example.d9a004076802.png",
+                "checks": {
+                  "oneImage": true,
+                  "expectedSource": true,
+                  "expectedDimensions": true,
+                  "photoClass": true,
+                  "noPlaceholderOrAvatar": true,
+                  "score90": true,
+                  "meter90": true
+                },
+                "ok": true
+              }
+            }
+          ],
+          "ok": true
+        },
+        {
+          "file": "velvet.css",
+          "responses": [
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "status": 200,
+              "contentType": "text/css",
+              "cacheControl": "public, max-age=0, must-revalidate",
+              "etag": "W/\"0ccb889856f8b9bcae178569ce266661\"",
+              "bytes": 37008,
+              "elapsedMs": 62,
+              "actualSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "expectedSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.anjugames.workers.dev/",
+              "referencedUrl": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true
+            },
+            {
+              "url": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1&releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "status": 200,
+              "contentType": "text/css",
+              "cacheControl": "public, max-age=0, must-revalidate",
+              "etag": "W/\"0ccb889856f8b9bcae178569ce266661\"",
+              "bytes": 37008,
+              "elapsedMs": 48,
+              "actualSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "expectedSha256LF": "4cce7fff466f5b0c8294b8a37bab0833ae8ce5389a2b12acd8b55e8684816727",
+              "cachePolicyOk": true,
+              "ok": true,
+              "sourcePageUrl": "https://gazostadium.anjugames.workers.dev/?releaseCheck=1791372272656-2fefbaa6-8e38-4d75-a22e-37c18a5f4eb1",
+              "referencedUrl": "https://gazostadium.anjugames.workers.dev/velvet.css?v=velvet-stage-v1-desktop-align-v1-hariai-dm-v1-tribute-v1-retire-training-lights-v1-retire-flea-danwaku-v1-lobby-initial-snapshot-v1-hero-image-v1",
+              "markerPresent": true,
+              "invariantOk": true
+            }
+          ],
+          "ok": true
+        }
+      ],
+      "image": {
+        "url": "https://gazostadium.anjugames.workers.dev/assets/landing/hero-example.d9a004076802.png",
+        "status": 200,
+        "contentType": "image/png",
+        "cacheControl": "public, max-age=31536000, immutable",
+        "etag": "\"33c5e3d6d49644aa2978c97bc6652f6f\"",
+        "bytes": 38093,
+        "elapsedMs": 16,
+        "referencedByAppVariants": 2,
+        "expectedBytes": 38093,
+        "expectedSha256": "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0",
+        "actualSha256": "d9a00407680297c6b33868c9b12b42165dd94437b54ff9fe66b70bfbdfe414a0",
+        "cachePolicyOk": true,
+        "ok": true
+      },
+      "excluded": [
+        {
+          "file": "/firebase.json",
+          "url": "https://gazostadium.anjugames.workers.dev/firebase.json",
+          "status": 404,
+          "contentType": "",
+          "cacheControl": "",
+          "etag": null,
+          "bytes": 0,
+          "elapsedMs": 10,
+          "ok": true
+        },
+        {
+          "file": "/functions/scripts/verify-hero-image-release.cjs",
+          "url": "https://gazostadium.anjugames.workers.dev/functions/scripts/verify-hero-image-release.cjs",
+          "status": 404,
+          "contentType": "",
+          "cacheControl": "",
+          "etag": null,
+          "bytes": 0,
+          "elapsedMs": 15,
+          "ok": true
+        },
+        {
+          "file": "/README.md",
+          "url": "https://gazostadium.anjugames.workers.dev/README.md",
+          "status": 404,
+          "contentType": "",
+          "cacheControl": "",
+          "etag": null,
+          "bytes": 0,
+          "elapsedMs": 19,
+          "ok": true
+        },
+        {
+          "file": "/_headers",
+          "url": "https://gazostadium.anjugames.workers.dev/_headers",
+          "status": 404,
+          "contentType": "",
+          "cacheControl": "",
+          "etag": null,
+          "bytes": 0,
+          "elapsedMs": 13,
+          "ok": true
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "ok": true,
+  "hostingRelease": {
+    "checkedAt": "2026-10-07T11:23:43.747Z",
+    "name": "sites/gazostadium/releases/1791372206403000",
+    "releaseTime": "2026-10-07T11:23:26.403Z",
+    "version": {
+      "name": "sites/gazostadium/versions/666695030502ee18",
+      "status": "FINALIZED"
+    }
+  },
+  "initialHostingRelease": {
+    "checkedAt": "2026-10-07T11:21:05.162Z",
+    "name": "sites/gazostadium/releases/1791372021543000",
+    "releaseTime": "2026-10-07T11:20:21.543Z",
+    "version": {
+      "name": "sites/gazostadium/versions/cb8babba6515e72f",
+      "status": "FINALIZED"
+    }
+  },
+  "scope": {
+    "deployed": [
+      "firebase-hosting",
+      "cloudflare-static-assets-via-existing-git-integration"
+    ],
+    "functionsChanged": false,
+    "rulesChanged": false,
+    "indexesChanged": false,
+    "productionDataModified": false
+  },
+  "tests": {
+    "total": 1887,
+    "passed": 1858,
+    "failed": 0,
+    "skipped": 29,
+    "focusedPassed": 9,
+    "focusedFailed": 0,
+    "focusedSkipped": 0,
+    "verifierPositiveAndNegativeChecksPassed": true
+  },
+  "visualQA": {
+    "checkedDuring": "preceding implementation turn",
+    "type": "offline synthetic preview with module scripts removed and connect-src none",
+    "viewports": [
+      {
+        "width": 1280,
+        "height": 900,
+        "scrollWidth": 1265
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "scrollWidth": 375
+      },
+      {
+        "width": 320,
+        "height": 740,
+        "scrollWidth": 320
+      }
+    ],
+    "imageNaturalDimensions": {
+      "width": 360,
+      "height": 270
+    },
+    "imageRenderedDimensions": {
+      "width": 168,
+      "height": 126
+    },
+    "badgeAbsent": true,
+    "score90Retained": true,
+    "physicalMobileTested": false,
+    "realPlayerMatchTested": false
+  }
+}
