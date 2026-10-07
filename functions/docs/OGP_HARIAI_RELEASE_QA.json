@@ -1,0 +1,587 @@
+{
+  "checkedAt": "2026-10-07T13:26:20.675Z",
+  "readOnly": true,
+  "productionDataAccessed": false,
+  "userAgent": "Twitterbot/1.0",
+  "canonicalUrl": "https://gazostadium.anjugames.workers.dev/",
+  "timeoutMs": 20000,
+  "maxBodyBytes": 5000000,
+  "normalization": "HTML CRLF and CR converted to LF before SHA-256; PNG uses its original bytes",
+  "routes": [
+    {
+      "origin": "https://gazostadium.web.app",
+      "pages": [
+        {
+          "url": "https://gazostadium.web.app/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": "\"7b768984aa5e9d09ba1442304fdf13a429cf81a8bdb375dd025c41a3ecb997b4-br\"",
+          "bytes": 18054,
+          "elapsedMs": 335,
+          "expectedSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "actualSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "metadata": {
+            "headCount": 1,
+            "values": {
+              "og:type": "website",
+              "og:url": "https://gazostadium.anjugames.workers.dev/",
+              "og:title": "貼り合いスタジアム",
+              "og:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "og:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:width": "1200",
+              "og:image:height": "630",
+              "og:image:type": "image/png",
+              "twitter:card": "summary_large_image",
+              "twitter:title": "貼り合いスタジアム",
+              "twitter:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "twitter:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:alt": "貼り合いスタジアムのリンク画像。「貼って、刺して、点で返す。」の見出しと、小悪魔の口調の相手が画像に「ねぇ、これ好きでしょ？♡」と添え、こちらが90点で返すDM風のやりとり。"
+            },
+            "counts": {
+              "og:type": {
+                "document": 1,
+                "head": 1
+              },
+              "og:url": {
+                "document": 1,
+                "head": 1
+              },
+              "og:title": {
+                "document": 1,
+                "head": 1
+              },
+              "og:description": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:width": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:height": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:type": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:card": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:title": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:description": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:alt": {
+                "document": 1,
+                "head": 1
+              }
+            },
+            "canonicalLinks": [
+              "https://gazostadium.anjugames.workers.dev/"
+            ],
+            "issues": [],
+            "ok": true
+          },
+          "ok": true
+        }
+      ],
+      "image": {
+        "url": "https://gazostadium.web.app/assets/ogp/ogp.4193da908263.png",
+        "status": 200,
+        "contentType": "image/png",
+        "cacheControl": "max-age=3600",
+        "etag": "\"9733211faf03a8360603c7f385dbb1b5acd134dbd95c31efde1c4c87f4b771d1\"",
+        "bytes": 571219,
+        "elapsedMs": 427,
+        "expectedSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+        "actualSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+        "png": {
+          "signatureOk": true,
+          "ihdrOk": true,
+          "width": 1200,
+          "height": 630,
+          "sizeOk": true,
+          "ok": true
+        },
+        "cachePolicyOk": true,
+        "ok": true
+      },
+      "retiredImage": {
+        "url": "https://gazostadium.web.app/ogp.png",
+        "status": 404,
+        "contentType": "text/html; charset=utf-8",
+        "cacheControl": "max-age=3600",
+        "etag": null,
+        "bytes": 21376,
+        "elapsedMs": 92,
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.firebaseapp.com",
+      "pages": [
+        {
+          "url": "https://gazostadium.firebaseapp.com/",
+          "status": 200,
+          "contentType": "text/html; charset=utf-8",
+          "cacheControl": "max-age=3600",
+          "etag": "\"7b768984aa5e9d09ba1442304fdf13a429cf81a8bdb375dd025c41a3ecb997b4-br\"",
+          "bytes": 18054,
+          "elapsedMs": 304,
+          "expectedSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "actualSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "metadata": {
+            "headCount": 1,
+            "values": {
+              "og:type": "website",
+              "og:url": "https://gazostadium.anjugames.workers.dev/",
+              "og:title": "貼り合いスタジアム",
+              "og:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "og:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:width": "1200",
+              "og:image:height": "630",
+              "og:image:type": "image/png",
+              "twitter:card": "summary_large_image",
+              "twitter:title": "貼り合いスタジアム",
+              "twitter:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "twitter:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:alt": "貼り合いスタジアムのリンク画像。「貼って、刺して、点で返す。」の見出しと、小悪魔の口調の相手が画像に「ねぇ、これ好きでしょ？♡」と添え、こちらが90点で返すDM風のやりとり。"
+            },
+            "counts": {
+              "og:type": {
+                "document": 1,
+                "head": 1
+              },
+              "og:url": {
+                "document": 1,
+                "head": 1
+              },
+              "og:title": {
+                "document": 1,
+                "head": 1
+              },
+              "og:description": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:width": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:height": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:type": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:card": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:title": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:description": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:alt": {
+                "document": 1,
+                "head": 1
+              }
+            },
+            "canonicalLinks": [
+              "https://gazostadium.anjugames.workers.dev/"
+            ],
+            "issues": [],
+            "ok": true
+          },
+          "ok": true
+        }
+      ],
+      "image": {
+        "url": "https://gazostadium.firebaseapp.com/assets/ogp/ogp.4193da908263.png",
+        "status": 200,
+        "contentType": "image/png",
+        "cacheControl": "max-age=3600",
+        "etag": "\"9733211faf03a8360603c7f385dbb1b5acd134dbd95c31efde1c4c87f4b771d1\"",
+        "bytes": 571219,
+        "elapsedMs": 308,
+        "expectedSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+        "actualSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+        "png": {
+          "signatureOk": true,
+          "ihdrOk": true,
+          "width": 1200,
+          "height": 630,
+          "sizeOk": true,
+          "ok": true
+        },
+        "cachePolicyOk": true,
+        "ok": true
+      },
+      "retiredImage": {
+        "url": "https://gazostadium.firebaseapp.com/ogp.png",
+        "status": 404,
+        "contentType": "text/html; charset=utf-8",
+        "cacheControl": "max-age=3600",
+        "etag": null,
+        "bytes": 21376,
+        "elapsedMs": 96,
+        "ok": true
+      },
+      "ok": true
+    },
+    {
+      "origin": "https://gazostadium.anjugames.workers.dev",
+      "pages": [
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/",
+          "status": 200,
+          "contentType": "text/html",
+          "cacheControl": "public, max-age=0, must-revalidate",
+          "etag": null,
+          "bytes": 18054,
+          "elapsedMs": 519,
+          "expectedSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "actualSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "metadata": {
+            "headCount": 1,
+            "values": {
+              "og:type": "website",
+              "og:url": "https://gazostadium.anjugames.workers.dev/",
+              "og:title": "貼り合いスタジアム",
+              "og:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "og:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:width": "1200",
+              "og:image:height": "630",
+              "og:image:type": "image/png",
+              "twitter:card": "summary_large_image",
+              "twitter:title": "貼り合いスタジアム",
+              "twitter:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "twitter:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:alt": "貼り合いスタジアムのリンク画像。「貼って、刺して、点で返す。」の見出しと、小悪魔の口調の相手が画像に「ねぇ、これ好きでしょ？♡」と添え、こちらが90点で返すDM風のやりとり。"
+            },
+            "counts": {
+              "og:type": {
+                "document": 1,
+                "head": 1
+              },
+              "og:url": {
+                "document": 1,
+                "head": 1
+              },
+              "og:title": {
+                "document": 1,
+                "head": 1
+              },
+              "og:description": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:width": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:height": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:type": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:card": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:title": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:description": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:alt": {
+                "document": 1,
+                "head": 1
+              }
+            },
+            "canonicalLinks": [
+              "https://gazostadium.anjugames.workers.dev/"
+            ],
+            "issues": [],
+            "ok": true
+          },
+          "ok": true
+        },
+        {
+          "url": "https://gazostadium.anjugames.workers.dev/?v=2",
+          "status": 200,
+          "contentType": "text/html",
+          "cacheControl": "public, max-age=0, must-revalidate",
+          "etag": null,
+          "bytes": 18054,
+          "elapsedMs": 353,
+          "expectedSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "actualSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+          "metadata": {
+            "headCount": 1,
+            "values": {
+              "og:type": "website",
+              "og:url": "https://gazostadium.anjugames.workers.dev/",
+              "og:title": "貼り合いスタジアム",
+              "og:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "og:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:width": "1200",
+              "og:image:height": "630",
+              "og:image:type": "image/png",
+              "twitter:card": "summary_large_image",
+              "twitter:title": "貼り合いスタジアム",
+              "twitter:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+              "twitter:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+              "og:image:alt": "貼り合いスタジアムのリンク画像。「貼って、刺して、点で返す。」の見出しと、小悪魔の口調の相手が画像に「ねぇ、これ好きでしょ？♡」と添え、こちらが90点で返すDM風のやりとり。"
+            },
+            "counts": {
+              "og:type": {
+                "document": 1,
+                "head": 1
+              },
+              "og:url": {
+                "document": 1,
+                "head": 1
+              },
+              "og:title": {
+                "document": 1,
+                "head": 1
+              },
+              "og:description": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:width": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:height": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:type": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:card": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:title": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:description": {
+                "document": 1,
+                "head": 1
+              },
+              "twitter:image": {
+                "document": 1,
+                "head": 1
+              },
+              "og:image:alt": {
+                "document": 1,
+                "head": 1
+              }
+            },
+            "canonicalLinks": [
+              "https://gazostadium.anjugames.workers.dev/"
+            ],
+            "issues": [],
+            "ok": true
+          },
+          "ok": true
+        }
+      ],
+      "image": {
+        "url": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+        "status": 200,
+        "contentType": "image/png",
+        "cacheControl": "public, max-age=0, must-revalidate",
+        "etag": "\"d468c8a28d2dc28b0c3f663495188376\"",
+        "bytes": 571219,
+        "elapsedMs": 787,
+        "expectedSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+        "actualSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+        "png": {
+          "signatureOk": true,
+          "ihdrOk": true,
+          "width": 1200,
+          "height": 630,
+          "sizeOk": true,
+          "ok": true
+        },
+        "cachePolicyOk": true,
+        "ok": true
+      },
+      "retiredImage": {
+        "url": "https://gazostadium.anjugames.workers.dev/ogp.png",
+        "status": 404,
+        "contentType": "",
+        "cacheControl": "",
+        "etag": null,
+        "bytes": 0,
+        "elapsedMs": 94,
+        "ok": true
+      },
+      "ok": true
+    }
+  ],
+  "robots": {
+    "url": "https://gazostadium.anjugames.workers.dev/robots.txt",
+    "status": 200,
+    "contentType": "text/plain; charset=utf-8",
+    "cacheControl": "",
+    "etag": null,
+    "bytes": 1248,
+    "elapsedMs": 390,
+    "classification": "robots_text",
+    "text": "# As a condition of accessing this website, you agree to abide by the following\n# content signals:\n\n# (a)  If a content-signal = yes, you may collect content for the corresponding\n#      use.\n# (b)  If a content-signal = no, you may not collect content for the\n#      corresponding use.\n# (c)  If the website operator does not include a content signal for a\n#      corresponding use, the website operator neither grants nor restricts\n#      permission via content signal with respect to the corresponding use.\n\n# The content signals and their meanings are:\n\n# search:   building a search index and providing search results (e.g., returning\n#           hyperlinks and short excerpts from your website's contents). Search does not\n#           include providing AI-generated search summaries.\n# ai-input: inputting content into one or more AI models (e.g., retrieval\n#           augmented generation, grounding, or other real-time taking of content for\n#           generative AI search answers).\n# ai-train: training or fine-tuning AI models.\n\n# ANY RESTRICTIONS EXPRESSED VIA CONTENT SIGNALS ARE EXPRESS RESERVATIONS OF\n# RIGHTS UNDER ARTICLE 4 OF THE EUROPEAN UNION DIRECTIVE 2019/790 ON COPYRIGHT\n# AND RELATED RIGHTS IN THE DIGITAL SINGLE MARKET.\n",
+    "textTruncated": false,
+    "directives": [],
+    "policyEvaluation": "Reported for review; crawler allow/disallow policy is not interpreted automatically.",
+    "ok": true
+  },
+  "ok": true,
+  "local": {
+    "htmlSha256LF": "309598f3830dc887b5f92ad81024d26832c6c47381302fa1240979edda81f606",
+    "imageUrl": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+    "imageSha256": "4193da90826353d2e806eacac952899483bc6063b85184393732f9753e0b32b0",
+    "imageBytes": 571219,
+    "metadata": {
+      "headCount": 1,
+      "values": {
+        "og:type": "website",
+        "og:url": "https://gazostadium.anjugames.workers.dev/",
+        "og:title": "貼り合いスタジアム",
+        "og:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+        "og:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+        "og:image:width": "1200",
+        "og:image:height": "630",
+        "og:image:type": "image/png",
+        "twitter:card": "summary_large_image",
+        "twitter:title": "貼り合いスタジアム",
+        "twitter:description": "DMじゃ物足りない貼り合いに。女の子になり切れる吹き出しで、推し画像を貼り合って刺さり具合を点で返す1on1。画像はサーバーに残りません。",
+        "twitter:image": "https://gazostadium.anjugames.workers.dev/assets/ogp/ogp.4193da908263.png",
+        "og:image:alt": "貼り合いスタジアムのリンク画像。「貼って、刺して、点で返す。」の見出しと、小悪魔の口調の相手が画像に「ねぇ、これ好きでしょ？♡」と添え、こちらが90点で返すDM風のやりとり。"
+      },
+      "counts": {
+        "og:type": {
+          "document": 1,
+          "head": 1
+        },
+        "og:url": {
+          "document": 1,
+          "head": 1
+        },
+        "og:title": {
+          "document": 1,
+          "head": 1
+        },
+        "og:description": {
+          "document": 1,
+          "head": 1
+        },
+        "og:image": {
+          "document": 1,
+          "head": 1
+        },
+        "og:image:width": {
+          "document": 1,
+          "head": 1
+        },
+        "og:image:height": {
+          "document": 1,
+          "head": 1
+        },
+        "og:image:type": {
+          "document": 1,
+          "head": 1
+        },
+        "twitter:card": {
+          "document": 1,
+          "head": 1
+        },
+        "twitter:title": {
+          "document": 1,
+          "head": 1
+        },
+        "twitter:description": {
+          "document": 1,
+          "head": 1
+        },
+        "twitter:image": {
+          "document": 1,
+          "head": 1
+        },
+        "og:image:alt": {
+          "document": 1,
+          "head": 1
+        }
+      },
+      "canonicalLinks": [
+        "https://gazostadium.anjugames.workers.dev/"
+      ],
+      "issues": [],
+      "ok": true
+    },
+    "png": {
+      "signatureOk": true,
+      "ihdrOk": true,
+      "width": 1200,
+      "height": 630,
+      "sizeOk": true,
+      "ok": true
+    }
+  },
+  "finishedAt": "2026-10-07T13:26:21.500Z"
+}
