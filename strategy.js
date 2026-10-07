@@ -4821,6 +4821,15 @@ async function setupRoomListeners() {
     } else handleRecoverableError(error);
   };
   let databaseWasConnected = null;
+  // Server-clock correction must not depend on a room write succeeding. In
+  // particular, reconnecting at the deadline can reject presence registration.
+  targetState.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
+    if (!current()) return;
+    targetState.serverTimeOffset = Number(snapshot.val() || 0);
+    targetState.prestartGuard?.sync();
+    updateStrategyIdleNotice();
+    if (targetState.screen === "review") startReviewClock();
+  }));
   const activeDisconnect = onDisconnect(ref(database, `online/strategyActive/${state.uid}`));
   await activeDisconnect.remove();
   if (!current()) { await activeDisconnect.cancel().catch(() => {}); return; }
@@ -4859,13 +4868,6 @@ async function setupRoomListeners() {
     else if (state.screen === "gameover") render();
     else renderBattleIfChanged();
   }, handleRoomError));
-  state.roomUnsubscribers.push(onValue(ref(database, ".info/serverTimeOffset"), (snapshot) => {
-    if (!current()) return;
-    state.serverTimeOffset = Number(snapshot.val() || 0);
-    state.prestartGuard?.sync();
-    updateStrategyIdleNotice();
-    if (state.screen === "review") startReviewClock();
-  }));
   state.roomUnsubscribers.push(onValue(ref(database, ".info/connected"), (snapshot) => {
     if (!current()) return;
     const connected = snapshot.val() === true;

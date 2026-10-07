@@ -323,6 +323,19 @@ test("pending ICE draining cannot enter a newer peer after its awaited candidate
   assert.deepEqual(f.context.state.pendingIce, ["new-first"]);
 });
 
+test("server-clock correction is registered even if room presence setup rejects", async () => {
+  const f = roomRuntime();
+  let synchronized = 0;
+  f.state.prestartGuard = { sync: () => { synchronized++; } };
+  f.hooks.set = async () => { throw new Error("permission denied"); };
+  await assert.rejects(f.context.setupRoomListeners(), /permission denied/);
+  const offset = f.listeners.find((item) => item.location === ".info/serverTimeOffset");
+  assert.ok(offset);
+  offset.value({ val: () => -360000 });
+  assert.equal(f.state.serverTimeOffset, -360000);
+  assert.equal(synchronized, 1);
+});
+
 test("a fast local clock cannot prevent offset registration or strand peer setup after server pending", async () => {
   const f = roomRuntime();
   const commits = ["first", "second", "third"];
