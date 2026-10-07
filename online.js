@@ -107,6 +107,7 @@ import {
   resolveOnlineOpponentPresence,
   runOnlineOpponentDestroyedTransition,
 } from "./online-room-lifecycle.mjs?v=online-room-lifecycle-v2";
+import { createSoloHiddenWaitGuard } from "./online-solo-idle-guard.mjs?v=solo-match-cost-guard-v1";
 import {
   ONLINE_P2P_RECOVERY_PHASES,
   createOnlineP2pGenerationToken,
@@ -670,6 +671,11 @@ function createOnlineState() {
     soloSessionCleanupPending: false,
     soloSessionOwnershipLost: false,
     soloSessionAbortRoomId: "",
+    soloHiddenWaitGuard: null,
+    soloHiddenWaitInitializationBusy: false,
+    soloHiddenWaitReleasePromise: null,
+    soloHiddenWaitStopError: false,
+    soloHiddenWaitStopped: false,
     roomSetupAttempt: null,
     playerIndex: 0,
     players: [],
@@ -5257,6 +5263,11 @@ function renderSetup() {
         <p>画像を5枚選ぶと対戦できます。控えを3枚まで追加すると、各ラウンドで最大8枚から選べます。</p></div>
       <button class="button button-ghost button-small" id="onlineBackHome">タイトルへ</button>
     </div>
+    ${state.soloHiddenWaitStopped ? `<div class="solo-familiar-book-note" role="status">
+      <div><strong>相手の検索を停止しました</strong>
+      <p>検索中にこのページが5分間表示されなかったため、通信を続けないよう待機を終了しました。デッキとプロフィールはそのままです。検索は自動では再開しません。</p></div>
+      <button class="button button-primary" id="resumeSoloHiddenWait" type="button" ${ready && !state.matchmakingLaunchBusy ? "" : "disabled"}>相手を探し直す</button>
+    </div>` : ""}
     <div class="online-profile-strip">
       <span class="connection-pill ${state.authReady ? "connected" : ""}">${state.authReady ? "● Firebase接続済み" : "○ Firebaseへ接続中…"}</span>
       ${renderTitleBadge()}
@@ -5891,6 +5902,16 @@ function renderPointShop() {
 }
 
 function renderMatching() {
+  if (state.soloHiddenWaitStopError) {
+    return renderStatusCard({
+      icon: "◎",
+      eyebrow: "WAITING STOP CONFIRMATION",
+      title: "検索の停止を確認しています",
+      body: "このページが5分間表示されなかったため、新しい相手の検索を停止しています。通信状態を確認してください。終了が確認できるまで検索は再開しません。成立済みの対戦は保護します。",
+      details: "<p>デッキとプロフィールはそのままです。</p>",
+      actions: '<button class="button button-primary" id="retrySoloHiddenWaitStop">停止を再確認</button><button class="button button-ghost" id="cancelMatching">マッチングをやめる</button>',
+    });
+  }
   const sampleCount = getDeckSampleCount();
   const startingHp = getStartingHp(sampleCount);
   const preference = getImagePreferenceOption(state.imagePreference);
@@ -6760,6 +6781,7 @@ function bindScreenEvents() {
   if (state.screen === "achievements") bindAchievementEvents();
   if (state.screen === "creatorCard") bindCreatorCardEvents();
   if (state.screen === "matching") {
+    document.querySelector("#retrySoloHiddenWaitStop")?.addEventListener("click", () => state.soloHiddenWaitGuard?.retry());
     document.querySelector("#expandMatchingScope")?.addEventListener("click", expandMatchmakingScope);
     document.querySelector("#cancelMatching")?.addEventListener("click", cancelMatching);
   }
@@ -7428,6 +7450,8 @@ function isMatchmakingSetupReady() {
 
 function updateMatchmakingSetupButton() {
   const disabled = !isMatchmakingSetupReady() || state.matchmakingLaunchBusy;
+  const resumeButton = document.querySelector("#resumeSoloHiddenWait");
+  if (resumeButton) resumeButton.disabled = disabled;
   const button = document.querySelector("#findOpponent");
   const crownButton = document.querySelector('[data-crown-matchmaking-action="start"]');
   if (button) {
@@ -7464,6 +7488,9 @@ function renderSoloCrownMatchmakingActions() {
 }
 
 function bindSoloCrownMatchmakingActions() {
+  document.querySelector("#resumeSoloHiddenWait")?.addEventListener("click", () => {
+    requestMatchmaking({ intent: "regular" });
+  });
   document.querySelector("#findOpponent")?.addEventListener("click", () => {
     requestMatchmaking({ intent: "regular" });
   });
@@ -8977,6 +9004,22 @@ function clearSoloSessionHeartbeat(expectedState = state) {
 
 function markSoloSessionLeaseLost(expectedState = state) {
   if (!expectedState.soloSessionLeaseHeld) return;
+  const idleGuard = expectedState.soloHiddenWaitGuard;
+  idleGuard?.sync();
+  if (active && state === expectedState && expectedState.screen === "matching"
+      && !expectedState.roomId && idleGuard?.expired && !idleGuard.disposed
+      && !expectedState.cleanupPromise && !expectedState.soloSessionReleaseStarted
+      && !expectedState.p2pAutoRequeueCancelling) {
+    // After a frozen tab resumes, local lease expiry is not proof that the
+    // server has no offered/active match. All three heartbeat loss paths
+    // (schedule, refresh, response) must stay on the waiting-only release
+    // path until that exact fence is confirmed released or no longer owned.
+    clearSoloSessionHeartbeat(expectedState);
+    expectedState.soloHiddenWaitStopError = true;
+    expectedState.soloSessionCleanupPending = true;
+    render();
+    return;
+  }
   expectedState.soloSessionLeaseHeld = false;
   clearSoloSessionHeartbeat(expectedState);
   handleSoloSessionLeaseLost(expectedState).catch(handleRecoverableError);
@@ -9010,7 +9053,18 @@ async function refreshSoloSessionLease(expectedState = state) {
   if (!active
       || state !== expectedState
       || !expectedState.soloSessionLeaseHeld
+      || expectedState.soloHiddenWaitReleasePromise
       || expectedState.soloSessionHeartbeatInFlight) return false;
+  // A frozen tab can deliver an overdue heartbeat before visibilitychange.
+  // Let waiting-only expiry decide first, instead of taking the ordinary
+  // lease-lost cleanup path. Protected/failed stops still renew normally.
+  expectedState.soloHiddenWaitGuard?.sync();
+  if (expectedState.soloHiddenWaitGuard?.pendingStop) {
+    await expectedState.soloHiddenWaitGuard.pendingStop;
+    if (state !== expectedState || !expectedState.soloSessionLeaseHeld
+        || expectedState.soloHiddenWaitReleasePromise
+        || expectedState.soloSessionHeartbeatInFlight) return false;
+  }
   if (Number(expectedState.soloSessionLease?.expiresAt || 0) <= serverNow()) {
     markSoloSessionLeaseLost(expectedState);
     return false;
@@ -9252,6 +9306,7 @@ function scheduleSoloServerMatchRetry(
   if (resetBackoff) clearSoloServerMatchRetry(expectedState);
   if (state !== expectedState
       || !isCurrentMatchmakingGeneration(generation)
+      || expectedState.soloHiddenWaitGuard?.blocksNewSearch()
       || expectedState.soloServerMatchRetryTimer) return false;
   const retryAttempt = expectedState.soloServerMatchRetryAttempt;
   expectedState.soloServerMatchRetryAttempt = Math.min(8, retryAttempt + 1);
@@ -9420,10 +9475,111 @@ async function armActiveReservationDisconnect(
   );
 }
 
+function soloHiddenWaitContext(expectedState, generation) {
+  return {
+    current: active && state === expectedState && expectedState.screen === "matching"
+      && expectedState.matchmakingGeneration === generation && !expectedState.roomId
+      && !expectedState.cleanupPromise && !expectedState.p2pCleanupPromise
+      && !expectedState.p2pAutoRequeueCancelling,
+    visible: document.visibilityState === "visible",
+    busy: Boolean(expectedState.soloHiddenWaitInitializationBusy
+      || expectedState.soloServerMatchBusy || expectedState.matchingBusy
+      || expectedState.acceptingOffer || expectedState.acceptingOfferRoomId
+      || expectedState.pendingIncomingOffer || expectedState.pendingOffer
+      || expectedState.soloSessionHeartbeatInFlight
+      || expectedState.soloHiddenWaitReleasePromise),
+  };
+}
+
+function startSoloHiddenWaitGuard(expectedState, generation) {
+  expectedState.soloHiddenWaitGuard?.dispose();
+  expectedState.soloHiddenWaitGuard = createSoloHiddenWaitGuard({
+    getContext: () => soloHiddenWaitContext(expectedState, generation),
+    stopWaiting: () => stopSoloHiddenMatchmaking(expectedState, generation),
+    now: () => Date.now(),
+    setTimer: (callback, delay) => window.setTimeout(callback, delay),
+    clearTimer: (timer) => window.clearTimeout(timer),
+  });
+  expectedState.soloHiddenWaitGuard.sync();
+}
+
+async function stopSoloHiddenMatchmaking(expectedState, generation) {
+  const context = soloHiddenWaitContext(expectedState, generation);
+  if (!context.current || context.busy) return 1000;
+  const sessionId = expectedState.clientSessionId;
+  const leaseToken = expectedState.clientLeaseToken;
+  const sessionGeneration = expectedState.soloSessionGeneration;
+  const transitionToken = expectedState.lifecycleTransitionToken;
+  const stillCurrent = () => soloHiddenWaitContext(expectedState, generation).current
+    && expectedState.lifecycleTransitionToken === transitionToken
+    && expectedState.clientSessionId === sessionId
+    && expectedState.clientLeaseToken === leaseToken
+    && expectedState.soloSessionGeneration === sessionGeneration;
+  let released = !expectedState.soloSessionLease;
+  let ownershipLost = false;
+  if (!released) {
+    // The server holds the same matching lock while checking waiting-only.
+    // Local roomId alone cannot protect a match accepted by the other tab.
+    const releasePromise = Promise.resolve().then(() => soloSessionActionCallable({
+      action: "release", onlyWaiting: true, sessionId, leaseToken,
+      generation: sessionGeneration,
+    }));
+    expectedState.soloHiddenWaitReleasePromise = releasePromise;
+    try {
+      const response = await releasePromise;
+      released = response?.data?.released === true;
+      ownershipLost = response?.data?.reason === "lease-lost";
+      if (!stillCurrent()) return 20_000;
+      if (!released && !ownershipLost) {
+        // Do not call the ordinary (unconditional) release for a protected
+        // offer/active room, a busy lock, or an unconfirmed cleanup.
+        const wasStopError = expectedState.soloHiddenWaitStopError;
+        expectedState.soloHiddenWaitStopError = !["occupied", "match-in-progress"].includes(response?.data?.reason);
+        expectedState.soloSessionCleanupPending = expectedState.soloHiddenWaitStopError;
+        if (expectedState.soloHiddenWaitStopError || wasStopError) render();
+        return 20_000;
+      }
+    } catch (error) {
+      if (stillCurrent()) {
+        expectedState.soloHiddenWaitStopError = true;
+        expectedState.soloSessionCleanupPending = true;
+        render();
+        console.error(error);
+      }
+      return 20_000;
+    } finally {
+      if (expectedState.soloHiddenWaitReleasePromise === releasePromise) {
+        expectedState.soloHiddenWaitReleasePromise = null;
+      }
+      if (!released && !ownershipLost && stillCurrent()) {
+        if (expectedState.soloSessionLeaseHeld && !expectedState.soloSessionHeartbeat) {
+          scheduleSoloSessionLeaseHeartbeat(expectedState);
+        }
+        if (expectedState.pendingIncomingOffer) drainIncomingOffers().catch(handleRecoverableError);
+      }
+    }
+  }
+  if (!stillCurrent()) return 20_000;
+  // Clear the lease before any asynchronous public-presence cleanup. An old
+  // heartbeat response must neither recreate the queue nor reschedule itself.
+  expectedState.soloSessionLeaseHeld = false;
+  clearSoloSessionHeartbeat(expectedState);
+  expectedState.soloSessionLease = null;
+  expectedState.soloSessionGeneration = 0;
+  expectedState.soloSessionFence = null;
+  expectedState.soloSessionOwnershipLost = ownershipLost;
+  expectedState.soloHiddenWaitStopped = true;
+  expectedState.soloHiddenWaitStopError = false;
+  expectedState.soloSessionCleanupPending = false;
+  await cancelMatching();
+  return 20_000;
+}
+
 async function beginMatchmaking({ automatic = false } = {}) {
   const expectedState = state;
   if (expectedState.soloSessionCleanupPending || expectedState.cleanupPromise
-      || expectedState.p2pCleanupPromise || expectedState.soloSessionReleasePromise) {
+      || expectedState.p2pCleanupPromise || expectedState.soloSessionReleasePromise
+      || expectedState.soloHiddenWaitReleasePromise) {
     showSoloCleanupPending(expectedState);
     return;
   }
@@ -9436,6 +9592,7 @@ async function beginMatchmaking({ automatic = false } = {}) {
   if (automatic && (
     document.visibilityState !== "visible"
     || !navigator.onLine
+    || expectedState.soloHiddenWaitStopped
   )) return;
   if (automatic) {
     expectedState.p2pAutoRequeueStartedAt = Date.now();
@@ -9449,6 +9606,9 @@ async function beginMatchmaking({ automatic = false } = {}) {
   const startingHp = getStartingHp(sampleCount);
   const generation = ++matchmakingGenerationCounter;
   expectedState.matchmakingGeneration = generation;
+  expectedState.soloHiddenWaitInitializationBusy = true;
+  expectedState.soloHiddenWaitStopError = false;
+  expectedState.soloHiddenWaitStopped = false;
   try {
     expectedState.matchScopeAvailable = false;
     expectedState.matchScopeExpanded = false;
@@ -9469,6 +9629,7 @@ async function beginMatchmaking({ automatic = false } = {}) {
     persistRoleplayLineSettings(expectedState);
     localStorage.setItem(IMAGE_PREFERENCE_KEY, expectedState.imagePreference);
     expectedState.screen = "matching";
+    startSoloHiddenWaitGuard(expectedState, generation);
     setOnlineChrome("MATCHING");
     render();
 
@@ -9538,6 +9699,7 @@ async function beginMatchmaking({ automatic = false } = {}) {
       }, MATCH_SCOPE_EXPAND_DELAY_MS);
     }
     expectedState.queueHeartbeat = window.setInterval(() => {
+      if (expectedState.soloHiddenWaitReleasePromise) return;
       update(queueEntryRef, { lastSeen: serverNow() })
         .catch(() => {});
     }, 20_000);
@@ -9563,6 +9725,11 @@ async function beginMatchmaking({ automatic = false } = {}) {
     showToast(error?.soloProfileProjectionPending
       ? error.message
       : "対戦の検索を開始できませんでした。通信環境を確認して、もう一度お試しください。");
+  } finally {
+    if (state === expectedState && expectedState.matchmakingGeneration === generation) {
+      expectedState.soloHiddenWaitInitializationBusy = false;
+      expectedState.soloHiddenWaitGuard?.sync();
+    }
   }
 }
 
@@ -9714,6 +9881,7 @@ function attemptCurrentSoloMatchmaking(
 
 async function attemptSoloServerMatch(generation = state.matchmakingGeneration) {
   if (!isCurrentMatchmakingGeneration(generation)) return;
+  if (state.soloHiddenWaitGuard?.blocksNewSearch()) return;
   if (state.soloServerMatchBusy
       || state.matchingBusy
       || state.acceptingOffer
@@ -9777,6 +9945,7 @@ async function attemptSoloServerMatch(generation = state.matchmakingGeneration) 
   } finally {
     if (state === expectedState && state.matchmakingGeneration === generation) {
       state.soloServerMatchBusy = false;
+      state.soloHiddenWaitGuard?.sync();
     }
   }
 }
@@ -10004,7 +10173,7 @@ async function acceptOffer(roomId, offer) {
 }
 
 async function drainIncomingOffers() {
-  if (state.acceptingOffer) return;
+  if (state.acceptingOffer || state.soloHiddenWaitReleasePromise) return;
   while (active && state.screen === "matching" && !state.roomId && state.pendingIncomingOffer) {
     const incoming = state.pendingIncomingOffer;
     state.pendingIncomingOffer = null;
@@ -10066,6 +10235,10 @@ async function enterRoom(roomId) {
     throw new Error("ルーム情報を取得できませんでした。");
   }
   window.clearTimeout(state.matchTimer);
+  if (state.soloHiddenWaitStopError) {
+    state.soloHiddenWaitStopError = false;
+    state.soloSessionCleanupPending = false;
+  }
   state.playerSafetyStopped = false;
   state.roomId = roomId;
   state.room = room;
@@ -13085,6 +13258,7 @@ async function resetOnlineState(screen) {
     soloBlockedCursor: expectedState.soloBlockedCursor,
     soloBlockedDetailsOpen: expectedState.soloBlockedDetailsOpen,
     soloReunionPreference: expectedState.soloReunionPreference,
+    soloHiddenWaitStopped: expectedState.soloHiddenWaitStopped,
     signatureCardId: expectedState.signatureCardId,
     economy: expectedState.economy,
     economyReady: expectedState.economyReady,
@@ -13169,6 +13343,8 @@ async function leaveToFreeTable() {
 }
 
 async function cleanupMatchmaking(keepActive, targetState = state) {
+  targetState.soloHiddenWaitGuard?.dispose();
+  targetState.soloHiddenWaitGuard = null;
   targetState.matchmakingGeneration = ++matchmakingGenerationCounter;
   window.clearTimeout(targetState.matchTimer);
   window.clearTimeout(targetState.matchScopeTimer);
@@ -13206,6 +13382,11 @@ async function cleanupOnlineResources(
   { preserveP2pRecovery = false } = {},
 ) {
   clearActiveContact("solo");
+  // A manual leave/retry must not race a waiting-only release from the old
+  // fence. This promise contains only the RPC, not the following cleanup.
+  if (targetState.soloHiddenWaitReleasePromise) {
+    await waitForOnlineOperation(targetState.soloHiddenWaitReleasePromise, 15_000).catch(() => {});
+  }
   if (!preserveP2pRecovery && (targetState.p2pCleanupPromise
       || targetState.p2pRecovery?.phase === ONLINE_P2P_RECOVERY_PHASES.CLEANING_UP)) {
     // Leaving or retrying must not discard a still-running release. Its old
@@ -13407,6 +13588,7 @@ document.addEventListener("visibilitychange", () => {
     visible: document.visibilityState === "visible",
   });
   cancelUnavailableAutomaticMatchmaking();
+  state.soloHiddenWaitGuard?.sync();
   const currentDashboard = getRankingDashboard();
   if (document.visibilityState === "visible"
       && getOverallRankingPreference().enabled

@@ -7157,6 +7157,9 @@ async function blockedSoloPairIdsForQueue(uid, queue, now) {
     .filter(([candidateUid, entry]) => (
       candidateUid !== uid
       && isValidSoloServerQueueEntry(candidateUid, entry, now)
+      // Match selection uses this same pure preference test. Incompatible
+      // candidates cannot be selected, so do not read their block documents.
+      && Number.isFinite(soloQueuePreferenceTier(queue[uid], entry))
     ))
     .sort((first, second) => (
       Number(first[1].joinedAt) - Number(second[1].joinedAt)
@@ -7178,7 +7181,7 @@ async function readSoloPlayerBlock(firstUid, secondUid) {
   const policy = await playerSafetyService.policyRef(firstUid, secondUid).get();
   // A canonical tombstone intentionally supersedes every legacy block source.
   if (policy.exists) {
-    const current = await playerSafetyService.getPolicy(firstUid, secondUid);
+    const current = playerSafetyService.policyFromSnapshot(firstUid, secondUid, policy);
     return { exists: current.participants.some((uid) => current.blockedBy?.[uid] === true), policy: current };
   }
   return soloFamiliarBlockPairRef(firstUid, secondUid).get();
@@ -8067,7 +8070,7 @@ function requireSoloSessionActionData(value) {
       "profileProjectionVersion",
     ]),
     heartbeat: new Set(["action", "sessionId", "leaseToken", "generation"]),
-    release: new Set(["action", "sessionId", "leaseToken", "generation"]),
+    release: new Set(["action", "sessionId", "leaseToken", "generation", "onlyWaiting"]),
     try_match: new Set(["action", "sessionId", "leaseToken", "avoidUid"]),
     accept: new Set(["action", "sessionId", "leaseToken", "roomId"]),
     cancel: new Set(["action", "sessionId", "leaseToken", "roomId", "abort"]),
@@ -8092,6 +8095,12 @@ function requireSoloSessionActionData(value) {
       value.generation,
       "セッション世代",
     );
+  }
+  if (action === "release" && Object.hasOwn(value, "onlyWaiting")) {
+    if (typeof value.onlyWaiting !== "boolean") {
+      throw new HttpsError("invalid-argument", "待機終了の条件を確認してください。");
+    }
+    result.onlyWaiting = value.onlyWaiting;
   }
   if (action === "claim") {
     if (Object.hasOwn(value, "sameSessionOwnerConfirmedGone")
@@ -8839,7 +8848,7 @@ async function heartbeatSoloSessionV2(uid, data) {
   return soloSessionClaimResponse(claim, "refreshed");
 }
 
-async function removeSoloSessionResourceIfFenced(reference, fence) {
+async function removeSoloSessionResourceIfFenced(reference, fence, { onlyWaiting = false } = {}) {
   let safe = false;
   const result = await reference.transaction((currentValue) => {
     if (currentValue == null) {
@@ -8847,6 +8856,11 @@ async function removeSoloSessionResourceIfFenced(reference, fence) {
       return null;
     }
     if (!resourceFenceMatches(currentValue, fence)) {
+      safe = false;
+      return;
+    }
+    if (onlyWaiting && (currentValue.state !== "waiting"
+        || currentValue.roomId != null || currentValue.attemptId != null)) {
       safe = false;
       return;
     }
@@ -8874,12 +8888,35 @@ async function releaseSoloSessionV2(uid, data) {
       leaseToken: releasedClaim.leaseToken,
       generation: releasedClaim.generation,
     };
+    if (data.onlyWaiting === true) {
+      // This guard shares the match-reservation locks, including peer-initiated
+      // matches. Never turn a hidden-tab timeout into an active-match release.
+      const [queueSnapshot, activeSnapshot] = await Promise.all([
+        soloSessionQueueRef(uid, data.sessionId).get(),
+        soloSessionActiveRef(uid, data.sessionId).get(),
+      ]);
+      const queue = queueSnapshot.val();
+      if (activeSnapshot.val() != null || (queue != null && (
+        queue.state !== "waiting" || queue.roomId != null || queue.attemptId != null
+      ))) {
+        return { released: false, reason: "match-in-progress" };
+      }
+      if (queue != null && !resourceFenceMatches(queue, fence)) {
+        return { released: false, reason: "resource-changed" };
+      }
+      if (!await renewSoloSessionClaimGuard(uid, releaseGuard)) {
+        return { released: false, reason: "occupied" };
+      }
+    }
     const [queueRemoved, activeRemoved] = await Promise.all([
       removeSoloSessionResourceIfFenced(
         soloSessionQueueRef(uid, data.sessionId),
         fence,
+        { onlyWaiting: data.onlyWaiting === true },
       ),
-      removeSoloSessionResourceIfFenced(
+      // A conditional release observed no active resource under the shared
+      // reservation guard. It must never issue an active-resource deletion.
+      data.onlyWaiting === true ? Promise.resolve(true) : removeSoloSessionResourceIfFenced(
         soloSessionActiveRef(uid, data.sessionId),
         fence,
       ),
@@ -8890,6 +8927,12 @@ async function releaseSoloSessionV2(uid, data) {
     await soloSessionV2QueueIndex.remove(uid, fence).catch(() => false);
     let claimReleased = false;
     const result = await claimRef.transaction((currentValue) => {
+      if (data.onlyWaiting === true && currentValue == null) {
+        // A cold RTDB transaction may begin with null even after get(). Let
+        // the server retry with its actual value before checking the fence.
+        claimReleased = false;
+        return null;
+      }
       const current = normalizeClaim(currentValue);
       if (!current
           || current.sessionId !== data.sessionId

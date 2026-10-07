@@ -77,6 +77,10 @@ function createPlayerSafetyService({ firestore, realtime, HttpsError, resolveCon
     validUid(first); validUid(second);
     return normalizePolicy(await read(policyRef(first, second), transaction), first, second);
   }
+  function policyFromSnapshot(first, second, snapshot) {
+    validUid(first); validUid(second);
+    return normalizePolicy(snapshot, first, second);
+  }
   function blocked(policy) {
     return policy.participants.some((uid) => policy.blockedBy?.[uid] === true);
   }
@@ -486,7 +490,7 @@ function createPlayerSafetyService({ firestore, realtime, HttpsError, resolveCon
     }
     fail("invalid-argument", "未対応の安心設定操作です。");
   }
-  return Object.freeze({ pairIdFor, policyRef, getPolicy, isBlocked, assertAllowed, filterVisible,
+  return Object.freeze({ pairIdFor, policyRef, getPolicy, policyFromSnapshot, isBlocked, assertAllowed, filterVisible,
     syncPolicy, ensureContact, checkContact, activateContact, revokeContact, pruneContacts,
     processOperation, cleanup, performAction, importLegacyDirection });
 }
