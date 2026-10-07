@@ -546,9 +546,9 @@ test("create charges one Pay once, replays identical payload, and rejects a chan
   );
   assert.equal(
     Boolean(harness.firestore.read("achievementProfiles/seller").unlocked.flea_listings_1),
-    true,
+    false,
   );
-  assert.equal(first.newlyUnlocked.includes("flea_listings_1"), true);
+  assert.equal(first.newlyUnlocked.includes("flea_listings_1"), false);
 
   const replay = await harness.service.performAction("seller", listingInput());
   assert.equal(replay.createdListing.id, listingId);
@@ -772,13 +772,13 @@ test("25 Pay sale is atomic, credits 23 Pay, sinks 2 Pay, and is purchase-idempo
   );
   assert.equal(
     Boolean(harness.firestore.read("achievementProfiles/seller").unlocked.flea_sales_1),
-    true,
+    false,
   );
   assert.equal(
     Boolean(harness.firestore.read("achievementProfiles/buyer").unlocked.flea_purchases_1),
-    true,
+    false,
   );
-  assert.equal(bought.newlyUnlocked.includes("flea_purchases_1"), true);
+  assert.equal(bought.newlyUnlocked.includes("flea_purchases_1"), false);
   assert.equal(bought.newlyUnlocked.includes("flea_sales_1"), false);
 
   const replay = await harness.service.performAction("buyer", {
@@ -848,8 +848,16 @@ test("insufficient buyer balance rolls back every sale-side write", async () => 
   );
 });
 
-test("state backfills historical flea records once and unlocks only the viewer's flea collection", async () => {
+test("internal historical backfill remains idempotent and preserves legacy unlocks without awarding retired achievements", async () => {
   const harness = createHarness({ balances: { legacy: 0 } });
+  harness.firestore.write("achievementProfiles/legacy", {
+    schemaVersion: 1,
+    unlocked: { flea_listings_1: 10, flea_sales_1: 20 },
+    pendingUnlocks: {},
+    customShowcase: ["flea_listings_1", "flea_sales_1"],
+    initializedAt: 1,
+    updatedAt: 20,
+  });
   harness.firestore.write("anjuPayFleaListings/legacy-listing-1", {
     sellerUid: "legacy",
     status: "expired",
@@ -877,10 +885,13 @@ test("state backfills historical flea records once and unlocks only the viewer's
     sales: 1,
     purchases: 1,
   });
-  assert.deepEqual(first.newlyUnlocked.sort(), [
-    "flea_listings_1",
-    "flea_purchases_1",
-    "flea_sales_1",
+  assert.deepEqual(first.newlyUnlocked, []);
+  assert.deepEqual(harness.firestore.read("achievementProfiles/legacy").unlocked, {
+    flea_listings_1: 10,
+    flea_sales_1: 20,
+  });
+  assert.deepEqual(harness.firestore.read("achievementProfiles/legacy").customShowcase, [
+    "flea_listings_1", "flea_sales_1",
   ]);
   const storedStats = harness.firestore.read("anjuPayFleaAchievementStats/legacy");
   assert.equal(storedStats.historyBackfilled, true);

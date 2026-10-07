@@ -9,6 +9,14 @@ const root = path.resolve(__dirname, "..", "..");
 const frontendSource = fs.readFileSync(path.join(root, "danwaku-note.js"), "utf8");
 const cssSource = fs.readFileSync(path.join(root, "danwaku-note.css"), "utf8");
 
+test("retired NOTE entry, ready waiter and global assets are absent", () => {
+  const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.doesNotMatch(app, /danwakuNoteButton|startDanwakuNote|hariai-danwaku-note-ready/);
+  assert.doesNotMatch(html, /(?:src|href)="danwaku-note\.(?:js|css)\?v=/);
+  assert.doesNotMatch(html.match(/<meta\s+name="description"[\s\S]*?\/>/)?.[0] || "", /断惑NOTE/);
+});
+
 function sourceBetween(source, start, end) {
   const startIndex = source.indexOf(start);
   const endIndex = source.indexOf(end, startIndex + start.length);

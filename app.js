@@ -115,8 +115,6 @@
   let profileAvatarReadyPromise = null;
   let pendingValueMarketDestination = "";
   let valueMarketReadyListenerPending = false;
-  let pendingFleaMarketDestination = "";
-  let fleaMarketReadyListenerPending = false;
   let pendingFreeTableIntent = "";
   let freeTableReadyListenerPending = false;
   let freeTableLaunchGeneration = 0;
@@ -807,19 +805,6 @@
     </section>`;
   }
 
-  function renderLandingFleaPanel() {
-    return `<section class="landing-flea" id="fleaMarketPanel" aria-labelledby="fleaMarketPanelTitle">
-      <div class="landing-flea-mark" aria-hidden="true"><span>一日棚</span><strong>◇</strong></div>
-      <div class="landing-flea-copy">
-        <span class="eyebrow">ANJUPAY FLEA MARKET</span>
-        <h2 id="fleaMarketPanelTitle">AnjuPayフリマ</h2>
-        <p class="landing-flea-lead">ことばから、推しに出会う。</p>
-        <p>イラスト・実写・衣装コーデを、画像ではなく言葉で紹介する今日だけの一日棚です。売りっ子カードから人柄を見つけることも、紹介する一品から読むこともできます。</p>
-        <small>フリマの取引は、推し値市場の販売実績・ランキング・常連帳・店主評価へ加算しません。出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録され、本人が選んだ解除済みの推し値市場実績は売りっ子カードへ飾れます。実物・画像データ・衣服・権利の受け渡しはありません。</small>
-        <div class="landing-flea-actions"><button class="button button-primary" id="fleaMarketSellersButton" type="button">今日の売りっ子を見る</button><button class="button button-ghost" id="fleaMarketBrowseButton" type="button">一品から見る</button><button class="button button-ghost" id="fleaMarketSellButton" type="button">今日の一品を出す</button></div>
-      </div>
-    </section>`;
-  }
 
   function bindLandingTopMessageEvents() {
     document.querySelector("[data-top-message-retry]")?.addEventListener("click", async () => {
@@ -1027,7 +1012,6 @@
           <button class="vl-tile vl-tile-market vl-tile-tribute" id="tributeButton" type="button"><small>会わない前提で、AnjuPayを差し出す</small><span>お貢ぎ牧場</span></button>
           <button class="vl-tile vl-tile-ai" id="aiTextTrainingButton" type="button"><small>AIと対戦しよう</small><span>文字コラトレーニング</span></button>
           <button class="vl-tile vl-tile-roulette" id="rouletteTrainingButton" type="button"><small>縦ドラムでテンポ・メニュー・回数が変化</small><span>ルーレットトレーニング</span></button>
-          <button class="vl-tile vl-tile-danwaku" id="danwakuNoteButton" type="button"><small>断ちたい習慣を、自分の判断で一日ずつ</small><span>断惑NOTE</span></button>
         </div>
       </section>
       <nav class="vl-tabbar" aria-label="ランキングとAnjuPay">
@@ -1037,16 +1021,6 @@
         <button class="vl-tab vl-tab-wallet" type="button" id="accountButton">AnjuPayウォレット</button>
       </nav>
       ${renderLandingTopMessagePanel()}
-      ${renderLandingFleaPanel()}
-      <section class="vl-more" aria-labelledby="landingMoreTitle">
-        <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
-        <div class="vl-list">
-          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の財布の人数で並ぶ管理人</small>お貢ぎ牧場の番付</button>
-          <button class="vl-row" type="button" id="valueMarketRankingButton"><small>ランキング・永久実績・推し値証書の閲覧</small>旧推し値市場の記録</button>
-          <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
-          <button class="vl-row vl-row-audio" type="button" id="audioStudioButton"><small>端末の中だけで録音・変換</small>10秒音声をつくる</button>
-        </div>
-      </section>
       <section class="vl-live-board" aria-labelledby="landingLiveTitle">
         <div class="vl-section-head"><span>Live</span><h2 id="landingLiveTitle">いまの参加状況</h2></div>
         <div class="mode-lobby-stats" aria-label="モード別の参加・開室状況">
@@ -1073,6 +1047,15 @@
           <span id="lobbyStatsRefreshStatus">${escapeHtml(lobbyRefresh.message)}</span>
         </div>
       </section>
+      <section class="vl-more" aria-labelledby="landingMoreTitle">
+        <div class="vl-section-head"><span>More</span><h2 id="landingMoreTitle">記録と道具</h2></div>
+        <div class="vl-list">
+          <button class="vl-row" type="button" id="tributeRankingButton"><small>今月の財布の人数で並ぶ管理人</small>お貢ぎ牧場の番付</button>
+          <button class="vl-row" type="button" id="valueMarketRankingButton"><small>ランキング・永久実績・推し値証書の閲覧</small>旧推し値市場の記録</button>
+          <button class="vl-row vl-row-achievement" type="button" id="achievementButton"><small>遊んだ歩みで解除する称号と記録</small>実績コレクション</button>
+          <button class="vl-row vl-row-audio" type="button" id="audioStudioButton"><small>端末の中だけで録音・変換</small>10秒音声をつくる</button>
+        </div>
+      </section>
       <details class="vl-safe">
         <summary><b>安心して遊べる理由</b><span>匿名で参加</span><span>画像は相手へP2Pで直接</span><span>サーバーに保存しない</span></summary>
         <p class="lobby-privacy">対戦人数にトップページの閲覧者は含みません。自由卓は人数ではなく、お迎え中・同席中の卓数です。推し値市場の商談中は、売り手と買い手の両方が通信中の商談件数です。推しカードは本人が公開した表示名・活動札・紹介文・称号・実績・成長段階・任意のXだけを表示し、匿名UID・勝敗・画像・ルーム情報は表示しません。</p>
@@ -1084,7 +1067,6 @@
   function renderLandingScreen() {
     cancelPendingFreeTableLaunch();
     pendingValueMarketDestination = "";
-    pendingFleaMarketDestination = "";
     currentScreen = "landing";
     expandedRankingEntryId = "";
     rankingComments = [];
@@ -1097,7 +1079,6 @@
       const control = event.target.closest?.("button, a");
       if (!control) return;
       if (!control.matches("#valueMarketButton, #valueMarketRankingButton")) pendingValueMarketDestination = "";
-      if (!control.matches("#fleaMarketSellersButton, #fleaMarketBrowseButton, #fleaMarketSellButton")) pendingFleaMarketDestination = "";
       if (!control.matches("#freeTableButton, #freeTableStatusButton")) cancelPendingFreeTableLaunch();
     }, { capture: true });
     document.querySelector("#strategyLabButton")?.addEventListener("click", startStrategyLab);
@@ -1105,7 +1086,6 @@
     document.querySelector("#soloBoardButton")?.addEventListener("click", startOnlineBattle);
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
-    document.querySelector("#danwakuNoteButton")?.addEventListener("click", startDanwakuNote);
     document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
       startFreeTable({ intent: event.currentTarget.dataset.freeTableIntent });
     });
@@ -1115,9 +1095,6 @@
     document.querySelector("#tributeButton")?.addEventListener("click", () => startTribute());
     document.querySelector("#tributeRankingButton")?.addEventListener("click", () => startTribute({ initialScreen: "ranking" }));
     document.querySelector("#valueMarketRankingButton")?.addEventListener("click", startValueMarketRankings);
-    document.querySelector("#fleaMarketSellersButton")?.addEventListener("click", startFleaMarketSellers);
-    document.querySelector("#fleaMarketBrowseButton")?.addEventListener("click", startFleaMarketBrowse);
-    document.querySelector("#fleaMarketSellButton")?.addEventListener("click", startFleaMarketSell);
     document.querySelector("#rankingButton")?.addEventListener("click", () => renderRankingScreen({ refresh: true }));
     document.querySelector("#achievementButton")?.addEventListener("click", () => openOnlineFeature("openAchievements"));
     document.querySelector("#dailyMissionButton")?.addEventListener("click", () => openOnlineFeature("openDailyMissions"));
@@ -2099,18 +2076,6 @@
     );
   }
 
-  function startDanwakuNote() {
-    if (window.HariaiDanwakuNote?.start) {
-      window.HariaiDanwakuNote.start();
-      return;
-    }
-    showToast("断惑NOTEを読み込んでいます…");
-    window.addEventListener(
-      "hariai-danwaku-note-ready",
-      () => window.HariaiDanwakuNote?.start?.(),
-      { once: true },
-    );
-  }
 
   function cancelPendingFreeTableLaunch() {
     freeTableLaunchGeneration += 1;
@@ -2194,45 +2159,6 @@
     }, { once: true });
   }
 
-  function startFleaMarketBrowse() {
-    startFleaMarketDestination("shelf");
-  }
-
-  function startFleaMarketSellers() {
-    startFleaMarketDestination("sellers");
-  }
-
-  function startFleaMarketSell() {
-    startFleaMarketDestination("sell");
-  }
-
-  function startFleaMarketDestination(destination) {
-    const initialScreen = ["sellers", "sell"].includes(destination) ? destination : "shelf";
-    if (typeof window.HariaiFleaMarket?.start === "function") {
-      pendingFleaMarketDestination = "";
-      window.HariaiFleaMarket.start({ initialScreen });
-      return;
-    }
-    if (window.HariaiFleaMarket) {
-      showToast("AnjuPayフリマを更新しました。ページを再読み込みしてお試しください。");
-      return;
-    }
-    pendingFleaMarketDestination = initialScreen;
-    showToast(initialScreen === "sell"
-      ? "AnjuPayフリマの出品画面を読み込んでいます…"
-      : initialScreen === "sellers"
-        ? "今日の売りっ子を読み込んでいます…"
-        : "AnjuPayフリマの一日棚を読み込んでいます…");
-    if (fleaMarketReadyListenerPending) return;
-    fleaMarketReadyListenerPending = true;
-    window.addEventListener("hariai-flea-market-ready", () => {
-      fleaMarketReadyListenerPending = false;
-      const requestedDestination = pendingFleaMarketDestination;
-      pendingFleaMarketDestination = "";
-      if (!requestedDestination || !document.querySelector(".screen.hero")) return;
-      window.HariaiFleaMarket?.start?.({ initialScreen: requestedDestination });
-    }, { once: true });
-  }
 
   function startAccount() {
     if (window.HariaiAccount?.start) {
@@ -2584,7 +2510,7 @@
     const footerItems = document.querySelectorAll(".site-footer span");
     if (status) status.innerHTML = "<i></i> ONLINE READY";
     if (privacy) privacy.textContent = "P2Pメディア転送";
-    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO TRAINING + 断惑NOTE + FREE TABLE + MARKETS";
+    if (footerItems[0]) footerItems[0].textContent = "ONLINE 1ON1 + STRATEGY + SOLO TRAINING + FREE TABLE + ANJUPAY";
     if (footerItems[1]) footerItems[1].textContent = "ソロ画像・抽選・自己申告は端末内。対人モードのメディアはP2Pで一時転送します";
     const title = destroyDialog?.querySelector("h2");
     const body = destroyDialog?.querySelector("p");

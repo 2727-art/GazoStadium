@@ -275,8 +275,9 @@
     thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 270, 365],
     names: ["発心の一歩", "一念の灯", "精進の芽", "日々の歩み", "不放逸のしるし", "心調う", "蓮のつぼみ", "蓮華ひらく", "光の道標", "無尽の歩み"],
     description: (target) => `断惑継続の最高記録が${target}日になった`,
-    hint: "断惑継続を自分のペースで記録すると解除",
+    hint: "終了した断惑NOTEの記録",
     autoPublic: false,
+    legacy: true,
   });
   addSeries({
     scope: "ai_training",
@@ -445,8 +446,9 @@
     thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
     names: ["今日の棚開き", "三日の店主", "七つの一品", "二週間の棚", "三十日のことば", "六十日の店先", "百日の売りっ子", "半年の一日棚", "一年分のことば", "千日のフリマ店主"],
     description: (target) => `AnjuPayフリマへ異なる${target}日で一品を出品した`,
-    hint: "連続でなくても、一日棚へ出品した日が積み重なると解除",
+    hint: "終了したAnjuPayフリマの記録",
     autoPublic: false,
+    legacy: true,
   });
   addSeries({
     scope: "flea",
@@ -457,8 +459,9 @@
     thresholds: [1, 3, 7, 14, 30, 60, 100, 180, 365, 1000],
     names: ["ご縁第一号", "三つのご縁", "七つの旅立ち", "二週間分のご縁", "三十の旅立ち", "六十の出会い", "百のご縁", "百八十の旅立ち", "三百六十五のご縁", "千のご縁を結ぶ人"],
     description: (target) => `AnjuPayフリマで出品した一品が${target}件届いた`,
-    hint: "価格の高さではなく、一品が誰かへ届くと解除",
+    hint: "終了したAnjuPayフリマの記録",
     autoPublic: false,
+    legacy: true,
   });
   addSeries({
     scope: "flea",
@@ -469,8 +472,9 @@
     thresholds: [1, 3, 10, 30, 100, 300, 500, 1000, 3000, 10000],
     names: ["はじめての出会い記録", "三つのことば", "十の出会い", "三十の一品", "百のことばを受け取る", "三百の出会い記録", "五百の店主を知る", "千の一日棚", "三千のことば", "万のご縁を見届けた人"],
     description: (target) => `AnjuPayフリマで${target}件の出会いの記録を残した`,
-    hint: "価格の高さではなく、ことばから一品を選ぶと解除",
+    hint: "終了したAnjuPayフリマの記録",
     autoPublic: false,
+    legacy: true,
   });
   // お貢ぎ牧場。金額や順位ではなく、管理が続いた記録。同じ相手とは日本時間の1日1回だけ数え、自動公開しない。
   addSeries({
@@ -648,6 +652,7 @@
         .filter((definition) => definition.category === category.id
           && (!definition.legacy || profile.unlocked[definition.id]))
         .map((definition) => definition.family))];
+      if (!families.length && ["danwaku_note", "flea_listing", "flea_connections"].includes(category.id)) return "";
       const cards = families.map((family) => {
         const familyDefinitions = catalog.filter((definition) => definition.family === family).sort((a, b) => a.level - b.level);
         const current = highest.get(family);

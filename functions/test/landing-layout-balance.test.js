@@ -26,12 +26,12 @@ test("desktop landing aligns the entrances to one column and stacks two gap-free
   assert.doesNotMatch(desktop, /\.vl-board-list\s*\{/, "the open tables stay one timeline on desktop");
   assert.match(
     desktop,
-    /\.vl-others-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/s,
-    "the four other modes fill one desktop row",
+    /\.vl-others-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
+    "the three remaining other modes fill one desktop row",
   );
   assert.match(velvet, /\.vl-main-button\s*\{[^}]*grid-column:\s*1 \/ -1;/s, "normal 1on1 stays the widest entrance");
   // 左右の列は独立して上から積むので、隣の区画の高さで隙間ができない
-  assert.match(desktop, /\.hero\.vl-landing > \.landing-flea,[\s\S]*?\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
+  assert.match(desktop, /\.hero\.vl-landing > \.vl-live-board\s*\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
   assert.doesNotMatch(velvet, /training-lights/);
   assert.match(desktop, /\.hero\.vl-landing > \.landing-community,[\s\S]*?\{[^}]*float:\s*right;[^}]*clear:\s*right;/s);
   assert.match(

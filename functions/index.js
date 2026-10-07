@@ -154,6 +154,7 @@ const {
   createRouletteTrainingService,
 } = require("./roulette-training-service");
 const { createTributeService } = require("./tribute-service");
+const { throwRetiredCommunityMode } = require("./retired-community-modes");
 const {
   createDanwakuNoteService,
 } = require("./danwaku-note-service");
@@ -1156,19 +1157,15 @@ async function resolveDanwakuDisplayName(uid) {
 }
 
 async function readMatchAchievementShowcases(participantUids, capturedAt = Date.now()) {
-  const [profileSnapshots, danwakuBadgeSnapshots] = await Promise.all([
-    Promise.all(
-      participantUids.map((participantUid) => achievementProfileRef(participantUid).get()),
-    ),
-    Promise.all(
-      participantUids.map((participantUid) => danwakuMatchBadgeRef(participantUid).get()),
-    ),
-  ]);
+  // Retired NOTE badges remain valid in existing snapshots, but new matches
+  // no longer read the mode's per-user badge documents.
+  const profileSnapshots = await Promise.all(
+    participantUids.map((participantUid) => achievementProfileRef(participantUid).get()),
+  );
   return buildMatchAchievementShowcases(
     participantUids,
     profileSnapshots.map((snapshot) => snapshot.data()),
     capturedAt,
-    danwakuBadgeSnapshots.map((snapshot) => snapshot.data()),
   );
 }
 
@@ -1999,17 +1996,12 @@ async function ensureEconomyProgress(uid) {
 }
 
 async function ensureAchievementState(uid, { deferTributeBackfill = false } = {}) {
-  await Promise.all([
-    anjuPayFleaAchievementStatsStore.ensure(uid),
-    ...(deferTributeBackfill ? [] : [tributeService.ensureAchievementStats(uid)]),
-  ]);
+  if (!deferTributeBackfill) await tributeService.ensureAchievementStats(uid);
   const progressRef = economyProgressRef(uid);
   const profileRef = achievementProfileRef(uid);
   const crownMonthlyStatsRef = crownMonthlyAchievementStatsRef(uid);
   const statsRef = marketStatsRef(uid);
-  const fleaStatsRef = anjuPayFleaAchievementStatsStore.statsRef(uid);
   const trainingRef = trainingProfileRef(uid);
-  const danwakuRef = danwakuProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
   const rouletteSellerStatsRef = rouletteTrainingSellerStatsRef(uid);
@@ -2020,9 +2012,7 @@ async function ensureAchievementState(uid, { deferTributeBackfill = false } = {}
       profileSnapshot,
       crownMonthlyStatsSnapshot,
       marketSnapshot,
-      fleaStatsSnapshot,
       trainingSnapshot,
-      danwakuSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
       rouletteSellerStatsSnapshot,
@@ -2032,9 +2022,7 @@ async function ensureAchievementState(uid, { deferTributeBackfill = false } = {}
       transaction.get(profileRef),
       transaction.get(crownMonthlyStatsRef),
       transaction.get(statsRef),
-      transaction.get(fleaStatsRef),
       transaction.get(trainingRef),
-      transaction.get(danwakuRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
       transaction.get(rouletteSellerStatsRef),
@@ -2049,9 +2037,11 @@ async function ensureAchievementState(uid, { deferTributeBackfill = false } = {}
     const progress = normalizeEconomyProgress(progressData);
     const crownMonthlyStats = normalizeCrownMonthlyStats(crownMonthlyStatsSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
-    const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
+    // Keep response shapes and historical achievement IDs without querying
+    // retired modes or backfilling their data during unrelated activity.
+    const fleaStats = normalizeFleaStats(null);
     const trainingProfile = normalizeRetiredTrainingHistory(trainingSnapshot.data());
-    const danwakuStats = normalizeDanwakuStats(danwakuSnapshot.data());
+    const danwakuStats = normalizeDanwakuStats(null);
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
       rankingUseCount: aiSellerStatsSnapshot.get("rankingUseCount"),
@@ -3464,11 +3454,9 @@ async function setAchievementShowcase(uid, idsValue) {
   if (requestedIds.length !== rawIds.length) {
     throw new HttpsError("invalid-argument", "ショーケースの実績IDが正しくありません。");
   }
-  await anjuPayFleaAchievementStatsStore.ensure(uid);
   const profileRef = achievementProfileRef(uid);
   const progressRef = economyProgressRef(uid);
   const statsRef = marketStatsRef(uid);
-  const fleaStatsRef = anjuPayFleaAchievementStatsStore.statsRef(uid);
   const trainingRef = trainingProfileRef(uid);
   const aiPlayerStatsRef = aiTextTrainingPlayerStatsRef(uid);
   const aiSellerStatsRef = aiTextTrainingSellerStatsRef(uid);
@@ -3480,7 +3468,6 @@ async function setAchievementShowcase(uid, idsValue) {
       profileSnapshot,
       progressSnapshot,
       marketSnapshot,
-      fleaStatsSnapshot,
       trainingSnapshot,
       aiPlayerStatsSnapshot,
       aiSellerStatsSnapshot,
@@ -3490,7 +3477,6 @@ async function setAchievementShowcase(uid, idsValue) {
       transaction.get(profileRef),
       transaction.get(progressRef),
       transaction.get(statsRef),
-      transaction.get(fleaStatsRef),
       transaction.get(trainingRef),
       transaction.get(aiPlayerStatsRef),
       transaction.get(aiSellerStatsRef),
@@ -3499,7 +3485,7 @@ async function setAchievementShowcase(uid, idsValue) {
     ]);
     const progress = normalizeEconomyProgress(progressSnapshot.data());
     const marketStats = normalizeMarketStats(marketSnapshot.data());
-    const fleaStats = normalizeFleaStats(fleaStatsSnapshot.data());
+    const fleaStats = normalizeFleaStats(null);
     const trainingProfile = normalizeRetiredTrainingHistory(trainingSnapshot.data());
     const aiTextTrainingStats = normalizeAiTextTrainingStats({
       ...aiPlayerStatsSnapshot.data(),
@@ -16260,18 +16246,8 @@ const anjuPayFleaService = createAnjuPayFleaService({
 });
 
 exports.anjuPayFleaAction = onCall(callableOptions("anjuPayFleaAction"), async (request) => {
-  const uid = requireUid(request);
-  try {
-    return await anjuPayFleaService.performAction(uid, request.data);
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    console.error("anjuPayFleaAction failed", {
-      uid,
-      action: request.data?.action,
-      error,
-    });
-    throw new HttpsError("internal", "AnjuPayフリマの処理を完了できませんでした。");
-  }
+  requireUid(request);
+  return throwRetiredCommunityMode(HttpsError, "anju_pay_flea");
 });
 
 const tributeService = createTributeService({
@@ -16341,53 +16317,13 @@ const danwakuNoteService = createDanwakuNoteService({
 });
 
 exports.danwakuNoteAction = onCall(callableOptions("danwakuNoteAction"), async (request) => {
-  const uid = requireUid(request);
-  try {
-    return await danwakuNoteService.dispatch(uid, request.data);
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    console.error("danwakuNoteAction failed", {
-      uid,
-      action: request.data?.action,
-      error,
-    });
-    throw new HttpsError("internal", "断惑NOTEの処理を完了できませんでした。");
-  }
+  requireUid(request);
+  return throwRetiredCommunityMode(HttpsError, "danwaku_note");
 });
 
-exports.cleanupDanwakuDeletionJobs = onSchedule({
-  schedule: "every 15 minutes",
-  timeZone: "Asia/Tokyo",
-  timeoutSeconds: 300,
-  memory: "256MiB",
-  maxInstances: 1,
-}, async () => {
-  try {
-    const result = await danwakuNoteService.cleanupDeletionJobs();
-    console.info("cleanupDanwakuDeletionJobs completed", result);
-    return result;
-  } catch (error) {
-    console.error("cleanupDanwakuDeletionJobs failed", {
-      code: typeof error?.code === "string" ? error.code : "unknown",
-    });
-    throw error;
-  }
-});
-
-exports.expireAnjuPayFleaListings = onSchedule({
-  schedule: "every day 00:00",
-  timeZone: "Asia/Tokyo",
-  timeoutSeconds: 300,
-  memory: "256MiB",
-  maxInstances: 1,
-}, async () => {
-  try {
-    return await anjuPayFleaService.expireListings(Date.now());
-  } catch (error) {
-    console.error("expireAnjuPayFleaListings failed", { error });
-    throw error;
-  }
-});
+// Retired mode schedulers are intentionally not exported. Their cleanup
+// services remain available for an explicitly authorized history repair;
+// production jobs are removed separately after pending work is rechecked.
 
 const freeTableService = createFreeTableService({
   playerSafety: playerSafetyService,

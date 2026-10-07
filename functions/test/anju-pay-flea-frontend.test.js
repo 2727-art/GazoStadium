@@ -17,47 +17,23 @@ function between(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test("the flea market is a separate top-level discovery panel, not another VALUE MARKET action", () => {
+test("retired flea entry and global assets are removed while the shared creator-card showcase remains", () => {
   const app = read("app.js");
   const html = read("index.html");
   const flea = read("flea-market.js");
-  const heroActions = between(app, '<div class="hero-actions">', "</div>");
-  const fleaPanel = between(app, "function renderLandingFleaPanel", "function bindLandingTopMessageEvents");
-
-  assert.match(html, /styles\.css\?v=[^"]*urikko-card-v1/);
-  assert.match(html, /flea-market\.css\?v=[^"]*urikko-card-v1/);
-  assert.match(html, /app\.js\?v=[^"]*urikko-card-v1/);
-  assert.match(html, /flea-market\.js\?v=[^"]*app-check-v3[^"]*urikko-card-v1/);
-  assert.match(app, /function renderLandingFleaPanel\(\)/);
-  assert.ok(
-    app.indexOf("${renderLandingTopMessagePanel()}")
-      < app.indexOf("${renderLandingFleaPanel()}"),
-    "the flea panel must follow the public creator-card showcase",
-  );
-  assert.doesNotMatch(heroActions, /fleaMarket/);
-  assert.match(fleaPanel, /id="fleaMarketSellersButton"[^>]*>今日の売りっ子を見る/);
-  assert.match(fleaPanel, /id="fleaMarketBrowseButton"[^>]*>一品から見る/);
-  assert.match(fleaPanel, /id="fleaMarketSellButton"[^>]*>今日の一品を出す/);
-  assert.ok(
-    fleaPanel.indexOf('id="fleaMarketSellersButton"')
-      < fleaPanel.indexOf('id="fleaMarketBrowseButton"')
-      && fleaPanel.indexOf('id="fleaMarketBrowseButton"')
-        < fleaPanel.indexOf('id="fleaMarketSellButton"'),
-    "seller discovery must be the primary flea-market route",
-  );
-  assert.match(app, /function startFleaMarketSellers\(\) \{[\s\S]*?startFleaMarketDestination\("sellers"\)/);
-  assert.match(app, /const initialScreen = \["sellers", "sell"\]\.includes\(destination\) \? destination : "shelf"/);
-  assert.match(app, /#fleaMarketSellersButton, #fleaMarketBrowseButton, #fleaMarketSellButton/);
-  assert.match(app, /フリマの取引は、推し値市場の販売実績・ランキング・常連帳・店主評価へ加算しません/);
-  assert.match(app, /出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録され/);
-  assert.match(app, /本人が選んだ解除済みの推し値市場実績は売りっ子カードへ飾れます/);
-  assert.match(
-    flea,
-    /ここでの出品・売却・購入は独立したAnjuPayフリマ実績にだけ記録し、市場のランキング・実績・常連帳・店主評価へは加算しません/,
-  );
+  assert.doesNotMatch(html, /(?:src|href)="flea-market\.(?:js|css)\?v=/);
+  assert.doesNotMatch(app, /renderLandingFleaPanel|fleaMarket(?:Sellers|Browse|Sell)Button|startFleaMarket|pendingFleaMarketDestination|hariai-flea-market-ready/);
+  assert.match(app, /renderLandingTopMessagePanel\(\)/);
+  assert.match(app, /id="topMessagePanel"/);
+  assert.match(app, /openOnlineFeature\("openCreatorCard"\)/);
+  // Historical frontend source remains available for compatibility tests; it is not globally loaded.
   assert.match(flea, /httpsCallable\(functions, "anjuPayFleaAction"\)/);
   assert.doesNotMatch(flea, /valueMarketAction|valueMarketQueue|valueMarketShop/);
-  assert.doesNotMatch(flea, /marketStats|unlockAchievements|MarketCertificates|patronFund/);
+  for (const asset of ["app.js", "achievements.js"]) {
+    assert.ok(html.includes(asset + "?v="));
+    const reference = html.split("\n").find((line) => line.includes(asset + "?v="));
+    assert.match(reference, /retire-flea-danwaku-v1/);
+  }
 });
 
 test("server flea unlocks notify the collection and ACK only flea-scoped IDs", () => {
@@ -601,7 +577,7 @@ test("direct Firestore access is denied and the callable starts with enforced Ap
   }
   assert.equal(rollout.APP_CHECK_ENFORCEMENT.anjuPayFleaAction, true);
   assert.match(server, /exports\.anjuPayFleaAction = onCall\(callableOptions\("anjuPayFleaAction"\)/);
-  assert.match(server, /exports\.expireAnjuPayFleaListings = onSchedule\(\{[\s\S]*schedule: "every day 00:00"[\s\S]*timeZone: "Asia\/Tokyo"/);
+  assert.doesNotMatch(server, /exports\.expireAnjuPayFleaListings\s*=/);
   assert.ok(indexes.indexes.some((index) => (
     index.collectionGroup === "anjuPayFleaListings"
       && index.fields.some((field) => field.fieldPath === "dateKey")

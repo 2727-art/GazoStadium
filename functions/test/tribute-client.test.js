@@ -233,7 +233,7 @@ test("the contract screen shows both ranch achievement lines and forwards unlock
   assert.match(styles, /\.achievement-badge\.achievement-scope-tribute \{/);
   assert.match(read("achievements.js"), /\{ id: "tribute_ranch", label: "お貢ぎ牧場"/);
   assert.match(read("achievements.js"), /画像の好み・敗北・AnjuPayフリマ・お貢ぎ牧場の実績は自動公開されず/);
-  assert.match(html, /achievements\.js\?v=[^"]*-tribute-ranch-v1"/);
+  assert.match(html, /achievements\.js\?v=[^"]*-tribute-ranch-v1(?:-[^"]+)?"/);
   assert.match(firestoreRules, /match \/tributeAchievementStats\/\{uid\} \{\s*allow read, write: if false;/);
 });
 

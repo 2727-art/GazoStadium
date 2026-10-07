@@ -38,13 +38,16 @@ test("Danwaku private, public-projection, and match-badge documents are explicit
   );
 });
 
-test("Danwaku deletion cleanup is bounded and scheduled behind the server service", () => {
+test("retired Danwaku cleanup remains available for authorized repair but has no scheduled export", () => {
   const functionsIndex = fs.readFileSync(
     path.join(root, "functions", "index.js"),
     "utf8",
   );
-  assert.match(
+  assert.doesNotMatch(
     functionsIndex,
-    /exports\.cleanupDanwakuDeletionJobs = onSchedule\(\{[\s\S]*?schedule: "every 15 minutes"[\s\S]*?maxInstances: 1,[\s\S]*?danwakuNoteService\.cleanupDeletionJobs\(\)/,
+    /exports\.cleanupDanwakuDeletionJobs\s*=/,
   );
+  const service = fs.readFileSync(path.join(root, "functions", "danwaku-note-service.js"), "utf8");
+  assert.match(service, /async function cleanupDeletionJobs/);
+  assert.match(service, /DANWAKU_DELETION_CLEANUP_LIMIT = 50/);
 });

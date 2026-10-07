@@ -395,7 +395,7 @@ test("retired Training 60 aggregates remain readable but cannot unlock new achie
   );
 });
 
-test("Danwaku NOTE achievements use the canonical highest-ever boundary and stay opt-in", () => {
+test("retired Danwaku NOTE achievements preserve their historical catalog and opt-in showcase without new unlocks", () => {
   const definitions = ACHIEVEMENT_DEFINITIONS
     .filter((definition) => definition.family === "danwaku_streak")
     .sort((first, second) => first.level - second.level);
@@ -412,7 +412,7 @@ test("Danwaku NOTE achievements use the canonical highest-ever boundary and stay
   assert.equal(definitions.every((definition) => definition.category === "danwaku_note"), true);
   assert.equal(definitions.every((definition) => definition.icon === "蓮"), true);
   assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
-  assert.equal(definitions.every((definition) => definition.legacy === false), true);
+  assert.equal(definitions.every((definition) => definition.legacy === true), true);
   assert.deepEqual(
     definitions.map((definition) => definition.condition),
     definitions.map((definition) => ({
@@ -434,13 +434,9 @@ test("Danwaku NOTE achievements use the canonical highest-ever boundary and stay
     danwakuStats: { highestEverDays },
     scope: "danwaku",
   });
-  assert.deepEqual(idsAt(0), []);
-  assert.deepEqual(idsAt(6), ["danwaku_streak_1", "danwaku_streak_3"]);
-  assert.deepEqual(idsAt(7), ["danwaku_streak_1", "danwaku_streak_3", "danwaku_streak_7"]);
-  assert.equal(idsAt(13).includes("danwaku_streak_14"), false);
-  assert.equal(idsAt(14).includes("danwaku_streak_14"), true);
-  assert.equal(idsAt(364).includes("danwaku_streak_365"), false);
-  assert.equal(idsAt(365).includes("danwaku_streak_365"), true);
+  for (const days of [0, 1, 6, 7, 13, 14, 364, 365, 10000]) {
+    assert.deepEqual(idsAt(days), [], `retired days ${days} never grant a new achievement`);
+  }
   assert.equal(
     eligibleAchievementIds({ danwakuStats: { highestEverDays: 365 }, scope: "battle" })
       .some((id) => id.startsWith("danwaku_streak_")),
@@ -931,6 +927,7 @@ test("all active progression families extend in place to level ten while retired
     "training_sessions",
     "training_workouts",
     "training_minutes",
+    "danwaku_streak",
   ]);
   for (const [family, thresholds] of Object.entries(expectedThresholds)) {
     const definitions = ACHIEVEMENT_DEFINITIONS
@@ -1050,10 +1047,12 @@ test("the final achievement preview and cache marker cover the newly opened fami
   for (const asset of ["styles.css", "achievements.js", "online.js"]) {
     assert.match(html, new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]*${secretLossMarker}`), asset);
   }
-  for (const asset of ["styles.css", "app.js", "flea-market.js"]) {
+  for (const asset of ["styles.css", "app.js"]) {
     const reference = html.match(new RegExp(`${asset.replace(".", "\\.")}\\?v=[^"]+`))?.[0] || "";
     assert.equal(reference.includes(marker), false, asset);
   }
+  assert.doesNotMatch(html, /(?:flea-market|danwaku-note)\.(?:js|css)\?v=/);
+  assert.match(html, /achievements\.js\?v=[^"]*retire-flea-danwaku-v1/);
   for (const id of [
     "battle_total_30000",
     "battle_solo_10000",
@@ -1069,7 +1068,7 @@ test("the final achievement preview and cache marker cover the newly opened fami
   for (const id of SECRET_LOSS_STREAK_IDS) assert.match(online, new RegExp(id), id);
 });
 
-test("AnjuPay flea achievements use only dedicated authoritative counts", () => {
+test("retired AnjuPay flea achievements keep authoritative historical stats and equipped IDs without new unlocks", () => {
   const stats = normalizeFleaStats({
     listings: 14.9,
     sales: 7.8,
@@ -1084,12 +1083,8 @@ test("AnjuPay flea achievements use only dedicated authoritative counts", () => 
     purchases: 30,
   });
   const ids = eligibleAchievementIds({ fleaStats: stats, scope: "flea" });
-  for (const expected of [
-    "flea_listings_14",
-    "flea_sales_7",
-    "flea_purchases_30",
-  ]) assert.equal(ids.includes(expected), true, expected);
-  assert.equal(ids.includes("flea_listings_30"), false);
+  assert.deepEqual(ids, []);
+  assert.deepEqual(eligibleAchievementIds({ fleaStats: { listings: 1000, sales: 1000, purchases: 10000 }, scope: "flea" }), []);
   assert.equal(ids.some((id) => id.startsWith("market_")), false);
   assert.equal(
     eligibleAchievementIds({ fleaStats: stats, scope: "market" })
@@ -1100,6 +1095,7 @@ test("AnjuPay flea achievements use only dedicated authoritative counts", () => 
     .filter((definition) => definition.scope === "flea");
   assert.equal(definitions.length, 30);
   assert.equal(definitions.every((definition) => definition.autoPublic === false), true);
+  assert.equal(definitions.every((definition) => definition.legacy === true), true);
   assert.deepEqual(
     [...new Set(definitions.map((definition) => definition.condition.type))],
     ["flea_stat"],
@@ -1263,20 +1259,19 @@ test("browser and Functions catalogs expose the same achievement IDs", () => {
     "価格や売上額、ランキング順位ではなく、トレーニングパックが利用された回数と広がりの記録",
     "同じ利用者からはJSTの1日1回だけ数える",
     "いろいろな人へトレーニングメニューが届くと解除",
-    "AnjuPayフリマ・一日棚",
-    "AnjuPayフリマ・ご縁",
-    "断惑NOTE",
-    "断ちたい習慣と向き合い、自分で継続を記した日々の歩み",
-    "断惑継続を自分のペースで記録すると解除",
     "月間王座",
     "2026年8月以降の検証済み月間王座で刻む、参加・入賞・戴冠の記録",
-    "連続日数ではなく、自分のペースで一品を言葉にした日々の記録",
-    "売上額や順位ではなく、一品が届いた回数と出会いの記録",
     "SPECIAL COLLECTION",
     "別のゲームで獲得した実績コードを入力すると解除",
   ]) {
     assert.match(collectionHtml, new RegExp(copy));
   }
+  assert.doesNotMatch(collectionHtml, /AnjuPayフリマ・一日棚|AnjuPayフリマ・ご縁|断惑継続を自分のペースで記録すると解除/);
+  const legacyHtml = window.HariaiAchievements.renderCollection({
+    unlocked: { flea_listings_14: 100, danwaku_streak_7: 100 },
+  });
+  assert.match(legacyHtml, /二週間の棚/);
+  assert.match(legacyHtml, /精進の芽/);
   assert.equal((collectionHtml.match(/SECRET RECORD/g) || []).length, 2);
   assert.match(collectionHtml, /achievement-level-1 is-secret/);
   assert.match(collectionHtml, /条件は解除まで非公開です/);

@@ -220,7 +220,7 @@ test("common deferred backfill writes no unlocks before initialization and retri
   const result = await h.get("payer", { deferTributeBackfill: true });
   assert.equal(result.eligible[0], "wallet:3");
   assert.equal(h.calls.backfill, 1);
-  assert.equal(h.calls.flea, 1);
+  assert.equal(h.calls.flea, 0, "retired Flea stats are not backfilled by common achievement reads");
   assert.equal(h.reads.filter((item) => item === "tributeStats/payer").length, 3);
   assert.equal(h.writes.length, 0);
   const failed = commonHarness({ ready: false, initialize: false });

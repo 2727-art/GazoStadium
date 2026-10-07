@@ -107,7 +107,6 @@ test("changed browser assets use the retirement cache marker", () => {
     "strategy.js",
     "online.js",
     "free-table.js",
-    "flea-market.js",
     "market.js",
     "ai-text-training.js",
   ]) {
@@ -117,6 +116,7 @@ test("changed browser assets use the retirement cache marker", () => {
       assetName,
     );
   }
+  assert.doesNotMatch(html, /src=["']flea-market\.js/, "the subsequently retired flea market is no longer a global module");
   assert.doesNotMatch(html, /training-v6-companion|kitaeai-hp/);
 });
 

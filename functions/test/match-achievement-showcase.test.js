@@ -352,8 +352,8 @@ test("callable, materialization, App Check, and server-only room rules are wired
   );
   assert.match(backend, /function soloHostedRoomPayload\(permit, achievementShowcases = null\)/);
   assert.match(backend, /achievementProfileRef\(participantUid\)\.get\(\)/);
-  assert.match(backend, /danwakuMatchBadgeRef\(participantUid\)\.get\(\)/);
-  assert.match(backend, /danwakuBadgeSnapshots\.map\(\(snapshot\) => snapshot\.data\(\)\)/);
+  assert.doesNotMatch(backend, /danwakuMatchBadgeRef\(participantUid\)\.get\(\)/);
+  assert.doesNotMatch(backend, /danwakuBadgeSnapshots\.map\(\(snapshot\) => snapshot\.data\(\)\)/);
   assert.match(backend, /collection\("strategyMatchAchievementFreezes"\)\.doc\(roomId\)/);
   assert.match(freeze, /achievementShowcases = await readMatchAchievementShowcases\(/);
   assert.match(freeze, /expiresAt: capturedAt \+ STRATEGY_MATCH_ACHIEVEMENT_FREEZE_TTL_MS|const expiresAt = capturedAt \+ STRATEGY_MATCH_ACHIEVEMENT_FREEZE_TTL_MS/);

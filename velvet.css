@@ -1442,14 +1442,13 @@ a:focus-visible,
   }
 
   .vl-others-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .hero.vl-landing > .vl-tabbar {
     margin-top: 16px;
   }
 
-  .hero.vl-landing > .landing-flea,
   .hero.vl-landing > .vl-live-board {
     float: left;
     clear: left;
