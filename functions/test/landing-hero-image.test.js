@@ -58,3 +58,12 @@ test("the homepage loads the updated hero markup and image styling cache version
   assert.match(html, /app\.js\?v=[^"]*hero-image-v1/);
   assert.match(html, /velvet\.css\?v=[^"]*hero-image-v1/);
 });
+
+test("Cloudflare sets the same image-only cache policy and Firebase does not serve its configuration", () => {
+  const rules = read("_headers").split(/\r?\n/).filter((line) => line.trim() && !line.trimStart().startsWith("#"));
+  assert.deepEqual(rules, [
+    `/${imagePath}`,
+    "  Cache-Control: public, max-age=31536000, immutable",
+  ]);
+  assert.ok(JSON.parse(read("firebase.json")).hosting.ignore.includes("_headers"));
+});

@@ -52,6 +52,7 @@
     ],
     "ignore": [
       "firebase.json",
+      "_headers",
       ".firebaserc",
       "database.rules.json",
       "README.md",
