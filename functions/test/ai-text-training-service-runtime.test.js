@@ -1172,6 +1172,99 @@ test("a close before completed finish preserves the close marker and releases th
   );
 });
 
+for (const closeFirst of [false, true]) {
+  test(`without lights heartbeats, completion ${closeFirst ? "after" : "before"} close keeps achievements and clears the active pointer`, async () => {
+    const now = Date.parse("2026-10-07T03:00:00.000Z");
+    const harness = createHarness({ balances: { player: 0 }, now });
+    const started = await beginAchievementSession(harness, "player", `no_heart_complete_${closeFirst ? "early" : "late"}`);
+    const activePath = "aiTextTrainingActiveAchievementSessions/player";
+    const sessionPath = `aiTextTrainingAchievementSessions/${started.session.id}`;
+    assert.equal(harness.firestore.read(activePath).lastSeenAt, 0,
+      "begin alone does not mark a player as actively lighting the gym");
+
+    harness.setNow(now + 100_000);
+    if (closeFirst) {
+      await closeAchievementPresence(harness, "player", started.session.id);
+      assert.equal(harness.firestore.read(activePath).sessionId, started.session.id,
+        "closing visibility alone preserves the still-unfinished achievement session");
+    }
+    const completed = await finishAchievementSession(harness, "player", started.session.id);
+    assert.equal(completed.session.status, "completed");
+    assert.equal(completed.stats.completedSessions, 1);
+    assert.equal(completed.stats.completionDays, 1);
+    assert.ok(completed.newlyUnlocked.includes("ai_training_sessions_1"));
+    if (!closeFirst) {
+      assert.equal(harness.firestore.read(activePath).sessionId, started.session.id,
+        "legacy server completion still needs the preserved close action");
+      await closeAchievementPresence(harness, "player", started.session.id);
+    }
+    assert.equal(harness.firestore.read(activePath), undefined);
+    assert.equal(harness.firestore.read(sessionPath).presenceClosedAt, now + 100_000);
+    assert.equal(harness.firestore.read("achievementProfiles/player").unlocked.ai_training_sessions_1, now + 100_000);
+
+    const repeatedFinish = await finishAchievementSession(harness, "player", started.session.id);
+    const repeatedClose = await closeAchievementPresence(harness, "player", started.session.id);
+    assert.equal(repeatedFinish.idempotent, true);
+    assert.equal(repeatedFinish.stats.completedSessions, 1);
+    assert.deepEqual(repeatedFinish.newlyUnlocked, []);
+    assert.equal(repeatedClose.idempotent, true);
+    assert.equal(harness.firestore.read(activePath), undefined);
+  });
+
+  test(`without lights heartbeats, exit ${closeFirst ? "after" : "before"} close clears the pointer without granting completion`, async () => {
+    const now = Date.parse("2026-10-07T03:00:00.000Z");
+    const harness = createHarness({ balances: { player: 0 }, now });
+    const started = await beginAchievementSession(harness, "player", `no_heart_exit_${closeFirst ? "early" : "late"}`);
+    const activePath = "aiTextTrainingActiveAchievementSessions/player";
+    harness.setNow(now + 10_000);
+    if (closeFirst) await closeAchievementPresence(harness, "player", started.session.id);
+    const exited = await finishAchievementSession(harness, "player", started.session.id, {
+      outcome: "exited", completedRounds: 0, activeSeconds: 10,
+    });
+    if (!closeFirst) await closeAchievementPresence(harness, "player", started.session.id);
+    assert.equal(exited.session.status, "exited");
+    assert.equal(exited.stats.completedSessions, 0);
+    assert.deepEqual(exited.newlyUnlocked, []);
+    assert.equal(harness.firestore.read(activePath), undefined);
+    assert.equal(harness.firestore.read("achievementProfiles/player"), undefined);
+    assert.deepEqual(harness.achievementSyncs, []);
+
+    harness.setNow(now + 100_000);
+    const delayedCompletion = await finishAchievementSession(harness, "player", started.session.id);
+    assert.equal(delayedCompletion.session.status, "exited");
+    assert.equal(delayedCompletion.idempotent, true);
+    assert.equal(delayedCompletion.stats.completedSessions, 0);
+    await closeAchievementPresence(harness, "player", started.session.id);
+    assert.equal(harness.firestore.read(activePath), undefined);
+  });
+}
+
+test("a delayed no-heartbeat session close and finish retry cannot remove the newer active session", async () => {
+  const now = Date.parse("2026-10-07T03:00:00.000Z");
+  const harness = createHarness({ balances: { player: 0 }, now });
+  const first = await beginAchievementSession(harness, "player", "no_heart_old_session");
+  harness.setNow(now + 100_000);
+  await finishAchievementSession(harness, "player", first.session.id);
+  const second = await beginAchievementSession(harness, "player", "no_heart_new_session");
+  const activePath = "aiTextTrainingActiveAchievementSessions/player";
+  const currentPointer = harness.firestore.read(activePath);
+  assert.equal(currentPointer.sessionId, second.session.id);
+  assert.equal(currentPointer.lastSeenAt, 0);
+
+  await closeAchievementPresence(harness, "player", first.session.id);
+  const oldFinish = await finishAchievementSession(harness, "player", first.session.id);
+  await closeAchievementPresence(harness, "player", first.session.id);
+  assert.deepEqual(harness.firestore.read(activePath), currentPointer);
+  assert.equal(oldFinish.stats.completedSessions, 1);
+
+  harness.setNow(now + 200_000);
+  const completed = await finishAchievementSession(harness, "player", second.session.id);
+  await closeAchievementPresence(harness, "player", second.session.id);
+  assert.equal(completed.stats.completedSessions, 2);
+  assert.equal(completed.stats.completionDays, 1);
+  assert.equal(harness.firestore.read(activePath), undefined);
+});
+
 test("safety stop is terminal, closes the presence lease, and never counts as completion", async () => {
   const now = Date.parse("2026-07-29T03:00:00.000Z");
   const harness = createHarness({ balances: { player: 0 }, now });

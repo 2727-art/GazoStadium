@@ -66,7 +66,7 @@ test("public lobby stats use one initial batch and manual batches without presen
   assert.match(refreshSource, /get\(ref\(database, "online\/publicPresence"\)\)/);
   assert.match(refreshSource, /get\(ref\(database, "online\/publicMarketPresence"\)\)/);
   assert.match(refreshSource, /loadFreeTablePublicStatsSnapshot\(\)/);
-  assert.match(refreshSource, /loadAiTextTrainingPublicStatsSnapshot\(\)/);
+  assert.doesNotMatch(refreshSource, /loadAiTextTrainingPublicStatsSnapshot|aiTrainingResult|aiTrainingStats/);
   assert.doesNotMatch(refreshSource, /onValue\(/);
   assert.match(watchSource, /refreshLobbyPublicStats\(\{ initial: true \}\)/);
   assert.doesNotMatch(watchSource, /online\/publicPresence["`]/);
@@ -91,7 +91,7 @@ test("refresh batches preserve previous values on partial failure and never age 
   assert.match(refreshSource, /let nextLobbyPresenceEntries = lobbyPresenceEntries/);
   assert.match(refreshSource, /let nextMarketPresenceEntries = marketPresenceEntries/);
   assert.match(refreshSource, /let nextFreeTableStats = \{ \.\.\.lobbyStats\.freeTable \}/);
-  assert.match(refreshSource, /let nextAiTrainingStats = \{ \.\.\.lobbyStats\.aiTextTraining \}/);
+  assert.doesNotMatch(refreshSource, /nextAiTrainingStats|lobbyStats\.aiTextTraining/);
   assert.match(refreshSource, /refreshPresence: presenceResult\.status === "fulfilled"/);
   assert.match(refreshSource, /refreshMarket: marketResult\.status === "fulfilled"/);
   assert.match(online, /refreshPresence \? \{[\s\S]*\} : \{ \.\.\.previousStats\[mode\] \}/);

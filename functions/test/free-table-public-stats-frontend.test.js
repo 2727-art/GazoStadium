@@ -27,10 +27,11 @@ test("free table public stats load only on initial/manual refresh and result ent
   const onlineSource = read("online.js");
   const loaderStart = onlineSource.indexOf("async function loadFreeTablePublicStatsSnapshot()");
   const refreshStart = onlineSource.indexOf("function refreshFreeTablePublicStats()");
-  const refreshEnd = onlineSource.indexOf("function normalizeAiTextTrainingPublicStats", refreshStart);
+  const refreshEnd = onlineSource.indexOf("function refreshLobbyStats(", refreshStart);
   const refreshSource = onlineSource.slice(loaderStart, refreshEnd);
 
   assert.ok(loaderStart >= 0);
+  assert.ok(refreshStart > loaderStart && refreshEnd > refreshStart);
   assert.match(onlineSource, /httpsCallable\(functions, "freeTablePublicStats"\)/);
   assert.match(refreshSource, /freeTablePublicStatsCallable\(\{\}\)/);
   assert.doesNotMatch(refreshSource, /ensureAuthenticated|signInAnonymously|setPersistence/);

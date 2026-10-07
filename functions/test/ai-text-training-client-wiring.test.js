@@ -508,7 +508,7 @@ test("doodle cheer composes every line as a stable full-image collage and record
   const cosmeticsPanel = sourceBlock(client, "function renderCosmeticsPanel", "function renderSetup");
   assert.match(cosmeticsPanel, /is-doodle is-collage[\s\S]*?role="img" aria-label=/);
   assert.match(online, /shop-ai-training-style-message is-doodle is-collage[\s\S]*?role="img" aria-label=/);
-  const resultLineup = sourceBlock(client, "function renderResultLineup", "function renderAiTextTrainingLightResult");
+  const resultLineup = sourceBlock(client, "function renderResultLineup", "function renderResult()");
   assert.match(resultLineup, /今回の5作品/);
   assert.match(resultLineup, /const completedSession = state\.completedRounds >= AI_TEXT_TRAINING_ROUND_COUNT/);
   assert.match(resultLineup, /completedSession[\s\S]*?Array\.from\(\{ length: AI_TEXT_TRAINING_ROUND_COUNT \}/);
@@ -2166,11 +2166,6 @@ test("defeat ZONE completes the workout at five rounds but consumes its paid use
     "function finishDefeatPresentation",
     "function queueAchievementFinish",
   );
-  const companionCopy = sourceBlock(
-    client,
-    "function aiTextTrainingLightsCompanionCopy",
-    "function updateAiTextTrainingLightsCompanionDom",
-  );
   const requestHome = sourceBlock(client, "function requestHome", "function cleanup");
 
   assert.match(setup, /name="aiTextTrainingPlayStyle"/);
@@ -2205,10 +2200,7 @@ test("defeat ZONE completes the workout at five rounds but consumes its paid use
     /keepDefeatPresentation[\s\S]*?targetState\.sessionPlayStyle === "defeat_zone"[\s\S]*?persistSession\(\)/,
   );
   assert.doesNotMatch(commit, /DEFEAT_ZONE_(?:RUSH|COOLDOWN)_MS/);
-  assert.match(
-    companionCopy,
-    /targetState\.workoutFinalized[\s\S]*?5ラウンド完了。あなたの灯りは消灯しました。/,
-  );
+  assert.doesNotMatch(client, /ai-text-training-companion|あなたの灯り/);
 
   const outcomes = [];
   const runtimeState = {
@@ -3119,10 +3111,7 @@ test("the in-round timer and beat gauge use opposite edges with a ten-second fin
     sourceBlock(client, "function supportMessage", "function updatePlayingDom"),
     /document\.querySelector\("#aiTextTrainingCheer > span"\)/,
   );
-  assert.match(
-    trainingStyles,
-    /@media \(max-width: 480px\)[\s\S]*?\.ai-text-training-companion > span\s*\{[\s\S]*?display:\s*none;[\s\S]*?\.ai-text-training-companion > p\s*\{[\s\S]*?white-space:\s*nowrap;/,
-  );
+  assert.doesNotMatch(trainingStyles, /\.ai-text-training-companion/);
   const standardPlay = sourceBlock(client, "function renderPlay()", "function resultTitle");
   assert.match(standardPlay, /renderFrame\([\s\S]*?\{ showHeader: false \}\);/);
   assert.doesNotMatch(standardPlay, /title: "SOLO TRAINING"|backAction: "exit-session"/);

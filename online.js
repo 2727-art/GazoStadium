@@ -459,7 +459,6 @@ const LOBBY_PUBLIC_STATS_REFRESH_COOLDOWN_MS = 30_000;
 const LOBBY_PUBLIC_STATS_REQUEST_TIMEOUT_MS = 20_000;
 const FREE_TABLE_PUBLIC_STATS_STALE_MS = 180_000;
 const FREE_TABLE_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
-const AI_TEXT_TRAINING_PUBLIC_STATS_FUTURE_TOLERANCE_MS = 30_000;
 const SOLO_REMATCH_SOFT_WIDEN_MS = 20_000;
 const FALLBACK_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
@@ -474,7 +473,6 @@ const soloSessionActionCallable = httpsCallable(functions, "soloSessionAction");
 const getP2pIceServersCallable = httpsCallable(functions, "getP2pIceServers");
 const reportP2pConnectivityCallable = httpsCallable(functions, "reportP2pConnectivity");
 const freeTablePublicStatsCallable = httpsCallable(functions, "freeTablePublicStats");
-const aiTextTrainingPublicStatsCallable = httpsCallable(functions, "aiTextTrainingPublicStats");
 const appRoot = document.querySelector("#app");
 const destroyDialog = document.querySelector("#destroyDialog");
 const sampleHandicapDialog = document.querySelector("#sampleHandicapDialog");
@@ -510,24 +508,14 @@ let freeTablePublicStats = {
 let freeTablePublicStatsLastSuccessAt = 0;
 let freeTablePublicStatsRequest = null;
 let lastFreeTablePublicStatsEventSignature = "";
-let aiTextTrainingPublicStats = {
-  activeCount: null,
-  hasRecentActivity: null,
-  updatedAt: null,
-  freshnessMs: null,
-  recentWindowMs: null,
-};
-let lastAiTextTrainingPublicStatsEventSignature = "";
 let freeTableResultTransitionBusy = false;
 const LOBBY_MODES = [...ACTIVE_BATTLE_MODES];
 const createLobbyStats = (
   value = null,
   freeTableStats = freeTablePublicStats,
-  aiTrainingStats = aiTextTrainingPublicStats,
 ) => ({
   ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { waiting: value, playing: value }])),
   freeTable: { ...freeTableStats },
-  aiTextTraining: { ...aiTrainingStats },
   market: { sellerWaiting: value, buyerWaiting: value, negotiating: value },
 });
 let lobbyStats = createLobbyStats();
@@ -2225,7 +2213,6 @@ function getLobbyStats() {
   return {
     ...Object.fromEntries(LOBBY_MODES.map((mode) => [mode, { ...lobbyStats[mode] }])),
     freeTable: { ...lobbyStats.freeTable },
-    aiTextTraining: { ...lobbyStats.aiTextTraining },
     market: { ...lobbyStats.market },
   };
 }
@@ -2968,50 +2955,9 @@ function refreshFreeTablePublicStatsImmediately() {
   return refreshFreeTablePublicStats();
 }
 
-function normalizeAiTextTrainingPublicStats(value, receivedAt) {
-  const activeCount = value?.activeCount;
-  const hasRecentActivity = value?.hasRecentActivity;
-  const updatedAt = value?.updatedAt;
-  const freshnessMs = value?.freshnessMs;
-  const recentWindowMs = value?.recentWindowMs;
-  if (!Number.isSafeInteger(activeCount)
-      || activeCount < 0
-      || typeof hasRecentActivity !== "boolean"
-      || !Number.isSafeInteger(updatedAt)
-      || updatedAt < 0
-      || !Number.isSafeInteger(freshnessMs)
-      || freshnessMs < 10_000
-      || freshnessMs > 10 * 60_000
-      || !Number.isSafeInteger(recentWindowMs)
-      || recentWindowMs < freshnessMs
-      || recentWindowMs > 24 * 60 * 60_000) return null;
-  if (Number.isSafeInteger(aiTextTrainingPublicStats.updatedAt)
-      && updatedAt < aiTextTrainingPublicStats.updatedAt) return null;
-  if (publicServerTimeOffsetReady) {
-    const estimatedServerNow = receivedAt + publicServerTimeOffset;
-    if (updatedAt > estimatedServerNow + AI_TEXT_TRAINING_PUBLIC_STATS_FUTURE_TOLERANCE_MS
-        || updatedAt <= estimatedServerNow - freshnessMs) return null;
-  }
-  return {
-    activeCount,
-    hasRecentActivity,
-    updatedAt,
-    freshnessMs,
-    recentWindowMs,
-  };
-}
-
-async function loadAiTextTrainingPublicStatsSnapshot() {
-  const response = await aiTextTrainingPublicStatsCallable({});
-  const receivedAt = Date.now();
-  const nextStats = normalizeAiTextTrainingPublicStats(response?.data, receivedAt);
-  if (!nextStats) throw new Error("Invalid AI text training public stats response.");
-  return { stats: nextStats, receivedAt };
-}
 
 function refreshLobbyStats({
   freeTableStats = freeTablePublicStats,
-  aiTrainingStats = aiTextTrainingPublicStats,
   refreshPresence = true,
   refreshMarket = true,
 } = {}) {
@@ -3023,7 +2969,7 @@ function refreshLobbyStats({
     && (entry?.state === "waiting" || entry?.state === "playing")
   ));
   const previousStats = lobbyStats;
-  const nextStats = createLobbyStats(null, freeTableStats, aiTrainingStats);
+  const nextStats = createLobbyStats(null, freeTableStats);
   LOBBY_MODES.forEach((mode) => {
     nextStats[mode] = refreshPresence ? {
       waiting: lobbyPresenceEntries === null ? null : 0,
@@ -3076,19 +3022,6 @@ function renderLobbyStats() {
   if (signature !== lastFreeTablePublicStatsEventSignature) {
     lastFreeTablePublicStatsEventSignature = signature;
     window.dispatchEvent(new CustomEvent("hariai-free-table-public-stats-updated", { detail }));
-  }
-  const aiTextTrainingDetail = { ...aiTextTrainingPublicStats };
-  const aiTextTrainingSignature = [
-    aiTextTrainingDetail.activeCount ?? "unknown",
-    aiTextTrainingDetail.hasRecentActivity ?? "unknown",
-    aiTextTrainingDetail.recentWindowMs ?? "unknown",
-  ].join(":");
-  if (aiTextTrainingSignature !== lastAiTextTrainingPublicStatsEventSignature) {
-    lastAiTextTrainingPublicStatsEventSignature = aiTextTrainingSignature;
-    window.dispatchEvent(new CustomEvent(
-      "hariai-ai-text-training-public-stats-updated",
-      { detail: aiTextTrainingDetail },
-    ));
   }
 }
 
@@ -3186,16 +3119,14 @@ async function refreshLobbyPublicStats({ initial = false } = {}) {
       withLobbyPublicStatsTimeout(get(ref(database, "online/publicPresence"))),
       withLobbyPublicStatsTimeout(get(ref(database, "online/publicMarketPresence"))),
       withLobbyPublicStatsTimeout(loadFreeTablePublicStatsSnapshot()),
-      withLobbyPublicStatsTimeout(loadAiTextTrainingPublicStatsSnapshot()),
     ]);
     if (generation !== lobbyPublicStatsRefreshGeneration) {
       return getLobbyStatsRefreshStatus();
     }
-    const [presenceResult, marketResult, freeTableResult, aiTrainingResult] = results;
+    const [presenceResult, marketResult, freeTableResult] = results;
     let nextLobbyPresenceEntries = lobbyPresenceEntries;
     let nextMarketPresenceEntries = marketPresenceEntries;
     let nextFreeTableStats = { ...lobbyStats.freeTable };
-    let nextAiTrainingStats = { ...lobbyStats.aiTextTraining };
     let successCount = 0;
 
     if (presenceResult.status === "fulfilled") {
@@ -3213,18 +3144,11 @@ async function refreshLobbyPublicStats({ initial = false } = {}) {
       freeTablePublicStatsLastSuccessAt = receivedAt;
       successCount += 1;
     }
-    if (aiTrainingResult.status === "fulfilled") {
-      const { stats } = aiTrainingResult.value;
-      nextAiTrainingStats = { ...stats };
-      aiTextTrainingPublicStats = { ...stats };
-      successCount += 1;
-    }
 
     lobbyPresenceEntries = nextLobbyPresenceEntries;
     marketPresenceEntries = nextMarketPresenceEntries;
     refreshLobbyStats({
       freeTableStats: nextFreeTableStats,
-      aiTrainingStats: nextAiTrainingStats,
       refreshPresence: presenceResult.status === "fulfilled",
       refreshMarket: marketResult.status === "fulfilled",
     });

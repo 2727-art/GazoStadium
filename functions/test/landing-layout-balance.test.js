@@ -31,7 +31,8 @@ test("desktop landing aligns the entrances to one column and stacks two gap-free
   );
   assert.match(velvet, /\.vl-main-button\s*\{[^}]*grid-column:\s*1 \/ -1;/s, "normal 1on1 stays the widest entrance");
   // 左右の列は独立して上から積むので、隣の区画の高さで隙間ができない
-  assert.match(desktop, /\.hero\.vl-landing > \.training-lights-card,[\s\S]*?\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
+  assert.match(desktop, /\.hero\.vl-landing > \.landing-flea,[\s\S]*?\{[^}]*float:\s*left;[^}]*clear:\s*left;/s);
+  assert.doesNotMatch(velvet, /training-lights/);
   assert.match(desktop, /\.hero\.vl-landing > \.landing-community,[\s\S]*?\{[^}]*float:\s*right;[^}]*clear:\s*right;/s);
   assert.match(
     styles,

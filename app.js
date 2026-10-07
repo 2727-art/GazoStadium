@@ -931,118 +931,6 @@
     }
   }
 
-  function aiTextTrainingRecentWindowLabel(value) {
-    const recentWindowMs = Number(value);
-    if (!Number.isFinite(recentWindowMs) || recentWindowMs <= 0) return "少し前にも";
-    const minutes = Math.max(1, Math.round(recentWindowMs / 60_000));
-    if (minutes === 60) return "この1時間にも";
-    if (minutes > 60 && minutes % 60 === 0) return `この${minutes / 60}時間にも`;
-    return `この${minutes}分にも`;
-  }
-
-  function aiTextTrainingLightsPresentation(value) {
-    const activeCount = Number.isInteger(value?.activeCount) && value.activeCount >= 0
-      ? value.activeCount
-      : null;
-    if (activeCount === null) {
-      return {
-        state: "checking",
-        activeCount: null,
-        heading: "仲間の気配を確認しています…",
-        detail: "確認中でも、自分のペースですぐに始められます。",
-        ariaLabel: "文字コラジムの灯り。仲間の気配を確認しています。",
-      };
-    }
-    if (activeCount > 0) {
-      return {
-        state: "active",
-        activeCount,
-        heading: `いま${activeCount}人が、それぞれの場所でトレーニング中`,
-        detail: "あなたも、自分のペースでこの輪に加われます",
-        ariaLabel: `文字コラジムの灯り。いま${activeCount}人が、それぞれの場所でトレーニング中です。`,
-      };
-    }
-    if (value?.hasRecentActivity === true) {
-      return {
-        state: "recent",
-        activeCount: 0,
-        heading: "いまは静かな時間です。",
-        detail: `${aiTextTrainingRecentWindowLabel(value.recentWindowMs)}、誰かのトレーニングの灯りがありました`,
-        ariaLabel: "文字コラジムの灯り。いまは静かですが、少し前に仲間の灯りがありました。",
-      };
-    }
-    return {
-      state: "quiet",
-      activeCount: 0,
-      heading: "いまは静かな時間です。",
-      detail: "始めると、ここに最初の灯りがともります",
-      ariaLabel: "文字コラジムの灯り。始めると、ここに最初の灯りがともります。",
-    };
-  }
-
-  function renderAiTextTrainingLightDots(presentation) {
-    const visibleCount = presentation.state === "active"
-      ? Math.min(7, Math.max(1, presentation.activeCount))
-      : presentation.state === "checking"
-        ? 3
-        : 1;
-    const dots = Array.from(
-      { length: visibleCount },
-      (_, index) => `<i style="--training-light-index:${index}" aria-hidden="true"></i>`,
-    ).join("");
-    const overflow = presentation.state === "active" && presentation.activeCount > visibleCount
-      ? `<b aria-hidden="true">+${presentation.activeCount - visibleCount}</b>`
-      : "";
-    return `${dots}${overflow}`;
-  }
-
-  function updateAiTextTrainingLightDots(element, presentation) {
-    if (!element) return;
-    const visibleCount = presentation.state === "active"
-      ? Math.min(7, Math.max(1, presentation.activeCount))
-      : presentation.state === "checking"
-        ? 3
-        : 1;
-    const nodes = Array.from({ length: visibleCount }, (_, index) => {
-      const dot = document.createElement("i");
-      dot.style.setProperty("--training-light-index", String(index));
-      dot.setAttribute("aria-hidden", "true");
-      return dot;
-    });
-    if (presentation.state === "active" && presentation.activeCount > visibleCount) {
-      const overflow = document.createElement("b");
-      overflow.setAttribute("aria-hidden", "true");
-      overflow.textContent = `+${presentation.activeCount - visibleCount}`;
-      nodes.push(overflow);
-    }
-    element.replaceChildren(...nodes);
-  }
-
-  function renderAiTextTrainingLights(value) {
-    const presentation = aiTextTrainingLightsPresentation(value);
-    return `<aside class="training-lights-card is-${presentation.state}" id="aiTextTrainingLights" data-training-lights-state="${presentation.state}" aria-label="${escapeHtml(presentation.ariaLabel)}">
-      <div class="training-lights-visual" aria-hidden="true"><span class="training-lights-dots" id="aiTextTrainingLightDots">${renderAiTextTrainingLightDots(presentation)}</span><small>TRAINING LIGHTS</small></div>
-      <div class="training-lights-copy" aria-live="polite" aria-atomic="true"><span>文字コラジムの灯り</span><strong id="aiTextTrainingLightsHeading">${escapeHtml(presentation.heading)}</strong><p id="aiTextTrainingLightsDetail">${escapeHtml(presentation.detail)}</p><small>名前も画像も表示しない、匿名の仲間の気配です。</small></div>
-      <button class="button training-lights-start" id="aiTextTrainingLightsStartButton" type="button">自分のペースで始める</button>
-    </aside>`;
-  }
-
-  function updateLandingAiTextTrainingLights() {
-    if (currentScreen !== "landing") return;
-    const card = document.querySelector("#aiTextTrainingLights");
-    if (!card) return;
-    const stats = window.HariaiOnline?.getLobbyStats?.().aiTextTraining || {};
-    const presentation = aiTextTrainingLightsPresentation(stats);
-    card.className = `training-lights-card is-${presentation.state}`;
-    card.dataset.trainingLightsState = presentation.state;
-    card.setAttribute("aria-label", presentation.ariaLabel);
-    const dots = document.querySelector("#aiTextTrainingLightDots");
-    const heading = document.querySelector("#aiTextTrainingLightsHeading");
-    const detail = document.querySelector("#aiTextTrainingLightsDetail");
-    updateAiTextTrainingLightDots(dots, presentation);
-    if (heading) heading.textContent = presentation.heading;
-    if (detail) detail.textContent = presentation.detail;
-  }
 
   function lobbyStatsRefreshPresentation(value = {}) {
     const available = value.available !== false;
@@ -1074,7 +962,6 @@
     const modeStats = (mode) => lobbyStats[mode] || { waiting: null, playing: null };
     const soloStats = modeStats("solo");
     const strategyStats = modeStats("strategy");
-    const aiTextTrainingStats = lobbyStats.aiTextTraining || {};
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const freeTableLamp = freeTableLampPresentation(freeTableStats);
     const marketStats = lobbyStats.market || { sellerWaiting: null, buyerWaiting: null, negotiating: null };
@@ -1149,7 +1036,6 @@
         <button class="vl-tab vl-tab-shop" type="button" id="pointShopButton">AnjuPayストア</button>
         <button class="vl-tab vl-tab-wallet" type="button" id="accountButton">AnjuPayウォレット</button>
       </nav>
-      ${renderAiTextTrainingLights(aiTextTrainingStats)}
       ${renderLandingTopMessagePanel()}
       ${renderLandingFleaPanel()}
       <section class="vl-more" aria-labelledby="landingMoreTitle">
@@ -1220,7 +1106,6 @@
     document.querySelector("#aiTextTrainingButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#rouletteTrainingButton")?.addEventListener("click", startRouletteTraining);
     document.querySelector("#danwakuNoteButton")?.addEventListener("click", startDanwakuNote);
-    document.querySelector("#aiTextTrainingLightsStartButton")?.addEventListener("click", startAiTextTraining);
     document.querySelector("#freeTableButton")?.addEventListener("click", (event) => {
       startFreeTable({ intent: event.currentTarget.dataset.freeTableIntent });
     });
@@ -2814,14 +2699,9 @@
     if (currentScreen === "ranking") refreshRankingSurfaces();
     if (document.querySelector("#topMessagePanel")) window.HariaiOnline?.refreshTopMessages?.();
     updateLandingFreeTableEntrance();
-    updateLandingAiTextTrainingLights();
   });
 
   window.addEventListener("hariai-free-table-public-stats-updated", updateLandingFreeTableEntrance);
-  window.addEventListener(
-    "hariai-ai-text-training-public-stats-updated",
-    updateLandingAiTextTrainingLights,
-  );
 
   window.addEventListener("hariai-top-messages-updated", () => {
     const messages = window.HariaiOnline?.getTopMessages?.() || [];

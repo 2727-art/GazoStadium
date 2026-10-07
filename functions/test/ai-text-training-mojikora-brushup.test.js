@@ -422,7 +422,7 @@ test("my scripts, editor helpers and artwork saving never reach the server", () 
   assert.match(exportHelpers, /URL\.revokeObjectURL/);
   const exportAll = sourceBlock(client, "function loadArtworkImage", "function renderResultArtworkOverlay");
   assert.doesNotMatch(exportAll, /fetch\(|navigator\.share|XMLHttpRequest|callable|sendBeacon|firebase/i);
-  const lineup = sourceBlock(client, "function renderResultLineup", "function renderAiTextTrainingLightResult");
+  const lineup = sourceBlock(client, "function renderResultLineup", "function renderResult()");
   assert.match(lineup, /data-ai-text-training-save-artwork="\$\{index\}"/);
   assert.match(lineup, /この端末にだけ保存します（投稿・共有はしません）/);
 });
@@ -461,8 +461,8 @@ test("styles hide the overlapping stamp and keep placement bands, controls and e
 });
 
 test("cache tokens and the design notes cover the brushup", () => {
-  assert.match(html, /ai-text-training\.css\?v=[^"]*mojikora-brushup-v1"/);
-  assert.match(html, /ai-text-training\.js\?v=[^"]*mojikora-brushup-v1-tribute-v1"/);
+  assert.match(html, /ai-text-training\.css\?v=[^"]*mojikora-brushup-v1[^"]*retire-training-lights-v1"/);
+  assert.match(html, /ai-text-training\.js\?v=[^"]*mojikora-brushup-v1-tribute-v1[^"]*retire-training-lights-v1"/);
   assert.match(client, /ai-text-training-core\.mjs\?v=[^"]*mojikora-brushup-v1"/);
   assert.match(design, /### 6\.1\.1 マイ台本（端末内・無料）/);
   assert.match(design, /hariai-ai-text-training-my-scripts-v1/);

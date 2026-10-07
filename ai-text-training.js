@@ -135,13 +135,6 @@ const REPORT_REASONS = Object.freeze([
   Object.freeze({ id: "other", label: "その他" }),
 ]);
 const ROUND_SECONDS_OPTIONS = Object.freeze([15, 20, 30, 45, 60]);
-const AI_TEXT_TRAINING_LIGHT_HEARTBEAT_MS = 20_000;
-const AI_TEXT_TRAINING_LIGHT_ENGAGED_PHASES = new Set([
-  "countdown",
-  "playing",
-  "reaction",
-  "next_preview",
-]);
 const AI_TEXT_TRAINING_VIDEO_AUDIO_PHASES = new Set([
   "countdown",
   "playing",
@@ -867,6 +860,28 @@ function flushAchievementRetryQueue() {
             completedRounds: record.completedRounds,
             activeSeconds: record.activeSeconds,
           });
+          if (normalizeAchievementOwnerUid(auth.currentUser?.uid) !== authenticatedUid) {
+            allSucceeded = false;
+            break;
+          }
+          // Finishing is already committed even if the separate pointer close
+          // fails. Preserve its unlock notification before an idempotent retry.
+          notifyAchievementUnlocks(response.data?.newlyUnlocked);
+          // A delayed begin/finish may belong to a screen that has already
+          // been replaced. Close that exact session before dropping its retry
+          // record, without borrowing the current screen's session pointer.
+          const closeTarget = state.achievementActionId === record.actionId
+            && state.achievementSessionId === record.sessionId
+            ? state
+            : { preview: false, achievementSessionId: record.sessionId };
+          if (typeof closeAiTextTrainingLightsPresence === "function"
+              && !await closeAiTextTrainingLightsPresence(closeTarget)) {
+            throw new Error("実績記録の終了確認を再送します。");
+          }
+          if (normalizeAchievementOwnerUid(auth.currentUser?.uid) !== authenticatedUid) {
+            allSucceeded = false;
+            break;
+          }
           writeAchievementRetryQueue(
             readAchievementRetryQueue()
               .filter((item) => item.actionId !== record.actionId),
@@ -877,7 +892,6 @@ function flushAchievementRetryQueue() {
             );
             persistSession();
           }
-          notifyAchievementUnlocks(response.data?.newlyUnlocked);
         } catch (error) {
           allSucceeded = false;
           state.achievementRetryError = error?.message
@@ -1003,11 +1017,6 @@ function createState() {
     achievementRetryInFlight: false,
     achievementRetryError: "",
     notifiedAchievementIds: new Set(),
-    trainingLightsDesiredActive: false,
-    trainingLightsPresenceActive: false,
-    trainingLightsPresenceRequest: null,
-    trainingLightsSyncAgain: false,
-    trainingLightsHeartbeatTimer: null,
     trainingLightsCloseRequested: false,
     trainingLightsCloseRequest: null,
     trainingLightsCloseRequestSessionId: "",
@@ -1166,43 +1175,6 @@ function stopRuntimeTimers() {
   state.roundEndsAt = 0;
 }
 
-function aiTextTrainingLightsCanBeActive(targetState = state) {
-  return active
-    && state === targetState
-    && !targetState.preview
-    && !targetState.workoutFinalized
-    && !targetState.trainingLightsCloseRequested
-    && document.visibilityState === "visible"
-    && targetState.screen === "play"
-    && /^[a-f0-9]{40}$/u.test(String(targetState.achievementSessionId || ""))
-    && AI_TEXT_TRAINING_LIGHT_ENGAGED_PHASES.has(targetState.phase);
-}
-
-function clearAiTextTrainingLightsHeartbeat(targetState = state) {
-  window.clearInterval(targetState.trainingLightsHeartbeatTimer);
-  targetState.trainingLightsHeartbeatTimer = null;
-}
-
-function aiTextTrainingLightsCompanionCopy(targetState = state) {
-  if (targetState.workoutFinalized) {
-    return "5ラウンド完了。あなたの灯りは消灯しました。";
-  }
-  if (["paused", "zone_paused"].includes(targetState.phase)) {
-    return "あなたの灯りも一時停止中です。再開すると、また仲間の輪へ戻ります。";
-  }
-  if (targetState.trainingLightsPresenceActive
-      && targetState.trainingLightsDesiredActive) {
-    return "あなたの灯りも、仲間の輪につながっています";
-  }
-  return "仲間の灯りをつないでいます…";
-}
-
-function updateAiTextTrainingLightsCompanionDom(targetState = state) {
-  if (state !== targetState) return;
-  const message = document.querySelector("#aiTextTrainingCompanionMessage");
-  if (message) message.textContent = aiTextTrainingLightsCompanionCopy(targetState);
-}
-
 function closeAiTextTrainingLightsPresence(targetState = state) {
   const sessionId = String(targetState.achievementSessionId || "");
   if (targetState.preview || !/^[a-f0-9]{40}$/u.test(sessionId)) {
@@ -1215,12 +1187,13 @@ function closeAiTextTrainingLightsPresence(targetState = state) {
       && targetState.trainingLightsCloseRequestSessionId === sessionId) {
     return targetState.trainingLightsCloseRequest;
   }
-  targetState.trainingLightsPresenceActive = false;
   const closeRequest = aiTextTrainingAction({
     action: "close_achievement_presence",
     sessionId,
   }).then(() => {
-    targetState.trainingLightsClosedSessionId = sessionId;
+    if (targetState.achievementSessionId === sessionId) {
+      targetState.trainingLightsClosedSessionId = sessionId;
+    }
     return true;
   }).catch(() => false).finally(() => {
     if (targetState.trainingLightsCloseRequest === closeRequest) {
@@ -1233,91 +1206,19 @@ function closeAiTextTrainingLightsPresence(targetState = state) {
   return closeRequest;
 }
 
-function sendAiTextTrainingLightsPresence(targetState, requestedActive) {
-  const sessionId = String(targetState.achievementSessionId || "");
-  if (targetState.preview || !/^[a-f0-9]{40}$/u.test(sessionId)) {
-    return Promise.resolve(false);
-  }
-  if (targetState.trainingLightsPresenceRequest) {
-    targetState.trainingLightsSyncAgain = true;
-    return targetState.trainingLightsPresenceRequest;
-  }
-  const payload = {
-    action: "heartbeat_achievement_session",
-    sessionId,
-    active: requestedActive === true,
-  };
-  const presenceRequest = Promise.resolve()
-    .then(() => aiTextTrainingAction(payload))
-    .then(() => {
-      if (state !== targetState || targetState.achievementSessionId !== sessionId) return false;
-      targetState.trainingLightsPresenceActive = !targetState.trainingLightsCloseRequested
-        && requestedActive === true;
-      if (requestedActive
-          && targetState.trainingLightsDesiredActive
-          && aiTextTrainingLightsCanBeActive(targetState)) {
-        updateAiTextTrainingLightsCompanionDom(targetState);
-      }
-      return true;
-    })
-    .catch(() => false)
-    .finally(() => {
-      if (targetState.trainingLightsPresenceRequest === presenceRequest) {
-        targetState.trainingLightsPresenceRequest = null;
-      }
-      if (state !== targetState) return;
-      if (targetState.achievementSessionId !== sessionId) {
-        if (targetState.trainingLightsSyncAgain) {
-          targetState.trainingLightsSyncAgain = false;
-          syncAiTextTrainingLightsPresence();
-        }
-        return;
-      }
-      const currentlyClose = targetState.trainingLightsCloseRequested === true
-        || targetState.screen === "result";
-      if (currentlyClose) {
-        targetState.trainingLightsSyncAgain = false;
-        closeAiTextTrainingLightsPresence(targetState);
-        return;
-      }
-      const currentlyDesired = aiTextTrainingLightsCanBeActive(targetState)
-        && targetState.trainingLightsDesiredActive;
-      if (targetState.trainingLightsSyncAgain
-          || currentlyDesired !== requestedActive) {
-        targetState.trainingLightsSyncAgain = false;
-        sendAiTextTrainingLightsPresence(targetState, currentlyDesired);
-      }
-    });
-  targetState.trainingLightsPresenceRequest = presenceRequest;
-  return presenceRequest;
-}
-
-function syncAiTextTrainingLightsPresence({ forceInactive = false, close = false } = {}) {
+// Public training lights are retired. Existing phase/recovery hooks now only
+// close a terminal achievement session; they never send presence heartbeats.
+// Closing remains necessary because the server pointer also protects account
+// migration and must not keep a finished workout marked as active.
+function syncAiTextTrainingLightsPresence({ close = false } = {}) {
   const targetState = state;
   if (close || targetState.screen === "result") {
     targetState.trainingLightsCloseRequested = true;
   }
-  const desiredActive = !forceInactive
-    && !targetState.trainingLightsCloseRequested
-    && aiTextTrainingLightsCanBeActive(targetState);
-  targetState.trainingLightsDesiredActive = desiredActive;
-  if (!desiredActive) targetState.trainingLightsPresenceActive = false;
-  updateAiTextTrainingLightsCompanionDom(targetState);
-  clearAiTextTrainingLightsHeartbeat(targetState);
-  if (!/^[a-f0-9]{40}$/u.test(String(targetState.achievementSessionId || ""))) return;
   if (targetState.trainingLightsCloseRequested) {
-    closeAiTextTrainingLightsPresence(targetState);
-    return;
+    return closeAiTextTrainingLightsPresence(targetState);
   }
-  sendAiTextTrainingLightsPresence(targetState, desiredActive);
-  if (!desiredActive) return;
-  targetState.trainingLightsHeartbeatTimer = window.setInterval(() => {
-    if (!aiTextTrainingLightsCanBeActive(targetState)) {
-      syncAiTextTrainingLightsPresence({ forceInactive: true });
-      return;
-    }
-    sendAiTextTrainingLightsPresence(targetState, true);
-  }, AI_TEXT_TRAINING_LIGHT_HEARTBEAT_MS);
+  return Promise.resolve(false);
 }
 
 async function releaseWakeLock() {
@@ -2196,10 +2097,7 @@ function installPreview(requestedScreen) {
       );
     }
     if (["play", "reaction", "zone", "cooldown"].includes(requestedScreen)) {
-      const previewLightIsActive = requestedScreen !== "play";
       state.achievementBeginRequested = true;
-      state.trainingLightsDesiredActive = previewLightIsActive;
-      state.trainingLightsPresenceActive = previewLightIsActive;
     }
   }
   if (requestedScreen === "rankings") state.screen = "rankings";
@@ -3907,14 +3805,6 @@ function renderTrainingEdgeHud(remainingSeconds, label = "残り時間") {
   </div>`;
 }
 
-function renderAiTextTrainingLightsCompanion() {
-  if (!state.achievementBeginRequested) return "";
-  const paused = ["paused", "zone_paused"].includes(state.phase);
-  return `<aside class="ai-text-training-companion${paused ? " is-paused" : ""}" data-ai-text-training-companion aria-label="文字コラジムの仲間の灯り">
-    <i aria-hidden="true"></i><span>TRAINING LIGHTS</span><p id="aiTextTrainingCompanionMessage">${escapeHtml(aiTextTrainingLightsCompanionCopy())}</p>
-  </aside>`;
-}
-
 function renderPlayingImage() {
   if (zoneVideoEligibleForSession()) {
     const clipIndex = state.roundIndex % state.zoneVideoClips.length;
@@ -4493,7 +4383,6 @@ function renderPlay() {
     <section class="ai-text-training-arena ${state.phase === "countdown" ? "is-countdown" : ""}" data-att-mood="${escapeHtml(trainingMood())}" data-att-tempo="${escapeHtml(aiTextTrainingTempoBand(bpm))}">
       <div class="ai-text-training-opponent" data-att-cheer-presentation="${escapeHtml(cheerDisplayMode(cheerMessage))}">${renderPlayingImage()}<div class="ai-text-training-vignette" aria-hidden="true"></div>${showRoundCheer ? renderDoodleCheer(cheerMessage) : ""}</div>
       ${center}
-      ${renderAiTextTrainingLightsCompanion()}
       <div class="ai-text-training-safety-controls">
         <button class="button button-danger ai-text-training-emergency" type="button" data-ai-text-training-action="stop-session" aria-label="無理、痛い、めまいを感じた時、またはトレーニングを終える時に即停止">無理・痛い・めまい／即停止</button>
       </div>
@@ -4860,11 +4749,6 @@ function renderResultLineup({ winner = false } = {}) {
   </section>`;
 }
 
-function renderAiTextTrainingLightResult() {
-  if (!state.achievementBeginRequested) return "";
-  return `<p class="ai-text-training-light-result"><i aria-hidden="true"></i><strong>あなたも、今日ここで頑張った一人です</strong><span>あなたの灯りが、次に始める誰かへ仲間の気配を残します。</span></p>`;
-}
-
 function renderResult() {
   const completedRounds = state.resultOutcome === "completed"
     ? AI_TEXT_TRAINING_ROUND_COUNT
@@ -4886,7 +4770,6 @@ function renderResult() {
     <section class="ai-text-training-result ${state.resultOutcome === "safety_stopped" || state.postWorkoutSafetyStopped ? "is-safety" : ""} ${defeatCertificate ? "is-defeat" : ""}">
       <span>${defeatCertificate ? "AI WIN · DEFEAT CERTIFICATE" : state.postWorkoutSafetyStopped ? "TRAINING COMPLETE · SAFETY STOP" : state.postWorkoutExited ? "TRAINING COMPLETE · ZONE EXIT" : state.resultOutcome === "completed" ? "SESSION CLEAR" : "SESSION ENDED"}</span>
       <h2>${escapeHtml(resultTitle())}</h2>
-      ${renderAiTextTrainingLightResult()}
       <p>${state.resultOutcome === "safety_stopped" || state.postWorkoutSafetyStopped ? `${state.workoutFinalized ? "5ラウンドの完了記録は保持しました。" : ""}止まる判断は失敗ではありません。体調が戻らない場合は運動を再開しないでください。` : state.postWorkoutExited && !state.defeatResolution ? "5ラウンドの完了記録は保持しました。敗北は確定せず、今回の対戦演出だけを終了しました。" : defeatCertificate ? "厳選した5枚が最終攻勢を制しました。対戦には敗北、トレーニングは5ラウンド完了です。" : "動作の回数やフォームは判定していません。実際に到達した範囲だけを記録します。"}</p>
       ${defeatCertificate ? `<section class="ai-text-training-outcome-grid" aria-label="今回の結果"><article><small>対戦結果</small><strong>DEFEAT</strong><span>あなたの敗北</span></article><article><small>トレーニング結果</small><strong>COMPLETE</strong><span>5ラウンド達成</span></article></section><blockquote class="ai-text-training-message-surface">${escapeHtml(state.defeatCertificateMessage || defeatZoneFallbackLines("zone_certificate")[0])}</blockquote>` : state.postWorkoutExited ? '<blockquote class="ai-text-training-message-surface">対戦結果は未確定です。今日はここまでにしました。</blockquote>' : state.resultOutcome === "exited" ? '<blockquote class="ai-text-training-message-surface">今日はここまで。止める判断にペナルティはありません。</blockquote>' : state.resultOutcome === "completed" ? `<blockquote class="ai-text-training-message-surface">${escapeHtml(clearMessage())}</blockquote>` : ""}
       ${renderResultLineup({ winner: defeatCertificate })}
@@ -5598,12 +5481,6 @@ function newSessionPlan() {
   state.achievementSessionId = "";
   state.achievementBeginRequested = false;
   state.achievementRetryError = "";
-  if (typeof clearAiTextTrainingLightsHeartbeat === "function") {
-    clearAiTextTrainingLightsHeartbeat();
-  }
-  state.trainingLightsDesiredActive = false;
-  state.trainingLightsPresenceActive = false;
-  state.trainingLightsSyncAgain = false;
   state.trainingLightsCloseRequested = false;
   state.trainingLightsCloseRequest = null;
   state.trainingLightsCloseRequestSessionId = "";
@@ -6793,12 +6670,6 @@ function resetForAnotherSession({ drawMode = "same" } = {}) {
   state.achievementSessionId = "";
   state.achievementBeginRequested = false;
   state.achievementRetryError = "";
-  if (typeof clearAiTextTrainingLightsHeartbeat === "function") {
-    clearAiTextTrainingLightsHeartbeat();
-  }
-  state.trainingLightsDesiredActive = false;
-  state.trainingLightsPresenceActive = false;
-  state.trainingLightsSyncAgain = false;
   state.trainingLightsCloseRequested = false;
   state.trainingLightsCloseRequest = null;
   state.trainingLightsCloseRequestSessionId = "";
@@ -6847,9 +6718,6 @@ function requestHome() {
 function cleanup({ releaseDeck = false } = {}) {
   if (typeof syncAiTextTrainingLightsPresence === "function") {
     syncAiTextTrainingLightsPresence({ forceInactive: true, close: true });
-  }
-  if (typeof clearAiTextTrainingLightsHeartbeat === "function") {
-    clearAiTextTrainingLightsHeartbeat();
   }
   stopRuntimeTimers();
   releaseWakeLock();

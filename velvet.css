@@ -1274,18 +1274,12 @@ a:focus-visible,
 .vl-row-audio { --row-icon: var(--vs-icon-mic); }
 
 /* 既存の区画も、飾りのない夜の面へそろえる */
-.vl-landing .training-lights-card,
 .vl-landing .landing-community,
 .vl-landing .landing-flea,
 .vl-live-board,
 .vl-more {
   max-width: none;
   margin: 0;
-}
-
-.vl-landing .training-lights-card {
-  border-color: rgba(255, 138, 182, 0.24);
-  background: var(--ha-surface);
 }
 
 .vl-landing .landing-community {
@@ -1455,7 +1449,6 @@ a:focus-visible,
     margin-top: 16px;
   }
 
-  .hero.vl-landing > .training-lights-card,
   .hero.vl-landing > .landing-flea,
   .hero.vl-landing > .vl-live-board {
     float: left;
@@ -1473,15 +1466,6 @@ a:focus-visible,
     margin: 24px 0 0;
   }
 
-  /* 半分の幅でも文字が詰まらないよう、灯りのボタンは本文の下に置く */
-  .vl-landing .training-lights-card {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .vl-landing .training-lights-start {
-    width: 100%;
-    grid-column: 1 / -1;
-  }
 }
 
 /* 推しカードの見出しは折り返さず、操作ボタンが入らない時は次の行へ送る */
