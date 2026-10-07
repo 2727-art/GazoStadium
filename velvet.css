@@ -716,6 +716,15 @@ a:focus-visible,
   animation: vs-fade-up 500ms var(--vs-ease-out) 350ms both;
 }
 
+/* トップ専用の静的な見本画像。元の比率を保ち、狭い画面でも収める。 */
+.vl-hero-thread img.ha-photo {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: none;
+}
+
 /* 通常型1on1の入口 */
 .vl-landing .hero-actions {
   max-width: none;

@@ -907,7 +907,7 @@
     const freeTableStats = lobbyStats.freeTable || { welcomingRooms: null, seatedRooms: null };
     const freeTableLamp = freeTableLampPresentation(freeTableStats);
     const statValue = (value) => Number.isInteger(value) ? value : "--";
-    // トップの見本のやりとり。実際の対戦画面と同じ吹き出しとメーターで描く（人の画像や名前は使わない）。
+    // トップ専用の固定画像で描く見本。利用者の投稿画像や名前は取得しない。
     const heroMeter = Array.from({ length: 10 }, (_, index) => {
       const score = index + 1;
       const band = score <= 6 ? "low" : score <= 8 ? "mid" : "high";
@@ -922,8 +922,8 @@
           <p class="vl-lead">推しの画像にひとことを添えて送り合い、刺さり具合を点数で返す。</p>
         </div>
         <div class="vl-hero-thread" role="img" aria-label="やりとりの例。相手が画像に「ねぇ、これ好きでしょ？♡」と添えて貼り、こちらが90点で返す。">
-          <div class="ha-msg is-theirs" aria-hidden="true"><span class="ha-avatar">小</span><div class="ha-msg-body">
-            <span class="ha-photo is-placeholder"><i></i>画像</span>
+          <div class="ha-msg is-theirs" aria-hidden="true"><div class="ha-msg-body">
+            <img class="ha-photo" src="assets/landing/hero-example.d9a004076802.png" width="360" height="270" alt="" decoding="async" />
             <span class="ha-bubble">ねぇ、これ好きでしょ？♡</span>
           </div></div>
           <div class="ha-msg is-mine" aria-hidden="true"><div class="ha-msg-body">

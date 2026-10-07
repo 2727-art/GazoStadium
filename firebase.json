@@ -39,6 +39,17 @@
   "hosting": {
     "site": "gazostadium",
     "public": ".",
+    "headers": [
+      {
+        "source": "/assets/landing/hero-example.d9a004076802.png",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      }
+    ],
     "ignore": [
       "firebase.json",
       ".firebaserc",
